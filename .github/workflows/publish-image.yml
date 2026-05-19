@@ -1,6 +1,12 @@
 name: Publish Docker image
 
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing Git tag to publish, without refs/tags/"
+        required: true
+        type: string
   push:
     tags:
       - "*"
@@ -20,6 +26,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          fetch-depth: 0
 
       - name: Set image name
         id: image
@@ -32,9 +41,11 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
+          context: git
           images: ${{ steps.image.outputs.name }}
           tags: |
-            type=ref,event=tag
+            type=ref,event=tag,enable=${{ github.event_name == 'push' }}
+            type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
             type=sha,prefix=sha-
             type=raw,value=latest
 
