@@ -15,6 +15,9 @@
 # Optional env (sensible defaults — see .env for the full list):
 #   NEO4J_USER, NEO4J_DATABASE
 #   REDIS_PASSWORD, REDIS_DB, REDIS_PORT
+#   DENSE_MEM_DOMAIN, ACME_EMAIL, DENSE_MEM_PUBLIC_NETWORK,
+#   DENSE_MEM_PUBLIC_NETWORK_EXTERNAL, TRAEFIK_* when enabling the traefik
+#   profile
 #
 # The image entrypoint (/app/docker-entrypoint.sh) builds POSTGRES_DSN from
 # its component env vars at container start, so no credentialed connection
@@ -24,6 +27,32 @@
 # before schema-dependent checks run.
 
 services:
+  traefik:
+    profiles: ["traefik"]
+    image: traefik:v3
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:-admin@example.com}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      - "--accesslog=true"
+      - "--log.level=INFO"
+    ports:
+      - "${TRAEFIK_HTTP_PORT:-80}:80"
+      - "${TRAEFIK_HTTPS_PORT:-443}:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-acme:/letsencrypt
+    networks:
+      - public
+    restart: unless-stopped
+
   postgres:
     image: postgres:16-alpine
     env_file:
@@ -32,6 +61,8 @@ services:
       - postgres-data:/var/lib/postgresql/data
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - private
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"${POSTGRES_USER:-densemem}\" -d \"${POSTGRES_DB:-densemem}\""]
       interval: 10s
@@ -57,6 +88,8 @@ services:
     ports:
       - "127.0.0.1:${NEO4J_HTTP_PORT:-7474}:7474"
       - "127.0.0.1:${NEO4J_BOLT_PORT:-7687}:7687"
+    networks:
+      - private
     healthcheck:
       test:
         - "CMD-SHELL"
@@ -84,6 +117,8 @@ services:
       - redis-data:/data
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    networks:
+      - private
     healthcheck:
       test: ["CMD-SHELL", "redis-cli ${REDIS_PASSWORD:+-a $$REDIS_PASSWORD} ping | grep -q PONG"]
       interval: 10s
@@ -96,23 +131,56 @@ services:
     image: ghcr.io/markhuangai/dense-mem:latest
     env_file:
       - .env
+    expose:
+      - "8080"
     ports:
-      - "127.0.0.1:8080:8080"
-      - "127.0.0.1:8090:8090"
+      - "${CONTROL_PORTAL_BIND:-127.0.0.1}:${CONTROL_PORTAL_PORT:-8090}:8090"
     environment:
       POSTGRES_HOST: postgres
       NEO4J_URI: bolt://neo4j:7687
       REDIS_ADDR: "${REDIS_ADDR:-}"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${DENSE_MEM_PUBLIC_NETWORK:-dense-mem-public}"
+      - "traefik.http.routers.densemem.rule=Host(`${DENSE_MEM_DOMAIN:-localhost}`)"
+      - "traefik.http.routers.densemem.entrypoints=websecure"
+      - "traefik.http.routers.densemem.tls=true"
+      - "traefik.http.routers.densemem.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.densemem.middlewares=densemem-secure-headers,densemem-compress,densemem-rate-limit,densemem-buffer,densemem-inflight"
+      - "traefik.http.services.densemem.loadbalancer.server.port=8080"
+      - "traefik.http.middlewares.densemem-secure-headers.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.densemem-secure-headers.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.densemem-secure-headers.headers.stsPreload=true"
+      - "traefik.http.middlewares.densemem-secure-headers.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.densemem-secure-headers.headers.browserXssFilter=true"
+      - "traefik.http.middlewares.densemem-secure-headers.headers.referrerPolicy=no-referrer"
+      - "traefik.http.middlewares.densemem-secure-headers.headers.frameDeny=true"
+      - "traefik.http.middlewares.densemem-compress.compress=true"
+      - "traefik.http.middlewares.densemem-rate-limit.rateLimit.average=${TRAEFIK_RATE_AVERAGE:-60}"
+      - "traefik.http.middlewares.densemem-rate-limit.rateLimit.period=${TRAEFIK_RATE_PERIOD:-1m}"
+      - "traefik.http.middlewares.densemem-rate-limit.rateLimit.burst=${TRAEFIK_RATE_BURST:-30}"
+      - "traefik.http.middlewares.densemem-buffer.buffering.maxRequestBodyBytes=${TRAEFIK_MAX_BODY_BYTES:-1048576}"
+      - "traefik.http.middlewares.densemem-inflight.inFlightReq.amount=${TRAEFIK_INFLIGHT_REQUESTS:-32}"
     depends_on:
       postgres:
         condition: service_healthy
       neo4j:
         condition: service_healthy
+    networks:
+      - public
+      - private
     restart: unless-stopped
 
 volumes:
+  traefik-acme:
   postgres-data:
   neo4j-data:
   neo4j-logs:
   neo4j-plugins:
   redis-data:
+
+networks:
+  public:
+    name: ${DENSE_MEM_PUBLIC_NETWORK:-dense-mem-public}
+    external: ${DENSE_MEM_PUBLIC_NETWORK_EXTERNAL:-false}
+  private:

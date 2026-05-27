@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,6 +24,7 @@ type Principal struct {
 	Role      string
 	Scopes    []string
 	KeyPrefix string
+	RateLimit int
 }
 
 // PrincipalInterface is the companion interface for Principal.
@@ -33,6 +35,7 @@ type PrincipalInterface interface {
 	GetRole() string
 	GetScopes() []string
 	GetKeyPrefix() string
+	GetRateLimit() int
 }
 
 // Ensure Principal implements PrincipalInterface
@@ -44,14 +47,34 @@ func (p *Principal) GetProfileID() *uuid.UUID { return p.ProfileID }
 func (p *Principal) GetRole() string          { return p.Role }
 func (p *Principal) GetScopes() []string      { return p.Scopes }
 func (p *Principal) GetKeyPrefix() string     { return p.KeyPrefix }
+func (p *Principal) GetRateLimit() int        { return p.RateLimit }
 
 // principalContextKey is the unexported context key type for storing principals.
 // Using an unexported type prevents downstream code from constructing fake principals.
 type principalContextKey struct{}
 
+var authVerifyLimiter struct {
+	mu    sync.RWMutex
+	slots chan struct{}
+}
+
+func SetAuthVerificationConcurrency(limit int) {
+	authVerifyLimiter.mu.Lock()
+	defer authVerifyLimiter.mu.Unlock()
+	if limit <= 0 {
+		authVerifyLimiter.slots = nil
+		return
+	}
+	authVerifyLimiter.slots = make(chan struct{}, limit)
+}
+
 // AuthMiddleware creates an authentication middleware that validates API keys.
 // It requires the Authorization header in the format "Bearer <rawKey>".
 func AuthMiddleware(repo repository.APIKeyRepository, auditSvc service.AuditService) echo.MiddlewareFunc {
+	return AuthMiddlewareWithSecurity(repo, auditSvc, nil)
+}
+
+func AuthMiddlewareWithSecurity(repo repository.APIKeyRepository, auditSvc service.AuditService, securitySvc SecurityBanService) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			// Extract Authorization header
@@ -59,68 +82,78 @@ func AuthMiddleware(repo repository.APIKeyRepository, auditSvc service.AuditServ
 
 			// Missing header
 			if authHeader == "" {
-				logAuthFailure(c, auditSvc, nil, "AUTH_MISSING", "missing authorization header")
+				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_MISSING", "missing authorization header")
 				return httperr.New(httperr.AUTH_MISSING, "missing authorization header")
 			}
 
 			// Parse Bearer token
 			parts := strings.SplitN(authHeader, " ", 2)
 			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-				logAuthFailure(c, auditSvc, nil, "AUTH_INVALID", "malformed authorization header")
+				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_INVALID", "malformed authorization header")
 				return httperr.New(httperr.AUTH_INVALID, "malformed authorization header")
 			}
 
 			rawKey := parts[1]
 			if rawKey == "" {
-				logAuthFailure(c, auditSvc, nil, "AUTH_INVALID", "empty bearer token")
+				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_INVALID", "empty bearer token")
 				return httperr.New(httperr.AUTH_INVALID, "empty bearer token")
 			}
 
-			// Extract prefix (first 12 characters)
-			if len(rawKey) < 12 {
-				logAuthFailure(c, auditSvc, nil, "AUTH_INVALID", "invalid key format")
+			prefixes := crypto.GetLookupPrefixes(rawKey)
+			if len(prefixes) == 0 {
+				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_INVALID", "invalid key format")
 				return httperr.New(httperr.AUTH_INVALID, "invalid key format")
 			}
-			prefix := rawKey[:12]
 
 			// Look up active key by prefix
 			ctx := c.Request().Context()
-			key, err := repo.GetActiveByPrefix(ctx, prefix)
-			if err != nil {
-				return httperr.New(httperr.INTERNAL_ERROR, "failed to lookup key")
+			var (
+				key    *domain.APIKey
+				prefix string
+			)
+			for _, candidate := range prefixes {
+				found, err := repo.GetActiveByPrefix(ctx, candidate)
+				if err != nil {
+					return httperr.New(httperr.INTERNAL_ERROR, "failed to lookup key")
+				}
+				if found != nil {
+					key = found
+					prefix = candidate
+					break
+				}
 			}
 
 			// No matching key found
 			if key == nil {
-				logAuthFailure(c, auditSvc, nil, "AUTH_INVALID", "invalid api key")
+				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_INVALID", "invalid api key")
 				return httperr.New(httperr.AUTH_INVALID, "invalid api key")
 			}
 
 			// Check if key is revoked (shouldn't happen with GetActiveByPrefix, but defensive)
 			if key.RevokedAt != nil {
 				profileID := key.ProfileID.String()
-				logAuthFailure(c, auditSvc, &profileID, "AUTH_REVOKED", "api key has been revoked")
+				logAuthFailure(c, auditSvc, securitySvc, &profileID, "AUTH_REVOKED", "api key has been revoked")
 				return httperr.New(httperr.AUTH_REVOKED, "api key has been revoked")
 			}
 
 			// Check if key is expired (shouldn't happen with GetActiveByPrefix, but defensive)
 			if key.ExpiresAt != nil && key.ExpiresAt.Before(time.Now().UTC()) {
 				profileID := key.ProfileID.String()
-				logAuthFailure(c, auditSvc, &profileID, "AUTH_EXPIRED", "api key has expired")
+				logAuthFailure(c, auditSvc, securitySvc, &profileID, "AUTH_EXPIRED", "api key has expired")
 				return httperr.New(httperr.AUTH_EXPIRED, "api key has expired")
 			}
 
 			// Verify the raw key against the stored Argon2id hash
-			if !crypto.VerifyKey(rawKey, key.KeyHash) {
+			if !verifyKeyWithLimit(ctx, rawKey, key.KeyHash) {
 				profileID := key.ProfileID.String()
-				logAuthFailure(c, auditSvc, &profileID, "AUTH_INVALID", "invalid api key")
+				logAuthFailure(c, auditSvc, securitySvc, &profileID, "AUTH_INVALID", "invalid api key")
 				return httperr.New(httperr.AUTH_INVALID, "invalid api key")
 			}
 
 			// All runtime keys must be profile-bound. Legacy profile-less keys are
 			// rejected so the server only accepts the multi-tenant bearer model.
 			if key.ProfileID == uuid.Nil {
-				logAuthFailure(c, auditSvc, nil, "AUTH_INVALID", "api key is not profile bound")
+				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_INVALID", "api key is not profile bound")
 				return httperr.New(httperr.AUTH_INVALID, "invalid api key")
 			}
 
@@ -130,6 +163,7 @@ func AuthMiddleware(repo repository.APIKeyRepository, auditSvc service.AuditServ
 				Role:      "standard",
 				Scopes:    key.Scopes,
 				KeyPrefix: prefix,
+				RateLimit: key.RateLimit,
 			}
 
 			// Store principal in context
@@ -154,7 +188,15 @@ func AuthMiddleware(repo repository.APIKeyRepository, auditSvc service.AuditServ
 }
 
 // logAuthFailure logs an authentication failure event to the audit service.
-func logAuthFailure(c echo.Context, auditSvc service.AuditService, profileID *string, reason, message string) {
+func logAuthFailure(c echo.Context, auditSvc service.AuditService, securitySvc SecurityBanService, profileID *string, reason, message string) {
+	if securitySvc != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if _, err := securitySvc.RecordAuthFailure(ctx, c.RealIP(), authFailureSurface(c), reason); err != nil {
+			c.Logger().Errorf("security auth failure record failed: %v", err)
+		}
+		cancel()
+	}
+
 	if auditSvc == nil {
 		return
 	}
@@ -172,6 +214,33 @@ func logAuthFailure(c echo.Context, auditSvc service.AuditService, profileID *st
 	defer cancel()
 
 	_ = auditSvc.AuthFailure(ctx, profileID, "api_key", "", metadata, clientIP, correlationID)
+}
+
+func verifyKeyWithLimit(ctx context.Context, rawKey, keyHash string) bool {
+	authVerifyLimiter.mu.RLock()
+	slots := authVerifyLimiter.slots
+	authVerifyLimiter.mu.RUnlock()
+	if slots == nil {
+		return crypto.VerifyKey(rawKey, keyHash)
+	}
+	select {
+	case slots <- struct{}{}:
+		defer func() { <-slots }()
+		return crypto.VerifyKey(rawKey, keyHash)
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func authFailureSurface(c echo.Context) string {
+	path := c.Path()
+	if path == "" {
+		path = c.Request().URL.Path
+	}
+	if strings.HasPrefix(path, "/mcp") {
+		return "mcp"
+	}
+	return "api"
 }
 
 // GetPrincipal retrieves the authenticated principal from the context.

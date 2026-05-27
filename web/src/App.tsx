@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
+  Ban,
   Check,
   Copy,
   KeyRound,
@@ -17,6 +18,8 @@ import {
   ControlApi,
   CreatedApiKey,
   Profile,
+  SecurityBan,
+  SecuritySettings,
 } from "./api";
 
 const TOKEN_STORAGE_KEY = "denseMem.controlToken";
@@ -165,6 +168,7 @@ function Portal({ api, onSignOut }: { api: ControlApi; onSignOut: () => void }) 
           ) : (
             <div className="empty-state">{loadState === "loading" ? "Loading" : "No profiles"}</div>
           )}
+          <SecurityPanel api={api} />
         </section>
       </section>
     </main>
@@ -526,6 +530,215 @@ function CreatedKeyNotice({ createdKey, onDismiss }: { createdKey: CreatedApiKey
           <X size={17} aria-hidden="true" />
         </button>
       </div>
+    </div>
+  );
+}
+
+function SecurityPanel({ api }: { api: ControlApi }) {
+  const [settings, setSettings] = useState<SecuritySettings | null>(null);
+  const [bans, setBans] = useState<SecurityBan[]>([]);
+  const [includeExpired, setIncludeExpired] = useState(false);
+  const [ip, setIp] = useState("");
+  const [reason, setReason] = useState("");
+  const [expiresAt, setExpiresAt] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function loadSecurity(nextIncludeExpired = includeExpired) {
+    setBusy(true);
+    setError("");
+    try {
+      const [nextSettings, page] = await Promise.all([
+        api.getSecuritySettings(),
+        api.listSecurityBans(nextIncludeExpired),
+      ]);
+      setSettings(nextSettings);
+      setBans(page.data);
+    } catch (err) {
+      setError(readError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadSecurity();
+  }, []);
+
+  async function saveSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!settings) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      setSettings(await api.updateSecuritySettings(settings));
+    } catch (err) {
+      setError(readError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createBan(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!ip.trim()) {
+      setError("IP address is required.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await api.createSecurityBan({
+        ip: ip.trim(),
+        reason: reason.trim() || "manual ban",
+        expires_at: expiresAt ? new Date(expiresAt).toISOString() : undefined,
+      });
+      setIp("");
+      setReason("");
+      setExpiresAt("");
+      await loadSecurity();
+    } catch (err) {
+      setError(readError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteBan(ipAddress: string) {
+    if (!window.confirm(`Remove IP ban for ${ipAddress}?`)) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await api.deleteSecurityBan(ipAddress);
+      await loadSecurity();
+    } catch (err) {
+      setError(readError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function updateNumber(field: keyof Pick<SecuritySettings, "failure_threshold" | "failure_window_seconds" | "ban_duration_seconds">, value: string) {
+    const parsed = Number.parseInt(value, 10);
+    setSettings((current) => current ? { ...current, [field]: Number.isFinite(parsed) ? parsed : 0 } : current);
+  }
+
+  return (
+    <section className="surface">
+      <div className="section-heading">
+        <h2>Security</h2>
+        <button className="icon-button" type="button" aria-label="Refresh security" onClick={() => void loadSecurity()} disabled={busy}>
+          <RefreshCw size={16} aria-hidden="true" />
+        </button>
+      </div>
+      {error && <div className="banner error" role="alert">{error}</div>}
+      {settings ? (
+        <form className="security-grid" onSubmit={saveSettings}>
+          <label className="check-row span" htmlFor="security-enabled">
+            <input
+              id="security-enabled"
+              type="checkbox"
+              checked={settings.enabled}
+              onChange={(event) => setSettings({ ...settings, enabled: event.target.checked })}
+            />
+            IP ban protection
+          </label>
+          <label htmlFor="failure-threshold">Failures</label>
+          <input id="failure-threshold" inputMode="numeric" value={settings.failure_threshold} onChange={(event) => updateNumber("failure_threshold", event.target.value)} />
+          <label htmlFor="failure-window">Window seconds</label>
+          <input id="failure-window" inputMode="numeric" value={settings.failure_window_seconds} onChange={(event) => updateNumber("failure_window_seconds", event.target.value)} />
+          <label htmlFor="ban-duration">Ban seconds</label>
+          <input id="ban-duration" inputMode="numeric" value={settings.ban_duration_seconds} onChange={(event) => updateNumber("ban_duration_seconds", event.target.value)} />
+          <button className="primary-button span" type="submit" disabled={busy}>
+            <ShieldCheck size={16} aria-hidden="true" />
+            Save security
+          </button>
+        </form>
+      ) : (
+        <div className="table-placeholder">Loading</div>
+      )}
+
+      <form className="security-grid security-ban-form" onSubmit={createBan}>
+        <label htmlFor="ban-ip">IP address</label>
+        <input id="ban-ip" value={ip} onChange={(event) => setIp(event.target.value)} />
+        <label htmlFor="ban-reason">Reason</label>
+        <input id="ban-reason" value={reason} onChange={(event) => setReason(event.target.value)} />
+        <label htmlFor="ban-expires">Expires</label>
+        <input id="ban-expires" type="datetime-local" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} />
+        <button className="danger-button span" type="submit" disabled={busy}>
+          <Ban size={16} aria-hidden="true" />
+          Add ban
+        </button>
+      </form>
+
+      <label className="check-row include-row" htmlFor="include-expired">
+        <input
+          id="include-expired"
+          type="checkbox"
+          checked={includeExpired}
+          onChange={(event) => {
+            setIncludeExpired(event.target.checked);
+            void loadSecurity(event.target.checked);
+          }}
+        />
+        Include expired
+      </label>
+      <SecurityBanTable bans={bans} busy={busy} onDelete={(ipAddress) => void deleteBan(ipAddress)} />
+    </section>
+  );
+}
+
+function SecurityBanTable({
+  bans,
+  busy,
+  onDelete,
+}: {
+  bans: SecurityBan[];
+  busy: boolean;
+  onDelete: (ip: string) => void;
+}) {
+  if (bans.length === 0) {
+    return <div className="table-placeholder">No IP bans</div>;
+  }
+
+  return (
+    <div className="table-wrap">
+      <table className="data-table security-table">
+        <thead>
+          <tr>
+            <th>IP</th>
+            <th>Source</th>
+            <th>Failures</th>
+            <th>Expires</th>
+            <th className="actions-cell">Delete</th>
+          </tr>
+        </thead>
+        <tbody>
+          {bans.map((ban) => (
+            <tr key={ban.ip}>
+              <td><code>{ban.ip}</code></td>
+              <td>{ban.source}</td>
+              <td>{ban.failure_count}</td>
+              <td>{ban.expires_at ? formatDate(ban.expires_at) : "Never"}</td>
+              <td className="actions-cell">
+                <button
+                  className="icon-button danger"
+                  type="button"
+                  aria-label={`Delete IP ban ${ban.ip}`}
+                  disabled={busy}
+                  onClick={() => onDelete(ban.ip)}
+                >
+                  <Trash2 size={16} aria-hidden="true" />
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

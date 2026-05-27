@@ -180,6 +180,9 @@ func (s *Server) handleToolsCall(ctx context.Context, raw json.RawMessage) (map[
 	// profile. The HTTP API derives scope from the profile-bound API key; local
 	// registries may still receive a construction-time profile for tests.
 	delete(args, "profile_id")
+	if err := registry.ValidateInput(tool, args); err != nil {
+		return nil, &rpcError{Code: errCodeInvalidParams, Message: err.Error()}
+	}
 	result, err := tool.Invoke(ctx, s.profileID, args)
 	if err != nil {
 		s.logger.Error("mcp: tool invocation failed", err,

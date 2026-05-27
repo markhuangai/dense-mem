@@ -27,6 +27,8 @@ type ProtectedDeps struct {
 	RateLimitService service.RateLimitServiceInterface
 	// AuditService is the service for audit logging.
 	AuditService service.AuditService
+	// SecurityService checks active IP bans and records auth failures.
+	SecurityService middleware.SecurityBanService
 	// Config is the application configuration.
 	Config config.ConfigProvider
 	// Logger is the structured logger.
@@ -41,6 +43,7 @@ type ProtectedDepsInterface interface {
 	GetProfileSvc() handler.ProfileServiceInterface
 	GetRateLimitService() service.RateLimitServiceInterface
 	GetAuditService() service.AuditService
+	GetSecurityService() middleware.SecurityBanService
 	GetConfig() config.ConfigProvider
 	GetLogger() observability.LogProvider
 }
@@ -69,6 +72,10 @@ func (d *ProtectedDeps) GetAuditService() service.AuditService {
 	return d.AuditService
 }
 
+func (d *ProtectedDeps) GetSecurityService() middleware.SecurityBanService {
+	return d.SecurityService
+}
+
 func (d *ProtectedDeps) GetConfig() config.ConfigProvider {
 	return d.Config
 }
@@ -90,13 +97,14 @@ func (d *ProtectedDeps) GetLogger() observability.LogProvider {
 func RegisterProtectedRoutes(e *echo.Echo, deps ProtectedDeps) {
 	// Create profile authorization service from audit service
 	profileAuthzSvc := middleware.NewProfileAuthorizationService(deps.AuditService)
+	authMW := middleware.AuthMiddlewareWithSecurity(deps.APIKeyRepo, deps.AuditService, deps.SecurityService)
 
 	// ====================================
 	// Profile routes with target profile
 	// ====================================
 	// Middleware order: auth -> profile resolution -> profile authorization -> rate limit -> bind+validate -> handler
 	profileGroup := e.Group("/api/v1/profiles/:profileId")
-	profileGroup.Use(middleware.AuthMiddleware(deps.APIKeyRepo, deps.AuditService))
+	profileGroup.Use(authMW)
 	profileGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	profileGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
 	profileGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
@@ -117,7 +125,7 @@ func RegisterProtectedRoutes(e *echo.Echo, deps ProtectedDeps) {
 	// ====================================
 	// Middleware order: auth -> profile resolution(header) -> profile authorization -> rate limit -> bind+validate -> handler
 	toolGroup := e.Group("/api/v1/tools")
-	toolGroup.Use(middleware.AuthMiddleware(deps.APIKeyRepo, deps.AuditService))
+	toolGroup.Use(authMW)
 	toolGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	toolGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
 	toolGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
@@ -138,6 +146,7 @@ func RegisterProtectedRoutes(e *echo.Echo, deps ProtectedDeps) {
 func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handlers ProtectedHandlers) {
 	// Create profile authorization service from audit service
 	profileAuthzSvc := middleware.NewProfileAuthorizationService(deps.AuditService)
+	authMW := middleware.AuthMiddlewareWithSecurity(deps.APIKeyRepo, deps.AuditService, deps.SecurityService)
 
 	// Profile handler for profile operations
 	profileHandler := handler.NewProfileHandler(deps.ProfileSvc)
@@ -148,7 +157,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	// GET /api/v1/profiles/:profileId → same-profile
 	// PATCH /api/v1/profiles/:profileId → same-profile + write
 	profileGroup := e.Group("/api/v1/profiles/:profileId")
-	profileGroup.Use(middleware.AuthMiddleware(deps.APIKeyRepo, deps.AuditService))
+	profileGroup.Use(authMW)
 	profileGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	profileGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
 	profileGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
@@ -176,7 +185,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	// Fragment routes — canonical /api/v1/fragments (AC-50)
 	// Middleware: auth -> profile resolution(header) -> profile authorization -> rate limit
 	fragmentGroup := e.Group("/api/v1/fragments")
-	fragmentGroup.Use(middleware.AuthMiddleware(deps.APIKeyRepo, deps.AuditService))
+	fragmentGroup.Use(authMW)
 	fragmentGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	fragmentGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
 	fragmentGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
@@ -200,7 +209,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	// Claim routes — canonical /api/v1/claims (AC-16, knowledge pipeline Phase 2)
 	// Middleware: auth -> profile resolution(header) -> profile authorization -> rate limit
 	claimGroup := e.Group("/api/v1/claims")
-	claimGroup.Use(middleware.AuthMiddleware(deps.APIKeyRepo, deps.AuditService))
+	claimGroup.Use(authMW)
 	claimGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	claimGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
 	claimGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
@@ -227,7 +236,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	// Fact routes — canonical /api/v1/facts (AC-41, knowledge pipeline Phase 4)
 	// Middleware: auth -> profile resolution(header) -> profile authorization -> rate limit
 	factGroup := e.Group("/api/v1/facts")
-	factGroup.Use(middleware.AuthMiddleware(deps.APIKeyRepo, deps.AuditService))
+	factGroup.Use(authMW)
 	factGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	factGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
 	factGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
@@ -241,7 +250,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 
 	// Community routes — canonical /api/v1/communities
 	communityGroup := e.Group("/api/v1/communities")
-	communityGroup.Use(middleware.AuthMiddleware(deps.APIKeyRepo, deps.AuditService))
+	communityGroup.Use(authMW)
 	communityGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	communityGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
 	communityGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
@@ -255,7 +264,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 
 	// MCP Streamable HTTP endpoint.
 	mcpGroup := e.Group("/mcp")
-	mcpGroup.Use(middleware.AuthMiddleware(deps.APIKeyRepo, deps.AuditService))
+	mcpGroup.Use(authMW)
 	mcpGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	mcpGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
 	mcpGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
@@ -268,7 +277,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 
 	// Tool routes
 	toolGroup := e.Group("/api/v1/tools")
-	toolGroup.Use(middleware.AuthMiddleware(deps.APIKeyRepo, deps.AuditService))
+	toolGroup.Use(authMW)
 	toolGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	toolGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
 	toolGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
@@ -296,15 +305,15 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	// OpenAPI — expose the full runtime contract when available. The AI-safe
 	// variant remains as a fallback for reduced runtimes and tests.
 	if handlers.OpenAPIFull != nil {
-		e.GET("/api/v1/openapi.json", handlers.OpenAPIFull, middleware.AuthMiddleware(deps.APIKeyRepo, deps.AuditService))
+		e.GET("/api/v1/openapi.json", handlers.OpenAPIFull, authMW)
 	} else if handlers.OpenAPIAISafe != nil {
-		e.GET("/api/v1/openapi.json", handlers.OpenAPIAISafe, middleware.AuthMiddleware(deps.APIKeyRepo, deps.AuditService))
+		e.GET("/api/v1/openapi.json", handlers.OpenAPIAISafe, authMW)
 	}
 
 	// Recall route — canonical GET /api/v1/recall (AC-55, AC-62)
 	// Middleware: auth -> profile resolution(header) -> profile authorization -> rate limit
 	recallGroup := e.Group("/api/v1/recall")
-	recallGroup.Use(middleware.AuthMiddleware(deps.APIKeyRepo, deps.AuditService))
+	recallGroup.Use(authMW)
 	recallGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	recallGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
 	recallGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))

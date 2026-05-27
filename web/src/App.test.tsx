@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { ApiKey, Profile } from "./api";
+import { ApiKey, Profile, SecuritySettings } from "./api";
 
 const profileA: Profile = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -11,6 +11,14 @@ const profileA: Profile = {
   metadata: null,
   config: null,
   created_at: "2026-05-01T12:00:00Z",
+  updated_at: "2026-05-01T12:00:00Z",
+};
+
+const securitySettings: SecuritySettings = {
+  enabled: true,
+  failure_threshold: 10,
+  failure_window_seconds: 600,
+  ban_duration_seconds: 0,
   updated_at: "2026-05-01T12:00:00Z",
 };
 
@@ -168,6 +176,22 @@ function mockPortalFetch({
     }
     if (url.includes("/api-keys") && method === "DELETE") {
       currentKeys = currentKeys.filter((key) => !url.endsWith(`/api-keys/${key.id}`));
+      return jsonResponse({ data: { status: "deleted" } });
+    }
+    if (url.endsWith("/security/settings") && method === "GET") {
+      return jsonResponse({ data: securitySettings });
+    }
+    if (url.endsWith("/security/settings") && method === "PATCH") {
+      return jsonResponse({ data: { ...securitySettings, ...JSON.parse(String(init?.body)) } });
+    }
+    if (url.includes("/security/bans") && method === "GET") {
+      return jsonResponse(page([]));
+    }
+    if (url.endsWith("/security/bans") && method === "POST") {
+      const body = JSON.parse(String(init?.body));
+      return jsonResponse({ data: { ip: body.ip, reason: body.reason, source: "manual", failure_count: 0, banned_at: "2026-05-01T12:00:00Z", expires_at: null, last_failed_at: null, metadata: {}, revoked_at: null } }, 201);
+    }
+    if (url.includes("/security/bans/") && method === "DELETE") {
       return jsonResponse({ data: { status: "deleted" } });
     }
     if (method === "PATCH") {

@@ -142,6 +142,25 @@ func (m *mockAuditService) List(ctx context.Context, profileID string, limit, of
 	return []service.AuditLogEntry{}, 0, nil
 }
 
+type mockSecurityService struct {
+	recordAuthFailureCalled  bool
+	recordAuthFailureIP      string
+	recordAuthFailureSurface string
+	recordAuthFailureReason  string
+}
+
+func (m *mockSecurityService) CheckBan(ctx context.Context, ip string) (*domain.SecurityIPBan, error) {
+	return nil, nil
+}
+
+func (m *mockSecurityService) RecordAuthFailure(ctx context.Context, ip, surface, reason string) (*domain.SecurityIPBan, error) {
+	m.recordAuthFailureCalled = true
+	m.recordAuthFailureIP = ip
+	m.recordAuthFailureSurface = surface
+	m.recordAuthFailureReason = reason
+	return nil, nil
+}
+
 // newTestEcho creates a new Echo instance with the custom error handler
 func newTestEcho() *echo.Echo {
 	e := echo.New()
@@ -174,6 +193,31 @@ func TestAuthMiddleware_MissingHeader(t *testing.T) {
 	bodyStr := rec.Body.String()
 	assert.Contains(t, bodyStr, "AUTH_MISSING")
 	assert.True(t, mockAudit.authFailureCalled, "audit service should be called for auth failure")
+}
+
+func TestAuthMiddleware_WithSecurityStillAuditsAuthFailure(t *testing.T) {
+	e := newTestEcho()
+	mockRepo := &mockAPIKeyRepository{}
+	mockAudit := &mockAuditService{}
+	mockSecurity := &mockSecurityService{}
+
+	e.Use(AuthMiddlewareWithSecurity(mockRepo, mockAudit, mockSecurity))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.RemoteAddr = "192.0.2.10:12345"
+	rec := httptest.NewRecorder()
+	e.GET("/test", func(c echo.Context) error {
+		return c.String(http.StatusOK, "ok")
+	})
+
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.True(t, mockSecurity.recordAuthFailureCalled, "security service should record auth failure")
+	assert.True(t, mockAudit.authFailureCalled, "audit service should still record auth failure")
+	assert.Equal(t, "192.0.2.10", mockSecurity.recordAuthFailureIP)
+	assert.Equal(t, "api", mockSecurity.recordAuthFailureSurface)
+	assert.Equal(t, "AUTH_MISSING", mockSecurity.recordAuthFailureReason)
 }
 
 func TestAuthMiddleware_MalformedHeader(t *testing.T) {
@@ -394,7 +438,47 @@ func TestAuthMiddleware_ValidKey_StoresPrincipal(t *testing.T) {
 	assert.Equal(t, profileID, *capturedPrincipal.ProfileID)
 	assert.Equal(t, "standard", capturedPrincipal.Role)
 	assert.Equal(t, []string{"read", "write"}, capturedPrincipal.Scopes)
-	assert.Equal(t, rawKey[:12], capturedPrincipal.KeyPrefix)
+	assert.Equal(t, rawKey[:24], capturedPrincipal.KeyPrefix)
+}
+
+func TestAuthMiddleware_LegacyPrefixLookupFallback(t *testing.T) {
+	e := newTestEcho()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	rawKey := "testprefix12345678901234567890"
+	keyHash, err := crypto.HashKey(rawKey)
+	require.NoError(t, err)
+
+	var prefixes []string
+	mockRepo := &mockAPIKeyRepository{
+		getActiveByPrefixFunc: func(ctx context.Context, prefix string) (*domain.APIKey, error) {
+			prefixes = append(prefixes, prefix)
+			if prefix != rawKey[:12] {
+				return nil, nil
+			}
+			return &domain.APIKey{
+				ID:        keyID,
+				ProfileID: profileID,
+				KeyHash:   keyHash,
+				Scopes:    []string{"read"},
+			}, nil
+		},
+	}
+
+	e.Use(AuthMiddleware(mockRepo, nil))
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	rec := httptest.NewRecorder()
+	e.GET("/test", func(c echo.Context) error {
+		return c.String(http.StatusOK, "ok")
+	})
+
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	require.Len(t, prefixes, 2)
+	assert.Equal(t, rawKey[:24], prefixes[0])
+	assert.Equal(t, rawKey[:12], prefixes[1])
 }
 
 func TestAuthMiddleware_ProfilelessKeyRejected(t *testing.T) {

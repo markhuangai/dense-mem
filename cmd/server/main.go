@@ -94,6 +94,7 @@ func main() {
 	// Wire embedding dimension into request validator so the embedding_dim tag
 	// on dto.SemanticSearchRequest enforces the configured length at bind time.
 	validation.SetEmbeddingDimensions(cfg.GetEmbeddingDimensions())
+	middleware.SetAuthVerificationConcurrency(cfg.AuthVerifyMaxConcurrency)
 
 	// Create root context with timeout for startup. A cold database may need
 	// time to apply migrations before schema-dependent checks can run.
@@ -164,6 +165,7 @@ func main() {
 	rlsHelper := postgres.NewRLS()
 	profileRepo := repository.NewProfileRepository(pgDB.GetDB(), rlsHelper)
 	apiKeyRepo := repository.NewAPIKeyRepository(pgDB.GetDB(), rlsHelper)
+	securityRepo := repository.NewSecurityRepository(pgDB.GetDB(), rlsHelper)
 
 	// ========================================
 	// Neo4j profile scope enforcer and graph writer
@@ -175,6 +177,7 @@ func main() {
 	// Service layer
 	// ========================================
 	auditService := service.NewAuditService(pgDB.GetDB())
+	securityService := service.NewSecurityService(securityRepo, auditService)
 
 	profileService := service.NewProfileServiceWithDataPurger(profileRepo, auditService, backend.cleanupRepo, profileDataPurger)
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, profileService, auditService, backend.cleanupRepo, backend.cleanupRepo)
@@ -186,6 +189,7 @@ func main() {
 	// Graph query service
 	cypherValidator := graphquery.NewCypherValidator()
 	graphQueryService := graphquery.NewGraphQueryService(profileScopeEnforcer, cypherValidator)
+	graphQueryService = graphquery.NewTimeoutService(graphQueryService, time.Duration(cfg.GraphQueryDefaultTimeoutSeconds)*time.Second)
 
 	// Keyword search services (fragment and fact searchers)
 	// These use the profileScopeEnforcer as their searcher interface
@@ -351,25 +355,26 @@ func main() {
 
 	// Tool registry is the single source of truth for MCP / HTTP catalog / OpenAPI.
 	toolRegistry, err := registry.BuildDefault(registry.Dependencies{
-		FragmentCreate:  fragmentCreateRegistrySvc,
-		FragmentGet:     fragmentGetSvc,
-		FragmentList:    fragmentListSvc,
-		Recall:          recallRegistrySvc,
-		KeywordSearch:   keywordSearchService,
-		SemanticSearch:  semanticSearchService,
-		GraphQuery:      graphQueryService,
-		ClaimCreate:     claimCreateSvc,
-		ClaimGet:        claimGetSvc,
-		ClaimList:       claimListSvc,
-		ClaimVerify:     claimVerifyRegistrySvc,
-		FactPromote:     factPromoteSvc,
-		FactGet:         factGetSvc,
-		FactList:        factListSvc,
-		FragmentRetract: fragmentRetractSvc,
-		CommunityDetect: communityDetectRegistrySvc,
-		CommunityGet:    communityGetSvc,
-		CommunityList:   communityListSvc,
-		Memory:          memorySvc,
+		FragmentCreate:              fragmentCreateRegistrySvc,
+		FragmentGet:                 fragmentGetSvc,
+		FragmentList:                fragmentListSvc,
+		Recall:                      recallRegistrySvc,
+		KeywordSearch:               keywordSearchService,
+		SemanticSearch:              semanticSearchService,
+		GraphQuery:                  graphQueryService,
+		GraphQueryMaxTimeoutSeconds: cfg.GraphQueryMaxTimeoutSeconds,
+		ClaimCreate:                 claimCreateSvc,
+		ClaimGet:                    claimGetSvc,
+		ClaimList:                   claimListSvc,
+		ClaimVerify:                 claimVerifyRegistrySvc,
+		FactPromote:                 factPromoteSvc,
+		FactGet:                     factGetSvc,
+		FactList:                    factListSvc,
+		FragmentRetract:             fragmentRetractSvc,
+		CommunityDetect:             communityDetectRegistrySvc,
+		CommunityGet:                communityGetSvc,
+		CommunityList:               communityListSvc,
+		Memory:                      memorySvc,
 	})
 	if err != nil {
 		log.Fatalf("failed to build tool registry: %v", err)
@@ -380,12 +385,17 @@ func main() {
 	// ========================================
 	// SSE lifecycle
 	// ========================================
-	streamLifecycle := sse.NewStreamLifecycle(backend.concurrencyLimiter, backend.streamCleanupRepo)
+	streamLifecycle := sse.NewStreamLifecycleWithConfig(
+		backend.concurrencyLimiter,
+		sse.NewHeartbeatSenderWithInterval(time.Duration(cfg.GetSSEHeartbeatSeconds())*time.Second),
+		time.Duration(cfg.GetSSEMaxDurationSeconds())*time.Second,
+		backend.streamCleanupRepo,
+	)
 
 	// ========================================
 	// Handlers
 	// ========================================
-	graphQueryHandler := handler.NewGraphQueryHandler(graphQueryService)
+	graphQueryHandler := handler.NewGraphQueryHandlerWithTimeouts(graphQueryService, time.Duration(cfg.GraphQueryMaxTimeoutSeconds)*time.Second)
 	keywordSearchHandler := handler.NewKeywordSearchHandler(keywordSearchService)
 	semanticSearchHandler := handler.NewSemanticSearchHandler(semanticSearchService)
 
@@ -412,7 +422,7 @@ func main() {
 	toolCatalogHandler := handler.NewToolCatalogHandler(toolRegistry)
 	toolReadHandler := handler.NewToolReadHandler(toolRegistry)
 	toolExecuteHandler := handler.NewToolExecuteHandler(toolRegistry)
-	mcpHandler := handler.NewMCPHandler(toolRegistry, logger)
+	mcpHandler := handler.NewMCPHandlerWithLifecycle(toolRegistry, logger, streamLifecycle)
 	openAPIAISafeHandler := handler.NewOpenAPIHandler(openAPIGen, openapi.SpecVariantAISafe)
 	openAPIFullHandler := handler.NewOpenAPIHandler(openAPIGen, openapi.SpecVariantFull)
 
@@ -450,6 +460,7 @@ func main() {
 	// Register request context middleware globally.
 	e.Use(middleware.CorrelationIDMiddleware())
 	e.Use(middleware.ClientIPMiddleware())
+	e.Use(middleware.SecurityBanMiddleware(securityService))
 
 	// ========================================
 	// Register protected routes with all handlers
@@ -460,6 +471,7 @@ func main() {
 		ProfileSvc:       profileService,
 		RateLimitService: rateLimitService,
 		AuditService:     auditService,
+		SecurityService:  securityService,
 		Config:           &cfg,
 		Logger:           logger,
 	}
@@ -497,7 +509,7 @@ func main() {
 
 	http.RegisterProtectedRoutesWithHandlers(e, protectedDeps, protectedHandlers)
 
-	controlServer, err := http.NewControlPortalServer(&cfg, profileService, apiKeyService, logger)
+	controlServer, err := http.NewControlPortalServer(&cfg, profileService, apiKeyService, logger, securityService)
 	if err != nil {
 		log.Fatalf("failed to build control portal server: %v", err)
 	}

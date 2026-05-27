@@ -45,7 +45,7 @@ func buildRedisBackend(ctx context.Context, cfg config.Config) (*backendBundle, 
 
 	rateLimitService := service.NewRateLimitService(redisClient)
 
-	concurrencyLimiter := sse.NewConcurrencyLimiter(redisClient)
+	concurrencyLimiter := sse.NewConcurrencyLimiterWithConfig(redisClient, cfg.SSEMaxConcurrentStreams, 3600)
 	streamCleanupRepo := sse.NewStreamCleanupRepository(redisClient)
 
 	return &backendBundle{

@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/labstack/echo/v4"
+
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
@@ -220,6 +222,24 @@ func TestNewServerAcceptsHealthChecks(t *testing.T) {
 	server := NewServer(cfg, logger, HealthConfig{Checks: checks})
 	if server == nil {
 		t.Error("expected Echo instance to be created")
+	}
+}
+
+func TestNewServerUsesDirectIPByDefault(t *testing.T) {
+	e := NewServer(config.Config{}, observability.New(slog.LevelInfo), HealthConfig{})
+	e.GET("/ip", func(c echo.Context) error {
+		return c.String(http.StatusOK, c.RealIP())
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/ip", nil)
+	req.RemoteAddr = "203.0.113.10:12345"
+	req.Header.Set("X-Forwarded-For", "198.51.100.77")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if got, want := rec.Body.String(), "203.0.113.10"; got != want {
+		t.Errorf("RealIP() = %q, want %q", got, want)
 	}
 }
 

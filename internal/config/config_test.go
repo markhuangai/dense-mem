@@ -17,6 +17,10 @@ func clearEnv() {
 		"REDIS_ADDR",
 		"REDIS_PASSWORD",
 		"REDIS_DB",
+		"HTTP_MAX_BODY_BYTES",
+		"AUTH_VERIFY_MAX_CONCURRENCY",
+		"GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS",
+		"GRAPH_QUERY_MAX_TIMEOUT_SECONDS",
 		"RATE_LIMIT_PER_MINUTE",
 		"SSE_HEARTBEAT_SECONDS",
 		"SSE_MAX_DURATION_SECONDS",
@@ -78,6 +82,18 @@ func TestLoadDefaults(t *testing.T) {
 	// Test integer defaults
 	if cfg.RateLimitPerMinute != 100 {
 		t.Errorf("RateLimitPerMinute default = %d, want %d", cfg.RateLimitPerMinute, 100)
+	}
+	if cfg.HTTPMaxBodyBytes != 1048576 {
+		t.Errorf("HTTPMaxBodyBytes default = %d, want %d", cfg.HTTPMaxBodyBytes, 1048576)
+	}
+	if cfg.AuthVerifyMaxConcurrency != 8 {
+		t.Errorf("AuthVerifyMaxConcurrency default = %d, want %d", cfg.AuthVerifyMaxConcurrency, 8)
+	}
+	if cfg.GraphQueryDefaultTimeoutSeconds != 10 {
+		t.Errorf("GraphQueryDefaultTimeoutSeconds default = %d, want %d", cfg.GraphQueryDefaultTimeoutSeconds, 10)
+	}
+	if cfg.GraphQueryMaxTimeoutSeconds != 30 {
+		t.Errorf("GraphQueryMaxTimeoutSeconds default = %d, want %d", cfg.GraphQueryMaxTimeoutSeconds, 30)
 	}
 	if cfg.SSEHeartbeatSeconds != 30 {
 		t.Errorf("SSEHeartbeatSeconds default = %d, want %d", cfg.SSEHeartbeatSeconds, 30)
@@ -238,6 +254,26 @@ func TestLoadValidation_NegativeInteger(t *testing.T) {
 	}
 }
 
+func TestLoadValidation_GraphQueryDefaultTimeoutExceedsMax(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+	os.Setenv("GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS", "60")
+	os.Setenv("GRAPH_QUERY_MAX_TIMEOUT_SECONDS", "30")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() expected error for graph-query timeout mismatch, got nil")
+	}
+
+	validationErr, ok := err.(*ValidationError)
+	if !ok {
+		t.Fatalf("expected *ValidationError, got %T", err)
+	}
+	if validationErr.Field != "GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS" {
+		t.Errorf("ValidationError.Field = %q, want %q", validationErr.Field, "GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS")
+	}
+}
+
 func TestLoadOverrides(t *testing.T) {
 	clearEnv()
 	setRequiredEnv()
@@ -247,6 +283,10 @@ func TestLoadOverrides(t *testing.T) {
 	os.Setenv("NEO4J_DATABASE", "testdb")
 	os.Setenv("REDIS_PASSWORD", "redispass")
 	os.Setenv("REDIS_DB", "5")
+	os.Setenv("HTTP_MAX_BODY_BYTES", "2097152")
+	os.Setenv("AUTH_VERIFY_MAX_CONCURRENCY", "12")
+	os.Setenv("GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS", "20")
+	os.Setenv("GRAPH_QUERY_MAX_TIMEOUT_SECONDS", "60")
 	os.Setenv("RATE_LIMIT_PER_MINUTE", "200")
 	os.Setenv("SSE_HEARTBEAT_SECONDS", "60")
 	os.Setenv("SSE_MAX_DURATION_SECONDS", "600")
@@ -273,6 +313,18 @@ func TestLoadOverrides(t *testing.T) {
 	// Integer overrides
 	if cfg.RedisDB != 5 {
 		t.Errorf("RedisDB = %d, want %d", cfg.RedisDB, 5)
+	}
+	if cfg.HTTPMaxBodyBytes != 2097152 {
+		t.Errorf("HTTPMaxBodyBytes = %d, want %d", cfg.HTTPMaxBodyBytes, 2097152)
+	}
+	if cfg.AuthVerifyMaxConcurrency != 12 {
+		t.Errorf("AuthVerifyMaxConcurrency = %d, want %d", cfg.AuthVerifyMaxConcurrency, 12)
+	}
+	if cfg.GraphQueryDefaultTimeoutSeconds != 20 {
+		t.Errorf("GraphQueryDefaultTimeoutSeconds = %d, want %d", cfg.GraphQueryDefaultTimeoutSeconds, 20)
+	}
+	if cfg.GraphQueryMaxTimeoutSeconds != 60 {
+		t.Errorf("GraphQueryMaxTimeoutSeconds = %d, want %d", cfg.GraphQueryMaxTimeoutSeconds, 60)
 	}
 	if cfg.RateLimitPerMinute != 200 {
 		t.Errorf("RateLimitPerMinute = %d, want %d", cfg.RateLimitPerMinute, 200)

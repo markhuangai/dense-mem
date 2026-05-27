@@ -10,6 +10,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
+	httpvalidation "github.com/markhuangai/dense-mem/internal/http/validation"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/tools/graphquery"
 )
@@ -39,7 +40,8 @@ type GraphQueryServiceInterface interface {
 
 // GraphQueryHandler handles HTTP requests for graph-query operations.
 type GraphQueryHandler struct {
-	svc GraphQueryServiceInterface
+	svc        GraphQueryServiceInterface
+	maxTimeout time.Duration
 }
 
 // GraphQueryHandlerInterface is the companion interface for GraphQueryHandler.
@@ -53,6 +55,10 @@ var _ GraphQueryHandlerInterface = (*GraphQueryHandler)(nil)
 // NewGraphQueryHandler creates a new graph query handler.
 func NewGraphQueryHandler(svc GraphQueryServiceInterface) *GraphQueryHandler {
 	return &GraphQueryHandler{svc: svc}
+}
+
+func NewGraphQueryHandlerWithTimeouts(svc GraphQueryServiceInterface, maxTimeout time.Duration) *GraphQueryHandler {
+	return &GraphQueryHandler{svc: svc, maxTimeout: maxTimeout}
 }
 
 // Handle handles POST /api/v1/tools/graph-query.
@@ -72,15 +78,21 @@ func (h *GraphQueryHandler) Handle(c echo.Context) error {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
 	}
 
-	// Validate required query field
-	if req.Query == "" {
-		return httperr.New(httperr.VALIDATION_ERROR, "query is required")
+	if err := httpvalidation.ValidateStruct(&req); err != nil {
+		return httperr.New(httperr.VALIDATION_ERROR, err.Error())
+	}
+	if req.TimeoutSeconds < 0 {
+		return httperr.New(httperr.VALIDATION_ERROR, "timeout_seconds must be greater than or equal to 0")
 	}
 
 	// Apply timeout if specified
 	if req.TimeoutSeconds > 0 {
+		requested := time.Duration(req.TimeoutSeconds) * time.Second
+		if h.maxTimeout > 0 && requested > h.maxTimeout {
+			return httperr.New(httperr.VALIDATION_ERROR, "timeout_seconds exceeds maximum")
+		}
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(req.TimeoutSeconds)*time.Second)
+		ctx, cancel = context.WithTimeout(ctx, requested)
 		defer cancel()
 	}
 

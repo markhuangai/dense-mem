@@ -50,27 +50,31 @@ type ConfigProvider interface {
 // Config holds all configuration for the application.
 // All fields are populated from environment variables with sensible defaults.
 type Config struct {
-	HTTPAddr                  string
-	PostgresDSN               string
-	Neo4jURI                  string
-	Neo4jUser                 string
-	Neo4jPassword             string
-	Neo4jDatabase             string
-	RedisAddr                 string
-	RedisPassword             string
-	RedisDB                   int
-	RateLimitPerMinute        int
-	FragmentCreateRateLimit   int
-	FragmentReadRateLimit     int
-	SSEHeartbeatSeconds       int
-	SSEMaxDurationSeconds     int
-	SSEMaxConcurrentStreams   int
-	EmbeddingDimensions       int
-	AIAPIURL                  string
-	AIAPIKey                  string `json:"-"`
-	AIEmbeddingModel          string
-	AIEmbeddingDimensions     int
-	AIEmbeddingTimeoutSeconds int
+	HTTPAddr                        string
+	PostgresDSN                     string
+	Neo4jURI                        string
+	Neo4jUser                       string
+	Neo4jPassword                   string
+	Neo4jDatabase                   string
+	RedisAddr                       string
+	RedisPassword                   string
+	RedisDB                         int
+	HTTPMaxBodyBytes                int
+	AuthVerifyMaxConcurrency        int
+	GraphQueryDefaultTimeoutSeconds int
+	GraphQueryMaxTimeoutSeconds     int
+	RateLimitPerMinute              int
+	FragmentCreateRateLimit         int
+	FragmentReadRateLimit           int
+	SSEHeartbeatSeconds             int
+	SSEMaxDurationSeconds           int
+	SSEMaxConcurrentStreams         int
+	EmbeddingDimensions             int
+	AIAPIURL                        string
+	AIAPIKey                        string `json:"-"`
+	AIEmbeddingModel                string
+	AIEmbeddingDimensions           int
+	AIEmbeddingTimeoutSeconds       int
 	// Knowledge-pipeline knobs (AC-X3)
 	AIVerifierAPIURL           string
 	AIVerifierAPIKey           string `json:"-"`
@@ -99,6 +103,7 @@ func (c *Config) GetNeo4jDatabase() string          { return c.Neo4jDatabase }
 func (c *Config) GetRedisAddr() string              { return c.RedisAddr }
 func (c *Config) GetRedisPassword() string          { return c.RedisPassword }
 func (c *Config) GetRedisDB() int                   { return c.RedisDB }
+func (c *Config) GetHTTPMaxBodyBytes() int          { return c.HTTPMaxBodyBytes }
 func (c *Config) GetRateLimitPerMinute() int        { return c.RateLimitPerMinute }
 func (c *Config) GetFragmentCreateRateLimit() int   { return c.FragmentCreateRateLimit }
 func (c *Config) GetFragmentReadRateLimit() int     { return c.FragmentReadRateLimit }
@@ -244,6 +249,7 @@ func parseBoolOrDefault(key string, defaultValue bool) (bool, error) {
 // Returns a typed ValidationError for any validation failures.
 func Load() (Config, error) {
 	cfg := Config{}
+	var err error
 
 	// String fields with defaults
 	cfg.HTTPAddr = getEnvOrDefault("HTTP_ADDR", ":8080")
@@ -254,10 +260,29 @@ func Load() (Config, error) {
 	cfg.Neo4jDatabase = os.Getenv("NEO4J_DATABASE")
 	cfg.RedisAddr = os.Getenv("REDIS_ADDR")
 	cfg.RedisPassword = os.Getenv("REDIS_PASSWORD")
-	// Integer fields with defaults
-	var err error
 
+	// Integer fields with defaults
 	cfg.RedisDB, err = parseIntOrDefault("REDIS_DB", 0)
+	if err != nil {
+		return cfg, err
+	}
+
+	cfg.HTTPMaxBodyBytes, err = parseIntOrDefault("HTTP_MAX_BODY_BYTES", 1048576)
+	if err != nil {
+		return cfg, err
+	}
+
+	cfg.AuthVerifyMaxConcurrency, err = parseIntOrDefault("AUTH_VERIFY_MAX_CONCURRENCY", 8)
+	if err != nil {
+		return cfg, err
+	}
+
+	cfg.GraphQueryDefaultTimeoutSeconds, err = parseIntOrDefault("GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS", 10)
+	if err != nil {
+		return cfg, err
+	}
+
+	cfg.GraphQueryMaxTimeoutSeconds, err = parseIntOrDefault("GRAPH_QUERY_MAX_TIMEOUT_SECONDS", 30)
 	if err != nil {
 		return cfg, err
 	}
@@ -400,6 +425,10 @@ func Load() (Config, error) {
 		name  string
 		value int
 	}{
+		{"HTTP_MAX_BODY_BYTES", cfg.HTTPMaxBodyBytes},
+		{"AUTH_VERIFY_MAX_CONCURRENCY", cfg.AuthVerifyMaxConcurrency},
+		{"GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS", cfg.GraphQueryDefaultTimeoutSeconds},
+		{"GRAPH_QUERY_MAX_TIMEOUT_SECONDS", cfg.GraphQueryMaxTimeoutSeconds},
 		{"RATE_LIMIT_PER_MINUTE", cfg.RateLimitPerMinute},
 		{"SSE_HEARTBEAT_SECONDS", cfg.SSEHeartbeatSeconds},
 		{"SSE_MAX_DURATION_SECONDS", cfg.SSEMaxDurationSeconds},
@@ -418,6 +447,13 @@ func Load() (Config, error) {
 				Field:   field.name,
 				Message: fmt.Sprintf("must be greater than 0, got %d", field.value),
 			}
+		}
+	}
+
+	if cfg.GraphQueryDefaultTimeoutSeconds > cfg.GraphQueryMaxTimeoutSeconds {
+		return cfg, &ValidationError{
+			Field:   "GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS",
+			Message: fmt.Sprintf("must be less than or equal to GRAPH_QUERY_MAX_TIMEOUT_SECONDS, got %d > %d", cfg.GraphQueryDefaultTimeoutSeconds, cfg.GraphQueryMaxTimeoutSeconds),
 		}
 	}
 

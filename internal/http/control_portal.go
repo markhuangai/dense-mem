@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	nethttp "net/http"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	dto "github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
+	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	httpvalidation "github.com/markhuangai/dense-mem/internal/http/validation"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -31,6 +33,7 @@ func NewControlPortalServer(
 	profileSvc handler.ProfileServiceInterface,
 	apiKeySvc handler.APIKeyServiceInterface,
 	logger observability.LogProvider,
+	securitySvcs ...service.SecurityService,
 ) (*echo.Echo, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("control portal: config is required")
@@ -40,8 +43,11 @@ func NewControlPortalServer(
 	}
 
 	e := echo.New()
+	applyServerLimits(e)
+	applyIPExtractor(e)
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(echomw.Recover())
+	e.Use(echomw.BodyLimit(fmt.Sprintf("%dB", controlMaxBodyBytes(cfg))))
 	e.Use(echomw.RequestLoggerWithConfig(echomw.RequestLoggerConfig{
 		HandleError: true,
 		LogMethod:   true,
@@ -65,9 +71,17 @@ func NewControlPortalServer(
 		},
 	}))
 
-	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc}
+	var securitySvc service.SecurityService
+	if len(securitySvcs) > 0 {
+		securitySvc = securitySvcs[0]
+	}
+	if securitySvc != nil {
+		e.Use(httpmw.SecurityBanMiddleware(securitySvc))
+	}
+
+	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc}
 	api := e.Group("/control/api")
-	api.Use(controlPortalMiddleware(cfg.GetControlPortalToken()))
+	api.Use(controlPortalMiddleware(cfg.GetControlPortalToken(), securitySvc))
 	api.GET("/session", control.session)
 	api.GET("/profiles", control.listProfiles)
 	api.POST("/profiles", control.createProfile)
@@ -76,6 +90,11 @@ func NewControlPortalServer(
 	api.GET("/profiles/:profileId/api-keys", control.listAPIKeys)
 	api.POST("/profiles/:profileId/api-keys", control.createAPIKey)
 	api.DELETE("/profiles/:profileId/api-keys/:keyId", control.deleteAPIKey)
+	api.GET("/security/settings", control.getSecuritySettings)
+	api.PATCH("/security/settings", control.updateSecuritySettings)
+	api.GET("/security/bans", control.listSecurityBans)
+	api.POST("/security/bans", control.createSecurityBan)
+	api.DELETE("/security/bans/:ip", control.deleteSecurityBan)
 
 	if staticDir := defaultPortalStaticDir(); staticDir != "" {
 		e.Static("/", staticDir)
@@ -87,6 +106,7 @@ func NewControlPortalServer(
 type controlPortalHandler struct {
 	profiles handler.ProfileServiceInterface
 	keys     handler.APIKeyServiceInterface
+	security service.SecurityService
 }
 
 func (h *controlPortalHandler) session(c echo.Context) error {
@@ -245,12 +265,131 @@ func (h *controlPortalHandler) deleteAPIKey(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": map[string]string{"status": "deleted"}})
 }
 
+func (h *controlPortalHandler) getSecuritySettings(c echo.Context) error {
+	if h.security == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "security service unavailable")
+	}
+	settings, err := h.security.GetSecuritySettings(c.Request().Context())
+	if err != nil {
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlSecuritySettings(settings)})
+}
+
+func (h *controlPortalHandler) updateSecuritySettings(c echo.Context) error {
+	if h.security == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "security service unavailable")
+	}
+	current, err := h.security.GetSecuritySettings(c.Request().Context())
+	if err != nil {
+		return err
+	}
+	next := *current
+	var body controlSecuritySettingsRequest
+	if err := c.Bind(&body); err != nil {
+		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
+	}
+	if body.Enabled != nil {
+		next.Enabled = *body.Enabled
+	}
+	if body.FailureThreshold != nil {
+		next.FailureThreshold = *body.FailureThreshold
+	}
+	if body.FailureWindowSeconds != nil {
+		next.FailureWindowSeconds = *body.FailureWindowSeconds
+	}
+	if body.BanDurationSeconds != nil {
+		next.BanDurationSeconds = *body.BanDurationSeconds
+	}
+	updated, err := h.security.UpdateSecuritySettings(c.Request().Context(), next, "control", c.RealIP(), "")
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidSecuritySettings) {
+			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
+		}
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlSecuritySettings(updated)})
+}
+
+func (h *controlPortalHandler) listSecurityBans(c echo.Context) error {
+	if h.security == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "security service unavailable")
+	}
+	limit, offset := controlPagination(c)
+	includeExpired := parseControlBool(c.QueryParam("include_expired"))
+	bans, total, err := h.security.ListSecurityBans(c.Request().Context(), includeExpired, limit, offset)
+	if err != nil {
+		return err
+	}
+	items := make([]controlSecurityBanResponse, 0, len(bans))
+	for _, ban := range bans {
+		items = append(items, toControlSecurityBan(ban))
+	}
+	return c.JSON(nethttp.StatusOK, handler.PaginationEnvelope{
+		Data:       items,
+		Pagination: handler.Pagination{Limit: limit, Offset: offset, Total: total},
+	})
+}
+
+func (h *controlPortalHandler) createSecurityBan(c echo.Context) error {
+	if h.security == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "security service unavailable")
+	}
+	var body controlCreateSecurityBanRequest
+	if err := c.Bind(&body); err != nil {
+		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
+	}
+	var expiresAt *time.Time
+	if body.ExpiresAt != nil && strings.TrimSpace(*body.ExpiresAt) != "" {
+		parsed, err := time.Parse(time.RFC3339, *body.ExpiresAt)
+		if err != nil {
+			return httperr.New(httperr.VALIDATION_ERROR, "expires_at must be RFC3339")
+		}
+		expiresAt = &parsed
+	}
+	ban, err := h.security.CreateManualSecurityBan(c.Request().Context(), body.IP, body.Reason, expiresAt, "control", c.RealIP(), "")
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidSecurityIP) || errors.Is(err, service.ErrInvalidSecuritySettings) {
+			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
+		}
+		return err
+	}
+	return c.JSON(nethttp.StatusCreated, map[string]any{"data": toControlSecurityBan(*ban)})
+}
+
+func (h *controlPortalHandler) deleteSecurityBan(c echo.Context) error {
+	if h.security == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "security service unavailable")
+	}
+	ip := c.Param("ip")
+	if err := h.security.DeleteSecurityBan(c.Request().Context(), ip, "control", c.RealIP(), ""); err != nil {
+		if errors.Is(err, service.ErrInvalidSecurityIP) {
+			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
+		}
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": map[string]string{"status": "deleted"}})
+}
+
 type controlCreateAPIKeyRequest struct {
 	RateLimit int     `json:"rate_limit"`
 	ExpiresAt *string `json:"expires_at"`
 }
 
-func controlPortalMiddleware(token string) echo.MiddlewareFunc {
+type controlSecuritySettingsRequest struct {
+	Enabled              *bool `json:"enabled"`
+	FailureThreshold     *int  `json:"failure_threshold"`
+	FailureWindowSeconds *int  `json:"failure_window_seconds"`
+	BanDurationSeconds   *int  `json:"ban_duration_seconds"`
+}
+
+type controlCreateSecurityBanRequest struct {
+	IP        string  `json:"ip"`
+	Reason    string  `json:"reason"`
+	ExpiresAt *string `json:"expires_at"`
+}
+
+func controlPortalMiddleware(token string, securitySvc service.SecurityService) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			origin := c.Request().Header.Get(echo.HeaderOrigin)
@@ -264,11 +403,34 @@ func controlPortalMiddleware(token string) echo.MiddlewareFunc {
 				return c.NoContent(nethttp.StatusNoContent)
 			}
 			if !controlTokenMatches(c.Request(), token) {
+				recordControlAuthFailure(c, securitySvc)
 				return httperr.New(httperr.AUTH_INVALID, "invalid control portal token")
 			}
 			return next(c)
 		}
 	}
+}
+
+func recordControlAuthFailure(c echo.Context, securitySvc service.SecurityService) {
+	if securitySvc == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := securitySvc.RecordAuthFailure(ctx, c.RealIP(), "control", "AUTH_INVALID"); err != nil {
+		c.Logger().Errorf("control security auth failure record failed: %v", err)
+	}
+}
+
+type controlBodyLimitConfig interface {
+	GetHTTPMaxBodyBytes() int
+}
+
+func controlMaxBodyBytes(cfg config.ConfigProvider) int {
+	if provider, ok := cfg.(controlBodyLimitConfig); ok {
+		return effectiveMaxBodyBytes(provider.GetHTTPMaxBodyBytes())
+	}
+	return effectiveMaxBodyBytes(0)
 }
 
 func controlTokenMatches(req *nethttp.Request, expected string) bool {
@@ -327,6 +489,62 @@ func controlPagination(c echo.Context) (int, int) {
 		}
 	}
 	return limit, offset
+}
+
+func parseControlBool(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+type controlSecuritySettingsResponse struct {
+	Enabled              bool   `json:"enabled"`
+	FailureThreshold     int    `json:"failure_threshold"`
+	FailureWindowSeconds int    `json:"failure_window_seconds"`
+	BanDurationSeconds   int    `json:"ban_duration_seconds"`
+	UpdatedAt            string `json:"updated_at"`
+}
+
+func toControlSecuritySettings(settings *domain.SecuritySettings) controlSecuritySettingsResponse {
+	if settings == nil {
+		return controlSecuritySettingsResponse{}
+	}
+	return controlSecuritySettingsResponse{
+		Enabled:              settings.Enabled,
+		FailureThreshold:     settings.FailureThreshold,
+		FailureWindowSeconds: settings.FailureWindowSeconds,
+		BanDurationSeconds:   settings.BanDurationSeconds,
+		UpdatedAt:            settings.UpdatedAt.Format(time.RFC3339),
+	}
+}
+
+type controlSecurityBanResponse struct {
+	IP           string         `json:"ip"`
+	Reason       string         `json:"reason"`
+	Source       string         `json:"source"`
+	FailureCount int            `json:"failure_count"`
+	BannedAt     string         `json:"banned_at"`
+	ExpiresAt    *string        `json:"expires_at"`
+	LastFailedAt *string        `json:"last_failed_at"`
+	Metadata     map[string]any `json:"metadata"`
+	RevokedAt    *string        `json:"revoked_at"`
+}
+
+func toControlSecurityBan(ban domain.SecurityIPBan) controlSecurityBanResponse {
+	return controlSecurityBanResponse{
+		IP:           ban.IP,
+		Reason:       ban.Reason,
+		Source:       ban.Source,
+		FailureCount: ban.FailureCount,
+		BannedAt:     ban.BannedAt.Format(time.RFC3339),
+		ExpiresAt:    controlTimePtr(ban.ExpiresAt),
+		LastFailedAt: controlTimePtr(ban.LastFailedAt),
+		Metadata:     ban.Metadata,
+		RevokedAt:    controlTimePtr(ban.RevokedAt),
+	}
 }
 
 type controlProfileResponse struct {

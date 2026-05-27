@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -13,6 +14,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/service/recallservice"
+	"github.com/markhuangai/dense-mem/internal/tools/graphquery"
 )
 
 type stubCreate struct {
@@ -45,6 +47,12 @@ func (stubList) List(ctx context.Context, profileID string, opts fragmentservice
 	return []domain.Fragment{{FragmentID: "f-1", ProfileID: profileID}}, "", nil
 }
 
+type stubGraphQuery struct{}
+
+func (stubGraphQuery) Execute(ctx context.Context, profileID string, query string, params map[string]any) (*graphquery.GraphQueryResult, error) {
+	return &graphquery.GraphQueryResult{}, nil
+}
+
 func TestBuildDefault_RegistersV1ToolSurface(t *testing.T) {
 	reg, err := BuildDefault(Dependencies{})
 	if err != nil {
@@ -73,6 +81,30 @@ func TestBuildDefault_SchemaFieldsPopulated(t *testing.T) {
 	}
 	if len(tool.RequiredScopes) == 0 {
 		t.Error("save_memory must declare required scopes")
+	}
+}
+
+func TestBuildDefault_GraphQueryTimeoutMaximumIsConfigurable(t *testing.T) {
+	reg, err := BuildDefault(Dependencies{GraphQuery: stubGraphQuery{}, GraphQueryMaxTimeoutSeconds: 5})
+	if err != nil {
+		t.Fatalf("BuildDefault: %v", err)
+	}
+	tool, ok := reg.Get("graph-query")
+	if !ok {
+		t.Fatal("graph-query tool not registered")
+	}
+
+	properties := tool.InputSchema["properties"].(map[string]any)
+	timeoutSchema := properties["timeout_seconds"].(map[string]any)
+	if got, want := timeoutSchema["maximum"], 5; got != want {
+		t.Fatalf("timeout_seconds maximum = %v, want %d", got, want)
+	}
+	if err := ValidateInput(tool, map[string]any{"query": "RETURN 1", "timeout_seconds": float64(6)}); err == nil {
+		t.Fatal("ValidateInput expected timeout maximum error, got nil")
+	}
+	_, err = tool.Invoke(context.Background(), "profile-1", map[string]any{"query": "RETURN 1", "timeout_seconds": 6})
+	if err == nil || !strings.Contains(err.Error(), "less than or equal to 5") {
+		t.Fatalf("Invoke error = %v, want configured timeout maximum", err)
 	}
 }
 

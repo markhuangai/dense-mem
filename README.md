@@ -151,13 +151,48 @@ To rotate embedding models safely:
 cp docker-compose.example.yml docker-compose.yml
 cp .env.example .env
 docker compose up -d
-curl http://localhost:8080/health
 ```
 
 The default compose stack provisions `neo4j:5.26-community` with the Neo4j Graph
 Data Science plugin enabled. Redis can be omitted for single-node deployments,
 but multi-instance deployments need Redis for shared rate limits and SSE
 concurrency.
+
+By default, the main API port is only exposed to Docker networks. Use the
+Traefik profile for public HTTPS access. The control portal host bind is
+configured with `CONTROL_PORTAL_BIND` and `CONTROL_PORTAL_PORT`.
+
+### Public HTTPS With Traefik
+
+The example compose file includes an optional `traefik` profile for public MCP
+and REST exposure. It terminates TLS with Let's Encrypt, redirects HTTP to
+HTTPS, applies secure headers, request compression, edge rate limiting, request
+body limits, and in-flight request limits.
+
+```bash
+cp docker-compose.example.yml docker-compose.yml
+cp .env.example .env
+# set DENSE_MEM_DOMAIN and ACME_EMAIL in .env
+docker compose --profile traefik up -d
+```
+
+The server container exposes `8080` only to Docker networks. Traefik routes
+public traffic to that internal service port; it does not route to the control
+portal. The control portal is the only host-published server port, and its bind
+address is controlled by `CONTROL_PORTAL_BIND`. Keep Redis disabled for a single
+local instance unless you need shared state across multiple server containers.
+
+The public Docker network is named with `DENSE_MEM_PUBLIC_NETWORK`. Set
+`DENSE_MEM_PUBLIC_NETWORK_EXTERNAL=true` when you want compose to attach Traefik
+and the server to an existing network instead of creating one.
+
+The app intentionally ignores forwarded client-IP headers in this example.
+Traefik remains responsible for public edge controls such as rate limits and
+request limits. App-level IP ban protection is available in the control portal,
+but it is disabled by default and should only be enabled when dense-mem receives
+the real client IP as the direct socket address. When enabled, repeated failed
+API-key, MCP, or control-token attempts are counted in Postgres and can create
+permanent or time-limited bans.
 
 ## Provision A Profile And API Key
 
@@ -377,8 +412,8 @@ curl "http://localhost:8080/api/v1/recall?q=preferences" \
 
 ## Local Control Portal
 
-The control portal is for profile and API-key management only. It does not
-expose a memory, fact, claim, graph, or database browser.
+The control portal is for profile, API-key, and security-ban management. It does
+not expose a memory, fact, claim, graph, or database browser.
 
 Environment variables:
 
@@ -403,6 +438,8 @@ The portal supports:
   allow deletion
 - list, create, and delete API keys
 - one-time plaintext key display immediately after key creation
+- view and update IP ban settings
+- list active bans, add manual bans, and remove bans
 
 ## Data Egress
 

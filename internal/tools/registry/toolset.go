@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
@@ -28,9 +29,10 @@ type Dependencies struct {
 	Recall         recallservice.RecallService
 
 	// Search / graph tools (v1)
-	KeywordSearch  keywordsearch.KeywordSearchService
-	SemanticSearch semanticsearch.SemanticSearchService
-	GraphQuery     graphquery.GraphQueryService
+	KeywordSearch               keywordsearch.KeywordSearchService
+	SemanticSearch              semanticsearch.SemanticSearchService
+	GraphQuery                  graphquery.GraphQueryService
+	GraphQueryMaxTimeoutSeconds int
 
 	// Knowledge pipeline tools
 	ClaimCreate     claimservice.CreateClaimService
@@ -409,6 +411,10 @@ func semanticSearchTool(deps Dependencies) Tool {
 // --- graph-query -----------------------------------------------------------
 
 func graphQueryTool(deps Dependencies) Tool {
+	maxTimeoutSeconds := deps.GraphQueryMaxTimeoutSeconds
+	if maxTimeoutSeconds <= 0 {
+		maxTimeoutSeconds = 30
+	}
 	return Tool{
 		Name:        "graph-query",
 		Description: "Advanced: profile-scoped read-only Cypher. The server injects the profile filter and caps row count.",
@@ -416,8 +422,9 @@ func graphQueryTool(deps Dependencies) Tool {
 			"type":     "object",
 			"required": []string{"query"},
 			"properties": map[string]any{
-				"query":      map[string]any{"type": "string"},
-				"parameters": map[string]any{"type": "object", "additionalProperties": true},
+				"query":           map[string]any{"type": "string", "maxLength": 5000},
+				"parameters":      map[string]any{"type": "object", "additionalProperties": true},
+				"timeout_seconds": map[string]any{"type": "integer", "minimum": 1, "maximum": maxTimeoutSeconds},
 			},
 			"additionalProperties": false,
 		},
@@ -432,6 +439,14 @@ func graphQueryTool(deps Dependencies) Tool {
 				return nil, errors.New("graph-query: query is required")
 			}
 			params, _ := input["parameters"].(map[string]any)
+			if timeout, ok := intInput(input["timeout_seconds"]); ok && timeout > 0 {
+				if timeout > maxTimeoutSeconds {
+					return nil, fmt.Errorf("graph-query: timeout_seconds must be less than or equal to %d", maxTimeoutSeconds)
+				}
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+				defer cancel()
+			}
 			res, err := deps.GraphQuery.Execute(ctx, profileID, query, params)
 			if err != nil {
 				return nil, err
@@ -496,6 +511,20 @@ func evidenceObjectSchema() map[string]any {
 			"authority":          map[string]any{"type": "string"},
 		},
 	}
+}
+
+func intInput(value any) (int, bool) {
+	switch v := value.(type) {
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case float64:
+		if v == float64(int(v)) {
+			return int(v), true
+		}
+	}
+	return 0, false
 }
 
 // remapInput roundtrips a map[string]any into a typed request struct so each

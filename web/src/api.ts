@@ -46,6 +46,32 @@ export type CreatedApiKey = {
   key: ApiKey;
 };
 
+export type SecuritySettings = {
+  enabled: boolean;
+  failure_threshold: number;
+  failure_window_seconds: number;
+  ban_duration_seconds: number;
+  updated_at: string;
+};
+
+export type SecurityBan = {
+  ip: string;
+  reason: string;
+  source: "auto" | "manual";
+  failure_count: number;
+  banned_at: string;
+  expires_at: string | null;
+  last_failed_at: string | null;
+  metadata: Record<string, unknown> | null;
+  revoked_at: string | null;
+};
+
+export type CreateSecurityBanInput = {
+  ip: string;
+  reason: string;
+  expires_at?: string;
+};
+
 export class ApiError extends Error {
   status: number;
 
@@ -100,6 +126,27 @@ export class ControlApi {
 
   deleteApiKey(profileId: string, keyId: string): Promise<{ status: string }> {
     return this.requestEnvelope<{ status: string }>(`/profiles/${profileId}/api-keys/${keyId}`, { method: "DELETE" });
+  }
+
+  getSecuritySettings(): Promise<SecuritySettings> {
+    return this.requestEnvelope<SecuritySettings>("/security/settings");
+  }
+
+  updateSecuritySettings(input: SecuritySettings): Promise<SecuritySettings> {
+    return this.requestEnvelope<SecuritySettings>("/security/settings", { method: "PATCH", body: input });
+  }
+
+  listSecurityBans(includeExpired = false): Promise<Page<SecurityBan>> {
+    const suffix = includeExpired ? "?include_expired=true" : "";
+    return this.request<Page<SecurityBan>>(`/security/bans${suffix}`);
+  }
+
+  createSecurityBan(input: CreateSecurityBanInput): Promise<SecurityBan> {
+    return this.requestEnvelope<SecurityBan>("/security/bans", { method: "POST", body: input });
+  }
+
+  deleteSecurityBan(ip: string): Promise<{ status: string }> {
+    return this.requestEnvelope<{ status: string }>(`/security/bans/${encodeURIComponent(ip)}`, { method: "DELETE" });
   }
 
   private async requestEnvelope<T>(path: string, options: RequestOptions = {}): Promise<T> {

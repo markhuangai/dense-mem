@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -66,12 +67,15 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // The health and ready endpoints are not behind auth, profile, or rate-limit middleware.
 func NewServer(cfg config.Config, logger observability.LogProvider, health HealthConfig) *echo.Echo {
 	e := echo.New()
+	applyServerLimits(e)
+	applyIPExtractor(e)
 
 	// Set custom error handler
 	e.HTTPErrorHandler = httperr.ErrorHandler
 
 	// Global middleware (applies to all routes)
 	e.Use(middleware.Recover())
+	e.Use(middleware.BodyLimit(fmt.Sprintf("%dB", effectiveMaxBodyBytes(cfg.HTTPMaxBodyBytes))))
 	e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
 		HandleError: true,
 		LogMethod:   true,
@@ -115,6 +119,23 @@ func NewServer(cfg config.Config, logger observability.LogProvider, health Healt
 	registerPublicRoutes(e, health)
 
 	return e
+}
+
+func applyServerLimits(e *echo.Echo) {
+	e.Server.ReadHeaderTimeout = 5 * time.Second
+	e.Server.ReadTimeout = 30 * time.Second
+	e.Server.IdleTimeout = 60 * time.Second
+}
+
+func applyIPExtractor(e *echo.Echo) {
+	e.IPExtractor = echo.ExtractIPDirect()
+}
+
+func effectiveMaxBodyBytes(value int) int {
+	if value > 0 {
+		return value
+	}
+	return 1048576
 }
 
 // NewServerWithGracefulShutdown creates a new server and returns it along with a shutdown function.

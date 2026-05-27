@@ -12,19 +12,20 @@ import (
 
 // Argon2id parameters
 const (
-	argon2Memory     = 65536 // 64 MB
-	argon2Time       = 3
-	argon2Threads    = 4
-	argon2SaltLength = 16
-	argon2KeyLength  = 32
-	keyPrefix        = "dm_live_"
-	keyPrefixLength  = 12 // first 12 chars of the raw key (including prefix)
-	keySuffixLength  = 6
+	argon2Memory          = 65536 // 64 MB
+	argon2Time            = 3
+	argon2Threads         = 4
+	argon2SaltLength      = 16
+	argon2KeyLength       = 32
+	keyPrefix             = "dm_live_"
+	keyPrefixLength       = 24 // first 24 chars of the raw key (including prefix)
+	legacyKeyPrefixLength = 12
+	keySuffixLength       = 6
 )
 
 // GenerateRawKey generates a new raw API key.
 // Format: dm_live_ + base64url(32 random bytes)
-// The key_prefix is the first 12 characters of the full raw key string.
+// The key_prefix is the first 24 characters of the full raw key string.
 func GenerateRawKey() (string, error) {
 	// Generate 32 random bytes
 	randomBytes := make([]byte, 32)
@@ -41,12 +42,27 @@ func GenerateRawKey() (string, error) {
 	return fullKey, nil
 }
 
-// GetKeyPrefix extracts the first 12 characters of the raw key.
+// GetKeyPrefix extracts the first 24 characters of the raw key.
 func GetKeyPrefix(rawKey string) string {
 	if len(rawKey) < keyPrefixLength {
 		return rawKey
 	}
 	return rawKey[:keyPrefixLength]
+}
+
+// GetLookupPrefixes returns current and legacy key-prefix candidates.
+func GetLookupPrefixes(rawKey string) []string {
+	prefixes := []string{}
+	if len(rawKey) >= keyPrefixLength {
+		prefixes = append(prefixes, rawKey[:keyPrefixLength])
+	}
+	if len(rawKey) >= legacyKeyPrefixLength {
+		legacy := rawKey[:legacyKeyPrefixLength]
+		if len(prefixes) == 0 || prefixes[0] != legacy {
+			prefixes = append(prefixes, legacy)
+		}
+	}
+	return prefixes
 }
 
 // GetKeySuffix extracts the last 6 characters of the raw key for display.

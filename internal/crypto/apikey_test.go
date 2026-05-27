@@ -18,10 +18,10 @@ func TestGenerateAPIKeyFormat(t *testing.T) {
 		// Check prefix
 		assert.True(t, strings.HasPrefix(key, "dm_live_"), "Key should start with 'dm_live_'")
 
-		// Check prefix extraction (first 12 chars)
+		// Check prefix extraction (first 24 chars)
 		prefix := GetKeyPrefix(key)
-		assert.Equal(t, 12, len(prefix), "Prefix should be 12 characters")
-		assert.Equal(t, key[:12], prefix, "Prefix should be first 12 characters of key")
+		assert.Equal(t, 24, len(prefix), "Prefix should be 24 characters")
+		assert.Equal(t, key[:24], prefix, "Prefix should be first 24 characters of key")
 
 		suffix := GetKeySuffix(key)
 		assert.Equal(t, 6, len(suffix), "Suffix should be 6 characters")
@@ -34,6 +34,16 @@ func TestGenerateAPIKeyFormat(t *testing.T) {
 		// Verify no padding characters (base64url uses no padding)
 		assert.NotContains(t, encodedPart, "=", "Base64url should not contain padding")
 	}
+}
+
+func TestGetLookupPrefixesIncludesLegacyPrefix(t *testing.T) {
+	rawKey := "dm_live_12345678901234567890"
+
+	prefixes := GetLookupPrefixes(rawKey)
+
+	require.Len(t, prefixes, 2)
+	assert.Equal(t, rawKey[:24], prefixes[0])
+	assert.Equal(t, rawKey[:12], prefixes[1])
 }
 
 func TestGetKeySuffixShortKey(t *testing.T) {
@@ -76,7 +86,11 @@ func TestVerifyAPIKeyTampered(t *testing.T) {
 	require.NoError(t, err)
 
 	// Tamper with the hash
-	tamperedHash := hash[:len(hash)-1] + "X"
+	replacement := "X"
+	if strings.HasSuffix(hash, replacement) {
+		replacement = "Y"
+	}
+	tamperedHash := hash[:len(hash)-1] + replacement
 
 	// Verify tampered hash fails
 	assert.False(t, VerifyKey(rawKey, tamperedHash), "Tampered hash should not verify")

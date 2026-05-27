@@ -41,10 +41,14 @@ func RateLimitMiddleware(svc service.RateLimitServiceInterface, cfg config.Confi
 			// Select limit tier. Fragment routes get their write/read tier and
 			// everything else falls back to the standard per-profile tier.
 			limit := selectRateLimit(cfg, principal.Role, c.Request().Method, routePath)
+			if principal.RateLimit > 0 && principal.RateLimit < limit {
+				limit = principal.RateLimit
+			}
 
 			// Perform rate limit check
 			ctx := c.Request().Context()
-			allowed, remaining, resetAt, err := svc.Check(ctx, profileID, routePath, limit)
+			rateLimitSubject := profileID + ":key:" + principal.KeyID.String()
+			allowed, remaining, resetAt, err := svc.Check(ctx, rateLimitSubject, routePath, limit)
 			if err != nil {
 				// On error, let the request through (fail open)
 				// But log the error

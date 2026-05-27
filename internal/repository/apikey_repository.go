@@ -87,12 +87,12 @@ func (r *APIKeyRepositoryImpl) CreateStandardKey(ctx context.Context, key *domai
 
 // GetKeyPrefixFromHash extracts a prefix placeholder from the key hash.
 // In practice, the key_prefix should be passed separately, but this helper
-// extracts the first 12 chars of the hash as a fallback.
+// extracts the first 24 chars of the hash as a fallback.
 func GetKeyPrefixFromHash(hash string) string {
-	if len(hash) < 12 {
+	if len(hash) < 24 {
 		return hash
 	}
-	return hash[:12]
+	return hash[:24]
 }
 
 // ListByProfile retrieves API keys for a profile with pagination.

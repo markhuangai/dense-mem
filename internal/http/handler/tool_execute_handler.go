@@ -3,10 +3,8 @@ package handler
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strings"
 
 	"github.com/labstack/echo/v4"
@@ -78,8 +76,8 @@ func (h *ToolExecuteHandler) Handle(c echo.Context) error {
 			return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
 		}
 	}
-	if apiErr := validateToolInput(tool, args); apiErr != nil {
-		return apiErr
+	if err := registry.ValidateInput(tool, args); err != nil {
+		return httperr.New(httperr.VALIDATION_ERROR, err.Error())
 	}
 	delete(args, "profile_id")
 
@@ -151,75 +149,6 @@ func principalCanSeeTool(principal *middleware.Principal, tool registry.Tool) bo
 		}
 	}
 	return true
-}
-
-func validateToolInput(tool registry.Tool, args map[string]any) *httperr.APIError {
-	schema := tool.InputSchema
-	if len(schema) == 0 {
-		return nil
-	}
-
-	for _, name := range schemaRequiredFields(schema) {
-		if _, ok := args[name]; !ok {
-			return httperr.New(httperr.VALIDATION_ERROR, fmt.Sprintf("%s is required", name))
-		}
-	}
-
-	if schemaDisallowsAdditionalProperties(schema) {
-		allowed := schemaProperties(schema)
-		for key := range args {
-			if _, ok := allowed[key]; !ok {
-				return httperr.New(httperr.VALIDATION_ERROR, fmt.Sprintf("unknown field: %s", key))
-			}
-		}
-	}
-
-	return nil
-}
-
-func schemaRequiredFields(schema map[string]any) []string {
-	raw, ok := schema["required"]
-	if !ok {
-		return nil
-	}
-
-	switch v := raw.(type) {
-	case []string:
-		return append([]string(nil), v...)
-	case []any:
-		required := make([]string, 0, len(v))
-		for _, item := range v {
-			if name, ok := item.(string); ok && name != "" {
-				required = append(required, name)
-			}
-		}
-		sort.Strings(required)
-		return required
-	default:
-		return nil
-	}
-}
-
-func schemaDisallowsAdditionalProperties(schema map[string]any) bool {
-	v, ok := schema["additionalProperties"].(bool)
-	return ok && !v
-}
-
-func schemaProperties(schema map[string]any) map[string]struct{} {
-	props := make(map[string]struct{})
-	raw, ok := schema["properties"]
-	if !ok {
-		return props
-	}
-
-	switch v := raw.(type) {
-	case map[string]any:
-		for key := range v {
-			props[key] = struct{}{}
-		}
-	}
-
-	return props
 }
 
 func mapToolExecuteError(err error) *httperr.APIError {

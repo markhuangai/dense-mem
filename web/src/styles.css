@@ -170,7 +170,8 @@ textarea:focus {
 
 .inline-form,
 .edit-grid,
-.key-form {
+.key-form,
+.security-grid {
   display: grid;
   gap: 10px;
 }
@@ -183,7 +184,8 @@ textarea:focus {
 }
 
 .edit-grid,
-.key-form {
+.key-form,
+.security-grid {
   grid-template-columns: 140px minmax(0, 1fr);
   align-items: center;
 }
@@ -357,6 +359,19 @@ button:disabled {
   border-bottom: 1px solid #e2e9e7;
 }
 
+.security-grid {
+  margin-bottom: 16px;
+}
+
+.security-ban-form {
+  padding-top: 16px;
+  border-top: 1px solid #e2e9e7;
+}
+
+.include-row {
+  margin: 4px 0 12px;
+}
+
 fieldset {
   display: flex;
   flex-wrap: wrap;
@@ -428,7 +443,8 @@ code {
   }
 
   .edit-grid,
-  .key-form {
+  .key-form,
+  .security-grid {
     grid-template-columns: 1fr;
   }
 }

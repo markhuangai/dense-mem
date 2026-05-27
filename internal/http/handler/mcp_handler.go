@@ -1,11 +1,12 @@
 package handler
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/labstack/echo/v4"
 
@@ -13,13 +14,15 @@ import (
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/mcp"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
 // MCPHandler serves the MCP Streamable HTTP endpoint at /mcp.
 type MCPHandler struct {
-	reg    registry.Registry
-	logger observability.LogProvider
+	reg       registry.Registry
+	logger    observability.LogProvider
+	lifecycle sse.StreamLifecycle
 }
 
 // MCPHandlerInterface is the companion interface for MCPHandler.
@@ -33,6 +36,10 @@ var _ MCPHandlerInterface = (*MCPHandler)(nil)
 // NewMCPHandler constructs a Streamable HTTP MCP handler.
 func NewMCPHandler(reg registry.Registry, logger observability.LogProvider) *MCPHandler {
 	return &MCPHandler{reg: reg, logger: logger}
+}
+
+func NewMCPHandlerWithLifecycle(reg registry.Registry, logger observability.LogProvider, lifecycle sse.StreamLifecycle) *MCPHandler {
+	return &MCPHandler{reg: reg, logger: logger, lifecycle: lifecycle}
 }
 
 // HandlePost serves POST /mcp. It accepts a single JSON-RPC request and returns
@@ -72,28 +79,34 @@ func (h *MCPHandler) HandleGet(c echo.Context) error {
 	if !acceptsEventStream(c.Request().Header.Get("Accept")) {
 		return c.NoContent(http.StatusMethodNotAllowed)
 	}
+	if h.lifecycle == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "stream lifecycle unavailable")
+	}
 
-	headers := c.Response().Header()
-	headers.Set(echo.HeaderContentType, "text/event-stream")
-	headers.Set(echo.HeaderCacheControl, "no-cache")
-	headers.Set(echo.HeaderConnection, "keep-alive")
-	c.Response().WriteHeader(http.StatusOK)
-	if err := writeSSEComment(c, "dense-mem MCP stream ready"); err != nil {
+	profileID, ok := middleware.GetResolvedProfileID(c.Request().Context())
+	if !ok {
+		return httperr.New(httperr.PROFILE_ID_REQUIRED, "profile ID is required")
+	}
+
+	writer, err := sse.NewSSEWriter(c.Response())
+	if err != nil {
 		return err
 	}
 
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-c.Request().Context().Done():
-			return nil
-		case <-ticker.C:
-			if err := writeSSEComment(c, "keepalive"); err != nil {
-				return err
-			}
+	err = h.lifecycle.Start(c.Request().Context(), profileID.String(), writer, func(ctx context.Context) error {
+		if err := writer.WriteComment("dense-mem MCP stream ready"); err != nil {
+			return err
 		}
+		<-ctx.Done()
+		return nil
+	})
+	if errors.Is(err, sse.ErrTooManyStreams) {
+		return httperr.New(httperr.RATE_LIMITED, "too many concurrent streams")
 	}
+	if errors.Is(err, sse.ErrStreamTerminated) || errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
 }
 
 func acceptsEventStream(accept string) bool {
