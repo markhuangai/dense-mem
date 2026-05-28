@@ -349,6 +349,8 @@ function TeamProfilesPanel({ api, team }: { api: ControlApi; team: Team }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [deletingKeyId, setDeletingKeyId] = useState("");
+  const [savingKeyId, setSavingKeyId] = useState("");
+  const [rotatingKeyId, setRotatingKeyId] = useState("");
 
   async function loadKeys() {
     setLoading(true);
@@ -367,6 +369,49 @@ function TeamProfilesPanel({ api, team }: { api: ControlApi; team: Team }) {
     setCreatedKey(null);
     void loadKeys();
   }, [team.id]);
+
+  async function updateKeyName(keyId: string, name: string) {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setError("Profile name is required.");
+      return;
+    }
+    setSavingKeyId(keyId);
+    setError("");
+    try {
+      const updated = await api.updateTeamProfile(team.id, keyId, { name: trimmedName });
+      setKeys((current) => current.map((item) => (item.id === keyId ? updated : item)));
+    } catch (err) {
+      setError(readError(err));
+    } finally {
+      setSavingKeyId("");
+    }
+  }
+
+  async function rotateKey(keyId: string) {
+    const key = keys.find((item) => item.id === keyId);
+    if (!key) {
+      return;
+    }
+    if (!window.confirm(`Regenerate key for profile "${key.name}"? The current key will stop working.`)) {
+      return;
+    }
+    setRotatingKeyId(keyId);
+    setError("");
+    try {
+      const rotated = await api.regenerateTeamProfileKey(team.id, keyId, {
+        name: key.name,
+        rate_limit: key.rate_limit,
+        expires_at: key.expires_at ?? undefined,
+      });
+      setCreatedKey(rotated);
+      await loadKeys();
+    } catch (err) {
+      setError(readError(err));
+    } finally {
+      setRotatingKeyId("");
+    }
+  }
 
   async function deleteKey(keyId: string) {
     const key = keys.find((item) => item.id === keyId);
@@ -402,7 +447,11 @@ function TeamProfilesPanel({ api, team }: { api: ControlApi; team: Team }) {
       {!loading && (
         <TeamProfileTable
           keys={keys}
+          savingKeyId={savingKeyId}
+          rotatingKeyId={rotatingKeyId}
           deletingKeyId={deletingKeyId}
+          onRename={(keyId, name) => void updateKeyName(keyId, name)}
+          onRotate={(keyId) => void rotateKey(keyId)}
           onDelete={(keyId) => void deleteKey(keyId)}
         />
       )}
@@ -412,11 +461,19 @@ function TeamProfilesPanel({ api, team }: { api: ControlApi; team: Team }) {
 
 function TeamProfileTable({
   keys,
+  savingKeyId,
+  rotatingKeyId,
   deletingKeyId,
+  onRename,
+  onRotate,
   onDelete,
 }: {
   keys: TeamProfile[];
+  savingKeyId: string;
+  rotatingKeyId: string;
   deletingKeyId: string;
+  onRename: (keyId: string, name: string) => void;
+  onRotate: (keyId: string) => void;
   onDelete: (keyId: string) => void;
 }) {
   if (keys.length === 0) {
@@ -432,35 +489,103 @@ function TeamProfileTable({
             <th>Key</th>
             <th>Created</th>
             <th>Last used</th>
-            <th className="actions-cell">Delete</th>
+            <th className="actions-cell">Actions</th>
           </tr>
         </thead>
         <tbody>
-          {keys.map((key) => {
-            const display = displayKeySuffix(key);
-            return (
-              <tr key={key.id}>
-                <td>{key.name}</td>
-                <td><code>{display}</code></td>
-                <td>{formatDate(key.created_at)}</td>
-                <td>{key.last_used_at ? formatDate(key.last_used_at) : "Never"}</td>
-                <td className="actions-cell">
-                  <button
-                    className="icon-button danger"
-                    type="button"
-                    aria-label={`Delete profile ${key.name}`}
-                    disabled={deletingKeyId === key.id}
-                    onClick={() => onDelete(key.id)}
-                  >
-                    <Trash2 size={16} aria-hidden="true" />
-                  </button>
-                </td>
-              </tr>
-            );
-          })}
+          {keys.map((key) => (
+            <TeamProfileRow
+              key={key.id}
+              profile={key}
+              saving={savingKeyId === key.id}
+              rotating={rotatingKeyId === key.id}
+              deleting={deletingKeyId === key.id}
+              onRename={onRename}
+              onRotate={onRotate}
+              onDelete={onDelete}
+            />
+          ))}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function TeamProfileRow({
+  profile,
+  saving,
+  rotating,
+  deleting,
+  onRename,
+  onRotate,
+  onDelete,
+}: {
+  profile: TeamProfile;
+  saving: boolean;
+  rotating: boolean;
+  deleting: boolean;
+  onRename: (keyId: string, name: string) => void;
+  onRotate: (keyId: string) => void;
+  onDelete: (keyId: string) => void;
+}) {
+  const [draftName, setDraftName] = useState(profile.name);
+  const trimmedDraft = draftName.trim();
+  const unchanged = trimmedDraft === profile.name;
+  const busy = saving || rotating || deleting;
+
+  useEffect(() => {
+    setDraftName(profile.name);
+  }, [profile.id, profile.name]);
+
+  return (
+    <tr>
+      <td>
+        <div className="profile-name-cell">
+          <input
+            aria-label={`Profile name ${profile.name}`}
+            value={draftName}
+            onChange={(event) => setDraftName(event.target.value)}
+          />
+          <button
+            className="icon-button"
+            type="button"
+            aria-label={`Save profile ${profile.name}`}
+            title="Save profile"
+            disabled={busy || unchanged || trimmedDraft.length === 0}
+            onClick={() => onRename(profile.id, draftName)}
+          >
+            <Pencil size={16} aria-hidden="true" />
+          </button>
+        </div>
+      </td>
+      <td><code>{displayKeySuffix(profile)}</code></td>
+      <td>{formatDate(profile.created_at)}</td>
+      <td>{profile.last_used_at ? formatDate(profile.last_used_at) : "Never"}</td>
+      <td className="actions-cell">
+        <div className="table-actions">
+          <button
+            className="icon-button"
+            type="button"
+            aria-label={`Regenerate key for profile ${profile.name}`}
+            title="Regenerate key"
+            disabled={busy}
+            onClick={() => onRotate(profile.id)}
+          >
+            <RefreshCw size={16} aria-hidden="true" />
+          </button>
+          <button
+            className="icon-button danger"
+            type="button"
+            aria-label={`Delete profile ${profile.name}`}
+            title="Delete profile"
+            disabled={busy}
+            onClick={() => onDelete(profile.id)}
+          >
+            <Trash2 size={16} aria-hidden="true" />
+          </button>
+        </div>
+      </td>
+    </tr>
   );
 }
 

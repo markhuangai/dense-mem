@@ -2,12 +2,15 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/lib/pq"
 
 	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -29,6 +32,30 @@ var standardAPIKeyScopes = []string{"read", "write"}
 // StandardAPIKeyScopes returns the fixed scope set for all standard API keys.
 func StandardAPIKeyScopes() []string {
 	return append([]string(nil), standardAPIKeyScopes...)
+}
+
+func normalizeTeamProfileName(name string) (string, error) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return "", httperr.New(httperr.VALIDATION_ERROR, "profile name is required")
+	}
+	if len([]rune(trimmed)) > 100 {
+		return "", httperr.New(httperr.VALIDATION_ERROR, "profile name must be at most 100 characters")
+	}
+	return trimmed, nil
+}
+
+func teamProfileNameConflict(err error, name string) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return httperr.New(httperr.CONFLICT, fmt.Sprintf("profile with name '%s' already exists for this team", name))
+	}
+
+	var pqErr *pq.Error
+	if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+		return httperr.New(httperr.CONFLICT, fmt.Sprintf("profile with name '%s' already exists for this team", name))
+	}
+	return nil
 }
 
 // KeySessionInvalidator is an interface for invalidating key sessions.
@@ -55,6 +82,8 @@ type APIKeyService interface {
 	RevokeForProfile(ctx context.Context, profileID, id uuid.UUID, actorKeyID *string, actorRole, clientIP, correlationID string) error
 	// DeleteForProfile hard-deletes the key only when it belongs to profileID; NOT_FOUND otherwise.
 	DeleteForProfile(ctx context.Context, profileID, id uuid.UUID, actorKeyID *string, actorRole, clientIP, correlationID string) error
+	// UpdateNameForProfile renames the team profile without changing key material.
+	UpdateNameForProfile(ctx context.Context, profileID, id uuid.UUID, name string, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, error)
 	// RotateForProfile rotates key material in place for a named team profile.
 	RotateForProfile(ctx context.Context, profileID, id uuid.UUID, req CreateAPIKeyRequest, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, string, error)
 }
@@ -187,6 +216,73 @@ func (s *APIKeyServiceImpl) CreateStandardKey(ctx context.Context, profileID uui
 	// Return the key (without hash) and the raw key (shown exactly once)
 	key.KeyHash = ""
 	return key, rawKey, nil
+}
+
+// UpdateNameForProfile renames a team profile without rotating its key.
+func (s *APIKeyServiceImpl) UpdateNameForProfile(ctx context.Context, profileID, id uuid.UUID, name string, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, error) {
+	normalizedName, err := normalizeTeamProfileName(name)
+	if err != nil {
+		return nil, err
+	}
+
+	key, err := s.repo.GetByIDForProfile(ctx, profileID, id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get team profile: %w", err)
+	}
+	if key == nil {
+		return nil, httperr.New(httperr.NOT_FOUND, fmt.Sprintf("team profile with id '%s' not found", id.String()))
+	}
+
+	currentName := key.GetProfileName()
+	if currentName == normalizedName {
+		key.KeyHash = ""
+		key.Name = normalizedName
+		key.Label = normalizedName
+		return key, nil
+	}
+
+	beforePayload := map[string]interface{}{
+		"team_id":      profileID.String(),
+		"profile_id":   key.ID.String(),
+		"profile_name": currentName,
+	}
+
+	rows, err := s.repo.UpdateNameForProfile(ctx, profileID, id, normalizedName)
+	if err != nil {
+		if conflict := teamProfileNameConflict(err, normalizedName); conflict != nil {
+			return nil, conflict
+		}
+		return nil, fmt.Errorf("failed to update team profile name: %w", err)
+	}
+	if rows == 0 {
+		return nil, httperr.New(httperr.NOT_FOUND, fmt.Sprintf("team profile with id '%s' not found", id.String()))
+	}
+
+	key.KeyHash = ""
+	key.Name = normalizedName
+	key.Label = normalizedName
+
+	profileIDStr := profileID.String()
+	if err := s.auditService.Append(ctx, AuditLogEntry{
+		ProfileID:     &profileIDStr,
+		Operation:     "UPDATE",
+		EntityType:    "team_profile",
+		EntityID:      key.ID.String(),
+		BeforePayload: beforePayload,
+		AfterPayload: map[string]interface{}{
+			"team_id":      profileID.String(),
+			"profile_id":   key.ID.String(),
+			"profile_name": normalizedName,
+		},
+		ActorKeyID:    actorKeyID,
+		ActorRole:     actorRole,
+		ClientIP:      clientIP,
+		CorrelationID: correlationID,
+	}); err != nil {
+		s.logAuditError(err, "UPDATE", key.ID.String(), correlationID)
+	}
+
+	return key, nil
 }
 
 // RotateForProfile rotates a team profile's API key in place.

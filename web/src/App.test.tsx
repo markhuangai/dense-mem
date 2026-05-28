@@ -97,6 +97,43 @@ describe("App", () => {
     await waitFor(() => expect(screen.queryByText("dm_plain_once")).not.toBeInTheDocument());
   });
 
+  it("updates team and profile names and regenerates a key", async () => {
+    const fetchMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<App />);
+    await screen.findByRole("button", { name: "Default" });
+
+    const teamName = screen.getByLabelText("Name", { selector: "#team-name" });
+    await userEvent.clear(teamName);
+    await userEvent.type(teamName, "Renamed Team");
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    expect(await screen.findByRole("heading", { name: "Renamed Team" })).toBeInTheDocument();
+
+    const profileName = await screen.findByLabelText("Profile name default profile");
+    await userEvent.clear(profileName);
+    await userEvent.type(profileName, "Research profile");
+    await userEvent.click(screen.getByRole("button", { name: /save profile default profile/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining(`/teams/${profileA.id}/profiles/${keyA().id}`),
+        expect.objectContaining({ method: "PATCH" }),
+      );
+    });
+    expect(await screen.findByDisplayValue("Research profile")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /regenerate key for profile Research profile/i }));
+    expect(await screen.findByText("dm_rotated_once")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining(`/teams/${profileA.id}/profiles/${keyA().id}/rotate`),
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+  });
+
   it("shows team profiles with suffix, last used time, and delete action", async () => {
     const fetchMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
     sessionStorage.setItem("denseMem.controlToken", "secret");
@@ -168,7 +205,19 @@ function mockPortalFetch({
     if (url.includes("/profiles") && method === "GET") {
       return jsonResponse(page(currentKeys));
     }
-    if (url.includes("/profiles") && method === "POST") {
+    if (url.includes("/profiles/") && url.endsWith("/rotate") && method === "POST") {
+      const body = JSON.parse(String(init?.body));
+      const rotated = { ...(currentKeys.find((key) => url.includes(key.id)) ?? keyA()), name: body.name, key_suffix: "rot8ed", last_used_at: null };
+      currentKeys = currentKeys.map((key) => (key.id === rotated.id ? rotated : key));
+      return jsonResponse({ data: { api_key: "dm_rotated_once", key: rotated } });
+    }
+    if (url.includes("/profiles/") && method === "PATCH") {
+      const body = JSON.parse(String(init?.body));
+      const updated = { ...(currentKeys.find((key) => url.endsWith(`/profiles/${key.id}`)) ?? keyA()), name: body.name };
+      currentKeys = currentKeys.map((key) => (key.id === updated.id ? updated : key));
+      return jsonResponse({ data: updated });
+    }
+    if (url.endsWith("/profiles") && method === "POST") {
       const body = JSON.parse(String(init?.body));
       expect(body.label).toBeUndefined();
       const created = { ...keyA(), name: body.name };
@@ -195,8 +244,11 @@ function mockPortalFetch({
     if (url.includes("/security/bans/") && method === "DELETE") {
       return jsonResponse({ data: { status: "deleted" } });
     }
-    if (method === "PATCH") {
-      return jsonResponse({ data: currentProfiles[0] });
+    if (url.includes("/teams/") && method === "PATCH") {
+      const body = JSON.parse(String(init?.body));
+      const updated = { ...(currentProfiles.find((team) => url.endsWith(`/teams/${team.id}`)) ?? currentProfiles[0]), name: body.name, description: body.description };
+      currentProfiles = currentProfiles.map((team) => (team.id === updated.id ? updated : team));
+      return jsonResponse({ data: updated });
     }
     if (method === "DELETE") {
       currentProfiles = currentProfiles.filter((team) => !url.endsWith(`/teams/${team.id}`));

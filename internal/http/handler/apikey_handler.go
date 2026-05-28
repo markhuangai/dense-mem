@@ -20,6 +20,7 @@ import (
 // This allows mocking in tests and decouples the handler from concrete implementations.
 type APIKeyServiceInterface interface {
 	CreateStandardKey(ctx context.Context, profileID uuid.UUID, req service.CreateAPIKeyRequest, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, string, error)
+	UpdateNameForProfile(ctx context.Context, profileID, id uuid.UUID, name string, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, error)
 	RotateForProfile(ctx context.Context, profileID, id uuid.UUID, req service.CreateAPIKeyRequest, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, string, error)
 	ListByProfile(ctx context.Context, profileID uuid.UUID, limit, offset int) ([]*domain.APIKey, error)
 	CountByProfile(ctx context.Context, profileID uuid.UUID) (int64, error)

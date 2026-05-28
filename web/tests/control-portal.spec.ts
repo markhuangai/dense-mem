@@ -10,7 +10,18 @@ const team = {
   updated_at: "2026-05-01T12:00:00Z",
 };
 
-const key = {
+type TestKey = {
+  id: string;
+  team_id: string;
+  name: string;
+  key_suffix: string;
+  rate_limit: number;
+  last_used_at: string | null;
+  expires_at: string | null;
+  created_at: string;
+};
+
+const key: TestKey = {
   id: "22222222-2222-4222-8222-222222222222",
   team_id: team.id,
   name: "default profile",
@@ -22,7 +33,6 @@ const key = {
 };
 
 type TestProfile = typeof team;
-type TestKey = typeof key;
 
 test("team creation flow", async ({ page }) => {
   await mockApi(page, { teams: [team], keys: [] });
@@ -44,6 +54,23 @@ test("API key creation shows plaintext once", async ({ page }) => {
   await expect(page.getByText("dm_plain_once")).toBeVisible();
   await page.getByRole("button", { name: "Dismiss API key" }).click();
   await expect(page.getByText("dm_plain_once")).toBeHidden();
+});
+
+test("team and profile names update and profile key regenerates", async ({ page }) => {
+  await mockApi(page, { teams: [team], keys: [key] });
+  await openPortal(page);
+
+  await page.locator("#team-name").fill("Renamed Team");
+  await page.getByRole("button", { name: /^Save$/ }).click();
+  await expect(page.getByRole("heading", { name: "Renamed Team" })).toBeVisible();
+
+  await page.getByLabel("Profile name default profile").fill("Research profile");
+  await page.getByRole("button", { name: /Save profile default profile/ }).click();
+  await expect(page.getByLabel("Profile name Research profile")).toHaveValue("Research profile");
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: /Regenerate key for profile Research profile/ }).click();
+  await expect(page.getByText("dm_rotated_once")).toBeVisible();
 });
 
 test("team profile list and delete flow", async ({ page }) => {
@@ -124,7 +151,19 @@ async function mockApi(page: Page, state: { teams: TestProfile[]; keys: TestKey[
     if (url.includes("/profiles") && method === "GET") {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(pageOf(keys)) });
     }
-    if (url.includes("/profiles") && method === "POST") {
+    if (url.includes("/profiles/") && url.endsWith("/rotate") && method === "POST") {
+      const body = route.request().postDataJSON() as { name: string };
+      const rotated = { ...(keys.find((item) => url.includes(item.id)) ?? key), name: body.name, key_suffix: "rot8ed", last_used_at: null };
+      keys = keys.map((item) => (item.id === rotated.id ? rotated : item));
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { api_key: "dm_rotated_once", key: rotated } }) });
+    }
+    if (url.includes("/profiles/") && method === "PATCH") {
+      const body = route.request().postDataJSON() as { name: string };
+      const updated = { ...(keys.find((item) => url.endsWith(`/profiles/${item.id}`)) ?? key), name: body.name };
+      keys = keys.map((item) => (item.id === updated.id ? updated : item));
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: updated }) });
+    }
+    if (url.endsWith("/profiles") && method === "POST") {
       const body = route.request().postDataJSON() as { label?: string; name: string };
       expect(body.label).toBeUndefined();
       const created = { ...key, name: body.name };
@@ -134,6 +173,12 @@ async function mockApi(page: Page, state: { teams: TestProfile[]; keys: TestKey[
     if (url.includes("/profiles/") && method === "DELETE") {
       keys = keys.filter((item) => !url.endsWith(`/profiles/${item.id}`));
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { status: "deleted" } }) });
+    }
+    if (url.includes("/teams/") && method === "PATCH") {
+      const body = route.request().postDataJSON() as { name: string; description: string };
+      const updated = { ...(teams.find((item) => url.endsWith(`/teams/${item.id}`)) ?? team), name: body.name, description: body.description };
+      teams = teams.map((item) => (item.id === updated.id ? updated : item));
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: updated }) });
     }
     if (url.includes("/teams/") && method === "DELETE") {
       teams = [];

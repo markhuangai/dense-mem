@@ -89,6 +89,8 @@ func NewControlPortalServer(
 	api.DELETE("/teams/:teamId", control.deleteProfile)
 	api.GET("/teams/:teamId/profiles", control.listAPIKeys)
 	api.POST("/teams/:teamId/profiles", control.createAPIKey)
+	api.PATCH("/teams/:teamId/profiles/:profileId", control.updateAPIKey)
+	api.POST("/teams/:teamId/profiles/:profileId/rotate", control.rotateAPIKey)
 	api.DELETE("/teams/:teamId/profiles/:profileId", control.deleteAPIKey)
 	// Legacy aliases retained while the portal and operator tooling move to teams.
 	api.GET("/profiles", control.listProfiles)
@@ -97,6 +99,8 @@ func NewControlPortalServer(
 	api.DELETE("/profiles/:profileId", control.deleteProfile)
 	api.GET("/profiles/:profileId/api-keys", control.listAPIKeys)
 	api.POST("/profiles/:profileId/api-keys", control.createAPIKey)
+	api.PATCH("/profiles/:profileId/api-keys/:keyId", control.updateAPIKey)
+	api.POST("/profiles/:profileId/api-keys/:keyId/rotate", control.rotateAPIKey)
 	api.DELETE("/profiles/:profileId/api-keys/:keyId", control.deleteAPIKey)
 	api.GET("/security/settings", control.getSecuritySettings)
 	api.PATCH("/security/settings", control.updateSecuritySettings)
@@ -259,6 +263,62 @@ func (h *controlPortalHandler) createAPIKey(c echo.Context) error {
 	})
 }
 
+func (h *controlPortalHandler) updateAPIKey(c echo.Context) error {
+	profileID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
+	if err != nil {
+		return err
+	}
+	keyID, err := parseControlUUID(controlTeamProfileIDParam(c), "profile ID")
+	if err != nil {
+		return err
+	}
+	var body controlUpdateAPIKeyRequest
+	if err := c.Bind(&body); err != nil {
+		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
+	}
+	key, err := h.keys.UpdateNameForProfile(c.Request().Context(), profileID, keyID, body.Name, nil, "control", c.RealIP(), "")
+	if err != nil {
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlAPIKey(key)})
+}
+
+func (h *controlPortalHandler) rotateAPIKey(c echo.Context) error {
+	profileID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
+	if err != nil {
+		return err
+	}
+	keyID, err := parseControlUUID(controlTeamProfileIDParam(c), "profile ID")
+	if err != nil {
+		return err
+	}
+	var body controlCreateAPIKeyRequest
+	if err := c.Bind(&body); err != nil {
+		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
+	}
+	req := service.CreateAPIKeyRequest{
+		Name:      body.Name,
+		RateLimit: body.RateLimit,
+	}
+	if body.ExpiresAt != nil {
+		expiresAt, err := time.Parse(time.RFC3339, *body.ExpiresAt)
+		if err != nil {
+			return httperr.New(httperr.VALIDATION_ERROR, "expires_at must be RFC3339")
+		}
+		req.ExpiresAt = &expiresAt
+	}
+	key, rawKey, err := h.keys.RotateForProfile(c.Request().Context(), profileID, keyID, req, nil, "control", c.RealIP(), "")
+	if err != nil {
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{
+		"data": map[string]any{
+			"api_key": rawKey,
+			"key":     toControlAPIKey(key),
+		},
+	})
+}
+
 func (h *controlPortalHandler) deleteAPIKey(c echo.Context) error {
 	profileID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
@@ -384,6 +444,10 @@ type controlCreateAPIKeyRequest struct {
 	Name      string  `json:"name"`
 	RateLimit int     `json:"rate_limit"`
 	ExpiresAt *string `json:"expires_at"`
+}
+
+type controlUpdateAPIKeyRequest struct {
+	Name string `json:"name"`
 }
 
 type controlSecuritySettingsRequest struct {

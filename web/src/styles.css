@@ -333,14 +333,40 @@ button:disabled {
   text-align: right;
 }
 
+.key-table {
+  min-width: 760px;
+}
+
 .key-table th:nth-child(1),
 .key-table td:nth-child(1) {
-  width: 180px;
+  width: 240px;
 }
 
 .key-table th:nth-child(4),
 .key-table td:nth-child(4) {
   width: 72px;
+}
+
+.key-table .actions-cell {
+  width: 104px;
+}
+
+.profile-name-cell,
+.table-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.profile-name-cell input {
+  min-width: 0;
+  min-height: 34px;
+  padding: 7px 9px;
+}
+
+.profile-name-cell .icon-button,
+.table-actions .icon-button {
+  flex: 0 0 auto;
 }
 
 .table-placeholder,
@@ -467,5 +493,39 @@ code {
   .data-table th,
   .data-table td {
     padding: 9px 8px;
+  }
+
+  .key-table {
+    min-width: 0;
+  }
+
+  .key-table thead {
+    display: none;
+  }
+
+  .key-table,
+  .key-table tbody,
+  .key-table tr,
+  .key-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .key-table tr {
+    padding: 8px 0;
+    border-bottom: 1px solid #e3ebe8;
+  }
+
+  .key-table td {
+    border-bottom: 0;
+  }
+
+  .key-table .actions-cell {
+    width: 100%;
+    text-align: left;
+  }
+
+  .profile-name-cell {
+    align-items: stretch;
   }
 }

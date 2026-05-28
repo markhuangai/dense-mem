@@ -7,12 +7,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/httperr"
 )
 
 // MockAPIKeyRepository is a mock implementation of repository.APIKeyRepository
@@ -48,6 +51,11 @@ func (m *MockAPIKeyRepository) RevokeForProfile(ctx context.Context, profileID, 
 
 func (m *MockAPIKeyRepository) RotateForProfile(ctx context.Context, profileID, id uuid.UUID, keyHash, keyPrefix, keySuffix string, expiresAt *time.Time) (int64, error) {
 	args := m.Called(ctx, profileID, id, keyHash, keyPrefix, keySuffix, expiresAt)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+func (m *MockAPIKeyRepository) UpdateNameForProfile(ctx context.Context, profileID, id uuid.UUID, name string) (int64, error) {
+	args := m.Called(ctx, profileID, id, name)
 	return args.Get(0).(int64), args.Error(1)
 }
 
@@ -375,6 +383,95 @@ func TestAPIKeyServiceListNeverReturnsHash(t *testing.T) {
 	assert.Empty(t, result[0].KeyHash, "List should not return key_hash")
 
 	mockRepo.AssertExpectations(t)
+}
+
+func TestAPIKeyServiceUpdateNameForProfile(t *testing.T) {
+	ctx := context.Background()
+	keyID := uuid.New()
+	profileID := uuid.New()
+
+	mockRepo := new(MockAPIKeyRepository)
+	mockProfileService := new(MockProfileService)
+	mockAuditService := new(MockAuditService)
+	mockSessionInvalidator := new(MockKeySessionInvalidator)
+	mockStatePurger := new(MockProfileStatePurger)
+
+	service := NewAPIKeyService(mockRepo, mockProfileService, mockAuditService, mockSessionInvalidator, mockStatePurger)
+
+	key := &domain.APIKey{
+		ID:        keyID,
+		ProfileID: profileID,
+		TeamID:    profileID,
+		Label:     "default profile",
+		Name:      "default profile",
+		KeyHash:   "secret-hash",
+		CreatedAt: time.Now(),
+	}
+
+	mockRepo.On("GetByIDForProfile", ctx, profileID, keyID).Return(key, nil)
+	mockRepo.On("UpdateNameForProfile", ctx, profileID, keyID, "research profile").Return(int64(1), nil)
+	mockAuditService.On("Append", ctx, mock.MatchedBy(func(entry AuditLogEntry) bool {
+		return entry.Operation == "UPDATE" &&
+			entry.EntityType == "team_profile" &&
+			entry.EntityID == keyID.String() &&
+			entry.ProfileID != nil &&
+			*entry.ProfileID == profileID.String()
+	})).Return(nil)
+
+	updated, err := service.UpdateNameForProfile(ctx, profileID, keyID, " research profile ", nil, "system", "127.0.0.1", "test-correlation")
+
+	require.NoError(t, err)
+	require.NotNil(t, updated)
+	assert.Equal(t, "research profile", updated.Name)
+	assert.Equal(t, "research profile", updated.Label)
+	assert.Empty(t, updated.KeyHash, "KeyHash should not be returned")
+	mockRepo.AssertExpectations(t)
+	mockAuditService.AssertExpectations(t)
+}
+
+func TestAPIKeyServiceUpdateNameForProfileDuplicate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "pgx", err: &pgconn.PgError{Code: "23505"}},
+		{name: "pq", err: &pq.Error{Code: "23505"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			keyID := uuid.New()
+			profileID := uuid.New()
+
+			mockRepo := new(MockAPIKeyRepository)
+			mockProfileService := new(MockProfileService)
+			mockAuditService := new(MockAuditService)
+			mockSessionInvalidator := new(MockKeySessionInvalidator)
+			mockStatePurger := new(MockProfileStatePurger)
+
+			service := NewAPIKeyService(mockRepo, mockProfileService, mockAuditService, mockSessionInvalidator, mockStatePurger)
+
+			key := &domain.APIKey{
+				ID:        keyID,
+				ProfileID: profileID,
+				TeamID:    profileID,
+				Label:     "default profile",
+				Name:      "default profile",
+				CreatedAt: time.Now(),
+			}
+
+			mockRepo.On("GetByIDForProfile", ctx, profileID, keyID).Return(key, nil)
+			mockRepo.On("UpdateNameForProfile", ctx, profileID, keyID, "existing profile").Return(int64(0), tc.err)
+
+			updated, err := service.UpdateNameForProfile(ctx, profileID, keyID, "existing profile", nil, "system", "127.0.0.1", "test-correlation")
+
+			require.Nil(t, updated)
+			require.Error(t, err)
+			var apiErr *httperr.APIError
+			require.ErrorAs(t, err, &apiErr)
+			assert.Equal(t, httperr.CONFLICT, apiErr.Code)
+			mockRepo.AssertExpectations(t)
+		})
+	}
 }
 
 // TestAPIKeyServiceDeleteForProfile_CallsSessionInvalidator proves that DeleteForProfile

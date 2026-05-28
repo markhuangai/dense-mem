@@ -117,6 +117,17 @@ func (s *controlKeySvc) RotateForProfile(_ context.Context, profileID, id uuid.U
 	return nil, "", nil
 }
 
+func (s *controlKeySvc) UpdateNameForProfile(_ context.Context, profileID, id uuid.UUID, name string, _ *string, _ string, _ string, _ string) (*domain.APIKey, error) {
+	for _, key := range s.keys {
+		if key.ProfileID == profileID && key.ID == id {
+			key.Name = name
+			key.Label = name
+			return key, nil
+		}
+	}
+	return nil, nil
+}
+
 func (s *controlKeySvc) ListByProfile(_ context.Context, profileID uuid.UUID, _ int, _ int) ([]*domain.APIKey, error) {
 	out := make([]*domain.APIKey, 0, len(s.keys))
 	for _, key := range s.keys {
@@ -242,6 +253,26 @@ func TestControlPortalProfileAndKeyFlows(t *testing.T) {
 	require.Empty(t, keys.keys[len(keys.keys)-1].Label)
 
 	keyID := keys.keys[len(keys.keys)-1].ID
+	renameBody := `{"name":"Research Profile"}`
+	req = httptest.NewRequest(http.MethodPatch, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String(), strings.NewReader(renameBody))
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"name":"Research Profile"`)
+	require.Equal(t, "Research Profile", keys.keys[len(keys.keys)-1].Name)
+
+	rotateBody := `{"name":"Research Profile","rate_limit":120}`
+	req = httptest.NewRequest(http.MethodPost, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String()+"/rotate", strings.NewReader(rotateBody))
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"api_key":"dm_rotated_plaintext"`)
+	require.Contains(t, rec.Body.String(), `"key_suffix":"rot8ed"`)
+
 	req = httptest.NewRequest(http.MethodDelete, "/control/api/profiles/"+profileID.String()+"/api-keys/"+keyID.String(), nil)
 	req.Header.Set("Authorization", "Bearer secret")
 	rec = httptest.NewRecorder()

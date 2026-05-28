@@ -43,6 +43,10 @@ export type CreateTeamProfileInput = {
   expires_at?: string;
 };
 
+export type UpdateTeamProfileInput = {
+  name: string;
+};
+
 export type CreatedTeamProfile = {
   api_key: string;
   key: TeamProfile;
@@ -124,6 +128,14 @@ export class ControlApi {
 
   createTeamProfile(teamId: string, input: CreateTeamProfileInput): Promise<CreatedTeamProfile> {
     return this.requestEnvelope<CreatedTeamProfile>(`/teams/${teamId}/profiles`, { method: "POST", body: input });
+  }
+
+  updateTeamProfile(teamId: string, profileId: string, input: UpdateTeamProfileInput): Promise<TeamProfile> {
+    return this.requestEnvelope<TeamProfile>(`/teams/${teamId}/profiles/${profileId}`, { method: "PATCH", body: input });
+  }
+
+  regenerateTeamProfileKey(teamId: string, profileId: string, input: CreateTeamProfileInput): Promise<CreatedTeamProfile> {
+    return this.requestEnvelope<CreatedTeamProfile>(`/teams/${teamId}/profiles/${profileId}/rotate`, { method: "POST", body: input });
   }
 
   deleteTeamProfile(teamId: string, profileId: string): Promise<{ status: string }> {

@@ -26,6 +26,8 @@ type APIKeyRepository interface {
 	RevokeForProfile(ctx context.Context, profileID, id uuid.UUID) (int64, error)
 	// DeleteForProfile hard-deletes a key only when it belongs to profileID. Returns number of rows affected.
 	DeleteForProfile(ctx context.Context, profileID, id uuid.UUID) (int64, error)
+	// UpdateNameForProfile renames a team profile only when it belongs to profileID.
+	UpdateNameForProfile(ctx context.Context, profileID, id uuid.UUID, name string) (int64, error)
 	// RotateForProfile replaces key material for one team profile in place.
 	RotateForProfile(ctx context.Context, profileID, id uuid.UUID, keyHash, keyPrefix, keySuffix string, expiresAt *time.Time) (int64, error)
 	TouchLastUsed(ctx context.Context, id uuid.UUID) error
@@ -262,6 +264,29 @@ func (r *APIKeyRepositoryImpl) DeleteForProfile(ctx context.Context, profileID, 
 		return 0, fmt.Errorf("failed to delete api key for profile: %w", err)
 	}
 
+	return rowsAffected, nil
+}
+
+// UpdateNameForProfile renames a team profile without changing its API key.
+func (r *APIKeyRepositoryImpl) UpdateNameForProfile(ctx context.Context, profileID, id uuid.UUID, name string) (int64, error) {
+	now := time.Now().UTC()
+	var rowsAffected int64
+	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
+		res := tx.Exec(`
+			UPDATE team_profiles
+			SET name = $1,
+			    updated_at = $2
+			WHERE id = $3 AND team_id = $4
+		`, name, now, id, profileID)
+		if res.Error != nil {
+			return res.Error
+		}
+		rowsAffected = res.RowsAffected
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to update team profile name: %w", err)
+	}
 	return rowsAffected, nil
 }
 
