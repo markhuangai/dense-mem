@@ -71,6 +71,26 @@ func TestSecurityServiceCreateManualBanRejectsInvalidIP(t *testing.T) {
 	require.True(t, errors.Is(err, ErrInvalidSecurityIP))
 }
 
+func TestSecurityServiceDeleteSecurityBanResetsFailures(t *testing.T) {
+	repo := newFakeSecurityRepository()
+	now := time.Now().UTC()
+	repo.failures["192.0.2.12"] = 7
+	repo.bans["192.0.2.12"] = &domain.SecurityIPBan{
+		IP:           "192.0.2.12",
+		Reason:       "auth failures: AUTH_INVALID",
+		Source:       domain.SecurityBanSourceAuto,
+		FailureCount: 7,
+		BannedAt:     now,
+	}
+	svc := NewSecurityService(repo, nil)
+
+	err := svc.DeleteSecurityBan(context.Background(), "192.0.2.12", "control", "127.0.0.1", "corr")
+
+	require.NoError(t, err)
+	require.NotContains(t, repo.failures, "192.0.2.12")
+	require.NotNil(t, repo.bans["192.0.2.12"].RevokedAt)
+}
+
 type fakeSecurityRepository struct {
 	settings domain.SecuritySettings
 	failures map[string]int
@@ -146,5 +166,6 @@ func (r *fakeSecurityRepository) DeleteBan(ctx context.Context, ip string, now t
 	if ban := r.bans[ip]; ban != nil {
 		ban.RevokedAt = &now
 	}
+	delete(r.failures, ip)
 	return nil
 }

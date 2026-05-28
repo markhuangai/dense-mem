@@ -284,11 +284,17 @@ func securityBanListWhereClause(includeExpired bool) string {
 
 func (r *SecurityRepositoryImpl) DeleteBan(ctx context.Context, ip string, now time.Time) error {
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		return tx.Exec(`
+		if err := tx.Exec(`
 			UPDATE security_ip_bans
 			SET revoked_at = $2, updated_at = $2
 			WHERE ip = $1 AND revoked_at IS NULL
-		`, ip, now).Error
+		`, ip, now).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			DELETE FROM security_ip_failures
+			WHERE ip = $1
+		`, ip).Error
 	})
 	if err != nil {
 		return fmt.Errorf("failed to revoke security ban: %w", err)

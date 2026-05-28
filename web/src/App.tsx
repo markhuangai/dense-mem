@@ -5,11 +5,14 @@ import {
   Copy,
   KeyRound,
   LogOut,
+  Moon,
   Pencil,
   Plus,
   RefreshCw,
   ShieldCheck,
+  Sun,
   Trash2,
+  Users,
   X,
 } from "lucide-react";
 import {
@@ -23,15 +26,27 @@ import {
 } from "./api";
 
 const TOKEN_STORAGE_KEY = "denseMem.controlToken";
+const THEME_STORAGE_KEY = "denseMem.controlTheme";
 
 type LoadState = "idle" | "loading" | "error";
+type Theme = "light" | "dark";
+type PortalTab = "teams" | "profiles" | "security";
 
 export function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_STORAGE_KEY) ?? "");
   const [draftToken, setDraftToken] = useState(token);
   const [authError, setAuthError] = useState("");
+  const [theme, setTheme] = useState<Theme>(() => readTheme());
 
   const api = useMemo(() => (token ? new ControlApi(token) : null), [token]);
+
+  function toggleTheme() {
+    setTheme((current) => {
+      const next = current === "dark" ? "light" : "dark";
+      localStorage.setItem(THEME_STORAGE_KEY, next);
+      return next;
+    });
+  }
 
   async function submitToken(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -59,11 +74,19 @@ export function App() {
 
   if (!api) {
     return (
-      <main className="auth-shell">
+      <main className="auth-shell" data-theme={theme}>
         <form className="auth-panel" onSubmit={submitToken}>
           <div className="brand-row">
             <span className="brand-mark"><ShieldCheck size={20} aria-hidden="true" /></span>
             <h1>Dense-Mem Control</h1>
+            <button
+              className="icon-button theme-toggle"
+              type="button"
+              aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+              onClick={toggleTheme}
+            >
+              {theme === "dark" ? <Sun size={17} aria-hidden="true" /> : <Moon size={17} aria-hidden="true" />}
+            </button>
           </div>
           <label htmlFor="portal-token">Control token</label>
           <input
@@ -83,12 +106,23 @@ export function App() {
     );
   }
 
-  return <Portal api={api} onSignOut={clearToken} />;
+  return <Portal api={api} theme={theme} onToggleTheme={toggleTheme} onSignOut={clearToken} />;
 }
 
-function Portal({ api, onSignOut }: { api: ControlApi; onSignOut: () => void }) {
+function Portal({
+  api,
+  theme,
+  onToggleTheme,
+  onSignOut,
+}: {
+  api: ControlApi;
+  theme: Theme;
+  onToggleTheme: () => void;
+  onSignOut: () => void;
+}) {
   const [teams, setTeams] = useState<Team[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState("");
+  const [activeTab, setActiveTab] = useState<PortalTab>("teams");
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [error, setError] = useState("");
 
@@ -118,13 +152,22 @@ function Portal({ api, onSignOut }: { api: ControlApi; onSignOut: () => void }) 
   const selectedTeam = teams.find((team) => team.id === selectedTeamId) ?? null;
 
   return (
-    <main className="app-shell">
+    <main className="app-shell" data-theme={theme}>
       <header className="topbar">
         <div className="brand-row">
           <span className="brand-mark"><ShieldCheck size={20} aria-hidden="true" /></span>
           <h1>Dense-Mem Control</h1>
         </div>
         <div className="topbar-actions">
+          <button
+            className="icon-button"
+            type="button"
+            aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+            title={theme === "dark" ? "Light theme" : "Dark theme"}
+            onClick={onToggleTheme}
+          >
+            {theme === "dark" ? <Sun size={17} aria-hidden="true" /> : <Moon size={17} aria-hidden="true" />}
+          </button>
           <button className="icon-button" type="button" aria-label="Refresh teams" onClick={() => void loadTeams()}>
             <RefreshCw size={18} aria-hidden="true" />
           </button>
@@ -138,13 +181,43 @@ function Portal({ api, onSignOut }: { api: ControlApi; onSignOut: () => void }) 
       {error && <div className="banner error" role="alert">{error}</div>}
 
       <section className="workspace">
-        <aside className="team-pane" aria-label="Teams">
+        <aside className="control-sidebar" aria-label="Control navigation">
+          <nav className="portal-tabs" aria-label="Portal sections">
+            <button
+              className={activeTab === "teams" ? "tab-button active" : "tab-button"}
+              type="button"
+              aria-current={activeTab === "teams" ? "page" : undefined}
+              onClick={() => setActiveTab("teams")}
+            >
+              <Users size={17} aria-hidden="true" />
+              Teams
+            </button>
+            <button
+              className={activeTab === "profiles" ? "tab-button active" : "tab-button"}
+              type="button"
+              aria-current={activeTab === "profiles" ? "page" : undefined}
+              disabled={!selectedTeam}
+              onClick={() => setActiveTab("profiles")}
+            >
+              <KeyRound size={17} aria-hidden="true" />
+              Profiles & API Keys
+            </button>
+            <button
+              className={activeTab === "security" ? "tab-button active" : "tab-button"}
+              type="button"
+              aria-current={activeTab === "security" ? "page" : undefined}
+              onClick={() => setActiveTab("security")}
+            >
+              <Ban size={17} aria-hidden="true" />
+              IP Bans
+            </button>
+          </nav>
+
           <div className="section-heading">
             <h2>Teams</h2>
             <span>{teams.length}</span>
           </div>
-          <TeamCreateForm api={api} onCreated={(team) => void loadTeams(team.id)} />
-          <TeamTable
+          <TeamSelectList
             teams={teams}
             selectedTeamId={selectedTeamId}
             loading={loadState === "loading"}
@@ -153,26 +226,40 @@ function Portal({ api, onSignOut }: { api: ControlApi; onSignOut: () => void }) 
         </aside>
 
         <section className="detail-pane" aria-label="Team details">
-          {selectedTeam ? (
+          {activeTab === "teams" && (
             <>
-              <TeamEditor
-                api={api}
-                team={selectedTeam}
-                onUpdated={(team) => {
-                  setTeams((current) => current.map((item) => (item.id === team.id ? team : item)));
-                }}
-                onDeleted={() => void loadTeams()}
-              />
-              <TeamProfilesPanel api={api} team={selectedTeam} />
+              <section className="surface">
+                <div className="section-heading">
+                  <h2>Create team</h2>
+                </div>
+                <TeamCreateForm api={api} onCreated={(team) => void loadTeams(team.id)} />
+              </section>
+              {selectedTeam ? (
+                <TeamEditor
+                  api={api}
+                  team={selectedTeam}
+                  onUpdated={(team) => {
+                    setTeams((current) => current.map((item) => (item.id === team.id ? team : item)));
+                  }}
+                  onDeleted={() => void loadTeams()}
+                />
+              ) : (
+                <div className="empty-state">{loadState === "loading" ? "Loading" : "No teams"}</div>
+              )}
             </>
-          ) : (
-            <div className="empty-state">{loadState === "loading" ? "Loading" : "No teams"}</div>
           )}
-          <SecurityPanel api={api} />
+          {activeTab === "profiles" && (
+            selectedTeam ? <TeamProfilesPanel api={api} team={selectedTeam} /> : <div className="empty-state">Select a team</div>
+          )}
+          {activeTab === "security" && <SecurityPanel api={api} />}
         </section>
       </section>
     </main>
   );
+}
+
+function readTheme(): Theme {
+  return localStorage.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light";
 }
 
 function TeamCreateForm({ api, onCreated }: { api: ControlApi; onCreated: (team: Team) => void }) {
@@ -216,7 +303,7 @@ function TeamCreateForm({ api, onCreated }: { api: ControlApi; onCreated: (team:
   );
 }
 
-function TeamTable({
+function TeamSelectList({
   teams,
   selectedTeamId,
   loading,
@@ -228,35 +315,26 @@ function TeamTable({
   onSelect: (teamId: string) => void;
 }) {
   if (loading && teams.length === 0) {
-    return <div className="table-placeholder">Loading</div>;
+    return <div className="table-placeholder compact">Loading</div>;
+  }
+
+  if (teams.length === 0) {
+    return <div className="table-placeholder compact">No teams</div>;
   }
 
   return (
-    <div className="table-wrap">
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Updated</th>
-          </tr>
-        </thead>
-        <tbody>
-          {teams.map((team) => (
-            <tr
-              key={team.id}
-              className={team.id === selectedTeamId ? "selected" : ""}
-              onClick={() => onSelect(team.id)}
-            >
-              <td>
-                <button className="row-button" type="button" onClick={() => onSelect(team.id)}>
-                  {team.name}
-                </button>
-              </td>
-              <td>{formatDate(team.updated_at)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="team-list">
+      {teams.map((team) => (
+        <button
+          key={team.id}
+          className={team.id === selectedTeamId ? "team-list-item selected" : "team-list-item"}
+          type="button"
+          onClick={() => onSelect(team.id)}
+        >
+          <span>{team.name}</span>
+          <small>{formatDate(team.updated_at)}</small>
+        </button>
+      ))}
     </div>
   );
 }
@@ -700,22 +778,6 @@ function SecurityPanel({ api }: { api: ControlApi }) {
     void loadSecurity();
   }, []);
 
-  async function saveSettings(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!settings) {
-      return;
-    }
-    setBusy(true);
-    setError("");
-    try {
-      setSettings(await api.updateSecuritySettings(settings));
-    } catch (err) {
-      setError(readError(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function createBan(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!ip.trim()) {
@@ -742,7 +804,7 @@ function SecurityPanel({ api }: { api: ControlApi }) {
   }
 
   async function deleteBan(ipAddress: string) {
-    if (!window.confirm(`Remove IP ban for ${ipAddress}?`)) {
+    if (!window.confirm(`Clear IP ban for ${ipAddress} and reset its strikes?`)) {
       return;
     }
     setBusy(true);
@@ -757,45 +819,43 @@ function SecurityPanel({ api }: { api: ControlApi }) {
     }
   }
 
-  function updateNumber(field: keyof Pick<SecuritySettings, "failure_threshold" | "failure_window_seconds" | "ban_duration_seconds">, value: string) {
-    const parsed = Number.parseInt(value, 10);
-    setSettings((current) => current ? { ...current, [field]: Number.isFinite(parsed) ? parsed : 0 } : current);
-  }
-
   return (
-    <section className="surface">
+    <section className="surface security-panel">
       <div className="section-heading">
-        <h2>Security</h2>
+        <div>
+          <h2>IP Bans</h2>
+          <p className="section-subtitle">Review failed-auth bans, add manual bans, and clear strikes.</p>
+        </div>
         <button className="icon-button" type="button" aria-label="Refresh security" onClick={() => void loadSecurity()} disabled={busy}>
           <RefreshCw size={16} aria-hidden="true" />
         </button>
       </div>
       {error && <div className="banner error" role="alert">{error}</div>}
-      {settings ? (
-        <form className="security-grid" onSubmit={saveSettings}>
-          <label className="check-row span" htmlFor="security-enabled">
-            <input
-              id="security-enabled"
-              type="checkbox"
-              checked={settings.enabled}
-              onChange={(event) => setSettings({ ...settings, enabled: event.target.checked })}
-            />
-            IP ban protection
-          </label>
-          <label htmlFor="failure-threshold">Failures</label>
-          <input id="failure-threshold" inputMode="numeric" value={settings.failure_threshold} onChange={(event) => updateNumber("failure_threshold", event.target.value)} />
-          <label htmlFor="failure-window">Window seconds</label>
-          <input id="failure-window" inputMode="numeric" value={settings.failure_window_seconds} onChange={(event) => updateNumber("failure_window_seconds", event.target.value)} />
-          <label htmlFor="ban-duration">Ban seconds</label>
-          <input id="ban-duration" inputMode="numeric" value={settings.ban_duration_seconds} onChange={(event) => updateNumber("ban_duration_seconds", event.target.value)} />
-          <button className="primary-button span" type="submit" disabled={busy}>
-            <ShieldCheck size={16} aria-hidden="true" />
-            Save security
-          </button>
-        </form>
-      ) : (
-        <div className="table-placeholder">Loading</div>
-      )}
+
+      <div className="security-summary" aria-label="IP ban rules">
+        {settings ? (
+          <>
+            <div className="summary-item">
+              <span>Protection</span>
+              <strong>{settings.enabled ? "On" : "Off"}</strong>
+            </div>
+            <div className="summary-item">
+              <span>Threshold</span>
+              <strong>{settings.failure_threshold} failures</strong>
+            </div>
+            <div className="summary-item">
+              <span>Window</span>
+              <strong>{settings.failure_window_seconds}s</strong>
+            </div>
+            <div className="summary-item">
+              <span>Ban duration</span>
+              <strong>{settings.ban_duration_seconds === 0 ? "Permanent" : `${settings.ban_duration_seconds}s`}</strong>
+            </div>
+          </>
+        ) : (
+          <div className="table-placeholder compact">Loading rules</div>
+        )}
+      </div>
 
       <form className="security-grid security-ban-form" onSubmit={createBan}>
         <label htmlFor="ban-ip">IP address</label>
@@ -810,18 +870,24 @@ function SecurityPanel({ api }: { api: ControlApi }) {
         </button>
       </form>
 
-      <label className="check-row include-row" htmlFor="include-expired">
-        <input
-          id="include-expired"
-          type="checkbox"
-          checked={includeExpired}
-          onChange={(event) => {
-            setIncludeExpired(event.target.checked);
-            void loadSecurity(event.target.checked);
-          }}
-        />
-        Include expired
-      </label>
+      <div className="list-toolbar">
+        <div>
+          <h3>Ban list</h3>
+          <span>{bans.length} IPs</span>
+        </div>
+        <label className="check-row include-row" htmlFor="include-expired">
+          <input
+            id="include-expired"
+            type="checkbox"
+            checked={includeExpired}
+            onChange={(event) => {
+              setIncludeExpired(event.target.checked);
+              void loadSecurity(event.target.checked);
+            }}
+          />
+          Include expired
+        </label>
+      </div>
       <SecurityBanTable bans={bans} busy={busy} onDelete={(ipAddress) => void deleteBan(ipAddress)} />
     </section>
   );
@@ -846,24 +912,29 @@ function SecurityBanTable({
         <thead>
           <tr>
             <th>IP</th>
+            <th>Failed attempts</th>
             <th>Source</th>
-            <th>Failures</th>
+            <th>Reason</th>
+            <th>Last failed</th>
             <th>Expires</th>
-            <th className="actions-cell">Delete</th>
+            <th className="actions-cell">Clear</th>
           </tr>
         </thead>
         <tbody>
           {bans.map((ban) => (
             <tr key={ban.ip}>
               <td><code>{ban.ip}</code></td>
-              <td>{ban.source}</td>
               <td>{ban.failure_count}</td>
+              <td><span className={ban.source === "auto" ? "status-pill warning" : "status-pill neutral"}>{ban.source}</span></td>
+              <td>{ban.reason}</td>
+              <td>{ban.last_failed_at ? formatDate(ban.last_failed_at) : "Never"}</td>
               <td>{ban.expires_at ? formatDate(ban.expires_at) : "Never"}</td>
               <td className="actions-cell">
                 <button
                   className="icon-button danger"
                   type="button"
-                  aria-label={`Delete IP ban ${ban.ip}`}
+                  aria-label={`Clear IP ban and reset strikes for ${ban.ip}`}
+                  title="Clear ban and reset strikes"
                   disabled={busy}
                   onClick={() => onDelete(ban.ip)}
                 >

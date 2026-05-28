@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { TeamProfile, Team, SecuritySettings } from "./api";
+import { TeamProfile, Team, SecurityBan, SecuritySettings } from "./api";
 
 const profileA: Team = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -20,6 +20,18 @@ const securitySettings: SecuritySettings = {
   failure_window_seconds: 600,
   ban_duration_seconds: 0,
   updated_at: "2026-05-01T12:00:00Z",
+};
+
+const securityBan: SecurityBan = {
+  ip: "203.0.113.10",
+  reason: "auth failures: AUTH_INVALID",
+  source: "auto",
+  failure_count: 11,
+  banned_at: "2026-05-02T12:00:00Z",
+  expires_at: null,
+  last_failed_at: "2026-05-02T12:00:00Z",
+  metadata: {},
+  revoked_at: null,
 };
 
 function keyA(profileId = profileA.id): TeamProfile {
@@ -58,7 +70,7 @@ describe("App", () => {
     sessionStorage.setItem("denseMem.controlToken", "secret");
 
     render(<App />);
-    await screen.findByRole("button", { name: "Default" });
+    await screen.findByRole("button", { name: /Default/ });
     await userEvent.type(screen.getByLabelText("Name", { selector: "#new-team-name" }), "ab");
     await userEvent.click(screen.getByRole("button", { name: /^create$/i }));
 
@@ -76,7 +88,7 @@ describe("App", () => {
     sessionStorage.setItem("denseMem.controlToken", "secret");
 
     render(<App />);
-    await screen.findByRole("button", { name: "Default" });
+    await screen.findByRole("button", { name: /Default/ });
     await userEvent.type(screen.getByLabelText("Name", { selector: "#new-team-name" }), "Work Team");
     await userEvent.type(screen.getByLabelText("Description", { selector: "#new-team-description" }), "for work");
     await userEvent.click(screen.getByRole("button", { name: /^create$/i }));
@@ -89,7 +101,8 @@ describe("App", () => {
     sessionStorage.setItem("denseMem.controlToken", "secret");
 
     render(<App />);
-    await screen.findByRole("button", { name: "Default" });
+    await screen.findByRole("button", { name: /Default/ });
+    await userEvent.click(screen.getByRole("button", { name: /profiles & api keys/i }));
     await userEvent.click(screen.getByRole("button", { name: /create profile/i }));
 
     expect(await screen.findByText("dm_plain_once")).toBeInTheDocument();
@@ -103,7 +116,7 @@ describe("App", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
     render(<App />);
-    await screen.findByRole("button", { name: "Default" });
+    await screen.findByRole("button", { name: /Default/ });
 
     const teamName = screen.getByLabelText("Name", { selector: "#team-name" });
     await userEvent.clear(teamName);
@@ -111,6 +124,7 @@ describe("App", () => {
     await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
     expect(await screen.findByRole("heading", { name: "Renamed Team" })).toBeInTheDocument();
 
+    await userEvent.click(screen.getByRole("button", { name: /profiles & api keys/i }));
     const profileName = await screen.findByLabelText("Profile name default profile");
     await userEvent.clear(profileName);
     await userEvent.type(profileName, "Research profile");
@@ -139,7 +153,8 @@ describe("App", () => {
     sessionStorage.setItem("denseMem.controlToken", "secret");
 
     render(<App />);
-    await screen.findByRole("button", { name: "Default" });
+    await screen.findByRole("button", { name: /Default/ });
+    await userEvent.click(screen.getByRole("button", { name: /profiles & api keys/i }));
 
     expect(await screen.findByText("******abc123")).toBeInTheDocument();
     const keyRow = screen.getByText("******abc123").closest("tr");
@@ -157,13 +172,36 @@ describe("App", () => {
     await waitFor(() => expect(screen.queryByText("******abc123")).not.toBeInTheDocument());
   });
 
+  it("shows IP ban attempts and clears a ban with strikes reset", async () => {
+    const fetchMock = mockPortalFetch({ teams: [profileA], keys: [keyA()], bans: [securityBan] });
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<App />);
+    await screen.findByRole("button", { name: /Default/ });
+    await userEvent.click(screen.getByRole("button", { name: /ip bans/i }));
+
+    expect(await screen.findByText("203.0.113.10")).toBeInTheDocument();
+    expect(screen.getByText("11")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /clear ip ban and reset strikes for 203.0.113.10/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/security/bans/203.0.113.10"),
+        expect.objectContaining({ method: "DELETE" }),
+      );
+    });
+    await waitFor(() => expect(screen.queryByText("203.0.113.10")).not.toBeInTheDocument());
+  });
+
   it("deletes a team", async () => {
     const deleteMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
     sessionStorage.setItem("denseMem.controlToken", "secret");
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
     render(<App />);
-    await screen.findByRole("button", { name: "Default" });
+    await screen.findByRole("button", { name: /Default/ });
     await userEvent.click(screen.getByRole("button", { name: /^delete$/i }));
 
     await waitFor(() => {
@@ -176,13 +214,16 @@ function mockPortalFetch({
   teams,
   keys,
   createdProfile,
+  bans = [],
 }: {
   teams: Team[];
   keys: TeamProfile[];
   createdProfile?: Team;
+  bans?: SecurityBan[];
 }) {
   let currentProfiles = teams;
   let currentKeys = keys;
+  let currentBans = bans;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -235,13 +276,16 @@ function mockPortalFetch({
       return jsonResponse({ data: { ...securitySettings, ...JSON.parse(String(init?.body)) } });
     }
     if (url.includes("/security/bans") && method === "GET") {
-      return jsonResponse(page([]));
+      return jsonResponse(page(currentBans));
     }
     if (url.endsWith("/security/bans") && method === "POST") {
       const body = JSON.parse(String(init?.body));
-      return jsonResponse({ data: { ip: body.ip, reason: body.reason, source: "manual", failure_count: 0, banned_at: "2026-05-01T12:00:00Z", expires_at: null, last_failed_at: null, metadata: {}, revoked_at: null } }, 201);
+      const created = { ip: body.ip, reason: body.reason, source: "manual", failure_count: 0, banned_at: "2026-05-01T12:00:00Z", expires_at: null, last_failed_at: null, metadata: {}, revoked_at: null } as SecurityBan;
+      currentBans = [created, ...currentBans];
+      return jsonResponse({ data: created }, 201);
     }
     if (url.includes("/security/bans/") && method === "DELETE") {
+      currentBans = currentBans.filter((ban) => !url.endsWith(`/security/bans/${ban.ip}`));
       return jsonResponse({ data: { status: "deleted" } });
     }
     if (url.includes("/teams/") && method === "PATCH") {
