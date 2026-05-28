@@ -83,12 +83,6 @@ type promoteDB interface {
 // CONFIG_PROMOTE_TX_TIMEOUT_SEC in production; overridden per-instance.
 const defaultLockTimeout = 30 * time.Second
 
-// errClaimNotFound is returned by loadClaim when the Claim node is absent or
-// belongs to a different profile. Intentionally unexported: callers outside
-// this package receive an opaque error so existence under other profiles is
-// never leaked (profile isolation invariant).
-var errClaimNotFound = errors.New("claim not found for promote")
-
 // promoteClaimServiceImpl implements PromoteClaimService.
 //
 // Profile isolation invariant: profileID is received as an explicit parameter
@@ -255,7 +249,7 @@ func (s *promoteClaimServiceImpl) doConfirmMemory(ctx context.Context, profileID
 //  1. Load claim; error if absent or belonging to a different profile.
 //  2. Assert status == StatusValidated → ErrClaimNotValidated.
 //  3. Look up predicate gate → ErrPredicateNotPoliced for unknown predicates.
-//  4. Assert policy is SingleCurrent or MultiValued → ErrUnsupportedPolicy.
+//  4. Assert policy is one implemented by the promotion service.
 //  5. Evaluate all gate thresholds cumulatively → ErrGateRejected.
 //  6. Idempotency: return existing Fact if PROMOTES_TO edge already exists.
 //  7. Dispatch to policy-specific path (multi_valued or single_current).
@@ -586,7 +580,7 @@ func (s *promoteClaimServiceImpl) linkClaimToExistingFact(
 }
 
 // loadClaim retrieves a Claim from Neo4j, including its supporting fragment
-// IDs (needed for the support gate OR check). Returns errClaimNotFound when
+// IDs (needed for the support gate OR check). Returns ErrClaimNotFound when
 // the Claim does not exist or belongs to a different profile.
 //
 // Profile isolation: the Cypher MATCH includes {team_id: $profileId}; zero
@@ -599,7 +593,7 @@ func (s *promoteClaimServiceImpl) loadClaim(ctx context.Context, profileID, clai
 		return nil, fmt.Errorf("promote: load claim: %w", err)
 	}
 	if len(rows) == 0 {
-		return nil, errClaimNotFound
+		return nil, ErrClaimNotFound
 	}
 	return rowToClaimForPromote(profileID, rows[0]), nil
 }

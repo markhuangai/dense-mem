@@ -37,6 +37,9 @@ type getFactServiceImpl struct {
 
 // Compile-time check that getFactServiceImpl satisfies GetFactService.
 var _ GetFactService = (*getFactServiceImpl)(nil)
+var _ interface {
+	GetByIDs(ctx context.Context, profileID string, factIDs []string) (map[string]*domain.Fact, error)
+} = (*getFactServiceImpl)(nil)
 
 // NewGetFactService constructs a ready-to-use GetFactService.
 func NewGetFactService(reader factReader) GetFactService {
@@ -50,7 +53,7 @@ func NewGetFactService(reader factReader) GetFactService {
 // produces zero rows — the caller receives ErrFactNotFound without any
 // indication of whether the fact exists under another profile.
 const getFactCypher = `
-MATCH (f:Fact {team_id: $profileId, fact_id: $factId})
+	MATCH (f:Fact {team_id: $profileId, fact_id: $factId})
 OPTIONAL MATCH (f)<-[:PROMOTES_TO {team_id: $profileId}]-(c:Claim {team_id: $profileId})
 OPTIONAL MATCH (c)-[r:SUPPORTED_BY {team_id: $profileId}]->(sf:SourceFragment {team_id: $profileId})
 WITH f, collect(CASE
@@ -90,8 +93,53 @@ RETURN
     f.classification_lattice_version AS classification_lattice_version,
     f.source_quality                 AS source_quality,
     f.labels                         AS labels,
-    f.metadata                       AS metadata,
-    evidence                         AS evidence`
+	    f.metadata                       AS metadata,
+	    evidence                         AS evidence`
+
+const getFactsByIDCypher = `
+	MATCH (f:Fact {team_id: $profileId})
+	WHERE f.fact_id IN $factIds
+	OPTIONAL MATCH (f)<-[:PROMOTES_TO {team_id: $profileId}]-(c:Claim {team_id: $profileId})
+	OPTIONAL MATCH (c)-[r:SUPPORTED_BY {team_id: $profileId}]->(sf:SourceFragment {team_id: $profileId})
+	WITH f, collect(CASE
+	    WHEN sf.fragment_id IS NULL THEN NULL
+	    ELSE {
+	        fragment_id: sf.fragment_id,
+	        speaker: r.speaker,
+	        span_start: r.span_start,
+	        span_end: r.span_end,
+	        extract_conf: r.extract_conf,
+	        extraction_model: r.extraction_model,
+	        extraction_version: r.extraction_version,
+	        pipeline_run_id: r.pipeline_run_id,
+	        authority: coalesce(r.authority, sf.authority, 'unknown')
+	    }
+	END) AS evidence
+	RETURN
+	    f.fact_id                        AS fact_id,
+	    f.created_by_profile_id          AS created_by_profile_id,
+	    f.created_by_profile_name        AS created_by_profile_name,
+	    f.promoted_by_profile_id         AS promoted_by_profile_id,
+	    f.promoted_by_profile_name       AS promoted_by_profile_name,
+	    f.subject                        AS subject,
+	    f.predicate                      AS predicate,
+	    f.object                         AS object,
+	    f.status                         AS status,
+	    f.truth_score                    AS truth_score,
+	    f.valid_from                     AS valid_from,
+	    f.valid_to                       AS valid_to,
+	    f.recorded_at                    AS recorded_at,
+	    f.recorded_to                    AS recorded_to,
+	    f.retracted_at                   AS retracted_at,
+	    f.last_confirmed_at              AS last_confirmed_at,
+	    f.promoted_from_claim_id         AS promoted_from_claim_id,
+	    f.classification                 AS classification,
+	    f.classification_json            AS classification_json,
+	    f.classification_lattice_version AS classification_lattice_version,
+	    f.source_quality                 AS source_quality,
+	    f.labels                         AS labels,
+	    f.metadata                       AS metadata,
+	    evidence                         AS evidence`
 
 // Get retrieves the fact identified by factID within profileID.
 //
@@ -108,6 +156,28 @@ func (s *getFactServiceImpl) Get(ctx context.Context, profileID string, factID s
 		return nil, ErrFactNotFound
 	}
 	return rowToFact(profileID, rows[0]), nil
+}
+
+// GetByIDs retrieves facts by ID with one profile-scoped read. Missing IDs are
+// omitted from the returned map.
+func (s *getFactServiceImpl) GetByIDs(ctx context.Context, profileID string, factIDs []string) (map[string]*domain.Fact, error) {
+	out := make(map[string]*domain.Fact, len(factIDs))
+	if len(factIDs) == 0 {
+		return out, nil
+	}
+	_, rows, err := s.reader.ScopedRead(ctx, profileID, getFactsByIDCypher, map[string]any{
+		"factIds": factIDs,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("fact batch get: %w", err)
+	}
+	for _, row := range rows {
+		fact := rowToFact(profileID, row)
+		if fact.FactID != "" {
+			out[fact.FactID] = fact
+		}
+	}
+	return out, nil
 }
 
 // rowToFact maps a single Neo4j result row (keyed by RETURN aliases) to a

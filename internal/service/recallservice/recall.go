@@ -136,6 +136,10 @@ type FragmentHydrator interface {
 	GetByID(ctx context.Context, profileID, fragmentID string) (*domain.Fragment, error)
 }
 
+type fragmentBatchHydrator interface {
+	GetByIDs(ctx context.Context, profileID string, fragmentIDs []string) (map[string]*domain.Fragment, error)
+}
+
 // FactRecallResult is one query-matched tier-1 candidate before hydration.
 type FactRecallResult struct {
 	FactID     string
@@ -175,9 +179,17 @@ type FactHydrator interface {
 	Get(ctx context.Context, profileID string, factID string) (*domain.Fact, error)
 }
 
+type factBatchHydrator interface {
+	GetByIDs(ctx context.Context, profileID string, factIDs []string) (map[string]*domain.Fact, error)
+}
+
 // ClaimHydrator loads one claim by ID for the recall tier response.
 type ClaimHydrator interface {
 	Get(ctx context.Context, profileID string, claimID string) (*domain.Claim, error)
+}
+
+type claimBatchHydrator interface {
+	GetByIDs(ctx context.Context, profileID string, claimIDs []string) (map[string]*domain.Claim, error)
 }
 
 // recallService implements RecallService.
@@ -340,14 +352,25 @@ func (s *recallService) Recall(ctx context.Context, profileID string, req Recall
 
 	// Hydrate fragment hits (tier 2).
 	fragmentHits := make([]RecallHit, 0, len(merged))
+	fragmentsByID, batchFragments := s.batchHydrateFragments(ctx, profileID, merged)
 	for _, m := range merged {
-		frag, err := s.hydrator.GetByID(ctx, profileID, m.id)
-		if err != nil {
-			// A winning id may vanish due to a concurrent delete or retraction
-			// (AC-44). In both cases we skip the id rather than failing the whole
-			// recall so that the remaining results are still returned to the caller.
-			s.logHydrateError(m.id, err)
-			continue
+		var frag *domain.Fragment
+		if batchFragments {
+			frag = fragmentsByID[m.id]
+			if frag == nil {
+				s.logHydrateError(m.id, errors.New("fragment not found"))
+				continue
+			}
+		} else {
+			var err error
+			frag, err = s.hydrator.GetByID(ctx, profileID, m.id)
+			if err != nil {
+				// A winning id may vanish due to a concurrent delete or retraction
+				// (AC-44). In both cases we skip the id rather than failing the whole
+				// recall so that the remaining results are still returned to the caller.
+				s.logHydrateError(m.id, err)
+				continue
+			}
 		}
 		fragmentHits = append(fragmentHits, RecallHit{
 			Fragment:     frag,
@@ -377,6 +400,28 @@ func (s *recallService) Recall(ctx context.Context, profileID string, req Recall
 	return all, nil
 }
 
+func (s *recallService) batchHydrateFragments(ctx context.Context, profileID string, merged []rrfEntry) (map[string]*domain.Fragment, bool) {
+	batch, ok := s.hydrator.(fragmentBatchHydrator)
+	if !ok || len(merged) == 0 {
+		return nil, false
+	}
+	ids := make([]string, 0, len(merged))
+	for _, entry := range merged {
+		if entry.id != "" {
+			ids = append(ids, entry.id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, false
+	}
+	fragments, err := batch.GetByIDs(ctx, profileID, ids)
+	if err != nil {
+		s.logHydrateError("batch", err)
+		return nil, false
+	}
+	return fragments, true
+}
+
 // enrichTierHits fetches tier-1 (active facts) and tier-1.5 (validated claims)
 // hits that actually match the recall query. Errors are logged and swallowed so
 // that a failing tier enrichment does not prevent fragment recall from
@@ -393,6 +438,7 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 				)
 			}
 		} else {
+			filtered := make([]FactRecallResult, 0, len(facts))
 			for _, candidate := range facts {
 				if candidate.FactID == "" || candidate.ProfileID != "" && candidate.ProfileID != profileID {
 					continue
@@ -400,10 +446,24 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 				if !factCandidateMatchesRecallWindow(candidate, req.ValidAt, req.KnownAt) {
 					continue
 				}
-				f, err := s.factGet.Get(ctx, profileID, candidate.FactID)
-				if err != nil {
-					s.logHydrateError(candidate.FactID, err)
-					continue
+				filtered = append(filtered, candidate)
+			}
+			factsByID, batchFacts := s.batchHydrateFacts(ctx, profileID, filtered)
+			for _, candidate := range filtered {
+				var f *domain.Fact
+				if batchFacts {
+					f = factsByID[candidate.FactID]
+					if f == nil {
+						s.logHydrateError(candidate.FactID, errors.New("fact not found"))
+						continue
+					}
+				} else {
+					var err error
+					f, err = s.factGet.Get(ctx, profileID, candidate.FactID)
+					if err != nil {
+						s.logHydrateError(candidate.FactID, err)
+						continue
+					}
 				}
 				if !factMatchesRecallWindow(f, req.ValidAt, req.KnownAt) {
 					continue
@@ -431,6 +491,7 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 				)
 			}
 		} else {
+			filtered := make([]ClaimRecallResult, 0, len(claims))
 			for _, candidate := range claims {
 				if candidate.ClaimID == "" || candidate.ProfileID != "" && candidate.ProfileID != profileID {
 					continue
@@ -438,10 +499,24 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 				if !claimCandidateMatchesRecallWindow(candidate, req.ValidAt, req.KnownAt) {
 					continue
 				}
-				c, err := s.claimGet.Get(ctx, profileID, candidate.ClaimID)
-				if err != nil {
-					s.logHydrateError(candidate.ClaimID, err)
-					continue
+				filtered = append(filtered, candidate)
+			}
+			claimsByID, batchClaims := s.batchHydrateClaims(ctx, profileID, filtered)
+			for _, candidate := range filtered {
+				var c *domain.Claim
+				if batchClaims {
+					c = claimsByID[candidate.ClaimID]
+					if c == nil {
+						s.logHydrateError(candidate.ClaimID, errors.New("claim not found"))
+						continue
+					}
+				} else {
+					var err error
+					c, err = s.claimGet.Get(ctx, profileID, candidate.ClaimID)
+					if err != nil {
+						s.logHydrateError(candidate.ClaimID, err)
+						continue
+					}
 				}
 				if !claimMatchesRecallWindow(c, req.ValidAt, req.KnownAt) {
 					continue
@@ -462,6 +537,50 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 	}
 
 	return hits
+}
+
+func (s *recallService) batchHydrateFacts(ctx context.Context, profileID string, candidates []FactRecallResult) (map[string]*domain.Fact, bool) {
+	batch, ok := s.factGet.(factBatchHydrator)
+	if !ok || len(candidates) == 0 {
+		return nil, false
+	}
+	ids := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.FactID != "" {
+			ids = append(ids, candidate.FactID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, false
+	}
+	facts, err := batch.GetByIDs(ctx, profileID, ids)
+	if err != nil {
+		s.logHydrateError("facts batch", err)
+		return nil, false
+	}
+	return facts, true
+}
+
+func (s *recallService) batchHydrateClaims(ctx context.Context, profileID string, candidates []ClaimRecallResult) (map[string]*domain.Claim, bool) {
+	batch, ok := s.claimGet.(claimBatchHydrator)
+	if !ok || len(candidates) == 0 {
+		return nil, false
+	}
+	ids := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.ClaimID != "" {
+			ids = append(ids, candidate.ClaimID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, false
+	}
+	claims, err := batch.GetByIDs(ctx, profileID, ids)
+	if err != nil {
+		s.logHydrateError("claims batch", err)
+		return nil, false
+	}
+	return claims, true
 }
 
 // rrfEntry is the internal accumulator keyed by fragment id.

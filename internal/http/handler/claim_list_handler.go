@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -25,7 +26,8 @@ const (
 
 // ClaimListHandler serves GET /api/v1/claims.
 type ClaimListHandler struct {
-	svc claimservice.ListClaimsService
+	svc      claimservice.ListClaimsService
+	filtered claimservice.ListClaimsFilteredService
 }
 
 // ClaimListHandlerInterface is the companion interface for ClaimListHandler.
@@ -41,8 +43,16 @@ func NewClaimListHandler(svc claimservice.ListClaimsService) *ClaimListHandler {
 	return &ClaimListHandler{svc: svc}
 }
 
-// Handle lists claims in the caller's profile with offset-based pagination.
-// The cursor is an opaque token encoding the current offset as a base-10 integer.
+// NewClaimListHandlerWithFiltered constructs a ClaimListHandler that uses the
+// keyset-paginated service for new opaque cursors while retaining the offset
+// compatibility service for legacy numeric cursors.
+func NewClaimListHandlerWithFiltered(svc claimservice.ListClaimsService, filtered claimservice.ListClaimsFilteredService) *ClaimListHandler {
+	return &ClaimListHandler{svc: svc, filtered: filtered}
+}
+
+// Handle lists claims in the caller's profile. New responses use the
+// keyset-paginated cursor from ListClaimsFilteredService; legacy numeric cursors
+// continue to route through ListClaimsService.
 func (h *ClaimListHandler) Handle(c echo.Context) error {
 	ctx := c.Request().Context()
 
@@ -63,6 +73,28 @@ func (h *ClaimListHandler) Handle(c echo.Context) error {
 	limit := req.Limit
 	if limit == 0 {
 		limit = defaultClaimListLimit
+	}
+
+	if h.filtered != nil && !isLegacyClaimOffsetCursor(req.Cursor) {
+		result, err := h.filtered.List(ctx, profileID.String(), claimservice.ListClaimOptions{
+			Limit:    limit,
+			Cursor:   req.Cursor,
+			Status:   req.Status,
+			Modality: req.Modality,
+		})
+		if err != nil {
+			if errors.Is(err, claimservice.ErrInvalidClaimCursor) {
+				return httperr.New(httperr.VALIDATION_ERROR, "invalid cursor")
+			}
+			return httperr.New(httperr.INTERNAL_ERROR, "failed to list claims")
+		}
+		claims := make([]domain.Claim, 0, len(result.Items))
+		for _, p := range result.Items {
+			if p != nil {
+				claims = append(claims, *p)
+			}
+		}
+		return c.JSON(http.StatusOK, response.ToListClaimsResponse(claims, result.NextCursor))
 	}
 
 	// Decode cursor as an offset integer. An empty cursor means start at 0.
@@ -96,4 +128,12 @@ func (h *ClaimListHandler) Handle(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, response.ToListClaimsResponse(claims, nextCursor))
+}
+
+func isLegacyClaimOffsetCursor(cursor string) bool {
+	if cursor == "" {
+		return false
+	}
+	n, err := strconv.Atoi(cursor)
+	return err == nil && n >= 0
 }

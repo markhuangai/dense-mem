@@ -79,9 +79,10 @@ func (f *fakeKeywordSearcher) SearchContent(ctx context.Context, profileID strin
 }
 
 type fakeHydrator struct {
-	frags     map[string]*domain.Fragment
-	callCount int32
-	missIDs   map[string]bool
+	frags          map[string]*domain.Fragment
+	callCount      int32
+	batchCallCount int32
+	missIDs        map[string]bool
 }
 
 func (f *fakeHydrator) GetByID(ctx context.Context, profileID, fragmentID string) (*domain.Fragment, error) {
@@ -93,6 +94,22 @@ func (f *fakeHydrator) GetByID(ctx context.Context, profileID, fragmentID string
 		return frag, nil
 	}
 	return &domain.Fragment{FragmentID: fragmentID, ProfileID: profileID, Content: fragmentID + " content"}, nil
+}
+
+func (f *fakeHydrator) GetByIDs(ctx context.Context, profileID string, fragmentIDs []string) (map[string]*domain.Fragment, error) {
+	atomic.AddInt32(&f.batchCallCount, 1)
+	out := make(map[string]*domain.Fragment, len(fragmentIDs))
+	for _, fragmentID := range fragmentIDs {
+		if f.missIDs != nil && f.missIDs[fragmentID] {
+			continue
+		}
+		if frag, ok := f.frags[fragmentID]; ok {
+			out[fragmentID] = frag
+			continue
+		}
+		out[fragmentID] = &domain.Fragment{FragmentID: fragmentID, ProfileID: profileID, Content: fragmentID + " content"}
+	}
+	return out, nil
 }
 
 type fakeFactSearcher struct {
@@ -124,25 +141,53 @@ func (f *fakeClaimSearcher) SearchValidated(ctx context.Context, profileID strin
 }
 
 type fakeFactGetter struct {
-	facts map[string]*domain.Fact
+	facts          map[string]*domain.Fact
+	callCount      int32
+	batchCallCount int32
 }
 
 func (f *fakeFactGetter) Get(ctx context.Context, profileID string, factID string) (*domain.Fact, error) {
+	atomic.AddInt32(&f.callCount, 1)
 	if fact, ok := f.facts[factID]; ok {
 		return fact, nil
 	}
 	return nil, errors.New("fact not found")
 }
 
+func (f *fakeFactGetter) GetByIDs(ctx context.Context, profileID string, factIDs []string) (map[string]*domain.Fact, error) {
+	atomic.AddInt32(&f.batchCallCount, 1)
+	out := make(map[string]*domain.Fact, len(factIDs))
+	for _, factID := range factIDs {
+		if fact, ok := f.facts[factID]; ok {
+			out[factID] = fact
+		}
+	}
+	return out, nil
+}
+
 type fakeClaimGetter struct {
-	claims map[string]*domain.Claim
+	claims         map[string]*domain.Claim
+	callCount      int32
+	batchCallCount int32
 }
 
 func (f *fakeClaimGetter) Get(ctx context.Context, profileID string, claimID string) (*domain.Claim, error) {
+	atomic.AddInt32(&f.callCount, 1)
 	if claim, ok := f.claims[claimID]; ok {
 		return claim, nil
 	}
 	return nil, errors.New("claim not found")
+}
+
+func (f *fakeClaimGetter) GetByIDs(ctx context.Context, profileID string, claimIDs []string) (map[string]*domain.Claim, error) {
+	atomic.AddInt32(&f.batchCallCount, 1)
+	out := make(map[string]*domain.Claim, len(claimIDs))
+	for _, claimID := range claimIDs {
+		if claim, ok := f.claims[claimID]; ok {
+			out[claimID] = claim
+		}
+	}
+	return out, nil
 }
 
 // --- tests -----------------------------------------------------------------
@@ -195,6 +240,25 @@ func TestRecallService_HybridMergesFragmentOnly(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestRecallService_UsesBatchFragmentHydration(t *testing.T) {
+	sem := &fakeSemanticSearcher{
+		hits: []semanticsearch.SearchHit{
+			{ID: "f1", Type: "fragment"},
+			{ID: "f2", Type: "fragment"},
+		},
+	}
+	kw := &fakeKeywordSearcher{}
+	emb := &stubEmbedding{DimensionsResult: 4}
+	hydrator := &fakeHydrator{}
+	svc := NewRecallService(emb, sem, kw, hydrator, nil, nil)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "test", Limit: 2})
+	require.NoError(t, err)
+	require.Len(t, out, 2)
+	assert.Equal(t, int32(1), atomic.LoadInt32(&hydrator.batchCallCount))
+	assert.Equal(t, int32(0), atomic.LoadInt32(&hydrator.callCount))
 }
 
 // TestRecallService_OverfetchesVectorBranch — AC-40 overfetch requirement.
@@ -376,6 +440,10 @@ func TestRecallService_TierEnrichmentUsesQueryMatchedSearchers(t *testing.T) {
 	assert.Equal(t, TierValidatedClaim, out[1].Tier)
 	require.NotNil(t, out[1].Claim)
 	assert.Equal(t, "claim-1", out[1].Claim.ClaimID)
+	assert.Equal(t, int32(1), atomic.LoadInt32(&factGetter.batchCallCount))
+	assert.Equal(t, int32(0), atomic.LoadInt32(&factGetter.callCount))
+	assert.Equal(t, int32(1), atomic.LoadInt32(&claimGetter.batchCallCount))
+	assert.Equal(t, int32(0), atomic.LoadInt32(&claimGetter.callCount))
 }
 
 // TestRecallService_RejectsEmptyProfileID enforces profile isolation input.

@@ -31,12 +31,18 @@ type GetFragmentService interface {
 	GetByID(ctx context.Context, profileID, fragmentID string) (*domain.Fragment, error)
 }
 
+// BatchGetFragmentService retrieves multiple fragments in one profile-scoped read.
+type BatchGetFragmentService interface {
+	GetByIDs(ctx context.Context, profileID string, fragmentIDs []string) (map[string]*domain.Fragment, error)
+}
+
 // getFragmentService implements GetFragmentService via Neo4j.
 type getFragmentService struct {
 	reader ScopedReader
 }
 
 var _ GetFragmentService = (*getFragmentService)(nil)
+var _ BatchGetFragmentService = (*getFragmentService)(nil)
 
 // NewGetFragmentService constructs a GetFragmentService.
 func NewGetFragmentService(reader ScopedReader) GetFragmentService {
@@ -84,6 +90,55 @@ func (s *getFragmentService) GetByID(ctx context.Context, profileID, fragmentID 
 	}
 
 	return mapRowToFragment(results[0]), nil
+}
+
+// GetByIDs executes one profile-scoped read for the requested fragment IDs.
+// Missing IDs are omitted from the returned map so callers can preserve their
+// existing miss-handling behavior.
+func (s *getFragmentService) GetByIDs(ctx context.Context, profileID string, fragmentIDs []string) (map[string]*domain.Fragment, error) {
+	out := make(map[string]*domain.Fragment, len(fragmentIDs))
+	if len(fragmentIDs) == 0 {
+		return out, nil
+	}
+
+	query := `
+		MATCH (sf:SourceFragment {team_id: $profileId})
+		WHERE sf.fragment_id IN $fragmentIds AND ` + neo4j.FragmentActiveFilter + `
+		RETURN sf.fragment_id AS fragment_id,
+		       sf.team_id AS team_id,
+		       sf.content AS content,
+		       sf.source AS source,
+		       sf.source_type AS source_type,
+		       sf.authority AS authority,
+		       sf.labels AS labels,
+		       sf.metadata AS metadata,
+		       sf.metadata_json AS metadata_json,
+		       sf.content_hash AS content_hash,
+		       sf.idempotency_key AS idempotency_key,
+		       sf.embedding_model AS embedding_model,
+		       sf.embedding_dimensions AS embedding_dimensions,
+		       sf.source_quality AS source_quality,
+		       sf.classification AS classification,
+		       sf.classification_json AS classification_json,
+		       sf.created_by_profile_id AS created_by_profile_id,
+		       sf.created_by_profile_name AS created_by_profile_name,
+		       sf.created_at AS created_at,
+		       sf.updated_at AS updated_at
+	`
+
+	_, results, err := s.reader.ScopedRead(ctx, profileID, query, map[string]any{
+		"fragmentIds": fragmentIDs,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to batch read fragments: %w", err)
+	}
+	for _, row := range results {
+		fragment := mapRowToFragment(row)
+		if fragment.FragmentID != "" {
+			out[fragment.FragmentID] = fragment
+		}
+	}
+	return out, nil
 }
 
 // mapRowToFragment converts a Neo4j result map to a domain.Fragment.

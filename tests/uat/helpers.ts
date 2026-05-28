@@ -7,13 +7,20 @@ import neo4j, { Driver, Session } from 'neo4j-driver';
 
 export const BASE_URL = process.env.BASE_URL || 'http://localhost:8080';
 export const API_KEY = process.env.API_KEY || 'test-api-key';
+export const API_KEY_B = process.env.API_KEY_B || '';
 export const PROFILE_ID = process.env.PROFILE_ID || 'test-profile-id';
 export const DENSE_MEM_URL = process.env.DENSE_MEM_URL || BASE_URL;
 export const DENSE_MEM_API_KEY = process.env.DENSE_MEM_API_KEY || API_KEY;
 
-const NEO4J_URI = process.env.NEO4J_URI || 'bolt://localhost:7687';
+const NEO4J_URI = normalizeNeo4jURI(
+  process.env.NEO4J_TEST_URI || process.env.NEO4J_URI || 'bolt://localhost:7687',
+);
 const NEO4J_USER = process.env.NEO4J_USER || 'neo4j';
 const NEO4J_PASSWORD = process.env.NEO4J_PASSWORD || 'password';
+
+function normalizeNeo4jURI(uri: string): string {
+  return uri.replace('://neo4j:', '://localhost:');
+}
 
 // ---------------------------------------------------------------------------
 // HTTP header factories
@@ -21,8 +28,13 @@ const NEO4J_PASSWORD = process.env.NEO4J_PASSWORD || 'password';
 
 /** Standard authenticated headers. Profile scope is derived from the API key. */
 export function headers(_profileId?: string): Record<string, string> {
+  return headersForApiKey(API_KEY);
+}
+
+/** Authenticated headers for a specific API key. */
+export function headersForApiKey(apiKey: string): Record<string, string> {
   return {
-    'Authorization': `Bearer ${API_KEY}`,
+    'Authorization': `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
   };
 }
@@ -133,8 +145,22 @@ export async function seedFragmentForProfile(
     labels?: string[];
   } = {},
 ): Promise<{ id: string; fragment_id: string; [k: string]: unknown }> {
+  return seedFragmentWithHeaders(request, headers(profileId), content, opts);
+}
+
+/** Create a fragment using explicit auth headers. */
+export async function seedFragmentWithHeaders(
+  request: APIRequestContext,
+  authHeaders: Record<string, string>,
+  content: string = 'The sky is blue on clear days.',
+  opts: {
+    source_quality?: number;
+    classification?: Record<string, unknown>;
+    labels?: string[];
+  } = {},
+): Promise<{ id: string; fragment_id: string; [k: string]: unknown }> {
   const res = await request.post(`${BASE_URL}/api/v1/fragments`, {
-    headers: headers(profileId),
+    headers: authHeaders,
     data: {
       content,
       source_quality: opts.source_quality ?? 0.9,
@@ -165,10 +191,23 @@ export async function createAndVerifyClaim(
     resolution_conf?: number;
   } = {},
 ): Promise<{ id: string; status: string; [k: string]: unknown }> {
+  const predicate = opts.predicate ?? 'likes';
+  const subject = opts.subject ?? 'sky';
+  const object = opts.object ?? 'blue';
+
   // If no fragment provided, seed one first
   let fragmentId = opts.fragmentId;
   if (!fragmentId) {
-    const frag = await seedFragmentForProfile(request, profileId);
+    const frag = await seedFragmentForProfile(
+      request,
+      profileId,
+      `${subject} ${predicate} ${object}.`,
+      {
+        source_quality: 0.99,
+        classification: { domain: 'uat', confidence: 0.99 },
+        labels: ['uat'],
+      },
+    );
     fragmentId = frag.fragment_id;
   }
 
@@ -176,9 +215,9 @@ export async function createAndVerifyClaim(
   const createRes = await request.post(`${BASE_URL}/api/v1/claims`, {
     headers: headers(profileId),
     data: {
-      predicate: opts.predicate ?? 'likes',
-      subject: opts.subject ?? 'sky',
-      object: opts.object ?? 'blue',
+      predicate,
+      subject,
+      object,
       modality: opts.modality ?? 'assertion',
       extract_conf: opts.extract_conf ?? 0.95,
       resolution_conf: opts.resolution_conf ?? 0.95,
@@ -197,10 +236,12 @@ export async function createAndVerifyClaim(
       data: {
         verifier_model: opts.verifier_model ?? 'test-verifier',
       },
+      timeout: 60_000,
     },
   );
   expect(verifyRes.status(), `verifyClaim: expected 200, got ${verifyRes.status()}`).toBe(200);
   const verifyBody = await verifyRes.json();
+  expect(verifyBody.status, 'verifyClaim: expected verifier to validate seeded evidence').toBe('validated');
   return {
     id: verifyBody.claim_id as string,
     claim_id: verifyBody.claim_id as string,
@@ -260,12 +301,12 @@ export async function createTwoSupportPromotedFact(
 ): Promise<[{ id: string }, { id: string }]> {
   const factA = await createAndPromoteClaim(request, profileId, {
     subject: sharedSubject,
-    predicate: 'IS',
+    predicate: 'likes',
     object: '100_celsius',
   });
   const factB = await createAndPromoteClaim(request, profileId, {
     subject: sharedSubject,
-    predicate: 'IS',
+    predicate: 'likes',
     object: '212_fahrenheit',
   });
   return [factA, factB];

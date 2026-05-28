@@ -1,9 +1,9 @@
 /**
- * UAT-01 — Phase 1: Neo4j vector and constraint indexes exist.
+ * UAT-01 — Phase 1: Neo4j schema indexes and constraints exist.
  *
  * Verifies that the server bootstraps the required Neo4j schema:
- * - SourceFragment vector index (`source_fragment_embedding`)
- * - Fact vector index (`fact_embedding`)
+ * - SourceFragment vector index (`fragment_embedding_idx`)
+ * - Fact recall full-text index (`fact_recall_idx`)
  * - Uniqueness constraints on SourceFragment and Fact nodes
  *
  * These tests exercise the schema bootstrapper directly via Neo4j and
@@ -19,15 +19,15 @@ const profileId = process.env.PROFILE_ID || 'uat-profile-phase1';
 // UAT-01a: Vector index on SourceFragment exists in Neo4j
 test('UAT-01a: SourceFragment vector index exists', async () => {
   const rows = await neo4jQuery(
-    "SHOW VECTOR INDEXES YIELD name WHERE name = 'source_fragment_embedding' RETURN name",
+    "SHOW VECTOR INDEXES YIELD name WHERE name = 'fragment_embedding_idx' RETURN name",
   );
   expect(rows.length).toBeGreaterThan(0);
 });
 
-// UAT-01b: Vector index on Fact exists in Neo4j
-test('UAT-01b: Fact vector index exists', async () => {
+// UAT-01b: Full-text recall index on Fact exists in Neo4j
+test('UAT-01b: Fact recall full-text index exists', async () => {
   const rows = await neo4jQuery(
-    "SHOW VECTOR INDEXES YIELD name WHERE name = 'fact_embedding' RETURN name",
+    "SHOW INDEXES YIELD name, type WHERE name = 'fact_recall_idx' AND type = 'FULLTEXT' RETURN name",
   );
   expect(rows.length).toBeGreaterThan(0);
 });

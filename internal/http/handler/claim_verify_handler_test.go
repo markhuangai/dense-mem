@@ -111,6 +111,35 @@ func TestClaimVerifyHandler_Returns404OnNotFound(t *testing.T) {
 	}
 }
 
+// TestClaimVerifyHandler_Returns404OnSupportingFragmentMissing verifies
+// missing or retracted support is surfaced as a stable public 404.
+func TestClaimVerifyHandler_Returns404OnSupportingFragmentMissing(t *testing.T) {
+	e := echo.New()
+	profileID := uuid.New()
+	e.HTTPErrorHandler = httperr.ErrorHandler
+
+	svc := &mockVerifyClaimService{
+		verifyFunc: func(ctx context.Context, pid, cid string) (*domain.Claim, error) {
+			return nil, claimservice.ErrSupportingFragmentMissing
+		},
+	}
+	h := NewClaimVerifyHandler(svc)
+
+	e.Use(injectProfileMiddleware(profileID))
+	e.POST("/api/v1/claims/:id/verify", h.Handle)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/claims/claim-missing-support/verify", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d; want 404. body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), string(httperr.ErrSupportingFragmentMissing)) {
+		t.Errorf("body must contain supporting_fragment_missing; got: %s", rec.Body.String())
+	}
+}
+
 // TestClaimVerifyHandler_Returns400WhenProfileMissing verifies missing profile → 400.
 func TestClaimVerifyHandler_Returns400WhenProfileMissing(t *testing.T) {
 	e := echo.New()

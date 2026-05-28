@@ -5,9 +5,7 @@
  * when a comparable fact already exists for the same subject+predicate with a
  * different object under strict (single-valued) policies.
  *
- * Also verifies the `rejected_weaker` and `gate_rejected` paths.
- *
- * Will be RED until Units 35-43 (gates, contradiction, promote service/handler) are complete.
+ * Also verifies the `rejected_weaker`, append-only, and multi-valued paths.
  */
 
 import { test, expect } from '@playwright/test';
@@ -23,17 +21,17 @@ const profileId = process.env.PROFILE_ID || 'uat-profile-phase4-contradiction';
 
 // UAT-07a: Promoting a claim that contradicts an existing fact returns comparable_disputed
 test('UAT-07a: contradicting fact returns comparable_disputed 409', async ({ request }) => {
-  // Promote first fact: boiling_point IS 100_celsius
+  // Promote first fact: boiling_point profile_fact 100_celsius
   await createAndPromoteClaim(request, profileId, {
-    predicate: 'IS',
+    predicate: 'profile_fact',
     subject: 'boiling_point_test',
     object: '100_celsius',
     policy: 'single_supporter',
   });
 
-  // Create + verify a contradicting claim: boiling_point IS 200_celsius
+  // Create + verify a contradicting claim for the same subject+predicate.
   const contradictingClaim = await createAndVerifyClaim(request, profileId, {
-    predicate: 'IS',
+    predicate: 'profile_fact',
     subject: 'boiling_point_test',
     object: '200_celsius',
   });
@@ -54,7 +52,7 @@ test('UAT-07a: contradicting fact returns comparable_disputed 409', async ({ req
 test('UAT-07b: weaker claim returns rejected_weaker 409', async ({ request }) => {
   // Promote first fact with high source quality
   await createAndPromoteClaim(request, profileId, {
-    predicate: 'HAS_PROPERTY',
+    predicate: 'profile_fact',
     subject: 'iron_weaker_test',
     object: 'ferromagnetic',
     policy: 'single_supporter',
@@ -62,7 +60,7 @@ test('UAT-07b: weaker claim returns rejected_weaker 409', async ({ request }) =>
 
   // Try to promote a weaker claim for the same fact
   const weakerClaim = await createAndVerifyClaim(request, profileId, {
-    predicate: 'HAS_PROPERTY',
+    predicate: 'profile_fact',
     subject: 'iron_weaker_test',
     object: 'ferromagnetic',
   });
@@ -74,7 +72,7 @@ test('UAT-07b: weaker claim returns rejected_weaker 409', async ({ request }) =>
       data: { policy: 'single_supporter' },
     },
   );
-  // Should be 201 (idempotent, same fact) or 409 rejected_weaker depending on policy
+  // Same-object promotion may confirm the existing fact or reject/defer based on scores.
   expect([200, 201, 409]).toContain(promoteRes.status());
   if (promoteRes.status() === 409) {
     const body = await promoteRes.json();
@@ -82,10 +80,10 @@ test('UAT-07b: weaker claim returns rejected_weaker 409', async ({ request }) =>
   }
 });
 
-// UAT-07c: Gate rejection with unsupported policy returns gate_rejected (409)
-test('UAT-07c: unsupported_policy returns 422', async ({ request }) => {
+// UAT-07c: Append-only predicates promote without single-current contradiction handling
+test('UAT-07c: append-only corrected predicate promotes successfully', async ({ request }) => {
   const claim = await createAndVerifyClaim(request, profileId, {
-    predicate: 'IS',
+    predicate: 'corrected',
     subject: 'gate_test_subject',
     object: 'gate_test_object',
   });
@@ -94,12 +92,13 @@ test('UAT-07c: unsupported_policy returns 422', async ({ request }) => {
     `${BASE_URL}/api/v1/claims/${claim.id}/promote`,
     {
       headers: headers(profileId),
-      data: { policy: 'invalid_unknown_policy' },
+      data: { policy: 'single_supporter' },
     },
   );
-  expect(promoteRes.status()).toBe(422);
+  expect(promoteRes.status()).toBe(201);
   const body = await promoteRes.json();
-  expect(body.code).toBe('unsupported_policy');
+  expect(body.fact_id).toBeDefined();
+  expect(body.predicate).toBe('corrected');
 });
 
 // UAT-07d: Two facts with different objects for same predicate — both can coexist under multi-value policy

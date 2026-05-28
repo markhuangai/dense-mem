@@ -118,9 +118,8 @@ func TestDefaultPromotionGates(t *testing.T) {
 	})
 
 	t.Run("all four policy constants are defined — R2", func(t *testing.T) {
-		// R2 (binding): full enum defined in v1; only single_current and
-		// multi_valued are implemented. Versioned and AppendOnly exist so that
-		// callers can return ErrUnsupportedPolicy rather than ErrPredicateNotPoliced.
+		// R2 (binding): full enum defined in v1 and implemented by the
+		// promotion service.
 		require.Equal(t, Policy("single_current"), SingleCurrent)
 		require.Equal(t, Policy("multi_valued"), MultiValued)
 		require.Equal(t, Policy("versioned"), Versioned)

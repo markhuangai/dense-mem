@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -263,7 +262,7 @@ func TestClaimPromoteHandler_CrossProfileIsolation(t *testing.T) {
 			}
 			// All other profiles receive a denial — indistinguishable from
 			// "not found" so no cross-profile existence is leaked.
-			return nil, errors.New("claim not found for promote")
+			return nil, factservice.ErrClaimNotFound
 		},
 	}
 	h := NewClaimPromoteHandler(svc)
@@ -276,9 +275,8 @@ func TestClaimPromoteHandler_CrossProfileIsolation(t *testing.T) {
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
-	// Profile B must NOT get a success response.
-	if rec.Code == http.StatusCreated {
-		t.Errorf("cross-profile promote returned 201; isolation must prevent this")
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("cross-profile promote returned %d; want 404 (isolation must not leak existence). body=%s", rec.Code, rec.Body.String())
 	}
 
 	// Profile A's fact ID must not appear in profile B's response.

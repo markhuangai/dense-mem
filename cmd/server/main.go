@@ -204,11 +204,13 @@ func main() {
 	// ========================================
 	// Discoverability: embedding, fragments, recall, registry, openapi
 	// ========================================
-	// Metrics are in-memory (Prometheus export is a separate concern). Adapters
-	// translate between neo4j's ScopedReader and the fragment services' local
-	// ScopedReader, and between fragmentservice's AuditLogEntry and the canonical
-	// service.AuditLogEntry.
-	discoverabilityMetrics := observability.NewInMemoryDiscoverabilityMetrics()
+	// Production startup uses the no-op metrics backend so request volume does
+	// not accumulate unbounded in-memory samples. Tests can still inject the
+	// in-memory recorder directly where assertions need captured observations.
+	discoverabilityMetrics := observability.NoopDiscoverabilityMetrics()
+	// Adapters translate between neo4j's ScopedReader and the fragment services'
+	// local ScopedReader, and between fragmentservice's AuditLogEntry and the
+	// canonical service.AuditLogEntry.
 	readerAdapter := &scopedReaderAdapter{inner: profileScopeEnforcer}
 	fragmentAuditor := &fragmentAuditAdapter{inner: auditService}
 	claimAuditor := &claimAuditAdapter{inner: auditService}
@@ -257,6 +259,7 @@ func main() {
 	)
 	claimGetSvc := claimservice.NewGetClaimService(profileScopeEnforcer, slog.Default())
 	claimListSvc := claimservice.NewListClaimsService(profileScopeEnforcer)
+	claimListFilteredSvc := claimservice.NewListClaimsFilteredService(profileScopeEnforcer)
 	claimDeleteSvc := claimservice.NewDeleteClaimService(profileScopeEnforcer, claimAuditor, slog.Default())
 
 	claimLock := postgres.NewClaimLock(discoverabilityMetrics)
@@ -411,7 +414,7 @@ func main() {
 	fragmentRetractHandler := handler.NewFragmentRetractHandler(fragmentRetractSvc)
 	claimCreateHandler := handler.NewClaimCreateHandler(claimCreateSvc)
 	claimReadHandler := handler.NewClaimReadHandler(claimGetSvc)
-	claimListHandler := handler.NewClaimListHandler(claimListSvc)
+	claimListHandler := handler.NewClaimListHandlerWithFiltered(claimListSvc, claimListFilteredSvc)
 	claimDeleteHandler := handler.NewClaimDeleteHandler(claimDeleteSvc)
 	claimVerifyHandler := handler.NewClaimVerifyHandler(claimVerifyHTTPSvc)
 	claimPromoteHandler := handler.NewClaimPromoteHandler(factPromoteSvc)

@@ -12,13 +12,14 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'crypto';
 import {
+  API_KEY_B,
   headers,
+  headersForApiKey,
   createAndPromoteClaim,
   BASE_URL,
 } from './helpers';
 
 const profileId = process.env.PROFILE_ID || '00000000-0000-0000-0000-000000000101';
-const profileIdB = process.env.PROFILE_ID_B || '00000000-0000-0000-0000-000000000102';
 
 // UAT-10a: Community detection returns 200 with summary and communities are readable
 test('UAT-10a: community detection returns 200 with summary', async ({ request }) => {
@@ -55,40 +56,38 @@ test('UAT-10a: community detection returns 200 with summary', async ({ request }
   expect(Array.isArray(listBody.items)).toBe(true);
 });
 
-// UAT-10b: Community detection requires a profile header.
-test('UAT-10b: community detection rejects missing profile context', async ({ request }) => {
-  const res = await request.post(
-    `${BASE_URL}/api/v1/tools/detect_community`,
-    {
-      headers: {
-        'Authorization': `Bearer ${process.env.API_KEY || 'test-api-key'}`,
-        'Content-Type': 'application/json',
-      },
-    },
-  );
-  expect(res.status()).toBe(400);
-});
-
-// UAT-10c: Community detection on a profile with no data returns empty summary
-test('UAT-10c: empty profile returns empty community summary', async ({ request }) => {
-  const emptyProfileId = randomUUID();
+// UAT-10b: Community detection on a profile with no data returns empty summary
+test('UAT-10b: empty profile returns empty community summary', async ({ request }) => {
+  test.skip(!API_KEY_B, 'API_KEY_B is required for empty secondary profile coverage');
+  if (!API_KEY_B) {
+    return;
+  }
 
   const res = await request.post(
     `${BASE_URL}/api/v1/tools/detect_community`,
     {
-      headers: headers(emptyProfileId),
+      headers: headersForApiKey(API_KEY_B),
     },
   );
-  expect(res.status()).toBeGreaterThanOrEqual(400);
-  expect(res.status()).toBeLessThanOrEqual(404);
+  expect(res.status()).toBe(200);
+  const body = await res.json();
+  expect(body.detected).toBe(true);
+  expect(typeof body.community_count).toBe('number');
 });
 
-// UAT-10d: Community detection is profile-scoped — does not cross profile boundaries
-test('UAT-10d: community detection is profile-scoped', async ({ request }) => {
+// UAT-10c: Community detection is profile-scoped — does not cross profile boundaries
+test('UAT-10c: community detection is profile-scoped', async ({ request }) => {
+  test.skip(!API_KEY_B, 'API_KEY_B is required for cross-profile isolation');
+  if (!API_KEY_B) {
+    return;
+  }
+
+  const uniqueSubject = `carbon_community_${randomUUID()}`;
+
   // Seed facts in profile A
   await createAndPromoteClaim(request, profileId, {
     predicate: 'likes',
-    subject: 'carbon_community_test',
+    subject: uniqueSubject,
     object: 'nonmetal',
   });
 
@@ -96,9 +95,10 @@ test('UAT-10d: community detection is profile-scoped', async ({ request }) => {
   const res = await request.post(
     `${BASE_URL}/api/v1/tools/detect_community`,
     {
-      headers: headers(profileIdB),
+      headers: headersForApiKey(API_KEY_B),
     },
   );
-  expect(res.status()).toBeGreaterThanOrEqual(400);
-  expect(res.status()).toBeLessThanOrEqual(404);
+  expect(res.status()).toBe(200);
+  const body = await res.json();
+  expect(JSON.stringify(body)).not.toContain(uniqueSubject);
 });

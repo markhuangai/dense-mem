@@ -50,6 +50,8 @@ func (h *ClaimPromoteHandler) Handle(c echo.Context) error {
 	fact, err := h.svc.Promote(ctx, profileID.String(), claimID)
 	if err != nil {
 		switch {
+		case errors.Is(err, factservice.ErrClaimNotFound):
+			return httperr.New(httperr.ErrClaimNotFound, "claim not found")
 		case errors.Is(err, factservice.ErrPredicateNotPoliced):
 			return httperr.New(httperr.ErrPredicateNotPoliced, "predicate not policed for promotion")
 		case errors.Is(err, factservice.ErrUnsupportedPolicy):

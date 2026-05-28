@@ -9,9 +9,13 @@ import "errors"
 // accidental promotion of unvalidated knowledge.
 var ErrPredicateNotPoliced = errors.New("predicate not policed")
 
-// ErrUnsupportedPolicy is returned when a gate's Policy is a known enum value
-// (Versioned or AppendOnly) that is not yet implemented in v1. HTTP callers
-// MUST map this to 422.
+// ErrClaimNotFound is returned when a promote request targets a Claim that is
+// absent or belongs to a different profile. HTTP callers MUST map this to the
+// same 404 used by normal claim reads so cross-profile access leaks nothing.
+var ErrClaimNotFound = errors.New("claim not found for promote")
+
+// ErrUnsupportedPolicy is returned when a gate's Policy is not implemented by
+// the promotion service. HTTP callers MUST map this to 422.
 var ErrUnsupportedPolicy = errors.New("unsupported policy")
 
 // ErrClaimNotValidated is returned when a promote request targets a Claim that

@@ -40,6 +40,9 @@ type ListClaimOptions struct {
 	// Subject filters results to claims with this subject value.
 	// Empty string means "no filter".
 	Subject string
+	// Modality filters results to claims with this modality value.
+	// Empty string means "no filter".
+	Modality string
 }
 
 // ListClaimsResult is the paginated response from a claim list query.
@@ -131,11 +134,12 @@ func decodeClaimCursor(cursor string) (time.Time, string, error) {
 // should call GetClaimService.Get for individual claims.
 const listClaimsCypher = `
 MATCH (c:Claim {team_id: $profileId})
-WHERE ($status IS NULL OR c.status = $status)
-  AND ($predicate IS NULL OR c.predicate = $predicate)
-  AND ($subject IS NULL OR c.subject = $subject)
-  AND ($afterTs IS NULL OR c.recorded_at < $afterTs
-       OR (c.recorded_at = $afterTs AND c.claim_id < $afterId))
+	WHERE ($status IS NULL OR c.status = $status)
+	  AND ($predicate IS NULL OR c.predicate = $predicate)
+	  AND ($subject IS NULL OR c.subject = $subject)
+	  AND ($modality IS NULL OR c.modality = $modality)
+	  AND ($afterTs IS NULL OR c.recorded_at < $afterTs
+	       OR (c.recorded_at = $afterTs AND c.claim_id < $afterId))
 RETURN c.claim_id                        AS claim_id,
        c.created_by_profile_id           AS created_by_profile_id,
        c.created_by_profile_name         AS created_by_profile_name,
@@ -187,6 +191,7 @@ func (s *listClaimsFilteredServiceImpl) List(ctx context.Context, profileID stri
 
 	// Nil params instruct Neo4j to skip the corresponding WHERE clause guard.
 	var statusParam, predicateParam, subjectParam any
+	var modalityParam any
 	if opts.Status != "" {
 		statusParam = opts.Status
 	}
@@ -195,6 +200,9 @@ func (s *listClaimsFilteredServiceImpl) List(ctx context.Context, profileID stri
 	}
 	if opts.Subject != "" {
 		subjectParam = opts.Subject
+	}
+	if opts.Modality != "" {
+		modalityParam = opts.Modality
 	}
 
 	var afterTsParam, afterIDParam any
@@ -207,6 +215,7 @@ func (s *listClaimsFilteredServiceImpl) List(ctx context.Context, profileID stri
 		"status":    statusParam,
 		"predicate": predicateParam,
 		"subject":   subjectParam,
+		"modality":  modalityParam,
 		"afterTs":   afterTsParam,
 		"afterId":   afterIDParam,
 		// Overfetch by 1 to detect "more available" without a COUNT query.

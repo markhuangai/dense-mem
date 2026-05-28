@@ -7,7 +7,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
-	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
@@ -84,65 +83,9 @@ func (d *ProtectedDeps) GetLogger() observability.LogProvider {
 	return d.Logger
 }
 
-// RegisterProtectedRoutes registers all protected route groups with the Echo instance.
-// The middleware order for each route family is critical:
-//
-// Profile routes (/api/v1/profiles/:profileId/*):
-//   - auth -> profile resolution -> profile authorization -> rate limit -> bind+validate -> handler
-//
-// Tool routes (/api/v1/tools/*):
-//   - auth -> profile resolution(header) -> profile authorization -> rate limit -> bind+validate -> handler
-//
-// Public routes (/health, /ready) remain outside these groups with no middleware.
-func RegisterProtectedRoutes(e *echo.Echo, deps ProtectedDeps) {
-	// Create profile authorization service from audit service
-	profileAuthzSvc := middleware.NewProfileAuthorizationService(deps.AuditService)
-	authMW := middleware.AuthMiddlewareWithSecurity(deps.APIKeyRepo, deps.AuditService, deps.SecurityService)
-
-	// ====================================
-	// Profile routes with target profile
-	// ====================================
-	// Middleware order: auth -> profile resolution -> profile authorization -> rate limit -> bind+validate -> handler
-	profileGroup := e.Group("/api/v1/profiles/:profileId")
-	profileGroup.Use(authMW)
-	profileGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
-	profileGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
-	profileGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
-
-	// Placeholder handler for testing middleware chain
-	profileGroup.GET("/test", func(c echo.Context) error {
-		return response.SuccessOK(c, map[string]string{"status": "profile_test"})
-	})
-
-	// API Keys sub-resource under profiles
-	// authKeyGroup := profileGroup.Group("/api-keys")
-	// authKeyGroup.GET("", listAPIKeysHandler)
-	// authKeyGroup.POST("", createAPIKeyHandler, middleware.BindAndValidate[...]())
-	// authKeyGroup.DELETE("/:id", revokeAPIKeyHandler)
-
-	// ====================================
-	// Tool routes
-	// ====================================
-	// Middleware order: auth -> profile resolution(header) -> profile authorization -> rate limit -> bind+validate -> handler
-	toolGroup := e.Group("/api/v1/tools")
-	toolGroup.Use(authMW)
-	toolGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
-	toolGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
-	toolGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
-
-	// Tool routes (handlers will be added in later units)
-	// toolGroup.GET("/:id", getToolHandler, middleware.BindAndValidate[...]())
-	// toolGroup.POST("", createToolHandler, middleware.BindAndValidate[...]())
-
-	// Placeholder handler for testing middleware chain
-	toolGroup.GET("/test", func(c echo.Context) error {
-		return response.SuccessOK(c, map[string]string{"status": "tool_test"})
-	})
-
-}
-
-// RegisterProtectedRoutesWithHandlers registers protected routes with actual handlers.
-// This is provided for later units that implement real handlers.
+// RegisterProtectedRoutesWithHandlers registers protected API routes with the
+// middleware chain required for authentication, profile authorization, rate
+// limiting, route-specific validation, and handler execution.
 func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handlers ProtectedHandlers) {
 	// Create profile authorization service from audit service
 	profileAuthzSvc := middleware.NewProfileAuthorizationService(deps.AuditService)

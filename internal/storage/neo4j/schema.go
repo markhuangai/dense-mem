@@ -29,10 +29,12 @@ const (
 	IndexClaimProfileSubjectPredicate = "claim_profile_subject_predicate_idx"
 	IndexClaimProfileIdempotency      = "claim_team_idempotency_idx"
 	IndexClaimProfileContentHash      = "claim_profile_content_hash_idx"
+	IndexClaimProfileRecordedAt       = "claim_profile_recorded_at_idx"
 
 	// Composite indexes for Fact nodes — team_id is leading key (Unit 12, AC-4)
 	IndexFactProfileStatus                 = "fact_profile_status_idx"
 	IndexFactProfileSubjectPredicateStatus = "fact_profile_subject_predicate_status_idx"
+	IndexFactProfileRecordedAt             = "fact_profile_recorded_at_idx"
 
 	// Composite index for SourceFragment nodes — team_id is leading key (Unit 12, AC-5)
 	IndexSourceFragmentProfileStatus = "sourcefragment_profile_status_idx"
@@ -330,6 +332,10 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 			"CREATE INDEX claim_profile_content_hash_idx IF NOT EXISTS FOR (c:Claim) ON (c.team_id, c.content_hash)",
 			IndexClaimProfileContentHash,
 		},
+		{
+			"CREATE INDEX claim_profile_recorded_at_idx IF NOT EXISTS FOR (c:Claim) ON (c.team_id, c.recorded_at, c.claim_id)",
+			IndexClaimProfileRecordedAt,
+		},
 		// Fact indexes (AC-4)
 		{
 			"CREATE INDEX fact_profile_status_idx IF NOT EXISTS FOR (f:Fact) ON (f.team_id, f.status)",
@@ -338,6 +344,10 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 		{
 			"CREATE INDEX fact_profile_subject_predicate_status_idx IF NOT EXISTS FOR (f:Fact) ON (f.team_id, f.subject, f.predicate, f.status)",
 			IndexFactProfileSubjectPredicateStatus,
+		},
+		{
+			"CREATE INDEX fact_profile_recorded_at_idx IF NOT EXISTS FOR (f:Fact) ON (f.team_id, f.recorded_at, f.fact_id)",
+			IndexFactProfileRecordedAt,
 		},
 		// SourceFragment status index (AC-5)
 		{

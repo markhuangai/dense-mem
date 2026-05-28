@@ -33,6 +33,9 @@ type getClaimServiceImpl struct {
 
 // Compile-time check that getClaimServiceImpl satisfies GetClaimService.
 var _ GetClaimService = (*getClaimServiceImpl)(nil)
+var _ interface {
+	GetByIDs(ctx context.Context, profileID string, claimIDs []string) (map[string]*domain.Claim, error)
+} = (*getClaimServiceImpl)(nil)
 
 // NewGetClaimService constructs a ready-to-use GetClaimService.
 // logger may be nil; an absent logger emits no structured log lines.
@@ -60,7 +63,7 @@ func NewGetClaimService(reader claimReader, logger *slog.Logger) GetClaimService
 // ErrClaimNotFound without leaking that the claim exists under a different
 // profile.
 const getClaimCypher = `
-MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
+	MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
 OPTIONAL MATCH (c)-[r:SUPPORTED_BY {team_id: $profileId}]->(sf:SourceFragment {team_id: $profileId})
 RETURN
     c.claim_id                        AS claim_id,
@@ -108,7 +111,59 @@ RETURN
             pipeline_run_id: r.pipeline_run_id,
             authority: coalesce(r.authority, sf.authority, 'unknown')
         }
-    END) AS evidence`
+	    END) AS evidence`
+
+const getClaimsByIDCypher = `
+	MATCH (c:Claim {team_id: $profileId})
+	WHERE c.claim_id IN $claimIds
+	OPTIONAL MATCH (c)-[r:SUPPORTED_BY {team_id: $profileId}]->(sf:SourceFragment {team_id: $profileId})
+	RETURN
+	    c.claim_id                        AS claim_id,
+	    c.created_by_profile_id           AS created_by_profile_id,
+	    c.created_by_profile_name         AS created_by_profile_name,
+	    c.subject                         AS subject,
+	    c.predicate                       AS predicate,
+	    c.object                          AS object,
+	    c.modality                        AS modality,
+	    c.polarity                        AS polarity,
+	    c.speaker                         AS speaker,
+	    c.span_start                      AS span_start,
+	    c.span_end                        AS span_end,
+	    c.valid_from                      AS valid_from,
+	    c.valid_to                        AS valid_to,
+	    c.recorded_at                     AS recorded_at,
+	    c.recorded_to                     AS recorded_to,
+	    c.extract_conf                    AS extract_conf,
+	    c.resolution_conf                 AS resolution_conf,
+	    c.source_quality                  AS source_quality,
+	    c.entailment_verdict              AS entailment_verdict,
+	    c.status                          AS status,
+	    c.last_verifier_response          AS last_verifier_response,
+	    c.verified_at                     AS verified_at,
+	    c.extraction_model                AS extraction_model,
+	    c.extraction_version              AS extraction_version,
+	    c.verifier_model                  AS verifier_model,
+	    c.pipeline_run_id                 AS pipeline_run_id,
+	    c.content_hash                    AS content_hash,
+	    c.idempotency_key                 AS idempotency_key,
+	    c.classification                  AS classification,
+	    c.classification_json             AS classification_json,
+	    c.classification_lattice_version  AS classification_lattice_version,
+	    collect(sf.fragment_id)           AS supported_by,
+	    collect(CASE
+	        WHEN sf.fragment_id IS NULL THEN NULL
+	        ELSE {
+	            fragment_id: sf.fragment_id,
+	            speaker: r.speaker,
+	            span_start: r.span_start,
+	            span_end: r.span_end,
+	            extract_conf: r.extract_conf,
+	            extraction_model: r.extraction_model,
+	            extraction_version: r.extraction_version,
+	            pipeline_run_id: r.pipeline_run_id,
+	            authority: coalesce(r.authority, sf.authority, 'unknown')
+	        }
+	    END) AS evidence`
 
 // Get retrieves the claim identified by claimID within profileID.
 //
@@ -126,6 +181,28 @@ func (s *getClaimServiceImpl) Get(ctx context.Context, profileID string, claimID
 		return nil, ErrClaimNotFound
 	}
 	return rowToClaim(profileID, rows[0]), nil
+}
+
+// GetByIDs retrieves claims by ID with one profile-scoped read. Missing IDs are
+// omitted from the returned map.
+func (s *getClaimServiceImpl) GetByIDs(ctx context.Context, profileID string, claimIDs []string) (map[string]*domain.Claim, error) {
+	out := make(map[string]*domain.Claim, len(claimIDs))
+	if len(claimIDs) == 0 {
+		return out, nil
+	}
+	_, rows, err := s.reader.ScopedRead(ctx, profileID, getClaimsByIDCypher, map[string]any{
+		"claimIds": claimIDs,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("claim batch get: %w", err)
+	}
+	for _, row := range rows {
+		claim := rowToClaim(profileID, row)
+		if claim.ClaimID != "" {
+			out[claim.ClaimID] = claim
+		}
+	}
+	return out, nil
 }
 
 // rowToClaim maps a single Neo4j result row (keyed by RETURN aliases) to a

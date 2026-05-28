@@ -54,6 +54,8 @@ func (h *ClaimVerifyHandler) Handle(c echo.Context) error {
 		switch {
 		case errors.Is(err, claimservice.ErrClaimNotFound):
 			return httperr.New(httperr.ErrClaimNotFound, "claim not found")
+		case errors.Is(err, claimservice.ErrSupportingFragmentMissing):
+			return httperr.New(httperr.ErrSupportingFragmentMissing, "supporting fragment missing or retracted")
 
 		case errors.Is(err, verifier.ErrVerifierRateLimit):
 			// Preserve Retry-After when the provider supplies one.

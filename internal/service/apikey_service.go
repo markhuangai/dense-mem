@@ -93,14 +93,15 @@ func teamProfileNameConflict(err error, name string) error {
 	return nil
 }
 
-// KeySessionInvalidator is an interface for invalidating key sessions.
-// Unit 22 will implement this with Redis cleanup.
+// KeySessionInvalidator invalidates key-bound sessions. Redis-backed deployments
+// delete matching session keys; no-Redis deployments inject a non-nil no-op.
 type KeySessionInvalidator interface {
 	InvalidateKeySessions(ctx context.Context, profileID, keyID string) error
 }
 
-// ProfileStatePurger is an interface for purging profile state.
-// Unit 22 will implement this with Redis cleanup.
+// ProfileStatePurger removes cache, session, and stream state for a profile.
+// Redis-backed deployments delete matching keys; no-Redis deployments inject a
+// non-nil no-op.
 type ProfileStatePurger interface {
 	PurgeProfileState(ctx context.Context, profileID string) error
 }

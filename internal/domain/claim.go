@@ -40,13 +40,11 @@ const (
 	// PolarityMinus indicates a negating or contradicting claim.
 	PolarityMinus ClaimPolarity = "-"
 
-	// PolarityPositive is a deprecated alias for PolarityPlus.
-	// Retained for compile-time compatibility with callers that have not yet
-	// migrated to the canonical PolarityPlus name; will be removed in a future
-	// cleanup pass once all call sites have been updated.
+	// PolarityPositive is a deprecated alias for PolarityPlus. Retained for
+	// external compile-time compatibility; new code should use PolarityPlus.
 	PolarityPositive ClaimPolarity = PolarityPlus
-	// PolarityNegative is a deprecated alias for PolarityMinus.
-	// Same migration note as PolarityPositive.
+	// PolarityNegative is a deprecated alias for PolarityMinus. Retained for
+	// external compile-time compatibility; new code should use PolarityMinus.
 	PolarityNegative ClaimPolarity = PolarityMinus
 )
 
@@ -104,9 +102,9 @@ const (
 	// when the verifier returns a malformed response or times out (plan R5).
 	VerdictInsufficient EntailmentVerdict = "insufficient"
 
-	// VerdictUnverified is a deprecated alias for VerdictInsufficient.
-	// Retained for compile-time compatibility with callers that have not yet
-	// migrated; will be removed once all call sites reference VerdictInsufficient.
+	// VerdictUnverified is a deprecated alias for VerdictInsufficient. Retained
+	// for external compile-time compatibility; new code should use
+	// VerdictInsufficient.
 	VerdictUnverified EntailmentVerdict = VerdictInsufficient
 )
 

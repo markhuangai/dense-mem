@@ -591,7 +591,7 @@ func TestPromote_ErrorPaths(t *testing.T) {
 		_, err := svc.Promote(ctx, profileID, "nonexistent")
 
 		require.Error(t, err)
-		require.True(t, errors.Is(err, errClaimNotFound))
+		require.True(t, errors.Is(err, ErrClaimNotFound))
 	})
 
 	t.Run("returns ErrClaimNotValidated when claim is not validated", func(t *testing.T) {

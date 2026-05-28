@@ -31,6 +31,17 @@ func (m *mockListClaimsService) List(ctx context.Context, profileID string, limi
 	}, 2, nil
 }
 
+type mockListClaimsFilteredService struct {
+	listFunc func(ctx context.Context, profileID string, opts claimservice.ListClaimOptions) (*claimservice.ListClaimsResult, error)
+}
+
+func (m *mockListClaimsFilteredService) List(ctx context.Context, profileID string, opts claimservice.ListClaimOptions) (*claimservice.ListClaimsResult, error) {
+	if m.listFunc != nil {
+		return m.listFunc(ctx, profileID, opts)
+	}
+	return &claimservice.ListClaimsResult{}, nil
+}
+
 // TestClaimListHandler_Returns200WithItems verifies a successful list returns 200 with items.
 func TestClaimListHandler_Returns200WithItems(t *testing.T) {
 	e := echo.New()
@@ -130,12 +141,123 @@ func TestClaimListHandler_HasMoreWhenMoreResultsExist(t *testing.T) {
 	}
 }
 
+func TestClaimListHandler_UsesFilteredKeysetServiceForNewCursors(t *testing.T) {
+	e := echo.New()
+	profileID := uuid.New()
+	compatCalled := false
+	compat := &mockListClaimsService{
+		listFunc: func(ctx context.Context, pid string, limit, offset int) ([]*domain.Claim, int, error) {
+			compatCalled = true
+			return nil, 0, nil
+		},
+	}
+	var captured claimservice.ListClaimOptions
+	filtered := &mockListClaimsFilteredService{
+		listFunc: func(ctx context.Context, pid string, opts claimservice.ListClaimOptions) (*claimservice.ListClaimsResult, error) {
+			if pid != profileID.String() {
+				t.Fatalf("profileID = %q; want %q", pid, profileID.String())
+			}
+			captured = opts
+			return &claimservice.ListClaimsResult{
+				Items:      []*domain.Claim{{ClaimID: "c1", ProfileID: pid}},
+				NextCursor: "keyset-cursor",
+				HasMore:    true,
+			}, nil
+		},
+	}
+	h := NewClaimListHandlerWithFiltered(compat, filtered)
+
+	e.Use(injectProfileMiddleware(profileID))
+	e.GET("/api/v1/claims", h.Handle)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/claims?limit=1&status=validated&modality=assertion", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200. body=%s", rec.Code, rec.Body.String())
+	}
+	if compatCalled {
+		t.Fatal("legacy offset service should not be called for keyset listing")
+	}
+	if captured.Limit != 1 || captured.Status != "validated" || captured.Modality != "assertion" {
+		t.Fatalf("filtered opts = %+v; want limit/status/modality propagated", captured)
+	}
+	var resp dto.ListClaimsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v. body=%s", err, rec.Body.String())
+	}
+	if resp.NextCursor != "keyset-cursor" || !resp.HasMore {
+		t.Fatalf("next_cursor/has_more = %q/%v; want keyset-cursor/true", resp.NextCursor, resp.HasMore)
+	}
+}
+
+func TestClaimListHandler_NumericCursorUsesLegacyOffsetFallback(t *testing.T) {
+	e := echo.New()
+	profileID := uuid.New()
+	var capturedLimit, capturedOffset int
+	compat := &mockListClaimsService{
+		listFunc: func(ctx context.Context, pid string, limit, offset int) ([]*domain.Claim, int, error) {
+			capturedLimit = limit
+			capturedOffset = offset
+			return []*domain.Claim{}, offset, nil
+		},
+	}
+	filteredCalled := false
+	filtered := &mockListClaimsFilteredService{
+		listFunc: func(ctx context.Context, profileID string, opts claimservice.ListClaimOptions) (*claimservice.ListClaimsResult, error) {
+			filteredCalled = true
+			return &claimservice.ListClaimsResult{}, nil
+		},
+	}
+	h := NewClaimListHandlerWithFiltered(compat, filtered)
+
+	e.Use(injectProfileMiddleware(profileID))
+	e.GET("/api/v1/claims", h.Handle)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/claims?limit=5&cursor=20", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200. body=%s", rec.Code, rec.Body.String())
+	}
+	if filteredCalled {
+		t.Fatal("filtered service should not be called for legacy numeric cursor")
+	}
+	if capturedLimit != 5 || capturedOffset != 20 {
+		t.Fatalf("legacy limit/offset = %d/%d; want 5/20", capturedLimit, capturedOffset)
+	}
+}
+
 // TestClaimListHandler_Returns422OnInvalidCursor verifies an unparseable cursor → 422.
 func TestClaimListHandler_Returns422OnInvalidCursor(t *testing.T) {
 	e := echo.New()
 	profileID := uuid.New()
 	svc := &mockListClaimsService{}
 	h := NewClaimListHandler(svc)
+	e.HTTPErrorHandler = httperr.ErrorHandler
+
+	e.Use(injectProfileMiddleware(profileID))
+	e.GET("/api/v1/claims", h.Handle)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/claims?cursor=not-a-number", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d; want 422. body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestClaimListHandler_Returns422OnInvalidKeysetCursor(t *testing.T) {
+	e := echo.New()
+	profileID := uuid.New()
+	h := NewClaimListHandlerWithFiltered(&mockListClaimsService{}, &mockListClaimsFilteredService{
+		listFunc: func(ctx context.Context, profileID string, opts claimservice.ListClaimOptions) (*claimservice.ListClaimsResult, error) {
+			return nil, claimservice.ErrInvalidClaimCursor
+		},
+	})
 	e.HTTPErrorHandler = httperr.ErrorHandler
 
 	e.Use(injectProfileMiddleware(profileID))

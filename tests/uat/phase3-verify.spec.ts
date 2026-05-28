@@ -6,23 +6,24 @@
  * - transitions the claim from candidate → validated
  * - returns the updated claim with verification metadata
  * - is profile-isolated
- *
- * Will be RED until Units 28-33 (verifier, verify service, verify handler) are complete.
  */
 
 import { test, expect } from '@playwright/test';
 import {
   headers,
+  API_KEY_B,
+  headersForApiKey,
   seedFragmentForProfile,
   BASE_URL,
   createValidatedCandidateForVerify,
 } from './helpers';
 
 const profileId = process.env.PROFILE_ID || 'uat-profile-phase3-verify';
-const profileIdB = 'uat-profile-phase3-verify-b';
 
 // UAT-04a: Verify endpoint transitions claim to validated
 test('UAT-04a: POST /claims/:id/verify transitions to validated', async ({ request }) => {
+  test.setTimeout(90_000);
+
   const frag = await seedFragmentForProfile(request, profileId, 'Gold is a metal.');
 
   const createRes = await request.post(`${BASE_URL}/api/v1/claims`, {
@@ -31,26 +32,25 @@ test('UAT-04a: POST /claims/:id/verify transitions to validated', async ({ reque
       predicate: 'IS_A',
       subject: 'gold',
       object: 'metal',
-      supporting_fragment_ids: [frag.fragment_id],
+      supported_by: [frag.fragment_id],
     },
   });
   expect(createRes.status()).toBe(201);
-  const claimId: string = (await createRes.json()).data.id;
+  const claimId: string = (await createRes.json()).claim_id;
 
   const verifyRes = await request.post(
     `${BASE_URL}/api/v1/claims/${claimId}/verify`,
     {
       headers: headers(profileId),
       data: { verifier_model: 'gpt-4o-mini' },
+      timeout: 60_000,
     },
   );
   expect(verifyRes.status()).toBe(200);
   const body = await verifyRes.json();
   expect(body).toMatchObject({
-    data: {
-      id: claimId,
-      status: 'validated',
-    },
+    claim_id: claimId,
+    status: 'validated',
   });
 });
 
@@ -63,28 +63,31 @@ test('UAT-04b: verified claim includes verification_metadata', async ({ request 
   });
   expect(claim.status).toBe('validated');
   // Verification metadata should be present
-  expect(claim).toHaveProperty('id');
+  expect(claim).toHaveProperty('claim_id');
 });
 
 // UAT-04c: Verifying an already-validated claim is idempotent (200)
 test('UAT-04c: re-verifying a validated claim returns 200', async ({ request }) => {
-  const frag = await seedFragmentForProfile(request, profileId, 'Silver is shiny.');
+  test.setTimeout(90_000);
+
+  const frag = await seedFragmentForProfile(request, profileId, 'silver_idempotent IS shiny.');
   const createRes = await request.post(`${BASE_URL}/api/v1/claims`, {
     headers: headers(profileId),
     data: {
       predicate: 'IS',
       subject: 'silver_idempotent',
       object: 'shiny',
-      supporting_fragment_ids: [frag.fragment_id],
+      supported_by: [frag.fragment_id],
     },
   });
   expect(createRes.status()).toBe(201);
-  const claimId: string = (await createRes.json()).data.id;
+  const claimId: string = (await createRes.json()).claim_id;
 
   // First verify
   await request.post(`${BASE_URL}/api/v1/claims/${claimId}/verify`, {
     headers: headers(profileId),
     data: { verifier_model: 'test-verifier' },
+    timeout: 60_000,
   });
 
   // Second verify — idempotent
@@ -93,15 +96,21 @@ test('UAT-04c: re-verifying a validated claim returns 200', async ({ request }) 
     {
       headers: headers(profileId),
       data: { verifier_model: 'test-verifier' },
+      timeout: 60_000,
     },
   );
   expect(res2.status()).toBe(200);
   const body2 = await res2.json();
-  expect(body2.data.status).toBe('validated');
+  expect(body2.status).toBe('validated');
 });
 
 // UAT-04d: Cross-profile isolation — profile B cannot verify profile A's claim
 test('UAT-04d: cross-profile isolation on verify', async ({ request }) => {
+  test.skip(!API_KEY_B, 'API_KEY_B is required for cross-profile isolation');
+  if (!API_KEY_B) {
+    return;
+  }
+
   const frag = await seedFragmentForProfile(request, profileId, 'Copper conducts electricity.');
   const createRes = await request.post(`${BASE_URL}/api/v1/claims`, {
     headers: headers(profileId),
@@ -109,18 +118,19 @@ test('UAT-04d: cross-profile isolation on verify', async ({ request }) => {
       predicate: 'CONDUCTS',
       subject: 'copper',
       object: 'electricity',
-      supporting_fragment_ids: [frag.fragment_id],
+      supported_by: [frag.fragment_id],
     },
   });
   expect(createRes.status()).toBe(201);
-  const claimId: string = (await createRes.json()).data.id;
+  const claimId: string = (await createRes.json()).claim_id;
 
   // Profile B attempts to verify profile A's claim — must be rejected
   const verifyRes = await request.post(
     `${BASE_URL}/api/v1/claims/${claimId}/verify`,
     {
-      headers: headers(profileIdB),
+      headers: headersForApiKey(API_KEY_B),
       data: { verifier_model: 'test-verifier' },
+      timeout: 60_000,
     },
   );
   expect(verifyRes.status()).not.toBe(200);

@@ -234,8 +234,8 @@ func unitLogger() observability.LogProvider {
 // Unit tests — no build tag, no Neo4j required (AC-3, AC-4, AC-5)
 // ============================================================================
 
-// TestEnsureSchema_ClaimCompositeIndexes verifies that EnsureSchema issues all
-// six Claim composite indexes with team_id as the leading key (AC-3).
+// TestEnsureSchema_ClaimCompositeIndexes verifies that EnsureSchema issues
+// Claim composite indexes with team_id as the leading key (AC-3).
 func TestEnsureSchema_ClaimCompositeIndexes(t *testing.T) {
 	ctx := context.Background()
 	client := &recordingClient{}
@@ -254,6 +254,7 @@ func TestEnsureSchema_ClaimCompositeIndexes(t *testing.T) {
 		{"claim_profile_subject_predicate_idx", IndexClaimProfileSubjectPredicate},
 		{"claim_team_idempotency_idx", IndexClaimProfileIdempotency},
 		{"claim_profile_content_hash_idx", IndexClaimProfileContentHash},
+		{"claim_profile_recorded_at_idx", IndexClaimProfileRecordedAt},
 	}
 
 	for _, w := range wantIndexes {
@@ -262,8 +263,8 @@ func TestEnsureSchema_ClaimCompositeIndexes(t *testing.T) {
 	}
 }
 
-// TestEnsureSchema_FactCompositeIndexes verifies that EnsureSchema issues both
-// Fact composite indexes with team_id as the leading key (AC-4).
+// TestEnsureSchema_FactCompositeIndexes verifies that EnsureSchema issues Fact
+// composite indexes with team_id as the leading key (AC-4).
 func TestEnsureSchema_FactCompositeIndexes(t *testing.T) {
 	ctx := context.Background()
 	client := &recordingClient{}
@@ -275,6 +276,7 @@ func TestEnsureSchema_FactCompositeIndexes(t *testing.T) {
 	wantIndexes := []string{
 		IndexFactProfileStatus,
 		IndexFactProfileSubjectPredicateStatus,
+		IndexFactProfileRecordedAt,
 	}
 
 	for _, idx := range wantIndexes {
