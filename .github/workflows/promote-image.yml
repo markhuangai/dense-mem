@@ -80,6 +80,12 @@ jobs:
         shell: bash
         run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
+      - name: Configure Docker credentials path
+        shell: bash
+        run: |
+          mkdir -p "${RUNNER_TEMP}/.docker"
+          echo "DOCKER_CONFIG=${RUNNER_TEMP}/.docker" >> "$GITHUB_ENV"
+
       - name: Log in to registry
         shell: bash
         env:
