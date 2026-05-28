@@ -420,13 +420,13 @@ func TestBuildDefaultKnowledgeTools_CrossProfileIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get_claim profileB: %v", err)
 	}
-	aProfile, _ := aResult["profile_id"].(string)
-	bProfile, _ := bResult["profile_id"].(string)
+	aProfile, _ := aResult["team_id"].(string)
+	bProfile, _ := bResult["team_id"].(string)
 	if aProfile != "profileA" {
-		t.Errorf("get_claim profileA result has profile_id=%q; want profileA", aProfile)
+		t.Errorf("get_claim profileA result has team_id=%q; want profileA", aProfile)
 	}
 	if bProfile != "profileB" {
-		t.Errorf("get_claim profileB result has profile_id=%q; want profileB", bProfile)
+		t.Errorf("get_claim profileB result has team_id=%q; want profileB", bProfile)
 	}
 	// The cross-profile isolation invariant: B's result must not contain A's data.
 	if bProfile == "profileA" {

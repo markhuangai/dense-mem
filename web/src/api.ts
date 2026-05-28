@@ -1,4 +1,4 @@
-export type Profile = {
+export type Team = {
   id: string;
   name: string;
   description: string;
@@ -8,9 +8,10 @@ export type Profile = {
   updated_at: string;
 };
 
-export type ApiKey = {
+export type TeamProfile = {
   id: string;
-  profile_id: string;
+  team_id: string;
+  name: string;
   key_suffix: string | null;
   rate_limit: number;
   last_used_at: string | null;
@@ -29,21 +30,22 @@ export type Page<T> = {
   pagination: Pagination;
 };
 
-export type CreateProfileInput = {
+export type CreateTeamInput = {
   name: string;
   description: string;
 };
 
-export type UpdateProfileInput = CreateProfileInput;
+export type UpdateTeamInput = CreateTeamInput;
 
-export type CreateApiKeyInput = {
+export type CreateTeamProfileInput = {
+  name: string;
   rate_limit: number;
   expires_at?: string;
 };
 
-export type CreatedApiKey = {
+export type CreatedTeamProfile = {
   api_key: string;
-  key: ApiKey;
+  key: TeamProfile;
 };
 
 export type SecuritySettings = {
@@ -100,32 +102,32 @@ export class ControlApi {
     return this.request<{ authenticated: boolean }>("/session");
   }
 
-  listProfiles(): Promise<Page<Profile>> {
-    return this.request<Page<Profile>>("/profiles");
+  listTeams(): Promise<Page<Team>> {
+    return this.request<Page<Team>>("/teams");
   }
 
-  createProfile(input: CreateProfileInput): Promise<Profile> {
-    return this.requestEnvelope<Profile>("/profiles", { method: "POST", body: input });
+  createTeam(input: CreateTeamInput): Promise<Team> {
+    return this.requestEnvelope<Team>("/teams", { method: "POST", body: input });
   }
 
-  updateProfile(profileId: string, input: UpdateProfileInput): Promise<Profile> {
-    return this.requestEnvelope<Profile>(`/profiles/${profileId}`, { method: "PATCH", body: input });
+  updateTeam(teamId: string, input: UpdateTeamInput): Promise<Team> {
+    return this.requestEnvelope<Team>(`/teams/${teamId}`, { method: "PATCH", body: input });
   }
 
-  deleteProfile(profileId: string): Promise<{ status: string }> {
-    return this.requestEnvelope<{ status: string }>(`/profiles/${profileId}`, { method: "DELETE" });
+  deleteTeam(teamId: string): Promise<{ status: string }> {
+    return this.requestEnvelope<{ status: string }>(`/teams/${teamId}`, { method: "DELETE" });
   }
 
-  listApiKeys(profileId: string): Promise<Page<ApiKey>> {
-    return this.request<Page<ApiKey>>(`/profiles/${profileId}/api-keys`);
+  listTeamProfiles(teamId: string): Promise<Page<TeamProfile>> {
+    return this.request<Page<TeamProfile>>(`/teams/${teamId}/profiles`);
   }
 
-  createApiKey(profileId: string, input: CreateApiKeyInput): Promise<CreatedApiKey> {
-    return this.requestEnvelope<CreatedApiKey>(`/profiles/${profileId}/api-keys`, { method: "POST", body: input });
+  createTeamProfile(teamId: string, input: CreateTeamProfileInput): Promise<CreatedTeamProfile> {
+    return this.requestEnvelope<CreatedTeamProfile>(`/teams/${teamId}/profiles`, { method: "POST", body: input });
   }
 
-  deleteApiKey(profileId: string, keyId: string): Promise<{ status: string }> {
-    return this.requestEnvelope<{ status: string }>(`/profiles/${profileId}/api-keys/${keyId}`, { method: "DELETE" });
+  deleteTeamProfile(teamId: string, profileId: string): Promise<{ status: string }> {
+    return this.requestEnvelope<{ status: string }>(`/teams/${teamId}/profiles/${profileId}`, { method: "DELETE" });
   }
 
   getSecuritySettings(): Promise<SecuritySettings> {

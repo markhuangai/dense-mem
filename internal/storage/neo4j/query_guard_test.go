@@ -198,58 +198,58 @@ func TestQueryGuard_RejectsNetworkProcedures(t *testing.T) {
 	}
 }
 
-// TestQueryGuard_InjectsProfileIdPredicate tests that profile_id predicates are injected.
+// TestQueryGuard_InjectsProfileIdPredicate tests that team_id predicates are injected.
 func TestQueryGuard_InjectsProfileIdPredicate(t *testing.T) {
 	guard := NewQueryGuard()
 
 	tests := []struct {
-		name            string
-		query           string
-		profileID       string
+		name             string
+		query            string
+		profileID        string
 		expectedInResult bool
-		expectError     bool
+		expectError      bool
 	}{
 		{
-			name:            "simple MATCH with RETURN",
-			query:           "MATCH (n:SourceFragment) RETURN n",
-			profileID:       "profile-123",
+			name:             "simple MATCH with RETURN",
+			query:            "MATCH (n:SourceFragment) RETURN n",
+			profileID:        "profile-123",
 			expectedInResult: true,
-			expectError:     false,
+			expectError:      false,
 		},
 		{
-			name:            "MATCH with existing WHERE clause",
-			query:           "MATCH (n:SourceFragment) WHERE n.active = true RETURN n",
-			profileID:       "profile-123",
+			name:             "MATCH with existing WHERE clause",
+			query:            "MATCH (n:SourceFragment) WHERE n.active = true RETURN n",
+			profileID:        "profile-123",
 			expectedInResult: true,
-			expectError:     false,
+			expectError:      false,
 		},
 		{
-			name:            "MATCH with existing profile_id filter",
-			query:           "MATCH (n:SourceFragment) WHERE n.profile_id = $profileId RETURN n",
-			profileID:       "profile-123",
+			name:             "MATCH with existing team_id filter",
+			query:            "MATCH (n:SourceFragment) WHERE n.team_id = $profileId RETURN n",
+			profileID:        "profile-123",
 			expectedInResult: false, // Should not inject since already present
-			expectError:     false,
+			expectError:      false,
 		},
 		{
-			name:            "MATCH with existing literal profile_id",
-			query:           "MATCH (n:SourceFragment) WHERE n.profile_id = 'profile-456' RETURN n",
-			profileID:       "profile-123",
+			name:             "MATCH with existing literal team_id",
+			query:            "MATCH (n:SourceFragment) WHERE n.team_id = 'profile-456' RETURN n",
+			profileID:        "profile-123",
 			expectedInResult: false, // Should not inject since already present
-			expectError:     false,
+			expectError:      false,
 		},
 		{
-			name:            "MATCH with ORDER BY",
-			query:           "MATCH (sf:SourceFragment) RETURN sf ORDER BY sf.created_at",
-			profileID:       "profile-123",
+			name:             "MATCH with ORDER BY",
+			query:            "MATCH (sf:SourceFragment) RETURN sf ORDER BY sf.created_at",
+			profileID:        "profile-123",
 			expectedInResult: true,
-			expectError:     false,
+			expectError:      false,
 		},
 		{
-			name:            "MATCH with LIMIT",
-			query:           "MATCH (f:Fact) RETURN f LIMIT 10",
-			profileID:       "profile-123",
+			name:             "MATCH with LIMIT",
+			query:            "MATCH (f:Fact) RETURN f LIMIT 10",
+			profileID:        "profile-123",
 			expectedInResult: true,
-			expectError:     false,
+			expectError:      false,
 		},
 	}
 
@@ -263,19 +263,19 @@ func TestQueryGuard_InjectsProfileIdPredicate(t *testing.T) {
 			require.NoError(t, err)
 
 			if tt.expectedInResult {
-				// Check that profile_id predicate was injected
-				assert.Contains(t, result, "profile_id", "Result should contain profile_id: %s", result)
+				// Check that team_id predicate was injected
+				assert.Contains(t, result, "team_id", "Result should contain team_id: %s", result)
 				assert.Contains(t, result, tt.profileID, "Result should contain profile ID: %s", result)
 			} else {
-				// Check that query was returned unchanged or has profile_id
-				hasProfileID := strings.Contains(result, "profile_id")
-				assert.True(t, hasProfileID, "Query should have profile_id: %s", result)
+				// Check that query was returned unchanged or has team_id
+				hasProfileID := strings.Contains(result, "team_id")
+				assert.True(t, hasProfileID, "Query should have team_id: %s", result)
 			}
 		})
 	}
 }
 
-// TestQueryGuard_RejectsQueryMissingProfileId tests queries that cannot have profile_id injected safely.
+// TestQueryGuard_RejectsQueryMissingProfileId tests queries that cannot have team_id injected safely.
 func TestQueryGuard_RejectsQueryMissingProfileId(t *testing.T) {
 	guard := NewQueryGuard()
 

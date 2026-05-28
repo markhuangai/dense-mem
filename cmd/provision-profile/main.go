@@ -25,6 +25,8 @@ type cliConfig struct {
 }
 
 type provisionOutput struct {
+	TeamID      string  `json:"team_id"`
+	TeamName    string  `json:"team_name"`
 	ProfileID   string  `json:"profile_id"`
 	ProfileName string  `json:"profile_name"`
 	APIKey      string  `json:"api_key"`
@@ -79,22 +81,23 @@ func run(args []string, stdout, stderr io.Writer) error {
 	defer services.Close()
 
 	correlationID := operatorcli.CorrelationID()
-	profile, err := services.ProfileService.Create(ctx, service.CreateProfileRequest{
+	team, err := services.ProfileService.Create(ctx, service.CreateProfileRequest{
 		Name:        cfg.name,
 		Description: cfg.description,
 		Metadata:    metadata,
 		Config:      configMap,
 	}, nil, operatorcli.DefaultActorRole, operatorcli.DefaultClientIP, correlationID)
 	if err != nil {
-		return fmt.Errorf("create profile: %w", err)
+		return fmt.Errorf("create team: %w", err)
 	}
 
-	_, rawKey, err := services.APIKeyService.CreateStandardKey(ctx, profile.ID, service.CreateAPIKeyRequest{
+	teamProfile, rawKey, err := services.APIKeyService.CreateStandardKey(ctx, team.ID, service.CreateAPIKeyRequest{
+		Name:      "default profile",
 		RateLimit: cfg.rateLimit,
 		ExpiresAt: expiresAt,
 	}, nil, operatorcli.DefaultActorRole, operatorcli.DefaultClientIP, correlationID)
 	if err != nil {
-		cleanupErr := services.ProfileService.Delete(ctx, profile.ID, nil, operatorcli.DefaultActorRole, operatorcli.DefaultClientIP, correlationID)
+		cleanupErr := services.ProfileService.Delete(ctx, team.ID, nil, operatorcli.DefaultActorRole, operatorcli.DefaultClientIP, correlationID)
 		if cleanupErr != nil {
 			return fmt.Errorf("create api key: %w (cleanup failed: %v)", err, cleanupErr)
 		}
@@ -110,8 +113,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(provisionOutput{
-		ProfileID:   profile.ID.String(),
-		ProfileName: profile.Name,
+		TeamID:      team.ID.String(),
+		TeamName:    team.Name,
+		ProfileID:   teamProfile.ID.String(),
+		ProfileName: teamProfile.GetProfileName(),
 		APIKey:      rawKey,
 		ExpiresAt:   expiresAtStr,
 	})
@@ -120,13 +125,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 func parseCLI(args []string, stderr io.Writer) (cliConfig, error) {
 	var cfg cliConfig
 
-	fs := flag.NewFlagSet("provision-profile", flag.ContinueOnError)
+	fs := flag.NewFlagSet("provision-team", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
-	fs.StringVar(&cfg.name, "name", "", "Profile name (required)")
-	fs.StringVar(&cfg.description, "description", "", "Profile description")
-	fs.StringVar(&cfg.metadataJSON, "metadata-json", "", "Optional profile metadata JSON object")
-	fs.StringVar(&cfg.configJSON, "config-json", "", "Optional profile config JSON object")
+	fs.StringVar(&cfg.name, "name", "", "Team name (required)")
+	fs.StringVar(&cfg.description, "description", "", "Team description")
+	fs.StringVar(&cfg.metadataJSON, "metadata-json", "", "Optional team metadata JSON object")
+	fs.StringVar(&cfg.configJSON, "config-json", "", "Optional team config JSON object")
 	fs.IntVar(&cfg.rateLimit, "rate-limit", 0, "Per-key rate limit override")
 	fs.StringVar(&cfg.expiresAt, "expires-at", "", "Optional RFC3339 expiration for the generated key")
 

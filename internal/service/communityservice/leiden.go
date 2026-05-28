@@ -73,7 +73,7 @@ var _ DetectCommunityService = (*leidenServiceImpl)(nil)
 // advisory locks (db) and Neo4j GDS (neo4jClient).
 //
 // Profile isolation: every GDS operation is scoped to a graph name that
-// embeds profileID, and Cypher projections filter by n.profile_id = $profileId
+// embeds profileID, and Cypher projections filter by n.team_id = $profileId
 // so communities from different profiles are never mixed.
 func NewLeidenService(
 	db *gorm.DB,
@@ -241,20 +241,20 @@ func (l *pgCommunityLocker) WithCommunityLock(
 // ---------------------------------------------------------------------------
 
 // Cypher queries used by neo4jLeidenQuerier are declared as constants so they
-// are visible to reviewers and auditable for profile_id filter presence.
+// are visible to reviewers and auditable for team_id filter presence.
 // Both queries carry $profileId as a GDS parameter, enforcing the profile
 // isolation invariant at the database level.
 const (
 	// leidenNodeQuery selects SourceFragment, Claim, and Fact nodes that
 	// belong to the given profile. Passed as the nodeQuery argument to GDS
 	// projection procedures; $profileId is supplied via the parameters map.
-	leidenNodeQuery = "MATCH (n) WHERE n.profile_id = $profileId AND (n:SourceFragment OR n:Claim OR n:Fact) RETURN id(n) AS id"
+	leidenNodeQuery = "MATCH (n) WHERE n.team_id = $profileId AND (n:SourceFragment OR n:Claim OR n:Fact) RETURN id(n) AS id"
 
 	// leidenRelQuery selects only relationships whose source and target both
 	// belong to the same profile, preventing cross-profile edges from leaking
 	// into the projection. Community detection only depends on connectivity,
 	// so the relationship type is normalized for later undirected mutation.
-	leidenRelQuery = "MATCH (s)-[r]->(t) WHERE s.profile_id = $profileId AND t.profile_id = $profileId RETURN id(s) AS source, id(t) AS target, 'RELATED' AS type"
+	leidenRelQuery = "MATCH (s)-[r]->(t) WHERE s.team_id = $profileId AND t.team_id = $profileId RETURN id(s) AS source, id(t) AS target, 'RELATED' AS type"
 )
 
 // neo4jLeidenQuerier implements leidenQuerier using a real Neo4j GDS client.

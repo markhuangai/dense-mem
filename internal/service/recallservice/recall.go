@@ -18,7 +18,7 @@
 // and make the degradation invisible to callers (AC-40).
 //
 // The query embedding is used only within Recall and is never persisted
-// (AC-40). Branch results are post-filtered by profile_id as defense in
+// (AC-40). Branch results are post-filtered by team_id as defense in
 // depth, even though each branch already enforces the filter at the query
 // layer. Only SourceFragment-typed hits are kept (AC-39).
 package recallservice

@@ -24,14 +24,14 @@ func TestRejectMissingProfileId(t *testing.T) {
 		{
 			name: "ScopedRead rejects empty profileID",
 			call: func() error {
-				_, _, err := enforcer.ScopedRead(ctx, "", "MATCH (n) WHERE n.profile_id = $profileId RETURN n", nil)
+				_, _, err := enforcer.ScopedRead(ctx, "", "MATCH (n) WHERE n.team_id = $profileId RETURN n", nil)
 				return err
 			},
 		},
 		{
 			name: "ScopedWrite rejects empty profileID",
 			call: func() error {
-				_, err := enforcer.ScopedWrite(ctx, "", "CREATE (n:Node {profile_id: $profileId})", nil)
+				_, err := enforcer.ScopedWrite(ctx, "", "CREATE (n:Node {team_id: $profileId})", nil)
 				return err
 			},
 		},
@@ -52,7 +52,7 @@ func TestRejectProfileParamOverride(t *testing.T) {
 
 	enforcer := NewProfileScopeEnforcer(nil)
 
-	queryWithPlaceholder := "MATCH (n) WHERE n.profile_id = $profileId RETURN n"
+	queryWithPlaceholder := "MATCH (n) WHERE n.team_id = $profileId RETURN n"
 
 	tests := []struct {
 		name  string
@@ -72,7 +72,7 @@ func TestRejectProfileParamOverride(t *testing.T) {
 			name: "ScopedWrite rejects caller-supplied profileId",
 			call: func() error {
 				params := map[string]any{"profileId": "caller-value"}
-				_, err := enforcer.ScopedWrite(ctx, "profile-123", "CREATE (n:Node {profile_id: $profileId})", params)
+				_, err := enforcer.ScopedWrite(ctx, "profile-123", "CREATE (n:Node {team_id: $profileId})", params)
 				return err
 			},
 			param: "profileId",
@@ -99,7 +99,7 @@ func TestRejectProfileParamOverride(t *testing.T) {
 			name: "ScopedWrite allows different-casing key (PROFILEID) alongside profileId injection",
 			call: func() error {
 				params := map[string]any{"PROFILEID": "caller-value"}
-				_, err := enforcer.ScopedWrite(ctx, "profile-123", "CREATE (n:Node {profile_id: $profileId})", params)
+				_, err := enforcer.ScopedWrite(ctx, "profile-123", "CREATE (n:Node {team_id: $profileId})", params)
 				return err
 			},
 			param: "PROFILEID",
@@ -158,28 +158,28 @@ func TestRejectQueryWithoutProfilePlaceholder(t *testing.T) {
 		{
 			name: "ScopedRead rejects query with wrong placeholder format (:profileId)",
 			call: func() error {
-				_, _, err := enforcer.ScopedRead(ctx, "profile-123", "MATCH (n) WHERE n.profile_id = :profileId RETURN n", nil)
+				_, _, err := enforcer.ScopedRead(ctx, "profile-123", "MATCH (n) WHERE n.team_id = :profileId RETURN n", nil)
 				return err
 			},
 		},
 		{
-			name: "ScopedRead rejects query with literal profile_id but no placeholder",
+			name: "ScopedRead rejects query with literal team_id but no placeholder",
 			call: func() error {
-				_, _, err := enforcer.ScopedRead(ctx, "profile-123", "MATCH (n) WHERE n.profile_id = 'literal-value' RETURN n", nil)
+				_, _, err := enforcer.ScopedRead(ctx, "profile-123", "MATCH (n) WHERE n.team_id = 'literal-value' RETURN n", nil)
 				return err
 			},
 		},
 		{
 			name: "ScopedRead rejects query with profileId without dollar sign",
 			call: func() error {
-				_, _, err := enforcer.ScopedRead(ctx, "profile-123", "MATCH (n) WHERE n.profile_id = profileId RETURN n", nil)
+				_, _, err := enforcer.ScopedRead(ctx, "profile-123", "MATCH (n) WHERE n.team_id = profileId RETURN n", nil)
 				return err
 			},
 		},
 		{
 			name: "ScopedRead rejects query with {profileId} format",
 			call: func() error {
-				_, _, err := enforcer.ScopedRead(ctx, "profile-123", "MATCH (n) WHERE n.profile_id = {profileId} RETURN n", nil)
+				_, _, err := enforcer.ScopedRead(ctx, "profile-123", "MATCH (n) WHERE n.team_id = {profileId} RETURN n", nil)
 				return err
 			},
 		},
@@ -294,7 +294,7 @@ func TestScopedReadInjectsProfileId(t *testing.T) {
 	// Test that params are prepared correctly for various input scenarios
 	t.Run("validation passes and profileId is injected", func(t *testing.T) {
 		profileID := "test-profile-456"
-		query := "MATCH (n:User) WHERE n.profile_id = $profileId RETURN n"
+		query := "MATCH (n:User) WHERE n.team_id = $profileId RETURN n"
 
 		// Test with nil params
 		params, err := enforcer.validateAndPrepare(profileID, query, nil)
@@ -342,7 +342,7 @@ func TestScopedWriteInjectsProfileId(t *testing.T) {
 
 	t.Run("validation passes and profileId is injected", func(t *testing.T) {
 		profileID := "test-profile-789"
-		query := "CREATE (n:User {profile_id: $profileId, name: $name})"
+		query := "CREATE (n:User {team_id: $profileId, name: $name})"
 
 		params, err := enforcer.validateAndPrepare(profileID, query, map[string]any{"name": "Alice"})
 		require.NoError(t, err)
@@ -511,13 +511,13 @@ func TestScopedWriteTx_CrossProfileIsolation(t *testing.T) {
 		// Caller cannot substitute a different profileId to access profile-B's data.
 		params := map[string]any{"profileId": "profile-B"}
 		_, err := RunScoped(ctx, nil, "profile-A",
-			"MATCH (n {profile_id: $profileId}) RETURN n", params)
+			"MATCH (n {team_id: $profileId}) RETURN n", params)
 		require.ErrorIs(t, err, ErrProfileParamOverride)
 	})
 
 	t.Run("RunScoped rejects empty profileID", func(t *testing.T) {
 		_, err := RunScoped(ctx, nil, "",
-			"MATCH (n {profile_id: $profileId}) RETURN n", nil)
+			"MATCH (n {team_id: $profileId}) RETURN n", nil)
 		require.ErrorIs(t, err, ErrEmptyProfileID)
 	})
 
@@ -539,7 +539,7 @@ func TestScopedWriteTx_CrossProfileIsolation(t *testing.T) {
 		// non-overlapping profileId values so the graph engine cannot confuse them.
 		eA := &profileScopeEnforcer{}
 		eB := &profileScopeEnforcer{}
-		query := "MATCH (n {profile_id: $profileId}) RETURN n"
+		query := "MATCH (n {team_id: $profileId}) RETURN n"
 
 		paramsA, err := eA.validateAndPrepare("profile-A", query, nil)
 		require.NoError(t, err)

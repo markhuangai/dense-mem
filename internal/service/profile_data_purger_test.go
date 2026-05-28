@@ -30,7 +30,7 @@ func TestNeo4jProfileDataPurgerPurgesRelationshipsAndNodesByProfile(t *testing.T
 	require.NoError(t, err)
 	require.Len(t, writer.queries, 2)
 	require.Equal(t, []string{"profile-123", "profile-123"}, writer.profileIDs)
-	require.Contains(t, strings.Join(writer.queries, "\n"), "r.profile_id = $profileId")
-	require.Contains(t, strings.Join(writer.queries, "\n"), "n.profile_id = $profileId")
+	require.Contains(t, strings.Join(writer.queries, "\n"), "r.team_id = $profileId")
+	require.Contains(t, strings.Join(writer.queries, "\n"), "n.team_id = $profileId")
 	require.Contains(t, strings.Join(writer.queries, "\n"), "DETACH DELETE n")
 }

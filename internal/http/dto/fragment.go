@@ -31,24 +31,27 @@ type CreateFragmentRequest struct {
 // Both "id" and "fragment_id" are emitted with the same value: "id" for backward
 // compatibility (AC-41) and "fragment_id" for UAT-02/UAT-03 contract requirements.
 type FragmentResponse struct {
-	ID                  string         `json:"id"`
-	FragmentID          string         `json:"fragment_id"` // alias of ID; required by UAT-02/UAT-03
-	Content             string         `json:"content"`
-	SourceType          string         `json:"source_type"`
-	Source              string         `json:"source,omitempty"`
-	Authority           string         `json:"authority,omitempty"`
-	Labels              []string       `json:"labels,omitempty"`
-	Metadata            map[string]any `json:"metadata,omitempty"`
-	ContentHash         string         `json:"content_hash"`
-	IdempotencyKey      string         `json:"idempotency_key,omitempty"`
-	EmbeddingModel      string         `json:"embedding_model"`
-	EmbeddingDimensions int            `json:"embedding_dimensions"`
-	SourceQuality       float64        `json:"source_quality"`
-	Classification      map[string]any `json:"classification,omitempty"`
-	Status              string         `json:"status,omitempty"`
-	RecordedTo          *time.Time     `json:"recorded_to,omitempty"`
-	CreatedAt           time.Time      `json:"created_at"`
-	UpdatedAt           time.Time      `json:"updated_at"`
+	ID                   string         `json:"id"`
+	FragmentID           string         `json:"fragment_id"` // alias of ID; required by UAT-02/UAT-03
+	TeamID               string         `json:"team_id,omitempty"`
+	CreatedByProfileID   string         `json:"created_by_profile_id,omitempty"`
+	CreatedByProfileName string         `json:"created_by_profile_name,omitempty"`
+	Content              string         `json:"content"`
+	SourceType           string         `json:"source_type"`
+	Source               string         `json:"source,omitempty"`
+	Authority            string         `json:"authority,omitempty"`
+	Labels               []string       `json:"labels,omitempty"`
+	Metadata             map[string]any `json:"metadata,omitempty"`
+	ContentHash          string         `json:"content_hash"`
+	IdempotencyKey       string         `json:"idempotency_key,omitempty"`
+	EmbeddingModel       string         `json:"embedding_model"`
+	EmbeddingDimensions  int            `json:"embedding_dimensions"`
+	SourceQuality        float64        `json:"source_quality"`
+	Classification       map[string]any `json:"classification,omitempty"`
+	Status               string         `json:"status,omitempty"`
+	RecordedTo           *time.Time     `json:"recorded_to,omitempty"`
+	CreatedAt            time.Time      `json:"created_at"`
+	UpdatedAt            time.Time      `json:"updated_at"`
 }
 
 // ListFragmentsRequest represents query parameters for listing fragments.

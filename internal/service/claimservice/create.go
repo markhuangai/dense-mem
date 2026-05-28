@@ -8,6 +8,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/claimidentity"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentcodec"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -74,14 +75,14 @@ func NewCreateClaimService(
 // createClaimCypher persists a Claim node and one SUPPORTED_BY edge per
 // supporting fragment in a single atomic write.
 //
-// MERGE on (profile_id, claim_id) makes the write race-safe: concurrent
+// MERGE on (team_id, claim_id) makes the write race-safe: concurrent
 // requests that derive the same deterministic claim_id will converge on one
 // node rather than producing duplicates.  ON CREATE SET populates all fields
 // only when the node is first written — a matched (already-existing) node is
 // left untouched.
 //
 // UNWIND $edges creates one SUPPORTED_BY relationship per fragment entry.
-// Each edge carries profile_id and fragment_id for isolation enforcement and
+// Each edge carries team_id and fragment_id for isolation enforcement and
 // fast index scans, plus extracted_at and extract_conf as provenance metadata.
 // When $edges is empty the UNWIND produces zero rows and no edges are written,
 // but the Claim node MERGE has already committed.
@@ -89,7 +90,7 @@ func NewCreateClaimService(
 // Profile isolation: $profileId is injected automatically by ScopedWrite.
 // Callers MUST NOT include profileId in the params map.
 const createClaimCypher = `
-MERGE (c:Claim {profile_id: $profileId, claim_id: $claimId})
+MERGE (c:Claim {team_id: $profileId, claim_id: $claimId})
 ON CREATE SET
     c.subject                        = $subject,
     c.predicate                      = $predicate,
@@ -114,11 +115,13 @@ ON CREATE SET
     c.idempotency_key                = $idempotencyKey,
     c.classification_json            = $classificationJSON,
     c.classification_lattice_version = $classificationLatticeVersion,
+    c.created_by_profile_id          = $createdByProfileId,
+    c.created_by_profile_name        = $createdByProfileName,
     c.supported_by                   = $supportedBy
 WITH c
 UNWIND $edges AS edge
-MATCH (sf:SourceFragment {profile_id: $profileId, fragment_id: edge.fragment_id})
-MERGE (c)-[r:SUPPORTED_BY {profile_id: $profileId, fragment_id: edge.fragment_id}]->(sf)
+MATCH (sf:SourceFragment {team_id: $profileId, fragment_id: edge.fragment_id})
+MERGE (c)-[r:SUPPORTED_BY {team_id: $profileId, fragment_id: edge.fragment_id}]->(sf)
 ON CREATE SET
     r.extracted_at = edge.extracted_at,
     r.extract_conf = edge.extract_conf,
@@ -221,6 +224,13 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 
 	// Step 7: compute defaults.
 	now := time.Now().UTC()
+	actor, hasActor := requestctx.ActorProfileFromContext(ctx)
+	creatorID := ""
+	creatorName := ""
+	if hasActor {
+		creatorID = actor.ProfileID.String()
+		creatorName = actor.ProfileName
+	}
 
 	// Merged classification is map[string]string from the lattice; convert to
 	// map[string]any because domain.Claim.Classification is typed that way.
@@ -230,8 +240,10 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 	}
 
 	newClaim := &domain.Claim{
-		ClaimID:   claimID,
-		ProfileID: profileID,
+		ClaimID:              claimID,
+		ProfileID:            profileID,
+		CreatedByProfileID:   creatorID,
+		CreatedByProfileName: creatorName,
 		// Semantic triple from the caller.
 		Subject:   claim.Subject,
 		Predicate: claim.Predicate,
@@ -287,7 +299,7 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 	//   - extract_conf — confidence score from the extraction pipeline
 	//
 	// Profile isolation on the relationship is enforced by the $profileId
-	// injection in ScopedWrite, which also populates the profile_id property
+	// injection in ScopedWrite, which also populates the team_id property
 	// written by the ON CREATE SET clause in createClaimCypher.
 	edges := make([]map[string]any, 0, len(support.Fragments))
 	for _, frag := range support.Fragments {
@@ -342,6 +354,8 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 		"idempotencyKey":               newClaim.IdempotencyKey,
 		"classificationJSON":           classificationJSON,
 		"classificationLatticeVersion": newClaim.ClassificationLatticeVersion,
+		"createdByProfileId":           newClaim.CreatedByProfileID,
+		"createdByProfileName":         newClaim.CreatedByProfileName,
 		"supportedBy":                  newClaim.SupportedBy,
 		// edges drives the UNWIND ... MERGE for SUPPORTED_BY relationships.
 		"edges": edges,
@@ -369,14 +383,14 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 			// Raw text intentionally excluded from the audit payload.
 			AfterPayload: map[string]any{
 				"claim_id":     claimID,
-				"profile_id":   profileID,
+				"team_id":      profileID,
 				"content_hash": contentHash,
 				"status":       string(domain.StatusCandidate),
 			},
 		}
 		if auditErr := s.audit.Append(ctx, entry); auditErr != nil && s.logger != nil {
 			s.logger.Warn("audit emit failed for claim.create",
-				slog.String("profile_id", profileID),
+				slog.String("team_id", profileID),
 				slog.String("claim_id", claimID),
 				slog.String("error", auditErr.Error()),
 			)

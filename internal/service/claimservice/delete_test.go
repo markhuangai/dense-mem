@@ -19,16 +19,16 @@ type stubDeleteResultSummary struct {
 	nodesDeleted int
 }
 
-func (s *stubDeleteResultSummary) Server() neo4j.ServerInfo                     { return nil }
-func (s *stubDeleteResultSummary) Query() neo4j.Query                           { return nil }
-func (s *stubDeleteResultSummary) StatementType() neo4j.StatementType           { return 0 }
-func (s *stubDeleteResultSummary) Plan() neo4j.Plan                             { return nil }
-func (s *stubDeleteResultSummary) Profile() neo4j.ProfiledPlan                  { return nil }
-func (s *stubDeleteResultSummary) Notifications() []neo4j.Notification          { return nil }
-func (s *stubDeleteResultSummary) GqlStatusObjects() []neo4j.GqlStatusObject    { return nil }
-func (s *stubDeleteResultSummary) ResultAvailableAfter() time.Duration          { return 0 }
-func (s *stubDeleteResultSummary) ResultConsumedAfter() time.Duration           { return 0 }
-func (s *stubDeleteResultSummary) Database() neo4j.DatabaseInfo                 { return nil }
+func (s *stubDeleteResultSummary) Server() neo4j.ServerInfo                  { return nil }
+func (s *stubDeleteResultSummary) Query() neo4j.Query                        { return nil }
+func (s *stubDeleteResultSummary) StatementType() neo4j.StatementType        { return 0 }
+func (s *stubDeleteResultSummary) Plan() neo4j.Plan                          { return nil }
+func (s *stubDeleteResultSummary) Profile() neo4j.ProfiledPlan               { return nil }
+func (s *stubDeleteResultSummary) Notifications() []neo4j.Notification       { return nil }
+func (s *stubDeleteResultSummary) GqlStatusObjects() []neo4j.GqlStatusObject { return nil }
+func (s *stubDeleteResultSummary) ResultAvailableAfter() time.Duration       { return 0 }
+func (s *stubDeleteResultSummary) ResultConsumedAfter() time.Duration        { return 0 }
+func (s *stubDeleteResultSummary) Database() neo4j.DatabaseInfo              { return nil }
 func (s *stubDeleteResultSummary) Counters() neo4j.Counters {
 	return &stubDeleteCounters{nodesDeleted: s.nodesDeleted}
 }
@@ -41,19 +41,19 @@ type stubDeleteCounters struct {
 	nodesDeleted int
 }
 
-func (c *stubDeleteCounters) ContainsUpdates() bool     { return c.nodesDeleted > 0 }
-func (c *stubDeleteCounters) NodesCreated() int         { return 0 }
-func (c *stubDeleteCounters) NodesDeleted() int         { return c.nodesDeleted }
-func (c *stubDeleteCounters) RelationshipsCreated() int { return 0 }
-func (c *stubDeleteCounters) RelationshipsDeleted() int { return 0 }
-func (c *stubDeleteCounters) PropertiesSet() int        { return 0 }
-func (c *stubDeleteCounters) LabelsAdded() int          { return 0 }
-func (c *stubDeleteCounters) LabelsRemoved() int        { return 0 }
-func (c *stubDeleteCounters) IndexesAdded() int         { return 0 }
-func (c *stubDeleteCounters) IndexesRemoved() int       { return 0 }
-func (c *stubDeleteCounters) ConstraintsAdded() int     { return 0 }
-func (c *stubDeleteCounters) ConstraintsRemoved() int   { return 0 }
-func (c *stubDeleteCounters) SystemUpdates() int        { return 0 }
+func (c *stubDeleteCounters) ContainsUpdates() bool       { return c.nodesDeleted > 0 }
+func (c *stubDeleteCounters) NodesCreated() int           { return 0 }
+func (c *stubDeleteCounters) NodesDeleted() int           { return c.nodesDeleted }
+func (c *stubDeleteCounters) RelationshipsCreated() int   { return 0 }
+func (c *stubDeleteCounters) RelationshipsDeleted() int   { return 0 }
+func (c *stubDeleteCounters) PropertiesSet() int          { return 0 }
+func (c *stubDeleteCounters) LabelsAdded() int            { return 0 }
+func (c *stubDeleteCounters) LabelsRemoved() int          { return 0 }
+func (c *stubDeleteCounters) IndexesAdded() int           { return 0 }
+func (c *stubDeleteCounters) IndexesRemoved() int         { return 0 }
+func (c *stubDeleteCounters) ConstraintsAdded() int       { return 0 }
+func (c *stubDeleteCounters) ConstraintsRemoved() int     { return 0 }
+func (c *stubDeleteCounters) SystemUpdates() int          { return 0 }
 func (c *stubDeleteCounters) ContainsSystemUpdates() bool { return false }
 
 // Compile-time check: stubDeleteCounters satisfies neo4j.Counters.
@@ -64,7 +64,7 @@ var _ neo4j.Counters = (*stubDeleteCounters)(nil)
 // existingClaims maps profileID to the set of claimIDs that exist in that
 // profile. ScopedWrite returns nodesDeleted=1 when the claim exists and removes
 // it from the set; returns nodesDeleted=0 when absent. This mirrors the Neo4j
-// MATCH ... DETACH DELETE semantics scoped by profile_id.
+// MATCH ... DETACH DELETE semantics scoped by team_id.
 type stubProfileDeleteWriter struct {
 	// existingClaims maps profileID → set of claimIDs present in that profile.
 	existingClaims map[string]map[string]bool
@@ -180,9 +180,9 @@ func TestDeleteClaim_CrossProfileIsolation(t *testing.T) {
 	const profileB = "00000000-0000-0000-0000-000000000002"
 	const claimID = "claim-isolation-001"
 
-	// The stub models Neo4j's profile_id scoping: ScopedWrite only deletes
+	// The stub models Neo4j's team_id scoping: ScopedWrite only deletes
 	// claims registered under the given profileID. Profile B cannot delete
-	// profile A's claim because the MATCH filter on profile_id prevents it.
+	// profile A's claim because the MATCH filter on team_id prevents it.
 	writer := &stubProfileDeleteWriter{
 		existingClaims: map[string]map[string]bool{
 			profileA: {claimID: true}, // claim belongs to profile A only

@@ -38,8 +38,12 @@ func (s FactStatus) IsValid() bool {
 // omit or zero-out ProfileID when constructing a Fact.
 type Fact struct {
 	// Identity / scope
-	FactID    string `json:"fact_id"`
-	ProfileID string `json:"profile_id"`
+	FactID                string `json:"fact_id"`
+	ProfileID             string `json:"team_id"`
+	CreatedByProfileID    string `json:"created_by_profile_id,omitempty"`
+	CreatedByProfileName  string `json:"created_by_profile_name,omitempty"`
+	PromotedByProfileID   string `json:"promoted_by_profile_id,omitempty"`
+	PromotedByProfileName string `json:"promoted_by_profile_name,omitempty"`
 
 	// Semantic triple (preserved from the promoting Claim)
 	Subject   string `json:"subject"`

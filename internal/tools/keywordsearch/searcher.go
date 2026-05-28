@@ -31,7 +31,7 @@ func NewFragmentSearcher(reader ScopedReaderInterface) FragmentSearcherInterface
 }
 
 // SearchContent performs full-text search on SourceFragment content.
-// Results are filtered by profile_id and retract status in the Cypher query.
+// Results are filtered by team_id and retract status in the Cypher query.
 func (s *neo4jFragmentSearcher) SearchContent(ctx context.Context, profileID string, query string, labels []string, limit int) ([]FragmentSearchResult, error) {
 	// Adapt FragmentActiveFilter (which uses the sf. node alias) to the f. alias used here.
 	// This excludes retracted SourceFragment nodes; legacy nodes without a status property
@@ -39,7 +39,7 @@ func (s *neo4jFragmentSearcher) SearchContent(ctx context.Context, profileID str
 	fragmentActive := strings.ReplaceAll(neo4jstore.FragmentActiveFilter, "sf.", "f.")
 
 	// Build the base WHERE clause: profile isolation + retract filter.
-	baseWhere := "f.profile_id = $profileId AND " + fragmentActive
+	baseWhere := "f.team_id = $profileId AND " + fragmentActive
 
 	// Optionally extend with label filter — appended as a separate AND condition so
 	// the label values remain a Cypher parameter (prevents injection, AC-6).
@@ -52,7 +52,7 @@ func (s *neo4jFragmentSearcher) SearchContent(ctx context.Context, profileID str
 	// Uses db.index.fulltext.queryNodes for content search.
 	cypherQuery := `CALL db.index.fulltext.queryNodes('fragment_content_idx', $searchQuery) YIELD node AS f, score
 WHERE ` + whereClause + `
-RETURN f.fragment_id AS fragment_id, f.content AS content, f.labels AS labels, f.metadata AS metadata, f.profile_id AS profile_id, score
+RETURN f.fragment_id AS fragment_id, f.content AS content, f.labels AS labels, f.metadata AS metadata, f.team_id AS team_id, score
 LIMIT $limit`
 
 	// Build params
@@ -81,7 +81,7 @@ LIMIT $limit`
 			Score:      getFloat64Val(row, "score"),
 			Labels:     getLabels(row, "labels"),
 			Metadata:   getMetadata(row, "metadata"),
-			ProfileID:  getString(row, "profile_id"),
+			ProfileID:  getString(row, "team_id"),
 		}
 	}
 
@@ -102,14 +102,14 @@ func NewFactSearcher(reader ScopedReaderInterface) FactSearcherInterface {
 }
 
 // SearchPredicate performs full-text search on Fact predicates.
-// Results are filtered by profile_id in the Cypher query.
+// Results are filtered by team_id in the Cypher query.
 func (s *neo4jFactSearcher) SearchPredicate(ctx context.Context, profileID string, query string, labels []string, limit int) ([]FactSearchResult, error) {
 	// Build the Cypher query with full-text index search
 	// Uses db.index.fulltext.queryNodes for predicate search — fact_predicate_idx is a node index on Fact.predicate
 	cypherQuery := `
 		CALL db.index.fulltext.queryNodes('fact_predicate_idx', $searchQuery) YIELD node AS r, score
-		WHERE r.profile_id = $profileId
-		RETURN r.fact_id AS fact_id, r.predicate AS predicate, r.labels AS labels, r.metadata AS metadata, r.profile_id AS profile_id,
+		WHERE r.team_id = $profileId
+		RETURN r.fact_id AS fact_id, r.predicate AS predicate, r.labels AS labels, r.metadata AS metadata, r.team_id AS team_id,
 		       r.valid_from AS valid_from, r.valid_to AS valid_to, r.recorded_at AS recorded_at, r.recorded_to AS recorded_to, score
 		LIMIT $limit
 	`
@@ -122,8 +122,8 @@ func (s *neo4jFactSearcher) SearchPredicate(ctx context.Context, profileID strin
 
 	// Add label filter if specified — values are passed as a parameter to prevent Cypher injection
 	if len(labels) > 0 {
-		cypherQuery = strings.Replace(cypherQuery, "WHERE r.profile_id = $profileId",
-			"WHERE r.profile_id = $profileId AND ANY(label IN $labels WHERE label IN r.labels)", 1)
+		cypherQuery = strings.Replace(cypherQuery, "WHERE r.team_id = $profileId",
+			"WHERE r.team_id = $profileId AND ANY(label IN $labels WHERE label IN r.labels)", 1)
 		params["labels"] = labels
 	}
 
@@ -142,7 +142,7 @@ func (s *neo4jFactSearcher) SearchPredicate(ctx context.Context, profileID strin
 			Score:      getFloat64Val(row, "score"),
 			Labels:     getLabels(row, "labels"),
 			Metadata:   getMetadata(row, "metadata"),
-			ProfileID:  getString(row, "profile_id"),
+			ProfileID:  getString(row, "team_id"),
 			ValidFrom:  getTimePtr(row, "valid_from"),
 			ValidTo:    getTimePtr(row, "valid_to"),
 			RecordedAt: getTimeVal(row, "recorded_at"),

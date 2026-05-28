@@ -28,7 +28,7 @@ func (p *neo4jProfileDataPurger) PurgeProfileData(ctx context.Context, profileID
 
 	if _, err := p.writer.ScopedWrite(ctx, profileID, `
 		MATCH ()-[r]-()
-		WHERE r.profile_id = $profileId
+		WHERE r.team_id = $profileId
 		DELETE r
 	`, nil); err != nil {
 		return fmt.Errorf("purge profile relationships: %w", err)
@@ -36,7 +36,7 @@ func (p *neo4jProfileDataPurger) PurgeProfileData(ctx context.Context, profileID
 
 	if _, err := p.writer.ScopedWrite(ctx, profileID, `
 		MATCH (n)
-		WHERE n.profile_id = $profileId
+		WHERE n.team_id = $profileId
 		DETACH DELETE n
 	`, nil); err != nil {
 		return fmt.Errorf("purge profile nodes: %w", err)

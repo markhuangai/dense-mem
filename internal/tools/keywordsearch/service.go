@@ -22,7 +22,7 @@ type SearchHit struct {
 	Score     float64        `json:"score"`
 	Labels    []string       `json:"labels"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
-	ProfileID string         `json:"profile_id"` // For defense-in-depth post-filter
+	ProfileID string         `json:"team_id"` // For defense-in-depth post-filter
 }
 
 // KeywordSearchRequest represents the request for keyword search.
@@ -158,7 +158,7 @@ type FragmentSearchResult struct {
 	Score      float64        `json:"score"`
 	Labels     []string       `json:"labels"`
 	Metadata   map[string]any `json:"metadata"`
-	ProfileID  string         `json:"profile_id"`
+	ProfileID  string         `json:"team_id"`
 }
 
 // FactSearchResult represents a result from Fact predicate full-text search.
@@ -168,7 +168,7 @@ type FactSearchResult struct {
 	Score      float64        `json:"score"`
 	Labels     []string       `json:"labels"`
 	Metadata   map[string]any `json:"metadata"`
-	ProfileID  string         `json:"profile_id"`
+	ProfileID  string         `json:"team_id"`
 	ValidFrom  *time.Time     `json:"valid_from,omitempty"`
 	ValidTo    *time.Time     `json:"valid_to,omitempty"`
 	RecordedAt time.Time      `json:"recorded_at"`
@@ -252,13 +252,13 @@ func (s *keywordSearchService) Search(ctx context.Context, profileID string, req
 		return nil, NewValidationError("profile ID is required")
 	}
 
-	// Search SourceFragment content (filtered by profile_id in Cypher)
+	// Search SourceFragment content (filtered by team_id in Cypher)
 	fragmentResults, err := s.fragmentSearcher.SearchContent(ctx, profileID, req.Query, req.Labels, limitApplied)
 	if err != nil {
 		return nil, err
 	}
 
-	// Search Fact predicates (filtered by profile_id in Cypher)
+	// Search Fact predicates (filtered by team_id in Cypher)
 	factResults, err := s.factSearcher.SearchPredicate(ctx, profileID, req.Query, req.Labels, limitApplied)
 	if err != nil {
 		return nil, err
@@ -269,7 +269,7 @@ func (s *keywordSearchService) Search(ctx context.Context, profileID string, req
 
 	// Convert fragment results with post-filter
 	for _, fr := range fragmentResults {
-		// Defense-in-depth: post-filter by profile_id in Go
+		// Defense-in-depth: post-filter by team_id in Go
 		if fr.ProfileID != profileID {
 			continue // Skip results from other profiles
 		}
@@ -290,7 +290,7 @@ func (s *keywordSearchService) Search(ctx context.Context, profileID string, req
 
 	// Convert fact results with post-filter
 	for _, fr := range factResults {
-		// Defense-in-depth: post-filter by profile_id in Go
+		// Defense-in-depth: post-filter by team_id in Go
 		if fr.ProfileID != profileID {
 			continue // Skip results from other profiles
 		}

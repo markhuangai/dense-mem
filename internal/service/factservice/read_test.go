@@ -15,7 +15,7 @@ import (
 //
 // Rows are keyed by profileID to model Neo4j's profile-scoped isolation:
 // ScopedRead returns only the rows registered for the given profile, mirroring
-// the {profile_id: $profileId} filter in the Cypher queries.
+// the {team_id: $profileId} filter in the Cypher queries.
 //
 // callCount tracks how many times ScopedRead has been called so list tests can
 // provide different responses per call (page query vs count query).
@@ -245,7 +245,7 @@ func TestGetFact_CrossProfileIsolation(t *testing.T) {
 
 	// The stub models Neo4j's profile-scoped isolation: ScopedRead returns only
 	// the rows registered for the given profileID, mirroring the
-	// {profile_id: $profileId} MATCH filter. Profile B gets no rows even though
+	// {team_id: $profileId} MATCH filter. Profile B gets no rows even though
 	// the fact ID matches — exactly as production Neo4j would behave.
 	row := makeFactRow(sharedFactID, "Alice", "knows", "active", now)
 	reader := &stubFactReader{

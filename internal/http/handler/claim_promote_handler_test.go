@@ -83,7 +83,7 @@ func TestClaimPromoteHandler(t *testing.T) {
 		t.Errorf("fact_id = %q; want %q", resp.FactID, factID)
 	}
 	if resp.ProfileID != profileID.String() {
-		t.Errorf("profile_id = %q; want %q", resp.ProfileID, profileID.String())
+		t.Errorf("team_id = %q; want %q", resp.ProfileID, profileID.String())
 	}
 	if resp.PromotedFromClaimID != claimID {
 		t.Errorf("promoted_from_claim_id = %q; want %q", resp.PromotedFromClaimID, claimID)

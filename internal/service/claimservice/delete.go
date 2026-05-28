@@ -48,7 +48,7 @@ func NewDeleteClaimService(
 //
 // Callers MUST NOT include profileId in the params map; ScopedWrite injects it.
 const deleteClaimCypher = `
-MATCH (c:Claim {profile_id: $profileId, claim_id: $claimId})
+MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
 DETACH DELETE c`
 
 // Delete permanently removes the claim identified by claimID from the graph.
@@ -81,13 +81,13 @@ func (s *deleteClaimServiceImpl) Delete(ctx context.Context, profileID string, c
 			EntityType: "claim",
 			EntityID:   claimID,
 			BeforePayload: map[string]any{
-				"claim_id":   claimID,
-				"profile_id": profileID,
+				"claim_id": claimID,
+				"team_id":  profileID,
 			},
 		}
 		if auditErr := s.audit.Append(ctx, entry); auditErr != nil && s.logger != nil {
 			s.logger.Warn("audit emit failed for claim.delete",
-				slog.String("profile_id", profileID),
+				slog.String("team_id", profileID),
 				slog.String("claim_id", claimID),
 				slog.String("error", auditErr.Error()),
 			)

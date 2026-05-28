@@ -102,14 +102,19 @@ func DefaultRoutes() []RouteDescriptor {
 		{Method: "POST", Path: "/mcp", OperationID: "mcpPost", Description: "MCP Streamable HTTP JSON-RPC endpoint."},
 		{Method: "GET", Path: "/mcp", OperationID: "mcpGet", Description: "MCP Streamable HTTP SSE stream endpoint."},
 
-		// --- Profile routes (full runtime variant) ---
-		{Method: "GET", Path: "/api/v1/profiles/{profileId}", OperationID: "getProfile", Description: "Get a profile."},
-		{Method: "PATCH", Path: "/api/v1/profiles/{profileId}", OperationID: "patchProfile", Description: "Update profile metadata."},
+		// --- Team routes (full runtime variant) ---
+		{Method: "GET", Path: "/api/v1/teams/{teamId}", OperationID: "getTeam", Description: "Get a team."},
+		{Method: "PATCH", Path: "/api/v1/teams/{teamId}", OperationID: "patchTeam", Description: "Update team metadata."},
+		{Method: "GET", Path: "/api/v1/teams/{teamId}/profiles", OperationID: "listTeamProfiles", Description: "List named profiles and key metadata for a team."},
+		{Method: "POST", Path: "/api/v1/teams/{teamId}/profiles", OperationID: "createTeamProfile", Description: "Create a named profile and return its API key once."},
+		{Method: "GET", Path: "/api/v1/teams/{teamId}/profiles/{profileId}", OperationID: "getTeamProfile", Description: "Get one named profile and key metadata."},
+		{Method: "POST", Path: "/api/v1/teams/{teamId}/profiles/{profileId}/rotate", OperationID: "rotateTeamProfileKey", Description: "Rotate a named profile's API key in place."},
+		{Method: "DELETE", Path: "/api/v1/teams/{teamId}/profiles/{profileId}", OperationID: "deleteTeamProfile", Description: "Delete a named profile and its API key."},
 
 		// --- Audit log (full variant) ---
-		{Method: "GET", Path: "/api/v1/profiles/{profileId}/audit-log", OperationID: "getAuditLog", Description: "Fetch the profile's audit log."},
+		{Method: "GET", Path: "/api/v1/teams/{teamId}/audit-log", OperationID: "getAuditLog", Description: "Fetch the team's audit log."},
 
 		// --- SSE query stream (full variant) ---
-		{Method: "POST", Path: "/api/v1/profiles/{profileId}/query/stream", OperationID: "queryStream", Description: "Server-sent event stream for long-running queries."},
+		{Method: "POST", Path: "/api/v1/teams/{teamId}/query/stream", OperationID: "queryStream", Description: "Server-sent event stream for long-running queries."},
 	}
 }

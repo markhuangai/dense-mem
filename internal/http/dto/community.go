@@ -22,7 +22,7 @@ type CommunityDetectRequest struct {
 // CommunityResponse is the public representation of a persisted community summary.
 type CommunityResponse struct {
 	CommunityID      string    `json:"community_id"`
-	ProfileID        string    `json:"profile_id"`
+	ProfileID        string    `json:"team_id"`
 	Level            int       `json:"level"`
 	Summary          string    `json:"summary"`
 	SummaryVersion   string    `json:"summary_version"`

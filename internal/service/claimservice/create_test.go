@@ -209,7 +209,7 @@ func TestCreateClaimDedupeAndDefaults(t *testing.T) {
 		// Identity fields derived by the service.
 		require.NotEmpty(t, c.ContentHash, "content_hash must be populated")
 		require.NotEmpty(t, c.ClaimID, "claim_id must be populated")
-		require.Equal(t, profileID, c.ProfileID, "profile_id must be propagated")
+		require.Equal(t, profileID, c.ProfileID, "team_id must be propagated")
 
 		// Exactly one write to the graph.
 		require.Len(t, writer.written, 1, "exactly one graph write expected")
@@ -336,12 +336,12 @@ func TestCreateClaim_CrossProfileIsolation(t *testing.T) {
 
 // TestCreateClaimPersistsSupportEdges covers AC-12 and AC-14.
 //
-// AC-12: one SUPPORTED_BY edge per fragment, carrying profile_id,
+// AC-12: one SUPPORTED_BY edge per fragment, carrying team_id,
 // fragment_id, extracted_at = recorded_at, and extract_conf = claim.extract_conf.
 // AC-14: claim_create_total metric emitted with outcome="created".
 //
 // Profile isolation: edges param must carry the caller's profileID, not a
-// cross-profile ID, so that MERGE (c)-[r:SUPPORTED_BY {profile_id: …}]->(sf)
+// cross-profile ID, so that MERGE (c)-[r:SUPPORTED_BY {team_id: …}]->(sf)
 // cannot link nodes across profiles.
 func TestCreateClaimPersistsSupportEdges(t *testing.T) {
 	ctx := context.Background()
@@ -429,7 +429,7 @@ func TestCreateClaimPersistsSupportEdges(t *testing.T) {
 		// (In production the $profileId param is injected by ScopedWrite; here
 		// we verify the service correctly passes it through via the Cypher
 		// parameter — no separate field on the edge descriptor needed, as
-		// profile_id is the $profileId bound variable in the query.)
+		// team_id is the $profileId bound variable in the query.)
 	}
 
 	// Verify that recorded_at on the returned claim matches the edge's extracted_at.

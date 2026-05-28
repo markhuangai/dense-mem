@@ -29,18 +29,20 @@ const (
 // reads as "id": "..." (AC-41 compatibility clause) while internal code references FragmentID
 // to match the Neo4j constraint name sourcefragment_fragment_id_unique.
 type Fragment struct {
-	FragmentID          string         `json:"id"` // API field "id" maps to stored fragment_id
-	ProfileID           string         `json:"profile_id"`
-	Content             string         `json:"content"`
-	Source              string         `json:"source,omitempty"`
-	SourceType          SourceType     `json:"source_type"`
-	Authority           Authority      `json:"authority,omitempty"`
-	Labels              []string       `json:"labels,omitempty"`
-	Metadata            map[string]any `json:"metadata,omitempty"`
-	ContentHash         string         `json:"content_hash"`
-	IdempotencyKey      string         `json:"idempotency_key,omitempty"`
-	EmbeddingModel      string         `json:"embedding_model"`
-	EmbeddingDimensions int            `json:"embedding_dimensions"`
+	FragmentID           string         `json:"id"` // API field "id" maps to stored fragment_id
+	ProfileID            string         `json:"team_id"`
+	CreatedByProfileID   string         `json:"created_by_profile_id,omitempty"`
+	CreatedByProfileName string         `json:"created_by_profile_name,omitempty"`
+	Content              string         `json:"content"`
+	Source               string         `json:"source,omitempty"`
+	SourceType           SourceType     `json:"source_type"`
+	Authority            Authority      `json:"authority,omitempty"`
+	Labels               []string       `json:"labels,omitempty"`
+	Metadata             map[string]any `json:"metadata,omitempty"`
+	ContentHash          string         `json:"content_hash"`
+	IdempotencyKey       string         `json:"idempotency_key,omitempty"`
+	EmbeddingModel       string         `json:"embedding_model"`
+	EmbeddingDimensions  int            `json:"embedding_dimensions"`
 	// SourceQuality is a [0,1] signal used by downstream claim extraction to weight
 	// evidence reliability. Claims inherit this value from their supporting fragments.
 	SourceQuality float64 `json:"source_quality"`

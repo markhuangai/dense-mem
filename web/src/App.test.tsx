@@ -2,9 +2,9 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { ApiKey, Profile, SecuritySettings } from "./api";
+import { TeamProfile, Team, SecuritySettings } from "./api";
 
-const profileA: Profile = {
+const profileA: Team = {
   id: "11111111-1111-4111-8111-111111111111",
   name: "Default",
   description: "",
@@ -22,10 +22,11 @@ const securitySettings: SecuritySettings = {
   updated_at: "2026-05-01T12:00:00Z",
 };
 
-function keyA(profileId = profileA.id): ApiKey {
+function keyA(profileId = profileA.id): TeamProfile {
   return {
     id: "22222222-2222-4222-8222-222222222222",
-    profile_id: profileId,
+    team_id: profileA.id,
+    name: "default profile",
     key_suffix: "abc123",
     rate_limit: 120,
     last_used_at: "2026-05-02T13:00:00Z",
@@ -52,52 +53,52 @@ describe("App", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("invalid token");
   });
 
-  it("shows profile validation states", async () => {
-    mockPortalFetch({ profiles: [profileA], keys: [] });
+  it("shows team validation states", async () => {
+    mockPortalFetch({ teams: [profileA], keys: [] });
     sessionStorage.setItem("denseMem.controlToken", "secret");
 
     render(<App />);
     await screen.findByRole("button", { name: "Default" });
-    await userEvent.type(screen.getByLabelText("Name", { selector: "#new-profile-name" }), "ab");
+    await userEvent.type(screen.getByLabelText("Name", { selector: "#new-team-name" }), "ab");
     await userEvent.click(screen.getByRole("button", { name: /^create$/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Name must be at least 3 characters.");
   });
 
-  it("creates a profile and selects it", async () => {
-    const created: Profile = {
+  it("creates a team and selects it", async () => {
+    const created: Team = {
       ...profileA,
       id: "33333333-3333-4333-8333-333333333333",
-      name: "Work Profile",
+      name: "Work Team",
       description: "for work",
     };
-    mockPortalFetch({ profiles: [profileA], keys: [], createdProfile: created });
+    mockPortalFetch({ teams: [profileA], keys: [], createdProfile: created });
     sessionStorage.setItem("denseMem.controlToken", "secret");
 
     render(<App />);
     await screen.findByRole("button", { name: "Default" });
-    await userEvent.type(screen.getByLabelText("Name", { selector: "#new-profile-name" }), "Work Profile");
-    await userEvent.type(screen.getByLabelText("Description", { selector: "#new-profile-description" }), "for work");
+    await userEvent.type(screen.getByLabelText("Name", { selector: "#new-team-name" }), "Work Team");
+    await userEvent.type(screen.getByLabelText("Description", { selector: "#new-team-description" }), "for work");
     await userEvent.click(screen.getByRole("button", { name: /^create$/i }));
 
-    expect(await screen.findByRole("heading", { name: "Work Profile" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Work Team" })).toBeInTheDocument();
   });
 
   it("creates an API key and shows plaintext once", async () => {
-    mockPortalFetch({ profiles: [profileA], keys: [] });
+    mockPortalFetch({ teams: [profileA], keys: [] });
     sessionStorage.setItem("denseMem.controlToken", "secret");
 
     render(<App />);
     await screen.findByRole("button", { name: "Default" });
-    await userEvent.click(screen.getByRole("button", { name: /create key/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create profile/i }));
 
     expect(await screen.findByText("dm_plain_once")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /dismiss api key/i }));
     await waitFor(() => expect(screen.queryByText("dm_plain_once")).not.toBeInTheDocument());
   });
 
-  it("shows API keys with suffix, last used time, and delete action", async () => {
-    const fetchMock = mockPortalFetch({ profiles: [profileA], keys: [keyA()] });
+  it("shows team profiles with suffix, last used time, and delete action", async () => {
+    const fetchMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
     sessionStorage.setItem("denseMem.controlToken", "secret");
 
     render(<App />);
@@ -108,19 +109,19 @@ describe("App", () => {
     expect(keyRow).not.toBeNull();
     expect(within(keyRow as HTMLElement).getByText(/May/i)).toBeInTheDocument();
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    await userEvent.click(screen.getByRole("button", { name: /delete api key \*\*\*\*\*\*abc123/i }));
+    await userEvent.click(screen.getByRole("button", { name: /delete profile default profile/i }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining(`/profiles/${profileA.id}/api-keys/${keyA().id}`),
+        expect.stringContaining(`/teams/${profileA.id}/profiles/${keyA().id}`),
         expect.objectContaining({ method: "DELETE" }),
       );
     });
     await waitFor(() => expect(screen.queryByText("******abc123")).not.toBeInTheDocument());
   });
 
-  it("deletes a profile", async () => {
-    const deleteMock = mockPortalFetch({ profiles: [profileA], keys: [keyA()] });
+  it("deletes a team", async () => {
+    const deleteMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
     sessionStorage.setItem("denseMem.controlToken", "secret");
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
@@ -129,21 +130,21 @@ describe("App", () => {
     await userEvent.click(screen.getByRole("button", { name: /^delete$/i }));
 
     await waitFor(() => {
-      expect(deleteMock).toHaveBeenCalledWith(expect.stringContaining(`/profiles/${profileA.id}`), expect.objectContaining({ method: "DELETE" }));
+      expect(deleteMock).toHaveBeenCalledWith(expect.stringContaining(`/teams/${profileA.id}`), expect.objectContaining({ method: "DELETE" }));
     });
   });
 });
 
 function mockPortalFetch({
-  profiles,
+  teams,
   keys,
   createdProfile,
 }: {
-  profiles: Profile[];
-  keys: ApiKey[];
-  createdProfile?: Profile;
+  teams: Team[];
+  keys: TeamProfile[];
+  createdProfile?: Team;
 }) {
-  let currentProfiles = profiles;
+  let currentProfiles = teams;
   let currentKeys = keys;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -152,30 +153,30 @@ function mockPortalFetch({
     if (url.endsWith("/session")) {
       return jsonResponse({ data: { authenticated: true } });
     }
-    if (url.endsWith("/profiles") && method === "GET") {
+    if (url.endsWith("/teams") && method === "GET") {
       return jsonResponse(page(currentProfiles));
     }
-    if (url.endsWith("/profiles") && method === "POST") {
-      const profile = createdProfile ?? {
+    if (url.endsWith("/teams") && method === "POST") {
+      const team = createdProfile ?? {
         ...profileA,
         id: "33333333-3333-4333-8333-333333333333",
         name: JSON.parse(String(init?.body)).name,
       };
-      currentProfiles = [...currentProfiles, profile];
-      return jsonResponse({ data: profile }, 201);
+      currentProfiles = [...currentProfiles, team];
+      return jsonResponse({ data: team }, 201);
     }
-    if (url.includes("/api-keys") && method === "GET") {
+    if (url.includes("/profiles") && method === "GET") {
       return jsonResponse(page(currentKeys));
     }
-    if (url.includes("/api-keys") && method === "POST") {
+    if (url.includes("/profiles") && method === "POST") {
       const body = JSON.parse(String(init?.body));
       expect(body.label).toBeUndefined();
-      const created = keyA();
+      const created = { ...keyA(), name: body.name };
       currentKeys = [created, ...currentKeys];
       return jsonResponse({ data: { api_key: "dm_plain_once", key: created } }, 201);
     }
-    if (url.includes("/api-keys") && method === "DELETE") {
-      currentKeys = currentKeys.filter((key) => !url.endsWith(`/api-keys/${key.id}`));
+    if (url.includes("/profiles/") && method === "DELETE") {
+      currentKeys = currentKeys.filter((key) => !url.endsWith(`/profiles/${key.id}`));
       return jsonResponse({ data: { status: "deleted" } });
     }
     if (url.endsWith("/security/settings") && method === "GET") {
@@ -198,7 +199,7 @@ function mockPortalFetch({
       return jsonResponse({ data: currentProfiles[0] });
     }
     if (method === "DELETE") {
-      currentProfiles = currentProfiles.filter((profile) => !url.endsWith(`/profiles/${profile.id}`));
+      currentProfiles = currentProfiles.filter((team) => !url.endsWith(`/teams/${team.id}`));
       return jsonResponse({ data: { status: "deleted" } });
     }
     return jsonResponse({ message: "not found" }, 404);

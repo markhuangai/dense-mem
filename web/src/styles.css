@@ -98,7 +98,7 @@ button {
   align-items: start;
 }
 
-.profile-pane,
+.team-pane,
 .detail-pane {
   min-width: 0;
 }
@@ -109,7 +109,7 @@ button {
 }
 
 .surface,
-.profile-pane {
+.team-pane {
   background: #ffffff;
   border: 1px solid #d7e1df;
   border-radius: 8px;
@@ -452,7 +452,7 @@ code {
 @media (max-width: 560px) {
   .auth-panel,
   .surface,
-  .profile-pane {
+  .team-pane {
     padding: 14px;
   }
 

@@ -200,8 +200,8 @@ func TestRetractFragment_AuditPayload_ExcludesContent(t *testing.T) {
 	if got := audit.LastEntry.AfterPayload["fragment_id"]; got != "frag-secret" {
 		t.Errorf("audit AfterPayload[fragment_id] = %v; want frag-secret", got)
 	}
-	if got := audit.LastEntry.AfterPayload["profile_id"]; got != "pA" {
-		t.Errorf("audit AfterPayload[profile_id] = %v; want pA", got)
+	if got := audit.LastEntry.AfterPayload["team_id"]; got != "pA" {
+		t.Errorf("audit AfterPayload[team_id] = %v; want pA", got)
 	}
 }
 

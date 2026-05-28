@@ -216,6 +216,15 @@ func hasQuery(queries []string, substr string) bool {
 	return false
 }
 
+func queryIndex(queries []string, substr string) int {
+	for i, q := range queries {
+		if strings.Contains(q, substr) {
+			return i
+		}
+	}
+	return -1
+}
+
 // unitLogger returns a minimal logger suitable for unit tests.
 func unitLogger() observability.LogProvider {
 	return observability.New(slog.LevelDebug)
@@ -226,7 +235,7 @@ func unitLogger() observability.LogProvider {
 // ============================================================================
 
 // TestEnsureSchema_ClaimCompositeIndexes verifies that EnsureSchema issues all
-// six Claim composite indexes with profile_id as the leading key (AC-3).
+// six Claim composite indexes with team_id as the leading key (AC-3).
 func TestEnsureSchema_ClaimCompositeIndexes(t *testing.T) {
 	ctx := context.Background()
 	client := &recordingClient{}
@@ -243,7 +252,7 @@ func TestEnsureSchema_ClaimCompositeIndexes(t *testing.T) {
 		{"claim_profile_status_idx", IndexClaimProfileStatus},
 		{"claim_profile_predicate_idx", IndexClaimProfilePredicate},
 		{"claim_profile_subject_predicate_idx", IndexClaimProfileSubjectPredicate},
-		{"claim_profile_idempotency_idx", IndexClaimProfileIdempotency},
+		{"claim_team_idempotency_idx", IndexClaimProfileIdempotency},
 		{"claim_profile_content_hash_idx", IndexClaimProfileContentHash},
 	}
 
@@ -254,7 +263,7 @@ func TestEnsureSchema_ClaimCompositeIndexes(t *testing.T) {
 }
 
 // TestEnsureSchema_FactCompositeIndexes verifies that EnsureSchema issues both
-// Fact composite indexes with profile_id as the leading key (AC-4).
+// Fact composite indexes with team_id as the leading key (AC-4).
 func TestEnsureSchema_FactCompositeIndexes(t *testing.T) {
 	ctx := context.Background()
 	client := &recordingClient{}
@@ -275,7 +284,7 @@ func TestEnsureSchema_FactCompositeIndexes(t *testing.T) {
 }
 
 // TestEnsureSchema_SourceFragmentStatusIndex verifies that EnsureSchema issues
-// the SourceFragment status composite index with profile_id as the leading key (AC-5).
+// the SourceFragment status composite index with team_id as the leading key (AC-5).
 func TestEnsureSchema_SourceFragmentStatusIndex(t *testing.T) {
 	ctx := context.Background()
 	client := &recordingClient{}
@@ -289,7 +298,7 @@ func TestEnsureSchema_SourceFragmentStatusIndex(t *testing.T) {
 }
 
 // TestEnsureSchema_CrossProfileIsolation verifies that every new composite index
-// has profile_id as its leading column, enforcing per-profile isolation at the
+// has team_id as its leading column, enforcing per-profile isolation at the
 // schema level (profile-isolation.md).
 func TestEnsureSchema_CrossProfileIsolation(t *testing.T) {
 	ctx := context.Background()
@@ -320,17 +329,17 @@ func TestEnsureSchema_CrossProfileIsolation(t *testing.T) {
 				continue
 			}
 			found = true
-			// profile_id must appear before any other field name in ON (...).
+			// team_id must appear before any other field name in ON (...).
 			onClause := q[strings.Index(q, " ON ("):]
-			require.True(t, strings.Contains(onClause, "profile_id"),
-				"index %s must include profile_id in ON clause: %s", idxName, q)
-			// profile_id must be the first property listed inside ON (...).
+			require.True(t, strings.Contains(onClause, "team_id"),
+				"index %s must include team_id in ON clause: %s", idxName, q)
+			// team_id must be the first property listed inside ON (...).
 			firstParen := strings.Index(onClause, "(")
 			require.True(t, firstParen >= 0, "expected ON clause in: %s", q)
 			insideParen := onClause[firstParen+1:]
-			assert.True(t, strings.HasPrefix(strings.TrimSpace(insideParen), strings.Split(insideParen, ".")[0]+".profile_id") ||
-				strings.Contains(insideParen[:strings.Index(insideParen, ",")+1], "profile_id"),
-				"profile_id must be the leading key in index %s: %s", idxName, q)
+			assert.True(t, strings.HasPrefix(strings.TrimSpace(insideParen), strings.Split(insideParen, ".")[0]+".team_id") ||
+				strings.Contains(insideParen[:strings.Index(insideParen, ",")+1], "team_id"),
+				"team_id must be the leading key in index %s: %s", idxName, q)
 		}
 		assert.True(t, found, "no CREATE INDEX query found for %s", idxName)
 	}
@@ -349,6 +358,29 @@ func TestEnsureSchema_LegacyDropIncludesFactPredicateIdx(t *testing.T) {
 
 	assert.True(t, hasQuery(client.queries, "DROP INDEX fact_predicate_idx IF EXISTS"),
 		"EnsureSchema must include DROP INDEX fact_predicate_idx IF EXISTS in legacy drops")
+}
+
+func TestEnsureSchema_BackfillsLegacyProfileIDBeforeTeamConstraints(t *testing.T) {
+	ctx := context.Background()
+	client := &recordingClient{edition: string(EditionEnterprise)}
+	bs := NewSchemaBootstrapper(client, 1536, unitLogger())
+
+	err := bs.EnsureSchema(ctx)
+	require.NoError(t, err)
+
+	nodeBackfill := queryIndex(client.queries, "n.team_id IS NULL AND n.profile_id IS NOT NULL")
+	relationshipBackfill := queryIndex(client.queries, "r.team_id IS NULL AND r.profile_id IS NOT NULL")
+	endpointBackfill := queryIndex(client.queries, "a.team_id = b.team_id")
+	constraint := queryIndex(client.queries, "CREATE CONSTRAINT supported_by_team_id_exists")
+
+	require.NotEqual(t, -1, nodeBackfill, "node profile_id backfill query must be issued")
+	require.NotEqual(t, -1, relationshipBackfill, "relationship profile_id backfill query must be issued")
+	require.NotEqual(t, -1, endpointBackfill, "relationship endpoint team_id backfill query must be issued")
+	require.NotEqual(t, -1, constraint, "enterprise relationship constraint query must be issued")
+
+	assert.Less(t, nodeBackfill, constraint, "node backfill must run before relationship constraints")
+	assert.Less(t, relationshipBackfill, constraint, "relationship backfill must run before relationship constraints")
+	assert.Less(t, endpointBackfill, constraint, "endpoint relationship backfill must run before relationship constraints")
 }
 
 // schemaTestConfig implements ConfigProvider for schema testing
@@ -484,7 +516,7 @@ func TestEnsureSchema_CreatesConstraints(t *testing.T) {
 	}
 }
 
-// TestEnsureSchema_CreatesProfileIdIndexes tests that profile_id indexes are created.
+// TestEnsureSchema_CreatesProfileIdIndexes tests that team_id indexes are created.
 func TestEnsureSchema_CreatesProfileIdIndexes(t *testing.T) {
 	ctx := context.Background()
 
@@ -498,9 +530,9 @@ func TestEnsureSchema_CreatesProfileIdIndexes(t *testing.T) {
 
 	// Clean up any existing indexes first
 	_, _ = client.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		_, _ = tx.Run(ctx, "DROP INDEX sourcefragment_profile_id_idx IF EXISTS", nil)
-		_, _ = tx.Run(ctx, "DROP INDEX claim_profile_id_idx IF EXISTS", nil)
-		_, _ = tx.Run(ctx, "DROP INDEX fact_profile_id_idx IF EXISTS", nil)
+		_, _ = tx.Run(ctx, "DROP INDEX sourcefragment_team_id_idx IF EXISTS", nil)
+		_, _ = tx.Run(ctx, "DROP INDEX claim_team_id_idx IF EXISTS", nil)
+		_, _ = tx.Run(ctx, "DROP INDEX fact_team_id_idx IF EXISTS", nil)
 		return nil, nil
 	})
 
@@ -514,9 +546,9 @@ func TestEnsureSchema_CreatesProfileIdIndexes(t *testing.T) {
 
 	// Verify indexes exist
 	indexes := []string{
-		"sourcefragment_profile_id_idx",
-		"claim_profile_id_idx",
-		"fact_profile_id_idx",
+		"sourcefragment_team_id_idx",
+		"claim_team_id_idx",
+		"fact_team_id_idx",
 	}
 
 	for _, indexName := range indexes {
@@ -695,7 +727,7 @@ func TestSchemaBootstrapper_Interface(t *testing.T) {
 }
 
 // TestEnsureSchema_FragmentDedupeIndexes tests that composite indexes for fragment deduplication are created.
-// AC-44: Idempotency-key uniqueness and indexing — dedupe scoped to (profile_id, idempotency_key).
+// AC-44: Idempotency-key uniqueness and indexing — dedupe scoped to (team_id, idempotency_key).
 // AC-45: Content-hash lookup indexing strategy — profile-scoped lookup by content hash is efficient.
 // AC-29: Created-at ordering index for list ordering.
 func TestEnsureSchema_FragmentDedupeIndexes(t *testing.T) {
@@ -711,7 +743,7 @@ func TestEnsureSchema_FragmentDedupeIndexes(t *testing.T) {
 
 	// Clean up any existing composite indexes first
 	_, _ = client.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		_, _ = tx.Run(ctx, "DROP INDEX fragment_profile_idempotency_idx IF EXISTS", nil)
+		_, _ = tx.Run(ctx, "DROP INDEX fragment_team_idempotency_idx IF EXISTS", nil)
 		_, _ = tx.Run(ctx, "DROP INDEX fragment_profile_content_hash_idx IF EXISTS", nil)
 		_, _ = tx.Run(ctx, "DROP INDEX fragment_profile_created_at_idx IF EXISTS", nil)
 		return nil, nil
@@ -727,7 +759,7 @@ func TestEnsureSchema_FragmentDedupeIndexes(t *testing.T) {
 
 	// Verify composite indexes exist
 	compositeIndexes := []string{
-		"fragment_profile_idempotency_idx",
+		"fragment_team_idempotency_idx",
 		"fragment_profile_content_hash_idx",
 		"fragment_profile_created_at_idx",
 	}
@@ -776,7 +808,7 @@ func TestEnsureSchema_FragmentDedupeIndexes_Idempotent(t *testing.T) {
 
 	// Verify composite indexes still exist after multiple runs
 	compositeIndexes := []string{
-		"fragment_profile_idempotency_idx",
+		"fragment_team_idempotency_idx",
 		"fragment_profile_content_hash_idx",
 		"fragment_profile_created_at_idx",
 	}
@@ -871,12 +903,12 @@ func TestEnsureSchema_CreatesCanonicalIndexNames(t *testing.T) {
 }
 
 // TestRelationshipProfileConstraints verifies that EnsureSchema issues all four
-// relationship profile_id existence constraints (Unit 13, AC-X1).
+// relationship team_id existence constraints (Unit 13, AC-X1).
 //
 // Each constraint must:
 //   - Use the canonical constant name (prevents typo drift).
 //   - Target the correct relationship type.
-//   - Require r.profile_id IS NOT NULL (enforces profile isolation at the edge level).
+//   - Require r.team_id IS NOT NULL (enforces profile isolation at the edge level).
 //
 // A cross-profile isolation sub-test verifies that profile A data cannot leak
 // to profile B through an unconstrained relationship.
@@ -908,12 +940,12 @@ func TestRelationshipProfileConstraints(t *testing.T) {
 				// The Cypher must target the correct relationship type.
 				assert.True(t, hasQuery(client.queries, w.relType),
 					"Constraint for %s must reference rel type %s", w.constName, w.relType)
-				// The Cypher must enforce IS NOT NULL on profile_id.
+				// The Cypher must enforce IS NOT NULL on team_id.
 				found := false
 				for _, q := range client.queries {
 					if strings.Contains(q, w.constName) {
-						assert.True(t, strings.Contains(q, "profile_id IS NOT NULL"),
-							"Constraint %s must require profile_id IS NOT NULL: %s", w.constName, q)
+						assert.True(t, strings.Contains(q, "team_id IS NOT NULL"),
+							"Constraint %s must require team_id IS NOT NULL: %s", w.constName, q)
 						found = true
 						break
 					}
@@ -929,7 +961,7 @@ func TestEnsureSchema_RelationshipConstraintsUnsupportedDoesNotFail(t *testing.T
 	ctx := context.Background()
 	client := &recordingClient{
 		runErrFor: func(cypher string) error {
-			if strings.Contains(cypher, "REQUIRE r.profile_id IS NOT NULL") {
+			if strings.Contains(cypher, "REQUIRE r.team_id IS NOT NULL") {
 				return fmt.Errorf("Neo4jError: Neo.DatabaseError.Schema.ConstraintCreationFailed (Property existence constraint requires Neo4j Enterprise Edition.)")
 			}
 			return nil
@@ -977,8 +1009,8 @@ func TestEnsureSchema_RelationshipConstraintUnexpectedFailureReturnsError(t *tes
 }
 
 // TestRelationshipProfileConstraints_LiveEnforcement verifies that the four
-// relationship profile_id existence constraints actually prevent creating
-// relationships without profile_id (AC-X1 enforcement).
+// relationship team_id existence constraints actually prevent creating
+// relationships without team_id (AC-X1 enforcement).
 //
 // This is a live integration test against Neo4j that complements the unit-level
 // Cypher-recording test above.  It uses the _TestNode label so all data can be
@@ -1059,12 +1091,12 @@ func TestRelationshipProfileConstraints_LiveEnforcement(t *testing.T) {
 	existingConstraints, ok := existingConstraintsRaw.([]string)
 	require.True(t, ok, "existing constraints result must be []string")
 	if len(existingConstraints) < 4 {
-		t.Skip("relationship profile_id constraints are unsupported by the connected Neo4j edition")
+		t.Skip("relationship team_id constraints are unsupported by the connected Neo4j edition")
 	}
 
-	t.Run("rejects_relationship_without_profile_id", func(t *testing.T) {
+	t.Run("rejects_relationship_without_team_id", func(t *testing.T) {
 		// The SUPPORTED_BY existence constraint must reject a relationship that
-		// omits profile_id entirely (or sets it to null).
+		// omits team_id entirely (or sets it to null).
 		_, err := client.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
 			res, err := tx.Run(ctx,
 				"CREATE (:_TestNode {id: 'rej-a'})-[r:SUPPORTED_BY]->(:_TestNode {id: 'rej-b'})",
@@ -1077,7 +1109,7 @@ func TestRelationshipProfileConstraints_LiveEnforcement(t *testing.T) {
 			return nil, nil
 		})
 		require.Error(t, err,
-			"creating SUPPORTED_BY without profile_id must be rejected by the constraint")
+			"creating SUPPORTED_BY without team_id must be rejected by the constraint")
 	})
 
 	t.Run("cross_profile_isolation", func(t *testing.T) {
@@ -1089,9 +1121,9 @@ func TestRelationshipProfileConstraints_LiveEnforcement(t *testing.T) {
 		// Profile A relationship.
 		_, err := client.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
 			res, err := tx.Run(ctx,
-				`CREATE (:_TestNode {id: $sfID,    profile_id: $pid})
-				 -[r:SUPPORTED_BY {profile_id: $pid}]->
-				 (:_TestNode {id: $claimID, profile_id: $pid})`,
+				`CREATE (:_TestNode {id: $sfID,    team_id: $pid})
+				 -[r:SUPPORTED_BY {team_id: $pid}]->
+				 (:_TestNode {id: $claimID, team_id: $pid})`,
 				map[string]any{
 					"sfID":    "sf-enforce-a",
 					"claimID": "claim-enforce-a",
@@ -1109,9 +1141,9 @@ func TestRelationshipProfileConstraints_LiveEnforcement(t *testing.T) {
 		// Profile B relationship.
 		_, err = client.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
 			res, err := tx.Run(ctx,
-				`CREATE (:_TestNode {id: $sfID,    profile_id: $pid})
-				 -[r:SUPPORTED_BY {profile_id: $pid}]->
-				 (:_TestNode {id: $claimID, profile_id: $pid})`,
+				`CREATE (:_TestNode {id: $sfID,    team_id: $pid})
+				 -[r:SUPPORTED_BY {team_id: $pid}]->
+				 (:_TestNode {id: $claimID, team_id: $pid})`,
 				map[string]any{
 					"sfID":    "sf-enforce-b",
 					"claimID": "claim-enforce-b",
@@ -1131,8 +1163,8 @@ func TestRelationshipProfileConstraints_LiveEnforcement(t *testing.T) {
 		result, err := client.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
 			res, err := tx.Run(ctx,
 				`MATCH (:_TestNode)-[r:SUPPORTED_BY]->(:_TestNode)
-				 WHERE r.profile_id = $profileId
-				 RETURN r.profile_id AS profile_id`,
+				 WHERE r.team_id = $profileId
+				 RETURN r.team_id AS team_id`,
 				map[string]any{"profileId": profileA},
 			)
 			if err != nil {
@@ -1140,7 +1172,7 @@ func TestRelationshipProfileConstraints_LiveEnforcement(t *testing.T) {
 			}
 			var profiles []string
 			for res.Next(ctx) {
-				pid, _ := res.Record().Get("profile_id")
+				pid, _ := res.Record().Get("team_id")
 				if s, ok := pid.(string); ok {
 					profiles = append(profiles, s)
 				}

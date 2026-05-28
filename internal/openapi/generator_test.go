@@ -29,7 +29,7 @@ func TestGenerator_AISafeExcludesRuntimeOnlyRoutes(t *testing.T) {
 	if !ok {
 		t.Fatalf("paths missing or wrong type")
 	}
-	if _, present := paths["/api/v1/profiles/{profileId}/query/stream"]; present {
+	if _, present := paths["/api/v1/teams/{teamId}/query/stream"]; present {
 		t.Errorf("runtime-only query stream path must NOT appear in ai-safe spec")
 	}
 	if _, present := paths["/api/v1/fragments"]; !present {
@@ -44,8 +44,8 @@ func TestGenerator_FullIncludesRuntimeOnlyRoutes(t *testing.T) {
 		t.Fatalf("Generate: %v", err)
 	}
 	paths := spec["paths"].(map[string]any)
-	if _, present := paths["/api/v1/profiles/{profileId}/query/stream"]; !present {
-		t.Errorf("full spec must include /api/v1/profiles/{profileId}/query/stream")
+	if _, present := paths["/api/v1/teams/{teamId}/query/stream"]; !present {
+		t.Errorf("full spec must include /api/v1/teams/{teamId}/query/stream")
 	}
 	if _, present := paths["/api/v1/fragments"]; !present {
 		t.Errorf("full spec must include /api/v1/fragments")

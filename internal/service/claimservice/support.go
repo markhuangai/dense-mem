@@ -47,7 +47,7 @@ type supportResult struct {
 //
 // Profile isolation: $profileId is injected automatically by ScopedRead;
 // callers MUST NOT include profileId in the params map.
-const loadSupportingFragmentsQuery = `MATCH (sf:SourceFragment {profile_id: $profileId})
+const loadSupportingFragmentsQuery = `MATCH (sf:SourceFragment {team_id: $profileId})
 WHERE sf.fragment_id IN $fragmentIds
   AND coalesce(sf.status, 'active') <> 'retracted'
 RETURN sf.fragment_id  AS fragment_id,
@@ -129,7 +129,7 @@ func loadSupportingFragments(
 	// way, the caller cannot proceed with incomplete evidence.
 	for _, id := range fragmentIDs {
 		if _, ok := found[id]; !ok {
-			return nil, fmt.Errorf("%w: fragment_id=%s profile_id=%s",
+			return nil, fmt.Errorf("%w: fragment_id=%s team_id=%s",
 				ErrSupportingFragmentMissing, id, profileID)
 		}
 	}

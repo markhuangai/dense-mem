@@ -49,7 +49,13 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=linux \
     go build -trimpath -ldflags="-s -w" -o /out/delete-key ./cmd/delete-key && \
     CGO_ENABLED=0 GOOS=linux \
-    go build -trimpath -ldflags="-s -w" -o /out/rotate-key ./cmd/rotate-key
+    go build -trimpath -ldflags="-s -w" -o /out/rotate-key ./cmd/rotate-key && \
+    cp /out/provision-profile /out/provision-team && \
+    cp /out/list-profiles /out/list-teams && \
+    cp /out/delete-profile /out/delete-team && \
+    cp /out/list-keys /out/list-team-profiles && \
+    cp /out/delete-key /out/delete-team-profile && \
+    cp /out/rotate-key /out/rotate-team-profile-key
 
 # ============================================================================
 # Runtime stage
@@ -81,11 +87,17 @@ WORKDIR /app
 COPY --from=builder /out/server  /app/server
 COPY --from=builder /out/migrate /app/migrate
 COPY --from=builder /out/provision-profile /app/provision-profile
+COPY --from=builder /out/provision-team /app/provision-team
 COPY --from=builder /out/list-profiles /app/list-profiles
+COPY --from=builder /out/list-teams /app/list-teams
 COPY --from=builder /out/delete-profile /app/delete-profile
+COPY --from=builder /out/delete-team /app/delete-team
 COPY --from=builder /out/list-keys /app/list-keys
+COPY --from=builder /out/list-team-profiles /app/list-team-profiles
 COPY --from=builder /out/delete-key /app/delete-key
+COPY --from=builder /out/delete-team-profile /app/delete-team-profile
 COPY --from=builder /out/rotate-key /app/rotate-key
+COPY --from=builder /out/rotate-team-profile-key /app/rotate-team-profile-key
 
 # migrator.go discovers migrations via cwd-relative walk; WORKDIR=/app plus
 # this copy satisfies Strategy 1 in getMigrationsDir().

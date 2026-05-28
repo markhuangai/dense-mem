@@ -183,8 +183,8 @@ func (s *AuditServiceImpl) Append(ctx context.Context, entry AuditLogEntry) erro
 	insertFn := func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO audit_log (
-				id, profile_id, timestamp, operation, entity_type, entity_id,
-				before_payload, after_payload, actor_key_id, actor_role,
+				id, team_id, timestamp, operation, entity_type, entity_id,
+				before_payload, after_payload, actor_profile_id, actor_role,
 				client_ip, correlation_id, metadata
 			) VALUES (
 				$1, $2, $3, $4, $5, $6,
@@ -228,11 +228,11 @@ func (s *AuditServiceImpl) List(ctx context.Context, profileID string, limit, of
 	var entries []AuditLogEntry
 	queryFn := func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
-			SELECT id, profile_id, timestamp, operation, entity_type, entity_id,
-			       before_payload, after_payload, actor_key_id, actor_role,
+			SELECT id, team_id, timestamp, operation, entity_type, entity_id,
+			       before_payload, after_payload, actor_profile_id, actor_role,
 			       client_ip, correlation_id, metadata
 			FROM audit_log
-			WHERE profile_id = $1
+			WHERE team_id = $1
 			ORDER BY timestamp DESC
 			LIMIT $2 OFFSET $3
 		`, profileID, limit, offset).Rows()
@@ -308,7 +308,7 @@ func (s *AuditServiceImpl) List(ctx context.Context, profileID string, limit, of
 		}
 		if err := s.rls.WithProfileTx(ctx, s.db, profileID, func(tx *gorm.DB) error {
 			return tx.Raw(`
-				SELECT COUNT(*) FROM audit_log WHERE profile_id = $1
+				SELECT COUNT(*) FROM audit_log WHERE team_id = $1
 			`, profileID).Scan(&total).Error
 		}); err != nil {
 			return nil, 0, fmt.Errorf("failed to count audit log entries: %w", err)
@@ -318,7 +318,7 @@ func (s *AuditServiceImpl) List(ctx context.Context, profileID string, limit, of
 			return nil, 0, fmt.Errorf("failed to query audit log: %w", err)
 		}
 		if err := s.db.WithContext(ctx).Raw(`
-			SELECT COUNT(*) FROM audit_log WHERE profile_id = $1
+			SELECT COUNT(*) FROM audit_log WHERE team_id = $1
 		`, profileID).Scan(&total).Error; err != nil {
 			return nil, 0, fmt.Errorf("failed to count audit log entries: %w", err)
 		}
@@ -447,7 +447,7 @@ func (s *AuditServiceImpl) CrossProfileDenied(ctx context.Context, actorProfileI
 		metadata = make(map[string]interface{})
 	}
 	metadata["actor_profile_id"] = actorProfileID
-	metadata["target_profile_id"] = targetProfileID
+	metadata["target_team_id"] = targetProfileID
 	metadata["denied_operation"] = operation
 
 	entry := AuditLogEntry{

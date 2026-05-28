@@ -14,10 +14,10 @@ import {
 } from "lucide-react";
 import {
   ApiError,
-  ApiKey,
+  TeamProfile,
   ControlApi,
-  CreatedApiKey,
-  Profile,
+  CreatedTeamProfile,
+  Team,
   SecurityBan,
   SecuritySettings,
 } from "./api";
@@ -87,22 +87,22 @@ export function App() {
 }
 
 function Portal({ api, onSignOut }: { api: ControlApi; onSignOut: () => void }) {
-  const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [selectedProfileId, setSelectedProfileId] = useState("");
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [selectedTeamId, setSelectedTeamId] = useState("");
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [error, setError] = useState("");
 
-  async function loadProfiles(nextSelectedId?: string) {
+  async function loadTeams(nextSelectedId?: string) {
     setLoadState("loading");
     setError("");
     try {
-      const page = await api.listProfiles();
-      setProfiles(page.data);
-      const selected = nextSelectedId || selectedProfileId;
-      if (selected && page.data.some((profile) => profile.id === selected)) {
-        setSelectedProfileId(selected);
+      const page = await api.listTeams();
+      setTeams(page.data);
+      const selected = nextSelectedId || selectedTeamId;
+      if (selected && page.data.some((team) => team.id === selected)) {
+        setSelectedTeamId(selected);
       } else {
-        setSelectedProfileId(page.data[0]?.id ?? "");
+        setSelectedTeamId(page.data[0]?.id ?? "");
       }
       setLoadState("idle");
     } catch (err) {
@@ -112,10 +112,10 @@ function Portal({ api, onSignOut }: { api: ControlApi; onSignOut: () => void }) 
   }
 
   useEffect(() => {
-    void loadProfiles();
+    void loadTeams();
   }, []);
 
-  const selectedProfile = profiles.find((profile) => profile.id === selectedProfileId) ?? null;
+  const selectedTeam = teams.find((team) => team.id === selectedTeamId) ?? null;
 
   return (
     <main className="app-shell">
@@ -125,7 +125,7 @@ function Portal({ api, onSignOut }: { api: ControlApi; onSignOut: () => void }) 
           <h1>Dense-Mem Control</h1>
         </div>
         <div className="topbar-actions">
-          <button className="icon-button" type="button" aria-label="Refresh profiles" onClick={() => void loadProfiles()}>
+          <button className="icon-button" type="button" aria-label="Refresh teams" onClick={() => void loadTeams()}>
             <RefreshCw size={18} aria-hidden="true" />
           </button>
           <button className="ghost-button" type="button" onClick={onSignOut}>
@@ -138,35 +138,35 @@ function Portal({ api, onSignOut }: { api: ControlApi; onSignOut: () => void }) 
       {error && <div className="banner error" role="alert">{error}</div>}
 
       <section className="workspace">
-        <aside className="profile-pane" aria-label="Profiles">
+        <aside className="team-pane" aria-label="Teams">
           <div className="section-heading">
-            <h2>Profiles</h2>
-            <span>{profiles.length}</span>
+            <h2>Teams</h2>
+            <span>{teams.length}</span>
           </div>
-          <ProfileCreateForm api={api} onCreated={(profile) => void loadProfiles(profile.id)} />
-          <ProfileTable
-            profiles={profiles}
-            selectedProfileId={selectedProfileId}
+          <TeamCreateForm api={api} onCreated={(team) => void loadTeams(team.id)} />
+          <TeamTable
+            teams={teams}
+            selectedTeamId={selectedTeamId}
             loading={loadState === "loading"}
-            onSelect={setSelectedProfileId}
+            onSelect={setSelectedTeamId}
           />
         </aside>
 
-        <section className="detail-pane" aria-label="Profile details">
-          {selectedProfile ? (
+        <section className="detail-pane" aria-label="Team details">
+          {selectedTeam ? (
             <>
-              <ProfileEditor
+              <TeamEditor
                 api={api}
-                profile={selectedProfile}
-                onUpdated={(profile) => {
-                  setProfiles((current) => current.map((item) => (item.id === profile.id ? profile : item)));
+                team={selectedTeam}
+                onUpdated={(team) => {
+                  setTeams((current) => current.map((item) => (item.id === team.id ? team : item)));
                 }}
-                onDeleted={() => void loadProfiles()}
+                onDeleted={() => void loadTeams()}
               />
-              <ApiKeysPanel api={api} profile={selectedProfile} />
+              <TeamProfilesPanel api={api} team={selectedTeam} />
             </>
           ) : (
-            <div className="empty-state">{loadState === "loading" ? "Loading" : "No profiles"}</div>
+            <div className="empty-state">{loadState === "loading" ? "Loading" : "No teams"}</div>
           )}
           <SecurityPanel api={api} />
         </section>
@@ -175,7 +175,7 @@ function Portal({ api, onSignOut }: { api: ControlApi; onSignOut: () => void }) 
   );
 }
 
-function ProfileCreateForm({ api, onCreated }: { api: ControlApi; onCreated: (profile: Profile) => void }) {
+function TeamCreateForm({ api, onCreated }: { api: ControlApi; onCreated: (team: Team) => void }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [error, setError] = useState("");
@@ -190,10 +190,10 @@ function ProfileCreateForm({ api, onCreated }: { api: ControlApi; onCreated: (pr
     setBusy(true);
     setError("");
     try {
-      const profile = await api.createProfile({ name: name.trim(), description: description.trim() });
+      const team = await api.createTeam({ name: name.trim(), description: description.trim() });
       setName("");
       setDescription("");
-      onCreated(profile);
+      onCreated(team);
     } catch (err) {
       setError(readError(err));
     } finally {
@@ -203,10 +203,10 @@ function ProfileCreateForm({ api, onCreated }: { api: ControlApi; onCreated: (pr
 
   return (
     <form className="inline-form" onSubmit={submit}>
-      <label htmlFor="new-profile-name">Name</label>
-      <input id="new-profile-name" value={name} onChange={(event) => setName(event.target.value)} />
-      <label htmlFor="new-profile-description">Description</label>
-      <input id="new-profile-description" value={description} onChange={(event) => setDescription(event.target.value)} />
+      <label htmlFor="new-team-name">Name</label>
+      <input id="new-team-name" value={name} onChange={(event) => setName(event.target.value)} />
+      <label htmlFor="new-team-description">Description</label>
+      <input id="new-team-description" value={description} onChange={(event) => setDescription(event.target.value)} />
       {error && <p className="field-error" role="alert">{error}</p>}
       <button className="primary-button compact" type="submit" disabled={busy}>
         <Plus size={16} aria-hidden="true" />
@@ -216,18 +216,18 @@ function ProfileCreateForm({ api, onCreated }: { api: ControlApi; onCreated: (pr
   );
 }
 
-function ProfileTable({
-  profiles,
-  selectedProfileId,
+function TeamTable({
+  teams,
+  selectedTeamId,
   loading,
   onSelect,
 }: {
-  profiles: Profile[];
-  selectedProfileId: string;
+  teams: Team[];
+  selectedTeamId: string;
   loading: boolean;
-  onSelect: (profileId: string) => void;
+  onSelect: (teamId: string) => void;
 }) {
-  if (loading && profiles.length === 0) {
+  if (loading && teams.length === 0) {
     return <div className="table-placeholder">Loading</div>;
   }
 
@@ -241,18 +241,18 @@ function ProfileTable({
           </tr>
         </thead>
         <tbody>
-          {profiles.map((profile) => (
+          {teams.map((team) => (
             <tr
-              key={profile.id}
-              className={profile.id === selectedProfileId ? "selected" : ""}
-              onClick={() => onSelect(profile.id)}
+              key={team.id}
+              className={team.id === selectedTeamId ? "selected" : ""}
+              onClick={() => onSelect(team.id)}
             >
               <td>
-                <button className="row-button" type="button" onClick={() => onSelect(profile.id)}>
-                  {profile.name}
+                <button className="row-button" type="button" onClick={() => onSelect(team.id)}>
+                  {team.name}
                 </button>
               </td>
-              <td>{formatDate(profile.updated_at)}</td>
+              <td>{formatDate(team.updated_at)}</td>
             </tr>
           ))}
         </tbody>
@@ -261,27 +261,27 @@ function ProfileTable({
   );
 }
 
-function ProfileEditor({
+function TeamEditor({
   api,
-  profile,
+  team,
   onUpdated,
   onDeleted,
 }: {
   api: ControlApi;
-  profile: Profile;
-  onUpdated: (profile: Profile) => void;
+  team: Team;
+  onUpdated: (team: Team) => void;
   onDeleted: () => void;
 }) {
-  const [name, setName] = useState(profile.name);
-  const [description, setDescription] = useState(profile.description ?? "");
+  const [name, setName] = useState(team.name);
+  const [description, setDescription] = useState(team.description ?? "");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    setName(profile.name);
-    setDescription(profile.description ?? "");
+    setName(team.name);
+    setDescription(team.description ?? "");
     setError("");
-  }, [profile.id, profile.name, profile.description]);
+  }, [team.id, team.name, team.description]);
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -292,7 +292,7 @@ function ProfileEditor({
     setBusy(true);
     setError("");
     try {
-      onUpdated(await api.updateProfile(profile.id, { name: name.trim(), description: description.trim() }));
+      onUpdated(await api.updateTeam(team.id, { name: name.trim(), description: description.trim() }));
     } catch (err) {
       setError(readError(err));
     } finally {
@@ -301,13 +301,13 @@ function ProfileEditor({
   }
 
   async function remove() {
-    if (!window.confirm(`Delete profile "${profile.name}"? This cannot be undone.`)) {
+    if (!window.confirm(`Delete team "${team.name}"? This cannot be undone.`)) {
       return;
     }
     setBusy(true);
     setError("");
     try {
-      await api.deleteProfile(profile.id);
+      await api.deleteTeam(team.id);
       onDeleted();
     } catch (err) {
       setError(readError(err));
@@ -319,14 +319,14 @@ function ProfileEditor({
   return (
     <section className="surface">
       <div className="section-heading">
-        <h2>{profile.name}</h2>
-        <span>{shortId(profile.id)}</span>
+        <h2>{team.name}</h2>
+        <span>{shortId(team.id)}</span>
       </div>
       <form className="edit-grid" onSubmit={save}>
-        <label htmlFor="profile-name">Name</label>
-        <input id="profile-name" value={name} onChange={(event) => setName(event.target.value)} />
-        <label htmlFor="profile-description">Description</label>
-        <textarea id="profile-description" value={description} onChange={(event) => setDescription(event.target.value)} />
+        <label htmlFor="team-name">Name</label>
+        <input id="team-name" value={name} onChange={(event) => setName(event.target.value)} />
+        <label htmlFor="team-description">Description</label>
+        <textarea id="team-description" value={description} onChange={(event) => setDescription(event.target.value)} />
         {error && <p className="field-error span" role="alert">{error}</p>}
         <div className="button-row span">
           <button className="primary-button" type="submit" disabled={busy}>
@@ -343,9 +343,9 @@ function ProfileEditor({
   );
 }
 
-function ApiKeysPanel({ api, profile }: { api: ControlApi; profile: Profile }) {
-  const [keys, setKeys] = useState<ApiKey[]>([]);
-  const [createdKey, setCreatedKey] = useState<CreatedApiKey | null>(null);
+function TeamProfilesPanel({ api, team }: { api: ControlApi; team: Team }) {
+  const [keys, setKeys] = useState<TeamProfile[]>([]);
+  const [createdKey, setCreatedKey] = useState<CreatedTeamProfile | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [deletingKeyId, setDeletingKeyId] = useState("");
@@ -354,7 +354,7 @@ function ApiKeysPanel({ api, profile }: { api: ControlApi; profile: Profile }) {
     setLoading(true);
     setError("");
     try {
-      const page = await api.listApiKeys(profile.id);
+      const page = await api.listTeamProfiles(team.id);
       setKeys(page.data);
     } catch (err) {
       setError(readError(err));
@@ -366,18 +366,18 @@ function ApiKeysPanel({ api, profile }: { api: ControlApi; profile: Profile }) {
   useEffect(() => {
     setCreatedKey(null);
     void loadKeys();
-  }, [profile.id]);
+  }, [team.id]);
 
   async function deleteKey(keyId: string) {
     const key = keys.find((item) => item.id === keyId);
-    const label = key ? displayKeySuffix(key) : "this key";
-    if (!window.confirm(`Delete API key ${label}?`)) {
+    const label = key ? key.name : "this profile";
+    if (!window.confirm(`Delete profile "${label}"?`)) {
       return;
     }
     setDeletingKeyId(keyId);
     setError("");
     try {
-      await api.deleteApiKey(profile.id, keyId);
+      await api.deleteTeamProfile(team.id, keyId);
       await loadKeys();
     } catch (err) {
       setError(readError(err));
@@ -389,18 +389,18 @@ function ApiKeysPanel({ api, profile }: { api: ControlApi; profile: Profile }) {
   return (
     <section className="surface">
       <div className="section-heading">
-        <h2>API keys</h2>
+        <h2>Profiles</h2>
         <span>{keys.length}</span>
       </div>
       {createdKey && <CreatedKeyNotice createdKey={createdKey} onDismiss={() => setCreatedKey(null)} />}
       {error && <div className="banner error" role="alert">{error}</div>}
-      <ApiKeyCreateForm api={api} profile={profile} onCreated={(value) => {
+      <TeamProfileCreateForm api={api} team={team} onCreated={(value) => {
         setCreatedKey(value);
         void loadKeys();
       }} />
       {loading && <div className="table-placeholder">Loading</div>}
       {!loading && (
-        <ApiKeyTable
+        <TeamProfileTable
           keys={keys}
           deletingKeyId={deletingKeyId}
           onDelete={(keyId) => void deleteKey(keyId)}
@@ -410,17 +410,17 @@ function ApiKeysPanel({ api, profile }: { api: ControlApi; profile: Profile }) {
   );
 }
 
-function ApiKeyTable({
+function TeamProfileTable({
   keys,
   deletingKeyId,
   onDelete,
 }: {
-  keys: ApiKey[];
+  keys: TeamProfile[];
   deletingKeyId: string;
   onDelete: (keyId: string) => void;
 }) {
   if (keys.length === 0) {
-    return <div className="table-placeholder">No API keys</div>;
+    return <div className="table-placeholder">No profiles</div>;
   }
 
   return (
@@ -428,6 +428,7 @@ function ApiKeyTable({
       <table className="data-table key-table">
         <thead>
           <tr>
+            <th>Name</th>
             <th>Key</th>
             <th>Created</th>
             <th>Last used</th>
@@ -439,6 +440,7 @@ function ApiKeyTable({
             const display = displayKeySuffix(key);
             return (
               <tr key={key.id}>
+                <td>{key.name}</td>
                 <td><code>{display}</code></td>
                 <td>{formatDate(key.created_at)}</td>
                 <td>{key.last_used_at ? formatDate(key.last_used_at) : "Never"}</td>
@@ -446,7 +448,7 @@ function ApiKeyTable({
                   <button
                     className="icon-button danger"
                     type="button"
-                    aria-label={`Delete API key ${display}`}
+                    aria-label={`Delete profile ${key.name}`}
                     disabled={deletingKeyId === key.id}
                     onClick={() => onDelete(key.id)}
                   >
@@ -462,21 +464,26 @@ function ApiKeyTable({
   );
 }
 
-function ApiKeyCreateForm({
+function TeamProfileCreateForm({
   api,
-  profile,
+  team,
   onCreated,
 }: {
   api: ControlApi;
-  profile: Profile;
-  onCreated: (created: CreatedApiKey) => void;
+  team: Team;
+  onCreated: (created: CreatedTeamProfile) => void;
 }) {
+  const [name, setName] = useState("default profile");
   const [rateLimit, setRateLimit] = useState("120");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (name.trim().length < 1) {
+      setError("Profile name is required.");
+      return;
+    }
     const parsedRateLimit = Number.parseInt(rateLimit, 10);
     if (!Number.isFinite(parsedRateLimit) || parsedRateLimit <= 0) {
       setError("Rate limit must be greater than zero.");
@@ -485,7 +492,8 @@ function ApiKeyCreateForm({
     setBusy(true);
     setError("");
     try {
-      const created = await api.createApiKey(profile.id, {
+      const created = await api.createTeamProfile(team.id, {
+        name: name.trim(),
         rate_limit: parsedRateLimit,
       });
       onCreated(created);
@@ -498,18 +506,20 @@ function ApiKeyCreateForm({
 
   return (
     <form className="key-form" onSubmit={submit}>
+      <label htmlFor="team-profile-name">Profile name</label>
+      <input id="team-profile-name" value={name} onChange={(event) => setName(event.target.value)} />
       <label htmlFor="rate-limit">Rate limit</label>
       <input id="rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
       {error && <p className="field-error span" role="alert">{error}</p>}
       <button className="primary-button span" type="submit" disabled={busy}>
         <KeyRound size={16} aria-hidden="true" />
-        Create key
+        Create profile
       </button>
     </form>
   );
 }
 
-function CreatedKeyNotice({ createdKey, onDismiss }: { createdKey: CreatedApiKey; onDismiss: () => void }) {
+function CreatedKeyNotice({ createdKey, onDismiss }: { createdKey: CreatedTeamProfile; onDismiss: () => void }) {
   const [copied, setCopied] = useState(false);
 
   async function copy() {
@@ -757,7 +767,7 @@ function formatDate(value: string): string {
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
 
-function displayKeySuffix(key: ApiKey): string {
+function displayKeySuffix(key: TeamProfile): string {
   const suffix = key.key_suffix?.trim();
   return suffix ? `******${suffix}` : "Unavailable";
 }

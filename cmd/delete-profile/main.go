@@ -17,12 +17,12 @@ import (
 )
 
 type cliConfig struct {
-	profileID string
+	teamID string
 }
 
 type output struct {
-	ProfileID string `json:"profile_id"`
-	Status    string `json:"status"`
+	TeamID string `json:"team_id"`
+	Status string `json:"status"`
 }
 
 func main() {
@@ -38,9 +38,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	profileID, err := uuid.Parse(cfg.profileID)
+	teamID, err := uuid.Parse(cfg.teamID)
 	if err != nil {
-		return fmt.Errorf("invalid --profile-id: %w", err)
+		return fmt.Errorf("invalid --team-id: %w", err)
 	}
 
 	dsn, err := operatorcli.ResolvePostgresDSN(os.Getenv)
@@ -57,31 +57,31 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 	defer services.Close()
 
-	if err := services.ProfileService.Delete(ctx, profileID, nil, operatorcli.DefaultActorRole, operatorcli.DefaultClientIP, operatorcli.CorrelationID()); err != nil {
-		return fmt.Errorf("delete profile: %w", err)
+	if err := services.ProfileService.Delete(ctx, teamID, nil, operatorcli.DefaultActorRole, operatorcli.DefaultClientIP, operatorcli.CorrelationID()); err != nil {
+		return fmt.Errorf("delete team: %w", err)
 	}
 
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(output{
-		ProfileID: profileID.String(),
-		Status:    "deleted",
+		TeamID: teamID.String(),
+		Status: "deleted",
 	})
 }
 
 func parseCLI(args []string, stderr io.Writer) (cliConfig, error) {
 	var cfg cliConfig
 
-	fs := flag.NewFlagSet("delete-profile", flag.ContinueOnError)
+	fs := flag.NewFlagSet("delete-team", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.StringVar(&cfg.profileID, "profile-id", "", "Profile UUID to delete")
+	fs.StringVar(&cfg.teamID, "team-id", "", "Team UUID to delete")
 
 	if err := fs.Parse(args); err != nil {
 		return cliConfig{}, err
 	}
-	cfg.profileID = strings.TrimSpace(cfg.profileID)
-	if cfg.profileID == "" {
-		return cliConfig{}, errors.New("--profile-id is required")
+	cfg.teamID = strings.TrimSpace(cfg.teamID)
+	if cfg.teamID == "" {
+		return cliConfig{}, errors.New("--team-id is required")
 	}
 	return cfg, nil
 }

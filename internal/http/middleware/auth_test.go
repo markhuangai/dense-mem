@@ -47,6 +47,10 @@ func (m *mockAPIKeyRepository) RevokeForProfile(ctx context.Context, profileID, 
 	return 0, nil
 }
 
+func (m *mockAPIKeyRepository) RotateForProfile(ctx context.Context, profileID, id uuid.UUID, keyHash, keyPrefix, keySuffix string, expiresAt *time.Time) (int64, error) {
+	return 0, nil
+}
+
 func (m *mockAPIKeyRepository) DeleteForProfile(ctx context.Context, profileID, id uuid.UUID) (int64, error) {
 	return 0, nil
 }
@@ -434,8 +438,9 @@ func TestAuthMiddleware_ValidKey_StoresPrincipal(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	require.NotNil(t, capturedPrincipal, "principal should be stored in context")
 	assert.Equal(t, keyID, capturedPrincipal.KeyID)
+	assert.Equal(t, profileID, capturedPrincipal.TeamID)
 	require.NotNil(t, capturedPrincipal.ProfileID)
-	assert.Equal(t, profileID, *capturedPrincipal.ProfileID)
+	assert.Equal(t, keyID, *capturedPrincipal.ProfileID)
 	assert.Equal(t, "standard", capturedPrincipal.Role)
 	assert.Equal(t, []string{"read", "write"}, capturedPrincipal.Scopes)
 	assert.Equal(t, rawKey[:24], capturedPrincipal.KeyPrefix)

@@ -400,7 +400,7 @@ func TestProfileServiceDeleteRemovesActiveKeys(t *testing.T) {
 
 	// Create an active API key for this profile
 	_, err = sqlDB.ExecContext(ctx, `
-		INSERT INTO api_keys (id, profile_id, key_hash, key_prefix, label, scopes, expires_at, revoked_at, created_at, updated_at)
+		INSERT INTO api_keys (id, team_id, key_hash, key_prefix, label, scopes, expires_at, revoked_at, created_at, updated_at)
 		VALUES (gen_random_uuid(), $1, 'testhash', 'testprefix', 'Test Key', ARRAY['read'], NULL, NULL, NOW(), NOW())
 	`, profile.ID)
 	require.NoError(t, err, "Should create API key")
@@ -412,7 +412,7 @@ func TestProfileServiceDeleteRemovesActiveKeys(t *testing.T) {
 	err = sqlDB.QueryRowContext(ctx, `
 		SELECT COUNT(*)
 		FROM api_keys
-		WHERE profile_id = $1
+		WHERE team_id = $1
 	`, profile.ID).Scan(&keyCount)
 	require.NoError(t, err, "Should query API keys")
 	assert.Equal(t, 0, keyCount, "profile API keys should be deleted")
@@ -426,7 +426,7 @@ func TestProfileServiceDeleteRemovesActiveKeys(t *testing.T) {
 	require.NoError(t, err, "Should query profiles")
 	assert.Equal(t, 0, profileCount, "profile row should be deleted")
 
-	sqlDB.Exec("DELETE FROM api_keys WHERE profile_id = $1", profile.ID)
+	sqlDB.Exec("DELETE FROM api_keys WHERE team_id = $1", profile.ID)
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id = $1", profile.ID.String())
 	sqlDB.Exec("DELETE FROM profiles WHERE id = $1", profile.ID.String())
 }

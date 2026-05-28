@@ -8,9 +8,9 @@ import (
 )
 
 type listingScopedReader struct {
-	rows          []map[string]any
-	err           error
-	capturedParams map[string]any
+	rows            []map[string]any
+	err             error
+	capturedParams  map[string]any
 	capturedProfile string
 }
 
@@ -23,7 +23,7 @@ func (l *listingScopedReader) ScopedRead(ctx context.Context, profileID, query s
 func rowAt(id string, ts time.Time, content string) map[string]any {
 	return map[string]any{
 		"fragment_id": id,
-		"profile_id":  "pA",
+		"team_id":     "pA",
 		"content":     content,
 		"source_type": "manual",
 		"created_at":  ts,

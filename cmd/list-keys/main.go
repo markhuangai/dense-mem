@@ -17,13 +17,14 @@ import (
 )
 
 type cliConfig struct {
-	profileID string
-	limit     int
-	offset    int
+	teamID string
+	limit  int
+	offset int
 }
 
 type keyItem struct {
-	KeyID      string     `json:"key_id"`
+	ProfileID  string     `json:"profile_id"`
+	Name       string     `json:"name"`
 	KeySuffix  string     `json:"key_suffix"`
 	RateLimit  int        `json:"rate_limit"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
@@ -32,11 +33,11 @@ type keyItem struct {
 }
 
 type output struct {
-	ProfileID string    `json:"profile_id"`
-	Items     []keyItem `json:"items"`
-	Total     int64     `json:"total"`
-	Limit     int       `json:"limit"`
-	Offset    int       `json:"offset"`
+	TeamID string    `json:"team_id"`
+	Items  []keyItem `json:"items"`
+	Total  int64     `json:"total"`
+	Limit  int       `json:"limit"`
+	Offset int       `json:"offset"`
 }
 
 func main() {
@@ -52,9 +53,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	profileID, err := uuid.Parse(cfg.profileID)
+	teamID, err := uuid.Parse(cfg.teamID)
 	if err != nil {
-		return fmt.Errorf("invalid --profile-id: %w", err)
+		return fmt.Errorf("invalid --team-id: %w", err)
 	}
 
 	dsn, err := operatorcli.ResolvePostgresDSN(os.Getenv)
@@ -71,19 +72,20 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 	defer services.Close()
 
-	keys, err := services.APIKeyService.ListByProfile(ctx, profileID, cfg.limit, cfg.offset)
+	keys, err := services.APIKeyService.ListByProfile(ctx, teamID, cfg.limit, cfg.offset)
 	if err != nil {
-		return fmt.Errorf("list keys: %w", err)
+		return fmt.Errorf("list profiles: %w", err)
 	}
-	total, err := services.APIKeyService.CountByProfile(ctx, profileID)
+	total, err := services.APIKeyService.CountByProfile(ctx, teamID)
 	if err != nil {
-		return fmt.Errorf("count keys: %w", err)
+		return fmt.Errorf("count profiles: %w", err)
 	}
 
 	items := make([]keyItem, 0, len(keys))
 	for _, key := range keys {
 		items = append(items, keyItem{
-			KeyID:      key.ID.String(),
+			ProfileID:  key.ID.String(),
+			Name:       key.GetProfileName(),
 			KeySuffix:  key.KeySuffix,
 			RateLimit:  key.RateLimit,
 			LastUsedAt: key.LastUsedAt,
@@ -95,29 +97,29 @@ func run(args []string, stdout, stderr io.Writer) error {
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(output{
-		ProfileID: profileID.String(),
-		Items:     items,
-		Total:     total,
-		Limit:     cfg.limit,
-		Offset:    cfg.offset,
+		TeamID: teamID.String(),
+		Items:  items,
+		Total:  total,
+		Limit:  cfg.limit,
+		Offset: cfg.offset,
 	})
 }
 
 func parseCLI(args []string, stderr io.Writer) (cliConfig, error) {
 	var cfg cliConfig
 
-	fs := flag.NewFlagSet("list-keys", flag.ContinueOnError)
+	fs := flag.NewFlagSet("list-team-profiles", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.StringVar(&cfg.profileID, "profile-id", "", "Profile UUID to inspect")
-	fs.IntVar(&cfg.limit, "limit", 100, "Maximum number of keys to return")
+	fs.StringVar(&cfg.teamID, "team-id", "", "Team UUID to inspect")
+	fs.IntVar(&cfg.limit, "limit", 100, "Maximum number of profiles to return")
 	fs.IntVar(&cfg.offset, "offset", 0, "Offset for pagination")
 
 	if err := fs.Parse(args); err != nil {
 		return cliConfig{}, err
 	}
-	cfg.profileID = strings.TrimSpace(cfg.profileID)
-	if cfg.profileID == "" {
-		return cliConfig{}, errors.New("--profile-id is required")
+	cfg.teamID = strings.TrimSpace(cfg.teamID)
+	if cfg.teamID == "" {
+		return cliConfig{}, errors.New("--team-id is required")
 	}
 	return cfg, nil
 }

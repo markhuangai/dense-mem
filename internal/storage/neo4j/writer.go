@@ -56,7 +56,7 @@ func NewGraphWriter(enforcer ProfileScopeEnforcer) GraphWriter {
 }
 
 // CreateNode creates a new node with the given label and properties.
-// It automatically injects the profile_id into the node properties.
+// It automatically injects the team_id into the node properties.
 // Returns the generated node ID on success.
 // All writes are parameterized to prevent Cypher injection.
 func (w *graphWriter) CreateNode(ctx context.Context, profileID string, label string, props map[string]any) (string, error) {
@@ -69,14 +69,14 @@ func (w *graphWriter) CreateNode(ctx context.Context, profileID string, label st
 		nodeProps[k] = v
 	}
 
-	// Inject profile_id and node_id into properties
-	nodeProps["profile_id"] = profileID
+	// Inject team_id and node_id into properties
+	nodeProps["team_id"] = profileID
 	nodeProps["id"] = nodeID
 
 	// Build parameterized Cypher query
 	// The $profileId placeholder is required by ScopedWrite for validation
 	query := fmt.Sprintf(
-		"CREATE (n:%s $props) SET n.profile_id = $profileId RETURN n.id",
+		"CREATE (n:%s $props) SET n.team_id = $profileId RETURN n.id",
 		label,
 	)
 
@@ -93,7 +93,7 @@ func (w *graphWriter) CreateNode(ctx context.Context, profileID string, label st
 
 // CreateRelationship creates a relationship between two nodes.
 // It validates that both endpoint nodes belong to the same profile before creating.
-// The relationship itself also stores the profile_id.
+// The relationship itself also stores the team_id.
 // Returns CrossProfileRelationshipError if endpoints belong to different profiles.
 // All queries are parameterized to prevent Cypher injection.
 func (w *graphWriter) CreateRelationship(ctx context.Context, profileID string, fromLabel string, fromID string, toLabel string, toID string, relType string, props map[string]any) error {
@@ -102,10 +102,10 @@ func (w *graphWriter) CreateRelationship(ctx context.Context, profileID string, 
 	// and ensure atomicity of the validation
 	checkQuery := `
 		MATCH (from:%s {id: $fromId}) 
-		WHERE from.profile_id = $profileId
+		WHERE from.team_id = $profileId
 		MATCH (to:%s {id: $toId}) 
-		WHERE to.profile_id = $profileId
-		RETURN from.profile_id AS fromProfileId, to.profile_id AS toProfileId
+		WHERE to.team_id = $profileId
+		RETURN from.team_id AS fromProfileId, to.team_id AS toProfileId
 	`
 	checkQuery = fmt.Sprintf(checkQuery, fromLabel, toLabel)
 
@@ -142,16 +142,16 @@ func (w *graphWriter) CreateRelationship(ctx context.Context, profileID string, 
 	for k, v := range props {
 		relProps[k] = v
 	}
-	// Inject profile_id into relationship properties
-	relProps["profile_id"] = profileID
+	// Inject team_id into relationship properties
+	relProps["team_id"] = profileID
 
 	// Build parameterized Cypher query for relationship creation
 	// The $profileId placeholder is required by ScopedWrite for validation
 	createQuery := `
 		MATCH (from:%s {id: $fromId})
-		WHERE from.profile_id = $profileId
+		WHERE from.team_id = $profileId
 		MATCH (to:%s {id: $toId})
-		WHERE to.profile_id = $profileId
+		WHERE to.team_id = $profileId
 		CREATE (from)-[r:%s $props]->(to)
 		RETURN type(r)
 	`
@@ -169,17 +169,17 @@ func (w *graphWriter) CreateRelationship(ctx context.Context, profileID string, 
 	return nil
 }
 
-// getNodeProfileID retrieves the profile_id of a node.
+// getNodeProfileID retrieves the team_id of a node.
 // This is used for cross-profile validation.
-// Returns the profile_id and whether the node exists.
+// Returns the team_id and whether the node exists.
 // Note: This method is internal and uses the caller's profileID for scoping,
-// but returns the actual profile_id of the node if it exists.
+// but returns the actual team_id of the node if it exists.
 func (w *graphWriter) getNodeProfileID(ctx context.Context, profileID string, label string, nodeID string) (string, bool) {
 	// Use a query through the enforcer
 	// Note: We need $profileId placeholder for ScopedRead to work
 	// So we include it in a WHERE clause that's always true
 	queryWithPlaceholder := fmt.Sprintf(
-		"MATCH (n:%s {id: $nodeId}) WHERE $profileId = $profileId RETURN n.profile_id AS profileId LIMIT 1",
+		"MATCH (n:%s {id: $nodeId}) WHERE $profileId = $profileId RETURN n.team_id AS profileId LIMIT 1",
 		label,
 	)
 

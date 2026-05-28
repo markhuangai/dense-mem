@@ -126,8 +126,10 @@ func (v EntailmentVerdict) IsValid() bool {
 // omit or zero-out ProfileID when constructing a Claim.
 type Claim struct {
 	// Identity / scope
-	ClaimID   string `json:"claim_id"`
-	ProfileID string `json:"profile_id"`
+	ClaimID              string `json:"claim_id"`
+	ProfileID            string `json:"team_id"`
+	CreatedByProfileID   string `json:"created_by_profile_id,omitempty"`
+	CreatedByProfileName string `json:"created_by_profile_name,omitempty"`
 
 	// Semantic triple
 	Subject   string `json:"subject"`

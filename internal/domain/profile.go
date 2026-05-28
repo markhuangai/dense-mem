@@ -6,9 +6,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// ProfileModel is the companion interface for Profile.
+// TeamModel is the companion interface for Team.
 // Consumers and tests depend on this abstraction rather than the concrete struct.
-type ProfileModel interface {
+type TeamModel interface {
 	GetID() uuid.UUID
 	GetName() string
 	GetDescription() string
@@ -19,8 +19,8 @@ type ProfileModel interface {
 	GetDeletedAt() *time.Time
 }
 
-// Profile represents a user-defined profile for organizing knowledge.
-type Profile struct {
+// Team represents a team knowledge base.
+type Team struct {
 	ID          uuid.UUID
 	Name        string
 	Description string
@@ -31,15 +31,21 @@ type Profile struct {
 	DeletedAt   *time.Time
 }
 
-// Ensure Profile implements ProfileModel
-var _ ProfileModel = (*Profile)(nil)
+// Profile is retained as a compatibility alias during the team rename.
+type Profile = Team
 
-// Getters for ProfileModel interface
-func (p *Profile) GetID() uuid.UUID       { return p.ID }
-func (p *Profile) GetName() string        { return p.Name }
-func (p *Profile) GetDescription() string { return p.Description }
-func (p *Profile) GetMetadata() map[string]any { return p.Metadata }
-func (p *Profile) GetConfig() map[string]any   { return p.Config }
-func (p *Profile) GetCreatedAt() time.Time     { return p.CreatedAt }
-func (p *Profile) GetUpdatedAt() time.Time     { return p.UpdatedAt }
-func (p *Profile) GetDeletedAt() *time.Time    { return p.DeletedAt }
+// ProfileModel is retained as a compatibility alias during the team rename.
+type ProfileModel = TeamModel
+
+// Ensure Team implements TeamModel
+var _ TeamModel = (*Team)(nil)
+
+// Getters for TeamModel interface
+func (p *Team) GetID() uuid.UUID            { return p.ID }
+func (p *Team) GetName() string             { return p.Name }
+func (p *Team) GetDescription() string      { return p.Description }
+func (p *Team) GetMetadata() map[string]any { return p.Metadata }
+func (p *Team) GetConfig() map[string]any   { return p.Config }
+func (p *Team) GetCreatedAt() time.Time     { return p.CreatedAt }
+func (p *Team) GetUpdatedAt() time.Time     { return p.UpdatedAt }
+func (p *Team) GetDeletedAt() *time.Time    { return p.DeletedAt }

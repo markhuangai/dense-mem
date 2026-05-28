@@ -37,10 +37,10 @@ func NewClaimSearcher(reader RecallScopedReader) ClaimSearcher {
 func (s *neo4jFactSearcher) SearchActive(ctx context.Context, profileID string, query string, limit int) ([]FactRecallResult, error) {
 	cypher := `
 CALL db.index.fulltext.queryNodes('fact_recall_idx', $searchQuery) YIELD node AS f, score
-WHERE f.profile_id = $profileId AND f.status = 'active'
+WHERE f.team_id = $profileId AND f.status = 'active'
 RETURN
     f.fact_id AS fact_id,
-    f.profile_id AS profile_id,
+    f.team_id AS team_id,
     f.valid_from AS valid_from,
     f.valid_to AS valid_to,
     f.recorded_at AS recorded_at,
@@ -60,7 +60,7 @@ LIMIT $limit`
 	for _, row := range rows {
 		results = append(results, FactRecallResult{
 			FactID:     recallString(row, "fact_id"),
-			ProfileID:  recallString(row, "profile_id"),
+			ProfileID:  recallString(row, "team_id"),
 			Score:      recallFloat64(row, "score"),
 			ValidFrom:  recallTimePtr(row, "valid_from"),
 			ValidTo:    recallTimePtr(row, "valid_to"),
@@ -75,10 +75,10 @@ LIMIT $limit`
 func (s *neo4jClaimSearcher) SearchValidated(ctx context.Context, profileID string, query string, limit int) ([]ClaimRecallResult, error) {
 	cypher := `
 CALL db.index.fulltext.queryNodes('claim_recall_idx', $searchQuery) YIELD node AS c, score
-WHERE c.profile_id = $profileId AND c.status = 'validated'
+WHERE c.team_id = $profileId AND c.status = 'validated'
 RETURN
     c.claim_id AS claim_id,
-    c.profile_id AS profile_id,
+    c.team_id AS team_id,
     c.valid_from AS valid_from,
     c.valid_to AS valid_to,
     c.recorded_at AS recorded_at,
@@ -98,7 +98,7 @@ LIMIT $limit`
 	for _, row := range rows {
 		results = append(results, ClaimRecallResult{
 			ClaimID:    recallString(row, "claim_id"),
-			ProfileID:  recallString(row, "profile_id"),
+			ProfileID:  recallString(row, "team_id"),
 			Score:      recallFloat64(row, "score"),
 			ValidFrom:  recallTimePtr(row, "valid_from"),
 			ValidTo:    recallTimePtr(row, "valid_to"),

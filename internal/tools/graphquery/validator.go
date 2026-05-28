@@ -23,7 +23,7 @@ func (e *ValidationError) Error() string {
 }
 
 // cypherValidator validates Cypher queries for safe, scoped execution.
-// It enforces read-only operations and ensures profile_id predicates are present.
+// It enforces read-only operations and ensures team_id predicates are present.
 type cypherValidator struct{}
 
 // Ensure cypherValidator implements CypherValidator
@@ -51,7 +51,7 @@ var optionalMatchPattern = regexp.MustCompile(`(?i)\bOPTIONAL\s+MATCH\b`)
 // - Write clauses: CREATE, MERGE, DELETE, SET, REMOVE, DROP, FOREACH, LOAD CSV, CALL, UNION, USE
 // - Multiple statements (semicolons)
 // - Anonymous node patterns without aliases
-// - Node patterns without profile_id constraints
+// - Node patterns without team_id constraints
 func (v *cypherValidator) Validate(query string) error {
 	query = strings.TrimSpace(query)
 
@@ -95,9 +95,9 @@ func (v *cypherValidator) Validate(query string) error {
 		return nil
 	}
 
-	// Check if all aliases in the main query are constrained by profile_id
+	// Check if all aliases in the main query are constrained by team_id
 	if !allAliasesHaveProfilePredicate(mainQuery, aliases) {
-		return &ValidationError{Reason: "all node aliases must be constrained by profile_id predicate"}
+		return &ValidationError{Reason: "all node aliases must be constrained by team_id predicate"}
 	}
 
 	return nil
@@ -128,38 +128,38 @@ func hasAnonymousNodePattern(query string) bool {
 	return anonymousPattern.MatchString(query)
 }
 
-// allAliasesHaveProfilePredicate checks if all aliases have profile_id constraints.
+// allAliasesHaveProfilePredicate checks if all aliases have team_id constraints.
 // Valid constraints:
-// - inline: {profile_id: $profileId}
-// - WHERE clause: alias.profile_id = $profileId
+// - inline: {team_id: $profileId}
+// - WHERE clause: alias.team_id = $profileId
 func allAliasesHaveProfilePredicate(query string, aliases []string) bool {
-	// Check for WHERE clause with profile_id that applies to any alias
-	whereHasProfileID := regexp.MustCompile(`(?i)\bWHERE\b.*profile_id\s*=\s*\$profileId`).MatchString(query)
+	// Check for WHERE clause with team_id that applies to any alias
+	whereHasProfileID := regexp.MustCompile(`(?i)\bWHERE\b.*team_id\s*=\s*\$profileId`).MatchString(query)
 
 	for _, alias := range aliases {
-		// Check inline: {profile_id: $profileId} for this specific alias
-		inlinePattern := regexp.MustCompile(fmt.Sprintf(`(?i)\(\s*%s\s*(?::\s*[a-zA-Z_][a-zA-Z0-9_]*)?\s*\{[^}]*profile_id\s*:\s*\$profileId[^}]*\}`, regexp.QuoteMeta(alias)))
+		// Check inline: {team_id: $profileId} for this specific alias
+		inlinePattern := regexp.MustCompile(fmt.Sprintf(`(?i)\(\s*%s\s*(?::\s*[a-zA-Z_][a-zA-Z0-9_]*)?\s*\{[^}]*team_id\s*:\s*\$profileId[^}]*\}`, regexp.QuoteMeta(alias)))
 		if inlinePattern.MatchString(query) {
-			continue // This alias has inline profile_id
+			continue // This alias has inline team_id
 		}
 
 		// Check WHERE clause for this specific alias
-		wherePattern := regexp.MustCompile(fmt.Sprintf(`(?i)\bWHERE\b.*\b%s\.profile_id\s*=\s*\$profileId`, regexp.QuoteMeta(alias)))
+		wherePattern := regexp.MustCompile(fmt.Sprintf(`(?i)\bWHERE\b.*\b%s\.team_id\s*=\s*\$profileId`, regexp.QuoteMeta(alias)))
 		if wherePattern.MatchString(query) {
-			continue // This alias has WHERE profile_id
+			continue // This alias has WHERE team_id
 		}
 
-		// If WHERE clause has profile_id but not specific to this alias, still accept
-		// (This handles cases like: WHERE n.profile_id = $profileId AND m.profile_id = $profileId)
+		// If WHERE clause has team_id but not specific to this alias, still accept
+		// (This handles cases like: WHERE n.team_id = $profileId AND m.team_id = $profileId)
 		if whereHasProfileID {
-			// Check if this specific alias is mentioned with profile_id in WHERE
-			aliasProfileInWhere := regexp.MustCompile(fmt.Sprintf(`(?i)\b%s\.profile_id\s*=\s*\$profileId`, regexp.QuoteMeta(alias))).MatchString(query)
+			// Check if this specific alias is mentioned with team_id in WHERE
+			aliasProfileInWhere := regexp.MustCompile(fmt.Sprintf(`(?i)\b%s\.team_id\s*=\s*\$profileId`, regexp.QuoteMeta(alias))).MatchString(query)
 			if aliasProfileInWhere {
 				continue
 			}
 		}
 
-		// This alias doesn't have profile_id constraint
+		// This alias doesn't have team_id constraint
 		return false
 	}
 

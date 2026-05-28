@@ -44,7 +44,7 @@ type ProfileScopeEnforcer interface {
 // (AC-44).
 const FragmentActiveFilter = "coalesce(sf.status,'active') <> 'retracted'"
 
-// profileScopeEnforcer enforces profile_id scoping on all Neo4j operations.
+// profileScopeEnforcer enforces team_id scoping on all Neo4j operations.
 // It injects profileId into queries and validates that queries contain the required placeholder.
 type profileScopeEnforcer struct {
 	executor Neo4jClientInterface

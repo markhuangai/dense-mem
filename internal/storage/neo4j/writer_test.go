@@ -13,7 +13,7 @@ import (
 )
 
 // TestCreateNodeInjectsProfileId tests that CreateNode automatically injects
-// the profile_id into node properties.
+// the team_id into node properties.
 func TestCreateNodeInjectsProfileId(t *testing.T) {
 	ctx := context.Background()
 
@@ -46,10 +46,10 @@ func TestCreateNodeInjectsProfileId(t *testing.T) {
 	require.NoError(t, err, "CreateNode should succeed")
 	require.NotEmpty(t, nodeID, "CreateNode should return a non-empty node ID")
 
-	// Verify the node was created with profile_id injected
+	// Verify the node was created with team_id injected
 	result, err := client.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 		res, err := tx.Run(ctx,
-			"MATCH (n:TestNode {id: $nodeId}) RETURN n.id, n.profile_id, n.name, n.value",
+			"MATCH (n:TestNode {id: $nodeId}) RETURN n.id, n.team_id, n.name, n.value",
 			map[string]any{"nodeId": nodeID},
 		)
 		if err != nil {
@@ -57,10 +57,10 @@ func TestCreateNodeInjectsProfileId(t *testing.T) {
 		}
 		if res.Next(ctx) {
 			return map[string]any{
-				"id":         res.Record().Values[0],
-				"profile_id": res.Record().Values[1],
-				"name":       res.Record().Values[2],
-				"value":      res.Record().Values[3],
+				"id":      res.Record().Values[0],
+				"team_id": res.Record().Values[1],
+				"name":    res.Record().Values[2],
+				"value":   res.Record().Values[3],
 			}, nil
 		}
 		return nil, errors.New("node not found")
@@ -69,7 +69,7 @@ func TestCreateNodeInjectsProfileId(t *testing.T) {
 
 	nodeData := result.(map[string]any)
 	assert.Equal(t, nodeID, nodeData["id"], "node ID should match")
-	assert.Equal(t, profileID, nodeData["profile_id"], "profile_id should be injected")
+	assert.Equal(t, profileID, nodeData["team_id"], "team_id should be injected")
 	assert.Equal(t, "TestName", nodeData["name"], "name property should be preserved")
 	assert.Equal(t, int64(42), nodeData["value"], "value property should be preserved")
 
@@ -118,10 +118,10 @@ func TestCreateRelationshipValidatesSameProfile(t *testing.T) {
 	err = writer.CreateRelationship(ctx, profileID, "Person", fromID, "Person", toID, "KNOWS", relProps)
 	require.NoError(t, err, "CreateRelationship should succeed for same-profile nodes")
 
-	// Verify the relationship was created with profile_id
+	// Verify the relationship was created with team_id
 	result, err := client.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 		res, err := tx.Run(ctx,
-			"MATCH (from:Person {id: $fromId})-[r:KNOWS]->(to:Person {id: $toId}) RETURN r.profile_id, r.since",
+			"MATCH (from:Person {id: $fromId})-[r:KNOWS]->(to:Person {id: $toId}) RETURN r.team_id, r.since",
 			map[string]any{"fromId": fromID, "toId": toID},
 		)
 		if err != nil {
@@ -129,8 +129,8 @@ func TestCreateRelationshipValidatesSameProfile(t *testing.T) {
 		}
 		if res.Next(ctx) {
 			return map[string]any{
-				"profile_id": res.Record().Values[0],
-				"since":      res.Record().Values[1],
+				"team_id": res.Record().Values[0],
+				"since":   res.Record().Values[1],
 			}, nil
 		}
 		return nil, errors.New("relationship not found")
@@ -138,7 +138,7 @@ func TestCreateRelationshipValidatesSameProfile(t *testing.T) {
 	require.NoError(t, err, "should find the created relationship")
 
 	relData := result.(map[string]any)
-	assert.Equal(t, profileID, relData["profile_id"], "relationship should have profile_id")
+	assert.Equal(t, profileID, relData["team_id"], "relationship should have team_id")
 	assert.Equal(t, int64(2020), relData["since"], "relationship property should be preserved")
 
 	// Cleanup

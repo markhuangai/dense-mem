@@ -14,24 +14,29 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 // Principal represents the authenticated principal stored in context.
 type Principal struct {
-	KeyID     uuid.UUID
-	ProfileID *uuid.UUID
-	Role      string
-	Scopes    []string
-	KeyPrefix string
-	RateLimit int
+	KeyID       uuid.UUID
+	TeamID      uuid.UUID
+	ProfileID   *uuid.UUID
+	ProfileName string
+	Role        string
+	Scopes      []string
+	KeyPrefix   string
+	RateLimit   int
 }
 
 // PrincipalInterface is the companion interface for Principal.
 // Consumers and tests depend on this abstraction rather than the concrete struct.
 type PrincipalInterface interface {
 	GetKeyID() uuid.UUID
+	GetTeamID() uuid.UUID
 	GetProfileID() *uuid.UUID
+	GetProfileName() string
 	GetRole() string
 	GetScopes() []string
 	GetKeyPrefix() string
@@ -42,8 +47,18 @@ type PrincipalInterface interface {
 var _ PrincipalInterface = (*Principal)(nil)
 
 // Getters for PrincipalInterface
-func (p *Principal) GetKeyID() uuid.UUID      { return p.KeyID }
+func (p *Principal) GetKeyID() uuid.UUID { return p.KeyID }
+func (p *Principal) GetTeamID() uuid.UUID {
+	if p.TeamID != uuid.Nil {
+		return p.TeamID
+	}
+	if p.ProfileID != nil {
+		return *p.ProfileID
+	}
+	return uuid.Nil
+}
 func (p *Principal) GetProfileID() *uuid.UUID { return p.ProfileID }
+func (p *Principal) GetProfileName() string   { return p.ProfileName }
 func (p *Principal) GetRole() string          { return p.Role }
 func (p *Principal) GetScopes() []string      { return p.Scopes }
 func (p *Principal) GetKeyPrefix() string     { return p.KeyPrefix }
@@ -131,43 +146,54 @@ func AuthMiddlewareWithSecurity(repo repository.APIKeyRepository, auditSvc servi
 
 			// Check if key is revoked (shouldn't happen with GetActiveByPrefix, but defensive)
 			if key.RevokedAt != nil {
-				profileID := key.ProfileID.String()
-				logAuthFailure(c, auditSvc, securitySvc, &profileID, "AUTH_REVOKED", "api key has been revoked")
+				teamID := key.GetTeamID().String()
+				logAuthFailure(c, auditSvc, securitySvc, &teamID, "AUTH_REVOKED", "api key has been revoked")
 				return httperr.New(httperr.AUTH_REVOKED, "api key has been revoked")
 			}
 
 			// Check if key is expired (shouldn't happen with GetActiveByPrefix, but defensive)
 			if key.ExpiresAt != nil && key.ExpiresAt.Before(time.Now().UTC()) {
-				profileID := key.ProfileID.String()
-				logAuthFailure(c, auditSvc, securitySvc, &profileID, "AUTH_EXPIRED", "api key has expired")
+				teamID := key.GetTeamID().String()
+				logAuthFailure(c, auditSvc, securitySvc, &teamID, "AUTH_EXPIRED", "api key has expired")
 				return httperr.New(httperr.AUTH_EXPIRED, "api key has expired")
 			}
 
 			// Verify the raw key against the stored Argon2id hash
 			if !verifyKeyWithLimit(ctx, rawKey, key.KeyHash) {
-				profileID := key.ProfileID.String()
-				logAuthFailure(c, auditSvc, securitySvc, &profileID, "AUTH_INVALID", "invalid api key")
+				teamID := key.GetTeamID().String()
+				logAuthFailure(c, auditSvc, securitySvc, &teamID, "AUTH_INVALID", "invalid api key")
 				return httperr.New(httperr.AUTH_INVALID, "invalid api key")
 			}
 
-			// All runtime keys must be profile-bound. Legacy profile-less keys are
+			teamID := key.GetTeamID()
+			profileID := key.ID
+			profileName := key.GetProfileName()
+
+			// All runtime keys must be team-bound. Legacy team-less keys are
 			// rejected so the server only accepts the multi-tenant bearer model.
-			if key.ProfileID == uuid.Nil {
+			if teamID == uuid.Nil {
 				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_INVALID", "api key is not profile bound")
 				return httperr.New(httperr.AUTH_INVALID, "invalid api key")
 			}
 
 			principal := &Principal{
-				KeyID:     key.ID,
-				ProfileID: &key.ProfileID,
-				Role:      "standard",
-				Scopes:    key.Scopes,
-				KeyPrefix: prefix,
-				RateLimit: key.RateLimit,
+				KeyID:       key.ID,
+				TeamID:      teamID,
+				ProfileID:   &profileID,
+				ProfileName: profileName,
+				Role:        "standard",
+				Scopes:      key.Scopes,
+				KeyPrefix:   prefix,
+				RateLimit:   key.RateLimit,
 			}
 
 			// Store principal in context
 			ctx = context.WithValue(ctx, principalContextKey{}, principal)
+			ctx = requestctx.WithActorProfile(ctx, requestctx.ActorProfile{
+				TeamID:      teamID,
+				ProfileID:   profileID,
+				ProfileName: profileName,
+			})
 
 			// Remove the Authorization header to prevent downstream access to raw key
 			req := c.Request().Clone(ctx)

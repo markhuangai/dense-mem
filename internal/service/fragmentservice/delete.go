@@ -50,7 +50,7 @@ func (s *deleteFragmentService) Delete(ctx context.Context, profileID, fragmentI
 	// Step 1: pre-flight existence check — guarantees accurate 404 response when the
 	// fragment does not exist in this profile (AC-31 no existence leak).
 	existsQuery := `
-		MATCH (sf:SourceFragment {profile_id: $profileId, fragment_id: $fragmentId})
+		MATCH (sf:SourceFragment {team_id: $profileId, fragment_id: $fragmentId})
 		RETURN sf.fragment_id AS fragment_id
 		LIMIT 1
 	`
@@ -65,7 +65,7 @@ func (s *deleteFragmentService) Delete(ctx context.Context, profileID, fragmentI
 
 	// Step 2: perform the hard delete via ScopedWrite.
 	deleteQuery := `
-		MATCH (sf:SourceFragment {profile_id: $profileId, fragment_id: $fragmentId})
+		MATCH (sf:SourceFragment {team_id: $profileId, fragment_id: $fragmentId})
 		DETACH DELETE sf
 	`
 	deleteParams := map[string]any{"fragmentId": fragmentID}
@@ -86,13 +86,13 @@ func (s *deleteFragmentService) Delete(ctx context.Context, profileID, fragmentI
 			CorrelationID: correlation.FromContext(ctx),
 			AfterPayload: map[string]interface{}{
 				"fragment_id": fragmentID,
-				"profile_id":  profileID,
+				"team_id":     profileID,
 			},
 		}
 		if err := s.audit.Append(ctx, entry); err != nil {
 			if s.logger != nil {
 				s.logger.Warn("failed to emit audit event for fragment deletion",
-					slog.String("profile_id", profileID),
+					slog.String("team_id", profileID),
 					slog.String("fragment_id", fragmentID),
 					slog.String("error", err.Error()),
 				)

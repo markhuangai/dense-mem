@@ -17,13 +17,13 @@ import (
 )
 
 type cliConfig struct {
+	teamID    string
 	profileID string
-	keyID     string
 }
 
 type output struct {
+	TeamID    string `json:"team_id"`
 	ProfileID string `json:"profile_id"`
-	KeyID     string `json:"key_id"`
 	Status    string `json:"status"`
 }
 
@@ -40,13 +40,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
+	teamID, err := uuid.Parse(cfg.teamID)
+	if err != nil {
+		return fmt.Errorf("invalid --team-id: %w", err)
+	}
 	profileID, err := uuid.Parse(cfg.profileID)
 	if err != nil {
 		return fmt.Errorf("invalid --profile-id: %w", err)
-	}
-	keyID, err := uuid.Parse(cfg.keyID)
-	if err != nil {
-		return fmt.Errorf("invalid --key-id: %w", err)
 	}
 
 	dsn, err := operatorcli.ResolvePostgresDSN(os.Getenv)
@@ -63,15 +63,15 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 	defer services.Close()
 
-	if err := services.APIKeyService.DeleteForProfile(ctx, profileID, keyID, nil, operatorcli.DefaultActorRole, operatorcli.DefaultClientIP, operatorcli.CorrelationID()); err != nil {
-		return fmt.Errorf("delete key: %w", err)
+	if err := services.APIKeyService.DeleteForProfile(ctx, teamID, profileID, nil, operatorcli.DefaultActorRole, operatorcli.DefaultClientIP, operatorcli.CorrelationID()); err != nil {
+		return fmt.Errorf("delete profile: %w", err)
 	}
 
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(output{
+		TeamID:    teamID.String(),
 		ProfileID: profileID.String(),
-		KeyID:     keyID.String(),
 		Status:    "deleted",
 	})
 }
@@ -79,21 +79,21 @@ func run(args []string, stdout, stderr io.Writer) error {
 func parseCLI(args []string, stderr io.Writer) (cliConfig, error) {
 	var cfg cliConfig
 
-	fs := flag.NewFlagSet("delete-key", flag.ContinueOnError)
+	fs := flag.NewFlagSet("delete-team-profile", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.StringVar(&cfg.profileID, "profile-id", "", "Profile UUID that owns the key")
-	fs.StringVar(&cfg.keyID, "key-id", "", "API key UUID to delete")
+	fs.StringVar(&cfg.teamID, "team-id", "", "Team UUID that owns the profile")
+	fs.StringVar(&cfg.profileID, "profile-id", "", "Profile UUID to delete")
 
 	if err := fs.Parse(args); err != nil {
 		return cliConfig{}, err
 	}
+	cfg.teamID = strings.TrimSpace(cfg.teamID)
 	cfg.profileID = strings.TrimSpace(cfg.profileID)
-	cfg.keyID = strings.TrimSpace(cfg.keyID)
+	if cfg.teamID == "" {
+		return cliConfig{}, errors.New("--team-id is required")
+	}
 	if cfg.profileID == "" {
 		return cliConfig{}, errors.New("--profile-id is required")
-	}
-	if cfg.keyID == "" {
-		return cliConfig{}, errors.New("--key-id is required")
 	}
 	return cfg, nil
 }

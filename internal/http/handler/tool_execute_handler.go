@@ -79,7 +79,7 @@ func (h *ToolExecuteHandler) Handle(c echo.Context) error {
 	if err := registry.ValidateInput(tool, args); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, err.Error())
 	}
-	delete(args, "profile_id")
+	delete(args, "team_id")
 
 	out, err := tool.Invoke(ctx, profileID.String(), args)
 	if err != nil {

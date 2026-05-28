@@ -9,9 +9,9 @@ import (
 
 // InvariantFinding represents a single cross-profile relationship violation.
 type InvariantFinding struct {
-	FromProfileID string `json:"from_profile_id"`
+	FromProfileID string `json:"from_team_id"`
 	RelType       string `json:"rel_type"`
-	ToProfileID   string `json:"to_profile_id"`
+	ToProfileID   string `json:"to_team_id"`
 }
 
 // InvariantScanResult represents the result of an invariant scan.
@@ -65,7 +65,7 @@ func NewInvariantScanService(client Neo4jClientInterface, auditSvc AuditService)
 // - This is an invariant violation that should never occur in normal operation
 //
 // IMPORTANT: This query must not be subject to ScopedRead's profile filter.
-// It must execute at the database level without profile_id scoping.
+// It must execute at the database level without team_id scoping.
 //
 // Audit logging fires regardless of whether violations are found.
 func (s *invariantScanService) Scan(ctx context.Context) (*InvariantScanResult, error) {
@@ -74,8 +74,8 @@ func (s *invariantScanService) Scan(ctx context.Context) (*InvariantScanResult, 
 	// because it must scan across all profiles
 	query := `
 		MATCH (a)-[r]->(b)
-		WHERE a.profile_id <> b.profile_id
-		RETURN a.profile_id AS from_profile_id, type(r) AS rel_type, b.profile_id AS to_profile_id
+		WHERE a.team_id <> b.team_id
+		RETURN a.team_id AS from_team_id, type(r) AS rel_type, b.team_id AS to_team_id
 		LIMIT 100
 	`
 
@@ -98,9 +98,9 @@ func (s *invariantScanService) Scan(ctx context.Context) (*InvariantScanResult, 
 		// Convert records to findings
 		findings = make([]InvariantFinding, 0, len(records))
 		for _, record := range records {
-			fromProfileID, _ := record.Get("from_profile_id")
+			fromProfileID, _ := record.Get("from_team_id")
 			relType, _ := record.Get("rel_type")
-			toProfileID, _ := record.Get("to_profile_id")
+			toProfileID, _ := record.Get("to_team_id")
 
 			findings = append(findings, InvariantFinding{
 				FromProfileID: fmt.Sprintf("%v", fromProfileID),
@@ -152,9 +152,9 @@ func (s *invariantScanService) ScanWithAudit(ctx context.Context, actorKeyID *st
 			findingsMeta := make([]map[string]interface{}, len(result.Findings))
 			for i, f := range result.Findings {
 				findingsMeta[i] = map[string]interface{}{
-					"from_profile_id": f.FromProfileID,
-					"rel_type":        f.RelType,
-					"to_profile_id":   f.ToProfileID,
+					"from_team_id": f.FromProfileID,
+					"rel_type":     f.RelType,
+					"to_team_id":   f.ToProfileID,
 				}
 			}
 			metadata["findings"] = findingsMeta

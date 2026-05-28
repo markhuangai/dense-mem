@@ -23,6 +23,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentcodec"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentdedupe"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentidentity"
@@ -139,7 +140,7 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 		if err != nil {
 			if s.logger != nil {
 				s.logger.Error("fragment create: idempotency lookup failed",
-					slog.String("profile_id", profileID),
+					slog.String("team_id", profileID),
 					slog.String("error", err.Error()),
 				)
 			}
@@ -160,7 +161,7 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 		if err != nil {
 			if s.logger != nil {
 				s.logger.Error("fragment create: content-hash lookup failed",
-					slog.String("profile_id", profileID),
+					slog.String("team_id", profileID),
 					slog.String("content_hash", contentHash),
 					slog.String("error", err.Error()),
 				)
@@ -185,7 +186,7 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 		// Embedding failure prevents persistence (AC-23)
 		if s.logger != nil {
 			s.logger.Error("embedding generation failed",
-				slog.String("profile_id", profileID),
+				slog.String("team_id", profileID),
 				slog.String("error", err.Error()),
 			)
 		}
@@ -199,7 +200,7 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 		if err := s.consistency.ValidateVectorLength(vec); err != nil {
 			if s.logger != nil {
 				s.logger.Error("embedding vector length mismatch",
-					slog.String("profile_id", profileID),
+					slog.String("team_id", profileID),
 					slog.Int("expected", s.embed.Dimensions()),
 					slog.Int("actual", dims),
 				)
@@ -212,24 +213,33 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 	// Step 7: Build fragment domain object
 	now := time.Now().UTC()
 	fragmentID := fragmentidentity.NewFragmentID()
+	actor, hasActor := requestctx.ActorProfileFromContext(ctx)
+	creatorID := ""
+	creatorName := ""
+	if hasActor {
+		creatorID = actor.ProfileID.String()
+		creatorName = actor.ProfileName
+	}
 
 	fragment := &domain.Fragment{
-		FragmentID:          fragmentID,
-		ProfileID:           profileID,
-		Content:             req.Content,
-		Source:              req.Source,
-		SourceType:          sourceType,
-		Authority:           authority,
-		Labels:              req.Labels,
-		Metadata:            req.Metadata,
-		ContentHash:         contentHash,
-		IdempotencyKey:      req.IdempotencyKey,
-		EmbeddingModel:      model,
-		EmbeddingDimensions: dims,
-		SourceQuality:       req.SourceQuality,
-		Classification:      req.Classification,
-		CreatedAt:           now,
-		UpdatedAt:           now,
+		FragmentID:           fragmentID,
+		ProfileID:            profileID,
+		CreatedByProfileID:   creatorID,
+		CreatedByProfileName: creatorName,
+		Content:              req.Content,
+		Source:               req.Source,
+		SourceType:           sourceType,
+		Authority:            authority,
+		Labels:               req.Labels,
+		Metadata:             req.Metadata,
+		ContentHash:          contentHash,
+		IdempotencyKey:       req.IdempotencyKey,
+		EmbeddingModel:       model,
+		EmbeddingDimensions:  dims,
+		SourceQuality:        req.SourceQuality,
+		Classification:       req.Classification,
+		CreatedAt:            now,
+		UpdatedAt:            now,
 	}
 
 	metadataJSON, err := fragmentcodec.EncodeOptionalMap(fragment.Metadata)
@@ -247,7 +257,7 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 	// Note: embedding vector is stored but not exposed in read responses (AC-28)
 	query := `
 		CREATE (sf:SourceFragment {
-			profile_id: $profileId,
+			team_id: $profileId,
 			fragment_id: $fragmentId,
 			content: $content,
 			content_hash: $contentHash,
@@ -262,35 +272,39 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 			embedding_dimensions: $embeddingDimensions,
 			source_quality: $sourceQuality,
 			classification_json: $classificationJSON,
+			created_by_profile_id: $createdByProfileId,
+			created_by_profile_name: $createdByProfileName,
 			created_at: $createdAt,
 			updated_at: $updatedAt
 		})
 	`
 
 	params := map[string]any{
-		"fragmentId":          fragment.FragmentID,
-		"content":             fragment.Content,
-		"contentHash":         fragment.ContentHash,
-		"idempotencyKey":      fragment.IdempotencyKey,
-		"source":              fragment.Source,
-		"sourceType":          string(fragment.SourceType),
-		"authority":           string(fragment.Authority),
-		"labels":              fragment.Labels,
-		"metadataJSON":        metadataJSON,
-		"embedding":           vec,
-		"embeddingModel":      fragment.EmbeddingModel,
-		"embeddingDimensions": fragment.EmbeddingDimensions,
-		"sourceQuality":       fragment.SourceQuality,
-		"classificationJSON":  classificationJSON,
-		"createdAt":           fragment.CreatedAt,
-		"updatedAt":           fragment.UpdatedAt,
+		"fragmentId":           fragment.FragmentID,
+		"content":              fragment.Content,
+		"contentHash":          fragment.ContentHash,
+		"idempotencyKey":       fragment.IdempotencyKey,
+		"source":               fragment.Source,
+		"sourceType":           string(fragment.SourceType),
+		"authority":            string(fragment.Authority),
+		"labels":               fragment.Labels,
+		"metadataJSON":         metadataJSON,
+		"embedding":            vec,
+		"embeddingModel":       fragment.EmbeddingModel,
+		"embeddingDimensions":  fragment.EmbeddingDimensions,
+		"sourceQuality":        fragment.SourceQuality,
+		"classificationJSON":   classificationJSON,
+		"createdByProfileId":   fragment.CreatedByProfileID,
+		"createdByProfileName": fragment.CreatedByProfileName,
+		"createdAt":            fragment.CreatedAt,
+		"updatedAt":            fragment.UpdatedAt,
 	}
 
 	_, err = s.writer.ScopedWrite(ctx, profileID, query, params)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Error("fragment create: persist failed",
-				slog.String("profile_id", profileID),
+				slog.String("team_id", profileID),
 				slog.String("fragment_id", fragment.FragmentID),
 				slog.String("error", err.Error()),
 			)
@@ -305,7 +319,7 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 			// Log but don't fail - the fragment is already persisted
 			if s.logger != nil {
 				s.logger.Warn("failed to record first-write consistency",
-					slog.String("profile_id", profileID),
+					slog.String("team_id", profileID),
 					slog.String("fragment_id", fragmentID),
 					slog.String("error", err.Error()),
 				)
@@ -326,7 +340,7 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 			CorrelationID: correlation.FromContext(ctx),
 			AfterPayload: map[string]interface{}{
 				"fragment_id":          fragmentID,
-				"profile_id":           profileID,
+				"team_id":              profileID,
 				"source_type":          string(fragment.SourceType),
 				"content_hash":         fragment.ContentHash,
 				"embedding_model":      fragment.EmbeddingModel,
@@ -338,7 +352,7 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 			// Log but don't fail - the fragment is already persisted
 			if s.logger != nil {
 				s.logger.Warn("failed to emit audit event for fragment creation",
-					slog.String("profile_id", profileID),
+					slog.String("team_id", profileID),
 					slog.String("fragment_id", fragmentID),
 					slog.String("error", err.Error()),
 				)

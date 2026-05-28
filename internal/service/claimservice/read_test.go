@@ -15,7 +15,7 @@ import (
 //
 // Rows are keyed by profileID to model Neo4j's profile-scoped isolation:
 // ScopedRead returns only the rows registered for the given profile, mirroring
-// the {profile_id: $profileId} filter in getClaimCypher.
+// the {team_id: $profileId} filter in getClaimCypher.
 type stubClaimReader struct {
 	rowsByProfile map[string][]map[string]any
 	err           error
@@ -362,7 +362,7 @@ func TestGetClaim_CrossProfileIsolation(t *testing.T) {
 
 	// The stub models Neo4j's profile-scoped isolation: ScopedRead returns only
 	// the rows registered for the given profileID, mirroring the
-	// {profile_id: $profileId} MATCH filter. Profile B gets no rows even though
+	// {team_id: $profileId} MATCH filter. Profile B gets no rows even though
 	// the claim ID matches — exactly as production Neo4j would behave.
 	row := map[string]any{
 		"claim_id":                       sharedClaimID,

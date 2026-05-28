@@ -130,7 +130,7 @@ func (r *ProfileRepositoryImpl) Create(ctx context.Context, profile *domain.Prof
 	// seed the session with the new profile's id so the RLS policy passes.
 	err = r.rls.WithProfileTx(ctx, r.db, profile.ID.String(), func(tx *gorm.DB) error {
 		return tx.Exec(`
-			INSERT INTO profiles (id, name, description, metadata, config, status, created_at, updated_at, deleted_at)
+			INSERT INTO teams (id, name, description, metadata, config, status, created_at, updated_at, deleted_at)
 			VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, 'active', $6, $7, NULL)
 		`, profile.ID, profile.Name, profile.Description, metadata, config, profile.CreatedAt, profile.UpdatedAt).Error
 	})
@@ -152,7 +152,7 @@ func (r *ProfileRepositoryImpl) GetByID(ctx context.Context, id uuid.UUID) (*dom
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
 			SELECT id, name, description, metadata::text, config::text, created_at, updated_at, deleted_at
-			FROM profiles
+			FROM teams
 			WHERE id = $1 AND deleted_at IS NULL
 		`, id).Rows()
 		if err != nil {
@@ -199,7 +199,7 @@ func (r *ProfileRepositoryImpl) List(ctx context.Context, limit, offset int) ([]
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
 			SELECT id, name, description, metadata::text, config::text, created_at, updated_at, deleted_at
-			FROM profiles
+			FROM teams
 			WHERE deleted_at IS NULL
 			ORDER BY created_at DESC, id ASC
 			LIMIT $1 OFFSET $2
@@ -233,7 +233,7 @@ func (r *ProfileRepositoryImpl) Count(ctx context.Context) (int64, error) {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return tx.Raw(`
 			SELECT COUNT(*)
-			FROM profiles
+			FROM teams
 			WHERE deleted_at IS NULL
 		`).Scan(&count).Error
 	})
@@ -261,7 +261,7 @@ func (r *ProfileRepositoryImpl) Update(ctx context.Context, profile *domain.Prof
 	// UPDATE must satisfy profiles_self_access (id = app.current_profile_id).
 	err = r.rls.WithProfileTx(ctx, r.db, profile.ID.String(), func(tx *gorm.DB) error {
 		return tx.Exec(`
-			UPDATE profiles
+			UPDATE teams
 			SET name = $1, description = $2, metadata = $3::jsonb, config = $4::jsonb, updated_at = $5
 			WHERE id = $6 AND deleted_at IS NULL
 		`, profile.Name, profile.Description, metadata, config, profile.UpdatedAt, profile.ID).Error
@@ -282,7 +282,7 @@ func (r *ProfileRepositoryImpl) SoftDelete(ctx context.Context, id uuid.UUID) er
 	// Soft-delete is an UPDATE; must satisfy profiles_self_access (id = app.current_profile_id).
 	err := r.rls.WithProfileTx(ctx, r.db, id.String(), func(tx *gorm.DB) error {
 		return tx.Exec(`
-			UPDATE profiles
+			UPDATE teams
 			SET status = 'deleted', deleted_at = $1
 			WHERE id = $2 AND deleted_at IS NULL
 		`, now, id).Error
@@ -301,13 +301,13 @@ func (r *ProfileRepositoryImpl) SoftDelete(ctx context.Context, id uuid.UUID) er
 func (r *ProfileRepositoryImpl) HardDelete(ctx context.Context, id uuid.UUID) error {
 	err := r.rls.WithProfileTx(ctx, r.db, id.String(), func(tx *gorm.DB) error {
 		if err := tx.Exec(`
-			DELETE FROM api_keys
-			WHERE profile_id = $1
+			DELETE FROM team_profiles
+			WHERE team_id = $1
 		`, id).Error; err != nil {
 			return err
 		}
 		return tx.Exec(`
-			DELETE FROM profiles
+			DELETE FROM teams
 			WHERE id = $1 AND deleted_at IS NULL
 		`, id).Error
 	})
@@ -327,8 +327,8 @@ func (r *ProfileRepositoryImpl) CountActiveKeys(ctx context.Context, profileID u
 	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
 		return tx.Raw(`
 			SELECT COUNT(*)
-			FROM api_keys
-			WHERE profile_id = $1
+			FROM team_profiles
+			WHERE team_id = $1
 				AND revoked_at IS NULL
 				AND (expires_at IS NULL OR expires_at > NOW())
 		`, profileID).Scan(&count).Error
@@ -350,7 +350,7 @@ func (r *ProfileRepositoryImpl) NameExists(ctx context.Context, name string) (bo
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return tx.Raw(`
 			SELECT COUNT(*)
-			FROM profiles
+			FROM teams
 			WHERE lower(name) = lower($1) AND deleted_at IS NULL
 		`, name).Scan(&count).Error
 	})

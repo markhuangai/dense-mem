@@ -4,8 +4,8 @@
 -- Enable pgcrypto extension for gen_random_uuid()
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- Profiles table: stores tenant-like entities for multi-tenancy
-CREATE TABLE IF NOT EXISTS profiles (
+-- Teams table: stores tenant-like entities for multi-tenancy
+CREATE TABLE IF NOT EXISTS teams (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(100) NOT NULL,
     description TEXT NOT NULL DEFAULT '',
@@ -18,18 +18,18 @@ CREATE TABLE IF NOT EXISTS profiles (
 );
 
 -- Partial unique index: only active (non-deleted) profiles must have unique names
-CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_name_unique_active
-    ON profiles (lower(name))
+CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_name_unique_active
+    ON teams (lower(name))
     WHERE deleted_at IS NULL;
 
--- API keys table: stores profile-bound authentication keys
-CREATE TABLE IF NOT EXISTS api_keys (
+-- Team profiles table: stores named profile identities and their active API key material
+CREATE TABLE IF NOT EXISTS team_profiles (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    profile_id UUID NOT NULL REFERENCES profiles(id) ON DELETE RESTRICT,
+    team_id UUID NOT NULL REFERENCES teams(id) ON DELETE RESTRICT,
     key_hash TEXT NOT NULL,
-    key_prefix VARCHAR(12) NOT NULL,
+    key_prefix VARCHAR(24) NOT NULL,
     key_suffix VARCHAR(6) NULL,
-    label VARCHAR(100) NOT NULL DEFAULT '',
+    name VARCHAR(100) NOT NULL DEFAULT '',
     scopes TEXT[] NOT NULL DEFAULT ARRAY['read','write']::text[],
     rate_limit INTEGER NOT NULL DEFAULT 0 CHECK (rate_limit >= 0),
     expires_at TIMESTAMPTZ NULL,
@@ -39,29 +39,45 @@ CREATE TABLE IF NOT EXISTS api_keys (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Indexes for api_keys
-CREATE INDEX IF NOT EXISTS idx_api_keys_profile_id ON api_keys(profile_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_key_prefix_unique ON api_keys(key_prefix);
+-- Indexes for team_profiles
+CREATE INDEX IF NOT EXISTS idx_team_profiles_team_id ON team_profiles(team_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_team_profiles_key_prefix_unique ON team_profiles(key_prefix);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_team_profiles_team_name_unique ON team_profiles(team_id, lower(name));
 
 -- Audit log table: append-only record of all operations
 CREATE TABLE IF NOT EXISTS audit_log (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    profile_id UUID NULL REFERENCES profiles(id) ON DELETE SET NULL,
+    team_id UUID NULL REFERENCES teams(id) ON DELETE SET NULL,
     timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
     operation VARCHAR(64) NOT NULL,
     entity_type VARCHAR(64) NOT NULL,
     entity_id TEXT NOT NULL,
     before_payload JSONB NULL,
     after_payload JSONB NULL,
-    actor_key_id UUID NULL REFERENCES api_keys(id) ON DELETE SET NULL,
+    actor_profile_id UUID NULL REFERENCES team_profiles(id) ON DELETE SET NULL,
     actor_role VARCHAR(20) NULL,
     client_ip INET NULL,
     correlation_id TEXT NULL,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
--- Indexes for audit_log
-CREATE INDEX IF NOT EXISTS idx_audit_log_profile_timestamp ON audit_log(profile_id, timestamp DESC);
+-- Indexes for audit_log. Existing deployments may still have profile_id until
+-- the team/profile rename migration runs.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'audit_log' AND column_name = 'team_id'
+    ) THEN
+        CREATE INDEX IF NOT EXISTS idx_audit_log_team_timestamp ON audit_log(team_id, timestamp DESC);
+    ELSIF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'audit_log' AND column_name = 'profile_id'
+    ) THEN
+        CREATE INDEX IF NOT EXISTS idx_audit_log_profile_timestamp ON audit_log(profile_id, timestamp DESC);
+    END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp DESC);
 
 -- +goose StatementEnd
@@ -70,7 +86,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp DESC);
 
 -- Drop tables in reverse dependency order to avoid FK constraint errors
 DROP TABLE IF EXISTS audit_log;
-DROP TABLE IF EXISTS api_keys;
-DROP TABLE IF EXISTS profiles;
+DROP TABLE IF EXISTS team_profiles;
+DROP TABLE IF EXISTS teams;
 
 -- +goose StatementEnd

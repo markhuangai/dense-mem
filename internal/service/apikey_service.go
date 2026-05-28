@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,6 +19,7 @@ import (
 // Label and scopes are intentionally not caller-controlled: every standard key
 // belongs to one profile and receives the fixed read/write scope set.
 type CreateAPIKeyRequest struct {
+	Name      string     `json:"name"`
 	RateLimit int        `json:"rate_limit"`
 	ExpiresAt *time.Time `json:"expires_at"`
 }
@@ -53,6 +55,8 @@ type APIKeyService interface {
 	RevokeForProfile(ctx context.Context, profileID, id uuid.UUID, actorKeyID *string, actorRole, clientIP, correlationID string) error
 	// DeleteForProfile hard-deletes the key only when it belongs to profileID; NOT_FOUND otherwise.
 	DeleteForProfile(ctx context.Context, profileID, id uuid.UUID, actorKeyID *string, actorRole, clientIP, correlationID string) error
+	// RotateForProfile rotates key material in place for a named team profile.
+	RotateForProfile(ctx context.Context, profileID, id uuid.UUID, req CreateAPIKeyRequest, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, string, error)
 }
 
 // APIKeyServiceImpl implements the APIKeyService interface.
@@ -127,8 +131,13 @@ func (s *APIKeyServiceImpl) CreateStandardKey(ctx context.Context, profileID uui
 		return nil, "", fmt.Errorf("failed to verify profile: %w", err)
 	}
 
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = "default profile"
+	}
+
 	// Generate raw key
-	rawKey, err := crypto.GenerateRawKey()
+	rawKey, err := crypto.GenerateRawKeyForProfile(name)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to generate raw key: %w", err)
 	}
@@ -142,7 +151,9 @@ func (s *APIKeyServiceImpl) CreateStandardKey(ctx context.Context, profileID uui
 	// Create the key record
 	key := &domain.APIKey{
 		ProfileID: profileID,
-		Label:     "",
+		TeamID:    profileID,
+		Label:     name,
+		Name:      name,
 		KeyHash:   keyHash,
 		KeyPrefix: crypto.GetKeyPrefix(rawKey),
 		KeySuffix: crypto.GetKeySuffix(rawKey),
@@ -157,10 +168,11 @@ func (s *APIKeyServiceImpl) CreateStandardKey(ctx context.Context, profileID uui
 
 	// Audit the creation (without the raw key or hash)
 	afterPayload := map[string]interface{}{
-		"id":         key.ID.String(),
-		"profile_id": key.ProfileID.String(),
-		"rate_limit": key.RateLimit,
-		"role":       "standard",
+		"id":           key.ID.String(),
+		"team_id":      key.ProfileID.String(),
+		"profile_name": key.GetProfileName(),
+		"rate_limit":   key.RateLimit,
+		"role":         "standard",
 	}
 	if key.ExpiresAt != nil {
 		afterPayload["expires_at"] = key.ExpiresAt.Format(time.RFC3339)
@@ -174,6 +186,68 @@ func (s *APIKeyServiceImpl) CreateStandardKey(ctx context.Context, profileID uui
 
 	// Return the key (without hash) and the raw key (shown exactly once)
 	key.KeyHash = ""
+	return key, rawKey, nil
+}
+
+// RotateForProfile rotates a team profile's API key in place.
+func (s *APIKeyServiceImpl) RotateForProfile(ctx context.Context, profileID, id uuid.UUID, req CreateAPIKeyRequest, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, string, error) {
+	key, err := s.repo.GetByIDForProfile(ctx, profileID, id)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get team profile: %w", err)
+	}
+	if key == nil {
+		return nil, "", httperr.New(httperr.NOT_FOUND, fmt.Sprintf("team profile with id '%s' not found", id.String()))
+	}
+
+	name := key.GetProfileName()
+	rawKey, err := crypto.GenerateRawKeyForProfile(name)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to generate raw key: %w", err)
+	}
+	keyHash, err := crypto.HashKey(rawKey)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to hash key: %w", err)
+	}
+
+	rows, err := s.repo.RotateForProfile(ctx, profileID, id, keyHash, crypto.GetKeyPrefix(rawKey), crypto.GetKeySuffix(rawKey), req.ExpiresAt)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to rotate team profile key: %w", err)
+	}
+	if rows == 0 {
+		return nil, "", httperr.New(httperr.NOT_FOUND, fmt.Sprintf("team profile with id '%s' not found", id.String()))
+	}
+	if s.sessionInvalidator != nil {
+		if err := s.sessionInvalidator.InvalidateKeySessions(ctx, profileID.String(), id.String()); err != nil {
+			s.logger.Warn("session_invalidation_failed", slog.String("error", err.Error()), slog.String("team_id", id.String()))
+		}
+	}
+
+	key.KeyHash = ""
+	key.KeyPrefix = crypto.GetKeyPrefix(rawKey)
+	key.KeySuffix = crypto.GetKeySuffix(rawKey)
+	key.ExpiresAt = req.ExpiresAt
+	key.LastUsedAt = nil
+	key.RevokedAt = nil
+
+	profileIDStr := profileID.String()
+	if err := s.auditService.Append(ctx, AuditLogEntry{
+		ProfileID:  &profileIDStr,
+		Operation:  "ROTATE_KEY",
+		EntityType: "team_profile",
+		EntityID:   key.ID.String(),
+		AfterPayload: map[string]interface{}{
+			"team_id":      profileID.String(),
+			"profile_id":   key.ID.String(),
+			"profile_name": key.GetProfileName(),
+		},
+		ActorKeyID:    actorKeyID,
+		ActorRole:     actorRole,
+		ClientIP:      clientIP,
+		CorrelationID: correlationID,
+	}); err != nil {
+		s.logAuditError(err, "ROTATE", key.ID.String(), correlationID)
+	}
+
 	return key, rawKey, nil
 }
 
@@ -219,7 +293,7 @@ func (s *APIKeyServiceImpl) RevokeForProfile(ctx context.Context, profileID, id 
 
 	beforePayload := map[string]interface{}{
 		"id":         key.ID.String(),
-		"profile_id": key.ProfileID.String(),
+		"team_id":    key.ProfileID.String(),
 		"label":      key.Label,
 		"scopes":     key.Scopes,
 		"rate_limit": key.RateLimit,
@@ -263,7 +337,7 @@ func (s *APIKeyServiceImpl) DeleteForProfile(ctx context.Context, profileID, id 
 
 	beforePayload := map[string]interface{}{
 		"id":           key.ID.String(),
-		"profile_id":   key.ProfileID.String(),
+		"team_id":      key.ProfileID.String(),
 		"rate_limit":   key.RateLimit,
 		"last_used_at": key.LastUsedAt,
 		"expires_at":   key.ExpiresAt,

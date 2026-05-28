@@ -95,7 +95,7 @@ func TestAuditLogAppendOnlyTriggerBlocksUpdate(t *testing.T) {
 	// Create an audit log entry
 	var auditLogID string
 	err = sqlDB.QueryRowContext(ctx, `
-		INSERT INTO audit_log (id, profile_id, operation, entity_type, entity_id)
+		INSERT INTO audit_log (id, team_id, operation, entity_type, entity_id)
 		VALUES (gen_random_uuid(), $1, 'CREATE', 'test', 'test-update-block')
 		RETURNING id
 	`, profileID).Scan(&auditLogID)
@@ -149,7 +149,7 @@ func TestAuditLogAppendOnlyTriggerBlocksDelete(t *testing.T) {
 	// Create an audit log entry
 	var auditLogID string
 	err = sqlDB.QueryRowContext(ctx, `
-		INSERT INTO audit_log (id, profile_id, operation, entity_type, entity_id)
+		INSERT INTO audit_log (id, team_id, operation, entity_type, entity_id)
 		VALUES (gen_random_uuid(), $1, 'CREATE', 'test', 'test-delete-block')
 		RETURNING id
 	`, profileID).Scan(&auditLogID)
@@ -204,7 +204,7 @@ func TestAuditServiceAppend(t *testing.T) {
 	// Create an API key for the actor
 	var keyID string
 	err = sqlDB.QueryRowContext(ctx, `
-		INSERT INTO api_keys (id, profile_id, key_hash, key_prefix, label, scopes)
+		INSERT INTO api_keys (id, team_id, key_hash, key_prefix, label, scopes)
 		VALUES (gen_random_uuid(), $1, 'testhash123', 'testsvc', 'service-test', ARRAY['read'])
 		RETURNING id
 	`, profileID).Scan(&keyID)
@@ -233,14 +233,14 @@ func TestAuditServiceAppend(t *testing.T) {
 	var retrievedActorKeyID sql.NullString
 
 	err = sqlDB.QueryRowContext(ctx, `
-		SELECT profile_id, operation, entity_type, entity_id, actor_key_id, actor_role, client_ip, correlation_id
+		SELECT team_id, operation, entity_type, entity_id, actor_key_id, actor_role, client_ip, correlation_id
 		FROM audit_log
 		WHERE entity_id = 'test-entity-123'
 	`).Scan(&retrievedProfileID, &retrievedOperation, &retrievedEntityType, &retrievedEntityID,
 		&retrievedActorKeyID, &retrievedActorRole, &retrievedClientIP, &retrievedCorrelationID)
 	require.NoError(t, err, "should retrieve audit log entry")
 
-	assert.Equal(t, profileID, retrievedProfileID, "profile_id should match")
+	assert.Equal(t, profileID, retrievedProfileID, "team_id should match")
 	assert.Equal(t, "CREATE", retrievedOperation, "operation should match")
 	assert.Equal(t, "test_entity", retrievedEntityType, "entity_type should match")
 	assert.Equal(t, "test-entity-123", retrievedEntityID, "entity_id should match")
@@ -406,7 +406,7 @@ func TestAuditServiceRedactsSecrets(t *testing.T) {
 			"token":            "bearer-token-abc",
 			"embedding":        []float32{0.1, 0.2, 0.3},
 			"embeddings":       [][]float32{{0.1, 0.2}, {0.3, 0.4}},
-			"profile_id":       profileID,    // This should be preserved
+			"team_id":          profileID,    // This should be preserved
 			"label":            "test-label", // This should be preserved
 		},
 		ActorRole:     "system",
@@ -439,7 +439,7 @@ func TestAuditServiceRedactsSecrets(t *testing.T) {
 
 	// Verify legitimate fields ARE present
 	assert.Contains(t, afterPayload, "Test Key", "name should be preserved")
-	assert.Contains(t, afterPayload, profileID, "profile_id should be preserved")
+	assert.Contains(t, afterPayload, profileID, "team_id should be preserved")
 	assert.Contains(t, afterPayload, "test-label", "label should be preserved")
 }
 
@@ -495,7 +495,7 @@ func TestAuditServiceHelperMethods(t *testing.T) {
 
 	var keyID string
 	err = sqlDB.QueryRowContext(ctx, `
-		INSERT INTO api_keys (id, profile_id, key_hash, key_prefix, label, scopes)
+		INSERT INTO api_keys (id, team_id, key_hash, key_prefix, label, scopes)
 		VALUES (gen_random_uuid(), $1, 'testhash456', 'testhlp', 'helper-test', ARRAY['read'])
 		RETURNING id
 	`, profileID).Scan(&keyID)

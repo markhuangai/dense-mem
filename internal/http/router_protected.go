@@ -150,37 +150,59 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 
 	// Profile handler for profile operations
 	profileHandler := handler.NewProfileHandler(deps.ProfileSvc)
-
-	// ====================================
-	// Profile-specific routes (with :profileId in path)
-	// ====================================
-	// GET /api/v1/profiles/:profileId → same-profile
-	// PATCH /api/v1/profiles/:profileId → same-profile + write
-	profileGroup := e.Group("/api/v1/profiles/:profileId")
-	profileGroup.Use(authMW)
-	profileGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
-	profileGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
-	profileGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
-
-	profileGroup.GET("", profileHandler.Get, middleware.RequireScopes("read"))
-	profileGroup.PATCH("", profileHandler.Patch, middleware.RequireScopes("write"), middleware.BindAndValidate[dto.UpdateProfileRequest](middleware.UpdateProfileBodyKey))
-
-	// ====================================
-	// Audit log route (append-only, read endpoint only)
-	// ====================================
-	// GET /api/v1/profiles/:profileId/audit-log → same-profile + read
-	// Audit handler does its own permission check for defense-in-depth
-	auditHandler := handler.NewAuditHandler(deps.AuditService)
-	profileGroup.GET("/audit-log", auditHandler.Get, middleware.RequireScopes("read"))
-
-	// ====================================
-	// Query stream SSE route
-	// ====================================
-	// POST /api/v1/profiles/:profileId/query/stream → SSE stream
-	// Requires Accept: text/event-stream header; query = read scope
-	if handlers.QueryStream != nil {
-		profileGroup.POST("/query/stream", handlers.QueryStream, middleware.RequireScopes("read"))
+	var apiKeyHandler *handler.APIKeyHandler
+	if handlers.APIKeySvc != nil {
+		apiKeyHandler = handler.NewAPIKeyHandler(handlers.APIKeySvc)
 	}
+
+	// ====================================
+	// Team-specific routes (with :teamId in path)
+	// ====================================
+	// GET /api/v1/teams/:teamId → same-team
+	// PATCH /api/v1/teams/:teamId → same-team + write
+	auditHandler := handler.NewAuditHandler(deps.AuditService)
+
+	registerTeamScopedRoutes := func(prefix string, legacyAPIKeyPaths bool) {
+		group := e.Group(prefix)
+		group.Use(authMW)
+		group.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
+		group.Use(middleware.AuthorizeProfile(profileAuthzSvc))
+		group.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
+
+		group.GET("", profileHandler.Get, middleware.RequireScopes("read"))
+		group.PATCH("", profileHandler.Patch, middleware.RequireScopes("write"), middleware.BindAndValidate[dto.UpdateProfileRequest](middleware.UpdateProfileBodyKey))
+
+		// Audit log route (append-only, read endpoint only). The handler does
+		// its own permission check for defense-in-depth.
+		group.GET("/audit-log", auditHandler.Get, middleware.RequireScopes("read"))
+
+		// Query stream SSE route. Requires Accept: text/event-stream header;
+		// query = read scope.
+		if handlers.QueryStream != nil {
+			group.POST("/query/stream", handlers.QueryStream, middleware.RequireScopes("read"))
+		}
+
+		if apiKeyHandler == nil {
+			return
+		}
+		if legacyAPIKeyPaths {
+			group.GET("/api-keys", apiKeyHandler.List, middleware.RequireScopes("read"))
+			group.POST("/api-keys", apiKeyHandler.Create, middleware.RequireScopes("write"), middleware.BindAndValidate[dto.CreateAPIKeyRequest](middleware.CreateAPIKeyBodyKey))
+			group.GET("/api-keys/:keyId", apiKeyHandler.Get, middleware.RequireScopes("read"))
+			group.POST("/api-keys/:keyId/rotate", apiKeyHandler.Rotate, middleware.RequireScopes("write"), middleware.BindAndValidate[dto.CreateAPIKeyRequest](middleware.CreateAPIKeyBodyKey))
+			group.DELETE("/api-keys/:keyId", apiKeyHandler.Delete, middleware.RequireScopes("write"))
+			return
+		}
+		group.GET("/profiles", apiKeyHandler.List, middleware.RequireScopes("read"))
+		group.POST("/profiles", apiKeyHandler.Create, middleware.RequireScopes("write"), middleware.BindAndValidate[dto.CreateAPIKeyRequest](middleware.CreateAPIKeyBodyKey))
+		group.GET("/profiles/:profileId", apiKeyHandler.Get, middleware.RequireScopes("read"))
+		group.POST("/profiles/:profileId/rotate", apiKeyHandler.Rotate, middleware.RequireScopes("write"), middleware.BindAndValidate[dto.CreateAPIKeyRequest](middleware.CreateAPIKeyBodyKey))
+		group.DELETE("/profiles/:profileId", apiKeyHandler.Delete, middleware.RequireScopes("write"))
+	}
+
+	registerTeamScopedRoutes("/api/v1/teams/:teamId", false)
+	// Legacy aliases retained so old clients can rotate gradually.
+	registerTeamScopedRoutes("/api/v1/profiles/:profileId", true)
 
 	// Fragment routes — canonical /api/v1/fragments (AC-50)
 	// Middleware: auth -> profile resolution(header) -> profile authorization -> rate limit

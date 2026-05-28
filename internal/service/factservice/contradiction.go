@@ -27,10 +27,14 @@ type contradictionTxRunner interface {
 // Profile isolation: $profileId is injected automatically by ScopedRead.
 // The status filter is applied inline to avoid a separate parameter.
 const findActiveFactsCypher = `
-MATCH (f:Fact {profile_id: $profileId, subject: $subject, predicate: $predicate})
+MATCH (f:Fact {team_id: $profileId, subject: $subject, predicate: $predicate})
 WHERE f.status = 'active'
 RETURN
     f.fact_id                        AS fact_id,
+    f.created_by_profile_id          AS created_by_profile_id,
+    f.created_by_profile_name        AS created_by_profile_name,
+    f.promoted_by_profile_id         AS promoted_by_profile_id,
+    f.promoted_by_profile_name       AS promoted_by_profile_name,
     f.subject                        AS subject,
     f.predicate                      AS predicate,
     f.object                         AS object,
@@ -99,7 +103,7 @@ func sameObjectConfirmPath(
 	return db.ScopedWriteTx(ctx, profileID, func(tx neo4j.ManagedTransaction) error {
 		for _, f := range existingFacts {
 			result, err := neo4jstorage.RunScoped(ctx, tx, profileID,
-				`MATCH (f:Fact {profile_id: $profileId, fact_id: $factId})
+				`MATCH (f:Fact {team_id: $profileId, fact_id: $factId})
                  SET f.last_confirmed_at = $now`,
 				map[string]any{
 					"factId": f.FactID,
@@ -119,7 +123,7 @@ func sameObjectConfirmPath(
 
 // supersedePath marks each oldFact as superseded, closes its recorded_to and
 // valid_to timestamps, and creates a SUPERSEDED_BY relationship from the old
-// Fact to the new Claim. The relationship carries profile_id for isolation.
+// Fact to the new Claim. The relationship carries team_id for isolation.
 //
 // valid_to is set to newClaimValidFrom when non-nil, otherwise to now. This
 // preserves the temporal validity chain across supersessions.
@@ -143,7 +147,7 @@ func supersedePath(
 		for _, old := range oldFacts {
 			// 1. Mark fact superseded and close temporal range.
 			result, err := neo4jstorage.RunScoped(ctx, tx, profileID,
-				`MATCH (f:Fact {profile_id: $profileId, fact_id: $factId})
+				`MATCH (f:Fact {team_id: $profileId, fact_id: $factId})
                  SET f.status     = $status,
                      f.recorded_to = $recordedTo,
                      f.valid_to   = $validTo`,
@@ -161,11 +165,11 @@ func supersedePath(
 				return fmt.Errorf("supersede consume %s: %w", old.FactID, err)
 			}
 
-			// 2. Create SUPERSEDED_BY relationship carrying profile_id.
+			// 2. Create SUPERSEDED_BY relationship carrying team_id.
 			result, err = neo4jstorage.RunScoped(ctx, tx, profileID,
-				`MATCH (f:Fact {profile_id: $profileId, fact_id: $factId}),
-                       (c:Claim {profile_id: $profileId, claim_id: $claimId})
-                 CREATE (f)-[:SUPERSEDED_BY {profile_id: $profileId}]->(c)`,
+				`MATCH (f:Fact {team_id: $profileId, fact_id: $factId}),
+                       (c:Claim {team_id: $profileId, claim_id: $claimId})
+                 CREATE (f)-[:SUPERSEDED_BY {team_id: $profileId}]->(c)`,
 				map[string]any{
 					"factId":  old.FactID,
 					"claimId": newClaimID,
@@ -184,7 +188,7 @@ func supersedePath(
 
 // comparablePath marks the claim as disputed and creates a CONTRADICTS
 // relationship from the Claim to each conflicting active Fact. The relationship
-// carries profile_id for isolation.
+// carries team_id for isolation.
 //
 // "disputed" is the domain term for a claim with strength comparable to an
 // existing Fact. No typed constant exists in domain.ClaimStatus; the string
@@ -201,7 +205,7 @@ func comparablePath(
 	return db.ScopedWriteTx(ctx, profileID, func(tx neo4j.ManagedTransaction) error {
 		// 1. Mark claim disputed.
 		result, err := neo4jstorage.RunScoped(ctx, tx, profileID,
-			`MATCH (c:Claim {profile_id: $profileId, claim_id: $claimId})
+			`MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
              SET c.status = $status`,
 			map[string]any{
 				"claimId": claimID,
@@ -218,9 +222,9 @@ func comparablePath(
 		// 2. Create CONTRADICTS relationship to each conflicting Fact.
 		for _, f := range conflictingFacts {
 			result, err = neo4jstorage.RunScoped(ctx, tx, profileID,
-				`MATCH (c:Claim {profile_id: $profileId, claim_id: $claimId}),
-                       (f:Fact {profile_id: $profileId, fact_id: $factId})
-                 CREATE (c)-[:CONTRADICTS {profile_id: $profileId}]->(f)`,
+				`MATCH (c:Claim {team_id: $profileId, claim_id: $claimId}),
+                       (f:Fact {team_id: $profileId, fact_id: $factId})
+                 CREATE (c)-[:CONTRADICTS {team_id: $profileId}]->(f)`,
 				map[string]any{
 					"claimId": claimID,
 					"factId":  f.FactID,
@@ -249,7 +253,7 @@ func weakerPath(
 ) error {
 	return db.ScopedWriteTx(ctx, profileID, func(tx neo4j.ManagedTransaction) error {
 		result, err := neo4jstorage.RunScoped(ctx, tx, profileID,
-			`MATCH (c:Claim {profile_id: $profileId, claim_id: $claimId})
+			`MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
              SET c.status = $status`,
 			map[string]any{
 				"claimId": claimID,

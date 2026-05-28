@@ -103,7 +103,7 @@ func decodeCursor(token string) (factCursor, bool, error) {
 // Filters: empty-string parameters are treated as no-ops by the OR conditions.
 // Cursor: when $hasCursor is false the cursor WHERE branch is skipped entirely.
 const listFactsCypher = `
-MATCH (f:Fact {profile_id: $profileId})
+MATCH (f:Fact {team_id: $profileId})
 WHERE ($subject = '' OR f.subject = $subject)
   AND ($predicate = '' OR f.predicate = $predicate)
   AND ($status = '' OR f.status = $status)
@@ -118,6 +118,10 @@ WHERE ($subject = '' OR f.subject = $subject)
   )
 RETURN
     f.fact_id                        AS fact_id,
+    f.created_by_profile_id          AS created_by_profile_id,
+    f.created_by_profile_name        AS created_by_profile_name,
+    f.promoted_by_profile_id         AS promoted_by_profile_id,
+    f.promoted_by_profile_name       AS promoted_by_profile_name,
     f.subject                        AS subject,
     f.predicate                      AS predicate,
     f.object                         AS object,

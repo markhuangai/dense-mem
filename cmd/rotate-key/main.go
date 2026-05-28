@@ -18,15 +18,14 @@ import (
 )
 
 type cliConfig struct {
+	teamID    string
 	profileID string
-	keyID     string
 	expiresAt string
 }
 
 type output struct {
+	TeamID    string  `json:"team_id"`
 	ProfileID string  `json:"profile_id"`
-	OldKeyID  string  `json:"old_key_id"`
-	NewKeyID  string  `json:"new_key_id"`
 	APIKey    string  `json:"api_key"`
 	ExpiresAt *string `json:"expires_at,omitempty"`
 }
@@ -44,13 +43,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
+	teamID, err := uuid.Parse(cfg.teamID)
+	if err != nil {
+		return fmt.Errorf("invalid --team-id: %w", err)
+	}
 	profileID, err := uuid.Parse(cfg.profileID)
 	if err != nil {
 		return fmt.Errorf("invalid --profile-id: %w", err)
-	}
-	keyID, err := uuid.Parse(cfg.keyID)
-	if err != nil {
-		return fmt.Errorf("invalid --key-id: %w", err)
 	}
 
 	dsn, err := operatorcli.ResolvePostgresDSN(os.Getenv)
@@ -67,9 +66,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 	defer services.Close()
 
-	existing, err := services.APIKeyService.GetByIDForProfile(ctx, profileID, keyID)
+	existing, err := services.APIKeyService.GetByIDForProfile(ctx, teamID, profileID)
 	if err != nil {
-		return fmt.Errorf("load existing key: %w", err)
+		return fmt.Errorf("load existing profile: %w", err)
 	}
 
 	expiresAt := existing.ExpiresAt
@@ -82,20 +81,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	correlationID := operatorcli.CorrelationID()
-	newKey, rawKey, err := services.APIKeyService.CreateStandardKey(ctx, profileID, service.CreateAPIKeyRequest{
+	rotated, rawKey, err := services.APIKeyService.RotateForProfile(ctx, teamID, profileID, service.CreateAPIKeyRequest{
+		Name:      existing.GetProfileName(),
 		RateLimit: existing.RateLimit,
 		ExpiresAt: expiresAt,
 	}, nil, operatorcli.DefaultActorRole, operatorcli.DefaultClientIP, correlationID)
 	if err != nil {
-		return fmt.Errorf("create replacement key: %w", err)
-	}
-
-	if err := services.APIKeyService.DeleteForProfile(ctx, profileID, keyID, nil, operatorcli.DefaultActorRole, operatorcli.DefaultClientIP, correlationID); err != nil {
-		rollbackErr := services.APIKeyService.DeleteForProfile(ctx, profileID, newKey.ID, nil, operatorcli.DefaultActorRole, operatorcli.DefaultClientIP, correlationID)
-		if rollbackErr != nil {
-			return fmt.Errorf("delete old key: %w (rollback failed for new key %s: %v)", err, newKey.ID.String(), rollbackErr)
-		}
-		return fmt.Errorf("delete old key: %w", err)
+		return fmt.Errorf("rotate key: %w", err)
 	}
 
 	var expiresAtStr *string
@@ -107,9 +99,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(output{
-		ProfileID: profileID.String(),
-		OldKeyID:  keyID.String(),
-		NewKeyID:  newKey.ID.String(),
+		TeamID:    teamID.String(),
+		ProfileID: rotated.ID.String(),
 		APIKey:    rawKey,
 		ExpiresAt: expiresAtStr,
 	})
@@ -118,24 +109,24 @@ func run(args []string, stdout, stderr io.Writer) error {
 func parseCLI(args []string, stderr io.Writer) (cliConfig, error) {
 	var cfg cliConfig
 
-	fs := flag.NewFlagSet("rotate-key", flag.ContinueOnError)
+	fs := flag.NewFlagSet("rotate-team-profile-key", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.StringVar(&cfg.profileID, "profile-id", "", "Profile UUID that owns the key")
-	fs.StringVar(&cfg.keyID, "key-id", "", "API key UUID to rotate")
+	fs.StringVar(&cfg.teamID, "team-id", "", "Team UUID that owns the profile")
+	fs.StringVar(&cfg.profileID, "profile-id", "", "Profile UUID to rotate")
 	fs.StringVar(&cfg.expiresAt, "expires-at", "", "Optional RFC3339 expiration override for the replacement key")
 
 	if err := fs.Parse(args); err != nil {
 		return cliConfig{}, err
 	}
+	cfg.teamID = strings.TrimSpace(cfg.teamID)
 	cfg.profileID = strings.TrimSpace(cfg.profileID)
-	cfg.keyID = strings.TrimSpace(cfg.keyID)
 	cfg.expiresAt = strings.TrimSpace(cfg.expiresAt)
 
+	if cfg.teamID == "" {
+		return cliConfig{}, errors.New("--team-id is required")
+	}
 	if cfg.profileID == "" {
 		return cliConfig{}, errors.New("--profile-id is required")
-	}
-	if cfg.keyID == "" {
-		return cliConfig{}, errors.New("--key-id is required")
 	}
 
 	return cfg, nil

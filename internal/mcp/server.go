@@ -4,8 +4,8 @@
 // Design constraints (Unit 24 plan):
 //   - Tool discovery and execution are fully delegated to the shared
 //     registry.Registry — no business logic lives here. (AC-37)
-//   - The HTTP API derives the profile from the profile-bound API key. Callers
-//     cannot switch profiles by injecting profile_id into tool arguments.
+//   - The HTTP API derives the team from the API key. Callers cannot switch
+//     teams by injecting profile_id or team_id into tool arguments.
 package mcp
 
 import (
@@ -176,9 +176,10 @@ func (s *Server) handleToolsCall(ctx context.Context, raw json.RawMessage) (map[
 	if args == nil {
 		args = map[string]any{}
 	}
-	// Strip profile_id to prevent callers from overriding the fixed server
-	// profile. The HTTP API derives scope from the profile-bound API key; local
-	// registries may still receive a construction-time profile for tests.
+	// Strip tenant IDs to prevent callers from overriding the fixed server
+	// team. The HTTP API derives scope from the bearer key; local registries
+	// may still receive a construction-time team for tests.
+	delete(args, "team_id")
 	delete(args, "profile_id")
 	if err := registry.ValidateInput(tool, args); err != nil {
 		return nil, &rpcError{Code: errCodeInvalidParams, Message: err.Error()}

@@ -256,7 +256,7 @@ func TestListClaims_CrossProfileIsolation(t *testing.T) {
 
 	// The stub models Neo4j's profile-scoped isolation: ScopedRead returns only
 	// rows registered for the given profileID, mirroring the
-	// {profile_id: $profileId} MATCH filter. Profile B receives no rows.
+	// {team_id: $profileId} MATCH filter. Profile B receives no rows.
 	reader := &stubClaimReader{
 		rowsByProfile: map[string][]map[string]any{
 			profileA: {rowA},

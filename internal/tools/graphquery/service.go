@@ -20,10 +20,10 @@ const (
 
 // GraphQueryResult represents the result of a graph query execution.
 type GraphQueryResult struct {
-	Columns      []string         `json:"columns"`
-	Rows         []map[string]any `json:"rows"`
-	RowCount     int              `json:"row_count"`
-	RowCapApplied bool            `json:"row_cap_applied"`
+	Columns       []string         `json:"columns"`
+	Rows          []map[string]any `json:"rows"`
+	RowCount      int              `json:"row_count"`
+	RowCapApplied bool             `json:"row_cap_applied"`
 }
 
 // GraphQueryService is the interface for executing graph queries.
@@ -61,7 +61,7 @@ func (s *graphQueryService) Execute(ctx context.Context, profileID string, query
 		return nil, err
 	}
 
-	// Check for forbidden params (profileId, profile_id)
+	// Check for forbidden params (profileId, team_id)
 	if err := validateParams(params); err != nil {
 		return nil, err
 	}
@@ -82,9 +82,9 @@ func (s *graphQueryService) Execute(ctx context.Context, profileID string, query
 	columns := extractColumns(rows)
 
 	return &GraphQueryResult{
-		Columns:      columns,
-		Rows:         rows,
-		RowCount:     len(rows),
+		Columns:       columns,
+		Rows:          rows,
+		RowCount:      len(rows),
 		RowCapApplied: rowCapApplied,
 	}, nil
 }
@@ -135,8 +135,8 @@ func validateParams(params map[string]any) error {
 		return nil
 	}
 
-	// Check for profileId and profile_id
-	forbiddenKeys := []string{"profileId", "profile_id"}
+	// Check for profileId and team_id
+	forbiddenKeys := []string{"profileId", "team_id"}
 	for _, key := range forbiddenKeys {
 		if _, exists := params[key]; exists {
 			return NewForbiddenParamError(key)

@@ -42,8 +42,8 @@ func TestDedupeLookup_ProfileScoped_IdempotencyKey(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, got, "miss should return nil fragment")
 
-	// Verify the query includes profile_id filtering
-	assert.Contains(t, reader.LastQuery, "profile_id", "query must filter by profile_id")
+	// Verify the query includes team_id filtering
+	assert.Contains(t, reader.LastQuery, "team_id", "query must filter by team_id")
 	assert.Contains(t, reader.LastQuery, "$profileId", "query must use $profileId placeholder")
 	assert.Contains(t, reader.LastQuery, "idempotency_key", "query must filter by idempotency_key")
 	assert.Equal(t, "pA", reader.LastParams["profileId"])
@@ -61,8 +61,8 @@ func TestDedupeLookup_ProfileScoped_ContentHash(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, got, "miss should return nil fragment")
 
-	// Verify the query includes profile_id filtering
-	assert.Contains(t, reader.LastQuery, "profile_id", "query must filter by profile_id")
+	// Verify the query includes team_id filtering
+	assert.Contains(t, reader.LastQuery, "team_id", "query must filter by team_id")
 	assert.Contains(t, reader.LastQuery, "$profileId", "query must use $profileId placeholder")
 	assert.Contains(t, reader.LastQuery, "content_hash", "query must filter by content_hash")
 	assert.Equal(t, "profile-xyz", reader.LastParams["profileId"])
@@ -75,12 +75,12 @@ func TestDedupeLookup_ByIdempotencyKey_Hit(t *testing.T) {
 	reader := &fakeScopedReader{
 		Results: []map[string]any{
 			{
-				"fragment_id":   "frag-123",
-				"profile_id":    "profile-xyz",
-				"content":       "test content",
-				"source":        "test-source",
-				"source_type":   "document",
-				"content_hash":  "hash123",
+				"fragment_id":     "frag-123",
+				"team_id":         "profile-xyz",
+				"content":         "test content",
+				"source":          "test-source",
+				"source_type":     "document",
+				"content_hash":    "hash123",
 				"idempotency_key": "test-key",
 			},
 		},
@@ -102,11 +102,11 @@ func TestDedupeLookup_ByContentHash_Hit(t *testing.T) {
 	reader := &fakeScopedReader{
 		Results: []map[string]any{
 			{
-				"fragment_id":   "frag-456",
-				"profile_id":    "profile-abc",
-				"content":       "hello world",
-				"content_hash":  "hash456",
-				"source_type":   "conversation",
+				"fragment_id":  "frag-456",
+				"team_id":      "profile-abc",
+				"content":      "hello world",
+				"content_hash": "hash456",
+				"source_type":  "conversation",
 			},
 		},
 	}
@@ -130,7 +130,7 @@ func TestDedupeLookup_UsesCompositeIndex(t *testing.T) {
 	// Test idempotency key lookup uses the pattern for composite index
 	_, _ = lookup.ByIdempotencyKey(context.Background(), "p1", "k1")
 	assert.Contains(t, reader.LastQuery, "MATCH (sf:SourceFragment", "query must match SourceFragment nodes")
-	assert.Contains(t, reader.LastQuery, "profile_id: $profileId", "query must use profile_id property")
+	assert.Contains(t, reader.LastQuery, "team_id: $profileId", "query must use team_id property")
 	assert.Contains(t, reader.LastQuery, "idempotency_key: $key", "query must use idempotency_key property")
 
 	// Test content hash lookup uses the pattern for composite index

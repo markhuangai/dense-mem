@@ -83,6 +83,14 @@ func NewControlPortalServer(
 	api := e.Group("/control/api")
 	api.Use(controlPortalMiddleware(cfg.GetControlPortalToken(), securitySvc))
 	api.GET("/session", control.session)
+	api.GET("/teams", control.listProfiles)
+	api.POST("/teams", control.createProfile)
+	api.PATCH("/teams/:teamId", control.updateProfile)
+	api.DELETE("/teams/:teamId", control.deleteProfile)
+	api.GET("/teams/:teamId/profiles", control.listAPIKeys)
+	api.POST("/teams/:teamId/profiles", control.createAPIKey)
+	api.DELETE("/teams/:teamId/profiles/:profileId", control.deleteAPIKey)
+	// Legacy aliases retained while the portal and operator tooling move to teams.
 	api.GET("/profiles", control.listProfiles)
 	api.POST("/profiles", control.createProfile)
 	api.PATCH("/profiles/:profileId", control.updateProfile)
@@ -154,7 +162,7 @@ func (h *controlPortalHandler) createProfile(c echo.Context) error {
 }
 
 func (h *controlPortalHandler) updateProfile(c echo.Context) error {
-	profileID, err := parseControlUUID(c.Param("profileId"), "profile ID")
+	profileID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
 	}
@@ -185,7 +193,7 @@ func (h *controlPortalHandler) updateProfile(c echo.Context) error {
 }
 
 func (h *controlPortalHandler) deleteProfile(c echo.Context) error {
-	profileID, err := parseControlUUID(c.Param("profileId"), "profile ID")
+	profileID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
 	}
@@ -196,7 +204,7 @@ func (h *controlPortalHandler) deleteProfile(c echo.Context) error {
 }
 
 func (h *controlPortalHandler) listAPIKeys(c echo.Context) error {
-	profileID, err := parseControlUUID(c.Param("profileId"), "profile ID")
+	profileID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
 	}
@@ -220,7 +228,7 @@ func (h *controlPortalHandler) listAPIKeys(c echo.Context) error {
 }
 
 func (h *controlPortalHandler) createAPIKey(c echo.Context) error {
-	profileID, err := parseControlUUID(c.Param("profileId"), "profile ID")
+	profileID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
 	}
@@ -229,6 +237,7 @@ func (h *controlPortalHandler) createAPIKey(c echo.Context) error {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
 	}
 	req := service.CreateAPIKeyRequest{
+		Name:      body.Name,
 		RateLimit: body.RateLimit,
 	}
 	if body.ExpiresAt != nil {
@@ -251,11 +260,11 @@ func (h *controlPortalHandler) createAPIKey(c echo.Context) error {
 }
 
 func (h *controlPortalHandler) deleteAPIKey(c echo.Context) error {
-	profileID, err := parseControlUUID(c.Param("profileId"), "profile ID")
+	profileID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
 	}
-	keyID, err := parseControlUUID(c.Param("keyId"), "key ID")
+	keyID, err := parseControlUUID(controlTeamProfileIDParam(c), "profile ID")
 	if err != nil {
 		return err
 	}
@@ -372,6 +381,7 @@ func (h *controlPortalHandler) deleteSecurityBan(c echo.Context) error {
 }
 
 type controlCreateAPIKeyRequest struct {
+	Name      string  `json:"name"`
 	RateLimit int     `json:"rate_limit"`
 	ExpiresAt *string `json:"expires_at"`
 }
@@ -470,6 +480,20 @@ func parseControlUUID(raw, label string) (uuid.UUID, error) {
 		return uuid.Nil, httperr.New(httperr.INVALID_UUID, "invalid "+label+" format")
 	}
 	return id, nil
+}
+
+func controlTeamIDParam(c echo.Context) string {
+	if v := c.Param("teamId"); v != "" {
+		return v
+	}
+	return c.Param("profileId")
+}
+
+func controlTeamProfileIDParam(c echo.Context) string {
+	if v := c.Param("keyId"); v != "" {
+		return v
+	}
+	return c.Param("profileId")
 }
 
 func controlPagination(c echo.Context) (int, int) {
@@ -571,7 +595,8 @@ func toControlProfile(profile *domain.Profile) controlProfileResponse {
 
 type controlAPIKeyResponse struct {
 	ID         uuid.UUID `json:"id"`
-	ProfileID  uuid.UUID `json:"profile_id"`
+	TeamID     uuid.UUID `json:"team_id"`
+	Name       string    `json:"name"`
 	KeySuffix  string    `json:"key_suffix"`
 	RateLimit  int       `json:"rate_limit"`
 	LastUsedAt *string   `json:"last_used_at"`
@@ -582,7 +607,8 @@ type controlAPIKeyResponse struct {
 func toControlAPIKey(key *domain.APIKey) controlAPIKeyResponse {
 	return controlAPIKeyResponse{
 		ID:         key.ID,
-		ProfileID:  key.ProfileID,
+		TeamID:     key.GetTeamID(),
+		Name:       key.GetProfileName(),
 		KeySuffix:  key.KeySuffix,
 		RateLimit:  key.RateLimit,
 		LastUsedAt: controlTimePtr(key.LastUsedAt),

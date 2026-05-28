@@ -42,7 +42,7 @@ func NewAuditHandler(svc AuditServiceInterface) *AuditHandler {
 // AuditLogResponse is the response format for a single audit log entry.
 type AuditLogResponse struct {
 	ID            string                 `json:"id"`
-	ProfileID     *string                `json:"profile_id,omitempty"`
+	ProfileID     *string                `json:"team_id,omitempty"`
 	Timestamp     string                 `json:"timestamp"`
 	Operation     string                 `json:"operation"`
 	EntityType    string                 `json:"entity_type"`

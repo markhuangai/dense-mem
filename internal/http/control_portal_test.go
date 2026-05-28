@@ -89,7 +89,9 @@ func (s *controlKeySvc) CreateStandardKey(_ context.Context, profileID uuid.UUID
 	key := &domain.APIKey{
 		ID:        uuid.New(),
 		ProfileID: profileID,
-		Label:     "",
+		TeamID:    profileID,
+		Label:     req.Name,
+		Name:      req.Name,
 		KeyPrefix: "dm_test",
 		KeySuffix: "intext",
 		Scopes:    service.StandardAPIKeyScopes(),
@@ -100,6 +102,19 @@ func (s *controlKeySvc) CreateStandardKey(_ context.Context, profileID uuid.UUID
 	s.rawKey = "dm_test_plaintext"
 	s.keys = append(s.keys, key)
 	return key, s.rawKey, nil
+}
+
+func (s *controlKeySvc) RotateForProfile(_ context.Context, profileID, id uuid.UUID, req service.CreateAPIKeyRequest, _ *string, _ string, _ string, _ string) (*domain.APIKey, string, error) {
+	for _, key := range s.keys {
+		if key.ProfileID == profileID && key.ID == id {
+			key.Name = req.Name
+			key.Label = req.Name
+			key.KeySuffix = "rot8ed"
+			key.ExpiresAt = req.ExpiresAt
+			return key, "dm_rotated_plaintext", nil
+		}
+	}
+	return nil, "", nil
 }
 
 func (s *controlKeySvc) ListByProfile(_ context.Context, profileID uuid.UUID, _ int, _ int) ([]*domain.APIKey, error) {

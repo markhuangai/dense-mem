@@ -130,13 +130,15 @@ func decodeClaimCursor(cursor string) (time.Time, string, error) {
 // to SUPPORTED_BY edges to avoid N+1 reads. Callers that require edge data
 // should call GetClaimService.Get for individual claims.
 const listClaimsCypher = `
-MATCH (c:Claim {profile_id: $profileId})
+MATCH (c:Claim {team_id: $profileId})
 WHERE ($status IS NULL OR c.status = $status)
   AND ($predicate IS NULL OR c.predicate = $predicate)
   AND ($subject IS NULL OR c.subject = $subject)
   AND ($afterTs IS NULL OR c.recorded_at < $afterTs
        OR (c.recorded_at = $afterTs AND c.claim_id < $afterId))
 RETURN c.claim_id                        AS claim_id,
+       c.created_by_profile_id           AS created_by_profile_id,
+       c.created_by_profile_name         AS created_by_profile_name,
        c.subject                         AS subject,
        c.predicate                       AS predicate,
        c.object                          AS object,

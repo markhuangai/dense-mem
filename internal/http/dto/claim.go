@@ -53,34 +53,36 @@ type CreateClaimRequest struct {
 
 // ClaimResponse represents a claim in API responses.
 type ClaimResponse struct {
-	ClaimID           string         `json:"claim_id"`
-	ProfileID         string         `json:"profile_id"`
-	Subject           string         `json:"subject"`
-	Predicate         string         `json:"predicate"`
-	Object            string         `json:"object"`
-	Modality          string         `json:"modality"`
-	Polarity          string         `json:"polarity"`
-	Speaker           string         `json:"speaker,omitempty"`
-	SpanStart         int            `json:"span_start"`
-	SpanEnd           int            `json:"span_end"`
-	ValidFrom         *time.Time     `json:"valid_from,omitempty"`
-	ValidTo           *time.Time     `json:"valid_to,omitempty"`
-	RecordedAt        time.Time      `json:"recorded_at"`
-	RecordedTo        *time.Time     `json:"recorded_to,omitempty"`
-	ExtractConf       float64        `json:"extract_conf"`
-	ResolutionConf    float64        `json:"resolution_conf"`
-	SourceQuality     float64        `json:"source_quality"`
-	EntailmentVerdict string         `json:"entailment_verdict"`
-	Status            string         `json:"status"`
-	ExtractionModel   string         `json:"extraction_model"`
-	ExtractionVersion string         `json:"extraction_version"`
-	VerifierModel     string         `json:"verifier_model,omitempty"`
-	PipelineRunID     string         `json:"pipeline_run_id,omitempty"`
-	ContentHash       string         `json:"content_hash"`
-	IdempotencyKey    string         `json:"idempotency_key,omitempty"`
-	Classification    map[string]any `json:"classification,omitempty"`
-	SupportedBy       []string       `json:"supported_by,omitempty"`
-	Evidence          []Evidence     `json:"evidence,omitempty"`
+	ClaimID              string         `json:"claim_id"`
+	ProfileID            string         `json:"team_id"`
+	CreatedByProfileID   string         `json:"created_by_profile_id,omitempty"`
+	CreatedByProfileName string         `json:"created_by_profile_name,omitempty"`
+	Subject              string         `json:"subject"`
+	Predicate            string         `json:"predicate"`
+	Object               string         `json:"object"`
+	Modality             string         `json:"modality"`
+	Polarity             string         `json:"polarity"`
+	Speaker              string         `json:"speaker,omitempty"`
+	SpanStart            int            `json:"span_start"`
+	SpanEnd              int            `json:"span_end"`
+	ValidFrom            *time.Time     `json:"valid_from,omitempty"`
+	ValidTo              *time.Time     `json:"valid_to,omitempty"`
+	RecordedAt           time.Time      `json:"recorded_at"`
+	RecordedTo           *time.Time     `json:"recorded_to,omitempty"`
+	ExtractConf          float64        `json:"extract_conf"`
+	ResolutionConf       float64        `json:"resolution_conf"`
+	SourceQuality        float64        `json:"source_quality"`
+	EntailmentVerdict    string         `json:"entailment_verdict"`
+	Status               string         `json:"status"`
+	ExtractionModel      string         `json:"extraction_model"`
+	ExtractionVersion    string         `json:"extraction_version"`
+	VerifierModel        string         `json:"verifier_model,omitempty"`
+	PipelineRunID        string         `json:"pipeline_run_id,omitempty"`
+	ContentHash          string         `json:"content_hash"`
+	IdempotencyKey       string         `json:"idempotency_key,omitempty"`
+	Classification       map[string]any `json:"classification,omitempty"`
+	SupportedBy          []string       `json:"supported_by,omitempty"`
+	Evidence             []Evidence     `json:"evidence,omitempty"`
 }
 
 // ListClaimsRequest represents query parameters for listing claims.

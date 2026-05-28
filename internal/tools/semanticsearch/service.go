@@ -22,7 +22,7 @@ type SearchHit struct {
 	Score     float64        `json:"score"`
 	Labels    []string       `json:"labels"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
-	ProfileID string         `json:"profile_id"` // For defense-in-depth post-filter
+	ProfileID string         `json:"team_id"` // For defense-in-depth post-filter
 }
 
 // SearchHitInterface is the companion interface for SearchHit.
@@ -283,7 +283,7 @@ func (s *semanticSearchService) Search(ctx context.Context, profileID string, re
 		return nil, err
 	}
 
-	// Defense-in-depth: post-filter by profile_id in Go
+	// Defense-in-depth: post-filter by team_id in Go
 	// profile A must never receive profile B rows even if B contains the nearest global vector candidate
 	filteredHits := make([]SearchHit, 0, len(hits))
 	for _, hit := range hits {

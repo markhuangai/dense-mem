@@ -40,7 +40,7 @@ func TestQueryVectorIndex_RetractedFragmentsFiltered(t *testing.T) {
 func TestQueryVectorIndex_RetractedNodeNotReturned(t *testing.T) {
 	// Simulate the DB returning only the active fragment (retracted one filtered out).
 	reader := &capturingScopedReader{rows: []map[string]any{
-		{"id": "frag-active", "content": "active content", "score": float64(0.9), "labels": []any{}, "metadata": map[string]any{}, "profile_id": "p1"},
+		{"id": "frag-active", "content": "active content", "score": float64(0.9), "labels": []any{}, "metadata": map[string]any{}, "team_id": "p1"},
 	}}
 	s := NewEmbeddingSearcher(reader)
 

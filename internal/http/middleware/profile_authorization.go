@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
@@ -32,7 +33,7 @@ func (s *profileAuthorizationService) CrossProfileDenied(ctx context.Context, ac
 	return s.auditSvc.CrossProfileDenied(ctx, actorProfileID, targetProfileID, operation, metadata, clientIP, correlationID)
 }
 
-// AuthorizeProfile creates a middleware that enforces profile-based authorization.
+// AuthorizeProfile creates a middleware that enforces team-based authorization.
 //
 // Authorization rules:
 // 1. If no target profile is in context (no ResolvedProfileKey), pass through silently.
@@ -61,15 +62,16 @@ func AuthorizeProfile(authzSvc ProfileAuthorizationService) echo.MiddlewareFunc 
 				return next(c)
 			}
 
-			// Profile-bound principals must match the target profile.
-			if principal.ProfileID != nil && *principal.ProfileID == targetProfileID {
+			// Team-bound principals must match the target team.
+			principalTeamID := principal.GetTeamID()
+			if principalTeamID == targetProfileID {
 				return next(c)
 			}
 
 			// Authorization denied - audit and return 403
 			actorProfileID := ""
-			if principal.ProfileID != nil {
-				actorProfileID = principal.ProfileID.String()
+			if principalTeamID != uuid.Nil {
+				actorProfileID = principalTeamID.String()
 			}
 
 			// Log cross-profile access denial

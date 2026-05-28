@@ -104,13 +104,13 @@ func (s *listFragmentsService) List(ctx context.Context, profileID string, opts 
 	}
 
 	query := `
-		MATCH (sf:SourceFragment {profile_id: $profileId})
+		MATCH (sf:SourceFragment {team_id: $profileId})
 		WHERE ` + neo4j.FragmentActiveFilter + `
 		  AND ($srcType IS NULL OR sf.source_type = $srcType)
 		  AND ($afterTs IS NULL OR sf.created_at < $afterTs
 		       OR (sf.created_at = $afterTs AND sf.fragment_id < $afterId))
 		RETURN sf.fragment_id AS fragment_id,
-		       sf.profile_id AS profile_id,
+		       sf.team_id AS team_id,
 		       sf.content AS content,
 		       sf.source AS source,
 		       sf.source_type AS source_type,
@@ -125,6 +125,8 @@ func (s *listFragmentsService) List(ctx context.Context, profileID string, opts 
 		       sf.source_quality AS source_quality,
 		       sf.classification AS classification,
 		       sf.classification_json AS classification_json,
+		       sf.created_by_profile_id AS created_by_profile_id,
+		       sf.created_by_profile_name AS created_by_profile_name,
 		       sf.created_at AS created_at,
 		       sf.updated_at AS updated_at
 		ORDER BY sf.created_at DESC, sf.fragment_id DESC

@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	classificationSvc "github.com/markhuangai/dense-mem/internal/service/classification"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentcodec"
 	neo4jstorage "github.com/markhuangai/dense-mem/internal/storage/neo4j"
@@ -262,7 +263,7 @@ func (s *promoteClaimServiceImpl) doConfirmMemory(ctx context.Context, profileID
 func (s *promoteClaimServiceImpl) doPromote(ctx context.Context, profileID, claimID string) (*domain.Fact, error) {
 	// Step 1: load the claim.
 	//
-	// Profile isolation: loadClaimForPromoteCypher includes {profile_id: $profileId}
+	// Profile isolation: loadClaimForPromoteCypher includes {team_id: $profileId}
 	// on the MATCH clause. A claim in a different profile produces zero rows,
 	// indistinguishable from "not found" — no existence leak.
 	claim, err := s.loadClaim(ctx, profileID, claimID)
@@ -486,9 +487,20 @@ func (s *promoteClaimServiceImpl) createNewFact(
 	mergedClass := fromStringMap(lat.Max(toStringMap(claim.Classification), map[string]string{}))
 
 	now := time.Now().UTC()
+	promoterID := ""
+	promoterName := ""
+	if actor, ok := requestctx.ActorProfileFromContext(ctx); ok {
+		promoterID = actor.ProfileID.String()
+		promoterName = actor.ProfileName
+	}
+
 	fact := &domain.Fact{
 		FactID:                       uuid.New().String(),
 		ProfileID:                    profileID,
+		CreatedByProfileID:           claim.CreatedByProfileID,
+		CreatedByProfileName:         claim.CreatedByProfileName,
+		PromotedByProfileID:          promoterID,
+		PromotedByProfileName:        promoterName,
 		Subject:                      claim.Subject,
 		Predicate:                    claim.Predicate,
 		Object:                       claim.Object,
@@ -513,6 +525,10 @@ func (s *promoteClaimServiceImpl) createNewFact(
 			map[string]any{
 				"claimId":                      claim.ClaimID,
 				"factId":                       fact.FactID,
+				"createdByProfileId":           fact.CreatedByProfileID,
+				"createdByProfileName":         fact.CreatedByProfileName,
+				"promotedByProfileId":          fact.PromotedByProfileID,
+				"promotedByProfileName":        fact.PromotedByProfileName,
 				"subject":                      fact.Subject,
 				"predicate":                    fact.Predicate,
 				"object":                       fact.Object,
@@ -551,9 +567,9 @@ func (s *promoteClaimServiceImpl) linkClaimToExistingFact(
 ) error {
 	return s.db.ScopedWriteTx(ctx, profileID, func(tx neo4j.ManagedTransaction) error {
 		result, err := neo4jstorage.RunScoped(ctx, tx, profileID,
-			`MATCH (c:Claim {profile_id: $profileId, claim_id: $claimId}),
-                   (f:Fact  {profile_id: $profileId, fact_id:  $factId})
-             CREATE (c)-[:PROMOTES_TO {profile_id: $profileId}]->(f)
+			`MATCH (c:Claim {team_id: $profileId, claim_id: $claimId}),
+                   (f:Fact  {team_id: $profileId, fact_id:  $factId})
+             CREATE (c)-[:PROMOTES_TO {team_id: $profileId}]->(f)
              SET c.status = $claimStatus`,
 			map[string]any{
 				"claimId":     claimID,
@@ -573,7 +589,7 @@ func (s *promoteClaimServiceImpl) linkClaimToExistingFact(
 // IDs (needed for the support gate OR check). Returns errClaimNotFound when
 // the Claim does not exist or belongs to a different profile.
 //
-// Profile isolation: the Cypher MATCH includes {profile_id: $profileId}; zero
+// Profile isolation: the Cypher MATCH includes {team_id: $profileId}; zero
 // rows are indistinguishable from "not found" — no cross-profile existence leak.
 func (s *promoteClaimServiceImpl) loadClaim(ctx context.Context, profileID, claimID string) (*domain.Claim, error) {
 	_, rows, err := s.db.ScopedRead(ctx, profileID, loadClaimForPromoteCypher, map[string]any{
@@ -592,7 +608,7 @@ func (s *promoteClaimServiceImpl) loadClaim(ctx context.Context, profileID, clai
 // Fact scoped to this profile. Returns the existing Fact when one is found,
 // nil when the claim has not yet been promoted.
 //
-// Profile isolation: the Cypher MATCH includes {profile_id: $profileId} on
+// Profile isolation: the Cypher MATCH includes {team_id: $profileId} on
 // both the Claim and Fact nodes and on the PROMOTES_TO relationship.
 func (s *promoteClaimServiceImpl) checkIdempotency(ctx context.Context, profileID, claimID string) (*domain.Fact, error) {
 	_, rows, err := s.db.ScopedRead(ctx, profileID, idempotencyCheckCypher, map[string]any{
@@ -665,14 +681,14 @@ func (s *promoteClaimServiceImpl) emitAudit(
 		EntityType: "fact",
 		EntityID:   factID,
 		AfterPayload: map[string]any{
-			"claim_id":   claimID,
-			"profile_id": profileID,
-			"fact_id":    factID,
+			"claim_id": claimID,
+			"team_id":  profileID,
+			"fact_id":  factID,
 		},
 	}
 	if auditErr := s.audit.Append(ctx, entry); auditErr != nil && s.logger != nil {
 		s.logger.Warn("audit emit failed for "+operation,
-			slog.String("profile_id", profileID),
+			slog.String("team_id", profileID),
 			slog.String("claim_id", claimID),
 			slog.String("fact_id", factID),
 			slog.String("error", auditErr.Error()),
@@ -746,6 +762,8 @@ func rowToClaimForPromote(profileID string, row map[string]any) *domain.Claim {
 	return &domain.Claim{
 		ClaimID:                      strVal("claim_id"),
 		ProfileID:                    profileID,
+		CreatedByProfileID:           strVal("created_by_profile_id"),
+		CreatedByProfileName:         strVal("created_by_profile_name"),
 		Subject:                      strVal("subject"),
 		Predicate:                    strVal("predicate"),
 		Object:                       strVal("object"),
@@ -772,10 +790,12 @@ func rowToClaimForPromote(profileID string, row map[string]any) *domain.Claim {
 // the Claim node pattern, the SourceFragment node pattern, and the SUPPORTED_BY
 // relationship pattern.
 const loadClaimForPromoteCypher = `
-MATCH (c:Claim {profile_id: $profileId, claim_id: $claimId})
-OPTIONAL MATCH (c)-[:SUPPORTED_BY {profile_id: $profileId}]->(sf:SourceFragment {profile_id: $profileId})
+MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
+OPTIONAL MATCH (c)-[:SUPPORTED_BY {team_id: $profileId}]->(sf:SourceFragment {team_id: $profileId})
 RETURN
     c.claim_id                        AS claim_id,
+    c.created_by_profile_id           AS created_by_profile_id,
+    c.created_by_profile_name         AS created_by_profile_name,
     c.subject                         AS subject,
     c.predicate                       AS predicate,
     c.object                          AS object,
@@ -797,9 +817,13 @@ RETURN
 // Profile isolation: $profileId on Claim node, Fact node, and PROMOTES_TO
 // relationship prevents cross-profile idempotency hits.
 const idempotencyCheckCypher = `
-MATCH (c:Claim {profile_id: $profileId, claim_id: $claimId})-[:PROMOTES_TO {profile_id: $profileId}]->(f:Fact {profile_id: $profileId})
+MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})-[:PROMOTES_TO {team_id: $profileId}]->(f:Fact {team_id: $profileId})
 RETURN
     f.fact_id                        AS fact_id,
+    f.created_by_profile_id          AS created_by_profile_id,
+    f.created_by_profile_name        AS created_by_profile_name,
+    f.promoted_by_profile_id         AS promoted_by_profile_id,
+    f.promoted_by_profile_name       AS promoted_by_profile_name,
     f.subject                        AS subject,
     f.predicate                      AS predicate,
     f.object                         AS object,
@@ -827,10 +851,14 @@ RETURN
 // Profile isolation: $profileId appears on the Claim MATCH, the new Fact node,
 // and the PROMOTES_TO relationship; RunScoped also injects it automatically.
 const createFactAndEdgeCypher = `
-MATCH (c:Claim {profile_id: $profileId, claim_id: $claimId})
+MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
 CREATE (f:Fact {
-    profile_id:                    $profileId,
+    team_id:                    $profileId,
     fact_id:                       $factId,
+    created_by_profile_id:         $createdByProfileId,
+    created_by_profile_name:       $createdByProfileName,
+    promoted_by_profile_id:        $promotedByProfileId,
+    promoted_by_profile_name:      $promotedByProfileName,
     subject:                       $subject,
     predicate:                     $predicate,
     object:                        $object,
@@ -844,5 +872,5 @@ CREATE (f:Fact {
     classification_lattice_version: $classificationLatticeVersion,
     source_quality:                $sourceQuality
 })
-CREATE (c)-[:PROMOTES_TO {profile_id: $profileId}]->(f)
+CREATE (c)-[:PROMOTES_TO {team_id: $profileId}]->(f)
 SET c.status = $claimStatus`

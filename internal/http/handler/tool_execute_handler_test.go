@@ -97,7 +97,7 @@ func TestToolExecuteHandler_RejectsUnknownFieldWhenAdditionalPropertiesFalse(t *
 
 	e.POST("/api/v1/tools/:name", h.Handle)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/get_memory", strings.NewReader(`{"id":"frag-1","profile_id":"forged"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/get_memory", strings.NewReader(`{"id":"frag-1","team_id":"forged"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Profile-ID", profileID.String())
 	rec := httptest.NewRecorder()
@@ -109,7 +109,7 @@ func TestToolExecuteHandler_RejectsUnknownFieldWhenAdditionalPropertiesFalse(t *
 
 	var apiErr httperr.APIError
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &apiErr))
-	assert.Contains(t, apiErr.Message, "unknown field: profile_id")
+	assert.Contains(t, apiErr.Message, "unknown field: team_id")
 }
 
 func TestToolExecuteHandler_MapsEmbeddingFailureToServiceUnavailable(t *testing.T) {

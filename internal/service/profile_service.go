@@ -91,7 +91,7 @@ func (s *ProfileServiceImpl) logAuditError(err error, operation, profileID, corr
 	s.logger.Error("audit_log_write_failed",
 		slog.String("error", err.Error()),
 		slog.String("operation", operation),
-		slog.String("profile_id", profileID),
+		slog.String("team_id", profileID),
 		slog.String("correlation_id", correlationID),
 	)
 }
@@ -303,7 +303,7 @@ func (s *ProfileServiceImpl) Delete(ctx context.Context, id uuid.UUID, actorKeyI
 	if s.statePurger != nil {
 		if err := s.statePurger.PurgeProfileState(ctx, id.String()); err != nil {
 			// Log but don't fail the operation
-			s.logger.Warn("profile_state_purge_failed", slog.String("error", err.Error()), slog.String("profile_id", id.String()))
+			s.logger.Warn("profile_state_purge_failed", slog.String("error", err.Error()), slog.String("team_id", id.String()))
 		}
 	}
 

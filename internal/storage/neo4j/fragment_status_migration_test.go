@@ -172,7 +172,7 @@ func (c *crossProfileCapturingClient) ExecuteWrite(_ context.Context, _ neo4j.Ma
 //
 //  1. status='active' is set on nodes from both profile A and profile B — the migration
 //     runs globally and must process all profiles in a single sweep.
-//  2. profile_id is never modified — write rows carry only fragment_id; profile ownership
+//  2. team_id is never modified — write rows carry only fragment_id; profile ownership
 //     is preserved on every node after migration.
 //  3. No cross-profile data leakage — the write query only sets sf.status and does not
 //     read, return, or expose any profile-specific fields.
@@ -201,27 +201,27 @@ func TestBackfillFragmentStatus_CrossProfileIsolation(t *testing.T) {
 	assert.Equal(t, 2, stub.writeCallCount,
 		"write must be called once per batch (profile A batch + profile B batch)")
 
-	// Property 2: write rows carry only fragment_id — profile_id is never present.
+	// Property 2: write rows carry only fragment_id — team_id is never present.
 	// writeActiveStatus builds rows with exactly {"fragment_id": id} for each fragment.
 	allFragmentIDs := append(profileAFragments, profileBFragments...)
 	for _, id := range allFragmentIDs {
 		row := map[string]interface{}{"fragment_id": id}
-		assert.NotContains(t, row, "profile_id",
-			"write row for %q must not carry profile_id — migration must not modify profile ownership", id)
+		assert.NotContains(t, row, "team_id",
+			"write row for %q must not carry team_id — migration must not modify profile ownership", id)
 		assert.Contains(t, row, "fragment_id",
 			"write row must identify the fragment by fragment_id")
 	}
 
 	// Property 3: the write Cypher only sets sf.status='active'; it does not touch
-	// or return profile_id, so no cross-profile data can be exposed.
+	// or return team_id, so no cross-profile data can be exposed.
 	writeQuery := `
 		UNWIND $rows AS row
 		MATCH (sf:SourceFragment {fragment_id: row.fragment_id})
 		SET sf.status = 'active'
 		RETURN count(sf) AS processed
 	`
-	assert.NotContains(t, writeQuery, "profile_id",
-		"write query must not reference profile_id — no cross-profile data exposure")
+	assert.NotContains(t, writeQuery, "team_id",
+		"write query must not reference team_id — no cross-profile data exposure")
 	assert.Contains(t, writeQuery, "SET sf.status = 'active'",
 		"write query must only set status")
 }

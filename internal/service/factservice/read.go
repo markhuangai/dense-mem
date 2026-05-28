@@ -50,9 +50,9 @@ func NewGetFactService(reader factReader) GetFactService {
 // produces zero rows — the caller receives ErrFactNotFound without any
 // indication of whether the fact exists under another profile.
 const getFactCypher = `
-MATCH (f:Fact {profile_id: $profileId, fact_id: $factId})
-OPTIONAL MATCH (f)<-[:PROMOTES_TO {profile_id: $profileId}]-(c:Claim {profile_id: $profileId})
-OPTIONAL MATCH (c)-[r:SUPPORTED_BY {profile_id: $profileId}]->(sf:SourceFragment {profile_id: $profileId})
+MATCH (f:Fact {team_id: $profileId, fact_id: $factId})
+OPTIONAL MATCH (f)<-[:PROMOTES_TO {team_id: $profileId}]-(c:Claim {team_id: $profileId})
+OPTIONAL MATCH (c)-[r:SUPPORTED_BY {team_id: $profileId}]->(sf:SourceFragment {team_id: $profileId})
 WITH f, collect(CASE
     WHEN sf.fragment_id IS NULL THEN NULL
     ELSE {
@@ -69,6 +69,10 @@ WITH f, collect(CASE
 END) AS evidence
 RETURN
     f.fact_id                        AS fact_id,
+    f.created_by_profile_id          AS created_by_profile_id,
+    f.created_by_profile_name        AS created_by_profile_name,
+    f.promoted_by_profile_id         AS promoted_by_profile_id,
+    f.promoted_by_profile_name       AS promoted_by_profile_name,
     f.subject                        AS subject,
     f.predicate                      AS predicate,
     f.object                         AS object,
@@ -182,8 +186,12 @@ func rowToFact(profileID string, row map[string]any) *domain.Fact {
 	}
 
 	return &domain.Fact{
-		FactID:    strVal("fact_id"),
-		ProfileID: profileID,
+		FactID:                strVal("fact_id"),
+		ProfileID:             profileID,
+		CreatedByProfileID:    strVal("created_by_profile_id"),
+		CreatedByProfileName:  strVal("created_by_profile_name"),
+		PromotedByProfileID:   strVal("promoted_by_profile_id"),
+		PromotedByProfileName: strVal("promoted_by_profile_name"),
 
 		Subject:   strVal("subject"),
 		Predicate: strVal("predicate"),

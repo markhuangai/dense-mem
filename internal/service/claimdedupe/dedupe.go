@@ -37,6 +37,8 @@ func NewNeo4jDedupeLookup(reader ScopedReader) DedupeLookup {
 const claimLookupReturn = `
 RETURN
     c.claim_id                        AS claim_id,
+    c.created_by_profile_id           AS created_by_profile_id,
+    c.created_by_profile_name         AS created_by_profile_name,
     c.subject                         AS subject,
     c.predicate                       AS predicate,
     c.object                          AS object,
@@ -69,11 +71,11 @@ RETURN
 LIMIT 1`
 
 const byIdempotencyKeyQuery = `
-MATCH (c:Claim {profile_id: $profileId, idempotency_key: $key})
+MATCH (c:Claim {team_id: $profileId, idempotency_key: $key})
 ` + claimLookupReturn
 
 const byContentHashQuery = `
-MATCH (c:Claim {profile_id: $profileId, content_hash: $hash})
+MATCH (c:Claim {team_id: $profileId, content_hash: $hash})
 ` + claimLookupReturn
 
 // ByIdempotencyKey finds an existing claim by idempotency key within a profile.

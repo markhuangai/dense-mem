@@ -1,8 +1,16 @@
 -- +goose Up
 -- +goose StatementBegin
 
-ALTER TABLE api_keys
-    ALTER COLUMN key_prefix TYPE VARCHAR(24);
+DO $$
+BEGIN
+    IF to_regclass('public.team_profiles') IS NOT NULL THEN
+        ALTER TABLE team_profiles
+            ALTER COLUMN key_prefix TYPE VARCHAR(24);
+    ELSIF to_regclass('public.api_keys') IS NOT NULL THEN
+        ALTER TABLE api_keys
+            ALTER COLUMN key_prefix TYPE VARCHAR(24);
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS security_settings (
     id BOOLEAN PRIMARY KEY DEFAULT true CHECK (id),
@@ -58,9 +66,5 @@ CREATE INDEX IF NOT EXISTS idx_security_ip_bans_expires_at
 DROP TABLE IF EXISTS security_ip_bans;
 DROP TABLE IF EXISTS security_ip_failures;
 DROP TABLE IF EXISTS security_settings;
-
-ALTER TABLE api_keys
-    ALTER COLUMN key_prefix TYPE VARCHAR(12)
-    USING left(key_prefix, 12);
 
 -- +goose StatementEnd

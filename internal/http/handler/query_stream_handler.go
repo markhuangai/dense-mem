@@ -314,7 +314,7 @@ func sanitizeOrchestratorError(err error) string {
 func filterRowsByProfile(rows []map[string]any, profileID string) []map[string]any {
 	filtered := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
-		if rowProfile, ok := row["profile_id"].(string); ok {
+		if rowProfile, ok := row["team_id"].(string); ok {
 			if rowProfile == profileID {
 				filtered = append(filtered, row)
 			}

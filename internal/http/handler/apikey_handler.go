@@ -20,6 +20,7 @@ import (
 // This allows mocking in tests and decouples the handler from concrete implementations.
 type APIKeyServiceInterface interface {
 	CreateStandardKey(ctx context.Context, profileID uuid.UUID, req service.CreateAPIKeyRequest, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, string, error)
+	RotateForProfile(ctx context.Context, profileID, id uuid.UUID, req service.CreateAPIKeyRequest, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, string, error)
 	ListByProfile(ctx context.Context, profileID uuid.UUID, limit, offset int) ([]*domain.APIKey, error)
 	CountByProfile(ctx context.Context, profileID uuid.UUID) (int64, error)
 	GetByIDForProfile(ctx context.Context, profileID, id uuid.UUID) (*domain.APIKey, error)
@@ -37,6 +38,7 @@ type APIKeyHandlerInterface interface {
 	Create(c echo.Context) error
 	List(c echo.Context) error
 	Get(c echo.Context) error
+	Rotate(c echo.Context) error
 	Delete(c echo.Context) error
 }
 
@@ -62,16 +64,15 @@ func (h *APIKeyHandler) Create(c echo.Context) error {
 	ctx := c.Request().Context()
 	principal := middleware.GetPrincipal(ctx)
 
-	// Parse profile ID from path
-	profileIDStr := c.Param("profileId")
+	profileIDStr := teamIDParam(c)
 	if profileIDStr == "" {
-		return httperr.New(httperr.PROFILE_ID_REQUIRED, "profile ID is required")
+		return httperr.New(httperr.PROFILE_ID_REQUIRED, "team ID is required")
 	}
 
 	// Validate UUID format
 	profileID, err := uuid.Parse(profileIDStr)
 	if err != nil {
-		return httperr.New(httperr.INVALID_UUID, "invalid profile ID format")
+		return httperr.New(httperr.INVALID_UUID, "invalid team ID format")
 	}
 
 	// Get validated request body
@@ -82,6 +83,7 @@ func (h *APIKeyHandler) Create(c echo.Context) error {
 
 	// Build service request
 	req := service.CreateAPIKeyRequest{
+		Name:      body.Name,
 		RateLimit: body.RateLimit,
 	}
 	if body.ExpiresAt != nil {
@@ -119,16 +121,15 @@ func (h *APIKeyHandler) Create(c echo.Context) error {
 func (h *APIKeyHandler) List(c echo.Context) error {
 	ctx := c.Request().Context()
 
-	// Parse profile ID from path
-	profileIDStr := c.Param("profileId")
+	profileIDStr := teamIDParam(c)
 	if profileIDStr == "" {
-		return httperr.New(httperr.PROFILE_ID_REQUIRED, "profile ID is required")
+		return httperr.New(httperr.PROFILE_ID_REQUIRED, "team ID is required")
 	}
 
 	// Validate UUID format
 	profileID, err := uuid.Parse(profileIDStr)
 	if err != nil {
-		return httperr.New(httperr.INVALID_UUID, "invalid profile ID format")
+		return httperr.New(httperr.INVALID_UUID, "invalid team ID format")
 	}
 
 	// Parse pagination params
@@ -170,28 +171,26 @@ func (h *APIKeyHandler) List(c echo.Context) error {
 func (h *APIKeyHandler) Get(c echo.Context) error {
 	ctx := c.Request().Context()
 
-	// Parse profile ID from path
-	profileIDStr := c.Param("profileId")
+	profileIDStr := teamIDParam(c)
 	if profileIDStr == "" {
-		return httperr.New(httperr.PROFILE_ID_REQUIRED, "profile ID is required")
+		return httperr.New(httperr.PROFILE_ID_REQUIRED, "team ID is required")
 	}
 
 	// Validate profile UUID format
 	profileID, err := uuid.Parse(profileIDStr)
 	if err != nil {
-		return httperr.New(httperr.INVALID_UUID, "invalid profile ID format")
+		return httperr.New(httperr.INVALID_UUID, "invalid team ID format")
 	}
 
-	// Parse key ID from path
-	keyIDStr := c.Param("keyId")
+	keyIDStr := teamProfileIDParam(c)
 	if keyIDStr == "" {
-		return httperr.New(httperr.NOT_FOUND, "key ID is required")
+		return httperr.New(httperr.NOT_FOUND, "profile ID is required")
 	}
 
 	// Validate key UUID format
 	keyID, err := uuid.Parse(keyIDStr)
 	if err != nil {
-		return httperr.New(httperr.INVALID_UUID, "invalid key ID format")
+		return httperr.New(httperr.INVALID_UUID, "invalid profile ID format")
 	}
 
 	// Get API key scoped to profile — returns NOT_FOUND on cross-profile id.
@@ -204,6 +203,65 @@ func (h *APIKeyHandler) Get(c echo.Context) error {
 	return response.SuccessOK(c, toAPIKeyResponse(key))
 }
 
+// Rotate handles POST /api/v1/teams/:teamId/profiles/:profileId/rotate.
+// Requires 'write' scope. Returns the same profile id with new plaintext key material.
+func (h *APIKeyHandler) Rotate(c echo.Context) error {
+	ctx := c.Request().Context()
+	principal := middleware.GetPrincipal(ctx)
+
+	profileIDStr := teamIDParam(c)
+	if profileIDStr == "" {
+		return httperr.New(httperr.PROFILE_ID_REQUIRED, "team ID is required")
+	}
+	profileID, err := uuid.Parse(profileIDStr)
+	if err != nil {
+		return httperr.New(httperr.INVALID_UUID, "invalid team ID format")
+	}
+
+	keyIDStr := teamProfileIDParam(c)
+	if keyIDStr == "" {
+		return httperr.New(httperr.NOT_FOUND, "profile ID is required")
+	}
+	keyID, err := uuid.Parse(keyIDStr)
+	if err != nil {
+		return httperr.New(httperr.INVALID_UUID, "invalid profile ID format")
+	}
+
+	body, ok := middleware.GetValidatedBody[dto.CreateAPIKeyRequest](ctx, middleware.CreateAPIKeyBodyKey)
+	if !ok {
+		return httperr.New(httperr.VALIDATION_ERROR, "request body not found")
+	}
+
+	req := service.CreateAPIKeyRequest{
+		Name:      body.Name,
+		RateLimit: body.RateLimit,
+	}
+	if body.ExpiresAt != nil {
+		t, err := time.Parse(time.RFC3339, *body.ExpiresAt)
+		if err == nil {
+			req.ExpiresAt = &t
+		}
+	}
+
+	var actorKeyID *string
+	actorRole := "standard"
+	if principal != nil {
+		keyIDStr := principal.KeyID.String()
+		actorKeyID = &keyIDStr
+		actorRole = principal.Role
+	}
+
+	key, rawKey, err := h.svc.RotateForProfile(ctx, profileID, keyID, req, actorKeyID, actorRole, c.RealIP(), middleware.GetCorrelationID(ctx))
+	if err != nil {
+		return err
+	}
+
+	return response.SuccessOK(c, CreateAPIKeyResponse{
+		APIKey: rawKey,
+		Key:    toAPIKeyResponse(key),
+	})
+}
+
 // Delete handles DELETE /api/v1/profiles/:profileId/api-keys/:keyId.
 // Requires 'write' scope.
 // Returns 200 with { "status": "deleted" }.
@@ -212,28 +270,26 @@ func (h *APIKeyHandler) Delete(c echo.Context) error {
 	ctx := c.Request().Context()
 	principal := middleware.GetPrincipal(ctx)
 
-	// Parse profile ID from path
-	profileIDStr := c.Param("profileId")
+	profileIDStr := teamIDParam(c)
 	if profileIDStr == "" {
-		return httperr.New(httperr.PROFILE_ID_REQUIRED, "profile ID is required")
+		return httperr.New(httperr.PROFILE_ID_REQUIRED, "team ID is required")
 	}
 
 	// Validate profile UUID format
 	profileID, err := uuid.Parse(profileIDStr)
 	if err != nil {
-		return httperr.New(httperr.INVALID_UUID, "invalid profile ID format")
+		return httperr.New(httperr.INVALID_UUID, "invalid team ID format")
 	}
 
-	// Parse key ID from path
-	keyIDStr := c.Param("keyId")
+	keyIDStr := teamProfileIDParam(c)
 	if keyIDStr == "" {
-		return httperr.New(httperr.NOT_FOUND, "key ID is required")
+		return httperr.New(httperr.NOT_FOUND, "profile ID is required")
 	}
 
 	// Validate key UUID format
 	keyID, err := uuid.Parse(keyIDStr)
 	if err != nil {
-		return httperr.New(httperr.INVALID_UUID, "invalid key ID format")
+		return httperr.New(httperr.INVALID_UUID, "invalid profile ID format")
 	}
 
 	// Get actor metadata from principal
@@ -254,6 +310,20 @@ func (h *APIKeyHandler) Delete(c echo.Context) error {
 	return response.SuccessOK(c, map[string]string{"status": "deleted"})
 }
 
+func teamIDParam(c echo.Context) string {
+	if v := c.Param("teamId"); v != "" {
+		return v
+	}
+	return c.Param("profileId")
+}
+
+func teamProfileIDParam(c echo.Context) string {
+	if v := c.Param("keyId"); v != "" {
+		return v
+	}
+	return c.Param("profileId")
+}
+
 // toAPIKeyResponse converts a domain.APIKey to dto.APIKeyResponse.
 // Never includes key_hash or plaintext.
 func toAPIKeyResponse(k *domain.APIKey) dto.APIKeyResponse {
@@ -271,7 +341,8 @@ func toAPIKeyResponse(k *domain.APIKey) dto.APIKeyResponse {
 
 	return dto.APIKeyResponse{
 		ID:         k.ID,
-		ProfileID:  k.ProfileID,
+		TeamID:     k.GetTeamID(),
+		Name:       k.GetProfileName(),
 		KeySuffix:  k.KeySuffix,
 		RateLimit:  k.RateLimit,
 		LastUsedAt: lastUsedAt,
@@ -297,6 +368,8 @@ func toAPIKeyListItem(k *domain.APIKey) dto.APIKeyListItem {
 
 	return dto.APIKeyListItem{
 		ID:         k.ID,
+		TeamID:     k.GetTeamID(),
+		Name:       k.GetProfileName(),
 		KeySuffix:  k.KeySuffix,
 		RateLimit:  k.RateLimit,
 		LastUsedAt: lastUsedAt,

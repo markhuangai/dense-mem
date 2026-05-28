@@ -135,7 +135,7 @@ func main() {
 	// ========================================
 	// Neo4j schema bootstrap
 	// ========================================
-	// Creates uniqueness constraints, profile_id indexes, full-text indexes,
+	// Creates uniqueness constraints, team_id indexes, full-text indexes,
 	// vector index with configured dimensions, and composite fragment dedupe
 	// indexes. Idempotent; legacy index names are dropped and recreated with
 	// canonical names. Config loading makes EmbeddingDimensions match the
@@ -161,7 +161,7 @@ func main() {
 	// Repository layer
 	// ========================================
 	// RLSHelper is shared across repos so every query runs with Postgres
-	// FORCE RLS session variables (app.current_profile_id / app.tx_mode) set.
+	// FORCE RLS session variables (app.current_team_id / app.tx_mode) set.
 	rlsHelper := postgres.NewRLS()
 	profileRepo := repository.NewProfileRepository(pgDB.GetDB(), rlsHelper)
 	apiKeyRepo := repository.NewAPIKeyRepository(pgDB.GetDB(), rlsHelper)

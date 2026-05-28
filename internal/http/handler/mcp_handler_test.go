@@ -52,14 +52,14 @@ func TestMCPHandlerPostToolCallUsesAuthenticatedProfile(t *testing.T) {
 		RequiredScopes: []string{"read"},
 		Invoke: func(ctx context.Context, pid string, input map[string]any) (map[string]any, error) {
 			gotProfile = pid
-			_, hasOverride := input["profile_id"]
+			_, hasOverride := input["team_id"]
 			return map[string]any{"has_override": hasOverride}, nil
 		},
 	}))
 
 	h := NewMCPHandler(reg, testMCPLogger())
 	e := echo.New()
-	body := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"probe","arguments":{"profile_id":"attacker"}}}`
+	body := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"probe","arguments":{"team_id":"attacker"}}}`
 	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
 	req = req.WithContext(mcpTestContext(req.Context(), profileID, []string{"read"}))
 	rec := httptest.NewRecorder()

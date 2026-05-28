@@ -51,7 +51,7 @@ func NewGetClaimService(reader claimReader, logger *slog.Logger) GetClaimService
 // Profile isolation: $profileId is injected automatically by ScopedRead and
 // appears on both the Claim node pattern and the SUPPORTED_BY relationship
 // pattern. This prevents cross-profile leakage through relationship traversal —
-// a SUPPORTED_BY edge whose profile_id differs from the Claim's profile_id is
+// a SUPPORTED_BY edge whose team_id differs from the Claim's team_id is
 // silently excluded from the collect().
 //
 // OPTIONAL MATCH on SourceFragment ensures that a Claim with no supporting
@@ -60,10 +60,12 @@ func NewGetClaimService(reader claimReader, logger *slog.Logger) GetClaimService
 // ErrClaimNotFound without leaking that the claim exists under a different
 // profile.
 const getClaimCypher = `
-MATCH (c:Claim {profile_id: $profileId, claim_id: $claimId})
-OPTIONAL MATCH (c)-[r:SUPPORTED_BY {profile_id: $profileId}]->(sf:SourceFragment {profile_id: $profileId})
+MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
+OPTIONAL MATCH (c)-[r:SUPPORTED_BY {team_id: $profileId}]->(sf:SourceFragment {team_id: $profileId})
 RETURN
     c.claim_id                        AS claim_id,
+    c.created_by_profile_id           AS created_by_profile_id,
+    c.created_by_profile_name         AS created_by_profile_name,
     c.subject                         AS subject,
     c.predicate                       AS predicate,
     c.object                          AS object,
@@ -220,8 +222,10 @@ func rowToClaim(profileID string, row map[string]any) *domain.Claim {
 	}
 
 	return &domain.Claim{
-		ClaimID:   strVal("claim_id"),
-		ProfileID: profileID,
+		ClaimID:              strVal("claim_id"),
+		ProfileID:            profileID,
+		CreatedByProfileID:   strVal("created_by_profile_id"),
+		CreatedByProfileName: strVal("created_by_profile_name"),
 
 		Subject:   strVal("subject"),
 		Predicate: strVal("predicate"),

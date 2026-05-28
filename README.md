@@ -2,12 +2,12 @@
 
 Dense-Mem is a standalone HTTP MCP memory server for LLM hosts. It owns durable
 memory state, provenance, typed claims and facts, server-side embeddings,
-profile isolation, and recall. The host LLM owns conversation, judgment, and user
+team isolation, and recall. The host LLM owns conversation, judgment, and user
 interaction.
 
 HTTP MCP is the v1 supported MCP transport. Dense-Mem serves MCP at `/mcp` from
 the main HTTP process and also exposes REST, OpenAPI, and a token-protected
-control portal for profile and API-key administration.
+control portal for team and profile-key administration.
 
 Redis is optional for single-node deployments and required for multi-instance
 deployments.
@@ -20,7 +20,7 @@ deployments.
 | Embeddings | Fragment embeddings and recall-query embeddings through the configured provider | No vectors for normal writes or recall |
 | Retrieval | Facts, validated claims, fragments, contradictions, clarification tasks | Choosing what to ask or cite in the conversation |
 | Truth changes | Comparable-conflict detection, confirmation-driven supersession | Asking the user which uncertain memory is correct |
-| Operations | Profiles, API keys, audit metadata, control portal | Client-side MCP configuration |
+| Operations | Teams, named profiles, API keys, audit metadata, control portal | Client-side MCP configuration |
 
 Dense-Mem is not an agent brain, planner, or external truth arbiter. It stores
 memory, applies explicit gates, and returns structured outcomes.
@@ -47,7 +47,7 @@ flowchart TB
 
     subgraph Storage["Storage"]
         Neo4j["Neo4j graph + vector indexes"]
-        Postgres["Postgres profiles + keys + audit"]
+        Postgres["Postgres teams + profiles + audit"]
         Redis["Redis rate limits + SSE concurrency"]
     end
 
@@ -87,7 +87,7 @@ The high-level MCP tools use that pipeline instead of bypassing it.
 |------|---------|
 | `remember` | Normal chat-session memory insertion. Saves evidence, creates typed claims, verifies, promotes when gates pass, and returns structured outcomes. |
 | `import_memories` | Ingests summarized historical conversations. By default it records evidence and validated claims without auto-promotion. |
-| `recall_memory` | Retrieves facts, validated claims, fragments, and `clarifications[]` for the authenticated profile. |
+| `recall_memory` | Retrieves facts, validated claims, fragments, and `clarifications[]` for the authenticated team. |
 | `reflect_memories` | Reviews active facts, candidate or disputed claims, contradictions, stale memories, and clarification needs. |
 | `confirm_memory` | Applies the user's answer to a clarification task, either accepting a claim and superseding comparable active facts or keeping/rejecting it. |
 
@@ -194,16 +194,17 @@ the real client IP as the direct socket address. When enabled, repeated failed
 API-key, MCP, or control-token attempts are counted in Postgres and can create
 permanent or time-limited bans.
 
-## Provision A Profile And API Key
+## Provision A Team And API Key
 
-Dense-Mem API keys are opaque, profile-bound keys. The profile binding lives on
-the server side; callers do not send `X-Profile-ID` for header-scoped memory
-routes.
+Dense-Mem API keys are opaque keys bound to a named profile inside a team. The
+team binding lives on the server side; callers do not send `X-Team-ID` for
+header-scoped memory routes. Multiple MCP client configurations can point at
+different teams by using different team-profile API keys.
 
-The container includes `/app/provision-profile`:
+The container includes `/app/provision-team`:
 
 ```bash
-docker compose exec server /app/provision-profile --name "primary-memory"
+docker compose exec server /app/provision-team --name "primary-memory"
 ```
 
 Local Go development:
@@ -216,9 +217,11 @@ Example output:
 
 ```json
 {
-  "profile_id": "11111111-2222-3333-4444-555555555555",
-  "profile_name": "primary-memory",
-  "api_key": "dm_live_..."
+  "team_id": "11111111-2222-3333-4444-555555555555",
+  "team_name": "primary-memory",
+  "profile_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+  "profile_name": "default profile",
+  "api_key": "dm_default-prof_..."
 }
 ```
 
@@ -227,22 +230,22 @@ The plaintext `api_key` is returned only at creation time.
 Useful operator commands:
 
 ```bash
-docker compose exec server /app/list-profiles
-docker compose exec server /app/list-keys --profile-id "<profile-id>"
-docker compose exec server /app/rotate-key --profile-id "<profile-id>" --key-id "<key-id>"
-docker compose exec server /app/delete-key --profile-id "<profile-id>" --key-id "<key-id>"
-docker compose exec server /app/delete-profile --profile-id "<profile-id>"
+docker compose exec server /app/list-teams
+docker compose exec server /app/list-team-profiles --team-id "<team-id>"
+docker compose exec server /app/rotate-team-profile-key --team-id "<team-id>" --profile-id "<profile-id>"
+docker compose exec server /app/delete-team-profile --team-id "<team-id>" --profile-id "<profile-id>"
+docker compose exec server /app/delete-team --team-id "<team-id>"
 ```
 
-`delete-profile` hard-deletes the profile, profile-owned API keys, and
-profile-owned memory rows. The audit log remains append-only.
+`delete-team` hard-deletes the team, team profiles, and team-owned memory rows.
+The audit log remains append-only.
 
 ## Configure MCP
 
-Use a profile-bound API key:
+Use a team-profile API key:
 
 ```bash
-export DENSE_MEM_API_KEY="dm_live_..."
+export DENSE_MEM_API_KEY="dm_default-prof_..."
 ```
 
 Dense-Mem serves MCP Streamable HTTP at:
@@ -254,7 +257,7 @@ http://localhost:8080/mcp
 MCP clients authenticate with:
 
 ```text
-Authorization: Bearer <profile-bound-api-key>
+Authorization: Bearer <team-profile-api-key>
 ```
 
 ### Claude Code
@@ -391,12 +394,13 @@ Claude Desktop can use the same package:
 | Facts | `GET /api/v1/facts`, `GET /api/v1/facts/{id}` |
 | Recall | `GET /api/v1/recall` |
 | Tools | `GET /api/v1/tools`, `GET /api/v1/tools/{id}`, `POST /api/v1/tools/{name}` |
-| Profiles | `GET /api/v1/profiles/{profileId}`, `PATCH /api/v1/profiles/{profileId}`, `GET /api/v1/profiles/{profileId}/audit-log` |
-| Streaming | `POST /api/v1/profiles/{profileId}/query/stream` |
+| Teams | `GET /api/v1/teams/{teamId}`, `PATCH /api/v1/teams/{teamId}`, `GET /api/v1/teams/{teamId}/audit-log` |
+| Team profiles | `GET /api/v1/teams/{teamId}/profiles`, `POST /api/v1/teams/{teamId}/profiles`, `POST /api/v1/teams/{teamId}/profiles/{profileId}/rotate`, `DELETE /api/v1/teams/{teamId}/profiles/{profileId}` |
+| Streaming | `POST /api/v1/teams/{teamId}/query/stream` |
 | Communities | `GET /api/v1/communities`, `GET /api/v1/communities/{id}` |
 | MCP | `POST /mcp`, `GET /mcp` |
 
-Header-scoped memory routes derive the profile from the bearer API key.
+Header-scoped memory routes derive the team and profile from the bearer API key.
 
 Example:
 
@@ -412,7 +416,7 @@ curl "http://localhost:8080/api/v1/recall?q=preferences" \
 
 ## Local Control Portal
 
-The control portal is for profile, API-key, and security-ban management. It does
+The control portal is for team, team-profile key, and security-ban management. It does
 not expose a memory, fact, claim, graph, or database browser.
 
 Environment variables:
@@ -434,9 +438,9 @@ Dense-Mem validates all of the following before starting the portal:
 
 The portal supports:
 
-- list, create, update, and delete profiles where the existing profile rules
+- list, create, update, and delete teams where the existing deletion rules
   allow deletion
-- list, create, and delete API keys
+- list, create, and delete named profiles and their API keys
 - one-time plaintext key display immediately after key creation
 - view and update IP ban settings
 - list active bans, add manual bans, and remove bans

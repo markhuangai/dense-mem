@@ -14,7 +14,7 @@ type QueryGuardInterface interface {
 }
 
 // QueryGuard validates and sanitizes Cypher queries for safe execution.
-// It enforces read-only operations and ensures profile_id predicates are present.
+// It enforces read-only operations and ensures team_id predicates are present.
 type QueryGuard struct{}
 
 // Ensure QueryGuard implements QueryGuardInterface
@@ -77,28 +77,28 @@ func (g *QueryGuard) Validate(query string) error {
 	return nil
 }
 
-// profileIDPattern matches profile_id filters in WHERE clauses.
-var profileIDPattern = regexp.MustCompile(`(?i)\bprofile_id\s*=\s*\$`)
+// profileIDPattern matches team_id filters in WHERE clauses.
+var profileIDPattern = regexp.MustCompile(`(?i)\bteam_id\s*=\s*\$`)
 
-// InjectProfilePredicate ensures a query has a profile_id filter.
-// If the query already contains a profile_id filter, it returns the query unchanged.
+// InjectProfilePredicate ensures a query has a team_id filter.
+// If the query already contains a team_id filter, it returns the query unchanged.
 // If missing, it injects a WHERE clause to enforce profile isolation.
 // Returns an error if injection is ambiguous or unsafe.
 func (g *QueryGuard) InjectProfilePredicate(query, profileID string) (string, error) {
-	// Check if profile_id filter already exists
+	// Check if team_id filter already exists
 	if profileIDPattern.MatchString(query) {
-		// Query already has profile_id parameter filter
+		// Query already has team_id parameter filter
 		return query, nil
 	}
 
-	// Check for literal profile_id comparison (without parameter)
-	literalProfileIDPattern := regexp.MustCompile(`(?i)\bprofile_id\s*=\s*['"]`)
+	// Check for literal team_id comparison (without parameter)
+	literalProfileIDPattern := regexp.MustCompile(`(?i)\bteam_id\s*=\s*['"]`)
 	if literalProfileIDPattern.MatchString(query) {
-		// Query has literal profile_id, which is acceptable
+		// Query has literal team_id, which is acceptable
 		return query, nil
 	}
 
-	// Need to inject profile_id predicate
+	// Need to inject team_id predicate
 	// Normalize query whitespace for analysis
 	normalizedQuery := strings.TrimSpace(query)
 
@@ -114,20 +114,20 @@ func (g *QueryGuard) InjectProfilePredicate(query, profileID string) (string, er
 
 	if len(matches) < 2 {
 		// Cannot determine node variable - query structure is too complex or ambiguous
-		return "", &ValidationError{Reason: "cannot determine node variable for profile_id injection - query structure is ambiguous or unsupported"}
+		return "", &ValidationError{Reason: "cannot determine node variable for team_id injection - query structure is ambiguous or unsupported"}
 	}
 
 	nodeVar := matches[1]
 
-	// Check if the query has IN predicate in profile_id check (more complex)
-	// e.g., profile_id IN [...] - we consider this as already having a filter
-	profileIDInPattern := regexp.MustCompile(`(?i)\bprofile_id\s+IN\b`)
+	// Check if the query has IN predicate in team_id check (more complex)
+	// e.g., team_id IN [...] - we consider this as already having a filter
+	profileIDInPattern := regexp.MustCompile(`(?i)\bteam_id\s+IN\b`)
 	if profileIDInPattern.MatchString(normalizedQuery) {
 		return query, nil
 	}
 
 	// Build the profile predicate
-	profilePredicate := fmt.Sprintf("%s.profile_id = '%s'", nodeVar, profileID)
+	profilePredicate := fmt.Sprintf("%s.team_id = '%s'", nodeVar, profileID)
 
 	if hasWhere {
 		// Append to existing WHERE clause

@@ -398,7 +398,7 @@ func TestPromoteHappyPaths_CrossProfileIsolation(t *testing.T) {
 
 	t.Run("profile B cannot access profile A's claim", func(t *testing.T) {
 		// ScopedRead for profile B returns no rows (claim not in profile B).
-		// This mirrors Neo4j's {profile_id: $profileId} scoping: a claim owned
+		// This mirrors Neo4j's {team_id: $profileId} scoping: a claim owned
 		// by profile A produces zero rows when queried as profile B.
 		db := &stubPromoteDB{
 			responsesByCall: map[int][]map[string]any{
@@ -549,7 +549,7 @@ func TestPromoteContradictionMatrix(t *testing.T) {
 		const profileA = "00000000-0000-0000-0000-000000000001"
 		const profileB = "00000000-0000-0000-0000-000000000002"
 
-		// ScopedRead for profile B returns no rows — the {profile_id: $profileId}
+		// ScopedRead for profile B returns no rows — the {team_id: $profileId}
 		// filter on the Claim node prevents cross-profile access. This is
 		// indistinguishable from "not found", so no existence is leaked.
 		db := &stubPromoteDB{

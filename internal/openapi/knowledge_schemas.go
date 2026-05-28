@@ -69,7 +69,7 @@ func knowledgeSchemas() map[string]any {
 				},
 				"idempotency_key": map[string]any{
 					"type":        "string",
-					"description": "Client-supplied idempotency key scoped to the profile.",
+					"description": "Client-supplied idempotency key scoped to the team.",
 					"maxLength":   128,
 				},
 				"valid_from": map[string]any{
@@ -92,9 +92,16 @@ func knowledgeSchemas() map[string]any {
 					"type":   "string",
 					"format": "uuid",
 				},
-				"profile_id": map[string]any{
+				"team_id": map[string]any{
 					"type":   "string",
 					"format": "uuid",
+				},
+				"created_by_profile_id": map[string]any{
+					"type":   "string",
+					"format": "uuid",
+				},
+				"created_by_profile_name": map[string]any{
+					"type": "string",
 				},
 				"subject": map[string]any{
 					"type": "string",
@@ -189,7 +196,7 @@ func knowledgeSchemas() map[string]any {
 					"items": knowledgeEvidenceSchema(),
 				},
 			},
-			"required": []string{"claim_id", "profile_id", "subject", "predicate", "object", "modality", "polarity", "span_start", "span_end", "recorded_at", "extract_conf", "resolution_conf", "source_quality", "entailment_verdict", "status", "extraction_model", "content_hash"},
+			"required": []string{"claim_id", "team_id", "subject", "predicate", "object", "modality", "polarity", "span_start", "span_end", "recorded_at", "extract_conf", "resolution_conf", "source_quality", "entailment_verdict", "status", "extraction_model", "content_hash"},
 		},
 
 		// FactResponse is the body returned for a promoted, validated fact node.
@@ -204,9 +211,23 @@ func knowledgeSchemas() map[string]any {
 					"format":      "uuid",
 					"description": "Unique identifier of the promoted fact.",
 				},
-				"profile_id": map[string]any{
+				"team_id": map[string]any{
 					"type":   "string",
 					"format": "uuid",
+				},
+				"created_by_profile_id": map[string]any{
+					"type":   "string",
+					"format": "uuid",
+				},
+				"created_by_profile_name": map[string]any{
+					"type": "string",
+				},
+				"promoted_by_profile_id": map[string]any{
+					"type":   "string",
+					"format": "uuid",
+				},
+				"promoted_by_profile_name": map[string]any{
+					"type": "string",
 				},
 				"subject": map[string]any{
 					"type":        "string",
@@ -297,7 +318,7 @@ func knowledgeSchemas() map[string]any {
 					"description": "Supporting evidence lineage for the fact.",
 				},
 			},
-			"required": []string{"fact_id", "profile_id", "subject", "predicate", "object", "status", "truth_score", "recorded_at", "promoted_from_claim_id", "source_quality"},
+			"required": []string{"fact_id", "team_id", "subject", "predicate", "object", "status", "truth_score", "recorded_at", "promoted_from_claim_id", "source_quality"},
 		},
 
 		// FactRequest is the request body for promoting a validated claim to a fact.
@@ -533,7 +554,7 @@ func knowledgeSchemas() map[string]any {
 				"community_id": map[string]any{
 					"type": "string",
 				},
-				"profile_id": map[string]any{
+				"team_id": map[string]any{
 					"type": "string",
 				},
 				"level": map[string]any{
@@ -561,7 +582,7 @@ func knowledgeSchemas() map[string]any {
 					"format": "date-time",
 				},
 			},
-			"required": []string{"community_id", "profile_id", "level", "summary", "summary_version", "member_count", "last_summarized_at"},
+			"required": []string{"community_id", "team_id", "level", "summary", "summary_version", "member_count", "last_summarized_at"},
 		},
 		"ListCommunitiesResponse": map[string]any{
 			"type": "object",

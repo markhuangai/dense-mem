@@ -18,33 +18,33 @@ const (
 	IndexClaimRecall       = "claim_recall_idx"
 
 	// Composite indexes for fragment deduplication and lookup (Unit 12)
-	IndexFragmentProfileIdempotency = "fragment_profile_idempotency_idx"
+	IndexFragmentProfileIdempotency = "fragment_team_idempotency_idx"
 	IndexFragmentProfileContentHash = "fragment_profile_content_hash_idx"
 	IndexFragmentProfileCreatedAt   = "fragment_profile_created_at_idx"
 
-	// Composite indexes for Claim nodes — profile_id is leading key (Unit 12, AC-3)
+	// Composite indexes for Claim nodes — team_id is leading key (Unit 12, AC-3)
 	IndexClaimProfileClaimID          = "claim_profile_claim_id_idx"
 	IndexClaimProfileStatus           = "claim_profile_status_idx"
 	IndexClaimProfilePredicate        = "claim_profile_predicate_idx"
 	IndexClaimProfileSubjectPredicate = "claim_profile_subject_predicate_idx"
-	IndexClaimProfileIdempotency      = "claim_profile_idempotency_idx"
+	IndexClaimProfileIdempotency      = "claim_team_idempotency_idx"
 	IndexClaimProfileContentHash      = "claim_profile_content_hash_idx"
 
-	// Composite indexes for Fact nodes — profile_id is leading key (Unit 12, AC-4)
+	// Composite indexes for Fact nodes — team_id is leading key (Unit 12, AC-4)
 	IndexFactProfileStatus                 = "fact_profile_status_idx"
 	IndexFactProfileSubjectPredicateStatus = "fact_profile_subject_predicate_status_idx"
 
-	// Composite index for SourceFragment nodes — profile_id is leading key (Unit 12, AC-5)
+	// Composite index for SourceFragment nodes — team_id is leading key (Unit 12, AC-5)
 	IndexSourceFragmentProfileStatus = "sourcefragment_profile_status_idx"
 	// Persisted community summary lookups.
 	IndexCommunityProfileCommunityID = "community_profile_community_id_idx"
 
-	// Relationship profile_id existence constraints (Unit 13, AC-X1)
+	// Relationship team_id existence constraints (Unit 13, AC-X1)
 	// These names are canonical identifiers stored in Neo4j metadata.
-	ConstraintSupportedByProfileIDExists  = "supported_by_profile_id_exists"
-	ConstraintPromotesToProfileIDExists   = "promotes_to_profile_id_exists"
-	ConstraintSupersededByProfileIDExists = "superseded_by_profile_id_exists"
-	ConstraintContradictsProfileIDExists  = "contradicts_profile_id_exists"
+	ConstraintSupportedByProfileIDExists  = "supported_by_team_id_exists"
+	ConstraintPromotesToProfileIDExists   = "promotes_to_team_id_exists"
+	ConstraintSupersededByProfileIDExists = "superseded_by_team_id_exists"
+	ConstraintContradictsProfileIDExists  = "contradicts_team_id_exists"
 )
 
 // SchemaBootstrapperInterface is the companion interface for SchemaBootstrapper.
@@ -99,6 +99,10 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 		s.logger.Info("Detected Neo4j edition", observability.String("edition", string(edition)))
 	}
 
+	if err := s.backfillLegacyTeamID(ctx); err != nil {
+		return err
+	}
+
 	// Create unique constraints
 	constraints := []string{
 		"CREATE CONSTRAINT sourcefragment_fragment_id_unique IF NOT EXISTS FOR (sf:SourceFragment) REQUIRE sf.fragment_id IS UNIQUE",
@@ -117,8 +121,8 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 		s.logger.Debug("Created constraint", observability.String("query", cypher))
 	}
 
-	// Create relationship profile_id existence constraints (Unit 13, AC-X1).
-	// profile_id is required on all pipeline edges so that no relationship can
+	// Create relationship team_id existence constraints (Unit 13, AC-X1).
+	// team_id is required on all pipeline edges so that no relationship can
 	// escape profile isolation if a node-level filter is accidentally omitted.
 	if edition == EditionEnterprise {
 		relationshipConstraints := []struct {
@@ -126,19 +130,19 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 			name   string
 		}{
 			{
-				"CREATE CONSTRAINT supported_by_profile_id_exists IF NOT EXISTS FOR ()-[r:SUPPORTED_BY]-() REQUIRE r.profile_id IS NOT NULL",
+				"CREATE CONSTRAINT supported_by_team_id_exists IF NOT EXISTS FOR ()-[r:SUPPORTED_BY]-() REQUIRE r.team_id IS NOT NULL",
 				ConstraintSupportedByProfileIDExists,
 			},
 			{
-				"CREATE CONSTRAINT promotes_to_profile_id_exists IF NOT EXISTS FOR ()-[r:PROMOTES_TO]-() REQUIRE r.profile_id IS NOT NULL",
+				"CREATE CONSTRAINT promotes_to_team_id_exists IF NOT EXISTS FOR ()-[r:PROMOTES_TO]-() REQUIRE r.team_id IS NOT NULL",
 				ConstraintPromotesToProfileIDExists,
 			},
 			{
-				"CREATE CONSTRAINT superseded_by_profile_id_exists IF NOT EXISTS FOR ()-[r:SUPERSEDED_BY]-() REQUIRE r.profile_id IS NOT NULL",
+				"CREATE CONSTRAINT superseded_by_team_id_exists IF NOT EXISTS FOR ()-[r:SUPERSEDED_BY]-() REQUIRE r.team_id IS NOT NULL",
 				ConstraintSupersededByProfileIDExists,
 			},
 			{
-				"CREATE CONSTRAINT contradicts_profile_id_exists IF NOT EXISTS FOR ()-[r:CONTRADICTS]-() REQUIRE r.profile_id IS NOT NULL",
+				"CREATE CONSTRAINT contradicts_team_id_exists IF NOT EXISTS FOR ()-[r:CONTRADICTS]-() REQUIRE r.team_id IS NOT NULL",
 				ConstraintContradictsProfileIDExists,
 			},
 		}
@@ -151,7 +155,7 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 			if err != nil {
 				if isUnsupportedRelationshipConstraintError(err) {
 					s.logger.Warn(
-						"skipping relationship profile_id constraint; unsupported by connected Neo4j deployment",
+						"skipping relationship team_id constraint; unsupported by connected Neo4j deployment",
 						observability.String("name", rc.name),
 						observability.String("error", err.Error()),
 					)
@@ -167,12 +171,12 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 		)
 	}
 
-	// Create profile_id indexes
+	// Create team_id indexes
 	indexes := []string{
-		"CREATE INDEX sourcefragment_profile_id_idx IF NOT EXISTS FOR (sf:SourceFragment) ON (sf.profile_id)",
-		"CREATE INDEX claim_profile_id_idx IF NOT EXISTS FOR (c:Claim) ON (c.profile_id)",
-		"CREATE INDEX fact_profile_id_idx IF NOT EXISTS FOR (f:Fact) ON (f.profile_id)",
-		"CREATE INDEX community_profile_id_idx IF NOT EXISTS FOR (c:Community) ON (c.profile_id)",
+		"CREATE INDEX sourcefragment_team_id_idx IF NOT EXISTS FOR (sf:SourceFragment) ON (sf.team_id)",
+		"CREATE INDEX claim_team_id_idx IF NOT EXISTS FOR (c:Claim) ON (c.team_id)",
+		"CREATE INDEX fact_team_id_idx IF NOT EXISTS FOR (f:Fact) ON (f.team_id)",
+		"CREATE INDEX community_team_id_idx IF NOT EXISTS FOR (c:Community) ON (c.team_id)",
 	}
 
 	for _, cypher := range indexes {
@@ -262,7 +266,7 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 
 	// Create composite indexes for fragment deduplication and lookup (Unit 12)
 	// These are ADDITIVE migrations - no DROP of existing indexes.
-	// AC-44: Idempotency-key uniqueness scoped to (profile_id, idempotency_key)
+	// AC-44: Idempotency-key uniqueness scoped to (team_id, idempotency_key)
 	// AC-45: Content-hash lookup profile-scoped
 	// AC-29: Created-at ordering profile-scoped
 	compositeIndexes := []struct {
@@ -270,15 +274,15 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 		name   string
 	}{
 		{
-			"CREATE INDEX fragment_profile_idempotency_idx IF NOT EXISTS FOR (sf:SourceFragment) ON (sf.profile_id, sf.idempotency_key)",
-			"fragment_profile_idempotency_idx",
+			"CREATE INDEX fragment_team_idempotency_idx IF NOT EXISTS FOR (sf:SourceFragment) ON (sf.team_id, sf.idempotency_key)",
+			"fragment_team_idempotency_idx",
 		},
 		{
-			"CREATE INDEX fragment_profile_content_hash_idx IF NOT EXISTS FOR (sf:SourceFragment) ON (sf.profile_id, sf.content_hash)",
+			"CREATE INDEX fragment_profile_content_hash_idx IF NOT EXISTS FOR (sf:SourceFragment) ON (sf.team_id, sf.content_hash)",
 			"fragment_profile_content_hash_idx",
 		},
 		{
-			"CREATE INDEX fragment_profile_created_at_idx IF NOT EXISTS FOR (sf:SourceFragment) ON (sf.profile_id, sf.created_at)",
+			"CREATE INDEX fragment_profile_created_at_idx IF NOT EXISTS FOR (sf:SourceFragment) ON (sf.team_id, sf.created_at)",
 			"fragment_profile_created_at_idx",
 		},
 	}
@@ -295,7 +299,7 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 	}
 
 	// Create claim, fact, and sourcefragment composite indexes (Unit 12)
-	// profile_id is always the leading key for efficient profile-scoped lookups.
+	// team_id is always the leading key for efficient profile-scoped lookups.
 	// AC-3: Claim composite indexes, AC-4: Fact composite indexes, AC-5: SF status index.
 	pipelineIndexes := []struct {
 		cypher string
@@ -303,45 +307,45 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 	}{
 		// Claim indexes (AC-3)
 		{
-			"CREATE INDEX claim_profile_claim_id_idx IF NOT EXISTS FOR (c:Claim) ON (c.profile_id, c.claim_id)",
+			"CREATE INDEX claim_profile_claim_id_idx IF NOT EXISTS FOR (c:Claim) ON (c.team_id, c.claim_id)",
 			IndexClaimProfileClaimID,
 		},
 		{
-			"CREATE INDEX claim_profile_status_idx IF NOT EXISTS FOR (c:Claim) ON (c.profile_id, c.status)",
+			"CREATE INDEX claim_profile_status_idx IF NOT EXISTS FOR (c:Claim) ON (c.team_id, c.status)",
 			IndexClaimProfileStatus,
 		},
 		{
-			"CREATE INDEX claim_profile_predicate_idx IF NOT EXISTS FOR (c:Claim) ON (c.profile_id, c.predicate)",
+			"CREATE INDEX claim_profile_predicate_idx IF NOT EXISTS FOR (c:Claim) ON (c.team_id, c.predicate)",
 			IndexClaimProfilePredicate,
 		},
 		{
-			"CREATE INDEX claim_profile_subject_predicate_idx IF NOT EXISTS FOR (c:Claim) ON (c.profile_id, c.subject, c.predicate)",
+			"CREATE INDEX claim_profile_subject_predicate_idx IF NOT EXISTS FOR (c:Claim) ON (c.team_id, c.subject, c.predicate)",
 			IndexClaimProfileSubjectPredicate,
 		},
 		{
-			"CREATE INDEX claim_profile_idempotency_idx IF NOT EXISTS FOR (c:Claim) ON (c.profile_id, c.idempotency_key)",
+			"CREATE INDEX claim_team_idempotency_idx IF NOT EXISTS FOR (c:Claim) ON (c.team_id, c.idempotency_key)",
 			IndexClaimProfileIdempotency,
 		},
 		{
-			"CREATE INDEX claim_profile_content_hash_idx IF NOT EXISTS FOR (c:Claim) ON (c.profile_id, c.content_hash)",
+			"CREATE INDEX claim_profile_content_hash_idx IF NOT EXISTS FOR (c:Claim) ON (c.team_id, c.content_hash)",
 			IndexClaimProfileContentHash,
 		},
 		// Fact indexes (AC-4)
 		{
-			"CREATE INDEX fact_profile_status_idx IF NOT EXISTS FOR (f:Fact) ON (f.profile_id, f.status)",
+			"CREATE INDEX fact_profile_status_idx IF NOT EXISTS FOR (f:Fact) ON (f.team_id, f.status)",
 			IndexFactProfileStatus,
 		},
 		{
-			"CREATE INDEX fact_profile_subject_predicate_status_idx IF NOT EXISTS FOR (f:Fact) ON (f.profile_id, f.subject, f.predicate, f.status)",
+			"CREATE INDEX fact_profile_subject_predicate_status_idx IF NOT EXISTS FOR (f:Fact) ON (f.team_id, f.subject, f.predicate, f.status)",
 			IndexFactProfileSubjectPredicateStatus,
 		},
 		// SourceFragment status index (AC-5)
 		{
-			"CREATE INDEX sourcefragment_profile_status_idx IF NOT EXISTS FOR (sf:SourceFragment) ON (sf.profile_id, sf.status)",
+			"CREATE INDEX sourcefragment_profile_status_idx IF NOT EXISTS FOR (sf:SourceFragment) ON (sf.team_id, sf.status)",
 			IndexSourceFragmentProfileStatus,
 		},
 		{
-			"CREATE INDEX community_profile_community_id_idx IF NOT EXISTS FOR (c:Community) ON (c.profile_id, c.community_id)",
+			"CREATE INDEX community_profile_community_id_idx IF NOT EXISTS FOR (c:Community) ON (c.team_id, c.community_id)",
 			IndexCommunityProfileCommunityID,
 		},
 	}
@@ -358,5 +362,57 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 	}
 
 	s.logger.Info("Neo4j schema ensured successfully")
+	return nil
+}
+
+func (s *SchemaBootstrapper) backfillLegacyTeamID(ctx context.Context) error {
+	legacyBackfills := []struct {
+		name   string
+		cypher string
+	}{
+		{
+			name: "legacy_node_team_id",
+			cypher: `
+MATCH (n)
+WHERE n.team_id IS NULL AND n.profile_id IS NOT NULL
+SET n.team_id = n.profile_id
+RETURN count(n) AS updated`,
+		},
+		{
+			name: "legacy_relationship_team_id",
+			cypher: `
+MATCH ()-[r]->()
+WHERE r.team_id IS NULL AND r.profile_id IS NOT NULL
+SET r.team_id = r.profile_id
+RETURN count(r) AS updated`,
+		},
+		{
+			name: "legacy_relationship_team_id_from_endpoints",
+			cypher: `
+MATCH (a)-[r]->(b)
+WHERE r.team_id IS NULL
+  AND a.team_id IS NOT NULL
+  AND b.team_id IS NOT NULL
+  AND a.team_id = b.team_id
+SET r.team_id = a.team_id
+RETURN count(r) AS updated`,
+		},
+	}
+
+	for _, backfill := range legacyBackfills {
+		_, err := s.client.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			result, err := tx.Run(ctx, backfill.cypher, nil)
+			if err != nil {
+				return nil, err
+			}
+			_, err = result.Consume(ctx)
+			return nil, err
+		})
+		if err != nil {
+			return fmt.Errorf("failed to backfill legacy Neo4j team_id (%s): %w", backfill.name, err)
+		}
+		s.logger.Debug("backfilled legacy Neo4j team_id", observability.String("name", backfill.name))
+	}
+
 	return nil
 }

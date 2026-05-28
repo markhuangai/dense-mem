@@ -46,6 +46,11 @@ func (m *MockAPIKeyRepository) RevokeForProfile(ctx context.Context, profileID, 
 	return args.Get(0).(int64), args.Error(1)
 }
 
+func (m *MockAPIKeyRepository) RotateForProfile(ctx context.Context, profileID, id uuid.UUID, keyHash, keyPrefix, keySuffix string, expiresAt *time.Time) (int64, error) {
+	args := m.Called(ctx, profileID, id, keyHash, keyPrefix, keySuffix, expiresAt)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 func (m *MockAPIKeyRepository) DeleteForProfile(ctx context.Context, profileID, id uuid.UUID) (int64, error) {
 	args := m.Called(ctx, profileID, id)
 	return args.Get(0).(int64), args.Error(1)
@@ -323,11 +328,12 @@ func TestAPIKeyServiceCreate(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, key)
 	assert.NotEmpty(t, rawKey)
-	assert.True(t, strings.HasPrefix(rawKey, "dm_live_"), "Raw key should have dm_live_ prefix")
+	assert.True(t, strings.HasPrefix(rawKey, "dm_default-prof_"), "Raw key should include the profile slug")
 	assert.Empty(t, key.KeyHash, "KeyHash should not be returned")
 	assert.Equal(t, crypto.GetKeySuffix(rawKey), key.KeySuffix, "KeySuffix should be last 6 raw key characters")
 	assert.Equal(t, []string{"read", "write"}, key.Scopes)
-	assert.Empty(t, key.Label)
+	assert.Equal(t, "default profile", key.Label)
+	assert.Equal(t, "default profile", key.Name)
 
 	// Verify the raw key is not logged or stored in the response
 	mockRepo.AssertExpectations(t)

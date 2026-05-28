@@ -140,21 +140,20 @@ func (h *ProfileHandler) List(c echo.Context) error {
 	})
 }
 
-// Get handles GET /api/v1/profiles/:profileId.
-// Returns 200 with the profile data.
+// Get handles GET /api/v1/teams/:teamId.
+// Returns 200 with the team data.
 func (h *ProfileHandler) Get(c echo.Context) error {
 	ctx := c.Request().Context()
 
-	// Parse profile ID from path
-	profileIDStr := c.Param("profileId")
+	profileIDStr := teamPathIDParam(c)
 	if profileIDStr == "" {
-		return httperr.New(httperr.PROFILE_ID_REQUIRED, "profile ID is required")
+		return httperr.New(httperr.PROFILE_ID_REQUIRED, "team ID is required")
 	}
 
 	// Validate UUID format
 	profileID, err := uuid.Parse(profileIDStr)
 	if err != nil {
-		return httperr.New(httperr.INVALID_UUID, "invalid profile ID format")
+		return httperr.New(httperr.INVALID_UUID, "invalid team ID format")
 	}
 
 	// Get profile
@@ -165,29 +164,28 @@ func (h *ProfileHandler) Get(c echo.Context) error {
 
 	// Check if profile exists (Get returns NOT_FOUND error for deleted profiles)
 	if profile == nil {
-		return httperr.New(httperr.NOT_FOUND, "profile not found")
+		return httperr.New(httperr.NOT_FOUND, "team not found")
 	}
 
 	// Return 200 with profile data
 	return response.SuccessOK(c, toProfileResponse(profile))
 }
 
-// Patch handles PATCH /api/v1/profiles/:profileId.
-// Returns 200 with the updated profile data.
+// Patch handles PATCH /api/v1/teams/:teamId.
+// Returns 200 with the updated team data.
 func (h *ProfileHandler) Patch(c echo.Context) error {
 	ctx := c.Request().Context()
 	principal := middleware.GetPrincipal(ctx)
 
-	// Parse profile ID from path
-	profileIDStr := c.Param("profileId")
+	profileIDStr := teamPathIDParam(c)
 	if profileIDStr == "" {
-		return httperr.New(httperr.PROFILE_ID_REQUIRED, "profile ID is required")
+		return httperr.New(httperr.PROFILE_ID_REQUIRED, "team ID is required")
 	}
 
 	// Validate UUID format
 	profileID, err := uuid.Parse(profileIDStr)
 	if err != nil {
-		return httperr.New(httperr.INVALID_UUID, "invalid profile ID format")
+		return httperr.New(httperr.INVALID_UUID, "invalid team ID format")
 	}
 
 	// Get validated request body
@@ -230,22 +228,21 @@ func (h *ProfileHandler) Patch(c echo.Context) error {
 	return response.SuccessOK(c, toProfileResponse(profile))
 }
 
-// Delete handles DELETE /api/v1/profiles/:profileId.
+// Delete handles DELETE /api/v1/teams/:teamId.
 // Returns 200 with { "status": "deleted" }.
 func (h *ProfileHandler) Delete(c echo.Context) error {
 	ctx := c.Request().Context()
 	principal := middleware.GetPrincipal(ctx)
 
-	// Parse profile ID from path
-	profileIDStr := c.Param("profileId")
+	profileIDStr := teamPathIDParam(c)
 	if profileIDStr == "" {
-		return httperr.New(httperr.PROFILE_ID_REQUIRED, "profile ID is required")
+		return httperr.New(httperr.PROFILE_ID_REQUIRED, "team ID is required")
 	}
 
 	// Validate UUID format
 	profileID, err := uuid.Parse(profileIDStr)
 	if err != nil {
-		return httperr.New(httperr.INVALID_UUID, "invalid profile ID format")
+		return httperr.New(httperr.INVALID_UUID, "invalid team ID format")
 	}
 
 	// Get actor metadata from principal
@@ -267,7 +264,14 @@ func (h *ProfileHandler) Delete(c echo.Context) error {
 	return response.SuccessOK(c, map[string]string{"status": "deleted"})
 }
 
-// toProfileResponse converts a domain.Profile to dto.ProfileResponse.
+func teamPathIDParam(c echo.Context) string {
+	if v := c.Param("teamId"); v != "" {
+		return v
+	}
+	return c.Param("profileId")
+}
+
+// toProfileResponse converts a domain.Team to dto.ProfileResponse.
 func toProfileResponse(p *domain.Profile) dto.ProfileResponse {
 	return dto.ProfileResponse{
 		ID:          p.ID,

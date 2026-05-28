@@ -20,11 +20,15 @@ type ProfileResolutionServiceInterface interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Profile, error)
 }
 
-// ResolvedProfileKey is the typed context key for storing the resolved profile ID.
+// ResolvedProfileKey is the typed context key for storing the resolved team ID.
 // Using a typed context key prevents accidental overwrites from other packages.
 type ResolvedProfileKey struct{}
 
-// ProfileIDHeader is the legacy HTTP header for profile ID overrides.
+// TeamIDHeader is the HTTP header for explicit team ID overrides in legacy clients.
+const TeamIDHeader = "X-Team-ID"
+
+// ProfileIDHeader is retained for legacy clients; new callers should use the
+// bearer key's team binding.
 const ProfileIDHeader = "X-Profile-ID"
 
 func isHeaderScopedProfileRoute(path string) bool {
@@ -48,7 +52,7 @@ func isHeaderScopedProfileRoute(path string) bool {
 }
 
 // ProfileResolutionMiddleware creates a middleware that resolves and validates
-// profile IDs from path parameters, legacy headers, or the authenticated key.
+// team IDs from path parameters, legacy headers, or the authenticated key.
 //
 // For profile-scoped routes (/api/v1/profiles/:profileId/*): reads :profileId param
 // For header-scoped routes (/api/v1/tools/*, /api/v1/fragments, etc.): prefers
@@ -75,17 +79,23 @@ func ProfileResolutionMiddleware(svc ProfileResolutionServiceInterface) echo.Mid
 			path := c.Request().URL.Path
 
 			if isHeaderScopedProfileRoute(path) {
-				// Canonical profile-scoped routes use the profile-bound API key.
+				// Canonical team-scoped routes use the team-bound API key.
 				isToolRoute = true
-				if principal != nil && principal.ProfileID != nil {
-					profileIDStr = principal.ProfileID.String()
+				if principal != nil && principal.GetTeamID() != uuid.Nil {
+					profileIDStr = principal.GetTeamID().String()
 				} else {
-					profileIDStr = c.Request().Header.Get(ProfileIDHeader)
+					profileIDStr = c.Request().Header.Get(TeamIDHeader)
+					if profileIDStr == "" {
+						profileIDStr = c.Request().Header.Get(ProfileIDHeader)
+					}
 				}
-			} else if strings.HasPrefix(path, "/api/v1/profiles/") {
-				// Profile route: read from :profileId path param
+			} else if strings.HasPrefix(path, "/api/v1/teams/") || strings.HasPrefix(path, "/api/v1/profiles/") {
+				// Team route: read from :teamId path param, with legacy :profileId support.
 				isToolRoute = false
-				profileIDStr = c.Param("profileId")
+				profileIDStr = c.Param("teamId")
+				if profileIDStr == "" {
+					profileIDStr = c.Param("profileId")
+				}
 			} else {
 				// Not a route that needs profile resolution, pass through
 				return next(c)
@@ -132,13 +142,18 @@ func ProfileResolutionMiddleware(svc ProfileResolutionServiceInterface) echo.Mid
 	}
 }
 
-// GetResolvedProfileID retrieves the resolved profile ID from the context.
+// GetResolvedProfileID retrieves the resolved team ID from the context.
 // Returns the profile ID and true if found, or uuid.Nil and false if not found.
 func GetResolvedProfileID(ctx context.Context) (uuid.UUID, bool) {
 	if id, ok := ctx.Value(ResolvedProfileKey{}).(uuid.UUID); ok {
 		return id, true
 	}
 	return uuid.Nil, false
+}
+
+// GetResolvedTeamID retrieves the resolved team ID from the context.
+func GetResolvedTeamID(ctx context.Context) (uuid.UUID, bool) {
+	return GetResolvedProfileID(ctx)
 }
 
 // MustGetResolvedProfileID retrieves the resolved profile ID from the context.
@@ -151,8 +166,18 @@ func MustGetResolvedProfileID(ctx context.Context) uuid.UUID {
 	return id
 }
 
+// MustGetResolvedTeamID retrieves the resolved team ID from the context.
+func MustGetResolvedTeamID(ctx context.Context) uuid.UUID {
+	return MustGetResolvedProfileID(ctx)
+}
+
 // SetResolvedProfileIDForTest sets a resolved profile ID in context for testing purposes.
 // This is intended for use in unit tests to bypass profile resolution middleware.
 func SetResolvedProfileIDForTest(ctx context.Context, profileID uuid.UUID) context.Context {
 	return context.WithValue(ctx, ResolvedProfileKey{}, profileID)
+}
+
+// SetResolvedTeamIDForTest sets a resolved team ID in context for testing.
+func SetResolvedTeamIDForTest(ctx context.Context, teamID uuid.UUID) context.Context {
+	return SetResolvedProfileIDForTest(ctx, teamID)
 }

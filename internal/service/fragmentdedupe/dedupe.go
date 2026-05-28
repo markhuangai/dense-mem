@@ -58,10 +58,10 @@ func (l *neo4jDedupeLookup) ByIdempotencyKey(ctx context.Context, profileID, key
 	// Use composite index for O(log n) lookup (from Unit 12)
 	// The query must contain $profileId placeholder for ScopedRead validation
 	query := `
-		MATCH (sf:SourceFragment {profile_id: $profileId, idempotency_key: $key})
+		MATCH (sf:SourceFragment {team_id: $profileId, idempotency_key: $key})
 		WHERE ` + neo4j.FragmentActiveFilter + `
 		RETURN sf.fragment_id AS fragment_id,
-		       sf.profile_id AS profile_id,
+		       sf.team_id AS team_id,
 		       sf.content AS content,
 		       sf.source AS source,
 		       sf.source_type AS source_type,
@@ -75,6 +75,8 @@ func (l *neo4jDedupeLookup) ByIdempotencyKey(ctx context.Context, profileID, key
 		       sf.source_quality AS source_quality,
 		       sf.classification AS classification,
 		       sf.classification_json AS classification_json,
+		       sf.created_by_profile_id AS created_by_profile_id,
+		       sf.created_by_profile_name AS created_by_profile_name,
 		       sf.created_at AS created_at,
 		       sf.updated_at AS updated_at
 		LIMIT 1
@@ -102,10 +104,10 @@ func (l *neo4jDedupeLookup) ByContentHash(ctx context.Context, profileID, hash s
 	// Use composite index for O(log n) lookup (from Unit 12)
 	// The query must contain $profileId placeholder for ScopedRead validation
 	query := `
-		MATCH (sf:SourceFragment {profile_id: $profileId, content_hash: $hash})
+		MATCH (sf:SourceFragment {team_id: $profileId, content_hash: $hash})
 		WHERE ` + neo4j.FragmentActiveFilter + `
 		RETURN sf.fragment_id AS fragment_id,
-		       sf.profile_id AS profile_id,
+		       sf.team_id AS team_id,
 		       sf.content AS content,
 		       sf.source AS source,
 		       sf.source_type AS source_type,
@@ -119,6 +121,8 @@ func (l *neo4jDedupeLookup) ByContentHash(ctx context.Context, profileID, hash s
 		       sf.source_quality AS source_quality,
 		       sf.classification AS classification,
 		       sf.classification_json AS classification_json,
+		       sf.created_by_profile_id AS created_by_profile_id,
+		       sf.created_by_profile_name AS created_by_profile_name,
 		       sf.created_at AS created_at,
 		       sf.updated_at AS updated_at
 		LIMIT 1
@@ -146,8 +150,14 @@ func mapToFragment(m map[string]any) *domain.Fragment {
 	if v, ok := m["fragment_id"]; ok {
 		fragment.FragmentID, _ = v.(string)
 	}
-	if v, ok := m["profile_id"]; ok {
+	if v, ok := m["team_id"]; ok {
 		fragment.ProfileID, _ = v.(string)
+	}
+	if v, ok := m["created_by_profile_id"]; ok {
+		fragment.CreatedByProfileID, _ = v.(string)
+	}
+	if v, ok := m["created_by_profile_name"]; ok {
+		fragment.CreatedByProfileName, _ = v.(string)
 	}
 	if v, ok := m["content"]; ok {
 		fragment.Content, _ = v.(string)

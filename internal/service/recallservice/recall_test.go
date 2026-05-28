@@ -420,7 +420,7 @@ func TestRecallService_PostFiltersCrossProfileHits(t *testing.T) {
 	}
 }
 
-// mixedSemanticSearcher intentionally returns rows with varying profile_id so
+// mixedSemanticSearcher intentionally returns rows with varying team_id so
 // the post-filter can be exercised.
 type mixedSemanticSearcher struct {
 	hits []semanticsearch.SearchHit

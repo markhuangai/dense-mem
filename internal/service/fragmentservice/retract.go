@@ -8,8 +8,8 @@
 // FACT REVALIDATION (AC-47, AC-48):
 // After tombstoning, the service traverses
 //
-//	(c:Claim)-[:SUPPORTED_BY {profile_id}]->(sf:SourceFragment)
-//	(c)-[:PROMOTES_TO {profile_id}]->(f:Fact)
+//	(c:Claim)-[:SUPPORTED_BY {team_id}]->(sf:SourceFragment)
+//	(c)-[:PROMOTES_TO {team_id}]->(f:Fact)
 //
 // The SUPPORTED_BY direction is (Claim)->(SourceFragment): a Claim node carries
 // the outgoing SUPPORTED_BY edge pointing to the SourceFragment that supports it.
@@ -108,7 +108,7 @@ func (s *retractFragmentService) Retract(ctx context.Context, profileID, fragmen
 		// Running inside the transaction prevents a TOCTOU race between the check
 		// and the tombstone SET.
 		existsResult, err := neo4jstorage.RunScoped(ctx, tx, profileID,
-			`MATCH (sf:SourceFragment {profile_id: $profileId, fragment_id: $fragmentId})
+			`MATCH (sf:SourceFragment {team_id: $profileId, fragment_id: $fragmentId})
 			 RETURN sf.fragment_id AS fragment_id
 			 LIMIT 1`,
 			map[string]any{"fragmentId": fragmentID},
@@ -126,7 +126,7 @@ func (s *retractFragmentService) Retract(ctx context.Context, profileID, fragmen
 
 		// Step 2: tombstone the fragment.
 		tombstoneResult, err := neo4jstorage.RunScoped(ctx, tx, profileID,
-			`MATCH (sf:SourceFragment {profile_id: $profileId, fragment_id: $fragmentId})
+			`MATCH (sf:SourceFragment {team_id: $profileId, fragment_id: $fragmentId})
 			 SET sf.status = 'retracted', sf.recorded_to = $now`,
 			map[string]any{"fragmentId": fragmentID, "now": now},
 		)
@@ -147,10 +147,10 @@ func (s *retractFragmentService) Retract(ctx context.Context, profileID, fragmen
 		// Line 2: Claim → PROMOTES_TO → Fact          (facts the claim promotes).
 		// Line 3: c2 → SUPPORTED_BY → sf              (remaining active fragments for each fact).
 		affectedQuery := fmt.Sprintf(`
-			MATCH (retractedSF:SourceFragment {profile_id: $profileId, fragment_id: $fragmentId})
-			MATCH (c:Claim {profile_id: $profileId})-[:SUPPORTED_BY {profile_id: $profileId}]->(retractedSF)
-			MATCH (c)-[:PROMOTES_TO {profile_id: $profileId}]->(f:Fact {profile_id: $profileId})
-			OPTIONAL MATCH (f)<-[:PROMOTES_TO {profile_id: $profileId}]-(c2:Claim {profile_id: $profileId})-[:SUPPORTED_BY {profile_id: $profileId}]->(sf:SourceFragment {profile_id: $profileId})
+			MATCH (retractedSF:SourceFragment {team_id: $profileId, fragment_id: $fragmentId})
+			MATCH (c:Claim {team_id: $profileId})-[:SUPPORTED_BY {team_id: $profileId}]->(retractedSF)
+			MATCH (c)-[:PROMOTES_TO {team_id: $profileId}]->(f:Fact {team_id: $profileId})
+			OPTIONAL MATCH (f)<-[:PROMOTES_TO {team_id: $profileId}]-(c2:Claim {team_id: $profileId})-[:SUPPORTED_BY {team_id: $profileId}]->(sf:SourceFragment {team_id: $profileId})
 			WHERE %s
 			WITH f, count(sf) AS activeSourceCount, max(coalesce(sf.source_quality, 0.0)) AS maxSourceQuality
 			RETURN f.fact_id AS fact_id, f.predicate AS predicate,
@@ -188,7 +188,7 @@ func (s *retractFragmentService) Retract(ctx context.Context, profileID, fragmen
 		if len(failingFactIDs) > 0 {
 			revalResult, err := neo4jstorage.RunScoped(ctx, tx, profileID,
 				`UNWIND $factIds AS factId
-				 MATCH (f:Fact {profile_id: $profileId, fact_id: factId})
+				 MATCH (f:Fact {team_id: $profileId, fact_id: factId})
 				 SET f.status = 'needs_revalidation'`,
 				map[string]any{"factIds": failingFactIDs},
 			)
@@ -206,7 +206,7 @@ func (s *retractFragmentService) Retract(ctx context.Context, profileID, fragmen
 		// ErrFragmentNotFound is expected; skip the warning log for it.
 		if s.logger != nil && !errors.Is(err, ErrFragmentNotFound) {
 			s.logger.Warn("retract transaction failed",
-				slog.String("profile_id", profileID),
+				slog.String("team_id", profileID),
 				slog.String("fragment_id", fragmentID),
 				slog.String("error", err.Error()),
 			)
@@ -231,14 +231,14 @@ func (s *retractFragmentService) Retract(ctx context.Context, profileID, fragmen
 			CorrelationID: correlation.FromContext(ctx),
 			AfterPayload: map[string]interface{}{
 				"fragment_id": fragmentID,
-				"profile_id":  profileID,
+				"team_id":     profileID,
 				// content and embedding intentionally excluded (AC-26)
 			},
 		}
 		if err := s.audit.Append(ctx, entry); err != nil {
 			if s.logger != nil {
 				s.logger.Warn("failed to emit audit event for fragment retraction",
-					slog.String("profile_id", profileID),
+					slog.String("team_id", profileID),
 					slog.String("fragment_id", fragmentID),
 					slog.String("error", err.Error()),
 				)

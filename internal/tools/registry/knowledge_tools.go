@@ -566,7 +566,7 @@ func claimObjectSchema() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"claim_id":           map[string]any{"type": "string"},
-			"profile_id":         map[string]any{"type": "string"},
+			"team_id":            map[string]any{"type": "string"},
 			"subject":            map[string]any{"type": "string"},
 			"predicate":          map[string]any{"type": "string"},
 			"object":             map[string]any{"type": "string"},
@@ -603,7 +603,7 @@ func factObjectSchema() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"fact_id":                        map[string]any{"type": "string"},
-			"profile_id":                     map[string]any{"type": "string"},
+			"team_id":                        map[string]any{"type": "string"},
 			"subject":                        map[string]any{"type": "string"},
 			"predicate":                      map[string]any{"type": "string"},
 			"object":                         map[string]any{"type": "string"},
@@ -631,7 +631,7 @@ func communityObjectSchema() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"community_id":       map[string]any{"type": "string"},
-			"profile_id":         map[string]any{"type": "string"},
+			"team_id":            map[string]any{"type": "string"},
 			"level":              map[string]any{"type": "integer"},
 			"summary":            map[string]any{"type": "string"},
 			"summary_version":    map[string]any{"type": "string"},

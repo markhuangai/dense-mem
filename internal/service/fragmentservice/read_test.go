@@ -26,7 +26,7 @@ func TestGetByID_ReturnsFragmentOnHit(t *testing.T) {
 		results: []map[string]any{
 			{
 				"fragment_id":          "frag-1",
-				"profile_id":           "pA",
+				"team_id":              "pA",
 				"content":              "hello",
 				"source":               "",
 				"source_type":          "manual",
@@ -71,7 +71,7 @@ func TestGetByID_CoercesLegacyNullSourceType(t *testing.T) {
 		results: []map[string]any{
 			{
 				"fragment_id": "frag-legacy",
-				"profile_id":  "pA",
+				"team_id":     "pA",
 				"content":     "legacy",
 				"source_type": nil, // legacy null
 			},
@@ -93,7 +93,7 @@ func TestGetByID_DecodesJSONEncodedMaps(t *testing.T) {
 		results: []map[string]any{
 			{
 				"fragment_id":         "frag-json",
-				"profile_id":          "pA",
+				"team_id":             "pA",
 				"content":             "json encoded",
 				"source_type":         "manual",
 				"metadata_json":       `{"origin":"uat"}`,

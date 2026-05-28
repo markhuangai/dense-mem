@@ -249,6 +249,8 @@ func tagsFor(r RouteDescriptor) []string {
 		return []string{"fragments"}
 	case strings.Contains(r.Path, "/tools"):
 		return []string{"tools"}
+	case strings.Contains(r.Path, "/teams"):
+		return []string{"teams"}
 	case strings.Contains(r.Path, "/profiles"):
 		return []string{"profiles"}
 	default:

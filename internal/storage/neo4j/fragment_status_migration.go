@@ -19,15 +19,15 @@ import (
 //   - Schema migrations are cluster-wide, not per-profile operations.
 //   - The migration only sets sf.status='active' on null nodes; it never reads,
 //     exposes, or cross-contaminates profile data.
-//   - After migration, every node retains its original sf.profile_id so that
-//     subsequent scoped queries (WHERE sf.profile_id = $profileId) remain correct.
+//   - After migration, every node retains its original sf.team_id so that
+//     subsequent scoped queries (WHERE sf.team_id = $profileId) remain correct.
 //   - Caller (e.g. an operator CLI or startup hook) is responsible for ensuring no
 //     normal profile traffic can observe intermediate migration state.
 //
 // ADDITIVE MIGRATION CONTRACT (AC-43):
 // - This migration is ADDITIVE ONLY.
 // - Only sets sf.status when it is null (idempotent, safe to rerun).
-// - Does not remove or rewrite any other node property, including profile_id.
+// - Does not remove or rewrite any other node property, including team_id.
 // - Legacy fragments remain readable during and after migration.
 // - Migration is safe to rerun (idempotent).
 //
@@ -182,7 +182,7 @@ func (r *fragmentStatusMigrationRunner) writeActiveStatus(ctx context.Context, f
 		return 0, nil
 	}
 
-	// Prepare rows for UNWIND. Each row carries only fragment_id — profile_id is never
+	// Prepare rows for UNWIND. Each row carries only fragment_id — team_id is never
 	// included here, ensuring the write cannot inadvertently modify profile ownership.
 	rows := make([]map[string]interface{}, len(fragmentIDs))
 	for i, id := range fragmentIDs {

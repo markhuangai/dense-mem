@@ -45,7 +45,7 @@ func TestGraphQueryReturnsRows(t *testing.T) {
 	}{
 		{
 			name:  "simple query with results",
-			query: "MATCH (n:Node {profile_id: $profileId}) RETURN n.name, n.value",
+			query: "MATCH (n:Node {team_id: $profileId}) RETURN n.name, n.value",
 			mockRows: []map[string]any{
 				{"n.name": "test1", "n.value": 1},
 				{"n.name": "test2", "n.value": 2},
@@ -54,7 +54,7 @@ func TestGraphQueryReturnsRows(t *testing.T) {
 		},
 		{
 			name:  "query with params",
-			query: "MATCH (n:Node {profile_id: $profileId}) WHERE n.value > $minValue RETURN n",
+			query: "MATCH (n:Node {team_id: $profileId}) WHERE n.value > $minValue RETURN n",
 			params: map[string]any{
 				"minValue": 10,
 			},
@@ -64,14 +64,14 @@ func TestGraphQueryReturnsRows(t *testing.T) {
 			expectLimitCap: true,
 		},
 		{
-			name:     "query with no results",
-			query:    "MATCH (n:Node {profile_id: $profileId}) WHERE n.value = 'nonexistent' RETURN n",
-			mockRows: []map[string]any{},
+			name:           "query with no results",
+			query:          "MATCH (n:Node {team_id: $profileId}) WHERE n.value = 'nonexistent' RETURN n",
+			mockRows:       []map[string]any{},
 			expectLimitCap: true,
 		},
 		{
 			name:  "query with existing limit within bounds",
-			query: "MATCH (n:Node {profile_id: $profileId}) RETURN n LIMIT 100",
+			query: "MATCH (n:Node {team_id: $profileId}) RETURN n LIMIT 100",
 			mockRows: []map[string]any{
 				{"n": map[string]any{"name": "test"}},
 			},
@@ -128,28 +128,28 @@ func TestGraphQueryCapsOrRejectsLimit(t *testing.T) {
 	}{
 		{
 			name:        "no LIMIT - adds default cap",
-			query:       "MATCH (n:Node {profile_id: $profileId}) RETURN n",
+			query:       "MATCH (n:Node {team_id: $profileId}) RETURN n",
 			expectError: false,
 		},
 		{
 			name:        "LIMIT within bounds - allowed",
-			query:       "MATCH (n:Node {profile_id: $profileId}) RETURN n LIMIT 500",
+			query:       "MATCH (n:Node {team_id: $profileId}) RETURN n LIMIT 500",
 			expectError: false,
 		},
 		{
 			name:        "LIMIT exactly at max - allowed",
-			query:       "MATCH (n:Node {profile_id: $profileId}) RETURN n LIMIT 1000",
+			query:       "MATCH (n:Node {team_id: $profileId}) RETURN n LIMIT 1000",
 			expectError: false,
 		},
 		{
 			name:        "LIMIT exceeds max - rejected",
-			query:       "MATCH (n:Node {profile_id: $profileId}) RETURN n LIMIT 1500",
+			query:       "MATCH (n:Node {team_id: $profileId}) RETURN n LIMIT 1500",
 			expectError: true,
 			errorType:   "limit",
 		},
 		{
 			name:        "LIMIT zero - rejected",
-			query:       "MATCH (n:Node {profile_id: $profileId}) RETURN n LIMIT 0",
+			query:       "MATCH (n:Node {team_id: $profileId}) RETURN n LIMIT 0",
 			expectError: true,
 			errorType:   "limit",
 		},
@@ -191,33 +191,33 @@ func TestGraphQueryCapsOrRejectsLimit(t *testing.T) {
 // TestGraphQuerySanitizesSyntaxError tests that Neo4j syntax errors are sanitized.
 func TestGraphQuerySanitizesSyntaxError(t *testing.T) {
 	tests := []struct {
-		name           string
-		driverError    error
-		expectError    bool
+		name            string
+		driverError     error
+		expectError     bool
 		expectSanitized bool
 	}{
 		{
-			name:           "syntax error - sanitized",
-			driverError:    errors.New("SyntaxException: Invalid input 'MARCH' expected 'MATCH'"),
-			expectError:    true,
+			name:            "syntax error - sanitized",
+			driverError:     errors.New("SyntaxException: Invalid input 'MARCH' expected 'MATCH'"),
+			expectError:     true,
 			expectSanitized: true,
 		},
 		{
-			name:           "invalid input error - sanitized",
-			driverError:    errors.New("Invalid input 'RUTRUN' expected 'RETURN'"),
-			expectError:    true,
+			name:            "invalid input error - sanitized",
+			driverError:     errors.New("Invalid input 'RUTRUN' expected 'RETURN'"),
+			expectError:     true,
 			expectSanitized: true,
 		},
 		{
-			name:           "unknown function error - sanitized",
-			driverError:    errors.New("Unknown function 'invalidFunc'"),
-			expectError:    true,
+			name:            "unknown function error - sanitized",
+			driverError:     errors.New("Unknown function 'invalidFunc'"),
+			expectError:     true,
 			expectSanitized: true,
 		},
 		{
-			name:           "other error - passed through",
-			driverError:    errors.New("connection refused"),
-			expectError:    true,
+			name:            "other error - passed through",
+			driverError:     errors.New("connection refused"),
+			expectError:     true,
 			expectSanitized: false,
 		},
 		{
@@ -231,7 +231,7 @@ func TestGraphQuerySanitizesSyntaxError(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 			profileID := "test-profile-id"
-			query := "MATCH (n:Node {profile_id: $profileId}) RETURN n"
+			query := "MATCH (n:Node {team_id: $profileId}) RETURN n"
 
 			mockReader := &mockScopedReader{
 				scopedReadFunc: func(ctx context.Context, pid string, q string, params map[string]any) (neo4j.ResultSummary, []map[string]any, error) {
@@ -268,7 +268,7 @@ func TestGraphQuerySanitizesSyntaxError(t *testing.T) {
 	}
 }
 
-// TestGraphQueryRejectsForbiddenParams tests that profileId/profile_id params are rejected.
+// TestGraphQueryRejectsForbiddenParams tests that profileId/team_id params are rejected.
 func TestGraphQueryRejectsForbiddenParams(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -281,9 +281,9 @@ func TestGraphQueryRejectsForbiddenParams(t *testing.T) {
 			},
 		},
 		{
-			name: "profile_id param rejected",
+			name: "team_id param rejected",
 			params: map[string]any{
-				"profile_id": "should-be-rejected",
+				"team_id": "should-be-rejected",
 			},
 		},
 	}
@@ -292,7 +292,7 @@ func TestGraphQueryRejectsForbiddenParams(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 			profileID := "test-profile-id"
-			query := "MATCH (n:Node {profile_id: $profileId}) RETURN n"
+			query := "MATCH (n:Node {team_id: $profileId}) RETURN n"
 
 			mockReader := &mockScopedReader{}
 			mockValidator := &mockValidator{}
@@ -309,11 +309,11 @@ func TestGraphQueryRejectsForbiddenParams(t *testing.T) {
 // TestProcessLimitClause tests the LIMIT clause processing logic.
 func TestProcessLimitClause(t *testing.T) {
 	tests := []struct {
-		name           string
-		query          string
-		expectCap      bool
-		expectError    bool
-		expectedLimit  string
+		name          string
+		query         string
+		expectCap     bool
+		expectError   bool
+		expectedLimit string
 	}{
 		{
 			name:          "no LIMIT - appends default",

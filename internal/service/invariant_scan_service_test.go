@@ -106,7 +106,7 @@ func TestInvariantScanClean(t *testing.T) {
 	// Clean test data before scan
 	_, err = client.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 		// Delete all test nodes and relationships
-		_, err := tx.Run(ctx, "MATCH (n) WHERE n.profile_id STARTS WITH 'test-' DETACH DELETE n", nil)
+		_, err := tx.Run(ctx, "MATCH (n) WHERE n.team_id STARTS WITH 'test-' DETACH DELETE n", nil)
 		return nil, err
 	})
 	require.NoError(t, err, "Test data cleanup should succeed")
@@ -160,7 +160,7 @@ func TestInvariantScanDetectsCrossProfile(t *testing.T) {
 
 	// Clean test data
 	_, err = client.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		_, err := tx.Run(ctx, "MATCH (n) WHERE n.profile_id STARTS WITH 'test-' DETACH DELETE n", nil)
+		_, err := tx.Run(ctx, "MATCH (n) WHERE n.team_id STARTS WITH 'test-' DETACH DELETE n", nil)
 		return nil, err
 	})
 	require.NoError(t, err, "Test data cleanup should succeed")
@@ -174,7 +174,7 @@ func TestInvariantScanDetectsCrossProfile(t *testing.T) {
 	// Create node in profile 1
 	_, err = client.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 		_, err := tx.Run(ctx,
-			"CREATE (n:Memory {id: $nodeId, profile_id: $profileId, content: 'test content'})",
+			"CREATE (n:Memory {id: $nodeId, team_id: $profileId, content: 'test content'})",
 			map[string]any{"nodeId": node1ID, "profileId": profile1},
 		)
 		return nil, err
@@ -184,7 +184,7 @@ func TestInvariantScanDetectsCrossProfile(t *testing.T) {
 	// Create node in profile 2
 	_, err = client.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 		_, err := tx.Run(ctx,
-			"CREATE (n:Memory {id: $nodeId, profile_id: $profileId, content: 'test content'})",
+			"CREATE (n:Memory {id: $nodeId, team_id: $profileId, content: 'test content'})",
 			map[string]any{"nodeId": node2ID, "profileId": profile2},
 		)
 		return nil, err
@@ -247,7 +247,7 @@ func TestInvariantScanDetectsCrossProfile(t *testing.T) {
 
 	// Clean up test data
 	_, err = client.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		_, err := tx.Run(ctx, "MATCH (n) WHERE n.profile_id STARTS WITH 'test-' DETACH DELETE n", nil)
+		_, err := tx.Run(ctx, "MATCH (n) WHERE n.team_id STARTS WITH 'test-' DETACH DELETE n", nil)
 		return nil, err
 	})
 	require.NoError(t, err, "Test data cleanup should succeed")
@@ -268,7 +268,7 @@ func TestInvariantScanAuditLog(t *testing.T) {
 
 	// Clean test data
 	_, err = client.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		_, err := tx.Run(ctx, "MATCH (n) WHERE n.profile_id STARTS WITH 'test-' DETACH DELETE n", nil)
+		_, err := tx.Run(ctx, "MATCH (n) WHERE n.team_id STARTS WITH 'test-' DETACH DELETE n", nil)
 		return nil, err
 	})
 	require.NoError(t, err, "Test data cleanup should succeed")
@@ -345,7 +345,7 @@ func TestInvariantScanAuditLog(t *testing.T) {
 
 	// Clean up test data
 	_, err = client.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		_, err := tx.Run(ctx, "MATCH (n) WHERE n.profile_id STARTS WITH 'test-' DETACH DELETE n", nil)
+		_, err := tx.Run(ctx, "MATCH (n) WHERE n.team_id STARTS WITH 'test-' DETACH DELETE n", nil)
 		return nil, err
 	})
 	require.NoError(t, err, "Test data cleanup should succeed")

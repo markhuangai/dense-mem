@@ -121,6 +121,6 @@ Returns a ranked list of knowledge hits spanning all pipeline tiers.
    their authority-oriented tier scores. Tier `2` scores are RRF values. Present all scores
    as relative ranking hints, not calibrated probabilities.
 
-5. **Cross-profile isolation**: Header-scoped routes derive profile scope from the
-   authenticated API key. Clients should not send `X-Profile-ID`; attempts to access
-   another profile through path-scoped routes return 403.
+5. **Cross-team isolation**: Header-scoped routes derive team scope from the
+   authenticated API key. Clients should not send `X-Team-ID`; attempts to access
+   another team through path-scoped routes return 403.

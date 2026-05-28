@@ -46,7 +46,7 @@ func newNeo4jCommunityStore(client gdsClient) *neo4jCommunityStore {
 
 const communityCountsCypher = `
 MATCH (n)
-WHERE n.profile_id = $profileId
+WHERE n.team_id = $profileId
   AND n.community_id IS NOT NULL
   AND (n:SourceFragment OR n:Claim OR n:Fact)
 RETURN toString(n.community_id) AS community_id,
@@ -54,7 +54,7 @@ RETURN toString(n.community_id) AS community_id,
 ORDER BY member_count DESC, community_id ASC`
 
 const communityFactTriplesCypher = `
-MATCH (f:Fact {profile_id: $profileId})
+MATCH (f:Fact {team_id: $profileId})
 WHERE f.community_id IS NOT NULL
   AND coalesce(f.status, '') IN ['active', 'needs_revalidation']
 RETURN toString(f.community_id) AS community_id,
@@ -63,7 +63,7 @@ RETURN toString(f.community_id) AS community_id,
        coalesce(f.object, '') AS object`
 
 const communityClaimTriplesCypher = `
-MATCH (c:Claim {profile_id: $profileId})
+MATCH (c:Claim {team_id: $profileId})
 WHERE c.community_id IS NOT NULL
   AND coalesce(c.status, 'candidate') <> 'rejected'
 RETURN toString(c.community_id) AS community_id,
@@ -72,13 +72,13 @@ RETURN toString(c.community_id) AS community_id,
        coalesce(c.object, '') AS object`
 
 const replaceCommunitiesDeleteCypher = `
-MATCH (c:Community {profile_id: $profileId})
+MATCH (c:Community {team_id: $profileId})
 WHERE NOT c.community_id IN $communityIDs
 DETACH DELETE c`
 
 const replaceCommunitiesUpsertCypher = `
 UNWIND $communities AS community
-MERGE (c:Community {profile_id: $profileId, community_id: community.community_id})
+MERGE (c:Community {team_id: $profileId, community_id: community.community_id})
 SET c.level = community.level,
     c.summary = community.summary,
     c.summary_version = community.summary_version,
@@ -88,9 +88,9 @@ SET c.level = community.level,
     c.last_summarized_at = community.last_summarized_at`
 
 const getCommunityCypher = `
-MATCH (c:Community {profile_id: $profileId, community_id: $communityId})
+MATCH (c:Community {team_id: $profileId, community_id: $communityId})
 RETURN c.community_id AS community_id,
-       c.profile_id AS profile_id,
+       c.team_id AS team_id,
        c.level AS level,
        c.summary AS summary,
        c.summary_version AS summary_version,
@@ -100,9 +100,9 @@ RETURN c.community_id AS community_id,
        c.last_summarized_at AS last_summarized_at`
 
 const listCommunitiesCypher = `
-MATCH (c:Community {profile_id: $profileId})
+MATCH (c:Community {team_id: $profileId})
 RETURN c.community_id AS community_id,
-       c.profile_id AS profile_id,
+       c.team_id AS team_id,
        c.level AS level,
        c.summary AS summary,
        c.summary_version AS summary_version,
@@ -454,7 +454,7 @@ func rowToCommunity(row map[string]any) *domain.Community {
 	}
 	community := &domain.Community{
 		CommunityID:      communityID,
-		ProfileID:        communityString(row["profile_id"]),
+		ProfileID:        communityString(row["team_id"]),
 		Level:            communityInt(row["level"]),
 		Summary:          communityString(row["summary"]),
 		SummaryVersion:   communityString(row["summary_version"]),

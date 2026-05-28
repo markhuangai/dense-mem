@@ -5,7 +5,11 @@ import "time"
 // FactResponse represents a promoted fact in API responses.
 type FactResponse struct {
 	FactID                       string         `json:"fact_id"`
-	ProfileID                    string         `json:"profile_id"`
+	ProfileID                    string         `json:"team_id"`
+	CreatedByProfileID           string         `json:"created_by_profile_id,omitempty"`
+	CreatedByProfileName         string         `json:"created_by_profile_name,omitempty"`
+	PromotedByProfileID          string         `json:"promoted_by_profile_id,omitempty"`
+	PromotedByProfileName        string         `json:"promoted_by_profile_name,omitempty"`
 	Subject                      string         `json:"subject"`
 	Predicate                    string         `json:"predicate"`
 	Object                       string         `json:"object"`

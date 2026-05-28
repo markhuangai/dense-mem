@@ -16,12 +16,12 @@ import (
 // successful entailment check.
 //
 // Profile isolation: $profileId is injected by ScopedWrite and must match the
-// Claim node's profile_id. A mismatched profileId produces zero MATCH results,
+// Claim node's team_id. A mismatched profileId produces zero MATCH results,
 // leaving the node untouched and preventing cross-profile mutation.
 //
 // Callers MUST NOT include profileId in the params map.
 const verifyClaimCypher = `
-MATCH (c:Claim {profile_id: $profileId, claim_id: $claimId})
+MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
 SET c.status                 = $status,
     c.entailment_verdict     = $entailmentVerdict,
     c.verifier_model         = $verifierModel,
@@ -34,7 +34,7 @@ SET c.status                 = $status,
 //
 // Profile isolation: $profileId is injected by ScopedWrite.
 const verifyClaimRawBodyCypher = `
-MATCH (c:Claim {profile_id: $profileId, claim_id: $claimId})
+MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
 SET c.last_verifier_response = $lastVerifierResponse`
 
 // verifyClaimServiceImpl implements VerifyClaimService.
@@ -103,7 +103,7 @@ func NewVerifyClaimService(
 func (s *verifyClaimServiceImpl) Verify(ctx context.Context, profileID string, claimID string) (*domain.Claim, error) {
 	// Step 1: load the claim.
 	//
-	// Profile isolation: getClaimCypher includes {profile_id: $profileId}
+	// Profile isolation: getClaimCypher includes {team_id: $profileId}
 	// on the MATCH clause. A claim belonging to a different profile produces
 	// zero rows, which is indistinguishable from "not found" — no existence leak.
 	_, rows, err := s.reader.ScopedRead(ctx, profileID, getClaimCypher, map[string]any{
@@ -161,7 +161,7 @@ func (s *verifyClaimServiceImpl) Verify(ctx context.Context, profileID string, c
 				"lastVerifierResponse": resp.RawJSON,
 			}); writeErr != nil && s.logger != nil {
 				s.logger.Warn("claim verify: failed to persist raw verifier body",
-					slog.String("profile_id", profileID),
+					slog.String("team_id", profileID),
 					slog.String("claim_id", claimID),
 					slog.String("error", writeErr.Error()),
 				)
@@ -265,7 +265,7 @@ func (s *verifyClaimServiceImpl) emitVerifyAudit(
 		EntityID:   claimID,
 		AfterPayload: map[string]any{
 			"claim_id":           claimID,
-			"profile_id":         profileID,
+			"team_id":            profileID,
 			"status":             string(claim.Status),
 			"entailment_verdict": string(claim.EntailmentVerdict),
 			"verdict":            verdict,
@@ -274,7 +274,7 @@ func (s *verifyClaimServiceImpl) emitVerifyAudit(
 
 	if auditErr := s.audit.Append(ctx, entry); auditErr != nil && s.logger != nil {
 		s.logger.Warn("audit emit failed for claim.verify",
-			slog.String("profile_id", profileID),
+			slog.String("team_id", profileID),
 			slog.String("claim_id", claimID),
 			slog.String("error", auditErr.Error()),
 		)

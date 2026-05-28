@@ -49,15 +49,15 @@ func TestKeywordSearchProfileFiltering(t *testing.T) {
 	profileB := "profile-b-id"
 
 	tests := []struct {
-		name                string
-		requestingProfile   string
-		fragmentResults     []FragmentSearchResult
-		factResults         []FactSearchResult
-		expectedProfileIDs  []string // All should match requesting profile
+		name               string
+		requestingProfile  string
+		fragmentResults    []FragmentSearchResult
+		factResults        []FactSearchResult
+		expectedProfileIDs []string // All should match requesting profile
 	}{
 		{
-			name:               "profile B sees only profile B fragments and facts",
-			requestingProfile:  profileB,
+			name:              "profile B sees only profile B fragments and facts",
+			requestingProfile: profileB,
 			fragmentResults: []FragmentSearchResult{
 				{FragmentID: "frag-1", Content: "content from profile A", Score: 0.9, ProfileID: profileA},
 				{FragmentID: "frag-2", Content: "content from profile B", Score: 0.8, ProfileID: profileB},
@@ -70,8 +70,8 @@ func TestKeywordSearchProfileFiltering(t *testing.T) {
 			expectedProfileIDs: []string{profileB, profileB}, // Only profile B results
 		},
 		{
-			name:               "profile A sees only profile A fragments and facts",
-			requestingProfile:  profileA,
+			name:              "profile A sees only profile A fragments and facts",
+			requestingProfile: profileA,
 			fragmentResults: []FragmentSearchResult{
 				{FragmentID: "frag-1", Content: "content from profile A", Score: 0.9, ProfileID: profileA},
 				{FragmentID: "frag-2", Content: "content from profile B", Score: 0.95, ProfileID: profileB},
@@ -84,8 +84,8 @@ func TestKeywordSearchProfileFiltering(t *testing.T) {
 			expectedProfileIDs: []string{profileA, profileA, profileA}, // Only profile A results
 		},
 		{
-			name:               "all results from other profile - empty result",
-			requestingProfile:  profileB,
+			name:              "all results from other profile - empty result",
+			requestingProfile: profileB,
 			fragmentResults: []FragmentSearchResult{
 				{FragmentID: "frag-1", Content: "content from profile A", Score: 0.9, ProfileID: profileA},
 				{FragmentID: "frag-2", Content: "more from profile A", Score: 0.95, ProfileID: profileA},
@@ -142,15 +142,15 @@ func TestKeywordSearchLimitCap(t *testing.T) {
 	profileID := "test-profile-id"
 
 	tests := []struct {
-		name              string
-		requestLimit      int
-		expectedLimitCap  int
-		expect422         bool
+		name             string
+		requestLimit     int
+		expectedLimitCap int
+		expect422        bool
 	}{
 		{
-			name:             "limit 0 returns 422 validation error",
-			requestLimit:     0,
-			expect422:        true,
+			name:         "limit 0 returns 422 validation error",
+			requestLimit: 0,
+			expect422:    true,
 		},
 		{
 			name:             "limit 50 is not capped",
@@ -191,7 +191,7 @@ func TestKeywordSearchLimitCap(t *testing.T) {
 						results[i] = FragmentSearchResult{
 							FragmentID: "frag-" + string(rune(i)),
 							Content:    "content",
-							Score:      float64(200 - i) / 200.0, // Descending scores
+							Score:      float64(200-i) / 200.0, // Descending scores
 							ProfileID:  pid,
 						}
 					}
@@ -247,7 +247,7 @@ func TestKeywordSearchEmptyResult(t *testing.T) {
 			factResults:     []FactSearchResult{},
 		},
 		{
-			name:            "results filtered out by profile mismatch",
+			name: "results filtered out by profile mismatch",
 			fragmentResults: []FragmentSearchResult{
 				{FragmentID: "frag-1", Content: "content from other profile", Score: 0.9, ProfileID: "other-profile"},
 			},
@@ -256,7 +256,7 @@ func TestKeywordSearchEmptyResult(t *testing.T) {
 			},
 		},
 		{
-			name:            "results filtered out by labels mismatch",
+			name: "results filtered out by labels mismatch",
 			fragmentResults: []FragmentSearchResult{
 				{FragmentID: "frag-1", Content: "content without matching labels", Score: 0.9, ProfileID: profileID, Labels: []string{"label-a"}},
 			},
@@ -301,6 +301,7 @@ func TestKeywordSearchEmptyResult(t *testing.T) {
 		})
 	}
 }
+
 // profileFilteringScopedReader is a test double for ScopedReaderInterface that returns
 // rows keyed by profileID — simulating Neo4j's per-profile data isolation.
 type profileFilteringScopedReader struct {
@@ -316,8 +317,8 @@ func (r *profileFilteringScopedReader) ScopedRead(_ context.Context, profileID s
 func TestSearchContent(t *testing.T) {
 	t.Run("maps fragment_id from f.fragment_id property", func(t *testing.T) {
 		reader := &fakeScopedReader{rows: []map[string]any{
-			{"fragment_id": "frag-abc-123", "content": "hello world", "score": 0.91, "profile_id": "p1"},
-			{"fragment_id": "frag-def-456", "content": "second result", "score": 0.55, "profile_id": "p1"},
+			{"fragment_id": "frag-abc-123", "content": "hello world", "score": 0.91, "team_id": "p1"},
+			{"fragment_id": "frag-def-456", "content": "second result", "score": 0.55, "team_id": "p1"},
 		}}
 		s := NewFragmentSearcher(reader)
 		got, err := s.SearchContent(context.Background(), "p1", "hello", nil, 10)
@@ -335,11 +336,11 @@ func TestSearchContent(t *testing.T) {
 		reader := &profileFilteringScopedReader{
 			rowsByProfile: map[string][]map[string]any{
 				profileA: {
-					{"fragment_id": "frag-a1", "content": "A content", "score": 0.9, "profile_id": profileA},
-					{"fragment_id": "frag-a2", "content": "A content 2", "score": 0.8, "profile_id": profileA},
+					{"fragment_id": "frag-a1", "content": "A content", "score": 0.9, "team_id": profileA},
+					{"fragment_id": "frag-a2", "content": "A content 2", "score": 0.8, "team_id": profileA},
 				},
 				profileB: {
-					{"fragment_id": "frag-b1", "content": "B content", "score": 0.7, "profile_id": profileB},
+					{"fragment_id": "frag-b1", "content": "B content", "score": 0.7, "team_id": profileB},
 				},
 			},
 		}
@@ -374,8 +375,8 @@ func TestSearchContent(t *testing.T) {
 func TestSearchPredicate(t *testing.T) {
 	t.Run("maps fact_id from r.fact_id node property", func(t *testing.T) {
 		reader := &fakeScopedReader{rows: []map[string]any{
-			{"fact_id": "fact-abc-123", "predicate": "knows", "score": 0.91, "profile_id": "p1"},
-			{"fact_id": "fact-def-456", "predicate": "likes", "score": 0.55, "profile_id": "p1"},
+			{"fact_id": "fact-abc-123", "predicate": "knows", "score": 0.91, "team_id": "p1"},
+			{"fact_id": "fact-def-456", "predicate": "likes", "score": 0.55, "team_id": "p1"},
 		}}
 		s := NewFactSearcher(reader)
 		got, err := s.SearchPredicate(context.Background(), "p1", "knows", nil, 10)
@@ -393,11 +394,11 @@ func TestSearchPredicate(t *testing.T) {
 		reader := &profileFilteringScopedReader{
 			rowsByProfile: map[string][]map[string]any{
 				profileA: {
-					{"fact_id": "fact-a1", "predicate": "A knows B", "score": 0.9, "profile_id": profileA},
-					{"fact_id": "fact-a2", "predicate": "A likes C", "score": 0.8, "profile_id": profileA},
+					{"fact_id": "fact-a1", "predicate": "A knows B", "score": 0.9, "team_id": profileA},
+					{"fact_id": "fact-a2", "predicate": "A likes C", "score": 0.8, "team_id": profileA},
 				},
 				profileB: {
-					{"fact_id": "fact-b1", "predicate": "B knows A", "score": 0.7, "profile_id": profileB},
+					{"fact_id": "fact-b1", "predicate": "B knows A", "score": 0.7, "team_id": profileB},
 				},
 			},
 		}
@@ -447,7 +448,7 @@ func TestLabelFiltering(t *testing.T) {
 		labels := []string{"science", "'; DROP DATABASE neo4j; //"}
 
 		reader := &capturingReader{rows: []map[string]any{
-			{"fragment_id": "frag-1", "content": "hello", "score": 0.9, "profile_id": "p1", "labels": []any{"science"}},
+			{"fragment_id": "frag-1", "content": "hello", "score": 0.9, "team_id": "p1", "labels": []any{"science"}},
 		}}
 		s := NewFragmentSearcher(reader)
 
@@ -476,7 +477,7 @@ func TestLabelFiltering(t *testing.T) {
 		labels := []string{"history", "'; MATCH (n) DETACH DELETE n; //"}
 
 		reader := &capturingReader{rows: []map[string]any{
-			{"fact_id": "fact-1", "predicate": "knows", "score": 0.85, "profile_id": "p1", "labels": []any{"history"}},
+			{"fact_id": "fact-1", "predicate": "knows", "score": 0.85, "team_id": "p1", "labels": []any{"history"}},
 		}}
 		s := NewFactSearcher(reader)
 
@@ -556,8 +557,8 @@ func TestLabelFiltering(t *testing.T) {
 // TestFragmentSearcher_ScorePropagated tests that BM25 scores are propagated from the fulltext search.
 func TestFragmentSearcher_ScorePropagated(t *testing.T) {
 	reader := &fakeScopedReader{rows: []map[string]any{
-		{"fragment_id": "f1", "content": "hello", "score": 0.87, "profile_id": "p"},
-		{"fragment_id": "f2", "content": "world", "score": 0.42, "profile_id": "p"},
+		{"fragment_id": "f1", "content": "hello", "score": 0.87, "team_id": "p"},
+		{"fragment_id": "f2", "content": "world", "score": 0.42, "team_id": "p"},
 	}}
 	s := NewFragmentSearcher(reader)
 	got, err := s.SearchContent(context.Background(), "p", "hello", nil, 10)
@@ -571,8 +572,8 @@ func TestFragmentSearcher_ScorePropagated(t *testing.T) {
 // TestFactSearcher_ScorePropagated tests that BM25 scores are propagated from the fulltext search.
 func TestFactSearcher_ScorePropagated(t *testing.T) {
 	reader := &fakeScopedReader{rows: []map[string]any{
-		{"fact_id": "fact-1", "predicate": "knows", "score": 0.33, "profile_id": "p"},
-		{"fact_id": "fact-2", "predicate": "likes", "score": 0.55, "profile_id": "p"},
+		{"fact_id": "fact-1", "predicate": "knows", "score": 0.33, "team_id": "p"},
+		{"fact_id": "fact-2", "predicate": "likes", "score": 0.55, "team_id": "p"},
 	}}
 	s := NewFactSearcher(reader)
 	got, err := s.SearchPredicate(context.Background(), "p", "knows", nil, 10)

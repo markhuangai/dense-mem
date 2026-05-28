@@ -14,7 +14,7 @@ import (
 // retracted SourceFragment nodes are excluded at the database layer.
 func TestSearchContent_RetractedFragmentsFiltered(t *testing.T) {
 	reader := &capturingReader{rows: []map[string]any{
-		{"fragment_id": "frag-1", "content": "hello", "score": 0.9, "profile_id": "p1"},
+		{"fragment_id": "frag-1", "content": "hello", "score": 0.9, "team_id": "p1"},
 	}}
 	s := NewFragmentSearcher(reader)
 
@@ -33,7 +33,7 @@ func TestSearchContent_RetractedFragmentsFiltered(t *testing.T) {
 func TestSearchContent_RetractedNodeNotReturned(t *testing.T) {
 	// Simulate the DB honouring the WHERE filter: only the active fragment is returned.
 	reader := &capturingReader{rows: []map[string]any{
-		{"fragment_id": "frag-active", "content": "active content", "score": 0.9, "profile_id": "p1"},
+		{"fragment_id": "frag-active", "content": "active content", "score": 0.9, "team_id": "p1"},
 		// "frag-retracted" is absent because the real DB filtered it via the WHERE clause.
 	}}
 	s := NewFragmentSearcher(reader)

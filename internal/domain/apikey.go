@@ -10,7 +10,9 @@ import (
 // Consumers and tests depend on this abstraction rather than the concrete struct.
 type APIKeyModel interface {
 	GetID() uuid.UUID
+	GetTeamID() uuid.UUID
 	GetProfileID() uuid.UUID
+	GetProfileName() string
 	GetLabel() string
 	GetKeyHash() string
 	GetKeyPrefix() string
@@ -25,9 +27,14 @@ type APIKeyModel interface {
 
 // APIKey represents an API key for authentication.
 type APIKey struct {
-	ID         uuid.UUID
+	// ID is the stable team profile ID. The key material can rotate in place.
+	ID uuid.UUID
+	// ProfileID is retained as the storage tenant/team ID for compatibility
+	// with existing call sites during the team migration.
 	ProfileID  uuid.UUID
+	TeamID     uuid.UUID
 	Label      string
+	Name       string
 	KeyHash    string
 	KeyPrefix  string
 	KeySuffix  string
@@ -44,8 +51,10 @@ var _ APIKeyModel = (*APIKey)(nil)
 
 // Getters for APIKeyModel interface
 func (k *APIKey) GetID() uuid.UUID          { return k.ID }
-func (k *APIKey) GetProfileID() uuid.UUID   { return k.ProfileID }
-func (k *APIKey) GetLabel() string          { return k.Label }
+func (k *APIKey) GetTeamID() uuid.UUID      { return k.effectiveTeamID() }
+func (k *APIKey) GetProfileID() uuid.UUID   { return k.effectiveTeamID() }
+func (k *APIKey) GetProfileName() string    { return k.effectiveName() }
+func (k *APIKey) GetLabel() string          { return k.effectiveName() }
 func (k *APIKey) GetKeyHash() string        { return k.KeyHash }
 func (k *APIKey) GetKeyPrefix() string      { return k.KeyPrefix }
 func (k *APIKey) GetKeySuffix() string      { return k.KeySuffix }
@@ -55,3 +64,17 @@ func (k *APIKey) GetLastUsedAt() *time.Time { return k.LastUsedAt }
 func (k *APIKey) GetExpiresAt() *time.Time  { return k.ExpiresAt }
 func (k *APIKey) GetCreatedAt() time.Time   { return k.CreatedAt }
 func (k *APIKey) GetRevokedAt() *time.Time  { return k.RevokedAt }
+
+func (k *APIKey) effectiveTeamID() uuid.UUID {
+	if k.TeamID != uuid.Nil {
+		return k.TeamID
+	}
+	return k.ProfileID
+}
+
+func (k *APIKey) effectiveName() string {
+	if k.Name != "" {
+		return k.Name
+	}
+	return k.Label
+}

@@ -17,8 +17,8 @@ type cliConfig struct {
 	offset int
 }
 
-type profileItem struct {
-	ProfileID   string         `json:"profile_id"`
+type teamItem struct {
+	TeamID      string         `json:"team_id"`
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
@@ -28,10 +28,10 @@ type profileItem struct {
 }
 
 type output struct {
-	Items  []profileItem `json:"items"`
-	Total  int64         `json:"total"`
-	Limit  int           `json:"limit"`
-	Offset int           `json:"offset"`
+	Items  []teamItem `json:"items"`
+	Total  int64      `json:"total"`
+	Limit  int        `json:"limit"`
+	Offset int        `json:"offset"`
 }
 
 func main() {
@@ -61,25 +61,25 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 	defer services.Close()
 
-	profiles, err := services.ProfileService.List(ctx, cfg.limit, cfg.offset)
+	teams, err := services.ProfileService.List(ctx, cfg.limit, cfg.offset)
 	if err != nil {
-		return fmt.Errorf("list profiles: %w", err)
+		return fmt.Errorf("list teams: %w", err)
 	}
 	total, err := services.ProfileService.Count(ctx)
 	if err != nil {
-		return fmt.Errorf("count profiles: %w", err)
+		return fmt.Errorf("count teams: %w", err)
 	}
 
-	items := make([]profileItem, 0, len(profiles))
-	for _, profile := range profiles {
-		items = append(items, profileItem{
-			ProfileID:   profile.ID.String(),
-			Name:        profile.Name,
-			Description: profile.Description,
-			Metadata:    profile.Metadata,
-			Config:      profile.Config,
-			CreatedAt:   profile.CreatedAt,
-			UpdatedAt:   profile.UpdatedAt,
+	items := make([]teamItem, 0, len(teams))
+	for _, team := range teams {
+		items = append(items, teamItem{
+			TeamID:      team.ID.String(),
+			Name:        team.Name,
+			Description: team.Description,
+			Metadata:    team.Metadata,
+			Config:      team.Config,
+			CreatedAt:   team.CreatedAt,
+			UpdatedAt:   team.UpdatedAt,
 		})
 	}
 
@@ -96,9 +96,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 func parseCLI(args []string, stderr io.Writer) (cliConfig, error) {
 	var cfg cliConfig
 
-	fs := flag.NewFlagSet("list-profiles", flag.ContinueOnError)
+	fs := flag.NewFlagSet("list-teams", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.IntVar(&cfg.limit, "limit", 100, "Maximum number of profiles to return")
+	fs.IntVar(&cfg.limit, "limit", 100, "Maximum number of teams to return")
 	fs.IntVar(&cfg.offset, "offset", 0, "Offset for pagination")
 
 	if err := fs.Parse(args); err != nil {

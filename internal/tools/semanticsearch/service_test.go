@@ -35,16 +35,16 @@ func TestQueryVectorIndex(t *testing.T) {
 
 	mockReader := &mockScopedReader{
 		scopedReadFunc: func(ctx context.Context, pid string, query string, params map[string]any) (neo4j.ResultSummary, []map[string]any, error) {
-			// Verify the profileID is passed through to enforce the profile_id WHERE filter.
+			// Verify the profileID is passed through to enforce the team_id WHERE filter.
 			require.Equal(t, profileID, pid, "ScopedRead must receive the requesting profileID")
 			rows := []map[string]any{
 				{
-					"id":         fragID, // searcher aliases f.fragment_id AS id
-					"content":    "test content",
-					"score":      float64(0.9),
-					"labels":     []any{},
-					"metadata":   map[string]any{},
-					"profile_id": profileID,
+					"id":       fragID, // searcher aliases f.fragment_id AS id
+					"content":  "test content",
+					"score":    float64(0.9),
+					"labels":   []any{},
+					"metadata": map[string]any{},
+					"team_id":  profileID,
 				},
 			}
 			return nil, rows, nil

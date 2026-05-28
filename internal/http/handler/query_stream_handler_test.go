@@ -31,7 +31,7 @@ func (m *mockQueryStreamOrchestrator) Run(ctx context.Context, profileID string,
 	}
 	// Default: emit tool_call, evidence, done
 	_ = writer.WriteEvent(sse.EventTypeToolCall, map[string]any{"name": "test-tool"})
-	_ = writer.WriteEvent(sse.EventTypeEvidence, map[string]any{"content": "test evidence", "profile_id": profileID})
+	_ = writer.WriteEvent(sse.EventTypeEvidence, map[string]any{"content": "test evidence", "team_id": profileID})
 	_ = writer.WriteEvent(sse.EventTypeDone, map[string]any{})
 	return nil
 }
@@ -102,7 +102,7 @@ func TestQueryStreamSSEFormat(t *testing.T) {
 		runFunc: func(ctx context.Context, pid string, query string, params map[string]any, writer sse.SSEWriter) error {
 			// Emit events in correct order
 			_ = writer.WriteEvent(sse.EventTypeToolCall, map[string]any{"name": "graph-query", "args": map[string]any{"query": query}})
-			_ = writer.WriteEvent(sse.EventTypeEvidence, map[string]any{"tool": "graph-query", "profile_id": pid, "data": []map[string]any{{"id": "test"}}})
+			_ = writer.WriteEvent(sse.EventTypeEvidence, map[string]any{"tool": "graph-query", "team_id": pid, "data": []map[string]any{{"id": "test"}}})
 			_ = writer.WriteEvent(sse.EventTypeDone, map[string]any{})
 			return nil
 		},
@@ -164,10 +164,10 @@ func TestQueryStreamProfileIsolation(t *testing.T) {
 			executeFunc: func(ctx context.Context, pid string, query string, params map[string]any) (*graphquery.GraphQueryResult, error) {
 				// Return rows from both profiles (simulating leak)
 				return &graphquery.GraphQueryResult{
-					Columns: []string{"id", "content", "profile_id"},
+					Columns: []string{"id", "content", "team_id"},
 					Rows: []map[string]any{
-						{"id": "hit-1", "content": "profile-A content", "profile_id": pid},
-						{"id": "hit-2", "content": "profile-B content", "profile_id": otherProfileID.String()},
+						{"id": "hit-1", "content": "profile-A content", "team_id": pid},
+						{"id": "hit-2", "content": "profile-B content", "team_id": otherProfileID.String()},
 					},
 					RowCount: 2,
 				}, nil
@@ -226,8 +226,8 @@ func TestQueryStreamProfileIsolation(t *testing.T) {
 					}
 				case []map[string]any:
 					for _, row := range v {
-						if rowProfile, ok := row["profile_id"].(string); ok {
-							assert.Equal(t, profileID.String(), rowProfile, "graph query row profile_id must match authenticated profile")
+						if rowProfile, ok := row["team_id"].(string); ok {
+							assert.Equal(t, profileID.String(), rowProfile, "graph query row team_id must match authenticated profile")
 						}
 					}
 				}

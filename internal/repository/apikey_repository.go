@@ -13,7 +13,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-// APIKeyRepository is the companion interface for API key data access.
+// APIKeyRepository is the companion interface for team profile key data access.
 // Consumers and tests depend on this abstraction rather than the concrete struct.
 type APIKeyRepository interface {
 	CreateStandardKey(ctx context.Context, key *domain.APIKey) error
@@ -26,6 +26,8 @@ type APIKeyRepository interface {
 	RevokeForProfile(ctx context.Context, profileID, id uuid.UUID) (int64, error)
 	// DeleteForProfile hard-deletes a key only when it belongs to profileID. Returns number of rows affected.
 	DeleteForProfile(ctx context.Context, profileID, id uuid.UUID) (int64, error)
+	// RotateForProfile replaces key material for one team profile in place.
+	RotateForProfile(ctx context.Context, profileID, id uuid.UUID, keyHash, keyPrefix, keySuffix string, expiresAt *time.Time) (int64, error)
 	TouchLastUsed(ctx context.Context, id uuid.UUID) error
 }
 
@@ -48,16 +50,18 @@ func NewAPIKeyRepository(db *gorm.DB, rls postgres.RLSHelper) *APIKeyRepositoryI
 	return &APIKeyRepositoryImpl{db: db, rls: rls}
 }
 
-// CreateStandardKey creates a new standard API key associated with a profile.
+// CreateStandardKey creates a new standard API key associated with a team profile.
 func (r *APIKeyRepositoryImpl) CreateStandardKey(ctx context.Context, key *domain.APIKey) error {
 	if key.ID == uuid.Nil {
 		key.ID = uuid.New()
 	}
+	teamID := key.GetTeamID()
+	name := key.GetProfileName()
 
 	now := time.Now().UTC()
 	key.CreatedAt = now
 
-	// Standard keys must have a profile_id
+	// Standard keys must have a team_id.
 	// Use the KeyPrefix field from the domain object (derived from raw key)
 	keyPrefix := key.KeyPrefix
 	if keyPrefix == "" {
@@ -66,16 +70,16 @@ func (r *APIKeyRepositoryImpl) CreateStandardKey(ctx context.Context, key *domai
 	}
 	keySuffix := key.KeySuffix
 
-	// INSERT must satisfy api_keys_self_access (profile_id = app.current_profile_id);
-	// set the session to the owning profile so the RLS WITH CHECK passes.
+	// INSERT must satisfy team_profiles_self_access (team_id = app.current_team_id);
+	// set the session to the owning team so the RLS WITH CHECK passes.
 	// Scopes must be wrapped in pq.Array — the pgx driver (via gorm.io/driver/postgres)
 	// does not encode a naked []string as Postgres text[]; it writes NULL and the
 	// authorization layer later sees an empty scope set.
-	err := r.rls.WithProfileTx(ctx, r.db, key.ProfileID.String(), func(tx *gorm.DB) error {
+	err := r.rls.WithProfileTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
 		return tx.Exec(`
-			INSERT INTO api_keys (id, profile_id, key_hash, key_prefix, key_suffix, label, scopes, rate_limit, expires_at, revoked_at, last_used_at, created_at, updated_at)
+			INSERT INTO team_profiles (id, team_id, key_hash, key_prefix, key_suffix, name, scopes, rate_limit, expires_at, revoked_at, last_used_at, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9, NULL, NULL, $10, $10)
-		`, key.ID, key.ProfileID, key.KeyHash, keyPrefix, keySuffix, key.Label, pq.Array(key.Scopes), key.RateLimit, key.ExpiresAt, now).Error
+		`, key.ID, teamID, key.KeyHash, keyPrefix, keySuffix, name, pq.Array(key.Scopes), key.RateLimit, key.ExpiresAt, now).Error
 	})
 
 	if err != nil {
@@ -113,9 +117,9 @@ func (r *APIKeyRepositoryImpl) ListByProfile(ctx context.Context, profileID uuid
 	keys := make([]*domain.APIKey, 0)
 	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
 		rows, rerr := tx.Raw(`
-			SELECT id, profile_id, COALESCE(key_suffix, ''), label, scopes, rate_limit, last_used_at, expires_at, created_at, revoked_at
-			FROM api_keys
-			WHERE profile_id = $1
+			SELECT id, team_id, COALESCE(key_suffix, ''), name, scopes, rate_limit, last_used_at, expires_at, created_at, revoked_at
+			FROM team_profiles
+			WHERE team_id = $1
 			ORDER BY created_at DESC, id ASC
 			LIMIT $2 OFFSET $3
 		`, profileID, limit, offset).Rows()
@@ -140,6 +144,8 @@ func (r *APIKeyRepositoryImpl) ListByProfile(ctx context.Context, profileID uuid
 			); serr != nil {
 				return serr
 			}
+			k.TeamID = k.ProfileID
+			k.Name = k.Label
 			keys = append(keys, &k)
 		}
 		return rows.Err()
@@ -161,13 +167,13 @@ func (r *APIKeyRepositoryImpl) ListByProfile(ctx context.Context, profileID uuid
 // empty and authorization fails closed.
 func (r *APIKeyRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix string) (*domain.APIKey, error) {
 	var key domain.APIKey
-	var profileID *uuid.UUID
+	var teamID *uuid.UUID
 	found := false
 
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, rerr := tx.Raw(`
-			SELECT id, profile_id, key_hash, COALESCE(key_suffix, ''), label, scopes, rate_limit, last_used_at, expires_at, created_at, revoked_at
-			FROM api_keys
+			SELECT id, team_id, key_hash, COALESCE(key_suffix, ''), name, scopes, rate_limit, last_used_at, expires_at, created_at, revoked_at
+			FROM team_profiles
 			WHERE key_prefix = $1
 				AND revoked_at IS NULL
 				AND (expires_at IS NULL OR expires_at > NOW())
@@ -181,7 +187,7 @@ func (r *APIKeyRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix str
 			found = true
 			return rows.Scan(
 				&key.ID,
-				&profileID,
+				&teamID,
 				&key.KeyHash,
 				&key.KeySuffix,
 				&key.Label,
@@ -202,9 +208,11 @@ func (r *APIKeyRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix str
 	if !found {
 		return nil, nil
 	}
-	if profileID != nil {
-		key.ProfileID = *profileID
+	if teamID != nil {
+		key.ProfileID = *teamID
+		key.TeamID = *teamID
 	}
+	key.Name = key.Label
 	return &key, nil
 }
 
@@ -217,9 +225,9 @@ func (r *APIKeyRepositoryImpl) RevokeForProfile(ctx context.Context, profileID, 
 	var rowsAffected int64
 	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
 		res := tx.Exec(`
-			UPDATE api_keys
+			UPDATE team_profiles
 			SET revoked_at = $1, updated_at = $1
-			WHERE id = $2 AND profile_id = $3 AND revoked_at IS NULL
+			WHERE id = $2 AND team_id = $3 AND revoked_at IS NULL
 		`, now, id, profileID)
 		if res.Error != nil {
 			return res.Error
@@ -240,8 +248,8 @@ func (r *APIKeyRepositoryImpl) DeleteForProfile(ctx context.Context, profileID, 
 	var rowsAffected int64
 	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
 		res := tx.Exec(`
-			DELETE FROM api_keys
-			WHERE id = $1 AND profile_id = $2
+			DELETE FROM team_profiles
+			WHERE id = $1 AND team_id = $2
 		`, id, profileID)
 		if res.Error != nil {
 			return res.Error
@@ -257,6 +265,35 @@ func (r *APIKeyRepositoryImpl) DeleteForProfile(ctx context.Context, profileID, 
 	return rowsAffected, nil
 }
 
+// RotateForProfile replaces the bearer secret for one team profile without
+// changing the profile identity.
+func (r *APIKeyRepositoryImpl) RotateForProfile(ctx context.Context, profileID, id uuid.UUID, keyHash, keyPrefix, keySuffix string, expiresAt *time.Time) (int64, error) {
+	now := time.Now().UTC()
+	var rowsAffected int64
+	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
+		res := tx.Exec(`
+			UPDATE team_profiles
+			SET key_hash = $1,
+			    key_prefix = $2,
+			    key_suffix = NULLIF($3, ''),
+			    expires_at = $4,
+			    revoked_at = NULL,
+			    last_used_at = NULL,
+			    updated_at = $5
+			WHERE id = $6 AND team_id = $7
+		`, keyHash, keyPrefix, keySuffix, expiresAt, now, id, profileID)
+		if res.Error != nil {
+			return res.Error
+		}
+		rowsAffected = res.RowsAffected
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to rotate key for team profile: %w", err)
+	}
+	return rowsAffected, nil
+}
+
 // GetByIDForProfile retrieves an API key by ID only when it belongs to profileID.
 // Returns nil when the id/profile combination does not match (prevents existence oracle).
 // Excludes the key_hash field from results.
@@ -269,9 +306,9 @@ func (r *APIKeyRepositoryImpl) GetByIDForProfile(ctx context.Context, profileID,
 
 	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
 		rows, rerr := tx.Raw(`
-			SELECT id, profile_id, COALESCE(key_suffix, ''), label, scopes, rate_limit, last_used_at, expires_at, created_at, revoked_at
-			FROM api_keys
-			WHERE id = $1 AND profile_id = $2
+			SELECT id, team_id, COALESCE(key_suffix, ''), name, scopes, rate_limit, last_used_at, expires_at, created_at, revoked_at
+			FROM team_profiles
+			WHERE id = $1 AND team_id = $2
 		`, id, profileID).Rows()
 		if rerr != nil {
 			return rerr
@@ -304,7 +341,9 @@ func (r *APIKeyRepositoryImpl) GetByIDForProfile(ctx context.Context, profileID,
 	}
 	if rowProfileID != nil {
 		key.ProfileID = *rowProfileID
+		key.TeamID = *rowProfileID
 	}
+	key.Name = key.Label
 	return &key, nil
 }
 
@@ -314,7 +353,7 @@ func (r *APIKeyRepositoryImpl) CountByProfile(ctx context.Context, profileID uui
 	var count int64
 	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
 		return tx.Raw(`
-			SELECT COUNT(*) FROM api_keys WHERE profile_id = $1
+			SELECT COUNT(*) FROM team_profiles WHERE team_id = $1
 		`, profileID).Scan(&count).Error
 	})
 	if err != nil {
@@ -332,7 +371,7 @@ func (r *APIKeyRepositoryImpl) TouchLastUsed(ctx context.Context, id uuid.UUID) 
 	// so this write runs without a profile-scoped transaction.
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return tx.Exec(`
-			UPDATE api_keys
+			UPDATE team_profiles
 			SET last_used_at = $1
 			WHERE id = $2
 		`, now, id).Error
