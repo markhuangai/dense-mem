@@ -349,6 +349,65 @@ func TestAPIKeyServiceCreate(t *testing.T) {
 	mockAuditService.AssertExpectations(t)
 }
 
+func TestAPIKeyServiceCreateReadOnlyKey(t *testing.T) {
+	ctx := context.Background()
+	profileID := uuid.New()
+
+	mockRepo := new(MockAPIKeyRepository)
+	mockProfileService := new(MockProfileService)
+	mockAuditService := new(MockAuditService)
+	mockSessionInvalidator := new(MockKeySessionInvalidator)
+	mockStatePurger := new(MockProfileStatePurger)
+
+	service := NewAPIKeyService(mockRepo, mockProfileService, mockAuditService, mockSessionInvalidator, mockStatePurger)
+
+	mockProfileService.On("Get", ctx, profileID).Return(&domain.Profile{ID: profileID}, nil)
+	mockRepo.On("CreateStandardKey", ctx, mock.AnythingOfType("*domain.APIKey")).Run(func(args mock.Arguments) {
+		key := args.Get(1).(*domain.APIKey)
+		assert.Equal(t, []string{"read"}, key.Scopes)
+		key.ID = uuid.New()
+	}).Return(nil)
+	mockAuditService.On("APIKeyCreated", ctx, mock.AnythingOfType("*string"), mock.AnythingOfType("string"), mock.MatchedBy(func(payload map[string]interface{}) bool {
+		scopes, ok := payload["scopes"].([]string)
+		return ok && assert.ObjectsAreEqual([]string{"read"}, scopes)
+	}), mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	key, rawKey, err := service.CreateStandardKey(ctx, profileID, CreateAPIKeyRequest{
+		Name:      "automation",
+		Scopes:    []string{"read"},
+		RateLimit: 100,
+	}, nil, "system", "127.0.0.1", "test-correlation")
+
+	require.NoError(t, err)
+	require.NotNil(t, key)
+	assert.NotEmpty(t, rawKey)
+	assert.Equal(t, []string{"read"}, key.Scopes)
+	assert.Empty(t, key.KeyHash)
+	mockRepo.AssertExpectations(t)
+	mockProfileService.AssertExpectations(t)
+	mockAuditService.AssertExpectations(t)
+}
+
+func TestNormalizeAPIKeyScopesRejectsUnsupportedSets(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		scopes []string
+	}{
+		{name: "write without read", scopes: []string{"write"}},
+		{name: "unknown scope", scopes: []string{"read", "admin"}},
+		{name: "blank scope", scopes: []string{"read", " "}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			normalized, err := NormalizeAPIKeyScopes(tc.scopes)
+			require.Nil(t, normalized)
+			require.Error(t, err)
+			var apiErr *httperr.APIError
+			require.ErrorAs(t, err, &apiErr)
+			assert.Equal(t, httperr.VALIDATION_ERROR, apiErr.Code)
+		})
+	}
+}
+
 // TestAPIKeyServiceListNeverReturnsHash verifies that list never returns key_hash.
 func TestAPIKeyServiceListNeverReturnsHash(t *testing.T) {
 	ctx := context.Background()

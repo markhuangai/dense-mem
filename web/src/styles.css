@@ -17,6 +17,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -296,6 +297,7 @@ legend {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   border: 1px solid var(--border-strong);
@@ -313,6 +315,7 @@ textarea {
 }
 
 input:focus,
+select:focus,
 textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
@@ -485,7 +488,7 @@ button:disabled {
 }
 
 .key-table {
-  min-width: 760px;
+  min-width: 840px;
 }
 
 .key-table th:nth-child(1),
@@ -493,8 +496,13 @@ button:disabled {
   width: 240px;
 }
 
-.key-table th:nth-child(4),
-.key-table td:nth-child(4) {
+.key-table th:nth-child(3),
+.key-table td:nth-child(3) {
+  width: 116px;
+}
+
+.key-table th:nth-child(5),
+.key-table td:nth-child(5) {
   width: 86px;
 }
 

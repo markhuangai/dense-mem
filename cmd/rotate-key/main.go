@@ -24,10 +24,11 @@ type cliConfig struct {
 }
 
 type output struct {
-	TeamID    string  `json:"team_id"`
-	ProfileID string  `json:"profile_id"`
-	APIKey    string  `json:"api_key"`
-	ExpiresAt *string `json:"expires_at,omitempty"`
+	TeamID    string   `json:"team_id"`
+	ProfileID string   `json:"profile_id"`
+	Scopes    []string `json:"scopes"`
+	APIKey    string   `json:"api_key"`
+	ExpiresAt *string  `json:"expires_at,omitempty"`
 }
 
 func main() {
@@ -101,6 +102,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	return enc.Encode(output{
 		TeamID:    teamID.String(),
 		ProfileID: rotated.ID.String(),
+		Scopes:    append([]string(nil), rotated.Scopes...),
 		APIKey:    rawKey,
 		ExpiresAt: expiresAtStr,
 	})

@@ -16,8 +16,13 @@ Playwright end-to-end tests for the dense-mem knowledge pipeline API.
 | `phase4-promote-concurrency.spec.ts` | UAT-08a–c | Concurrent promote idempotency |
 | `phase6-retract.spec.ts` | UAT-09a–e | Fragment retraction & cascade |
 | `phase7-community.spec.ts` | UAT-10a–d | Community detection |
-| `phase8-mcp.spec.ts` | UAT-11a–d | MCP server tool surface |
-| `phase9-recall.spec.ts` | UAT-12a–e, AC-X2 regression | Semantic recall endpoint |
+| `phase8-mcp.spec.ts` | UAT-11a-d | MCP server tool surface |
+| `phase9-recall.spec.ts` | UAT-12a-e, AC-X2 regression | Semantic recall endpoint |
+| `profile-key-permissions.spec.ts` | Permissions regression | Read-only profile key HTTP/MCP enforcement |
+| `control-plane-lifecycle.spec.ts` | Admin regression | Team profile key lifecycle, expiry, rate limit, audit |
+| `auth-matrix.spec.ts` | Auth regression | Missing/invalid auth and read-only write denial matrix |
+| `cli-workflows.spec.ts` | Operator regression | Container CLI provision/list/rotate/delete workflow |
+| `control-portal-live.spec.ts` | Portal regression | Real browser portal flow against live backend |
 | `e2e-journey.spec.ts` | UAT-13, AC-X2, AC-X6, isolation | Full pipeline end-to-end |
 
 ## Prerequisites
@@ -33,6 +38,9 @@ Playwright end-to-end tests for the dense-mem knowledge pipeline API.
 | `BASE_URL` | Server base URL | `http://localhost:8080` |
 | `API_KEY` | Standard API key | `test-api-key` |
 | `PROFILE_ID` | Default profile ID for tests | `test-profile-id` |
+| `TEAM_ID` | Team ID for team-profile management tests; falls back to `PROFILE_ID` | unset |
+| `CONTROL_BASE_URL` | Control portal URL for live portal UAT | `http://127.0.0.1:8090` |
+| `CONTROL_PORTAL_TOKEN` | Control portal token for live portal UAT | unset |
 | `NEO4J_URI` | Neo4j Bolt URI | `bolt://localhost:7687` |
 | `NEO4J_USER` | Neo4j username | `neo4j` |
 | `NEO4J_PASSWORD` | Neo4j password | `password` |
@@ -54,6 +62,21 @@ BASE_URL=http://localhost:8080 API_KEY=<key> PROFILE_ID=<id> \
 
 # Run a single phase
 npx playwright test phase2-claim-create.spec.ts
+
+# Run profile key permission checks
+TEAM_ID=<team-id> API_KEY=<read-write-key> npx playwright test profile-key-permissions.spec.ts
+
+# Run admin/control-plane checks
+TEAM_ID=<team-id> API_KEY=<read-write-key> npm run test:control-plane
+
+# Run container CLI workflow checks after docker compose is up
+npm run test:cli
+
+# Run real control portal browser checks
+CONTROL_PORTAL_TOKEN=<token> npm run test:portal-live
+
+# Run all admin/control-plane gaps
+TEAM_ID=<team-id> API_KEY=<read-write-key> CONTROL_PORTAL_TOKEN=<token> npm run test:admin
 
 # Run with verbose output
 npx playwright test --reporter=list
@@ -91,5 +114,14 @@ GET  /api/v1/facts
 POST /api/v1/fragments
 POST /api/v1/fragments/:id/retract
 POST /api/v1/tools/detect_community
+GET  /api/v1/teams/:teamId
+PATCH /api/v1/teams/:teamId
+GET  /api/v1/teams/:teamId/audit-log
+GET  /api/v1/teams/:teamId/profiles
+POST /api/v1/teams/:teamId/profiles
+GET  /api/v1/teams/:teamId/profiles/:profileId
+POST /api/v1/teams/:teamId/profiles/:profileId/rotate
+DELETE /api/v1/teams/:teamId/profiles/:profileId
+POST /mcp
 GET  /api/v1/openapi.json
 ```

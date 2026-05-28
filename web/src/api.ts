@@ -13,6 +13,7 @@ export type TeamProfile = {
   team_id: string;
   name: string;
   key_suffix: string | null;
+  scopes: string[] | null;
   rate_limit: number;
   last_used_at: string | null;
   expires_at: string | null;
@@ -39,6 +40,7 @@ export type UpdateTeamInput = CreateTeamInput;
 
 export type CreateTeamProfileInput = {
   name: string;
+  scopes?: string[];
   rate_limit: number;
   expires_at?: string;
 };

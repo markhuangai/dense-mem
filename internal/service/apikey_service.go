@@ -19,19 +19,54 @@ import (
 )
 
 // CreateAPIKeyRequest represents a request to create a standard API key.
-// Label and scopes are intentionally not caller-controlled: every standard key
-// belongs to one profile and receives the fixed read/write scope set.
+// Every standard key belongs to one team profile. Scopes are limited to the two
+// supported permission sets: read-only or read/write.
 type CreateAPIKeyRequest struct {
 	Name      string     `json:"name"`
 	RateLimit int        `json:"rate_limit"`
 	ExpiresAt *time.Time `json:"expires_at"`
+	Scopes    []string   `json:"scopes"`
 }
 
-var standardAPIKeyScopes = []string{"read", "write"}
+const (
+	APIKeyScopeRead  = "read"
+	APIKeyScopeWrite = "write"
+)
 
-// StandardAPIKeyScopes returns the fixed scope set for all standard API keys.
+var standardAPIKeyScopes = []string{APIKeyScopeRead, APIKeyScopeWrite}
+
+// StandardAPIKeyScopes returns the default read/write scope set.
 func StandardAPIKeyScopes() []string {
 	return append([]string(nil), standardAPIKeyScopes...)
+}
+
+// NormalizeAPIKeyScopes returns the canonical scope set for a key creation
+// request. Empty input preserves the historical default: read/write.
+func NormalizeAPIKeyScopes(scopes []string) ([]string, error) {
+	if len(scopes) == 0 {
+		return StandardAPIKeyScopes(), nil
+	}
+
+	var hasRead, hasWrite bool
+	for _, raw := range scopes {
+		switch strings.ToLower(strings.TrimSpace(raw)) {
+		case APIKeyScopeRead:
+			hasRead = true
+		case APIKeyScopeWrite:
+			hasWrite = true
+		default:
+			return nil, httperr.New(httperr.VALIDATION_ERROR, "api key scopes must be either [read] or [read, write]")
+		}
+	}
+
+	switch {
+	case hasRead && hasWrite:
+		return StandardAPIKeyScopes(), nil
+	case hasRead:
+		return []string{APIKeyScopeRead}, nil
+	default:
+		return nil, httperr.New(httperr.VALIDATION_ERROR, "api key scopes must be either [read] or [read, write]")
+	}
 }
 
 func normalizeTeamProfileName(name string) (string, error) {
@@ -160,6 +195,11 @@ func (s *APIKeyServiceImpl) CreateStandardKey(ctx context.Context, profileID uui
 		return nil, "", fmt.Errorf("failed to verify profile: %w", err)
 	}
 
+	scopes, err := NormalizeAPIKeyScopes(req.Scopes)
+	if err != nil {
+		return nil, "", err
+	}
+
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = "default profile"
@@ -186,7 +226,7 @@ func (s *APIKeyServiceImpl) CreateStandardKey(ctx context.Context, profileID uui
 		KeyHash:   keyHash,
 		KeyPrefix: crypto.GetKeyPrefix(rawKey),
 		KeySuffix: crypto.GetKeySuffix(rawKey),
-		Scopes:    StandardAPIKeyScopes(),
+		Scopes:    scopes,
 		RateLimit: req.RateLimit,
 		ExpiresAt: req.ExpiresAt,
 	}
@@ -200,6 +240,7 @@ func (s *APIKeyServiceImpl) CreateStandardKey(ctx context.Context, profileID uui
 		"id":           key.ID.String(),
 		"team_id":      key.ProfileID.String(),
 		"profile_name": key.GetProfileName(),
+		"scopes":       key.Scopes,
 		"rate_limit":   key.RateLimit,
 		"role":         "standard",
 	}

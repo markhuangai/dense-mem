@@ -87,6 +87,12 @@ func (h *APIKeyHandler) Create(c echo.Context) error {
 		Name:      body.Name,
 		RateLimit: body.RateLimit,
 	}
+	if body.Scopes != nil {
+		if len(*body.Scopes) == 0 {
+			return httperr.New(httperr.VALIDATION_ERROR, "api key scopes must be either [read] or [read, write]")
+		}
+		req.Scopes = append([]string(nil), (*body.Scopes)...)
+	}
 	if body.ExpiresAt != nil {
 		t, err := time.Parse(time.RFC3339, *body.ExpiresAt)
 		if err == nil {
@@ -232,6 +238,9 @@ func (h *APIKeyHandler) Rotate(c echo.Context) error {
 	if !ok {
 		return httperr.New(httperr.VALIDATION_ERROR, "request body not found")
 	}
+	if body.Scopes != nil {
+		return httperr.New(httperr.VALIDATION_ERROR, "scopes cannot be changed by rotating a key")
+	}
 
 	req := service.CreateAPIKeyRequest{
 		Name:      body.Name,
@@ -345,6 +354,7 @@ func toAPIKeyResponse(k *domain.APIKey) dto.APIKeyResponse {
 		TeamID:     k.GetTeamID(),
 		Name:       k.GetProfileName(),
 		KeySuffix:  k.KeySuffix,
+		Scopes:     append([]string{}, k.Scopes...),
 		RateLimit:  k.RateLimit,
 		LastUsedAt: lastUsedAt,
 		ExpiresAt:  expiresAt,
@@ -372,6 +382,7 @@ func toAPIKeyListItem(k *domain.APIKey) dto.APIKeyListItem {
 		TeamID:     k.GetTeamID(),
 		Name:       k.GetProfileName(),
 		KeySuffix:  k.KeySuffix,
+		Scopes:     append([]string{}, k.Scopes...),
 		RateLimit:  k.RateLimit,
 		LastUsedAt: lastUsedAt,
 		ExpiresAt:  expiresAt,

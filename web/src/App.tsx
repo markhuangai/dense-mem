@@ -31,6 +31,7 @@ const THEME_STORAGE_KEY = "denseMem.controlTheme";
 type LoadState = "idle" | "loading" | "error";
 type Theme = "light" | "dark";
 type PortalTab = "teams" | "profiles" | "security";
+type ProfilePermission = "read" | "read_write";
 
 export function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_STORAGE_KEY) ?? "");
@@ -565,6 +566,7 @@ function TeamProfileTable({
           <tr>
             <th>Name</th>
             <th>Key</th>
+            <th>Permission</th>
             <th>Created</th>
             <th>Last used</th>
             <th className="actions-cell">Actions</th>
@@ -637,6 +639,7 @@ function TeamProfileRow({
         </div>
       </td>
       <td><code>{displayKeySuffix(profile)}</code></td>
+      <td>{profilePermissionLabel(profile.scopes)}</td>
       <td>{formatDate(profile.created_at)}</td>
       <td>{profile.last_used_at ? formatDate(profile.last_used_at) : "Never"}</td>
       <td className="actions-cell">
@@ -677,6 +680,7 @@ function TeamProfileCreateForm({
   onCreated: (created: CreatedTeamProfile) => void;
 }) {
   const [name, setName] = useState("default profile");
+  const [permission, setPermission] = useState<ProfilePermission>("read_write");
   const [rateLimit, setRateLimit] = useState("120");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -697,6 +701,7 @@ function TeamProfileCreateForm({
     try {
       const created = await api.createTeamProfile(team.id, {
         name: name.trim(),
+        scopes: permission === "read" ? ["read"] : ["read", "write"],
         rate_limit: parsedRateLimit,
       });
       onCreated(created);
@@ -711,6 +716,15 @@ function TeamProfileCreateForm({
     <form className="key-form" onSubmit={submit}>
       <label htmlFor="team-profile-name">Profile name</label>
       <input id="team-profile-name" value={name} onChange={(event) => setName(event.target.value)} />
+      <label htmlFor="team-profile-permission">Permission</label>
+      <select
+        id="team-profile-permission"
+        value={permission}
+        onChange={(event) => setPermission(event.target.value as ProfilePermission)}
+      >
+        <option value="read_write">Read/write</option>
+        <option value="read">Read only</option>
+      </select>
       <label htmlFor="rate-limit">Rate limit</label>
       <input id="rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
       {error && <p className="field-error span" role="alert">{error}</p>}
@@ -966,6 +980,10 @@ function formatDate(value: string): string {
 function displayKeySuffix(key: TeamProfile): string {
   const suffix = key.key_suffix?.trim();
   return suffix ? `******${suffix}` : "Unavailable";
+}
+
+function profilePermissionLabel(scopes: string[] | null | undefined): string {
+  return scopes?.includes("write") ? "Read/write" : "Read only";
 }
 
 function shortId(value: string): string {

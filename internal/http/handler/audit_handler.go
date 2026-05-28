@@ -56,7 +56,8 @@ type AuditLogResponse struct {
 	Metadata      map[string]interface{} `json:"metadata,omitempty"`
 }
 
-// Get handles GET /api/v1/profiles/:profileId/audit-log.
+// Get handles GET /api/v1/teams/:teamId/audit-log and the legacy
+// GET /api/v1/profiles/:profileId/audit-log alias.
 // Requires a same-profile principal.
 // Returns 200 with paginated audit log entries for the requested profile only.
 // No update/delete endpoints are provided - audit log is append-only.
@@ -71,10 +72,13 @@ func (h *AuditHandler) Get(c echo.Context) error {
 		}
 	}
 
-	// Parse profile ID from path
-	profileIDStr := c.Param("profileId")
+	// Parse team ID from the canonical path, with legacy profileId fallback.
+	profileIDStr := c.Param("teamId")
 	if profileIDStr == "" {
-		return httperr.New(httperr.PROFILE_ID_REQUIRED, "profile ID is required")
+		profileIDStr = c.Param("profileId")
+	}
+	if profileIDStr == "" {
+		return httperr.New(httperr.PROFILE_ID_REQUIRED, "team ID is required")
 	}
 
 	// Validate UUID format
@@ -83,9 +87,10 @@ func (h *AuditHandler) Get(c echo.Context) error {
 		return httperr.New(httperr.INVALID_UUID, "invalid profile ID format")
 	}
 
-	// Permission check: same-profile principal only.
+	// Permission check: same-team principal only. Team-profile keys carry their
+	// own key ID as ProfileID and their owning team as TeamID.
 	if principal != nil {
-		if principal.ProfileID == nil || *principal.ProfileID != profileID {
+		if principal.GetTeamID() != profileID {
 			return httperr.New(httperr.FORBIDDEN, "access denied to this profile's audit log")
 		}
 	}

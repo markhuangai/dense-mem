@@ -108,6 +108,47 @@ func TestAuditHandler_Get_SameProfile(t *testing.T) {
 	}
 }
 
+// TestAuditHandler_Get_TeamRouteUsesTeamID verifies the canonical
+// /api/v1/teams/:teamId/audit-log route reads teamId and authorizes using
+// Principal.TeamID, not the team-profile key ID.
+func TestAuditHandler_Get_TeamRouteUsesTeamID(t *testing.T) {
+	e := newTestEcho()
+	teamID := uuid.New()
+	teamProfileKeyID := uuid.New()
+
+	mockSvc := &mockAuditService{
+		listFunc: func(ctx context.Context, pid string, limit, offset int) ([]service.AuditLogEntry, int, error) {
+			assert.Equal(t, teamID.String(), pid)
+			return []service.AuditLogEntry{}, 0, nil
+		},
+	}
+	h := NewAuditHandler(mockSvc)
+
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			ctx := c.Request().Context()
+			ctx = middleware.SetPrincipalForTest(ctx, &middleware.Principal{
+				KeyID:     teamProfileKeyID,
+				TeamID:    teamID,
+				ProfileID: &teamProfileKeyID,
+				Role:      "standard",
+				Scopes:    []string{"read"},
+			})
+			c.SetRequest(c.Request().WithContext(ctx))
+			return next(c)
+		}
+	})
+
+	e.GET("/api/v1/teams/:teamId/audit-log", h.Get)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/teams/"+teamID.String()+"/audit-log", nil)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
 // TestAuditHandler_Get_DefaultPagination tests that default pagination is limit=20, offset=0.
 func TestAuditHandler_Get_DefaultPagination(t *testing.T) {
 	e := newTestEcho()

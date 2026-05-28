@@ -26,6 +26,7 @@ type keyItem struct {
 	ProfileID  string     `json:"profile_id"`
 	Name       string     `json:"name"`
 	KeySuffix  string     `json:"key_suffix"`
+	Scopes     []string   `json:"scopes"`
 	RateLimit  int        `json:"rate_limit"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
@@ -87,6 +88,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 			ProfileID:  key.ID.String(),
 			Name:       key.GetProfileName(),
 			KeySuffix:  key.KeySuffix,
+			Scopes:     append([]string(nil), key.Scopes...),
 			RateLimit:  key.RateLimit,
 			LastUsedAt: key.LastUsedAt,
 			ExpiresAt:  key.ExpiresAt,

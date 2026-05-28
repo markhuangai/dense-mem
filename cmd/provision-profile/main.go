@@ -25,12 +25,13 @@ type cliConfig struct {
 }
 
 type provisionOutput struct {
-	TeamID      string  `json:"team_id"`
-	TeamName    string  `json:"team_name"`
-	ProfileID   string  `json:"profile_id"`
-	ProfileName string  `json:"profile_name"`
-	APIKey      string  `json:"api_key"`
-	ExpiresAt   *string `json:"expires_at,omitempty"`
+	TeamID      string   `json:"team_id"`
+	TeamName    string   `json:"team_name"`
+	ProfileID   string   `json:"profile_id"`
+	ProfileName string   `json:"profile_name"`
+	Scopes      []string `json:"scopes"`
+	APIKey      string   `json:"api_key"`
+	ExpiresAt   *string  `json:"expires_at,omitempty"`
 }
 
 func main() {
@@ -117,6 +118,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		TeamName:    team.Name,
 		ProfileID:   teamProfile.ID.String(),
 		ProfileName: teamProfile.GetProfileName(),
+		Scopes:      append([]string(nil), teamProfile.Scopes...),
 		APIKey:      rawKey,
 		ExpiresAt:   expiresAtStr,
 	})

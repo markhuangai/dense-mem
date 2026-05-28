@@ -80,12 +80,18 @@ func (s *controlProfileSvc) Delete(_ context.Context, id uuid.UUID, _ *string, _
 }
 
 type controlKeySvc struct {
-	keys       []*domain.APIKey
-	rawKey     string
-	deletedKey uuid.UUID
+	keys          []*domain.APIKey
+	rawKey        string
+	deletedKey    uuid.UUID
+	lastCreateReq service.CreateAPIKeyRequest
 }
 
 func (s *controlKeySvc) CreateStandardKey(_ context.Context, profileID uuid.UUID, req service.CreateAPIKeyRequest, _ *string, _ string, _ string, _ string) (*domain.APIKey, string, error) {
+	scopes, err := service.NormalizeAPIKeyScopes(req.Scopes)
+	if err != nil {
+		return nil, "", err
+	}
+	s.lastCreateReq = req
 	key := &domain.APIKey{
 		ID:        uuid.New(),
 		ProfileID: profileID,
@@ -94,7 +100,7 @@ func (s *controlKeySvc) CreateStandardKey(_ context.Context, profileID uuid.UUID
 		Name:      req.Name,
 		KeyPrefix: "dm_test",
 		KeySuffix: "intext",
-		Scopes:    service.StandardAPIKeyScopes(),
+		Scopes:    scopes,
 		RateLimit: req.RateLimit,
 		CreatedAt: time.Now().UTC(),
 		ExpiresAt: req.ExpiresAt,
@@ -237,7 +243,7 @@ func TestControlPortalProfileAndKeyFlows(t *testing.T) {
 	require.Len(t, profiles.profiles, 2)
 
 	profileID := profiles.profiles[1].ID
-	keyBody := `{"rate_limit":120}`
+	keyBody := `{"rate_limit":120,"scopes":["read"]}`
 	req = httptest.NewRequest(http.MethodPost, "/control/api/profiles/"+profileID.String()+"/api-keys", strings.NewReader(keyBody))
 	req.Header.Set("Authorization", "Bearer secret")
 	req.Header.Set("Content-Type", "application/json")
@@ -248,8 +254,9 @@ func TestControlPortalProfileAndKeyFlows(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), `"key_prefix"`)
 	require.Contains(t, rec.Body.String(), `"key_suffix":"intext"`)
 	require.NotContains(t, rec.Body.String(), `"label"`)
-	require.NotContains(t, rec.Body.String(), `"scopes"`)
+	require.Contains(t, rec.Body.String(), `"scopes":["read"]`)
 	require.NotContains(t, rec.Body.String(), `"revoked_at"`)
+	require.Equal(t, []string{"read"}, keys.lastCreateReq.Scopes)
 	require.Empty(t, keys.keys[len(keys.keys)-1].Label)
 
 	keyID := keys.keys[len(keys.keys)-1].ID

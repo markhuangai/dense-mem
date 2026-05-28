@@ -40,6 +40,7 @@ function keyA(profileId = profileA.id): TeamProfile {
     team_id: profileA.id,
     name: "default profile",
     key_suffix: "abc123",
+    scopes: ["read", "write"],
     rate_limit: 120,
     last_used_at: "2026-05-02T13:00:00Z",
     expires_at: null,
@@ -97,15 +98,25 @@ describe("App", () => {
   });
 
   it("creates an API key and shows plaintext once", async () => {
-    mockPortalFetch({ teams: [profileA], keys: [] });
+    const fetchMock = mockPortalFetch({ teams: [profileA], keys: [] });
     sessionStorage.setItem("denseMem.controlToken", "secret");
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
     await userEvent.click(screen.getByRole("button", { name: /profiles & api keys/i }));
+    await userEvent.selectOptions(screen.getByLabelText(/permission/i), "read");
     await userEvent.click(screen.getByRole("button", { name: /create profile/i }));
 
     expect(await screen.findByText("dm_plain_once")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining(`/teams/${profileA.id}/profiles`),
+        expect.objectContaining({
+          method: "POST",
+          body: expect.stringContaining(`"scopes":["read"]`),
+        }),
+      );
+    });
     await userEvent.click(screen.getByRole("button", { name: /dismiss api key/i }));
     await waitFor(() => expect(screen.queryByText("dm_plain_once")).not.toBeInTheDocument());
   });
@@ -159,6 +170,7 @@ describe("App", () => {
     expect(await screen.findByText("******abc123")).toBeInTheDocument();
     const keyRow = screen.getByText("******abc123").closest("tr");
     expect(keyRow).not.toBeNull();
+    expect(within(keyRow as HTMLElement).getByText("Read/write")).toBeInTheDocument();
     expect(within(keyRow as HTMLElement).getByText(/May/i)).toBeInTheDocument();
     vi.spyOn(window, "confirm").mockReturnValue(true);
     await userEvent.click(screen.getByRole("button", { name: /delete profile default profile/i }));
@@ -261,7 +273,7 @@ function mockPortalFetch({
     if (url.endsWith("/profiles") && method === "POST") {
       const body = JSON.parse(String(init?.body));
       expect(body.label).toBeUndefined();
-      const created = { ...keyA(), name: body.name };
+      const created = { ...keyA(), name: body.name, scopes: body.scopes };
       currentKeys = [created, ...currentKeys];
       return jsonResponse({ data: { api_key: "dm_plain_once", key: created } }, 201);
     }

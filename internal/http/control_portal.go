@@ -244,6 +244,12 @@ func (h *controlPortalHandler) createAPIKey(c echo.Context) error {
 		Name:      body.Name,
 		RateLimit: body.RateLimit,
 	}
+	if body.Scopes != nil {
+		if len(*body.Scopes) == 0 {
+			return httperr.New(httperr.VALIDATION_ERROR, "api key scopes must be either [read] or [read, write]")
+		}
+		req.Scopes = append([]string(nil), (*body.Scopes)...)
+	}
 	if body.ExpiresAt != nil {
 		expiresAt, err := time.Parse(time.RFC3339, *body.ExpiresAt)
 		if err != nil {
@@ -295,6 +301,9 @@ func (h *controlPortalHandler) rotateAPIKey(c echo.Context) error {
 	var body controlCreateAPIKeyRequest
 	if err := c.Bind(&body); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
+	}
+	if body.Scopes != nil {
+		return httperr.New(httperr.VALIDATION_ERROR, "scopes cannot be changed by rotating a key")
 	}
 	req := service.CreateAPIKeyRequest{
 		Name:      body.Name,
@@ -441,9 +450,10 @@ func (h *controlPortalHandler) deleteSecurityBan(c echo.Context) error {
 }
 
 type controlCreateAPIKeyRequest struct {
-	Name      string  `json:"name"`
-	RateLimit int     `json:"rate_limit"`
-	ExpiresAt *string `json:"expires_at"`
+	Name      string    `json:"name"`
+	Scopes    *[]string `json:"scopes"`
+	RateLimit int       `json:"rate_limit"`
+	ExpiresAt *string   `json:"expires_at"`
 }
 
 type controlUpdateAPIKeyRequest struct {
@@ -662,6 +672,7 @@ type controlAPIKeyResponse struct {
 	TeamID     uuid.UUID `json:"team_id"`
 	Name       string    `json:"name"`
 	KeySuffix  string    `json:"key_suffix"`
+	Scopes     []string  `json:"scopes"`
 	RateLimit  int       `json:"rate_limit"`
 	LastUsedAt *string   `json:"last_used_at"`
 	ExpiresAt  *string   `json:"expires_at"`
@@ -674,6 +685,7 @@ func toControlAPIKey(key *domain.APIKey) controlAPIKeyResponse {
 		TeamID:     key.GetTeamID(),
 		Name:       key.GetProfileName(),
 		KeySuffix:  key.KeySuffix,
+		Scopes:     append([]string{}, key.Scopes...),
 		RateLimit:  key.RateLimit,
 		LastUsedAt: controlTimePtr(key.LastUsedAt),
 		ExpiresAt:  controlTimePtr(key.ExpiresAt),

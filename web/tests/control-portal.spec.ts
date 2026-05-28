@@ -15,6 +15,7 @@ type TestKey = {
   team_id: string;
   name: string;
   key_suffix: string;
+  scopes: string[];
   rate_limit: number;
   last_used_at: string | null;
   expires_at: string | null;
@@ -26,6 +27,7 @@ const key: TestKey = {
   team_id: team.id,
   name: "default profile",
   key_suffix: "abc123",
+  scopes: ["read", "write"],
   rate_limit: 120,
   last_used_at: "2026-05-02T13:00:00Z",
   expires_at: null,
@@ -74,6 +76,7 @@ test("API key creation shows plaintext once", async ({ page }) => {
   await openPortal(page);
 
   await page.getByRole("button", { name: /Profiles & API Keys/ }).click();
+  await page.getByLabel("Permission").selectOption("read");
   await page.getByRole("button", { name: "Create profile" }).click();
 
   await expect(page.getByText("dm_plain_once")).toBeVisible();
@@ -106,6 +109,7 @@ test("team profile list and delete flow", async ({ page }) => {
   await page.getByRole("button", { name: /Profiles & API Keys/ }).click();
   await expect(page.getByText("******abc123")).toBeVisible();
   const keyRow = page.getByRole("row", { name: /abc123/ });
+  await expect(keyRow).toContainText("Read/write");
   await expect(keyRow.getByText(/May/)).toBeVisible();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: /Delete profile default profile/ }).click();
@@ -208,9 +212,10 @@ async function mockApi(page: Page, state: { teams: TestProfile[]; keys: TestKey[
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: updated }) });
     }
     if (url.endsWith("/profiles") && method === "POST") {
-      const body = route.request().postDataJSON() as { label?: string; name: string };
+      const body = route.request().postDataJSON() as { label?: string; name: string; scopes: string[] };
       expect(body.label).toBeUndefined();
-      const created = { ...key, name: body.name };
+      expect(body.scopes).toEqual(["read"]);
+      const created = { ...key, name: body.name, scopes: body.scopes };
       keys = [created, ...keys];
       return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ data: { api_key: "dm_plain_once", key: created } }) });
     }

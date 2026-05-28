@@ -221,11 +221,16 @@ Example output:
   "team_name": "primary-memory",
   "profile_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
   "profile_name": "default profile",
+  "scopes": ["read", "write"],
   "api_key": "dm_default-prof_..."
 }
 ```
 
 The plaintext `api_key` is returned only at creation time.
+Team-profile keys default to `["read","write"]`. Create a read-only profile key
+for automation by passing `scopes: ["read"]` to the team-profile creation API or
+by selecting **Read only** in the control portal. Supported scope sets are
+`["read"]` and `["read","write"]`; rotate preserves the existing permissions.
 
 Useful operator commands:
 
@@ -401,6 +406,9 @@ Claude Desktop can use the same package:
 | MCP | `POST /mcp`, `GET /mcp` |
 
 Header-scoped memory routes derive the team and profile from the bearer API key.
+Read-only profile keys can call read routes, recall, graph/keyword/semantic
+search, and read-scoped MCP tools. Write routes and write-scoped MCP tools
+return insufficient-permission errors.
 
 Example:
 
@@ -412,6 +420,15 @@ curl http://localhost:8080/api/v1/tools \
 ```bash
 curl "http://localhost:8080/api/v1/recall?q=preferences" \
   -H "Authorization: Bearer $DENSE_MEM_API_KEY"
+```
+
+Create a read-only automation key:
+
+```bash
+curl -X POST "http://localhost:8080/api/v1/teams/$TEAM_ID/profiles" \
+  -H "Authorization: Bearer $DENSE_MEM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"automation-readonly","scopes":["read"],"rate_limit":120}'
 ```
 
 ## Local Control Portal

@@ -14,6 +14,11 @@
     "test:phase7": "playwright test phase7-community.spec.ts",
     "test:phase8": "playwright test phase8-mcp.spec.ts",
     "test:phase9": "playwright test phase9-recall.spec.ts",
+    "test:permissions": "playwright test profile-key-permissions.spec.ts",
+    "test:control-plane": "playwright test control-plane-lifecycle.spec.ts auth-matrix.spec.ts",
+    "test:cli": "playwright test cli-workflows.spec.ts",
+    "test:portal-live": "playwright test control-portal-live.spec.ts",
+    "test:admin": "playwright test control-plane-lifecycle.spec.ts auth-matrix.spec.ts cli-workflows.spec.ts control-portal-live.spec.ts",
     "test:e2e": "playwright test e2e-journey.spec.ts"
   },
   "devDependencies": {
