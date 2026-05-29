@@ -7,7 +7,6 @@
 # NOTE: docker-entrypoint.sh is NOT ignored — it is copied into the image.
 Dockerfile
 docker-compose.yml
-docker-compose.example.yml
 .dockerignore
 
 # Secrets and env — never ship to the image
@@ -31,7 +30,6 @@ migrate
 # the binary is self-contained)
 docs/
 README.md
-CLAUDE.md
 LICENSE
 
 # Tests (not compiled into cmd/server or cmd/migrate binaries)

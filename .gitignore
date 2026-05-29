@@ -12,7 +12,7 @@ build/
 .env.local
 .env.*.local
 
-# Local docker-compose (template lives in docker-compose.example.yml)
+# Local docker-compose files created from examples/docker-compose.*.yml
 docker-compose.yml
 docker-compose.override.yml
 

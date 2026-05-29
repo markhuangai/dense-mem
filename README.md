@@ -293,7 +293,7 @@ You can also pass the key directly:
 
 ```bash
 claude mcp add --transport http dense-mem http://localhost:8080/mcp \
-  --header "Authorization: Bearer dm_live_..."
+  --header "Authorization: Bearer dm_default-prof_..."
 ```
 
 Claude Code documents HTTP MCP servers as the recommended remote-server option
@@ -308,7 +308,7 @@ CLI and the Codex IDE extension. To store the header directly in the config:
 ```toml
 [mcp_servers.dense_mem]
 url = "http://localhost:8080/mcp"
-http_headers = { Authorization = "Bearer dm_live_..." }
+http_headers = { Authorization = "Bearer dm_default-prof_..." }
 tool_timeout_sec = 60
 enabled = true
 ```
@@ -332,30 +332,24 @@ Some desktop MCP clients can run stdio MCP commands but do not reliably surface
 Streamable HTTP MCP servers in their callable tool registry. For those clients,
 use the Dense-Mem stdio proxy.
 
-Once the package is published to npm, use:
+Install or run the published package with `npx`:
 
 ```bash
 npx -y dense-mem-mcp-proxy
 ```
 
-Until then, run the package from a local checkout or a local `npm pack` tarball.
-For a checkout at `/path/to/dense-mem`:
+Use environment variables for normal desktop-client configuration:
 
 ```toml
 [mcp_servers.dense_mem]
-command = "node"
-args = [
-  "/path/to/dense-mem/packages/mcp-proxy/bin/dense-mem-mcp-proxy.js",
-  "--url",
-  "http://127.0.0.1:8080/mcp",
-  "--header",
-  "Authorization: Bearer dm_live_..."
-]
+command = "npx"
+args = ["-y", "dense-mem-mcp-proxy"]
+env = { DENSE_MEM_MCP_URL = "http://127.0.0.1:8080/mcp", DENSE_MEM_API_KEY = "dm_default-prof_..." }
 tool_timeout_sec = 60
 enabled = true
 ```
 
-The same configuration can use `npx` after publication:
+Arguments are still supported when environment variables are not available:
 
 ```toml
 [mcp_servers.dense_mem]
@@ -366,26 +360,26 @@ args = [
   "--url",
   "http://127.0.0.1:8080/mcp",
   "--header",
-  "Authorization: Bearer dm_live_..."
+  "Authorization: Bearer dm_default-prof_..."
 ]
 tool_timeout_sec = 60
 enabled = true
 ```
 
-Environment variables are also supported:
+For local proxy development from a checkout at `/path/to/dense-mem`:
 
 ```toml
 [mcp_servers.dense_mem]
-command = "npx"
-args = ["-y", "dense-mem-mcp-proxy"]
-env = { DENSE_MEM_MCP_URL = "http://127.0.0.1:8080/mcp", DENSE_MEM_API_KEY = "dm_live_..." }
+command = "node"
+args = ["/path/to/dense-mem/packages/mcp-proxy/bin/dense-mem-mcp-proxy.js"]
+env = { DENSE_MEM_MCP_URL = "http://127.0.0.1:8080/mcp", DENSE_MEM_API_KEY = "dm_default-prof_..." }
 tool_timeout_sec = 60
 enabled = true
 ```
 
 The proxy supports `--authorization "Bearer ..."` and repeated
 `--header "Name: value"` flags. It writes MCP JSON-RPC only to stdout; diagnostic
-logs go to stderr with Authorization headers and Dense-Mem API keys redacted.
+logs go to stderr with Authorization headers redacted.
 
 Claude Desktop can use the same package:
 
@@ -393,14 +387,12 @@ Claude Desktop can use the same package:
 {
   "mcpServers": {
     "dense_mem": {
-      "command": "node",
-      "args": [
-        "/path/to/dense-mem/packages/mcp-proxy/bin/dense-mem-mcp-proxy.js",
-        "--url",
-        "http://127.0.0.1:8080/mcp",
-        "--header",
-        "Authorization: Bearer dm_live_..."
-      ]
+      "command": "npx",
+      "args": ["-y", "dense-mem-mcp-proxy"],
+      "env": {
+        "DENSE_MEM_MCP_URL": "http://127.0.0.1:8080/mcp",
+        "DENSE_MEM_API_KEY": "dm_default-prof_..."
+      }
     }
   }
 }
@@ -514,4 +506,4 @@ Dense-Mem exposes three discoverability surfaces backed by one registry:
 
 ## License
 
-MIT
+Apache-2.0
