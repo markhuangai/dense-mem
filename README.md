@@ -147,40 +147,57 @@ To rotate embedding models safely:
 
 ## Quick Start
 
+Download the base local-only compose example and create a minimal `.env` file:
+
 ```bash
-cp docker-compose.example.yml docker-compose.yml
-cp .env.example .env
+mkdir dense-mem-local
+cd dense-mem-local
+
+curl -fsSLo docker-compose.yml \
+  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/docker-compose.base.yml
+
+cat > .env <<'EOF'
+POSTGRES_PASSWORD=choose-a-strong-postgres-password
+NEO4J_PASSWORD=choose-a-strong-neo4j-password
+CONTROL_PORTAL_TOKEN=choose-a-long-control-portal-token
+AI_API_KEY=your-ai-provider-api-key
+EOF
+
 docker compose up -d
 ```
 
-The default compose stack provisions `neo4j:5.26-community` with the Neo4j Graph
-Data Science plugin enabled. Redis can be omitted for single-node deployments,
-but multi-instance deployments need Redis for shared rate limits and SSE
-concurrency.
+The base compose example provisions Postgres, `neo4j:5.26-community` with the
+Neo4j Graph Data Science plugin, and the Dense-Mem server. It exposes only local
+host ports:
 
-By default, the main API port is only exposed to Docker networks. Use the
-Traefik profile for public HTTPS access. The control portal host bind is
-configured with `CONTROL_PORTAL_BIND` and `CONTROL_PORTAL_PORT`.
+```text
+MCP/API:        http://127.0.0.1:8080/mcp
+Control portal: http://127.0.0.1:8090/
+```
+
+Redis and public HTTPS are intentionally omitted from the base example. Use the
+expert example only when you need those deployment options.
 
 ### Public HTTPS With Traefik
 
-The example compose file includes an optional `traefik` profile for public MCP
-and REST exposure. It terminates TLS with Let's Encrypt, redirects HTTP to
-HTTPS, applies secure headers, request compression, edge rate limiting, request
+The expert compose example includes optional `traefik` and `redis` profiles. The
+Traefik profile provides public MCP and REST exposure with Let's Encrypt TLS,
+HTTPS redirects, secure headers, request compression, edge rate limiting, request
 body limits, and in-flight request limits.
 
 ```bash
-cp docker-compose.example.yml docker-compose.yml
-cp .env.example .env
-# set DENSE_MEM_DOMAIN and ACME_EMAIL in .env
+curl -fsSLo docker-compose.yml \
+  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/docker-compose.expert.yml
+
+# Set the base values plus DENSE_MEM_DOMAIN and ACME_EMAIL in .env.
 docker compose --profile traefik up -d
 ```
 
-The server container exposes `8080` only to Docker networks. Traefik routes
-public traffic to that internal service port; it does not route to the control
-portal. The control portal is the only host-published server port, and its bind
-address is controlled by `CONTROL_PORTAL_BIND`. Keep Redis disabled for a single
-local instance unless you need shared state across multiple server containers.
+Traefik routes public traffic to the server's internal `8080` port. It does not
+route to the control portal. The control portal is the only host-published
+server port, and its bind address is controlled by `CONTROL_PORTAL_BIND`. Keep
+Redis disabled for a single local instance unless you need shared state across
+multiple server containers.
 
 The public Docker network is named with `DENSE_MEM_PUBLIC_NETWORK`. Set
 `DENSE_MEM_PUBLIC_NETWORK_EXTERNAL=true` when you want compose to attach Traefik

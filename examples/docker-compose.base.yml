@@ -1,0 +1,109 @@
+# Dense-Mem base compose example.
+#
+# Download this file as docker-compose.yml for a local-only setup:
+#   curl -fsSLo docker-compose.yml \
+#     https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/docker-compose.base.yml
+#
+# Required .env values:
+#   POSTGRES_PASSWORD
+#   NEO4J_PASSWORD
+#   CONTROL_PORTAL_TOKEN
+#   AI_API_KEY
+#
+# This example exposes Dense-Mem only on localhost:
+#   MCP/API:        http://127.0.0.1:8080/mcp
+#   Control portal: http://127.0.0.1:8090/
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-densemem}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-densemem}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - private
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"${POSTGRES_USER:-densemem}\" -d \"${POSTGRES_DB:-densemem}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  neo4j:
+    image: neo4j:5.26-community
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:?NEO4J_PASSWORD must be set in .env}
+      NEO4J_PLUGINS: '["graph-data-science"]'
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 1g
+      NEO4J_server_memory_pagecache_size: 512m
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+      - neo4j-plugins:/plugins
+    networks:
+      - private
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >
+          wget -q --spider http://127.0.0.1:7474
+          && cypher-shell -u "${NEO4J_USER:-neo4j}" -p "${NEO4J_PASSWORD}" 'RETURN 1' >/dev/null 2>&1
+          || exit 1
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+    restart: unless-stopped
+
+  server:
+    image: ghcr.io/markhuangai/dense-mem:latest
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      HTTP_ADDR: ${HTTP_ADDR:-:8080}
+      CONTROL_HTTP_ADDR: ${CONTROL_HTTP_ADDR:-:8090}
+      CONTROL_PORTAL_TOKEN: ${CONTROL_PORTAL_TOKEN:?CONTROL_PORTAL_TOKEN must be set in .env}
+      POSTGRES_USER: ${POSTGRES_USER:-densemem}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-densemem}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_SSLMODE: disable
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD must be set in .env}
+      NEO4J_DATABASE: ${NEO4J_DATABASE:-}
+      REDIS_ADDR: ""
+      AI_API_URL: ${AI_API_URL:-https://api.openai.com/v1}
+      AI_API_KEY: ${AI_API_KEY:?AI_API_KEY must be set in .env}
+      AI_API_EMBEDDING_MODEL: ${AI_API_EMBEDDING_MODEL:-text-embedding-3-small}
+      AI_API_EMBEDDING_DIMENSIONS: ${AI_API_EMBEDDING_DIMENSIONS:-1536}
+      AI_API_EMBEDDING_TIMEOUT_SECONDS: ${AI_API_EMBEDDING_TIMEOUT_SECONDS:-30}
+      AI_VERIFIER_API_URL: ${AI_VERIFIER_API_URL:-}
+      AI_VERIFIER_API_KEY: ${AI_VERIFIER_API_KEY:-}
+      AI_VERIFIER_MODEL: ${AI_VERIFIER_MODEL:-gpt-4o-mini}
+      AI_VERIFIER_TIMEOUT_SECONDS: ${AI_VERIFIER_TIMEOUT_SECONDS:-60}
+    ports:
+      - "127.0.0.1:${DENSE_MEM_PORT:-8080}:8080"
+      - "127.0.0.1:${CONTROL_PORTAL_PORT:-8090}:8090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    networks:
+      - private
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  neo4j-data:
+  neo4j-logs:
+  neo4j-plugins:
+
+networks:
+  private:
