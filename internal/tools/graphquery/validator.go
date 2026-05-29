@@ -40,11 +40,12 @@ var writeClausesPattern = regexp.MustCompile(`(?i)\b(CREATE|MERGE|DELETE|SET|REM
 // loadCSVPattern matches LOAD CSV clause.
 var loadCSVPattern = regexp.MustCompile(`(?i)\bLOAD\s+CSV\b`)
 
+// unsafeBooleanPattern matches boolean forms that can make a required team
+// predicate non-binding (for example: n.team_id = $profileId OR true).
+var unsafeBooleanPattern = regexp.MustCompile(`(?i)\b(OR|XOR|NOT)\b`)
+
 // semicolonPattern matches semicolons that would indicate multiple statements.
 var semicolonPattern = regexp.MustCompile(`;`)
-
-// optionalMatchPattern matches OPTIONAL MATCH clause.
-var optionalMatchPattern = regexp.MustCompile(`(?i)\bOPTIONAL\s+MATCH\b`)
 
 // Validate checks if a Cypher query is safe for scoped execution.
 // It rejects queries containing:
@@ -65,6 +66,10 @@ func (v *cypherValidator) Validate(query string) error {
 		return &ValidationError{Reason: "query contains LOAD CSV which is not allowed"}
 	}
 
+	if match := unsafeBooleanPattern.FindString(query); match != "" {
+		return &ValidationError{Reason: fmt.Sprintf("query contains unsupported boolean operator: %s", strings.ToUpper(match))}
+	}
+
 	// Check for write clauses and forbidden constructs
 	if match := writeClausesPattern.FindString(query); match != "" {
 		return &ValidationError{Reason: fmt.Sprintf("query contains forbidden clause: %s", strings.ToUpper(match))}
@@ -75,28 +80,13 @@ func (v *cypherValidator) Validate(query string) error {
 		return &ValidationError{Reason: "all node patterns must have an alias"}
 	}
 
-	// Check if query has OPTIONAL MATCH
-	hasOptionalMatch := optionalMatchPattern.MatchString(query)
-
-	// Extract aliases from the main MATCH clause (before OPTIONAL MATCH if any)
-	var mainQuery string
-	if hasOptionalMatch {
-		// Split at OPTIONAL MATCH and only check the main part
-		parts := optionalMatchPattern.Split(query, 2)
-		mainQuery = parts[0]
-	} else {
-		mainQuery = query
-	}
-
-	// Extract all aliases from the main query
-	aliases := extractAliases(mainQuery)
+	aliases := extractAliases(query)
 	if len(aliases) == 0 {
 		// No node patterns found (e.g., RETURN 1), allow it
 		return nil
 	}
 
-	// Check if all aliases in the main query are constrained by team_id
-	if !allAliasesHaveProfilePredicate(mainQuery, aliases) {
+	if !allAliasesHaveProfilePredicate(query, aliases) {
 		return &ValidationError{Reason: "all node aliases must be constrained by team_id predicate"}
 	}
 
@@ -108,12 +98,17 @@ func (v *cypherValidator) Validate(query string) error {
 func extractAliases(query string) []string {
 	// Match node patterns: (alias:Label) or (alias) or (alias {...})
 	// Pattern captures: (alias optional :Label optional {props})
-	nodePatternWithAlias := regexp.MustCompile(`\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*(?::\s*[a-zA-Z_][a-zA-Z0-9_]*)?(?:\s*\{[^}]*\})?\s*\)`)
+	nodePatternWithAlias := regexp.MustCompile(`\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*(?::\s*[a-zA-Z_][a-zA-Z0-9_]*(?:\s*:\s*[a-zA-Z_][a-zA-Z0-9_]*)*)?(?:\s*\{[^}]*\})?\s*\)`)
 
 	matches := nodePatternWithAlias.FindAllStringSubmatch(query, -1)
 	aliases := make([]string, 0, len(matches))
+	seen := make(map[string]struct{}, len(matches))
 	for _, match := range matches {
 		if len(match) > 1 && match[1] != "" {
+			if _, ok := seen[match[1]]; ok {
+				continue
+			}
+			seen[match[1]] = struct{}{}
 			aliases = append(aliases, match[1])
 		}
 	}
@@ -133,12 +128,9 @@ func hasAnonymousNodePattern(query string) bool {
 // - inline: {team_id: $profileId}
 // - WHERE clause: alias.team_id = $profileId
 func allAliasesHaveProfilePredicate(query string, aliases []string) bool {
-	// Check for WHERE clause with team_id that applies to any alias
-	whereHasProfileID := regexp.MustCompile(`(?i)\bWHERE\b.*team_id\s*=\s*\$profileId`).MatchString(query)
-
 	for _, alias := range aliases {
 		// Check inline: {team_id: $profileId} for this specific alias
-		inlinePattern := regexp.MustCompile(fmt.Sprintf(`(?i)\(\s*%s\s*(?::\s*[a-zA-Z_][a-zA-Z0-9_]*)?\s*\{[^}]*team_id\s*:\s*\$profileId[^}]*\}`, regexp.QuoteMeta(alias)))
+		inlinePattern := regexp.MustCompile(fmt.Sprintf(`(?i)\(\s*%s\s*(?::\s*[a-zA-Z_][a-zA-Z0-9_]*(?:\s*:\s*[a-zA-Z_][a-zA-Z0-9_]*)*)?\s*\{[^}]*team_id\s*:\s*\$profileId[^}]*\}`, regexp.QuoteMeta(alias)))
 		if inlinePattern.MatchString(query) {
 			continue // This alias has inline team_id
 		}
@@ -147,16 +139,6 @@ func allAliasesHaveProfilePredicate(query string, aliases []string) bool {
 		wherePattern := regexp.MustCompile(fmt.Sprintf(`(?i)\bWHERE\b.*\b%s\.team_id\s*=\s*\$profileId`, regexp.QuoteMeta(alias)))
 		if wherePattern.MatchString(query) {
 			continue // This alias has WHERE team_id
-		}
-
-		// If WHERE clause has team_id but not specific to this alias, still accept
-		// (This handles cases like: WHERE n.team_id = $profileId AND m.team_id = $profileId)
-		if whereHasProfileID {
-			// Check if this specific alias is mentioned with team_id in WHERE
-			aliasProfileInWhere := regexp.MustCompile(fmt.Sprintf(`(?i)\b%s\.team_id\s*=\s*\$profileId`, regexp.QuoteMeta(alias))).MatchString(query)
-			if aliasProfileInWhere {
-				continue
-			}
 		}
 
 		// This alias doesn't have team_id constraint

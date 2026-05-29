@@ -166,6 +166,7 @@ func main() {
 	profileRepo := repository.NewProfileRepository(pgDB.GetDB(), rlsHelper)
 	apiKeyRepo := repository.NewAPIKeyRepository(pgDB.GetDB(), rlsHelper)
 	securityRepo := repository.NewSecurityRepository(pgDB.GetDB(), rlsHelper)
+	usageMetricsRepo := repository.NewUsageMetricsRepository(pgDB.GetDB(), rlsHelper)
 
 	// ========================================
 	// Neo4j profile scope enforcer and graph writer
@@ -178,6 +179,8 @@ func main() {
 	// ========================================
 	auditService := service.NewAuditService(pgDB.GetDB())
 	securityService := service.NewSecurityService(securityRepo, auditService)
+	usageMetricsService := service.NewUsageMetricsService(usageMetricsRepo, logger)
+	usageMetricsService.Start(context.Background())
 
 	profileService := service.NewProfileServiceWithDataPurger(profileRepo, auditService, backend.cleanupRepo, profileDataPurger)
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, profileService, auditService, backend.cleanupRepo, backend.cleanupRepo)
@@ -473,6 +476,7 @@ func main() {
 		ProfileService:   profileService,
 		ProfileSvc:       profileService,
 		RateLimitService: rateLimitService,
+		UsageMetrics:     usageMetricsService,
 		AuditService:     auditService,
 		SecurityService:  securityService,
 		Config:           &cfg,
@@ -512,7 +516,7 @@ func main() {
 
 	http.RegisterProtectedRoutesWithHandlers(e, protectedDeps, protectedHandlers)
 
-	controlServer, err := http.NewControlPortalServer(&cfg, profileService, apiKeyService, logger, securityService)
+	controlServer, err := http.NewControlPortalServerWithMetrics(&cfg, profileService, apiKeyService, usageMetricsService, healthConfig, logger, securityService)
 	if err != nil {
 		log.Fatalf("failed to build control portal server: %v", err)
 	}
@@ -545,5 +549,10 @@ func main() {
 	}
 	if err := http.ShutdownControlPortal(controlServer, logger); err != nil {
 		logger.Error("control portal shutdown error", err)
+	}
+	metricsShutdownCtx, metricsShutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer metricsShutdownCancel()
+	if err := usageMetricsService.Shutdown(metricsShutdownCtx); err != nil {
+		logger.Error("usage metrics shutdown error", err)
 	}
 }

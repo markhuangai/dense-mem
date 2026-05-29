@@ -25,4 +25,23 @@ describe("ControlApi", () => {
 
     await expect(api.session()).rejects.toMatchObject(new ApiError(401, "invalid token"));
   });
+
+  it("requests metrics with window and team filters", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: {
+        window: { from: "2026-05-02T12:00:00Z", to: "2026-05-02T13:00:00Z", bucket_seconds: 60, retention_days: 30 },
+        system: { requests: 0, errors: 0, avg_latency_ms: 0, max_latency_ms: 0 },
+        dependencies: [],
+        teams: [],
+        keys: [],
+        routes: [],
+      },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const api = new ControlApi("secret", "/control/api");
+    await api.getMetrics({ window_minutes: 60, team_id: "team-1" });
+
+    expect(fetchMock).toHaveBeenCalledWith("/control/api/metrics?window_minutes=60&team_id=team-1", expect.any(Object));
+  });
 });

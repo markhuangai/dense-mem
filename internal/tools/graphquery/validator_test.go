@@ -305,8 +305,8 @@ func TestAcceptScopedReadOnlyQuery(t *testing.T) {
 			query: "MATCH (n:SourceFragment {team_id: $profileId})-[:CONTAINS]->(f:Fact {team_id: $profileId})-[:LINKS_TO]->(t:Target {team_id: $profileId}) RETURN n, f, t",
 		},
 		{
-			name:  "OPTIONAL MATCH with team_id",
-			query: "MATCH (n:SourceFragment {team_id: $profileId}) OPTIONAL MATCH (n)-[:HAS_TAG]->(t:Tag) RETURN n, t",
+			name:  "OPTIONAL MATCH with all aliases scoped",
+			query: "MATCH (n:SourceFragment {team_id: $profileId}) OPTIONAL MATCH (n)-[:HAS_TAG]->(t:Tag {team_id: $profileId}) RETURN n, t",
 		},
 		{
 			name:  "WITH clause with team_id",
@@ -342,6 +342,62 @@ func TestAcceptScopedReadOnlyQuery(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validator.Validate(tt.query)
 			assert.NoError(t, err, "Query should be accepted: %s", tt.query)
+		})
+	}
+}
+
+func TestRejectUnscopedOptionalMatchAliases(t *testing.T) {
+	validator := NewCypherValidator()
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{
+			name:  "optional match introduces unscoped alias",
+			query: "MATCH (n:SourceFragment {team_id: $profileId}) OPTIONAL MATCH (n)-[:HAS_TAG]->(t:Tag) RETURN n, t",
+		},
+		{
+			name:  "optional match can scan all source fragments",
+			query: "MATCH (n:SourceFragment {team_id: $profileId}) OPTIONAL MATCH (m:SourceFragment) RETURN m LIMIT 10",
+		},
+		{
+			name:  "later match after with introduces unscoped alias",
+			query: "MATCH (n:SourceFragment {team_id: $profileId}) WITH n MATCH (m:SourceFragment) RETURN n, m",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validator.Validate(tt.query)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "team_id")
+		})
+	}
+}
+
+func TestRejectUnsafeBooleanTeamPredicates(t *testing.T) {
+	validator := NewCypherValidator()
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{
+			name:  "or can make scoped predicate optional",
+			query: "MATCH (n:SourceFragment) WHERE n.team_id = $profileId OR n.status = 'active' RETURN n",
+		},
+		{
+			name:  "not can invert scoped predicate",
+			query: "MATCH (n:SourceFragment) WHERE NOT n.team_id = $profileId RETURN n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validator.Validate(tt.query)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "boolean")
 		})
 	}
 }

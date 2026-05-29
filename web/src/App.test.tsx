@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { TeamProfile, Team, SecurityBan, SecuritySettings } from "./api";
+import { TeamProfile, Team, SecurityBan, SecuritySettings, ControlMetrics } from "./api";
 
 const profileA: Team = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -32,6 +32,34 @@ const securityBan: SecurityBan = {
   last_failed_at: "2026-05-02T12:00:00Z",
   metadata: {},
   revoked_at: null,
+};
+
+const metricsSnapshot: ControlMetrics = {
+  window: {
+    from: "2026-05-02T12:00:00Z",
+    to: "2026-05-02T13:00:00Z",
+    bucket_seconds: 60,
+    retention_days: 30,
+  },
+  system: {
+    requests: 42,
+    errors: 2,
+    avg_latency_ms: 18.5,
+    max_latency_ms: 90,
+  },
+  dependencies: [
+    { name: "postgres", status: "ok", latency_ms: 3 },
+    { name: "neo4j", status: "ok", latency_ms: 8 },
+  ],
+  teams: [
+    { team_id: profileA.id, team_name: "Default", requests: 42, errors: 2, avg_latency_ms: 18.5, max_latency_ms: 90 },
+  ],
+  keys: [
+    { team_id: profileA.id, team_name: "Default", key_id: keyA().id, key_name: "default profile", key_suffix: "abc123", requests: 40, errors: 1, avg_latency_ms: 17, max_latency_ms: 80 },
+  ],
+  routes: [
+    { route: "/api/v1/fragments/:id", method: "GET", status_class: "2xx", requests: 39, errors: 0, avg_latency_ms: 16, max_latency_ms: 70 },
+  ],
 };
 
 function keyA(profileId = profileA.id): TeamProfile {
@@ -207,6 +235,27 @@ describe("App", () => {
     await waitFor(() => expect(screen.queryByText("203.0.113.10")).not.toBeInTheDocument());
   });
 
+  it("shows operational metrics", async () => {
+    const fetchMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+
+    render(<App />);
+    await screen.findByRole("button", { name: /Default/ });
+    await userEvent.click(screen.getByRole("button", { name: /^metrics$/i }));
+
+    expect(await screen.findByRole("heading", { name: "Metrics" })).toBeInTheDocument();
+    expect((await screen.findAllByText("42")).length).toBeGreaterThan(0);
+    expect(screen.getByText("postgres")).toBeInTheDocument();
+    expect(screen.getByText("default profile")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/metrics?window_minutes=60"),
+        expect.objectContaining({ method: "GET" }),
+      );
+    });
+  });
+
   it("deletes a team", async () => {
     const deleteMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
     sessionStorage.setItem("denseMem.controlToken", "secret");
@@ -242,6 +291,9 @@ function mockPortalFetch({
 
     if (url.endsWith("/session")) {
       return jsonResponse({ data: { authenticated: true } });
+    }
+    if (url.includes("/metrics") && method === "GET") {
+      return jsonResponse({ data: metricsSnapshot });
     }
     if (url.endsWith("/teams") && method === "GET") {
       return jsonResponse(page(currentProfiles));

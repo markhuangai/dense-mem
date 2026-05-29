@@ -80,6 +80,60 @@ export type CreateSecurityBanInput = {
   expires_at?: string;
 };
 
+export type MetricsTotal = {
+  requests: number;
+  errors: number;
+  avg_latency_ms: number;
+  max_latency_ms: number;
+};
+
+export type MetricsWindow = {
+  from: string;
+  to: string;
+  bucket_seconds: number;
+  retention_days: number;
+};
+
+export type MetricsDependency = {
+  name: string;
+  status: "ok" | "error" | "degraded";
+  latency_ms: number | null;
+  message?: string;
+};
+
+export type MetricsTeam = MetricsTotal & {
+  team_id: string;
+  team_name: string;
+};
+
+export type MetricsKey = MetricsTotal & {
+  team_id: string;
+  team_name: string;
+  key_id: string;
+  key_name: string;
+  key_suffix: string;
+};
+
+export type MetricsRoute = MetricsTotal & {
+  route: string;
+  method: string;
+  status_class: string;
+};
+
+export type ControlMetrics = {
+  window: MetricsWindow;
+  system: MetricsTotal;
+  dependencies: MetricsDependency[];
+  teams: MetricsTeam[];
+  keys: MetricsKey[];
+  routes: MetricsRoute[];
+};
+
+export type MetricsQuery = {
+  window_minutes?: number;
+  team_id?: string;
+};
+
 export class ApiError extends Error {
   status: number;
 
@@ -163,6 +217,18 @@ export class ControlApi {
 
   deleteSecurityBan(ip: string): Promise<{ status: string }> {
     return this.requestEnvelope<{ status: string }>(`/security/bans/${encodeURIComponent(ip)}`, { method: "DELETE" });
+  }
+
+  getMetrics(query: MetricsQuery = {}): Promise<ControlMetrics> {
+    const params = new URLSearchParams();
+    if (query.window_minutes !== undefined) {
+      params.set("window_minutes", String(query.window_minutes));
+    }
+    if (query.team_id) {
+      params.set("team_id", query.team_id);
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    return this.requestEnvelope<ControlMetrics>(`/metrics${suffix}`);
   }
 
   private async requestEnvelope<T>(path: string, options: RequestOptions = {}): Promise<T> {

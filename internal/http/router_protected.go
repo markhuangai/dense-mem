@@ -24,6 +24,8 @@ type ProtectedDeps struct {
 	ProfileSvc handler.ProfileServiceInterface
 	// RateLimitService is the service for rate limiting.
 	RateLimitService service.RateLimitServiceInterface
+	// UsageMetrics records authenticated request usage for the control-panel metrics tab.
+	UsageMetrics service.UsageMetricsRecorder
 	// AuditService is the service for audit logging.
 	AuditService service.AuditService
 	// SecurityService checks active IP bans and records auth failures.
@@ -41,6 +43,7 @@ type ProtectedDepsInterface interface {
 	GetProfileService() middleware.ProfileResolutionServiceInterface
 	GetProfileSvc() handler.ProfileServiceInterface
 	GetRateLimitService() service.RateLimitServiceInterface
+	GetUsageMetrics() service.UsageMetricsRecorder
 	GetAuditService() service.AuditService
 	GetSecurityService() middleware.SecurityBanService
 	GetConfig() config.ConfigProvider
@@ -67,6 +70,10 @@ func (d *ProtectedDeps) GetRateLimitService() service.RateLimitServiceInterface 
 	return d.RateLimitService
 }
 
+func (d *ProtectedDeps) GetUsageMetrics() service.UsageMetricsRecorder {
+	return d.UsageMetrics
+}
+
 func (d *ProtectedDeps) GetAuditService() service.AuditService {
 	return d.AuditService
 }
@@ -90,6 +97,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	// Create profile authorization service from audit service
 	profileAuthzSvc := middleware.NewProfileAuthorizationService(deps.AuditService)
 	authMW := middleware.AuthMiddlewareWithSecurity(deps.APIKeyRepo, deps.AuditService, deps.SecurityService)
+	usageMW := middleware.UsageMetricsMiddleware(deps.UsageMetrics)
 
 	// Profile handler for profile operations
 	profileHandler := handler.NewProfileHandler(deps.ProfileSvc)
@@ -110,6 +118,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 		group.Use(authMW)
 		group.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 		group.Use(middleware.AuthorizeProfile(profileAuthzSvc))
+		group.Use(usageMW)
 		group.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
 
 		group.GET("", profileHandler.Get, middleware.RequireScopes("read"))
@@ -153,6 +162,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	fragmentGroup.Use(authMW)
 	fragmentGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	fragmentGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
+	fragmentGroup.Use(usageMW)
 	fragmentGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
 
 	if handlers.FragmentCreate != nil {
@@ -177,6 +187,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	claimGroup.Use(authMW)
 	claimGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	claimGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
+	claimGroup.Use(usageMW)
 	claimGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
 
 	if handlers.ClaimCreate != nil {
@@ -204,6 +215,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	factGroup.Use(authMW)
 	factGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	factGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
+	factGroup.Use(usageMW)
 	factGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
 
 	if handlers.FactGet != nil {
@@ -218,6 +230,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	communityGroup.Use(authMW)
 	communityGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	communityGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
+	communityGroup.Use(usageMW)
 	communityGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
 
 	if handlers.CommunityList != nil {
@@ -232,6 +245,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	mcpGroup.Use(authMW)
 	mcpGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	mcpGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
+	mcpGroup.Use(usageMW)
 	mcpGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
 	if handlers.MCPPost != nil {
 		mcpGroup.POST("", handlers.MCPPost)
@@ -245,6 +259,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	toolGroup.Use(authMW)
 	toolGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	toolGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
+	toolGroup.Use(usageMW)
 	toolGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
 
 	if handlers.ToolCatalog != nil {
@@ -281,6 +296,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	recallGroup.Use(authMW)
 	recallGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	recallGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
+	recallGroup.Use(usageMW)
 	recallGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
 
 	if handlers.Recall != nil {

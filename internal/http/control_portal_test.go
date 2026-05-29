@@ -192,6 +192,19 @@ func testControlServer(t *testing.T) (*controlProfileSvc, *controlKeySvc, http.H
 	return profiles, keys, e
 }
 
+type controlMetricsSvc struct {
+	snapshot *domain.UsageMetricsSnapshot
+	filter   domain.UsageMetricsFilter
+}
+
+func (s *controlMetricsSvc) Snapshot(_ context.Context, filter domain.UsageMetricsFilter) (*domain.UsageMetricsSnapshot, error) {
+	s.filter = filter
+	if s.snapshot != nil {
+		return s.snapshot, nil
+	}
+	return &domain.UsageMetricsSnapshot{}, nil
+}
+
 func TestControlPortalRejectsUnsafeConfig(t *testing.T) {
 	_, err := NewControlPortalServer(&config.Config{
 		ControlHTTPAddr: "127.0.0.1:8090",
@@ -221,6 +234,37 @@ func TestControlPortalAuthAndOrigin(t *testing.T) {
 	server.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "https://example.com", rec.Header().Get("Access-Control-Allow-Origin"))
+}
+
+func TestControlPortalMetrics(t *testing.T) {
+	profiles := &controlProfileSvc{}
+	keys := &controlKeySvc{}
+	metrics := &controlMetricsSvc{snapshot: &domain.UsageMetricsSnapshot{
+		System: domain.UsageMetricTotal{Requests: 3, Errors: 1, AvgLatencyMS: 12.5, MaxLatencyMS: 40},
+		Teams:  []domain.UsageTeamMetric{{TeamID: uuid.New(), TeamName: "Default", UsageMetricTotal: domain.UsageMetricTotal{Requests: 3}}},
+	}}
+	health := HealthConfig{Checks: []HealthCheck{{
+		Name: "postgres",
+		Check: func(context.Context) error {
+			return nil
+		},
+	}}}
+	e, err := NewControlPortalServerWithMetrics(&config.Config{
+		ControlHTTPAddr:    "127.0.0.1:8090",
+		ControlPortalToken: "secret",
+	}, profiles, keys, metrics, health, nil)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/control/api/metrics?window_minutes=30", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"requests":3`)
+	require.Contains(t, rec.Body.String(), `"dependencies"`)
+	require.Contains(t, rec.Body.String(), `"postgres"`)
+	require.True(t, metrics.filter.To.After(metrics.filter.From))
 }
 
 func TestControlPortalProfileAndKeyFlows(t *testing.T) {

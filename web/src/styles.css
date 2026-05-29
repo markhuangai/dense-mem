@@ -526,6 +526,24 @@ button:disabled {
   width: 120px;
 }
 
+.metrics-table {
+  min-width: 760px;
+}
+
+.metrics-table th:not(:first-child),
+.metrics-table td:not(:first-child) {
+  width: 116px;
+}
+
+.route-metrics-table {
+  min-width: 820px;
+}
+
+.route-metrics-table th:first-child,
+.route-metrics-table td:first-child {
+  width: 420px;
+}
+
 .profile-name-cell,
 .table-actions {
   display: flex;
@@ -570,6 +588,39 @@ button:disabled {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 16px;
+}
+
+.metrics-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.metrics-toolbar {
+  display: grid;
+  grid-template-columns: 72px minmax(130px, 170px) 52px minmax(160px, 220px);
+  gap: 10px;
+  align-items: center;
+  padding: 12px 0 16px;
+  border-top: 1px solid var(--border);
+}
+
+.metrics-block {
+  margin-top: 16px;
+}
+
+.dependency-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dependency-grid .summary-item small {
+  display: block;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .summary-item {
@@ -672,6 +723,11 @@ code {
   background: var(--warning-soft);
 }
 
+.status-pill.error {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
 .status-pill.neutral {
   color: var(--accent-strong);
   background: var(--accent-soft);
@@ -717,7 +773,7 @@ code {
   }
 
   .portal-tabs {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .tab-button {
@@ -734,8 +790,14 @@ code {
     grid-template-columns: 1fr;
   }
 
-  .security-summary {
+  .security-summary,
+  .metrics-summary,
+  .dependency-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .metrics-toolbar {
+    grid-template-columns: 1fr 1fr;
   }
 }
 
@@ -762,7 +824,10 @@ code {
   }
 
   .portal-tabs,
-  .security-summary {
+  .security-summary,
+  .metrics-summary,
+  .dependency-grid,
+  .metrics-toolbar {
     grid-template-columns: 1fr;
   }
 

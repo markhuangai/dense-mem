@@ -35,6 +35,18 @@ func NewControlPortalServer(
 	logger observability.LogProvider,
 	securitySvcs ...service.SecurityService,
 ) (*echo.Echo, error) {
+	return NewControlPortalServerWithMetrics(cfg, profileSvc, apiKeySvc, nil, HealthConfig{}, logger, securitySvcs...)
+}
+
+func NewControlPortalServerWithMetrics(
+	cfg config.ConfigProvider,
+	profileSvc handler.ProfileServiceInterface,
+	apiKeySvc handler.APIKeyServiceInterface,
+	metricsSvc service.UsageMetricsReader,
+	health HealthConfig,
+	logger observability.LogProvider,
+	securitySvcs ...service.SecurityService,
+) (*echo.Echo, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("control portal: config is required")
 	}
@@ -79,10 +91,11 @@ func NewControlPortalServer(
 		e.Use(httpmw.SecurityBanMiddleware(securitySvc))
 	}
 
-	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc}
+	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc, metrics: metricsSvc, health: health}
 	api := e.Group("/control/api")
 	api.Use(controlPortalMiddleware(cfg.GetControlPortalToken(), securitySvc))
 	api.GET("/session", control.session)
+	api.GET("/metrics", control.getMetrics)
 	api.GET("/teams", control.listProfiles)
 	api.POST("/teams", control.createProfile)
 	api.PATCH("/teams/:teamId", control.updateProfile)
@@ -119,10 +132,34 @@ type controlPortalHandler struct {
 	profiles handler.ProfileServiceInterface
 	keys     handler.APIKeyServiceInterface
 	security service.SecurityService
+	metrics  service.UsageMetricsReader
+	health   HealthConfig
 }
 
 func (h *controlPortalHandler) session(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": map[string]bool{"authenticated": true}})
+}
+
+func (h *controlPortalHandler) getMetrics(c echo.Context) error {
+	if h.metrics == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "usage metrics unavailable")
+	}
+	filter, err := controlMetricsFilter(c)
+	if err != nil {
+		return err
+	}
+	snapshot, err := h.metrics.Snapshot(c.Request().Context(), filter)
+	if err != nil {
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": controlMetricsResponse{
+		Window:       snapshot.Window,
+		System:       snapshot.System,
+		Dependencies: controlDependencySnapshot(c.Request().Context(), h.health),
+		Teams:        snapshot.Teams,
+		Keys:         snapshot.Keys,
+		Routes:       snapshot.Routes,
+	}})
 }
 
 func (h *controlPortalHandler) listProfiles(c echo.Context) error {
@@ -471,6 +508,94 @@ type controlCreateSecurityBanRequest struct {
 	IP        string  `json:"ip"`
 	Reason    string  `json:"reason"`
 	ExpiresAt *string `json:"expires_at"`
+}
+
+type controlMetricsResponse struct {
+	Window       domain.UsageMetricsWindow   `json:"window"`
+	System       domain.UsageMetricTotal     `json:"system"`
+	Dependencies []controlDependencyResponse `json:"dependencies"`
+	Teams        []domain.UsageTeamMetric    `json:"teams"`
+	Keys         []domain.UsageKeyMetric     `json:"keys"`
+	Routes       []domain.UsageRouteMetric   `json:"routes"`
+}
+
+type controlDependencyResponse struct {
+	Name      string  `json:"name"`
+	Status    string  `json:"status"`
+	LatencyMS *int64  `json:"latency_ms"`
+	Message   *string `json:"message,omitempty"`
+}
+
+const (
+	controlMetricsDefaultWindowMinutes = 60
+	controlMetricsMaxWindowMinutes     = 43200
+)
+
+func controlMetricsFilter(c echo.Context) (domain.UsageMetricsFilter, error) {
+	windowMinutes := controlMetricsDefaultWindowMinutes
+	if raw := strings.TrimSpace(c.QueryParam("window_minutes")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > controlMetricsMaxWindowMinutes {
+			return domain.UsageMetricsFilter{}, httperr.New(httperr.VALIDATION_ERROR, "window_minutes must be between 1 and 43200")
+		}
+		windowMinutes = parsed
+	}
+
+	var teamID *uuid.UUID
+	if raw := strings.TrimSpace(c.QueryParam("team_id")); raw != "" {
+		parsed, err := uuid.Parse(raw)
+		if err != nil {
+			return domain.UsageMetricsFilter{}, httperr.New(httperr.INVALID_UUID, "invalid team ID format")
+		}
+		teamID = &parsed
+	}
+
+	to := time.Now().UTC()
+	return domain.UsageMetricsFilter{
+		From:   to.Add(-time.Duration(windowMinutes) * time.Minute),
+		To:     to,
+		TeamID: teamID,
+	}, nil
+}
+
+func controlDependencySnapshot(ctx context.Context, health HealthConfig) []controlDependencyResponse {
+	responses := make([]controlDependencyResponse, 0, len(health.Checks)+1)
+	for _, check := range health.Checks {
+		if check.Check == nil {
+			continue
+		}
+		checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		start := time.Now()
+		err := check.Check(checkCtx)
+		latency := time.Since(start).Milliseconds()
+		cancel()
+
+		status := "ok"
+		var message *string
+		if err != nil {
+			status = "error"
+			text := err.Error()
+			message = &text
+		}
+		responses = append(responses, controlDependencyResponse{
+			Name:      check.Name,
+			Status:    status,
+			LatencyMS: &latency,
+			Message:   message,
+		})
+	}
+	if health.Degraded {
+		message := health.Reason
+		if message == "" {
+			message = "degraded mode"
+		}
+		responses = append(responses, controlDependencyResponse{
+			Name:    "redis",
+			Status:  "degraded",
+			Message: &message,
+		})
+	}
+	return responses
 }
 
 func controlPortalMiddleware(token string, securitySvc service.SecurityService) echo.MiddlewareFunc {
