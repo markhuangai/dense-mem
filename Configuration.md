@@ -109,8 +109,7 @@ docker compose --profile redis up -d
 The quick start is local only. Skip this section unless you intentionally want
 Dense-Mem reachable through a public HTTPS domain.
 
-For public HTTPS, download the expert compose example after the local setup
-works:
+For public HTTPS, download the [expert compose example](https://github.com/markhuangai/dense-mem/blob/main/examples/docker-compose.expert.yml) after the local setup works:
 
 ```bash
 curl -fsSLo docker-compose.yml \

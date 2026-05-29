@@ -20,8 +20,8 @@ Dense-Mem provides two downloadable compose examples:
 
 | Example | Use it when |
 | --- | --- |
-| `docker-compose.base.yml` | You want the easiest local-only setup. Start here. |
-| `docker-compose.expert.yml` | You need public HTTPS, Traefik, Redis, or advanced edge settings. |
+| [docker-compose.base.yml](https://github.com/markhuangai/dense-mem/blob/main/examples/docker-compose.base.yml) | You want the easiest local-only setup. Start here. |
+| [docker-compose.expert.yml](https://github.com/markhuangai/dense-mem/blob/main/examples/docker-compose.expert.yml) | You need public HTTPS, Traefik, Redis, or advanced edge settings. |
 
 ## Step 1: Get The Files
 
@@ -32,7 +32,7 @@ mkdir dense-mem-local
 cd dense-mem-local
 ```
 
-Download the base local-only compose file:
+Download the [base local-only compose file](https://github.com/markhuangai/dense-mem/blob/main/examples/docker-compose.base.yml):
 
 ```bash
 curl -fsSLo docker-compose.yml \
@@ -178,8 +178,7 @@ Your data stays in Docker volumes unless you intentionally remove those volumes.
 
 ## Optional: Expert Compose
 
-Use the expert example only when you intentionally need public HTTPS, Traefik,
-Redis, or edge limits:
+Use the [expert compose file](https://github.com/markhuangai/dense-mem/blob/main/examples/docker-compose.expert.yml) only when you intentionally need public HTTPS, Traefik, Redis, or edge limits:
 
 ```bash
 curl -fsSLo docker-compose.yml \
