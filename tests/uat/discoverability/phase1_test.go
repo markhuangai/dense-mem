@@ -251,7 +251,7 @@ func TestUAT11_MCPHTTPDiscovery(t *testing.T) {
 		"MCP server takes the shared registry, not its own tool list")
 }
 
-// UAT-12: Hybrid recall merges semantic + keyword via RRF with profile_id
+// UAT-12: Hybrid recall merges semantic + keyword via RRF with team_id
 // post-filter and fragment-only results (Unit 22).
 // AC trace: AC-38, AC-39, AC-40, AC-51.
 func TestUAT12_HybridRecallRanking(t *testing.T) {
@@ -259,7 +259,7 @@ func TestUAT12_HybridRecallRanking(t *testing.T) {
 	for _, sym := range []string{
 		"RRFConstant", "OverfetchMultiplier",
 		"RecallRequest", "RecallHit",
-		"profile_id",
+		"team_id",
 	} {
 		assert.Contains(t, body, sym,
 			"recall.go must declare %q", sym)
@@ -275,7 +275,7 @@ func TestUAT12_HybridRecallRanking(t *testing.T) {
 	assert.Equal(t, 5, req.Limit)
 }
 
-// UAT-13: Recall fails closed on embedding errors and isolates by profile_id
+// UAT-13: Recall fails closed on embedding errors and isolates by caller profile
 // (Unit 22).
 // AC trace: AC-39, AC-40, AC-47, AC-52.
 func TestUAT13_RecallCrossProfileIsolation(t *testing.T) {
@@ -285,7 +285,7 @@ func TestUAT13_RecallCrossProfileIsolation(t *testing.T) {
 		"recall must expose a sanitized embedding-unavailable error (AC-40)")
 	assert.Contains(t, body, "fail-closed",
 		"recall must document fail-closed behavior")
-	// SourceFragment-only and defensive post-filter by profile_id (AC-39, AC-47).
+	// SourceFragment-only and defensive post-filter by caller profile (AC-39, AC-47).
 	assert.Contains(t, body, "SourceFragment",
 		"recall must keep only SourceFragment-typed hits")
 	assert.Contains(t, body, "h.ProfileID != profileID",
