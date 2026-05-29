@@ -102,6 +102,15 @@ After you answer, the assistant can confirm which memory should stay active.
 
 Dense-Mem keys are tied to a team and a named profile.
 
+Use these terms this way:
+
+| Term | Meaning |
+| --- | --- |
+| Team | Top-level memory boundary. Use separate teams when memory should not mix. |
+| Profile | Named key identity inside a team, usually one assistant, role, workflow, or automation. |
+| Read-write key | Can remember, import, confirm, and otherwise mutate memory for its team/profile. |
+| Read-only key | Can recall, search, and inspect memory, but cannot write or change it. |
+
 Use this when you want separate memory spaces:
 
 | Situation | Suggested setup |
@@ -111,7 +120,8 @@ Use this when you want separate memory spaces:
 | Multiple projects | One team per project |
 | Automation that should only read | Read-only profile key |
 
-Do not share a write key with tools that should only search memory.
+Do not share a write key with tools that should only search memory. See
+[Read-Only Keys](Technical-Reference#read-only-keys) for the API example.
 
 ## Daily Operator Commands
 
