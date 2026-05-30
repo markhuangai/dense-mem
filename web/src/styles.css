@@ -623,6 +623,112 @@ button:disabled {
   font-size: 12px;
 }
 
+.key-summary {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  background: var(--panel-strong);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.key-summary span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 740;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-form {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.entity-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.knowledge-list {
+  display: grid;
+  gap: 10px;
+}
+
+.knowledge-item {
+  min-width: 0;
+  padding: 13px;
+  background: var(--panel-strong);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.knowledge-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.knowledge-item-head small {
+  color: var(--subtle);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.knowledge-item h3 {
+  margin: 0 0 6px;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.knowledge-item p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.key-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 16px;
+}
+
+.key-detail-grid div {
+  min-width: 0;
+  padding: 12px;
+  background: var(--panel-strong);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.key-detail-grid dt {
+  margin-bottom: 6px;
+  color: var(--subtle);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.key-detail-grid dd {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .summary-item {
   min-width: 0;
   padding: 12px;
@@ -798,6 +904,11 @@ code {
 
   .metrics-toolbar {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .search-form,
+  .key-detail-grid {
+    grid-template-columns: 1fr;
   }
 }
 

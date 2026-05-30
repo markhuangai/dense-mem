@@ -209,6 +209,16 @@ Runtime controls:
 The server rejects missing and invalid control portal tokens. Network exposure is
 an operator deployment decision.
 
+## User Knowledge Portal
+
+The API-key user portal is served by the main API process at `/ui`. It accepts
+normal Dense-Mem API keys and is intentionally narrower than the control portal:
+it can view the authenticated team's knowledge, show only the current key
+profile, and regenerate only that current key when it has `write` scope.
+
+It cannot update team metadata, create keys, list other team profiles, rotate
+other keys, or rename the current profile.
+
 ## Operational Notes
 
 - Redis is optional for single-node use.

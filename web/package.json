@@ -5,10 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit && vite build",
+    "dev:user": "vite --config vite.user.config.ts --host 127.0.0.1",
+    "build": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit && vite build && vite build --config vite.user.config.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "playwright": "playwright test"
+    "playwright": "bash ../scripts/e2e-compose.sh",
+    "playwright:compose": "playwright test --config playwright.compose.config.ts",
+    "playwright:mock": "npm run playwright:mock:control && npm run playwright:mock:user",
+    "playwright:mock:control": "playwright test",
+    "playwright:mock:user": "playwright test --config playwright.user.config.ts"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.0.4",

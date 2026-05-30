@@ -1,0 +1,244 @@
+import { expect, Page, test } from "@playwright/test";
+
+const team = {
+  id: "11111111-1111-4111-8111-111111111111",
+  name: "Research Team",
+  description: "",
+  created_at: "2026-05-01T12:00:00Z",
+  updated_at: "2026-05-01T12:00:00Z",
+};
+
+type TestKey = {
+  id: string;
+  team_id: string;
+  name: string;
+  key_suffix: string;
+  scopes: string[];
+  rate_limit: number;
+  last_used_at: string | null;
+  expires_at: string | null;
+  created_at: string;
+};
+
+const readKey: TestKey = {
+  id: "22222222-2222-4222-8222-222222222222",
+  team_id: team.id,
+  name: "Mine",
+  key_suffix: "abc123",
+  scopes: ["read"],
+  rate_limit: 120,
+  last_used_at: null,
+  expires_at: null,
+  created_at: "2026-05-01T12:00:00Z",
+};
+
+const writeKey: TestKey = {
+  ...readKey,
+  scopes: ["read", "write"],
+};
+
+const facts = [
+  {
+    fact_id: "fact-1",
+    subject: "Alice",
+    predicate: "works_on",
+    object: "project-x",
+    status: "active",
+    truth_score: 0.94,
+    recorded_at: "2026-05-02T12:00:00Z",
+  },
+];
+
+const claims = [
+  {
+    claim_id: "claim-1",
+    subject: "Alice",
+    predicate: "uses",
+    object: "Dense-Mem",
+    modality: "assertion",
+    polarity: "+",
+    status: "validated",
+    entailment_verdict: "entailed",
+    extract_conf: 0.91,
+    resolution_conf: 0.88,
+    recorded_at: "2026-05-02T12:00:00Z",
+  },
+];
+
+const fragments = [
+  {
+    id: "frag-1",
+    fragment_id: "frag-1",
+    content: "Alice is working on project-x with Dense-Mem.",
+    source_type: "manual",
+    source: "notes",
+    labels: ["project"],
+    status: "active",
+    created_at: "2026-05-02T12:00:00Z",
+    updated_at: "2026-05-02T12:00:00Z",
+  },
+];
+
+const communities = [
+  {
+    community_id: "community-1",
+    level: 0,
+    summary: "Project work around Dense-Mem.",
+    member_count: 3,
+    top_entities: ["Alice", "project-x", "Dense-Mem"],
+    top_predicates: ["works_on", "uses"],
+    last_summarized_at: "2026-05-02T12:00:00Z",
+  },
+];
+
+test("API key login, recall, and read-only knowledge tabs", async ({ page }) => {
+  const calls = await mockUserApi(page, { key: readKey, canRotate: false });
+  await openUserPortal(page, "dm_read");
+
+  await expect(page.getByText("Research Team")).toBeVisible();
+  await expect(page.getByText("Mine")).toBeVisible();
+  await expect(page.getByText("Other profile")).toBeHidden();
+
+  await page.getByLabel("Keyword").fill("project");
+  await page.getByRole("button", { name: "Search" }).click();
+  await expect(page.getByRole("heading", { name: "Alice" }).first()).toBeVisible();
+  await expect(page.getByText("project-x").first()).toBeVisible();
+  await expect(page.getByText("Dense-Mem").first()).toBeVisible();
+
+  await page.getByRole("button", { name: "Facts" }).click();
+  await expect(page.getByText("works_on: project-x")).toBeVisible();
+
+  await page.getByRole("button", { name: "Claims" }).click();
+  await expect(page.getByText("uses: Dense-Mem")).toBeVisible();
+
+  await page.getByRole("button", { name: "Fragments" }).click();
+  await expect(page.getByText("Alice is working on project-x with Dense-Mem.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Communities" }).click();
+  await expect(page.getByText("Project work around Dense-Mem.")).toBeVisible();
+  expect(calls.disallowedProfileCalls).toEqual([]);
+});
+
+test("read-only key cannot regenerate itself", async ({ page }) => {
+  await mockUserApi(page, { key: readKey, canRotate: false });
+  await openUserPortal(page, "dm_read");
+
+  await page.getByRole("button", { name: /My key/i }).click();
+  await expect(page.getByRole("button", { name: /Regenerate key/i })).toBeDisabled();
+});
+
+test("write key regenerates only through the self-rotate endpoint", async ({ page }) => {
+  const calls = await mockUserApi(page, { key: writeKey, canRotate: true });
+  await openUserPortal(page, "dm_write");
+
+  await page.getByRole("button", { name: /My key/i }).click();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: /Regenerate key/i }).click();
+
+  const details = page.getByLabel("Knowledge details");
+  await expect(details.getByText("dm_new_plaintext")).toBeVisible();
+  await expect(details.getByText("******new123")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("denseMem.userApiKey"))).toBe("dm_new_plaintext");
+  expect(calls.rotateBodies).toEqual(["{}"]);
+  expect(calls.disallowedProfileCalls).toEqual([]);
+});
+
+test("invalid API key shows login error", async ({ page }) => {
+  await page.route("**/ui/api/session", async (route) => {
+    await route.fulfill({
+      status: 401,
+      contentType: "application/json",
+      body: JSON.stringify({ message: "invalid api key" }),
+    });
+  });
+  await page.goto("/ui/");
+
+  await page.getByLabel("API key").fill("wrong");
+  await page.getByRole("button", { name: "Sign in" }).click();
+
+  await expect(page.getByRole("alert")).toContainText("invalid api key");
+});
+
+test("responsive user portal layout", async ({ page }) => {
+  await mockUserApi(page, { key: readKey, canRotate: false });
+  await openUserPortal(page, "dm_read");
+
+  await expect(page.getByRole("heading", { name: "Dense-Mem Knowledge" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Recall" })).toBeVisible();
+
+  if ((page.viewportSize()?.width ?? 1000) < 700) {
+    await expect(page.locator(".workspace")).toHaveCSS("grid-template-columns", /[0-9.]+px/);
+  }
+});
+
+async function openUserPortal(page: Page, apiKey: string) {
+  await page.goto("/ui/");
+  await page.getByLabel("API key").fill(apiKey);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByText("Research Team")).toBeVisible();
+}
+
+async function mockUserApi(page: Page, state: { key: TestKey; canRotate: boolean }) {
+  const calls = {
+    rotateBodies: [] as string[],
+    disallowedProfileCalls: [] as string[],
+  };
+  let currentKey = { ...state.key };
+  let currentCanRotate = state.canRotate;
+
+  await page.route("**/api/v1/teams/**/profiles**", async (route) => {
+    calls.disallowedProfileCalls.push(route.request().url());
+    await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ message: "profile list must not be called" }) });
+  });
+
+  await page.route("**/ui/api/session", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ data: { team, key: currentKey, can_rotate: currentCanRotate } }),
+    });
+  });
+
+  await page.route("**/ui/api/key/rotate", async (route) => {
+    calls.rotateBodies.push(route.request().postData() ?? "");
+    currentKey = { ...currentKey, key_suffix: "new123", last_used_at: null };
+    currentCanRotate = currentKey.scopes.includes("write");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ data: { api_key: "dm_new_plaintext", key: currentKey } }),
+    });
+  });
+
+  await page.route("**/api/v1/recall**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: [
+          { tier: "1", score: 0.94, fact: facts[0], semantic_rank: 0, keyword_rank: 0, final_score: 0 },
+          { tier: "1.5", score: 0.45, claim: claims[0], semantic_rank: 0, keyword_rank: 0, final_score: 0 },
+          { tier: "2", score: 0.02, fragment: fragments[0], semantic_rank: 1, keyword_rank: 2, final_score: 0.02 },
+        ],
+      }),
+    });
+  });
+
+  await page.route("**/api/v1/facts**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: facts, has_more: false }) });
+  });
+
+  await page.route("**/api/v1/claims**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: claims, has_more: false }) });
+  });
+
+  await page.route("**/api/v1/fragments**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: fragments, has_more: false }) });
+  });
+
+  await page.route("**/api/v1/communities**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: communities, total: communities.length }) });
+  });
+
+  return calls;
+}

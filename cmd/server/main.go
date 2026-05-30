@@ -515,6 +515,16 @@ func main() {
 	protectedHandlers.FragmentCreate = fragmentCreateHandler.Handle
 
 	http.RegisterProtectedRoutesWithHandlers(e, protectedDeps, protectedHandlers)
+	http.RegisterUserPortal(e, http.UserPortalDeps{
+		APIKeyRepo:   apiKeyRepo,
+		ProfileSvc:   profileService,
+		APIKeySvc:    apiKeyService,
+		RateLimitSvc: rateLimitService,
+		UsageMetrics: usageMetricsService,
+		AuditSvc:     auditService,
+		SecuritySvc:  securityService,
+		Config:       &cfg,
+	})
 
 	controlServer, err := http.NewControlPortalServerWithMetrics(&cfg, profileService, apiKeyService, usageMetricsService, healthConfig, logger, securityService)
 	if err != nil {

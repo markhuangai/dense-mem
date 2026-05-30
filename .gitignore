@@ -5,6 +5,7 @@ bun.lockb
 # Build outputs
 dist/
 build/
+user-dist/
 *.tsbuildinfo
 
 # Environment files

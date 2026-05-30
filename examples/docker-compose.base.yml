@@ -12,6 +12,7 @@
 #
 # This example exposes Dense-Mem only on localhost:
 #   MCP/API:        http://127.0.0.1:8080/mcp
+#   User portal:    http://127.0.0.1:8080/ui
 #   Control portal: http://127.0.0.1:8090/
 
 services:

@@ -83,6 +83,7 @@ host ports:
 
 ```text
 MCP/API:        http://127.0.0.1:8080/mcp
+User portal:    http://127.0.0.1:8080/ui
 Control portal: http://127.0.0.1:8090/
 ```
 

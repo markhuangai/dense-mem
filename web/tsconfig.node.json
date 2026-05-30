@@ -8,5 +8,5 @@
     "noEmit": true,
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo"
   },
-  "include": ["vite.config.ts", "playwright.config.ts"]
+  "include": ["vite.config.ts", "vite.user.config.ts", "playwright.config.ts", "playwright.user.config.ts", "playwright.compose.config.ts"]
 }

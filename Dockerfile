@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.7
-
 # ============================================================================
 # Web portal build stage
 # ============================================================================
@@ -24,17 +22,14 @@ WORKDIR /src
 
 # Module download in its own layer so source edits do not bust the cache.
 COPY go.mod go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod \
-    go mod download
+RUN go mod download
 
 COPY . .
 
 # CGO=0 produces a static binary that runs on alpine without libc shims.
 # -trimpath strips build-host paths; -ldflags="-s -w" drops symbol + DWARF
 # tables (smaller image, no debugger support in prod).
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux \
+RUN CGO_ENABLED=0 GOOS=linux \
     go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server && \
     CGO_ENABLED=0 GOOS=linux \
     go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate && \
@@ -104,6 +99,7 @@ COPY --from=builder /out/rotate-team-profile-key /app/rotate-team-profile-key
 COPY --chown=densemem:densemem migrations /app/migrations
 
 COPY --from=web-builder --chown=densemem:densemem /web/dist /app/web/dist
+COPY --from=web-builder --chown=densemem:densemem /web/user-dist /app/web/user-dist
 
 # Entrypoint wrapper assembles POSTGRES_DSN from component env vars if the
 # DSN is not supplied directly. Keeps the full credentialed URL literal out
