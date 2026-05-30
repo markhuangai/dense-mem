@@ -11,6 +11,10 @@
 #   CONTROL_PORTAL_TOKEN
 #   AI_API_KEY
 #
+# The server also requires AI_API_URL, AI_API_EMBEDDING_MODEL, and
+# AI_API_EMBEDDING_DIMENSIONS. This compose example supplies OpenAI defaults
+# below; set them in .env when using another provider or model.
+#
 # Set real values when enabling the traefik profile:
 #   DENSE_MEM_DOMAIN
 #   ACME_EMAIL

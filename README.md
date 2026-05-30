@@ -56,8 +56,8 @@ retrieved later.
 
 ## 60-Second Quickstart
 
-Download the base local-only compose example, set the required secrets, and
-start Dense-Mem:
+Download the base local-only compose example and env template, set the required
+secrets, and start Dense-Mem:
 
 ```bash
 mkdir dense-mem-local
@@ -65,13 +65,12 @@ cd dense-mem-local
 
 curl -fsSLo docker-compose.yml \
   https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/docker-compose.base.yml
+curl -fsSLo .env.example \
+  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/.env.example
 
-cat > .env <<'EOF'
-POSTGRES_PASSWORD=choose-a-strong-postgres-password
-NEO4J_PASSWORD=choose-a-strong-neo4j-password
-CONTROL_PORTAL_TOKEN=choose-a-long-control-portal-token
-AI_API_KEY=your-ai-provider-api-key
-EOF
+cp .env.example .env
+# Fill in POSTGRES_PASSWORD, NEO4J_PASSWORD, CONTROL_PORTAL_TOKEN, and AI_API_KEY.
+${EDITOR:-vi} .env
 
 docker compose up -d
 docker compose exec server /app/provision-team --name "primary-memory"
@@ -90,6 +89,14 @@ Control portal: http://127.0.0.1:8090/
 Cold image pulls can take longer than 60 seconds. Redis and public HTTPS are
 intentionally omitted from the base example; use the expert example when you
 need those deployment options.
+
+The server requires a complete embedding configuration at startup:
+`AI_API_URL`, `AI_API_KEY`, `AI_API_EMBEDDING_MODEL`, and
+`AI_API_EMBEDDING_DIMENSIONS`. The compose examples provide OpenAI defaults for
+the URL, model, and dimensions (`https://api.openai.com/v1`,
+`text-embedding-3-small`, `1536`), so the minimal local setup only needs you to
+fill in `AI_API_KEY`. Override those values together when using a different
+embedding provider or model.
 
 ## Compare
 
