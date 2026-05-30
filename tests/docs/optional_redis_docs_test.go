@@ -14,7 +14,7 @@ func TestOptionalRedisDocs_AllSixFilesUpdated(t *testing.T) {
 		"../../.claude/rules/database.md",
 		"../../.claude/rules/profile-isolation.md",
 		"../../README.md",
-		"../../.env.example",
+		"../../examples/.env.example",
 		"../../docs/standalone-mcp-memory-architecture.md",
 	}
 
