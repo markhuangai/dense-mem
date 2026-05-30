@@ -15,8 +15,13 @@ limits, or public access.
 | `NEO4J_PASSWORD` | Password for Neo4j. | Choose a strong secret. |
 | `CONTROL_PORTAL_TOKEN` | Token required to use the local control portal. | Choose a long secret. |
 | `AI_API_KEY` | API key used by the embedding provider. | Your provider key. |
-| `AI_API_EMBEDDING_MODEL` | Embedding model name. | Default is `text-embedding-3-small`. |
-| `AI_API_EMBEDDING_DIMENSIONS` | Embedding size expected from the model. | Default is `1536`. |
+
+The server requires a complete embedding configuration at startup:
+`AI_API_URL`, `AI_API_KEY`, `AI_API_EMBEDDING_MODEL`, and
+`AI_API_EMBEDDING_DIMENSIONS`. The compose examples supply OpenAI defaults for
+the URL, model, and dimensions, so the first local setup only needs an
+`AI_API_KEY`. Set all four values explicitly when using a different embedding
+provider or model.
 
 Dense-Mem validates embedding configuration on startup. Do not change embedding
 model or dimensions casually after storing memory. Mixed vector dimensions can
@@ -70,6 +75,12 @@ Embeddings are required for normal writes and recall.
 | `AI_API_EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model. |
 | `AI_API_EMBEDDING_DIMENSIONS` | `1536` | Expected embedding dimensions. |
 | `AI_API_EMBEDDING_TIMEOUT_SECONDS` | `30` | Embedding request timeout. |
+
+`AI_API_URL`, `AI_API_KEY`, `AI_API_EMBEDDING_MODEL`, and
+`AI_API_EMBEDDING_DIMENSIONS` are all required by the server. The defaults above
+come from the compose examples and target OpenAI's
+`text-embedding-3-small` model. For another provider, change the URL, model, and
+dimension together.
 
 Claim verification can use the same provider or a separate verifier provider.
 
