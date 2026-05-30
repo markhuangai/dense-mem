@@ -152,6 +152,11 @@ func principalCanSeeTool(principal *middleware.Principal, tool registry.Tool) bo
 }
 
 func mapToolExecuteError(err error) *httperr.APIError {
+	var apiErr *httperr.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr
+	}
+
 	switch {
 	case errors.Is(err, registry.ErrToolUnavailable):
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "tool unavailable")

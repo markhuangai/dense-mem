@@ -49,6 +49,10 @@ func (h *ClaimPromoteHandler) Handle(c echo.Context) error {
 
 	fact, err := h.svc.Promote(ctx, profileID.String(), claimID)
 	if err != nil {
+		var apiErr *httperr.APIError
+		if errors.As(err, &apiErr) {
+			return apiErr
+		}
 		switch {
 		case errors.Is(err, factservice.ErrClaimNotFound):
 			return httperr.New(httperr.ErrClaimNotFound, "claim not found")

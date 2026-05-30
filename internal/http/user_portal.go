@@ -23,15 +23,16 @@ import (
 
 // UserPortalDeps holds the dependencies for the API-key user portal.
 type UserPortalDeps struct {
-	APIKeyRepo    repository.APIKeyRepository
-	ProfileSvc    handler.ProfileServiceInterface
-	APIKeySvc     handler.APIKeyServiceInterface
-	RateLimitSvc  service.RateLimitServiceInterface
-	UsageMetrics  service.UsageMetricsRecorder
-	AuditSvc      service.AuditService
-	SecuritySvc   httpmw.SecurityBanService
-	Config        config.ConfigProvider
-	UserStaticDir string
+	APIKeyRepo      repository.APIKeyRepository
+	ProfileSvc      handler.ProfileServiceInterface
+	APIKeySvc       handler.APIKeyServiceInterface
+	RateLimitSvc    service.RateLimitServiceInterface
+	UsageMetrics    service.UsageMetricsRecorder
+	AuditSvc        service.AuditService
+	SecuritySvc     httpmw.SecurityBanService
+	Config          config.ConfigProvider
+	UserStaticDir   string
+	ExtraMiddleware []echo.MiddlewareFunc
 }
 
 // RegisterUserPortal registers the API-key user portal under /ui on the main API server.
@@ -43,6 +44,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 
 	api := e.Group("/ui/api")
 	api.Use(httpmw.AuthMiddlewareWithSecurity(deps.APIKeyRepo, deps.AuditSvc, deps.SecuritySvc))
+	api.Use(deps.ExtraMiddleware...)
 	api.Use(httpmw.UsageMetricsMiddleware(deps.UsageMetrics))
 	api.Use(httpmw.RateLimitMiddleware(deps.RateLimitSvc, deps.Config, deps.AuditSvc))
 	api.GET("/session", portal.session)

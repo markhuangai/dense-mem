@@ -19,6 +19,7 @@ type RedisClientInterface interface {
 	Del(ctx context.Context, key string) error
 	Scan(ctx context.Context, cursor uint64, match string, count int64) (keys []string, nextCursor uint64, err error)
 	IncrWithExpire(ctx context.Context, key string, expireSeconds int64) (int64, error)
+	AddWithExpire(ctx context.Context, key string, delta int64, expireSeconds int64) (int64, error)
 }
 
 // RedisClient wraps a Redis client with mandatory key-prefix enforcement.
@@ -124,6 +125,25 @@ func (rc *RedisClient) IncrWithExpire(ctx context.Context, key string, expireSec
 	result, err := rc.client.Eval(ctx, script, []string{key}, expireSeconds).Int64()
 	if err != nil {
 		return 0, fmt.Errorf("failed to increment with expire: %w", err)
+	}
+	return result, nil
+}
+
+// AddWithExpire adds delta to the key and sets expiration if this is the first write.
+// This is atomic and is used for quota counters where one operation can consume
+// more than one unit, such as stored content bytes.
+func (rc *RedisClient) AddWithExpire(ctx context.Context, key string, delta int64, expireSeconds int64) (int64, error) {
+	script := `
+		local delta = tonumber(ARGV[1])
+		local current = redis.call('INCRBY', KEYS[1], delta)
+		if current == delta then
+			redis.call('EXPIRE', KEYS[1], ARGV[2])
+		end
+		return current
+	`
+	result, err := rc.client.Eval(ctx, script, []string{key}, delta, expireSeconds).Int64()
+	if err != nil {
+		return 0, fmt.Errorf("failed to add with expire: %w", err)
 	}
 	return result, nil
 }

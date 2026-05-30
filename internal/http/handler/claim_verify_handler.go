@@ -51,6 +51,10 @@ func (h *ClaimVerifyHandler) Handle(c echo.Context) error {
 
 	claim, err := h.svc.Verify(ctx, profileID.String(), claimID)
 	if err != nil {
+		var apiErr *httperr.APIError
+		if errors.As(err, &apiErr) {
+			return apiErr
+		}
 		switch {
 		case errors.Is(err, claimservice.ErrClaimNotFound):
 			return httperr.New(httperr.ErrClaimNotFound, "claim not found")

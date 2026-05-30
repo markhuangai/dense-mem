@@ -1,0 +1,95 @@
+name: Publish demo Docker image
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release or prerelease Git tag to publish, without refs/tags/ (example: v1.0.0 or v1.0.0-rc.0)"
+        required: true
+        type: string
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  publish-demo:
+    name: Build and push demo image
+    runs-on: rootless-docker
+
+    steps:
+      - name: Resolve release tag
+        id: version
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            tag="${INPUT_TAG}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.+)?$ ]]; then
+            echo "::error::publish-demo-image only builds release or prerelease tags like v1.0.0 or v1.0.0-rc.0"
+            exit 1
+          fi
+
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ steps.version.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Set image name
+        id: image
+        shell: bash
+        run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure Docker credentials path
+        shell: bash
+        run: |
+          mkdir -p "${RUNNER_TEMP}/.docker"
+          echo "DOCKER_CONFIG=${RUNNER_TEMP}/.docker" >> "$GITHUB_ENV"
+
+      - name: Log in to registry
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "${GITHUB_TOKEN}" | docker login "${REGISTRY}" -u "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          context: git
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=raw,value=demo
+            type=raw,value=demo-${{ steps.version.outputs.tag }}
+            type=sha,prefix=demo-sha-
+
+      - name: Build and push demo image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile.demo
+          platforms: linux/amd64,linux/arm64/v8
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -86,6 +86,10 @@ func handleFragmentCreateError(ctx context.Context, err error) *httperr.APIError
 	if err == nil {
 		return nil
 	}
+	var apiErr *httperr.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr
+	}
 
 	// Check for embedding timeout errors → 504 Gateway Timeout
 	if errors.Is(err, embedding.ErrEmbeddingTimeout) {

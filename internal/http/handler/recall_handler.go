@@ -72,6 +72,10 @@ func (h *RecallHandler) Handle(c echo.Context) error {
 		IncludeEvidence: req.IncludeEvidence,
 	})
 	if err != nil {
+		var apiErr *httperr.APIError
+		if errors.As(err, &apiErr) {
+			return apiErr
+		}
 		if errors.Is(err, recallservice.ErrEmbeddingUnavailable) {
 			return httperr.New(httperr.SERVICE_UNAVAILABLE, "embedding provider unavailable")
 		}

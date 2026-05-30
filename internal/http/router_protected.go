@@ -34,6 +34,9 @@ type ProtectedDeps struct {
 	Config config.ConfigProvider
 	// Logger is the structured logger.
 	Logger observability.LogProvider
+	// PostAuthMiddleware runs after authentication, profile resolution, and
+	// authorization, and before usage metrics/rate limiting.
+	PostAuthMiddleware []echo.MiddlewareFunc
 }
 
 // ProtectedDepsInterface is the companion interface for ProtectedDeps.
@@ -48,6 +51,7 @@ type ProtectedDepsInterface interface {
 	GetSecurityService() middleware.SecurityBanService
 	GetConfig() config.ConfigProvider
 	GetLogger() observability.LogProvider
+	GetPostAuthMiddleware() []echo.MiddlewareFunc
 }
 
 // Ensure ProtectedDeps implements ProtectedDepsInterface
@@ -90,6 +94,10 @@ func (d *ProtectedDeps) GetLogger() observability.LogProvider {
 	return d.Logger
 }
 
+func (d *ProtectedDeps) GetPostAuthMiddleware() []echo.MiddlewareFunc {
+	return d.PostAuthMiddleware
+}
+
 // RegisterProtectedRoutesWithHandlers registers protected API routes with the
 // middleware chain required for authentication, profile authorization, rate
 // limiting, route-specific validation, and handler execution.
@@ -118,6 +126,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 		group.Use(authMW)
 		group.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 		group.Use(middleware.AuthorizeProfile(profileAuthzSvc))
+		group.Use(deps.PostAuthMiddleware...)
 		group.Use(usageMW)
 		group.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
 
@@ -162,6 +171,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	fragmentGroup.Use(authMW)
 	fragmentGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	fragmentGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
+	fragmentGroup.Use(deps.PostAuthMiddleware...)
 	fragmentGroup.Use(usageMW)
 	fragmentGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
 
@@ -187,6 +197,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	claimGroup.Use(authMW)
 	claimGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	claimGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
+	claimGroup.Use(deps.PostAuthMiddleware...)
 	claimGroup.Use(usageMW)
 	claimGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
 
@@ -215,6 +226,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	factGroup.Use(authMW)
 	factGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	factGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
+	factGroup.Use(deps.PostAuthMiddleware...)
 	factGroup.Use(usageMW)
 	factGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
 
@@ -230,6 +242,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	communityGroup.Use(authMW)
 	communityGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	communityGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
+	communityGroup.Use(deps.PostAuthMiddleware...)
 	communityGroup.Use(usageMW)
 	communityGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
 
@@ -245,6 +258,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	mcpGroup.Use(authMW)
 	mcpGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	mcpGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
+	mcpGroup.Use(deps.PostAuthMiddleware...)
 	mcpGroup.Use(usageMW)
 	mcpGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
 	if handlers.MCPPost != nil {
@@ -259,6 +273,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	toolGroup.Use(authMW)
 	toolGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	toolGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
+	toolGroup.Use(deps.PostAuthMiddleware...)
 	toolGroup.Use(usageMW)
 	toolGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
 
@@ -284,10 +299,11 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 
 	// OpenAPI — expose the full runtime contract when available. The AI-safe
 	// variant remains as a fallback for reduced runtimes and tests.
+	openAPIMiddleware := append([]echo.MiddlewareFunc{authMW}, deps.PostAuthMiddleware...)
 	if handlers.OpenAPIFull != nil {
-		e.GET("/api/v1/openapi.json", handlers.OpenAPIFull, authMW)
+		e.GET("/api/v1/openapi.json", handlers.OpenAPIFull, openAPIMiddleware...)
 	} else if handlers.OpenAPIAISafe != nil {
-		e.GET("/api/v1/openapi.json", handlers.OpenAPIAISafe, authMW)
+		e.GET("/api/v1/openapi.json", handlers.OpenAPIAISafe, openAPIMiddleware...)
 	}
 
 	// Recall route — canonical GET /api/v1/recall (AC-55, AC-62)
@@ -296,6 +312,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	recallGroup.Use(authMW)
 	recallGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 	recallGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
+	recallGroup.Use(deps.PostAuthMiddleware...)
 	recallGroup.Use(usageMW)
 	recallGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
 

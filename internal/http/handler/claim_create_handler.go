@@ -76,6 +76,10 @@ func (h *ClaimCreateHandler) Handle(c echo.Context) error {
 
 	result, err := h.svc.Create(ctx, profileID.String(), claim)
 	if err != nil {
+		var apiErr *httperr.APIError
+		if errors.As(err, &apiErr) {
+			return apiErr
+		}
 		if errors.Is(err, claimservice.ErrSupportingFragmentMissing) {
 			return httperr.New(httperr.ErrSupportingFragmentMissing, "supporting fragment missing or retracted")
 		}
