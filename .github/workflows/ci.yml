@@ -29,6 +29,19 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: .lint/package-lock.json
+
+      - name: Install lint dependencies
+        run: npm ci --prefix .lint
+
+      - name: Run repository lint
+        run: npm run --prefix .lint lint:lines
+
       - name: Run Go tests
         run: go test ./...
 

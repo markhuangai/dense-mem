@@ -1,0 +1,28 @@
+{
+  "plugins": {
+    "@textlint/text": {
+      "extensions": [
+        ".css",
+        ".go",
+        ".html",
+        ".js",
+        ".json",
+        ".md",
+        ".sh",
+        ".sql",
+        ".toml",
+        ".ts",
+        ".tsx",
+        ".txt",
+        ".yaml",
+        ".yml"
+      ]
+    }
+  },
+  "rules": {
+    "max-number-of-lines": {
+      "max": 1000
+    }
+  },
+  "ignorePatterns": []
+}
