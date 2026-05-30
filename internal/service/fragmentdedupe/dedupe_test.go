@@ -2,7 +2,9 @@ package fragmentdedupe
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -160,4 +162,54 @@ func TestDedupeLookup_InterfaceAssertion(t *testing.T) {
 	reader := &fakeScopedReader{}
 	var _ DedupeLookup = NewNeo4jDedupeLookup(reader)
 	assert.True(t, true, "interface assertion passed")
+}
+
+func TestDedupeLookupErrorsAndFullMapping(t *testing.T) {
+	readerErr := errors.New("neo4j down")
+	reader := &fakeScopedReader{Error: readerErr}
+	lookup := NewNeo4jDedupeLookup(reader)
+
+	frag, err := lookup.ByIdempotencyKey(context.Background(), "p1", "k1")
+	require.Nil(t, frag)
+	require.ErrorContains(t, err, "failed to lookup fragment by idempotency key")
+
+	frag, err = lookup.ByContentHash(context.Background(), "p1", "h1")
+	require.Nil(t, frag)
+	require.ErrorContains(t, err, "failed to lookup fragment by content hash")
+
+	createdAt := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	updatedAt := createdAt.Add(time.Minute)
+	reader = &fakeScopedReader{Results: []map[string]any{{
+		"fragment_id":             "frag-full",
+		"team_id":                 "profile-1",
+		"created_by_profile_id":   "creator-1",
+		"created_by_profile_name": "Creator",
+		"content":                 "hello",
+		"source":                  "chat",
+		"source_type":             "manual",
+		"labels":                  []any{"a", 2, "b"},
+		"metadata_json":           `{"origin":"dedupe"}`,
+		"content_hash":            "hash-full",
+		"idempotency_key":         "idem-full",
+		"embedding_model":         "embed",
+		"embedding_dimensions":    int64(6),
+		"source_quality":          float32(0.8),
+		"classification_json":     `{"topic":"unit"}`,
+		"created_at":              createdAt,
+		"updated_at":              updatedAt,
+	}}}
+	lookup = NewNeo4jDedupeLookup(reader)
+
+	frag, err = lookup.ByContentHash(context.Background(), "profile-1", "hash-full")
+
+	require.NoError(t, err)
+	require.NotNil(t, frag)
+	assert.Equal(t, "creator-1", frag.CreatedByProfileID)
+	assert.Equal(t, []string{"a", "b"}, frag.Labels)
+	assert.Equal(t, "dedupe", frag.Metadata["origin"])
+	assert.Equal(t, 6, frag.EmbeddingDimensions)
+	assert.InDelta(t, 0.8, frag.SourceQuality, 1e-6)
+	assert.Equal(t, "unit", frag.Classification["topic"])
+	assert.Equal(t, createdAt, frag.CreatedAt)
+	assert.Equal(t, updatedAt, frag.UpdatedAt)
 }

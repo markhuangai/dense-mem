@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -81,8 +82,10 @@ func TestUsageMetricsService_PrunesExpiredBuckets(t *testing.T) {
 }
 
 type fakeUsageMetricsRepo struct {
-	mu      sync.Mutex
-	buckets map[fakeUsageMetricKey]domain.UsageMetricBucket
+	mu          sync.Mutex
+	buckets     map[fakeUsageMetricKey]domain.UsageMetricBucket
+	upsertErr   error
+	snapshotErr error
 }
 
 type fakeUsageMetricKey struct {
@@ -99,6 +102,9 @@ func newFakeUsageMetricsRepo() *fakeUsageMetricsRepo {
 }
 
 func (r *fakeUsageMetricsRepo) UpsertBuckets(_ context.Context, buckets []domain.UsageMetricBucket) error {
+	if r.upsertErr != nil {
+		return r.upsertErr
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, bucket := range buckets {
@@ -138,6 +144,9 @@ func (r *fakeUsageMetricsRepo) PruneBefore(_ context.Context, cutoff time.Time) 
 }
 
 func (r *fakeUsageMetricsRepo) Snapshot(_ context.Context, filter domain.UsageMetricsFilter) (*domain.UsageMetricsSnapshot, error) {
+	if r.snapshotErr != nil {
+		return nil, r.snapshotErr
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -200,4 +209,73 @@ func finalizeFakeTotal(total domain.UsageMetricTotal) domain.UsageMetricTotal {
 		total.AvgLatencyMS = total.AvgLatencyMS / float64(total.Requests)
 	}
 	return total
+}
+
+func TestUsageMetricsService_RequeuesBucketsAfterFlushError(t *testing.T) {
+	repo := newFakeUsageMetricsRepo()
+	repo.upsertErr = errors.New("upsert failed")
+	svc := NewUsageMetricsService(repo, nil)
+	teamID := uuid.New()
+	keyID := uuid.New()
+
+	svc.RecordRequest(context.Background(), domain.UsageMetricEvent{
+		Timestamp: time.Now().UTC(),
+		TeamID:    teamID,
+		KeyID:     keyID,
+		Route:     " ",
+		Method:    " ",
+		Status:    700,
+		Latency:   -time.Second,
+	})
+
+	require.ErrorContains(t, svc.Flush(context.Background()), "upsert failed")
+	repo.upsertErr = nil
+	require.NoError(t, svc.Flush(context.Background()))
+
+	snapshot, err := svc.Snapshot(context.Background(), domain.UsageMetricsFilter{
+		From: time.Now().UTC().Add(-time.Hour),
+		To:   time.Now().UTC().Add(time.Hour),
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), snapshot.System.Requests)
+	require.Equal(t, int64(1), snapshot.System.Errors)
+	require.Equal(t, int64(0), snapshot.System.MaxLatencyMS)
+}
+
+func TestUsageMetricsService_NilSnapshotAndLifecycle(t *testing.T) {
+	var nilSvc *UsageMetricsServiceImpl
+	nilSvc.RecordRequest(context.Background(), domain.UsageMetricEvent{})
+	require.NoError(t, nilSvc.Flush(context.Background()))
+	require.NoError(t, nilSvc.Prune(context.Background()))
+	nilSvc.Start(context.Background())
+	require.NoError(t, nilSvc.Shutdown(context.Background()))
+	_, err := nilSvc.Snapshot(context.Background(), domain.UsageMetricsFilter{})
+	require.ErrorContains(t, err, "usage metrics service unavailable")
+
+	repo := newFakeUsageMetricsRepo()
+	svc := NewUsageMetricsService(repo, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	svc.Start(ctx)
+	svc.Start(ctx)
+	cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), time.Second)
+	defer shutdownCancel()
+	require.NoError(t, svc.Shutdown(shutdownCtx))
+
+	repo.snapshotErr = errors.New("snapshot failed")
+	_, err = svc.Snapshot(context.Background(), domain.UsageMetricsFilter{})
+	require.ErrorContains(t, err, "snapshot failed")
+}
+
+func TestUsageMetricsNormalizationHelpers(t *testing.T) {
+	now := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	filter := normalizeMetricsFilter(domain.UsageMetricsFilter{
+		From: now,
+		To:   now.Add(-time.Minute),
+	})
+	require.True(t, filter.From.Before(filter.To))
+	require.Equal(t, 200, normalizeHTTPStatus(0))
+	require.Equal(t, 500, normalizeHTTPStatus(99))
+	require.Equal(t, 500, normalizeHTTPStatus(600))
+	require.Equal(t, 204, normalizeHTTPStatus(204))
 }

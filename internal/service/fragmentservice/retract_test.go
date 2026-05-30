@@ -3,6 +3,8 @@ package fragmentservice
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"testing"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -137,6 +139,18 @@ func TestRetractFragment_TxFailure_ReturnsError_NoSideEffects(t *testing.T) {
 	}
 }
 
+func TestRetractFragment_TxFailure_LogsNonNotFoundError(t *testing.T) {
+	db := &fakeRetractDB{txErr: errors.New("neo4j down")}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	svc := NewRetractFragmentService(db, nil, logger, nil)
+
+	err := svc.Retract(context.Background(), "pA", "frag-1")
+	if err == nil {
+		t.Fatal("expected error when tx fails")
+	}
+}
+
 func TestRetractFragment_Atomicity_MidTxFailure_NoPartialState(t *testing.T) {
 	// Simulate a mid-transaction failure (e.g., network partition after tombstone
 	// but before the revalidation UNWIND SET). The neo4j driver rolls back the
@@ -220,6 +234,27 @@ func TestRetractFragment_AuditCarriesCorrelationID(t *testing.T) {
 	}
 }
 
+func TestRetractFragment_AuditFailureDoesNotFailRetraction(t *testing.T) {
+	db := &fakeRetractDB{txErr: nil}
+	audit := &fakeAudit{AppendErr: errors.New("audit sink down")}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+
+	svc := NewRetractFragmentService(db, audit, logger, metrics)
+
+	err := svc.Retract(context.Background(), "pA", "frag-1")
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := metrics.FragmentRetractCount(); got != 1 {
+		t.Errorf("FragmentRetractCount = %d; want 1", got)
+	}
+	if audit.EventCount != 1 {
+		t.Fatalf("audit.EventCount = %d; want 1", audit.EventCount)
+	}
+}
+
 // ---- passesGate unit tests -------------------------------------------------
 //
 // These tests call passesGate directly to verify the OR-semantics support gate
@@ -274,5 +309,39 @@ func TestRetractFragment_PassesGate_WorksAt_MultiSourceRequired(t *testing.T) {
 	// count=2 satisfies count arm → gate passes.
 	if !svc.passesGate("works_at", 2, 0.0) {
 		t.Error("passesGate(works_at, count=2, quality=0.0) = false; want true (count arm passes)")
+	}
+}
+
+func TestRetractFragmentNeo4jScalarCoercionHelpers(t *testing.T) {
+	intCases := []struct {
+		value any
+		want  int
+	}{
+		{int64(42), 42},
+		{int(7), 7},
+		{float64(3.9), 3},
+		{"not-a-number", 0},
+		{nil, 0},
+	}
+	for _, tc := range intCases {
+		if got := toInt(tc.value); got != tc.want {
+			t.Errorf("toInt(%T(%v)) = %d; want %d", tc.value, tc.value, got, tc.want)
+		}
+	}
+
+	floatCases := []struct {
+		value any
+		want  float64
+	}{
+		{float64(0.75), 0.75},
+		{int64(2), 2},
+		{int(3), 3},
+		{"not-a-number", 0},
+		{nil, 0},
+	}
+	for _, tc := range floatCases {
+		if got := toFloat64(tc.value); got != tc.want {
+			t.Errorf("toFloat64(%T(%v)) = %v; want %v", tc.value, tc.value, got, tc.want)
+		}
 	}
 }

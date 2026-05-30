@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -340,4 +341,29 @@ func TestKeywordSearchHandler_RejectsLegacyQueryField(t *testing.T) {
 
 	// Should reject because "keywords" is required, not "query"
 	assert.Contains(t, []int{http.StatusBadRequest, http.StatusUnprocessableEntity}, rec.Code)
+}
+
+func TestKeywordSearchHandler_MalformedJSONAndErrorMapping(t *testing.T) {
+	e := newTestEcho()
+	e.HTTPErrorHandler = httperr.ErrorHandler
+	profileID := uuid.New()
+	h := NewKeywordSearchHandler(&mockKeywordSearchService{})
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			ctx := middleware.SetResolvedProfileIDForTest(c.Request().Context(), profileID)
+			c.SetRequest(c.Request().WithContext(ctx))
+			return next(c)
+		}
+	})
+	e.POST("/api/v1/tools/keyword-search", h.Handle)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/keyword-search", strings.NewReader(`{malformed`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+
+	require.Nil(t, handleKeywordSearchError(nil))
+	require.Equal(t, httperr.VALIDATION_ERROR, handleKeywordSearchError(keywordsearch.NewValidationError("bad request")).Code)
+	require.Equal(t, httperr.INTERNAL_ERROR, handleKeywordSearchError(errors.New("index down")).Code)
 }

@@ -2,6 +2,7 @@ package semanticsearch
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -470,4 +471,113 @@ func TestSemanticSearchThresholdFiltersHits(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Data, 1)
 	assert.Equal(t, "frag-1", result.Data[0].ID)
+}
+
+func TestSemanticSearchDTOGettersAndErrors(t *testing.T) {
+	req := &SemanticSearchRequest{
+		Embedding: []float32{0.1, 0.2, 0.3},
+		Query:     "memory",
+		Limit:     7,
+		Threshold: 0.8,
+	}
+	require.Equal(t, []float32{0.1, 0.2, 0.3}, req.GetEmbedding())
+	require.Equal(t, "memory", req.GetQuery())
+	require.Equal(t, 7, req.GetLimit())
+	require.Equal(t, 0.8, req.GetThreshold())
+
+	hit := SearchHit{
+		ID:        "fragment-1",
+		Type:      "fragment",
+		Content:   "content",
+		Score:     0.9,
+		Labels:    []string{"work"},
+		Metadata:  map[string]any{"source": "test"},
+		ProfileID: "profile-1",
+	}
+	require.Equal(t, "fragment-1", hit.GetID())
+	require.Equal(t, "fragment", hit.GetType())
+	require.Equal(t, "content", hit.GetContent())
+	require.Equal(t, 0.9, hit.GetScore())
+	require.Equal(t, []string{"work"}, hit.GetLabels())
+	require.Equal(t, map[string]any{"source": "test"}, hit.GetMetadata())
+	require.Equal(t, "profile-1", hit.GetProfileID())
+
+	result := &SemanticSearchResult{
+		Data: []SearchHit{hit},
+		Meta: SemanticSearchMeta{LimitApplied: 7},
+	}
+	require.Equal(t, []SearchHit{hit}, result.GetData())
+	require.Equal(t, SemanticSearchMeta{LimitApplied: 7}, result.GetMeta())
+	meta := result.GetMeta()
+	require.Equal(t, 7, meta.GetLimitApplied())
+	require.Equal(t, "bad request", NewValidationError("bad request").Error())
+	require.Equal(t, "embedding dimension mismatch: expected 3, got 2", NewDimensionMismatchError(3, 2).Error())
+}
+
+func TestSemanticSearchValidationThresholdAndDependencyErrors(t *testing.T) {
+	validEmbedding := []float32{0.1, 0.2, 0.3}
+
+	t.Run("profile id is required", func(t *testing.T) {
+		svc := NewSemanticSearchService(&mockEmbeddingSearcher{}, 3)
+
+		_, err := svc.Search(context.Background(), "", &SemanticSearchRequest{Embedding: validEmbedding, Limit: 10})
+
+		require.Error(t, err)
+		require.True(t, IsValidationError(err))
+	})
+
+	t.Run("threshold below range", func(t *testing.T) {
+		svc := NewSemanticSearchService(&mockEmbeddingSearcher{}, 3)
+
+		_, err := svc.Search(context.Background(), "profile-1", &SemanticSearchRequest{Embedding: validEmbedding, Limit: 10, Threshold: -0.1})
+
+		require.Error(t, err)
+		require.True(t, IsValidationError(err))
+	})
+
+	t.Run("threshold above range", func(t *testing.T) {
+		svc := NewSemanticSearchService(&mockEmbeddingSearcher{}, 3)
+
+		_, err := svc.Search(context.Background(), "profile-1", &SemanticSearchRequest{Embedding: validEmbedding, Limit: 10, Threshold: 1.1})
+
+		require.Error(t, err)
+		require.True(t, IsValidationError(err))
+	})
+
+	t.Run("searcher error returns error", func(t *testing.T) {
+		svc := NewSemanticSearchService(
+			&mockEmbeddingSearcher{queryVectorIndexFunc: func(context.Context, string, []float32, int) ([]SearchHit, error) {
+				return nil, errors.New("vector search failed")
+			}},
+			3,
+		)
+
+		_, err := svc.Search(context.Background(), "profile-1", &SemanticSearchRequest{Embedding: validEmbedding, Limit: 10})
+
+		require.ErrorContains(t, err, "vector search failed")
+	})
+}
+
+func TestSemanticSearcherValueCoercionHelpers(t *testing.T) {
+	row := map[string]any{
+		"string":     "value",
+		"number":     123,
+		"score64":    float64(0.7),
+		"score32":    float32(0.5),
+		"labels_any": []any{"a", 2},
+		"labels_str": []string{"x", "y"},
+		"metadata":   map[string]any{"k": "v"},
+	}
+
+	require.Equal(t, "value", getStringVal(row, "string"))
+	require.Equal(t, "123", getStringVal(row, "number"))
+	require.Empty(t, getStringVal(row, "missing"))
+	require.Equal(t, 0.7, getFloat64Val(row, "score64"))
+	require.Equal(t, 0.5, getFloat64Val(row, "score32"))
+	require.Zero(t, getFloat64Val(row, "string"))
+	require.Equal(t, []string{"a", "2"}, getLabelsVal(row, "labels_any"))
+	require.Equal(t, []string{"x", "y"}, getLabelsVal(row, "labels_str"))
+	require.Nil(t, getLabelsVal(row, "missing"))
+	require.Equal(t, map[string]any{"k": "v"}, getMetadataVal(row, "metadata"))
+	require.Nil(t, getMetadataVal(row, "string"))
 }

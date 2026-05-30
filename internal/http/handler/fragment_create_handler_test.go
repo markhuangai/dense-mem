@@ -209,5 +209,40 @@ func TestFragmentCreateHandler_EmbeddingFailureMapsTo503(t *testing.T) {
 	}
 }
 
+func TestHandleFragmentCreateErrorMapsKnownErrors(t *testing.T) {
+	cases := []struct {
+		name    string
+		err     error
+		code    httperr.ErrorCode
+		message string
+	}{
+		{"nil", nil, "", ""},
+		{"embedding timeout", embedding.ErrEmbeddingTimeout, httperr.SERVICE_UNAVAILABLE, "embedding request timed out"},
+		{"embedding provider", embedding.ErrEmbeddingProvider, httperr.SERVICE_UNAVAILABLE, "embedding service unavailable"},
+		{"embedding rate limit", embedding.ErrEmbeddingRateLimit, httperr.SERVICE_UNAVAILABLE, "embedding service rate limited"},
+		{"embedding failed", fragmentservice.ErrEmbeddingFailed, httperr.SERVICE_UNAVAILABLE, "embedding service unavailable"},
+		{"context deadline", context.DeadlineExceeded, httperr.SERVICE_UNAVAILABLE, "request timed out"},
+		{"default", errors.New("write failed"), httperr.INTERNAL_ERROR, "failed to create fragment"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := handleFragmentCreateError(context.Background(), tc.err)
+			if tc.err == nil {
+				if got != nil {
+					t.Fatalf("handleFragmentCreateError(nil) = %v; want nil", got)
+				}
+				return
+			}
+			if got.Code != tc.code {
+				t.Fatalf("code = %s; want %s", got.Code, tc.code)
+			}
+			if got.Message != tc.message {
+				t.Fatalf("message = %q; want %q", got.Message, tc.message)
+			}
+		})
+	}
+}
+
 // Compile-time companion interface check (already in handler.go)
 var _ FragmentCreateHandlerInterface = (*FragmentCreateHandler)(nil)

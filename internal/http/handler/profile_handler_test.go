@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -469,4 +470,123 @@ func TestProfileHandler_Delete_200(t *testing.T) {
 	data, ok := resp.Data.(map[string]interface{})
 	require.True(t, ok)
 	assert.Equal(t, "deleted", data["status"])
+}
+
+func TestProfileHandler_AdditionalErrorAndActorBranches(t *testing.T) {
+	t.Run("create missing validated body", func(t *testing.T) {
+		e := newTestEcho()
+		h := NewProfileHandler(&mockProfileService{})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/profiles", nil)
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		err := h.Create(c)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "request body not found")
+	})
+
+	t.Run("create forwards actor metadata from principal", func(t *testing.T) {
+		e := newTestEcho()
+		keyID := uuid.New()
+		mockSvc := &mockProfileService{
+			createFunc: func(ctx context.Context, req service.CreateProfileRequest, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.Profile, error) {
+				require.NotNil(t, actorKeyID)
+				assert.Equal(t, keyID.String(), *actorKeyID)
+				assert.Equal(t, "admin", actorRole)
+				return &domain.Profile{ID: uuid.New(), Name: req.Name, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}, nil
+			},
+		}
+		h := NewProfileHandler(mockSvc)
+		e.POST("/api/v1/profiles", h.Create, middleware.BindAndValidate[dto.CreateProfileRequest](middleware.CreateProfileBodyKey))
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/profiles", strings.NewReader(`{"name":"Actor Team"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req = req.WithContext(middleware.SetPrincipalForTest(req.Context(), &middleware.Principal{KeyID: keyID, Role: "admin"}))
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusCreated, rec.Code)
+	})
+
+	t.Run("list propagates list and count errors", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			svc  *mockProfileService
+		}{
+			{
+				name: "list error",
+				svc: &mockProfileService{listFunc: func(context.Context, int, int) ([]*domain.Profile, error) {
+					return nil, errors.New("list failed")
+				}},
+			},
+			{
+				name: "count error",
+				svc: &mockProfileService{
+					listFunc: func(context.Context, int, int) ([]*domain.Profile, error) { return []*domain.Profile{}, nil },
+					countFunc: func(context.Context) (int64, error) {
+						return 0, errors.New("count failed")
+					},
+				},
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				e := newTestEcho()
+				h := NewProfileHandler(tc.svc)
+				e.GET("/api/v1/profiles", h.List)
+				req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles", nil)
+				rec := httptest.NewRecorder()
+
+				e.ServeHTTP(rec, req)
+
+				assert.Equal(t, http.StatusInternalServerError, rec.Code)
+			})
+		}
+	})
+
+	t.Run("get nil profile returns not found", func(t *testing.T) {
+		e := newTestEcho()
+		profileID := uuid.New()
+		h := NewProfileHandler(&mockProfileService{getFunc: func(context.Context, uuid.UUID) (*domain.Profile, error) {
+			return nil, nil
+		}})
+		e.GET("/api/v1/profiles/:profileId", h.Get)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/"+profileID.String(), nil)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+
+	t.Run("patch missing body and description only", func(t *testing.T) {
+		e := newTestEcho()
+		profileID := uuid.New()
+		h := NewProfileHandler(&mockProfileService{})
+		req := httptest.NewRequest(http.MethodPatch, "/api/v1/profiles/"+profileID.String(), nil)
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+		c.SetPath("/api/v1/profiles/:profileId")
+		c.SetParamNames("profileId")
+		c.SetParamValues(profileID.String())
+		err := h.Patch(c)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "request body not found")
+
+		called := false
+		h = NewProfileHandler(&mockProfileService{updateFunc: func(ctx context.Context, id uuid.UUID, req service.UpdateProfileRequest, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.Profile, error) {
+			called = true
+			require.Nil(t, req.Name)
+			require.NotNil(t, req.Description)
+			return &domain.Profile{ID: id, Description: *req.Description, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}, nil
+		}})
+		e = newTestEcho()
+		e.PATCH("/api/v1/profiles/:profileId", h.Patch, middleware.BindAndValidate[dto.UpdateProfileRequest](middleware.UpdateProfileBodyKey))
+		req = httptest.NewRequest(http.MethodPatch, "/api/v1/profiles/"+profileID.String(), strings.NewReader(`{"description":"new desc"}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec = httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.True(t, called)
+	})
 }

@@ -22,6 +22,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/http/dto"
+	httpvalidation "github.com/markhuangai/dense-mem/internal/http/validation"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentcodec"
@@ -121,6 +122,11 @@ func NewCreateFragmentService(
 // 9. Record first-write consistency (AC-52).
 // 10. Emit audit event (AC-26).
 func (s *createFragmentService) Create(ctx context.Context, profileID string, req *dto.CreateFragmentRequest) (*CreateResult, error) {
+	if err := validateCreateFragmentRequest(req); err != nil {
+		s.metrics.IncFragmentCreate("error")
+		return nil, err
+	}
+
 	// Step 1: Set default source type (AC-46)
 	sourceType := domain.SourceType(req.SourceType)
 	if sourceType == "" {
@@ -365,4 +371,17 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 		Fragment:  fragment,
 		Duplicate: false,
 	}, nil
+}
+
+func validateCreateFragmentRequest(req *dto.CreateFragmentRequest) error {
+	if req == nil {
+		return errors.New("validation: fragment request is required")
+	}
+	if err := httpvalidation.ValidateStruct(req); err != nil {
+		return fmt.Errorf("validation: %w", err)
+	}
+	if err := dto.ValidateMetadataSize(req.Metadata); err != nil {
+		return fmt.Errorf("validation: %w", err)
+	}
+	return nil
 }

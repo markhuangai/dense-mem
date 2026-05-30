@@ -2,7 +2,9 @@ package keywordsearch
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
@@ -582,4 +584,134 @@ func TestFactSearcher_ScorePropagated(t *testing.T) {
 	assert.InDelta(t, 0.33, got[0].Score, 1e-6)
 	assert.InDelta(t, 0.55, got[1].Score, 1e-6)
 	assert.NotEqual(t, 1.0, got[0].Score, "score must not be hardcoded")
+}
+
+func TestKeywordSearchDTOGettersAndValidationError(t *testing.T) {
+	validAt := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	req := &KeywordSearchRequest{
+		Query:   "memory",
+		Limit:   7,
+		Labels:  []string{"work"},
+		ValidAt: &validAt,
+	}
+	require.Equal(t, "memory", req.GetQuery())
+	require.Equal(t, 7, req.GetLimit())
+	require.Equal(t, []string{"work"}, req.GetLabels())
+
+	hit := SearchHit{
+		ID:        "fact-1",
+		Type:      "fact",
+		Content:   "likes",
+		Score:     0.9,
+		Labels:    []string{"work"},
+		Metadata:  map[string]any{"source": "test"},
+		ProfileID: "profile-1",
+	}
+	require.Equal(t, "fact-1", hit.GetID())
+	require.Equal(t, "fact", hit.GetType())
+	require.Equal(t, "likes", hit.GetContent())
+	require.Equal(t, 0.9, hit.GetScore())
+	require.Equal(t, []string{"work"}, hit.GetLabels())
+	require.Equal(t, map[string]any{"source": "test"}, hit.GetMetadata())
+	require.Equal(t, "profile-1", hit.GetProfileID())
+
+	result := &KeywordSearchResult{
+		Data: []SearchHit{hit},
+		Meta: KeywordSearchMeta{LimitApplied: 7},
+	}
+	require.Equal(t, []SearchHit{hit}, result.GetData())
+	require.Equal(t, KeywordSearchMeta{LimitApplied: 7}, result.GetMeta())
+	meta := result.GetMeta()
+	require.Equal(t, 7, meta.GetLimitApplied())
+	require.Equal(t, "bad request", NewValidationError("bad request").Error())
+}
+
+func TestKeywordSearchValidationAndDependencyErrors(t *testing.T) {
+	t.Run("query is required", func(t *testing.T) {
+		svc := NewKeywordSearchService(&mockFragmentSearcher{}, &mockFactSearcher{})
+
+		_, err := svc.Search(context.Background(), "profile-1", &KeywordSearchRequest{Limit: 10})
+
+		require.Error(t, err)
+		require.True(t, IsValidationError(err))
+	})
+
+	t.Run("profile id is required", func(t *testing.T) {
+		svc := NewKeywordSearchService(&mockFragmentSearcher{}, &mockFactSearcher{})
+
+		_, err := svc.Search(context.Background(), "", &KeywordSearchRequest{Query: "memory", Limit: 10})
+
+		require.Error(t, err)
+		require.True(t, IsValidationError(err))
+	})
+
+	t.Run("fragment search error returns error", func(t *testing.T) {
+		svc := NewKeywordSearchService(
+			&mockFragmentSearcher{searchContentFunc: func(context.Context, string, string, []string, int) ([]FragmentSearchResult, error) {
+				return nil, errors.New("fragment search failed")
+			}},
+			&mockFactSearcher{},
+		)
+
+		_, err := svc.Search(context.Background(), "profile-1", &KeywordSearchRequest{Query: "memory", Limit: 10})
+
+		require.ErrorContains(t, err, "fragment search failed")
+	})
+
+	t.Run("fact search error returns error", func(t *testing.T) {
+		svc := NewKeywordSearchService(
+			&mockFragmentSearcher{},
+			&mockFactSearcher{searchPredicateFunc: func(context.Context, string, string, []string, int) ([]FactSearchResult, error) {
+				return nil, errors.New("fact search failed")
+			}},
+		)
+
+		_, err := svc.Search(context.Background(), "profile-1", &KeywordSearchRequest{Query: "memory", Limit: 10})
+
+		require.ErrorContains(t, err, "fact search failed")
+	})
+}
+
+func TestKeywordFactResultMatchesWindow(t *testing.T) {
+	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	before := base.Add(-time.Hour)
+	after := base.Add(time.Hour)
+
+	require.True(t, factResultMatchesWindow(FactSearchResult{RecordedAt: base}, nil, nil))
+	require.False(t, factResultMatchesWindow(FactSearchResult{ValidFrom: &after, RecordedAt: base}, &base, nil))
+	require.False(t, factResultMatchesWindow(FactSearchResult{ValidTo: &base, RecordedAt: base}, &base, nil))
+	require.False(t, factResultMatchesWindow(FactSearchResult{RecordedAt: after}, nil, &base))
+	require.False(t, factResultMatchesWindow(FactSearchResult{RecordedAt: before, RecordedTo: &base}, nil, &base))
+	require.True(t, factResultMatchesWindow(FactSearchResult{ValidFrom: &before, ValidTo: &after, RecordedAt: before, RecordedTo: &after}, &base, &base))
+}
+
+func TestKeywordSearcherValueCoercionHelpers(t *testing.T) {
+	now := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	row := map[string]any{
+		"string":       "value",
+		"number":       123,
+		"labels_any":   []any{"a", 2},
+		"labels_str":   []string{"x", "y"},
+		"metadata":     map[string]any{"k": "v"},
+		"score64":      float64(0.7),
+		"score32":      float32(0.5),
+		"recorded_at":  now,
+		"recorded_nil": "not-time",
+	}
+
+	require.Equal(t, "value", getString(row, "string"))
+	require.Equal(t, "123", getString(row, "number"))
+	require.Empty(t, getString(row, "missing"))
+	require.Equal(t, []string{"a", "2"}, getLabels(row, "labels_any"))
+	require.Equal(t, []string{"x", "y"}, getLabels(row, "labels_str"))
+	require.Nil(t, getLabels(row, "missing"))
+	require.Equal(t, map[string]any{"k": "v"}, getMetadata(row, "metadata"))
+	require.Nil(t, getMetadata(row, "string"))
+	require.Equal(t, 0.7, getFloat64Val(row, "score64"))
+	require.Equal(t, 0.5, getFloat64Val(row, "score32"))
+	require.Zero(t, getFloat64Val(row, "string"))
+	require.Equal(t, &now, getTimePtr(row, "recorded_at"))
+	require.Nil(t, getTimePtr(row, "recorded_nil"))
+	require.Equal(t, now, getTimeVal(row, "recorded_at"))
+	require.True(t, getTimeVal(row, "recorded_nil").IsZero())
 }

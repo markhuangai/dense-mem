@@ -11,6 +11,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/tools/keywordsearch"
 	"github.com/markhuangai/dense-mem/internal/tools/semanticsearch"
 	"github.com/stretchr/testify/assert"
@@ -83,6 +84,7 @@ type fakeHydrator struct {
 	callCount      int32
 	batchCallCount int32
 	missIDs        map[string]bool
+	batchErr       error
 }
 
 func (f *fakeHydrator) GetByID(ctx context.Context, profileID, fragmentID string) (*domain.Fragment, error) {
@@ -98,6 +100,9 @@ func (f *fakeHydrator) GetByID(ctx context.Context, profileID, fragmentID string
 
 func (f *fakeHydrator) GetByIDs(ctx context.Context, profileID string, fragmentIDs []string) (map[string]*domain.Fragment, error) {
 	atomic.AddInt32(&f.batchCallCount, 1)
+	if f.batchErr != nil {
+		return nil, f.batchErr
+	}
 	out := make(map[string]*domain.Fragment, len(fragmentIDs))
 	for _, fragmentID := range fragmentIDs {
 		if f.missIDs != nil && f.missIDs[fragmentID] {
@@ -116,11 +121,15 @@ type fakeFactSearcher struct {
 	results   []FactRecallResult
 	lastQuery string
 	lastLimit int
+	err       error
 }
 
 func (f *fakeFactSearcher) SearchActive(ctx context.Context, profileID string, query string, limit int) ([]FactRecallResult, error) {
 	f.lastQuery = query
 	f.lastLimit = limit
+	if f.err != nil {
+		return nil, f.err
+	}
 	out := make([]FactRecallResult, len(f.results))
 	copy(out, f.results)
 	return out, nil
@@ -130,11 +139,15 @@ type fakeClaimSearcher struct {
 	results   []ClaimRecallResult
 	lastQuery string
 	lastLimit int
+	err       error
 }
 
 func (f *fakeClaimSearcher) SearchValidated(ctx context.Context, profileID string, query string, limit int) ([]ClaimRecallResult, error) {
 	f.lastQuery = query
 	f.lastLimit = limit
+	if f.err != nil {
+		return nil, f.err
+	}
 	out := make([]ClaimRecallResult, len(f.results))
 	copy(out, f.results)
 	return out, nil
@@ -144,6 +157,7 @@ type fakeFactGetter struct {
 	facts          map[string]*domain.Fact
 	callCount      int32
 	batchCallCount int32
+	batchErr       error
 }
 
 func (f *fakeFactGetter) Get(ctx context.Context, profileID string, factID string) (*domain.Fact, error) {
@@ -156,6 +170,9 @@ func (f *fakeFactGetter) Get(ctx context.Context, profileID string, factID strin
 
 func (f *fakeFactGetter) GetByIDs(ctx context.Context, profileID string, factIDs []string) (map[string]*domain.Fact, error) {
 	atomic.AddInt32(&f.batchCallCount, 1)
+	if f.batchErr != nil {
+		return nil, f.batchErr
+	}
 	out := make(map[string]*domain.Fact, len(factIDs))
 	for _, factID := range factIDs {
 		if fact, ok := f.facts[factID]; ok {
@@ -169,6 +186,7 @@ type fakeClaimGetter struct {
 	claims         map[string]*domain.Claim
 	callCount      int32
 	batchCallCount int32
+	batchErr       error
 }
 
 func (f *fakeClaimGetter) Get(ctx context.Context, profileID string, claimID string) (*domain.Claim, error) {
@@ -181,6 +199,9 @@ func (f *fakeClaimGetter) Get(ctx context.Context, profileID string, claimID str
 
 func (f *fakeClaimGetter) GetByIDs(ctx context.Context, profileID string, claimIDs []string) (map[string]*domain.Claim, error) {
 	atomic.AddInt32(&f.batchCallCount, 1)
+	if f.batchErr != nil {
+		return nil, f.batchErr
+	}
 	out := make(map[string]*domain.Claim, len(claimIDs))
 	for _, claimID := range claimIDs {
 		if claim, ok := f.claims[claimID]; ok {
@@ -188,6 +209,66 @@ func (f *fakeClaimGetter) GetByIDs(ctx context.Context, profileID string, claimI
 		}
 	}
 	return out, nil
+}
+
+type getOnlyFragmentHydrator struct {
+	frags     map[string]*domain.Fragment
+	callCount int32
+}
+
+func (g *getOnlyFragmentHydrator) GetByID(ctx context.Context, profileID, fragmentID string) (*domain.Fragment, error) {
+	atomic.AddInt32(&g.callCount, 1)
+	if frag, ok := g.frags[fragmentID]; ok {
+		return frag, nil
+	}
+	return &domain.Fragment{FragmentID: fragmentID, ProfileID: profileID, Content: fragmentID + " content"}, nil
+}
+
+type getOnlyFactGetter struct {
+	facts     map[string]*domain.Fact
+	callCount int32
+}
+
+func (g *getOnlyFactGetter) Get(ctx context.Context, profileID string, factID string) (*domain.Fact, error) {
+	atomic.AddInt32(&g.callCount, 1)
+	if fact, ok := g.facts[factID]; ok {
+		return fact, nil
+	}
+	return nil, errors.New("fact not found")
+}
+
+type getOnlyClaimGetter struct {
+	claims    map[string]*domain.Claim
+	callCount int32
+}
+
+func (g *getOnlyClaimGetter) Get(ctx context.Context, profileID string, claimID string) (*domain.Claim, error) {
+	atomic.AddInt32(&g.callCount, 1)
+	if claim, ok := g.claims[claimID]; ok {
+		return claim, nil
+	}
+	return nil, errors.New("claim not found")
+}
+
+type fakeLogger struct {
+	warns  int32
+	errors int32
+}
+
+func (l *fakeLogger) Info(string, ...observability.LogAttr) {}
+
+func (l *fakeLogger) Error(string, error, ...observability.LogAttr) {
+	atomic.AddInt32(&l.errors, 1)
+}
+
+func (l *fakeLogger) Warn(string, ...observability.LogAttr) {
+	atomic.AddInt32(&l.warns, 1)
+}
+
+func (l *fakeLogger) Debug(string, ...observability.LogAttr) {}
+
+func (l *fakeLogger) With(...observability.LogAttr) observability.LogProvider {
+	return l
 }
 
 // --- tests -----------------------------------------------------------------
@@ -259,6 +340,78 @@ func TestRecallService_UsesBatchFragmentHydration(t *testing.T) {
 	require.Len(t, out, 2)
 	assert.Equal(t, int32(1), atomic.LoadInt32(&hydrator.batchCallCount))
 	assert.Equal(t, int32(0), atomic.LoadInt32(&hydrator.callCount))
+}
+
+func TestRecallTemporalWindowHelpers(t *testing.T) {
+	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	before := base.Add(-time.Hour)
+	after := base.Add(time.Hour)
+
+	require.False(t, factMatchesRecallWindow(nil, &base, &base))
+	require.False(t, claimMatchesRecallWindow(nil, &base, &base))
+
+	fact := &domain.Fact{RecordedAt: base, ValidFrom: &base}
+	require.False(t, factMatchesRecallWindow(fact, &before, nil))
+	fact.ValidFrom = nil
+	fact.ValidTo = &base
+	require.False(t, factMatchesRecallWindow(fact, &base, nil))
+	fact.ValidTo = nil
+	require.False(t, factMatchesRecallWindow(fact, nil, &before))
+	fact.RecordedTo = &base
+	require.False(t, factMatchesRecallWindow(fact, nil, &base))
+	fact.RecordedTo = nil
+	require.True(t, factMatchesRecallWindow(fact, &after, &after))
+
+	claim := &domain.Claim{RecordedAt: base, ValidFrom: &base}
+	require.False(t, claimMatchesRecallWindow(claim, &before, nil))
+	claim.ValidFrom = nil
+	claim.ValidTo = &base
+	require.False(t, claimMatchesRecallWindow(claim, &base, nil))
+	claim.ValidTo = nil
+	require.False(t, claimMatchesRecallWindow(claim, nil, &before))
+	claim.RecordedTo = &base
+	require.False(t, claimMatchesRecallWindow(claim, nil, &base))
+	claim.RecordedTo = nil
+	require.True(t, claimMatchesRecallWindow(claim, &after, &after))
+
+	factCandidate := FactRecallResult{RecordedAt: base, ValidFrom: &base}
+	require.False(t, factCandidateMatchesRecallWindow(factCandidate, &before, nil))
+	factCandidate.ValidFrom = nil
+	factCandidate.ValidTo = &base
+	require.False(t, factCandidateMatchesRecallWindow(factCandidate, &base, nil))
+	factCandidate.ValidTo = nil
+	require.False(t, factCandidateMatchesRecallWindow(factCandidate, nil, &before))
+	factCandidate.RecordedTo = &base
+	require.False(t, factCandidateMatchesRecallWindow(factCandidate, nil, &base))
+	factCandidate.RecordedTo = nil
+	require.True(t, factCandidateMatchesRecallWindow(factCandidate, &after, &after))
+
+	claimCandidate := ClaimRecallResult{RecordedAt: base, ValidFrom: &base}
+	require.False(t, claimCandidateMatchesRecallWindow(claimCandidate, &before, nil))
+	claimCandidate.ValidFrom = nil
+	claimCandidate.ValidTo = &base
+	require.False(t, claimCandidateMatchesRecallWindow(claimCandidate, &base, nil))
+	claimCandidate.ValidTo = nil
+	require.False(t, claimCandidateMatchesRecallWindow(claimCandidate, nil, &before))
+	claimCandidate.RecordedTo = &base
+	require.False(t, claimCandidateMatchesRecallWindow(claimCandidate, nil, &base))
+	claimCandidate.RecordedTo = nil
+	require.True(t, claimCandidateMatchesRecallWindow(claimCandidate, &after, &after))
+}
+
+func TestRecallSmallHelpersAndNilLoggers(t *testing.T) {
+	require.Nil(t, sanitizeEmbeddingError(nil))
+	require.Equal(t, "recall: embedding timeout", sanitizeEmbeddingError(embedding.ErrEmbeddingTimeout).Error())
+	require.Equal(t, "recall: embedding rate limited", sanitizeEmbeddingError(embedding.ErrEmbeddingRateLimit).Error())
+	require.Equal(t, "recall: embedding provider error", sanitizeEmbeddingError(embedding.ErrEmbeddingProvider).Error())
+	require.Equal(t, "recall: embedding unavailable", sanitizeEmbeddingError(errors.New("other")).Error())
+	require.Equal(t, MaxLimit, clampLimit(MaxLimit+100))
+	require.Equal(t, DefaultLimit, clampLimit(0))
+
+	svc := &recallService{}
+	svc.logKeywordError(errors.New("keyword failed"))
+	svc.logHydrateError("fragment-1", errors.New("hydrate failed"))
+	svc.logEmbeddingError(errors.New("embedding failed"))
 }
 
 // TestRecallService_OverfetchesVectorBranch — AC-40 overfetch requirement.
@@ -582,4 +735,334 @@ func itoa(i int) string {
 		n /= 10
 	}
 	return string(digits)
+}
+
+func TestRecallService_ReturnsClassifiedBranchErrors(t *testing.T) {
+	t.Run("semantic branch error returns embedding unavailable", func(t *testing.T) {
+		logger := &fakeLogger{}
+		svc := NewRecallService(
+			&stubEmbedding{DimensionsResult: 4},
+			&fakeSemanticSearcher{errFunc: func() error { return errors.New("vector index down") }},
+			&fakeKeywordSearcher{},
+			&fakeHydrator{},
+			logger,
+			nil,
+		)
+
+		_, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "q", Limit: 3})
+
+		require.ErrorIs(t, err, ErrEmbeddingUnavailable)
+		require.Equal(t, int32(1), atomic.LoadInt32(&logger.warns))
+	})
+
+	t.Run("keyword branch error returns keyword unavailable", func(t *testing.T) {
+		logger := &fakeLogger{}
+		svc := NewRecallService(
+			&stubEmbedding{DimensionsResult: 4},
+			&fakeSemanticSearcher{},
+			&fakeKeywordSearcher{errFunc: func() error { return errors.New("fulltext down") }},
+			&fakeHydrator{},
+			logger,
+			nil,
+		)
+
+		_, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "q", Limit: 3})
+
+		require.ErrorIs(t, err, ErrKeywordUnavailable)
+		require.Equal(t, int32(1), atomic.LoadInt32(&logger.errors))
+	})
+}
+
+func TestRecallService_HydrationFallbacksAndMisses(t *testing.T) {
+	t.Run("batch miss skips missing fragment", func(t *testing.T) {
+		logger := &fakeLogger{}
+		hydrator := &fakeHydrator{missIDs: map[string]bool{"f-missing": true}}
+		svc := NewRecallService(
+			&stubEmbedding{DimensionsResult: 4},
+			&fakeSemanticSearcher{hits: []semanticsearch.SearchHit{
+				{ID: "f-present", Type: "fragment"},
+				{ID: "f-missing", Type: "fragment"},
+			}},
+			&fakeKeywordSearcher{},
+			hydrator,
+			logger,
+			nil,
+		)
+
+		out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "q", Limit: 3})
+
+		require.NoError(t, err)
+		require.Len(t, out, 1)
+		require.Equal(t, "f-present", out[0].Fragment.FragmentID)
+		require.Equal(t, int32(1), atomic.LoadInt32(&hydrator.batchCallCount))
+		require.Equal(t, int32(1), atomic.LoadInt32(&logger.warns))
+	})
+
+	t.Run("batch error falls back to single fragment get", func(t *testing.T) {
+		hydrator := &fakeHydrator{batchErr: errors.New("batch failed")}
+		svc := NewRecallService(
+			&stubEmbedding{DimensionsResult: 4},
+			&fakeSemanticSearcher{hits: []semanticsearch.SearchHit{{ID: "f1", Type: "fragment"}}},
+			&fakeKeywordSearcher{},
+			hydrator,
+			nil,
+			nil,
+		)
+
+		out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "q", Limit: 3})
+
+		require.NoError(t, err)
+		require.Len(t, out, 1)
+		require.Equal(t, int32(1), atomic.LoadInt32(&hydrator.batchCallCount))
+		require.Equal(t, int32(1), atomic.LoadInt32(&hydrator.callCount))
+	})
+
+	t.Run("non-batch hydrator uses single fragment get", func(t *testing.T) {
+		hydrator := &getOnlyFragmentHydrator{}
+		svc := NewRecallService(
+			&stubEmbedding{DimensionsResult: 4},
+			&fakeSemanticSearcher{hits: []semanticsearch.SearchHit{{ID: "f1", Type: "fragment"}}},
+			&fakeKeywordSearcher{},
+			hydrator,
+			nil,
+			nil,
+		)
+
+		out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "q", Limit: 3})
+
+		require.NoError(t, err)
+		require.Len(t, out, 1)
+		require.Equal(t, int32(1), atomic.LoadInt32(&hydrator.callCount))
+	})
+
+	t.Run("empty merge has no batch hydration", func(t *testing.T) {
+		svc := &recallService{hydrator: &fakeHydrator{}}
+
+		fragments, ok := svc.batchHydrateFragments(context.Background(), "pA", nil)
+
+		require.False(t, ok)
+		require.Nil(t, fragments)
+	})
+}
+
+func TestRecallService_EnrichTierHitsFiltersAndStripsEvidence(t *testing.T) {
+	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	after := base.Add(time.Hour)
+	factSearcher := &fakeFactSearcher{results: []FactRecallResult{
+		{FactID: "", ProfileID: "pA", RecordedAt: base},
+		{FactID: "fact-other-profile", ProfileID: "pB", RecordedAt: base},
+		{FactID: "fact-future-candidate", ProfileID: "pA", ValidFrom: &after, RecordedAt: base},
+		{FactID: "fact-future-hydrated", ProfileID: "pA", RecordedAt: base},
+		{FactID: "fact-missing", ProfileID: "pA", RecordedAt: base},
+		{FactID: "fact-good", ProfileID: "pA", RecordedAt: base},
+	}}
+	claimSearcher := &fakeClaimSearcher{results: []ClaimRecallResult{
+		{ClaimID: "", ProfileID: "pA", RecordedAt: base},
+		{ClaimID: "claim-other-profile", ProfileID: "pB", RecordedAt: base},
+		{ClaimID: "claim-future-candidate", ProfileID: "pA", ValidFrom: &after, RecordedAt: base},
+		{ClaimID: "claim-future-hydrated", ProfileID: "pA", RecordedAt: base},
+		{ClaimID: "claim-missing", ProfileID: "pA", RecordedAt: base},
+		{ClaimID: "claim-good", ProfileID: "pA", RecordedAt: base},
+	}}
+	factGetter := &fakeFactGetter{facts: map[string]*domain.Fact{
+		"fact-future-hydrated": {
+			FactID:     "fact-future-hydrated",
+			ProfileID:  "pA",
+			ValidFrom:  &after,
+			RecordedAt: base,
+			TruthScore: 0.4,
+		},
+		"fact-good": {
+			FactID:     "fact-good",
+			ProfileID:  "pA",
+			RecordedAt: base,
+			TruthScore: 0.9,
+			Evidence:   []domain.Evidence{{FragmentID: "fragment-1"}},
+		},
+	}}
+	claimGetter := &fakeClaimGetter{claims: map[string]*domain.Claim{
+		"claim-future-hydrated": {
+			ClaimID:     "claim-future-hydrated",
+			ProfileID:   "pA",
+			ValidFrom:   &after,
+			RecordedAt:  base,
+			ExtractConf: 0.4,
+		},
+		"claim-good": {
+			ClaimID:     "claim-good",
+			ProfileID:   "pA",
+			RecordedAt:  base,
+			ExtractConf: 0.8,
+			Evidence:    []domain.Evidence{{FragmentID: "fragment-2"}},
+		},
+	}}
+	logger := &fakeLogger{}
+	svc := &recallService{
+		factSearcher:  factSearcher,
+		factGet:       factGetter,
+		claimSearcher: claimSearcher,
+		claimGet:      claimGetter,
+		claimWeight:   DefaultRecallValidatedClaimWeight,
+		logger:        logger,
+	}
+
+	out := svc.enrichTierHits(context.Background(), "pA", 10, RecallRequest{
+		Query:   "q",
+		ValidAt: &base,
+		KnownAt: &base,
+	})
+
+	require.Len(t, out, 2)
+	require.NotNil(t, out[0].Fact)
+	require.Equal(t, "fact-good", out[0].Fact.FactID)
+	require.Nil(t, out[0].Fact.Evidence)
+	require.NotNil(t, out[1].Claim)
+	require.Equal(t, "claim-good", out[1].Claim.ClaimID)
+	require.Nil(t, out[1].Claim.Evidence)
+	require.Equal(t, int32(1), atomic.LoadInt32(&factGetter.batchCallCount))
+	require.Equal(t, int32(1), atomic.LoadInt32(&claimGetter.batchCallCount))
+	require.Equal(t, int32(2), atomic.LoadInt32(&logger.warns))
+}
+
+func TestRecallService_EnrichTierHitsRetainsEvidenceWhenRequested(t *testing.T) {
+	factGetter := &fakeFactGetter{facts: map[string]*domain.Fact{
+		"fact-1": {
+			FactID:     "fact-1",
+			ProfileID:  "pA",
+			RecordedAt: time.Now().UTC(),
+			TruthScore: 0.9,
+			Evidence:   []domain.Evidence{{FragmentID: "fragment-1"}},
+		},
+	}}
+	claimGetter := &fakeClaimGetter{claims: map[string]*domain.Claim{
+		"claim-1": {
+			ClaimID:     "claim-1",
+			ProfileID:   "pA",
+			RecordedAt:  time.Now().UTC(),
+			ExtractConf: 0.8,
+			Evidence:    []domain.Evidence{{FragmentID: "fragment-2"}},
+		},
+	}}
+	svc := &recallService{
+		factSearcher:  &fakeFactSearcher{results: []FactRecallResult{{FactID: "fact-1", ProfileID: "pA"}}},
+		factGet:       factGetter,
+		claimSearcher: &fakeClaimSearcher{results: []ClaimRecallResult{{ClaimID: "claim-1", ProfileID: "pA"}}},
+		claimGet:      claimGetter,
+		claimWeight:   1,
+	}
+
+	out := svc.enrichTierHits(context.Background(), "pA", 10, RecallRequest{
+		Query:           "q",
+		IncludeEvidence: true,
+	})
+
+	require.Len(t, out, 2)
+	require.NotEmpty(t, out[0].Fact.Evidence)
+	require.NotEmpty(t, out[1].Claim.Evidence)
+	require.Equal(t, 0.8, out[1].Score)
+}
+
+func TestRecallService_EnrichTierHitsSearchErrorsAreLoggedAndSkipped(t *testing.T) {
+	logger := &fakeLogger{}
+	svc := &recallService{
+		factSearcher:  &fakeFactSearcher{err: errors.New("fact search failed")},
+		factGet:       &fakeFactGetter{},
+		claimSearcher: &fakeClaimSearcher{err: errors.New("claim search failed")},
+		claimGet:      &fakeClaimGetter{},
+		logger:        logger,
+	}
+
+	out := svc.enrichTierHits(context.Background(), "pA", 10, RecallRequest{Query: "q"})
+
+	require.Empty(t, out)
+	require.Equal(t, int32(2), atomic.LoadInt32(&logger.warns))
+}
+
+func TestRecallService_TierBatchErrorsFallBackToSingleGetters(t *testing.T) {
+	factGetter := &fakeFactGetter{
+		batchErr: errors.New("fact batch failed"),
+		facts: map[string]*domain.Fact{
+			"fact-1": {
+				FactID:     "fact-1",
+				ProfileID:  "pA",
+				RecordedAt: time.Now().UTC(),
+				TruthScore: 0.9,
+			},
+		},
+	}
+	claimGetter := &fakeClaimGetter{
+		batchErr: errors.New("claim batch failed"),
+		claims: map[string]*domain.Claim{
+			"claim-1": {
+				ClaimID:     "claim-1",
+				ProfileID:   "pA",
+				RecordedAt:  time.Now().UTC(),
+				ExtractConf: 0.8,
+			},
+		},
+	}
+	svc := &recallService{
+		factSearcher:  &fakeFactSearcher{results: []FactRecallResult{{FactID: "fact-1", ProfileID: "pA"}}},
+		factGet:       factGetter,
+		claimSearcher: &fakeClaimSearcher{results: []ClaimRecallResult{{ClaimID: "claim-1", ProfileID: "pA"}}},
+		claimGet:      claimGetter,
+		claimWeight:   1,
+	}
+
+	out := svc.enrichTierHits(context.Background(), "pA", 10, RecallRequest{Query: "q"})
+
+	require.Len(t, out, 2)
+	require.Equal(t, int32(1), atomic.LoadInt32(&factGetter.batchCallCount))
+	require.Equal(t, int32(1), atomic.LoadInt32(&factGetter.callCount))
+	require.Equal(t, int32(1), atomic.LoadInt32(&claimGetter.batchCallCount))
+	require.Equal(t, int32(1), atomic.LoadInt32(&claimGetter.callCount))
+}
+
+func TestRecallService_TierNonBatchGettersAndEmptyBatchInputs(t *testing.T) {
+	factGetter := &getOnlyFactGetter{facts: map[string]*domain.Fact{
+		"fact-1": {
+			FactID:     "fact-1",
+			ProfileID:  "pA",
+			RecordedAt: time.Now().UTC(),
+			TruthScore: 0.9,
+		},
+	}}
+	claimGetter := &getOnlyClaimGetter{claims: map[string]*domain.Claim{
+		"claim-1": {
+			ClaimID:     "claim-1",
+			ProfileID:   "pA",
+			RecordedAt:  time.Now().UTC(),
+			ExtractConf: 0.8,
+		},
+	}}
+	svc := &recallService{
+		factSearcher:  &fakeFactSearcher{results: []FactRecallResult{{FactID: "fact-1", ProfileID: "pA"}}},
+		factGet:       factGetter,
+		claimSearcher: &fakeClaimSearcher{results: []ClaimRecallResult{{ClaimID: "claim-1", ProfileID: "pA"}}},
+		claimGet:      claimGetter,
+		claimWeight:   1,
+	}
+
+	out := svc.enrichTierHits(context.Background(), "pA", 10, RecallRequest{Query: "q"})
+
+	require.Len(t, out, 2)
+	require.Equal(t, int32(1), atomic.LoadInt32(&factGetter.callCount))
+	require.Equal(t, int32(1), atomic.LoadInt32(&claimGetter.callCount))
+
+	emptySvc := &recallService{factGet: &fakeFactGetter{}, claimGet: &fakeClaimGetter{}}
+	facts, ok := emptySvc.batchHydrateFacts(context.Background(), "pA", nil)
+	require.False(t, ok)
+	require.Nil(t, facts)
+	claims, ok := emptySvc.batchHydrateClaims(context.Background(), "pA", nil)
+	require.False(t, ok)
+	require.Nil(t, claims)
+}
+
+func TestRecallService_FilterKeywordFragmentsDropsCrossProfileHits(t *testing.T) {
+	out := filterKeywordFragments([]keywordsearch.FragmentSearchResult{
+		{FragmentID: "own", ProfileID: "pA"},
+		{FragmentID: "other", ProfileID: "pB"},
+	}, "pA")
+
+	require.Equal(t, []keywordsearch.FragmentSearchResult{{FragmentID: "own", ProfileID: "pA"}}, out)
 }

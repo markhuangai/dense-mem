@@ -2,8 +2,10 @@ package claimservice
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -154,6 +156,10 @@ ON CREATE SET
 //  8. Persist via ScopedWrite.
 //  9. Emit audit event (failure swallowed).
 func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, claim *domain.Claim) (*CreateResult, error) {
+	if err := validateCreateClaimInput(claim); err != nil {
+		return nil, fmt.Errorf("claim create: validation: %w", err)
+	}
+
 	// Step 1: pre-hash field-length guard.
 	if err := claimidentity.ValidateClaimIdentityInputs(
 		profileID,
@@ -398,4 +404,30 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 	}
 
 	return &CreateResult{Claim: newClaim}, nil
+}
+
+func validateCreateClaimInput(claim *domain.Claim) error {
+	if claim == nil {
+		return errors.New("claim is required")
+	}
+	if claim.Modality != "" && !claim.Modality.IsValid() {
+		return errors.New("modality must be one of [assertion question proposal speculation quoted]")
+	}
+	if claim.Polarity != "" && !claim.Polarity.IsValid() {
+		return errors.New("polarity must be one of [+ -]")
+	}
+	if !validClaimConfidence(claim.ExtractConf) {
+		return errors.New("extract_conf must be between 0 and 1")
+	}
+	if !validClaimConfidence(claim.ResolutionConf) {
+		return errors.New("resolution_conf must be between 0 and 1")
+	}
+	if claim.ValidFrom != nil && claim.ValidTo != nil && claim.ValidFrom.After(*claim.ValidTo) {
+		return errors.New("valid_from must not be after valid_to")
+	}
+	return nil
+}
+
+func validClaimConfidence(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= 1
 }

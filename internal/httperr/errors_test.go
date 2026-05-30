@@ -2,6 +2,7 @@ package httperr
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -168,6 +169,42 @@ func TestErrorHandler(t *testing.T) {
 		assert.Equal(t, http.StatusInternalServerError, rec.Code)
 		assert.Contains(t, rec.Body.String(), `"code":"INTERNAL_ERROR"`)
 	})
+
+	t.Run("does not write committed response", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+		c.Response().Committed = true
+
+		ErrorHandler(New(NOT_FOUND, "resource not found"), c)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Empty(t, rec.Body.String())
+	})
+}
+
+func TestEchoHTTPErrorToAPIErrorBranches(t *testing.T) {
+	cases := []struct {
+		status int
+		code   ErrorCode
+	}{
+		{http.StatusBadRequest, VALIDATION_ERROR},
+		{http.StatusUnauthorized, AUTH_INVALID},
+		{http.StatusForbidden, FORBIDDEN},
+		{http.StatusNotFound, NOT_FOUND},
+		{http.StatusConflict, CONFLICT},
+		{http.StatusTooManyRequests, RATE_LIMITED},
+		{http.StatusServiceUnavailable, SERVICE_UNAVAILABLE},
+		{http.StatusInternalServerError, INTERNAL_ERROR},
+		{http.StatusTeapot, INTERNAL_ERROR},
+	}
+	for _, tc := range cases {
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
+			got := echoHTTPErrorToAPIError(echo.NewHTTPError(tc.status, errors.New("wrapped")))
+			assert.Equal(t, tc.code, got.Code)
+			assert.Contains(t, got.Message, "wrapped")
+		})
+	}
 }
 
 // TestKnowledgeErrorCodes verifies the stable external domain error codes introduced

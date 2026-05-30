@@ -619,6 +619,7 @@ func (c *testConfig) GetNeo4jDatabase() string          { return c.neo4jDatabase
 func (c *testConfig) GetRedisAddr() string              { return c.redisAddr }
 func (c *testConfig) GetRedisPassword() string          { return c.redisPassword }
 func (c *testConfig) GetRedisDB() int                   { return c.redisDB }
+func (c *testConfig) GetHTTPMaxBodyBytes() int          { return 0 }
 func (c *testConfig) GetRateLimitPerMinute() int        { return c.rateLimitPerMinute }
 func (c *testConfig) GetFragmentCreateRateLimit() int   { return c.fragmentCreateRateLimit }
 func (c *testConfig) GetFragmentReadRateLimit() int     { return c.fragmentReadRateLimit }

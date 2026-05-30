@@ -572,3 +572,75 @@ func TestAuthMiddleware_TouchLastUsed_Background(t *testing.T) {
 	assert.Equal(t, keyID, mockRepo.touchLastUsedID, "TouchLastUsed should be called with correct key ID")
 	mockRepo.touchLastUsedMu.Unlock()
 }
+
+func TestPrincipalInterfaceAndRequireAuthHelpers(t *testing.T) {
+	profileID := uuid.New()
+	keyID := uuid.New()
+	principal := &Principal{
+		KeyID:       keyID,
+		ProfileID:   &profileID,
+		ProfileName: "Primary",
+		Role:        "standard",
+		Scopes:      []string{"read", "write"},
+		KeyPrefix:   "dm_test",
+		RateLimit:   42,
+	}
+
+	if got := principal.GetKeyID(); got != keyID {
+		t.Fatalf("GetKeyID() = %s, want %s", got, keyID)
+	}
+	if got := principal.GetTeamID(); got != profileID {
+		t.Fatalf("GetTeamID() fallback = %s, want %s", got, profileID)
+	}
+	if got := principal.GetProfileID(); got == nil || *got != profileID {
+		t.Fatalf("GetProfileID() = %v, want %s", got, profileID)
+	}
+	assert.Equal(t, "Primary", principal.GetProfileName())
+	assert.Equal(t, "standard", principal.GetRole())
+	assert.Equal(t, []string{"read", "write"}, principal.GetScopes())
+	assert.Equal(t, "dm_test", principal.GetKeyPrefix())
+	assert.Equal(t, 42, principal.GetRateLimit())
+
+	ctx := SetPrincipalForTest(context.Background(), principal)
+	require.Same(t, principal, GetPrincipal(ctx))
+	require.Same(t, principal, GetPrincipalInterface(ctx))
+
+	required, err := RequirePrincipal(ctx)
+	require.NoError(t, err)
+	require.Same(t, principal, required)
+
+	_, err = RequirePrincipal(context.Background())
+	require.Error(t, err)
+
+	e := newTestEcho()
+	e.Use(RequireAuth())
+	e.GET("/protected", func(c echo.Context) error {
+		return c.String(http.StatusOK, "ok")
+	})
+	req := httptest.NewRequest(http.MethodGet, "/protected", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	req = httptest.NewRequest(http.MethodGet, "/protected", nil)
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestVerifyKeyWithLimitCanceledContext(t *testing.T) {
+	SetAuthVerificationConcurrency(1)
+	t.Cleanup(func() { SetAuthVerificationConcurrency(0) })
+
+	authVerifyLimiter.mu.RLock()
+	slots := authVerifyLimiter.slots
+	authVerifyLimiter.mu.RUnlock()
+	require.NotNil(t, slots)
+	slots <- struct{}{}
+	defer func() { <-slots }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	assert.False(t, verifyKeyWithLimit(ctx, "raw-key", "hash"))
+}

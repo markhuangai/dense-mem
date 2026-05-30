@@ -27,6 +27,7 @@ func (s *stubConfigProvider) GetNeo4jDatabase() string               { return ""
 func (s *stubConfigProvider) GetRedisAddr() string                   { return "" }
 func (s *stubConfigProvider) GetRedisPassword() string               { return "" }
 func (s *stubConfigProvider) GetRedisDB() int                        { return 0 }
+func (s *stubConfigProvider) GetHTTPMaxBodyBytes() int               { return 1048576 }
 func (s *stubConfigProvider) GetRateLimitPerMinute() int             { return 100 }
 func (s *stubConfigProvider) GetFragmentCreateRateLimit() int        { return 60 }
 func (s *stubConfigProvider) GetFragmentReadRateLimit() int          { return 300 }
@@ -265,4 +266,25 @@ func TestRetryVerifier_CrossProfileIsolation(t *testing.T) {
 	require.True(t, errors.Is(errB, ErrVerifierProvider))
 	assert.Empty(t, gotB.RawJSON, "profile B must not receive profile A's RawJSON")
 	assert.NotContains(t, gotB.RawJSON, "A", "profile A ID must not appear in profile B result")
+}
+
+func TestRetryVerifierConstructorDefaultsAndNoopLogger(t *testing.T) {
+	inner := &stubVerifier{fn: func(_ context.Context, _ Request) (Response, error) {
+		return Response{Verdict: "entailed"}, nil
+	}}
+	svc := NewRetryVerifier(inner, newTestCfg(0), nil)
+	require.Equal(t, 5, cap(svc.sem))
+
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	svc.SetMetrics(metrics)
+	svc.SetMetrics(nil)
+	_, err := svc.Verify(context.Background(), Request{ProfileID: "profile-A", Predicate: "claim"})
+	require.NoError(t, err)
+
+	var logger noopLogProvider
+	logger.Info("info")
+	logger.Warn("warn")
+	logger.Debug("debug")
+	logger.Error("error", errors.New("boom"))
+	require.NotNil(t, logger.With(observability.String("k", "v")))
 }

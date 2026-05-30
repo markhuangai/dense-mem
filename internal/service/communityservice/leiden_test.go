@@ -3,10 +3,15 @@ package communityservice
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 // ---------------------------------------------------------------------------
@@ -147,6 +152,7 @@ func (s *stubConfigProvider) GetNeo4jDatabase() string               { return ""
 func (s *stubConfigProvider) GetRedisAddr() string                   { return "" }
 func (s *stubConfigProvider) GetRedisPassword() string               { return "" }
 func (s *stubConfigProvider) GetRedisDB() int                        { return 0 }
+func (s *stubConfigProvider) GetHTTPMaxBodyBytes() int               { return 0 }
 func (s *stubConfigProvider) GetRateLimitPerMinute() int             { return 0 }
 func (s *stubConfigProvider) GetFragmentCreateRateLimit() int        { return 0 }
 func (s *stubConfigProvider) GetFragmentReadRateLimit() int          { return 0 }
@@ -181,6 +187,100 @@ func newTestLeidenService(locker communityLocker, querier leidenQuerier, maxNode
 		cfg:     &stubConfigProvider{maxNodes: maxNodes},
 		logger:  nil,
 	}
+}
+
+func TestLeidenProductionConstructorsAndWrappers(t *testing.T) {
+	ctx := context.Background()
+	client := &stubCommunityGDSClient{readResults: []any{int64(12)}}
+	cfg := &stubConfigProvider{maxNodes: 100}
+
+	svc := NewLeidenService(nil, client, cfg, nil)
+	require.NotNil(t, svc)
+
+	require.False(t, isEmptyCommunityProjectionError(nil))
+	require.False(t, isEmptyCommunityProjectionError(errors.New("different error")))
+	require.True(t, isEmptyCommunityProjectionError(errors.New("Node query returned no nodes")))
+
+	querier := &neo4jLeidenQuerier{client: client}
+	count, err := querier.EstimateProjection(ctx, "profile-1", "graph-1")
+	require.NoError(t, err)
+	require.Equal(t, int64(12), count)
+
+	querier = &neo4jLeidenQuerier{client: &stubCommunityGDSClient{readResults: []any{nil}}}
+	count, err = querier.EstimateProjection(ctx, "profile-1", "graph-1")
+	require.NoError(t, err)
+	require.Equal(t, int64(0), count)
+
+	querier = &neo4jLeidenQuerier{client: &stubCommunityGDSClient{readResults: []any{"bad"}}}
+	count, err = querier.EstimateProjection(ctx, "profile-1", "graph-1")
+	require.NoError(t, err)
+	require.Equal(t, int64(0), count)
+
+	readErr := errors.New("estimate failed")
+	querier = &neo4jLeidenQuerier{client: &stubCommunityGDSClient{readErrs: []error{readErr}}}
+	count, err = querier.EstimateProjection(ctx, "profile-1", "graph-1")
+	require.Equal(t, int64(0), count)
+	require.ErrorIs(t, err, readErr)
+
+	writeClient := &stubCommunityGDSClient{}
+	querier = &neo4jLeidenQuerier{client: writeClient}
+	require.NoError(t, querier.ProjectGraph(ctx, "profile-1", "graph-1"))
+	require.NoError(t, querier.ToUndirected(ctx, "graph-1"))
+	require.NoError(t, querier.RunLeiden(ctx, "graph-1", DetectOptions{Gamma: 1.2, Tolerance: 0.01, MaxLevels: 3}))
+	require.NoError(t, querier.DropGraph(ctx, "graph-1"))
+	require.Equal(t, 4, writeClient.writes)
+
+	writeErr := errors.New("write failed")
+	querier = &neo4jLeidenQuerier{client: &stubCommunityGDSClient{writeErr: writeErr}}
+	require.ErrorIs(t, querier.ProjectGraph(ctx, "profile-1", "graph-1"), writeErr)
+	require.ErrorIs(t, querier.ToUndirected(ctx, "graph-1"), writeErr)
+	require.ErrorIs(t, querier.RunLeiden(ctx, "graph-1", DetectOptions{}), writeErr)
+	require.ErrorIs(t, querier.DropGraph(ctx, "graph-1"), writeErr)
+}
+
+func TestPGCommunityLocker(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer sqlDB.Close()
+
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
+	require.NoError(t, err)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock\(hashtext\(\$1\)\)`).WithArgs("community:profile-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	locker := &pgCommunityLocker{db: db}
+	called := false
+	err = locker.WithCommunityLock(context.Background(), "profile-1", func(ctx context.Context) error {
+		called = true
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.True(t, called)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	sqlDB, mock, err = sqlmock.New()
+	require.NoError(t, err)
+	defer sqlDB.Close()
+	db, err = gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
+	require.NoError(t, err)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock\(hashtext\(\$1\)\)`).WithArgs("community:profile-2").
+		WillReturnError(errors.New("lock failed"))
+	mock.ExpectRollback()
+
+	locker = &pgCommunityLocker{db: db}
+	err = locker.WithCommunityLock(context.Background(), "profile-2", func(ctx context.Context) error {
+		t.Fatal("callback should not run when lock acquisition fails")
+		return nil
+	})
+
+	require.ErrorContains(t, err, "community advisory lock acquire")
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 // ---------------------------------------------------------------------------
@@ -397,6 +497,126 @@ func TestLeidenDetect(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, []DetectOptions{opts}, querier.runOptions,
 			"Detect must pass explicit tuning parameters through to the Leiden run")
+	})
+
+	t.Run("propagates advisory lock error", func(t *testing.T) {
+		lockErr := errors.New("lock unavailable")
+		locker := &stubCommunityLocker{err: lockErr}
+		querier := &stubLeidenQuerier{estimateNodeCount: 42}
+		svc := newTestLeidenService(locker, querier, maxNodes)
+
+		err := svc.Detect(ctx, profileID, DetectOptions{})
+
+		require.ErrorIs(t, err, lockErr)
+		require.Equal(t, []string{profileID}, locker.locked)
+		require.Empty(t, querier.estimatedProfiles)
+	})
+
+	t.Run("drop error is logged but does not fail successful detection", func(t *testing.T) {
+		locker := &stubCommunityLocker{}
+		querier := &stubLeidenQuerier{
+			estimateNodeCount: 42,
+			dropErr:           errors.New("drop failed"),
+		}
+		svc := &leidenServiceImpl{
+			locker:  locker,
+			querier: querier,
+			cfg:     &stubConfigProvider{maxNodes: maxNodes},
+			logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		}
+
+		err := svc.Detect(ctx, profileID, DetectOptions{})
+
+		require.NoError(t, err)
+		require.Equal(t, []string{GraphNamePrefix + profileID + "-leiden"}, querier.droppedGraphs)
+	})
+
+	t.Run("successful detection refreshes deterministic summaries", func(t *testing.T) {
+		locker := &stubCommunityLocker{}
+		querier := &stubLeidenQuerier{estimateNodeCount: 42}
+		store := &stubCommunitySummaryStore{
+			inputs: []communitySummaryInput{
+				{
+					CommunityID: "community-1",
+					MemberCount: 2,
+					FactTriples: []communityTriple{
+						{Subject: "alice", Predicate: "knows", Object: "bob"},
+					},
+				},
+			},
+		}
+		svc := &leidenServiceImpl{
+			locker:  locker,
+			querier: querier,
+			store:   store,
+			cfg:     &stubConfigProvider{maxNodes: maxNodes},
+		}
+
+		err := svc.Detect(ctx, profileID, DetectOptions{})
+
+		require.NoError(t, err)
+		require.Equal(t, []string{profileID}, store.replacedProfiles)
+		require.Len(t, store.replacedCommunities, 1)
+		require.Len(t, store.replacedCommunities[0], 1)
+		require.Equal(t, "community-1", store.replacedCommunities[0][0].CommunityID)
+		require.Equal(t, profileID, store.replacedCommunities[0][0].ProfileID)
+	})
+
+	t.Run("propagates summary input load error after leiden", func(t *testing.T) {
+		loadErr := errors.New("summary read failed")
+		locker := &stubCommunityLocker{}
+		querier := &stubLeidenQuerier{estimateNodeCount: 42}
+		store := &stubCommunitySummaryStore{loadErr: loadErr}
+		svc := &leidenServiceImpl{
+			locker:  locker,
+			querier: querier,
+			store:   store,
+			cfg:     &stubConfigProvider{maxNodes: maxNodes},
+		}
+
+		err := svc.Detect(ctx, profileID, DetectOptions{})
+
+		require.ErrorIs(t, err, loadErr)
+		require.ErrorContains(t, err, "community summary inputs")
+		require.Contains(t, querier.droppedGraphs, GraphNamePrefix+profileID+"-leiden")
+	})
+
+	t.Run("propagates summary replace error after leiden", func(t *testing.T) {
+		replaceErr := errors.New("summary write failed")
+		locker := &stubCommunityLocker{}
+		querier := &stubLeidenQuerier{estimateNodeCount: 42}
+		store := &stubCommunitySummaryStore{replaceErr: replaceErr}
+		svc := &leidenServiceImpl{
+			locker:  locker,
+			querier: querier,
+			store:   store,
+			cfg:     &stubConfigProvider{maxNodes: maxNodes},
+		}
+
+		err := svc.Detect(ctx, profileID, DetectOptions{})
+
+		require.ErrorIs(t, err, replaceErr)
+		require.ErrorContains(t, err, "community summary replace")
+		require.Contains(t, querier.droppedGraphs, GraphNamePrefix+profileID+"-leiden")
+	})
+
+	t.Run("propagates clear summary replace error for empty graph", func(t *testing.T) {
+		replaceErr := errors.New("summary clear failed")
+		locker := &stubCommunityLocker{}
+		querier := &stubLeidenQuerier{estimateNodeCount: 0}
+		store := &stubCommunitySummaryStore{replaceErr: replaceErr}
+		svc := &leidenServiceImpl{
+			locker:  locker,
+			querier: querier,
+			store:   store,
+			cfg:     &stubConfigProvider{maxNodes: maxNodes},
+		}
+
+		err := svc.Detect(ctx, profileID, DetectOptions{})
+
+		require.ErrorIs(t, err, replaceErr)
+		require.ErrorContains(t, err, "community summary replace")
+		require.Empty(t, querier.projectedGraphs)
 	})
 }
 

@@ -430,3 +430,131 @@ func TestMCP_HandlePayloadProducesOnlyJSONRPC(t *testing.T) {
 
 	_ = logBuf
 }
+
+func TestMCP_ToolsListDefaultsNilSchemaAndFiltersScopes(t *testing.T) {
+	logger, _ := testLogger(t)
+	reg := registry.New()
+	_ = reg.Register(registry.Tool{Name: "public", Description: "public"})
+	_ = reg.Register(registry.Tool{Name: "write_only", Description: "write", RequiredScopes: []string{"write"}})
+	s := NewServerWithScopes(reg, "pA", []string{"read"}, logger)
+
+	out := runRPC(t, s, `{"jsonrpc":"2.0","id":8,"method":"tools/list"}`)
+
+	if !strings.Contains(out, `"public"`) {
+		t.Fatalf("tools/list missing public tool: %s", out)
+	}
+	if strings.Contains(out, `"write_only"`) {
+		t.Fatalf("tools/list exposed insufficient-scope tool: %s", out)
+	}
+	if !strings.Contains(out, `"inputSchema":{"type":"object"}`) {
+		t.Fatalf("nil schema was not defaulted: %s", out)
+	}
+}
+
+func TestMCP_ToolsCallRejectsInvalidParamsAndScope(t *testing.T) {
+	logger, _ := testLogger(t)
+	reg := registry.New()
+	_ = reg.Register(registry.Tool{
+		Name:           "write_tool",
+		Description:    "needs write",
+		RequiredScopes: []string{"write"},
+		Invoke: func(context.Context, string, map[string]any) (map[string]any, error) {
+			return map[string]any{"ok": true}, nil
+		},
+	})
+	_ = reg.Register(registry.Tool{
+		Name:        "needs_text",
+		Description: "validates input",
+		InputSchema: map[string]any{
+			"type":     "object",
+			"required": []any{"text"},
+			"properties": map[string]any{
+				"text": map[string]any{"type": "string"},
+			},
+		},
+		Invoke: func(context.Context, string, map[string]any) (map[string]any, error) {
+			return map[string]any{"ok": true}, nil
+		},
+	})
+	_ = reg.Register(registry.Tool{Name: "metadata_only", Description: "no invoker"})
+	s := NewServerWithScopes(reg, "pA", []string{"read"}, logger)
+
+	cases := []struct {
+		name string
+		req  string
+		code int
+	}{
+		{"missing params", `{"jsonrpc":"2.0","id":1,"method":"tools/call"}`, errCodeInvalidParams},
+		{"invalid params", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":42}`, errCodeInvalidParams},
+		{"missing tool name", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"arguments":{}}}`, errCodeInvalidParams},
+		{"insufficient scope", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"write_tool","arguments":{}}}`, errCodeToolFailure},
+		{"not executable", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"metadata_only","arguments":{}}}`, errCodeToolFailure},
+		{"validation error", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"needs_text","arguments":{}}}`, errCodeInvalidParams},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := runRPC(t, s, tc.req)
+			var resp rpcResp
+			if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &resp); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if resp.Error == nil || resp.Error.Code != tc.code {
+				t.Fatalf("error = %+v; want code %d", resp.Error, tc.code)
+			}
+		})
+	}
+}
+
+func TestMCP_ToolsCallHandlesNilArgumentsAndMarshalFailure(t *testing.T) {
+	logger, _ := testLogger(t)
+	reg := registry.New()
+	var gotArgs map[string]any
+	_ = reg.Register(registry.Tool{
+		Name:        "nil_args",
+		Description: "captures nil args",
+		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+			gotArgs = input
+			return map[string]any{"ok": true}, nil
+		},
+	})
+	_ = reg.Register(registry.Tool{
+		Name:        "bad_result",
+		Description: "returns unmarshalable value",
+		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+			return map[string]any{"bad": make(chan int)}, nil
+		},
+	})
+	s := NewServer(reg, "pA", logger)
+
+	out := runRPC(t, s, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"nil_args"}}`)
+	var resp rpcResp
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Error != nil {
+		t.Fatalf("unexpected error: %+v", resp.Error)
+	}
+	if gotArgs == nil || len(gotArgs) != 0 {
+		t.Fatalf("nil arguments were not normalized to empty map: %v", gotArgs)
+	}
+
+	out = runRPC(t, s, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"bad_result","arguments":{}}}`)
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Error == nil || resp.Error.Code != errCodeToolFailure {
+		t.Fatalf("expected marshal failure, got %+v", resp.Error)
+	}
+}
+
+func TestMCPMustMarshalResponseFallsBackOnBadResult(t *testing.T) {
+	out := mustMarshalResponse(okResponse(json.RawMessage(`1`), map[string]any{"bad": make(chan int)}))
+	var resp rpcResp
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("fallback response was not valid JSON: %v", err)
+	}
+	if resp.Error == nil || resp.Error.Code != errCodeToolFailure {
+		t.Fatalf("fallback error = %+v; want tool failure", resp.Error)
+	}
+}

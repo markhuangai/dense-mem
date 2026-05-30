@@ -1,10 +1,13 @@
 package middleware
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -15,6 +18,27 @@ import (
 	"github.com/markhuangai/dense-mem/internal/storage/inmem"
 	"github.com/markhuangai/dense-mem/internal/storage/redis"
 )
+
+type stubRateLimitService struct {
+	allowed       bool
+	remaining     int
+	resetAt       time.Time
+	err           error
+	lastSubject   string
+	lastRoutePath string
+	lastLimit     int
+}
+
+func (s *stubRateLimitService) Check(ctx context.Context, subject, routePath string, limit int) (bool, int, time.Time, error) {
+	s.lastSubject = subject
+	s.lastRoutePath = routePath
+	s.lastLimit = limit
+	resetAt := s.resetAt
+	if resetAt.IsZero() {
+		resetAt = time.Now().Add(time.Minute)
+	}
+	return s.allowed, s.remaining, resetAt, s.err
+}
 
 // testRateLimitConfig implements config.ConfigProvider for rate limit tests.
 type testRateLimitConfig struct {
@@ -34,6 +58,7 @@ func (c *testRateLimitConfig) GetNeo4jDatabase() string          { return "" }
 func (c *testRateLimitConfig) GetRedisAddr() string              { return "" }
 func (c *testRateLimitConfig) GetRedisPassword() string          { return "" }
 func (c *testRateLimitConfig) GetRedisDB() int                   { return 0 }
+func (c *testRateLimitConfig) GetHTTPMaxBodyBytes() int          { return 1048576 }
 func (c *testRateLimitConfig) GetRateLimitPerMinute() int        { return c.rateLimitPerMinute }
 func (c *testRateLimitConfig) GetFragmentCreateRateLimit() int   { return c.fragmentCreateRateLimit }
 func (c *testRateLimitConfig) GetFragmentReadRateLimit() int     { return c.fragmentReadRateLimit }
@@ -140,6 +165,7 @@ func (c *redisRateLimitConfig) GetNeo4jDatabase() string               { return 
 func (c *redisRateLimitConfig) GetRedisAddr() string                   { return c.addr }
 func (c *redisRateLimitConfig) GetRedisPassword() string               { return c.password }
 func (c *redisRateLimitConfig) GetRedisDB() int                        { return c.db }
+func (c *redisRateLimitConfig) GetHTTPMaxBodyBytes() int               { return 1048576 }
 func (c *redisRateLimitConfig) GetRateLimitPerMinute() int             { return c.rateLimitPerMinute }
 func (c *redisRateLimitConfig) GetFragmentCreateRateLimit() int        { return c.fragmentCreateRateLimit }
 func (c *redisRateLimitConfig) GetFragmentReadRateLimit() int          { return c.fragmentReadRateLimit }
@@ -333,4 +359,120 @@ func TestRateLimitMiddleware_EnforcesStricterFragmentWriteTier(t *testing.T) {
 	// This proves the middleware picks the per-route tier, not a shared global bucket.
 	assert.Equal(t, http.StatusOK, get(), "read must still succeed — read tier is separate from write tier")
 	assert.Equal(t, http.StatusOK, get(), "second read must still succeed")
+}
+
+func TestRateLimitMiddleware_EdgeBranches(t *testing.T) {
+	cfg := &testRateLimitConfig{
+		rateLimitPerMinute:      100,
+		fragmentCreateRateLimit: 50,
+		fragmentReadRateLimit:   200,
+		claimWriteRateLimit:     40,
+		claimReadRateLimit:      150,
+	}
+
+	t.Run("no principal passes through", func(t *testing.T) {
+		e := echo.New()
+		limiter := &stubRateLimitService{allowed: true}
+		e.Use(RateLimitMiddleware(limiter, cfg, nil))
+		e.GET("/api/v1/other", func(c echo.Context) error {
+			return c.NoContent(http.StatusNoContent)
+		})
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/other", nil)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusNoContent, rec.Code)
+		assert.Empty(t, limiter.lastSubject)
+	})
+
+	t.Run("principal without profile is forbidden", func(t *testing.T) {
+		e := echo.New()
+		e.HTTPErrorHandler = httperr.ErrorHandler
+		e.Use(RateLimitMiddleware(&stubRateLimitService{allowed: true}, cfg, nil))
+		e.GET("/api/v1/other", func(c echo.Context) error {
+			return c.NoContent(http.StatusOK)
+		})
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/other", nil)
+		req = req.WithContext(SetPrincipalForTest(req.Context(), &Principal{KeyID: uuid.New()}))
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+
+	t.Run("rate limit service error fails open", func(t *testing.T) {
+		e := echo.New()
+		limiter := &stubRateLimitService{err: errors.New("store down")}
+		e.Use(RateLimitMiddleware(limiter, cfg, nil))
+		e.GET("/api/v1/other", func(c echo.Context) error {
+			return c.NoContent(http.StatusOK)
+		})
+
+		profileID := uuid.New()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/other", nil)
+		req = req.WithContext(SetPrincipalForTest(req.Context(), &Principal{
+			KeyID:     uuid.New(),
+			ProfileID: &profileID,
+		}))
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, 100, limiter.lastLimit)
+	})
+
+	t.Run("principal limit overrides larger route tier", func(t *testing.T) {
+		e := echo.New()
+		limiter := &stubRateLimitService{allowed: true, remaining: 4}
+		e.Use(RateLimitMiddleware(limiter, cfg, nil))
+		e.GET("/api/v1/profiles/:id/fragments", func(c echo.Context) error {
+			return c.NoContent(http.StatusOK)
+		})
+
+		profileID := uuid.New()
+		keyID := uuid.New()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/"+profileID.String()+"/fragments", nil)
+		req = req.WithContext(SetPrincipalForTest(req.Context(), &Principal{
+			KeyID:     keyID,
+			ProfileID: &profileID,
+			RateLimit: 5,
+		}))
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, 5, limiter.lastLimit)
+		assert.Contains(t, limiter.lastSubject, profileID.String()+":key:"+keyID.String())
+		assert.Equal(t, "5", rec.Header().Get("X-RateLimit-Limit"))
+	})
+
+	t.Run("denied request sets retry after and audits", func(t *testing.T) {
+		e := echo.New()
+		e.HTTPErrorHandler = httperr.ErrorHandler
+		limiter := &stubRateLimitService{
+			allowed:   false,
+			remaining: 0,
+			resetAt:   time.Now().Add(-time.Second),
+		}
+		e.Use(CorrelationIDMiddleware())
+		e.Use(RateLimitMiddleware(limiter, cfg, &mockAuditService{}))
+		e.DELETE("/api/v1/profiles/:id/claims/:claim_id", func(c echo.Context) error {
+			return c.NoContent(http.StatusOK)
+		})
+
+		profileID := uuid.New()
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/profiles/"+profileID.String()+"/claims/claim-1", nil)
+		req = req.WithContext(SetPrincipalForTest(req.Context(), &Principal{
+			KeyID:     uuid.New(),
+			ProfileID: &profileID,
+		}))
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusTooManyRequests, rec.Code)
+		assert.Equal(t, "0", rec.Header().Get("Retry-After"))
+		assert.Equal(t, 40, limiter.lastLimit)
+	})
 }

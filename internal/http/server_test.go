@@ -243,6 +243,27 @@ func TestNewServerUsesDirectIPByDefault(t *testing.T) {
 	}
 }
 
+func TestServerWrapperMethods(t *testing.T) {
+	e := echo.New()
+	server := &Server{echo: e}
+
+	if got := server.GetEcho(); got != e {
+		t.Fatalf("GetEcho() = %p; want %p", got, e)
+	}
+
+	if err := server.Start("not-a-valid-listen-address"); err == nil {
+		t.Fatal("expected Start to return an error for an invalid listen address")
+	}
+
+	if err := server.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+
+	if err := ShutdownServer(e, observability.New(slog.LevelInfo)); err != nil {
+		t.Fatalf("ShutdownServer() error = %v", err)
+	}
+}
+
 // TestHealthEndpointNoMiddleware verifies that /health has no middleware applied
 func TestHealthEndpointNoMiddleware(t *testing.T) {
 	cfg := config.Config{HTTPAddr: ":8080"}

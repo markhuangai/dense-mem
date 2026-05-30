@@ -626,10 +626,14 @@ func (s *promoteClaimServiceImpl) checkIdempotency(ctx context.Context, profileI
 func evaluateGates(claim *domain.Claim, gate PromotionGate) error {
 	var failed []string
 
-	if claim.ExtractConf < gate.MinExtractConf {
+	if !validConfidence(claim.ExtractConf) {
+		failed = append(failed, "extract_conf")
+	} else if claim.ExtractConf < gate.MinExtractConf {
 		failed = append(failed, "extract_conf")
 	}
-	if claim.ResolutionConf < gate.MinResolutionConf {
+	if !validConfidence(claim.ResolutionConf) {
+		failed = append(failed, "resolution_conf")
+	} else if claim.ResolutionConf < gate.MinResolutionConf {
 		failed = append(failed, "resolution_conf")
 	}
 	if gate.RequiresAssertion && claim.Modality != domain.ModalityAssertion {

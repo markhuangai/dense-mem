@@ -1,114 +1,79 @@
 package response
 
 import (
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"testing"
+	"time"
 
-	"github.com/labstack/echo/v4"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-func TestSuccessEnvelope(t *testing.T) {
-	e := echo.New()
+func TestCommunityResponses(t *testing.T) {
+	now := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	require.Nil(t, ToCommunityResponse(nil))
 
-	t.Run("writes data wrapper with correct status", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		rec := httptest.NewRecorder()
-		c := e.NewContext(req, rec)
+	community := &domain.Community{
+		CommunityID:      "community-1",
+		ProfileID:        "profile-1",
+		Level:            2,
+		Summary:          "summary",
+		SummaryVersion:   "v1",
+		MemberCount:      3,
+		TopEntities:      []string{"alice"},
+		TopPredicates:    []string{"knows"},
+		LastSummarizedAt: now,
+	}
+	got := ToCommunityResponse(community)
+	require.Equal(t, "community-1", got.CommunityID)
+	require.Equal(t, now, got.LastSummarizedAt)
 
-		testData := map[string]interface{}{
-			"id":   "123",
-			"name": "test",
-		}
+	list := ToListCommunitiesResponse([]*domain.Community{nil, community})
+	require.Equal(t, 1, list.Total)
+	require.Len(t, list.Items, 1)
 
-		err := Success(c, http.StatusOK, testData)
-		require.NoError(t, err)
+	detect := ToCommunityDetectResponse([]*domain.Community{nil, community})
+	require.True(t, detect.Detected)
+	require.Equal(t, 1, detect.CommunityCount)
+	require.Equal(t, 3, detect.NodeCount)
+}
 
-		assert.Equal(t, http.StatusOK, rec.Code)
+func TestFactResponses(t *testing.T) {
+	now := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	require.Nil(t, ToFactResponse(nil))
+	require.Nil(t, toEvidenceResponses(nil))
 
-		var result map[string]interface{}
-		err = json.Unmarshal(rec.Body.Bytes(), &result)
-		require.NoError(t, err)
+	fact := &domain.Fact{
+		FactID:                       "fact-1",
+		ProfileID:                    "profile-1",
+		CreatedByProfileID:           "creator",
+		CreatedByProfileName:         "Creator",
+		PromotedByProfileID:          "promoter",
+		PromotedByProfileName:        "Promoter",
+		Subject:                      "Alice",
+		Predicate:                    "knows",
+		Object:                       "Bob",
+		Status:                       domain.FactStatusActive,
+		TruthScore:                   0.91,
+		RecordedAt:                   now,
+		LastConfirmedAt:              &now,
+		PromotedFromClaimID:          "claim-1",
+		Classification:               map[string]any{"domain": "people"},
+		ClassificationLatticeVersion: "v1",
+		SourceQuality:                0.8,
+		Labels:                       []string{"people"},
+		Metadata:                     map[string]any{"source": "unit"},
+		Evidence:                     []domain.Evidence{{FragmentID: "fragment-1", Speaker: "Alice", SpanStart: 1, SpanEnd: 2, ExtractConf: 0.9, ExtractionModel: "model", ExtractionVersion: "v1", PipelineRunID: "run", Authority: domain.AuthorityPrimary}},
+	}
 
-		// Verify top-level "data" key exists
-		data, ok := result["data"]
-		require.True(t, ok, "expected 'data' key at top level")
+	got := ToFactResponse(fact)
+	require.Equal(t, "fact-1", got.FactID)
+	require.Equal(t, "active", got.Status)
+	require.Len(t, got.Evidence, 1)
+	require.Equal(t, "primary", got.Evidence[0].Authority)
 
-		dataMap, ok := data.(map[string]interface{})
-		require.True(t, ok, "expected data to be an object")
-		assert.Equal(t, "123", dataMap["id"])
-		assert.Equal(t, "test", dataMap["name"])
-	})
-
-	t.Run("SuccessOK writes 200 status", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		rec := httptest.NewRecorder()
-		c := e.NewContext(req, rec)
-
-		err := SuccessOK(c, "hello")
-		require.NoError(t, err)
-
-		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.Contains(t, rec.Body.String(), `"data":"hello"`)
-	})
-
-	t.Run("SuccessCreated writes 201 status", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/test", nil)
-		rec := httptest.NewRecorder()
-		c := e.NewContext(req, rec)
-
-		err := SuccessCreated(c, map[string]string{"id": "new-id"})
-		require.NoError(t, err)
-
-		assert.Equal(t, http.StatusCreated, rec.Code)
-		assert.Contains(t, rec.Body.String(), `"data"`)
-		assert.Contains(t, rec.Body.String(), `"id":"new-id"`)
-	})
-
-	t.Run("SuccessNoContent writes 204 status", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodDelete, "/test", nil)
-		rec := httptest.NewRecorder()
-		c := e.NewContext(req, rec)
-
-		err := SuccessNoContent(c)
-		require.NoError(t, err)
-
-		assert.Equal(t, http.StatusNoContent, rec.Code)
-	})
-
-	t.Run("handles nil data", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		rec := httptest.NewRecorder()
-		c := e.NewContext(req, rec)
-
-		err := Success(c, http.StatusOK, nil)
-		require.NoError(t, err)
-
-		assert.Contains(t, rec.Body.String(), `"data":null`)
-	})
-
-	t.Run("handles array data", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		rec := httptest.NewRecorder()
-		c := e.NewContext(req, rec)
-
-		testData := []string{"item1", "item2", "item3"}
-
-		err := Success(c, http.StatusOK, testData)
-		require.NoError(t, err)
-
-		var result map[string]interface{}
-		err = json.Unmarshal(rec.Body.Bytes(), &result)
-		require.NoError(t, err)
-
-		data, ok := result["data"].([]interface{})
-		require.True(t, ok)
-		assert.Len(t, data, 3)
-		assert.Equal(t, "item1", data[0])
-		assert.Equal(t, "item2", data[1])
-		assert.Equal(t, "item3", data[2])
-	})
+	list := ToListFactsResponse([]*domain.Fact{nil, fact}, "next")
+	require.True(t, list.HasMore)
+	require.Equal(t, "next", list.NextCursor)
+	require.Len(t, list.Items, 1)
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
 )
 
@@ -285,4 +286,68 @@ func TestListClaims_CrossProfileIsolation(t *testing.T) {
 	}
 	require.NotContains(t, bIDs, "claim-a",
 		"profile A's claim must not be visible to profile B")
+}
+
+type sequenceClaimReader struct {
+	pages [][]map[string]any
+	call  int
+	err   error
+}
+
+func (s *sequenceClaimReader) ScopedRead(_ context.Context, _ string, _ string, _ map[string]any) (neo4j.ResultSummary, []map[string]any, error) {
+	if s.err != nil {
+		return nil, nil, s.err
+	}
+	if s.call >= len(s.pages) {
+		return nil, nil, nil
+	}
+	rows := s.pages[s.call]
+	s.call++
+	return nil, rows, nil
+}
+
+func TestListClaimsCompatService(t *testing.T) {
+	ctx := context.Background()
+	const profileID = "00000000-0000-0000-0000-000000000001"
+	now := time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC)
+	row := func(id string, seconds int) map[string]any {
+		return map[string]any{
+			"claim_id":           id,
+			"subject":            "Alice",
+			"predicate":          "likes",
+			"object":             "Go",
+			"modality":           "assertion",
+			"polarity":           "+",
+			"recorded_at":        now.Add(-time.Duration(seconds) * time.Second),
+			"entailment_verdict": "unverified",
+			"status":             "candidate",
+			"supported_by":       []any{},
+		}
+	}
+
+	reader := &sequenceClaimReader{pages: [][]map[string]any{
+		{row("claim-0", 0), row("claim-1", 1), row("claim-overfetch", 2)},
+		{row("claim-2", 3)},
+	}}
+	svc := NewListClaimsService(reader)
+
+	items, total, err := svc.List(ctx, profileID, 1, 2)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, "claim-2", items[0].ClaimID)
+	require.Equal(t, 3, total)
+
+	reader = &sequenceClaimReader{pages: [][]map[string]any{{}}}
+	svc = NewListClaimsService(reader)
+	items, total, err = svc.List(ctx, profileID, 5, 10)
+	require.NoError(t, err)
+	require.Empty(t, items)
+	require.Equal(t, 0, total)
+
+	reader = &sequenceClaimReader{err: errors.New("list failed")}
+	svc = NewListClaimsService(reader)
+	items, total, err = svc.List(ctx, profileID, 5, 0)
+	require.Nil(t, items)
+	require.Equal(t, 0, total)
+	require.ErrorContains(t, err, "failed to list claims")
 }

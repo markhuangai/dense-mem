@@ -19,6 +19,7 @@ type ConfigProvider interface {
 	GetRedisAddr() string
 	GetRedisPassword() string
 	GetRedisDB() int
+	GetHTTPMaxBodyBytes() int
 	GetRateLimitPerMinute() int
 	GetFragmentCreateRateLimit() int
 	GetFragmentReadRateLimit() int

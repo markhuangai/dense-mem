@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -139,6 +141,66 @@ func TestFragmentCreateService_HappyPath(t *testing.T) {
 	}
 	if consistency.RecordCount != 1 {
 		t.Errorf("consistency.RecordCount = %d; want 1", consistency.RecordCount)
+	}
+}
+
+func TestCreate_RejectsInvalidRequestBeforeEmbedding(t *testing.T) {
+	cases := []struct {
+		name string
+		req  *dto.CreateFragmentRequest
+		want string
+	}{
+		{
+			name: "nil request",
+			req:  nil,
+			want: "fragment request is required",
+		},
+		{
+			name: "oversized metadata",
+			req: &dto.CreateFragmentRequest{
+				Content:  "x",
+				Metadata: map[string]any{"blob": strings.Repeat("x", dto.MaxMetadataBytes)},
+			},
+			want: "metadata size",
+		},
+		{
+			name: "invalid source type",
+			req: &dto.CreateFragmentRequest{
+				Content:    "x",
+				SourceType: "webhook",
+			},
+			want: "SourceType",
+		},
+		{
+			name: "blank label",
+			req: &dto.CreateFragmentRequest{
+				Content: "x",
+				Labels:  []string{""},
+			},
+			want: "Labels",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mockEmb := &stubEmbedding{DimensionsResult: 4, ModelNameResult: "m1"}
+			writer := &fakeScopedWriter{}
+			svc := NewCreateFragmentService(mockEmb, writer, &fakeDedupeLookup{}, nil, &fakeConsistency{}, nil, nil)
+
+			_, err := svc.Create(context.Background(), "pA", tc.req)
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v; want it to contain %q", err, tc.want)
+			}
+			if mockEmb.CallCount != 0 {
+				t.Fatalf("embedding calls = %d; want 0", mockEmb.CallCount)
+			}
+			if writer.WriteCount != 0 {
+				t.Fatalf("writes = %d; want 0", writer.WriteCount)
+			}
+		})
 	}
 }
 
@@ -286,6 +348,104 @@ func TestCreate_WriteFailure_PropagatesError(t *testing.T) {
 	}
 	if audit.EventCount != 0 {
 		t.Errorf("audit must not fire on persist failure; EventCount = %d", audit.EventCount)
+	}
+}
+
+func TestCreate_LookupFailuresStopBeforeEmbedding(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	cases := []struct {
+		name   string
+		req    *dto.CreateFragmentRequest
+		lookup *fakeDedupeLookup
+		want   string
+	}{
+		{
+			name: "idempotency lookup error",
+			req: &dto.CreateFragmentRequest{
+				Content:        "x",
+				IdempotencyKey: "idem-key",
+			},
+			lookup: &fakeDedupeLookup{ByKeyErr: errors.New("lookup unavailable")},
+			want:   "failed to check idempotency key",
+		},
+		{
+			name:   "content hash lookup error",
+			req:    &dto.CreateFragmentRequest{Content: "x"},
+			lookup: &fakeDedupeLookup{ByHashErr: errors.New("lookup unavailable")},
+			want:   "failed to check content hash",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mockEmb := &stubEmbedding{DimensionsResult: 4, ModelNameResult: "m1"}
+			writer := &fakeScopedWriter{}
+			svc := NewCreateFragmentService(mockEmb, writer, tc.lookup, &fakeAudit{}, &fakeConsistency{}, logger, nil)
+
+			_, err := svc.Create(context.Background(), "pA", tc.req)
+
+			if err == nil {
+				t.Fatal("expected lookup error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v; want it to contain %q", err, tc.want)
+			}
+			if mockEmb.CallCount != 0 {
+				t.Fatalf("embedding calls = %d; want 0", mockEmb.CallCount)
+			}
+			if writer.WriteCount != 0 {
+				t.Fatalf("writes = %d; want 0", writer.WriteCount)
+			}
+		})
+	}
+}
+
+func TestCreate_ClassificationEncodeFailureStopsBeforePersist(t *testing.T) {
+	mockEmb := &stubEmbedding{DimensionsResult: 4, ModelNameResult: "m1"}
+	writer := &fakeScopedWriter{}
+	svc := NewCreateFragmentService(mockEmb, writer, &fakeDedupeLookup{}, &fakeAudit{}, &fakeConsistency{}, nil, nil)
+
+	_, err := svc.Create(context.Background(), "pA", &dto.CreateFragmentRequest{
+		Content:        "x",
+		Classification: map[string]any{"bad": func() {}},
+	})
+
+	if err == nil {
+		t.Fatal("expected classification JSON encoding error")
+	}
+	if !strings.Contains(err.Error(), "fragment classification") {
+		t.Fatalf("error = %v; want classification encode context", err)
+	}
+	if writer.WriteCount != 0 {
+		t.Fatalf("writes = %d; want 0", writer.WriteCount)
+	}
+}
+
+func TestCreate_PostPersistWarningsDoNotFailCreate(t *testing.T) {
+	mockEmb := &stubEmbedding{DimensionsResult: 4, ModelNameResult: "m1"}
+	writer := &fakeScopedWriter{}
+	audit := &fakeAudit{AppendErr: errors.New("audit unavailable")}
+	consistency := &fakeConsistency{RecordErr: errors.New("config store unavailable")}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := NewCreateFragmentService(mockEmb, writer, &fakeDedupeLookup{}, audit, consistency, logger, nil)
+
+	out, err := svc.Create(context.Background(), "pA", &dto.CreateFragmentRequest{Content: "x"})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out == nil || out.Fragment == nil {
+		t.Fatal("expected created fragment")
+	}
+	if writer.WriteCount != 1 {
+		t.Fatalf("writes = %d; want 1", writer.WriteCount)
+	}
+	if consistency.RecordCount != 1 {
+		t.Fatalf("consistency records = %d; want 1", consistency.RecordCount)
+	}
+	if audit.EventCount != 1 {
+		t.Fatalf("audit events = %d; want 1", audit.EventCount)
 	}
 }
 

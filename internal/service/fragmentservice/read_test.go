@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
@@ -125,5 +126,87 @@ func TestGetByID_PropagatesReaderError(t *testing.T) {
 	}
 	if errors.Is(err, ErrFragmentNotFound) {
 		t.Error("reader error must not be mapped to ErrFragmentNotFound")
+	}
+}
+
+func TestGetByIDsAndMapRowToFragmentBranches(t *testing.T) {
+	createdAt := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	updatedAt := createdAt.Add(time.Hour)
+	reader := &fakeScopedReader{
+		results: []map[string]any{
+			{
+				"fragment_id":             "frag-1",
+				"team_id":                 "pA",
+				"created_by_profile_id":   "creator-1",
+				"created_by_profile_name": "Creator",
+				"content":                 "hello",
+				"source":                  "chat",
+				"source_type":             "conversation",
+				"authority":               "authoritative",
+				"labels":                  []any{"one", 2, "two"},
+				"metadata":                map[string]any{"origin": "test"},
+				"content_hash":            "hash-1",
+				"idempotency_key":         "idem-1",
+				"embedding_model":         "embed",
+				"embedding_dimensions":    int(3),
+				"source_quality":          float32(0.7),
+				"classification":          map[string]any{"topic": "unit"},
+				"created_at":              createdAt,
+				"updated_at":              updatedAt,
+			},
+			{
+				"fragment_id":          "",
+				"team_id":              "pA",
+				"embedding_dimensions": int64(4),
+			},
+		},
+	}
+	svc := NewGetFragmentService(reader).(BatchGetFragmentService)
+
+	empty, err := svc.GetByIDs(context.Background(), "pA", nil)
+	if err != nil {
+		t.Fatalf("GetByIDs empty: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("GetByIDs empty len = %d, want 0", len(empty))
+	}
+
+	got, err := svc.GetByIDs(context.Background(), "pA", []string{"frag-1", "missing"})
+	if err != nil {
+		t.Fatalf("GetByIDs: %v", err)
+	}
+	frag := got["frag-1"]
+	if frag == nil {
+		t.Fatal("frag-1 missing from batch output")
+	}
+	if frag.CreatedByProfileID != "creator-1" || frag.CreatedByProfileName != "Creator" {
+		t.Fatalf("creator fields = %q/%q", frag.CreatedByProfileID, frag.CreatedByProfileName)
+	}
+	if frag.Authority != domain.AuthorityAuthoritative {
+		t.Fatalf("Authority = %q, want authoritative", frag.Authority)
+	}
+	if len(frag.Labels) != 2 || frag.Labels[0] != "one" || frag.Labels[1] != "two" {
+		t.Fatalf("Labels = %#v, want [one two]", frag.Labels)
+	}
+	if frag.Metadata["origin"] != "test" || frag.Classification["topic"] != "unit" {
+		t.Fatalf("decoded maps = metadata %#v classification %#v", frag.Metadata, frag.Classification)
+	}
+	if frag.EmbeddingDimensions != 3 || frag.SourceQuality < 0.699999 || frag.SourceQuality > 0.700001 {
+		t.Fatalf("embedding/source quality = %d/%f", frag.EmbeddingDimensions, frag.SourceQuality)
+	}
+	if !frag.CreatedAt.Equal(createdAt) || !frag.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("times = %s/%s", frag.CreatedAt, frag.UpdatedAt)
+	}
+	if _, ok := got[""]; ok {
+		t.Fatal("empty fragment_id row should be skipped")
+	}
+
+	reader.err = errors.New("neo4j down")
+	got, err = svc.GetByIDs(context.Background(), "pA", []string{"frag-1"})
+	if err == nil || !errors.Is(err, reader.err) {
+		t.Fatalf("GetByIDs error = %v, want wrapped reader error", err)
+	}
+	if got != nil {
+		t.Fatalf("GetByIDs error output = %#v, want nil", got)
 	}
 }

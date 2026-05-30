@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -396,6 +397,165 @@ func TestQueryStreamSSEFormat_ErrorEvent(t *testing.T) {
 
 	// Verify error event is terminal (no done event)
 	assert.NotContains(t, bodyStr, "event: done")
+}
+
+func TestQueryStreamHandlerValidationAndLifecycleBranches(t *testing.T) {
+	profileID := uuid.New()
+
+	run := func(lifecycle *mockStreamLifecycle, body string, accept string, withProfile bool) *httptest.ResponseRecorder {
+		e := newTestEcho()
+		h := NewQueryStreamHandler(&mockQueryStreamOrchestrator{}, lifecycle)
+		if withProfile {
+			e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+				return func(c echo.Context) error {
+					ctx := middleware.SetResolvedProfileIDForTest(c.Request().Context(), profileID)
+					c.SetRequest(c.Request().WithContext(ctx))
+					return next(c)
+				}
+			})
+		}
+		e.POST("/api/v1/profiles/:profileId/query/stream", h.Handle)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/profiles/"+profileID.String()+"/query/stream", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", accept)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := run(&mockStreamLifecycle{}, `{"query":"x"}`, "text/event-stream", false)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	rec = run(&mockStreamLifecycle{}, `{`, "text/event-stream", true)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+
+	rec = run(&mockStreamLifecycle{}, `{"query":""}`, "text/event-stream", true)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+
+	rec = run(&mockStreamLifecycle{
+		startFunc: func(ctx context.Context, profileID string, writer sse.SSEWriter, work func(context.Context) error) error {
+			return sse.ErrTooManyStreams
+		},
+	}, `{"query":"x"}`, "text/event-stream", true)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), "too many concurrent streams")
+
+	rec = run(&mockStreamLifecycle{
+		startFunc: func(ctx context.Context, profileID string, writer sse.SSEWriter, work func(context.Context) error) error {
+			return errors.New("database details")
+		},
+	}, `{"query":"x"}`, "text/event-stream", true)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), "internal error")
+	assert.NotContains(t, rec.Body.String(), "database details")
+}
+
+func TestQueryStreamOrchestratorHelpersAndErrorBranches(t *testing.T) {
+	t.Run("constructor wires services", func(t *testing.T) {
+		orch := NewQueryStreamOrchestrator(&mockGraphQueryService{}, &mockKeywordSearchService{}, &mockSemanticSearchService{})
+		require.NotNil(t, orch)
+	})
+
+	t.Run("writer error stops first tool call", func(t *testing.T) {
+		orch := NewQueryStreamOrchestrator(&mockGraphQueryService{}, nil, nil)
+		writer := &mockSSEWriter{writeErr: errors.New("write failed")}
+
+		err := orch.Run(context.Background(), "profile-1", "query", nil, writer)
+
+		require.ErrorContains(t, err, "write failed")
+	})
+
+	t.Run("graph error is sanitized into event", func(t *testing.T) {
+		orch := NewQueryStreamOrchestrator(&mockGraphQueryService{
+			executeFunc: func(ctx context.Context, profileID string, query string, params map[string]any) (*graphquery.GraphQueryResult, error) {
+				return nil, &graphquery.ValidationError{Reason: "missing team filter"}
+			},
+		}, nil, nil)
+		writer := &mockSSEWriter{}
+
+		err := orch.Run(context.Background(), "profile-1", "query", nil, writer)
+
+		require.NoError(t, err)
+		require.Len(t, writer.events, 2)
+		assert.Equal(t, sse.EventTypeError, writer.events[1].eventType)
+	})
+
+	t.Run("keyword error is sanitized into event", func(t *testing.T) {
+		orch := NewQueryStreamOrchestrator(nil, &mockKeywordSearchService{
+			searchFunc: func(ctx context.Context, profileID string, req *keywordsearch.KeywordSearchRequest) (*keywordsearch.KeywordSearchResult, error) {
+				return nil, keywordsearch.NewValidationError("query is required")
+			},
+		}, nil)
+		writer := &mockSSEWriter{}
+
+		err := orch.Run(context.Background(), "profile-1", "query", nil, writer)
+
+		require.NoError(t, err)
+		require.Len(t, writer.events, 2)
+		assert.Equal(t, sse.EventTypeError, writer.events[1].eventType)
+	})
+
+	t.Run("semantic error is sanitized into event", func(t *testing.T) {
+		orch := NewQueryStreamOrchestrator(nil, nil, &mockSemanticSearchService{
+			searchFunc: func(ctx context.Context, profileID string, req *semanticsearch.SemanticSearchRequest) (*semanticsearch.SemanticSearchResult, error) {
+				return nil, semanticsearch.NewDimensionMismatchError(3, 2)
+			},
+		})
+		writer := &mockSSEWriter{}
+
+		err := orch.Run(context.Background(), "profile-1", "query", map[string]any{"embedding": []any{1.0, 2.0}}, writer)
+
+		require.NoError(t, err)
+		require.Len(t, writer.events, 2)
+		assert.Equal(t, sse.EventTypeError, writer.events[1].eventType)
+	})
+
+	t.Run("done writer error is returned", func(t *testing.T) {
+		orch := NewQueryStreamOrchestrator(nil, nil, nil)
+		writer := &mockSSEWriter{writeErr: errors.New("done failed")}
+
+		err := orch.Run(context.Background(), "profile-1", "query", nil, writer)
+
+		require.ErrorContains(t, err, "done failed")
+	})
+
+	assert.Equal(t, "", sanitizeError(nil))
+	assert.Equal(t, "internal error", sanitizeError(errors.New("secret")))
+
+	sanitizedCases := []error{
+		&graphquery.ValidationError{Reason: "bad query"},
+		graphquery.NewLimitError("limit exceeded"),
+		graphquery.NewForbiddenParamError("profileId"),
+		graphquery.NewSyntaxError("syntax error"),
+		keywordsearch.NewValidationError("bad keywords"),
+		semanticsearch.NewValidationError("bad semantic request"),
+		semanticsearch.NewDimensionMismatchError(3, 2),
+		semanticsearch.NewEmbeddingGenerationNotConfiguredError("embedding generation not configured"),
+	}
+	for _, err := range sanitizedCases {
+		if got := sanitizeOrchestratorError(err); got != err.Error() {
+			t.Fatalf("sanitizeOrchestratorError(%T) = %q, want %q", err, got, err.Error())
+		}
+	}
+	assert.Equal(t, "", sanitizeOrchestratorError(nil))
+	assert.Equal(t, "internal error", sanitizeOrchestratorError(errors.New("driver details")))
+
+	embedding, ok := extractEmbedding(map[string]any{"embedding": []any{float64(1), float32(2)}})
+	require.True(t, ok)
+	assert.Equal(t, []float32{1, 2}, embedding)
+
+	embedding, ok = extractEmbedding(map[string]any{"embedding": []float32{3, 4}})
+	require.True(t, ok)
+	assert.Equal(t, []float32{3, 4}, embedding)
+
+	_, ok = extractEmbedding(nil)
+	assert.False(t, ok)
+	_, ok = extractEmbedding(map[string]any{})
+	assert.False(t, ok)
+	_, ok = extractEmbedding(map[string]any{"embedding": []any{"bad"}})
+	assert.False(t, ok)
+	_, ok = extractEmbedding(map[string]any{"embedding": "bad"})
+	assert.False(t, ok)
 }
 
 // mockGraphQueryService for testing

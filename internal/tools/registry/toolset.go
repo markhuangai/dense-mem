@@ -310,6 +310,9 @@ func recallMemoryTool(deps Dependencies) Tool {
 				if err != nil {
 					return nil, err
 				}
+				if m == nil {
+					return nil, errors.New("recall_memory: hit missing fragment")
+				}
 				m["semantic_rank"] = hits[i].SemanticRank
 				m["keyword_rank"] = hits[i].KeywordRank
 				m["final_score"] = hits[i].FinalScore

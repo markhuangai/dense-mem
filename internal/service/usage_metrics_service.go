@@ -184,9 +184,10 @@ func (s *UsageMetricsServiceImpl) Start(ctx context.Context) {
 		return
 	}
 	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
 	s.cancel = cancel
-	s.done = make(chan struct{})
-	go s.run(runCtx)
+	s.done = done
+	go s.run(runCtx, done)
 }
 
 func (s *UsageMetricsServiceImpl) Shutdown(ctx context.Context) error {
@@ -213,8 +214,8 @@ func (s *UsageMetricsServiceImpl) Shutdown(ctx context.Context) error {
 	return s.Flush(ctx)
 }
 
-func (s *UsageMetricsServiceImpl) run(ctx context.Context) {
-	defer close(s.done)
+func (s *UsageMetricsServiceImpl) run(ctx context.Context, done chan struct{}) {
+	defer close(done)
 
 	if err := s.Prune(ctx); err != nil && s.logger != nil {
 		s.logger.Warn("usage metrics prune failed", observability.String("error", err.Error()))

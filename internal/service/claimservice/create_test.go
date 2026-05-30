@@ -2,11 +2,17 @@ package claimservice
 
 import (
 	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"math"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/claimidentity"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentcodec"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -83,8 +89,9 @@ func TestCreateClaimDedupeAndDefaults(t *testing.T) {
 		}
 		writer := &stubClaimWriter{}
 		reader := &stubScopedReader{rowsByProfile: map[string][]map[string]any{}}
+		metrics := observability.NewInMemoryDiscoverabilityMetrics()
 
-		svc := NewCreateClaimService(lookup, reader, writer, nil, nil, nil)
+		svc := NewCreateClaimService(lookup, reader, writer, nil, nil, metrics)
 
 		got, err := svc.Create(ctx, profileID, &domain.Claim{
 			Subject:        "Alice",
@@ -99,6 +106,10 @@ func TestCreateClaimDedupeAndDefaults(t *testing.T) {
 		require.Equal(t, "existing-id", got.DuplicateOf)
 		require.Equal(t, existing, got.Claim)
 		require.Empty(t, writer.written, "duplicate hit must not write to the graph")
+		samples := metrics.ClaimCreateSamples()
+		require.Len(t, samples, 1)
+		require.Equal(t, "duplicate", samples[0].Outcome)
+		require.Equal(t, "idempotency_key", samples[0].DedupeReason)
 	})
 
 	t.Run("content hash hit returns existing claim without write", func(t *testing.T) {
@@ -120,8 +131,9 @@ func TestCreateClaimDedupeAndDefaults(t *testing.T) {
 		}
 		writer := &stubClaimWriter{}
 		reader := &stubScopedReader{rowsByProfile: map[string][]map[string]any{}}
+		metrics := observability.NewInMemoryDiscoverabilityMetrics()
 
-		svc := NewCreateClaimService(lookup, reader, writer, nil, nil, nil)
+		svc := NewCreateClaimService(lookup, reader, writer, nil, nil, metrics)
 
 		got, err := svc.Create(ctx, profileID, input)
 
@@ -131,6 +143,10 @@ func TestCreateClaimDedupeAndDefaults(t *testing.T) {
 		require.Equal(t, "hash-dupe-id", got.DuplicateOf)
 		require.Equal(t, existing, got.Claim)
 		require.Empty(t, writer.written, "duplicate hit must not write to the graph")
+		samples := metrics.ClaimCreateSamples()
+		require.Len(t, samples, 1)
+		require.Equal(t, "duplicate", samples[0].Outcome)
+		require.Equal(t, "content_hash", samples[0].DedupeReason)
 	})
 
 	t.Run("fresh claim computes status, verdict, recorded_at, source_quality, classification", func(t *testing.T) {
@@ -477,4 +493,177 @@ func TestCreateClaimPersistsSupportEdges(t *testing.T) {
 		"cross-profile fragment reference must be rejected before any graph write")
 	require.Empty(t, writerIsolation.written,
 		"no graph write must occur when cross-profile isolation check fails")
+}
+
+func TestCreateRejectsInvalidConfidenceBeforeLookup(t *testing.T) {
+	const profileID = "00000000-0000-0000-0000-000000000001"
+	lookup := &stubClaimDedupeLookup{
+		byIdempotencyKey: map[string]*domain.Claim{},
+		byContentHash:    map[string]*domain.Claim{},
+	}
+	writer := &stubClaimWriter{}
+	svc := NewCreateClaimService(lookup, nil, writer, nil, nil, nil)
+
+	_, err := svc.Create(context.Background(), profileID, &domain.Claim{
+		Subject:        "Alice",
+		Predicate:      "likes",
+		Object:         "coffee",
+		ExtractConf:    99,
+		ResolutionConf: 0.8,
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "extract_conf")
+	require.Empty(t, writer.written)
+}
+
+func TestValidateCreateClaimInputRejectsInvalidFields(t *testing.T) {
+	from := time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name  string
+		claim *domain.Claim
+		want  string
+	}{
+		{
+			name:  "nil claim",
+			claim: nil,
+			want:  "claim is required",
+		},
+		{
+			name:  "invalid modality",
+			claim: &domain.Claim{Modality: domain.ClaimModality("rumor")},
+			want:  "modality",
+		},
+		{
+			name:  "invalid polarity",
+			claim: &domain.Claim{Polarity: domain.ClaimPolarity("maybe")},
+			want:  "polarity",
+		},
+		{
+			name:  "nan extract confidence",
+			claim: &domain.Claim{ExtractConf: math.NaN()},
+			want:  "extract_conf",
+		},
+		{
+			name:  "infinite resolution confidence",
+			claim: &domain.Claim{ResolutionConf: math.Inf(1)},
+			want:  "resolution_conf",
+		},
+		{
+			name:  "valid_from after valid_to",
+			claim: &domain.Claim{ValidFrom: &from, ValidTo: &to},
+			want:  "valid_from",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateCreateClaimInput(tc.claim)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tc.want)
+		})
+	}
+
+	require.NoError(t, validateCreateClaimInput(&domain.Claim{
+		Modality:       domain.ModalityAssertion,
+		Polarity:       domain.PolarityPositive,
+		ExtractConf:    1,
+		ResolutionConf: 0,
+		ValidFrom:      &to,
+		ValidTo:        &from,
+	}))
+}
+
+func TestCreateClaimLookupAndPersistErrors(t *testing.T) {
+	const profileID = "00000000-0000-0000-0000-000000000001"
+
+	t.Run("idempotency lookup error", func(t *testing.T) {
+		lookup := &stubClaimDedupeLookup{err: errors.New("lookup down")}
+		writer := &stubClaimWriter{}
+		svc := NewCreateClaimService(lookup, nil, writer, nil, nil, nil)
+
+		_, err := svc.Create(context.Background(), profileID, &domain.Claim{
+			Subject:        "Alice",
+			Predicate:      "likes",
+			Object:         "coffee",
+			IdempotencyKey: "same-request",
+		})
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "idempotency lookup")
+		require.Empty(t, writer.written)
+	})
+
+	t.Run("content hash lookup error", func(t *testing.T) {
+		lookup := &stubClaimDedupeLookup{err: errors.New("lookup down")}
+		writer := &stubClaimWriter{}
+		svc := NewCreateClaimService(lookup, nil, writer, nil, nil, nil)
+
+		_, err := svc.Create(context.Background(), profileID, &domain.Claim{
+			Subject:   "Alice",
+			Predicate: "likes",
+			Object:    "coffee",
+		})
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "content-hash lookup")
+		require.Empty(t, writer.written)
+	})
+
+	t.Run("writer error", func(t *testing.T) {
+		lookup := &stubClaimDedupeLookup{
+			byIdempotencyKey: map[string]*domain.Claim{},
+			byContentHash:    map[string]*domain.Claim{},
+		}
+		writer := &stubClaimWriter{err: errors.New("neo4j down")}
+		svc := NewCreateClaimService(lookup, nil, writer, nil, nil, nil)
+
+		_, err := svc.Create(context.Background(), profileID, &domain.Claim{
+			Subject:   "Alice",
+			Predicate: "likes",
+			Object:    "coffee",
+		})
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "persist")
+		require.Len(t, writer.written, 0)
+	})
+}
+
+func TestCreateClaimActorAndAuditBranches(t *testing.T) {
+	const profileID = "00000000-0000-0000-0000-000000000001"
+	lookup := &stubClaimDedupeLookup{
+		byIdempotencyKey: map[string]*domain.Claim{},
+		byContentHash:    map[string]*domain.Claim{},
+	}
+	writer := &stubClaimWriter{}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := NewCreateClaimService(
+		lookup,
+		nil,
+		writer,
+		&stubFailingAudit{err: errors.New("audit store down")},
+		logger,
+		nil,
+	)
+	actorID := uuid.MustParse("00000000-0000-0000-0000-0000000000aa")
+	ctx := requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{
+		ProfileID:   actorID,
+		ProfileName: "analyst",
+	})
+
+	got, err := svc.Create(ctx, profileID, &domain.Claim{
+		Subject:   "Alice",
+		Predicate: "likes",
+		Object:    "coffee",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, actorID.String(), got.Claim.CreatedByProfileID)
+	require.Equal(t, "analyst", got.Claim.CreatedByProfileName)
+	require.Len(t, writer.written, 1)
+	require.Equal(t, actorID.String(), writer.written[0]["createdByProfileId"])
+	require.Equal(t, "analyst", writer.written[0]["createdByProfileName"])
 }

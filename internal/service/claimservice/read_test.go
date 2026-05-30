@@ -424,3 +424,78 @@ func TestGetClaim_CrossProfileIsolation(t *testing.T) {
 	require.NotContains(t, bResults, profileB,
 		"profile A's claim must not reference profile B")
 }
+
+func TestGetClaimByIDsAndEvidenceMapping(t *testing.T) {
+	ctx := context.Background()
+	const profileID = "00000000-0000-0000-0000-000000000001"
+	now := time.Now().UTC()
+
+	row := map[string]any{
+		"claim_id":                       "claim-1",
+		"created_by_profile_id":          "creator-1",
+		"created_by_profile_name":        "Creator",
+		"subject":                        "Alice",
+		"predicate":                      "likes",
+		"object":                         "Go",
+		"modality":                       "assertion",
+		"polarity":                       "+",
+		"speaker":                        "Alice",
+		"span_start":                     int(3),
+		"span_end":                       int64(9),
+		"recorded_at":                    now,
+		"extract_conf":                   0.8,
+		"resolution_conf":                0.7,
+		"source_quality":                 0.6,
+		"entailment_verdict":             "entailed",
+		"status":                         "validated",
+		"supported_by":                   []any{"fragment-1", "", 12},
+		"classification":                 map[string]any{"topic": "prefs"},
+		"classification_lattice_version": "v1",
+		"evidence": []any{
+			map[string]any{
+				"fragment_id":        "fragment-1",
+				"speaker":            "Alice",
+				"span_start":         int64(3),
+				"span_end":           int(9),
+				"extract_conf":       float32(0.8),
+				"extraction_model":   "model-a",
+				"extraction_version": "1",
+				"pipeline_run_id":    "run-1",
+				"authority":          "primary",
+			},
+			map[string]any{"fragment_id": ""},
+			"not-a-map",
+		},
+	}
+	reader := &stubClaimReader{
+		rowsByProfile: map[string][]map[string]any{
+			profileID: {row, {"claim_id": "", "recorded_at": now}},
+		},
+	}
+	svc := NewGetClaimService(reader, nil)
+	batchSvc := svc.(interface {
+		GetByIDs(ctx context.Context, profileID string, claimIDs []string) (map[string]*domain.Claim, error)
+	})
+
+	empty, err := batchSvc.GetByIDs(ctx, profileID, nil)
+	require.NoError(t, err)
+	require.Empty(t, empty)
+
+	got, err := batchSvc.GetByIDs(ctx, profileID, []string{"claim-1", "missing"})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	claim := got["claim-1"]
+	require.NotNil(t, claim)
+	require.Equal(t, []string{"fragment-1"}, claim.SupportedBy)
+	require.Len(t, claim.Evidence, 1)
+	require.Equal(t, "fragment-1", claim.Evidence[0].FragmentID)
+	require.Equal(t, 3, claim.Evidence[0].SpanStart)
+	require.Equal(t, 9, claim.Evidence[0].SpanEnd)
+	require.InDelta(t, 0.8, claim.Evidence[0].ExtractConf, 1e-6)
+	require.Equal(t, domain.AuthorityPrimary, claim.Evidence[0].Authority)
+
+	reader.err = errors.New("read failed")
+	got, err = batchSvc.GetByIDs(ctx, profileID, []string{"claim-1"})
+	require.Nil(t, got)
+	require.ErrorContains(t, err, "claim batch get")
+}

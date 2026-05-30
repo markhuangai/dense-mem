@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -652,4 +653,280 @@ func TestAPIKeyServiceRevokeForProfile_NilInvalidatorIsSafe(t *testing.T) {
 	require.NoError(t, err)
 	mockRepo.AssertExpectations(t)
 	mockAuditService.AssertExpectations(t)
+}
+
+func TestAPIKeyServiceScopeNameAndConstructorHelpers(t *testing.T) {
+	scopes := StandardAPIKeyScopes()
+	scopes[0] = "mutated"
+	assert.Equal(t, []string{"read", "write"}, StandardAPIKeyScopes())
+
+	normalized, err := NormalizeAPIKeyScopes([]string{" WRITE ", "Read"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"read", "write"}, normalized)
+
+	normalized, err = NormalizeAPIKeyScopes(nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"read", "write"}, normalized)
+
+	name, err := normalizeTeamProfileName(" research ")
+	require.NoError(t, err)
+	assert.Equal(t, "research", name)
+
+	_, err = normalizeTeamProfileName(" ")
+	require.Error(t, err)
+	_, err = normalizeTeamProfileName(strings.Repeat("x", 101))
+	require.Error(t, err)
+	assert.Nil(t, teamProfileNameConflict(errors.New("not unique"), "name"))
+
+	svc := NewAPIKeyServiceWithLogger(nil, nil, nil, nil, nil, nil)
+	require.Nil(t, svc.logger)
+	svc.logAuditError(errors.New("audit failed"), "CREATE", "key-1", "corr")
+}
+
+func TestAPIKeyServiceCreateStandardKeyErrorAndAuditBranches(t *testing.T) {
+	ctx := context.Background()
+	profileID := uuid.New()
+
+	t.Run("profile lookup error", func(t *testing.T) {
+		mockRepo := new(MockAPIKeyRepository)
+		mockProfileService := new(MockProfileService)
+		mockAuditService := new(MockAuditService)
+		svc := NewAPIKeyService(mockRepo, mockProfileService, mockAuditService, nil, nil)
+		mockProfileService.On("Get", ctx, profileID).Return(nil, errors.New("profile failed"))
+
+		key, raw, err := svc.CreateStandardKey(ctx, profileID, CreateAPIKeyRequest{}, nil, "system", "127.0.0.1", "corr")
+
+		require.ErrorContains(t, err, "failed to verify profile")
+		require.Nil(t, key)
+		require.Empty(t, raw)
+		mockProfileService.AssertExpectations(t)
+	})
+
+	t.Run("invalid scopes", func(t *testing.T) {
+		mockRepo := new(MockAPIKeyRepository)
+		mockProfileService := new(MockProfileService)
+		mockAuditService := new(MockAuditService)
+		svc := NewAPIKeyService(mockRepo, mockProfileService, mockAuditService, nil, nil)
+		mockProfileService.On("Get", ctx, profileID).Return(&domain.Profile{ID: profileID}, nil)
+
+		key, raw, err := svc.CreateStandardKey(ctx, profileID, CreateAPIKeyRequest{Scopes: []string{"write"}}, nil, "system", "127.0.0.1", "corr")
+
+		require.Error(t, err)
+		require.Nil(t, key)
+		require.Empty(t, raw)
+		mockProfileService.AssertExpectations(t)
+	})
+
+	t.Run("repo error", func(t *testing.T) {
+		mockRepo := new(MockAPIKeyRepository)
+		mockProfileService := new(MockProfileService)
+		mockAuditService := new(MockAuditService)
+		svc := NewAPIKeyService(mockRepo, mockProfileService, mockAuditService, nil, nil)
+		mockProfileService.On("Get", ctx, profileID).Return(&domain.Profile{ID: profileID}, nil)
+		mockRepo.On("CreateStandardKey", ctx, mock.AnythingOfType("*domain.APIKey")).Return(errors.New("insert failed"))
+
+		key, raw, err := svc.CreateStandardKey(ctx, profileID, CreateAPIKeyRequest{Name: "ops"}, nil, "system", "127.0.0.1", "corr")
+
+		require.ErrorContains(t, err, "failed to create api key")
+		require.Nil(t, key)
+		require.Empty(t, raw)
+		mockRepo.AssertExpectations(t)
+		mockProfileService.AssertExpectations(t)
+	})
+
+	t.Run("audit error is non-fatal", func(t *testing.T) {
+		mockRepo := new(MockAPIKeyRepository)
+		mockProfileService := new(MockProfileService)
+		mockAuditService := new(MockAuditService)
+		svc := NewAPIKeyService(mockRepo, mockProfileService, mockAuditService, nil, nil)
+		expiresAt := time.Now().UTC().Add(time.Hour)
+		mockProfileService.On("Get", ctx, profileID).Return(&domain.Profile{ID: profileID}, nil)
+		mockRepo.On("CreateStandardKey", ctx, mock.AnythingOfType("*domain.APIKey")).Run(func(args mock.Arguments) {
+			args.Get(1).(*domain.APIKey).ID = uuid.New()
+		}).Return(nil)
+		mockAuditService.On("APIKeyCreated", ctx, mock.AnythingOfType("*string"), mock.AnythingOfType("string"), mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("audit failed"))
+
+		key, raw, err := svc.CreateStandardKey(ctx, profileID, CreateAPIKeyRequest{Name: "ops", ExpiresAt: &expiresAt}, nil, "system", "127.0.0.1", "corr")
+
+		require.NoError(t, err)
+		require.NotNil(t, key)
+		require.NotEmpty(t, raw)
+		mockRepo.AssertExpectations(t)
+		mockProfileService.AssertExpectations(t)
+		mockAuditService.AssertExpectations(t)
+	})
+}
+
+func TestAPIKeyServiceUpdateNameBranches(t *testing.T) {
+	ctx := context.Background()
+	profileID := uuid.New()
+	keyID := uuid.New()
+
+	t.Run("invalid name", func(t *testing.T) {
+		svc := NewAPIKeyService(new(MockAPIKeyRepository), new(MockProfileService), new(MockAuditService), nil, nil)
+		key, err := svc.UpdateNameForProfile(ctx, profileID, keyID, " ", nil, "system", "127.0.0.1", "corr")
+		require.Error(t, err)
+		require.Nil(t, key)
+	})
+
+	t.Run("same name returns sanitized key without update", func(t *testing.T) {
+		mockRepo := new(MockAPIKeyRepository)
+		svc := NewAPIKeyService(mockRepo, new(MockProfileService), new(MockAuditService), nil, nil)
+		key := &domain.APIKey{ID: keyID, ProfileID: profileID, TeamID: profileID, Name: "research", Label: "research", KeyHash: "secret"}
+		mockRepo.On("GetByIDForProfile", ctx, profileID, keyID).Return(key, nil)
+
+		updated, err := svc.UpdateNameForProfile(ctx, profileID, keyID, "research", nil, "system", "127.0.0.1", "corr")
+
+		require.NoError(t, err)
+		require.Empty(t, updated.KeyHash)
+		mockRepo.AssertExpectations(t)
+	})
+
+	t.Run("not found and rows affected zero", func(t *testing.T) {
+		mockRepo := new(MockAPIKeyRepository)
+		svc := NewAPIKeyService(mockRepo, new(MockProfileService), new(MockAuditService), nil, nil)
+		mockRepo.On("GetByIDForProfile", ctx, profileID, keyID).Return(nil, nil).Once()
+		updated, err := svc.UpdateNameForProfile(ctx, profileID, keyID, "new", nil, "system", "127.0.0.1", "corr")
+		require.Error(t, err)
+		require.Nil(t, updated)
+
+		key := &domain.APIKey{ID: keyID, ProfileID: profileID, TeamID: profileID, Name: "old", Label: "old"}
+		mockRepo.On("GetByIDForProfile", ctx, profileID, keyID).Return(key, nil).Once()
+		mockRepo.On("UpdateNameForProfile", ctx, profileID, keyID, "new").Return(int64(0), nil).Once()
+		updated, err = svc.UpdateNameForProfile(ctx, profileID, keyID, "new", nil, "system", "127.0.0.1", "corr")
+		require.Error(t, err)
+		require.Nil(t, updated)
+		mockRepo.AssertExpectations(t)
+	})
+
+	t.Run("repo and audit errors", func(t *testing.T) {
+		mockRepo := new(MockAPIKeyRepository)
+		mockAuditService := new(MockAuditService)
+		svc := NewAPIKeyService(mockRepo, new(MockProfileService), mockAuditService, nil, nil)
+		key := &domain.APIKey{ID: keyID, ProfileID: profileID, TeamID: profileID, Name: "old", Label: "old"}
+		mockRepo.On("GetByIDForProfile", ctx, profileID, keyID).Return(key, nil).Once()
+		mockRepo.On("UpdateNameForProfile", ctx, profileID, keyID, "new").Return(int64(0), errors.New("update failed")).Once()
+		updated, err := svc.UpdateNameForProfile(ctx, profileID, keyID, "new", nil, "system", "127.0.0.1", "corr")
+		require.ErrorContains(t, err, "failed to update team profile name")
+		require.Nil(t, updated)
+
+		mockRepo.On("GetByIDForProfile", ctx, profileID, keyID).Return(key, nil).Once()
+		mockRepo.On("UpdateNameForProfile", ctx, profileID, keyID, "newer").Return(int64(1), nil).Once()
+		mockAuditService.On("Append", ctx, mock.AnythingOfType("service.AuditLogEntry")).Return(errors.New("audit failed")).Once()
+		updated, err = svc.UpdateNameForProfile(ctx, profileID, keyID, "newer", nil, "system", "127.0.0.1", "corr")
+		require.NoError(t, err)
+		require.Equal(t, "newer", updated.Name)
+		mockRepo.AssertExpectations(t)
+		mockAuditService.AssertExpectations(t)
+	})
+}
+
+func TestAPIKeyServiceRotateRevokeDeleteBranches(t *testing.T) {
+	ctx := context.Background()
+	profileID := uuid.New()
+	keyID := uuid.New()
+
+	t.Run("rotate success with non-fatal invalidation and audit errors", func(t *testing.T) {
+		mockRepo := new(MockAPIKeyRepository)
+		mockAuditService := new(MockAuditService)
+		mockSessionInvalidator := new(MockKeySessionInvalidator)
+		svc := NewAPIKeyService(mockRepo, new(MockProfileService), mockAuditService, mockSessionInvalidator, nil)
+		key := &domain.APIKey{ID: keyID, ProfileID: profileID, TeamID: profileID, Name: "research", Label: "research", KeyHash: "old"}
+		mockRepo.On("GetByIDForProfile", ctx, profileID, keyID).Return(key, nil)
+		mockRepo.On("RotateForProfile", ctx, profileID, keyID, mock.AnythingOfType("string"), mock.AnythingOfType("string"), mock.AnythingOfType("string"), (*time.Time)(nil)).Return(int64(1), nil)
+		mockSessionInvalidator.On("InvalidateKeySessions", ctx, profileID.String(), keyID.String()).Return(errors.New("redis failed"))
+		mockAuditService.On("Append", ctx, mock.AnythingOfType("service.AuditLogEntry")).Return(errors.New("audit failed"))
+
+		updated, raw, err := svc.RotateForProfile(ctx, profileID, keyID, CreateAPIKeyRequest{}, nil, "system", "127.0.0.1", "corr")
+
+		require.NoError(t, err)
+		require.NotEmpty(t, raw)
+		require.Empty(t, updated.KeyHash)
+		require.Nil(t, updated.LastUsedAt)
+		require.Nil(t, updated.RevokedAt)
+		mockRepo.AssertExpectations(t)
+		mockSessionInvalidator.AssertExpectations(t)
+		mockAuditService.AssertExpectations(t)
+	})
+
+	t.Run("rotate not found and rows zero", func(t *testing.T) {
+		mockRepo := new(MockAPIKeyRepository)
+		svc := NewAPIKeyService(mockRepo, new(MockProfileService), new(MockAuditService), nil, nil)
+		mockRepo.On("GetByIDForProfile", ctx, profileID, keyID).Return(nil, nil).Once()
+		updated, raw, err := svc.RotateForProfile(ctx, profileID, keyID, CreateAPIKeyRequest{}, nil, "system", "127.0.0.1", "corr")
+		require.Error(t, err)
+		require.Nil(t, updated)
+		require.Empty(t, raw)
+
+		key := &domain.APIKey{ID: keyID, ProfileID: profileID, TeamID: profileID, Name: "research", Label: "research"}
+		mockRepo.On("GetByIDForProfile", ctx, profileID, keyID).Return(key, nil).Once()
+		mockRepo.On("RotateForProfile", ctx, profileID, keyID, mock.AnythingOfType("string"), mock.AnythingOfType("string"), mock.AnythingOfType("string"), (*time.Time)(nil)).Return(int64(0), nil).Once()
+		updated, raw, err = svc.RotateForProfile(ctx, profileID, keyID, CreateAPIKeyRequest{}, nil, "system", "127.0.0.1", "corr")
+		require.Error(t, err)
+		require.Nil(t, updated)
+		require.Empty(t, raw)
+		mockRepo.AssertExpectations(t)
+	})
+
+	t.Run("revoke conflict rows zero and repo errors", func(t *testing.T) {
+		now := time.Now().UTC()
+		mockRepo := new(MockAPIKeyRepository)
+		svc := NewAPIKeyService(mockRepo, new(MockProfileService), new(MockAuditService), nil, nil)
+		revokedKey := &domain.APIKey{ID: keyID, ProfileID: profileID, RevokedAt: &now}
+		mockRepo.On("GetByIDForProfile", ctx, profileID, keyID).Return(revokedKey, nil).Once()
+		err := svc.RevokeForProfile(ctx, profileID, keyID, nil, "system", "127.0.0.1", "corr")
+		require.Error(t, err)
+
+		activeKey := &domain.APIKey{ID: keyID, ProfileID: profileID}
+		mockRepo.On("GetByIDForProfile", ctx, profileID, keyID).Return(activeKey, nil).Once()
+		mockRepo.On("RevokeForProfile", ctx, profileID, keyID).Return(int64(0), nil).Once()
+		err = svc.RevokeForProfile(ctx, profileID, keyID, nil, "system", "127.0.0.1", "corr")
+		require.Error(t, err)
+
+		mockRepo.On("GetByIDForProfile", ctx, profileID, keyID).Return(activeKey, nil).Once()
+		mockRepo.On("RevokeForProfile", ctx, profileID, keyID).Return(int64(0), errors.New("revoke failed")).Once()
+		err = svc.RevokeForProfile(ctx, profileID, keyID, nil, "system", "127.0.0.1", "corr")
+		require.ErrorContains(t, err, "failed to revoke api key")
+		mockRepo.AssertExpectations(t)
+	})
+
+	t.Run("delete not found rows zero and repo error", func(t *testing.T) {
+		mockRepo := new(MockAPIKeyRepository)
+		svc := NewAPIKeyService(mockRepo, new(MockProfileService), new(MockAuditService), nil, nil)
+		mockRepo.On("GetByIDForProfile", ctx, profileID, keyID).Return(nil, nil).Once()
+		err := svc.DeleteForProfile(ctx, profileID, keyID, nil, "system", "127.0.0.1", "corr")
+		require.Error(t, err)
+
+		key := &domain.APIKey{ID: keyID, ProfileID: profileID}
+		mockRepo.On("GetByIDForProfile", ctx, profileID, keyID).Return(key, nil).Once()
+		mockRepo.On("DeleteForProfile", ctx, profileID, keyID).Return(int64(0), nil).Once()
+		err = svc.DeleteForProfile(ctx, profileID, keyID, nil, "system", "127.0.0.1", "corr")
+		require.Error(t, err)
+
+		mockRepo.On("GetByIDForProfile", ctx, profileID, keyID).Return(key, nil).Once()
+		mockRepo.On("DeleteForProfile", ctx, profileID, keyID).Return(int64(0), errors.New("delete failed")).Once()
+		err = svc.DeleteForProfile(ctx, profileID, keyID, nil, "system", "127.0.0.1", "corr")
+		require.ErrorContains(t, err, "failed to delete api key")
+		mockRepo.AssertExpectations(t)
+	})
+
+	t.Run("get count and repository errors", func(t *testing.T) {
+		mockRepo := new(MockAPIKeyRepository)
+		svc := NewAPIKeyService(mockRepo, new(MockProfileService), new(MockAuditService), nil, nil)
+		mockRepo.On("GetByIDForProfile", ctx, profileID, keyID).Return(nil, errors.New("get failed")).Once()
+		key, err := svc.GetByIDForProfile(ctx, profileID, keyID)
+		require.ErrorContains(t, err, "failed to get api key")
+		require.Nil(t, key)
+
+		mockRepo.On("GetByIDForProfile", ctx, profileID, keyID).Return(nil, nil).Once()
+		key, err = svc.GetByIDForProfile(ctx, profileID, keyID)
+		require.Error(t, err)
+		require.Nil(t, key)
+
+		mockRepo.On("CountByProfile", ctx, profileID).Return(int64(3), nil).Once()
+		total, err := svc.CountByProfile(ctx, profileID)
+		require.NoError(t, err)
+		require.Equal(t, int64(3), total)
+		mockRepo.AssertExpectations(t)
+	})
 }

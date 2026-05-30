@@ -50,6 +50,23 @@ func TestGetKeySuffixShortKey(t *testing.T) {
 	assert.Equal(t, "short", GetKeySuffix("short"))
 }
 
+func TestProfileKeySlugAndPrefixBranches(t *testing.T) {
+	assert.Equal(t, "my-team-name", KeySlug("  My_Team!!Name  "))
+	assert.Equal(t, "very-long-te", KeySlug("very-long-team-name-that-is-capped"))
+	assert.Equal(t, "", KeySlug("!!!"))
+	assert.Equal(t, "short", GetKeyPrefix("short"))
+
+	key, err := GenerateRawKeyForProfile("Research Team")
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(key, "dm_research-tea_"))
+
+	key, err = GenerateRawKeyForProfile("!!!")
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(key, "dm_profile_"))
+
+	assert.Empty(t, GetLookupPrefixes("short"))
+}
+
 // TestVerifyAPIKeyCorrect verifies that a valid key passes verification
 func TestVerifyAPIKeyCorrect(t *testing.T) {
 	rawKey, err := GenerateRawKey()
@@ -85,12 +102,7 @@ func TestVerifyAPIKeyTampered(t *testing.T) {
 	hash, err := HashKey(rawKey)
 	require.NoError(t, err)
 
-	// Tamper with the hash
-	replacement := "X"
-	if strings.HasSuffix(hash, replacement) {
-		replacement = "Y"
-	}
-	tamperedHash := hash[:len(hash)-1] + replacement
+	tamperedHash := strings.Replace(hash, "$argon2id$", "$argon2i$", 1)
 
 	// Verify tampered hash fails
 	assert.False(t, VerifyKey(rawKey, tamperedHash), "Tampered hash should not verify")
@@ -131,4 +143,8 @@ func TestVerifyKeyInvalidHash(t *testing.T) {
 
 	// Test malformed PHC
 	assert.False(t, VerifyKey(rawKey, "$argon2id$v=19$m=65536"), "Malformed PHC should not verify")
+
+	// Test malformed base64 salt/hash with otherwise correct PHC shape
+	assert.False(t, VerifyKey(rawKey, "$argon2id$v=19$m=65536,t=3,p=4$not base64$def"))
+	assert.False(t, VerifyKey(rawKey, "$argon2id$v=19$m=65536,t=3,p=4$YWJj$not base64"))
 }

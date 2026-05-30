@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -85,6 +86,65 @@ func TestRecallHandler(t *testing.T) {
 	}
 	if item.Fragment == nil || item.Fragment.FragmentID != fragID {
 		t.Errorf("fragment_id mismatch: got fragment=%v; want fragment_id=%q", item.Fragment, fragID)
+	}
+}
+
+func TestRecallHandler_ReturnsClaimAndFactHits(t *testing.T) {
+	e := echo.New()
+	profileID := uuid.New()
+	svc := &stubRecallService{
+		recallFunc: func(ctx context.Context, pid string, req recallservice.RecallRequest) ([]recallservice.RecallHit, error) {
+			return []recallservice.RecallHit{
+				{
+					Claim: &domain.Claim{
+						ClaimID:   "claim-abc",
+						ProfileID: pid,
+						Subject:   "sky",
+						Predicate: "is",
+						Object:    "blue",
+						Status:    domain.StatusValidated,
+					},
+					Tier: recallservice.TierValidatedClaim,
+				},
+				{
+					Fact: &domain.Fact{
+						FactID:    "fact-abc",
+						ProfileID: pid,
+						Subject:   "water",
+						Predicate: "is",
+						Object:    "wet",
+						Status:    domain.FactStatusActive,
+					},
+					Tier: recallservice.TierActiveFact,
+				},
+			}, nil
+		},
+	}
+	h := NewRecallHandler(svc)
+	e.HTTPErrorHandler = httperr.ErrorHandler
+
+	e.Use(injectProfileMiddleware(profileID))
+	e.GET("/api/v1/recall", h.Handle)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/recall?query=test+query", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200. body=%s", rec.Code, rec.Body.String())
+	}
+	var resp recallDataEnvelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v. body=%s", err, rec.Body.String())
+	}
+	if len(resp.Data) != 2 {
+		t.Fatalf("data count = %d; want 2. body=%s", len(resp.Data), rec.Body.String())
+	}
+	if resp.Data[0].Claim == nil || resp.Data[0].Claim.ClaimID != "claim-abc" {
+		t.Fatalf("claim hit = %#v; want claim-abc", resp.Data[0].Claim)
+	}
+	if resp.Data[1].Fact == nil || resp.Data[1].Fact.FactID != "fact-abc" {
+		t.Fatalf("fact hit = %#v; want fact-abc", resp.Data[1].Fact)
 	}
 }
 
@@ -179,6 +239,50 @@ func TestRecallHandler_Returns503WhenEmbeddingUnavailable(t *testing.T) {
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d; want 503", rec.Code)
+	}
+}
+
+func TestRecallHandler_ServiceErrorMappings(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{
+			name: "keyword unavailable",
+			err:  recallservice.ErrKeywordUnavailable,
+			want: http.StatusServiceUnavailable,
+		},
+		{
+			name: "generic recall failure",
+			err:  errors.New("query failed"),
+			want: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := echo.New()
+			profileID := uuid.New()
+			svc := &stubRecallService{
+				recallFunc: func(ctx context.Context, pid string, req recallservice.RecallRequest) ([]recallservice.RecallHit, error) {
+					return nil, tc.err
+				},
+			}
+			h := NewRecallHandler(svc)
+			e.HTTPErrorHandler = httperr.ErrorHandler
+
+			e.Use(injectProfileMiddleware(profileID))
+			e.GET("/api/v1/recall", h.Handle)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/recall?query=hello", nil)
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d; want %d. body=%s", rec.Code, tc.want, rec.Body.String())
+			}
+		})
 	}
 }
 

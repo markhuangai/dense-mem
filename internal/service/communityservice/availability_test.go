@@ -103,6 +103,36 @@ func TestProbeGDS(t *testing.T) {
 	})
 }
 
+func TestAvailabilityProductionWrappers(t *testing.T) {
+	ctx := context.Background()
+	client := &stubCommunityGDSClient{readResults: []any{nil, []string{"dense-mem-profile-g"}}}
+
+	svc := NewAvailabilityService(client, nil)
+	require.NotNil(t, svc)
+
+	querier := &neo4jGDSQuerier{client: client}
+	require.NoError(t, querier.ProbeAvailability(ctx))
+
+	names, err := querier.ListProjectedGraphs(ctx, GraphNamePrefix)
+	require.NoError(t, err)
+	require.Equal(t, []string{"dense-mem-profile-g"}, names)
+
+	require.NoError(t, querier.DropProjectedGraph(ctx, "dense-mem-profile-g"))
+
+	readErr := errors.New("read failed")
+	querier = &neo4jGDSQuerier{client: &stubCommunityGDSClient{readErrs: []error{readErr}}}
+	require.ErrorIs(t, querier.ProbeAvailability(ctx), readErr)
+
+	querier = &neo4jGDSQuerier{client: &stubCommunityGDSClient{readErrs: []error{readErr}}}
+	names, err = querier.ListProjectedGraphs(ctx, GraphNamePrefix)
+	require.Nil(t, names)
+	require.ErrorIs(t, err, readErr)
+
+	writeErr := errors.New("write failed")
+	querier = &neo4jGDSQuerier{client: &stubCommunityGDSClient{writeErr: writeErr}}
+	require.ErrorIs(t, querier.DropProjectedGraph(ctx, "dense-mem-profile-g"), writeErr)
+}
+
 // ---------------------------------------------------------------------------
 // TestSweepOrphanGraphs — covers AC-50
 // ---------------------------------------------------------------------------

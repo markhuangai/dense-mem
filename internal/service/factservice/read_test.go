@@ -276,3 +276,65 @@ func TestGetFact_CrossProfileIsolation(t *testing.T) {
 	require.NotContains(t, bResults, profileB,
 		"profile A's fact must not reference profile B")
 }
+
+func TestGetFactByIDsAndEvidenceMapping(t *testing.T) {
+	ctx := context.Background()
+	const profileID = "00000000-0000-0000-0000-000000000001"
+	now := time.Now().UTC()
+
+	row := makeFactRow("fact-1", "Alice", "likes", "active", now)
+	row["created_by_profile_id"] = "creator-1"
+	row["created_by_profile_name"] = "Creator"
+	row["promoted_by_profile_id"] = "promoter-1"
+	row["promoted_by_profile_name"] = "Promoter"
+	row["metadata"] = `{"source":"unit"}`
+	row["evidence"] = []any{
+		map[string]any{
+			"fragment_id":        "fragment-1",
+			"speaker":            "Alice",
+			"span_start":         int64(4),
+			"span_end":           int(12),
+			"extract_conf":       float32(0.75),
+			"extraction_model":   "model-a",
+			"extraction_version": "1",
+			"pipeline_run_id":    "run-1",
+			"authority":          "secondary",
+		},
+		map[string]any{"fragment_id": ""},
+		"not-a-map",
+	}
+
+	reader := &stubFactReader{
+		rowsByProfile: map[string][]map[string]any{
+			profileID: {row, {"fact_id": "", "recorded_at": now}},
+		},
+	}
+	svc := NewGetFactService(reader)
+	batchSvc := svc.(interface {
+		GetByIDs(ctx context.Context, profileID string, factIDs []string) (map[string]*domain.Fact, error)
+	})
+
+	empty, err := batchSvc.GetByIDs(ctx, profileID, nil)
+	require.NoError(t, err)
+	require.Empty(t, empty)
+
+	got, err := batchSvc.GetByIDs(ctx, profileID, []string{"fact-1", "missing"})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	fact := got["fact-1"]
+	require.NotNil(t, fact)
+	require.Equal(t, "creator-1", fact.CreatedByProfileID)
+	require.Equal(t, "promoter-1", fact.PromotedByProfileID)
+	require.Equal(t, "unit", fact.Metadata["source"])
+	require.Len(t, fact.Evidence, 1)
+	require.Equal(t, "fragment-1", fact.Evidence[0].FragmentID)
+	require.Equal(t, 4, fact.Evidence[0].SpanStart)
+	require.Equal(t, 12, fact.Evidence[0].SpanEnd)
+	require.InDelta(t, 0.75, fact.Evidence[0].ExtractConf, 1e-6)
+	require.Equal(t, domain.AuthoritySecondary, fact.Evidence[0].Authority)
+
+	reader.err = errors.New("read failed")
+	got, err = batchSvc.GetByIDs(ctx, profileID, []string{"fact-1"})
+	require.Nil(t, got)
+	require.ErrorContains(t, err, "fact batch get")
+}

@@ -68,6 +68,10 @@ func computeTruthScore(extractConf, resolutionConf float64, supportCountGateMet,
 		0.15*boolWeight(maxSourceQualityGateMet)
 }
 
+func validConfidence(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= 1
+}
+
 // ClaimStrength computes the Strength of a Claim evaluated against the given
 // PromotionGate.
 //

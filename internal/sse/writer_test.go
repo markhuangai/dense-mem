@@ -3,6 +3,7 @@ package sse
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -50,6 +51,24 @@ func (m *mockNonFlusher) Write(b []byte) (int, error) {
 func (m *mockNonFlusher) WriteHeader(statusCode int) {
 	m.statusCode = statusCode
 }
+
+type errorFlusher struct {
+	header http.Header
+}
+
+func (e *errorFlusher) Header() http.Header {
+	if e.header == nil {
+		e.header = make(http.Header)
+	}
+	return e.header
+}
+
+func (e *errorFlusher) Write([]byte) (int, error) {
+	return 0, errors.New("write failed")
+}
+
+func (e *errorFlusher) WriteHeader(int) {}
+func (e *errorFlusher) Flush()          {}
 
 // TestSSEEventFormat tests that SSE events are formatted correctly as "event: <type>\ndata: <json>\n\n".
 func TestSSEEventFormat(t *testing.T) {
@@ -333,6 +352,73 @@ func TestSSEWriter_Headers(t *testing.T) {
 	}
 }
 
+func TestSSEWriter_WriteCommentAndErrors(t *testing.T) {
+	t.Run("comment writes and flushes", func(t *testing.T) {
+		flusher := newMockFlusher()
+		writer, err := NewSSEWriter(flusher)
+		if err != nil {
+			t.Fatalf("NewSSEWriter() error = %v", err)
+		}
+
+		if err := writer.WriteComment("keepalive"); err != nil {
+			t.Fatalf("WriteComment() error = %v", err)
+		}
+		if got := flusher.Body.String(); got != ": keepalive\n\n" {
+			t.Fatalf("comment body = %q; want SSE comment frame", got)
+		}
+		if !flusher.flushed {
+			t.Fatal("expected Flush() after comment")
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+		if err := writer.WriteComment("closed"); err != ErrStreamClosed {
+			t.Fatalf("WriteComment after close = %v; want ErrStreamClosed", err)
+		}
+	})
+
+	t.Run("event marshal error", func(t *testing.T) {
+		flusher := newMockFlusher()
+		writer, err := NewSSEWriter(flusher)
+		if err != nil {
+			t.Fatalf("NewSSEWriter() error = %v", err)
+		}
+
+		err = writer.WriteEvent(EventTypeEvidence, map[string]any{"bad": func() {}})
+		if err == nil || !strings.Contains(err.Error(), "failed to marshal payload") {
+			t.Fatalf("WriteEvent marshal err = %v; want marshal context", err)
+		}
+	})
+
+	t.Run("event write error", func(t *testing.T) {
+		writer, err := NewSSEWriter(&errorFlusher{})
+		if err != nil {
+			t.Fatalf("NewSSEWriter() error = %v", err)
+		}
+
+		err = writer.WriteEvent(EventTypeTextDelta, map[string]any{"delta": "test"})
+		if err == nil || !strings.Contains(err.Error(), "failed to write event") {
+			t.Fatalf("WriteEvent write err = %v; want write context", err)
+		}
+	})
+
+	t.Run("comment write error", func(t *testing.T) {
+		writer, err := NewSSEWriter(&errorFlusher{})
+		if err != nil {
+			t.Fatalf("NewSSEWriter() error = %v", err)
+		}
+
+		err = writer.WriteComment("keepalive")
+		if err == nil || !strings.Contains(err.Error(), "failed to write comment") {
+			t.Fatalf("WriteComment write err = %v; want write context", err)
+		}
+	})
+
+	if got := sanitizeToolCallPayload(struct{ Name string }{Name: "plain"}); got == nil {
+		t.Fatal("non-map tool payload should be returned as-is")
+	}
+}
+
 // TestSSEWriter_EvidencePayloadBounded tests that evidence payloads are bounded to 10KB.
 func TestSSEWriter_EvidencePayloadBounded(t *testing.T) {
 	flusher := newMockFlusher()
@@ -392,9 +478,9 @@ func TestSSEWriter_ToolCallSanitization(t *testing.T) {
 		"api_key":  "secret-key-123",
 		"password": "secret-password",
 		"args": map[string]any{
-			"query":    "hello",
-			"token":    "secret-token",
-			"nested":   map[string]any{"credential": "nested-secret"},
+			"query":  "hello",
+			"token":  "secret-token",
+			"nested": map[string]any{"credential": "nested-secret"},
 		},
 	}
 

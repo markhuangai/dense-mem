@@ -545,3 +545,172 @@ func TestHeartbeatWithRealHTTPResponseWriter(t *testing.T) {
 	assert.GreaterOrEqual(t, len(comments), 2, "expected at least 2 heartbeat comments")
 	assert.LessOrEqual(t, len(comments), 4, "expected at most 4 heartbeat comments")
 }
+
+type fakeRedisKeyBuilder struct {
+	err error
+}
+
+func (b fakeRedisKeyBuilder) Stream(profileID, identifier string) (string, error) {
+	if b.err != nil {
+		return "", b.err
+	}
+	return "profile:" + profileID + ":stream:" + identifier, nil
+}
+
+type fakeLifecycleRedis struct {
+	builder any
+
+	count     int64
+	incrErr   error
+	expireErr error
+	scanErr   error
+	delErr    error
+
+	expireCalls int
+	decrCalls   int
+	delCalls    int
+	scanPattern string
+	scanKeys    []string
+}
+
+func (r *fakeLifecycleRedis) KeyBuilder() any {
+	if r.builder != nil {
+		return r.builder
+	}
+	return fakeRedisKeyBuilder{}
+}
+
+func (r *fakeLifecycleRedis) Incr(context.Context, string) (int64, error) {
+	if r.incrErr != nil {
+		return 0, r.incrErr
+	}
+	r.count++
+	return r.count, nil
+}
+
+func (r *fakeLifecycleRedis) Decr(context.Context, string) (int64, error) {
+	r.decrCalls++
+	r.count--
+	return r.count, nil
+}
+
+func (r *fakeLifecycleRedis) Expire(context.Context, string, int64) error {
+	r.expireCalls++
+	return r.expireErr
+}
+
+func (r *fakeLifecycleRedis) Del(context.Context, string) error {
+	r.delCalls++
+	return r.delErr
+}
+
+func (r *fakeLifecycleRedis) Scan(_ context.Context, _ uint64, match string, _ int64) ([]string, uint64, error) {
+	r.scanPattern = match
+	if r.scanErr != nil {
+		return nil, 0, r.scanErr
+	}
+	return r.scanKeys, 0, nil
+}
+
+func TestStreamLifecycleConstructors(t *testing.T) {
+	client := &fakeLifecycleRedis{}
+	limiter, ok := NewConcurrencyLimiter(client).(*redisConcurrencyLimiter)
+	require.True(t, ok)
+	assert.Equal(t, MaxConcurrentStreams, limiter.maxStreams)
+	assert.Equal(t, int64(3600), limiter.counterTTL)
+
+	heartbeat, ok := NewHeartbeatSender().(*heartbeatSender)
+	require.True(t, ok)
+	assert.Equal(t, HeartbeatInterval, heartbeat.interval)
+
+	lifecycle, ok := NewStreamLifecycle(newMockConcurrencyLimiter(1), newMockCleanupRepository()).(*streamLifecycle)
+	require.True(t, ok)
+	assert.Equal(t, MaxStreamDuration, lifecycle.maxDuration)
+	assert.NotNil(t, lifecycle.heartbeatSender)
+}
+
+func TestRedisConcurrencyLimiterAcquireBranches(t *testing.T) {
+	t.Run("success sets TTL and release is idempotent", func(t *testing.T) {
+		client := &fakeLifecycleRedis{}
+		limiter := NewConcurrencyLimiterWithConfig(client, 1, 9)
+
+		release, err := limiter.Acquire(context.Background(), "profile-1")
+		require.NoError(t, err)
+		require.NotNil(t, release)
+		assert.Equal(t, 1, client.expireCalls)
+
+		release()
+		release()
+		assert.Equal(t, 1, client.decrCalls)
+	})
+
+	t.Run("limit exceeded decrements immediately", func(t *testing.T) {
+		client := &fakeLifecycleRedis{count: 1}
+		limiter := NewConcurrencyLimiterWithConfig(client, 1, 9)
+
+		release, err := limiter.Acquire(context.Background(), "profile-1")
+
+		require.ErrorIs(t, err, ErrTooManyStreams)
+		assert.Nil(t, release)
+		assert.Equal(t, 1, client.decrCalls)
+	})
+
+	t.Run("invalid key builder", func(t *testing.T) {
+		client := &fakeLifecycleRedis{builder: struct{}{}}
+		limiter := NewConcurrencyLimiterWithConfig(client, 1, 9)
+
+		_, err := limiter.Acquire(context.Background(), "profile-1")
+
+		require.ErrorContains(t, err, "keybuilder")
+	})
+
+	t.Run("stream key error", func(t *testing.T) {
+		client := &fakeLifecycleRedis{builder: fakeRedisKeyBuilder{err: errors.New("bad key")}}
+		limiter := NewConcurrencyLimiterWithConfig(client, 1, 9)
+
+		_, err := limiter.Acquire(context.Background(), "profile-1")
+
+		require.ErrorContains(t, err, "failed to build")
+	})
+
+	t.Run("increment error", func(t *testing.T) {
+		client := &fakeLifecycleRedis{incrErr: errors.New("redis down")}
+		limiter := NewConcurrencyLimiterWithConfig(client, 1, 9)
+
+		_, err := limiter.Acquire(context.Background(), "profile-1")
+
+		require.ErrorContains(t, err, "failed to increment")
+	})
+
+	t.Run("ttl error decrements", func(t *testing.T) {
+		client := &fakeLifecycleRedis{expireErr: errors.New("ttl failed")}
+		limiter := NewConcurrencyLimiterWithConfig(client, 1, 9)
+
+		_, err := limiter.Acquire(context.Background(), "profile-1")
+
+		require.ErrorContains(t, err, "failed to set")
+		assert.Equal(t, 1, client.decrCalls)
+	})
+}
+
+func TestStreamCleanupRepositoryPurgeProfileStreamState(t *testing.T) {
+	client := &fakeLifecycleRedis{scanKeys: []string{"profile:p1:stream:a", "profile:p1:stream:b"}}
+	repo := NewStreamCleanupRepository(client)
+
+	err := repo.PurgeProfileStreamState(context.Background(), "p1")
+
+	require.NoError(t, err)
+	assert.Equal(t, "profile:p1:stream:*", client.scanPattern)
+	assert.Equal(t, 2, client.delCalls)
+
+	client = &fakeLifecycleRedis{scanErr: errors.New("scan failed")}
+	repo = NewStreamCleanupRepository(client)
+	err = repo.PurgeProfileStreamState(context.Background(), "p1")
+	require.ErrorContains(t, err, "failed to scan")
+
+	client = &fakeLifecycleRedis{scanKeys: []string{"profile:p1:stream:a"}, delErr: errors.New("delete failed")}
+	repo = NewStreamCleanupRepository(client)
+	err = repo.PurgeProfileStreamState(context.Background(), "p1")
+	require.NoError(t, err, "delete errors are intentionally best effort")
+	assert.Equal(t, 1, client.delCalls)
+}

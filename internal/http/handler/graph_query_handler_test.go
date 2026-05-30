@@ -2,10 +2,12 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -13,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
+	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/tools/graphquery"
 )
 
@@ -234,4 +237,93 @@ func TestGraphQueryHandler_MissingQuery(t *testing.T) {
 	e.ServeHTTP(rec, req)
 
 	assert.NotEqual(t, http.StatusOK, rec.Code)
+}
+
+func TestGraphQueryHandler_RejectsTimeoutValidationBranches(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		h    *GraphQueryHandler
+	}{
+		{
+			name: "negative timeout",
+			body: `{"query":"RETURN 1","timeout_seconds":-1}`,
+			h:    NewGraphQueryHandler(&mockGraphQueryServiceForHandler{}),
+		},
+		{
+			name: "timeout exceeds maximum",
+			body: `{"query":"RETURN 1","timeout_seconds":30}`,
+			h:    NewGraphQueryHandlerWithTimeouts(&mockGraphQueryServiceForHandler{}, time.Second),
+		},
+		{
+			name: "malformed json",
+			body: `{malformed`,
+			h:    NewGraphQueryHandler(&mockGraphQueryServiceForHandler{}),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newTestEcho()
+			e.HTTPErrorHandler = httperr.ErrorHandler
+			profileID := uuid.New()
+			e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+				return func(c echo.Context) error {
+					ctx := middleware.SetResolvedProfileIDForTest(c.Request().Context(), profileID)
+					c.SetRequest(c.Request().WithContext(ctx))
+					return next(c)
+				}
+			})
+			e.POST("/api/v1/tools/graph-query", tc.h.Handle)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/graph-query", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+
+			e.ServeHTTP(rec, req)
+
+			require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+		})
+	}
+}
+
+func TestGraphQueryHandlerRequiresResolvedProfileID(t *testing.T) {
+	e := newTestEcho()
+	e.HTTPErrorHandler = httperr.ErrorHandler
+	h := NewGraphQueryHandler(&mockGraphQueryServiceForHandler{})
+	e.POST("/api/v1/tools/graph-query", h.Handle)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/graph-query", strings.NewReader(`{"query":"RETURN 1"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleGraphQueryErrorMapsKnownErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		code httperr.ErrorCode
+	}{
+		{"nil", nil, ""},
+		{"limit", graphquery.NewLimitError("bad limit"), httperr.VALIDATION_ERROR},
+		{"forbidden param", graphquery.NewForbiddenParamError("team_id"), httperr.VALIDATION_ERROR},
+		{"syntax", graphquery.NewSyntaxError("bad syntax"), httperr.VALIDATION_ERROR},
+		{"validation", &graphquery.ValidationError{Reason: "bad query"}, httperr.VALIDATION_ERROR},
+		{"default", errors.New("neo4j unavailable"), httperr.INTERNAL_ERROR},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := handleGraphQueryError(tc.err)
+			if tc.err == nil {
+				require.Nil(t, got)
+				return
+			}
+			require.Equal(t, tc.code, got.Code)
+		})
+	}
 }

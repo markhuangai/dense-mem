@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"strings"
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -298,6 +300,11 @@ func (s *service) processClaim(ctx context.Context, profileID, fragmentID string
 		out.Error = "subject, predicate, and object are required"
 		return out, nil
 	}
+	if err := validateTypedClaimInput(in); err != nil {
+		out.Status = "invalid"
+		out.Error = err.Error()
+		return out, nil
+	}
 	if !IsPersonalPredicate(in.Predicate) {
 		out.Status = "predicate_not_supported"
 		out.Error = "predicate is not in the high-level personal-memory allow-list"
@@ -503,6 +510,48 @@ func (s *service) ConfirmMemory(ctx context.Context, profileID string, req Confi
 func IsPersonalPredicate(predicate string) bool {
 	_, ok := PersonalPredicates[predicate]
 	return ok
+}
+
+func validateTypedClaimInput(in TypedClaimInput) error {
+	switch {
+	case strings.TrimSpace(in.Subject) == "":
+		return errors.New("subject is required")
+	case len(in.Subject) > 256:
+		return errors.New("subject exceeds maximum length of 256")
+	case strings.TrimSpace(in.Predicate) == "":
+		return errors.New("predicate is required")
+	case strings.TrimSpace(in.Object) == "":
+		return errors.New("object is required")
+	case len(in.Object) > 1024:
+		return errors.New("object exceeds maximum length of 1024")
+	case len(in.Speaker) > 256:
+		return errors.New("speaker exceeds maximum length of 256")
+	case len(in.IdempotencyKey) > 128:
+		return errors.New("idempotency_key exceeds maximum length of 128")
+	case len(in.ExtractionModel) > 128:
+		return errors.New("extraction_model exceeds maximum length of 128")
+	case len(in.ExtractionVersion) > 64:
+		return errors.New("extraction_version exceeds maximum length of 64")
+	case len(in.PipelineRunID) > 128:
+		return errors.New("pipeline_run_id exceeds maximum length of 128")
+	}
+	if in.Modality != "" && !domain.ClaimModality(in.Modality).IsValid() {
+		return errors.New("modality must be one of [assertion question proposal speculation quoted]")
+	}
+	if in.Polarity != "" && !domain.ClaimPolarity(in.Polarity).IsValid() {
+		return errors.New("polarity must be one of [+ -]")
+	}
+	if !validConfidence(in.ExtractConf) {
+		return errors.New("extract_conf must be between 0 and 1")
+	}
+	if !validConfidence(in.ResolutionConf) {
+		return errors.New("resolution_conf must be between 0 and 1")
+	}
+	return nil
+}
+
+func validConfidence(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= 1
 }
 
 func clampReflectLimit(limit int) int {

@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"reflect"
@@ -48,12 +49,15 @@ func validateSchemaValue(name string, value any, schema map[string]any) error {
 		if !ok {
 			return fmt.Errorf("%s must be a string", name)
 		}
+		if minLen, ok := schemaNumber(schema["minLength"]); ok && len(s) < int(minLen) {
+			return fmt.Errorf("%s must be at least %d characters", name, int(minLen))
+		}
 		if maxLen, ok := schemaNumber(schema["maxLength"]); ok && len(s) > int(maxLen) {
 			return fmt.Errorf("%s exceeds maximum length of %d", name, int(maxLen))
 		}
 	case "integer":
 		number, ok := schemaNumber(value)
-		if !ok || math.Trunc(number) != number {
+		if !ok || !isFiniteNumber(number) || math.Trunc(number) != number {
 			return fmt.Errorf("%s must be an integer", name)
 		}
 		if min, ok := schemaNumber(schema["minimum"]); ok && number < min {
@@ -64,7 +68,7 @@ func validateSchemaValue(name string, value any, schema map[string]any) error {
 		}
 	case "number":
 		number, ok := schemaNumber(value)
-		if !ok {
+		if !ok || !isFiniteNumber(number) {
 			return fmt.Errorf("%s must be a number", name)
 		}
 		if min, ok := schemaNumber(schema["minimum"]); ok && number < min {
@@ -74,22 +78,57 @@ func validateSchemaValue(name string, value any, schema map[string]any) error {
 			return fmt.Errorf("%s must be less than or equal to %g", name, max)
 		}
 	case "object":
-		reflected := reflect.ValueOf(value)
-		if !reflected.IsValid() || reflected.Kind() != reflect.Map {
+		fields, ok := objectFields(value)
+		if !ok {
 			return fmt.Errorf("%s must be an object", name)
+		}
+		for _, fieldName := range schemaRequiredFields(schema) {
+			if _, ok := fields[fieldName]; !ok {
+				return fmt.Errorf("%s.%s is required", name, fieldName)
+			}
+		}
+		properties := schemaProperties(schema)
+		if schemaDisallowsAdditionalProperties(schema) {
+			for key := range fields {
+				if _, ok := properties[key]; !ok {
+					return fmt.Errorf("%s.%s is not allowed", name, key)
+				}
+			}
+		}
+		for key, fieldValue := range fields {
+			prop, ok := properties[key]
+			if !ok {
+				continue
+			}
+			if err := validateSchemaValue(name+"."+key, fieldValue, prop); err != nil {
+				return err
+			}
 		}
 	case "array":
 		reflected := reflect.ValueOf(value)
 		if !reflected.IsValid() || (reflected.Kind() != reflect.Slice && reflected.Kind() != reflect.Array) {
 			return fmt.Errorf("%s must be an array", name)
 		}
+		if minItems, ok := schemaNumber(schema["minItems"]); ok && reflected.Len() < int(minItems) {
+			return fmt.Errorf("%s must contain at least %d items", name, int(minItems))
+		}
 		if maxItems, ok := schemaNumber(schema["maxItems"]); ok && reflected.Len() > int(maxItems) {
 			return fmt.Errorf("%s exceeds maximum item count of %d", name, int(maxItems))
+		}
+		if itemSchema, ok := schema["items"].(map[string]any); ok {
+			for i := 0; i < reflected.Len(); i++ {
+				if err := validateSchemaValue(fmt.Sprintf("%s[%d]", name, i), reflected.Index(i).Interface(), itemSchema); err != nil {
+					return err
+				}
+			}
 		}
 	case "boolean":
 		if _, ok := value.(bool); !ok {
 			return fmt.Errorf("%s must be a boolean", name)
 		}
+	}
+	if err := validateSchemaEnum(name, value, schema); err != nil {
+		return err
 	}
 	return nil
 }
@@ -104,8 +143,79 @@ func schemaNumber(value any) (float64, bool) {
 		return v, true
 	case float32:
 		return float64(v), true
+	case json.Number:
+		number, err := v.Float64()
+		return number, err == nil
 	default:
 		return 0, false
+	}
+}
+
+func isFiniteNumber(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func objectFields(value any) (map[string]any, bool) {
+	reflected := reflect.ValueOf(value)
+	if !reflected.IsValid() || reflected.Kind() != reflect.Map || reflected.Type().Key().Kind() != reflect.String {
+		return nil, false
+	}
+
+	fields := make(map[string]any, reflected.Len())
+	iter := reflected.MapRange()
+	for iter.Next() {
+		fields[iter.Key().String()] = iter.Value().Interface()
+	}
+	return fields, true
+}
+
+func validateSchemaEnum(name string, value any, schema map[string]any) error {
+	raw, ok := schema["enum"]
+	if !ok {
+		return nil
+	}
+
+	switch values := raw.(type) {
+	case []string:
+		s, ok := value.(string)
+		if !ok {
+			return nil
+		}
+		for _, allowed := range values {
+			if s == allowed {
+				return nil
+			}
+		}
+	case []any:
+		for _, allowed := range values {
+			if schemaValuesEqual(value, allowed) {
+				return nil
+			}
+		}
+	default:
+		return nil
+	}
+
+	return fmt.Errorf("%s must be one of %s", name, schemaEnumDescription(raw))
+}
+
+func schemaValuesEqual(left, right any) bool {
+	leftNumber, leftOK := schemaNumber(left)
+	rightNumber, rightOK := schemaNumber(right)
+	if leftOK && rightOK {
+		return leftNumber == rightNumber
+	}
+	return reflect.DeepEqual(left, right)
+}
+
+func schemaEnumDescription(raw any) string {
+	switch values := raw.(type) {
+	case []string:
+		return fmt.Sprintf("%v", values)
+	case []any:
+		return fmt.Sprintf("%v", values)
+	default:
+		return "the allowed values"
 	}
 }
 

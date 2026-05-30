@@ -16,6 +16,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
@@ -107,6 +108,151 @@ func TestMCPHandlerToolsListFiltersByScope(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, rec.Body.String(), "read_tool")
 	require.NotContains(t, rec.Body.String(), "write_tool")
+}
+
+func TestMCPHandlerPostValidationBranches(t *testing.T) {
+	h := NewMCPHandler(registry.New(), testMCPLogger())
+	e := echo.New()
+
+	t.Run("missing profile", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{}`))
+		req = req.WithContext(middleware.SetPrincipalForTest(req.Context(), &middleware.Principal{Scopes: []string{"read"}}))
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		err := h.HandlePost(c)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "PROFILE_ID_REQUIRED")
+	})
+
+	t.Run("missing principal", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{}`))
+		req = req.WithContext(middleware.SetResolvedProfileIDForTest(req.Context(), uuid.New()))
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		err := h.HandlePost(c)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "AUTH_MISSING")
+	})
+
+	t.Run("empty body", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`   `))
+		req = req.WithContext(mcpTestContext(req.Context(), uuid.New(), []string{"read"}))
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		err := h.HandlePost(c)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "request body is required")
+	})
+}
+
+func TestMCPHandlerGetBranches(t *testing.T) {
+	e := echo.New()
+	profileID := uuid.New()
+
+	t.Run("non SSE accept is method not allowed", func(t *testing.T) {
+		h := NewMCPHandlerWithLifecycle(registry.New(), testMCPLogger(), &mockStreamLifecycle{})
+		req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+		req.Header.Set(echo.HeaderAccept, "application/json")
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		require.NoError(t, h.HandleGet(c))
+		require.Equal(t, http.StatusMethodNotAllowed, rec.Code)
+	})
+
+	t.Run("missing lifecycle", func(t *testing.T) {
+		h := NewMCPHandler(registry.New(), testMCPLogger())
+		req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+		req.Header.Set(echo.HeaderAccept, "text/event-stream")
+		req = req.WithContext(middleware.SetResolvedProfileIDForTest(req.Context(), profileID))
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		err := h.HandleGet(c)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "SERVICE_UNAVAILABLE")
+	})
+
+	t.Run("missing profile", func(t *testing.T) {
+		h := NewMCPHandlerWithLifecycle(registry.New(), testMCPLogger(), &mockStreamLifecycle{})
+		req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+		req.Header.Set(echo.HeaderAccept, "text/event-stream")
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		err := h.HandleGet(c)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "PROFILE_ID_REQUIRED")
+	})
+
+	t.Run("too many streams", func(t *testing.T) {
+		h := NewMCPHandlerWithLifecycle(registry.New(), testMCPLogger(), &mockStreamLifecycle{
+			startFunc: func(ctx context.Context, profileID string, writer sse.SSEWriter, work func(context.Context) error) error {
+				return sse.ErrTooManyStreams
+			},
+		})
+		req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+		req.Header.Set(echo.HeaderAccept, "text/event-stream")
+		req = req.WithContext(middleware.SetResolvedProfileIDForTest(req.Context(), profileID))
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		err := h.HandleGet(c)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "RATE_LIMITED")
+	})
+
+	t.Run("stream terminated is clean", func(t *testing.T) {
+		h := NewMCPHandlerWithLifecycle(registry.New(), testMCPLogger(), &mockStreamLifecycle{
+			startFunc: func(ctx context.Context, profileID string, writer sse.SSEWriter, work func(context.Context) error) error {
+				return sse.ErrStreamTerminated
+			},
+		})
+		req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+		req.Header.Set(echo.HeaderAccept, "text/event-stream")
+		req = req.WithContext(middleware.SetResolvedProfileIDForTest(req.Context(), profileID))
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		require.NoError(t, h.HandleGet(c))
+	})
+
+	t.Run("writes ready comment", func(t *testing.T) {
+		h := NewMCPHandlerWithLifecycle(registry.New(), testMCPLogger(), &mockStreamLifecycle{
+			startFunc: func(ctx context.Context, profileID string, writer sse.SSEWriter, work func(context.Context) error) error {
+				workCtx, cancel := context.WithCancel(ctx)
+				cancel()
+				return work(workCtx)
+			},
+		})
+		req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+		req.Header.Set(echo.HeaderAccept, "text/event-stream")
+		req = req.WithContext(middleware.SetResolvedProfileIDForTest(req.Context(), profileID))
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		require.NoError(t, h.HandleGet(c))
+		require.Contains(t, rec.Body.String(), ": dense-mem MCP stream ready")
+	})
+}
+
+func TestWriteSSEComment(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	require.NoError(t, writeSSEComment(c, "hello"))
+	require.Equal(t, ": hello\n\n", rec.Body.String())
 }
 
 func mcpTestContext(ctx context.Context, profileID uuid.UUID, scopes []string) context.Context {

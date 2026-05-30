@@ -136,6 +136,9 @@ func (s *invariantScanService) Scan(ctx context.Context) (*InvariantScanResult, 
 func (s *invariantScanService) ScanWithAudit(ctx context.Context, actorKeyID *string, actorRole, clientIP, correlationID string) (*InvariantScanResult, error) {
 	// Execute the scan
 	result, err := s.Scan(ctx)
+	if result == nil {
+		result = &InvariantScanResult{Status: "error"}
+	}
 
 	// Build audit metadata
 	metadata := map[string]interface{}{
