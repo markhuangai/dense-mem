@@ -40,6 +40,22 @@ test("control panel rejects an invalid control token", async ({ page }) => {
   await expect(page.getByRole("alert")).toContainText(/invalid/i);
 });
 
+test("control panel shows operational metrics against compose", async ({ page }) => {
+  await openControlPanel(page);
+
+  await page.getByRole("button", { name: /^Metrics$/ }).click();
+
+  await expect(page.getByRole("heading", { name: "Metrics" })).toBeVisible();
+  await expect(page.getByLabel("Request metrics")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Dependencies" })).toBeVisible();
+  await expect(page.getByText("postgres")).toBeVisible();
+  await expect(page.getByText("neo4j")).toBeVisible();
+
+  await page.getByLabel("Window").selectOption("360");
+  await page.getByLabel("Team", { exact: true }).selectOption(seedTeamId);
+  await expect(page.getByRole("heading", { name: "Metrics" })).toBeVisible();
+});
+
 test("user portal logs in with a real API key and shows only that profile", async ({ page, request }, testInfo) => {
   const otherProfile = await createTeamProfile(request, uniqueName("Other profile", testInfo), ["read"]);
 

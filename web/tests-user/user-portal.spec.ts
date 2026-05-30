@@ -165,6 +165,10 @@ test("responsive user portal layout", async ({ page }) => {
 
   await expect(page.getByRole("heading", { name: "Dense-Mem Knowledge" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Recall" })).toBeVisible();
+  const shellMinHeight = await page.locator(".app-shell").evaluate((element) => Number.parseFloat(getComputedStyle(element).minHeight));
+  expect(shellMinHeight).toBeGreaterThanOrEqual((page.viewportSize()?.height ?? 0) - 1);
+  await expect(page.locator(".control-sidebar")).toHaveCSS("border-radius", "8px");
+  await expect(page.locator(".surface").first()).toHaveCSS("border-radius", "8px");
 
   if ((page.viewportSize()?.width ?? 1000) < 700) {
     await expect(page.locator(".workspace")).toHaveCSS("grid-template-columns", /[0-9.]+px/);

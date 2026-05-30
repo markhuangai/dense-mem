@@ -58,6 +58,34 @@ const ban: TestBan = {
   revoked_at: null,
 };
 
+const metrics = {
+  window: {
+    from: "2026-05-02T12:00:00Z",
+    to: "2026-05-02T13:00:00Z",
+    bucket_seconds: 60,
+    retention_days: 30,
+  },
+  system: {
+    requests: 42,
+    errors: 2,
+    avg_latency_ms: 18.5,
+    max_latency_ms: 90,
+  },
+  dependencies: [
+    { name: "postgres", status: "ok", latency_ms: 3 },
+    { name: "neo4j", status: "ok", latency_ms: 8 },
+  ],
+  teams: [
+    { team_id: team.id, team_name: "Default", requests: 42, errors: 2, avg_latency_ms: 18.5, max_latency_ms: 90 },
+  ],
+  keys: [
+    { team_id: team.id, team_name: "Default", key_id: key.id, key_name: "default profile", key_suffix: "abc123", requests: 40, errors: 1, avg_latency_ms: 17, max_latency_ms: 80 },
+  ],
+  routes: [
+    { route: "/api/v1/fragments/:id", method: "GET", status_class: "2xx", requests: 39, errors: 0, avg_latency_ms: 16, max_latency_ms: 70 },
+  ],
+};
+
 type TestProfile = typeof team;
 
 test("team creation flow", async ({ page }) => {
@@ -132,6 +160,32 @@ test("IP ban list and clear reset flow", async ({ page }) => {
   await expect(page.getByText("203.0.113.10")).toBeHidden();
 });
 
+test("metrics tab renders operational totals and filter queries", async ({ page }) => {
+  const calls = await mockApi(page, { teams: [team], keys: [key] });
+  await openPortal(page);
+
+  await page.getByRole("button", { name: /^Metrics$/ }).click();
+
+  const summary = page.getByLabel("Request metrics");
+  await expect(summary).toContainText("42");
+  await expect(summary).toContainText("2");
+  await expect(summary).toContainText("4.8%");
+  await expect(summary).toContainText("19 ms");
+  await expect(summary).toContainText("90 ms");
+  await expect(page.getByText("postgres")).toBeVisible();
+  await expect(page.getByText("neo4j")).toBeVisible();
+  await expect(page.getByRole("row", { name: /Default\s+42\s+2\s+19 ms\s+90 ms/ })).toBeVisible();
+  await expect(page.getByRole("row", { name: /default profile\s+\*\*\*\*\*\*abc123\s+Default\s+40\s+1\s+17 ms/ })).toBeVisible();
+  await expect(page.getByRole("row", { name: /\/api\/v1\/fragments\/:id\s+GET\s+2xx\s+39\s+0/ })).toBeVisible();
+
+  await page.getByLabel("Window").selectOption("360");
+  await page.getByLabel("Team", { exact: true }).selectOption(team.id);
+
+  await expect.poll(() => calls.metricsUrls.some((url) => (
+    url.includes("window_minutes=360") && url.includes(`team_id=${team.id}`)
+  ))).toBe(true);
+});
+
 test("team delete flow", async ({ page }) => {
   await mockApi(page, { teams: [team], keys: [key] });
   await openPortal(page);
@@ -160,6 +214,10 @@ test("responsive portal layout", async ({ page }) => {
 
   await expect(page.getByRole("heading", { name: "Dense-Mem Control" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Teams" })).toBeVisible();
+  const shellMinHeight = await page.locator(".app-shell").evaluate((element) => Number.parseFloat(getComputedStyle(element).minHeight));
+  expect(shellMinHeight).toBeGreaterThanOrEqual((page.viewportSize()?.height ?? 0) - 1);
+  await expect(page.locator(".control-sidebar")).toHaveCSS("border-radius", "8px");
+  await expect(page.locator(".surface").first()).toHaveCSS("border-radius", "8px");
   await page.getByRole("button", { name: /Profiles & API Keys/ }).click();
   await expect(page.getByRole("heading", { name: "Profiles" })).toBeVisible();
 
@@ -177,6 +235,9 @@ async function openPortal(page: Page) {
 }
 
 async function mockApi(page: Page, state: { teams: TestProfile[]; keys: TestKey[]; bans?: TestBan[] }) {
+  const calls = {
+    metricsUrls: [] as string[],
+  };
   let teams = [...state.teams];
   let keys = [...state.keys];
   let bans = [...(state.bans ?? [])];
@@ -186,6 +247,10 @@ async function mockApi(page: Page, state: { teams: TestProfile[]; keys: TestKey[
 
     if (url.endsWith("/session")) {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { authenticated: true } }) });
+    }
+    if (url.includes("/metrics") && method === "GET") {
+      calls.metricsUrls.push(url);
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: metrics }) });
     }
     if (url.endsWith("/teams") && method === "GET") {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(pageOf(teams)) });
@@ -255,6 +320,7 @@ async function mockApi(page: Page, state: { teams: TestProfile[]; keys: TestKey[
     }
     return route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ message: "not found" }) });
   });
+  return calls;
 }
 
 function pageOf<T>(data: T[]) {
