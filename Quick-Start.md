@@ -59,13 +59,16 @@ Open `.env` and replace the placeholder values:
 ${EDITOR:-vi} .env
 ```
 
-At minimum, fill in:
+For clarity, make the embedding provider explicit:
 
 ```text
 POSTGRES_PASSWORD=choose-a-strong-postgres-password
 NEO4J_PASSWORD=choose-a-strong-neo4j-password
 CONTROL_PORTAL_TOKEN=choose-a-long-control-portal-token
+AI_API_URL=https://api.openai.com/v1
 AI_API_KEY=your-ai-provider-api-key
+AI_API_EMBEDDING_MODEL=text-embedding-3-large
+AI_API_EMBEDDING_DIMENSIONS=3072
 ```
 
 The control portal creates and rotates API keys. The base compose file binds it
@@ -73,11 +76,11 @@ to `127.0.0.1`, so it is reachable only from your computer.
 
 The server requires a complete embedding configuration at startup:
 `AI_API_URL`, `AI_API_KEY`, `AI_API_EMBEDDING_MODEL`, and
-`AI_API_EMBEDDING_DIMENSIONS`. The compose examples provide OpenAI defaults for
-the URL, model, and dimensions (`https://api.openai.com/v1`,
-`text-embedding-3-small`, `1536`), so the first setup only needs you to fill in
-`AI_API_KEY`. Override those values together when using a different embedding
-provider or model.
+`AI_API_EMBEDDING_DIMENSIONS`. Dense-Mem expects an OpenAI-compatible embedding
+API. The example above uses OpenAI's `text-embedding-3-large`, which returns
+`3072` dimensions. If you use `text-embedding-3-small`, set dimensions to
+`1536` instead. For another provider, change the URL, model, and dimension
+together before storing important memory.
 
 ## Step 3: Start Dense-Mem
 

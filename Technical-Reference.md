@@ -145,6 +145,7 @@ docker compose exec server /app/rotate-team-profile-key \
 | Problem | Check |
 | --- | --- |
 | Server does not start | Required `.env` values, Postgres health, Neo4j health. |
+| `permission denied to create extension "pgcrypto"` during Postgres migrations | Install `pgcrypto` once with a database owner or admin role, then restart the server. See [Configuration](Configuration#database-settings). |
 | Recall fails | AI provider key, embedding model, embedding dimensions, provider quota. |
 | MCP client cannot connect | URL, bearer token, client MCP config, server logs. |
 | Control portal rejects requests | `CONTROL_PORTAL_TOKEN` and portal URL. |

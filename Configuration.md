@@ -14,14 +14,16 @@ limits, or public access.
 | `POSTGRES_PASSWORD` | Password for the Postgres container. | Choose a strong secret. |
 | `NEO4J_PASSWORD` | Password for Neo4j. | Choose a strong secret. |
 | `CONTROL_PORTAL_TOKEN` | Token required to use the local control portal. | Choose a long secret. |
+| `AI_API_URL` | OpenAI-compatible embedding provider base URL. | `https://api.openai.com/v1` for OpenAI. |
 | `AI_API_KEY` | API key used by the embedding provider. | Your provider key. |
+| `AI_API_EMBEDDING_MODEL` | Embedding model name. | `text-embedding-3-large` for stronger recall, or the provider model you choose. |
+| `AI_API_EMBEDDING_DIMENSIONS` | Embedding vector size. | `3072` for `text-embedding-3-large`; `1536` for `text-embedding-3-small`. |
 
 The server requires a complete embedding configuration at startup:
 `AI_API_URL`, `AI_API_KEY`, `AI_API_EMBEDDING_MODEL`, and
-`AI_API_EMBEDDING_DIMENSIONS`. The compose examples supply OpenAI defaults for
-the URL, model, and dimensions, so the first local setup only needs an
-`AI_API_KEY`. Set all four values explicitly when using a different embedding
-provider or model.
+`AI_API_EMBEDDING_DIMENSIONS`. Dense-Mem uses an OpenAI-compatible embedding API.
+The compose examples supply OpenAI defaults, but production setups should set all
+four values explicitly so the model and stored vector dimensions are obvious.
 
 Dense-Mem validates embedding configuration on startup. Do not change embedding
 model or dimensions casually after storing memory. Mixed vector dimensions can
@@ -54,6 +56,30 @@ Postgres stores teams, profiles, API key metadata, migrations, and audit logs.
 | `POSTGRES_SSLMODE` | `disable` | SSL mode for local compose. |
 | `POSTGRES_DSN` | empty | Optional full connection string for non-compose deployments. |
 
+Dense-Mem's first Postgres migration uses `gen_random_uuid()` and creates the
+`pgcrypto` extension when it is missing. Fresh installs that use the bundled
+`postgres:16-alpine` compose service normally work without a manual step because
+the configured `POSTGRES_USER` owns the database. External, managed, or reused
+Postgres databases may use a restricted runtime role; in that case, install the
+extension once with a database owner or admin role before starting Dense-Mem:
+
+```bash
+psql "$ADMIN_POSTGRES_DSN" -c 'CREATE EXTENSION IF NOT EXISTS pgcrypto;'
+```
+
+For bundled compose, this preflight uses the Postgres service's own configured
+user and database:
+
+```bash
+docker compose exec postgres sh -lc \
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"'
+```
+
+If that command also fails with `permission denied`, the database or volume was
+not initialized with the configured runtime user as a database owner. Use an
+admin role to install the extension, or recreate the Postgres volume only when
+the existing data is disposable.
+
 Neo4j stores memory graph data, claims, facts, relationships, and vector-backed
 search data.
 
@@ -81,6 +107,17 @@ Embeddings are required for normal writes and recall.
 come from the compose examples and target OpenAI's
 `text-embedding-3-small` model. For another provider, change the URL, model, and
 dimension together.
+
+Common OpenAI choices:
+
+| Model | Dimensions |
+| --- | --- |
+| `text-embedding-3-small` | `1536` |
+| `text-embedding-3-large` | `3072` |
+
+Choose the embedding model and dimensions before storing important memory.
+Changing either later requires re-embedding or rebuilding vector indexes; do not
+mix vectors from different embedding configurations.
 
 Claim verification can use the same provider or a separate verifier provider.
 
