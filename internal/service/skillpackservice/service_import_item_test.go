@@ -136,13 +136,33 @@ func TestImportItemErrorAndDuplicateBranches(t *testing.T) {
 		t.Fatalf("duplicate fact after state = %v, want no new claim import provenance", duplicateFactLedger.changes[0].AfterState)
 	}
 
+	alreadyPromotedLedger := &fakeLedger{}
+	alreadyPromotedGraph := &recordingGraph{promotedFacts: map[string]string{"claim-dup": "fact-existing"}}
+	alreadyPromotedSvc := New(Dependencies{
+		ClaimCreate: &fakeClaimCreate{duplicate: true, claimID: "claim-dup"},
+		Graph:       alreadyPromotedGraph,
+		Ledger:      alreadyPromotedLedger,
+	}).(*service)
+	alreadyPromoted := alreadyPromotedSvc.importItem(ctx, "team-1", "import-1", "hash", "fragment-1", ModeTrusted, duplicateFactItem, inspected, "")
+	if alreadyPromoted.Status != "promoted" || alreadyPromoted.FactID != "fact-existing" {
+		t.Fatalf("alreadyPromoted = %+v, want existing promoted fact", alreadyPromoted)
+	}
+	if alreadyPromotedGraph.writeCount != 0 || len(alreadyPromotedLedger.changes) != 0 {
+		t.Fatalf("writes=%d changes=%d, want no mutation for already promoted duplicate", alreadyPromotedGraph.writeCount, len(alreadyPromotedLedger.changes))
+	}
+
+	appendErrGraph := &recordingGraph{}
 	appendErrSvc := New(Dependencies{
 		ClaimCreate: &fakeClaimCreate{},
+		Graph:       appendErrGraph,
 		Ledger:      &fakeLedger{appendErr: errors.New("append failed")},
 	}).(*service)
 	appendErr := appendErrSvc.importItem(ctx, "team-1", "import-1", "hash", "fragment-1", ModeReview, item, inspected, "")
 	if appendErr.Status != "error" || !strings.Contains(appendErr.Error, "append failed") {
 		t.Fatalf("appendErr = %+v, want ledger append error", appendErr)
+	}
+	if !graphWriteContains(appendErrGraph, "DETACH DELETE c") {
+		t.Fatalf("graph writes = %q, want created claim cleanup", appendErrGraph.writeQueries)
 	}
 }
 
@@ -167,15 +187,57 @@ func TestImportItemPromotionAndSupersedeErrorBranches(t *testing.T) {
 		t.Fatalf("tagFactErr = %+v, want tag fact error", tagFactErr)
 	}
 
+	factAppendErrGraph := &recordingGraph{}
 	factAppendErrSvc := New(Dependencies{
 		ClaimCreate: &fakeClaimCreate{},
 		FactPromote: fakeFactPromote{},
-		Graph:       &recordingGraph{},
+		Graph:       factAppendErrGraph,
 		Ledger:      &fakeLedger{appendErr: errors.New("fact append failed"), appendErrAfter: 2},
 	}).(*service)
 	factAppendErr := factAppendErrSvc.importItem(ctx, "team-1", "import-1", "hash", "fragment-1", ModeTrusted, factItem, inspected, "")
 	if factAppendErr.Status != "error" || !strings.Contains(factAppendErr.Error, "fact append failed") {
 		t.Fatalf("factAppendErr = %+v, want fact append error", factAppendErr)
+	}
+	if !graphWriteContains(factAppendErrGraph, "DETACH DELETE f") {
+		t.Fatalf("graph writes = %q, want created fact cleanup", factAppendErrGraph.writeQueries)
+	}
+
+	claimAppendErrGraph := &recordingGraph{}
+	claimAppendErrSvc := New(Dependencies{
+		ClaimCreate: &fakeClaimCreate{},
+		FactPromote: fakeFactPromote{},
+		Graph:       claimAppendErrGraph,
+		Ledger:      &fakeLedger{appendErr: errors.New("claim append failed")},
+	}).(*service)
+	claimAppendErr := claimAppendErrSvc.importItem(ctx, "team-1", "import-1", "hash", "fragment-1", ModeTrusted, factItem, inspected, "")
+	if claimAppendErr.Status != "error" || !strings.Contains(claimAppendErr.Error, "claim append failed") {
+		t.Fatalf("claimAppendErr = %+v, want claim append error", claimAppendErr)
+	}
+	if !graphWriteContains(claimAppendErrGraph, "DETACH DELETE f") || !graphWriteContains(claimAppendErrGraph, "DETACH DELETE c") {
+		t.Fatalf("graph writes = %q, want fact and claim cleanup", claimAppendErrGraph.writeQueries)
+	}
+
+	duplicateAppendErrGraph := &recordingGraph{}
+	duplicateAppendErrSvc := New(Dependencies{
+		ClaimCreate: &fakeClaimCreate{duplicate: true, claimID: "claim-dup"},
+		ClaimGet: fakeClaimGet{claims: map[string]*domain.Claim{"claim-dup": &domain.Claim{
+			ClaimID:           "claim-dup",
+			Subject:           "assistant",
+			Predicate:         "has_skill",
+			Object:            "tests import item branches",
+			Status:            domain.StatusCandidate,
+			EntailmentVerdict: domain.VerdictInsufficient,
+		}}},
+		FactPromote: fakeFactPromote{},
+		Graph:       duplicateAppendErrGraph,
+		Ledger:      &fakeLedger{appendErr: errors.New("duplicate append failed")},
+	}).(*service)
+	duplicateAppendErr := duplicateAppendErrSvc.importItem(ctx, "team-1", "import-1", "hash", "fragment-1", ModeTrusted, factItem, inspected, "")
+	if duplicateAppendErr.Status != "error" || !strings.Contains(duplicateAppendErr.Error, "duplicate append failed") {
+		t.Fatalf("duplicateAppendErr = %+v, want duplicate append error", duplicateAppendErr)
+	}
+	if !graphWriteContains(duplicateAppendErrGraph, "last_verifier_response") {
+		t.Fatalf("graph writes = %q, want duplicate claim restore", duplicateAppendErrGraph.writeQueries)
 	}
 
 	manualItem := SkillPackItem{

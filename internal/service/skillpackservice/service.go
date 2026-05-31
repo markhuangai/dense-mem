@@ -261,14 +261,14 @@ func (s *service) Import(ctx context.Context, profileID string, req ImportReques
 	fragmentID := fragmentRes.Fragment.FragmentID
 	if !fragmentRes.Duplicate {
 		if err := s.graphOps.tagFragment(ctx, profileID, fragmentID, importID, hash); err != nil {
-			return nil, err
+			return nil, s.cleanupCreatedEntity(ctx, profileID, "fragment", fragmentID, err)
 		}
 		if err := s.appendChange(ctx, profileID, importID, "fragment", fragmentID, domain.SkillPackChangeActionCreated, nil, map[string]any{
 			"fragment_id":  fragmentID,
 			"content_hash": fragmentRes.Fragment.ContentHash,
 			"import_id":    importID,
 		}); err != nil {
-			return nil, err
+			return nil, s.cleanupCreatedEntity(ctx, profileID, "fragment", fragmentID, err)
 		}
 	}
 
@@ -514,19 +514,29 @@ func (s *service) importItem(ctx context.Context, profileID, importID, artifactH
 	if mode == ModeReview {
 		if !createRes.Duplicate {
 			if err := s.graphOps.tagClaim(ctx, profileID, result.ClaimID, importID, artifactHash, item.SourceKind); err != nil {
-				result.Status = "error"
-				result.Error = err.Error()
-				return result
+				return itemError(result, s.cleanupCreatedEntity(ctx, profileID, "claim", result.ClaimID, err))
 			}
 			after := claimLedgerState(createRes.Claim, importID)
 			if err := s.appendChange(ctx, profileID, importID, "claim", result.ClaimID, domain.SkillPackChangeActionCreated, nil, after); err != nil {
-				result.Status = "error"
-				result.Error = err.Error()
-				return result
+				return itemError(result, s.cleanupCreatedEntity(ctx, profileID, "claim", result.ClaimID, err))
 			}
 		}
 		result.Status = "imported"
 		return result
+	}
+
+	promotedFactID := ""
+	if item.SourceKind == SourceKindFact && createRes.Duplicate {
+		var err error
+		promotedFactID, err = s.graphOps.promotedFactIDForClaim(ctx, profileID, result.ClaimID)
+		if err != nil {
+			return itemError(result, err)
+		}
+		if promotedFactID != "" {
+			result.FactID = promotedFactID
+			result.Status = "promoted"
+			return result
+		}
 	}
 
 	beforeClaim := claimLedgerState(createRes.Claim, "")
@@ -537,16 +547,15 @@ func (s *service) importItem(ctx context.Context, profileID, importID, artifactH
 	}
 	if createRes.Duplicate {
 		if err := s.graphOps.trustExistingClaim(ctx, profileID, result.ClaimID); err != nil {
-			result.Status = "error"
-			result.Error = err.Error()
-			return result
+			return itemError(result, err)
 		}
 	} else {
 		if err := s.graphOps.trustClaim(ctx, profileID, result.ClaimID, importID, artifactHash, item.SourceKind); err != nil {
-			result.Status = "error"
-			result.Error = err.Error()
-			return result
+			return itemError(result, s.cleanupCreatedEntity(ctx, profileID, "claim", result.ClaimID, err))
 		}
+	}
+	failClaimMutation := func(err error) ImportItemResult {
+		return itemError(result, s.cleanupClaimMutation(ctx, profileID, importID, result.ClaimID, createRes.Duplicate, beforeClaim, err))
 	}
 
 	if decision == DecisionSupersedeLocal {
@@ -558,38 +567,32 @@ func (s *service) importItem(ctx context.Context, profileID, importID, artifactH
 						"fact_id": f.FactID,
 						"status":  string(domain.FactStatusSuperseded),
 					}); err != nil {
-						result.Status = "error"
-						result.Error = err.Error()
-						return result
+						return failClaimMutation(err)
 					}
 				}
 			}
 			factIDs = append(factIDs, f.FactID)
 		}
 		if err := s.graphOps.supersedeFacts(ctx, profileID, factIDs, result.ClaimID, importID); err != nil {
-			result.Status = "error"
-			result.Error = err.Error()
-			return result
+			return failClaimMutation(err)
 		}
 	}
 
 	if item.SourceKind == SourceKindFact {
 		if s.deps.FactPromote == nil {
-			result.Status = "error"
-			result.Error = "fact promote service is required"
-			return result
+			return failClaimMutation(errors.New("fact promote service is required"))
 		}
 		fact, err := s.deps.FactPromote.Promote(ctx, profileID, result.ClaimID)
 		if err != nil {
-			result.Status = "error"
-			result.Error = err.Error()
-			return result
+			return failClaimMutation(err)
 		}
 		result.FactID = fact.FactID
-		if err := s.graphOps.tagFact(ctx, profileID, fact.FactID, importID, artifactHash, item.SourceKind); err != nil {
-			result.Status = "error"
-			result.Error = err.Error()
-			return result
+		factCreated := fact.PromotedFromClaimID == result.ClaimID
+		if factCreated {
+			if err := s.graphOps.tagFact(ctx, profileID, fact.FactID, importID, artifactHash, item.SourceKind); err != nil {
+				err = s.cleanupCreatedEntity(ctx, profileID, "fact", fact.FactID, err)
+				return failClaimMutation(err)
+			}
 		}
 		if !createRes.Duplicate {
 			afterClaim := map[string]any{"claim_id": result.ClaimID, "subject": item.Subject, "predicate": item.Predicate, "object": item.Object, "status": string(domain.StatusSuperseded), "import_id": importID}
@@ -599,22 +602,24 @@ func (s *service) importItem(ctx context.Context, profileID, importID, artifactH
 				}
 			}
 			if err := s.appendChange(ctx, profileID, importID, "claim", result.ClaimID, domain.SkillPackChangeActionCreated, nil, afterClaim); err != nil {
-				result.Status = "error"
-				result.Error = err.Error()
-				return result
+				if factCreated {
+					err = s.cleanupCreatedEntity(ctx, profileID, "fact", fact.FactID, err)
+				}
+				return failClaimMutation(err)
 			}
 		} else {
 			afterClaim := trustedClaimAfterState(result.ClaimID, domain.StatusSuperseded)
 			if err := s.appendChange(ctx, profileID, importID, "claim", result.ClaimID, domain.SkillPackChangeActionUpdated, beforeClaim, afterClaim); err != nil {
-				result.Status = "error"
-				result.Error = err.Error()
-				return result
+				if factCreated {
+					err = s.cleanupCreatedEntity(ctx, profileID, "fact", fact.FactID, err)
+				}
+				return failClaimMutation(err)
 			}
 		}
-		if err := s.appendChange(ctx, profileID, importID, "fact", fact.FactID, domain.SkillPackChangeActionCreated, nil, factLedgerStateWithImport(fact, importID)); err != nil {
-			result.Status = "error"
-			result.Error = err.Error()
-			return result
+		if factCreated {
+			if err := s.appendChange(ctx, profileID, importID, "fact", fact.FactID, domain.SkillPackChangeActionCreated, nil, factLedgerStateWithImport(fact, importID)); err != nil {
+				return itemError(result, s.cleanupCreatedEntity(ctx, profileID, "fact", fact.FactID, err))
+			}
 		}
 		result.Status = "promoted"
 		return result
@@ -628,19 +633,21 @@ func (s *service) importItem(ctx context.Context, profileID, importID, artifactH
 			}
 		}
 		if err := s.appendChange(ctx, profileID, importID, "claim", result.ClaimID, domain.SkillPackChangeActionCreated, nil, afterClaim); err != nil {
-			result.Status = "error"
-			result.Error = err.Error()
-			return result
+			return failClaimMutation(err)
 		}
 	} else {
 		afterClaim := trustedClaimAfterState(result.ClaimID, domain.StatusValidated)
 		if err := s.appendChange(ctx, profileID, importID, "claim", result.ClaimID, domain.SkillPackChangeActionUpdated, beforeClaim, afterClaim); err != nil {
-			result.Status = "error"
-			result.Error = err.Error()
-			return result
+			return failClaimMutation(err)
 		}
 	}
 	result.Status = "validated"
+	return result
+}
+
+func itemError(result ImportItemResult, err error) ImportItemResult {
+	result.Status = "error"
+	result.Error = err.Error()
 	return result
 }
 
@@ -668,6 +675,29 @@ func (s *service) appendChange(ctx context.Context, profileID, importID, entityT
 		AfterState:  after,
 		CreatedAt:   time.Now().UTC(),
 	})
+}
+
+func (s *service) cleanupCreatedEntity(ctx context.Context, profileID, entityType, entityID string, cause error) error {
+	if cause == nil || !s.graphOps.available() {
+		return cause
+	}
+	if err := s.graphOps.deleteEntity(ctx, profileID, entityType, entityID); err != nil {
+		return fmt.Errorf("%w; cleanup %s %s: %v", cause, entityType, entityID, err)
+	}
+	return cause
+}
+
+func (s *service) cleanupClaimMutation(ctx context.Context, profileID, importID, claimID string, duplicate bool, before map[string]any, cause error) error {
+	if cause == nil || !s.graphOps.available() {
+		return cause
+	}
+	if !duplicate {
+		return s.cleanupCreatedEntity(ctx, profileID, "claim", claimID, cause)
+	}
+	if err := s.graphOps.restoreClaim(ctx, profileID, claimID, importID, before); err != nil {
+		return fmt.Errorf("%w; cleanup claim %s: %v", cause, claimID, err)
+	}
+	return cause
 }
 
 func (s *service) rollbackConflicts(ctx context.Context, profileID string, changes []domain.SkillPackImportChange) []string {

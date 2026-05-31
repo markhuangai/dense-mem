@@ -509,7 +509,7 @@ func TestReviewImportSkipsDuplicateFragmentMutationAndLedger(t *testing.T) {
 	}
 }
 
-func TestImportAbortsWhenItemLedgerAppendFailsAfterGraphMutation(t *testing.T) {
+func TestImportAbortsAndCompensatesWhenItemLedgerAppendFails(t *testing.T) {
 	graph := &recordingGraph{}
 	ledger := &fakeLedger{appendErr: errors.New("append failed"), appendErrAfter: 2}
 	svc := New(Dependencies{
@@ -532,8 +532,8 @@ func TestImportAbortsWhenItemLedgerAppendFailsAfterGraphMutation(t *testing.T) {
 	if ledger.updateCalls != 0 {
 		t.Fatalf("update calls = %d, want no applied status update", ledger.updateCalls)
 	}
-	if graph.writeCount != 2 {
-		t.Fatalf("graph writes = %d, want fragment and claim tags before abort", graph.writeCount)
+	if !graphWriteContains(graph, "DETACH DELETE c") {
+		t.Fatalf("graph writes = %q, want created claim cleanup before abort", graph.writeQueries)
 	}
 }
 

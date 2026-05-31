@@ -212,6 +212,24 @@ func (g *graphOps) tagFact(ctx context.Context, profileID, factID, importID, art
 	return err
 }
 
+func (g *graphOps) promotedFactIDForClaim(ctx context.Context, profileID, claimID string) (string, error) {
+	if !g.available() {
+		return "", fmt.Errorf("skill pack import: graph store is required for trusted import")
+	}
+	_, rows, err := g.graph.ScopedRead(ctx, profileID, `
+		MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})-[:PROMOTES_TO {team_id: $profileId}]->(f:Fact {team_id: $profileId})
+		RETURN f.fact_id AS fact_id
+		LIMIT 1
+	`, map[string]any{"claimId": claimID})
+	if err != nil {
+		return "", err
+	}
+	if len(rows) == 0 {
+		return "", nil
+	}
+	return stringState(rows[0], "fact_id"), nil
+}
+
 func (g *graphOps) supersedeFacts(ctx context.Context, profileID string, factIDs []string, claimID, importID string) error {
 	if len(factIDs) == 0 {
 		return nil

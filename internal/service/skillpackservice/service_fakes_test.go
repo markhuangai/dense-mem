@@ -117,6 +117,7 @@ func (g *factCandidateGraph) ScopedWriteTx(_ context.Context, _ string, _ func(n
 
 type recordingGraph struct {
 	states        map[string]map[string]any
+	promotedFacts map[string]string
 	writeCount    int
 	writeErr      error
 	writeErrAfter int
@@ -130,6 +131,12 @@ type recordingGraph struct {
 func (g *recordingGraph) ScopedRead(_ context.Context, _ string, _ string, params map[string]any) (neo4jdriver.ResultSummary, []map[string]any, error) {
 	if g.readErr != nil {
 		return nil, nil, g.readErr
+	}
+	if claimID, _ := params["claimId"].(string); claimID != "" {
+		if factID := g.promotedFacts[claimID]; factID != "" {
+			return nil, []map[string]any{{"fact_id": factID}}, nil
+		}
+		return nil, nil, nil
 	}
 	entityID, _ := params["entityId"].(string)
 	if entityID == "" {
@@ -155,6 +162,15 @@ func (g *recordingGraph) ScopedWrite(_ context.Context, _ string, query string, 
 func (g *recordingGraph) ScopedWriteTx(_ context.Context, _ string, _ func(neo4jdriver.ManagedTransaction) error) error {
 	g.txCount++
 	return g.txErr
+}
+
+func graphWriteContains(g *recordingGraph, fragment string) bool {
+	for _, query := range g.writeQueries {
+		if strings.Contains(query, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 func (f fakeFactGet) Get(_ context.Context, _ string, factID string) (*domain.Fact, error) {
