@@ -17,9 +17,14 @@ import (
 	httpserver "github.com/markhuangai/dense-mem/internal/http"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
+	"github.com/markhuangai/dense-mem/internal/service/claimdedupe"
+	"github.com/markhuangai/dense-mem/internal/service/claimservice"
+	"github.com/markhuangai/dense-mem/internal/service/factservice"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentdedupe"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
+	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 	neo4jstorage "github.com/markhuangai/dense-mem/internal/storage/neo4j"
 	pgclient "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
@@ -138,7 +143,9 @@ func startWritableMemoryServer(t *testing.T, env *TestEnv) (*httptest.Server, fr
 	readerAdapter := &scopedReaderAdapter{inner: profileScopeEnforcer}
 	fragmentAuditor := &fragmentAuditAdapter{inner: env.auditService}
 	lookup := fragmentdedupe.NewNeo4jDedupeLookup(readerAdapter)
+	claimDedupeLookup := claimdedupe.NewNeo4jDedupeLookup(readerAdapter)
 	consistency := service.NewEmbeddingConsistencyService(pgclient.NewEmbeddingConfigRepository(env.db), cfgProvider)
+	skillPackLedger := repository.NewSkillPackImportRepository(env.db, pgclient.NewRLS())
 
 	embedder := &fixedEmbeddingProvider{
 		model: cfgProvider.aiEmbeddingModel,
@@ -156,11 +163,51 @@ func startWritableMemoryServer(t *testing.T, env *TestEnv) (*httptest.Server, fr
 	)
 	fragmentGetSvc := fragmentservice.NewGetFragmentService(readerAdapter)
 	fragmentListSvc := fragmentservice.NewListFragmentsService(readerAdapter)
+	claimCreateSvc := claimservice.NewCreateClaimService(
+		claimDedupeLookup,
+		profileScopeEnforcer,
+		profileScopeEnforcer,
+		nil,
+		slog.Default(),
+		nil,
+	)
+	claimGetSvc := claimservice.NewGetClaimService(profileScopeEnforcer, slog.Default())
+	claimListSvc := claimservice.NewListClaimsService(profileScopeEnforcer)
+	factPromoteSvc := factservice.NewPromoteClaimService(
+		profileScopeEnforcer,
+		pgclient.NewClaimLock(nil),
+		env.db,
+		nil,
+		slog.Default(),
+		nil,
+		0,
+	)
+	factGetSvc := factservice.NewGetFactService(profileScopeEnforcer)
+	factListSvc := factservice.NewListFactsService(profileScopeEnforcer)
+	skillPackSvc := skillpackservice.New(skillpackservice.Dependencies{
+		FragmentCreate: fragmentCreateSvc,
+		ClaimCreate:    claimCreateSvc,
+		ClaimGet:       claimGetSvc,
+		ClaimList:      claimListSvc,
+		FactPromote:    factPromoteSvc,
+		FactGet:        factGetSvc,
+		FactList:       factListSvc,
+		Graph:          profileScopeEnforcer,
+		Ledger:         skillPackLedger,
+		HistoryDays:    30,
+	})
 
 	reg, err := registry.BuildDefault(registry.Dependencies{
 		FragmentCreate: fragmentCreateSvc,
 		FragmentGet:    fragmentGetSvc,
 		FragmentList:   fragmentListSvc,
+		ClaimCreate:    claimCreateSvc,
+		ClaimGet:       claimGetSvc,
+		ClaimList:      claimListSvc,
+		FactPromote:    factPromoteSvc,
+		FactGet:        factGetSvc,
+		FactList:       factListSvc,
+		SkillPack:      skillPackSvc,
 	})
 	require.NoError(t, err)
 
@@ -289,4 +336,409 @@ func TestUATMCPRuntime_SaveMemoryPersistsAndReadsBack(t *testing.T) {
 	}))
 	require.Equal(t, "duplicate", dupResp["status"])
 	require.Equal(t, fragmentID, dupResp["duplicate_of"])
+}
+
+func TestUATMCPRuntime_SkillPackReviewImportAndRollback(t *testing.T) {
+	t.Helper()
+	ctx := context.Background()
+
+	env, cleanup := SetupTestEnv(t, ctx)
+	defer cleanup()
+
+	profileID, rawAPIKey := createProfileAndKey(t, ctx, env)
+	serverURL, _ := startWritableMemoryServer(t, env)
+	mcp := &mcpHTTPClient{baseURL: serverURL.URL, apiKey: rawAPIKey}
+
+	initResp := mcp.call(t, "initialize", map[string]any{
+		"protocolVersion": "2024-11-05",
+		"capabilities":    map[string]any{},
+		"clientInfo": map[string]any{
+			"name":    "uat-skill-pack",
+			"version": "1.0.0",
+		},
+	})
+	require.NotNil(t, initResp["result"], "initialize must succeed")
+
+	toolsResp := mcp.call(t, "tools/list", map[string]any{})
+	result, ok := toolsResp["result"].(map[string]any)
+	require.True(t, ok)
+	tools, ok := result["tools"].([]any)
+	require.True(t, ok)
+	toolNames := make(map[string]struct{}, len(tools))
+	for _, raw := range tools {
+		tool, ok := raw.(map[string]any)
+		require.True(t, ok)
+		name, ok := tool["name"].(string)
+		require.True(t, ok)
+		toolNames[name] = struct{}{}
+	}
+	for _, name := range []string{
+		"export_skill_pack",
+		"inspect_skill_pack",
+		"import_skill_pack",
+		"rollback_skill_pack_import",
+	} {
+		_, ok := toolNames[name]
+		require.True(t, ok, "MCP tool %s should be exposed", name)
+	}
+
+	exportResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
+		"name": "export_skill_pack",
+		"arguments": map[string]any{
+			"name": "UAT skill pack",
+			"manual_items": []map[string]any{{
+				"subject":     "assistant",
+				"predicate":   "has_skill",
+				"object":      "imports and rolls back skill packs through MCP",
+				"source_kind": "manual",
+			}},
+		},
+	}))
+	artifactJSON, ok := exportResp["canonical_json"].(string)
+	require.True(t, ok)
+	require.NotEmpty(t, artifactJSON)
+	artifactHash, ok := exportResp["sha256"].(string)
+	require.True(t, ok)
+	require.Len(t, artifactHash, 64)
+
+	inspectResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
+		"name": "inspect_skill_pack",
+		"arguments": map[string]any{
+			"artifact_json":   artifactJSON,
+			"expected_sha256": artifactHash,
+		},
+	}))
+	require.Equal(t, artifactHash, inspectResp["artifact_hash"])
+	inspectItems, ok := inspectResp["items"].([]any)
+	require.True(t, ok)
+	require.Len(t, inspectItems, 1)
+	firstInspect, ok := inspectItems[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "new", firstInspect["status"])
+
+	importResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
+		"name": "import_skill_pack",
+		"arguments": map[string]any{
+			"artifact_json":   artifactJSON,
+			"expected_sha256": artifactHash,
+			"mode":            "review",
+		},
+	}))
+	require.Equal(t, "applied", importResp["status"])
+	importID, ok := importResp["import_id"].(string)
+	require.True(t, ok)
+	require.NotEmpty(t, importID)
+	require.Equal(t, float64(1), importResp["applied_count"])
+
+	importItems, ok := importResp["items"].([]any)
+	require.True(t, ok)
+	require.Len(t, importItems, 1)
+	firstImport, ok := importItems[0].(map[string]any)
+	require.True(t, ok)
+	claimID, ok := firstImport["claim_id"].(string)
+	require.True(t, ok)
+	require.NotEmpty(t, claimID)
+
+	profileScopeEnforcer := neo4jstorage.NewProfileScopeEnforcer(env.neo4jClient)
+	_, claimRows, err := profileScopeEnforcer.ScopedRead(ctx, profileID, `
+		MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
+		RETURN c.import_id AS import_id, c.status AS status
+	`, map[string]any{"claimId": claimID})
+	require.NoError(t, err)
+	require.Len(t, claimRows, 1)
+	require.Equal(t, importID, claimRows[0]["import_id"])
+	require.Equal(t, "candidate", claimRows[0]["status"])
+
+	ledger := repository.NewSkillPackImportRepository(env.db, pgclient.NewRLS())
+	record, err := ledger.GetImport(ctx, profileID, importID)
+	require.NoError(t, err)
+	require.Equal(t, "applied", record.Status)
+	require.Equal(t, artifactHash, record.ArtifactHash)
+
+	rollbackResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
+		"name": "rollback_skill_pack_import",
+		"arguments": map[string]any{
+			"import_id": importID,
+		},
+	}))
+	require.Equalf(t, "rolled_back", rollbackResp["status"], "conflicts: %v", rollbackResp["conflicts"])
+	require.GreaterOrEqual(t, int(rollbackResp["reverted_count"].(float64)), 2)
+
+	_, claimRows, err = profileScopeEnforcer.ScopedRead(ctx, profileID, `
+		MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
+		RETURN c.claim_id AS claim_id
+	`, map[string]any{"claimId": claimID})
+	require.NoError(t, err)
+	require.Empty(t, claimRows)
+
+	_, fragmentRows, err := profileScopeEnforcer.ScopedRead(ctx, profileID, `
+		MATCH (sf:SourceFragment {team_id: $profileId, import_id: $importId})
+		RETURN sf.fragment_id AS fragment_id
+	`, map[string]any{"importId": importID})
+	require.NoError(t, err)
+	require.Empty(t, fragmentRows)
+
+	record, err = ledger.GetImport(ctx, profileID, importID)
+	require.NoError(t, err)
+	require.Equal(t, "rolled_back", record.Status)
+}
+
+func TestUATMCPRuntime_SkillPackTrustedImportValidatesPromotesAndRollback(t *testing.T) {
+	t.Helper()
+	ctx := context.Background()
+
+	env, cleanup := SetupTestEnv(t, ctx)
+	defer cleanup()
+
+	profileID, rawAPIKey := createProfileAndKey(t, ctx, env)
+	serverURL, _ := startWritableMemoryServer(t, env)
+	mcp := &mcpHTTPClient{baseURL: serverURL.URL, apiKey: rawAPIKey}
+	profileScopeEnforcer := neo4jstorage.NewProfileScopeEnforcer(env.neo4jClient)
+	ledger := repository.NewSkillPackImportRepository(env.db, pgclient.NewRLS())
+
+	initResp := mcp.call(t, "initialize", map[string]any{
+		"protocolVersion": "2024-11-05",
+		"capabilities":    map[string]any{},
+		"clientInfo": map[string]any{
+			"name":    "uat-skill-pack-trusted",
+			"version": "1.0.0",
+		},
+	})
+	require.NotNil(t, initResp["result"], "initialize must succeed")
+
+	t.Run("trusted manual item validates claim and rolls back", func(t *testing.T) {
+		exportResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
+			"name": "export_skill_pack",
+			"arguments": map[string]any{
+				"name": "Trusted validation skill pack",
+				"manual_items": []map[string]any{{
+					"subject":     "assistant",
+					"predicate":   "has_skill",
+					"object":      "trusted validation through skill packs",
+					"source_kind": "manual",
+				}},
+			},
+		}))
+		artifactJSON, ok := exportResp["canonical_json"].(string)
+		require.True(t, ok)
+		artifactHash, ok := exportResp["sha256"].(string)
+		require.True(t, ok)
+
+		importResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
+			"name": "import_skill_pack",
+			"arguments": map[string]any{
+				"artifact_json":   artifactJSON,
+				"expected_sha256": artifactHash,
+				"mode":            "trusted",
+			},
+		}))
+		require.Equal(t, "applied", importResp["status"])
+		require.Equal(t, float64(1), importResp["applied_count"])
+		importID, ok := importResp["import_id"].(string)
+		require.True(t, ok)
+
+		importItems, ok := importResp["items"].([]any)
+		require.True(t, ok)
+		require.Len(t, importItems, 1)
+		firstImport, ok := importItems[0].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "validated", firstImport["status"])
+		claimID, ok := firstImport["claim_id"].(string)
+		require.True(t, ok)
+		require.NotEmpty(t, claimID)
+
+		_, claimRows, err := profileScopeEnforcer.ScopedRead(ctx, profileID, `
+			MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
+			RETURN c.import_id AS import_id,
+			       c.status AS status,
+			       c.entailment_verdict AS entailment_verdict,
+			       c.verifier_model AS verifier_model
+		`, map[string]any{"claimId": claimID})
+		require.NoError(t, err)
+		require.Len(t, claimRows, 1)
+		require.Equal(t, importID, claimRows[0]["import_id"])
+		require.Equal(t, "validated", claimRows[0]["status"])
+		require.Equal(t, "entailed", claimRows[0]["entailment_verdict"])
+		require.Equal(t, "skill_pack.source_trust", claimRows[0]["verifier_model"])
+
+		record, err := ledger.GetImport(ctx, profileID, importID)
+		require.NoError(t, err)
+		require.Equal(t, "applied", record.Status)
+		require.Equal(t, "trusted", record.Mode)
+
+		rollbackResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
+			"name": "rollback_skill_pack_import",
+			"arguments": map[string]any{
+				"import_id": importID,
+			},
+		}))
+		require.Equalf(t, "rolled_back", rollbackResp["status"], "conflicts: %v", rollbackResp["conflicts"])
+		require.GreaterOrEqual(t, int(rollbackResp["reverted_count"].(float64)), 2)
+
+		_, claimRows, err = profileScopeEnforcer.ScopedRead(ctx, profileID, `
+			MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
+			RETURN c.claim_id AS claim_id
+		`, map[string]any{"claimId": claimID})
+		require.NoError(t, err)
+		require.Empty(t, claimRows)
+
+		_, fragmentRows, err := profileScopeEnforcer.ScopedRead(ctx, profileID, `
+			MATCH (sf:SourceFragment {team_id: $profileId, import_id: $importId})
+			RETURN sf.fragment_id AS fragment_id
+		`, map[string]any{"importId": importID})
+		require.NoError(t, err)
+		require.Empty(t, fragmentRows)
+
+		record, err = ledger.GetImport(ctx, profileID, importID)
+		require.NoError(t, err)
+		require.Equal(t, "rolled_back", record.Status)
+	})
+
+	t.Run("trusted source fact promotes fact, exports candidate, and rolls back", func(t *testing.T) {
+		exportResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
+			"name": "export_skill_pack",
+			"arguments": map[string]any{
+				"name": "Trusted fact skill pack",
+				"manual_items": []map[string]any{{
+					"subject":     "assistant",
+					"predicate":   "has_skill",
+					"object":      "trusted fact promotion through skill packs",
+					"source_kind": "source_fact",
+				}},
+			},
+		}))
+		artifactJSON, ok := exportResp["canonical_json"].(string)
+		require.True(t, ok)
+		artifactHash, ok := exportResp["sha256"].(string)
+		require.True(t, ok)
+
+		importResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
+			"name": "import_skill_pack",
+			"arguments": map[string]any{
+				"artifact_json":   artifactJSON,
+				"expected_sha256": artifactHash,
+				"mode":            "trusted",
+			},
+		}))
+		require.Equal(t, "applied", importResp["status"])
+		importID, ok := importResp["import_id"].(string)
+		require.True(t, ok)
+
+		importItems, ok := importResp["items"].([]any)
+		require.True(t, ok)
+		require.Len(t, importItems, 1)
+		firstImport, ok := importItems[0].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "promoted", firstImport["status"])
+		claimID, ok := firstImport["claim_id"].(string)
+		require.True(t, ok)
+		factID, ok := firstImport["fact_id"].(string)
+		require.True(t, ok)
+		require.NotEmpty(t, factID)
+
+		_, claimRows, err := profileScopeEnforcer.ScopedRead(ctx, profileID, `
+			MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
+			RETURN c.import_id AS import_id,
+			       c.status AS status,
+			       c.entailment_verdict AS entailment_verdict,
+			       c.verifier_model AS verifier_model
+		`, map[string]any{"claimId": claimID})
+		require.NoError(t, err)
+		require.Len(t, claimRows, 1)
+		require.Equal(t, importID, claimRows[0]["import_id"])
+		require.Equal(t, "superseded", claimRows[0]["status"])
+		require.Equal(t, "entailed", claimRows[0]["entailment_verdict"])
+		require.Equal(t, "skill_pack.source_trust", claimRows[0]["verifier_model"])
+
+		_, factRows, err := profileScopeEnforcer.ScopedRead(ctx, profileID, `
+			MATCH (f:Fact {team_id: $profileId, fact_id: $factId})
+			RETURN f.import_id AS import_id,
+			       f.status AS status,
+			       f.promoted_from_claim_id AS promoted_from_claim_id,
+			       f.subject AS subject,
+			       f.predicate AS predicate,
+			       f.object AS object
+		`, map[string]any{"factId": factID})
+		require.NoError(t, err)
+		require.Len(t, factRows, 1)
+		require.Equal(t, importID, factRows[0]["import_id"])
+		require.Equal(t, "active", factRows[0]["status"])
+		require.Equal(t, claimID, factRows[0]["promoted_from_claim_id"])
+		require.Equal(t, "assistant", factRows[0]["subject"])
+		require.Equal(t, "has_skill", factRows[0]["predicate"])
+		require.Equal(t, "trusted fact promotion through skill packs", factRows[0]["object"])
+
+		candidatesResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
+			"name": "find_skill_pack_candidates",
+			"arguments": map[string]any{
+				"query": "trusted fact promotion",
+				"limit": 5,
+			},
+		}))
+		candidates, ok := candidatesResp["candidates"].([]any)
+		require.True(t, ok)
+		require.NotEmpty(t, candidates)
+		firstCandidate, ok := candidates[0].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, factID, firstCandidate["id"])
+		require.Equal(t, "fact", firstCandidate["type"])
+
+		factExportResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
+			"name": "export_skill_pack",
+			"arguments": map[string]any{
+				"name":     "Export promoted trusted fact",
+				"fact_ids": []string{factID},
+			},
+		}))
+		factArtifactJSON, ok := factExportResp["canonical_json"].(string)
+		require.True(t, ok)
+		var factArtifact map[string]any
+		require.NoError(t, json.Unmarshal([]byte(factArtifactJSON), &factArtifact))
+		items, ok := factArtifact["items"].([]any)
+		require.True(t, ok)
+		require.Len(t, items, 1)
+		firstItem, ok := items[0].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "source_fact", firstItem["source_kind"])
+		require.Equal(t, "trusted fact promotion through skill packs", firstItem["object"])
+
+		record, err := ledger.GetImport(ctx, profileID, importID)
+		require.NoError(t, err)
+		require.Equal(t, "applied", record.Status)
+		require.Equal(t, "trusted", record.Mode)
+
+		rollbackResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
+			"name": "rollback_skill_pack_import",
+			"arguments": map[string]any{
+				"import_id": importID,
+			},
+		}))
+		require.Equalf(t, "rolled_back", rollbackResp["status"], "conflicts: %v", rollbackResp["conflicts"])
+		require.GreaterOrEqual(t, int(rollbackResp["reverted_count"].(float64)), 3)
+
+		_, claimRows, err = profileScopeEnforcer.ScopedRead(ctx, profileID, `
+			MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
+			RETURN c.claim_id AS claim_id
+		`, map[string]any{"claimId": claimID})
+		require.NoError(t, err)
+		require.Empty(t, claimRows)
+
+		_, factRows, err = profileScopeEnforcer.ScopedRead(ctx, profileID, `
+			MATCH (f:Fact {team_id: $profileId, fact_id: $factId})
+			RETURN f.fact_id AS fact_id
+		`, map[string]any{"factId": factID})
+		require.NoError(t, err)
+		require.Empty(t, factRows)
+
+		_, fragmentRows, err := profileScopeEnforcer.ScopedRead(ctx, profileID, `
+			MATCH (sf:SourceFragment {team_id: $profileId, import_id: $importId})
+			RETURN sf.fragment_id AS fragment_id
+		`, map[string]any{"importId": importID})
+		require.NoError(t, err)
+		require.Empty(t, fragmentRows)
+
+		record, err = ledger.GetImport(ctx, profileID, importID)
+		require.NoError(t, err)
+		require.Equal(t, "rolled_back", record.Status)
+	})
 }
