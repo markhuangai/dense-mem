@@ -47,6 +47,7 @@ type ConfigProvider interface {
 	GetClaimReadRateLimit() int
 	GetRecallValidatedClaimWeight() float64
 	GetPromoteTxTimeoutSeconds() int
+	GetSkillPackImportHistoryDays() int
 	GetAICommunityMaxNodes() int
 	GetControlHTTPAddr() string
 	GetControlPortalToken() string
@@ -89,6 +90,7 @@ type Config struct {
 	ClaimReadRateLimit         int
 	RecallValidatedClaimWeight float64
 	PromoteTxTimeoutSeconds    int
+	SkillPackImportHistoryDays int
 	AICommunityMaxNodes        int
 	ControlHTTPAddr            string
 	ControlPortalToken         string `json:"-"`
@@ -148,6 +150,7 @@ func (c *Config) GetClaimWriteRateLimit() int            { return c.ClaimWriteRa
 func (c *Config) GetClaimReadRateLimit() int             { return c.ClaimReadRateLimit }
 func (c *Config) GetRecallValidatedClaimWeight() float64 { return c.RecallValidatedClaimWeight }
 func (c *Config) GetPromoteTxTimeoutSeconds() int        { return c.PromoteTxTimeoutSeconds }
+func (c *Config) GetSkillPackImportHistoryDays() int     { return c.SkillPackImportHistoryDays }
 func (c *Config) GetAICommunityMaxNodes() int            { return c.AICommunityMaxNodes }
 func (c *Config) GetControlHTTPAddr() string             { return c.ControlHTTPAddr }
 func (c *Config) GetControlPortalToken() string          { return c.ControlPortalToken }
@@ -385,6 +388,11 @@ func Load() (Config, error) {
 		return cfg, err
 	}
 
+	cfg.SkillPackImportHistoryDays, err = parseIntOrDefault("SKILL_PACK_IMPORT_HISTORY_DAYS", 30)
+	if err != nil {
+		return cfg, err
+	}
+
 	cfg.AICommunityMaxNodes, err = parseIntOrDefault("AI_COMMUNITY_MAX_NODES", 500000)
 	if err != nil {
 		return cfg, err
@@ -440,6 +448,7 @@ func Load() (Config, error) {
 		{"CLAIM_WRITE_RATE_LIMIT", cfg.ClaimWriteRateLimit},
 		{"CLAIM_READ_RATE_LIMIT", cfg.ClaimReadRateLimit},
 		{"PROMOTE_TX_TIMEOUT_SECONDS", cfg.PromoteTxTimeoutSeconds},
+		{"SKILL_PACK_IMPORT_HISTORY_DAYS", cfg.SkillPackImportHistoryDays},
 		{"AI_COMMUNITY_MAX_NODES", cfg.AICommunityMaxNodes},
 	}
 

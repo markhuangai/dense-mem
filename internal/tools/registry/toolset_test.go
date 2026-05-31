@@ -93,6 +93,8 @@ func TestBuildDefault_RegistersV1ToolSurface(t *testing.T) {
 		"save_memory", "get_memory", "list_recent_memories", "recall_memory",
 		"remember", "import_memories", "reflect_memories", "confirm_memory",
 		"keyword-search", "semantic-search", "graph-query",
+		"find_skill_pack_candidates", "export_skill_pack", "inspect_skill_pack",
+		"import_skill_pack", "rollback_skill_pack_import",
 	}
 	for _, name := range required {
 		if _, ok := reg.Get(name); !ok {

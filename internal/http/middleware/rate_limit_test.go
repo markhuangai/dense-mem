@@ -90,6 +90,7 @@ func (c *testRateLimitConfig) GetClaimReadRateLimit() int {
 }
 func (c *testRateLimitConfig) GetRecallValidatedClaimWeight() float64 { return 0.5 }
 func (c *testRateLimitConfig) GetPromoteTxTimeoutSeconds() int        { return 10 }
+func (c *testRateLimitConfig) GetSkillPackImportHistoryDays() int     { return 30 }
 func (c *testRateLimitConfig) GetAICommunityMaxNodes() int            { return 500000 }
 func (c *testRateLimitConfig) GetControlHTTPAddr() string             { return "127.0.0.1:8090" }
 func (c *testRateLimitConfig) GetControlPortalToken() string          { return "" }
@@ -186,6 +187,7 @@ func (c *redisRateLimitConfig) GetClaimWriteRateLimit() int            { return 
 func (c *redisRateLimitConfig) GetClaimReadRateLimit() int             { return 300 }
 func (c *redisRateLimitConfig) GetRecallValidatedClaimWeight() float64 { return 0.5 }
 func (c *redisRateLimitConfig) GetPromoteTxTimeoutSeconds() int        { return 10 }
+func (c *redisRateLimitConfig) GetSkillPackImportHistoryDays() int     { return 30 }
 func (c *redisRateLimitConfig) GetAICommunityMaxNodes() int            { return 500000 }
 func (c *redisRateLimitConfig) GetControlHTTPAddr() string             { return "127.0.0.1:8090" }
 func (c *redisRateLimitConfig) GetControlPortalToken() string          { return "" }

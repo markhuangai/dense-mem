@@ -390,6 +390,7 @@ func TestConfigProviderInterface(t *testing.T) {
 	_ = provider.GetClaimReadRateLimit()
 	_ = provider.GetRecallValidatedClaimWeight()
 	_ = provider.GetPromoteTxTimeoutSeconds()
+	_ = provider.GetSkillPackImportHistoryDays()
 	_ = provider.GetAICommunityMaxNodes()
 	_ = provider.GetControlHTTPAddr()
 	_ = provider.GetControlPortalToken()
@@ -681,6 +682,9 @@ func TestLoadKnowledgeConfigDefaults(t *testing.T) {
 	}
 	if got := cfg.GetPromoteTxTimeoutSeconds(); got != 10 {
 		t.Errorf("GetPromoteTxTimeoutSeconds() = %d, want %d", got, 10)
+	}
+	if got := cfg.GetSkillPackImportHistoryDays(); got != 30 {
+		t.Errorf("GetSkillPackImportHistoryDays() = %d, want %d", got, 30)
 	}
 	if got := cfg.GetAICommunityMaxNodes(); got != 500000 {
 		t.Errorf("GetAICommunityMaxNodes() = %d, want %d", got, 500000)

@@ -14,6 +14,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/service/recallservice"
+	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 	"github.com/markhuangai/dense-mem/internal/tools/graphquery"
 	"github.com/markhuangai/dense-mem/internal/tools/keywordsearch"
 	"github.com/markhuangai/dense-mem/internal/tools/semanticsearch"
@@ -47,6 +48,7 @@ type Dependencies struct {
 	CommunityGet    communityservice.GetCommunitySummaryService
 	CommunityList   communityservice.ListCommunitiesService
 	Memory          memoryservice.Service
+	SkillPack       skillpackservice.Service
 }
 
 // ErrToolUnavailable is the defensive fallback returned when a tool dependency
@@ -93,6 +95,11 @@ func defaultTools(deps Dependencies) []Tool {
 		detectCommunityTool(deps),
 		getCommunitySummaryTool(deps),
 		listCommunitiesTool(deps),
+		findSkillPackCandidatesTool(deps),
+		exportSkillPackTool(deps),
+		inspectSkillPackTool(deps),
+		importSkillPackTool(deps),
+		rollbackSkillPackImportTool(deps),
 	}
 }
 
