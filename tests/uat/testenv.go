@@ -538,7 +538,6 @@ func (te *TestEnv) buildConfig() *testConfig {
 		rateLimit = te.rateLimitPerMinute
 	}
 	return &testConfig{
-		httpAddr:                ":0",
 		postgresDSN:             te.postgresDSN,
 		neo4jURI:                te.neo4jURI,
 		neo4jUser:               te.neo4jUser,
@@ -565,7 +564,6 @@ func (te *TestEnv) buildConfigConcrete() config.Config {
 		rateLimit = te.rateLimitPerMinute
 	}
 	return config.Config{
-		HTTPAddr:                  ":0",
 		PostgresDSN:               te.postgresDSN,
 		Neo4jURI:                  te.neo4jURI,
 		Neo4jUser:                 te.neo4jUser,
@@ -587,7 +585,6 @@ func (te *TestEnv) buildConfigConcrete() config.Config {
 
 // testConfig implements config.ConfigProvider
 type testConfig struct {
-	httpAddr                string
 	postgresDSN             string
 	neo4jURI                string
 	neo4jUser               string
@@ -610,7 +607,6 @@ type testConfig struct {
 	aiEmbeddingTimeoutSecs  int
 }
 
-func (c *testConfig) GetHTTPAddr() string               { return c.httpAddr }
 func (c *testConfig) GetPostgresDSN() string            { return c.postgresDSN }
 func (c *testConfig) GetNeo4jURI() string               { return c.neo4jURI }
 func (c *testConfig) GetNeo4jUser() string              { return c.neo4jUser }

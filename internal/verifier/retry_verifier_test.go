@@ -18,7 +18,6 @@ type stubConfigProvider struct {
 	maxConcurrency int
 }
 
-func (s *stubConfigProvider) GetHTTPAddr() string                    { return ":8080" }
 func (s *stubConfigProvider) GetPostgresDSN() string                 { return "" }
 func (s *stubConfigProvider) GetNeo4jURI() string                    { return "" }
 func (s *stubConfigProvider) GetNeo4jUser() string                   { return "" }

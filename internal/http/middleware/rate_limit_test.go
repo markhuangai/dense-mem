@@ -49,7 +49,6 @@ type testRateLimitConfig struct {
 	claimReadRateLimit      int
 }
 
-func (c *testRateLimitConfig) GetHTTPAddr() string               { return ":8080" }
 func (c *testRateLimitConfig) GetPostgresDSN() string            { return "" }
 func (c *testRateLimitConfig) GetNeo4jURI() string               { return "" }
 func (c *testRateLimitConfig) GetNeo4jUser() string              { return "" }
@@ -156,7 +155,6 @@ type redisRateLimitConfig struct {
 	fragmentReadRateLimit   int
 }
 
-func (c *redisRateLimitConfig) GetHTTPAddr() string                    { return ":8080" }
 func (c *redisRateLimitConfig) GetPostgresDSN() string                 { return "" }
 func (c *redisRateLimitConfig) GetNeo4jURI() string                    { return "" }
 func (c *redisRateLimitConfig) GetNeo4jUser() string                   { return "" }

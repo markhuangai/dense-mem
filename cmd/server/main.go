@@ -537,11 +537,11 @@ func main() {
 		}
 	}()
 
-	logger.Info("starting server", observability.String("addr", cfg.HTTPAddr))
+	logger.Info("starting server", observability.String("addr", config.DefaultHTTPAddr))
 
 	// Start server in a goroutine
 	go func() {
-		if err := e.Start(cfg.HTTPAddr); err != nil {
+		if err := e.Start(config.DefaultHTTPAddr); err != nil {
 			logger.Error("server error", err)
 		}
 	}()

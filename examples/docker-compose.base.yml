@@ -69,7 +69,6 @@ services:
     image: ghcr.io/markhuangai/dense-mem:latest
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      HTTP_ADDR: ${HTTP_ADDR:-:8080}
       CONTROL_HTTP_ADDR: ${CONTROL_HTTP_ADDR:-:8090}
       CONTROL_PORTAL_TOKEN: ${CONTROL_PORTAL_TOKEN:?CONTROL_PORTAL_TOKEN must be set in .env}
       POSTGRES_USER: ${POSTGRES_USER:-densemem}

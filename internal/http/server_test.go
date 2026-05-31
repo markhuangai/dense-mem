@@ -18,7 +18,7 @@ import (
 // TestHealthEndpointReturns200 verifies that /health returns 200 {"status":"ok"}
 func TestHealthEndpointReturns200(t *testing.T) {
 	// Arrange
-	cfg := config.Config{HTTPAddr: ":8080"}
+	cfg := config.Config{}
 	logger := observability.New(slog.LevelInfo)
 	e := NewServer(cfg, logger, HealthConfig{})
 
@@ -51,7 +51,7 @@ func TestHealthEndpointReturns200(t *testing.T) {
 // TestReadyBypassesAuth verifies that /ready is not behind auth/profile/rate-limit middleware
 func TestReadyBypassesAuth(t *testing.T) {
 	// Arrange
-	cfg := config.Config{HTTPAddr: ":8080"}
+	cfg := config.Config{}
 	logger := observability.New(slog.LevelInfo)
 	checks := []HealthCheck{}
 	e := NewServer(cfg, logger, HealthConfig{Checks: checks})
@@ -81,7 +81,7 @@ func TestReadyBypassesAuth(t *testing.T) {
 // TestReadyDegradedWhenCheckFails verifies that /ready returns 503 when at least one HealthCheck returns error
 func TestReadyDegradedWhenCheckFails(t *testing.T) {
 	// Arrange
-	cfg := config.Config{HTTPAddr: ":8080"}
+	cfg := config.Config{}
 	logger := observability.New(slog.LevelInfo)
 
 	// Create a failing health check
@@ -135,7 +135,7 @@ func TestReadyDegradedWhenCheckFails(t *testing.T) {
 // TestReadyReadyWhenAllChecksPass verifies that /ready returns 200 when all checks pass
 func TestReadyReadyWhenAllChecksPass(t *testing.T) {
 	// Arrange
-	cfg := config.Config{HTTPAddr: ":8080"}
+	cfg := config.Config{}
 	logger := observability.New(slog.LevelInfo)
 
 	// Create passing health checks
@@ -189,7 +189,7 @@ func TestGracefulShutdown(t *testing.T) {
 	// We can't easily test actual graceful shutdown in unit tests,
 	// but we can verify the timeout constant is correct
 
-	cfg := config.Config{HTTPAddr: ":8080"}
+	cfg := config.Config{}
 	logger := observability.New(slog.LevelInfo)
 	checks := []HealthCheck{}
 
@@ -209,7 +209,7 @@ func TestGracefulShutdown(t *testing.T) {
 
 // TestNewServerAcceptsHealthChecks verifies that NewServer accepts HealthConfig and compiles
 func TestNewServerAcceptsHealthChecks(t *testing.T) {
-	cfg := config.Config{HTTPAddr: ":8080"}
+	cfg := config.Config{}
 	logger := observability.New(slog.LevelInfo)
 
 	// Create various health checks
@@ -266,7 +266,7 @@ func TestServerWrapperMethods(t *testing.T) {
 
 // TestHealthEndpointNoMiddleware verifies that /health has no middleware applied
 func TestHealthEndpointNoMiddleware(t *testing.T) {
-	cfg := config.Config{HTTPAddr: ":8080"}
+	cfg := config.Config{}
 	logger := observability.New(slog.LevelInfo)
 	e := NewServer(cfg, logger, HealthConfig{})
 

@@ -83,7 +83,6 @@ services:
     image: ${DENSE_MEM_DEMO_IMAGE:-ghcr.io/markhuangai/dense-mem:demo}
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      HTTP_ADDR: ${HTTP_ADDR:-:8080}
       DEMO_PUBLIC_BASE_URL: ${DEMO_PUBLIC_BASE_URL:-}
       POSTGRES_USER: ${POSTGRES_USER:-densemem}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}

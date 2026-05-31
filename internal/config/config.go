@@ -7,10 +7,14 @@ import (
 	"strings"
 )
 
+const (
+	DefaultHTTPPort = "8080"
+	DefaultHTTPAddr = ":" + DefaultHTTPPort
+)
+
 // ConfigProvider is the companion interface for Config.
 // Consumers and tests depend on this abstraction rather than the concrete struct.
 type ConfigProvider interface {
-	GetHTTPAddr() string
 	GetPostgresDSN() string
 	GetNeo4jURI() string
 	GetNeo4jUser() string
@@ -51,7 +55,6 @@ type ConfigProvider interface {
 // Config holds all configuration for the application.
 // All fields are populated from environment variables with sensible defaults.
 type Config struct {
-	HTTPAddr                        string
 	PostgresDSN                     string
 	Neo4jURI                        string
 	Neo4jUser                       string
@@ -95,7 +98,6 @@ type Config struct {
 var _ ConfigProvider = (*Config)(nil)
 
 // Getters for ConfigProvider interface
-func (c *Config) GetHTTPAddr() string               { return c.HTTPAddr }
 func (c *Config) GetPostgresDSN() string            { return c.PostgresDSN }
 func (c *Config) GetNeo4jURI() string               { return c.Neo4jURI }
 func (c *Config) GetNeo4jUser() string              { return c.Neo4jUser }
@@ -253,7 +255,6 @@ func Load() (Config, error) {
 	var err error
 
 	// String fields with defaults
-	cfg.HTTPAddr = getEnvOrDefault("HTTP_ADDR", ":8080")
 	cfg.PostgresDSN = os.Getenv("POSTGRES_DSN")
 	cfg.Neo4jURI = os.Getenv("NEO4J_URI")
 	cfg.Neo4jUser = os.Getenv("NEO4J_USER")

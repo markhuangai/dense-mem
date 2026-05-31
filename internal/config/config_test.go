@@ -8,7 +8,6 @@ import (
 // clearEnv clears all config-related environment variables
 func clearEnv() {
 	envVars := []string{
-		"HTTP_ADDR",
 		"POSTGRES_DSN",
 		"NEO4J_URI",
 		"NEO4J_USER",
@@ -76,9 +75,12 @@ func TestLoadDefaults(t *testing.T) {
 		t.Fatalf("Load() returned unexpected error: %v", err)
 	}
 
-	// Test string defaults
-	if cfg.HTTPAddr != ":8080" {
-		t.Errorf("HTTPAddr default = %q, want %q", cfg.HTTPAddr, ":8080")
+	// Test listener defaults
+	if DefaultHTTPPort != "8080" {
+		t.Errorf("DefaultHTTPPort = %q, want %q", DefaultHTTPPort, "8080")
+	}
+	if DefaultHTTPAddr != ":8080" {
+		t.Errorf("DefaultHTTPAddr = %q, want %q", DefaultHTTPAddr, ":8080")
 	}
 
 	// Test integer defaults
@@ -281,7 +283,6 @@ func TestLoadOverrides(t *testing.T) {
 	setRequiredEnv()
 
 	// Override all values
-	os.Setenv("HTTP_ADDR", ":9090")
 	os.Setenv("NEO4J_DATABASE", "testdb")
 	os.Setenv("REDIS_PASSWORD", "redispass")
 	os.Setenv("REDIS_DB", "5")
@@ -302,9 +303,6 @@ func TestLoadOverrides(t *testing.T) {
 	}
 
 	// String overrides
-	if cfg.HTTPAddr != ":9090" {
-		t.Errorf("HTTPAddr = %q, want %q", cfg.HTTPAddr, ":9090")
-	}
 	if cfg.Neo4jDatabase != "testdb" {
 		t.Errorf("Neo4jDatabase = %q, want %q", cfg.Neo4jDatabase, "testdb")
 	}
@@ -361,7 +359,6 @@ func TestConfigProviderInterface(t *testing.T) {
 	var provider ConfigProvider = &cfg
 
 	// Test all getter methods
-	_ = provider.GetHTTPAddr()
 	_ = provider.GetPostgresDSN()
 	_ = provider.GetNeo4jURI()
 	_ = provider.GetNeo4jUser()
