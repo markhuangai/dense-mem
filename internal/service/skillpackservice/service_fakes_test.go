@@ -210,8 +210,9 @@ func (f fakeClaimList) List(_ context.Context, _ string, limit, offset int) ([]*
 }
 
 type fakeFragmentCreate struct {
-	calls int
-	err   error
+	calls     int
+	duplicate bool
+	err       error
 }
 
 func (f *fakeFragmentCreate) Create(_ context.Context, profileID string, req *dto.CreateFragmentRequest) (*fragmentservice.CreateResult, error) {
@@ -227,6 +228,7 @@ func (f *fakeFragmentCreate) Create(_ context.Context, profileID string, req *dt
 			ContentHash: "hash",
 			CreatedAt:   time.Now().UTC(),
 		},
+		Duplicate: f.duplicate,
 	}, nil
 }
 

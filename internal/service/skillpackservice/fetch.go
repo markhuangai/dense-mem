@@ -23,14 +23,15 @@ func defaultHTTPClient() *http.Client {
 	transport := &http.Transport{
 		Proxy: nil,
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-			host, _, err := net.SplitHostPort(address)
+			host, port, err := net.SplitHostPort(address)
 			if err != nil {
 				return nil, err
 			}
-			if err := rejectUnsafeHost(ctx, host); err != nil {
+			dialAddress, err := safeDialAddress(ctx, network, host, port)
+			if err != nil {
 				return nil, err
 			}
-			return dialer.DialContext(ctx, network, address)
+			return dialer.DialContext(ctx, network, dialAddress)
 		},
 	}
 	client := &http.Client{
@@ -93,19 +94,46 @@ func validateArtifactURL(rawURL string) error {
 }
 
 func rejectUnsafeHost(ctx context.Context, host string) error {
+	_, err := safeDialAddress(ctx, "tcp", host, "0")
+	return err
+}
+
+func safeDialAddress(ctx context.Context, network, host, port string) (string, error) {
 	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
 	if err != nil {
-		return fmt.Errorf("%w: resolve host: %v", ErrUnsafeURL, err)
+		return "", fmt.Errorf("%w: resolve host: %v", ErrUnsafeURL, err)
 	}
+	return safeDialAddressFromResolved(network, port, ips)
+}
+
+func safeDialAddressFromResolved(network, port string, ips []net.IPAddr) (string, error) {
 	if len(ips) == 0 {
-		return fmt.Errorf("%w: host resolved to no addresses", ErrUnsafeURL)
+		return "", fmt.Errorf("%w: host resolved to no addresses", ErrUnsafeURL)
 	}
+	var selected net.IP
 	for _, addr := range ips {
 		if isUnsafeIP(addr.IP) {
-			return fmt.Errorf("%w: blocked private or local address", ErrUnsafeURL)
+			return "", fmt.Errorf("%w: blocked private or local address", ErrUnsafeURL)
+		}
+		if selected == nil && ipMatchesNetwork(network, addr.IP) {
+			selected = addr.IP
 		}
 	}
-	return nil
+	if selected == nil {
+		return "", fmt.Errorf("%w: host resolved to no %s addresses", ErrUnsafeURL, network)
+	}
+	return net.JoinHostPort(selected.String(), port), nil
+}
+
+func ipMatchesNetwork(network string, ip net.IP) bool {
+	switch network {
+	case "tcp4":
+		return ip.To4() != nil
+	case "tcp6":
+		return ip.To4() == nil && ip.To16() != nil
+	default:
+		return true
+	}
 }
 
 func isUnsafeIP(ip net.IP) bool {

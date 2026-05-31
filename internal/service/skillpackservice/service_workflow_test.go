@@ -305,6 +305,22 @@ func TestFetchArtifactBranches(t *testing.T) {
 	}
 }
 
+func TestSafeDialAddressUsesResolvedSafeIP(t *testing.T) {
+	dialAddress, err := safeDialAddressFromResolved("tcp", "443", []net.IPAddr{{IP: net.ParseIP("203.0.113.10")}})
+	if err != nil {
+		t.Fatalf("safe dial address: %v", err)
+	}
+	if dialAddress != "203.0.113.10:443" {
+		t.Fatalf("dial address = %q, want vetted IP address", dialAddress)
+	}
+	if _, err := safeDialAddressFromResolved("tcp", "443", []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}); !errors.Is(err, ErrUnsafeURL) {
+		t.Fatalf("unsafe resolved IP err = %v, want ErrUnsafeURL", err)
+	}
+	if _, err := safeDialAddressFromResolved("tcp4", "443", []net.IPAddr{{IP: net.ParseIP("2001:db8::1")}}); !errors.Is(err, ErrUnsafeURL) {
+		t.Fatalf("network mismatch err = %v, want ErrUnsafeURL", err)
+	}
+}
+
 func TestURLSafetyRejectsNonHTTPSAndLocalIPs(t *testing.T) {
 	if err := validateArtifactURL("http://example.com/pack.json"); !errors.Is(err, ErrUnsafeURL) {
 		t.Fatalf("validateArtifactURL http err = %v, want ErrUnsafeURL", err)
@@ -461,6 +477,35 @@ func TestReviewImportSkipsUnselectedItems(t *testing.T) {
 	}
 	if len(ledger.changes) != 2 {
 		t.Fatalf("ledger changes len = %d, want fragment+selected claim", len(ledger.changes))
+	}
+}
+
+func TestReviewImportSkipsDuplicateFragmentMutationAndLedger(t *testing.T) {
+	graph := &recordingGraph{}
+	ledger := &fakeLedger{}
+	svc := New(Dependencies{
+		FragmentCreate: &fakeFragmentCreate{duplicate: true},
+		ClaimCreate:    &fakeClaimCreate{},
+		Graph:          graph,
+		Ledger:         ledger,
+	})
+
+	res, err := svc.Import(context.Background(), "team-1", ImportRequest{
+		Artifact:      packWithItem(SourceKindManual),
+		Mode:          ModeReview,
+		SelectedItems: []int{-1},
+	})
+	if err != nil {
+		t.Fatalf("Import duplicate fragment: %v", err)
+	}
+	if res.SkippedCount != 1 || res.Status != domain.SkillPackImportStatusNeedsReview {
+		t.Fatalf("result = %+v, want skipped duplicate-fragment-only import", res)
+	}
+	if graph.writeCount != 0 {
+		t.Fatalf("graph writes = %d, want no duplicate fragment tag", graph.writeCount)
+	}
+	if len(ledger.changes) != 0 {
+		t.Fatalf("ledger changes len = %d, want no created fragment change", len(ledger.changes))
 	}
 }
 
@@ -880,14 +925,18 @@ func TestImportItemReviewDuplicateAndFactFinalClaimBranches(t *testing.T) {
 	inspected := InspectItem{Index: 0, Item: item}
 
 	reviewDuplicateLedger := &fakeLedger{}
+	reviewDuplicateGraph := &recordingGraph{}
 	reviewDuplicateSvc := New(Dependencies{
 		ClaimCreate: &fakeClaimCreate{duplicate: true, claimID: "claim-dup"},
-		Graph:       &recordingGraph{},
+		Graph:       reviewDuplicateGraph,
 		Ledger:      reviewDuplicateLedger,
 	}).(*service)
 	reviewDuplicate := reviewDuplicateSvc.importItem(ctx, "team-1", "import-1", "hash", "fragment-1", ModeReview, item, inspected, "")
 	if reviewDuplicate.Status != "imported" || len(reviewDuplicateLedger.changes) != 0 {
 		t.Fatalf("reviewDuplicate = %+v changes=%d, want imported without claim change", reviewDuplicate, len(reviewDuplicateLedger.changes))
+	}
+	if reviewDuplicateGraph.writeCount != 0 {
+		t.Fatalf("graph writes = %d, want no duplicate claim tag", reviewDuplicateGraph.writeCount)
 	}
 
 	factItem := item

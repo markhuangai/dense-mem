@@ -259,15 +259,17 @@ func (s *service) Import(ctx context.Context, profileID string, req ImportReques
 		return nil, err
 	}
 	fragmentID := fragmentRes.Fragment.FragmentID
-	if err := s.graphOps.tagFragment(ctx, profileID, fragmentID, importID, hash); err != nil {
-		return nil, err
-	}
-	if err := s.appendChange(ctx, profileID, importID, "fragment", fragmentID, domain.SkillPackChangeActionCreated, nil, map[string]any{
-		"fragment_id":  fragmentID,
-		"content_hash": fragmentRes.Fragment.ContentHash,
-		"import_id":    importID,
-	}); err != nil {
-		return nil, err
+	if !fragmentRes.Duplicate {
+		if err := s.graphOps.tagFragment(ctx, profileID, fragmentID, importID, hash); err != nil {
+			return nil, err
+		}
+		if err := s.appendChange(ctx, profileID, importID, "fragment", fragmentID, domain.SkillPackChangeActionCreated, nil, map[string]any{
+			"fragment_id":  fragmentID,
+			"content_hash": fragmentRes.Fragment.ContentHash,
+			"import_id":    importID,
+		}); err != nil {
+			return nil, err
+		}
 	}
 
 	out := &ImportResult{
@@ -504,12 +506,12 @@ func (s *service) importItem(ctx context.Context, profileID, importID, artifactH
 	result.ClaimID = createRes.Claim.ClaimID
 
 	if mode == ModeReview {
-		if err := s.graphOps.tagClaim(ctx, profileID, result.ClaimID, importID, artifactHash, item.SourceKind); err != nil {
-			result.Status = "error"
-			result.Error = err.Error()
-			return result
-		}
 		if !createRes.Duplicate {
+			if err := s.graphOps.tagClaim(ctx, profileID, result.ClaimID, importID, artifactHash, item.SourceKind); err != nil {
+				result.Status = "error"
+				result.Error = err.Error()
+				return result
+			}
 			after := claimLedgerState(createRes.Claim, importID)
 			if err := s.appendChange(ctx, profileID, importID, "claim", result.ClaimID, domain.SkillPackChangeActionCreated, nil, after); err != nil {
 				result.Status = "error"
