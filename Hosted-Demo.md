@@ -53,11 +53,9 @@ critical. Expired demo teams and graph data are deleted.
 
 ## Step 1: Generate A Key
 
-Open:
+Open the hosted demo page:
 
-```text
-https://demo-dense-mem.markhuang.ai
-```
+[https://demo-dense-mem.markhuang.ai](https://demo-dense-mem.markhuang.ai)
 
 The page creates a key automatically for the browser tab. You can also click
 **Generate New Key**.
