@@ -459,6 +459,9 @@ func TestGraphOpsQueryHelpersAndState(t *testing.T) {
 	if err := ops.trustClaim(ctx, "team-1", "claim-1", "import-1", "hash", SourceKindManual); err != nil {
 		t.Fatalf("trustClaim: %v", err)
 	}
+	if err := ops.trustExistingClaim(ctx, "team-1", "claim-1"); err != nil {
+		t.Fatalf("trustExistingClaim: %v", err)
+	}
 	if err := ops.tagFact(ctx, "team-1", "fact-1", "import-1", "hash", SourceKindFact); err != nil {
 		t.Fatalf("tagFact: %v", err)
 	}
@@ -470,6 +473,10 @@ func TestGraphOpsQueryHelpersAndState(t *testing.T) {
 		"entailment_verdict": string(domain.VerdictInsufficient),
 	}); err != nil {
 		t.Fatalf("restoreClaim: %v", err)
+	}
+	restoreQuery := graph.writeQueries[len(graph.writeQueries)-1]
+	if strings.Contains(restoreQuery, "REMOVE c.import_id") {
+		t.Fatalf("restoreClaim query removes import metadata: %s", restoreQuery)
 	}
 	state, err := ops.currentState(ctx, "team-1", "claim", "claim-1")
 	if err != nil {
@@ -495,6 +502,9 @@ func TestGraphOpsQueryHelpersAndState(t *testing.T) {
 	nilOps := newGraphOps(nil)
 	if err := nilOps.trustClaim(ctx, "team-1", "claim-1", "import-1", "hash", SourceKindManual); err == nil {
 		t.Fatal("trustClaim without graph should fail")
+	}
+	if err := nilOps.trustExistingClaim(ctx, "team-1", "claim-1"); err == nil {
+		t.Fatal("trustExistingClaim without graph should fail")
 	}
 	if err := nilOps.supersedeFacts(ctx, "team-1", nil, "claim-1", "import-1"); err != nil {
 		t.Fatalf("supersedeFacts empty without graph: %v", err)

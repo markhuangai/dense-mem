@@ -175,6 +175,24 @@ func (g *graphOps) trustClaim(ctx context.Context, profileID, claimID, importID,
 	return err
 }
 
+func (g *graphOps) trustExistingClaim(ctx context.Context, profileID, claimID string) error {
+	if !g.available() {
+		return fmt.Errorf("skill pack import: graph store is required for trusted import")
+	}
+	now := time.Now().UTC()
+	_, err := g.graph.ScopedWrite(ctx, profileID, `
+		MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
+		SET c.status = 'validated',
+		    c.entailment_verdict = 'entailed',
+		    c.verifier_model = 'skill_pack.source_trust',
+		    c.verified_at = $verifiedAt
+	`, map[string]any{
+		"claimId":    claimID,
+		"verifiedAt": now,
+	})
+	return err
+}
+
 func (g *graphOps) tagFact(ctx context.Context, profileID, factID, importID, artifactHash, sourceKind string) error {
 	if !g.available() {
 		return nil
@@ -267,16 +285,12 @@ func (g *graphOps) restoreClaim(ctx context.Context, profileID, claimID, importI
 	}
 	_, err := g.graph.ScopedWrite(ctx, profileID, `
 		MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
-		SET c.status = $status,
-		    c.entailment_verdict = $entailmentVerdict,
-		    c.verifier_model = $verifierModel,
-		    c.verified_at = $verifiedAt,
-		    c.last_verifier_response = $lastVerifierResponse
-		REMOVE c.import_id,
-		       c.import_bundle_hash,
-		       c.import_source_kind,
-		       c.imported
-	`, map[string]any{
+			SET c.status = $status,
+			    c.entailment_verdict = $entailmentVerdict,
+			    c.verifier_model = $verifierModel,
+			    c.verified_at = $verifiedAt,
+			    c.last_verifier_response = $lastVerifierResponse
+		`, map[string]any{
 		"claimId":              claimID,
 		"status":               stringState(before, "status"),
 		"entailmentVerdict":    stringState(before, "entailment_verdict"),

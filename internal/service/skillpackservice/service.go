@@ -286,6 +286,12 @@ func (s *service) Import(ctx context.Context, profileID string, req ImportReques
 		}
 		result := s.importItem(ctx, profileID, importID, hash, fragmentID, req.Mode, item, inspection.Items[idx], decisionByIndex[idx])
 		out.Items = append(out.Items, result)
+		if result.Status == "error" {
+			if result.Error == "" {
+				return nil, fmt.Errorf("skill pack import: item %d failed", result.Index)
+			}
+			return nil, fmt.Errorf("skill pack import: item %d: %s", result.Index, result.Error)
+		}
 		if result.Status == "imported" || result.Status == "promoted" || result.Status == "validated" {
 			out.AppliedCount++
 		} else {
@@ -529,10 +535,18 @@ func (s *service) importItem(ctx context.Context, profileID, importID, artifactH
 			beforeClaim = claimLedgerState(existing, "")
 		}
 	}
-	if err := s.graphOps.trustClaim(ctx, profileID, result.ClaimID, importID, artifactHash, item.SourceKind); err != nil {
-		result.Status = "error"
-		result.Error = err.Error()
-		return result
+	if createRes.Duplicate {
+		if err := s.graphOps.trustExistingClaim(ctx, profileID, result.ClaimID); err != nil {
+			result.Status = "error"
+			result.Error = err.Error()
+			return result
+		}
+	} else {
+		if err := s.graphOps.trustClaim(ctx, profileID, result.ClaimID, importID, artifactHash, item.SourceKind); err != nil {
+			result.Status = "error"
+			result.Error = err.Error()
+			return result
+		}
 	}
 
 	if decision == DecisionSupersedeLocal {
@@ -590,7 +604,7 @@ func (s *service) importItem(ctx context.Context, profileID, importID, artifactH
 				return result
 			}
 		} else {
-			afterClaim := map[string]any{"claim_id": result.ClaimID, "status": string(domain.StatusSuperseded), "import_id": importID}
+			afterClaim := trustedClaimAfterState(result.ClaimID, domain.StatusSuperseded)
 			if err := s.appendChange(ctx, profileID, importID, "claim", result.ClaimID, domain.SkillPackChangeActionUpdated, beforeClaim, afterClaim); err != nil {
 				result.Status = "error"
 				result.Error = err.Error()
@@ -619,7 +633,7 @@ func (s *service) importItem(ctx context.Context, profileID, importID, artifactH
 			return result
 		}
 	} else {
-		afterClaim := map[string]any{"claim_id": result.ClaimID, "status": string(domain.StatusValidated), "entailment_verdict": string(domain.VerdictEntailed), "import_id": importID}
+		afterClaim := trustedClaimAfterState(result.ClaimID, domain.StatusValidated)
 		if err := s.appendChange(ctx, profileID, importID, "claim", result.ClaimID, domain.SkillPackChangeActionUpdated, beforeClaim, afterClaim); err != nil {
 			result.Status = "error"
 			result.Error = err.Error()
@@ -628,6 +642,15 @@ func (s *service) importItem(ctx context.Context, profileID, importID, artifactH
 	}
 	result.Status = "validated"
 	return result
+}
+
+func trustedClaimAfterState(claimID string, status domain.ClaimStatus) map[string]any {
+	return map[string]any{
+		"claim_id":           claimID,
+		"status":             string(status),
+		"entailment_verdict": string(domain.VerdictEntailed),
+		"verifier_model":     "skill_pack.source_trust",
+	}
 }
 
 func (s *service) appendChange(ctx context.Context, profileID, importID, entityType, entityID, action string, before, after map[string]any) error {

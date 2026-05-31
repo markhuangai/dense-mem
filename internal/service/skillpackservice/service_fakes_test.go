@@ -120,6 +120,8 @@ type recordingGraph struct {
 	writeCount    int
 	writeErr      error
 	writeErrAfter int
+	writeQueries  []string
+	writeParams   []map[string]any
 	txCount       int
 	txErr         error
 	readErr       error
@@ -140,8 +142,10 @@ func (g *recordingGraph) ScopedRead(_ context.Context, _ string, _ string, param
 	return nil, []map[string]any{{"state": state}}, nil
 }
 
-func (g *recordingGraph) ScopedWrite(_ context.Context, _ string, _ string, _ map[string]any) (neo4jdriver.ResultSummary, error) {
+func (g *recordingGraph) ScopedWrite(_ context.Context, _ string, query string, params map[string]any) (neo4jdriver.ResultSummary, error) {
 	g.writeCount++
+	g.writeQueries = append(g.writeQueries, query)
+	g.writeParams = append(g.writeParams, params)
 	if g.writeErr != nil && (g.writeErrAfter == 0 || g.writeCount >= g.writeErrAfter) {
 		return nil, g.writeErr
 	}
@@ -291,6 +295,7 @@ type fakeLedger struct {
 	appendErr      error
 	appendErrAfter int
 	appendCalls    int
+	updateCalls    int
 }
 
 func (f *fakeLedger) CreateImport(_ context.Context, record domain.SkillPackImport) error {
@@ -303,6 +308,7 @@ func (f *fakeLedger) CreateImport(_ context.Context, record domain.SkillPackImpo
 }
 
 func (f *fakeLedger) UpdateImportStatus(_ context.Context, _, _, status string, _, _ int, _ map[string]any) error {
+	f.updateCalls++
 	if f.updateErr != nil {
 		return f.updateErr
 	}

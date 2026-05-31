@@ -509,6 +509,34 @@ func TestReviewImportSkipsDuplicateFragmentMutationAndLedger(t *testing.T) {
 	}
 }
 
+func TestImportAbortsWhenItemLedgerAppendFailsAfterGraphMutation(t *testing.T) {
+	graph := &recordingGraph{}
+	ledger := &fakeLedger{appendErr: errors.New("append failed"), appendErrAfter: 2}
+	svc := New(Dependencies{
+		FragmentCreate: &fakeFragmentCreate{},
+		ClaimCreate:    &fakeClaimCreate{},
+		Graph:          graph,
+		Ledger:         ledger,
+	})
+
+	res, err := svc.Import(context.Background(), "team-1", ImportRequest{
+		Artifact: packWithItem(SourceKindManual),
+		Mode:     ModeReview,
+	})
+	if err == nil || !strings.Contains(err.Error(), "item 0: append failed") {
+		t.Fatalf("Import err = %v, want item append failure", err)
+	}
+	if res != nil {
+		t.Fatalf("result = %+v, want nil on aborted import", res)
+	}
+	if ledger.updateCalls != 0 {
+		t.Fatalf("update calls = %d, want no applied status update", ledger.updateCalls)
+	}
+	if graph.writeCount != 2 {
+		t.Fatalf("graph writes = %d, want fragment and claim tags before abort", graph.writeCount)
+	}
+}
+
 func TestImportAndRollbackDependencyErrorBranches(t *testing.T) {
 	ctx := context.Background()
 	pack := packWithItem(SourceKindManual)
@@ -629,21 +657,25 @@ func TestTrustedImportValidatesAndPromotes(t *testing.T) {
 	})
 
 	t.Run("source fact requires promoter", func(t *testing.T) {
+		ledger := &fakeLedger{}
 		svc := New(Dependencies{
 			FragmentCreate: &fakeFragmentCreate{},
 			ClaimCreate:    &fakeClaimCreate{},
 			Graph:          &recordingGraph{},
-			Ledger:         &fakeLedger{},
+			Ledger:         ledger,
 		})
 		res, err := svc.Import(context.Background(), "team-1", ImportRequest{
 			Artifact: packWithItem(SourceKindFact),
 			Mode:     ModeTrusted,
 		})
-		if err != nil {
-			t.Fatalf("Import: %v", err)
+		if err == nil || !strings.Contains(err.Error(), "fact promote service is required") {
+			t.Fatalf("Import err = %v, want fact promote service error", err)
 		}
-		if res.Items[0].Status != "error" || !strings.Contains(res.Items[0].Error, "fact promote service is required") {
-			t.Fatalf("item = %+v, want fact promote service error", res.Items[0])
+		if res != nil {
+			t.Fatalf("result = %+v, want nil on aborted import", res)
+		}
+		if ledger.updateCalls != 0 {
+			t.Fatalf("update calls = %d, want no applied status update", ledger.updateCalls)
 		}
 	})
 }
@@ -804,10 +836,11 @@ func TestImportItemErrorAndDuplicateBranches(t *testing.T) {
 		EntailmentVerdict: domain.VerdictInsufficient,
 	}
 	duplicateLedger := &fakeLedger{}
+	duplicateGraph := &recordingGraph{}
 	duplicateSvc := New(Dependencies{
 		ClaimCreate: &fakeClaimCreate{duplicate: true, claimID: "claim-dup"},
 		ClaimGet:    fakeClaimGet{claims: map[string]*domain.Claim{"claim-dup": existingClaim}},
-		Graph:       &recordingGraph{},
+		Graph:       duplicateGraph,
 		Ledger:      duplicateLedger,
 	}).(*service)
 	duplicate := duplicateSvc.importItem(ctx, "team-1", "import-1", "hash", "fragment-1", ModeTrusted, item, inspected, "")
@@ -817,6 +850,12 @@ func TestImportItemErrorAndDuplicateBranches(t *testing.T) {
 	if duplicateLedger.changes[0].Action != domain.SkillPackChangeActionUpdated ||
 		duplicateLedger.changes[0].BeforeState["status"] != string(domain.StatusCandidate) {
 		t.Fatalf("duplicate change = %+v, want updated candidate claim", duplicateLedger.changes[0])
+	}
+	if _, ok := duplicateLedger.changes[0].AfterState["import_id"]; ok {
+		t.Fatalf("duplicate after state = %v, want no new import provenance", duplicateLedger.changes[0].AfterState)
+	}
+	if len(duplicateGraph.writeQueries) != 1 || strings.Contains(duplicateGraph.writeQueries[0], "import_id") {
+		t.Fatalf("duplicate graph writes = %q, want trust without import tag", duplicateGraph.writeQueries)
 	}
 
 	duplicateFactItem := item
@@ -835,6 +874,9 @@ func TestImportItemErrorAndDuplicateBranches(t *testing.T) {
 	}
 	if duplicateFactLedger.changes[0].Action != domain.SkillPackChangeActionUpdated {
 		t.Fatalf("first duplicate fact change = %+v, want updated claim", duplicateFactLedger.changes[0])
+	}
+	if _, ok := duplicateFactLedger.changes[0].AfterState["import_id"]; ok {
+		t.Fatalf("duplicate fact after state = %v, want no new claim import provenance", duplicateFactLedger.changes[0].AfterState)
 	}
 
 	appendErrSvc := New(Dependencies{
