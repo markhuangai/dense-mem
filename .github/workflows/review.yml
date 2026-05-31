@@ -1,0 +1,49 @@
+name: GitVibe review
+run-name: "[git-vibe][review]: PR #${{ inputs.pr-number }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr-number:
+        description: Pull request number to review.
+        required: true
+        type: string
+      timeout_minutes:
+        description: Maximum minutes for the review matrix job.
+        required: false
+        type: number
+        default: 60
+      max_turns:
+        description: Maximum AI turns for the review stage.
+        required: false
+        type: number
+        default: 90
+      dry-run:
+        description: Validate without writing to GitHub.
+        required: false
+        type: boolean
+        default: false
+      source-comment:
+        description: JSON source comment metadata for replying to command comments.
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  review:
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+      pull-requests: write
+    uses: markhuangai/git-vibe/.github/workflows/review.yml@v3.1.2
+    with:
+      pr-number: ${{ github.event.inputs.pr-number }}
+      runner: docker-runner
+      timeout_minutes: ${{ fromJSON(github.event.inputs.timeout_minutes) }}
+      max_turns: ${{ fromJSON(github.event.inputs.max_turns) }}
+      dry-run: ${{ fromJSON(github.event.inputs.dry-run) }}
+      source-comment: ${{ github.event.inputs.source-comment }}
+    secrets:
+      GITVIBE_GITHUB_TOKEN: ${{ secrets.GITVIBE_GITHUB_TOKEN }}
+      GITVIBE_AI_ENV_JSON: ${{ secrets.GITVIBE_AI_ENV_JSON }}

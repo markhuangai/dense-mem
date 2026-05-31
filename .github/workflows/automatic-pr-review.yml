@@ -1,0 +1,32 @@
+name: GitVibe automatic PR review
+run-name: "[git-vibe][automatic-pr-review]: PR #${{ github.event.pull_request.number }}"
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+    branches:
+      - dev
+
+concurrency:
+  group: git-vibe-automatic-pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: ${{ !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository }}
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+      pull-requests: write
+    uses: markhuangai/git-vibe/.github/workflows/review.yml@v3.1.2
+    with:
+      pr-number: ${{ format('{0}', github.event.pull_request.number) }}
+      runner: docker-runner
+      timeout_minutes: 60
+      max_turns: 90
+      dry-run: false
+      source-comment: ""
+    secrets:
+      GITVIBE_GITHUB_TOKEN: ${{ secrets.GITVIBE_GITHUB_TOKEN }}
+      GITVIBE_AI_ENV_JSON: ${{ secrets.GITVIBE_AI_ENV_JSON }}

@@ -1,0 +1,79 @@
+name: GitVibe develop
+run-name: "[git-vibe][develop]: Issue #${{ inputs.issue-number }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue-number:
+        description: Approved implementation issue number.
+        required: true
+        type: string
+      implementation_timeout_minutes:
+        description: Maximum minutes for the implementation job.
+        required: false
+        type: number
+        default: 120
+      review_timeout_minutes:
+        description: Maximum minutes for the review matrix job.
+        required: false
+        type: number
+        default: 60
+      create_pr_timeout_minutes:
+        description: Maximum minutes for the PR creation job.
+        required: false
+        type: number
+        default: 15
+      max_turns:
+        description: Default maximum AI turns for stages in this workflow.
+        required: false
+        type: number
+        default: 90
+      implementation_max_turns:
+        description: Maximum AI turns for implementation and feedback-style coding work.
+        required: false
+        type: number
+        default: 200
+      validation_repair_attempts:
+        description: Maximum validation repair attempts inside each implementation run.
+        required: false
+        type: number
+        default: 3
+      validation_repair_max_turns:
+        description: Maximum AI turns for each validation repair attempt.
+        required: false
+        type: number
+        default: 45
+      dry-run:
+        description: Validate without writing to GitHub.
+        required: false
+        type: boolean
+        default: false
+      source-comment:
+        description: JSON source comment metadata for replying to command comments.
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  develop:
+    permissions:
+      actions: write
+      contents: write
+      issues: write
+      pull-requests: write
+    uses: markhuangai/git-vibe/.github/workflows/develop.yml@v3.1.2
+    with:
+      issue-number: ${{ github.event.inputs.issue-number }}
+      runner: docker-runner
+      implementation_timeout_minutes: ${{ fromJSON(github.event.inputs.implementation_timeout_minutes) }}
+      review_timeout_minutes: ${{ fromJSON(github.event.inputs.review_timeout_minutes) }}
+      create_pr_timeout_minutes: ${{ fromJSON(github.event.inputs.create_pr_timeout_minutes) }}
+      max_turns: ${{ fromJSON(github.event.inputs.max_turns) }}
+      implementation_max_turns: ${{ fromJSON(github.event.inputs.implementation_max_turns) }}
+      validation_repair_attempts: ${{ fromJSON(github.event.inputs.validation_repair_attempts) }}
+      validation_repair_max_turns: ${{ fromJSON(github.event.inputs.validation_repair_max_turns) }}
+      dry-run: ${{ fromJSON(github.event.inputs.dry-run) }}
+      source-comment: ${{ github.event.inputs.source-comment }}
+    secrets:
+      GITVIBE_GITHUB_TOKEN: ${{ secrets.GITVIBE_GITHUB_TOKEN }}
+      GITVIBE_AI_ENV_JSON: ${{ secrets.GITVIBE_AI_ENV_JSON }}

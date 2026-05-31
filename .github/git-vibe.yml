@@ -1,0 +1,146 @@
+# Copy this file to .github/git-vibe.yml in the consumer repository.
+
+version: 1
+
+permissions:
+  # Users with write, maintain, or admin can approve automation.
+  approver_roles:
+    - write
+    - maintain
+    - admin
+
+labels:
+  story: gvi:story
+  needs_discussion: gvi:needs-discussion
+  investigate: git-vibe:investigate
+  investigating: gvi:investigating
+  investigated: gvi:investigated
+  ready_for_approval: gvi:ready-for-approval
+  approved: git-vibe:approved
+  review: git-vibe:review
+  reviewing: gvi:reviewing
+  in_progress: gvi:in-progress
+  blocked: gvi:blocked
+  pr_opened: gvi:pr-opened
+  pr_approved: gvi:pr-approved
+  pr_merged: gvi:pr-merged
+  validate: git-vibe:validate
+  validating: gvi:validating
+  validated: gvi:validated
+
+commands:
+  prefix: /git-vibe
+  allow_external_agent_mentions: false
+
+event_delivery:
+  # webhook: repository webhook points at the self-hosted GitVibe server.
+  # relay: webhook proxy/tunnel such as Smee, Hookdeck, Cloudflare Tunnel, or ngrok.
+  # actions: no-server receiver workflows in the consumer repository.
+  # polling: local/scheduled worker polls GitHub APIs with cursors/ETags.
+  mode: webhook
+  relay:
+    provider: smee
+    # GitHub Actions Secret name. Relay URLs may contain delivery tokens; do not commit the real URL.
+    url_secret: GITVIBE_RELAY_URL
+  actions_receiver:
+    enabled: false
+    scheduled_scan: "*/15 * * * *"
+  polling:
+    enabled: false
+    interval_seconds: 300
+
+github_auth:
+  # Self-hosted default: the GitVibe server uses a fine-grained PAT scoped to this repository.
+  mode: webhook-pat
+  # GitHub Actions Secret name. Stores the GitHub write token.
+  token_secret: GITVIBE_GITHUB_TOKEN
+
+tests:
+  commands: []
+
+ai:
+  security:
+    web:
+      # Default for public repositories: let AI search current GitHub project material only.
+      # Add domains only for websites the repository owner trusts AI to search and fetch.
+      allowed_domains:
+        - github.com
+        - "*.github.com"
+  profiles:
+    local_proxy:
+      adapter: ai-sdk-agentool
+      context_window_tokens: 200000
+      provider:
+        type: openai-compatible
+        model: kimi-k2.5
+        base_url:
+          from_bundle: GITVIBE_AI_BASE_URL
+        api_key:
+          from_bundle: GITVIBE_AI_API_KEY
+      reasoning:
+        effort: high
+      provider_options:
+        openai:
+          reasoningEffort: high
+          reasoningSummary: concise
+        anthropic:
+          effort: high
+    codex_5.5_high:
+      adapter: cli-codex
+      auth_json:
+        from_bundle: CODEX_AUTH_JSON
+      model: gpt-5.5
+      reasoning:
+        effort: high
+        summary: concise
+    codex_5.5_xhigh:
+      adapter: cli-codex
+      auth_json:
+        from_bundle: CODEX_AUTH_JSON
+      model: gpt-5.5
+      reasoning:
+        effort: xhigh
+        summary: concise
+  role_groups:
+    swarm:
+      synthesizer: codex_5.5_high
+      parallel: 3
+      roles:
+        - role: correctness.md
+          profile: local_proxy
+        - role: security.md
+          profile: local_proxy
+        - role: maintainability.md
+          profile: local_proxy
+  budgets:
+    default_timeout_minutes: 60
+    review_timeout_minutes: 60
+    implementation_timeout_minutes: 120
+    feedback_timeout_minutes: 120
+    create_pr_timeout_minutes: 15
+    default_max_turns: 90
+    implementation_max_turns: 200
+    feedback_max_turns: 120
+    validation_repair_attempts: 3
+    validation_repair_max_turns: 45
+    pr_feedback_max_iterations: 3
+    request_retry_attempts: 3
+    request_retry_delay_seconds: 60
+  stages:
+    investigate:
+      role_group: swarm
+    validate:
+      role_group: swarm
+    materialize:
+      profile: codex_5.5_high
+    implement:
+      enabled: false
+      profile: local_proxy
+    review-matrix:
+      role_group: swarm
+    create-pr:
+      enabled: false
+      profile: local_proxy
+    address-pr-feedback:
+      enabled: false
+      profile: local_proxy

@@ -12,6 +12,7 @@ user-dist/
 .env
 .env.local
 .env.*.local
+.env.git-vibe
 
 # Local docker-compose files created from examples/docker-compose.*.yml
 docker-compose.yml
