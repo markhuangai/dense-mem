@@ -67,6 +67,49 @@ func TestFindCandidatesFallsBackToFactAndClaimLists(t *testing.T) {
 	}
 }
 
+func TestFindCandidatesListErrorBranches(t *testing.T) {
+	factErrSvc := New(Dependencies{FactList: fakeFactList{err: errors.New("fact list failed")}})
+	if _, err := factErrSvc.FindCandidates(context.Background(), "team-1", FindCandidatesRequest{Query: "skill pack"}); err == nil || !strings.Contains(err.Error(), "fact list failed") {
+		t.Fatalf("fact list err = %v, want fact list failed", err)
+	}
+
+	claimErrSvc := New(Dependencies{
+		FactList:  fakeFactList{},
+		ClaimList: fakeClaimList{err: errors.New("claim list failed")},
+	})
+	if _, err := claimErrSvc.FindCandidates(context.Background(), "team-1", FindCandidatesRequest{Query: "skill pack"}); err == nil || !strings.Contains(err.Error(), "claim list failed") {
+		t.Fatalf("claim list err = %v, want claim list failed", err)
+	}
+
+	empty, err := newGraphOps(nil).findCandidates(context.Background(), "team-1", "   ", 10)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("empty graph candidates = %+v err=%v, want none", empty, err)
+	}
+}
+
+func TestExportAndInspectDependencyErrorBranches(t *testing.T) {
+	factGetSvc := New(Dependencies{FactGet: fakeFactGet{err: errors.New("fact get failed")}})
+	if _, err := factGetSvc.Export(context.Background(), "team-1", ExportRequest{Name: "Pack", FactIDs: []string{"fact-1"}}); err == nil || !strings.Contains(err.Error(), "fact get failed") {
+		t.Fatalf("fact get err = %v, want fact get failed", err)
+	}
+
+	claimGetSvc := New(Dependencies{ClaimGet: fakeClaimGet{err: errors.New("claim get failed")}})
+	if _, err := claimGetSvc.Export(context.Background(), "team-1", ExportRequest{Name: "Pack", ClaimIDs: []string{"claim-1"}}); err == nil || !strings.Contains(err.Error(), "claim get failed") {
+		t.Fatalf("claim get err = %v, want claim get failed", err)
+	}
+
+	item := SkillPackItem{Subject: "assistant", Predicate: "has_skill", Object: "testing", SourceKind: SourceKindManual}
+	factListSvc := New(Dependencies{FactList: fakeFactList{err: errors.New("fact inspect failed")}}).(*service)
+	if _, err := factListSvc.inspectItem(context.Background(), "team-1", 0, item); err == nil || !strings.Contains(err.Error(), "fact inspect failed") {
+		t.Fatalf("fact inspect err = %v, want fact inspect failed", err)
+	}
+
+	claimListSvc := New(Dependencies{ClaimList: fakeClaimList{err: errors.New("claim inspect failed")}}).(*service)
+	if _, err := claimListSvc.inspectItem(context.Background(), "team-1", 0, item); err == nil || !strings.Contains(err.Error(), "claim inspect failed") {
+		t.Fatalf("claim inspect err = %v, want claim inspect failed", err)
+	}
+}
+
 func TestInspectRejectsHashMismatch(t *testing.T) {
 	svc := New(Dependencies{})
 	pack := &SkillPack{
@@ -229,14 +272,36 @@ func TestFetchArtifactBranches(t *testing.T) {
 	if _, err := fetchArtifact(context.Background(), &fakeHTTPClient{status: http.StatusOK, body: strings.Repeat("x", maxArtifactBytes+1)}, "https://example.com/pack.json"); !errors.Is(err, ErrInvalidArtifact) {
 		t.Fatalf("oversize err = %v, want ErrInvalidArtifact", err)
 	}
+	if _, err := fetchArtifact(context.Background(), &fakeHTTPClient{status: http.StatusOK, readErr: errors.New("read failed")}, "https://example.com/pack.json"); err == nil || !strings.Contains(err.Error(), "read failed") {
+		t.Fatalf("read err = %v, want read failed", err)
+	}
+	if err := validateArtifactURL("://bad-url"); !errors.Is(err, ErrUnsafeURL) {
+		t.Fatalf("bad URL err = %v, want ErrUnsafeURL", err)
+	}
 	if err := validateArtifactURL("https:///missing-host"); !errors.Is(err, ErrUnsafeURL) {
 		t.Fatalf("missing host err = %v, want ErrUnsafeURL", err)
 	}
 	if err := rejectUnsafeHost(context.Background(), "localhost"); !errors.Is(err, ErrUnsafeURL) {
 		t.Fatalf("localhost err = %v, want ErrUnsafeURL", err)
 	}
-	if defaultHTTPClient() == nil {
+	client := defaultHTTPClient()
+	if client == nil {
 		t.Fatal("defaultHTTPClient returned nil")
+	}
+	redirectReq, _ := http.NewRequest(http.MethodGet, "https://example.com/next.json", nil)
+	if err := client.CheckRedirect(redirectReq, []*http.Request{&http.Request{}, &http.Request{}, &http.Request{}}); err == nil || !strings.Contains(err.Error(), "too many redirects") {
+		t.Fatalf("redirect count err = %v, want too many redirects", err)
+	}
+	unsafeRedirect, _ := http.NewRequest(http.MethodGet, "http://example.com/next.json", nil)
+	if err := client.CheckRedirect(unsafeRedirect, nil); !errors.Is(err, ErrUnsafeURL) {
+		t.Fatalf("unsafe redirect err = %v, want ErrUnsafeURL", err)
+	}
+	transport := client.Transport.(*http.Transport)
+	if _, err := transport.DialContext(context.Background(), "tcp", "127.0.0.1:80"); !errors.Is(err, ErrUnsafeURL) {
+		t.Fatalf("unsafe dial err = %v, want ErrUnsafeURL", err)
+	}
+	if _, err := transport.DialContext(context.Background(), "tcp", "missing-port"); err == nil {
+		t.Fatal("bad dial address should fail")
 	}
 }
 
@@ -249,6 +314,12 @@ func TestURLSafetyRejectsNonHTTPSAndLocalIPs(t *testing.T) {
 	}
 	if !isUnsafeIP(net.ParseIP("169.254.169.254")) {
 		t.Fatal("link-local metadata address should be unsafe")
+	}
+	if !isUnsafeIP(nil) {
+		t.Fatal("nil IP should be unsafe")
+	}
+	if !isUnsafeIP(net.ParseIP("224.0.0.1")) {
+		t.Fatal("multicast address should be unsafe")
 	}
 }
 
@@ -396,6 +467,24 @@ func TestReviewImportSkipsUnselectedItems(t *testing.T) {
 func TestImportAndRollbackDependencyErrorBranches(t *testing.T) {
 	ctx := context.Background()
 	pack := packWithItem(SourceKindManual)
+
+	loadErrSvc := New(Dependencies{
+		FragmentCreate: &fakeFragmentCreate{},
+		ClaimCreate:    &fakeClaimCreate{},
+		Ledger:         &fakeLedger{},
+	})
+	if _, err := loadErrSvc.Import(ctx, "team-1", ImportRequest{Mode: ModeReview}); err == nil || !strings.Contains(err.Error(), "artifact_json") {
+		t.Fatalf("load err = %v, want missing artifact input", err)
+	}
+
+	createErrSvc := New(Dependencies{
+		FragmentCreate: &fakeFragmentCreate{},
+		ClaimCreate:    &fakeClaimCreate{},
+		Ledger:         &fakeLedger{createErr: errors.New("create import failed")},
+	})
+	if _, err := createErrSvc.Import(ctx, "team-1", ImportRequest{Artifact: pack, Mode: ModeReview}); err == nil || !strings.Contains(err.Error(), "create import failed") {
+		t.Fatalf("create import err = %v, want create import failed", err)
+	}
 
 	fragmentErrSvc := New(Dependencies{
 		FragmentCreate: &fakeFragmentCreate{err: errors.New("fragment failed")},
@@ -710,5 +799,122 @@ func TestImportItemErrorAndDuplicateBranches(t *testing.T) {
 	appendErr := appendErrSvc.importItem(ctx, "team-1", "import-1", "hash", "fragment-1", ModeReview, item, inspected, "")
 	if appendErr.Status != "error" || !strings.Contains(appendErr.Error, "append failed") {
 		t.Fatalf("appendErr = %+v, want ledger append error", appendErr)
+	}
+}
+
+func TestImportItemPromotionAndSupersedeErrorBranches(t *testing.T) {
+	ctx := context.Background()
+	factItem := SkillPackItem{
+		Subject:    "assistant",
+		Predicate:  "has_skill",
+		Object:     "tests import item branches",
+		SourceKind: SourceKindFact,
+	}
+	inspected := InspectItem{Index: 0, Item: factItem}
+
+	tagFactErrSvc := New(Dependencies{
+		ClaimCreate: &fakeClaimCreate{},
+		FactPromote: fakeFactPromote{},
+		Graph:       &recordingGraph{writeErr: errors.New("tag fact failed"), writeErrAfter: 2},
+		Ledger:      &fakeLedger{},
+	}).(*service)
+	tagFactErr := tagFactErrSvc.importItem(ctx, "team-1", "import-1", "hash", "fragment-1", ModeTrusted, factItem, inspected, "")
+	if tagFactErr.Status != "error" || !strings.Contains(tagFactErr.Error, "tag fact failed") {
+		t.Fatalf("tagFactErr = %+v, want tag fact error", tagFactErr)
+	}
+
+	factAppendErrSvc := New(Dependencies{
+		ClaimCreate: &fakeClaimCreate{},
+		FactPromote: fakeFactPromote{},
+		Graph:       &recordingGraph{},
+		Ledger:      &fakeLedger{appendErr: errors.New("fact append failed"), appendErrAfter: 2},
+	}).(*service)
+	factAppendErr := factAppendErrSvc.importItem(ctx, "team-1", "import-1", "hash", "fragment-1", ModeTrusted, factItem, inspected, "")
+	if factAppendErr.Status != "error" || !strings.Contains(factAppendErr.Error, "fact append failed") {
+		t.Fatalf("factAppendErr = %+v, want fact append error", factAppendErr)
+	}
+
+	manualItem := SkillPackItem{
+		Subject:    "assistant",
+		Predicate:  "has_skill",
+		Object:     "tests supersede errors",
+		SourceKind: SourceKindManual,
+	}
+	supersedeInspected := InspectItem{
+		Index: 0,
+		Item:  manualItem,
+		ConflictingFacts: []FactSummary{{
+			FactID:    "fact-local",
+			Subject:   manualItem.Subject,
+			Predicate: manualItem.Predicate,
+			Object:    "old behavior",
+			Status:    string(domain.FactStatusActive),
+		}},
+	}
+	supersedeErrSvc := New(Dependencies{
+		ClaimCreate: &fakeClaimCreate{},
+		FactGet: fakeFactGet{facts: map[string]*domain.Fact{"fact-local": &domain.Fact{
+			FactID:    "fact-local",
+			Subject:   manualItem.Subject,
+			Predicate: manualItem.Predicate,
+			Object:    "old behavior",
+			Status:    domain.FactStatusActive,
+		}}},
+		Graph:  &recordingGraph{txErr: errors.New("supersede failed")},
+		Ledger: &fakeLedger{},
+	}).(*service)
+	supersedeErr := supersedeErrSvc.importItem(ctx, "team-1", "import-1", "hash", "fragment-1", ModeTrusted, manualItem, supersedeInspected, DecisionSupersedeLocal)
+	if supersedeErr.Status != "error" || !strings.Contains(supersedeErr.Error, "supersede failed") {
+		t.Fatalf("supersedeErr = %+v, want supersede error", supersedeErr)
+	}
+}
+
+func TestImportItemReviewDuplicateAndFactFinalClaimBranches(t *testing.T) {
+	ctx := context.Background()
+	item := SkillPackItem{
+		Subject:    "assistant",
+		Predicate:  "has_skill",
+		Object:     "tests duplicate review branches",
+		SourceKind: SourceKindManual,
+	}
+	inspected := InspectItem{Index: 0, Item: item}
+
+	reviewDuplicateLedger := &fakeLedger{}
+	reviewDuplicateSvc := New(Dependencies{
+		ClaimCreate: &fakeClaimCreate{duplicate: true, claimID: "claim-dup"},
+		Graph:       &recordingGraph{},
+		Ledger:      reviewDuplicateLedger,
+	}).(*service)
+	reviewDuplicate := reviewDuplicateSvc.importItem(ctx, "team-1", "import-1", "hash", "fragment-1", ModeReview, item, inspected, "")
+	if reviewDuplicate.Status != "imported" || len(reviewDuplicateLedger.changes) != 0 {
+		t.Fatalf("reviewDuplicate = %+v changes=%d, want imported without claim change", reviewDuplicate, len(reviewDuplicateLedger.changes))
+	}
+
+	factItem := item
+	factItem.SourceKind = SourceKindFact
+	finalClaim := &domain.Claim{
+		ClaimID:              "claim-1",
+		Subject:              factItem.Subject,
+		Predicate:            factItem.Predicate,
+		Object:               factItem.Object,
+		Status:               domain.StatusSuperseded,
+		EntailmentVerdict:    domain.VerdictEntailed,
+		VerifierModel:        "skill_pack.source_trust",
+		LastVerifierResponse: "trusted source",
+	}
+	factLedger := &fakeLedger{}
+	factSvc := New(Dependencies{
+		ClaimCreate: &fakeClaimCreate{},
+		ClaimGet:    fakeClaimGet{claims: map[string]*domain.Claim{"claim-1": finalClaim}},
+		FactPromote: fakeFactPromote{},
+		Graph:       &recordingGraph{},
+		Ledger:      factLedger,
+	}).(*service)
+	promoted := factSvc.importItem(ctx, "team-1", "import-1", "hash", "fragment-1", ModeTrusted, factItem, inspected, "")
+	if promoted.Status != "promoted" || len(factLedger.changes) != 2 {
+		t.Fatalf("promoted = %+v changes=%d, want promoted with claim and fact changes", promoted, len(factLedger.changes))
+	}
+	if factLedger.changes[0].AfterState["verifier_model"] != "skill_pack.source_trust" {
+		t.Fatalf("after state = %v, want final claim verifier fields", factLedger.changes[0].AfterState)
 	}
 }

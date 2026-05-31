@@ -359,6 +359,91 @@ func TestRollbackBlocksWhenImportedEntityIsMissing(t *testing.T) {
 	}
 }
 
+func TestRollbackActionWriteErrorBranches(t *testing.T) {
+	tests := []struct {
+		name   string
+		change domain.SkillPackImportChange
+		graph  *recordingGraph
+		want   string
+	}{
+		{
+			name: "delete created entity fails",
+			change: domain.SkillPackImportChange{
+				ImportID:   "import-1",
+				TeamID:     "team-1",
+				EntityType: "fragment",
+				EntityID:   "fragment-1",
+				Action:     domain.SkillPackChangeActionCreated,
+				AfterState: map[string]any{
+					"fragment_id": "fragment-1",
+					"import_id":   "import-1",
+				},
+			},
+			graph: &recordingGraph{
+				states:   map[string]map[string]any{"fragment-1": {"fragment_id": "fragment-1", "import_id": "import-1"}},
+				writeErr: errors.New("delete failed"),
+			},
+			want: "delete failed",
+		},
+		{
+			name: "restore updated claim fails",
+			change: domain.SkillPackImportChange{
+				ImportID:   "import-1",
+				TeamID:     "team-1",
+				EntityType: "claim",
+				EntityID:   "claim-1",
+				Action:     domain.SkillPackChangeActionUpdated,
+				BeforeState: map[string]any{
+					"claim_id":           "claim-1",
+					"status":             string(domain.StatusCandidate),
+					"entailment_verdict": string(domain.VerdictInsufficient),
+				},
+				AfterState: map[string]any{
+					"claim_id":           "claim-1",
+					"status":             string(domain.StatusValidated),
+					"entailment_verdict": string(domain.VerdictEntailed),
+					"import_id":          "import-1",
+				},
+			},
+			graph: &recordingGraph{
+				states:   map[string]map[string]any{"claim-1": {"claim_id": "claim-1", "status": string(domain.StatusValidated), "entailment_verdict": string(domain.VerdictEntailed), "import_id": "import-1"}},
+				writeErr: errors.New("restore claim failed"),
+			},
+			want: "restore claim failed",
+		},
+		{
+			name: "restore superseded fact fails",
+			change: domain.SkillPackImportChange{
+				ImportID:    "import-1",
+				TeamID:      "team-1",
+				EntityType:  "fact",
+				EntityID:    "fact-1",
+				Action:      domain.SkillPackChangeActionSuperseded,
+				BeforeState: map[string]any{"fact_id": "fact-1", "status": string(domain.FactStatusActive)},
+				AfterState:  map[string]any{"fact_id": "fact-1", "status": string(domain.FactStatusSuperseded)},
+			},
+			graph: &recordingGraph{
+				states: map[string]map[string]any{"fact-1": {"fact_id": "fact-1", "status": string(domain.FactStatusSuperseded)}},
+				txErr:  errors.New("restore fact failed"),
+			},
+			want: "restore fact failed",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := New(Dependencies{
+				Ledger: &fakeLedger{changes: []domain.SkillPackImportChange{tc.change}},
+				Graph:  tc.graph,
+			})
+			_, err := svc.Rollback(context.Background(), "team-1", RollbackRequest{ImportID: "import-1"})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("rollback err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestGraphOpsQueryHelpersAndState(t *testing.T) {
 	graph := &recordingGraph{states: map[string]map[string]any{
 		"claim-1": {"claim_id": "claim-1", "status": "validated"},

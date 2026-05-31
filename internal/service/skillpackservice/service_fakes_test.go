@@ -18,6 +18,7 @@ import (
 
 type fakeFactGet struct {
 	facts map[string]*domain.Fact
+	err   error
 }
 
 func packWithItem(sourceKind string) *SkillPack {
@@ -37,6 +38,7 @@ type fakeHTTPClient struct {
 	status     int
 	body       string
 	err        error
+	readErr    error
 	lastAccept string
 }
 
@@ -45,10 +47,19 @@ func (f *fakeHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
-	return &http.Response{
-		StatusCode: f.status,
-		Body:       io.NopCloser(strings.NewReader(f.body)),
-	}, nil
+	body := io.NopCloser(strings.NewReader(f.body))
+	if f.readErr != nil {
+		body = io.NopCloser(errorReader{err: f.readErr})
+	}
+	return &http.Response{StatusCode: f.status, Body: body}, nil
+}
+
+type errorReader struct {
+	err error
+}
+
+func (r errorReader) Read([]byte) (int, error) {
+	return 0, r.err
 }
 
 type mutatingScopedGraph struct {
@@ -105,11 +116,13 @@ func (g *factCandidateGraph) ScopedWriteTx(_ context.Context, _ string, _ func(n
 }
 
 type recordingGraph struct {
-	states     map[string]map[string]any
-	writeCount int
-	writeErr   error
-	txCount    int
-	readErr    error
+	states        map[string]map[string]any
+	writeCount    int
+	writeErr      error
+	writeErrAfter int
+	txCount       int
+	txErr         error
+	readErr       error
 }
 
 func (g *recordingGraph) ScopedRead(_ context.Context, _ string, _ string, params map[string]any) (neo4jdriver.ResultSummary, []map[string]any, error) {
@@ -129,31 +142,45 @@ func (g *recordingGraph) ScopedRead(_ context.Context, _ string, _ string, param
 
 func (g *recordingGraph) ScopedWrite(_ context.Context, _ string, _ string, _ map[string]any) (neo4jdriver.ResultSummary, error) {
 	g.writeCount++
-	return nil, g.writeErr
+	if g.writeErr != nil && (g.writeErrAfter == 0 || g.writeCount >= g.writeErrAfter) {
+		return nil, g.writeErr
+	}
+	return nil, nil
 }
 
 func (g *recordingGraph) ScopedWriteTx(_ context.Context, _ string, _ func(neo4jdriver.ManagedTransaction) error) error {
 	g.txCount++
-	return nil
+	return g.txErr
 }
 
 func (f fakeFactGet) Get(_ context.Context, _ string, factID string) (*domain.Fact, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
 	return f.facts[factID], nil
 }
 
 type fakeClaimGet struct {
 	claims map[string]*domain.Claim
+	err    error
 }
 
 func (f fakeClaimGet) Get(_ context.Context, _ string, claimID string) (*domain.Claim, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
 	return f.claims[claimID], nil
 }
 
 type fakeFactList struct {
 	facts []*domain.Fact
+	err   error
 }
 
 func (f fakeFactList) List(_ context.Context, _ string, filters factservice.FactListFilters, _ int, _ string) ([]*domain.Fact, string, error) {
+	if f.err != nil {
+		return nil, "", f.err
+	}
 	out := []*domain.Fact{}
 	for _, fact := range f.facts {
 		if filters.Subject != "" && fact.Subject != filters.Subject {
@@ -172,9 +199,13 @@ func (f fakeFactList) List(_ context.Context, _ string, filters factservice.Fact
 
 type fakeClaimList struct {
 	claims []*domain.Claim
+	err    error
 }
 
 func (f fakeClaimList) List(_ context.Context, _ string, limit, offset int) ([]*domain.Claim, int, error) {
+	if f.err != nil {
+		return nil, 0, f.err
+	}
 	return f.claims, len(f.claims), nil
 }
 
@@ -247,17 +278,23 @@ func (f fakeFactPromote) Promote(_ context.Context, profileID, claimID string) (
 }
 
 type fakeLedger struct {
-	imports   []domain.SkillPackImport
-	changes   []domain.SkillPackImportChange
-	status    string
-	updateErr error
-	markErr   error
-	getErr    error
-	listErr   error
-	appendErr error
+	imports        []domain.SkillPackImport
+	changes        []domain.SkillPackImportChange
+	status         string
+	createErr      error
+	updateErr      error
+	markErr        error
+	getErr         error
+	listErr        error
+	appendErr      error
+	appendErrAfter int
+	appendCalls    int
 }
 
 func (f *fakeLedger) CreateImport(_ context.Context, record domain.SkillPackImport) error {
+	if f.createErr != nil {
+		return f.createErr
+	}
 	f.imports = append(f.imports, record)
 	f.status = record.Status
 	return nil
@@ -291,7 +328,8 @@ func (f *fakeLedger) GetImport(context.Context, string, string) (*domain.SkillPa
 }
 
 func (f *fakeLedger) AppendChange(_ context.Context, change domain.SkillPackImportChange) error {
-	if f.appendErr != nil {
+	f.appendCalls++
+	if f.appendErr != nil && (f.appendErrAfter == 0 || f.appendCalls >= f.appendErrAfter) {
 		return f.appendErr
 	}
 	f.changes = append(f.changes, change)
