@@ -188,6 +188,7 @@ type ImportResult struct {
 	Status            string             `json:"status"`
 	AppliedCount      int                `json:"applied_count"`
 	SkippedCount      int                `json:"skipped_count"`
+	Error             string             `json:"error,omitempty"`
 	Items             []ImportItemResult `json:"items,omitempty"`
 	DecisionsRequired []ConflictPrompt   `json:"decisions_required,omitempty"`
 }

@@ -583,8 +583,12 @@ func TestImportAndRollbackDependencyErrorBranches(t *testing.T) {
 		ClaimCreate:    &fakeClaimCreate{},
 		Ledger:         &fakeLedger{updateErr: errors.New("update failed")},
 	})
-	if _, err := updateErrSvc.Import(ctx, "team-1", ImportRequest{Artifact: pack, Mode: ModeReview}); err == nil || !strings.Contains(err.Error(), "update failed") {
-		t.Fatalf("update err = %v, want update failed", err)
+	updateErrRes, err := updateErrSvc.Import(ctx, "team-1", ImportRequest{Artifact: pack, Mode: ModeReview})
+	if err != nil {
+		t.Fatalf("update err = %v, want recoverable result", err)
+	}
+	if updateErrRes == nil || updateErrRes.ImportID == "" || updateErrRes.Status != "status_update_failed" || !strings.Contains(updateErrRes.Error, "update failed") {
+		t.Fatalf("update result = %+v, want rollback id and status update error", updateErrRes)
 	}
 
 	getErrSvc := New(Dependencies{Ledger: &fakeLedger{getErr: errors.New("get failed")}})

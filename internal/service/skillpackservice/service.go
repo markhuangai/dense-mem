@@ -308,7 +308,9 @@ func (s *service) Import(ctx context.Context, profileID string, req ImportReques
 		"mode":          req.Mode,
 		"artifact_hash": hash,
 	}); err != nil {
-		return nil, err
+		out.Status = "status_update_failed"
+		out.Error = fmt.Sprintf("skill pack import status update failed: %v", err)
+		return out, nil
 	}
 	return out, nil
 }
