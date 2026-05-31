@@ -287,10 +287,21 @@ func (s *service) Import(ctx context.Context, profileID string, req ImportReques
 		result := s.importItem(ctx, profileID, importID, hash, fragmentID, req.Mode, item, inspection.Items[idx], decisionByIndex[idx])
 		out.Items = append(out.Items, result)
 		if result.Status == "error" {
+			out.Status = domain.SkillPackImportStatusFailed
 			if result.Error == "" {
-				return nil, fmt.Errorf("skill pack import: item %d failed", result.Index)
+				out.Error = fmt.Sprintf("skill pack import: item %d failed", result.Index)
+			} else {
+				out.Error = fmt.Sprintf("skill pack import: item %d: %s", result.Index, result.Error)
 			}
-			return nil, fmt.Errorf("skill pack import: item %d: %s", result.Index, result.Error)
+			if err := s.deps.Ledger.UpdateImportStatus(ctx, profileID, importID, out.Status, out.AppliedCount, out.SkippedCount, map[string]any{
+				"mode":              req.Mode,
+				"artifact_hash":     hash,
+				"failed_item_index": result.Index,
+				"error":             out.Error,
+			}); err != nil {
+				out.Error = fmt.Sprintf("%s; skill pack import status update failed: %v", out.Error, err)
+			}
+			return out, nil
 		}
 		if result.Status == "imported" || result.Status == "promoted" || result.Status == "validated" {
 			out.AppliedCount++

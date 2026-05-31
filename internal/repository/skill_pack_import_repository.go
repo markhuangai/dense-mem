@@ -88,7 +88,7 @@ func (r *SkillPackImportRepositoryImpl) UpdateImportStatus(ctx context.Context, 
 			    applied_count = $4,
 			    skipped_count = $5,
 			    summary = $6::jsonb,
-			    completed_at = CASE WHEN $3::text IN ('applied', 'needs_review') THEN $7 ELSE completed_at END,
+			    completed_at = CASE WHEN $3::text IN ('applied', 'failed', 'needs_review') THEN $7 ELSE completed_at END,
 			    updated_at = $7
 			WHERE team_id = $1 AND import_id = $2
 		`, teamID, importID, status, appliedCount, skippedCount, string(summaryJSON), now).Error

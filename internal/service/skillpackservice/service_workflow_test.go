@@ -509,7 +509,7 @@ func TestReviewImportSkipsDuplicateFragmentMutationAndLedger(t *testing.T) {
 	}
 }
 
-func TestImportAbortsAndCompensatesWhenItemLedgerAppendFails(t *testing.T) {
+func TestImportReturnsRecoverableResultWhenItemLedgerAppendFails(t *testing.T) {
 	graph := &recordingGraph{}
 	ledger := &fakeLedger{appendErr: errors.New("append failed"), appendErrAfter: 2}
 	svc := New(Dependencies{
@@ -523,14 +523,14 @@ func TestImportAbortsAndCompensatesWhenItemLedgerAppendFails(t *testing.T) {
 		Artifact: packWithItem(SourceKindManual),
 		Mode:     ModeReview,
 	})
-	if err == nil || !strings.Contains(err.Error(), "item 0: append failed") {
-		t.Fatalf("Import err = %v, want item append failure", err)
+	if err != nil {
+		t.Fatalf("Import err = %v, want recoverable result", err)
 	}
-	if res != nil {
-		t.Fatalf("result = %+v, want nil on aborted import", res)
+	if res == nil || res.ImportID == "" || res.Status != domain.SkillPackImportStatusFailed || !strings.Contains(res.Error, "item 0: append failed") {
+		t.Fatalf("result = %+v, want failed status with rollback id", res)
 	}
-	if ledger.updateCalls != 0 {
-		t.Fatalf("update calls = %d, want no applied status update", ledger.updateCalls)
+	if ledger.updateCalls != 1 || ledger.status != domain.SkillPackImportStatusFailed {
+		t.Fatalf("ledger update calls/status = %d/%q, want one failed update", ledger.updateCalls, ledger.status)
 	}
 	if !graphWriteContains(graph, "DETACH DELETE c") {
 		t.Fatalf("graph writes = %q, want created claim cleanup before abort", graph.writeQueries)
@@ -672,14 +672,14 @@ func TestTrustedImportValidatesAndPromotes(t *testing.T) {
 			Artifact: packWithItem(SourceKindFact),
 			Mode:     ModeTrusted,
 		})
-		if err == nil || !strings.Contains(err.Error(), "fact promote service is required") {
-			t.Fatalf("Import err = %v, want fact promote service error", err)
+		if err != nil {
+			t.Fatalf("Import err = %v, want recoverable result", err)
 		}
-		if res != nil {
-			t.Fatalf("result = %+v, want nil on aborted import", res)
+		if res == nil || res.ImportID == "" || res.Status != domain.SkillPackImportStatusFailed || !strings.Contains(res.Error, "fact promote service is required") {
+			t.Fatalf("result = %+v, want failed status with rollback id", res)
 		}
-		if ledger.updateCalls != 0 {
-			t.Fatalf("update calls = %d, want no applied status update", ledger.updateCalls)
+		if ledger.updateCalls != 1 || ledger.status != domain.SkillPackImportStatusFailed {
+			t.Fatalf("ledger update calls/status = %d/%q, want one failed update", ledger.updateCalls, ledger.status)
 		}
 	})
 }

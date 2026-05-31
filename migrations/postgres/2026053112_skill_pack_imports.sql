@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS skill_pack_imports (
     schema_version TEXT NOT NULL,
     name TEXT NOT NULL,
     mode VARCHAR(16) NOT NULL CHECK (mode IN ('review', 'trusted')),
-    status VARCHAR(24) NOT NULL CHECK (status IN ('inspecting', 'needs_review', 'applied', 'rolled_back')),
+    status VARCHAR(24) NOT NULL CHECK (status IN ('inspecting', 'needs_review', 'applied', 'failed', 'rolled_back')),
     item_count INTEGER NOT NULL DEFAULT 0 CHECK (item_count >= 0),
     applied_count INTEGER NOT NULL DEFAULT 0 CHECK (applied_count >= 0),
     skipped_count INTEGER NOT NULL DEFAULT 0 CHECK (skipped_count >= 0),

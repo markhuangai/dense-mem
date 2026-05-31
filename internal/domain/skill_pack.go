@@ -5,6 +5,7 @@ import "time"
 const (
 	SkillPackImportStatusInspecting  = "inspecting"
 	SkillPackImportStatusApplied     = "applied"
+	SkillPackImportStatusFailed      = "failed"
 	SkillPackImportStatusRolledBack  = "rolled_back"
 	SkillPackImportStatusNeedsReview = "needs_review"
 
