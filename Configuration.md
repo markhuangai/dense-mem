@@ -33,12 +33,15 @@ break search.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `HTTP_ADDR` | `:8080` | Main server address inside the container. |
 | `CONTROL_HTTP_ADDR` | `:8090` | Control portal address inside the container. |
 | `CONTROL_PORTAL_BIND` | `127.0.0.1` | Host interface for the control portal. |
 | `CONTROL_PORTAL_PORT` | `8090` | Host port for the control portal. |
 | `NEO4J_HTTP_PORT` | `7474` | Local Neo4j browser port. |
 | `NEO4J_BOLT_PORT` | `7687` | Local Neo4j driver port. |
+
+The main Dense-Mem server always listens on container port `8080`. Change host
+exposure with the compose port variables, such as `DENSE_MEM_PORT` for the base
+example or `DENSE_MEM_DEMO_PORT` for the demo example.
 
 Keep the control portal on `127.0.0.1` for local use. It manages API keys.
 
