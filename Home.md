@@ -51,6 +51,7 @@ flowchart LR
 
 | Goal | Page |
 | --- | --- |
+| Try Dense-Mem before installing anything | [Hosted Demo](Hosted-Demo) |
 | Run Dense-Mem with the fewest choices | [Quick Start](Quick-Start) |
 | Learn what to do after it is running | [Using Dense-Mem](Using-Dense-Mem) |
 | Review every important setting | [Configuration](Configuration) |
