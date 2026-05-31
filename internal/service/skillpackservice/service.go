@@ -308,6 +308,8 @@ func (s *service) Import(ctx context.Context, profileID string, req ImportReques
 		"mode":          req.Mode,
 		"artifact_hash": hash,
 	}); err != nil {
+		// Return a recoverable result: callers need import_id to roll back
+		// graph changes already covered by durable change records.
 		out.Status = "status_update_failed"
 		out.Error = fmt.Sprintf("skill pack import status update failed: %v", err)
 		return out, nil

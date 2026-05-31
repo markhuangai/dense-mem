@@ -468,6 +468,37 @@ func TestBuildDefaultSkillPackTools_InvokeSuccessAndInvalidInput(t *testing.T) {
 	}
 }
 
+func TestImportSkillPackReturnsRecoverableResultOnPartialError(t *testing.T) {
+	skillPack := &stubSkillPackService{
+		importResult: &skillpackservice.ImportResult{
+			ImportID:     "import-rollback",
+			ArtifactHash: "hash",
+			Mode:         skillpackservice.ModeReview,
+			Status:       "status_update_failed",
+		},
+		importErr: errors.New("update failed"),
+	}
+	reg, _ := BuildDefault(Dependencies{SkillPack: skillPack})
+	tool, _ := reg.Get("import_skill_pack")
+
+	out, err := tool.Invoke(context.Background(), "profile-skill", map[string]any{
+		"mode":          "review",
+		"artifact_json": `{"schema_version":"dense-mem.skill_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"manual"}]}`,
+	})
+	if err != nil {
+		t.Fatalf("import_skill_pack Invoke: %v", err)
+	}
+	if out["import_id"] != "import-rollback" {
+		t.Fatalf("import_id = %v; want import-rollback", out["import_id"])
+	}
+	if out["status"] != "status_update_failed" {
+		t.Fatalf("status = %v; want status_update_failed", out["status"])
+	}
+	if out["error"] != "update failed" {
+		t.Fatalf("error = %v; want update failed", out["error"])
+	}
+}
+
 func TestBuildDefault_FragmentInvokerEdgeBranches(t *testing.T) {
 	t.Run("save duplicate includes duplicate_of", func(t *testing.T) {
 		reg, _ := BuildDefault(Dependencies{FragmentCreate: duplicateCreate{}})
@@ -748,7 +779,9 @@ func (s *stubCommunityList) List(ctx context.Context, profileID string, limit in
 }
 
 type stubSkillPackService struct {
-	lastProfile string
+	lastProfile  string
+	importResult *skillpackservice.ImportResult
+	importErr    error
 }
 
 func (s *stubSkillPackService) FindCandidates(ctx context.Context, profileID string, req skillpackservice.FindCandidatesRequest) (*skillpackservice.FindCandidatesResult, error) {
@@ -796,6 +829,9 @@ func (s *stubSkillPackService) Inspect(ctx context.Context, profileID string, re
 
 func (s *stubSkillPackService) Import(ctx context.Context, profileID string, req skillpackservice.ImportRequest) (*skillpackservice.ImportResult, error) {
 	s.lastProfile = profileID
+	if s.importResult != nil || s.importErr != nil {
+		return s.importResult, s.importErr
+	}
 	return &skillpackservice.ImportResult{
 		ImportID:     "import-1",
 		ArtifactHash: "hash",

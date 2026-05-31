@@ -137,6 +137,15 @@ func importSkillPackTool(deps Dependencies) Tool {
 			}
 			res, err := deps.SkillPack.Import(ctx, profileID, req)
 			if err != nil {
+				if res != nil && res.ImportID != "" {
+					if res.Status == "" {
+						res.Status = "error"
+					}
+					if res.Error == "" {
+						res.Error = err.Error()
+					}
+					return structToMap(res)
+				}
 				return nil, err
 			}
 			return structToMap(res)
