@@ -309,13 +309,15 @@ func main() {
 	recallClaimSearcher := recallservice.NewClaimSearcher(profileScopeEnforcer)
 
 	var (
-		claimVerifyRegistrySvc claimservice.VerifyClaimService = unavailableVerifyClaimService{}
-		claimVerifyHTTPSvc     claimservice.VerifyClaimService = unavailableVerifyClaimService{}
+		claimVerifyRegistrySvc   claimservice.VerifyClaimService = unavailableVerifyClaimService{}
+		claimVerifyHTTPSvc       claimservice.VerifyClaimService = unavailableVerifyClaimService{}
+		skillPackConflictDecider skillpackservice.ConflictDecider
 	)
 	if verifierConfigured(&cfg) {
 		baseVerifier := verifier.NewOpenAIVerifier(&cfg, nil)
 		retryVerifier := verifier.NewRetryVerifier(baseVerifier, &cfg, logger)
 		retryVerifier.SetMetrics(discoverabilityMetrics)
+		skillPackConflictDecider = skillpackservice.NewOpenAIConflictDecider(&cfg, nil)
 
 		claimVerifyRegistrySvc = claimservice.NewVerifyClaimService(
 			profileScopeEnforcer,
@@ -409,16 +411,17 @@ func main() {
 		FactList:       factListSvc,
 	})
 	skillPackSvc := skillpackservice.New(skillpackservice.Dependencies{
-		FragmentCreate: fragmentCreateRegistrySvc,
-		ClaimCreate:    claimCreateSvc,
-		ClaimGet:       claimGetSvc,
-		ClaimList:      claimListSvc,
-		FactPromote:    factPromoteSvc,
-		FactGet:        factGetSvc,
-		FactList:       factListSvc,
-		Graph:          profileScopeEnforcer,
-		Ledger:         skillPackImportRepo,
-		HistoryDays:    cfg.GetSkillPackImportHistoryDays(),
+		FragmentCreate:  fragmentCreateRegistrySvc,
+		ClaimCreate:     claimCreateSvc,
+		ClaimGet:        claimGetSvc,
+		ClaimList:       claimListSvc,
+		FactPromote:     factPromoteSvc,
+		FactGet:         factGetSvc,
+		FactList:        factListSvc,
+		ConflictDecider: skillPackConflictDecider,
+		Graph:           profileScopeEnforcer,
+		Ledger:          skillPackImportRepo,
+		HistoryDays:     cfg.GetSkillPackImportHistoryDays(),
 	})
 
 	// Tool registry is the single source of truth for MCP / HTTP catalog / OpenAPI.

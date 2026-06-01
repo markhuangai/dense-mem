@@ -23,6 +23,7 @@ const (
 	DecisionImportAnyway    = "import_anyway"
 	DecisionSkip            = "skip"
 	DecisionSupersedeLocal  = "supersede_local"
+	DecisionDemoteToClaim   = "demote_to_claim"
 	defaultHistoryRetention = 30 * 24 * time.Hour
 )
 
@@ -45,17 +46,22 @@ type ImportLedger interface {
 }
 
 type Dependencies struct {
-	FragmentCreate fragmentservice.CreateFragmentService
-	ClaimCreate    claimservice.CreateClaimService
-	ClaimGet       claimservice.GetClaimService
-	ClaimList      claimservice.ListClaimsService
-	FactPromote    factservice.PromoteClaimService
-	FactGet        factservice.GetFactService
-	FactList       factservice.ListFactsService
-	Graph          GraphStore
-	Ledger         ImportLedger
-	HistoryDays    int
-	HTTPClient     ArtifactHTTPClient
+	FragmentCreate  fragmentservice.CreateFragmentService
+	ClaimCreate     claimservice.CreateClaimService
+	ClaimGet        claimservice.GetClaimService
+	ClaimList       claimservice.ListClaimsService
+	FactPromote     factservice.PromoteClaimService
+	FactGet         factservice.GetFactService
+	FactList        factservice.ListFactsService
+	ConflictDecider ConflictDecider
+	Graph           GraphStore
+	Ledger          ImportLedger
+	HistoryDays     int
+	HTTPClient      ArtifactHTTPClient
+}
+
+type ConflictDecider interface {
+	Decide(ctx context.Context, req ConflictDecisionRequest) (ConflictDecisionResult, error)
 }
 
 type SkillPack struct {
@@ -105,10 +111,11 @@ type ExportResult struct {
 }
 
 type InspectRequest struct {
-	Artifact       *SkillPack `json:"artifact,omitempty"`
-	ArtifactJSON   string     `json:"artifact_json,omitempty"`
-	URL            string     `json:"url,omitempty"`
-	ExpectedSHA256 string     `json:"expected_sha256,omitempty"`
+	Artifact           *SkillPack `json:"artifact,omitempty"`
+	ArtifactJSON       string     `json:"artifact_json,omitempty"`
+	URL                string     `json:"url,omitempty"`
+	ExpectedSHA256     string     `json:"expected_sha256,omitempty"`
+	RecommendDecisions bool       `json:"recommend_decisions,omitempty"`
 }
 
 type InspectResult struct {
@@ -122,14 +129,15 @@ type InspectResult struct {
 }
 
 type InspectItem struct {
-	Index            int            `json:"index"`
-	Item             SkillPackItem  `json:"item"`
-	Status           string         `json:"status"`
-	Severity         string         `json:"severity,omitempty"`
-	MatchingFacts    []FactSummary  `json:"matching_facts,omitempty"`
-	ConflictingFacts []FactSummary  `json:"conflicting_facts,omitempty"`
-	MatchingClaims   []ClaimSummary `json:"matching_claims,omitempty"`
-	Message          string         `json:"message,omitempty"`
+	Index             int            `json:"index"`
+	Item              SkillPackItem  `json:"item"`
+	Status            string         `json:"status"`
+	Severity          string         `json:"severity,omitempty"`
+	MatchingFacts     []FactSummary  `json:"matching_facts,omitempty"`
+	ConflictingFacts  []FactSummary  `json:"conflicting_facts,omitempty"`
+	SupersededMatches []FactSummary  `json:"superseded_matches,omitempty"`
+	MatchingClaims    []ClaimSummary `json:"matching_claims,omitempty"`
+	Message           string         `json:"message,omitempty"`
 }
 
 type FactSummary struct {
@@ -149,25 +157,54 @@ type ClaimSummary struct {
 }
 
 type ConflictPrompt struct {
-	Index          int      `json:"index"`
-	Reason         string   `json:"reason"`
-	FactIDs        []string `json:"fact_ids,omitempty"`
-	AllowedActions []string `json:"allowed_actions"`
+	Index             int                     `json:"index"`
+	Reason            string                  `json:"reason"`
+	FactIDs           []string                `json:"fact_ids,omitempty"`
+	SupersededFactIDs []string                `json:"superseded_fact_ids,omitempty"`
+	AllowedActions    []string                `json:"allowed_actions"`
+	Recommendation    *DecisionRecommendation `json:"recommendation,omitempty"`
 }
 
 type ImportRequest struct {
-	Artifact          *SkillPack         `json:"artifact,omitempty"`
-	ArtifactJSON      string             `json:"artifact_json,omitempty"`
-	URL               string             `json:"url,omitempty"`
-	ExpectedSHA256    string             `json:"expected_sha256,omitempty"`
-	Mode              string             `json:"mode"`
-	SelectedItems     []int              `json:"selected_items,omitempty"`
-	ConflictDecisions []ConflictDecision `json:"conflict_decisions,omitempty"`
+	Artifact            *SkillPack         `json:"artifact,omitempty"`
+	ArtifactJSON        string             `json:"artifact_json,omitempty"`
+	URL                 string             `json:"url,omitempty"`
+	ExpectedSHA256      string             `json:"expected_sha256,omitempty"`
+	Mode                string             `json:"mode"`
+	SelectedItems       []int              `json:"selected_items,omitempty"`
+	ConflictDecisions   []ConflictDecision `json:"conflict_decisions,omitempty"`
+	AutoDecideConflicts bool               `json:"auto_decide_conflicts,omitempty"`
 }
 
 type ConflictDecision struct {
 	Index  int    `json:"index"`
 	Action string `json:"action"`
+}
+
+type ConflictDecisionRequest struct {
+	ProfileID    string         `json:"profile_id"`
+	ArtifactHash string         `json:"artifact_hash"`
+	Mode         string         `json:"mode"`
+	SourceURL    string         `json:"source_url,omitempty"`
+	Item         SkillPackItem  `json:"item"`
+	Inspection   InspectItem    `json:"inspection"`
+	Prompt       ConflictPrompt `json:"prompt"`
+}
+
+type ConflictDecisionResult struct {
+	Action     string  `json:"action"`
+	Confidence float64 `json:"confidence"`
+	Rationale  string  `json:"rationale"`
+	Model      string  `json:"model,omitempty"`
+	RawJSON    string  `json:"raw_json,omitempty"`
+}
+
+type DecisionRecommendation struct {
+	Action     string  `json:"action,omitempty"`
+	Confidence float64 `json:"confidence,omitempty"`
+	Rationale  string  `json:"rationale,omitempty"`
+	Model      string  `json:"model,omitempty"`
+	Error      string  `json:"error,omitempty"`
 }
 
 type ImportItemResult struct {
