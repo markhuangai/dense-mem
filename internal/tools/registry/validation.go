@@ -53,7 +53,11 @@ func validateSchemaValue(name string, value any, schema map[string]any) error {
 			return fmt.Errorf("%s must be at least %d characters", name, int(minLen))
 		}
 		if maxLen, ok := schemaNumber(schema["maxLength"]); ok && len(s) > int(maxLen) {
-			return fmt.Errorf("%s exceeds maximum length of %d", name, int(maxLen))
+			message := fmt.Sprintf("%s exceeds maximum length of %d", name, int(maxLen))
+			if hint, ok := schema["x-validation-hint"].(string); ok && hint != "" {
+				message = message + ": " + hint
+			}
+			return fmt.Errorf("%s", message)
 		}
 	case "integer":
 		number, ok := schemaNumber(value)

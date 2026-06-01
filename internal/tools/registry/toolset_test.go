@@ -179,6 +179,17 @@ func TestValidateInputRejectsNestedSaveMemoryFields(t *testing.T) {
 		t.Fatal("save_memory tool not registered")
 	}
 
+	properties := tool.InputSchema["properties"].(map[string]any)
+	contentSchema := properties["content"].(map[string]any)
+	if got, want := contentSchema["maxLength"], memoryEntryMaxLength; got != want {
+		t.Fatalf("save_memory content maxLength = %v; want %d", got, want)
+	}
+	if err := ValidateInput(tool, map[string]any{
+		"content": strings.Repeat("x", memoryEntryMaxLength+1),
+	}); err == nil || !strings.Contains(err.Error(), "Split large scenarios") {
+		t.Fatalf("ValidateInput long content error = %v; want split guidance", err)
+	}
+
 	if err := ValidateInput(tool, map[string]any{
 		"content":     "hello",
 		"source_type": "webhook",

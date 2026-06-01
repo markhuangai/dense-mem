@@ -108,12 +108,12 @@ func defaultTools(deps Dependencies) []Tool {
 func saveMemoryTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "save_memory",
-		Description: "Persist a new SourceFragment for the caller's profile. The server produces the embedding; text and metadata are stored with an audit entry. Supports idempotency via idempotency_key or content hash.",
+		Description: "Persist one granular SourceFragment for the caller's profile. Keep each entry under 1000 characters and split large scenarios into claim-worthy evidence pieces so future claims can attach to precise support. The server produces the embedding; text and metadata are stored with an audit entry. Supports idempotency via idempotency_key or content hash.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"content"},
 			"properties": map[string]any{
-				"content":         schemaString("Fragment text.", 8192),
+				"content":         memoryEntryString("Fragment text."),
 				"source_type":     schemaEnum([]string{"conversation", "document", "observation", "manual"}),
 				"source":          schemaString("Free-form provenance.", 256),
 				"authority":       schemaEnum([]string{"authoritative", "primary", "secondary", "inferred", "unknown"}),
@@ -467,6 +467,17 @@ func graphQueryTool(deps Dependencies) Tool {
 }
 
 // --- schema + marshaling helpers ------------------------------------------
+
+const (
+	memoryEntryMaxLength = 999
+	memoryEntryGuidance  = "Split large scenarios into multiple semantic entries under 1000 characters. Store one decision, fact, correction, preference, project milestone, or other claim-worthy unit per entry; attach typed claims to the smallest supporting entry and use multiple supported_by IDs only when one claim needs cross-entry evidence."
+)
+
+func memoryEntryString(description string) map[string]any {
+	s := schemaString(description+" "+memoryEntryGuidance, memoryEntryMaxLength)
+	s["x-validation-hint"] = memoryEntryGuidance
+	return s
+}
 
 func schemaString(description string, maxLen int) map[string]any {
 	s := map[string]any{"type": "string"}
