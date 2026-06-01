@@ -1,11 +1,23 @@
 <h1 align="center">Dense-Mem</h1>
 
 <p align="center">
+  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/Dense--Mem-trustworthy_AI_memory-0f766e?style=for-the-badge&logo=github&logoColor=white" alt="Dense-Mem" />
 </p>
 
 <p align="center">
   <strong>Self-hosted memory for AI agents that preserves evidence, detects conflicts, and never silently rewrites facts.</strong>
+</p>
+
+<p align="center">
+  <a href="https://demo-dense-mem.markhuang.ai"><img src="https://img.shields.io/badge/Try%20Dense--Mem%20live-Open%20hosted%20demo-0f766e?style=for-the-badge" alt="Try Dense-Mem live" /></a>
+</p>
+
+<p align="center">
+  <strong>Create a temporary isolated team and test Dense-Mem before self-hosting.</strong>
 </p>
 
 <p align="center">
