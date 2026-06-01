@@ -174,6 +174,7 @@ func (s *stubConfigProvider) GetClaimWriteRateLimit() int            { return 0 
 func (s *stubConfigProvider) GetClaimReadRateLimit() int             { return 0 }
 func (s *stubConfigProvider) GetRecallValidatedClaimWeight() float64 { return 0 }
 func (s *stubConfigProvider) GetPromoteTxTimeoutSeconds() int        { return 0 }
+func (s *stubConfigProvider) GetSkillPackImportHistoryDays() int     { return 30 }
 func (s *stubConfigProvider) GetControlHTTPAddr() string             { return "127.0.0.1:8090" }
 func (s *stubConfigProvider) GetControlPortalToken() string          { return "" }
 

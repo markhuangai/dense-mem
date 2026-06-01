@@ -36,6 +36,7 @@ bun-debug.log*
 
 # Test
 coverage/
+coverage.out
 .nyc_output/
 tests/uat/test-results/
 tests/uat/playwright-report/

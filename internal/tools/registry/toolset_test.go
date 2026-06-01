@@ -15,6 +15,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/service/recallservice"
+	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 	"github.com/markhuangai/dense-mem/internal/tools/graphquery"
 	"github.com/markhuangai/dense-mem/internal/tools/keywordsearch"
 	"github.com/markhuangai/dense-mem/internal/tools/semanticsearch"
@@ -93,6 +94,8 @@ func TestBuildDefault_RegistersV1ToolSurface(t *testing.T) {
 		"save_memory", "get_memory", "list_recent_memories", "recall_memory",
 		"remember", "import_memories", "reflect_memories", "confirm_memory",
 		"keyword-search", "semantic-search", "graph-query",
+		"find_skill_pack_candidates", "export_skill_pack", "inspect_skill_pack",
+		"import_skill_pack", "rollback_skill_pack_import",
 	}
 	for _, name := range required {
 		if _, ok := reg.Get(name); !ok {
@@ -409,6 +412,93 @@ func TestBuildDefault_SearchAndRecallInvokers(t *testing.T) {
 	}
 }
 
+func TestBuildDefaultSkillPackTools_InvokeSuccessAndInvalidInput(t *testing.T) {
+	skillPack := &stubSkillPackService{}
+	reg, _ := BuildDefault(Dependencies{SkillPack: skillPack})
+
+	cases := []struct {
+		name      string
+		input     map[string]any
+		wantField string
+		wantValue any
+	}{
+		{name: "find_skill_pack_candidates", input: map[string]any{"query": "skill packs", "limit": float64(5)}, wantField: "candidates"},
+		{name: "export_skill_pack", input: map[string]any{"name": "Pack", "manual_items": []any{map[string]any{"subject": "assistant", "predicate": "has_skill", "object": "testing", "source_kind": "manual"}}}, wantField: "sha256", wantValue: strings.Repeat("a", 64)},
+		{name: "inspect_skill_pack", input: map[string]any{"artifact_json": `{"schema_version":"dense-mem.skill_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"manual"}]}`}, wantField: "artifact_hash", wantValue: "hash"},
+		{name: "import_skill_pack", input: map[string]any{"mode": "review", "artifact_json": `{"schema_version":"dense-mem.skill_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"manual"}]}`}, wantField: "import_id", wantValue: "import-1"},
+		{name: "rollback_skill_pack_import", input: map[string]any{"import_id": "import-1"}, wantField: "status", wantValue: "rolled_back"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tool, _ := reg.Get(tc.name)
+			out, err := tool.Invoke(context.Background(), "profile-skill", tc.input)
+			if err != nil {
+				t.Fatalf("%s Invoke: %v", tc.name, err)
+			}
+			if skillPack.lastProfile != "profile-skill" {
+				t.Fatalf("%s profile = %q, want profile-skill", tc.name, skillPack.lastProfile)
+			}
+			if tc.wantValue != nil && out[tc.wantField] != tc.wantValue {
+				t.Fatalf("%s %s = %v; want %v", tc.name, tc.wantField, out[tc.wantField], tc.wantValue)
+			}
+			if tc.wantValue == nil && out[tc.wantField] == nil {
+				t.Fatalf("%s missing field %s in %v", tc.name, tc.wantField, out)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name string
+		in   map[string]any
+		want string
+	}{
+		{name: "find_skill_pack_candidates", in: map[string]any{"query": func() {}}, want: "find_skill_pack_candidates: invalid input"},
+		{name: "export_skill_pack", in: map[string]any{"name": func() {}}, want: "export_skill_pack: invalid input"},
+		{name: "inspect_skill_pack", in: map[string]any{"artifact_json": func() {}}, want: "inspect_skill_pack: invalid input"},
+		{name: "import_skill_pack", in: map[string]any{"mode": func() {}}, want: "import_skill_pack: invalid input"},
+		{name: "rollback_skill_pack_import", in: map[string]any{"import_id": func() {}}, want: "rollback_skill_pack_import: invalid input"},
+	} {
+		t.Run(tc.name+" invalid input", func(t *testing.T) {
+			tool, _ := reg.Get(tc.name)
+			_, err := tool.Invoke(context.Background(), "profile-skill", tc.in)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("%s err = %v; want %q", tc.name, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestImportSkillPackReturnsRecoverableResultOnPartialError(t *testing.T) {
+	skillPack := &stubSkillPackService{
+		importResult: &skillpackservice.ImportResult{
+			ImportID:     "import-rollback",
+			ArtifactHash: "hash",
+			Mode:         skillpackservice.ModeReview,
+			Status:       "status_update_failed",
+		},
+		importErr: errors.New("update failed"),
+	}
+	reg, _ := BuildDefault(Dependencies{SkillPack: skillPack})
+	tool, _ := reg.Get("import_skill_pack")
+
+	out, err := tool.Invoke(context.Background(), "profile-skill", map[string]any{
+		"mode":          "review",
+		"artifact_json": `{"schema_version":"dense-mem.skill_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"manual"}]}`,
+	})
+	if err != nil {
+		t.Fatalf("import_skill_pack Invoke: %v", err)
+	}
+	if out["import_id"] != "import-rollback" {
+		t.Fatalf("import_id = %v; want import-rollback", out["import_id"])
+	}
+	if out["status"] != "status_update_failed" {
+		t.Fatalf("status = %v; want status_update_failed", out["status"])
+	}
+	if out["error"] != "update failed" {
+		t.Fatalf("error = %v; want update failed", out["error"])
+	}
+}
+
 func TestBuildDefault_FragmentInvokerEdgeBranches(t *testing.T) {
 	t.Run("save duplicate includes duplicate_of", func(t *testing.T) {
 		reg, _ := BuildDefault(Dependencies{FragmentCreate: duplicateCreate{}})
@@ -686,4 +776,76 @@ func (s *stubCommunityList) List(ctx context.Context, profileID string, limit in
 		return nil, s.err
 	}
 	return []*domain.Community{{CommunityID: "community-1", ProfileID: profileID, MemberCount: 2}}, nil
+}
+
+type stubSkillPackService struct {
+	lastProfile  string
+	importResult *skillpackservice.ImportResult
+	importErr    error
+}
+
+func (s *stubSkillPackService) FindCandidates(ctx context.Context, profileID string, req skillpackservice.FindCandidatesRequest) (*skillpackservice.FindCandidatesResult, error) {
+	s.lastProfile = profileID
+	return &skillpackservice.FindCandidatesResult{Candidates: []skillpackservice.Candidate{{
+		ID:   "candidate-1",
+		Type: "fact",
+		Item: skillpackservice.SkillPackItem{
+			Subject:    "assistant",
+			Predicate:  "has_skill",
+			Object:     req.Query,
+			SourceKind: skillpackservice.SourceKindFact,
+		},
+	}}}, nil
+}
+
+func (s *stubSkillPackService) Export(ctx context.Context, profileID string, req skillpackservice.ExportRequest) (*skillpackservice.ExportResult, error) {
+	s.lastProfile = profileID
+	return &skillpackservice.ExportResult{
+		Artifact: skillpackservice.SkillPack{
+			SchemaVersion: skillpackservice.SchemaVersion,
+			Name:          req.Name,
+			Items: []skillpackservice.SkillPackItem{{
+				Subject:    "assistant",
+				Predicate:  "has_skill",
+				Object:     "testing",
+				SourceKind: skillpackservice.SourceKindManual,
+			}},
+		},
+		CanonicalJSON: "{}",
+		SHA256:        strings.Repeat("a", 64),
+		ItemCount:     1,
+	}, nil
+}
+
+func (s *stubSkillPackService) Inspect(ctx context.Context, profileID string, req skillpackservice.InspectRequest) (*skillpackservice.InspectResult, error) {
+	s.lastProfile = profileID
+	return &skillpackservice.InspectResult{
+		ArtifactHash: "hash",
+		Name:         "Pack",
+		ItemCount:    1,
+		Items:        []skillpackservice.InspectItem{{Index: 0, Status: "new"}},
+	}, nil
+}
+
+func (s *stubSkillPackService) Import(ctx context.Context, profileID string, req skillpackservice.ImportRequest) (*skillpackservice.ImportResult, error) {
+	s.lastProfile = profileID
+	if s.importResult != nil || s.importErr != nil {
+		return s.importResult, s.importErr
+	}
+	return &skillpackservice.ImportResult{
+		ImportID:     "import-1",
+		ArtifactHash: "hash",
+		Mode:         req.Mode,
+		Status:       domain.SkillPackImportStatusApplied,
+		AppliedCount: 1,
+	}, nil
+}
+
+func (s *stubSkillPackService) Rollback(ctx context.Context, profileID string, req skillpackservice.RollbackRequest) (*skillpackservice.RollbackResult, error) {
+	s.lastProfile = profileID
+	return &skillpackservice.RollbackResult{
+		ImportID:      req.ImportID,
+		Status:        domain.SkillPackImportStatusRolledBack,
+		RevertedCount: 2,
+	}, nil
 }

@@ -27,6 +27,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/service/recallservice"
+	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/storage/neo4j"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -167,6 +168,7 @@ func main() {
 	apiKeyRepo := repository.NewAPIKeyRepository(pgDB.GetDB(), rlsHelper)
 	securityRepo := repository.NewSecurityRepository(pgDB.GetDB(), rlsHelper)
 	usageMetricsRepo := repository.NewUsageMetricsRepository(pgDB.GetDB(), rlsHelper)
+	skillPackImportRepo := repository.NewSkillPackImportRepository(pgDB.GetDB(), rlsHelper)
 
 	// ========================================
 	// Neo4j profile scope enforcer and graph writer
@@ -287,13 +289,15 @@ func main() {
 	recallClaimSearcher := recallservice.NewClaimSearcher(profileScopeEnforcer)
 
 	var (
-		claimVerifyRegistrySvc claimservice.VerifyClaimService = unavailableVerifyClaimService{}
-		claimVerifyHTTPSvc     claimservice.VerifyClaimService = unavailableVerifyClaimService{}
+		claimVerifyRegistrySvc   claimservice.VerifyClaimService = unavailableVerifyClaimService{}
+		claimVerifyHTTPSvc       claimservice.VerifyClaimService = unavailableVerifyClaimService{}
+		skillPackConflictDecider skillpackservice.ConflictDecider
 	)
 	if verifierConfigured(&cfg) {
 		baseVerifier := verifier.NewOpenAIVerifier(&cfg, nil)
 		retryVerifier := verifier.NewRetryVerifier(baseVerifier, &cfg, logger)
 		retryVerifier.SetMetrics(discoverabilityMetrics)
+		skillPackConflictDecider = skillpackservice.NewOpenAIConflictDecider(&cfg, nil)
 
 		claimVerifyRegistrySvc = claimservice.NewVerifyClaimService(
 			profileScopeEnforcer,
@@ -347,6 +351,19 @@ func main() {
 		FactConfirm:    factConfirmSvc,
 		FactList:       factListSvc,
 	})
+	skillPackSvc := skillpackservice.New(skillpackservice.Dependencies{
+		FragmentCreate:  fragmentCreateRegistrySvc,
+		ClaimCreate:     claimCreateSvc,
+		ClaimGet:        claimGetSvc,
+		ClaimList:       claimListSvc,
+		FactPromote:     factPromoteSvc,
+		FactGet:         factGetSvc,
+		FactList:        factListSvc,
+		ConflictDecider: skillPackConflictDecider,
+		Graph:           profileScopeEnforcer,
+		Ledger:          skillPackImportRepo,
+		HistoryDays:     cfg.GetSkillPackImportHistoryDays(),
+	})
 
 	var (
 		communityDetectRegistrySvc communityservice.DetectCommunityService = unavailableCommunityDetectService{}
@@ -381,6 +398,7 @@ func main() {
 		CommunityGet:                communityGetSvc,
 		CommunityList:               communityListSvc,
 		Memory:                      memorySvc,
+		SkillPack:                   skillPackSvc,
 	})
 	if err != nil {
 		log.Fatalf("failed to build tool registry: %v", err)
