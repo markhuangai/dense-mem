@@ -25,6 +25,7 @@ call when they need to save or recall information.
 | Personal coding memory | "Remember that I prefer small pull requests and explicit error handling." |
 | Project memory | "Recall the deployment steps for my API service." |
 | Team memory | "Remember the frontend team uses Bun and strict TypeScript." |
+| Portable memory handoff | "Package the validated onboarding facts so another team can inspect and import them." |
 | AI assistant continuity | "Before answering, recall what you know about this project." |
 | Safer corrections | "Actually, keep the new preference and replace the old one." |
 
@@ -78,6 +79,10 @@ non-conflicting claims into active facts.
 
 That means memory is not only a pile of notes. It keeps track of where a memory
 came from and whether it became an active fact.
+
+Dense-Mem can also package selected facts, validated claims, and manual triples
+as portable skill packs. A skill pack is canonical JSON plus a SHA-256 hash, so
+another team can inspect the contents before importing them.
 
 ## What Dense-Mem Does Not Do
 

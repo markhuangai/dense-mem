@@ -31,6 +31,7 @@ Use normal language. You do not need to know the tool names.
 | Recall context | "Before we start, recall what you know about this project." |
 | Check memory health | "Review my stored memories and tell me if anything needs clarification." |
 | Correct a memory | "Replace the old deployment note with this new one." |
+| Share reusable knowledge | "Package the validated React testing memories so another team can inspect and import them." |
 
 ## What Dense-Mem Returns
 
@@ -97,6 +98,82 @@ Which preference should I keep: concise answers or long detailed answers?
 ```
 
 After you answer, the assistant can confirm which memory should stay active.
+
+## Portable Skill Packs
+
+Skill packs move selected memory between Dense-Mem teams or deployments. They are
+best for reusable knowledge such as project onboarding facts, coding standards,
+tooling conventions, or domain notes that another assistant should inspect
+before trusting.
+
+The normal workflow is:
+
+```mermaid
+sequenceDiagram
+  participant Source as Source team
+  participant Assistant
+  participant Target as Target team
+
+  Assistant->>Source: find_skill_pack_candidates(query)
+  Source-->>Assistant: candidate facts and validated claims
+  Assistant->>Source: export_skill_pack(...)
+  Source-->>Assistant: canonical_json and sha256
+  Assistant->>Target: inspect_skill_pack(...)
+  Target-->>Assistant: duplicates, conflicts, and decisions
+  Assistant->>Target: import_skill_pack(...)
+  Target-->>Assistant: import_id and item results
+```
+
+Ask your assistant to do this in normal language:
+
+```text
+Find memories about our repository review standards that could be exported as a
+skill pack.
+```
+
+Then:
+
+```text
+Export the selected memories as a skill pack named "Repo review standards" and
+show me the SHA-256 hash.
+```
+
+Before importing into another team, inspect the artifact:
+
+```text
+Inspect this skill pack JSON before importing it. Tell me which items are new,
+duplicates, or conflicts.
+```
+
+Import in review mode when you want the pack to create evidence and candidate
+claims without promoting trusted facts:
+
+```text
+Import this skill pack in review mode.
+```
+
+Use trusted mode only for artifacts you are willing to treat as authoritative.
+Trusted mode can validate imported claims and can promote `source_fact` items to
+active facts. If an item conflicts with an active local fact, Dense-Mem returns
+`decisions_required` instead of silently replacing local memory.
+
+Conflict decisions are explicit:
+
+| Decision | Meaning |
+| --- | --- |
+| `skip` | Do not import that item. |
+| `import_anyway` | Import the item without superseding local facts. |
+| `supersede_local` | Supersede conflicting active local facts with the imported item. |
+| `demote_to_claim` | For `source_fact` items, keep the import as a validated claim instead of promoting it to an active fact. |
+
+Every applied import returns an `import_id`. Keep it if you may need rollback:
+
+```text
+Rollback skill-pack import 11111111-2222-3333-4444-555555555555.
+```
+
+Rollback uses the import ledger. It blocks if an imported graph entity changed
+after import, so you can review the conflict instead of undoing newer work.
 
 ## Teams And Profiles
 
