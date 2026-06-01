@@ -147,7 +147,7 @@ var _ TestEnvProvider = (*TestEnv)(nil)
 func (te *TestEnv) Setup(ctx context.Context) error {
 	// Start Postgres container
 	pgContainer, err := postgrescontainer.Run(ctx,
-		"postgres:16-alpine",
+		"postgres:18-alpine",
 		postgrescontainer.WithDatabase("uatdb"),
 		postgrescontainer.WithUsername("uatuser"),
 		postgrescontainer.WithPassword("uatpass"),

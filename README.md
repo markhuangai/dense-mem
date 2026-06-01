@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://github.com/markhuangai/dense-mem"><img src="https://img.shields.io/github/stars/markhuangai/dense-mem?style=flat-square&logo=github" alt="GitHub stars" /></a>
   <a href="https://github.com/markhuangai/dense-mem/issues"><img src="https://img.shields.io/github/issues/markhuangai/dense-mem?style=flat-square&logo=github" alt="GitHub issues" /></a>
-  <a href="https://github.com/markhuangai/dense-mem/blob/main/LICENSE"><img src="https://img.shields.io/github/license/markhuangai/dense-mem?style=flat-square" alt="License" /></a>
+  <a href="https://github.com/markhuangai/dense-mem/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-blue?style=flat-square" alt="License: Apache-2.0" /></a>
   <img src="https://img.shields.io/badge/Go-1.26-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go 1.26" />
   <a href="https://github.com/markhuangai/dense-mem/pkgs/container/dense-mem"><img src="https://img.shields.io/badge/Docker-GHCR-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker image on GHCR" /></a>
 </p>
@@ -19,9 +19,13 @@
 <p align="center">
   <img src="https://img.shields.io/badge/MCP-Streamable_HTTP-111827?style=flat-square" alt="MCP Streamable HTTP" />
   <img src="https://img.shields.io/badge/Neo4j-5.26-008CC1?style=flat-square&logo=neo4j&logoColor=white" alt="Neo4j 5.26" />
-  <img src="https://img.shields.io/badge/PostgreSQL-16-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL 16" />
+  <img src="https://img.shields.io/badge/PostgreSQL-18-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL 18" />
   <img src="https://img.shields.io/badge/OpenAPI-3.0-6BA539?style=flat-square&logo=openapiinitiative&logoColor=white" alt="OpenAPI 3.0" />
   <img src="https://visitor-badge.laobi.icu/badge?page_id=markhuangai.dense-mem&style=flat-square" alt="Visitors" />
+</p>
+
+<p align="center">
+  <a href="https://zenodo.org/records/20469578"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.20469578.svg" alt="DOI: 10.5281/zenodo.20469578" /></a>
 </p>
 
 Dense-Mem gives MCP clients a durable memory layer with provenance, typed claims
@@ -33,6 +37,10 @@ structured outcomes the host can explain to users.
 Under the hood, Dense-Mem is a standalone HTTP MCP memory server. HTTP MCP is
 the v1 supported MCP transport and is served at `/mcp` from the main HTTP
 process.
+
+Dense-Mem is part of the research preprint
+[Governed Enterprise AI Memory Beyond RAG: From Vector Retrieval to Permissioned
+Knowledge Graphs](https://zenodo.org/records/20469578).
 
 ## Try the Hosted Demo
 
