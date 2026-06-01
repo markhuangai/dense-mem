@@ -180,7 +180,7 @@ func (s *service) Inspect(ctx context.Context, profileID string, req InspectRequ
 	if err != nil {
 		return nil, err
 	}
-	return s.inspectPack(ctx, profileID, pack, hash, sourceURL)
+	return s.inspectPack(ctx, profileID, pack, hash, sourceURL, req.RecommendDecisions)
 }
 
 func (s *service) Import(ctx context.Context, profileID string, req ImportRequest) (*ImportResult, error) {
@@ -201,12 +201,15 @@ func (s *service) Import(ctx context.Context, profileID string, req ImportReques
 	if err != nil {
 		return nil, err
 	}
-	inspection, err := s.inspectPack(ctx, profileID, pack, hash, sourceURL)
+	inspection, err := s.inspectPack(ctx, profileID, pack, hash, sourceURL, false)
 	if err != nil {
 		return nil, err
 	}
 	selected := selectedIndexSet(req.SelectedItems, len(pack.Items))
 	decisionByIndex := conflictDecisionMap(req.ConflictDecisions)
+	if req.Mode == ModeTrusted && req.AutoDecideConflicts {
+		s.recommendMissingDecisions(ctx, profileID, hash, sourceURL, req.Mode, inspection, selected, decisionByIndex, true)
+	}
 	if req.Mode == ModeTrusted {
 		missing := requiredDecisions(inspection, selected, decisionByIndex)
 		if len(missing) > 0 {
@@ -239,6 +242,26 @@ func (s *service) Import(ctx context.Context, profileID string, req ImportReques
 		return nil, err
 	}
 
+	out := &ImportResult{
+		ImportID:     importID,
+		ArtifactHash: hash,
+		Mode:         req.Mode,
+		Status:       domain.SkillPackImportStatusInspecting,
+		Items:        []ImportItemResult{},
+	}
+	failSetup := func(cause error) (*ImportResult, error) {
+		out.Status = domain.SkillPackImportStatusFailed
+		out.Error = cause.Error()
+		if err := s.deps.Ledger.UpdateImportStatus(ctx, profileID, importID, out.Status, out.AppliedCount, out.SkippedCount, map[string]any{
+			"mode":          req.Mode,
+			"artifact_hash": hash,
+			"error":         out.Error,
+		}); err != nil {
+			out.Error = fmt.Sprintf("%s; skill pack import status update failed: %v", out.Error, err)
+		}
+		return out, nil
+	}
+
 	fragmentRes, err := s.deps.FragmentCreate.Create(ctx, profileID, &dto.CreateFragmentRequest{
 		Content:        fragmentContent(pack, hash),
 		SourceType:     "document",
@@ -256,31 +279,35 @@ func (s *service) Import(ctx context.Context, profileID string, req ImportReques
 		SourceQuality: sourceQuality(req.Mode),
 	})
 	if err != nil {
-		return nil, err
+		return failSetup(err)
 	}
 	fragmentID := fragmentRes.Fragment.FragmentID
 	if !fragmentRes.Duplicate {
 		if err := s.graphOps.tagFragment(ctx, profileID, fragmentID, importID, hash); err != nil {
-			return nil, s.cleanupCreatedEntity(ctx, profileID, "fragment", fragmentID, err)
+			return failSetup(s.cleanupCreatedEntity(ctx, profileID, "fragment", fragmentID, err))
 		}
 		if err := s.appendChange(ctx, profileID, importID, "fragment", fragmentID, domain.SkillPackChangeActionCreated, nil, map[string]any{
 			"fragment_id":  fragmentID,
 			"content_hash": fragmentRes.Fragment.ContentHash,
 			"import_id":    importID,
 		}); err != nil {
-			return nil, s.cleanupCreatedEntity(ctx, profileID, "fragment", fragmentID, err)
+			return failSetup(s.cleanupCreatedEntity(ctx, profileID, "fragment", fragmentID, err))
 		}
 	}
 
-	out := &ImportResult{
-		ImportID:     importID,
-		ArtifactHash: hash,
-		Mode:         req.Mode,
-		Status:       domain.SkillPackImportStatusApplied,
-		Items:        []ImportItemResult{},
-	}
+	out.Status = domain.SkillPackImportStatusApplied
 	for idx, item := range pack.Items {
 		if !selected[idx] {
+			out.SkippedCount++
+			continue
+		}
+		if duplicateInspectionStatus(inspection.Items[idx].Status) {
+			out.Items = append(out.Items, ImportItemResult{
+				Index:    idx,
+				Item:     item,
+				Status:   "skipped",
+				Decision: DecisionSkip,
+			})
 			out.SkippedCount++
 			continue
 		}
@@ -415,7 +442,7 @@ func (s *service) loadArtifact(ctx context.Context, artifact *SkillPack, artifac
 	return pack, hash, string(canonical), sourceURL, nil
 }
 
-func (s *service) inspectPack(ctx context.Context, profileID string, pack SkillPack, hash, sourceURL string) (*InspectResult, error) {
+func (s *service) inspectPack(ctx context.Context, profileID string, pack SkillPack, hash, sourceURL string, recommendDecisions bool) (*InspectResult, error) {
 	out := &InspectResult{
 		ArtifactHash: hash,
 		Name:         pack.Name,
@@ -431,17 +458,14 @@ func (s *service) inspectPack(ctx context.Context, profileID string, pack SkillP
 		}
 		out.Items = append(out.Items, inspected)
 		if inspected.Status == "conflicts_with_fact" {
-			var factIDs []string
-			for _, f := range inspected.ConflictingFacts {
-				factIDs = append(factIDs, f.FactID)
-			}
-			out.DecisionsRequired = append(out.DecisionsRequired, ConflictPrompt{
-				Index:          idx,
-				Reason:         "imported item conflicts with active local facts",
-				FactIDs:        factIDs,
-				AllowedActions: []string{DecisionImportAnyway, DecisionSkip, DecisionSupersedeLocal},
-			})
+			out.DecisionsRequired = append(out.DecisionsRequired, conflictPrompt(idx, item, inspected, "imported item conflicts with active local facts"))
+		} else if inspected.Status == "matches_superseded_fact" {
+			out.DecisionsRequired = append(out.DecisionsRequired, conflictPrompt(idx, item, inspected, "imported item matches superseded local facts"))
 		}
+	}
+	if recommendDecisions {
+		selected := selectedIndexSet(nil, len(pack.Items))
+		s.recommendMissingDecisions(ctx, profileID, hash, sourceURL, ModeTrusted, out, selected, map[int]string{}, false)
 	}
 	return out, nil
 }
@@ -471,6 +495,19 @@ func (s *service) inspectItem(ctx context.Context, profileID string, idx int, it
 				out.ConflictingFacts = append(out.ConflictingFacts, summary)
 			}
 		}
+		supersededFacts, _, err := s.deps.FactList.List(ctx, profileID, factservice.FactListFilters{
+			Subject:   item.Subject,
+			Predicate: item.Predicate,
+			Status:    domain.FactStatusSuperseded,
+		}, maxPackItems, "")
+		if err != nil {
+			return out, err
+		}
+		for _, fact := range supersededFacts {
+			if fact.Object == item.Object {
+				out.SupersededMatches = append(out.SupersededMatches, factSummary(fact))
+			}
+		}
 	}
 	if s.deps.ClaimList != nil {
 		claims, _, err := s.deps.ClaimList.List(ctx, profileID, maxPackItems, 0)
@@ -490,229 +527,14 @@ func (s *service) inspectItem(ctx context.Context, profileID string, idx int, it
 	case len(out.MatchingFacts) > 0:
 		out.Status = "duplicate_fact"
 		out.Severity = "low"
+	case len(out.SupersededMatches) > 0:
+		out.Status = "matches_superseded_fact"
+		out.Severity = "high"
 	case len(out.MatchingClaims) > 0:
 		out.Status = "already_claimed"
 		out.Severity = "low"
 	}
 	return out, nil
-}
-
-func (s *service) importItem(ctx context.Context, profileID, importID, artifactHash, fragmentID, mode string, item SkillPackItem, inspected InspectItem, decision string) ImportItemResult {
-	result := ImportItemResult{Index: inspected.Index, Item: item, Conflicts: inspected.ConflictingFacts, Decision: decision}
-	if decision == DecisionSkip {
-		result.Status = "skipped"
-		return result
-	}
-	claim := &domain.Claim{
-		Subject:           item.Subject,
-		Predicate:         item.Predicate,
-		Object:            item.Object,
-		Modality:          domain.ModalityAssertion,
-		Polarity:          domain.PolarityPlus,
-		Speaker:           "skill_pack",
-		ExtractConf:       confidenceFor(mode, item.SourceKind),
-		ResolutionConf:    confidenceFor(mode, item.SourceKind),
-		IdempotencyKey:    fmt.Sprintf("skill-pack:%s:%d", artifactHash, inspected.Index),
-		SupportedBy:       []string{fragmentID},
-		ExtractionModel:   "skill_pack_import",
-		ExtractionVersion: SchemaVersion,
-		PipelineRunID:     importID,
-	}
-	createRes, err := s.deps.ClaimCreate.Create(ctx, profileID, claim)
-	if err != nil {
-		result.Status = "error"
-		result.Error = err.Error()
-		return result
-	}
-	result.ClaimID = createRes.Claim.ClaimID
-
-	if mode == ModeReview {
-		if !createRes.Duplicate {
-			if err := s.graphOps.tagClaim(ctx, profileID, result.ClaimID, importID, artifactHash, item.SourceKind); err != nil {
-				return itemError(result, s.cleanupCreatedEntity(ctx, profileID, "claim", result.ClaimID, err))
-			}
-			after := claimLedgerState(createRes.Claim, importID)
-			if err := s.appendChange(ctx, profileID, importID, "claim", result.ClaimID, domain.SkillPackChangeActionCreated, nil, after); err != nil {
-				return itemError(result, s.cleanupCreatedEntity(ctx, profileID, "claim", result.ClaimID, err))
-			}
-		}
-		result.Status = "imported"
-		return result
-	}
-
-	promotedFactID := ""
-	if item.SourceKind == SourceKindFact && createRes.Duplicate {
-		var err error
-		promotedFactID, err = s.graphOps.promotedFactIDForClaim(ctx, profileID, result.ClaimID)
-		if err != nil {
-			return itemError(result, err)
-		}
-		if promotedFactID != "" {
-			result.FactID = promotedFactID
-			result.Status = "promoted"
-			return result
-		}
-	}
-
-	beforeClaim := claimLedgerState(createRes.Claim, "")
-	if createRes.Duplicate && s.deps.ClaimGet != nil {
-		if existing, err := s.deps.ClaimGet.Get(ctx, profileID, result.ClaimID); err == nil {
-			beforeClaim = claimLedgerState(existing, "")
-		}
-	}
-	if createRes.Duplicate {
-		if err := s.graphOps.trustExistingClaim(ctx, profileID, result.ClaimID); err != nil {
-			return itemError(result, err)
-		}
-	} else {
-		if err := s.graphOps.trustClaim(ctx, profileID, result.ClaimID, importID, artifactHash, item.SourceKind); err != nil {
-			return itemError(result, s.cleanupCreatedEntity(ctx, profileID, "claim", result.ClaimID, err))
-		}
-	}
-	failClaimMutation := func(err error) ImportItemResult {
-		return itemError(result, s.cleanupClaimMutation(ctx, profileID, importID, result.ClaimID, createRes.Duplicate, beforeClaim, err))
-	}
-
-	if decision == DecisionSupersedeLocal {
-		var factIDs []string
-		for _, f := range inspected.ConflictingFacts {
-			if s.deps.FactGet != nil {
-				if before, err := s.deps.FactGet.Get(ctx, profileID, f.FactID); err == nil {
-					if err := s.appendChange(ctx, profileID, importID, "fact", f.FactID, domain.SkillPackChangeActionSuperseded, factLedgerState(before), map[string]any{
-						"fact_id": f.FactID,
-						"status":  string(domain.FactStatusSuperseded),
-					}); err != nil {
-						return failClaimMutation(err)
-					}
-				}
-			}
-			factIDs = append(factIDs, f.FactID)
-		}
-		if err := s.graphOps.supersedeFacts(ctx, profileID, factIDs, result.ClaimID, importID); err != nil {
-			return failClaimMutation(err)
-		}
-	}
-
-	if item.SourceKind == SourceKindFact {
-		if s.deps.FactPromote == nil {
-			return failClaimMutation(errors.New("fact promote service is required"))
-		}
-		fact, err := s.deps.FactPromote.Promote(ctx, profileID, result.ClaimID)
-		if err != nil {
-			return failClaimMutation(err)
-		}
-		result.FactID = fact.FactID
-		factCreated := fact.PromotedFromClaimID == result.ClaimID
-		if factCreated {
-			if err := s.graphOps.tagFact(ctx, profileID, fact.FactID, importID, artifactHash, item.SourceKind); err != nil {
-				err = s.cleanupCreatedEntity(ctx, profileID, "fact", fact.FactID, err)
-				return failClaimMutation(err)
-			}
-		}
-		if !createRes.Duplicate {
-			afterClaim := map[string]any{"claim_id": result.ClaimID, "subject": item.Subject, "predicate": item.Predicate, "object": item.Object, "status": string(domain.StatusSuperseded), "import_id": importID}
-			if s.deps.ClaimGet != nil {
-				if finalClaim, err := s.deps.ClaimGet.Get(ctx, profileID, result.ClaimID); err == nil {
-					afterClaim = claimLedgerState(finalClaim, importID)
-				}
-			}
-			if err := s.appendChange(ctx, profileID, importID, "claim", result.ClaimID, domain.SkillPackChangeActionCreated, nil, afterClaim); err != nil {
-				if factCreated {
-					err = s.cleanupCreatedEntity(ctx, profileID, "fact", fact.FactID, err)
-				}
-				return failClaimMutation(err)
-			}
-		} else {
-			afterClaim := trustedClaimAfterState(result.ClaimID, domain.StatusSuperseded)
-			if err := s.appendChange(ctx, profileID, importID, "claim", result.ClaimID, domain.SkillPackChangeActionUpdated, beforeClaim, afterClaim); err != nil {
-				if factCreated {
-					err = s.cleanupCreatedEntity(ctx, profileID, "fact", fact.FactID, err)
-				}
-				return failClaimMutation(err)
-			}
-		}
-		if factCreated {
-			if err := s.appendChange(ctx, profileID, importID, "fact", fact.FactID, domain.SkillPackChangeActionCreated, nil, factLedgerStateWithImport(fact, importID)); err != nil {
-				return itemError(result, s.cleanupCreatedEntity(ctx, profileID, "fact", fact.FactID, err))
-			}
-		}
-		result.Status = "promoted"
-		return result
-	}
-
-	if !createRes.Duplicate {
-		afterClaim := map[string]any{"claim_id": result.ClaimID, "subject": item.Subject, "predicate": item.Predicate, "object": item.Object, "status": string(domain.StatusValidated), "entailment_verdict": string(domain.VerdictEntailed), "import_id": importID}
-		if s.deps.ClaimGet != nil {
-			if finalClaim, err := s.deps.ClaimGet.Get(ctx, profileID, result.ClaimID); err == nil {
-				afterClaim = claimLedgerState(finalClaim, importID)
-			}
-		}
-		if err := s.appendChange(ctx, profileID, importID, "claim", result.ClaimID, domain.SkillPackChangeActionCreated, nil, afterClaim); err != nil {
-			return failClaimMutation(err)
-		}
-	} else {
-		afterClaim := trustedClaimAfterState(result.ClaimID, domain.StatusValidated)
-		if err := s.appendChange(ctx, profileID, importID, "claim", result.ClaimID, domain.SkillPackChangeActionUpdated, beforeClaim, afterClaim); err != nil {
-			return failClaimMutation(err)
-		}
-	}
-	result.Status = "validated"
-	return result
-}
-
-func itemError(result ImportItemResult, err error) ImportItemResult {
-	result.Status = "error"
-	result.Error = err.Error()
-	return result
-}
-
-func trustedClaimAfterState(claimID string, status domain.ClaimStatus) map[string]any {
-	return map[string]any{
-		"claim_id":           claimID,
-		"status":             string(status),
-		"entailment_verdict": string(domain.VerdictEntailed),
-		"verifier_model":     "skill_pack.source_trust",
-	}
-}
-
-func (s *service) appendChange(ctx context.Context, profileID, importID, entityType, entityID, action string, before, after map[string]any) error {
-	if s.deps.Ledger == nil {
-		return nil
-	}
-	return s.deps.Ledger.AppendChange(ctx, domain.SkillPackImportChange{
-		ChangeID:    uuid.NewString(),
-		ImportID:    importID,
-		TeamID:      profileID,
-		EntityType:  entityType,
-		EntityID:    entityID,
-		Action:      action,
-		BeforeState: before,
-		AfterState:  after,
-		CreatedAt:   time.Now().UTC(),
-	})
-}
-
-func (s *service) cleanupCreatedEntity(ctx context.Context, profileID, entityType, entityID string, cause error) error {
-	if cause == nil || !s.graphOps.available() {
-		return cause
-	}
-	if err := s.graphOps.deleteEntity(ctx, profileID, entityType, entityID); err != nil {
-		return fmt.Errorf("%w; cleanup %s %s: %v", cause, entityType, entityID, err)
-	}
-	return cause
-}
-
-func (s *service) cleanupClaimMutation(ctx context.Context, profileID, importID, claimID string, duplicate bool, before map[string]any, cause error) error {
-	if cause == nil || !s.graphOps.available() {
-		return cause
-	}
-	if !duplicate {
-		return s.cleanupCreatedEntity(ctx, profileID, "claim", claimID, cause)
-	}
-	if err := s.graphOps.restoreClaim(ctx, profileID, claimID, importID, before); err != nil {
-		return fmt.Errorf("%w; cleanup claim %s: %v", cause, claimID, err)
-	}
-	return cause
 }
 
 func (s *service) rollbackConflicts(ctx context.Context, profileID string, changes []domain.SkillPackImportChange) []string {
@@ -779,25 +601,6 @@ func stateValueMatches(currentValue, expectedValue any) bool {
 	default:
 		return fmt.Sprint(currentValue) == fmt.Sprint(expectedValue)
 	}
-}
-
-func requiredDecisions(inspection *InspectResult, selected map[int]bool, decisions map[int]string) []ConflictPrompt {
-	var missing []ConflictPrompt
-	for _, prompt := range inspection.DecisionsRequired {
-		if !selected[prompt.Index] {
-			continue
-		}
-		action := decisions[prompt.Index]
-		if action == "" {
-			missing = append(missing, prompt)
-			continue
-		}
-		if action != DecisionImportAnyway && action != DecisionSkip && action != DecisionSupersedeLocal {
-			prompt.Reason = "invalid conflict decision"
-			missing = append(missing, prompt)
-		}
-	}
-	return missing
 }
 
 func selectedIndexSet(indexes []int, itemCount int) map[int]bool {

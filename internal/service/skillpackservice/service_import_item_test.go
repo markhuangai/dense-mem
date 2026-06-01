@@ -273,6 +273,60 @@ func TestImportItemPromotionAndSupersedeErrorBranches(t *testing.T) {
 	if supersedeErr.Status != "error" || !strings.Contains(supersedeErr.Error, "supersede failed") {
 		t.Fatalf("supersedeErr = %+v, want supersede error", supersedeErr)
 	}
+
+	restoreGraph := &recordingGraph{}
+	restoreSvc := New(Dependencies{
+		ClaimCreate: &fakeClaimCreate{},
+		FactGet: fakeFactGet{facts: map[string]*domain.Fact{"fact-local": &domain.Fact{
+			FactID:    "fact-local",
+			Subject:   manualItem.Subject,
+			Predicate: manualItem.Predicate,
+			Object:    "old behavior",
+			Status:    domain.FactStatusActive,
+		}}},
+		Graph:  restoreGraph,
+		Ledger: &fakeLedger{appendErr: errors.New("claim append failed"), appendErrAfter: 2},
+	}).(*service)
+	restoreErr := restoreSvc.importItem(ctx, "team-1", "import-1", "hash", "fragment-1", ModeTrusted, manualItem, supersedeInspected, DecisionSupersedeLocal)
+	if restoreErr.Status != "error" || !strings.Contains(restoreErr.Error, "claim append failed") {
+		t.Fatalf("restoreErr = %+v, want claim append error", restoreErr)
+	}
+	if restoreGraph.txCount != 2 {
+		t.Fatalf("txCount = %d, want supersede tx plus restore tx", restoreGraph.txCount)
+	}
+
+	factRestoreGraph := &recordingGraph{}
+	factRestoreSvc := New(Dependencies{
+		ClaimCreate: &fakeClaimCreate{},
+		FactGet: fakeFactGet{facts: map[string]*domain.Fact{"fact-local": &domain.Fact{
+			FactID:    "fact-local",
+			Subject:   factItem.Subject,
+			Predicate: factItem.Predicate,
+			Object:    "old behavior",
+			Status:    domain.FactStatusActive,
+		}}},
+		FactPromote: fakeFactPromote{err: errors.New("promote failed after supersede")},
+		Graph:       factRestoreGraph,
+		Ledger:      &fakeLedger{},
+	}).(*service)
+	factSupersedeInspected := InspectItem{
+		Index: 0,
+		Item:  factItem,
+		ConflictingFacts: []FactSummary{{
+			FactID:    "fact-local",
+			Subject:   factItem.Subject,
+			Predicate: factItem.Predicate,
+			Object:    "old behavior",
+			Status:    string(domain.FactStatusActive),
+		}},
+	}
+	factRestoreErr := factRestoreSvc.importItem(ctx, "team-1", "import-1", "hash", "fragment-1", ModeTrusted, factItem, factSupersedeInspected, DecisionSupersedeLocal)
+	if factRestoreErr.Status != "error" || !strings.Contains(factRestoreErr.Error, "promote failed after supersede") {
+		t.Fatalf("factRestoreErr = %+v, want promote error", factRestoreErr)
+	}
+	if factRestoreGraph.txCount != 2 {
+		t.Fatalf("txCount = %d, want supersede tx plus restore tx", factRestoreGraph.txCount)
+	}
 }
 
 func TestImportItemReviewDuplicateAndFactFinalClaimBranches(t *testing.T) {

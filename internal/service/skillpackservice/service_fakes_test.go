@@ -229,6 +229,22 @@ func (f fakeClaimList) List(_ context.Context, _ string, limit, offset int) ([]*
 	return f.claims, len(f.claims), nil
 }
 
+type fakeConflictDecider struct {
+	result   ConflictDecisionResult
+	err      error
+	calls    int
+	requests []ConflictDecisionRequest
+}
+
+func (f *fakeConflictDecider) Decide(_ context.Context, req ConflictDecisionRequest) (ConflictDecisionResult, error) {
+	f.calls++
+	f.requests = append(f.requests, req)
+	if f.err != nil {
+		return ConflictDecisionResult{}, f.err
+	}
+	return f.result, nil
+}
+
 type fakeFragmentCreate struct {
 	calls     int
 	duplicate bool

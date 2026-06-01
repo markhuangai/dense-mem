@@ -384,6 +384,43 @@ func TestFindCandidatesGraphFactFastPathAndReadError(t *testing.T) {
 	}
 }
 
+func TestInspectReportsSupersededMatchesAndRecommendations(t *testing.T) {
+	item := packWithItem(SourceKindFact).Items[0]
+	decider := &fakeConflictDecider{result: ConflictDecisionResult{
+		Action:     DecisionSkip,
+		Confidence: 0.92,
+		Rationale:  "matches superseded local knowledge",
+		Model:      "test-decider",
+	}}
+	svc := New(Dependencies{
+		FactList: fakeFactList{facts: []*domain.Fact{{
+			FactID:    "fact-old",
+			Subject:   item.Subject,
+			Predicate: item.Predicate,
+			Object:    item.Object,
+			Status:    domain.FactStatusSuperseded,
+		}}},
+		ConflictDecider: decider,
+	})
+
+	res, err := svc.Inspect(context.Background(), "team-1", InspectRequest{
+		Artifact:           packWithItem(SourceKindFact),
+		RecommendDecisions: true,
+	})
+	if err != nil {
+		t.Fatalf("Inspect superseded: %v", err)
+	}
+	if len(res.Items) != 1 || res.Items[0].Status != "matches_superseded_fact" || len(res.Items[0].SupersededMatches) != 1 {
+		t.Fatalf("items = %+v, want superseded match", res.Items)
+	}
+	if len(res.DecisionsRequired) != 1 || res.DecisionsRequired[0].Recommendation == nil || res.DecisionsRequired[0].Recommendation.Action != DecisionSkip {
+		t.Fatalf("decisions = %+v, want skip recommendation", res.DecisionsRequired)
+	}
+	if decider.calls != 1 || len(decider.requests[0].Inspection.SupersededMatches) != 1 {
+		t.Fatalf("decider calls/requests = %d/%+v, want superseded evidence", decider.calls, decider.requests)
+	}
+}
+
 func TestReviewImportWritesFragmentClaimAndLedger(t *testing.T) {
 	fragmentCreate := &fakeFragmentCreate{}
 	claimCreate := &fakeClaimCreate{}
@@ -480,6 +517,37 @@ func TestReviewImportSkipsUnselectedItems(t *testing.T) {
 	}
 }
 
+func TestImportSkipsDuplicateInspectionResultsBeforeMutation(t *testing.T) {
+	item := packWithItem(SourceKindFact).Items[0]
+	claimCreate := &fakeClaimCreate{}
+	svc := New(Dependencies{
+		FragmentCreate: &fakeFragmentCreate{},
+		ClaimCreate:    claimCreate,
+		FactList: fakeFactList{facts: []*domain.Fact{{
+			FactID:    "fact-existing",
+			Subject:   item.Subject,
+			Predicate: item.Predicate,
+			Object:    item.Object,
+			Status:    domain.FactStatusActive,
+		}}},
+		Ledger: &fakeLedger{},
+	})
+
+	res, err := svc.Import(context.Background(), "team-1", ImportRequest{
+		Artifact: packWithItem(SourceKindFact),
+		Mode:     ModeTrusted,
+	})
+	if err != nil {
+		t.Fatalf("Import duplicate fact: %v", err)
+	}
+	if res.AppliedCount != 0 || res.SkippedCount != 1 || res.Items[0].Status != "skipped" {
+		t.Fatalf("result = %+v, want duplicate item skipped", res)
+	}
+	if claimCreate.calls != 0 {
+		t.Fatalf("claimCreate calls = %d, want 0", claimCreate.calls)
+	}
+}
+
 func TestReviewImportSkipsDuplicateFragmentMutationAndLedger(t *testing.T) {
 	graph := &recordingGraph{}
 	ledger := &fakeLedger{}
@@ -564,8 +632,12 @@ func TestImportAndRollbackDependencyErrorBranches(t *testing.T) {
 		ClaimCreate:    &fakeClaimCreate{},
 		Ledger:         &fakeLedger{},
 	})
-	if _, err := fragmentErrSvc.Import(ctx, "team-1", ImportRequest{Artifact: pack, Mode: ModeReview}); err == nil || !strings.Contains(err.Error(), "fragment failed") {
-		t.Fatalf("fragment err = %v, want fragment failed", err)
+	fragmentErrRes, err := fragmentErrSvc.Import(ctx, "team-1", ImportRequest{Artifact: pack, Mode: ModeReview})
+	if err != nil {
+		t.Fatalf("fragment err = %v, want recoverable result", err)
+	}
+	if fragmentErrRes == nil || fragmentErrRes.ImportID == "" || fragmentErrRes.Status != domain.SkillPackImportStatusFailed || !strings.Contains(fragmentErrRes.Error, "fragment failed") {
+		t.Fatalf("fragment result = %+v, want failed result with import id", fragmentErrRes)
 	}
 
 	tagFragmentErrSvc := New(Dependencies{
@@ -574,8 +646,12 @@ func TestImportAndRollbackDependencyErrorBranches(t *testing.T) {
 		Graph:          &recordingGraph{writeErr: errors.New("tag fragment failed")},
 		Ledger:         &fakeLedger{},
 	})
-	if _, err := tagFragmentErrSvc.Import(ctx, "team-1", ImportRequest{Artifact: pack, Mode: ModeReview}); err == nil || !strings.Contains(err.Error(), "tag fragment failed") {
-		t.Fatalf("tag fragment err = %v, want tag fragment failed", err)
+	tagFragmentErrRes, err := tagFragmentErrSvc.Import(ctx, "team-1", ImportRequest{Artifact: pack, Mode: ModeReview})
+	if err != nil {
+		t.Fatalf("tag fragment err = %v, want recoverable result", err)
+	}
+	if tagFragmentErrRes == nil || tagFragmentErrRes.ImportID == "" || tagFragmentErrRes.Status != domain.SkillPackImportStatusFailed || !strings.Contains(tagFragmentErrRes.Error, "tag fragment failed") {
+		t.Fatalf("tag fragment result = %+v, want failed result with import id", tagFragmentErrRes)
 	}
 
 	updateErrSvc := New(Dependencies{
@@ -752,6 +828,127 @@ func TestTrustedImportConflictDecisions(t *testing.T) {
 		}
 		if graph.txCount != 1 {
 			t.Fatalf("txCount = %d, want supersede tx", graph.txCount)
+		}
+	})
+
+	t.Run("demote source fact to claim", func(t *testing.T) {
+		ledger := &fakeLedger{}
+		svc := New(Dependencies{
+			FragmentCreate: &fakeFragmentCreate{},
+			ClaimCreate:    &fakeClaimCreate{},
+			FactList:       fakeFactList{facts: []*domain.Fact{conflictingFact}},
+			FactPromote:    fakeFactPromote{err: errors.New("promote should not be called")},
+			Graph:          &recordingGraph{},
+			Ledger:         ledger,
+		})
+		res, err := svc.Import(context.Background(), "team-1", ImportRequest{
+			Artifact: packWithItem(SourceKindFact),
+			Mode:     ModeTrusted,
+			ConflictDecisions: []ConflictDecision{{
+				Index:  0,
+				Action: DecisionDemoteToClaim,
+			}},
+		})
+		if err != nil {
+			t.Fatalf("Import demote: %v", err)
+		}
+		if res.Items[0].Status != "validated" || res.Items[0].FactID != "" || res.Items[0].ClaimID == "" {
+			t.Fatalf("item = %+v, want validated claim without fact", res.Items[0])
+		}
+		if len(ledger.changes) != 2 {
+			t.Fatalf("changes len = %d, want fragment+claim", len(ledger.changes))
+		}
+	})
+
+	t.Run("demote invalid for manual conflict", func(t *testing.T) {
+		claimCreate := &fakeClaimCreate{}
+		svc := New(Dependencies{
+			FragmentCreate: &fakeFragmentCreate{},
+			ClaimCreate:    claimCreate,
+			FactList:       fakeFactList{facts: []*domain.Fact{conflictingFact}},
+			Ledger:         &fakeLedger{},
+		})
+		res, err := svc.Import(context.Background(), "team-1", ImportRequest{
+			Artifact: packWithItem(SourceKindManual),
+			Mode:     ModeTrusted,
+			ConflictDecisions: []ConflictDecision{{
+				Index:  0,
+				Action: DecisionDemoteToClaim,
+			}},
+		})
+		if err != nil {
+			t.Fatalf("Import invalid demote: %v", err)
+		}
+		if res.Status != domain.SkillPackImportStatusNeedsReview || len(res.DecisionsRequired) != 1 || res.DecisionsRequired[0].Reason != "invalid conflict decision" {
+			t.Fatalf("result = %+v, want invalid decision review", res)
+		}
+		if claimCreate.calls != 0 {
+			t.Fatalf("claimCreate calls = %d, want no writes", claimCreate.calls)
+		}
+	})
+
+	t.Run("auto decide applies high confidence decision", func(t *testing.T) {
+		decider := &fakeConflictDecider{result: ConflictDecisionResult{
+			Action:     DecisionDemoteToClaim,
+			Confidence: 0.95,
+			Rationale:  "preserve remote fact as claim",
+			Model:      "test-decider",
+		}}
+		svc := New(Dependencies{
+			FragmentCreate:  &fakeFragmentCreate{},
+			ClaimCreate:     &fakeClaimCreate{},
+			FactList:        fakeFactList{facts: []*domain.Fact{conflictingFact}},
+			FactPromote:     fakeFactPromote{err: errors.New("promote should not be called")},
+			ConflictDecider: decider,
+			Graph:           &recordingGraph{},
+			Ledger:          &fakeLedger{},
+		})
+		res, err := svc.Import(context.Background(), "team-1", ImportRequest{
+			Artifact:            packWithItem(SourceKindFact),
+			Mode:                ModeTrusted,
+			AutoDecideConflicts: true,
+		})
+		if err != nil {
+			t.Fatalf("Import auto decide: %v", err)
+		}
+		if decider.calls != 1 {
+			t.Fatalf("decider calls = %d, want 1", decider.calls)
+		}
+		if res.Status != domain.SkillPackImportStatusApplied || res.Items[0].Decision != DecisionDemoteToClaim || res.Items[0].Status != "validated" {
+			t.Fatalf("result = %+v, want demoted applied import", res)
+		}
+	})
+
+	t.Run("auto decide falls back on low confidence", func(t *testing.T) {
+		claimCreate := &fakeClaimCreate{}
+		decider := &fakeConflictDecider{result: ConflictDecisionResult{
+			Action:     DecisionSupersedeLocal,
+			Confidence: 0.40,
+			Rationale:  "uncertain",
+		}}
+		svc := New(Dependencies{
+			FragmentCreate:  &fakeFragmentCreate{},
+			ClaimCreate:     claimCreate,
+			FactList:        fakeFactList{facts: []*domain.Fact{conflictingFact}},
+			ConflictDecider: decider,
+			Ledger:          &fakeLedger{},
+		})
+		res, err := svc.Import(context.Background(), "team-1", ImportRequest{
+			Artifact:            packWithItem(SourceKindManual),
+			Mode:                ModeTrusted,
+			AutoDecideConflicts: true,
+		})
+		if err != nil {
+			t.Fatalf("Import low confidence auto decide: %v", err)
+		}
+		if res.Status != domain.SkillPackImportStatusNeedsReview || len(res.DecisionsRequired) != 1 {
+			t.Fatalf("result = %+v, want needs_review", res)
+		}
+		if res.DecisionsRequired[0].Recommendation == nil || !strings.Contains(res.DecisionsRequired[0].Recommendation.Error, "below auto-decision threshold") {
+			t.Fatalf("recommendation = %+v, want threshold error", res.DecisionsRequired[0].Recommendation)
+		}
+		if claimCreate.calls != 0 {
+			t.Fatalf("claimCreate calls = %d, want no writes", claimCreate.calls)
 		}
 	})
 }
