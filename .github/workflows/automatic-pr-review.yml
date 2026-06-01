@@ -6,6 +6,7 @@ on:
     types: [opened, reopened, synchronize, ready_for_review]
     branches:
       - dev
+      - main
 
 concurrency:
   group: git-vibe-automatic-pr-review-${{ github.event.pull_request.number }}
