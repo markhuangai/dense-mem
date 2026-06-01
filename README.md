@@ -34,6 +34,12 @@ Under the hood, Dense-Mem is a standalone HTTP MCP memory server. HTTP MCP is
 the v1 supported MCP transport and is served at `/mcp` from the main HTTP
 process.
 
+## Try the Hosted Demo
+
+Create a temporary isolated team at
+[https://demo-dense-mem.markhuang.ai](https://demo-dense-mem.markhuang.ai) and
+test Dense-Mem before self-hosting.
+
 <p align="center">
   <img src="docs/assets/readme-hero.jpg" alt="Cartoon architecture illustration: AI clients send evidence into a secure Dense-Mem vault where claims become facts, conflicts become clarification questions, and durable storage sits behind the service." />
 </p>
