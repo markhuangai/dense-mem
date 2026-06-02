@@ -78,6 +78,9 @@ func TestBuildDefault_RecallInvokerMapsTieredHits(t *testing.T) {
 	if !ok || claimPayload["claim_id"] != "claim-hit" || claimPayload["predicate"] != "prefers" {
 		t.Fatalf("claim payload = %v, want claim-hit prefers", claim["claim"])
 	}
+	if _, ok := claimPayload["last_verifier_response"]; ok {
+		t.Fatalf("claim payload leaked last_verifier_response: %v", claimPayload)
+	}
 
 	fragment := results[2]
 	if fragment["tier"] != recallservice.TierFragment || fragment["id"] != "fragment-hit" {
@@ -102,10 +105,11 @@ func TestRecallHitToMapInfersTierAndScore(t *testing.T) {
 
 	claimHit, err := recallHitToMap(recallservice.RecallHit{
 		Claim: &domain.Claim{
-			ClaimID:           "claim-inferred",
-			ProfileID:         "profile-1",
-			EntailmentVerdict: domain.VerdictEntailed,
-			Status:            domain.StatusValidated,
+			ClaimID:              "claim-inferred",
+			ProfileID:            "profile-1",
+			EntailmentVerdict:    domain.VerdictEntailed,
+			LastVerifierResponse: "internal verifier trace",
+			Status:               domain.StatusValidated,
 		},
 	})
 	if err != nil {
@@ -113,6 +117,10 @@ func TestRecallHitToMapInfersTierAndScore(t *testing.T) {
 	}
 	if claimHit["tier"] != recallservice.TierValidatedClaim {
 		t.Fatalf("claim hit tier = %v, want %s", claimHit["tier"], recallservice.TierValidatedClaim)
+	}
+	claimPayload := claimHit["claim"].(map[string]any)
+	if _, ok := claimPayload["last_verifier_response"]; ok {
+		t.Fatalf("claim hit leaked last_verifier_response: %v", claimPayload)
 	}
 
 	factHit, err := recallHitToMap(recallservice.RecallHit{
@@ -165,18 +173,19 @@ func (stubRecallWithTieredHits) Recall(ctx context.Context, profileID string, re
 		},
 		{
 			Claim: &domain.Claim{
-				ClaimID:           "claim-hit",
-				ProfileID:         profileID,
-				Subject:           "user",
-				Predicate:         "prefers",
-				Object:            "active memory usage",
-				Modality:          domain.ModalityAssertion,
-				Polarity:          domain.PolarityPlus,
-				RecordedAt:        now,
-				ExtractConf:       0.82,
-				ResolutionConf:    0.9,
-				EntailmentVerdict: domain.VerdictEntailed,
-				Status:            domain.StatusValidated,
+				ClaimID:              "claim-hit",
+				ProfileID:            profileID,
+				Subject:              "user",
+				Predicate:            "prefers",
+				Object:               "active memory usage",
+				Modality:             domain.ModalityAssertion,
+				Polarity:             domain.PolarityPlus,
+				RecordedAt:           now,
+				ExtractConf:          0.82,
+				ResolutionConf:       0.9,
+				EntailmentVerdict:    domain.VerdictEntailed,
+				LastVerifierResponse: "internal verifier trace",
+				Status:               domain.StatusValidated,
 			},
 			Tier:  recallservice.TierValidatedClaim,
 			Score: 0.41,

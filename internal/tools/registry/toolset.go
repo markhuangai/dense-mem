@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/http/dto"
+	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
@@ -351,7 +352,7 @@ func recallHitToMap(hit recallservice.RecallHit) (map[string]any, error) {
 		if tier == "" {
 			tier = recallservice.TierValidatedClaim
 		}
-		claim, err := structToMap(hit.Claim)
+		claim, err := structToMap(response.ToClaimResponse(hit.Claim, ""))
 		if err != nil {
 			return nil, err
 		}
