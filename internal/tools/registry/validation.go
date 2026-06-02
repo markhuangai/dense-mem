@@ -6,6 +6,7 @@ import (
 	"math"
 	"reflect"
 	"sort"
+	"unicode/utf8"
 )
 
 func ValidateInput(tool Tool, args map[string]any) error {
@@ -49,10 +50,11 @@ func validateSchemaValue(name string, value any, schema map[string]any) error {
 		if !ok {
 			return fmt.Errorf("%s must be a string", name)
 		}
-		if minLen, ok := schemaNumber(schema["minLength"]); ok && len(s) < int(minLen) {
+		charLen := utf8.RuneCountInString(s)
+		if minLen, ok := schemaNumber(schema["minLength"]); ok && charLen < int(minLen) {
 			return fmt.Errorf("%s must be at least %d characters", name, int(minLen))
 		}
-		if maxLen, ok := schemaNumber(schema["maxLength"]); ok && len(s) > int(maxLen) {
+		if maxLen, ok := schemaNumber(schema["maxLength"]); ok && charLen > int(maxLen) {
 			message := fmt.Sprintf("%s exceeds maximum length of %d", name, int(maxLen))
 			if hint, ok := schema["x-validation-hint"].(string); ok && hint != "" {
 				message = message + ": " + hint
