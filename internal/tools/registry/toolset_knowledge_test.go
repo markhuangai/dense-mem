@@ -164,14 +164,14 @@ func TestBuildDefaultMemoryTools_GranularEntryValidation(t *testing.T) {
 }
 
 func TestBuildDefault_RecallInvokerErrorBranches(t *testing.T) {
-	t.Run("nil fragment hit returns mapping error", func(t *testing.T) {
+	t.Run("empty hit returns mapping error", func(t *testing.T) {
 		reg, _ := BuildDefault(Dependencies{Recall: stubRecallNilFragment{}})
 		tool, _ := reg.Get("recall_memory")
 
 		_, err := tool.Invoke(context.Background(), "profile-memory", map[string]any{"query": "hello"})
 
-		if err == nil || !strings.Contains(err.Error(), "hit missing fragment") {
-			t.Fatalf("err = %v; want hit missing fragment", err)
+		if err == nil || !strings.Contains(err.Error(), "hit missing payload") {
+			t.Fatalf("err = %v; want hit missing payload", err)
 		}
 	})
 
