@@ -128,7 +128,7 @@ func TestExportIncludesSelectedFactSupportGraph(t *testing.T) {
 			Source:        "conversation",
 			SourceType:    "conversation",
 			Authority:     string(domain.AuthorityPrimary),
-			SourceQuality: 0.95,
+			SourceQuality: optionalFloat64(0.95),
 		},
 	}}
 	svc := New(Dependencies{

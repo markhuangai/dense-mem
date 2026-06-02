@@ -46,14 +46,14 @@ func TestImportRebuildsSelectedSupportLineage(t *testing.T) {
 				Source:        "conversation",
 				SourceType:    string(domain.SourceTypeConversation),
 				Authority:     string(domain.AuthorityPrimary),
-				SourceQuality: 0.93,
+				SourceQuality: optionalFloat64(0.93),
 			}, {
 				FragmentID:    "fragment-source-2",
 				Content:       "Strong outlines turn each supporting claim into a section with an acceptance check.",
 				Source:        "conversation",
 				SourceType:    string(domain.SourceTypeConversation),
 				Authority:     string(domain.AuthorityPrimary),
-				SourceQuality: 0.93,
+				SourceQuality: optionalFloat64(0.93),
 			}},
 		},
 	}
@@ -91,6 +91,55 @@ func TestImportRebuildsSelectedSupportLineage(t *testing.T) {
 	}
 	if len(ledger.changes) != 4 {
 		t.Fatalf("ledger changes = %d, want artifact fragment + two support fragments + claim", len(ledger.changes))
+	}
+}
+
+func TestImportSupportFragmentSourceQualityDistinguishesZeroFromOmitted(t *testing.T) {
+	fragmentCreate := &fakeFragmentCreate{}
+	svc := New(Dependencies{
+		FragmentCreate: fragmentCreate,
+		ClaimCreate:    &fakeClaimCreate{},
+		Graph:          &recordingGraph{},
+		Ledger:         &fakeLedger{},
+	})
+	artifactJSON := `{
+		"schema_version":"dense-mem.skill_pack.v1",
+		"name":"Supported pack",
+		"items":[{
+			"subject":"assistant",
+			"predicate":"has_skill",
+			"object":"imports source quality safely",
+			"source_kind":"manual",
+			"support_fragment_ids":["explicit-zero","omitted"]
+		}],
+		"support":{"fragments":[{
+			"fragment_id":"explicit-zero",
+			"content":"Explicit zero-quality evidence must stay weak.",
+			"source_quality":0
+		},{
+			"fragment_id":"omitted",
+			"content":"Omitted quality should use the review import default."
+		}]}
+	}`
+
+	res, err := svc.Import(context.Background(), "team-1", ImportRequest{
+		ArtifactJSON: artifactJSON,
+		Mode:         ModeReview,
+	})
+	if err != nil {
+		t.Fatalf("Import support source quality pack: %v", err)
+	}
+	if res.Status != domain.SkillPackImportStatusApplied {
+		t.Fatalf("result status = %s, want applied", res.Status)
+	}
+	if len(fragmentCreate.requests) != 3 {
+		t.Fatalf("fragment create requests = %d, want artifact plus two support fragments", len(fragmentCreate.requests))
+	}
+	if got := fragmentCreate.requests[1].SourceQuality; got != 0 {
+		t.Fatalf("explicit zero support source quality = %v, want 0", got)
+	}
+	if got := fragmentCreate.requests[2].SourceQuality; got != 0.8 {
+		t.Fatalf("omitted support source quality = %v, want review default", got)
 	}
 }
 
@@ -157,6 +206,12 @@ func TestGraphRowStateHelpersDecodeTypes(t *testing.T) {
 	if floatState(row, "float32") != 1.25 || floatState(row, "int") != 2 || floatState(row, "int64") != 3 || floatState(row, "missing") != 0 {
 		t.Fatalf("floatState decoded unexpected values")
 	}
+	if got := optionalFloatState(row, "missing"); got != nil {
+		t.Fatalf("optionalFloatState missing = %v, want nil", *got)
+	}
+	if got := optionalFloatState(row, "float32"); got == nil || *got != 1.25 {
+		t.Fatalf("optionalFloatState float32 = %v, want 1.25", got)
+	}
 	decoded := optionalMapState(row, "bad_json", "metadata_json")
 	if decoded["topic"] != "testing" {
 		t.Fatalf("optionalMapState = %+v, want decoded metadata_json", decoded)
@@ -200,7 +255,7 @@ func TestSupportValidationRejectsMalformedFields(t *testing.T) {
 		{name: "too many labels", fragment: SkillPackSupportFragment{FragmentID: "fragment-1", Content: "content", Labels: make([]string, 21)}, want: "labels exceeds"},
 		{name: "empty label", fragment: SkillPackSupportFragment{FragmentID: "fragment-1", Content: "content", Labels: []string{""}}, want: "labels[0]"},
 		{name: "long label", fragment: SkillPackSupportFragment{FragmentID: "fragment-1", Content: "content", Labels: []string{strings.Repeat("l", 65)}}, want: "labels[0] exceeds"},
-		{name: "bad quality", fragment: SkillPackSupportFragment{FragmentID: "fragment-1", Content: "content", SourceQuality: 2}, want: "source_quality"},
+		{name: "bad quality", fragment: SkillPackSupportFragment{FragmentID: "fragment-1", Content: "content", SourceQuality: optionalFloat64(2)}, want: "source_quality"},
 	}
 	for _, tc := range fragmentCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -209,4 +264,8 @@ func TestSupportValidationRejectsMalformedFields(t *testing.T) {
 			}
 		})
 	}
+}
+
+func optionalFloat64(value float64) *float64 {
+	return &value
 }

@@ -266,9 +266,9 @@ func (s *service) importSupportFragment(ctx context.Context, profileID, importID
 	return localID, nil
 }
 
-func importSourceQuality(mode string, exported float64) float64 {
-	if exported > 0 {
-		return exported
+func importSourceQuality(mode string, exported *float64) float64 {
+	if exported != nil {
+		return *exported
 	}
 	return sourceQuality(mode)
 }

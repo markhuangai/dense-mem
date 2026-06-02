@@ -210,7 +210,7 @@ func validateSupportFragment(fragment SkillPackSupportFragment) error {
 			return fmt.Errorf("labels[%d] exceeds 64 characters", i)
 		}
 	}
-	if !validConfidence(fragment.SourceQuality) {
+	if fragment.SourceQuality != nil && !validConfidence(*fragment.SourceQuality) {
 		return errors.New("source_quality must be in [0,1]")
 	}
 	return nil

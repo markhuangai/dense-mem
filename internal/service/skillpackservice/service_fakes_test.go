@@ -141,6 +141,10 @@ func (g *recordingGraph) ScopedRead(_ context.Context, _ string, _ string, param
 			if !exists {
 				continue
 			}
+			var sourceQuality any
+			if fragment.SourceQuality != nil {
+				sourceQuality = *fragment.SourceQuality
+			}
 			rows = append(rows, map[string]any{
 				"fragment_id":    fragment.FragmentID,
 				"content":        fragment.Content,
@@ -148,7 +152,7 @@ func (g *recordingGraph) ScopedRead(_ context.Context, _ string, _ string, param
 				"source_type":    fragment.SourceType,
 				"authority":      fragment.Authority,
 				"labels":         fragment.Labels,
-				"source_quality": fragment.SourceQuality,
+				"source_quality": sourceQuality,
 			})
 		}
 		return nil, rows, nil

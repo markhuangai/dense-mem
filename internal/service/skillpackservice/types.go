@@ -103,7 +103,7 @@ type SkillPackSupportFragment struct {
 	SourceType    string   `json:"source_type,omitempty"`
 	Authority     string   `json:"authority,omitempty"`
 	Labels        []string `json:"labels,omitempty"`
-	SourceQuality float64  `json:"source_quality,omitempty"`
+	SourceQuality *float64 `json:"source_quality,omitempty"`
 }
 
 type Candidate struct {

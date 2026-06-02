@@ -156,7 +156,7 @@ func supportFragmentFromRow(row map[string]any) SkillPackSupportFragment {
 		SourceType:    stringState(row, "source_type"),
 		Authority:     stringState(row, "authority"),
 		Labels:        stringSliceState(row, "labels"),
-		SourceQuality: floatState(row, "source_quality"),
+		SourceQuality: optionalFloatState(row, "source_quality"),
 	}
 }
 
@@ -502,6 +502,28 @@ func floatState(m map[string]any, key string) float64 {
 		return float64(v)
 	default:
 		return 0
+	}
+}
+
+func optionalFloatState(m map[string]any, key string) *float64 {
+	raw, ok := m[key]
+	if !ok || raw == nil {
+		return nil
+	}
+	switch v := raw.(type) {
+	case float64:
+		return &v
+	case float32:
+		value := float64(v)
+		return &value
+	case int:
+		value := float64(v)
+		return &value
+	case int64:
+		value := float64(v)
+		return &value
+	default:
+		return nil
 	}
 }
 
