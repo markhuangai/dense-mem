@@ -51,6 +51,9 @@ func TestExportProducesMinimalCanonicalArtifactAndHash(t *testing.T) {
 	if res.Artifact.SchemaVersion != SchemaVersion {
 		t.Fatalf("schema_version = %q", res.Artifact.SchemaVersion)
 	}
+	if res.Artifact.ExportedAt == nil {
+		t.Fatal("exported_at is required on exported artifacts")
+	}
 	if len(res.Artifact.Items) != 3 {
 		t.Fatalf("items len = %d, want 3", len(res.Artifact.Items))
 	}
@@ -93,6 +96,74 @@ func TestExportAllowsMoreThanOneHundredFacts(t *testing.T) {
 	}
 	if len(res.Artifact.Items) != len(factIDs) {
 		t.Fatalf("items len = %d, want %d", len(res.Artifact.Items), len(factIDs))
+	}
+}
+
+func TestExportIncludesSelectedFactSupportGraph(t *testing.T) {
+	fact := &domain.Fact{
+		FactID:              "fact-1",
+		Subject:             "assistant",
+		Predicate:           "has_skill",
+		Object:              "writes useful blog outlines",
+		Status:              domain.FactStatusActive,
+		PromotedFromClaimID: "claim-1",
+	}
+	claim := &domain.Claim{
+		ClaimID:        "claim-1",
+		Subject:        fact.Subject,
+		Predicate:      fact.Predicate,
+		Object:         fact.Object,
+		Status:         domain.StatusSuperseded,
+		Modality:       domain.ModalityAssertion,
+		Polarity:       domain.PolarityPlus,
+		Speaker:        "user",
+		ExtractConf:    0.91,
+		ResolutionConf: 0.92,
+		SupportedBy:    []string{"fragment-1"},
+	}
+	graph := &recordingGraph{supportFragments: map[string]SkillPackSupportFragment{
+		"fragment-1": {
+			FragmentID:    "fragment-1",
+			Content:       "A blog outline should define audience, thesis, claims, and success checks.",
+			Source:        "conversation",
+			SourceType:    "conversation",
+			Authority:     string(domain.AuthorityPrimary),
+			SourceQuality: 0.95,
+		},
+	}}
+	svc := New(Dependencies{
+		FactGet:  fakeFactGet{facts: map[string]*domain.Fact{"fact-1": fact}},
+		ClaimGet: fakeClaimGet{claims: map[string]*domain.Claim{"claim-1": claim}},
+		Graph:    graph,
+	})
+
+	res, err := svc.Export(context.Background(), "team-1", ExportRequest{
+		Name:    "Blog writing",
+		FactIDs: []string{"fact-1"},
+	})
+	if err != nil {
+		t.Fatalf("Export with support: %v", err)
+	}
+	if res.Filename != "blog-writing.skill-pack.json" || res.ContentType != "application/json" {
+		t.Fatalf("file metadata = %q/%q, want blog-writing.skill-pack.json/application/json", res.Filename, res.ContentType)
+	}
+	if len(res.Artifact.Items) != 1 {
+		t.Fatalf("items len = %d, want 1", len(res.Artifact.Items))
+	}
+	item := res.Artifact.Items[0]
+	if item.SourceID != "fact-1" || len(item.SupportClaimIDs) != 1 || item.SupportClaimIDs[0] != "claim-1" {
+		t.Fatalf("item support = %+v, want source fact and support claim", item)
+	}
+	if res.Artifact.Support == nil || len(res.Artifact.Support.Claims) != 1 || len(res.Artifact.Support.Fragments) != 1 {
+		t.Fatalf("support = %+v, want one claim and one fragment", res.Artifact.Support)
+	}
+	if res.Artifact.Support.Fragments[0].Content == "" ||
+		strings.Contains(res.CanonicalJSON, "team_id") ||
+		strings.Contains(res.CanonicalJSON, "extract_conf") ||
+		strings.Contains(res.CanonicalJSON, "resolution_conf") ||
+		strings.Contains(res.CanonicalJSON, "extraction_model") ||
+		strings.Contains(res.CanonicalJSON, "extraction_version") {
+		t.Fatalf("canonical support JSON = %s", res.CanonicalJSON)
 	}
 }
 

@@ -47,11 +47,12 @@ func exportSkillPackTool(deps Dependencies) Tool {
 			"type":     "object",
 			"required": []string{"name"},
 			"properties": map[string]any{
-				"name":         schemaString("Skill pack name.", 256),
-				"description":  schemaString("Short skill pack description.", 1024),
-				"fact_ids":     map[string]any{"type": "array", "items": schemaString("Fact ID.", 128)},
-				"claim_ids":    map[string]any{"type": "array", "items": schemaString("Claim ID.", 128)},
-				"manual_items": skillPackItemsSchema(),
+				"name":            schemaString("Skill pack name.", 256),
+				"description":     schemaString("Short skill pack description.", 1024),
+				"fact_ids":        map[string]any{"type": "array", "items": schemaString("Fact ID.", 128)},
+				"claim_ids":       map[string]any{"type": "array", "items": schemaString("Claim ID.", 128)},
+				"manual_items":    skillPackItemsSchema(),
+				"include_support": map[string]any{"type": "boolean", "description": "Include selected fact/claim support claims and source fragments. Defaults to true."},
 			},
 			"additionalProperties": false,
 		},
@@ -192,7 +193,9 @@ func skillPackSchema() map[string]any {
 			"schema_version": schemaEnum([]string{"dense-mem.skill_pack.v1"}),
 			"name":           schemaString("Skill pack name.", 256),
 			"description":    schemaString("Short skill pack description.", 1024),
+			"exported_at":    schemaString("RFC3339 export timestamp.", 64),
 			"items":          skillPackItemsSchema(),
+			"support":        skillPackSupportSchema(),
 		},
 		"additionalProperties": false,
 	}
@@ -206,13 +209,65 @@ func skillPackItemsSchema() map[string]any {
 			"type":     "object",
 			"required": []string{"subject", "predicate", "object", "source_kind"},
 			"properties": map[string]any{
-				"subject":     schemaString("Triple subject.", 256),
-				"predicate":   schemaEnum([]string{"has_skill", "knows", "uses"}),
-				"object":      schemaString("Triple object.", 1024),
-				"source_kind": schemaEnum([]string{"source_fact", "source_validated_claim", "manual"}),
+				"subject":              schemaString("Triple subject.", 256),
+				"predicate":            schemaEnum([]string{"has_skill", "knows", "uses"}),
+				"object":               schemaString("Triple object.", 1024),
+				"source_kind":          schemaEnum([]string{"source_fact", "source_validated_claim", "manual"}),
+				"source_id":            schemaString("Original source fact or claim ID.", 128),
+				"support_claim_ids":    map[string]any{"type": "array", "items": schemaString("Supporting claim ID.", 128)},
+				"support_fragment_ids": map[string]any{"type": "array", "items": schemaString("Supporting fragment ID.", 128)},
 			},
 			"additionalProperties": false,
 		},
+	}
+}
+
+func skillPackSupportSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"claims": map[string]any{
+				"type":  "array",
+				"items": skillPackSupportClaimSchema(),
+			},
+			"fragments": map[string]any{
+				"type":  "array",
+				"items": skillPackSupportFragmentSchema(),
+			},
+		},
+		"additionalProperties": false,
+	}
+}
+
+func skillPackSupportClaimSchema() map[string]any {
+	return map[string]any{
+		"type":     "object",
+		"required": []string{"claim_id", "subject", "predicate", "object"},
+		"properties": map[string]any{
+			"claim_id":     schemaString("Original supporting claim ID.", 128),
+			"subject":      schemaString("Claim subject.", 256),
+			"predicate":    schemaEnum([]string{"has_skill", "knows", "uses"}),
+			"object":       schemaString("Claim object.", 1024),
+			"supported_by": map[string]any{"type": "array", "items": schemaString("Supporting fragment ID.", 128)},
+		},
+		"additionalProperties": false,
+	}
+}
+
+func skillPackSupportFragmentSchema() map[string]any {
+	return map[string]any{
+		"type":     "object",
+		"required": []string{"fragment_id", "content"},
+		"properties": map[string]any{
+			"fragment_id":    schemaString("Original source fragment ID.", 128),
+			"content":        schemaString("Source fragment content.", 8192),
+			"source":         schemaString("Source identifier.", 256),
+			"source_type":    schemaEnum([]string{"conversation", "document", "observation", "manual"}),
+			"authority":      schemaEnum([]string{"authoritative", "primary", "secondary", "inferred", "unknown"}),
+			"labels":         map[string]any{"type": "array", "items": schemaString("Fragment label.", 64)},
+			"source_quality": map[string]any{"type": "number", "minimum": 0, "maximum": 1},
+		},
+		"additionalProperties": false,
 	}
 }
 
