@@ -236,14 +236,14 @@ func TestParseArtifactJSONValidationBranches(t *testing.T) {
 	if err := validatePack(longNamePack); err == nil {
 		t.Fatal("long name should fail")
 	}
-	tooManyItemsPack := longNamePack
-	tooManyItemsPack.Name = "Pack"
-	tooManyItemsPack.Items = make([]SkillPackItem, maxPackItems+1)
-	for i := range tooManyItemsPack.Items {
-		tooManyItemsPack.Items[i] = SkillPackItem{Subject: "assistant", Predicate: "has_skill", Object: "testing", SourceKind: SourceKindManual}
+	manyItemsPack := longNamePack
+	manyItemsPack.Name = "Pack"
+	manyItemsPack.Items = make([]SkillPackItem, 101)
+	for i := range manyItemsPack.Items {
+		manyItemsPack.Items[i] = SkillPackItem{Subject: "assistant", Predicate: "has_skill", Object: "testing", SourceKind: SourceKindManual}
 	}
-	if err := validatePack(tooManyItemsPack); err == nil {
-		t.Fatal("too many items should fail")
+	if err := validatePack(manyItemsPack); err != nil {
+		t.Fatalf("many items should pass: %v", err)
 	}
 	if err := validateExpectedHash("abc", "not-64"); !errors.Is(err, ErrInvalidArtifact) {
 		t.Fatalf("invalid expected hash err = %v, want ErrInvalidArtifact", err)

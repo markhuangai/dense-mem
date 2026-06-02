@@ -49,8 +49,8 @@ func exportSkillPackTool(deps Dependencies) Tool {
 			"properties": map[string]any{
 				"name":         schemaString("Skill pack name.", 256),
 				"description":  schemaString("Short skill pack description.", 1024),
-				"fact_ids":     map[string]any{"type": "array", "items": schemaString("Fact ID.", 128), "maxItems": 100},
-				"claim_ids":    map[string]any{"type": "array", "items": schemaString("Claim ID.", 128), "maxItems": 100},
+				"fact_ids":     map[string]any{"type": "array", "items": schemaString("Fact ID.", 128)},
+				"claim_ids":    map[string]any{"type": "array", "items": schemaString("Claim ID.", 128)},
 				"manual_items": skillPackItemsSchema(),
 			},
 			"additionalProperties": false,
@@ -121,7 +121,7 @@ func importSkillPackTool(deps Dependencies) Tool {
 				"url":                   schemaString("HTTPS URL to a skill pack JSON artifact.", 2048),
 				"expected_sha256":       schemaString("Expected canonical artifact SHA-256.", 64),
 				"mode":                  schemaEnum([]string{"review", "trusted"}),
-				"selected_items":        map[string]any{"type": "array", "items": map[string]any{"type": "integer", "minimum": 0}, "maxItems": 100},
+				"selected_items":        map[string]any{"type": "array", "items": map[string]any{"type": "integer", "minimum": 0}},
 				"conflict_decisions":    conflictDecisionsSchema(),
 				"auto_decide_conflicts": map[string]any{"type": "boolean", "description": "Allow the configured LLM decider to fill missing conflict decisions before trusted import writes."},
 			},
@@ -202,7 +202,6 @@ func skillPackItemsSchema() map[string]any {
 	return map[string]any{
 		"type":     "array",
 		"minItems": 1,
-		"maxItems": 100,
 		"items": map[string]any{
 			"type":     "object",
 			"required": []string{"subject", "predicate", "object", "source_kind"},
@@ -219,8 +218,7 @@ func skillPackItemsSchema() map[string]any {
 
 func conflictDecisionsSchema() map[string]any {
 	return map[string]any{
-		"type":     "array",
-		"maxItems": 100,
+		"type": "array",
 		"items": map[string]any{
 			"type":     "object",
 			"required": []string{"index", "action"},

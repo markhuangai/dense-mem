@@ -13,6 +13,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
 )
 
+const skillPackListPageLimit = 100
+
 type service struct {
 	deps     Dependencies
 	graphOps *graphOps
@@ -34,7 +36,7 @@ func New(deps Dependencies) Service {
 }
 
 func (s *service) FindCandidates(ctx context.Context, profileID string, req FindCandidatesRequest) (*FindCandidatesResult, error) {
-	limit := clampLimit(req.Limit, 20, maxPackItems)
+	limit := clampLimit(req.Limit, 20, skillPackListPageLimit)
 	query := strings.ToLower(strings.TrimSpace(req.Query))
 	if query == "" {
 		return nil, errors.New("skill pack candidates: query is required")
@@ -48,7 +50,7 @@ func (s *service) FindCandidates(ctx context.Context, profileID string, req Find
 
 	out := &FindCandidatesResult{Candidates: []Candidate{}}
 	if s.deps.FactList != nil {
-		facts, _, err := s.deps.FactList.List(ctx, profileID, factservice.FactListFilters{Status: domain.FactStatusActive}, maxPackItems, "")
+		facts, _, err := s.deps.FactList.List(ctx, profileID, factservice.FactListFilters{Status: domain.FactStatusActive}, skillPackListPageLimit, "")
 		if err != nil {
 			return nil, err
 		}
@@ -75,7 +77,7 @@ func (s *service) FindCandidates(ctx context.Context, profileID string, req Find
 	}
 
 	if s.deps.ClaimList != nil && len(out.Candidates) < limit {
-		claims, _, err := s.deps.ClaimList.List(ctx, profileID, maxPackItems, 0)
+		claims, _, err := s.deps.ClaimList.List(ctx, profileID, skillPackListPageLimit, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -483,7 +485,7 @@ func (s *service) inspectItem(ctx context.Context, profileID string, idx int, it
 			Subject:   item.Subject,
 			Predicate: item.Predicate,
 			Status:    domain.FactStatusActive,
-		}, maxPackItems, "")
+		}, skillPackListPageLimit, "")
 		if err != nil {
 			return out, err
 		}
@@ -499,7 +501,7 @@ func (s *service) inspectItem(ctx context.Context, profileID string, idx int, it
 			Subject:   item.Subject,
 			Predicate: item.Predicate,
 			Status:    domain.FactStatusSuperseded,
-		}, maxPackItems, "")
+		}, skillPackListPageLimit, "")
 		if err != nil {
 			return out, err
 		}
@@ -510,7 +512,7 @@ func (s *service) inspectItem(ctx context.Context, profileID string, idx int, it
 		}
 	}
 	if s.deps.ClaimList != nil {
-		claims, _, err := s.deps.ClaimList.List(ctx, profileID, maxPackItems, 0)
+		claims, _, err := s.deps.ClaimList.List(ctx, profileID, skillPackListPageLimit, 0)
 		if err != nil {
 			return out, err
 		}

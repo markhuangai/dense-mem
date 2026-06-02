@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -61,6 +62,37 @@ func TestExportProducesMinimalCanonicalArtifactAndHash(t *testing.T) {
 	sum := sha256.Sum256([]byte(res.CanonicalJSON))
 	if got := res.SHA256; got != hex.EncodeToString(sum[:]) {
 		t.Fatalf("sha256 = %s, want hash of canonical JSON", got)
+	}
+}
+
+func TestExportAllowsMoreThanOneHundredFacts(t *testing.T) {
+	facts := make(map[string]*domain.Fact)
+	factIDs := make([]string, 0, 101)
+	for i := 0; i < 101; i++ {
+		factID := fmt.Sprintf("fact-%03d", i)
+		factIDs = append(factIDs, factID)
+		facts[factID] = &domain.Fact{
+			FactID:    factID,
+			Subject:   "assistant",
+			Predicate: "has_skill",
+			Object:    fmt.Sprintf("skill %03d", i),
+			Status:    domain.FactStatusActive,
+		}
+	}
+	svc := New(Dependencies{FactGet: fakeFactGet{facts: facts}})
+
+	res, err := svc.Export(context.Background(), "team-1", ExportRequest{
+		Name:    "Large pack",
+		FactIDs: factIDs,
+	})
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	if res.ItemCount != len(factIDs) {
+		t.Fatalf("item_count = %d, want %d", res.ItemCount, len(factIDs))
+	}
+	if len(res.Artifact.Items) != len(factIDs) {
+		t.Fatalf("items len = %d, want %d", len(res.Artifact.Items), len(factIDs))
 	}
 }
 

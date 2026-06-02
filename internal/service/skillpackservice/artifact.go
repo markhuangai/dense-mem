@@ -13,7 +13,6 @@ import (
 
 const (
 	maxArtifactBytes = 1 << 20
-	maxPackItems     = 100
 )
 
 var (
@@ -80,9 +79,6 @@ func validatePack(pack SkillPack) error {
 	}
 	if len(pack.Items) == 0 {
 		return fmt.Errorf("%w: items is required", ErrInvalidArtifact)
-	}
-	if len(pack.Items) > maxPackItems {
-		return fmt.Errorf("%w: items exceeds maximum of %d", ErrInvalidArtifact, maxPackItems)
 	}
 	for i, item := range pack.Items {
 		if err := validateItem(item); err != nil {

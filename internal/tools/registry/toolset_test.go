@@ -479,6 +479,49 @@ func TestBuildDefaultSkillPackTools_InvokeSuccessAndInvalidInput(t *testing.T) {
 	}
 }
 
+func TestSkillPackSchemasDoNotCapItemsAtOneHundred(t *testing.T) {
+	reg, _ := BuildDefault(Dependencies{SkillPack: &stubSkillPackService{}})
+
+	factIDs := make([]any, 101)
+	selectedItems := make([]any, 101)
+	conflictDecisions := make([]any, 101)
+	items := make([]any, 101)
+	for i := 0; i < 101; i++ {
+		factIDs[i] = "fact-1"
+		selectedItems[i] = i
+		conflictDecisions[i] = map[string]any{"index": i, "action": "skip"}
+		items[i] = map[string]any{
+			"subject":     "assistant",
+			"predicate":   "has_skill",
+			"object":      "testing",
+			"source_kind": "manual",
+		}
+	}
+	artifact := map[string]any{
+		"schema_version": "dense-mem.skill_pack.v1",
+		"name":           "Pack",
+		"items":          items,
+	}
+
+	exportTool, _ := reg.Get("export_skill_pack")
+	if err := ValidateInput(exportTool, map[string]any{"name": "Pack", "fact_ids": factIDs}); err != nil {
+		t.Fatalf("export_skill_pack ValidateInput: %v", err)
+	}
+	inspectTool, _ := reg.Get("inspect_skill_pack")
+	if err := ValidateInput(inspectTool, map[string]any{"artifact": artifact}); err != nil {
+		t.Fatalf("inspect_skill_pack ValidateInput: %v", err)
+	}
+	importTool, _ := reg.Get("import_skill_pack")
+	if err := ValidateInput(importTool, map[string]any{
+		"artifact":           artifact,
+		"mode":               "review",
+		"selected_items":     selectedItems,
+		"conflict_decisions": conflictDecisions,
+	}); err != nil {
+		t.Fatalf("import_skill_pack ValidateInput: %v", err)
+	}
+}
+
 func TestImportSkillPackReturnsRecoverableResultOnPartialError(t *testing.T) {
 	skillPack := &stubSkillPackService{
 		importResult: &skillpackservice.ImportResult{
