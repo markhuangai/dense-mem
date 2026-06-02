@@ -11,7 +11,7 @@ import (
 func rememberTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "remember",
-		Description: "Store one granular chat-session memory evidence entry, create host-extracted typed personal-memory claims, verify them, and promote non-conflicting validated claims to facts. Keep each entry under 1000 characters and split large scenarios into precise supporting evidence pieces.",
+		Description: "Use after the user states a durable preference, correction, identity/profile fact, project decision, active goal, reusable instruction, or milestone that should persist across sessions. Store one granular chat-session memory evidence entry, create host-extracted typed personal-memory claims, verify them, and promote non-conflicting validated claims to facts. Do not store temporary task state, speculation, or one-off details as active memory. Keep each entry under 1000 characters and split large scenarios into precise supporting evidence pieces.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"content"},
@@ -48,7 +48,7 @@ func rememberTool(deps Dependencies) Tool {
 func importMemoriesTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "import_memories",
-		Description: "Import one granular summarized historical memory entry as evidence and optional typed personal-memory claims. Split bulk history into entries under 1000 characters so claims can attach to precise support. Bulk imports do not auto-promote unless auto_promote is true.",
+		Description: "Use for summarized historical conversations or migrated memory bundles, not normal live chat turns. Import one granular summarized historical memory entry as evidence and optional typed personal-memory claims. Split bulk history into entries under 1000 characters so claims can attach to precise support. Bulk imports do not auto-promote unless auto_promote is true.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"summary"},
@@ -85,7 +85,7 @@ func importMemoriesTool(deps Dependencies) Tool {
 func reflectMemoriesTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "reflect_memories",
-		Description: "Review the caller profile's current facts, candidate/disputed claims, stale facts, and clarification needs.",
+		Description: "Use when memory health may affect the answer or when recall returns clarifications. Review the caller profile's current facts, candidate/disputed claims, stale facts, and clarification needs.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

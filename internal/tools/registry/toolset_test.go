@@ -405,6 +405,13 @@ func TestBuildDefault_SearchAndRecallInvokers(t *testing.T) {
 	if len(results) != 1 || results[0]["id"] != "fragment-hit" {
 		t.Fatalf("recall results = %v, want fragment-hit", results)
 	}
+	if results[0]["tier"] != recallservice.TierFragment {
+		t.Fatalf("fragment tier = %v, want %s", results[0]["tier"], recallservice.TierFragment)
+	}
+	fragment, ok := results[0]["fragment"].(map[string]any)
+	if !ok || fragment["id"] != "fragment-hit" {
+		t.Fatalf("fragment payload = %v, want nested fragment-hit", results[0]["fragment"])
+	}
 	if memory.lastProfile != "profile-search" {
 		t.Fatalf("recall reflection profile = %q, want profile-search", memory.lastProfile)
 	}
@@ -680,6 +687,8 @@ type stubRecallWithHit struct{}
 func (stubRecallWithHit) Recall(ctx context.Context, profileID string, req recallservice.RecallRequest) ([]recallservice.RecallHit, error) {
 	return []recallservice.RecallHit{{
 		Fragment:     &domain.Fragment{FragmentID: "fragment-hit", ProfileID: profileID, Content: req.Query},
+		Tier:         recallservice.TierFragment,
+		Score:        0.75,
 		SemanticRank: 1,
 		KeywordRank:  2,
 		FinalScore:   0.75,

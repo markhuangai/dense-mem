@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	internalhttp "github.com/markhuangai/dense-mem/internal/http"
@@ -57,4 +58,25 @@ func TestServerBootstrapWiresKnowledgePipeline(t *testing.T) {
 		Recall: recallH.Handle,
 	}
 	require.NotNil(t, ph.Recall, "ProtectedHandlers.Recall must be non-nil after handler assignment")
+}
+
+func TestRecallRegistryUsesTieredRecallService(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+	}{
+		{name: "server", path: "main.go"},
+		{name: "demo server", path: "../demo-server/main.go"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := os.ReadFile(tc.path)
+			require.NoError(t, err)
+			source := string(body)
+
+			require.Contains(t, source, "tieredRecallSvc := recallservice.NewRecallServiceWithTiers(")
+			require.Contains(t, source, "recallRegistrySvc = tieredRecallSvc")
+			require.NotContains(t, source, "recallRegistrySvc = recallservice.NewRecallService(")
+		})
+	}
 }

@@ -338,15 +338,7 @@ func main() {
 		recallHTTPSvc     recallservice.RecallService = unavailableRecallService{}
 	)
 	if cfg.IsEmbeddingConfigured() {
-		recallRegistrySvc = recallservice.NewRecallService(
-			retryEmbedder,
-			embeddingSearcher,
-			fragmentSearcher,
-			fragmentGetSvc,
-			logger,
-			discoverabilityMetrics,
-		)
-		recallHTTPSvc = recallservice.NewRecallServiceWithTiers(
+		tieredRecallSvc := recallservice.NewRecallServiceWithTiers(
 			retryEmbedder,
 			embeddingSearcher,
 			fragmentSearcher,
@@ -359,6 +351,8 @@ func main() {
 			logger,
 			discoverabilityMetrics,
 		)
+		recallRegistrySvc = tieredRecallSvc
+		recallHTTPSvc = tieredRecallSvc
 	}
 
 	var (
