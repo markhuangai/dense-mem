@@ -58,6 +58,13 @@ older comparable facts so audit and history remain intact.
 
 Normal chat-session insertion.
 
+MCP callers should send one granular evidence entry per call. Each entry is
+validated to stay under 1000 characters; larger scenarios should be split by
+decision, fact, correction, preference, project milestone, or another
+claim-worthy unit. Typed claims should point at the smallest supporting entry,
+using multiple supporting fragment IDs only when one claim needs evidence from
+more than one entry.
+
 1. Save source evidence as a fragment.
 2. Embed the fragment through the configured provider.
 3. Create typed claims from host-supplied candidate memories.

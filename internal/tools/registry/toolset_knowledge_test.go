@@ -130,6 +130,39 @@ func TestBuildDefaultMemoryTools_InvalidInputBranches(t *testing.T) {
 	}
 }
 
+func TestBuildDefaultMemoryTools_GranularEntryValidation(t *testing.T) {
+	reg, _ := BuildDefault(Dependencies{Memory: &stubMemory{}})
+
+	cases := []struct {
+		toolName string
+		field    string
+	}{
+		{toolName: "remember", field: "content"},
+		{toolName: "import_memories", field: "summary"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.toolName, func(t *testing.T) {
+			tool, ok := reg.Get(tc.toolName)
+			if !ok {
+				t.Fatalf("%s not registered", tc.toolName)
+			}
+			properties := tool.InputSchema["properties"].(map[string]any)
+			fieldSchema := properties[tc.field].(map[string]any)
+			if got, want := fieldSchema["maxLength"], memoryEntryMaxLength; got != want {
+				t.Fatalf("%s.%s maxLength = %v; want %d", tc.toolName, tc.field, got, want)
+			}
+
+			err := ValidateInput(tool, map[string]any{
+				tc.field: strings.Repeat("x", memoryEntryMaxLength+1),
+			})
+			if err == nil || !strings.Contains(err.Error(), "Split large scenarios") {
+				t.Fatalf("ValidateInput long %s error = %v; want split guidance", tc.field, err)
+			}
+		})
+	}
+}
+
 func TestBuildDefault_RecallInvokerErrorBranches(t *testing.T) {
 	t.Run("nil fragment hit returns mapping error", func(t *testing.T) {
 		reg, _ := BuildDefault(Dependencies{Recall: stubRecallNilFragment{}})

@@ -11,6 +11,10 @@ import (
 )
 
 func (s *service) importItem(ctx context.Context, profileID, importID, artifactHash, fragmentID, mode string, item SkillPackItem, inspected InspectItem, decision string) ImportItemResult {
+	return s.importItemWithSupport(ctx, profileID, importID, artifactHash, fragmentID, mode, item, inspected, decision, itemSupportInput{})
+}
+
+func (s *service) importItemWithSupport(ctx context.Context, profileID, importID, artifactHash, fragmentID, mode string, item SkillPackItem, inspected InspectItem, decision string, support itemSupportInput) ImportItemResult {
 	result := ImportItemResult{Index: inspected.Index, Item: item, Conflicts: inspected.ConflictingFacts, Decision: decision}
 	if decision == DecisionSkip {
 		result.Status = "skipped"
@@ -19,21 +23,7 @@ func (s *service) importItem(ctx context.Context, profileID, importID, artifactH
 	if decision == DecisionDemoteToClaim && item.SourceKind != SourceKindFact {
 		return itemError(result, fmt.Errorf("%s is only valid for %s items", DecisionDemoteToClaim, SourceKindFact))
 	}
-	claim := &domain.Claim{
-		Subject:           item.Subject,
-		Predicate:         item.Predicate,
-		Object:            item.Object,
-		Modality:          domain.ModalityAssertion,
-		Polarity:          domain.PolarityPlus,
-		Speaker:           "skill_pack",
-		ExtractConf:       confidenceFor(mode, item.SourceKind),
-		ResolutionConf:    confidenceFor(mode, item.SourceKind),
-		IdempotencyKey:    fmt.Sprintf("skill-pack:%s:%d", artifactHash, inspected.Index),
-		SupportedBy:       []string{fragmentID},
-		ExtractionModel:   "skill_pack_import",
-		ExtractionVersion: SchemaVersion,
-		PipelineRunID:     importID,
-	}
+	claim := claimFromItem(item, mode, artifactHash, inspected.Index, importID, support, fragmentID)
 	createRes, err := s.deps.ClaimCreate.Create(ctx, profileID, claim)
 	if err != nil {
 		result.Status = "error"

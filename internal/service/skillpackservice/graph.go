@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/service/fragmentcodec"
 	neo4jstorage "github.com/markhuangai/dense-mem/internal/storage/neo4j"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
@@ -111,6 +112,51 @@ func candidateFromRow(row map[string]any, sourceKind string) Candidate {
 		},
 		Snippet:    stringState(row, "object"),
 		RecordedAt: recordedAt,
+	}
+}
+
+func (g *graphOps) loadSupportFragments(ctx context.Context, profileID string, fragmentIDs []string) (map[string]SkillPackSupportFragment, error) {
+	out := map[string]SkillPackSupportFragment{}
+	fragmentIDs = uniqueStrings(fragmentIDs)
+	if len(fragmentIDs) == 0 {
+		return out, nil
+	}
+	if !g.available() {
+		return nil, fmt.Errorf("skill pack export: graph store is required to export support fragments")
+	}
+	_, rows, err := g.graph.ScopedRead(ctx, profileID, `
+		MATCH (sf:SourceFragment {team_id: $profileId})
+		WHERE sf.fragment_id IN $fragmentIds
+		  AND (sf.status IS NULL OR sf.status = 'active')
+		RETURN sf.fragment_id AS fragment_id,
+		       sf.content AS content,
+		       sf.source AS source,
+		       sf.source_type AS source_type,
+		       sf.authority AS authority,
+		       sf.labels AS labels,
+		       sf.source_quality AS source_quality
+	`, map[string]any{"fragmentIds": fragmentIDs})
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		fragment := supportFragmentFromRow(row)
+		if fragment.FragmentID != "" {
+			out[fragment.FragmentID] = fragment
+		}
+	}
+	return out, nil
+}
+
+func supportFragmentFromRow(row map[string]any) SkillPackSupportFragment {
+	return SkillPackSupportFragment{
+		FragmentID:    stringState(row, "fragment_id"),
+		Content:       stringState(row, "content"),
+		Source:        stringState(row, "source"),
+		SourceType:    stringState(row, "source_type"),
+		Authority:     stringState(row, "authority"),
+		Labels:        stringSliceState(row, "labels"),
+		SourceQuality: floatState(row, "source_quality"),
 	}
 }
 
@@ -421,6 +467,51 @@ func stringState(m map[string]any, key string) string {
 		return v
 	}
 	return ""
+}
+
+func stringSliceState(m map[string]any, key string) []string {
+	raw, ok := m[key]
+	if !ok || raw == nil {
+		return nil
+	}
+	switch values := raw.(type) {
+	case []string:
+		return values
+	case []any:
+		out := make([]string, 0, len(values))
+		for _, value := range values {
+			if s, ok := value.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func floatState(m map[string]any, key string) float64 {
+	switch v := m[key].(type) {
+	case float64:
+		return v
+	case float32:
+		return float64(v)
+	case int:
+		return float64(v)
+	case int64:
+		return float64(v)
+	default:
+		return 0
+	}
+}
+
+func optionalMapState(m map[string]any, keys ...string) map[string]any {
+	for _, key := range keys {
+		if decoded := fragmentcodec.DecodeOptionalMap(m[key]); decoded != nil {
+			return decoded
+		}
+	}
+	return nil
 }
 
 func nullableStringState(m map[string]any, key string) any {
