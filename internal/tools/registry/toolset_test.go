@@ -179,6 +179,17 @@ func TestValidateInputRejectsNestedSaveMemoryFields(t *testing.T) {
 		t.Fatal("save_memory tool not registered")
 	}
 
+	properties := tool.InputSchema["properties"].(map[string]any)
+	contentSchema := properties["content"].(map[string]any)
+	if got, want := contentSchema["maxLength"], memoryEntryMaxLength; got != want {
+		t.Fatalf("save_memory content maxLength = %v; want %d", got, want)
+	}
+	if err := ValidateInput(tool, map[string]any{
+		"content": strings.Repeat("x", memoryEntryMaxLength+1),
+	}); err == nil || !strings.Contains(err.Error(), "Split large scenarios") {
+		t.Fatalf("ValidateInput long content error = %v; want split guidance", err)
+	}
+
 	if err := ValidateInput(tool, map[string]any{
 		"content":     "hello",
 		"source_type": "webhook",
@@ -394,6 +405,13 @@ func TestBuildDefault_SearchAndRecallInvokers(t *testing.T) {
 	if len(results) != 1 || results[0]["id"] != "fragment-hit" {
 		t.Fatalf("recall results = %v, want fragment-hit", results)
 	}
+	if results[0]["tier"] != recallservice.TierFragment {
+		t.Fatalf("fragment tier = %v, want %s", results[0]["tier"], recallservice.TierFragment)
+	}
+	fragment, ok := results[0]["fragment"].(map[string]any)
+	if !ok || fragment["id"] != "fragment-hit" {
+		t.Fatalf("fragment payload = %v, want nested fragment-hit", results[0]["fragment"])
+	}
 	if memory.lastProfile != "profile-search" {
 		t.Fatalf("recall reflection profile = %q, want profile-search", memory.lastProfile)
 	}
@@ -465,6 +483,95 @@ func TestBuildDefaultSkillPackTools_InvokeSuccessAndInvalidInput(t *testing.T) {
 				t.Fatalf("%s err = %v; want %q", tc.name, err, tc.want)
 			}
 		})
+	}
+}
+
+func TestSkillPackSchemasDoNotCapItemsAtOneHundred(t *testing.T) {
+	reg, _ := BuildDefault(Dependencies{SkillPack: &stubSkillPackService{}})
+
+	factIDs := make([]any, 101)
+	selectedItems := make([]any, 101)
+	conflictDecisions := make([]any, 101)
+	items := make([]any, 101)
+	for i := 0; i < 101; i++ {
+		factIDs[i] = "fact-1"
+		selectedItems[i] = i
+		conflictDecisions[i] = map[string]any{"index": i, "action": "skip"}
+		items[i] = map[string]any{
+			"subject":     "assistant",
+			"predicate":   "has_skill",
+			"object":      "testing",
+			"source_kind": "manual",
+		}
+	}
+	artifact := map[string]any{
+		"schema_version": "dense-mem.skill_pack.v1",
+		"name":           "Pack",
+		"items":          items,
+	}
+
+	exportTool, _ := reg.Get("export_skill_pack")
+	if err := ValidateInput(exportTool, map[string]any{"name": "Pack", "fact_ids": factIDs}); err != nil {
+		t.Fatalf("export_skill_pack ValidateInput: %v", err)
+	}
+	inspectTool, _ := reg.Get("inspect_skill_pack")
+	if err := ValidateInput(inspectTool, map[string]any{"artifact": artifact}); err != nil {
+		t.Fatalf("inspect_skill_pack ValidateInput: %v", err)
+	}
+	importTool, _ := reg.Get("import_skill_pack")
+	if err := ValidateInput(importTool, map[string]any{
+		"artifact":           artifact,
+		"mode":               "review",
+		"selected_items":     selectedItems,
+		"conflict_decisions": conflictDecisions,
+	}); err != nil {
+		t.Fatalf("import_skill_pack ValidateInput: %v", err)
+	}
+}
+
+func TestSkillPackSchemasAcceptSupportGraph(t *testing.T) {
+	reg, _ := BuildDefault(Dependencies{SkillPack: &stubSkillPackService{}})
+	artifact := map[string]any{
+		"schema_version": "dense-mem.skill_pack.v1",
+		"name":           "Supported pack",
+		"items": []any{map[string]any{
+			"subject":              "assistant",
+			"predicate":            "has_skill",
+			"object":               "testing",
+			"source_kind":          "source_validated_claim",
+			"source_id":            "claim-1",
+			"support_claim_ids":    []any{"claim-1"},
+			"support_fragment_ids": []any{"fragment-1"},
+		}},
+		"support": map[string]any{
+			"claims": []any{map[string]any{
+				"claim_id":     "claim-1",
+				"subject":      "assistant",
+				"predicate":    "has_skill",
+				"object":       "testing",
+				"supported_by": []any{"fragment-1"},
+			}},
+			"fragments": []any{map[string]any{
+				"fragment_id":    "fragment-1",
+				"content":        "testing evidence",
+				"source_type":    "conversation",
+				"authority":      "primary",
+				"source_quality": 0.9,
+			}},
+		},
+	}
+
+	exportTool, _ := reg.Get("export_skill_pack")
+	if err := ValidateInput(exportTool, map[string]any{"name": "Pack", "claim_ids": []any{"claim-1"}, "include_support": false}); err != nil {
+		t.Fatalf("export_skill_pack support flag ValidateInput: %v", err)
+	}
+	inspectTool, _ := reg.Get("inspect_skill_pack")
+	if err := ValidateInput(inspectTool, map[string]any{"artifact": artifact}); err != nil {
+		t.Fatalf("inspect_skill_pack support artifact ValidateInput: %v", err)
+	}
+	importTool, _ := reg.Get("import_skill_pack")
+	if err := ValidateInput(importTool, map[string]any{"artifact": artifact, "mode": "review"}); err != nil {
+		t.Fatalf("import_skill_pack support artifact ValidateInput: %v", err)
 	}
 }
 
@@ -580,6 +687,8 @@ type stubRecallWithHit struct{}
 func (stubRecallWithHit) Recall(ctx context.Context, profileID string, req recallservice.RecallRequest) ([]recallservice.RecallHit, error) {
 	return []recallservice.RecallHit{{
 		Fragment:     &domain.Fragment{FragmentID: "fragment-hit", ProfileID: profileID, Content: req.Query},
+		Tier:         recallservice.TierFragment,
+		Score:        0.75,
 		SemanticRank: 1,
 		KeywordRank:  2,
 		FinalScore:   0.75,
@@ -814,6 +923,8 @@ func (s *stubSkillPackService) Export(ctx context.Context, profileID string, req
 		CanonicalJSON: "{}",
 		SHA256:        strings.Repeat("a", 64),
 		ItemCount:     1,
+		Filename:      "pack.skill-pack.json",
+		ContentType:   "application/json",
 	}, nil
 }
 

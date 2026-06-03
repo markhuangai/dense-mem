@@ -51,6 +51,19 @@ func TestValidateInputSchemaBranches(t *testing.T) {
 		t.Fatalf("ValidateInput valid input: %v", err)
 	}
 
+	nonASCIIValid := map[string]any{
+		"name":    strings.Repeat("界", 5),
+		"count":   json.Number("2"),
+		"ratio":   float32(0.5),
+		"enabled": true,
+		"mode":    "fast",
+		"nested":  map[string]string{"id": "n1"},
+		"items":   []any{json.Number("1"), float64(2)},
+	}
+	if err := ValidateInput(tool, nonASCIIValid); err != nil {
+		t.Fatalf("ValidateInput non-ASCII exact max input: %v", err)
+	}
+
 	cases := []struct {
 		name string
 		args map[string]any
@@ -60,7 +73,9 @@ func TestValidateInputSchemaBranches(t *testing.T) {
 		{"unknown field", map[string]any{"name": "ok", "count": 1, "extra": true}, "unknown field: extra"},
 		{"string type", map[string]any{"name": 3, "count": 1}, "name must be a string"},
 		{"string min length", map[string]any{"name": "a", "count": 1}, "at least 2"},
+		{"string min length non-ASCII", map[string]any{"name": "界", "count": 1}, "at least 2"},
 		{"string max length", map[string]any{"name": "abcdef", "count": 1}, "maximum length"},
+		{"string max length non-ASCII", map[string]any{"name": strings.Repeat("界", 6), "count": 1}, "maximum length"},
 		{"integer type", map[string]any{"name": "ok", "count": 1.2}, "count must be an integer"},
 		{"integer finite", map[string]any{"name": "ok", "count": math.Inf(1)}, "count must be an integer"},
 		{"integer min", map[string]any{"name": "ok", "count": 0}, "greater than or equal to 1"},

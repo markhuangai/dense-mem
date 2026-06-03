@@ -65,17 +65,45 @@ type ConflictDecider interface {
 }
 
 type SkillPack struct {
-	SchemaVersion string          `json:"schema_version"`
-	Name          string          `json:"name"`
-	Description   string          `json:"description,omitempty"`
-	Items         []SkillPackItem `json:"items"`
+	SchemaVersion string            `json:"schema_version"`
+	Name          string            `json:"name"`
+	Description   string            `json:"description,omitempty"`
+	ExportedAt    *time.Time        `json:"exported_at,omitempty"`
+	Items         []SkillPackItem   `json:"items"`
+	Support       *SkillPackSupport `json:"support,omitempty"`
 }
 
 type SkillPackItem struct {
-	Subject    string `json:"subject"`
-	Predicate  string `json:"predicate"`
-	Object     string `json:"object"`
-	SourceKind string `json:"source_kind"`
+	Subject            string   `json:"subject"`
+	Predicate          string   `json:"predicate"`
+	Object             string   `json:"object"`
+	SourceKind         string   `json:"source_kind"`
+	SourceID           string   `json:"source_id,omitempty"`
+	SupportClaimIDs    []string `json:"support_claim_ids,omitempty"`
+	SupportFragmentIDs []string `json:"support_fragment_ids,omitempty"`
+}
+
+type SkillPackSupport struct {
+	Claims    []SkillPackSupportClaim    `json:"claims,omitempty"`
+	Fragments []SkillPackSupportFragment `json:"fragments,omitempty"`
+}
+
+type SkillPackSupportClaim struct {
+	ClaimID     string   `json:"claim_id"`
+	Subject     string   `json:"subject"`
+	Predicate   string   `json:"predicate"`
+	Object      string   `json:"object"`
+	SupportedBy []string `json:"supported_by,omitempty"`
+}
+
+type SkillPackSupportFragment struct {
+	FragmentID    string   `json:"fragment_id"`
+	Content       string   `json:"content"`
+	Source        string   `json:"source,omitempty"`
+	SourceType    string   `json:"source_type,omitempty"`
+	Authority     string   `json:"authority,omitempty"`
+	Labels        []string `json:"labels,omitempty"`
+	SourceQuality *float64 `json:"source_quality,omitempty"`
 }
 
 type Candidate struct {
@@ -96,11 +124,12 @@ type FindCandidatesResult struct {
 }
 
 type ExportRequest struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	FactIDs     []string        `json:"fact_ids,omitempty"`
-	ClaimIDs    []string        `json:"claim_ids,omitempty"`
-	ManualItems []SkillPackItem `json:"manual_items,omitempty"`
+	Name           string          `json:"name"`
+	Description    string          `json:"description,omitempty"`
+	FactIDs        []string        `json:"fact_ids,omitempty"`
+	ClaimIDs       []string        `json:"claim_ids,omitempty"`
+	ManualItems    []SkillPackItem `json:"manual_items,omitempty"`
+	IncludeSupport *bool           `json:"include_support,omitempty"`
 }
 
 type ExportResult struct {
@@ -108,6 +137,8 @@ type ExportResult struct {
 	CanonicalJSON string    `json:"canonical_json"`
 	SHA256        string    `json:"sha256"`
 	ItemCount     int       `json:"item_count"`
+	Filename      string    `json:"filename"`
+	ContentType   string    `json:"content_type"`
 }
 
 type InspectRequest struct {
@@ -123,9 +154,15 @@ type InspectResult struct {
 	Name              string           `json:"name"`
 	Description       string           `json:"description,omitempty"`
 	ItemCount         int              `json:"item_count"`
+	SupportSummary    *SupportSummary  `json:"support_summary,omitempty"`
 	Items             []InspectItem    `json:"items"`
 	DecisionsRequired []ConflictPrompt `json:"decisions_required,omitempty"`
 	SourceURL         string           `json:"source_url,omitempty"`
+}
+
+type SupportSummary struct {
+	ClaimCount    int `json:"claim_count"`
+	FragmentCount int `json:"fragment_count"`
 }
 
 type InspectItem struct {

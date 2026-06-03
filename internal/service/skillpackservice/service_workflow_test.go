@@ -201,6 +201,18 @@ func TestParseArtifactJSONValidationBranches(t *testing.T) {
 	if _, err := parseArtifactJSON([]byte(strings.Repeat("x", maxArtifactBytes+1))); !errors.Is(err, ErrInvalidArtifact) {
 		t.Fatalf("oversized parse err = %v, want ErrInvalidArtifact", err)
 	}
+	supported := `{"schema_version":"dense-mem.skill_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"source_validated_claim","source_id":"claim-1","support_claim_ids":["claim-1"],"support_fragment_ids":["fragment-1"]}],"support":{"claims":[{"claim_id":"claim-1","subject":"assistant","predicate":"has_skill","object":"testing","supported_by":["fragment-1"]}],"fragments":[{"fragment_id":"fragment-1","content":"testing evidence","source_type":"conversation"}]}}`
+	if pack, err := parseArtifactJSON([]byte(supported)); err != nil || pack.Support == nil || len(pack.Support.Claims) != 1 {
+		t.Fatalf("parse supported artifact pack=%+v err=%v, want support", pack, err)
+	}
+	danglingItemClaim := `{"schema_version":"dense-mem.skill_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"source_validated_claim","support_claim_ids":["missing"]}],"support":{"fragments":[{"fragment_id":"fragment-1","content":"testing evidence"}]}}`
+	if _, err := parseArtifactJSON([]byte(danglingItemClaim)); !errors.Is(err, ErrInvalidArtifact) || !strings.Contains(err.Error(), "missing claim") {
+		t.Fatalf("dangling item claim err = %v, want missing claim ErrInvalidArtifact", err)
+	}
+	danglingClaimFragment := `{"schema_version":"dense-mem.skill_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"source_validated_claim","support_claim_ids":["claim-1"]}],"support":{"claims":[{"claim_id":"claim-1","subject":"assistant","predicate":"has_skill","object":"testing","supported_by":["missing"]}]}}`
+	if _, err := parseArtifactJSON([]byte(danglingClaimFragment)); !errors.Is(err, ErrInvalidArtifact) || !strings.Contains(err.Error(), "missing fragment") {
+		t.Fatalf("dangling claim fragment err = %v, want missing fragment ErrInvalidArtifact", err)
+	}
 	if err := validateItem(SkillPackItem{Subject: strings.Repeat("x", 257), Predicate: "has_skill", Object: "x", SourceKind: SourceKindManual}); err == nil {
 		t.Fatal("long subject should fail")
 	}
@@ -236,14 +248,14 @@ func TestParseArtifactJSONValidationBranches(t *testing.T) {
 	if err := validatePack(longNamePack); err == nil {
 		t.Fatal("long name should fail")
 	}
-	tooManyItemsPack := longNamePack
-	tooManyItemsPack.Name = "Pack"
-	tooManyItemsPack.Items = make([]SkillPackItem, maxPackItems+1)
-	for i := range tooManyItemsPack.Items {
-		tooManyItemsPack.Items[i] = SkillPackItem{Subject: "assistant", Predicate: "has_skill", Object: "testing", SourceKind: SourceKindManual}
+	manyItemsPack := longNamePack
+	manyItemsPack.Name = "Pack"
+	manyItemsPack.Items = make([]SkillPackItem, 101)
+	for i := range manyItemsPack.Items {
+		manyItemsPack.Items[i] = SkillPackItem{Subject: "assistant", Predicate: "has_skill", Object: "testing", SourceKind: SourceKindManual}
 	}
-	if err := validatePack(tooManyItemsPack); err == nil {
-		t.Fatal("too many items should fail")
+	if err := validatePack(manyItemsPack); err != nil {
+		t.Fatalf("many items should pass: %v", err)
 	}
 	if err := validateExpectedHash("abc", "not-64"); !errors.Is(err, ErrInvalidArtifact) {
 		t.Fatalf("invalid expected hash err = %v, want ErrInvalidArtifact", err)
@@ -771,16 +783,33 @@ func TestTrustedImportConflictDecisions(t *testing.T) {
 
 	t.Run("skip selected conflict", func(t *testing.T) {
 		ledger := &fakeLedger{}
+		fragmentCreate := &fakeFragmentCreate{}
 		claimCreate := &fakeClaimCreate{}
+		pack := packWithItem(SourceKindManual)
+		pack.Items[0].SupportClaimIDs = []string{"claim-skip"}
+		pack.Items[0].SupportFragmentIDs = []string{"fragment-skip"}
+		pack.Support = &SkillPackSupport{
+			Claims: []SkillPackSupportClaim{{
+				ClaimID:     "claim-skip",
+				Subject:     pack.Items[0].Subject,
+				Predicate:   pack.Items[0].Predicate,
+				Object:      pack.Items[0].Object,
+				SupportedBy: []string{"fragment-skip"},
+			}},
+			Fragments: []SkillPackSupportFragment{{
+				FragmentID: "fragment-skip",
+				Content:    "Skipped support evidence should not be imported.",
+			}},
+		}
 		svc := New(Dependencies{
-			FragmentCreate: &fakeFragmentCreate{},
+			FragmentCreate: fragmentCreate,
 			ClaimCreate:    claimCreate,
 			FactList:       fakeFactList{facts: []*domain.Fact{conflictingFact}},
 			Graph:          &recordingGraph{},
 			Ledger:         ledger,
 		})
 		res, err := svc.Import(context.Background(), "team-1", ImportRequest{
-			Artifact: packWithItem(SourceKindManual),
+			Artifact: pack,
 			Mode:     ModeTrusted,
 			ConflictDecisions: []ConflictDecision{{
 				Index:  0,
@@ -795,6 +824,9 @@ func TestTrustedImportConflictDecisions(t *testing.T) {
 		}
 		if claimCreate.calls != 0 {
 			t.Fatalf("claimCreate calls = %d, want 0", claimCreate.calls)
+		}
+		if fragmentCreate.calls != 1 {
+			t.Fatalf("fragmentCreate calls = %d, want only artifact summary fragment", fragmentCreate.calls)
 		}
 	})
 

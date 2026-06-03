@@ -13,6 +13,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
 )
 
+const skillPackListPageLimit = 100
+
 type service struct {
 	deps     Dependencies
 	graphOps *graphOps
@@ -34,7 +36,7 @@ func New(deps Dependencies) Service {
 }
 
 func (s *service) FindCandidates(ctx context.Context, profileID string, req FindCandidatesRequest) (*FindCandidatesResult, error) {
-	limit := clampLimit(req.Limit, 20, maxPackItems)
+	limit := clampLimit(req.Limit, 20, skillPackListPageLimit)
 	query := strings.ToLower(strings.TrimSpace(req.Query))
 	if query == "" {
 		return nil, errors.New("skill pack candidates: query is required")
@@ -48,7 +50,7 @@ func (s *service) FindCandidates(ctx context.Context, profileID string, req Find
 
 	out := &FindCandidatesResult{Candidates: []Candidate{}}
 	if s.deps.FactList != nil {
-		facts, _, err := s.deps.FactList.List(ctx, profileID, factservice.FactListFilters{Status: domain.FactStatusActive}, maxPackItems, "")
+		facts, _, err := s.deps.FactList.List(ctx, profileID, factservice.FactListFilters{Status: domain.FactStatusActive}, skillPackListPageLimit, "")
 		if err != nil {
 			return nil, err
 		}
@@ -75,7 +77,7 @@ func (s *service) FindCandidates(ctx context.Context, profileID string, req Find
 	}
 
 	if s.deps.ClaimList != nil && len(out.Candidates) < limit {
-		claims, _, err := s.deps.ClaimList.List(ctx, profileID, maxPackItems, 0)
+		claims, _, err := s.deps.ClaimList.List(ctx, profileID, skillPackListPageLimit, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -107,12 +109,16 @@ func (s *service) Export(ctx context.Context, profileID string, req ExportReques
 	if strings.TrimSpace(req.Name) == "" {
 		return nil, errors.New("skill pack export: name is required")
 	}
+	exportedAt := time.Now().UTC()
 	pack := SkillPack{
 		SchemaVersion: SchemaVersion,
 		Name:          req.Name,
 		Description:   req.Description,
+		ExportedAt:    &exportedAt,
 		Items:         []SkillPackItem{},
 	}
+	withSupport := includeSupport(req)
+	support := newSupportBuilder()
 
 	for _, factID := range req.FactIDs {
 		if s.deps.FactGet == nil {
@@ -122,15 +128,25 @@ func (s *service) Export(ctx context.Context, profileID string, req ExportReques
 		if err != nil {
 			return nil, err
 		}
+		if fact == nil {
+			return nil, fmt.Errorf("skill pack export: fact %s not found", factID)
+		}
 		if !allowedPredicate(fact.Predicate) {
 			return nil, fmt.Errorf("skill pack export: fact %s predicate %q is not supported", factID, fact.Predicate)
 		}
-		pack.Items = append(pack.Items, SkillPackItem{
+		item := SkillPackItem{
 			Subject:    fact.Subject,
 			Predicate:  fact.Predicate,
 			Object:     fact.Object,
 			SourceKind: SourceKindFact,
-		})
+			SourceID:   fact.FactID,
+		}
+		if withSupport {
+			if err := s.addFactSupport(ctx, profileID, &item, fact, support); err != nil {
+				return nil, err
+			}
+		}
+		pack.Items = append(pack.Items, item)
 	}
 
 	for _, claimID := range req.ClaimIDs {
@@ -141,18 +157,28 @@ func (s *service) Export(ctx context.Context, profileID string, req ExportReques
 		if err != nil {
 			return nil, err
 		}
+		if claim == nil {
+			return nil, fmt.Errorf("skill pack export: claim %s not found", claimID)
+		}
 		if claim.Status != domain.StatusValidated {
 			return nil, fmt.Errorf("skill pack export: claim %s must be validated", claimID)
 		}
 		if !allowedPredicate(claim.Predicate) {
 			return nil, fmt.Errorf("skill pack export: claim %s predicate %q is not supported", claimID, claim.Predicate)
 		}
-		pack.Items = append(pack.Items, SkillPackItem{
+		item := SkillPackItem{
 			Subject:    claim.Subject,
 			Predicate:  claim.Predicate,
 			Object:     claim.Object,
 			SourceKind: SourceKindValidatedClaim,
-		})
+			SourceID:   claim.ClaimID,
+		}
+		if withSupport {
+			if err := s.addClaimSupport(ctx, profileID, &item, claim, support); err != nil {
+				return nil, err
+			}
+		}
+		pack.Items = append(pack.Items, item)
 	}
 
 	for _, item := range req.ManualItems {
@@ -162,6 +188,9 @@ func (s *service) Export(ctx context.Context, profileID string, req ExportReques
 		pack.Items = append(pack.Items, item)
 	}
 
+	if withSupport {
+		pack.Support = support.build()
+	}
 	pack = normalizePack(pack)
 	canonical, hash, err := canonicalArtifact(pack)
 	if err != nil {
@@ -172,6 +201,8 @@ func (s *service) Export(ctx context.Context, profileID string, req ExportReques
 		CanonicalJSON: string(canonical),
 		SHA256:        hash,
 		ItemCount:     len(pack.Items),
+		Filename:      skillPackFilename(pack.Name),
+		ContentType:   "application/json",
 	}, nil
 }
 
@@ -207,6 +238,7 @@ func (s *service) Import(ctx context.Context, profileID string, req ImportReques
 	}
 	selected := selectedIndexSet(req.SelectedItems, len(pack.Items))
 	decisionByIndex := conflictDecisionMap(req.ConflictDecisions)
+	supportState := newSupportImportState(pack)
 	if req.Mode == ModeTrusted && req.AutoDecideConflicts {
 		s.recommendMissingDecisions(ctx, profileID, hash, sourceURL, req.Mode, inspection, selected, decisionByIndex, true)
 	}
@@ -256,6 +288,24 @@ func (s *service) Import(ctx context.Context, profileID string, req ImportReques
 			"mode":          req.Mode,
 			"artifact_hash": hash,
 			"error":         out.Error,
+		}); err != nil {
+			out.Error = fmt.Sprintf("%s; skill pack import status update failed: %v", out.Error, err)
+		}
+		return out, nil
+	}
+	failItem := func(result ImportItemResult) (*ImportResult, error) {
+		out.Items = append(out.Items, result)
+		out.Status = domain.SkillPackImportStatusFailed
+		if result.Error == "" {
+			out.Error = fmt.Sprintf("skill pack import: item %d failed", result.Index)
+		} else {
+			out.Error = fmt.Sprintf("skill pack import: item %d: %s", result.Index, result.Error)
+		}
+		if err := s.deps.Ledger.UpdateImportStatus(ctx, profileID, importID, out.Status, out.AppliedCount, out.SkippedCount, map[string]any{
+			"mode":              req.Mode,
+			"artifact_hash":     hash,
+			"failed_item_index": result.Index,
+			"error":             out.Error,
 		}); err != nil {
 			out.Error = fmt.Sprintf("%s; skill pack import status update failed: %v", out.Error, err)
 		}
@@ -311,24 +361,26 @@ func (s *service) Import(ctx context.Context, profileID string, req ImportReques
 			out.SkippedCount++
 			continue
 		}
-		result := s.importItem(ctx, profileID, importID, hash, fragmentID, req.Mode, item, inspection.Items[idx], decisionByIndex[idx])
+		if decisionByIndex[idx] == DecisionSkip {
+			result := s.importItemWithSupport(ctx, profileID, importID, hash, fragmentID, req.Mode, item, inspection.Items[idx], DecisionSkip, itemSupportInput{})
+			out.Items = append(out.Items, result)
+			out.SkippedCount++
+			continue
+		}
+		itemSupport, err := s.importSupportForItem(ctx, profileID, importID, hash, sourceURL, req.Mode, pack, supportState, item)
+		if err != nil {
+			return failItem(itemError(ImportItemResult{
+				Index:     idx,
+				Item:      item,
+				Conflicts: inspection.Items[idx].ConflictingFacts,
+				Decision:  decisionByIndex[idx],
+			}, err))
+		}
+		result := s.importItemWithSupport(ctx, profileID, importID, hash, fragmentID, req.Mode, item, inspection.Items[idx], decisionByIndex[idx], itemSupport)
 		out.Items = append(out.Items, result)
 		if result.Status == "error" {
-			out.Status = domain.SkillPackImportStatusFailed
-			if result.Error == "" {
-				out.Error = fmt.Sprintf("skill pack import: item %d failed", result.Index)
-			} else {
-				out.Error = fmt.Sprintf("skill pack import: item %d: %s", result.Index, result.Error)
-			}
-			if err := s.deps.Ledger.UpdateImportStatus(ctx, profileID, importID, out.Status, out.AppliedCount, out.SkippedCount, map[string]any{
-				"mode":              req.Mode,
-				"artifact_hash":     hash,
-				"failed_item_index": result.Index,
-				"error":             out.Error,
-			}); err != nil {
-				out.Error = fmt.Sprintf("%s; skill pack import status update failed: %v", out.Error, err)
-			}
-			return out, nil
+			out.Items = out.Items[:len(out.Items)-1]
+			return failItem(result)
 		}
 		if result.Status == "imported" || result.Status == "promoted" || result.Status == "validated" {
 			out.AppliedCount++
@@ -451,6 +503,12 @@ func (s *service) inspectPack(ctx context.Context, profileID string, pack SkillP
 		SourceURL:    sourceURL,
 		Items:        make([]InspectItem, 0, len(pack.Items)),
 	}
+	if pack.Support != nil {
+		out.SupportSummary = &SupportSummary{
+			ClaimCount:    len(pack.Support.Claims),
+			FragmentCount: len(pack.Support.Fragments),
+		}
+	}
 	for idx, item := range pack.Items {
 		inspected, err := s.inspectItem(ctx, profileID, idx, item)
 		if err != nil {
@@ -483,7 +541,7 @@ func (s *service) inspectItem(ctx context.Context, profileID string, idx int, it
 			Subject:   item.Subject,
 			Predicate: item.Predicate,
 			Status:    domain.FactStatusActive,
-		}, maxPackItems, "")
+		}, skillPackListPageLimit, "")
 		if err != nil {
 			return out, err
 		}
@@ -499,7 +557,7 @@ func (s *service) inspectItem(ctx context.Context, profileID string, idx int, it
 			Subject:   item.Subject,
 			Predicate: item.Predicate,
 			Status:    domain.FactStatusSuperseded,
-		}, maxPackItems, "")
+		}, skillPackListPageLimit, "")
 		if err != nil {
 			return out, err
 		}
@@ -510,7 +568,7 @@ func (s *service) inspectItem(ctx context.Context, profileID string, idx int, it
 		}
 	}
 	if s.deps.ClaimList != nil {
-		claims, _, err := s.deps.ClaimList.List(ctx, profileID, maxPackItems, 0)
+		claims, _, err := s.deps.ClaimList.List(ctx, profileID, skillPackListPageLimit, 0)
 		if err != nil {
 			return out, err
 		}

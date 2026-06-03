@@ -3,6 +3,7 @@ package skillpackservice
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -116,21 +117,45 @@ func (g *factCandidateGraph) ScopedWriteTx(_ context.Context, _ string, _ func(n
 }
 
 type recordingGraph struct {
-	states        map[string]map[string]any
-	promotedFacts map[string]string
-	writeCount    int
-	writeErr      error
-	writeErrAfter int
-	writeQueries  []string
-	writeParams   []map[string]any
-	txCount       int
-	txErr         error
-	readErr       error
+	states           map[string]map[string]any
+	promotedFacts    map[string]string
+	supportFragments map[string]SkillPackSupportFragment
+	writeCount       int
+	writeErr         error
+	writeErrAfter    int
+	writeQueries     []string
+	writeParams      []map[string]any
+	txCount          int
+	txErr            error
+	readErr          error
 }
 
 func (g *recordingGraph) ScopedRead(_ context.Context, _ string, _ string, params map[string]any) (neo4jdriver.ResultSummary, []map[string]any, error) {
 	if g.readErr != nil {
 		return nil, nil, g.readErr
+	}
+	if fragmentIDs, _ := params["fragmentIds"].([]string); len(fragmentIDs) > 0 {
+		rows := []map[string]any{}
+		for _, fragmentID := range fragmentIDs {
+			fragment, exists := g.supportFragments[fragmentID]
+			if !exists {
+				continue
+			}
+			var sourceQuality any
+			if fragment.SourceQuality != nil {
+				sourceQuality = *fragment.SourceQuality
+			}
+			rows = append(rows, map[string]any{
+				"fragment_id":    fragment.FragmentID,
+				"content":        fragment.Content,
+				"source":         fragment.Source,
+				"source_type":    fragment.SourceType,
+				"authority":      fragment.Authority,
+				"labels":         fragment.Labels,
+				"source_quality": sourceQuality,
+			})
+		}
+		return nil, rows, nil
 	}
 	if claimID, _ := params["claimId"].(string); claimID != "" {
 		if factID := g.promotedFacts[claimID]; factID != "" {
@@ -249,19 +274,22 @@ type fakeFragmentCreate struct {
 	calls     int
 	duplicate bool
 	err       error
+	requests  []*dto.CreateFragmentRequest
 }
 
 func (f *fakeFragmentCreate) Create(_ context.Context, profileID string, req *dto.CreateFragmentRequest) (*fragmentservice.CreateResult, error) {
 	f.calls++
+	f.requests = append(f.requests, req)
 	if f.err != nil {
 		return nil, f.err
 	}
+	fragmentID := fmt.Sprintf("fragment-%d", f.calls)
 	return &fragmentservice.CreateResult{
 		Fragment: &domain.Fragment{
-			FragmentID:  "fragment-1",
+			FragmentID:  fragmentID,
 			ProfileID:   profileID,
 			Content:     req.Content,
-			ContentHash: "hash",
+			ContentHash: "hash-" + fragmentID,
 			CreatedAt:   time.Now().UTC(),
 		},
 		Duplicate: f.duplicate,
@@ -273,10 +301,12 @@ type fakeClaimCreate struct {
 	duplicate bool
 	claimID   string
 	err       error
+	claims    []*domain.Claim
 }
 
 func (f *fakeClaimCreate) Create(_ context.Context, profileID string, claim *domain.Claim) (*claimservice.CreateResult, error) {
 	f.calls++
+	f.claims = append(f.claims, claim)
 	if f.err != nil {
 		return nil, f.err
 	}

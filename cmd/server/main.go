@@ -318,15 +318,7 @@ func main() {
 		recallHTTPSvc     recallservice.RecallService = unavailableRecallService{}
 	)
 	if cfg.IsEmbeddingConfigured() {
-		recallRegistrySvc = recallservice.NewRecallService(
-			retryEmbedder,
-			embeddingSearcher,
-			fragmentSearcher,
-			fragmentGetSvc,
-			logger,
-			discoverabilityMetrics,
-		)
-		recallHTTPSvc = recallservice.NewRecallServiceWithTiers(
+		tieredRecallSvc := recallservice.NewRecallServiceWithTiers(
 			retryEmbedder,
 			embeddingSearcher,
 			fragmentSearcher,
@@ -339,6 +331,8 @@ func main() {
 			logger,
 			discoverabilityMetrics,
 		)
+		recallRegistrySvc = tieredRecallSvc
+		recallHTTPSvc = tieredRecallSvc
 	}
 
 	memorySvc := memoryservice.New(memoryservice.Dependencies{
@@ -555,11 +549,15 @@ func main() {
 		}
 	}()
 
-	logger.Info("starting server", observability.String("addr", config.DefaultHTTPAddr))
+	httpAddr := os.Getenv("HTTP_ADDR")
+	if httpAddr == "" {
+		httpAddr = config.DefaultHTTPAddr
+	}
+	logger.Info("starting server", observability.String("addr", httpAddr))
 
 	// Start server in a goroutine
 	go func() {
-		if err := e.Start(config.DefaultHTTPAddr); err != nil {
+		if err := e.Start(httpAddr); err != nil {
 			logger.Error("server error", err)
 		}
 	}()
