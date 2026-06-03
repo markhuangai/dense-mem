@@ -1,5 +1,6 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import {
+  BarChart3,
   Check,
   Copy,
   FileText,
@@ -14,6 +15,8 @@ import {
   Sun,
   X,
 } from "lucide-react";
+import { TelemetryDashboard } from "../telemetry/TelemetryDashboard";
+import { TelemetrySnapshot, TelemetryWindowKey } from "../telemetry/types";
 import {
   Claim,
   Community,
@@ -29,7 +32,7 @@ const TOKEN_STORAGE_KEY = "denseMem.userApiKey";
 const THEME_STORAGE_KEY = "denseMem.userTheme";
 
 type Theme = "light" | "dark";
-type UserTab = "search" | "facts" | "claims" | "fragments" | "communities" | "key";
+type UserTab = "search" | "usage" | "facts" | "claims" | "fragments" | "communities" | "key";
 
 export function UserPortalApp() {
   const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_STORAGE_KEY) ?? "");
@@ -181,6 +184,7 @@ function UserPortal({
         <aside className="control-sidebar" aria-label="Knowledge navigation">
           <nav className="portal-tabs" aria-label="Knowledge sections">
             <TabButton active={activeTab === "search"} icon={<Search size={17} aria-hidden="true" />} label="Recall" onClick={() => setActiveTab("search")} />
+            <TabButton active={activeTab === "usage"} icon={<BarChart3 size={17} aria-hidden="true" />} label="Usage" onClick={() => setActiveTab("usage")} />
             <TabButton active={activeTab === "facts"} icon={<ShieldCheck size={17} aria-hidden="true" />} label="Facts" onClick={() => setActiveTab("facts")} />
             <TabButton active={activeTab === "claims"} icon={<GitBranch size={17} aria-hidden="true" />} label="Claims" onClick={() => setActiveTab("claims")} />
             <TabButton active={activeTab === "fragments"} icon={<FileText size={17} aria-hidden="true" />} label="Fragments" onClick={() => setActiveTab("fragments")} />
@@ -203,6 +207,7 @@ function UserPortal({
 
         <section className="detail-pane" aria-label="Knowledge details">
           {activeTab === "search" && <SearchPanel api={api} />}
+          {activeTab === "usage" && <UserTelemetryPanel api={api} />}
           {activeTab === "facts" && <FactsPanel api={api} />}
           {activeTab === "claims" && <ClaimsPanel api={api} />}
           {activeTab === "fragments" && <FragmentsPanel api={api} />}
@@ -245,6 +250,53 @@ function TabButton({
       {icon}
       {label}
     </button>
+  );
+}
+
+function UserTelemetryPanel({ api }: { api: UserApi }) {
+  const [snapshot, setSnapshot] = useState<TelemetrySnapshot | null>(null);
+  const [windowKey, setWindowKey] = useState<TelemetryWindowKey>("1h");
+  const [scope, setScope] = useState<"self" | "team">("self");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function loadTelemetry(nextWindow = windowKey, nextScope = scope) {
+    setLoading(true);
+    setError("");
+    try {
+      setSnapshot(await api.telemetry({ window: nextWindow, scope: nextScope }));
+    } catch (err) {
+      setError(readError(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadTelemetry();
+  }, [windowKey, scope]);
+
+  return (
+    <section className="surface">
+      <TelemetryDashboard
+        title="Usage"
+        snapshot={snapshot}
+        windowKey={windowKey}
+        loading={loading}
+        error={error}
+        onWindowChange={setWindowKey}
+        onRefresh={() => void loadTelemetry()}
+        controls={(
+          <>
+            <label htmlFor="user-telemetry-scope">Scope</label>
+            <select id="user-telemetry-scope" value={scope} onChange={(event) => setScope(event.target.value as "self" | "team")}>
+              <option value="self">My profile</option>
+              <option value="team">Team</option>
+            </select>
+          </>
+        )}
+      />
+    </section>
   );
 }
 

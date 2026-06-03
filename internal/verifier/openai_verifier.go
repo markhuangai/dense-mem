@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 const (
@@ -77,6 +78,11 @@ type openAIVerifierAPIResponse struct {
 			Content string `json:"content"`
 		} `json:"message"`
 	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int64 `json:"prompt_tokens"`
+		CompletionTokens int64 `json:"completion_tokens"`
+		TotalTokens      int64 `json:"total_tokens"`
+	} `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
 		Code    string `json:"code"`
@@ -98,6 +104,7 @@ type OpenAIVerifier struct {
 	apiKey     string
 	model      string
 	httpClient *http.Client
+	metrics    observability.DiscoverabilityMetrics
 }
 
 // Compile-time assertion that OpenAIVerifier implements Verifier.
@@ -121,7 +128,18 @@ func NewOpenAIVerifier(cfg config.ConfigProvider, httpClient *http.Client) *Open
 		apiKey:     cfg.GetAIVerifierAPIKey(),
 		model:      cfg.GetAIVerifierModel(),
 		httpClient: client,
+		metrics:    observability.NoopDiscoverabilityMetrics(),
 	}
+}
+
+// SetMetrics attaches a DiscoverabilityMetrics recorder. A nil value is
+// normalised to the noop recorder so call sites need no nil checks.
+// Intended for bootstrap-time wiring; not safe to call mid-request.
+func (v *OpenAIVerifier) SetMetrics(m observability.DiscoverabilityMetrics) {
+	if m == nil {
+		m = observability.NoopDiscoverabilityMetrics()
+	}
+	v.metrics = m
 }
 
 // Verify submits req to the OpenAI-compatible chat completions endpoint and
@@ -129,6 +147,12 @@ func NewOpenAIVerifier(cfg config.ConfigProvider, httpClient *http.Client) *Open
 // types defined in errors.go (ErrVerifierTimeout, ErrVerifierProvider,
 // ErrVerifierRateLimit, ErrVerifierMalformedResponse).
 func (v *OpenAIVerifier) Verify(ctx context.Context, req Request) (Response, error) {
+	started := time.Now()
+	latencyOutcome := "error"
+	defer func() {
+		observability.RecordVerifierLatency(ctx, v.metrics, v.model, float64(time.Since(started).Milliseconds()), latencyOutcome)
+	}()
+
 	evidence := prepareEvidence(req.Context)
 
 	// Build the user payload as JSON so the LLM receives a machine-readable object.
@@ -190,6 +214,7 @@ func (v *OpenAIVerifier) Verify(ctx context.Context, req Request) (Response, err
 	httpResp, err := v.httpClient.Do(httpReq)
 	if err != nil {
 		if ctx.Err() != nil {
+			latencyOutcome = "timeout"
 			return Response{}, &TimeoutError{
 				Provider: openAIVerifierProvider,
 				Message:  ctx.Err().Error(),
@@ -205,6 +230,7 @@ func (v *OpenAIVerifier) Verify(ctx context.Context, req Request) (Response, err
 
 	var apiResp openAIVerifierAPIResponse
 	if err := json.NewDecoder(httpResp.Body).Decode(&apiResp); err != nil {
+		latencyOutcome = "malformed"
 		return Response{}, &MalformedResponseError{
 			Provider: openAIVerifierProvider,
 			Message:  "failed to decode API response",
@@ -216,6 +242,7 @@ func (v *OpenAIVerifier) Verify(ctx context.Context, req Request) (Response, err
 		if apiResp.Error != nil && apiResp.Error.Message != "" {
 			msg = apiResp.Error.Message
 		}
+		latencyOutcome = "rate_limited"
 		return Response{}, &RateLimitError{
 			Provider: openAIVerifierProvider,
 			Message:  msg,
@@ -234,6 +261,7 @@ func (v *OpenAIVerifier) Verify(ctx context.Context, req Request) (Response, err
 	}
 
 	if len(apiResp.Choices) == 0 {
+		latencyOutcome = "malformed"
 		return Response{}, &MalformedResponseError{
 			Provider: openAIVerifierProvider,
 			Message:  "no choices in response",
@@ -244,6 +272,7 @@ func (v *OpenAIVerifier) Verify(ctx context.Context, req Request) (Response, err
 
 	var result openAIVerifierResult
 	if err := json.Unmarshal([]byte(rawContent), &result); err != nil {
+		latencyOutcome = "malformed"
 		return Response{}, &MalformedResponseError{
 			Provider: openAIVerifierProvider,
 			Message:  "failed to parse structured response content",
@@ -256,6 +285,7 @@ func (v *OpenAIVerifier) Verify(ctx context.Context, req Request) (Response, err
 	case "entailed", "contradicted", "insufficient":
 		// valid — continue
 	default:
+		latencyOutcome = "malformed"
 		return Response{}, &MalformedResponseError{
 			Provider: openAIVerifierProvider,
 			Message:  fmt.Sprintf("invalid verdict %q: must be entailed|contradicted|insufficient", result.Verdict),
@@ -265,6 +295,7 @@ func (v *OpenAIVerifier) Verify(ctx context.Context, req Request) (Response, err
 
 	// Validate confidence is in [0, 1].
 	if result.Confidence < 0 || result.Confidence > 1 {
+		latencyOutcome = "malformed"
 		return Response{}, &MalformedResponseError{
 			Provider: openAIVerifierProvider,
 			Message:  fmt.Sprintf("confidence %f out of range [0,1]", result.Confidence),
@@ -274,6 +305,7 @@ func (v *OpenAIVerifier) Verify(ctx context.Context, req Request) (Response, err
 
 	// Validate rationale is non-empty.
 	if strings.TrimSpace(result.Rationale) == "" {
+		latencyOutcome = "malformed"
 		return Response{}, &MalformedResponseError{
 			Provider: openAIVerifierProvider,
 			Message:  "rationale must be non-empty",
@@ -281,6 +313,10 @@ func (v *OpenAIVerifier) Verify(ctx context.Context, req Request) (Response, err
 		}
 	}
 
+	if apiResp.Usage != nil {
+		observability.RecordVerifierTokens(ctx, v.metrics, v.model, apiResp.Usage.PromptTokens, apiResp.Usage.CompletionTokens, apiResp.Usage.TotalTokens)
+	}
+	latencyOutcome = "ok"
 	return Response{
 		Verdict:    result.Verdict,
 		Confidence: result.Confidence,

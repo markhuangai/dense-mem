@@ -18,10 +18,10 @@ import (
 )
 
 type controlProfileSvc struct {
-	profiles []*domain.Profile
-	deleted  uuid.UUID
-	listErr  error
-	countErr error
+	profiles  []*domain.Profile
+	deleted   uuid.UUID
+	listErr   error
+	countErr  error
 	createErr error
 	updateErr error
 	deleteErr error
@@ -254,6 +254,23 @@ func (s *controlMetricsSvc) Snapshot(_ context.Context, filter domain.UsageMetri
 	return &domain.UsageMetricsSnapshot{}, nil
 }
 
+type controlTelemetrySvc struct {
+	snapshot *service.TelemetrySnapshot
+	filter   service.TelemetryFilter
+	err      error
+}
+
+func (s *controlTelemetrySvc) Snapshot(_ context.Context, filter service.TelemetryFilter) (*service.TelemetrySnapshot, error) {
+	s.filter = filter
+	if s.err != nil {
+		return nil, s.err
+	}
+	if s.snapshot != nil {
+		return s.snapshot, nil
+	}
+	return &service.TelemetrySnapshot{Available: true}, nil
+}
+
 type controlSecuritySvc struct {
 	settings       domain.SecuritySettings
 	bans           []domain.SecurityIPBan
@@ -423,6 +440,69 @@ func TestControlPortalMetrics(t *testing.T) {
 	require.True(t, metrics.filter.To.After(metrics.filter.From))
 }
 
+func TestControlPortalTelemetry(t *testing.T) {
+	teamID := uuid.New()
+	telemetry := &controlTelemetrySvc{snapshot: &service.TelemetrySnapshot{
+		Available: true,
+		Window:    service.TelemetryWindow{Key: "1h"},
+		Scope:     service.TelemetryScope{Type: "team", TeamID: &teamID},
+		Cards:     []service.TelemetryCard{{ID: "http_requests", Label: "HTTP requests", Unit: "requests", Value: 3}},
+	}}
+	scrapeHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("# HELP densemem_test metric\n"))
+	})
+	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+		ControlHTTPAddr:    "127.0.0.1:8090",
+		ControlPortalToken: "secret",
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
+		Reader:        telemetry,
+		ScrapeHandler: scrapeHandler,
+		ScrapeToken:   "scrape-secret",
+	}, HealthConfig{}, nil)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/control/api/telemetry?window=1h&scope=team&team_id="+teamID.String(), nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"available":true`)
+	require.Equal(t, "1h", telemetry.filter.Window)
+	require.Equal(t, "team", telemetry.filter.Scope)
+	require.Equal(t, teamID, *telemetry.filter.TeamID)
+
+	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+
+	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("X-Telemetry-Scrape-Token", "scrape-secret")
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), "densemem_test")
+
+	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Authorization", "Bearer scrape-secret")
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	e, err = NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+		ControlHTTPAddr:    "127.0.0.1:8090",
+		ControlPortalToken: "secret",
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
+		ScrapeHandler: scrapeHandler,
+	}, HealthConfig{}, nil)
+	require.NoError(t, err)
+	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+}
+
 func TestControlPortalProfileAndKeyFlows(t *testing.T) {
 	profiles, keys, server := testControlServer(t)
 
@@ -585,6 +665,49 @@ func TestControlPortalMetricsErrors(t *testing.T) {
 	e.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"status":"degraded"`)
+}
+
+func TestControlPortalTelemetryErrors(t *testing.T) {
+	_, _, server := testControlServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/control/api/telemetry", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+
+	telemetry := &controlTelemetrySvc{}
+	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+		ControlHTTPAddr:    "127.0.0.1:8090",
+		ControlPortalToken: "secret",
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
+		Reader: telemetry,
+	}, HealthConfig{}, nil)
+	require.NoError(t, err)
+
+	req = httptest.NewRequest(http.MethodGet, "/control/api/telemetry?scope=bad", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+
+	req = httptest.NewRequest(http.MethodGet, "/control/api/telemetry?team_id=bad", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+
+	req = httptest.NewRequest(http.MethodGet, "/control/api/telemetry?profile_id=bad", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+
+	telemetry.err = errors.New("telemetry backend failed")
+	req = httptest.NewRequest(http.MethodGet, "/control/api/telemetry", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
 }
 
 func TestControlPortalSecurityFlows(t *testing.T) {

@@ -150,7 +150,7 @@ func (s *promoteClaimServiceImpl) Promote(ctx context.Context, profileID string,
 	})
 
 	if lockErr != nil {
-		s.incMetric("error")
+		s.incMetric(ctx, "error")
 		return nil, lockErr
 	}
 	return fact, nil
@@ -177,7 +177,7 @@ func (s *promoteClaimServiceImpl) ConfirmMemory(ctx context.Context, profileID s
 		return nil
 	})
 	if lockErr != nil {
-		s.incMetric("error")
+		s.incMetric(ctx, "error")
 		return nil, lockErr
 	}
 	return out, nil
@@ -234,7 +234,7 @@ func (s *promoteClaimServiceImpl) doConfirmMemory(ctx context.Context, profileID
 			if err := alignPath(ctx, s.db, profileID, fact.FactID, foreignAlignments); err != nil {
 				return nil, fmt.Errorf("confirm memory: link alignments: %w", err)
 			}
-			s.incMetric("promoted")
+			s.incMetric(ctx, "promoted")
 			s.emitAudit(ctx, profileID, claim.ClaimID, fact.FactID, "claim.confirm.accept")
 			return &ConfirmMemoryResult{
 				ClaimID:  claim.ClaimID,
@@ -254,7 +254,7 @@ func (s *promoteClaimServiceImpl) doConfirmMemory(ctx context.Context, profileID
 		if err != nil {
 			return nil, err
 		}
-		s.incMetric("promoted")
+		s.incMetric(ctx, "promoted")
 		s.emitAudit(ctx, profileID, claim.ClaimID, fact.FactID, "claim.confirm.accept")
 		return &ConfirmMemoryResult{
 			ClaimID:  claim.ClaimID,
@@ -333,7 +333,7 @@ func (s *promoteClaimServiceImpl) doPromote(ctx context.Context, profileID, clai
 		return nil, err
 	}
 	if existing != nil {
-		s.incMetric("skipped")
+		s.incMetric(ctx, "skipped")
 		s.emitAudit(ctx, profileID, claimID, existing.FactID, "claim.promote.idempotent")
 		return existing, nil
 	}
@@ -366,7 +366,7 @@ func (s *promoteClaimServiceImpl) doPromote(ctx context.Context, profileID, clai
 	}
 
 	// Step 8: emit metric and audit for the successful promotion path.
-	s.incMetric("promoted")
+	s.incMetric(ctx, "promoted")
 	s.emitAudit(ctx, profileID, claimID, fact.FactID, "claim.promote")
 	return fact, nil
 }
@@ -772,10 +772,8 @@ func evaluateGates(claim *domain.Claim, gate PromotionGate) error {
 }
 
 // incMetric bumps the promotion_outcome_total counter. Nil-safe.
-func (s *promoteClaimServiceImpl) incMetric(outcome string) {
-	if s.metrics != nil {
-		s.metrics.IncPromotionOutcome(outcome)
-	}
+func (s *promoteClaimServiceImpl) incMetric(ctx context.Context, outcome string) {
+	observability.RecordPromotionOutcome(ctx, s.metrics, outcome)
 }
 
 // emitAudit writes a claim.promote audit entry. Any error is logged and

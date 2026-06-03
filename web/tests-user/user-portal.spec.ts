@@ -91,6 +91,33 @@ const communities = [
   },
 ];
 
+const telemetry = {
+  available: true,
+  window: {
+    key: "1h",
+    from: "2026-05-02T12:00:00Z",
+    to: "2026-05-02T13:00:00Z",
+    step_seconds: 60,
+    retention_days: 30,
+  },
+  scope: { type: "self", team_id: team.id, profile_id: readKey.id },
+  cards: [
+    { id: "http_requests", label: "HTTP requests", unit: "requests", value: 9 },
+    { id: "embedding_tokens", label: "Embedding tokens", unit: "tokens", value: 320 },
+  ],
+  series: [
+    {
+      id: "http_rps",
+      label: "HTTP requests",
+      unit: "rps",
+      points: [
+        { timestamp: "2026-05-02T12:00:00Z", value: 0.1 },
+        { timestamp: "2026-05-02T13:00:00Z", value: 0.2 },
+      ],
+    },
+  ],
+};
+
 test("API key login, recall, and read-only knowledge tabs", async ({ page }) => {
   const calls = await mockUserApi(page, { key: readKey, canRotate: false });
   await openUserPortal(page, "dm_read");
@@ -104,6 +131,10 @@ test("API key login, recall, and read-only knowledge tabs", async ({ page }) => 
   await expect(page.getByRole("heading", { name: "Alice" }).first()).toBeVisible();
   await expect(page.getByText("project-x").first()).toBeVisible();
   await expect(page.getByText("Dense-Mem").first()).toBeVisible();
+
+  await page.getByRole("button", { name: "Usage" }).click();
+  await expect(page.getByLabel("Usage totals")).toContainText("HTTP requests");
+  await expect(page.getByLabel("Usage charts")).toContainText("HTTP requests");
 
   await page.getByRole("button", { name: "Facts" }).click();
   await expect(page.getByText("works_on: project-x")).toBeVisible();
@@ -211,6 +242,14 @@ async function mockUserApi(page: Page, state: { key: TestKey; canRotate: boolean
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({ data: { api_key: "dm_new_plaintext", key: currentKey } }),
+    });
+  });
+
+  await page.route("**/ui/api/telemetry**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ data: telemetry }),
     });
   });
 

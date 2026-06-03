@@ -44,4 +44,22 @@ describe("ControlApi", () => {
 
     expect(fetchMock).toHaveBeenCalledWith("/control/api/metrics?window_minutes=60&team_id=team-1", expect.any(Object));
   });
+
+  it("requests telemetry with window and profile filters", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: {
+        available: true,
+        window: { key: "1h", from: "2026-05-02T12:00:00Z", to: "2026-05-02T13:00:00Z", step_seconds: 60, retention_days: 30 },
+        scope: { type: "profile", team_id: "team-1", profile_id: "profile-1" },
+        cards: [],
+        series: [],
+      },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const api = new ControlApi("secret", "/control/api");
+    await api.getTelemetry({ window: "1h", scope: "profile", team_id: "team-1", profile_id: "profile-1" });
+
+    expect(fetchMock).toHaveBeenCalledWith("/control/api/telemetry?window=1h&scope=profile&team_id=team-1&profile_id=profile-1", expect.any(Object));
+  });
 });

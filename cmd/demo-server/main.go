@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"log/slog"
+	nethttp "net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -230,10 +231,25 @@ func main() {
 	// ========================================
 	// Discoverability: embedding, fragments, recall, registry, openapi
 	// ========================================
-	// Production startup uses the no-op metrics backend so request volume does
-	// not accumulate unbounded in-memory samples. Tests can still inject the
-	// in-memory recorder directly where assertions need captured observations.
+	// Production startup uses the no-op metrics backend unless telemetry is
+	// explicitly enabled. Tests can still inject the in-memory recorder directly
+	// where assertions need captured observations.
 	discoverabilityMetrics := observability.NoopDiscoverabilityMetrics()
+	var (
+		telemetryReader        service.TelemetryReader
+		telemetryHTTPMetrics   observability.HTTPMetrics
+		telemetryScrapeHandler nethttp.Handler
+	)
+	if cfg.GetTelemetryEnabled() {
+		prometheusMetrics := observability.NewPrometheusMetrics()
+		discoverabilityMetrics = prometheusMetrics
+		telemetryHTTPMetrics = prometheusMetrics
+		telemetryScrapeHandler = prometheusMetrics.Handler()
+		telemetryReader = service.NewPrometheusTelemetryService(
+			cfg.GetTelemetryPrometheusURL(),
+			time.Duration(cfg.GetTelemetryQueryTimeoutSeconds())*time.Second,
+		)
+	}
 	// Adapters translate between neo4j's ScopedReader and the fragment services'
 	// local ScopedReader, and between fragmentservice's AuditLogEntry and the
 	// canonical service.AuditLogEntry.
@@ -254,6 +270,7 @@ func main() {
 	)
 	if cfg.IsEmbeddingConfigured() {
 		openaiProvider := embedding.NewOpenAIEmbeddingProvider(&cfg, nil)
+		openaiProvider.SetMetrics(discoverabilityMetrics)
 		retryEmbedder = embedding.NewRetryEmbeddingProviderWithKey(openaiProvider, logger, cfg.GetAIAPIKey())
 		retryEmbedder.SetMetrics(discoverabilityMetrics)
 
@@ -317,8 +334,8 @@ func main() {
 	)
 	if verifierConfigured(&cfg) {
 		baseVerifier := verifier.NewOpenAIVerifier(&cfg, nil)
+		baseVerifier.SetMetrics(discoverabilityMetrics)
 		retryVerifier := verifier.NewRetryVerifier(baseVerifier, &cfg, logger)
-		retryVerifier.SetMetrics(discoverabilityMetrics)
 		skillPackConflictDecider = skillpackservice.NewOpenAIConflictDecider(&cfg, nil)
 
 		claimVerifyRegistrySvc = claimservice.NewVerifyClaimService(
@@ -384,6 +401,10 @@ func main() {
 		if err := runtimeMode.ConfigureServices(startupCtx, runtimeCtx, &runtimeServices); err != nil {
 			log.Fatalf("failed to configure runtime services: %v", err)
 		}
+	}
+	if telemetryHTTPMetrics != nil {
+		runtimeServices.PostAuthMiddleware = append(runtimeServices.PostAuthMiddleware, middleware.TelemetryHTTPMiddleware(telemetryHTTPMetrics))
+		runtimeServices.UserPortalMiddleware = append(runtimeServices.UserPortalMiddleware, middleware.TelemetryHTTPMiddleware(telemetryHTTPMetrics))
 	}
 	fragmentCreateRegistrySvc = runtimeServices.FragmentCreateRegistrySvc
 	fragmentCreateHTTPSvc = runtimeServices.FragmentCreateHTTPSvc
@@ -602,6 +623,7 @@ func main() {
 		APIKeySvc:       apiKeyService,
 		RateLimitSvc:    rateLimitService,
 		UsageMetrics:    usageMetricsService,
+		Telemetry:       telemetryReader,
 		AuditSvc:        auditService,
 		SecuritySvc:     securityService,
 		Config:          &cfg,
@@ -618,7 +640,20 @@ func main() {
 
 	var controlServer *echo.Echo
 	if !runtimeMode.DisableControlPortal {
-		controlServer, err = http.NewControlPortalServerWithMetrics(&cfg, profileService, apiKeyService, usageMetricsService, healthConfig, logger, securityService)
+		controlServer, err = http.NewControlPortalServerWithMetricsAndTelemetry(
+			&cfg,
+			profileService,
+			apiKeyService,
+			usageMetricsService,
+			http.ControlPortalTelemetry{
+				Reader:        telemetryReader,
+				ScrapeHandler: telemetryScrapeHandler,
+				ScrapeToken:   cfg.GetTelemetryScrapeToken(),
+			},
+			healthConfig,
+			logger,
+			securityService,
+		)
 		if err != nil {
 			log.Fatalf("failed to build control portal server: %v", err)
 		}

@@ -1,14 +1,26 @@
 import { useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
-import { ControlApi, ControlMetrics, Team } from "../api";
+import { ControlApi, ControlMetrics, Team, TeamProfile } from "../api";
+import { TelemetryDashboard } from "../telemetry/TelemetryDashboard";
+import { TelemetrySnapshot, TelemetryWindowKey } from "../telemetry/types";
 import { dependencyStatusClass, formatCount, formatDate, formatLatency, formatPercent, readError, shortId } from "./utils";
+
+type TelemetryControlScope = "system" | "team" | "profile";
 
 export function MetricsPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
   const [metrics, setMetrics] = useState<ControlMetrics | null>(null);
+  const [telemetry, setTelemetry] = useState<TelemetrySnapshot | null>(null);
   const [windowMinutes, setWindowMinutes] = useState(60);
+  const [telemetryWindow, setTelemetryWindow] = useState<TelemetryWindowKey>("1h");
+  const [telemetryScope, setTelemetryScope] = useState<TelemetryControlScope>("system");
   const [teamId, setTeamId] = useState("");
+  const [telemetryTeamId, setTelemetryTeamId] = useState("");
+  const [telemetryProfileId, setTelemetryProfileId] = useState("");
+  const [teamProfiles, setTeamProfiles] = useState<TeamProfile[]>([]);
   const [error, setError] = useState("");
+  const [telemetryError, setTelemetryError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [telemetryLoading, setTelemetryLoading] = useState(false);
 
   async function loadMetrics(nextWindow = windowMinutes, nextTeamId = teamId) {
     setLoading(true);
@@ -29,11 +41,122 @@ export function MetricsPanel({ api, teams }: { api: ControlApi; teams: Team[] })
     void loadMetrics();
   }, [windowMinutes, teamId]);
 
+  async function loadTeamProfiles(nextTeamId = telemetryTeamId) {
+    if (!nextTeamId) {
+      setTeamProfiles([]);
+      setTelemetryProfileId("");
+      return;
+    }
+    try {
+      const page = await api.listTeamProfiles(nextTeamId);
+      setTeamProfiles(page.data);
+      setTelemetryProfileId((current) => (current && page.data.some((profile) => profile.id === current) ? current : page.data[0]?.id ?? ""));
+    } catch (err) {
+      setTelemetryError(readError(err));
+      setTeamProfiles([]);
+    }
+  }
+
+  async function loadTelemetry(
+    nextWindow = telemetryWindow,
+    nextScope = telemetryScope,
+    nextTeamId = telemetryTeamId,
+    nextProfileId = telemetryProfileId,
+  ) {
+    if (nextScope === "team" && !nextTeamId) {
+      setTelemetryError("Select a team.");
+      return;
+    }
+    if (nextScope === "profile" && !nextProfileId) {
+      setTelemetryError("Select a profile.");
+      return;
+    }
+    setTelemetryLoading(true);
+    setTelemetryError("");
+    try {
+      setTelemetry(await api.getTelemetry({
+        window: nextWindow,
+        scope: nextScope,
+        team_id: nextScope === "team" || nextScope === "profile" ? nextTeamId || undefined : undefined,
+        profile_id: nextScope === "profile" ? nextProfileId || undefined : undefined,
+      }));
+    } catch (err) {
+      setTelemetryError(readError(err));
+    } finally {
+      setTelemetryLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadTelemetry();
+  }, [telemetryWindow, telemetryScope, telemetryTeamId, telemetryProfileId]);
+
+  useEffect(() => {
+    if (telemetryScope === "profile") {
+      void loadTeamProfiles();
+    } else {
+      setTeamProfiles([]);
+      setTelemetryProfileId("");
+    }
+  }, [telemetryScope, telemetryTeamId]);
+
+  function changeTelemetryScope(scope: TelemetryControlScope) {
+    setTelemetryScope(scope);
+    if (scope === "system") {
+      setTelemetryTeamId("");
+      setTelemetryProfileId("");
+    } else if (!telemetryTeamId && teams.length > 0) {
+      setTelemetryTeamId(teams[0].id);
+    }
+  }
+
   return (
     <section className="surface metrics-panel">
+      <TelemetryDashboard
+        title="Telemetry"
+        snapshot={telemetry}
+        windowKey={telemetryWindow}
+        loading={telemetryLoading}
+        error={telemetryError}
+        onWindowChange={setTelemetryWindow}
+        onRefresh={() => void loadTelemetry()}
+        controls={(
+          <>
+            <label htmlFor="telemetry-scope">Scope</label>
+            <select id="telemetry-scope" value={telemetryScope} onChange={(event) => changeTelemetryScope(event.target.value as TelemetryControlScope)}>
+              <option value="system">All teams</option>
+              <option value="team">Team</option>
+              <option value="profile">Profile</option>
+            </select>
+            {telemetryScope !== "system" && (
+              <>
+                <label htmlFor="telemetry-team">Team</label>
+                <select id="telemetry-team" value={telemetryTeamId} onChange={(event) => setTelemetryTeamId(event.target.value)}>
+                  <option value="">Select team</option>
+                  {teams.map((team) => (
+                    <option key={team.id} value={team.id}>{team.name}</option>
+                  ))}
+                </select>
+              </>
+            )}
+            {telemetryScope === "profile" && (
+              <>
+                <label htmlFor="telemetry-profile">Profile</label>
+                <select id="telemetry-profile" value={telemetryProfileId} onChange={(event) => setTelemetryProfileId(event.target.value)} disabled={!telemetryTeamId}>
+                  <option value="">Select profile</option>
+                  {teamProfiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>{profile.name || shortId(profile.id)}</option>
+                  ))}
+                </select>
+              </>
+            )}
+          </>
+        )}
+      />
+
       <div className="section-heading">
         <div>
-          <h2>Metrics</h2>
+          <h2>Usage Rollup</h2>
           {metrics && <p className="section-subtitle">{formatDate(metrics.window.from)} - {formatDate(metrics.window.to)}</p>}
         </div>
         <button className="icon-button" type="button" aria-label="Refresh metrics" onClick={() => void loadMetrics()} disabled={loading}>

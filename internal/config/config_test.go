@@ -44,6 +44,10 @@ func clearEnv() {
 		"AI_COMMUNITY_MAX_NODES",
 		"CONTROL_HTTP_ADDR",
 		"CONTROL_PORTAL_TOKEN",
+		"TELEMETRY_ENABLED",
+		"TELEMETRY_PROMETHEUS_URL",
+		"TELEMETRY_QUERY_TIMEOUT_SECONDS",
+		"TELEMETRY_SCRAPE_TOKEN",
 	}
 	for _, v := range envVars {
 		os.Unsetenv(v)
@@ -118,6 +122,38 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.ControlHTTPAddr != ":8090" {
 		t.Errorf("ControlHTTPAddr default = %q, want %q", cfg.ControlHTTPAddr, ":8090")
+	}
+}
+
+func TestLoadTelemetryConfig(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+	os.Setenv("TELEMETRY_ENABLED", "true")
+	os.Setenv("TELEMETRY_PROMETHEUS_URL", "http://prometheus:9090")
+	os.Setenv("TELEMETRY_QUERY_TIMEOUT_SECONDS", "12")
+	os.Setenv("TELEMETRY_SCRAPE_TOKEN", "scrape-secret")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned unexpected error: %v", err)
+	}
+
+	if !cfg.GetTelemetryEnabled() {
+		t.Fatal("GetTelemetryEnabled() = false, want true")
+	}
+	if got := cfg.GetTelemetryPrometheusURL(); got != "http://prometheus:9090" {
+		t.Errorf("GetTelemetryPrometheusURL() = %q", got)
+	}
+	if got := cfg.GetTelemetryQueryTimeoutSeconds(); got != 12 {
+		t.Errorf("GetTelemetryQueryTimeoutSeconds() = %d, want 12", got)
+	}
+	if got := cfg.GetTelemetryScrapeToken(); got != "scrape-secret" {
+		t.Errorf("GetTelemetryScrapeToken() = %q", got)
+	}
+
+	cfg.TelemetryQueryTimeoutSeconds = 0
+	if got := cfg.GetTelemetryQueryTimeoutSeconds(); got != 5 {
+		t.Errorf("GetTelemetryQueryTimeoutSeconds() fallback = %d, want 5", got)
 	}
 }
 

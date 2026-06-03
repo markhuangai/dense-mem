@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 // OpenAIEmbeddingProvider implements EmbeddingProviderInterface for OpenAI-compatible APIs.
@@ -20,6 +21,7 @@ type OpenAIEmbeddingProvider struct {
 	dimensions int
 	timeout    time.Duration
 	httpClient *http.Client
+	metrics    observability.DiscoverabilityMetrics
 }
 
 // Compile-time assertion that OpenAIEmbeddingProvider implements EmbeddingProviderInterface.
@@ -45,7 +47,18 @@ func NewOpenAIEmbeddingProvider(cfg config.ConfigProvider, httpClient *http.Clie
 		dimensions: cfg.GetAIEmbeddingDimensions(),
 		timeout:    timeout,
 		httpClient: client,
+		metrics:    observability.NoopDiscoverabilityMetrics(),
 	}
+}
+
+// SetMetrics attaches a DiscoverabilityMetrics recorder. A nil value is
+// normalised to the noop recorder so call sites need no nil checks.
+// Intended for bootstrap-time wiring; not safe to call mid-request.
+func (p *OpenAIEmbeddingProvider) SetMetrics(m observability.DiscoverabilityMetrics) {
+	if m == nil {
+		m = observability.NoopDiscoverabilityMetrics()
+	}
+	p.metrics = m
 }
 
 // Embed returns the embedding for a single text.
@@ -75,6 +88,10 @@ type openAIEmbeddingResponse struct {
 	Data []struct {
 		Embedding []float32 `json:"embedding"`
 	} `json:"data"`
+	Usage *struct {
+		PromptTokens int64 `json:"prompt_tokens"`
+		TotalTokens  int64 `json:"total_tokens"`
+	} `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
@@ -158,6 +175,9 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 	result := make([][]float32, len(respBody.Data))
 	for i, d := range respBody.Data {
 		result[i] = d.Embedding
+	}
+	if respBody.Usage != nil {
+		observability.RecordEmbeddingTokens(ctx, p.metrics, p.model, respBody.Usage.PromptTokens, respBody.Usage.TotalTokens)
 	}
 
 	return result, p.model, nil

@@ -223,9 +223,9 @@ func (s *retractFragmentService) Retract(ctx context.Context, profileID, fragmen
 
 	// Step 6: post-tx side effects — emitted only after the transaction commits
 	// so no counters are bumped on failure.
-	s.metrics.IncFragmentRetract()
+	observability.RecordFragmentRetract(ctx, s.metrics)
 	for i := 0; i < needsRevalidationCount; i++ {
-		s.metrics.IncFactNeedsRevalidation()
+		observability.RecordFactNeedsRevalidation(ctx, s.metrics)
 	}
 
 	if s.audit != nil {

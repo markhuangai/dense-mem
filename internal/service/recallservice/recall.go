@@ -278,7 +278,7 @@ func NewRecallServiceWithTiers(
 func (s *recallService) Recall(ctx context.Context, profileID string, req RecallRequest) ([]RecallHit, error) {
 	start := time.Now()
 	defer func() {
-		s.metrics.ObserveRecallLatency(float64(time.Since(start).Milliseconds()))
+		observability.RecordRecallLatency(ctx, s.metrics, float64(time.Since(start).Milliseconds()))
 	}()
 
 	if profileID == "" {

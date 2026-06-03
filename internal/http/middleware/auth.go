@@ -191,6 +191,7 @@ func AuthMiddlewareWithSecurity(repo repository.APIKeyRepository, auditSvc servi
 			ctx = context.WithValue(ctx, principalContextKey{}, principal)
 			ctx = requestctx.WithActorProfile(ctx, requestctx.ActorProfile{
 				TeamID:      teamID,
+				TeamName:    key.TeamName,
 				ProfileID:   profileID,
 				ProfileName: profileName,
 			})

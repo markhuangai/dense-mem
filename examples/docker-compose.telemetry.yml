@@ -1,0 +1,40 @@
+# Dense-Mem telemetry compose overlay.
+#
+# Use with the base or expert compose example:
+#   docker compose \
+#     -f examples/docker-compose.base.yml \
+#     -f examples/docker-compose.telemetry.yml \
+#     up -d
+#
+# Prometheus is kept on the private Docker network and stores 30 days of data.
+# The control and /ui portals query it through TELEMETRY_PROMETHEUS_URL.
+
+services:
+  server:
+    environment:
+      TELEMETRY_ENABLED: "true"
+      TELEMETRY_PROMETHEUS_URL: http://prometheus:9090
+      TELEMETRY_QUERY_TIMEOUT_SECONDS: ${TELEMETRY_QUERY_TIMEOUT_SECONDS:-5}
+      TELEMETRY_SCRAPE_TOKEN: ${TELEMETRY_SCRAPE_TOKEN:-}
+    depends_on:
+      prometheus:
+        condition: service_started
+
+  prometheus:
+    image: prom/prometheus:v3.12.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --web.listen-address=0.0.0.0:9090
+    volumes:
+      - prometheus-data:/prometheus
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    networks:
+      - private
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:

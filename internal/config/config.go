@@ -81,19 +81,23 @@ type Config struct {
 	AIEmbeddingDimensions           int
 	AIEmbeddingTimeoutSeconds       int
 	// Knowledge-pipeline knobs (AC-X3)
-	AIVerifierAPIURL           string
-	AIVerifierAPIKey           string `json:"-"`
-	AIVerifierModel            string
-	AIVerifierTimeoutSeconds   int
-	AIVerifierMaxConcurrency   int
-	ClaimWriteRateLimit        int
-	ClaimReadRateLimit         int
-	RecallValidatedClaimWeight float64
-	PromoteTxTimeoutSeconds    int
-	SkillPackImportHistoryDays int
-	AICommunityMaxNodes        int
-	ControlHTTPAddr            string
-	ControlPortalToken         string `json:"-"`
+	AIVerifierAPIURL             string
+	AIVerifierAPIKey             string `json:"-"`
+	AIVerifierModel              string
+	AIVerifierTimeoutSeconds     int
+	AIVerifierMaxConcurrency     int
+	ClaimWriteRateLimit          int
+	ClaimReadRateLimit           int
+	RecallValidatedClaimWeight   float64
+	PromoteTxTimeoutSeconds      int
+	SkillPackImportHistoryDays   int
+	AICommunityMaxNodes          int
+	ControlHTTPAddr              string
+	ControlPortalToken           string `json:"-"`
+	TelemetryEnabled             bool
+	TelemetryPrometheusURL       string
+	TelemetryQueryTimeoutSeconds int
+	TelemetryScrapeToken         string `json:"-"`
 }
 
 // Ensure Config implements ConfigProvider
@@ -154,6 +158,15 @@ func (c *Config) GetSkillPackImportHistoryDays() int     { return c.SkillPackImp
 func (c *Config) GetAICommunityMaxNodes() int            { return c.AICommunityMaxNodes }
 func (c *Config) GetControlHTTPAddr() string             { return c.ControlHTTPAddr }
 func (c *Config) GetControlPortalToken() string          { return c.ControlPortalToken }
+func (c *Config) GetTelemetryEnabled() bool              { return c.TelemetryEnabled }
+func (c *Config) GetTelemetryPrometheusURL() string      { return c.TelemetryPrometheusURL }
+func (c *Config) GetTelemetryQueryTimeoutSeconds() int {
+	if c.TelemetryQueryTimeoutSeconds > 0 {
+		return c.TelemetryQueryTimeoutSeconds
+	}
+	return 5
+}
+func (c *Config) GetTelemetryScrapeToken() string { return c.TelemetryScrapeToken }
 
 // ValidationError represents a configuration validation failure.
 type ValidationError struct {
@@ -400,6 +413,16 @@ func Load() (Config, error) {
 
 	cfg.ControlHTTPAddr = getEnvOrDefault("CONTROL_HTTP_ADDR", ":8090")
 	cfg.ControlPortalToken = os.Getenv("CONTROL_PORTAL_TOKEN")
+	cfg.TelemetryEnabled, err = parseBoolOrDefault("TELEMETRY_ENABLED", false)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.TelemetryPrometheusURL = os.Getenv("TELEMETRY_PROMETHEUS_URL")
+	cfg.TelemetryQueryTimeoutSeconds, err = parseIntOrDefault("TELEMETRY_QUERY_TIMEOUT_SECONDS", 5)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.TelemetryScrapeToken = os.Getenv("TELEMETRY_SCRAPE_TOKEN")
 
 	// Validation
 	if cfg.PostgresDSN == "" {
@@ -450,6 +473,7 @@ func Load() (Config, error) {
 		{"PROMOTE_TX_TIMEOUT_SECONDS", cfg.PromoteTxTimeoutSeconds},
 		{"SKILL_PACK_IMPORT_HISTORY_DAYS", cfg.SkillPackImportHistoryDays},
 		{"AI_COMMUNITY_MAX_NODES", cfg.AICommunityMaxNodes},
+		{"TELEMETRY_QUERY_TIMEOUT_SECONDS", cfg.TelemetryQueryTimeoutSeconds},
 	}
 
 	for _, field := range numericFields {

@@ -33,6 +33,7 @@ type APIKey struct {
 	// with existing call sites during the team migration.
 	ProfileID  uuid.UUID
 	TeamID     uuid.UUID
+	TeamName   string
 	Label      string
 	Name       string
 	KeyHash    string

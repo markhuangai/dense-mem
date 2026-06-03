@@ -47,6 +47,34 @@ func NewControlPortalServerWithMetrics(
 	logger observability.LogProvider,
 	securitySvcs ...service.SecurityService,
 ) (*echo.Echo, error) {
+	return NewControlPortalServerWithMetricsAndTelemetry(
+		cfg,
+		profileSvc,
+		apiKeySvc,
+		metricsSvc,
+		ControlPortalTelemetry{},
+		health,
+		logger,
+		securitySvcs...,
+	)
+}
+
+type ControlPortalTelemetry struct {
+	Reader        service.TelemetryReader
+	ScrapeHandler nethttp.Handler
+	ScrapeToken   string
+}
+
+func NewControlPortalServerWithMetricsAndTelemetry(
+	cfg config.ConfigProvider,
+	profileSvc handler.ProfileServiceInterface,
+	apiKeySvc handler.APIKeyServiceInterface,
+	metricsSvc service.UsageMetricsReader,
+	telemetry ControlPortalTelemetry,
+	health HealthConfig,
+	logger observability.LogProvider,
+	securitySvcs ...service.SecurityService,
+) (*echo.Echo, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("control portal: config is required")
 	}
@@ -91,11 +119,16 @@ func NewControlPortalServerWithMetrics(
 		e.Use(httpmw.SecurityBanMiddleware(securitySvc))
 	}
 
-	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc, metrics: metricsSvc, health: health}
+	if telemetry.ScrapeHandler != nil {
+		e.GET("/metrics", echo.WrapHandler(telemetry.ScrapeHandler), telemetryScrapeTokenMiddleware(telemetry.ScrapeToken))
+	}
+
+	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, health: health}
 	api := e.Group("/control/api")
 	api.Use(controlPortalMiddleware(cfg.GetControlPortalToken(), securitySvc))
 	api.GET("/session", control.session)
 	api.GET("/metrics", control.getMetrics)
+	api.GET("/telemetry", control.getTelemetry)
 	api.GET("/teams", control.listProfiles)
 	api.POST("/teams", control.createProfile)
 	api.PATCH("/teams/:teamId", control.updateProfile)
@@ -129,11 +162,12 @@ func NewControlPortalServerWithMetrics(
 }
 
 type controlPortalHandler struct {
-	profiles handler.ProfileServiceInterface
-	keys     handler.APIKeyServiceInterface
-	security service.SecurityService
-	metrics  service.UsageMetricsReader
-	health   HealthConfig
+	profiles  handler.ProfileServiceInterface
+	keys      handler.APIKeyServiceInterface
+	security  service.SecurityService
+	metrics   service.UsageMetricsReader
+	telemetry service.TelemetryReader
+	health    HealthConfig
 }
 
 func (h *controlPortalHandler) session(c echo.Context) error {
@@ -160,6 +194,21 @@ func (h *controlPortalHandler) getMetrics(c echo.Context) error {
 		Keys:         snapshot.Keys,
 		Routes:       snapshot.Routes,
 	}})
+}
+
+func (h *controlPortalHandler) getTelemetry(c echo.Context) error {
+	if h.telemetry == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "telemetry unavailable")
+	}
+	filter, err := controlTelemetryFilter(c)
+	if err != nil {
+		return err
+	}
+	snapshot, err := h.telemetry.Snapshot(c.Request().Context(), filter)
+	if err != nil {
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": snapshot})
 }
 
 func (h *controlPortalHandler) listProfiles(c echo.Context) error {
@@ -558,6 +607,43 @@ func controlMetricsFilter(c echo.Context) (domain.UsageMetricsFilter, error) {
 	}, nil
 }
 
+func controlTelemetryFilter(c echo.Context) (service.TelemetryFilter, error) {
+	scope := strings.TrimSpace(c.QueryParam("scope"))
+	if scope == "" {
+		scope = "system"
+	}
+	switch scope {
+	case "system", "team", "profile":
+	default:
+		return service.TelemetryFilter{}, httperr.New(httperr.VALIDATION_ERROR, "scope must be one of system, team, profile")
+	}
+
+	var teamID *uuid.UUID
+	if raw := strings.TrimSpace(c.QueryParam("team_id")); raw != "" {
+		parsed, err := uuid.Parse(raw)
+		if err != nil {
+			return service.TelemetryFilter{}, httperr.New(httperr.INVALID_UUID, "invalid team ID format")
+		}
+		teamID = &parsed
+	}
+
+	var profileID *uuid.UUID
+	if raw := strings.TrimSpace(c.QueryParam("profile_id")); raw != "" {
+		parsed, err := uuid.Parse(raw)
+		if err != nil {
+			return service.TelemetryFilter{}, httperr.New(httperr.INVALID_UUID, "invalid profile ID format")
+		}
+		profileID = &parsed
+	}
+
+	return service.TelemetryFilter{
+		Window:    strings.TrimSpace(c.QueryParam("window")),
+		Scope:     scope,
+		TeamID:    teamID,
+		ProfileID: profileID,
+	}, nil
+}
+
 func controlDependencySnapshot(ctx context.Context, health HealthConfig) []controlDependencyResponse {
 	responses := make([]controlDependencyResponse, 0, len(health.Checks)+1)
 	for _, check := range health.Checks {
@@ -596,6 +682,28 @@ func controlDependencySnapshot(ctx context.Context, health HealthConfig) []contr
 		})
 	}
 	return responses
+}
+
+func telemetryScrapeTokenMiddleware(token string) echo.MiddlewareFunc {
+	expected := strings.TrimSpace(token)
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			if expected == "" {
+				return next(c)
+			}
+			got := c.Request().Header.Get("X-Telemetry-Scrape-Token")
+			if got == "" {
+				auth := c.Request().Header.Get(echo.HeaderAuthorization)
+				if strings.HasPrefix(auth, "Bearer ") {
+					got = strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+				}
+			}
+			if subtle.ConstantTimeCompare([]byte(got), []byte(expected)) != 1 {
+				return httperr.New(httperr.AUTH_INVALID, "invalid telemetry scrape token")
+			}
+			return next(c)
+		}
+	}
 }
 
 func controlPortalMiddleware(token string, securitySvc service.SecurityService) echo.MiddlewareFunc {
