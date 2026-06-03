@@ -125,6 +125,8 @@ func (s *listFragmentsService) List(ctx context.Context, profileID string, opts 
 		       sf.source_quality AS source_quality,
 		       sf.classification AS classification,
 		       sf.classification_json AS classification_json,
+		       sf.owner_profile_id AS owner_profile_id,
+		       sf.owner_profile_name AS owner_profile_name,
 		       sf.created_by_profile_id AS created_by_profile_id,
 		       sf.created_by_profile_name AS created_by_profile_name,
 		       sf.created_at AS created_at,

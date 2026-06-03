@@ -97,6 +97,8 @@ RETURN
     c.classification                  AS classification,
     c.classification_json             AS classification_json,
     c.classification_lattice_version  AS classification_lattice_version,
+    c.owner_profile_id                AS owner_profile_id,
+    c.owner_profile_name              AS owner_profile_name,
     collect(sf.fragment_id)           AS supported_by,
     collect(CASE
         WHEN sf.fragment_id IS NULL THEN NULL
@@ -149,6 +151,8 @@ const getClaimsByIDCypher = `
 	    c.classification                  AS classification,
 	    c.classification_json             AS classification_json,
 	    c.classification_lattice_version  AS classification_lattice_version,
+	    c.owner_profile_id                AS owner_profile_id,
+	    c.owner_profile_name              AS owner_profile_name,
 	    collect(sf.fragment_id)           AS supported_by,
 	    collect(CASE
 	        WHEN sf.fragment_id IS NULL THEN NULL
@@ -301,6 +305,8 @@ func rowToClaim(profileID string, row map[string]any) *domain.Claim {
 	return &domain.Claim{
 		ClaimID:              strVal("claim_id"),
 		ProfileID:            profileID,
+		OwnerProfileID:       firstNonEmpty(strVal("owner_profile_id"), strVal("created_by_profile_id")),
+		OwnerProfileName:     firstNonEmpty(strVal("owner_profile_name"), strVal("created_by_profile_name")),
 		CreatedByProfileID:   strVal("created_by_profile_id"),
 		CreatedByProfileName: strVal("created_by_profile_name"),
 
@@ -347,6 +353,15 @@ func rowToClaim(profileID string, row map[string]any) *domain.Claim {
 func strFromMap(m map[string]any, key string) string {
 	v, _ := m[key].(string)
 	return v
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func intFromMap(m map[string]any, key string) int {

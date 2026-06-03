@@ -6,8 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/ownership"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	postgresstorage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
@@ -31,6 +34,7 @@ type stubPromoteDB struct {
 	readErr          error
 	writeTxErr       error
 	callCount        int
+	writeTxCount     int
 	lastWriteProfile string
 }
 
@@ -56,6 +60,7 @@ func (s *stubPromoteDB) ScopedWriteTx(
 	profileID string,
 	_ func(tx neo4j.ManagedTransaction) error,
 ) error {
+	s.writeTxCount++
 	s.lastWriteProfile = profileID
 	return s.writeTxErr
 }
@@ -616,6 +621,37 @@ func TestPromoteContradictionMatrix(t *testing.T) {
 		require.ErrorIs(t, err, ErrPromotionDeferredDisputed)
 	})
 
+	t.Run("foreign conflict: actor defers instead of superseding another owner fact", func(t *testing.T) {
+		actorID := uuid.MustParse("00000000-0000-0000-0000-0000000000aa")
+		foreignOwnerID := uuid.MustParse("00000000-0000-0000-0000-0000000000bb")
+		actorCtx := requestctx.WithActorProfile(ctx, requestctx.ActorProfile{
+			ProfileID:   actorID,
+			ProfileName: "native",
+		})
+		claimRow := makeContradictingClaimRow("claim-foreign-conflict", "Corp X")
+		claimRow["owner_profile_id"] = actorID.String()
+		claimRow["owner_profile_name"] = "native"
+		factRow := makeContradictingFactRow("fact-foreign-weaker", 0.40)
+		factRow["owner_profile_id"] = foreignOwnerID.String()
+		factRow["owner_profile_name"] = "web"
+
+		db := &stubPromoteDB{
+			responsesByCall: map[int][]map[string]any{
+				0: {claimRow},
+				1: {},
+				2: {factRow},
+			},
+		}
+		svc := newTestService(db, &stubClaimLocker{}, &captureAuditEmitter{}, observability.NewInMemoryDiscoverabilityMetrics())
+
+		got, err := svc.Promote(actorCtx, profileID, "claim-foreign-conflict")
+
+		require.Nil(t, got)
+		require.ErrorIs(t, err, ErrPromotionDeferredDisputed)
+		require.Equal(t, 1, db.writeTxCount)
+		require.Equal(t, profileID, db.lastWriteProfile)
+	})
+
 	t.Run("weaker: claim rejected, returns ErrPromotionRejected (AC-38)", func(t *testing.T) {
 		// Claim object "Corp X" differs from fact object "Corp Y".
 		// fact TruthScore (0.99) >> claim TruthScore (0.745) → weaker path.
@@ -688,6 +724,31 @@ func TestPromote_ErrorPaths(t *testing.T) {
 
 		require.Error(t, err)
 		require.True(t, errors.Is(err, ErrClaimNotFound))
+	})
+
+	t.Run("returns owner mismatch when actor promotes foreign-owned claim", func(t *testing.T) {
+		actorID := uuid.MustParse("00000000-0000-0000-0000-0000000000aa")
+		ownerID := uuid.MustParse("00000000-0000-0000-0000-0000000000bb")
+		actorCtx := requestctx.WithActorProfile(ctx, requestctx.ActorProfile{
+			ProfileID:   actorID,
+			ProfileName: "web",
+		})
+		row := makeClaimRow("claim-foreign-owner", "Alice", "likes", "coffee", string(domain.StatusValidated))
+		row["owner_profile_id"] = ownerID.String()
+		row["owner_profile_name"] = "native"
+		db := &stubPromoteDB{
+			responsesByCall: map[int][]map[string]any{
+				0: {row},
+			},
+		}
+		svc := newTestService(db, &stubClaimLocker{}, &captureAuditEmitter{}, observability.NewInMemoryDiscoverabilityMetrics())
+
+		got, err := svc.Promote(actorCtx, profileID, "claim-foreign-owner")
+
+		require.Nil(t, got)
+		require.ErrorIs(t, err, ownership.ErrOwnerMismatch)
+		require.Equal(t, 1, db.callCount)
+		require.Zero(t, db.writeTxCount)
 	})
 
 	t.Run("returns ErrClaimNotValidated when claim is not validated", func(t *testing.T) {
@@ -865,6 +926,58 @@ func TestPromote_AdditionalPolicies(t *testing.T) {
 		require.Equal(t, predicate, got.Predicate)
 		require.Equal(t, domain.FactStatusActive, got.Status)
 		require.NotEqual(t, "fact-old-version", got.FactID)
+	})
+
+	t.Run("versioned: actor keeps foreign versions and links overlays", func(t *testing.T) {
+		const predicate = "employment_versioned_owner_test"
+		origGate, hadGate := DefaultPromotionGates[predicate]
+		defer restoreGate(predicate, origGate, hadGate)
+		DefaultPromotionGates[predicate] = PromotionGate{
+			Policy:              Versioned,
+			MinExtractConf:      0.70,
+			MinResolutionConf:   0.60,
+			RequiresAssertion:   true,
+			RequiresEntailed:    true,
+			MinSourceCount:      1,
+			MinMaxSourceQuality: 0.0,
+		}
+
+		actorID := uuid.MustParse("00000000-0000-0000-0000-0000000000aa")
+		foreignOwnerID := uuid.MustParse("00000000-0000-0000-0000-0000000000bb")
+		actorCtx := requestctx.WithActorProfile(ctx, requestctx.ActorProfile{
+			ProfileID:   actorID,
+			ProfileName: "native",
+		})
+		claimRow := makeClaimRow("claim-versioned-owner", "Alice", predicate, "Acme Corp", string(domain.StatusValidated))
+		claimRow["owner_profile_id"] = actorID.String()
+		claimRow["owner_profile_name"] = "native"
+
+		ownedOld := makeFactRow("fact-owned-old", "Alice", predicate, "active", time.Now().UTC())
+		ownedOld["object"] = "Old Corp"
+		ownedOld["owner_profile_id"] = actorID.String()
+		foreignSame := makeFactRow("fact-foreign-same", "Alice", predicate, "active", time.Now().UTC())
+		foreignSame["object"] = "Acme Corp"
+		foreignSame["owner_profile_id"] = foreignOwnerID.String()
+		foreignDifferent := makeFactRow("fact-foreign-different", "Alice", predicate, "active", time.Now().UTC())
+		foreignDifferent["object"] = "Other Corp"
+		foreignDifferent["owner_profile_id"] = foreignOwnerID.String()
+
+		db := &stubPromoteDB{
+			responsesByCall: map[int][]map[string]any{
+				0: {claimRow},
+				1: {},
+				2: {ownedOld, foreignSame, foreignDifferent},
+			},
+		}
+		svc := newTestService(db, &stubClaimLocker{}, &captureAuditEmitter{}, observability.NewInMemoryDiscoverabilityMetrics())
+
+		got, err := svc.Promote(actorCtx, profileID, "claim-versioned-owner")
+
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		require.Equal(t, actorID.String(), got.OwnerProfileID)
+		require.Equal(t, "Acme Corp", got.Object)
+		require.Equal(t, 4, db.writeTxCount)
 	})
 
 	t.Run("append_only: creates a new fact without rejecting on prior history", func(t *testing.T) {

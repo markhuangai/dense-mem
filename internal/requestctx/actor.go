@@ -27,3 +27,15 @@ func ActorProfileFromContext(ctx context.Context) (ActorProfile, bool) {
 	actor, ok := ctx.Value(actorContextKey{}).(ActorProfile)
 	return actor, ok
 }
+
+// ActorOwner returns the profile identity used as the ownership boundary for
+// team-scoped knowledge entities. Empty values mean the caller did not carry an
+// authenticated profile actor, which is treated by service code as a system
+// context rather than a public user mutation.
+func ActorOwner(ctx context.Context) (profileID, profileName string, ok bool) {
+	actor, ok := ActorProfileFromContext(ctx)
+	if !ok || actor.ProfileID == uuid.Nil {
+		return "", "", false
+	}
+	return actor.ProfileID.String(), actor.ProfileName, true
+}

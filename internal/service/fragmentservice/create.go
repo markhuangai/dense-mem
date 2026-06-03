@@ -219,19 +219,15 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 	// Step 7: Build fragment domain object
 	now := time.Now().UTC()
 	fragmentID := fragmentidentity.NewFragmentID()
-	actor, hasActor := requestctx.ActorProfileFromContext(ctx)
-	creatorID := ""
-	creatorName := ""
-	if hasActor {
-		creatorID = actor.ProfileID.String()
-		creatorName = actor.ProfileName
-	}
+	ownerID, ownerName, _ := requestctx.ActorOwner(ctx)
 
 	fragment := &domain.Fragment{
 		FragmentID:           fragmentID,
 		ProfileID:            profileID,
-		CreatedByProfileID:   creatorID,
-		CreatedByProfileName: creatorName,
+		OwnerProfileID:       ownerID,
+		OwnerProfileName:     ownerName,
+		CreatedByProfileID:   ownerID,
+		CreatedByProfileName: ownerName,
 		Content:              req.Content,
 		Source:               req.Source,
 		SourceType:           sourceType,
@@ -278,6 +274,8 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 			embedding_dimensions: $embeddingDimensions,
 			source_quality: $sourceQuality,
 			classification_json: $classificationJSON,
+			owner_profile_id: $ownerProfileId,
+			owner_profile_name: $ownerProfileName,
 			created_by_profile_id: $createdByProfileId,
 			created_by_profile_name: $createdByProfileName,
 			created_at: $createdAt,
@@ -300,6 +298,8 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 		"embeddingDimensions":  fragment.EmbeddingDimensions,
 		"sourceQuality":        fragment.SourceQuality,
 		"classificationJSON":   classificationJSON,
+		"ownerProfileId":       fragment.OwnerProfileID,
+		"ownerProfileName":     fragment.OwnerProfileName,
 		"createdByProfileId":   fragment.CreatedByProfileID,
 		"createdByProfileName": fragment.CreatedByProfileName,
 		"createdAt":            fragment.CreatedAt,

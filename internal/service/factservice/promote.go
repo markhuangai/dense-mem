@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/ownership"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	classificationSvc "github.com/markhuangai/dense-mem/internal/service/classification"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentcodec"
@@ -187,6 +188,9 @@ func (s *promoteClaimServiceImpl) doConfirmMemory(ctx context.Context, profileID
 	if err != nil {
 		return nil, err
 	}
+	if err := ownership.RequireOwner(ctx, claim.OwnerProfileID); err != nil {
+		return nil, err
+	}
 
 	switch req.Decision {
 	case "accept_claim":
@@ -204,11 +208,42 @@ func (s *promoteClaimServiceImpl) doConfirmMemory(ctx context.Context, profileID
 		}
 
 		conflicts := make([]*domain.Fact, 0, len(activeFacts))
+		alignments := make([]*domain.Fact, 0, len(activeFacts))
 		for _, fact := range activeFacts {
 			if fact.Object != claim.Object {
 				conflicts = append(conflicts, fact)
+			} else {
+				alignments = append(alignments, fact)
 			}
 		}
+		if actorOwnerID := ownership.ActorOwnerID(ctx); actorOwnerID != "" {
+			ownConflicts, foreignConflicts := splitFactsByOwner(conflicts, actorOwnerID)
+			_, foreignAlignments := splitFactsByOwner(alignments, actorOwnerID)
+			if len(ownConflicts) > 0 {
+				if err := supersedePath(ctx, s.db, profileID, ownConflicts, claim.ClaimID, claim.ValidFrom); err != nil {
+					return nil, fmt.Errorf("confirm memory: supersede owner conflicts: %w", err)
+				}
+			}
+			fact, err := s.createNewFact(ctx, profileID, claim, gate)
+			if err != nil {
+				return nil, err
+			}
+			if err := overlayPath(ctx, s.db, profileID, fact.FactID, foreignConflicts); err != nil {
+				return nil, fmt.Errorf("confirm memory: link overlays: %w", err)
+			}
+			if err := alignPath(ctx, s.db, profileID, fact.FactID, foreignAlignments); err != nil {
+				return nil, fmt.Errorf("confirm memory: link alignments: %w", err)
+			}
+			s.incMetric("promoted")
+			s.emitAudit(ctx, profileID, claim.ClaimID, fact.FactID, "claim.confirm.accept")
+			return &ConfirmMemoryResult{
+				ClaimID:  claim.ClaimID,
+				Decision: req.Decision,
+				Status:   "accepted",
+				Fact:     fact,
+			}, nil
+		}
+
 		if len(conflicts) > 0 {
 			if err := supersedePath(ctx, s.db, profileID, conflicts, claim.ClaimID, claim.ValidFrom); err != nil {
 				return nil, fmt.Errorf("confirm memory: supersede conflicts: %w", err)
@@ -262,6 +297,9 @@ func (s *promoteClaimServiceImpl) doPromote(ctx context.Context, profileID, clai
 	// indistinguishable from "not found" — no existence leak.
 	claim, err := s.loadClaim(ctx, profileID, claimID)
 	if err != nil {
+		return nil, err
+	}
+	if err := ownership.RequireOwner(ctx, claim.OwnerProfileID); err != nil {
 		return nil, err
 	}
 
@@ -366,12 +404,49 @@ func (s *promoteClaimServiceImpl) handleSingleCurrent(
 	// Partition into same-object and differing-object active facts.
 	var sameObj []*domain.Fact
 	var differingObj []*domain.Fact
+	var foreignSameForAlignment []*domain.Fact
 	for _, f := range activeFacts {
 		if f.Object == claim.Object {
 			sameObj = append(sameObj, f)
 		} else {
 			differingObj = append(differingObj, f)
 		}
+	}
+
+	if actorOwnerID := ownership.ActorOwnerID(ctx); actorOwnerID != "" {
+		ownSame, foreignSame := splitFactsByOwner(sameObj, actorOwnerID)
+		ownDiffering, foreignDiffering := splitFactsByOwner(differingObj, actorOwnerID)
+		foreignSameForAlignment = foreignSame
+
+		if len(foreignDiffering) > 0 {
+			if err := comparablePath(ctx, s.db, profileID, claim.ClaimID, foreignDiffering); err != nil {
+				return nil, fmt.Errorf("promote: foreign conflict path: %w", err)
+			}
+			return nil, ErrPromotionDeferredDisputed
+		}
+
+		if len(ownDiffering) == 0 {
+			if len(ownSame) > 0 {
+				if err := sameObjectConfirmPath(ctx, s.db, profileID, ownSame); err != nil {
+					return nil, fmt.Errorf("promote: same-object owner confirm: %w", err)
+				}
+				if err := s.linkClaimToExistingFact(ctx, profileID, claim.ClaimID, ownSame[0].FactID); err != nil {
+					return nil, fmt.Errorf("promote: link claim to existing owner fact: %w", err)
+				}
+				return ownSame[0], nil
+			}
+			fact, err := s.createNewFact(ctx, profileID, claim, gate)
+			if err != nil {
+				return nil, err
+			}
+			if err := alignPath(ctx, s.db, profileID, fact.FactID, foreignSame); err != nil {
+				return nil, fmt.Errorf("promote: link same-object alignments: %w", err)
+			}
+			return fact, nil
+		}
+
+		sameObj = ownSame
+		differingObj = ownDiffering
 	}
 
 	if len(differingObj) == 0 {
@@ -434,7 +509,14 @@ func (s *promoteClaimServiceImpl) handleSingleCurrent(
 	if err := supersedePath(ctx, s.db, profileID, differingObj, claim.ClaimID, claim.ValidFrom); err != nil {
 		return nil, fmt.Errorf("promote: supersede path: %w", err)
 	}
-	return s.createNewFact(ctx, profileID, claim, gate)
+	fact, err := s.createNewFact(ctx, profileID, claim, gate)
+	if err != nil {
+		return nil, err
+	}
+	if err := alignPath(ctx, s.db, profileID, fact.FactID, foreignSameForAlignment); err != nil {
+		return nil, fmt.Errorf("promote: link same-object alignments: %w", err)
+	}
+	return fact, nil
 }
 
 // handleVersioned creates a new fact version and closes any older active
@@ -449,6 +531,35 @@ func (s *promoteClaimServiceImpl) handleVersioned(
 	activeFacts, err := findActiveFactsBySubjectPredicate(ctx, s.db, profileID, claim.Subject, claim.Predicate)
 	if err != nil {
 		return nil, fmt.Errorf("promote: find active versioned facts: %w", err)
+	}
+	if actorOwnerID := ownership.ActorOwnerID(ctx); actorOwnerID != "" {
+		ownedFacts, foreignFacts := splitFactsByOwner(activeFacts, actorOwnerID)
+		if len(ownedFacts) > 0 {
+			if err := supersedePath(ctx, s.db, profileID, ownedFacts, claim.ClaimID, claim.ValidFrom); err != nil {
+				return nil, fmt.Errorf("promote: versioned owner supersede path: %w", err)
+			}
+		}
+		fact, err := s.createNewFact(ctx, profileID, claim, gate)
+		if err != nil {
+			return nil, err
+		}
+
+		var alignedFacts []*domain.Fact
+		var overlaidFacts []*domain.Fact
+		for _, foreign := range foreignFacts {
+			if foreign.Object == claim.Object {
+				alignedFacts = append(alignedFacts, foreign)
+			} else {
+				overlaidFacts = append(overlaidFacts, foreign)
+			}
+		}
+		if err := overlayPath(ctx, s.db, profileID, fact.FactID, overlaidFacts); err != nil {
+			return nil, fmt.Errorf("promote: versioned link overlays: %w", err)
+		}
+		if err := alignPath(ctx, s.db, profileID, fact.FactID, alignedFacts); err != nil {
+			return nil, fmt.Errorf("promote: versioned link alignments: %w", err)
+		}
+		return fact, nil
 	}
 	if len(activeFacts) > 0 {
 		if err := supersedePath(ctx, s.db, profileID, activeFacts, claim.ClaimID, claim.ValidFrom); err != nil {
@@ -491,6 +602,8 @@ func (s *promoteClaimServiceImpl) createNewFact(
 	fact := &domain.Fact{
 		FactID:                       uuid.New().String(),
 		ProfileID:                    profileID,
+		OwnerProfileID:               firstNonEmpty(claim.OwnerProfileID, claim.CreatedByProfileID),
+		OwnerProfileName:             firstNonEmpty(claim.OwnerProfileName, claim.CreatedByProfileName),
 		CreatedByProfileID:           claim.CreatedByProfileID,
 		CreatedByProfileName:         claim.CreatedByProfileName,
 		PromotedByProfileID:          promoterID,
@@ -519,6 +632,8 @@ func (s *promoteClaimServiceImpl) createNewFact(
 			map[string]any{
 				"claimId":                      claim.ClaimID,
 				"factId":                       fact.FactID,
+				"ownerProfileId":               fact.OwnerProfileID,
+				"ownerProfileName":             fact.OwnerProfileName,
 				"createdByProfileId":           fact.CreatedByProfileID,
 				"createdByProfileName":         fact.CreatedByProfileName,
 				"promotedByProfileId":          fact.PromotedByProfileID,
@@ -720,6 +835,24 @@ func fromStringMap(m map[string]string) map[string]any {
 	return out
 }
 
+func splitFactsByOwner(facts []*domain.Fact, ownerProfileID string) (owned, foreign []*domain.Fact) {
+	for _, fact := range facts {
+		if factOwnerID(fact) == ownerProfileID {
+			owned = append(owned, fact)
+		} else {
+			foreign = append(foreign, fact)
+		}
+	}
+	return owned, foreign
+}
+
+func factOwnerID(fact *domain.Fact) string {
+	if fact == nil {
+		return ""
+	}
+	return firstNonEmpty(fact.OwnerProfileID, fact.CreatedByProfileID, fact.PromotedByProfileID)
+}
+
 // rowToClaimForPromote maps a Neo4j result row to the minimal domain.Claim
 // fields required for promotion. profileID is propagated from the caller
 // rather than read from the row (ScopedRead has already enforced isolation).
@@ -760,6 +893,8 @@ func rowToClaimForPromote(profileID string, row map[string]any) *domain.Claim {
 	return &domain.Claim{
 		ClaimID:                      strVal("claim_id"),
 		ProfileID:                    profileID,
+		OwnerProfileID:               firstNonEmpty(strVal("owner_profile_id"), strVal("created_by_profile_id")),
+		OwnerProfileName:             firstNonEmpty(strVal("owner_profile_name"), strVal("created_by_profile_name")),
 		CreatedByProfileID:           strVal("created_by_profile_id"),
 		CreatedByProfileName:         strVal("created_by_profile_name"),
 		Subject:                      strVal("subject"),
@@ -792,6 +927,8 @@ MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
 OPTIONAL MATCH (c)-[:SUPPORTED_BY {team_id: $profileId}]->(sf:SourceFragment {team_id: $profileId})
 RETURN
     c.claim_id                        AS claim_id,
+    c.owner_profile_id                AS owner_profile_id,
+    c.owner_profile_name              AS owner_profile_name,
     c.created_by_profile_id           AS created_by_profile_id,
     c.created_by_profile_name         AS created_by_profile_name,
     c.subject                         AS subject,
@@ -818,6 +955,8 @@ const idempotencyCheckCypher = `
 MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})-[:PROMOTES_TO {team_id: $profileId}]->(f:Fact {team_id: $profileId})
 RETURN
     f.fact_id                        AS fact_id,
+    f.owner_profile_id               AS owner_profile_id,
+    f.owner_profile_name             AS owner_profile_name,
     f.created_by_profile_id          AS created_by_profile_id,
     f.created_by_profile_name        AS created_by_profile_name,
     f.promoted_by_profile_id         AS promoted_by_profile_id,
@@ -853,6 +992,8 @@ MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
 CREATE (f:Fact {
     team_id:                    $profileId,
     fact_id:                       $factId,
+    owner_profile_id:              $ownerProfileId,
+    owner_profile_name:            $ownerProfileName,
     created_by_profile_id:         $createdByProfileId,
     created_by_profile_name:       $createdByProfileName,
     promoted_by_profile_id:        $promotedByProfileId,

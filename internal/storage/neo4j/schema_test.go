@@ -255,6 +255,8 @@ func TestEnsureSchema_ClaimCompositeIndexes(t *testing.T) {
 		{"claim_team_idempotency_idx", IndexClaimProfileIdempotency},
 		{"claim_profile_content_hash_idx", IndexClaimProfileContentHash},
 		{"claim_profile_recorded_at_idx", IndexClaimProfileRecordedAt},
+		{"claim_owner_idempotency_idx", IndexClaimOwnerIdempotency},
+		{"claim_owner_content_hash_idx", IndexClaimOwnerContentHash},
 	}
 
 	for _, w := range wantIndexes {
@@ -310,7 +312,7 @@ func TestEnsureSchema_CrossProfileIsolation(t *testing.T) {
 	err := bs.EnsureSchema(ctx)
 	require.NoError(t, err)
 
-	// All 9 pipeline index names from Unit 12.
+	// Pipeline and owner index names must all keep team_id as the leading key.
 	newIndexNames := []string{
 		IndexClaimProfileClaimID,
 		IndexClaimProfileStatus,
@@ -318,9 +320,13 @@ func TestEnsureSchema_CrossProfileIsolation(t *testing.T) {
 		IndexClaimProfileSubjectPredicate,
 		IndexClaimProfileIdempotency,
 		IndexClaimProfileContentHash,
+		IndexClaimOwnerIdempotency,
+		IndexClaimOwnerContentHash,
 		IndexFactProfileStatus,
 		IndexFactProfileSubjectPredicateStatus,
 		IndexSourceFragmentProfileStatus,
+		IndexFragmentOwnerIdempotency,
+		IndexFragmentOwnerContentHash,
 	}
 
 	for _, idxName := range newIndexNames {

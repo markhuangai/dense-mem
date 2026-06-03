@@ -118,6 +118,8 @@ WHERE ($subject = '' OR f.subject = $subject)
   )
 RETURN
     f.fact_id                        AS fact_id,
+    f.owner_profile_id               AS owner_profile_id,
+    f.owner_profile_name             AS owner_profile_name,
     f.created_by_profile_id          AS created_by_profile_id,
     f.created_by_profile_name        AS created_by_profile_name,
     f.promoted_by_profile_id         AS promoted_by_profile_id,
@@ -126,6 +128,7 @@ RETURN
     f.predicate                      AS predicate,
     f.object                         AS object,
     f.status                         AS status,
+    f.authority_state                AS authority_state,
     f.truth_score                    AS truth_score,
     f.valid_from                     AS valid_from,
     f.valid_to                       AS valid_to,

@@ -16,6 +16,8 @@ func ToClaimResponse(c *domain.Claim, _ string) *dto.ClaimResponse {
 	return &dto.ClaimResponse{
 		ClaimID:              c.ClaimID,
 		ProfileID:            c.ProfileID,
+		OwnerProfileID:       c.OwnerProfileID,
+		OwnerProfileName:     c.OwnerProfileName,
 		CreatedByProfileID:   c.CreatedByProfileID,
 		CreatedByProfileName: c.CreatedByProfileName,
 		Subject:              c.Subject,

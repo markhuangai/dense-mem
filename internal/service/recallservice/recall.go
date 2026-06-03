@@ -57,6 +57,8 @@ const (
 
 	// TierActiveFact is the recall tier for active Fact nodes (highest authority).
 	TierActiveFact = "1"
+	// TierConflict is the recall tier for active facts with overlay/conflict context.
+	TierConflict = "1.25"
 	// TierValidatedClaim is the recall tier for validated Claim nodes.
 	TierValidatedClaim = "1.5"
 	// TierFragment is the recall tier for SourceFragment nodes (raw evidence).
@@ -142,13 +144,14 @@ type fragmentBatchHydrator interface {
 
 // FactRecallResult is one query-matched tier-1 candidate before hydration.
 type FactRecallResult struct {
-	FactID     string
-	ProfileID  string
-	Score      float64
-	ValidFrom  *time.Time
-	ValidTo    *time.Time
-	RecordedAt time.Time
-	RecordedTo *time.Time
+	FactID         string
+	ProfileID      string
+	Score          float64
+	ValidFrom      *time.Time
+	ValidTo        *time.Time
+	RecordedAt     time.Time
+	RecordedTo     *time.Time
+	AuthorityState string
 }
 
 // ClaimRecallResult is one query-matched tier-1.5 candidate before hydration.
@@ -468,14 +471,23 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 				if !factMatchesRecallWindow(f, req.ValidAt, req.KnownAt) {
 					continue
 				}
+				authorityState := candidate.AuthorityState
+				if authorityState == "" {
+					authorityState = "authoritative"
+				}
 				if !req.IncludeEvidence {
 					factCopy := *f
 					factCopy.Evidence = nil
 					f = &factCopy
 				}
+				f.AuthorityState = authorityState
+				tier := TierActiveFact
+				if authorityState != "authoritative" {
+					tier = TierConflict
+				}
 				hits = append(hits, RecallHit{
 					Fact:  f,
-					Tier:  TierActiveFact,
+					Tier:  tier,
 					Score: f.TruthScore,
 				})
 			}

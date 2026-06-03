@@ -36,6 +36,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/ownership"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
 	neo4jstorage "github.com/markhuangai/dense-mem/internal/storage/neo4j"
 )
@@ -109,7 +110,8 @@ func (s *retractFragmentService) Retract(ctx context.Context, profileID, fragmen
 		// and the tombstone SET.
 		existsResult, err := neo4jstorage.RunScoped(ctx, tx, profileID,
 			`MATCH (sf:SourceFragment {team_id: $profileId, fragment_id: $fragmentId})
-			 RETURN sf.fragment_id AS fragment_id
+			 RETURN sf.fragment_id AS fragment_id,
+			        coalesce(sf.owner_profile_id, sf.created_by_profile_id, '') AS owner_profile_id
 			 LIMIT 1`,
 			map[string]any{"fragmentId": fragmentID},
 		)
@@ -122,6 +124,10 @@ func (s *retractFragmentService) Retract(ctx context.Context, profileID, fragmen
 		}
 		if len(existsRecords) == 0 {
 			return ErrFragmentNotFound
+		}
+		ownerID, _ := existsRecords[0].AsMap()["owner_profile_id"].(string)
+		if err := ownership.RequireOwner(ctx, ownerID); err != nil {
+			return err
 		}
 
 		// Step 2: tombstone the fragment.

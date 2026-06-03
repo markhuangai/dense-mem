@@ -13,6 +13,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/ownership"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
@@ -160,6 +161,8 @@ func mapToolExecuteError(err error) *httperr.APIError {
 	switch {
 	case errors.Is(err, registry.ErrToolUnavailable):
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "tool unavailable")
+	case errors.Is(err, ownership.ErrOwnerMismatch):
+		return httperr.New(httperr.FORBIDDEN, "only the owner profile can modify this knowledge")
 	case errors.Is(err, claimservice.ErrSupportingFragmentMissing):
 		return httperr.New(httperr.ErrSupportingFragmentMissing, "supporting fragment missing or retracted")
 	case errors.Is(err, claimservice.ErrClaimNotFound):

@@ -31,6 +31,8 @@ const (
 type Fragment struct {
 	FragmentID           string         `json:"id"` // API field "id" maps to stored fragment_id
 	ProfileID            string         `json:"team_id"`
+	OwnerProfileID       string         `json:"owner_profile_id,omitempty"`
+	OwnerProfileName     string         `json:"owner_profile_name,omitempty"`
 	CreatedByProfileID   string         `json:"created_by_profile_id,omitempty"`
 	CreatedByProfileName string         `json:"created_by_profile_name,omitempty"`
 	Content              string         `json:"content"`

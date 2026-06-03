@@ -41,6 +41,8 @@ func TestRelationshipProfileConstraints(t *testing.T) {
 			{"PROMOTES_TO", "PROMOTES_TO", ConstraintPromotesToProfileIDExists},
 			{"SUPERSEDED_BY", "SUPERSEDED_BY", ConstraintSupersededByProfileIDExists},
 			{"CONTRADICTS", "CONTRADICTS", ConstraintContradictsProfileIDExists},
+			{"OVERLAYS", "OVERLAYS", ConstraintOverlaysProfileIDExists},
+			{"ALIGNS_WITH", "ALIGNS_WITH", ConstraintAlignsWithProfileIDExists},
 		}
 
 		for _, w := range wantConstraints {
@@ -98,6 +100,8 @@ func TestEnsureSchema_CommunityEditionSkipsRelationshipConstraints(t *testing.T)
 	assert.False(t, hasQuery(client.queries, ConstraintPromotesToProfileIDExists))
 	assert.False(t, hasQuery(client.queries, ConstraintSupersededByProfileIDExists))
 	assert.False(t, hasQuery(client.queries, ConstraintContradictsProfileIDExists))
+	assert.False(t, hasQuery(client.queries, ConstraintOverlaysProfileIDExists))
+	assert.False(t, hasQuery(client.queries, ConstraintAlignsWithProfileIDExists))
 	assert.True(t, hasQuery(client.queries, IndexCommunityProfileCommunityID),
 		"EnsureSchema must continue creating supported indexes on community edition")
 }
@@ -146,6 +150,8 @@ func TestRelationshipProfileConstraints_LiveEnforcement(t *testing.T) {
 			ConstraintPromotesToProfileIDExists,
 			ConstraintSupersededByProfileIDExists,
 			ConstraintContradictsProfileIDExists,
+			ConstraintOverlaysProfileIDExists,
+			ConstraintAlignsWithProfileIDExists,
 		} {
 			if res, err := tx.Run(ctx, "DROP CONSTRAINT "+name+" IF EXISTS", nil); err == nil {
 				res.Consume(ctx)
@@ -183,6 +189,8 @@ func TestRelationshipProfileConstraints_LiveEnforcement(t *testing.T) {
 				ConstraintPromotesToProfileIDExists,
 				ConstraintSupersededByProfileIDExists,
 				ConstraintContradictsProfileIDExists,
+				ConstraintOverlaysProfileIDExists,
+				ConstraintAlignsWithProfileIDExists,
 			}},
 		)
 		if err != nil {
@@ -201,7 +209,7 @@ func TestRelationshipProfileConstraints_LiveEnforcement(t *testing.T) {
 
 	existingConstraints, ok := existingConstraintsRaw.([]string)
 	require.True(t, ok, "existing constraints result must be []string")
-	if len(existingConstraints) < 4 {
+	if len(existingConstraints) < 6 {
 		t.Skip("relationship team_id constraints are unsupported by the connected Neo4j edition")
 	}
 
