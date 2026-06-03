@@ -34,6 +34,8 @@ type FragmentResponse struct {
 	ID                   string         `json:"id"`
 	FragmentID           string         `json:"fragment_id"` // alias of ID; required by UAT-02/UAT-03
 	TeamID               string         `json:"team_id,omitempty"`
+	OwnerProfileID       string         `json:"owner_profile_id,omitempty"`
+	OwnerProfileName     string         `json:"owner_profile_name,omitempty"`
 	CreatedByProfileID   string         `json:"created_by_profile_id,omitempty"`
 	CreatedByProfileName string         `json:"created_by_profile_name,omitempty"`
 	Content              string         `json:"content"`
@@ -50,6 +52,7 @@ type FragmentResponse struct {
 	Classification       map[string]any `json:"classification,omitempty"`
 	Status               string         `json:"status,omitempty"`
 	RecordedTo           *time.Time     `json:"recorded_to,omitempty"`
+	RetractedAt          *time.Time     `json:"retracted_at,omitempty"`
 	CreatedAt            time.Time      `json:"created_at"`
 	UpdatedAt            time.Time      `json:"updated_at"`
 }

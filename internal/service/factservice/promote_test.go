@@ -31,6 +31,7 @@ type stubPromoteDB struct {
 	readErr          error
 	writeTxErr       error
 	callCount        int
+	writeTxCount     int
 	lastWriteProfile string
 }
 
@@ -56,6 +57,7 @@ func (s *stubPromoteDB) ScopedWriteTx(
 	profileID string,
 	_ func(tx neo4j.ManagedTransaction) error,
 ) error {
+	s.writeTxCount++
 	s.lastWriteProfile = profileID
 	return s.writeTxErr
 }

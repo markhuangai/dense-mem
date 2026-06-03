@@ -70,8 +70,14 @@ WITH f, collect(CASE
         authority: coalesce(r.authority, sf.authority, 'unknown')
     }
 END) AS evidence
+OPTIONAL MATCH (incomingOverlay:Fact {team_id: $profileId, status: 'active'})-[:OVERLAYS {team_id: $profileId}]->(f)
+WITH f, evidence, count(DISTINCT incomingOverlay) AS incoming_overlay_count
+OPTIONAL MATCH (f)-[:OVERLAYS {team_id: $profileId}]->(outgoingOverlay:Fact {team_id: $profileId, status: 'active'})
+WITH f, evidence, incoming_overlay_count, count(DISTINCT outgoingOverlay) AS outgoing_overlay_count
 RETURN
     f.fact_id                        AS fact_id,
+    f.owner_profile_id               AS owner_profile_id,
+    f.owner_profile_name             AS owner_profile_name,
     f.created_by_profile_id          AS created_by_profile_id,
     f.created_by_profile_name        AS created_by_profile_name,
     f.promoted_by_profile_id         AS promoted_by_profile_id,
@@ -80,6 +86,11 @@ RETURN
     f.predicate                      AS predicate,
     f.object                         AS object,
     f.status                         AS status,
+    CASE
+        WHEN outgoing_overlay_count > 0 THEN 'overlay'
+        WHEN incoming_overlay_count > 0 THEN 'conflicted'
+        ELSE 'authoritative'
+    END                              AS authority_state,
     f.truth_score                    AS truth_score,
     f.valid_from                     AS valid_from,
     f.valid_to                       AS valid_to,
@@ -115,8 +126,14 @@ const getFactsByIDCypher = `
 	        authority: coalesce(r.authority, sf.authority, 'unknown')
 	    }
 	END) AS evidence
+	OPTIONAL MATCH (incomingOverlay:Fact {team_id: $profileId, status: 'active'})-[:OVERLAYS {team_id: $profileId}]->(f)
+	WITH f, evidence, count(DISTINCT incomingOverlay) AS incoming_overlay_count
+	OPTIONAL MATCH (f)-[:OVERLAYS {team_id: $profileId}]->(outgoingOverlay:Fact {team_id: $profileId, status: 'active'})
+	WITH f, evidence, incoming_overlay_count, count(DISTINCT outgoingOverlay) AS outgoing_overlay_count
 	RETURN
 	    f.fact_id                        AS fact_id,
+	    f.owner_profile_id               AS owner_profile_id,
+	    f.owner_profile_name             AS owner_profile_name,
 	    f.created_by_profile_id          AS created_by_profile_id,
 	    f.created_by_profile_name        AS created_by_profile_name,
 	    f.promoted_by_profile_id         AS promoted_by_profile_id,
@@ -125,6 +142,11 @@ const getFactsByIDCypher = `
 	    f.predicate                      AS predicate,
 	    f.object                         AS object,
 	    f.status                         AS status,
+	    CASE
+	        WHEN outgoing_overlay_count > 0 THEN 'overlay'
+	        WHEN incoming_overlay_count > 0 THEN 'conflicted'
+	        ELSE 'authoritative'
+	    END                              AS authority_state,
 	    f.truth_score                    AS truth_score,
 	    f.valid_from                     AS valid_from,
 	    f.valid_to                       AS valid_to,
@@ -258,6 +280,8 @@ func rowToFact(profileID string, row map[string]any) *domain.Fact {
 	return &domain.Fact{
 		FactID:                strVal("fact_id"),
 		ProfileID:             profileID,
+		OwnerProfileID:        firstNonEmpty(strVal("owner_profile_id"), strVal("created_by_profile_id"), strVal("promoted_by_profile_id")),
+		OwnerProfileName:      firstNonEmpty(strVal("owner_profile_name"), strVal("created_by_profile_name"), strVal("promoted_by_profile_name")),
 		CreatedByProfileID:    strVal("created_by_profile_id"),
 		CreatedByProfileName:  strVal("created_by_profile_name"),
 		PromotedByProfileID:   strVal("promoted_by_profile_id"),
@@ -267,8 +291,9 @@ func rowToFact(profileID string, row map[string]any) *domain.Fact {
 		Predicate: strVal("predicate"),
 		Object:    strVal("object"),
 
-		Status:     domain.FactStatus(strVal("status")),
-		TruthScore: float64Val("truth_score"),
+		Status:         domain.FactStatus(strVal("status")),
+		AuthorityState: strVal("authority_state"),
+		TruthScore:     float64Val("truth_score"),
 
 		ValidFrom:       timePtr("valid_from"),
 		ValidTo:         timePtr("valid_to"),
@@ -292,6 +317,15 @@ func rowToFact(profileID string, row map[string]any) *domain.Fact {
 func factStrFromMap(m map[string]any, key string) string {
 	v, _ := m[key].(string)
 	return v
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func factIntFromMap(m map[string]any, key string) int {

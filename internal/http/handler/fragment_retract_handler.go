@@ -8,6 +8,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/ownership"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 )
 
@@ -54,6 +55,9 @@ func (h *FragmentRetractHandler) Handle(c echo.Context) error {
 	if err := h.svc.Retract(ctx, profileID.String(), fragmentID); err != nil {
 		if errors.Is(err, fragmentservice.ErrFragmentNotFound) {
 			return httperr.New(httperr.NOT_FOUND, "fragment not found")
+		}
+		if errors.Is(err, ownership.ErrOwnerMismatch) {
+			return httperr.New(httperr.FORBIDDEN, "only the owner profile can modify this knowledge")
 		}
 		return httperr.New(httperr.INTERNAL_ERROR, "failed to retract fragment")
 	}

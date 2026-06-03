@@ -357,6 +357,39 @@ func listFactsTool(deps Dependencies) Tool {
 	}
 }
 
+// --- retract_fact ---------------------------------------------------------
+
+func retractFactTool(deps Dependencies) Tool {
+	return Tool{
+		Name:        "retract_fact",
+		Description: "Withdraw a Fact from current knowledge within the caller's profile. The fact is soft-tombstoned; graph lineage and validity timestamps are preserved.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"required":             []string{"id"},
+			"properties":           map[string]any{"id": schemaString("Fact ID to retract.", 128)},
+			"additionalProperties": false,
+		},
+		OutputSchema: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"status": schemaEnum([]string{"retracted"})},
+		},
+		RequiredScopes: []string{"write"},
+		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+			if deps.FactRetract == nil {
+				return nil, ErrToolUnavailable
+			}
+			id, _ := input["id"].(string)
+			if id == "" {
+				return nil, errors.New("retract_fact: id is required")
+			}
+			if err := deps.FactRetract.Retract(ctx, profileID, id); err != nil {
+				return nil, err
+			}
+			return map[string]any{"status": "retracted"}, nil
+		},
+	}
+}
+
 // --- retract_fragment -----------------------------------------------------
 
 func retractFragmentTool(deps Dependencies) Tool {

@@ -2,7 +2,7 @@
 //
 // RETRACT SEMANTICS (AC-45):
 // Retract is a soft tombstone: the SourceFragment node is stamped with
-// status='retracted' and recorded_to=now. It remains in the graph for lineage
+// status='retracted' and retracted_at=now. It remains in the graph for lineage
 // but is excluded from all active-fragment reads via FragmentActiveFilter (AC-44).
 //
 // FACT REVALIDATION (AC-47, AC-48):
@@ -36,6 +36,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/ownership"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
 	neo4jstorage "github.com/markhuangai/dense-mem/internal/storage/neo4j"
 )
@@ -90,7 +91,7 @@ func NewRetractFragmentService(
 //
 // Algorithm (all steps inside one ScopedWriteTx for atomicity — AC-48):
 //  1. tx-local existence check: accurate 404, no existence leak across profiles.
-//  2. Tombstone: SET status='retracted', recorded_to=now.
+//  2. Tombstone: SET status='retracted', retracted_at=now.
 //  3. Traverse affected facts; collect remaining active support stats (run after
 //     tombstone so the retracted node is excluded by the active filter).
 //  4. Evaluate each fact against DefaultPromotionGates (OR semantics, AC-35).
@@ -109,7 +110,8 @@ func (s *retractFragmentService) Retract(ctx context.Context, profileID, fragmen
 		// and the tombstone SET.
 		existsResult, err := neo4jstorage.RunScoped(ctx, tx, profileID,
 			`MATCH (sf:SourceFragment {team_id: $profileId, fragment_id: $fragmentId})
-			 RETURN sf.fragment_id AS fragment_id
+			 RETURN sf.fragment_id AS fragment_id,
+			        coalesce(sf.owner_profile_id, sf.created_by_profile_id, '') AS owner_profile_id
 			 LIMIT 1`,
 			map[string]any{"fragmentId": fragmentID},
 		)
@@ -123,11 +125,16 @@ func (s *retractFragmentService) Retract(ctx context.Context, profileID, fragmen
 		if len(existsRecords) == 0 {
 			return ErrFragmentNotFound
 		}
+		ownerID, _ := existsRecords[0].AsMap()["owner_profile_id"].(string)
+		if err := ownership.RequireOwner(ctx, ownerID); err != nil {
+			return err
+		}
 
 		// Step 2: tombstone the fragment.
 		tombstoneResult, err := neo4jstorage.RunScoped(ctx, tx, profileID,
 			`MATCH (sf:SourceFragment {team_id: $profileId, fragment_id: $fragmentId})
-			 SET sf.status = 'retracted', sf.recorded_to = $now`,
+			 SET sf.status = 'retracted',
+			     sf.retracted_at = coalesce(sf.retracted_at, $now)`,
 			map[string]any{"fragmentId": fragmentID, "now": now},
 		)
 		if err != nil {

@@ -188,9 +188,11 @@ func TestGraphRowStateHelpersDecodeTypes(t *testing.T) {
 	row := map[string]any{
 		"strings":       []string{"a", "b"},
 		"mixed":         []any{"c", 12, "d", ""},
+		"float64":       float64(1.5),
 		"float32":       float32(1.25),
 		"int":           int(2),
 		"int64":         int64(3),
+		"nil":           nil,
 		"metadata_json": `{"topic":"testing"}`,
 		"bad_json":      "{",
 	}
@@ -203,14 +205,29 @@ func TestGraphRowStateHelpersDecodeTypes(t *testing.T) {
 	if stringSliceState(row, "missing") != nil || stringSliceState(map[string]any{"x": 1}, "x") != nil {
 		t.Fatal("stringSliceState should return nil for missing or unsupported values")
 	}
-	if floatState(row, "float32") != 1.25 || floatState(row, "int") != 2 || floatState(row, "int64") != 3 || floatState(row, "missing") != 0 {
+	if floatState(row, "float64") != 1.5 || floatState(row, "float32") != 1.25 || floatState(row, "int") != 2 || floatState(row, "int64") != 3 || floatState(row, "missing") != 0 {
 		t.Fatalf("floatState decoded unexpected values")
 	}
 	if got := optionalFloatState(row, "missing"); got != nil {
 		t.Fatalf("optionalFloatState missing = %v, want nil", *got)
 	}
+	if got := optionalFloatState(row, "nil"); got != nil {
+		t.Fatalf("optionalFloatState nil = %v, want nil", *got)
+	}
+	if got := optionalFloatState(row, "float64"); got == nil || *got != 1.5 {
+		t.Fatalf("optionalFloatState float64 = %v, want 1.5", got)
+	}
 	if got := optionalFloatState(row, "float32"); got == nil || *got != 1.25 {
 		t.Fatalf("optionalFloatState float32 = %v, want 1.25", got)
+	}
+	if got := optionalFloatState(row, "int"); got == nil || *got != 2 {
+		t.Fatalf("optionalFloatState int = %v, want 2", got)
+	}
+	if got := optionalFloatState(row, "int64"); got == nil || *got != 3 {
+		t.Fatalf("optionalFloatState int64 = %v, want 3", got)
+	}
+	if got := optionalFloatState(map[string]any{"bad": "nope"}, "bad"); got != nil {
+		t.Fatalf("optionalFloatState unsupported = %v, want nil", *got)
 	}
 	decoded := optionalMapState(row, "bad_json", "metadata_json")
 	if decoded["topic"] != "testing" {

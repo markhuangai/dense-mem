@@ -661,9 +661,17 @@ func TestCreateClaimActorAndAuditBranches(t *testing.T) {
 	})
 
 	require.NoError(t, err)
+	expectedHash := claimidentity.ContentHash("Alice", "likes", "coffee", nil)
+	expectedClaimID, idErr := claimidentity.ClaimIDFromHash(actorID.String(), expectedHash)
+	require.NoError(t, idErr)
+	require.Equal(t, expectedClaimID, got.Claim.ClaimID)
+	require.Equal(t, actorID.String(), got.Claim.OwnerProfileID)
+	require.Equal(t, "analyst", got.Claim.OwnerProfileName)
 	require.Equal(t, actorID.String(), got.Claim.CreatedByProfileID)
 	require.Equal(t, "analyst", got.Claim.CreatedByProfileName)
 	require.Len(t, writer.written, 1)
+	require.Equal(t, actorID.String(), writer.written[0]["ownerProfileId"])
+	require.Equal(t, "analyst", writer.written[0]["ownerProfileName"])
 	require.Equal(t, actorID.String(), writer.written[0]["createdByProfileId"])
 	require.Equal(t, "analyst", writer.written[0]["createdByProfileName"])
 }

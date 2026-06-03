@@ -6,6 +6,8 @@ import "time"
 type FactResponse struct {
 	FactID                       string         `json:"fact_id"`
 	ProfileID                    string         `json:"team_id"`
+	OwnerProfileID               string         `json:"owner_profile_id,omitempty"`
+	OwnerProfileName             string         `json:"owner_profile_name,omitempty"`
 	CreatedByProfileID           string         `json:"created_by_profile_id,omitempty"`
 	CreatedByProfileName         string         `json:"created_by_profile_name,omitempty"`
 	PromotedByProfileID          string         `json:"promoted_by_profile_id,omitempty"`
@@ -14,6 +16,7 @@ type FactResponse struct {
 	Predicate                    string         `json:"predicate"`
 	Object                       string         `json:"object"`
 	Status                       string         `json:"status"`
+	AuthorityState               string         `json:"authority_state,omitempty"`
 	TruthScore                   float64        `json:"truth_score"`
 	ValidFrom                    *time.Time     `json:"valid_from,omitempty"`
 	ValidTo                      *time.Time     `json:"valid_to,omitempty"`

@@ -304,6 +304,7 @@ func main() {
 	}
 	factGetSvc := factservice.NewGetFactService(profileScopeEnforcer)
 	factListSvc := factservice.NewListFactsService(profileScopeEnforcer)
+	factRetractSvc := factservice.NewRetractFactService(profileScopeEnforcer, factAuditor, slog.Default())
 	communityGetSvc := communityservice.NewGetCommunitySummaryService(neo4jClient)
 	communityListSvc := communityservice.NewListCommunitiesService(neo4jClient)
 	recallFactSearcher := recallservice.NewFactSearcher(profileScopeEnforcer)
@@ -444,6 +445,7 @@ func main() {
 		FactPromote:                 factPromoteSvc,
 		FactGet:                     factGetSvc,
 		FactList:                    factListSvc,
+		FactRetract:                 factRetractSvc,
 		FragmentRetract:             fragmentRetractSvc,
 		CommunityDetect:             communityDetectRegistrySvc,
 		CommunityGet:                communityGetSvc,
@@ -493,6 +495,7 @@ func main() {
 	claimPromoteHandler := handler.NewClaimPromoteHandler(factPromoteSvc)
 	factReadHandler := handler.NewFactReadHandler(factGetSvc)
 	factListHandler := handler.NewFactListHandler(factListSvc)
+	factRetractHandler := handler.NewFactRetractHandler(factRetractSvc)
 	communityReadHandler := handler.NewCommunityReadHandler(communityGetSvc)
 	communityListHandler := handler.NewCommunityListHandler(communityListSvc)
 	toolCatalogHandler := handler.NewToolCatalogHandler(toolRegistry)
@@ -578,6 +581,7 @@ func main() {
 		ClaimPromote:    claimPromoteHandler.Handle,
 		FactGet:         factReadHandler.Handle,
 		FactList:        factListHandler.Handle,
+		FactRetract:     factRetractHandler.Handle,
 		CommunityRead:   communityReadHandler.Handle,
 		CommunityList:   communityListHandler.Handle,
 		ToolCatalog:     toolCatalogHandler.Handle,

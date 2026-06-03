@@ -132,6 +132,8 @@ func TestGetByID_PropagatesReaderError(t *testing.T) {
 func TestGetByIDsAndMapRowToFragmentBranches(t *testing.T) {
 	createdAt := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 	updatedAt := createdAt.Add(time.Hour)
+	recordedTo := createdAt.Add(2 * time.Hour)
+	retractedAt := createdAt.Add(3 * time.Hour)
 	reader := &fakeScopedReader{
 		results: []map[string]any{
 			{
@@ -149,8 +151,10 @@ func TestGetByIDsAndMapRowToFragmentBranches(t *testing.T) {
 				"idempotency_key":         "idem-1",
 				"embedding_model":         "embed",
 				"embedding_dimensions":    int(3),
-				"source_quality":          float32(0.7),
+				"source_quality":          float64(0.7),
 				"classification":          map[string]any{"topic": "unit"},
+				"recorded_to":             recordedTo,
+				"retracted_at":            retractedAt,
 				"created_at":              createdAt,
 				"updated_at":              updatedAt,
 			},
@@ -193,6 +197,12 @@ func TestGetByIDsAndMapRowToFragmentBranches(t *testing.T) {
 	}
 	if frag.EmbeddingDimensions != 3 || frag.SourceQuality < 0.699999 || frag.SourceQuality > 0.700001 {
 		t.Fatalf("embedding/source quality = %d/%f", frag.EmbeddingDimensions, frag.SourceQuality)
+	}
+	if frag.RecordedTo == nil || !frag.RecordedTo.Equal(recordedTo) {
+		t.Fatalf("RecordedTo = %v, want %s", frag.RecordedTo, recordedTo)
+	}
+	if frag.RetractedAt == nil || !frag.RetractedAt.Equal(retractedAt) {
+		t.Fatalf("RetractedAt = %v, want %s", frag.RetractedAt, retractedAt)
 	}
 	if !frag.CreatedAt.Equal(createdAt) || !frag.UpdatedAt.Equal(updatedAt) {
 		t.Fatalf("times = %s/%s", frag.CreatedAt, frag.UpdatedAt)

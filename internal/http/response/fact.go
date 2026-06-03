@@ -14,6 +14,8 @@ func ToFactResponse(f *domain.Fact) *dto.FactResponse {
 	return &dto.FactResponse{
 		FactID:                       f.FactID,
 		ProfileID:                    f.ProfileID,
+		OwnerProfileID:               f.OwnerProfileID,
+		OwnerProfileName:             f.OwnerProfileName,
 		CreatedByProfileID:           f.CreatedByProfileID,
 		CreatedByProfileName:         f.CreatedByProfileName,
 		PromotedByProfileID:          f.PromotedByProfileID,
@@ -22,6 +24,7 @@ func ToFactResponse(f *domain.Fact) *dto.FactResponse {
 		Predicate:                    f.Predicate,
 		Object:                       f.Object,
 		Status:                       string(f.Status),
+		AuthorityState:               f.AuthorityState,
 		TruthScore:                   f.TruthScore,
 		ValidFrom:                    f.ValidFrom,
 		ValidTo:                      f.ValidTo,

@@ -6,6 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/ownership"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
 )
@@ -68,6 +71,8 @@ var _ neo4j.Counters = (*stubDeleteCounters)(nil)
 type stubProfileDeleteWriter struct {
 	// existingClaims maps profileID → set of claimIDs present in that profile.
 	existingClaims map[string]map[string]bool
+	// claimOwners maps profileID → claimID → owner_profile_id for owner checks.
+	claimOwners map[string]map[string]string
 	// err, when non-nil, is returned from every ScopedWrite call.
 	err error
 }
@@ -92,8 +97,30 @@ func (s *stubProfileDeleteWriter) ScopedWrite(
 	return &stubDeleteResultSummary{nodesDeleted: 1}, nil
 }
 
+func (s *stubProfileDeleteWriter) ScopedRead(
+	_ context.Context,
+	profileID string,
+	_ string,
+	params map[string]any,
+) (neo4j.ResultSummary, []map[string]any, error) {
+	if s.err != nil {
+		return nil, nil, s.err
+	}
+	claimID, _ := params["claimId"].(string)
+	claims, ok := s.existingClaims[profileID]
+	if !ok || !claims[claimID] {
+		return nil, nil, nil
+	}
+	ownerID := ""
+	if owners, ok := s.claimOwners[profileID]; ok {
+		ownerID = owners[claimID]
+	}
+	return nil, []map[string]any{{"owner_profile_id": ownerID}}, nil
+}
+
 // Compile-time check: stubProfileDeleteWriter satisfies claimWriter.
 var _ claimWriter = (*stubProfileDeleteWriter)(nil)
+var _ claimReader = (*stubProfileDeleteWriter)(nil)
 
 // TestDeleteClaim covers AC-15: claim deletion must be profile-scoped and must
 // return ErrClaimNotFound when the claim does not exist for the given profile.
@@ -157,6 +184,51 @@ func TestDeleteClaim(t *testing.T) {
 
 		require.NoError(t, err,
 			"audit failure must not surface as a Delete error")
+	})
+
+	t.Run("actor can delete only own claim", func(t *testing.T) {
+		ownerID := uuid.MustParse("00000000-0000-0000-0000-0000000000aa")
+		actorCtx := requestctx.WithActorProfile(ctx, requestctx.ActorProfile{
+			ProfileID:   ownerID,
+			ProfileName: "native",
+		})
+		writer := &stubProfileDeleteWriter{
+			existingClaims: map[string]map[string]bool{
+				profileID: {claimID: true},
+			},
+			claimOwners: map[string]map[string]string{
+				profileID: {claimID: ownerID.String()},
+			},
+		}
+		svc := NewDeleteClaimService(writer, nil, nil)
+
+		err := svc.Delete(actorCtx, profileID, claimID)
+
+		require.NoError(t, err)
+		require.False(t, writer.existingClaims[profileID][claimID])
+	})
+
+	t.Run("actor cannot delete another owner claim", func(t *testing.T) {
+		ownerID := uuid.MustParse("00000000-0000-0000-0000-0000000000aa")
+		actorID := uuid.MustParse("00000000-0000-0000-0000-0000000000bb")
+		actorCtx := requestctx.WithActorProfile(ctx, requestctx.ActorProfile{
+			ProfileID:   actorID,
+			ProfileName: "web",
+		})
+		writer := &stubProfileDeleteWriter{
+			existingClaims: map[string]map[string]bool{
+				profileID: {claimID: true},
+			},
+			claimOwners: map[string]map[string]string{
+				profileID: {claimID: ownerID.String()},
+			},
+		}
+		svc := NewDeleteClaimService(writer, nil, nil)
+
+		err := svc.Delete(actorCtx, profileID, claimID)
+
+		require.ErrorIs(t, err, ownership.ErrOwnerMismatch)
+		require.True(t, writer.existingClaims[profileID][claimID])
 	})
 }
 

@@ -350,6 +350,87 @@ func TestGetClaim(t *testing.T) {
 	})
 }
 
+func TestRowToClaimForExternalUse_HydratesOwnerFallbackAndEvidence(t *testing.T) {
+	now := time.Now().UTC()
+	verifiedAt := now.Add(time.Minute)
+	recordedTo := now.Add(time.Hour)
+	row := map[string]any{
+		"claim_id":                       "claim-export",
+		"created_by_profile_id":          "creator-profile",
+		"created_by_profile_name":        "Creator",
+		"subject":                        "Alice",
+		"predicate":                      "prefers",
+		"object":                         "TypeScript",
+		"modality":                       string(domain.ModalityAssertion),
+		"polarity":                       string(domain.PolarityPositive),
+		"speaker":                        "Alice",
+		"span_start":                     3,
+		"span_end":                       11,
+		"recorded_at":                    now,
+		"recorded_to":                    recordedTo,
+		"extract_conf":                   0.83,
+		"resolution_conf":                0.74,
+		"source_quality":                 0.91,
+		"entailment_verdict":             string(domain.VerdictEntailed),
+		"status":                         string(domain.StatusValidated),
+		"last_verifier_response":         "entailed",
+		"verified_at":                    verifiedAt,
+		"extraction_model":               "extractor",
+		"extraction_version":             "v2",
+		"verifier_model":                 "verifier",
+		"pipeline_run_id":                "run-export",
+		"content_hash":                   "hash-export",
+		"idempotency_key":                "idem-export",
+		"classification_json":            `{"platform":"web"}`,
+		"classification_lattice_version": "v3",
+		"supported_by":                   []any{"frag-1", "", 42, "frag-2"},
+		"evidence": []any{
+			map[string]any{
+				"fragment_id":        "frag-1",
+				"speaker":            "Alice",
+				"span_start":         int64(3),
+				"span_end":           11,
+				"extract_conf":       float32(0.66),
+				"extraction_model":   "extractor",
+				"extraction_version": "v2",
+				"pipeline_run_id":    "run-export",
+				"authority":          string(domain.AuthorityPrimary),
+			},
+			map[string]any{
+				"fragment_id":  "frag-default",
+				"span_start":   "bad",
+				"span_end":     "bad",
+				"extract_conf": "bad",
+			},
+			map[string]any{"fragment_id": ""},
+			"not evidence",
+		},
+	}
+
+	got := RowToClaimForExternalUse("team-profile", row)
+
+	require.Equal(t, "claim-export", got.ClaimID)
+	require.Equal(t, "team-profile", got.ProfileID)
+	require.Equal(t, "creator-profile", got.OwnerProfileID)
+	require.Equal(t, "Creator", got.OwnerProfileName)
+	require.Equal(t, 3, got.SpanStart)
+	require.Equal(t, 11, got.SpanEnd)
+	require.Equal(t, &recordedTo, got.RecordedTo)
+	require.Equal(t, &verifiedAt, got.VerifiedAt)
+	require.Equal(t, "web", got.Classification["platform"])
+	require.Equal(t, []string{"frag-1", "frag-2"}, got.SupportedBy)
+	require.Len(t, got.Evidence, 2)
+	require.Equal(t, "frag-1", got.Evidence[0].FragmentID)
+	require.Equal(t, 3, got.Evidence[0].SpanStart)
+	require.Equal(t, 11, got.Evidence[0].SpanEnd)
+	require.InDelta(t, 0.66, got.Evidence[0].ExtractConf, 1e-6)
+	require.Equal(t, domain.AuthorityPrimary, got.Evidence[0].Authority)
+	require.Equal(t, "frag-default", got.Evidence[1].FragmentID)
+	require.Zero(t, got.Evidence[1].SpanStart)
+	require.Zero(t, got.Evidence[1].SpanEnd)
+	require.Zero(t, got.Evidence[1].ExtractConf)
+}
+
 // TestGetClaim_CrossProfileIsolation verifies that a claim belonging to profile
 // A is not returned when querying as profile B, and that existence under the
 // other profile is not leaked. This is a mandatory security test per

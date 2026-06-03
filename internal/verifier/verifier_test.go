@@ -28,6 +28,7 @@ func TestSentinels(t *testing.T) {
 	t.Run("ErrVerifierTimeout", func(t *testing.T) {
 		wrapped := &TimeoutError{Provider: "openai", Message: "deadline exceeded"}
 		assert.ErrorIs(t, wrapped, ErrVerifierTimeout)
+		assert.Equal(t, "verifier request timed out: openai: deadline exceeded", wrapped.Error())
 		assert.NotErrorIs(t, wrapped, ErrVerifierProvider)
 		assert.NotErrorIs(t, wrapped, ErrVerifierRateLimit)
 		assert.NotErrorIs(t, wrapped, ErrVerifierMalformedResponse)
@@ -36,6 +37,8 @@ func TestSentinels(t *testing.T) {
 	t.Run("ErrVerifierProvider", func(t *testing.T) {
 		wrapped := &ProviderError{Provider: "openai", Message: "500 internal server error"}
 		assert.ErrorIs(t, wrapped, ErrVerifierProvider)
+		assert.Equal(t, "verifier provider error: openai: 500 internal server error", wrapped.Error())
+		assert.NoError(t, errors.Unwrap(wrapped))
 		assert.NotErrorIs(t, wrapped, ErrVerifierTimeout)
 		assert.NotErrorIs(t, wrapped, ErrVerifierRateLimit)
 		assert.NotErrorIs(t, wrapped, ErrVerifierMalformedResponse)
@@ -46,11 +49,14 @@ func TestSentinels(t *testing.T) {
 		wrapped := &ProviderError{Provider: "openai", Message: "transport error", Cause: cause}
 		assert.ErrorIs(t, wrapped, ErrVerifierProvider)
 		assert.ErrorIs(t, wrapped, cause)
+		assert.Equal(t, "verifier provider error: openai: transport error: tcp: connection reset", wrapped.Error())
+		assert.ErrorIs(t, errors.Unwrap(wrapped), cause)
 	})
 
 	t.Run("ErrVerifierRateLimit", func(t *testing.T) {
 		wrapped := &RateLimitError{Provider: "openai", Message: "too many requests", RetryAfter: 60}
 		assert.ErrorIs(t, wrapped, ErrVerifierRateLimit)
+		assert.Equal(t, "verifier request rate limited: openai: too many requests", wrapped.Error())
 		assert.NotErrorIs(t, wrapped, ErrVerifierTimeout)
 		assert.NotErrorIs(t, wrapped, ErrVerifierProvider)
 		assert.NotErrorIs(t, wrapped, ErrVerifierMalformedResponse)
@@ -59,6 +65,7 @@ func TestSentinels(t *testing.T) {
 	t.Run("ErrVerifierMalformedResponse", func(t *testing.T) {
 		wrapped := &MalformedResponseError{Provider: "openai", Message: "unexpected field", RawJSON: `{"x":1}`}
 		assert.ErrorIs(t, wrapped, ErrVerifierMalformedResponse)
+		assert.Equal(t, "verifier malformed response: openai: unexpected field", wrapped.Error())
 		assert.NotErrorIs(t, wrapped, ErrVerifierTimeout)
 		assert.NotErrorIs(t, wrapped, ErrVerifierProvider)
 		assert.NotErrorIs(t, wrapped, ErrVerifierRateLimit)

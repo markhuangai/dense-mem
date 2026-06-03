@@ -9,6 +9,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/ownership"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
@@ -116,6 +117,9 @@ func (s *verifyClaimServiceImpl) Verify(ctx context.Context, profileID string, c
 		return nil, ErrClaimNotFound
 	}
 	claim := rowToClaim(profileID, rows[0])
+	if err := ownership.RequireOwner(ctx, claim.OwnerProfileID); err != nil {
+		return nil, err
+	}
 
 	// Step 2: load supporting fragments.
 	//

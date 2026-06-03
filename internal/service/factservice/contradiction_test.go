@@ -170,6 +170,66 @@ func TestContradictionPaths(t *testing.T) {
 		require.Contains(t, err.Error(), "tx failed")
 	})
 
+	// ── overlayPath ──────────────────────────────────────────────────────────
+
+	t.Run("overlayPath skips tx when there are no foreign facts", func(t *testing.T) {
+		db := &stubContradictionTxRunner{}
+
+		err := overlayPath(ctx, db, profileA, "fact-new", nil)
+
+		require.NoError(t, err)
+		require.Empty(t, db.calledProfileID)
+	})
+
+	t.Run("overlayPath routes profileID to ScopedWriteTx", func(t *testing.T) {
+		db := &stubContradictionTxRunner{}
+
+		err := overlayPath(ctx, db, profileA, "fact-new", []*domain.Fact{{FactID: "fact-foreign"}})
+
+		require.NoError(t, err)
+		require.Equal(t, profileA, db.calledProfileID)
+	})
+
+	t.Run("overlayPath propagates tx error", func(t *testing.T) {
+		txErr := errors.New("overlay failed")
+		db := &stubContradictionTxRunner{txErr: txErr}
+
+		err := overlayPath(ctx, db, profileA, "fact-new", []*domain.Fact{{FactID: "fact-foreign"}})
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "overlay failed")
+	})
+
+	// ── alignPath ────────────────────────────────────────────────────────────
+
+	t.Run("alignPath skips tx when there are no foreign facts", func(t *testing.T) {
+		db := &stubContradictionTxRunner{}
+
+		err := alignPath(ctx, db, profileA, "fact-new", nil)
+
+		require.NoError(t, err)
+		require.Empty(t, db.calledProfileID)
+	})
+
+	t.Run("alignPath routes profileID to ScopedWriteTx", func(t *testing.T) {
+		db := &stubContradictionTxRunner{}
+
+		err := alignPath(ctx, db, profileA, "fact-new", []*domain.Fact{{FactID: "fact-aligned"}})
+
+		require.NoError(t, err)
+		require.Equal(t, profileA, db.calledProfileID)
+	})
+
+	t.Run("alignPath propagates tx error", func(t *testing.T) {
+		txErr := errors.New("align failed")
+		db := &stubContradictionTxRunner{txErr: txErr}
+
+		err := alignPath(ctx, db, profileA, "fact-new", []*domain.Fact{{FactID: "fact-aligned"}})
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "align failed")
+	})
+
 	// ── comparablePath ───────────────────────────────────────────────────────
 
 	t.Run("comparablePath routes profileID to ScopedWriteTx", func(t *testing.T) {

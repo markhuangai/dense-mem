@@ -45,6 +45,7 @@ type Dependencies struct {
 	FactPromote     factservice.PromoteClaimService
 	FactGet         factservice.GetFactService
 	FactList        factservice.ListFactsService
+	FactRetract     factservice.RetractFactService
 	FragmentRetract fragmentservice.RetractFragmentService
 	CommunityDetect communityservice.DetectCommunityService
 	CommunityGet    communityservice.GetCommunitySummaryService
@@ -96,6 +97,7 @@ func defaultTools(deps Dependencies) []Tool {
 		promoteClaimTool(deps),
 		getFactTool(deps),
 		listFactsTool(deps),
+		retractFactTool(deps),
 		retractFragmentTool(deps),
 		detectCommunityTool(deps),
 		getCommunitySummaryTool(deps),

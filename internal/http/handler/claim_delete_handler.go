@@ -8,6 +8,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/ownership"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
 )
 
@@ -48,6 +49,9 @@ func (h *ClaimDeleteHandler) Handle(c echo.Context) error {
 	if err := h.svc.Delete(ctx, profileID.String(), claimID); err != nil {
 		if errors.Is(err, claimservice.ErrClaimNotFound) {
 			return httperr.New(httperr.ErrClaimNotFound, "claim not found")
+		}
+		if errors.Is(err, ownership.ErrOwnerMismatch) {
+			return httperr.New(httperr.FORBIDDEN, "only the owner profile can modify this knowledge")
 		}
 		return httperr.New(httperr.INTERNAL_ERROR, "failed to delete claim")
 	}

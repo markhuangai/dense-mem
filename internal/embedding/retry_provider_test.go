@@ -22,6 +22,12 @@ func (l *testNopLogger) With(attrs ...observability.LogAttr) observability.LogPr
 
 func newTestLogger() observability.LogProvider { return &testNopLogger{} }
 
+type timeoutNetError struct{}
+
+func (timeoutNetError) Error() string   { return "temporary timeout" }
+func (timeoutNetError) Timeout() bool   { return true }
+func (timeoutNetError) Temporary() bool { return false }
+
 func TestRetryProvider_Retries5xxUpToMax(t *testing.T) {
 	var calls int
 	inner := &MockEmbeddingProvider{
@@ -69,6 +75,49 @@ func TestRetryProvider_Retries429(t *testing.T) {
 	assert.Equal(t, 3, calls, "failed twice, succeeded on third")
 	assert.Equal(t, []float32{0.1, 0.2}, vec)
 	assert.Equal(t, "model", model)
+}
+
+func TestRetryProvider_SetMetrics(t *testing.T) {
+	inner := &MockEmbeddingProvider{
+		EmbedFunc: func(ctx context.Context, text string) ([]float32, string, error) {
+			return []float32{0.1}, "model", nil
+		},
+	}
+	p := NewRetryEmbeddingProvider(inner, newTestLogger())
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	p.SetMetrics(metrics)
+
+	_, _, err := p.Embed(context.Background(), "x")
+	require.NoError(t, err)
+
+	samples := metrics.EmbeddingSamples()
+	require.Len(t, samples, 1)
+	assert.Equal(t, "ok", samples[0].Outcome)
+
+	p.SetMetrics(nil)
+	_, _, err = p.Embed(context.Background(), "x")
+	require.NoError(t, err)
+}
+
+func TestRetryProvider_ClassifyEmbeddingError(t *testing.T) {
+	assert.Equal(t, "ok", classifyEmbeddingError(nil))
+	assert.Equal(t, "timeout", classifyEmbeddingError(context.DeadlineExceeded))
+	assert.Equal(t, "timeout", classifyEmbeddingError(&TimeoutError{Provider: "stub", Message: "deadline"}))
+	assert.Equal(t, "timeout", classifyEmbeddingError(timeoutNetError{}))
+	assert.Equal(t, "rate_limited", classifyEmbeddingError(&RateLimitError{Provider: "stub", Message: "429"}))
+	assert.Equal(t, "rate_limited", classifyEmbeddingError(&ProviderHTTPError{Status: 429}))
+	assert.Equal(t, "error", classifyEmbeddingError(&ProviderHTTPError{Status: 500}))
+	assert.Equal(t, "error", classifyEmbeddingError(errors.New("boom")))
+}
+
+func TestRetryProvider_ShouldRetryDirectErrorClasses(t *testing.T) {
+	p := NewRetryEmbeddingProvider(&MockEmbeddingProvider{}, newTestLogger())
+
+	assert.False(t, p.shouldRetry(nil))
+	assert.True(t, p.shouldRetry(timeoutNetError{}))
+	assert.True(t, p.shouldRetry(&TimeoutError{Provider: "stub", Message: "deadline"}))
+	assert.True(t, p.shouldRetry(&RateLimitError{Provider: "stub", Message: "429"}))
+	assert.False(t, p.shouldRetry(errors.New("boom")))
 }
 
 func TestRetryProvider_ContextCancelStopsRetry(t *testing.T) {

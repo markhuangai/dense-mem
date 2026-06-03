@@ -390,6 +390,18 @@ func knowledgeSchemas() map[string]any {
 			"required": []string{"status"},
 		},
 
+		"RetractFactResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"status": map[string]any{
+					"type":        "string",
+					"enum":        []string{"retracted"},
+					"description": "Confirmation that the fact has been soft-tombstoned.",
+				},
+			},
+			"required": []string{"status"},
+		},
+
 		// CommunityDetectRequest is the request body for
 		// Community detection request/response payloads.
 		// All fields are optional tuning parameters for the underlying GDS algorithm.

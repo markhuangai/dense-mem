@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/markhuangai/dense-mem/internal/ownership"
 )
 
 // deleteClaimServiceImpl implements DeleteClaimService.
 type deleteClaimServiceImpl struct {
 	writer claimWriter
+	reader claimReader
 	audit  AuditEmitter
 	logger *slog.Logger
 }
@@ -26,11 +29,15 @@ func NewDeleteClaimService(
 	audit AuditEmitter,
 	logger *slog.Logger,
 ) DeleteClaimService {
-	return &deleteClaimServiceImpl{
+	svc := &deleteClaimServiceImpl{
 		writer: writer,
 		audit:  audit,
 		logger: logger,
 	}
+	if reader, ok := writer.(claimReader); ok {
+		svc.reader = reader
+	}
+	return svc
 }
 
 // deleteClaimCypher removes a Claim node and all its relationships atomically.
@@ -51,6 +58,11 @@ const deleteClaimCypher = `
 MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
 DETACH DELETE c`
 
+const claimOwnerCypher = `
+MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
+RETURN coalesce(c.owner_profile_id, c.created_by_profile_id, '') AS owner_profile_id
+LIMIT 1`
+
 // Delete permanently removes the claim identified by claimID from the graph.
 //
 // Returns ErrClaimNotFound when:
@@ -58,6 +70,10 @@ DETACH DELETE c`
 //   - the claim exists but belongs to a different profile (indistinguishable from
 //     absent — no existence leak)
 func (s *deleteClaimServiceImpl) Delete(ctx context.Context, profileID string, claimID string) error {
+	if err := s.requireClaimOwner(ctx, profileID, claimID); err != nil {
+		return err
+	}
+
 	summary, err := s.writer.ScopedWrite(ctx, profileID, deleteClaimCypher, map[string]any{
 		"claimId": claimID,
 	})
@@ -95,4 +111,24 @@ func (s *deleteClaimServiceImpl) Delete(ctx context.Context, profileID string, c
 	}
 
 	return nil
+}
+
+func (s *deleteClaimServiceImpl) requireClaimOwner(ctx context.Context, profileID, claimID string) error {
+	if ownership.ActorOwnerID(ctx) == "" {
+		return nil
+	}
+	if s.reader == nil {
+		return ownership.ErrOwnerMismatch
+	}
+	_, rows, err := s.reader.ScopedRead(ctx, profileID, claimOwnerCypher, map[string]any{
+		"claimId": claimID,
+	})
+	if err != nil {
+		return fmt.Errorf("claim delete: owner check: %w", err)
+	}
+	if len(rows) == 0 {
+		return ErrClaimNotFound
+	}
+	ownerID, _ := rows[0]["owner_profile_id"].(string)
+	return ownership.RequireOwner(ctx, ownerID)
 }

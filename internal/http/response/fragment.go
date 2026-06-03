@@ -16,6 +16,8 @@ func ToFragmentResponse(f *domain.Fragment) *dto.FragmentResponse {
 		ID:                   f.FragmentID,
 		FragmentID:           f.FragmentID, // alias; same value as ID for UAT-02/UAT-03 compatibility
 		TeamID:               f.ProfileID,
+		OwnerProfileID:       f.OwnerProfileID,
+		OwnerProfileName:     f.OwnerProfileName,
 		CreatedByProfileID:   f.CreatedByProfileID,
 		CreatedByProfileName: f.CreatedByProfileName,
 		Content:              f.Content,
@@ -32,6 +34,7 @@ func ToFragmentResponse(f *domain.Fragment) *dto.FragmentResponse {
 		Classification:       f.Classification,
 		Status:               string(f.Status),
 		RecordedTo:           f.RecordedTo,
+		RetractedAt:          f.RetractedAt,
 		CreatedAt:            f.CreatedAt,
 		UpdatedAt:            f.UpdatedAt,
 	}
