@@ -23,7 +23,7 @@ Playwright end-to-end tests for the dense-mem knowledge pipeline API.
 | `auth-matrix.spec.ts` | Auth regression | Missing/invalid auth and read-only write denial matrix |
 | `cli-workflows.spec.ts` | Operator regression | Container CLI provision/list/rotate/delete workflow |
 | `control-portal-live.spec.ts` | Portal regression | Real browser portal flow against live backend |
-| `e2e-journey.spec.ts` | UAT-13, AC-X2, AC-X6, isolation | Full pipeline end-to-end |
+| `e2e-journey.spec.ts` | UAT-13, AC-X2, AC-X6, isolation | Full pipeline, trace, and context end-to-end |
 
 ## Prerequisites
 
@@ -61,6 +61,9 @@ npx playwright test --list
 BASE_URL=http://localhost:8080 API_KEY=<key> API_KEY_B=<second-key> PROFILE_ID=<team-id> \
   npx playwright test
 
+# Run the e2e journey against a running compose stack with two generated keys
+BASE_URL=http://localhost:8080 npm run test:e2e:provisioned
+
 # Run a single phase
 npx playwright test phase2-claim-create.spec.ts
 
@@ -88,6 +91,11 @@ npx playwright test --reporter=list
 The Playwright specs are live UAT coverage, not red scaffolding. Tests that prove
 cross-profile isolation use `API_KEY_B`; when it is absent, those specific checks
 are skipped instead of faking isolation with a profile string.
+
+Use `npm run test:e2e:provisioned` when running against local Docker Compose. It
+creates two disposable teams with generated keys and sets `REQUIRE_API_KEY_B=1`,
+so the cross-profile isolation test fails instead of skipping if the secondary
+key was not provisioned.
 
 ## Helper Utilities (`helpers.ts`)
 
@@ -117,6 +125,8 @@ GET  /api/v1/facts
 POST /api/v1/fragments
 POST /api/v1/fragments/:id/retract
 POST /api/v1/tools/detect_community
+POST /api/v1/tools/trace_memory
+POST /api/v1/tools/assemble_context
 GET  /api/v1/teams/:teamId
 PATCH /api/v1/teams/:teamId
 GET  /api/v1/teams/:teamId/audit-log

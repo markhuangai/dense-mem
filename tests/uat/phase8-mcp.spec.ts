@@ -72,6 +72,8 @@ test('UAT-11b: MCP endpoint exposes required memory tools', async () => {
         'get_memory',
         'list_recent_memories',
         'recall_memory',
+        'trace_memory',
+        'assemble_context',
         'post_claim',
         'get_fact',
         'find_skill_pack_candidates',
