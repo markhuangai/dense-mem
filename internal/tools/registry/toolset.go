@@ -11,6 +11,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
+	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
@@ -48,6 +49,7 @@ type Dependencies struct {
 	CommunityDetect communityservice.DetectCommunityService
 	CommunityGet    communityservice.GetCommunitySummaryService
 	CommunityList   communityservice.ListCommunitiesService
+	Context         contextservice.Service
 	Memory          memoryservice.Service
 	SkillPack       skillpackservice.Service
 }
@@ -77,6 +79,8 @@ func defaultTools(deps Dependencies) []Tool {
 		getMemoryTool(deps),
 		listRecentMemoriesTool(deps),
 		recallMemoryTool(deps),
+		traceMemoryTool(deps),
+		assembleContextTool(deps),
 		rememberTool(deps),
 		importMemoriesTool(deps),
 		reflectMemoriesTool(deps),

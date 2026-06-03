@@ -23,7 +23,7 @@ Playwright end-to-end tests for the dense-mem knowledge pipeline API.
 | `auth-matrix.spec.ts` | Auth regression | Missing/invalid auth and read-only write denial matrix |
 | `cli-workflows.spec.ts` | Operator regression | Container CLI provision/list/rotate/delete workflow |
 | `control-portal-live.spec.ts` | Portal regression | Real browser portal flow against live backend |
-| `e2e-journey.spec.ts` | UAT-13, AC-X2, AC-X6, isolation | Full pipeline end-to-end |
+| `e2e-journey.spec.ts` | UAT-13, AC-X2, AC-X6, isolation | Full pipeline, trace, and context end-to-end |
 
 ## Prerequisites
 
@@ -117,6 +117,8 @@ GET  /api/v1/facts
 POST /api/v1/fragments
 POST /api/v1/fragments/:id/retract
 POST /api/v1/tools/detect_community
+POST /api/v1/tools/trace_memory
+POST /api/v1/tools/assemble_context
 GET  /api/v1/teams/:teamId
 PATCH /api/v1/teams/:teamId
 GET  /api/v1/teams/:teamId/audit-log
