@@ -54,11 +54,12 @@ type Fragment struct {
 	// Status tracks the lifecycle state of the fragment (active or retracted).
 	// Defaults to active on creation. Hard-delete behavior is handled separately.
 	Status FragmentStatus `json:"status,omitempty"`
-	// RecordedTo marks the point in time up to which this fragment's content has been
-	// processed into downstream claims/facts. Nil means not yet recorded.
-	RecordedTo *time.Time `json:"recorded_to,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	// RecordedTo is retained for backward-compatible responses on legacy rows.
+	// New retractions use RetractedAt.
+	RecordedTo  *time.Time `json:"recorded_to,omitempty"`
+	RetractedAt *time.Time `json:"retracted_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 	// Embedding vector deliberately NOT included in default read response (AC-28).
 }
 

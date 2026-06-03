@@ -14,7 +14,7 @@ import (
 
 // --- knowledge pipeline tests ---
 
-// TestBuildDefaultIncludesKnowledgeTools verifies all 9 knowledge pipeline
+// TestBuildDefaultIncludesKnowledgeTools verifies the knowledge pipeline
 // tools are registered regardless of whether their dependencies are wired.
 func TestBuildDefaultIncludesKnowledgeTools(t *testing.T) {
 	reg, err := BuildDefault(Dependencies{})
@@ -24,7 +24,7 @@ func TestBuildDefaultIncludesKnowledgeTools(t *testing.T) {
 	required := []string{
 		"post_claim", "get_claim", "list_claims", "verify_claim",
 		"promote_claim", "get_fact", "list_facts",
-		"retract_fragment", "detect_community", "get_community_summary", "list_communities",
+		"retract_fact", "retract_fragment", "detect_community", "get_community_summary", "list_communities",
 	}
 	for _, name := range required {
 		if _, ok := reg.Get(name); !ok {
@@ -46,6 +46,7 @@ func TestBuildDefaultKnowledgeTools_ReturnUnavailableWhenDepsMissing(t *testing.
 		{"promote_claim", map[string]any{"claim_id": "claim-1"}},
 		{"get_fact", map[string]any{"id": "fact-1"}},
 		{"list_facts", map[string]any{}},
+		{"retract_fact", map[string]any{"id": "fact-1"}},
 		{"remember", map[string]any{"content": "hello"}},
 		{"import_memories", map[string]any{"summary": "hello"}},
 		{"reflect_memories", map[string]any{}},
@@ -192,10 +193,12 @@ func TestBuildDefault_RecallInvokerErrorBranches(t *testing.T) {
 // service — no cross-profile data leakage is possible at the tool layer.
 func TestBuildDefaultKnowledgeTools_CrossProfileIsolation(t *testing.T) {
 	retract := &stubFragmentRetract{}
+	factRetract := &stubFactRetract{}
 	detect := &stubCommunityDetect{}
 	communities := &stubCommunityList{}
 	reg, _ := BuildDefault(Dependencies{
 		ClaimGet:        stubClaimGet{},
+		FactRetract:     factRetract,
 		FragmentRetract: retract,
 		CommunityDetect: detect,
 		CommunityList:   communities,
@@ -214,6 +217,21 @@ func TestBuildDefaultKnowledgeTools_CrossProfileIsolation(t *testing.T) {
 	}
 	if retract.lastProfile != "profileB" {
 		t.Errorf("retract_fragment routed to %q after second call; want profileB", retract.lastProfile)
+	}
+
+	// retract_fact — verify profileID routing.
+	factTool, _ := reg.Get("retract_fact")
+	if _, err := factTool.Invoke(context.Background(), "profileA", map[string]any{"id": "fact-1"}); err != nil {
+		t.Fatalf("retract_fact profileA: %v", err)
+	}
+	if factRetract.lastProfile != "profileA" {
+		t.Errorf("retract_fact routed to %q; want profileA", factRetract.lastProfile)
+	}
+	if _, err := factTool.Invoke(context.Background(), "profileB", map[string]any{"id": "fact-2"}); err != nil {
+		t.Fatalf("retract_fact profileB: %v", err)
+	}
+	if factRetract.lastProfile != "profileB" {
+		t.Errorf("retract_fact routed to %q after second call; want profileB", factRetract.lastProfile)
 	}
 
 	// get_claim — verify that each profile receives only its own scoped data.
@@ -272,6 +290,7 @@ func TestBuildDefaultKnowledgeTools_CrossProfileIsolation(t *testing.T) {
 
 func TestBuildDefaultKnowledgeTools_InvokeSuccessPaths(t *testing.T) {
 	retract := &stubFragmentRetract{}
+	factRetract := &stubFactRetract{}
 	detect := &stubCommunityDetect{}
 	communities := &stubCommunityList{}
 	reg, _ := BuildDefault(Dependencies{
@@ -282,6 +301,7 @@ func TestBuildDefaultKnowledgeTools_InvokeSuccessPaths(t *testing.T) {
 		FactPromote:     stubFactPromote{},
 		FactGet:         stubFactGet{},
 		FactList:        stubFactList{},
+		FactRetract:     factRetract,
 		FragmentRetract: retract,
 		CommunityDetect: detect,
 		CommunityGet:    stubCommunityGet{},
@@ -364,6 +384,18 @@ func TestBuildDefaultKnowledgeTools_InvokeSuccessPaths(t *testing.T) {
 	}
 	if retract.lastProfile != "profile-success" {
 		t.Fatalf("retract_fragment profile = %q; want profile-success", retract.lastProfile)
+	}
+
+	retractFactTool, _ := reg.Get("retract_fact")
+	retractFactOut, err := retractFactTool.Invoke(context.Background(), "profile-success", map[string]any{"id": "fact-1"})
+	if err != nil {
+		t.Fatalf("retract_fact Invoke: %v", err)
+	}
+	if factRetract.lastProfile != "profile-success" {
+		t.Fatalf("retract_fact profile = %q; want profile-success", factRetract.lastProfile)
+	}
+	if retractFactOut["status"] != "retracted" {
+		t.Fatalf("retract_fact status = %v; want retracted", retractFactOut["status"])
 	}
 
 	detectTool, _ := reg.Get("detect_community")
@@ -473,6 +505,7 @@ func TestBuildDefaultKnowledgeTools_RequiredIDsAndTemporalFiltering(t *testing.T
 		ClaimVerify:     stubClaimVerify{},
 		FactPromote:     stubFactPromote{},
 		FactGet:         stubFactGet{},
+		FactRetract:     &stubFactRetract{},
 		FragmentRetract: &stubFragmentRetract{},
 		CommunityGet:    stubCommunityGet{},
 	})
@@ -486,6 +519,7 @@ func TestBuildDefaultKnowledgeTools_RequiredIDsAndTemporalFiltering(t *testing.T
 		{name: "verify_claim", input: map[string]any{}, want: "id is required"},
 		{name: "promote_claim", input: map[string]any{}, want: "claim_id is required"},
 		{name: "get_fact", input: map[string]any{}, want: "id is required"},
+		{name: "retract_fact", input: map[string]any{}, want: "id is required"},
 		{name: "retract_fragment", input: map[string]any{}, want: "id is required"},
 		{name: "get_community_summary", input: map[string]any{}, want: "community_id is required"},
 	}

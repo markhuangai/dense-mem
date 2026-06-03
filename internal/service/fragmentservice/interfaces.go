@@ -27,7 +27,7 @@ type CreateFragmentService interface {
 
 // RetractFragmentService tombstones a fragment and recomputes affected facts.
 //
-// RETRACT VS DELETE: Retract is a soft tombstone (status='retracted', recorded_to=now).
+// RETRACT VS DELETE: Retract is a soft tombstone (status='retracted', retracted_at=now).
 // The node remains in the graph so lineage is preserved, but it is excluded from all
 // active-fragment reads (FragmentActiveFilter). Hard delete (DETACH DELETE) is a
 // separate operation (DeleteFragmentService).

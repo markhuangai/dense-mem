@@ -66,3 +66,11 @@ type ListFactsService interface {
 	// on the next call (empty string when no further results exist).
 	List(ctx context.Context, profileID string, filters FactListFilters, limit int, cursor string) ([]*domain.Fact, string, error)
 }
+
+// RetractFactService soft-tombstones a fact without changing its truth-validity
+// interval. Implementations must enforce owner-scoped mutation.
+type RetractFactService interface {
+	// Retract marks the Fact as retracted within profileID. Missing or
+	// cross-profile facts return ErrFactNotFound.
+	Retract(ctx context.Context, profileID, factID string) error
+}

@@ -8,8 +8,8 @@ type FactStatus string
 const (
 	// FactStatusActive is a live, authoritative fact.
 	FactStatusActive FactStatus = "active"
-	// FactStatusRetracted is a fact that has been withdrawn and is no longer
-	// considered valid.
+	// FactStatusRetracted is a fact that has been withdrawn from current
+	// knowledge without implying the statement became false.
 	FactStatusRetracted FactStatus = "retracted"
 	// FactStatusSuperseded is a fact replaced by a newer promoted fact.
 	FactStatusSuperseded FactStatus = "superseded"

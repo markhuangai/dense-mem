@@ -465,6 +465,37 @@ SET f.owner_profile_id = coalesce(f.created_by_profile_id, f.promoted_by_profile
     f.owner_profile_name = coalesce(f.created_by_profile_name, f.promoted_by_profile_name)
 RETURN count(f) AS updated`,
 		},
+		{
+			name: "legacy_claim_supported_by_property",
+			cypher: `
+MATCH (c:Claim)
+WHERE c.supported_by IS NOT NULL
+OPTIONAL MATCH (c)-[:SUPPORTED_BY]->(sf:SourceFragment)
+WITH c, [id IN coalesce(c.supported_by, []) WHERE id IS NOT NULL] AS property_ids,
+     collect(DISTINCT sf.fragment_id) AS relationship_ids
+WHERE size(property_ids) = 0 OR all(id IN property_ids WHERE id IN relationship_ids)
+REMOVE c.supported_by
+RETURN count(c) AS updated`,
+		},
+		{
+			name: "legacy_fragment_retracted_at",
+			cypher: `
+MATCH (sf:SourceFragment)
+WHERE sf.status = 'retracted'
+  AND sf.retracted_at IS NULL
+  AND sf.recorded_to IS NOT NULL
+SET sf.retracted_at = sf.recorded_to
+REMOVE sf.recorded_to
+RETURN count(sf) AS updated`,
+		},
+		{
+			name: "legacy_fact_authority_state_property",
+			cypher: `
+MATCH (f:Fact)
+WHERE f.authority_state IS NOT NULL
+REMOVE f.authority_state
+RETURN count(f) AS updated`,
+		},
 	}
 
 	for _, backfill := range legacyBackfills {

@@ -41,7 +41,7 @@ RETURN
     f.predicate                      AS predicate,
     f.object                         AS object,
     f.status                         AS status,
-    f.authority_state                AS authority_state,
+    'authoritative'                  AS authority_state,
     f.truth_score                    AS truth_score,
     f.valid_from                     AS valid_from,
     f.valid_to                       AS valid_to,
@@ -124,12 +124,13 @@ func sameObjectConfirmPath(
 	})
 }
 
-// supersedePath marks each oldFact as superseded, closes its recorded_to and
-// valid_to timestamps, and creates a SUPERSEDED_BY relationship from the old
-// Fact to the new Claim. The relationship carries team_id for isolation.
+// supersedePath marks each oldFact as superseded, closes its recorded_to
+// timestamp, and creates a SUPERSEDED_BY relationship from the old Fact to the
+// new Claim. The relationship carries team_id for isolation.
 //
-// valid_to is set to newClaimValidFrom when non-nil, otherwise to now. This
-// preserves the temporal validity chain across supersessions.
+// valid_to is set only when the replacement claim has an explicit valid_from.
+// Without that bound, supersession changes current knowledge but does not prove
+// the old fact stopped being true at the write time.
 //
 // Profile isolation: every RunScoped call injects $profileId.
 func supersedePath(
@@ -141,7 +142,7 @@ func supersedePath(
 	newClaimValidFrom *time.Time,
 ) error {
 	now := time.Now().UTC()
-	validTo := now
+	var validTo any
 	if newClaimValidFrom != nil {
 		validTo = *newClaimValidFrom
 	}
@@ -152,8 +153,10 @@ func supersedePath(
 			result, err := neo4jstorage.RunScoped(ctx, tx, profileID,
 				`MATCH (f:Fact {team_id: $profileId, fact_id: $factId})
                  SET f.status     = $status,
-                     f.recorded_to = $recordedTo,
-                     f.valid_to   = $validTo`,
+                     f.recorded_to = $recordedTo
+                 FOREACH (_ IN CASE WHEN $validTo IS NULL THEN [] ELSE [1] END |
+                     SET f.valid_to = $validTo
+                 )`,
 				map[string]any{
 					"factId":     old.FactID,
 					"status":     string(domain.FactStatusSuperseded),

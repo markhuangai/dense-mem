@@ -860,6 +860,15 @@ func (s *stubFragmentRetract) Retract(ctx context.Context, profileID, fragmentID
 	return nil
 }
 
+type stubFactRetract struct {
+	lastProfile string
+}
+
+func (s *stubFactRetract) Retract(ctx context.Context, profileID, factID string) error {
+	s.lastProfile = profileID
+	return nil
+}
+
 type stubCommunityDetect struct {
 	lastProfile string
 	lastOptions communityservice.DetectOptions

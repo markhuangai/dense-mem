@@ -34,6 +34,7 @@ func ToFragmentResponse(f *domain.Fragment) *dto.FragmentResponse {
 		Classification:       f.Classification,
 		Status:               string(f.Status),
 		RecordedTo:           f.RecordedTo,
+		RetractedAt:          f.RetractedAt,
 		CreatedAt:            f.CreatedAt,
 		UpdatedAt:            f.UpdatedAt,
 	}

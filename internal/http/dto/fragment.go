@@ -52,6 +52,7 @@ type FragmentResponse struct {
 	Classification       map[string]any `json:"classification,omitempty"`
 	Status               string         `json:"status,omitempty"`
 	RecordedTo           *time.Time     `json:"recorded_to,omitempty"`
+	RetractedAt          *time.Time     `json:"retracted_at,omitempty"`
 	CreatedAt            time.Time      `json:"created_at"`
 	UpdatedAt            time.Time      `json:"updated_at"`
 }

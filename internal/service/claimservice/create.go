@@ -120,8 +120,7 @@ ON CREATE SET
     c.owner_profile_id               = $ownerProfileId,
     c.owner_profile_name             = $ownerProfileName,
     c.created_by_profile_id          = $createdByProfileId,
-    c.created_by_profile_name        = $createdByProfileName,
-    c.supported_by                   = $supportedBy
+    c.created_by_profile_name        = $createdByProfileName
 WITH c
 UNWIND $edges AS edge
 MATCH (sf:SourceFragment {team_id: $profileId, fragment_id: edge.fragment_id})
@@ -366,7 +365,6 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 		"ownerProfileName":             newClaim.OwnerProfileName,
 		"createdByProfileId":           newClaim.CreatedByProfileID,
 		"createdByProfileName":         newClaim.CreatedByProfileName,
-		"supportedBy":                  newClaim.SupportedBy,
 		// edges drives the UNWIND ... MERGE for SUPPORTED_BY relationships.
 		"edges": edges,
 	}

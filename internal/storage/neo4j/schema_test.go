@@ -379,11 +379,17 @@ func TestEnsureSchema_BackfillsLegacyProfileIDBeforeTeamConstraints(t *testing.T
 	nodeBackfill := queryIndex(client.queries, "n.team_id IS NULL AND n.profile_id IS NOT NULL")
 	relationshipBackfill := queryIndex(client.queries, "r.team_id IS NULL AND r.profile_id IS NOT NULL")
 	endpointBackfill := queryIndex(client.queries, "a.team_id = b.team_id")
+	claimSupportCleanup := queryIndex(client.queries, "REMOVE c.supported_by")
+	fragmentRetractedAtBackfill := queryIndex(client.queries, "SET sf.retracted_at = sf.recorded_to")
+	factAuthorityCleanup := queryIndex(client.queries, "REMOVE f.authority_state")
 	constraint := queryIndex(client.queries, "CREATE CONSTRAINT supported_by_team_id_exists")
 
 	require.NotEqual(t, -1, nodeBackfill, "node profile_id backfill query must be issued")
 	require.NotEqual(t, -1, relationshipBackfill, "relationship profile_id backfill query must be issued")
 	require.NotEqual(t, -1, endpointBackfill, "relationship endpoint team_id backfill query must be issued")
+	require.NotEqual(t, -1, claimSupportCleanup, "claim supported_by property cleanup query must be issued")
+	require.NotEqual(t, -1, fragmentRetractedAtBackfill, "fragment retracted_at backfill query must be issued")
+	require.NotEqual(t, -1, factAuthorityCleanup, "fact authority_state cleanup query must be issued")
 	require.NotEqual(t, -1, constraint, "enterprise relationship constraint query must be issued")
 
 	assert.Less(t, nodeBackfill, constraint, "node backfill must run before relationship constraints")

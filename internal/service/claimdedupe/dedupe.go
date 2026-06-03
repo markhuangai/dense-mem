@@ -36,6 +36,8 @@ func NewNeo4jDedupeLookup(reader ScopedReader) DedupeLookup {
 }
 
 const claimLookupReturn = `
+OPTIONAL MATCH (c)-[:SUPPORTED_BY {team_id: $profileId}]->(sf:SourceFragment {team_id: $profileId})
+WITH c, collect(sf.fragment_id) AS supported_by
 RETURN
     c.claim_id                        AS claim_id,
     c.created_by_profile_id           AS created_by_profile_id,
@@ -70,7 +72,7 @@ RETURN
     c.classification_lattice_version  AS classification_lattice_version,
     c.owner_profile_id                AS owner_profile_id,
     c.owner_profile_name              AS owner_profile_name,
-    coalesce(c.supported_by, [])      AS supported_by
+    supported_by                      AS supported_by
 LIMIT 1`
 
 const byIdempotencyKeyQuery = `

@@ -70,6 +70,10 @@ WITH f, collect(CASE
         authority: coalesce(r.authority, sf.authority, 'unknown')
     }
 END) AS evidence
+OPTIONAL MATCH (incomingOverlay:Fact {team_id: $profileId, status: 'active'})-[:OVERLAYS {team_id: $profileId}]->(f)
+WITH f, evidence, count(DISTINCT incomingOverlay) AS incoming_overlay_count
+OPTIONAL MATCH (f)-[:OVERLAYS {team_id: $profileId}]->(outgoingOverlay:Fact {team_id: $profileId, status: 'active'})
+WITH f, evidence, incoming_overlay_count, count(DISTINCT outgoingOverlay) AS outgoing_overlay_count
 RETURN
     f.fact_id                        AS fact_id,
     f.owner_profile_id               AS owner_profile_id,
@@ -82,7 +86,11 @@ RETURN
     f.predicate                      AS predicate,
     f.object                         AS object,
     f.status                         AS status,
-    f.authority_state                AS authority_state,
+    CASE
+        WHEN outgoing_overlay_count > 0 THEN 'overlay'
+        WHEN incoming_overlay_count > 0 THEN 'conflicted'
+        ELSE 'authoritative'
+    END                              AS authority_state,
     f.truth_score                    AS truth_score,
     f.valid_from                     AS valid_from,
     f.valid_to                       AS valid_to,
@@ -118,6 +126,10 @@ const getFactsByIDCypher = `
 	        authority: coalesce(r.authority, sf.authority, 'unknown')
 	    }
 	END) AS evidence
+	OPTIONAL MATCH (incomingOverlay:Fact {team_id: $profileId, status: 'active'})-[:OVERLAYS {team_id: $profileId}]->(f)
+	WITH f, evidence, count(DISTINCT incomingOverlay) AS incoming_overlay_count
+	OPTIONAL MATCH (f)-[:OVERLAYS {team_id: $profileId}]->(outgoingOverlay:Fact {team_id: $profileId, status: 'active'})
+	WITH f, evidence, incoming_overlay_count, count(DISTINCT outgoingOverlay) AS outgoing_overlay_count
 	RETURN
 	    f.fact_id                        AS fact_id,
 	    f.owner_profile_id               AS owner_profile_id,
@@ -130,7 +142,11 @@ const getFactsByIDCypher = `
 	    f.predicate                      AS predicate,
 	    f.object                         AS object,
 	    f.status                         AS status,
-	    f.authority_state                AS authority_state,
+	    CASE
+	        WHEN outgoing_overlay_count > 0 THEN 'overlay'
+	        WHEN incoming_overlay_count > 0 THEN 'conflicted'
+	        ELSE 'authoritative'
+	    END                              AS authority_state,
 	    f.truth_score                    AS truth_score,
 	    f.valid_from                     AS valid_from,
 	    f.valid_to                       AS valid_to,
