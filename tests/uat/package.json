@@ -19,7 +19,8 @@
     "test:cli": "playwright test cli-workflows.spec.ts",
     "test:portal-live": "playwright test control-portal-live.spec.ts",
     "test:admin": "playwright test control-plane-lifecycle.spec.ts auth-matrix.spec.ts cli-workflows.spec.ts control-portal-live.spec.ts",
-    "test:e2e": "playwright test e2e-journey.spec.ts"
+    "test:e2e": "playwright test e2e-journey.spec.ts",
+    "test:e2e:provisioned": "bash scripts/provisioned-e2e.sh"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",

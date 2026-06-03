@@ -19,6 +19,7 @@ import {
 } from './helpers';
 
 const profileId = process.env.PROFILE_ID || 'uat-profile-e2e-journey';
+const requireApiKeyB = process.env.REQUIRE_API_KEY_B === '1';
 
 // UAT-13: Full pipeline — fragment → claim → verify → promote → recall → retract
 test('UAT-13: full knowledge pipeline journey', async ({ request }) => {
@@ -196,8 +197,11 @@ test('AC-X6 regression: error envelope includes stable code field', async ({ req
 test('Cross-profile isolation: fact from profile A not visible to profile B', async ({
   request,
 }) => {
-  test.skip(!API_KEY_B, 'API_KEY_B is required for cross-profile isolation');
   if (!API_KEY_B) {
+    if (requireApiKeyB) {
+      throw new Error('API_KEY_B is required when REQUIRE_API_KEY_B=1');
+    }
+    test.skip(true, 'API_KEY_B is required for cross-profile isolation');
     return;
   }
 

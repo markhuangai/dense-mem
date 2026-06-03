@@ -61,6 +61,9 @@ npx playwright test --list
 BASE_URL=http://localhost:8080 API_KEY=<key> API_KEY_B=<second-key> PROFILE_ID=<team-id> \
   npx playwright test
 
+# Run the e2e journey against a running compose stack with two generated keys
+BASE_URL=http://localhost:8080 npm run test:e2e:provisioned
+
 # Run a single phase
 npx playwright test phase2-claim-create.spec.ts
 
@@ -88,6 +91,11 @@ npx playwright test --reporter=list
 The Playwright specs are live UAT coverage, not red scaffolding. Tests that prove
 cross-profile isolation use `API_KEY_B`; when it is absent, those specific checks
 are skipped instead of faking isolation with a profile string.
+
+Use `npm run test:e2e:provisioned` when running against local Docker Compose. It
+creates two disposable teams with generated keys and sets `REQUIRE_API_KEY_B=1`,
+so the cross-profile isolation test fails instead of skipping if the secondary
+key was not provisioned.
 
 ## Helper Utilities (`helpers.ts`)
 
