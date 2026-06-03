@@ -91,6 +91,23 @@ Recall combines active facts, validated claims, fragments, and clarification
 needs. Results include `clarifications[]` so host LLMs can ask the user about
 conflicts during normal chat.
 
+### `trace_memory`
+
+Bounded evidence expansion.
+
+Trace starts from one fact or claim ID and returns only the allowed lineage
+around that anchor: promotion, support fragments, contradictions, and
+supersession. It is the safe alternative to asking an LLM to invent Cypher or
+roam the graph.
+
+### `assemble_context`
+
+Prompt-ready context assembly.
+
+Context assembly runs recall, expands supporting evidence for fact and claim
+hits when requested, and returns both structured items and a bounded
+`context_block`. Stored memory is labeled as data, not instructions.
+
 ### `reflect_memories`
 
 Memory review.

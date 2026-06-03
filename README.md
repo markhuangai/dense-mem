@@ -37,7 +37,7 @@
 </p>
 
 <p align="center">
-  <a href="https://zenodo.org/records/20469578"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.20469578.svg" alt="DOI: 10.5281/zenodo.20469578" /></a>
+  <a href="https://zenodo.org/records/20469578"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.20519039.svg" alt="DOI: 10.5281/zenodo.20519039" /></a>
 </p>
 
 Dense-Mem gives MCP clients a durable memory layer with provenance, typed claims
@@ -171,6 +171,8 @@ memory, applies explicit gates, and returns structured outcomes.
 | `remember` | Normal chat-session memory insertion. Saves evidence, creates typed claims, verifies, promotes when gates pass, and returns structured outcomes. |
 | `import_memories` | Ingests summarized historical conversations. By default it records evidence and validated claims without auto-promotion. |
 | `recall_memory` | Retrieves facts, validated claims, fragments, and `clarifications[]` for the authenticated team. |
+| `trace_memory` | Expands one fact or claim into bounded evidence, promotion lineage, contradictions, and supersession links. |
+| `assemble_context` | Builds a bounded prompt-ready context block plus structured facts, claims, fragments, and clarifications. |
 | `reflect_memories` | Reviews active facts, candidate or disputed claims, contradictions, stale memories, and clarification needs. |
 | `confirm_memory` | Applies the user's answer to a clarification task, either accepting a claim and superseding comparable active facts or keeping/rejecting it. |
 

@@ -22,6 +22,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/claimdedupe"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
+	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentdedupe"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
@@ -345,6 +346,14 @@ func main() {
 		FactConfirm:    factConfirmSvc,
 		FactList:       factListSvc,
 	})
+	contextSvc := contextservice.New(contextservice.Dependencies{
+		Reader:      profileScopeEnforcer,
+		FactGet:     factGetSvc,
+		ClaimGet:    claimGetSvc,
+		FragmentGet: fragmentGetSvc,
+		Recall:      recallRegistrySvc,
+		Memory:      memorySvc,
+	})
 	skillPackSvc := skillpackservice.New(skillpackservice.Dependencies{
 		FragmentCreate:  fragmentCreateRegistrySvc,
 		ClaimCreate:     claimCreateSvc,
@@ -391,6 +400,7 @@ func main() {
 		CommunityDetect:             communityDetectRegistrySvc,
 		CommunityGet:                communityGetSvc,
 		CommunityList:               communityListSvc,
+		Context:                     contextSvc,
 		Memory:                      memorySvc,
 		SkillPack:                   skillPackSvc,
 	})
