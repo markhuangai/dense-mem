@@ -549,11 +549,15 @@ func main() {
 		}
 	}()
 
-	logger.Info("starting server", observability.String("addr", config.DefaultHTTPAddr))
+	httpAddr := os.Getenv("HTTP_ADDR")
+	if httpAddr == "" {
+		httpAddr = config.DefaultHTTPAddr
+	}
+	logger.Info("starting server", observability.String("addr", httpAddr))
 
 	// Start server in a goroutine
 	go func() {
-		if err := e.Start(config.DefaultHTTPAddr); err != nil {
+		if err := e.Start(httpAddr); err != nil {
 			logger.Error("server error", err)
 		}
 	}()
