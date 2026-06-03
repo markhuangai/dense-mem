@@ -469,3 +469,28 @@ func TestProfileResolution_MustGetResolvedProfileID_ReturnsID(t *testing.T) {
 	result := MustGetResolvedProfileID(ctx)
 	assert.Equal(t, profileID, result)
 }
+
+func TestProfileResolution_TeamAliasHelpers(t *testing.T) {
+	teamID := uuid.New()
+
+	ctx := SetResolvedTeamIDForTest(context.Background(), teamID)
+
+	gotProfileID, ok := GetResolvedProfileID(ctx)
+	require.True(t, ok)
+	assert.Equal(t, teamID, gotProfileID)
+
+	gotTeamID, ok := GetResolvedTeamID(ctx)
+	require.True(t, ok)
+	assert.Equal(t, teamID, gotTeamID)
+	assert.Equal(t, teamID, MustGetResolvedTeamID(ctx))
+}
+
+func TestProfileResolution_SetResolvedProfileIDForTest(t *testing.T) {
+	profileID := uuid.New()
+
+	ctx := SetResolvedProfileIDForTest(context.Background(), profileID)
+
+	got, ok := GetResolvedProfileID(ctx)
+	require.True(t, ok)
+	assert.Equal(t, profileID, got)
+}

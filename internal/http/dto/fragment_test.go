@@ -224,6 +224,13 @@ func TestValidateMetadataSize(t *testing.T) {
 		require.ErrorAs(t, err, &sizeErr)
 		assert.Equal(t, MaxMetadataBytes, sizeErr.Max)
 		assert.Greater(t, sizeErr.Size, MaxMetadataBytes)
+		assert.Equal(t, "metadata size exceeds maximum", sizeErr.Error())
+	})
+
+	t.Run("marshal error returned", func(t *testing.T) {
+		err := ValidateMetadataSize(map[string]any{"bad": func() {}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unsupported type")
 	})
 
 	t.Run("complex metadata within limit", func(t *testing.T) {

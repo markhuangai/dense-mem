@@ -127,6 +127,54 @@ func TestPromoteOwnerScopedMutations(t *testing.T) {
 		require.Equal(t, "Acme Corp", got.Object)
 		require.Equal(t, 4, db.writeTxCount)
 	})
+
+	t.Run("confirm accept supersedes own conflicts and overlays foreign facts", func(t *testing.T) {
+		actorID := uuid.MustParse("00000000-0000-0000-0000-0000000000aa")
+		foreignOwnerID := uuid.MustParse("00000000-0000-0000-0000-0000000000bb")
+		actorCtx := requestctx.WithActorProfile(ctx, requestctx.ActorProfile{
+			ProfileID:   actorID,
+			ProfileName: "native",
+		})
+		claimRow := makeClaimRowForSingleCurrent("claim-confirm-owner", "Alice", "Acme Corp")
+		claimRow["status"] = string(domain.StatusDisputed)
+		claimRow["owner_profile_id"] = actorID.String()
+		claimRow["owner_profile_name"] = "native"
+
+		ownConflict := makeFactRow("fact-owned-conflict", "Alice", "works_at", "active", time.Now().UTC())
+		ownConflict["object"] = "Old Corp"
+		ownConflict["owner_profile_id"] = actorID.String()
+		foreignConflict := makeFactRow("fact-foreign-conflict", "Alice", "works_at", "active", time.Now().UTC())
+		foreignConflict["object"] = "Other Corp"
+		foreignConflict["owner_profile_id"] = foreignOwnerID.String()
+		foreignAlignment := makeFactRow("fact-foreign-alignment", "Alice", "works_at", "active", time.Now().UTC())
+		foreignAlignment["object"] = "Acme Corp"
+		foreignAlignment["owner_profile_id"] = foreignOwnerID.String()
+
+		db := &stubPromoteDB{
+			responsesByCall: map[int][]map[string]any{
+				0: {claimRow},
+				1: {ownConflict, foreignConflict, foreignAlignment},
+			},
+		}
+		metrics := observability.NewInMemoryDiscoverabilityMetrics()
+		audit := &captureAuditEmitter{}
+		svc := newTestService(db, &stubClaimLocker{}, audit, metrics)
+
+		got, err := svc.ConfirmMemory(actorCtx, profileID, ConfirmMemoryRequest{
+			ClaimID:  "claim-confirm-owner",
+			Decision: "accept_claim",
+		})
+
+		require.NoError(t, err)
+		require.Equal(t, "accepted", got.Status)
+		require.NotNil(t, got.Fact)
+		require.Equal(t, actorID.String(), got.Fact.OwnerProfileID)
+		require.Equal(t, "Acme Corp", got.Fact.Object)
+		require.Equal(t, 4, db.writeTxCount)
+		require.Equal(t, 1, metrics.PromotionOutcomeCount("promoted"))
+		require.Len(t, audit.entries, 1)
+		require.Equal(t, "claim.confirm.accept", audit.entries[0].Operation)
+	})
 }
 
 func restorePromotionGate(predicate string, gate PromotionGate, ok bool) {
