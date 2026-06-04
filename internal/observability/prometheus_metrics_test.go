@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
@@ -200,6 +201,7 @@ func TestKnowledgeBacklogCollector_ExportsScopedBacklogGauges(t *testing.T) {
 		{TeamID: "team-1", ProfileID: "profile-2", Item: "claim_disputed", Count: 1},
 		{TeamID: "team-1", ProfileID: "profile-1", Item: "fact_needs_revalidation", Count: 4},
 		{TeamID: "team-1", ProfileID: "profile-1", Item: "unbounded", Count: 999},
+		{TeamID: "team-1", ProfileID: "profile-negative", Item: "claim_candidate", Count: -1},
 	}}
 	metrics := NewPrometheusMetrics()
 	metrics.RegisterKnowledgeBacklogCollector(reader, nil)
@@ -218,6 +220,9 @@ func TestKnowledgeBacklogCollector_ExportsScopedBacklogGauges(t *testing.T) {
 	}
 	if strings.Contains(body, "unbounded") {
 		t.Fatalf("scraped metrics included unbounded item\n%s", body)
+	}
+	if strings.Contains(body, "profile-negative") {
+		t.Fatalf("scraped metrics included negative sample\n%s", body)
 	}
 }
 
@@ -246,17 +251,204 @@ func TestKnowledgeBacklogCollector_UsesCachedSamplesOnReadFailure(t *testing.T) 
 	}
 }
 
+func TestKnowledgeBacklogCollector_UsesFreshCacheWithoutReader(t *testing.T) {
+	reader := &fakeKnowledgeBacklogReader{samples: []knowledgeBacklogSample{
+		{TeamID: "team-1", ProfileID: "profile-1", Item: "claim_candidate", Count: 3},
+	}}
+	collector := NewKnowledgeBacklogCollector(reader, nil)
+	collector.ttl = time.Hour
+
+	samples, err := collector.samples()
+	if err != nil {
+		t.Fatalf("initial samples error: %v", err)
+	}
+	if len(samples) != 1 || samples[0].Count != 3 {
+		t.Fatalf("initial samples = %+v", samples)
+	}
+
+	reader.err = errors.New("reader should not be called while cache is fresh")
+	samples, err = collector.samples()
+	if err != nil {
+		t.Fatalf("fresh cached samples error: %v", err)
+	}
+	if reader.calls != 1 {
+		t.Fatalf("reader calls = %d; want 1", reader.calls)
+	}
+	if len(samples) != 1 || samples[0].Count != 3 {
+		t.Fatalf("fresh cached samples = %+v", samples)
+	}
+
+	samples[0].Count = 99
+	samples, err = collector.samples()
+	if err != nil {
+		t.Fatalf("fresh cached samples after mutation error: %v", err)
+	}
+	if samples[0].Count != 3 {
+		t.Fatalf("cache returned mutated sample = %+v", samples)
+	}
+}
+
+func TestKnowledgeBacklogCollector_ReturnsErrorForUnexpectedReadResult(t *testing.T) {
+	collector := NewKnowledgeBacklogCollector(&fakeKnowledgeBacklogReader{
+		useResult: true,
+		result:    "not samples",
+	}, nil)
+
+	_, err := collector.samples()
+	if err == nil || !strings.Contains(err.Error(), "knowledge backlog query returned string") {
+		t.Fatalf("samples error = %v", err)
+	}
+}
+
+func TestKnowledgeBacklogCollector_CollectWarnsOnReadFailure(t *testing.T) {
+	logger := &fakeLogProvider{}
+	collector := NewKnowledgeBacklogCollector(&fakeKnowledgeBacklogReader{
+		err: errors.New("neo4j unavailable"),
+	}, logger)
+
+	collector.Collect(make(chan prometheus.Metric, 1))
+
+	if len(logger.warns) != 1 {
+		t.Fatalf("warn count = %d; want 1", len(logger.warns))
+	}
+	if logger.warns[0] != "knowledge backlog metrics collection failed" {
+		t.Fatalf("warn message = %q", logger.warns[0])
+	}
+}
+
+func TestKnowledgeBacklogCollector_ParsesRows(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		row  map[string]any
+		want knowledgeBacklogSample
+	}{
+		{
+			name: "int64 count",
+			row: map[string]any{
+				"team_id":    "team-1",
+				"profile_id": "profile-1",
+				"item":       "claim_candidate",
+				"count":      int64(3),
+			},
+			want: knowledgeBacklogSample{
+				TeamID:    "team-1",
+				ProfileID: "profile-1",
+				Item:      "claim_candidate",
+				Count:     3,
+			},
+		},
+		{
+			name: "int count",
+			row: map[string]any{
+				"team_id":    "team-2",
+				"profile_id": "profile-2",
+				"item":       "claim_validated",
+				"count":      2,
+			},
+			want: knowledgeBacklogSample{
+				TeamID:    "team-2",
+				ProfileID: "profile-2",
+				Item:      "claim_validated",
+				Count:     2,
+			},
+		},
+		{
+			name: "float64 count and non-string labels",
+			row: map[string]any{
+				"team_id":    7,
+				"profile_id": nil,
+				"item":       "claim_disputed",
+				"count":      1.0,
+			},
+			want: knowledgeBacklogSample{
+				Item:  "claim_disputed",
+				Count: 1,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := knowledgeBacklogSampleFromMap(tc.row)
+			if err != nil {
+				t.Fatalf("knowledgeBacklogSampleFromMap error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("knowledgeBacklogSampleFromMap = %+v; want %+v", got, tc.want)
+			}
+		})
+	}
+
+	_, err := knowledgeBacklogSampleFromMap(map[string]any{
+		"team_id":    "team-1",
+		"profile_id": "profile-1",
+		"item":       "claim_candidate",
+		"count":      "3",
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid backlog count") {
+		t.Fatalf("invalid count error = %v", err)
+	}
+}
+
+func TestPrometheusMetrics_RegisterKnowledgeBacklogCollectorIgnoresNilInputs(t *testing.T) {
+	var nilMetrics *PrometheusMetrics
+	nilMetrics.RegisterKnowledgeBacklogCollector(&fakeKnowledgeBacklogReader{}, nil)
+
+	metrics := NewPrometheusMetrics()
+	metrics.RegisterKnowledgeBacklogCollector(nil, nil)
+}
+
+func TestNoopDiscoverabilityMetrics_ConsumesCalls(t *testing.T) {
+	metrics := NoopDiscoverabilityMetrics()
+
+	metrics.ObserveEmbeddingLatency(1, "ok")
+	metrics.IncEmbeddingError("timeout")
+	metrics.ObserveRecallLatency(1)
+	metrics.ObserveRecall(1, 2, "ok")
+	metrics.ObserveMemoryFunnelLatency("claim_to_verify", 1, "verified")
+	metrics.IncFragmentCreate("created")
+	metrics.IncClaimCreate("duplicate", "exact")
+	metrics.IncVerifyVerdict("verified")
+	metrics.IncPromotionOutcome("promoted")
+	metrics.ObservePromoteLockWait(1)
+	metrics.IncFragmentRetract()
+	metrics.IncFactNeedsRevalidation()
+	metrics.IncCommunityDetect("ok")
+	metrics.ObserveCommunityDetect(1, 2)
+}
+
 type fakeKnowledgeBacklogReader struct {
-	samples []knowledgeBacklogSample
-	err     error
+	samples   []knowledgeBacklogSample
+	result    any
+	useResult bool
+	err       error
+	calls     int
 }
 
 func (f *fakeKnowledgeBacklogReader) ExecuteRead(context.Context, neo4j.ManagedTransactionWork) (any, error) {
+	f.calls++
 	if f.err != nil {
 		return nil, f.err
 	}
+	if f.useResult {
+		return f.result, nil
+	}
 	return f.samples, nil
 }
+
+type fakeLogProvider struct {
+	warns []string
+}
+
+func (f *fakeLogProvider) Info(string, ...LogAttr) {}
+
+func (f *fakeLogProvider) Error(string, error, ...LogAttr) {}
+
+func (f *fakeLogProvider) Warn(msg string, _ ...LogAttr) {
+	f.warns = append(f.warns, msg)
+}
+
+func (f *fakeLogProvider) Debug(string, ...LogAttr) {}
+
+func (f *fakeLogProvider) With(...LogAttr) LogProvider { return f }
 
 func scrapePrometheusMetrics(t *testing.T, metrics *PrometheusMetrics) string {
 	t.Helper()
