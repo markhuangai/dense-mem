@@ -104,13 +104,27 @@ ai:
   role_groups:
     swarm:
       synthesizer: codex_5.5_high
-      parallel: 3
+      parallel: 4
       roles:
         - role: correctness.md
           profile: local_proxy
         - role: security.md
           profile: local_proxy
         - role: maintainability.md
+          profile: local_proxy
+        - role: implemented-feature.md
+          profile: local_proxy
+        - role: over-engineering.md
+          profile: local_proxy
+        - role: test-evidence.md
+          profile: local_proxy
+        - role: contract-compatibility.md
+          profile: local_proxy
+        - role: data-integrity.md
+          profile: local_proxy
+        - role: operations-readiness.md
+          profile: local_proxy
+        - role: performance-cost.md
           profile: local_proxy
   budgets:
     default_timeout_minutes: 60
