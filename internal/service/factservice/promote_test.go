@@ -64,6 +64,43 @@ func (s *stubPromoteDB) ScopedWriteTx(
 
 var _ promoteDB = (*stubPromoteDB)(nil)
 
+type promotionStubResultSummary struct {
+	counters neo4j.Counters
+}
+
+func (s promotionStubResultSummary) Server() neo4j.ServerInfo { return nil }
+func (s promotionStubResultSummary) Query() neo4j.Query       { return nil }
+func (s promotionStubResultSummary) StatementType() neo4j.StatementType {
+	return neo4j.StatementTypeUnknown
+}
+func (s promotionStubResultSummary) Counters() neo4j.Counters                  { return s.counters }
+func (s promotionStubResultSummary) Plan() neo4j.Plan                          { return nil }
+func (s promotionStubResultSummary) Profile() neo4j.ProfiledPlan               { return nil }
+func (s promotionStubResultSummary) Notifications() []neo4j.Notification       { return nil }
+func (s promotionStubResultSummary) GqlStatusObjects() []neo4j.GqlStatusObject { return nil }
+func (s promotionStubResultSummary) ResultAvailableAfter() time.Duration       { return 0 }
+func (s promotionStubResultSummary) ResultConsumedAfter() time.Duration        { return 0 }
+func (s promotionStubResultSummary) Database() neo4j.DatabaseInfo              { return nil }
+
+type promotionStubCounters struct {
+	containsUpdates bool
+}
+
+func (c promotionStubCounters) ContainsUpdates() bool       { return c.containsUpdates }
+func (c promotionStubCounters) NodesCreated() int           { return 0 }
+func (c promotionStubCounters) NodesDeleted() int           { return 0 }
+func (c promotionStubCounters) RelationshipsCreated() int   { return 0 }
+func (c promotionStubCounters) RelationshipsDeleted() int   { return 0 }
+func (c promotionStubCounters) PropertiesSet() int          { return 0 }
+func (c promotionStubCounters) LabelsAdded() int            { return 0 }
+func (c promotionStubCounters) LabelsRemoved() int          { return 0 }
+func (c promotionStubCounters) IndexesAdded() int           { return 0 }
+func (c promotionStubCounters) IndexesRemoved() int         { return 0 }
+func (c promotionStubCounters) ConstraintsAdded() int       { return 0 }
+func (c promotionStubCounters) ConstraintsRemoved() int     { return 0 }
+func (c promotionStubCounters) SystemUpdates() int          { return 0 }
+func (c promotionStubCounters) ContainsSystemUpdates() bool { return false }
+
 // stubClaimLocker implements postgresstorage.ClaimLocker for unit tests.
 //
 // It immediately invokes fn with a nil *gorm.DB — the promotion algorithm
@@ -359,6 +396,17 @@ func TestPromoteQueriesUseJSONClassificationStorage(t *testing.T) {
 	require.Contains(t, loadClaimForPromoteCypher, "c.classification_json             AS classification_json")
 	require.Contains(t, idempotencyCheckCypher, "f.classification_json            AS classification_json")
 	require.Contains(t, createFactAndEdgeCypher, "classification_json:           $classificationJSON")
+}
+
+func TestPromotionSummaryContainsUpdates(t *testing.T) {
+	require.False(t, promotionSummaryContainsUpdates(nil))
+	require.False(t, promotionSummaryContainsUpdates(promotionStubResultSummary{}))
+	require.False(t, promotionSummaryContainsUpdates(promotionStubResultSummary{
+		counters: promotionStubCounters{},
+	}))
+	require.True(t, promotionSummaryContainsUpdates(promotionStubResultSummary{
+		counters: promotionStubCounters{containsUpdates: true},
+	}))
 }
 
 func TestConfirmMemoryDecisionBranches(t *testing.T) {

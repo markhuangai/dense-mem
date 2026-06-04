@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"reflect"
 	"strings"
 	"time"
 
@@ -86,21 +87,27 @@ func NewAuditServiceWithLogger(db *gorm.DB, logger *slog.Logger) *AuditServiceIm
 	return &AuditServiceImpl{db: db, logger: logger, rls: postgres.NewRLS()}
 }
 
-// sensitiveFields contains the list of fields that must be redacted from audit payloads.
-var sensitiveFields = map[string]bool{
-	"key_hash":         true,
-	"encrypted_secret": true,
-	"api_key":          true,
-	"raw_key":          true,
-	"secret":           true,
-	"password":         true,
-	"token":            true,
-	"embedding":        true,
-	"embeddings":       true,
-	"ai_api_key":       true,
+// sensitiveFields contains exact normalized field names redacted from audit data.
+var sensitiveFields = map[string]struct{}{
+	"access_token":     {},
+	"accesstoken":      {},
+	"ai_api_key":       {},
+	"api_key":          {},
+	"apikey":           {},
+	"authorization":    {},
+	"encrypted_secret": {},
+	"embedding":        {},
+	"embeddings":       {},
+	"key_hash":         {},
+	"password":         {},
+	"raw_key":          {},
+	"refresh_token":    {},
+	"refreshtoken":     {},
+	"secret":           {},
+	"token":            {},
 }
 
-// redactPayload removes sensitive fields from a payload map.
+// redactPayload removes sensitive fields from audit maps.
 // It returns a new map and does not modify the original.
 func redactPayload(payload map[string]interface{}) map[string]interface{} {
 	if payload == nil {
@@ -109,17 +116,69 @@ func redactPayload(payload map[string]interface{}) map[string]interface{} {
 
 	redacted := make(map[string]interface{}, len(payload))
 	for key, value := range payload {
-		if sensitiveFields[key] {
+		if isSensitiveAuditField(key) {
 			continue
 		}
-		// Recursively redact nested maps
-		if nestedMap, ok := value.(map[string]interface{}); ok {
-			redacted[key] = redactPayload(nestedMap)
-		} else {
-			redacted[key] = value
-		}
+		redacted[key] = redactAuditValue(value)
 	}
 	return redacted
+}
+
+func isSensitiveAuditField(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	if _, ok := sensitiveFields[normalized]; ok {
+		return true
+	}
+	compact := strings.ReplaceAll(normalized, "_", "")
+	if _, ok := sensitiveFields[compact]; ok {
+		return true
+	}
+	return strings.HasSuffix(normalized, "_api_key") ||
+		strings.HasSuffix(normalized, "_password") ||
+		strings.HasSuffix(normalized, "_secret") ||
+		strings.HasSuffix(normalized, "_token") ||
+		strings.HasSuffix(compact, "apikey") ||
+		strings.HasSuffix(compact, "password") ||
+		strings.HasSuffix(compact, "secret") ||
+		strings.HasSuffix(compact, "token")
+}
+
+func redactAuditValue(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		return redactPayload(typed)
+	case []interface{}:
+		redacted := make([]interface{}, len(typed))
+		for i, child := range typed {
+			redacted[i] = redactAuditValue(child)
+		}
+		return redacted
+	}
+
+	reflected := reflect.ValueOf(value)
+	if !reflected.IsValid() {
+		return value
+	}
+	if reflected.Kind() == reflect.Map && reflected.Type().Key().Kind() == reflect.String {
+		fields := make(map[string]interface{}, reflected.Len())
+		iter := reflected.MapRange()
+		for iter.Next() {
+			fields[iter.Key().String()] = iter.Value().Interface()
+		}
+		return redactPayload(fields)
+	}
+	if reflected.Kind() == reflect.Slice || reflected.Kind() == reflect.Array {
+		if reflected.Type().Elem().Kind() == reflect.Uint8 {
+			return value
+		}
+		redacted := make([]interface{}, reflected.Len())
+		for i := 0; i < reflected.Len(); i++ {
+			redacted[i] = redactAuditValue(reflected.Index(i).Interface())
+		}
+		return redacted
+	}
+	return value
 }
 
 func auditClientIPValue(ctx context.Context, entry AuditLogEntry) any {
@@ -160,7 +219,7 @@ func (s *AuditServiceImpl) Append(ctx context.Context, entry AuditLogEntry) erro
 	// Convert metadata to JSON
 	metadataJSON := []byte("{}")
 	if entry.Metadata != nil {
-		data, err := json.Marshal(entry.Metadata)
+		data, err := json.Marshal(redactPayload(entry.Metadata))
 		if err != nil {
 			return fmt.Errorf("failed to marshal metadata: %w", err)
 		}

@@ -11,6 +11,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/ownership"
 	"github.com/markhuangai/dense-mem/internal/verifier"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
 // verifyClaimCypher updates a Claim node's verification fields after a
@@ -212,7 +213,7 @@ func (s *verifyClaimServiceImpl) Verify(ctx context.Context, profileID string, c
 	now := time.Now().UTC()
 
 	// Persist the updated fields.
-	_, err = s.writer.ScopedWrite(ctx, profileID, verifyClaimCypher, map[string]any{
+	summary, err := s.writer.ScopedWrite(ctx, profileID, verifyClaimCypher, map[string]any{
 		"claimId":              claimID,
 		"status":               string(newStatus),
 		"entailmentVerdict":    string(newVerdict),
@@ -223,6 +224,10 @@ func (s *verifyClaimServiceImpl) Verify(ctx context.Context, profileID string, c
 	if err != nil {
 		s.incVerifyMetric(ctx, "error")
 		return nil, fmt.Errorf("claim verify: persist: %w", err)
+	}
+	if !writeSummaryContainsUpdates(summary) {
+		s.incVerifyMetric(ctx, "error")
+		return nil, ErrClaimNotFound
 	}
 
 	// Step 8: emit metric for the successful verification path.
@@ -245,6 +250,10 @@ func (s *verifyClaimServiceImpl) Verify(ctx context.Context, profileID string, c
 // backend is wired. Nil-safe: if metrics is nil the call is a no-op.
 func (s *verifyClaimServiceImpl) incVerifyMetric(ctx context.Context, outcome string) {
 	observability.RecordVerifyVerdict(ctx, s.metrics, s.verifierModel, outcome)
+}
+
+func writeSummaryContainsUpdates(summary neo4j.ResultSummary) bool {
+	return summary != nil && summary.Counters() != nil && summary.Counters().ContainsUpdates()
 }
 
 // emitVerifyAudit writes a claim.verify audit entry. Any error is logged and

@@ -179,8 +179,7 @@ func (s *Server) handleToolsCall(ctx context.Context, raw json.RawMessage) (map[
 	// Strip tenant IDs to prevent callers from overriding the fixed server
 	// team. The HTTP API derives scope from the bearer key; local registries
 	// may still receive a construction-time team for tests.
-	delete(args, "team_id")
-	delete(args, "profile_id")
+	registry.StripTenantOverrideArgs(args)
 	if err := registry.ValidateInput(tool, args); err != nil {
 		return nil, &rpcError{Code: errCodeInvalidParams, Message: err.Error()}
 	}
