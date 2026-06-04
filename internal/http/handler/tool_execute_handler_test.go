@@ -71,7 +71,7 @@ func TestToolExecuteHandler_RejectsMissingRequiredField(t *testing.T) {
 	assert.Contains(t, apiErr.Message, "content is required")
 }
 
-func TestToolExecuteHandler_RejectsUnknownFieldWhenAdditionalPropertiesFalse(t *testing.T) {
+func TestToolExecuteHandler_RejectsUnknownNonTenantFieldWhenAdditionalPropertiesFalse(t *testing.T) {
 	reg := registry.New()
 	called := false
 	err := reg.Register(registry.Tool{
@@ -104,7 +104,7 @@ func TestToolExecuteHandler_RejectsUnknownFieldWhenAdditionalPropertiesFalse(t *
 
 	e.POST("/api/v1/tools/:name", h.Handle)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/get_memory", strings.NewReader(`{"id":"frag-1","team_id":"forged"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/get_memory", strings.NewReader(`{"id":"frag-1","unexpected":"forged"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Profile-ID", profileID.String())
 	rec := httptest.NewRecorder()
@@ -116,7 +116,51 @@ func TestToolExecuteHandler_RejectsUnknownFieldWhenAdditionalPropertiesFalse(t *
 
 	var apiErr httperr.APIError
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &apiErr))
-	assert.Contains(t, apiErr.Message, "unknown field: team_id")
+	assert.Contains(t, apiErr.Message, "unknown field: unexpected")
+}
+
+func TestToolExecuteHandler_StripsTenantFieldsBeforeStrictValidation(t *testing.T) {
+	reg := registry.New()
+	var gotInput map[string]any
+	err := reg.Register(registry.Tool{
+		Name:           "get_memory",
+		InputSchema:    map[string]any{"type": "object", "properties": map[string]any{"id": map[string]any{"type": "string"}}, "additionalProperties": false},
+		RequiredScopes: []string{"read"},
+		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+			gotInput = input
+			return map[string]any{"ok": true}, nil
+		},
+	})
+	require.NoError(t, err)
+
+	h := NewToolExecuteHandler(reg)
+	e := newTestEcho()
+	profileID := uuid.New()
+
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			ctx := middleware.SetResolvedProfileIDForTest(c.Request().Context(), profileID)
+			ctx = middleware.SetPrincipalForTest(ctx, &middleware.Principal{
+				KeyID:  uuid.New(),
+				Role:   "user",
+				Scopes: []string{"read"},
+			})
+			c.SetRequest(c.Request().WithContext(ctx))
+			return next(c)
+		}
+	})
+
+	e.POST("/api/v1/tools/:name", h.Handle)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/get_memory", strings.NewReader(`{"id":"frag-1","team_id":"forged","profile_id":"forged-profile"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Profile-ID", profileID.String())
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, map[string]any{"id": "frag-1"}, gotInput)
 }
 
 func TestToolExecuteHandler_MapsEmbeddingFailureToServiceUnavailable(t *testing.T) {
@@ -249,7 +293,7 @@ func TestToolExecuteHandler_AdditionalBranches(t *testing.T) {
 		require.Equal(t, http.StatusInternalServerError, rec.Code)
 	})
 
-	t.Run("success strips forged team_id", func(t *testing.T) {
+	t.Run("success strips forged tenant fields", func(t *testing.T) {
 		reg := registry.New()
 		var gotInput map[string]any
 		require.NoError(t, reg.Register(registry.Tool{
@@ -274,12 +318,13 @@ func TestToolExecuteHandler_AdditionalBranches(t *testing.T) {
 		})
 		e.POST("/api/v1/tools/:name", h.Handle)
 
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/probe", strings.NewReader(`{"team_id":"attacker","x":1}`))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/probe", strings.NewReader(`{"team_id":"attacker","profile_id":"attacker-profile","x":1}`))
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, req)
 
 		require.Equal(t, http.StatusOK, rec.Code)
 		require.NotContains(t, gotInput, "team_id")
+		require.NotContains(t, gotInput, "profile_id")
 	})
 }
 

@@ -656,8 +656,7 @@ func (s *promoteClaimServiceImpl) createNewFact(
 		if err != nil {
 			return fmt.Errorf("create fact node: %w", err)
 		}
-		_, err = result.Consume(ctx)
-		return err
+		return consumeRequiredPromotionWrite(ctx, result)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("promote: persist new fact: %w", err)
@@ -689,9 +688,26 @@ func (s *promoteClaimServiceImpl) linkClaimToExistingFact(
 		if err != nil {
 			return fmt.Errorf("link claim to existing fact: %w", err)
 		}
-		_, err = result.Consume(ctx)
-		return err
+		return consumeRequiredPromotionWrite(ctx, result)
 	})
+}
+
+func consumeRequiredPromotionWrite(ctx context.Context, result neo4j.ResultWithContext) error {
+	if result == nil {
+		return ErrClaimNotFound
+	}
+	summary, err := result.Consume(ctx)
+	if err != nil {
+		return err
+	}
+	if !promotionSummaryContainsUpdates(summary) {
+		return ErrClaimNotFound
+	}
+	return nil
+}
+
+func promotionSummaryContainsUpdates(summary neo4j.ResultSummary) bool {
+	return summary != nil && summary.Counters() != nil && summary.Counters().ContainsUpdates()
 }
 
 // loadClaim retrieves a Claim from Neo4j, including its supporting fragment

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"sync"
 
 	"github.com/labstack/echo/v4"
 
@@ -14,8 +15,11 @@ import (
 // variant and full runtime variant to protected routes, so whoever reaches
 // this handler is already authorized for the requested variant.
 type OpenAPIHandler struct {
-	gen     openapi.Generator
-	variant openapi.SpecVariant
+	gen       openapi.Generator
+	variant   openapi.SpecVariant
+	cacheOnce sync.Once
+	cacheSpec map[string]any
+	cacheErr  error
 }
 
 // OpenAPIHandlerInterface is the companion interface for OpenAPIHandler.
@@ -32,9 +36,11 @@ func NewOpenAPIHandler(gen openapi.Generator, variant openapi.SpecVariant) *Open
 
 // Handle returns the OpenAPI document as JSON.
 func (h *OpenAPIHandler) Handle(c echo.Context) error {
-	spec, err := h.gen.Generate(h.variant)
-	if err != nil {
+	h.cacheOnce.Do(func() {
+		h.cacheSpec, h.cacheErr = h.gen.Generate(h.variant)
+	})
+	if h.cacheErr != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to generate openapi spec")
 	}
-	return c.JSON(http.StatusOK, spec)
+	return c.JSON(http.StatusOK, h.cacheSpec)
 }

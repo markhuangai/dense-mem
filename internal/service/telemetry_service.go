@@ -89,6 +89,7 @@ type TelemetryPoint struct {
 type PrometheusTelemetryService struct {
 	baseURL string
 	client  *http.Client
+	timeout time.Duration
 	now     func() time.Time
 }
 
@@ -99,6 +100,7 @@ func NewPrometheusTelemetryService(baseURL string, timeout time.Duration) *Prome
 	return &PrometheusTelemetryService{
 		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
 		client:  &http.Client{Timeout: timeout},
+		timeout: timeout,
 		now:     time.Now,
 	}
 }
@@ -141,11 +143,14 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 		return snapshot, nil
 	}
 
+	queryCtx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+
 	selector := telemetrySelector(scope, nil)
 	cardSpecs := telemetryCardSpecs(scope, windowKey)
 	cards := make([]TelemetryCard, 0, len(cardSpecs))
 	for _, spec := range cardSpecs {
-		value, queryErr := s.queryInstant(ctx, spec.Query)
+		value, queryErr := s.queryInstant(queryCtx, spec.Query)
 		if queryErr != nil {
 			snapshot.Message = "telemetry backend query failed"
 			return snapshot, nil
@@ -156,7 +161,7 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 	seriesSpecs := telemetrySeriesSpecs(selector, windowDef.Rate)
 	series := make([]TelemetrySeries, 0, len(seriesSpecs))
 	for _, spec := range seriesSpecs {
-		points, queryErr := s.queryRange(ctx, spec.Query, from, to, windowDef.Step)
+		points, queryErr := s.queryRange(queryCtx, spec.Query, from, to, windowDef.Step)
 		if queryErr != nil {
 			snapshot.Message = "telemetry backend query failed"
 			return snapshot, nil

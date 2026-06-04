@@ -42,6 +42,14 @@ func ValidateInput(tool Tool, args map[string]any) error {
 	return nil
 }
 
+// StripTenantOverrideArgs removes caller-supplied tenant selectors from tool
+// arguments. Transports derive scope from authenticated context, not request
+// bodies.
+func StripTenantOverrideArgs(args map[string]any) {
+	delete(args, "team_id")
+	delete(args, "profile_id")
+}
+
 func validateSchemaValue(name string, value any, schema map[string]any) error {
 	expected, _ := schema["type"].(string)
 	switch expected {

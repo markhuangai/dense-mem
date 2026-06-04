@@ -77,10 +77,10 @@ func (h *ToolExecuteHandler) Handle(c echo.Context) error {
 			return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
 		}
 	}
+	registry.StripTenantOverrideArgs(args)
 	if err := registry.ValidateInput(tool, args); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, err.Error())
 	}
-	delete(args, "team_id")
 
 	out, err := tool.Invoke(ctx, profileID.String(), args)
 	if err != nil {

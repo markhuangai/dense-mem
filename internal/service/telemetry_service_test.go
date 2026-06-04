@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -88,10 +89,41 @@ func TestPrometheusTelemetryService_RejectsInvalidWindow(t *testing.T) {
 	require.Contains(t, err.Error(), "window must be one of")
 }
 
+func TestPrometheusTelemetryService_SnapshotTimeoutBoundsSequentialQueries(t *testing.T) {
+	var requests atomic.Int32
+	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		time.Sleep(25 * time.Millisecond)
+		switch r.URL.Path {
+		case "/api/v1/query":
+			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"value":[1770000000,"42"]}]}}`))
+		case "/api/v1/query_range":
+			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"values":[[1770000000,"0.5"]]}]}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer prom.Close()
+
+	svc := NewPrometheusTelemetryService(prom.URL, 60*time.Millisecond)
+	svc.now = func() time.Time { return time.Unix(1770000060, 0).UTC() }
+
+	start := time.Now()
+	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m", Scope: "system"})
+	elapsed := time.Since(start)
+
+	require.NoError(t, err)
+	require.False(t, snapshot.Available)
+	require.Equal(t, "telemetry backend query failed", snapshot.Message)
+	require.Less(t, elapsed, 250*time.Millisecond)
+	require.Less(t, requests.Load(), int32(len(telemetryCardSpecs(TelemetryScope{Type: "system"}, "15m"))))
+}
+
 func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
 	svc := NewPrometheusTelemetryService(" https://prom.example.test/ ", 0)
 	require.Equal(t, "https://prom.example.test", svc.baseURL)
 	require.Equal(t, 5*time.Second, svc.client.Timeout)
+	require.Equal(t, 5*time.Second, svc.timeout)
 
 	snapshot, err := (*PrometheusTelemetryService)(nil).Snapshot(context.Background(), TelemetryFilter{})
 	require.NoError(t, err)
