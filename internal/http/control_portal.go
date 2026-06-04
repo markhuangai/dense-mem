@@ -120,6 +120,9 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 	}
 
 	if telemetry.ScrapeHandler != nil {
+		if strings.TrimSpace(telemetry.ScrapeToken) == "" {
+			return nil, fmt.Errorf("control portal: telemetry scrape token is required")
+		}
 		e.GET("/metrics", echo.WrapHandler(telemetry.ScrapeHandler), telemetryScrapeTokenMiddleware(telemetry.ScrapeToken))
 	}
 
@@ -688,9 +691,6 @@ func telemetryScrapeTokenMiddleware(token string) echo.MiddlewareFunc {
 	expected := strings.TrimSpace(token)
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			if expected == "" {
-				return next(c)
-			}
 			got := c.Request().Header.Get("X-Telemetry-Scrape-Token")
 			if got == "" {
 				auth := c.Request().Header.Get(echo.HeaderAuthorization)

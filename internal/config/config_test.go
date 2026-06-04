@@ -157,6 +157,24 @@ func TestLoadTelemetryConfig(t *testing.T) {
 	}
 }
 
+func TestLoadTelemetryConfigRequiresScrapeToken(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+	os.Setenv("TELEMETRY_ENABLED", "true")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() expected error for missing telemetry scrape token, got nil")
+	}
+	validationErr, ok := err.(*ValidationError)
+	if !ok {
+		t.Fatalf("expected *ValidationError, got %T", err)
+	}
+	if validationErr.Field != "TELEMETRY_SCRAPE_TOKEN" {
+		t.Errorf("ValidationError.Field = %q, want TELEMETRY_SCRAPE_TOKEN", validationErr.Field)
+	}
+}
+
 func TestLoadValidation_MissingPostgresDSN(t *testing.T) {
 	clearEnv()
 	os.Setenv("NEO4J_URI", "bolt://localhost:7687")

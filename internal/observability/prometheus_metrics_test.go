@@ -45,9 +45,7 @@ func TestPrometheusMetrics_RecordsScopedMetrics(t *testing.T) {
 	for _, want := range []string{
 		`densemem_http_requests_total{`,
 		`team_id="11111111-1111-4111-8111-111111111111"`,
-		`team_name="Research"`,
 		`profile_id="22222222-2222-4222-8222-222222222222"`,
-		`profile_name="Profile A"`,
 		`route="/api/v1/fragments/:id"`,
 		`method="GET"`,
 		`status_class="4xx"`,
@@ -68,6 +66,16 @@ func TestPrometheusMetrics_RecordsScopedMetrics(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("scraped metrics missing %q\n%s", want, body)
+		}
+	}
+	for _, blocked := range []string{
+		`team_name=`,
+		`profile_name=`,
+		`Research`,
+		`Profile A`,
+	} {
+		if strings.Contains(body, blocked) {
+			t.Fatalf("scraped metrics leaked %q\n%s", blocked, body)
 		}
 	}
 }
@@ -125,9 +133,7 @@ func TestPrometheusMetrics_RecordsUnknownLabelsAndFallbackHelpers(t *testing.T) 
 	body := scrapePrometheusMetrics(t, metrics)
 	for _, want := range []string{
 		`team_id="unknown"`,
-		`team_name="unknown"`,
 		`profile_id="unknown"`,
-		`profile_name="unknown"`,
 		`route="unknown"`,
 		`method="UNKNOWN"`,
 		`status_class="5xx"`,
@@ -142,8 +148,8 @@ func TestPrometheusMetrics_RecordsUnknownLabelsAndFallbackHelpers(t *testing.T) 
 }
 
 func TestPrometheusMetricLabelHelpers(t *testing.T) {
-	if got := identityLabels(); len(got) != 4 {
-		t.Fatalf("identityLabels len = %d; want 4", len(got))
+	if got := identityLabels(); len(got) != 2 {
+		t.Fatalf("identityLabels len = %d; want 2", len(got))
 	}
 	if got := uuidLabel(uuid.Nil); got != unknownMetricLabel {
 		t.Fatalf("uuidLabel(nil) = %q; want %q", got, unknownMetricLabel)
@@ -166,7 +172,7 @@ func TestPrometheusMetricLabelHelpers(t *testing.T) {
 		ProfileName: "  Profile  ",
 	})
 	got := identityValues(ctx)
-	want := []string{"unknown", "Team", "unknown", "Profile"}
+	want := []string{"unknown", "unknown"}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("identityValues[%d] = %q; want %q", i, got[i], want[i])

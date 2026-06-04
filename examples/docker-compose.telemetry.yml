@@ -7,6 +7,8 @@
 #     up -d
 #
 # Prometheus is kept on the private Docker network and stores 30 days of data.
+# Set TELEMETRY_SCRAPE_TOKEN before starting this overlay; Prometheus receives it
+# through a Compose secret and uses it as a bearer token when scraping /metrics.
 # The control and /ui portals query it through TELEMETRY_PROMETHEUS_URL.
 
 services:
@@ -15,7 +17,7 @@ services:
       TELEMETRY_ENABLED: "true"
       TELEMETRY_PROMETHEUS_URL: http://prometheus:9090
       TELEMETRY_QUERY_TIMEOUT_SECONDS: ${TELEMETRY_QUERY_TIMEOUT_SECONDS:-5}
-      TELEMETRY_SCRAPE_TOKEN: ${TELEMETRY_SCRAPE_TOKEN:-}
+      TELEMETRY_SCRAPE_TOKEN: ${TELEMETRY_SCRAPE_TOKEN:?set TELEMETRY_SCRAPE_TOKEN}
     depends_on:
       prometheus:
         condition: service_started
@@ -30,6 +32,8 @@ services:
     volumes:
       - prometheus-data:/prometheus
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    secrets:
+      - telemetry-scrape-token
     ports:
       - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
     networks:
@@ -38,3 +42,7 @@ services:
 
 volumes:
   prometheus-data:
+
+secrets:
+  telemetry-scrape-token:
+    environment: TELEMETRY_SCRAPE_TOKEN

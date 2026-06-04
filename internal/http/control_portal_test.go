@@ -490,17 +490,13 @@ func TestControlPortalTelemetry(t *testing.T) {
 	e.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	e, err = NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	_, err = NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
 	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
 		ScrapeHandler: scrapeHandler,
 	}, HealthConfig{}, nil)
-	require.NoError(t, err)
-	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
-	rec = httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code)
+	require.ErrorContains(t, err, "telemetry scrape token is required")
 }
 
 func TestControlPortalProfileAndKeyFlows(t *testing.T) {

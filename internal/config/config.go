@@ -453,6 +453,13 @@ func Load() (Config, error) {
 		}
 	}
 
+	if cfg.TelemetryEnabled && strings.TrimSpace(cfg.TelemetryScrapeToken) == "" {
+		return cfg, &ValidationError{
+			Field:   "TELEMETRY_SCRAPE_TOKEN",
+			Message: "required when TELEMETRY_ENABLED=true",
+		}
+	}
+
 	// Validate numeric limits > 0
 	numericFields := []struct {
 		name  string

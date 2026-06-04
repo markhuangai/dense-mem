@@ -323,19 +323,17 @@ func (m *PrometheusMetrics) addTokens(counter *prometheus.CounterVec, ctx contex
 }
 
 func identityLabels() []string {
-	return []string{"team_id", "team_name", "profile_id", "profile_name"}
+	return []string{"team_id", "profile_id"}
 }
 
 func identityValues(ctx context.Context) []string {
 	if actor, ok := requestctx.ActorProfileFromContext(ctx); ok {
 		return []string{
 			uuidLabel(actor.TeamID),
-			normalizeLabel(actor.TeamName),
 			uuidLabel(actor.ProfileID),
-			normalizeLabel(actor.ProfileName),
 		}
 	}
-	return []string{unknownMetricLabel, unknownMetricLabel, unknownMetricLabel, unknownMetricLabel}
+	return []string{unknownMetricLabel, unknownMetricLabel}
 }
 
 func uuidLabel(id uuid.UUID) string {
