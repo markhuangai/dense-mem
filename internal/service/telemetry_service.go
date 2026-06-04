@@ -242,7 +242,7 @@ func telemetrySelector(scope TelemetryScope, extra map[string]string) string {
 	for _, k := range keys {
 		v := labels[k]
 		if strings.HasPrefix(v, "~") {
-			parts = append(parts, fmt.Sprintf(`%s=%s`, k, strings.TrimPrefix(v, "~")))
+			parts = append(parts, fmt.Sprintf(`%s=~%s`, k, strings.TrimPrefix(v, "~")))
 			continue
 		}
 		parts = append(parts, fmt.Sprintf(`%s=%q`, k, v))

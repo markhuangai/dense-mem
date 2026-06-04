@@ -67,6 +67,16 @@ func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {
 		}
 		return false
 	})
+	var httpErrorCardQuery string
+	for _, query := range queries {
+		if strings.Contains(query, `sum(increase(densemem_http_requests_total`) && strings.Contains(query, "status_class") {
+			httpErrorCardQuery = query
+			break
+		}
+	}
+	require.NotEmpty(t, httpErrorCardQuery)
+	require.Contains(t, httpErrorCardQuery, `status_class=~"4xx|5xx"`)
+	require.NotContains(t, httpErrorCardQuery, `status_class="4xx|5xx"`)
 }
 
 func TestPrometheusTelemetryService_RejectsInvalidWindow(t *testing.T) {
@@ -95,6 +105,7 @@ func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, `{"team_id":"11111111-1111-4111-8111-111111111111"}`, mustMarshalStringMap(t, scopeLabels(scope)))
 	require.Equal(t, `{kind="total"}`, telemetrySelectorWithRaw("", `kind="total"`))
+	require.Equal(t, `{status_class=~"4xx|5xx"}`, telemetrySelector(TelemetryScope{}, map[string]string{"status_class": `~"4xx|5xx"`}))
 
 	scope, err = normalizeTelemetryScope(TelemetryFilter{Scope: "self", TeamID: &teamID, ProfileID: &profileID})
 	require.NoError(t, err)
