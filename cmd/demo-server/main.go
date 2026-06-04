@@ -245,9 +245,10 @@ func main() {
 		discoverabilityMetrics = prometheusMetrics
 		telemetryHTTPMetrics = prometheusMetrics
 		telemetryScrapeHandler = prometheusMetrics.Handler()
-		telemetryReader = service.NewPrometheusTelemetryService(
+		telemetryReader = service.NewPrometheusTelemetryServiceWithLogger(
 			cfg.GetTelemetryPrometheusURL(),
 			time.Duration(cfg.GetTelemetryQueryTimeoutSeconds())*time.Second,
+			logger,
 		)
 	}
 	// Adapters translate between neo4j's ScopedReader and the fragment services'

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+
+	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 func TestPrometheusTelemetryService_UnconfiguredReturnsUnavailableSnapshot(t *testing.T) {
@@ -225,6 +228,68 @@ func TestPrometheusTelemetryService_QueryFailureBranches(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, snapshot.Available)
 	require.Equal(t, "telemetry backend query failed", snapshot.Message)
+}
+
+func TestPrometheusTelemetryService_LogsQueryFailure(t *testing.T) {
+	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"error","error":"bad instant"}`))
+	}))
+	defer prom.Close()
+
+	logger := &captureTelemetryLogger{}
+	svc := NewPrometheusTelemetryServiceWithLogger(prom.URL, time.Second, logger)
+
+	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m", Scope: "system"})
+
+	require.NoError(t, err)
+	require.False(t, snapshot.Available)
+	require.Equal(t, "telemetry backend query failed", snapshot.Message)
+	require.Equal(t, "telemetry backend query failed", logger.message)
+	require.ErrorContains(t, logger.err, "bad instant")
+	require.Contains(t, logger.attrs, "query_kind=instant")
+	require.Contains(t, logger.attrs, "query_id=http_requests")
+	require.Contains(t, logger.attrs, "window=15m")
+	require.Contains(t, logger.attrs, "scope=system")
+	require.Contains(t, logger.attrs, "prometheus_query=sum(increase(densemem_http_requests_total[15m]))")
+}
+
+type captureTelemetryLogger struct {
+	message string
+	err     error
+	attrs   []string
+}
+
+func (l *captureTelemetryLogger) Info(string, ...observability.LogAttr) {}
+
+func (l *captureTelemetryLogger) Error(msg string, err error, attrs ...observability.LogAttr) {
+	l.message = msg
+	l.err = err
+	l.attrs = logAttrStrings(attrs)
+}
+
+func (l *captureTelemetryLogger) Warn(string, ...observability.LogAttr)  {}
+func (l *captureTelemetryLogger) Debug(string, ...observability.LogAttr) {}
+
+func (l *captureTelemetryLogger) With(...observability.LogAttr) observability.LogProvider {
+	return l
+}
+
+func logAttrStrings(attrs []observability.LogAttr) []string {
+	out := make([]string, 0, len(attrs))
+	for _, attr := range attrs {
+		out = append(out, attr.Key+"="+toLogString(attr.Value))
+	}
+	return out
+}
+
+func toLogString(value any) string {
+	if err, ok := value.(error); ok {
+		return err.Error()
+	}
+	if value == nil {
+		return ""
+	}
+	return fmt.Sprint(value)
 }
 
 func scopeLabels(scope TelemetryScope) map[string]string {

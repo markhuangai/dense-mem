@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 const TelemetryRetentionDays = 30
@@ -91,9 +92,14 @@ type PrometheusTelemetryService struct {
 	client  *http.Client
 	timeout time.Duration
 	now     func() time.Time
+	logger  observability.LogProvider
 }
 
 func NewPrometheusTelemetryService(baseURL string, timeout time.Duration) *PrometheusTelemetryService {
+	return NewPrometheusTelemetryServiceWithLogger(baseURL, timeout, nil)
+}
+
+func NewPrometheusTelemetryServiceWithLogger(baseURL string, timeout time.Duration, logger observability.LogProvider) *PrometheusTelemetryService {
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
@@ -102,6 +108,7 @@ func NewPrometheusTelemetryService(baseURL string, timeout time.Duration) *Prome
 		client:  &http.Client{Timeout: timeout},
 		timeout: timeout,
 		now:     time.Now,
+		logger:  logger,
 	}
 }
 
@@ -152,6 +159,7 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 	for _, spec := range cardSpecs {
 		value, queryErr := s.queryInstant(queryCtx, spec.Query)
 		if queryErr != nil {
+			s.logQueryFailure("instant", spec, windowKey, scope, queryErr)
 			snapshot.Message = "telemetry backend query failed"
 			return snapshot, nil
 		}
@@ -163,6 +171,7 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 	for _, spec := range seriesSpecs {
 		points, queryErr := s.queryRange(queryCtx, spec.Query, from, to, windowDef.Step)
 		if queryErr != nil {
+			s.logQueryFailure("range", spec, windowKey, scope, queryErr)
 			snapshot.Message = "telemetry backend query failed"
 			return snapshot, nil
 		}
@@ -174,6 +183,26 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 	snapshot.Cards = cards
 	snapshot.Series = series
 	return snapshot, nil
+}
+
+func (s *PrometheusTelemetryService) logQueryFailure(kind string, spec telemetryQuerySpec, window string, scope TelemetryScope, err error) {
+	if s == nil || s.logger == nil {
+		return
+	}
+	attrs := []observability.LogAttr{
+		observability.String("query_kind", kind),
+		observability.String("query_id", spec.ID),
+		observability.String("window", window),
+		observability.String("scope", scope.Type),
+		observability.String("prometheus_query", spec.Query),
+	}
+	if scope.TeamID != nil {
+		attrs = append(attrs, observability.String("team_id", scope.TeamID.String()))
+	}
+	if scope.ProfileID != nil {
+		attrs = append(attrs, observability.String("profile_id", scope.ProfileID.String()))
+	}
+	s.logger.Error("telemetry backend query failed", err, attrs...)
 }
 
 type telemetryQuerySpec struct {
