@@ -201,9 +201,7 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 			return nil, fmt.Errorf("claim create: idempotency lookup: %w", err)
 		}
 		if existing != nil {
-			if s.metrics != nil {
-				s.metrics.IncClaimCreate("duplicate", "idempotency_key")
-			}
+			observability.RecordClaimCreate(ctx, s.metrics, "duplicate", "idempotency_key")
 			return &CreateResult{
 				Claim:       existing,
 				Duplicate:   true,
@@ -217,9 +215,7 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 			return nil, fmt.Errorf("claim create: content-hash lookup: %w", err)
 		}
 		if existing != nil {
-			if s.metrics != nil {
-				s.metrics.IncClaimCreate("duplicate", "content_hash")
-			}
+			observability.RecordClaimCreate(ctx, s.metrics, "duplicate", "content_hash")
 			return &CreateResult{
 				Claim:       existing,
 				Duplicate:   true,
@@ -291,9 +287,7 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 	newClaim.Evidence = make([]domain.Evidence, 0, len(support.Fragments))
 	classificationJSON, err := fragmentcodec.EncodeOptionalMap(newClaim.Classification)
 	if err != nil {
-		if s.metrics != nil {
-			s.metrics.IncClaimCreate("error", "")
-		}
+		observability.RecordClaimCreate(ctx, s.metrics, "error", "")
 		return nil, fmt.Errorf("claim create: encode classification: %w", err)
 	}
 
@@ -370,15 +364,11 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 	}
 	_, err = s.writer.ScopedWrite(ctx, profileID, createClaimCypher, params)
 	if err != nil {
-		if s.metrics != nil {
-			s.metrics.IncClaimCreate("error", "")
-		}
+		observability.RecordClaimCreate(ctx, s.metrics, "error", "")
 		return nil, fmt.Errorf("claim create: persist: %w", err)
 	}
 
-	if s.metrics != nil {
-		s.metrics.IncClaimCreate("created", "")
-	}
+	observability.RecordClaimCreate(ctx, s.metrics, "created", "")
 
 	// Step 9: emit audit event; swallow failures so the primary op succeeds.
 	if s.audit != nil {

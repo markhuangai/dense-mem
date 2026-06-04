@@ -86,6 +86,33 @@ const metrics = {
   ],
 };
 
+const telemetry = {
+  available: true,
+  window: {
+    key: "1h",
+    from: "2026-05-02T12:00:00Z",
+    to: "2026-05-02T13:00:00Z",
+    step_seconds: 60,
+    retention_days: 30,
+  },
+  scope: { type: "system" },
+  cards: [
+    { id: "http_requests", label: "HTTP requests", unit: "requests", value: 42 },
+    { id: "verifier_tokens", label: "Verifier tokens", unit: "tokens", value: 1200 },
+  ],
+  series: [
+    {
+      id: "http_rps",
+      label: "HTTP requests",
+      unit: "rps",
+      points: [
+        { timestamp: "2026-05-02T12:00:00Z", value: 0.4 },
+        { timestamp: "2026-05-02T13:00:00Z", value: 0.9 },
+      ],
+    },
+  ],
+};
+
 type TestProfile = typeof team;
 
 test("team creation flow", async ({ page }) => {
@@ -247,6 +274,9 @@ async function mockApi(page: Page, state: { teams: TestProfile[]; keys: TestKey[
 
     if (url.endsWith("/session")) {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { authenticated: true } }) });
+    }
+    if (url.includes("/telemetry") && method === "GET") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: telemetry }) });
     }
     if (url.includes("/metrics") && method === "GET") {
       calls.metricsUrls.push(url);

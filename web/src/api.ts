@@ -1,3 +1,5 @@
+import type { ControlTelemetryQuery, TelemetrySnapshot } from "./telemetry/types";
+
 export type Team = {
   id: string;
   name: string;
@@ -229,6 +231,24 @@ export class ControlApi {
     }
     const suffix = params.toString() ? `?${params.toString()}` : "";
     return this.requestEnvelope<ControlMetrics>(`/metrics${suffix}`);
+  }
+
+  getTelemetry(query: ControlTelemetryQuery = {}): Promise<TelemetrySnapshot> {
+    const params = new URLSearchParams();
+    if (query.window) {
+      params.set("window", query.window);
+    }
+    if (query.scope) {
+      params.set("scope", query.scope);
+    }
+    if (query.team_id) {
+      params.set("team_id", query.team_id);
+    }
+    if (query.profile_id) {
+      params.set("profile_id", query.profile_id);
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    return this.requestEnvelope<TelemetrySnapshot>(`/telemetry${suffix}`);
   }
 
   private async requestEnvelope<T>(path: string, options: RequestOptions = {}): Promise<T> {

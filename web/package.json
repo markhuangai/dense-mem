@@ -5,8 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "dev:control": "vite --host 127.0.0.1",
     "dev:user": "vite --config vite.user.config.ts --host 127.0.0.1",
-    "build": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit && vite build && vite build --config vite.user.config.ts",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "build:control": "vite build",
+    "build:user": "vite build --config vite.user.config.ts",
+    "build": "npm run typecheck && npm run build:control && npm run build:user",
     "test": "vitest run",
     "test:watch": "vitest",
     "playwright": "bash ../scripts/e2e-compose.sh",
@@ -20,6 +24,7 @@
     "lucide-react": "^0.468.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
+    "recharts": "^3.8.1",
     "typescript": "^5.9.3",
     "vite": "^7.1.9"
   },

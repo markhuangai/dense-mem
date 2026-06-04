@@ -8,6 +8,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service"
 )
 
@@ -19,6 +20,19 @@ func UsageMetricsMiddleware(recorder service.UsageMetricsRecorder) echo.Middlewa
 			start := time.Now()
 			err := next(c)
 			recordUsageMetric(c, recorder, start, err)
+			return err
+		}
+	}
+}
+
+// TelemetryHTTPMiddleware records authenticated HTTP request telemetry for
+// scrape-oriented metrics backends such as Prometheus.
+func TelemetryHTTPMiddleware(recorder observability.HTTPMetrics) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			start := time.Now()
+			err := next(c)
+			recordTelemetryHTTPMetric(c, recorder, start, err)
 			return err
 		}
 	}
@@ -46,6 +60,17 @@ func recordUsageMetric(c echo.Context, recorder service.UsageMetricsRecorder, st
 		Status:    usageStatus(c, err),
 		Latency:   time.Since(start),
 	})
+}
+
+func recordTelemetryHTTPMetric(c echo.Context, recorder observability.HTTPMetrics, start time.Time, err error) {
+	if recorder == nil {
+		return
+	}
+	route := c.Path()
+	if route == "" {
+		route = "unknown"
+	}
+	recorder.ObserveHTTPRequest(c.Request().Context(), route, c.Request().Method, usageStatus(c, err), time.Since(start))
 }
 
 func usageStatus(c echo.Context, err error) int {

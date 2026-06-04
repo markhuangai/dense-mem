@@ -62,6 +62,33 @@ const metricsSnapshot: ControlMetrics = {
   ],
 };
 
+const telemetrySnapshot = {
+  available: true,
+  window: {
+    key: "1h",
+    from: "2026-05-02T12:00:00Z",
+    to: "2026-05-02T13:00:00Z",
+    step_seconds: 60,
+    retention_days: 30,
+  },
+  scope: { type: "system" },
+  cards: [
+    { id: "http_requests", label: "HTTP requests", unit: "requests", value: 42 },
+    { id: "verifier_tokens", label: "Verifier tokens", unit: "tokens", value: 1200 },
+  ],
+  series: [
+    {
+      id: "http_rps",
+      label: "HTTP requests",
+      unit: "rps",
+      points: [
+        { timestamp: "2026-05-02T12:00:00Z", value: 0.5 },
+        { timestamp: "2026-05-02T13:00:00Z", value: 0.8 },
+      ],
+    },
+  ],
+};
+
 function keyA(profileId = profileA.id): TeamProfile {
   return {
     id: "22222222-2222-4222-8222-222222222222",
@@ -243,7 +270,7 @@ describe("App", () => {
     await screen.findByRole("button", { name: /Default/ });
     await userEvent.click(screen.getByRole("button", { name: /^metrics$/i }));
 
-    expect(await screen.findByRole("heading", { name: "Metrics" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Telemetry" })).toBeInTheDocument();
     expect((await screen.findAllByText("42")).length).toBeGreaterThan(0);
     expect(screen.getByText("postgres")).toBeInTheDocument();
     expect(screen.getByText("default profile")).toBeInTheDocument();
@@ -291,6 +318,9 @@ function mockPortalFetch({
 
     if (url.endsWith("/session")) {
       return jsonResponse({ data: { authenticated: true } });
+    }
+    if (url.includes("/telemetry") && method === "GET") {
+      return jsonResponse({ data: telemetrySnapshot });
     }
     if (url.includes("/metrics") && method === "GET") {
       return jsonResponse({ data: metricsSnapshot });

@@ -13,6 +13,7 @@ type actorContextKey struct{}
 // identity inside that team.
 type ActorProfile struct {
 	TeamID      uuid.UUID
+	TeamName    string
 	ProfileID   uuid.UUID
 	ProfileName string
 }

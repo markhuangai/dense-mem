@@ -123,7 +123,7 @@ func NewCreateFragmentService(
 // 10. Emit audit event (AC-26).
 func (s *createFragmentService) Create(ctx context.Context, profileID string, req *dto.CreateFragmentRequest) (*CreateResult, error) {
 	if err := validateCreateFragmentRequest(req); err != nil {
-		s.metrics.IncFragmentCreate("error")
+		observability.RecordFragmentCreate(ctx, s.metrics, "error")
 		return nil, err
 	}
 
@@ -150,11 +150,11 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 					slog.String("error", err.Error()),
 				)
 			}
-			s.metrics.IncFragmentCreate("error")
+			observability.RecordFragmentCreate(ctx, s.metrics, "error")
 			return nil, fmt.Errorf("failed to check idempotency key: %w", err)
 		}
 		if existing != nil {
-			s.metrics.IncFragmentCreate("duplicate")
+			observability.RecordFragmentCreate(ctx, s.metrics, "duplicate")
 			return &CreateResult{
 				Fragment:    existing,
 				Duplicate:   true,
@@ -172,11 +172,11 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 					slog.String("error", err.Error()),
 				)
 			}
-			s.metrics.IncFragmentCreate("error")
+			observability.RecordFragmentCreate(ctx, s.metrics, "error")
 			return nil, fmt.Errorf("failed to check content hash: %w", err)
 		}
 		if existing != nil {
-			s.metrics.IncFragmentCreate("duplicate")
+			observability.RecordFragmentCreate(ctx, s.metrics, "duplicate")
 			return &CreateResult{
 				Fragment:    existing,
 				Duplicate:   true,
@@ -196,7 +196,7 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 				slog.String("error", err.Error()),
 			)
 		}
-		s.metrics.IncFragmentCreate("error")
+		observability.RecordFragmentCreate(ctx, s.metrics, "error")
 		return nil, errors.Join(ErrEmbeddingFailed, err)
 	}
 
@@ -211,7 +211,7 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 					slog.Int("actual", dims),
 				)
 			}
-			s.metrics.IncFragmentCreate("error")
+			observability.RecordFragmentCreate(ctx, s.metrics, "error")
 			return nil, fmt.Errorf("%w: %v", ErrVectorLengthMismatch, err)
 		}
 	}
@@ -246,12 +246,12 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 
 	metadataJSON, err := fragmentcodec.EncodeOptionalMap(fragment.Metadata)
 	if err != nil {
-		s.metrics.IncFragmentCreate("error")
+		observability.RecordFragmentCreate(ctx, s.metrics, "error")
 		return nil, fmt.Errorf("failed to encode fragment metadata: %w", err)
 	}
 	classificationJSON, err := fragmentcodec.EncodeOptionalMap(fragment.Classification)
 	if err != nil {
-		s.metrics.IncFragmentCreate("error")
+		observability.RecordFragmentCreate(ctx, s.metrics, "error")
 		return nil, fmt.Errorf("failed to encode fragment classification: %w", err)
 	}
 
@@ -315,7 +315,7 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 				slog.String("error", err.Error()),
 			)
 		}
-		s.metrics.IncFragmentCreate("error")
+		observability.RecordFragmentCreate(ctx, s.metrics, "error")
 		return nil, fmt.Errorf("failed to persist fragment: %w", err)
 	}
 
@@ -366,7 +366,7 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 		}
 	}
 
-	s.metrics.IncFragmentCreate("created")
+	observability.RecordFragmentCreate(ctx, s.metrics, "created")
 	return &CreateResult{
 		Fragment:  fragment,
 		Duplicate: false,

@@ -155,7 +155,7 @@ func (s *verifyClaimServiceImpl) Verify(ctx context.Context, profileID string, c
 
 	if verifyErr != nil {
 		// Step 6: verifier failure — leave claim state unchanged.
-		s.incVerifyMetric("error")
+		s.incVerifyMetric(ctx, "error")
 
 		// Persist raw body when the provider attached one (diagnostic only;
 		// write failure is non-fatal and only logged).
@@ -204,7 +204,7 @@ func (s *verifyClaimServiceImpl) Verify(ctx context.Context, profileID string, c
 		// The verifier interface guarantees exactly three valid verdict values.
 		// A rogue implementation that violates this contract is treated as a
 		// transient error rather than silently promoting/demoting the claim.
-		s.incVerifyMetric("error")
+		s.incVerifyMetric(ctx, "error")
 		s.emitVerifyAudit(ctx, profileID, claimID, claim, "error")
 		return nil, fmt.Errorf("claim verify: unexpected verdict %q from verifier", resp.Verdict)
 	}
@@ -221,12 +221,12 @@ func (s *verifyClaimServiceImpl) Verify(ctx context.Context, profileID string, c
 		"lastVerifierResponse": resp.RawJSON,
 	})
 	if err != nil {
-		s.incVerifyMetric("error")
+		s.incVerifyMetric(ctx, "error")
 		return nil, fmt.Errorf("claim verify: persist: %w", err)
 	}
 
 	// Step 8: emit metric for the successful verification path.
-	s.incVerifyMetric(outcome)
+	s.incVerifyMetric(ctx, outcome)
 
 	// Mutate the in-memory claim so the caller receives the post-verify state.
 	claim.Status = newStatus
@@ -243,10 +243,8 @@ func (s *verifyClaimServiceImpl) Verify(ctx context.Context, profileID string, c
 
 // incVerifyMetric bumps the verify_verdict_total counter when a metrics
 // backend is wired. Nil-safe: if metrics is nil the call is a no-op.
-func (s *verifyClaimServiceImpl) incVerifyMetric(outcome string) {
-	if s.metrics != nil {
-		s.metrics.IncVerifyVerdict(outcome)
-	}
+func (s *verifyClaimServiceImpl) incVerifyMetric(ctx context.Context, outcome string) {
+	observability.RecordVerifyVerdict(ctx, s.metrics, s.verifierModel, outcome)
 }
 
 // emitVerifyAudit writes a claim.verify audit entry. Any error is logged and

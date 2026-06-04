@@ -124,6 +124,27 @@ the URL, model, and dimensions (`https://api.openai.com/v1`,
 fill in `AI_API_KEY`. Override those values together when using a different
 embedding provider or model.
 
+### Telemetry Overlay
+
+Prometheus telemetry is optional and off by default. To collect usage,
+performance, verifier token, embedding token, recall, and promotion metrics for
+the `/ui` app and control portal dashboards, run the base stack with the
+telemetry overlay:
+
+```bash
+curl -fsSLo prometheus.yml \
+  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/prometheus.yml
+curl -fsSLo docker-compose.telemetry.yml \
+  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/docker-compose.telemetry.yml
+
+export TELEMETRY_SCRAPE_TOKEN="$(openssl rand -hex 32)"
+docker compose -f docker-compose.yml -f docker-compose.telemetry.yml up -d
+```
+
+The overlay starts Prometheus on `127.0.0.1:9090`, retains 30 days of samples,
+passes `TELEMETRY_SCRAPE_TOKEN` to Prometheus as a scrape secret, and points
+Dense-Mem at `http://prometheus:9090` for telemetry queries.
+
 ## Compare
 
 | Capability | Dense-Mem | File memory | Vector DB | Generic MCP memory |

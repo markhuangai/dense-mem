@@ -98,6 +98,27 @@ func TestUsageMetricsMiddlewareSkipsMissingRecorderOrPrincipal(t *testing.T) {
 	require.Empty(t, recorder.events)
 }
 
+func TestTelemetryHTTPMiddlewareRecordsRouteTemplate(t *testing.T) {
+	recorder := &captureHTTPMetricsRecorder{}
+	e := echo.New()
+	e.HTTPErrorHandler = httperr.ErrorHandler
+	e.Use(TelemetryHTTPMiddleware(recorder))
+	e.GET("/api/v1/fragments/:id", func(c echo.Context) error {
+		return httperr.New(httperr.VALIDATION_ERROR, "bad id")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/fragments/bad", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	require.Len(t, recorder.events, 1)
+	require.Equal(t, "/api/v1/fragments/:id", recorder.events[0].Route)
+	require.Equal(t, http.MethodGet, recorder.events[0].Method)
+	require.Equal(t, http.StatusUnprocessableEntity, recorder.events[0].Status)
+	require.GreaterOrEqual(t, recorder.events[0].Duration, time.Duration(0))
+}
+
 func TestUsageStatusCoversFallbackBranches(t *testing.T) {
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -140,4 +161,19 @@ type captureUsageMetricsRecorder struct {
 
 func (r *captureUsageMetricsRecorder) RecordRequest(_ context.Context, event domain.UsageMetricEvent) {
 	r.events = append(r.events, event)
+}
+
+type captureHTTPMetricsRecorder struct {
+	events []captureHTTPMetricEvent
+}
+
+type captureHTTPMetricEvent struct {
+	Route    string
+	Method   string
+	Status   int
+	Duration time.Duration
+}
+
+func (r *captureHTTPMetricsRecorder) ObserveHTTPRequest(_ context.Context, route, method string, status int, duration time.Duration) {
+	r.events = append(r.events, captureHTTPMetricEvent{Route: route, Method: method, Status: status, Duration: duration})
 }

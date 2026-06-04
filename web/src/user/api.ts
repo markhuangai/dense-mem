@@ -1,3 +1,5 @@
+import type { TelemetrySnapshot, UserTelemetryQuery } from "../telemetry/types";
+
 export type UserTeam = {
   id: string;
   name: string;
@@ -127,6 +129,19 @@ export class UserApi {
 
   async rotateKey(): Promise<RotateResponse> {
     const payload = await this.request<Envelope<RotateResponse>>("/ui/api/key/rotate", { method: "POST", body: {} });
+    return payload.data;
+  }
+
+  async telemetry(query: UserTelemetryQuery = {}): Promise<TelemetrySnapshot> {
+    const params = new URLSearchParams();
+    if (query.window) {
+      params.set("window", query.window);
+    }
+    if (query.scope) {
+      params.set("scope", query.scope);
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    const payload = await this.request<Envelope<TelemetrySnapshot>>(`/ui/api/telemetry${suffix}`);
     return payload.data;
   }
 
