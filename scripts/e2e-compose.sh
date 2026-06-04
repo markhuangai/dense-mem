@@ -117,8 +117,10 @@ fi
 
 CONTROL_ADDR="${CONTROL_HTTP_ADDR:-$(read_dotenv_value CONTROL_HTTP_ADDR)}"
 HTTP_ADDR="${HTTP_ADDR:-$(read_dotenv_value HTTP_ADDR)}"
+PROMETHEUS_PORT="${PROMETHEUS_PORT:-$(read_dotenv_value PROMETHEUS_PORT)}"
 CONTROL_URL="${CONTROL_URL:-$(url_from_addr "$CONTROL_ADDR" "http://127.0.0.1:8090")}"
 USER_URL="${USER_URL:-$(url_from_addr "$HTTP_ADDR" "http://127.0.0.1:8080")}"
+PROMETHEUS_URL="${DENSE_MEM_PROMETHEUS_URL:-http://127.0.0.1:${PROMETHEUS_PORT:-9090}}"
 
 cd "$ROOT_DIR"
 
@@ -142,6 +144,7 @@ docker compose -f "$COMPOSE_FILE" up -d --build
 
 wait_for_url "main API readiness" "${USER_URL}/ready"
 wait_for_url "control portal API" "${CONTROL_URL}/control/api/session" "Authorization: Bearer ${CONTROL_TOKEN}"
+wait_for_url "Prometheus readiness" "${PROMETHEUS_URL}/-/ready"
 
 echo "Seeding e2e team through the compose server container."
 seed_json="$(docker compose -f "$COMPOSE_FILE" exec -T server /app/provision-team --name "E2E Team" --description "compose e2e seed" --rate-limit 300)"
@@ -155,4 +158,5 @@ DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \
 DENSE_MEM_E2E_TEAM_ID="$team_id" \
 DENSE_MEM_E2E_TEAM_NAME="E2E Team" \
 DENSE_MEM_E2E_API_KEY="$api_key" \
+DENSE_MEM_PROMETHEUS_URL="$PROMETHEUS_URL" \
 npm --prefix "$ROOT_DIR/web" run playwright:compose

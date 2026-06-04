@@ -26,6 +26,11 @@ func TestPrometheusTelemetryService_UnconfiguredReturnsUnavailableSnapshot(t *te
 	require.Equal(t, "telemetry backend is not configured", snapshot.Message)
 	require.NotEmpty(t, snapshot.Cards)
 	require.NotEmpty(t, snapshot.Series)
+
+	payload, err := json.Marshal(snapshot)
+	require.NoError(t, err)
+	require.Contains(t, string(payload), `"points":[]`)
+	require.NotContains(t, string(payload), `"points":null`)
 }
 
 func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {

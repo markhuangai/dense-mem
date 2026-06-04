@@ -431,12 +431,13 @@ func telemetryEmptyCards() []TelemetryCard {
 }
 
 func telemetryEmptySeries() []TelemetrySeries {
+	emptyPoints := []TelemetryPoint{}
 	return []TelemetrySeries{
-		{ID: "http_rps", Label: "HTTP requests", Unit: "rps"},
-		{ID: "http_errors_rps", Label: "HTTP errors", Unit: "rps"},
-		{ID: "embedding_tokens", Label: "Embedding tokens", Unit: "tokens/s"},
-		{ID: "verifier_tokens", Label: "Verifier tokens", Unit: "tokens/s"},
-		{ID: "recalls", Label: "Recall requests", Unit: "requests/s"},
-		{ID: "promotions", Label: "Promotions", Unit: "promotions/s"},
+		{ID: "http_rps", Label: "HTTP requests", Unit: "rps", Points: emptyPoints},
+		{ID: "http_errors_rps", Label: "HTTP errors", Unit: "rps", Points: emptyPoints},
+		{ID: "embedding_tokens", Label: "Embedding tokens", Unit: "tokens/s", Points: emptyPoints},
+		{ID: "verifier_tokens", Label: "Verifier tokens", Unit: "tokens/s", Points: emptyPoints},
+		{ID: "recalls", Label: "Recall requests", Unit: "requests/s", Points: emptyPoints},
+		{ID: "promotions", Label: "Promotions", Unit: "promotions/s", Points: emptyPoints},
 	}
 }

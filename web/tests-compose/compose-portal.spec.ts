@@ -6,6 +6,7 @@ const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
 const seedTeamId = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
 const seedTeamName = requiredEnv("DENSE_MEM_E2E_TEAM_NAME");
 const seedApiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");
+const prometheusUrl = requiredEnv("DENSE_MEM_PROMETHEUS_URL").replace(/\/$/, "");
 
 type CreatedProfile = {
   api_key: string;
@@ -16,6 +17,21 @@ type CreatedProfile = {
     key_suffix: string;
     scopes: string[];
     rate_limit: number;
+  };
+};
+
+type PrometheusQueryResponse = {
+  status?: string;
+  data?: {
+    result?: unknown[];
+  };
+};
+
+type TelemetryResponse = {
+  data?: {
+    available?: boolean;
+    cards?: unknown;
+    series?: unknown;
   };
 };
 
@@ -45,7 +61,7 @@ test("control panel shows operational metrics against compose", async ({ page })
 
   await page.getByRole("button", { name: /^Metrics$/ }).click();
 
-  await expect(page.getByRole("heading", { name: "Metrics" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Usage Rollup" })).toBeVisible();
   await expect(page.getByLabel("Request metrics")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Dependencies" })).toBeVisible();
   await expect(page.getByText("postgres")).toBeVisible();
@@ -53,7 +69,38 @@ test("control panel shows operational metrics against compose", async ({ page })
 
   await page.getByLabel("Window").selectOption("360");
   await page.getByLabel("Team", { exact: true }).selectOption(seedTeamId);
-  await expect(page.getByRole("heading", { name: "Metrics" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Usage Rollup" })).toBeVisible();
+});
+
+test("prometheus telemetry is scraped and rendered in control panel and user portal", async ({ page, request }) => {
+  const sessionResponse = await request.get(`${userUrl}/ui/api/session`, { headers: bearer(seedApiKey) });
+  expect(sessionResponse.status()).toBe(200);
+
+  await expect.poll(
+    () => prometheusResultCount(request, `densemem_http_requests_total{route="/ui/api/session"}`),
+    {
+      intervals: [1_000, 5_000, 10_000],
+      timeout: 120_000,
+    },
+  ).toBeGreaterThan(0);
+
+  const telemetryResponse = await request.get(`${userUrl}/ui/api/telemetry?window=15m`, { headers: bearer(seedApiKey) });
+  expect(telemetryResponse.status()).toBe(200);
+  const telemetryBody = await telemetryResponse.json() as TelemetryResponse;
+  expect(telemetryBody.data?.available).toBe(true);
+  expect(Array.isArray(telemetryBody.data?.cards)).toBe(true);
+  assertTelemetrySeries(telemetryBody);
+
+  await openControlPanel(page);
+  await page.getByRole("button", { name: /^Metrics$/ }).click();
+  await expect(page.getByRole("heading", { name: "Telemetry" })).toBeVisible();
+  await expect(page.getByLabel("Telemetry totals")).toContainText("HTTP requests");
+  await expect(page.getByLabel("Telemetry charts")).toContainText("HTTP requests");
+
+  await openUserPortal(page, seedApiKey);
+  await page.getByRole("button", { name: "Usage" }).click();
+  await expect(page.getByLabel("Usage totals")).toContainText("HTTP requests");
+  await expect(page.getByLabel("Usage charts")).toContainText("HTTP requests");
 });
 
 test("user portal logs in with a real API key and shows only that profile", async ({ page, request }, testInfo) => {
@@ -163,6 +210,38 @@ async function createTeamProfile(request: APIRequestContext, name: string, scope
   }
   const payload = await response.json() as { data: CreatedProfile };
   return payload.data;
+}
+
+async function prometheusResultCount(request: APIRequestContext, query: string) {
+  const response = await request.get(`${prometheusUrl}/api/v1/query`, { params: { query } });
+  if (response.status() !== 200) {
+    return 0;
+  }
+  const body = await response.json() as PrometheusQueryResponse;
+  if (body.status !== "success" || !Array.isArray(body.data?.result)) {
+    return 0;
+  }
+  return body.data.result.length;
+}
+
+function assertTelemetrySeries(body: TelemetryResponse) {
+  const series = body.data?.series;
+  expect(Array.isArray(series)).toBe(true);
+  if (!Array.isArray(series)) {
+    throw new Error("telemetry series must be an array");
+  }
+  expect(series.length).toBeGreaterThan(0);
+  for (const item of series) {
+    expect(isRecord(item)).toBe(true);
+    if (!isRecord(item)) {
+      throw new Error("telemetry series item must be an object");
+    }
+    expect(Array.isArray(item.points)).toBe(true);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function bearer(token: string) {
