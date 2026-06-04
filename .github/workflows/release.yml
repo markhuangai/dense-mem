@@ -1,0 +1,304 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_rc:
+        description: "Existing RC tag to release from (example: v1.2.2-rc.4)"
+        required: true
+        type: string
+      release_tag:
+        description: "Stable release tag to create (example: v1.3.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  prepare-release:
+    name: Prepare release
+    runs-on: docker-runner
+    outputs:
+      source_tag: ${{ steps.version.outputs.source_tag }}
+      release_tag: ${{ steps.version.outputs.release_tag }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Ensure release is not already published
+        uses: actions/github-script@v7
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        with:
+          script: |
+            const tag = process.env.RELEASE_TAG;
+
+            try {
+              await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tag,
+              });
+              core.setFailed(`${tag} already exists as a GitHub Release`);
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+            }
+
+      - name: Validate release inputs
+        id: version
+        shell: bash
+        env:
+          SOURCE_TAG: ${{ inputs.source_rc }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release_tag must be a stable semantic version like v1.0.0"
+            exit 1
+          fi
+
+          if [[ ! "${SOURCE_TAG}" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+)-rc\.[0-9]+$ ]]; then
+            echo "::error::source_rc must be an RC prerelease tag like v1.0.0-rc.0"
+            exit 1
+          fi
+          source_base="${BASH_REMATCH[1]}"
+          source_base_pattern="${source_base//./\\.}"
+
+          highest="$(
+            printf '%s\n%s\n' "${source_base}" "${RELEASE_TAG}" |
+              sort -V |
+              tail -n 1
+          )"
+          if [[ "${highest}" != "${RELEASE_TAG}" ]]; then
+            echo "::error::release_tag must not be lower than source_rc base ${source_base}"
+            exit 1
+          fi
+
+          git fetch --tags --force origin '+refs/tags/*:refs/tags/*'
+
+          if ! git rev-parse -q --verify "refs/tags/${SOURCE_TAG}" >/dev/null; then
+            echo "::error::source_rc does not exist as a Git tag: ${SOURCE_TAG}"
+            exit 1
+          fi
+
+          latest_rc="$(
+            git tag -l "${source_base}-rc.*" |
+              grep -E "^${source_base_pattern}-rc\.[0-9]+$" |
+              sort -V |
+              tail -n 1
+          )"
+          if [[ "${SOURCE_TAG}" != "${latest_rc}" ]]; then
+            echo "::error::only the latest RC can be released. Latest for ${source_base} is ${latest_rc}"
+            exit 1
+          fi
+
+          latest_stable="$(
+            git tag -l 'v[0-9]*.[0-9]*.[0-9]*' |
+              grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' |
+              grep -F -v -x "${RELEASE_TAG}" |
+              sort -V |
+              tail -n 1 || true
+          )"
+          if [[ -n "${latest_stable}" ]]; then
+            highest_stable="$(
+              printf '%s\n%s\n' "${latest_stable}" "${RELEASE_TAG}" |
+                sort -V |
+                tail -n 1
+            )"
+            if [[ "${highest_stable}" != "${RELEASE_TAG}" ]]; then
+              echo "::error::release_tag must be newer than latest stable ${latest_stable}"
+              exit 1
+            fi
+          fi
+
+          source_commit="$(git rev-list -n 1 "${SOURCE_TAG}")"
+          if git rev-parse -q --verify "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            release_commit="$(git rev-list -n 1 "${RELEASE_TAG}")"
+            if [[ "${release_commit}" != "${source_commit}" ]]; then
+              echo "::error::release_tag already exists at ${release_commit}, expected ${source_commit}"
+              exit 1
+            fi
+          else
+            git tag "${RELEASE_TAG}" "${source_commit}"
+            git push origin "refs/tags/${RELEASE_TAG}"
+          fi
+
+          echo "source_tag=${SOURCE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+
+  promote-image:
+    name: Promote Docker image
+    needs: prepare-release
+    runs-on: rootless-docker
+
+    env:
+      REGISTRY: ghcr.io
+
+    steps:
+      - name: Set image name
+        id: image
+        shell: bash
+        run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure Docker credentials path
+        shell: bash
+        run: |
+          mkdir -p "${RUNNER_TEMP}/.docker"
+          echo "DOCKER_CONFIG=${RUNNER_TEMP}/.docker" >> "$GITHUB_ENV"
+
+      - name: Log in to registry
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: echo "${GITHUB_TOKEN}" | docker login "${REGISTRY}" -u "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Promote image tags
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          image="${{ steps.image.outputs.name }}"
+          source_ref="${image}:${{ needs.prepare-release.outputs.source_tag }}"
+          release_ref="${image}:${{ needs.prepare-release.outputs.release_tag }}"
+          latest_ref="${image}:latest"
+
+          docker buildx imagetools inspect "${source_ref}" >/dev/null
+          docker buildx imagetools create \
+            -t "${release_ref}" \
+            -t "${latest_ref}" \
+            "${source_ref}"
+
+  publish-demo-image:
+    name: Publish demo image
+    needs: prepare-release
+    uses: ./.github/workflows/publish-demo-image.yml
+    with:
+      tag: ${{ needs.prepare-release.outputs.release_tag }}
+
+  create-github-release:
+    name: Create GitHub Release
+    needs:
+      - prepare-release
+      - promote-image
+      - publish-demo-image
+    runs-on: docker-runner
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Write release notes
+        shell: bash
+        env:
+          SOURCE_TAG: ${{ needs.prepare-release.outputs.source_tag }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+          REPOSITORY: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          set -euo pipefail
+
+          git fetch --tags --force origin '+refs/tags/*:refs/tags/*'
+
+          if [[ ! "${SOURCE_TAG}" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+)-rc\.[0-9]+$ ]]; then
+            echo "::error::source tag is not an RC prerelease tag: ${SOURCE_TAG}"
+            exit 1
+          fi
+          source_base="${BASH_REMATCH[1]}"
+          source_base_pattern="${source_base//./\\.}"
+
+          previous_stable="$(
+            git tag -l 'v[0-9]*.[0-9]*.[0-9]*' |
+              grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' |
+              grep -F -v -x "${RELEASE_TAG}" |
+              sort -V |
+              tail -n 1 || true
+          )"
+
+          {
+            echo "## Summary"
+            echo
+            echo "${RELEASE_TAG} promotes ${SOURCE_TAG}."
+            echo
+            echo "## Prerelease Messages"
+            echo
+
+            for rc_tag in $(
+              git tag -l "${source_base}-rc.*" |
+                grep -E "^${source_base_pattern}-rc\.[0-9]+$" |
+                sort -V
+            ); do
+              echo "### ${rc_tag}"
+              echo
+              git log -1 --format=%B "${rc_tag}"
+              echo
+
+              if [[ "${rc_tag}" == "${SOURCE_TAG}" ]]; then
+                break
+              fi
+            done
+
+            echo "## Commits"
+            echo
+            if [[ -n "${previous_stable}" ]]; then
+              git log --reverse --format='- `%h` %s' "${previous_stable}..${SOURCE_TAG}"
+            else
+              git log --reverse --format='- `%h` %s' "${SOURCE_TAG}"
+            fi
+            echo
+            echo "## Full Changelog"
+            echo
+            if [[ -n "${previous_stable}" ]]; then
+              echo "${SERVER_URL}/${REPOSITORY}/compare/${previous_stable}...${RELEASE_TAG}"
+            else
+              echo "${SERVER_URL}/${REPOSITORY}/releases/tag/${RELEASE_TAG}"
+            fi
+          } > release-notes.md
+
+      - name: Create GitHub Release
+        uses: actions/github-script@v7
+        env:
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+        with:
+          script: |
+            const fs = require("fs");
+            const tag = process.env.RELEASE_TAG;
+            const body = fs.readFileSync("release-notes.md", "utf8").trim() || tag;
+
+            try {
+              await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tag,
+              });
+              core.setFailed(`${tag} already exists as a GitHub Release`);
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+
+              await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tag,
+                name: tag,
+                body,
+                prerelease: false,
+              });
+            }

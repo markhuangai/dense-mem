@@ -1,0 +1,182 @@
+name: Release prerelease
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+    branches:
+      - dev
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-prerelease-dev
+  cancel-in-progress: false
+
+jobs:
+  prepare-prerelease:
+    name: Prepare prerelease
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push'
+      }}
+    runs-on: docker-runner
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      should_publish: ${{ steps.version.outputs.is_prerelease }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Resolve next prerelease tag
+        id: version
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          git fetch --tags --force origin \
+            '+refs/tags/*:refs/tags/*' \
+            '+refs/heads/dev:refs/remotes/origin/dev'
+          git rev-parse --verify "${HEAD_SHA}^{commit}" >/dev/null
+
+          current_dev="$(git rev-parse refs/remotes/origin/dev)"
+          if [[ "${current_dev}" != "${HEAD_SHA}" ]]; then
+            echo "dev advanced to ${current_dev}; skipping stale CI head ${HEAD_SHA}"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          existing_tag="$(
+            git tag --points-at "${HEAD_SHA}" -l 'v*.*.*' |
+              grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$' |
+              sort -V |
+              tail -n 1 || true
+          )"
+          if [[ -n "${existing_tag}" ]]; then
+            is_prerelease=false
+            if [[ "${existing_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
+              is_prerelease=true
+            fi
+
+            echo "tag=${existing_tag}" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=${is_prerelease}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          latest_stable="$(
+            git tag -l 'v[0-9]*.[0-9]*.[0-9]*' |
+              grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' |
+              sort -V |
+              tail -n 1 || true
+          )"
+          if [[ -z "${latest_stable}" ]]; then
+            latest_stable="v0.0.0"
+          fi
+
+          if [[ ! "${latest_stable}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "::error::latest stable tag is not a semantic version: ${latest_stable}"
+            exit 1
+          fi
+
+          major="${BASH_REMATCH[1]}"
+          minor="${BASH_REMATCH[2]}"
+          patch="${BASH_REMATCH[3]}"
+          base="v${major}.${minor}.$((patch + 1))"
+          base_pattern="${base//./\\.}"
+
+          latest_rc="$(
+            git tag -l "${base}-rc.*" |
+              grep -E "^${base_pattern}-rc\.[0-9]+$" |
+              sort -V |
+              tail -n 1 || true
+          )"
+          if [[ -z "${latest_rc}" ]]; then
+            rc_number=0
+          elif [[ "${latest_rc}" =~ -rc\.([0-9]+)$ ]]; then
+            rc_number="$((BASH_REMATCH[1] + 1))"
+          else
+            echo "::error::latest RC tag is not valid: ${latest_rc}"
+            exit 1
+          fi
+
+          next_tag="${base}-rc.${rc_number}"
+          git tag "${next_tag}" "${HEAD_SHA}"
+          git push origin "refs/tags/${next_tag}"
+
+          echo "tag=${next_tag}" >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+
+      - name: Write prerelease notes
+        if: steps.version.outputs.is_prerelease == 'true'
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: git log -1 --format=%B "${HEAD_SHA}" > prerelease-notes.md
+
+      - name: Ensure GitHub prerelease
+        if: steps.version.outputs.is_prerelease == 'true'
+        uses: actions/github-script@v7
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        with:
+          script: |
+            const fs = require("fs");
+            const tag = process.env.TAG;
+            const body = fs.readFileSync("prerelease-notes.md", "utf8").trim() || tag;
+            const request = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+            };
+
+            try {
+              const { data } = await github.rest.repos.getReleaseByTag(request);
+              if (!data.prerelease) {
+                core.setFailed(`${tag} exists as a non-prerelease GitHub Release`);
+              } else {
+                core.info(`${tag} prerelease already exists`);
+              }
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+
+              await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tag,
+                target_commitish: process.env.HEAD_SHA,
+                name: tag,
+                body,
+                prerelease: true,
+              });
+            }
+
+  publish-image:
+    name: Publish prerelease image
+    needs: prepare-prerelease
+    if: needs.prepare-prerelease.outputs.should_publish == 'true'
+    uses: ./.github/workflows/publish-image.yml
+    with:
+      tag: ${{ needs.prepare-prerelease.outputs.tag }}
+
+  publish-demo-image:
+    name: Publish demo image
+    needs: prepare-prerelease
+    if: needs.prepare-prerelease.outputs.should_publish == 'true'
+    uses: ./.github/workflows/publish-demo-image.yml
+    with:
+      tag: ${{ needs.prepare-prerelease.outputs.tag }}
