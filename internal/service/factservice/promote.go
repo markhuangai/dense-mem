@@ -235,6 +235,7 @@ func (s *promoteClaimServiceImpl) doConfirmMemory(ctx context.Context, profileID
 				return nil, fmt.Errorf("confirm memory: link alignments: %w", err)
 			}
 			s.incMetric(ctx, "promoted")
+			s.recordPromotionFunnelLatency(ctx, claim, "promoted")
 			s.emitAudit(ctx, profileID, claim.ClaimID, fact.FactID, "claim.confirm.accept")
 			return &ConfirmMemoryResult{
 				ClaimID:  claim.ClaimID,
@@ -255,6 +256,7 @@ func (s *promoteClaimServiceImpl) doConfirmMemory(ctx context.Context, profileID
 			return nil, err
 		}
 		s.incMetric(ctx, "promoted")
+		s.recordPromotionFunnelLatency(ctx, claim, "promoted")
 		s.emitAudit(ctx, profileID, claim.ClaimID, fact.FactID, "claim.confirm.accept")
 		return &ConfirmMemoryResult{
 			ClaimID:  claim.ClaimID,
@@ -367,6 +369,7 @@ func (s *promoteClaimServiceImpl) doPromote(ctx context.Context, profileID, clai
 
 	// Step 8: emit metric and audit for the successful promotion path.
 	s.incMetric(ctx, "promoted")
+	s.recordPromotionFunnelLatency(ctx, claim, "promoted")
 	s.emitAudit(ctx, profileID, claimID, fact.FactID, "claim.promote")
 	return fact, nil
 }
@@ -792,6 +795,19 @@ func (s *promoteClaimServiceImpl) incMetric(ctx context.Context, outcome string)
 	observability.RecordPromotionOutcome(ctx, s.metrics, outcome)
 }
 
+func (s *promoteClaimServiceImpl) recordPromotionFunnelLatency(ctx context.Context, claim *domain.Claim, outcome string) {
+	if claim == nil {
+		return
+	}
+	now := time.Now().UTC()
+	if !claim.RecordedAt.IsZero() {
+		observability.RecordMemoryFunnelLatency(ctx, s.metrics, "claim_to_promotion", now.Sub(claim.RecordedAt).Seconds(), outcome)
+	}
+	if claim.VerifiedAt != nil && !claim.VerifiedAt.IsZero() {
+		observability.RecordMemoryFunnelLatency(ctx, s.metrics, "verify_to_promotion", now.Sub(*claim.VerifiedAt).Seconds(), outcome)
+	}
+}
+
 // emitAudit writes a claim.promote audit entry. Any error is logged and
 // swallowed so audit failures never bubble up to the caller.
 func (s *promoteClaimServiceImpl) emitAudit(
@@ -873,6 +889,8 @@ RETURN
     c.modality                        AS modality,
     c.status                          AS status,
     c.entailment_verdict              AS entailment_verdict,
+    c.recorded_at                     AS recorded_at,
+    c.verified_at                     AS verified_at,
     c.extract_conf                    AS extract_conf,
     c.resolution_conf                 AS resolution_conf,
     c.source_quality                  AS source_quality,

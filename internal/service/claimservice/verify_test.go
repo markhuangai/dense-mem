@@ -165,6 +165,11 @@ func TestVerifyClaimEntailed(t *testing.T) {
 	// Metric: "verified".
 	require.Equal(t, 1, metrics.VerifyVerdictCount("verified"))
 	require.Equal(t, 0, metrics.VerifyVerdictCount("error"))
+	funnel := metrics.MemoryFunnelSamples()
+	require.Len(t, funnel, 1)
+	require.Equal(t, "claim_to_verify", funnel[0].Stage)
+	require.Equal(t, "verified", funnel[0].Outcome)
+	require.GreaterOrEqual(t, funnel[0].Seconds, 0.0)
 }
 
 // TestVerifyClaimContradicted verifies that a "contradicted" verdict transitions

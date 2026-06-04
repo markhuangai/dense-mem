@@ -31,6 +31,8 @@ type ScopedDiscoverabilityMetrics interface {
 	ObserveVerifierTokens(ctx context.Context, model string, promptTokens, completionTokens, totalTokens int64)
 	IncVerifyVerdictFor(ctx context.Context, model string, outcome string)
 	ObserveRecallLatencyFor(ctx context.Context, durationMs float64)
+	ObserveRecallFor(ctx context.Context, durationMs float64, resultCount int, outcome string)
+	ObserveMemoryFunnelLatencyFor(ctx context.Context, stage string, seconds float64, outcome string)
 	IncFragmentCreateFor(ctx context.Context, outcome string)
 	IncClaimCreateFor(ctx context.Context, outcome string, dedupeReason string)
 	IncPromotionOutcomeFor(ctx context.Context, outcome string)
@@ -57,6 +59,8 @@ type PrometheusMetrics struct {
 	verifierTokens  *prometheus.CounterVec
 	recallCalls     *prometheus.CounterVec
 	recallDur       *prometheus.HistogramVec
+	recallResults   *prometheus.HistogramVec
+	memoryFunnel    *prometheus.HistogramVec
 	fragmentCreates *prometheus.CounterVec
 	claimCreates    *prometheus.CounterVec
 	verifyVerdicts  *prometheus.CounterVec
@@ -126,6 +130,16 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 			Help:    "Recall request duration.",
 			Buckets: prometheus.DefBuckets,
 		}, identityLabels()),
+		recallResults: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "densemem_recall_results",
+			Help:    "Recall result count per request.",
+			Buckets: []float64{0, 1, 2, 5, 10, 20, 50, 100},
+		}, append(identityLabels(), "outcome")),
+		memoryFunnel: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "densemem_memory_funnel_latency_seconds",
+			Help:    "Latency between memory pipeline stages.",
+			Buckets: []float64{1, 5, 30, 60, 300, 900, 3600, 21600, 86400, 604800},
+		}, append(identityLabels(), "stage", "outcome")),
 		fragmentCreates: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "densemem_fragment_create_total",
 			Help: "Fragment create outcomes.",
@@ -174,7 +188,7 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		m.httpRequests, m.httpDuration,
 		m.embeddingCalls, m.embeddingErrors, m.embeddingDur, m.embeddingTokens,
 		m.verifierCalls, m.verifierDur, m.verifierTokens,
-		m.recallCalls, m.recallDur,
+		m.recallCalls, m.recallDur, m.recallResults, m.memoryFunnel,
 		m.fragmentCreates, m.claimCreates, m.verifyVerdicts, m.promotions,
 		m.promoteWait, m.retractions, m.revalidation,
 		m.communityRuns, m.communityDur, m.communityNodes,
@@ -233,6 +247,32 @@ func (m *PrometheusMetrics) ObserveRecallLatencyFor(ctx context.Context, duratio
 	labels := identityValues(ctx)
 	m.recallCalls.WithLabelValues(append(labels, "ok")...).Inc()
 	m.recallDur.WithLabelValues(labels...).Observe(durationMs / 1000)
+}
+
+func (m *PrometheusMetrics) ObserveRecall(durationMs float64, resultCount int, outcome string) {
+	m.ObserveRecallFor(context.Background(), durationMs, resultCount, outcome)
+}
+
+func (m *PrometheusMetrics) ObserveRecallFor(ctx context.Context, durationMs float64, resultCount int, outcome string) {
+	labels := identityValues(ctx)
+	outcome = normalizeLabel(outcome)
+	m.recallCalls.WithLabelValues(append(labels, outcome)...).Inc()
+	m.recallDur.WithLabelValues(labels...).Observe(durationMs / 1000)
+	if resultCount < 0 {
+		resultCount = 0
+	}
+	m.recallResults.WithLabelValues(append(labels, outcome)...).Observe(float64(resultCount))
+}
+
+func (m *PrometheusMetrics) ObserveMemoryFunnelLatency(stage string, seconds float64, outcome string) {
+	m.ObserveMemoryFunnelLatencyFor(context.Background(), stage, seconds, outcome)
+}
+
+func (m *PrometheusMetrics) ObserveMemoryFunnelLatencyFor(ctx context.Context, stage string, seconds float64, outcome string) {
+	if seconds < 0 {
+		return
+	}
+	m.memoryFunnel.WithLabelValues(append(identityValues(ctx), normalizeLabel(stage), normalizeLabel(outcome))...).Observe(seconds)
 }
 
 func (m *PrometheusMetrics) IncFragmentCreate(outcome string) {
@@ -439,6 +479,28 @@ func RecordRecallLatency(ctx context.Context, metrics DiscoverabilityMetrics, du
 		return
 	}
 	metrics.ObserveRecallLatency(durationMs)
+}
+
+func RecordRecall(ctx context.Context, metrics DiscoverabilityMetrics, durationMs float64, resultCount int, outcome string) {
+	if metrics == nil {
+		return
+	}
+	if scoped, ok := metrics.(ScopedDiscoverabilityMetrics); ok {
+		scoped.ObserveRecallFor(ctx, durationMs, resultCount, outcome)
+		return
+	}
+	metrics.ObserveRecall(durationMs, resultCount, outcome)
+}
+
+func RecordMemoryFunnelLatency(ctx context.Context, metrics DiscoverabilityMetrics, stage string, seconds float64, outcome string) {
+	if metrics == nil || seconds < 0 {
+		return
+	}
+	if scoped, ok := metrics.(ScopedDiscoverabilityMetrics); ok {
+		scoped.ObserveMemoryFunnelLatencyFor(ctx, stage, seconds, outcome)
+		return
+	}
+	metrics.ObserveMemoryFunnelLatency(stage, seconds, outcome)
 }
 
 func RecordFragmentCreate(ctx context.Context, metrics DiscoverabilityMetrics, outcome string) {

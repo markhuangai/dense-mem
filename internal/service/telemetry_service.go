@@ -219,11 +219,19 @@ func telemetryCardSpecs(scope TelemetryScope, window string) []telemetryQuerySpe
 		{ID: "verifier_tokens", Label: "Verifier tokens", Unit: "tokens", Query: telemetryIncrease("densemem_verifier_tokens_total", scope, map[string]string{"kind": "total"}, window)},
 		{ID: "embedding_tokens", Label: "Embedding tokens", Unit: "tokens", Query: telemetryIncrease("densemem_embedding_tokens_total", scope, map[string]string{"kind": "total"}, window)},
 		{ID: "recalls", Label: "Recall requests", Unit: "requests", Query: telemetryIncrease("densemem_recall_requests_total", scope, nil, window)},
+		{ID: "avg_recall_results", Label: "Avg recall results", Unit: "results", Query: telemetryHistogramAverage("densemem_recall_results", scope, nil, window, 1)},
 		{ID: "promotions", Label: "Promotions", Unit: "promotions", Query: telemetryIncrease("densemem_promotion_outcome_total", scope, map[string]string{"outcome": "promoted"}, window)},
 		{ID: "promotion_rate", Label: "Promotion rate", Unit: "percent", Query: telemetryPromotionRate(scope, window)},
 		{ID: "avg_http_latency", Label: "Avg HTTP latency", Unit: "ms", Query: telemetryAverageLatency("densemem_http_request_duration_seconds", scope, window)},
 		{ID: "avg_embedding_latency", Label: "Avg embedding latency", Unit: "ms", Query: telemetryAverageLatency("densemem_embedding_duration_seconds", scope, window)},
 		{ID: "avg_verifier_latency", Label: "Avg verifier latency", Unit: "ms", Query: telemetryAverageLatency("densemem_verifier_duration_seconds", scope, window)},
+		{ID: "avg_claim_verify_latency", Label: "Avg claim-to-verify", Unit: "ms", Query: telemetryHistogramAverage("densemem_memory_funnel_latency_seconds", scope, map[string]string{"stage": "claim_to_verify"}, window, 1000)},
+		{ID: "avg_claim_promotion_latency", Label: "Avg claim-to-promote", Unit: "ms", Query: telemetryHistogramAverage("densemem_memory_funnel_latency_seconds", scope, map[string]string{"stage": "claim_to_promotion"}, window, 1000)},
+		{ID: "avg_verify_promotion_latency", Label: "Avg verify-to-promote", Unit: "ms", Query: telemetryHistogramAverage("densemem_memory_funnel_latency_seconds", scope, map[string]string{"stage": "verify_to_promotion"}, window, 1000)},
+		{ID: "pending_claims", Label: "Pending claims", Unit: "claims", Query: telemetryGaugeSum("densemem_knowledge_backlog_items", scope, map[string]string{"item": "claim_candidate"})},
+		{ID: "validated_claims", Label: "Validated claims", Unit: "claims", Query: telemetryGaugeSum("densemem_knowledge_backlog_items", scope, map[string]string{"item": "claim_validated"})},
+		{ID: "disputed_claims", Label: "Disputed claims", Unit: "claims", Query: telemetryGaugeSum("densemem_knowledge_backlog_items", scope, map[string]string{"item": "claim_disputed"})},
+		{ID: "revalidation_backlog", Label: "Revalidation backlog", Unit: "facts", Query: telemetryGaugeSum("densemem_knowledge_backlog_items", scope, map[string]string{"item": "fact_needs_revalidation"})},
 	}
 }
 
@@ -235,6 +243,14 @@ func telemetrySeriesSpecs(selector string, rateWindow string) []telemetryQuerySp
 		{ID: "verifier_tokens", Label: "Verifier tokens", Unit: "tokens/s", Query: fmt.Sprintf("sum(rate(densemem_verifier_tokens_total%s[%s]))", telemetrySelectorWithRaw(selector, `kind="total"`), rateWindow)},
 		{ID: "recalls", Label: "Recall requests", Unit: "requests/s", Query: fmt.Sprintf("sum(rate(densemem_recall_requests_total%s[%s]))", selector, rateWindow)},
 		{ID: "promotions", Label: "Promotions", Unit: "promotions/s", Query: fmt.Sprintf("sum(rate(densemem_promotion_outcome_total%s[%s]))", telemetrySelectorWithRaw(selector, `outcome="promoted"`), rateWindow)},
+		{ID: "recall_results", Label: "Recall results", Unit: "results", Query: telemetryRangeHistogramAverage("densemem_recall_results", selector, "", rateWindow, 1)},
+		{ID: "claim_verify_latency", Label: "Claim-to-verify", Unit: "ms", Query: telemetryRangeHistogramAverage("densemem_memory_funnel_latency_seconds", selector, `stage="claim_to_verify"`, rateWindow, 1000)},
+		{ID: "claim_promotion_latency", Label: "Claim-to-promote", Unit: "ms", Query: telemetryRangeHistogramAverage("densemem_memory_funnel_latency_seconds", selector, `stage="claim_to_promotion"`, rateWindow, 1000)},
+		{ID: "verify_promotion_latency", Label: "Verify-to-promote", Unit: "ms", Query: telemetryRangeHistogramAverage("densemem_memory_funnel_latency_seconds", selector, `stage="verify_to_promotion"`, rateWindow, 1000)},
+		{ID: "pending_claims", Label: "Pending claims", Unit: "claims", Query: telemetryRangeGauge("densemem_knowledge_backlog_items", selector, `item="claim_candidate"`)},
+		{ID: "validated_claims", Label: "Validated claims", Unit: "claims", Query: telemetryRangeGauge("densemem_knowledge_backlog_items", selector, `item="claim_validated"`)},
+		{ID: "disputed_claims", Label: "Disputed claims", Unit: "claims", Query: telemetryRangeGauge("densemem_knowledge_backlog_items", selector, `item="claim_disputed"`)},
+		{ID: "revalidation_backlog", Label: "Revalidation backlog", Unit: "facts", Query: telemetryRangeGauge("densemem_knowledge_backlog_items", selector, `item="fact_needs_revalidation"`)},
 	}
 }
 
@@ -243,8 +259,27 @@ func telemetryIncrease(metric string, scope TelemetryScope, extra map[string]str
 }
 
 func telemetryAverageLatency(metric string, scope TelemetryScope, window string) string {
-	selector := telemetrySelector(scope, nil)
-	return fmt.Sprintf("1000 * sum(increase(%s_sum%s[%s])) / sum(increase(%s_count%s[%s]))", metric, selector, window, metric, selector, window)
+	return telemetryHistogramAverage(metric, scope, nil, window, 1000)
+}
+
+func telemetryHistogramAverage(metric string, scope TelemetryScope, extra map[string]string, window string, multiplier float64) string {
+	selector := telemetrySelector(scope, extra)
+	return fmt.Sprintf("%g * sum(increase(%s_sum%s[%s])) / sum(increase(%s_count%s[%s]))", multiplier, metric, selector, window, metric, selector, window)
+}
+
+func telemetryGaugeSum(metric string, scope TelemetryScope, extra map[string]string) string {
+	return fmt.Sprintf("sum(%s%s)", metric, telemetrySelector(scope, extra))
+}
+
+func telemetryRangeHistogramAverage(metric string, selector string, raw string, rateWindow string, multiplier float64) string {
+	if raw != "" {
+		selector = telemetrySelectorWithRaw(selector, raw)
+	}
+	return fmt.Sprintf("%g * sum(rate(%s_sum%s[%s])) / sum(rate(%s_count%s[%s]))", multiplier, metric, selector, rateWindow, metric, selector, rateWindow)
+}
+
+func telemetryRangeGauge(metric string, selector string, raw string) string {
+	return fmt.Sprintf("sum(%s%s)", metric, telemetrySelectorWithRaw(selector, raw))
 }
 
 func telemetryPromotionRate(scope TelemetryScope, window string) string {
@@ -451,11 +486,19 @@ func telemetryEmptyCards() []TelemetryCard {
 		{ID: "verifier_tokens", Label: "Verifier tokens", Unit: "tokens"},
 		{ID: "embedding_tokens", Label: "Embedding tokens", Unit: "tokens"},
 		{ID: "recalls", Label: "Recall requests", Unit: "requests"},
+		{ID: "avg_recall_results", Label: "Avg recall results", Unit: "results"},
 		{ID: "promotions", Label: "Promotions", Unit: "promotions"},
 		{ID: "promotion_rate", Label: "Promotion rate", Unit: "percent"},
 		{ID: "avg_http_latency", Label: "Avg HTTP latency", Unit: "ms"},
 		{ID: "avg_embedding_latency", Label: "Avg embedding latency", Unit: "ms"},
 		{ID: "avg_verifier_latency", Label: "Avg verifier latency", Unit: "ms"},
+		{ID: "avg_claim_verify_latency", Label: "Avg claim-to-verify", Unit: "ms"},
+		{ID: "avg_claim_promotion_latency", Label: "Avg claim-to-promote", Unit: "ms"},
+		{ID: "avg_verify_promotion_latency", Label: "Avg verify-to-promote", Unit: "ms"},
+		{ID: "pending_claims", Label: "Pending claims", Unit: "claims"},
+		{ID: "validated_claims", Label: "Validated claims", Unit: "claims"},
+		{ID: "disputed_claims", Label: "Disputed claims", Unit: "claims"},
+		{ID: "revalidation_backlog", Label: "Revalidation backlog", Unit: "facts"},
 	}
 }
 
@@ -468,5 +511,13 @@ func telemetryEmptySeries() []TelemetrySeries {
 		{ID: "verifier_tokens", Label: "Verifier tokens", Unit: "tokens/s", Points: emptyPoints},
 		{ID: "recalls", Label: "Recall requests", Unit: "requests/s", Points: emptyPoints},
 		{ID: "promotions", Label: "Promotions", Unit: "promotions/s", Points: emptyPoints},
+		{ID: "recall_results", Label: "Recall results", Unit: "results", Points: emptyPoints},
+		{ID: "claim_verify_latency", Label: "Claim-to-verify", Unit: "ms", Points: emptyPoints},
+		{ID: "claim_promotion_latency", Label: "Claim-to-promote", Unit: "ms", Points: emptyPoints},
+		{ID: "verify_promotion_latency", Label: "Verify-to-promote", Unit: "ms", Points: emptyPoints},
+		{ID: "pending_claims", Label: "Pending claims", Unit: "claims", Points: emptyPoints},
+		{ID: "validated_claims", Label: "Validated claims", Unit: "claims", Points: emptyPoints},
+		{ID: "disputed_claims", Label: "Disputed claims", Unit: "claims", Points: emptyPoints},
+		{ID: "revalidation_backlog", Label: "Revalidation backlog", Unit: "facts", Points: emptyPoints},
 	}
 }

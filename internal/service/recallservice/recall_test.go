@@ -291,7 +291,8 @@ func TestRecallService_HybridMergesFragmentOnly(t *testing.T) {
 		},
 	}
 	emb := &stubEmbedding{DimensionsResult: 4}
-	svc := NewRecallService(emb, sem, kw, &fakeHydrator{}, nil, nil)
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	svc := NewRecallService(emb, sem, kw, &fakeHydrator{}, nil, metrics)
 
 	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "test", Limit: 10})
 	if err != nil {
@@ -321,6 +322,10 @@ func TestRecallService_HybridMergesFragmentOnly(t *testing.T) {
 			}
 		}
 	}
+	samples := metrics.RecallSamples()
+	require.Len(t, samples, 1)
+	require.Equal(t, 3, samples[0].ResultCount)
+	require.Equal(t, "ok", samples[0].Outcome)
 }
 
 func TestRecallService_UsesBatchFragmentHydration(t *testing.T) {

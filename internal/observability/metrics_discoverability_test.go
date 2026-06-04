@@ -9,6 +9,8 @@ func TestNoopDiscoverabilityMetrics_NeverPanics(t *testing.T) {
 	m.ObserveEmbeddingLatency(10, "ok")
 	m.IncEmbeddingError("timeout")
 	m.ObserveRecallLatency(5)
+	m.ObserveRecall(5, 2, "ok")
+	m.ObserveMemoryFunnelLatency("claim_to_verify", 1, "verified")
 	m.IncFragmentCreate("created")
 }
 
@@ -55,6 +57,32 @@ func TestInMemoryDiscoverabilityMetrics_RecordsRecallLatency(t *testing.T) {
 	}
 }
 
+func TestInMemoryDiscoverabilityMetrics_RecordsRecallResults(t *testing.T) {
+	m := NewInMemoryDiscoverabilityMetrics()
+	m.ObserveRecall(42.0, 3, "ok")
+
+	samples := m.RecallSamples()
+	if len(samples) != 1 {
+		t.Fatalf("recall samples = %d; want 1", len(samples))
+	}
+	if samples[0].DurationMs != 42.0 || samples[0].ResultCount != 3 || samples[0].Outcome != "ok" {
+		t.Errorf("recall sample = %+v", samples[0])
+	}
+}
+
+func TestInMemoryDiscoverabilityMetrics_RecordsMemoryFunnelLatency(t *testing.T) {
+	m := NewInMemoryDiscoverabilityMetrics()
+	m.ObserveMemoryFunnelLatency("claim_to_verify", 2.5, "verified")
+
+	samples := m.MemoryFunnelSamples()
+	if len(samples) != 1 {
+		t.Fatalf("funnel samples = %d; want 1", len(samples))
+	}
+	if samples[0].Stage != "claim_to_verify" || samples[0].Seconds != 2.5 || samples[0].Outcome != "verified" {
+		t.Errorf("funnel sample = %+v", samples[0])
+	}
+}
+
 func TestInMemoryDiscoverabilityMetrics_RecordsFragmentCreateOutcomes(t *testing.T) {
 	m := NewInMemoryDiscoverabilityMetrics()
 	m.IncFragmentCreate("created")
@@ -77,6 +105,8 @@ func TestInMemoryDiscoverabilityMetrics_ConcurrentSafe(t *testing.T) {
 			m.ObserveEmbeddingLatency(1, "ok")
 			m.IncEmbeddingError("timeout")
 			m.ObserveRecallLatency(1)
+			m.ObserveRecall(1, 1, "ok")
+			m.ObserveMemoryFunnelLatency("claim_to_verify", 1, "verified")
 			m.IncFragmentCreate("created")
 		}()
 	}
@@ -218,6 +248,8 @@ func TestInMemoryKnowledgeMetrics(t *testing.T) {
 		m.IncVerifyVerdict("verified")
 		m.IncPromotionOutcome("promoted")
 		m.ObservePromoteLockWait(0.1)
+		m.ObserveRecall(1, 1, "ok")
+		m.ObserveMemoryFunnelLatency("claim_to_verify", 1, "verified")
 		m.IncFragmentRetract()
 		m.IncFactNeedsRevalidation()
 		m.IncCommunityDetect("ok")

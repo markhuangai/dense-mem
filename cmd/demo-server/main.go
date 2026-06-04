@@ -242,6 +242,7 @@ func main() {
 	)
 	if cfg.GetTelemetryEnabled() {
 		prometheusMetrics := observability.NewPrometheusMetrics()
+		prometheusMetrics.RegisterKnowledgeBacklogCollector(neo4jClient, logger)
 		discoverabilityMetrics = prometheusMetrics
 		telemetryHTTPMetrics = prometheusMetrics
 		telemetryScrapeHandler = prometheusMetrics.Handler()

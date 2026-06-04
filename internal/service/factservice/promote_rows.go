@@ -44,6 +44,10 @@ func rowToClaimForPromote(profileID string, row map[string]any) *domain.Claim {
 		}
 		return &v
 	}
+	timeVal := func(key string) time.Time {
+		v, _ := row[key].(time.Time)
+		return v
+	}
 
 	var supportedBy []string
 	if raw, ok := row["supported_by"].([]any); ok {
@@ -75,6 +79,8 @@ func rowToClaimForPromote(profileID string, row map[string]any) *domain.Claim {
 		Modality:                     domain.ClaimModality(strVal("modality")),
 		Status:                       domain.ClaimStatus(strVal("status")),
 		EntailmentVerdict:            domain.EntailmentVerdict(strVal("entailment_verdict")),
+		RecordedAt:                   timeVal("recorded_at"),
+		VerifiedAt:                   timePtr("verified_at"),
 		ExtractConf:                  float64Val("extract_conf"),
 		ResolutionConf:               float64Val("resolution_conf"),
 		SourceQuality:                float64Val("source_quality"),

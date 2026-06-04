@@ -277,15 +277,19 @@ func NewRecallServiceWithTiers(
 // `limit` hydrated fragments for the caller's profile.
 func (s *recallService) Recall(ctx context.Context, profileID string, req RecallRequest) ([]RecallHit, error) {
 	start := time.Now()
+	outcome := "ok"
+	resultCount := 0
 	defer func() {
-		observability.RecordRecallLatency(ctx, s.metrics, float64(time.Since(start).Milliseconds()))
+		observability.RecordRecall(ctx, s.metrics, float64(time.Since(start).Milliseconds()), resultCount, outcome)
 	}()
 
 	if profileID == "" {
+		outcome = "validation_error"
 		return nil, errors.New("recall: profile id is required")
 	}
 	query := strings.TrimSpace(req.Query)
 	if query == "" {
+		outcome = "validation_error"
 		return nil, errors.New("recall: query is required")
 	}
 
@@ -330,10 +334,12 @@ func (s *recallService) Recall(ctx context.Context, profileID string, req Recall
 
 	if semErr != nil {
 		s.logEmbeddingError(semErr)
+		outcome = "embedding_unavailable"
 		return nil, ErrEmbeddingUnavailable
 	}
 	if kwErr != nil {
 		s.logKeywordError(kwErr)
+		outcome = "keyword_unavailable"
 		return nil, ErrKeywordUnavailable
 	}
 
@@ -400,6 +406,7 @@ func (s *recallService) Recall(ctx context.Context, profileID string, req Recall
 	if len(all) > limit {
 		all = all[:limit]
 	}
+	resultCount = len(all)
 	return all, nil
 }
 

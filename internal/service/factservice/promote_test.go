@@ -146,6 +146,8 @@ var _ AuditEmitter = (*captureAuditEmitter)(nil)
 // for promotion evaluation. All gate thresholds for "likes" (multi_valued) are
 // satisfied by default; callers may override individual fields.
 func makeClaimRow(claimID, subject, predicate, object, status string) map[string]any {
+	now := time.Now().UTC()
+	verifiedAt := now.Add(-time.Minute)
 	return map[string]any{
 		"claim_id":                       claimID,
 		"subject":                        subject,
@@ -154,6 +156,8 @@ func makeClaimRow(claimID, subject, predicate, object, status string) map[string
 		"modality":                       string(domain.ModalityAssertion),
 		"status":                         status,
 		"entailment_verdict":             string(domain.VerdictEntailed),
+		"recorded_at":                    now.Add(-time.Hour),
+		"verified_at":                    verifiedAt,
 		"extract_conf":                   0.75,
 		"resolution_conf":                0.65,
 		"source_quality":                 0.8,
@@ -176,6 +180,14 @@ func makeClaimRowForSingleCurrent(claimID, subject, object string) map[string]an
 	row["resolution_conf"] = 0.80
 	row["source_quality"] = 0.95
 	return row
+}
+
+func promotionFunnelStages(samples []observability.MemoryFunnelSample) []string {
+	stages := make([]string, 0, len(samples))
+	for _, sample := range samples {
+		stages = append(stages, sample.Stage)
+	}
+	return stages
 }
 
 // newTestService returns a promoteClaimServiceImpl wired to the provided stubs.
@@ -242,6 +254,10 @@ func TestPromoteHappyPaths(t *testing.T) {
 		require.InDelta(t, 0.64, got.TruthScore, 1e-6)
 		// Metric emitted.
 		require.Equal(t, 1, metrics.PromotionOutcomeCount("promoted"))
+		funnel := metrics.MemoryFunnelSamples()
+		require.Len(t, funnel, 2)
+		require.Contains(t, promotionFunnelStages(funnel), "claim_to_promotion")
+		require.Contains(t, promotionFunnelStages(funnel), "verify_to_promotion")
 		// Audit emitted.
 		require.Len(t, audit.entries, 1)
 		require.Equal(t, "claim.promote", audit.entries[0].Operation)

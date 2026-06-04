@@ -232,6 +232,7 @@ func (s *verifyClaimServiceImpl) Verify(ctx context.Context, profileID string, c
 
 	// Step 8: emit metric for the successful verification path.
 	s.incVerifyMetric(ctx, outcome)
+	s.recordFunnelLatency(ctx, "claim_to_verify", claim.RecordedAt, now, outcome)
 
 	// Mutate the in-memory claim so the caller receives the post-verify state.
 	claim.Status = newStatus
@@ -250,6 +251,13 @@ func (s *verifyClaimServiceImpl) Verify(ctx context.Context, profileID string, c
 // backend is wired. Nil-safe: if metrics is nil the call is a no-op.
 func (s *verifyClaimServiceImpl) incVerifyMetric(ctx context.Context, outcome string) {
 	observability.RecordVerifyVerdict(ctx, s.metrics, s.verifierModel, outcome)
+}
+
+func (s *verifyClaimServiceImpl) recordFunnelLatency(ctx context.Context, stage string, from, to time.Time, outcome string) {
+	if from.IsZero() || to.IsZero() {
+		return
+	}
+	observability.RecordMemoryFunnelLatency(ctx, s.metrics, stage, to.Sub(from).Seconds(), outcome)
 }
 
 func writeSummaryContainsUpdates(summary neo4j.ResultSummary) bool {

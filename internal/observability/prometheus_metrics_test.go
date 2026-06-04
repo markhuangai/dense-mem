@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
@@ -32,6 +34,8 @@ func TestPrometheusMetrics_RecordsScopedMetrics(t *testing.T) {
 	metrics.ObserveVerifierTokens(ctx, "verify-model", 7, 8, 15)
 	metrics.IncVerifyVerdictFor(ctx, "verify-model", "verified")
 	metrics.ObserveRecallLatencyFor(ctx, 42)
+	metrics.ObserveRecallFor(ctx, 42, 3, "ok")
+	metrics.ObserveMemoryFunnelLatencyFor(ctx, "claim_to_verify", 2.5, "verified")
 	metrics.IncFragmentCreateFor(ctx, "created")
 	metrics.IncClaimCreateFor(ctx, "duplicate", "content_hash")
 	metrics.IncPromotionOutcomeFor(ctx, "promoted")
@@ -58,6 +62,9 @@ func TestPrometheusMetrics_RecordsScopedMetrics(t *testing.T) {
 		`kind="completion"`,
 		`densemem_verify_verdict_total{`,
 		`outcome="verified"`,
+		`densemem_recall_results_bucket{`,
+		`densemem_memory_funnel_latency_seconds_bucket{`,
+		`stage="claim_to_verify"`,
 		`densemem_claim_create_total{`,
 		`dedupe_reason="content_hash"`,
 		`densemem_retractions_total{`,
@@ -88,6 +95,8 @@ func TestPrometheusMetrics_RecordsUnknownLabelsAndFallbackHelpers(t *testing.T) 
 	metrics.ObserveEmbeddingLatency(1, "")
 	metrics.IncEmbeddingError("")
 	metrics.ObserveRecallLatency(2)
+	metrics.ObserveRecall(2, 0, "")
+	metrics.ObserveMemoryFunnelLatency("", 1, "")
 	metrics.IncFragmentCreate("")
 	metrics.IncClaimCreate("", "")
 	metrics.IncVerifyVerdict("")
@@ -105,6 +114,8 @@ func TestPrometheusMetrics_RecordsUnknownLabelsAndFallbackHelpers(t *testing.T) 
 	RecordVerifierTokens(ctx, metrics, "verify-model", 1, 1, 2)
 	RecordVerifyVerdict(ctx, metrics, "verify-model", "verified")
 	RecordRecallLatency(ctx, metrics, 1)
+	RecordRecall(ctx, metrics, 1, 2, "ok")
+	RecordMemoryFunnelLatency(ctx, metrics, "claim_to_promotion", 5, "promoted")
 	RecordFragmentCreate(ctx, metrics, "created")
 	RecordClaimCreate(ctx, metrics, "created", "")
 	RecordPromotionOutcome(ctx, metrics, "promoted")
@@ -120,6 +131,8 @@ func TestPrometheusMetrics_RecordsUnknownLabelsAndFallbackHelpers(t *testing.T) 
 	RecordVerifierTokens(ctx, fallback, "ignored", 1, 1, 2)
 	RecordVerifyVerdict(ctx, fallback, "ignored", "verified")
 	RecordRecallLatency(ctx, fallback, 30)
+	RecordRecall(ctx, fallback, 30, 4, "ok")
+	RecordMemoryFunnelLatency(ctx, fallback, "claim_to_verify", 3, "verified")
 	RecordFragmentCreate(ctx, fallback, "created")
 	RecordClaimCreate(ctx, fallback, "duplicate", "exact")
 	RecordPromotionOutcome(ctx, fallback, "promoted")
@@ -180,6 +193,71 @@ func TestPrometheusMetricLabelHelpers(t *testing.T) {
 	}
 }
 
+func TestKnowledgeBacklogCollector_ExportsScopedBacklogGauges(t *testing.T) {
+	reader := &fakeKnowledgeBacklogReader{samples: []knowledgeBacklogSample{
+		{TeamID: "team-1", ProfileID: "profile-1", Item: "claim_candidate", Count: 3},
+		{TeamID: "team-1", ProfileID: "profile-1", Item: "claim_validated", Count: 2},
+		{TeamID: "team-1", ProfileID: "profile-2", Item: "claim_disputed", Count: 1},
+		{TeamID: "team-1", ProfileID: "profile-1", Item: "fact_needs_revalidation", Count: 4},
+		{TeamID: "team-1", ProfileID: "profile-1", Item: "unbounded", Count: 999},
+	}}
+	metrics := NewPrometheusMetrics()
+	metrics.RegisterKnowledgeBacklogCollector(reader, nil)
+
+	body := scrapePrometheusMetrics(t, metrics)
+
+	for _, want := range []string{
+		`densemem_knowledge_backlog_items{item="claim_candidate",profile_id="profile-1",team_id="team-1"} 3`,
+		`densemem_knowledge_backlog_items{item="claim_validated",profile_id="profile-1",team_id="team-1"} 2`,
+		`densemem_knowledge_backlog_items{item="claim_disputed",profile_id="profile-2",team_id="team-1"} 1`,
+		`densemem_knowledge_backlog_items{item="fact_needs_revalidation",profile_id="profile-1",team_id="team-1"} 4`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("scraped metrics missing %q\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "unbounded") {
+		t.Fatalf("scraped metrics included unbounded item\n%s", body)
+	}
+}
+
+func TestKnowledgeBacklogCollector_UsesCachedSamplesOnReadFailure(t *testing.T) {
+	reader := &fakeKnowledgeBacklogReader{samples: []knowledgeBacklogSample{
+		{TeamID: "team-1", ProfileID: "profile-1", Item: "claim_candidate", Count: 3},
+	}}
+	collector := NewKnowledgeBacklogCollector(reader, nil)
+	collector.ttl = 0
+
+	samples, err := collector.samples()
+	if err != nil {
+		t.Fatalf("initial samples error: %v", err)
+	}
+	if len(samples) != 1 {
+		t.Fatalf("initial samples = %+v", samples)
+	}
+
+	reader.err = errors.New("neo4j unavailable")
+	samples, err = collector.samples()
+	if err != nil {
+		t.Fatalf("cached samples error: %v", err)
+	}
+	if len(samples) != 1 || samples[0].Count != 3 {
+		t.Fatalf("cached samples = %+v", samples)
+	}
+}
+
+type fakeKnowledgeBacklogReader struct {
+	samples []knowledgeBacklogSample
+	err     error
+}
+
+func (f *fakeKnowledgeBacklogReader) ExecuteRead(context.Context, neo4j.ManagedTransactionWork) (any, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.samples, nil
+}
+
 func scrapePrometheusMetrics(t *testing.T, metrics *PrometheusMetrics) string {
 	t.Helper()
 
@@ -204,8 +282,16 @@ func assertFallbackRecorded(t *testing.T, metrics *InMemoryDiscoverabilityMetric
 	if got := metrics.VerifyVerdictCount("verified"); got != 1 {
 		t.Fatalf("fallback verified verdicts = %d; want 1", got)
 	}
-	if got := len(metrics.RecallLatencies()); got != 1 {
-		t.Fatalf("fallback recall latencies = %d; want 1", got)
+	if got := len(metrics.RecallLatencies()); got != 2 {
+		t.Fatalf("fallback recall latencies = %d; want 2", got)
+	}
+	recalls := metrics.RecallSamples()
+	if len(recalls) != 1 || recalls[0].ResultCount != 4 || recalls[0].Outcome != "ok" {
+		t.Fatalf("fallback recall samples = %+v", recalls)
+	}
+	funnel := metrics.MemoryFunnelSamples()
+	if len(funnel) != 1 || funnel[0].Stage != "claim_to_verify" || funnel[0].Outcome != "verified" {
+		t.Fatalf("fallback funnel samples = %+v", funnel)
 	}
 	if got := metrics.FragmentCreateCount("created"); got != 1 {
 		t.Fatalf("fallback fragment creates = %d; want 1", got)
@@ -235,6 +321,8 @@ func exerciseNilMetricHelpers(ctx context.Context) {
 	RecordVerifierTokens(ctx, nil, "model", 1, 1, 2)
 	RecordVerifyVerdict(ctx, nil, "model", "verified")
 	RecordRecallLatency(ctx, nil, 1)
+	RecordRecall(ctx, nil, 1, 1, "ok")
+	RecordMemoryFunnelLatency(ctx, nil, "stage", 1, "ok")
 	RecordFragmentCreate(ctx, nil, "created")
 	RecordClaimCreate(ctx, nil, "created", "")
 	RecordPromotionOutcome(ctx, nil, "promoted")
