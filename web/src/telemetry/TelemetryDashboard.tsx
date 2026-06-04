@@ -78,18 +78,21 @@ export function TelemetryDashboard({
             ))}
           </div>
           <div className="telemetry-chart-grid" aria-label={`${title} charts`}>
-            {snapshot.series.map((series) => (
-              <div className="telemetry-chart" key={series.id}>
-                <div className="telemetry-chart-head">
-                  <h3>{series.label}</h3>
-                  <span>{series.unit}</span>
-                </div>
-                {series.points.length === 0 ? (
-                  <div className="chart-empty">No samples</div>
-                ) : (
+            {snapshot.series.map((series) => {
+              const samplePoints = Array.isArray(series.points) ? series.points : [];
+              const hasSamples = samplePoints.length > 0;
+              const chartPoints = telemetryChartPoints(samplePoints, snapshot.window.from, snapshot.window.to);
+
+              return (
+                <div className="telemetry-chart" key={series.id}>
+                  <div className="telemetry-chart-head">
+                    <h3>{series.label}</h3>
+                    <span>{series.unit}</span>
+                  </div>
                   <div className="telemetry-chart-body">
+                    {!hasSamples && <div className="chart-empty-label">No samples</div>}
                     <ResponsiveContainer width="100%" height="100%" minWidth={280} minHeight={180}>
-                      <LineChart data={series.points} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+                      <LineChart data={chartPoints} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
                         <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
                         <XAxis
                           dataKey="timestamp"
@@ -100,7 +103,8 @@ export function TelemetryDashboard({
                         <YAxis
                           width={44}
                           tick={{ fill: "var(--muted)", fontSize: 11 }}
-                          tickFormatter={(value) => compactNumber(Number(value))}
+                          tickFormatter={(value) => formatTelemetryAxisTick(Number(value), series.unit)}
+                          domain={telemetryYAxisDomain(samplePoints)}
                         />
                         <Tooltip
                           contentStyle={{
@@ -112,20 +116,22 @@ export function TelemetryDashboard({
                           labelFormatter={(label) => formatTelemetryTime(String(label))}
                           formatter={(value) => [formatTelemetryValue(Number(value), series.unit), series.label]}
                         />
-                        <Line
-                          type="monotone"
-                          dataKey="value"
-                          stroke="var(--accent)"
-                          strokeWidth={2}
-                          dot={false}
-                          isAnimationActive={false}
-                        />
+                        {hasSamples && (
+                          <Line
+                            type="monotone"
+                            dataKey="value"
+                            stroke="var(--accent)"
+                            strokeWidth={2}
+                            dot={false}
+                            isAnimationActive={false}
+                          />
+                        )}
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
-                )}
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
         </>
       )}
@@ -144,6 +150,77 @@ export function formatTelemetryValue(value: number, unit: string) {
     return value.toFixed(value >= 10 ? 1 : 2);
   }
   return compactNumber(value);
+}
+
+export function formatTelemetryAxisTick(value: number, unit: string) {
+  if (!Number.isFinite(value)) {
+    return "";
+  }
+  if (unit.includes("/s") || unit === "rps") {
+    return formatRateTick(value);
+  }
+  return compactNumber(value);
+}
+
+export function telemetryChartPoints(
+  points: TelemetrySnapshot["series"][number]["points"],
+  from: string,
+  to: string,
+) {
+  if (points.length > 0) {
+    return points;
+  }
+  return [
+    { timestamp: from, value: 0 },
+    { timestamp: to, value: 0 },
+  ];
+}
+
+function telemetryYAxisDomain(points: TelemetrySnapshot["series"][number]["points"]) {
+  if (points.length === 0) {
+    return [0, 1];
+  }
+  const values = points.map((point) => point.value).filter(Number.isFinite);
+  if (values.length === 0) {
+    return [0, 1];
+  }
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  if (min === max) {
+    if (max === 0) {
+      return [0, 1];
+    }
+    const padding = Math.abs(max) * 0.2;
+    return [Math.max(0, max - padding), max + padding];
+  }
+  return ["auto", "auto"];
+}
+
+function formatRateTick(value: number) {
+  if (value === 0) {
+    return "0";
+  }
+  const absValue = Math.abs(value);
+  if (absValue >= 10) {
+    return compactNumber(value);
+  }
+  if (absValue >= 1) {
+    return trimFixed(value, 1);
+  }
+  if (absValue >= 0.1) {
+    return trimFixed(value, 2);
+  }
+  if (absValue >= 0.01) {
+    return trimFixed(value, 3);
+  }
+  if (absValue >= 0.001) {
+    return trimFixed(value, 4);
+  }
+  return trimFixed(value, 5);
+}
+
+function trimFixed(value: number, digits: number) {
+  return value.toFixed(digits).replace(/\.?0+$/, "");
 }
 
 function compactNumber(value: number) {

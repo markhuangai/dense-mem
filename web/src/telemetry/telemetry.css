@@ -51,17 +51,19 @@
 }
 
 .telemetry-chart-body {
+  position: relative;
   height: calc(100% - 30px);
 }
 
-.chart-empty {
+.chart-empty-label {
+  position: absolute;
+  inset: 0;
   display: grid;
   place-items: center;
-  height: calc(100% - 28px);
   color: var(--muted);
-  border: 1px dashed var(--border-strong);
-  border-radius: 7px;
   font-size: 13px;
+  pointer-events: none;
+  z-index: 1;
 }
 
 @media (max-width: 980px) {
