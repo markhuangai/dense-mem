@@ -46,6 +46,7 @@ func clearEnv() {
 		"CONTROL_PORTAL_TOKEN",
 		"TELEMETRY_ENABLED",
 		"TELEMETRY_PROMETHEUS_URL",
+		"TELEMETRY_PROMETHEUS_JOB",
 		"TELEMETRY_QUERY_TIMEOUT_SECONDS",
 		"TELEMETRY_SCRAPE_TOKEN",
 	}
@@ -123,6 +124,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.ControlHTTPAddr != ":8090" {
 		t.Errorf("ControlHTTPAddr default = %q, want %q", cfg.ControlHTTPAddr, ":8090")
 	}
+	if cfg.TelemetryPrometheusJob != "" {
+		t.Errorf("TelemetryPrometheusJob default = %q, want empty", cfg.TelemetryPrometheusJob)
+	}
 }
 
 func TestLoadTelemetryConfig(t *testing.T) {
@@ -130,6 +134,7 @@ func TestLoadTelemetryConfig(t *testing.T) {
 	setRequiredEnv()
 	os.Setenv("TELEMETRY_ENABLED", "true")
 	os.Setenv("TELEMETRY_PROMETHEUS_URL", "http://prometheus:9090")
+	os.Setenv("TELEMETRY_PROMETHEUS_JOB", " dense-mem-demo ")
 	os.Setenv("TELEMETRY_QUERY_TIMEOUT_SECONDS", "12")
 	os.Setenv("TELEMETRY_SCRAPE_TOKEN", "scrape-secret")
 
@@ -143,6 +148,9 @@ func TestLoadTelemetryConfig(t *testing.T) {
 	}
 	if got := cfg.GetTelemetryPrometheusURL(); got != "http://prometheus:9090" {
 		t.Errorf("GetTelemetryPrometheusURL() = %q", got)
+	}
+	if got := cfg.GetTelemetryPrometheusJob(); got != "dense-mem-demo" {
+		t.Errorf("GetTelemetryPrometheusJob() = %q", got)
 	}
 	if got := cfg.GetTelemetryQueryTimeoutSeconds(); got != 12 {
 		t.Errorf("GetTelemetryQueryTimeoutSeconds() = %d, want 12", got)

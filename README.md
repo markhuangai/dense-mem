@@ -143,7 +143,9 @@ docker compose -f docker-compose.yml -f docker-compose.telemetry.yml up -d
 
 The overlay starts Prometheus on `127.0.0.1:9090`, retains 30 days of samples,
 passes `TELEMETRY_SCRAPE_TOKEN` to Prometheus as a scrape secret, and points
-Dense-Mem at `http://prometheus:9090` for telemetry queries.
+Dense-Mem at `http://prometheus:9090` for telemetry queries. It also sets
+`TELEMETRY_PROMETHEUS_JOB=dense-mem` so dashboards query only the `dense-mem`
+scrape job when Prometheus is shared.
 
 For the disposable demo image, keep the control portal disabled and use the
 demo telemetry overlay instead:
@@ -159,7 +161,8 @@ docker compose -f docker-compose.yml -f docker-compose.demo.telemetry.yml up -d
 ```
 
 The demo overlay scrapes the demo service at `demo:8091` on the private Compose
-network. Do not publish that metrics listener publicly.
+network and sets `TELEMETRY_PROMETHEUS_JOB=dense-mem-demo`. Do not publish that
+metrics listener publicly.
 
 ## Compare
 

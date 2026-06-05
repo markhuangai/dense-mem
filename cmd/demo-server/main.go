@@ -246,9 +246,10 @@ func main() {
 		discoverabilityMetrics = prometheusMetrics
 		telemetryHTTPMetrics = prometheusMetrics
 		telemetryScrapeHandler = prometheusMetrics.Handler()
-		telemetryReader = service.NewPrometheusTelemetryServiceWithLogger(
+		telemetryReader = service.NewPrometheusTelemetryServiceWithJobAndLogger(
 			cfg.GetTelemetryPrometheusURL(),
 			time.Duration(cfg.GetTelemetryQueryTimeoutSeconds())*time.Second,
+			cfg.GetTelemetryPrometheusJob(),
 			logger,
 		)
 	}

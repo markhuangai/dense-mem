@@ -54,7 +54,7 @@ func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {
 	}))
 	defer prom.Close()
 
-	svc := NewPrometheusTelemetryService(prom.URL, time.Second)
+	svc := NewPrometheusTelemetryServiceWithJobAndLogger(prom.URL, time.Second, "dense-mem-demo", nil)
 	svc.now = func() time.Time { return time.Unix(1770000060, 0).UTC() }
 
 	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{
@@ -75,6 +75,14 @@ func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {
 			}
 		}
 		return false
+	})
+	require.Condition(t, func() bool {
+		for _, query := range queries {
+			if !strings.Contains(query, `job="dense-mem-demo"`) {
+				return false
+			}
+		}
+		return len(queries) > 0
 	})
 	var httpErrorCardQuery string
 	for _, query := range queries {
@@ -124,7 +132,7 @@ func TestPrometheusTelemetryService_SnapshotTimeoutBoundsSequentialQueries(t *te
 	require.False(t, snapshot.Available)
 	require.Equal(t, "telemetry backend query failed", snapshot.Message)
 	require.Less(t, elapsed, 250*time.Millisecond)
-	require.Less(t, requests.Load(), int32(len(telemetryCardSpecs(TelemetryScope{Type: "system"}, "15m"))))
+	require.Less(t, requests.Load(), int32(len(telemetryCardSpecs(TelemetryScope{Type: "system"}, nil, "15m"))))
 }
 
 func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
@@ -146,6 +154,7 @@ func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
 	require.Equal(t, `{"team_id":"11111111-1111-4111-8111-111111111111"}`, mustMarshalStringMap(t, scopeLabels(scope)))
 	require.Equal(t, `{kind="total"}`, telemetrySelectorWithRaw("", `kind="total"`))
 	require.Equal(t, `{status_class=~"4xx|5xx"}`, telemetrySelector(TelemetryScope{}, map[string]string{"status_class": `~"4xx|5xx"`}))
+	require.Equal(t, `{job="dense-mem-demo",status_class=~"4xx|5xx"}`, telemetrySelector(TelemetryScope{}, mergeTelemetryLabels(map[string]string{"job": "dense-mem-demo"}, map[string]string{"status_class": `~"4xx|5xx"`})))
 
 	scope, err = normalizeTelemetryScope(TelemetryFilter{Scope: "self", TeamID: &teamID, ProfileID: &profileID})
 	require.NoError(t, err)

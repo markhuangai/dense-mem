@@ -96,6 +96,7 @@ type Config struct {
 	ControlPortalToken           string `json:"-"`
 	TelemetryEnabled             bool
 	TelemetryPrometheusURL       string
+	TelemetryPrometheusJob       string
 	TelemetryQueryTimeoutSeconds int
 	TelemetryScrapeToken         string `json:"-"`
 }
@@ -160,6 +161,7 @@ func (c *Config) GetControlHTTPAddr() string             { return c.ControlHTTPA
 func (c *Config) GetControlPortalToken() string          { return c.ControlPortalToken }
 func (c *Config) GetTelemetryEnabled() bool              { return c.TelemetryEnabled }
 func (c *Config) GetTelemetryPrometheusURL() string      { return c.TelemetryPrometheusURL }
+func (c *Config) GetTelemetryPrometheusJob() string      { return c.TelemetryPrometheusJob }
 func (c *Config) GetTelemetryQueryTimeoutSeconds() int {
 	if c.TelemetryQueryTimeoutSeconds > 0 {
 		return c.TelemetryQueryTimeoutSeconds
@@ -418,6 +420,7 @@ func Load() (Config, error) {
 		return cfg, err
 	}
 	cfg.TelemetryPrometheusURL = os.Getenv("TELEMETRY_PROMETHEUS_URL")
+	cfg.TelemetryPrometheusJob = strings.TrimSpace(os.Getenv("TELEMETRY_PROMETHEUS_JOB"))
 	cfg.TelemetryQueryTimeoutSeconds, err = parseIntOrDefault("TELEMETRY_QUERY_TIMEOUT_SECONDS", 5)
 	if err != nil {
 		return cfg, err
