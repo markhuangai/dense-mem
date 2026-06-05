@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/ownership"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	classificationSvc "github.com/markhuangai/dense-mem/internal/service/classification"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentcodec"
@@ -149,7 +150,7 @@ func (s *promoteClaimServiceImpl) Promote(ctx context.Context, profileID string,
 	})
 
 	if lockErr != nil {
-		s.incMetric("error")
+		s.incMetric(ctx, "error")
 		return nil, lockErr
 	}
 	return fact, nil
@@ -176,7 +177,7 @@ func (s *promoteClaimServiceImpl) ConfirmMemory(ctx context.Context, profileID s
 		return nil
 	})
 	if lockErr != nil {
-		s.incMetric("error")
+		s.incMetric(ctx, "error")
 		return nil, lockErr
 	}
 	return out, nil
@@ -185,6 +186,9 @@ func (s *promoteClaimServiceImpl) ConfirmMemory(ctx context.Context, profileID s
 func (s *promoteClaimServiceImpl) doConfirmMemory(ctx context.Context, profileID string, req ConfirmMemoryRequest) (*ConfirmMemoryResult, error) {
 	claim, err := s.loadClaim(ctx, profileID, req.ClaimID)
 	if err != nil {
+		return nil, err
+	}
+	if err := ownership.RequireOwner(ctx, claim.OwnerProfileID); err != nil {
 		return nil, err
 	}
 
@@ -204,11 +208,43 @@ func (s *promoteClaimServiceImpl) doConfirmMemory(ctx context.Context, profileID
 		}
 
 		conflicts := make([]*domain.Fact, 0, len(activeFacts))
+		alignments := make([]*domain.Fact, 0, len(activeFacts))
 		for _, fact := range activeFacts {
 			if fact.Object != claim.Object {
 				conflicts = append(conflicts, fact)
+			} else {
+				alignments = append(alignments, fact)
 			}
 		}
+		if actorOwnerID := ownership.ActorOwnerID(ctx); actorOwnerID != "" {
+			ownConflicts, foreignConflicts := splitFactsByOwner(conflicts, actorOwnerID)
+			_, foreignAlignments := splitFactsByOwner(alignments, actorOwnerID)
+			if len(ownConflicts) > 0 {
+				if err := supersedePath(ctx, s.db, profileID, ownConflicts, claim.ClaimID, claim.ValidFrom); err != nil {
+					return nil, fmt.Errorf("confirm memory: supersede owner conflicts: %w", err)
+				}
+			}
+			fact, err := s.createNewFact(ctx, profileID, claim, gate)
+			if err != nil {
+				return nil, err
+			}
+			if err := overlayPath(ctx, s.db, profileID, fact.FactID, foreignConflicts); err != nil {
+				return nil, fmt.Errorf("confirm memory: link overlays: %w", err)
+			}
+			if err := alignPath(ctx, s.db, profileID, fact.FactID, foreignAlignments); err != nil {
+				return nil, fmt.Errorf("confirm memory: link alignments: %w", err)
+			}
+			s.incMetric(ctx, "promoted")
+			s.recordPromotionFunnelLatency(ctx, claim, "promoted")
+			s.emitAudit(ctx, profileID, claim.ClaimID, fact.FactID, "claim.confirm.accept")
+			return &ConfirmMemoryResult{
+				ClaimID:  claim.ClaimID,
+				Decision: req.Decision,
+				Status:   "accepted",
+				Fact:     fact,
+			}, nil
+		}
+
 		if len(conflicts) > 0 {
 			if err := supersedePath(ctx, s.db, profileID, conflicts, claim.ClaimID, claim.ValidFrom); err != nil {
 				return nil, fmt.Errorf("confirm memory: supersede conflicts: %w", err)
@@ -219,7 +255,8 @@ func (s *promoteClaimServiceImpl) doConfirmMemory(ctx context.Context, profileID
 		if err != nil {
 			return nil, err
 		}
-		s.incMetric("promoted")
+		s.incMetric(ctx, "promoted")
+		s.recordPromotionFunnelLatency(ctx, claim, "promoted")
 		s.emitAudit(ctx, profileID, claim.ClaimID, fact.FactID, "claim.confirm.accept")
 		return &ConfirmMemoryResult{
 			ClaimID:  claim.ClaimID,
@@ -264,6 +301,9 @@ func (s *promoteClaimServiceImpl) doPromote(ctx context.Context, profileID, clai
 	if err != nil {
 		return nil, err
 	}
+	if err := ownership.RequireOwner(ctx, claim.OwnerProfileID); err != nil {
+		return nil, err
+	}
 
 	// Step 2: assert the claim is in a promotable state.
 	if claim.Status != domain.StatusValidated {
@@ -295,7 +335,7 @@ func (s *promoteClaimServiceImpl) doPromote(ctx context.Context, profileID, clai
 		return nil, err
 	}
 	if existing != nil {
-		s.incMetric("skipped")
+		s.incMetric(ctx, "skipped")
 		s.emitAudit(ctx, profileID, claimID, existing.FactID, "claim.promote.idempotent")
 		return existing, nil
 	}
@@ -328,7 +368,8 @@ func (s *promoteClaimServiceImpl) doPromote(ctx context.Context, profileID, clai
 	}
 
 	// Step 8: emit metric and audit for the successful promotion path.
-	s.incMetric("promoted")
+	s.incMetric(ctx, "promoted")
+	s.recordPromotionFunnelLatency(ctx, claim, "promoted")
 	s.emitAudit(ctx, profileID, claimID, fact.FactID, "claim.promote")
 	return fact, nil
 }
@@ -366,12 +407,49 @@ func (s *promoteClaimServiceImpl) handleSingleCurrent(
 	// Partition into same-object and differing-object active facts.
 	var sameObj []*domain.Fact
 	var differingObj []*domain.Fact
+	var foreignSameForAlignment []*domain.Fact
 	for _, f := range activeFacts {
 		if f.Object == claim.Object {
 			sameObj = append(sameObj, f)
 		} else {
 			differingObj = append(differingObj, f)
 		}
+	}
+
+	if actorOwnerID := ownership.ActorOwnerID(ctx); actorOwnerID != "" {
+		ownSame, foreignSame := splitFactsByOwner(sameObj, actorOwnerID)
+		ownDiffering, foreignDiffering := splitFactsByOwner(differingObj, actorOwnerID)
+		foreignSameForAlignment = foreignSame
+
+		if len(foreignDiffering) > 0 {
+			if err := comparablePath(ctx, s.db, profileID, claim.ClaimID, foreignDiffering); err != nil {
+				return nil, fmt.Errorf("promote: foreign conflict path: %w", err)
+			}
+			return nil, ErrPromotionDeferredDisputed
+		}
+
+		if len(ownDiffering) == 0 {
+			if len(ownSame) > 0 {
+				if err := sameObjectConfirmPath(ctx, s.db, profileID, ownSame); err != nil {
+					return nil, fmt.Errorf("promote: same-object owner confirm: %w", err)
+				}
+				if err := s.linkClaimToExistingFact(ctx, profileID, claim.ClaimID, ownSame[0].FactID); err != nil {
+					return nil, fmt.Errorf("promote: link claim to existing owner fact: %w", err)
+				}
+				return ownSame[0], nil
+			}
+			fact, err := s.createNewFact(ctx, profileID, claim, gate)
+			if err != nil {
+				return nil, err
+			}
+			if err := alignPath(ctx, s.db, profileID, fact.FactID, foreignSame); err != nil {
+				return nil, fmt.Errorf("promote: link same-object alignments: %w", err)
+			}
+			return fact, nil
+		}
+
+		sameObj = ownSame
+		differingObj = ownDiffering
 	}
 
 	if len(differingObj) == 0 {
@@ -434,7 +512,14 @@ func (s *promoteClaimServiceImpl) handleSingleCurrent(
 	if err := supersedePath(ctx, s.db, profileID, differingObj, claim.ClaimID, claim.ValidFrom); err != nil {
 		return nil, fmt.Errorf("promote: supersede path: %w", err)
 	}
-	return s.createNewFact(ctx, profileID, claim, gate)
+	fact, err := s.createNewFact(ctx, profileID, claim, gate)
+	if err != nil {
+		return nil, err
+	}
+	if err := alignPath(ctx, s.db, profileID, fact.FactID, foreignSameForAlignment); err != nil {
+		return nil, fmt.Errorf("promote: link same-object alignments: %w", err)
+	}
+	return fact, nil
 }
 
 // handleVersioned creates a new fact version and closes any older active
@@ -449,6 +534,35 @@ func (s *promoteClaimServiceImpl) handleVersioned(
 	activeFacts, err := findActiveFactsBySubjectPredicate(ctx, s.db, profileID, claim.Subject, claim.Predicate)
 	if err != nil {
 		return nil, fmt.Errorf("promote: find active versioned facts: %w", err)
+	}
+	if actorOwnerID := ownership.ActorOwnerID(ctx); actorOwnerID != "" {
+		ownedFacts, foreignFacts := splitFactsByOwner(activeFacts, actorOwnerID)
+		if len(ownedFacts) > 0 {
+			if err := supersedePath(ctx, s.db, profileID, ownedFacts, claim.ClaimID, claim.ValidFrom); err != nil {
+				return nil, fmt.Errorf("promote: versioned owner supersede path: %w", err)
+			}
+		}
+		fact, err := s.createNewFact(ctx, profileID, claim, gate)
+		if err != nil {
+			return nil, err
+		}
+
+		var alignedFacts []*domain.Fact
+		var overlaidFacts []*domain.Fact
+		for _, foreign := range foreignFacts {
+			if foreign.Object == claim.Object {
+				alignedFacts = append(alignedFacts, foreign)
+			} else {
+				overlaidFacts = append(overlaidFacts, foreign)
+			}
+		}
+		if err := overlayPath(ctx, s.db, profileID, fact.FactID, overlaidFacts); err != nil {
+			return nil, fmt.Errorf("promote: versioned link overlays: %w", err)
+		}
+		if err := alignPath(ctx, s.db, profileID, fact.FactID, alignedFacts); err != nil {
+			return nil, fmt.Errorf("promote: versioned link alignments: %w", err)
+		}
+		return fact, nil
 	}
 	if len(activeFacts) > 0 {
 		if err := supersedePath(ctx, s.db, profileID, activeFacts, claim.ClaimID, claim.ValidFrom); err != nil {
@@ -491,6 +605,8 @@ func (s *promoteClaimServiceImpl) createNewFact(
 	fact := &domain.Fact{
 		FactID:                       uuid.New().String(),
 		ProfileID:                    profileID,
+		OwnerProfileID:               firstNonEmpty(claim.OwnerProfileID, claim.CreatedByProfileID),
+		OwnerProfileName:             firstNonEmpty(claim.OwnerProfileName, claim.CreatedByProfileName),
 		CreatedByProfileID:           claim.CreatedByProfileID,
 		CreatedByProfileName:         claim.CreatedByProfileName,
 		PromotedByProfileID:          promoterID,
@@ -519,6 +635,8 @@ func (s *promoteClaimServiceImpl) createNewFact(
 			map[string]any{
 				"claimId":                      claim.ClaimID,
 				"factId":                       fact.FactID,
+				"ownerProfileId":               fact.OwnerProfileID,
+				"ownerProfileName":             fact.OwnerProfileName,
 				"createdByProfileId":           fact.CreatedByProfileID,
 				"createdByProfileName":         fact.CreatedByProfileName,
 				"promotedByProfileId":          fact.PromotedByProfileID,
@@ -541,8 +659,7 @@ func (s *promoteClaimServiceImpl) createNewFact(
 		if err != nil {
 			return fmt.Errorf("create fact node: %w", err)
 		}
-		_, err = result.Consume(ctx)
-		return err
+		return consumeRequiredPromotionWrite(ctx, result)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("promote: persist new fact: %w", err)
@@ -574,9 +691,26 @@ func (s *promoteClaimServiceImpl) linkClaimToExistingFact(
 		if err != nil {
 			return fmt.Errorf("link claim to existing fact: %w", err)
 		}
-		_, err = result.Consume(ctx)
-		return err
+		return consumeRequiredPromotionWrite(ctx, result)
 	})
+}
+
+func consumeRequiredPromotionWrite(ctx context.Context, result neo4j.ResultWithContext) error {
+	if result == nil {
+		return ErrClaimNotFound
+	}
+	summary, err := result.Consume(ctx)
+	if err != nil {
+		return err
+	}
+	if !promotionSummaryContainsUpdates(summary) {
+		return ErrClaimNotFound
+	}
+	return nil
+}
+
+func promotionSummaryContainsUpdates(summary neo4j.ResultSummary) bool {
+	return summary != nil && summary.Counters() != nil && summary.Counters().ContainsUpdates()
 }
 
 // loadClaim retrieves a Claim from Neo4j, including its supporting fragment
@@ -657,9 +791,20 @@ func evaluateGates(claim *domain.Claim, gate PromotionGate) error {
 }
 
 // incMetric bumps the promotion_outcome_total counter. Nil-safe.
-func (s *promoteClaimServiceImpl) incMetric(outcome string) {
-	if s.metrics != nil {
-		s.metrics.IncPromotionOutcome(outcome)
+func (s *promoteClaimServiceImpl) incMetric(ctx context.Context, outcome string) {
+	observability.RecordPromotionOutcome(ctx, s.metrics, outcome)
+}
+
+func (s *promoteClaimServiceImpl) recordPromotionFunnelLatency(ctx context.Context, claim *domain.Claim, outcome string) {
+	if claim == nil {
+		return
+	}
+	now := time.Now().UTC()
+	if !claim.RecordedAt.IsZero() {
+		observability.RecordMemoryFunnelLatency(ctx, s.metrics, "claim_to_promotion", now.Sub(claim.RecordedAt).Seconds(), outcome)
+	}
+	if claim.VerifiedAt != nil && !claim.VerifiedAt.IsZero() {
+		observability.RecordMemoryFunnelLatency(ctx, s.metrics, "verify_to_promotion", now.Sub(*claim.VerifiedAt).Seconds(), outcome)
 	}
 }
 
@@ -720,64 +865,6 @@ func fromStringMap(m map[string]string) map[string]any {
 	return out
 }
 
-// rowToClaimForPromote maps a Neo4j result row to the minimal domain.Claim
-// fields required for promotion. profileID is propagated from the caller
-// rather than read from the row (ScopedRead has already enforced isolation).
-func rowToClaimForPromote(profileID string, row map[string]any) *domain.Claim {
-	strVal := func(key string) string {
-		v, _ := row[key].(string)
-		return v
-	}
-	float64Val := func(key string) float64 {
-		v, _ := row[key].(float64)
-		return v
-	}
-	timePtr := func(key string) *time.Time {
-		v, ok := row[key].(time.Time)
-		if !ok {
-			return nil
-		}
-		return &v
-	}
-
-	var supportedBy []string
-	if raw, ok := row["supported_by"].([]any); ok {
-		supportedBy = make([]string, 0, len(raw))
-		for _, v := range raw {
-			if s, ok := v.(string); ok && s != "" {
-				supportedBy = append(supportedBy, s)
-			}
-		}
-	}
-
-	var classification map[string]any
-	if decoded := fragmentcodec.DecodeOptionalMap(row["classification"]); decoded != nil {
-		classification = decoded
-	} else if decoded := fragmentcodec.DecodeOptionalMap(row["classification_json"]); decoded != nil {
-		classification = decoded
-	}
-
-	return &domain.Claim{
-		ClaimID:                      strVal("claim_id"),
-		ProfileID:                    profileID,
-		CreatedByProfileID:           strVal("created_by_profile_id"),
-		CreatedByProfileName:         strVal("created_by_profile_name"),
-		Subject:                      strVal("subject"),
-		Predicate:                    strVal("predicate"),
-		Object:                       strVal("object"),
-		Modality:                     domain.ClaimModality(strVal("modality")),
-		Status:                       domain.ClaimStatus(strVal("status")),
-		EntailmentVerdict:            domain.EntailmentVerdict(strVal("entailment_verdict")),
-		ExtractConf:                  float64Val("extract_conf"),
-		ResolutionConf:               float64Val("resolution_conf"),
-		SourceQuality:                float64Val("source_quality"),
-		ValidFrom:                    timePtr("valid_from"),
-		Classification:               classification,
-		ClassificationLatticeVersion: strVal("classification_lattice_version"),
-		SupportedBy:                  supportedBy,
-	}
-}
-
 // ── Cypher query constants ──────────────────────────────────────────────────
 
 // loadClaimForPromoteCypher retrieves the Claim fields needed for promotion
@@ -792,6 +879,8 @@ MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
 OPTIONAL MATCH (c)-[:SUPPORTED_BY {team_id: $profileId}]->(sf:SourceFragment {team_id: $profileId})
 RETURN
     c.claim_id                        AS claim_id,
+    c.owner_profile_id                AS owner_profile_id,
+    c.owner_profile_name              AS owner_profile_name,
     c.created_by_profile_id           AS created_by_profile_id,
     c.created_by_profile_name         AS created_by_profile_name,
     c.subject                         AS subject,
@@ -800,6 +889,8 @@ RETURN
     c.modality                        AS modality,
     c.status                          AS status,
     c.entailment_verdict              AS entailment_verdict,
+    c.recorded_at                     AS recorded_at,
+    c.verified_at                     AS verified_at,
     c.extract_conf                    AS extract_conf,
     c.resolution_conf                 AS resolution_conf,
     c.source_quality                  AS source_quality,
@@ -818,6 +909,8 @@ const idempotencyCheckCypher = `
 MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})-[:PROMOTES_TO {team_id: $profileId}]->(f:Fact {team_id: $profileId})
 RETURN
     f.fact_id                        AS fact_id,
+    f.owner_profile_id               AS owner_profile_id,
+    f.owner_profile_name             AS owner_profile_name,
     f.created_by_profile_id          AS created_by_profile_id,
     f.created_by_profile_name        AS created_by_profile_name,
     f.promoted_by_profile_id         AS promoted_by_profile_id,
@@ -853,6 +946,8 @@ MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
 CREATE (f:Fact {
     team_id:                    $profileId,
     fact_id:                       $factId,
+    owner_profile_id:              $ownerProfileId,
+    owner_profile_name:            $ownerProfileName,
     created_by_profile_id:         $createdByProfileId,
     created_by_profile_name:       $createdByProfileName,
     promoted_by_profile_id:        $promotedByProfileId,

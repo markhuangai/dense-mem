@@ -255,6 +255,8 @@ func TestEnsureSchema_ClaimCompositeIndexes(t *testing.T) {
 		{"claim_team_idempotency_idx", IndexClaimProfileIdempotency},
 		{"claim_profile_content_hash_idx", IndexClaimProfileContentHash},
 		{"claim_profile_recorded_at_idx", IndexClaimProfileRecordedAt},
+		{"claim_owner_idempotency_idx", IndexClaimOwnerIdempotency},
+		{"claim_owner_content_hash_idx", IndexClaimOwnerContentHash},
 	}
 
 	for _, w := range wantIndexes {
@@ -310,7 +312,7 @@ func TestEnsureSchema_CrossProfileIsolation(t *testing.T) {
 	err := bs.EnsureSchema(ctx)
 	require.NoError(t, err)
 
-	// All 9 pipeline index names from Unit 12.
+	// Pipeline and owner index names must all keep team_id as the leading key.
 	newIndexNames := []string{
 		IndexClaimProfileClaimID,
 		IndexClaimProfileStatus,
@@ -318,9 +320,13 @@ func TestEnsureSchema_CrossProfileIsolation(t *testing.T) {
 		IndexClaimProfileSubjectPredicate,
 		IndexClaimProfileIdempotency,
 		IndexClaimProfileContentHash,
+		IndexClaimOwnerIdempotency,
+		IndexClaimOwnerContentHash,
 		IndexFactProfileStatus,
 		IndexFactProfileSubjectPredicateStatus,
 		IndexSourceFragmentProfileStatus,
+		IndexFragmentOwnerIdempotency,
+		IndexFragmentOwnerContentHash,
 	}
 
 	for _, idxName := range newIndexNames {
@@ -373,11 +379,17 @@ func TestEnsureSchema_BackfillsLegacyProfileIDBeforeTeamConstraints(t *testing.T
 	nodeBackfill := queryIndex(client.queries, "n.team_id IS NULL AND n.profile_id IS NOT NULL")
 	relationshipBackfill := queryIndex(client.queries, "r.team_id IS NULL AND r.profile_id IS NOT NULL")
 	endpointBackfill := queryIndex(client.queries, "a.team_id = b.team_id")
+	claimSupportCleanup := queryIndex(client.queries, "REMOVE c.supported_by")
+	fragmentRetractedAtBackfill := queryIndex(client.queries, "SET sf.retracted_at = sf.recorded_to")
+	factAuthorityCleanup := queryIndex(client.queries, "REMOVE f.authority_state")
 	constraint := queryIndex(client.queries, "CREATE CONSTRAINT supported_by_team_id_exists")
 
 	require.NotEqual(t, -1, nodeBackfill, "node profile_id backfill query must be issued")
 	require.NotEqual(t, -1, relationshipBackfill, "relationship profile_id backfill query must be issued")
 	require.NotEqual(t, -1, endpointBackfill, "relationship endpoint team_id backfill query must be issued")
+	require.NotEqual(t, -1, claimSupportCleanup, "claim supported_by property cleanup query must be issued")
+	require.NotEqual(t, -1, fragmentRetractedAtBackfill, "fragment retracted_at backfill query must be issued")
+	require.NotEqual(t, -1, factAuthorityCleanup, "fact authority_state cleanup query must be issued")
 	require.NotEqual(t, -1, constraint, "enterprise relationship constraint query must be issued")
 
 	assert.Less(t, nodeBackfill, constraint, "node backfill must run before relationship constraints")

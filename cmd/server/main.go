@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"log/slog"
+	nethttp "net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -22,6 +23,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/claimdedupe"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
+	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentdedupe"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
@@ -209,10 +211,28 @@ func main() {
 	// ========================================
 	// Discoverability: embedding, fragments, recall, registry, openapi
 	// ========================================
-	// Production startup uses the no-op metrics backend so request volume does
-	// not accumulate unbounded in-memory samples. Tests can still inject the
-	// in-memory recorder directly where assertions need captured observations.
+	// Production startup uses the no-op metrics backend unless telemetry is
+	// explicitly enabled. Tests can still inject the in-memory recorder directly
+	// where assertions need captured observations.
 	discoverabilityMetrics := observability.NoopDiscoverabilityMetrics()
+	var (
+		telemetryReader        service.TelemetryReader
+		telemetryHTTPMetrics   observability.HTTPMetrics
+		telemetryScrapeHandler nethttp.Handler
+	)
+	if cfg.GetTelemetryEnabled() {
+		prometheusMetrics := observability.NewPrometheusMetrics()
+		prometheusMetrics.RegisterKnowledgeBacklogCollector(neo4jClient, logger)
+		discoverabilityMetrics = prometheusMetrics
+		telemetryHTTPMetrics = prometheusMetrics
+		telemetryScrapeHandler = prometheusMetrics.Handler()
+		telemetryReader = service.NewPrometheusTelemetryServiceWithJobAndLogger(
+			cfg.GetTelemetryPrometheusURL(),
+			time.Duration(cfg.GetTelemetryQueryTimeoutSeconds())*time.Second,
+			cfg.GetTelemetryPrometheusJob(),
+			logger,
+		)
+	}
 	// Adapters translate between neo4j's ScopedReader and the fragment services'
 	// local ScopedReader, and between fragmentservice's AuditLogEntry and the
 	// canonical service.AuditLogEntry.
@@ -233,6 +253,7 @@ func main() {
 	)
 	if cfg.IsEmbeddingConfigured() {
 		openaiProvider := embedding.NewOpenAIEmbeddingProvider(&cfg, nil)
+		openaiProvider.SetMetrics(discoverabilityMetrics)
 		retryEmbedder = embedding.NewRetryEmbeddingProviderWithKey(openaiProvider, logger, cfg.GetAIAPIKey())
 		retryEmbedder.SetMetrics(discoverabilityMetrics)
 
@@ -283,6 +304,7 @@ func main() {
 	}
 	factGetSvc := factservice.NewGetFactService(profileScopeEnforcer)
 	factListSvc := factservice.NewListFactsService(profileScopeEnforcer)
+	factRetractSvc := factservice.NewRetractFactService(profileScopeEnforcer, factAuditor, slog.Default())
 	communityGetSvc := communityservice.NewGetCommunitySummaryService(neo4jClient)
 	communityListSvc := communityservice.NewListCommunitiesService(neo4jClient)
 	recallFactSearcher := recallservice.NewFactSearcher(profileScopeEnforcer)
@@ -295,8 +317,8 @@ func main() {
 	)
 	if verifierConfigured(&cfg) {
 		baseVerifier := verifier.NewOpenAIVerifier(&cfg, nil)
+		baseVerifier.SetMetrics(discoverabilityMetrics)
 		retryVerifier := verifier.NewRetryVerifier(baseVerifier, &cfg, logger)
-		retryVerifier.SetMetrics(discoverabilityMetrics)
 		skillPackConflictDecider = skillpackservice.NewOpenAIConflictDecider(&cfg, nil)
 
 		claimVerifyRegistrySvc = claimservice.NewVerifyClaimService(
@@ -345,6 +367,14 @@ func main() {
 		FactConfirm:    factConfirmSvc,
 		FactList:       factListSvc,
 	})
+	contextSvc := contextservice.New(contextservice.Dependencies{
+		Reader:      profileScopeEnforcer,
+		FactGet:     factGetSvc,
+		ClaimGet:    claimGetSvc,
+		FragmentGet: fragmentGetSvc,
+		Recall:      recallRegistrySvc,
+		Memory:      memorySvc,
+	})
 	skillPackSvc := skillpackservice.New(skillpackservice.Dependencies{
 		FragmentCreate:  fragmentCreateRegistrySvc,
 		ClaimCreate:     claimCreateSvc,
@@ -387,10 +417,12 @@ func main() {
 		FactPromote:                 factPromoteSvc,
 		FactGet:                     factGetSvc,
 		FactList:                    factListSvc,
+		FactRetract:                 factRetractSvc,
 		FragmentRetract:             fragmentRetractSvc,
 		CommunityDetect:             communityDetectRegistrySvc,
 		CommunityGet:                communityGetSvc,
 		CommunityList:               communityListSvc,
+		Context:                     contextSvc,
 		Memory:                      memorySvc,
 		SkillPack:                   skillPackSvc,
 	})
@@ -435,6 +467,7 @@ func main() {
 	claimPromoteHandler := handler.NewClaimPromoteHandler(factPromoteSvc)
 	factReadHandler := handler.NewFactReadHandler(factGetSvc)
 	factListHandler := handler.NewFactListHandler(factListSvc)
+	factRetractHandler := handler.NewFactRetractHandler(factRetractSvc)
 	communityReadHandler := handler.NewCommunityReadHandler(communityGetSvc)
 	communityListHandler := handler.NewCommunityListHandler(communityListSvc)
 	toolCatalogHandler := handler.NewToolCatalogHandler(toolRegistry)
@@ -494,6 +527,9 @@ func main() {
 		Config:           &cfg,
 		Logger:           logger,
 	}
+	if telemetryHTTPMetrics != nil {
+		protectedDeps.PostAuthMiddleware = append(protectedDeps.PostAuthMiddleware, middleware.TelemetryHTTPMiddleware(telemetryHTTPMetrics))
+	}
 
 	protectedHandlers := http.ProtectedHandlers{
 		APIKeySvc:       apiKeyService,
@@ -513,6 +549,7 @@ func main() {
 		ClaimPromote:    claimPromoteHandler.Handle,
 		FactGet:         factReadHandler.Handle,
 		FactList:        factListHandler.Handle,
+		FactRetract:     factRetractHandler.Handle,
 		CommunityRead:   communityReadHandler.Handle,
 		CommunityList:   communityListHandler.Handle,
 		ToolCatalog:     toolCatalogHandler.Handle,
@@ -527,18 +564,36 @@ func main() {
 	protectedHandlers.FragmentCreate = fragmentCreateHandler.Handle
 
 	http.RegisterProtectedRoutesWithHandlers(e, protectedDeps, protectedHandlers)
-	http.RegisterUserPortal(e, http.UserPortalDeps{
+	userPortalDeps := http.UserPortalDeps{
 		APIKeyRepo:   apiKeyRepo,
 		ProfileSvc:   profileService,
 		APIKeySvc:    apiKeyService,
 		RateLimitSvc: rateLimitService,
 		UsageMetrics: usageMetricsService,
+		Telemetry:    telemetryReader,
 		AuditSvc:     auditService,
 		SecuritySvc:  securityService,
 		Config:       &cfg,
-	})
+	}
+	if telemetryHTTPMetrics != nil {
+		userPortalDeps.ExtraMiddleware = append(userPortalDeps.ExtraMiddleware, middleware.TelemetryHTTPMiddleware(telemetryHTTPMetrics))
+	}
+	http.RegisterUserPortal(e, userPortalDeps)
 
-	controlServer, err := http.NewControlPortalServerWithMetrics(&cfg, profileService, apiKeyService, usageMetricsService, healthConfig, logger, securityService)
+	controlServer, err := http.NewControlPortalServerWithMetricsAndTelemetry(
+		&cfg,
+		profileService,
+		apiKeyService,
+		usageMetricsService,
+		http.ControlPortalTelemetry{
+			Reader:        telemetryReader,
+			ScrapeHandler: telemetryScrapeHandler,
+			ScrapeToken:   cfg.GetTelemetryScrapeToken(),
+		},
+		healthConfig,
+		logger,
+		securityService,
+	)
 	if err != nil {
 		log.Fatalf("failed to build control portal server: %v", err)
 	}

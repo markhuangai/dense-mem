@@ -171,6 +171,8 @@ RETURN c.claim_id                        AS claim_id,
        c.classification                  AS classification,
        c.classification_json             AS classification_json,
        c.classification_lattice_version  AS classification_lattice_version,
+       c.owner_profile_id                AS owner_profile_id,
+       c.owner_profile_name              AS owner_profile_name,
        [] AS supported_by
 ORDER BY c.recorded_at DESC, c.claim_id DESC
 LIMIT $limit

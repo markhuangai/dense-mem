@@ -71,6 +71,7 @@ func DefaultRoutes() []RouteDescriptor {
 		// --- Facts (AI-safe, knowledge pipeline Phase 4) ---
 		{Method: "GET", Path: "/api/v1/facts/{id}", OperationID: "getFact", ResponseSchema: "FactResponse", AISafe: true, Tags: []string{"knowledge"}, Description: "Fetch a single promoted fact by id."},
 		{Method: "GET", Path: "/api/v1/facts", OperationID: "listFacts", AISafe: true, Tags: []string{"knowledge"}, Description: "List promoted facts (keyset pagination)."},
+		{Method: "POST", Path: "/api/v1/facts/{id}/retract", OperationID: "retractFact", ResponseSchema: "RetractFactResponse", AISafe: true, Tags: []string{"knowledge"}, Description: "Soft-tombstone a fact; preserves graph lineage and validity timestamps."},
 		{Method: "GET", Path: "/api/v1/communities", OperationID: "listCommunities", ResponseSchema: "ListCommunitiesResponse", AISafe: true, Tags: []string{"community"}, Description: "List persisted community summaries for the caller's profile."},
 		{Method: "GET", Path: "/api/v1/communities/{id}", OperationID: "getCommunitySummary", ResponseSchema: "CommunityResponse", AISafe: true, Tags: []string{"community"}, Description: "Fetch one persisted community summary by community_id."},
 

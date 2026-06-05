@@ -174,11 +174,24 @@ func (r *APIKeyRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix str
 
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, rerr := tx.Raw(`
-			SELECT id, team_id, key_hash, COALESCE(key_suffix, ''), name, scopes, rate_limit, last_used_at, expires_at, created_at, revoked_at
-			FROM team_profiles
-			WHERE key_prefix = $1
-				AND revoked_at IS NULL
-				AND (expires_at IS NULL OR expires_at > NOW())
+			SELECT
+				k.id,
+				k.team_id,
+				COALESCE(t.name, ''),
+				k.key_hash,
+				COALESCE(k.key_suffix, ''),
+				k.name,
+				k.scopes,
+				k.rate_limit,
+				k.last_used_at,
+				k.expires_at,
+				k.created_at,
+				k.revoked_at
+			FROM team_profiles k
+			LEFT JOIN teams t ON t.id = k.team_id
+			WHERE k.key_prefix = $1
+				AND k.revoked_at IS NULL
+				AND (k.expires_at IS NULL OR k.expires_at > NOW())
 		`, prefix).Rows()
 		if rerr != nil {
 			return rerr
@@ -190,6 +203,7 @@ func (r *APIKeyRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix str
 			return rows.Scan(
 				&key.ID,
 				&teamID,
+				&key.TeamName,
 				&key.KeyHash,
 				&key.KeySuffix,
 				&key.Label,

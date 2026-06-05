@@ -225,7 +225,7 @@ func TestFragmentModel_HasAllRequiredFields(t *testing.T) {
 
 // TestFragmentStatus is the red-test gate for Unit 45.
 // It verifies that FragmentStatus type constants exist and that
-// Fragment carries Status and RecordedTo fields per AC-43.
+// Fragment carries Status and RetractedAt fields.
 func TestFragmentStatus(t *testing.T) {
 	t.Run("constant values are correct strings", func(t *testing.T) {
 		assert.Equal(t, FragmentStatus("active"), FragmentStatusActive)
@@ -252,6 +252,13 @@ func TestFragmentStatus(t *testing.T) {
 		f := Fragment{RecordedTo: &now}
 		require.NotNil(t, f.RecordedTo)
 		assert.True(t, now.Equal(*f.RecordedTo))
+	})
+
+	t.Run("fragment retracted_at field accepts a time pointer", func(t *testing.T) {
+		now := time.Now().UTC()
+		f := Fragment{RetractedAt: &now}
+		require.NotNil(t, f.RetractedAt)
+		assert.True(t, now.Equal(*f.RetractedAt))
 	})
 
 	t.Run("status serializes to json", func(t *testing.T) {
@@ -287,5 +294,16 @@ func TestFragmentStatus(t *testing.T) {
 		b, err := json.Marshal(f)
 		require.NoError(t, err)
 		assert.Contains(t, string(b), `"recorded_to"`)
+	})
+
+	t.Run("retracted_at serializes to json when set", func(t *testing.T) {
+		ts := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
+		f := Fragment{
+			FragmentID:  "test-id",
+			RetractedAt: &ts,
+		}
+		b, err := json.Marshal(f)
+		require.NoError(t, err)
+		assert.Contains(t, string(b), `"retracted_at"`)
 	})
 }

@@ -68,6 +68,7 @@ func (p *RetryEmbeddingProvider) SetMetrics(m observability.DiscoverabilityMetri
 // Embed returns the embedding for a single text with retry logic.
 func (p *RetryEmbeddingProvider) Embed(ctx context.Context, text string) ([]float32, string, error) {
 	var lastErr error
+	configuredModel := p.inner.ModelName()
 
 	for attempt := 0; attempt <= p.maxRetries; attempt++ {
 		attemptStart := time.Now()
@@ -75,12 +76,12 @@ func (p *RetryEmbeddingProvider) Embed(ctx context.Context, text string) ([]floa
 		dur := float64(time.Since(attemptStart).Milliseconds())
 
 		if err == nil {
-			p.metrics.ObserveEmbeddingLatency(dur, "ok")
+			observability.RecordEmbeddingLatency(ctx, p.metrics, model, dur, "ok")
 			return vec, model, nil
 		}
 
 		code := classifyEmbeddingError(err)
-		p.metrics.ObserveEmbeddingLatency(dur, code)
+		observability.RecordEmbeddingLatency(ctx, p.metrics, configuredModel, dur, code)
 
 		lastErr = err
 
@@ -107,7 +108,7 @@ func (p *RetryEmbeddingProvider) Embed(ctx context.Context, text string) ([]floa
 	}
 
 	// Final failure — increment error counter by classified code.
-	p.metrics.IncEmbeddingError(classifyEmbeddingError(lastErr))
+	observability.RecordEmbeddingError(ctx, p.metrics, configuredModel, classifyEmbeddingError(lastErr))
 
 	// Sanitize the error before returning
 	return nil, "", SanitizeError(lastErr, p.apiKey)
@@ -116,6 +117,7 @@ func (p *RetryEmbeddingProvider) Embed(ctx context.Context, text string) ([]floa
 // EmbedBatch returns embeddings for multiple texts with retry logic.
 func (p *RetryEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string) ([][]float32, string, error) {
 	var lastErr error
+	configuredModel := p.inner.ModelName()
 
 	for attempt := 0; attempt <= p.maxRetries; attempt++ {
 		attemptStart := time.Now()
@@ -123,12 +125,12 @@ func (p *RetryEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string)
 		dur := float64(time.Since(attemptStart).Milliseconds())
 
 		if err == nil {
-			p.metrics.ObserveEmbeddingLatency(dur, "ok")
+			observability.RecordEmbeddingLatency(ctx, p.metrics, model, dur, "ok")
 			return vecs, model, nil
 		}
 
 		code := classifyEmbeddingError(err)
-		p.metrics.ObserveEmbeddingLatency(dur, code)
+		observability.RecordEmbeddingLatency(ctx, p.metrics, configuredModel, dur, code)
 
 		lastErr = err
 
@@ -154,7 +156,7 @@ func (p *RetryEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string)
 		}
 	}
 
-	p.metrics.IncEmbeddingError(classifyEmbeddingError(lastErr))
+	observability.RecordEmbeddingError(ctx, p.metrics, configuredModel, classifyEmbeddingError(lastErr))
 
 	// Sanitize the error before returning
 	return nil, "", SanitizeError(lastErr, p.apiKey)

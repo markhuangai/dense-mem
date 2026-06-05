@@ -236,6 +236,9 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	if handlers.FactList != nil {
 		factGroup.GET("", handlers.FactList, middleware.RequireScopes("read"))
 	}
+	if handlers.FactRetract != nil {
+		factGroup.POST("/:id/retract", handlers.FactRetract, middleware.RequireScopes("write"))
+	}
 
 	// Community routes — canonical /api/v1/communities
 	communityGroup := e.Group("/api/v1/communities")
@@ -358,6 +361,8 @@ type ProtectedHandlers struct {
 	FactGet echo.HandlerFunc
 	// FactList handles GET /api/v1/facts (Phase 4 fact listing)
 	FactList echo.HandlerFunc
+	// FactRetract handles POST /api/v1/facts/:id/retract.
+	FactRetract echo.HandlerFunc
 	// FragmentRetract handles POST /api/v1/fragments/:id/retract (Phase 6 soft tombstone)
 	FragmentRetract echo.HandlerFunc
 	// CommunityRead handles GET /api/v1/communities/:id.

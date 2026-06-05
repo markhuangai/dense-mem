@@ -18,6 +18,8 @@ func TestSanitizeError_ScrubsAPIKey(t *testing.T) {
 	assert.NotContains(t, out.Error(), "sk-abc123")
 	assert.Contains(t, out.Error(), "[REDACTED]")
 	assert.Contains(t, out.Error(), "embedding provider error")
+	assert.ErrorIs(t, out, raw)
+	assert.Equal(t, raw, errors.Unwrap(out))
 }
 
 func TestSanitizeError_ScrubsBearerToken(t *testing.T) {

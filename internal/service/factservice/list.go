@@ -116,8 +116,14 @@ WHERE ($subject = '' OR f.subject = $subject)
     OR f.recorded_at < $cursorTime
     OR (f.recorded_at = $cursorTime AND f.fact_id < $cursorFactID)
   )
+OPTIONAL MATCH (incomingOverlay:Fact {team_id: $profileId, status: 'active'})-[:OVERLAYS {team_id: $profileId}]->(f)
+WITH f, count(DISTINCT incomingOverlay) AS incoming_overlay_count
+OPTIONAL MATCH (f)-[:OVERLAYS {team_id: $profileId}]->(outgoingOverlay:Fact {team_id: $profileId, status: 'active'})
+WITH f, incoming_overlay_count, count(DISTINCT outgoingOverlay) AS outgoing_overlay_count
 RETURN
     f.fact_id                        AS fact_id,
+    f.owner_profile_id               AS owner_profile_id,
+    f.owner_profile_name             AS owner_profile_name,
     f.created_by_profile_id          AS created_by_profile_id,
     f.created_by_profile_name        AS created_by_profile_name,
     f.promoted_by_profile_id         AS promoted_by_profile_id,
@@ -126,6 +132,11 @@ RETURN
     f.predicate                      AS predicate,
     f.object                         AS object,
     f.status                         AS status,
+    CASE
+        WHEN outgoing_overlay_count > 0 THEN 'overlay'
+        WHEN incoming_overlay_count > 0 THEN 'conflicted'
+        ELSE 'authoritative'
+    END                              AS authority_state,
     f.truth_score                    AS truth_score,
     f.valid_from                     AS valid_from,
     f.valid_to                       AS valid_to,

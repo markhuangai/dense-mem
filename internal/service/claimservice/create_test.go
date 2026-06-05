@@ -51,6 +51,7 @@ type stubClaimWriter struct {
 	written []map[string]any
 	queries []string
 	err     error
+	summary neo4j.ResultSummary
 }
 
 func (s *stubClaimWriter) ScopedWrite(
@@ -64,11 +65,50 @@ func (s *stubClaimWriter) ScopedWrite(
 	}
 	s.queries = append(s.queries, query)
 	s.written = append(s.written, params)
-	return nil, nil
+	if s.summary != nil {
+		return s.summary, nil
+	}
+	return stubResultSummary{counters: stubCounters{containsUpdates: true, propertiesSet: 1}}, nil
 }
 
 // Compile-time check: stubClaimWriter satisfies the package-internal interface.
 var _ claimWriter = (*stubClaimWriter)(nil)
+
+type stubResultSummary struct {
+	counters neo4j.Counters
+}
+
+func (s stubResultSummary) Server() neo4j.ServerInfo                  { return nil }
+func (s stubResultSummary) Query() neo4j.Query                        { return nil }
+func (s stubResultSummary) StatementType() neo4j.StatementType        { return neo4j.StatementTypeUnknown }
+func (s stubResultSummary) Counters() neo4j.Counters                  { return s.counters }
+func (s stubResultSummary) Plan() neo4j.Plan                          { return nil }
+func (s stubResultSummary) Profile() neo4j.ProfiledPlan               { return nil }
+func (s stubResultSummary) Notifications() []neo4j.Notification       { return nil }
+func (s stubResultSummary) GqlStatusObjects() []neo4j.GqlStatusObject { return nil }
+func (s stubResultSummary) ResultAvailableAfter() time.Duration       { return 0 }
+func (s stubResultSummary) ResultConsumedAfter() time.Duration        { return 0 }
+func (s stubResultSummary) Database() neo4j.DatabaseInfo              { return nil }
+
+type stubCounters struct {
+	containsUpdates bool
+	propertiesSet   int
+}
+
+func (c stubCounters) ContainsUpdates() bool       { return c.containsUpdates }
+func (c stubCounters) NodesCreated() int           { return 0 }
+func (c stubCounters) NodesDeleted() int           { return 0 }
+func (c stubCounters) RelationshipsCreated() int   { return 0 }
+func (c stubCounters) RelationshipsDeleted() int   { return 0 }
+func (c stubCounters) PropertiesSet() int          { return c.propertiesSet }
+func (c stubCounters) LabelsAdded() int            { return 0 }
+func (c stubCounters) LabelsRemoved() int          { return 0 }
+func (c stubCounters) IndexesAdded() int           { return 0 }
+func (c stubCounters) IndexesRemoved() int         { return 0 }
+func (c stubCounters) ConstraintsAdded() int       { return 0 }
+func (c stubCounters) ConstraintsRemoved() int     { return 0 }
+func (c stubCounters) SystemUpdates() int          { return 0 }
+func (c stubCounters) ContainsSystemUpdates() bool { return false }
 
 // TestCreateClaimDedupeAndDefaults covers AC-11 (deduplicate by idempotency key
 // and content hash) and AC-13 (server-side default population).
@@ -661,9 +701,17 @@ func TestCreateClaimActorAndAuditBranches(t *testing.T) {
 	})
 
 	require.NoError(t, err)
+	expectedHash := claimidentity.ContentHash("Alice", "likes", "coffee", nil)
+	expectedClaimID, idErr := claimidentity.ClaimIDFromHash(actorID.String(), expectedHash)
+	require.NoError(t, idErr)
+	require.Equal(t, expectedClaimID, got.Claim.ClaimID)
+	require.Equal(t, actorID.String(), got.Claim.OwnerProfileID)
+	require.Equal(t, "analyst", got.Claim.OwnerProfileName)
 	require.Equal(t, actorID.String(), got.Claim.CreatedByProfileID)
 	require.Equal(t, "analyst", got.Claim.CreatedByProfileName)
 	require.Len(t, writer.written, 1)
+	require.Equal(t, actorID.String(), writer.written[0]["ownerProfileId"])
+	require.Equal(t, "analyst", writer.written[0]["ownerProfileName"])
 	require.Equal(t, actorID.String(), writer.written[0]["createdByProfileId"])
 	require.Equal(t, "analyst", writer.written[0]["createdByProfileName"])
 }

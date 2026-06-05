@@ -57,3 +57,6 @@ temp/
 
 # Editor backups
 *.bak
+telemetry-scrape-token
+prometheus.yml
+.env.mcp

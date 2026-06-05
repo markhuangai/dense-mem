@@ -8,8 +8,8 @@ type FactStatus string
 const (
 	// FactStatusActive is a live, authoritative fact.
 	FactStatusActive FactStatus = "active"
-	// FactStatusRetracted is a fact that has been withdrawn and is no longer
-	// considered valid.
+	// FactStatusRetracted is a fact that has been withdrawn from current
+	// knowledge without implying the statement became false.
 	FactStatusRetracted FactStatus = "retracted"
 	// FactStatusSuperseded is a fact replaced by a newer promoted fact.
 	FactStatusSuperseded FactStatus = "superseded"
@@ -40,6 +40,8 @@ type Fact struct {
 	// Identity / scope
 	FactID                string `json:"fact_id"`
 	ProfileID             string `json:"team_id"`
+	OwnerProfileID        string `json:"owner_profile_id,omitempty"`
+	OwnerProfileName      string `json:"owner_profile_name,omitempty"`
 	CreatedByProfileID    string `json:"created_by_profile_id,omitempty"`
 	CreatedByProfileName  string `json:"created_by_profile_name,omitempty"`
 	PromotedByProfileID   string `json:"promoted_by_profile_id,omitempty"`
@@ -52,6 +54,8 @@ type Fact struct {
 
 	// Lifecycle
 	Status FactStatus `json:"status"`
+	// AuthorityState describes read-time authority after overlay/conflict checks.
+	AuthorityState string `json:"authority_state,omitempty"`
 
 	// Quality signal: a [0,1] score reflecting aggregate evidence weight.
 	TruthScore float64 `json:"truth_score"`

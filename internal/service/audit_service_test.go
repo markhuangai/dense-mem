@@ -406,12 +406,22 @@ func TestAuditServiceRedactsSecrets(t *testing.T) {
 			"token":            "bearer-token-abc",
 			"embedding":        []float32{0.1, 0.2, 0.3},
 			"embeddings":       [][]float32{{0.1, 0.2}, {0.3, 0.4}},
+			"Authorization":    "Bearer payload-token",
+			"nested":           map[string]interface{}{"access_token": "payload-access-token", "refreshToken": "payload-refresh-token", "safe": "keep"},
+			"clientSecret":     "payload-client-secret",
 			"team_id":          profileID,    // This should be preserved
 			"label":            "test-label", // This should be preserved
 		},
 		ActorRole:     "system",
 		ClientIP:      "192.168.1.1",
 		CorrelationID: "corr-redact-789",
+		Metadata: map[string]interface{}{
+			"source":        "unit",
+			"apiKey":        "metadata-api-key",
+			"Authorization": "Bearer metadata-token",
+			"clientSecret":  "metadata-client-secret",
+			"nested":        map[string]interface{}{"refresh_token": "metadata-refresh-token", "refreshToken": "metadata-refresh-token-camel", "safe": "keep"},
+		},
 	}
 
 	err = auditService.Append(ctx, entry)
@@ -419,11 +429,12 @@ func TestAuditServiceRedactsSecrets(t *testing.T) {
 
 	// Verify the entry was written and check the payload
 	var afterPayload string
+	var metadataPayload string
 	err = sqlDB.QueryRowContext(ctx, `
-		SELECT after_payload::text
-		FROM audit_log
-		WHERE entity_id = 'test-redaction-123'
-	`).Scan(&afterPayload)
+			SELECT after_payload::text, metadata::text
+			FROM audit_log
+			WHERE entity_id = 'test-redaction-123'
+		`).Scan(&afterPayload, &metadataPayload)
 	require.NoError(t, err, "should retrieve audit log entry")
 
 	// Verify sensitive fields are NOT present
@@ -434,13 +445,24 @@ func TestAuditServiceRedactsSecrets(t *testing.T) {
 	assert.NotContains(t, afterPayload, "secret-value", "secret should be redacted")
 	assert.NotContains(t, afterPayload, "password123", "password should be redacted")
 	assert.NotContains(t, afterPayload, "bearer-token-abc", "token should be redacted")
+	assert.NotContains(t, afterPayload, "Bearer payload-token", "authorization should be redacted")
+	assert.NotContains(t, afterPayload, "payload-access-token", "nested access token should be redacted")
+	assert.NotContains(t, afterPayload, "payload-refresh-token", "nested refreshToken should be redacted")
+	assert.NotContains(t, afterPayload, "payload-client-secret", "clientSecret should be redacted")
 	assert.NotContains(t, afterPayload, "0.1", "embedding should be redacted")
 	assert.NotContains(t, afterPayload, "embeddings", "embeddings field should be redacted")
+	assert.NotContains(t, metadataPayload, "metadata-api-key", "metadata apiKey should be redacted")
+	assert.NotContains(t, metadataPayload, "Bearer metadata-token", "metadata authorization should be redacted")
+	assert.NotContains(t, metadataPayload, "metadata-client-secret", "metadata clientSecret should be redacted")
+	assert.NotContains(t, metadataPayload, "metadata-refresh-token", "nested metadata refresh token should be redacted")
+	assert.NotContains(t, metadataPayload, "metadata-refresh-token-camel", "nested metadata refreshToken should be redacted")
 
 	// Verify legitimate fields ARE present
 	assert.Contains(t, afterPayload, "Test Key", "name should be preserved")
 	assert.Contains(t, afterPayload, profileID, "team_id should be preserved")
 	assert.Contains(t, afterPayload, "test-label", "label should be preserved")
+	assert.Contains(t, metadataPayload, "unit", "metadata source should be preserved")
+	assert.Contains(t, metadataPayload, "keep", "safe nested metadata should be preserved")
 }
 
 // verifyAuditEntry is a helper to verify audit log entries were created

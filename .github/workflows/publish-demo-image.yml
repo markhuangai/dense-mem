@@ -7,6 +7,12 @@ on:
         description: "Existing release or prerelease Git tag to publish, without refs/tags/ (example: v1.0.0 or v1.0.0-rc.0)"
         required: true
         type: string
+  workflow_call:
+    inputs:
+      tag:
+        description: "Existing release or prerelease Git tag to publish, without refs/tags/ (example: v1.0.0 or v1.0.0-rc.0)"
+        required: true
+        type: string
   push:
     tags:
       - "v*.*.*"
@@ -32,7 +38,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+          if [[ -n "${INPUT_TAG}" ]]; then
             tag="${INPUT_TAG}"
           else
             tag="${GITHUB_REF_NAME}"
@@ -65,7 +71,7 @@ jobs:
       - name: Log in to registry
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: echo "${GITHUB_TOKEN}" | docker login "${REGISTRY}" -u "${GITHUB_ACTOR}" --password-stdin
 
       - name: Set up Docker Buildx

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentcodec"
 	"github.com/markhuangai/dense-mem/internal/storage/neo4j"
 )
@@ -60,6 +61,7 @@ func (l *neo4jDedupeLookup) ByIdempotencyKey(ctx context.Context, profileID, key
 	query := `
 		MATCH (sf:SourceFragment {team_id: $profileId, idempotency_key: $key})
 		WHERE ` + neo4j.FragmentActiveFilter + `
+		  AND ($ownerProfileId = '' OR coalesce(sf.owner_profile_id, sf.created_by_profile_id, '') = $ownerProfileId)
 		RETURN sf.fragment_id AS fragment_id,
 		       sf.team_id AS team_id,
 		       sf.content AS content,
@@ -75,6 +77,8 @@ func (l *neo4jDedupeLookup) ByIdempotencyKey(ctx context.Context, profileID, key
 		       sf.source_quality AS source_quality,
 		       sf.classification AS classification,
 		       sf.classification_json AS classification_json,
+		       sf.owner_profile_id AS owner_profile_id,
+		       sf.owner_profile_name AS owner_profile_name,
 		       sf.created_by_profile_id AS created_by_profile_id,
 		       sf.created_by_profile_name AS created_by_profile_name,
 		       sf.created_at AS created_at,
@@ -82,7 +86,8 @@ func (l *neo4jDedupeLookup) ByIdempotencyKey(ctx context.Context, profileID, key
 		LIMIT 1
 	`
 	params := map[string]any{
-		"key": key,
+		"key":            key,
+		"ownerProfileId": ownerProfileIDFromContext(ctx),
 	}
 
 	_, results, err := l.reader.ScopedRead(ctx, profileID, query, params)
@@ -106,6 +111,7 @@ func (l *neo4jDedupeLookup) ByContentHash(ctx context.Context, profileID, hash s
 	query := `
 		MATCH (sf:SourceFragment {team_id: $profileId, content_hash: $hash})
 		WHERE ` + neo4j.FragmentActiveFilter + `
+		  AND ($ownerProfileId = '' OR coalesce(sf.owner_profile_id, sf.created_by_profile_id, '') = $ownerProfileId)
 		RETURN sf.fragment_id AS fragment_id,
 		       sf.team_id AS team_id,
 		       sf.content AS content,
@@ -121,6 +127,8 @@ func (l *neo4jDedupeLookup) ByContentHash(ctx context.Context, profileID, hash s
 		       sf.source_quality AS source_quality,
 		       sf.classification AS classification,
 		       sf.classification_json AS classification_json,
+		       sf.owner_profile_id AS owner_profile_id,
+		       sf.owner_profile_name AS owner_profile_name,
 		       sf.created_by_profile_id AS created_by_profile_id,
 		       sf.created_by_profile_name AS created_by_profile_name,
 		       sf.created_at AS created_at,
@@ -128,7 +136,8 @@ func (l *neo4jDedupeLookup) ByContentHash(ctx context.Context, profileID, hash s
 		LIMIT 1
 	`
 	params := map[string]any{
-		"hash": hash,
+		"hash":           hash,
+		"ownerProfileId": ownerProfileIDFromContext(ctx),
 	}
 
 	_, results, err := l.reader.ScopedRead(ctx, profileID, query, params)
@@ -153,11 +162,23 @@ func mapToFragment(m map[string]any) *domain.Fragment {
 	if v, ok := m["team_id"]; ok {
 		fragment.ProfileID, _ = v.(string)
 	}
+	if v, ok := m["owner_profile_id"]; ok {
+		fragment.OwnerProfileID, _ = v.(string)
+	}
+	if v, ok := m["owner_profile_name"]; ok {
+		fragment.OwnerProfileName, _ = v.(string)
+	}
 	if v, ok := m["created_by_profile_id"]; ok {
 		fragment.CreatedByProfileID, _ = v.(string)
 	}
 	if v, ok := m["created_by_profile_name"]; ok {
 		fragment.CreatedByProfileName, _ = v.(string)
+	}
+	if fragment.OwnerProfileID == "" {
+		fragment.OwnerProfileID = fragment.CreatedByProfileID
+	}
+	if fragment.OwnerProfileName == "" {
+		fragment.OwnerProfileName = fragment.CreatedByProfileName
 	}
 	if v, ok := m["content"]; ok {
 		fragment.Content, _ = v.(string)
@@ -220,4 +241,9 @@ func mapToFragment(m map[string]any) *domain.Fragment {
 	}
 
 	return fragment
+}
+
+func ownerProfileIDFromContext(ctx context.Context) string {
+	ownerID, _, _ := requestctx.ActorOwner(ctx)
+	return ownerID
 }

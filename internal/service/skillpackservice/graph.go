@@ -290,7 +290,6 @@ func (g *graphOps) supersedeFacts(ctx context.Context, profileID string, factIDs
 			MATCH (f:Fact {team_id: $profileId, fact_id: factId})
 			SET f.status = 'superseded',
 			    f.recorded_to = $now,
-			    f.valid_to = $now,
 			    f.import_superseded_by_import_id = $importId
 			WITH f
 			MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})

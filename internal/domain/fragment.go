@@ -31,6 +31,8 @@ const (
 type Fragment struct {
 	FragmentID           string         `json:"id"` // API field "id" maps to stored fragment_id
 	ProfileID            string         `json:"team_id"`
+	OwnerProfileID       string         `json:"owner_profile_id,omitempty"`
+	OwnerProfileName     string         `json:"owner_profile_name,omitempty"`
 	CreatedByProfileID   string         `json:"created_by_profile_id,omitempty"`
 	CreatedByProfileName string         `json:"created_by_profile_name,omitempty"`
 	Content              string         `json:"content"`
@@ -52,11 +54,12 @@ type Fragment struct {
 	// Status tracks the lifecycle state of the fragment (active or retracted).
 	// Defaults to active on creation. Hard-delete behavior is handled separately.
 	Status FragmentStatus `json:"status,omitempty"`
-	// RecordedTo marks the point in time up to which this fragment's content has been
-	// processed into downstream claims/facts. Nil means not yet recorded.
-	RecordedTo *time.Time `json:"recorded_to,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	// RecordedTo is retained for backward-compatible responses on legacy rows.
+	// New retractions use RetractedAt.
+	RecordedTo  *time.Time `json:"recorded_to,omitempty"`
+	RetractedAt *time.Time `json:"retracted_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 	// Embedding vector deliberately NOT included in default read response (AC-28).
 }
 

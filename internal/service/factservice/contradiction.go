@@ -31,6 +31,8 @@ MATCH (f:Fact {team_id: $profileId, subject: $subject, predicate: $predicate})
 WHERE f.status = 'active'
 RETURN
     f.fact_id                        AS fact_id,
+    f.owner_profile_id               AS owner_profile_id,
+    f.owner_profile_name             AS owner_profile_name,
     f.created_by_profile_id          AS created_by_profile_id,
     f.created_by_profile_name        AS created_by_profile_name,
     f.promoted_by_profile_id         AS promoted_by_profile_id,
@@ -39,6 +41,7 @@ RETURN
     f.predicate                      AS predicate,
     f.object                         AS object,
     f.status                         AS status,
+    'authoritative'                  AS authority_state,
     f.truth_score                    AS truth_score,
     f.valid_from                     AS valid_from,
     f.valid_to                       AS valid_to,
@@ -121,12 +124,13 @@ func sameObjectConfirmPath(
 	})
 }
 
-// supersedePath marks each oldFact as superseded, closes its recorded_to and
-// valid_to timestamps, and creates a SUPERSEDED_BY relationship from the old
-// Fact to the new Claim. The relationship carries team_id for isolation.
+// supersedePath marks each oldFact as superseded, closes its recorded_to
+// timestamp, and creates a SUPERSEDED_BY relationship from the old Fact to the
+// new Claim. The relationship carries team_id for isolation.
 //
-// valid_to is set to newClaimValidFrom when non-nil, otherwise to now. This
-// preserves the temporal validity chain across supersessions.
+// valid_to is set only when the replacement claim has an explicit valid_from.
+// Without that bound, supersession changes current knowledge but does not prove
+// the old fact stopped being true at the write time.
 //
 // Profile isolation: every RunScoped call injects $profileId.
 func supersedePath(
@@ -138,7 +142,7 @@ func supersedePath(
 	newClaimValidFrom *time.Time,
 ) error {
 	now := time.Now().UTC()
-	validTo := now
+	var validTo any
 	if newClaimValidFrom != nil {
 		validTo = *newClaimValidFrom
 	}
@@ -149,8 +153,10 @@ func supersedePath(
 			result, err := neo4jstorage.RunScoped(ctx, tx, profileID,
 				`MATCH (f:Fact {team_id: $profileId, fact_id: $factId})
                  SET f.status     = $status,
-                     f.recorded_to = $recordedTo,
-                     f.valid_to   = $validTo`,
+                     f.recorded_to = $recordedTo
+                 FOREACH (_ IN CASE WHEN $validTo IS NULL THEN [] ELSE [1] END |
+                     SET f.valid_to = $validTo
+                 )`,
 				map[string]any{
 					"factId":     old.FactID,
 					"status":     string(domain.FactStatusSuperseded),
@@ -180,6 +186,80 @@ func supersedePath(
 			}
 			if _, err := result.Consume(ctx); err != nil {
 				return fmt.Errorf("SUPERSEDED_BY consume %s: %w", old.FactID, err)
+			}
+		}
+		return nil
+	})
+}
+
+// overlayPath links a newly-created owner fact to conflicting facts owned by
+// other profiles. It records the relationship without mutating the target facts.
+func overlayPath(
+	ctx context.Context,
+	db contradictionTxRunner,
+	profileID string,
+	newFactID string,
+	overlaidFacts []*domain.Fact,
+) error {
+	if len(overlaidFacts) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	return db.ScopedWriteTx(ctx, profileID, func(tx neo4j.ManagedTransaction) error {
+		for _, old := range overlaidFacts {
+			result, err := neo4jstorage.RunScoped(ctx, tx, profileID,
+				`MATCH (overlay:Fact {team_id: $profileId, fact_id: $newFactId}),
+                       (base:Fact {team_id: $profileId, fact_id: $oldFactId})
+                 MERGE (overlay)-[r:OVERLAYS {team_id: $profileId}]->(base)
+                 ON CREATE SET r.created_at = $createdAt`,
+				map[string]any{
+					"newFactId": newFactID,
+					"oldFactId": old.FactID,
+					"createdAt": now,
+				},
+			)
+			if err != nil {
+				return fmt.Errorf("create OVERLAYS for fact %s: %w", old.FactID, err)
+			}
+			if _, err := result.Consume(ctx); err != nil {
+				return fmt.Errorf("OVERLAYS consume %s: %w", old.FactID, err)
+			}
+		}
+		return nil
+	})
+}
+
+// alignPath links a newly-created owner fact to same-object facts owned by
+// other profiles. It records agreement without updating the target fact.
+func alignPath(
+	ctx context.Context,
+	db contradictionTxRunner,
+	profileID string,
+	newFactID string,
+	alignedFacts []*domain.Fact,
+) error {
+	if len(alignedFacts) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	return db.ScopedWriteTx(ctx, profileID, func(tx neo4j.ManagedTransaction) error {
+		for _, aligned := range alignedFacts {
+			result, err := neo4jstorage.RunScoped(ctx, tx, profileID,
+				`MATCH (source:Fact {team_id: $profileId, fact_id: $newFactId}),
+                       (target:Fact {team_id: $profileId, fact_id: $alignedFactId})
+                 MERGE (source)-[r:ALIGNS_WITH {team_id: $profileId}]->(target)
+                 ON CREATE SET r.created_at = $createdAt`,
+				map[string]any{
+					"newFactId":     newFactID,
+					"alignedFactId": aligned.FactID,
+					"createdAt":     now,
+				},
+			)
+			if err != nil {
+				return fmt.Errorf("create ALIGNS_WITH for fact %s: %w", aligned.FactID, err)
+			}
+			if _, err := result.Consume(ctx); err != nil {
+				return fmt.Errorf("ALIGNS_WITH consume %s: %w", aligned.FactID, err)
 			}
 		}
 		return nil

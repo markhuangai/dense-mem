@@ -31,6 +31,7 @@ type stubPromoteDB struct {
 	readErr          error
 	writeTxErr       error
 	callCount        int
+	writeTxCount     int
 	lastWriteProfile string
 }
 
@@ -56,11 +57,49 @@ func (s *stubPromoteDB) ScopedWriteTx(
 	profileID string,
 	_ func(tx neo4j.ManagedTransaction) error,
 ) error {
+	s.writeTxCount++
 	s.lastWriteProfile = profileID
 	return s.writeTxErr
 }
 
 var _ promoteDB = (*stubPromoteDB)(nil)
+
+type promotionStubResultSummary struct {
+	counters neo4j.Counters
+}
+
+func (s promotionStubResultSummary) Server() neo4j.ServerInfo { return nil }
+func (s promotionStubResultSummary) Query() neo4j.Query       { return nil }
+func (s promotionStubResultSummary) StatementType() neo4j.StatementType {
+	return neo4j.StatementTypeUnknown
+}
+func (s promotionStubResultSummary) Counters() neo4j.Counters                  { return s.counters }
+func (s promotionStubResultSummary) Plan() neo4j.Plan                          { return nil }
+func (s promotionStubResultSummary) Profile() neo4j.ProfiledPlan               { return nil }
+func (s promotionStubResultSummary) Notifications() []neo4j.Notification       { return nil }
+func (s promotionStubResultSummary) GqlStatusObjects() []neo4j.GqlStatusObject { return nil }
+func (s promotionStubResultSummary) ResultAvailableAfter() time.Duration       { return 0 }
+func (s promotionStubResultSummary) ResultConsumedAfter() time.Duration        { return 0 }
+func (s promotionStubResultSummary) Database() neo4j.DatabaseInfo              { return nil }
+
+type promotionStubCounters struct {
+	containsUpdates bool
+}
+
+func (c promotionStubCounters) ContainsUpdates() bool       { return c.containsUpdates }
+func (c promotionStubCounters) NodesCreated() int           { return 0 }
+func (c promotionStubCounters) NodesDeleted() int           { return 0 }
+func (c promotionStubCounters) RelationshipsCreated() int   { return 0 }
+func (c promotionStubCounters) RelationshipsDeleted() int   { return 0 }
+func (c promotionStubCounters) PropertiesSet() int          { return 0 }
+func (c promotionStubCounters) LabelsAdded() int            { return 0 }
+func (c promotionStubCounters) LabelsRemoved() int          { return 0 }
+func (c promotionStubCounters) IndexesAdded() int           { return 0 }
+func (c promotionStubCounters) IndexesRemoved() int         { return 0 }
+func (c promotionStubCounters) ConstraintsAdded() int       { return 0 }
+func (c promotionStubCounters) ConstraintsRemoved() int     { return 0 }
+func (c promotionStubCounters) SystemUpdates() int          { return 0 }
+func (c promotionStubCounters) ContainsSystemUpdates() bool { return false }
 
 // stubClaimLocker implements postgresstorage.ClaimLocker for unit tests.
 //
@@ -107,6 +146,8 @@ var _ AuditEmitter = (*captureAuditEmitter)(nil)
 // for promotion evaluation. All gate thresholds for "likes" (multi_valued) are
 // satisfied by default; callers may override individual fields.
 func makeClaimRow(claimID, subject, predicate, object, status string) map[string]any {
+	now := time.Now().UTC()
+	verifiedAt := now.Add(-time.Minute)
 	return map[string]any{
 		"claim_id":                       claimID,
 		"subject":                        subject,
@@ -115,6 +156,8 @@ func makeClaimRow(claimID, subject, predicate, object, status string) map[string
 		"modality":                       string(domain.ModalityAssertion),
 		"status":                         status,
 		"entailment_verdict":             string(domain.VerdictEntailed),
+		"recorded_at":                    now.Add(-time.Hour),
+		"verified_at":                    verifiedAt,
 		"extract_conf":                   0.75,
 		"resolution_conf":                0.65,
 		"source_quality":                 0.8,
@@ -137,6 +180,14 @@ func makeClaimRowForSingleCurrent(claimID, subject, object string) map[string]an
 	row["resolution_conf"] = 0.80
 	row["source_quality"] = 0.95
 	return row
+}
+
+func promotionFunnelStages(samples []observability.MemoryFunnelSample) []string {
+	stages := make([]string, 0, len(samples))
+	for _, sample := range samples {
+		stages = append(stages, sample.Stage)
+	}
+	return stages
 }
 
 // newTestService returns a promoteClaimServiceImpl wired to the provided stubs.
@@ -203,6 +254,10 @@ func TestPromoteHappyPaths(t *testing.T) {
 		require.InDelta(t, 0.64, got.TruthScore, 1e-6)
 		// Metric emitted.
 		require.Equal(t, 1, metrics.PromotionOutcomeCount("promoted"))
+		funnel := metrics.MemoryFunnelSamples()
+		require.Len(t, funnel, 2)
+		require.Contains(t, promotionFunnelStages(funnel), "claim_to_promotion")
+		require.Contains(t, promotionFunnelStages(funnel), "verify_to_promotion")
 		// Audit emitted.
 		require.Len(t, audit.entries, 1)
 		require.Equal(t, "claim.promote", audit.entries[0].Operation)
@@ -357,6 +412,17 @@ func TestPromoteQueriesUseJSONClassificationStorage(t *testing.T) {
 	require.Contains(t, loadClaimForPromoteCypher, "c.classification_json             AS classification_json")
 	require.Contains(t, idempotencyCheckCypher, "f.classification_json            AS classification_json")
 	require.Contains(t, createFactAndEdgeCypher, "classification_json:           $classificationJSON")
+}
+
+func TestPromotionSummaryContainsUpdates(t *testing.T) {
+	require.False(t, promotionSummaryContainsUpdates(nil))
+	require.False(t, promotionSummaryContainsUpdates(promotionStubResultSummary{}))
+	require.False(t, promotionSummaryContainsUpdates(promotionStubResultSummary{
+		counters: promotionStubCounters{},
+	}))
+	require.True(t, promotionSummaryContainsUpdates(promotionStubResultSummary{
+		counters: promotionStubCounters{containsUpdates: true},
+	}))
 }
 
 func TestConfirmMemoryDecisionBranches(t *testing.T) {

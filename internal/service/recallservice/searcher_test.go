@@ -32,13 +32,14 @@ func TestRecallSearchersConvertRowsAndWrapErrors(t *testing.T) {
 	now := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 	later := now.Add(time.Hour)
 	reader := &unitRecallScopedReader{rows: []map[string]any{{
-		"fact_id":     "fact-1",
-		"team_id":     "profile-1",
-		"score":       float32(0.75),
-		"valid_from":  now,
-		"valid_to":    later,
-		"recorded_at": now,
-		"recorded_to": later,
+		"fact_id":         "fact-1",
+		"team_id":         "profile-1",
+		"score":           float32(0.75),
+		"valid_from":      now,
+		"valid_to":        later,
+		"recorded_at":     now,
+		"recorded_to":     later,
+		"authority_state": "overlay",
 	}}}
 
 	facts, err := NewFactSearcher(reader).SearchActive(context.Background(), "profile-1", "alice", 5)
@@ -51,6 +52,10 @@ func TestRecallSearchersConvertRowsAndWrapErrors(t *testing.T) {
 	require.InDelta(t, 0.75, facts[0].Score, 1e-9)
 	require.NotNil(t, facts[0].ValidFrom)
 	require.NotNil(t, facts[0].RecordedTo)
+	require.Equal(t, "overlay", facts[0].AuthorityState)
+	require.Contains(t, reader.lastQuery, "OVERLAYS")
+	require.Contains(t, reader.lastQuery, "incoming_overlay_count")
+	require.Contains(t, reader.lastQuery, "outgoing_overlay_count")
 
 	reader = &unitRecallScopedReader{rows: []map[string]any{{
 		"claim_id":    "claim-1",

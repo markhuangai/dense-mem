@@ -28,6 +28,7 @@ type UserPortalDeps struct {
 	APIKeySvc       handler.APIKeyServiceInterface
 	RateLimitSvc    service.RateLimitServiceInterface
 	UsageMetrics    service.UsageMetricsRecorder
+	Telemetry       service.TelemetryReader
 	AuditSvc        service.AuditService
 	SecuritySvc     httpmw.SecurityBanService
 	Config          config.ConfigProvider
@@ -38,8 +39,9 @@ type UserPortalDeps struct {
 // RegisterUserPortal registers the API-key user portal under /ui on the main API server.
 func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	portal := &userPortalHandler{
-		profiles: deps.ProfileSvc,
-		keys:     deps.APIKeySvc,
+		profiles:  deps.ProfileSvc,
+		keys:      deps.APIKeySvc,
+		telemetry: deps.Telemetry,
 	}
 
 	api := e.Group("/ui/api")
@@ -48,6 +50,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	api.Use(httpmw.UsageMetricsMiddleware(deps.UsageMetrics))
 	api.Use(httpmw.RateLimitMiddleware(deps.RateLimitSvc, deps.Config, deps.AuditSvc))
 	api.GET("/session", portal.session)
+	api.GET("/telemetry", portal.telemetrySnapshot, httpmw.RequireScopes("read"))
 	api.POST("/key/rotate", portal.rotateCurrentKey, httpmw.RequireScopes("write"))
 
 	staticDir := strings.TrimSpace(deps.UserStaticDir)
@@ -58,8 +61,9 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 }
 
 type userPortalHandler struct {
-	profiles handler.ProfileServiceInterface
-	keys     handler.APIKeyServiceInterface
+	profiles  handler.ProfileServiceInterface
+	keys      handler.APIKeyServiceInterface
+	telemetry service.TelemetryReader
 }
 
 type userPortalSessionResponse struct {
@@ -99,6 +103,40 @@ func (h *userPortalHandler) session(c echo.Context) error {
 		return err
 	}
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": session})
+}
+
+func (h *userPortalHandler) telemetrySnapshot(c echo.Context) error {
+	if h.telemetry == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "telemetry unavailable")
+	}
+	ctx := c.Request().Context()
+	principal := httpmw.GetPrincipal(ctx)
+	if principal == nil {
+		return httperr.New(httperr.FORBIDDEN, "authentication required")
+	}
+
+	scope := strings.TrimSpace(c.QueryParam("scope"))
+	if scope == "" {
+		scope = "self"
+	}
+	if scope != "self" {
+		return httperr.New(httperr.FORBIDDEN, "user portal telemetry is limited to the authenticated profile")
+	}
+
+	teamID := principal.GetTeamID()
+	profileID := principal.GetKeyID()
+	filter := service.TelemetryFilter{
+		Window:    strings.TrimSpace(c.QueryParam("window")),
+		Scope:     scope,
+		TeamID:    &teamID,
+		ProfileID: &profileID,
+	}
+
+	snapshot, err := h.telemetry.Snapshot(ctx, filter)
+	if err != nil {
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": snapshot})
 }
 
 func (h *userPortalHandler) rotateCurrentKey(c echo.Context) error {

@@ -153,11 +153,11 @@ func TestAuditAppendRedactsPayloadsAndWritesInsert(t *testing.T) {
 		"entity-1",
 		auditJSONArg{
 			present: map[string]interface{}{"name": "before"},
-			absent:  []string{"secret", "token"},
+			absent:  []string{"secret", "token", "Authorization", "refreshToken"},
 		},
 		auditJSONArg{
 			present: map[string]interface{}{"name": "after"},
-			absent:  []string{"api_key", "embedding"},
+			absent:  []string{"api_key", "embedding", "access_token", "clientSecret"},
 		},
 		sqlmock.AnyArg(),
 		"admin",
@@ -165,6 +165,7 @@ func TestAuditAppendRedactsPayloadsAndWritesInsert(t *testing.T) {
 		"corr-1",
 		auditJSONArg{
 			present: map[string]interface{}{"source": "unit"},
+			absent:  []string{"password", "apiKey", "refresh_token", "clientSecret", "refreshToken"},
 		},
 	).WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -176,22 +177,28 @@ func TestAuditAppendRedactsPayloadsAndWritesInsert(t *testing.T) {
 		EntityType: "secret_entity",
 		EntityID:   "entity-1",
 		BeforePayload: map[string]interface{}{
-			"name":   "before",
-			"secret": "remove",
-			"nested": map[string]interface{}{"token": "remove", "safe": "keep"},
+			"name":          "before",
+			"secret":        "remove",
+			"Authorization": "remove",
+			"nested":        map[string]interface{}{"token": "remove", "refreshToken": "remove", "safe": "keep"},
 		},
 		AfterPayload: map[string]interface{}{
-			"name":      "after",
-			"api_key":   "remove",
-			"embedding": []float64{1, 2, 3},
+			"name":         "after",
+			"api_key":      "remove",
+			"access_token": "remove",
+			"clientSecret": "remove",
+			"embedding":    []float64{1, 2, 3},
 		},
 		ActorKeyID:    &actorKeyID,
 		ActorRole:     "admin",
 		ClientIP:      "203.0.113.10",
 		CorrelationID: "corr-1",
 		Metadata: map[string]interface{}{
-			"source":   "unit",
-			"password": "remove",
+			"source":         "unit",
+			"password":       "remove",
+			"apiKey":         "remove",
+			"nested":         map[string]string{"refresh_token": "remove", "refreshToken": "remove", "safe": "keep"},
+			"array_payloads": []map[string]interface{}{{"client_secret": "remove", "clientSecret": "remove", "name": "kept"}},
 		},
 	})
 

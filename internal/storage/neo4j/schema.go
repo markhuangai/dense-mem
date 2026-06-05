@@ -21,6 +21,8 @@ const (
 	IndexFragmentProfileIdempotency = "fragment_team_idempotency_idx"
 	IndexFragmentProfileContentHash = "fragment_profile_content_hash_idx"
 	IndexFragmentProfileCreatedAt   = "fragment_profile_created_at_idx"
+	IndexFragmentOwnerIdempotency   = "fragment_owner_idempotency_idx"
+	IndexFragmentOwnerContentHash   = "fragment_owner_content_hash_idx"
 
 	// Composite indexes for Claim nodes — team_id is leading key (Unit 12, AC-3)
 	IndexClaimProfileClaimID          = "claim_profile_claim_id_idx"
@@ -30,6 +32,8 @@ const (
 	IndexClaimProfileIdempotency      = "claim_team_idempotency_idx"
 	IndexClaimProfileContentHash      = "claim_profile_content_hash_idx"
 	IndexClaimProfileRecordedAt       = "claim_profile_recorded_at_idx"
+	IndexClaimOwnerIdempotency        = "claim_owner_idempotency_idx"
+	IndexClaimOwnerContentHash        = "claim_owner_content_hash_idx"
 
 	// Composite indexes for Fact nodes — team_id is leading key (Unit 12, AC-4)
 	IndexFactProfileStatus                 = "fact_profile_status_idx"
@@ -47,6 +51,8 @@ const (
 	ConstraintPromotesToProfileIDExists   = "promotes_to_team_id_exists"
 	ConstraintSupersededByProfileIDExists = "superseded_by_team_id_exists"
 	ConstraintContradictsProfileIDExists  = "contradicts_team_id_exists"
+	ConstraintOverlaysProfileIDExists     = "overlays_team_id_exists"
+	ConstraintAlignsWithProfileIDExists   = "aligns_with_team_id_exists"
 )
 
 // SchemaBootstrapperInterface is the companion interface for SchemaBootstrapper.
@@ -146,6 +152,14 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 			{
 				"CREATE CONSTRAINT contradicts_team_id_exists IF NOT EXISTS FOR ()-[r:CONTRADICTS]-() REQUIRE r.team_id IS NOT NULL",
 				ConstraintContradictsProfileIDExists,
+			},
+			{
+				"CREATE CONSTRAINT overlays_team_id_exists IF NOT EXISTS FOR ()-[r:OVERLAYS]-() REQUIRE r.team_id IS NOT NULL",
+				ConstraintOverlaysProfileIDExists,
+			},
+			{
+				"CREATE CONSTRAINT aligns_with_team_id_exists IF NOT EXISTS FOR ()-[r:ALIGNS_WITH]-() REQUIRE r.team_id IS NOT NULL",
+				ConstraintAlignsWithProfileIDExists,
 			},
 		}
 
@@ -287,6 +301,14 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 			"CREATE INDEX fragment_profile_created_at_idx IF NOT EXISTS FOR (sf:SourceFragment) ON (sf.team_id, sf.created_at)",
 			"fragment_profile_created_at_idx",
 		},
+		{
+			"CREATE INDEX fragment_owner_idempotency_idx IF NOT EXISTS FOR (sf:SourceFragment) ON (sf.team_id, sf.owner_profile_id, sf.idempotency_key)",
+			IndexFragmentOwnerIdempotency,
+		},
+		{
+			"CREATE INDEX fragment_owner_content_hash_idx IF NOT EXISTS FOR (sf:SourceFragment) ON (sf.team_id, sf.owner_profile_id, sf.content_hash)",
+			IndexFragmentOwnerContentHash,
+		},
 	}
 
 	for _, idx := range compositeIndexes {
@@ -335,6 +357,14 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 		{
 			"CREATE INDEX claim_profile_recorded_at_idx IF NOT EXISTS FOR (c:Claim) ON (c.team_id, c.recorded_at, c.claim_id)",
 			IndexClaimProfileRecordedAt,
+		},
+		{
+			"CREATE INDEX claim_owner_idempotency_idx IF NOT EXISTS FOR (c:Claim) ON (c.team_id, c.owner_profile_id, c.idempotency_key)",
+			IndexClaimOwnerIdempotency,
+		},
+		{
+			"CREATE INDEX claim_owner_content_hash_idx IF NOT EXISTS FOR (c:Claim) ON (c.team_id, c.owner_profile_id, c.content_hash)",
+			IndexClaimOwnerContentHash,
 		},
 		// Fact indexes (AC-4)
 		{
@@ -406,6 +436,65 @@ WHERE r.team_id IS NULL
   AND a.team_id = b.team_id
 SET r.team_id = a.team_id
 RETURN count(r) AS updated`,
+		},
+		{
+			name: "legacy_sourcefragment_owner",
+			cypher: `
+MATCH (sf:SourceFragment)
+WHERE sf.owner_profile_id IS NULL AND sf.created_by_profile_id IS NOT NULL
+SET sf.owner_profile_id = sf.created_by_profile_id,
+    sf.owner_profile_name = sf.created_by_profile_name
+RETURN count(sf) AS updated`,
+		},
+		{
+			name: "legacy_claim_owner",
+			cypher: `
+MATCH (c:Claim)
+WHERE c.owner_profile_id IS NULL AND c.created_by_profile_id IS NOT NULL
+SET c.owner_profile_id = c.created_by_profile_id,
+    c.owner_profile_name = c.created_by_profile_name
+RETURN count(c) AS updated`,
+		},
+		{
+			name: "legacy_fact_owner",
+			cypher: `
+MATCH (f:Fact)
+WHERE f.owner_profile_id IS NULL
+  AND coalesce(f.created_by_profile_id, f.promoted_by_profile_id) IS NOT NULL
+SET f.owner_profile_id = coalesce(f.created_by_profile_id, f.promoted_by_profile_id),
+    f.owner_profile_name = coalesce(f.created_by_profile_name, f.promoted_by_profile_name)
+RETURN count(f) AS updated`,
+		},
+		{
+			name: "legacy_claim_supported_by_property",
+			cypher: `
+MATCH (c:Claim)
+WHERE c.supported_by IS NOT NULL
+OPTIONAL MATCH (c)-[:SUPPORTED_BY]->(sf:SourceFragment)
+WITH c, [id IN coalesce(c.supported_by, []) WHERE id IS NOT NULL] AS property_ids,
+     collect(DISTINCT sf.fragment_id) AS relationship_ids
+WHERE size(property_ids) = 0 OR all(id IN property_ids WHERE id IN relationship_ids)
+REMOVE c.supported_by
+RETURN count(c) AS updated`,
+		},
+		{
+			name: "legacy_fragment_retracted_at",
+			cypher: `
+MATCH (sf:SourceFragment)
+WHERE sf.status = 'retracted'
+  AND sf.retracted_at IS NULL
+  AND sf.recorded_to IS NOT NULL
+SET sf.retracted_at = sf.recorded_to
+REMOVE sf.recorded_to
+RETURN count(sf) AS updated`,
+		},
+		{
+			name: "legacy_fact_authority_state_property",
+			cypher: `
+MATCH (f:Fact)
+WHERE f.authority_state IS NOT NULL
+REMOVE f.authority_state
+RETURN count(f) AS updated`,
 		},
 	}
 

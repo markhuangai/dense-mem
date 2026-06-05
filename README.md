@@ -37,7 +37,7 @@
 </p>
 
 <p align="center">
-  <a href="https://zenodo.org/records/20469578"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.20469578.svg" alt="DOI: 10.5281/zenodo.20469578" /></a>
+  <a href="https://zenodo.org/records/20469578"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.20519039.svg" alt="DOI: 10.5281/zenodo.20519039" /></a>
 </p>
 
 Dense-Mem gives MCP clients a durable memory layer with provenance, typed claims
@@ -124,6 +124,46 @@ the URL, model, and dimensions (`https://api.openai.com/v1`,
 fill in `AI_API_KEY`. Override those values together when using a different
 embedding provider or model.
 
+### Telemetry Overlay
+
+Prometheus telemetry is optional and off by default. To collect usage,
+performance, verifier token, embedding token, recall, and promotion metrics for
+the `/ui` app and control portal dashboards, run the base stack with the
+telemetry overlay:
+
+```bash
+curl -fsSLo prometheus.yml \
+  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/prometheus.yml
+curl -fsSLo docker-compose.telemetry.yml \
+  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/docker-compose.telemetry.yml
+
+export TELEMETRY_SCRAPE_TOKEN="$(openssl rand -hex 32)"
+docker compose -f docker-compose.yml -f docker-compose.telemetry.yml up -d
+```
+
+The overlay starts Prometheus on `127.0.0.1:9090`, retains 30 days of samples,
+passes `TELEMETRY_SCRAPE_TOKEN` to Prometheus as a scrape secret, and points
+Dense-Mem at `http://prometheus:9090` for telemetry queries. It also sets
+`TELEMETRY_PROMETHEUS_JOB=dense-mem` so dashboards query only the `dense-mem`
+scrape job when Prometheus is shared.
+
+For the disposable demo image, keep the control portal disabled and use the
+demo telemetry overlay instead:
+
+```bash
+curl -fsSLo prometheus.demo.yml \
+  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/prometheus.demo.yml
+curl -fsSLo docker-compose.demo.telemetry.yml \
+  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/docker-compose.demo.telemetry.yml
+
+export TELEMETRY_SCRAPE_TOKEN="$(openssl rand -hex 32)"
+docker compose -f docker-compose.yml -f docker-compose.demo.telemetry.yml up -d
+```
+
+The demo overlay scrapes the demo service at `demo:8091` on the private Compose
+network and sets `TELEMETRY_PROMETHEUS_JOB=dense-mem-demo`. Do not publish that
+metrics listener publicly.
+
 ## Compare
 
 | Capability | Dense-Mem | File memory | Vector DB | Generic MCP memory |
@@ -171,6 +211,8 @@ memory, applies explicit gates, and returns structured outcomes.
 | `remember` | Normal chat-session memory insertion. Saves evidence, creates typed claims, verifies, promotes when gates pass, and returns structured outcomes. |
 | `import_memories` | Ingests summarized historical conversations. By default it records evidence and validated claims without auto-promotion. |
 | `recall_memory` | Retrieves facts, validated claims, fragments, and `clarifications[]` for the authenticated team. |
+| `trace_memory` | Expands one fact or claim into bounded evidence, promotion lineage, contradictions, and supersession links. |
+| `assemble_context` | Builds a bounded prompt-ready context block plus structured facts, claims, fragments, and clarifications. |
 | `reflect_memories` | Reviews active facts, candidate or disputed claims, contradictions, stale memories, and clarification needs. |
 | `confirm_memory` | Applies the user's answer to a clarification task, either accepting a claim and superseding comparable active facts or keeping/rejecting it. |
 

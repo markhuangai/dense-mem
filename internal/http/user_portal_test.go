@@ -127,6 +127,51 @@ func TestUserPortalSessionShowsOnlyAuthenticatedKey(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), "Other")
 }
 
+func TestUserPortalTelemetry(t *testing.T) {
+	teamID := uuid.New()
+	keyID := uuid.New()
+	authKey, rawKey := userPortalTestKey(t, teamID, keyID, "Mine", []string{"read"})
+	telemetry := &controlTelemetrySvc{snapshot: &service.TelemetrySnapshot{
+		Available: true,
+		Window:    service.TelemetryWindow{Key: "15m"},
+		Cards:     []service.TelemetryCard{{ID: "http_requests", Label: "HTTP requests", Unit: "requests", Value: 4}},
+	}}
+	server := userPortalTestServerWithTelemetry(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.APIKey{authKey}}, "", telemetry)
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/telemetry?window=15m", nil)
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"available":true`)
+	require.Equal(t, "15m", telemetry.filter.Window)
+	require.Equal(t, "self", telemetry.filter.Scope)
+	require.Equal(t, teamID, *telemetry.filter.TeamID)
+	require.Equal(t, keyID, *telemetry.filter.ProfileID)
+
+	req = httptest.NewRequest(http.MethodGet, "/ui/api/telemetry?window=30m&scope=team", nil)
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	require.Equal(t, "15m", telemetry.filter.Window)
+	require.Equal(t, "self", telemetry.filter.Scope)
+	require.Equal(t, keyID, *telemetry.filter.ProfileID)
+
+	req = httptest.NewRequest(http.MethodGet, "/ui/api/telemetry?scope=profile", nil)
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusForbidden, rec.Code)
+
+	noTelemetry := userPortalTestServer(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.APIKey{authKey}}, "")
+	req = httptest.NewRequest(http.MethodGet, "/ui/api/telemetry", nil)
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	rec = httptest.NewRecorder()
+	noTelemetry.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+}
+
 func TestUserPortalRotateRequiresWriteScope(t *testing.T) {
 	teamID := uuid.New()
 	authKey, rawKey := userPortalTestKey(t, teamID, uuid.New(), "Read only", []string{"read"})
@@ -227,6 +272,10 @@ func userPortalTestKey(t *testing.T, teamID, keyID uuid.UUID, name string, scope
 }
 
 func userPortalTestServer(t *testing.T, teamID uuid.UUID, authKey *domain.APIKey, keySvc *userPortalKeySvc, staticDir string) http.Handler {
+	return userPortalTestServerWithTelemetry(t, teamID, authKey, keySvc, staticDir, nil)
+}
+
+func userPortalTestServerWithTelemetry(t *testing.T, teamID uuid.UUID, authKey *domain.APIKey, keySvc *userPortalKeySvc, staticDir string, telemetry service.TelemetryReader) http.Handler {
 	t.Helper()
 	profiles := &controlProfileSvc{profiles: []*domain.Profile{{
 		ID:        teamID,
@@ -247,6 +296,7 @@ func userPortalTestServer(t *testing.T, teamID uuid.UUID, authKey *domain.APIKey
 		ProfileSvc:    profiles,
 		APIKeySvc:     keySvc,
 		RateLimitSvc:  service.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
+		Telemetry:     telemetry,
 		Config:        &config.Config{RateLimitPerMinute: 100, FragmentCreateRateLimit: 60, FragmentReadRateLimit: 300, ClaimWriteRateLimit: 60, ClaimReadRateLimit: 300},
 		UserStaticDir: staticDir,
 	})

@@ -70,6 +70,10 @@ func (s *getFragmentService) GetByID(ctx context.Context, profileID, fragmentID 
 		       sf.source_quality AS source_quality,
 		       sf.classification AS classification,
 		       sf.classification_json AS classification_json,
+		       sf.recorded_to AS recorded_to,
+		       sf.retracted_at AS retracted_at,
+		       sf.owner_profile_id AS owner_profile_id,
+		       sf.owner_profile_name AS owner_profile_name,
 		       sf.created_by_profile_id AS created_by_profile_id,
 		       sf.created_by_profile_name AS created_by_profile_name,
 		       sf.created_at AS created_at,
@@ -120,6 +124,10 @@ func (s *getFragmentService) GetByIDs(ctx context.Context, profileID string, fra
 		       sf.source_quality AS source_quality,
 		       sf.classification AS classification,
 		       sf.classification_json AS classification_json,
+		       sf.recorded_to AS recorded_to,
+		       sf.retracted_at AS retracted_at,
+		       sf.owner_profile_id AS owner_profile_id,
+		       sf.owner_profile_name AS owner_profile_name,
 		       sf.created_by_profile_id AS created_by_profile_id,
 		       sf.created_by_profile_name AS created_by_profile_name,
 		       sf.created_at AS created_at,
@@ -152,11 +160,23 @@ func mapRowToFragment(row map[string]any) *domain.Fragment {
 	if v, ok := row["team_id"].(string); ok {
 		f.ProfileID = v
 	}
+	if v, ok := row["owner_profile_id"].(string); ok {
+		f.OwnerProfileID = v
+	}
+	if v, ok := row["owner_profile_name"].(string); ok {
+		f.OwnerProfileName = v
+	}
 	if v, ok := row["created_by_profile_id"].(string); ok {
 		f.CreatedByProfileID = v
 	}
 	if v, ok := row["created_by_profile_name"].(string); ok {
 		f.CreatedByProfileName = v
+	}
+	if f.OwnerProfileID == "" {
+		f.OwnerProfileID = f.CreatedByProfileID
+	}
+	if f.OwnerProfileName == "" {
+		f.OwnerProfileName = f.CreatedByProfileName
 	}
 	if v, ok := row["content"].(string); ok {
 		f.Content = v
@@ -211,6 +231,12 @@ func mapRowToFragment(row map[string]any) *domain.Fragment {
 		f.Classification = v
 	} else if v := fragmentcodec.DecodeOptionalMap(row["classification_json"]); v != nil {
 		f.Classification = v
+	}
+	if v, ok := row["recorded_to"].(time.Time); ok {
+		f.RecordedTo = &v
+	}
+	if v, ok := row["retracted_at"].(time.Time); ok {
+		f.RetractedAt = &v
 	}
 	if v, ok := row["created_at"].(time.Time); ok {
 		f.CreatedAt = v

@@ -165,6 +165,11 @@ func TestVerifyClaimEntailed(t *testing.T) {
 	// Metric: "verified".
 	require.Equal(t, 1, metrics.VerifyVerdictCount("verified"))
 	require.Equal(t, 0, metrics.VerifyVerdictCount("error"))
+	funnel := metrics.MemoryFunnelSamples()
+	require.Len(t, funnel, 1)
+	require.Equal(t, "claim_to_verify", funnel[0].Stage)
+	require.Equal(t, "verified", funnel[0].Outcome)
+	require.GreaterOrEqual(t, funnel[0].Seconds, 0.0)
 }
 
 // TestVerifyClaimContradicted verifies that a "contradicted" verdict transitions
@@ -273,6 +278,41 @@ func TestVerifyClaimNotFound(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrClaimNotFound)
 	require.Empty(t, writer.written, "no write must occur when claim is missing")
+}
+
+func TestVerifyClaimReturnsNotFoundWhenPersistMatchesNoRows(t *testing.T) {
+	ctx := context.Background()
+
+	claimRows := map[string][]map[string]any{
+		verifyTestProfileA: {baseVerifyClaimRow(verifyTestClaimID, verifyTestProfileA)},
+	}
+	fragRows := map[string][]map[string]any{
+		verifyTestProfileA: {},
+	}
+	writer := &stubClaimWriter{
+		summary: stubResultSummary{counters: stubCounters{}},
+	}
+	verif := &stubVerifier{
+		resp: verifier.Response{
+			Verdict:    "entailed",
+			Confidence: 0.95,
+			Reasoning:  "clear match",
+			RawJSON:    `{"verdict":"entailed"}`,
+		},
+	}
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	audit := &capturingAudit{}
+
+	svc := buildVerifyService(claimRows, fragRows, writer, verif, "gpt-4o-mini", audit, metrics)
+
+	_, err := svc.Verify(ctx, verifyTestProfileA, verifyTestClaimID)
+
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrClaimNotFound)
+	require.Len(t, writer.written, 1, "the persist attempt still happens after the initial read")
+	require.Equal(t, 1, metrics.VerifyVerdictCount("error"))
+	require.Equal(t, 0, metrics.VerifyVerdictCount("verified"))
+	require.Empty(t, audit.entries, "successful verification audit must not emit when persistence matched no rows")
 }
 
 // TestVerifyClaimVerifierError verifies that a verifier failure propagates as

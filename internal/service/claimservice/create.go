@@ -117,9 +117,10 @@ ON CREATE SET
     c.idempotency_key                = $idempotencyKey,
     c.classification_json            = $classificationJSON,
     c.classification_lattice_version = $classificationLatticeVersion,
+    c.owner_profile_id               = $ownerProfileId,
+    c.owner_profile_name             = $ownerProfileName,
     c.created_by_profile_id          = $createdByProfileId,
-    c.created_by_profile_name        = $createdByProfileName,
-    c.supported_by                   = $supportedBy
+    c.created_by_profile_name        = $createdByProfileName
 WITH c
 UNWIND $edges AS edge
 MATCH (sf:SourceFragment {team_id: $profileId, fragment_id: edge.fragment_id})
@@ -173,6 +174,11 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 
 	// Step 2: compute content_hash.
 	contentHash := claimidentity.ContentHash(claim.Subject, claim.Predicate, claim.Object, claim.ValidFrom)
+	ownerID, ownerName, _ := requestctx.ActorOwner(ctx)
+	identityScopeID := profileID
+	if ownerID != "" {
+		identityScopeID = ownerID
+	}
 
 	// Step 3: derive deterministic claim_id.
 	var (
@@ -180,9 +186,9 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 		idErr   error
 	)
 	if claim.IdempotencyKey != "" {
-		claimID, idErr = claimidentity.ClaimID(profileID, claim.IdempotencyKey)
+		claimID, idErr = claimidentity.ClaimID(identityScopeID, claim.IdempotencyKey)
 	} else {
-		claimID, idErr = claimidentity.ClaimIDFromHash(profileID, contentHash)
+		claimID, idErr = claimidentity.ClaimIDFromHash(identityScopeID, contentHash)
 	}
 	if idErr != nil {
 		return nil, fmt.Errorf("claim create: derive claim_id: %w", idErr)
@@ -195,9 +201,7 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 			return nil, fmt.Errorf("claim create: idempotency lookup: %w", err)
 		}
 		if existing != nil {
-			if s.metrics != nil {
-				s.metrics.IncClaimCreate("duplicate", "idempotency_key")
-			}
+			observability.RecordClaimCreate(ctx, s.metrics, "duplicate", "idempotency_key")
 			return &CreateResult{
 				Claim:       existing,
 				Duplicate:   true,
@@ -211,9 +215,7 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 			return nil, fmt.Errorf("claim create: content-hash lookup: %w", err)
 		}
 		if existing != nil {
-			if s.metrics != nil {
-				s.metrics.IncClaimCreate("duplicate", "content_hash")
-			}
+			observability.RecordClaimCreate(ctx, s.metrics, "duplicate", "content_hash")
 			return &CreateResult{
 				Claim:       existing,
 				Duplicate:   true,
@@ -230,13 +232,6 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 
 	// Step 7: compute defaults.
 	now := time.Now().UTC()
-	actor, hasActor := requestctx.ActorProfileFromContext(ctx)
-	creatorID := ""
-	creatorName := ""
-	if hasActor {
-		creatorID = actor.ProfileID.String()
-		creatorName = actor.ProfileName
-	}
 
 	// Merged classification is map[string]string from the lattice; convert to
 	// map[string]any because domain.Claim.Classification is typed that way.
@@ -248,8 +243,10 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 	newClaim := &domain.Claim{
 		ClaimID:              claimID,
 		ProfileID:            profileID,
-		CreatedByProfileID:   creatorID,
-		CreatedByProfileName: creatorName,
+		OwnerProfileID:       ownerID,
+		OwnerProfileName:     ownerName,
+		CreatedByProfileID:   ownerID,
+		CreatedByProfileName: ownerName,
 		// Semantic triple from the caller.
 		Subject:   claim.Subject,
 		Predicate: claim.Predicate,
@@ -290,9 +287,7 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 	newClaim.Evidence = make([]domain.Evidence, 0, len(support.Fragments))
 	classificationJSON, err := fragmentcodec.EncodeOptionalMap(newClaim.Classification)
 	if err != nil {
-		if s.metrics != nil {
-			s.metrics.IncClaimCreate("error", "")
-		}
+		observability.RecordClaimCreate(ctx, s.metrics, "error", "")
 		return nil, fmt.Errorf("claim create: encode classification: %w", err)
 	}
 
@@ -360,23 +355,20 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 		"idempotencyKey":               newClaim.IdempotencyKey,
 		"classificationJSON":           classificationJSON,
 		"classificationLatticeVersion": newClaim.ClassificationLatticeVersion,
+		"ownerProfileId":               newClaim.OwnerProfileID,
+		"ownerProfileName":             newClaim.OwnerProfileName,
 		"createdByProfileId":           newClaim.CreatedByProfileID,
 		"createdByProfileName":         newClaim.CreatedByProfileName,
-		"supportedBy":                  newClaim.SupportedBy,
 		// edges drives the UNWIND ... MERGE for SUPPORTED_BY relationships.
 		"edges": edges,
 	}
 	_, err = s.writer.ScopedWrite(ctx, profileID, createClaimCypher, params)
 	if err != nil {
-		if s.metrics != nil {
-			s.metrics.IncClaimCreate("error", "")
-		}
+		observability.RecordClaimCreate(ctx, s.metrics, "error", "")
 		return nil, fmt.Errorf("claim create: persist: %w", err)
 	}
 
-	if s.metrics != nil {
-		s.metrics.IncClaimCreate("created", "")
-	}
+	observability.RecordClaimCreate(ctx, s.metrics, "created", "")
 
 	// Step 9: emit audit event; swallow failures so the primary op succeeds.
 	if s.audit != nil {

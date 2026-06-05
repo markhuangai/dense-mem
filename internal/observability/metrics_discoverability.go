@@ -15,6 +15,10 @@ type DiscoverabilityMetrics interface {
 	IncEmbeddingError(code string)
 	// ObserveRecallLatency records one recall-service call end-to-end.
 	ObserveRecallLatency(durationMs float64)
+	// ObserveRecall records one recall-service call with its result count.
+	ObserveRecall(durationMs float64, resultCount int, outcome string)
+	// ObserveMemoryFunnelLatency records latency between memory pipeline stages.
+	ObserveMemoryFunnelLatency(stage string, seconds float64, outcome string)
 	// IncFragmentCreate bumps the fragment-create outcome counter.
 	// outcome must be one of: "created" | "duplicate" | "error".
 	IncFragmentCreate(outcome string)
@@ -53,35 +57,40 @@ type noopMetrics struct{}
 
 var _ DiscoverabilityMetrics = noopMetrics{}
 
-func (noopMetrics) ObserveEmbeddingLatency(float64, string)   {}
-func (noopMetrics) IncEmbeddingError(string)                  {}
-func (noopMetrics) ObserveRecallLatency(float64)              {}
-func (noopMetrics) IncFragmentCreate(string)                  {}
-func (noopMetrics) IncClaimCreate(string, string)             {}
-func (noopMetrics) IncVerifyVerdict(string)                   {}
-func (noopMetrics) IncPromotionOutcome(string)                {}
-func (noopMetrics) ObservePromoteLockWait(float64)            {}
-func (noopMetrics) IncFragmentRetract()                       {}
-func (noopMetrics) IncFactNeedsRevalidation()                 {}
-func (noopMetrics) IncCommunityDetect(string)                 {}
-func (noopMetrics) ObserveCommunityDetect(float64, int)       {}
+func (noopMetrics) ObserveEmbeddingLatency(float64, string) {}
+func (noopMetrics) IncEmbeddingError(string)                {}
+func (noopMetrics) ObserveRecallLatency(float64)            {}
+func (noopMetrics) ObserveRecall(float64, int, string)      {}
+func (noopMetrics) ObserveMemoryFunnelLatency(string, float64, string) {
+}
+func (noopMetrics) IncFragmentCreate(string)            {}
+func (noopMetrics) IncClaimCreate(string, string)       {}
+func (noopMetrics) IncVerifyVerdict(string)             {}
+func (noopMetrics) IncPromotionOutcome(string)          {}
+func (noopMetrics) ObservePromoteLockWait(float64)      {}
+func (noopMetrics) IncFragmentRetract()                 {}
+func (noopMetrics) IncFactNeedsRevalidation()           {}
+func (noopMetrics) IncCommunityDetect(string)           {}
+func (noopMetrics) ObserveCommunityDetect(float64, int) {}
 
 // InMemoryDiscoverabilityMetrics is a test-friendly recorder. Tests can
 // inspect the captured samples to assert that a code path actually emitted
 // the expected metric without standing up Prometheus.
 type InMemoryDiscoverabilityMetrics struct {
-	mu                    sync.Mutex
-	embeddingSamples      []EmbeddingSample
-	embeddingErrors       map[string]int
-	recallLatencies       []float64
-	fragmentOutcomes      map[string]int
-	claimCreateSamples    []ClaimCreateSample
-	verifyVerdicts        map[string]int
-	promotionOutcomes     map[string]int
-	promoteLockWaits      []float64
-	fragmentRetracts      int
-	factNeedsRevalidation int
-	communityDetectOuts   map[string]int
+	mu                     sync.Mutex
+	embeddingSamples       []EmbeddingSample
+	embeddingErrors        map[string]int
+	recallLatencies        []float64
+	recallSamples          []RecallSample
+	memoryFunnelSamples    []MemoryFunnelSample
+	fragmentOutcomes       map[string]int
+	claimCreateSamples     []ClaimCreateSample
+	verifyVerdicts         map[string]int
+	promotionOutcomes      map[string]int
+	promoteLockWaits       []float64
+	fragmentRetracts       int
+	factNeedsRevalidation  int
+	communityDetectOuts    map[string]int
 	communityDetectSamples []CommunityDetectSample
 }
 
@@ -101,6 +110,20 @@ type CommunityDetectSample struct {
 type EmbeddingSample struct {
 	DurationMs float64
 	Outcome    string
+}
+
+// RecallSample is one recorded recall event.
+type RecallSample struct {
+	DurationMs  float64
+	ResultCount int
+	Outcome     string
+}
+
+// MemoryFunnelSample is one observed pipeline-stage latency.
+type MemoryFunnelSample struct {
+	Stage   string
+	Seconds float64
+	Outcome string
 }
 
 var _ DiscoverabilityMetrics = (*InMemoryDiscoverabilityMetrics)(nil)
@@ -137,6 +160,21 @@ func (m *InMemoryDiscoverabilityMetrics) ObserveRecallLatency(durationMs float64
 	m.recallLatencies = append(m.recallLatencies, durationMs)
 }
 
+// ObserveRecall records one recall event with the number of returned hits.
+func (m *InMemoryDiscoverabilityMetrics) ObserveRecall(durationMs float64, resultCount int, outcome string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recallLatencies = append(m.recallLatencies, durationMs)
+	m.recallSamples = append(m.recallSamples, RecallSample{DurationMs: durationMs, ResultCount: resultCount, Outcome: outcome})
+}
+
+// ObserveMemoryFunnelLatency records one memory-pipeline stage latency.
+func (m *InMemoryDiscoverabilityMetrics) ObserveMemoryFunnelLatency(stage string, seconds float64, outcome string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.memoryFunnelSamples = append(m.memoryFunnelSamples, MemoryFunnelSample{Stage: stage, Seconds: seconds, Outcome: outcome})
+}
+
 // IncFragmentCreate bumps the fragment-create outcome counter.
 func (m *InMemoryDiscoverabilityMetrics) IncFragmentCreate(outcome string) {
 	m.mu.Lock()
@@ -166,6 +204,24 @@ func (m *InMemoryDiscoverabilityMetrics) RecallLatencies() []float64 {
 	defer m.mu.Unlock()
 	out := make([]float64, len(m.recallLatencies))
 	copy(out, m.recallLatencies)
+	return out
+}
+
+// RecallSamples returns a copy of the recorded recall samples.
+func (m *InMemoryDiscoverabilityMetrics) RecallSamples() []RecallSample {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]RecallSample, len(m.recallSamples))
+	copy(out, m.recallSamples)
+	return out
+}
+
+// MemoryFunnelSamples returns a copy of the recorded funnel latency samples.
+func (m *InMemoryDiscoverabilityMetrics) MemoryFunnelSamples() []MemoryFunnelSample {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]MemoryFunnelSample, len(m.memoryFunnelSamples))
+	copy(out, m.memoryFunnelSamples)
 	return out
 }
 

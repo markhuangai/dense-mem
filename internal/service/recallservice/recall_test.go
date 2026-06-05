@@ -291,7 +291,8 @@ func TestRecallService_HybridMergesFragmentOnly(t *testing.T) {
 		},
 	}
 	emb := &stubEmbedding{DimensionsResult: 4}
-	svc := NewRecallService(emb, sem, kw, &fakeHydrator{}, nil, nil)
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	svc := NewRecallService(emb, sem, kw, &fakeHydrator{}, nil, metrics)
 
 	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "test", Limit: 10})
 	if err != nil {
@@ -321,6 +322,10 @@ func TestRecallService_HybridMergesFragmentOnly(t *testing.T) {
 			}
 		}
 	}
+	samples := metrics.RecallSamples()
+	require.Len(t, samples, 1)
+	require.Equal(t, 3, samples[0].ResultCount)
+	require.Equal(t, "ok", samples[0].Outcome)
 }
 
 func TestRecallService_UsesBatchFragmentHydration(t *testing.T) {
@@ -597,6 +602,48 @@ func TestRecallService_TierEnrichmentUsesQueryMatchedSearchers(t *testing.T) {
 	assert.Equal(t, int32(0), atomic.LoadInt32(&factGetter.callCount))
 	assert.Equal(t, int32(1), atomic.LoadInt32(&claimGetter.batchCallCount))
 	assert.Equal(t, int32(0), atomic.LoadInt32(&claimGetter.callCount))
+}
+
+func TestRecallService_TierEnrichmentDowngradesOverlayFacts(t *testing.T) {
+	factSearcher := &fakeFactSearcher{
+		results: []FactRecallResult{{
+			FactID:         "fact-overlay",
+			ProfileID:      "pA",
+			AuthorityState: "overlay",
+		}},
+	}
+	factGetter := &fakeFactGetter{
+		facts: map[string]*domain.Fact{
+			"fact-overlay": {
+				FactID:     "fact-overlay",
+				ProfileID:  "pA",
+				Status:     domain.FactStatusActive,
+				TruthScore: 0.95,
+				RecordedAt: time.Now().UTC(),
+			},
+		},
+	}
+	svc := NewRecallServiceWithTiers(
+		&stubEmbedding{DimensionsResult: 4},
+		&fakeSemanticSearcher{},
+		&fakeKeywordSearcher{},
+		&fakeHydrator{},
+		factSearcher,
+		factGetter,
+		nil,
+		nil,
+		0,
+		nil,
+		nil,
+	)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "platform choice", Limit: 5})
+
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Equal(t, TierConflict, out[0].Tier)
+	require.NotNil(t, out[0].Fact)
+	require.Equal(t, "overlay", out[0].Fact.AuthorityState)
 }
 
 // TestRecallService_RejectsEmptyProfileID enforces profile isolation input.

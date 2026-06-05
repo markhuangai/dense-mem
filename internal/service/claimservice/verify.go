@@ -9,7 +9,9 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/ownership"
 	"github.com/markhuangai/dense-mem/internal/verifier"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
 // verifyClaimCypher updates a Claim node's verification fields after a
@@ -116,6 +118,9 @@ func (s *verifyClaimServiceImpl) Verify(ctx context.Context, profileID string, c
 		return nil, ErrClaimNotFound
 	}
 	claim := rowToClaim(profileID, rows[0])
+	if err := ownership.RequireOwner(ctx, claim.OwnerProfileID); err != nil {
+		return nil, err
+	}
 
 	// Step 2: load supporting fragments.
 	//
@@ -151,7 +156,7 @@ func (s *verifyClaimServiceImpl) Verify(ctx context.Context, profileID string, c
 
 	if verifyErr != nil {
 		// Step 6: verifier failure — leave claim state unchanged.
-		s.incVerifyMetric("error")
+		s.incVerifyMetric(ctx, "error")
 
 		// Persist raw body when the provider attached one (diagnostic only;
 		// write failure is non-fatal and only logged).
@@ -200,7 +205,7 @@ func (s *verifyClaimServiceImpl) Verify(ctx context.Context, profileID string, c
 		// The verifier interface guarantees exactly three valid verdict values.
 		// A rogue implementation that violates this contract is treated as a
 		// transient error rather than silently promoting/demoting the claim.
-		s.incVerifyMetric("error")
+		s.incVerifyMetric(ctx, "error")
 		s.emitVerifyAudit(ctx, profileID, claimID, claim, "error")
 		return nil, fmt.Errorf("claim verify: unexpected verdict %q from verifier", resp.Verdict)
 	}
@@ -208,7 +213,7 @@ func (s *verifyClaimServiceImpl) Verify(ctx context.Context, profileID string, c
 	now := time.Now().UTC()
 
 	// Persist the updated fields.
-	_, err = s.writer.ScopedWrite(ctx, profileID, verifyClaimCypher, map[string]any{
+	summary, err := s.writer.ScopedWrite(ctx, profileID, verifyClaimCypher, map[string]any{
 		"claimId":              claimID,
 		"status":               string(newStatus),
 		"entailmentVerdict":    string(newVerdict),
@@ -217,12 +222,17 @@ func (s *verifyClaimServiceImpl) Verify(ctx context.Context, profileID string, c
 		"lastVerifierResponse": resp.RawJSON,
 	})
 	if err != nil {
-		s.incVerifyMetric("error")
+		s.incVerifyMetric(ctx, "error")
 		return nil, fmt.Errorf("claim verify: persist: %w", err)
+	}
+	if !writeSummaryContainsUpdates(summary) {
+		s.incVerifyMetric(ctx, "error")
+		return nil, ErrClaimNotFound
 	}
 
 	// Step 8: emit metric for the successful verification path.
-	s.incVerifyMetric(outcome)
+	s.incVerifyMetric(ctx, outcome)
+	s.recordFunnelLatency(ctx, "claim_to_verify", claim.RecordedAt, now, outcome)
 
 	// Mutate the in-memory claim so the caller receives the post-verify state.
 	claim.Status = newStatus
@@ -239,10 +249,19 @@ func (s *verifyClaimServiceImpl) Verify(ctx context.Context, profileID string, c
 
 // incVerifyMetric bumps the verify_verdict_total counter when a metrics
 // backend is wired. Nil-safe: if metrics is nil the call is a no-op.
-func (s *verifyClaimServiceImpl) incVerifyMetric(outcome string) {
-	if s.metrics != nil {
-		s.metrics.IncVerifyVerdict(outcome)
+func (s *verifyClaimServiceImpl) incVerifyMetric(ctx context.Context, outcome string) {
+	observability.RecordVerifyVerdict(ctx, s.metrics, s.verifierModel, outcome)
+}
+
+func (s *verifyClaimServiceImpl) recordFunnelLatency(ctx context.Context, stage string, from, to time.Time, outcome string) {
+	if from.IsZero() || to.IsZero() {
+		return
 	}
+	observability.RecordMemoryFunnelLatency(ctx, s.metrics, stage, to.Sub(from).Seconds(), outcome)
+}
+
+func writeSummaryContainsUpdates(summary neo4j.ResultSummary) bool {
+	return summary != nil && summary.Counters() != nil && summary.Counters().ContainsUpdates()
 }
 
 // emitVerifyAudit writes a claim.verify audit entry. Any error is logged and

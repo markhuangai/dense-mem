@@ -38,6 +38,10 @@ func (s *neo4jFactSearcher) SearchActive(ctx context.Context, profileID string, 
 	cypher := `
 CALL db.index.fulltext.queryNodes('fact_recall_idx', $searchQuery) YIELD node AS f, score
 WHERE f.team_id = $profileId AND f.status = 'active'
+OPTIONAL MATCH (incomingOverlay:Fact {team_id: $profileId})-[:OVERLAYS {team_id: $profileId}]->(f)
+WITH f, score, count(incomingOverlay) AS incoming_overlay_count
+OPTIONAL MATCH (f)-[:OVERLAYS {team_id: $profileId}]->(outgoingOverlay:Fact {team_id: $profileId})
+WITH f, score, incoming_overlay_count, count(outgoingOverlay) AS outgoing_overlay_count
 RETURN
     f.fact_id AS fact_id,
     f.team_id AS team_id,
@@ -45,6 +49,11 @@ RETURN
     f.valid_to AS valid_to,
     f.recorded_at AS recorded_at,
     f.recorded_to AS recorded_to,
+    CASE
+      WHEN outgoing_overlay_count > 0 THEN 'overlay'
+      WHEN incoming_overlay_count > 0 THEN 'conflicted'
+      ELSE 'authoritative'
+    END AS authority_state,
     score
 LIMIT $limit`
 
@@ -59,13 +68,14 @@ LIMIT $limit`
 	results := make([]FactRecallResult, 0, len(rows))
 	for _, row := range rows {
 		results = append(results, FactRecallResult{
-			FactID:     recallString(row, "fact_id"),
-			ProfileID:  recallString(row, "team_id"),
-			Score:      recallFloat64(row, "score"),
-			ValidFrom:  recallTimePtr(row, "valid_from"),
-			ValidTo:    recallTimePtr(row, "valid_to"),
-			RecordedAt: recallTime(row, "recorded_at"),
-			RecordedTo: recallTimePtr(row, "recorded_to"),
+			FactID:         recallString(row, "fact_id"),
+			ProfileID:      recallString(row, "team_id"),
+			Score:          recallFloat64(row, "score"),
+			ValidFrom:      recallTimePtr(row, "valid_from"),
+			ValidTo:        recallTimePtr(row, "valid_to"),
+			RecordedAt:     recallTime(row, "recorded_at"),
+			RecordedTo:     recallTimePtr(row, "recorded_to"),
+			AuthorityState: recallString(row, "authority_state"),
 		})
 	}
 

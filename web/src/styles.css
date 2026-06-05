@@ -438,6 +438,12 @@ button:disabled {
   border: 1px solid color-mix(in srgb, var(--danger) 34%, var(--border));
 }
 
+.banner.neutral {
+  color: var(--muted);
+  background: var(--panel-strong);
+  border: 1px solid var(--border);
+}
+
 .table-wrap {
   width: 100%;
   overflow-x: auto;

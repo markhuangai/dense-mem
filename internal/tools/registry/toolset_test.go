@@ -92,6 +92,7 @@ func TestBuildDefault_RegistersV1ToolSurface(t *testing.T) {
 	}
 	required := []string{
 		"save_memory", "get_memory", "list_recent_memories", "recall_memory",
+		"trace_memory", "assemble_context",
 		"remember", "import_memories", "reflect_memories", "confirm_memory",
 		"keyword-search", "semantic-search", "graph-query",
 		"find_skill_pack_candidates", "export_skill_pack", "inspect_skill_pack",
@@ -247,6 +248,8 @@ func TestBuildDefault_V1InvokersReturnUnavailableWhenDepsMissing(t *testing.T) {
 		{name: "get_memory", input: map[string]any{"id": "fragment-1"}},
 		{name: "list_recent_memories", input: map[string]any{}},
 		{name: "recall_memory", input: map[string]any{"query": "hello"}},
+		{name: "trace_memory", input: map[string]any{"type": "fact", "id": "fact-1"}},
+		{name: "assemble_context", input: map[string]any{"query": "hello"}},
 		{name: "keyword-search", input: map[string]any{"keywords": "hello"}},
 		{name: "semantic-search", input: map[string]any{"embedding": []any{float64(0.1)}}},
 		{name: "graph-query", input: map[string]any{"query": "MATCH (n) RETURN n"}},
@@ -853,6 +856,15 @@ type stubFragmentRetract struct {
 }
 
 func (s *stubFragmentRetract) Retract(ctx context.Context, profileID, fragmentID string) error {
+	s.lastProfile = profileID
+	return nil
+}
+
+type stubFactRetract struct {
+	lastProfile string
+}
+
+func (s *stubFactRetract) Retract(ctx context.Context, profileID, factID string) error {
 	s.lastProfile = profileID
 	return nil
 }

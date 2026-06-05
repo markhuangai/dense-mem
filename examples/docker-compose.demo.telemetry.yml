@@ -1,0 +1,47 @@
+# Dense-Mem public demo telemetry compose overlay.
+#
+# Use with the demo compose example:
+#   docker compose \
+#     -f examples/docker-compose.demo.yml \
+#     -f examples/docker-compose.demo.telemetry.yml \
+#     up -d
+#
+# Prometheus is kept on the private Docker network and scrapes the demo
+# metrics-only listener on port 8091. The demo control portal stays disabled.
+
+services:
+  demo:
+    environment:
+      TELEMETRY_ENABLED: "true"
+      TELEMETRY_PROMETHEUS_URL: http://prometheus:9090
+      TELEMETRY_PROMETHEUS_JOB: ${TELEMETRY_PROMETHEUS_JOB:-dense-mem-demo}
+      TELEMETRY_QUERY_TIMEOUT_SECONDS: ${TELEMETRY_QUERY_TIMEOUT_SECONDS:-5}
+      TELEMETRY_SCRAPE_TOKEN: ${TELEMETRY_SCRAPE_TOKEN:?set TELEMETRY_SCRAPE_TOKEN}
+    depends_on:
+      prometheus:
+        condition: service_started
+
+  prometheus:
+    image: prom/prometheus:v3.12.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --web.listen-address=0.0.0.0:9090
+    volumes:
+      - demo-prometheus-data:/prometheus
+      - ./prometheus.demo.yml:/etc/prometheus/prometheus.yml:ro
+    secrets:
+      - telemetry-scrape-token
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    networks:
+      - private
+    restart: unless-stopped
+
+volumes:
+  demo-prometheus-data:
+
+secrets:
+  telemetry-scrape-token:
+    environment: TELEMETRY_SCRAPE_TOKEN

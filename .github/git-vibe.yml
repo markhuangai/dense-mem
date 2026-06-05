@@ -66,6 +66,17 @@ ai:
       allowed_domains:
         - github.com
         - "*.github.com"
+  mcp:
+    servers:
+      dense_mem:
+        transport: stdio
+        command: npx
+        args: ["-y", "dense-mem-mcp-proxy"]
+        env:
+          DENSE_MEM_API_KEY:
+            from_bundle: DENSE_MEM_API_KEY
+          DENSE_MEM_MCP_URL:
+            from_bundle: DENSE_MEM_MCP_URL
   profiles:
     local_proxy:
       adapter: ai-sdk-agentool
@@ -104,13 +115,27 @@ ai:
   role_groups:
     swarm:
       synthesizer: codex_5.5_high
-      parallel: 3
+      parallel: 4
       roles:
         - role: correctness.md
           profile: local_proxy
         - role: security.md
           profile: local_proxy
         - role: maintainability.md
+          profile: local_proxy
+        - role: implemented-feature.md
+          profile: local_proxy
+        - role: over-engineering.md
+          profile: local_proxy
+        - role: test-evidence.md
+          profile: local_proxy
+        - role: contract-compatibility.md
+          profile: local_proxy
+        - role: data-integrity.md
+          profile: local_proxy
+        - role: operations-readiness.md
+          profile: local_proxy
+        - role: performance-cost.md
           profile: local_proxy
   budgets:
     default_timeout_minutes: 60
@@ -129,18 +154,102 @@ ai:
   stages:
     investigate:
       role_group: swarm
+      mcp:
+        dense_mem:
+          required: true
+          tools: 
+            - search_memory
+            - recall_memory
+            - assemble_context
+            - get_memory
+            - verify_claim
+            - get_fact
+            - keyword_search
+            - semantic_search
+            - list_communities
+            - get_community_summary
     validate:
       role_group: swarm
+      mcp:
+        dense_mem:
+          required: true
+          tools: 
+            - search_memory
+            - recall_memory
+            - assemble_context
+            - get_memory
+            - verify_claim
+            - get_fact
+            - keyword_search
+            - semantic_search
+            - list_communities
+            - get_community_summary
     materialize:
       profile: codex_5.5_high
+      mcp:
+        dense_mem:
+          required: true
+          tools: 
+            - search_memory
+            - recall_memory
+            - assemble_context
+            - get_memory
+            - verify_claim
+            - get_fact
+            - keyword_search
+            - semantic_search
+            - list_communities
+            - get_community_summary
     implement:
       enabled: false
       profile: local_proxy
+      mcp:
+        dense_mem:
+          required: true
+          tools: 
+            - search_memory
+            - recall_memory
+            - assemble_context
+            - get_memory
+            - verify_claim
+            - get_fact
+            - keyword_search
+            - semantic_search
+            - list_communities
+            - get_community_summary
     review-matrix:
       role_group: swarm
+      mcp:
+        dense_mem:
+          required: true
+          tools: 
+            - search_memory
+            - recall_memory
+            - assemble_context
+            - get_memory
+            - verify_claim
+            - get_fact
+            - keyword_search
+            - semantic_search
+            - list_communities
+            - get_community_summary
     create-pr:
       enabled: false
       profile: local_proxy
     address-pr-feedback:
       enabled: false
       profile: local_proxy
+      mcp:
+        dense_mem:
+          required: true
+          tools: 
+            - search_memory
+            - recall_memory
+            - assemble_context
+            - get_memory
+            - verify_claim
+            - get_fact
+            - keyword_search
+            - semantic_search
+            - list_communities
+            - get_community_summary

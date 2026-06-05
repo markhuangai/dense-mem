@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
 )
 
@@ -35,6 +36,8 @@ func NewNeo4jDedupeLookup(reader ScopedReader) DedupeLookup {
 }
 
 const claimLookupReturn = `
+OPTIONAL MATCH (c)-[:SUPPORTED_BY {team_id: $profileId}]->(sf:SourceFragment {team_id: $profileId})
+WITH c, collect(sf.fragment_id) AS supported_by
 RETURN
     c.claim_id                        AS claim_id,
     c.created_by_profile_id           AS created_by_profile_id,
@@ -67,21 +70,26 @@ RETURN
     c.classification                  AS classification,
     c.classification_json             AS classification_json,
     c.classification_lattice_version  AS classification_lattice_version,
-    coalesce(c.supported_by, [])      AS supported_by
+    c.owner_profile_id                AS owner_profile_id,
+    c.owner_profile_name              AS owner_profile_name,
+    supported_by                      AS supported_by
 LIMIT 1`
 
 const byIdempotencyKeyQuery = `
 MATCH (c:Claim {team_id: $profileId, idempotency_key: $key})
+WHERE ($ownerProfileId = '' OR coalesce(c.owner_profile_id, c.created_by_profile_id, '') = $ownerProfileId)
 ` + claimLookupReturn
 
 const byContentHashQuery = `
 MATCH (c:Claim {team_id: $profileId, content_hash: $hash})
+WHERE ($ownerProfileId = '' OR coalesce(c.owner_profile_id, c.created_by_profile_id, '') = $ownerProfileId)
 ` + claimLookupReturn
 
 // ByIdempotencyKey finds an existing claim by idempotency key within a profile.
 func (l *neo4jDedupeLookup) ByIdempotencyKey(ctx context.Context, profileID, key string) (*domain.Claim, error) {
 	_, rows, err := l.reader.ScopedRead(ctx, profileID, byIdempotencyKeyQuery, map[string]any{
-		"key": key,
+		"key":            key,
+		"ownerProfileId": ownerProfileIDFromContext(ctx),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("claim dedupe by idempotency key: %w", err)
@@ -95,7 +103,8 @@ func (l *neo4jDedupeLookup) ByIdempotencyKey(ctx context.Context, profileID, key
 // ByContentHash finds an existing claim by content hash within a profile.
 func (l *neo4jDedupeLookup) ByContentHash(ctx context.Context, profileID, hash string) (*domain.Claim, error) {
 	_, rows, err := l.reader.ScopedRead(ctx, profileID, byContentHashQuery, map[string]any{
-		"hash": hash,
+		"hash":           hash,
+		"ownerProfileId": ownerProfileIDFromContext(ctx),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("claim dedupe by content hash: %w", err)
@@ -110,4 +119,9 @@ func (l *neo4jDedupeLookup) ByContentHash(ctx context.Context, profileID, hash s
 // shape as direct reads.
 func rowToClaim(profileID string, row map[string]any) *domain.Claim {
 	return claimservice.RowToClaimForExternalUse(profileID, row)
+}
+
+func ownerProfileIDFromContext(ctx context.Context) string {
+	ownerID, _, _ := requestctx.ActorOwner(ctx)
+	return ownerID
 }

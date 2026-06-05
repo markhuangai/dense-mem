@@ -95,7 +95,7 @@ func (c *ClaimLock) WithClaimLock(
 		// Measure lock-wait duration once per transaction.
 		if !lockObserved {
 			lockObserved = true
-			c.metrics.ObservePromoteLockWait(time.Since(lockWaitStart).Seconds())
+			observability.RecordPromoteLockWait(ctx, c.metrics, time.Since(lockWaitStart).Seconds())
 		}
 
 		return fn(tx)

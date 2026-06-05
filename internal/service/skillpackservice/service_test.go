@@ -859,6 +859,15 @@ func TestSkillPackSmallHelpers(t *testing.T) {
 	if nullableTimeState(map[string]any{"x": now.Format(time.RFC3339Nano)}, "x") == nil {
 		t.Fatal("nullableTimeState should parse RFC3339Nano")
 	}
+	if nullableTimeState(map[string]any{}, "x") != nil {
+		t.Fatal("nullableTimeState should ignore missing values")
+	}
+	if nullableTimeState(map[string]any{"x": nil}, "x") != nil {
+		t.Fatal("nullableTimeState should ignore nil values")
+	}
+	if nullableTimeState(map[string]any{"x": ""}, "x") != nil {
+		t.Fatal("nullableTimeState should ignore empty strings")
+	}
 	if nullableTimeState(map[string]any{"x": "not-time"}, "x") != nil {
 		t.Fatal("nullableTimeState should ignore unparsable strings")
 	}
