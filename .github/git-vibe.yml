@@ -157,32 +157,82 @@ ai:
       mcp:
         dense_mem:
           required: true
-          tools: ["search_memory", "recall_memory", "assemble_context", "get_memory", "verify_claim", "get_fact", "keyword_search", "semantic_search", "list_communities", "get_community_summary"]
+          tools: 
+            - search_memory
+            - recall_memory
+            - assemble_context
+            - get_memory
+            - verify_claim
+            - get_fact
+            - keyword_search
+            - semantic_search
+            - list_communities
+            - get_community_summary
     validate:
       role_group: swarm
       mcp:
         dense_mem:
           required: true
-          tools: ["search_memory", "recall_memory", "assemble_context", "get_memory", "verify_claim", "get_fact", "keyword_search", "semantic_search", "list_communities", "get_community_summary"]
+          tools: 
+            - search_memory
+            - recall_memory
+            - assemble_context
+            - get_memory
+            - verify_claim
+            - get_fact
+            - keyword_search
+            - semantic_search
+            - list_communities
+            - get_community_summary
     materialize:
       profile: codex_5.5_high
       mcp:
         dense_mem:
           required: true
-          tools: ["search_memory", "recall_memory", "assemble_context", "get_memory", "verify_claim", "get_fact", "keyword_search", "semantic_search", "list_communities", "get_community_summary"]
+          tools: 
+            - search_memory
+            - recall_memory
+            - assemble_context
+            - get_memory
+            - verify_claim
+            - get_fact
+            - keyword_search
+            - semantic_search
+            - list_communities
+            - get_community_summary
     implement:
       enabled: false
       profile: local_proxy
       mcp:
         dense_mem:
           required: true
-          tools: ["search_memory", "recall_memory", "assemble_context", "get_memory", "verify_claim", "get_fact", "keyword_search", "semantic_search", "list_communities", "get_community_summary"]
+          tools: 
+            - search_memory
+            - recall_memory
+            - assemble_context
+            - get_memory
+            - verify_claim
+            - get_fact
+            - keyword_search
+            - semantic_search
+            - list_communities
+            - get_community_summary
     review-matrix:
       role_group: swarm
       mcp:
         dense_mem:
           required: true
-          tools: ["search_memory", "recall_memory", "assemble_context", "get_memory", "verify_claim", "get_fact", "keyword_search", "semantic_search", "list_communities", "get_community_summary"]
+          tools: 
+            - search_memory
+            - recall_memory
+            - assemble_context
+            - get_memory
+            - verify_claim
+            - get_fact
+            - keyword_search
+            - semantic_search
+            - list_communities
+            - get_community_summary
     create-pr:
       enabled: false
       profile: local_proxy
@@ -192,4 +242,14 @@ ai:
       mcp:
         dense_mem:
           required: true
-          tools: ["search_memory", "recall_memory", "assemble_context", "get_memory", "verify_claim", "get_fact", "keyword_search", "semantic_search", "list_communities", "get_community_summary"]
+          tools: 
+            - search_memory
+            - recall_memory
+            - assemble_context
+            - get_memory
+            - verify_claim
+            - get_fact
+            - keyword_search
+            - semantic_search
+            - list_communities
+            - get_community_summary
