@@ -256,15 +256,14 @@ function TabButton({
 function UserTelemetryPanel({ api }: { api: UserApi }) {
   const [snapshot, setSnapshot] = useState<TelemetrySnapshot | null>(null);
   const [windowKey, setWindowKey] = useState<TelemetryWindowKey>("1h");
-  const [scope, setScope] = useState<"self" | "team">("self");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function loadTelemetry(nextWindow = windowKey, nextScope = scope) {
+  async function loadTelemetry(nextWindow = windowKey) {
     setLoading(true);
     setError("");
     try {
-      setSnapshot(await api.telemetry({ window: nextWindow, scope: nextScope }));
+      setSnapshot(await api.telemetry({ window: nextWindow }));
     } catch (err) {
       setError(readError(err));
     } finally {
@@ -274,7 +273,7 @@ function UserTelemetryPanel({ api }: { api: UserApi }) {
 
   useEffect(() => {
     void loadTelemetry();
-  }, [windowKey, scope]);
+  }, [windowKey]);
 
   return (
     <section className="surface">
@@ -286,15 +285,6 @@ function UserTelemetryPanel({ api }: { api: UserApi }) {
         error={error}
         onWindowChange={setWindowKey}
         onRefresh={() => void loadTelemetry()}
-        controls={(
-          <>
-            <label htmlFor="user-telemetry-scope">Scope</label>
-            <select id="user-telemetry-scope" value={scope} onChange={(event) => setScope(event.target.value as "self" | "team")}>
-              <option value="self">My profile</option>
-              <option value="team">Team</option>
-            </select>
-          </>
-        )}
       />
     </section>
   );

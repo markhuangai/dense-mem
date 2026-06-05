@@ -119,19 +119,17 @@ func (h *userPortalHandler) telemetrySnapshot(c echo.Context) error {
 	if scope == "" {
 		scope = "self"
 	}
-	if scope != "self" && scope != "team" {
-		return httperr.New(httperr.VALIDATION_ERROR, "scope must be one of self, team")
+	if scope != "self" {
+		return httperr.New(httperr.FORBIDDEN, "user portal telemetry is limited to the authenticated profile")
 	}
 
 	teamID := principal.GetTeamID()
 	profileID := principal.GetKeyID()
 	filter := service.TelemetryFilter{
-		Window: strings.TrimSpace(c.QueryParam("window")),
-		Scope:  scope,
-		TeamID: &teamID,
-	}
-	if scope == "self" {
-		filter.ProfileID = &profileID
+		Window:    strings.TrimSpace(c.QueryParam("window")),
+		Scope:     scope,
+		TeamID:    &teamID,
+		ProfileID: &profileID,
 	}
 
 	snapshot, err := h.telemetry.Snapshot(ctx, filter)
