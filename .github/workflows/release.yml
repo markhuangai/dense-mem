@@ -183,19 +183,11 @@ jobs:
             -t "${latest_ref}" \
             "${source_ref}"
 
-  publish-demo-image:
-    name: Publish demo image
-    needs: prepare-release
-    uses: ./.github/workflows/publish-demo-image.yml
-    with:
-      tag: ${{ needs.prepare-release.outputs.release_tag }}
-
   create-github-release:
     name: Create GitHub Release
     needs:
       - prepare-release
       - promote-image
-      - publish-demo-image
     runs-on: docker-runner
 
     steps:
