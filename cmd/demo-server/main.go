@@ -641,6 +641,7 @@ func main() {
 	}
 
 	var controlServer *echo.Echo
+	var telemetryServer *echo.Echo
 	if !runtimeMode.DisableControlPortal {
 		controlServer, err = http.NewControlPortalServerWithMetricsAndTelemetry(
 			&cfg,
@@ -663,6 +664,17 @@ func main() {
 		go func() {
 			if err := controlServer.Start(cfg.GetControlHTTPAddr()); err != nil {
 				logger.Error("control portal server error", err)
+			}
+		}()
+	} else if telemetryScrapeHandler != nil {
+		telemetryServer, err = newDemoTelemetryServer(telemetryScrapeHandler, cfg.GetTelemetryScrapeToken())
+		if err != nil {
+			log.Fatalf("failed to build telemetry scrape server: %v", err)
+		}
+		logger.Info("starting telemetry scrape server", observability.String("addr", demoTelemetryHTTPAddr))
+		go func() {
+			if err := telemetryServer.Start(demoTelemetryHTTPAddr); err != nil {
+				logger.Error("telemetry scrape server error", err)
 			}
 		}()
 	}
@@ -690,6 +702,11 @@ func main() {
 	if controlServer != nil {
 		if err := http.ShutdownControlPortal(controlServer, logger); err != nil {
 			logger.Error("control portal shutdown error", err)
+		}
+	}
+	if telemetryServer != nil {
+		if err := shutdownDemoTelemetryServer(telemetryServer); err != nil {
+			logger.Error("telemetry scrape server shutdown error", err)
 		}
 	}
 	if runtimeShutdown != nil {
