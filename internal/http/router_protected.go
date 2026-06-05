@@ -312,6 +312,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	// OpenAPI — expose the full runtime contract when available. The AI-safe
 	// variant remains as a fallback for reduced runtimes and tests.
 	openAPIMiddleware := append([]echo.MiddlewareFunc{authMW}, deps.PostAuthMiddleware...)
+	openAPIMiddleware = append(openAPIMiddleware, lastUsedMW)
 	if handlers.OpenAPIFull != nil {
 		e.GET("/api/v1/openapi.json", handlers.OpenAPIFull, openAPIMiddleware...)
 	} else if handlers.OpenAPIAISafe != nil {
