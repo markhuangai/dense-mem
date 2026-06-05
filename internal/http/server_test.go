@@ -15,6 +15,30 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
+type captureLogProvider struct {
+	msg   string
+	attrs []observability.LogAttr
+}
+
+func (l *captureLogProvider) Info(msg string, attrs ...observability.LogAttr) {
+	l.msg = msg
+	l.attrs = append([]observability.LogAttr(nil), attrs...)
+}
+
+func (l *captureLogProvider) Error(msg string, err error, attrs ...observability.LogAttr) {
+	l.Info(msg, attrs...)
+}
+
+func (l *captureLogProvider) Warn(msg string, attrs ...observability.LogAttr) {
+	l.Info(msg, attrs...)
+}
+
+func (l *captureLogProvider) Debug(msg string, attrs ...observability.LogAttr) {}
+
+func (l *captureLogProvider) With(attrs ...observability.LogAttr) observability.LogProvider {
+	return l
+}
+
 // TestHealthEndpointReturns200 verifies that /health returns 200 {"status":"ok"}
 func TestHealthEndpointReturns200(t *testing.T) {
 	// Arrange
@@ -223,6 +247,52 @@ func TestNewServerAcceptsHealthChecks(t *testing.T) {
 	if server == nil {
 		t.Error("expected Echo instance to be created")
 	}
+}
+
+func TestRequestLoggerOmitsQueryString(t *testing.T) {
+	logger := &captureLogProvider{}
+	e := NewServer(config.Config{}, logger, HealthConfig{})
+	e.GET("/api/v1/recall", func(c echo.Context) error {
+		return c.String(http.StatusOK, "ok")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/recall?query=secret-memory&token=raw-token", nil)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+	if logger.msg != "http_request" {
+		t.Fatalf("expected http_request log, got %q", logger.msg)
+	}
+	if got := logAttrValue(logger.attrs, "uri"); got != "/api/v1/recall" {
+		t.Fatalf("uri attr = %q, want %q", got, "/api/v1/recall")
+	}
+	if got := logAttrValue(logger.attrs, "route"); got != "/api/v1/recall" {
+		t.Fatalf("route attr = %q, want %q", got, "/api/v1/recall")
+	}
+	for _, attr := range logger.attrs {
+		value, ok := attr.Value.(string)
+		if !ok {
+			continue
+		}
+		if value == "secret-memory" || value == "raw-token" {
+			t.Fatalf("sensitive query value leaked in attr %q", attr.Key)
+		}
+	}
+}
+
+func logAttrValue(attrs []observability.LogAttr, key string) string {
+	for _, attr := range attrs {
+		if attr.Key != key {
+			continue
+		}
+		value, _ := attr.Value.(string)
+		return value
+	}
+	return ""
 }
 
 func TestNewServerUsesDirectIPByDefault(t *testing.T) {

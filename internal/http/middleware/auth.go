@@ -201,14 +201,25 @@ func AuthMiddlewareWithSecurity(repo repository.APIKeyRepository, auditSvc servi
 			req.Header.Del("Authorization")
 			c.SetRequest(req)
 
-			// Touch last used asynchronously (fire and forget)
-			go func(keyID uuid.UUID) {
-				// Use a background context with timeout for the async operation
-				touchCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				_ = repo.TouchLastUsed(touchCtx, keyID)
-			}(key.ID)
+			return next(c)
+		}
+	}
+}
 
+// LastUsedMiddleware updates API key last_used_at after earlier middleware has
+// admitted the request. Place it after rate limiting to avoid DB writes for
+// over-quota valid keys.
+func LastUsedMiddleware(repo repository.APIKeyRepository) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			principal := GetPrincipal(c.Request().Context())
+			if principal != nil {
+				go func(keyID uuid.UUID) {
+					touchCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+					_ = repo.TouchLastUsed(touchCtx, keyID)
+				}(principal.KeyID)
+			}
 			return next(c)
 		}
 	}
