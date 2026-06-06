@@ -175,14 +175,17 @@ func TestUAT9_FragmentReadListDelete(t *testing.T) {
 // AC trace: AC-32, AC-33, AC-34, AC-35, AC-50.
 func TestUAT10_ToolCatalogAndOpenAPI(t *testing.T) {
 	toolset := readFile(t, "internal/tools/registry/toolset.go")
-	// AI-facing verbs use underscore_case (save_memory, recall_memory, …);
-	// legacy primitives keep their original hyphenated names.
+	// AI-facing verbs use underscore_case consistently.
 	for _, name := range []string{
 		"save_memory", "get_memory", "list_recent_memories", "recall_memory",
-		"keyword-search", "semantic-search", "graph-query",
+		"keyword_search", "semantic_search", "graph_query",
 	} {
 		assert.Contains(t, toolset, name,
 			"registry must declare canonical tool %q", name)
+	}
+	for _, name := range []string{"keyword-search", "semantic-search", "graph-query"} {
+		assert.NotContains(t, toolset, name,
+			"registry must not declare legacy hyphenated tool %q", name)
 	}
 
 	generator := readFile(t, "internal/openapi/generator.go")
@@ -204,7 +207,7 @@ func TestUAT10_ToolCatalogAndOpenAPI(t *testing.T) {
 	for _, name := range []string{
 		// Original 7 (Phase 1 canonical set)
 		"save_memory", "get_memory", "list_recent_memories", "recall_memory",
-		"keyword-search", "semantic-search", "graph-query",
+		"keyword_search", "semantic_search", "graph_query",
 		// Phase 8 knowledge pipeline tools
 		"post_claim", "get_claim", "list_claims",
 		"verify_claim", "promote_claim",
@@ -213,6 +216,9 @@ func TestUAT10_ToolCatalogAndOpenAPI(t *testing.T) {
 		"get_community_summary", "list_communities",
 	} {
 		assert.True(t, seen[name], "registry must list %q after BuildDefault", name)
+	}
+	for _, name := range []string{"keyword-search", "semantic-search", "graph-query"} {
+		assert.False(t, seen[name], "registry must not list legacy hyphenated tool %q", name)
 	}
 	assert.GreaterOrEqual(t, len(list), 7, "BuildDefault must register at least the original 7 canonical tools")
 

@@ -381,11 +381,11 @@ func recallHitToMap(hit recallservice.RecallHit) (map[string]any, error) {
 	return out, nil
 }
 
-// --- keyword-search --------------------------------------------------------
+// --- keyword_search --------------------------------------------------------
 
 func keywordSearchTool(deps Dependencies) Tool {
 	return Tool{
-		Name:        "keyword-search",
+		Name:        "keyword_search",
 		Description: "Advanced: BM25 full-text search across fragments and fact predicates.",
 		InputSchema: map[string]any{
 			"type":     "object",
@@ -407,7 +407,7 @@ func keywordSearchTool(deps Dependencies) Tool {
 			}
 			var dtoReq dto.KeywordSearchRequest
 			if err := remapInput(input, &dtoReq); err != nil {
-				return nil, fmt.Errorf("keyword-search: invalid input: %w", err)
+				return nil, fmt.Errorf("keyword_search: invalid input: %w", err)
 			}
 			req := keywordsearch.KeywordSearchRequest{
 				Query:   dtoReq.Keywords,
@@ -425,11 +425,11 @@ func keywordSearchTool(deps Dependencies) Tool {
 	}
 }
 
-// --- semantic-search -------------------------------------------------------
+// --- semantic_search -------------------------------------------------------
 
 func semanticSearchTool(deps Dependencies) Tool {
 	return Tool{
-		Name:        "semantic-search",
+		Name:        "semantic_search",
 		Description: "Advanced: kNN vector search. Caller supplies a pre-computed embedding vector.",
 		InputSchema: map[string]any{
 			"type":     "object",
@@ -450,7 +450,7 @@ func semanticSearchTool(deps Dependencies) Tool {
 			}
 			var req semanticsearch.SemanticSearchRequest
 			if err := remapInput(input, &req); err != nil {
-				return nil, fmt.Errorf("semantic-search: invalid input: %w", err)
+				return nil, fmt.Errorf("semantic_search: invalid input: %w", err)
 			}
 			res, err := deps.SemanticSearch.Search(ctx, profileID, &req)
 			if err != nil {
@@ -461,7 +461,7 @@ func semanticSearchTool(deps Dependencies) Tool {
 	}
 }
 
-// --- graph-query -----------------------------------------------------------
+// --- graph_query -----------------------------------------------------------
 
 func graphQueryTool(deps Dependencies) Tool {
 	maxTimeoutSeconds := deps.GraphQueryMaxTimeoutSeconds
@@ -469,7 +469,7 @@ func graphQueryTool(deps Dependencies) Tool {
 		maxTimeoutSeconds = 30
 	}
 	return Tool{
-		Name:        "graph-query",
+		Name:        "graph_query",
 		Description: "Advanced: profile-scoped read-only Cypher. The server injects the profile filter and caps row count.",
 		InputSchema: map[string]any{
 			"type":     "object",
@@ -489,12 +489,12 @@ func graphQueryTool(deps Dependencies) Tool {
 			}
 			query, _ := input["query"].(string)
 			if query == "" {
-				return nil, errors.New("graph-query: query is required")
+				return nil, errors.New("graph_query: query is required")
 			}
 			params, _ := input["parameters"].(map[string]any)
 			if timeout, ok := intInput(input["timeout_seconds"]); ok && timeout > 0 {
 				if timeout > maxTimeoutSeconds {
-					return nil, fmt.Errorf("graph-query: timeout_seconds must be less than or equal to %d", maxTimeoutSeconds)
+					return nil, fmt.Errorf("graph_query: timeout_seconds must be less than or equal to %d", maxTimeoutSeconds)
 				}
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Second)

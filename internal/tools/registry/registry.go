@@ -1,7 +1,7 @@
 // Package registry is the single source of truth for the dense-mem tool catalog.
 //
 // Every AI-exposed verb (save_memory, recall_memory, list_recent_memories,
-// get_memory, plus the lower-level keyword-search / semantic-search / graph-query
+// get_memory, plus the lower-level keyword_search / semantic_search / graph_query
 // primitives) is registered once here with its name, description, JSON Schemas,
 // required scopes, and a bound invoker. HTTP handlers, the
 // catalog endpoint (Unit 21), the OpenAPI generator (Unit 23), and the MCP
@@ -11,9 +11,14 @@ package registry
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"sync"
 )
+
+const toolNamePatternText = `^[a-z][a-z0-9_]{0,63}$`
+
+var toolNamePattern = regexp.MustCompile(toolNamePatternText)
 
 // ToolInvoker is the uniform execution contract for every registered tool.
 // The caller provides the profile scope explicitly so nothing inside the tool
@@ -56,6 +61,9 @@ func New() Registry {
 func (r *inMemoryRegistry) Register(tool Tool) error {
 	if tool.Name == "" {
 		return fmt.Errorf("registry: tool name must not be empty")
+	}
+	if !toolNamePattern.MatchString(tool.Name) {
+		return fmt.Errorf("registry: tool name %q must match %s", tool.Name, toolNamePatternText)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -294,13 +294,13 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	}
 	// Search/query tools are read-scoped (no data mutation).
 	if handlers.GraphQuery != nil {
-		toolGroup.POST("/graph-query", handlers.GraphQuery, middleware.RequireScopes("read"))
+		toolGroup.POST("/graph_query", handlers.GraphQuery, middleware.RequireScopes("read"))
 	}
 	if handlers.KeywordSearch != nil {
-		toolGroup.POST("/keyword-search", handlers.KeywordSearch, middleware.RequireScopes("read"))
+		toolGroup.POST("/keyword_search", handlers.KeywordSearch, middleware.RequireScopes("read"))
 	}
 	if handlers.SemanticSearch != nil {
-		toolGroup.POST("/semantic-search", handlers.SemanticSearch, middleware.RequireScopes("read"))
+		toolGroup.POST("/semantic_search", handlers.SemanticSearch, middleware.RequireScopes("read"))
 	}
 	if handlers.GetTool != nil {
 		toolGroup.GET("/:id", handlers.GetTool, middleware.RequireScopes("read"))

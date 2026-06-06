@@ -150,11 +150,11 @@ func NewQueryStreamOrchestrator(
 // Run executes the query across multiple tools and emits SSE events.
 // Events are emitted in order: tool_call, evidence, done.
 func (o *queryStreamOrchestrator) Run(ctx context.Context, profileID string, query string, params map[string]any, writer sse.SSEWriter) error {
-	// Execute graph-query tool
+	// Execute graph_query tool
 	if o.graphQueryService != nil {
 		// Emit tool_call event before execution
 		err := writer.WriteEvent(sse.EventTypeToolCall, map[string]any{
-			"name": "graph-query",
+			"name": "graph_query",
 			"args": map[string]any{"query": query, "params": params},
 		})
 		if err != nil {
@@ -174,7 +174,7 @@ func (o *queryStreamOrchestrator) Run(ctx context.Context, profileID string, que
 			// Filter rows to ensure profile isolation (defense-in-depth)
 			filteredRows := filterRowsByProfile(result.Rows, profileID)
 			err = writer.WriteEvent(sse.EventTypeEvidence, map[string]any{
-				"tool":    "graph-query",
+				"tool":    "graph_query",
 				"profile": profileID,
 				"data":    filteredRows,
 				"meta": map[string]any{
@@ -189,11 +189,11 @@ func (o *queryStreamOrchestrator) Run(ctx context.Context, profileID string, que
 		}
 	}
 
-	// Execute keyword-search tool
+	// Execute keyword_search tool
 	if o.keywordSearchService != nil {
 		// Emit tool_call event before execution
 		err := writer.WriteEvent(sse.EventTypeToolCall, map[string]any{
-			"name": "keyword-search",
+			"name": "keyword_search",
 			"args": map[string]any{"query": query},
 		})
 		if err != nil {
@@ -216,7 +216,7 @@ func (o *queryStreamOrchestrator) Run(ctx context.Context, profileID string, que
 			// Filter evidence to ensure profile isolation (defense-in-depth)
 			filteredHits := filterHitsByProfile(result.Data, profileID)
 			err = writer.WriteEvent(sse.EventTypeEvidence, map[string]any{
-				"tool":    "keyword-search",
+				"tool":    "keyword_search",
 				"profile": profileID,
 				"data":    filteredHits,
 				"meta": map[string]any{
@@ -229,13 +229,13 @@ func (o *queryStreamOrchestrator) Run(ctx context.Context, profileID string, que
 		}
 	}
 
-	// Execute semantic-search tool (if embedding provided in params)
+	// Execute semantic_search tool (if embedding provided in params)
 	if o.semanticSearchService != nil {
 		embedding, hasEmbedding := extractEmbedding(params)
 		if hasEmbedding && len(embedding) > 0 {
 			// Emit tool_call event before execution
 			err := writer.WriteEvent(sse.EventTypeToolCall, map[string]any{
-				"name": "semantic-search",
+				"name": "semantic_search",
 				"args": map[string]any{"query": query, "embedding_present": true},
 			})
 			if err != nil {
@@ -259,7 +259,7 @@ func (o *queryStreamOrchestrator) Run(ctx context.Context, profileID string, que
 				// Filter evidence to ensure profile isolation (defense-in-depth)
 				filteredHits := filterSemanticHitsByProfile(result.Data, profileID)
 				err = writer.WriteEvent(sse.EventTypeEvidence, map[string]any{
-					"tool":    "semantic-search",
+					"tool":    "semantic_search",
 					"profile": profileID,
 					"data":    filteredHits,
 					"meta": map[string]any{

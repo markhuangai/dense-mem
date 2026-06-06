@@ -38,6 +38,25 @@ func TestRegistry_RejectEmptyName(t *testing.T) {
 	}
 }
 
+func TestRegistry_RejectNonUnderscoreCaseNames(t *testing.T) {
+	r := New()
+	invalid := []string{
+		"keyword-search",
+		"Keyword_Search",
+		"keyword.search",
+		"keyword/search",
+		"keyword search",
+		"_keyword_search",
+		"keywordSearch",
+		"a1234567890123456789012345678901234567890123456789012345678901234",
+	}
+	for _, name := range invalid {
+		if err := r.Register(Tool{Name: name}); err == nil {
+			t.Errorf("Register(%q) expected underscore_case validation error", name)
+		}
+	}
+}
+
 func TestRegistry_Get_ReturnsFalseForMissing(t *testing.T) {
 	r := New()
 	_, ok := r.Get("nope")
@@ -97,14 +116,14 @@ func TestRegistry_InvokePropagatesError(t *testing.T) {
 
 func TestRegistry_List_SortedAlphabetically(t *testing.T) {
 	r := New()
-	_ = r.Register(Tool{Name: "semantic-search"})
-	_ = r.Register(Tool{Name: "graph-query"})
+	_ = r.Register(Tool{Name: "semantic_search"})
+	_ = r.Register(Tool{Name: "graph_query"})
 	_ = r.Register(Tool{Name: "save_memory"})
 	got := r.List()
 	if len(got) != 3 {
 		t.Fatalf("List length = %d; want 3", len(got))
 	}
-	want := []string{"graph-query", "save_memory", "semantic-search"}
+	want := []string{"graph_query", "save_memory", "semantic_search"}
 	for i, n := range want {
 		if got[i].Name != n {
 			t.Errorf("List[%d] = %q; want %q", i, got[i].Name, n)
@@ -122,9 +141,9 @@ func TestToolRegistry_ListReturnsAllRegistered(t *testing.T) {
 		"get_memory",
 		"list_recent_memories",
 		"recall_memory",
-		"keyword-search",
-		"semantic-search",
-		"graph-query",
+		"keyword_search",
+		"semantic_search",
+		"graph_query",
 	}
 	for _, n := range names {
 		if err := r.Register(Tool{Name: n}); err != nil {
