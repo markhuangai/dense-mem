@@ -4,8 +4,8 @@ Dense-Mem has two portal surfaces:
 
 | Portal | URL | Auth | Purpose |
 | --- | --- | --- | --- |
-| User portal | `http://127.0.0.1:8080/ui` | Dense-Mem API key | Current key/session, self telemetry, current-key rotation. |
-| Control portal | `http://127.0.0.1:8090/` | `CONTROL_PORTAL_TOKEN` | Teams, profiles, keys, security bans, control telemetry. |
+| User portal | `http://127.0.0.1:8080/ui` | Dense-Mem API key | Current key/session, self telemetry, current-key rotation, and bounded team management for manager keys. |
+| Control portal | `http://127.0.0.1:8090/` | `CONTROL_PORTAL_TOKEN` | Teams, profiles, profile roles, keys, security bans, control telemetry. |
 
 Keep the control portal private. It is not meant to be a public admin site.
 
@@ -23,8 +23,12 @@ Use it to:
 - view the authenticated team and profile session
 - rotate the current key when the key has write scope
 - view self-scoped telemetry when telemetry is enabled
+- manage same-team member profiles when the current key has manager role
 
-The user portal cannot create arbitrary teams or manage every key.
+The user portal cannot create arbitrary teams. Manager keys can update same-team
+metadata and create, list, rename, rotate, or delete member profiles. The user
+portal cannot create manager profiles or change roles; use the control portal
+for manager lifecycle changes.
 
 ## Control Portal
 
@@ -50,6 +54,7 @@ Use it to:
 
 - create teams
 - create named profiles
+- set profile roles
 - create read-only or read-write API keys
 - rotate keys
 - delete profiles or keys
@@ -94,7 +99,21 @@ docker compose exec server /app/delete-team-profile \
   --profile-id "<profile-id>"
 ```
 
-## Key Scope Choices
+## Roles And Scope Choices
+
+Roles and scopes control different things:
+
+| Field | Values | Controls |
+| --- | --- | --- |
+| Role | `manager`, `member` | Team/profile administration. |
+| Scopes | `read`, `read` + `write` | Knowledge read/write behavior. |
+
+The first profile in a new team defaults to `manager`. Later profiles default to
+`member`. During migration, existing teams assign `manager` to the earliest
+active profile and `member` to the rest.
+
+Manager keys can access the team-management APIs and the `/ui` Team tab. Member
+keys cannot, even when they have write scope.
 
 | Key type | Use it for |
 | --- | --- |
@@ -107,7 +126,7 @@ Do not share write keys with tools that only need recall.
 
 ```bash
 curl -X POST "http://127.0.0.1:8080/api/v1/teams/$TEAM_ID/profiles" \
-  -H "Authorization: Bearer $DENSE_MEM_API_KEY" \
+  -H "Authorization: Bearer $MANAGER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name":"automation-readonly","scopes":["read"],"rate_limit":120}'
 ```

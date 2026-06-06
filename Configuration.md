@@ -53,6 +53,9 @@ The base example publishes these local URLs:
 
 Keep the control portal on `127.0.0.1` for local use. It manages API keys.
 
+Manager/member profile access is not controlled by a feature flag. It is active
+after the RBAC migration and is stored in the `team_profiles.role` column.
+
 ## Database Settings
 
 Postgres stores teams, profiles, API key metadata, migrations, and audit logs.

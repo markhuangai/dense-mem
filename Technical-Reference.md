@@ -167,7 +167,7 @@ imports can rebuild the supporting fragments and claims.
 | Recall | `GET /api/v1/recall` |
 | Tools | `GET /api/v1/tools`, `GET /api/v1/tools/{id}`, `POST /api/v1/tools/{name}` |
 | Teams | `GET /api/v1/teams/{teamId}`, `PATCH /api/v1/teams/{teamId}`, `GET /api/v1/teams/{teamId}/audit-log` |
-| Team profiles | `GET /api/v1/teams/{teamId}/profiles`, `POST /api/v1/teams/{teamId}/profiles`, `GET /api/v1/teams/{teamId}/profiles/{profileId}`, `POST /api/v1/teams/{teamId}/profiles/{profileId}/rotate`, `DELETE /api/v1/teams/{teamId}/profiles/{profileId}` |
+| Team profiles | `GET /api/v1/teams/{teamId}/profiles`, `POST /api/v1/teams/{teamId}/profiles`, `GET /api/v1/teams/{teamId}/profiles/{profileId}`, `PATCH /api/v1/teams/{teamId}/profiles/{profileId}`, `POST /api/v1/teams/{teamId}/profiles/{profileId}/rotate`, `DELETE /api/v1/teams/{teamId}/profiles/{profileId}` |
 | Streaming | `POST /api/v1/teams/{teamId}/query/stream` |
 | Communities | `GET /api/v1/communities`, `GET /api/v1/communities/{id}` |
 | MCP | `POST /mcp`, `GET /mcp` |
@@ -178,6 +178,11 @@ API-key lifecycle clients, but new integrations should use the team routes.
 
 Header-scoped memory routes derive the team and profile from the bearer API key.
 Do not send `X-Team-ID` for normal memory routes.
+
+Team metadata updates and team-profile lifecycle routes require a manager key for
+that team. Knowledge routes still use read/write scopes. A write-scoped member
+key can write memory but cannot list, create, rename, rotate, or delete other
+profiles.
 
 ## Recall Endpoint
 
@@ -210,7 +215,7 @@ Create one through the API:
 
 ```bash
 curl -X POST "http://localhost:8080/api/v1/teams/$TEAM_ID/profiles" \
-  -H "Authorization: Bearer $DENSE_MEM_API_KEY" \
+  -H "Authorization: Bearer $MANAGER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name":"automation-readonly","scopes":["read"],"rate_limit":120}'
 ```
@@ -230,7 +235,13 @@ Its API routes live under `/ui/api`. They authenticate with the current Dense-Me
 API key and can return the current session, rotate the current key when it has
 write scope, and read self-scoped telemetry when telemetry is enabled.
 
-The control portal manages teams, profiles, keys, and security-ban settings.
+When the current key has manager role, the user portal also shows a Team tab.
+Managers can update team metadata and create, list, rename, rotate, or delete
+member profiles. Manager role creation and role changes stay in the control
+portal.
+
+The control portal manages teams, profiles, profile roles, keys, and security-ban
+settings.
 
 It does not browse or edit memory content.
 

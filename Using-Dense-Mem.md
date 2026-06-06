@@ -237,10 +237,11 @@ http://127.0.0.1:8080/ui
 
 The user portal is for the current API key. It can show the current team/profile
 session, rotate the authenticated key when it has write scope, and show
-per-profile telemetry when telemetry is enabled.
+per-profile telemetry when telemetry is enabled. If the current key has manager
+role, it can also manage same-team member profiles from the Team tab.
 
 It is separate from the control portal. The control portal uses
-`CONTROL_PORTAL_TOKEN` and manages all teams, profiles, keys, and security-ban
-settings.
+`CONTROL_PORTAL_TOKEN` and manages all teams, profiles, profile roles, keys, and
+security-ban settings.
 
 See [Portals And API Keys](Portals-And-API-Keys) for the full operator guide.

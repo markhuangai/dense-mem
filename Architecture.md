@@ -122,10 +122,15 @@ An API key belongs to:
 
 - one team
 - one named profile
+- one profile role, either manager or member
 - one scope set, either read-only or read-write
 
 Clients do not need to send a team ID for normal memory routes. Dense-Mem derives
 the team and profile from the bearer key.
+
+Roles and scopes are separate. Scopes control knowledge access. Manager role
+controls team metadata and same-team member profile administration. Member keys
+cannot manage profiles, even with write scope.
 
 ## Transport
 
