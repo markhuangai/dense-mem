@@ -16,8 +16,8 @@ limits, or public access.
 | `CONTROL_PORTAL_TOKEN` | Token required to use the local control portal. | Choose a long secret. |
 | `AI_API_URL` | OpenAI-compatible embedding provider base URL. | `https://api.openai.com/v1` for OpenAI. |
 | `AI_API_KEY` | API key used by the embedding provider. | Your provider key. |
-| `AI_API_EMBEDDING_MODEL` | Embedding model name. | `text-embedding-3-large` for stronger recall, or the provider model you choose. |
-| `AI_API_EMBEDDING_DIMENSIONS` | Embedding vector size. | `3072` for `text-embedding-3-large`; `1536` for `text-embedding-3-small`. |
+| `AI_API_EMBEDDING_MODEL` | Embedding model name. | `text-embedding-3-small` by default, or the provider model you choose. |
+| `AI_API_EMBEDDING_DIMENSIONS` | Embedding vector size. | `1536` for `text-embedding-3-small`; `3072` for `text-embedding-3-large`. |
 
 The server requires a complete embedding configuration at startup:
 `AI_API_URL`, `AI_API_KEY`, `AI_API_EMBEDDING_MODEL`, and
@@ -43,6 +43,14 @@ The main Dense-Mem server always listens on container port `8080`. Change host
 exposure with the compose port variables, such as `DENSE_MEM_PORT` for the base
 example or `DENSE_MEM_DEMO_PORT` for the demo example.
 
+The base example publishes these local URLs:
+
+| Service | URL |
+| --- | --- |
+| MCP/API | `http://127.0.0.1:8080/mcp` |
+| User portal | `http://127.0.0.1:8080/ui` |
+| Control portal | `http://127.0.0.1:8090/` |
+
 Keep the control portal on `127.0.0.1` for local use. It manages API keys.
 
 ## Database Settings
@@ -61,7 +69,7 @@ Postgres stores teams, profiles, API key metadata, migrations, and audit logs.
 
 Dense-Mem's first Postgres migration uses `gen_random_uuid()` and creates the
 `pgcrypto` extension when it is missing. Fresh installs that use the bundled
-`postgres:16-alpine` compose service normally work without a manual step because
+`postgres:18-alpine` compose service normally work without a manual step because
 the configured `POSTGRES_USER` owns the database. External, managed, or reused
 Postgres databases may use a restricted runtime role; in that case, install the
 extension once with a database owner or admin role before starting Dense-Mem:
@@ -130,6 +138,7 @@ Claim verification can use the same provider or a separate verifier provider.
 | `AI_VERIFIER_API_KEY` | empty | Uses `AI_API_KEY` when verifier URL is empty. |
 | `AI_VERIFIER_MODEL` | `gpt-4o-mini` | Model used to verify claims. |
 | `AI_VERIFIER_TIMEOUT_SECONDS` | `60` | Verifier request timeout. |
+| `AI_VERIFIER_MAX_CONCURRENCY` | `5` | Maximum concurrent verifier requests. |
 
 Provider traffic may leave your environment. The embedding provider sees memory
 text and recall queries. The verifier provider sees claims and supporting
@@ -149,11 +158,15 @@ limits and shared SSE concurrency controls.
 | `REDIS_PASSWORD` | empty | Optional Redis password. |
 | `REDIS_DB` | `0` | Redis database number. |
 
-Start Redis when using the expert compose example:
+For the expert compose Redis service, set `REDIS_ADDR=redis:6379`, then start
+Redis:
 
 ```bash
 docker compose --profile redis up -d
 ```
+
+See [Public HTTPS And Redis](Public-HTTPS-And-Redis#redis) for the deployment
+guide.
 
 ## Public HTTPS
 
@@ -183,6 +196,9 @@ docker compose --profile traefik up -d
 Traefik exposes the main MCP and API service. It does not route to the control
 portal. Keep the portal private.
 
+See [Public HTTPS And Redis](Public-HTTPS-And-Redis#public-https) for the
+operator guide.
+
 ## Public Edge Limits
 
 | Variable | Default | Meaning |
@@ -192,6 +208,37 @@ portal. Keep the portal private.
 | `TRAEFIK_RATE_BURST` | `30` | Burst allowance. |
 | `TRAEFIK_MAX_BODY_BYTES` | `1048576` | Public body size limit. |
 | `TRAEFIK_INFLIGHT_REQUESTS` | `32` | Max in-flight requests. |
+
+## Telemetry
+
+Prometheus telemetry is optional and disabled by default.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `TELEMETRY_ENABLED` | `false` | Enables Prometheus metrics and telemetry query APIs. |
+| `TELEMETRY_PROMETHEUS_URL` | empty | Prometheus base URL used by `/ui/api/telemetry` and `/control/api/telemetry`. |
+| `TELEMETRY_PROMETHEUS_JOB` | empty | Optional Prometheus job filter for shared Prometheus instances. |
+| `TELEMETRY_QUERY_TIMEOUT_SECONDS` | `5` | Timeout for Prometheus query requests. |
+| `TELEMETRY_SCRAPE_TOKEN` | empty | Bearer token required by `/metrics` when telemetry is enabled. |
+| `PROMETHEUS_PORT` | `9090` | Host port for the telemetry overlay's local Prometheus UI/API. |
+
+To enable telemetry with the base or expert compose example:
+
+```bash
+curl -fsSLo prometheus.yml \
+  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/prometheus.yml
+curl -fsSLo docker-compose.telemetry.yml \
+  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/docker-compose.telemetry.yml
+
+export TELEMETRY_SCRAPE_TOKEN="$(openssl rand -hex 32)"
+docker compose -f docker-compose.yml -f docker-compose.telemetry.yml up -d
+```
+
+The overlay starts Prometheus on `127.0.0.1:9090`, keeps metrics on the private
+Compose network, scrapes the control server's `/metrics` endpoint with the
+scrape token, and sets `TELEMETRY_PROMETHEUS_JOB=dense-mem` by default.
+
+See [Telemetry](Telemetry) for portal usage, demo telemetry, and troubleshooting.
 
 ## Runtime Limits
 
@@ -205,6 +252,13 @@ portal. Keep the portal private.
 | `SSE_HEARTBEAT_SECONDS` | `30` | SSE heartbeat interval. |
 | `SSE_MAX_DURATION_SECONDS` | `300` | Max SSE stream duration. |
 | `SSE_MAX_CONCURRENT_STREAMS` | `10` | Max concurrent SSE streams per client. |
+| `FRAGMENT_CREATE_RATE_LIMIT` | `60` | Fragment write limit per minute. |
+| `FRAGMENT_READ_RATE_LIMIT` | `300` | Fragment read limit per minute. |
+| `CLAIM_WRITE_RATE_LIMIT` | `60` | Claim write limit per minute. |
+| `CLAIM_READ_RATE_LIMIT` | `300` | Claim read limit per minute. |
+| `RECALL_VALIDATED_CLAIM_WEIGHT` | `0.5` | Extra recall score weight for validated claims. |
+| `PROMOTE_TX_TIMEOUT_SECONDS` | `10` | Claim promotion transaction timeout. |
+| `AI_COMMUNITY_MAX_NODES` | `500000` | Maximum Neo4j nodes considered by AI community analysis. |
 
 ## Logging
 

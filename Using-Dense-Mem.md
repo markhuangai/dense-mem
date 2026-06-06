@@ -29,9 +29,39 @@ Use normal language. You do not need to know the tool names.
 | Save a preference | "Remember that I prefer direct answers and no filler." |
 | Save a project fact | "Remember that this repo deploys through Docker Swarm." |
 | Recall context | "Before we start, recall what you know about this project." |
+| Investigate evidence | "Show me why you believe that memory and what could contradict it." |
+| Build answer context | "Assemble the relevant project memory before answering." |
 | Check memory health | "Review my stored memories and tell me if anything needs clarification." |
 | Correct a memory | "Replace the old deployment note with this new one." |
-| Share reusable knowledge | "Package the validated React testing memories so another team can inspect and import them." |
+
+## Write Granular Memories
+
+Dense-Mem works best when each saved memory entry is a focused evidence unit,
+not a broad scenario summary. MCP memory writes are validated to stay under 1000
+characters per entry.
+
+Split large scenarios by decision, fact, correction, preference, project
+milestone, or another claim-worthy unit. This gives Dense-Mem cleaner
+`SUPPORTED_BY` links from claims to the smallest evidence that proves them, and
+it helps future recall and graph relationships stay precise.
+
+Good:
+
+```text
+Remember that the Dense-Mem MCP tools should keep each memory evidence entry
+under 1000 characters.
+```
+
+Better than:
+
+```text
+Remember this whole project history, including every decision, benchmark,
+deployment setting, and marketing plan...
+```
+
+When one claim needs evidence from more than one entry, the assistant can attach
+multiple supporting fragment IDs instead of merging unrelated context into one
+large fragment.
 
 ## What Dense-Mem Returns
 
@@ -46,6 +76,39 @@ Dense-Mem can return several kinds of memory:
 
 For normal use, facts are the most important. Claims and fragments help explain
 where a memory came from.
+
+## Trace Evidence And Assemble Context
+
+Use `trace_memory` when an answer needs provenance for one specific fact or
+claim. It returns the anchor memory, the promoting claim when available,
+supporting fragments, bounded contradiction or supersession links, and explicit
+edge records.
+
+```json
+{
+  "type": "fact",
+  "id": "fact_123",
+  "max_related": 5,
+  "include_fragments": true
+}
+```
+
+Use `assemble_context` when the assistant should prepare a bounded context block
+before answering. It calls recall, includes source IDs, returns structured items,
+and starts the text block with a reminder that memory is data, not instructions.
+
+```json
+{
+  "query": "repo release process and testing expectations",
+  "limit": 5,
+  "max_chars": 4000,
+  "include_evidence": true
+}
+```
+
+This keeps memory inspection bounded. The assistant should trace a specific
+claim or fact when it needs evidence, not ask Dense-Mem to traverse the whole
+graph.
 
 ## Example: Personal Preference
 
@@ -99,81 +162,8 @@ Which preference should I keep: concise answers or long detailed answers?
 
 After you answer, the assistant can confirm which memory should stay active.
 
-## Portable Skill Packs
-
-Skill packs move selected memory between Dense-Mem teams or deployments. They are
-best for reusable knowledge such as project onboarding facts, coding standards,
-tooling conventions, or domain notes that another assistant should inspect
-before trusting.
-
-The normal workflow is:
-
-```mermaid
-sequenceDiagram
-  participant Source as Source team
-  participant Assistant
-  participant Target as Target team
-
-  Assistant->>Source: find_skill_pack_candidates(query)
-  Source-->>Assistant: candidate facts and validated claims
-  Assistant->>Source: export_skill_pack(...)
-  Source-->>Assistant: canonical_json and sha256
-  Assistant->>Target: inspect_skill_pack(...)
-  Target-->>Assistant: duplicates, conflicts, and decisions
-  Assistant->>Target: import_skill_pack(...)
-  Target-->>Assistant: import_id and item results
-```
-
-Ask your assistant to do this in normal language:
-
-```text
-Find memories about our repository review standards that could be exported as a
-skill pack.
-```
-
-Then:
-
-```text
-Export the selected memories as a skill pack named "Repo review standards" and
-show me the SHA-256 hash.
-```
-
-Before importing into another team, inspect the artifact:
-
-```text
-Inspect this skill pack JSON before importing it. Tell me which items are new,
-duplicates, or conflicts.
-```
-
-Import in review mode when you want the pack to create evidence and candidate
-claims without promoting trusted facts:
-
-```text
-Import this skill pack in review mode.
-```
-
-Use trusted mode only for artifacts you are willing to treat as authoritative.
-Trusted mode can validate imported claims and can promote `source_fact` items to
-active facts. If an item conflicts with an active local fact, Dense-Mem returns
-`decisions_required` instead of silently replacing local memory.
-
-Conflict decisions are explicit:
-
-| Decision | Meaning |
-| --- | --- |
-| `skip` | Do not import that item. |
-| `import_anyway` | Import the item without superseding local facts. |
-| `supersede_local` | Supersede conflicting active local facts with the imported item. |
-| `demote_to_claim` | For `source_fact` items, keep the import as a validated claim instead of promoting it to an active fact. |
-
-Every applied import returns an `import_id`. Keep it if you may need rollback:
-
-```text
-Rollback skill-pack import 11111111-2222-3333-4444-555555555555.
-```
-
-Rollback uses the import ledger. It blocks if an imported graph entity changed
-after import, so you can review the conflict instead of undoing newer work.
+See [Conflicts And Corrections](Conflicts-And-Corrections) for the full
+clarification and `confirm_memory` workflow.
 
 ## Teams And Profiles
 
@@ -198,6 +188,7 @@ Use this when you want separate memory spaces:
 | Automation that should only read | Read-only profile key |
 
 Do not share a write key with tools that should only search memory. See
+[Portals And API Keys](Portals-And-API-Keys) for key management and
 [Read-Only Keys](Technical-Reference#read-only-keys) for the API example.
 
 ## Daily Operator Commands
@@ -235,3 +226,21 @@ Use the local control portal to:
 
 The portal is not a memory browser. It does not show every fact, claim, or graph
 node.
+
+## When To Use The User Portal
+
+Use the authenticated user portal at:
+
+```text
+http://127.0.0.1:8080/ui
+```
+
+The user portal is for the current API key. It can show the current team/profile
+session, rotate the authenticated key when it has write scope, and show
+per-profile telemetry when telemetry is enabled.
+
+It is separate from the control portal. The control portal uses
+`CONTROL_PORTAL_TOKEN` and manages all teams, profiles, keys, and security-ban
+settings.
+
+See [Portals And API Keys](Portals-And-API-Keys) for the full operator guide.

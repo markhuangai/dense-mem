@@ -25,7 +25,6 @@ call when they need to save or recall information.
 | Personal coding memory | "Remember that I prefer small pull requests and explicit error handling." |
 | Project memory | "Recall the deployment steps for my API service." |
 | Team memory | "Remember the frontend team uses Bun and strict TypeScript." |
-| Portable memory handoff | "Package the validated onboarding facts so another team can inspect and import them." |
 | AI assistant continuity | "Before answering, recall what you know about this project." |
 | Safer corrections | "Actually, keep the new preference and replace the old one." |
 
@@ -55,6 +54,12 @@ flowchart LR
 | Try Dense-Mem before installing anything | [Hosted Demo](Hosted-Demo) |
 | Run Dense-Mem with the fewest choices | [Quick Start](Quick-Start) |
 | Learn what to do after it is running | [Using Dense-Mem](Using-Dense-Mem) |
+| Connect Claude Code, Codex, or another MCP client | [MCP Clients](MCP-Clients) |
+| Understand memory conflicts and corrections | [Conflicts And Corrections](Conflicts-And-Corrections) |
+| Export or import reusable knowledge | [Skill Packs](Skill-Packs) |
+| Manage teams, profiles, and API keys | [Portals And API Keys](Portals-And-API-Keys) |
+| Enable Prometheus metrics and dashboards | [Telemetry](Telemetry) |
+| Publish Dense-Mem with HTTPS or Redis | [Public HTTPS And Redis](Public-HTTPS-And-Redis) |
 | Review every important setting | [Configuration](Configuration) |
 | Understand the system design | [Architecture](Architecture) |
 | Read tool, API, and operations notes | [Technical Reference](Technical-Reference) |
@@ -79,10 +84,6 @@ non-conflicting claims into active facts.
 
 That means memory is not only a pile of notes. It keeps track of where a memory
 came from and whether it became an active fact.
-
-Dense-Mem can also package selected facts, validated claims, and manual triples
-as portable skill packs. A skill pack is canonical JSON plus a SHA-256 hash, so
-another team can inspect the contents before importing them.
 
 ## What Dense-Mem Does Not Do
 

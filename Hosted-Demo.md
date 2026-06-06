@@ -38,6 +38,7 @@ context instead of starting cold.
 | Limit | Demo value |
 | --- | --- |
 | Session lifetime | 24 hours |
+| Generated demo sessions | 10 per IP per day |
 | Authenticated requests | 300 |
 | Write attempts | 75 |
 | Save attempts | 30 |

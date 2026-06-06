@@ -19,7 +19,9 @@ flowchart TB
   subgraph DenseMem["Dense-Mem"]
     MCP["/mcp Streamable HTTP"]
     REST["REST API"]
+    UserPortal["User portal /ui"]
     Portal["Control portal"]
+    Metrics["Metrics endpoint /metrics"]
     Registry["Tool registry"]
     Memory["Memory orchestration"]
     Recall["Recall service"]
@@ -30,11 +32,13 @@ flowchart TB
     Postgres["Postgres teams, profiles, audit"]
     Neo4j["Neo4j graph and vector indexes"]
     Redis["Redis optional shared limits"]
+    Prometheus["Prometheus optional telemetry"]
   end
 
   Hosts --> MCP
   MCP --> Registry
   REST --> Registry
+  UserPortal --> REST
   Portal --> REST
   Registry --> Memory
   Registry --> Recall
@@ -44,6 +48,9 @@ flowchart TB
   Recall --> Neo4j
   REST --> Postgres
   REST --> Redis
+  Metrics --> Prometheus
+  REST --> Prometheus
+  Portal --> Prometheus
 ```
 
 ## Responsibility Boundary
@@ -54,7 +61,7 @@ flowchart TB
 | Embeddings | Fragment embeddings and recall-query embeddings | No vectors for normal use |
 | Retrieval | Facts, claims, fragments, and clarifications | Choosing how to use recalled context |
 | Corrections | Conflict detection and supersession records | Asking the user which memory is correct |
-| Operations | Teams, profiles, API keys, audit metadata | Client-side MCP configuration |
+| Operations | Teams, profiles, API keys, audit metadata, user portal, control portal | Client-side MCP configuration |
 
 Dense-Mem is intentionally narrow. It does not replace the assistant. It gives
 the assistant a reliable memory service.
@@ -144,6 +151,7 @@ REST and OpenAPI remain available for non-MCP integrations and operations.
 | Postgres | Teams, profiles, key metadata, audit records, migrations. |
 | Neo4j | Memory graph, claims, facts, relationships, vector indexes. |
 | Redis | Optional for one server; required for multi-instance shared limits. |
+| Prometheus | Optional telemetry store for the `/ui` app and control portal dashboards. |
 
 ## Embedding Ownership
 

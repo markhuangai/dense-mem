@@ -12,7 +12,8 @@ You will run:
 - Dense-Mem server
 - Postgres for teams, profiles, keys, and audit records
 - Neo4j for memory graph and search indexes
-- a local control portal for creating API keys
+- a local user portal at `/ui` for the authenticated API key
+- a local control portal for creating teams, profiles, and API keys
 
 Redis and public HTTPS are optional. Skip them for your first setup.
 
@@ -65,10 +66,10 @@ For clarity, make the embedding provider explicit:
 POSTGRES_PASSWORD=choose-a-strong-postgres-password
 NEO4J_PASSWORD=choose-a-strong-neo4j-password
 CONTROL_PORTAL_TOKEN=choose-a-long-control-portal-token
-AI_API_URL=https://api.openai.com/v1
 AI_API_KEY=your-ai-provider-api-key
-AI_API_EMBEDDING_MODEL=text-embedding-3-large
-AI_API_EMBEDDING_DIMENSIONS=3072
+AI_API_URL=https://api.openai.com/v1
+AI_API_EMBEDDING_MODEL=text-embedding-3-small
+AI_API_EMBEDDING_DIMENSIONS=1536
 ```
 
 The control portal creates and rotates API keys. The base compose file binds it
@@ -76,11 +77,11 @@ to `127.0.0.1`, so it is reachable only from your computer.
 
 The server requires a complete embedding configuration at startup:
 `AI_API_URL`, `AI_API_KEY`, `AI_API_EMBEDDING_MODEL`, and
-`AI_API_EMBEDDING_DIMENSIONS`. Dense-Mem expects an OpenAI-compatible embedding
-API. The example above uses OpenAI's `text-embedding-3-large`, which returns
-`3072` dimensions. If you use `text-embedding-3-small`, set dimensions to
-`1536` instead. For another provider, change the URL, model, and dimension
-together before storing important memory.
+`AI_API_EMBEDDING_DIMENSIONS`. The compose examples provide OpenAI defaults for
+the URL, model, and dimensions, so the minimal local setup only needs
+`AI_API_KEY`. For another provider, change the URL, model, and dimension
+together before storing important memory. If you use OpenAI's
+`text-embedding-3-large`, set dimensions to `3072`.
 
 ## Step 3: Start Dense-Mem
 
@@ -99,7 +100,13 @@ docker compose ps
 The local MCP endpoint is now reachable from your computer:
 
 ```text
-http://localhost:8080/mcp
+http://127.0.0.1:8080/mcp
+```
+
+The authenticated user portal is:
+
+```text
+http://127.0.0.1:8080/ui
 ```
 
 The local control portal is:
