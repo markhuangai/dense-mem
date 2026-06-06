@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,11 +12,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/storage/inmem"
@@ -49,6 +52,9 @@ func (r *userPortalAuthRepo) DeleteForProfile(context.Context, uuid.UUID, uuid.U
 func (r *userPortalAuthRepo) UpdateNameForProfile(context.Context, uuid.UUID, uuid.UUID, string) (int64, error) {
 	return 0, nil
 }
+func (r *userPortalAuthRepo) UpdateRoleForProfile(context.Context, uuid.UUID, uuid.UUID, string) (int64, error) {
+	return 0, nil
+}
 func (r *userPortalAuthRepo) RotateForProfile(context.Context, uuid.UUID, uuid.UUID, string, string, string, *time.Time) (int64, error) {
 	return 0, nil
 }
@@ -66,6 +72,9 @@ func (s *userPortalKeySvc) CreateStandardKey(context.Context, uuid.UUID, service
 	return nil, "", nil
 }
 func (s *userPortalKeySvc) UpdateNameForProfile(context.Context, uuid.UUID, uuid.UUID, string, *string, string, string, string) (*domain.APIKey, error) {
+	return nil, nil
+}
+func (s *userPortalKeySvc) UpdateRoleForProfile(context.Context, uuid.UUID, uuid.UUID, string, *string, string, string, string) (*domain.APIKey, error) {
 	return nil, nil
 }
 func (s *userPortalKeySvc) RotateForProfile(_ context.Context, profileID, id uuid.UUID, req service.CreateAPIKeyRequest, _ *string, _ string, _ string, _ string) (*domain.APIKey, string, error) {
@@ -97,6 +106,24 @@ func (s *userPortalKeySvc) GetByIDForProfile(_ context.Context, profileID, id uu
 }
 func (s *userPortalKeySvc) DeleteForProfile(context.Context, uuid.UUID, uuid.UUID, *string, string, string, string) error {
 	return nil
+}
+
+type userPortalNilKeySvc struct {
+	userPortalKeySvc
+	err error
+}
+
+func (s *userPortalNilKeySvc) GetByIDForProfile(context.Context, uuid.UUID, uuid.UUID) (*domain.APIKey, error) {
+	return nil, s.err
+}
+
+type userPortalRotateErrorKeySvc struct {
+	userPortalKeySvc
+	err error
+}
+
+func (s *userPortalRotateErrorKeySvc) RotateForProfile(context.Context, uuid.UUID, uuid.UUID, service.CreateAPIKeyRequest, *string, string, string, string) (*domain.APIKey, string, error) {
+	return nil, "", s.err
 }
 
 func TestUserPortalSessionShowsOnlyAuthenticatedKey(t *testing.T) {
@@ -227,6 +254,97 @@ func TestUserPortalRotateRejectsEditableFields(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "does not accept editable fields")
 }
 
+func TestUserPortalCurrentSessionErrors(t *testing.T) {
+	teamID := uuid.New()
+	keyID := uuid.New()
+	authKey, _ := userPortalTestKey(t, teamID, keyID, "Current profile", []string{"read", "write"})
+
+	h := &userPortalHandler{
+		profiles: &controlProfileSvc{},
+		keys:     &userPortalKeySvc{keys: []*domain.APIKey{authKey}},
+	}
+	err := h.session(userPortalEchoContext(t, http.MethodGet, "/ui/api/session", "", nil))
+	require.ErrorContains(t, err, "authentication required")
+
+	_, err = h.currentSession(userPortalEchoContext(t, http.MethodGet, "/ui/api/session", "", &httpmw.Principal{
+		KeyID:  keyID,
+		TeamID: teamID,
+		Role:   service.APIKeyRoleMember,
+		Scopes: []string{"read"},
+	}))
+	require.ErrorContains(t, err, "team not found")
+
+	h.profiles = &controlProfileSvc{profiles: []*domain.Profile{{
+		ID:        teamID,
+		Name:      "Team",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}}}
+	h.keys = &userPortalNilKeySvc{err: errors.New("lookup failed")}
+	_, err = h.currentSession(userPortalEchoContext(t, http.MethodGet, "/ui/api/session", "", &httpmw.Principal{
+		KeyID:  keyID,
+		TeamID: teamID,
+		Role:   service.APIKeyRoleMember,
+		Scopes: []string{"read"},
+	}))
+	require.ErrorContains(t, err, "lookup failed")
+
+	h.keys = &userPortalNilKeySvc{}
+	_, err = h.currentSession(userPortalEchoContext(t, http.MethodGet, "/ui/api/session", "", &httpmw.Principal{
+		KeyID:  keyID,
+		TeamID: teamID,
+		Role:   service.APIKeyRoleMember,
+		Scopes: []string{"read"},
+	}))
+	require.ErrorContains(t, err, "key not found")
+}
+
+func TestUserPortalRotateCurrentKeyErrors(t *testing.T) {
+	teamID := uuid.New()
+	keyID := uuid.New()
+	authKey, _ := userPortalTestKey(t, teamID, keyID, "Current profile", []string{"read", "write"})
+	h := &userPortalHandler{
+		profiles: &controlProfileSvc{},
+		keys:     &userPortalKeySvc{keys: []*domain.APIKey{authKey}},
+	}
+
+	err := h.rotateCurrentKey(userPortalEchoContext(t, http.MethodPost, "/ui/api/key/rotate", "{}", nil))
+	require.ErrorContains(t, err, "authentication required")
+
+	principal := &httpmw.Principal{
+		KeyID:  keyID,
+		TeamID: teamID,
+		Role:   service.APIKeyRoleMember,
+		Scopes: []string{"read", "write"},
+	}
+	h.keys = &userPortalNilKeySvc{err: errors.New("lookup failed")}
+	err = h.rotateCurrentKey(userPortalEchoContext(t, http.MethodPost, "/ui/api/key/rotate", "{}", principal))
+	require.ErrorContains(t, err, "lookup failed")
+
+	h.keys = &userPortalNilKeySvc{}
+	err = h.rotateCurrentKey(userPortalEchoContext(t, http.MethodPost, "/ui/api/key/rotate", "{}", principal))
+	require.ErrorContains(t, err, "key not found")
+
+	h.keys = &userPortalRotateErrorKeySvc{
+		userPortalKeySvc: userPortalKeySvc{keys: []*domain.APIKey{authKey}},
+		err:              errors.New("rotate failed"),
+	}
+	err = h.rotateCurrentKey(userPortalEchoContext(t, http.MethodPost, "/ui/api/key/rotate", "{}", principal))
+	require.ErrorContains(t, err, "rotate failed")
+}
+
+func TestRejectEditableRotateBodyBranches(t *testing.T) {
+	c := userPortalEchoContext(t, http.MethodPost, "/ui/api/key/rotate", "", nil)
+	c.Request().Body = nil
+	require.NoError(t, rejectEditableRotateBody(c))
+
+	c = userPortalEchoContext(t, http.MethodPost, "/ui/api/key/rotate", "   ", nil)
+	require.NoError(t, rejectEditableRotateBody(c))
+
+	c = userPortalEchoContext(t, http.MethodPost, "/ui/api/key/rotate", `{"name"`, nil)
+	require.ErrorContains(t, rejectEditableRotateBody(c), "malformed JSON body")
+}
+
 func TestUserPortalStaticDoesNotShadowAPI(t *testing.T) {
 	teamID := uuid.New()
 	authKey, rawKey := userPortalTestKey(t, teamID, uuid.New(), "Mine", []string{"read", "write"})
@@ -301,4 +419,16 @@ func userPortalTestServerWithTelemetry(t *testing.T, teamID uuid.UUID, authKey *
 		UserStaticDir: staticDir,
 	})
 	return e
+}
+
+func userPortalEchoContext(t *testing.T, method, target, body string, principal *httpmw.Principal) echo.Context {
+	t.Helper()
+
+	e := echo.New()
+	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	if principal != nil {
+		req = req.WithContext(httpmw.SetPrincipalForTest(req.Context(), principal))
+	}
+	rec := httptest.NewRecorder()
+	return e.NewContext(req, rec)
 }

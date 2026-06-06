@@ -145,4 +145,6 @@ const (
 	UpdateProfileBodyKey = "update_profile_body"
 	// CreateAPIKeyBodyKey is the context key for create API key request body.
 	CreateAPIKeyBodyKey = "create_apikey_body"
+	// UpdateAPIKeyBodyKey is the context key for update API key request body.
+	UpdateAPIKeyBodyKey = "update_apikey_body"
 )

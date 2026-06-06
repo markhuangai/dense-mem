@@ -28,6 +28,8 @@ type APIKeyRepository interface {
 	DeleteForProfile(ctx context.Context, profileID, id uuid.UUID) (int64, error)
 	// UpdateNameForProfile renames a team profile only when it belongs to profileID.
 	UpdateNameForProfile(ctx context.Context, profileID, id uuid.UUID, name string) (int64, error)
+	// UpdateRoleForProfile changes a team profile role only when it belongs to profileID.
+	UpdateRoleForProfile(ctx context.Context, profileID, id uuid.UUID, role string) (int64, error)
 	// RotateForProfile replaces key material for one team profile in place.
 	RotateForProfile(ctx context.Context, profileID, id uuid.UUID, keyHash, keyPrefix, keySuffix string, expiresAt *time.Time) (int64, error)
 	TouchLastUsed(ctx context.Context, id uuid.UUID) error
@@ -79,9 +81,9 @@ func (r *APIKeyRepositoryImpl) CreateStandardKey(ctx context.Context, key *domai
 	// authorization layer later sees an empty scope set.
 	err := r.rls.WithProfileTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
 		return tx.Exec(`
-			INSERT INTO team_profiles (id, team_id, key_hash, key_prefix, key_suffix, name, scopes, rate_limit, expires_at, revoked_at, last_used_at, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9, NULL, NULL, $10, $10)
-		`, key.ID, teamID, key.KeyHash, keyPrefix, keySuffix, name, pq.Array(key.Scopes), key.RateLimit, key.ExpiresAt, now).Error
+			INSERT INTO team_profiles (id, team_id, key_hash, key_prefix, key_suffix, name, scopes, role, rate_limit, expires_at, revoked_at, last_used_at, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9, $10, NULL, NULL, $11, $11)
+		`, key.ID, teamID, key.KeyHash, keyPrefix, keySuffix, name, pq.Array(key.Scopes), key.GetRole(), key.RateLimit, key.ExpiresAt, now).Error
 	})
 
 	if err != nil {
@@ -119,7 +121,7 @@ func (r *APIKeyRepositoryImpl) ListByProfile(ctx context.Context, profileID uuid
 	keys := make([]*domain.APIKey, 0)
 	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
 		rows, rerr := tx.Raw(`
-			SELECT id, team_id, COALESCE(key_suffix, ''), name, scopes, rate_limit, last_used_at, expires_at, created_at, revoked_at
+			SELECT id, team_id, COALESCE(key_suffix, ''), name, scopes, role, rate_limit, last_used_at, expires_at, created_at, revoked_at
 			FROM team_profiles
 			WHERE team_id = $1
 			ORDER BY created_at DESC, id ASC
@@ -138,6 +140,7 @@ func (r *APIKeyRepositoryImpl) ListByProfile(ctx context.Context, profileID uuid
 				&k.KeySuffix,
 				&k.Label,
 				pq.Array(&k.Scopes),
+				&k.Role,
 				&k.RateLimit,
 				&k.LastUsedAt,
 				&k.ExpiresAt,
@@ -182,6 +185,7 @@ func (r *APIKeyRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix str
 				COALESCE(k.key_suffix, ''),
 				k.name,
 				k.scopes,
+				k.role,
 				k.rate_limit,
 				k.last_used_at,
 				k.expires_at,
@@ -208,6 +212,7 @@ func (r *APIKeyRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix str
 				&key.KeySuffix,
 				&key.Label,
 				pq.Array(&key.Scopes),
+				&key.Role,
 				&key.RateLimit,
 				&key.LastUsedAt,
 				&key.ExpiresAt,
@@ -304,6 +309,29 @@ func (r *APIKeyRepositoryImpl) UpdateNameForProfile(ctx context.Context, profile
 	return rowsAffected, nil
 }
 
+// UpdateRoleForProfile changes a team profile role without changing key material.
+func (r *APIKeyRepositoryImpl) UpdateRoleForProfile(ctx context.Context, profileID, id uuid.UUID, role string) (int64, error) {
+	now := time.Now().UTC()
+	var rowsAffected int64
+	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
+		res := tx.Exec(`
+			UPDATE team_profiles
+			SET role = $1,
+			    updated_at = $2
+			WHERE id = $3 AND team_id = $4
+		`, role, now, id, profileID)
+		if res.Error != nil {
+			return res.Error
+		}
+		rowsAffected = res.RowsAffected
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to update team profile role: %w", err)
+	}
+	return rowsAffected, nil
+}
+
 // RotateForProfile replaces the bearer secret for one team profile without
 // changing the profile identity.
 func (r *APIKeyRepositoryImpl) RotateForProfile(ctx context.Context, profileID, id uuid.UUID, keyHash, keyPrefix, keySuffix string, expiresAt *time.Time) (int64, error) {
@@ -345,7 +373,7 @@ func (r *APIKeyRepositoryImpl) GetByIDForProfile(ctx context.Context, profileID,
 
 	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
 		rows, rerr := tx.Raw(`
-			SELECT id, team_id, COALESCE(key_suffix, ''), name, scopes, rate_limit, last_used_at, expires_at, created_at, revoked_at
+			SELECT id, team_id, COALESCE(key_suffix, ''), name, scopes, role, rate_limit, last_used_at, expires_at, created_at, revoked_at
 			FROM team_profiles
 			WHERE id = $1 AND team_id = $2
 		`, id, profileID).Rows()
@@ -362,6 +390,7 @@ func (r *APIKeyRepositoryImpl) GetByIDForProfile(ctx context.Context, profileID,
 				&key.KeySuffix,
 				&key.Label,
 				pq.Array(&key.Scopes),
+				&key.Role,
 				&key.RateLimit,
 				&key.LastUsedAt,
 				&key.ExpiresAt,

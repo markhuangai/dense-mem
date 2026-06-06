@@ -170,6 +170,19 @@ func (s *controlKeySvc) UpdateNameForProfile(_ context.Context, profileID, id uu
 	return nil, nil
 }
 
+func (s *controlKeySvc) UpdateRoleForProfile(_ context.Context, profileID, id uuid.UUID, role string, _ *string, _ string, _ string, _ string) (*domain.APIKey, error) {
+	if s.updateErr != nil {
+		return nil, s.updateErr
+	}
+	for _, key := range s.keys {
+		if key.ProfileID == profileID && key.ID == id {
+			key.Role = role
+			return key, nil
+		}
+	}
+	return nil, nil
+}
+
 func (s *controlKeySvc) ListByProfile(_ context.Context, profileID uuid.UUID, _ int, _ int) ([]*domain.APIKey, error) {
 	if s.listErr != nil {
 		return nil, s.listErr

@@ -181,7 +181,7 @@ func AuthMiddlewareWithSecurity(repo repository.APIKeyRepository, auditSvc servi
 				TeamID:      teamID,
 				ProfileID:   &profileID,
 				ProfileName: profileName,
-				Role:        "standard",
+				Role:        key.GetRole(),
 				Scopes:      key.Scopes,
 				KeyPrefix:   prefix,
 				RateLimit:   key.RateLimit,

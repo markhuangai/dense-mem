@@ -26,6 +26,7 @@ type apiKeyHandlerService struct {
 	total        int64
 	createReq    service.CreateAPIKeyRequest
 	rotateReq    service.CreateAPIKeyRequest
+	updatedName  string
 	deletedKeyID uuid.UUID
 	err          error
 	listErr      error
@@ -43,7 +44,12 @@ func (s *apiKeyHandlerService) CreateStandardKey(_ context.Context, _ uuid.UUID,
 	return s.key, s.raw, nil
 }
 
-func (s *apiKeyHandlerService) UpdateNameForProfile(context.Context, uuid.UUID, uuid.UUID, string, *string, string, string, string) (*domain.APIKey, error) {
+func (s *apiKeyHandlerService) UpdateNameForProfile(_ context.Context, _ uuid.UUID, _ uuid.UUID, name string, _ *string, _ string, _ string, _ string) (*domain.APIKey, error) {
+	s.updatedName = name
+	return s.key, s.err
+}
+
+func (s *apiKeyHandlerService) UpdateRoleForProfile(context.Context, uuid.UUID, uuid.UUID, string, *string, string, string, string) (*domain.APIKey, error) {
 	return s.key, s.err
 }
 
@@ -155,6 +161,35 @@ func TestAPIKeyHandlerCreateListGetRotateDelete(t *testing.T) {
 		}
 	})
 
+	t.Run("update renames member profile", func(t *testing.T) {
+		updateSvc := &apiKeyHandlerService{key: key}
+		h := NewAPIKeyHandler(updateSvc)
+		rec, err := runAPIKeyHandlerWithUpdateBody(t, http.MethodPatch, "/api/v1/teams/"+profileID.String()+"/profiles/"+keyID.String(), "/api/v1/teams/:teamId/profiles/:profileId", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, `{"name":"renamed profile"}`, h.Update)
+		if err != nil {
+			t.Fatalf("Update error: %v", err)
+		}
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d; want 200", rec.Code)
+		}
+		if updateSvc.updatedName != "renamed profile" {
+			t.Fatalf("updated name = %q; want renamed profile", updateSvc.updatedName)
+		}
+	})
+
+	t.Run("update rejects manager profile targets", func(t *testing.T) {
+		managerKey := *key
+		managerKey.Role = service.APIKeyRoleManager
+		updateSvc := &apiKeyHandlerService{key: &managerKey}
+		h := NewAPIKeyHandler(updateSvc)
+		_, err := runAPIKeyHandlerWithUpdateBody(t, http.MethodPatch, "/api/v1/teams/"+profileID.String()+"/profiles/"+keyID.String(), "/api/v1/teams/:teamId/profiles/:profileId", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, `{"name":"renamed profile"}`, h.Update)
+		if err == nil || !strings.Contains(err.Error(), "manager profiles can only be managed from the control portal") {
+			t.Fatalf("Update error = %v; want manager target rejection", err)
+		}
+		if updateSvc.updatedName != "" {
+			t.Fatalf("updated name = %q; want no delegated update", updateSvc.updatedName)
+		}
+	})
+
 	t.Run("rotate rejects scope changes and accepts metadata updates", func(t *testing.T) {
 		withScopes := `{"name":"rotated","scopes":["read"]}`
 		_, err := runAPIKeyHandlerWithBody(t, http.MethodPost, "/api/v1/teams/"+profileID.String()+"/profiles/"+keyID.String()+"/rotate", "/api/v1/teams/:teamId/profiles/:profileId/rotate", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, withScopes, h.Rotate)
@@ -192,6 +227,7 @@ func TestAPIKeyHandlerCreateListGetRotateDelete(t *testing.T) {
 func TestAPIKeyHandlerValidationErrors(t *testing.T) {
 	h := NewAPIKeyHandler(&apiKeyHandlerService{})
 	profileID := uuid.New().String()
+	keyID := uuid.New().String()
 
 	cases := []struct {
 		name       string
@@ -224,6 +260,27 @@ func TestAPIKeyHandlerValidationErrors(t *testing.T) {
 			paramVals:  []string{profileID, "not-a-uuid"},
 			handler:    h.Get,
 			want:       "invalid profile ID format",
+		},
+		{
+			name:       "update invalid team id",
+			method:     http.MethodPatch,
+			target:     "/api/v1/teams/not-a-uuid/profiles/" + keyID,
+			path:       "/api/v1/teams/:teamId/profiles/:profileId",
+			paramNames: []string{"teamId", "profileId"},
+			paramVals:  []string{"not-a-uuid", keyID},
+			body:       `{"name":"ops"}`,
+			handler:    h.Update,
+			want:       "invalid team ID format",
+		},
+		{
+			name:       "update missing body",
+			method:     http.MethodPatch,
+			target:     "/api/v1/teams/" + profileID + "/profiles/" + keyID,
+			path:       "/api/v1/teams/:teamId/profiles/:profileId",
+			paramNames: []string{"teamId", "profileId"},
+			paramVals:  []string{profileID, keyID},
+			handler:    h.Update,
+			want:       "request body not found",
 		},
 		{
 			name:       "delete missing key id",
@@ -367,11 +424,30 @@ func runAPIKeyHandlerWithBody(t *testing.T, method, target, path string, paramNa
 	return runAPIKeyHandlerWithOptionalBody(t, method, target, path, paramNames, paramVals, body, handler)
 }
 
+func runAPIKeyHandlerWithUpdateBody(t *testing.T, method, target, path string, paramNames, paramVals []string, body string, handler echo.HandlerFunc) (*httptest.ResponseRecorder, error) {
+	t.Helper()
+
+	rec, c := newAPIKeyHandlerContext(t, method, target, path, paramNames, paramVals, body)
+	wrapped := middleware.BindAndValidate[dto.UpdateAPIKeyRequest](middleware.UpdateAPIKeyBodyKey)(handler)
+	return rec, wrapped(c)
+}
+
 func runAPIKeyHandler(t *testing.T, method, target, path string, paramNames, paramVals []string, handler echo.HandlerFunc) (*httptest.ResponseRecorder, error) {
 	return runAPIKeyHandlerWithOptionalBody(t, method, target, path, paramNames, paramVals, "", handler)
 }
 
 func runAPIKeyHandlerWithOptionalBody(t *testing.T, method, target, path string, paramNames, paramVals []string, body string, handler echo.HandlerFunc) (*httptest.ResponseRecorder, error) {
+	t.Helper()
+
+	rec, c := newAPIKeyHandlerContext(t, method, target, path, paramNames, paramVals, body)
+	if body == "" {
+		return rec, handler(c)
+	}
+	wrapped := middleware.BindAndValidate[dto.CreateAPIKeyRequest](middleware.CreateAPIKeyBodyKey)(handler)
+	return rec, wrapped(c)
+}
+
+func newAPIKeyHandlerContext(t *testing.T, method, target, path string, paramNames, paramVals []string, body string) (*httptest.ResponseRecorder, echo.Context) {
 	t.Helper()
 
 	e := echo.New()
@@ -396,9 +472,5 @@ func runAPIKeyHandlerWithOptionalBody(t *testing.T, method, target, path string,
 	c.SetParamNames(paramNames...)
 	c.SetParamValues(paramVals...)
 
-	if body == "" {
-		return rec, handler(c)
-	}
-	wrapped := middleware.BindAndValidate[dto.CreateAPIKeyRequest](middleware.CreateAPIKeyBodyKey)(handler)
-	return rec, wrapped(c)
+	return rec, c
 }

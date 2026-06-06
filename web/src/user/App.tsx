@@ -13,6 +13,7 @@ import {
   Search,
   ShieldCheck,
   Sun,
+  Users,
   X,
 } from "lucide-react";
 import { TelemetryDashboard } from "../telemetry/TelemetryDashboard";
@@ -27,12 +28,13 @@ import {
   UserApi,
   UserSession,
 } from "./api";
+import { TeamManagementPanel } from "./TeamManagementPanel";
 
 const TOKEN_STORAGE_KEY = "denseMem.userApiKey";
 const THEME_STORAGE_KEY = "denseMem.userTheme";
 
 type Theme = "light" | "dark";
-type UserTab = "search" | "usage" | "facts" | "claims" | "fragments" | "communities" | "key";
+type UserTab = "search" | "usage" | "facts" | "claims" | "fragments" | "communities" | "team" | "key";
 
 export function UserPortalApp() {
   const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_STORAGE_KEY) ?? "");
@@ -151,6 +153,12 @@ function UserPortal({
     void loadSession();
   }, [api]);
 
+  useEffect(() => {
+    if (session && !session.can_manage_team && activeTab === "team") {
+      setActiveTab("search");
+    }
+  }, [activeTab, session]);
+
   return (
     <main className="app-shell" data-theme={theme}>
       <header className="topbar">
@@ -189,6 +197,7 @@ function UserPortal({
             <TabButton active={activeTab === "claims"} icon={<GitBranch size={17} aria-hidden="true" />} label="Claims" onClick={() => setActiveTab("claims")} />
             <TabButton active={activeTab === "fragments"} icon={<FileText size={17} aria-hidden="true" />} label="Fragments" onClick={() => setActiveTab("fragments")} />
             <TabButton active={activeTab === "communities"} icon={<Layers3 size={17} aria-hidden="true" />} label="Communities" onClick={() => setActiveTab("communities")} />
+            {session?.can_manage_team && <TabButton active={activeTab === "team"} icon={<Users size={17} aria-hidden="true" />} label="Team" onClick={() => setActiveTab("team")} />}
             <TabButton active={activeTab === "key"} icon={<KeyRound size={17} aria-hidden="true" />} label="My key" onClick={() => setActiveTab("key")} />
           </nav>
           <div className="section-heading">
@@ -212,6 +221,13 @@ function UserPortal({
           {activeTab === "claims" && <ClaimsPanel api={api} />}
           {activeTab === "fragments" && <FragmentsPanel api={api} />}
           {activeTab === "communities" && <CommunitiesPanel api={api} />}
+          {activeTab === "team" && session?.can_manage_team && (
+            <TeamManagementPanel
+              api={api}
+              session={session}
+              onTeamUpdated={(team) => setSession((current) => current ? { ...current, team } : current)}
+            />
+          )}
           {activeTab === "key" && session && (
             <KeyPanel
               api={api}
@@ -219,7 +235,12 @@ function UserPortal({
               onRotated={(rotated) => {
                 sessionStorage.setItem(TOKEN_STORAGE_KEY, rotated.api_key);
                 onTokenChange(rotated.api_key);
-                setSession((current) => current ? { ...current, key: rotated.key, can_rotate: rotated.key.scopes.includes("write") } : current);
+                setSession((current) => current ? {
+                  ...current,
+                  key: rotated.key,
+                  can_rotate: rotated.key.scopes.includes("write"),
+                  can_manage_team: rotated.key.role === "manager",
+                } : current);
               }}
             />
           )}
@@ -460,6 +481,7 @@ function KeyPanel({
       <dl className="key-detail-grid">
         <div><dt>Profile</dt><dd>{session.key.name}</dd></div>
         <div><dt>Key</dt><dd><code>{displayKeySuffix(session.key.key_suffix)}</code></dd></div>
+        <div><dt>Role</dt><dd>{profileRoleLabel(session.key.role)}</dd></div>
         <div><dt>Scopes</dt><dd>{session.key.scopes.join(", ") || "none"}</dd></div>
         <div><dt>Rate limit</dt><dd>{session.key.rate_limit}</dd></div>
         <div><dt>Created</dt><dd>{formatDate(session.key.created_at)}</dd></div>
@@ -693,6 +715,10 @@ function readError(error: unknown): string {
 
 function displayKeySuffix(suffix: string | null): string {
   return suffix ? `******${suffix}` : "Unavailable";
+}
+
+function profileRoleLabel(role: UserSession["key"]["role"] | null | undefined): string {
+  return role === "manager" ? "Manager" : "Member";
 }
 
 function shortId(id: string): string {

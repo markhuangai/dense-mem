@@ -332,6 +332,7 @@ func (h *controlPortalHandler) createAPIKey(c echo.Context) error {
 	req := service.CreateAPIKeyRequest{
 		Name:      body.Name,
 		RateLimit: body.RateLimit,
+		Role:      body.Role,
 	}
 	if body.Scopes != nil {
 		if len(*body.Scopes) == 0 {
@@ -371,9 +372,21 @@ func (h *controlPortalHandler) updateAPIKey(c echo.Context) error {
 	if err := c.Bind(&body); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
 	}
-	key, err := h.keys.UpdateNameForProfile(c.Request().Context(), profileID, keyID, body.Name, nil, "control", c.RealIP(), "")
-	if err != nil {
-		return err
+	if strings.TrimSpace(body.Name) == "" && strings.TrimSpace(body.Role) == "" {
+		return httperr.New(httperr.VALIDATION_ERROR, "profile name or role is required")
+	}
+	var key *domain.APIKey
+	if strings.TrimSpace(body.Name) != "" {
+		key, err = h.keys.UpdateNameForProfile(c.Request().Context(), profileID, keyID, body.Name, nil, "control", c.RealIP(), "")
+		if err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(body.Role) != "" {
+		key, err = h.keys.UpdateRoleForProfile(c.Request().Context(), profileID, keyID, body.Role, nil, "control", c.RealIP(), "")
+		if err != nil {
+			return err
+		}
 	}
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlAPIKey(key)})
 }
@@ -393,6 +406,9 @@ func (h *controlPortalHandler) rotateAPIKey(c echo.Context) error {
 	}
 	if body.Scopes != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, "scopes cannot be changed by rotating a key")
+	}
+	if strings.TrimSpace(body.Role) != "" {
+		return httperr.New(httperr.VALIDATION_ERROR, "role cannot be changed by rotating a key")
 	}
 	req := service.CreateAPIKeyRequest{
 		Name:      body.Name,
@@ -541,12 +557,14 @@ func (h *controlPortalHandler) deleteSecurityBan(c echo.Context) error {
 type controlCreateAPIKeyRequest struct {
 	Name      string    `json:"name"`
 	Scopes    *[]string `json:"scopes"`
+	Role      string    `json:"role"`
 	RateLimit int       `json:"rate_limit"`
 	ExpiresAt *string   `json:"expires_at"`
 }
 
 type controlUpdateAPIKeyRequest struct {
 	Name string `json:"name"`
+	Role string `json:"role"`
 }
 
 type controlSecuritySettingsRequest struct {
@@ -906,6 +924,7 @@ type controlAPIKeyResponse struct {
 	Name       string    `json:"name"`
 	KeySuffix  string    `json:"key_suffix"`
 	Scopes     []string  `json:"scopes"`
+	Role       string    `json:"role"`
 	RateLimit  int       `json:"rate_limit"`
 	LastUsedAt *string   `json:"last_used_at"`
 	ExpiresAt  *string   `json:"expires_at"`
@@ -919,6 +938,7 @@ func toControlAPIKey(key *domain.APIKey) controlAPIKeyResponse {
 		Name:       key.GetProfileName(),
 		KeySuffix:  key.KeySuffix,
 		Scopes:     append([]string{}, key.Scopes...),
+		Role:       key.GetRole(),
 		RateLimit:  key.RateLimit,
 		LastUsedAt: controlTimePtr(key.LastUsedAt),
 		ExpiresAt:  controlTimePtr(key.ExpiresAt),

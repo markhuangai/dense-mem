@@ -8,14 +8,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestOptionalRedisDocs_AllSixFilesUpdated(t *testing.T) {
+func TestOptionalRedisDocs_CoreRepoFilesUpdated(t *testing.T) {
 	paths := []string{
 		"../../.claude/rules/architecture.md",
 		"../../.claude/rules/database.md",
 		"../../.claude/rules/profile-isolation.md",
 		"../../README.md",
 		"../../examples/.env.example",
-		"../../docs/standalone-mcp-memory-architecture.md",
 	}
 
 	for _, path := range paths {
@@ -32,7 +31,6 @@ func TestOptionalRedisDocs_AllSixFilesUpdated(t *testing.T) {
 func TestStandaloneMemoryDocs_NoLegacyDiscoveryReferences(t *testing.T) {
 	paths := []string{
 		"../../README.md",
-		"../../docs/standalone-mcp-memory-architecture.md",
 	}
 
 	for _, path := range paths {

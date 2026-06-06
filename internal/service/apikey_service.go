@@ -26,11 +26,14 @@ type CreateAPIKeyRequest struct {
 	RateLimit int        `json:"rate_limit"`
 	ExpiresAt *time.Time `json:"expires_at"`
 	Scopes    []string   `json:"scopes"`
+	Role      string     `json:"role"`
 }
 
 const (
-	APIKeyScopeRead  = "read"
-	APIKeyScopeWrite = "write"
+	APIKeyScopeRead   = "read"
+	APIKeyScopeWrite  = "write"
+	APIKeyRoleManager = "manager"
+	APIKeyRoleMember  = "member"
 )
 
 var standardAPIKeyScopes = []string{APIKeyScopeRead, APIKeyScopeWrite}
@@ -66,6 +69,19 @@ func NormalizeAPIKeyScopes(scopes []string) ([]string, error) {
 		return []string{APIKeyScopeRead}, nil
 	default:
 		return nil, httperr.New(httperr.VALIDATION_ERROR, "api key scopes must be either [read] or [read, write]")
+	}
+}
+
+func NormalizeAPIKeyRole(role string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "":
+		return "", nil
+	case APIKeyRoleManager:
+		return APIKeyRoleManager, nil
+	case APIKeyRoleMember:
+		return APIKeyRoleMember, nil
+	default:
+		return "", httperr.New(httperr.VALIDATION_ERROR, "api key role must be either manager or member")
 	}
 }
 
@@ -120,6 +136,8 @@ type APIKeyService interface {
 	DeleteForProfile(ctx context.Context, profileID, id uuid.UUID, actorKeyID *string, actorRole, clientIP, correlationID string) error
 	// UpdateNameForProfile renames the team profile without changing key material.
 	UpdateNameForProfile(ctx context.Context, profileID, id uuid.UUID, name string, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, error)
+	// UpdateRoleForProfile changes the team profile role without changing key material.
+	UpdateRoleForProfile(ctx context.Context, profileID, id uuid.UUID, role string, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, error)
 	// RotateForProfile rotates key material in place for a named team profile.
 	RotateForProfile(ctx context.Context, profileID, id uuid.UUID, req CreateAPIKeyRequest, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, string, error)
 }
@@ -201,6 +219,22 @@ func (s *APIKeyServiceImpl) CreateStandardKey(ctx context.Context, profileID uui
 		return nil, "", err
 	}
 
+	role, err := NormalizeAPIKeyRole(req.Role)
+	if err != nil {
+		return nil, "", err
+	}
+	if role == "" {
+		count, err := s.repo.CountByProfile(ctx, profileID)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to count team profiles: %w", err)
+		}
+		if count == 0 {
+			role = APIKeyRoleManager
+		} else {
+			role = APIKeyRoleMember
+		}
+	}
+
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = "default profile"
@@ -228,6 +262,7 @@ func (s *APIKeyServiceImpl) CreateStandardKey(ctx context.Context, profileID uui
 		KeyPrefix: crypto.GetKeyPrefix(rawKey),
 		KeySuffix: crypto.GetKeySuffix(rawKey),
 		Scopes:    scopes,
+		Role:      role,
 		RateLimit: req.RateLimit,
 		ExpiresAt: req.ExpiresAt,
 	}
@@ -243,7 +278,7 @@ func (s *APIKeyServiceImpl) CreateStandardKey(ctx context.Context, profileID uui
 		"profile_name": key.GetProfileName(),
 		"scopes":       key.Scopes,
 		"rate_limit":   key.RateLimit,
-		"role":         "standard",
+		"role":         key.GetRole(),
 	}
 	if key.ExpiresAt != nil {
 		afterPayload["expires_at"] = key.ExpiresAt.Format(time.RFC3339)
@@ -258,6 +293,71 @@ func (s *APIKeyServiceImpl) CreateStandardKey(ctx context.Context, profileID uui
 	// Return the key (without hash) and the raw key (shown exactly once)
 	key.KeyHash = ""
 	return key, rawKey, nil
+}
+
+// UpdateRoleForProfile changes a team profile's administrative role without
+// changing key material or data scopes.
+func (s *APIKeyServiceImpl) UpdateRoleForProfile(ctx context.Context, profileID, id uuid.UUID, role string, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, error) {
+	normalizedRole, err := NormalizeAPIKeyRole(role)
+	if err != nil {
+		return nil, err
+	}
+	if normalizedRole == "" {
+		return nil, httperr.New(httperr.VALIDATION_ERROR, "api key role is required")
+	}
+
+	key, err := s.repo.GetByIDForProfile(ctx, profileID, id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get team profile: %w", err)
+	}
+	if key == nil {
+		return nil, httperr.New(httperr.NOT_FOUND, fmt.Sprintf("team profile with id '%s' not found", id.String()))
+	}
+	currentRole := key.GetRole()
+	if currentRole == normalizedRole {
+		key.KeyHash = ""
+		key.Role = normalizedRole
+		return key, nil
+	}
+
+	beforePayload := map[string]interface{}{
+		"team_id":    profileID.String(),
+		"profile_id": key.ID.String(),
+		"role":       currentRole,
+	}
+
+	rows, err := s.repo.UpdateRoleForProfile(ctx, profileID, id, normalizedRole)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update team profile role: %w", err)
+	}
+	if rows == 0 {
+		return nil, httperr.New(httperr.NOT_FOUND, fmt.Sprintf("team profile with id '%s' not found", id.String()))
+	}
+
+	key.KeyHash = ""
+	key.Role = normalizedRole
+
+	profileIDStr := profileID.String()
+	if err := s.auditService.Append(ctx, AuditLogEntry{
+		ProfileID:     &profileIDStr,
+		Operation:     "UPDATE",
+		EntityType:    "team_profile",
+		EntityID:      key.ID.String(),
+		BeforePayload: beforePayload,
+		AfterPayload: map[string]interface{}{
+			"team_id":    profileID.String(),
+			"profile_id": key.ID.String(),
+			"role":       normalizedRole,
+		},
+		ActorKeyID:    actorKeyID,
+		ActorRole:     actorRole,
+		ClientIP:      clientIP,
+		CorrelationID: correlationID,
+	}); err != nil {
+		s.logAuditError(err, "UPDATE_ROLE", key.ID.String(), correlationID)
+	}
+
+	return key, nil
 }
 
 // UpdateNameForProfile renames a team profile without rotating its key.

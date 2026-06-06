@@ -55,6 +55,10 @@ func (m *mockAPIKeyRepository) UpdateNameForProfile(ctx context.Context, profile
 	return 0, nil
 }
 
+func (m *mockAPIKeyRepository) UpdateRoleForProfile(ctx context.Context, profileID, id uuid.UUID, role string) (int64, error) {
+	return 0, nil
+}
+
 func (m *mockAPIKeyRepository) DeleteForProfile(ctx context.Context, profileID, id uuid.UUID) (int64, error) {
 	return 0, nil
 }
@@ -413,6 +417,7 @@ func TestAuthMiddleware_ValidKey_StoresPrincipal(t *testing.T) {
 				ProfileID: profileID,
 				KeyHash:   keyHash,
 				Scopes:    []string{"read", "write"},
+				Role:      service.APIKeyRoleManager,
 				RevokedAt: nil,
 				ExpiresAt: nil,
 			}, nil
@@ -445,7 +450,7 @@ func TestAuthMiddleware_ValidKey_StoresPrincipal(t *testing.T) {
 	assert.Equal(t, profileID, capturedPrincipal.TeamID)
 	require.NotNil(t, capturedPrincipal.ProfileID)
 	assert.Equal(t, keyID, *capturedPrincipal.ProfileID)
-	assert.Equal(t, "standard", capturedPrincipal.Role)
+	assert.Equal(t, service.APIKeyRoleManager, capturedPrincipal.Role)
 	assert.Equal(t, []string{"read", "write"}, capturedPrincipal.Scopes)
 	assert.Equal(t, rawKey[:24], capturedPrincipal.KeyPrefix)
 }
@@ -575,7 +580,7 @@ func TestLastUsedMiddleware_TouchLastUsed_Background(t *testing.T) {
 	principal := &Principal{
 		KeyID:     keyID,
 		ProfileID: &profileID,
-		Role:      "standard",
+		Role:      service.APIKeyRoleMember,
 	}
 
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
@@ -623,7 +628,7 @@ func TestLastUsedMiddleware_SkipsWhenRateLimited(t *testing.T) {
 	principal := &Principal{
 		KeyID:     keyID,
 		ProfileID: &profileID,
-		Role:      "standard",
+		Role:      service.APIKeyRoleMember,
 	}
 
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
@@ -658,7 +663,7 @@ func TestPrincipalInterfaceAndRequireAuthHelpers(t *testing.T) {
 		KeyID:       keyID,
 		ProfileID:   &profileID,
 		ProfileName: "Primary",
-		Role:        "standard",
+		Role:        service.APIKeyRoleManager,
 		Scopes:      []string{"read", "write"},
 		KeyPrefix:   "dm_test",
 		RateLimit:   42,
@@ -674,7 +679,7 @@ func TestPrincipalInterfaceAndRequireAuthHelpers(t *testing.T) {
 		t.Fatalf("GetProfileID() = %v, want %s", got, profileID)
 	}
 	assert.Equal(t, "Primary", principal.GetProfileName())
-	assert.Equal(t, "standard", principal.GetRole())
+	assert.Equal(t, service.APIKeyRoleManager, principal.GetRole())
 	assert.Equal(t, []string{"read", "write"}, principal.GetScopes())
 	assert.Equal(t, "dm_test", principal.GetKeyPrefix())
 	assert.Equal(t, 42, principal.GetRateLimit())
