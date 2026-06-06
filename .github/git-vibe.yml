@@ -161,7 +161,6 @@ ai:
             - recall_memory
             - assemble_context
             - get_memory
-            - verify_claim
             - get_fact
             - keyword-search
             - semantic-search
@@ -176,7 +175,6 @@ ai:
             - recall_memory
             - assemble_context
             - get_memory
-            - verify_claim
             - get_fact
             - keyword-search
             - semantic-search
@@ -191,7 +189,6 @@ ai:
             - recall_memory
             - assemble_context
             - get_memory
-            - verify_claim
             - get_fact
             - keyword-search
             - semantic-search
@@ -207,7 +204,6 @@ ai:
             - recall_memory
             - assemble_context
             - get_memory
-            - verify_claim
             - get_fact
             - keyword-search
             - semantic-search
@@ -222,7 +218,6 @@ ai:
             - recall_memory
             - assemble_context
             - get_memory
-            - verify_claim
             - get_fact
             - keyword-search
             - semantic-search
@@ -241,7 +236,6 @@ ai:
             - recall_memory
             - assemble_context
             - get_memory
-            - verify_claim
             - get_fact
             - keyword-search
             - semantic-search
