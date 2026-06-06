@@ -25,7 +25,7 @@ jobs:
       pr-number: ${{ format('{0}', github.event.pull_request.number) }}
       runner: docker-runner
       timeout_minutes: 60
-      max_turns: 90
+      max_turns: 200
       dry-run: false
       source-comment: ""
     secrets:
