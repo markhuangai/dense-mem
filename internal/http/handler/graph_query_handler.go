@@ -15,7 +15,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/tools/graphquery"
 )
 
-// GraphQueryResponse represents the response for graph-query.
+// GraphQueryResponse represents the response for graph_query.
 type GraphQueryResponse struct {
 	Data GraphQueryData `json:"data"`
 	Meta GraphQueryMeta `json:"meta"`
@@ -38,7 +38,7 @@ type GraphQueryServiceInterface interface {
 	Execute(ctx context.Context, profileID string, query string, params map[string]any) (*graphquery.GraphQueryResult, error)
 }
 
-// GraphQueryHandler handles HTTP requests for graph-query operations.
+// GraphQueryHandler handles HTTP requests for graph_query operations.
 type GraphQueryHandler struct {
 	svc        GraphQueryServiceInterface
 	maxTimeout time.Duration
@@ -61,7 +61,7 @@ func NewGraphQueryHandlerWithTimeouts(svc GraphQueryServiceInterface, maxTimeout
 	return &GraphQueryHandler{svc: svc, maxTimeout: maxTimeout}
 }
 
-// Handle handles POST /api/v1/tools/graph-query.
+// Handle handles POST /api/v1/tools/graph_query.
 // It validates the request, executes the query, and returns results.
 func (h *GraphQueryHandler) Handle(c echo.Context) error {
 	ctx := c.Request().Context()

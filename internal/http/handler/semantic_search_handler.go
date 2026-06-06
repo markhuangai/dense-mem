@@ -12,7 +12,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/tools/semanticsearch"
 )
 
-// SemanticSearchHandler handles HTTP requests for semantic-search operations.
+// SemanticSearchHandler handles HTTP requests for semantic_search operations.
 type SemanticSearchHandler struct {
 	svc semanticsearch.SemanticSearchService
 }
@@ -30,7 +30,7 @@ func NewSemanticSearchHandler(svc semanticsearch.SemanticSearchService) *Semanti
 	return &SemanticSearchHandler{svc: svc}
 }
 
-// Handle handles POST /api/v1/tools/semantic-search.
+// Handle handles POST /api/v1/tools/semantic_search.
 // It validates the request, executes the search, and returns results.
 func (h *SemanticSearchHandler) Handle(c echo.Context) error {
 	ctx := c.Request().Context()

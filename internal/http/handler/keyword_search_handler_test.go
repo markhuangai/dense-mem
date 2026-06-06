@@ -65,10 +65,10 @@ func TestKeywordSearchHandler_Handle_Success(t *testing.T) {
 		}
 	})
 
-	e.POST("/api/v1/tools/keyword-search", h.Handle)
+	e.POST("/api/v1/tools/keyword_search", h.Handle)
 
 	body := `{"keywords": "test query", "limit": 20}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/keyword-search", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/keyword_search", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Profile-ID", profileID.String())
 	rec := httptest.NewRecorder()
@@ -106,10 +106,10 @@ func TestKeywordSearchHandler_Handle_LimitZero_422(t *testing.T) {
 		}
 	})
 
-	e.POST("/api/v1/tools/keyword-search", h.Handle)
+	e.POST("/api/v1/tools/keyword_search", h.Handle)
 
 	body := `{"keywords": "test query", "limit": 0}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/keyword-search", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/keyword_search", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Profile-ID", profileID.String())
 	rec := httptest.NewRecorder()
@@ -149,10 +149,10 @@ func TestKeywordSearchHandler_Handle_EmptyResult_200(t *testing.T) {
 		}
 	})
 
-	e.POST("/api/v1/tools/keyword-search", h.Handle)
+	e.POST("/api/v1/tools/keyword_search", h.Handle)
 
 	body := `{"keywords": "nonexistent", "limit": 20}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/keyword-search", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/keyword_search", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Profile-ID", profileID.String())
 	rec := httptest.NewRecorder()
@@ -173,10 +173,10 @@ func TestKeywordSearchHandler_Handle_MissingProfileID(t *testing.T) {
 	e := newTestEcho()
 	h := NewKeywordSearchHandler(&mockKeywordSearchService{})
 
-	e.POST("/api/v1/tools/keyword-search", h.Handle)
+	e.POST("/api/v1/tools/keyword_search", h.Handle)
 
 	body := `{"keywords": "test", "limit": 20}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/keyword-search", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/keyword_search", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	// No X-Profile-ID header
 	rec := httptest.NewRecorder()
@@ -206,11 +206,11 @@ func TestKeywordSearchHandler_Handle_LimitCapped(t *testing.T) {
 		}
 	})
 
-	e.POST("/api/v1/tools/keyword-search", h.Handle)
+	e.POST("/api/v1/tools/keyword_search", h.Handle)
 
 	// DTO validation enforces max=100, so limit=150 should be rejected with 422
 	body := `{"keywords": "test query", "limit": 150}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/keyword-search", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/keyword_search", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Profile-ID", profileID.String())
 	rec := httptest.NewRecorder()
@@ -254,10 +254,10 @@ func TestKeywordSearchHandler_BindsDTO_Keywords(t *testing.T) {
 		}
 	})
 
-	e.POST("/api/v1/tools/keyword-search", h.Handle)
+	e.POST("/api/v1/tools/keyword_search", h.Handle)
 
 	body := `{"keywords": "alpha", "limit": 5}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/keyword-search", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/keyword_search", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Profile-ID", profileID.String())
 	rec := httptest.NewRecorder()
@@ -298,10 +298,10 @@ func TestKeywordSearchHandler_PassesLabelsAndTemporalFilters(t *testing.T) {
 		}
 	})
 
-	e.POST("/api/v1/tools/keyword-search", h.Handle)
+	e.POST("/api/v1/tools/keyword_search", h.Handle)
 
 	body := `{"keywords":"alpha","limit":5,"labels":["science","history"],"valid_at":"2024-03-01T12:00:00Z","known_at":"2024-03-02T12:00:00Z"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/keyword-search", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/keyword_search", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Profile-ID", profileID.String())
 	rec := httptest.NewRecorder()
@@ -329,10 +329,10 @@ func TestKeywordSearchHandler_RejectsLegacyQueryField(t *testing.T) {
 		}
 	})
 
-	e.POST("/api/v1/tools/keyword-search", h.Handle)
+	e.POST("/api/v1/tools/keyword_search", h.Handle)
 
 	body := `{"query": "alpha"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/keyword-search", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/keyword_search", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Profile-ID", profileID.String())
 	rec := httptest.NewRecorder()
@@ -355,9 +355,9 @@ func TestKeywordSearchHandler_MalformedJSONAndErrorMapping(t *testing.T) {
 			return next(c)
 		}
 	})
-	e.POST("/api/v1/tools/keyword-search", h.Handle)
+	e.POST("/api/v1/tools/keyword_search", h.Handle)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/keyword-search", strings.NewReader(`{malformed`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/keyword_search", strings.NewReader(`{malformed`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)

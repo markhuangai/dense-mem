@@ -61,7 +61,7 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
-    uses: markhuangai/git-vibe/.github/workflows/develop.yml@v3.2.0-rc.2
+    uses: markhuangai/git-vibe/.github/workflows/develop.yml@v3.2.0-rc.3
     with:
       issue-number: ${{ github.event.inputs.issue-number }}
       runner: docker-runner

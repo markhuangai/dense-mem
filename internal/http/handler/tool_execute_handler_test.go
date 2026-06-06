@@ -265,7 +265,7 @@ func TestToolExecuteHandler_AdditionalBranches(t *testing.T) {
 	t.Run("not found and not executable", func(t *testing.T) {
 		reg := registry.New()
 		require.NoError(t, reg.Register(registry.Tool{
-			Name:           "descriptor-only",
+			Name:           "descriptor_only",
 			InputSchema:    map[string]any{"type": "object"},
 			RequiredScopes: []string{"read"},
 		}))
@@ -287,7 +287,7 @@ func TestToolExecuteHandler_AdditionalBranches(t *testing.T) {
 		e.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusNotFound, rec.Code)
 
-		req = httptest.NewRequest(http.MethodPost, "/api/v1/tools/descriptor-only", strings.NewReader(`{}`))
+		req = httptest.NewRequest(http.MethodPost, "/api/v1/tools/descriptor_only", strings.NewReader(`{}`))
 		rec = httptest.NewRecorder()
 		e.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusInternalServerError, rec.Code)

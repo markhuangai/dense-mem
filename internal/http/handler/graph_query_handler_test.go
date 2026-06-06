@@ -64,10 +64,10 @@ func TestGraphQueryHandler_AcceptsParameters(t *testing.T) {
 		}
 	})
 
-	e.POST("/api/v1/tools/graph-query", h.Handle)
+	e.POST("/api/v1/tools/graph_query", h.Handle)
 
 	body := `{"query":"MATCH (n) RETURN n LIMIT 1","parameters":{"x":1}}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/graph-query", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/graph_query", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -106,11 +106,11 @@ func TestGraphQueryHandler_RejectsLegacyParamsField(t *testing.T) {
 		}
 	})
 
-	e.POST("/api/v1/tools/graph-query", h.Handle)
+	e.POST("/api/v1/tools/graph_query", h.Handle)
 
 	// Use legacy "params" field instead of "parameters"
 	body := `{"query":"MATCH (n) RETURN n","params":{"x":1}}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/graph-query", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/graph_query", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -153,10 +153,10 @@ func TestGraphQueryHandler_TimeoutSeconds(t *testing.T) {
 		}
 	})
 
-	e.POST("/api/v1/tools/graph-query", h.Handle)
+	e.POST("/api/v1/tools/graph_query", h.Handle)
 
 	body := `{"query":"MATCH (n) RETURN n","timeout_seconds":30}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/graph-query", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/graph_query", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -196,10 +196,10 @@ func TestGraphQueryHandler_TimeoutSecondsZero(t *testing.T) {
 		}
 	})
 
-	e.POST("/api/v1/tools/graph-query", h.Handle)
+	e.POST("/api/v1/tools/graph_query", h.Handle)
 
 	body := `{"query":"MATCH (n) RETURN n","timeout_seconds":0}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/graph-query", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/graph_query", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -227,10 +227,10 @@ func TestGraphQueryHandler_MissingQuery(t *testing.T) {
 		}
 	})
 
-	e.POST("/api/v1/tools/graph-query", h.Handle)
+	e.POST("/api/v1/tools/graph_query", h.Handle)
 
 	body := `{}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/graph-query", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/graph_query", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -274,9 +274,9 @@ func TestGraphQueryHandler_RejectsTimeoutValidationBranches(t *testing.T) {
 					return next(c)
 				}
 			})
-			e.POST("/api/v1/tools/graph-query", tc.h.Handle)
+			e.POST("/api/v1/tools/graph_query", tc.h.Handle)
 
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/graph-query", strings.NewReader(tc.body))
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/graph_query", strings.NewReader(tc.body))
 			req.Header.Set("Content-Type", "application/json")
 			rec := httptest.NewRecorder()
 
@@ -291,9 +291,9 @@ func TestGraphQueryHandlerRequiresResolvedProfileID(t *testing.T) {
 	e := newTestEcho()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	h := NewGraphQueryHandler(&mockGraphQueryServiceForHandler{})
-	e.POST("/api/v1/tools/graph-query", h.Handle)
+	e.POST("/api/v1/tools/graph_query", h.Handle)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/graph-query", strings.NewReader(`{"query":"RETURN 1"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/graph_query", strings.NewReader(`{"query":"RETURN 1"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 

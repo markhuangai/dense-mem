@@ -64,10 +64,10 @@ func TestSemanticSearchHandler_BindsDTOAndThreshold(t *testing.T) {
 		}
 	})
 
-	e.POST("/api/v1/tools/semantic-search", h.Handle)
+	e.POST("/api/v1/tools/semantic_search", h.Handle)
 
 	body := `{"query":"semantic query","embedding":[0.1,0.2,0.3],"limit":5,"threshold":0.75}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/semantic-search", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/semantic_search", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Profile-ID", profileID.String())
 	rec := httptest.NewRecorder()
@@ -98,10 +98,10 @@ func TestSemanticSearchHandler_RejectsInvalidThreshold(t *testing.T) {
 		}
 	})
 
-	e.POST("/api/v1/tools/semantic-search", h.Handle)
+	e.POST("/api/v1/tools/semantic_search", h.Handle)
 
 	body := `{"embedding":[0.1,0.2,0.3],"limit":5,"threshold":1.25}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/semantic-search", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/semantic_search", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Profile-ID", profileID.String())
 	rec := httptest.NewRecorder()
@@ -116,9 +116,9 @@ func TestSemanticSearchHandlerRequiresResolvedProfileAndValidJSON(t *testing.T) 
 		e := newTestEcho()
 		e.HTTPErrorHandler = httperr.ErrorHandler
 		h := NewSemanticSearchHandler(&mockSemanticSearchHandlerService{})
-		e.POST("/api/v1/tools/semantic-search", h.Handle)
+		e.POST("/api/v1/tools/semantic_search", h.Handle)
 
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/semantic-search", strings.NewReader(`{"embedding":[0.1,0.2,0.3],"limit":5}`))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/semantic_search", strings.NewReader(`{"embedding":[0.1,0.2,0.3],"limit":5}`))
 		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 
@@ -139,9 +139,9 @@ func TestSemanticSearchHandlerRequiresResolvedProfileAndValidJSON(t *testing.T) 
 				return next(c)
 			}
 		})
-		e.POST("/api/v1/tools/semantic-search", h.Handle)
+		e.POST("/api/v1/tools/semantic_search", h.Handle)
 
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/semantic-search", strings.NewReader(`{malformed`))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/semantic_search", strings.NewReader(`{malformed`))
 		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 
