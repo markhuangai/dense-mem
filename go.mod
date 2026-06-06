@@ -2,6 +2,8 @@ module github.com/markhuangai/dense-mem
 
 go 1.26
 
+toolchain go1.26.4
+
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/go-playground/validator/v10 v10.30.2

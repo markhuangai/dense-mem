@@ -527,7 +527,7 @@ func TestAuthMiddleware_ProfilelessKeyRejected(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "AUTH_INVALID")
 }
 
-func TestAuthMiddleware_TouchLastUsed_Background(t *testing.T) {
+func TestAuthMiddleware_DoesNotTouchLastUsed(t *testing.T) {
 	e := newTestEcho()
 	profileID := uuid.New()
 	keyID := uuid.New()
@@ -562,14 +562,92 @@ func TestAuthMiddleware_TouchLastUsed_Background(t *testing.T) {
 	e.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
-
-	// Wait for the background goroutine to complete
-	time.Sleep(100 * time.Millisecond)
-
-	// Verify TouchLastUsed was called in background
 	mockRepo.touchLastUsedMu.Lock()
-	assert.True(t, mockRepo.touchLastUsedCalled, "TouchLastUsed should be called")
-	assert.Equal(t, keyID, mockRepo.touchLastUsedID, "TouchLastUsed should be called with correct key ID")
+	assert.False(t, mockRepo.touchLastUsedCalled, "auth middleware should not touch last used")
+	mockRepo.touchLastUsedMu.Unlock()
+}
+
+func TestLastUsedMiddleware_TouchLastUsed_Background(t *testing.T) {
+	e := newTestEcho()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	mockRepo := &mockAPIKeyRepository{}
+	principal := &Principal{
+		KeyID:     keyID,
+		ProfileID: &profileID,
+		Role:      "standard",
+	}
+
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			req := c.Request().WithContext(SetPrincipalForTest(c.Request().Context(), principal))
+			c.SetRequest(req)
+			return next(c)
+		}
+	})
+	e.Use(LastUsedMiddleware(mockRepo))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+
+	e.GET("/test", func(c echo.Context) error {
+		return c.String(http.StatusOK, "ok")
+	})
+
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	require.Eventually(t, func() bool {
+		mockRepo.touchLastUsedMu.Lock()
+		defer mockRepo.touchLastUsedMu.Unlock()
+		return mockRepo.touchLastUsedCalled && mockRepo.touchLastUsedID == keyID
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestLastUsedMiddleware_SkipsWhenRateLimited(t *testing.T) {
+	e := newTestEcho()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	mockRepo := &mockAPIKeyRepository{}
+	limiter := &stubRateLimitService{
+		allowed:   false,
+		remaining: 0,
+		resetAt:   time.Now().Add(time.Minute),
+	}
+	cfg := &testRateLimitConfig{
+		rateLimitPerMinute:      1,
+		fragmentCreateRateLimit: 1,
+		fragmentReadRateLimit:   1,
+	}
+	principal := &Principal{
+		KeyID:     keyID,
+		ProfileID: &profileID,
+		Role:      "standard",
+	}
+
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			req := c.Request().WithContext(SetPrincipalForTest(c.Request().Context(), principal))
+			c.SetRequest(req)
+			return next(c)
+		}
+	})
+	e.Use(RateLimitMiddleware(limiter, cfg, nil))
+	e.Use(LastUsedMiddleware(mockRepo))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+
+	e.GET("/test", func(c echo.Context) error {
+		return c.String(http.StatusOK, "ok")
+	})
+
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusTooManyRequests, rec.Code)
+	mockRepo.touchLastUsedMu.Lock()
+	assert.False(t, mockRepo.touchLastUsedCalled, "rate-limited requests should not touch last used")
 	mockRepo.touchLastUsedMu.Unlock()
 }
 

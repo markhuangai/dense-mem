@@ -143,7 +143,7 @@ ai:
     implementation_timeout_minutes: 120
     feedback_timeout_minutes: 120
     create_pr_timeout_minutes: 15
-    default_max_turns: 90
+    default_max_turns: 200
     implementation_max_turns: 200
     feedback_max_turns: 120
     validation_repair_attempts: 3
@@ -158,14 +158,12 @@ ai:
         dense_mem:
           required: true
           tools: 
-            - search_memory
             - recall_memory
             - assemble_context
             - get_memory
-            - verify_claim
             - get_fact
-            - keyword_search
-            - semantic_search
+            - keyword-search
+            - semantic-search
             - list_communities
             - get_community_summary
     validate:
@@ -174,14 +172,12 @@ ai:
         dense_mem:
           required: true
           tools: 
-            - search_memory
             - recall_memory
             - assemble_context
             - get_memory
-            - verify_claim
             - get_fact
-            - keyword_search
-            - semantic_search
+            - keyword-search
+            - semantic-search
             - list_communities
             - get_community_summary
     materialize:
@@ -190,14 +186,12 @@ ai:
         dense_mem:
           required: true
           tools: 
-            - search_memory
             - recall_memory
             - assemble_context
             - get_memory
-            - verify_claim
             - get_fact
-            - keyword_search
-            - semantic_search
+            - keyword-search
+            - semantic-search
             - list_communities
             - get_community_summary
     implement:
@@ -207,14 +201,12 @@ ai:
         dense_mem:
           required: true
           tools: 
-            - search_memory
             - recall_memory
             - assemble_context
             - get_memory
-            - verify_claim
             - get_fact
-            - keyword_search
-            - semantic_search
+            - keyword-search
+            - semantic-search
             - list_communities
             - get_community_summary
     review-matrix:
@@ -223,14 +215,12 @@ ai:
         dense_mem:
           required: true
           tools: 
-            - search_memory
             - recall_memory
             - assemble_context
             - get_memory
-            - verify_claim
             - get_fact
-            - keyword_search
-            - semantic_search
+            - keyword-search
+            - semantic-search
             - list_communities
             - get_community_summary
     create-pr:
@@ -243,13 +233,11 @@ ai:
         dense_mem:
           required: true
           tools: 
-            - search_memory
             - recall_memory
             - assemble_context
             - get_memory
-            - verify_claim
             - get_fact
-            - keyword_search
-            - semantic_search
+            - keyword-search
+            - semantic-search
             - list_communities
             - get_community_summary
