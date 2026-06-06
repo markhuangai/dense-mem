@@ -375,6 +375,11 @@ func (h *controlPortalHandler) updateAPIKey(c echo.Context) error {
 	if strings.TrimSpace(body.Name) == "" && strings.TrimSpace(body.Role) == "" {
 		return httperr.New(httperr.VALIDATION_ERROR, "profile name or role is required")
 	}
+	if strings.TrimSpace(body.Role) != "" {
+		if _, err := service.NormalizeAPIKeyRole(body.Role); err != nil {
+			return err
+		}
+	}
 	var key *domain.APIKey
 	if strings.TrimSpace(body.Name) != "" {
 		key, err = h.keys.UpdateNameForProfile(c.Request().Context(), profileID, keyID, body.Name, nil, "control", c.RealIP(), "")

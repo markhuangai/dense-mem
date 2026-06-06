@@ -559,6 +559,16 @@ func TestControlPortalProfileAndKeyFlows(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"name":"Research Profile"`)
 	require.Equal(t, "Research Profile", keys.keys[len(keys.keys)-1].Name)
 
+	invalidMixedUpdate := `{"name":"Should Not Persist","role":"owner"}`
+	req = httptest.NewRequest(http.MethodPatch, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String(), strings.NewReader(invalidMixedUpdate))
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	require.Contains(t, rec.Body.String(), "api key role must be either manager or member")
+	require.Equal(t, "Research Profile", keys.keys[len(keys.keys)-1].Name)
+
 	rotateBody := `{"name":"Research Profile","rate_limit":120}`
 	req = httptest.NewRequest(http.MethodPost, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String()+"/rotate", strings.NewReader(rotateBody))
 	req.Header.Set("Authorization", "Bearer secret")
