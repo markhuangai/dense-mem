@@ -162,8 +162,8 @@ ai:
             - assemble_context
             - get_memory
             - get_fact
-            - keyword-search
-            - semantic-search
+            - keyword_search
+            - semantic_search
             - list_communities
             - get_community_summary
     validate:
@@ -176,8 +176,8 @@ ai:
             - assemble_context
             - get_memory
             - get_fact
-            - keyword-search
-            - semantic-search
+            - keyword_search
+            - semantic_search
             - list_communities
             - get_community_summary
     materialize:
@@ -190,8 +190,8 @@ ai:
             - assemble_context
             - get_memory
             - get_fact
-            - keyword-search
-            - semantic-search
+            - keyword_search
+            - semantic_search
             - list_communities
             - get_community_summary
     implement:
@@ -205,8 +205,8 @@ ai:
             - assemble_context
             - get_memory
             - get_fact
-            - keyword-search
-            - semantic-search
+            - keyword_search
+            - semantic_search
             - list_communities
             - get_community_summary
     review-matrix:
@@ -219,8 +219,8 @@ ai:
             - assemble_context
             - get_memory
             - get_fact
-            - keyword-search
-            - semantic-search
+            - keyword_search
+            - semantic_search
             - list_communities
             - get_community_summary
     create-pr:
@@ -237,7 +237,7 @@ ai:
             - assemble_context
             - get_memory
             - get_fact
-            - keyword-search
-            - semantic-search
+            - keyword_search
+            - semantic_search
             - list_communities
             - get_community_summary
