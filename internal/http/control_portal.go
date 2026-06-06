@@ -372,22 +372,27 @@ func (h *controlPortalHandler) updateAPIKey(c echo.Context) error {
 	if err := c.Bind(&body); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
 	}
-	if strings.TrimSpace(body.Name) == "" && strings.TrimSpace(body.Role) == "" {
+	namePresent := strings.TrimSpace(body.Name) != ""
+	rolePresent := strings.TrimSpace(body.Role) != ""
+	if !namePresent && !rolePresent {
 		return httperr.New(httperr.VALIDATION_ERROR, "profile name or role is required")
 	}
-	if strings.TrimSpace(body.Role) != "" {
+	if namePresent && rolePresent {
+		return httperr.New(httperr.VALIDATION_ERROR, "profile name and role must be updated separately")
+	}
+	if rolePresent {
 		if _, err := service.NormalizeAPIKeyRole(body.Role); err != nil {
 			return err
 		}
 	}
 	var key *domain.APIKey
-	if strings.TrimSpace(body.Name) != "" {
+	if namePresent {
 		key, err = h.keys.UpdateNameForProfile(c.Request().Context(), profileID, keyID, body.Name, nil, "control", c.RealIP(), "")
 		if err != nil {
 			return err
 		}
 	}
-	if strings.TrimSpace(body.Role) != "" {
+	if rolePresent {
 		key, err = h.keys.UpdateRoleForProfile(c.Request().Context(), profileID, keyID, body.Role, nil, "control", c.RealIP(), "")
 		if err != nil {
 			return err

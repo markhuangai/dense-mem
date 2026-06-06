@@ -51,10 +51,9 @@ export type CreateTeamProfileInput = {
   expires_at?: string;
 };
 
-export type UpdateTeamProfileInput = {
-  name?: string;
-  role?: ProfileRole;
-};
+export type UpdateTeamProfileInput =
+  | { name: string; role?: never }
+  | { name?: never; role: ProfileRole };
 
 export type CreatedTeamProfile = {
   api_key: string;
