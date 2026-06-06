@@ -35,7 +35,7 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
-    uses: markhuangai/git-vibe/.github/workflows/address-feedback.yml@v3.2.0-rc.2
+    uses: markhuangai/git-vibe/.github/workflows/address-feedback.yml@v3.2.0-rc.3
     with:
       pr-number: ${{ github.event.inputs.pr-number }}
       runner: docker-runner
