@@ -49,6 +49,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	api.Use(deps.ExtraMiddleware...)
 	api.Use(httpmw.UsageMetricsMiddleware(deps.UsageMetrics))
 	api.Use(httpmw.RateLimitMiddleware(deps.RateLimitSvc, deps.Config, deps.AuditSvc))
+	api.Use(httpmw.LastUsedMiddleware(deps.APIKeyRepo))
 	api.GET("/session", portal.session)
 	api.GET("/telemetry", portal.telemetrySnapshot, httpmw.RequireScopes("read"))
 	api.POST("/key/rotate", portal.rotateCurrentKey, httpmw.RequireScopes("write"))

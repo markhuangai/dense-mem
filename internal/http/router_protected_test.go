@@ -2,11 +2,16 @@ package http
 
 import (
 	"context"
+	nethttp "net/http"
+	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service"
 )
@@ -39,6 +44,67 @@ func (routerAPIKeyService) GetByIDForProfile(context.Context, uuid.UUID, uuid.UU
 
 func (routerAPIKeyService) DeleteForProfile(context.Context, uuid.UUID, uuid.UUID, *string, string, string, string) error {
 	return nil
+}
+
+type routerAPIKeyRepo struct {
+	key *domain.APIKey
+
+	mu           sync.Mutex
+	touchedID    uuid.UUID
+	touchedCount int
+}
+
+func (r *routerAPIKeyRepo) CreateStandardKey(context.Context, *domain.APIKey) error {
+	return nil
+}
+
+func (r *routerAPIKeyRepo) ListByProfile(context.Context, uuid.UUID, int, int) ([]*domain.APIKey, error) {
+	return nil, nil
+}
+
+func (r *routerAPIKeyRepo) CountByProfile(context.Context, uuid.UUID) (int64, error) {
+	return 0, nil
+}
+
+func (r *routerAPIKeyRepo) GetByIDForProfile(context.Context, uuid.UUID, uuid.UUID) (*domain.APIKey, error) {
+	return nil, nil
+}
+
+func (r *routerAPIKeyRepo) GetActiveByPrefix(_ context.Context, prefix string) (*domain.APIKey, error) {
+	if r.key != nil && r.key.KeyPrefix == prefix {
+		return r.key, nil
+	}
+	return nil, nil
+}
+
+func (r *routerAPIKeyRepo) RevokeForProfile(context.Context, uuid.UUID, uuid.UUID) (int64, error) {
+	return 0, nil
+}
+
+func (r *routerAPIKeyRepo) DeleteForProfile(context.Context, uuid.UUID, uuid.UUID) (int64, error) {
+	return 0, nil
+}
+
+func (r *routerAPIKeyRepo) UpdateNameForProfile(context.Context, uuid.UUID, uuid.UUID, string) (int64, error) {
+	return 0, nil
+}
+
+func (r *routerAPIKeyRepo) RotateForProfile(context.Context, uuid.UUID, uuid.UUID, string, string, string, *time.Time) (int64, error) {
+	return 0, nil
+}
+
+func (r *routerAPIKeyRepo) TouchLastUsed(_ context.Context, id uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.touchedID = id
+	r.touchedCount++
+	return nil
+}
+
+func (r *routerAPIKeyRepo) touched(id uuid.UUID) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.touchedID == id && r.touchedCount > 0
 }
 
 func TestProtectedDepsGettersReturnConfiguredDependencies(t *testing.T) {
@@ -139,9 +205,9 @@ func TestRegisterProtectedRoutesWithHandlersRegistersConfiguredSurface(t *testin
 		"POST /mcp",
 		"GET /mcp",
 		"GET /api/v1/tools",
-		"POST /api/v1/tools/graph-query",
-		"POST /api/v1/tools/keyword-search",
-		"POST /api/v1/tools/semantic-search",
+		"POST /api/v1/tools/graph_query",
+		"POST /api/v1/tools/keyword_search",
+		"POST /api/v1/tools/semantic_search",
 		"GET /api/v1/tools/:id",
 		"POST /api/v1/tools/:name",
 		"GET /api/v1/openapi.json",
@@ -164,6 +230,54 @@ func TestRegisterProtectedRoutesWithHandlersUsesAISafeOpenAPIFallback(t *testing
 	if !registeredRoutes(e)["GET /api/v1/openapi.json"] {
 		t.Fatal("AI-safe OpenAPI fallback route not registered")
 	}
+}
+
+func TestRegisterProtectedRoutesWithHandlersTouchesLastUsedOnOpenAPI(t *testing.T) {
+	rawKey, err := crypto.GenerateRawKey()
+	if err != nil {
+		t.Fatalf("GenerateRawKey: %v", err)
+	}
+	keyHash, err := crypto.HashKey(rawKey)
+	if err != nil {
+		t.Fatalf("HashKey: %v", err)
+	}
+
+	keyID := uuid.New()
+	repo := &routerAPIKeyRepo{key: &domain.APIKey{
+		ID:        keyID,
+		TeamID:    uuid.New(),
+		Name:      "docs-reader",
+		KeyHash:   keyHash,
+		KeyPrefix: crypto.GetKeyPrefix(rawKey),
+		KeySuffix: crypto.GetKeySuffix(rawKey),
+		Scopes:    []string{"read"},
+		RateLimit: 100,
+		CreatedAt: time.Now().UTC(),
+	}}
+
+	e := echo.New()
+	RegisterProtectedRoutesWithHandlers(e, ProtectedDeps{APIKeyRepo: repo}, ProtectedHandlers{
+		OpenAPIFull: func(c echo.Context) error { return c.NoContent(nethttp.StatusNoContent) },
+	})
+
+	req := httptest.NewRequest(nethttp.MethodGet, "/api/v1/openapi.json", nil)
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != nethttp.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, nethttp.StatusNoContent, rec.Body.String())
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if repo.touched(keyID) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("OpenAPI route did not touch last-used timestamp")
 }
 
 func registeredRoutes(e *echo.Echo) map[string]bool {

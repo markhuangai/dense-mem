@@ -77,13 +77,14 @@ func NewServer(cfg config.Config, logger observability.LogProvider, health Healt
 	e.Use(middleware.Recover())
 	e.Use(middleware.BodyLimit(fmt.Sprintf("%dB", effectiveMaxBodyBytes(cfg.HTTPMaxBodyBytes))))
 	e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
-		HandleError: true,
-		LogMethod:   true,
-		LogURI:      true,
-		LogStatus:   true,
-		LogLatency:  true,
-		LogRemoteIP: true,
-		LogError:    true,
+		HandleError:  true,
+		LogMethod:    true,
+		LogURI:       false,
+		LogStatus:    true,
+		LogLatency:   true,
+		LogRemoteIP:  true,
+		LogError:     true,
+		LogRoutePath: true,
 		LogValuesFunc: func(c echo.Context, v middleware.RequestLoggerValues) error {
 			if logger == nil {
 				return nil
@@ -91,7 +92,7 @@ func NewServer(cfg config.Config, logger observability.LogProvider, health Healt
 
 			attrs := []observability.LogAttr{
 				observability.String("method", v.Method),
-				observability.String("uri", v.URI),
+				observability.String("uri", requestLogURI(c)),
 				observability.Int("status", v.Status),
 				observability.String("latency", v.Latency.String()),
 				observability.String("remote_ip", v.RemoteIP),
@@ -119,6 +120,19 @@ func NewServer(cfg config.Config, logger observability.LogProvider, health Healt
 	registerPublicRoutes(e, health)
 
 	return e
+}
+
+func requestLogURI(c echo.Context) string {
+	if c == nil || c.Request() == nil || c.Request().URL == nil {
+		return ""
+	}
+	if path := c.Request().URL.EscapedPath(); path != "" {
+		return path
+	}
+	if path := c.Request().URL.Path; path != "" {
+		return path
+	}
+	return "/"
 }
 
 func applyServerLimits(e *echo.Echo) {

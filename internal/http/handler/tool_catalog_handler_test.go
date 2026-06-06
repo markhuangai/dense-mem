@@ -123,7 +123,7 @@ func TestToolCatalogHandler_FullV1Surface(t *testing.T) {
 	}
 	expected := []string{
 		"save_memory", "get_memory", "list_recent_memories", "recall_memory",
-		"keyword-search", "semantic-search", "graph-query",
+		"keyword_search", "semantic_search", "graph_query",
 	}
 	seen := make(map[string]bool, len(resp.Tools))
 	for _, te := range resp.Tools {
@@ -132,6 +132,11 @@ func TestToolCatalogHandler_FullV1Surface(t *testing.T) {
 	for _, name := range expected {
 		if !seen[name] {
 			t.Errorf("v1 tool %q missing from catalog", name)
+		}
+	}
+	for _, name := range []string{"keyword-search", "semantic-search", "graph-query"} {
+		if seen[name] {
+			t.Errorf("legacy hyphenated tool %q must not appear in catalog", name)
 		}
 	}
 }

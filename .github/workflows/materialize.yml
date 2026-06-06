@@ -35,7 +35,7 @@ jobs:
       contents: read
       discussions: write
       issues: write
-    uses: markhuangai/git-vibe/.github/workflows/materialize.yml@v3.2.0-rc.2
+    uses: markhuangai/git-vibe/.github/workflows/materialize.yml@v3.2.0
     with:
       discussion-number: ${{ github.event.inputs.discussion-number }}
       runner: docker-runner

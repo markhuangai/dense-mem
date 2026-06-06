@@ -20,12 +20,12 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
-    uses: markhuangai/git-vibe/.github/workflows/review.yml@v3.2.0-rc.2
+    uses: markhuangai/git-vibe/.github/workflows/review.yml@v3.2.0
     with:
       pr-number: ${{ format('{0}', github.event.pull_request.number) }}
       runner: docker-runner
       timeout_minutes: 60
-      max_turns: 90
+      max_turns: 200
       dry-run: false
       source-comment: ""
     secrets:

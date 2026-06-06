@@ -12,7 +12,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/tools/keywordsearch"
 )
 
-// KeywordSearchHandler handles HTTP requests for keyword-search operations.
+// KeywordSearchHandler handles HTTP requests for keyword_search operations.
 type KeywordSearchHandler struct {
 	svc keywordsearch.KeywordSearchService
 }
@@ -30,7 +30,7 @@ func NewKeywordSearchHandler(svc keywordsearch.KeywordSearchService) *KeywordSea
 	return &KeywordSearchHandler{svc: svc}
 }
 
-// Handle handles POST /api/v1/tools/keyword-search.
+// Handle handles POST /api/v1/tools/keyword_search.
 // It validates the request, executes the search, and returns results.
 func (h *KeywordSearchHandler) Handle(c echo.Context) error {
 	ctx := c.Request().Context()

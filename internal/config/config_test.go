@@ -328,7 +328,7 @@ func TestLoadValidation_GraphQueryDefaultTimeoutExceedsMax(t *testing.T) {
 
 	_, err := Load()
 	if err == nil {
-		t.Fatal("Load() expected error for graph-query timeout mismatch, got nil")
+		t.Fatal("Load() expected error for graph_query timeout mismatch, got nil")
 	}
 
 	validationErr, ok := err.(*ValidationError)

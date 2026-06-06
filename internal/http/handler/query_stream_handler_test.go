@@ -102,8 +102,8 @@ func TestQueryStreamSSEFormat(t *testing.T) {
 	mockOrch := &mockQueryStreamOrchestrator{
 		runFunc: func(ctx context.Context, pid string, query string, params map[string]any, writer sse.SSEWriter) error {
 			// Emit events in correct order
-			_ = writer.WriteEvent(sse.EventTypeToolCall, map[string]any{"name": "graph-query", "args": map[string]any{"query": query}})
-			_ = writer.WriteEvent(sse.EventTypeEvidence, map[string]any{"tool": "graph-query", "team_id": pid, "data": []map[string]any{{"id": "test"}}})
+			_ = writer.WriteEvent(sse.EventTypeToolCall, map[string]any{"name": "graph_query", "args": map[string]any{"query": query}})
+			_ = writer.WriteEvent(sse.EventTypeEvidence, map[string]any{"tool": "graph_query", "team_id": pid, "data": []map[string]any{{"id": "test"}}})
 			_ = writer.WriteEvent(sse.EventTypeDone, map[string]any{})
 			return nil
 		},

@@ -94,13 +94,18 @@ func TestBuildDefault_RegistersV1ToolSurface(t *testing.T) {
 		"save_memory", "get_memory", "list_recent_memories", "recall_memory",
 		"trace_memory", "assemble_context",
 		"remember", "import_memories", "reflect_memories", "confirm_memory",
-		"keyword-search", "semantic-search", "graph-query",
+		"keyword_search", "semantic_search", "graph_query",
 		"find_skill_pack_candidates", "export_skill_pack", "inspect_skill_pack",
 		"import_skill_pack", "rollback_skill_pack_import",
 	}
 	for _, name := range required {
 		if _, ok := reg.Get(name); !ok {
 			t.Errorf("tool %q not registered", name)
+		}
+	}
+	for _, name := range []string{"keyword-search", "semantic-search", "graph-query"} {
+		if _, ok := reg.Get(name); ok {
+			t.Errorf("legacy hyphenated tool %q must not be registered", name)
 		}
 	}
 }
@@ -124,9 +129,9 @@ func TestBuildDefault_GraphQueryTimeoutMaximumIsConfigurable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildDefault: %v", err)
 	}
-	tool, ok := reg.Get("graph-query")
+	tool, ok := reg.Get("graph_query")
 	if !ok {
-		t.Fatal("graph-query tool not registered")
+		t.Fatal("graph_query tool not registered")
 	}
 
 	properties := tool.InputSchema["properties"].(map[string]any)
@@ -250,9 +255,9 @@ func TestBuildDefault_V1InvokersReturnUnavailableWhenDepsMissing(t *testing.T) {
 		{name: "recall_memory", input: map[string]any{"query": "hello"}},
 		{name: "trace_memory", input: map[string]any{"type": "fact", "id": "fact-1"}},
 		{name: "assemble_context", input: map[string]any{"query": "hello"}},
-		{name: "keyword-search", input: map[string]any{"keywords": "hello"}},
-		{name: "semantic-search", input: map[string]any{"embedding": []any{float64(0.1)}}},
-		{name: "graph-query", input: map[string]any{"query": "MATCH (n) RETURN n"}},
+		{name: "keyword_search", input: map[string]any{"keywords": "hello"}},
+		{name: "semantic_search", input: map[string]any{"embedding": []any{float64(0.1)}}},
+		{name: "graph_query", input: map[string]any{"query": "MATCH (n) RETURN n"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -285,16 +290,16 @@ func TestBuildDefault_V1InvokerInvalidInputBranches(t *testing.T) {
 			want: "recall_memory: invalid input",
 		},
 		{
-			name: "keyword-search",
+			name: "keyword_search",
 			deps: Dependencies{KeywordSearch: &stubKeywordSearch{}},
 			in:   map[string]any{"keywords": func() {}},
-			want: "keyword-search: invalid input",
+			want: "keyword_search: invalid input",
 		},
 		{
-			name: "semantic-search",
+			name: "semantic_search",
 			deps: Dependencies{SemanticSearch: &stubSemanticSearch{}},
 			in:   map[string]any{"embedding": func() {}},
-			want: "semantic-search: invalid input",
+			want: "semantic_search: invalid input",
 		},
 	}
 
@@ -363,36 +368,36 @@ func TestBuildDefault_SearchAndRecallInvokers(t *testing.T) {
 		GraphQuery:     stubGraphQuery{},
 	})
 
-	keywordTool, _ := reg.Get("keyword-search")
+	keywordTool, _ := reg.Get("keyword_search")
 	keywordOut, err := keywordTool.Invoke(context.Background(), "profile-search", map[string]any{
 		"keywords": "hello",
 		"limit":    float64(7),
 		"labels":   []any{"work"},
 	})
 	if err != nil {
-		t.Fatalf("keyword-search Invoke: %v", err)
+		t.Fatalf("keyword_search Invoke: %v", err)
 	}
 	if keyword.lastProfile != "profile-search" || keyword.lastReq.Query != "hello" || keyword.lastReq.Limit != 7 {
-		t.Fatalf("keyword-search request = profile %q req %+v", keyword.lastProfile, keyword.lastReq)
+		t.Fatalf("keyword_search request = profile %q req %+v", keyword.lastProfile, keyword.lastReq)
 	}
 	if keywordOut["meta"] == nil {
-		t.Fatalf("keyword-search output missing meta: %v", keywordOut)
+		t.Fatalf("keyword_search output missing meta: %v", keywordOut)
 	}
 
-	semanticTool, _ := reg.Get("semantic-search")
+	semanticTool, _ := reg.Get("semantic_search")
 	semanticOut, err := semanticTool.Invoke(context.Background(), "profile-search", map[string]any{
 		"query":     "hello",
 		"embedding": []any{float64(0.1), float64(0.2)},
 		"limit":     float64(3),
 	})
 	if err != nil {
-		t.Fatalf("semantic-search Invoke: %v", err)
+		t.Fatalf("semantic_search Invoke: %v", err)
 	}
 	if semantic.lastProfile != "profile-search" || semantic.lastReq.Query != "hello" || semantic.lastReq.Limit != 3 {
-		t.Fatalf("semantic-search request = profile %q req %+v", semantic.lastProfile, semantic.lastReq)
+		t.Fatalf("semantic_search request = profile %q req %+v", semantic.lastProfile, semantic.lastReq)
 	}
 	if semanticOut["data"] == nil {
-		t.Fatalf("semantic-search output missing data: %v", semanticOut)
+		t.Fatalf("semantic_search output missing data: %v", semanticOut)
 	}
 
 	recallTool, _ := reg.Get("recall_memory")
@@ -419,17 +424,17 @@ func TestBuildDefault_SearchAndRecallInvokers(t *testing.T) {
 		t.Fatalf("recall reflection profile = %q, want profile-search", memory.lastProfile)
 	}
 
-	graphTool, _ := reg.Get("graph-query")
+	graphTool, _ := reg.Get("graph_query")
 	graphOut, err := graphTool.Invoke(context.Background(), "profile-search", map[string]any{
 		"query":           "MATCH (n) RETURN n",
 		"parameters":      map[string]any{"x": 1},
 		"timeout_seconds": float64(1),
 	})
 	if err != nil {
-		t.Fatalf("graph-query Invoke: %v", err)
+		t.Fatalf("graph_query Invoke: %v", err)
 	}
 	if graphOut == nil {
-		t.Fatal("graph-query output is nil")
+		t.Fatal("graph_query output is nil")
 	}
 }
 

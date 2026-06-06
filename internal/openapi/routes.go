@@ -92,12 +92,12 @@ func DefaultRoutes() []RouteDescriptor {
 			"400": "Missing or invalid query parameter.",
 			"503": "Embedding provider unavailable.",
 		}},
-		{Method: "POST", Path: "/api/v1/tools/recall-memory", OperationID: "recallMemory", ToolName: "recall_memory", AISafe: true, Description: "Hybrid semantic + keyword recall over fragments."},
+		{Method: "POST", Path: "/api/v1/tools/recall_memory", OperationID: "recallMemory", ToolName: "recall_memory", AISafe: true, Description: "Hybrid semantic + keyword recall over fragments."},
 
 		// --- Advanced tool routes (full variant only) ---
-		{Method: "POST", Path: "/api/v1/tools/graph-query", OperationID: "graphQueryTool", ToolName: "graph-query", Description: "Advanced: read-only Cypher query."},
-		{Method: "POST", Path: "/api/v1/tools/keyword-search", OperationID: "keywordSearchTool", ToolName: "keyword-search", Description: "Advanced: BM25 keyword search."},
-		{Method: "POST", Path: "/api/v1/tools/semantic-search", OperationID: "semanticSearchTool", ToolName: "semantic-search", Description: "Advanced: kNN vector search."},
+		{Method: "POST", Path: "/api/v1/tools/graph_query", OperationID: "graphQueryTool", ToolName: "graph_query", Description: "Advanced: read-only Cypher query."},
+		{Method: "POST", Path: "/api/v1/tools/keyword_search", OperationID: "keywordSearchTool", ToolName: "keyword_search", Description: "Advanced: BM25 keyword search."},
+		{Method: "POST", Path: "/api/v1/tools/semantic_search", OperationID: "semanticSearchTool", ToolName: "semantic_search", Description: "Advanced: kNN vector search."},
 
 		// --- MCP Streamable HTTP (full runtime variant) ---
 		{Method: "POST", Path: "/mcp", OperationID: "mcpPost", Description: "MCP Streamable HTTP JSON-RPC endpoint."},

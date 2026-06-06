@@ -106,6 +106,8 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	profileAuthzSvc := middleware.NewProfileAuthorizationService(deps.AuditService)
 	authMW := middleware.AuthMiddlewareWithSecurity(deps.APIKeyRepo, deps.AuditService, deps.SecurityService)
 	usageMW := middleware.UsageMetricsMiddleware(deps.UsageMetrics)
+	rateLimitMW := middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService)
+	lastUsedMW := middleware.LastUsedMiddleware(deps.APIKeyRepo)
 
 	// Profile handler for profile operations
 	profileHandler := handler.NewProfileHandler(deps.ProfileSvc)
@@ -128,7 +130,8 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 		group.Use(middleware.AuthorizeProfile(profileAuthzSvc))
 		group.Use(deps.PostAuthMiddleware...)
 		group.Use(usageMW)
-		group.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
+		group.Use(rateLimitMW)
+		group.Use(lastUsedMW)
 
 		group.GET("", profileHandler.Get, middleware.RequireScopes("read"))
 		group.PATCH("", profileHandler.Patch, middleware.RequireScopes("write"), middleware.BindAndValidate[dto.UpdateProfileRequest](middleware.UpdateProfileBodyKey))
@@ -173,7 +176,8 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	fragmentGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
 	fragmentGroup.Use(deps.PostAuthMiddleware...)
 	fragmentGroup.Use(usageMW)
-	fragmentGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
+	fragmentGroup.Use(rateLimitMW)
+	fragmentGroup.Use(lastUsedMW)
 
 	if handlers.FragmentCreate != nil {
 		fragmentGroup.POST("", handlers.FragmentCreate, middleware.RequireScopes("write"))
@@ -199,7 +203,8 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	claimGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
 	claimGroup.Use(deps.PostAuthMiddleware...)
 	claimGroup.Use(usageMW)
-	claimGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
+	claimGroup.Use(rateLimitMW)
+	claimGroup.Use(lastUsedMW)
 
 	if handlers.ClaimCreate != nil {
 		claimGroup.POST("", handlers.ClaimCreate, middleware.RequireScopes("write"))
@@ -228,7 +233,8 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	factGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
 	factGroup.Use(deps.PostAuthMiddleware...)
 	factGroup.Use(usageMW)
-	factGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
+	factGroup.Use(rateLimitMW)
+	factGroup.Use(lastUsedMW)
 
 	if handlers.FactGet != nil {
 		factGroup.GET("/:id", handlers.FactGet, middleware.RequireScopes("read"))
@@ -247,7 +253,8 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	communityGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
 	communityGroup.Use(deps.PostAuthMiddleware...)
 	communityGroup.Use(usageMW)
-	communityGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
+	communityGroup.Use(rateLimitMW)
+	communityGroup.Use(lastUsedMW)
 
 	if handlers.CommunityList != nil {
 		communityGroup.GET("", handlers.CommunityList, middleware.RequireScopes("read"))
@@ -263,7 +270,8 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	mcpGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
 	mcpGroup.Use(deps.PostAuthMiddleware...)
 	mcpGroup.Use(usageMW)
-	mcpGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
+	mcpGroup.Use(rateLimitMW)
+	mcpGroup.Use(lastUsedMW)
 	if handlers.MCPPost != nil {
 		mcpGroup.POST("", handlers.MCPPost)
 	}
@@ -278,20 +286,21 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	toolGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
 	toolGroup.Use(deps.PostAuthMiddleware...)
 	toolGroup.Use(usageMW)
-	toolGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
+	toolGroup.Use(rateLimitMW)
+	toolGroup.Use(lastUsedMW)
 
 	if handlers.ToolCatalog != nil {
 		toolGroup.GET("", handlers.ToolCatalog, middleware.RequireScopes("read"))
 	}
 	// Search/query tools are read-scoped (no data mutation).
 	if handlers.GraphQuery != nil {
-		toolGroup.POST("/graph-query", handlers.GraphQuery, middleware.RequireScopes("read"))
+		toolGroup.POST("/graph_query", handlers.GraphQuery, middleware.RequireScopes("read"))
 	}
 	if handlers.KeywordSearch != nil {
-		toolGroup.POST("/keyword-search", handlers.KeywordSearch, middleware.RequireScopes("read"))
+		toolGroup.POST("/keyword_search", handlers.KeywordSearch, middleware.RequireScopes("read"))
 	}
 	if handlers.SemanticSearch != nil {
-		toolGroup.POST("/semantic-search", handlers.SemanticSearch, middleware.RequireScopes("read"))
+		toolGroup.POST("/semantic_search", handlers.SemanticSearch, middleware.RequireScopes("read"))
 	}
 	if handlers.GetTool != nil {
 		toolGroup.GET("/:id", handlers.GetTool, middleware.RequireScopes("read"))
@@ -303,6 +312,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	// OpenAPI — expose the full runtime contract when available. The AI-safe
 	// variant remains as a fallback for reduced runtimes and tests.
 	openAPIMiddleware := append([]echo.MiddlewareFunc{authMW}, deps.PostAuthMiddleware...)
+	openAPIMiddleware = append(openAPIMiddleware, lastUsedMW)
 	if handlers.OpenAPIFull != nil {
 		e.GET("/api/v1/openapi.json", handlers.OpenAPIFull, openAPIMiddleware...)
 	} else if handlers.OpenAPIAISafe != nil {
@@ -317,7 +327,8 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	recallGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
 	recallGroup.Use(deps.PostAuthMiddleware...)
 	recallGroup.Use(usageMW)
-	recallGroup.Use(middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService))
+	recallGroup.Use(rateLimitMW)
+	recallGroup.Use(lastUsedMW)
 
 	if handlers.Recall != nil {
 		recallGroup.GET("", handlers.Recall, middleware.RequireScopes("read"))
