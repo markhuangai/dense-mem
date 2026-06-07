@@ -28,7 +28,6 @@ migrate
 
 # Docs and licensing (keep out of the build context to speed it up;
 # the binary is self-contained)
-docs/
 README.md
 LICENSE
 

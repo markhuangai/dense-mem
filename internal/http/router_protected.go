@@ -120,7 +120,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	// Team-specific routes (with :teamId in path)
 	// ====================================
 	// GET /api/v1/teams/:teamId → same-team
-	// PATCH /api/v1/teams/:teamId → same-team + write
+	// PATCH /api/v1/teams/:teamId → same-team + manager
 	auditHandler := handler.NewAuditHandler(deps.AuditService)
 
 	registerTeamScopedRoutes := func(prefix string, legacyAPIKeyPaths bool) {
@@ -134,7 +134,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 		group.Use(lastUsedMW)
 
 		group.GET("", profileHandler.Get, middleware.RequireScopes("read"))
-		group.PATCH("", profileHandler.Patch, middleware.RequireScopes("write"), middleware.BindAndValidate[dto.UpdateProfileRequest](middleware.UpdateProfileBodyKey))
+		group.PATCH("", profileHandler.Patch, middleware.RequireRole(service.APIKeyRoleManager), middleware.BindAndValidate[dto.UpdateProfileRequest](middleware.UpdateProfileBodyKey))
 
 		// Audit log route (append-only, read endpoint only). The handler does
 		// its own permission check for defense-in-depth.
@@ -150,18 +150,20 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 			return
 		}
 		if legacyAPIKeyPaths {
-			group.GET("/api-keys", apiKeyHandler.List, middleware.RequireScopes("read"))
-			group.POST("/api-keys", apiKeyHandler.Create, middleware.RequireScopes("write"), middleware.BindAndValidate[dto.CreateAPIKeyRequest](middleware.CreateAPIKeyBodyKey))
-			group.GET("/api-keys/:keyId", apiKeyHandler.Get, middleware.RequireScopes("read"))
-			group.POST("/api-keys/:keyId/rotate", apiKeyHandler.Rotate, middleware.RequireScopes("write"), middleware.BindAndValidate[dto.CreateAPIKeyRequest](middleware.CreateAPIKeyBodyKey))
-			group.DELETE("/api-keys/:keyId", apiKeyHandler.Delete, middleware.RequireScopes("write"))
+			group.GET("/api-keys", apiKeyHandler.List, middleware.RequireRole(service.APIKeyRoleManager))
+			group.POST("/api-keys", apiKeyHandler.Create, middleware.RequireRole(service.APIKeyRoleManager), middleware.BindAndValidate[dto.CreateAPIKeyRequest](middleware.CreateAPIKeyBodyKey))
+			group.GET("/api-keys/:keyId", apiKeyHandler.Get, middleware.RequireRole(service.APIKeyRoleManager))
+			group.PATCH("/api-keys/:keyId", apiKeyHandler.Update, middleware.RequireRole(service.APIKeyRoleManager), middleware.BindAndValidate[dto.UpdateAPIKeyRequest](middleware.UpdateAPIKeyBodyKey))
+			group.POST("/api-keys/:keyId/rotate", apiKeyHandler.Rotate, middleware.RequireRole(service.APIKeyRoleManager), middleware.BindAndValidate[dto.CreateAPIKeyRequest](middleware.CreateAPIKeyBodyKey))
+			group.DELETE("/api-keys/:keyId", apiKeyHandler.Delete, middleware.RequireRole(service.APIKeyRoleManager))
 			return
 		}
-		group.GET("/profiles", apiKeyHandler.List, middleware.RequireScopes("read"))
-		group.POST("/profiles", apiKeyHandler.Create, middleware.RequireScopes("write"), middleware.BindAndValidate[dto.CreateAPIKeyRequest](middleware.CreateAPIKeyBodyKey))
-		group.GET("/profiles/:profileId", apiKeyHandler.Get, middleware.RequireScopes("read"))
-		group.POST("/profiles/:profileId/rotate", apiKeyHandler.Rotate, middleware.RequireScopes("write"), middleware.BindAndValidate[dto.CreateAPIKeyRequest](middleware.CreateAPIKeyBodyKey))
-		group.DELETE("/profiles/:profileId", apiKeyHandler.Delete, middleware.RequireScopes("write"))
+		group.GET("/profiles", apiKeyHandler.List, middleware.RequireRole(service.APIKeyRoleManager))
+		group.POST("/profiles", apiKeyHandler.Create, middleware.RequireRole(service.APIKeyRoleManager), middleware.BindAndValidate[dto.CreateAPIKeyRequest](middleware.CreateAPIKeyBodyKey))
+		group.GET("/profiles/:profileId", apiKeyHandler.Get, middleware.RequireRole(service.APIKeyRoleManager))
+		group.PATCH("/profiles/:profileId", apiKeyHandler.Update, middleware.RequireRole(service.APIKeyRoleManager), middleware.BindAndValidate[dto.UpdateAPIKeyRequest](middleware.UpdateAPIKeyBodyKey))
+		group.POST("/profiles/:profileId/rotate", apiKeyHandler.Rotate, middleware.RequireRole(service.APIKeyRoleManager), middleware.BindAndValidate[dto.CreateAPIKeyRequest](middleware.CreateAPIKeyBodyKey))
+		group.DELETE("/profiles/:profileId", apiKeyHandler.Delete, middleware.RequireRole(service.APIKeyRoleManager))
 	}
 
 	registerTeamScopedRoutes("/api/v1/teams/:teamId", false)

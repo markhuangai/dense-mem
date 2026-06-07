@@ -105,12 +105,13 @@ func DefaultRoutes() []RouteDescriptor {
 
 		// --- Team routes (full runtime variant) ---
 		{Method: "GET", Path: "/api/v1/teams/{teamId}", OperationID: "getTeam", Description: "Get a team."},
-		{Method: "PATCH", Path: "/api/v1/teams/{teamId}", OperationID: "patchTeam", Description: "Update team metadata."},
-		{Method: "GET", Path: "/api/v1/teams/{teamId}/profiles", OperationID: "listTeamProfiles", Description: "List named profiles and key metadata for a team."},
-		{Method: "POST", Path: "/api/v1/teams/{teamId}/profiles", OperationID: "createTeamProfile", Description: "Create a named profile and return its API key once."},
-		{Method: "GET", Path: "/api/v1/teams/{teamId}/profiles/{profileId}", OperationID: "getTeamProfile", Description: "Get one named profile and key metadata."},
-		{Method: "POST", Path: "/api/v1/teams/{teamId}/profiles/{profileId}/rotate", OperationID: "rotateTeamProfileKey", Description: "Rotate a named profile's API key in place."},
-		{Method: "DELETE", Path: "/api/v1/teams/{teamId}/profiles/{profileId}", OperationID: "deleteTeamProfile", Description: "Delete a named profile and its API key."},
+		{Method: "PATCH", Path: "/api/v1/teams/{teamId}", OperationID: "patchTeam", Description: "Update team metadata. Requires a manager key for the team."},
+		{Method: "GET", Path: "/api/v1/teams/{teamId}/profiles", OperationID: "listTeamProfiles", Description: "List named profiles and key metadata for a team. Requires a manager key for the team."},
+		{Method: "POST", Path: "/api/v1/teams/{teamId}/profiles", OperationID: "createTeamProfile", Description: "Create a member profile and return its API key once. Requires a manager key for the team."},
+		{Method: "GET", Path: "/api/v1/teams/{teamId}/profiles/{profileId}", OperationID: "getTeamProfile", Description: "Get one named profile and key metadata. Requires a manager key for the team."},
+		{Method: "PATCH", Path: "/api/v1/teams/{teamId}/profiles/{profileId}", OperationID: "patchTeamProfile", Description: "Rename a member profile. Requires a manager key for the team."},
+		{Method: "POST", Path: "/api/v1/teams/{teamId}/profiles/{profileId}/rotate", OperationID: "rotateTeamProfileKey", Description: "Rotate a member profile's API key in place. Requires a manager key for the team."},
+		{Method: "DELETE", Path: "/api/v1/teams/{teamId}/profiles/{profileId}", OperationID: "deleteTeamProfile", Description: "Delete a member profile and its API key. Requires a manager key for the team."},
 
 		// --- Audit log (full variant) ---
 		{Method: "GET", Path: "/api/v1/teams/{teamId}/audit-log", OperationID: "getAuditLog", Description: "Fetch the team's audit log."},

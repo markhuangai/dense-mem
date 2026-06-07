@@ -23,6 +23,10 @@ export function profilePermissionLabel(scopes: string[] | null | undefined): str
   return scopes?.includes("write") ? "Read/write" : "Read only";
 }
 
+export function profileRoleLabel(role: TeamProfile["role"] | null | undefined): string {
+  return role === "manager" ? "Manager" : "Member";
+}
+
 export function formatCount(value: number): string {
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value);
 }

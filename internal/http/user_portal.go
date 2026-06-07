@@ -68,9 +68,10 @@ type userPortalHandler struct {
 }
 
 type userPortalSessionResponse struct {
-	Team      userPortalTeamResponse `json:"team"`
-	Key       userPortalKeyResponse  `json:"key"`
-	CanRotate bool                   `json:"can_rotate"`
+	Team          userPortalTeamResponse `json:"team"`
+	Key           userPortalKeyResponse  `json:"key"`
+	CanRotate     bool                   `json:"can_rotate"`
+	CanManageTeam bool                   `json:"can_manage_team"`
 }
 
 type userPortalTeamResponse struct {
@@ -87,6 +88,7 @@ type userPortalKeyResponse struct {
 	Name       string    `json:"name"`
 	KeySuffix  string    `json:"key_suffix"`
 	Scopes     []string  `json:"scopes"`
+	Role       string    `json:"role"`
 	RateLimit  int       `json:"rate_limit"`
 	LastUsedAt *string   `json:"last_used_at"`
 	ExpiresAt  *string   `json:"expires_at"`
@@ -202,9 +204,10 @@ func (h *userPortalHandler) currentSession(c echo.Context) (userPortalSessionRes
 	}
 
 	return userPortalSessionResponse{
-		Team:      toUserPortalTeam(team),
-		Key:       toUserPortalKey(key),
-		CanRotate: userPortalHasScope(principal.Scopes, service.APIKeyScopeWrite),
+		Team:          toUserPortalTeam(team),
+		Key:           toUserPortalKey(key),
+		CanRotate:     userPortalHasScope(principal.Scopes, service.APIKeyScopeWrite),
+		CanManageTeam: principal.Role == service.APIKeyRoleManager,
 	}, nil
 }
 
@@ -247,6 +250,7 @@ func toUserPortalKey(key *domain.APIKey) userPortalKeyResponse {
 		Name:       key.GetProfileName(),
 		KeySuffix:  key.KeySuffix,
 		Scopes:     append([]string{}, key.Scopes...),
+		Role:       key.GetRole(),
 		RateLimit:  key.RateLimit,
 		LastUsedAt: controlTimePtr(key.LastUsedAt),
 		ExpiresAt:  controlTimePtr(key.ExpiresAt),

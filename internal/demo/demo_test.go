@@ -388,6 +388,10 @@ func (s *fakeAPIKeyService) UpdateNameForProfile(context.Context, uuid.UUID, uui
 	return nil, nil
 }
 
+func (s *fakeAPIKeyService) UpdateRoleForProfile(context.Context, uuid.UUID, uuid.UUID, string, *string, string, string, string) (*domain.APIKey, error) {
+	return nil, nil
+}
+
 func (s *fakeAPIKeyService) RotateForProfile(context.Context, uuid.UUID, uuid.UUID, service.CreateAPIKeyRequest, *string, string, string, string) (*domain.APIKey, string, error) {
 	return nil, "", nil
 }

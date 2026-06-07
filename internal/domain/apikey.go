@@ -18,6 +18,7 @@ type APIKeyModel interface {
 	GetKeyPrefix() string
 	GetKeySuffix() string
 	GetScopes() []string
+	GetRole() string
 	GetRateLimit() int
 	GetLastUsedAt() *time.Time
 	GetExpiresAt() *time.Time
@@ -40,6 +41,7 @@ type APIKey struct {
 	KeyPrefix  string
 	KeySuffix  string
 	Scopes     []string
+	Role       string
 	RateLimit  int
 	LastUsedAt *time.Time
 	ExpiresAt  *time.Time
@@ -60,6 +62,7 @@ func (k *APIKey) GetKeyHash() string        { return k.KeyHash }
 func (k *APIKey) GetKeyPrefix() string      { return k.KeyPrefix }
 func (k *APIKey) GetKeySuffix() string      { return k.KeySuffix }
 func (k *APIKey) GetScopes() []string       { return k.Scopes }
+func (k *APIKey) GetRole() string           { return k.effectiveRole() }
 func (k *APIKey) GetRateLimit() int         { return k.RateLimit }
 func (k *APIKey) GetLastUsedAt() *time.Time { return k.LastUsedAt }
 func (k *APIKey) GetExpiresAt() *time.Time  { return k.ExpiresAt }
@@ -78,4 +81,11 @@ func (k *APIKey) effectiveName() string {
 		return k.Name
 	}
 	return k.Label
+}
+
+func (k *APIKey) effectiveRole() string {
+	if k.Role != "" {
+		return k.Role
+	}
+	return "member"
 }

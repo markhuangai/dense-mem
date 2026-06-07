@@ -60,6 +60,11 @@ func (m *MockAPIKeyRepository) UpdateNameForProfile(ctx context.Context, profile
 	return args.Get(0).(int64), args.Error(1)
 }
 
+func (m *MockAPIKeyRepository) UpdateRoleForProfile(ctx context.Context, profileID, id uuid.UUID, role string) (int64, error) {
+	args := m.Called(ctx, profileID, id, role)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 func (m *MockAPIKeyRepository) DeleteForProfile(ctx context.Context, profileID, id uuid.UUID) (int64, error) {
 	args := m.Called(ctx, profileID, id)
 	return args.Get(0).(int64), args.Error(1)
@@ -321,9 +326,11 @@ func TestAPIKeyServiceCreate(t *testing.T) {
 
 	// Setup expectations
 	mockProfileService.On("Get", ctx, profileID).Return(&domain.Profile{ID: profileID}, nil)
+	mockRepo.On("CountByProfile", ctx, profileID).Return(int64(0), nil)
 	mockRepo.On("CreateStandardKey", ctx, mock.AnythingOfType("*domain.APIKey")).Run(func(args mock.Arguments) {
 		key := args.Get(1).(*domain.APIKey)
 		assert.Equal(t, []string{"read", "write"}, key.Scopes)
+		assert.Equal(t, APIKeyRoleManager, key.Role)
 		key.ID = uuid.New() // Simulate DB assigning ID
 	}).Return(nil)
 	mockAuditService.On("APIKeyCreated", ctx, mock.AnythingOfType("*string"), mock.AnythingOfType("string"), mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
@@ -343,6 +350,7 @@ func TestAPIKeyServiceCreate(t *testing.T) {
 	assert.Equal(t, []string{"read", "write"}, key.Scopes)
 	assert.Equal(t, "default profile", key.Label)
 	assert.Equal(t, "default profile", key.Name)
+	assert.Equal(t, APIKeyRoleManager, key.Role)
 
 	// Verify the raw key is not logged or stored in the response
 	mockRepo.AssertExpectations(t)
@@ -363,14 +371,17 @@ func TestAPIKeyServiceCreateReadOnlyKey(t *testing.T) {
 	service := NewAPIKeyService(mockRepo, mockProfileService, mockAuditService, mockSessionInvalidator, mockStatePurger)
 
 	mockProfileService.On("Get", ctx, profileID).Return(&domain.Profile{ID: profileID}, nil)
+	mockRepo.On("CountByProfile", ctx, profileID).Return(int64(1), nil)
 	mockRepo.On("CreateStandardKey", ctx, mock.AnythingOfType("*domain.APIKey")).Run(func(args mock.Arguments) {
 		key := args.Get(1).(*domain.APIKey)
 		assert.Equal(t, []string{"read"}, key.Scopes)
+		assert.Equal(t, APIKeyRoleMember, key.Role)
 		key.ID = uuid.New()
 	}).Return(nil)
 	mockAuditService.On("APIKeyCreated", ctx, mock.AnythingOfType("*string"), mock.AnythingOfType("string"), mock.MatchedBy(func(payload map[string]interface{}) bool {
 		scopes, ok := payload["scopes"].([]string)
-		return ok && assert.ObjectsAreEqual([]string{"read"}, scopes)
+		role, roleOK := payload["role"].(string)
+		return ok && assert.ObjectsAreEqual([]string{"read"}, scopes) && roleOK && role == APIKeyRoleMember
 	}), mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	key, rawKey, err := service.CreateStandardKey(ctx, profileID, CreateAPIKeyRequest{
@@ -383,6 +394,7 @@ func TestAPIKeyServiceCreateReadOnlyKey(t *testing.T) {
 	require.NotNil(t, key)
 	assert.NotEmpty(t, rawKey)
 	assert.Equal(t, []string{"read"}, key.Scopes)
+	assert.Equal(t, APIKeyRoleMember, key.Role)
 	assert.Empty(t, key.KeyHash)
 	mockRepo.AssertExpectations(t)
 	mockProfileService.AssertExpectations(t)
@@ -723,6 +735,7 @@ func TestAPIKeyServiceCreateStandardKeyErrorAndAuditBranches(t *testing.T) {
 		mockAuditService := new(MockAuditService)
 		svc := NewAPIKeyService(mockRepo, mockProfileService, mockAuditService, nil, nil)
 		mockProfileService.On("Get", ctx, profileID).Return(&domain.Profile{ID: profileID}, nil)
+		mockRepo.On("CountByProfile", ctx, profileID).Return(int64(0), nil)
 		mockRepo.On("CreateStandardKey", ctx, mock.AnythingOfType("*domain.APIKey")).Return(errors.New("insert failed"))
 
 		key, raw, err := svc.CreateStandardKey(ctx, profileID, CreateAPIKeyRequest{Name: "ops"}, nil, "system", "127.0.0.1", "corr")
@@ -741,6 +754,7 @@ func TestAPIKeyServiceCreateStandardKeyErrorAndAuditBranches(t *testing.T) {
 		svc := NewAPIKeyService(mockRepo, mockProfileService, mockAuditService, nil, nil)
 		expiresAt := time.Now().UTC().Add(time.Hour)
 		mockProfileService.On("Get", ctx, profileID).Return(&domain.Profile{ID: profileID}, nil)
+		mockRepo.On("CountByProfile", ctx, profileID).Return(int64(1), nil)
 		mockRepo.On("CreateStandardKey", ctx, mock.AnythingOfType("*domain.APIKey")).Run(func(args mock.Arguments) {
 			args.Get(1).(*domain.APIKey).ID = uuid.New()
 		}).Return(nil)

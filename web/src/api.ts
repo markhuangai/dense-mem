@@ -16,11 +16,14 @@ export type TeamProfile = {
   name: string;
   key_suffix: string | null;
   scopes: string[] | null;
+  role: ProfileRole;
   rate_limit: number;
   last_used_at: string | null;
   expires_at: string | null;
   created_at: string;
 };
+
+export type ProfileRole = "manager" | "member";
 
 export type Pagination = {
   limit: number;
@@ -43,13 +46,14 @@ export type UpdateTeamInput = CreateTeamInput;
 export type CreateTeamProfileInput = {
   name: string;
   scopes?: string[];
+  role?: ProfileRole;
   rate_limit: number;
   expires_at?: string;
 };
 
-export type UpdateTeamProfileInput = {
-  name: string;
-};
+export type UpdateTeamProfileInput =
+  | { name: string; role?: never }
+  | { name?: never; role: ProfileRole };
 
 export type CreatedTeamProfile = {
   api_key: string;
