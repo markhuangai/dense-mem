@@ -1,0 +1,15 @@
+name: CI Push
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+
+permissions:
+  contents: read
+
+jobs:
+  go-unit:
+    name: Go unit tests
+    uses: ./.github/workflows/ci-shared.yml
