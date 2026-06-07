@@ -42,6 +42,35 @@ func TestMCPHandlerPostInitializeJSON(t *testing.T) {
 	require.Equal(t, "2024-11-05", result["protocolVersion"])
 }
 
+func TestMCPHandlerPostInitializeUsesResolvedTeamContext(t *testing.T) {
+	h := NewMCPHandler(registry.New(), testMCPLogger())
+	e := echo.New()
+	profileID := uuid.New()
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	ctx := middleware.SetResolvedTeamContextForTest(req.Context(), middleware.ResolvedTeamContext{
+		ID:          profileID,
+		Name:        "Dense-Mem Project",
+		Description: "Project memory only",
+	})
+	ctx = middleware.SetPrincipalForTest(ctx, &middleware.Principal{TeamID: profileID, Scopes: []string{"read"}})
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := h.HandlePost(c)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	result := resp["result"].(map[string]any)
+	serverInfo := result["serverInfo"].(map[string]any)
+	require.Equal(t, "dense-mem-dense-mem-project", serverInfo["name"])
+	require.Contains(t, serverInfo["description"], "Project memory only")
+	require.Contains(t, result["instructions"], "Dense-Mem Project")
+}
+
 func TestMCPHandlerPostToolCallUsesAuthenticatedProfile(t *testing.T) {
 	reg := registry.New()
 	profileID := uuid.New()

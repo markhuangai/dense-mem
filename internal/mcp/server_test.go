@@ -140,6 +140,49 @@ func TestMCP_Initialize(t *testing.T) {
 	if info["name"] != ServerName {
 		t.Errorf("serverInfo.name = %v; want %v", info["name"], ServerName)
 	}
+	if _, ok := result["instructions"]; ok {
+		t.Errorf("legacy initialize unexpectedly included team instructions: %v", result["instructions"])
+	}
+}
+
+func TestMCP_InitializeIncludesTeamContext(t *testing.T) {
+	logger, _ := testLogger(t)
+	reg := registry.New()
+	s := NewServerWithScopesAndTeamContext(reg, "pA", nil, TeamContext{
+		Name:        "Dense-Mem Project",
+		Description: "Project memory only",
+	}, logger)
+
+	out := runRPC(t, s, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	var resp rpcResp
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &resp); err != nil {
+		t.Fatalf("unmarshal: %v — out=%q", err, out)
+	}
+	if resp.Error != nil {
+		t.Fatalf("unexpected error: %+v", resp.Error)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		t.Fatalf("result unmarshal: %v", err)
+	}
+
+	info, _ := result["serverInfo"].(map[string]any)
+	if info["name"] != "dense-mem-dense-mem-project" {
+		t.Errorf("serverInfo.name = %v; want dense-mem-dense-mem-project", info["name"])
+	}
+	if info["title"] != "Dense-Mem: Dense-Mem Project" {
+		t.Errorf("serverInfo.title = %v", info["title"])
+	}
+	description, _ := info["description"].(string)
+	if !strings.Contains(description, "Project memory only") {
+		t.Errorf("serverInfo.description missing team description: %q", description)
+	}
+	instructions, _ := result["instructions"].(string)
+	for _, want := range []string{"Dense-Mem Project", "personal memory MCP", "ask before writing"} {
+		if !strings.Contains(instructions, want) {
+			t.Errorf("instructions missing %q: %q", want, instructions)
+		}
+	}
 }
 
 func TestMCP_ToolsListMirrorsRegistry(t *testing.T) {
@@ -184,6 +227,50 @@ func TestMCP_ToolsListMirrorsRegistry(t *testing.T) {
 	}
 	if _, ok := payload.Tools[0]["inputSchema"]; !ok {
 		t.Errorf("missing inputSchema")
+	}
+}
+
+func TestMCP_ToolsListIncludesTeamContextWithoutMutatingRegistry(t *testing.T) {
+	logger, _ := testLogger(t)
+	reg := registry.New()
+	_ = reg.Register(registry.Tool{
+		Name:        "remember",
+		Description: "Store durable memory.",
+		InputSchema: map[string]any{"type": "object"},
+	})
+	s := NewServerWithScopesAndTeamContext(reg, "pA", nil, TeamContext{
+		Name:        "Dense-Mem Project",
+		Description: "Project memory only",
+	}, logger)
+
+	out := runRPC(t, s, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
+	var resp rpcResp
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	var payload struct {
+		Tools []map[string]any `json:"tools"`
+	}
+	if err := json.Unmarshal(resp.Result, &payload); err != nil {
+		t.Fatalf("result unmarshal: %v", err)
+	}
+	if len(payload.Tools) != 1 {
+		t.Fatalf("tools count = %d; want 1", len(payload.Tools))
+	}
+
+	description, _ := payload.Tools[0]["description"].(string)
+	for _, want := range []string{"Dense-Mem team scope: Dense-Mem Project", "Project memory only", "Store durable memory."} {
+		if !strings.Contains(description, want) {
+			t.Errorf("tool description missing %q: %q", want, description)
+		}
+	}
+
+	tool, ok := reg.Get("remember")
+	if !ok {
+		t.Fatal("remember not registered")
+	}
+	if tool.Description != "Store durable memory." {
+		t.Fatalf("registry description was mutated: %q", tool.Description)
 	}
 }
 

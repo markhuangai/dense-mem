@@ -42,8 +42,12 @@ redact Authorization headers and Dense-Mem API keys.
 
 ## Codex Desktop
 
+Use a team-specific config key when one client connects to multiple Dense-Mem
+teams. Dense-Mem also returns the authenticated team name and description through
+MCP discovery, but many clients display or namespace tools by this local key.
+
 ```toml
-[mcp_servers.dense_mem]
+[mcp_servers.dense_mem_primary_memory]
 command = "npx"
 args = ["-y", "dense-mem-mcp-proxy"]
 env = { DENSE_MEM_MCP_URL = "http://127.0.0.1:8080/mcp", DENSE_MEM_API_KEY = "dm_live_..." }
@@ -56,7 +60,7 @@ enabled = true
 ```json
 {
   "mcpServers": {
-    "dense_mem": {
+    "dense_mem_primary_memory": {
       "command": "npx",
       "args": ["-y", "dense-mem-mcp-proxy"],
       "env": {
