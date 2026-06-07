@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -382,6 +383,9 @@ func (h *APIKeyHandler) rejectManagerTarget(ctx context.Context, profileID, keyI
 	key, err := h.svc.GetByIDForProfile(ctx, profileID, keyID)
 	if err != nil {
 		return err
+	}
+	if key == nil {
+		return httperr.New(httperr.NOT_FOUND, fmt.Sprintf("team profile with id '%s' not found", keyID.String()))
 	}
 	if key.GetRole() == service.APIKeyRoleManager {
 		return httperr.New(httperr.FORBIDDEN, "manager profiles can only be managed from the control portal")

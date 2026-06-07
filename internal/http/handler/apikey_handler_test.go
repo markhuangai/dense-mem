@@ -190,6 +190,29 @@ func TestAPIKeyHandlerCreateListGetRotateDelete(t *testing.T) {
 		}
 	})
 
+	t.Run("mutations return not found for missing profile targets", func(t *testing.T) {
+		missingSvc := &apiKeyHandlerService{}
+		h := NewAPIKeyHandler(missingSvc)
+
+		_, err := runAPIKeyHandlerWithUpdateBody(t, http.MethodPatch, "/api/v1/teams/"+profileID.String()+"/profiles/"+keyID.String(), "/api/v1/teams/:teamId/profiles/:profileId", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, `{"name":"renamed profile"}`, h.Update)
+		assertAPIKeyHandlerErrorCode(t, err, httperr.NOT_FOUND)
+		if missingSvc.updatedName != "" {
+			t.Fatalf("updated name = %q; want no delegated update", missingSvc.updatedName)
+		}
+
+		_, err = runAPIKeyHandlerWithBody(t, http.MethodPost, "/api/v1/teams/"+profileID.String()+"/profiles/"+keyID.String()+"/rotate", "/api/v1/teams/:teamId/profiles/:profileId/rotate", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, `{"name":"rotated"}`, h.Rotate)
+		assertAPIKeyHandlerErrorCode(t, err, httperr.NOT_FOUND)
+		if missingSvc.rotateReq.Name != "" {
+			t.Fatalf("rotate request name = %q; want no delegated rotate", missingSvc.rotateReq.Name)
+		}
+
+		_, err = runAPIKeyHandler(t, http.MethodDelete, "/api/v1/teams/"+profileID.String()+"/profiles/"+keyID.String(), "/api/v1/teams/:teamId/profiles/:profileId", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, h.Delete)
+		assertAPIKeyHandlerErrorCode(t, err, httperr.NOT_FOUND)
+		if missingSvc.deletedKeyID != uuid.Nil {
+			t.Fatalf("deleted key = %s; want no delegated delete", missingSvc.deletedKeyID)
+		}
+	})
+
 	t.Run("rotate rejects scope changes and accepts metadata updates", func(t *testing.T) {
 		withScopes := `{"name":"rotated","scopes":["read"]}`
 		_, err := runAPIKeyHandlerWithBody(t, http.MethodPost, "/api/v1/teams/"+profileID.String()+"/profiles/"+keyID.String()+"/rotate", "/api/v1/teams/:teamId/profiles/:profileId/rotate", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, withScopes, h.Rotate)
@@ -422,6 +445,20 @@ func TestAPIKeyResponseHelpersPreferCanonicalFields(t *testing.T) {
 
 func runAPIKeyHandlerWithBody(t *testing.T, method, target, path string, paramNames, paramVals []string, body string, handler echo.HandlerFunc) (*httptest.ResponseRecorder, error) {
 	return runAPIKeyHandlerWithOptionalBody(t, method, target, path, paramNames, paramVals, body, handler)
+}
+
+func assertAPIKeyHandlerErrorCode(t *testing.T, err error, want httperr.ErrorCode) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("error = nil; want %s", want)
+	}
+	apiErr, ok := err.(httperr.APIErrorProvider)
+	if !ok {
+		t.Fatalf("error = %T %v; want httperr.APIErrorProvider", err, err)
+	}
+	if got := apiErr.GetCode(); got != want {
+		t.Fatalf("error code = %s; want %s", got, want)
+	}
 }
 
 func runAPIKeyHandlerWithUpdateBody(t *testing.T, method, target, path string, paramNames, paramVals []string, body string, handler echo.HandlerFunc) (*httptest.ResponseRecorder, error) {
