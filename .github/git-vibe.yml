@@ -115,7 +115,7 @@ ai:
   role_groups:
     swarm:
       synthesizer: codex_5.5_high
-      parallel: 4
+      parallel: 6
       roles:
         - role: correctness.md
           profile: local_proxy
