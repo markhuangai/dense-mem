@@ -3,7 +3,6 @@ name: Release prerelease
 on:
   workflow_run:
     workflows:
-      - CI
       - CI Push
     types:
       - completed
