@@ -1,14 +1,7 @@
-name: CI
+name: CI Shared
 
 on:
-  push:
-    branches:
-      - main
-      - dev
-  pull_request:
-    branches:
-      - main
-      - dev
+  workflow_call:
 
 permissions:
   contents: read

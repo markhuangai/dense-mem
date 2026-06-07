@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/tools"
@@ -41,17 +42,37 @@ type Server struct {
 	registry  registry.Registry
 	profileID string
 	scopes    []string
+	team      TeamContext
 	logger    observability.LogProvider
+}
+
+// TeamContext is non-secret team metadata made visible in MCP discovery so
+// clients can distinguish multiple API-key-scoped Dense-Mem connections.
+type TeamContext struct {
+	Name        string
+	Description string
 }
 
 // NewServer constructs a Server bound to a registry and a fixed profile ID.
 func NewServer(reg registry.Registry, profileID string, logger observability.LogProvider) *Server {
-	return &Server{registry: reg, profileID: profileID, logger: logger}
+	return NewServerWithScopesAndTeamContext(reg, profileID, nil, TeamContext{}, logger)
 }
 
 // NewServerWithScopes constructs a Server that filters visible/callable tools by scope.
 func NewServerWithScopes(reg registry.Registry, profileID string, scopes []string, logger observability.LogProvider) *Server {
-	return &Server{registry: reg, profileID: profileID, scopes: append([]string(nil), scopes...), logger: logger}
+	return NewServerWithScopesAndTeamContext(reg, profileID, scopes, TeamContext{}, logger)
+}
+
+// NewServerWithScopesAndTeamContext constructs a Server with request-scoped team
+// metadata for MCP discovery surfaces.
+func NewServerWithScopesAndTeamContext(reg registry.Registry, profileID string, scopes []string, team TeamContext, logger observability.LogProvider) *Server {
+	return &Server{
+		registry:  reg,
+		profileID: profileID,
+		scopes:    append([]string(nil), scopes...),
+		team:      normalizeTeamContext(team),
+		logger:    logger,
+	}
 }
 
 // rpcRequest mirrors the incoming JSON-RPC 2.0 envelope.
@@ -107,16 +128,28 @@ func (s *Server) dispatch(ctx context.Context, req rpcRequest) rpcResponse {
 
 // handleInitialize returns the server's capability block.
 func (s *Server) handleInitialize() map[string]any {
-	return map[string]any{
+	serverInfo := map[string]any{
+		"name":    s.serverName(),
+		"version": ServerVersion,
+	}
+	if s.team.Name != "" {
+		serverInfo["title"] = fmt.Sprintf("Dense-Mem: %s", s.team.Name)
+	}
+	if description := s.serverDescription(); description != "" {
+		serverInfo["description"] = description
+	}
+
+	out := map[string]any{
 		"protocolVersion": ProtocolVersion,
 		"capabilities": map[string]any{
 			"tools": map[string]any{},
 		},
-		"serverInfo": map[string]any{
-			"name":    ServerName,
-			"version": ServerVersion,
-		},
+		"serverInfo": serverInfo,
 	}
+	if instructions := s.instructions(); instructions != "" {
+		out["instructions"] = instructions
+	}
+	return out
 }
 
 // handleToolsList returns registered tools mapped to MCP tool descriptors.
@@ -134,7 +167,7 @@ func (s *Server) handleToolsList() map[string]any {
 		}
 		out = append(out, map[string]any{
 			"name":        t.Name,
-			"description": t.Description,
+			"description": s.toolDescription(t.Description),
 			"inputSchema": schema,
 		})
 	}
@@ -221,6 +254,100 @@ func (s *Server) canUseTool(tool registry.Tool) bool {
 		}
 	}
 	return true
+}
+
+func (s *Server) serverName() string {
+	if s.team.Name == "" {
+		return ServerName
+	}
+	slug := slugifyMCPName(s.team.Name)
+	if slug == "" {
+		return ServerName
+	}
+	return ServerName + "-" + slug
+}
+
+func (s *Server) serverDescription() string {
+	if s.team.Name == "" && s.team.Description == "" {
+		return ""
+	}
+	name := s.teamDisplayName()
+	if s.team.Description == "" {
+		return fmt.Sprintf("Dense-Mem MCP server for team %q.", name)
+	}
+	return fmt.Sprintf("Dense-Mem MCP server for team %q. Scope description: %s", name, s.team.Description)
+}
+
+func (s *Server) instructions() string {
+	if s.team.Name == "" && s.team.Description == "" {
+		return ""
+	}
+	name := s.teamDisplayName()
+	parts := []string{
+		fmt.Sprintf("Use this Dense-Mem MCP connection only for memories, evidence, claims, facts, recall, and knowledge operations that belong to the %q team.", name),
+		"Use a personal memory MCP for unrelated personal identity, private-life facts, and cross-project preferences.",
+		"If a memory could belong to both this team and a personal memory, ask before writing.",
+	}
+	if s.team.Description != "" {
+		parts = append(parts, "Team scope description: "+s.team.Description)
+	}
+	return strings.Join(parts, " ")
+}
+
+func (s *Server) toolDescription(description string) string {
+	if s.team.Name == "" && s.team.Description == "" {
+		return description
+	}
+
+	prefixParts := []string{
+		fmt.Sprintf("Dense-Mem team scope: %s.", s.teamDisplayName()),
+		"Use this MCP only for memory and knowledge belonging to this team; use personal memory MCPs for unrelated personal facts.",
+	}
+	if s.team.Description != "" {
+		prefixParts = append(prefixParts, "Scope description: "+s.team.Description)
+	}
+	prefix := strings.Join(prefixParts, " ")
+	if strings.TrimSpace(description) == "" {
+		return prefix
+	}
+	return prefix + " " + description
+}
+
+func (s *Server) teamDisplayName() string {
+	if s.team.Name != "" {
+		return s.team.Name
+	}
+	return "this team"
+}
+
+func normalizeTeamContext(team TeamContext) TeamContext {
+	return TeamContext{
+		Name:        normalizeMCPText(team.Name),
+		Description: normalizeMCPText(team.Description),
+	}
+}
+
+func normalizeMCPText(value string) string {
+	return strings.Join(strings.Fields(value), " ")
+}
+
+func slugifyMCPName(value string) string {
+	value = strings.ToLower(value)
+	var b strings.Builder
+	lastHyphen := false
+	for _, r := range value {
+		isAlnum := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if isAlnum {
+			b.WriteRune(r)
+			lastHyphen = false
+			continue
+		}
+		if !lastHyphen && b.Len() > 0 {
+			b.WriteByte('-')
+			lastHyphen = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }
 
 func okResponse(id json.RawMessage, result any) rpcResponse {

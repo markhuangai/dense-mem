@@ -333,10 +333,11 @@ func TestProfileResolution_StoresInContext(t *testing.T) {
 
 	profileID := uuid.New()
 	profile := &domain.Profile{
-		ID:        profileID,
-		Name:      "test-profile",
-		CreatedAt: time.Now().UTC(),
-		UpdatedAt: time.Now().UTC(),
+		ID:          profileID,
+		Name:        "test-profile",
+		Description: "Profile resolution test scope",
+		CreatedAt:   time.Now().UTC(),
+		UpdatedAt:   time.Now().UTC(),
 	}
 
 	mockSvc := &mockProfileResolutionService{
@@ -346,11 +347,14 @@ func TestProfileResolution_StoresInContext(t *testing.T) {
 	}
 
 	var capturedID uuid.UUID
+	var capturedTeam ResolvedTeamContext
 	var found bool
+	var teamFound bool
 
 	e.GET("/api/v1/profiles/:profileId/test", func(c echo.Context) error {
 		ctx := c.Request().Context()
 		capturedID, found = GetResolvedProfileID(ctx)
+		capturedTeam, teamFound = GetResolvedTeamContext(ctx)
 		return c.String(http.StatusOK, "ok")
 	}, ProfileResolutionMiddleware(mockSvc))
 
@@ -362,6 +366,12 @@ func TestProfileResolution_StoresInContext(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.True(t, found, "profile ID should be found in context")
 	assert.Equal(t, profileID, capturedID)
+	assert.True(t, teamFound, "team context should be found in context")
+	assert.Equal(t, ResolvedTeamContext{
+		ID:          profileID,
+		Name:        "test-profile",
+		Description: "Profile resolution test scope",
+	}, capturedTeam)
 }
 
 // TestProfileResolution_ProfileNotFound tests that a non-existent profile
@@ -493,4 +503,23 @@ func TestProfileResolution_SetResolvedProfileIDForTest(t *testing.T) {
 	got, ok := GetResolvedProfileID(ctx)
 	require.True(t, ok)
 	assert.Equal(t, profileID, got)
+}
+
+func TestProfileResolution_SetResolvedTeamContextForTest(t *testing.T) {
+	teamID := uuid.New()
+	team := ResolvedTeamContext{
+		ID:          teamID,
+		Name:        "Dense-Mem Project",
+		Description: "Project memory only",
+	}
+
+	ctx := SetResolvedTeamContextForTest(context.Background(), team)
+
+	gotID, ok := GetResolvedProfileID(ctx)
+	require.True(t, ok)
+	assert.Equal(t, teamID, gotID)
+
+	gotTeam, ok := GetResolvedTeamContext(ctx)
+	require.True(t, ok)
+	assert.Equal(t, team, gotTeam)
 }

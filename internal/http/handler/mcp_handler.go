@@ -64,7 +64,12 @@ func (h *MCPHandler) HandlePost(c echo.Context) error {
 		return httperr.New(httperr.VALIDATION_ERROR, "request body is required")
 	}
 
-	server := mcp.NewServerWithScopes(h.reg, profileID.String(), principal.Scopes, h.logger)
+	team := mcp.TeamContext{}
+	if resolvedTeam, ok := middleware.GetResolvedTeamContext(ctx); ok {
+		team.Name = resolvedTeam.Name
+		team.Description = resolvedTeam.Description
+	}
+	server := mcp.NewServerWithScopesAndTeamContext(h.reg, profileID.String(), principal.Scopes, team, h.logger)
 	responsePayload := server.HandlePayload(ctx, payload)
 
 	if acceptsEventStream(c.Request().Header.Get("Accept")) {
