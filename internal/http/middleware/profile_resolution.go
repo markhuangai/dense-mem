@@ -24,6 +24,18 @@ type ProfileResolutionServiceInterface interface {
 // Using a typed context key prevents accidental overwrites from other packages.
 type ResolvedProfileKey struct{}
 
+// ResolvedTeamContextKey is the typed context key for storing the resolved team
+// metadata needed by downstream MCP surfaces.
+type ResolvedTeamContextKey struct{}
+
+// ResolvedTeamContext contains non-secret team metadata resolved from the
+// authenticated API key or route. It is safe to expose to authenticated callers.
+type ResolvedTeamContext struct {
+	ID          uuid.UUID
+	Name        string
+	Description string
+}
+
 // TeamIDHeader is the HTTP header for explicit team ID overrides in legacy clients.
 const TeamIDHeader = "X-Team-ID"
 
@@ -128,9 +140,14 @@ func ProfileResolutionMiddleware(svc ProfileResolutionServiceInterface) echo.Mid
 				return httperr.New(httperr.NOT_FOUND, "profile not found")
 			}
 
-			// Store resolved profile ID in context
-			// Use a dedicated typed key to prevent collisions
+			// Store resolved team ID and metadata in context.
+			// Use dedicated typed keys to prevent collisions.
 			resolvedCtx := context.WithValue(ctx, ResolvedProfileKey{}, profileID)
+			resolvedCtx = context.WithValue(resolvedCtx, ResolvedTeamContextKey{}, ResolvedTeamContext{
+				ID:          profileID,
+				Name:        profile.Name,
+				Description: profile.Description,
+			})
 			c.SetRequest(c.Request().WithContext(resolvedCtx))
 
 			// Continue to next handler
@@ -154,6 +171,12 @@ func GetResolvedProfileID(ctx context.Context) (uuid.UUID, bool) {
 // GetResolvedTeamID retrieves the resolved team ID from the context.
 func GetResolvedTeamID(ctx context.Context) (uuid.UUID, bool) {
 	return GetResolvedProfileID(ctx)
+}
+
+// GetResolvedTeamContext retrieves the resolved team metadata from the context.
+func GetResolvedTeamContext(ctx context.Context) (ResolvedTeamContext, bool) {
+	team, ok := ctx.Value(ResolvedTeamContextKey{}).(ResolvedTeamContext)
+	return team, ok
 }
 
 // MustGetResolvedProfileID retrieves the resolved profile ID from the context.
@@ -180,4 +203,12 @@ func SetResolvedProfileIDForTest(ctx context.Context, profileID uuid.UUID) conte
 // SetResolvedTeamIDForTest sets a resolved team ID in context for testing.
 func SetResolvedTeamIDForTest(ctx context.Context, teamID uuid.UUID) context.Context {
 	return SetResolvedProfileIDForTest(ctx, teamID)
+}
+
+// SetResolvedTeamContextForTest sets resolved team metadata in context for tests.
+func SetResolvedTeamContextForTest(ctx context.Context, team ResolvedTeamContext) context.Context {
+	if team.ID != uuid.Nil {
+		ctx = SetResolvedProfileIDForTest(ctx, team.ID)
+	}
+	return context.WithValue(ctx, ResolvedTeamContextKey{}, team)
 }
