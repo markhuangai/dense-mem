@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Ban, RefreshCw, Trash2 } from "lucide-react";
 import { ControlApi, SecurityBan, SecuritySettings } from "../api";
+import { SectionHeading, SummaryCard } from "../ui/components";
 import { formatDate, readError } from "./utils";
 
 export function SecurityPanel({ api }: { api: ControlApi }) {
@@ -77,36 +78,24 @@ export function SecurityPanel({ api }: { api: ControlApi }) {
 
   return (
     <section className="surface security-panel">
-      <div className="section-heading">
-        <div>
-          <h2>IP Bans</h2>
-          <p className="section-subtitle">Review failed-auth bans, add manual bans, and clear strikes.</p>
-        </div>
-        <button className="icon-button" type="button" aria-label="Refresh security" onClick={() => void loadSecurity()} disabled={busy}>
-          <RefreshCw size={16} aria-hidden="true" />
-        </button>
-      </div>
+      <SectionHeading
+        title="IP Bans"
+        subtitle="Review failed-auth bans, add manual bans, and clear strikes."
+        actions={(
+          <button className="icon-button" type="button" aria-label="Refresh security" onClick={() => void loadSecurity()} disabled={busy}>
+            <RefreshCw size={16} aria-hidden="true" />
+          </button>
+        )}
+      />
       {error && <div className="banner error" role="alert">{error}</div>}
 
       <div className="security-summary" aria-label="IP ban rules">
         {settings ? (
           <>
-            <div className="summary-item">
-              <span>Protection</span>
-              <strong>{settings.enabled ? "On" : "Off"}</strong>
-            </div>
-            <div className="summary-item">
-              <span>Threshold</span>
-              <strong>{settings.failure_threshold} failures</strong>
-            </div>
-            <div className="summary-item">
-              <span>Window</span>
-              <strong>{settings.failure_window_seconds}s</strong>
-            </div>
-            <div className="summary-item">
-              <span>Ban duration</span>
-              <strong>{settings.ban_duration_seconds === 0 ? "Permanent" : `${settings.ban_duration_seconds}s`}</strong>
-            </div>
+            <SummaryCard label="Protection" value={settings.enabled ? "On" : "Off"} />
+            <SummaryCard label="Threshold" value={`${settings.failure_threshold} failures`} />
+            <SummaryCard label="Window" value={`${settings.failure_window_seconds}s`} />
+            <SummaryCard label="Ban duration" value={settings.ban_duration_seconds === 0 ? "Permanent" : `${settings.ban_duration_seconds}s`} />
           </>
         ) : (
           <div className="table-placeholder compact">Loading rules</div>

@@ -86,6 +86,50 @@ const metrics = {
   ],
 };
 
+const telemetryCards = [
+  { id: "http_requests", label: "HTTP requests", unit: "requests", value: 42 },
+  { id: "http_errors", label: "HTTP errors", unit: "requests", value: 2 },
+  { id: "verifier_tokens", label: "Verifier tokens", unit: "tokens", value: 1200 },
+  { id: "embedding_tokens", label: "Embedding tokens", unit: "tokens", value: 3200 },
+  { id: "recalls", label: "Recall requests", unit: "requests", value: 9 },
+  { id: "avg_recall_results", label: "Avg recall results", unit: "results", value: 3.2 },
+  { id: "promotions", label: "Promotions", unit: "promotions", value: 4 },
+  { id: "promotion_rate", label: "Promotion rate", unit: "percent", value: 66.6 },
+  { id: "avg_http_latency", label: "Avg HTTP latency", unit: "ms", value: 18.5 },
+  { id: "avg_embedding_latency", label: "Avg embedding latency", unit: "ms", value: 44.2 },
+  { id: "avg_verifier_latency", label: "Avg verifier latency", unit: "ms", value: 112.8 },
+  { id: "avg_claim_verify_latency", label: "Avg claim-to-verify", unit: "ms", value: 210.4 },
+  { id: "avg_claim_promotion_latency", label: "Avg claim-to-promote", unit: "ms", value: 420.9 },
+  { id: "avg_verify_promotion_latency", label: "Avg verify-to-promote", unit: "ms", value: 190.1 },
+  { id: "pending_claims", label: "Pending claims", unit: "claims", value: 5 },
+  { id: "validated_claims", label: "Validated claims", unit: "claims", value: 12 },
+  { id: "disputed_claims", label: "Disputed claims", unit: "claims", value: 1 },
+  { id: "revalidation_backlog", label: "Revalidation backlog", unit: "facts", value: 7 },
+];
+
+const telemetrySeries = [
+  { id: "http_rps", label: "HTTP requests", unit: "rps" },
+  { id: "http_errors_rps", label: "HTTP errors", unit: "rps" },
+  { id: "embedding_tokens", label: "Embedding tokens", unit: "tokens/s" },
+  { id: "verifier_tokens", label: "Verifier tokens", unit: "tokens/s" },
+  { id: "recalls", label: "Recall requests", unit: "requests/s" },
+  { id: "promotions", label: "Promotions", unit: "promotions/s" },
+  { id: "recall_results", label: "Recall results", unit: "results" },
+  { id: "claim_verify_latency", label: "Claim-to-verify", unit: "ms" },
+  { id: "claim_promotion_latency", label: "Claim-to-promote", unit: "ms" },
+  { id: "verify_promotion_latency", label: "Verify-to-promote", unit: "ms" },
+  { id: "pending_claims", label: "Pending claims", unit: "claims" },
+  { id: "validated_claims", label: "Validated claims", unit: "claims" },
+  { id: "disputed_claims", label: "Disputed claims", unit: "claims" },
+  { id: "revalidation_backlog", label: "Revalidation backlog", unit: "facts" },
+].map((series, index) => ({
+  ...series,
+  points: [
+    { timestamp: "2026-05-02T12:00:00Z", value: index / 10 },
+    { timestamp: "2026-05-02T13:00:00Z", value: index / 10 + 0.4 },
+  ],
+}));
+
 const telemetry = {
   available: true,
   window: {
@@ -96,21 +140,8 @@ const telemetry = {
     retention_days: 30,
   },
   scope: { type: "system" },
-  cards: [
-    { id: "http_requests", label: "HTTP requests", unit: "requests", value: 42 },
-    { id: "verifier_tokens", label: "Verifier tokens", unit: "tokens", value: 1200 },
-  ],
-  series: [
-    {
-      id: "http_rps",
-      label: "HTTP requests",
-      unit: "rps",
-      points: [
-        { timestamp: "2026-05-02T12:00:00Z", value: 0.4 },
-        { timestamp: "2026-05-02T13:00:00Z", value: 0.9 },
-      ],
-    },
-  ],
+  cards: telemetryCards,
+  series: telemetrySeries,
 };
 
 type TestProfile = typeof team;
@@ -193,6 +224,15 @@ test("metrics tab renders operational totals and filter queries", async ({ page 
 
   await page.getByRole("button", { name: /^Metrics$/ }).click();
 
+  const telemetryTotals = page.getByLabel("Telemetry totals");
+  for (const card of telemetryCards) {
+    await expect(telemetryTotals).toContainText(card.label);
+  }
+  const telemetryCharts = page.getByLabel("Telemetry charts");
+  for (const series of telemetrySeries) {
+    await expect(telemetryCharts).toContainText(series.label);
+  }
+
   const summary = page.getByLabel("Request metrics");
   await expect(summary).toContainText("42");
   await expect(summary).toContainText("2");
@@ -211,6 +251,7 @@ test("metrics tab renders operational totals and filter queries", async ({ page 
   await expect.poll(() => calls.metricsUrls.some((url) => (
     url.includes("window_minutes=360") && url.includes(`team_id=${team.id}`)
   ))).toBe(true);
+  await expectNoShellOverlap(page);
 });
 
 test("team delete flow", async ({ page }) => {
@@ -247,6 +288,7 @@ test("responsive portal layout", async ({ page }) => {
   await expect(page.locator(".surface").first()).toHaveCSS("border-radius", "8px");
   await page.getByRole("button", { name: /Profiles & API Keys/ }).click();
   await expect(page.getByRole("heading", { name: "Profiles" })).toBeVisible();
+  await expectNoShellOverlap(page);
 
   if ((page.viewportSize()?.width ?? 1000) < 700) {
     await expect(page.locator(".workspace")).toHaveCSS("grid-template-columns", /[0-9.]+px/);
@@ -259,6 +301,39 @@ async function openPortal(page: Page) {
   await page.getByRole("button", { name: "Unlock" }).click();
   await expect(page.getByRole("heading", { name: "Teams" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Default/ })).toBeVisible();
+}
+
+async function expectNoShellOverlap(page: Page) {
+  const boxes = await page.locator(".topbar, .control-sidebar, .detail-pane").evaluateAll((elements) => (
+    elements.map((element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        className: element.className,
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+      };
+    })
+  ));
+  for (const box of boxes) {
+    expect(box.width).toBeGreaterThan(0);
+    expect(box.height).toBeGreaterThan(0);
+  }
+  for (let i = 0; i < boxes.length; i += 1) {
+    for (let j = i + 1; j < boxes.length; j += 1) {
+      expect(rectanglesOverlap(boxes[i], boxes[j]), `${boxes[i].className} overlaps ${boxes[j].className}`).toBe(false);
+    }
+  }
+}
+
+function rectanglesOverlap(
+  first: { left: number; top: number; right: number; bottom: number },
+  second: { left: number; top: number; right: number; bottom: number },
+) {
+  return first.left < second.right && first.right > second.left && first.top < second.bottom && first.bottom > second.top;
 }
 
 async function mockApi(page: Page, state: { teams: TestProfile[]; keys: TestKey[]; bans?: TestBan[] }) {

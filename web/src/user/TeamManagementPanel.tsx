@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Check, Copy, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { CreatedTeamProfile, UserApi, UserKey, UserSession, UserTeam } from "./api";
+import { SectionHeading } from "../ui/components";
 
 type ProfilePermission = "read" | "read_write";
 
@@ -134,10 +135,7 @@ export function TeamManagementPanel({
 
   return (
     <section className="surface">
-      <div className="section-heading">
-        <h2>Team</h2>
-        <span>{profileRoleLabel(session.key.role)}</span>
-      </div>
+      <SectionHeading title="Team" meta={profileRoleLabel(session.key.role)} />
       {createdKey && <CreatedKeyNotice apiKey={createdKey.api_key} onDismiss={() => setCreatedKey(null)} />}
       {error && <div className="banner error" role="alert">{error}</div>}
       <form className="edit-grid" onSubmit={saveTeam}>
@@ -153,15 +151,17 @@ export function TeamManagementPanel({
         </div>
       </form>
 
-      <div className="section-heading">
-        <h2>Profiles</h2>
-        <div className="button-row">
-          <span>{profiles.length}</span>
-          <button className="icon-button" type="button" aria-label="Refresh profiles" onClick={() => void loadProfiles()}>
-            <RefreshCw size={16} aria-hidden="true" />
-          </button>
-        </div>
-      </div>
+      <SectionHeading
+        title="Profiles"
+        actions={(
+          <div className="button-row">
+            <span>{profiles.length}</span>
+            <button className="icon-button" type="button" aria-label="Refresh profiles" onClick={() => void loadProfiles()}>
+              <RefreshCw size={16} aria-hidden="true" />
+            </button>
+          </div>
+        )}
+      />
       <ManagedProfileCreateForm
         disabled={loading}
         onCreate={async (input) => {

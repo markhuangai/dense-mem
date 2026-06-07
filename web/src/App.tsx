@@ -20,6 +20,7 @@ import { TeamProfile, ControlApi, CreatedTeamProfile, ProfileRole, Team } from "
 import { MetricsPanel } from "./control/MetricsPanel";
 import { SecurityPanel } from "./control/SecurityPanel";
 import { displayKeySuffix, formatDate, profilePermissionLabel, profileRoleLabel, readError, shortId } from "./control/utils";
+import { AuthShell, PortalShell, SectionHeading } from "./ui/components";
 
 const TOKEN_STORAGE_KEY = "denseMem.controlToken";
 const THEME_STORAGE_KEY = "denseMem.controlTheme";
@@ -71,35 +72,36 @@ export function App() {
 
   if (!api) {
     return (
-      <main className="auth-shell" data-theme={theme}>
-        <form className="auth-panel" onSubmit={submitToken}>
-          <div className="brand-row">
-            <span className="brand-mark"><ShieldCheck size={20} aria-hidden="true" /></span>
-            <h1>Dense-Mem Control</h1>
-            <button
-              className="icon-button theme-toggle"
-              type="button"
-              aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-              onClick={toggleTheme}
-            >
-              {theme === "dark" ? <Sun size={17} aria-hidden="true" /> : <Moon size={17} aria-hidden="true" />}
-            </button>
-          </div>
-          <label htmlFor="portal-token">Control token</label>
-          <input
-            id="portal-token"
-            type="password"
-            value={draftToken}
-            onChange={(event) => setDraftToken(event.target.value)}
-            autoComplete="current-password"
-          />
-          {authError && <p className="field-error" role="alert">{authError}</p>}
-          <button className="primary-button" type="submit">
-            <ShieldCheck size={17} aria-hidden="true" />
-            Unlock
+      <AuthShell
+        theme={theme}
+        title="Dense-Mem Control"
+        icon={<ShieldCheck size={20} aria-hidden="true" />}
+        onSubmit={submitToken}
+        actions={(
+          <button
+            className="icon-button theme-toggle"
+            type="button"
+            aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+            onClick={toggleTheme}
+          >
+            {theme === "dark" ? <Sun size={17} aria-hidden="true" /> : <Moon size={17} aria-hidden="true" />}
           </button>
-        </form>
-      </main>
+        )}
+      >
+        <label htmlFor="portal-token">Control token</label>
+        <input
+          id="portal-token"
+          type="password"
+          value={draftToken}
+          onChange={(event) => setDraftToken(event.target.value)}
+          autoComplete="current-password"
+        />
+        {authError && <p className="field-error" role="alert">{authError}</p>}
+        <button className="primary-button" type="submit">
+          <ShieldCheck size={17} aria-hidden="true" />
+          Unlock
+        </button>
+      </AuthShell>
     );
   }
 
@@ -149,13 +151,12 @@ function Portal({
   const selectedTeam = teams.find((team) => team.id === selectedTeamId) ?? null;
 
   return (
-    <main className="app-shell" data-theme={theme}>
-      <header className="topbar">
-        <div className="brand-row">
-          <span className="brand-mark"><ShieldCheck size={20} aria-hidden="true" /></span>
-          <h1>Dense-Mem Control</h1>
-        </div>
-        <div className="topbar-actions">
+    <PortalShell
+      theme={theme}
+      title="Dense-Mem Control"
+      icon={<ShieldCheck size={20} aria-hidden="true" />}
+      topbarActions={(
+        <>
           <button
             className="icon-button"
             type="button"
@@ -172,96 +173,79 @@ function Portal({
             <LogOut size={17} aria-hidden="true" />
             Sign out
           </button>
-        </div>
-      </header>
-
-      {error && <div className="banner error" role="alert">{error}</div>}
-
-      <section className="workspace">
-        <aside className="control-sidebar" aria-label="Control navigation">
-          <nav className="portal-tabs" aria-label="Portal sections">
-            <button
-              className={activeTab === "teams" ? "tab-button active" : "tab-button"}
-              type="button"
-              aria-current={activeTab === "teams" ? "page" : undefined}
-              onClick={() => setActiveTab("teams")}
-            >
-              <Users size={17} aria-hidden="true" />
-              Teams
-            </button>
-            <button
-              className={activeTab === "metrics" ? "tab-button active" : "tab-button"}
-              type="button"
-              aria-current={activeTab === "metrics" ? "page" : undefined}
-              onClick={() => setActiveTab("metrics")}
-            >
-              <BarChart3 size={17} aria-hidden="true" />
-              Metrics
-            </button>
-            <button
-              className={activeTab === "profiles" ? "tab-button active" : "tab-button"}
-              type="button"
-              aria-current={activeTab === "profiles" ? "page" : undefined}
-              disabled={!selectedTeam}
-              onClick={() => setActiveTab("profiles")}
-            >
-              <KeyRound size={17} aria-hidden="true" />
-              Profiles & API Keys
-            </button>
-            <button
-              className={activeTab === "security" ? "tab-button active" : "tab-button"}
-              type="button"
-              aria-current={activeTab === "security" ? "page" : undefined}
-              onClick={() => setActiveTab("security")}
-            >
-              <Ban size={17} aria-hidden="true" />
-              IP Bans
-            </button>
-          </nav>
-
-          <div className="section-heading">
-            <h2>Teams</h2>
-            <span>{teams.length}</span>
-          </div>
-          <TeamSelectList
-            teams={teams}
-            selectedTeamId={selectedTeamId}
-            loading={loadState === "loading"}
-            onSelect={setSelectedTeamId}
-          />
-        </aside>
-
-        <section className="detail-pane" aria-label="Team details">
-          {activeTab === "teams" && (
-            <>
-              <section className="surface">
-                <div className="section-heading">
-                  <h2>Create team</h2>
-                </div>
-                <TeamCreateForm api={api} onCreated={(team) => void loadTeams(team.id)} />
-              </section>
-              {selectedTeam ? (
-                <TeamEditor
-                  api={api}
-                  team={selectedTeam}
-                  onUpdated={(team) => {
-                    setTeams((current) => current.map((item) => (item.id === team.id ? team : item)));
-                  }}
-                  onDeleted={() => void loadTeams()}
-                />
-              ) : (
-                <div className="empty-state">{loadState === "loading" ? "Loading" : "No teams"}</div>
-              )}
-            </>
+        </>
+      )}
+      navLabel="Control navigation"
+      navItems={[
+        {
+          id: "teams",
+          label: "Teams",
+          icon: <Users size={17} aria-hidden="true" />,
+          active: activeTab === "teams",
+          onClick: () => setActiveTab("teams"),
+        },
+        {
+          id: "metrics",
+          label: "Metrics",
+          icon: <BarChart3 size={17} aria-hidden="true" />,
+          active: activeTab === "metrics",
+          onClick: () => setActiveTab("metrics"),
+        },
+        {
+          id: "profiles",
+          label: "Profiles & API Keys",
+          icon: <KeyRound size={17} aria-hidden="true" />,
+          active: activeTab === "profiles",
+          disabled: !selectedTeam,
+          onClick: () => setActiveTab("profiles"),
+        },
+        {
+          id: "security",
+          label: "IP Bans",
+          icon: <Ban size={17} aria-hidden="true" />,
+          active: activeTab === "security",
+          onClick: () => setActiveTab("security"),
+        },
+      ]}
+      sidebarTitle="Teams"
+      sidebarMeta={teams.length}
+      sidebarBody={(
+        <TeamSelectList
+          teams={teams}
+          selectedTeamId={selectedTeamId}
+          loading={loadState === "loading"}
+          onSelect={setSelectedTeamId}
+        />
+      )}
+      detailLabel="Team details"
+      error={error}
+    >
+      {activeTab === "teams" && (
+        <>
+          <section className="surface">
+            <SectionHeading title="Create team" />
+            <TeamCreateForm api={api} onCreated={(team) => void loadTeams(team.id)} />
+          </section>
+          {selectedTeam ? (
+            <TeamEditor
+              api={api}
+              team={selectedTeam}
+              onUpdated={(team) => {
+                setTeams((current) => current.map((item) => (item.id === team.id ? team : item)));
+              }}
+              onDeleted={() => void loadTeams()}
+            />
+          ) : (
+            <div className="empty-state">{loadState === "loading" ? "Loading" : "No teams"}</div>
           )}
-          {activeTab === "profiles" && (
-            selectedTeam ? <TeamProfilesPanel api={api} team={selectedTeam} /> : <div className="empty-state">Select a team</div>
-          )}
-          {activeTab === "metrics" && <MetricsPanel api={api} teams={teams} />}
-          {activeTab === "security" && <SecurityPanel api={api} />}
-        </section>
-      </section>
-    </main>
+        </>
+      )}
+      {activeTab === "profiles" && (
+        selectedTeam ? <TeamProfilesPanel api={api} team={selectedTeam} /> : <div className="empty-state">Select a team</div>
+      )}
+      {activeTab === "metrics" && <MetricsPanel api={api} teams={teams} />}
+      {activeTab === "security" && <SecurityPanel api={api} />}
+    </PortalShell>
   );
 }
 
@@ -403,10 +387,7 @@ function TeamEditor({
 
   return (
     <section className="surface">
-      <div className="section-heading">
-        <h2>{team.name}</h2>
-        <span>{shortId(team.id)}</span>
-      </div>
+      <SectionHeading title={team.name} meta={shortId(team.id)} />
       <form className="edit-grid" onSubmit={save}>
         <label htmlFor="team-name">Name</label>
         <input id="team-name" value={name} onChange={(event) => setName(event.target.value)} />
@@ -532,10 +513,7 @@ function TeamProfilesPanel({ api, team }: { api: ControlApi; team: Team }) {
 
   return (
     <section className="surface">
-      <div className="section-heading">
-        <h2>Profiles</h2>
-        <span>{keys.length}</span>
-      </div>
+      <SectionHeading title="Profiles" meta={keys.length} />
       {createdKey && <CreatedKeyNotice createdKey={createdKey} onDismiss={() => setCreatedKey(null)} />}
       {error && <div className="banner error" role="alert">{error}</div>}
       <TeamProfileCreateForm

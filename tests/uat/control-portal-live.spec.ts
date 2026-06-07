@@ -6,7 +6,7 @@
  * backend, with API cleanup for the disposable team.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
 const CONTROL_BASE_URL = process.env.CONTROL_BASE_URL || 'http://127.0.0.1:8090';
 const CONTROL_PORTAL_TOKEN = process.env.CONTROL_PORTAL_TOKEN || '';
@@ -54,6 +54,7 @@ test('control portal creates, displays, and deletes a read-only team profile', a
     await page.getByLabel('Control token').fill(CONTROL_PORTAL_TOKEN);
     await page.getByRole('button', { name: 'Unlock' }).click();
     await expect(page.getByRole('heading', { name: 'Teams' })).toBeVisible();
+    await expectNoShellOverlap(page);
 
     await page.getByLabel('Name').first().fill(teamName);
     await page.getByLabel('Description').first().fill('live portal UAT team');
@@ -65,6 +66,7 @@ test('control portal creates, displays, and deletes a read-only team profile', a
 
     await page.getByRole('button', { name: /Profiles & API Keys/ }).click();
     await expect(page.getByRole('heading', { name: 'Profiles' })).toBeVisible();
+    await expectNoShellOverlap(page);
     await page.getByLabel('Profile name').fill(profileName);
     await page.getByLabel('Permission').selectOption('read');
     await page.getByLabel('Rate limit').fill('120');
@@ -91,3 +93,36 @@ test('control portal creates, displays, and deletes a read-only team profile', a
     }
   }
 });
+
+async function expectNoShellOverlap(page: Page) {
+  const boxes = await page.locator('.topbar, .control-sidebar, .detail-pane').evaluateAll((elements) => (
+    elements.map((element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        className: element.className,
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+      };
+    })
+  ));
+  for (const box of boxes) {
+    expect(box.width).toBeGreaterThan(0);
+    expect(box.height).toBeGreaterThan(0);
+  }
+  for (let i = 0; i < boxes.length; i += 1) {
+    for (let j = i + 1; j < boxes.length; j += 1) {
+      expect(rectanglesOverlap(boxes[i], boxes[j]), `${boxes[i].className} overlaps ${boxes[j].className}`).toBe(false);
+    }
+  }
+}
+
+function rectanglesOverlap(
+  first: { left: number; top: number; right: number; bottom: number },
+  second: { left: number; top: number; right: number; bottom: number },
+) {
+  return first.left < second.right && first.right > second.left && first.top < second.bottom && first.bottom > second.top;
+}

@@ -70,6 +70,19 @@ test("control panel shows operational metrics against compose", async ({ page })
   await page.getByLabel("Window").selectOption("360");
   await page.getByLabel("Team", { exact: true }).selectOption(seedTeamId);
   await expect(page.getByRole("heading", { name: "Usage Rollup" })).toBeVisible();
+  await expectNoShellOverlap(page);
+});
+
+test("control panel keeps security settings display-only against compose", async ({ page }) => {
+  await openControlPanel(page);
+
+  await page.getByRole("button", { name: /IP Bans/ }).click();
+
+  await expect(page.getByRole("heading", { name: "IP Bans" })).toBeVisible();
+  await expect(page.getByLabel("IP ban rules")).toContainText("Protection");
+  await expect(page.getByLabel("IP ban rules")).toContainText("Threshold");
+  await expect(page.getByRole("button", { name: /Save settings/ })).toHaveCount(0);
+  await expectNoShellOverlap(page);
 });
 
 test("prometheus telemetry is scraped and rendered in control panel and user portal", async ({ page, request }) => {
@@ -90,6 +103,10 @@ test("prometheus telemetry is scraped and rendered in control panel and user por
   expect(telemetryBody.data?.available).toBe(true);
   expect(Array.isArray(telemetryBody.data?.cards)).toBe(true);
   assertTelemetrySeries(telemetryBody);
+  const cardLabels = telemetryLabels(telemetryBody.data?.cards);
+  const seriesLabels = telemetryLabels(telemetryBody.data?.series);
+  expect(cardLabels.length).toBeGreaterThan(0);
+  expect(seriesLabels.length).toBeGreaterThan(0);
 
   await openControlPanel(page);
   await page.getByRole("button", { name: /^Metrics$/ }).click();
@@ -99,8 +116,13 @@ test("prometheus telemetry is scraped and rendered in control panel and user por
 
   await openUserPortal(page, seedApiKey);
   await page.getByRole("button", { name: "Usage" }).click();
-  await expect(page.getByLabel("Usage totals")).toContainText("HTTP requests");
-  await expect(page.getByLabel("Usage charts")).toContainText("HTTP requests");
+  for (const label of cardLabels) {
+    await expect(page.getByLabel("Usage totals")).toContainText(label);
+  }
+  for (const label of seriesLabels) {
+    await expect(page.getByLabel("Usage charts")).toContainText(label);
+  }
+  await expectNoShellOverlap(page);
 });
 
 test("user portal logs in with a real API key and shows only that profile", async ({ page, request }, testInfo) => {
@@ -240,8 +262,50 @@ function assertTelemetrySeries(body: TelemetryResponse) {
   }
 }
 
+function telemetryLabels(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => (isRecord(item) && typeof item.label === "string" ? item.label : ""))
+    .filter(Boolean);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+async function expectNoShellOverlap(page: Page) {
+  const boxes = await page.locator(".topbar, .control-sidebar, .detail-pane").evaluateAll((elements) => (
+    elements.map((element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        className: element.className,
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+      };
+    })
+  ));
+  for (const box of boxes) {
+    expect(box.width).toBeGreaterThan(0);
+    expect(box.height).toBeGreaterThan(0);
+  }
+  for (let i = 0; i < boxes.length; i += 1) {
+    for (let j = i + 1; j < boxes.length; j += 1) {
+      expect(rectanglesOverlap(boxes[i], boxes[j]), `${boxes[i].className} overlaps ${boxes[j].className}`).toBe(false);
+    }
+  }
+}
+
+function rectanglesOverlap(
+  first: { left: number; top: number; right: number; bottom: number },
+  second: { left: number; top: number; right: number; bottom: number },
+) {
+  return first.left < second.right && first.right > second.left && first.top < second.bottom && first.bottom > second.top;
 }
 
 function bearer(token: string) {
