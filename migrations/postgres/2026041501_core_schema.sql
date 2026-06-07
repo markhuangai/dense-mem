@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS team_profiles (
     key_suffix VARCHAR(6) NULL,
     name VARCHAR(100) NOT NULL DEFAULT '',
     scopes TEXT[] NOT NULL DEFAULT ARRAY['read','write']::text[],
+    role VARCHAR(20) NOT NULL DEFAULT 'member' CHECK (role IN ('manager', 'member')),
     rate_limit INTEGER NOT NULL DEFAULT 0 CHECK (rate_limit >= 0),
     expires_at TIMESTAMPTZ NULL,
     revoked_at TIMESTAMPTZ NULL,

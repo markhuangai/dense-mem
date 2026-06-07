@@ -96,6 +96,7 @@ function keyA(profileId = profileA.id): TeamProfile {
     name: "default profile",
     key_suffix: "abc123",
     scopes: ["read", "write"],
+    role: "manager",
     rate_limit: 120,
     last_used_at: "2026-05-02T13:00:00Z",
     expires_at: null,
@@ -171,6 +172,13 @@ describe("App", () => {
           body: expect.stringContaining(`"scopes":["read"]`),
         }),
       );
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining(`/teams/${profileA.id}/profiles`),
+        expect.objectContaining({
+          method: "POST",
+          body: expect.stringContaining(`"role":"manager"`),
+        }),
+      );
     });
     await userEvent.click(screen.getByRole("button", { name: /dismiss api key/i }));
     await waitFor(() => expect(screen.queryByText("dm_plain_once")).not.toBeInTheDocument());
@@ -204,6 +212,17 @@ describe("App", () => {
     });
     expect(await screen.findByDisplayValue("Research profile")).toBeInTheDocument();
 
+    await userEvent.selectOptions(screen.getByLabelText("Profile role Research profile"), "member");
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining(`/teams/${profileA.id}/profiles/${keyA().id}`),
+        expect.objectContaining({
+          method: "PATCH",
+          body: expect.stringContaining(`"role":"member"`),
+        }),
+      );
+    });
+
     await userEvent.click(screen.getByRole("button", { name: /regenerate key for profile Research profile/i }));
     expect(await screen.findByText("dm_rotated_once")).toBeInTheDocument();
     await waitFor(() => {
@@ -226,6 +245,7 @@ describe("App", () => {
     const keyRow = screen.getByText("******abc123").closest("tr");
     expect(keyRow).not.toBeNull();
     expect(within(keyRow as HTMLElement).getByText("Read/write")).toBeInTheDocument();
+    expect(within(keyRow as HTMLElement).getByLabelText("Profile role default profile")).toHaveValue("manager");
     expect(within(keyRow as HTMLElement).getByText(/May/i)).toBeInTheDocument();
     vi.spyOn(window, "confirm").mockReturnValue(true);
     await userEvent.click(screen.getByRole("button", { name: /delete profile default profile/i }));
@@ -348,14 +368,15 @@ function mockPortalFetch({
     }
     if (url.includes("/profiles/") && method === "PATCH") {
       const body = JSON.parse(String(init?.body));
-      const updated = { ...(currentKeys.find((key) => url.endsWith(`/profiles/${key.id}`)) ?? keyA()), name: body.name };
+      const current = currentKeys.find((key) => url.endsWith(`/profiles/${key.id}`)) ?? keyA();
+      const updated = { ...current, name: body.name ?? current.name, role: body.role ?? current.role };
       currentKeys = currentKeys.map((key) => (key.id === updated.id ? updated : key));
       return jsonResponse({ data: updated });
     }
     if (url.endsWith("/profiles") && method === "POST") {
       const body = JSON.parse(String(init?.body));
       expect(body.label).toBeUndefined();
-      const created = { ...keyA(), name: body.name, scopes: body.scopes };
+      const created = { ...keyA(), name: body.name, scopes: body.scopes, role: body.role };
       currentKeys = [created, ...currentKeys];
       return jsonResponse({ data: { api_key: "dm_plain_once", key: created } }, 201);
     }

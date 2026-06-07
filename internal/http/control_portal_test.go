@@ -170,6 +170,19 @@ func (s *controlKeySvc) UpdateNameForProfile(_ context.Context, profileID, id uu
 	return nil, nil
 }
 
+func (s *controlKeySvc) UpdateRoleForProfile(_ context.Context, profileID, id uuid.UUID, role string, _ *string, _ string, _ string, _ string) (*domain.APIKey, error) {
+	if s.updateErr != nil {
+		return nil, s.updateErr
+	}
+	for _, key := range s.keys {
+		if key.ProfileID == profileID && key.ID == id {
+			key.Role = role
+			return key, nil
+		}
+	}
+	return nil, nil
+}
+
 func (s *controlKeySvc) ListByProfile(_ context.Context, profileID uuid.UUID, _ int, _ int) ([]*domain.APIKey, error) {
 	if s.listErr != nil {
 		return nil, s.listErr
@@ -545,6 +558,27 @@ func TestControlPortalProfileAndKeyFlows(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"name":"Research Profile"`)
 	require.Equal(t, "Research Profile", keys.keys[len(keys.keys)-1].Name)
+
+	mixedUpdate := `{"name":"Should Not Persist","role":"member"}`
+	req = httptest.NewRequest(http.MethodPatch, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String(), strings.NewReader(mixedUpdate))
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	require.Contains(t, rec.Body.String(), "profile name and role must be updated separately")
+	require.Equal(t, "Research Profile", keys.keys[len(keys.keys)-1].Name)
+	require.Empty(t, keys.keys[len(keys.keys)-1].Role)
+
+	roleBody := `{"role":"member"}`
+	req = httptest.NewRequest(http.MethodPatch, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String(), strings.NewReader(roleBody))
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"role":"member"`)
+	require.Equal(t, "member", keys.keys[len(keys.keys)-1].Role)
 
 	rotateBody := `{"name":"Research Profile","rate_limit":120}`
 	req = httptest.NewRequest(http.MethodPost, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String()+"/rotate", strings.NewReader(rotateBody))

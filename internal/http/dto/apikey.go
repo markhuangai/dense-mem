@@ -17,6 +17,12 @@ type CreateAPIKeyRequest struct {
 	ExpiresAt *string   `json:"expires_at"`
 }
 
+// UpdateAPIKeyRequest represents a protected API request to rename a member
+// team profile. Role changes are intentionally control-portal only.
+type UpdateAPIKeyRequest struct {
+	Name string `json:"name" validate:"required,min=1,max=100,notblank"`
+}
+
 // APIKeyResponse represents a team profile and its single active API key in API responses.
 type APIKeyResponse struct {
 	ID         uuid.UUID `json:"id"`
@@ -24,6 +30,7 @@ type APIKeyResponse struct {
 	Name       string    `json:"name"`
 	KeySuffix  string    `json:"key_suffix"`
 	Scopes     []string  `json:"scopes"`
+	Role       string    `json:"role"`
 	RateLimit  int       `json:"rate_limit"`
 	LastUsedAt *string   `json:"last_used_at"`
 	ExpiresAt  *string   `json:"expires_at"`
@@ -37,6 +44,7 @@ type APIKeyListItem struct {
 	Name       string    `json:"name"`
 	KeySuffix  string    `json:"key_suffix"`
 	Scopes     []string  `json:"scopes"`
+	Role       string    `json:"role"`
 	RateLimit  int       `json:"rate_limit"`
 	LastUsedAt *string   `json:"last_used_at"`
 	ExpiresAt  *string   `json:"expires_at"`

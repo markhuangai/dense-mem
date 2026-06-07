@@ -16,10 +16,10 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { TeamProfile, ControlApi, CreatedTeamProfile, Team } from "./api";
+import { TeamProfile, ControlApi, CreatedTeamProfile, ProfileRole, Team } from "./api";
 import { MetricsPanel } from "./control/MetricsPanel";
 import { SecurityPanel } from "./control/SecurityPanel";
-import { displayKeySuffix, formatDate, profilePermissionLabel, readError, shortId } from "./control/utils";
+import { displayKeySuffix, formatDate, profilePermissionLabel, profileRoleLabel, readError, shortId } from "./control/utils";
 
 const TOKEN_STORAGE_KEY = "denseMem.controlToken";
 const THEME_STORAGE_KEY = "denseMem.controlTheme";
@@ -435,6 +435,7 @@ function TeamProfilesPanel({ api, team }: { api: ControlApi; team: Team }) {
   const [loading, setLoading] = useState(false);
   const [deletingKeyId, setDeletingKeyId] = useState("");
   const [savingKeyId, setSavingKeyId] = useState("");
+  const [updatingRoleKeyId, setUpdatingRoleKeyId] = useState("");
   const [rotatingKeyId, setRotatingKeyId] = useState("");
 
   async function loadKeys() {
@@ -470,6 +471,19 @@ function TeamProfilesPanel({ api, team }: { api: ControlApi; team: Team }) {
       setError(readError(err));
     } finally {
       setSavingKeyId("");
+    }
+  }
+
+  async function updateKeyRole(keyId: string, role: ProfileRole) {
+    setUpdatingRoleKeyId(keyId);
+    setError("");
+    try {
+      const updated = await api.updateTeamProfile(team.id, keyId, { role });
+      setKeys((current) => current.map((item) => (item.id === keyId ? updated : item)));
+    } catch (err) {
+      setError(readError(err));
+    } finally {
+      setUpdatingRoleKeyId("");
     }
   }
 
@@ -524,18 +538,26 @@ function TeamProfilesPanel({ api, team }: { api: ControlApi; team: Team }) {
       </div>
       {createdKey && <CreatedKeyNotice createdKey={createdKey} onDismiss={() => setCreatedKey(null)} />}
       {error && <div className="banner error" role="alert">{error}</div>}
-      <TeamProfileCreateForm api={api} team={team} onCreated={(value) => {
-        setCreatedKey(value);
-        void loadKeys();
-      }} />
+      <TeamProfileCreateForm
+        api={api}
+        team={team}
+        defaultRole={keys.length === 0 ? "manager" : "member"}
+        disabled={loading}
+        onCreated={(value) => {
+          setCreatedKey(value);
+          void loadKeys();
+        }}
+      />
       {loading && <div className="table-placeholder">Loading</div>}
       {!loading && (
         <TeamProfileTable
           keys={keys}
           savingKeyId={savingKeyId}
+          updatingRoleKeyId={updatingRoleKeyId}
           rotatingKeyId={rotatingKeyId}
           deletingKeyId={deletingKeyId}
           onRename={(keyId, name) => void updateKeyName(keyId, name)}
+          onRoleChange={(keyId, role) => void updateKeyRole(keyId, role)}
           onRotate={(keyId) => void rotateKey(keyId)}
           onDelete={(keyId) => void deleteKey(keyId)}
         />
@@ -547,17 +569,21 @@ function TeamProfilesPanel({ api, team }: { api: ControlApi; team: Team }) {
 function TeamProfileTable({
   keys,
   savingKeyId,
+  updatingRoleKeyId,
   rotatingKeyId,
   deletingKeyId,
   onRename,
+  onRoleChange,
   onRotate,
   onDelete,
 }: {
   keys: TeamProfile[];
   savingKeyId: string;
+  updatingRoleKeyId: string;
   rotatingKeyId: string;
   deletingKeyId: string;
   onRename: (keyId: string, name: string) => void;
+  onRoleChange: (keyId: string, role: ProfileRole) => void;
   onRotate: (keyId: string) => void;
   onDelete: (keyId: string) => void;
 }) {
@@ -573,6 +599,7 @@ function TeamProfileTable({
             <th>Name</th>
             <th>Key</th>
             <th>Permission</th>
+            <th>Role</th>
             <th>Created</th>
             <th>Last used</th>
             <th className="actions-cell">Actions</th>
@@ -584,9 +611,11 @@ function TeamProfileTable({
               key={key.id}
               profile={key}
               saving={savingKeyId === key.id}
+              updatingRole={updatingRoleKeyId === key.id}
               rotating={rotatingKeyId === key.id}
               deleting={deletingKeyId === key.id}
               onRename={onRename}
+              onRoleChange={onRoleChange}
               onRotate={onRotate}
               onDelete={onDelete}
             />
@@ -600,24 +629,28 @@ function TeamProfileTable({
 function TeamProfileRow({
   profile,
   saving,
+  updatingRole,
   rotating,
   deleting,
   onRename,
+  onRoleChange,
   onRotate,
   onDelete,
 }: {
   profile: TeamProfile;
   saving: boolean;
+  updatingRole: boolean;
   rotating: boolean;
   deleting: boolean;
   onRename: (keyId: string, name: string) => void;
+  onRoleChange: (keyId: string, role: ProfileRole) => void;
   onRotate: (keyId: string) => void;
   onDelete: (keyId: string) => void;
 }) {
   const [draftName, setDraftName] = useState(profile.name);
   const trimmedDraft = draftName.trim();
   const unchanged = trimmedDraft === profile.name;
-  const busy = saving || rotating || deleting;
+  const busy = saving || updatingRole || rotating || deleting;
 
   useEffect(() => {
     setDraftName(profile.name);
@@ -646,6 +679,17 @@ function TeamProfileRow({
       </td>
       <td><code>{displayKeySuffix(profile)}</code></td>
       <td>{profilePermissionLabel(profile.scopes)}</td>
+      <td>
+        <select
+          aria-label={`Profile role ${profile.name}`}
+          value={profile.role}
+          disabled={busy}
+          onChange={(event) => onRoleChange(profile.id, event.target.value as ProfileRole)}
+        >
+          <option value="manager">{profileRoleLabel("manager")}</option>
+          <option value="member">{profileRoleLabel("member")}</option>
+        </select>
+      </td>
       <td>{formatDate(profile.created_at)}</td>
       <td>{profile.last_used_at ? formatDate(profile.last_used_at) : "Never"}</td>
       <td className="actions-cell">
@@ -679,17 +723,26 @@ function TeamProfileRow({
 function TeamProfileCreateForm({
   api,
   team,
+  defaultRole,
+  disabled,
   onCreated,
 }: {
   api: ControlApi;
   team: Team;
+  defaultRole: ProfileRole;
+  disabled: boolean;
   onCreated: (created: CreatedTeamProfile) => void;
 }) {
   const [name, setName] = useState("default profile");
   const [permission, setPermission] = useState<ProfilePermission>("read_write");
+  const [role, setRole] = useState<ProfileRole>(defaultRole);
   const [rateLimit, setRateLimit] = useState("120");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setRole(defaultRole);
+  }, [team.id, defaultRole]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -708,6 +761,7 @@ function TeamProfileCreateForm({
       const created = await api.createTeamProfile(team.id, {
         name: name.trim(),
         scopes: permission === "read" ? ["read"] : ["read", "write"],
+        role,
         rate_limit: parsedRateLimit,
       });
       onCreated(created);
@@ -731,10 +785,19 @@ function TeamProfileCreateForm({
         <option value="read_write">Read/write</option>
         <option value="read">Read only</option>
       </select>
+      <label htmlFor="team-profile-role">Role</label>
+      <select
+        id="team-profile-role"
+        value={role}
+        onChange={(event) => setRole(event.target.value as ProfileRole)}
+      >
+        <option value="manager">{profileRoleLabel("manager")}</option>
+        <option value="member">{profileRoleLabel("member")}</option>
+      </select>
       <label htmlFor="rate-limit">Rate limit</label>
       <input id="rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
       {error && <p className="field-error span" role="alert">{error}</p>}
-      <button className="primary-button span" type="submit" disabled={busy}>
+      <button className="primary-button span" type="submit" disabled={busy || disabled}>
         <KeyRound size={16} aria-hidden="true" />
         Create profile
       </button>

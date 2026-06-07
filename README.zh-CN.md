@@ -59,7 +59,7 @@ Knowledge Graphs](https://zenodo.org/records/20469578)。
 创建一个临时隔离团队，就可以先试 Dense-Mem 的核心流程。
 
 <p align="center">
-  <img src="docs/assets/readme-hero.jpg" alt="Cartoon architecture illustration: AI clients send evidence into a secure Dense-Mem vault where claims become facts, conflicts become clarification questions, and durable storage sits behind the service." />
+  <img src="assets/readme-hero.jpg" alt="Cartoon architecture illustration: AI clients send evidence into a secure Dense-Mem vault where claims become facts, conflicts become clarification questions, and durable storage sits behind the service." />
 </p>
 
 ## 为什么需要 Dense-Mem？
@@ -208,10 +208,10 @@ Dense-Mem 用同一个 registry 支撑三种 discoverability surface：
 
 ## 设计说明
 
-- [standalone MCP memory architecture](docs/standalone-mcp-memory-architecture.md)
-- [knowledge-pipeline contracts](docs/knowledge-pipeline-contracts.md)
-- [knowledge-pipeline client contracts](docs/knowledge-pipeline-client-contracts.md)
-- [knowledge-pipeline operability](docs/knowledge-pipeline-operability.md)
+- [standalone MCP memory architecture](https://github.com/markhuangai/dense-mem/wiki/Standalone-MCP-Memory-Architecture)
+- [knowledge-pipeline contracts](https://github.com/markhuangai/dense-mem/wiki/Knowledge-Pipeline-Contracts)
+- [knowledge-pipeline client contracts](https://github.com/markhuangai/dense-mem/wiki/Knowledge-Pipeline-Client-Contracts)
+- [knowledge-pipeline operability](https://github.com/markhuangai/dense-mem/wiki/Knowledge-Pipeline-Operability)
 
 ## License
 

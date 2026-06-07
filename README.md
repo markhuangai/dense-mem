@@ -61,7 +61,7 @@ Create a temporary isolated team at
 test Dense-Mem before self-hosting.
 
 <p align="center">
-  <img src="docs/assets/readme-hero.jpg" alt="Cartoon architecture illustration: AI clients send evidence into a secure Dense-Mem vault where claims become facts, conflicts become clarification questions, and durable storage sits behind the service." />
+  <img src="assets/readme-hero.jpg" alt="Cartoon architecture illustration: AI clients send evidence into a secure Dense-Mem vault where claims become facts, conflicts become clarification questions, and durable storage sits behind the service." />
 </p>
 
 ## Why Dense-Mem?
@@ -267,10 +267,10 @@ and [Quick Start](https://github.com/markhuangai/dense-mem/wiki/Quick-Start).
 
 ## Design Notes
 
-- [standalone MCP memory architecture](docs/standalone-mcp-memory-architecture.md)
-- [knowledge-pipeline contracts](docs/knowledge-pipeline-contracts.md)
-- [knowledge-pipeline client contracts](docs/knowledge-pipeline-client-contracts.md)
-- [knowledge-pipeline operability](docs/knowledge-pipeline-operability.md)
+- [standalone MCP memory architecture](https://github.com/markhuangai/dense-mem/wiki/Standalone-MCP-Memory-Architecture)
+- [knowledge-pipeline contracts](https://github.com/markhuangai/dense-mem/wiki/Knowledge-Pipeline-Contracts)
+- [knowledge-pipeline client contracts](https://github.com/markhuangai/dense-mem/wiki/Knowledge-Pipeline-Client-Contracts)
+- [knowledge-pipeline operability](https://github.com/markhuangai/dense-mem/wiki/Knowledge-Pipeline-Operability)
 
 ## License
 

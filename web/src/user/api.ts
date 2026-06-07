@@ -14,6 +14,7 @@ export type UserKey = {
   name: string;
   key_suffix: string;
   scopes: string[];
+  role: "manager" | "member";
   rate_limit: number;
   last_used_at: string | null;
   expires_at: string | null;
@@ -24,11 +25,39 @@ export type UserSession = {
   team: UserTeam;
   key: UserKey;
   can_rotate: boolean;
+  can_manage_team: boolean;
 };
 
 export type RotateResponse = {
   api_key: string;
   key: UserKey;
+};
+
+export type CreatedTeamProfile = RotateResponse;
+
+export type Page<T> = {
+  data: T[];
+  pagination: {
+    limit: number;
+    offset: number;
+    total: number;
+  };
+};
+
+export type UpdateTeamInput = {
+  name: string;
+  description: string;
+};
+
+export type CreateTeamProfileInput = {
+  name: string;
+  scopes?: string[];
+  rate_limit: number;
+  expires_at?: string;
+};
+
+export type UpdateTeamProfileInput = {
+  name: string;
 };
 
 export type Fragment = {
@@ -129,6 +158,35 @@ export class UserApi {
 
   async rotateKey(): Promise<RotateResponse> {
     const payload = await this.request<Envelope<RotateResponse>>("/ui/api/key/rotate", { method: "POST", body: {} });
+    return payload.data;
+  }
+
+  async updateTeam(teamId: string, input: UpdateTeamInput): Promise<UserTeam> {
+    const payload = await this.request<Envelope<UserTeam>>(`/api/v1/teams/${teamId}`, { method: "PATCH", body: input });
+    return payload.data;
+  }
+
+  listTeamProfiles(teamId: string): Promise<Page<UserKey>> {
+    return this.request<Page<UserKey>>(`/api/v1/teams/${teamId}/profiles`);
+  }
+
+  async createTeamProfile(teamId: string, input: CreateTeamProfileInput): Promise<CreatedTeamProfile> {
+    const payload = await this.request<Envelope<CreatedTeamProfile>>(`/api/v1/teams/${teamId}/profiles`, { method: "POST", body: input });
+    return payload.data;
+  }
+
+  async updateTeamProfile(teamId: string, profileId: string, input: UpdateTeamProfileInput): Promise<UserKey> {
+    const payload = await this.request<Envelope<UserKey>>(`/api/v1/teams/${teamId}/profiles/${profileId}`, { method: "PATCH", body: input });
+    return payload.data;
+  }
+
+  async rotateTeamProfile(teamId: string, profileId: string, input: CreateTeamProfileInput): Promise<CreatedTeamProfile> {
+    const payload = await this.request<Envelope<CreatedTeamProfile>>(`/api/v1/teams/${teamId}/profiles/${profileId}/rotate`, { method: "POST", body: input });
+    return payload.data;
+  }
+
+  async deleteTeamProfile(teamId: string, profileId: string): Promise<{ status: string }> {
+    const payload = await this.request<Envelope<{ status: string }>>(`/api/v1/teams/${teamId}/profiles/${profileId}`, { method: "DELETE" });
     return payload.data;
   }
 

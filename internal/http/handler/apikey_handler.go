@@ -21,6 +21,7 @@ import (
 type APIKeyServiceInterface interface {
 	CreateStandardKey(ctx context.Context, profileID uuid.UUID, req service.CreateAPIKeyRequest, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, string, error)
 	UpdateNameForProfile(ctx context.Context, profileID, id uuid.UUID, name string, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, error)
+	UpdateRoleForProfile(ctx context.Context, profileID, id uuid.UUID, role string, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, error)
 	RotateForProfile(ctx context.Context, profileID, id uuid.UUID, req service.CreateAPIKeyRequest, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, string, error)
 	ListByProfile(ctx context.Context, profileID uuid.UUID, limit, offset int) ([]*domain.APIKey, error)
 	CountByProfile(ctx context.Context, profileID uuid.UUID) (int64, error)
@@ -39,6 +40,7 @@ type APIKeyHandlerInterface interface {
 	Create(c echo.Context) error
 	List(c echo.Context) error
 	Get(c echo.Context) error
+	Update(c echo.Context) error
 	Rotate(c echo.Context) error
 	Delete(c echo.Context) error
 }
@@ -58,8 +60,8 @@ type CreateAPIKeyResponse struct {
 	Key    dto.APIKeyResponse `json:"key"`
 }
 
-// Create handles POST /api/v1/profiles/:profileId/api-keys.
-// Requires 'write' scope.
+// Create handles POST /api/v1/teams/:teamId/profiles.
+// Requires manager role.
 // Returns 201 with the created key and plaintext api_key.
 func (h *APIKeyHandler) Create(c echo.Context) error {
 	ctx := c.Request().Context()
@@ -102,7 +104,7 @@ func (h *APIKeyHandler) Create(c echo.Context) error {
 
 	// Get actor metadata from principal
 	var actorKeyID *string
-	actorRole := "standard"
+	actorRole := service.APIKeyRoleMember
 	if principal != nil {
 		keyIDStr := principal.KeyID.String()
 		actorKeyID = &keyIDStr
@@ -122,8 +124,8 @@ func (h *APIKeyHandler) Create(c echo.Context) error {
 	})
 }
 
-// List handles GET /api/v1/profiles/:profileId/api-keys.
-// Requires 'read' scope.
+// List handles GET /api/v1/teams/:teamId/profiles.
+// Requires manager role.
 // Returns 200 with paginated list of API keys (never includes key_hash or plaintext).
 func (h *APIKeyHandler) List(c echo.Context) error {
 	ctx := c.Request().Context()
@@ -171,8 +173,8 @@ func (h *APIKeyHandler) List(c echo.Context) error {
 	})
 }
 
-// Get handles GET /api/v1/profiles/:profileId/api-keys/:keyId.
-// Requires 'read' scope.
+// Get handles GET /api/v1/teams/:teamId/profiles/:profileId.
+// Requires manager role.
 // Returns 200 with the API key data (never includes key_hash or plaintext).
 // Scoped to the profileId in the path — returns NOT_FOUND for cross-profile ids.
 func (h *APIKeyHandler) Get(c echo.Context) error {
@@ -210,8 +212,56 @@ func (h *APIKeyHandler) Get(c echo.Context) error {
 	return response.SuccessOK(c, toAPIKeyResponse(key))
 }
 
+// Update handles PATCH /api/v1/teams/:teamId/profiles/:profileId.
+// Requires manager role and can only rename member profiles.
+func (h *APIKeyHandler) Update(c echo.Context) error {
+	ctx := c.Request().Context()
+	principal := middleware.GetPrincipal(ctx)
+
+	profileIDStr := teamIDParam(c)
+	if profileIDStr == "" {
+		return httperr.New(httperr.PROFILE_ID_REQUIRED, "team ID is required")
+	}
+	profileID, err := uuid.Parse(profileIDStr)
+	if err != nil {
+		return httperr.New(httperr.INVALID_UUID, "invalid team ID format")
+	}
+
+	keyIDStr := teamProfileIDParam(c)
+	if keyIDStr == "" {
+		return httperr.New(httperr.NOT_FOUND, "profile ID is required")
+	}
+	keyID, err := uuid.Parse(keyIDStr)
+	if err != nil {
+		return httperr.New(httperr.INVALID_UUID, "invalid profile ID format")
+	}
+
+	body, ok := middleware.GetValidatedBody[dto.UpdateAPIKeyRequest](ctx, middleware.UpdateAPIKeyBodyKey)
+	if !ok {
+		return httperr.New(httperr.VALIDATION_ERROR, "request body not found")
+	}
+
+	if err := h.rejectManagerTarget(ctx, profileID, keyID); err != nil {
+		return err
+	}
+
+	var actorKeyID *string
+	actorRole := service.APIKeyRoleMember
+	if principal != nil {
+		keyIDStr := principal.KeyID.String()
+		actorKeyID = &keyIDStr
+		actorRole = principal.Role
+	}
+
+	key, err := h.svc.UpdateNameForProfile(ctx, profileID, keyID, body.Name, actorKeyID, actorRole, c.RealIP(), middleware.GetCorrelationID(ctx))
+	if err != nil {
+		return err
+	}
+	return response.SuccessOK(c, toAPIKeyResponse(key))
+}
+
 // Rotate handles POST /api/v1/teams/:teamId/profiles/:profileId/rotate.
-// Requires 'write' scope. Returns the same profile id with new plaintext key material.
+// Requires manager role and can only rotate member profiles.
 func (h *APIKeyHandler) Rotate(c echo.Context) error {
 	ctx := c.Request().Context()
 	principal := middleware.GetPrincipal(ctx)
@@ -254,7 +304,11 @@ func (h *APIKeyHandler) Rotate(c echo.Context) error {
 	}
 
 	var actorKeyID *string
-	actorRole := "standard"
+	if err := h.rejectManagerTarget(ctx, profileID, keyID); err != nil {
+		return err
+	}
+
+	actorRole := service.APIKeyRoleMember
 	if principal != nil {
 		keyIDStr := principal.KeyID.String()
 		actorKeyID = &keyIDStr
@@ -272,8 +326,8 @@ func (h *APIKeyHandler) Rotate(c echo.Context) error {
 	})
 }
 
-// Delete handles DELETE /api/v1/profiles/:profileId/api-keys/:keyId.
-// Requires 'write' scope.
+// Delete handles DELETE /api/v1/teams/:teamId/profiles/:profileId.
+// Requires manager role and can only delete member profiles.
 // Returns 200 with { "status": "deleted" }.
 // Scoped to the profileId in the path — returns NOT_FOUND for cross-profile ids.
 func (h *APIKeyHandler) Delete(c echo.Context) error {
@@ -304,7 +358,11 @@ func (h *APIKeyHandler) Delete(c echo.Context) error {
 
 	// Get actor metadata from principal
 	var actorKeyID *string
-	actorRole := "standard"
+	if err := h.rejectManagerTarget(ctx, profileID, keyID); err != nil {
+		return err
+	}
+
+	actorRole := service.APIKeyRoleMember
 	if principal != nil {
 		keyIDStr := principal.KeyID.String()
 		actorKeyID = &keyIDStr
@@ -318,6 +376,17 @@ func (h *APIKeyHandler) Delete(c echo.Context) error {
 	}
 
 	return response.SuccessOK(c, map[string]string{"status": "deleted"})
+}
+
+func (h *APIKeyHandler) rejectManagerTarget(ctx context.Context, profileID, keyID uuid.UUID) error {
+	key, err := h.svc.GetByIDForProfile(ctx, profileID, keyID)
+	if err != nil {
+		return err
+	}
+	if key.GetRole() == service.APIKeyRoleManager {
+		return httperr.New(httperr.FORBIDDEN, "manager profiles can only be managed from the control portal")
+	}
+	return nil
 }
 
 func teamIDParam(c echo.Context) string {
@@ -355,6 +424,7 @@ func toAPIKeyResponse(k *domain.APIKey) dto.APIKeyResponse {
 		Name:       k.GetProfileName(),
 		KeySuffix:  k.KeySuffix,
 		Scopes:     append([]string{}, k.Scopes...),
+		Role:       k.GetRole(),
 		RateLimit:  k.RateLimit,
 		LastUsedAt: lastUsedAt,
 		ExpiresAt:  expiresAt,
@@ -383,6 +453,7 @@ func toAPIKeyListItem(k *domain.APIKey) dto.APIKeyListItem {
 		Name:       k.GetProfileName(),
 		KeySuffix:  k.KeySuffix,
 		Scopes:     append([]string{}, k.Scopes...),
+		Role:       k.GetRole(),
 		RateLimit:  k.RateLimit,
 		LastUsedAt: lastUsedAt,
 		ExpiresAt:  expiresAt,
