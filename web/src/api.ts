@@ -140,6 +140,58 @@ export type MetricsQuery = {
   team_id?: string;
 };
 
+export type SSOProvider = {
+  id: string;
+  name: string;
+  kind: "azure_ad" | "pingone" | "generic_oidc";
+  issuer_url: string;
+  client_id: string;
+  client_secret_env: string;
+  scopes: string[];
+  group_claims: string[];
+  groups_endpoint: string;
+  groups_scopes: string[];
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SSOGroupMapping = {
+  id: string;
+  provider_id: string;
+  team_id: string;
+  team_name: string;
+  group_id: string;
+  group_name: string;
+  scopes: string[];
+  role: ProfileRole;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SSOProviderInput = {
+  name: string;
+  kind: SSOProvider["kind"];
+  issuer_url: string;
+  client_id: string;
+  client_secret_env: string;
+  scopes: string[];
+  group_claims: string[];
+  groups_endpoint: string;
+  groups_scopes: string[];
+  enabled: boolean;
+};
+
+export type SSOGroupMappingInput = {
+  team_id: string;
+  group_id: string;
+  group_name: string;
+  scopes: string[];
+  role: ProfileRole;
+  enabled: boolean;
+};
+
 export class ApiError extends Error {
   status: number;
 
@@ -253,6 +305,38 @@ export class ControlApi {
     }
     const suffix = params.toString() ? `?${params.toString()}` : "";
     return this.requestEnvelope<TelemetrySnapshot>(`/telemetry${suffix}`);
+  }
+
+  listSSOProviders(): Promise<SSOProvider[]> {
+    return this.requestEnvelope<SSOProvider[]>("/sso/providers");
+  }
+
+  createSSOProvider(input: SSOProviderInput): Promise<SSOProvider> {
+    return this.requestEnvelope<SSOProvider>("/sso/providers", { method: "POST", body: input });
+  }
+
+  updateSSOProvider(providerId: string, input: SSOProviderInput): Promise<SSOProvider> {
+    return this.requestEnvelope<SSOProvider>(`/sso/providers/${providerId}`, { method: "PATCH", body: input });
+  }
+
+  deleteSSOProvider(providerId: string): Promise<{ status: string }> {
+    return this.requestEnvelope<{ status: string }>(`/sso/providers/${providerId}`, { method: "DELETE" });
+  }
+
+  listSSOGroupMappings(providerId: string): Promise<SSOGroupMapping[]> {
+    return this.requestEnvelope<SSOGroupMapping[]>(`/sso/providers/${providerId}/mappings`);
+  }
+
+  createSSOGroupMapping(providerId: string, input: SSOGroupMappingInput): Promise<SSOGroupMapping> {
+    return this.requestEnvelope<SSOGroupMapping>(`/sso/providers/${providerId}/mappings`, { method: "POST", body: input });
+  }
+
+  updateSSOGroupMapping(providerId: string, mappingId: string, input: SSOGroupMappingInput): Promise<SSOGroupMapping> {
+    return this.requestEnvelope<SSOGroupMapping>(`/sso/providers/${providerId}/mappings/${mappingId}`, { method: "PATCH", body: input });
+  }
+
+  deleteSSOGroupMapping(providerId: string, mappingId: string): Promise<{ status: string }> {
+    return this.requestEnvelope<{ status: string }>(`/sso/providers/${providerId}/mappings/${mappingId}`, { method: "DELETE" });
   }
 
   private async requestEnvelope<T>(path: string, options: RequestOptions = {}): Promise<T> {

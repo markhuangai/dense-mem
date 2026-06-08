@@ -49,6 +49,11 @@ func clearEnv() {
 		"TELEMETRY_PROMETHEUS_JOB",
 		"TELEMETRY_QUERY_TIMEOUT_SECONDS",
 		"TELEMETRY_SCRAPE_TOKEN",
+		"SSO_PUBLIC_BASE_URL",
+		"SSO_ENTITLEMENT_CACHE_TTL_SECONDS",
+		"SSO_SESSION_TTL_SECONDS",
+		"SSO_STATE_TTL_SECONDS",
+		"SSO_COOKIE_SECURE",
 	}
 	for _, v := range envVars {
 		os.Unsetenv(v)
@@ -126,6 +131,15 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.TelemetryPrometheusJob != "" {
 		t.Errorf("TelemetryPrometheusJob default = %q, want empty", cfg.TelemetryPrometheusJob)
+	}
+	if cfg.SSOEntitlementCacheTTLSeconds != 300 {
+		t.Errorf("SSOEntitlementCacheTTLSeconds default = %d, want 300", cfg.SSOEntitlementCacheTTLSeconds)
+	}
+	if cfg.SSOSessionTTLSeconds != 28800 {
+		t.Errorf("SSOSessionTTLSeconds default = %d, want 28800", cfg.SSOSessionTTLSeconds)
+	}
+	if cfg.SSOStateTTLSeconds != 600 {
+		t.Errorf("SSOStateTTLSeconds default = %d, want 600", cfg.SSOStateTTLSeconds)
 	}
 }
 
@@ -358,6 +372,11 @@ func TestLoadOverrides(t *testing.T) {
 	os.Setenv("SSE_MAX_CONCURRENT_STREAMS", "20")
 	os.Setenv("CONTROL_HTTP_ADDR", "localhost:9091")
 	os.Setenv("CONTROL_PORTAL_TOKEN", "control-secret")
+	os.Setenv("SSO_PUBLIC_BASE_URL", "https://dense.example.com/")
+	os.Setenv("SSO_ENTITLEMENT_CACHE_TTL_SECONDS", "120")
+	os.Setenv("SSO_SESSION_TTL_SECONDS", "3600")
+	os.Setenv("SSO_STATE_TTL_SECONDS", "180")
+	os.Setenv("SSO_COOKIE_SECURE", "true")
 
 	cfg, err := Load()
 	if err != nil {
@@ -405,6 +424,21 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.ControlPortalToken != "control-secret" {
 		t.Errorf("ControlPortalToken = %q, want control-secret", cfg.ControlPortalToken)
+	}
+	if cfg.SSOPublicBaseURL != "https://dense.example.com" {
+		t.Errorf("SSOPublicBaseURL = %q, want https://dense.example.com", cfg.SSOPublicBaseURL)
+	}
+	if cfg.SSOEntitlementCacheTTLSeconds != 120 {
+		t.Errorf("SSOEntitlementCacheTTLSeconds = %d, want 120", cfg.SSOEntitlementCacheTTLSeconds)
+	}
+	if cfg.SSOSessionTTLSeconds != 3600 {
+		t.Errorf("SSOSessionTTLSeconds = %d, want 3600", cfg.SSOSessionTTLSeconds)
+	}
+	if cfg.SSOStateTTLSeconds != 180 {
+		t.Errorf("SSOStateTTLSeconds = %d, want 180", cfg.SSOStateTTLSeconds)
+	}
+	if !cfg.SSOCookieSecure {
+		t.Errorf("SSOCookieSecure = false, want true")
 	}
 }
 
@@ -818,6 +852,10 @@ func TestLoadValidation_RemainingInvalidEnvironmentBranches(t *testing.T) {
 		{"invalid recall weight", func() { os.Setenv("RECALL_VALIDATED_CLAIM_WEIGHT", "bad") }, "RECALL_VALIDATED_CLAIM_WEIGHT"},
 		{"invalid promote timeout", func() { os.Setenv("PROMOTE_TX_TIMEOUT_SECONDS", "bad") }, "PROMOTE_TX_TIMEOUT_SECONDS"},
 		{"invalid community max nodes", func() { os.Setenv("AI_COMMUNITY_MAX_NODES", "bad") }, "AI_COMMUNITY_MAX_NODES"},
+		{"invalid sso entitlement ttl", func() { os.Setenv("SSO_ENTITLEMENT_CACHE_TTL_SECONDS", "bad") }, "SSO_ENTITLEMENT_CACHE_TTL_SECONDS"},
+		{"invalid sso session ttl", func() { os.Setenv("SSO_SESSION_TTL_SECONDS", "bad") }, "SSO_SESSION_TTL_SECONDS"},
+		{"invalid sso state ttl", func() { os.Setenv("SSO_STATE_TTL_SECONDS", "bad") }, "SSO_STATE_TTL_SECONDS"},
+		{"invalid sso cookie secure", func() { os.Setenv("SSO_COOKIE_SECURE", "maybe") }, "SSO_COOKIE_SECURE"},
 		{"zero http max body bytes", func() { os.Setenv("HTTP_MAX_BODY_BYTES", "0") }, "HTTP_MAX_BODY_BYTES"},
 		{"recall weight below range", func() { os.Setenv("RECALL_VALIDATED_CLAIM_WEIGHT", "-0.1") }, "RECALL_VALIDATED_CLAIM_WEIGHT"},
 		{"recall weight above range", func() { os.Setenv("RECALL_VALIDATED_CLAIM_WEIGHT", "1.1") }, "RECALL_VALIDATED_CLAIM_WEIGHT"},

@@ -178,6 +178,7 @@ func main() {
 	rlsHelper := postgres.NewRLS()
 	profileRepo := repository.NewProfileRepository(pgDB.GetDB(), rlsHelper)
 	apiKeyRepo := repository.NewAPIKeyRepository(pgDB.GetDB(), rlsHelper)
+	ssoRepo := repository.NewSSORepository(pgDB.GetDB(), rlsHelper)
 	securityRepo := repository.NewSecurityRepository(pgDB.GetDB(), rlsHelper)
 	usageMetricsRepo := repository.NewUsageMetricsRepository(pgDB.GetDB(), rlsHelper)
 	skillPackImportRepo := repository.NewSkillPackImportRepository(pgDB.GetDB(), rlsHelper)
@@ -198,6 +199,12 @@ func main() {
 
 	profileService := service.NewProfileServiceWithDataPurger(profileRepo, auditService, backend.cleanupRepo, profileDataPurger)
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, profileService, auditService, backend.cleanupRepo, backend.cleanupRepo)
+	ssoService := service.NewSSOService(ssoRepo, service.SSOConfig{
+		EntitlementCacheTTL: time.Duration(cfg.SSOEntitlementCacheTTLSeconds) * time.Second,
+		SessionTTL:          time.Duration(cfg.SSOSessionTTLSeconds) * time.Second,
+		StateTTL:            time.Duration(cfg.SSOStateTTLSeconds) * time.Second,
+		CookieSecure:        cfg.SSOCookieSecure,
+	})
 	rateLimitService := backend.rateLimitService
 	runtimeCtx := serverRuntimeContext{
 		Config:         &cfg,
@@ -582,6 +589,7 @@ func main() {
 		UsageMetrics:       usageMetricsService,
 		AuditService:       auditService,
 		SecurityService:    securityService,
+		SSOAuthenticator:   ssoService,
 		Config:             &cfg,
 		Logger:             logger,
 		PostAuthMiddleware: runtimeServices.PostAuthMiddleware,
@@ -621,16 +629,18 @@ func main() {
 
 	http.RegisterProtectedRoutesWithHandlers(e, protectedDeps, protectedHandlers)
 	http.RegisterUserPortal(e, http.UserPortalDeps{
-		APIKeyRepo:      apiKeyRepo,
-		ProfileSvc:      profileService,
-		APIKeySvc:       apiKeyService,
-		RateLimitSvc:    rateLimitService,
-		UsageMetrics:    usageMetricsService,
-		Telemetry:       telemetryReader,
-		AuditSvc:        auditService,
-		SecuritySvc:     securityService,
-		Config:          &cfg,
-		ExtraMiddleware: runtimeServices.UserPortalMiddleware,
+		APIKeyRepo:       apiKeyRepo,
+		ProfileSvc:       profileService,
+		APIKeySvc:        apiKeyService,
+		RateLimitSvc:     rateLimitService,
+		UsageMetrics:     usageMetricsService,
+		Telemetry:        telemetryReader,
+		AuditSvc:         auditService,
+		SecuritySvc:      securityService,
+		SSOService:       ssoService,
+		SSOPublicBaseURL: cfg.SSOPublicBaseURL,
+		Config:           &cfg,
+		ExtraMiddleware:  runtimeServices.UserPortalMiddleware,
 	})
 
 	var runtimeShutdown func(context.Context) error
@@ -653,6 +663,7 @@ func main() {
 				Reader:        telemetryReader,
 				ScrapeHandler: telemetryScrapeHandler,
 				ScrapeToken:   cfg.GetTelemetryScrapeToken(),
+				SSO:           ssoService,
 			},
 			healthConfig,
 			logger,

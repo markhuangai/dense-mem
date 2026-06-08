@@ -30,6 +30,11 @@ type ProtectedDeps struct {
 	AuditService service.AuditService
 	// SecurityService checks active IP bans and records auth failures.
 	SecurityService middleware.SecurityBanService
+	// SSOAuthenticator validates SSO-linked API keys and browser SSO sessions when configured.
+	SSOAuthenticator interface {
+		middleware.SSOEntitlementValidator
+		middleware.SSOSessionAuthenticator
+	}
 	// Config is the application configuration.
 	Config config.ConfigProvider
 	// Logger is the structured logger.
@@ -104,7 +109,10 @@ func (d *ProtectedDeps) GetPostAuthMiddleware() []echo.MiddlewareFunc {
 func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handlers ProtectedHandlers) {
 	// Create profile authorization service from audit service
 	profileAuthzSvc := middleware.NewProfileAuthorizationService(deps.AuditService)
-	authMW := middleware.AuthMiddlewareWithSecurity(deps.APIKeyRepo, deps.AuditService, deps.SecurityService)
+	authMW := middleware.AuthMiddlewareWithOptions(deps.APIKeyRepo, deps.AuditService, deps.SecurityService, middleware.AuthOptions{
+		SSOEntitlementValidator: deps.SSOAuthenticator,
+		SSOSessionAuthenticator: deps.SSOAuthenticator,
+	})
 	usageMW := middleware.UsageMetricsMiddleware(deps.UsageMetrics)
 	rateLimitMW := middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService)
 	lastUsedMW := middleware.LastUsedMiddleware(deps.APIKeyRepo)

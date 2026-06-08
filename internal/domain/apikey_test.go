@@ -27,6 +27,7 @@ func TestAPIKeyGettersUseTeamAndNameCompatibilityFallbacks(t *testing.T) {
 		KeyPrefix:  "dm_123",
 		KeySuffix:  "abcd",
 		Scopes:     []string{"memory:read"},
+		Role:       "manager",
 		RateLimit:  120,
 		LastUsedAt: &lastUsed,
 		ExpiresAt:  &expires,
@@ -43,6 +44,7 @@ func TestAPIKeyGettersUseTeamAndNameCompatibilityFallbacks(t *testing.T) {
 	require.Equal(t, "dm_123", key.GetKeyPrefix())
 	require.Equal(t, "abcd", key.GetKeySuffix())
 	require.Equal(t, []string{"memory:read"}, key.GetScopes())
+	require.Equal(t, "manager", key.GetRole())
 	require.Equal(t, 120, key.GetRateLimit())
 	require.Equal(t, &lastUsed, key.GetLastUsedAt())
 	require.Equal(t, &expires, key.GetExpiresAt())
@@ -54,4 +56,5 @@ func TestAPIKeyGettersUseTeamAndNameCompatibilityFallbacks(t *testing.T) {
 	require.Equal(t, profileID, legacy.GetProfileID())
 	require.Equal(t, "legacy label", legacy.GetProfileName())
 	require.Equal(t, "legacy label", legacy.GetLabel())
+	require.Equal(t, "member", legacy.GetRole())
 }

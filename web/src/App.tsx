@@ -16,9 +16,16 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { TeamProfile, ControlApi, CreatedTeamProfile, ProfileRole, Team } from "./api";
+import {
+  ControlApi,
+  CreatedTeamProfile,
+  ProfileRole,
+  Team,
+  TeamProfile,
+} from "./api";
 import { MetricsPanel } from "./control/MetricsPanel";
 import { SecurityPanel } from "./control/SecurityPanel";
+import { SSOPanel } from "./control/SSOPanel";
 import { displayKeySuffix, formatDate, profilePermissionLabel, profileRoleLabel, readError, shortId } from "./control/utils";
 import { AuthShell, PortalShell, SectionHeading } from "./ui/components";
 
@@ -27,7 +34,7 @@ const THEME_STORAGE_KEY = "denseMem.controlTheme";
 
 type LoadState = "idle" | "loading" | "error";
 type Theme = "light" | "dark";
-type PortalTab = "teams" | "metrics" | "profiles" | "security";
+type PortalTab = "teams" | "metrics" | "profiles" | "security" | "sso";
 type ProfilePermission = "read" | "read_write";
 
 export function App() {
@@ -206,6 +213,13 @@ function Portal({
           active: activeTab === "security",
           onClick: () => setActiveTab("security"),
         },
+        {
+          id: "sso",
+          label: "SSO",
+          icon: <ShieldCheck size={17} aria-hidden="true" />,
+          active: activeTab === "sso",
+          onClick: () => setActiveTab("sso"),
+        },
       ]}
       sidebarTitle="Teams"
       sidebarMeta={teams.length}
@@ -245,6 +259,7 @@ function Portal({
       )}
       {activeTab === "metrics" && <MetricsPanel api={api} teams={teams} />}
       {activeTab === "security" && <SecurityPanel api={api} />}
+      {activeTab === "sso" && <SSOPanel api={api} teams={teams} />}
     </PortalShell>
   );
 }

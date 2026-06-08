@@ -47,6 +47,16 @@ type APIKey struct {
 	ExpiresAt  *time.Time
 	CreatedAt  time.Time
 	RevokedAt  *time.Time
+
+	AuthSource                  string
+	SSOIdentityID               *uuid.UUID
+	SSOProviderID               *uuid.UUID
+	SSOSubject                  string
+	SSOEmail                    string
+	SSOGroupID                  string
+	SSOEntitlementStatus        string
+	SSOLastEntitlementCheckedAt *time.Time
+	SSOLastLoginAt              *time.Time
 }
 
 // Ensure APIKey implements APIKeyModel

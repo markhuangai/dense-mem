@@ -16,6 +16,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service"
 )
 
@@ -171,6 +172,22 @@ func (m *mockSecurityService) RecordAuthFailure(ctx context.Context, ip, surface
 	m.recordAuthFailureSurface = surface
 	m.recordAuthFailureReason = reason
 	return nil, nil
+}
+
+type mockSSOEntitlementValidator struct {
+	validateFunc func(ctx context.Context, key *domain.APIKey) (*domain.APIKey, error)
+}
+
+func (m mockSSOEntitlementValidator) ValidateAPIKeyPrincipal(ctx context.Context, key *domain.APIKey) (*domain.APIKey, error) {
+	return m.validateFunc(ctx, key)
+}
+
+type mockSSOSessionAuthenticator struct {
+	authenticateFunc func(ctx context.Context, sessionToken, csrfToken string, requireCSRF bool) (*domain.APIKey, error)
+}
+
+func (m mockSSOSessionAuthenticator) AuthenticateSession(ctx context.Context, sessionToken, csrfToken string, requireCSRF bool) (*domain.APIKey, error) {
+	return m.authenticateFunc(ctx, sessionToken, csrfToken, requireCSRF)
 }
 
 // newTestEcho creates a new Echo instance with the custom error handler
@@ -453,6 +470,183 @@ func TestAuthMiddleware_ValidKey_StoresPrincipal(t *testing.T) {
 	assert.Equal(t, service.APIKeyRoleManager, capturedPrincipal.Role)
 	assert.Equal(t, []string{"read", "write"}, capturedPrincipal.Scopes)
 	assert.Equal(t, rawKey[:24], capturedPrincipal.KeyPrefix)
+}
+
+func TestAuthMiddleware_SSOEntitlementValidatorOverridesPrincipal(t *testing.T) {
+	e := newTestEcho()
+	originalTeamID := uuid.New()
+	mappedTeamID := uuid.New()
+	originalProfileID := uuid.New()
+	mappedProfileID := uuid.New()
+	providerID := uuid.New()
+	rawKey := "testprefix12345678901234567890"
+	keyHash, err := crypto.HashKey(rawKey)
+	require.NoError(t, err)
+
+	mockRepo := &mockAPIKeyRepository{
+		getActiveByPrefixFunc: func(ctx context.Context, prefix string) (*domain.APIKey, error) {
+			return &domain.APIKey{
+				ID:        originalProfileID,
+				ProfileID: originalTeamID,
+				TeamID:    originalTeamID,
+				Name:      "Original profile",
+				TeamName:  "Original team",
+				KeyHash:   keyHash,
+				Scopes:    []string{"read"},
+				Role:      service.APIKeyRoleMember,
+				RateLimit: 10,
+			}, nil
+		},
+	}
+	validator := mockSSOEntitlementValidator{
+		validateFunc: func(ctx context.Context, key *domain.APIKey) (*domain.APIKey, error) {
+			require.Equal(t, originalProfileID, key.ID)
+			validated := *key
+			validated.ID = mappedProfileID
+			validated.ProfileID = mappedTeamID
+			validated.TeamID = mappedTeamID
+			validated.Name = "Mapped profile"
+			validated.TeamName = "Mapped team"
+			validated.Scopes = []string{"read", "write"}
+			validated.Role = service.APIKeyRoleManager
+			validated.RateLimit = 77
+			validated.SSOProviderID = &providerID
+			validated.SSOSubject = "subject-123"
+			return &validated, nil
+		},
+	}
+
+	e.Use(AuthMiddlewareWithOptions(mockRepo, nil, nil, AuthOptions{SSOEntitlementValidator: validator}))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	rec := httptest.NewRecorder()
+
+	var capturedPrincipal *Principal
+	var capturedActor requestctx.ActorProfile
+	var actorOK bool
+	e.GET("/test", func(c echo.Context) error {
+		capturedPrincipal = GetPrincipal(c.Request().Context())
+		capturedActor, actorOK = requestctx.ActorProfileFromContext(c.Request().Context())
+		return c.String(http.StatusOK, "ok")
+	})
+
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, capturedPrincipal)
+	assert.Equal(t, mappedProfileID, capturedPrincipal.KeyID)
+	assert.Equal(t, mappedTeamID, capturedPrincipal.TeamID)
+	require.NotNil(t, capturedPrincipal.ProfileID)
+	assert.Equal(t, mappedProfileID, *capturedPrincipal.ProfileID)
+	assert.Equal(t, "Mapped profile", capturedPrincipal.ProfileName)
+	assert.Equal(t, service.APIKeyRoleManager, capturedPrincipal.Role)
+	assert.Equal(t, []string{"read", "write"}, capturedPrincipal.Scopes)
+	assert.Equal(t, 77, capturedPrincipal.RateLimit)
+	require.NotNil(t, capturedPrincipal.SSOProviderID)
+	assert.Equal(t, providerID, *capturedPrincipal.SSOProviderID)
+	assert.Equal(t, "subject-123", capturedPrincipal.SSOSubject)
+	require.True(t, actorOK)
+	assert.Equal(t, mappedTeamID, capturedActor.TeamID)
+	assert.Equal(t, "Mapped team", capturedActor.TeamName)
+	assert.Equal(t, mappedProfileID, capturedActor.ProfileID)
+	assert.Equal(t, "Mapped profile", capturedActor.ProfileName)
+}
+
+func TestAuthMiddleware_SSOEntitlementValidatorDeniesKey(t *testing.T) {
+	e := newTestEcho()
+	teamID := uuid.New()
+	keyID := uuid.New()
+	rawKey := "testprefix12345678901234567890"
+	keyHash, err := crypto.HashKey(rawKey)
+	require.NoError(t, err)
+
+	mockRepo := &mockAPIKeyRepository{
+		getActiveByPrefixFunc: func(ctx context.Context, prefix string) (*domain.APIKey, error) {
+			return &domain.APIKey{
+				ID:        keyID,
+				ProfileID: teamID,
+				TeamID:    teamID,
+				KeyHash:   keyHash,
+				Scopes:    []string{"read"},
+				Role:      service.APIKeyRoleMember,
+			}, nil
+		},
+	}
+	mockAudit := &mockAuditService{}
+	validator := mockSSOEntitlementValidator{
+		validateFunc: func(ctx context.Context, key *domain.APIKey) (*domain.APIKey, error) {
+			return nil, service.ErrSSOEntitlementRefreshStale
+		},
+	}
+
+	e.Use(AuthMiddlewareWithOptions(mockRepo, mockAudit, nil, AuthOptions{SSOEntitlementValidator: validator}))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	rec := httptest.NewRecorder()
+
+	handlerCalled := false
+	e.GET("/test", func(c echo.Context) error {
+		handlerCalled = true
+		return c.String(http.StatusOK, "ok")
+	})
+
+	e.ServeHTTP(rec, req)
+
+	assert.False(t, handlerCalled)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Contains(t, rec.Body.String(), "FORBIDDEN")
+	assert.True(t, mockAudit.authFailureCalled)
+}
+
+func TestAuthMiddleware_SSOSessionAuthenticatesWithoutAuthorizationHeader(t *testing.T) {
+	e := newTestEcho()
+	teamID := uuid.New()
+	profileID := uuid.New()
+	providerID := uuid.New()
+	authenticator := mockSSOSessionAuthenticator{
+		authenticateFunc: func(ctx context.Context, sessionToken, csrfToken string, requireCSRF bool) (*domain.APIKey, error) {
+			require.Equal(t, "session-token", sessionToken)
+			require.Empty(t, csrfToken)
+			require.False(t, requireCSRF)
+			return &domain.APIKey{
+				ID:            profileID,
+				ProfileID:     teamID,
+				TeamID:        teamID,
+				Name:          "SSO profile",
+				TeamName:      "SSO team",
+				Scopes:        []string{"read"},
+				Role:          service.APIKeyRoleMember,
+				RateLimit:     120,
+				SSOProviderID: &providerID,
+				SSOSubject:    "subject-123",
+			}, nil
+		},
+	}
+
+	e.Use(AuthMiddlewareWithOptions(&mockAPIKeyRepository{}, nil, nil, AuthOptions{SSOSessionAuthenticator: authenticator}))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.AddCookie(&http.Cookie{Name: service.SSOSessionCookieName, Value: "session-token"})
+	rec := httptest.NewRecorder()
+
+	var capturedPrincipal *Principal
+	e.GET("/test", func(c echo.Context) error {
+		capturedPrincipal = GetPrincipal(c.Request().Context())
+		return c.String(http.StatusOK, "ok")
+	})
+
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, capturedPrincipal)
+	assert.Equal(t, "sso_session", capturedPrincipal.AuthMethod)
+	assert.Equal(t, profileID, capturedPrincipal.KeyID)
+	assert.Equal(t, teamID, capturedPrincipal.TeamID)
+	assert.Equal(t, []string{"read"}, capturedPrincipal.Scopes)
+	require.NotNil(t, capturedPrincipal.SSOProviderID)
+	assert.Equal(t, providerID, *capturedPrincipal.SSOProviderID)
 }
 
 func TestAuthMiddleware_LegacyPrefixLookupFallback(t *testing.T) {

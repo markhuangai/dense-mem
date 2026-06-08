@@ -12,6 +12,14 @@ func TestNoopDiscoverabilityMetrics_NeverPanics(t *testing.T) {
 	m.ObserveRecall(5, 2, "ok")
 	m.ObserveMemoryFunnelLatency("claim_to_verify", 1, "verified")
 	m.IncFragmentCreate("created")
+	m.IncClaimCreate("created", "")
+	m.IncVerifyVerdict("verified")
+	m.IncPromotionOutcome("promoted")
+	m.ObservePromoteLockWait(0.001)
+	m.IncFragmentRetract()
+	m.IncFactNeedsRevalidation()
+	m.IncCommunityDetect("ok")
+	m.ObserveCommunityDetect(1.2, 10)
 }
 
 func TestInMemoryDiscoverabilityMetrics_RecordsEmbeddingLatency(t *testing.T) {

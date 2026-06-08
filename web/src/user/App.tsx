@@ -25,6 +25,7 @@ import {
   Fragment,
   RecallHit,
   RotateResponse,
+  SSOProvider,
   UserApi,
   UserSession,
 } from "./api";
@@ -35,13 +36,46 @@ const TOKEN_STORAGE_KEY = "denseMem.userApiKey";
 const THEME_STORAGE_KEY = "denseMem.userTheme";
 
 type Theme = "light" | "dark";
+type AuthMode = "none" | "api_key" | "sso";
 type UserTab = "search" | "usage" | "facts" | "claims" | "fragments" | "communities" | "team" | "key";
 
 export function UserPortalApp() {
   const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_STORAGE_KEY) ?? "");
   const [draftToken, setDraftToken] = useState(token);
+  const [authMode, setAuthMode] = useState<AuthMode>(() => token ? "api_key" : "none");
+  const [ssoProviders, setSSOProviders] = useState<SSOProvider[]>([]);
   const [authError, setAuthError] = useState("");
   const [theme, setTheme] = useState<Theme>(() => readTheme());
+
+  useEffect(() => {
+    if (token) {
+      return;
+    }
+    let active = true;
+    const api = new UserApi("");
+    api.ssoProviders()
+      .then((providers) => {
+        if (active) {
+          setSSOProviders(providers);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setSSOProviders([]);
+        }
+      });
+    api.session()
+      .then(() => {
+        if (active) {
+          setAuthMode("sso");
+          setAuthError("");
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [token]);
 
   function toggleTheme() {
     setTheme((current) => {
@@ -62,19 +96,24 @@ export function UserPortalApp() {
       await new UserApi(nextToken).session();
       sessionStorage.setItem(TOKEN_STORAGE_KEY, nextToken);
       setToken(nextToken);
+      setAuthMode("api_key");
       setAuthError("");
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Authentication failed.");
     }
   }
 
-  function signOut() {
+  async function signOut() {
+    if (authMode === "sso") {
+      await new UserApi("").logoutSSO().catch(() => undefined);
+    }
     sessionStorage.removeItem(TOKEN_STORAGE_KEY);
     setToken("");
     setDraftToken("");
+    setAuthMode("none");
   }
 
-  if (!token) {
+  if (!token && authMode !== "sso") {
     return (
       <AuthShell
         theme={theme}
@@ -105,6 +144,23 @@ export function UserPortalApp() {
           <KeyRound size={17} aria-hidden="true" />
           Sign in
         </button>
+        {ssoProviders.length > 0 && (
+          <div className="sso-provider-list">
+            {ssoProviders.map((provider) => (
+              <button
+                className="ghost-button"
+                type="button"
+                key={provider.id}
+                onClick={() => {
+                  window.location.href = new UserApi("").ssoStartUrl(provider.id);
+                }}
+              >
+                <ShieldCheck size={17} aria-hidden="true" />
+                {provider.name}
+              </button>
+            ))}
+          </div>
+        )}
       </AuthShell>
     );
   }
@@ -112,28 +168,34 @@ export function UserPortalApp() {
   return (
     <UserPortal
       token={token}
+      authMode={authMode}
       theme={theme}
-      onTokenChange={setToken}
+      onTokenChange={(nextToken) => {
+        setToken(nextToken);
+        setAuthMode(nextToken ? "api_key" : "none");
+      }}
       onToggleTheme={toggleTheme}
-      onSignOut={signOut}
+      onSignOut={() => void signOut()}
     />
   );
 }
 
 function UserPortal({
   token,
+  authMode,
   theme,
   onTokenChange,
   onToggleTheme,
   onSignOut,
 }: {
   token: string;
+  authMode: AuthMode;
   theme: Theme;
   onTokenChange: (token: string) => void;
   onToggleTheme: () => void;
   onSignOut: () => void;
 }) {
-  const api = useMemo(() => new UserApi(token), [token]);
+  const api = useMemo(() => new UserApi(token), [token, authMode]);
   const [session, setSession] = useState<UserSession | null>(null);
   const [activeTab, setActiveTab] = useState<UserTab>("search");
   const [error, setError] = useState("");
@@ -148,6 +210,15 @@ function UserPortal({
       setError(readError(err));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function switchSSOTeam(profileId: string) {
+    setError("");
+    try {
+      setSession(await api.switchSSOTeam(profileId));
+    } catch (err) {
+      setError(readError(err));
     }
   }
 
@@ -205,7 +276,19 @@ function UserPortal({
       sidebarSubtitle={session ? shortId(session.team.id) : undefined}
       sidebarBody={session && (
         <div className="key-summary">
-          <span>{session.key.name}</span>
+          {authMode === "sso" && (session.teams?.length ?? 0) > 1 ? (
+            <select
+              aria-label="Active team"
+              value={session.key.id}
+              onChange={(event) => void switchSSOTeam(event.target.value)}
+            >
+              {session.teams?.map((item) => (
+                <option value={item.key.id} key={item.key.id}>{item.team.name}</option>
+              ))}
+            </select>
+          ) : (
+            <span>{session.key.name}</span>
+          )}
           <code>{displayKeySuffix(session.key.key_suffix)}</code>
         </div>
       )}
@@ -230,8 +313,10 @@ function UserPortal({
           api={api}
           session={session}
           onRotated={(rotated) => {
-            sessionStorage.setItem(TOKEN_STORAGE_KEY, rotated.api_key);
-            onTokenChange(rotated.api_key);
+            if (authMode === "api_key") {
+              sessionStorage.setItem(TOKEN_STORAGE_KEY, rotated.api_key);
+              onTokenChange(rotated.api_key);
+            }
             setSession((current) => current ? {
               ...current,
               key: rotated.key,

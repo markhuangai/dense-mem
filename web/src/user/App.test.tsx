@@ -182,8 +182,14 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = []) {
     const url = String(input);
     const method = init?.method ?? "GET";
 
+    if (url === "/ui/api/sso/providers" && method === "GET") {
+      return jsonResponse({ data: [] });
+    }
     if (url === "/ui/api/session" && method === "GET") {
-      const auth = (init?.headers as Record<string, string> | undefined)?.Authorization ?? "";
+      const auth = authorizationHeader(init);
+      if (!auth) {
+        return jsonResponse({ code: "AUTH_MISSING", message: "missing authorization header", details: null }, 401);
+      }
       const selectedSession = auth.includes("dm_new_plaintext") ? rotatedSession : session;
       return jsonResponse({ data: { ...selectedSession, team: currentTeam } });
     }
@@ -242,6 +248,20 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = []) {
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
+}
+
+function authorizationHeader(init?: RequestInit): string {
+  const headers = init?.headers;
+  if (!headers) {
+    return "";
+  }
+  if (headers instanceof Headers) {
+    return headers.get("Authorization") ?? "";
+  }
+  if (Array.isArray(headers)) {
+    return headers.find(([name]) => name.toLowerCase() === "authorization")?.[1] ?? "";
+  }
+  return (headers as Record<string, string>).Authorization ?? (headers as Record<string, string>).authorization ?? "";
 }
 
 function jsonResponse(payload: unknown, status = 200) {

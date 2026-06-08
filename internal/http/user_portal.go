@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	nethttp "net/http"
 	"os"
@@ -23,29 +24,46 @@ import (
 
 // UserPortalDeps holds the dependencies for the API-key user portal.
 type UserPortalDeps struct {
-	APIKeyRepo      repository.APIKeyRepository
-	ProfileSvc      handler.ProfileServiceInterface
-	APIKeySvc       handler.APIKeyServiceInterface
-	RateLimitSvc    service.RateLimitServiceInterface
-	UsageMetrics    service.UsageMetricsRecorder
-	Telemetry       service.TelemetryReader
-	AuditSvc        service.AuditService
-	SecuritySvc     httpmw.SecurityBanService
-	Config          config.ConfigProvider
-	UserStaticDir   string
-	ExtraMiddleware []echo.MiddlewareFunc
+	APIKeyRepo       repository.APIKeyRepository
+	ProfileSvc       handler.ProfileServiceInterface
+	APIKeySvc        handler.APIKeyServiceInterface
+	RateLimitSvc     service.RateLimitServiceInterface
+	UsageMetrics     service.UsageMetricsRecorder
+	Telemetry        service.TelemetryReader
+	AuditSvc         service.AuditService
+	SecuritySvc      httpmw.SecurityBanService
+	SSOService       *service.SSOService
+	SSOPublicBaseURL string
+	Config           config.ConfigProvider
+	UserStaticDir    string
+	ExtraMiddleware  []echo.MiddlewareFunc
 }
 
 // RegisterUserPortal registers the API-key user portal under /ui on the main API server.
 func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	portal := &userPortalHandler{
-		profiles:  deps.ProfileSvc,
-		keys:      deps.APIKeySvc,
-		telemetry: deps.Telemetry,
+		profiles:         deps.ProfileSvc,
+		keys:             deps.APIKeySvc,
+		telemetry:        deps.Telemetry,
+		sso:              deps.SSOService,
+		ssoPublicBaseURL: strings.TrimRight(strings.TrimSpace(deps.SSOPublicBaseURL), "/"),
+	}
+
+	if deps.SSOService != nil {
+		ssoAPI := e.Group("/ui/api/sso")
+		ssoAPI.GET("/providers", portal.ssoProviders)
+		ssoAPI.GET("/start/:providerId", portal.startSSO)
+		ssoAPI.GET("/callback", portal.completeSSO)
+		ssoAPI.POST("/logout", portal.logoutSSO)
 	}
 
 	api := e.Group("/ui/api")
-	api.Use(httpmw.AuthMiddlewareWithSecurity(deps.APIKeyRepo, deps.AuditSvc, deps.SecuritySvc))
+	authOpts := httpmw.AuthOptions{}
+	if deps.SSOService != nil {
+		authOpts.SSOEntitlementValidator = deps.SSOService
+		authOpts.SSOSessionAuthenticator = deps.SSOService
+	}
+	api.Use(httpmw.AuthMiddlewareWithOptions(deps.APIKeyRepo, deps.AuditSvc, deps.SecuritySvc, authOpts))
 	api.Use(deps.ExtraMiddleware...)
 	api.Use(httpmw.UsageMetricsMiddleware(deps.UsageMetrics))
 	api.Use(httpmw.RateLimitMiddleware(deps.RateLimitSvc, deps.Config, deps.AuditSvc))
@@ -53,6 +71,9 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	api.GET("/session", portal.session)
 	api.GET("/telemetry", portal.telemetrySnapshot, httpmw.RequireScopes("read"))
 	api.POST("/key/rotate", portal.rotateCurrentKey, httpmw.RequireScopes("write"))
+	if deps.SSOService != nil {
+		api.POST("/sso/team", portal.switchSSOTeam, httpmw.RequireScopes("read"))
+	}
 
 	staticDir := strings.TrimSpace(deps.UserStaticDir)
 	if staticDir == "" {
@@ -62,12 +83,23 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 }
 
 type userPortalHandler struct {
-	profiles  handler.ProfileServiceInterface
-	keys      handler.APIKeyServiceInterface
-	telemetry service.TelemetryReader
+	profiles         handler.ProfileServiceInterface
+	keys             handler.APIKeyServiceInterface
+	telemetry        service.TelemetryReader
+	sso              *service.SSOService
+	ssoPublicBaseURL string
 }
 
 type userPortalSessionResponse struct {
+	Team          userPortalTeamResponse         `json:"team"`
+	Key           userPortalKeyResponse          `json:"key"`
+	Teams         []userPortalTeamOptionResponse `json:"teams,omitempty"`
+	AuthMethod    string                         `json:"auth_method"`
+	CanRotate     bool                           `json:"can_rotate"`
+	CanManageTeam bool                           `json:"can_manage_team"`
+}
+
+type userPortalTeamOptionResponse struct {
 	Team          userPortalTeamResponse `json:"team"`
 	Key           userPortalKeyResponse  `json:"key"`
 	CanRotate     bool                   `json:"can_rotate"`
@@ -98,6 +130,16 @@ type userPortalKeyResponse struct {
 type userPortalRotateResponse struct {
 	APIKey string                `json:"api_key"`
 	Key    userPortalKeyResponse `json:"key"`
+}
+
+type userPortalSSOProviderResponse struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+	Kind string    `json:"kind"`
+}
+
+type userPortalSwitchSSOTeamRequest struct {
+	ProfileID string `json:"profile_id"`
 }
 
 func (h *userPortalHandler) session(c echo.Context) error {
@@ -185,6 +227,9 @@ func (h *userPortalHandler) currentSession(c echo.Context) (userPortalSessionRes
 	if principal == nil {
 		return userPortalSessionResponse{}, httperr.New(httperr.FORBIDDEN, "authentication required")
 	}
+	if principal.AuthMethod == "sso_session" {
+		return h.currentSSOSession(c)
+	}
 
 	teamID := principal.GetTeamID()
 	keyID := principal.GetKeyID()
@@ -206,9 +251,124 @@ func (h *userPortalHandler) currentSession(c echo.Context) (userPortalSessionRes
 	return userPortalSessionResponse{
 		Team:          toUserPortalTeam(team),
 		Key:           toUserPortalKey(key),
+		AuthMethod:    "api_key",
 		CanRotate:     userPortalHasScope(principal.Scopes, service.APIKeyScopeWrite),
 		CanManageTeam: principal.Role == service.APIKeyRoleManager,
 	}, nil
+}
+
+func (h *userPortalHandler) currentSSOSession(c echo.Context) (userPortalSessionResponse, error) {
+	if h.sso == nil {
+		return userPortalSessionResponse{}, httperr.New(httperr.AUTH_MISSING, "authentication required")
+	}
+	token, err := ssoSessionTokenFromRequest(c)
+	if err != nil {
+		return userPortalSessionResponse{}, err
+	}
+	info, err := h.sso.CurrentSession(c.Request().Context(), token)
+	if err != nil {
+		return userPortalSessionResponse{}, userPortalSSOError(err)
+	}
+	teams := make([]userPortalTeamOptionResponse, 0, len(info.Teams))
+	for _, team := range info.Teams {
+		teams = append(teams, toUserPortalTeamOption(team))
+	}
+	selected := toUserPortalTeamOption(info.Selected)
+	return userPortalSessionResponse{
+		Team:          selected.Team,
+		Key:           selected.Key,
+		Teams:         teams,
+		AuthMethod:    "sso",
+		CanRotate:     selected.CanRotate,
+		CanManageTeam: selected.CanManageTeam,
+	}, nil
+}
+
+func (h *userPortalHandler) ssoProviders(c echo.Context) error {
+	if h.sso == nil {
+		return c.JSON(nethttp.StatusOK, map[string]any{"data": []userPortalSSOProviderResponse{}})
+	}
+	providers, err := h.sso.ListEnabledProviders(c.Request().Context())
+	if err != nil {
+		return err
+	}
+	items := make([]userPortalSSOProviderResponse, 0, len(providers))
+	for _, provider := range providers {
+		items = append(items, userPortalSSOProviderResponse{
+			ID:   provider.ID,
+			Name: provider.Name,
+			Kind: string(provider.Kind),
+		})
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": items})
+}
+
+func (h *userPortalHandler) startSSO(c echo.Context) error {
+	if h.sso == nil {
+		return httperr.New(httperr.NOT_FOUND, "sso is not configured")
+	}
+	providerID, err := uuid.Parse(c.Param("providerId"))
+	if err != nil {
+		return httperr.New(httperr.INVALID_UUID, "invalid sso provider ID format")
+	}
+	start, err := h.sso.BeginLogin(c.Request().Context(), providerID, h.ssoCallbackURL(c), c.QueryParam("redirect"))
+	if err != nil {
+		return userPortalSSOError(err)
+	}
+	return c.Redirect(nethttp.StatusFound, start.AuthURL)
+}
+
+func (h *userPortalHandler) completeSSO(c echo.Context) error {
+	if h.sso == nil {
+		return httperr.New(httperr.NOT_FOUND, "sso is not configured")
+	}
+	if errText := strings.TrimSpace(c.QueryParam("error")); errText != "" {
+		return httperr.New(httperr.AUTH_INVALID, "sso login failed")
+	}
+	result, err := h.sso.CompleteLogin(c.Request().Context(), c.QueryParam("state"), c.QueryParam("code"), h.ssoCallbackURL(c))
+	if err != nil {
+		return userPortalSSOError(err)
+	}
+	setSSOCookie(c, service.SSOSessionCookieName, result.SessionToken, true, result.Session.ExpiresAt, h.sso.CookieSecure())
+	setSSOCookie(c, service.SSOCSRFCookieName, result.CSRFToken, false, result.Session.ExpiresAt, h.sso.CookieSecure())
+	return c.Redirect(nethttp.StatusFound, result.RedirectPath)
+}
+
+func (h *userPortalHandler) logoutSSO(c echo.Context) error {
+	if h.sso != nil {
+		if cookie, err := c.Request().Cookie(service.SSOSessionCookieName); err == nil {
+			_ = h.sso.Logout(c.Request().Context(), cookie.Value)
+		}
+	}
+	clearSSOCookie(c, service.SSOSessionCookieName)
+	clearSSOCookie(c, service.SSOCSRFCookieName)
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": map[string]string{"status": "signed_out"}})
+}
+
+func (h *userPortalHandler) switchSSOTeam(c echo.Context) error {
+	if h.sso == nil {
+		return httperr.New(httperr.NOT_FOUND, "sso is not configured")
+	}
+	token, err := ssoSessionTokenFromRequest(c)
+	if err != nil {
+		return err
+	}
+	var body userPortalSwitchSSOTeamRequest
+	if err := c.Bind(&body); err != nil {
+		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
+	}
+	profileID, err := uuid.Parse(strings.TrimSpace(body.ProfileID))
+	if err != nil {
+		return httperr.New(httperr.INVALID_UUID, "invalid SSO profile ID format")
+	}
+	if _, err := h.sso.SwitchSessionTeam(c.Request().Context(), token, profileID); err != nil {
+		return userPortalSSOError(err)
+	}
+	session, err := h.currentSSOSession(c)
+	if err != nil {
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": session})
 }
 
 func rejectEditableRotateBody(c echo.Context) error {
@@ -258,6 +418,15 @@ func toUserPortalKey(key *domain.APIKey) userPortalKeyResponse {
 	}
 }
 
+func toUserPortalTeamOption(item domain.SSOTeamProfile) userPortalTeamOptionResponse {
+	return userPortalTeamOptionResponse{
+		Team:          toUserPortalTeam(&item.Team),
+		Key:           toUserPortalKey(&item.Profile),
+		CanRotate:     userPortalHasScope(item.Profile.Scopes, service.APIKeyScopeWrite),
+		CanManageTeam: item.Profile.GetRole() == service.APIKeyRoleManager,
+	}
+}
+
 func userPortalHasScope(scopes []string, required string) bool {
 	for _, scope := range scopes {
 		if scope == required {
@@ -265,6 +434,67 @@ func userPortalHasScope(scopes []string, required string) bool {
 		}
 	}
 	return false
+}
+
+func (h *userPortalHandler) ssoCallbackURL(c echo.Context) string {
+	if h.ssoPublicBaseURL != "" {
+		return h.ssoPublicBaseURL + "/ui/api/sso/callback"
+	}
+	scheme := c.Scheme()
+	if forwarded := c.Request().Header.Get("X-Forwarded-Proto"); forwarded != "" {
+		scheme = strings.TrimSpace(strings.Split(forwarded, ",")[0])
+	}
+	host := c.Request().Host
+	if forwarded := c.Request().Header.Get("X-Forwarded-Host"); forwarded != "" {
+		host = strings.TrimSpace(strings.Split(forwarded, ",")[0])
+	}
+	return scheme + "://" + host + "/ui/api/sso/callback"
+}
+
+func ssoSessionTokenFromRequest(c echo.Context) (string, error) {
+	cookie, err := c.Request().Cookie(service.SSOSessionCookieName)
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		return "", httperr.New(httperr.AUTH_MISSING, "authentication required")
+	}
+	return cookie.Value, nil
+}
+
+func setSSOCookie(c echo.Context, name, value string, httpOnly bool, expires time.Time, secure bool) {
+	c.SetCookie(&nethttp.Cookie{
+		Name:     name,
+		Value:    value,
+		Path:     "/",
+		Expires:  expires,
+		MaxAge:   int(time.Until(expires).Seconds()),
+		HttpOnly: httpOnly,
+		Secure:   secure,
+		SameSite: nethttp.SameSiteLaxMode,
+	})
+}
+
+func clearSSOCookie(c echo.Context, name string) {
+	c.SetCookie(&nethttp.Cookie{
+		Name:     name,
+		Value:    "",
+		Path:     "/",
+		Expires:  time.Unix(0, 0).UTC(),
+		MaxAge:   -1,
+		HttpOnly: name == service.SSOSessionCookieName,
+		SameSite: nethttp.SameSiteLaxMode,
+	})
+}
+
+func userPortalSSOError(err error) error {
+	switch {
+	case errors.Is(err, service.ErrSSOSessionInvalid):
+		return httperr.New(httperr.AUTH_INVALID, "invalid sso session")
+	case errors.Is(err, service.ErrSSOCSRFInvalid):
+		return httperr.New(httperr.FORBIDDEN, "invalid sso csrf token")
+	case errors.Is(err, service.ErrSSOAccessDenied), errors.Is(err, service.ErrSSOProviderDisabled), errors.Is(err, service.ErrSSOEntitlementRefreshStale):
+		return httperr.New(httperr.FORBIDDEN, "sso access denied")
+	default:
+		return err
+	}
 }
 
 func registerUserPortalStatic(e *echo.Echo, staticDir string) {

@@ -24,6 +24,13 @@ func TestInMemoryRateLimitStore_ExpiresKeys(t *testing.T) {
 	assert.Equal(t, int64(1), count)
 }
 
+func TestNewInMemoryRateLimitStoreUsesDefaultClock(t *testing.T) {
+	store := NewInMemoryRateLimitStore()
+	count, err := store.IncrWithExpire(context.Background(), "default-clock", 1)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count)
+}
+
 func TestInMemoryRateLimitStore_IncrementsSameKey(t *testing.T) {
 	now := time.Unix(1700000000, 0)
 	store := NewInMemoryRateLimitStoreWithClock(func() time.Time { return now })

@@ -121,10 +121,15 @@ func (r *APIKeyRepositoryImpl) ListByProfile(ctx context.Context, profileID uuid
 	keys := make([]*domain.APIKey, 0)
 	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
 		rows, rerr := tx.Raw(`
-			SELECT id, team_id, COALESCE(key_suffix, ''), name, scopes, role, rate_limit, last_used_at, expires_at, created_at, revoked_at
-			FROM team_profiles
-			WHERE team_id = $1
-			ORDER BY created_at DESC, id ASC
+				SELECT
+					id, team_id, COALESCE(key_suffix, ''), name, scopes, role, rate_limit,
+					last_used_at, expires_at, created_at, revoked_at, auth_source,
+					COALESCE(sso_identity_id::text, ''), COALESCE(sso_provider_id::text, ''),
+					COALESCE(sso_subject, ''), sso_email, sso_group_id, sso_entitlement_status,
+					sso_last_entitlement_checked_at, sso_last_login_at
+				FROM team_profiles
+				WHERE team_id = $1
+				ORDER BY created_at DESC, id ASC
 			LIMIT $2 OFFSET $3
 		`, profileID, limit, offset).Rows()
 		if rerr != nil {
@@ -134,6 +139,7 @@ func (r *APIKeyRepositoryImpl) ListByProfile(ctx context.Context, profileID uuid
 
 		for rows.Next() {
 			var k domain.APIKey
+			var ssoIdentityID, ssoProviderID string
 			if serr := rows.Scan(
 				&k.ID,
 				&k.ProfileID,
@@ -146,9 +152,20 @@ func (r *APIKeyRepositoryImpl) ListByProfile(ctx context.Context, profileID uuid
 				&k.ExpiresAt,
 				&k.CreatedAt,
 				&k.RevokedAt,
+				&k.AuthSource,
+				&ssoIdentityID,
+				&ssoProviderID,
+				&k.SSOSubject,
+				&k.SSOEmail,
+				&k.SSOGroupID,
+				&k.SSOEntitlementStatus,
+				&k.SSOLastEntitlementCheckedAt,
+				&k.SSOLastLoginAt,
 			); serr != nil {
 				return serr
 			}
+			k.SSOIdentityID = parseOptionalUUID(ssoIdentityID)
+			k.SSOProviderID = parseOptionalUUID(ssoProviderID)
 			k.TeamID = k.ProfileID
 			k.Name = k.Label
 			keys = append(keys, &k)
@@ -173,6 +190,7 @@ func (r *APIKeyRepositoryImpl) ListByProfile(ctx context.Context, profileID uuid
 func (r *APIKeyRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix string) (*domain.APIKey, error) {
 	var key domain.APIKey
 	var teamID *uuid.UUID
+	var ssoIdentityID, ssoProviderID string
 	found := false
 
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
@@ -181,22 +199,32 @@ func (r *APIKeyRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix str
 				k.id,
 				k.team_id,
 				COALESCE(t.name, ''),
-				k.key_hash,
-				COALESCE(k.key_suffix, ''),
-				k.name,
-				k.scopes,
-				k.role,
-				k.rate_limit,
-				k.last_used_at,
-				k.expires_at,
-				k.created_at,
-				k.revoked_at
-			FROM team_profiles k
-			LEFT JOIN teams t ON t.id = k.team_id
-			WHERE k.key_prefix = $1
-				AND k.revoked_at IS NULL
-				AND (k.expires_at IS NULL OR k.expires_at > NOW())
-		`, prefix).Rows()
+					k.key_hash,
+					COALESCE(k.key_suffix, ''),
+					k.name,
+					k.scopes,
+					k.role,
+					k.rate_limit,
+					k.last_used_at,
+					k.expires_at,
+					k.created_at,
+					k.revoked_at,
+					k.auth_source,
+					COALESCE(k.sso_identity_id::text, ''),
+					COALESCE(k.sso_provider_id::text, ''),
+					COALESCE(k.sso_subject, ''),
+					k.sso_email,
+					k.sso_group_id,
+					k.sso_entitlement_status,
+					k.sso_last_entitlement_checked_at,
+					k.sso_last_login_at
+				FROM team_profiles k
+				LEFT JOIN teams t ON t.id = k.team_id
+				WHERE k.key_prefix = $1
+					AND k.key_hash IS NOT NULL
+					AND k.revoked_at IS NULL
+					AND (k.expires_at IS NULL OR k.expires_at > NOW())
+			`, prefix).Rows()
 		if rerr != nil {
 			return rerr
 		}
@@ -218,6 +246,15 @@ func (r *APIKeyRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix str
 				&key.ExpiresAt,
 				&key.CreatedAt,
 				&key.RevokedAt,
+				&key.AuthSource,
+				&ssoIdentityID,
+				&ssoProviderID,
+				&key.SSOSubject,
+				&key.SSOEmail,
+				&key.SSOGroupID,
+				&key.SSOEntitlementStatus,
+				&key.SSOLastEntitlementCheckedAt,
+				&key.SSOLastLoginAt,
 			)
 		}
 		return rows.Err()
@@ -234,6 +271,8 @@ func (r *APIKeyRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix str
 		key.TeamID = *teamID
 	}
 	key.Name = key.Label
+	key.SSOIdentityID = parseOptionalUUID(ssoIdentityID)
+	key.SSOProviderID = parseOptionalUUID(ssoProviderID)
 	return &key, nil
 }
 
@@ -369,14 +408,20 @@ func (r *APIKeyRepositoryImpl) RotateForProfile(ctx context.Context, profileID, 
 func (r *APIKeyRepositoryImpl) GetByIDForProfile(ctx context.Context, profileID, id uuid.UUID) (*domain.APIKey, error) {
 	var key domain.APIKey
 	var rowProfileID *uuid.UUID
+	var ssoIdentityID, ssoProviderID string
 	found := false
 
 	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
 		rows, rerr := tx.Raw(`
-			SELECT id, team_id, COALESCE(key_suffix, ''), name, scopes, role, rate_limit, last_used_at, expires_at, created_at, revoked_at
-			FROM team_profiles
-			WHERE id = $1 AND team_id = $2
-		`, id, profileID).Rows()
+				SELECT
+					id, team_id, COALESCE(key_suffix, ''), name, scopes, role, rate_limit,
+					last_used_at, expires_at, created_at, revoked_at, auth_source,
+					COALESCE(sso_identity_id::text, ''), COALESCE(sso_provider_id::text, ''),
+					COALESCE(sso_subject, ''), sso_email, sso_group_id, sso_entitlement_status,
+					sso_last_entitlement_checked_at, sso_last_login_at
+				FROM team_profiles
+				WHERE id = $1 AND team_id = $2
+			`, id, profileID).Rows()
 		if rerr != nil {
 			return rerr
 		}
@@ -396,6 +441,15 @@ func (r *APIKeyRepositoryImpl) GetByIDForProfile(ctx context.Context, profileID,
 				&key.ExpiresAt,
 				&key.CreatedAt,
 				&key.RevokedAt,
+				&key.AuthSource,
+				&ssoIdentityID,
+				&ssoProviderID,
+				&key.SSOSubject,
+				&key.SSOEmail,
+				&key.SSOGroupID,
+				&key.SSOEntitlementStatus,
+				&key.SSOLastEntitlementCheckedAt,
+				&key.SSOLastLoginAt,
 			)
 		}
 		return rows.Err()
@@ -412,7 +466,20 @@ func (r *APIKeyRepositoryImpl) GetByIDForProfile(ctx context.Context, profileID,
 		key.TeamID = *rowProfileID
 	}
 	key.Name = key.Label
+	key.SSOIdentityID = parseOptionalUUID(ssoIdentityID)
+	key.SSOProviderID = parseOptionalUUID(ssoProviderID)
 	return &key, nil
+}
+
+func parseOptionalUUID(raw string) *uuid.UUID {
+	if raw == "" {
+		return nil
+	}
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return nil
+	}
+	return &id
 }
 
 // CountByProfile returns the total number of API keys for a profile.
