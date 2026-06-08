@@ -193,6 +193,16 @@ button {
   padding: 18px;
 }
 
+.surface-section {
+  min-width: 0;
+}
+
+.team-management-surface .surface-section + .surface-section {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
 .portal-tabs {
   display: grid;
   gap: 6px;

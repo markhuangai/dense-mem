@@ -14,6 +14,7 @@ type TestKey = {
   name: string;
   key_suffix: string;
   scopes: string[];
+  role: "manager" | "member";
   rate_limit: number;
   last_used_at: string | null;
   expires_at: string | null;
@@ -26,6 +27,7 @@ const readKey: TestKey = {
   name: "Mine",
   key_suffix: "abc123",
   scopes: ["read"],
+  role: "member",
   rate_limit: 120,
   last_used_at: null,
   expires_at: null,
@@ -35,6 +37,22 @@ const readKey: TestKey = {
 const writeKey: TestKey = {
   ...readKey,
   scopes: ["read", "write"],
+};
+
+const managerKey: TestKey = {
+  ...writeKey,
+  id: "33333333-3333-4333-8333-333333333333",
+  name: "Manager",
+  key_suffix: "mgr123",
+  role: "manager",
+};
+
+const memberProfile: TestKey = {
+  ...writeKey,
+  id: "44444444-4444-4444-8444-444444444444",
+  name: "Member profile",
+  key_suffix: "p6ZAc",
+  role: "member",
 };
 
 const facts = [
@@ -244,6 +262,40 @@ test("responsive user portal layout", async ({ page }) => {
   }
 });
 
+test("manager team page separates team editing from profile management", async ({ page }) => {
+  await mockUserApi(page, {
+    key: managerKey,
+    canManageTeam: true,
+    canRotate: true,
+    profiles: [managerKey, memberProfile],
+  });
+  await openUserPortal(page, "dm_manager");
+
+  await page.getByRole("button", { name: /^Team$/ }).click();
+  const surface = page.locator(".team-management-surface");
+  await expect(surface.getByRole("heading", { name: "Team" })).toBeVisible();
+  await expect(surface.getByRole("heading", { name: "Profiles" })).toBeVisible();
+
+  const spacing = await surface.evaluate((element) => {
+    const sections = Array.from(element.querySelectorAll(".surface-section"));
+    if (sections.length < 2) {
+      throw new Error("team management sections are missing");
+    }
+    const first = sections[0].getBoundingClientRect();
+    const second = sections[1].getBoundingClientRect();
+    const secondStyle = getComputedStyle(sections[1]);
+    return {
+      borderTopWidth: Number.parseFloat(secondStyle.borderTopWidth),
+      marginGap: second.top - first.bottom,
+      paddingTop: Number.parseFloat(secondStyle.paddingTop),
+    };
+  });
+  expect(spacing.marginGap).toBeGreaterThanOrEqual(18);
+  expect(spacing.paddingTop).toBeGreaterThanOrEqual(18);
+  expect(spacing.borderTopWidth).toBeGreaterThanOrEqual(1);
+  await expectNoShellOverlap(page);
+});
+
 async function openUserPortal(page: Page, apiKey: string) {
   await page.goto("/ui/");
   await page.getByLabel("API key").fill(apiKey);
@@ -284,24 +336,74 @@ function rectanglesOverlap(
   return first.left < second.right && first.right > second.left && first.top < second.bottom && first.bottom > second.top;
 }
 
-async function mockUserApi(page: Page, state: { key: TestKey; canRotate: boolean }) {
+async function mockUserApi(
+  page: Page,
+  state: { key: TestKey; canRotate: boolean; canManageTeam?: boolean; profiles?: TestKey[] },
+) {
   const calls = {
     rotateBodies: [] as string[],
     disallowedProfileCalls: [] as string[],
   };
+  let currentTeam = { ...team };
   let currentKey = { ...state.key };
   let currentCanRotate = state.canRotate;
+  let currentProfiles = (state.profiles ?? []).map((profile) => ({ ...profile }));
 
   await page.route("**/api/v1/teams/**/profiles**", async (route) => {
+    if (state.canManageTeam) {
+      const request = route.request();
+      const url = new URL(request.url());
+      if (url.pathname === `/api/v1/teams/${currentTeam.id}/profiles` && request.method() === "GET") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            data: currentProfiles,
+            pagination: { limit: 50, offset: 0, total: currentProfiles.length },
+          }),
+        });
+        return;
+      }
+    }
     calls.disallowedProfileCalls.push(route.request().url());
     await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ message: "profile list must not be called" }) });
+  });
+
+  await page.route("**/api/v1/teams/*", async (route) => {
+    if (!state.canManageTeam) {
+      calls.disallowedProfileCalls.push(route.request().url());
+      await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ message: "team management must not be called" }) });
+      return;
+    }
+
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === `/api/v1/teams/${currentTeam.id}` && request.method() === "PATCH") {
+      const body = JSON.parse(request.postData() ?? "{}") as Partial<typeof team>;
+      currentTeam = {
+        ...currentTeam,
+        name: body.name ?? currentTeam.name,
+        description: body.description ?? currentTeam.description,
+      };
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: currentTeam }) });
+      return;
+    }
+
+    await route.fallback();
   });
 
   await page.route("**/ui/api/session", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ data: { team, key: currentKey, can_rotate: currentCanRotate } }),
+      body: JSON.stringify({
+        data: {
+          team: currentTeam,
+          key: currentKey,
+          can_rotate: currentCanRotate,
+          can_manage_team: state.canManageTeam ?? false,
+        },
+      }),
     });
   });
 
