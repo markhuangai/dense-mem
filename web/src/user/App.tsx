@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   BarChart3,
   Check,
@@ -29,6 +29,7 @@ import {
   UserSession,
 } from "./api";
 import { TeamManagementPanel } from "./TeamManagementPanel";
+import { AuthShell, PortalShell, SectionHeading } from "../ui/components";
 
 const TOKEN_STORAGE_KEY = "denseMem.userApiKey";
 const THEME_STORAGE_KEY = "denseMem.userTheme";
@@ -75,35 +76,36 @@ export function UserPortalApp() {
 
   if (!token) {
     return (
-      <main className="auth-shell" data-theme={theme}>
-        <form className="auth-panel" onSubmit={submitToken}>
-          <div className="brand-row">
-            <span className="brand-mark"><ShieldCheck size={20} aria-hidden="true" /></span>
-            <h1>Dense-Mem Knowledge</h1>
-            <button
-              className="icon-button theme-toggle"
-              type="button"
-              aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-              onClick={toggleTheme}
-            >
-              {theme === "dark" ? <Sun size={17} aria-hidden="true" /> : <Moon size={17} aria-hidden="true" />}
-            </button>
-          </div>
-          <label htmlFor="user-api-key">API key</label>
-          <input
-            id="user-api-key"
-            type="password"
-            value={draftToken}
-            onChange={(event) => setDraftToken(event.target.value)}
-            autoComplete="current-password"
-          />
-          {authError && <p className="field-error" role="alert">{authError}</p>}
-          <button className="primary-button" type="submit">
-            <KeyRound size={17} aria-hidden="true" />
-            Sign in
+      <AuthShell
+        theme={theme}
+        title="Dense-Mem Knowledge"
+        icon={<ShieldCheck size={20} aria-hidden="true" />}
+        onSubmit={submitToken}
+        actions={(
+          <button
+            className="icon-button theme-toggle"
+            type="button"
+            aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+            onClick={toggleTheme}
+          >
+            {theme === "dark" ? <Sun size={17} aria-hidden="true" /> : <Moon size={17} aria-hidden="true" />}
           </button>
-        </form>
-      </main>
+        )}
+      >
+        <label htmlFor="user-api-key">API key</label>
+        <input
+          id="user-api-key"
+          type="password"
+          value={draftToken}
+          onChange={(event) => setDraftToken(event.target.value)}
+          autoComplete="current-password"
+        />
+        {authError && <p className="field-error" role="alert">{authError}</p>}
+        <button className="primary-button" type="submit">
+          <KeyRound size={17} aria-hidden="true" />
+          Sign in
+        </button>
+      </AuthShell>
     );
   }
 
@@ -159,14 +161,26 @@ function UserPortal({
     }
   }, [activeTab, session]);
 
+  const navItems = [
+    { id: "search", label: "Recall", icon: <Search size={17} aria-hidden="true" />, active: activeTab === "search", onClick: () => setActiveTab("search") },
+    { id: "usage", label: "Usage", icon: <BarChart3 size={17} aria-hidden="true" />, active: activeTab === "usage", onClick: () => setActiveTab("usage") },
+    { id: "facts", label: "Facts", icon: <ShieldCheck size={17} aria-hidden="true" />, active: activeTab === "facts", onClick: () => setActiveTab("facts") },
+    { id: "claims", label: "Claims", icon: <GitBranch size={17} aria-hidden="true" />, active: activeTab === "claims", onClick: () => setActiveTab("claims") },
+    { id: "fragments", label: "Fragments", icon: <FileText size={17} aria-hidden="true" />, active: activeTab === "fragments", onClick: () => setActiveTab("fragments") },
+    { id: "communities", label: "Communities", icon: <Layers3 size={17} aria-hidden="true" />, active: activeTab === "communities", onClick: () => setActiveTab("communities") },
+    ...(session?.can_manage_team ? [
+      { id: "team", label: "Team", icon: <Users size={17} aria-hidden="true" />, active: activeTab === "team", onClick: () => setActiveTab("team") },
+    ] : []),
+    { id: "key", label: "My key", icon: <KeyRound size={17} aria-hidden="true" />, active: activeTab === "key", onClick: () => setActiveTab("key") },
+  ];
+
   return (
-    <main className="app-shell" data-theme={theme}>
-      <header className="topbar">
-        <div className="brand-row">
-          <span className="brand-mark"><ShieldCheck size={20} aria-hidden="true" /></span>
-          <h1>Dense-Mem Knowledge</h1>
-        </div>
-        <div className="topbar-actions">
+    <PortalShell
+      theme={theme}
+      title="Dense-Mem Knowledge"
+      icon={<ShieldCheck size={20} aria-hidden="true" />}
+      topbarActions={(
+        <>
           <button
             className="icon-button"
             type="button"
@@ -183,94 +197,51 @@ function UserPortal({
             <LogOut size={17} aria-hidden="true" />
             Sign out
           </button>
+        </>
+      )}
+      navLabel="Knowledge navigation"
+      navItems={navItems}
+      sidebarTitle={session?.team.name ?? (loading ? "Loading" : "Team")}
+      sidebarSubtitle={session ? shortId(session.team.id) : undefined}
+      sidebarBody={session && (
+        <div className="key-summary">
+          <span>{session.key.name}</span>
+          <code>{displayKeySuffix(session.key.key_suffix)}</code>
         </div>
-      </header>
-
-      {error && <div className="banner error" role="alert">{error}</div>}
-
-      <section className="workspace">
-        <aside className="control-sidebar" aria-label="Knowledge navigation">
-          <nav className="portal-tabs" aria-label="Knowledge sections">
-            <TabButton active={activeTab === "search"} icon={<Search size={17} aria-hidden="true" />} label="Recall" onClick={() => setActiveTab("search")} />
-            <TabButton active={activeTab === "usage"} icon={<BarChart3 size={17} aria-hidden="true" />} label="Usage" onClick={() => setActiveTab("usage")} />
-            <TabButton active={activeTab === "facts"} icon={<ShieldCheck size={17} aria-hidden="true" />} label="Facts" onClick={() => setActiveTab("facts")} />
-            <TabButton active={activeTab === "claims"} icon={<GitBranch size={17} aria-hidden="true" />} label="Claims" onClick={() => setActiveTab("claims")} />
-            <TabButton active={activeTab === "fragments"} icon={<FileText size={17} aria-hidden="true" />} label="Fragments" onClick={() => setActiveTab("fragments")} />
-            <TabButton active={activeTab === "communities"} icon={<Layers3 size={17} aria-hidden="true" />} label="Communities" onClick={() => setActiveTab("communities")} />
-            {session?.can_manage_team && <TabButton active={activeTab === "team"} icon={<Users size={17} aria-hidden="true" />} label="Team" onClick={() => setActiveTab("team")} />}
-            <TabButton active={activeTab === "key"} icon={<KeyRound size={17} aria-hidden="true" />} label="My key" onClick={() => setActiveTab("key")} />
-          </nav>
-          <div className="section-heading">
-            <div>
-              <h2>{session?.team.name ?? (loading ? "Loading" : "Team")}</h2>
-              {session && <p className="section-subtitle">{shortId(session.team.id)}</p>}
-            </div>
-          </div>
-          {session && (
-            <div className="key-summary">
-              <span>{session.key.name}</span>
-              <code>{displayKeySuffix(session.key.key_suffix)}</code>
-            </div>
-          )}
-        </aside>
-
-        <section className="detail-pane" aria-label="Knowledge details">
-          {activeTab === "search" && <SearchPanel api={api} />}
-          {activeTab === "usage" && <UserTelemetryPanel api={api} />}
-          {activeTab === "facts" && <FactsPanel api={api} />}
-          {activeTab === "claims" && <ClaimsPanel api={api} />}
-          {activeTab === "fragments" && <FragmentsPanel api={api} />}
-          {activeTab === "communities" && <CommunitiesPanel api={api} />}
-          {activeTab === "team" && session?.can_manage_team && (
-            <TeamManagementPanel
-              api={api}
-              session={session}
-              onTeamUpdated={(team) => setSession((current) => current ? { ...current, team } : current)}
-            />
-          )}
-          {activeTab === "key" && session && (
-            <KeyPanel
-              api={api}
-              session={session}
-              onRotated={(rotated) => {
-                sessionStorage.setItem(TOKEN_STORAGE_KEY, rotated.api_key);
-                onTokenChange(rotated.api_key);
-                setSession((current) => current ? {
-                  ...current,
-                  key: rotated.key,
-                  can_rotate: rotated.key.scopes.includes("write"),
-                  can_manage_team: rotated.key.role === "manager",
-                } : current);
-              }}
-            />
-          )}
-        </section>
-      </section>
-    </main>
-  );
-}
-
-function TabButton({
-  active,
-  icon,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  icon: ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      className={active ? "tab-button active" : "tab-button"}
-      type="button"
-      aria-current={active ? "page" : undefined}
-      onClick={onClick}
+      )}
+      detailLabel="Knowledge details"
+      error={error}
     >
-      {icon}
-      {label}
-    </button>
+      {activeTab === "search" && <SearchPanel api={api} />}
+      {activeTab === "usage" && <UserTelemetryPanel api={api} />}
+      {activeTab === "facts" && <FactsPanel api={api} />}
+      {activeTab === "claims" && <ClaimsPanel api={api} />}
+      {activeTab === "fragments" && <FragmentsPanel api={api} />}
+      {activeTab === "communities" && <CommunitiesPanel api={api} />}
+      {activeTab === "team" && session?.can_manage_team && (
+        <TeamManagementPanel
+          api={api}
+          session={session}
+          onTeamUpdated={(team) => setSession((current) => current ? { ...current, team } : current)}
+        />
+      )}
+      {activeTab === "key" && session && (
+        <KeyPanel
+          api={api}
+          session={session}
+          onRotated={(rotated) => {
+            sessionStorage.setItem(TOKEN_STORAGE_KEY, rotated.api_key);
+            onTokenChange(rotated.api_key);
+            setSession((current) => current ? {
+              ...current,
+              key: rotated.key,
+              can_rotate: rotated.key.scopes.includes("write"),
+              can_manage_team: rotated.key.role === "manager",
+            } : current);
+          }}
+        />
+      )}
+    </PortalShell>
   );
 }
 
@@ -345,10 +316,7 @@ function SearchPanel({ api }: { api: UserApi }) {
 
   return (
     <section className="surface">
-      <div className="section-heading">
-        <h2>Recall</h2>
-        <span>{hits.length}</span>
-      </div>
+      <SectionHeading title="Recall" meta={hits.length} />
       <form className="search-form" onSubmit={submit}>
         <label htmlFor="recall-query">Keyword</label>
         <input id="recall-query" value={query} onChange={(event) => setQuery(event.target.value)} />
@@ -472,10 +440,7 @@ function KeyPanel({
 
   return (
     <section className="surface">
-      <div className="section-heading">
-        <h2>My key</h2>
-        <span>{session.can_rotate ? "write" : "read"}</span>
-      </div>
+      <SectionHeading title="My key" meta={session.can_rotate ? "write" : "read"} />
       {createdKey && <CreatedKeyNotice apiKey={createdKey} onDismiss={() => setCreatedKey("")} />}
       {error && <div className="banner error" role="alert">{error}</div>}
       <dl className="key-detail-grid">
@@ -500,15 +465,17 @@ function KeyPanel({
 
 function PanelHeading({ title, count, onRefresh }: { title: string; count: number; onRefresh: () => void }) {
   return (
-    <div className="section-heading">
-      <h2>{title}</h2>
-      <div className="button-row">
-        <span>{count}</span>
-        <button className="icon-button" type="button" aria-label={`Refresh ${title}`} onClick={onRefresh}>
-          <RefreshCw size={16} aria-hidden="true" />
-        </button>
-      </div>
-    </div>
+    <SectionHeading
+      title={title}
+      actions={(
+        <div className="button-row">
+          <span>{count}</span>
+          <button className="icon-button" type="button" aria-label={`Refresh ${title}`} onClick={onRefresh}>
+            <RefreshCw size={16} aria-hidden="true" />
+          </button>
+        </div>
+      )}
+    />
   );
 }
 

@@ -3,6 +3,7 @@ import { RefreshCw } from "lucide-react";
 import { ControlApi, ControlMetrics, Team, TeamProfile } from "../api";
 import { TelemetryDashboard } from "../telemetry/TelemetryDashboard";
 import { TelemetrySnapshot, TelemetryWindowKey } from "../telemetry/types";
+import { SectionHeading, SummaryCard } from "../ui/components";
 import { dependencyStatusClass, formatCount, formatDate, formatLatency, formatPercent, readError, shortId } from "./utils";
 
 type TelemetryControlScope = "system" | "team" | "profile";
@@ -154,15 +155,15 @@ export function MetricsPanel({ api, teams }: { api: ControlApi; teams: Team[] })
         )}
       />
 
-      <div className="section-heading">
-        <div>
-          <h2>Usage Rollup</h2>
-          {metrics && <p className="section-subtitle">{formatDate(metrics.window.from)} - {formatDate(metrics.window.to)}</p>}
-        </div>
-        <button className="icon-button" type="button" aria-label="Refresh metrics" onClick={() => void loadMetrics()} disabled={loading}>
-          <RefreshCw size={16} aria-hidden="true" />
-        </button>
-      </div>
+      <SectionHeading
+        title="Usage Rollup"
+        subtitle={metrics ? `${formatDate(metrics.window.from)} - ${formatDate(metrics.window.to)}` : undefined}
+        actions={(
+          <button className="icon-button" type="button" aria-label="Refresh metrics" onClick={() => void loadMetrics()} disabled={loading}>
+            <RefreshCw size={16} aria-hidden="true" />
+          </button>
+        )}
+      />
       {error && <div className="banner error" role="alert">{error}</div>}
 
       <div className="metrics-toolbar">
@@ -203,26 +204,11 @@ export function MetricsPanel({ api, teams }: { api: ControlApi; teams: Team[] })
 function MetricsSummary({ metrics }: { metrics: ControlMetrics }) {
   return (
     <div className="metrics-summary" aria-label="Request metrics">
-      <div className="summary-item">
-        <span>Requests</span>
-        <strong>{formatCount(metrics.system.requests)}</strong>
-      </div>
-      <div className="summary-item">
-        <span>Errors</span>
-        <strong>{formatCount(metrics.system.errors)}</strong>
-      </div>
-      <div className="summary-item">
-        <span>Error rate</span>
-        <strong>{formatPercent(metrics.system.errors, metrics.system.requests)}</strong>
-      </div>
-      <div className="summary-item">
-        <span>Avg latency</span>
-        <strong>{formatLatency(metrics.system.avg_latency_ms)}</strong>
-      </div>
-      <div className="summary-item">
-        <span>Max latency</span>
-        <strong>{formatLatency(metrics.system.max_latency_ms)}</strong>
-      </div>
+      <SummaryCard label="Requests" value={formatCount(metrics.system.requests)} />
+      <SummaryCard label="Errors" value={formatCount(metrics.system.errors)} tone={metrics.system.errors > 0 ? "warning" : "neutral"} />
+      <SummaryCard label="Error rate" value={formatPercent(metrics.system.errors, metrics.system.requests)} />
+      <SummaryCard label="Avg latency" value={formatLatency(metrics.system.avg_latency_ms)} />
+      <SummaryCard label="Max latency" value={formatLatency(metrics.system.max_latency_ms)} />
     </div>
   );
 }
@@ -241,11 +227,13 @@ function DependencySummary({ dependencies }: { dependencies: ControlMetrics["dep
       </div>
       <div className="dependency-grid">
         {dependencies.map((dep) => (
-          <div className="summary-item" key={dep.name}>
-            <span>{dep.name}</span>
-            <strong><span className={`status-pill ${dependencyStatusClass(dep.status)}`}>{dep.status}</span></strong>
-            <small>{dep.latency_ms === null || dep.latency_ms === undefined ? "n/a" : formatLatency(dep.latency_ms)}</small>
-          </div>
+          <SummaryCard
+            key={dep.name}
+            label={dep.name}
+            value={<span className={`status-pill ${dependencyStatusClass(dep.status)}`}>{dep.status}</span>}
+            detail={dep.latency_ms === null || dep.latency_ms === undefined ? "n/a" : formatLatency(dep.latency_ms)}
+            tone={dep.status === "error" ? "danger" : dep.status === "degraded" ? "warning" : "neutral"}
+          />
         ))}
       </div>
     </div>

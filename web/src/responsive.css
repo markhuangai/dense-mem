@@ -1,0 +1,144 @@
+@media (max-width: 1180px) {
+  .topbar,
+  .workspace,
+  .app-shell > .banner {
+    width: min(100% - 32px, 1040px);
+  }
+
+  .workspace {
+    grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  }
+
+  .telemetry-card-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 980px) {
+  .app-shell {
+    padding: 14px 0 28px;
+  }
+
+  .topbar,
+  .workspace {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .control-sidebar {
+    position: static;
+  }
+
+  .portal-tabs {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .tab-button {
+    justify-content: center;
+  }
+
+  .topbar-actions {
+    justify-content: start;
+  }
+
+  .edit-grid,
+  .key-form,
+  .security-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .security-summary,
+  .metrics-summary,
+  .dependency-grid,
+  .telemetry-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .metrics-toolbar {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .search-form,
+  .key-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .topbar,
+  .workspace,
+  .app-shell > .banner {
+    width: calc(100vw - 28px);
+  }
+
+  .auth-panel,
+  .surface,
+  .control-sidebar {
+    padding: 14px;
+  }
+
+  .brand-row h1 {
+    font-size: 19px;
+  }
+
+  .topbar-actions,
+  .list-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .portal-tabs,
+  .security-summary,
+  .metrics-summary,
+  .dependency-grid,
+  .metrics-toolbar,
+  .telemetry-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .tab-button {
+    justify-content: flex-start;
+  }
+
+  .secret-box {
+    grid-template-columns: 1fr;
+  }
+
+  .data-table th,
+  .data-table td {
+    padding: 9px 8px;
+  }
+
+  .key-table {
+    min-width: 0;
+  }
+
+  .key-table thead {
+    display: none;
+  }
+
+  .key-table,
+  .key-table tbody,
+  .key-table tr,
+  .key-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .key-table tr {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .key-table td {
+    border-bottom: 0;
+  }
+
+  .key-table .actions-cell {
+    width: 100%;
+    text-align: left;
+  }
+
+  .profile-name-cell {
+    align-items: stretch;
+  }
+}
