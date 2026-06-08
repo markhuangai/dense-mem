@@ -10,6 +10,7 @@ import {
 } from "recharts";
 import { RefreshCw } from "lucide-react";
 import { TelemetrySnapshot, TelemetryWindowKey, telemetryWindowOptions } from "./types";
+import { SectionHeading, SummaryCard } from "../ui/components";
 import "./telemetry.css";
 
 type TelemetryDashboardProps = {
@@ -35,19 +36,15 @@ export function TelemetryDashboard({
 }: TelemetryDashboardProps) {
   return (
     <div className="telemetry-dashboard">
-      <div className="section-heading">
-        <div>
-          <h2>{title}</h2>
-          {snapshot && (
-            <p className="section-subtitle">
-              {formatTelemetryTime(snapshot.window.from)} - {formatTelemetryTime(snapshot.window.to)}
-            </p>
-          )}
-        </div>
-        <button className="icon-button" type="button" aria-label="Refresh telemetry" onClick={onRefresh} disabled={loading}>
-          <RefreshCw size={16} aria-hidden="true" />
-        </button>
-      </div>
+      <SectionHeading
+        title={title}
+        subtitle={snapshot ? `${formatTelemetryTime(snapshot.window.from)} - ${formatTelemetryTime(snapshot.window.to)}` : undefined}
+        actions={(
+          <button className="icon-button" type="button" aria-label="Refresh telemetry" onClick={onRefresh} disabled={loading}>
+            <RefreshCw size={16} aria-hidden="true" />
+          </button>
+        )}
+      />
 
       <div className="metrics-toolbar telemetry-toolbar">
         <label htmlFor={`${title}-telemetry-window`}>Telemetry range</label>
@@ -71,10 +68,7 @@ export function TelemetryDashboard({
         <>
           <div className="telemetry-card-grid" aria-label={`${title} totals`}>
             {snapshot.cards.map((card) => (
-              <div className="summary-item" key={card.id}>
-                <span>{card.label}</span>
-                <strong>{formatTelemetryValue(card.value, card.unit)}</strong>
-              </div>
+              <SummaryCard key={card.id} label={card.label} value={formatTelemetryValue(card.value, card.unit)} />
             ))}
           </div>
           <div className="telemetry-chart-grid" aria-label={`${title} charts`}>

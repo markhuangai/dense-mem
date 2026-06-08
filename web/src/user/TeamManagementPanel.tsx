@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Check, Copy, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { CreatedTeamProfile, UserApi, UserKey, UserSession, UserTeam } from "./api";
+import { SectionHeading } from "../ui/components";
 
 type ProfilePermission = "read" | "read_write";
 
@@ -133,55 +134,58 @@ export function TeamManagementPanel({
   }
 
   return (
-    <section className="surface">
-      <div className="section-heading">
-        <h2>Team</h2>
-        <span>{profileRoleLabel(session.key.role)}</span>
+    <section className="surface team-management-surface">
+      <div className="surface-section">
+        <SectionHeading title="Team" meta={profileRoleLabel(session.key.role)} />
+        {createdKey && <CreatedKeyNotice apiKey={createdKey.api_key} onDismiss={() => setCreatedKey(null)} />}
+        {error && <div className="banner error" role="alert">{error}</div>}
+        <form className="edit-grid" onSubmit={saveTeam}>
+          <label htmlFor="user-team-name">Name</label>
+          <input id="user-team-name" value={teamName} onChange={(event) => setTeamName(event.target.value)} />
+          <label htmlFor="user-team-description">Description</label>
+          <textarea id="user-team-description" value={teamDescription} onChange={(event) => setTeamDescription(event.target.value)} />
+          <div className="button-row span">
+            <button className="primary-button" type="submit" disabled={teamBusy}>
+              <Pencil size={16} aria-hidden="true" />
+              Save team
+            </button>
+          </div>
+        </form>
       </div>
-      {createdKey && <CreatedKeyNotice apiKey={createdKey.api_key} onDismiss={() => setCreatedKey(null)} />}
-      {error && <div className="banner error" role="alert">{error}</div>}
-      <form className="edit-grid" onSubmit={saveTeam}>
-        <label htmlFor="user-team-name">Name</label>
-        <input id="user-team-name" value={teamName} onChange={(event) => setTeamName(event.target.value)} />
-        <label htmlFor="user-team-description">Description</label>
-        <textarea id="user-team-description" value={teamDescription} onChange={(event) => setTeamDescription(event.target.value)} />
-        <div className="button-row span">
-          <button className="primary-button" type="submit" disabled={teamBusy}>
-            <Pencil size={16} aria-hidden="true" />
-            Save team
-          </button>
-        </div>
-      </form>
 
-      <div className="section-heading">
-        <h2>Profiles</h2>
-        <div className="button-row">
-          <span>{profiles.length}</span>
-          <button className="icon-button" type="button" aria-label="Refresh profiles" onClick={() => void loadProfiles()}>
-            <RefreshCw size={16} aria-hidden="true" />
-          </button>
-        </div>
-      </div>
-      <ManagedProfileCreateForm
-        disabled={loading}
-        onCreate={async (input) => {
-          const created = await api.createTeamProfile(session.team.id, input);
-          setCreatedKey(created);
-          await loadProfiles();
-        }}
-      />
-      {loading && <div className="table-placeholder">Loading</div>}
-      {!loading && (
-        <ManagedProfileTable
-          profiles={profiles}
-          savingProfileId={savingProfileId}
-          rotatingProfileId={rotatingProfileId}
-          deletingProfileId={deletingProfileId}
-          onRename={(profileId, name) => void updateProfileName(profileId, name)}
-          onRotate={(profileId) => void rotateProfile(profileId)}
-          onDelete={(profileId) => void deleteProfile(profileId)}
+      <div className="surface-section">
+        <SectionHeading
+          title="Profiles"
+          actions={(
+            <div className="button-row">
+              <span>{profiles.length}</span>
+              <button className="icon-button" type="button" aria-label="Refresh profiles" onClick={() => void loadProfiles()}>
+                <RefreshCw size={16} aria-hidden="true" />
+              </button>
+            </div>
+          )}
         />
-      )}
+        <ManagedProfileCreateForm
+          disabled={loading}
+          onCreate={async (input) => {
+            const created = await api.createTeamProfile(session.team.id, input);
+            setCreatedKey(created);
+            await loadProfiles();
+          }}
+        />
+        {loading && <div className="table-placeholder">Loading</div>}
+        {!loading && (
+          <ManagedProfileTable
+            profiles={profiles}
+            savingProfileId={savingProfileId}
+            rotatingProfileId={rotatingProfileId}
+            deletingProfileId={deletingProfileId}
+            onRename={(profileId, name) => void updateProfileName(profileId, name)}
+            onRotate={(profileId) => void rotateProfile(profileId)}
+            onDelete={(profileId) => void deleteProfile(profileId)}
+          />
+        )}
+      </div>
     </section>
   );
 }

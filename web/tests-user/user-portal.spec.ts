@@ -14,6 +14,7 @@ type TestKey = {
   name: string;
   key_suffix: string;
   scopes: string[];
+  role: "manager" | "member";
   rate_limit: number;
   last_used_at: string | null;
   expires_at: string | null;
@@ -26,6 +27,7 @@ const readKey: TestKey = {
   name: "Mine",
   key_suffix: "abc123",
   scopes: ["read"],
+  role: "member",
   rate_limit: 120,
   last_used_at: null,
   expires_at: null,
@@ -35,6 +37,22 @@ const readKey: TestKey = {
 const writeKey: TestKey = {
   ...readKey,
   scopes: ["read", "write"],
+};
+
+const managerKey: TestKey = {
+  ...writeKey,
+  id: "33333333-3333-4333-8333-333333333333",
+  name: "Manager",
+  key_suffix: "mgr123",
+  role: "manager",
+};
+
+const memberProfile: TestKey = {
+  ...writeKey,
+  id: "44444444-4444-4444-8444-444444444444",
+  name: "Member profile",
+  key_suffix: "p6ZAc",
+  role: "member",
 };
 
 const facts = [
@@ -91,6 +109,50 @@ const communities = [
   },
 ];
 
+const telemetryCards = [
+  { id: "http_requests", label: "HTTP requests", unit: "requests", value: 9 },
+  { id: "http_errors", label: "HTTP errors", unit: "requests", value: 1 },
+  { id: "verifier_tokens", label: "Verifier tokens", unit: "tokens", value: 120 },
+  { id: "embedding_tokens", label: "Embedding tokens", unit: "tokens", value: 320 },
+  { id: "recalls", label: "Recall requests", unit: "requests", value: 3 },
+  { id: "avg_recall_results", label: "Avg recall results", unit: "results", value: 2.5 },
+  { id: "promotions", label: "Promotions", unit: "promotions", value: 1 },
+  { id: "promotion_rate", label: "Promotion rate", unit: "percent", value: 50 },
+  { id: "avg_http_latency", label: "Avg HTTP latency", unit: "ms", value: 16.4 },
+  { id: "avg_embedding_latency", label: "Avg embedding latency", unit: "ms", value: 39.1 },
+  { id: "avg_verifier_latency", label: "Avg verifier latency", unit: "ms", value: 101.5 },
+  { id: "avg_claim_verify_latency", label: "Avg claim-to-verify", unit: "ms", value: 200 },
+  { id: "avg_claim_promotion_latency", label: "Avg claim-to-promote", unit: "ms", value: 300 },
+  { id: "avg_verify_promotion_latency", label: "Avg verify-to-promote", unit: "ms", value: 90 },
+  { id: "pending_claims", label: "Pending claims", unit: "claims", value: 4 },
+  { id: "validated_claims", label: "Validated claims", unit: "claims", value: 8 },
+  { id: "disputed_claims", label: "Disputed claims", unit: "claims", value: 0 },
+  { id: "revalidation_backlog", label: "Revalidation backlog", unit: "facts", value: 2 },
+];
+
+const telemetrySeries = [
+  { id: "http_rps", label: "HTTP requests", unit: "rps" },
+  { id: "http_errors_rps", label: "HTTP errors", unit: "rps" },
+  { id: "embedding_tokens", label: "Embedding tokens", unit: "tokens/s" },
+  { id: "verifier_tokens", label: "Verifier tokens", unit: "tokens/s" },
+  { id: "recalls", label: "Recall requests", unit: "requests/s" },
+  { id: "promotions", label: "Promotions", unit: "promotions/s" },
+  { id: "recall_results", label: "Recall results", unit: "results" },
+  { id: "claim_verify_latency", label: "Claim-to-verify", unit: "ms" },
+  { id: "claim_promotion_latency", label: "Claim-to-promote", unit: "ms" },
+  { id: "verify_promotion_latency", label: "Verify-to-promote", unit: "ms" },
+  { id: "pending_claims", label: "Pending claims", unit: "claims" },
+  { id: "validated_claims", label: "Validated claims", unit: "claims" },
+  { id: "disputed_claims", label: "Disputed claims", unit: "claims" },
+  { id: "revalidation_backlog", label: "Revalidation backlog", unit: "facts" },
+].map((series, index) => ({
+  ...series,
+  points: [
+    { timestamp: "2026-05-02T12:00:00Z", value: index / 20 },
+    { timestamp: "2026-05-02T13:00:00Z", value: index / 20 + 0.2 },
+  ],
+}));
+
 const telemetry = {
   available: true,
   window: {
@@ -101,21 +163,8 @@ const telemetry = {
     retention_days: 30,
   },
   scope: { type: "self", team_id: team.id, profile_id: readKey.id },
-  cards: [
-    { id: "http_requests", label: "HTTP requests", unit: "requests", value: 9 },
-    { id: "embedding_tokens", label: "Embedding tokens", unit: "tokens", value: 320 },
-  ],
-  series: [
-    {
-      id: "http_rps",
-      label: "HTTP requests",
-      unit: "rps",
-      points: [
-        { timestamp: "2026-05-02T12:00:00Z", value: 0.1 },
-        { timestamp: "2026-05-02T13:00:00Z", value: 0.2 },
-      ],
-    },
-  ],
+  cards: telemetryCards,
+  series: telemetrySeries,
 };
 
 test("API key login, recall, and read-only knowledge tabs", async ({ page }) => {
@@ -133,8 +182,14 @@ test("API key login, recall, and read-only knowledge tabs", async ({ page }) => 
   await expect(page.getByText("Dense-Mem").first()).toBeVisible();
 
   await page.getByRole("button", { name: "Usage" }).click();
-  await expect(page.getByLabel("Usage totals")).toContainText("HTTP requests");
-  await expect(page.getByLabel("Usage charts")).toContainText("HTTP requests");
+  const usageTotals = page.getByLabel("Usage totals");
+  for (const card of telemetryCards) {
+    await expect(usageTotals).toContainText(card.label);
+  }
+  const usageCharts = page.getByLabel("Usage charts");
+  for (const series of telemetrySeries) {
+    await expect(usageCharts).toContainText(series.label);
+  }
 
   await page.getByRole("button", { name: "Facts" }).click();
   await expect(page.getByText("works_on: project-x")).toBeVisible();
@@ -200,10 +255,45 @@ test("responsive user portal layout", async ({ page }) => {
   expect(shellMinHeight).toBeGreaterThanOrEqual((page.viewportSize()?.height ?? 0) - 1);
   await expect(page.locator(".control-sidebar")).toHaveCSS("border-radius", "8px");
   await expect(page.locator(".surface").first()).toHaveCSS("border-radius", "8px");
+  await expectNoShellOverlap(page);
 
   if ((page.viewportSize()?.width ?? 1000) < 700) {
     await expect(page.locator(".workspace")).toHaveCSS("grid-template-columns", /[0-9.]+px/);
   }
+});
+
+test("manager team page separates team editing from profile management", async ({ page }) => {
+  await mockUserApi(page, {
+    key: managerKey,
+    canManageTeam: true,
+    canRotate: true,
+    profiles: [managerKey, memberProfile],
+  });
+  await openUserPortal(page, "dm_manager");
+
+  await page.getByRole("button", { name: /^Team$/ }).click();
+  const surface = page.locator(".team-management-surface");
+  await expect(surface.getByRole("heading", { name: "Team" })).toBeVisible();
+  await expect(surface.getByRole("heading", { name: "Profiles" })).toBeVisible();
+
+  const spacing = await surface.evaluate((element) => {
+    const sections = Array.from(element.querySelectorAll(".surface-section"));
+    if (sections.length < 2) {
+      throw new Error("team management sections are missing");
+    }
+    const first = sections[0].getBoundingClientRect();
+    const second = sections[1].getBoundingClientRect();
+    const secondStyle = getComputedStyle(sections[1]);
+    return {
+      borderTopWidth: Number.parseFloat(secondStyle.borderTopWidth),
+      marginGap: second.top - first.bottom,
+      paddingTop: Number.parseFloat(secondStyle.paddingTop),
+    };
+  });
+  expect(spacing.marginGap).toBeGreaterThanOrEqual(18);
+  expect(spacing.paddingTop).toBeGreaterThanOrEqual(18);
+  expect(spacing.borderTopWidth).toBeGreaterThanOrEqual(1);
+  await expectNoShellOverlap(page);
 });
 
 async function openUserPortal(page: Page, apiKey: string) {
@@ -213,24 +303,107 @@ async function openUserPortal(page: Page, apiKey: string) {
   await expect(page.getByText("Research Team")).toBeVisible();
 }
 
-async function mockUserApi(page: Page, state: { key: TestKey; canRotate: boolean }) {
+async function expectNoShellOverlap(page: Page) {
+  const boxes = await page.locator(".topbar, .control-sidebar, .detail-pane").evaluateAll((elements) => (
+    elements.map((element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        className: element.className,
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+      };
+    })
+  ));
+  for (const box of boxes) {
+    expect(box.width).toBeGreaterThan(0);
+    expect(box.height).toBeGreaterThan(0);
+  }
+  for (let i = 0; i < boxes.length; i += 1) {
+    for (let j = i + 1; j < boxes.length; j += 1) {
+      expect(rectanglesOverlap(boxes[i], boxes[j]), `${boxes[i].className} overlaps ${boxes[j].className}`).toBe(false);
+    }
+  }
+}
+
+function rectanglesOverlap(
+  first: { left: number; top: number; right: number; bottom: number },
+  second: { left: number; top: number; right: number; bottom: number },
+) {
+  return first.left < second.right && first.right > second.left && first.top < second.bottom && first.bottom > second.top;
+}
+
+async function mockUserApi(
+  page: Page,
+  state: { key: TestKey; canRotate: boolean; canManageTeam?: boolean; profiles?: TestKey[] },
+) {
   const calls = {
     rotateBodies: [] as string[],
     disallowedProfileCalls: [] as string[],
   };
+  let currentTeam = { ...team };
   let currentKey = { ...state.key };
   let currentCanRotate = state.canRotate;
+  let currentProfiles = (state.profiles ?? []).map((profile) => ({ ...profile }));
 
   await page.route("**/api/v1/teams/**/profiles**", async (route) => {
+    if (state.canManageTeam) {
+      const request = route.request();
+      const url = new URL(request.url());
+      if (url.pathname === `/api/v1/teams/${currentTeam.id}/profiles` && request.method() === "GET") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            data: currentProfiles,
+            pagination: { limit: 50, offset: 0, total: currentProfiles.length },
+          }),
+        });
+        return;
+      }
+    }
     calls.disallowedProfileCalls.push(route.request().url());
     await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ message: "profile list must not be called" }) });
+  });
+
+  await page.route("**/api/v1/teams/*", async (route) => {
+    if (!state.canManageTeam) {
+      calls.disallowedProfileCalls.push(route.request().url());
+      await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ message: "team management must not be called" }) });
+      return;
+    }
+
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === `/api/v1/teams/${currentTeam.id}` && request.method() === "PATCH") {
+      const body = JSON.parse(request.postData() ?? "{}") as Partial<typeof team>;
+      currentTeam = {
+        ...currentTeam,
+        name: body.name ?? currentTeam.name,
+        description: body.description ?? currentTeam.description,
+      };
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: currentTeam }) });
+      return;
+    }
+
+    await route.fallback();
   });
 
   await page.route("**/ui/api/session", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ data: { team, key: currentKey, can_rotate: currentCanRotate } }),
+      body: JSON.stringify({
+        data: {
+          team: currentTeam,
+          key: currentKey,
+          can_rotate: currentCanRotate,
+          can_manage_team: state.canManageTeam ?? false,
+        },
+      }),
     });
   });
 
