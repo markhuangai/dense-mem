@@ -195,6 +195,7 @@ func main() {
 		StateTTL:            time.Duration(cfg.SSOStateTTLSeconds) * time.Second,
 		CookieSecure:        cfg.SSOCookieSecure,
 		HTTPClient:          &nethttp.Client{Timeout: time.Duration(cfg.SSOHTTPTimeoutSeconds) * time.Second},
+		HTTPTimeout:         time.Duration(cfg.SSOHTTPTimeoutSeconds) * time.Second,
 	})
 	rateLimitService := backend.rateLimitService
 
