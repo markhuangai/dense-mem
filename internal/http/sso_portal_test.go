@@ -144,8 +144,10 @@ func TestUserPortalSSOHandlers(t *testing.T) {
 		profileTwoID: &repo.teamProfiles[1].Profile,
 	}
 	handler := &userPortalHandler{
-		sso:              service.NewSSOService(repo, service.SSOConfig{Now: func() time.Time { return now }}),
-		ssoPublicBaseURL: "https://portal.example.com",
+		sso: service.NewSSOService(repo, service.SSOConfig{
+			PublicBaseURL: "https://portal.example.com",
+			Now:           func() time.Time { return now },
+		}),
 	}
 
 	c, rec := userSSOContext(nethttp.MethodGet, "/ui/api/sso/providers", "", "")
@@ -177,11 +179,11 @@ func TestUserPortalSSOHandlers(t *testing.T) {
 	req.Host = "internal.example"
 	req.Header.Set("X-Forwarded-Proto", "https")
 	req.Header.Set("X-Forwarded-Host", "public.example")
-	callbackURL, err := handler.ssoCallbackURL()
+	callbackURL, err := handler.ssoCallbackURL(c.Request().Context())
 	require.NoError(t, err)
 	require.Equal(t, "https://portal.example.com/ui/api/sso/callback", callbackURL)
-	handler.ssoPublicBaseURL = ""
-	_, err = handler.ssoCallbackURL()
+	handler.sso = service.NewSSOService(repo, service.SSOConfig{Now: func() time.Time { return now }})
+	_, err = handler.ssoCallbackURL(c.Request().Context())
 	require.ErrorContains(t, err, "sso public base url is not configured")
 }
 
@@ -237,7 +239,10 @@ func TestUserPortalSSOErrorBranches(t *testing.T) {
 	c.SetParamValues(providerID.String())
 	require.ErrorContains(t, handler.startSSO(c), "sso public base url is not configured")
 
-	handler.ssoPublicBaseURL = "https://portal.example.com"
+	handler.sso = service.NewSSOService(&httpSSORepoStub{
+		providers: map[uuid.UUID]*domain.SSOProvider{providerID: provider},
+		now:       now,
+	}, service.SSOConfig{PublicBaseURL: "https://portal.example.com", HTTPClient: discovery.Client(), Now: func() time.Time { return now }})
 	c, rec = userSSOContext(nethttp.MethodGet, "/ui/api/sso/start/"+providerID.String(), "", "")
 	c.SetParamNames("providerId")
 	c.SetParamValues(providerID.String())
@@ -453,11 +458,10 @@ func TestUserPortalPublicSSOStartIsRateLimited(t *testing.T) {
 	}
 	e := NewServer(*cfg, nil, HealthConfig{})
 	RegisterUserPortal(e, UserPortalDeps{
-		APIKeyRepo:       &userPortalAuthRepo{},
-		RateLimitSvc:     service.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
-		SSOService:       service.NewSSOService(&httpSSORepoStub{}, service.SSOConfig{}),
-		SSOPublicBaseURL: "https://portal.example.com",
-		Config:           cfg,
+		APIKeyRepo:   &userPortalAuthRepo{},
+		RateLimitSvc: service.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
+		SSOService:   service.NewSSOService(&httpSSORepoStub{}, service.SSOConfig{PublicBaseURL: "https://portal.example.com"}),
+		Config:       cfg,
 	})
 
 	target := "/ui/api/sso/start/" + uuid.NewString()

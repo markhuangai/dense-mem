@@ -192,6 +192,25 @@ export type SSOGroupMappingInput = {
   enabled: boolean;
 };
 
+export type SSOConfigItem = {
+  key: string;
+  value: string;
+  effective_value: string;
+  updated_at: string;
+};
+
+export type SSOConfig = {
+  update_time: string;
+  items: SSOConfigItem[];
+};
+
+export type SSOConfigInput = {
+  items: Array<{
+    key: string;
+    value: string;
+  }>;
+};
+
 export class ApiError extends Error {
   status: number;
 
@@ -337,6 +356,14 @@ export class ControlApi {
 
   deleteSSOGroupMapping(providerId: string, mappingId: string): Promise<{ status: string }> {
     return this.requestEnvelope<{ status: string }>(`/sso/providers/${providerId}/mappings/${mappingId}`, { method: "DELETE" });
+  }
+
+  getSSOConfig(): Promise<SSOConfig> {
+    return this.requestEnvelope<SSOConfig>("/config/sso");
+  }
+
+  updateSSOConfig(input: SSOConfigInput): Promise<SSOConfig> {
+    return this.requestEnvelope<SSOConfig>("/config/sso", { method: "PATCH", body: input });
   }
 
   private async requestEnvelope<T>(path: string, options: RequestOptions = {}): Promise<T> {

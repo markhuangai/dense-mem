@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -25,29 +26,27 @@ import (
 
 // UserPortalDeps holds the dependencies for the API-key user portal.
 type UserPortalDeps struct {
-	APIKeyRepo       repository.APIKeyRepository
-	ProfileSvc       handler.ProfileServiceInterface
-	APIKeySvc        handler.APIKeyServiceInterface
-	RateLimitSvc     service.RateLimitServiceInterface
-	UsageMetrics     service.UsageMetricsRecorder
-	Telemetry        service.TelemetryReader
-	AuditSvc         service.AuditService
-	SecuritySvc      httpmw.SecurityBanService
-	SSOService       *service.SSOService
-	SSOPublicBaseURL string
-	Config           config.ConfigProvider
-	UserStaticDir    string
-	ExtraMiddleware  []echo.MiddlewareFunc
+	APIKeyRepo      repository.APIKeyRepository
+	ProfileSvc      handler.ProfileServiceInterface
+	APIKeySvc       handler.APIKeyServiceInterface
+	RateLimitSvc    service.RateLimitServiceInterface
+	UsageMetrics    service.UsageMetricsRecorder
+	Telemetry       service.TelemetryReader
+	AuditSvc        service.AuditService
+	SecuritySvc     httpmw.SecurityBanService
+	SSOService      *service.SSOService
+	Config          config.ConfigProvider
+	UserStaticDir   string
+	ExtraMiddleware []echo.MiddlewareFunc
 }
 
 // RegisterUserPortal registers the API-key user portal under /ui on the main API server.
 func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	portal := &userPortalHandler{
-		profiles:         deps.ProfileSvc,
-		keys:             deps.APIKeySvc,
-		telemetry:        deps.Telemetry,
-		sso:              deps.SSOService,
-		ssoPublicBaseURL: strings.TrimRight(strings.TrimSpace(deps.SSOPublicBaseURL), "/"),
+		profiles:  deps.ProfileSvc,
+		keys:      deps.APIKeySvc,
+		telemetry: deps.Telemetry,
+		sso:       deps.SSOService,
 	}
 
 	if deps.SSOService != nil {
@@ -85,11 +84,10 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 }
 
 type userPortalHandler struct {
-	profiles         handler.ProfileServiceInterface
-	keys             handler.APIKeyServiceInterface
-	telemetry        service.TelemetryReader
-	sso              *service.SSOService
-	ssoPublicBaseURL string
+	profiles  handler.ProfileServiceInterface
+	keys      handler.APIKeyServiceInterface
+	telemetry service.TelemetryReader
+	sso       *service.SSOService
 }
 
 type userPortalSessionResponse struct {
@@ -313,7 +311,7 @@ func (h *userPortalHandler) startSSO(c echo.Context) error {
 	if err != nil {
 		return httperr.New(httperr.INVALID_UUID, "invalid sso provider ID format")
 	}
-	callbackURL, err := h.ssoCallbackURL()
+	callbackURL, err := h.ssoCallbackURL(c.Request().Context())
 	if err != nil {
 		return err
 	}
@@ -331,7 +329,7 @@ func (h *userPortalHandler) completeSSO(c echo.Context) error {
 	if errText := strings.TrimSpace(c.QueryParam("error")); errText != "" {
 		return httperr.New(httperr.AUTH_INVALID, "sso login failed")
 	}
-	callbackURL, err := h.ssoCallbackURL()
+	callbackURL, err := h.ssoCallbackURL(c.Request().Context())
 	if err != nil {
 		return err
 	}
@@ -339,8 +337,9 @@ func (h *userPortalHandler) completeSSO(c echo.Context) error {
 	if err != nil {
 		return userPortalSSOError(err)
 	}
-	setSSOCookie(c, service.SSOSessionCookieName, result.SessionToken, true, result.Session.ExpiresAt, h.sso.CookieSecure())
-	setSSOCookie(c, service.SSOCSRFCookieName, result.CSRFToken, false, result.Session.ExpiresAt, h.sso.CookieSecure())
+	cookieSecure := h.sso.CookieSecure(c.Request().Context())
+	setSSOCookie(c, service.SSOSessionCookieName, result.SessionToken, true, result.Session.ExpiresAt, cookieSecure)
+	setSSOCookie(c, service.SSOCSRFCookieName, result.CSRFToken, false, result.Session.ExpiresAt, cookieSecure)
 	return c.Redirect(nethttp.StatusFound, result.RedirectPath)
 }
 
@@ -446,9 +445,16 @@ func userPortalHasScope(scopes []string, required string) bool {
 	return false
 }
 
-func (h *userPortalHandler) ssoCallbackURL() (string, error) {
-	if h.ssoPublicBaseURL != "" {
-		return h.ssoPublicBaseURL + "/ui/api/sso/callback", nil
+func (h *userPortalHandler) ssoCallbackURL(ctx context.Context) (string, error) {
+	if h.sso == nil {
+		return "", httperr.New(httperr.SERVICE_UNAVAILABLE, "sso is not configured")
+	}
+	baseURL, err := h.sso.PublicBaseURL(ctx)
+	if err != nil {
+		return "", err
+	}
+	if baseURL != "" {
+		return baseURL + "/ui/api/sso/callback", nil
 	}
 	return "", httperr.New(httperr.SERVICE_UNAVAILABLE, "sso public base url is not configured")
 }

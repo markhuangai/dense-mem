@@ -59,9 +59,10 @@ func TestSSOBeginLoginCreatesOAuthState(t *testing.T) {
 		},
 	}
 	svc := NewSSOService(repo, SSOConfig{
-		HTTPClient: oidcServer.Client(),
-		StateTTL:   time.Minute,
-		Now:        func() time.Time { return now },
+		HTTPClient:    oidcServer.Client(),
+		StateTTL:      time.Minute,
+		RuntimeConfig: ssoRuntimeConfigStub{cfg: SSORuntimeConfig{StateTTL: 2 * time.Minute}},
+		Now:           func() time.Time { return now },
 	})
 
 	start, err := svc.BeginLogin(context.Background(), providerID, "https://app.example.com/ui/api/sso/callback", "//evil.example")
@@ -71,7 +72,7 @@ func TestSSOBeginLoginCreatesOAuthState(t *testing.T) {
 	require.Len(t, repo.oauthStates, 1)
 	assert.Equal(t, providerID, repo.oauthStates[0].ProviderID)
 	assert.Equal(t, "/ui", repo.oauthStates[0].RedirectPath)
-	assert.Equal(t, now.Add(time.Minute), repo.oauthStates[0].ExpiresAt)
+	assert.Equal(t, now.Add(2*time.Minute), repo.oauthStates[0].ExpiresAt)
 	assert.NotEmpty(t, repo.oauthStates[0].PKCEVerifier)
 	assert.NotEmpty(t, repo.oauthStates[0].Nonce)
 
@@ -86,6 +87,18 @@ func TestSSOBeginLoginCreatesOAuthState(t *testing.T) {
 	assert.NotEmpty(t, query.Get("state"))
 	assert.NotEmpty(t, query.Get("nonce"))
 	assert.Contains(t, strings.Fields(query.Get("scope")), "openid")
+}
+
+type ssoRuntimeConfigStub struct {
+	cfg SSORuntimeConfig
+	err error
+}
+
+func (s ssoRuntimeConfigStub) SSORuntimeConfig(context.Context) (SSORuntimeConfig, error) {
+	if s.err != nil {
+		return SSORuntimeConfig{}, s.err
+	}
+	return s.cfg, nil
 }
 
 func TestSSOBeginLoginFailsWhenExpiredStateCleanupFails(t *testing.T) {
@@ -391,8 +404,17 @@ func TestSSOProviderAndMappingManagement(t *testing.T) {
 	repo.providerList = []*domain.SSOProvider{repo.providers[providerID]}
 	svc := NewSSOService(repo, SSOConfig{})
 
-	assert.False(t, (*SSOService)(nil).CookieSecure())
-	assert.True(t, NewSSOService(repo, SSOConfig{CookieSecure: true}).CookieSecure())
+	assert.False(t, (*SSOService)(nil).CookieSecure(ctx))
+	assert.True(t, NewSSOService(repo, SSOConfig{CookieSecure: true}).CookieSecure(ctx))
+	publicBaseURL, err := NewSSOService(repo, SSOConfig{PublicBaseURL: "https://portal.example.com/"}).PublicBaseURL(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "https://portal.example.com", publicBaseURL)
+
+	runtimeErrSvc := NewSSOService(repo, SSOConfig{
+		RuntimeConfig: ssoRuntimeConfigStub{err: errors.New("config unavailable")},
+	})
+	_, err = runtimeErrSvc.PublicBaseURL(ctx)
+	require.ErrorContains(t, err, "config unavailable")
 
 	allProviders, err := svc.ListProviders(ctx)
 	require.NoError(t, err)

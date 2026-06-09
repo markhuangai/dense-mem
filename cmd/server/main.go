@@ -169,6 +169,7 @@ func main() {
 	profileRepo := repository.NewProfileRepository(pgDB.GetDB(), rlsHelper)
 	apiKeyRepo := repository.NewAPIKeyRepository(pgDB.GetDB(), rlsHelper)
 	ssoRepo := repository.NewSSORepository(pgDB.GetDB(), rlsHelper)
+	appConfigRepo := repository.NewAppConfigRepository(pgDB.GetDB(), rlsHelper)
 	securityRepo := repository.NewSecurityRepository(pgDB.GetDB(), rlsHelper)
 	usageMetricsRepo := repository.NewUsageMetricsRepository(pgDB.GetDB(), rlsHelper)
 	skillPackImportRepo := repository.NewSkillPackImportRepository(pgDB.GetDB(), rlsHelper)
@@ -183,6 +184,7 @@ func main() {
 	// Service layer
 	// ========================================
 	auditService := service.NewAuditService(pgDB.GetDB())
+	appConfigService := service.NewAppConfigService(appConfigRepo, auditService)
 	securityService := service.NewSecurityService(securityRepo, auditService)
 	usageMetricsService := service.NewUsageMetricsService(usageMetricsRepo, logger)
 	usageMetricsService.Start(context.Background())
@@ -190,12 +192,7 @@ func main() {
 	profileService := service.NewProfileServiceWithDataPurger(profileRepo, auditService, backend.cleanupRepo, profileDataPurger)
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, profileService, auditService, backend.cleanupRepo, backend.cleanupRepo)
 	ssoService := service.NewSSOService(ssoRepo, service.SSOConfig{
-		EntitlementCacheTTL: time.Duration(cfg.SSOEntitlementCacheTTLSeconds) * time.Second,
-		SessionTTL:          time.Duration(cfg.SSOSessionTTLSeconds) * time.Second,
-		StateTTL:            time.Duration(cfg.SSOStateTTLSeconds) * time.Second,
-		CookieSecure:        cfg.SSOCookieSecure,
-		HTTPClient:          &nethttp.Client{Timeout: time.Duration(cfg.SSOHTTPTimeoutSeconds) * time.Second},
-		HTTPTimeout:         time.Duration(cfg.SSOHTTPTimeoutSeconds) * time.Second,
+		RuntimeConfig: appConfigService,
 	})
 	rateLimitService := backend.rateLimitService
 
@@ -575,17 +572,16 @@ func main() {
 
 	http.RegisterProtectedRoutesWithHandlers(e, protectedDeps, protectedHandlers)
 	userPortalDeps := http.UserPortalDeps{
-		APIKeyRepo:       apiKeyRepo,
-		ProfileSvc:       profileService,
-		APIKeySvc:        apiKeyService,
-		RateLimitSvc:     rateLimitService,
-		UsageMetrics:     usageMetricsService,
-		Telemetry:        telemetryReader,
-		AuditSvc:         auditService,
-		SecuritySvc:      securityService,
-		SSOService:       ssoService,
-		SSOPublicBaseURL: cfg.SSOPublicBaseURL,
-		Config:           &cfg,
+		APIKeyRepo:   apiKeyRepo,
+		ProfileSvc:   profileService,
+		APIKeySvc:    apiKeyService,
+		RateLimitSvc: rateLimitService,
+		UsageMetrics: usageMetricsService,
+		Telemetry:    telemetryReader,
+		AuditSvc:     auditService,
+		SecuritySvc:  securityService,
+		SSOService:   ssoService,
+		Config:       &cfg,
 	}
 	if telemetryHTTPMetrics != nil {
 		userPortalDeps.ExtraMiddleware = append(userPortalDeps.ExtraMiddleware, middleware.TelemetryHTTPMiddleware(telemetryHTTPMetrics))
@@ -602,6 +598,7 @@ func main() {
 			ScrapeHandler: telemetryScrapeHandler,
 			ScrapeToken:   cfg.GetTelemetryScrapeToken(),
 			SSO:           ssoService,
+			Config:        appConfigService,
 		},
 		healthConfig,
 		logger,

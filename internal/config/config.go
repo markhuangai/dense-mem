@@ -81,30 +81,24 @@ type Config struct {
 	AIEmbeddingDimensions           int
 	AIEmbeddingTimeoutSeconds       int
 	// Knowledge-pipeline knobs (AC-X3)
-	AIVerifierAPIURL              string
-	AIVerifierAPIKey              string `json:"-"`
-	AIVerifierModel               string
-	AIVerifierTimeoutSeconds      int
-	AIVerifierMaxConcurrency      int
-	ClaimWriteRateLimit           int
-	ClaimReadRateLimit            int
-	RecallValidatedClaimWeight    float64
-	PromoteTxTimeoutSeconds       int
-	SkillPackImportHistoryDays    int
-	AICommunityMaxNodes           int
-	ControlHTTPAddr               string
-	ControlPortalToken            string `json:"-"`
-	TelemetryEnabled              bool
-	TelemetryPrometheusURL        string
-	TelemetryPrometheusJob        string
-	TelemetryQueryTimeoutSeconds  int
-	TelemetryScrapeToken          string `json:"-"`
-	SSOPublicBaseURL              string
-	SSOEntitlementCacheTTLSeconds int
-	SSOSessionTTLSeconds          int
-	SSOStateTTLSeconds            int
-	SSOHTTPTimeoutSeconds         int
-	SSOCookieSecure               bool
+	AIVerifierAPIURL             string
+	AIVerifierAPIKey             string `json:"-"`
+	AIVerifierModel              string
+	AIVerifierTimeoutSeconds     int
+	AIVerifierMaxConcurrency     int
+	ClaimWriteRateLimit          int
+	ClaimReadRateLimit           int
+	RecallValidatedClaimWeight   float64
+	PromoteTxTimeoutSeconds      int
+	SkillPackImportHistoryDays   int
+	AICommunityMaxNodes          int
+	ControlHTTPAddr              string
+	ControlPortalToken           string `json:"-"`
+	TelemetryEnabled             bool
+	TelemetryPrometheusURL       string
+	TelemetryPrometheusJob       string
+	TelemetryQueryTimeoutSeconds int
+	TelemetryScrapeToken         string `json:"-"`
 }
 
 // Ensure Config implements ConfigProvider
@@ -432,28 +426,6 @@ func Load() (Config, error) {
 		return cfg, err
 	}
 	cfg.TelemetryScrapeToken = os.Getenv("TELEMETRY_SCRAPE_TOKEN")
-	cfg.SSOPublicBaseURL = strings.TrimRight(strings.TrimSpace(os.Getenv("SSO_PUBLIC_BASE_URL")), "/")
-	cfg.SSOEntitlementCacheTTLSeconds, err = parseIntOrDefault("SSO_ENTITLEMENT_CACHE_TTL_SECONDS", 300)
-	if err != nil {
-		return cfg, err
-	}
-	cfg.SSOSessionTTLSeconds, err = parseIntOrDefault("SSO_SESSION_TTL_SECONDS", 28800)
-	if err != nil {
-		return cfg, err
-	}
-	cfg.SSOStateTTLSeconds, err = parseIntOrDefault("SSO_STATE_TTL_SECONDS", 600)
-	if err != nil {
-		return cfg, err
-	}
-	cfg.SSOHTTPTimeoutSeconds, err = parseIntOrDefault("SSO_HTTP_TIMEOUT_SECONDS", 10)
-	if err != nil {
-		return cfg, err
-	}
-	cfg.SSOCookieSecure, err = parseBoolOrDefault("SSO_COOKIE_SECURE", false)
-	if err != nil {
-		return cfg, err
-	}
-
 	// Validation
 	if cfg.PostgresDSN == "" {
 		return cfg, &ValidationError{
@@ -511,10 +483,6 @@ func Load() (Config, error) {
 		{"SKILL_PACK_IMPORT_HISTORY_DAYS", cfg.SkillPackImportHistoryDays},
 		{"AI_COMMUNITY_MAX_NODES", cfg.AICommunityMaxNodes},
 		{"TELEMETRY_QUERY_TIMEOUT_SECONDS", cfg.TelemetryQueryTimeoutSeconds},
-		{"SSO_ENTITLEMENT_CACHE_TTL_SECONDS", cfg.SSOEntitlementCacheTTLSeconds},
-		{"SSO_SESSION_TTL_SECONDS", cfg.SSOSessionTTLSeconds},
-		{"SSO_STATE_TTL_SECONDS", cfg.SSOStateTTLSeconds},
-		{"SSO_HTTP_TIMEOUT_SECONDS", cfg.SSOHTTPTimeoutSeconds},
 	}
 
 	for _, field := range numericFields {

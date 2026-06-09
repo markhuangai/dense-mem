@@ -10,6 +10,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Settings,
   ShieldCheck,
   Sun,
   Trash2,
@@ -26,6 +27,7 @@ import {
 import { MetricsPanel } from "./control/MetricsPanel";
 import { SecurityPanel } from "./control/SecurityPanel";
 import { SSOPanel } from "./control/SSOPanel";
+import { ConfigPanel } from "./control/ConfigPanel";
 import { displayKeySuffix, formatDate, profilePermissionLabel, profileRoleLabel, readError, shortId } from "./control/utils";
 import { AuthShell, PortalShell, SectionHeading } from "./ui/components";
 
@@ -34,7 +36,7 @@ const THEME_STORAGE_KEY = "denseMem.controlTheme";
 
 type LoadState = "idle" | "loading" | "error";
 type Theme = "light" | "dark";
-type PortalTab = "teams" | "metrics" | "profiles" | "security" | "sso";
+type PortalTab = "teams" | "metrics" | "profiles" | "security" | "sso" | "config";
 type ProfilePermission = "read" | "read_write";
 
 export function App() {
@@ -220,6 +222,13 @@ function Portal({
           active: activeTab === "sso",
           onClick: () => setActiveTab("sso"),
         },
+        {
+          id: "config",
+          label: "Config",
+          icon: <Settings size={17} aria-hidden="true" />,
+          active: activeTab === "config",
+          onClick: () => setActiveTab("config"),
+        },
       ]}
       sidebarTitle="Teams"
       sidebarMeta={teams.length}
@@ -260,6 +269,7 @@ function Portal({
       {activeTab === "metrics" && <MetricsPanel api={api} teams={teams} />}
       {activeTab === "security" && <SecurityPanel api={api} />}
       {activeTab === "sso" && <SSOPanel api={api} teams={teams} />}
+      {activeTab === "config" && <ConfigPanel api={api} />}
     </PortalShell>
   );
 }

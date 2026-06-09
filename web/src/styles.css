@@ -260,6 +260,16 @@ button {
   cursor: not-allowed;
 }
 
+.config-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.config-tabs .tab-button {
+  width: auto;
+  border: 1px solid var(--border);
+}
+
 .danger-icon {
   color: var(--danger);
 }
@@ -490,6 +500,12 @@ button:disabled {
 .field-error {
   margin: 0;
   font-size: 13px;
+  line-height: 1.35;
+}
+
+.form-meta {
+  color: var(--muted);
+  font-size: 12px;
   line-height: 1.35;
 }
 

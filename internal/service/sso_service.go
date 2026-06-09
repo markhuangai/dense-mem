@@ -43,6 +43,19 @@ type SSOGroupResolver interface {
 	ResolveGroups(ctx context.Context, provider domain.SSOProvider, subject, accessToken string) ([]string, error)
 }
 
+type SSORuntimeConfigProvider interface {
+	SSORuntimeConfig(ctx context.Context) (SSORuntimeConfig, error)
+}
+
+type SSORuntimeConfig struct {
+	PublicBaseURL       string
+	EntitlementCacheTTL time.Duration
+	SessionTTL          time.Duration
+	StateTTL            time.Duration
+	CookieSecure        bool
+	HTTPTimeout         time.Duration
+}
+
 type SSOConfig struct {
 	PublicBaseURL       string
 	EntitlementCacheTTL time.Duration
@@ -52,17 +65,15 @@ type SSOConfig struct {
 	HTTPClient          *http.Client
 	HTTPTimeout         time.Duration
 	GroupResolver       SSOGroupResolver
+	RuntimeConfig       SSORuntimeConfigProvider
 	Now                 func() time.Time
 }
 
 type SSOService struct {
 	repo                repository.SSORepository
-	entitlementCacheTTL time.Duration
-	sessionTTL          time.Duration
-	stateTTL            time.Duration
-	cookieSecure        bool
+	defaultRuntime      SSORuntimeConfig
+	runtimeConfigSource SSORuntimeConfigProvider
 	httpClient          *http.Client
-	httpTimeout         time.Duration
 	groupResolver       SSOGroupResolver
 	now                 func() time.Time
 }
@@ -87,49 +98,46 @@ type SSOSessionInfo struct {
 }
 
 func NewSSOService(repo repository.SSORepository, cfg SSOConfig) *SSOService {
-	entitlementTTL := cfg.EntitlementCacheTTL
-	if entitlementTTL <= 0 {
-		entitlementTTL = DefaultSSOEntitlementCacheTTL
-	}
-	sessionTTL := cfg.SessionTTL
-	if sessionTTL <= 0 {
-		sessionTTL = DefaultSSOSessionTTL
-	}
-	stateTTL := cfg.StateTTL
-	if stateTTL <= 0 {
-		stateTTL = DefaultSSOStateTTL
-	}
-	httpTimeout := cfg.HTTPTimeout
-	if httpTimeout <= 0 {
-		httpTimeout = DefaultSSOHTTPTimeout
-	}
-	httpClient := boundedSSOHTTPClient(cfg.HTTPClient, httpTimeout)
+	defaultRuntime := normalizeSSORuntimeConfig(SSORuntimeConfig{
+		PublicBaseURL:       cfg.PublicBaseURL,
+		EntitlementCacheTTL: cfg.EntitlementCacheTTL,
+		SessionTTL:          cfg.SessionTTL,
+		StateTTL:            cfg.StateTTL,
+		CookieSecure:        cfg.CookieSecure,
+		HTTPTimeout:         cfg.HTTPTimeout,
+	})
+	httpClient := boundedSSOHTTPClient(cfg.HTTPClient, defaultRuntime.HTTPTimeout)
 	now := cfg.Now
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	resolver := cfg.GroupResolver
-	if resolver == nil {
-		resolver = &HTTPSSOGroupResolver{HTTPClient: httpClient}
-	}
 	return &SSOService{
 		repo:                repo,
-		entitlementCacheTTL: entitlementTTL,
-		sessionTTL:          sessionTTL,
-		stateTTL:            stateTTL,
-		cookieSecure:        cfg.CookieSecure,
+		defaultRuntime:      defaultRuntime,
+		runtimeConfigSource: cfg.RuntimeConfig,
 		httpClient:          httpClient,
-		httpTimeout:         httpTimeout,
-		groupResolver:       resolver,
+		groupResolver:       cfg.GroupResolver,
 		now:                 now,
 	}
 }
 
-func (s *SSOService) CookieSecure() bool {
+func (s *SSOService) CookieSecure(ctx context.Context) bool {
 	if s == nil {
 		return false
 	}
-	return s.cookieSecure
+	cfg, err := s.runtimeConfig(ctx)
+	if err != nil {
+		return s.defaultRuntime.CookieSecure
+	}
+	return cfg.CookieSecure
+}
+
+func (s *SSOService) PublicBaseURL(ctx context.Context) (string, error) {
+	cfg, err := s.runtimeConfig(ctx)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/"), nil
 }
 
 func (s *SSOService) ListEnabledProviders(ctx context.Context) ([]*domain.SSOProvider, error) {
@@ -235,6 +243,10 @@ func (s *SSOService) BeginLogin(ctx context.Context, providerID uuid.UUID, callb
 	if s == nil || s.repo == nil {
 		return nil, ErrSSOProviderDisabled
 	}
+	runtime, err := s.runtimeConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
 	provider, err := s.repo.GetProvider(ctx, providerID)
 	if err != nil {
 		return nil, err
@@ -246,7 +258,7 @@ func (s *SSOService) BeginLogin(ctx context.Context, providerID uuid.UUID, callb
 		return nil, err
 	}
 
-	providerCtx, cancel := s.providerContext(ctx)
+	providerCtx, cancel := s.providerContext(ctx, runtime)
 	defer cancel()
 	oidcProvider, oauthConfig, err := s.oauthConfig(providerCtx, *provider, callbackURL)
 	if err != nil {
@@ -272,7 +284,7 @@ func (s *SSOService) BeginLogin(ctx context.Context, providerID uuid.UUID, callb
 		PKCEVerifier: pkceVerifier,
 		Nonce:        nonce,
 		RedirectPath: safeRedirectPath(redirectPath),
-		ExpiresAt:    s.now().Add(s.stateTTL),
+		ExpiresAt:    s.now().Add(runtime.StateTTL),
 		CreatedAt:    s.now(),
 	}
 	if err := s.repo.CreateOAuthState(ctx, state); err != nil {
@@ -292,6 +304,10 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 	if s == nil || s.repo == nil {
 		return nil, ErrSSOProviderDisabled
 	}
+	runtime, err := s.runtimeConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
 	state, err := s.repo.ConsumeOAuthState(ctx, HashSSOToken(stateToken))
 	if err != nil {
 		return nil, err
@@ -308,7 +324,7 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 		return nil, ErrSSOProviderDisabled
 	}
 
-	providerCtx, cancel := s.providerContext(ctx)
+	providerCtx, cancel := s.providerContext(ctx, runtime)
 	defer cancel()
 	oidcProvider, oauthConfig, err := s.oauthConfig(providerCtx, *provider, callbackURL)
 	if err != nil {
@@ -338,7 +354,7 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 		claims.Subject = idToken.Subject
 	}
 	if len(claims.Groups) == 0 {
-		claims.Groups, err = s.groupResolver.ResolveGroups(providerCtx, *provider, claims.Subject, token.AccessToken)
+		claims.Groups, err = s.resolveGroups(providerCtx, runtime, *provider, claims.Subject, token.AccessToken)
 		if err != nil {
 			return nil, ErrSSOAccessDenied
 		}
@@ -350,7 +366,7 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 	}
 	entitlements, err := s.entitlementsFromMappings(provider.ID, claims.Subject, mappings)
 	if err != nil {
-		_ = s.storeEntitlementCache(ctx, provider.ID, claims.Subject, claims.Groups, "denied", "")
+		_ = s.storeEntitlementCacheWithTTL(ctx, runtime.EntitlementCacheTTL, provider.ID, claims.Subject, claims.Groups, "denied", "")
 		return nil, err
 	}
 
@@ -376,7 +392,7 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 		}
 		activeByProfileID[profile.ID] = struct{}{}
 	}
-	if err := s.storeEntitlementCache(ctx, provider.ID, claims.Subject, claims.Groups, "active", ""); err != nil {
+	if err := s.storeEntitlementCacheWithTTL(ctx, runtime.EntitlementCacheTTL, provider.ID, claims.Subject, claims.Groups, "active", ""); err != nil {
 		return nil, err
 	}
 
@@ -403,7 +419,7 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 		TeamProfileID: selected.Profile.ID,
 		TeamID:        selected.Team.ID,
 		CSRFHash:      HashSSOToken(csrfToken),
-		ExpiresAt:     now.Add(s.sessionTTL),
+		ExpiresAt:     now.Add(runtime.SessionTTL),
 		CreatedAt:     now,
 		LastSeenAt:    now,
 	}
@@ -538,11 +554,15 @@ func (s *SSOService) ValidateAPIKeyPrincipal(ctx context.Context, key *domain.AP
 	}
 	now := s.now()
 	if cache == nil || cache.ExpiresAt.Before(now) || cache.ExpiresAt.Equal(now) {
-		providerCtx, cancel := s.providerContext(ctx)
-		groups, refreshErr := s.groupResolver.ResolveGroups(providerCtx, *provider, key.SSOSubject, "")
+		runtime, err := s.runtimeConfig(ctx)
+		if err != nil {
+			return nil, err
+		}
+		providerCtx, cancel := s.providerContext(ctx, runtime)
+		groups, refreshErr := s.resolveGroups(providerCtx, runtime, *provider, key.SSOSubject, "")
 		cancel()
 		if refreshErr != nil {
-			_ = s.storeEntitlementCache(ctx, provider.ID, key.SSOSubject, nil, "error", refreshErr.Error())
+			_ = s.storeEntitlementCacheWithTTL(ctx, runtime.EntitlementCacheTTL, provider.ID, key.SSOSubject, nil, "error", refreshErr.Error())
 			return nil, ErrSSOEntitlementRefreshStale
 		}
 		cache = &domain.SSOEntitlementCache{
@@ -551,7 +571,7 @@ func (s *SSOService) ValidateAPIKeyPrincipal(ctx context.Context, key *domain.AP
 			Groups:     groups,
 			Status:     "active",
 			CheckedAt:  now,
-			ExpiresAt:  now.Add(s.entitlementCacheTTL),
+			ExpiresAt:  now.Add(runtime.EntitlementCacheTTL),
 		}
 		mappings, err := s.repo.ListMappingsForGroups(ctx, provider.ID, groups)
 		if err != nil {
@@ -607,20 +627,20 @@ func (s *SSOService) oauthConfig(ctx context.Context, provider domain.SSOProvide
 	}, nil
 }
 
-func (s *SSOService) providerContext(ctx context.Context) (context.Context, context.CancelFunc) {
+func (s *SSOService) providerContext(ctx context.Context, runtime SSORuntimeConfig) (context.Context, context.CancelFunc) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if s != nil && s.httpClient != nil {
-		ctx = context.WithValue(ctx, oauth2.HTTPClient, s.httpClient)
+	if s != nil {
+		ctx = context.WithValue(ctx, oauth2.HTTPClient, boundedSSOHTTPClient(s.httpClient, runtime.HTTPTimeout))
 	}
-	if s == nil || s.httpTimeout <= 0 {
+	if runtime.HTTPTimeout <= 0 {
 		return ctx, func() {}
 	}
 	if _, ok := ctx.Deadline(); ok {
 		return ctx, func() {}
 	}
-	return context.WithTimeout(ctx, s.httpTimeout)
+	return context.WithTimeout(ctx, runtime.HTTPTimeout)
 }
 
 func boundedSSOHTTPClient(client *http.Client, timeout time.Duration) *http.Client {
@@ -708,6 +728,14 @@ func (s *SSOService) currentEntitledTeams(ctx context.Context, identityID uuid.U
 }
 
 func (s *SSOService) storeEntitlementCache(ctx context.Context, providerID uuid.UUID, subject string, groups []string, status, message string) error {
+	runtime, err := s.runtimeConfig(ctx)
+	if err != nil {
+		return err
+	}
+	return s.storeEntitlementCacheWithTTL(ctx, runtime.EntitlementCacheTTL, providerID, subject, groups, status, message)
+}
+
+func (s *SSOService) storeEntitlementCacheWithTTL(ctx context.Context, ttl time.Duration, providerID uuid.UUID, subject string, groups []string, status, message string) error {
 	now := s.now()
 	return s.repo.SetEntitlementCache(ctx, domain.SSOEntitlementCache{
 		ProviderID: providerID,
@@ -715,7 +743,45 @@ func (s *SSOService) storeEntitlementCache(ctx context.Context, providerID uuid.
 		Groups:     dedupeStrings(groups),
 		Status:     status,
 		CheckedAt:  now,
-		ExpiresAt:  now.Add(s.entitlementCacheTTL),
+		ExpiresAt:  now.Add(ttl),
 		Error:      message,
 	})
+}
+
+func (s *SSOService) runtimeConfig(ctx context.Context) (SSORuntimeConfig, error) {
+	if s == nil {
+		return normalizeSSORuntimeConfig(SSORuntimeConfig{}), nil
+	}
+	if s.runtimeConfigSource == nil {
+		return s.defaultRuntime, nil
+	}
+	cfg, err := s.runtimeConfigSource.SSORuntimeConfig(ctx)
+	if err != nil {
+		return SSORuntimeConfig{}, err
+	}
+	return normalizeSSORuntimeConfig(cfg), nil
+}
+
+func normalizeSSORuntimeConfig(cfg SSORuntimeConfig) SSORuntimeConfig {
+	cfg.PublicBaseURL = strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/")
+	if cfg.EntitlementCacheTTL <= 0 {
+		cfg.EntitlementCacheTTL = DefaultSSOEntitlementCacheTTL
+	}
+	if cfg.SessionTTL <= 0 {
+		cfg.SessionTTL = DefaultSSOSessionTTL
+	}
+	if cfg.StateTTL <= 0 {
+		cfg.StateTTL = DefaultSSOStateTTL
+	}
+	if cfg.HTTPTimeout <= 0 {
+		cfg.HTTPTimeout = DefaultSSOHTTPTimeout
+	}
+	return cfg
+}
+
+func (s *SSOService) resolveGroups(ctx context.Context, runtime SSORuntimeConfig, provider domain.SSOProvider, subject, accessToken string) ([]string, error) {
+	if s.groupResolver != nil {
+		return s.groupResolver.ResolveGroups(ctx, provider, subject, accessToken)
+	}
+	return (&HTTPSSOGroupResolver{HTTPClient: boundedSSOHTTPClient(s.httpClient, runtime.HTTPTimeout)}).ResolveGroups(ctx, provider, subject, accessToken)
 }
