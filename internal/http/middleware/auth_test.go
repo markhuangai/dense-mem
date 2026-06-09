@@ -649,6 +649,70 @@ func TestAuthMiddleware_SSOSessionAuthenticatesWithoutAuthorizationHeader(t *tes
 	assert.Equal(t, providerID, *capturedPrincipal.SSOProviderID)
 }
 
+func TestAuthMiddleware_SSOSessionRequiresCSRFHeaderForUnsafeMethods(t *testing.T) {
+	e := newTestEcho()
+	authenticator := mockSSOSessionAuthenticator{
+		authenticateFunc: func(ctx context.Context, sessionToken, csrfToken string, requireCSRF bool) (*domain.APIKey, error) {
+			require.Equal(t, "session-token", sessionToken)
+			require.Empty(t, csrfToken)
+			require.True(t, requireCSRF)
+			return nil, service.ErrSSOCSRFInvalid
+		},
+	}
+	e.Use(AuthMiddlewareWithOptions(&mockAPIKeyRepository{}, nil, nil, AuthOptions{SSOSessionAuthenticator: authenticator}))
+
+	req := httptest.NewRequest(http.MethodPost, "/test", nil)
+	req.AddCookie(&http.Cookie{Name: service.SSOSessionCookieName, Value: "session-token"})
+	req.AddCookie(&http.Cookie{Name: service.SSOCSRFCookieName, Value: "cookie-csrf"})
+	rec := httptest.NewRecorder()
+	handlerCalled := false
+	e.POST("/test", func(c echo.Context) error {
+		handlerCalled = true
+		return c.String(http.StatusOK, "ok")
+	})
+
+	e.ServeHTTP(rec, req)
+
+	assert.False(t, handlerCalled)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Contains(t, rec.Body.String(), "invalid sso csrf token")
+}
+
+func TestAuthMiddleware_SSOSessionUsesCSRFHeaderForUnsafeMethods(t *testing.T) {
+	e := newTestEcho()
+	teamID := uuid.New()
+	profileID := uuid.New()
+	authenticator := mockSSOSessionAuthenticator{
+		authenticateFunc: func(ctx context.Context, sessionToken, csrfToken string, requireCSRF bool) (*domain.APIKey, error) {
+			require.Equal(t, "session-token", sessionToken)
+			require.Equal(t, "header-csrf", csrfToken)
+			require.True(t, requireCSRF)
+			return &domain.APIKey{
+				ID:        profileID,
+				ProfileID: teamID,
+				TeamID:    teamID,
+				Name:      "SSO profile",
+				Scopes:    []string{"read"},
+				Role:      service.APIKeyRoleMember,
+			}, nil
+		},
+	}
+	e.Use(AuthMiddlewareWithOptions(&mockAPIKeyRepository{}, nil, nil, AuthOptions{SSOSessionAuthenticator: authenticator}))
+
+	req := httptest.NewRequest(http.MethodPost, "/test", nil)
+	req.AddCookie(&http.Cookie{Name: service.SSOSessionCookieName, Value: "session-token"})
+	req.AddCookie(&http.Cookie{Name: service.SSOCSRFCookieName, Value: "cookie-csrf"})
+	req.Header.Set(service.SSOCSRFHeaderName, "header-csrf")
+	rec := httptest.NewRecorder()
+	e.POST("/test", func(c echo.Context) error {
+		return c.String(http.StatusOK, "ok")
+	})
+
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
 func TestAuthMiddleware_LegacyPrefixLookupFallback(t *testing.T) {
 	e := newTestEcho()
 	profileID := uuid.New()

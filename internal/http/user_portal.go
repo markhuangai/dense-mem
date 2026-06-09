@@ -440,14 +440,11 @@ func (h *userPortalHandler) ssoCallbackURL(c echo.Context) string {
 	if h.ssoPublicBaseURL != "" {
 		return h.ssoPublicBaseURL + "/ui/api/sso/callback"
 	}
-	scheme := c.Scheme()
-	if forwarded := c.Request().Header.Get("X-Forwarded-Proto"); forwarded != "" {
-		scheme = strings.TrimSpace(strings.Split(forwarded, ",")[0])
+	scheme := "http"
+	if c.Request().TLS != nil {
+		scheme = "https"
 	}
-	host := c.Request().Host
-	if forwarded := c.Request().Header.Get("X-Forwarded-Host"); forwarded != "" {
-		host = strings.TrimSpace(strings.Split(forwarded, ",")[0])
-	}
+	host := strings.TrimSpace(c.Request().Host)
 	return scheme + "://" + host + "/ui/api/sso/callback"
 }
 
@@ -486,6 +483,8 @@ func clearSSOCookie(c echo.Context, name string) {
 
 func userPortalSSOError(err error) error {
 	switch {
+	case err == nil:
+		return nil
 	case errors.Is(err, service.ErrSSOSessionInvalid):
 		return httperr.New(httperr.AUTH_INVALID, "invalid sso session")
 	case errors.Is(err, service.ErrSSOCSRFInvalid):
@@ -493,7 +492,7 @@ func userPortalSSOError(err error) error {
 	case errors.Is(err, service.ErrSSOAccessDenied), errors.Is(err, service.ErrSSOProviderDisabled), errors.Is(err, service.ErrSSOEntitlementRefreshStale):
 		return httperr.New(httperr.FORBIDDEN, "sso access denied")
 	default:
-		return err
+		return httperr.New(httperr.INTERNAL_ERROR, "sso authentication failed")
 	}
 }
 

@@ -262,7 +262,7 @@ func authenticateSSOSession(c echo.Context, next echo.HandlerFunc, authenticator
 	}
 	requireCSRF := requestRequiresCSRF(c.Request().Method)
 	csrfToken := c.Request().Header.Get(service.SSOCSRFHeaderName)
-	if csrfToken == "" {
+	if csrfToken == "" && !requireCSRF {
 		if csrfCookie, err := c.Request().Cookie(service.SSOCSRFCookieName); err == nil {
 			csrfToken = csrfCookie.Value
 		}

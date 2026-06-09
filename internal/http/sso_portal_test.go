@@ -179,7 +179,7 @@ func TestUserPortalSSOHandlers(t *testing.T) {
 	req.Header.Set("X-Forwarded-Host", "public.example")
 	require.Equal(t, "https://portal.example.com/ui/api/sso/callback", handler.ssoCallbackURL(c))
 	handler.ssoPublicBaseURL = ""
-	require.Equal(t, "https://public.example/ui/api/sso/callback", handler.ssoCallbackURL(c))
+	require.Equal(t, "http://internal.example/ui/api/sso/callback", handler.ssoCallbackURL(c))
 }
 
 func TestUserPortalSSOErrorBranches(t *testing.T) {
@@ -239,6 +239,8 @@ func TestUserPortalSSOErrorBranches(t *testing.T) {
 	require.ErrorContains(t, userPortalSSOError(service.ErrSSOSessionInvalid), "invalid sso session")
 	require.ErrorContains(t, userPortalSSOError(service.ErrSSOCSRFInvalid), "invalid sso csrf token")
 	require.ErrorContains(t, userPortalSSOError(service.ErrSSOAccessDenied), "sso access denied")
+	require.ErrorContains(t, userPortalSSOError(errors.New("issuer returned tenant detail")), "sso authentication failed")
+	require.NotContains(t, userPortalSSOError(errors.New("issuer returned tenant detail")).Error(), "tenant detail")
 }
 
 func TestControlPortalSSOErrorBranches(t *testing.T) {
