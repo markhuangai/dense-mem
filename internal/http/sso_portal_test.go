@@ -177,9 +177,12 @@ func TestUserPortalSSOHandlers(t *testing.T) {
 	req.Host = "internal.example"
 	req.Header.Set("X-Forwarded-Proto", "https")
 	req.Header.Set("X-Forwarded-Host", "public.example")
-	require.Equal(t, "https://portal.example.com/ui/api/sso/callback", handler.ssoCallbackURL(c))
+	callbackURL, err := handler.ssoCallbackURL()
+	require.NoError(t, err)
+	require.Equal(t, "https://portal.example.com/ui/api/sso/callback", callbackURL)
 	handler.ssoPublicBaseURL = ""
-	require.Equal(t, "http://internal.example/ui/api/sso/callback", handler.ssoCallbackURL(c))
+	_, err = handler.ssoCallbackURL()
+	require.ErrorContains(t, err, "sso public base url is not configured")
 }
 
 func TestUserPortalSSOErrorBranches(t *testing.T) {
@@ -230,6 +233,12 @@ func TestUserPortalSSOErrorBranches(t *testing.T) {
 		now:       now,
 	}, service.SSOConfig{HTTPClient: discovery.Client(), Now: func() time.Time { return now }})
 	c, rec := userSSOContext(nethttp.MethodGet, "/ui/api/sso/start/"+providerID.String(), "", "")
+	c.SetParamNames("providerId")
+	c.SetParamValues(providerID.String())
+	require.ErrorContains(t, handler.startSSO(c), "sso public base url is not configured")
+
+	handler.ssoPublicBaseURL = "https://portal.example.com"
+	c, rec = userSSOContext(nethttp.MethodGet, "/ui/api/sso/start/"+providerID.String(), "", "")
 	c.SetParamNames("providerId")
 	c.SetParamValues(providerID.String())
 	require.NoError(t, handler.startSSO(c))
@@ -433,6 +442,41 @@ func TestUserPortalSSORoutesAndCookies(t *testing.T) {
 	require.ErrorContains(t, handler.completeSSO(c), "sso is not configured")
 }
 
+func TestUserPortalPublicSSOStartIsRateLimited(t *testing.T) {
+	cfg := &config.Config{
+		HTTPMaxBodyBytes:        1048576,
+		RateLimitPerMinute:      1,
+		FragmentCreateRateLimit: 60,
+		FragmentReadRateLimit:   300,
+		ClaimWriteRateLimit:     60,
+		ClaimReadRateLimit:      300,
+	}
+	e := NewServer(*cfg, nil, HealthConfig{})
+	RegisterUserPortal(e, UserPortalDeps{
+		APIKeyRepo:       &userPortalAuthRepo{},
+		RateLimitSvc:     service.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
+		SSOService:       service.NewSSOService(&httpSSORepoStub{}, service.SSOConfig{}),
+		SSOPublicBaseURL: "https://portal.example.com",
+		Config:           cfg,
+	})
+
+	target := "/ui/api/sso/start/" + uuid.NewString()
+	req := httptest.NewRequest(nethttp.MethodGet, target, nil)
+	req.RemoteAddr = "198.51.100.10:1234"
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.NotEqual(t, nethttp.StatusTooManyRequests, rec.Code)
+	require.Equal(t, "1", rec.Header().Get("X-RateLimit-Limit"))
+
+	req = httptest.NewRequest(nethttp.MethodGet, target, nil)
+	req.RemoteAddr = "198.51.100.10:1234"
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, nethttp.StatusTooManyRequests, rec.Code)
+	require.Equal(t, "1", rec.Header().Get("X-RateLimit-Limit"))
+	require.NotEmpty(t, rec.Header().Get("Retry-After"))
+}
+
 func controlPortalSSOServer(t *testing.T, repo *httpSSORepoStub, now time.Time) nethttp.Handler {
 	t.Helper()
 	ssoSvc := service.NewSSOService(repo, service.SSOConfig{Now: func() time.Time { return now }})
@@ -485,6 +529,7 @@ type httpSSORepoStub struct {
 	sessions           map[string]*domain.SSOSession
 	updatedSessionHash string
 	deletedSessionHash string
+	deleteExpiredAt    time.Time
 	now                time.Time
 }
 
@@ -710,8 +755,11 @@ func (r *httpSSORepoStub) CreateOAuthState(context.Context, domain.SSOOAuthState
 func (r *httpSSORepoStub) ConsumeOAuthState(context.Context, string) (*domain.SSOOAuthState, error) {
 	return nil, nil
 }
-func (r *httpSSORepoStub) DeleteExpiredOAuthStates(context.Context, time.Time) error { return nil }
-func (r *httpSSORepoStub) CreateSession(context.Context, domain.SSOSession) error    { return nil }
+func (r *httpSSORepoStub) DeleteExpiredOAuthStates(_ context.Context, now time.Time) error {
+	r.deleteExpiredAt = now
+	return nil
+}
+func (r *httpSSORepoStub) CreateSession(context.Context, domain.SSOSession) error { return nil }
 
 func (r *httpSSORepoStub) GetSession(_ context.Context, sessionHash string) (*domain.SSOSession, error) {
 	if r.sessions == nil || r.sessions[sessionHash] == nil {

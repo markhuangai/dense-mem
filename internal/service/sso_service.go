@@ -23,6 +23,7 @@ const (
 	DefaultSSOEntitlementCacheTTL = 5 * time.Minute
 	DefaultSSOSessionTTL          = 8 * time.Hour
 	DefaultSSOStateTTL            = 10 * time.Minute
+	DefaultSSOHTTPTimeout         = 10 * time.Second
 
 	SSOSessionCookieName = "dense_mem_sso_session"
 	SSOCSRFCookieName    = "dense_mem_sso_csrf"
@@ -49,6 +50,7 @@ type SSOConfig struct {
 	StateTTL            time.Duration
 	CookieSecure        bool
 	HTTPClient          *http.Client
+	HTTPTimeout         time.Duration
 	GroupResolver       SSOGroupResolver
 	Now                 func() time.Time
 }
@@ -59,6 +61,8 @@ type SSOService struct {
 	sessionTTL          time.Duration
 	stateTTL            time.Duration
 	cookieSecure        bool
+	httpClient          *http.Client
+	httpTimeout         time.Duration
 	groupResolver       SSOGroupResolver
 	now                 func() time.Time
 }
@@ -95,13 +99,18 @@ func NewSSOService(repo repository.SSORepository, cfg SSOConfig) *SSOService {
 	if stateTTL <= 0 {
 		stateTTL = DefaultSSOStateTTL
 	}
+	httpTimeout := cfg.HTTPTimeout
+	if httpTimeout <= 0 {
+		httpTimeout = DefaultSSOHTTPTimeout
+	}
+	httpClient := boundedSSOHTTPClient(cfg.HTTPClient, httpTimeout)
 	now := cfg.Now
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	resolver := cfg.GroupResolver
 	if resolver == nil {
-		resolver = &HTTPSSOGroupResolver{HTTPClient: cfg.HTTPClient}
+		resolver = &HTTPSSOGroupResolver{HTTPClient: httpClient}
 	}
 	return &SSOService{
 		repo:                repo,
@@ -109,6 +118,8 @@ func NewSSOService(repo repository.SSORepository, cfg SSOConfig) *SSOService {
 		sessionTTL:          sessionTTL,
 		stateTTL:            stateTTL,
 		cookieSecure:        cfg.CookieSecure,
+		httpClient:          httpClient,
+		httpTimeout:         httpTimeout,
 		groupResolver:       resolver,
 		now:                 now,
 	}
@@ -231,8 +242,13 @@ func (s *SSOService) BeginLogin(ctx context.Context, providerID uuid.UUID, callb
 	if provider == nil || !provider.Enabled {
 		return nil, ErrSSOProviderDisabled
 	}
+	if err := s.repo.DeleteExpiredOAuthStates(ctx, s.now()); err != nil {
+		return nil, err
+	}
 
-	oidcProvider, oauthConfig, err := s.oauthConfig(ctx, *provider, callbackURL)
+	providerCtx, cancel := s.providerContext(ctx)
+	defer cancel()
+	oidcProvider, oauthConfig, err := s.oauthConfig(providerCtx, *provider, callbackURL)
 	if err != nil {
 		return nil, err
 	}
@@ -292,11 +308,13 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 		return nil, ErrSSOProviderDisabled
 	}
 
-	oidcProvider, oauthConfig, err := s.oauthConfig(ctx, *provider, callbackURL)
+	providerCtx, cancel := s.providerContext(ctx)
+	defer cancel()
+	oidcProvider, oauthConfig, err := s.oauthConfig(providerCtx, *provider, callbackURL)
 	if err != nil {
 		return nil, err
 	}
-	token, err := oauthConfig.Exchange(ctx, code, oauth2.SetAuthURLParam("code_verifier", state.PKCEVerifier))
+	token, err := oauthConfig.Exchange(providerCtx, code, oauth2.SetAuthURLParam("code_verifier", state.PKCEVerifier))
 	if err != nil {
 		return nil, fmt.Errorf("sso token exchange failed: %w", err)
 	}
@@ -304,12 +322,12 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 	if !ok || strings.TrimSpace(rawIDToken) == "" {
 		return nil, fmt.Errorf("sso token exchange did not return id_token")
 	}
-	idToken, err := oidcProvider.Verifier(&oidc.Config{ClientID: provider.ClientID}).Verify(ctx, rawIDToken)
+	idToken, err := oidcProvider.Verifier(&oidc.Config{ClientID: provider.ClientID}).Verify(providerCtx, rawIDToken)
 	if err != nil {
 		return nil, fmt.Errorf("sso id_token verification failed: %w", err)
 	}
 
-	claims, err := readOIDCClaims(ctx, oidcProvider, token, idToken, *provider)
+	claims, err := readOIDCClaims(providerCtx, oidcProvider, token, idToken, *provider)
 	if err != nil {
 		return nil, err
 	}
@@ -320,7 +338,7 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 		claims.Subject = idToken.Subject
 	}
 	if len(claims.Groups) == 0 {
-		claims.Groups, err = s.groupResolver.ResolveGroups(ctx, *provider, claims.Subject, token.AccessToken)
+		claims.Groups, err = s.groupResolver.ResolveGroups(providerCtx, *provider, claims.Subject, token.AccessToken)
 		if err != nil {
 			return nil, ErrSSOAccessDenied
 		}
@@ -520,7 +538,9 @@ func (s *SSOService) ValidateAPIKeyPrincipal(ctx context.Context, key *domain.AP
 	}
 	now := s.now()
 	if cache == nil || cache.ExpiresAt.Before(now) || cache.ExpiresAt.Equal(now) {
-		groups, refreshErr := s.groupResolver.ResolveGroups(ctx, *provider, key.SSOSubject, "")
+		providerCtx, cancel := s.providerContext(ctx)
+		groups, refreshErr := s.groupResolver.ResolveGroups(providerCtx, *provider, key.SSOSubject, "")
+		cancel()
 		if refreshErr != nil {
 			_ = s.storeEntitlementCache(ctx, provider.ID, key.SSOSubject, nil, "error", refreshErr.Error())
 			return nil, ErrSSOEntitlementRefreshStale
@@ -585,6 +605,36 @@ func (s *SSOService) oauthConfig(ctx context.Context, provider domain.SSOProvide
 		Scopes:       scopes,
 		RedirectURL:  callbackURL,
 	}, nil
+}
+
+func (s *SSOService) providerContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if s != nil && s.httpClient != nil {
+		ctx = context.WithValue(ctx, oauth2.HTTPClient, s.httpClient)
+	}
+	if s == nil || s.httpTimeout <= 0 {
+		return ctx, func() {}
+	}
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, s.httpTimeout)
+}
+
+func boundedSSOHTTPClient(client *http.Client, timeout time.Duration) *http.Client {
+	if timeout <= 0 {
+		timeout = DefaultSSOHTTPTimeout
+	}
+	if client == nil {
+		return &http.Client{Timeout: timeout}
+	}
+	copy := *client
+	if copy.Timeout <= 0 {
+		copy.Timeout = timeout
+	}
+	return &copy
 }
 
 func (s *SSOService) sessionFromToken(ctx context.Context, sessionToken string) (*domain.SSOSession, error) {

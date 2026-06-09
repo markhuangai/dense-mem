@@ -103,6 +103,7 @@ type Config struct {
 	SSOEntitlementCacheTTLSeconds int
 	SSOSessionTTLSeconds          int
 	SSOStateTTLSeconds            int
+	SSOHTTPTimeoutSeconds         int
 	SSOCookieSecure               bool
 }
 
@@ -444,6 +445,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return cfg, err
 	}
+	cfg.SSOHTTPTimeoutSeconds, err = parseIntOrDefault("SSO_HTTP_TIMEOUT_SECONDS", 10)
+	if err != nil {
+		return cfg, err
+	}
 	cfg.SSOCookieSecure, err = parseBoolOrDefault("SSO_COOKIE_SECURE", false)
 	if err != nil {
 		return cfg, err
@@ -509,6 +514,7 @@ func Load() (Config, error) {
 		{"SSO_ENTITLEMENT_CACHE_TTL_SECONDS", cfg.SSOEntitlementCacheTTLSeconds},
 		{"SSO_SESSION_TTL_SECONDS", cfg.SSOSessionTTLSeconds},
 		{"SSO_STATE_TTL_SECONDS", cfg.SSOStateTTLSeconds},
+		{"SSO_HTTP_TIMEOUT_SECONDS", cfg.SSOHTTPTimeoutSeconds},
 	}
 
 	for _, field := range numericFields {

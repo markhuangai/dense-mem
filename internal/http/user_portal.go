@@ -7,6 +7,7 @@ import (
 	nethttp "net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,6 +52,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 
 	if deps.SSOService != nil {
 		ssoAPI := e.Group("/ui/api/sso")
+		ssoAPI.Use(publicSSORateLimitMiddleware(deps.RateLimitSvc, deps.Config))
 		ssoAPI.GET("/providers", portal.ssoProviders)
 		ssoAPI.GET("/start/:providerId", portal.startSSO)
 		ssoAPI.GET("/callback", portal.completeSSO)
@@ -311,7 +313,11 @@ func (h *userPortalHandler) startSSO(c echo.Context) error {
 	if err != nil {
 		return httperr.New(httperr.INVALID_UUID, "invalid sso provider ID format")
 	}
-	start, err := h.sso.BeginLogin(c.Request().Context(), providerID, h.ssoCallbackURL(c), c.QueryParam("redirect"))
+	callbackURL, err := h.ssoCallbackURL()
+	if err != nil {
+		return err
+	}
+	start, err := h.sso.BeginLogin(c.Request().Context(), providerID, callbackURL, c.QueryParam("redirect"))
 	if err != nil {
 		return userPortalSSOError(err)
 	}
@@ -325,7 +331,11 @@ func (h *userPortalHandler) completeSSO(c echo.Context) error {
 	if errText := strings.TrimSpace(c.QueryParam("error")); errText != "" {
 		return httperr.New(httperr.AUTH_INVALID, "sso login failed")
 	}
-	result, err := h.sso.CompleteLogin(c.Request().Context(), c.QueryParam("state"), c.QueryParam("code"), h.ssoCallbackURL(c))
+	callbackURL, err := h.ssoCallbackURL()
+	if err != nil {
+		return err
+	}
+	result, err := h.sso.CompleteLogin(c.Request().Context(), c.QueryParam("state"), c.QueryParam("code"), callbackURL)
 	if err != nil {
 		return userPortalSSOError(err)
 	}
@@ -436,16 +446,47 @@ func userPortalHasScope(scopes []string, required string) bool {
 	return false
 }
 
-func (h *userPortalHandler) ssoCallbackURL(c echo.Context) string {
+func (h *userPortalHandler) ssoCallbackURL() (string, error) {
 	if h.ssoPublicBaseURL != "" {
-		return h.ssoPublicBaseURL + "/ui/api/sso/callback"
+		return h.ssoPublicBaseURL + "/ui/api/sso/callback", nil
 	}
-	scheme := "http"
-	if c.Request().TLS != nil {
-		scheme = "https"
+	return "", httperr.New(httperr.SERVICE_UNAVAILABLE, "sso public base url is not configured")
+}
+
+func publicSSORateLimitMiddleware(svc service.RateLimitServiceInterface, cfg config.ConfigProvider) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			if svc == nil || cfg == nil {
+				return next(c)
+			}
+			limit := cfg.GetRateLimitPerMinute()
+			if limit <= 0 {
+				return next(c)
+			}
+			routePath := c.Path()
+			if routePath == "" {
+				routePath = c.Request().URL.Path
+			}
+			subject := "public-sso:ip:" + c.RealIP()
+			allowed, remaining, resetAt, err := svc.Check(c.Request().Context(), subject, routePath, limit)
+			if err != nil {
+				c.Logger().Errorf("public sso rate limit check failed: %v", err)
+				return next(c)
+			}
+			c.Response().Header().Set("X-RateLimit-Limit", strconv.Itoa(limit))
+			c.Response().Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
+			c.Response().Header().Set("X-RateLimit-Reset", strconv.FormatInt(resetAt.Unix(), 10))
+			if !allowed {
+				retryAfter := int(time.Until(resetAt).Seconds())
+				if retryAfter < 0 {
+					retryAfter = 0
+				}
+				c.Response().Header().Set("Retry-After", strconv.Itoa(retryAfter))
+				return httperr.New(httperr.RATE_LIMITED, "rate limit exceeded")
+			}
+			return next(c)
+		}
 	}
-	host := strings.TrimSpace(c.Request().Host)
-	return scheme + "://" + host + "/ui/api/sso/callback"
 }
 
 func ssoSessionTokenFromRequest(c echo.Context) (string, error) {

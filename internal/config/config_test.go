@@ -53,6 +53,7 @@ func clearEnv() {
 		"SSO_ENTITLEMENT_CACHE_TTL_SECONDS",
 		"SSO_SESSION_TTL_SECONDS",
 		"SSO_STATE_TTL_SECONDS",
+		"SSO_HTTP_TIMEOUT_SECONDS",
 		"SSO_COOKIE_SECURE",
 	}
 	for _, v := range envVars {
@@ -140,6 +141,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.SSOStateTTLSeconds != 600 {
 		t.Errorf("SSOStateTTLSeconds default = %d, want 600", cfg.SSOStateTTLSeconds)
+	}
+	if cfg.SSOHTTPTimeoutSeconds != 10 {
+		t.Errorf("SSOHTTPTimeoutSeconds default = %d, want 10", cfg.SSOHTTPTimeoutSeconds)
 	}
 }
 
@@ -376,6 +380,7 @@ func TestLoadOverrides(t *testing.T) {
 	os.Setenv("SSO_ENTITLEMENT_CACHE_TTL_SECONDS", "120")
 	os.Setenv("SSO_SESSION_TTL_SECONDS", "3600")
 	os.Setenv("SSO_STATE_TTL_SECONDS", "180")
+	os.Setenv("SSO_HTTP_TIMEOUT_SECONDS", "15")
 	os.Setenv("SSO_COOKIE_SECURE", "true")
 
 	cfg, err := Load()
@@ -436,6 +441,9 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.SSOStateTTLSeconds != 180 {
 		t.Errorf("SSOStateTTLSeconds = %d, want 180", cfg.SSOStateTTLSeconds)
+	}
+	if cfg.SSOHTTPTimeoutSeconds != 15 {
+		t.Errorf("SSOHTTPTimeoutSeconds = %d, want 15", cfg.SSOHTTPTimeoutSeconds)
 	}
 	if !cfg.SSOCookieSecure {
 		t.Errorf("SSOCookieSecure = false, want true")
@@ -855,6 +863,7 @@ func TestLoadValidation_RemainingInvalidEnvironmentBranches(t *testing.T) {
 		{"invalid sso entitlement ttl", func() { os.Setenv("SSO_ENTITLEMENT_CACHE_TTL_SECONDS", "bad") }, "SSO_ENTITLEMENT_CACHE_TTL_SECONDS"},
 		{"invalid sso session ttl", func() { os.Setenv("SSO_SESSION_TTL_SECONDS", "bad") }, "SSO_SESSION_TTL_SECONDS"},
 		{"invalid sso state ttl", func() { os.Setenv("SSO_STATE_TTL_SECONDS", "bad") }, "SSO_STATE_TTL_SECONDS"},
+		{"invalid sso http timeout", func() { os.Setenv("SSO_HTTP_TIMEOUT_SECONDS", "bad") }, "SSO_HTTP_TIMEOUT_SECONDS"},
 		{"invalid sso cookie secure", func() { os.Setenv("SSO_COOKIE_SECURE", "maybe") }, "SSO_COOKIE_SECURE"},
 		{"zero http max body bytes", func() { os.Setenv("HTTP_MAX_BODY_BYTES", "0") }, "HTTP_MAX_BODY_BYTES"},
 		{"recall weight below range", func() { os.Setenv("RECALL_VALIDATED_CLAIM_WEIGHT", "-0.1") }, "RECALL_VALIDATED_CLAIM_WEIGHT"},

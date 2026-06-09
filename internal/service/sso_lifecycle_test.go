@@ -67,6 +67,7 @@ func TestSSOBeginLoginCreatesOAuthState(t *testing.T) {
 	start, err := svc.BeginLogin(context.Background(), providerID, "https://app.example.com/ui/api/sso/callback", "//evil.example")
 
 	require.NoError(t, err)
+	assert.Equal(t, now, repo.deleteExpiredAt)
 	require.Len(t, repo.oauthStates, 1)
 	assert.Equal(t, providerID, repo.oauthStates[0].ProviderID)
 	assert.Equal(t, "/ui", repo.oauthStates[0].RedirectPath)
@@ -85,6 +86,77 @@ func TestSSOBeginLoginCreatesOAuthState(t *testing.T) {
 	assert.NotEmpty(t, query.Get("state"))
 	assert.NotEmpty(t, query.Get("nonce"))
 	assert.Contains(t, strings.Fields(query.Get("scope")), "openid")
+}
+
+func TestSSOBeginLoginFailsWhenExpiredStateCleanupFails(t *testing.T) {
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	providerID := uuid.New()
+	backendErr := errors.New("cleanup failed")
+	repo := &ssoRepositoryStub{
+		t: t,
+		providers: map[uuid.UUID]*domain.SSOProvider{
+			providerID: {
+				ID:        providerID,
+				Name:      "Enterprise",
+				Kind:      domain.SSOProviderKindGenericOIDC,
+				IssuerURL: "https://issuer.example.com",
+				ClientID:  "client-id",
+				Enabled:   true,
+			},
+		},
+		deleteExpiredErr: backendErr,
+	}
+	svc := NewSSOService(repo, SSOConfig{Now: func() time.Time { return now }})
+
+	start, err := svc.BeginLogin(context.Background(), providerID, "https://app.example.com/ui/api/sso/callback", "")
+
+	require.ErrorIs(t, err, backendErr)
+	require.Nil(t, start)
+	assert.Equal(t, now, repo.deleteExpiredAt)
+	assert.Empty(t, repo.oauthStates)
+}
+
+func TestSSOBeginLoginUsesBoundedOIDCHTTPTimeout(t *testing.T) {
+	var slowDiscovery *httptest.Server
+	slowDiscovery = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/.well-known/openid-configuration" {
+			http.NotFound(w, r)
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer":                 slowDiscovery.URL,
+			"authorization_endpoint": slowDiscovery.URL + "/authorize",
+			"token_endpoint":         slowDiscovery.URL + "/token",
+			"jwks_uri":               slowDiscovery.URL + "/jwks",
+		})
+	}))
+	defer slowDiscovery.Close()
+
+	providerID := uuid.New()
+	repo := &ssoRepositoryStub{
+		t: t,
+		providers: map[uuid.UUID]*domain.SSOProvider{
+			providerID: {
+				ID:        providerID,
+				Name:      "Enterprise",
+				Kind:      domain.SSOProviderKindGenericOIDC,
+				IssuerURL: slowDiscovery.URL,
+				ClientID:  "client-id",
+				Enabled:   true,
+			},
+		},
+	}
+	svc := NewSSOService(repo, SSOConfig{
+		HTTPClient:  slowDiscovery.Client(),
+		HTTPTimeout: 20 * time.Millisecond,
+	})
+
+	start, err := svc.BeginLogin(context.Background(), providerID, "https://app.example.com/ui/api/sso/callback", "")
+
+	require.Error(t, err)
+	require.Nil(t, start)
+	require.ErrorContains(t, err, "context deadline exceeded")
 }
 
 func TestSSOCompleteLoginCreatesSession(t *testing.T) {

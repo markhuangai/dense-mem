@@ -174,6 +174,8 @@ type ssoRepositoryStub struct {
 	createOAuthStateErr  error
 	consumeOAuthStateErr error
 	consumableState      *domain.SSOOAuthState
+	deleteExpiredAt      time.Time
+	deleteExpiredErr     error
 	createdSession       *domain.SSOSession
 }
 
@@ -483,8 +485,8 @@ func (r *ssoRepositoryStub) ConsumeOAuthState(ctx context.Context, stateHash str
 }
 
 func (r *ssoRepositoryStub) DeleteExpiredOAuthStates(ctx context.Context, now time.Time) error {
-	r.unexpected("DeleteExpiredOAuthStates")
-	return nil
+	r.deleteExpiredAt = now
+	return r.deleteExpiredErr
 }
 
 func (r *ssoRepositoryStub) CreateSession(ctx context.Context, session domain.SSOSession) error {
