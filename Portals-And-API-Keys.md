@@ -30,6 +30,48 @@ metadata and create, list, rename, rotate, or delete member profiles. The user
 portal cannot create manager profiles or change roles; use the control portal
 for manager lifecycle changes.
 
+## User Portal SSO
+
+When SSO is configured, the user portal adds public SSO endpoints under the main
+Dense-Mem public base URL.
+
+Register this redirect URI with the OIDC provider:
+
+```text
+https://<dense-mem-host>/ui/api/sso/callback
+```
+
+This value is derived from `SSO_PUBLIC_BASE_URL`, so a deployment with:
+
+```text
+SSO_PUBLIC_BASE_URL=https://dense-mem.example.com
+```
+
+uses:
+
+```text
+https://dense-mem.example.com/ui/api/sso/callback
+```
+
+Dense-Mem exposes these user-portal SSO endpoints:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/ui/api/sso/providers` | Lists enabled SSO providers for the login screen. |
+| `GET` | `/ui/api/sso/start/:providerId` | Starts OIDC login and redirects to the provider. |
+| `GET` | `/ui/api/sso/callback` | Receives the OIDC authorization code callback. |
+| `POST` | `/ui/api/sso/logout` | Clears the local Dense-Mem SSO session cookies. |
+
+Do not use `/ui/api/sso/logout` as an OIDC post-logout redirect URI. It is a
+local API endpoint, not a browser landing page. Dense-Mem does not currently
+perform RP-initiated OIDC logout with `post_logout_redirect_uri`.
+
+If the provider requires a post-logout redirect URI, use the portal URL:
+
+```text
+https://<dense-mem-host>/ui
+```
+
 ## Control Portal
 
 The control portal runs on a separate local port:
