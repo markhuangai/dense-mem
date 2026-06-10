@@ -161,7 +161,7 @@ export function SSOPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
           )}
         />
         {error && <div className="banner error" role="alert">{error}</div>}
-        <div className="table-wrap">
+        <div className="table-wrap sso-provider-table-wrap">
           <table className="data-table">
             <thead>
               <tr>
@@ -280,7 +280,7 @@ function SSOMappingForm({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   return (
-    <form className="inline-form" onSubmit={onSubmit}>
+    <form className="inline-form sso-mapping-form" onSubmit={onSubmit}>
       <label htmlFor="sso-map-team">Team</label>
       <select id="sso-map-team" value={draft.team_id} onChange={(event) => onChange({ ...draft, team_id: event.target.value })}>
         {teams.map((team) => <option value={team.id} key={team.id}>{team.name}</option>)}
@@ -303,8 +303,10 @@ function SSOMappingForm({
         <option value="member">Member</option>
         <option value="manager">Manager</option>
       </select>
-      <label htmlFor="sso-map-enabled">Enabled</label>
-      <input id="sso-map-enabled" type="checkbox" checked={draft.enabled} onChange={(event) => onChange({ ...draft, enabled: event.target.checked })} />
+      <label className="toggle-row span" htmlFor="sso-map-enabled">
+        <span>Enabled</span>
+        <input id="sso-map-enabled" type="checkbox" checked={draft.enabled} onChange={(event) => onChange({ ...draft, enabled: event.target.checked })} />
+      </label>
       <button className="primary-button compact" type="submit" disabled={busy || teams.length === 0}>
         <Plus size={16} aria-hidden="true" />
         Add

@@ -415,6 +415,37 @@ textarea:focus {
   width: auto;
 }
 
+.toggle-row {
+  display: inline-flex; align-items: center; justify-content: space-between;
+  gap: 12px; min-height: 40px; color: var(--text); cursor: pointer;
+}
+
+.toggle-row input {
+  width: 42px; height: 24px; position: relative; flex: 0 0 auto; margin: 0;
+  border: 1px solid var(--border-strong); border-radius: 999px; appearance: none;
+  background: var(--panel-muted); cursor: pointer; transition: background 0.16s ease, border-color 0.16s ease;
+}
+
+.toggle-row input::after {
+  position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
+  content: ""; border-radius: 50%; background: var(--panel);
+  box-shadow: 0 1px 2px rgba(23, 35, 34, 0.24);
+  transition: transform 0.16s ease;
+}
+
+.toggle-row input:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.toggle-row input:checked::after {
+  transform: translateX(18px);
+}
+
+.toggle-row input:focus-visible {
+  box-shadow: 0 0 0 3px var(--focus);
+}
+
 .span {
   grid-column: 1 / -1;
 }
@@ -533,6 +564,8 @@ button:disabled {
   border-radius: 8px;
   background: var(--panel);
 }
+
+.sso-provider-table-wrap { overflow-x: visible; }
 
 .data-table {
   width: 100%;
@@ -666,6 +699,11 @@ button:disabled {
 .table-placeholder.compact {
   min-height: 76px;
   padding: 12px;
+}
+
+.sso-mapping-form + .table-wrap,
+.sso-mapping-form + .table-placeholder {
+  margin-top: 14px;
 }
 
 .key-form {
