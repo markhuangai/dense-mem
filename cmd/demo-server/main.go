@@ -178,6 +178,8 @@ func main() {
 	rlsHelper := postgres.NewRLS()
 	profileRepo := repository.NewProfileRepository(pgDB.GetDB(), rlsHelper)
 	apiKeyRepo := repository.NewAPIKeyRepository(pgDB.GetDB(), rlsHelper)
+	ssoRepo := repository.NewSSORepository(pgDB.GetDB(), rlsHelper)
+	appConfigRepo := repository.NewAppConfigRepository(pgDB.GetDB(), rlsHelper)
 	securityRepo := repository.NewSecurityRepository(pgDB.GetDB(), rlsHelper)
 	usageMetricsRepo := repository.NewUsageMetricsRepository(pgDB.GetDB(), rlsHelper)
 	skillPackImportRepo := repository.NewSkillPackImportRepository(pgDB.GetDB(), rlsHelper)
@@ -192,12 +194,16 @@ func main() {
 	// Service layer
 	// ========================================
 	auditService := service.NewAuditService(pgDB.GetDB())
+	appConfigService := service.NewAppConfigService(appConfigRepo, auditService)
 	securityService := service.NewSecurityService(securityRepo, auditService)
 	usageMetricsService := service.NewUsageMetricsService(usageMetricsRepo, logger)
 	usageMetricsService.Start(context.Background())
 
 	profileService := service.NewProfileServiceWithDataPurger(profileRepo, auditService, backend.cleanupRepo, profileDataPurger)
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, profileService, auditService, backend.cleanupRepo, backend.cleanupRepo)
+	ssoService := service.NewSSOService(ssoRepo, service.SSOConfig{
+		RuntimeConfig: appConfigService,
+	})
 	rateLimitService := backend.rateLimitService
 	runtimeCtx := serverRuntimeContext{
 		Config:         &cfg,
@@ -582,6 +588,7 @@ func main() {
 		UsageMetrics:       usageMetricsService,
 		AuditService:       auditService,
 		SecurityService:    securityService,
+		SSOAuthenticator:   ssoService,
 		Config:             &cfg,
 		Logger:             logger,
 		PostAuthMiddleware: runtimeServices.PostAuthMiddleware,
@@ -629,6 +636,7 @@ func main() {
 		Telemetry:       telemetryReader,
 		AuditSvc:        auditService,
 		SecuritySvc:     securityService,
+		SSOService:      ssoService,
 		Config:          &cfg,
 		ExtraMiddleware: runtimeServices.UserPortalMiddleware,
 	})
@@ -653,6 +661,8 @@ func main() {
 				Reader:        telemetryReader,
 				ScrapeHandler: telemetryScrapeHandler,
 				ScrapeToken:   cfg.GetTelemetryScrapeToken(),
+				SSO:           ssoService,
+				Config:        appConfigService,
 			},
 			healthConfig,
 			logger,

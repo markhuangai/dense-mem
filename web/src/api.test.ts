@@ -62,4 +62,24 @@ describe("ControlApi", () => {
 
     expect(fetchMock).toHaveBeenCalledWith("/control/api/telemetry?window=1h&scope=profile&team_id=team-1&profile_id=profile-1", expect.any(Object));
   });
+
+  it("reads and updates SSO config", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
+      data: {
+        update_time: "2026-06-09T12:00:00Z",
+        items: [{ key: "SSO_PUBLIC_BASE_URL", value: "", effective_value: "", updated_at: "2026-06-09T12:00:00Z" }],
+      },
+    }), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const api = new ControlApi("secret", "/control/api");
+    await api.getSSOConfig();
+    await api.updateSSOConfig({ items: [{ key: "SSO_PUBLIC_BASE_URL", value: "https://portal.example.com" }] });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/control/api/config/sso", expect.objectContaining({ method: "GET" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/control/api/config/sso", expect.objectContaining({
+      method: "PATCH",
+      body: JSON.stringify({ items: [{ key: "SSO_PUBLIC_BASE_URL", value: "https://portal.example.com" }] }),
+    }));
+  });
 });

@@ -19,6 +19,10 @@ func TestNoopCleanupRepository_ReturnsNilForBothCleanupCalls(t *testing.T) {
 
 	err = repo.InvalidateKeySessions(context.Background(), "profile-1", "key-1")
 	assert.NoError(t, err)
+
+	streamRepo := NewNoopStreamCleanupRepository()
+	err = streamRepo.PurgeProfileStreamState(context.Background(), "profile-1")
+	assert.NoError(t, err)
 }
 
 func TestNoopCleanupImplementations_SatisfyRequiredInterfaces(t *testing.T) {

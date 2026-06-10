@@ -100,6 +100,11 @@ button {
   margin-left: auto;
 }
 
+.sso-provider-list {
+  display: grid;
+  gap: 8px;
+}
+
 .app-shell {
   padding: 20px 0 32px;
 }
@@ -255,9 +260,28 @@ button {
   cursor: not-allowed;
 }
 
+.config-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.config-tabs .tab-button {
+  width: auto;
+  border: 1px solid var(--border);
+}
+
+.danger-icon {
+  color: var(--danger);
+}
+
 .team-list {
   display: grid;
   gap: 6px;
+}
+
+.key-summary select {
+  width: 100%;
+  min-width: 0;
 }
 
 .team-list-item {
@@ -380,6 +404,17 @@ textarea:focus {
   align-items: center;
 }
 
+.checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+}
+
+.checkbox-row input {
+  width: auto;
+}
+
 .span {
   grid-column: 1 / -1;
 }
@@ -465,6 +500,12 @@ button:disabled {
 .field-error {
   margin: 0;
   font-size: 13px;
+  line-height: 1.35;
+}
+
+.form-meta {
+  color: var(--muted);
+  font-size: 12px;
   line-height: 1.35;
 }
 

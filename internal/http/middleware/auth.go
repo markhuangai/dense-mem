@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -20,14 +21,17 @@ import (
 
 // Principal represents the authenticated principal stored in context.
 type Principal struct {
-	KeyID       uuid.UUID
-	TeamID      uuid.UUID
-	ProfileID   *uuid.UUID
-	ProfileName string
-	Role        string
-	Scopes      []string
-	KeyPrefix   string
-	RateLimit   int
+	KeyID         uuid.UUID
+	TeamID        uuid.UUID
+	ProfileID     *uuid.UUID
+	ProfileName   string
+	Role          string
+	Scopes        []string
+	KeyPrefix     string
+	RateLimit     int
+	AuthMethod    string
+	SSOProviderID *uuid.UUID
+	SSOSubject    string
 }
 
 // PrincipalInterface is the companion interface for Principal.
@@ -90,6 +94,23 @@ func AuthMiddleware(repo repository.APIKeyRepository, auditSvc service.AuditServ
 }
 
 func AuthMiddlewareWithSecurity(repo repository.APIKeyRepository, auditSvc service.AuditService, securitySvc SecurityBanService) echo.MiddlewareFunc {
+	return AuthMiddlewareWithOptions(repo, auditSvc, securitySvc, AuthOptions{})
+}
+
+type SSOEntitlementValidator interface {
+	ValidateAPIKeyPrincipal(ctx context.Context, key *domain.APIKey) (*domain.APIKey, error)
+}
+
+type SSOSessionAuthenticator interface {
+	AuthenticateSession(ctx context.Context, sessionToken, csrfToken string, requireCSRF bool) (*domain.APIKey, error)
+}
+
+type AuthOptions struct {
+	SSOEntitlementValidator SSOEntitlementValidator
+	SSOSessionAuthenticator SSOSessionAuthenticator
+}
+
+func AuthMiddlewareWithOptions(repo repository.APIKeyRepository, auditSvc service.AuditService, securitySvc SecurityBanService, opts AuthOptions) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			// Extract Authorization header
@@ -97,6 +118,11 @@ func AuthMiddlewareWithSecurity(repo repository.APIKeyRepository, auditSvc servi
 
 			// Missing header
 			if authHeader == "" {
+				if opts.SSOSessionAuthenticator != nil {
+					if err := authenticateSSOSession(c, next, opts.SSOSessionAuthenticator); err != errNoSSOSession {
+						return err
+					}
+				}
 				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_MISSING", "missing authorization header")
 				return httperr.New(httperr.AUTH_MISSING, "missing authorization header")
 			}
@@ -165,26 +191,47 @@ func AuthMiddlewareWithSecurity(repo repository.APIKeyRepository, auditSvc servi
 				return httperr.New(httperr.AUTH_INVALID, "invalid api key")
 			}
 
-			teamID := key.GetTeamID()
-			profileID := key.ID
-			profileName := key.GetProfileName()
-
 			// All runtime keys must be team-bound. Legacy team-less keys are
 			// rejected so the server only accepts the multi-tenant bearer model.
+			teamID := key.GetTeamID()
+			if teamID == uuid.Nil {
+				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_INVALID", "api key is not profile bound")
+				return httperr.New(httperr.AUTH_INVALID, "invalid api key")
+			}
+			if opts.SSOEntitlementValidator != nil {
+				validated, err := opts.SSOEntitlementValidator.ValidateAPIKeyPrincipal(ctx, key)
+				if err != nil {
+					teamIDStr := teamID.String()
+					logAuthFailure(c, auditSvc, securitySvc, &teamIDStr, "SSO_ENTITLEMENT_DENIED", "sso entitlement denied")
+					return ssoAuthError(err)
+				}
+				if validated == nil {
+					teamIDStr := teamID.String()
+					logAuthFailure(c, auditSvc, securitySvc, &teamIDStr, "SSO_ENTITLEMENT_DENIED", "sso entitlement denied")
+					return httperr.New(httperr.FORBIDDEN, "sso access denied")
+				}
+				key = validated
+			}
+			teamID = key.GetTeamID()
+			profileID := key.ID
+			profileName := key.GetProfileName()
 			if teamID == uuid.Nil {
 				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_INVALID", "api key is not profile bound")
 				return httperr.New(httperr.AUTH_INVALID, "invalid api key")
 			}
 
 			principal := &Principal{
-				KeyID:       key.ID,
-				TeamID:      teamID,
-				ProfileID:   &profileID,
-				ProfileName: profileName,
-				Role:        key.GetRole(),
-				Scopes:      key.Scopes,
-				KeyPrefix:   prefix,
-				RateLimit:   key.RateLimit,
+				KeyID:         key.ID,
+				TeamID:        teamID,
+				ProfileID:     &profileID,
+				ProfileName:   profileName,
+				Role:          key.GetRole(),
+				Scopes:        key.Scopes,
+				KeyPrefix:     prefix,
+				RateLimit:     key.RateLimit,
+				AuthMethod:    "api_key",
+				SSOProviderID: key.SSOProviderID,
+				SSOSubject:    key.SSOSubject,
 			}
 
 			// Store principal in context
@@ -206,6 +253,74 @@ func AuthMiddlewareWithSecurity(repo repository.APIKeyRepository, auditSvc servi
 	}
 }
 
+var errNoSSOSession = errors.New("no sso session")
+
+func authenticateSSOSession(c echo.Context, next echo.HandlerFunc, authenticator SSOSessionAuthenticator) error {
+	cookie, err := c.Request().Cookie(service.SSOSessionCookieName)
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		return errNoSSOSession
+	}
+	requireCSRF := requestRequiresCSRF(c.Request().Method)
+	csrfToken := c.Request().Header.Get(service.SSOCSRFHeaderName)
+	if csrfToken == "" && !requireCSRF {
+		if csrfCookie, err := c.Request().Cookie(service.SSOCSRFCookieName); err == nil {
+			csrfToken = csrfCookie.Value
+		}
+	}
+	key, err := authenticator.AuthenticateSession(c.Request().Context(), cookie.Value, csrfToken, requireCSRF)
+	if err != nil {
+		return ssoAuthError(err)
+	}
+	teamID := key.GetTeamID()
+	if teamID == uuid.Nil {
+		return httperr.New(httperr.AUTH_INVALID, "invalid sso session")
+	}
+	profileID := key.ID
+	principal := &Principal{
+		KeyID:         key.ID,
+		TeamID:        teamID,
+		ProfileID:     &profileID,
+		ProfileName:   key.GetProfileName(),
+		Role:          key.GetRole(),
+		Scopes:        key.Scopes,
+		RateLimit:     key.RateLimit,
+		AuthMethod:    "sso_session",
+		SSOProviderID: key.SSOProviderID,
+		SSOSubject:    key.SSOSubject,
+	}
+	ctx := context.WithValue(c.Request().Context(), principalContextKey{}, principal)
+	ctx = requestctx.WithActorProfile(ctx, requestctx.ActorProfile{
+		TeamID:      teamID,
+		TeamName:    key.TeamName,
+		ProfileID:   profileID,
+		ProfileName: key.GetProfileName(),
+	})
+	c.SetRequest(c.Request().WithContext(ctx))
+	return next(c)
+}
+
+func requestRequiresCSRF(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	default:
+		return true
+	}
+}
+
+func ssoAuthError(err error) error {
+	switch {
+	case errors.Is(err, service.ErrSSOSessionInvalid):
+		return httperr.New(httperr.AUTH_INVALID, "invalid sso session")
+	case errors.Is(err, service.ErrSSOCSRFInvalid):
+		return httperr.New(httperr.FORBIDDEN, "invalid sso csrf token")
+	case errors.Is(err, service.ErrSSOAccessDenied), errors.Is(err, service.ErrSSOProviderDisabled), errors.Is(err, service.ErrSSOEntitlementRefreshStale):
+		return httperr.New(httperr.FORBIDDEN, "sso access denied")
+	default:
+		return httperr.New(httperr.INTERNAL_ERROR, "sso authentication failed")
+	}
+}
+
 // LastUsedMiddleware updates API key last_used_at after earlier middleware has
 // admitted the request. Place it after rate limiting to avoid DB writes for
 // over-quota valid keys.
@@ -213,7 +328,7 @@ func LastUsedMiddleware(repo repository.APIKeyRepository) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			principal := GetPrincipal(c.Request().Context())
-			if principal != nil {
+			if principal != nil && principal.AuthMethod != "sso_session" && principal.KeyID != uuid.Nil {
 				go func(keyID uuid.UUID) {
 					touchCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 					defer cancel()

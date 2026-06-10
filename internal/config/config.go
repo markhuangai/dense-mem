@@ -426,7 +426,6 @@ func Load() (Config, error) {
 		return cfg, err
 	}
 	cfg.TelemetryScrapeToken = os.Getenv("TELEMETRY_SCRAPE_TOKEN")
-
 	// Validation
 	if cfg.PostgresDSN == "" {
 		return cfg, &ValidationError{

@@ -25,6 +25,13 @@ type mockEvent struct {
 	payload   any
 }
 
+func TestSSEEventGetters(t *testing.T) {
+	event := &SSEEvent{Type: EventTypeTextDelta, Data: []byte(`{"delta":"hello"}`)}
+
+	assert.Equal(t, EventTypeTextDelta, event.GetType())
+	assert.JSONEq(t, `{"delta":"hello"}`, string(event.GetData()))
+}
+
 func newMockSSEWriter() *mockSSEWriter {
 	return &mockSSEWriter{
 		events:   make([]mockEvent, 0),

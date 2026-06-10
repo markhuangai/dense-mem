@@ -49,6 +49,12 @@ func clearEnv() {
 		"TELEMETRY_PROMETHEUS_JOB",
 		"TELEMETRY_QUERY_TIMEOUT_SECONDS",
 		"TELEMETRY_SCRAPE_TOKEN",
+		"SSO_PUBLIC_BASE_URL",
+		"SSO_ENTITLEMENT_CACHE_TTL_SECONDS",
+		"SSO_SESSION_TTL_SECONDS",
+		"SSO_STATE_TTL_SECONDS",
+		"SSO_HTTP_TIMEOUT_SECONDS",
+		"SSO_COOKIE_SECURE",
 	}
 	for _, v := range envVars {
 		os.Unsetenv(v)
@@ -358,7 +364,6 @@ func TestLoadOverrides(t *testing.T) {
 	os.Setenv("SSE_MAX_CONCURRENT_STREAMS", "20")
 	os.Setenv("CONTROL_HTTP_ADDR", "localhost:9091")
 	os.Setenv("CONTROL_PORTAL_TOKEN", "control-secret")
-
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() returned unexpected error: %v", err)
