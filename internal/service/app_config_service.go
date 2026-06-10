@@ -186,7 +186,8 @@ func ssoRuntimeConfigFromEntries(entries map[string]domain.AppConfigEntry) (SSOR
 	sessionTTL, sessionEffective := ssoConfigSeconds(normalized[domain.AppConfigSSOSessionTTLSeconds], DefaultSSOSessionTTL)
 	stateTTL, stateEffective := ssoConfigSeconds(normalized[domain.AppConfigSSOStateTTLSeconds], DefaultSSOStateTTL)
 	httpTimeout, httpEffective := ssoConfigSeconds(normalized[domain.AppConfigSSOHTTPTimeoutSeconds], DefaultSSOHTTPTimeout)
-	cookieSecure, cookieEffective := ssoConfigBool(normalized[domain.AppConfigSSOCookieSecure], false)
+	cookieSecureDefault := defaultSSOCookieSecure(normalized[domain.AppConfigSSOPublicBaseURL])
+	cookieSecure, cookieEffective := ssoConfigBool(normalized[domain.AppConfigSSOCookieSecure], cookieSecureDefault)
 
 	runtime := SSORuntimeConfig{
 		PublicBaseURL:       normalized[domain.AppConfigSSOPublicBaseURL],
@@ -284,6 +285,14 @@ func ssoConfigBool(value string, fallback bool) (bool, string) {
 	}
 	parsed, _ := strconv.ParseBool(value)
 	return parsed, strconv.FormatBool(parsed)
+}
+
+func defaultSSOCookieSecure(publicBaseURL string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(publicBaseURL))
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(parsed.Scheme, "https") && parsed.Host != ""
 }
 
 func ssoConfigItem(entries map[string]domain.AppConfigEntry, key, effective string) domain.SSOConfigItem {

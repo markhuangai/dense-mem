@@ -152,7 +152,7 @@ function ConfigField({
       <>
         <label htmlFor={item.key}>{label}</label>
         <select id={item.key} value={value} onChange={(event) => onChange(event.target.value)}>
-          <option value="">Default false</option>
+          <option value="">Auto from public URL</option>
           <option value="true">true</option>
           <option value="false">false</option>
         </select>

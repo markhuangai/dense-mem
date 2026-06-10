@@ -58,6 +58,66 @@ func TestAppConfigServiceSSOSettingsDefaultsAndUpdate(t *testing.T) {
 	assert.True(t, runtime.CookieSecure)
 }
 
+func TestAppConfigServiceSSOCookieSecureEffectiveDefault(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name          string
+		publicBaseURL string
+		cookieSecure  string
+		wantSecure    bool
+		wantEffective string
+	}{
+		{
+			name:          "https public URL defaults secure cookies",
+			publicBaseURL: "https://portal.example.com",
+			wantSecure:    true,
+			wantEffective: "true",
+		},
+		{
+			name:          "http public URL defaults insecure cookies",
+			publicBaseURL: "http://localhost:8080",
+			wantSecure:    false,
+			wantEffective: "false",
+		},
+		{
+			name:          "explicit false overrides https public URL",
+			publicBaseURL: "https://portal.example.com",
+			cookieSecure:  "false",
+			wantSecure:    false,
+			wantEffective: "false",
+		},
+		{
+			name:          "explicit true overrides http public URL",
+			publicBaseURL: "http://localhost:8080",
+			cookieSecure:  "true",
+			wantSecure:    true,
+			wantEffective: "true",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newAppConfigRepoStub(now, map[string]string{
+				domain.AppConfigUpdateTimeKey:    now.Format(time.RFC3339Nano),
+				domain.AppConfigSSOPublicBaseURL: tt.publicBaseURL,
+				domain.AppConfigSSOCookieSecure:  tt.cookieSecure,
+			})
+			svc := NewAppConfigService(repo, nil)
+			svc.now = func() time.Time { return now }
+
+			settings, err := svc.GetSSOSettings(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantEffective, appConfigItem(settings, domain.AppConfigSSOCookieSecure).EffectiveValue)
+
+			runtime, err := svc.SSORuntimeConfig(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, tt.publicBaseURL, runtime.PublicBaseURL)
+			assert.Equal(t, tt.wantSecure, runtime.CookieSecure)
+		})
+	}
+}
+
 func TestAppConfigServiceCachesUntilUpdateTimeChanges(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC)
