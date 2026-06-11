@@ -63,6 +63,36 @@ func TestGenerator_ValidOpenAPIVersion(t *testing.T) {
 	}
 }
 
+func TestGenerator_CustomBuildInfoAndCloneSlice(t *testing.T) {
+	g := NewWithInfo(testRegistry(t), DefaultRoutes(), BuildInfo{
+		Title:       "custom dense-mem",
+		Version:     "v-test",
+		Description: "custom description",
+	})
+	spec, err := g.Generate(SpecVariantAISafe)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	info := spec["info"].(map[string]any)
+	if info["title"] != "custom dense-mem" || info["version"] != "v-test" {
+		t.Fatalf("info = %v, want custom build info", info)
+	}
+
+	originalNested := map[string]any{"x": "y"}
+	original := []any{map[string]any{"nested": []any{originalNested}}, "scalar"}
+	clone := cloneSlice(original)
+	cloneMap := clone[0].(map[string]any)
+	cloneNested := cloneMap["nested"].([]any)[0].(map[string]any)
+	cloneNested["x"] = "changed"
+
+	if originalNested["x"] != "y" {
+		t.Fatalf("cloneSlice mutated original nested map: %v", originalNested)
+	}
+	if clone[1] != "scalar" {
+		t.Fatalf("cloneSlice scalar = %v, want scalar", clone[1])
+	}
+}
+
 func TestGenerator_SecuritySchemesPresent(t *testing.T) {
 	g := New(testRegistry(t), DefaultRoutes())
 	spec, err := g.Generate(SpecVariantFull)

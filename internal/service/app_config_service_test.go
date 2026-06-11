@@ -58,6 +58,62 @@ func TestAppConfigServiceSSOSettingsDefaultsAndUpdate(t *testing.T) {
 	assert.True(t, runtime.CookieSecure)
 }
 
+func TestAppConfigServiceDreamingSettingsDefaultsAndUpdate(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC)
+	repo := newAppConfigRepoStub(now, map[string]string{
+		domain.AppConfigUpdateTimeKey: now.Format(time.RFC3339Nano),
+	})
+	svc := NewAppConfigService(repo, nil)
+	svc.now = func() time.Time { return now }
+
+	settings, err := svc.GetDreamingSettings(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, now.Format(time.RFC3339Nano), settings.UpdateTime)
+	assert.Equal(t, "false", dreamingConfigItemForTest(settings, domain.AppConfigDreamingEnabled).EffectiveValue)
+	assert.Equal(t, "false", dreamingConfigItemForTest(settings, domain.AppConfigDreamingForceEnabled).EffectiveValue)
+	assert.Equal(t, "03:00", dreamingConfigItemForTest(settings, domain.AppConfigDreamingStartTimeLocal).EffectiveValue)
+	assert.Equal(t, "UTC", dreamingConfigItemForTest(settings, domain.AppConfigDreamingTimezone).EffectiveValue)
+	assert.Equal(t, "true", dreamingConfigItemForTest(settings, domain.AppConfigDreamingReflectEnabled).EffectiveValue)
+	assert.Equal(t, "true", dreamingConfigItemForTest(settings, domain.AppConfigDreamingReevaluateEnabled).EffectiveValue)
+	assert.Equal(t, "true", dreamingConfigItemForTest(settings, domain.AppConfigDreamingDreamEnabled).EffectiveValue)
+	assert.Equal(t, "5", dreamingConfigItemForTest(settings, domain.AppConfigDreamingMaxOutputs).EffectiveValue)
+
+	runtime, err := svc.DreamingRuntimeConfig(ctx)
+	require.NoError(t, err)
+	assert.False(t, runtime.Enabled)
+	assert.False(t, runtime.ForceEnabled)
+	assert.True(t, runtime.ReflectEnabled)
+	assert.True(t, runtime.ReevaluateEnabled)
+	assert.True(t, runtime.DreamEnabled)
+	assert.Equal(t, "03:00", runtime.StartTimeLocal)
+	assert.Equal(t, "UTC", runtime.Timezone)
+	assert.Equal(t, 5, runtime.MaxOutputs)
+
+	now = now.Add(time.Minute)
+	updated, err := svc.UpdateDreamingSettings(ctx, map[string]string{
+		domain.AppConfigDreamingEnabled:        "true",
+		domain.AppConfigDreamingStartTimeLocal: "02:30",
+		domain.AppConfigDreamingTimezone:       "America/New_York",
+		domain.AppConfigDreamingDreamEnabled:   "false",
+		domain.AppConfigDreamingMaxOutputs:     "9",
+	}, "control", "127.0.0.1", "corr")
+	require.NoError(t, err)
+	assert.Equal(t, "true", dreamingConfigItemForTest(updated, domain.AppConfigDreamingEnabled).EffectiveValue)
+	assert.Equal(t, "02:30", dreamingConfigItemForTest(updated, domain.AppConfigDreamingStartTimeLocal).EffectiveValue)
+	assert.Equal(t, "America/New_York", dreamingConfigItemForTest(updated, domain.AppConfigDreamingTimezone).EffectiveValue)
+	assert.Equal(t, "false", dreamingConfigItemForTest(updated, domain.AppConfigDreamingDreamEnabled).EffectiveValue)
+	assert.Equal(t, "9", dreamingConfigItemForTest(updated, domain.AppConfigDreamingMaxOutputs).EffectiveValue)
+
+	runtime, err = svc.DreamingRuntimeConfig(ctx)
+	require.NoError(t, err)
+	assert.True(t, runtime.Enabled)
+	assert.Equal(t, "02:30", runtime.StartTimeLocal)
+	assert.Equal(t, "America/New_York", runtime.Timezone)
+	assert.False(t, runtime.DreamEnabled)
+	assert.Equal(t, 9, runtime.MaxOutputs)
+}
+
 func TestAppConfigServiceSSOCookieSecureEffectiveDefault(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC)
@@ -202,6 +258,24 @@ func TestAppConfigServiceValidation(t *testing.T) {
 
 	_, err = svc.UpdateSSOSettings(ctx, map[string]string{domain.AppConfigSSOPublicBaseURL: "://bad"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
+	_, err = svc.UpdateDreamingSettings(ctx, map[string]string{"unknown": "value"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
+	_, err = svc.UpdateDreamingSettings(ctx, map[string]string{domain.AppConfigUpdateTimeKey: "v2"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
+	_, err = svc.UpdateDreamingSettings(ctx, map[string]string{domain.AppConfigDreamingEnabled: "maybe"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
+	_, err = svc.UpdateDreamingSettings(ctx, map[string]string{domain.AppConfigDreamingStartTimeLocal: "25:99"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
+	_, err = svc.UpdateDreamingSettings(ctx, map[string]string{domain.AppConfigDreamingTimezone: "Nope/Zone"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
+	_, err = svc.UpdateDreamingSettings(ctx, map[string]string{domain.AppConfigDreamingMaxOutputs: "0"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
 }
 
 func TestAppConfigServiceAuditNoopAndUnavailableBranches(t *testing.T) {
@@ -241,6 +315,7 @@ func TestAppConfigServiceAuditNoopAndUnavailableBranches(t *testing.T) {
 	assert.Equal(t, DefaultAppConfigCacheCheckInterval, (&AppConfigServiceImpl{checkInterval: -time.Second}).cacheInterval())
 	assert.Nil(t, cloneAppConfigCache(nil))
 	assert.Nil(t, ssoSettingsPayload(nil))
+	assert.Nil(t, dreamingSettingsPayload(nil))
 }
 
 func TestAppConfigServiceInitialLoadAndRefreshErrors(t *testing.T) {
@@ -307,6 +382,9 @@ func newAppConfigRepoStub(now time.Time, values map[string]string) *appConfigRep
 	for _, key := range editableSSOConfigKeys() {
 		entries[key] = domain.AppConfigEntry{Key: key, Value: "", UpdatedAt: now}
 	}
+	for _, key := range editableDreamingConfigKeys() {
+		entries[key] = domain.AppConfigEntry{Key: key, Value: "", UpdatedAt: now}
+	}
 	entries[domain.AppConfigUpdateTimeKey] = domain.AppConfigEntry{Key: domain.AppConfigUpdateTimeKey, Value: now.Format(time.RFC3339Nano), UpdatedAt: now}
 	for key, value := range values {
 		entries[key] = domain.AppConfigEntry{Key: key, Value: value, UpdatedAt: now}
@@ -364,6 +442,15 @@ func appConfigItem(settings *domain.SSOConfigSettings, key string) domain.SSOCon
 		}
 	}
 	return domain.SSOConfigItem{}
+}
+
+func dreamingConfigItemForTest(settings *domain.DreamingConfigSettings, key string) domain.DreamingConfigItem {
+	for _, item := range settings.Items {
+		if item.Key == key {
+			return item
+		}
+	}
+	return domain.DreamingConfigItem{}
 }
 
 type appConfigAuditStub struct {

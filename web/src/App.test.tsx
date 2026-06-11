@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { TeamProfile, Team, SecurityBan, SecuritySettings, ControlMetrics, SSOConfig } from "./api";
+import { TeamProfile, Team, SecurityBan, SecuritySettings, ControlMetrics, SSOConfig, DreamingConfig } from "./api";
 
 const profileA: Team = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -99,6 +99,32 @@ const ssoConfigSnapshot: SSOConfig = {
     { key: "SSO_HTTP_TIMEOUT_SECONDS", value: "", effective_value: "10", updated_at: "2026-06-09T12:00:00Z" },
     { key: "SSO_COOKIE_SECURE", value: "", effective_value: "false", updated_at: "2026-06-09T12:00:00Z" },
   ],
+};
+
+const dreamingConfigSnapshot: DreamingConfig = {
+  update_time: "2026-06-11T03:00:00Z",
+  items: [
+    { key: "DREAMING_ENABLED", value: "false", effective_value: "false", updated_at: "2026-06-11T03:00:00Z" },
+    { key: "DREAMING_FORCE_ENABLED", value: "false", effective_value: "false", updated_at: "2026-06-11T03:00:00Z" },
+    { key: "DREAMING_START_TIME_LOCAL", value: "03:00", effective_value: "03:00", updated_at: "2026-06-11T03:00:00Z" },
+    { key: "DREAMING_TIMEZONE", value: "UTC", effective_value: "UTC", updated_at: "2026-06-11T03:00:00Z" },
+    { key: "DREAMING_REFLECT_ENABLED", value: "true", effective_value: "true", updated_at: "2026-06-11T03:00:00Z" },
+    { key: "DREAMING_REEVALUATE_ENABLED", value: "true", effective_value: "true", updated_at: "2026-06-11T03:00:00Z" },
+    { key: "DREAMING_DREAM_ENABLED", value: "true", effective_value: "true", updated_at: "2026-06-11T03:00:00Z" },
+    { key: "DREAMING_MODEL", value: "", effective_value: "", updated_at: "2026-06-11T03:00:00Z" },
+    { key: "DREAMING_MAX_OUTPUTS", value: "5", effective_value: "5", updated_at: "2026-06-11T03:00:00Z" },
+  ],
+  effective: {
+    enabled: false,
+    force_enabled: false,
+    start_time_local: "03:00",
+    timezone: "UTC",
+    reflect_enabled: true,
+    reevaluate_enabled: true,
+    dream_enabled: true,
+    model: "",
+    max_outputs: 5,
+  },
 };
 
 function keyA(profileId = profileA.id): TeamProfile {
@@ -339,6 +365,33 @@ describe("App", () => {
     expect(await screen.findByText("Saved")).toBeInTheDocument();
   });
 
+  it("edits dreaming runtime config", async () => {
+    const fetchMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+
+    render(<App />);
+    await screen.findByRole("button", { name: /Default/ });
+    await userEvent.click(screen.getByRole("button", { name: /^Config$/i }));
+    await userEvent.click(await screen.findByRole("tab", { name: /dreaming/i }));
+
+    expect(await screen.findByRole("heading", { name: "Dreaming" })).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText("Enable scheduled cycle"), "true");
+    await userEvent.clear(screen.getByLabelText("Cycle start time"));
+    await userEvent.type(screen.getByLabelText("Cycle start time"), "02:30");
+    await userEvent.click(screen.getByRole("button", { name: /save config/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/config/dreaming"),
+        expect.objectContaining({
+          method: "PATCH",
+          body: expect.stringContaining(`"DREAMING_START_TIME_LOCAL"`),
+        }),
+      );
+    });
+    expect(await screen.findByText("Saved")).toBeInTheDocument();
+  });
+
   it("deletes a team", async () => {
     const deleteMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
     sessionStorage.setItem("denseMem.controlToken", "secret");
@@ -369,6 +422,7 @@ function mockPortalFetch({
   let currentKeys = keys;
   let currentBans = bans;
   let currentSSOConfig = structuredClone(ssoConfigSnapshot);
+  let currentDreamingConfig = structuredClone(dreamingConfigSnapshot);
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -395,6 +449,21 @@ function mockPortalFetch({
         }),
       };
       return jsonResponse({ data: currentSSOConfig });
+    }
+    if (url.endsWith("/config/dreaming") && method === "GET") {
+      return jsonResponse({ data: currentDreamingConfig });
+    }
+    if (url.endsWith("/config/dreaming") && method === "PATCH") {
+      const body = JSON.parse(String(init?.body));
+      currentDreamingConfig = {
+        ...currentDreamingConfig,
+        update_time: "2026-06-11T03:01:00Z",
+        items: currentDreamingConfig.items.map((item) => {
+          const update = body.items.find((candidate: { key: string }) => candidate.key === item.key);
+          return update ? { ...item, value: update.value, updated_at: "2026-06-11T03:01:00Z" } : item;
+        }),
+      };
+      return jsonResponse({ data: currentDreamingConfig });
     }
     if (url.endsWith("/teams") && method === "GET") {
       return jsonResponse(page(currentProfiles));

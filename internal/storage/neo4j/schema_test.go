@@ -327,6 +327,11 @@ func TestEnsureSchema_CrossProfileIsolation(t *testing.T) {
 		IndexSourceFragmentProfileStatus,
 		IndexFragmentOwnerIdempotency,
 		IndexFragmentOwnerContentHash,
+		IndexDreamProfileDreamID,
+		IndexDreamProfileStatus,
+		IndexDreamProfileContentHash,
+		IndexDreamProfileUpdatedAt,
+		IndexDreamRunProfileDate,
 	}
 
 	for _, idxName := range newIndexNames {

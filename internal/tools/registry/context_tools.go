@@ -114,6 +114,7 @@ func assembleContextResultSchema() map[string]any {
 			"context_block":  map[string]any{"type": "string"},
 			"items":          map[string]any{"type": "array", "items": contextItemSchema()},
 			"clarifications": clarificationArraySchema(),
+			"related_dreams": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
 			"truncated":      map[string]any{"type": "boolean"},
 		},
 	}

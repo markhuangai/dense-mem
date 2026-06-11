@@ -170,6 +170,10 @@ func (s *stubConfigProvider) GetAIVerifierAPIKey() string            { return ""
 func (s *stubConfigProvider) GetAIVerifierModel() string             { return "" }
 func (s *stubConfigProvider) GetAIVerifierTimeoutSeconds() int       { return 0 }
 func (s *stubConfigProvider) GetAIVerifierMaxConcurrency() int       { return 0 }
+func (s *stubConfigProvider) GetAIDreamingAPIURL() string            { return "" }
+func (s *stubConfigProvider) GetAIDreamingAPIKey() string            { return "" }
+func (s *stubConfigProvider) GetAIDreamingModel() string             { return "" }
+func (s *stubConfigProvider) GetAIDreamingTimeoutSeconds() int       { return 0 }
 func (s *stubConfigProvider) GetClaimWriteRateLimit() int            { return 0 }
 func (s *stubConfigProvider) GetClaimReadRateLimit() int             { return 0 }
 func (s *stubConfigProvider) GetRecallValidatedClaimWeight() float64 { return 0 }

@@ -211,6 +211,33 @@ export type SSOConfigInput = {
   }>;
 };
 
+export type DreamingRuntimeConfig = {
+  enabled: boolean;
+  force_enabled: boolean;
+  start_time_local: string;
+  timezone: string;
+  reflect_enabled: boolean;
+  reevaluate_enabled: boolean;
+  dream_enabled: boolean;
+  model: string;
+  max_outputs: number;
+};
+
+export type DreamingConfigItem = SSOConfigItem;
+
+export type DreamingConfig = {
+  update_time: string;
+  items: DreamingConfigItem[];
+  effective: DreamingRuntimeConfig;
+};
+
+export type DreamingConfigInput = {
+  items: Array<{
+    key: string;
+    value: string;
+  }>;
+};
+
 export class ApiError extends Error {
   status: number;
 
@@ -364,6 +391,14 @@ export class ControlApi {
 
   updateSSOConfig(input: SSOConfigInput): Promise<SSOConfig> {
     return this.requestEnvelope<SSOConfig>("/config/sso", { method: "PATCH", body: input });
+  }
+
+  getDreamingConfig(): Promise<DreamingConfig> {
+    return this.requestEnvelope<DreamingConfig>("/config/dreaming");
+  }
+
+  updateDreamingConfig(input: DreamingConfigInput): Promise<DreamingConfig> {
+    return this.requestEnvelope<DreamingConfig>("/config/dreaming", { method: "PATCH", body: input });
   }
 
   private async requestEnvelope<T>(path: string, options: RequestOptions = {}): Promise<T> {

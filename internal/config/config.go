@@ -43,6 +43,10 @@ type ConfigProvider interface {
 	GetAIVerifierModel() string
 	GetAIVerifierTimeoutSeconds() int
 	GetAIVerifierMaxConcurrency() int
+	GetAIDreamingAPIURL() string
+	GetAIDreamingAPIKey() string
+	GetAIDreamingModel() string
+	GetAIDreamingTimeoutSeconds() int
 	GetClaimWriteRateLimit() int
 	GetClaimReadRateLimit() int
 	GetRecallValidatedClaimWeight() float64
@@ -86,6 +90,10 @@ type Config struct {
 	AIVerifierModel              string
 	AIVerifierTimeoutSeconds     int
 	AIVerifierMaxConcurrency     int
+	AIDreamingAPIURL             string
+	AIDreamingAPIKey             string `json:"-"`
+	AIDreamingModel              string
+	AIDreamingTimeoutSeconds     int
 	ClaimWriteRateLimit          int
 	ClaimReadRateLimit           int
 	RecallValidatedClaimWeight   float64
@@ -150,7 +158,31 @@ func (c *Config) GetAIVerifierTimeoutSeconds() int {
 	}
 	return 60
 }
-func (c *Config) GetAIVerifierMaxConcurrency() int       { return c.AIVerifierMaxConcurrency }
+func (c *Config) GetAIVerifierMaxConcurrency() int { return c.AIVerifierMaxConcurrency }
+func (c *Config) GetAIDreamingAPIURL() string {
+	if c.AIDreamingAPIURL != "" {
+		return c.AIDreamingAPIURL
+	}
+	return c.GetAIVerifierAPIURL()
+}
+func (c *Config) GetAIDreamingAPIKey() string {
+	if c.AIDreamingAPIKey != "" {
+		return c.AIDreamingAPIKey
+	}
+	return c.GetAIVerifierAPIKey()
+}
+func (c *Config) GetAIDreamingModel() string {
+	if c.AIDreamingModel != "" {
+		return c.AIDreamingModel
+	}
+	return c.GetAIVerifierModel()
+}
+func (c *Config) GetAIDreamingTimeoutSeconds() int {
+	if c.AIDreamingTimeoutSeconds > 0 {
+		return c.AIDreamingTimeoutSeconds
+	}
+	return c.GetAIVerifierTimeoutSeconds()
+}
 func (c *Config) GetClaimWriteRateLimit() int            { return c.ClaimWriteRateLimit }
 func (c *Config) GetClaimReadRateLimit() int             { return c.ClaimReadRateLimit }
 func (c *Config) GetRecallValidatedClaimWeight() float64 { return c.RecallValidatedClaimWeight }
@@ -383,6 +415,25 @@ func Load() (Config, error) {
 		return cfg, err
 	}
 
+	dreamingAPIURLSet := strings.TrimSpace(os.Getenv("AI_DREAMING_API_URL")) != ""
+	dreamingAPIKeySet := strings.TrimSpace(os.Getenv("AI_DREAMING_API_KEY")) != ""
+	cfg.AIDreamingAPIURL = os.Getenv("AI_DREAMING_API_URL")
+	if cfg.AIDreamingAPIURL == "" {
+		cfg.AIDreamingAPIURL = cfg.GetAIVerifierAPIURL()
+	}
+	cfg.AIDreamingAPIKey = os.Getenv("AI_DREAMING_API_KEY")
+	if cfg.AIDreamingAPIKey == "" && !dreamingAPIURLSet {
+		cfg.AIDreamingAPIKey = cfg.GetAIVerifierAPIKey()
+	}
+	cfg.AIDreamingModel = os.Getenv("AI_DREAMING_MODEL")
+	if cfg.AIDreamingModel == "" {
+		cfg.AIDreamingModel = cfg.GetAIVerifierModel()
+	}
+	cfg.AIDreamingTimeoutSeconds, err = parseIntOrDefault("AI_DREAMING_TIMEOUT_SECONDS", cfg.GetAIVerifierTimeoutSeconds())
+	if err != nil {
+		return cfg, err
+	}
+
 	cfg.ClaimWriteRateLimit, err = parseIntOrDefault("CLAIM_WRITE_RATE_LIMIT", 60)
 	if err != nil {
 		return cfg, err
@@ -477,6 +528,7 @@ func Load() (Config, error) {
 		{"SSE_MAX_CONCURRENT_STREAMS", cfg.SSEMaxConcurrentStreams},
 		{"AI_VERIFIER_TIMEOUT_SECONDS", cfg.AIVerifierTimeoutSeconds},
 		{"AI_VERIFIER_MAX_CONCURRENCY", cfg.AIVerifierMaxConcurrency},
+		{"AI_DREAMING_TIMEOUT_SECONDS", cfg.AIDreamingTimeoutSeconds},
 		{"CLAIM_WRITE_RATE_LIMIT", cfg.ClaimWriteRateLimit},
 		{"CLAIM_READ_RATE_LIMIT", cfg.ClaimReadRateLimit},
 		{"PROMOTE_TX_TIMEOUT_SECONDS", cfg.PromoteTxTimeoutSeconds},
@@ -519,6 +571,18 @@ func Load() (Config, error) {
 		return cfg, &ValidationError{
 			Field:   "AI_VERIFIER_API_URL",
 			Message: "required when AI_VERIFIER_API_KEY is set and AI_API_URL is empty",
+		}
+	}
+	if dreamingAPIURLSet && !dreamingAPIKeySet {
+		return cfg, &ValidationError{
+			Field:   "AI_DREAMING_API_KEY",
+			Message: "required when AI_DREAMING_API_URL is set",
+		}
+	}
+	if dreamingAPIKeySet && strings.TrimSpace(cfg.AIDreamingAPIURL) == "" {
+		return cfg, &ValidationError{
+			Field:   "AI_DREAMING_API_URL",
+			Message: "required when AI_DREAMING_API_KEY is set and verifier/API URL is empty",
 		}
 	}
 
