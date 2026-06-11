@@ -566,6 +566,8 @@ button:disabled {
 }
 
 .sso-provider-table-wrap { overflow-x: visible; }
+.sso-provider-table-wrap .actions-cell { width: 108px; }
+.sso-provider-table-wrap .button-row { justify-content: flex-end; }
 
 .data-table {
   width: 100%;
