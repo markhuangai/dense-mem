@@ -287,8 +287,6 @@ function SSOMappingForm({
       </select>
       <label htmlFor="sso-map-group-id">Group ID</label>
       <input id="sso-map-group-id" value={draft.group_id} onChange={(event) => onChange({ ...draft, group_id: event.target.value })} />
-      <label htmlFor="sso-map-group-name">Group name</label>
-      <input id="sso-map-group-name" value={draft.group_name} onChange={(event) => onChange({ ...draft, group_name: event.target.value })} />
       <label htmlFor="sso-map-permission">Permission</label>
       <select
         id="sso-map-permission"
@@ -336,7 +334,7 @@ function SSOMappingTable({ mappings, onDelete }: { mappings: SSOGroupMapping[]; 
           {mappings.map((mapping) => (
             <tr key={mapping.id}>
               <td>{mapping.team_name || shortId(mapping.team_id)}</td>
-              <td><code>{mapping.group_name || mapping.group_id}</code></td>
+              <td><code>{mapping.group_id}</code></td>
               <td>{profilePermissionLabel(mapping.scopes)}</td>
               <td>{profileRoleLabel(mapping.role)}</td>
               <td><span className={mapping.enabled ? "status-pill neutral" : "status-pill warning"}>{mapping.enabled ? "enabled" : "disabled"}</span></td>
@@ -387,7 +385,6 @@ function emptyMappingInput(teamId: string): SSOGroupMappingInput {
   return {
     team_id: teamId,
     group_id: "",
-    group_name: "",
     scopes: ["read"],
     role: "member",
     enabled: true,

@@ -118,6 +118,72 @@ func TestSSOValidateAPIKeyPrincipalFailsClosedWhenRefreshUnavailable(t *testing.
 	assert.Equal(t, 1, resolver.calls)
 }
 
+func TestSSOListEnabledProvidersRequiresPublicLoginReadiness(t *testing.T) {
+	ctx := context.Background()
+	readyID := uuid.New()
+	secretReadyID := uuid.New()
+	missingSecretID := uuid.New()
+	invalidID := uuid.New()
+	disabledID := uuid.New()
+	secretEnv := "DENSE_MEM_TEST_SSO_SECRET"
+	missingSecretEnv := "DENSE_MEM_TEST_MISSING_SSO_SECRET"
+	t.Setenv(secretEnv, "test-secret")
+	t.Setenv(missingSecretEnv, "")
+
+	ready := domain.SSOProvider{
+		ID:        readyID,
+		Name:      "Ready OIDC",
+		Kind:      domain.SSOProviderKindGenericOIDC,
+		IssuerURL: "https://issuer.example.com",
+		ClientID:  "client-id",
+		Enabled:   true,
+	}
+	secretReady := ready
+	secretReady.ID = secretReadyID
+	secretReady.Name = "Secret OIDC"
+	secretReady.ClientSecretEnv = secretEnv
+	missingSecret := ready
+	missingSecret.ID = missingSecretID
+	missingSecret.Name = "Missing Secret"
+	missingSecret.ClientSecretEnv = missingSecretEnv
+	invalid := ready
+	invalid.ID = invalidID
+	invalid.Name = "Invalid OIDC"
+	invalid.ClientID = ""
+	disabled := ready
+	disabled.ID = disabledID
+	disabled.Name = "Disabled OIDC"
+	disabled.Enabled = false
+
+	repo := &ssoRepositoryStub{
+		t: t,
+		providerList: []*domain.SSOProvider{
+			&ready,
+			&secretReady,
+			&missingSecret,
+			&invalid,
+			&disabled,
+		},
+	}
+
+	svc := NewSSOService(repo, SSOConfig{PublicBaseURL: "https://portal.example.com"})
+	providers, err := svc.ListEnabledProviders(ctx)
+	require.NoError(t, err)
+	require.Len(t, providers, 2)
+	assert.Equal(t, readyID, providers[0].ID)
+	assert.Equal(t, secretReadyID, providers[1].ID)
+
+	withoutBaseURL := NewSSOService(repo, SSOConfig{})
+	providers, err = withoutBaseURL.ListEnabledProviders(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, providers)
+
+	withInvalidBaseURL := NewSSOService(repo, SSOConfig{PublicBaseURL: "portal.example.com"})
+	providers, err = withInvalidBaseURL.ListEnabledProviders(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, providers)
+}
+
 type ssoGroupResolverStub struct {
 	t          *testing.T
 	groups     []string

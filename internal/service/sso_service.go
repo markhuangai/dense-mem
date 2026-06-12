@@ -144,7 +144,24 @@ func (s *SSOService) ListEnabledProviders(ctx context.Context) ([]*domain.SSOPro
 	if s == nil || s.repo == nil {
 		return []*domain.SSOProvider{}, nil
 	}
-	return s.repo.ListEnabledProviders(ctx)
+	runtime, err := s.runtimeConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !ssoRuntimeReadyForPublicLogin(runtime) {
+		return []*domain.SSOProvider{}, nil
+	}
+	providers, err := s.repo.ListEnabledProviders(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]*domain.SSOProvider, 0, len(providers))
+	for _, provider := range providers {
+		if ssoProviderReadyForPublicLogin(provider) {
+			items = append(items, provider)
+		}
+	}
+	return items, nil
 }
 
 func (s *SSOService) ListProviders(ctx context.Context) ([]*domain.SSOProvider, error) {

@@ -220,7 +220,7 @@ func TestUserPortalSSOErrorBranches(t *testing.T) {
 	_, err = handler.currentSSOSession(c)
 	require.ErrorContains(t, err, "invalid sso session")
 
-	handler.sso = service.NewSSOService(&httpSSORepoStub{listProvidersErr: errors.New("list providers failed")}, service.SSOConfig{})
+	handler.sso = service.NewSSOService(&httpSSORepoStub{listProvidersErr: errors.New("list providers failed")}, service.SSOConfig{PublicBaseURL: "https://portal.example.com"})
 	c, _ = userSSOContext(nethttp.MethodGet, "/ui/api/sso/providers", "", "")
 	require.ErrorContains(t, handler.ssoProviders(c), "list providers failed")
 
@@ -405,7 +405,10 @@ func TestUserPortalSSORoutesAndCookies(t *testing.T) {
 		httpSSOTeamProfile(identityID, providerID, profileID, teamID, "Team One", service.APIKeyRoleMember, now),
 	}
 	repo.ssoProfiles = map[uuid.UUID]*domain.APIKey{profileID: &repo.teamProfiles[0].Profile}
-	ssoSvc := service.NewSSOService(repo, service.SSOConfig{Now: func() time.Time { return now }})
+	ssoSvc := service.NewSSOService(repo, service.SSOConfig{
+		PublicBaseURL: "https://portal.example.com",
+		Now:           func() time.Time { return now },
+	})
 
 	e := NewServer(config.Config{
 		HTTPMaxBodyBytes:        1048576,

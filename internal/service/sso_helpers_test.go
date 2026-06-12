@@ -34,13 +34,14 @@ func TestSSOTokenAndRedirectHelpers(t *testing.T) {
 
 func TestSSOClaimAndGroupHelpers(t *testing.T) {
 	raw := map[string]json.RawMessage{
-		"email":  json.RawMessage(`"ada@example.com"`),
-		"groups": json.RawMessage(`["g2","g1","g1"]`),
-		"roles":  json.RawMessage(`"role-1"`),
+		"email":         json.RawMessage(`"ada@example.com"`),
+		"groups":        json.RawMessage(`["g2","g1","g1"]`),
+		"roles":         json.RawMessage(`"role-1"`),
+		"zitadel_roles": json.RawMessage(`{"dense-mem-admin":{"org-id":"example.zitadel.cloud"},"dense-mem-member":{}}`),
 	}
 
 	assert.Equal(t, "ada@example.com", firstClaimString(raw, "missing", "email"))
-	assert.Equal(t, []string{"g1", "g2", "role-1"}, groupsFromRawClaims(raw, []string{"groups", "roles"}))
+	assert.Equal(t, []string{"dense-mem-admin", "dense-mem-member", "g1", "g2", "role-1"}, groupsFromRawClaims(raw, []string{"groups", "roles", "zitadel_roles"}))
 	assert.Equal(t, []string{"a", "b"}, dedupeStrings([]string{" b ", "", "a", "b"}))
 	assert.True(t, containsString([]string{"openid", "email"}, "openid"))
 	assert.False(t, containsString([]string{"email"}, "profile"))

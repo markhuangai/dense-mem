@@ -255,6 +255,13 @@ func groupsFromRawClaims(raw map[string]json.RawMessage, names []string) []strin
 		var single string
 		if err := json.Unmarshal(data, &single); err == nil && single != "" {
 			groups = append(groups, single)
+			continue
+		}
+		var keyed map[string]json.RawMessage
+		if err := json.Unmarshal(data, &keyed); err == nil {
+			for key := range keyed {
+				groups = append(groups, key)
+			}
 		}
 	}
 	return dedupeStrings(groups)
@@ -403,6 +410,25 @@ func containsString(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func ssoRuntimeReadyForPublicLogin(runtime SSORuntimeConfig) bool {
+	parsed, err := url.Parse(strings.TrimSpace(runtime.PublicBaseURL))
+	return err == nil && parsed.Host != "" && (parsed.Scheme == "http" || parsed.Scheme == "https")
+}
+
+func ssoProviderReadyForPublicLogin(provider *domain.SSOProvider) bool {
+	if provider == nil || !provider.Enabled {
+		return false
+	}
+	copy := *provider
+	if err := normalizeSSOProvider(&copy); err != nil {
+		return false
+	}
+	if copy.ClientSecretEnv != "" && strings.TrimSpace(os.Getenv(copy.ClientSecretEnv)) == "" {
+		return false
+	}
+	return true
 }
 
 func normalizeSSOProvider(provider *domain.SSOProvider) error {
