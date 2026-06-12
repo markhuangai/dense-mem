@@ -26,11 +26,16 @@ import (
 )
 
 type oidcLoginClaims struct {
-	Subject     string
-	Email       string
-	DisplayName string
-	Nonce       string
-	Groups      []string
+	Subject             string
+	Email               string
+	DisplayName         string
+	Nonce               string
+	Groups              []string
+	IDTokenClaimNames   []string
+	UserInfoClaimNames  []string
+	GroupsFromUserInfo  bool
+	UserInfoError       string
+	UserInfoClaimsError string
 }
 
 func readOIDCClaims(ctx context.Context, provider *oidc.Provider, token *oauth2.Token, idToken *oidc.IDToken, ssoProvider domain.SSOProvider) (oidcLoginClaims, error) {
@@ -39,17 +44,19 @@ func readOIDCClaims(ctx context.Context, provider *oidc.Provider, token *oauth2.
 		return oidcLoginClaims{}, fmt.Errorf("failed to parse oidc claims: %w", err)
 	}
 	claims := oidcLoginClaims{
-		Subject:     idToken.Subject,
-		Email:       firstClaimString(raw, "email", "preferred_username", "upn"),
-		DisplayName: firstClaimString(raw, "name", "display_name"),
-		Nonce:       firstClaimString(raw, "nonce"),
-		Groups:      groupsFromRawClaims(raw, ssoProvider.GroupClaims),
+		Subject:           idToken.Subject,
+		Email:             firstClaimString(raw, "email", "preferred_username", "upn"),
+		DisplayName:       firstClaimString(raw, "name", "display_name"),
+		Nonce:             firstClaimString(raw, "nonce"),
+		Groups:            groupsFromRawClaims(raw, ssoProvider.GroupClaims),
+		IDTokenClaimNames: rawClaimNames(raw),
 	}
 	if claims.Email == "" || claims.DisplayName == "" || len(claims.Groups) == 0 {
 		info, err := provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
 		if err == nil && info != nil {
 			var userInfoRaw map[string]json.RawMessage
 			if err := info.Claims(&userInfoRaw); err == nil {
+				claims.UserInfoClaimNames = rawClaimNames(userInfoRaw)
 				if claims.Email == "" {
 					claims.Email = firstClaimString(userInfoRaw, "email", "preferred_username", "upn")
 				}
@@ -58,8 +65,15 @@ func readOIDCClaims(ctx context.Context, provider *oidc.Provider, token *oauth2.
 				}
 				if len(claims.Groups) == 0 {
 					claims.Groups = groupsFromRawClaims(userInfoRaw, ssoProvider.GroupClaims)
+					claims.GroupsFromUserInfo = len(claims.Groups) > 0
 				}
+			} else {
+				claims.UserInfoClaimsError = err.Error()
 			}
+		} else if err != nil {
+			claims.UserInfoError = err.Error()
+		} else {
+			claims.UserInfoError = "userinfo response missing"
 		}
 	}
 	if claims.DisplayName == "" {
@@ -69,6 +83,15 @@ func readOIDCClaims(ctx context.Context, provider *oidc.Provider, token *oauth2.
 		claims.DisplayName = claims.Subject
 	}
 	return claims, nil
+}
+
+func rawClaimNames(raw map[string]json.RawMessage) []string {
+	names := make([]string, 0, len(raw))
+	for name := range raw {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 type HTTPSSOGroupResolver struct {

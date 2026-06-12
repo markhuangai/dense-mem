@@ -193,6 +193,7 @@ func main() {
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, profileService, auditService, backend.cleanupRepo, backend.cleanupRepo)
 	ssoService := service.NewSSOService(ssoRepo, service.SSOConfig{
 		RuntimeConfig: appConfigService,
+		Logger:        logger,
 	})
 	rateLimitService := backend.rateLimitService
 
