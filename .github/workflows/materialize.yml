@@ -28,14 +28,14 @@ on:
         required: false
         type: string
         default: ""
-
 jobs:
   materialize:
     permissions:
+      id-token: write
       contents: read
       discussions: write
       issues: write
-    uses: markhuangai/git-vibe/.github/workflows/materialize.yml@v3.3.0
+    uses: markhuangai/git-vibe/.github/workflows/materialize.yml@v4.0.0
     with:
       discussion-number: ${{ github.event.inputs.discussion-number }}
       runner: docker-runner
@@ -44,6 +44,5 @@ jobs:
       dry-run: ${{ fromJSON(github.event.inputs.dry-run) }}
       source-comment: ${{ github.event.inputs.source-comment }}
     secrets:
-      GITVIBE_GITHUB_TOKEN: ${{ secrets.GITVIBE_GITHUB_TOKEN }}
       GITVIBE_AI_ENV_JSON: ${{ secrets.GITVIBE_AI_ENV_JSON }}
       GITVIBE_MCP_ENV_JSON: ${{ secrets.GITVIBE_MCP_ENV_JSON }}
