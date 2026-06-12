@@ -332,10 +332,9 @@ func recallMemoryTool(deps Dependencies) Tool {
 			}
 			if deps.Dreams != nil {
 				dreams, err := deps.Dreams.Recall(ctx, profileID, req.Query, 5)
-				if err != nil {
-					return nil, err
+				if err == nil {
+					out["related_dreams"] = dreams
 				}
-				out["related_dreams"] = dreams
 			}
 			return out, nil
 		},

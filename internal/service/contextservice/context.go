@@ -305,9 +305,9 @@ func (s *service) Assemble(ctx context.Context, profileID string, req AssembleRe
 	}
 	var relatedDreams []*domain.Dream
 	if s.deps.Dreams != nil {
-		relatedDreams, err = s.deps.Dreams.Recall(ctx, profileID, query, 5)
-		if err != nil {
-			return nil, err
+		dreams, err := s.deps.Dreams.Recall(ctx, profileID, query, 5)
+		if err == nil {
+			relatedDreams = dreams
 		}
 	}
 

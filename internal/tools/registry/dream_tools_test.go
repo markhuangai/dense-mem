@@ -86,6 +86,7 @@ type stubDreamService struct {
 	lastListOpts   dreamservice.ListOptions
 	lastResolveReq dreamservice.ResolveFeedbackRequest
 	recallQuery    string
+	recallErr      error
 }
 
 func (s *stubDreamService) RunCycle(ctx context.Context, profileID string, req dreamservice.RunCycleRequest) (*dreamservice.RunCycleResult, error) {
@@ -106,6 +107,9 @@ func (s *stubDreamService) Get(ctx context.Context, profileID, dreamID string) (
 
 func (s *stubDreamService) Recall(ctx context.Context, profileID, query string, limit int) ([]*domain.Dream, error) {
 	s.recallQuery = query
+	if s.recallErr != nil {
+		return nil, s.recallErr
+	}
 	return []*domain.Dream{stubDream(profileID)}, nil
 }
 

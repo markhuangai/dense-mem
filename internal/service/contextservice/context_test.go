@@ -9,6 +9,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
+	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
@@ -263,6 +264,24 @@ func TestAssembleContextOptionsAndErrors(t *testing.T) {
 		Memory: &fakeMemory{err: reflectErr},
 	}).Assemble(ctx, "profile-a", AssembleRequest{Query: "q"})
 	require.ErrorIs(t, err, reflectErr)
+}
+
+func TestAssembleContextIgnoresDreamRecallFailure(t *testing.T) {
+	ctx := context.Background()
+	recall := &fakeRecall{hits: []recallservice.RecallHit{{
+		Tier:     recallservice.TierFragment,
+		Score:    0.2,
+		Fragment: fragmentFixture("fragment-1", "Base memory still returns."),
+	}}}
+	dreams := &fakeDreams{recallErr: errors.New("dream recall failed")}
+	svc := New(Dependencies{Recall: recall, Dreams: dreams})
+
+	got, err := svc.Assemble(ctx, "profile-a", AssembleRequest{Query: "project context"})
+
+	require.NoError(t, err)
+	require.Len(t, got.Items, 1)
+	require.Empty(t, got.RelatedDreams)
+	require.Equal(t, "project context", dreams.recallQuery)
 }
 
 func TestAssembleContextTruncatesAtMaxChars(t *testing.T) {
@@ -594,4 +613,41 @@ func (f *fakeMemory) Reflect(context.Context, string, memoryservice.ReflectReque
 
 func (f *fakeMemory) ConfirmMemory(context.Context, string, memoryservice.ConfirmRequest) (*memoryservice.ConfirmResult, error) {
 	return nil, errors.New("not implemented")
+}
+
+type fakeDreams struct {
+	recallQuery string
+	recallErr   error
+}
+
+func (f *fakeDreams) RunCycle(context.Context, string, dreamservice.RunCycleRequest) (*dreamservice.RunCycleResult, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (f *fakeDreams) List(context.Context, string, dreamservice.ListOptions) ([]*domain.Dream, string, error) {
+	return nil, "", errors.New("not implemented")
+}
+
+func (f *fakeDreams) Get(context.Context, string, string) (*domain.Dream, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (f *fakeDreams) Recall(_ context.Context, _ string, query string, _ int) ([]*domain.Dream, error) {
+	f.recallQuery = query
+	if f.recallErr != nil {
+		return nil, f.recallErr
+	}
+	return []*domain.Dream{{DreamID: "dream-1", Hypothesis: "A may affect B."}}, nil
+}
+
+func (f *fakeDreams) ResolveFeedback(context.Context, string, dreamservice.ResolveFeedbackRequest) (*dreamservice.ResolveFeedbackResult, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (f *fakeDreams) Status(context.Context, string) (*dreamservice.StatusResult, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (f *fakeDreams) EffectiveConfig(context.Context, string) (dreamservice.EffectiveConfig, error) {
+	return dreamservice.EffectiveConfig{}, nil
 }
