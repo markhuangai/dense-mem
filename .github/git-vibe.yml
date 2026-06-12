@@ -33,10 +33,7 @@ commands:
   allow_external_agent_mentions: false
 
 event_delivery:
-  # webhook: repository webhook points at the self-hosted GitVibe server.
-  # relay: webhook proxy/tunnel such as Smee, Hookdeck, Cloudflare Tunnel, or ngrok.
-  # actions: no-server receiver workflows in the consumer repository.
-  # polling: local/scheduled worker polls GitHub APIs with cursors/ETags.
+  # Hosted GitHub App installs configure webhooks centrally; repositories do not create hooks.
   mode: webhook
   relay:
     provider: smee
@@ -50,10 +47,7 @@ event_delivery:
     interval_seconds: 300
 
 github_auth:
-  # Self-hosted default: the GitVibe server uses a fine-grained PAT scoped to this repository.
-  mode: webhook-pat
-  # GitHub Actions Secret name. Stores the GitHub write token.
-  token_secret: GITVIBE_GITHUB_TOKEN
+  mode: github-app
 
 tests:
   commands: []
