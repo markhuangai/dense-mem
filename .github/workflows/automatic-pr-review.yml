@@ -16,6 +16,7 @@ jobs:
   review:
     if: ${{ !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository }}
     permissions:
+      id-token: write
       actions: write
       contents: read
       issues: write
