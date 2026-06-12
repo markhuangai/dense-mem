@@ -237,6 +237,11 @@ func telemetryCardSpecs(scope TelemetryScope, baseLabels map[string]string, wind
 		{ID: "embedding_tokens", Label: "Embedding tokens", Unit: "tokens", Query: telemetryIncrease("densemem_embedding_tokens_total", scope, baseLabels, map[string]string{"kind": "total"}, window)},
 		{ID: "recalls", Label: "Recall requests", Unit: "requests", Query: telemetryIncrease("densemem_recall_requests_total", scope, baseLabels, nil, window)},
 		{ID: "avg_recall_results", Label: "Avg recall results", Unit: "results", Query: telemetryHistogramAverage("densemem_recall_results", scope, baseLabels, nil, window, 1)},
+		{ID: "p95_recall_latency", Label: "P95 recall latency", Unit: "ms", Query: telemetryHistogramQuantile("densemem_recall_duration_seconds", scope, baseLabels, nil, window, 0.95, 1000)},
+		{ID: "eval_candidate_recall_50", Label: "Eval Recall@50", Unit: "percent", Query: telemetryRecallEvalScore(scope, baseLabels, "candidate_recall", "50", window)},
+		{ID: "eval_hit_rate_5", Label: "Eval Hit@5", Unit: "percent", Query: telemetryRecallEvalScore(scope, baseLabels, "hit_rate", "5", window)},
+		{ID: "eval_mrr_5", Label: "Eval MRR@5", Unit: "percent", Query: telemetryRecallEvalScore(scope, baseLabels, "mrr", "5", window)},
+		{ID: "eval_tier_correctness", Label: "Eval tier correctness", Unit: "percent", Query: telemetryRecallEvalScore(scope, baseLabels, "tier_correctness", "all", window)},
 		{ID: "promotions", Label: "Promotions", Unit: "promotions", Query: telemetryIncrease("densemem_promotion_outcome_total", scope, baseLabels, map[string]string{"outcome": "promoted"}, window)},
 		{ID: "promotion_rate", Label: "Promotion rate", Unit: "percent", Query: telemetryPromotionRate(scope, baseLabels, window)},
 		{ID: "avg_http_latency", Label: "Avg HTTP latency", Unit: "ms", Query: telemetryAverageLatency("densemem_http_request_duration_seconds", scope, baseLabels, window)},
@@ -261,6 +266,11 @@ func telemetrySeriesSpecs(selector string, rateWindow string) []telemetryQuerySp
 		{ID: "recalls", Label: "Recall requests", Unit: "requests/s", Query: fmt.Sprintf("sum(rate(densemem_recall_requests_total%s[%s]))", selector, rateWindow)},
 		{ID: "promotions", Label: "Promotions", Unit: "promotions/s", Query: fmt.Sprintf("sum(rate(densemem_promotion_outcome_total%s[%s]))", telemetrySelectorWithRaw(selector, `outcome="promoted"`), rateWindow)},
 		{ID: "recall_results", Label: "Recall results", Unit: "results", Query: telemetryRangeHistogramAverage("densemem_recall_results", selector, "", rateWindow, 1)},
+		{ID: "recall_p95_latency", Label: "Recall p95 latency", Unit: "ms", Query: telemetryRangeHistogramQuantile("densemem_recall_duration_seconds", selector, "", rateWindow, 0.95, 1000)},
+		{ID: "eval_candidate_recall_50", Label: "Eval Recall@50", Unit: "percent", Query: telemetryRangeRecallEvalScore(selector, "candidate_recall", "50", 100)},
+		{ID: "eval_hit_rate_5", Label: "Eval Hit@5", Unit: "percent", Query: telemetryRangeRecallEvalScore(selector, "hit_rate", "5", 100)},
+		{ID: "eval_mrr_5", Label: "Eval MRR@5", Unit: "percent", Query: telemetryRangeRecallEvalScore(selector, "mrr", "5", 100)},
+		{ID: "eval_tier_correctness", Label: "Eval tier correctness", Unit: "percent", Query: telemetryRangeRecallEvalScore(selector, "tier_correctness", "all", 100)},
 		{ID: "claim_verify_latency", Label: "Claim-to-verify", Unit: "ms", Query: telemetryRangeHistogramAverage("densemem_memory_funnel_latency_seconds", selector, `stage="claim_to_verify"`, rateWindow, 1000)},
 		{ID: "claim_promotion_latency", Label: "Claim-to-promote", Unit: "ms", Query: telemetryRangeHistogramAverage("densemem_memory_funnel_latency_seconds", selector, `stage="claim_to_promotion"`, rateWindow, 1000)},
 		{ID: "verify_promotion_latency", Label: "Verify-to-promote", Unit: "ms", Query: telemetryRangeHistogramAverage("densemem_memory_funnel_latency_seconds", selector, `stage="verify_to_promotion"`, rateWindow, 1000)},
@@ -284,6 +294,17 @@ func telemetryHistogramAverage(metric string, scope TelemetryScope, baseLabels m
 	return fmt.Sprintf("%g * sum(increase(%s_sum%s[%s])) / sum(increase(%s_count%s[%s]))", multiplier, metric, selector, window, metric, selector, window)
 }
 
+func telemetryHistogramQuantile(metric string, scope TelemetryScope, baseLabels map[string]string, extra map[string]string, window string, quantile float64, multiplier float64) string {
+	selector := telemetrySelector(scope, mergeTelemetryLabels(baseLabels, extra))
+	return fmt.Sprintf("%g * histogram_quantile(%g, sum(rate(%s_bucket%s[%s])) by (le))", multiplier, quantile, metric, selector, window)
+}
+
+func telemetryRecallEvalScore(scope TelemetryScope, baseLabels map[string]string, metric string, k string, window string) string {
+	extra := map[string]string{"metric": metric, "k": k}
+	selector := telemetrySelector(scope, mergeTelemetryLabels(baseLabels, extra))
+	return fmt.Sprintf("100 * avg(avg_over_time(densemem_recall_eval_score%s[%s]))", selector, window)
+}
+
 func telemetryGaugeSum(metric string, scope TelemetryScope, baseLabels map[string]string, extra map[string]string) string {
 	return fmt.Sprintf("sum(%s%s)", metric, telemetrySelector(scope, mergeTelemetryLabels(baseLabels, extra)))
 }
@@ -293,6 +314,18 @@ func telemetryRangeHistogramAverage(metric string, selector string, raw string, 
 		selector = telemetrySelectorWithRaw(selector, raw)
 	}
 	return fmt.Sprintf("%g * sum(rate(%s_sum%s[%s])) / sum(rate(%s_count%s[%s]))", multiplier, metric, selector, rateWindow, metric, selector, rateWindow)
+}
+
+func telemetryRangeHistogramQuantile(metric string, selector string, raw string, rateWindow string, quantile float64, multiplier float64) string {
+	if raw != "" {
+		selector = telemetrySelectorWithRaw(selector, raw)
+	}
+	return fmt.Sprintf("%g * histogram_quantile(%g, sum(rate(%s_bucket%s[%s])) by (le))", multiplier, quantile, metric, selector, rateWindow)
+}
+
+func telemetryRangeRecallEvalScore(selector string, metric string, k string, multiplier float64) string {
+	selector = telemetrySelectorWithRaw(selector, fmt.Sprintf(`metric=%q,k=%q`, metric, k))
+	return fmt.Sprintf("%g * avg(densemem_recall_eval_score%s)", multiplier, selector)
 }
 
 func telemetryRangeGauge(metric string, selector string, raw string) string {
@@ -518,6 +551,11 @@ func telemetryEmptyCards() []TelemetryCard {
 		{ID: "embedding_tokens", Label: "Embedding tokens", Unit: "tokens"},
 		{ID: "recalls", Label: "Recall requests", Unit: "requests"},
 		{ID: "avg_recall_results", Label: "Avg recall results", Unit: "results"},
+		{ID: "p95_recall_latency", Label: "P95 recall latency", Unit: "ms"},
+		{ID: "eval_candidate_recall_50", Label: "Eval Recall@50", Unit: "percent"},
+		{ID: "eval_hit_rate_5", Label: "Eval Hit@5", Unit: "percent"},
+		{ID: "eval_mrr_5", Label: "Eval MRR@5", Unit: "percent"},
+		{ID: "eval_tier_correctness", Label: "Eval tier correctness", Unit: "percent"},
 		{ID: "promotions", Label: "Promotions", Unit: "promotions"},
 		{ID: "promotion_rate", Label: "Promotion rate", Unit: "percent"},
 		{ID: "avg_http_latency", Label: "Avg HTTP latency", Unit: "ms"},
@@ -543,6 +581,11 @@ func telemetryEmptySeries() []TelemetrySeries {
 		{ID: "recalls", Label: "Recall requests", Unit: "requests/s", Points: emptyPoints},
 		{ID: "promotions", Label: "Promotions", Unit: "promotions/s", Points: emptyPoints},
 		{ID: "recall_results", Label: "Recall results", Unit: "results", Points: emptyPoints},
+		{ID: "recall_p95_latency", Label: "Recall p95 latency", Unit: "ms", Points: emptyPoints},
+		{ID: "eval_candidate_recall_50", Label: "Eval Recall@50", Unit: "percent", Points: emptyPoints},
+		{ID: "eval_hit_rate_5", Label: "Eval Hit@5", Unit: "percent", Points: emptyPoints},
+		{ID: "eval_mrr_5", Label: "Eval MRR@5", Unit: "percent", Points: emptyPoints},
+		{ID: "eval_tier_correctness", Label: "Eval tier correctness", Unit: "percent", Points: emptyPoints},
 		{ID: "claim_verify_latency", Label: "Claim-to-verify", Unit: "ms", Points: emptyPoints},
 		{ID: "claim_promotion_latency", Label: "Claim-to-promote", Unit: "ms", Points: emptyPoints},
 		{ID: "verify_promotion_latency", Label: "Verify-to-promote", Unit: "ms", Points: emptyPoints},

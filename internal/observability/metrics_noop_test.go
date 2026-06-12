@@ -12,6 +12,7 @@ func TestNoopDiscoverabilityMetricsImplementsAllMethods(t *testing.T) {
 	metrics.IncEmbeddingError("timeout")
 	metrics.ObserveRecallLatency(3.5)
 	metrics.ObserveRecall(3.5, 2, "ok")
+	metrics.ObserveRecallEvaluation("golden", "rrf", "mrr", 5, 0.75)
 	metrics.ObserveMemoryFunnelLatency("claim_to_verify", 1.25, "verified")
 	metrics.IncFragmentCreate("created")
 	metrics.IncClaimCreate("duplicate", "content_hash")
