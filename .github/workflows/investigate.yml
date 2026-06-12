@@ -28,14 +28,14 @@ on:
         required: false
         type: string
         default: ""
-
 jobs:
   investigate:
     permissions:
+      id-token: write
       contents: read
       issues: write
       pull-requests: read
-    uses: markhuangai/git-vibe/.github/workflows/investigate.yml@v3.2.1
+    uses: markhuangai/git-vibe/.github/workflows/investigate.yml@v4.0.0
     with:
       issue-number: ${{ github.event.inputs.issue-number }}
       runner: docker-runner
@@ -44,6 +44,5 @@ jobs:
       dry-run: ${{ fromJSON(github.event.inputs.dry-run) }}
       source-comment: ${{ github.event.inputs.source-comment }}
     secrets:
-      GITVIBE_GITHUB_TOKEN: ${{ secrets.GITVIBE_GITHUB_TOKEN }}
       GITVIBE_AI_ENV_JSON: ${{ secrets.GITVIBE_AI_ENV_JSON }}
       GITVIBE_MCP_ENV_JSON: ${{ secrets.GITVIBE_MCP_ENV_JSON }}
