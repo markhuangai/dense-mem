@@ -3,9 +3,11 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -293,4 +295,70 @@ func TestInteractiveOAuthScopesIncludesGroupEndpointScopes(t *testing.T) {
 		GroupsScopes: []string{"groups.read"},
 	})
 	assert.Equal(t, []string{"openid", "profile"}, withoutEndpoint)
+}
+
+func TestSSOSetupErrorMessage(t *testing.T) {
+	for _, tt := range []struct {
+		code SSOSetupErrorCode
+		want string
+	}{
+		{SSOSetupGroupsMissing, "sso setup failed: no groups found in configured claims"},
+		{SSOSetupGroupLookupFailed, "sso setup failed: group lookup failed"},
+		{SSOSetupMappingMissing, "sso setup failed: no mapping matched the user groups"},
+		{SSOSetupEntitlementEmpty, "sso setup failed: no enabled team entitlement matched"},
+		{SSOSetupErrorCode("unknown"), "sso setup failed"},
+	} {
+		err := NewSSOSetupError(tt.code, nil)
+		message, ok := SSOSetupErrorMessage(err)
+		require.True(t, ok)
+		assert.Equal(t, tt.want, message)
+		assert.ErrorIs(t, err, ErrSSOAccessDenied)
+	}
+
+	backendErr := errors.New("backend denied")
+	err := NewSSOSetupError(SSOSetupMappingMissing, backendErr)
+	assert.Equal(t, "backend denied", err.Error())
+	assert.ErrorIs(t, err, backendErr)
+
+	message, ok := SSOSetupErrorMessage(errors.New("plain error"))
+	assert.False(t, ok)
+	assert.Empty(t, message)
+}
+
+func TestSSOEntitlementCacheHelpers(t *testing.T) {
+	runtime := SSORuntimeConfig{
+		EntitlementCacheTTL: 5 * time.Minute,
+		SessionTTL:          time.Hour,
+	}
+
+	assert.Equal(t, time.Hour, ssoActiveEntitlementCacheTTL(runtime, ssoEntitlementSourceClaims))
+	assert.Equal(t, 5*time.Minute, ssoActiveEntitlementCacheTTL(runtime, ssoEntitlementSourceEndpoint))
+	assert.Equal(t, "source=claims", ssoEntitlementCacheMessage(ssoEntitlementSourceClaims))
+	assert.Empty(t, ssoEntitlementCacheMessage(""))
+}
+
+func TestSSOKeyRequiresEntitlementValidation(t *testing.T) {
+	providerID := uuid.New()
+	identityID := uuid.New()
+
+	for _, tt := range []struct {
+		name string
+		key  *domain.APIKey
+		want bool
+	}{
+		{name: "nil", key: nil, want: false},
+		{name: "ordinary", key: &domain.APIKey{}, want: false},
+		{name: "unlinked api key", key: &domain.APIKey{AuthSource: "api_key", SSOEntitlementStatus: "unlinked"}, want: false},
+		{name: "sso auth source", key: &domain.APIKey{AuthSource: "sso"}, want: true},
+		{name: "hybrid auth source", key: &domain.APIKey{AuthSource: "hybrid"}, want: true},
+		{name: "identity", key: &domain.APIKey{SSOIdentityID: &identityID}, want: true},
+		{name: "provider", key: &domain.APIKey{SSOProviderID: &providerID}, want: true},
+		{name: "subject", key: &domain.APIKey{SSOSubject: "subject"}, want: true},
+		{name: "group", key: &domain.APIKey{SSOGroupID: "group"}, want: true},
+		{name: "status", key: &domain.APIKey{SSOEntitlementStatus: "active"}, want: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, ssoKeyRequiresEntitlementValidation(tt.key))
+		})
+	}
 }
