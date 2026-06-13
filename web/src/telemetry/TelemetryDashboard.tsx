@@ -150,6 +150,9 @@ export function formatTelemetryAxisTick(value: number, unit: string) {
   if (!Number.isFinite(value)) {
     return "";
   }
+  if (unit === "percent") {
+    return `${trimFixed(value, value >= 10 ? 0 : 1)}%`;
+  }
   if (unit.includes("/s") || unit === "rps") {
     return formatRateTick(value);
   }

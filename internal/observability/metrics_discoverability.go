@@ -17,6 +17,9 @@ type DiscoverabilityMetrics interface {
 	ObserveRecallLatency(durationMs float64)
 	// ObserveRecall records one recall-service call with its result count.
 	ObserveRecall(durationMs float64, resultCount int, outcome string)
+	// ObserveRecallEvaluation records one offline recall-evaluation score.
+	// suite, pipeline, metric, and k must be bounded label sets; k=0 means all.
+	ObserveRecallEvaluation(suite string, pipeline string, metric string, k int, value float64)
 	// ObserveMemoryFunnelLatency records latency between memory pipeline stages.
 	ObserveMemoryFunnelLatency(stage string, seconds float64, outcome string)
 	// IncFragmentCreate bumps the fragment-create outcome counter.
@@ -61,6 +64,8 @@ func (noopMetrics) ObserveEmbeddingLatency(float64, string) {}
 func (noopMetrics) IncEmbeddingError(string)                {}
 func (noopMetrics) ObserveRecallLatency(float64)            {}
 func (noopMetrics) ObserveRecall(float64, int, string)      {}
+func (noopMetrics) ObserveRecallEvaluation(string, string, string, int, float64) {
+}
 func (noopMetrics) ObserveMemoryFunnelLatency(string, float64, string) {
 }
 func (noopMetrics) IncFragmentCreate(string)            {}
@@ -82,6 +87,7 @@ type InMemoryDiscoverabilityMetrics struct {
 	embeddingErrors        map[string]int
 	recallLatencies        []float64
 	recallSamples          []RecallSample
+	recallEvalSamples      []RecallEvaluationSample
 	memoryFunnelSamples    []MemoryFunnelSample
 	fragmentOutcomes       map[string]int
 	claimCreateSamples     []ClaimCreateSample
@@ -117,6 +123,15 @@ type RecallSample struct {
 	DurationMs  float64
 	ResultCount int
 	Outcome     string
+}
+
+// RecallEvaluationSample is one offline recall-evaluation score.
+type RecallEvaluationSample struct {
+	Suite    string
+	Pipeline string
+	Metric   string
+	K        int
+	Value    float64
 }
 
 // MemoryFunnelSample is one observed pipeline-stage latency.
@@ -168,6 +183,19 @@ func (m *InMemoryDiscoverabilityMetrics) ObserveRecall(durationMs float64, resul
 	m.recallSamples = append(m.recallSamples, RecallSample{DurationMs: durationMs, ResultCount: resultCount, Outcome: outcome})
 }
 
+// ObserveRecallEvaluation records one offline recall-evaluation score.
+func (m *InMemoryDiscoverabilityMetrics) ObserveRecallEvaluation(suite string, pipeline string, metric string, k int, value float64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recallEvalSamples = append(m.recallEvalSamples, RecallEvaluationSample{
+		Suite:    suite,
+		Pipeline: pipeline,
+		Metric:   metric,
+		K:        k,
+		Value:    value,
+	})
+}
+
 // ObserveMemoryFunnelLatency records one memory-pipeline stage latency.
 func (m *InMemoryDiscoverabilityMetrics) ObserveMemoryFunnelLatency(stage string, seconds float64, outcome string) {
 	m.mu.Lock()
@@ -213,6 +241,15 @@ func (m *InMemoryDiscoverabilityMetrics) RecallSamples() []RecallSample {
 	defer m.mu.Unlock()
 	out := make([]RecallSample, len(m.recallSamples))
 	copy(out, m.recallSamples)
+	return out
+}
+
+// RecallEvaluationSamples returns a copy of the recorded recall eval scores.
+func (m *InMemoryDiscoverabilityMetrics) RecallEvaluationSamples() []RecallEvaluationSample {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]RecallEvaluationSample, len(m.recallEvalSamples))
+	copy(out, m.recallEvalSamples)
 	return out
 }
 

@@ -36,6 +36,7 @@ func TestPrometheusMetrics_RecordsScopedMetrics(t *testing.T) {
 	metrics.IncVerifyVerdictFor(ctx, "verify-model", "verified")
 	metrics.ObserveRecallLatencyFor(ctx, 42)
 	metrics.ObserveRecallFor(ctx, 42, 3, "ok")
+	metrics.ObserveRecallEvaluationFor(ctx, "golden", "rrf", "candidate_recall", 50, 0.92)
 	metrics.ObserveMemoryFunnelLatencyFor(ctx, "claim_to_verify", 2.5, "verified")
 	metrics.IncFragmentCreateFor(ctx, "created")
 	metrics.IncClaimCreateFor(ctx, "duplicate", "content_hash")
@@ -64,6 +65,11 @@ func TestPrometheusMetrics_RecordsScopedMetrics(t *testing.T) {
 		`densemem_verify_verdict_total{`,
 		`outcome="verified"`,
 		`densemem_recall_results_bucket{`,
+		`densemem_recall_eval_score{`,
+		`suite="golden"`,
+		`pipeline="rrf"`,
+		`metric="candidate_recall"`,
+		`k="50"`,
 		`densemem_memory_funnel_latency_seconds_bucket{`,
 		`stage="claim_to_verify"`,
 		`densemem_claim_create_total{`,
@@ -97,6 +103,7 @@ func TestPrometheusMetrics_RecordsUnknownLabelsAndFallbackHelpers(t *testing.T) 
 	metrics.IncEmbeddingError("")
 	metrics.ObserveRecallLatency(2)
 	metrics.ObserveRecall(2, 0, "")
+	metrics.ObserveRecallEvaluation("", "", "", -1, 1.5)
 	metrics.ObserveMemoryFunnelLatency("", 1, "")
 	metrics.IncFragmentCreate("")
 	metrics.IncClaimCreate("", "")
@@ -116,6 +123,7 @@ func TestPrometheusMetrics_RecordsUnknownLabelsAndFallbackHelpers(t *testing.T) 
 	RecordVerifyVerdict(ctx, metrics, "verify-model", "verified")
 	RecordRecallLatency(ctx, metrics, 1)
 	RecordRecall(ctx, metrics, 1, 2, "ok")
+	RecordRecallEvaluation(ctx, metrics, "golden", "candidate-rerank", "hit_rate", 5, 0.8)
 	RecordMemoryFunnelLatency(ctx, metrics, "claim_to_promotion", 5, "promoted")
 	RecordFragmentCreate(ctx, metrics, "created")
 	RecordClaimCreate(ctx, metrics, "created", "")
@@ -133,6 +141,7 @@ func TestPrometheusMetrics_RecordsUnknownLabelsAndFallbackHelpers(t *testing.T) 
 	RecordVerifyVerdict(ctx, fallback, "ignored", "verified")
 	RecordRecallLatency(ctx, fallback, 30)
 	RecordRecall(ctx, fallback, 30, 4, "ok")
+	RecordRecallEvaluation(ctx, fallback, "golden", "rrf", "mrr", 5, 0.7)
 	RecordMemoryFunnelLatency(ctx, fallback, "claim_to_verify", 3, "verified")
 	RecordFragmentCreate(ctx, fallback, "created")
 	RecordClaimCreate(ctx, fallback, "duplicate", "exact")
@@ -154,6 +163,10 @@ func TestPrometheusMetrics_RecordsUnknownLabelsAndFallbackHelpers(t *testing.T) 
 		`model="unknown"`,
 		`outcome="unknown"`,
 		`dedupe_reason="unknown"`,
+		`suite="unknown"`,
+		`pipeline="unknown"`,
+		`metric="unknown"`,
+		`k="all"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("scraped metrics missing %q\n%s", want, body)
@@ -403,6 +416,7 @@ func TestNoopDiscoverabilityMetrics_ConsumesCalls(t *testing.T) {
 	metrics.IncEmbeddingError("timeout")
 	metrics.ObserveRecallLatency(1)
 	metrics.ObserveRecall(1, 2, "ok")
+	metrics.ObserveRecallEvaluation("golden", "rrf", "tier_correctness", 0, 1)
 	metrics.ObserveMemoryFunnelLatency("claim_to_verify", 1, "verified")
 	metrics.IncFragmentCreate("created")
 	metrics.IncClaimCreate("duplicate", "exact")
@@ -481,6 +495,10 @@ func assertFallbackRecorded(t *testing.T, metrics *InMemoryDiscoverabilityMetric
 	if len(recalls) != 1 || recalls[0].ResultCount != 4 || recalls[0].Outcome != "ok" {
 		t.Fatalf("fallback recall samples = %+v", recalls)
 	}
+	recallEval := metrics.RecallEvaluationSamples()
+	if len(recallEval) != 1 || recallEval[0].Metric != "mrr" || recallEval[0].Value != 0.7 {
+		t.Fatalf("fallback recall eval samples = %+v", recallEval)
+	}
 	funnel := metrics.MemoryFunnelSamples()
 	if len(funnel) != 1 || funnel[0].Stage != "claim_to_verify" || funnel[0].Outcome != "verified" {
 		t.Fatalf("fallback funnel samples = %+v", funnel)
@@ -514,6 +532,7 @@ func exerciseNilMetricHelpers(ctx context.Context) {
 	RecordVerifyVerdict(ctx, nil, "model", "verified")
 	RecordRecallLatency(ctx, nil, 1)
 	RecordRecall(ctx, nil, 1, 1, "ok")
+	RecordRecallEvaluation(ctx, nil, "suite", "pipeline", "metric", 5, 1)
 	RecordMemoryFunnelLatency(ctx, nil, "stage", 1, "ok")
 	RecordFragmentCreate(ctx, nil, "created")
 	RecordClaimCreate(ctx, nil, "created", "")
