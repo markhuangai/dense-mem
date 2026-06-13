@@ -71,8 +71,8 @@ not show SSO login in `/ui`.
 | `SSO_COOKIE_SECURE` | derived | Secure-cookie setting. Defaults to `true` for `https` public base URLs and `false` otherwise. |
 
 These settings can be managed from the control portal SSO configuration screen.
-See [Portals And API Keys](Portals-And-API-Keys#user-portal-sso) for provider,
-ZITADEL, and group-mapping setup.
+See [Portals And API Keys](Portals-And-API-Keys#user-portal-sso) for generic
+OIDC provider setup, group mappings, and the example ZITADEL configuration.
 
 ## Database Settings
 

@@ -4,15 +4,15 @@ Dense-Mem has two portal surfaces:
 
 | Portal | URL | Auth | Purpose |
 | --- | --- | --- | --- |
-| User portal | `http://127.0.0.1:8080/ui` | Dense-Mem API key | Current key/session, self telemetry, current-key rotation, and bounded team management for manager keys. |
+| User portal | `http://127.0.0.1:8080/ui` | Dense-Mem API key, or SSO when configured | Current key/session, self telemetry, current-key rotation, SSO team selection, and bounded team management for manager access. |
 | Control portal | `http://127.0.0.1:8090/` | `CONTROL_PORTAL_TOKEN` | Teams, profiles, profile roles, keys, security bans, control telemetry. |
 
 Keep the control portal private. It is not meant to be a public admin site.
 
 ## User Portal
 
-The user portal runs on the main Dense-Mem API server. It authenticates with the
-same API key used by MCP clients:
+The user portal runs on the main Dense-Mem API server. For API-key login, it
+authenticates with the same API key used by MCP clients:
 
 ```text
 Authorization: Bearer dm_...
@@ -24,6 +24,9 @@ Use it to:
 - rotate the current key when the key has write scope
 - view self-scoped telemetry when telemetry is enabled
 - manage same-team member profiles when the current key has manager role
+- sign in with SSO when SSO is configured for the deployment
+- switch between teams granted by the current SSO identity
+- create or rotate one SSO-owned personal API key per team for member SSO access
 
 The user portal cannot create arbitrary teams. Manager keys can update same-team
 metadata and create, list, rename, rotate, or delete member profiles. The user
@@ -60,6 +63,9 @@ Dense-Mem exposes these user-portal SSO endpoints:
 | `GET` | `/ui/api/sso/providers` | Lists enabled SSO providers for the login screen. |
 | `GET` | `/ui/api/sso/start/:providerId` | Starts OIDC login and redirects to the provider. |
 | `GET` | `/ui/api/sso/callback` | Receives the OIDC authorization code callback. |
+| `POST` | `/ui/api/sso/team` | Switches the current SSO browser session to another entitled team. |
+| `POST` | `/ui/api/sso/key` | Creates the current SSO member's owned API key for the selected team. |
+| `POST` | `/ui/api/sso/key/rotate` | Rotates the current SSO member's owned API key for the selected team. |
 | `POST` | `/ui/api/sso/logout` | Clears the local Dense-Mem SSO session cookies. |
 
 Do not use `/ui/api/sso/logout` as an OIDC post-logout redirect URI. It is a
@@ -67,12 +73,33 @@ local API endpoint, not a browser landing page. Dense-Mem does not currently
 perform RP-initiated OIDC logout with `post_logout_redirect_uri`.
 
 SSO sessions and API keys are separate authentication sources. One SSO identity
-can be entitled to multiple teams; Dense-Mem creates one SSO team profile per
-entitled team for browser-session access. That SSO profile has no API key
-material and cannot be rotated into an API key. When an SSO manager creates a
-profile from the Team tab, the returned key is a normal API-key profile. Future
-bearer-token login with that key uses standard API-key authentication and is not
-tied to the creator's SSO session.
+can be entitled to multiple teams, and the same provider group or role can map
+to many Dense-Mem teams. Dense-Mem creates one SSO team profile per entitled
+team for browser-session access, and `/ui` shows a team selector for those
+teams.
+
+The SSO team profile has no API key material and is not rotated into an API
+key. It only represents the browser SSO session for the selected team.
+
+SSO manager sessions see the Team tab and can manage same-team member profiles
+like a manager API-key login. Keys created from the Team tab are ordinary API
+keys.
+
+SSO member sessions see the My key tab. Each SSO identity can own at most one
+active personal API key per team. That key is stored as a normal
+`auth_source=api_key` key with SSO ownership metadata so `/ui` can find the
+owner's key. Future bearer-token login with that key uses the standard API-key
+implementation; it is not a hybrid SSO login and does not require later SSO
+entitlement refresh.
+
+The current SSO entitlement limits what the member can create or rotate from
+`/ui`:
+
+| SSO entitlement on selected team | My key behavior |
+| --- | --- |
+| Manager | Use the Team tab instead of My key. |
+| Member with read/write permission | Can create a read/write or read-only personal API key. Can rotate only if the existing personal key also has write scope. |
+| Member with read-only permission | Can create a read-only personal API key. Cannot rotate it from `/ui`. |
 
 If the provider requires a post-logout redirect URI, use the portal URL:
 
@@ -107,7 +134,7 @@ Configure providers in the control portal SSO section.
 | Client secret env | Environment variable name that contains the client secret. Leave empty for public PKCE clients. |
 | Scopes | Login scopes requested during the browser flow. Use at least `openid`, `profile`, and `email`. |
 | Group claims | Claim names that contain group, role, or entitlement values. |
-| Groups endpoint | Optional endpoint used when group claims are not present or when bearer-key entitlement refresh needs a provider lookup. |
+| Groups endpoint | Optional endpoint used when group claims are not present or when SSO entitlement refresh needs a provider lookup. |
 | Groups scopes | Scopes for the groups endpoint. If a groups endpoint is configured, these are also requested during browser login. |
 | Enabled | Enables the provider for login after the rest of the setup is correct. |
 
@@ -117,8 +144,8 @@ Group mappings connect provider group values to Dense-Mem teams:
 | --- | --- |
 | Team | Dense-Mem team to grant access to. |
 | Group | Exact group or role value from the provider claim. |
-| Permission | Dense-Mem API scopes, such as read-only or read/write. |
-| Role | Dense-Mem profile role, such as member or manager. |
+| Permission | Dense-Mem API scopes for member mappings, such as read-only or read/write. Manager mappings always grant read/write. |
+| Role | Dense-Mem profile role, either member or manager. Manager role grants the `/ui` Team tab for that team. |
 | Status | Disable a mapping without deleting it. |
 
 ### Generic OIDC Group And Role Mapping
@@ -146,9 +173,8 @@ string your provider emits.
 
 For claim-only providers, leave `Groups endpoint` and `Groups scopes` empty.
 Claim-derived entitlements are cached for the browser SSO session lifetime. For
-providers that require live entitlement refresh outside the browser session,
-configure `Groups endpoint` and the delegated or client-credential scopes it
-needs.
+providers that do not emit usable group or role claims, configure
+`Groups endpoint` and the delegated or client-credential scopes it needs.
 
 Examples:
 
@@ -232,7 +258,7 @@ Create a Dense-Mem group mapping whose `Group` value is the ZITADEL role key:
 | --- | --- |
 | Team | `Mark` |
 | Group | `dense-mem-admin` |
-| Permission | `Read/write` |
+| Permission | Not shown for `Manager`; manager implies read/write. |
 | Role | `Manager` |
 | Status | `enabled` |
 
