@@ -253,6 +253,7 @@ func TestUserPortalSSOErrorBranches(t *testing.T) {
 	require.ErrorContains(t, userPortalSSOError(service.ErrSSOSessionInvalid), "invalid sso session")
 	require.ErrorContains(t, userPortalSSOError(service.ErrSSOCSRFInvalid), "invalid sso csrf token")
 	require.ErrorContains(t, userPortalSSOError(service.ErrSSOAccessDenied), "sso access denied")
+	require.ErrorContains(t, userPortalSSOError(service.NewSSOSetupError(service.SSOSetupMappingMissing, service.ErrSSOAccessDenied)), "no mapping matched")
 	require.ErrorContains(t, userPortalSSOError(errors.New("issuer returned tenant detail")), "sso authentication failed")
 	require.NotContains(t, userPortalSSOError(errors.New("issuer returned tenant detail")).Error(), "tenant detail")
 }

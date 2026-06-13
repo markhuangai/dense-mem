@@ -118,6 +118,37 @@ func TestSSOValidateAPIKeyPrincipalFailsClosedWhenRefreshUnavailable(t *testing.
 	assert.Equal(t, 1, resolver.calls)
 }
 
+func TestSSOValidateAPIKeyPrincipalDeniesIncompleteSSOLinks(t *testing.T) {
+	providerID := uuid.New()
+	identityID := uuid.New()
+	teamID := uuid.New()
+	svc := NewSSOService(&ssoRepositoryStub{t: t}, SSOConfig{})
+
+	for name, ordinary := range map[string]*domain.APIKey{
+		"empty sso fields": {ID: uuid.New(), TeamID: teamID},
+		"db unlinked":      {ID: uuid.New(), TeamID: teamID, AuthSource: "api_key", SSOEntitlementStatus: "unlinked"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			validated, err := svc.ValidateAPIKeyPrincipal(context.Background(), ordinary)
+			require.NoError(t, err)
+			assert.Same(t, ordinary, validated)
+		})
+	}
+
+	for name, key := range map[string]*domain.APIKey{
+		"sso auth source only": {ID: uuid.New(), TeamID: teamID, AuthSource: "sso"},
+		"sso identity only":    {ID: uuid.New(), TeamID: teamID, SSOIdentityID: &identityID},
+		"provider no subject":  {ID: uuid.New(), TeamID: teamID, AuthSource: "sso", SSOProviderID: &providerID},
+		"subject no provider":  {ID: uuid.New(), TeamID: teamID, AuthSource: "hybrid", SSOSubject: "subject-123"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			validated, err := svc.ValidateAPIKeyPrincipal(context.Background(), key)
+			require.ErrorIs(t, err, ErrSSOAccessDenied)
+			assert.Nil(t, validated)
+		})
+	}
+}
+
 func TestSSOListEnabledProvidersRequiresPublicLoginReadiness(t *testing.T) {
 	ctx := context.Background()
 	readyID := uuid.New()

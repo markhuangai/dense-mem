@@ -529,6 +529,9 @@ func clearSSOCookie(c echo.Context, name string) {
 }
 
 func userPortalSSOError(err error) error {
+	if message, ok := service.SSOSetupErrorMessage(err); ok {
+		return httperr.New(httperr.FORBIDDEN, message)
+	}
 	switch {
 	case err == nil:
 		return nil

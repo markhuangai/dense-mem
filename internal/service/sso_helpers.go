@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/google/uuid"
@@ -36,6 +38,63 @@ type oidcLoginClaims struct {
 	GroupsFromUserInfo  bool
 	UserInfoError       string
 	UserInfoClaimsError string
+}
+
+type SSOSetupErrorCode string
+
+const (
+	SSOSetupGroupsMissing     SSOSetupErrorCode = "groups_missing"
+	SSOSetupGroupLookupFailed SSOSetupErrorCode = "group_lookup_failed"
+	SSOSetupMappingMissing    SSOSetupErrorCode = "mapping_missing"
+	SSOSetupEntitlementEmpty  SSOSetupErrorCode = "entitlement_empty"
+
+	ssoEntitlementSourceClaims   = "claims"
+	ssoEntitlementSourceEndpoint = "endpoint"
+)
+
+type SSOSetupError struct {
+	Code SSOSetupErrorCode
+	Err  error
+}
+
+func NewSSOSetupError(code SSOSetupErrorCode, err error) error {
+	if err == nil {
+		err = ErrSSOAccessDenied
+	}
+	return &SSOSetupError{Code: code, Err: err}
+}
+
+func (e *SSOSetupError) Error() string {
+	if e == nil || e.Err == nil {
+		return ErrSSOAccessDenied.Error()
+	}
+	return e.Err.Error()
+}
+
+func (e *SSOSetupError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+func SSOSetupErrorMessage(err error) (string, bool) {
+	var setupErr *SSOSetupError
+	if !errors.As(err, &setupErr) {
+		return "", false
+	}
+	switch setupErr.Code {
+	case SSOSetupGroupsMissing:
+		return "sso setup failed: no groups found in configured claims", true
+	case SSOSetupGroupLookupFailed:
+		return "sso setup failed: group lookup failed", true
+	case SSOSetupMappingMissing:
+		return "sso setup failed: no mapping matched the user groups", true
+	case SSOSetupEntitlementEmpty:
+		return "sso setup failed: no enabled team entitlement matched", true
+	default:
+		return "sso setup failed", true
+	}
 }
 
 func readOIDCClaims(ctx context.Context, provider *oidc.Provider, token *oauth2.Token, idToken *oidc.IDToken, ssoProvider domain.SSOProvider) (oidcLoginClaims, error) {
@@ -433,6 +492,64 @@ func containsString(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func interactiveOAuthScopes(provider domain.SSOProvider) []string {
+	scopes := normalizeOAuthScopes(provider.Scopes)
+	if len(scopes) == 0 {
+		scopes = []string{"openid", "profile", "email"}
+	}
+	if strings.TrimSpace(provider.GroupsEndpoint) != "" {
+		scopes = appendOAuthScopes(scopes, provider.GroupsScopes...)
+	}
+	if !containsString(scopes, oidc.ScopeOpenID) {
+		scopes = append([]string{oidc.ScopeOpenID}, scopes...)
+	}
+	return scopes
+}
+
+func normalizeOAuthScopes(scopes []string) []string {
+	return appendOAuthScopes(nil, scopes...)
+}
+
+func appendOAuthScopes(scopes []string, values ...string) []string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" && !containsString(scopes, trimmed) {
+			scopes = append(scopes, trimmed)
+		}
+	}
+	return scopes
+}
+
+func ssoActiveEntitlementCacheTTL(runtime SSORuntimeConfig, source string) time.Duration {
+	if source == ssoEntitlementSourceClaims {
+		return runtime.SessionTTL
+	}
+	return runtime.EntitlementCacheTTL
+}
+
+func ssoEntitlementCacheMessage(source string) string {
+	if strings.TrimSpace(source) == "" {
+		return ""
+	}
+	return "source=" + source
+}
+
+func ssoKeyRequiresEntitlementValidation(key *domain.APIKey) bool {
+	if key == nil {
+		return false
+	}
+	switch strings.TrimSpace(key.AuthSource) {
+	case "sso", "hybrid":
+		return true
+	}
+	status := strings.TrimSpace(key.SSOEntitlementStatus)
+	return key.SSOIdentityID != nil ||
+		key.SSOProviderID != nil ||
+		strings.TrimSpace(key.SSOSubject) != "" ||
+		strings.TrimSpace(key.SSOGroupID) != "" ||
+		(status != "" && status != "unlinked")
 }
 
 func ssoRuntimeReadyForPublicLogin(runtime SSORuntimeConfig) bool {

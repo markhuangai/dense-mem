@@ -278,6 +278,8 @@ func TestSSOCompleteLoginCreatesSession(t *testing.T) {
 	assert.Equal(t, APIKeyRoleManager, result.Session.Selected.Profile.Role)
 	require.NotNil(t, repo.savedCache)
 	assert.Equal(t, []string{"group-a"}, repo.savedCache.Groups)
+	assert.Equal(t, now.Add(time.Hour), repo.savedCache.ExpiresAt)
+	assert.Equal(t, "source=claims", repo.savedCache.Error)
 	require.NotNil(t, repo.createdSession)
 	assert.Equal(t, now.Add(time.Hour), repo.createdSession.ExpiresAt)
 }

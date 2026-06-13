@@ -278,3 +278,19 @@ func TestHTTPSSOGroupResolverClientCredentialsUnavailable(t *testing.T) {
 	})
 	require.ErrorIs(t, err, ErrSSOGroupRefreshUnavailable)
 }
+
+func TestInteractiveOAuthScopesIncludesGroupEndpointScopes(t *testing.T) {
+	scopes := interactiveOAuthScopes(domain.SSOProvider{
+		Scopes:         []string{"email", "openid"},
+		GroupsEndpoint: "https://graph.example.com/groups",
+		GroupsScopes:   []string{"groups.read", "email"},
+	})
+
+	assert.Equal(t, []string{"email", "openid", "groups.read"}, scopes)
+
+	withoutEndpoint := interactiveOAuthScopes(domain.SSOProvider{
+		Scopes:       []string{"profile"},
+		GroupsScopes: []string{"groups.read"},
+	})
+	assert.Equal(t, []string{"openid", "profile"}, withoutEndpoint)
+}

@@ -453,15 +453,20 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 	if claims.Subject == "" {
 		claims.Subject = idToken.Subject
 	}
+	groupSource := ssoEntitlementSourceClaims
 	s.debugSSOLoginClaims("sso login oidc claims read", *provider, claims)
 	if len(claims.Groups) == 0 {
 		s.debugSSOLoginClaims("sso login groups missing from oidc claims", *provider, claims, observability.Bool("groups_endpoint_configured", strings.TrimSpace(provider.GroupsEndpoint) != ""))
 		claims.Groups, err = s.resolveGroups(providerCtx, runtime, *provider, claims.Subject, token.AccessToken)
 		if err != nil {
 			s.debugSSOLoginFailure("sso login group resolution failed", err, *provider, claims)
-			return nil, ErrSSOAccessDenied
+			if errors.Is(err, ErrSSOGroupRefreshUnavailable) {
+				return nil, NewSSOSetupError(SSOSetupGroupsMissing, ErrSSOAccessDenied)
+			}
+			return nil, NewSSOSetupError(SSOSetupGroupLookupFailed, ErrSSOAccessDenied)
 		}
 		claims.Groups = dedupeStrings(claims.Groups)
+		groupSource = ssoEntitlementSourceEndpoint
 		s.debugSSOLoginClaims("sso login groups resolved from endpoint", *provider, claims)
 	}
 
@@ -477,7 +482,11 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 		if cacheErr := s.storeEntitlementCacheWithTTL(ctx, runtime.EntitlementCacheTTL, provider.ID, claims.Subject, claims.Groups, "denied", ""); cacheErr != nil {
 			s.debugSSOLoginFailure("sso login denied entitlement cache store failed", cacheErr, *provider, claims, observability.Int("mapping_count", len(mappings)))
 		}
-		return nil, err
+		setupCode := SSOSetupMappingMissing
+		if len(mappings) > 0 {
+			setupCode = SSOSetupEntitlementEmpty
+		}
+		return nil, NewSSOSetupError(setupCode, ErrSSOAccessDenied)
 	}
 	s.debugSSOLoginClaims("sso login entitlements resolved", *provider, claims, observability.Int("entitlement_count", len(entitlements)))
 
@@ -505,7 +514,9 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 		}
 		activeByProfileID[profile.ID] = struct{}{}
 	}
-	if err := s.storeEntitlementCacheWithTTL(ctx, runtime.EntitlementCacheTTL, provider.ID, claims.Subject, claims.Groups, "active", ""); err != nil {
+	cacheTTL := ssoActiveEntitlementCacheTTL(runtime, groupSource)
+	cacheMessage := ssoEntitlementCacheMessage(groupSource)
+	if err := s.storeEntitlementCacheWithTTL(ctx, cacheTTL, provider.ID, claims.Subject, claims.Groups, "active", cacheMessage); err != nil {
 		s.debugSSOLoginFailure("sso login entitlement cache store failed", err, *provider, claims)
 		return nil, err
 	}
@@ -517,7 +528,7 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 	}
 	if len(teams) == 0 {
 		s.debugSSOLoginFailure("sso login entitled teams empty", ErrSSOAccessDenied, *provider, claims, observability.Int("active_profile_count", len(activeByProfileID)))
-		return nil, ErrSSOAccessDenied
+		return nil, NewSSOSetupError(SSOSetupEntitlementEmpty, ErrSSOAccessDenied)
 	}
 	selected := teams[0]
 	sessionToken, err := secureRandomToken(32)
@@ -679,6 +690,10 @@ func (s *SSOService) ValidateAPIKeyPrincipal(ctx context.Context, key *domain.AP
 		return nil, ErrSSOAccessDenied
 	}
 	if key.SSOProviderID == nil || strings.TrimSpace(key.SSOSubject) == "" {
+		if ssoKeyRequiresEntitlementValidation(key) {
+			s.debugSSOFailure("sso api key validation incomplete sso link", ErrSSOAccessDenied, ssoAPIKeyLogAttrs(key)...)
+			return nil, ErrSSOAccessDenied
+		}
 		return key, nil
 	}
 	provider, err := s.repo.GetProvider(ctx, *key.SSOProviderID)
@@ -760,13 +775,7 @@ func (s *SSOService) oauthConfig(ctx context.Context, provider domain.SSOProvide
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to discover oidc provider: %w", err)
 	}
-	scopes := provider.Scopes
-	if len(scopes) == 0 {
-		scopes = []string{"openid", "profile", "email"}
-	}
-	if !containsString(scopes, oidc.ScopeOpenID) {
-		scopes = append([]string{oidc.ScopeOpenID}, scopes...)
-	}
+	scopes := interactiveOAuthScopes(provider)
 	secret := ""
 	if provider.ClientSecretEnv != "" {
 		secret = os.Getenv(provider.ClientSecretEnv)
