@@ -54,6 +54,14 @@ Dense-Mem is part of the research preprint
 [Governed Enterprise AI Memory Beyond RAG: From Vector Retrieval to Permissioned
 Knowledge Graphs](https://zenodo.org/records/20519039).
 
+## Project Intro
+
+<p align="center">
+  <video src="https://cdn.markhuang.ai/videos/dense-mem/intro.mp4" controls width="100%">
+    <a href="https://cdn.markhuang.ai/videos/dense-mem/intro.mp4">Watch the Dense-Mem intro</a>
+  </video>
+</p>
+
 ## Try the Hosted Demo
 
 Create a temporary isolated team at
