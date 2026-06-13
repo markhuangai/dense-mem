@@ -21,7 +21,7 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
-    uses: markhuangai/git-vibe/.github/workflows/review.yml@v4.0.0
+    uses: markhuangai/git-vibe/.github/workflows/review.yml@dev
     with:
       pr-number: ${{ format('{0}', github.event.pull_request.number) }}
       runner: docker-runner
