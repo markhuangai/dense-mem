@@ -79,6 +79,10 @@ func (s *apiKeyHandlerService) GetByIDForProfile(context.Context, uuid.UUID, uui
 	return s.key, s.err
 }
 
+func (s *apiKeyHandlerService) GetSSOOwnedKey(context.Context, uuid.UUID, uuid.UUID) (*domain.APIKey, error) {
+	return nil, nil
+}
+
 func (s *apiKeyHandlerService) DeleteForProfile(_ context.Context, _ uuid.UUID, id uuid.UUID, _ *string, _ string, _ string, _ string) error {
 	s.deletedKeyID = id
 	return s.err

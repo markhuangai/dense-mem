@@ -302,6 +302,10 @@ function SSOMappingForm({
   onChange: (draft: SSOGroupMappingInput) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  function updateRole(role: ProfileRole) {
+    onChange({ ...draft, role, scopes: role === "manager" ? ["read", "write"] : draft.scopes });
+  }
+
   return (
     <form className="inline-form sso-mapping-form" onSubmit={onSubmit}>
       <label htmlFor="sso-map-team">Team</label>
@@ -310,20 +314,24 @@ function SSOMappingForm({
       </select>
       <label htmlFor="sso-map-group-id">Group ID</label>
       <input id="sso-map-group-id" value={draft.group_id} onChange={(event) => onChange({ ...draft, group_id: event.target.value })} />
-      <label htmlFor="sso-map-permission">Permission</label>
-      <select
-        id="sso-map-permission"
-        value={draft.scopes.includes("write") ? "read_write" : "read"}
-        onChange={(event) => onChange({ ...draft, scopes: event.target.value === "read_write" ? ["read", "write"] : ["read"] })}
-      >
-        <option value="read">Read</option>
-        <option value="read_write">Read/write</option>
-      </select>
       <label htmlFor="sso-map-role">Role</label>
-      <select id="sso-map-role" value={draft.role} onChange={(event) => onChange({ ...draft, role: event.target.value as ProfileRole })}>
+      <select id="sso-map-role" value={draft.role} onChange={(event) => updateRole(event.target.value as ProfileRole)}>
         <option value="member">Member</option>
         <option value="manager">Manager</option>
       </select>
+      {draft.role === "member" && (
+        <>
+          <label htmlFor="sso-map-permission">Permission</label>
+          <select
+            id="sso-map-permission"
+            value={draft.scopes.includes("write") ? "read_write" : "read"}
+            onChange={(event) => onChange({ ...draft, scopes: event.target.value === "read_write" ? ["read", "write"] : ["read"] })}
+          >
+            <option value="read">Read</option>
+            <option value="read_write">Read/write</option>
+          </select>
+        </>
+      )}
       <label className="toggle-row span" htmlFor="sso-map-enabled">
         <span>Enabled</span>
         <input id="sso-map-enabled" type="checkbox" checked={draft.enabled} onChange={(event) => onChange({ ...draft, enabled: event.target.checked })} />

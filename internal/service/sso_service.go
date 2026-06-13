@@ -884,6 +884,9 @@ func (s *SSOService) entitlementsFromMappings(providerID uuid.UUID, subject stri
 	}
 	result := make([]domain.SSOGroupMapping, 0, len(byTeam))
 	for _, mapping := range byTeam {
+		if mapping.Role == APIKeyRoleManager {
+			mapping.Scopes = StandardAPIKeyScopes()
+		}
 		result = append(result, *mapping)
 	}
 	sort.Slice(result, func(i, j int) bool {

@@ -136,6 +136,17 @@ func TestNormalizeSSOProviderAndMapping(t *testing.T) {
 	assert.Equal(t, []string{APIKeyScopeRead}, mapping.Scopes)
 	assert.Equal(t, APIKeyRoleMember, mapping.Role)
 
+	managerMapping := domain.SSOGroupMapping{
+		ProviderID: uuid.New(),
+		TeamID:     uuid.New(),
+		GroupID:    "group-manager",
+		Scopes:     []string{APIKeyScopeRead},
+		Role:       APIKeyRoleManager,
+	}
+	require.NoError(t, normalizeSSOGroupMapping(&managerMapping))
+	assert.Equal(t, StandardAPIKeyScopes(), managerMapping.Scopes)
+	assert.Equal(t, APIKeyRoleManager, managerMapping.Role)
+
 	invalidMapping := domain.SSOGroupMapping{ProviderID: uuid.New(), TeamID: uuid.New()}
 	require.Error(t, normalizeSSOGroupMapping(&invalidMapping))
 	invalidMapping = domain.SSOGroupMapping{ProviderID: uuid.New(), GroupID: "group-a"}

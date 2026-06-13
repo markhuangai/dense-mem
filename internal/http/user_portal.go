@@ -75,6 +75,8 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	api.POST("/key/rotate", portal.rotateCurrentKey, httpmw.RequireScopes("write"))
 	if deps.SSOService != nil {
 		api.POST("/sso/team", portal.switchSSOTeam, httpmw.RequireScopes("read"))
+		api.POST("/sso/key", portal.createSSOKey, httpmw.RequireScopes("read"))
+		api.POST("/sso/key/rotate", portal.rotateSSOKey, httpmw.RequireScopes("read"))
 	}
 
 	staticDir := strings.TrimSpace(deps.UserStaticDir)
@@ -92,12 +94,16 @@ type userPortalHandler struct {
 }
 
 type userPortalSessionResponse struct {
-	Team          userPortalTeamResponse         `json:"team"`
-	Key           userPortalKeyResponse          `json:"key"`
-	Teams         []userPortalTeamOptionResponse `json:"teams,omitempty"`
-	AuthMethod    string                         `json:"auth_method"`
-	CanRotate     bool                           `json:"can_rotate"`
-	CanManageTeam bool                           `json:"can_manage_team"`
+	Team                 userPortalTeamResponse         `json:"team"`
+	Key                  userPortalKeyResponse          `json:"key"`
+	Teams                []userPortalTeamOptionResponse `json:"teams,omitempty"`
+	AuthMethod           string                         `json:"auth_method"`
+	CanRotate            bool                           `json:"can_rotate"`
+	CanManageTeam        bool                           `json:"can_manage_team"`
+	PersonalKey          *userPortalKeyResponse         `json:"personal_key"`
+	CanCreatePersonalKey bool                           `json:"can_create_personal_key"`
+	CanRotatePersonalKey bool                           `json:"can_rotate_personal_key"`
+	PersonalKeyMaxScopes []string                       `json:"personal_key_max_scopes,omitempty"`
 }
 
 type userPortalTeamOptionResponse struct {
@@ -141,6 +147,13 @@ type userPortalSSOProviderResponse struct {
 
 type userPortalSwitchSSOTeamRequest struct {
 	ProfileID string `json:"profile_id"`
+}
+
+type userPortalCreateSSOKeyRequest struct {
+	Name      string   `json:"name"`
+	Scopes    []string `json:"scopes"`
+	RateLimit int      `json:"rate_limit"`
+	ExpiresAt *string  `json:"expires_at"`
 }
 
 func (h *userPortalHandler) session(c echo.Context) error {
@@ -265,11 +278,12 @@ func (h *userPortalHandler) currentSSOSession(c echo.Context) (userPortalSession
 	if h.sso == nil {
 		return userPortalSessionResponse{}, httperr.New(httperr.AUTH_MISSING, "authentication required")
 	}
+	ctx := c.Request().Context()
 	token, err := ssoSessionTokenFromRequest(c)
 	if err != nil {
 		return userPortalSessionResponse{}, err
 	}
-	info, err := h.sso.CurrentSession(c.Request().Context(), token)
+	info, err := h.sso.CurrentSession(ctx, token)
 	if err != nil {
 		return userPortalSessionResponse{}, userPortalSSOError(err)
 	}
@@ -278,14 +292,29 @@ func (h *userPortalHandler) currentSSOSession(c echo.Context) (userPortalSession
 		teams = append(teams, toUserPortalTeamOption(team))
 	}
 	selected := toUserPortalTeamOption(info.Selected)
-	return userPortalSessionResponse{
+	response := userPortalSessionResponse{
 		Team:          selected.Team,
 		Key:           selected.Key,
 		Teams:         teams,
 		AuthMethod:    "sso",
 		CanRotate:     false,
 		CanManageTeam: selected.CanManageTeam,
-	}, nil
+	}
+	if !selected.CanManageTeam && h.keys != nil {
+		personalKey, err := h.ssoOwnedKey(ctx, info.Selected.Team.ID, info.Identity.ID)
+		if err != nil {
+			return userPortalSessionResponse{}, err
+		}
+		response.CanCreatePersonalKey = personalKey == nil
+		response.PersonalKeyMaxScopes = append([]string{}, info.Selected.Profile.Scopes...)
+		if personalKey != nil {
+			keyResponse := toUserPortalKey(personalKey)
+			response.PersonalKey = &keyResponse
+			response.CanRotatePersonalKey = userPortalHasScope(personalKey.Scopes, service.APIKeyScopeWrite) &&
+				userPortalHasScope(info.Selected.Profile.Scopes, service.APIKeyScopeWrite)
+		}
+	}
+	return response, nil
 }
 
 func (h *userPortalHandler) ssoProviders(c echo.Context) error {
@@ -392,6 +421,183 @@ func (h *userPortalHandler) switchSSOTeam(c echo.Context) error {
 		return err
 	}
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": session})
+}
+
+func (h *userPortalHandler) createSSOKey(c echo.Context) error {
+	info, principal, err := h.ssoRequestSession(c)
+	if err != nil {
+		return err
+	}
+	if info.Selected.Profile.GetRole() == service.APIKeyRoleManager {
+		return httperr.New(httperr.FORBIDDEN, "sso managers should create api keys from the team section")
+	}
+	if h.keys == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "api key service unavailable")
+	}
+	existing, err := h.keys.GetSSOOwnedKey(c.Request().Context(), info.Selected.Team.ID, info.Identity.ID)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return httperr.New(httperr.CONFLICT, "sso-owned api key already exists for this team")
+	}
+
+	var body userPortalCreateSSOKeyRequest
+	if err := c.Bind(&body); err != nil {
+		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
+	}
+	req, err := userPortalSSOCreateKeyRequest(body, info.Identity, info.Selected.Profile.Scopes)
+	if err != nil {
+		return err
+	}
+	req.SSOOwnerIdentityID = &info.Identity.ID
+
+	actorKeyID := principal.KeyID.String()
+	key, rawKey, err := h.keys.CreateStandardKey(
+		c.Request().Context(),
+		info.Selected.Team.ID,
+		req,
+		&actorKeyID,
+		principal.Role,
+		c.RealIP(),
+		httpmw.GetCorrelationID(c.Request().Context()),
+	)
+	if err != nil {
+		return err
+	}
+	return c.JSON(nethttp.StatusCreated, map[string]any{"data": userPortalRotateResponse{
+		APIKey: rawKey,
+		Key:    toUserPortalKey(key),
+	}})
+}
+
+func (h *userPortalHandler) rotateSSOKey(c echo.Context) error {
+	if err := rejectEditableRotateBody(c); err != nil {
+		return err
+	}
+	info, principal, err := h.ssoRequestSession(c)
+	if err != nil {
+		return err
+	}
+	if info.Selected.Profile.GetRole() == service.APIKeyRoleManager {
+		return httperr.New(httperr.FORBIDDEN, "sso managers should rotate api keys from the team section")
+	}
+	if h.keys == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "api key service unavailable")
+	}
+	personalKey, err := h.keys.GetSSOOwnedKey(c.Request().Context(), info.Selected.Team.ID, info.Identity.ID)
+	if err != nil {
+		return err
+	}
+	if personalKey == nil {
+		return httperr.New(httperr.NOT_FOUND, "sso-owned api key not found")
+	}
+	if !userPortalHasScope(personalKey.Scopes, service.APIKeyScopeWrite) ||
+		!userPortalHasScope(info.Selected.Profile.Scopes, service.APIKeyScopeWrite) {
+		return httperr.New(httperr.FORBIDDEN, "sso-owned api key cannot be rotated")
+	}
+
+	actorKeyID := principal.KeyID.String()
+	rotated, rawKey, err := h.keys.RotateForProfile(c.Request().Context(), info.Selected.Team.ID, personalKey.ID, service.CreateAPIKeyRequest{
+		Name:      personalKey.GetProfileName(),
+		RateLimit: personalKey.RateLimit,
+		ExpiresAt: personalKey.ExpiresAt,
+	}, &actorKeyID, principal.Role, c.RealIP(), httpmw.GetCorrelationID(c.Request().Context()))
+	if err != nil {
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": userPortalRotateResponse{
+		APIKey: rawKey,
+		Key:    toUserPortalKey(rotated),
+	}})
+}
+
+func (h *userPortalHandler) ssoRequestSession(c echo.Context) (*service.SSOSessionInfo, *httpmw.Principal, error) {
+	if h.sso == nil {
+		return nil, nil, httperr.New(httperr.NOT_FOUND, "sso is not configured")
+	}
+	principal := httpmw.GetPrincipal(c.Request().Context())
+	if principal == nil {
+		return nil, nil, httperr.New(httperr.FORBIDDEN, "authentication required")
+	}
+	if principal.AuthMethod != "sso_session" {
+		return nil, nil, httperr.New(httperr.FORBIDDEN, "sso session required")
+	}
+	token, err := ssoSessionTokenFromRequest(c)
+	if err != nil {
+		return nil, nil, err
+	}
+	info, err := h.sso.CurrentSession(c.Request().Context(), token)
+	if err != nil {
+		return nil, nil, userPortalSSOError(err)
+	}
+	return info, principal, nil
+}
+
+func (h *userPortalHandler) ssoOwnedKey(ctx context.Context, teamID, identityID uuid.UUID) (*domain.APIKey, error) {
+	if h.keys == nil {
+		return nil, nil
+	}
+	return h.keys.GetSSOOwnedKey(ctx, teamID, identityID)
+}
+
+func userPortalSSOCreateKeyRequest(body userPortalCreateSSOKeyRequest, identity domain.SSOIdentity, maxScopes []string) (service.CreateAPIKeyRequest, error) {
+	if !userPortalHasScope(maxScopes, service.APIKeyScopeRead) {
+		return service.CreateAPIKeyRequest{}, httperr.New(httperr.FORBIDDEN, "sso access denied")
+	}
+	scopes := append([]string{}, body.Scopes...)
+	if len(scopes) == 0 {
+		scopes = []string{service.APIKeyScopeRead}
+		if userPortalHasScope(maxScopes, service.APIKeyScopeWrite) {
+			scopes = service.StandardAPIKeyScopes()
+		}
+	}
+	normalizedScopes, err := service.NormalizeAPIKeyScopes(scopes)
+	if err != nil {
+		return service.CreateAPIKeyRequest{}, err
+	}
+	if userPortalHasScope(normalizedScopes, service.APIKeyScopeWrite) && !userPortalHasScope(maxScopes, service.APIKeyScopeWrite) {
+		return service.CreateAPIKeyRequest{}, httperr.New(httperr.FORBIDDEN, "cannot create api key above sso entitlement")
+	}
+	if body.RateLimit <= 0 {
+		return service.CreateAPIKeyRequest{}, httperr.New(httperr.VALIDATION_ERROR, "rate_limit must be greater than zero")
+	}
+	var expiresAt *time.Time
+	if body.ExpiresAt != nil && strings.TrimSpace(*body.ExpiresAt) != "" {
+		parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(*body.ExpiresAt))
+		if err != nil {
+			return service.CreateAPIKeyRequest{}, httperr.New(httperr.VALIDATION_ERROR, "expires_at must be an RFC3339 timestamp")
+		}
+		expiresAt = &parsed
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		name = ssoOwnedKeyDefaultName(identity)
+	}
+	return service.CreateAPIKeyRequest{
+		Name:      name,
+		RateLimit: body.RateLimit,
+		ExpiresAt: expiresAt,
+		Scopes:    normalizedScopes,
+		Role:      service.APIKeyRoleMember,
+	}, nil
+}
+
+func ssoOwnedKeyDefaultName(identity domain.SSOIdentity) string {
+	if email := strings.TrimSpace(identity.Email); email != "" {
+		return "SSO " + email
+	}
+	if displayName := strings.TrimSpace(identity.DisplayName); displayName != "" {
+		return "SSO " + displayName
+	}
+	subject := strings.TrimSpace(identity.Subject)
+	if len(subject) > 12 {
+		subject = subject[:12]
+	}
+	if subject != "" {
+		return "SSO " + subject
+	}
+	return "SSO API key"
 }
 
 func validateSSOLogoutCSRF(c echo.Context) error {

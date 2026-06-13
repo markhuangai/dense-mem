@@ -30,6 +30,7 @@ type Principal struct {
 	KeyPrefix     string
 	RateLimit     int
 	AuthMethod    string
+	SSOIdentityID *uuid.UUID
 	SSOProviderID *uuid.UUID
 	SSOSubject    string
 }
@@ -236,6 +237,7 @@ func AuthMiddlewareWithOptions(repo repository.APIKeyRepository, auditSvc servic
 				KeyPrefix:     prefix,
 				RateLimit:     key.RateLimit,
 				AuthMethod:    "api_key",
+				SSOIdentityID: key.SSOOwnerIdentityID,
 				SSOProviderID: key.SSOProviderID,
 				SSOSubject:    key.SSOSubject,
 			}
@@ -291,6 +293,7 @@ func authenticateSSOSession(c echo.Context, authenticator SSOSessionAuthenticato
 		Scopes:        key.Scopes,
 		RateLimit:     key.RateLimit,
 		AuthMethod:    "sso_session",
+		SSOIdentityID: key.SSOIdentityID,
 		SSOProviderID: key.SSOProviderID,
 		SSOSubject:    key.SSOSubject,
 	}

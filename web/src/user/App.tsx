@@ -38,9 +38,20 @@ const THEME_STORAGE_KEY = "denseMem.userTheme";
 type Theme = "light" | "dark";
 type AuthMode = "none" | "api_key" | "sso";
 type UserTab = "search" | "usage" | "facts" | "claims" | "fragments" | "communities" | "team" | "key";
+type ProfilePermission = "read" | "read_write";
 
 function sessionAuthMode(session: UserSession): AuthMode {
   return session.auth_method === "sso" ? "sso" : "api_key";
+}
+
+function canShowMyKey(session: UserSession | null): boolean {
+  if (!session) {
+    return false;
+  }
+  if (session.auth_method !== "sso") {
+    return true;
+  }
+  return !session.can_manage_team && (session.can_create_personal_key || Boolean(session.personal_key));
 }
 
 export function UserPortalApp() {
@@ -263,7 +274,7 @@ function UserPortal({
   }, [activeTab, session]);
 
   useEffect(() => {
-    if (session?.auth_method === "sso" && activeTab === "key") {
+    if (!canShowMyKey(session) && activeTab === "key") {
       setActiveTab("search");
     }
   }, [activeTab, session]);
@@ -278,10 +289,11 @@ function UserPortal({
     ...(session?.can_manage_team ? [
       { id: "team", label: "Team", icon: <Users size={17} aria-hidden="true" />, active: activeTab === "team", onClick: () => setActiveTab("team") },
     ] : []),
-    ...(session?.auth_method === "sso" ? [] : [
+    ...(canShowMyKey(session) ? [
       { id: "key", label: "My key", icon: <KeyRound size={17} aria-hidden="true" />, active: activeTab === "key", onClick: () => setActiveTab("key") },
-    ]),
+    ] : []),
   ];
+  const ssoTeamOptions = session?.teams ?? [];
 
   return (
     <PortalShell
@@ -318,14 +330,14 @@ function UserPortal({
       sidebarSubtitle={session ? shortId(session.team.id) : undefined}
       sidebarBody={session && (
         <div className="key-summary">
-          {authMode === "sso" && (session.teams?.length ?? 0) > 1 ? (
+          {authMode === "sso" ? (
             <select
               aria-label="Active team"
               value={session.key.id}
-              disabled={switchingTeam}
+              disabled={switchingTeam || ssoTeamOptions.length <= 1}
               onChange={(event) => void switchSSOTeam(event.target.value)}
             >
-              {session.teams?.map((item) => (
+              {ssoTeamOptions.map((item) => (
                 <option value={item.key.id} key={item.key.id}>{item.team.name}</option>
               ))}
             </select>
@@ -365,6 +377,14 @@ function UserPortal({
               key: rotated.key,
               can_rotate: rotated.key.scopes.includes("write"),
               can_manage_team: rotated.key.role === "manager",
+            } : current);
+          }}
+          onSSOKeyChanged={(key) => {
+            setSession((current) => current ? {
+              ...current,
+              personal_key: key,
+              can_create_personal_key: false,
+              can_rotate_personal_key: key.scopes.includes("write") && (current.personal_key_max_scopes ?? []).includes("write"),
             } : current);
           }}
         />
@@ -540,14 +560,55 @@ function KeyPanel({
   api,
   session,
   onRotated,
+  onSSOKeyChanged,
 }: {
   api: UserApi;
   session: UserSession;
   onRotated: (rotated: RotateResponse) => void;
+  onSSOKeyChanged: (key: UserSession["key"]) => void;
 }) {
   const [createdKey, setCreatedKey] = useState("");
+  const [name, setName] = useState("");
+  const [permission, setPermission] = useState<ProfilePermission>(() => (session.personal_key_max_scopes?.includes("write") ? "read_write" : "read"));
+  const [rateLimit, setRateLimit] = useState("120");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const isSSO = session.auth_method === "sso";
+  const personalKey = isSSO ? session.personal_key : session.key;
+  const maxScopes = session.personal_key_max_scopes ?? ["read"];
+  const canCreateWrite = maxScopes.includes("write");
+  const canRotate = isSSO ? session.can_rotate_personal_key : session.can_rotate;
+
+  useEffect(() => {
+    if (!canCreateWrite) {
+      setPermission("read");
+    }
+  }, [canCreateWrite]);
+
+  async function createSSOKey(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmedName = name.trim();
+    const parsedRateLimit = Number.parseInt(rateLimit, 10);
+    if (!Number.isFinite(parsedRateLimit) || parsedRateLimit <= 0) {
+      setError("Rate limit must be greater than zero.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const created = await api.createSSOKey({
+        name: trimmedName,
+        scopes: permission === "read_write" && canCreateWrite ? ["read", "write"] : ["read"],
+        rate_limit: parsedRateLimit,
+      });
+      setCreatedKey(created.api_key);
+      onSSOKeyChanged(created.key);
+    } catch (err) {
+      setError(readError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function rotate() {
     if (!window.confirm("Regenerate this API key? The current key will stop working.")) {
@@ -556,9 +617,13 @@ function KeyPanel({
     setBusy(true);
     setError("");
     try {
-      const rotated = await api.rotateKey();
+      const rotated = isSSO ? await api.rotateSSOKey() : await api.rotateKey();
       setCreatedKey(rotated.api_key);
-      onRotated(rotated);
+      if (isSSO) {
+        onSSOKeyChanged(rotated.key);
+      } else {
+        onRotated(rotated);
+      }
     } catch (err) {
       setError(readError(err));
     } finally {
@@ -568,25 +633,50 @@ function KeyPanel({
 
   return (
     <section className="surface">
-      <SectionHeading title="My key" meta={session.can_rotate ? "write" : "read"} />
+      <SectionHeading title="My key" meta={personalKey?.scopes.includes("write") || permission === "read_write" ? "write" : "read"} />
       {createdKey && <CreatedKeyNotice apiKey={createdKey} onDismiss={() => setCreatedKey("")} />}
       {error && <div className="banner error" role="alert">{error}</div>}
-      <dl className="key-detail-grid">
-        <div><dt>Profile</dt><dd>{session.key.name}</dd></div>
-        <div><dt>Key</dt><dd><code>{displayKeySuffix(session.key.key_suffix)}</code></dd></div>
-        <div><dt>Role</dt><dd>{profileRoleLabel(session.key.role)}</dd></div>
-        <div><dt>Scopes</dt><dd>{session.key.scopes.join(", ") || "none"}</dd></div>
-        <div><dt>Rate limit</dt><dd>{session.key.rate_limit}</dd></div>
-        <div><dt>Created</dt><dd>{formatDate(session.key.created_at)}</dd></div>
-        <div><dt>Last used</dt><dd>{session.key.last_used_at ? formatDate(session.key.last_used_at) : "Never"}</dd></div>
-        <div><dt>Expires</dt><dd>{session.key.expires_at ? formatDate(session.key.expires_at) : "Never"}</dd></div>
-      </dl>
-      <div className="button-row">
-        <button className="primary-button" type="button" disabled={!session.can_rotate || busy} onClick={() => void rotate()}>
-          <RefreshCw size={16} aria-hidden="true" />
-          Regenerate key
-        </button>
-      </div>
+      {personalKey ? (
+        <>
+          <dl className="key-detail-grid">
+            <div><dt>Profile</dt><dd>{personalKey.name}</dd></div>
+            <div><dt>Key</dt><dd><code>{displayKeySuffix(personalKey.key_suffix)}</code></dd></div>
+            <div><dt>Role</dt><dd>{profileRoleLabel(personalKey.role)}</dd></div>
+            <div><dt>Scopes</dt><dd>{personalKey.scopes.join(", ") || "none"}</dd></div>
+            <div><dt>Rate limit</dt><dd>{personalKey.rate_limit}</dd></div>
+            <div><dt>Created</dt><dd>{formatDate(personalKey.created_at)}</dd></div>
+            <div><dt>Last used</dt><dd>{personalKey.last_used_at ? formatDate(personalKey.last_used_at) : "Never"}</dd></div>
+            <div><dt>Expires</dt><dd>{personalKey.expires_at ? formatDate(personalKey.expires_at) : "Never"}</dd></div>
+          </dl>
+          <div className="button-row">
+            <button className="primary-button" type="button" disabled={!canRotate || busy} onClick={() => void rotate()}>
+              <RefreshCw size={16} aria-hidden="true" />
+              Regenerate key
+            </button>
+          </div>
+        </>
+      ) : (
+        <form className="key-form" onSubmit={createSSOKey}>
+          <label htmlFor="sso-personal-key-name">Profile name</label>
+          <input id="sso-personal-key-name" value={name} onChange={(event) => setName(event.target.value)} />
+          <label htmlFor="sso-personal-key-permission">Permission</label>
+          <select
+            id="sso-personal-key-permission"
+            value={permission}
+            disabled={!canCreateWrite}
+            onChange={(event) => setPermission(event.target.value as ProfilePermission)}
+          >
+            {canCreateWrite && <option value="read_write">Read/write</option>}
+            <option value="read">Read only</option>
+          </select>
+          <label htmlFor="sso-personal-key-rate-limit">Rate limit</label>
+          <input id="sso-personal-key-rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
+          <button className="primary-button span" type="submit" disabled={busy || !session.can_create_personal_key}>
+            <KeyRound size={16} aria-hidden="true" />
+            Create API key
+          </button>
+        </form>
+      )}
     </section>
   );
 }

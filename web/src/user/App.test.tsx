@@ -26,6 +26,10 @@ const baseSession: UserSession = {
   },
   can_rotate: false,
   can_manage_team: false,
+  personal_key: null,
+  can_create_personal_key: false,
+  can_rotate_personal_key: false,
+  personal_key_max_scopes: [],
 };
 
 const memberProfile: UserKey = {
@@ -177,7 +181,8 @@ describe("UserPortalApp", () => {
     render(<UserPortalApp />);
 
     expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /my key/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /my key/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^team$/i })).not.toBeInTheDocument();
     const teamSelect = await screen.findByLabelText("Active team");
     expect(teamSelect).toHaveValue(initial.key.id);
 
@@ -185,6 +190,7 @@ describe("UserPortalApp", () => {
 
     expect(await screen.findByRole("heading", { name: "Analytics Team" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /my key/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^team$/i })).toBeInTheDocument();
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         "/ui/api/sso/team",
@@ -210,6 +216,60 @@ describe("UserPortalApp", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("logout failed");
     expect(screen.getByRole("heading", { name: "Research Team" })).toBeInTheDocument();
     expect(screen.queryByLabelText(/api key/i)).not.toBeInTheDocument();
+  });
+
+  it("lets an SSO read/write member create and rotate their owned API key", async () => {
+    const { initial, switched } = ssoSessions();
+    const ssoKey = { ...initial.key, scopes: ["read", "write"] };
+    const readWriteSession: UserSession = {
+      ...initial,
+      key: ssoKey,
+      teams: initial.teams?.map((item, index) => index === 0 ? { ...item, key: ssoKey } : item),
+      personal_key_max_scopes: ["read", "write"],
+    };
+    const fetchMock = mockSSOUserFetch(readWriteSession, switched);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<UserPortalApp />);
+
+    expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /my key/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create api key/i }));
+
+    expect(await screen.findByText("dm_sso_personal_plaintext")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/ui/api/sso/key",
+        expect.objectContaining({
+          method: "POST",
+          credentials: "include",
+          body: expect.stringContaining(`"scopes":["read","write"]`),
+        }),
+      );
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: /regenerate key/i }));
+    expect(await screen.findByText("dm_sso_personal_rotated")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/ui/api/sso/key/rotate",
+        expect.objectContaining({ method: "POST", credentials: "include" }),
+      );
+    });
+  });
+
+  it("keeps SSO read-only owned API key rotation disabled", async () => {
+    const { initial, switched } = ssoSessions();
+    mockSSOUserFetch(initial, switched);
+
+    render(<UserPortalApp />);
+
+    expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /my key/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create api key/i }));
+
+    expect(await screen.findByText("dm_sso_personal_plaintext")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /regenerate key/i })).toBeDisabled();
   });
 });
 
@@ -307,6 +367,8 @@ function ssoSessions() {
   const initial: UserSession = {
     ...baseSession,
     auth_method: "sso",
+    can_create_personal_key: true,
+    personal_key_max_scopes: ["read"],
     teams: [
       { team: baseSession.team, key: baseSession.key, can_rotate: false, can_manage_team: false },
       { team: secondTeam, key: secondKey, can_rotate: false, can_manage_team: true },
@@ -318,6 +380,8 @@ function ssoSessions() {
     key: secondKey,
     can_rotate: false,
     can_manage_team: true,
+    can_create_personal_key: false,
+    personal_key_max_scopes: [],
   };
   return { initial, switched, secondKey };
 }
@@ -337,6 +401,29 @@ function mockSSOUserFetch(initial: UserSession, switched: UserSession, options: 
     if (url === "/ui/api/sso/team" && method === "POST") {
       current = switched;
       return jsonResponse({ data: current });
+    }
+    if (url === "/ui/api/sso/key" && method === "POST") {
+      const body = JSON.parse(String(init?.body));
+      const created: UserKey = {
+        ...current.key,
+        id: "77777777-7777-4777-8777-777777777777",
+        name: body.name,
+        key_suffix: "own123",
+        scopes: body.scopes,
+        role: "member",
+      };
+      current = {
+        ...current,
+        personal_key: created,
+        can_create_personal_key: false,
+        can_rotate_personal_key: created.scopes.includes("write") && (current.personal_key_max_scopes ?? []).includes("write"),
+      };
+      return jsonResponse({ data: { api_key: "dm_sso_personal_plaintext", key: created } }, 201);
+    }
+    if (url === "/ui/api/sso/key/rotate" && method === "POST") {
+      const rotated = { ...(current.personal_key ?? current.key), key_suffix: "rot321" };
+      current = { ...current, personal_key: rotated };
+      return jsonResponse({ data: { api_key: "dm_sso_personal_rotated", key: rotated } });
     }
     if (url === "/ui/api/sso/logout" && method === "POST") {
       if (options.logoutStatus) {

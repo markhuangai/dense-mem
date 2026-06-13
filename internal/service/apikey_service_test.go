@@ -78,6 +78,14 @@ func (m *MockAPIKeyRepository) GetByIDForProfile(ctx context.Context, profileID,
 	return args.Get(0).(*domain.APIKey), args.Error(1)
 }
 
+func (m *MockAPIKeyRepository) GetSSOOwnedKey(ctx context.Context, profileID, identityID uuid.UUID) (*domain.APIKey, error) {
+	args := m.Called(ctx, profileID, identityID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.APIKey), args.Error(1)
+}
+
 func (m *MockAPIKeyRepository) CountByProfile(ctx context.Context, profileID uuid.UUID) (int64, error) {
 	args := m.Called(ctx, profileID)
 	return args.Get(0).(int64), args.Error(1)
@@ -689,6 +697,19 @@ func TestAPIKeyServiceScopeNameAndConstructorHelpers(t *testing.T) {
 	_, err = normalizeTeamProfileName(strings.Repeat("x", 101))
 	require.Error(t, err)
 	assert.Nil(t, teamProfileNameConflict(errors.New("not unique"), "name"))
+	assert.Equal(t, "idx_team_profiles_sso_owner_team_active_unique", uniqueViolationName(&pgconn.PgError{
+		Code:           "23505",
+		ConstraintName: "idx_team_profiles_sso_owner_team_active_unique",
+	}))
+	assert.Equal(t, "idx_team_profiles_sso_owner_team_active_unique", uniqueViolationName(&pq.Error{
+		Code:       "23505",
+		Constraint: "idx_team_profiles_sso_owner_team_active_unique",
+	}))
+	assert.Empty(t, uniqueViolationName(&pq.Error{Code: "23503"}))
+	require.ErrorContains(t, apiKeyCreateConflict(&pgconn.PgError{
+		Code:           "23505",
+		ConstraintName: "idx_team_profiles_sso_owner_team_active_unique",
+	}, "name"), "sso-owned api key already exists for this team")
 
 	svc := NewAPIKeyServiceWithLogger(nil, nil, nil, nil, nil, nil)
 	require.Nil(t, svc.logger)
@@ -745,6 +766,30 @@ func TestAPIKeyServiceCreateStandardKeyErrorAndAuditBranches(t *testing.T) {
 		require.Empty(t, raw)
 		mockRepo.AssertExpectations(t)
 		mockProfileService.AssertExpectations(t)
+	})
+
+	t.Run("manager role forces read write scopes", func(t *testing.T) {
+		mockRepo := new(MockAPIKeyRepository)
+		mockProfileService := new(MockProfileService)
+		mockAuditService := new(MockAuditService)
+		svc := NewAPIKeyService(mockRepo, mockProfileService, mockAuditService, nil, nil)
+		mockProfileService.On("Get", ctx, profileID).Return(&domain.Profile{ID: profileID}, nil)
+		mockRepo.On("CreateStandardKey", ctx, mock.AnythingOfType("*domain.APIKey")).Run(func(args mock.Arguments) {
+			key := args.Get(1).(*domain.APIKey)
+			key.ID = uuid.New()
+			require.Equal(t, StandardAPIKeyScopes(), key.Scopes)
+			require.Equal(t, APIKeyRoleManager, key.Role)
+		}).Return(nil)
+		mockAuditService.On("APIKeyCreated", ctx, mock.AnythingOfType("*string"), mock.AnythingOfType("string"), mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+		key, raw, err := svc.CreateStandardKey(ctx, profileID, CreateAPIKeyRequest{Name: "manager", Scopes: []string{APIKeyScopeRead}, Role: APIKeyRoleManager}, nil, "system", "127.0.0.1", "corr")
+
+		require.NoError(t, err)
+		require.NotNil(t, key)
+		require.NotEmpty(t, raw)
+		mockRepo.AssertExpectations(t)
+		mockProfileService.AssertExpectations(t)
+		mockAuditService.AssertExpectations(t)
 	})
 
 	t.Run("audit error is non-fatal", func(t *testing.T) {

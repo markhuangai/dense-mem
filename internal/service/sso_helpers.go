@@ -429,6 +429,9 @@ func mergedEntitlementForTeam(mappings []*domain.SSOGroupMapping, teamID uuid.UU
 	if len(entitlement.Scopes) == 0 {
 		entitlement.Scopes = []string{APIKeyScopeRead}
 	}
+	if entitlement.Role == APIKeyRoleManager {
+		entitlement.Scopes = StandardAPIKeyScopes()
+	}
 	return entitlement, true
 }
 
@@ -653,5 +656,8 @@ func normalizeSSOGroupMapping(mapping *domain.SSOGroupMapping) error {
 		role = APIKeyRoleMember
 	}
 	mapping.Role = role
+	if mapping.Role == APIKeyRoleManager {
+		mapping.Scopes = StandardAPIKeyScopes()
+	}
 	return nil
 }

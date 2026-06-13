@@ -21,6 +21,7 @@ type APIKeyRepository interface {
 	CountByProfile(ctx context.Context, profileID uuid.UUID) (int64, error)
 	// GetByIDForProfile returns an API key only when it belongs to profileID. Returns nil on mismatch.
 	GetByIDForProfile(ctx context.Context, profileID, id uuid.UUID) (*domain.APIKey, error)
+	GetSSOOwnedKey(ctx context.Context, profileID, identityID uuid.UUID) (*domain.APIKey, error)
 	GetActiveByPrefix(ctx context.Context, prefix string) (*domain.APIKey, error)
 	// RevokeForProfile marks a key revoked only when it belongs to profileID. Returns number of rows affected.
 	RevokeForProfile(ctx context.Context, profileID, id uuid.UUID) (int64, error)
@@ -81,9 +82,17 @@ func (r *APIKeyRepositoryImpl) CreateStandardKey(ctx context.Context, key *domai
 	// authorization layer later sees an empty scope set.
 	err := r.rls.WithProfileTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
 		return tx.Exec(`
-			INSERT INTO team_profiles (id, team_id, key_hash, key_prefix, key_suffix, name, scopes, role, rate_limit, expires_at, revoked_at, last_used_at, created_at, updated_at, auth_source)
-			VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9, $10, NULL, NULL, $11, $11, 'api_key')
-		`, key.ID, teamID, key.KeyHash, keyPrefix, keySuffix, name, pq.Array(key.Scopes), key.GetRole(), key.RateLimit, key.ExpiresAt, now).Error
+				INSERT INTO team_profiles (
+					id, team_id, key_hash, key_prefix, key_suffix, name, scopes, role, rate_limit,
+					expires_at, revoked_at, last_used_at, created_at, updated_at, auth_source,
+					sso_owner_identity_id
+				)
+				VALUES (
+					$1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9,
+					$10, NULL, NULL, $11, $11, 'api_key',
+					$12
+				)
+			`, key.ID, teamID, key.KeyHash, keyPrefix, keySuffix, name, pq.Array(key.Scopes), key.GetRole(), key.RateLimit, key.ExpiresAt, now, key.SSOOwnerIdentityID).Error
 	})
 
 	if err != nil {
@@ -125,6 +134,7 @@ func (r *APIKeyRepositoryImpl) ListByProfile(ctx context.Context, profileID uuid
 					id, team_id, COALESCE(key_suffix, ''), name, scopes, role, rate_limit,
 					last_used_at, expires_at, created_at, revoked_at, COALESCE(auth_source, ''),
 					COALESCE(sso_identity_id::text, ''), COALESCE(sso_provider_id::text, ''),
+					COALESCE(sso_owner_identity_id::text, ''),
 					COALESCE(sso_subject, ''), COALESCE(sso_email, ''), COALESCE(sso_group_id, ''),
 					COALESCE(sso_entitlement_status, ''),
 					sso_last_entitlement_checked_at, sso_last_login_at
@@ -141,7 +151,7 @@ func (r *APIKeyRepositoryImpl) ListByProfile(ctx context.Context, profileID uuid
 
 		for rows.Next() {
 			var k domain.APIKey
-			var ssoIdentityID, ssoProviderID string
+			var ssoIdentityID, ssoProviderID, ssoOwnerIdentityID string
 			if serr := rows.Scan(
 				&k.ID,
 				&k.ProfileID,
@@ -157,6 +167,7 @@ func (r *APIKeyRepositoryImpl) ListByProfile(ctx context.Context, profileID uuid
 				&k.AuthSource,
 				&ssoIdentityID,
 				&ssoProviderID,
+				&ssoOwnerIdentityID,
 				&k.SSOSubject,
 				&k.SSOEmail,
 				&k.SSOGroupID,
@@ -168,6 +179,7 @@ func (r *APIKeyRepositoryImpl) ListByProfile(ctx context.Context, profileID uuid
 			}
 			k.SSOIdentityID = parseOptionalUUID(ssoIdentityID)
 			k.SSOProviderID = parseOptionalUUID(ssoProviderID)
+			k.SSOOwnerIdentityID = parseOptionalUUID(ssoOwnerIdentityID)
 			k.TeamID = k.ProfileID
 			k.Name = k.Label
 			keys = append(keys, &k)
@@ -192,7 +204,7 @@ func (r *APIKeyRepositoryImpl) ListByProfile(ctx context.Context, profileID uuid
 func (r *APIKeyRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix string) (*domain.APIKey, error) {
 	var key domain.APIKey
 	var teamID *uuid.UUID
-	var ssoIdentityID, ssoProviderID string
+	var ssoIdentityID, ssoProviderID, ssoOwnerIdentityID string
 	found := false
 
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
@@ -201,22 +213,23 @@ func (r *APIKeyRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix str
 				k.id,
 				k.team_id,
 				COALESCE(t.name, ''),
-					k.key_hash,
-					COALESCE(k.key_suffix, ''),
-					k.name,
-					k.scopes,
-					k.role,
-					k.rate_limit,
-					k.last_used_at,
-					k.expires_at,
-					k.created_at,
-					k.revoked_at,
-					COALESCE(k.auth_source, ''),
-					COALESCE(k.sso_identity_id::text, ''),
-					COALESCE(k.sso_provider_id::text, ''),
-					COALESCE(k.sso_subject, ''),
-					COALESCE(k.sso_email, ''),
-					COALESCE(k.sso_group_id, ''),
+				k.key_hash,
+				COALESCE(k.key_suffix, ''),
+				k.name,
+				k.scopes,
+				k.role,
+				k.rate_limit,
+				k.last_used_at,
+				k.expires_at,
+				k.created_at,
+				k.revoked_at,
+				COALESCE(k.auth_source, ''),
+				COALESCE(k.sso_identity_id::text, ''),
+				COALESCE(k.sso_provider_id::text, ''),
+				COALESCE(k.sso_owner_identity_id::text, ''),
+				COALESCE(k.sso_subject, ''),
+				COALESCE(k.sso_email, ''),
+				COALESCE(k.sso_group_id, ''),
 					COALESCE(k.sso_entitlement_status, ''),
 					k.sso_last_entitlement_checked_at,
 					k.sso_last_login_at
@@ -252,6 +265,7 @@ func (r *APIKeyRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix str
 				&key.AuthSource,
 				&ssoIdentityID,
 				&ssoProviderID,
+				&ssoOwnerIdentityID,
 				&key.SSOSubject,
 				&key.SSOEmail,
 				&key.SSOGroupID,
@@ -276,6 +290,7 @@ func (r *APIKeyRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix str
 	key.Name = key.Label
 	key.SSOIdentityID = parseOptionalUUID(ssoIdentityID)
 	key.SSOProviderID = parseOptionalUUID(ssoProviderID)
+	key.SSOOwnerIdentityID = parseOptionalUUID(ssoOwnerIdentityID)
 	return &key, nil
 }
 
@@ -411,7 +426,7 @@ func (r *APIKeyRepositoryImpl) RotateForProfile(ctx context.Context, profileID, 
 func (r *APIKeyRepositoryImpl) GetByIDForProfile(ctx context.Context, profileID, id uuid.UUID) (*domain.APIKey, error) {
 	var key domain.APIKey
 	var rowProfileID *uuid.UUID
-	var ssoIdentityID, ssoProviderID string
+	var ssoIdentityID, ssoProviderID, ssoOwnerIdentityID string
 	found := false
 
 	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
@@ -420,6 +435,7 @@ func (r *APIKeyRepositoryImpl) GetByIDForProfile(ctx context.Context, profileID,
 					id, team_id, COALESCE(key_suffix, ''), name, scopes, role, rate_limit,
 					last_used_at, expires_at, created_at, revoked_at, COALESCE(auth_source, ''),
 					COALESCE(sso_identity_id::text, ''), COALESCE(sso_provider_id::text, ''),
+					COALESCE(sso_owner_identity_id::text, ''),
 					COALESCE(sso_subject, ''), COALESCE(sso_email, ''), COALESCE(sso_group_id, ''),
 					COALESCE(sso_entitlement_status, ''),
 					sso_last_entitlement_checked_at, sso_last_login_at
@@ -448,6 +464,7 @@ func (r *APIKeyRepositoryImpl) GetByIDForProfile(ctx context.Context, profileID,
 				&key.AuthSource,
 				&ssoIdentityID,
 				&ssoProviderID,
+				&ssoOwnerIdentityID,
 				&key.SSOSubject,
 				&key.SSOEmail,
 				&key.SSOGroupID,
@@ -472,6 +489,82 @@ func (r *APIKeyRepositoryImpl) GetByIDForProfile(ctx context.Context, profileID,
 	key.Name = key.Label
 	key.SSOIdentityID = parseOptionalUUID(ssoIdentityID)
 	key.SSOProviderID = parseOptionalUUID(ssoProviderID)
+	key.SSOOwnerIdentityID = parseOptionalUUID(ssoOwnerIdentityID)
+	return &key, nil
+}
+
+// GetSSOOwnedKey returns the active normal API key owned by an SSO identity for one team.
+func (r *APIKeyRepositoryImpl) GetSSOOwnedKey(ctx context.Context, profileID, identityID uuid.UUID) (*domain.APIKey, error) {
+	var key domain.APIKey
+	var rowProfileID *uuid.UUID
+	var ssoIdentityID, ssoProviderID, ssoOwnerIdentityID string
+	found := false
+
+	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
+		rows, rerr := tx.Raw(`
+				SELECT
+					id, team_id, COALESCE(key_suffix, ''), name, scopes, role, rate_limit,
+					last_used_at, expires_at, created_at, revoked_at, COALESCE(auth_source, ''),
+					COALESCE(sso_identity_id::text, ''), COALESCE(sso_provider_id::text, ''),
+					COALESCE(sso_owner_identity_id::text, ''),
+					COALESCE(sso_subject, ''), COALESCE(sso_email, ''), COALESCE(sso_group_id, ''),
+					COALESCE(sso_entitlement_status, ''),
+					sso_last_entitlement_checked_at, sso_last_login_at
+				FROM team_profiles
+				WHERE team_id = $1
+					AND sso_owner_identity_id = $2
+					AND auth_source = 'api_key'
+					AND revoked_at IS NULL
+				ORDER BY created_at DESC, id ASC
+				LIMIT 1
+			`, profileID, identityID).Rows()
+		if rerr != nil {
+			return rerr
+		}
+		defer rows.Close()
+
+		if rows.Next() {
+			found = true
+			return rows.Scan(
+				&key.ID,
+				&rowProfileID,
+				&key.KeySuffix,
+				&key.Label,
+				pq.Array(&key.Scopes),
+				&key.Role,
+				&key.RateLimit,
+				&key.LastUsedAt,
+				&key.ExpiresAt,
+				&key.CreatedAt,
+				&key.RevokedAt,
+				&key.AuthSource,
+				&ssoIdentityID,
+				&ssoProviderID,
+				&ssoOwnerIdentityID,
+				&key.SSOSubject,
+				&key.SSOEmail,
+				&key.SSOGroupID,
+				&key.SSOEntitlementStatus,
+				&key.SSOLastEntitlementCheckedAt,
+				&key.SSOLastLoginAt,
+			)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sso-owned api key for profile: %w", err)
+	}
+	if !found {
+		return nil, nil
+	}
+	if rowProfileID != nil {
+		key.ProfileID = *rowProfileID
+		key.TeamID = *rowProfileID
+	}
+	key.Name = key.Label
+	key.SSOIdentityID = parseOptionalUUID(ssoIdentityID)
+	key.SSOProviderID = parseOptionalUUID(ssoProviderID)
+	key.SSOOwnerIdentityID = parseOptionalUUID(ssoOwnerIdentityID)
 	return &key, nil
 }
 

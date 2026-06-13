@@ -28,6 +28,10 @@ export type UserSession = {
   auth_method?: "api_key" | "sso";
   can_rotate: boolean;
   can_manage_team: boolean;
+  personal_key: UserKey | null;
+  can_create_personal_key: boolean;
+  can_rotate_personal_key: boolean;
+  personal_key_max_scopes?: string[];
 };
 
 export type UserTeamOption = {
@@ -187,6 +191,16 @@ export class UserApi {
 
   async logoutSSO(): Promise<{ status: string }> {
     const payload = await this.request<Envelope<{ status: string }>>("/ui/api/sso/logout", { method: "POST" });
+    return payload.data;
+  }
+
+  async createSSOKey(input: CreateTeamProfileInput): Promise<CreatedTeamProfile> {
+    const payload = await this.request<Envelope<CreatedTeamProfile>>("/ui/api/sso/key", { method: "POST", body: input });
+    return payload.data;
+  }
+
+  async rotateSSOKey(): Promise<RotateResponse> {
+    const payload = await this.request<Envelope<RotateResponse>>("/ui/api/sso/key/rotate", { method: "POST", body: {} });
     return payload.data;
   }
 
