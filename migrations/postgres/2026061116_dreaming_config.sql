@@ -15,7 +15,11 @@ VALUES
 ON CONFLICT (key) DO NOTHING;
 
 UPDATE app_config
-SET value = to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+SET value = regexp_replace(
+        to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+        '\.?0+Z$',
+        'Z'
+    ),
     updated_at = clock_timestamp()
 WHERE key = 'update_time';
 
@@ -38,7 +42,11 @@ WHERE key IN (
 );
 
 UPDATE app_config
-SET value = to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+SET value = regexp_replace(
+        to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+        '\.?0+Z$',
+        'Z'
+    ),
     updated_at = clock_timestamp()
 WHERE key = 'update_time';
 

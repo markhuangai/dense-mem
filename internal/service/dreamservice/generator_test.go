@@ -2,7 +2,9 @@ package dreamservice
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 )
@@ -50,4 +52,14 @@ func TestHeuristicGeneratorSkipsSamePredicatePairs(t *testing.T) {
 	for _, dream := range dreams {
 		require.NotEqual(t, dream.SourceRefs[0].ID, dream.SourceRefs[1].ID)
 	}
+}
+
+func TestInputSummaryTruncatesContentAtRuneBoundary(t *testing.T) {
+	content := strings.Repeat("a", 95) + "🙂tail"
+
+	summary := inputSummary(DreamInput{Type: "fragment", ID: "fragment-1", Content: content})
+
+	require.True(t, utf8.ValidString(summary))
+	require.Equal(t, 96, utf8.RuneCountInString(summary))
+	require.True(t, strings.HasSuffix(summary, "🙂"))
 }

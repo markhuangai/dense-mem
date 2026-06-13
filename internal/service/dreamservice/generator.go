@@ -91,8 +91,9 @@ func inputSummary(in DreamInput) string {
 		return strings.TrimSpace(in.Subject + " " + in.Predicate + " " + in.Object)
 	}
 	if in.Content != "" {
-		if len(in.Content) > 96 {
-			return in.Content[:96]
+		runes := []rune(in.Content)
+		if len(runes) > 96 {
+			return string(runes[:96])
 		}
 		return in.Content
 	}

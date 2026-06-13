@@ -8,7 +8,11 @@ CREATE TABLE IF NOT EXISTS app_config (
 );
 
 WITH seed_update AS (
-    SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS value
+    SELECT regexp_replace(
+        to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+        '\.?0+Z$',
+        'Z'
+    ) AS value
 )
 INSERT INTO app_config (key, value)
 VALUES

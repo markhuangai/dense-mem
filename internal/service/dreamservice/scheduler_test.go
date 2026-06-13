@@ -151,6 +151,21 @@ func TestSchedulerRunDueStopsOnProfileListError(t *testing.T) {
 	require.Zero(t, dreamSvc.runs)
 }
 
+func TestSchedulerPrunesStaleLastRunEntries(t *testing.T) {
+	scheduler := NewScheduler(&schedulerDreamStub{}, &schedulerProfileStub{}, discardSchedulerLogger())
+	scheduler.lastRun = map[string]string{
+		"stale":   "2026-06-03",
+		"recent":  "2026-06-10",
+		"invalid": "not-a-date",
+	}
+
+	scheduler.pruneLastRun(time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC))
+
+	require.NotContains(t, scheduler.lastRun, "stale")
+	require.NotContains(t, scheduler.lastRun, "invalid")
+	require.Equal(t, "2026-06-10", scheduler.lastRun["recent"])
+}
+
 type schedulerProfileStub struct {
 	profiles []*domain.Profile
 	offsets  []int

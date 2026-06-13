@@ -7,7 +7,11 @@ import (
 	"time"
 )
 
-const schedulerProfilePageSize = 100
+const (
+	schedulerProfilePageSize  = 100
+	schedulerLastRunRetention = 7 * 24 * time.Hour
+	schedulerRunDateLayout    = "2006-01-02"
+)
 
 type Scheduler struct {
 	service  Service
@@ -50,6 +54,7 @@ func (s *Scheduler) Start(ctx context.Context) {
 
 func (s *Scheduler) runDue(ctx context.Context) {
 	now := s.now()
+	s.pruneLastRun(now)
 	for offset := 0; ; offset += schedulerProfilePageSize {
 		profiles, err := s.profiles.List(ctx, schedulerProfilePageSize, offset)
 		if err != nil {
@@ -113,4 +118,15 @@ func (s *Scheduler) markRan(profileID, runDate string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastRun[profileID] = runDate
+}
+
+func (s *Scheduler) pruneLastRun(now time.Time) {
+	cutoffDate := now.UTC().Add(-schedulerLastRunRetention).Format(schedulerRunDateLayout)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for profileID, runDate := range s.lastRun {
+		if _, err := time.Parse(schedulerRunDateLayout, runDate); err != nil || runDate < cutoffDate {
+			delete(s.lastRun, profileID)
+		}
+	}
 }
