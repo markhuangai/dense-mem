@@ -68,6 +68,10 @@ func (m *mockAPIKeyRepository) GetByIDForProfile(ctx context.Context, profileID,
 	return nil, nil
 }
 
+func (m *mockAPIKeyRepository) GetSSOOwnedKey(ctx context.Context, profileID, identityID uuid.UUID) (*domain.APIKey, error) {
+	return nil, nil
+}
+
 func (m *mockAPIKeyRepository) CountByProfile(ctx context.Context, profileID uuid.UUID) (int64, error) {
 	return 0, nil
 }

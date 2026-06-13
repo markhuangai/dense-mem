@@ -28,14 +28,14 @@ on:
         required: false
         type: string
         default: ""
-
 jobs:
   address-feedback:
     permissions:
+      id-token: write
       contents: write
       issues: write
       pull-requests: write
-    uses: markhuangai/git-vibe/.github/workflows/address-feedback.yml@v3.3.0
+    uses: markhuangai/git-vibe/.github/workflows/address-feedback.yml@dev
     with:
       pr-number: ${{ github.event.inputs.pr-number }}
       runner: docker-runner
@@ -44,6 +44,5 @@ jobs:
       dry-run: ${{ fromJSON(github.event.inputs.dry-run) }}
       source-comment: ${{ github.event.inputs.source-comment }}
     secrets:
-      GITVIBE_GITHUB_TOKEN: ${{ secrets.GITVIBE_GITHUB_TOKEN }}
       GITVIBE_AI_ENV_JSON: ${{ secrets.GITVIBE_AI_ENV_JSON }}
       GITVIBE_MCP_ENV_JSON: ${{ secrets.GITVIBE_MCP_ENV_JSON }}

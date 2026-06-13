@@ -27,6 +27,7 @@ type APIKeyServiceInterface interface {
 	ListByProfile(ctx context.Context, profileID uuid.UUID, limit, offset int) ([]*domain.APIKey, error)
 	CountByProfile(ctx context.Context, profileID uuid.UUID) (int64, error)
 	GetByIDForProfile(ctx context.Context, profileID, id uuid.UUID) (*domain.APIKey, error)
+	GetSSOOwnedKey(ctx context.Context, profileID, identityID uuid.UUID) (*domain.APIKey, error)
 	DeleteForProfile(ctx context.Context, profileID, id uuid.UUID, actorKeyID *string, actorRole, clientIP, correlationID string) error
 }
 
@@ -89,6 +90,7 @@ func (h *APIKeyHandler) Create(c echo.Context) error {
 	req := service.CreateAPIKeyRequest{
 		Name:      body.Name,
 		RateLimit: body.RateLimit,
+		Role:      service.APIKeyRoleMember,
 	}
 	if body.Scopes != nil {
 		if len(*body.Scopes) == 0 {

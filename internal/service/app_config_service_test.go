@@ -24,12 +24,12 @@ func TestAppConfigServiceSSOSettingsDefaultsAndUpdate(t *testing.T) {
 	settings, err := svc.GetSSOSettings(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, now.Format(time.RFC3339Nano), settings.UpdateTime)
-	assert.Equal(t, "", appConfigItem(settings, domain.AppConfigSSOPublicBaseURL).Value)
-	assert.Equal(t, "300", appConfigItem(settings, domain.AppConfigSSOEntitlementCacheTTLSeconds).EffectiveValue)
-	assert.Equal(t, "28800", appConfigItem(settings, domain.AppConfigSSOSessionTTLSeconds).EffectiveValue)
-	assert.Equal(t, "600", appConfigItem(settings, domain.AppConfigSSOStateTTLSeconds).EffectiveValue)
-	assert.Equal(t, "10", appConfigItem(settings, domain.AppConfigSSOHTTPTimeoutSeconds).EffectiveValue)
-	assert.Equal(t, "false", appConfigItem(settings, domain.AppConfigSSOCookieSecure).EffectiveValue)
+	assert.Equal(t, "", appConfigItem(t, settings, domain.AppConfigSSOPublicBaseURL).Value)
+	assert.Equal(t, "300", appConfigItem(t, settings, domain.AppConfigSSOEntitlementCacheTTLSeconds).EffectiveValue)
+	assert.Equal(t, "28800", appConfigItem(t, settings, domain.AppConfigSSOSessionTTLSeconds).EffectiveValue)
+	assert.Equal(t, "600", appConfigItem(t, settings, domain.AppConfigSSOStateTTLSeconds).EffectiveValue)
+	assert.Equal(t, "10", appConfigItem(t, settings, domain.AppConfigSSOHTTPTimeoutSeconds).EffectiveValue)
+	assert.Equal(t, "false", appConfigItem(t, settings, domain.AppConfigSSOCookieSecure).EffectiveValue)
 
 	runtime, err := svc.SSORuntimeConfig(ctx)
 	require.NoError(t, err)
@@ -46,9 +46,9 @@ func TestAppConfigServiceSSOSettingsDefaultsAndUpdate(t *testing.T) {
 		domain.AppConfigSSOCookieSecure:      "true",
 	}, "control", "127.0.0.1", "corr")
 	require.NoError(t, err)
-	assert.Equal(t, "https://portal.example.com", appConfigItem(updated, domain.AppConfigSSOPublicBaseURL).Value)
-	assert.Equal(t, "3600", appConfigItem(updated, domain.AppConfigSSOSessionTTLSeconds).EffectiveValue)
-	assert.Equal(t, "true", appConfigItem(updated, domain.AppConfigSSOCookieSecure).EffectiveValue)
+	assert.Equal(t, "https://portal.example.com", appConfigItem(t, updated, domain.AppConfigSSOPublicBaseURL).Value)
+	assert.Equal(t, "3600", appConfigItem(t, updated, domain.AppConfigSSOSessionTTLSeconds).EffectiveValue)
+	assert.Equal(t, "true", appConfigItem(t, updated, domain.AppConfigSSOCookieSecure).EffectiveValue)
 	assert.Equal(t, now.Format(time.RFC3339Nano), updated.UpdateTime)
 
 	runtime, err = svc.SSORuntimeConfig(ctx)
@@ -164,7 +164,7 @@ func TestAppConfigServiceSSOCookieSecureEffectiveDefault(t *testing.T) {
 
 			settings, err := svc.GetSSOSettings(ctx)
 			require.NoError(t, err)
-			assert.Equal(t, tt.wantEffective, appConfigItem(settings, domain.AppConfigSSOCookieSecure).EffectiveValue)
+			assert.Equal(t, tt.wantEffective, appConfigItem(t, settings, domain.AppConfigSSOCookieSecure).EffectiveValue)
 
 			runtime, err := svc.SSORuntimeConfig(ctx)
 			require.NoError(t, err)
@@ -290,7 +290,7 @@ func TestAppConfigServiceAuditNoopAndUnavailableBranches(t *testing.T) {
 		domain.AppConfigSSOPublicBaseURL: "https://portal.example.com",
 	}, "", "203.0.113.10", "corr")
 	require.NoError(t, err)
-	assert.Equal(t, "https://portal.example.com", appConfigItem(updated, domain.AppConfigSSOPublicBaseURL).Value)
+	assert.Equal(t, "https://portal.example.com", appConfigItem(t, updated, domain.AppConfigSSOPublicBaseURL).Value)
 	require.Len(t, audit.entries, 1)
 	assert.Equal(t, "APP_CONFIG_UPDATE", audit.entries[0].Operation)
 	assert.Equal(t, "system", audit.entries[0].ActorRole)
@@ -435,12 +435,14 @@ func (r *appConfigRepoStub) UpdateValues(_ context.Context, values map[string]st
 	return changed, nil
 }
 
-func appConfigItem(settings *domain.SSOConfigSettings, key string) domain.SSOConfigItem {
+func appConfigItem(t *testing.T, settings *domain.SSOConfigSettings, key string) domain.SSOConfigItem {
+	t.Helper()
 	for _, item := range settings.Items {
 		if item.Key == key {
 			return item
 		}
 	}
+	require.Failf(t, "missing app config item", "key %s not found", key)
 	return domain.SSOConfigItem{}
 }
 

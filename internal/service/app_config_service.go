@@ -145,43 +145,49 @@ func (s *AppConfigServiceImpl) currentCache(ctx context.Context) (*appConfigCach
 	now := s.now().UTC()
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if s.cache != nil && now.Sub(s.cache.checkedAt) < s.cacheInterval() {
-		return cloneAppConfigCache(s.cache), nil
+		cache := cloneAppConfigCache(s.cache)
+		s.mu.Unlock()
+		return cache, nil
 	}
+	s.mu.Unlock()
 
 	updateTime, err := s.repo.GetUpdateTime(ctx)
 	if err != nil {
-		if s.cache != nil {
-			s.cache.checkedAt = now
-			return cloneAppConfigCache(s.cache), nil
-		}
-		return nil, err
+		return s.cachedOrError(now, err)
 	}
+	s.mu.Lock()
 	if s.cache != nil && updateTime == s.cache.updateTime {
 		s.cache.checkedAt = now
-		return cloneAppConfigCache(s.cache), nil
+		cache := cloneAppConfigCache(s.cache)
+		s.mu.Unlock()
+		return cache, nil
 	}
+	s.mu.Unlock()
 
 	entries, err := s.repo.List(ctx)
 	if err != nil {
-		if s.cache != nil {
-			s.cache.checkedAt = now
-			return cloneAppConfigCache(s.cache), nil
-		}
-		return nil, err
+		return s.cachedOrError(now, err)
 	}
 	next, err := buildAppConfigCache(entries, now)
 	if err != nil {
-		if s.cache != nil {
-			s.cache.checkedAt = now
-			return cloneAppConfigCache(s.cache), nil
-		}
-		return nil, err
+		return s.cachedOrError(now, err)
 	}
+	s.mu.Lock()
 	s.cache = next
-	return cloneAppConfigCache(s.cache), nil
+	cache := cloneAppConfigCache(s.cache)
+	s.mu.Unlock()
+	return cache, nil
+}
+
+func (s *AppConfigServiceImpl) cachedOrError(checkedAt time.Time, err error) (*appConfigCache, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cache != nil {
+		s.cache.checkedAt = checkedAt
+		return cloneAppConfigCache(s.cache), nil
+	}
+	return nil, err
 }
 
 func (s *AppConfigServiceImpl) cacheInterval() time.Duration {

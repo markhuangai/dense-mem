@@ -45,7 +45,10 @@ func (r *AppConfigRepositoryImpl) GetUpdateTime(ctx context.Context) (string, er
 		if !rows.Next() {
 			return sql.ErrNoRows
 		}
-		return rows.Scan(&updateTime)
+		if err := rows.Scan(&updateTime); err != nil {
+			return err
+		}
+		return rows.Err()
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to get app config update time: %w", err)

@@ -52,7 +52,7 @@ process.
 
 Dense-Mem is part of the research preprint
 [Governed Enterprise AI Memory Beyond RAG: From Vector Retrieval to Permissioned
-Knowledge Graphs](https://zenodo.org/records/20469578).
+Knowledge Graphs](https://zenodo.org/records/20519039).
 
 ## Try the Hosted Demo
 
@@ -146,6 +146,12 @@ passes `TELEMETRY_SCRAPE_TOKEN` to Prometheus as a scrape secret, and points
 Dense-Mem at `http://prometheus:9090` for telemetry queries. It also sets
 `TELEMETRY_PROMETHEUS_JOB=dense-mem` so dashboards query only the `dense-mem`
 scrape job when Prometheus is shared.
+
+Recall quality cards such as `Eval Recall@50`, `Eval Hit@5`, `Eval MRR@5`, and
+`Eval tier correctness` use the `densemem_recall_eval_score` gauge. They stay at
+zero until an offline eval runner emits bounded scores with `suite`, `pipeline`,
+`metric`, and `k` labels; normal production recall traffic only contributes
+request volume, result count, and latency.
 
 For the disposable demo image, keep the control portal disabled and use the
 demo telemetry overlay instead:

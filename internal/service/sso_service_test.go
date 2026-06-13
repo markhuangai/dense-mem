@@ -12,6 +12,11 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
+func TestSSOServiceDeleteMappingRequiresProviderID(t *testing.T) {
+	svc := NewSSOService(&ssoRepositoryStub{}, SSOConfig{})
+	require.ErrorContains(t, svc.DeleteMapping(context.Background(), uuid.Nil, uuid.New()), "sso provider ID is required")
+}
+
 func TestSSOValidateAPIKeyPrincipalUsesFreshCacheMappings(t *testing.T) {
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	providerID := uuid.New()
@@ -116,6 +121,103 @@ func TestSSOValidateAPIKeyPrincipalFailsClosedWhenRefreshUnavailable(t *testing.
 	assert.Equal(t, now.Add(time.Minute), repo.savedCache.ExpiresAt)
 	assert.Contains(t, repo.savedCache.Error, ErrSSOGroupRefreshUnavailable.Error())
 	assert.Equal(t, 1, resolver.calls)
+}
+
+func TestSSOValidateAPIKeyPrincipalDeniesIncompleteSSOLinks(t *testing.T) {
+	providerID := uuid.New()
+	identityID := uuid.New()
+	teamID := uuid.New()
+	svc := NewSSOService(&ssoRepositoryStub{t: t}, SSOConfig{})
+
+	for name, ordinary := range map[string]*domain.APIKey{
+		"empty sso fields": {ID: uuid.New(), TeamID: teamID},
+		"db unlinked":      {ID: uuid.New(), TeamID: teamID, AuthSource: "api_key", SSOEntitlementStatus: "unlinked"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			validated, err := svc.ValidateAPIKeyPrincipal(context.Background(), ordinary)
+			require.NoError(t, err)
+			assert.Same(t, ordinary, validated)
+		})
+	}
+
+	for name, key := range map[string]*domain.APIKey{
+		"sso auth source only": {ID: uuid.New(), TeamID: teamID, AuthSource: "sso"},
+		"sso identity only":    {ID: uuid.New(), TeamID: teamID, SSOIdentityID: &identityID},
+		"provider no subject":  {ID: uuid.New(), TeamID: teamID, AuthSource: "sso", SSOProviderID: &providerID},
+		"subject no provider":  {ID: uuid.New(), TeamID: teamID, AuthSource: "sso", SSOSubject: "subject-123"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			validated, err := svc.ValidateAPIKeyPrincipal(context.Background(), key)
+			require.ErrorIs(t, err, ErrSSOAccessDenied)
+			assert.Nil(t, validated)
+		})
+	}
+}
+
+func TestSSOListEnabledProvidersRequiresPublicLoginReadiness(t *testing.T) {
+	ctx := context.Background()
+	readyID := uuid.New()
+	secretReadyID := uuid.New()
+	missingSecretID := uuid.New()
+	invalidID := uuid.New()
+	disabledID := uuid.New()
+	secretEnv := "DENSE_MEM_TEST_SSO_SECRET"
+	missingSecretEnv := "DENSE_MEM_TEST_MISSING_SSO_SECRET"
+	t.Setenv(secretEnv, "test-secret")
+	t.Setenv(missingSecretEnv, "")
+
+	ready := domain.SSOProvider{
+		ID:        readyID,
+		Name:      "Ready OIDC",
+		Kind:      domain.SSOProviderKindGenericOIDC,
+		IssuerURL: "https://issuer.example.com",
+		ClientID:  "client-id",
+		Enabled:   true,
+	}
+	secretReady := ready
+	secretReady.ID = secretReadyID
+	secretReady.Name = "Secret OIDC"
+	secretReady.ClientSecretEnv = secretEnv
+	missingSecret := ready
+	missingSecret.ID = missingSecretID
+	missingSecret.Name = "Missing Secret"
+	missingSecret.ClientSecretEnv = missingSecretEnv
+	invalid := ready
+	invalid.ID = invalidID
+	invalid.Name = "Invalid OIDC"
+	invalid.ClientID = ""
+	disabled := ready
+	disabled.ID = disabledID
+	disabled.Name = "Disabled OIDC"
+	disabled.Enabled = false
+
+	repo := &ssoRepositoryStub{
+		t: t,
+		providerList: []*domain.SSOProvider{
+			&ready,
+			&secretReady,
+			&missingSecret,
+			&invalid,
+			&disabled,
+		},
+	}
+
+	svc := NewSSOService(repo, SSOConfig{PublicBaseURL: "https://portal.example.com"})
+	providers, err := svc.ListEnabledProviders(ctx)
+	require.NoError(t, err)
+	require.Len(t, providers, 2)
+	assert.Equal(t, readyID, providers[0].ID)
+	assert.Equal(t, secretReadyID, providers[1].ID)
+
+	withoutBaseURL := NewSSOService(repo, SSOConfig{})
+	providers, err = withoutBaseURL.ListEnabledProviders(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, providers)
+
+	withInvalidBaseURL := NewSSOService(repo, SSOConfig{PublicBaseURL: "portal.example.com"})
+	providers, err = withInvalidBaseURL.ListEnabledProviders(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, providers)
 }
 
 type ssoGroupResolverStub struct {
@@ -314,13 +416,13 @@ func (r *ssoRepositoryStub) UpdateMapping(ctx context.Context, mapping *domain.S
 	return nil
 }
 
-func (r *ssoRepositoryStub) DeleteMapping(ctx context.Context, id uuid.UUID) error {
+func (r *ssoRepositoryStub) DeleteMapping(ctx context.Context, providerID, id uuid.UUID) error {
 	if r.deleteMappingErr != nil {
 		return r.deleteMappingErr
 	}
 	r.deletedMappingID = id
 	for index, mapping := range r.mappings {
-		if mapping.ID == id {
+		if mapping.ID == id && mapping.ProviderID == providerID {
 			r.mappings = append(r.mappings[:index], r.mappings[index+1:]...)
 			break
 		}

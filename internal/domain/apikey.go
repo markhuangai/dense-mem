@@ -51,6 +51,7 @@ type APIKey struct {
 	AuthSource                  string
 	SSOIdentityID               *uuid.UUID
 	SSOProviderID               *uuid.UUID
+	SSOOwnerIdentityID          *uuid.UUID
 	SSOSubject                  string
 	SSOEmail                    string
 	SSOGroupID                  string

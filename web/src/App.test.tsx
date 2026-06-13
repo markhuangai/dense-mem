@@ -198,7 +198,6 @@ describe("App", () => {
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
     await userEvent.click(screen.getByRole("button", { name: /profiles & api keys/i }));
-    await userEvent.selectOptions(screen.getByLabelText(/permission/i), "read");
     await userEvent.click(screen.getByRole("button", { name: /create profile/i }));
 
     expect(await screen.findByText("dm_plain_once")).toBeInTheDocument();
@@ -207,7 +206,7 @@ describe("App", () => {
         expect.stringContaining(`/teams/${profileA.id}/profiles`),
         expect.objectContaining({
           method: "POST",
-          body: expect.stringContaining(`"scopes":["read"]`),
+          body: expect.stringContaining(`"scopes":["read","write"]`),
         }),
       );
       expect(fetchMock).toHaveBeenCalledWith(

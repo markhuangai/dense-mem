@@ -30,6 +30,7 @@ type Principal struct {
 	KeyPrefix     string
 	RateLimit     int
 	AuthMethod    string
+	SSOIdentityID *uuid.UUID
 	SSOProviderID *uuid.UUID
 	SSOSubject    string
 }
@@ -119,9 +120,15 @@ func AuthMiddlewareWithOptions(repo repository.APIKeyRepository, auditSvc servic
 			// Missing header
 			if authHeader == "" {
 				if opts.SSOSessionAuthenticator != nil {
-					if err := authenticateSSOSession(c, next, opts.SSOSessionAuthenticator); err != errNoSSOSession {
+					if err := authenticateSSOSession(c, opts.SSOSessionAuthenticator); err != nil {
+						if err == errNoSSOSession {
+							logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_MISSING", "missing authorization header")
+							return httperr.New(httperr.AUTH_MISSING, "missing authorization header")
+						}
+						logAuthFailure(c, auditSvc, securitySvc, nil, "SSO_AUTH_INVALID", "sso session authentication failed")
 						return err
 					}
+					return next(c)
 				}
 				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_MISSING", "missing authorization header")
 				return httperr.New(httperr.AUTH_MISSING, "missing authorization header")
@@ -230,6 +237,7 @@ func AuthMiddlewareWithOptions(repo repository.APIKeyRepository, auditSvc servic
 				KeyPrefix:     prefix,
 				RateLimit:     key.RateLimit,
 				AuthMethod:    "api_key",
+				SSOIdentityID: key.SSOOwnerIdentityID,
 				SSOProviderID: key.SSOProviderID,
 				SSOSubject:    key.SSOSubject,
 			}
@@ -255,7 +263,7 @@ func AuthMiddlewareWithOptions(repo repository.APIKeyRepository, auditSvc servic
 
 var errNoSSOSession = errors.New("no sso session")
 
-func authenticateSSOSession(c echo.Context, next echo.HandlerFunc, authenticator SSOSessionAuthenticator) error {
+func authenticateSSOSession(c echo.Context, authenticator SSOSessionAuthenticator) error {
 	cookie, err := c.Request().Cookie(service.SSOSessionCookieName)
 	if err != nil || strings.TrimSpace(cookie.Value) == "" {
 		return errNoSSOSession
@@ -285,6 +293,7 @@ func authenticateSSOSession(c echo.Context, next echo.HandlerFunc, authenticator
 		Scopes:        key.Scopes,
 		RateLimit:     key.RateLimit,
 		AuthMethod:    "sso_session",
+		SSOIdentityID: key.SSOIdentityID,
 		SSOProviderID: key.SSOProviderID,
 		SSOSubject:    key.SSOSubject,
 	}
@@ -296,7 +305,7 @@ func authenticateSSOSession(c echo.Context, next echo.HandlerFunc, authenticator
 		ProfileName: key.GetProfileName(),
 	})
 	c.SetRequest(c.Request().WithContext(ctx))
-	return next(c)
+	return nil
 }
 
 func requestRequiresCSRF(method string) bool {

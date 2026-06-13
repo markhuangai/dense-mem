@@ -16,11 +16,12 @@ jobs:
   review:
     if: ${{ !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository }}
     permissions:
+      id-token: write
       actions: write
       contents: read
       issues: write
       pull-requests: write
-    uses: markhuangai/git-vibe/.github/workflows/review.yml@v3.3.0
+    uses: markhuangai/git-vibe/.github/workflows/review.yml@dev
     with:
       pr-number: ${{ format('{0}', github.event.pull_request.number) }}
       runner: docker-runner
@@ -29,6 +30,5 @@ jobs:
       dry-run: false
       source-comment: ""
     secrets:
-      GITVIBE_GITHUB_TOKEN: ${{ secrets.GITVIBE_GITHUB_TOKEN }}
       GITVIBE_AI_ENV_JSON: ${{ secrets.GITVIBE_AI_ENV_JSON }}
       GITVIBE_MCP_ENV_JSON: ${{ secrets.GITVIBE_MCP_ENV_JSON }}

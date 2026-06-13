@@ -3,9 +3,11 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -34,13 +36,14 @@ func TestSSOTokenAndRedirectHelpers(t *testing.T) {
 
 func TestSSOClaimAndGroupHelpers(t *testing.T) {
 	raw := map[string]json.RawMessage{
-		"email":  json.RawMessage(`"ada@example.com"`),
-		"groups": json.RawMessage(`["g2","g1","g1"]`),
-		"roles":  json.RawMessage(`"role-1"`),
+		"email":         json.RawMessage(`"ada@example.com"`),
+		"groups":        json.RawMessage(`["g2","g1","g1"]`),
+		"roles":         json.RawMessage(`"role-1"`),
+		"zitadel_roles": json.RawMessage(`{"dense-mem-admin":{"org-id":"example.zitadel.cloud"},"dense-mem-member":{}}`),
 	}
 
 	assert.Equal(t, "ada@example.com", firstClaimString(raw, "missing", "email"))
-	assert.Equal(t, []string{"g1", "g2", "role-1"}, groupsFromRawClaims(raw, []string{"groups", "roles"}))
+	assert.Equal(t, []string{"dense-mem-admin", "dense-mem-member", "g1", "g2", "role-1"}, groupsFromRawClaims(raw, []string{"groups", "roles", "zitadel_roles"}))
 	assert.Equal(t, []string{"a", "b"}, dedupeStrings([]string{" b ", "", "a", "b"}))
 	assert.True(t, containsString([]string{"openid", "email"}, "openid"))
 	assert.False(t, containsString([]string{"email"}, "profile"))
@@ -114,6 +117,10 @@ func TestNormalizeSSOProviderAndMapping(t *testing.T) {
 	require.Error(t, normalizeSSOProvider(&badProvider))
 	badProvider = domain.SSOProvider{Name: "Bad", Kind: domain.SSOProviderKindAzureAD, IssuerURL: "https://login.example.com"}
 	require.Error(t, normalizeSSOProvider(&badProvider))
+	badProvider = domain.SSOProvider{Name: "Bad", Kind: domain.SSOProviderKindAzureAD, IssuerURL: "https://login.example.com", ClientID: "client", GroupsEndpoint: "http://graph.example.com/groups"}
+	require.ErrorContains(t, normalizeSSOProvider(&badProvider), "groups_endpoint must be an absolute https URL")
+	badProvider = domain.SSOProvider{Name: "Bad", Kind: domain.SSOProviderKindAzureAD, IssuerURL: "https://login.example.com", ClientID: "client", GroupsEndpoint: "https://user:pass@graph.example.com/groups"}
+	require.ErrorContains(t, normalizeSSOProvider(&badProvider), "groups_endpoint must not include credentials")
 
 	provider = domain.SSOProvider{Name: "Ping", Kind: domain.SSOProviderKindPingOne, IssuerURL: "https://ping.example.com", ClientID: "client", Scopes: []string{"email"}}
 	require.NoError(t, normalizeSSOProvider(&provider))
@@ -128,6 +135,17 @@ func TestNormalizeSSOProviderAndMapping(t *testing.T) {
 	assert.Equal(t, "group-1", mapping.GroupID)
 	assert.Equal(t, []string{APIKeyScopeRead}, mapping.Scopes)
 	assert.Equal(t, APIKeyRoleMember, mapping.Role)
+
+	managerMapping := domain.SSOGroupMapping{
+		ProviderID: uuid.New(),
+		TeamID:     uuid.New(),
+		GroupID:    "group-manager",
+		Scopes:     []string{APIKeyScopeRead},
+		Role:       APIKeyRoleManager,
+	}
+	require.NoError(t, normalizeSSOGroupMapping(&managerMapping))
+	assert.Equal(t, StandardAPIKeyScopes(), managerMapping.Scopes)
+	assert.Equal(t, APIKeyRoleManager, managerMapping.Role)
 
 	invalidMapping := domain.SSOGroupMapping{ProviderID: uuid.New(), TeamID: uuid.New()}
 	require.Error(t, normalizeSSOGroupMapping(&invalidMapping))
@@ -276,4 +294,85 @@ func TestHTTPSSOGroupResolverClientCredentialsUnavailable(t *testing.T) {
 		GroupsScopes:    []string{"group.read"},
 	})
 	require.ErrorIs(t, err, ErrSSOGroupRefreshUnavailable)
+}
+
+func TestInteractiveOAuthScopesIncludesGroupEndpointScopes(t *testing.T) {
+	scopes := interactiveOAuthScopes(domain.SSOProvider{
+		Scopes:         []string{"email", "openid"},
+		GroupsEndpoint: "https://graph.example.com/groups",
+		GroupsScopes:   []string{"groups.read", "email"},
+	})
+
+	assert.Equal(t, []string{"email", "openid", "groups.read"}, scopes)
+
+	withoutEndpoint := interactiveOAuthScopes(domain.SSOProvider{
+		Scopes:       []string{"profile"},
+		GroupsScopes: []string{"groups.read"},
+	})
+	assert.Equal(t, []string{"openid", "profile"}, withoutEndpoint)
+}
+
+func TestSSOSetupErrorMessage(t *testing.T) {
+	for _, tt := range []struct {
+		code SSOSetupErrorCode
+		want string
+	}{
+		{SSOSetupGroupsMissing, "sso setup failed: no groups found in configured claims"},
+		{SSOSetupGroupLookupFailed, "sso setup failed: group lookup failed"},
+		{SSOSetupMappingMissing, "sso setup failed: no mapping matched the user groups"},
+		{SSOSetupEntitlementEmpty, "sso setup failed: no enabled team entitlement matched"},
+		{SSOSetupErrorCode("unknown"), "sso setup failed"},
+	} {
+		err := NewSSOSetupError(tt.code, nil)
+		message, ok := SSOSetupErrorMessage(err)
+		require.True(t, ok)
+		assert.Equal(t, tt.want, message)
+		assert.ErrorIs(t, err, ErrSSOAccessDenied)
+	}
+
+	backendErr := errors.New("backend denied")
+	err := NewSSOSetupError(SSOSetupMappingMissing, backendErr)
+	assert.Equal(t, "backend denied", err.Error())
+	assert.ErrorIs(t, err, backendErr)
+
+	message, ok := SSOSetupErrorMessage(errors.New("plain error"))
+	assert.False(t, ok)
+	assert.Empty(t, message)
+}
+
+func TestSSOEntitlementCacheHelpers(t *testing.T) {
+	runtime := SSORuntimeConfig{
+		EntitlementCacheTTL: 5 * time.Minute,
+		SessionTTL:          time.Hour,
+	}
+
+	assert.Equal(t, time.Hour, ssoActiveEntitlementCacheTTL(runtime, ssoEntitlementSourceClaims))
+	assert.Equal(t, 5*time.Minute, ssoActiveEntitlementCacheTTL(runtime, ssoEntitlementSourceEndpoint))
+	assert.Equal(t, "source=claims", ssoEntitlementCacheMessage(ssoEntitlementSourceClaims))
+	assert.Empty(t, ssoEntitlementCacheMessage(""))
+}
+
+func TestSSOKeyRequiresEntitlementValidation(t *testing.T) {
+	providerID := uuid.New()
+	identityID := uuid.New()
+
+	for _, tt := range []struct {
+		name string
+		key  *domain.APIKey
+		want bool
+	}{
+		{name: "nil", key: nil, want: false},
+		{name: "ordinary", key: &domain.APIKey{}, want: false},
+		{name: "unlinked api key", key: &domain.APIKey{AuthSource: "api_key", SSOEntitlementStatus: "unlinked"}, want: false},
+		{name: "sso auth source", key: &domain.APIKey{AuthSource: "sso"}, want: true},
+		{name: "identity", key: &domain.APIKey{SSOIdentityID: &identityID}, want: true},
+		{name: "provider", key: &domain.APIKey{SSOProviderID: &providerID}, want: true},
+		{name: "subject", key: &domain.APIKey{SSOSubject: "subject"}, want: true},
+		{name: "group", key: &domain.APIKey{SSOGroupID: "group"}, want: true},
+		{name: "status", key: &domain.APIKey{SSOEntitlementStatus: "active"}, want: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, ssoKeyRequiresEntitlementValidation(tt.key))
+		})
+	}
 }

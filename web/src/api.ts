@@ -186,7 +186,6 @@ export type SSOProviderInput = {
 export type SSOGroupMappingInput = {
   team_id: string;
   group_id: string;
-  group_name: string;
   scopes: string[];
   role: ProfileRole;
   enabled: boolean;

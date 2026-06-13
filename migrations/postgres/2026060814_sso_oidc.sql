@@ -118,13 +118,37 @@ ALTER TABLE team_profiles
 
 ALTER TABLE team_profiles
     DROP CONSTRAINT IF EXISTS team_profiles_auth_source_check,
-    DROP CONSTRAINT IF EXISTS team_profiles_sso_entitlement_status_check;
+    DROP CONSTRAINT IF EXISTS team_profiles_sso_entitlement_status_check,
+    DROP CONSTRAINT IF EXISTS team_profiles_auth_source_shape_check;
 
 ALTER TABLE team_profiles
     ADD CONSTRAINT team_profiles_auth_source_check
-        CHECK (auth_source IN ('api_key', 'sso', 'hybrid')),
+        CHECK (auth_source IN ('api_key', 'sso')),
     ADD CONSTRAINT team_profiles_sso_entitlement_status_check
-        CHECK (sso_entitlement_status IN ('unlinked', 'active', 'denied', 'error'));
+        CHECK (sso_entitlement_status IN ('unlinked', 'active', 'denied', 'error')),
+    ADD CONSTRAINT team_profiles_auth_source_shape_check
+        CHECK (
+            (
+                auth_source = 'api_key'
+                AND key_hash IS NOT NULL
+                AND key_prefix IS NOT NULL
+                AND sso_identity_id IS NULL
+                AND sso_provider_id IS NULL
+                AND NULLIF(sso_subject, '') IS NULL
+                AND sso_entitlement_status = 'unlinked'
+            )
+            OR (
+                auth_source = 'sso'
+                AND key_hash IS NULL
+                AND key_prefix IS NULL
+                AND NULLIF(sso_subject, '') IS NOT NULL
+                AND sso_entitlement_status IN ('active', 'denied', 'error')
+                AND (
+                    (sso_identity_id IS NOT NULL AND sso_provider_id IS NOT NULL)
+                    OR (sso_identity_id IS NULL AND sso_provider_id IS NULL)
+                )
+            )
+        );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_team_profiles_sso_identity_team_unique
     ON team_profiles(sso_identity_id, team_id)
@@ -235,6 +259,7 @@ DROP INDEX IF EXISTS idx_team_profiles_sso_identity_team_unique;
 
 ALTER TABLE team_profiles
     DROP CONSTRAINT IF EXISTS team_profiles_sso_entitlement_status_check,
+    DROP CONSTRAINT IF EXISTS team_profiles_auth_source_shape_check,
     DROP CONSTRAINT IF EXISTS team_profiles_auth_source_check;
 
 DELETE FROM team_profiles WHERE auth_source = 'sso';

@@ -36,6 +36,9 @@ func (r *userPortalAuthRepo) CountByProfile(context.Context, uuid.UUID) (int64, 
 func (r *userPortalAuthRepo) GetByIDForProfile(context.Context, uuid.UUID, uuid.UUID) (*domain.APIKey, error) {
 	return nil, nil
 }
+func (r *userPortalAuthRepo) GetSSOOwnedKey(context.Context, uuid.UUID, uuid.UUID) (*domain.APIKey, error) {
+	return nil, nil
+}
 func (r *userPortalAuthRepo) GetActiveByPrefix(_ context.Context, prefix string) (*domain.APIKey, error) {
 	if r.key != nil && r.key.KeyPrefix == prefix {
 		key := *r.key
@@ -65,11 +68,36 @@ type userPortalKeySvc struct {
 	rotateProfileID uuid.UUID
 	rotateKeyID     uuid.UUID
 	lastRotateReq   service.CreateAPIKeyRequest
+	lastCreateReq   service.CreateAPIKeyRequest
 	rawRotatedKey   string
+	rawCreatedKey   string
 }
 
-func (s *userPortalKeySvc) CreateStandardKey(context.Context, uuid.UUID, service.CreateAPIKeyRequest, *string, string, string, string) (*domain.APIKey, string, error) {
-	return nil, "", nil
+func (s *userPortalKeySvc) CreateStandardKey(_ context.Context, profileID uuid.UUID, req service.CreateAPIKeyRequest, _ *string, _ string, _ string, _ string) (*domain.APIKey, string, error) {
+	scopes, err := service.NormalizeAPIKeyScopes(req.Scopes)
+	if err != nil {
+		return nil, "", err
+	}
+	if s.rawCreatedKey == "" {
+		s.rawCreatedKey = "dm_created_plaintext"
+	}
+	s.lastCreateReq = req
+	key := &domain.APIKey{
+		ID:                 uuid.New(),
+		TeamID:             profileID,
+		ProfileID:          profileID,
+		Name:               req.Name,
+		Label:              req.Name,
+		KeySuffix:          "own123",
+		Scopes:             scopes,
+		Role:               service.APIKeyRoleMember,
+		RateLimit:          req.RateLimit,
+		CreatedAt:          time.Now().UTC().Truncate(time.Second),
+		ExpiresAt:          req.ExpiresAt,
+		SSOOwnerIdentityID: req.SSOOwnerIdentityID,
+	}
+	s.keys = append(s.keys, key)
+	return key, s.rawCreatedKey, nil
 }
 func (s *userPortalKeySvc) UpdateNameForProfile(context.Context, uuid.UUID, uuid.UUID, string, *string, string, string, string) (*domain.APIKey, error) {
 	return nil, nil
@@ -103,6 +131,14 @@ func (s *userPortalKeySvc) GetByIDForProfile(_ context.Context, profileID, id uu
 		}
 	}
 	return nil, httperr.New(httperr.NOT_FOUND, "key not found")
+}
+func (s *userPortalKeySvc) GetSSOOwnedKey(_ context.Context, profileID, identityID uuid.UUID) (*domain.APIKey, error) {
+	for _, key := range s.keys {
+		if key.GetTeamID() == profileID && key.SSOOwnerIdentityID != nil && *key.SSOOwnerIdentityID == identityID && key.RevokedAt == nil {
+			return key, nil
+		}
+	}
+	return nil, nil
 }
 func (s *userPortalKeySvc) DeleteForProfile(context.Context, uuid.UUID, uuid.UUID, *string, string, string, string) error {
 	return nil
@@ -310,6 +346,15 @@ func TestUserPortalRotateCurrentKeyErrors(t *testing.T) {
 
 	err := h.rotateCurrentKey(userPortalEchoContext(t, http.MethodPost, "/ui/api/key/rotate", "{}", nil))
 	require.ErrorContains(t, err, "authentication required")
+
+	err = h.rotateCurrentKey(userPortalEchoContext(t, http.MethodPost, "/ui/api/key/rotate", "{}", &httpmw.Principal{
+		KeyID:      keyID,
+		TeamID:     teamID,
+		Role:       service.APIKeyRoleMember,
+		Scopes:     []string{"read", "write"},
+		AuthMethod: "sso_session",
+	}))
+	require.ErrorContains(t, err, "sso sessions cannot rotate api keys")
 
 	principal := &httpmw.Principal{
 		KeyID:  keyID,

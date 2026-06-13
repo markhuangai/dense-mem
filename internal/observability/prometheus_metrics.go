@@ -32,6 +32,7 @@ type ScopedDiscoverabilityMetrics interface {
 	IncVerifyVerdictFor(ctx context.Context, model string, outcome string)
 	ObserveRecallLatencyFor(ctx context.Context, durationMs float64)
 	ObserveRecallFor(ctx context.Context, durationMs float64, resultCount int, outcome string)
+	ObserveRecallEvaluationFor(ctx context.Context, suite string, pipeline string, metric string, k int, value float64)
 	ObserveMemoryFunnelLatencyFor(ctx context.Context, stage string, seconds float64, outcome string)
 	IncFragmentCreateFor(ctx context.Context, outcome string)
 	IncClaimCreateFor(ctx context.Context, outcome string, dedupeReason string)
@@ -60,6 +61,7 @@ type PrometheusMetrics struct {
 	recallCalls     *prometheus.CounterVec
 	recallDur       *prometheus.HistogramVec
 	recallResults   *prometheus.HistogramVec
+	recallEval      *prometheus.GaugeVec
 	memoryFunnel    *prometheus.HistogramVec
 	fragmentCreates *prometheus.CounterVec
 	claimCreates    *prometheus.CounterVec
@@ -135,6 +137,10 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 			Help:    "Recall result count per request.",
 			Buckets: []float64{0, 1, 2, 5, 10, 20, 50, 100},
 		}, append(identityLabels(), "outcome")),
+		recallEval: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "densemem_recall_eval_score",
+			Help: "Offline recall evaluation score from a bounded labeled suite.",
+		}, append(identityLabels(), "suite", "pipeline", "metric", "k")),
 		memoryFunnel: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "densemem_memory_funnel_latency_seconds",
 			Help:    "Latency between memory pipeline stages.",
@@ -188,7 +194,7 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		m.httpRequests, m.httpDuration,
 		m.embeddingCalls, m.embeddingErrors, m.embeddingDur, m.embeddingTokens,
 		m.verifierCalls, m.verifierDur, m.verifierTokens,
-		m.recallCalls, m.recallDur, m.recallResults, m.memoryFunnel,
+		m.recallCalls, m.recallDur, m.recallResults, m.recallEval, m.memoryFunnel,
 		m.fragmentCreates, m.claimCreates, m.verifyVerdicts, m.promotions,
 		m.promoteWait, m.retractions, m.revalidation,
 		m.communityRuns, m.communityDur, m.communityNodes,
@@ -262,6 +268,15 @@ func (m *PrometheusMetrics) ObserveRecallFor(ctx context.Context, durationMs flo
 		resultCount = 0
 	}
 	m.recallResults.WithLabelValues(append(labels, outcome)...).Observe(float64(resultCount))
+}
+
+func (m *PrometheusMetrics) ObserveRecallEvaluation(suite string, pipeline string, metric string, k int, value float64) {
+	m.ObserveRecallEvaluationFor(context.Background(), suite, pipeline, metric, k, value)
+}
+
+func (m *PrometheusMetrics) ObserveRecallEvaluationFor(ctx context.Context, suite string, pipeline string, metric string, k int, value float64) {
+	labels := append(identityValues(ctx), normalizeLabel(suite), normalizeLabel(pipeline), normalizeLabel(metric), normalizeRecallEvalK(k))
+	m.recallEval.WithLabelValues(labels...).Set(normalizeRecallEvalScore(value))
 }
 
 func (m *PrometheusMetrics) ObserveMemoryFunnelLatency(stage string, seconds float64, outcome string) {
@@ -398,6 +413,23 @@ func statusClass(status int) string {
 	return strconv.Itoa(status/100) + "xx"
 }
 
+func normalizeRecallEvalK(k int) string {
+	if k <= 0 {
+		return "all"
+	}
+	return strconv.Itoa(k)
+}
+
+func normalizeRecallEvalScore(value float64) float64 {
+	if value < 0 {
+		return 0
+	}
+	if value > 1 {
+		return 1
+	}
+	return value
+}
+
 // RecordEmbeddingLatency preserves the narrow DiscoverabilityMetrics contract
 // while allowing scoped recorders to attach request identity and model labels.
 func RecordEmbeddingLatency(ctx context.Context, metrics DiscoverabilityMetrics, model string, durationMs float64, outcome string) {
@@ -490,6 +522,17 @@ func RecordRecall(ctx context.Context, metrics DiscoverabilityMetrics, durationM
 		return
 	}
 	metrics.ObserveRecall(durationMs, resultCount, outcome)
+}
+
+func RecordRecallEvaluation(ctx context.Context, metrics DiscoverabilityMetrics, suite string, pipeline string, metric string, k int, value float64) {
+	if metrics == nil {
+		return
+	}
+	if scoped, ok := metrics.(ScopedDiscoverabilityMetrics); ok {
+		scoped.ObserveRecallEvaluationFor(ctx, suite, pipeline, metric, k, value)
+		return
+	}
+	metrics.ObserveRecallEvaluation(suite, pipeline, metric, k, value)
 }
 
 func RecordMemoryFunnelLatency(ctx context.Context, metrics DiscoverabilityMetrics, stage string, seconds float64, outcome string) {

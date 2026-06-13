@@ -79,6 +79,10 @@ func (s *apiKeyHandlerService) GetByIDForProfile(context.Context, uuid.UUID, uui
 	return s.key, s.err
 }
 
+func (s *apiKeyHandlerService) GetSSOOwnedKey(context.Context, uuid.UUID, uuid.UUID) (*domain.APIKey, error) {
+	return nil, nil
+}
+
 func (s *apiKeyHandlerService) DeleteForProfile(_ context.Context, _ uuid.UUID, id uuid.UUID, _ *string, _ string, _ string, _ string) error {
 	s.deletedKeyID = id
 	return s.err
@@ -121,6 +125,9 @@ func TestAPIKeyHandlerCreateListGetRotateDelete(t *testing.T) {
 		}
 		if svc.createReq.Name != "ops key" || svc.createReq.RateLimit != 42 {
 			t.Fatalf("create request = %+v", svc.createReq)
+		}
+		if svc.createReq.Role != service.APIKeyRoleMember {
+			t.Fatalf("role = %q; want %q", svc.createReq.Role, service.APIKeyRoleMember)
 		}
 		if got := svc.createReq.Scopes; len(got) != 1 || got[0] != scopes[0] {
 			t.Fatalf("scopes = %v; want %v", got, scopes)

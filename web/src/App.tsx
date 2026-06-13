@@ -747,6 +747,12 @@ function TeamProfileCreateForm({
     setRole(defaultRole);
   }, [team.id, defaultRole]);
 
+  useEffect(() => {
+    if (role === "manager") {
+      setPermission("read_write");
+    }
+  }, [role]);
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (name.trim().length < 1) {
@@ -763,7 +769,7 @@ function TeamProfileCreateForm({
     try {
       const created = await api.createTeamProfile(team.id, {
         name: name.trim(),
-        scopes: permission === "read" ? ["read"] : ["read", "write"],
+        scopes: role === "manager" || permission === "read_write" ? ["read", "write"] : ["read"],
         role,
         rate_limit: parsedRateLimit,
       });
@@ -779,15 +785,6 @@ function TeamProfileCreateForm({
     <form className="key-form" onSubmit={submit}>
       <label htmlFor="team-profile-name">Profile name</label>
       <input id="team-profile-name" value={name} onChange={(event) => setName(event.target.value)} />
-      <label htmlFor="team-profile-permission">Permission</label>
-      <select
-        id="team-profile-permission"
-        value={permission}
-        onChange={(event) => setPermission(event.target.value as ProfilePermission)}
-      >
-        <option value="read_write">Read/write</option>
-        <option value="read">Read only</option>
-      </select>
       <label htmlFor="team-profile-role">Role</label>
       <select
         id="team-profile-role"
@@ -797,6 +794,19 @@ function TeamProfileCreateForm({
         <option value="manager">{profileRoleLabel("manager")}</option>
         <option value="member">{profileRoleLabel("member")}</option>
       </select>
+      {role === "member" && (
+        <>
+          <label htmlFor="team-profile-permission">Permission</label>
+          <select
+            id="team-profile-permission"
+            value={permission}
+            onChange={(event) => setPermission(event.target.value as ProfilePermission)}
+          >
+            <option value="read_write">Read/write</option>
+            <option value="read">Read only</option>
+          </select>
+        </>
+      )}
       <label htmlFor="rate-limit">Rate limit</label>
       <input id="rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
       {error && <p className="field-error span" role="alert">{error}</p>}

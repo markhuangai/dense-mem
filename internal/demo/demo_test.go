@@ -378,6 +378,10 @@ func (s *fakeAPIKeyService) GetByIDForProfile(context.Context, uuid.UUID, uuid.U
 	return nil, nil
 }
 
+func (s *fakeAPIKeyService) GetSSOOwnedKey(context.Context, uuid.UUID, uuid.UUID) (*domain.APIKey, error) {
+	return nil, nil
+}
+
 func (s *fakeAPIKeyService) RevokeForProfile(context.Context, uuid.UUID, uuid.UUID, *string, string, string, string) error {
 	return nil
 }

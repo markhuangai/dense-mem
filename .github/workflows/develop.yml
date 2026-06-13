@@ -53,15 +53,15 @@ on:
         required: false
         type: string
         default: ""
-
 jobs:
   develop:
     permissions:
+      id-token: write
       actions: write
       contents: write
       issues: write
       pull-requests: write
-    uses: markhuangai/git-vibe/.github/workflows/develop.yml@v3.3.0
+    uses: markhuangai/git-vibe/.github/workflows/develop.yml@dev
     with:
       issue-number: ${{ github.event.inputs.issue-number }}
       runner: docker-runner
@@ -75,6 +75,5 @@ jobs:
       dry-run: ${{ fromJSON(github.event.inputs.dry-run) }}
       source-comment: ${{ github.event.inputs.source-comment }}
     secrets:
-      GITVIBE_GITHUB_TOKEN: ${{ secrets.GITVIBE_GITHUB_TOKEN }}
       GITVIBE_AI_ENV_JSON: ${{ secrets.GITVIBE_AI_ENV_JSON }}
       GITVIBE_MCP_ENV_JSON: ${{ secrets.GITVIBE_MCP_ENV_JSON }}
