@@ -66,6 +66,14 @@ Do not use `/ui/api/sso/logout` as an OIDC post-logout redirect URI. It is a
 local API endpoint, not a browser landing page. Dense-Mem does not currently
 perform RP-initiated OIDC logout with `post_logout_redirect_uri`.
 
+SSO sessions and API keys are separate authentication sources. One SSO identity
+can be entitled to multiple teams; Dense-Mem creates one SSO team profile per
+entitled team for browser-session access. That SSO profile has no API key
+material and cannot be rotated into an API key. When an SSO manager creates a
+profile from the Team tab, the returned key is a normal API-key profile. Future
+bearer-token login with that key uses standard API-key authentication and is not
+tied to the creator's SSO session.
+
 If the provider requires a post-logout redirect URI, use the portal URL:
 
 ```text
