@@ -55,7 +55,7 @@ describe("UserPortalApp", () => {
     await userEvent.type(screen.getByLabelText(/api key/i), "dm_key");
     await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
 
-    expect(await screen.findByText("Research Team")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
     expect(await screen.findByText("Mine")).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/profiles"))).toBe(false);
   });
@@ -169,6 +169,48 @@ describe("UserPortalApp", () => {
       );
     });
   });
+
+  it("uses server auth method for SSO cookie sessions and switches teams", async () => {
+    const { initial, switched, secondKey } = ssoSessions();
+    const fetchMock = mockSSOUserFetch(initial, switched);
+
+    render(<UserPortalApp />);
+
+    expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /my key/i })).not.toBeInTheDocument();
+    const teamSelect = await screen.findByLabelText("Active team");
+    expect(teamSelect).toHaveValue(initial.key.id);
+
+    await userEvent.selectOptions(teamSelect, secondKey.id);
+
+    expect(await screen.findByRole("heading", { name: "Analytics Team" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /my key/i })).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/ui/api/sso/team",
+        expect.objectContaining({
+          method: "POST",
+          credentials: "include",
+          body: JSON.stringify({ profile_id: secondKey.id }),
+        }),
+      );
+    });
+    expect(sessionStorage.getItem("denseMem.userApiKey")).toBeNull();
+  });
+
+  it("keeps the SSO portal open when logout fails", async () => {
+    const { initial, switched } = ssoSessions();
+    mockSSOUserFetch(initial, switched, { logoutStatus: 500 });
+
+    render(<UserPortalApp />);
+
+    expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /sign out/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("logout failed");
+    expect(screen.getByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    expect(screen.queryByLabelText(/api key/i)).not.toBeInTheDocument();
+  });
 });
 
 function mockUserFetch(session: UserSession, profiles: UserKey[] = []) {
@@ -237,6 +279,70 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = []) {
     if (url.includes(`/api/v1/teams/${currentTeam.id}/profiles/`) && method === "DELETE") {
       currentProfiles = currentProfiles.filter((profile) => !url.endsWith(`/profiles/${profile.id}`));
       return jsonResponse({ data: { status: "deleted" } });
+    }
+    if (url.startsWith("/api/v1/communities")) {
+      return jsonResponse({ items: [] });
+    }
+    if (url.startsWith("/api/v1/recall")) {
+      return jsonResponse({ data: [] });
+    }
+    return jsonResponse({ message: "not found" }, 404);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+function ssoSessions() {
+  const secondTeam = {
+    ...baseSession.team,
+    id: "55555555-5555-4555-8555-555555555555",
+    name: "Analytics Team",
+  };
+  const secondKey: UserKey = {
+    ...baseSession.key,
+    id: "66666666-6666-4666-8666-666666666666",
+    team_id: secondTeam.id,
+    name: "Analytics SSO",
+  };
+  const initial: UserSession = {
+    ...baseSession,
+    auth_method: "sso",
+    teams: [
+      { team: baseSession.team, key: baseSession.key, can_rotate: false, can_manage_team: false },
+      { team: secondTeam, key: secondKey, can_rotate: false, can_manage_team: true },
+    ],
+  };
+  const switched: UserSession = {
+    ...initial,
+    team: secondTeam,
+    key: secondKey,
+    can_rotate: false,
+    can_manage_team: true,
+  };
+  return { initial, switched, secondKey };
+}
+
+function mockSSOUserFetch(initial: UserSession, switched: UserSession, options: { logoutStatus?: number } = {}) {
+  let current = initial;
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+
+    if (url === "/ui/api/sso/providers" && method === "GET") {
+      return jsonResponse({ data: [] });
+    }
+    if (url === "/ui/api/session" && method === "GET") {
+      return jsonResponse({ data: current });
+    }
+    if (url === "/ui/api/sso/team" && method === "POST") {
+      current = switched;
+      return jsonResponse({ data: current });
+    }
+    if (url === "/ui/api/sso/logout" && method === "POST") {
+      if (options.logoutStatus) {
+        return jsonResponse({ message: "logout failed" }, options.logoutStatus);
+      }
+      return jsonResponse({ data: { status: "signed_out" } });
     }
     if (url.startsWith("/api/v1/communities")) {
       return jsonResponse({ items: [] });

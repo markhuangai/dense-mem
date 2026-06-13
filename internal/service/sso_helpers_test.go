@@ -117,6 +117,10 @@ func TestNormalizeSSOProviderAndMapping(t *testing.T) {
 	require.Error(t, normalizeSSOProvider(&badProvider))
 	badProvider = domain.SSOProvider{Name: "Bad", Kind: domain.SSOProviderKindAzureAD, IssuerURL: "https://login.example.com"}
 	require.Error(t, normalizeSSOProvider(&badProvider))
+	badProvider = domain.SSOProvider{Name: "Bad", Kind: domain.SSOProviderKindAzureAD, IssuerURL: "https://login.example.com", ClientID: "client", GroupsEndpoint: "http://graph.example.com/groups"}
+	require.ErrorContains(t, normalizeSSOProvider(&badProvider), "groups_endpoint must be an absolute https URL")
+	badProvider = domain.SSOProvider{Name: "Bad", Kind: domain.SSOProviderKindAzureAD, IssuerURL: "https://login.example.com", ClientID: "client", GroupsEndpoint: "https://user:pass@graph.example.com/groups"}
+	require.ErrorContains(t, normalizeSSOProvider(&badProvider), "groups_endpoint must not include credentials")
 
 	provider = domain.SSOProvider{Name: "Ping", Kind: domain.SSOProviderKindPingOne, IssuerURL: "https://ping.example.com", ClientID: "client", Scopes: []string{"email"}}
 	require.NoError(t, normalizeSSOProvider(&provider))
@@ -350,7 +354,6 @@ func TestSSOKeyRequiresEntitlementValidation(t *testing.T) {
 		{name: "ordinary", key: &domain.APIKey{}, want: false},
 		{name: "unlinked api key", key: &domain.APIKey{AuthSource: "api_key", SSOEntitlementStatus: "unlinked"}, want: false},
 		{name: "sso auth source", key: &domain.APIKey{AuthSource: "sso"}, want: true},
-		{name: "hybrid auth source", key: &domain.APIKey{AuthSource: "hybrid"}, want: true},
 		{name: "identity", key: &domain.APIKey{SSOIdentityID: &identityID}, want: true},
 		{name: "provider", key: &domain.APIKey{SSOProviderID: &providerID}, want: true},
 		{name: "subject", key: &domain.APIKey{SSOSubject: "subject"}, want: true},

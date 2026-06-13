@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3,
   Check,
@@ -39,6 +39,10 @@ type Theme = "light" | "dark";
 type AuthMode = "none" | "api_key" | "sso";
 type UserTab = "search" | "usage" | "facts" | "claims" | "fragments" | "communities" | "team" | "key";
 
+function sessionAuthMode(session: UserSession): AuthMode {
+  return session.auth_method === "sso" ? "sso" : "api_key";
+}
+
 export function UserPortalApp() {
   const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_STORAGE_KEY) ?? "");
   const [draftToken, setDraftToken] = useState(token);
@@ -65,9 +69,9 @@ export function UserPortalApp() {
         }
       });
     api.session()
-      .then(() => {
+      .then((session) => {
         if (active) {
-          setAuthMode("sso");
+          setAuthMode(sessionAuthMode(session));
           setAuthError("");
         }
       })
@@ -93,10 +97,10 @@ export function UserPortalApp() {
       return;
     }
     try {
-      await new UserApi(nextToken).session();
+      const session = await new UserApi(nextToken).session();
       sessionStorage.setItem(TOKEN_STORAGE_KEY, nextToken);
       setToken(nextToken);
-      setAuthMode("api_key");
+      setAuthMode(sessionAuthMode(session));
       setAuthError("");
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Authentication failed.");
@@ -104,13 +108,19 @@ export function UserPortalApp() {
   }
 
   async function signOut() {
-    if (authMode === "sso") {
-      await new UserApi("").logoutSSO().catch(() => undefined);
+    try {
+      if (authMode === "sso") {
+        await new UserApi("").logoutSSO();
+      }
+    } catch (error) {
+      setAuthError(readError(error));
+      throw error;
     }
     sessionStorage.removeItem(TOKEN_STORAGE_KEY);
     setToken("");
     setDraftToken("");
     setAuthMode("none");
+    setAuthError("");
   }
 
   if (!token && authMode !== "sso") {
@@ -174,8 +184,9 @@ export function UserPortalApp() {
         setToken(nextToken);
         setAuthMode(nextToken ? "api_key" : "none");
       }}
+      onAuthModeChange={setAuthMode}
       onToggleTheme={toggleTheme}
-      onSignOut={() => void signOut()}
+      onSignOut={signOut}
     />
   );
 }
@@ -185,6 +196,7 @@ function UserPortal({
   authMode,
   theme,
   onTokenChange,
+  onAuthModeChange,
   onToggleTheme,
   onSignOut,
 }: {
@@ -192,20 +204,25 @@ function UserPortal({
   authMode: AuthMode;
   theme: Theme;
   onTokenChange: (token: string) => void;
+  onAuthModeChange: (mode: AuthMode) => void;
   onToggleTheme: () => void;
-  onSignOut: () => void;
+  onSignOut: () => Promise<void>;
 }) {
   const api = useMemo(() => new UserApi(token), [token, authMode]);
   const [session, setSession] = useState<UserSession | null>(null);
   const [activeTab, setActiveTab] = useState<UserTab>("search");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [switchingTeam, setSwitchingTeam] = useState(false);
+  const switchRequestId = useRef(0);
 
   async function loadSession() {
     setLoading(true);
     setError("");
     try {
-      setSession(await api.session());
+      const next = await api.session();
+      setSession(next);
+      onAuthModeChange(sessionAuthMode(next));
     } catch (err) {
       setError(readError(err));
     } finally {
@@ -214,11 +231,24 @@ function UserPortal({
   }
 
   async function switchSSOTeam(profileId: string) {
+    const requestId = switchRequestId.current + 1;
+    switchRequestId.current = requestId;
+    setSwitchingTeam(true);
     setError("");
     try {
-      setSession(await api.switchSSOTeam(profileId));
+      const next = await api.switchSSOTeam(profileId);
+      if (switchRequestId.current === requestId) {
+        setSession(next);
+        onAuthModeChange(sessionAuthMode(next));
+      }
     } catch (err) {
-      setError(readError(err));
+      if (switchRequestId.current === requestId) {
+        setError(readError(err));
+      }
+    } finally {
+      if (switchRequestId.current === requestId) {
+        setSwitchingTeam(false);
+      }
     }
   }
 
@@ -228,6 +258,12 @@ function UserPortal({
 
   useEffect(() => {
     if (session && !session.can_manage_team && activeTab === "team") {
+      setActiveTab("search");
+    }
+  }, [activeTab, session]);
+
+  useEffect(() => {
+    if (session?.auth_method === "sso" && activeTab === "key") {
       setActiveTab("search");
     }
   }, [activeTab, session]);
@@ -242,7 +278,9 @@ function UserPortal({
     ...(session?.can_manage_team ? [
       { id: "team", label: "Team", icon: <Users size={17} aria-hidden="true" />, active: activeTab === "team", onClick: () => setActiveTab("team") },
     ] : []),
-    { id: "key", label: "My key", icon: <KeyRound size={17} aria-hidden="true" />, active: activeTab === "key", onClick: () => setActiveTab("key") },
+    ...(session?.auth_method === "sso" ? [] : [
+      { id: "key", label: "My key", icon: <KeyRound size={17} aria-hidden="true" />, active: activeTab === "key", onClick: () => setActiveTab("key") },
+    ]),
   ];
 
   return (
@@ -264,7 +302,11 @@ function UserPortal({
           <button className="icon-button" type="button" aria-label="Refresh session" onClick={() => void loadSession()}>
             <RefreshCw size={18} aria-hidden="true" />
           </button>
-          <button className="ghost-button" type="button" onClick={onSignOut}>
+          <button
+            className="ghost-button"
+            type="button"
+            onClick={() => void onSignOut().catch((err) => setError(readError(err)))}
+          >
             <LogOut size={17} aria-hidden="true" />
             Sign out
           </button>
@@ -280,6 +322,7 @@ function UserPortal({
             <select
               aria-label="Active team"
               value={session.key.id}
+              disabled={switchingTeam}
               onChange={(event) => void switchSSOTeam(event.target.value)}
             >
               {session.teams?.map((item) => (

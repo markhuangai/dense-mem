@@ -81,8 +81,8 @@ func (r *APIKeyRepositoryImpl) CreateStandardKey(ctx context.Context, key *domai
 	// authorization layer later sees an empty scope set.
 	err := r.rls.WithProfileTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
 		return tx.Exec(`
-			INSERT INTO team_profiles (id, team_id, key_hash, key_prefix, key_suffix, name, scopes, role, rate_limit, expires_at, revoked_at, last_used_at, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9, $10, NULL, NULL, $11, $11)
+			INSERT INTO team_profiles (id, team_id, key_hash, key_prefix, key_suffix, name, scopes, role, rate_limit, expires_at, revoked_at, last_used_at, created_at, updated_at, auth_source)
+			VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9, $10, NULL, NULL, $11, $11, 'api_key')
 		`, key.ID, teamID, key.KeyHash, keyPrefix, keySuffix, name, pq.Array(key.Scopes), key.GetRole(), key.RateLimit, key.ExpiresAt, now).Error
 	})
 
@@ -123,12 +123,14 @@ func (r *APIKeyRepositoryImpl) ListByProfile(ctx context.Context, profileID uuid
 		rows, rerr := tx.Raw(`
 				SELECT
 					id, team_id, COALESCE(key_suffix, ''), name, scopes, role, rate_limit,
-					last_used_at, expires_at, created_at, revoked_at, auth_source,
+					last_used_at, expires_at, created_at, revoked_at, COALESCE(auth_source, ''),
 					COALESCE(sso_identity_id::text, ''), COALESCE(sso_provider_id::text, ''),
-					COALESCE(sso_subject, ''), sso_email, sso_group_id, sso_entitlement_status,
+					COALESCE(sso_subject, ''), COALESCE(sso_email, ''), COALESCE(sso_group_id, ''),
+					COALESCE(sso_entitlement_status, ''),
 					sso_last_entitlement_checked_at, sso_last_login_at
 				FROM team_profiles
 				WHERE team_id = $1
+					AND auth_source = 'api_key'
 				ORDER BY created_at DESC, id ASC
 			LIMIT $2 OFFSET $3
 		`, profileID, limit, offset).Rows()
@@ -209,18 +211,19 @@ func (r *APIKeyRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix str
 					k.expires_at,
 					k.created_at,
 					k.revoked_at,
-					k.auth_source,
+					COALESCE(k.auth_source, ''),
 					COALESCE(k.sso_identity_id::text, ''),
 					COALESCE(k.sso_provider_id::text, ''),
 					COALESCE(k.sso_subject, ''),
-					k.sso_email,
-					k.sso_group_id,
-					k.sso_entitlement_status,
+					COALESCE(k.sso_email, ''),
+					COALESCE(k.sso_group_id, ''),
+					COALESCE(k.sso_entitlement_status, ''),
 					k.sso_last_entitlement_checked_at,
 					k.sso_last_login_at
 				FROM team_profiles k
 				LEFT JOIN teams t ON t.id = k.team_id
 				WHERE k.key_prefix = $1
+					AND k.auth_source = 'api_key'
 					AND k.key_hash IS NOT NULL
 					AND k.revoked_at IS NULL
 					AND (k.expires_at IS NULL OR k.expires_at > NOW())
@@ -287,7 +290,7 @@ func (r *APIKeyRepositoryImpl) RevokeForProfile(ctx context.Context, profileID, 
 		res := tx.Exec(`
 			UPDATE team_profiles
 			SET revoked_at = $1, updated_at = $1
-			WHERE id = $2 AND team_id = $3 AND revoked_at IS NULL
+			WHERE id = $2 AND team_id = $3 AND auth_source = 'api_key' AND revoked_at IS NULL
 		`, now, id, profileID)
 		if res.Error != nil {
 			return res.Error
@@ -309,7 +312,7 @@ func (r *APIKeyRepositoryImpl) DeleteForProfile(ctx context.Context, profileID, 
 	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
 		res := tx.Exec(`
 			DELETE FROM team_profiles
-			WHERE id = $1 AND team_id = $2
+			WHERE id = $1 AND team_id = $2 AND auth_source = 'api_key'
 		`, id, profileID)
 		if res.Error != nil {
 			return res.Error
@@ -334,7 +337,7 @@ func (r *APIKeyRepositoryImpl) UpdateNameForProfile(ctx context.Context, profile
 			UPDATE team_profiles
 			SET name = $1,
 			    updated_at = $2
-			WHERE id = $3 AND team_id = $4
+			WHERE id = $3 AND team_id = $4 AND auth_source = 'api_key'
 		`, name, now, id, profileID)
 		if res.Error != nil {
 			return res.Error
@@ -357,7 +360,7 @@ func (r *APIKeyRepositoryImpl) UpdateRoleForProfile(ctx context.Context, profile
 			UPDATE team_profiles
 			SET role = $1,
 			    updated_at = $2
-			WHERE id = $3 AND team_id = $4
+			WHERE id = $3 AND team_id = $4 AND auth_source = 'api_key'
 		`, role, now, id, profileID)
 		if res.Error != nil {
 			return res.Error
@@ -386,7 +389,7 @@ func (r *APIKeyRepositoryImpl) RotateForProfile(ctx context.Context, profileID, 
 			    revoked_at = NULL,
 			    last_used_at = NULL,
 			    updated_at = $5
-			WHERE id = $6 AND team_id = $7
+			WHERE id = $6 AND team_id = $7 AND auth_source = 'api_key'
 		`, keyHash, keyPrefix, keySuffix, expiresAt, now, id, profileID)
 		if res.Error != nil {
 			return res.Error
@@ -415,12 +418,13 @@ func (r *APIKeyRepositoryImpl) GetByIDForProfile(ctx context.Context, profileID,
 		rows, rerr := tx.Raw(`
 				SELECT
 					id, team_id, COALESCE(key_suffix, ''), name, scopes, role, rate_limit,
-					last_used_at, expires_at, created_at, revoked_at, auth_source,
+					last_used_at, expires_at, created_at, revoked_at, COALESCE(auth_source, ''),
 					COALESCE(sso_identity_id::text, ''), COALESCE(sso_provider_id::text, ''),
-					COALESCE(sso_subject, ''), sso_email, sso_group_id, sso_entitlement_status,
+					COALESCE(sso_subject, ''), COALESCE(sso_email, ''), COALESCE(sso_group_id, ''),
+					COALESCE(sso_entitlement_status, ''),
 					sso_last_entitlement_checked_at, sso_last_login_at
 				FROM team_profiles
-				WHERE id = $1 AND team_id = $2
+				WHERE id = $1 AND team_id = $2 AND auth_source = 'api_key'
 			`, id, profileID).Rows()
 		if rerr != nil {
 			return rerr
@@ -488,7 +492,7 @@ func (r *APIKeyRepositoryImpl) CountByProfile(ctx context.Context, profileID uui
 	var count int64
 	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
 		return tx.Raw(`
-			SELECT COUNT(*) FROM team_profiles WHERE team_id = $1
+			SELECT COUNT(*) FROM team_profiles WHERE team_id = $1 AND auth_source = 'api_key'
 		`, profileID).Scan(&count).Error
 	})
 	if err != nil {
@@ -508,7 +512,7 @@ func (r *APIKeyRepositoryImpl) TouchLastUsed(ctx context.Context, id uuid.UUID) 
 		return tx.Exec(`
 			UPDATE team_profiles
 			SET last_used_at = $1
-			WHERE id = $2
+			WHERE id = $2 AND auth_source = 'api_key'
 		`, now, id).Error
 	})
 

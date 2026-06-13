@@ -89,6 +89,7 @@ func (h *APIKeyHandler) Create(c echo.Context) error {
 	req := service.CreateAPIKeyRequest{
 		Name:      body.Name,
 		RateLimit: body.RateLimit,
+		Role:      service.APIKeyRoleMember,
 	}
 	if body.Scopes != nil {
 		if len(*body.Scopes) == 0 {

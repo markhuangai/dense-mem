@@ -15,6 +15,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/storage/inmem"
 )
@@ -155,20 +156,25 @@ func TestUserPortalSSOHandlers(t *testing.T) {
 	require.Equal(t, nethttp.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"name":"Enterprise IdP"`)
 
-	c, rec = userSSOContext(nethttp.MethodGet, "/ui/api/session", "", sessionToken)
+	c, _ = userSSOContext(nethttp.MethodGet, "/ui/api/session", "", sessionToken)
 	session, err := handler.currentSSOSession(c)
 	require.NoError(t, err)
 	require.Equal(t, "sso", session.AuthMethod)
+	require.False(t, session.CanRotate)
 	require.Len(t, session.Teams, 2)
+	require.False(t, session.Teams[0].CanRotate)
+	require.False(t, session.Teams[1].CanRotate)
 	require.Equal(t, "Team One", session.Team.Name)
 
 	c, rec = userSSOContext(nethttp.MethodPost, "/ui/api/sso/team", `{"profile_id":"`+profileTwoID.String()+`"}`, sessionToken)
+	setUserSSOPrincipal(c, profileOneID, teamOneID)
 	require.NoError(t, handler.switchSSOTeam(c))
 	require.Equal(t, nethttp.StatusOK, rec.Code)
 	require.Equal(t, service.HashSSOToken(sessionToken), repo.updatedSessionHash)
 	require.Contains(t, rec.Body.String(), `"name":"Team Two"`)
 
 	c, rec = userSSOContext(nethttp.MethodPost, "/ui/api/sso/logout", "", sessionToken)
+	addSSOCSRF(c, csrfToken)
 	require.NoError(t, handler.logoutSSO(c))
 	require.Equal(t, nethttp.StatusOK, rec.Code)
 	require.Equal(t, service.HashSSOToken(sessionToken), repo.deletedSessionHash)
@@ -203,14 +209,23 @@ func TestUserPortalSSOErrorBranches(t *testing.T) {
 	c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/team", `{}`, "")
 	require.ErrorContains(t, handler.switchSSOTeam(c), "authentication required")
 
+	c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/team", `{}`, "session-token")
+	setUserAPIKeyPrincipal(c, uuid.New(), uuid.New())
+	require.ErrorContains(t, handler.switchSSOTeam(c), "sso session required")
+
 	c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/team", `{`, "session-token")
+	setUserSSOPrincipal(c, uuid.New(), uuid.New())
 	require.ErrorContains(t, handler.switchSSOTeam(c), "malformed JSON body")
 
 	c, _ = userSSOContext(nethttp.MethodGet, "/ui/api/sso/callback?error=access_denied", "", "")
 	require.ErrorContains(t, handler.completeSSO(c), "sso login failed")
 
 	c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/team", `{"profile_id":"bad"}`, "session-token")
+	setUserSSOPrincipal(c, uuid.New(), uuid.New())
 	require.ErrorContains(t, handler.switchSSOTeam(c), "invalid SSO profile ID format")
+
+	c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/logout", "", "session-token")
+	require.ErrorContains(t, handler.logoutSSO(c), "invalid sso csrf token")
 
 	c, _ = userSSOContext(nethttp.MethodGet, "/ui/api/session", "", "")
 	_, err := ssoSessionTokenFromRequest(c)
@@ -234,7 +249,7 @@ func TestUserPortalSSOErrorBranches(t *testing.T) {
 		providers: map[uuid.UUID]*domain.SSOProvider{providerID: provider},
 		now:       now,
 	}, service.SSOConfig{HTTPClient: discovery.Client(), Now: func() time.Time { return now }})
-	c, rec := userSSOContext(nethttp.MethodGet, "/ui/api/sso/start/"+providerID.String(), "", "")
+	c, _ = userSSOContext(nethttp.MethodGet, "/ui/api/sso/start/"+providerID.String(), "", "")
 	c.SetParamNames("providerId")
 	c.SetParamValues(providerID.String())
 	require.ErrorContains(t, handler.startSSO(c), "sso public base url is not configured")
@@ -243,7 +258,7 @@ func TestUserPortalSSOErrorBranches(t *testing.T) {
 		providers: map[uuid.UUID]*domain.SSOProvider{providerID: provider},
 		now:       now,
 	}, service.SSOConfig{PublicBaseURL: "https://portal.example.com", HTTPClient: discovery.Client(), Now: func() time.Time { return now }})
-	c, rec = userSSOContext(nethttp.MethodGet, "/ui/api/sso/start/"+providerID.String(), "", "")
+	c, rec := userSSOContext(nethttp.MethodGet, "/ui/api/sso/start/"+providerID.String(), "", "")
 	c.SetParamNames("providerId")
 	c.SetParamValues(providerID.String())
 	require.NoError(t, handler.startSSO(c))
@@ -433,7 +448,10 @@ func TestUserPortalSSORoutesAndCookies(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"Enterprise IdP"`)
 
 	req = httptest.NewRequest(nethttp.MethodPost, "/ui/api/sso/logout", nil)
+	csrfToken := "csrf-token"
 	req.AddCookie(&nethttp.Cookie{Name: service.SSOSessionCookieName, Value: sessionToken})
+	req.AddCookie(&nethttp.Cookie{Name: service.SSOCSRFCookieName, Value: csrfToken})
+	req.Header.Set(service.SSOCSRFHeaderName, csrfToken)
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	require.Equal(t, nethttp.StatusOK, rec.Code)
@@ -518,6 +536,35 @@ func userSSOContext(method, target, body, sessionToken string) (echo.Context, *h
 	}
 	rec := httptest.NewRecorder()
 	return e.NewContext(req, rec), rec
+}
+
+func setUserSSOPrincipal(c echo.Context, profileID, teamID uuid.UUID) {
+	ctx := httpmw.SetPrincipalForTest(c.Request().Context(), &httpmw.Principal{
+		KeyID:      profileID,
+		TeamID:     teamID,
+		ProfileID:  &profileID,
+		Scopes:     []string{service.APIKeyScopeRead},
+		Role:       service.APIKeyRoleMember,
+		AuthMethod: "sso_session",
+	})
+	c.SetRequest(c.Request().WithContext(ctx))
+}
+
+func setUserAPIKeyPrincipal(c echo.Context, profileID, teamID uuid.UUID) {
+	ctx := httpmw.SetPrincipalForTest(c.Request().Context(), &httpmw.Principal{
+		KeyID:      profileID,
+		TeamID:     teamID,
+		ProfileID:  &profileID,
+		Scopes:     []string{service.APIKeyScopeRead},
+		Role:       service.APIKeyRoleMember,
+		AuthMethod: "api_key",
+	})
+	c.SetRequest(c.Request().WithContext(ctx))
+}
+
+func addSSOCSRF(c echo.Context, token string) {
+	c.Request().Header.Set(service.SSOCSRFHeaderName, token)
+	c.Request().AddCookie(&nethttp.Cookie{Name: service.SSOCSRFCookieName, Value: token})
 }
 
 type httpSSORepoStub struct {
@@ -659,13 +706,13 @@ func (r *httpSSORepoStub) UpdateMapping(_ context.Context, mapping *domain.SSOGr
 	return nil
 }
 
-func (r *httpSSORepoStub) DeleteMapping(_ context.Context, id uuid.UUID) error {
+func (r *httpSSORepoStub) DeleteMapping(_ context.Context, providerID, id uuid.UUID) error {
 	if r.deleteMappingErr != nil {
 		return r.deleteMappingErr
 	}
 	r.deletedMappingID = id
 	for index, mapping := range r.mappings {
-		if mapping.ID == id {
+		if mapping.ID == id && mapping.ProviderID == providerID {
 			r.mappings = append(r.mappings[:index], r.mappings[index+1:]...)
 			return nil
 		}
@@ -870,19 +917,20 @@ func httpSSOTeamProfile(identityID, providerID, profileID, teamID uuid.UUID, tea
 			UpdatedAt: now,
 		},
 		Profile: domain.APIKey{
-			ID:            profileID,
-			ProfileID:     teamID,
-			TeamID:        teamID,
-			TeamName:      teamName,
-			Name:          "SSO " + teamName,
-			KeySuffix:     strings.ToLower(strings.ReplaceAll(teamName, " ", "")),
-			Scopes:        []string{service.APIKeyScopeRead, service.APIKeyScopeWrite},
-			Role:          role,
-			CreatedAt:     now,
-			SSOIdentityID: &identityID,
-			SSOProviderID: &providerID,
-			SSOSubject:    "subject-123",
-			SSOEmail:      "user@example.com",
+			ID:                   profileID,
+			ProfileID:            teamID,
+			TeamID:               teamID,
+			TeamName:             teamName,
+			Name:                 "SSO " + teamName,
+			Scopes:               []string{service.APIKeyScopeRead, service.APIKeyScopeWrite},
+			Role:                 role,
+			CreatedAt:            now,
+			AuthSource:           "sso",
+			SSOIdentityID:        &identityID,
+			SSOProviderID:        &providerID,
+			SSOSubject:           "subject-123",
+			SSOEmail:             "user@example.com",
+			SSOEntitlementStatus: "active",
 		},
 	}
 }

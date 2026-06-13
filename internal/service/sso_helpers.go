@@ -541,7 +541,7 @@ func ssoKeyRequiresEntitlementValidation(key *domain.APIKey) bool {
 		return false
 	}
 	switch strings.TrimSpace(key.AuthSource) {
-	case "sso", "hybrid":
+	case "sso":
 		return true
 	}
 	status := strings.TrimSpace(key.SSOEntitlementStatus)
@@ -601,6 +601,15 @@ func normalizeSSOProvider(provider *domain.SSOProvider) error {
 	}
 	provider.ClientSecretEnv = strings.TrimSpace(provider.ClientSecretEnv)
 	provider.GroupsEndpoint = strings.TrimSpace(provider.GroupsEndpoint)
+	if provider.GroupsEndpoint != "" {
+		parsedEndpoint, err := url.Parse(provider.GroupsEndpoint)
+		if err != nil || parsedEndpoint.Scheme != "https" || parsedEndpoint.Host == "" {
+			return fmt.Errorf("sso groups_endpoint must be an absolute https URL")
+		}
+		if parsedEndpoint.User != nil {
+			return fmt.Errorf("sso groups_endpoint must not include credentials")
+		}
+	}
 	provider.Scopes = dedupeStrings(provider.Scopes)
 	if len(provider.Scopes) == 0 {
 		provider.Scopes = []string{"openid", "profile", "email"}

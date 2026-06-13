@@ -122,6 +122,9 @@ func TestAPIKeyHandlerCreateListGetRotateDelete(t *testing.T) {
 		if svc.createReq.Name != "ops key" || svc.createReq.RateLimit != 42 {
 			t.Fatalf("create request = %+v", svc.createReq)
 		}
+		if svc.createReq.Role != service.APIKeyRoleMember {
+			t.Fatalf("role = %q; want %q", svc.createReq.Role, service.APIKeyRoleMember)
+		}
 		if got := svc.createReq.Scopes; len(got) != 1 || got[0] != scopes[0] {
 			t.Fatalf("scopes = %v; want %v", got, scopes)
 		}

@@ -311,6 +311,15 @@ func TestUserPortalRotateCurrentKeyErrors(t *testing.T) {
 	err := h.rotateCurrentKey(userPortalEchoContext(t, http.MethodPost, "/ui/api/key/rotate", "{}", nil))
 	require.ErrorContains(t, err, "authentication required")
 
+	err = h.rotateCurrentKey(userPortalEchoContext(t, http.MethodPost, "/ui/api/key/rotate", "{}", &httpmw.Principal{
+		KeyID:      keyID,
+		TeamID:     teamID,
+		Role:       service.APIKeyRoleMember,
+		Scopes:     []string{"read", "write"},
+		AuthMethod: "sso_session",
+	}))
+	require.ErrorContains(t, err, "sso sessions cannot rotate api keys")
+
 	principal := &httpmw.Principal{
 		KeyID:  keyID,
 		TeamID: teamID,

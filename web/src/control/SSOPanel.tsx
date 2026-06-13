@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Check, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import {
   ControlApi,
@@ -20,7 +20,16 @@ export function SSOPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
   const [mappingDraft, setMappingDraft] = useState<SSOGroupMappingInput>(() => emptyMappingInput(teams[0]?.id ?? ""));
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const selectedProviderIdRef = useRef("");
+  const mappingsRequestId = useRef(0);
   const selectedProvider = providers.find((provider) => provider.id === selectedProviderId) ?? null;
+
+  function selectProvider(providerId: string) {
+    selectedProviderIdRef.current = providerId;
+    mappingsRequestId.current += 1;
+    setMappings([]);
+    setSelectedProviderId(providerId);
+  }
 
   async function loadProviders(nextSelectedId?: string) {
     setLoading(true);
@@ -28,8 +37,8 @@ export function SSOPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
     try {
       const items = await api.listSSOProviders();
       setProviders(items);
-      const selected = nextSelectedId || selectedProviderId || items[0]?.id || "";
-      setSelectedProviderId(items.some((item) => item.id === selected) ? selected : items[0]?.id ?? "");
+      const selected = nextSelectedId || selectedProviderIdRef.current || items[0]?.id || "";
+      selectProvider(items.some((item) => item.id === selected) ? selected : items[0]?.id ?? "");
     } catch (err) {
       setError(readError(err));
     } finally {
@@ -38,15 +47,23 @@ export function SSOPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
   }
 
   async function loadMappings(providerId: string) {
+    const requestId = mappingsRequestId.current + 1;
+    mappingsRequestId.current = requestId;
     if (!providerId) {
       setMappings([]);
       return;
     }
+    setMappings([]);
     setError("");
     try {
-      setMappings(await api.listSSOGroupMappings(providerId));
+      const items = await api.listSSOGroupMappings(providerId);
+      if (mappingsRequestId.current === requestId && selectedProviderIdRef.current === providerId) {
+        setMappings(items);
+      }
     } catch (err) {
-      setError(readError(err));
+      if (mappingsRequestId.current === requestId) {
+        setError(readError(err));
+      }
     }
   }
 
@@ -109,9 +126,12 @@ export function SSOPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
     setLoading(true);
     setError("");
     try {
-      await api.createSSOGroupMapping(selectedProviderId, mappingDraft);
+      const providerId = selectedProviderIdRef.current;
+      await api.createSSOGroupMapping(providerId, mappingDraft);
       setMappingDraft(emptyMappingInput(mappingDraft.team_id));
-      await loadMappings(selectedProviderId);
+      if (selectedProviderIdRef.current === providerId) {
+        await loadMappings(providerId);
+      }
     } catch (err) {
       setError(readError(err));
     } finally {
@@ -120,14 +140,17 @@ export function SSOPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
   }
 
   async function deleteMapping(mappingId: string) {
-    if (!selectedProviderId || !window.confirm("Delete this group mapping?")) {
+    const providerId = selectedProviderIdRef.current;
+    if (!providerId || !window.confirm("Delete this group mapping?")) {
       return;
     }
     setLoading(true);
     setError("");
     try {
-      await api.deleteSSOGroupMapping(selectedProviderId, mappingId);
-      await loadMappings(selectedProviderId);
+      await api.deleteSSOGroupMapping(providerId, mappingId);
+      if (selectedProviderIdRef.current === providerId) {
+        await loadMappings(providerId);
+      }
     } catch (err) {
       setError(readError(err));
     } finally {
@@ -150,7 +173,7 @@ export function SSOPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
                 className="ghost-button"
                 type="button"
                 onClick={() => {
-                  setSelectedProviderId("");
+                  selectProvider("");
                   setProviderDraft(emptyProviderInput());
                 }}
               >
@@ -181,7 +204,7 @@ export function SSOPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
                   <td><span className={provider.enabled ? "status-pill neutral" : "status-pill warning"}>{provider.enabled ? "enabled" : "disabled"}</span></td>
                   <td className="actions-cell">
                     <div className="button-row">
-                      <button className="icon-button" type="button" aria-label={`Edit ${provider.name}`} onClick={() => setSelectedProviderId(provider.id)}>
+                      <button className="icon-button" type="button" aria-label={`Edit ${provider.name}`} onClick={() => selectProvider(provider.id)}>
                         <Pencil size={16} aria-hidden="true" />
                       </button>
                       <button className="icon-button danger-icon" type="button" aria-label={`Delete ${provider.name}`} onClick={() => void deleteProvider(provider.id)}>

@@ -12,6 +12,11 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
+func TestSSOServiceDeleteMappingRequiresProviderID(t *testing.T) {
+	svc := NewSSOService(&ssoRepositoryStub{}, SSOConfig{})
+	require.ErrorContains(t, svc.DeleteMapping(context.Background(), uuid.Nil, uuid.New()), "sso provider ID is required")
+}
+
 func TestSSOValidateAPIKeyPrincipalUsesFreshCacheMappings(t *testing.T) {
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	providerID := uuid.New()
@@ -139,7 +144,7 @@ func TestSSOValidateAPIKeyPrincipalDeniesIncompleteSSOLinks(t *testing.T) {
 		"sso auth source only": {ID: uuid.New(), TeamID: teamID, AuthSource: "sso"},
 		"sso identity only":    {ID: uuid.New(), TeamID: teamID, SSOIdentityID: &identityID},
 		"provider no subject":  {ID: uuid.New(), TeamID: teamID, AuthSource: "sso", SSOProviderID: &providerID},
-		"subject no provider":  {ID: uuid.New(), TeamID: teamID, AuthSource: "hybrid", SSOSubject: "subject-123"},
+		"subject no provider":  {ID: uuid.New(), TeamID: teamID, AuthSource: "sso", SSOSubject: "subject-123"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			validated, err := svc.ValidateAPIKeyPrincipal(context.Background(), key)
@@ -411,13 +416,13 @@ func (r *ssoRepositoryStub) UpdateMapping(ctx context.Context, mapping *domain.S
 	return nil
 }
 
-func (r *ssoRepositoryStub) DeleteMapping(ctx context.Context, id uuid.UUID) error {
+func (r *ssoRepositoryStub) DeleteMapping(ctx context.Context, providerID, id uuid.UUID) error {
 	if r.deleteMappingErr != nil {
 		return r.deleteMappingErr
 	}
 	r.deletedMappingID = id
 	for index, mapping := range r.mappings {
-		if mapping.ID == id {
+		if mapping.ID == id && mapping.ProviderID == providerID {
 			r.mappings = append(r.mappings[:index], r.mappings[index+1:]...)
 			break
 		}

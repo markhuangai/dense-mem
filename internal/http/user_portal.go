@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -194,6 +195,9 @@ func (h *userPortalHandler) rotateCurrentKey(c echo.Context) error {
 	if principal == nil {
 		return httperr.New(httperr.FORBIDDEN, "authentication required")
 	}
+	if principal.AuthMethod == "sso_session" {
+		return httperr.New(httperr.FORBIDDEN, "sso sessions cannot rotate api keys")
+	}
 
 	teamID := principal.GetTeamID()
 	keyID := principal.GetKeyID()
@@ -279,7 +283,7 @@ func (h *userPortalHandler) currentSSOSession(c echo.Context) (userPortalSession
 		Key:           selected.Key,
 		Teams:         teams,
 		AuthMethod:    "sso",
-		CanRotate:     selected.CanRotate,
+		CanRotate:     false,
 		CanManageTeam: selected.CanManageTeam,
 	}, nil
 }
@@ -344,8 +348,11 @@ func (h *userPortalHandler) completeSSO(c echo.Context) error {
 }
 
 func (h *userPortalHandler) logoutSSO(c echo.Context) error {
-	if h.sso != nil {
-		if cookie, err := c.Request().Cookie(service.SSOSessionCookieName); err == nil {
+	if cookie, err := c.Request().Cookie(service.SSOSessionCookieName); err == nil && strings.TrimSpace(cookie.Value) != "" {
+		if err := validateSSOLogoutCSRF(c); err != nil {
+			return err
+		}
+		if h.sso != nil {
 			_ = h.sso.Logout(c.Request().Context(), cookie.Value)
 		}
 	}
@@ -357,6 +364,13 @@ func (h *userPortalHandler) logoutSSO(c echo.Context) error {
 func (h *userPortalHandler) switchSSOTeam(c echo.Context) error {
 	if h.sso == nil {
 		return httperr.New(httperr.NOT_FOUND, "sso is not configured")
+	}
+	principal := httpmw.GetPrincipal(c.Request().Context())
+	if principal == nil {
+		return httperr.New(httperr.FORBIDDEN, "authentication required")
+	}
+	if principal.AuthMethod != "sso_session" {
+		return httperr.New(httperr.FORBIDDEN, "sso session required")
 	}
 	token, err := ssoSessionTokenFromRequest(c)
 	if err != nil {
@@ -378,6 +392,18 @@ func (h *userPortalHandler) switchSSOTeam(c echo.Context) error {
 		return err
 	}
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": session})
+}
+
+func validateSSOLogoutCSRF(c echo.Context) error {
+	headerToken := strings.TrimSpace(c.Request().Header.Get(service.SSOCSRFHeaderName))
+	cookie, err := c.Request().Cookie(service.SSOCSRFCookieName)
+	if err != nil || headerToken == "" || strings.TrimSpace(cookie.Value) == "" {
+		return httperr.New(httperr.FORBIDDEN, "invalid sso csrf token")
+	}
+	if subtle.ConstantTimeCompare([]byte(headerToken), []byte(cookie.Value)) != 1 {
+		return httperr.New(httperr.FORBIDDEN, "invalid sso csrf token")
+	}
+	return nil
 }
 
 func rejectEditableRotateBody(c echo.Context) error {
@@ -431,7 +457,7 @@ func toUserPortalTeamOption(item domain.SSOTeamProfile) userPortalTeamOptionResp
 	return userPortalTeamOptionResponse{
 		Team:          toUserPortalTeam(&item.Team),
 		Key:           toUserPortalKey(&item.Profile),
-		CanRotate:     userPortalHasScope(item.Profile.Scopes, service.APIKeyScopeWrite),
+		CanRotate:     false,
 		CanManageTeam: item.Profile.GetRole() == service.APIKeyRoleManager,
 	}
 }

@@ -225,7 +225,7 @@ func (s *SSOService) DeleteProvider(ctx context.Context, providerID uuid.UUID) e
 		return err
 	}
 	if err := s.repo.DeleteProvider(ctx, providerID); err != nil {
-		s.debugSSOFailure("sso delete provider query failed", err, observability.String("provider_id", providerID.String()))
+		s.debugSSOFailure("sso delete provider query failed", err, ssoUUIDLogAttr("provider_id", providerID))
 		return err
 	}
 	return nil
@@ -239,7 +239,7 @@ func (s *SSOService) ListMappings(ctx context.Context, providerID uuid.UUID) ([]
 	}
 	mappings, err := s.repo.ListMappings(ctx, providerID)
 	if err != nil {
-		s.debugSSOFailure("sso list mappings query failed", err, observability.String("provider_id", providerID.String()))
+		s.debugSSOFailure("sso list mappings query failed", err, ssoUUIDLogAttr("provider_id", providerID))
 		return nil, err
 	}
 	return mappings, nil
@@ -294,14 +294,19 @@ func (s *SSOService) UpdateMapping(ctx context.Context, mapping domain.SSOGroupM
 	return &mapping, nil
 }
 
-func (s *SSOService) DeleteMapping(ctx context.Context, mappingID uuid.UUID) error {
+func (s *SSOService) DeleteMapping(ctx context.Context, providerID, mappingID uuid.UUID) error {
+	if providerID == uuid.Nil {
+		err := fmt.Errorf("sso provider ID is required")
+		s.debugSSOFailure("sso delete mapping validation failed", err)
+		return err
+	}
 	if mappingID == uuid.Nil {
 		err := fmt.Errorf("sso group mapping ID is required")
 		s.debugSSOFailure("sso delete mapping validation failed", err)
 		return err
 	}
-	if err := s.repo.DeleteMapping(ctx, mappingID); err != nil {
-		s.debugSSOFailure("sso delete mapping query failed", err, observability.String("mapping_id", mappingID.String()))
+	if err := s.repo.DeleteMapping(ctx, providerID, mappingID); err != nil {
+		s.debugSSOFailure("sso delete mapping query failed", err, ssoUUIDLogAttr("provider_id", providerID), ssoUUIDLogAttr("mapping_id", mappingID))
 		return err
 	}
 	return nil
@@ -312,21 +317,21 @@ func (s *SSOService) BeginLogin(ctx context.Context, providerID uuid.UUID, callb
 		return nil, ErrSSOProviderDisabled
 	}
 	if s.repo == nil {
-		s.debugSSOFailure("sso begin login repository missing", ErrSSOProviderDisabled, observability.String("provider_id", providerID.String()))
+		s.debugSSOFailure("sso begin login repository missing", ErrSSOProviderDisabled, ssoUUIDLogAttr("provider_id", providerID))
 		return nil, ErrSSOProviderDisabled
 	}
 	runtime, err := s.runtimeConfig(ctx)
 	if err != nil {
-		s.debugSSOFailure("sso begin login runtime config failed", err, observability.String("provider_id", providerID.String()))
+		s.debugSSOFailure("sso begin login runtime config failed", err, ssoUUIDLogAttr("provider_id", providerID))
 		return nil, err
 	}
 	provider, err := s.repo.GetProvider(ctx, providerID)
 	if err != nil {
-		s.debugSSOFailure("sso begin login provider lookup failed", err, observability.String("provider_id", providerID.String()))
+		s.debugSSOFailure("sso begin login provider lookup failed", err, ssoUUIDLogAttr("provider_id", providerID))
 		return nil, err
 	}
 	if provider == nil || !provider.Enabled {
-		s.debugSSOProviderFailure("sso begin login provider disabled", ErrSSOProviderDisabled, provider, observability.String("requested_provider_id", providerID.String()))
+		s.debugSSOProviderFailure("sso begin login provider disabled", ErrSSOProviderDisabled, provider, ssoUUIDLogAttr("requested_provider_id", providerID))
 		return nil, ErrSSOProviderDisabled
 	}
 	if err := s.repo.DeleteExpiredOAuthStates(ctx, s.now()); err != nil {
@@ -338,7 +343,7 @@ func (s *SSOService) BeginLogin(ctx context.Context, providerID uuid.UUID, callb
 	defer cancel()
 	oidcProvider, oauthConfig, err := s.oauthConfig(providerCtx, *provider, callbackURL)
 	if err != nil {
-		s.debugSSOProviderFailure("sso begin login oidc config failed", err, provider, observability.String("callback_url", callbackURL))
+		s.debugSSOProviderFailure("sso begin login oidc config failed", err, provider, ssoHashLogAttr("callback_url", callbackURL))
 		return nil, err
 	}
 	_ = oidcProvider
@@ -368,7 +373,7 @@ func (s *SSOService) BeginLogin(ctx context.Context, providerID uuid.UUID, callb
 		CreatedAt:    s.now(),
 	}
 	if err := s.repo.CreateOAuthState(ctx, state); err != nil {
-		s.debugSSOProviderFailure("sso begin login state persist failed", err, provider, observability.String("redirect_path", state.RedirectPath))
+		s.debugSSOProviderFailure("sso begin login state persist failed", err, provider, ssoHashLogAttr("redirect_path", state.RedirectPath))
 		return nil, err
 	}
 
@@ -406,11 +411,11 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 
 	provider, err := s.repo.GetProvider(ctx, state.ProviderID)
 	if err != nil {
-		s.debugSSOFailure("sso complete login provider lookup failed", err, observability.String("provider_id", state.ProviderID.String()))
+		s.debugSSOFailure("sso complete login provider lookup failed", err, ssoUUIDLogAttr("provider_id", state.ProviderID))
 		return nil, err
 	}
 	if provider == nil || !provider.Enabled {
-		s.debugSSOProviderFailure("sso complete login provider disabled", ErrSSOProviderDisabled, provider, observability.String("requested_provider_id", state.ProviderID.String()))
+		s.debugSSOProviderFailure("sso complete login provider disabled", ErrSSOProviderDisabled, provider, ssoUUIDLogAttr("requested_provider_id", state.ProviderID))
 		return nil, ErrSSOProviderDisabled
 	}
 
@@ -418,13 +423,13 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 	defer cancel()
 	oidcProvider, oauthConfig, err := s.oauthConfig(providerCtx, *provider, callbackURL)
 	if err != nil {
-		s.debugSSOProviderFailure("sso complete login oidc config failed", err, provider, observability.String("callback_url", callbackURL))
+		s.debugSSOProviderFailure("sso complete login oidc config failed", err, provider, ssoHashLogAttr("callback_url", callbackURL))
 		return nil, err
 	}
 	token, err := oauthConfig.Exchange(providerCtx, code, oauth2.SetAuthURLParam("code_verifier", state.PKCEVerifier))
 	if err != nil {
 		wrapped := fmt.Errorf("sso token exchange failed: %w", err)
-		s.debugSSOProviderFailure("sso complete login token exchange failed", wrapped, provider, observability.Bool("code_present", strings.TrimSpace(code) != ""), observability.String("callback_url", callbackURL))
+		s.debugSSOProviderFailure("sso complete login token exchange failed", wrapped, provider, observability.Bool("code_present", strings.TrimSpace(code) != ""), ssoHashLogAttr("callback_url", callbackURL))
 		return nil, wrapped
 	}
 	rawIDToken, ok := token.Extra("id_token").(string)
@@ -509,7 +514,7 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 		name := ssoProfileName(claims.Email, claims.DisplayName, identity.ID)
 		profile, err := s.repo.UpsertTeamProfileForMapping(ctx, *identity, entitlement, name)
 		if err != nil {
-			s.debugSSOLoginFailure("sso login team profile upsert failed", err, *provider, claims, observability.String("team_id", entitlement.TeamID.String()), observability.String("group_id", entitlement.GroupID), observability.String("role", entitlement.Role))
+			s.debugSSOLoginFailure("sso login team profile upsert failed", err, *provider, claims, ssoUUIDLogAttr("team_id", entitlement.TeamID), ssoHashLogAttr("group_id", entitlement.GroupID), observability.String("role", entitlement.Role))
 			return nil, err
 		}
 		activeByProfileID[profile.ID] = struct{}{}
@@ -523,7 +528,7 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 
 	teams, err := s.currentEntitledTeams(ctx, identity.ID, activeByProfileID)
 	if err != nil {
-		s.debugSSOLoginFailure("sso login current entitled teams failed", err, *provider, claims, observability.String("identity_id", identity.ID.String()))
+		s.debugSSOLoginFailure("sso login current entitled teams failed", err, *provider, claims, ssoUUIDLogAttr("identity_id", identity.ID))
 		return nil, err
 	}
 	if len(teams) == 0 {
@@ -553,7 +558,7 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 		LastSeenAt:    now,
 	}
 	if err := s.repo.CreateSession(ctx, session); err != nil {
-		s.debugSSOLoginFailure("sso login session persist failed", err, *provider, claims, append(ssoSessionLogAttrs(&session), observability.String("selected_profile_id", selected.Profile.ID.String()))...)
+		s.debugSSOLoginFailure("sso login session persist failed", err, *provider, claims, append(ssoSessionLogAttrs(&session), ssoUUIDLogAttr("selected_profile_id", selected.Profile.ID))...)
 		return nil, err
 	}
 
@@ -614,7 +619,7 @@ func (s *SSOService) CurrentSession(ctx context.Context, sessionToken string) (*
 	}
 	allTeams, err := s.repo.ListTeamProfilesForIdentity(ctx, identity.ID)
 	if err != nil {
-		s.debugSSOFailure("sso current session team list failed", err, append(ssoSessionLogAttrs(session), observability.String("identity_id", identity.ID.String()))...)
+		s.debugSSOFailure("sso current session team list failed", err, append(ssoSessionLogAttrs(session), ssoUUIDLogAttr("identity_id", identity.ID))...)
 		return nil, err
 	}
 	teams := make([]domain.SSOTeamProfile, 0, len(allTeams))
@@ -652,7 +657,7 @@ func (s *SSOService) SwitchSessionTeam(ctx context.Context, sessionToken string,
 	}
 	teams, err := s.repo.ListTeamProfilesForIdentity(ctx, session.IdentityID)
 	if err != nil {
-		s.debugSSOFailure("sso switch session team list failed", err, append(ssoSessionLogAttrs(session), observability.String("requested_team_profile_id", teamProfileID.String()))...)
+		s.debugSSOFailure("sso switch session team list failed", err, append(ssoSessionLogAttrs(session), ssoUUIDLogAttr("requested_team_profile_id", teamProfileID))...)
 		return nil, err
 	}
 	for _, team := range teams {
@@ -664,12 +669,12 @@ func (s *SSOService) SwitchSessionTeam(ctx context.Context, sessionToken string,
 			return nil, err
 		}
 		if err := s.repo.UpdateSessionTeam(ctx, session.SessionHash, team.Profile.ID, team.Team.ID); err != nil {
-			s.debugSSOFailure("sso switch session team update failed", err, append(ssoSessionLogAttrs(session), observability.String("requested_team_profile_id", teamProfileID.String()), observability.String("team_id", team.Team.ID.String()))...)
+			s.debugSSOFailure("sso switch session team update failed", err, append(ssoSessionLogAttrs(session), ssoUUIDLogAttr("requested_team_profile_id", teamProfileID), ssoUUIDLogAttr("team_id", team.Team.ID))...)
 			return nil, err
 		}
 		return s.CurrentSession(ctx, sessionToken)
 	}
-	s.debugSSOFailure("sso switch session team denied", ErrSSOAccessDenied, append(ssoSessionLogAttrs(session), observability.String("requested_team_profile_id", teamProfileID.String()), observability.Int("profile_count", len(teams)))...)
+	s.debugSSOFailure("sso switch session team denied", ErrSSOAccessDenied, append(ssoSessionLogAttrs(session), ssoUUIDLogAttr("requested_team_profile_id", teamProfileID), observability.Int("profile_count", len(teams)))...)
 	return nil, ErrSSOAccessDenied
 }
 
@@ -738,29 +743,29 @@ func (s *SSOService) ValidateAPIKeyPrincipal(ctx context.Context, key *domain.AP
 		}
 		mappings, err := s.repo.ListMappingsForGroups(ctx, provider.ID, groups)
 		if err != nil {
-			s.debugSSOProviderFailure("sso api key validation mapping lookup failed", err, provider, append(ssoAPIKeyLogAttrs(key), observability.Int("group_count", len(groups)), observability.LogAttr{Key: "groups", Value: groups})...)
+			s.debugSSOProviderFailure("sso api key validation mapping lookup failed", err, provider, append(ssoAPIKeyLogAttrs(key), observability.Int("group_count", len(groups)), ssoHashesLogAttr("groups", groups))...)
 			return nil, err
 		}
 		if !hasMappingForTeam(mappings, key.GetTeamID()) {
 			cache.Status = "denied"
 		}
 		if err := s.repo.SetEntitlementCache(ctx, *cache); err != nil {
-			s.debugSSOProviderFailure("sso api key validation entitlement cache store failed", err, provider, append(ssoAPIKeyLogAttrs(key), observability.String("cache_status", cache.Status), observability.Int("group_count", len(cache.Groups)), observability.LogAttr{Key: "groups", Value: cache.Groups})...)
+			s.debugSSOProviderFailure("sso api key validation entitlement cache store failed", err, provider, append(ssoAPIKeyLogAttrs(key), observability.String("cache_status", cache.Status), observability.Int("group_count", len(cache.Groups)), ssoHashesLogAttr("groups", cache.Groups))...)
 			return nil, err
 		}
 	}
 	if cache.Status != "active" {
-		s.debugSSOProviderFailure("sso api key validation cache denied", ErrSSOAccessDenied, provider, append(ssoAPIKeyLogAttrs(key), observability.String("cache_status", cache.Status), observability.Int("group_count", len(cache.Groups)), observability.LogAttr{Key: "groups", Value: cache.Groups})...)
+		s.debugSSOProviderFailure("sso api key validation cache denied", ErrSSOAccessDenied, provider, append(ssoAPIKeyLogAttrs(key), observability.String("cache_status", cache.Status), observability.Int("group_count", len(cache.Groups)), ssoHashesLogAttr("groups", cache.Groups))...)
 		return nil, ErrSSOAccessDenied
 	}
 	mappings, err := s.repo.ListMappingsForGroups(ctx, provider.ID, cache.Groups)
 	if err != nil {
-		s.debugSSOProviderFailure("sso api key validation cached mapping lookup failed", err, provider, append(ssoAPIKeyLogAttrs(key), observability.Int("group_count", len(cache.Groups)), observability.LogAttr{Key: "groups", Value: cache.Groups})...)
+		s.debugSSOProviderFailure("sso api key validation cached mapping lookup failed", err, provider, append(ssoAPIKeyLogAttrs(key), observability.Int("group_count", len(cache.Groups)), ssoHashesLogAttr("groups", cache.Groups))...)
 		return nil, err
 	}
 	entitlement, ok := mergedEntitlementForTeam(mappings, key.GetTeamID())
 	if !ok {
-		s.debugSSOProviderFailure("sso api key validation team entitlement missing", ErrSSOAccessDenied, provider, append(ssoAPIKeyLogAttrs(key), observability.Int("mapping_count", len(mappings)), observability.Int("group_count", len(cache.Groups)), observability.LogAttr{Key: "groups", Value: cache.Groups})...)
+		s.debugSSOProviderFailure("sso api key validation team entitlement missing", ErrSSOAccessDenied, provider, append(ssoAPIKeyLogAttrs(key), observability.Int("mapping_count", len(mappings)), observability.Int("group_count", len(cache.Groups)), ssoHashesLogAttr("groups", cache.Groups))...)
 		return nil, ErrSSOAccessDenied
 	}
 	key.Scopes = entitlement.Scopes
@@ -849,7 +854,7 @@ func (s *SSOService) sessionFromToken(ctx context.Context, sessionToken string) 
 
 func (s *SSOService) entitlementsFromMappings(providerID uuid.UUID, subject string, mappings []*domain.SSOGroupMapping) ([]domain.SSOGroupMapping, error) {
 	if len(mappings) == 0 {
-		s.debugSSOFailure("sso entitlement mappings empty", ErrSSOAccessDenied, observability.String("provider_id", providerID.String()), observability.String("subject", subject), observability.Int("mapping_count", 0))
+		s.debugSSOFailure("sso entitlement mappings empty", ErrSSOAccessDenied, ssoUUIDLogAttr("provider_id", providerID), ssoHashLogAttr("subject", subject), observability.Int("mapping_count", 0))
 		return nil, ErrSSOAccessDenied
 	}
 	byTeam := make(map[uuid.UUID]*domain.SSOGroupMapping)
@@ -874,7 +879,7 @@ func (s *SSOService) entitlementsFromMappings(providerID uuid.UUID, subject stri
 		}
 	}
 	if len(byTeam) == 0 {
-		s.debugSSOFailure("sso entitlement mappings inactive or mismatched", ErrSSOAccessDenied, observability.String("provider_id", providerID.String()), observability.String("subject", subject), observability.Int("mapping_count", len(mappings)))
+		s.debugSSOFailure("sso entitlement mappings inactive or mismatched", ErrSSOAccessDenied, ssoUUIDLogAttr("provider_id", providerID), ssoHashLogAttr("subject", subject), observability.Int("mapping_count", len(mappings)))
 		return nil, ErrSSOAccessDenied
 	}
 	result := make([]domain.SSOGroupMapping, 0, len(byTeam))
@@ -894,7 +899,7 @@ func (s *SSOService) entitlementsFromMappings(providerID uuid.UUID, subject stri
 func (s *SSOService) currentEntitledTeams(ctx context.Context, identityID uuid.UUID, allowed map[uuid.UUID]struct{}) ([]domain.SSOTeamProfile, error) {
 	allTeams, err := s.repo.ListTeamProfilesForIdentity(ctx, identityID)
 	if err != nil {
-		s.debugSSOFailure("sso current entitled teams list failed", err, observability.String("identity_id", identityID.String()), observability.Int("allowed_profile_count", len(allowed)))
+		s.debugSSOFailure("sso current entitled teams list failed", err, ssoUUIDLogAttr("identity_id", identityID), observability.Int("allowed_profile_count", len(allowed)))
 		return nil, err
 	}
 	teams := make([]domain.SSOTeamProfile, 0, len(allTeams))
@@ -909,7 +914,7 @@ func (s *SSOService) currentEntitledTeams(ctx context.Context, identityID uuid.U
 func (s *SSOService) storeEntitlementCache(ctx context.Context, providerID uuid.UUID, subject string, groups []string, status, message string) error {
 	runtime, err := s.runtimeConfig(ctx)
 	if err != nil {
-		s.debugSSOFailure("sso entitlement cache runtime config failed", err, observability.String("provider_id", providerID.String()), observability.String("subject", subject), observability.String("cache_status", status))
+		s.debugSSOFailure("sso entitlement cache runtime config failed", err, ssoUUIDLogAttr("provider_id", providerID), ssoHashLogAttr("subject", subject), observability.String("cache_status", status))
 		return err
 	}
 	return s.storeEntitlementCacheWithTTL(ctx, runtime.EntitlementCacheTTL, providerID, subject, groups, status, message)
@@ -927,7 +932,7 @@ func (s *SSOService) storeEntitlementCacheWithTTL(ctx context.Context, ttl time.
 		Error:      message,
 	}
 	if err := s.repo.SetEntitlementCache(ctx, cache); err != nil {
-		s.debugSSOFailure("sso entitlement cache store failed", err, observability.String("provider_id", providerID.String()), observability.String("subject", subject), observability.String("cache_status", status), observability.Int("group_count", len(cache.Groups)), observability.LogAttr{Key: "groups", Value: cache.Groups})
+		s.debugSSOFailure("sso entitlement cache store failed", err, ssoUUIDLogAttr("provider_id", providerID), ssoHashLogAttr("subject", subject), observability.String("cache_status", status), observability.Int("group_count", len(cache.Groups)), ssoHashesLogAttr("groups", cache.Groups))
 		return err
 	}
 	return nil

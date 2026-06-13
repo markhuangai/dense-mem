@@ -25,7 +25,7 @@ type SSORepository interface {
 	ListMappings(ctx context.Context, providerID uuid.UUID) ([]*domain.SSOGroupMapping, error)
 	CreateMapping(ctx context.Context, mapping *domain.SSOGroupMapping) error
 	UpdateMapping(ctx context.Context, mapping *domain.SSOGroupMapping) error
-	DeleteMapping(ctx context.Context, id uuid.UUID) error
+	DeleteMapping(ctx context.Context, providerID, id uuid.UUID) error
 	ListMappingsForGroups(ctx context.Context, providerID uuid.UUID, groups []string) ([]*domain.SSOGroupMapping, error)
 
 	UpsertIdentity(ctx context.Context, identity *domain.SSOIdentity) error
@@ -273,9 +273,9 @@ func (r *SSORepositoryImpl) UpdateMapping(ctx context.Context, mapping *domain.S
 	return nil
 }
 
-func (r *SSORepositoryImpl) DeleteMapping(ctx context.Context, id uuid.UUID) error {
+func (r *SSORepositoryImpl) DeleteMapping(ctx context.Context, providerID, id uuid.UUID) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
-		return tx.Exec(`DELETE FROM sso_group_mappings WHERE id = $1`, id).Error
+		return tx.Exec(`DELETE FROM sso_group_mappings WHERE id = $1 AND provider_id = $2`, id, providerID).Error
 	})
 	if err != nil {
 		return fmt.Errorf("failed to delete sso group mapping: %w", err)
@@ -292,9 +292,10 @@ func (r *SSORepositoryImpl) ListMappingsForGroups(ctx context.Context, providerI
 		rows, err := tx.Raw(`
 			SELECT m.id, m.provider_id, m.team_id, COALESCE(t.name, ''), m.group_id, m.group_name, m.scopes, m.role, m.enabled, m.created_at, m.updated_at
 			FROM sso_group_mappings m
-			LEFT JOIN teams t ON t.id = m.team_id
+			JOIN teams t ON t.id = m.team_id
 			WHERE m.provider_id = $1
 				AND m.enabled = true
+				AND t.deleted_at IS NULL
 				AND m.group_id = ANY($2)
 			ORDER BY t.name ASC, m.group_name ASC, m.group_id ASC
 		`, providerID, pq.Array(groups)).Rows()
@@ -404,6 +405,7 @@ func (r *SSORepositoryImpl) UpsertTeamProfileForMapping(ctx context.Context, ide
 			    sso_entitlement_status = 'active',
 			    sso_last_entitlement_checked_at = EXCLUDED.sso_last_entitlement_checked_at,
 			    sso_last_login_at = EXCLUDED.sso_last_login_at,
+			    revoked_at = NULL,
 			    updated_at = EXCLUDED.updated_at
 			RETURNING
 				id, team_id, COALESCE(name, ''), scopes, role, rate_limit, last_used_at, expires_at,
@@ -444,6 +446,7 @@ func (r *SSORepositoryImpl) ListTeamProfilesForIdentity(ctx context.Context, ide
 			FROM team_profiles k
 			JOIN teams t ON t.id = k.team_id
 			WHERE k.sso_identity_id = $1
+				AND k.auth_source = 'sso'
 				AND k.revoked_at IS NULL
 				AND t.deleted_at IS NULL
 			ORDER BY t.name ASC, k.id ASC
@@ -477,10 +480,11 @@ func (r *SSORepositoryImpl) GetSSOProfileByID(ctx context.Context, id uuid.UUID)
 				k.sso_provider_id, k.sso_subject, k.sso_email, k.sso_group_id,
 				k.sso_entitlement_status, k.sso_last_entitlement_checked_at, k.sso_last_login_at
 			FROM team_profiles k
-			LEFT JOIN teams t ON t.id = k.team_id
+			JOIN teams t ON t.id = k.team_id
 			WHERE k.id = $1
 				AND k.revoked_at IS NULL
-				AND k.auth_source IN ('sso', 'hybrid')
+				AND k.auth_source = 'sso'
+				AND t.deleted_at IS NULL
 		`, id).Rows()
 		if err != nil {
 			return err

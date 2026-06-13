@@ -1,8 +1,12 @@
 package service
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -13,11 +17,13 @@ func (s *SSOService) debugSSOLoginClaims(message string, provider domain.SSOProv
 		return
 	}
 	base := append(ssoProviderLogAttrs(&provider),
-		observability.String("subject", claims.Subject),
+		ssoHashLogAttr("subject", claims.Subject),
 		observability.Int("group_count", len(claims.Groups)),
-		observability.LogAttr{Key: "groups", Value: claims.Groups},
-		observability.LogAttr{Key: "id_token_claim_names", Value: claims.IDTokenClaimNames},
-		observability.LogAttr{Key: "userinfo_claim_names", Value: claims.UserInfoClaimNames},
+		ssoHashesLogAttr("groups", claims.Groups),
+		observability.Int("id_token_claim_count", len(claims.IDTokenClaimNames)),
+		ssoHashesLogAttr("id_token_claim_names", claims.IDTokenClaimNames),
+		observability.Int("userinfo_claim_count", len(claims.UserInfoClaimNames)),
+		ssoHashesLogAttr("userinfo_claim_names", claims.UserInfoClaimNames),
 		observability.Bool("groups_from_userinfo", claims.GroupsFromUserInfo),
 	)
 	if claims.UserInfoError != "" {
@@ -62,14 +68,15 @@ func ssoProviderLogAttrs(provider *domain.SSOProvider) []observability.LogAttr {
 	}
 	return []observability.LogAttr{
 		observability.Bool("provider_found", true),
-		observability.String("provider_id", provider.ID.String()),
-		observability.String("provider_name", provider.Name),
+		ssoUUIDLogAttr("provider_id", provider.ID),
+		ssoHashLogAttr("provider_name", provider.Name),
 		observability.String("provider_kind", string(provider.Kind)),
-		observability.String("issuer_url", provider.IssuerURL),
+		ssoHashLogAttr("issuer_url", provider.IssuerURL),
 		observability.Bool("provider_enabled", provider.Enabled),
 		observability.Bool("groups_endpoint_configured", strings.TrimSpace(provider.GroupsEndpoint) != ""),
 		observability.Bool("client_secret_env_configured", strings.TrimSpace(provider.ClientSecretEnv) != ""),
-		{Key: "configured_group_claims", Value: provider.GroupClaims},
+		observability.Int("configured_group_claim_count", len(provider.GroupClaims)),
+		ssoHashesLogAttr("configured_group_claims", provider.GroupClaims),
 	}
 }
 
@@ -79,10 +86,10 @@ func ssoMappingLogAttrs(mapping *domain.SSOGroupMapping) []observability.LogAttr
 	}
 	return []observability.LogAttr{
 		observability.Bool("mapping_found", true),
-		observability.String("mapping_id", mapping.ID.String()),
-		observability.String("provider_id", mapping.ProviderID.String()),
-		observability.String("team_id", mapping.TeamID.String()),
-		observability.String("group_id", mapping.GroupID),
+		ssoUUIDLogAttr("mapping_id", mapping.ID),
+		ssoUUIDLogAttr("provider_id", mapping.ProviderID),
+		ssoUUIDLogAttr("team_id", mapping.TeamID),
+		ssoHashLogAttr("group_id", mapping.GroupID),
 		observability.String("role", mapping.Role),
 		observability.Bool("mapping_enabled", mapping.Enabled),
 		{Key: "scopes", Value: mapping.Scopes},
@@ -95,10 +102,10 @@ func ssoSessionLogAttrs(session *domain.SSOSession) []observability.LogAttr {
 	}
 	return []observability.LogAttr{
 		observability.Bool("session_found", true),
-		observability.String("identity_id", session.IdentityID.String()),
-		observability.String("provider_id", session.ProviderID.String()),
-		observability.String("team_profile_id", session.TeamProfileID.String()),
-		observability.String("team_id", session.TeamID.String()),
+		ssoUUIDLogAttr("identity_id", session.IdentityID),
+		ssoUUIDLogAttr("provider_id", session.ProviderID),
+		ssoUUIDLogAttr("team_profile_id", session.TeamProfileID),
+		ssoUUIDLogAttr("team_id", session.TeamID),
 		observability.String("expires_at", session.ExpiresAt.Format(time.RFC3339)),
 	}
 }
@@ -109,25 +116,59 @@ func ssoAPIKeyLogAttrs(key *domain.APIKey) []observability.LogAttr {
 	}
 	attrs := []observability.LogAttr{
 		observability.Bool("api_key_found", true),
-		observability.String("profile_id", key.ID.String()),
-		observability.String("team_id", key.GetTeamID().String()),
+		ssoUUIDLogAttr("profile_id", key.ID),
+		ssoUUIDLogAttr("team_id", key.GetTeamID()),
 		observability.String("role", key.Role),
 		{Key: "scopes", Value: key.Scopes},
 	}
 	if key.SSOProviderID != nil {
-		attrs = append(attrs, observability.String("provider_id", key.SSOProviderID.String()))
+		attrs = append(attrs, ssoUUIDLogAttr("provider_id", *key.SSOProviderID))
 	}
 	if key.SSOIdentityID != nil {
-		attrs = append(attrs, observability.String("identity_id", key.SSOIdentityID.String()))
+		attrs = append(attrs, ssoUUIDLogAttr("identity_id", *key.SSOIdentityID))
 	}
 	if key.SSOSubject != "" {
-		attrs = append(attrs, observability.String("subject", key.SSOSubject))
+		attrs = append(attrs, ssoHashLogAttr("subject", key.SSOSubject))
 	}
 	if key.SSOGroupID != "" {
-		attrs = append(attrs, observability.String("sso_group_id", key.SSOGroupID))
+		attrs = append(attrs, ssoHashLogAttr("sso_group_id", key.SSOGroupID))
 	}
 	if key.SSOEntitlementStatus != "" {
 		attrs = append(attrs, observability.String("entitlement_status", key.SSOEntitlementStatus))
 	}
 	return attrs
+}
+
+func ssoUUIDLogAttr(key string, value uuid.UUID) observability.LogAttr {
+	if value == uuid.Nil {
+		return observability.String(key+"_hash", "")
+	}
+	return ssoHashLogAttr(key, value.String())
+}
+
+func ssoHashLogAttr(key, value string) observability.LogAttr {
+	return observability.String(key+"_hash", ssoRedactedHash(value))
+}
+
+func ssoHashesLogAttr(key string, values []string) observability.LogAttr {
+	return observability.LogAttr{Key: key + "_hashes", Value: ssoRedactedHashes(values)}
+}
+
+func ssoRedactedHashes(values []string) []string {
+	hashes := make([]string, 0, len(values))
+	for _, value := range dedupeStrings(values) {
+		if hash := ssoRedactedHash(value); hash != "" {
+			hashes = append(hashes, hash)
+		}
+	}
+	return hashes
+}
+
+func ssoRedactedHash(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(trimmed))
+	return hex.EncodeToString(sum[:8])
 }
