@@ -139,14 +139,15 @@ func (h *controlPortalHandler) deleteSSOMapping(c echo.Context) error {
 	if h.sso == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "sso service unavailable")
 	}
-	if _, err := parseControlUUID(c.Param("providerId"), "SSO provider ID"); err != nil {
+	providerID, err := parseControlUUID(c.Param("providerId"), "SSO provider ID")
+	if err != nil {
 		return err
 	}
 	mappingID, err := parseControlUUID(c.Param("mappingId"), "SSO group mapping ID")
 	if err != nil {
 		return err
 	}
-	if err := h.sso.DeleteMapping(c.Request().Context(), mappingID); err != nil {
+	if err := h.sso.DeleteMapping(c.Request().Context(), providerID, mappingID); err != nil {
 		return err
 	}
 	return c.JSON(200, map[string]any{"data": map[string]string{"status": "deleted"}})

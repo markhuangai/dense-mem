@@ -278,6 +278,8 @@ func TestSSOCompleteLoginCreatesSession(t *testing.T) {
 	assert.Equal(t, APIKeyRoleManager, result.Session.Selected.Profile.Role)
 	require.NotNil(t, repo.savedCache)
 	assert.Equal(t, []string{"group-a"}, repo.savedCache.Groups)
+	assert.Equal(t, now.Add(time.Hour), repo.savedCache.ExpiresAt)
+	assert.Equal(t, "source=claims", repo.savedCache.Error)
 	require.NotNil(t, repo.createdSession)
 	assert.Equal(t, now.Add(time.Hour), repo.createdSession.ExpiresAt)
 }
@@ -422,6 +424,11 @@ func TestSSOProviderAndMappingManagement(t *testing.T) {
 
 	providers, err := svc.ListEnabledProviders(ctx)
 	require.NoError(t, err)
+	require.Empty(t, providers)
+
+	publicSvc := NewSSOService(repo, SSOConfig{PublicBaseURL: "https://portal.example.com"})
+	providers, err = publicSvc.ListEnabledProviders(ctx)
+	require.NoError(t, err)
 	require.Len(t, providers, 1)
 
 	created, err := svc.CreateProvider(ctx, domain.SSOProvider{
@@ -463,7 +470,7 @@ func TestSSOProviderAndMappingManagement(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, listed, 1)
 
-	err = svc.DeleteMapping(ctx, mapping.ID)
+	err = svc.DeleteMapping(ctx, created.ID, mapping.ID)
 	require.NoError(t, err)
 	assert.Equal(t, mapping.ID, repo.deletedMappingID)
 }
@@ -520,10 +527,10 @@ func TestSSOServiceErrorBranches(t *testing.T) {
 	require.ErrorContains(t, err, "sso provider ID is required")
 	_, err = svc.UpdateMapping(ctx, domain.SSOGroupMapping{})
 	require.ErrorContains(t, err, "sso group mapping ID is required")
-	require.ErrorContains(t, svc.DeleteMapping(ctx, uuid.Nil), "sso group mapping ID is required")
+	require.ErrorContains(t, svc.DeleteMapping(ctx, providerID, uuid.Nil), "sso group mapping ID is required")
 
 	repo := &ssoRepositoryStub{t: t, listProvidersErr: backendErr}
-	svc = NewSSOService(repo, SSOConfig{})
+	svc = NewSSOService(repo, SSOConfig{PublicBaseURL: "https://portal.example.com"})
 	_, err = svc.ListProviders(ctx)
 	require.ErrorIs(t, err, backendErr)
 	_, err = svc.ListEnabledProviders(ctx)
@@ -566,7 +573,7 @@ func TestSSOServiceErrorBranches(t *testing.T) {
 
 	repo = &ssoRepositoryStub{t: t, deleteMappingErr: backendErr}
 	svc = NewSSOService(repo, SSOConfig{})
-	require.ErrorIs(t, svc.DeleteMapping(ctx, validMapping.ID), backendErr)
+	require.ErrorIs(t, svc.DeleteMapping(ctx, providerID, validMapping.ID), backendErr)
 
 	repo = &ssoRepositoryStub{t: t}
 	svc = NewSSOService(repo, SSOConfig{})

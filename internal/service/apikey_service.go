@@ -22,11 +22,12 @@ import (
 // Every standard key belongs to one team profile. Scopes are limited to the two
 // supported permission sets: read-only or read/write.
 type CreateAPIKeyRequest struct {
-	Name      string     `json:"name"`
-	RateLimit int        `json:"rate_limit"`
-	ExpiresAt *time.Time `json:"expires_at"`
-	Scopes    []string   `json:"scopes"`
-	Role      string     `json:"role"`
+	Name               string     `json:"name"`
+	RateLimit          int        `json:"rate_limit"`
+	ExpiresAt          *time.Time `json:"expires_at"`
+	Scopes             []string   `json:"scopes"`
+	Role               string     `json:"role"`
+	SSOOwnerIdentityID *uuid.UUID `json:"-"`
 }
 
 const (
@@ -109,6 +110,26 @@ func teamProfileNameConflict(err error, name string) error {
 	return nil
 }
 
+func apiKeyCreateConflict(err error, name string) error {
+	if uniqueViolationName(err) == "idx_team_profiles_sso_owner_team_active_unique" {
+		return httperr.New(httperr.CONFLICT, "sso-owned api key already exists for this team")
+	}
+	return teamProfileNameConflict(err, name)
+}
+
+func uniqueViolationName(err error) string {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return pgErr.ConstraintName
+	}
+
+	var pqErr *pq.Error
+	if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+		return pqErr.Constraint
+	}
+	return ""
+}
+
 // KeySessionInvalidator invalidates key-bound sessions. Redis-backed deployments
 // delete matching session keys; no-Redis deployments inject a non-nil no-op.
 type KeySessionInvalidator interface {
@@ -130,6 +151,7 @@ type APIKeyService interface {
 	CountByProfile(ctx context.Context, profileID uuid.UUID) (int64, error)
 	// GetByIDForProfile returns the key only when it belongs to profileID; NOT_FOUND otherwise (no existence oracle).
 	GetByIDForProfile(ctx context.Context, profileID, id uuid.UUID) (*domain.APIKey, error)
+	GetSSOOwnedKey(ctx context.Context, profileID, identityID uuid.UUID) (*domain.APIKey, error)
 	// RevokeForProfile revokes the key only when it belongs to profileID; NOT_FOUND otherwise.
 	RevokeForProfile(ctx context.Context, profileID, id uuid.UUID, actorKeyID *string, actorRole, clientIP, correlationID string) error
 	// DeleteForProfile hard-deletes the key only when it belongs to profileID; NOT_FOUND otherwise.
@@ -234,6 +256,9 @@ func (s *APIKeyServiceImpl) CreateStandardKey(ctx context.Context, profileID uui
 			role = APIKeyRoleMember
 		}
 	}
+	if role == APIKeyRoleManager {
+		scopes = StandardAPIKeyScopes()
+	}
 
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
@@ -254,20 +279,24 @@ func (s *APIKeyServiceImpl) CreateStandardKey(ctx context.Context, profileID uui
 
 	// Create the key record
 	key := &domain.APIKey{
-		ProfileID: profileID,
-		TeamID:    profileID,
-		Label:     name,
-		Name:      name,
-		KeyHash:   keyHash,
-		KeyPrefix: crypto.GetKeyPrefix(rawKey),
-		KeySuffix: crypto.GetKeySuffix(rawKey),
-		Scopes:    scopes,
-		Role:      role,
-		RateLimit: req.RateLimit,
-		ExpiresAt: req.ExpiresAt,
+		ProfileID:          profileID,
+		TeamID:             profileID,
+		Label:              name,
+		Name:               name,
+		KeyHash:            keyHash,
+		KeyPrefix:          crypto.GetKeyPrefix(rawKey),
+		KeySuffix:          crypto.GetKeySuffix(rawKey),
+		Scopes:             scopes,
+		Role:               role,
+		RateLimit:          req.RateLimit,
+		ExpiresAt:          req.ExpiresAt,
+		SSOOwnerIdentityID: req.SSOOwnerIdentityID,
 	}
 
 	if err := s.repo.CreateStandardKey(ctx, key); err != nil {
+		if conflict := apiKeyCreateConflict(err, name); conflict != nil {
+			return nil, "", conflict
+		}
 		return nil, "", fmt.Errorf("failed to create api key: %w", err)
 	}
 
@@ -509,6 +538,14 @@ func (s *APIKeyServiceImpl) GetByIDForProfile(ctx context.Context, profileID, id
 	}
 	if key == nil {
 		return nil, httperr.New(httperr.NOT_FOUND, fmt.Sprintf("api key with id '%s' not found", id.String()))
+	}
+	return key, nil
+}
+
+func (s *APIKeyServiceImpl) GetSSOOwnedKey(ctx context.Context, profileID, identityID uuid.UUID) (*domain.APIKey, error) {
+	key, err := s.repo.GetSSOOwnedKey(ctx, profileID, identityID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sso-owned api key for profile: %w", err)
 	}
 	return key, nil
 }

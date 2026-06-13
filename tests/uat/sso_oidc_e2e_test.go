@@ -263,9 +263,16 @@ type uatMockOIDCProvider struct {
 	server     *httptest.Server
 	privateKey *rsa.PrivateKey
 
-	mu          sync.Mutex
-	nextCode    int
-	nonceByCode map[string]string
+	mu         sync.Mutex
+	nextCode   int
+	authByCode map[string]uatOIDCAuthorization
+}
+
+type uatOIDCAuthorization struct {
+	nonce         string
+	codeChallenge string
+	clientID      string
+	redirectURI   string
 }
 
 func newUATMockOIDCProvider(t *testing.T) *uatMockOIDCProvider {
@@ -275,8 +282,8 @@ func newUATMockOIDCProvider(t *testing.T) *uatMockOIDCProvider {
 	require.NoError(t, err)
 
 	idp := &uatMockOIDCProvider{
-		privateKey:  privateKey,
-		nonceByCode: make(map[string]string),
+		privateKey: privateKey,
+		authByCode: make(map[string]uatOIDCAuthorization),
 	}
 	idp.server = httptest.NewServer(nethttp.HandlerFunc(idp.handle))
 	t.Cleanup(idp.server.Close)
@@ -340,7 +347,12 @@ func (p *uatMockOIDCProvider) handleAuthorize(w nethttp.ResponseWriter, r *netht
 		return
 	}
 
-	code := p.issueCode(query.Get("nonce"))
+	code := p.issueCode(uatOIDCAuthorization{
+		nonce:         query.Get("nonce"),
+		codeChallenge: query.Get("code_challenge"),
+		clientID:      query.Get("client_id"),
+		redirectURI:   query.Get("redirect_uri"),
+	})
 	callbackQuery := redirectURI.Query()
 	callbackQuery.Set("code", code)
 	callbackQuery.Set("state", query.Get("state"))
@@ -362,9 +374,15 @@ func (p *uatMockOIDCProvider) handleToken(w nethttp.ResponseWriter, r *nethttp.R
 		return
 	}
 
-	nonce, ok := p.consumeCode(r.Form.Get("code"))
+	auth, ok := p.consumeCode(r.Form.Get("code"))
 	if !ok {
 		nethttp.Error(w, "invalid code", nethttp.StatusBadRequest)
+		return
+	}
+	if r.Form.Get("client_id") != auth.clientID ||
+		r.Form.Get("redirect_uri") != auth.redirectURI ||
+		uatPKCEChallenge(r.Form.Get("code_verifier")) != auth.codeChallenge {
+		nethttp.Error(w, "authorization code binding mismatch", nethttp.StatusBadRequest)
 		return
 	}
 
@@ -375,7 +393,7 @@ func (p *uatMockOIDCProvider) handleToken(w nethttp.ResponseWriter, r *nethttp.R
 		"aud":    uatOIDCClientID,
 		"exp":    now.Add(time.Hour).Unix(),
 		"iat":    now.Add(-time.Minute).Unix(),
-		"nonce":  nonce,
+		"nonce":  auth.nonce,
 		"email":  uatSSOEmail,
 		"name":   uatSSOName,
 		"groups": []string{uatSSOGroupID},
@@ -393,25 +411,30 @@ func (p *uatMockOIDCProvider) handleToken(w nethttp.ResponseWriter, r *nethttp.R
 	})
 }
 
-func (p *uatMockOIDCProvider) issueCode(nonce string) string {
+func (p *uatMockOIDCProvider) issueCode(auth uatOIDCAuthorization) string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	p.nextCode++
 	code := fmt.Sprintf("uat-code-%d", p.nextCode)
-	p.nonceByCode[code] = nonce
+	p.authByCode[code] = auth
 	return code
 }
 
-func (p *uatMockOIDCProvider) consumeCode(code string) (string, bool) {
+func (p *uatMockOIDCProvider) consumeCode(code string) (uatOIDCAuthorization, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	nonce, ok := p.nonceByCode[code]
+	auth, ok := p.authByCode[code]
 	if ok {
-		delete(p.nonceByCode, code)
+		delete(p.authByCode, code)
 	}
-	return nonce, ok
+	return auth, ok
+}
+
+func uatPKCEChallenge(verifier string) string {
+	sum := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 func writeUATJSON(w nethttp.ResponseWriter, status int, payload any) {

@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/google/uuid"
@@ -26,11 +28,73 @@ import (
 )
 
 type oidcLoginClaims struct {
-	Subject     string
-	Email       string
-	DisplayName string
-	Nonce       string
-	Groups      []string
+	Subject             string
+	Email               string
+	DisplayName         string
+	Nonce               string
+	Groups              []string
+	IDTokenClaimNames   []string
+	UserInfoClaimNames  []string
+	GroupsFromUserInfo  bool
+	UserInfoError       string
+	UserInfoClaimsError string
+}
+
+type SSOSetupErrorCode string
+
+const (
+	SSOSetupGroupsMissing     SSOSetupErrorCode = "groups_missing"
+	SSOSetupGroupLookupFailed SSOSetupErrorCode = "group_lookup_failed"
+	SSOSetupMappingMissing    SSOSetupErrorCode = "mapping_missing"
+	SSOSetupEntitlementEmpty  SSOSetupErrorCode = "entitlement_empty"
+
+	ssoEntitlementSourceClaims   = "claims"
+	ssoEntitlementSourceEndpoint = "endpoint"
+)
+
+type SSOSetupError struct {
+	Code SSOSetupErrorCode
+	Err  error
+}
+
+func NewSSOSetupError(code SSOSetupErrorCode, err error) error {
+	if err == nil {
+		err = ErrSSOAccessDenied
+	}
+	return &SSOSetupError{Code: code, Err: err}
+}
+
+func (e *SSOSetupError) Error() string {
+	if e == nil || e.Err == nil {
+		return ErrSSOAccessDenied.Error()
+	}
+	return e.Err.Error()
+}
+
+func (e *SSOSetupError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+func SSOSetupErrorMessage(err error) (string, bool) {
+	var setupErr *SSOSetupError
+	if !errors.As(err, &setupErr) {
+		return "", false
+	}
+	switch setupErr.Code {
+	case SSOSetupGroupsMissing:
+		return "sso setup failed: no groups found in configured claims", true
+	case SSOSetupGroupLookupFailed:
+		return "sso setup failed: group lookup failed", true
+	case SSOSetupMappingMissing:
+		return "sso setup failed: no mapping matched the user groups", true
+	case SSOSetupEntitlementEmpty:
+		return "sso setup failed: no enabled team entitlement matched", true
+	default:
+		return "sso setup failed", true
+	}
 }
 
 func readOIDCClaims(ctx context.Context, provider *oidc.Provider, token *oauth2.Token, idToken *oidc.IDToken, ssoProvider domain.SSOProvider) (oidcLoginClaims, error) {
@@ -39,17 +103,19 @@ func readOIDCClaims(ctx context.Context, provider *oidc.Provider, token *oauth2.
 		return oidcLoginClaims{}, fmt.Errorf("failed to parse oidc claims: %w", err)
 	}
 	claims := oidcLoginClaims{
-		Subject:     idToken.Subject,
-		Email:       firstClaimString(raw, "email", "preferred_username", "upn"),
-		DisplayName: firstClaimString(raw, "name", "display_name"),
-		Nonce:       firstClaimString(raw, "nonce"),
-		Groups:      groupsFromRawClaims(raw, ssoProvider.GroupClaims),
+		Subject:           idToken.Subject,
+		Email:             firstClaimString(raw, "email", "preferred_username", "upn"),
+		DisplayName:       firstClaimString(raw, "name", "display_name"),
+		Nonce:             firstClaimString(raw, "nonce"),
+		Groups:            groupsFromRawClaims(raw, ssoProvider.GroupClaims),
+		IDTokenClaimNames: rawClaimNames(raw),
 	}
 	if claims.Email == "" || claims.DisplayName == "" || len(claims.Groups) == 0 {
 		info, err := provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
 		if err == nil && info != nil {
 			var userInfoRaw map[string]json.RawMessage
 			if err := info.Claims(&userInfoRaw); err == nil {
+				claims.UserInfoClaimNames = rawClaimNames(userInfoRaw)
 				if claims.Email == "" {
 					claims.Email = firstClaimString(userInfoRaw, "email", "preferred_username", "upn")
 				}
@@ -58,8 +124,15 @@ func readOIDCClaims(ctx context.Context, provider *oidc.Provider, token *oauth2.
 				}
 				if len(claims.Groups) == 0 {
 					claims.Groups = groupsFromRawClaims(userInfoRaw, ssoProvider.GroupClaims)
+					claims.GroupsFromUserInfo = len(claims.Groups) > 0
 				}
+			} else {
+				claims.UserInfoClaimsError = err.Error()
 			}
+		} else if err != nil {
+			claims.UserInfoError = err.Error()
+		} else {
+			claims.UserInfoError = "userinfo response missing"
 		}
 	}
 	if claims.DisplayName == "" {
@@ -69,6 +142,15 @@ func readOIDCClaims(ctx context.Context, provider *oidc.Provider, token *oauth2.
 		claims.DisplayName = claims.Subject
 	}
 	return claims, nil
+}
+
+func rawClaimNames(raw map[string]json.RawMessage) []string {
+	names := make([]string, 0, len(raw))
+	for name := range raw {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 type HTTPSSOGroupResolver struct {
@@ -255,6 +337,13 @@ func groupsFromRawClaims(raw map[string]json.RawMessage, names []string) []strin
 		var single string
 		if err := json.Unmarshal(data, &single); err == nil && single != "" {
 			groups = append(groups, single)
+			continue
+		}
+		var keyed map[string]json.RawMessage
+		if err := json.Unmarshal(data, &keyed); err == nil {
+			for key := range keyed {
+				groups = append(groups, key)
+			}
 		}
 	}
 	return dedupeStrings(groups)
@@ -340,6 +429,9 @@ func mergedEntitlementForTeam(mappings []*domain.SSOGroupMapping, teamID uuid.UU
 	if len(entitlement.Scopes) == 0 {
 		entitlement.Scopes = []string{APIKeyScopeRead}
 	}
+	if entitlement.Role == APIKeyRoleManager {
+		entitlement.Scopes = StandardAPIKeyScopes()
+	}
 	return entitlement, true
 }
 
@@ -405,6 +497,83 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
+func interactiveOAuthScopes(provider domain.SSOProvider) []string {
+	scopes := normalizeOAuthScopes(provider.Scopes)
+	if len(scopes) == 0 {
+		scopes = []string{"openid", "profile", "email"}
+	}
+	if strings.TrimSpace(provider.GroupsEndpoint) != "" {
+		scopes = appendOAuthScopes(scopes, provider.GroupsScopes...)
+	}
+	if !containsString(scopes, oidc.ScopeOpenID) {
+		scopes = append([]string{oidc.ScopeOpenID}, scopes...)
+	}
+	return scopes
+}
+
+func normalizeOAuthScopes(scopes []string) []string {
+	return appendOAuthScopes(nil, scopes...)
+}
+
+func appendOAuthScopes(scopes []string, values ...string) []string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" && !containsString(scopes, trimmed) {
+			scopes = append(scopes, trimmed)
+		}
+	}
+	return scopes
+}
+
+func ssoActiveEntitlementCacheTTL(runtime SSORuntimeConfig, source string) time.Duration {
+	if source == ssoEntitlementSourceClaims {
+		return runtime.SessionTTL
+	}
+	return runtime.EntitlementCacheTTL
+}
+
+func ssoEntitlementCacheMessage(source string) string {
+	if strings.TrimSpace(source) == "" {
+		return ""
+	}
+	return "source=" + source
+}
+
+func ssoKeyRequiresEntitlementValidation(key *domain.APIKey) bool {
+	if key == nil {
+		return false
+	}
+	switch strings.TrimSpace(key.AuthSource) {
+	case "sso":
+		return true
+	}
+	status := strings.TrimSpace(key.SSOEntitlementStatus)
+	return key.SSOIdentityID != nil ||
+		key.SSOProviderID != nil ||
+		strings.TrimSpace(key.SSOSubject) != "" ||
+		strings.TrimSpace(key.SSOGroupID) != "" ||
+		(status != "" && status != "unlinked")
+}
+
+func ssoRuntimeReadyForPublicLogin(runtime SSORuntimeConfig) bool {
+	parsed, err := url.Parse(strings.TrimSpace(runtime.PublicBaseURL))
+	return err == nil && parsed.Host != "" && (parsed.Scheme == "http" || parsed.Scheme == "https")
+}
+
+func ssoProviderReadyForPublicLogin(provider *domain.SSOProvider) bool {
+	if provider == nil || !provider.Enabled {
+		return false
+	}
+	copy := *provider
+	if err := normalizeSSOProvider(&copy); err != nil {
+		return false
+	}
+	if copy.ClientSecretEnv != "" && strings.TrimSpace(os.Getenv(copy.ClientSecretEnv)) == "" {
+		return false
+	}
+	return true
+}
+
 func normalizeSSOProvider(provider *domain.SSOProvider) error {
 	provider.Name = strings.TrimSpace(provider.Name)
 	if provider.Name == "" {
@@ -435,6 +604,15 @@ func normalizeSSOProvider(provider *domain.SSOProvider) error {
 	}
 	provider.ClientSecretEnv = strings.TrimSpace(provider.ClientSecretEnv)
 	provider.GroupsEndpoint = strings.TrimSpace(provider.GroupsEndpoint)
+	if provider.GroupsEndpoint != "" {
+		parsedEndpoint, err := url.Parse(provider.GroupsEndpoint)
+		if err != nil || parsedEndpoint.Scheme != "https" || parsedEndpoint.Host == "" {
+			return fmt.Errorf("sso groups_endpoint must be an absolute https URL")
+		}
+		if parsedEndpoint.User != nil {
+			return fmt.Errorf("sso groups_endpoint must not include credentials")
+		}
+	}
 	provider.Scopes = dedupeStrings(provider.Scopes)
 	if len(provider.Scopes) == 0 {
 		provider.Scopes = []string{"openid", "profile", "email"}
@@ -478,5 +656,8 @@ func normalizeSSOGroupMapping(mapping *domain.SSOGroupMapping) error {
 		role = APIKeyRoleMember
 	}
 	mapping.Role = role
+	if mapping.Role == APIKeyRoleManager {
+		mapping.Scopes = StandardAPIKeyScopes()
+	}
 	return nil
 }

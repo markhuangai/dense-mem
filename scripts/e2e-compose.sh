@@ -157,6 +157,7 @@ prepare_root_files() {
   backup_root_file "$ROOT_ENV_FILE" env
   backup_root_file "$ROOT_PROMETHEUS_FILE" prometheus
   backup_root_file "$ROOT_TELEMETRY_TOKEN_FILE" telemetry-token
+  ROOT_FILES_PREPARED=1
 
   cat > "$ROOT_ENV_FILE" <<EOF
 ${E2E_MARKER}
@@ -211,7 +212,6 @@ scrape_configs:
 EOF
 
   printf '%s\n' "$TELEMETRY_SCRAPE_TOKEN" > "$ROOT_TELEMETRY_TOKEN_FILE"
-  ROOT_FILES_PREPARED=1
 }
 
 restore_root_files() {
