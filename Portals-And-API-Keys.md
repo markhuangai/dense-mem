@@ -72,6 +72,202 @@ If the provider requires a post-logout redirect URI, use the portal URL:
 https://<dense-mem-host>/ui
 ```
 
+### SSO Login Visibility
+
+The user portal shows SSO login only when public SSO is ready:
+
+- `SSO_PUBLIC_BASE_URL` is an absolute `http` or `https` URL.
+- At least one SSO provider is enabled.
+- The provider has a valid issuer URL and client ID.
+- If the provider uses `Client secret env`, that environment variable exists
+  and is not empty.
+
+When these conditions are not met, `/ui` should only show API-key login and
+`GET /ui/api/sso/providers` should return no public providers. This is
+intentional for deployments such as the hosted demo.
+
+### Provider Fields
+
+Configure providers in the control portal SSO section.
+
+| Field | Meaning |
+| --- | --- |
+| Name | Display name shown on the user portal login screen. |
+| Kind | Use `OIDC` for standards-based OIDC providers. Use provider-specific kinds only when Dense-Mem has a provider-specific integration. |
+| Issuer URL | Provider issuer base URL, without `/.well-known/openid-configuration`. |
+| Client ID | OIDC application client ID. |
+| Client secret env | Environment variable name that contains the client secret. Leave empty for public PKCE clients. |
+| Scopes | Login scopes requested during the browser flow. Use at least `openid`, `profile`, and `email`. |
+| Group claims | Claim names that contain group, role, or entitlement values. |
+| Groups endpoint | Optional endpoint used when group claims are not present or when bearer-key entitlement refresh needs a provider lookup. |
+| Groups scopes | Scopes for the groups endpoint. If a groups endpoint is configured, these are also requested during browser login. |
+| Enabled | Enables the provider for login after the rest of the setup is correct. |
+
+Group mappings connect provider group values to Dense-Mem teams:
+
+| Mapping field | Meaning |
+| --- | --- |
+| Team | Dense-Mem team to grant access to. |
+| Group | Exact group or role value from the provider claim. |
+| Permission | Dense-Mem API scopes, such as read-only or read/write. |
+| Role | Dense-Mem profile role, such as member or manager. |
+| Status | Disable a mapping without deleting it. |
+
+### Generic OIDC Group And Role Mapping
+
+Dense-Mem is not tied to a specific SSO vendor. Any OIDC provider can work when
+it can provide stable group, role, or entitlement values through one of these
+paths:
+
+- ID-token claims
+- UserInfo claims
+- a configured groups endpoint
+
+Set `Group claims` to the claim names that contain the values you want to map.
+Dense-Mem accepts common claim shapes:
+
+| Claim shape | Dense-Mem group values |
+| --- | --- |
+| `["admin", "writer"]` | `admin`, `writer` |
+| `"admin"` | `admin` |
+| `{ "admin": {...}, "writer": {...} }` | `admin`, `writer` |
+
+The group mapping `Group` field must exactly match one emitted value. This can
+be an IdP group name, a role key, an application role, or any stable entitlement
+string your provider emits.
+
+For claim-only providers, leave `Groups endpoint` and `Groups scopes` empty.
+Claim-derived entitlements are cached for the browser SSO session lifetime. For
+providers that require live entitlement refresh outside the browser session,
+configure `Groups endpoint` and the delegated or client-credential scopes it
+needs.
+
+Examples:
+
+| Provider style | Typical `Group claims` |
+| --- | --- |
+| Generic OIDC group claims | `groups` |
+| Entra ID or Azure AD groups | `groups` or provider-specific group endpoint |
+| Application roles | `roles` |
+| ZITADEL project roles | `urn:zitadel:iam:org:project:<project_id>:roles, urn:zitadel:iam:org:project:roles` |
+
+Use `LOG_LEVEL=debug` during setup and read `id_token_claim_names`,
+`userinfo_claim_names`, and `groups` in the SSO callback logs to confirm the
+right claim names and emitted values.
+
+### Example: ZITADEL Cloud With Project Roles
+
+For hosted ZITADEL, use the ZITADEL instance that owns the application as the
+issuer URL:
+
+```text
+https://<instance>.us1.zitadel.cloud
+```
+
+If you have multiple ZITADEL URLs, use the one whose
+`/.well-known/openid-configuration` issuer matches the application client ID.
+
+In ZITADEL:
+
+1. Create or open the project used for Dense-Mem.
+2. Create a web application that uses Authorization Code with PKCE.
+3. Add the Dense-Mem redirect URI:
+
+   ```text
+   https://<dense-mem-host>/ui/api/sso/callback
+   ```
+
+4. Copy the application client ID.
+5. Create project roles for Dense-Mem access.
+
+Example project role:
+
+| ZITADEL role field | Example |
+| --- | --- |
+| Key | `dense-mem-admin` |
+| Display name | `Dense-Mem Admin` |
+| Group | `dense-mem` |
+
+Dense-Mem matches the role key from the token claim. The ZITADEL role group is
+only a ZITADEL-side organizer unless your emitted claim contains that value.
+
+Assign the role to each user that should access Dense-Mem. For example, assign
+your own user the `dense-mem-admin` role before testing login.
+
+In Dense-Mem, configure the provider:
+
+| Dense-Mem field | Value |
+| --- | --- |
+| Name | `ZITADEL` |
+| Kind | `OIDC` |
+| Issuer URL | `https://<instance>.us1.zitadel.cloud` |
+| Client ID | ZITADEL application client ID |
+| Client secret env | Empty for a public PKCE app, or an environment variable name for a confidential app secret. |
+| Scopes | `openid, profile, email` |
+| Group claims | `urn:zitadel:iam:org:project:<project_id>:roles, urn:zitadel:iam:org:project:roles` |
+| Groups endpoint | Empty when using ZITADEL role claims. |
+| Groups scopes | Empty when using ZITADEL role claims. |
+| Enabled | Checked after the provider, roles, and mappings are ready. |
+
+If ZITADEL does not emit role claims, enable `Assert Roles on Authentication`
+on the project for UserInfo role claims, or `User Roles Inside ID Token` on the
+application for ID-token role claims. When required by your ZITADEL setup, add
+the project audience scope to `Scopes`:
+
+```text
+urn:zitadel:iam:org:project:id:<project_id>:aud
+```
+
+Create a Dense-Mem group mapping whose `Group` value is the ZITADEL role key:
+
+| Dense-Mem mapping field | Example |
+| --- | --- |
+| Team | `Mark` |
+| Group | `dense-mem-admin` |
+| Permission | `Read/write` |
+| Role | `Manager` |
+| Status | `enabled` |
+
+With debug logging enabled, a successful claim read should show the ZITADEL role
+claim names and a group value matching the role key:
+
+```json
+{
+  "configured_group_claims": [
+    "urn:zitadel:iam:org:project:<project_id>:roles",
+    "urn:zitadel:iam:org:project:roles"
+  ],
+  "groups": ["dense-mem-admin"],
+  "groups_from_userinfo": true
+}
+```
+
+### SSO Troubleshooting
+
+Set `LOG_LEVEL=debug` while setting up SSO. The callback response now returns a
+safe setup hint, and the server log has provider and claim details.
+
+| Browser message | What to check |
+| --- | --- |
+| `sso setup failed: no groups found in configured claims` | `Group claims` does not match the token or UserInfo claim names, or the provider is not emitting the expected group or role claims. |
+| `sso setup failed: group lookup failed` | The groups endpoint, delegated scopes, or client credentials are wrong. |
+| `sso setup failed: no mapping matched the user groups` | The Dense-Mem mapping `Group` value does not exactly match the emitted role or group value. |
+| `sso setup failed: no enabled team entitlement matched` | A mapping exists, but it is disabled or does not grant an enabled team entitlement. |
+| `sso access denied` | The provider is disabled, the session is invalid, or entitlement validation failed after setup. |
+
+For claim-based setups, the usual fix is:
+
+1. Read `id_token_claim_names` and `userinfo_claim_names` in the debug log.
+2. Put the provider's group or role claim names in `Group claims`.
+3. Set the Dense-Mem mapping `Group` to the emitted group or role value.
+4. Confirm the user is assigned that group, role, or entitlement in the IdP.
+
+ZITADEL example references:
+
+- [Retrieve User Roles in ZITADEL](https://zitadel.com/docs/guides/integrate/retrieve-user-roles)
+- [Claims in ZITADEL](https://zitadel.com/docs/apis/openidoauth/claims)
+- [Applications in ZITADEL](https://zitadel.com/docs/guides/manage/console/applications-overview)
+
 ## Control Portal
 
 The control portal runs on a separate local port:

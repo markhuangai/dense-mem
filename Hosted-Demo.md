@@ -9,6 +9,13 @@ https://demo-dense-mem.markhuang.ai
 The demo generates a temporary isolated team and API key. The key lasts 24 hours.
 Use only disposable test data.
 
+## SSO Availability
+
+The hosted demo does not support SSO. The user portal on the demo should not
+show SSO login because no SSO provider is configured for that deployment.
+
+Use the generated demo API key to access `/ui`, MCP, and API routes.
+
 ## Related Tutorials
 
 | Goal | Tutorial |

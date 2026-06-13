@@ -56,6 +56,24 @@ Keep the control portal on `127.0.0.1` for local use. It manages API keys.
 Manager/member profile access is not controlled by a feature flag. It is active
 after the RBAC migration and is stored in the `team_profiles.role` column.
 
+## SSO Settings
+
+SSO is optional. Leave `SSO_PUBLIC_BASE_URL` empty when the deployment should
+not show SSO login in `/ui`.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SSO_PUBLIC_BASE_URL` | empty | Public base URL used to build `/ui/api/sso/callback`. Must be absolute `http` or `https` when SSO is enabled. |
+| `SSO_ENTITLEMENT_CACHE_TTL_SECONDS` | `300` | Cache TTL for provider-refreshed SSO entitlements. |
+| `SSO_SESSION_TTL_SECONDS` | `28800` | Browser SSO session lifetime. Claim-derived entitlements are cached for this duration. |
+| `SSO_STATE_TTL_SECONDS` | `600` | OAuth state and PKCE verifier lifetime during login. |
+| `SSO_HTTP_TIMEOUT_SECONDS` | `10` | Timeout for OIDC discovery, token exchange, UserInfo, and group endpoint calls. |
+| `SSO_COOKIE_SECURE` | derived | Secure-cookie setting. Defaults to `true` for `https` public base URLs and `false` otherwise. |
+
+These settings can be managed from the control portal SSO configuration screen.
+See [Portals And API Keys](Portals-And-API-Keys#user-portal-sso) for provider,
+ZITADEL, and group-mapping setup.
+
 ## Database Settings
 
 Postgres stores teams, profiles, API key metadata, migrations, and audit logs.
