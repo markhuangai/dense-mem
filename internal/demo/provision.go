@@ -91,6 +91,7 @@ func (p *Provisioner) Provision(ctx context.Context, opts ProvisionOptions) (*Pr
 		RateLimit: quotas.PerMinuteRequests,
 		ExpiresAt: &expiresAt,
 		Scopes:    service.StandardAPIKeyScopes(),
+		Role:      service.APIKeyRoleMember,
 	}, nil, "demo", opts.ClientIP, "demo-provision")
 	if err != nil {
 		_ = p.profiles.Delete(ctx, profile.ID, nil, "demo", opts.ClientIP, "demo-provision-rollback")

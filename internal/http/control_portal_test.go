@@ -213,6 +213,10 @@ func (s *controlKeySvc) GetByIDForProfile(_ context.Context, profileID, id uuid.
 	return nil, nil
 }
 
+func (s *controlKeySvc) GetSSOOwnedKey(context.Context, uuid.UUID, uuid.UUID) (*domain.APIKey, error) {
+	return nil, nil
+}
+
 func (s *controlKeySvc) RevokeForProfile(_ context.Context, _ uuid.UUID, id uuid.UUID, _ *string, _ string, _ string, _ string) error {
 	return nil
 }

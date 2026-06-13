@@ -349,6 +349,14 @@ async function mockUserApi(
   let currentCanRotate = state.canRotate;
   let currentProfiles = (state.profiles ?? []).map((profile) => ({ ...profile }));
 
+  await page.route("**/ui/api/sso/providers", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ data: [] }),
+    });
+  });
+
   await page.route("**/api/v1/teams/**/profiles**", async (route) => {
     if (state.canManageTeam) {
       const request = route.request();
@@ -393,6 +401,16 @@ async function mockUserApi(
   });
 
   await page.route("**/ui/api/session", async (route) => {
+    const authorization = route.request().headers().authorization ?? "";
+    if (!authorization.startsWith("Bearer ")) {
+      await route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: JSON.stringify({ message: "authentication required" }),
+      });
+      return;
+    }
+
     await route.fulfill({
       status: 200,
       contentType: "application/json",

@@ -61,6 +61,10 @@ npx playwright test --list
 BASE_URL=http://localhost:8080 API_KEY=<key> API_KEY_B=<second-key> PROFILE_ID=<team-id> \
   npx playwright test
 
+# Run browser portal e2e against an isolated local Docker Compose stack
+cd ../../web
+npm run playwright
+
 # Run the e2e journey against a running compose stack with two generated keys
 BASE_URL=http://localhost:8080 npm run test:e2e:provisioned
 
@@ -91,6 +95,14 @@ npx playwright test --reporter=list
 The Playwright specs are live UAT coverage, not red scaffolding. Tests that prove
 cross-profile isolation use `API_KEY_B`; when it is absent, those specific checks
 are skipped instead of faking isolation with a profile string.
+
+Use `npm run playwright` from `web/` for self-contained browser e2e coverage. It
+builds the current checkout with the project-root `docker-compose.yml`, starts
+an isolated Docker Compose project, provisions a disposable team, runs
+`web/tests-compose`, and tears that project down. The runner temporarily writes
+ignored root compose sidecar files (`.env`, `prometheus.yml`, and
+`telemetry-scrape-token`) and restores any previous local copies during cleanup.
+It does not run the knowledge-pipeline specs in this directory.
 
 Use `npm run test:e2e:provisioned` when running against local Docker Compose. It
 creates two disposable teams with generated keys and sets `REQUIRE_API_KEY_B=1`,

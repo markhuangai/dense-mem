@@ -63,6 +63,8 @@ type ControlPortalTelemetry struct {
 	Reader        service.TelemetryReader
 	ScrapeHandler nethttp.Handler
 	ScrapeToken   string
+	SSO           *service.SSOService
+	Config        service.AppConfigService
 }
 
 func NewControlPortalServerWithMetricsAndTelemetry(
@@ -126,7 +128,7 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		e.GET("/metrics", echo.WrapHandler(telemetry.ScrapeHandler), telemetryScrapeTokenMiddleware(telemetry.ScrapeToken))
 	}
 
-	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, health: health}
+	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, health: health, sso: telemetry.SSO, appConfig: telemetry.Config}
 	api := e.Group("/control/api")
 	api.Use(controlPortalMiddleware(cfg.GetControlPortalToken(), securitySvc))
 	api.GET("/session", control.session)
@@ -156,6 +158,20 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 	api.GET("/security/bans", control.listSecurityBans)
 	api.POST("/security/bans", control.createSecurityBan)
 	api.DELETE("/security/bans/:ip", control.deleteSecurityBan)
+	if telemetry.Config != nil {
+		api.GET("/config/sso", control.getSSOConfig)
+		api.PATCH("/config/sso", control.updateSSOConfig)
+	}
+	if telemetry.SSO != nil {
+		api.GET("/sso/providers", control.listSSOProviders)
+		api.POST("/sso/providers", control.createSSOProvider)
+		api.PATCH("/sso/providers/:providerId", control.updateSSOProvider)
+		api.DELETE("/sso/providers/:providerId", control.deleteSSOProvider)
+		api.GET("/sso/providers/:providerId/mappings", control.listSSOMappings)
+		api.POST("/sso/providers/:providerId/mappings", control.createSSOMapping)
+		api.PATCH("/sso/providers/:providerId/mappings/:mappingId", control.updateSSOMapping)
+		api.DELETE("/sso/providers/:providerId/mappings/:mappingId", control.deleteSSOMapping)
+	}
 
 	if staticDir := defaultPortalStaticDir(); staticDir != "" {
 		e.Static("/", staticDir)
@@ -171,6 +187,8 @@ type controlPortalHandler struct {
 	metrics   service.UsageMetricsReader
 	telemetry service.TelemetryReader
 	health    HealthConfig
+	sso       *service.SSOService
+	appConfig service.AppConfigService
 }
 
 func (h *controlPortalHandler) session(c echo.Context) error {

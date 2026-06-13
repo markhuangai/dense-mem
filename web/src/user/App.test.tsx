@@ -26,6 +26,10 @@ const baseSession: UserSession = {
   },
   can_rotate: false,
   can_manage_team: false,
+  personal_key: null,
+  can_create_personal_key: false,
+  can_rotate_personal_key: false,
+  personal_key_max_scopes: [],
 };
 
 const memberProfile: UserKey = {
@@ -55,7 +59,7 @@ describe("UserPortalApp", () => {
     await userEvent.type(screen.getByLabelText(/api key/i), "dm_key");
     await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
 
-    expect(await screen.findByText("Research Team")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
     expect(await screen.findByText("Mine")).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/profiles"))).toBe(false);
   });
@@ -169,6 +173,104 @@ describe("UserPortalApp", () => {
       );
     });
   });
+
+  it("uses server auth method for SSO cookie sessions and switches teams", async () => {
+    const { initial, switched, secondKey } = ssoSessions();
+    const fetchMock = mockSSOUserFetch(initial, switched);
+
+    render(<UserPortalApp />);
+
+    expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /my key/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^team$/i })).not.toBeInTheDocument();
+    const teamSelect = await screen.findByLabelText("Active team");
+    expect(teamSelect).toHaveValue(initial.key.id);
+
+    await userEvent.selectOptions(teamSelect, secondKey.id);
+
+    expect(await screen.findByRole("heading", { name: "Analytics Team" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /my key/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^team$/i })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/ui/api/sso/team",
+        expect.objectContaining({
+          method: "POST",
+          credentials: "include",
+          body: JSON.stringify({ profile_id: secondKey.id }),
+        }),
+      );
+    });
+    expect(sessionStorage.getItem("denseMem.userApiKey")).toBeNull();
+  });
+
+  it("keeps the SSO portal open when logout fails", async () => {
+    const { initial, switched } = ssoSessions();
+    mockSSOUserFetch(initial, switched, { logoutStatus: 500 });
+
+    render(<UserPortalApp />);
+
+    expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /sign out/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("logout failed");
+    expect(screen.getByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    expect(screen.queryByLabelText(/api key/i)).not.toBeInTheDocument();
+  });
+
+  it("lets an SSO read/write member create and rotate their owned API key", async () => {
+    const { initial, switched } = ssoSessions();
+    const ssoKey = { ...initial.key, scopes: ["read", "write"] };
+    const readWriteSession: UserSession = {
+      ...initial,
+      key: ssoKey,
+      teams: initial.teams?.map((item, index) => index === 0 ? { ...item, key: ssoKey } : item),
+      personal_key_max_scopes: ["read", "write"],
+    };
+    const fetchMock = mockSSOUserFetch(readWriteSession, switched);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<UserPortalApp />);
+
+    expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /my key/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create api key/i }));
+
+    expect(await screen.findByText("dm_sso_personal_plaintext")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/ui/api/sso/key",
+        expect.objectContaining({
+          method: "POST",
+          credentials: "include",
+          body: expect.stringContaining(`"scopes":["read","write"]`),
+        }),
+      );
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: /regenerate key/i }));
+    expect(await screen.findByText("dm_sso_personal_rotated")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/ui/api/sso/key/rotate",
+        expect.objectContaining({ method: "POST", credentials: "include" }),
+      );
+    });
+  });
+
+  it("keeps SSO read-only owned API key rotation disabled", async () => {
+    const { initial, switched } = ssoSessions();
+    mockSSOUserFetch(initial, switched);
+
+    render(<UserPortalApp />);
+
+    expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /my key/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create api key/i }));
+
+    expect(await screen.findByText("dm_sso_personal_plaintext")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /regenerate key/i })).toBeDisabled();
+  });
 });
 
 function mockUserFetch(session: UserSession, profiles: UserKey[] = []) {
@@ -182,8 +284,14 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = []) {
     const url = String(input);
     const method = init?.method ?? "GET";
 
+    if (url === "/ui/api/sso/providers" && method === "GET") {
+      return jsonResponse({ data: [] });
+    }
     if (url === "/ui/api/session" && method === "GET") {
-      const auth = (init?.headers as Record<string, string> | undefined)?.Authorization ?? "";
+      const auth = authorizationHeader(init);
+      if (!auth) {
+        return jsonResponse({ code: "AUTH_MISSING", message: "missing authorization header", details: null }, 401);
+      }
       const selectedSession = auth.includes("dm_new_plaintext") ? rotatedSession : session;
       return jsonResponse({ data: { ...selectedSession, team: currentTeam } });
     }
@@ -242,6 +350,111 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = []) {
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
+}
+
+function ssoSessions() {
+  const secondTeam = {
+    ...baseSession.team,
+    id: "55555555-5555-4555-8555-555555555555",
+    name: "Analytics Team",
+  };
+  const secondKey: UserKey = {
+    ...baseSession.key,
+    id: "66666666-6666-4666-8666-666666666666",
+    team_id: secondTeam.id,
+    name: "Analytics SSO",
+  };
+  const initial: UserSession = {
+    ...baseSession,
+    auth_method: "sso",
+    can_create_personal_key: true,
+    personal_key_max_scopes: ["read"],
+    teams: [
+      { team: baseSession.team, key: baseSession.key, can_rotate: false, can_manage_team: false },
+      { team: secondTeam, key: secondKey, can_rotate: false, can_manage_team: true },
+    ],
+  };
+  const switched: UserSession = {
+    ...initial,
+    team: secondTeam,
+    key: secondKey,
+    can_rotate: false,
+    can_manage_team: true,
+    can_create_personal_key: false,
+    personal_key_max_scopes: [],
+  };
+  return { initial, switched, secondKey };
+}
+
+function mockSSOUserFetch(initial: UserSession, switched: UserSession, options: { logoutStatus?: number } = {}) {
+  let current = initial;
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+
+    if (url === "/ui/api/sso/providers" && method === "GET") {
+      return jsonResponse({ data: [] });
+    }
+    if (url === "/ui/api/session" && method === "GET") {
+      return jsonResponse({ data: current });
+    }
+    if (url === "/ui/api/sso/team" && method === "POST") {
+      current = switched;
+      return jsonResponse({ data: current });
+    }
+    if (url === "/ui/api/sso/key" && method === "POST") {
+      const body = JSON.parse(String(init?.body));
+      const created: UserKey = {
+        ...current.key,
+        id: "77777777-7777-4777-8777-777777777777",
+        name: body.name,
+        key_suffix: "own123",
+        scopes: body.scopes,
+        role: "member",
+      };
+      current = {
+        ...current,
+        personal_key: created,
+        can_create_personal_key: false,
+        can_rotate_personal_key: created.scopes.includes("write") && (current.personal_key_max_scopes ?? []).includes("write"),
+      };
+      return jsonResponse({ data: { api_key: "dm_sso_personal_plaintext", key: created } }, 201);
+    }
+    if (url === "/ui/api/sso/key/rotate" && method === "POST") {
+      const rotated = { ...(current.personal_key ?? current.key), key_suffix: "rot321" };
+      current = { ...current, personal_key: rotated };
+      return jsonResponse({ data: { api_key: "dm_sso_personal_rotated", key: rotated } });
+    }
+    if (url === "/ui/api/sso/logout" && method === "POST") {
+      if (options.logoutStatus) {
+        return jsonResponse({ message: "logout failed" }, options.logoutStatus);
+      }
+      return jsonResponse({ data: { status: "signed_out" } });
+    }
+    if (url.startsWith("/api/v1/communities")) {
+      return jsonResponse({ items: [] });
+    }
+    if (url.startsWith("/api/v1/recall")) {
+      return jsonResponse({ data: [] });
+    }
+    return jsonResponse({ message: "not found" }, 404);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+function authorizationHeader(init?: RequestInit): string {
+  const headers = init?.headers;
+  if (!headers) {
+    return "";
+  }
+  if (headers instanceof Headers) {
+    return headers.get("Authorization") ?? "";
+  }
+  if (Array.isArray(headers)) {
+    return headers.find(([name]) => name.toLowerCase() === "authorization")?.[1] ?? "";
+  }
+  return (headers as Record<string, string>).Authorization ?? (headers as Record<string, string>).authorization ?? "";
 }
 
 function jsonResponse(payload: unknown, status = 200) {

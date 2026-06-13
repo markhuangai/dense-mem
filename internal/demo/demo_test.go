@@ -81,6 +81,7 @@ func TestProvisionCreatesDemoTeamAndExpiringKey(t *testing.T) {
 	require.NotNil(t, keys.req.ExpiresAt)
 	require.Equal(t, now.Add(24*time.Hour), *keys.req.ExpiresAt)
 	require.Equal(t, []string{"read", "write"}, keys.req.Scopes)
+	require.Equal(t, service.APIKeyRoleMember, keys.req.Role)
 }
 
 func TestProvisionEnforcesIssueQuota(t *testing.T) {
@@ -358,6 +359,7 @@ func (s *fakeAPIKeyService) CreateStandardKey(_ context.Context, profileID uuid.
 		Name:      req.Name,
 		Label:     req.Name,
 		Scopes:    req.Scopes,
+		Role:      req.Role,
 		RateLimit: req.RateLimit,
 		ExpiresAt: req.ExpiresAt,
 	}
@@ -373,6 +375,10 @@ func (s *fakeAPIKeyService) CountByProfile(context.Context, uuid.UUID) (int64, e
 }
 
 func (s *fakeAPIKeyService) GetByIDForProfile(context.Context, uuid.UUID, uuid.UUID) (*domain.APIKey, error) {
+	return nil, nil
+}
+
+func (s *fakeAPIKeyService) GetSSOOwnedKey(context.Context, uuid.UUID, uuid.UUID) (*domain.APIKey, error) {
 	return nil, nil
 }
 

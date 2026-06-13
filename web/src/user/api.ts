@@ -24,8 +24,27 @@ export type UserKey = {
 export type UserSession = {
   team: UserTeam;
   key: UserKey;
+  teams?: UserTeamOption[];
+  auth_method?: "api_key" | "sso";
   can_rotate: boolean;
   can_manage_team: boolean;
+  personal_key: UserKey | null;
+  can_create_personal_key: boolean;
+  can_rotate_personal_key: boolean;
+  personal_key_max_scopes?: string[];
+};
+
+export type UserTeamOption = {
+  team: UserTeam;
+  key: UserKey;
+  can_rotate: boolean;
+  can_manage_team: boolean;
+};
+
+export type SSOProvider = {
+  id: string;
+  name: string;
+  kind: string;
 };
 
 export type RotateResponse = {
@@ -156,6 +175,35 @@ export class UserApi {
     return payload.data;
   }
 
+  async ssoProviders(): Promise<SSOProvider[]> {
+    const payload = await this.request<Envelope<SSOProvider[]>>("/ui/api/sso/providers");
+    return payload.data;
+  }
+
+  ssoStartUrl(providerId: string): string {
+    return `/ui/api/sso/start/${encodeURIComponent(providerId)}`;
+  }
+
+  async switchSSOTeam(profileId: string): Promise<UserSession> {
+    const payload = await this.request<Envelope<UserSession>>("/ui/api/sso/team", { method: "POST", body: { profile_id: profileId } });
+    return payload.data;
+  }
+
+  async logoutSSO(): Promise<{ status: string }> {
+    const payload = await this.request<Envelope<{ status: string }>>("/ui/api/sso/logout", { method: "POST" });
+    return payload.data;
+  }
+
+  async createSSOKey(input: CreateTeamProfileInput): Promise<CreatedTeamProfile> {
+    const payload = await this.request<Envelope<CreatedTeamProfile>>("/ui/api/sso/key", { method: "POST", body: input });
+    return payload.data;
+  }
+
+  async rotateSSOKey(): Promise<RotateResponse> {
+    const payload = await this.request<Envelope<RotateResponse>>("/ui/api/sso/key/rotate", { method: "POST", body: {} });
+    return payload.data;
+  }
+
   async rotateKey(): Promise<RotateResponse> {
     const payload = await this.request<Envelope<RotateResponse>>("/ui/api/key/rotate", { method: "POST", body: {} });
     return payload.data;
@@ -226,12 +274,22 @@ export class UserApi {
   }
 
   private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+    const method = options.method ?? "GET";
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (this.token) {
+      headers.Authorization = `Bearer ${this.token}`;
+    } else if (method !== "GET" && method !== "HEAD") {
+      const csrf = readCookie("dense_mem_sso_csrf");
+      if (csrf) {
+        headers["X-Dense-Mem-CSRF"] = csrf;
+      }
+    }
     const response = await fetch(path, {
-      method: options.method ?? "GET",
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-        "Content-Type": "application/json",
-      },
+      method,
+      headers,
+      credentials: this.token ? "same-origin" : "include",
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
     });
 
@@ -244,6 +302,15 @@ export class UserApi {
 
     return payload as T;
   }
+}
+
+function readCookie(name: string): string {
+  const prefix = `${name}=`;
+  return document.cookie
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(prefix))
+    ?.slice(prefix.length) ?? "";
 }
 
 function errorMessage(payload: unknown, fallback: string): string {

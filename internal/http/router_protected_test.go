@@ -46,6 +46,10 @@ func (routerAPIKeyService) GetByIDForProfile(context.Context, uuid.UUID, uuid.UU
 	return nil, nil
 }
 
+func (routerAPIKeyService) GetSSOOwnedKey(context.Context, uuid.UUID, uuid.UUID) (*domain.APIKey, error) {
+	return nil, nil
+}
+
 func (routerAPIKeyService) DeleteForProfile(context.Context, uuid.UUID, uuid.UUID, *string, string, string, string) error {
 	return nil
 }
@@ -71,6 +75,10 @@ func (r *routerAPIKeyRepo) CountByProfile(context.Context, uuid.UUID) (int64, er
 }
 
 func (r *routerAPIKeyRepo) GetByIDForProfile(context.Context, uuid.UUID, uuid.UUID) (*domain.APIKey, error) {
+	return nil, nil
+}
+
+func (r *routerAPIKeyRepo) GetSSOOwnedKey(context.Context, uuid.UUID, uuid.UUID) (*domain.APIKey, error) {
 	return nil, nil
 }
 

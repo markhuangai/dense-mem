@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { TeamProfile, Team, SecurityBan, SecuritySettings, ControlMetrics } from "./api";
+import { TeamProfile, Team, SecurityBan, SecuritySettings, ControlMetrics, SSOConfig } from "./api";
 
 const profileA: Team = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -89,6 +89,18 @@ const telemetrySnapshot = {
   ],
 };
 
+const ssoConfigSnapshot: SSOConfig = {
+  update_time: "2026-06-09T12:00:00Z",
+  items: [
+    { key: "SSO_PUBLIC_BASE_URL", value: "", effective_value: "", updated_at: "2026-06-09T12:00:00Z" },
+    { key: "SSO_ENTITLEMENT_CACHE_TTL_SECONDS", value: "", effective_value: "300", updated_at: "2026-06-09T12:00:00Z" },
+    { key: "SSO_SESSION_TTL_SECONDS", value: "", effective_value: "28800", updated_at: "2026-06-09T12:00:00Z" },
+    { key: "SSO_STATE_TTL_SECONDS", value: "", effective_value: "600", updated_at: "2026-06-09T12:00:00Z" },
+    { key: "SSO_HTTP_TIMEOUT_SECONDS", value: "", effective_value: "10", updated_at: "2026-06-09T12:00:00Z" },
+    { key: "SSO_COOKIE_SECURE", value: "", effective_value: "false", updated_at: "2026-06-09T12:00:00Z" },
+  ],
+};
+
 function keyA(profileId = profileA.id): TeamProfile {
   return {
     id: "22222222-2222-4222-8222-222222222222",
@@ -160,7 +172,6 @@ describe("App", () => {
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
     await userEvent.click(screen.getByRole("button", { name: /profiles & api keys/i }));
-    await userEvent.selectOptions(screen.getByLabelText(/permission/i), "read");
     await userEvent.click(screen.getByRole("button", { name: /create profile/i }));
 
     expect(await screen.findByText("dm_plain_once")).toBeInTheDocument();
@@ -169,7 +180,7 @@ describe("App", () => {
         expect.stringContaining(`/teams/${profileA.id}/profiles`),
         expect.objectContaining({
           method: "POST",
-          body: expect.stringContaining(`"scopes":["read"]`),
+          body: expect.stringContaining(`"scopes":["read","write"]`),
         }),
       );
       expect(fetchMock).toHaveBeenCalledWith(
@@ -303,6 +314,30 @@ describe("App", () => {
     });
   });
 
+  it("edits SSO runtime config", async () => {
+    const fetchMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+
+    render(<App />);
+    await screen.findByRole("button", { name: /Default/ });
+    await userEvent.click(screen.getByRole("button", { name: /^Config$/i }));
+
+    expect(await screen.findByRole("heading", { name: "SSO" })).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Public base URL"), "https://portal.example.com");
+    await userEvent.click(screen.getByRole("button", { name: /save config/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/config/sso"),
+        expect.objectContaining({
+          method: "PATCH",
+          body: expect.stringContaining(`"SSO_PUBLIC_BASE_URL"`),
+        }),
+      );
+    });
+    expect(await screen.findByText("Saved")).toBeInTheDocument();
+  });
+
   it("deletes a team", async () => {
     const deleteMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
     sessionStorage.setItem("denseMem.controlToken", "secret");
@@ -332,6 +367,7 @@ function mockPortalFetch({
   let currentProfiles = teams;
   let currentKeys = keys;
   let currentBans = bans;
+  let currentSSOConfig = structuredClone(ssoConfigSnapshot);
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -344,6 +380,20 @@ function mockPortalFetch({
     }
     if (url.includes("/metrics") && method === "GET") {
       return jsonResponse({ data: metricsSnapshot });
+    }
+    if (url.endsWith("/config/sso") && method === "GET") {
+      return jsonResponse({ data: currentSSOConfig });
+    }
+    if (url.endsWith("/config/sso") && method === "PATCH") {
+      const body = JSON.parse(String(init?.body));
+      currentSSOConfig = {
+        update_time: "2026-06-09T12:01:00Z",
+        items: currentSSOConfig.items.map((item) => {
+          const update = body.items.find((candidate: { key: string }) => candidate.key === item.key);
+          return update ? { ...item, value: update.value, updated_at: "2026-06-09T12:01:00Z" } : item;
+        }),
+      };
+      return jsonResponse({ data: currentSSOConfig });
     }
     if (url.endsWith("/teams") && method === "GET") {
       return jsonResponse(page(currentProfiles));

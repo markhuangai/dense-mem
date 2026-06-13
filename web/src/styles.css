@@ -100,6 +100,11 @@ button {
   margin-left: auto;
 }
 
+.sso-provider-list {
+  display: grid;
+  gap: 8px;
+}
+
 .app-shell {
   padding: 20px 0 32px;
 }
@@ -255,9 +260,28 @@ button {
   cursor: not-allowed;
 }
 
+.config-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.config-tabs .tab-button {
+  width: auto;
+  border: 1px solid var(--border);
+}
+
+.danger-icon {
+  color: var(--danger);
+}
+
 .team-list {
   display: grid;
   gap: 6px;
+}
+
+.key-summary select {
+  width: 100%;
+  min-width: 0;
 }
 
 .team-list-item {
@@ -380,6 +404,48 @@ textarea:focus {
   align-items: center;
 }
 
+.checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+}
+
+.checkbox-row input {
+  width: auto;
+}
+
+.toggle-row {
+  display: inline-flex; align-items: center; justify-content: space-between;
+  gap: 12px; min-height: 40px; color: var(--text); cursor: pointer;
+}
+
+.toggle-row input {
+  width: 42px; height: 24px; position: relative; flex: 0 0 auto; margin: 0;
+  border: 1px solid var(--border-strong); border-radius: 999px; appearance: none;
+  background: var(--panel-muted); cursor: pointer; transition: background 0.16s ease, border-color 0.16s ease;
+}
+
+.toggle-row input::after {
+  position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
+  content: ""; border-radius: 50%; background: var(--panel);
+  box-shadow: 0 1px 2px rgba(23, 35, 34, 0.24);
+  transition: transform 0.16s ease;
+}
+
+.toggle-row input:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.toggle-row input:checked::after {
+  transform: translateX(18px);
+}
+
+.toggle-row input:focus-visible {
+  box-shadow: 0 0 0 3px var(--focus);
+}
+
 .span {
   grid-column: 1 / -1;
 }
@@ -468,6 +534,12 @@ button:disabled {
   line-height: 1.35;
 }
 
+.form-meta {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .banner {
   padding: 10px 12px;
   border-radius: 7px;
@@ -492,6 +564,11 @@ button:disabled {
   border-radius: 8px;
   background: var(--panel);
 }
+
+.sso-provider-table-wrap { overflow-x: visible; }
+.sso-provider-table-wrap .actions-cell { width: 108px; }
+.sso-provider-table-wrap .button-row { justify-content: flex-end; }
+.sso-provider-table-wrap + .edit-grid { margin-top: 14px; }
 
 .data-table {
   width: 100%;
@@ -625,6 +702,11 @@ button:disabled {
 .table-placeholder.compact {
   min-height: 76px;
   padding: 12px;
+}
+
+.sso-mapping-form + .table-wrap,
+.sso-mapping-form + .table-placeholder {
+  margin-top: 14px;
 }
 
 .key-form {

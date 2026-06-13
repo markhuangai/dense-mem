@@ -10,15 +10,24 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Settings,
   ShieldCheck,
   Sun,
   Trash2,
   Users,
   X,
 } from "lucide-react";
-import { TeamProfile, ControlApi, CreatedTeamProfile, ProfileRole, Team } from "./api";
+import {
+  ControlApi,
+  CreatedTeamProfile,
+  ProfileRole,
+  Team,
+  TeamProfile,
+} from "./api";
 import { MetricsPanel } from "./control/MetricsPanel";
 import { SecurityPanel } from "./control/SecurityPanel";
+import { SSOPanel } from "./control/SSOPanel";
+import { ConfigPanel } from "./control/ConfigPanel";
 import { displayKeySuffix, formatDate, profilePermissionLabel, profileRoleLabel, readError, shortId } from "./control/utils";
 import { AuthShell, PortalShell, SectionHeading } from "./ui/components";
 
@@ -27,7 +36,7 @@ const THEME_STORAGE_KEY = "denseMem.controlTheme";
 
 type LoadState = "idle" | "loading" | "error";
 type Theme = "light" | "dark";
-type PortalTab = "teams" | "metrics" | "profiles" | "security";
+type PortalTab = "teams" | "metrics" | "profiles" | "security" | "sso" | "config";
 type ProfilePermission = "read" | "read_write";
 
 export function App() {
@@ -206,6 +215,20 @@ function Portal({
           active: activeTab === "security",
           onClick: () => setActiveTab("security"),
         },
+        {
+          id: "sso",
+          label: "SSO",
+          icon: <ShieldCheck size={17} aria-hidden="true" />,
+          active: activeTab === "sso",
+          onClick: () => setActiveTab("sso"),
+        },
+        {
+          id: "config",
+          label: "Config",
+          icon: <Settings size={17} aria-hidden="true" />,
+          active: activeTab === "config",
+          onClick: () => setActiveTab("config"),
+        },
       ]}
       sidebarTitle="Teams"
       sidebarMeta={teams.length}
@@ -245,6 +268,8 @@ function Portal({
       )}
       {activeTab === "metrics" && <MetricsPanel api={api} teams={teams} />}
       {activeTab === "security" && <SecurityPanel api={api} />}
+      {activeTab === "sso" && <SSOPanel api={api} teams={teams} />}
+      {activeTab === "config" && <ConfigPanel api={api} />}
     </PortalShell>
   );
 }
@@ -722,6 +747,12 @@ function TeamProfileCreateForm({
     setRole(defaultRole);
   }, [team.id, defaultRole]);
 
+  useEffect(() => {
+    if (role === "manager") {
+      setPermission("read_write");
+    }
+  }, [role]);
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (name.trim().length < 1) {
@@ -738,7 +769,7 @@ function TeamProfileCreateForm({
     try {
       const created = await api.createTeamProfile(team.id, {
         name: name.trim(),
-        scopes: permission === "read" ? ["read"] : ["read", "write"],
+        scopes: role === "manager" || permission === "read_write" ? ["read", "write"] : ["read"],
         role,
         rate_limit: parsedRateLimit,
       });
@@ -754,15 +785,6 @@ function TeamProfileCreateForm({
     <form className="key-form" onSubmit={submit}>
       <label htmlFor="team-profile-name">Profile name</label>
       <input id="team-profile-name" value={name} onChange={(event) => setName(event.target.value)} />
-      <label htmlFor="team-profile-permission">Permission</label>
-      <select
-        id="team-profile-permission"
-        value={permission}
-        onChange={(event) => setPermission(event.target.value as ProfilePermission)}
-      >
-        <option value="read_write">Read/write</option>
-        <option value="read">Read only</option>
-      </select>
       <label htmlFor="team-profile-role">Role</label>
       <select
         id="team-profile-role"
@@ -772,6 +794,19 @@ function TeamProfileCreateForm({
         <option value="manager">{profileRoleLabel("manager")}</option>
         <option value="member">{profileRoleLabel("member")}</option>
       </select>
+      {role === "member" && (
+        <>
+          <label htmlFor="team-profile-permission">Permission</label>
+          <select
+            id="team-profile-permission"
+            value={permission}
+            onChange={(event) => setPermission(event.target.value as ProfilePermission)}
+          >
+            <option value="read_write">Read/write</option>
+            <option value="read">Read only</option>
+          </select>
+        </>
+      )}
       <label htmlFor="rate-limit">Rate limit</label>
       <input id="rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
       {error && <p className="field-error span" role="alert">{error}</p>}
