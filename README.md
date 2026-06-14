@@ -57,9 +57,13 @@ Knowledge Graphs](https://zenodo.org/records/20519039).
 ## Project Intro
 
 <p align="center">
-  <video src="https://cdn.markhuang.ai/videos/dense-mem/intro.mp4" controls width="100%">
-    <a href="https://cdn.markhuang.ai/videos/dense-mem/intro.mp4">Watch the Dense-Mem intro</a>
-  </video>
+  <a href="https://cdn.markhuang.ai/videos/dense-mem/intro.mp4">
+    <img src="assets/thumbnail.png" alt="Watch the Dense-Mem intro video" width="100%" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://cdn.markhuang.ai/videos/dense-mem/intro.mp4"><strong>Watch the Dense-Mem intro video</strong></a>
 </p>
 
 ## Try the Hosted Demo
