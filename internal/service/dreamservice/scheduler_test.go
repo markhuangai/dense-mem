@@ -221,6 +221,10 @@ func (s *schedulerDreamStub) Get(context.Context, string, string) (*domain.Dream
 	return nil, nil
 }
 
+func (s *schedulerDreamStub) ListRuns(context.Context, string, int) ([]*RunCycleResult, error) {
+	return nil, nil
+}
+
 func (s *schedulerDreamStub) Recall(context.Context, string, string, int) ([]*domain.Dream, error) {
 	return nil, nil
 }

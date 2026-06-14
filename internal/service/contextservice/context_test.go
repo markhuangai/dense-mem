@@ -632,6 +632,10 @@ func (f *fakeDreams) Get(context.Context, string, string) (*domain.Dream, error)
 	return nil, errors.New("not implemented")
 }
 
+func (f *fakeDreams) ListRuns(context.Context, string, int) ([]*dreamservice.RunCycleResult, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (f *fakeDreams) Recall(_ context.Context, _ string, query string, _ int) ([]*domain.Dream, error) {
 	f.recallQuery = query
 	if f.recallErr != nil {

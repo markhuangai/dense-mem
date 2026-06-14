@@ -390,9 +390,9 @@ func TestDreamServiceEffectiveConfigUsesProfileOverrides(t *testing.T) {
 	require.True(t, cfg.Enabled)
 	require.True(t, cfg.TeamEnabled)
 	require.Equal(t, "team", cfg.Source)
-	require.Equal(t, "04:30", cfg.StartTimeLocal)
-	require.Equal(t, "America/New_York", cfg.Timezone)
-	require.Equal(t, 3, cfg.MaxOutputs)
+	require.Equal(t, "03:00", cfg.StartTimeLocal)
+	require.Equal(t, "UTC", cfg.Timezone)
+	require.Equal(t, 5, cfg.MaxOutputs)
 }
 
 func TestDreamServiceNotFoundAndInternalBranches(t *testing.T) {
@@ -548,6 +548,45 @@ func TestDreamServiceReadErrors(t *testing.T) {
 
 	_, _, err = New(Dependencies{}).List(context.Background(), "profile-1", ListOptions{})
 	require.ErrorContains(t, err, "graph is required")
+}
+
+func TestDreamServiceListRuns(t *testing.T) {
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	graph := &cycleRunGraphStub{runRows: []map[string]any{{
+		"r": neo4j.Node{Props: map[string]any{
+			"run_id":             "run-1",
+			"run_date":           "2026-06-14",
+			"started_at":         now,
+			"completed_at":       now.Add(time.Minute),
+			"reflect_ran":        true,
+			"reevaluate_ran":     true,
+			"dream_ran":          true,
+			"stale_facts":        int64(1),
+			"candidate_claims":   int64(2),
+			"disputed_claims":    int64(3),
+			"clarifications":     int64(4),
+			"reevaluated_dreams": int64(5),
+			"created_dreams":     int64(6),
+			"status":             "completed",
+			"error":              "",
+		}},
+	}}}
+	svc := New(Dependencies{Graph: graph})
+
+	runs, err := svc.ListRuns(context.Background(), "profile-1", 500)
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	require.Equal(t, "run-1", runs[0].RunID)
+	require.Equal(t, "profile-1", runs[0].ProfileID)
+	require.True(t, runs[0].ReevaluateRan)
+	require.Equal(t, 6, runs[0].CreatedDreams)
+
+	_, err = New(Dependencies{}).ListRuns(context.Background(), "profile-1", 1)
+	require.ErrorContains(t, err, "graph is required")
+
+	graph.readErr = errors.New("read failed")
+	_, err = svc.ListRuns(context.Background(), "profile-1", 1)
+	require.ErrorContains(t, err, "read failed")
 }
 
 type cycleAppConfigStub struct {

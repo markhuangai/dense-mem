@@ -271,6 +271,34 @@ LIMIT 1`, map[string]any{"dreamId": dreamID})
 	return dreamFromRow(rows[0])
 }
 
+func (s *service) ListRuns(ctx context.Context, profileID string, limit int) ([]*RunCycleResult, error) {
+	if s.deps.Graph == nil {
+		return nil, fmt.Errorf("dream runs: graph is required")
+	}
+	if limit <= 0 {
+		limit = defaultListLimit
+	}
+	if limit > maxListLimit {
+		limit = maxListLimit
+	}
+	_, rows, err := s.deps.Graph.ScopedRead(ctx, profileID, `
+MATCH (r:DreamCycleRun {team_id: $profileId})
+RETURN r
+ORDER BY r.started_at DESC
+LIMIT $limit`, map[string]any{"limit": int64(limit)})
+	if err != nil {
+		return nil, fmt.Errorf("dream runs: %w", err)
+	}
+	runs := make([]*RunCycleResult, 0, len(rows))
+	for _, row := range rows {
+		run := runCycleResultFromRow(row, profileID)
+		if run != nil {
+			runs = append(runs, run)
+		}
+	}
+	return runs, nil
+}
+
 func (s *service) Recall(ctx context.Context, profileID, query string, limit int) ([]*domain.Dream, error) {
 	if s.deps.Graph == nil || strings.TrimSpace(query) == "" {
 		return nil, nil
@@ -698,9 +726,13 @@ LIMIT 1`, nil)
 	if err != nil || len(rows) == 0 {
 		return nil, err
 	}
-	node, ok := rows[0]["r"].(neo4j.Node)
+	return runCycleResultFromRow(rows[0], profileID), nil
+}
+
+func runCycleResultFromRow(row map[string]any, profileID string) *RunCycleResult {
+	node, ok := row["r"].(neo4j.Node)
 	if !ok {
-		return nil, nil
+		return nil
 	}
 	props := node.Props
 	return &RunCycleResult{
@@ -720,7 +752,7 @@ LIMIT 1`, nil)
 		CreatedDreams:     intFromRow(props, "created_dreams"),
 		Status:            stringFromMap(props, "status"),
 		Error:             stringFromMap(props, "error"),
-	}, nil
+	}
 }
 
 func dreamFromRow(row map[string]any) (*domain.Dream, error) {

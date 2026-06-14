@@ -30,6 +30,7 @@ import {
   UserSession,
 } from "./api";
 import { TeamManagementPanel } from "./TeamManagementPanel";
+import { UserDreamsPanel } from "./DreamsPanel";
 import { AuthShell, PortalShell, SectionHeading } from "../ui/components";
 
 const TOKEN_STORAGE_KEY = "denseMem.userApiKey";
@@ -37,7 +38,7 @@ const THEME_STORAGE_KEY = "denseMem.userTheme";
 
 type Theme = "light" | "dark";
 type AuthMode = "none" | "api_key" | "sso";
-type UserTab = "search" | "usage" | "facts" | "claims" | "fragments" | "communities" | "team" | "key";
+type UserTab = "search" | "dreams" | "usage" | "facts" | "claims" | "fragments" | "communities" | "team" | "key";
 type ProfilePermission = "read" | "read_write";
 
 function sessionAuthMode(session: UserSession): AuthMode {
@@ -281,6 +282,7 @@ function UserPortal({
 
   const navItems = [
     { id: "search", label: "Recall", icon: <Search size={17} aria-hidden="true" />, active: activeTab === "search", onClick: () => setActiveTab("search") },
+    { id: "dreams", label: "Dreams", icon: <Moon size={17} aria-hidden="true" />, active: activeTab === "dreams", onClick: () => setActiveTab("dreams") },
     { id: "usage", label: "Usage", icon: <BarChart3 size={17} aria-hidden="true" />, active: activeTab === "usage", onClick: () => setActiveTab("usage") },
     { id: "facts", label: "Facts", icon: <ShieldCheck size={17} aria-hidden="true" />, active: activeTab === "facts", onClick: () => setActiveTab("facts") },
     { id: "claims", label: "Claims", icon: <GitBranch size={17} aria-hidden="true" />, active: activeTab === "claims", onClick: () => setActiveTab("claims") },
@@ -351,6 +353,7 @@ function UserPortal({
       error={error}
     >
       {activeTab === "search" && <SearchPanel api={api} />}
+      {activeTab === "dreams" && <UserDreamsPanel api={api} />}
       {activeTab === "usage" && <UserTelemetryPanel api={api} />}
       {activeTab === "facts" && <FactsPanel api={api} />}
       {activeTab === "claims" && <ClaimsPanel api={api} />}

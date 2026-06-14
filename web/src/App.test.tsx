@@ -290,8 +290,6 @@ describe("App", () => {
     const scheduledToggle = screen.getByLabelText("Scheduled cycle", { selector: "input" });
     expect(scheduledToggle).not.toBeChecked();
     await userEvent.click(scheduledToggle);
-    await userEvent.selectOptions(screen.getByLabelText("Timezone", { selector: "select" }), "America/New_York");
-    await userEvent.click(screen.getByRole("button", { name: /clear max dream outputs override/i }));
     await userEvent.click(screen.getByRole("button", { name: /save dreaming/i }));
 
     const patchCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith(`/teams/${configuredTeam.id}`) && init?.method === "PATCH");
@@ -300,9 +298,9 @@ describe("App", () => {
     expect(body.config.retention).toBe("standard");
     expect(body.config.dreaming).toMatchObject({
       enabled: true,
-      timezone: "America/New_York",
       provider: "manual",
     });
+    expect(body.config.dreaming.timezone).toBeUndefined();
     expect(body.config.dreaming.max_outputs).toBeUndefined();
     expect(await screen.findByText("Saved")).toBeInTheDocument();
   });
@@ -416,7 +414,6 @@ describe("App", () => {
     expect(enabledToggle).toHaveAttribute("type", "checkbox");
     expect(enabledToggle).not.toBeChecked();
     await userEvent.click(enabledToggle);
-    await userEvent.click(screen.getByRole("button", { name: /clear force all teams override/i }));
     await userEvent.selectOptions(screen.getByLabelText("Timezone", { selector: "select" }), "America/New_York");
     await userEvent.click(screen.getByRole("button", { name: /clear timezone override/i }));
     await userEvent.clear(screen.getByLabelText("Cycle start time"));
@@ -437,7 +434,7 @@ describe("App", () => {
     const body = JSON.parse(String(patchCall?.[1]?.body));
     expect(body.items).toEqual(expect.arrayContaining([
       { key: "DREAMING_ENABLED", value: "true" },
-      { key: "DREAMING_FORCE_ENABLED", value: "" },
+      { key: "DREAMING_FORCE_ENABLED", value: "false" },
       { key: "DREAMING_TIMEZONE", value: "" },
       { key: "DREAMING_START_TIME_LOCAL", value: "02:30" },
     ]));

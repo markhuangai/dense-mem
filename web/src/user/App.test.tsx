@@ -207,8 +207,6 @@ describe("UserPortalApp", () => {
     const scheduledToggle = await screen.findByLabelText("Scheduled cycle", { selector: "input" });
     expect(scheduledToggle).not.toBeChecked();
     await userEvent.click(scheduledToggle);
-    await userEvent.selectOptions(screen.getByLabelText("Timezone", { selector: "select" }), "America/New_York");
-    await userEvent.click(screen.getByRole("button", { name: /clear max dream outputs override/i }));
     await userEvent.click(screen.getByRole("button", { name: /save dreaming/i }));
 
     await waitFor(() => {
@@ -222,8 +220,8 @@ describe("UserPortalApp", () => {
     expect(body.config.retention).toBe("long");
     expect(body.config.dreaming).toMatchObject({
       enabled: true,
-      timezone: "America/New_York",
     });
+    expect(body.config.dreaming.timezone).toBeUndefined();
     expect(body.config.dreaming.max_outputs).toBeUndefined();
     expect(await screen.findByText("Saved")).toBeInTheDocument();
   });

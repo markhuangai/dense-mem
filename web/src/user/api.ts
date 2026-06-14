@@ -5,6 +5,7 @@ export type UserTeam = {
   name: string;
   description: string;
   config?: Record<string, unknown> | null;
+  dreaming_effective?: DreamingEffectiveConfig | null;
   created_at: string;
   updated_at: string;
 };
@@ -133,6 +134,66 @@ export type ListResponse<T> = {
   next_cursor?: string;
   has_more?: boolean;
   total?: number;
+};
+
+export type DreamingRuntimeConfig = {
+  enabled: boolean;
+  force_enabled: boolean;
+  start_time_local: string;
+  timezone: string;
+  reflect_enabled: boolean;
+  reevaluate_enabled: boolean;
+  dream_enabled: boolean;
+  max_outputs: number;
+};
+
+export type DreamingEffectiveConfig = DreamingRuntimeConfig & {
+  team_enabled: boolean;
+  source: "global" | "team" | "global_force" | string;
+};
+
+export type Dream = {
+  dream_id: string;
+  team_id: string;
+  hypothesis: string;
+  what_if: string;
+  possible_outcome: string;
+  rationale: string;
+  likelihood: number;
+  confidence: number;
+  status: "proposed" | "reinforced" | "stale" | "rejected" | "promoted" | string;
+  cycle: string;
+  cycle_run_id?: string;
+  generator_model?: string;
+  source_refs?: Array<{ type: string; id: string }>;
+  invalidated_reason?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DreamRun = {
+  run_id: string;
+  team_id: string;
+  run_date: string;
+  started_at: string;
+  completed_at: string;
+  reflect_ran: boolean;
+  reevaluate_ran: boolean;
+  dream_ran: boolean;
+  stale_facts: number;
+  candidate_claims: number;
+  disputed_claims: number;
+  clarifications: number;
+  reevaluated_dreams: number;
+  created_dreams: number;
+  status: string;
+  error?: string;
+};
+
+export type DreamStatus = {
+  effective_config: DreamingEffectiveConfig;
+  latest_run?: DreamRun | null;
+  pending_count: number;
 };
 
 export type RecallHit = {
@@ -273,6 +334,28 @@ export class UserApi {
 
   listCommunities(limit = 20): Promise<ListResponse<Community>> {
     return this.request<ListResponse<Community>>(`/api/v1/communities?limit=${limit}`);
+  }
+
+  async dreamingStatus(): Promise<DreamStatus> {
+    const payload = await this.request<Envelope<DreamStatus>>("/api/v1/dreaming/status");
+    return payload.data;
+  }
+
+  async listDreamingRuns(limit = 20): Promise<DreamRun[]> {
+    const payload = await this.request<Envelope<DreamRun[]>>(`/api/v1/dreaming/runs?limit=${limit}`);
+    return payload.data;
+  }
+
+  async listDreams(status = "", limit = 20, cursor = ""): Promise<ListResponse<Dream>> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (status) {
+      params.set("status", status);
+    }
+    if (cursor) {
+      params.set("cursor", cursor);
+    }
+    const payload = await this.request<Envelope<ListResponse<Dream>>>(`/api/v1/dreams?${params.toString()}`);
+    return payload.data;
   }
 
   private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {

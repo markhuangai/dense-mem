@@ -2,13 +2,41 @@ package observability
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
+	"runtime"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type recordingLogSink struct {
+	records []LogRecord
+}
+
+func (s *recordingLogSink) WriteLog(_ context.Context, record LogRecord) error {
+	s.records = append(s.records, record)
+	return nil
+}
+
+type failingLogSink struct {
+	err error
+}
+
+func (s failingLogSink) WriteLog(context.Context, LogRecord) error {
+	return s.err
+}
+
+type testLogValuer struct{}
+
+func (testLogValuer) LogValue() slog.Value {
+	return slog.StringValue("resolved")
+}
 
 func TestLoggerNeverEmitsSecrets(t *testing.T) {
 	var buf bytes.Buffer
@@ -258,6 +286,121 @@ func TestLoggerWith(t *testing.T) {
 		assert.Contains(t, output, "safe")
 		assert.Contains(t, output, "value")
 	})
+}
+
+func TestOperationLogHandlerBuildsSanitizedRecords(t *testing.T) {
+	sink := &recordingLogSink{}
+	handler := newOperationLogHandler(slog.LevelDebug, sink).WithAttrs([]slog.Attr{
+		slog.String("team_id", "team-1"),
+		slog.String("api_key", "secret-key"),
+	})
+	pc, _, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	record := slog.NewRecord(time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC), slog.LevelError, "request failed", pc)
+	record.AddAttrs(
+		slog.String("profile_id", "profile-1"),
+		slog.String("request_id", "request-1"),
+		slog.Any("error", errors.New("boom")),
+		slog.Group("http",
+			slog.String("path", "/control/api/logs"),
+			slog.String("authorization", "Bearer secret"),
+		),
+		slog.Any("metadata", map[string]string{
+			"safe":  "visible",
+			"token": "hidden",
+		}),
+		slog.Any("items", []any{map[string]any{"password": "hidden", "name": "visible"}}),
+	)
+
+	require.NoError(t, handler.Handle(context.Background(), record))
+	require.Len(t, sink.records, 1)
+	got := sink.records[0]
+	assert.Equal(t, "ERROR", got.Severity)
+	assert.Equal(t, 40, got.SeverityRank)
+	assert.Equal(t, "request failed", got.Message)
+	assert.Equal(t, "team-1", got.TeamID)
+	assert.Equal(t, "profile-1", got.ProfileID)
+	assert.Equal(t, "request-1", got.CorrelationID)
+	assert.Equal(t, "boom", got.Error)
+	assert.NotEmpty(t, got.Source)
+	assert.NotContains(t, got.Attrs, "api_key")
+	assert.Equal(t, map[string]any{"path": "/control/api/logs"}, got.Attrs["http"])
+	assert.Equal(t, map[string]any{"safe": "visible"}, got.Attrs["metadata"])
+	items, ok := got.Attrs["items"].([]any)
+	require.True(t, ok)
+	assert.Equal(t, map[string]any{"name": "visible"}, items[0])
+}
+
+func TestOperationLogHandlerReturnsSinkErrors(t *testing.T) {
+	writeErr := errors.New("write failed")
+	handler := newOperationLogHandler(slog.LevelDebug, failingLogSink{err: writeErr})
+
+	err := handler.Handle(context.Background(), slog.NewRecord(time.Now(), slog.LevelInfo, "persist me", 0))
+
+	require.ErrorIs(t, err, writeErr)
+}
+
+func TestNewWithSinksAndTeeHandler(t *testing.T) {
+	sink := &recordingLogSink{}
+	handler := newTeeHandler(
+		slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelWarn}),
+		newOperationLogHandler(slog.LevelDebug, sink),
+	)
+	logger := slog.New(handler)
+
+	assert.True(t, handler.Enabled(context.Background(), slog.LevelError))
+	assert.NoError(t, handler.WithGroup("control").Handle(context.Background(), slog.NewRecord(time.Now(), slog.LevelInfo, "grouped", 0)))
+	assert.False(t, newTeeHandler(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError})).Enabled(context.Background(), slog.LevelDebug))
+	withAttrs := handler.WithAttrs([]slog.Attr{slog.String("team_id", "team-3")})
+	assert.NoError(t, withAttrs.Handle(context.Background(), slog.NewRecord(time.Now(), slog.LevelInfo, "with attrs", 0)))
+	logger.Debug("debug message", slog.String("correlation_id", "corr-1"))
+
+	require.Len(t, sink.records, 3)
+	assert.Equal(t, "INFO", sink.records[0].Severity)
+	assert.Equal(t, "team-3", sink.records[1].TeamID)
+	assert.Equal(t, "DEBUG", sink.records[2].Severity)
+	assert.Equal(t, "corr-1", sink.records[2].CorrelationID)
+
+	withSink := NewWithSinks(slog.LevelInfo, sink)
+	assert.NotNil(t, withSink.Slog())
+	withSink.Warn("warning", String("team_id", "team-2"))
+	require.Len(t, sink.records, 4)
+	assert.Equal(t, "WARN", sink.records[3].Severity)
+	assert.Equal(t, "team-2", sink.records[3].TeamID)
+
+	var nilLogger *Logger
+	assert.NotNil(t, nilLogger.Slog())
+}
+
+func TestLogSeverityHelpers(t *testing.T) {
+	tests := []struct {
+		level slog.Level
+		name  string
+		rank  int
+	}{
+		{level: slog.LevelDebug, name: "DEBUG", rank: 10},
+		{level: slog.LevelInfo, name: "INFO", rank: 20},
+		{level: slog.LevelWarn, name: "WARN", rank: 30},
+		{level: slog.LevelError, name: "ERROR", rank: 40},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.name, severityName(tt.level))
+		assert.Equal(t, tt.rank, severityRank(tt.level))
+	}
+	assert.Empty(t, sourceFromPC(0))
+	assert.Empty(t, stringAttr(map[string]any{"team_id": 12}, "team_id"))
+	assert.Empty(t, firstStringAttr(map[string]any{"a": 1}, "a", "b"))
+
+	now := time.Date(2026, 6, 14, 12, 0, 0, 123, time.UTC)
+	assert.Equal(t, int64(12), slogValueAny(slog.Int64Value(12)))
+	assert.Equal(t, uint64(12), slogValueAny(slog.Uint64Value(12)))
+	assert.Equal(t, 1.5, slogValueAny(slog.Float64Value(1.5)))
+	assert.Equal(t, true, slogValueAny(slog.BoolValue(true)))
+	assert.Equal(t, "2s", slogValueAny(slog.DurationValue(2*time.Second)))
+	assert.Equal(t, now.Format(time.RFC3339Nano), slogValueAny(slog.TimeValue(now)))
+	assert.Equal(t, "resolved", slogValueAny(slog.AnyValue(testLogValuer{})))
+	assert.Equal(t, "boom", slogValueAny(slog.AnyValue(errors.New("boom"))))
+	assert.Equal(t, []string{"a"}, slogValueAny(slog.AnyValue([]string{"a"})))
 }
 
 func TestLogProviderInterface(t *testing.T) {

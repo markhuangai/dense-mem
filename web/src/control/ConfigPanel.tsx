@@ -1,10 +1,10 @@
 import { FormEvent, useEffect, useState } from "react";
-import { Check, Moon, RefreshCw, Settings, X } from "lucide-react";
-import { ControlApi, DreamingConfig, DreamingConfigItem, SSOConfig, SSOConfigItem } from "../api";
+import { Check, ListFilter, Moon, RefreshCw, Settings, X } from "lucide-react";
+import { ControlApi, DreamingConfig, DreamingConfigItem, OperationLogConfig, OperationLogConfigItem, SSOConfig, SSOConfigItem } from "../api";
 import { SectionHeading } from "../ui/components";
 import { formatDate, readError } from "./utils";
 
-type ConfigTab = "sso" | "dreaming";
+type ConfigTab = "sso" | "dreaming" | "operation-logs";
 
 const CONFIG_LABELS: Record<string, string> = {
   SSO_PUBLIC_BASE_URL: "Public base URL",
@@ -21,6 +21,7 @@ const CONFIG_LABELS: Record<string, string> = {
   DREAMING_REEVALUATE_ENABLED: "Re-evaluate phase",
   DREAMING_DREAM_ENABLED: "Dream phase",
   DREAMING_MAX_OUTPUTS: "Max dream outputs",
+  OPERATION_LOG_RETENTION_DAYS: "Retention days",
 };
 
 const CONFIG_PLACEHOLDERS: Record<string, string> = {
@@ -31,6 +32,7 @@ const CONFIG_PLACEHOLDERS: Record<string, string> = {
   DREAMING_START_TIME_LOCAL: "03:00",
   DREAMING_TIMEZONE: "UTC",
   DREAMING_MAX_OUTPUTS: "5",
+  OPERATION_LOG_RETENTION_DAYS: "30",
 };
 
 const FALLBACK_TIMEZONES = [
@@ -83,10 +85,21 @@ export function ConfigPanel({ api }: { api: ControlApi }) {
             <Moon size={16} aria-hidden="true" />
             <span>Dreaming</span>
           </button>
+          <button
+            className={activeTab === "operation-logs" ? "tab-button active" : "tab-button"}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "operation-logs"}
+            onClick={() => setActiveTab("operation-logs")}
+          >
+            <ListFilter size={16} aria-hidden="true" />
+            <span>Logs</span>
+          </button>
         </div>
       </section>
       {activeTab === "sso" && <SSOConfigPanel api={api} />}
       {activeTab === "dreaming" && <DreamingConfigPanel api={api} />}
+      {activeTab === "operation-logs" && <OperationLogConfigPanel api={api} />}
     </>
   );
 }
@@ -259,12 +272,96 @@ function DreamingConfigPanel({ api }: { api: ControlApi }) {
   );
 }
 
+function OperationLogConfigPanel({ api }: { api: ControlApi }) {
+  const [config, setConfig] = useState<OperationLogConfig | null>(null);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function loadConfig() {
+    setLoading(true);
+    setError("");
+    setMessage("");
+    try {
+      const next = await api.getOperationLogConfig();
+      setConfig(next);
+      setDraft(Object.fromEntries(next.items.map((item) => [item.key, item.value])));
+    } catch (err) {
+      setError(readError(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadConfig();
+  }, []);
+
+  async function saveConfig(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLoading(true);
+    setError("");
+    setMessage("");
+    try {
+      const next = await api.updateOperationLogConfig({
+        items: Object.entries(draft).map(([key, value]) => ({ key, value })),
+      });
+      setConfig(next);
+      setDraft(Object.fromEntries(next.items.map((item) => [item.key, item.value])));
+      setMessage("Saved");
+    } catch (err) {
+      setError(readError(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <section className="surface">
+      <SectionHeading
+        title="Operation Logs"
+        actions={(
+          <div className="button-row">
+            {config?.update_time && <span className="form-meta">{formatDate(config.update_time)}</span>}
+            <button className="icon-button" type="button" aria-label="Refresh operation log config" onClick={() => void loadConfig()}>
+              <RefreshCw size={16} aria-hidden="true" />
+            </button>
+          </div>
+        )}
+      />
+      {error && <div className="banner error" role="alert">{error}</div>}
+      {message && <div className="banner neutral">{message}</div>}
+      {loading && !config ? (
+        <div className="table-placeholder compact">Loading</div>
+      ) : (
+        <form className="edit-grid" onSubmit={saveConfig}>
+          {(config?.items ?? []).map((item) => (
+            <ConfigField
+              key={item.key}
+              item={item}
+              value={draft[item.key] ?? ""}
+              onChange={(value) => setDraft((current) => ({ ...current, [item.key]: value }))}
+            />
+          ))}
+          <div className="button-row span">
+            <button className="primary-button" type="submit" disabled={loading || !config}>
+              <Check size={16} aria-hidden="true" />
+              Save config
+            </button>
+          </div>
+        </form>
+      )}
+    </section>
+  );
+}
+
 function ConfigField({
   item,
   value,
   onChange,
 }: {
-  item: SSOConfigItem | DreamingConfigItem;
+  item: SSOConfigItem | DreamingConfigItem | OperationLogConfigItem;
   value: string;
   onChange: (value: string) => void;
 }) {
@@ -298,11 +395,6 @@ function ConfigField({
               onChange={(event) => onChange(event.target.checked ? "true" : "false")}
             />
           </label>
-          {value !== "" && (
-            <button className="icon-button" type="button" aria-label={`Clear ${label} override`} title={`Clear ${label} override`} onClick={() => onChange("")}>
-              <X size={16} aria-hidden="true" />
-            </button>
-          )}
         </div>
       </>
     );
@@ -329,7 +421,7 @@ function ConfigField({
     );
   }
 
-  const numeric = item.key.endsWith("_SECONDS") || item.key === "DREAMING_MAX_OUTPUTS";
+  const numeric = item.key.endsWith("_SECONDS") || item.key === "DREAMING_MAX_OUTPUTS" || item.key === "OPERATION_LOG_RETENTION_DAYS";
   const time = item.key === "DREAMING_START_TIME_LOCAL";
   return (
     <>
@@ -338,7 +430,7 @@ function ConfigField({
         id={item.key}
         type={time ? "time" : numeric ? "number" : "text"}
         min={numeric ? 1 : undefined}
-        max={item.key === "DREAMING_MAX_OUTPUTS" ? 50 : undefined}
+        max={item.key === "DREAMING_MAX_OUTPUTS" ? 50 : item.key === "OPERATION_LOG_RETENTION_DAYS" ? 365 : undefined}
         placeholder={CONFIG_PLACEHOLDERS[item.key] ?? ""}
         value={value}
         onChange={(event) => onChange(event.target.value)}
