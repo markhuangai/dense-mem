@@ -129,9 +129,9 @@ for (const line of fs.readFileSync(path, "utf8").split(/\r?\n/)) {
 }
 if (resolved !== undefined) {
   process.stdout.write(resolved);
-  process.exit(0);
+} else {
+  process.exit(1);
 }
-process.exit(1);
 NODE
 }
 
