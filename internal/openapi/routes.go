@@ -101,7 +101,7 @@ func DefaultRoutes() []RouteDescriptor {
 
 		// --- Advanced tool routes (full variant only) ---
 		{Method: "POST", Path: "/api/v1/tools/graph_query", OperationID: "graphQueryTool", ToolName: "graph_query", Description: "Advanced: read-only Cypher query."},
-		{Method: "POST", Path: "/api/v1/tools/keyword_search", OperationID: "keywordSearchTool", ToolName: "keyword_search", Description: "Advanced: BM25 keyword search."},
+		{Method: "POST", Path: "/api/v1/tools/keyword_search", OperationID: "keywordSearchTool", ToolName: "keyword_search", Description: "Advanced: plain-text BM25 keyword search."},
 		{Method: "POST", Path: "/api/v1/tools/semantic_search", OperationID: "semanticSearchTool", ToolName: "semantic_search", Description: "Advanced: kNN vector search."},
 
 		// --- MCP Streamable HTTP (full runtime variant) ---

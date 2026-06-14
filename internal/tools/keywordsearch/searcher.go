@@ -8,6 +8,7 @@ import (
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 
+	"github.com/markhuangai/dense-mem/internal/fulltextquery"
 	neo4jstore "github.com/markhuangai/dense-mem/internal/storage/neo4j"
 )
 
@@ -33,6 +34,11 @@ func NewFragmentSearcher(reader ScopedReaderInterface) FragmentSearcherInterface
 // SearchContent performs full-text search on SourceFragment content.
 // Results are filtered by team_id and retract status in the Cypher query.
 func (s *neo4jFragmentSearcher) SearchContent(ctx context.Context, profileID string, query string, labels []string, limit int) ([]FragmentSearchResult, error) {
+	searchQuery := fulltextquery.PlainText(query)
+	if searchQuery == "" {
+		return []FragmentSearchResult{}, nil
+	}
+
 	// Adapt FragmentActiveFilter (which uses the sf. node alias) to the f. alias used here.
 	// This excludes retracted SourceFragment nodes; legacy nodes without a status property
 	// are treated as active per the coalesce default (AC-44).
@@ -57,7 +63,7 @@ LIMIT $limit`
 
 	// Build params
 	params := map[string]any{
-		"searchQuery": query,
+		"searchQuery": searchQuery,
 		"limit":       limit,
 	}
 
@@ -104,6 +110,11 @@ func NewFactSearcher(reader ScopedReaderInterface) FactSearcherInterface {
 // SearchPredicate performs full-text search on Fact predicates.
 // Results are filtered by team_id in the Cypher query.
 func (s *neo4jFactSearcher) SearchPredicate(ctx context.Context, profileID string, query string, labels []string, limit int) ([]FactSearchResult, error) {
+	searchQuery := fulltextquery.PlainText(query)
+	if searchQuery == "" {
+		return []FactSearchResult{}, nil
+	}
+
 	// Build the Cypher query with full-text index search
 	// Uses db.index.fulltext.queryNodes for predicate search — fact_predicate_idx is a node index on Fact.predicate
 	cypherQuery := `
@@ -116,7 +127,7 @@ func (s *neo4jFactSearcher) SearchPredicate(ctx context.Context, profileID strin
 
 	// Build params
 	params := map[string]any{
-		"searchQuery": query,
+		"searchQuery": searchQuery,
 		"limit":       limit,
 	}
 

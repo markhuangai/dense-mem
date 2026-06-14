@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/fulltextquery"
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	neo4jstorage "github.com/markhuangai/dense-mem/internal/storage/neo4j"
@@ -274,6 +275,10 @@ func (s *service) Recall(ctx context.Context, profileID, query string, limit int
 	if s.deps.Graph == nil || strings.TrimSpace(query) == "" {
 		return nil, nil
 	}
+	searchQuery := fulltextquery.PlainText(query)
+	if searchQuery == "" {
+		return nil, nil
+	}
 	if limit <= 0 {
 		limit = 5
 	}
@@ -287,7 +292,7 @@ WHERE d.team_id = $profileId
 RETURN d, score
 ORDER BY score DESC
 LIMIT $limit`, map[string]any{
-		"searchQuery": query,
+		"searchQuery": searchQuery,
 		"limit":       int64(limit),
 	})
 	if err != nil {
