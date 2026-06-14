@@ -20,7 +20,6 @@ const CONFIG_LABELS: Record<string, string> = {
   DREAMING_REFLECT_ENABLED: "Reflect phase",
   DREAMING_REEVALUATE_ENABLED: "Re-evaluate phase",
   DREAMING_DREAM_ENABLED: "Dream phase",
-  DREAMING_MODEL: "Dream model",
   DREAMING_MAX_OUTPUTS: "Max dream outputs",
 };
 
@@ -31,7 +30,6 @@ const CONFIG_PLACEHOLDERS: Record<string, string> = {
   SSO_HTTP_TIMEOUT_SECONDS: "10",
   DREAMING_START_TIME_LOCAL: "03:00",
   DREAMING_TIMEZONE: "UTC",
-  DREAMING_MODEL: "dense-mem.heuristic-dream-v1",
   DREAMING_MAX_OUTPUTS: "5",
 };
 

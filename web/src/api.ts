@@ -218,7 +218,6 @@ export type DreamingRuntimeConfig = {
   reflect_enabled: boolean;
   reevaluate_enabled: boolean;
   dream_enabled: boolean;
-  model: string;
   max_outputs: number;
 };
 

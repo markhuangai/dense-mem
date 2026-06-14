@@ -136,7 +136,6 @@ func TestRunCycleRunsEnabledPhasesAndWritesDreams(t *testing.T) {
 			ReevaluateEnabled: true,
 			DreamEnabled:      true,
 			MaxOutputs:        2,
-			Model:             "configured-model",
 		}},
 		Now: func() time.Time { return now },
 	})
@@ -157,7 +156,7 @@ func TestRunCycleRunsEnabledPhasesAndWritesDreams(t *testing.T) {
 	require.Equal(t, 1, memory.reflects)
 	require.Equal(t, 3, graph.writes)
 	require.Equal(t, 3, generator.lastReq.MaxOutputs)
-	require.Equal(t, "configured-model", generator.lastReq.GeneratorModel)
+	require.Equal(t, "stub-model", generator.lastReq.GeneratorModel)
 	require.Len(t, generator.lastReq.Inputs, 2)
 	require.True(t, hasDreamWriteQuery(graph.writeQueries, "MERGE (d:Dream"))
 	require.True(t, hasDreamWriteQuery(graph.writeQueries, "DREAMS_FROM"))
@@ -374,7 +373,6 @@ func TestDreamServiceEffectiveConfigUsesProfileOverrides(t *testing.T) {
 					"enabled":          "true",
 					"start_time_local": "04:30",
 					"timezone":         "America/New_York",
-					"model":            "dream-model",
 					"max_outputs":      "3",
 				},
 			},
@@ -389,7 +387,6 @@ func TestDreamServiceEffectiveConfigUsesProfileOverrides(t *testing.T) {
 	require.Equal(t, "team", cfg.Source)
 	require.Equal(t, "04:30", cfg.StartTimeLocal)
 	require.Equal(t, "America/New_York", cfg.Timezone)
-	require.Equal(t, "dream-model", cfg.Model)
 	require.Equal(t, 3, cfg.MaxOutputs)
 }
 

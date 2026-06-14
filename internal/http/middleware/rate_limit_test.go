@@ -76,10 +76,6 @@ func (c *testRateLimitConfig) GetAIVerifierAPIKey() string       { return "" }
 func (c *testRateLimitConfig) GetAIVerifierModel() string        { return "gpt-4o-mini" }
 func (c *testRateLimitConfig) GetAIVerifierTimeoutSeconds() int  { return 60 }
 func (c *testRateLimitConfig) GetAIVerifierMaxConcurrency() int  { return 5 }
-func (c *testRateLimitConfig) GetAIDreamingAPIURL() string       { return "" }
-func (c *testRateLimitConfig) GetAIDreamingAPIKey() string       { return "" }
-func (c *testRateLimitConfig) GetAIDreamingModel() string        { return "gpt-4o-mini" }
-func (c *testRateLimitConfig) GetAIDreamingTimeoutSeconds() int  { return 60 }
 func (c *testRateLimitConfig) GetClaimWriteRateLimit() int {
 	if c.claimWriteRateLimit != 0 {
 		return c.claimWriteRateLimit
@@ -187,10 +183,6 @@ func (c *redisRateLimitConfig) GetAIVerifierAPIKey() string            { return 
 func (c *redisRateLimitConfig) GetAIVerifierModel() string             { return "gpt-4o-mini" }
 func (c *redisRateLimitConfig) GetAIVerifierTimeoutSeconds() int       { return 60 }
 func (c *redisRateLimitConfig) GetAIVerifierMaxConcurrency() int       { return 5 }
-func (c *redisRateLimitConfig) GetAIDreamingAPIURL() string            { return "" }
-func (c *redisRateLimitConfig) GetAIDreamingAPIKey() string            { return "" }
-func (c *redisRateLimitConfig) GetAIDreamingModel() string             { return "gpt-4o-mini" }
-func (c *redisRateLimitConfig) GetAIDreamingTimeoutSeconds() int       { return 60 }
 func (c *redisRateLimitConfig) GetClaimWriteRateLimit() int            { return 60 }
 func (c *redisRateLimitConfig) GetClaimReadRateLimit() int             { return 300 }
 func (c *redisRateLimitConfig) GetRecallValidatedClaimWeight() float64 { return 0.5 }

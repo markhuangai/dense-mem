@@ -111,7 +111,6 @@ const dreamingConfigSnapshot: DreamingConfig = {
     { key: "DREAMING_REFLECT_ENABLED", value: "true", effective_value: "true", updated_at: "2026-06-11T03:00:00Z" },
     { key: "DREAMING_REEVALUATE_ENABLED", value: "true", effective_value: "true", updated_at: "2026-06-11T03:00:00Z" },
     { key: "DREAMING_DREAM_ENABLED", value: "true", effective_value: "true", updated_at: "2026-06-11T03:00:00Z" },
-    { key: "DREAMING_MODEL", value: "", effective_value: "", updated_at: "2026-06-11T03:00:00Z" },
     { key: "DREAMING_MAX_OUTPUTS", value: "5", effective_value: "5", updated_at: "2026-06-11T03:00:00Z" },
   ],
   effective: {
@@ -122,7 +121,6 @@ const dreamingConfigSnapshot: DreamingConfig = {
     reflect_enabled: true,
     reevaluate_enabled: true,
     dream_enabled: true,
-    model: "",
     max_outputs: 5,
   },
 };

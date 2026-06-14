@@ -43,9 +43,6 @@ func EffectiveDreamingConfig(global domain.DreamingRuntimeConfig, teamConfig map
 		if v, ok := stringFromAny(dreaming["timezone"]); ok && strings.TrimSpace(v) != "" {
 			cfg.Timezone = strings.TrimSpace(v)
 		}
-		if v, ok := stringFromAny(dreaming["model"]); ok {
-			cfg.Model = strings.TrimSpace(v)
-		}
 		if v, ok := intFromAny(dreaming["max_outputs"]); ok {
 			cfg.MaxOutputs = v
 		}

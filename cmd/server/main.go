@@ -383,7 +383,7 @@ func main() {
 		Profiles:       profileService,
 		Locker:         dreamservice.NewPostgresCycleLocker(),
 		Postgres:       pgDB.GetDB(),
-		Generator:      dreamservice.NewHeuristicGenerator(cfg.GetAIDreamingModel()),
+		Generator:      dreamservice.NewHeuristicGenerator(cfg.GetAIVerifierModel()),
 	})
 	contextSvc := contextservice.New(contextservice.Dependencies{
 		Reader:      profileScopeEnforcer,

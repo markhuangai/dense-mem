@@ -19,7 +19,6 @@ const (
 	AppConfigDreamingReflectEnabled    = "DREAMING_REFLECT_ENABLED"
 	AppConfigDreamingReevaluateEnabled = "DREAMING_REEVALUATE_ENABLED"
 	AppConfigDreamingDreamEnabled      = "DREAMING_DREAM_ENABLED"
-	AppConfigDreamingModel             = "DREAMING_MODEL"
 	AppConfigDreamingMaxOutputs        = "DREAMING_MAX_OUTPUTS"
 )
 

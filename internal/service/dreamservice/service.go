@@ -167,12 +167,9 @@ func (s *service) generateDreams(ctx context.Context, profileID, runID string, c
 	}
 	generator := s.deps.Generator
 	if generator == nil {
-		generator = NewHeuristicGenerator(cfg.Model)
+		generator = NewHeuristicGenerator("")
 	}
 	model := generator.Model()
-	if cfg.Model != "" {
-		model = cfg.Model
-	}
 	generated, err := generator.Generate(ctx, profileID, GenerateRequest{
 		MaxOutputs:     cfg.MaxOutputs,
 		Reflection:     reflection,

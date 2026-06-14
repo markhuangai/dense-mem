@@ -81,6 +81,5 @@ type DreamingRuntimeConfig struct {
 	ReflectEnabled    bool   `json:"reflect_enabled"`
 	ReevaluateEnabled bool   `json:"reevaluate_enabled"`
 	DreamEnabled      bool   `json:"dream_enabled"`
-	Model             string `json:"model"`
 	MaxOutputs        int    `json:"max_outputs"`
 }

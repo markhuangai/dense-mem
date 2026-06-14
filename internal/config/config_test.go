@@ -453,10 +453,6 @@ func TestConfigProviderInterface(t *testing.T) {
 	_ = provider.GetAIVerifierModel()
 	_ = provider.GetAIVerifierTimeoutSeconds()
 	_ = provider.GetAIVerifierMaxConcurrency()
-	_ = provider.GetAIDreamingAPIURL()
-	_ = provider.GetAIDreamingAPIKey()
-	_ = provider.GetAIDreamingModel()
-	_ = provider.GetAIDreamingTimeoutSeconds()
 	_ = provider.GetClaimWriteRateLimit()
 	_ = provider.GetClaimReadRateLimit()
 	_ = provider.GetRecallValidatedClaimWeight()
@@ -489,35 +485,6 @@ func TestConfigGetterFallbacksAndParsers(t *testing.T) {
 	}
 	if got := cfg.GetAIVerifierTimeoutSeconds(); got != 60 {
 		t.Fatalf("GetAIVerifierTimeoutSeconds() fallback = %d, want 60", got)
-	}
-	if got := cfg.GetAIDreamingAPIURL(); got != "https://shared.example/v1" {
-		t.Fatalf("GetAIDreamingAPIURL() fallback = %q, want shared URL", got)
-	}
-	if got := cfg.GetAIDreamingAPIKey(); got != "shared-key" {
-		t.Fatalf("GetAIDreamingAPIKey() fallback = %q, want shared key", got)
-	}
-	if got := cfg.GetAIDreamingModel(); got != "verifier-model" {
-		t.Fatalf("GetAIDreamingModel() fallback = %q, want verifier model", got)
-	}
-	if got := cfg.GetAIDreamingTimeoutSeconds(); got != 60 {
-		t.Fatalf("GetAIDreamingTimeoutSeconds() fallback = %d, want 60", got)
-	}
-
-	cfg.AIDreamingAPIURL = "https://dream.example/v1"
-	cfg.AIDreamingAPIKey = "dream-key"
-	cfg.AIDreamingModel = "dream-model"
-	cfg.AIDreamingTimeoutSeconds = 12
-	if got := cfg.GetAIDreamingAPIURL(); got != "https://dream.example/v1" {
-		t.Fatalf("GetAIDreamingAPIURL() override = %q, want dream URL", got)
-	}
-	if got := cfg.GetAIDreamingAPIKey(); got != "dream-key" {
-		t.Fatalf("GetAIDreamingAPIKey() override = %q, want dream key", got)
-	}
-	if got := cfg.GetAIDreamingModel(); got != "dream-model" {
-		t.Fatalf("GetAIDreamingModel() override = %q, want dream model", got)
-	}
-	if got := cfg.GetAIDreamingTimeoutSeconds(); got != 12 {
-		t.Fatalf("GetAIDreamingTimeoutSeconds() override = %d, want 12", got)
 	}
 
 	clearEnv()

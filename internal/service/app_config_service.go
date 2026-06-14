@@ -284,7 +284,6 @@ func dreamingRuntimeConfigFromEntries(entries map[string]domain.AppConfigEntry) 
 	maxOutputs, maxOutputsEffective := dreamingConfigInt(normalized[domain.AppConfigDreamingMaxOutputs], 5)
 	startTime := dreamingConfigString(normalized[domain.AppConfigDreamingStartTimeLocal], "03:00")
 	timezone := dreamingConfigString(normalized[domain.AppConfigDreamingTimezone], "UTC")
-	model := strings.TrimSpace(normalized[domain.AppConfigDreamingModel])
 
 	runtime := domain.DreamingRuntimeConfig{
 		Enabled:           enabled,
@@ -294,7 +293,6 @@ func dreamingRuntimeConfigFromEntries(entries map[string]domain.AppConfigEntry) 
 		ReflectEnabled:    reflectEnabled,
 		ReevaluateEnabled: reevaluateEnabled,
 		DreamEnabled:      dreamEnabled,
-		Model:             model,
 		MaxOutputs:        maxOutputs,
 	}
 	updateTime := entries[domain.AppConfigUpdateTimeKey].Value
@@ -306,7 +304,6 @@ func dreamingRuntimeConfigFromEntries(entries map[string]domain.AppConfigEntry) 
 		dreamingConfigItem(entries, domain.AppConfigDreamingReflectEnabled, reflectEffective),
 		dreamingConfigItem(entries, domain.AppConfigDreamingReevaluateEnabled, reevaluateEffective),
 		dreamingConfigItem(entries, domain.AppConfigDreamingDreamEnabled, dreamEffective),
-		dreamingConfigItem(entries, domain.AppConfigDreamingModel, model),
 		dreamingConfigItem(entries, domain.AppConfigDreamingMaxOutputs, maxOutputsEffective),
 	}
 	return domain.DreamingConfigSettings{UpdateTime: updateTime, Items: items, Effective: runtime}, nil
@@ -350,10 +347,6 @@ func normalizeDreamingConfigValues(values map[string]string) (map[string]string,
 			}
 			if _, err := time.LoadLocation(trimmed); err != nil {
 				return nil, fmt.Errorf("%w: DREAMING_TIMEZONE is not a valid IANA timezone", ErrInvalidAppConfig)
-			}
-		case domain.AppConfigDreamingModel:
-			if len(trimmed) > 128 {
-				return nil, fmt.Errorf("%w: DREAMING_MODEL exceeds maximum length of 128", ErrInvalidAppConfig)
 			}
 		case domain.AppConfigDreamingMaxOutputs:
 			if trimmed == "" {
@@ -439,7 +432,6 @@ func editableDreamingConfigKeys() []string {
 		domain.AppConfigDreamingReflectEnabled,
 		domain.AppConfigDreamingReevaluateEnabled,
 		domain.AppConfigDreamingDreamEnabled,
-		domain.AppConfigDreamingModel,
 		domain.AppConfigDreamingMaxOutputs,
 	}
 }

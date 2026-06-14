@@ -96,7 +96,6 @@ describe("ControlApi", () => {
           reflect_enabled: true,
           reevaluate_enabled: true,
           dream_enabled: true,
-          model: "",
           max_outputs: 5,
         },
       },
