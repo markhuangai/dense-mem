@@ -12,6 +12,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
+	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
@@ -53,6 +54,7 @@ type Dependencies struct {
 	Context         contextservice.Service
 	Memory          memoryservice.Service
 	SkillPack       skillpackservice.Service
+	Dreams          dreamservice.Service
 }
 
 // ErrToolUnavailable is the defensive fallback returned when a tool dependency
@@ -86,6 +88,11 @@ func defaultTools(deps Dependencies) []Tool {
 		importMemoriesTool(deps),
 		reflectMemoriesTool(deps),
 		confirmMemoryTool(deps),
+		dreamingStatusTool(deps),
+		runDreamingCycleTool(deps),
+		listDreamsTool(deps),
+		getDreamTool(deps),
+		resolveDreamFeedbackTool(deps),
 		keywordSearchTool(deps),
 		semanticSearchTool(deps),
 		graphQueryTool(deps),
@@ -289,6 +296,7 @@ func recallMemoryTool(deps Dependencies) Tool {
 					"items": recallHitObjectSchema(),
 				},
 				"clarifications": clarificationArraySchema(),
+				"related_dreams": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
 			},
 		},
 		RequiredScopes: []string{"read"},
@@ -314,13 +322,19 @@ func recallMemoryTool(deps Dependencies) Tool {
 				}
 				results = append(results, m)
 			}
-			out := map[string]any{"results": results, "clarifications": []any{}}
+			out := map[string]any{"results": results, "clarifications": []any{}, "related_dreams": []any{}}
 			if deps.Memory != nil {
 				reflection, err := deps.Memory.Reflect(ctx, profileID, memoryservice.ReflectRequest{Limit: 20})
 				if err != nil {
 					return nil, err
 				}
 				out["clarifications"] = reflection.Clarifications
+			}
+			if deps.Dreams != nil {
+				dreams, err := deps.Dreams.Recall(ctx, profileID, req.Query, 5)
+				if err == nil {
+					out["related_dreams"] = dreams
+				}
 			}
 			return out, nil
 		},

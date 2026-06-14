@@ -24,6 +24,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
+	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentdedupe"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
@@ -374,6 +375,16 @@ func main() {
 		FactConfirm:    factConfirmSvc,
 		FactList:       factListSvc,
 	})
+	dreamSvc := dreamservice.New(dreamservice.Dependencies{
+		Graph:          profileScopeEnforcer,
+		Memory:         memorySvc,
+		FragmentCreate: fragmentCreateRegistrySvc,
+		AppConfig:      appConfigService,
+		Profiles:       profileService,
+		Locker:         dreamservice.NewPostgresCycleLocker(),
+		Postgres:       pgDB.GetDB(),
+		Generator:      dreamservice.NewHeuristicGenerator(cfg.GetAIDreamingModel()),
+	})
 	contextSvc := contextservice.New(contextservice.Dependencies{
 		Reader:      profileScopeEnforcer,
 		FactGet:     factGetSvc,
@@ -381,6 +392,7 @@ func main() {
 		FragmentGet: fragmentGetSvc,
 		Recall:      recallRegistrySvc,
 		Memory:      memorySvc,
+		Dreams:      dreamSvc,
 	})
 	skillPackSvc := skillpackservice.New(skillpackservice.Dependencies{
 		FragmentCreate:  fragmentCreateRegistrySvc,
@@ -432,6 +444,7 @@ func main() {
 		Context:                     contextSvc,
 		Memory:                      memorySvc,
 		SkillPack:                   skillPackSvc,
+		Dreams:                      dreamSvc,
 	})
 	if err != nil {
 		log.Fatalf("failed to build tool registry: %v", err)
@@ -615,6 +628,10 @@ func main() {
 		}
 	}()
 
+	dreamSchedulerCtx, dreamSchedulerCancel := context.WithCancel(context.Background())
+	defer dreamSchedulerCancel()
+	go dreamservice.NewScheduler(dreamSvc, profileService, slog.Default()).Start(dreamSchedulerCtx)
+
 	httpAddr := os.Getenv("HTTP_ADDR")
 	if httpAddr == "" {
 		httpAddr = config.DefaultHTTPAddr
@@ -634,6 +651,7 @@ func main() {
 	<-quit
 
 	logger.Info("shutting down server")
+	dreamSchedulerCancel()
 
 	// Graceful shutdown with 10-second timeout
 	if err := http.ShutdownServer(e, logger); err != nil {

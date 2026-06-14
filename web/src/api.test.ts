@@ -82,4 +82,35 @@ describe("ControlApi", () => {
       body: JSON.stringify({ items: [{ key: "SSO_PUBLIC_BASE_URL", value: "https://portal.example.com" }] }),
     }));
   });
+
+  it("reads and updates dreaming config", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
+      data: {
+        update_time: "2026-06-11T03:00:00Z",
+        items: [{ key: "DREAMING_START_TIME_LOCAL", value: "03:00", effective_value: "03:00", updated_at: "2026-06-11T03:00:00Z" }],
+        effective: {
+          enabled: false,
+          force_enabled: false,
+          start_time_local: "03:00",
+          timezone: "UTC",
+          reflect_enabled: true,
+          reevaluate_enabled: true,
+          dream_enabled: true,
+          model: "",
+          max_outputs: 5,
+        },
+      },
+    }), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const api = new ControlApi("secret", "/control/api");
+    await api.getDreamingConfig();
+    await api.updateDreamingConfig({ items: [{ key: "DREAMING_START_TIME_LOCAL", value: "02:30" }] });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/control/api/config/dreaming", expect.objectContaining({ method: "GET" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/control/api/config/dreaming", expect.objectContaining({
+      method: "PATCH",
+      body: JSON.stringify({ items: [{ key: "DREAMING_START_TIME_LOCAL", value: "02:30" }] }),
+    }));
+  });
 });

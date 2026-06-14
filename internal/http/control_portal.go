@@ -161,6 +161,8 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 	if telemetry.Config != nil {
 		api.GET("/config/sso", control.getSSOConfig)
 		api.PATCH("/config/sso", control.updateSSOConfig)
+		api.GET("/config/dreaming", control.getDreamingConfig)
+		api.PATCH("/config/dreaming", control.updateDreamingConfig)
 	}
 	if telemetry.SSO != nil {
 		api.GET("/sso/providers", control.listSSOProviders)

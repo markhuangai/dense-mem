@@ -43,6 +43,8 @@ func TestRelationshipProfileConstraints(t *testing.T) {
 			{"CONTRADICTS", "CONTRADICTS", ConstraintContradictsProfileIDExists},
 			{"OVERLAYS", "OVERLAYS", ConstraintOverlaysProfileIDExists},
 			{"ALIGNS_WITH", "ALIGNS_WITH", ConstraintAlignsWithProfileIDExists},
+			{"DREAMS_FROM", "DREAMS_FROM", ConstraintDreamsFromProfileIDExists},
+			{"PROMOTED_TO", "PROMOTED_TO", ConstraintPromotedToProfileIDExists},
 		}
 
 		for _, w := range wantConstraints {
@@ -102,6 +104,8 @@ func TestEnsureSchema_CommunityEditionSkipsRelationshipConstraints(t *testing.T)
 	assert.False(t, hasQuery(client.queries, ConstraintContradictsProfileIDExists))
 	assert.False(t, hasQuery(client.queries, ConstraintOverlaysProfileIDExists))
 	assert.False(t, hasQuery(client.queries, ConstraintAlignsWithProfileIDExists))
+	assert.False(t, hasQuery(client.queries, ConstraintDreamsFromProfileIDExists))
+	assert.False(t, hasQuery(client.queries, ConstraintPromotedToProfileIDExists))
 	assert.True(t, hasQuery(client.queries, IndexCommunityProfileCommunityID),
 		"EnsureSchema must continue creating supported indexes on community edition")
 }

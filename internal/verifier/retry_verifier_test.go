@@ -45,6 +45,10 @@ func (s *stubConfigProvider) GetAIVerifierAPIKey() string            { return ""
 func (s *stubConfigProvider) GetAIVerifierModel() string             { return "gpt-4o-mini" }
 func (s *stubConfigProvider) GetAIVerifierTimeoutSeconds() int       { return 60 }
 func (s *stubConfigProvider) GetAIVerifierMaxConcurrency() int       { return s.maxConcurrency }
+func (s *stubConfigProvider) GetAIDreamingAPIURL() string            { return "" }
+func (s *stubConfigProvider) GetAIDreamingAPIKey() string            { return "" }
+func (s *stubConfigProvider) GetAIDreamingModel() string             { return "gpt-4o-mini" }
+func (s *stubConfigProvider) GetAIDreamingTimeoutSeconds() int       { return 60 }
 func (s *stubConfigProvider) GetClaimWriteRateLimit() int            { return 60 }
 func (s *stubConfigProvider) GetClaimReadRateLimit() int             { return 300 }
 func (s *stubConfigProvider) GetRecallValidatedClaimWeight() float64 { return 0.5 }
