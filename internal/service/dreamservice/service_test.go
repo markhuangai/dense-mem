@@ -271,6 +271,11 @@ func TestDreamServiceReadPaths(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, recalled, 1)
 
+	recalled, err = svc.Recall(context.Background(), "profile-1", "GitVibe workflows / git-vibe command", 100)
+	require.NoError(t, err)
+	require.Len(t, recalled, 1)
+	require.Equal(t, "GitVibe workflows git vibe command", graph.lastReadParams["searchQuery"])
+
 	emptyRecall, err := svc.Recall(context.Background(), "profile-1", "", 5)
 	require.NoError(t, err)
 	require.Nil(t, emptyRecall)
@@ -574,19 +579,21 @@ func (s dreamProfileStub) List(context.Context, int, int) ([]*domain.Profile, er
 }
 
 type cycleRunGraphStub struct {
-	existingRun   bool
-	writes        int
-	readErr       error
-	writeErr      error
-	executeWrites bool
-	writeQueries  []string
-	dreamRows     []map[string]any
-	runRows       []map[string]any
-	inputRows     []map[string]any
-	recordsFor    func(query string, params map[string]any) []*neo4j.Record
+	existingRun    bool
+	writes         int
+	readErr        error
+	writeErr       error
+	executeWrites  bool
+	writeQueries   []string
+	dreamRows      []map[string]any
+	runRows        []map[string]any
+	inputRows      []map[string]any
+	lastReadParams map[string]any
+	recordsFor     func(query string, params map[string]any) []*neo4j.Record
 }
 
-func (s *cycleRunGraphStub) ScopedRead(_ context.Context, _ string, query string, _ map[string]any) (neo4j.ResultSummary, []map[string]any, error) {
+func (s *cycleRunGraphStub) ScopedRead(_ context.Context, _ string, query string, params map[string]any) (neo4j.ResultSummary, []map[string]any, error) {
+	s.lastReadParams = params
 	if s.readErr != nil {
 		return nil, nil, s.readErr
 	}

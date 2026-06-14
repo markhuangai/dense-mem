@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/fulltextquery"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
@@ -35,6 +36,11 @@ func NewClaimSearcher(reader RecallScopedReader) ClaimSearcher {
 }
 
 func (s *neo4jFactSearcher) SearchActive(ctx context.Context, profileID string, query string, limit int) ([]FactRecallResult, error) {
+	searchQuery := fulltextquery.PlainText(query)
+	if searchQuery == "" {
+		return []FactRecallResult{}, nil
+	}
+
 	cypher := `
 CALL db.index.fulltext.queryNodes('fact_recall_idx', $searchQuery) YIELD node AS f, score
 WHERE f.team_id = $profileId AND f.status = 'active'
@@ -58,7 +64,7 @@ RETURN
 LIMIT $limit`
 
 	_, rows, err := s.reader.ScopedRead(ctx, profileID, cypher, map[string]any{
-		"searchQuery": query,
+		"searchQuery": searchQuery,
 		"limit":       limit,
 	})
 	if err != nil {
@@ -83,6 +89,11 @@ LIMIT $limit`
 }
 
 func (s *neo4jClaimSearcher) SearchValidated(ctx context.Context, profileID string, query string, limit int) ([]ClaimRecallResult, error) {
+	searchQuery := fulltextquery.PlainText(query)
+	if searchQuery == "" {
+		return []ClaimRecallResult{}, nil
+	}
+
 	cypher := `
 CALL db.index.fulltext.queryNodes('claim_recall_idx', $searchQuery) YIELD node AS c, score
 WHERE c.team_id = $profileId AND c.status = 'validated'
@@ -97,7 +108,7 @@ RETURN
 LIMIT $limit`
 
 	_, rows, err := s.reader.ScopedRead(ctx, profileID, cypher, map[string]any{
-		"searchQuery": query,
+		"searchQuery": searchQuery,
 		"limit":       limit,
 	})
 	if err != nil {

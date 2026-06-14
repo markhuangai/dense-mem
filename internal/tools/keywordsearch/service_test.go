@@ -435,12 +435,49 @@ type capturingReader struct {
 	capturedQuery  string
 	capturedParams map[string]any
 	rows           []map[string]any
+	calls          int
 }
 
 func (c *capturingReader) ScopedRead(_ context.Context, _ string, query string, params map[string]any) (neo4j.ResultSummary, []map[string]any, error) {
+	c.calls++
 	c.capturedQuery = query
 	c.capturedParams = params
 	return nil, c.rows, nil
+}
+
+func TestSearchersNormalizeLuceneQueryText(t *testing.T) {
+	t.Run("fragment search uses plain-text query", func(t *testing.T) {
+		reader := &capturingReader{}
+		s := NewFragmentSearcher(reader)
+
+		got, err := s.SearchContent(context.Background(), "p1", "git-vibe GitVibe /git-vibe github.com/markhuangai/git-vibe", nil, 10)
+
+		require.NoError(t, err)
+		require.Empty(t, got)
+		require.Equal(t, "git vibe GitVibe git vibe github com markhuangai git vibe", reader.capturedParams["searchQuery"])
+	})
+
+	t.Run("fact search uses plain-text query", func(t *testing.T) {
+		reader := &capturingReader{}
+		s := NewFactSearcher(reader)
+
+		got, err := s.SearchPredicate(context.Background(), "p1", `context: "project decisions" +(memory) -draft`, nil, 10)
+
+		require.NoError(t, err)
+		require.Empty(t, got)
+		require.Equal(t, "context project decisions memory draft", reader.capturedParams["searchQuery"])
+	})
+
+	t.Run("punctuation-only query returns empty result without calling neo4j", func(t *testing.T) {
+		reader := &capturingReader{}
+		s := NewFragmentSearcher(reader)
+
+		got, err := s.SearchContent(context.Background(), "p1", `/ \ + - && || ! ( ) { } [ ] ^ " ~ * ? :`, nil, 10)
+
+		require.NoError(t, err)
+		require.Empty(t, got)
+		require.Equal(t, 0, reader.calls)
+	})
 }
 
 // TestLabelFiltering verifies that label filter values are passed as Cypher parameters

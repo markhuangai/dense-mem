@@ -503,7 +503,7 @@ func recallHitToMap(hit recallservice.RecallHit) (map[string]any, error) {
 func keywordSearchTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "keyword_search",
-		Description: "Advanced: BM25 full-text search across fragments and fact predicates.",
+		Description: "Advanced: plain-text BM25 search across fragments and fact predicates.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"keywords"},
