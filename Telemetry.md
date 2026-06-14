@@ -67,6 +67,62 @@ http://127.0.0.1:8090/
 Use `CONTROL_PORTAL_TOKEN`. The control portal can show broader team, profile,
 route, dependency, and system views.
 
+## Online Recall Feedback
+
+Dense-Mem treats recall quality as online feedback from the host LLM. Production
+recall quality is measured from compact host judgments submitted after the
+answer, not from a separate labeled benchmark workflow.
+
+The intended online flow is:
+
+```text
+host LLM calls recall_memory
+  -> Dense-Mem returns ranked results and, when enabled, a compact feedback request
+  -> host LLM answers the user
+  -> host LLM submits recall feedback for that recall_id
+  -> Dense-Mem records bounded online recall-feedback metrics
+  -> Prometheus scrapes the metrics
+  -> portals display online recall quality
+```
+
+The feedback request is off by default. Set `RECALL_FEEDBACK_ENABLED=true` to
+register `submit_recall_feedback` and add `feedback_request` to `recall_memory`
+responses. Leave it disabled when you want to avoid the extra tool-call and token
+overhead.
+
+Useful online feedback cards include:
+
+| Card | What it means |
+| --- | --- |
+| LLM recall used rate | Share of feedback events where the host LLM used at least one recalled result. |
+| LLM answer supported rate | Share of feedback events where recalled context supported the final answer. |
+| LLM recall quality | Average LLM quality rating for returned recall context. |
+| LLM missing context rate | Share of feedback events where the LLM reported that important context was missing. |
+| LLM irrelevant result rate | Share of feedback events where returned context was irrelevant to the user request. |
+
+The cards read:
+
+```text
+densemem_recall_feedback_total
+densemem_recall_feedback_quality_score
+```
+
+The feedback schema should stay compact:
+
+```json
+{
+  "recall_id": "rec_...",
+  "used": true,
+  "answer_supported": true,
+  "quality": "high",
+  "missing_context": false,
+  "irrelevant": false
+}
+```
+
+Do not use `recall_id` as a Prometheus label. It is useful for linking one
+feedback submission to one recall event, but Prometheus labels must stay bounded.
+
 ## Metrics Endpoint
 
 When telemetry is enabled, Dense-Mem exposes Prometheus metrics on the control
