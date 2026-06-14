@@ -313,11 +313,18 @@ function ConfigField({
     return (
       <>
         <label htmlFor={item.key}>{label}</label>
-        <select id={item.key} value={timezone} onChange={(event) => onChange(event.target.value)}>
-          {timezoneOptions(timezone).map((option) => (
-            <option value={option} key={option}>{option}</option>
-          ))}
-        </select>
+        <div className="button-row">
+          <select id={item.key} value={timezone} onChange={(event) => onChange(event.target.value)}>
+            {timezoneOptions(timezone).map((option) => (
+              <option value={option} key={option}>{option}</option>
+            ))}
+          </select>
+          {value !== "" && (
+            <button className="icon-button" type="button" aria-label={`Clear ${label} override`} title={`Clear ${label} override`} onClick={() => onChange("")}>
+              <X size={16} aria-hidden="true" />
+            </button>
+          )}
+        </div>
       </>
     );
   }

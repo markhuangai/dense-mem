@@ -379,6 +379,7 @@ describe("App", () => {
     await userEvent.click(enabledToggle);
     await userEvent.click(screen.getByRole("button", { name: /clear force all teams override/i }));
     await userEvent.selectOptions(screen.getByLabelText("Timezone", { selector: "select" }), "America/New_York");
+    await userEvent.click(screen.getByRole("button", { name: /clear timezone override/i }));
     await userEvent.clear(screen.getByLabelText("Cycle start time"));
     await userEvent.type(screen.getByLabelText("Cycle start time"), "02:30");
     await userEvent.click(screen.getByRole("button", { name: /save config/i }));
@@ -398,7 +399,7 @@ describe("App", () => {
     expect(body.items).toEqual(expect.arrayContaining([
       { key: "DREAMING_ENABLED", value: "true" },
       { key: "DREAMING_FORCE_ENABLED", value: "" },
-      { key: "DREAMING_TIMEZONE", value: "America/New_York" },
+      { key: "DREAMING_TIMEZONE", value: "" },
       { key: "DREAMING_START_TIME_LOCAL", value: "02:30" },
     ]));
     expect(await screen.findByText("Saved")).toBeInTheDocument();
