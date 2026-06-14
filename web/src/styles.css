@@ -260,16 +260,13 @@ button {
   cursor: not-allowed;
 }
 
+.config-surface .section-heading { margin-bottom: 12px; }
 .config-tabs {
-  display: flex;
-  gap: 8px;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; width: min(420px, 100%);
+  padding: 4px; background: var(--panel-muted); border: 1px solid var(--border); border-radius: 8px;
 }
-
-.config-tabs .tab-button {
-  width: auto;
-  border: 1px solid var(--border);
-}
-
+.config-tabs .tab-button { justify-content: center; min-height: 38px; width: 100%; border: 1px solid transparent; border-radius: 6px; }
+.config-tabs .tab-button.active { color: var(--text); background: var(--panel); border-color: var(--border); box-shadow: var(--shadow-soft); }
 .danger-icon {
   color: var(--danger);
 }
@@ -445,6 +442,9 @@ textarea:focus {
 .toggle-row input:focus-visible {
   box-shadow: 0 0 0 3px var(--focus);
 }
+
+.config-toggle { width: min(280px, 100%); }
+.config-toggle span { color: var(--text); font-size: 14px; font-weight: 740; text-transform: none; }
 
 .span {
   grid-column: 1 / -1;

@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { Check, Moon, RefreshCw, Settings } from "lucide-react";
+import { Check, Moon, RefreshCw, Settings, X } from "lucide-react";
 import { ControlApi, DreamingConfig, DreamingConfigItem, SSOConfig, SSOConfigItem } from "../api";
 import { SectionHeading } from "../ui/components";
 import { formatDate, readError } from "./utils";
@@ -33,39 +33,57 @@ const CONFIG_PLACEHOLDERS: Record<string, string> = {
   DREAMING_MAX_OUTPUTS: "5",
 };
 
+const FALLBACK_TIMEZONES = [
+  "UTC",
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "America/Phoenix",
+  "America/Anchorage",
+  "America/Honolulu",
+  "Europe/London",
+  "Europe/Berlin",
+  "Europe/Paris",
+  "Europe/Madrid",
+  "Asia/Tokyo",
+  "Asia/Shanghai",
+  "Asia/Singapore",
+  "Asia/Kolkata",
+  "Australia/Sydney",
+];
+
+const SUPPORTED_TIMEZONES = getSupportedTimezones();
+
 export function ConfigPanel({ api }: { api: ControlApi }) {
   const [activeTab, setActiveTab] = useState<ConfigTab>("sso");
 
   return (
     <>
-      <section className="surface">
-        <SectionHeading
-          title="Config"
-          actions={(
-            <div className="config-tabs" role="tablist" aria-label="Config sections">
-              <button
-                className={activeTab === "sso" ? "tab-button active" : "tab-button"}
-                type="button"
-                role="tab"
-                aria-selected={activeTab === "sso"}
-                onClick={() => setActiveTab("sso")}
-              >
-                <Settings size={16} aria-hidden="true" />
-                <span>SSO</span>
-              </button>
-              <button
-                className={activeTab === "dreaming" ? "tab-button active" : "tab-button"}
-                type="button"
-                role="tab"
-                aria-selected={activeTab === "dreaming"}
-                onClick={() => setActiveTab("dreaming")}
-              >
-                <Moon size={16} aria-hidden="true" />
-                <span>Dreaming</span>
-              </button>
-            </div>
-          )}
-        />
+      <section className="surface config-surface">
+        <SectionHeading title="Config" />
+        <div className="config-tabs" role="tablist" aria-label="Config sections">
+          <button
+            className={activeTab === "sso" ? "tab-button active" : "tab-button"}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "sso"}
+            onClick={() => setActiveTab("sso")}
+          >
+            <Settings size={16} aria-hidden="true" />
+            <span>SSO</span>
+          </button>
+          <button
+            className={activeTab === "dreaming" ? "tab-button active" : "tab-button"}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "dreaming"}
+            onClick={() => setActiveTab("dreaming")}
+          >
+            <Moon size={16} aria-hidden="true" />
+            <span>Dreaming</span>
+          </button>
+        </div>
       </section>
       {activeTab === "sso" && <SSOConfigPanel api={api} />}
       {activeTab === "dreaming" && <DreamingConfigPanel api={api} />}
@@ -251,7 +269,6 @@ function ConfigField({
   onChange: (value: string) => void;
 }) {
   const label = CONFIG_LABELS[item.key] ?? item.key;
-  const effective = item.effective_value ? `effective ${item.effective_value}` : "";
 
   if (item.key === "SSO_COOKIE_SECURE") {
     return (
@@ -259,24 +276,48 @@ function ConfigField({
         <label htmlFor={item.key}>{label}</label>
         <select id={item.key} value={value} onChange={(event) => onChange(event.target.value)}>
           <option value="">Auto from public URL</option>
-          <option value="true">true</option>
-          <option value="false">false</option>
+          <option value="true">Enabled</option>
+          <option value="false">Disabled</option>
         </select>
-        <span className="form-meta span">{effective}</span>
       </>
     );
   }
 
   if (item.key.startsWith("DREAMING_") && item.key.endsWith("_ENABLED")) {
+    const checked = (value || item.effective_value) === "true";
     return (
       <>
         <label htmlFor={item.key}>{label}</label>
-        <select id={item.key} value={value} onChange={(event) => onChange(event.target.value)}>
-          <option value="">Default</option>
-          <option value="true">true</option>
-          <option value="false">false</option>
+        <div className="button-row">
+          <label className="toggle-row config-toggle" htmlFor={item.key}>
+            <span>{checked ? "Enabled" : "Disabled"}</span>
+            <input
+              id={item.key}
+              type="checkbox"
+              checked={checked}
+              onChange={(event) => onChange(event.target.checked ? "true" : "false")}
+            />
+          </label>
+          {value !== "" && (
+            <button className="icon-button" type="button" aria-label={`Clear ${label} override`} title={`Clear ${label} override`} onClick={() => onChange("")}>
+              <X size={16} aria-hidden="true" />
+            </button>
+          )}
+        </div>
+      </>
+    );
+  }
+
+  if (item.key === "DREAMING_TIMEZONE") {
+    const timezone = value || item.effective_value || "UTC";
+    return (
+      <>
+        <label htmlFor={item.key}>{label}</label>
+        <select id={item.key} value={timezone} onChange={(event) => onChange(event.target.value)}>
+          {timezoneOptions(timezone).map((option) => (
+            <option value={option} key={option}>{option}</option>
+          ))}
         </select>
-        <span className="form-meta span">{effective}</span>
       </>
     );
   }
@@ -295,7 +336,33 @@ function ConfigField({
         value={value}
         onChange={(event) => onChange(event.target.value)}
       />
-      <span className="form-meta span">{effective}</span>
     </>
   );
+}
+
+function getSupportedTimezones(): string[] {
+  const intl = Intl as typeof Intl & {
+    supportedValuesOf?: (key: "timeZone") => string[];
+  };
+  try {
+    return intl.supportedValuesOf?.("timeZone") ?? FALLBACK_TIMEZONES;
+  } catch {
+    return FALLBACK_TIMEZONES;
+  }
+}
+
+function timezoneOptions(current: string): string[] {
+  const values = new Set<string>(["UTC", ...SUPPORTED_TIMEZONES, ...FALLBACK_TIMEZONES]);
+  if (current.trim()) {
+    values.add(current.trim());
+  }
+  return [...values].sort((left, right) => {
+    if (left === "UTC") {
+      return -1;
+    }
+    if (right === "UTC") {
+      return 1;
+    }
+    return left.localeCompare(right);
+  });
 }

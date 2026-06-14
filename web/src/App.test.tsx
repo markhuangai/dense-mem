@@ -372,7 +372,13 @@ describe("App", () => {
     await userEvent.click(await screen.findByRole("tab", { name: /dreaming/i }));
 
     expect(await screen.findByRole("heading", { name: "Dreaming" })).toBeInTheDocument();
-    await userEvent.selectOptions(screen.getByLabelText("Enable scheduled cycle"), "true");
+    expect(screen.queryByText(/^effective /i)).not.toBeInTheDocument();
+    const enabledToggle = screen.getByLabelText("Enable scheduled cycle", { selector: "input" });
+    expect(enabledToggle).toHaveAttribute("type", "checkbox");
+    expect(enabledToggle).not.toBeChecked();
+    await userEvent.click(enabledToggle);
+    await userEvent.click(screen.getByRole("button", { name: /clear force all teams override/i }));
+    await userEvent.selectOptions(screen.getByLabelText("Timezone", { selector: "select" }), "America/New_York");
     await userEvent.clear(screen.getByLabelText("Cycle start time"));
     await userEvent.type(screen.getByLabelText("Cycle start time"), "02:30");
     await userEvent.click(screen.getByRole("button", { name: /save config/i }));
@@ -386,6 +392,15 @@ describe("App", () => {
         }),
       );
     });
+    const patchCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/config/dreaming") && init?.method === "PATCH");
+    expect(patchCall).toBeDefined();
+    const body = JSON.parse(String(patchCall?.[1]?.body));
+    expect(body.items).toEqual(expect.arrayContaining([
+      { key: "DREAMING_ENABLED", value: "true" },
+      { key: "DREAMING_FORCE_ENABLED", value: "" },
+      { key: "DREAMING_TIMEZONE", value: "America/New_York" },
+      { key: "DREAMING_START_TIME_LOCAL", value: "02:30" },
+    ]));
     expect(await screen.findByText("Saved")).toBeInTheDocument();
   });
 
