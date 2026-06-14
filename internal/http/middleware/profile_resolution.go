@@ -57,7 +57,7 @@ func isHeaderScopedProfileRoute(path string) bool {
 	}
 
 	for _, prefix := range headerScopedPrefixes {
-		if strings.HasPrefix(path, prefix) {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
 			return true
 		}
 	}

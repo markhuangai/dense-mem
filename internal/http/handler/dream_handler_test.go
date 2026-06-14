@@ -24,6 +24,7 @@ type dreamHandlerServiceStub struct {
 	runs       []*dreamservice.RunCycleResult
 	dreams     []*domain.Dream
 	dream      *domain.Dream
+	nextCursor string
 	listOpts   dreamservice.ListOptions
 	runsLimit  int
 	profileIDs []string
@@ -37,7 +38,7 @@ func (s *dreamHandlerServiceStub) RunCycle(context.Context, string, dreamservice
 func (s *dreamHandlerServiceStub) List(_ context.Context, profileID string, opts dreamservice.ListOptions) ([]*domain.Dream, string, error) {
 	s.profileIDs = append(s.profileIDs, profileID)
 	s.listOpts = opts
-	return s.dreams, "", nil
+	return s.dreams, s.nextCursor, nil
 }
 
 func (s *dreamHandlerServiceStub) Get(_ context.Context, profileID, dreamID string) (*domain.Dream, error) {
@@ -98,6 +99,7 @@ func TestDreamHandlerRoutes(t *testing.T) {
 			CreatedAt:  now,
 			UpdatedAt:  now,
 		}},
+		nextCursor: "after-dream-1",
 		dream: &domain.Dream{
 			ProfileID:  profileID.String(),
 			Hypothesis: "A dream appears",
@@ -119,7 +121,7 @@ func TestDreamHandlerRoutes(t *testing.T) {
 	}{
 		{path: "/api/v1/dreaming/status", want: `"pending_count":2`},
 		{path: "/api/v1/dreaming/runs?limit=3", want: `"run_id":"run-1"`},
-		{path: "/api/v1/dreams?limit=4&status=proposed&cursor=next", want: `"hypothesis":"A dream appears"`},
+		{path: "/api/v1/dreams?limit=4&status=proposed&cursor=next", want: `"next_cursor":"after-dream-1"`},
 		{path: "/api/v1/dreams/dream-1", want: `"dream_id":"dream-1"`},
 	}
 	for _, tt := range tests {

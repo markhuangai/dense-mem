@@ -203,7 +203,9 @@ func scanOperationLog(rows *sql.Rows) (domain.OperationLog, error) {
 	entry.ProfileID = parseNullableUUID(profileIDRaw)
 	entry.Attrs = map[string]any{}
 	if len(attrsRaw) > 0 {
-		_ = json.Unmarshal(attrsRaw, &entry.Attrs)
+		if err := json.Unmarshal(attrsRaw, &entry.Attrs); err != nil {
+			return domain.OperationLog{}, fmt.Errorf("invalid operation_logs.attrs JSON: %w", err)
+		}
 	}
 	return entry, nil
 }

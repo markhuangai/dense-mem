@@ -25,7 +25,7 @@ export function ControlDreamsPanel({ api, team }: { api: ControlApi; team: Team 
       ]);
       setStatus(nextStatusResult);
       setRuns(nextRuns);
-      setDreams(nextDreams);
+      setDreams(nextDreams.items);
     } catch (err) {
       setError(readError(err));
     } finally {

@@ -26,6 +26,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
+	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentdedupe"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
@@ -443,6 +444,16 @@ func main() {
 		FactConfirm:    factConfirmSvc,
 		FactList:       factListSvc,
 	})
+	dreamSvc := dreamservice.New(dreamservice.Dependencies{
+		Graph:          profileScopeEnforcer,
+		Memory:         memorySvc,
+		FragmentCreate: fragmentCreateRegistrySvc,
+		AppConfig:      appConfigService,
+		Profiles:       profileService,
+		Locker:         dreamservice.NewPostgresCycleLocker(),
+		Postgres:       pgDB.GetDB(),
+		Generator:      dreamservice.NewHeuristicGenerator(cfg.GetAIVerifierModel()),
+	})
 	contextSvc := contextservice.New(contextservice.Dependencies{
 		Reader:      profileScopeEnforcer,
 		FactGet:     factGetSvc,
@@ -450,6 +461,7 @@ func main() {
 		FragmentGet: fragmentGetSvc,
 		Recall:      recallRegistrySvc,
 		Memory:      memorySvc,
+		Dreams:      dreamSvc,
 	})
 	skillPackSvc := skillpackservice.New(skillpackservice.Dependencies{
 		FragmentCreate:  fragmentCreateRegistrySvc,
@@ -492,6 +504,7 @@ func main() {
 		Context:                     contextSvc,
 		Memory:                      memorySvc,
 		SkillPack:                   skillPackSvc,
+		Dreams:                      dreamSvc,
 	})
 	if err != nil {
 		log.Fatalf("failed to build tool registry: %v", err)
@@ -545,6 +558,7 @@ func main() {
 	openAPIFullHandler := handler.NewOpenAPIHandler(openAPIGen, openapi.SpecVariantFull)
 
 	recallHandler := handler.NewRecallHandler(recallHTTPSvc)
+	dreamHandler := handler.NewDreamHandler(dreamSvc)
 
 	// ========================================
 	// Health checks
@@ -632,6 +646,10 @@ func main() {
 		OpenAPIAISafe:   openAPIAISafeHandler.Handle,
 		OpenAPIFull:     openAPIFullHandler.Handle,
 		Recall:          recallHandler.Handle,
+		DreamingStatus:  dreamHandler.Status,
+		DreamingRuns:    dreamHandler.Runs,
+		DreamList:       dreamHandler.List,
+		DreamGet:        dreamHandler.Get,
 	}
 	protectedHandlers.FragmentCreate = fragmentCreateHandler.Handle
 
@@ -674,6 +692,7 @@ func main() {
 				SSO:           ssoService,
 				Config:        appConfigService,
 				Logs:          operationLogService,
+				Dreams:        dreamSvc,
 			},
 			healthConfig,
 			logger,

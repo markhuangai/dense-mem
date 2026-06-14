@@ -182,6 +182,24 @@ func TestProfileResolution_HeaderScopedCanonicalRoutes(t *testing.T) {
 	}
 }
 
+func TestHeaderScopedProfileRouteRequiresPathBoundary(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{path: "/api/v1/dreams", want: true},
+		{path: "/api/v1/dreams/dream-1", want: true},
+		{path: "/api/v1/dreams-extra", want: false},
+		{path: "/api/v1/recallXYZ", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			assert.Equal(t, tt.want, isHeaderScopedProfileRoute(tt.path))
+		})
+	}
+}
+
 func TestProfileResolution_HeaderScoped_UsesPrincipalProfile(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler

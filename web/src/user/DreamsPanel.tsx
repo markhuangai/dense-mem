@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { SectionHeading } from "../ui/components";
 import { Dream, DreamRun, DreamStatus, UserApi } from "./api";
@@ -12,8 +12,11 @@ export function UserDreamsPanel({ api }: { api: UserApi }) {
   const [dreamStatus, setDreamStatus] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const requestSeqRef = useRef(0);
 
   async function loadData(nextStatus = dreamStatus) {
+    const requestSeq = requestSeqRef.current + 1;
+    requestSeqRef.current = requestSeq;
     setLoading(true);
     setError("");
     try {
@@ -22,13 +25,21 @@ export function UserDreamsPanel({ api }: { api: UserApi }) {
         api.listDreamingRuns(10),
         api.listDreams(nextStatus, 50),
       ]);
+      if (requestSeq !== requestSeqRef.current) {
+        return;
+      }
       setStatus(nextStatusResult);
       setRuns(nextRuns);
-      setDreams(nextDreams);
+      setDreams(nextDreams.items);
     } catch (err) {
+      if (requestSeq !== requestSeqRef.current) {
+        return;
+      }
       setError(readError(err));
     } finally {
-      setLoading(false);
+      if (requestSeq === requestSeqRef.current) {
+        setLoading(false);
+      }
     }
   }
 
@@ -87,7 +98,13 @@ export function UserDreamsPanel({ api }: { api: UserApi }) {
 
       <section className="surface">
         <SectionHeading title="Cycle Runs" meta={runs.length} />
-        {runs.length === 0 ? <div className="table-placeholder">No runs</div> : <RunTable runs={runs} />}
+        {loading && runs.length === 0 ? (
+          <div className="table-placeholder">Loading</div>
+        ) : runs.length === 0 ? (
+          <div className="table-placeholder">No runs</div>
+        ) : (
+          <RunTable runs={runs} />
+        )}
       </section>
     </>
   );

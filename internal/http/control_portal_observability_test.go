@@ -37,14 +37,15 @@ func (s *controlOperationLogReaderStub) ListOperationLogs(_ context.Context, fil
 }
 
 type controlDreamServiceStub struct {
-	status    *dreamservice.StatusResult
-	runs      []*dreamservice.RunCycleResult
-	dreams    []*domain.Dream
-	dream     *domain.Dream
-	listOpts  dreamservice.ListOptions
-	runsLimit int
-	profileID string
-	getErr    error
+	status     *dreamservice.StatusResult
+	runs       []*dreamservice.RunCycleResult
+	dreams     []*domain.Dream
+	dream      *domain.Dream
+	nextCursor string
+	listOpts   dreamservice.ListOptions
+	runsLimit  int
+	profileID  string
+	getErr     error
 }
 
 func (s *controlDreamServiceStub) RunCycle(context.Context, string, dreamservice.RunCycleRequest) (*dreamservice.RunCycleResult, error) {
@@ -54,7 +55,7 @@ func (s *controlDreamServiceStub) RunCycle(context.Context, string, dreamservice
 func (s *controlDreamServiceStub) List(_ context.Context, profileID string, opts dreamservice.ListOptions) ([]*domain.Dream, string, error) {
 	s.profileID = profileID
 	s.listOpts = opts
-	return s.dreams, "", nil
+	return s.dreams, s.nextCursor, nil
 }
 
 func (s *controlDreamServiceStub) Get(_ context.Context, profileID, dreamID string) (*domain.Dream, error) {
@@ -120,6 +121,7 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 			CreatedAt:  now,
 			UpdatedAt:  now,
 		}},
+		nextCursor: "after-control-dream-1",
 		dream: &domain.Dream{
 			ProfileID:  teamID.String(),
 			Hypothesis: "A control dream appears",
@@ -169,6 +171,7 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 	rec = do("/control/api/teams/" + teamID.String() + "/dreams?limit=4&status=proposed&cursor=next")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "A control dream appears")
+	assert.Contains(t, rec.Body.String(), `"next_cursor":"after-control-dream-1"`)
 	assert.Equal(t, teamID.String(), dreams.profileID)
 	assert.Equal(t, dreamservice.ListOptions{Limit: 4, Status: "proposed", Cursor: "next"}, dreams.listOpts)
 

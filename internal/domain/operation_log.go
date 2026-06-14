@@ -33,6 +33,6 @@ type OperationLogFilter struct {
 
 // OperationLogPage is a paginated operation log response.
 type OperationLogPage struct {
-	Items []OperationLog
-	Total int64
+	Items []OperationLog `json:"items"`
+	Total int64          `json:"total"`
 }

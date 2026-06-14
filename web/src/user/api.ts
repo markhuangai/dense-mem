@@ -346,12 +346,15 @@ export class UserApi {
     return payload.data;
   }
 
-  async listDreams(status = "", limit = 20): Promise<Dream[]> {
+  async listDreams(status = "", limit = 20, cursor = ""): Promise<ListResponse<Dream>> {
     const params = new URLSearchParams({ limit: String(limit) });
     if (status) {
       params.set("status", status);
     }
-    const payload = await this.request<Envelope<Dream[]>>(`/api/v1/dreams?${params.toString()}`);
+    if (cursor) {
+      params.set("cursor", cursor);
+    }
+    const payload = await this.request<Envelope<ListResponse<Dream>>>(`/api/v1/dreams?${params.toString()}`);
     return payload.data;
   }
 

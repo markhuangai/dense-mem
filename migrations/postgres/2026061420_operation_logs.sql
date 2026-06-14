@@ -26,6 +26,9 @@ CREATE INDEX IF NOT EXISTS idx_operation_logs_timestamp
 CREATE INDEX IF NOT EXISTS idx_operation_logs_severity_timestamp
     ON operation_logs(severity_rank DESC, timestamp DESC, id DESC);
 
+CREATE INDEX IF NOT EXISTS idx_operation_logs_severity_value_timestamp
+    ON operation_logs(severity, timestamp DESC, id DESC);
+
 CREATE INDEX IF NOT EXISTS idx_operation_logs_team_timestamp
     ON operation_logs(team_id, timestamp DESC)
     WHERE team_id IS NOT NULL;

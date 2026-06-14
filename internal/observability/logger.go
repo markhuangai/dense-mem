@@ -298,8 +298,7 @@ func (h operationLogHandler) Handle(ctx context.Context, record slog.Record) err
 	if logRecord.Timestamp.IsZero() {
 		logRecord.Timestamp = time.Now().UTC()
 	}
-	_ = h.sink.WriteLog(ctx, logRecord)
-	return nil
+	return h.sink.WriteLog(ctx, logRecord)
 }
 
 func (h operationLogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {

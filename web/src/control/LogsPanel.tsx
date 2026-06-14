@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { ControlApi, OperationLog, OperationLogQuery, Team } from "../api";
 import { SectionHeading } from "../ui/components";
@@ -12,19 +12,30 @@ export function LogsPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
   const [query, setQuery] = useState<OperationLogQuery>({ limit: 100, offset: 0, sort: "timestamp", direction: "desc" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const requestSeqRef = useRef(0);
 
   async function loadLogs(nextQuery = query) {
+    const requestSeq = requestSeqRef.current + 1;
+    requestSeqRef.current = requestSeq;
     setLoading(true);
     setError("");
     try {
       const page = await api.listOperationLogs(nextQuery);
+      if (requestSeq !== requestSeqRef.current) {
+        return;
+      }
       setLogs(page.data);
       setTotal(page.pagination.total);
       setQuery({ ...nextQuery, limit: page.pagination.limit, offset: page.pagination.offset });
     } catch (err) {
+      if (requestSeq !== requestSeqRef.current) {
+        return;
+      }
       setError(readError(err));
     } finally {
-      setLoading(false);
+      if (requestSeq === requestSeqRef.current) {
+        setLoading(false);
+      }
     }
   }
 

@@ -24,6 +24,14 @@ func (s *recordingLogSink) WriteLog(_ context.Context, record LogRecord) error {
 	return nil
 }
 
+type failingLogSink struct {
+	err error
+}
+
+func (s failingLogSink) WriteLog(context.Context, LogRecord) error {
+	return s.err
+}
+
 type testLogValuer struct{}
 
 func (testLogValuer) LogValue() slog.Value {
@@ -321,6 +329,15 @@ func TestOperationLogHandlerBuildsSanitizedRecords(t *testing.T) {
 	items, ok := got.Attrs["items"].([]any)
 	require.True(t, ok)
 	assert.Equal(t, map[string]any{"name": "visible"}, items[0])
+}
+
+func TestOperationLogHandlerReturnsSinkErrors(t *testing.T) {
+	writeErr := errors.New("write failed")
+	handler := newOperationLogHandler(slog.LevelDebug, failingLogSink{err: writeErr})
+
+	err := handler.Handle(context.Background(), slog.NewRecord(time.Now(), slog.LevelInfo, "persist me", 0))
+
+	require.ErrorIs(t, err, writeErr)
 }
 
 func TestNewWithSinksAndTeeHandler(t *testing.T) {

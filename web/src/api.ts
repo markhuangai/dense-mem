@@ -331,6 +331,12 @@ export type DreamStatus = {
 export type DreamQuery = {
   limit?: number;
   status?: Dream["status"] | "";
+  cursor?: string;
+};
+
+export type DreamListResponse = {
+  items: Dream[];
+  next_cursor?: string;
 };
 
 export class ApiError extends Error {
@@ -533,7 +539,7 @@ export class ControlApi {
     return this.requestEnvelope<DreamRun[]>(`/teams/${teamId}/dreaming/runs?limit=${limit}`);
   }
 
-  listTeamDreams(teamId: string, query: DreamQuery = {}): Promise<Dream[]> {
+  listTeamDreams(teamId: string, query: DreamQuery = {}): Promise<DreamListResponse> {
     const params = new URLSearchParams();
     if (query.limit !== undefined) {
       params.set("limit", String(query.limit));
@@ -541,8 +547,11 @@ export class ControlApi {
     if (query.status) {
       params.set("status", query.status);
     }
+    if (query.cursor) {
+      params.set("cursor", query.cursor);
+    }
     const suffix = params.toString() ? `?${params.toString()}` : "";
-    return this.requestEnvelope<Dream[]>(`/teams/${teamId}/dreams${suffix}`);
+    return this.requestEnvelope<DreamListResponse>(`/teams/${teamId}/dreams${suffix}`);
   }
 
   private async requestEnvelope<T>(path: string, options: RequestOptions = {}): Promise<T> {

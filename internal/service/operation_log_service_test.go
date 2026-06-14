@@ -15,19 +15,23 @@ import (
 )
 
 type operationLogRepoStub struct {
-	appended    []domain.OperationLog
-	filters     []domain.OperationLogFilter
-	prunedAt    *time.Time
-	appendErr   error
-	listErr     error
-	pruneErr    error
-	appendCalls int
+	appended        []domain.OperationLog
+	filters         []domain.OperationLogFilter
+	prunedAt        *time.Time
+	appendErr       error
+	listErr         error
+	pruneErr        error
+	appendCalls     int
+	appendDeadlines []time.Time
 }
 
-func (s *operationLogRepoStub) AppendBatch(_ context.Context, logs []domain.OperationLog) error {
+func (s *operationLogRepoStub) AppendBatch(ctx context.Context, logs []domain.OperationLog) error {
 	s.appendCalls++
 	if s.appendErr != nil {
 		return s.appendErr
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		s.appendDeadlines = append(s.appendDeadlines, deadline)
 	}
 	s.appended = append(s.appended, logs...)
 	return nil
@@ -164,4 +168,6 @@ func TestOperationLogServiceLifecycleAndUnavailableBranches(t *testing.T) {
 	require.NoError(t, svc.WriteLog(ctx, observability.LogRecord{Message: "started"}))
 	require.NoError(t, svc.Shutdown(ctx))
 	require.Len(t, repo.appended, 1)
+	require.NotEmpty(t, repo.appendDeadlines)
+	assert.WithinDuration(t, time.Now().UTC().Add(operationLogShutdownFlushTimeout), repo.appendDeadlines[0], time.Second)
 }

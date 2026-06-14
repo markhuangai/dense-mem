@@ -559,7 +559,7 @@ func TestDreamServiceListRuns(t *testing.T) {
 			"started_at":         now,
 			"completed_at":       now.Add(time.Minute),
 			"reflect_ran":        true,
-			"re_evaluate_ran":    true,
+			"reevaluate_ran":     true,
 			"dream_ran":          true,
 			"stale_facts":        int64(1),
 			"candidate_claims":   int64(2),
@@ -578,6 +578,7 @@ func TestDreamServiceListRuns(t *testing.T) {
 	require.Len(t, runs, 1)
 	require.Equal(t, "run-1", runs[0].RunID)
 	require.Equal(t, "profile-1", runs[0].ProfileID)
+	require.True(t, runs[0].ReevaluateRan)
 	require.Equal(t, 6, runs[0].CreatedDreams)
 
 	_, err = New(Dependencies{}).ListRuns(context.Background(), "profile-1", 1)

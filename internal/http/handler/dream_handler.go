@@ -24,6 +24,11 @@ type DreamHandler struct {
 	svc dreamservice.Service
 }
 
+type dreamListResponse struct {
+	Items      []*domain.Dream `json:"items"`
+	NextCursor string          `json:"next_cursor,omitempty"`
+}
+
 func NewDreamHandler(svc dreamservice.Service) *DreamHandler {
 	return &DreamHandler{svc: svc}
 }
@@ -65,11 +70,11 @@ func (h *DreamHandler) List(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	dreams, _, err := h.svc.List(c.Request().Context(), profileID.String(), opts)
+	dreams, nextCursor, err := h.svc.List(c.Request().Context(), profileID.String(), opts)
 	if err != nil {
 		return err
 	}
-	return response.SuccessOK(c, dreams)
+	return response.SuccessOK(c, dreamListResponse{Items: dreams, NextCursor: nextCursor})
 }
 
 func (h *DreamHandler) Get(c echo.Context) error {

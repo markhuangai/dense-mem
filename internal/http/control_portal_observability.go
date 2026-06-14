@@ -16,6 +16,11 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 )
 
+type controlDreamListResponse struct {
+	Items      []*domain.Dream `json:"items"`
+	NextCursor string          `json:"next_cursor,omitempty"`
+}
+
 func (h *controlPortalHandler) listOperationLogs(c echo.Context) error {
 	if h.operationLogs == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "operation logs unavailable")
@@ -84,11 +89,11 @@ func (h *controlPortalHandler) listTeamDreams(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	dreams, _, err := h.dreams.List(c.Request().Context(), profileID.String(), opts)
+	dreams, nextCursor, err := h.dreams.List(c.Request().Context(), profileID.String(), opts)
 	if err != nil {
 		return err
 	}
-	return c.JSON(nethttp.StatusOK, map[string]any{"data": dreams})
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": controlDreamListResponse{Items: dreams, NextCursor: nextCursor}})
 }
 
 func (h *controlPortalHandler) getTeamDream(c echo.Context) error {

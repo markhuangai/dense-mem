@@ -15,10 +15,11 @@ import (
 )
 
 const (
-	operationLogQueueSize     = 4096
-	operationLogBatchSize     = 100
-	operationLogFlushInterval = 2 * time.Second
-	operationLogPruneInterval = time.Hour
+	operationLogQueueSize            = 4096
+	operationLogBatchSize            = 100
+	operationLogFlushInterval        = 2 * time.Second
+	operationLogPruneInterval        = time.Hour
+	operationLogShutdownFlushTimeout = 5 * time.Second
 )
 
 type OperationLogReader interface {
@@ -209,7 +210,9 @@ func (s *OperationLogServiceImpl) run(ctx context.Context, done chan struct{}) {
 	for {
 		select {
 		case <-ctx.Done():
-			_ = s.Flush(context.Background())
+			flushCtx, cancel := context.WithTimeout(context.Background(), operationLogShutdownFlushTimeout)
+			_ = s.Flush(flushCtx)
+			cancel()
 			return
 		case <-flushTicker.C:
 			_ = s.Flush(ctx)

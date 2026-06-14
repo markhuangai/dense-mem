@@ -112,4 +112,20 @@ describe("ControlApi", () => {
       body: JSON.stringify({ items: [{ key: "DREAMING_START_TIME_LOCAL", value: "02:30" }] }),
     }));
   });
+
+  it("requests team dreams with cursor pagination", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: {
+        items: [],
+        next_cursor: "next-dream",
+      },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const api = new ControlApi("secret", "/control/api");
+    const result = await api.listTeamDreams("team-1", { limit: 50, status: "proposed", cursor: "current-dream" });
+
+    expect(result.next_cursor).toBe("next-dream");
+    expect(fetchMock).toHaveBeenCalledWith("/control/api/teams/team-1/dreams?limit=50&status=proposed&cursor=current-dream", expect.any(Object));
+  });
 });
