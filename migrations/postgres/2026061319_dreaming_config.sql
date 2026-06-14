@@ -1,6 +1,10 @@
 -- +goose Up
 -- +goose StatementBegin
 
+SELECT set_config('app.tx_mode', 'system', true);
+SELECT set_config('app.current_team_id', '', true);
+SELECT set_config('app.current_profile_id', '', true);
+
 INSERT INTO app_config (key, value)
 VALUES
     ('DREAMING_ENABLED', 'false'),
@@ -26,6 +30,10 @@ WHERE key = 'update_time';
 
 -- +goose Down
 -- +goose StatementBegin
+
+SELECT set_config('app.tx_mode', 'system', true);
+SELECT set_config('app.current_team_id', '', true);
+SELECT set_config('app.current_profile_id', '', true);
 
 DELETE FROM app_config
 WHERE key IN (
