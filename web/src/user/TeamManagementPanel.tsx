@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { Check, Copy, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { CreatedTeamProfile, UserApi, UserKey, UserSession, UserTeam } from "./api";
 import { SectionHeading } from "../ui/components";
+import { TeamDreamingConfigForm } from "../teamDreamingConfig";
 
 type ProfilePermission = "read" | "read_write";
 
@@ -151,6 +152,17 @@ export function TeamManagementPanel({
             </button>
           </div>
         </form>
+      </div>
+
+      <div className="surface-section">
+        <TeamDreamingConfigForm
+          key={session.team.id}
+          config={session.team.config}
+          disabled={teamBusy}
+          onSave={async (config) => {
+            onTeamUpdated(await api.updateTeam(session.team.id, { name: session.team.name, description: session.team.description ?? "", config }));
+          }}
+        />
       </div>
 
       <div className="surface-section">

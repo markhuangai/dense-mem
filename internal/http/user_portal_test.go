@@ -185,6 +185,7 @@ func TestUserPortalSessionShowsOnlyAuthenticatedKey(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), authKey.ID.String())
+	require.Contains(t, rec.Body.String(), `"config":{"dreaming":{"enabled":true},"retention":"standard"}`)
 	require.Contains(t, rec.Body.String(), `"can_rotate":false`)
 	require.NotContains(t, rec.Body.String(), otherKey.ID.String())
 	require.NotContains(t, rec.Body.String(), "Other")
@@ -443,6 +444,7 @@ func userPortalTestServerWithTelemetry(t *testing.T, teamID uuid.UUID, authKey *
 	profiles := &controlProfileSvc{profiles: []*domain.Profile{{
 		ID:        teamID,
 		Name:      "Team",
+		Config:    map[string]any{"dreaming": map[string]any{"enabled": true}, "retention": "standard"},
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	}}}

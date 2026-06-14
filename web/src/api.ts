@@ -39,6 +39,7 @@ export type Page<T> = {
 export type CreateTeamInput = {
   name: string;
   description: string;
+  config?: Record<string, unknown>;
 };
 
 export type UpdateTeamInput = CreateTeamInput;

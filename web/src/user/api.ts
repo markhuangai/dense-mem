@@ -4,6 +4,7 @@ export type UserTeam = {
   id: string;
   name: string;
   description: string;
+  config?: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 };
@@ -66,6 +67,7 @@ export type Page<T> = {
 export type UpdateTeamInput = {
   name: string;
   description: string;
+  config?: Record<string, unknown>;
 };
 
 export type CreateTeamProfileInput = {

@@ -114,11 +114,12 @@ type userPortalTeamOptionResponse struct {
 }
 
 type userPortalTeamResponse struct {
-	ID          uuid.UUID `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	CreatedAt   string    `json:"created_at"`
-	UpdatedAt   string    `json:"updated_at"`
+	ID          uuid.UUID      `json:"id"`
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Config      map[string]any `json:"config"`
+	CreatedAt   string         `json:"created_at"`
+	UpdatedAt   string         `json:"updated_at"`
 }
 
 type userPortalKeyResponse struct {
@@ -639,6 +640,7 @@ func toUserPortalTeam(team *domain.Profile) userPortalTeamResponse {
 		ID:          team.ID,
 		Name:        team.Name,
 		Description: team.Description,
+		Config:      team.Config,
 		CreatedAt:   team.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:   team.UpdatedAt.Format(time.RFC3339),
 	}

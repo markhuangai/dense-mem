@@ -268,6 +268,45 @@ describe("App", () => {
     });
   });
 
+  it("edits team dreaming config without dropping other team config", async () => {
+    const configuredTeam: Team = {
+      ...profileA,
+      config: {
+        retention: "standard",
+        dreaming: {
+          enabled: false,
+          timezone: "UTC",
+          max_outputs: 3,
+          provider: "manual",
+        },
+      },
+    };
+    const fetchMock = mockPortalFetch({ teams: [configuredTeam], keys: [] });
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+
+    render(<App />);
+    await screen.findByRole("button", { name: /Default/ });
+
+    const scheduledToggle = screen.getByLabelText("Scheduled cycle", { selector: "input" });
+    expect(scheduledToggle).not.toBeChecked();
+    await userEvent.click(scheduledToggle);
+    await userEvent.selectOptions(screen.getByLabelText("Timezone", { selector: "select" }), "America/New_York");
+    await userEvent.click(screen.getByRole("button", { name: /clear max dream outputs override/i }));
+    await userEvent.click(screen.getByRole("button", { name: /save dreaming/i }));
+
+    const patchCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith(`/teams/${configuredTeam.id}`) && init?.method === "PATCH");
+    expect(patchCall).toBeDefined();
+    const body = JSON.parse(String(patchCall?.[1]?.body));
+    expect(body.config.retention).toBe("standard");
+    expect(body.config.dreaming).toMatchObject({
+      enabled: true,
+      timezone: "America/New_York",
+      provider: "manual",
+    });
+    expect(body.config.dreaming.max_outputs).toBeUndefined();
+    expect(await screen.findByText("Saved")).toBeInTheDocument();
+  });
+
   it("shows team profiles with suffix, last used time, and delete action", async () => {
     const fetchMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
     sessionStorage.setItem("denseMem.controlToken", "secret");
@@ -538,7 +577,8 @@ function mockPortalFetch({
     }
     if (url.includes("/teams/") && method === "PATCH") {
       const body = JSON.parse(String(init?.body));
-      const updated = { ...(currentProfiles.find((team) => url.endsWith(`/teams/${team.id}`)) ?? currentProfiles[0]), name: body.name, description: body.description };
+      const current = currentProfiles.find((team) => url.endsWith(`/teams/${team.id}`)) ?? currentProfiles[0];
+      const updated = { ...current, name: body.name ?? current.name, description: body.description ?? current.description, config: body.config ?? current.config };
       currentProfiles = currentProfiles.map((team) => (team.id === updated.id ? updated : team));
       return jsonResponse({ data: updated });
     }

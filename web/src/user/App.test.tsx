@@ -174,6 +174,60 @@ describe("UserPortalApp", () => {
     });
   });
 
+  it("lets a manager edit team dreaming config", async () => {
+    const managerSession: UserSession = {
+      ...baseSession,
+      team: {
+        ...baseSession.team,
+        config: {
+          retention: "long",
+          dreaming: {
+            enabled: false,
+            timezone: "UTC",
+            max_outputs: 4,
+          },
+        },
+      },
+      key: {
+        ...baseSession.key,
+        name: "Manager",
+        scopes: ["read", "write"],
+        role: "manager",
+      },
+      can_rotate: true,
+      can_manage_team: true,
+    };
+    const fetchMock = mockUserFetch(managerSession, [{ ...managerSession.key }]);
+    sessionStorage.setItem("denseMem.userApiKey", "dm_manager");
+
+    render(<UserPortalApp />);
+    await screen.findByText("Research Team");
+    await userEvent.click(screen.getByRole("button", { name: /^team$/i }));
+
+    const scheduledToggle = await screen.findByLabelText("Scheduled cycle", { selector: "input" });
+    expect(scheduledToggle).not.toBeChecked();
+    await userEvent.click(scheduledToggle);
+    await userEvent.selectOptions(screen.getByLabelText("Timezone", { selector: "select" }), "America/New_York");
+    await userEvent.click(screen.getByRole("button", { name: /clear max dream outputs override/i }));
+    await userEvent.click(screen.getByRole("button", { name: /save dreaming/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining(`/api/v1/teams/${baseSession.team.id}`),
+        expect.objectContaining({ method: "PATCH" }),
+      );
+    });
+    const patchCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith(`/api/v1/teams/${baseSession.team.id}`) && init?.method === "PATCH");
+    const body = JSON.parse(String(patchCall?.[1]?.body));
+    expect(body.config.retention).toBe("long");
+    expect(body.config.dreaming).toMatchObject({
+      enabled: true,
+      timezone: "America/New_York",
+    });
+    expect(body.config.dreaming.max_outputs).toBeUndefined();
+    expect(await screen.findByText("Saved")).toBeInTheDocument();
+  });
+
   it("uses server auth method for SSO cookie sessions and switches teams", async () => {
     const { initial, switched, secondKey } = ssoSessions();
     const fetchMock = mockSSOUserFetch(initial, switched);
@@ -305,7 +359,7 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = []) {
     }
     if (url === `/api/v1/teams/${currentTeam.id}` && method === "PATCH") {
       const body = JSON.parse(String(init?.body));
-      currentTeam = { ...currentTeam, name: body.name, description: body.description };
+      currentTeam = { ...currentTeam, name: body.name ?? currentTeam.name, description: body.description ?? currentTeam.description, config: body.config ?? currentTeam.config };
       return jsonResponse({ data: currentTeam });
     }
     if (url === `/api/v1/teams/${currentTeam.id}/profiles` && method === "GET") {

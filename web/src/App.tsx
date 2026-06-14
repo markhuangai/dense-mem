@@ -28,6 +28,7 @@ import { MetricsPanel } from "./control/MetricsPanel";
 import { SecurityPanel } from "./control/SecurityPanel";
 import { SSOPanel } from "./control/SSOPanel";
 import { ConfigPanel } from "./control/ConfigPanel";
+import { TeamDreamingConfigForm } from "./teamDreamingConfig";
 import { displayKeySuffix, formatDate, profilePermissionLabel, profileRoleLabel, readError, shortId } from "./control/utils";
 import { AuthShell, PortalShell, SectionHeading } from "./ui/components";
 
@@ -430,6 +431,16 @@ function TeamEditor({
           </button>
         </div>
       </form>
+      <div className="surface-section team-dreaming-section">
+        <TeamDreamingConfigForm
+          key={team.id}
+          config={team.config}
+          disabled={busy}
+          onSave={async (config) => {
+            onUpdated(await api.updateTeam(team.id, { name: team.name, description: team.description ?? "", config }));
+          }}
+        />
+      </div>
     </section>
   );
 }
