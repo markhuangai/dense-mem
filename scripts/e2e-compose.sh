@@ -20,6 +20,40 @@ sanitize_project_name() {
   printf '%s' "$sanitized"
 }
 
+pick_ports() {
+  local count="$1"
+  node - "$count" <<'NODE'
+const net = require("node:net");
+const count = Number(process.argv[2]);
+const servers = [];
+
+function listen() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      servers.push(server);
+      resolve(server.address().port);
+    });
+  });
+}
+
+(async () => {
+  const ports = [];
+  for (let i = 0; i < count; i += 1) {
+    ports.push(await listen());
+  }
+  console.log(ports.join(" "));
+  for (const server of servers) {
+    server.close();
+  }
+})().catch((error) => {
+  console.error(error.message);
+  process.exit(1);
+});
+NODE
+}
+
 json_field() {
   local field="$1"
   node -e '
@@ -43,46 +77,62 @@ const path = process.argv[2];
 const target = process.argv[3];
 
 function decodeValue(raw) {
-  let value = raw.trim();
-  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
-    return value.slice(1, -1)
-      .replace(/\\n/g, "\n")
-      .replace(/\\r/g, "\r")
-      .replace(/\\t/g, "\t")
-      .replace(/\\"/g, '"')
-      .replace(/\\\\/g, "\\");
+  const value = raw.trim();
+  if (value.startsWith('"') || value.startsWith("'")) {
+    const quote = value[0];
+    const closing = closingQuoteIndex(value, quote);
+    if (closing > 0) {
+      const inner = value.slice(1, closing);
+      if (quote === "'") {
+        return inner;
+      }
+      return inner
+        .replace(/\\n/g, "\n")
+        .replace(/\\r/g, "\r")
+        .replace(/\\t/g, "\t")
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, "\\");
+    }
   }
-  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
-    return value.slice(1, -1);
-  }
-  const comment = value.search(/\s#/);
-  if (comment >= 0) {
-    value = value.slice(0, comment);
-  }
-  return value.trim();
+  return stripInlineComment(value).trim();
 }
 
+function closingQuoteIndex(value, quote) {
+  for (let index = 1; index < value.length; index += 1) {
+    if (quote === '"' && value[index] === "\\" && index + 1 < value.length) {
+      index += 1;
+      continue;
+    }
+    if (value[index] === quote) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function stripInlineComment(value) {
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] === "#" && (index === 0 || /\s/.test(value[index - 1]))) {
+      return value.slice(0, index);
+    }
+  }
+  return value;
+}
+
+let resolved;
 for (const line of fs.readFileSync(path, "utf8").split(/\r?\n/)) {
   const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
   if (!match || match[1] !== target) {
     continue;
   }
-  process.stdout.write(decodeValue(match[2]));
+  resolved = decodeValue(match[2]);
+}
+if (resolved !== undefined) {
+  process.stdout.write(resolved);
   process.exit(0);
 }
 process.exit(1);
 NODE
-}
-
-read_env_value() {
-  local field="$1"
-  local fallback="$2"
-  local value=""
-  if value="$(env_file_value "$field")" && [[ -n "$value" ]]; then
-    printf '%s' "$value"
-    return
-  fi
-  printf '%s' "$fallback"
 }
 
 require_env_value() {
@@ -248,14 +298,27 @@ fi
 
 E2E_RUN_ID="${DENSE_MEM_E2E_RUN_ID:-$(date -u +%Y%m%d%H%M%S)-$$}"
 COMPOSE_PROJECT_NAME="$(sanitize_project_name "${DENSE_MEM_E2E_PROJECT_NAME:-densemem-e2e-${E2E_RUN_ID}}")"
-DENSE_MEM_PORT="${DENSE_MEM_E2E_API_PORT:-$(read_env_value DENSE_MEM_PORT 8080)}"
-CONTROL_PORTAL_PORT="${DENSE_MEM_E2E_CONTROL_PORT:-$(read_env_value CONTROL_PORTAL_PORT 8090)}"
-PROMETHEUS_PORT="${DENSE_MEM_E2E_PROMETHEUS_PORT:-$(read_env_value PROMETHEUS_PORT 9090)}"
-PROMETHEUS_CONTAINER_NAME="${DENSE_MEM_E2E_PROMETHEUS_CONTAINER_NAME:-$(read_env_value PROMETHEUS_CONTAINER_NAME "${COMPOSE_PROJECT_NAME}-prometheus")}"
+read -r \
+  generated_api_port \
+  generated_control_port \
+  generated_prometheus_port \
+  generated_postgres_port \
+  generated_neo4j_http_port \
+  generated_neo4j_bolt_port \
+  generated_redis_port < <(pick_ports 7)
+DENSE_MEM_PORT="${DENSE_MEM_E2E_API_PORT:-$generated_api_port}"
+CONTROL_PORTAL_PORT="${DENSE_MEM_E2E_CONTROL_PORT:-$generated_control_port}"
+PROMETHEUS_PORT="${DENSE_MEM_E2E_PROMETHEUS_PORT:-$generated_prometheus_port}"
+POSTGRES_HOST_PORT="${DENSE_MEM_E2E_POSTGRES_PORT:-$generated_postgres_port}"
+NEO4J_HTTP_HOST_PORT="${DENSE_MEM_E2E_NEO4J_HTTP_PORT:-$generated_neo4j_http_port}"
+NEO4J_BOLT_HOST_PORT="${DENSE_MEM_E2E_NEO4J_BOLT_PORT:-$generated_neo4j_bolt_port}"
+REDIS_PORT="${DENSE_MEM_E2E_REDIS_PORT:-$generated_redis_port}"
+PROMETHEUS_CONTAINER_NAME="${DENSE_MEM_E2E_PROMETHEUS_CONTAINER_NAME:-${COMPOSE_PROJECT_NAME}-prometheus}"
 CONTROL_URL="${DENSE_MEM_CONTROL_URL:-http://127.0.0.1:${CONTROL_PORTAL_PORT}}"
 USER_URL="${DENSE_MEM_USER_URL:-http://127.0.0.1:${DENSE_MEM_PORT}}"
 PROMETHEUS_URL="${DENSE_MEM_PROMETHEUS_URL:-http://127.0.0.1:${PROMETHEUS_PORT}}"
 export DENSE_MEM_PORT CONTROL_PORTAL_PORT PROMETHEUS_PORT PROMETHEUS_CONTAINER_NAME
+export POSTGRES_HOST_PORT NEO4J_HTTP_HOST_PORT NEO4J_BOLT_HOST_PORT REDIS_PORT
 
 require_env_true TELEMETRY_ENABLED
 require_env_true RECALL_FEEDBACK_ENABLED
