@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/response"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
@@ -31,6 +35,11 @@ type Dependencies struct {
 	FragmentGet    fragmentservice.GetFragmentService
 	FragmentList   fragmentservice.ListFragmentsService
 	Recall         recallservice.RecallService
+	Metrics        observability.DiscoverabilityMetrics
+
+	// RecallFeedbackEnabled controls whether recall_memory asks host LLMs for
+	// online feedback and whether submit_recall_feedback is registered.
+	RecallFeedbackEnabled bool
 
 	// Search / graph tools (v1)
 	KeywordSearch               keywordsearch.KeywordSearchService
@@ -76,7 +85,7 @@ func BuildDefault(deps Dependencies) (Registry, error) {
 }
 
 func defaultTools(deps Dependencies) []Tool {
-	return []Tool{
+	tools := []Tool{
 		// v1 fragment + search tools
 		saveMemoryTool(deps),
 		getMemoryTool(deps),
@@ -115,6 +124,10 @@ func defaultTools(deps Dependencies) []Tool {
 		importSkillPackTool(deps),
 		rollbackSkillPackImportTool(deps),
 	}
+	if deps.RecallFeedbackEnabled {
+		tools = append(tools, submitRecallFeedbackTool(deps))
+	}
+	return tools
 }
 
 // --- save_memory -----------------------------------------------------------
@@ -297,6 +310,15 @@ func recallMemoryTool(deps Dependencies) Tool {
 				},
 				"clarifications": clarificationArraySchema(),
 				"related_dreams": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
+				"feedback_request": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"requested": map[string]any{"type": "boolean"},
+						"recall_id": schemaString("Opaque recall event id to pass to submit_recall_feedback.", 128),
+						"tool":      schemaString("Feedback submission tool name.", 64),
+						"fields":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					},
+				},
 			},
 		},
 		RequiredScopes: []string{"read"},
@@ -323,6 +345,20 @@ func recallMemoryTool(deps Dependencies) Tool {
 				results = append(results, m)
 			}
 			out := map[string]any{"results": results, "clarifications": []any{}, "related_dreams": []any{}}
+			if deps.RecallFeedbackEnabled {
+				out["feedback_request"] = map[string]any{
+					"requested": true,
+					"recall_id": "rec_" + uuid.NewString(),
+					"tool":      "submit_recall_feedback",
+					"fields": []string{
+						"used",
+						"answer_supported",
+						"quality",
+						"missing_context",
+						"irrelevant",
+					},
+				}
+			}
 			if deps.Memory != nil {
 				reflection, err := deps.Memory.Reflect(ctx, profileID, memoryservice.ReflectRequest{Limit: 20})
 				if err != nil {
@@ -337,6 +373,73 @@ func recallMemoryTool(deps Dependencies) Tool {
 				}
 			}
 			return out, nil
+		},
+	}
+}
+
+func submitRecallFeedbackTool(deps Dependencies) Tool {
+	return Tool{
+		Name:        "submit_recall_feedback",
+		Description: "Submit compact host-LLM online feedback for a recall_memory response. Call this after answering when recall_memory returned feedback_request.requested=true. Do not include user content.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"required": []string{
+				"recall_id",
+				"used",
+				"answer_supported",
+				"quality",
+				"missing_context",
+				"irrelevant",
+			},
+			"properties": map[string]any{
+				"recall_id":        schemaString("Opaque recall id from recall_memory.feedback_request.recall_id.", 128),
+				"used":             map[string]any{"type": "boolean", "description": "Whether any recalled result informed the answer."},
+				"answer_supported": map[string]any{"type": "boolean", "description": "Whether recalled context supported the answer."},
+				"quality":          schemaEnum([]string{"high", "medium", "low"}),
+				"missing_context":  map[string]any{"type": "boolean", "description": "Whether important memory context appeared missing."},
+				"irrelevant":       map[string]any{"type": "boolean", "description": "Whether returned context was irrelevant."},
+			},
+			"additionalProperties": false,
+		},
+		OutputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"recorded": map[string]any{"type": "boolean"},
+			},
+		},
+		RequiredScopes: []string{"write"},
+		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+			if deps.Metrics == nil {
+				return nil, ErrToolUnavailable
+			}
+			var req struct {
+				RecallID        string `json:"recall_id"`
+				Used            bool   `json:"used"`
+				AnswerSupported bool   `json:"answer_supported"`
+				Quality         string `json:"quality"`
+				MissingContext  bool   `json:"missing_context"`
+				Irrelevant      bool   `json:"irrelevant"`
+			}
+			if err := remapInput(input, &req); err != nil {
+				return nil, fmt.Errorf("submit_recall_feedback: invalid input: %w", err)
+			}
+			if strings.TrimSpace(req.RecallID) == "" {
+				return nil, errors.New("submit_recall_feedback: recall_id is required")
+			}
+			quality := strings.ToLower(strings.TrimSpace(req.Quality))
+			switch quality {
+			case "high", "medium", "low":
+			default:
+				return nil, errors.New("submit_recall_feedback: quality must be one of high, medium, low")
+			}
+			observability.RecordRecallFeedback(ctx, deps.Metrics, observability.RecallFeedback{
+				Used:            req.Used,
+				AnswerSupported: req.AnswerSupported,
+				Quality:         quality,
+				MissingContext:  req.MissingContext,
+				Irrelevant:      req.Irrelevant,
+			})
+			return map[string]any{"recorded": true}, nil
 		},
 	}
 }

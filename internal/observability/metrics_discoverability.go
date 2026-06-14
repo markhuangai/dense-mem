@@ -17,9 +17,8 @@ type DiscoverabilityMetrics interface {
 	ObserveRecallLatency(durationMs float64)
 	// ObserveRecall records one recall-service call with its result count.
 	ObserveRecall(durationMs float64, resultCount int, outcome string)
-	// ObserveRecallEvaluation records one offline recall-evaluation score.
-	// suite, pipeline, metric, and k must be bounded label sets; k=0 means all.
-	ObserveRecallEvaluation(suite string, pipeline string, metric string, k int, value float64)
+	// ObserveRecallFeedback records one host-LLM online recall feedback event.
+	ObserveRecallFeedback(feedback RecallFeedback)
 	// ObserveMemoryFunnelLatency records latency between memory pipeline stages.
 	ObserveMemoryFunnelLatency(stage string, seconds float64, outcome string)
 	// IncFragmentCreate bumps the fragment-create outcome counter.
@@ -64,8 +63,7 @@ func (noopMetrics) ObserveEmbeddingLatency(float64, string) {}
 func (noopMetrics) IncEmbeddingError(string)                {}
 func (noopMetrics) ObserveRecallLatency(float64)            {}
 func (noopMetrics) ObserveRecall(float64, int, string)      {}
-func (noopMetrics) ObserveRecallEvaluation(string, string, string, int, float64) {
-}
+func (noopMetrics) ObserveRecallFeedback(RecallFeedback)    {}
 func (noopMetrics) ObserveMemoryFunnelLatency(string, float64, string) {
 }
 func (noopMetrics) IncFragmentCreate(string)            {}
@@ -87,7 +85,7 @@ type InMemoryDiscoverabilityMetrics struct {
 	embeddingErrors        map[string]int
 	recallLatencies        []float64
 	recallSamples          []RecallSample
-	recallEvalSamples      []RecallEvaluationSample
+	recallFeedbackSamples  []RecallFeedbackSample
 	memoryFunnelSamples    []MemoryFunnelSample
 	fragmentOutcomes       map[string]int
 	claimCreateSamples     []ClaimCreateSample
@@ -125,13 +123,23 @@ type RecallSample struct {
 	Outcome     string
 }
 
-// RecallEvaluationSample is one offline recall-evaluation score.
-type RecallEvaluationSample struct {
-	Suite    string
-	Pipeline string
-	Metric   string
-	K        int
-	Value    float64
+// RecallFeedback is one host-LLM online quality judgment for a recall result set.
+type RecallFeedback struct {
+	Used            bool
+	AnswerSupported bool
+	Quality         string
+	MissingContext  bool
+	Irrelevant      bool
+}
+
+// RecallFeedbackSample is one recorded online recall-feedback event.
+type RecallFeedbackSample struct {
+	Used            bool
+	AnswerSupported bool
+	Quality         string
+	QualityScore    float64
+	MissingContext  bool
+	Irrelevant      bool
 }
 
 // MemoryFunnelSample is one observed pipeline-stage latency.
@@ -183,16 +191,18 @@ func (m *InMemoryDiscoverabilityMetrics) ObserveRecall(durationMs float64, resul
 	m.recallSamples = append(m.recallSamples, RecallSample{DurationMs: durationMs, ResultCount: resultCount, Outcome: outcome})
 }
 
-// ObserveRecallEvaluation records one offline recall-evaluation score.
-func (m *InMemoryDiscoverabilityMetrics) ObserveRecallEvaluation(suite string, pipeline string, metric string, k int, value float64) {
+// ObserveRecallFeedback records one host-LLM online recall-feedback event.
+func (m *InMemoryDiscoverabilityMetrics) ObserveRecallFeedback(feedback RecallFeedback) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.recallEvalSamples = append(m.recallEvalSamples, RecallEvaluationSample{
-		Suite:    suite,
-		Pipeline: pipeline,
-		Metric:   metric,
-		K:        k,
-		Value:    value,
+	quality := normalizeRecallFeedbackQuality(feedback.Quality)
+	m.recallFeedbackSamples = append(m.recallFeedbackSamples, RecallFeedbackSample{
+		Used:            feedback.Used,
+		AnswerSupported: feedback.AnswerSupported,
+		Quality:         quality,
+		QualityScore:    recallFeedbackQualityScore(quality),
+		MissingContext:  feedback.MissingContext,
+		Irrelevant:      feedback.Irrelevant,
 	})
 }
 
@@ -244,12 +254,12 @@ func (m *InMemoryDiscoverabilityMetrics) RecallSamples() []RecallSample {
 	return out
 }
 
-// RecallEvaluationSamples returns a copy of the recorded recall eval scores.
-func (m *InMemoryDiscoverabilityMetrics) RecallEvaluationSamples() []RecallEvaluationSample {
+// RecallFeedbackSamples returns a copy of the recorded online recall feedback.
+func (m *InMemoryDiscoverabilityMetrics) RecallFeedbackSamples() []RecallFeedbackSample {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := make([]RecallEvaluationSample, len(m.recallEvalSamples))
-	copy(out, m.recallEvalSamples)
+	out := make([]RecallFeedbackSample, len(m.recallFeedbackSamples))
+	copy(out, m.recallFeedbackSamples)
 	return out
 }
 

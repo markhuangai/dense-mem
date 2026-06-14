@@ -109,6 +109,9 @@ func TestBuildDefault_RegistersV1ToolSurface(t *testing.T) {
 			t.Errorf("legacy hyphenated tool %q must not be registered", name)
 		}
 	}
+	if _, ok := reg.Get("submit_recall_feedback"); ok {
+		t.Error("submit_recall_feedback must not be registered when recall feedback is disabled")
+	}
 }
 
 func TestBuildDefault_SchemaFieldsPopulated(t *testing.T) {

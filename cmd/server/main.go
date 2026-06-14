@@ -425,6 +425,8 @@ func main() {
 		FragmentGet:                 fragmentGetSvc,
 		FragmentList:                fragmentListSvc,
 		Recall:                      recallRegistrySvc,
+		Metrics:                     discoverabilityMetrics,
+		RecallFeedbackEnabled:       cfg.GetRecallFeedbackEnabled(),
 		KeywordSearch:               keywordSearchService,
 		SemanticSearch:              semanticSearchService,
 		GraphQuery:                  graphQueryService,

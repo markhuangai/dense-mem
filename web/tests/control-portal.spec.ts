@@ -93,6 +93,11 @@ const telemetryCards = [
   { id: "embedding_tokens", label: "Embedding tokens", unit: "tokens", value: 3200 },
   { id: "recalls", label: "Recall requests", unit: "requests", value: 9 },
   { id: "avg_recall_results", label: "Avg recall results", unit: "results", value: 3.2 },
+  { id: "llm_recall_used_rate", label: "LLM recall used", unit: "percent", value: 80 },
+  { id: "llm_recall_answer_supported_rate", label: "LLM answer supported", unit: "percent", value: 70 },
+  { id: "llm_recall_quality_score", label: "LLM recall quality", unit: "percent", value: 75 },
+  { id: "llm_recall_missing_context_rate", label: "LLM missing context", unit: "percent", value: 10 },
+  { id: "llm_recall_irrelevant_rate", label: "LLM irrelevant recall", unit: "percent", value: 5 },
   { id: "promotions", label: "Promotions", unit: "promotions", value: 4 },
   { id: "promotion_rate", label: "Promotion rate", unit: "percent", value: 66.6 },
   { id: "avg_http_latency", label: "Avg HTTP latency", unit: "ms", value: 18.5 },
@@ -115,6 +120,11 @@ const telemetrySeries = [
   { id: "recalls", label: "Recall requests", unit: "requests/s" },
   { id: "promotions", label: "Promotions", unit: "promotions/s" },
   { id: "recall_results", label: "Recall results", unit: "results" },
+  { id: "llm_recall_used_rate", label: "LLM recall used", unit: "percent" },
+  { id: "llm_recall_answer_supported_rate", label: "LLM answer supported", unit: "percent" },
+  { id: "llm_recall_quality_score", label: "LLM recall quality", unit: "percent" },
+  { id: "llm_recall_missing_context_rate", label: "LLM missing context", unit: "percent" },
+  { id: "llm_recall_irrelevant_rate", label: "LLM irrelevant recall", unit: "percent" },
   { id: "claim_verify_latency", label: "Claim-to-verify", unit: "ms" },
   { id: "claim_promotion_latency", label: "Claim-to-promote", unit: "ms" },
   { id: "verify_promotion_latency", label: "Verify-to-promote", unit: "ms" },
@@ -162,6 +172,7 @@ test("API key creation shows plaintext once", async ({ page }) => {
   await openPortal(page);
 
   await page.getByRole("button", { name: /Profiles & API Keys/ }).click();
+  await page.getByLabel("Role").selectOption("member");
   await page.getByLabel("Permission").selectOption("read");
   await page.getByRole("button", { name: "Create profile" }).click();
 
