@@ -377,6 +377,7 @@ describe("App", () => {
     expect(enabledToggle).toHaveAttribute("type", "checkbox");
     expect(enabledToggle).not.toBeChecked();
     await userEvent.click(enabledToggle);
+    await userEvent.click(screen.getByRole("button", { name: /clear force all teams override/i }));
     await userEvent.selectOptions(screen.getByLabelText("Timezone", { selector: "select" }), "America/New_York");
     await userEvent.clear(screen.getByLabelText("Cycle start time"));
     await userEvent.type(screen.getByLabelText("Cycle start time"), "02:30");
@@ -396,6 +397,7 @@ describe("App", () => {
     const body = JSON.parse(String(patchCall?.[1]?.body));
     expect(body.items).toEqual(expect.arrayContaining([
       { key: "DREAMING_ENABLED", value: "true" },
+      { key: "DREAMING_FORCE_ENABLED", value: "" },
       { key: "DREAMING_TIMEZONE", value: "America/New_York" },
       { key: "DREAMING_START_TIME_LOCAL", value: "02:30" },
     ]));

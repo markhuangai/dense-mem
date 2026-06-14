@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { Check, Moon, RefreshCw, Settings } from "lucide-react";
+import { Check, Moon, RefreshCw, Settings, X } from "lucide-react";
 import { ControlApi, DreamingConfig, DreamingConfigItem, SSOConfig, SSOConfigItem } from "../api";
 import { SectionHeading } from "../ui/components";
 import { formatDate, readError } from "./utils";
@@ -288,15 +288,22 @@ function ConfigField({
     return (
       <>
         <label htmlFor={item.key}>{label}</label>
-        <label className="toggle-row config-toggle" htmlFor={item.key}>
-          <span>{checked ? "Enabled" : "Disabled"}</span>
-          <input
-            id={item.key}
-            type="checkbox"
-            checked={checked}
-            onChange={(event) => onChange(event.target.checked ? "true" : "false")}
-          />
-        </label>
+        <div className="button-row">
+          <label className="toggle-row config-toggle" htmlFor={item.key}>
+            <span>{checked ? "Enabled" : "Disabled"}</span>
+            <input
+              id={item.key}
+              type="checkbox"
+              checked={checked}
+              onChange={(event) => onChange(event.target.checked ? "true" : "false")}
+            />
+          </label>
+          {value !== "" && (
+            <button className="icon-button" type="button" aria-label={`Clear ${label} override`} title={`Clear ${label} override`} onClick={() => onChange("")}>
+              <X size={16} aria-hidden="true" />
+            </button>
+          )}
+        </div>
       </>
     );
   }
