@@ -114,6 +114,35 @@ func TestAppConfigServiceDreamingSettingsDefaultsAndUpdate(t *testing.T) {
 	assert.Equal(t, 9, runtime.MaxOutputs)
 }
 
+func TestAppConfigServiceOperationLogSettingsDefaultsAndUpdate(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	repo := newAppConfigRepoStub(now, map[string]string{
+		domain.AppConfigUpdateTimeKey: now.Format(time.RFC3339Nano),
+	})
+	svc := NewAppConfigService(repo, nil)
+	svc.now = func() time.Time { return now }
+
+	settings, err := svc.GetOperationLogSettings(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "30", operationLogConfigItemForTest(settings, domain.AppConfigOperationLogRetentionDays).EffectiveValue)
+
+	runtime, err := svc.OperationLogRuntimeConfig(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, DefaultOperationLogRetentionDays, runtime.RetentionDays)
+
+	now = now.Add(time.Minute)
+	updated, err := svc.UpdateOperationLogSettings(ctx, map[string]string{
+		domain.AppConfigOperationLogRetentionDays: "45",
+	}, "control", "127.0.0.1", "corr")
+	require.NoError(t, err)
+	assert.Equal(t, "45", operationLogConfigItemForTest(updated, domain.AppConfigOperationLogRetentionDays).EffectiveValue)
+
+	runtime, err = svc.OperationLogRuntimeConfig(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 45, runtime.RetentionDays)
+}
+
 func TestAppConfigServiceSSOCookieSecureEffectiveDefault(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC)
@@ -276,6 +305,12 @@ func TestAppConfigServiceValidation(t *testing.T) {
 
 	_, err = svc.UpdateDreamingSettings(ctx, map[string]string{domain.AppConfigDreamingMaxOutputs: "0"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
+	_, err = svc.UpdateOperationLogSettings(ctx, map[string]string{"unknown": "value"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
+	_, err = svc.UpdateOperationLogSettings(ctx, map[string]string{domain.AppConfigOperationLogRetentionDays: "0"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
 }
 
 func TestAppConfigServiceAuditNoopAndUnavailableBranches(t *testing.T) {
@@ -316,6 +351,7 @@ func TestAppConfigServiceAuditNoopAndUnavailableBranches(t *testing.T) {
 	assert.Nil(t, cloneAppConfigCache(nil))
 	assert.Nil(t, ssoSettingsPayload(nil))
 	assert.Nil(t, dreamingSettingsPayload(nil))
+	assert.Nil(t, operationLogSettingsPayload(nil))
 }
 
 func TestAppConfigServiceInitialLoadAndRefreshErrors(t *testing.T) {
@@ -383,6 +419,9 @@ func newAppConfigRepoStub(now time.Time, values map[string]string) *appConfigRep
 		entries[key] = domain.AppConfigEntry{Key: key, Value: "", UpdatedAt: now}
 	}
 	for _, key := range editableDreamingConfigKeys() {
+		entries[key] = domain.AppConfigEntry{Key: key, Value: "", UpdatedAt: now}
+	}
+	for _, key := range editableOperationLogConfigKeys() {
 		entries[key] = domain.AppConfigEntry{Key: key, Value: "", UpdatedAt: now}
 	}
 	entries[domain.AppConfigUpdateTimeKey] = domain.AppConfigEntry{Key: domain.AppConfigUpdateTimeKey, Value: now.Format(time.RFC3339Nano), UpdatedAt: now}
@@ -453,6 +492,15 @@ func dreamingConfigItemForTest(settings *domain.DreamingConfigSettings, key stri
 		}
 	}
 	return domain.DreamingConfigItem{}
+}
+
+func operationLogConfigItemForTest(settings *domain.OperationLogConfigSettings, key string) domain.OperationLogConfigItem {
+	for _, item := range settings.Items {
+		if item.Key == key {
+			return item
+		}
+	}
+	return domain.OperationLogConfigItem{}
 }
 
 type appConfigAuditStub struct {

@@ -343,6 +343,36 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	if handlers.Recall != nil {
 		recallGroup.GET("", handlers.Recall, middleware.RequireScopes("read"))
 	}
+
+	dreamingGroup := e.Group("/api/v1/dreaming")
+	dreamingGroup.Use(authMW)
+	dreamingGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
+	dreamingGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
+	dreamingGroup.Use(deps.PostAuthMiddleware...)
+	dreamingGroup.Use(usageMW)
+	dreamingGroup.Use(rateLimitMW)
+	dreamingGroup.Use(lastUsedMW)
+	if handlers.DreamingStatus != nil {
+		dreamingGroup.GET("/status", handlers.DreamingStatus, middleware.RequireScopes("read"))
+	}
+	if handlers.DreamingRuns != nil {
+		dreamingGroup.GET("/runs", handlers.DreamingRuns, middleware.RequireScopes("read"))
+	}
+
+	dreamGroup := e.Group("/api/v1/dreams")
+	dreamGroup.Use(authMW)
+	dreamGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
+	dreamGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
+	dreamGroup.Use(deps.PostAuthMiddleware...)
+	dreamGroup.Use(usageMW)
+	dreamGroup.Use(rateLimitMW)
+	dreamGroup.Use(lastUsedMW)
+	if handlers.DreamList != nil {
+		dreamGroup.GET("", handlers.DreamList, middleware.RequireScopes("read"))
+	}
+	if handlers.DreamGet != nil {
+		dreamGroup.GET("/:dreamId", handlers.DreamGet, middleware.RequireScopes("read"))
+	}
 }
 
 // ProtectedHandlers holds handler functions for protected routes.
@@ -391,5 +421,9 @@ type ProtectedHandlers struct {
 	// CommunityList handles GET /api/v1/communities.
 	CommunityList echo.HandlerFunc
 	// Recall handles GET /api/v1/recall?q=...&limit=... (Phase 9 hybrid recall)
-	Recall echo.HandlerFunc
+	Recall         echo.HandlerFunc
+	DreamingStatus echo.HandlerFunc
+	DreamingRuns   echo.HandlerFunc
+	DreamList      echo.HandlerFunc
+	DreamGet       echo.HandlerFunc
 }

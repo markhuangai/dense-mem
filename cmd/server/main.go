@@ -94,6 +94,7 @@ func main() {
 		level = slog.LevelDebug
 	}
 	logger := observability.New(level)
+	slog.SetDefault(logger.Slog())
 
 	// Wire embedding dimension into request validator so the embedding_dim tag
 	// on dto.SemanticSearchRequest enforces the configured length at bind time.
@@ -173,6 +174,7 @@ func main() {
 	appConfigRepo := repository.NewAppConfigRepository(pgDB.GetDB(), rlsHelper)
 	securityRepo := repository.NewSecurityRepository(pgDB.GetDB(), rlsHelper)
 	usageMetricsRepo := repository.NewUsageMetricsRepository(pgDB.GetDB(), rlsHelper)
+	operationLogRepo := repository.NewOperationLogRepository(pgDB.GetDB(), rlsHelper)
 	skillPackImportRepo := repository.NewSkillPackImportRepository(pgDB.GetDB(), rlsHelper)
 
 	// ========================================
@@ -186,6 +188,10 @@ func main() {
 	// ========================================
 	auditService := service.NewAuditService(pgDB.GetDB())
 	appConfigService := service.NewAppConfigService(appConfigRepo, auditService)
+	operationLogService := service.NewOperationLogService(operationLogRepo, appConfigService)
+	logger = observability.NewWithSinks(level, operationLogService)
+	slog.SetDefault(logger.Slog())
+	operationLogService.Start(context.Background())
 	securityService := service.NewSecurityService(securityRepo, auditService)
 	usageMetricsService := service.NewUsageMetricsService(usageMetricsRepo, logger)
 	usageMetricsService.Start(context.Background())
@@ -500,6 +506,7 @@ func main() {
 	openAPIFullHandler := handler.NewOpenAPIHandler(openAPIGen, openapi.SpecVariantFull)
 
 	recallHandler := handler.NewRecallHandler(recallHTTPSvc)
+	dreamHandler := handler.NewDreamHandler(dreamSvc)
 
 	// ========================================
 	// Health checks
@@ -583,6 +590,10 @@ func main() {
 		OpenAPIAISafe:   openAPIAISafeHandler.Handle,
 		OpenAPIFull:     openAPIFullHandler.Handle,
 		Recall:          recallHandler.Handle,
+		DreamingStatus:  dreamHandler.Status,
+		DreamingRuns:    dreamHandler.Runs,
+		DreamList:       dreamHandler.List,
+		DreamGet:        dreamHandler.Get,
 	}
 	protectedHandlers.FragmentCreate = fragmentCreateHandler.Handle
 
@@ -597,6 +608,7 @@ func main() {
 		AuditSvc:     auditService,
 		SecuritySvc:  securityService,
 		SSOService:   ssoService,
+		AppConfig:    appConfigService,
 		Config:       &cfg,
 	}
 	if telemetryHTTPMetrics != nil {
@@ -615,6 +627,8 @@ func main() {
 			ScrapeToken:   cfg.GetTelemetryScrapeToken(),
 			SSO:           ssoService,
 			Config:        appConfigService,
+			Logs:          operationLogService,
+			Dreams:        dreamSvc,
 		},
 		healthConfig,
 		logger,
@@ -666,5 +680,8 @@ func main() {
 	defer metricsShutdownCancel()
 	if err := usageMetricsService.Shutdown(metricsShutdownCtx); err != nil {
 		logger.Error("usage metrics shutdown error", err)
+	}
+	if err := operationLogService.Shutdown(metricsShutdownCtx); err != nil {
+		log.Printf("operation log shutdown error: %v", err)
 	}
 }

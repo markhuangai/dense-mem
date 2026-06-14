@@ -23,28 +23,26 @@ func EffectiveDreamingConfig(global domain.DreamingRuntimeConfig, teamConfig map
 	}
 	dreaming, ok := nestedMap(teamConfig, "dreaming")
 	if ok {
-		cfg.Source = "team"
+		hasTeamOverride := false
 		if v, ok := boolFromAny(dreaming["enabled"]); ok {
 			cfg.Enabled = v
 			cfg.TeamEnabled = v
+			hasTeamOverride = true
 		}
 		if v, ok := boolFromAny(dreaming["reflect_enabled"]); ok {
 			cfg.ReflectEnabled = v
+			hasTeamOverride = true
 		}
 		if v, ok := boolFromAny(dreaming["reevaluate_enabled"]); ok {
 			cfg.ReevaluateEnabled = v
+			hasTeamOverride = true
 		}
 		if v, ok := boolFromAny(dreaming["dream_enabled"]); ok {
 			cfg.DreamEnabled = v
+			hasTeamOverride = true
 		}
-		if v, ok := stringFromAny(dreaming["start_time_local"]); ok && strings.TrimSpace(v) != "" {
-			cfg.StartTimeLocal = strings.TrimSpace(v)
-		}
-		if v, ok := stringFromAny(dreaming["timezone"]); ok && strings.TrimSpace(v) != "" {
-			cfg.Timezone = strings.TrimSpace(v)
-		}
-		if v, ok := intFromAny(dreaming["max_outputs"]); ok {
-			cfg.MaxOutputs = v
+		if hasTeamOverride {
+			cfg.Source = "team"
 		}
 	}
 	if cfg.ForceEnabled {

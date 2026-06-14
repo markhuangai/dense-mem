@@ -105,6 +105,10 @@ func (s *stubDreamService) Get(ctx context.Context, profileID, dreamID string) (
 	return dream, nil
 }
 
+func (s *stubDreamService) ListRuns(context.Context, string, int) ([]*dreamservice.RunCycleResult, error) {
+	return []*dreamservice.RunCycleResult{{RunID: "run-1", Status: "completed"}}, nil
+}
+
 func (s *stubDreamService) Recall(ctx context.Context, profileID, query string, limit int) ([]*domain.Dream, error) {
 	s.recallQuery = query
 	if s.recallErr != nil {

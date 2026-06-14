@@ -158,6 +158,7 @@ export function TeamManagementPanel({
         <TeamDreamingConfigForm
           key={session.team.id}
           config={session.team.config}
+          effective={session.team.dreaming_effective}
           disabled={teamBusy}
           onSave={async (config) => {
             onTeamUpdated(await api.updateTeam(session.team.id, { name: session.team.name, description: session.team.description ?? "", config }));

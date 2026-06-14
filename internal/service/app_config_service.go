@@ -16,6 +16,7 @@ import (
 )
 
 const DefaultAppConfigCacheCheckInterval = 5 * time.Second
+const DefaultOperationLogRetentionDays = 30
 
 var ErrInvalidAppConfig = errors.New("invalid app config")
 
@@ -26,6 +27,9 @@ type AppConfigService interface {
 	GetDreamingSettings(ctx context.Context) (*domain.DreamingConfigSettings, error)
 	UpdateDreamingSettings(ctx context.Context, values map[string]string, actorRole, clientIP, correlationID string) (*domain.DreamingConfigSettings, error)
 	DreamingRuntimeConfig(ctx context.Context) (domain.DreamingRuntimeConfig, error)
+	GetOperationLogSettings(ctx context.Context) (*domain.OperationLogConfigSettings, error)
+	UpdateOperationLogSettings(ctx context.Context, values map[string]string, actorRole, clientIP, correlationID string) (*domain.OperationLogConfigSettings, error)
+	OperationLogRuntimeConfig(ctx context.Context) (domain.OperationLogRuntimeConfig, error)
 }
 
 type AppConfigServiceImpl struct {
@@ -44,6 +48,7 @@ type appConfigCache struct {
 	sso        SSORuntimeConfig
 	settings   domain.SSOConfigSettings
 	dreaming   domain.DreamingConfigSettings
+	opLogs     domain.OperationLogConfigSettings
 	checkedAt  time.Time
 }
 
@@ -138,6 +143,46 @@ func (s *AppConfigServiceImpl) DreamingRuntimeConfig(ctx context.Context) (domai
 	return cache.dreaming.Effective, nil
 }
 
+func (s *AppConfigServiceImpl) GetOperationLogSettings(ctx context.Context) (*domain.OperationLogConfigSettings, error) {
+	cache, err := s.currentCache(ctx)
+	if err != nil {
+		return nil, err
+	}
+	settings := cache.opLogs
+	settings.Items = append([]domain.OperationLogConfigItem(nil), cache.opLogs.Items...)
+	return &settings, nil
+}
+
+func (s *AppConfigServiceImpl) UpdateOperationLogSettings(ctx context.Context, values map[string]string, actorRole, clientIP, correlationID string) (*domain.OperationLogConfigSettings, error) {
+	normalized, err := normalizeOperationLogConfigValues(values)
+	if err != nil {
+		return nil, err
+	}
+	before, _ := s.GetOperationLogSettings(ctx)
+	now := s.now().UTC()
+	changed, err := s.repo.UpdateValues(ctx, normalized, now.Format(time.RFC3339Nano), now)
+	if err != nil {
+		return nil, err
+	}
+	s.invalidate()
+	updated, err := s.GetOperationLogSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if changed {
+		s.appendAudit("APP_CONFIG_UPDATE", "app_config", "operation_logs", actorRole, clientIP, correlationID, operationLogSettingsPayload(before), operationLogSettingsPayload(updated), map[string]any{"section": "operation_logs"})
+	}
+	return updated, nil
+}
+
+func (s *AppConfigServiceImpl) OperationLogRuntimeConfig(ctx context.Context) (domain.OperationLogRuntimeConfig, error) {
+	cache, err := s.currentCache(ctx)
+	if err != nil {
+		return domain.OperationLogRuntimeConfig{}, err
+	}
+	return cache.opLogs.Effective, nil
+}
+
 func (s *AppConfigServiceImpl) currentCache(ctx context.Context) (*appConfigCache, error) {
 	if s == nil || s.repo == nil {
 		return nil, fmt.Errorf("app config service is unavailable")
@@ -216,12 +261,17 @@ func buildAppConfigCache(entries map[string]domain.AppConfigEntry, checkedAt tim
 	if err != nil {
 		return nil, err
 	}
+	opLogs, err := operationLogRuntimeConfigFromEntries(entries)
+	if err != nil {
+		return nil, err
+	}
 	return &appConfigCache{
 		updateTime: updateEntry.Value,
 		entries:    cloneAppConfigEntries(entries),
 		sso:        runtime,
 		settings:   settings,
 		dreaming:   dreaming,
+		opLogs:     opLogs,
 		checkedAt:  checkedAt,
 	}, nil
 }
@@ -363,6 +413,54 @@ func normalizeDreamingConfigValues(values map[string]string) (map[string]string,
 	return normalized, nil
 }
 
+func operationLogRuntimeConfigFromEntries(entries map[string]domain.AppConfigEntry) (domain.OperationLogConfigSettings, error) {
+	values := make(map[string]string, len(editableOperationLogConfigKeys()))
+	for _, key := range editableOperationLogConfigKeys() {
+		values[key] = strings.TrimSpace(entries[key].Value)
+	}
+	normalized, err := normalizeOperationLogConfigValues(values)
+	if err != nil {
+		return domain.OperationLogConfigSettings{}, err
+	}
+	retentionDays, retentionEffective := operationLogConfigInt(normalized[domain.AppConfigOperationLogRetentionDays], DefaultOperationLogRetentionDays)
+	runtime := domain.OperationLogRuntimeConfig{RetentionDays: retentionDays}
+	updateTime := entries[domain.AppConfigUpdateTimeKey].Value
+	items := []domain.OperationLogConfigItem{
+		operationLogConfigItem(entries, domain.AppConfigOperationLogRetentionDays, retentionEffective),
+	}
+	return domain.OperationLogConfigSettings{UpdateTime: updateTime, Items: items, Effective: runtime}, nil
+}
+
+func normalizeOperationLogConfigValues(values map[string]string) (map[string]string, error) {
+	allowed := make(map[string]struct{}, len(editableOperationLogConfigKeys()))
+	for _, key := range editableOperationLogConfigKeys() {
+		allowed[key] = struct{}{}
+	}
+	normalized := make(map[string]string, len(values))
+	for key, value := range values {
+		if key == domain.AppConfigUpdateTimeKey {
+			return nil, fmt.Errorf("%w: update_time is read-only", ErrInvalidAppConfig)
+		}
+		if _, ok := allowed[key]; !ok {
+			return nil, fmt.Errorf("%w: unknown key %s", ErrInvalidAppConfig, key)
+		}
+		trimmed := strings.TrimSpace(value)
+		switch key {
+		case domain.AppConfigOperationLogRetentionDays:
+			if trimmed == "" {
+				trimmed = strconv.Itoa(DefaultOperationLogRetentionDays)
+			}
+			parsed, err := strconv.Atoi(trimmed)
+			if err != nil || parsed < 1 || parsed > 365 {
+				return nil, fmt.Errorf("%w: OPERATION_LOG_RETENTION_DAYS must be between 1 and 365", ErrInvalidAppConfig)
+			}
+			trimmed = strconv.Itoa(parsed)
+		}
+		normalized[key] = trimmed
+	}
+	return normalized, nil
+}
+
 func normalizeSSOConfigValues(values map[string]string) (map[string]string, error) {
 	allowed := make(map[string]struct{}, len(editableSSOConfigKeys()))
 	for _, key := range editableSSOConfigKeys() {
@@ -436,6 +534,12 @@ func editableDreamingConfigKeys() []string {
 	}
 }
 
+func editableOperationLogConfigKeys() []string {
+	return []string{
+		domain.AppConfigOperationLogRetentionDays,
+	}
+}
+
 func ssoConfigSeconds(value string, fallback time.Duration) (time.Duration, string) {
 	if strings.TrimSpace(value) == "" {
 		return fallback, strconv.Itoa(int(fallback / time.Second))
@@ -468,6 +572,14 @@ func dreamingConfigInt(value string, fallback int) (int, string) {
 	return parsed, strconv.Itoa(parsed)
 }
 
+func operationLogConfigInt(value string, fallback int) (int, string) {
+	if strings.TrimSpace(value) == "" {
+		return fallback, strconv.Itoa(fallback)
+	}
+	parsed, _ := strconv.Atoi(value)
+	return parsed, strconv.Itoa(parsed)
+}
+
 func dreamingConfigString(value, fallback string) string {
 	if strings.TrimSpace(value) == "" {
 		return fallback
@@ -493,6 +605,16 @@ func dreamingConfigItem(entries map[string]domain.AppConfigEntry, key, effective
 	}
 }
 
+func operationLogConfigItem(entries map[string]domain.AppConfigEntry, key, effective string) domain.OperationLogConfigItem {
+	entry := entries[key]
+	return domain.OperationLogConfigItem{
+		Key:            key,
+		Value:          strings.TrimSpace(entry.Value),
+		EffectiveValue: effective,
+		UpdatedAt:      entry.UpdatedAt,
+	}
+}
+
 func ssoConfigItem(entries map[string]domain.AppConfigEntry, key, effective string) domain.SSOConfigItem {
 	entry := entries[key]
 	return domain.SSOConfigItem{
@@ -511,6 +633,7 @@ func cloneAppConfigCache(cache *appConfigCache) *appConfigCache {
 	copy.entries = cloneAppConfigEntries(cache.entries)
 	copy.settings.Items = append([]domain.SSOConfigItem(nil), cache.settings.Items...)
 	copy.dreaming.Items = append([]domain.DreamingConfigItem(nil), cache.dreaming.Items...)
+	copy.opLogs.Items = append([]domain.OperationLogConfigItem(nil), cache.opLogs.Items...)
 	return &copy
 }
 
@@ -541,6 +664,24 @@ func ssoSettingsPayload(settings *domain.SSOConfigSettings) map[string]any {
 }
 
 func dreamingSettingsPayload(settings *domain.DreamingConfigSettings) map[string]any {
+	if settings == nil {
+		return nil
+	}
+	items := make([]map[string]string, 0, len(settings.Items))
+	for _, item := range settings.Items {
+		items = append(items, map[string]string{
+			"key":   item.Key,
+			"value": item.Value,
+		})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i]["key"] < items[j]["key"] })
+	return map[string]any{
+		"update_time": settings.UpdateTime,
+		"items":       items,
+	}
+}
+
+func operationLogSettingsPayload(settings *domain.OperationLogConfigSettings) map[string]any {
 	if settings == nil {
 		return nil
 	}

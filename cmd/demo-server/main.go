@@ -100,6 +100,7 @@ func main() {
 		level = slog.LevelDebug
 	}
 	logger := observability.New(level)
+	slog.SetDefault(logger.Slog())
 
 	// Wire embedding dimension into request validator so the embedding_dim tag
 	// on dto.SemanticSearchRequest enforces the configured length at bind time.
@@ -182,6 +183,7 @@ func main() {
 	appConfigRepo := repository.NewAppConfigRepository(pgDB.GetDB(), rlsHelper)
 	securityRepo := repository.NewSecurityRepository(pgDB.GetDB(), rlsHelper)
 	usageMetricsRepo := repository.NewUsageMetricsRepository(pgDB.GetDB(), rlsHelper)
+	operationLogRepo := repository.NewOperationLogRepository(pgDB.GetDB(), rlsHelper)
 	skillPackImportRepo := repository.NewSkillPackImportRepository(pgDB.GetDB(), rlsHelper)
 
 	// ========================================
@@ -195,6 +197,10 @@ func main() {
 	// ========================================
 	auditService := service.NewAuditService(pgDB.GetDB())
 	appConfigService := service.NewAppConfigService(appConfigRepo, auditService)
+	operationLogService := service.NewOperationLogService(operationLogRepo, appConfigService)
+	logger = observability.NewWithSinks(level, operationLogService)
+	slog.SetDefault(logger.Slog())
+	operationLogService.Start(context.Background())
 	securityService := service.NewSecurityService(securityRepo, auditService)
 	usageMetricsService := service.NewUsageMetricsService(usageMetricsRepo, logger)
 	usageMetricsService.Start(context.Background())
@@ -640,6 +646,7 @@ func main() {
 		AuditSvc:        auditService,
 		SecuritySvc:     securityService,
 		SSOService:      ssoService,
+		AppConfig:       appConfigService,
 		Config:          &cfg,
 		ExtraMiddleware: runtimeServices.UserPortalMiddleware,
 	})
@@ -666,6 +673,7 @@ func main() {
 				ScrapeToken:   cfg.GetTelemetryScrapeToken(),
 				SSO:           ssoService,
 				Config:        appConfigService,
+				Logs:          operationLogService,
 			},
 			healthConfig,
 			logger,
@@ -734,5 +742,8 @@ func main() {
 	defer metricsShutdownCancel()
 	if err := usageMetricsService.Shutdown(metricsShutdownCtx); err != nil {
 		logger.Error("usage metrics shutdown error", err)
+	}
+	if err := operationLogService.Shutdown(metricsShutdownCtx); err != nil {
+		log.Printf("operation log shutdown error: %v", err)
 	}
 }

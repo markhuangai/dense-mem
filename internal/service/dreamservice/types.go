@@ -69,6 +69,7 @@ type Service interface {
 	RunCycle(ctx context.Context, profileID string, req RunCycleRequest) (*RunCycleResult, error)
 	List(ctx context.Context, profileID string, opts ListOptions) ([]*domain.Dream, string, error)
 	Get(ctx context.Context, profileID, dreamID string) (*domain.Dream, error)
+	ListRuns(ctx context.Context, profileID string, limit int) ([]*RunCycleResult, error)
 	Recall(ctx context.Context, profileID, query string, limit int) ([]*domain.Dream, error)
 	ResolveFeedback(ctx context.Context, profileID string, req ResolveFeedbackRequest) (*ResolveFeedbackResult, error)
 	Status(ctx context.Context, profileID string) (*StatusResult, error)

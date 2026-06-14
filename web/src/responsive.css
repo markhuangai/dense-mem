@@ -49,6 +49,7 @@
 
   .security-summary,
   .metrics-summary,
+  .dreaming-effective-grid,
   .dependency-grid,
   .telemetry-card-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -89,6 +90,7 @@
   .portal-tabs,
   .security-summary,
   .metrics-summary,
+  .dreaming-effective-grid,
   .dependency-grid,
   .metrics-toolbar,
   .telemetry-card-grid {

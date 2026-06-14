@@ -37,9 +37,9 @@ func TestEffectiveDreamingConfigTeamOverridesAndForceEnable(t *testing.T) {
 	require.True(t, cfg.ReflectEnabled)
 	require.False(t, cfg.ReevaluateEnabled)
 	require.True(t, cfg.DreamEnabled)
-	require.Equal(t, "02:30", cfg.StartTimeLocal)
-	require.Equal(t, "America/New_York", cfg.Timezone)
-	require.Equal(t, 9, cfg.MaxOutputs)
+	require.Equal(t, "03:00", cfg.StartTimeLocal)
+	require.Equal(t, "UTC", cfg.Timezone)
+	require.Equal(t, 5, cfg.MaxOutputs)
 	require.Equal(t, "team", cfg.Source)
 
 	cfg, err = EffectiveDreamingConfig(global, map[string]any{
@@ -51,9 +51,9 @@ func TestEffectiveDreamingConfigTeamOverridesAndForceEnable(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, cfg.Enabled)
 	require.True(t, cfg.TeamEnabled)
-	require.Equal(t, "America/Los_Angeles", cfg.Timezone)
-	require.Equal(t, 7, cfg.MaxOutputs)
-	require.Equal(t, "team", cfg.Source)
+	require.Equal(t, "UTC", cfg.Timezone)
+	require.Equal(t, 5, cfg.MaxOutputs)
+	require.Equal(t, "global", cfg.Source)
 
 	global.ForceEnabled = true
 	cfg, err = EffectiveDreamingConfig(global, map[string]any{
@@ -70,8 +70,8 @@ func TestEffectiveDreamingConfigRawMessageAndValidation(t *testing.T) {
 	cfg, err := EffectiveDreamingConfig(domain.DreamingRuntimeConfig{}, map[string]any{"dreaming": raw})
 	require.NoError(t, err)
 	require.True(t, cfg.Enabled)
-	require.Equal(t, "04:15", cfg.StartTimeLocal)
-	require.Equal(t, 3, cfg.MaxOutputs)
+	require.Equal(t, "03:00", cfg.StartTimeLocal)
+	require.Equal(t, 5, cfg.MaxOutputs)
 
 	_, err = EffectiveDreamingConfig(domain.DreamingRuntimeConfig{StartTimeLocal: "25:99", Timezone: "UTC", MaxOutputs: 5}, nil)
 	require.ErrorContains(t, err, "start_time_local")
