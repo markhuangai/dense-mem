@@ -10,6 +10,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/tools/keywordsearch"
 	"github.com/markhuangai/dense-mem/internal/tools/semanticsearch"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,6 +48,36 @@ func TestRecallService_ReturnsClassifiedBranchErrors(t *testing.T) {
 		require.ErrorIs(t, err, ErrKeywordUnavailable)
 		require.Equal(t, int32(1), atomic.LoadInt32(&logger.errors))
 	})
+}
+
+func TestRecallService_UsesPlainTextKeywordBranchQuery(t *testing.T) {
+	reader := &recallKeywordReader{}
+	svc := NewRecallService(
+		&stubEmbedding{DimensionsResult: 4},
+		&fakeSemanticSearcher{},
+		keywordsearch.NewFragmentSearcher(reader),
+		&fakeHydrator{},
+		nil,
+		nil,
+	)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{
+		Query: "GitVibe workflows / git-vibe command",
+		Limit: 3,
+	})
+
+	require.NoError(t, err)
+	require.Empty(t, out)
+	require.Equal(t, "GitVibe workflows git vibe command", reader.lastParams["searchQuery"])
+}
+
+type recallKeywordReader struct {
+	lastParams map[string]any
+}
+
+func (r *recallKeywordReader) ScopedRead(_ context.Context, _ string, _ string, params map[string]any) (neo4j.ResultSummary, []map[string]any, error) {
+	r.lastParams = params
+	return nil, nil, nil
 }
 
 func TestRecallService_HydrationFallbacksAndMisses(t *testing.T) {

@@ -16,9 +16,11 @@ type unitRecallScopedReader struct {
 	lastProfile string
 	lastQuery   string
 	lastParams  map[string]any
+	calls       int
 }
 
 func (r *unitRecallScopedReader) ScopedRead(_ context.Context, profileID string, query string, params map[string]any) (neo4j.ResultSummary, []map[string]any, error) {
+	r.calls++
 	r.lastProfile = profileID
 	r.lastQuery = query
 	r.lastParams = params
@@ -82,4 +84,36 @@ func TestRecallSearcherHelpersReturnZeroValuesForWrongTypes(t *testing.T) {
 	require.Equal(t, 0.0, recallFloat64(row, "float"))
 	require.Nil(t, recallTimePtr(row, "time"))
 	require.True(t, recallTime(row, "time").IsZero())
+}
+
+func TestRecallSearchersNormalizeLuceneQueryText(t *testing.T) {
+	t.Run("fact recall uses plain-text query", func(t *testing.T) {
+		reader := &unitRecallScopedReader{}
+
+		got, err := NewFactSearcher(reader).SearchActive(context.Background(), "profile-1", "GitVibe workflows / git-vibe command", 5)
+
+		require.NoError(t, err)
+		require.Empty(t, got)
+		require.Equal(t, "GitVibe workflows git vibe command", reader.lastParams["searchQuery"])
+	})
+
+	t.Run("claim recall uses plain-text query", func(t *testing.T) {
+		reader := &unitRecallScopedReader{}
+
+		got, err := NewClaimSearcher(reader).SearchValidated(context.Background(), "profile-1", "github.com/markhuangai/git-vibe", 5)
+
+		require.NoError(t, err)
+		require.Empty(t, got)
+		require.Equal(t, "github com markhuangai git vibe", reader.lastParams["searchQuery"])
+	})
+
+	t.Run("punctuation-only query returns empty result without calling neo4j", func(t *testing.T) {
+		reader := &unitRecallScopedReader{}
+
+		got, err := NewFactSearcher(reader).SearchActive(context.Background(), "profile-1", "/", 5)
+
+		require.NoError(t, err)
+		require.Empty(t, got)
+		require.Equal(t, 0, reader.calls)
+	})
 }
