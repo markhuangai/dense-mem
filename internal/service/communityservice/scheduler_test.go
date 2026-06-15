@@ -194,6 +194,35 @@ func TestCommunitySchedulerRunProfileUsesDetectTimeout(t *testing.T) {
 	require.LessOrEqual(t, remaining, schedulerDetectTimeout)
 }
 
+func TestCommunitySchedulerRunProfileReleasesRunStoreReservationOnCancellation(t *testing.T) {
+	store := &communitySchedulerRunStoreStub{
+		reserved: map[string]bool{"profile-1|2026-06-15": true},
+	}
+	detector := &communitySchedulerDetectorStub{
+		detectFunc: func(ctx context.Context, _ string) error {
+			return ctx.Err()
+		},
+	}
+	scheduler := NewScheduler(
+		detector,
+		&communitySchedulerProfileStub{},
+		&communitySchedulerConfigStub{},
+		nil,
+		discardCommunitySchedulerLogger(),
+		WithSchedulerRunStore(store),
+	)
+	now := time.Date(2026, 6, 15, 3, 30, 0, 0, time.UTC)
+	scheduler.now = func() time.Time { return now }
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	scheduler.runProfile(ctx, schedulerJob{profileID: "profile-1", runDate: "2026-06-15", dueAt: now})
+
+	require.Equal(t, []string{"profile-1|2026-06-15"}, store.releaseKeys)
+	require.False(t, store.reserved["profile-1|2026-06-15"])
+	require.False(t, scheduler.alreadyRan("profile-1", "2026-06-15"))
+}
+
 func TestCommunitySchedulerStopsOnProfileListError(t *testing.T) {
 	profileSvc := &communitySchedulerProfileStub{err: errors.New("list failed")}
 	detector := &communitySchedulerDetectorStub{}
@@ -337,8 +366,10 @@ type communitySchedulerRunStoreStub struct {
 	mu          sync.Mutex
 	reserved    map[string]bool
 	tryKeys     []string
+	releaseKeys []string
 	pruneBefore []string
 	err         error
+	releaseErr  error
 	pruneErr    error
 }
 
@@ -358,6 +389,20 @@ func (s *communitySchedulerRunStoreStub) TryMarkRun(_ context.Context, profileID
 	}
 	s.reserved[key] = true
 	return true, nil
+}
+
+func (s *communitySchedulerRunStoreStub) ReleaseRun(_ context.Context, profileID, runDate string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := profileID + "|" + runDate
+	s.releaseKeys = append(s.releaseKeys, key)
+	if s.releaseErr != nil {
+		return s.releaseErr
+	}
+	if s.reserved != nil {
+		delete(s.reserved, key)
+	}
+	return nil
 }
 
 func (s *communitySchedulerRunStoreStub) Prune(_ context.Context, beforeRunDate string) error {

@@ -24,6 +24,9 @@ func TestPostgresSchedulerRunStore(t *testing.T) {
 	mock.ExpectExec(`(?s)DELETE FROM community_detection_runs.*WHERE run_date < \$1`).
 		WithArgs("2026-06-08").
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)DELETE FROM community_detection_runs.*WHERE profile_id = \$1 AND run_date = \$2`).
+		WithArgs("profile-1", "2026-06-15").
+		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	store := NewPostgresSchedulerRunStore(db)
 	reserved, err := store.TryMarkRun(context.Background(), "profile-1", "2026-06-15")
@@ -35,6 +38,7 @@ func TestPostgresSchedulerRunStore(t *testing.T) {
 	require.False(t, reserved)
 
 	require.NoError(t, store.Prune(context.Background(), "2026-06-08"))
+	require.NoError(t, store.ReleaseRun(context.Background(), "profile-1", "2026-06-15"))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -44,6 +48,7 @@ func TestPostgresSchedulerRunStoreErrors(t *testing.T) {
 	require.False(t, reserved)
 	require.ErrorContains(t, err, "db is required")
 	require.ErrorContains(t, store.Prune(context.Background(), "2026-06-08"), "db is required")
+	require.ErrorContains(t, store.ReleaseRun(context.Background(), "profile-1", "2026-06-15"), "db is required")
 
 	db, mock, cleanup := newSchedulerRunStoreMockDB(t)
 	defer cleanup()
@@ -54,12 +59,16 @@ func TestPostgresSchedulerRunStoreErrors(t *testing.T) {
 	mock.ExpectExec(`(?s)DELETE FROM community_detection_runs.*WHERE run_date < \$1`).
 		WithArgs("2026-06-08").
 		WillReturnError(errors.New("delete failed"))
+	mock.ExpectExec(`(?s)DELETE FROM community_detection_runs.*WHERE profile_id = \$1 AND run_date = \$2`).
+		WithArgs("profile-1", "2026-06-15").
+		WillReturnError(errors.New("release failed"))
 
 	store = NewPostgresSchedulerRunStore(db)
 	reserved, err = store.TryMarkRun(context.Background(), "profile-1", "2026-06-15")
 	require.False(t, reserved)
 	require.ErrorContains(t, err, "community scheduler run reserve")
 	require.ErrorContains(t, store.Prune(context.Background(), "2026-06-08"), "community scheduler run prune")
+	require.ErrorContains(t, store.ReleaseRun(context.Background(), "profile-1", "2026-06-15"), "community scheduler run release")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

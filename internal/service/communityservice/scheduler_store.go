@@ -30,6 +30,18 @@ ON CONFLICT (profile_id, run_date) DO NOTHING`, profileID, runDate)
 	return tx.RowsAffected > 0, nil
 }
 
+func (s *postgresSchedulerRunStore) ReleaseRun(ctx context.Context, profileID, runDate string) error {
+	if s == nil || s.db == nil {
+		return errors.New("community scheduler run store: db is required")
+	}
+	if err := s.db.WithContext(ctx).Exec(`
+DELETE FROM community_detection_runs
+WHERE profile_id = ? AND run_date = ?`, profileID, runDate).Error; err != nil {
+		return fmt.Errorf("community scheduler run release: %w", err)
+	}
+	return nil
+}
+
 func (s *postgresSchedulerRunStore) Prune(ctx context.Context, beforeRunDate string) error {
 	if s == nil || s.db == nil {
 		return errors.New("community scheduler run store: db is required")

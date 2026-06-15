@@ -13,11 +13,12 @@ import (
 )
 
 const (
-	schedulerProfilePageSize  = 100
-	schedulerDetectTimeout    = 10 * time.Minute
-	schedulerLastRunRetention = 7 * 24 * time.Hour
-	schedulerRunDateLayout    = "2006-01-02"
-	schedulerTickInterval     = time.Minute
+	schedulerProfilePageSize         = 100
+	schedulerDetectTimeout           = 10 * time.Minute
+	schedulerReservationReleaseLimit = 5 * time.Second
+	schedulerLastRunRetention        = 7 * 24 * time.Hour
+	schedulerRunDateLayout           = "2006-01-02"
+	schedulerTickInterval            = time.Minute
 )
 
 type SchedulerProfileService interface {
@@ -30,6 +31,7 @@ type SchedulerAppConfig interface {
 
 type SchedulerRunStore interface {
 	TryMarkRun(ctx context.Context, profileID, runDate string) (bool, error)
+	ReleaseRun(ctx context.Context, profileID, runDate string) error
 	Prune(ctx context.Context, beforeRunDate string) error
 }
 
@@ -186,6 +188,7 @@ func (s *Scheduler) runProfile(ctx context.Context, job schedulerJob) {
 	duration := s.now().Sub(started)
 	if err != nil {
 		if detectCtx.Err() != nil {
+			s.releaseRunReservation(ctx, job.profileID, job.runDate)
 			s.logger.Warn("community scheduler: detection canceled",
 				slog.String("profile_id", job.profileID),
 				slog.String("run_date", job.runDate),
@@ -302,6 +305,21 @@ func (s *Scheduler) reserveRun(ctx context.Context, profileID, runDate string) b
 		return false
 	}
 	return reserved
+}
+
+func (s *Scheduler) releaseRunReservation(ctx context.Context, profileID, runDate string) {
+	if s.runStore == nil {
+		return
+	}
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), schedulerReservationReleaseLimit)
+	defer cancel()
+	if err := s.runStore.ReleaseRun(releaseCtx, profileID, runDate); err != nil {
+		s.logger.Warn("community scheduler: run reservation release failed",
+			slog.String("profile_id", profileID),
+			slog.String("run_date", runDate),
+			slog.String("error", err.Error()),
+		)
+	}
 }
 
 func (s *Scheduler) markRan(profileID, runDate string) {
