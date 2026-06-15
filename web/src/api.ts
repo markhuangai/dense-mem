@@ -243,6 +243,29 @@ export type DreamingConfigInput = {
   }>;
 };
 
+export type CommunityDetectionRuntimeConfig = {
+  enabled: boolean;
+  start_time_local: string;
+  timezone: string;
+  max_concurrency: number;
+  jitter_seconds: number;
+};
+
+export type CommunityDetectionConfigItem = SSOConfigItem;
+
+export type CommunityDetectionConfig = {
+  update_time: string;
+  items: CommunityDetectionConfigItem[];
+  effective: CommunityDetectionRuntimeConfig;
+};
+
+export type CommunityDetectionConfigInput = {
+  items: Array<{
+    key: string;
+    value: string;
+  }>;
+};
+
 export type OperationLogRuntimeConfig = {
   retention_days: number;
 };
@@ -500,6 +523,14 @@ export class ControlApi {
 
   updateDreamingConfig(input: DreamingConfigInput): Promise<DreamingConfig> {
     return this.requestEnvelope<DreamingConfig>("/config/dreaming", { method: "PATCH", body: input });
+  }
+
+  getCommunityDetectionConfig(): Promise<CommunityDetectionConfig> {
+    return this.requestEnvelope<CommunityDetectionConfig>("/config/community-detection");
+  }
+
+  updateCommunityDetectionConfig(input: CommunityDetectionConfigInput): Promise<CommunityDetectionConfig> {
+    return this.requestEnvelope<CommunityDetectionConfig>("/config/community-detection", { method: "PATCH", body: input });
   }
 
   getOperationLogConfig(): Promise<OperationLogConfig> {

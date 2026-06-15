@@ -20,9 +20,11 @@ import (
 type controlAppConfigSvc struct {
 	settings             *domain.SSOConfigSettings
 	dreamingSettings     *domain.DreamingConfigSettings
+	communitySettings    *domain.CommunityDetectionConfigSettings
 	operationLogSettings *domain.OperationLogConfigSettings
 	values               map[string]string
 	dreamingValues       map[string]string
+	communityValues      map[string]string
 	operationLogValues   map[string]string
 	getErr               error
 	updateErr            error
@@ -76,6 +78,30 @@ func (s *controlAppConfigSvc) UpdateDreamingSettings(_ context.Context, values m
 
 func (s *controlAppConfigSvc) DreamingRuntimeConfig(context.Context) (domain.DreamingRuntimeConfig, error) {
 	return s.dreamingRuntime, s.dreamingRuntimeErr
+}
+
+func (s *controlAppConfigSvc) GetCommunityDetectionSettings(context.Context) (*domain.CommunityDetectionConfigSettings, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	return s.communitySettings, nil
+}
+
+func (s *controlAppConfigSvc) UpdateCommunityDetectionSettings(_ context.Context, values map[string]string, _, _, _ string) (*domain.CommunityDetectionConfigSettings, error) {
+	if s.updateErr != nil {
+		return nil, s.updateErr
+	}
+	if s.communityValues == nil {
+		s.communityValues = make(map[string]string)
+	}
+	for key, value := range values {
+		s.communityValues[key] = value
+	}
+	return s.communitySettings, nil
+}
+
+func (s *controlAppConfigSvc) CommunityDetectionRuntimeConfig(context.Context) (domain.CommunityDetectionRuntimeConfig, error) {
+	return domain.CommunityDetectionRuntimeConfig{}, nil
 }
 
 func (s *controlAppConfigSvc) GetOperationLogSettings(context.Context) (*domain.OperationLogConfigSettings, error) {
@@ -215,6 +241,64 @@ func TestControlPortalDreamingConfigFlows(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
+func TestControlPortalCommunityDetectionConfigFlows(t *testing.T) {
+	now := time.Date(2026, 6, 15, 3, 30, 0, 0, time.UTC)
+	appConfig := &controlAppConfigSvc{
+		communitySettings: &domain.CommunityDetectionConfigSettings{
+			UpdateTime: now.Format(time.RFC3339Nano),
+			Items: []domain.CommunityDetectionConfigItem{{
+				Key:            domain.AppConfigCommunityDetectionEnabled,
+				Value:          "false",
+				EffectiveValue: "false",
+				UpdatedAt:      now,
+			}, {
+				Key:            domain.AppConfigCommunityDetectionStartTimeLocal,
+				Value:          "03:30",
+				EffectiveValue: "03:30",
+				UpdatedAt:      now,
+			}},
+			Effective: domain.CommunityDetectionRuntimeConfig{
+				StartTimeLocal: "03:30",
+				Timezone:       "Local",
+				MaxConcurrency: 1,
+				JitterSeconds:  600,
+			},
+		},
+	}
+	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+		ControlHTTPAddr:    "127.0.0.1:8090",
+		ControlPortalToken: "secret",
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
+		Config: appConfig,
+	}, HealthConfig{}, nil)
+	require.NoError(t, err)
+
+	do := func(method, path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer secret")
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := do(http.MethodGet, "/control/api/config/community-detection", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"update_time":"2026-06-15T03:30:00Z"`)
+	require.Contains(t, rec.Body.String(), `"start_time_local":"03:30"`)
+
+	rec = do(http.MethodPatch, "/control/api/config/community-detection", `{"items":[{"key":"COMMUNITY_DETECTION_ENABLED","value":"true"}]}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "true", appConfig.communityValues[domain.AppConfigCommunityDetectionEnabled])
+
+	rec = do(http.MethodPatch, "/control/api/config/community-detection", "{")
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+
+	appConfig.updateErr = service.ErrInvalidAppConfig
+	rec = do(http.MethodPatch, "/control/api/config/community-detection", `{"items":[{"key":"COMMUNITY_DETECTION_MAX_CONCURRENCY","value":"0"}]}`)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+}
+
 func TestControlPortalOperationLogConfigFlows(t *testing.T) {
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	appConfig := &controlAppConfigSvc{
@@ -266,6 +350,7 @@ func TestControlPortalOperationLogConfigFlows(t *testing.T) {
 func TestControlConfigNilResponses(t *testing.T) {
 	require.Empty(t, toControlSSOConfig(nil).Items)
 	require.Empty(t, toControlDreamingConfig(nil).Items)
+	require.Empty(t, toControlCommunityDetectionConfig(nil).Items)
 	require.Empty(t, toControlOperationLogConfig(nil).Items)
 }
 

@@ -134,11 +134,9 @@ ai:
   budgets:
     default_timeout_minutes: 60
     review_timeout_minutes: 60
-    implementation_timeout_minutes: 120
     feedback_timeout_minutes: 120
     create_pr_timeout_minutes: 15
     default_max_turns: 200
-    implementation_max_turns: 200
     feedback_max_turns: 120
     validation_repair_attempts: 3
     validation_repair_max_turns: 45
@@ -188,41 +186,8 @@ ai:
             - semantic_search
             - list_communities
             - get_community_summary
-    implement:
-      enabled: false
-      profile: local_proxy
-      mcp:
-        dense_mem:
-          required: true
-          tools: 
-            - recall_memory
-            - assemble_context
-            - get_memory
-            - get_fact
-            - keyword_search
-            - semantic_search
-            - list_communities
-            - get_community_summary
     review-matrix:
       role_group: swarm
-      mcp:
-        dense_mem:
-          required: true
-          tools: 
-            - recall_memory
-            - assemble_context
-            - get_memory
-            - get_fact
-            - keyword_search
-            - semantic_search
-            - list_communities
-            - get_community_summary
-    create-pr:
-      enabled: false
-      profile: local_proxy
-    address-pr-feedback:
-      enabled: false
-      profile: local_proxy
       mcp:
         dense_mem:
           required: true

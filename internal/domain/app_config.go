@@ -21,6 +21,12 @@ const (
 	AppConfigDreamingDreamEnabled      = "DREAMING_DREAM_ENABLED"
 	AppConfigDreamingMaxOutputs        = "DREAMING_MAX_OUTPUTS"
 
+	AppConfigCommunityDetectionEnabled        = "COMMUNITY_DETECTION_ENABLED"
+	AppConfigCommunityDetectionStartTimeLocal = "COMMUNITY_DETECTION_START_TIME_LOCAL"
+	AppConfigCommunityDetectionTimezone       = "COMMUNITY_DETECTION_TIMEZONE"
+	AppConfigCommunityDetectionMaxConcurrency = "COMMUNITY_DETECTION_MAX_CONCURRENCY"
+	AppConfigCommunityDetectionJitterSeconds  = "COMMUNITY_DETECTION_JITTER_SECONDS"
+
 	AppConfigOperationLogRetentionDays = "OPERATION_LOG_RETENTION_DAYS"
 )
 

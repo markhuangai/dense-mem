@@ -1,10 +1,10 @@
 import { FormEvent, useEffect, useState } from "react";
-import { Check, ListFilter, Moon, RefreshCw, Settings, X } from "lucide-react";
-import { ControlApi, DreamingConfig, DreamingConfigItem, OperationLogConfig, OperationLogConfigItem, SSOConfig, SSOConfigItem } from "../api";
+import { Check, ListFilter, Moon, Network, RefreshCw, Settings, X } from "lucide-react";
+import { CommunityDetectionConfig, CommunityDetectionConfigItem, ControlApi, DreamingConfig, DreamingConfigItem, OperationLogConfig, OperationLogConfigItem, SSOConfig, SSOConfigItem } from "../api";
 import { SectionHeading } from "../ui/components";
 import { formatDate, readError } from "./utils";
 
-type ConfigTab = "sso" | "dreaming" | "operation-logs";
+type ConfigTab = "sso" | "dreaming" | "community" | "operation-logs";
 
 const CONFIG_LABELS: Record<string, string> = {
   SSO_PUBLIC_BASE_URL: "Public base URL",
@@ -21,6 +21,11 @@ const CONFIG_LABELS: Record<string, string> = {
   DREAMING_REEVALUATE_ENABLED: "Re-evaluate phase",
   DREAMING_DREAM_ENABLED: "Dream phase",
   DREAMING_MAX_OUTPUTS: "Max dream outputs",
+  COMMUNITY_DETECTION_ENABLED: "Enable scheduled detection",
+  COMMUNITY_DETECTION_START_TIME_LOCAL: "Detection start time",
+  COMMUNITY_DETECTION_TIMEZONE: "Timezone",
+  COMMUNITY_DETECTION_MAX_CONCURRENCY: "Max concurrency",
+  COMMUNITY_DETECTION_JITTER_SECONDS: "Jitter seconds",
   OPERATION_LOG_RETENTION_DAYS: "Retention days",
 };
 
@@ -32,6 +37,10 @@ const CONFIG_PLACEHOLDERS: Record<string, string> = {
   DREAMING_START_TIME_LOCAL: "03:00",
   DREAMING_TIMEZONE: "UTC",
   DREAMING_MAX_OUTPUTS: "5",
+  COMMUNITY_DETECTION_START_TIME_LOCAL: "03:30",
+  COMMUNITY_DETECTION_TIMEZONE: "Local",
+  COMMUNITY_DETECTION_MAX_CONCURRENCY: "1",
+  COMMUNITY_DETECTION_JITTER_SECONDS: "600",
   OPERATION_LOG_RETENTION_DAYS: "30",
 };
 
@@ -84,6 +93,16 @@ export function ConfigPanel({ api }: { api: ControlApi }) {
           <span>Dreaming</span>
         </button>
         <button
+          className={activeTab === "community" ? "tab-button active" : "tab-button"}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "community"}
+          onClick={() => setActiveTab("community")}
+        >
+          <Network size={16} aria-hidden="true" />
+          <span>Community</span>
+        </button>
+        <button
           className={activeTab === "operation-logs" ? "tab-button active" : "tab-button"}
           type="button"
           role="tab"
@@ -96,6 +115,7 @@ export function ConfigPanel({ api }: { api: ControlApi }) {
       </div>
       {activeTab === "sso" && <SSOConfigPanel api={api} />}
       {activeTab === "dreaming" && <DreamingConfigPanel api={api} />}
+      {activeTab === "community" && <CommunityDetectionConfigPanel api={api} />}
       {activeTab === "operation-logs" && <OperationLogConfigPanel api={api} />}
     </>
   );
@@ -269,6 +289,90 @@ function DreamingConfigPanel({ api }: { api: ControlApi }) {
   );
 }
 
+function CommunityDetectionConfigPanel({ api }: { api: ControlApi }) {
+  const [config, setConfig] = useState<CommunityDetectionConfig | null>(null);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function loadConfig() {
+    setLoading(true);
+    setError("");
+    setMessage("");
+    try {
+      const next = await api.getCommunityDetectionConfig();
+      setConfig(next);
+      setDraft(Object.fromEntries(next.items.map((item) => [item.key, item.value])));
+    } catch (err) {
+      setError(readError(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadConfig();
+  }, []);
+
+  async function saveConfig(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLoading(true);
+    setError("");
+    setMessage("");
+    try {
+      const next = await api.updateCommunityDetectionConfig({
+        items: Object.entries(draft).map(([key, value]) => ({ key, value })),
+      });
+      setConfig(next);
+      setDraft(Object.fromEntries(next.items.map((item) => [item.key, item.value])));
+      setMessage("Saved");
+    } catch (err) {
+      setError(readError(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <section className="surface">
+      <SectionHeading
+        title="Community Detection"
+        actions={(
+          <div className="button-row">
+            {config?.update_time && <span className="form-meta">{formatDate(config.update_time)}</span>}
+            <button className="icon-button" type="button" aria-label="Refresh community detection config" onClick={() => void loadConfig()}>
+              <RefreshCw size={16} aria-hidden="true" />
+            </button>
+          </div>
+        )}
+      />
+      {error && <div className="banner error" role="alert">{error}</div>}
+      {message && <div className="banner neutral">{message}</div>}
+      {loading && !config ? (
+        <div className="table-placeholder compact">Loading</div>
+      ) : (
+        <form className="edit-grid" onSubmit={saveConfig}>
+          {(config?.items ?? []).map((item) => (
+            <ConfigField
+              key={item.key}
+              item={item}
+              value={draft[item.key] ?? ""}
+              onChange={(value) => setDraft((current) => ({ ...current, [item.key]: value }))}
+            />
+          ))}
+          <div className="button-row span">
+            <button className="primary-button" type="submit" disabled={loading || !config}>
+              <Check size={16} aria-hidden="true" />
+              Save config
+            </button>
+          </div>
+        </form>
+      )}
+    </section>
+  );
+}
+
 function OperationLogConfigPanel({ api }: { api: ControlApi }) {
   const [config, setConfig] = useState<OperationLogConfig | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
@@ -358,7 +462,7 @@ function ConfigField({
   value,
   onChange,
 }: {
-  item: SSOConfigItem | DreamingConfigItem | OperationLogConfigItem;
+  item: SSOConfigItem | DreamingConfigItem | CommunityDetectionConfigItem | OperationLogConfigItem;
   value: string;
   onChange: (value: string) => void;
 }) {
@@ -377,7 +481,7 @@ function ConfigField({
     );
   }
 
-  if (item.key.startsWith("DREAMING_") && item.key.endsWith("_ENABLED")) {
+  if ((item.key.startsWith("DREAMING_") || item.key.startsWith("COMMUNITY_DETECTION_")) && item.key.endsWith("_ENABLED")) {
     const checked = (value || item.effective_value) === "true";
     return (
       <>
@@ -397,8 +501,8 @@ function ConfigField({
     );
   }
 
-  if (item.key === "DREAMING_TIMEZONE") {
-    const timezone = value || item.effective_value || "UTC";
+  if (item.key === "DREAMING_TIMEZONE" || item.key === "COMMUNITY_DETECTION_TIMEZONE") {
+    const timezone = value || item.effective_value || (item.key === "COMMUNITY_DETECTION_TIMEZONE" ? "Local" : "UTC");
     return (
       <>
         <label htmlFor={item.key}>{label}</label>
@@ -418,16 +522,17 @@ function ConfigField({
     );
   }
 
-  const numeric = item.key.endsWith("_SECONDS") || item.key === "DREAMING_MAX_OUTPUTS" || item.key === "OPERATION_LOG_RETENTION_DAYS";
-  const time = item.key === "DREAMING_START_TIME_LOCAL";
+  const numeric = item.key.endsWith("_SECONDS") || item.key === "DREAMING_MAX_OUTPUTS" || item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" || item.key === "OPERATION_LOG_RETENTION_DAYS";
+  const time = item.key === "DREAMING_START_TIME_LOCAL" || item.key === "COMMUNITY_DETECTION_START_TIME_LOCAL";
+  const min = item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 0 : numeric ? 1 : undefined;
   return (
     <>
       <label htmlFor={item.key}>{label}</label>
       <input
         id={item.key}
         type={time ? "time" : numeric ? "number" : "text"}
-        min={numeric ? 1 : undefined}
-        max={item.key === "DREAMING_MAX_OUTPUTS" ? 50 : item.key === "OPERATION_LOG_RETENTION_DAYS" ? 365 : undefined}
+        min={min}
+        max={item.key === "DREAMING_MAX_OUTPUTS" ? 50 : item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" ? 8 : item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 3600 : item.key === "OPERATION_LOG_RETENTION_DAYS" ? 365 : undefined}
         placeholder={CONFIG_PLACEHOLDERS[item.key] ?? ""}
         value={value}
         onChange={(event) => onChange(event.target.value)}
@@ -448,11 +553,17 @@ function getSupportedTimezones(): string[] {
 }
 
 function timezoneOptions(current: string): string[] {
-  const values = new Set<string>(["UTC", ...SUPPORTED_TIMEZONES, ...FALLBACK_TIMEZONES]);
+  const values = new Set<string>(["Local", "UTC", ...SUPPORTED_TIMEZONES, ...FALLBACK_TIMEZONES]);
   if (current.trim()) {
     values.add(current.trim());
   }
   return [...values].sort((left, right) => {
+    if (left === "Local") {
+      return -1;
+    }
+    if (right === "Local") {
+      return 1;
+    }
     if (left === "UTC") {
       return -1;
     }

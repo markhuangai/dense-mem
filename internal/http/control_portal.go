@@ -175,6 +175,8 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		api.PATCH("/config/sso", control.updateSSOConfig)
 		api.GET("/config/dreaming", control.getDreamingConfig)
 		api.PATCH("/config/dreaming", control.updateDreamingConfig)
+		api.GET("/config/community-detection", control.getCommunityDetectionConfig)
+		api.PATCH("/config/community-detection", control.updateCommunityDetectionConfig)
 		api.GET("/config/operation-logs", control.getOperationLogConfig)
 		api.PATCH("/config/operation-logs", control.updateOperationLogConfig)
 	}

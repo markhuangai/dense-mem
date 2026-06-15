@@ -500,6 +500,19 @@ async function mockApi(page: Page, state: { teams: TestProfile[]; keys: TestKey[
     if (url.includes("/config/dreaming") && method === "GET") {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { update_time: "2026-06-11T03:00:00Z", items: [], effective: {} } }) });
     }
+    if (url.includes("/config/community-detection") && method === "GET") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          data: {
+            update_time: "2026-06-15T03:30:00Z",
+            items: [{ key: "COMMUNITY_DETECTION_ENABLED", value: "false", effective_value: "false", updated_at: "2026-06-15T03:30:00Z" }],
+            effective: { enabled: false, start_time_local: "03:30", timezone: "Local", max_concurrency: 1, jitter_seconds: 600 },
+          },
+        }),
+      });
+    }
     if (url.includes("/config/operation-logs") && method === "GET") {
       return route.fulfill({
         status: 200,

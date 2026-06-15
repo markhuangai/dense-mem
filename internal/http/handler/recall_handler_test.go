@@ -198,6 +198,34 @@ func TestRecallHandler_CrossProfileIsolation(t *testing.T) {
 	}
 }
 
+func TestRecallHandler_ForwardsCommunityExpansionOption(t *testing.T) {
+	e := echo.New()
+	profileID := uuid.New()
+	var captured recallservice.RecallRequest
+	svc := &stubRecallService{
+		recallFunc: func(ctx context.Context, pid string, req recallservice.RecallRequest) ([]recallservice.RecallHit, error) {
+			captured = req
+			return nil, nil
+		},
+	}
+	h := NewRecallHandler(svc)
+	e.HTTPErrorHandler = httperr.ErrorHandler
+
+	e.Use(injectProfileMiddleware(profileID))
+	e.GET("/api/v1/recall", h.Handle)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/recall?query=anything&use_communities=true", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200. body=%s", rec.Code, rec.Body.String())
+	}
+	if !captured.UseCommunities {
+		t.Fatal("UseCommunities = false; want true")
+	}
+}
+
 // TestRecallHandler_Returns400WhenQueryMissing verifies missing query parameter → 400.
 // Stable external contract: missing query returns 400 (Bad Request), not 422.
 func TestRecallHandler_Returns400WhenQueryMissing(t *testing.T) {

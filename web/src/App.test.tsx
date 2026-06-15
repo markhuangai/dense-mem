@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { ControlMetrics, Dream, DreamRun, DreamStatus, DreamingConfig, OperationLog, OperationLogConfig, SecurityBan, SecuritySettings, SSOConfig, Team, TeamProfile } from "./api";
+import { CommunityDetectionConfig, ControlMetrics, Dream, DreamRun, DreamStatus, DreamingConfig, OperationLog, OperationLogConfig, SecurityBan, SecuritySettings, SSOConfig, Team, TeamProfile } from "./api";
 
 const profileA: Team = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -132,6 +132,24 @@ const operationLogConfigSnapshot: OperationLogConfig = {
   ],
   effective: {
     retention_days: 30,
+  },
+};
+
+const communityDetectionConfigSnapshot: CommunityDetectionConfig = {
+  update_time: "2026-06-15T03:30:00Z",
+  items: [
+    { key: "COMMUNITY_DETECTION_ENABLED", value: "false", effective_value: "false", updated_at: "2026-06-15T03:30:00Z" },
+    { key: "COMMUNITY_DETECTION_START_TIME_LOCAL", value: "03:30", effective_value: "03:30", updated_at: "2026-06-15T03:30:00Z" },
+    { key: "COMMUNITY_DETECTION_TIMEZONE", value: "Local", effective_value: "Local", updated_at: "2026-06-15T03:30:00Z" },
+    { key: "COMMUNITY_DETECTION_MAX_CONCURRENCY", value: "1", effective_value: "1", updated_at: "2026-06-15T03:30:00Z" },
+    { key: "COMMUNITY_DETECTION_JITTER_SECONDS", value: "600", effective_value: "600", updated_at: "2026-06-15T03:30:00Z" },
+  ],
+  effective: {
+    enabled: false,
+    start_time_local: "03:30",
+    timezone: "Local",
+    max_concurrency: 1,
+    jitter_seconds: 600,
   },
 };
 
@@ -621,6 +639,43 @@ describe("App", () => {
     expect(await screen.findByText("Saved")).toBeInTheDocument();
   });
 
+  it("edits community detection runtime config", async () => {
+    const fetchMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+
+    render(<App />);
+    await screen.findByRole("button", { name: /Default/ });
+    await userEvent.click(screen.getByRole("button", { name: /^Config$/i }));
+    await userEvent.click(await screen.findByRole("tab", { name: /community/i }));
+
+    expect(await screen.findByRole("heading", { name: "Community Detection" })).toBeInTheDocument();
+    const enabledToggle = screen.getByLabelText("Enable scheduled detection", { selector: "input" });
+    expect(enabledToggle).not.toBeChecked();
+    await userEvent.click(enabledToggle);
+    await userEvent.selectOptions(screen.getByLabelText("Timezone", { selector: "select" }), "UTC");
+    await userEvent.clear(screen.getByLabelText("Jitter seconds"));
+    await userEvent.type(screen.getByLabelText("Jitter seconds"), "0");
+    await userEvent.click(screen.getByRole("button", { name: /save config/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/config/community-detection"),
+        expect.objectContaining({
+          method: "PATCH",
+          body: expect.stringContaining(`"COMMUNITY_DETECTION_ENABLED"`),
+        }),
+      );
+    });
+    const patchCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/config/community-detection") && init?.method === "PATCH");
+    expect(patchCall).toBeDefined();
+    const body = JSON.parse(String(patchCall?.[1]?.body));
+    expect(body.items).toEqual(expect.arrayContaining([
+      { key: "COMMUNITY_DETECTION_ENABLED", value: "true" },
+      { key: "COMMUNITY_DETECTION_TIMEZONE", value: "UTC" },
+      { key: "COMMUNITY_DETECTION_JITTER_SECONDS", value: "0" },
+    ]));
+  });
+
   it("deletes a team", async () => {
     const deleteMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
     sessionStorage.setItem("denseMem.controlToken", "secret");
@@ -656,6 +711,7 @@ function mockPortalFetch({
   let currentBans = bans;
   let currentSSOConfig = structuredClone(ssoConfigSnapshot);
   let currentDreamingConfig = structuredClone(dreamingConfigSnapshot);
+  let currentCommunityDetectionConfig = structuredClone(communityDetectionConfigSnapshot);
   let currentOperationLogConfig = structuredClone(operationLogConfigSnapshot);
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -699,6 +755,21 @@ function mockPortalFetch({
         }),
       };
       return jsonResponse({ data: currentDreamingConfig });
+    }
+    if (url.endsWith("/config/community-detection") && method === "GET") {
+      return jsonResponse({ data: currentCommunityDetectionConfig });
+    }
+    if (url.endsWith("/config/community-detection") && method === "PATCH") {
+      const body = JSON.parse(String(init?.body));
+      currentCommunityDetectionConfig = {
+        ...currentCommunityDetectionConfig,
+        update_time: "2026-06-15T03:31:00Z",
+        items: currentCommunityDetectionConfig.items.map((item) => {
+          const update = body.items.find((candidate: { key: string }) => candidate.key === item.key);
+          return update ? { ...item, value: update.value, updated_at: "2026-06-15T03:31:00Z" } : item;
+        }),
+      };
+      return jsonResponse({ data: currentCommunityDetectionConfig });
     }
     if (url.endsWith("/config/operation-logs") && method === "GET") {
       return jsonResponse({ data: currentOperationLogConfig });

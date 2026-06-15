@@ -298,6 +298,7 @@ func recallMemoryTool(deps Dependencies) Tool {
 				"valid_at":         map[string]any{"type": "string", "format": "date-time"},
 				"known_at":         map[string]any{"type": "string", "format": "date-time"},
 				"include_evidence": map[string]any{"type": "boolean"},
+				"use_communities":  map[string]any{"type": "boolean"},
 			},
 			"additionalProperties": false,
 		},
