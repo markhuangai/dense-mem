@@ -677,11 +677,14 @@ func main() {
 		logger.Error("control portal shutdown error", err)
 	}
 	metricsShutdownCtx, metricsShutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer metricsShutdownCancel()
 	if err := usageMetricsService.Shutdown(metricsShutdownCtx); err != nil {
 		logger.Error("usage metrics shutdown error", err)
 	}
-	if err := operationLogService.Shutdown(metricsShutdownCtx); err != nil {
+	metricsShutdownCancel()
+
+	operationLogShutdownCtx, operationLogShutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer operationLogShutdownCancel()
+	if err := operationLogService.Shutdown(operationLogShutdownCtx); err != nil {
 		log.Printf("operation log shutdown error: %v", err)
 	}
 }

@@ -132,6 +132,11 @@ func TestOperationLogServiceBatchesAndPropagatesErrors(t *testing.T) {
 	svc = NewOperationLogService(repo, nil)
 	require.NoError(t, svc.WriteLog(ctx, observability.LogRecord{Severity: "error", Message: "queued"}))
 	require.ErrorContains(t, svc.Flush(ctx), "append failed")
+	assert.Empty(t, repo.appended)
+	repo.appendErr = nil
+	require.NoError(t, svc.Flush(ctx))
+	require.Len(t, repo.appended, 1)
+	assert.Equal(t, "queued", repo.appended[0].Message)
 
 	repo = &operationLogRepoStub{listErr: errors.New("list failed")}
 	svc = NewOperationLogService(repo, nil)
@@ -142,6 +147,18 @@ func TestOperationLogServiceBatchesAndPropagatesErrors(t *testing.T) {
 	svc = NewOperationLogService(repo, operationLogRetentionStub{err: errors.New("config unavailable")})
 	require.ErrorContains(t, svc.Prune(ctx), "prune failed")
 	require.NotNil(t, repo.prunedAt)
+}
+
+func TestOperationLogServiceReportsQueueBackpressure(t *testing.T) {
+	ctx := context.Background()
+	svc := NewOperationLogService(&operationLogRepoStub{}, nil)
+	for i := 0; i < operationLogQueueSize; i++ {
+		require.NoError(t, svc.WriteLog(ctx, observability.LogRecord{Message: "queued"}))
+	}
+
+	err := svc.WriteLog(ctx, observability.LogRecord{Message: "overflow"})
+
+	require.ErrorIs(t, err, ErrOperationLogQueueFull)
 }
 
 func TestOperationLogServiceLifecycleAndUnavailableBranches(t *testing.T) {

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -21,6 +22,8 @@ const (
 	operationLogPruneInterval        = time.Hour
 	operationLogShutdownFlushTimeout = 5 * time.Second
 )
+
+var ErrOperationLogQueueFull = errors.New("operation log queue full")
 
 type OperationLogReader interface {
 	ListOperationLogs(ctx context.Context, filter domain.OperationLogFilter) (*domain.OperationLogPage, error)
@@ -43,11 +46,13 @@ type OperationLogServiceImpl struct {
 	repo      repository.OperationLogRepository
 	retention OperationLogRetentionProvider
 
-	queue chan domain.OperationLog
+	queue  chan domain.OperationLog
+	failed []domain.OperationLog
 
 	lifecycleMu sync.Mutex
 	cancel      context.CancelFunc
 	done        chan struct{}
+	flushMu     sync.Mutex
 }
 
 var _ OperationLogService = (*OperationLogServiceImpl)(nil)
@@ -90,7 +95,7 @@ func (s *OperationLogServiceImpl) WriteLog(_ context.Context, record observabili
 	select {
 	case s.queue <- entry:
 	default:
-		return nil
+		return ErrOperationLogQueueFull
 	}
 	return nil
 }
@@ -122,6 +127,12 @@ func (s *OperationLogServiceImpl) Flush(ctx context.Context) error {
 	if s == nil || s.repo == nil {
 		return nil
 	}
+	s.flushMu.Lock()
+	defer s.flushMu.Unlock()
+
+	if err := s.flushFailed(ctx); err != nil {
+		return err
+	}
 	for {
 		batch := make([]domain.OperationLog, 0, operationLogBatchSize)
 		for len(batch) < operationLogBatchSize {
@@ -132,16 +143,38 @@ func (s *OperationLogServiceImpl) Flush(ctx context.Context) error {
 				if len(batch) == 0 {
 					return nil
 				}
-				if err := s.repo.AppendBatch(ctx, batch); err != nil {
+				if err := s.appendOrRetain(ctx, batch); err != nil {
 					return err
 				}
 				return nil
 			}
 		}
-		if err := s.repo.AppendBatch(ctx, batch); err != nil {
+		if err := s.appendOrRetain(ctx, batch); err != nil {
 			return err
 		}
 	}
+}
+
+func (s *OperationLogServiceImpl) flushFailed(ctx context.Context) error {
+	if len(s.failed) == 0 {
+		return nil
+	}
+	if err := s.repo.AppendBatch(ctx, s.failed); err != nil {
+		return err
+	}
+	s.failed = nil
+	return nil
+}
+
+func (s *OperationLogServiceImpl) appendOrRetain(ctx context.Context, batch []domain.OperationLog) error {
+	if len(batch) == 0 {
+		return nil
+	}
+	if err := s.repo.AppendBatch(ctx, batch); err != nil {
+		s.failed = append([]domain.OperationLog(nil), batch...)
+		return err
+	}
+	return nil
 }
 
 func (s *OperationLogServiceImpl) Prune(ctx context.Context) error {

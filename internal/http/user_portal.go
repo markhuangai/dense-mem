@@ -271,8 +271,12 @@ func (h *userPortalHandler) currentSession(c echo.Context) (userPortalSessionRes
 		return userPortalSessionResponse{}, httperr.New(httperr.NOT_FOUND, "key not found")
 	}
 
+	teamResponse, err := h.toUserPortalTeam(ctx, team)
+	if err != nil {
+		return userPortalSessionResponse{}, err
+	}
 	return userPortalSessionResponse{
-		Team:          h.toUserPortalTeam(ctx, team),
+		Team:          teamResponse,
 		Key:           toUserPortalKey(key),
 		AuthMethod:    "api_key",
 		CanRotate:     userPortalHasScope(principal.Scopes, service.APIKeyScopeWrite),
@@ -295,9 +299,16 @@ func (h *userPortalHandler) currentSSOSession(c echo.Context) (userPortalSession
 	}
 	teams := make([]userPortalTeamOptionResponse, 0, len(info.Teams))
 	for _, team := range info.Teams {
-		teams = append(teams, h.toUserPortalTeamOption(ctx, team))
+		option, err := h.toUserPortalTeamOption(ctx, team)
+		if err != nil {
+			return userPortalSessionResponse{}, err
+		}
+		teams = append(teams, option)
 	}
-	selected := h.toUserPortalTeamOption(ctx, info.Selected)
+	selected, err := h.toUserPortalTeamOption(ctx, info.Selected)
+	if err != nil {
+		return userPortalSessionResponse{}, err
+	}
 	response := userPortalSessionResponse{
 		Team:          selected.Team,
 		Key:           selected.Key,
@@ -640,16 +651,20 @@ func rejectEditableRotateBody(c echo.Context) error {
 	return nil
 }
 
-func (h *userPortalHandler) toUserPortalTeam(ctx context.Context, team *domain.Profile) userPortalTeamResponse {
+func (h *userPortalHandler) toUserPortalTeam(ctx context.Context, team *domain.Profile) (userPortalTeamResponse, error) {
+	effective, err := effectiveDreamingConfig(ctx, h.appConfig, team.Config)
+	if err != nil {
+		return userPortalTeamResponse{}, err
+	}
 	return userPortalTeamResponse{
 		ID:                team.ID,
 		Name:              team.Name,
 		Description:       team.Description,
 		Config:            team.Config,
-		DreamingEffective: effectiveDreamingConfig(ctx, h.appConfig, team.Config),
+		DreamingEffective: effective,
 		CreatedAt:         team.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:         team.UpdatedAt.Format(time.RFC3339),
-	}
+	}, nil
 }
 
 func toUserPortalKey(key *domain.APIKey) userPortalKeyResponse {
@@ -667,13 +682,17 @@ func toUserPortalKey(key *domain.APIKey) userPortalKeyResponse {
 	}
 }
 
-func (h *userPortalHandler) toUserPortalTeamOption(ctx context.Context, item domain.SSOTeamProfile) userPortalTeamOptionResponse {
+func (h *userPortalHandler) toUserPortalTeamOption(ctx context.Context, item domain.SSOTeamProfile) (userPortalTeamOptionResponse, error) {
+	team, err := h.toUserPortalTeam(ctx, &item.Team)
+	if err != nil {
+		return userPortalTeamOptionResponse{}, err
+	}
 	return userPortalTeamOptionResponse{
-		Team:          h.toUserPortalTeam(ctx, &item.Team),
+		Team:          team,
 		Key:           toUserPortalKey(&item.Profile),
 		CanRotate:     false,
 		CanManageTeam: item.Profile.GetRole() == service.APIKeyRoleManager,
-	}
+	}, nil
 }
 
 func userPortalHasScope(scopes []string, required string) bool {

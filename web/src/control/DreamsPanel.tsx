@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { ControlApi, Dream, DreamRun, DreamStatus, Team } from "../api";
 import { SectionHeading } from "../ui/components";
@@ -13,23 +13,38 @@ export function ControlDreamsPanel({ api, team }: { api: ControlApi; team: Team 
   const [dreamStatus, setDreamStatus] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const requestSeqRef = useRef(0);
+  const activeTeamIdRef = useRef(team.id);
+
+  activeTeamIdRef.current = team.id;
 
   async function loadData(nextStatus = dreamStatus) {
+    const requestSeq = requestSeqRef.current + 1;
+    requestSeqRef.current = requestSeq;
+    const requestTeamId = team.id;
     setLoading(true);
     setError("");
     try {
       const [nextStatusResult, nextRuns, nextDreams] = await Promise.all([
-        api.getTeamDreamingStatus(team.id),
-        api.listTeamDreamingRuns(team.id, 10),
-        api.listTeamDreams(team.id, { status: nextStatus, limit: 50 }),
+        api.getTeamDreamingStatus(requestTeamId),
+        api.listTeamDreamingRuns(requestTeamId, 10),
+        api.listTeamDreams(requestTeamId, { status: nextStatus, limit: 50 }),
       ]);
+      if (requestSeq !== requestSeqRef.current || requestTeamId !== activeTeamIdRef.current) {
+        return;
+      }
       setStatus(nextStatusResult);
       setRuns(nextRuns);
       setDreams(nextDreams.items);
     } catch (err) {
+      if (requestSeq !== requestSeqRef.current || requestTeamId !== activeTeamIdRef.current) {
+        return;
+      }
       setError(readError(err));
     } finally {
-      setLoading(false);
+      if (requestSeq === requestSeqRef.current && requestTeamId === activeTeamIdRef.current) {
+        setLoading(false);
+      }
     }
   }
 

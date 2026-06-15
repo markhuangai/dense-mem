@@ -334,6 +334,16 @@ func TestUserPortalCurrentSessionErrors(t *testing.T) {
 		Scopes: []string{"read"},
 	}))
 	require.ErrorContains(t, err, "key not found")
+
+	h.keys = &userPortalKeySvc{keys: []*domain.APIKey{authKey}}
+	h.appConfig = &controlAppConfigSvc{dreamingRuntimeErr: errors.New("config failed")}
+	_, err = h.currentSession(userPortalEchoContext(t, http.MethodGet, "/ui/api/session", "", &httpmw.Principal{
+		KeyID:  keyID,
+		TeamID: teamID,
+		Role:   service.APIKeyRoleMember,
+		Scopes: []string{"read"},
+	}))
+	require.ErrorContains(t, err, "load dreaming runtime config")
 }
 
 func TestUserPortalRotateCurrentKeyErrors(t *testing.T) {

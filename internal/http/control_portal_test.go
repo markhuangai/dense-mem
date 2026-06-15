@@ -968,3 +968,29 @@ func TestControlPortalServiceAndValidationErrorBranches(t *testing.T) {
 
 	require.NoError(t, ShutdownControlPortal(server, nil))
 }
+
+func TestControlPortalProfileDreamingConfigErrors(t *testing.T) {
+	profileID := uuid.New()
+	profiles := &controlProfileSvc{profiles: []*domain.Profile{{
+		ID:        profileID,
+		Name:      "Default",
+		Config:    map[string]any{"dreaming": map[string]any{"enabled": true}},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}}}
+	server, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+		ControlHTTPAddr:    "127.0.0.1:8090",
+		ControlPortalToken: "secret",
+	}, profiles, &controlKeySvc{}, nil, ControlPortalTelemetry{
+		Config: &controlAppConfigSvc{dreamingRuntimeErr: errors.New("config failed")},
+	}, HealthConfig{}, nil)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/control/api/teams", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	require.Contains(t, rec.Body.String(), "load dreaming runtime config")
+}

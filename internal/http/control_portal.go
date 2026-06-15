@@ -262,7 +262,11 @@ func (h *controlPortalHandler) listProfiles(c echo.Context) error {
 	}
 	items := make([]controlProfileResponse, 0, len(profiles))
 	for _, profile := range profiles {
-		items = append(items, h.toControlProfile(c.Request().Context(), profile))
+		item, err := h.toControlProfile(c.Request().Context(), profile)
+		if err != nil {
+			return err
+		}
+		items = append(items, item)
 	}
 	return c.JSON(nethttp.StatusOK, handler.PaginationEnvelope{
 		Data:       items,
@@ -287,7 +291,11 @@ func (h *controlPortalHandler) createProfile(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(nethttp.StatusCreated, map[string]any{"data": h.toControlProfile(c.Request().Context(), profile)})
+	item, err := h.toControlProfile(c.Request().Context(), profile)
+	if err != nil {
+		return err
+	}
+	return c.JSON(nethttp.StatusCreated, map[string]any{"data": item})
 }
 
 func (h *controlPortalHandler) updateProfile(c echo.Context) error {
@@ -318,7 +326,11 @@ func (h *controlPortalHandler) updateProfile(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(nethttp.StatusOK, map[string]any{"data": h.toControlProfile(c.Request().Context(), profile)})
+	item, err := h.toControlProfile(c.Request().Context(), profile)
+	if err != nil {
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": item})
 }
 
 func (h *controlPortalHandler) deleteProfile(c echo.Context) error {
@@ -913,17 +925,21 @@ type controlProfileResponse struct {
 	UpdatedAt         string                        `json:"updated_at"`
 }
 
-func (h *controlPortalHandler) toControlProfile(ctx context.Context, profile *domain.Profile) controlProfileResponse {
+func (h *controlPortalHandler) toControlProfile(ctx context.Context, profile *domain.Profile) (controlProfileResponse, error) {
+	effective, err := effectiveDreamingConfig(ctx, h.appConfig, profile.Config)
+	if err != nil {
+		return controlProfileResponse{}, err
+	}
 	return controlProfileResponse{
 		ID:                profile.ID,
 		Name:              profile.Name,
 		Description:       profile.Description,
 		Metadata:          profile.Metadata,
 		Config:            profile.Config,
-		DreamingEffective: effectiveDreamingConfig(ctx, h.appConfig, profile.Config),
+		DreamingEffective: effective,
 		CreatedAt:         profile.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:         profile.UpdatedAt.Format(time.RFC3339),
-	}
+	}, nil
 }
 
 type controlAPIKeyResponse struct {

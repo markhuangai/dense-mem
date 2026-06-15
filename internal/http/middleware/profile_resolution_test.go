@@ -187,6 +187,9 @@ func TestHeaderScopedProfileRouteRequiresPathBoundary(t *testing.T) {
 		path string
 		want bool
 	}{
+		{path: "/api/v1/dreaming", want: true},
+		{path: "/api/v1/dreaming/status", want: true},
+		{path: "/api/v1/dreaming-extra", want: false},
 		{path: "/api/v1/dreams", want: true},
 		{path: "/api/v1/dreams/dream-1", want: true},
 		{path: "/api/v1/dreams-extra", want: false},

@@ -196,9 +196,11 @@ func scanOperationLog(rows *sql.Rows) (domain.OperationLog, error) {
 	); err != nil {
 		return domain.OperationLog{}, err
 	}
-	if parsed, err := uuid.Parse(idRaw); err == nil {
-		entry.ID = parsed
+	parsedID, err := uuid.Parse(idRaw)
+	if err != nil {
+		return domain.OperationLog{}, fmt.Errorf("invalid operation_logs.id UUID: %w", err)
 	}
+	entry.ID = parsedID
 	entry.TeamID = parseNullableUUID(teamIDRaw)
 	entry.ProfileID = parseNullableUUID(profileIDRaw)
 	entry.Attrs = map[string]any{}

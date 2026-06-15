@@ -13,7 +13,7 @@ import (
 func TestEffectiveDreamingConfigHelper(t *testing.T) {
 	ctx := context.Background()
 
-	effective := effectiveDreamingConfig(ctx, &controlAppConfigSvc{
+	effective, err := effectiveDreamingConfig(ctx, &controlAppConfigSvc{
 		dreamingRuntime: domain.DreamingRuntimeConfig{
 			Enabled:           true,
 			ForceEnabled:      true,
@@ -25,24 +25,31 @@ func TestEffectiveDreamingConfigHelper(t *testing.T) {
 			MaxOutputs:        5,
 		},
 	}, map[string]any{"dreaming": map[string]any{"enabled": false}})
+	require.NoError(t, err)
 	require.NotNil(t, effective)
 	require.True(t, effective.Enabled)
 	require.True(t, effective.TeamEnabled)
 	require.Equal(t, "global_force", effective.Source)
 
-	effective = effectiveDreamingConfig(ctx, nil, map[string]any{"dreaming": map[string]any{"enabled": true}})
+	effective, err = effectiveDreamingConfig(ctx, nil, map[string]any{"dreaming": map[string]any{"enabled": true}})
+	require.NoError(t, err)
 	require.NotNil(t, effective)
 	require.True(t, effective.Enabled)
 	require.Equal(t, "team", effective.Source)
 
-	require.Nil(t, effectiveDreamingConfig(ctx, &controlAppConfigSvc{
+	effective, err = effectiveDreamingConfig(ctx, &controlAppConfigSvc{
 		dreamingRuntimeErr: errors.New("config failed"),
-	}, nil))
-	require.Nil(t, effectiveDreamingConfig(ctx, &controlAppConfigSvc{
+	}, nil)
+	require.Nil(t, effective)
+	require.ErrorContains(t, err, "load dreaming runtime config")
+
+	effective, err = effectiveDreamingConfig(ctx, &controlAppConfigSvc{
 		dreamingRuntime: domain.DreamingRuntimeConfig{
 			StartTimeLocal: "99:99",
 			Timezone:       "UTC",
 			MaxOutputs:     5,
 		},
-	}, nil))
+	}, nil)
+	require.Nil(t, effective)
+	require.ErrorContains(t, err, "compute effective dreaming config")
 }
