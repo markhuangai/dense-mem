@@ -49,6 +49,7 @@ beforeEach(() => {
   sessionStorage.clear();
   localStorage.clear();
   vi.restoreAllMocks();
+  vi.mocked(navigator.clipboard.writeText).mockClear();
 });
 
 describe("UserPortalApp", () => {
@@ -90,7 +91,9 @@ describe("UserPortalApp", () => {
     await userEvent.click(screen.getByRole("button", { name: /my key/i }));
     await userEvent.click(await screen.findByRole("button", { name: /regenerate key/i }));
 
-    expect(await screen.findByText("dm_new_plaintext")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("dm_new_plaintext")).toHaveAccessibleName("Generated API key");
+    await userEvent.click(screen.getByRole("button", { name: /copy api key/i }));
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("dm_new_plaintext");
     expect(sessionStorage.getItem("denseMem.userApiKey")).toBe("dm_new_plaintext");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith("/ui/api/key/rotate", expect.objectContaining({ method: "POST" }));
@@ -131,7 +134,7 @@ describe("UserPortalApp", () => {
     await userEvent.clear(newProfileName);
     await userEvent.type(newProfileName, "Writer");
     await userEvent.click(screen.getByRole("button", { name: /create member profile/i }));
-    expect(await screen.findByText("dm_member_plaintext")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("dm_member_plaintext")).toBeInTheDocument();
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringContaining(`/api/v1/teams/${baseSession.team.id}/profiles`),
@@ -157,7 +160,7 @@ describe("UserPortalApp", () => {
     });
 
     await userEvent.click(screen.getByRole("button", { name: /regenerate key for profile Reader Updated/i }));
-    expect(await screen.findByText("dm_member_rotated")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("dm_member_rotated")).toBeInTheDocument();
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringContaining(`/api/v1/teams/${baseSession.team.id}/profiles/${memberProfile.id}/rotate`),
@@ -288,7 +291,7 @@ describe("UserPortalApp", () => {
     await userEvent.click(screen.getByRole("button", { name: /my key/i }));
     await userEvent.click(screen.getByRole("button", { name: /create api key/i }));
 
-    expect(await screen.findByText("dm_sso_personal_plaintext")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("dm_sso_personal_plaintext")).toBeInTheDocument();
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         "/ui/api/sso/key",
@@ -301,7 +304,7 @@ describe("UserPortalApp", () => {
     });
 
     await userEvent.click(screen.getByRole("button", { name: /regenerate key/i }));
-    expect(await screen.findByText("dm_sso_personal_rotated")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("dm_sso_personal_rotated")).toBeInTheDocument();
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         "/ui/api/sso/key/rotate",
@@ -320,7 +323,7 @@ describe("UserPortalApp", () => {
     await userEvent.click(screen.getByRole("button", { name: /my key/i }));
     await userEvent.click(screen.getByRole("button", { name: /create api key/i }));
 
-    expect(await screen.findByText("dm_sso_personal_plaintext")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("dm_sso_personal_plaintext")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /regenerate key/i })).toBeDisabled();
   });
 });

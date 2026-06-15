@@ -143,6 +143,7 @@ function keyA(profileId = profileA.id): TeamProfile {
 beforeEach(() => {
   sessionStorage.clear();
   vi.restoreAllMocks();
+  vi.mocked(navigator.clipboard.writeText).mockClear();
 });
 
 describe("App", () => {
@@ -198,7 +199,9 @@ describe("App", () => {
     await userEvent.click(screen.getByRole("button", { name: /profiles & api keys/i }));
     await userEvent.click(screen.getByRole("button", { name: /create profile/i }));
 
-    expect(await screen.findByText("dm_plain_once")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("dm_plain_once")).toHaveAccessibleName("Generated API key");
+    await userEvent.click(screen.getByRole("button", { name: /copy api key/i }));
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("dm_plain_once");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringContaining(`/teams/${profileA.id}/profiles`),
@@ -216,7 +219,7 @@ describe("App", () => {
       );
     });
     await userEvent.click(screen.getByRole("button", { name: /dismiss api key/i }));
-    await waitFor(() => expect(screen.queryByText("dm_plain_once")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByDisplayValue("dm_plain_once")).not.toBeInTheDocument());
   });
 
   it("updates team and profile names and regenerates a key", async () => {
@@ -259,7 +262,7 @@ describe("App", () => {
     });
 
     await userEvent.click(screen.getByRole("button", { name: /regenerate key for profile Research profile/i }));
-    expect(await screen.findByText("dm_rotated_once")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("dm_rotated_once")).toBeInTheDocument();
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringContaining(`/teams/${profileA.id}/profiles/${keyA().id}/rotate`),

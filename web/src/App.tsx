@@ -2,8 +2,6 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Ban,
   BarChart3,
-  Check,
-  Copy,
   KeyRound,
   ListFilter,
   LogOut,
@@ -16,7 +14,6 @@ import {
   Sun,
   Trash2,
   Users,
-  X,
 } from "lucide-react";
 import {
   ControlApi,
@@ -33,7 +30,7 @@ import { ControlDreamsPanel } from "./control/DreamsPanel";
 import { LogsPanel } from "./control/LogsPanel";
 import { TeamDreamingConfigForm } from "./teamDreamingConfig";
 import { displayKeySuffix, formatDate, profilePermissionLabel, profileRoleLabel, readError, shortId } from "./control/utils";
-import { AuthShell, PortalShell, SectionHeading } from "./ui/components";
+import { AuthShell, PortalShell, SecretBox, SectionHeading } from "./ui/components";
 
 const TOKEN_STORAGE_KEY = "denseMem.controlToken";
 const THEME_STORAGE_KEY = "denseMem.controlTheme";
@@ -853,26 +850,13 @@ function TeamProfileCreateForm({
 }
 
 function CreatedKeyNotice({ createdKey, onDismiss }: { createdKey: CreatedTeamProfile; onDismiss: () => void }) {
-  const [copied, setCopied] = useState(false);
-
-  async function copy() {
-    await navigator.clipboard?.writeText(createdKey.api_key);
-    setCopied(true);
-  }
-
   return (
-    <div className="secret-box" role="status">
-      <div>
-        <code>{createdKey.api_key}</code>
-      </div>
-      <div className="secret-actions">
-        <button className="icon-button" type="button" aria-label="Copy API key" onClick={() => void copy()}>
-          {copied ? <Check size={17} aria-hidden="true" /> : <Copy size={17} aria-hidden="true" />}
-        </button>
-        <button className="icon-button" type="button" aria-label="Dismiss API key" onClick={onDismiss}>
-          <X size={17} aria-hidden="true" />
-        </button>
-      </div>
-    </div>
+    <SecretBox
+      value={createdKey.api_key}
+      valueLabel="Generated API key"
+      copyLabel="Copy API key"
+      dismissLabel="Dismiss API key"
+      onDismiss={onDismiss}
+    />
   );
 }

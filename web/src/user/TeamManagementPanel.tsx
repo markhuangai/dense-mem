@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
-import { Check, Copy, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { CreatedTeamProfile, UserApi, UserKey, UserSession, UserTeam } from "./api";
-import { SectionHeading } from "../ui/components";
+import { SecretBox, SectionHeading } from "../ui/components";
 import { TeamDreamingConfigForm } from "../teamDreamingConfig";
 
 type ProfilePermission = "read" | "read_write";
@@ -403,25 +403,14 @@ function ManagedProfileRow({
 }
 
 function CreatedKeyNotice({ apiKey, onDismiss }: { apiKey: string; onDismiss: () => void }) {
-  const [copied, setCopied] = useState(false);
-
-  async function copy() {
-    await navigator.clipboard?.writeText(apiKey);
-    setCopied(true);
-  }
-
   return (
-    <div className="secret-box" role="status">
-      <div><code>{apiKey}</code></div>
-      <div className="secret-actions">
-        <button className="icon-button" type="button" aria-label="Copy API key" onClick={() => void copy()}>
-          {copied ? <Check size={17} aria-hidden="true" /> : <Copy size={17} aria-hidden="true" />}
-        </button>
-        <button className="icon-button" type="button" aria-label="Dismiss API key" onClick={onDismiss}>
-          <X size={17} aria-hidden="true" />
-        </button>
-      </div>
-    </div>
+    <SecretBox
+      value={apiKey}
+      valueLabel="Generated API key"
+      copyLabel="Copy API key"
+      dismissLabel="Dismiss API key"
+      onDismiss={onDismiss}
+    />
   );
 }
 

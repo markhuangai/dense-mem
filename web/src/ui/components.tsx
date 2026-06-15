@@ -1,4 +1,5 @@
-import { FormEventHandler, ReactNode } from "react";
+import { Check, Copy, X } from "lucide-react";
+import { FormEventHandler, ReactNode, useRef, useState } from "react";
 
 export type ThemeName = "light" | "dark";
 
@@ -55,6 +56,14 @@ type FieldRowProps = {
   label: ReactNode;
   htmlFor?: string;
   children: ReactNode;
+};
+
+type SecretBoxProps = {
+  value: string;
+  valueLabel: string;
+  copyLabel: string;
+  dismissLabel: string;
+  onDismiss: () => void;
 };
 
 export function Brand({ title, icon }: BrandProps) {
@@ -180,6 +189,61 @@ export function SummaryCard({ label, value, detail, tone = "neutral" }: SummaryC
       {detail && <small>{detail}</small>}
     </div>
   );
+}
+
+export function SecretBox({ value, valueLabel, copyLabel, dismissLabel, onDismiss }: SecretBoxProps) {
+  const [copied, setCopied] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const secret = value.trim();
+
+  async function copySecret() {
+    setCopied(await writeClipboardText(secret, inputRef.current));
+  }
+
+  return (
+    <div className="secret-box" role="status">
+      <input
+        ref={inputRef}
+        className="secret-value"
+        value={secret}
+        readOnly
+        aria-label={valueLabel}
+        spellCheck={false}
+        onFocus={(event) => event.currentTarget.select()}
+      />
+      <div className="secret-actions">
+        <button className="icon-button" type="button" aria-label={copyLabel} onClick={() => void copySecret()}>
+          {copied ? <Check size={17} aria-hidden="true" /> : <Copy size={17} aria-hidden="true" />}
+        </button>
+        <button className="icon-button" type="button" aria-label={dismissLabel} onClick={onDismiss}>
+          <X size={17} aria-hidden="true" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+async function writeClipboardText(text: string, fallbackInput: HTMLInputElement | null): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall back to the selected input path below.
+  }
+
+  if (!fallbackInput) {
+    return false;
+  }
+  fallbackInput.focus();
+  fallbackInput.select();
+  fallbackInput.setSelectionRange(0, text.length);
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  }
 }
 
 export function FieldRow({ label, htmlFor, children }: FieldRowProps) {

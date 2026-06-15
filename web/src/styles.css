@@ -976,8 +976,20 @@ code {
   border-radius: 8px;
 }
 
-.secret-box strong {
-  display: block;
-  margin-bottom: 6px;
-  font-size: 14px;
+.secret-value {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 26%, var(--border));
+  border-radius: 6px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.secret-value:focus {
+  outline: 2px solid color-mix(in srgb, var(--warning) 42%, transparent);
+  outline-offset: 1px;
 }

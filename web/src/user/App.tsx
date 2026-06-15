@@ -1,8 +1,6 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3,
-  Check,
-  Copy,
   FileText,
   GitBranch,
   KeyRound,
@@ -14,7 +12,6 @@ import {
   ShieldCheck,
   Sun,
   Users,
-  X,
 } from "lucide-react";
 import { TelemetryDashboard } from "../telemetry/TelemetryDashboard";
 import { TelemetrySnapshot, TelemetryWindowKey } from "../telemetry/types";
@@ -31,7 +28,7 @@ import {
 } from "./api";
 import { TeamManagementPanel } from "./TeamManagementPanel";
 import { UserDreamsPanel } from "./DreamsPanel";
-import { AuthShell, PortalShell, SectionHeading } from "../ui/components";
+import { AuthShell, PortalShell, SecretBox, SectionHeading } from "../ui/components";
 
 const TOKEN_STORAGE_KEY = "denseMem.userApiKey";
 const THEME_STORAGE_KEY = "denseMem.userTheme";
@@ -781,25 +778,14 @@ function CommunityList({ items }: { items: Community[] }) {
 }
 
 function CreatedKeyNotice({ apiKey, onDismiss }: { apiKey: string; onDismiss: () => void }) {
-  const [copied, setCopied] = useState(false);
-
-  async function copy() {
-    await navigator.clipboard?.writeText(apiKey);
-    setCopied(true);
-  }
-
   return (
-    <div className="secret-box" role="status">
-      <div><code>{apiKey}</code></div>
-      <div className="secret-actions">
-        <button className="icon-button" type="button" aria-label="Copy API key" onClick={() => void copy()}>
-          {copied ? <Check size={17} aria-hidden="true" /> : <Copy size={17} aria-hidden="true" />}
-        </button>
-        <button className="icon-button" type="button" aria-label="Dismiss API key" onClick={onDismiss}>
-          <X size={17} aria-hidden="true" />
-        </button>
-      </div>
-    </div>
+    <SecretBox
+      value={apiKey}
+      valueLabel="Generated API key"
+      copyLabel="Copy API key"
+      dismissLabel="Dismiss API key"
+      onDismiss={onDismiss}
+    />
   );
 }
 
