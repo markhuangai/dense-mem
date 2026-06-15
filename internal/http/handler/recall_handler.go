@@ -70,6 +70,7 @@ func (h *RecallHandler) Handle(c echo.Context) error {
 		ValidAt:         req.ValidAt,
 		KnownAt:         req.KnownAt,
 		IncludeEvidence: req.IncludeEvidence,
+		UseCommunities:  req.UseCommunities,
 	})
 	if err != nil {
 		var apiErr *httperr.APIError

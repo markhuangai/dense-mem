@@ -10,6 +10,7 @@ type RecallRequest struct {
 	ValidAt         *time.Time `query:"valid_at"`
 	KnownAt         *time.Time `query:"known_at"`
 	IncludeEvidence bool       `query:"include_evidence"`
+	UseCommunities  bool       `query:"use_communities"`
 }
 
 // RecallHitResponse is one ranked result returned by the recall endpoint.

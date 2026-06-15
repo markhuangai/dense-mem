@@ -114,6 +114,56 @@ func TestAppConfigServiceDreamingSettingsDefaultsAndUpdate(t *testing.T) {
 	assert.Equal(t, 9, runtime.MaxOutputs)
 }
 
+func TestAppConfigServiceCommunityDetectionSettingsDefaultsAndUpdate(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 15, 3, 30, 0, 0, time.Local)
+	repo := newAppConfigRepoStub(now, map[string]string{
+		domain.AppConfigUpdateTimeKey: now.Format(time.RFC3339Nano),
+	})
+	svc := NewAppConfigService(repo, nil)
+	svc.now = func() time.Time { return now }
+
+	settings, err := svc.GetCommunityDetectionSettings(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, now.Format(time.RFC3339Nano), settings.UpdateTime)
+	assert.Equal(t, "false", communityDetectionConfigItemForTest(settings, domain.AppConfigCommunityDetectionEnabled).EffectiveValue)
+	assert.Equal(t, "03:30", communityDetectionConfigItemForTest(settings, domain.AppConfigCommunityDetectionStartTimeLocal).EffectiveValue)
+	assert.Equal(t, "Local", communityDetectionConfigItemForTest(settings, domain.AppConfigCommunityDetectionTimezone).EffectiveValue)
+	assert.Equal(t, "1", communityDetectionConfigItemForTest(settings, domain.AppConfigCommunityDetectionMaxConcurrency).EffectiveValue)
+	assert.Equal(t, "600", communityDetectionConfigItemForTest(settings, domain.AppConfigCommunityDetectionJitterSeconds).EffectiveValue)
+
+	runtime, err := svc.CommunityDetectionRuntimeConfig(ctx)
+	require.NoError(t, err)
+	assert.False(t, runtime.Enabled)
+	assert.Equal(t, "03:30", runtime.StartTimeLocal)
+	assert.Equal(t, "Local", runtime.Timezone)
+	assert.Equal(t, 1, runtime.MaxConcurrency)
+	assert.Equal(t, 600, runtime.JitterSeconds)
+
+	now = now.Add(time.Minute)
+	updated, err := svc.UpdateCommunityDetectionSettings(ctx, map[string]string{
+		domain.AppConfigCommunityDetectionEnabled:        "true",
+		domain.AppConfigCommunityDetectionStartTimeLocal: "02:45",
+		domain.AppConfigCommunityDetectionTimezone:       "America/New_York",
+		domain.AppConfigCommunityDetectionMaxConcurrency: "2",
+		domain.AppConfigCommunityDetectionJitterSeconds:  "0",
+	}, "control", "127.0.0.1", "corr")
+	require.NoError(t, err)
+	assert.Equal(t, "true", communityDetectionConfigItemForTest(updated, domain.AppConfigCommunityDetectionEnabled).EffectiveValue)
+	assert.Equal(t, "02:45", communityDetectionConfigItemForTest(updated, domain.AppConfigCommunityDetectionStartTimeLocal).EffectiveValue)
+	assert.Equal(t, "America/New_York", communityDetectionConfigItemForTest(updated, domain.AppConfigCommunityDetectionTimezone).EffectiveValue)
+	assert.Equal(t, "2", communityDetectionConfigItemForTest(updated, domain.AppConfigCommunityDetectionMaxConcurrency).EffectiveValue)
+	assert.Equal(t, "0", communityDetectionConfigItemForTest(updated, domain.AppConfigCommunityDetectionJitterSeconds).EffectiveValue)
+
+	runtime, err = svc.CommunityDetectionRuntimeConfig(ctx)
+	require.NoError(t, err)
+	assert.True(t, runtime.Enabled)
+	assert.Equal(t, "02:45", runtime.StartTimeLocal)
+	assert.Equal(t, "America/New_York", runtime.Timezone)
+	assert.Equal(t, 2, runtime.MaxConcurrency)
+	assert.Equal(t, 0, runtime.JitterSeconds)
+}
+
 func TestAppConfigServiceOperationLogSettingsDefaultsAndUpdate(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
@@ -306,6 +356,27 @@ func TestAppConfigServiceValidation(t *testing.T) {
 	_, err = svc.UpdateDreamingSettings(ctx, map[string]string{domain.AppConfigDreamingMaxOutputs: "0"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
 
+	_, err = svc.UpdateCommunityDetectionSettings(ctx, map[string]string{"unknown": "value"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
+	_, err = svc.UpdateCommunityDetectionSettings(ctx, map[string]string{domain.AppConfigUpdateTimeKey: "v2"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
+	_, err = svc.UpdateCommunityDetectionSettings(ctx, map[string]string{domain.AppConfigCommunityDetectionEnabled: "maybe"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
+	_, err = svc.UpdateCommunityDetectionSettings(ctx, map[string]string{domain.AppConfigCommunityDetectionStartTimeLocal: "25:99"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
+	_, err = svc.UpdateCommunityDetectionSettings(ctx, map[string]string{domain.AppConfigCommunityDetectionTimezone: "Nope/Zone"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
+	_, err = svc.UpdateCommunityDetectionSettings(ctx, map[string]string{domain.AppConfigCommunityDetectionMaxConcurrency: "0"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
+	_, err = svc.UpdateCommunityDetectionSettings(ctx, map[string]string{domain.AppConfigCommunityDetectionJitterSeconds: "-1"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
 	_, err = svc.UpdateOperationLogSettings(ctx, map[string]string{"unknown": "value"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
 
@@ -351,6 +422,7 @@ func TestAppConfigServiceAuditNoopAndUnavailableBranches(t *testing.T) {
 	assert.Nil(t, cloneAppConfigCache(nil))
 	assert.Nil(t, ssoSettingsPayload(nil))
 	assert.Nil(t, dreamingSettingsPayload(nil))
+	assert.Nil(t, communityDetectionSettingsPayload(nil))
 	assert.Nil(t, operationLogSettingsPayload(nil))
 }
 
@@ -419,6 +491,9 @@ func newAppConfigRepoStub(now time.Time, values map[string]string) *appConfigRep
 		entries[key] = domain.AppConfigEntry{Key: key, Value: "", UpdatedAt: now}
 	}
 	for _, key := range editableDreamingConfigKeys() {
+		entries[key] = domain.AppConfigEntry{Key: key, Value: "", UpdatedAt: now}
+	}
+	for _, key := range editableCommunityDetectionConfigKeys() {
 		entries[key] = domain.AppConfigEntry{Key: key, Value: "", UpdatedAt: now}
 	}
 	for _, key := range editableOperationLogConfigKeys() {
@@ -492,6 +567,15 @@ func dreamingConfigItemForTest(settings *domain.DreamingConfigSettings, key stri
 		}
 	}
 	return domain.DreamingConfigItem{}
+}
+
+func communityDetectionConfigItemForTest(settings *domain.CommunityDetectionConfigSettings, key string) domain.CommunityDetectionConfigItem {
+	for _, item := range settings.Items {
+		if item.Key == key {
+			return item
+		}
+	}
+	return domain.CommunityDetectionConfigItem{}
 }
 
 func operationLogConfigItemForTest(settings *domain.OperationLogConfigSettings, key string) domain.OperationLogConfigItem {

@@ -17,6 +17,10 @@ import (
 
 const DefaultAppConfigCacheCheckInterval = 5 * time.Second
 const DefaultOperationLogRetentionDays = 30
+const DefaultCommunityDetectionStartTimeLocal = "03:30"
+const DefaultCommunityDetectionTimezone = "Local"
+const DefaultCommunityDetectionMaxConcurrency = 1
+const DefaultCommunityDetectionJitterSeconds = 600
 
 var ErrInvalidAppConfig = errors.New("invalid app config")
 
@@ -27,6 +31,9 @@ type AppConfigService interface {
 	GetDreamingSettings(ctx context.Context) (*domain.DreamingConfigSettings, error)
 	UpdateDreamingSettings(ctx context.Context, values map[string]string, actorRole, clientIP, correlationID string) (*domain.DreamingConfigSettings, error)
 	DreamingRuntimeConfig(ctx context.Context) (domain.DreamingRuntimeConfig, error)
+	GetCommunityDetectionSettings(ctx context.Context) (*domain.CommunityDetectionConfigSettings, error)
+	UpdateCommunityDetectionSettings(ctx context.Context, values map[string]string, actorRole, clientIP, correlationID string) (*domain.CommunityDetectionConfigSettings, error)
+	CommunityDetectionRuntimeConfig(ctx context.Context) (domain.CommunityDetectionRuntimeConfig, error)
 	GetOperationLogSettings(ctx context.Context) (*domain.OperationLogConfigSettings, error)
 	UpdateOperationLogSettings(ctx context.Context, values map[string]string, actorRole, clientIP, correlationID string) (*domain.OperationLogConfigSettings, error)
 	OperationLogRuntimeConfig(ctx context.Context) (domain.OperationLogRuntimeConfig, error)
@@ -48,6 +55,7 @@ type appConfigCache struct {
 	sso        SSORuntimeConfig
 	settings   domain.SSOConfigSettings
 	dreaming   domain.DreamingConfigSettings
+	community  domain.CommunityDetectionConfigSettings
 	opLogs     domain.OperationLogConfigSettings
 	checkedAt  time.Time
 }
@@ -141,6 +149,46 @@ func (s *AppConfigServiceImpl) DreamingRuntimeConfig(ctx context.Context) (domai
 		return domain.DreamingRuntimeConfig{}, err
 	}
 	return cache.dreaming.Effective, nil
+}
+
+func (s *AppConfigServiceImpl) GetCommunityDetectionSettings(ctx context.Context) (*domain.CommunityDetectionConfigSettings, error) {
+	cache, err := s.currentCache(ctx)
+	if err != nil {
+		return nil, err
+	}
+	settings := cache.community
+	settings.Items = append([]domain.CommunityDetectionConfigItem(nil), cache.community.Items...)
+	return &settings, nil
+}
+
+func (s *AppConfigServiceImpl) UpdateCommunityDetectionSettings(ctx context.Context, values map[string]string, actorRole, clientIP, correlationID string) (*domain.CommunityDetectionConfigSettings, error) {
+	normalized, err := normalizeCommunityDetectionConfigValues(values)
+	if err != nil {
+		return nil, err
+	}
+	before, _ := s.GetCommunityDetectionSettings(ctx)
+	now := s.now().UTC()
+	changed, err := s.repo.UpdateValues(ctx, normalized, now.Format(time.RFC3339Nano), now)
+	if err != nil {
+		return nil, err
+	}
+	s.invalidate()
+	updated, err := s.GetCommunityDetectionSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if changed {
+		s.appendAudit("APP_CONFIG_UPDATE", "app_config", "community_detection", actorRole, clientIP, correlationID, communityDetectionSettingsPayload(before), communityDetectionSettingsPayload(updated), map[string]any{"section": "community_detection"})
+	}
+	return updated, nil
+}
+
+func (s *AppConfigServiceImpl) CommunityDetectionRuntimeConfig(ctx context.Context) (domain.CommunityDetectionRuntimeConfig, error) {
+	cache, err := s.currentCache(ctx)
+	if err != nil {
+		return domain.CommunityDetectionRuntimeConfig{}, err
+	}
+	return cache.community.Effective, nil
 }
 
 func (s *AppConfigServiceImpl) GetOperationLogSettings(ctx context.Context) (*domain.OperationLogConfigSettings, error) {
@@ -261,6 +309,10 @@ func buildAppConfigCache(entries map[string]domain.AppConfigEntry, checkedAt tim
 	if err != nil {
 		return nil, err
 	}
+	community, err := communityDetectionRuntimeConfigFromEntries(entries)
+	if err != nil {
+		return nil, err
+	}
 	opLogs, err := operationLogRuntimeConfigFromEntries(entries)
 	if err != nil {
 		return nil, err
@@ -271,6 +323,7 @@ func buildAppConfigCache(entries map[string]domain.AppConfigEntry, checkedAt tim
 		sso:        runtime,
 		settings:   settings,
 		dreaming:   dreaming,
+		community:  community,
 		opLogs:     opLogs,
 		checkedAt:  checkedAt,
 	}, nil
@@ -413,6 +466,101 @@ func normalizeDreamingConfigValues(values map[string]string) (map[string]string,
 	return normalized, nil
 }
 
+func communityDetectionRuntimeConfigFromEntries(entries map[string]domain.AppConfigEntry) (domain.CommunityDetectionConfigSettings, error) {
+	values := make(map[string]string, len(editableCommunityDetectionConfigKeys()))
+	for _, key := range editableCommunityDetectionConfigKeys() {
+		values[key] = strings.TrimSpace(entries[key].Value)
+	}
+	normalized, err := normalizeCommunityDetectionConfigValues(values)
+	if err != nil {
+		return domain.CommunityDetectionConfigSettings{}, err
+	}
+
+	enabled, enabledEffective := communityDetectionConfigBool(normalized[domain.AppConfigCommunityDetectionEnabled], false)
+	startTime := communityDetectionConfigString(normalized[domain.AppConfigCommunityDetectionStartTimeLocal], DefaultCommunityDetectionStartTimeLocal)
+	timezone := communityDetectionConfigString(normalized[domain.AppConfigCommunityDetectionTimezone], DefaultCommunityDetectionTimezone)
+	maxConcurrency, maxConcurrencyEffective := communityDetectionConfigInt(normalized[domain.AppConfigCommunityDetectionMaxConcurrency], DefaultCommunityDetectionMaxConcurrency)
+	jitterSeconds, jitterSecondsEffective := communityDetectionConfigInt(normalized[domain.AppConfigCommunityDetectionJitterSeconds], DefaultCommunityDetectionJitterSeconds)
+
+	runtime := domain.CommunityDetectionRuntimeConfig{
+		Enabled:        enabled,
+		StartTimeLocal: startTime,
+		Timezone:       timezone,
+		MaxConcurrency: maxConcurrency,
+		JitterSeconds:  jitterSeconds,
+	}
+	updateTime := entries[domain.AppConfigUpdateTimeKey].Value
+	items := []domain.CommunityDetectionConfigItem{
+		communityDetectionConfigItem(entries, domain.AppConfigCommunityDetectionEnabled, enabledEffective),
+		communityDetectionConfigItem(entries, domain.AppConfigCommunityDetectionStartTimeLocal, startTime),
+		communityDetectionConfigItem(entries, domain.AppConfigCommunityDetectionTimezone, timezone),
+		communityDetectionConfigItem(entries, domain.AppConfigCommunityDetectionMaxConcurrency, maxConcurrencyEffective),
+		communityDetectionConfigItem(entries, domain.AppConfigCommunityDetectionJitterSeconds, jitterSecondsEffective),
+	}
+	return domain.CommunityDetectionConfigSettings{UpdateTime: updateTime, Items: items, Effective: runtime}, nil
+}
+
+func normalizeCommunityDetectionConfigValues(values map[string]string) (map[string]string, error) {
+	allowed := make(map[string]struct{}, len(editableCommunityDetectionConfigKeys()))
+	for _, key := range editableCommunityDetectionConfigKeys() {
+		allowed[key] = struct{}{}
+	}
+	normalized := make(map[string]string, len(values))
+	for key, value := range values {
+		if key == domain.AppConfigUpdateTimeKey {
+			return nil, fmt.Errorf("%w: update_time is read-only", ErrInvalidAppConfig)
+		}
+		if _, ok := allowed[key]; !ok {
+			return nil, fmt.Errorf("%w: unknown key %s", ErrInvalidAppConfig, key)
+		}
+		trimmed := strings.TrimSpace(value)
+		switch key {
+		case domain.AppConfigCommunityDetectionEnabled:
+			if trimmed != "" {
+				parsed, err := strconv.ParseBool(trimmed)
+				if err != nil {
+					return nil, fmt.Errorf("%w: COMMUNITY_DETECTION_ENABLED must be true or false", ErrInvalidAppConfig)
+				}
+				trimmed = strconv.FormatBool(parsed)
+			}
+		case domain.AppConfigCommunityDetectionStartTimeLocal:
+			if trimmed == "" {
+				trimmed = DefaultCommunityDetectionStartTimeLocal
+			}
+			if _, err := time.Parse("15:04", trimmed); err != nil {
+				return nil, fmt.Errorf("%w: COMMUNITY_DETECTION_START_TIME_LOCAL must use HH:MM 24-hour format", ErrInvalidAppConfig)
+			}
+		case domain.AppConfigCommunityDetectionTimezone:
+			if trimmed == "" {
+				trimmed = DefaultCommunityDetectionTimezone
+			}
+			if _, err := time.LoadLocation(trimmed); err != nil {
+				return nil, fmt.Errorf("%w: COMMUNITY_DETECTION_TIMEZONE is not a valid IANA timezone", ErrInvalidAppConfig)
+			}
+		case domain.AppConfigCommunityDetectionMaxConcurrency:
+			if trimmed == "" {
+				trimmed = strconv.Itoa(DefaultCommunityDetectionMaxConcurrency)
+			}
+			parsed, err := strconv.Atoi(trimmed)
+			if err != nil || parsed < 1 || parsed > 8 {
+				return nil, fmt.Errorf("%w: COMMUNITY_DETECTION_MAX_CONCURRENCY must be between 1 and 8", ErrInvalidAppConfig)
+			}
+			trimmed = strconv.Itoa(parsed)
+		case domain.AppConfigCommunityDetectionJitterSeconds:
+			if trimmed == "" {
+				trimmed = strconv.Itoa(DefaultCommunityDetectionJitterSeconds)
+			}
+			parsed, err := strconv.Atoi(trimmed)
+			if err != nil || parsed < 0 || parsed > 3600 {
+				return nil, fmt.Errorf("%w: COMMUNITY_DETECTION_JITTER_SECONDS must be between 0 and 3600", ErrInvalidAppConfig)
+			}
+			trimmed = strconv.Itoa(parsed)
+		}
+		normalized[key] = trimmed
+	}
+	return normalized, nil
+}
+
 func operationLogRuntimeConfigFromEntries(entries map[string]domain.AppConfigEntry) (domain.OperationLogConfigSettings, error) {
 	values := make(map[string]string, len(editableOperationLogConfigKeys()))
 	for _, key := range editableOperationLogConfigKeys() {
@@ -534,6 +682,16 @@ func editableDreamingConfigKeys() []string {
 	}
 }
 
+func editableCommunityDetectionConfigKeys() []string {
+	return []string{
+		domain.AppConfigCommunityDetectionEnabled,
+		domain.AppConfigCommunityDetectionStartTimeLocal,
+		domain.AppConfigCommunityDetectionTimezone,
+		domain.AppConfigCommunityDetectionMaxConcurrency,
+		domain.AppConfigCommunityDetectionJitterSeconds,
+	}
+}
+
 func editableOperationLogConfigKeys() []string {
 	return []string{
 		domain.AppConfigOperationLogRetentionDays,
@@ -572,6 +730,22 @@ func dreamingConfigInt(value string, fallback int) (int, string) {
 	return parsed, strconv.Itoa(parsed)
 }
 
+func communityDetectionConfigBool(value string, fallback bool) (bool, string) {
+	if strings.TrimSpace(value) == "" {
+		return fallback, strconv.FormatBool(fallback)
+	}
+	parsed, _ := strconv.ParseBool(value)
+	return parsed, strconv.FormatBool(parsed)
+}
+
+func communityDetectionConfigInt(value string, fallback int) (int, string) {
+	if strings.TrimSpace(value) == "" {
+		return fallback, strconv.Itoa(fallback)
+	}
+	parsed, _ := strconv.Atoi(value)
+	return parsed, strconv.Itoa(parsed)
+}
+
 func operationLogConfigInt(value string, fallback int) (int, string) {
 	if strings.TrimSpace(value) == "" {
 		return fallback, strconv.Itoa(fallback)
@@ -581,6 +755,13 @@ func operationLogConfigInt(value string, fallback int) (int, string) {
 }
 
 func dreamingConfigString(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return strings.TrimSpace(value)
+}
+
+func communityDetectionConfigString(value, fallback string) string {
 	if strings.TrimSpace(value) == "" {
 		return fallback
 	}
@@ -598,6 +779,16 @@ func defaultSSOCookieSecure(publicBaseURL string) bool {
 func dreamingConfigItem(entries map[string]domain.AppConfigEntry, key, effective string) domain.DreamingConfigItem {
 	entry := entries[key]
 	return domain.DreamingConfigItem{
+		Key:            key,
+		Value:          strings.TrimSpace(entry.Value),
+		EffectiveValue: effective,
+		UpdatedAt:      entry.UpdatedAt,
+	}
+}
+
+func communityDetectionConfigItem(entries map[string]domain.AppConfigEntry, key, effective string) domain.CommunityDetectionConfigItem {
+	entry := entries[key]
+	return domain.CommunityDetectionConfigItem{
 		Key:            key,
 		Value:          strings.TrimSpace(entry.Value),
 		EffectiveValue: effective,
@@ -633,6 +824,7 @@ func cloneAppConfigCache(cache *appConfigCache) *appConfigCache {
 	copy.entries = cloneAppConfigEntries(cache.entries)
 	copy.settings.Items = append([]domain.SSOConfigItem(nil), cache.settings.Items...)
 	copy.dreaming.Items = append([]domain.DreamingConfigItem(nil), cache.dreaming.Items...)
+	copy.community.Items = append([]domain.CommunityDetectionConfigItem(nil), cache.community.Items...)
 	copy.opLogs.Items = append([]domain.OperationLogConfigItem(nil), cache.opLogs.Items...)
 	return &copy
 }
@@ -664,6 +856,24 @@ func ssoSettingsPayload(settings *domain.SSOConfigSettings) map[string]any {
 }
 
 func dreamingSettingsPayload(settings *domain.DreamingConfigSettings) map[string]any {
+	if settings == nil {
+		return nil
+	}
+	items := make([]map[string]string, 0, len(settings.Items))
+	for _, item := range settings.Items {
+		items = append(items, map[string]string{
+			"key":   item.Key,
+			"value": item.Value,
+		})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i]["key"] < items[j]["key"] })
+	return map[string]any{
+		"update_time": settings.UpdateTime,
+		"items":       items,
+	}
+}
+
+func communityDetectionSettingsPayload(settings *domain.CommunityDetectionConfigSettings) map[string]any {
 	if settings == nil {
 		return nil
 	}

@@ -43,7 +43,7 @@ type DiscoverabilityMetrics interface {
 	// for revalidation after a contradicting fragment is ingested.
 	IncFactNeedsRevalidation()
 	// IncCommunityDetect bumps the community-detection run counter.
-	// outcome must be one of: "ok" | "error".
+	// outcome must be one of: "ok" | "error" | "too_large" | "unavailable".
 	IncCommunityDetect(outcome string)
 	// ObserveCommunityDetect records the duration and projected node count of
 	// one community-detection run.

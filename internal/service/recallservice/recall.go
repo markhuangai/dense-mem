@@ -67,6 +67,16 @@ const (
 	// DefaultRecallValidatedClaimWeight scales validated-claim scores so that
 	// active facts outrank equivalent claims under the default weight.
 	DefaultRecallValidatedClaimWeight = 0.5
+
+	// DefaultCommunityExpansionCommunityLimit caps the number of communities
+	// selected for an opt-in community-aware recall expansion.
+	DefaultCommunityExpansionCommunityLimit = 3
+	// DefaultCommunityExpansionMembersPerCommunity caps fan-out per community.
+	DefaultCommunityExpansionMembersPerCommunity = 10
+	// DefaultCommunityExpansionScanLimit caps the summary rows scored in memory.
+	DefaultCommunityExpansionScanLimit = 50
+	// DefaultCommunityExpansionMinScore is the minimum summary match score.
+	DefaultCommunityExpansionMinScore = 0.2
 )
 
 // ErrEmbeddingUnavailable is returned to callers when the embedding provider
@@ -86,6 +96,7 @@ type RecallRequest struct {
 	ValidAt         *time.Time `json:"valid_at,omitempty"`
 	KnownAt         *time.Time `json:"known_at,omitempty"`
 	IncludeEvidence bool       `json:"include_evidence,omitempty"`
+	UseCommunities  bool       `json:"use_communities,omitempty"`
 }
 
 // RecallHit is one merged, hydrated recall result.
@@ -195,19 +206,64 @@ type claimBatchHydrator interface {
 	GetByIDs(ctx context.Context, profileID string, claimIDs []string) (map[string]*domain.Claim, error)
 }
 
+// CommunityExpansionOptions bounds opt-in expansion through persisted
+// community summaries.
+type CommunityExpansionOptions struct {
+	CommunityLimit      int
+	MembersPerCommunity int
+	ScanLimit           int
+	MaxCandidates       int
+	MinScore            float64
+}
+
+// CommunityFragmentRecallResult is one community-member fragment before
+// hydration.
+type CommunityFragmentRecallResult struct {
+	FragmentID string
+	ProfileID  string
+	Score      float64
+}
+
+// CommunityExpansion is the bounded set of original graph members selected by
+// community-aware recall.
+type CommunityExpansion struct {
+	SelectedCommunities int
+	Facts               []FactRecallResult
+	Claims              []ClaimRecallResult
+	Fragments           []CommunityFragmentRecallResult
+}
+
+// CommunityExpander selects matching persisted communities and returns their
+// original member nodes. Implementations must scope all reads to profileID.
+type CommunityExpander interface {
+	Expand(ctx context.Context, profileID string, query string, opts CommunityExpansionOptions) (CommunityExpansion, error)
+}
+
+// RecallServiceOption mutates optional recall dependencies while preserving the
+// stable constructor surface.
+type RecallServiceOption func(*recallService)
+
+// WithCommunityExpander enables opt-in community-aware recall expansion.
+func WithCommunityExpander(expander CommunityExpander) RecallServiceOption {
+	return func(s *recallService) {
+		s.communityExpander = expander
+	}
+}
+
 // recallService implements RecallService.
 type recallService struct {
-	embedder      EmbeddingProvider
-	semantic      SemanticSearcher
-	keyword       KeywordSearcher
-	hydrator      FragmentHydrator
-	factSearcher  FactSearcher // optional; nil → tier-1 results omitted
-	factGet       FactHydrator
-	claimSearcher ClaimSearcher // optional; nil → tier-1.5 results omitted
-	claimGet      ClaimHydrator
-	claimWeight   float64 // weight applied to claim scores (default DefaultRecallValidatedClaimWeight)
-	logger        observability.LogProvider
-	metrics       observability.DiscoverabilityMetrics
+	embedder          EmbeddingProvider
+	semantic          SemanticSearcher
+	keyword           KeywordSearcher
+	hydrator          FragmentHydrator
+	factSearcher      FactSearcher // optional; nil → tier-1 results omitted
+	factGet           FactHydrator
+	claimSearcher     ClaimSearcher // optional; nil → tier-1.5 results omitted
+	claimGet          ClaimHydrator
+	claimWeight       float64 // weight applied to claim scores (default DefaultRecallValidatedClaimWeight)
+	communityExpander CommunityExpander
+	logger            observability.LogProvider
+	metrics           observability.DiscoverabilityMetrics
 }
 
 var _ RecallService = (*recallService)(nil)
@@ -251,6 +307,7 @@ func NewRecallServiceWithTiers(
 	claimWeight float64,
 	logger observability.LogProvider,
 	metrics observability.DiscoverabilityMetrics,
+	options ...RecallServiceOption,
 ) RecallService {
 	if metrics == nil {
 		metrics = observability.NoopDiscoverabilityMetrics()
@@ -258,7 +315,7 @@ func NewRecallServiceWithTiers(
 	if claimWeight <= 0 {
 		claimWeight = DefaultRecallValidatedClaimWeight
 	}
-	return &recallService{
+	svc := &recallService{
 		embedder:      embedder,
 		semantic:      semantic,
 		keyword:       keyword,
@@ -271,6 +328,12 @@ func NewRecallServiceWithTiers(
 		logger:        logger,
 		metrics:       metrics,
 	}
+	for _, option := range options {
+		if option != nil {
+			option(svc)
+		}
+	}
+	return svc
 }
 
 // Recall runs both branches in parallel, merges via RRF, and returns the top
@@ -396,15 +459,13 @@ func (s *recallService) Recall(ctx context.Context, profileID string, req Recall
 
 	// Merge fragment hits with tier hits, sort by (tier ASC, score DESC).
 	all := append(tierHits, fragmentHits...) //nolint:gocritic
-	sort.SliceStable(all, func(i, j int) bool {
-		if all[i].Tier != all[j].Tier {
-			return all[i].Tier < all[j].Tier
-		}
-		return all[i].Score > all[j].Score
-	})
+	sortRecallHits(all)
 
 	if len(all) > limit {
 		all = all[:limit]
+	}
+	if req.UseCommunities && len(all) < limit {
+		all = append(all, s.enrichCommunityHits(ctx, profileID, limit-len(all), req, all)...)
 	}
 	resultCount = len(all)
 	return all, nil
