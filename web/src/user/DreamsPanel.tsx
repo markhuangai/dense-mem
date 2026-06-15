@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
-import { SectionHeading } from "../ui/components";
+import { InfoTooltip, SectionHeading } from "../ui/components";
 import { Dream, DreamRun, DreamStatus, UserApi } from "./api";
 
 const DREAM_STATUSES = ["", "proposed", "reinforced", "stale", "rejected", "promoted"];
@@ -60,11 +60,11 @@ export function UserDreamsPanel({ api }: { api: UserApi }) {
         />
         {error && <div className="banner error" role="alert">{error}</div>}
         {status && (
-          <div className="metrics-summary">
-            <SummaryMetric label="Source" value={sourceLabel(status.effective_config.source)} />
-            <SummaryMetric label="Scheduled" value={status.effective_config.enabled ? "Enabled" : "Disabled"} />
-            <SummaryMetric label="Pending" value={status.pending_count} />
-            <SummaryMetric label="Latest run" value={status.latest_run ? `${status.latest_run.status} ${formatDate(status.latest_run.started_at)}` : "None"} />
+          <div className="dream-status-bar" aria-label="Dreaming status">
+            <StatusItem label="Source" value={sourceLabel(status.effective_config.source)} />
+            <StatusItem label="Scheduled" value={status.effective_config.enabled ? "Enabled" : "Disabled"} />
+            <StatusItem label="Pending" value={status.pending_count} />
+            <StatusItem label="Latest run" value={status.latest_run ? `${status.latest_run.status} ${formatDate(status.latest_run.started_at)}` : "None"} />
           </div>
         )}
       </section>
@@ -110,12 +110,12 @@ export function UserDreamsPanel({ api }: { api: UserApi }) {
   );
 }
 
-function SummaryMetric({ label, value }: { label: string; value: string | number }) {
+function StatusItem({ label, value }: { label: string; value: string | number }) {
   return (
-    <div>
+    <span>
       <span>{label}</span>
       <strong>{value}</strong>
-    </div>
+    </span>
   );
 }
 
@@ -137,10 +137,16 @@ function DreamTable({ dreams }: { dreams: Dream[] }) {
             <tr key={dream.dream_id}>
               <td>{formatDate(dream.updated_at)}</td>
               <td><span className={dreamStatusClass(dream.status)}>{dream.status}</span></td>
-              <td>
-                <strong>{dream.hypothesis}</strong>
-                <small>{dream.rationale}</small>
-              </td>
+	              <td>
+	                <div className="dream-hypothesis-cell">
+	                  <strong>{dream.hypothesis}</strong>
+	                  {dream.rationale && (
+	                    <InfoTooltip label={`Why this hypothesis: ${dream.hypothesis}`}>
+	                      {dream.rationale}
+	                    </InfoTooltip>
+	                  )}
+	                </div>
+	              </td>
               <td>{Math.round(dream.confidence * 100)}%</td>
               <td><code>{dream.cycle_run_id?.slice(0, 8) || "-"}</code></td>
             </tr>

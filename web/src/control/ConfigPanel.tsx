@@ -62,41 +62,38 @@ export function ConfigPanel({ api }: { api: ControlApi }) {
 
   return (
     <>
-      <section className="surface config-surface">
-        <SectionHeading title="Config" />
-        <div className="config-tabs" role="tablist" aria-label="Config sections">
-          <button
-            className={activeTab === "sso" ? "tab-button active" : "tab-button"}
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "sso"}
-            onClick={() => setActiveTab("sso")}
-          >
-            <Settings size={16} aria-hidden="true" />
-            <span>SSO</span>
-          </button>
-          <button
-            className={activeTab === "dreaming" ? "tab-button active" : "tab-button"}
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "dreaming"}
-            onClick={() => setActiveTab("dreaming")}
-          >
-            <Moon size={16} aria-hidden="true" />
-            <span>Dreaming</span>
-          </button>
-          <button
-            className={activeTab === "operation-logs" ? "tab-button active" : "tab-button"}
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "operation-logs"}
-            onClick={() => setActiveTab("operation-logs")}
-          >
-            <ListFilter size={16} aria-hidden="true" />
-            <span>Logs</span>
-          </button>
-        </div>
-      </section>
+      <div className="config-tabs" role="tablist" aria-label="Config sections">
+        <button
+          className={activeTab === "sso" ? "tab-button active" : "tab-button"}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "sso"}
+          onClick={() => setActiveTab("sso")}
+        >
+          <Settings size={16} aria-hidden="true" />
+          <span>SSO</span>
+        </button>
+        <button
+          className={activeTab === "dreaming" ? "tab-button active" : "tab-button"}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "dreaming"}
+          onClick={() => setActiveTab("dreaming")}
+        >
+          <Moon size={16} aria-hidden="true" />
+          <span>Dreaming</span>
+        </button>
+        <button
+          className={activeTab === "operation-logs" ? "tab-button active" : "tab-button"}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "operation-logs"}
+          onClick={() => setActiveTab("operation-logs")}
+        >
+          <ListFilter size={16} aria-hidden="true" />
+          <span>Logs</span>
+        </button>
+      </div>
       {activeTab === "sso" && <SSOConfigPanel api={api} />}
       {activeTab === "dreaming" && <DreamingConfigPanel api={api} />}
       {activeTab === "operation-logs" && <OperationLogConfigPanel api={api} />}

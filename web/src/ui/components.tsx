@@ -1,5 +1,5 @@
-import { Check, Copy, X } from "lucide-react";
-import { FormEventHandler, ReactNode, useEffect, useRef, useState } from "react";
+import { Check, Copy, Info, X } from "lucide-react";
+import { FormEventHandler, ReactNode, useEffect, useId, useRef, useState } from "react";
 
 export type ThemeName = "light" | "dark";
 
@@ -64,6 +64,11 @@ type SecretBoxProps = {
   copyLabel: string;
   dismissLabel: string;
   onDismiss: () => void;
+};
+
+type InfoTooltipProps = {
+  label: string;
+  children: ReactNode;
 };
 
 export function Brand({ title, icon }: BrandProps) {
@@ -228,6 +233,26 @@ export function SecretBox({ value, valueLabel, copyLabel, dismissLabel, onDismis
         </button>
       </div>
     </div>
+  );
+}
+
+export function InfoTooltip({ label, children }: InfoTooltipProps) {
+  const tooltipId = useId();
+
+  return (
+    <span className="info-tooltip">
+      <button
+        className="info-tooltip-trigger"
+        type="button"
+        aria-label={label}
+        aria-describedby={tooltipId}
+      >
+        <Info size={14} aria-hidden="true" />
+      </button>
+      <span className="info-tooltip-content" id={tooltipId} role="tooltip">
+        {children}
+      </span>
+    </span>
   );
 }
 

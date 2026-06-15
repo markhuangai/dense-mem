@@ -88,6 +88,7 @@
   }
 
   .portal-tabs,
+  .config-tabs,
   .security-summary,
   .metrics-summary,
   .dreaming-effective-grid,
@@ -99,6 +100,19 @@
 
   .tab-button {
     justify-content: flex-start;
+  }
+
+  .config-tabs .tab-button {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .table-actions {
+    flex-wrap: wrap;
+  }
+
+  .table-page-size {
+    margin-left: 0;
   }
 
   .secret-box {
