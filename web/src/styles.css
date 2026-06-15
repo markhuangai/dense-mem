@@ -981,7 +981,7 @@ code {
   min-width: 0;
   padding: 8px 10px;
   color: var(--text);
-  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
   border: 1px solid color-mix(in srgb, var(--warning) 26%, var(--border));
   border-radius: 6px;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;

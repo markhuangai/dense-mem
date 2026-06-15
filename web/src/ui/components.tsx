@@ -1,5 +1,5 @@
 import { Check, Copy, X } from "lucide-react";
-import { FormEventHandler, ReactNode, useRef, useState } from "react";
+import { FormEventHandler, ReactNode, useEffect, useRef, useState } from "react";
 
 export type ThemeName = "light" | "dark";
 
@@ -195,6 +195,14 @@ export function SecretBox({ value, valueLabel, copyLabel, dismissLabel, onDismis
   const [copied, setCopied] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const secret = value.trim();
+
+  useEffect(() => {
+    if (!copied) {
+      return;
+    }
+    const timeout = window.setTimeout(() => setCopied(false), 2000);
+    return () => window.clearTimeout(timeout);
+  }, [copied]);
 
   async function copySecret() {
     setCopied(await writeClipboardText(secret, inputRef.current));
