@@ -849,8 +849,8 @@ func TestRecallService_CommunityExpansionFiltersProfile(t *testing.T) {
 		}},
 		nil,
 		&fakeFactGetter{facts: map[string]*domain.Fact{
-			"fact-other": {FactID: "fact-other", ProfileID: "pB", RecordedAt: now, TruthScore: 1},
-			"fact-own":   {FactID: "fact-own", ProfileID: "pA", RecordedAt: now, TruthScore: 0.9},
+			"fact-other": {FactID: "fact-other", ProfileID: "pB", Status: domain.FactStatusActive, RecordedAt: now, TruthScore: 1},
+			"fact-own":   {FactID: "fact-own", ProfileID: "pA", Status: domain.FactStatusActive, RecordedAt: now, TruthScore: 0.9},
 		}},
 		nil,
 		nil,
@@ -896,11 +896,11 @@ func TestRecallService_CommunityExpansionFillsUnusedSlotsAfterDirectRecall(t *te
 		}},
 		nil,
 		&fakeFactGetter{facts: map[string]*domain.Fact{
-			"fact-community": {FactID: "fact-community", ProfileID: "pA", RecordedAt: now, TruthScore: 0.9},
+			"fact-community": {FactID: "fact-community", ProfileID: "pA", Status: domain.FactStatusActive, RecordedAt: now, TruthScore: 0.9},
 		}},
 		nil,
 		&fakeClaimGetter{claims: map[string]*domain.Claim{
-			"claim-community": {ClaimID: "claim-community", ProfileID: "pA", RecordedAt: now, ExtractConf: 0.8},
+			"claim-community": {ClaimID: "claim-community", ProfileID: "pA", Status: domain.StatusValidated, RecordedAt: now, ExtractConf: 0.8},
 		}},
 		0,
 		nil,
@@ -911,12 +911,12 @@ func TestRecallService_CommunityExpansionFillsUnusedSlotsAfterDirectRecall(t *te
 	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "q", Limit: 3, UseCommunities: true})
 	require.NoError(t, err)
 	require.Len(t, out, 3)
-	require.NotNil(t, out[0].Fragment)
-	require.Equal(t, "f-direct", out[0].Fragment.FragmentID)
-	require.NotNil(t, out[1].Fact)
-	require.Equal(t, "fact-community", out[1].Fact.FactID)
-	require.NotNil(t, out[2].Claim)
-	require.Equal(t, "claim-community", out[2].Claim.ClaimID)
+	require.NotNil(t, out[0].Fact)
+	require.Equal(t, "fact-community", out[0].Fact.FactID)
+	require.NotNil(t, out[1].Claim)
+	require.Equal(t, "claim-community", out[1].Claim.ClaimID)
+	require.NotNil(t, out[2].Fragment)
+	require.Equal(t, "f-direct", out[2].Fragment.FragmentID)
 	require.Equal(t, DefaultCommunityExpansionCommunityLimit, expander.lastOptions.CommunityLimit)
 	require.Equal(t, DefaultCommunityExpansionMembersPerCommunity, expander.lastOptions.MembersPerCommunity)
 	require.Equal(t, DefaultCommunityExpansionCommunityLimit*DefaultCommunityExpansionMembersPerCommunity, expander.lastOptions.MaxCandidates)

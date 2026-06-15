@@ -14,6 +14,7 @@ import (
 
 const (
 	schedulerProfilePageSize  = 100
+	schedulerDetectTimeout    = 10 * time.Minute
 	schedulerLastRunRetention = 7 * 24 * time.Hour
 	schedulerRunDateLayout    = "2006-01-02"
 	schedulerTickInterval     = time.Minute
@@ -27,11 +28,25 @@ type SchedulerAppConfig interface {
 	CommunityDetectionRuntimeConfig(ctx context.Context) (domain.CommunityDetectionRuntimeConfig, error)
 }
 
+type SchedulerRunStore interface {
+	TryMarkRun(ctx context.Context, profileID, runDate string) (bool, error)
+	Prune(ctx context.Context, beforeRunDate string) error
+}
+
+type SchedulerOption func(*Scheduler)
+
+func WithSchedulerRunStore(store SchedulerRunStore) SchedulerOption {
+	return func(s *Scheduler) {
+		s.runStore = store
+	}
+}
+
 type Scheduler struct {
 	detector  DetectCommunityService
 	profiles  SchedulerProfileService
 	appConfig SchedulerAppConfig
 	metrics   observability.DiscoverabilityMetrics
+	runStore  SchedulerRunStore
 	now       func() time.Time
 	logger    *slog.Logger
 
@@ -45,14 +60,14 @@ type schedulerJob struct {
 	dueAt     time.Time
 }
 
-func NewScheduler(detector DetectCommunityService, profiles SchedulerProfileService, appConfig SchedulerAppConfig, metrics observability.DiscoverabilityMetrics, logger *slog.Logger) *Scheduler {
+func NewScheduler(detector DetectCommunityService, profiles SchedulerProfileService, appConfig SchedulerAppConfig, metrics observability.DiscoverabilityMetrics, logger *slog.Logger, options ...SchedulerOption) *Scheduler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	if metrics == nil {
 		metrics = observability.NoopDiscoverabilityMetrics()
 	}
-	return &Scheduler{
+	scheduler := &Scheduler{
 		detector:  detector,
 		profiles:  profiles,
 		appConfig: appConfig,
@@ -61,6 +76,12 @@ func NewScheduler(detector DetectCommunityService, profiles SchedulerProfileServ
 		logger:    logger,
 		lastRun:   map[string]string{},
 	}
+	for _, option := range options {
+		if option != nil {
+			option(scheduler)
+		}
+	}
+	return scheduler
 }
 
 func (s *Scheduler) Start(ctx context.Context) {
@@ -82,6 +103,7 @@ func (s *Scheduler) Start(ctx context.Context) {
 func (s *Scheduler) runDue(ctx context.Context) {
 	now := s.now()
 	s.pruneLastRun(now)
+	s.pruneRunStore(ctx, now)
 
 	cfg, err := s.appConfig.CommunityDetectionRuntimeConfig(ctx)
 	if err != nil {
@@ -109,7 +131,7 @@ func (s *Scheduler) runDue(ctx context.Context) {
 			}
 			profileID := profile.ID.String()
 			runDate, dueAt, due := scheduledCommunityRun(now, profileID, cfg)
-			if !due || s.alreadyRan(profileID, runDate) {
+			if !due || !s.reserveRun(ctx, profileID, runDate) {
 				continue
 			}
 			jobs = append(jobs, schedulerJob{profileID: profileID, runDate: runDate, dueAt: dueAt})
@@ -158,11 +180,18 @@ func (s *Scheduler) runJobs(ctx context.Context, jobs []schedulerJob, maxConcurr
 
 func (s *Scheduler) runProfile(ctx context.Context, job schedulerJob) {
 	started := s.now()
-	err := s.detector.Detect(ctx, job.profileID, DetectOptions{})
+	detectCtx, cancel := context.WithTimeout(ctx, schedulerDetectTimeout)
+	defer cancel()
+	err := s.detector.Detect(detectCtx, job.profileID, DetectOptions{})
 	duration := s.now().Sub(started)
 	if err != nil {
-		if ctx.Err() != nil {
-			s.logger.Warn("community scheduler: detection canceled", slog.String("team_id", job.profileID), slog.String("run_date", job.runDate), slog.String("error", err.Error()))
+		if detectCtx.Err() != nil {
+			s.logger.Warn("community scheduler: detection canceled",
+				slog.String("profile_id", job.profileID),
+				slog.String("run_date", job.runDate),
+				slog.String("context_error", detectCtx.Err().Error()),
+				slog.String("error", err.Error()),
+			)
 			return
 		}
 		s.markRan(job.profileID, job.runDate)
@@ -174,7 +203,7 @@ func (s *Scheduler) runProfile(ctx context.Context, job schedulerJob) {
 			logFn = s.logger.Info
 		}
 		logFn("community scheduler: detection skipped or failed",
-			slog.String("team_id", job.profileID),
+			slog.String("profile_id", job.profileID),
 			slog.String("run_date", job.runDate),
 			slog.String("outcome", outcome),
 			slog.String("due_at", job.dueAt.Format(time.RFC3339)),
@@ -188,7 +217,7 @@ func (s *Scheduler) runProfile(ctx context.Context, job schedulerJob) {
 	s.metrics.IncCommunityDetect("ok")
 	s.metrics.ObserveCommunityDetect(duration.Seconds(), 0)
 	s.logger.Info("community scheduler: detection completed",
-		slog.String("team_id", job.profileID),
+		slog.String("profile_id", job.profileID),
 		slog.String("run_date", job.runDate),
 		slog.String("due_at", job.dueAt.Format(time.RFC3339)),
 		slog.Duration("duration", duration),
@@ -259,10 +288,39 @@ func (s *Scheduler) alreadyRan(profileID, runDate string) bool {
 	return s.lastRun[profileID] == runDate
 }
 
+func (s *Scheduler) reserveRun(ctx context.Context, profileID, runDate string) bool {
+	if s.runStore == nil {
+		return !s.alreadyRan(profileID, runDate)
+	}
+	reserved, err := s.runStore.TryMarkRun(ctx, profileID, runDate)
+	if err != nil {
+		s.logger.Warn("community scheduler: run reservation failed",
+			slog.String("profile_id", profileID),
+			slog.String("run_date", runDate),
+			slog.String("error", err.Error()),
+		)
+		return false
+	}
+	return reserved
+}
+
 func (s *Scheduler) markRan(profileID, runDate string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastRun[profileID] = runDate
+}
+
+func (s *Scheduler) pruneRunStore(ctx context.Context, now time.Time) {
+	if s.runStore == nil {
+		return
+	}
+	cutoffDate := now.Add(-schedulerLastRunRetention).Format(schedulerRunDateLayout)
+	if err := s.runStore.Prune(ctx, cutoffDate); err != nil {
+		s.logger.Warn("community scheduler: run store prune failed",
+			slog.String("before_run_date", cutoffDate),
+			slog.String("error", err.Error()),
+		)
+	}
 }
 
 func (s *Scheduler) pruneLastRun(now time.Time) {

@@ -729,7 +729,14 @@ func main() {
 		communitySchedulerCtx, cancel := context.WithCancel(context.Background())
 		communitySchedulerCancel = cancel
 		defer communitySchedulerCancel()
-		go communityservice.NewScheduler(communityDetectRegistrySvc, profileService, appConfigService, discoverabilityMetrics, slog.Default()).Start(communitySchedulerCtx)
+		go communityservice.NewScheduler(
+			communityDetectRegistrySvc,
+			profileService,
+			appConfigService,
+			discoverabilityMetrics,
+			slog.Default(),
+			communityservice.WithSchedulerRunStore(communityservice.NewPostgresSchedulerRunStore(pgDB.GetDB())),
+		).Start(communitySchedulerCtx)
 	}
 
 	logger.Info("starting server", observability.String("addr", config.DefaultHTTPAddr))

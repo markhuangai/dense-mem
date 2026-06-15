@@ -82,6 +82,9 @@ func (s *recallService) communityFactHits(ctx context.Context, profileID string,
 		if f.ProfileID != "" && f.ProfileID != profileID {
 			continue
 		}
+		if f.Status != domain.FactStatusActive {
+			continue
+		}
 		if !factMatchesRecallWindow(f, req.ValidAt, req.KnownAt) {
 			continue
 		}
@@ -149,6 +152,9 @@ func (s *recallService) communityClaimHits(ctx context.Context, profileID string
 			}
 		}
 		if c.ProfileID != "" && c.ProfileID != profileID {
+			continue
+		}
+		if c.Status != domain.StatusValidated {
 			continue
 		}
 		if !claimMatchesRecallWindow(c, req.ValidAt, req.KnownAt) {

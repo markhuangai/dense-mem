@@ -466,6 +466,10 @@ func (s *recallService) Recall(ctx context.Context, profileID string, req Recall
 	}
 	if req.UseCommunities && len(all) < limit {
 		all = append(all, s.enrichCommunityHits(ctx, profileID, limit-len(all), req, all)...)
+		sortRecallHits(all)
+		if len(all) > limit {
+			all = all[:limit]
+		}
 	}
 	resultCount = len(all)
 	return all, nil

@@ -31,10 +31,12 @@ func TestCommunityExpansionEdgeBranches(t *testing.T) {
 	future := now.Add(time.Hour)
 	svc = &recallService{
 		factGet: &getOnlyFactGetter{facts: map[string]*domain.Fact{
-			"fact-good": {FactID: "fact-good", ProfileID: "pA", RecordedAt: now, TruthScore: 0.9},
+			"fact-good":      {FactID: "fact-good", ProfileID: "pA", Status: domain.FactStatusActive, RecordedAt: now, TruthScore: 0.9},
+			"fact-retracted": {FactID: "fact-retracted", ProfileID: "pA", Status: domain.FactStatusRetracted, RecordedAt: now, TruthScore: 0.9},
 		}},
 		claimGet: &getOnlyClaimGetter{claims: map[string]*domain.Claim{
-			"claim-good": {ClaimID: "claim-good", ProfileID: "pA", RecordedAt: now, ExtractConf: 0.8},
+			"claim-good":      {ClaimID: "claim-good", ProfileID: "pA", Status: domain.StatusValidated, RecordedAt: now, ExtractConf: 0.8},
+			"claim-candidate": {ClaimID: "claim-candidate", ProfileID: "pA", Status: domain.StatusCandidate, RecordedAt: now, ExtractConf: 0.8},
 		}},
 		claimWeight: DefaultRecallValidatedClaimWeight,
 		hydrator: &getOnlyFragmentHydrator{frags: map[string]*domain.Fragment{
@@ -54,6 +56,7 @@ func TestCommunityExpansionEdgeBranches(t *testing.T) {
 		{FactID: "fact-wrong", ProfileID: "pB", RecordedAt: now},
 		{FactID: "fact-future", ProfileID: "pA", RecordedAt: future},
 		{FactID: "fact-missing", ProfileID: "pA", RecordedAt: now},
+		{FactID: "fact-retracted", ProfileID: "pA", RecordedAt: now},
 		{FactID: "fact-good", ProfileID: "pA", RecordedAt: now},
 	})
 	require.Len(t, factHits, 1)
@@ -64,6 +67,7 @@ func TestCommunityExpansionEdgeBranches(t *testing.T) {
 		{ClaimID: "claim-wrong", ProfileID: "pB", RecordedAt: now},
 		{ClaimID: "claim-future", ProfileID: "pA", RecordedAt: future},
 		{ClaimID: "claim-missing", ProfileID: "pA", RecordedAt: now},
+		{ClaimID: "claim-candidate", ProfileID: "pA", RecordedAt: now},
 		{ClaimID: "claim-good", ProfileID: "pA", RecordedAt: now},
 	})
 	require.Len(t, claimHits, 1)

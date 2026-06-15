@@ -130,6 +130,70 @@ func TestCommunitySchedulerMarksAttemptsAndContinuesAfterErrors(t *testing.T) {
 	require.Len(t, metrics.CommunityDetectSamples(), 3)
 }
 
+func TestCommunitySchedulerRunStoreReservesAndPrunes(t *testing.T) {
+	profileID := uuid.New()
+	profileSvc := &communitySchedulerProfileStub{profiles: []*domain.Profile{{ID: profileID}}}
+	detector := &communitySchedulerDetectorStub{}
+	store := &communitySchedulerRunStoreStub{reserved: map[string]bool{}}
+	config := &communitySchedulerConfigStub{cfg: domain.CommunityDetectionRuntimeConfig{
+		Enabled:        true,
+		StartTimeLocal: "03:30",
+		Timezone:       "UTC",
+		MaxConcurrency: 1,
+		JitterSeconds:  0,
+	}}
+	scheduler := NewScheduler(detector, profileSvc, config, nil, discardCommunitySchedulerLogger(), WithSchedulerRunStore(store))
+	scheduler.now = func() time.Time { return time.Date(2026, 6, 15, 3, 30, 0, 0, time.UTC) }
+
+	scheduler.runDue(context.Background())
+	scheduler.runDue(context.Background())
+
+	require.Equal(t, []string{profileID.String()}, detector.profiles)
+	require.Equal(t, []string{profileID.String() + "|2026-06-15", profileID.String() + "|2026-06-15"}, store.tryKeys)
+	require.Equal(t, []string{"2026-06-08", "2026-06-08"}, store.pruneBefore)
+}
+
+func TestCommunitySchedulerRunStoreReservationErrorSkipsProfile(t *testing.T) {
+	profileID := uuid.New()
+	profileSvc := &communitySchedulerProfileStub{profiles: []*domain.Profile{{ID: profileID}}}
+	detector := &communitySchedulerDetectorStub{}
+	store := &communitySchedulerRunStoreStub{err: errors.New("store failed")}
+	config := &communitySchedulerConfigStub{cfg: domain.CommunityDetectionRuntimeConfig{
+		Enabled:        true,
+		StartTimeLocal: "03:30",
+		Timezone:       "UTC",
+		MaxConcurrency: 1,
+		JitterSeconds:  0,
+	}}
+	scheduler := NewScheduler(detector, profileSvc, config, nil, discardCommunitySchedulerLogger(), WithSchedulerRunStore(store))
+	scheduler.now = func() time.Time { return time.Date(2026, 6, 15, 3, 30, 0, 0, time.UTC) }
+
+	scheduler.runDue(context.Background())
+
+	require.Empty(t, detector.profiles)
+	require.Equal(t, []string{profileID.String() + "|2026-06-15"}, store.tryKeys)
+}
+
+func TestCommunitySchedulerRunProfileUsesDetectTimeout(t *testing.T) {
+	var remaining time.Duration
+	detector := &communitySchedulerDetectorStub{
+		detectFunc: func(ctx context.Context, _ string) error {
+			deadline, ok := ctx.Deadline()
+			require.True(t, ok)
+			remaining = time.Until(deadline)
+			return nil
+		},
+	}
+	scheduler := NewScheduler(detector, &communitySchedulerProfileStub{}, &communitySchedulerConfigStub{}, nil, discardCommunitySchedulerLogger())
+	now := time.Date(2026, 6, 15, 3, 30, 0, 0, time.UTC)
+	scheduler.now = func() time.Time { return now }
+
+	scheduler.runProfile(context.Background(), schedulerJob{profileID: "profile-1", runDate: "2026-06-15", dueAt: now})
+
+	require.Greater(t, remaining, schedulerDetectTimeout-time.Second)
+	require.LessOrEqual(t, remaining, schedulerDetectTimeout)
+}
+
 func TestCommunitySchedulerStopsOnProfileListError(t *testing.T) {
 	profileSvc := &communitySchedulerProfileStub{err: errors.New("list failed")}
 	detector := &communitySchedulerDetectorStub{}
@@ -251,16 +315,56 @@ func (s *communitySchedulerConfigStub) CommunityDetectionRuntimeConfig(context.C
 }
 
 type communitySchedulerDetectorStub struct {
-	mu       sync.Mutex
-	errs     map[string]error
-	profiles []string
+	mu         sync.Mutex
+	errs       map[string]error
+	profiles   []string
+	detectFunc func(ctx context.Context, profileID string) error
 }
 
-func (s *communitySchedulerDetectorStub) Detect(_ context.Context, profileID string, _ DetectOptions) error {
+func (s *communitySchedulerDetectorStub) Detect(ctx context.Context, profileID string, _ DetectOptions) error {
+	s.mu.Lock()
+	s.profiles = append(s.profiles, profileID)
+	err := s.errs[profileID]
+	detectFunc := s.detectFunc
+	s.mu.Unlock()
+	if detectFunc != nil {
+		return detectFunc(ctx, profileID)
+	}
+	return err
+}
+
+type communitySchedulerRunStoreStub struct {
+	mu          sync.Mutex
+	reserved    map[string]bool
+	tryKeys     []string
+	pruneBefore []string
+	err         error
+	pruneErr    error
+}
+
+func (s *communitySchedulerRunStoreStub) TryMarkRun(_ context.Context, profileID, runDate string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.profiles = append(s.profiles, profileID)
-	return s.errs[profileID]
+	key := profileID + "|" + runDate
+	s.tryKeys = append(s.tryKeys, key)
+	if s.err != nil {
+		return false, s.err
+	}
+	if s.reserved == nil {
+		s.reserved = map[string]bool{}
+	}
+	if s.reserved[key] {
+		return false, nil
+	}
+	s.reserved[key] = true
+	return true, nil
+}
+
+func (s *communitySchedulerRunStoreStub) Prune(_ context.Context, beforeRunDate string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneBefore = append(s.pruneBefore, beforeRunDate)
+	return s.pruneErr
 }
 
 func discardCommunitySchedulerLogger() *slog.Logger {
