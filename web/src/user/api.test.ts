@@ -60,6 +60,23 @@ describe("UserApi", () => {
     }));
   });
 
+  it("requests dreams with cursor pagination", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: {
+        items: [],
+        next_cursor: "next-dream",
+      },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await new UserApi("dm_key").listDreams("proposed", 50, "current-dream");
+
+    expect(result.next_cursor).toBe("next-dream");
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/dreams?limit=50&status=proposed&cursor=current-dream", expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer dm_key" }),
+    }));
+  });
+
   it("throws ApiError with server message", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ message: "invalid api key" }), { status: 401 })));
 

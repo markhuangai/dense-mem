@@ -10,6 +10,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
+	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
@@ -51,6 +52,7 @@ type Dependencies struct {
 	FragmentGet fragmentservice.GetFragmentService
 	Recall      recallservice.RecallService
 	Memory      memoryservice.Service
+	Dreams      dreamservice.Service
 }
 
 // New constructs a context Service.
@@ -118,6 +120,7 @@ type AssembleResult struct {
 	ContextBlock   string                        `json:"context_block"`
 	Items          []ContextItem                 `json:"items"`
 	Clarifications []memoryservice.Clarification `json:"clarifications,omitempty"`
+	RelatedDreams  []*domain.Dream               `json:"related_dreams,omitempty"`
 	Truncated      bool                          `json:"truncated"`
 }
 
@@ -300,6 +303,13 @@ func (s *service) Assemble(ctx context.Context, profileID string, req AssembleRe
 		}
 		clarifications = reflection.Clarifications
 	}
+	var relatedDreams []*domain.Dream
+	if s.deps.Dreams != nil {
+		dreams, err := s.deps.Dreams.Recall(ctx, profileID, query, 5)
+		if err == nil {
+			relatedDreams = dreams
+		}
+	}
 
 	block, truncated := renderContextBlock(query, items, clarifications, maxChars)
 	return &AssembleResult{
@@ -307,6 +317,7 @@ func (s *service) Assemble(ctx context.Context, profileID string, req AssembleRe
 		ContextBlock:   block,
 		Items:          items,
 		Clarifications: clarifications,
+		RelatedDreams:  relatedDreams,
 		Truncated:      truncated,
 	}, nil
 }

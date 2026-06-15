@@ -6,6 +6,7 @@ export type Team = {
   description: string;
   metadata: Record<string, unknown> | null;
   config: Record<string, unknown> | null;
+  dreaming_effective?: DreamingEffectiveConfig | null;
   created_at: string;
   updated_at: string;
 };
@@ -39,6 +40,7 @@ export type Page<T> = {
 export type CreateTeamInput = {
   name: string;
   description: string;
+  config?: Record<string, unknown>;
 };
 
 export type UpdateTeamInput = CreateTeamInput;
@@ -210,6 +212,133 @@ export type SSOConfigInput = {
   }>;
 };
 
+export type DreamingRuntimeConfig = {
+  enabled: boolean;
+  force_enabled: boolean;
+  start_time_local: string;
+  timezone: string;
+  reflect_enabled: boolean;
+  reevaluate_enabled: boolean;
+  dream_enabled: boolean;
+  max_outputs: number;
+};
+
+export type DreamingEffectiveConfig = DreamingRuntimeConfig & {
+  team_enabled: boolean;
+  source: "global" | "team" | "global_force" | string;
+};
+
+export type DreamingConfigItem = SSOConfigItem;
+
+export type DreamingConfig = {
+  update_time: string;
+  items: DreamingConfigItem[];
+  effective: DreamingRuntimeConfig;
+};
+
+export type DreamingConfigInput = {
+  items: Array<{
+    key: string;
+    value: string;
+  }>;
+};
+
+export type OperationLogRuntimeConfig = {
+  retention_days: number;
+};
+
+export type OperationLogConfigItem = SSOConfigItem;
+
+export type OperationLogConfig = {
+  update_time: string;
+  items: OperationLogConfigItem[];
+  effective: OperationLogRuntimeConfig;
+};
+
+export type OperationLogConfigInput = {
+  items: Array<{
+    key: string;
+    value: string;
+  }>;
+};
+
+export type OperationLog = {
+  id: string;
+  timestamp: string;
+  severity: "DEBUG" | "INFO" | "WARN" | "ERROR" | string;
+  severity_rank: number;
+  message: string;
+  source: string;
+  team_id: string | null;
+  profile_id: string | null;
+  correlation_id: string;
+  error: string;
+  attrs: Record<string, unknown> | null;
+};
+
+export type OperationLogQuery = {
+  limit?: number;
+  offset?: number;
+  severity?: OperationLog["severity"] | "";
+  sort?: "timestamp" | "severity";
+  direction?: "asc" | "desc";
+};
+
+export type Dream = {
+  dream_id: string;
+  team_id: string;
+  hypothesis: string;
+  what_if: string;
+  possible_outcome: string;
+  rationale: string;
+  likelihood: number;
+  confidence: number;
+  status: "proposed" | "reinforced" | "stale" | "rejected" | "promoted" | string;
+  cycle: string;
+  cycle_run_id?: string;
+  generator_model?: string;
+  source_refs?: Array<{ type: string; id: string }>;
+  invalidated_reason?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DreamRun = {
+  run_id: string;
+  team_id: string;
+  run_date: string;
+  started_at: string;
+  completed_at: string;
+  reflect_ran: boolean;
+  reevaluate_ran: boolean;
+  dream_ran: boolean;
+  stale_facts: number;
+  candidate_claims: number;
+  disputed_claims: number;
+  clarifications: number;
+  reevaluated_dreams: number;
+  created_dreams: number;
+  status: string;
+  error?: string;
+};
+
+export type DreamStatus = {
+  effective_config: DreamingEffectiveConfig;
+  latest_run?: DreamRun | null;
+  pending_count: number;
+};
+
+export type DreamQuery = {
+  limit?: number;
+  status?: Dream["status"] | "";
+  cursor?: string;
+};
+
+export type DreamListResponse = {
+  items: Dream[];
+  next_cursor?: string;
+};
+
 export class ApiError extends Error {
   status: number;
 
@@ -363,6 +492,66 @@ export class ControlApi {
 
   updateSSOConfig(input: SSOConfigInput): Promise<SSOConfig> {
     return this.requestEnvelope<SSOConfig>("/config/sso", { method: "PATCH", body: input });
+  }
+
+  getDreamingConfig(): Promise<DreamingConfig> {
+    return this.requestEnvelope<DreamingConfig>("/config/dreaming");
+  }
+
+  updateDreamingConfig(input: DreamingConfigInput): Promise<DreamingConfig> {
+    return this.requestEnvelope<DreamingConfig>("/config/dreaming", { method: "PATCH", body: input });
+  }
+
+  getOperationLogConfig(): Promise<OperationLogConfig> {
+    return this.requestEnvelope<OperationLogConfig>("/config/operation-logs");
+  }
+
+  updateOperationLogConfig(input: OperationLogConfigInput): Promise<OperationLogConfig> {
+    return this.requestEnvelope<OperationLogConfig>("/config/operation-logs", { method: "PATCH", body: input });
+  }
+
+  listOperationLogs(query: OperationLogQuery = {}): Promise<Page<OperationLog>> {
+    const params = new URLSearchParams();
+    if (query.limit !== undefined) {
+      params.set("limit", String(query.limit));
+    }
+    if (query.offset !== undefined) {
+      params.set("offset", String(query.offset));
+    }
+    if (query.severity) {
+      params.set("severity", query.severity);
+    }
+    if (query.sort) {
+      params.set("sort", query.sort);
+    }
+    if (query.direction) {
+      params.set("direction", query.direction);
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    return this.request<Page<OperationLog>>(`/logs${suffix}`);
+  }
+
+  getTeamDreamingStatus(teamId: string): Promise<DreamStatus> {
+    return this.requestEnvelope<DreamStatus>(`/teams/${teamId}/dreaming/status`);
+  }
+
+  listTeamDreamingRuns(teamId: string, limit = 20): Promise<DreamRun[]> {
+    return this.requestEnvelope<DreamRun[]>(`/teams/${teamId}/dreaming/runs?limit=${limit}`);
+  }
+
+  listTeamDreams(teamId: string, query: DreamQuery = {}): Promise<DreamListResponse> {
+    const params = new URLSearchParams();
+    if (query.limit !== undefined) {
+      params.set("limit", String(query.limit));
+    }
+    if (query.status) {
+      params.set("status", query.status);
+    }
+    if (query.cursor) {
+      params.set("cursor", query.cursor);
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    return this.requestEnvelope<DreamListResponse>(`/teams/${teamId}/dreams${suffix}`);
   }
 
   private async requestEnvelope<T>(path: string, options: RequestOptions = {}): Promise<T> {

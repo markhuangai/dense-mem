@@ -25,6 +25,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service"
+	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 )
 
 // NewControlPortalServer creates the token-protected management portal server.
@@ -65,6 +66,8 @@ type ControlPortalTelemetry struct {
 	ScrapeToken   string
 	SSO           *service.SSOService
 	Config        service.AppConfigService
+	Logs          service.OperationLogReader
+	Dreams        dreamservice.Service
 }
 
 func NewControlPortalServerWithMetricsAndTelemetry(
@@ -128,16 +131,25 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		e.GET("/metrics", echo.WrapHandler(telemetry.ScrapeHandler), telemetryScrapeTokenMiddleware(telemetry.ScrapeToken))
 	}
 
-	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, health: health, sso: telemetry.SSO, appConfig: telemetry.Config}
+	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, dreams: telemetry.Dreams, health: health, sso: telemetry.SSO, appConfig: telemetry.Config}
 	api := e.Group("/control/api")
 	api.Use(controlPortalMiddleware(cfg.GetControlPortalToken(), securitySvc))
 	api.GET("/session", control.session)
 	api.GET("/metrics", control.getMetrics)
 	api.GET("/telemetry", control.getTelemetry)
+	if telemetry.Logs != nil {
+		api.GET("/logs", control.listOperationLogs)
+	}
 	api.GET("/teams", control.listProfiles)
 	api.POST("/teams", control.createProfile)
 	api.PATCH("/teams/:teamId", control.updateProfile)
 	api.DELETE("/teams/:teamId", control.deleteProfile)
+	if telemetry.Dreams != nil {
+		api.GET("/teams/:teamId/dreaming/status", control.getTeamDreamingStatus)
+		api.GET("/teams/:teamId/dreaming/runs", control.listTeamDreamingRuns)
+		api.GET("/teams/:teamId/dreams", control.listTeamDreams)
+		api.GET("/teams/:teamId/dreams/:dreamId", control.getTeamDream)
+	}
 	api.GET("/teams/:teamId/profiles", control.listAPIKeys)
 	api.POST("/teams/:teamId/profiles", control.createAPIKey)
 	api.PATCH("/teams/:teamId/profiles/:profileId", control.updateAPIKey)
@@ -161,6 +173,10 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 	if telemetry.Config != nil {
 		api.GET("/config/sso", control.getSSOConfig)
 		api.PATCH("/config/sso", control.updateSSOConfig)
+		api.GET("/config/dreaming", control.getDreamingConfig)
+		api.PATCH("/config/dreaming", control.updateDreamingConfig)
+		api.GET("/config/operation-logs", control.getOperationLogConfig)
+		api.PATCH("/config/operation-logs", control.updateOperationLogConfig)
 	}
 	if telemetry.SSO != nil {
 		api.GET("/sso/providers", control.listSSOProviders)
@@ -181,14 +197,16 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 }
 
 type controlPortalHandler struct {
-	profiles  handler.ProfileServiceInterface
-	keys      handler.APIKeyServiceInterface
-	security  service.SecurityService
-	metrics   service.UsageMetricsReader
-	telemetry service.TelemetryReader
-	health    HealthConfig
-	sso       *service.SSOService
-	appConfig service.AppConfigService
+	profiles      handler.ProfileServiceInterface
+	keys          handler.APIKeyServiceInterface
+	security      service.SecurityService
+	metrics       service.UsageMetricsReader
+	telemetry     service.TelemetryReader
+	operationLogs service.OperationLogReader
+	dreams        dreamservice.Service
+	health        HealthConfig
+	sso           *service.SSOService
+	appConfig     service.AppConfigService
 }
 
 func (h *controlPortalHandler) session(c echo.Context) error {
@@ -244,7 +262,11 @@ func (h *controlPortalHandler) listProfiles(c echo.Context) error {
 	}
 	items := make([]controlProfileResponse, 0, len(profiles))
 	for _, profile := range profiles {
-		items = append(items, toControlProfile(profile))
+		item, err := h.toControlProfile(c.Request().Context(), profile)
+		if err != nil {
+			return err
+		}
+		items = append(items, item)
 	}
 	return c.JSON(nethttp.StatusOK, handler.PaginationEnvelope{
 		Data:       items,
@@ -269,7 +291,11 @@ func (h *controlPortalHandler) createProfile(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(nethttp.StatusCreated, map[string]any{"data": toControlProfile(profile)})
+	item, err := h.toControlProfile(c.Request().Context(), profile)
+	if err != nil {
+		return err
+	}
+	return c.JSON(nethttp.StatusCreated, map[string]any{"data": item})
 }
 
 func (h *controlPortalHandler) updateProfile(c echo.Context) error {
@@ -300,7 +326,11 @@ func (h *controlPortalHandler) updateProfile(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlProfile(profile)})
+	item, err := h.toControlProfile(c.Request().Context(), profile)
+	if err != nil {
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": item})
 }
 
 func (h *controlPortalHandler) deleteProfile(c echo.Context) error {
@@ -693,46 +723,6 @@ func controlTelemetryFilter(c echo.Context) (service.TelemetryFilter, error) {
 	}, nil
 }
 
-func controlDependencySnapshot(ctx context.Context, health HealthConfig) []controlDependencyResponse {
-	responses := make([]controlDependencyResponse, 0, len(health.Checks)+1)
-	for _, check := range health.Checks {
-		if check.Check == nil {
-			continue
-		}
-		checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		start := time.Now()
-		err := check.Check(checkCtx)
-		latency := time.Since(start).Milliseconds()
-		cancel()
-
-		status := "ok"
-		var message *string
-		if err != nil {
-			status = "error"
-			text := err.Error()
-			message = &text
-		}
-		responses = append(responses, controlDependencyResponse{
-			Name:      check.Name,
-			Status:    status,
-			LatencyMS: &latency,
-			Message:   message,
-		})
-	}
-	if health.Degraded {
-		message := health.Reason
-		if message == "" {
-			message = "degraded mode"
-		}
-		responses = append(responses, controlDependencyResponse{
-			Name:    "redis",
-			Status:  "degraded",
-			Message: &message,
-		})
-	}
-	return responses
-}
-
 func telemetryScrapeTokenMiddleware(token string) echo.MiddlewareFunc {
 	expected := strings.TrimSpace(token)
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
@@ -925,25 +915,31 @@ func toControlSecurityBan(ban domain.SecurityIPBan) controlSecurityBanResponse {
 }
 
 type controlProfileResponse struct {
-	ID          uuid.UUID      `json:"id"`
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	Metadata    map[string]any `json:"metadata"`
-	Config      map[string]any `json:"config"`
-	CreatedAt   string         `json:"created_at"`
-	UpdatedAt   string         `json:"updated_at"`
+	ID                uuid.UUID                     `json:"id"`
+	Name              string                        `json:"name"`
+	Description       string                        `json:"description"`
+	Metadata          map[string]any                `json:"metadata"`
+	Config            map[string]any                `json:"config"`
+	DreamingEffective *dreamservice.EffectiveConfig `json:"dreaming_effective,omitempty"`
+	CreatedAt         string                        `json:"created_at"`
+	UpdatedAt         string                        `json:"updated_at"`
 }
 
-func toControlProfile(profile *domain.Profile) controlProfileResponse {
-	return controlProfileResponse{
-		ID:          profile.ID,
-		Name:        profile.Name,
-		Description: profile.Description,
-		Metadata:    profile.Metadata,
-		Config:      profile.Config,
-		CreatedAt:   profile.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:   profile.UpdatedAt.Format(time.RFC3339),
+func (h *controlPortalHandler) toControlProfile(ctx context.Context, profile *domain.Profile) (controlProfileResponse, error) {
+	effective, err := effectiveDreamingConfig(ctx, h.appConfig, profile.Config)
+	if err != nil {
+		return controlProfileResponse{}, err
 	}
+	return controlProfileResponse{
+		ID:                profile.ID,
+		Name:              profile.Name,
+		Description:       profile.Description,
+		Metadata:          profile.Metadata,
+		Config:            profile.Config,
+		DreamingEffective: effective,
+		CreatedAt:         profile.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:         profile.UpdatedAt.Format(time.RFC3339),
+	}, nil
 }
 
 type controlAPIKeyResponse struct {

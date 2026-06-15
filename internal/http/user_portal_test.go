@@ -185,6 +185,7 @@ func TestUserPortalSessionShowsOnlyAuthenticatedKey(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), authKey.ID.String())
+	require.Contains(t, rec.Body.String(), `"config":{"dreaming":{"enabled":true},"retention":"standard"}`)
 	require.Contains(t, rec.Body.String(), `"can_rotate":false`)
 	require.NotContains(t, rec.Body.String(), otherKey.ID.String())
 	require.NotContains(t, rec.Body.String(), "Other")
@@ -333,6 +334,16 @@ func TestUserPortalCurrentSessionErrors(t *testing.T) {
 		Scopes: []string{"read"},
 	}))
 	require.ErrorContains(t, err, "key not found")
+
+	h.keys = &userPortalKeySvc{keys: []*domain.APIKey{authKey}}
+	h.appConfig = &controlAppConfigSvc{dreamingRuntimeErr: errors.New("config failed")}
+	_, err = h.currentSession(userPortalEchoContext(t, http.MethodGet, "/ui/api/session", "", &httpmw.Principal{
+		KeyID:  keyID,
+		TeamID: teamID,
+		Role:   service.APIKeyRoleMember,
+		Scopes: []string{"read"},
+	}))
+	require.ErrorContains(t, err, "load dreaming runtime config")
 }
 
 func TestUserPortalRotateCurrentKeyErrors(t *testing.T) {
@@ -443,6 +454,7 @@ func userPortalTestServerWithTelemetry(t *testing.T, teamID uuid.UUID, authKey *
 	profiles := &controlProfileSvc{profiles: []*domain.Profile{{
 		ID:        teamID,
 		Name:      "Team",
+		Config:    map[string]any{"dreaming": map[string]any{"enabled": true}, "retention": "standard"},
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	}}}

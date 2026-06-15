@@ -16,6 +16,7 @@ const (
 	IndexFactPredicate     = "fact_predicate_idx"
 	IndexFactRecall        = "fact_recall_idx"
 	IndexClaimRecall       = "claim_recall_idx"
+	IndexDreamRecall       = "dream_recall_idx"
 
 	// Composite indexes for fragment deduplication and lookup (Unit 12)
 	IndexFragmentProfileIdempotency = "fragment_team_idempotency_idx"
@@ -44,6 +45,12 @@ const (
 	IndexSourceFragmentProfileStatus = "sourcefragment_profile_status_idx"
 	// Persisted community summary lookups.
 	IndexCommunityProfileCommunityID = "community_profile_community_id_idx"
+	// Dream hypothesis lookups.
+	IndexDreamProfileDreamID     = "dream_profile_dream_id_idx"
+	IndexDreamProfileStatus      = "dream_profile_status_idx"
+	IndexDreamProfileContentHash = "dream_profile_content_hash_idx"
+	IndexDreamProfileUpdatedAt   = "dream_profile_updated_at_idx"
+	IndexDreamRunProfileDate     = "dreamrun_profile_date_idx"
 
 	// Relationship team_id existence constraints (Unit 13, AC-X1)
 	// These names are canonical identifiers stored in Neo4j metadata.
@@ -53,6 +60,8 @@ const (
 	ConstraintContradictsProfileIDExists  = "contradicts_team_id_exists"
 	ConstraintOverlaysProfileIDExists     = "overlays_team_id_exists"
 	ConstraintAlignsWithProfileIDExists   = "aligns_with_team_id_exists"
+	ConstraintDreamsFromProfileIDExists   = "dreams_from_team_id_exists"
+	ConstraintPromotedToProfileIDExists   = "promoted_to_team_id_exists"
 )
 
 // SchemaBootstrapperInterface is the companion interface for SchemaBootstrapper.
@@ -116,6 +125,7 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 		"CREATE CONSTRAINT sourcefragment_fragment_id_unique IF NOT EXISTS FOR (sf:SourceFragment) REQUIRE sf.fragment_id IS UNIQUE",
 		"CREATE CONSTRAINT claim_claim_id_unique IF NOT EXISTS FOR (c:Claim) REQUIRE c.claim_id IS UNIQUE",
 		"CREATE CONSTRAINT fact_fact_id_unique IF NOT EXISTS FOR (f:Fact) REQUIRE f.fact_id IS UNIQUE",
+		"CREATE CONSTRAINT dream_dream_id_unique IF NOT EXISTS FOR (d:Dream) REQUIRE d.dream_id IS UNIQUE",
 	}
 
 	for _, cypher := range constraints {
@@ -161,6 +171,14 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 				"CREATE CONSTRAINT aligns_with_team_id_exists IF NOT EXISTS FOR ()-[r:ALIGNS_WITH]-() REQUIRE r.team_id IS NOT NULL",
 				ConstraintAlignsWithProfileIDExists,
 			},
+			{
+				"CREATE CONSTRAINT dreams_from_team_id_exists IF NOT EXISTS FOR ()-[r:DREAMS_FROM]-() REQUIRE r.team_id IS NOT NULL",
+				ConstraintDreamsFromProfileIDExists,
+			},
+			{
+				"CREATE CONSTRAINT promoted_to_team_id_exists IF NOT EXISTS FOR ()-[r:PROMOTED_TO]-() REQUIRE r.team_id IS NOT NULL",
+				ConstraintPromotedToProfileIDExists,
+			},
 		}
 
 		for _, rc := range relationshipConstraints {
@@ -193,6 +211,8 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 		"CREATE INDEX claim_team_id_idx IF NOT EXISTS FOR (c:Claim) ON (c.team_id)",
 		"CREATE INDEX fact_team_id_idx IF NOT EXISTS FOR (f:Fact) ON (f.team_id)",
 		"CREATE INDEX community_team_id_idx IF NOT EXISTS FOR (c:Community) ON (c.team_id)",
+		"CREATE INDEX dream_team_id_idx IF NOT EXISTS FOR (d:Dream) ON (d.team_id)",
+		"CREATE INDEX dreamrun_team_id_idx IF NOT EXISTS FOR (r:DreamCycleRun) ON (r.team_id)",
 	}
 
 	for _, cypher := range indexes {
@@ -216,6 +236,7 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 		"DROP INDEX fact_predicate_idx IF EXISTS",
 		"DROP INDEX fact_recall_idx IF EXISTS",
 		"DROP INDEX claim_recall_idx IF EXISTS",
+		"DROP INDEX dream_recall_idx IF EXISTS",
 	}
 
 	for _, cypher := range legacyDrops {
@@ -251,6 +272,10 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 		{
 			"CREATE FULLTEXT INDEX claim_recall_idx IF NOT EXISTS FOR (c:Claim) ON EACH [c.subject, c.predicate, c.object]",
 			"claim_recall_idx",
+		},
+		{
+			"CREATE FULLTEXT INDEX dream_recall_idx IF NOT EXISTS FOR (d:Dream) ON EACH [d.hypothesis, d.what_if, d.possible_outcome, d.rationale]",
+			IndexDreamRecall,
 		},
 	}
 
@@ -387,6 +412,26 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 		{
 			"CREATE INDEX community_profile_community_id_idx IF NOT EXISTS FOR (c:Community) ON (c.team_id, c.community_id)",
 			IndexCommunityProfileCommunityID,
+		},
+		{
+			"CREATE INDEX dream_profile_dream_id_idx IF NOT EXISTS FOR (d:Dream) ON (d.team_id, d.dream_id)",
+			IndexDreamProfileDreamID,
+		},
+		{
+			"CREATE INDEX dream_profile_status_idx IF NOT EXISTS FOR (d:Dream) ON (d.team_id, d.status)",
+			IndexDreamProfileStatus,
+		},
+		{
+			"CREATE INDEX dream_profile_content_hash_idx IF NOT EXISTS FOR (d:Dream) ON (d.team_id, d.content_hash)",
+			IndexDreamProfileContentHash,
+		},
+		{
+			"CREATE INDEX dream_profile_updated_at_idx IF NOT EXISTS FOR (d:Dream) ON (d.team_id, d.updated_at, d.dream_id)",
+			IndexDreamProfileUpdatedAt,
+		},
+		{
+			"CREATE INDEX dreamrun_profile_date_idx IF NOT EXISTS FOR (r:DreamCycleRun) ON (r.team_id, r.run_date)",
+			IndexDreamRunProfileDate,
 		},
 	}
 

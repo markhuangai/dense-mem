@@ -23,7 +23,9 @@ type CreatedProfile = {
 type PrometheusQueryResponse = {
   status?: string;
   data?: {
-    result?: unknown[];
+    result?: Array<{
+      value?: [number, string];
+    }>;
   };
 };
 
@@ -123,6 +125,73 @@ test("prometheus telemetry is scraped and rendered in control panel and user por
     await expect(page.getByLabel("Usage charts")).toContainText(label);
   }
   await expectNoShellOverlap(page);
+});
+
+test("MCP recall feedback is submitted and scraped through compose telemetry", async ({ request }) => {
+  await mcpCall(request, "initialize", {
+    protocolVersion: "2024-11-05",
+    capabilities: {},
+    clientInfo: { name: "compose-recall-feedback", version: "1.0.0" },
+  });
+
+  const toolsResponse = await mcpCall(request, "tools/list", {});
+  expect(mcpToolNames(toolsResponse)).toEqual(expect.arrayContaining(["recall_memory", "submit_recall_feedback"]));
+
+  const recallPayload = mcpToolPayload(await mcpCall(request, "tools/call", {
+    name: "recall_memory",
+    arguments: {
+      query: "compose e2e recall feedback",
+      limit: 5,
+    },
+  }));
+
+  expect(Array.isArray(recallPayload.results)).toBe(true);
+  expect(isRecord(recallPayload.feedback_request)).toBe(true);
+  const feedbackRequest = recallPayload.feedback_request as Record<string, unknown>;
+  expect(feedbackRequest.requested).toBe(true);
+  expect(feedbackRequest.tool).toBe("submit_recall_feedback");
+  expect(typeof feedbackRequest.recall_id).toBe("string");
+  expect(String(feedbackRequest.recall_id)).toMatch(/^rec_/);
+
+  const submitPayload = mcpToolPayload(await mcpCall(request, "tools/call", {
+    name: "submit_recall_feedback",
+    arguments: {
+      recall_id: feedbackRequest.recall_id,
+      used: true,
+      answer_supported: true,
+      quality: "high",
+      missing_context: false,
+      irrelevant: false,
+    },
+  }));
+  expect(submitPayload.recorded).toBe(true);
+
+  await expect.poll(
+    () => prometheusQueryValue(request, `sum(densemem_recall_feedback_total{used="true",answer_supported="true",quality="high",missing_context="false",irrelevant="false"})`),
+    {
+      intervals: [1_000, 5_000, 10_000],
+      timeout: 120_000,
+    },
+  ).toBeGreaterThan(0);
+
+  await expect.poll(
+    () => prometheusQueryValue(request, "sum(densemem_recall_feedback_quality_score_count)"),
+    {
+      intervals: [1_000, 5_000, 10_000],
+      timeout: 120_000,
+    },
+  ).toBeGreaterThan(0);
+
+  const telemetryResponse = await request.get(`${userUrl}/ui/api/telemetry?window=15m`, { headers: bearer(seedApiKey) });
+  expect(telemetryResponse.status()).toBe(200);
+  const telemetryBody = await telemetryResponse.json() as TelemetryResponse;
+  expect(telemetryLabels(telemetryBody.data?.cards)).toEqual(expect.arrayContaining([
+    "LLM recall used",
+    "LLM answer supported",
+    "LLM recall quality",
+    "LLM missing context",
+    "LLM irrelevant recall",
+  ]));
 });
 
 test("user portal logs in with a real API key and shows only that profile", async ({ page, request }, testInfo) => {
@@ -244,6 +313,65 @@ async function prometheusResultCount(request: APIRequestContext, query: string) 
     return 0;
   }
   return body.data.result.length;
+}
+
+async function prometheusQueryValue(request: APIRequestContext, query: string) {
+  const response = await request.get(`${prometheusUrl}/api/v1/query`, { params: { query } });
+  if (response.status() !== 200) {
+    return 0;
+  }
+  const body = await response.json() as PrometheusQueryResponse;
+  const rawValue = body.data?.result?.[0]?.value?.[1];
+  if (body.status !== "success" || typeof rawValue !== "string") {
+    return 0;
+  }
+  const value = Number.parseFloat(rawValue);
+  return Number.isFinite(value) ? value : 0;
+}
+
+let mcpRequestID = 0;
+
+async function mcpCall(request: APIRequestContext, method: string, params: unknown) {
+  mcpRequestID += 1;
+  const response = await request.post(`${userUrl}/mcp`, {
+    headers: bearer(seedApiKey),
+    data: {
+      jsonrpc: "2.0",
+      id: mcpRequestID,
+      method,
+      params,
+    },
+  });
+  if (response.status() !== 200) {
+    throw new Error(`MCP ${method} failed: ${response.status()} ${await response.text()}`);
+  }
+  return await response.json() as Record<string, unknown>;
+}
+
+function mcpToolNames(response: Record<string, unknown>) {
+  expect(response.error).toBeUndefined();
+  const result = response.result;
+  expect(isRecord(result)).toBe(true);
+  if (!isRecord(result) || !Array.isArray(result.tools)) {
+    return [];
+  }
+  return result.tools
+    .map((tool) => (isRecord(tool) && typeof tool.name === "string" ? tool.name : ""))
+    .filter(Boolean);
+}
+
+function mcpToolPayload(response: Record<string, unknown>) {
+  expect(response.error).toBeUndefined();
+  const result = response.result;
+  expect(isRecord(result)).toBe(true);
+  if (!isRecord(result) || !Array.isArray(result.content)) {
+    throw new Error("MCP tool result content missing");
+  }
+  const first = result.content[0];
+  if (!isRecord(first) || typeof first.text !== "string") {
+    throw new Error("MCP tool result text missing");
+  }
+  return JSON.parse(first.text) as Record<string, unknown>;
 }
 
 function assertTelemetrySeries(body: TelemetryResponse) {

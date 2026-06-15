@@ -24,6 +24,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
+	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentdedupe"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
@@ -93,6 +94,7 @@ func main() {
 		level = slog.LevelDebug
 	}
 	logger := observability.New(level)
+	slog.SetDefault(logger.Slog())
 
 	// Wire embedding dimension into request validator so the embedding_dim tag
 	// on dto.SemanticSearchRequest enforces the configured length at bind time.
@@ -172,6 +174,7 @@ func main() {
 	appConfigRepo := repository.NewAppConfigRepository(pgDB.GetDB(), rlsHelper)
 	securityRepo := repository.NewSecurityRepository(pgDB.GetDB(), rlsHelper)
 	usageMetricsRepo := repository.NewUsageMetricsRepository(pgDB.GetDB(), rlsHelper)
+	operationLogRepo := repository.NewOperationLogRepository(pgDB.GetDB(), rlsHelper)
 	skillPackImportRepo := repository.NewSkillPackImportRepository(pgDB.GetDB(), rlsHelper)
 
 	// ========================================
@@ -185,6 +188,10 @@ func main() {
 	// ========================================
 	auditService := service.NewAuditService(pgDB.GetDB())
 	appConfigService := service.NewAppConfigService(appConfigRepo, auditService)
+	operationLogService := service.NewOperationLogService(operationLogRepo, appConfigService)
+	logger = observability.NewWithSinks(level, operationLogService)
+	slog.SetDefault(logger.Slog())
+	operationLogService.Start(context.Background())
 	securityService := service.NewSecurityService(securityRepo, auditService)
 	usageMetricsService := service.NewUsageMetricsService(usageMetricsRepo, logger)
 	usageMetricsService.Start(context.Background())
@@ -374,6 +381,16 @@ func main() {
 		FactConfirm:    factConfirmSvc,
 		FactList:       factListSvc,
 	})
+	dreamSvc := dreamservice.New(dreamservice.Dependencies{
+		Graph:          profileScopeEnforcer,
+		Memory:         memorySvc,
+		FragmentCreate: fragmentCreateRegistrySvc,
+		AppConfig:      appConfigService,
+		Profiles:       profileService,
+		Locker:         dreamservice.NewPostgresCycleLocker(),
+		Postgres:       pgDB.GetDB(),
+		Generator:      dreamservice.NewHeuristicGenerator(cfg.GetAIVerifierModel()),
+	})
 	contextSvc := contextservice.New(contextservice.Dependencies{
 		Reader:      profileScopeEnforcer,
 		FactGet:     factGetSvc,
@@ -381,6 +398,7 @@ func main() {
 		FragmentGet: fragmentGetSvc,
 		Recall:      recallRegistrySvc,
 		Memory:      memorySvc,
+		Dreams:      dreamSvc,
 	})
 	skillPackSvc := skillpackservice.New(skillpackservice.Dependencies{
 		FragmentCreate:  fragmentCreateRegistrySvc,
@@ -413,6 +431,8 @@ func main() {
 		FragmentGet:                 fragmentGetSvc,
 		FragmentList:                fragmentListSvc,
 		Recall:                      recallRegistrySvc,
+		Metrics:                     discoverabilityMetrics,
+		RecallFeedbackEnabled:       cfg.GetRecallFeedbackEnabled(),
 		KeywordSearch:               keywordSearchService,
 		SemanticSearch:              semanticSearchService,
 		GraphQuery:                  graphQueryService,
@@ -432,6 +452,7 @@ func main() {
 		Context:                     contextSvc,
 		Memory:                      memorySvc,
 		SkillPack:                   skillPackSvc,
+		Dreams:                      dreamSvc,
 	})
 	if err != nil {
 		log.Fatalf("failed to build tool registry: %v", err)
@@ -485,6 +506,7 @@ func main() {
 	openAPIFullHandler := handler.NewOpenAPIHandler(openAPIGen, openapi.SpecVariantFull)
 
 	recallHandler := handler.NewRecallHandler(recallHTTPSvc)
+	dreamHandler := handler.NewDreamHandler(dreamSvc)
 
 	// ========================================
 	// Health checks
@@ -568,6 +590,10 @@ func main() {
 		OpenAPIAISafe:   openAPIAISafeHandler.Handle,
 		OpenAPIFull:     openAPIFullHandler.Handle,
 		Recall:          recallHandler.Handle,
+		DreamingStatus:  dreamHandler.Status,
+		DreamingRuns:    dreamHandler.Runs,
+		DreamList:       dreamHandler.List,
+		DreamGet:        dreamHandler.Get,
 	}
 	protectedHandlers.FragmentCreate = fragmentCreateHandler.Handle
 
@@ -582,6 +608,7 @@ func main() {
 		AuditSvc:     auditService,
 		SecuritySvc:  securityService,
 		SSOService:   ssoService,
+		AppConfig:    appConfigService,
 		Config:       &cfg,
 	}
 	if telemetryHTTPMetrics != nil {
@@ -600,6 +627,8 @@ func main() {
 			ScrapeToken:   cfg.GetTelemetryScrapeToken(),
 			SSO:           ssoService,
 			Config:        appConfigService,
+			Logs:          operationLogService,
+			Dreams:        dreamSvc,
 		},
 		healthConfig,
 		logger,
@@ -614,6 +643,10 @@ func main() {
 			logger.Error("control portal server error", err)
 		}
 	}()
+
+	dreamSchedulerCtx, dreamSchedulerCancel := context.WithCancel(context.Background())
+	defer dreamSchedulerCancel()
+	go dreamservice.NewScheduler(dreamSvc, profileService, slog.Default()).Start(dreamSchedulerCtx)
 
 	httpAddr := os.Getenv("HTTP_ADDR")
 	if httpAddr == "" {
@@ -634,6 +667,7 @@ func main() {
 	<-quit
 
 	logger.Info("shutting down server")
+	dreamSchedulerCancel()
 
 	// Graceful shutdown with 10-second timeout
 	if err := http.ShutdownServer(e, logger); err != nil {
@@ -643,8 +677,14 @@ func main() {
 		logger.Error("control portal shutdown error", err)
 	}
 	metricsShutdownCtx, metricsShutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer metricsShutdownCancel()
 	if err := usageMetricsService.Shutdown(metricsShutdownCtx); err != nil {
 		logger.Error("usage metrics shutdown error", err)
+	}
+	metricsShutdownCancel()
+
+	operationLogShutdownCtx, operationLogShutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer operationLogShutdownCancel()
+	if err := operationLogService.Shutdown(operationLogShutdownCtx); err != nil {
+		log.Printf("operation log shutdown error: %v", err)
 	}
 }

@@ -49,6 +49,7 @@
 
   .security-summary,
   .metrics-summary,
+  .dreaming-effective-grid,
   .dependency-grid,
   .telemetry-card-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -87,8 +88,10 @@
   }
 
   .portal-tabs,
+  .config-tabs,
   .security-summary,
   .metrics-summary,
+  .dreaming-effective-grid,
   .dependency-grid,
   .metrics-toolbar,
   .telemetry-card-grid {
@@ -97,6 +100,19 @@
 
   .tab-button {
     justify-content: flex-start;
+  }
+
+  .config-tabs .tab-button {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .table-actions {
+    flex-wrap: wrap;
+  }
+
+  .table-page-size {
+    margin-left: 0;
   }
 
   .secret-box {

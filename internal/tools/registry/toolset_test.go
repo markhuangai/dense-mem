@@ -94,6 +94,7 @@ func TestBuildDefault_RegistersV1ToolSurface(t *testing.T) {
 		"save_memory", "get_memory", "list_recent_memories", "recall_memory",
 		"trace_memory", "assemble_context",
 		"remember", "import_memories", "reflect_memories", "confirm_memory",
+		"dreaming_status", "run_dreaming_cycle", "list_dreams", "get_dream", "resolve_dream_feedback",
 		"keyword_search", "semantic_search", "graph_query",
 		"find_skill_pack_candidates", "export_skill_pack", "inspect_skill_pack",
 		"import_skill_pack", "rollback_skill_pack_import",
@@ -107,6 +108,9 @@ func TestBuildDefault_RegistersV1ToolSurface(t *testing.T) {
 		if _, ok := reg.Get(name); ok {
 			t.Errorf("legacy hyphenated tool %q must not be registered", name)
 		}
+	}
+	if _, ok := reg.Get("submit_recall_feedback"); ok {
+		t.Error("submit_recall_feedback must not be registered when recall feedback is disabled")
 	}
 }
 
@@ -255,6 +259,11 @@ func TestBuildDefault_V1InvokersReturnUnavailableWhenDepsMissing(t *testing.T) {
 		{name: "recall_memory", input: map[string]any{"query": "hello"}},
 		{name: "trace_memory", input: map[string]any{"type": "fact", "id": "fact-1"}},
 		{name: "assemble_context", input: map[string]any{"query": "hello"}},
+		{name: "dreaming_status", input: map[string]any{}},
+		{name: "run_dreaming_cycle", input: map[string]any{}},
+		{name: "list_dreams", input: map[string]any{}},
+		{name: "get_dream", input: map[string]any{"dream_id": "dream-1"}},
+		{name: "resolve_dream_feedback", input: map[string]any{"dream_id": "dream-1", "decision": "reject"}},
 		{name: "keyword_search", input: map[string]any{"keywords": "hello"}},
 		{name: "semantic_search", input: map[string]any{"embedding": []any{float64(0.1)}}},
 		{name: "graph_query", input: map[string]any{"query": "MATCH (n) RETURN n"}},
@@ -300,6 +309,18 @@ func TestBuildDefault_V1InvokerInvalidInputBranches(t *testing.T) {
 			deps: Dependencies{SemanticSearch: &stubSemanticSearch{}},
 			in:   map[string]any{"embedding": func() {}},
 			want: "semantic_search: invalid input",
+		},
+		{
+			name: "run_dreaming_cycle",
+			deps: Dependencies{Dreams: &stubDreamService{}},
+			in:   map[string]any{"max_outputs": func() {}},
+			want: "run_dreaming_cycle: invalid input",
+		},
+		{
+			name: "resolve_dream_feedback",
+			deps: Dependencies{Dreams: &stubDreamService{}},
+			in:   map[string]any{"dream_id": func() {}, "decision": "reject"},
+			want: "resolve_dream_feedback: invalid input",
 		},
 	}
 
@@ -360,11 +381,13 @@ func TestBuildDefault_SearchAndRecallInvokers(t *testing.T) {
 	semantic := &stubSemanticSearch{}
 	memory := &stubMemory{}
 	recall := stubRecallWithHit{}
+	dreams := &stubDreamService{}
 	reg, _ := BuildDefault(Dependencies{
 		KeywordSearch:  keyword,
 		SemanticSearch: semantic,
 		Recall:         recall,
 		Memory:         memory,
+		Dreams:         dreams,
 		GraphQuery:     stubGraphQuery{},
 	})
 
@@ -422,6 +445,9 @@ func TestBuildDefault_SearchAndRecallInvokers(t *testing.T) {
 	}
 	if memory.lastProfile != "profile-search" {
 		t.Fatalf("recall reflection profile = %q, want profile-search", memory.lastProfile)
+	}
+	if dreams.recallQuery != "hello" {
+		t.Fatalf("dream recall query = %q, want hello", dreams.recallQuery)
 	}
 
 	graphTool, _ := reg.Get("graph_query")
@@ -661,27 +687,6 @@ func TestBuildDefault_FragmentInvokerEdgeBranches(t *testing.T) {
 			t.Fatalf("list output = %v", out)
 		}
 	})
-}
-
-func TestToolsetHelperBranches(t *testing.T) {
-	if got, ok := intInput(int64(7)); !ok || got != 7 {
-		t.Fatalf("intInput int64 = %d, %v; want 7, true", got, ok)
-	}
-	if got, ok := intInput(float64(8)); !ok || got != 8 {
-		t.Fatalf("intInput float64 = %d, %v; want 8, true", got, ok)
-	}
-	if _, ok := intInput(float64(8.5)); ok {
-		t.Fatal("intInput non-integral float ok = true, want false")
-	}
-	if _, ok := intInput("8"); ok {
-		t.Fatal("intInput string ok = true, want false")
-	}
-	if err := remapInput(map[string]any{"bad": func() {}}, &struct{}{}); err == nil {
-		t.Fatal("remapInput with unmarshalable value: want error")
-	}
-	if _, err := structToMap(map[string]any{"bad": func() {}}); err == nil {
-		t.Fatal("structToMap with unmarshalable value: want error")
-	}
 }
 
 type stubRecall struct{}

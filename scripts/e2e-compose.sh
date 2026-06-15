@@ -20,10 +20,6 @@ sanitize_project_name() {
   printf '%s' "$sanitized"
 }
 
-random_hex() {
-  node -e 'process.stdout.write(require("node:crypto").randomBytes(Number(process.argv[1])).toString("hex"))' "$1"
-}
-
 pick_ports() {
   local count="$1"
   node - "$count" <<'NODE'
@@ -71,6 +67,95 @@ process.stdin.on("end", () => {
   process.stdout.write(String(value));
 });
 ' "$field"
+}
+
+env_file_value() {
+  local field="$1"
+  node - "$ROOT_ENV_FILE" "$field" <<'NODE'
+const fs = require("node:fs");
+const path = process.argv[2];
+const target = process.argv[3];
+
+function decodeValue(raw) {
+  const value = raw.trim();
+  if (value.startsWith('"') || value.startsWith("'")) {
+    const quote = value[0];
+    const closing = closingQuoteIndex(value, quote);
+    if (closing > 0) {
+      const inner = value.slice(1, closing);
+      if (quote === "'") {
+        return inner;
+      }
+      return inner
+        .replace(/\\n/g, "\n")
+        .replace(/\\r/g, "\r")
+        .replace(/\\t/g, "\t")
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, "\\");
+    }
+  }
+  return stripInlineComment(value).trim();
+}
+
+function closingQuoteIndex(value, quote) {
+  for (let index = 1; index < value.length; index += 1) {
+    if (quote === '"' && value[index] === "\\" && index + 1 < value.length) {
+      index += 1;
+      continue;
+    }
+    if (value[index] === quote) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function stripInlineComment(value) {
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] === "#" && (index === 0 || /\s/.test(value[index - 1]))) {
+      return value.slice(0, index);
+    }
+  }
+  return value;
+}
+
+let resolved;
+for (const line of fs.readFileSync(path, "utf8").split(/\r?\n/)) {
+  const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+  if (!match || match[1] !== target) {
+    continue;
+  }
+  resolved = decodeValue(match[2]);
+}
+if (resolved !== undefined) {
+  process.stdout.write(resolved);
+} else {
+  process.exit(1);
+}
+NODE
+}
+
+require_env_value() {
+  local field="$1"
+  local value=""
+  if ! value="$(env_file_value "$field")" || [[ -z "$value" ]]; then
+    echo "Missing required ${field} in ${ROOT_ENV_FILE}." >&2
+    return 1
+  fi
+  printf '%s' "$value"
+}
+
+require_env_true() {
+  local field="$1"
+  local value=""
+  value="$(require_env_value "$field")"
+  case "$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')" in
+    true|1|yes|y|on)
+      return 0
+      ;;
+  esac
+  echo "${field} must be true in ${ROOT_ENV_FILE} for compose e2e." >&2
+  return 1
 }
 
 wait_for_url() {
@@ -154,47 +239,9 @@ restore_root_file() {
 }
 
 prepare_root_files() {
-  backup_root_file "$ROOT_ENV_FILE" env
   backup_root_file "$ROOT_PROMETHEUS_FILE" prometheus
   backup_root_file "$ROOT_TELEMETRY_TOKEN_FILE" telemetry-token
   ROOT_FILES_PREPARED=1
-
-  cat > "$ROOT_ENV_FILE" <<EOF
-${E2E_MARKER}
-LOG_LEVEL=info
-POSTGRES_USER=densemem
-POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-POSTGRES_DB=densemem
-POSTGRES_HOST=postgres
-POSTGRES_PORT=5432
-POSTGRES_SSLMODE=disable
-POSTGRES_HOST_PORT=${POSTGRES_HOST_PORT}
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=${NEO4J_PASSWORD}
-NEO4J_URI=bolt://neo4j:7687
-NEO4J_DATABASE=
-NEO4J_HTTP_HOST_PORT=${NEO4J_HTTP_HOST_PORT}
-NEO4J_BOLT_HOST_PORT=${NEO4J_BOLT_HOST_PORT}
-REDIS_ADDR=redis:6379
-REDIS_PORT=${REDIS_PORT}
-HTTP_ADDR=:8080
-CONTROL_HTTP_ADDR=:8090
-CONTROL_PORTAL_TOKEN=${CONTROL_TOKEN}
-TELEMETRY_ENABLED=true
-TELEMETRY_PROMETHEUS_URL=http://prometheus:9090
-TELEMETRY_PROMETHEUS_JOB=dense-mem
-TELEMETRY_SCRAPE_TOKEN=${TELEMETRY_SCRAPE_TOKEN}
-PROMETHEUS_PORT=${PROMETHEUS_PORT}
-PROMETHEUS_CONTAINER_NAME=${PROMETHEUS_CONTAINER_NAME}
-DENSE_MEM_PORT=${DENSE_MEM_PORT}
-CONTROL_PORTAL_PORT=${CONTROL_PORTAL_PORT}
-AI_API_URL=${AI_API_URL}
-AI_API_KEY=${AI_API_KEY}
-AI_API_EMBEDDING_MODEL=${AI_API_EMBEDDING_MODEL}
-AI_API_EMBEDDING_DIMENSIONS=${AI_API_EMBEDDING_DIMENSIONS}
-AI_VERIFIER_API_URL=
-AI_VERIFIER_API_KEY=
-EOF
 
   cat > "$ROOT_PROMETHEUS_FILE" <<EOF
 ${E2E_MARKER}
@@ -218,7 +265,6 @@ restore_root_files() {
   if [[ "$ROOT_FILES_PREPARED" != "1" || -z "$TEMP_DIR" ]]; then
     return
   fi
-  restore_root_file "$ROOT_ENV_FILE" env marker
   restore_root_file "$ROOT_PROMETHEUS_FILE" prometheus marker
   restore_root_file "$ROOT_TELEMETRY_TOKEN_FILE" telemetry-token token
 }
@@ -245,6 +291,13 @@ if [[ ! -f "$COMPOSE_FILE" ]]; then
   exit 1
 fi
 
+if [[ ! -f "$ROOT_ENV_FILE" ]]; then
+  echo "Missing .env at ${ROOT_ENV_FILE}; compose e2e uses the local .env file." >&2
+  exit 1
+fi
+
+E2E_RUN_ID="${DENSE_MEM_E2E_RUN_ID:-$(date -u +%Y%m%d%H%M%S)-$$}"
+COMPOSE_PROJECT_NAME="$(sanitize_project_name "${DENSE_MEM_E2E_PROJECT_NAME:-densemem-e2e-${E2E_RUN_ID}}")"
 read -r \
   generated_api_port \
   generated_control_port \
@@ -253,9 +306,6 @@ read -r \
   generated_neo4j_http_port \
   generated_neo4j_bolt_port \
   generated_redis_port < <(pick_ports 7)
-
-E2E_RUN_ID="${DENSE_MEM_E2E_RUN_ID:-$(date -u +%Y%m%d%H%M%S)-$$}"
-COMPOSE_PROJECT_NAME="$(sanitize_project_name "${DENSE_MEM_E2E_PROJECT_NAME:-densemem-e2e-${E2E_RUN_ID}}")"
 DENSE_MEM_PORT="${DENSE_MEM_E2E_API_PORT:-$generated_api_port}"
 CONTROL_PORTAL_PORT="${DENSE_MEM_E2E_CONTROL_PORT:-$generated_control_port}"
 PROMETHEUS_PORT="${DENSE_MEM_E2E_PROMETHEUS_PORT:-$generated_prometheus_port}"
@@ -267,15 +317,17 @@ PROMETHEUS_CONTAINER_NAME="${DENSE_MEM_E2E_PROMETHEUS_CONTAINER_NAME:-${COMPOSE_
 CONTROL_URL="${DENSE_MEM_CONTROL_URL:-http://127.0.0.1:${CONTROL_PORTAL_PORT}}"
 USER_URL="${DENSE_MEM_USER_URL:-http://127.0.0.1:${DENSE_MEM_PORT}}"
 PROMETHEUS_URL="${DENSE_MEM_PROMETHEUS_URL:-http://127.0.0.1:${PROMETHEUS_PORT}}"
+export DENSE_MEM_PORT CONTROL_PORTAL_PORT PROMETHEUS_PORT PROMETHEUS_CONTAINER_NAME
+export POSTGRES_HOST_PORT NEO4J_HTTP_HOST_PORT NEO4J_BOLT_HOST_PORT REDIS_PORT
 
-CONTROL_TOKEN="${DENSE_MEM_E2E_CONTROL_TOKEN:-$(random_hex 24)}"
-POSTGRES_PASSWORD="${DENSE_MEM_E2E_POSTGRES_PASSWORD:-$(random_hex 18)}"
-NEO4J_PASSWORD="${DENSE_MEM_E2E_NEO4J_PASSWORD:-e2e$(random_hex 12)}"
-TELEMETRY_SCRAPE_TOKEN="${DENSE_MEM_E2E_TELEMETRY_TOKEN:-$(random_hex 24)}"
-AI_API_KEY="${DENSE_MEM_E2E_AI_API_KEY:-e2e-not-used}"
-AI_API_URL="${DENSE_MEM_E2E_AI_API_URL:-http://127.0.0.1:1/v1}"
-AI_API_EMBEDDING_MODEL="${DENSE_MEM_E2E_AI_API_EMBEDDING_MODEL:-text-embedding-3-small}"
-AI_API_EMBEDDING_DIMENSIONS="${DENSE_MEM_E2E_AI_API_EMBEDDING_DIMENSIONS:-1536}"
+require_env_true TELEMETRY_ENABLED
+require_env_true RECALL_FEEDBACK_ENABLED
+require_env_value AI_API_URL >/dev/null
+require_env_value AI_API_KEY >/dev/null
+require_env_value AI_API_EMBEDDING_MODEL >/dev/null
+require_env_value AI_API_EMBEDDING_DIMENSIONS >/dev/null
+CONTROL_TOKEN="$(require_env_value CONTROL_PORTAL_TOKEN)"
+TELEMETRY_SCRAPE_TOKEN="$(require_env_value TELEMETRY_SCRAPE_TOKEN)"
 
 TEMP_DIR="$(mktemp -d)"
 

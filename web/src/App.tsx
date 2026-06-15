@@ -2,9 +2,8 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Ban,
   BarChart3,
-  Check,
-  Copy,
   KeyRound,
+  ListFilter,
   LogOut,
   Moon,
   Pencil,
@@ -15,7 +14,6 @@ import {
   Sun,
   Trash2,
   Users,
-  X,
 } from "lucide-react";
 import {
   ControlApi,
@@ -28,15 +26,18 @@ import { MetricsPanel } from "./control/MetricsPanel";
 import { SecurityPanel } from "./control/SecurityPanel";
 import { SSOPanel } from "./control/SSOPanel";
 import { ConfigPanel } from "./control/ConfigPanel";
+import { ControlDreamsPanel } from "./control/DreamsPanel";
+import { LogsPanel } from "./control/LogsPanel";
+import { TeamDreamingConfigForm } from "./teamDreamingConfig";
 import { displayKeySuffix, formatDate, profilePermissionLabel, profileRoleLabel, readError, shortId } from "./control/utils";
-import { AuthShell, PortalShell, SectionHeading } from "./ui/components";
+import { AuthShell, PortalShell, SecretBox, SectionHeading } from "./ui/components";
 
 const TOKEN_STORAGE_KEY = "denseMem.controlToken";
 const THEME_STORAGE_KEY = "denseMem.controlTheme";
 
 type LoadState = "idle" | "loading" | "error";
 type Theme = "light" | "dark";
-type PortalTab = "teams" | "metrics" | "profiles" | "security" | "sso" | "config";
+type PortalTab = "teams" | "dreams" | "metrics" | "logs" | "profiles" | "security" | "sso" | "config";
 type ProfilePermission = "read" | "read_write";
 
 export function App() {
@@ -201,6 +202,21 @@ function Portal({
           onClick: () => setActiveTab("metrics"),
         },
         {
+          id: "dreams",
+          label: "Dreams",
+          icon: <Moon size={17} aria-hidden="true" />,
+          active: activeTab === "dreams",
+          disabled: !selectedTeam,
+          onClick: () => setActiveTab("dreams"),
+        },
+        {
+          id: "logs",
+          label: "Logs",
+          icon: <ListFilter size={17} aria-hidden="true" />,
+          active: activeTab === "logs",
+          onClick: () => setActiveTab("logs"),
+        },
+        {
           id: "profiles",
           label: "Profiles & API Keys",
           icon: <KeyRound size={17} aria-hidden="true" />,
@@ -266,7 +282,11 @@ function Portal({
       {activeTab === "profiles" && (
         selectedTeam ? <TeamProfilesPanel api={api} team={selectedTeam} /> : <div className="empty-state">Select a team</div>
       )}
+      {activeTab === "dreams" && (
+        selectedTeam ? <ControlDreamsPanel api={api} team={selectedTeam} /> : <div className="empty-state">Select a team</div>
+      )}
       {activeTab === "metrics" && <MetricsPanel api={api} teams={teams} />}
+      {activeTab === "logs" && <LogsPanel api={api} teams={teams} />}
       {activeTab === "security" && <SecurityPanel api={api} />}
       {activeTab === "sso" && <SSOPanel api={api} teams={teams} />}
       {activeTab === "config" && <ConfigPanel api={api} />}
@@ -430,6 +450,17 @@ function TeamEditor({
           </button>
         </div>
       </form>
+      <div className="surface-section team-dreaming-section">
+        <TeamDreamingConfigForm
+          key={team.id}
+          config={team.config}
+          effective={team.dreaming_effective}
+          disabled={busy}
+          onSave={async (config) => {
+            onUpdated(await api.updateTeam(team.id, { name: team.name, description: team.description ?? "", config }));
+          }}
+        />
+      </div>
     </section>
   );
 }
@@ -819,26 +850,13 @@ function TeamProfileCreateForm({
 }
 
 function CreatedKeyNotice({ createdKey, onDismiss }: { createdKey: CreatedTeamProfile; onDismiss: () => void }) {
-  const [copied, setCopied] = useState(false);
-
-  async function copy() {
-    await navigator.clipboard?.writeText(createdKey.api_key);
-    setCopied(true);
-  }
-
   return (
-    <div className="secret-box" role="status">
-      <div>
-        <code>{createdKey.api_key}</code>
-      </div>
-      <div className="secret-actions">
-        <button className="icon-button" type="button" aria-label="Copy API key" onClick={() => void copy()}>
-          {copied ? <Check size={17} aria-hidden="true" /> : <Copy size={17} aria-hidden="true" />}
-        </button>
-        <button className="icon-button" type="button" aria-label="Dismiss API key" onClick={onDismiss}>
-          <X size={17} aria-hidden="true" />
-        </button>
-      </div>
-    </div>
+    <SecretBox
+      value={createdKey.api_key}
+      valueLabel="Generated API key"
+      copyLabel="Copy API key"
+      dismissLabel="Dismiss API key"
+      onDismiss={onDismiss}
+    />
   );
 }

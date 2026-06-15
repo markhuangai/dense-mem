@@ -52,10 +52,12 @@ func isHeaderScopedProfileRoute(path string) bool {
 		"/api/v1/facts",
 		"/api/v1/communities",
 		"/api/v1/recall",
+		"/api/v1/dreaming",
+		"/api/v1/dreams",
 	}
 
 	for _, prefix := range headerScopedPrefixes {
-		if strings.HasPrefix(path, prefix) {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
 			return true
 		}
 	}

@@ -52,6 +52,18 @@ Dense-Mem 也是这篇研究预印本的一部分：
 [Governed Enterprise AI Memory Beyond RAG: From Vector Retrieval to Permissioned
 Knowledge Graphs](https://zenodo.org/records/20469578)。
 
+## 项目介绍视频
+
+<p align="center">
+  <a href="https://cdn.markhuang.ai/videos/dense-mem/intro.mp4" target="_blank" rel="noopener noreferrer">
+    <img src="assets/thumbnail.png" alt="观看 Dense-Mem 项目介绍视频" width="100%" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://cdn.markhuang.ai/videos/dense-mem/intro.mp4" target="_blank" rel="noopener noreferrer"><strong>观看 Dense-Mem 项目介绍视频</strong></a>
+</p>
+
 ## 在线体验
 
 不用先部署。打开

@@ -12,6 +12,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestDreamStatusIsValid(t *testing.T) {
+	for _, status := range []DreamStatus{
+		DreamStatusProposed,
+		DreamStatusReinforced,
+		DreamStatusStale,
+		DreamStatusRejected,
+		DreamStatusPromoted,
+	} {
+		if !status.IsValid() {
+			t.Fatalf("status %q should be valid", status)
+		}
+	}
+	if DreamStatus("unknown").IsValid() {
+		t.Fatal("unknown dream status should be invalid")
+	}
+}
+
 // TestKnowledgeContractFieldNames verifies exact field names on all three contract structs match canonical names.
 func TestKnowledgeContractFieldNames(t *testing.T) {
 	t.Run("SourceFragmentContract has correct field names", func(t *testing.T) {

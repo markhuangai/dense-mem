@@ -10,6 +10,7 @@ func TestNoopDiscoverabilityMetrics_NeverPanics(t *testing.T) {
 	m.IncEmbeddingError("timeout")
 	m.ObserveRecallLatency(5)
 	m.ObserveRecall(5, 2, "ok")
+	m.ObserveRecallFeedback(RecallFeedback{Used: true, AnswerSupported: true, Quality: "high"})
 	m.ObserveMemoryFunnelLatency("claim_to_verify", 1, "verified")
 	m.IncFragmentCreate("created")
 	m.IncClaimCreate("created", "")
@@ -78,6 +79,25 @@ func TestInMemoryDiscoverabilityMetrics_RecordsRecallResults(t *testing.T) {
 	}
 }
 
+func TestInMemoryDiscoverabilityMetrics_RecordsRecallFeedback(t *testing.T) {
+	m := NewInMemoryDiscoverabilityMetrics()
+	m.ObserveRecallFeedback(RecallFeedback{
+		Used:            true,
+		AnswerSupported: false,
+		Quality:         "medium",
+		MissingContext:  true,
+		Irrelevant:      false,
+	})
+
+	samples := m.RecallFeedbackSamples()
+	if len(samples) != 1 {
+		t.Fatalf("recall feedback samples = %d; want 1", len(samples))
+	}
+	if !samples[0].Used || samples[0].AnswerSupported || samples[0].Quality != "medium" || samples[0].QualityScore != 0.5 || !samples[0].MissingContext || samples[0].Irrelevant {
+		t.Errorf("recall feedback sample = %+v", samples[0])
+	}
+}
+
 func TestInMemoryDiscoverabilityMetrics_RecordsMemoryFunnelLatency(t *testing.T) {
 	m := NewInMemoryDiscoverabilityMetrics()
 	m.ObserveMemoryFunnelLatency("claim_to_verify", 2.5, "verified")
@@ -114,6 +134,7 @@ func TestInMemoryDiscoverabilityMetrics_ConcurrentSafe(t *testing.T) {
 			m.IncEmbeddingError("timeout")
 			m.ObserveRecallLatency(1)
 			m.ObserveRecall(1, 1, "ok")
+			m.ObserveRecallFeedback(RecallFeedback{Used: true, AnswerSupported: true, Quality: "high"})
 			m.ObserveMemoryFunnelLatency("claim_to_verify", 1, "verified")
 			m.IncFragmentCreate("created")
 		}()
@@ -126,6 +147,9 @@ func TestInMemoryDiscoverabilityMetrics_ConcurrentSafe(t *testing.T) {
 	}
 	if got := m.FragmentCreateCount("created"); got != 50 {
 		t.Errorf("fragment_create created = %d; want 50", got)
+	}
+	if got := len(m.RecallFeedbackSamples()); got != 50 {
+		t.Errorf("recall feedback samples = %d; want 50", got)
 	}
 }
 

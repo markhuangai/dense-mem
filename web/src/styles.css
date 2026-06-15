@@ -260,16 +260,6 @@ button {
   cursor: not-allowed;
 }
 
-.config-tabs {
-  display: flex;
-  gap: 8px;
-}
-
-.config-tabs .tab-button {
-  width: auto;
-  border: 1px solid var(--border);
-}
-
 .danger-icon {
   color: var(--danger);
 }
@@ -415,36 +405,23 @@ textarea:focus {
   width: auto;
 }
 
-.toggle-row {
-  display: inline-flex; align-items: center; justify-content: space-between;
-  gap: 12px; min-height: 40px; color: var(--text); cursor: pointer;
-}
+.toggle-row { display: inline-flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 40px; color: var(--text); cursor: pointer; }
+.toggle-row input { width: 42px; height: 24px; position: relative; flex: 0 0 auto; margin: 0; border: 1px solid var(--border-strong); border-radius: 999px; appearance: none; background: var(--panel-muted); cursor: pointer; transition: background 0.16s ease, border-color 0.16s ease; }
+.toggle-row input::after { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; content: ""; border-radius: 50%; background: var(--panel); box-shadow: 0 1px 2px rgba(23, 35, 34, 0.24); transition: transform 0.16s ease; }
+.toggle-row input:checked { border-color: var(--accent); background: var(--accent); }
+.toggle-row input:checked::after { transform: translateX(18px); }
+.toggle-row input:focus-visible { box-shadow: 0 0 0 3px var(--focus); }
 
-.toggle-row input {
-  width: 42px; height: 24px; position: relative; flex: 0 0 auto; margin: 0;
-  border: 1px solid var(--border-strong); border-radius: 999px; appearance: none;
-  background: var(--panel-muted); cursor: pointer; transition: background 0.16s ease, border-color 0.16s ease;
-}
+.config-toggle { width: min(280px, 100%); }
+.config-toggle span { color: var(--text); font-size: 14px; font-weight: 740; text-transform: none; }
 
-.toggle-row input::after {
-  position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
-  content: ""; border-radius: 50%; background: var(--panel);
-  box-shadow: 0 1px 2px rgba(23, 35, 34, 0.24);
-  transition: transform 0.16s ease;
-}
-
-.toggle-row input:checked {
-  border-color: var(--accent);
-  background: var(--accent);
-}
-
-.toggle-row input:checked::after {
-  transform: translateX(18px);
-}
-
-.toggle-row input:focus-visible {
-  box-shadow: 0 0 0 3px var(--focus);
-}
+.team-dreaming-section { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--border); }
+.team-dreaming-panel { display: grid; gap: 12px; }
+.team-dreaming-panel .section-heading { margin-bottom: 0; }
+.team-dreaming-form { display: grid; gap: 10px; }
+.team-dreaming-row { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 10px; align-items: center; }
+.team-dreaming-row .button-row { min-width: 0; }
+.team-dreaming-row select, .team-dreaming-row input[type="number"], .team-dreaming-row input[type="time"] { max-width: 360px; }
 
 .span {
   grid-column: 1 / -1;
@@ -992,8 +969,20 @@ code {
   border-radius: 8px;
 }
 
-.secret-box strong {
-  display: block;
-  margin-bottom: 6px;
-  font-size: 14px;
+.secret-value {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 26%, var(--border));
+  border-radius: 6px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.secret-value:focus {
+  outline: 2px solid color-mix(in srgb, var(--warning) 42%, transparent);
+  outline-offset: 1px;
 }

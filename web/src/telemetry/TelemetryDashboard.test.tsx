@@ -9,6 +9,11 @@ describe("TelemetryDashboard helpers", () => {
     expect(formatTelemetryAxisTick(1.5, "requests/s")).toBe("1.5");
   });
 
+  it("formats percent axis labels with units", () => {
+    expect(formatTelemetryAxisTick(91.2, "percent")).toBe("91%");
+    expect(formatTelemetryAxisTick(8.5, "percent")).toBe("8.5%");
+  });
+
   it("uses the selected telemetry window as empty chart axis data", () => {
     const points = telemetryChartPoints([], "2026-05-02T12:00:00Z", "2026-05-02T13:00:00Z");
 

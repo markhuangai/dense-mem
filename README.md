@@ -54,6 +54,18 @@ Dense-Mem is part of the research preprint
 [Governed Enterprise AI Memory Beyond RAG: From Vector Retrieval to Permissioned
 Knowledge Graphs](https://zenodo.org/records/20519039).
 
+## Project Intro
+
+<p align="center">
+  <a href="https://cdn.markhuang.ai/videos/dense-mem/intro.mp4" target="_blank" rel="noopener noreferrer">
+    <img src="assets/thumbnail.png" alt="Watch the Dense-Mem intro video" width="100%" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://cdn.markhuang.ai/videos/dense-mem/intro.mp4" target="_blank" rel="noopener noreferrer"><strong>Watch the Dense-Mem intro video</strong></a>
+</p>
+
 ## Try the Hosted Demo
 
 Create a temporary isolated team at
@@ -146,6 +158,12 @@ passes `TELEMETRY_SCRAPE_TOKEN` to Prometheus as a scrape secret, and points
 Dense-Mem at `http://prometheus:9090` for telemetry queries. It also sets
 `TELEMETRY_PROMETHEUS_JOB=dense-mem` so dashboards query only the `dense-mem`
 scrape job when Prometheus is shared.
+
+Online recall-quality cards use `densemem_recall_feedback_total` and
+`densemem_recall_feedback_quality_score`. They stay at zero until
+`RECALL_FEEDBACK_ENABLED=true` registers the `submit_recall_feedback` tool and a
+host LLM submits compact feedback for `recall_memory` results. Normal production
+recall traffic still contributes request volume, result count, and latency.
 
 For the disposable demo image, keep the control portal disabled and use the
 demo telemetry overlay instead:

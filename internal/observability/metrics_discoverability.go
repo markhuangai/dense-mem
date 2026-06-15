@@ -17,6 +17,8 @@ type DiscoverabilityMetrics interface {
 	ObserveRecallLatency(durationMs float64)
 	// ObserveRecall records one recall-service call with its result count.
 	ObserveRecall(durationMs float64, resultCount int, outcome string)
+	// ObserveRecallFeedback records one host-LLM online recall feedback event.
+	ObserveRecallFeedback(feedback RecallFeedback)
 	// ObserveMemoryFunnelLatency records latency between memory pipeline stages.
 	ObserveMemoryFunnelLatency(stage string, seconds float64, outcome string)
 	// IncFragmentCreate bumps the fragment-create outcome counter.
@@ -61,6 +63,7 @@ func (noopMetrics) ObserveEmbeddingLatency(float64, string) {}
 func (noopMetrics) IncEmbeddingError(string)                {}
 func (noopMetrics) ObserveRecallLatency(float64)            {}
 func (noopMetrics) ObserveRecall(float64, int, string)      {}
+func (noopMetrics) ObserveRecallFeedback(RecallFeedback)    {}
 func (noopMetrics) ObserveMemoryFunnelLatency(string, float64, string) {
 }
 func (noopMetrics) IncFragmentCreate(string)            {}
@@ -82,6 +85,7 @@ type InMemoryDiscoverabilityMetrics struct {
 	embeddingErrors        map[string]int
 	recallLatencies        []float64
 	recallSamples          []RecallSample
+	recallFeedbackSamples  []RecallFeedbackSample
 	memoryFunnelSamples    []MemoryFunnelSample
 	fragmentOutcomes       map[string]int
 	claimCreateSamples     []ClaimCreateSample
@@ -117,6 +121,25 @@ type RecallSample struct {
 	DurationMs  float64
 	ResultCount int
 	Outcome     string
+}
+
+// RecallFeedback is one host-LLM online quality judgment for a recall result set.
+type RecallFeedback struct {
+	Used            bool
+	AnswerSupported bool
+	Quality         string
+	MissingContext  bool
+	Irrelevant      bool
+}
+
+// RecallFeedbackSample is one recorded online recall-feedback event.
+type RecallFeedbackSample struct {
+	Used            bool
+	AnswerSupported bool
+	Quality         string
+	QualityScore    float64
+	MissingContext  bool
+	Irrelevant      bool
 }
 
 // MemoryFunnelSample is one observed pipeline-stage latency.
@@ -168,6 +191,21 @@ func (m *InMemoryDiscoverabilityMetrics) ObserveRecall(durationMs float64, resul
 	m.recallSamples = append(m.recallSamples, RecallSample{DurationMs: durationMs, ResultCount: resultCount, Outcome: outcome})
 }
 
+// ObserveRecallFeedback records one host-LLM online recall-feedback event.
+func (m *InMemoryDiscoverabilityMetrics) ObserveRecallFeedback(feedback RecallFeedback) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	quality := normalizeRecallFeedbackQuality(feedback.Quality)
+	m.recallFeedbackSamples = append(m.recallFeedbackSamples, RecallFeedbackSample{
+		Used:            feedback.Used,
+		AnswerSupported: feedback.AnswerSupported,
+		Quality:         quality,
+		QualityScore:    recallFeedbackQualityScore(quality),
+		MissingContext:  feedback.MissingContext,
+		Irrelevant:      feedback.Irrelevant,
+	})
+}
+
 // ObserveMemoryFunnelLatency records one memory-pipeline stage latency.
 func (m *InMemoryDiscoverabilityMetrics) ObserveMemoryFunnelLatency(stage string, seconds float64, outcome string) {
 	m.mu.Lock()
@@ -213,6 +251,15 @@ func (m *InMemoryDiscoverabilityMetrics) RecallSamples() []RecallSample {
 	defer m.mu.Unlock()
 	out := make([]RecallSample, len(m.recallSamples))
 	copy(out, m.recallSamples)
+	return out
+}
+
+// RecallFeedbackSamples returns a copy of the recorded online recall feedback.
+func (m *InMemoryDiscoverabilityMetrics) RecallFeedbackSamples() []RecallFeedbackSample {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]RecallFeedbackSample, len(m.recallFeedbackSamples))
+	copy(out, m.recallFeedbackSamples)
 	return out
 }
 

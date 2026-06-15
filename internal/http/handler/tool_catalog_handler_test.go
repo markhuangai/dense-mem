@@ -123,6 +123,7 @@ func TestToolCatalogHandler_FullV1Surface(t *testing.T) {
 	}
 	expected := []string{
 		"save_memory", "get_memory", "list_recent_memories", "recall_memory",
+		"dreaming_status", "run_dreaming_cycle", "list_dreams", "get_dream", "resolve_dream_feedback",
 		"keyword_search", "semantic_search", "graph_query",
 	}
 	seen := make(map[string]bool, len(resp.Tools))

@@ -11,6 +11,17 @@ const (
 	AppConfigSSOStateTTLSeconds            = "SSO_STATE_TTL_SECONDS"
 	AppConfigSSOHTTPTimeoutSeconds         = "SSO_HTTP_TIMEOUT_SECONDS"
 	AppConfigSSOCookieSecure               = "SSO_COOKIE_SECURE"
+
+	AppConfigDreamingEnabled           = "DREAMING_ENABLED"
+	AppConfigDreamingForceEnabled      = "DREAMING_FORCE_ENABLED"
+	AppConfigDreamingStartTimeLocal    = "DREAMING_START_TIME_LOCAL"
+	AppConfigDreamingTimezone          = "DREAMING_TIMEZONE"
+	AppConfigDreamingReflectEnabled    = "DREAMING_REFLECT_ENABLED"
+	AppConfigDreamingReevaluateEnabled = "DREAMING_REEVALUATE_ENABLED"
+	AppConfigDreamingDreamEnabled      = "DREAMING_DREAM_ENABLED"
+	AppConfigDreamingMaxOutputs        = "DREAMING_MAX_OUTPUTS"
+
+	AppConfigOperationLogRetentionDays = "OPERATION_LOG_RETENTION_DAYS"
 )
 
 type AppConfigEntry struct {
@@ -29,4 +40,25 @@ type SSOConfigItem struct {
 type SSOConfigSettings struct {
 	UpdateTime string
 	Items      []SSOConfigItem
+}
+
+// OperationLogConfigSettings is the editable runtime configuration for
+// database-backed application log retention.
+type OperationLogConfigSettings struct {
+	UpdateTime string                    `json:"update_time"`
+	Items      []OperationLogConfigItem  `json:"items"`
+	Effective  OperationLogRuntimeConfig `json:"effective"`
+}
+
+// OperationLogConfigItem is one control-panel editable operation log config entry.
+type OperationLogConfigItem struct {
+	Key            string    `json:"key"`
+	Value          string    `json:"value"`
+	EffectiveValue string    `json:"effective_value"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// OperationLogRuntimeConfig is the effective operation log runtime config.
+type OperationLogRuntimeConfig struct {
+	RetentionDays int `json:"retention_days"`
 }

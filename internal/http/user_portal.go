@@ -23,6 +23,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
+	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 )
 
 // UserPortalDeps holds the dependencies for the API-key user portal.
@@ -36,6 +37,7 @@ type UserPortalDeps struct {
 	AuditSvc        service.AuditService
 	SecuritySvc     httpmw.SecurityBanService
 	SSOService      *service.SSOService
+	AppConfig       service.AppConfigService
 	Config          config.ConfigProvider
 	UserStaticDir   string
 	ExtraMiddleware []echo.MiddlewareFunc
@@ -48,6 +50,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 		keys:      deps.APIKeySvc,
 		telemetry: deps.Telemetry,
 		sso:       deps.SSOService,
+		appConfig: deps.AppConfig,
 	}
 
 	if deps.SSOService != nil {
@@ -91,6 +94,7 @@ type userPortalHandler struct {
 	keys      handler.APIKeyServiceInterface
 	telemetry service.TelemetryReader
 	sso       *service.SSOService
+	appConfig service.AppConfigService
 }
 
 type userPortalSessionResponse struct {
@@ -114,11 +118,13 @@ type userPortalTeamOptionResponse struct {
 }
 
 type userPortalTeamResponse struct {
-	ID          uuid.UUID `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	CreatedAt   string    `json:"created_at"`
-	UpdatedAt   string    `json:"updated_at"`
+	ID                uuid.UUID                     `json:"id"`
+	Name              string                        `json:"name"`
+	Description       string                        `json:"description"`
+	Config            map[string]any                `json:"config"`
+	DreamingEffective *dreamservice.EffectiveConfig `json:"dreaming_effective,omitempty"`
+	CreatedAt         string                        `json:"created_at"`
+	UpdatedAt         string                        `json:"updated_at"`
 }
 
 type userPortalKeyResponse struct {
@@ -265,8 +271,12 @@ func (h *userPortalHandler) currentSession(c echo.Context) (userPortalSessionRes
 		return userPortalSessionResponse{}, httperr.New(httperr.NOT_FOUND, "key not found")
 	}
 
+	teamResponse, err := h.toUserPortalTeam(ctx, team)
+	if err != nil {
+		return userPortalSessionResponse{}, err
+	}
 	return userPortalSessionResponse{
-		Team:          toUserPortalTeam(team),
+		Team:          teamResponse,
 		Key:           toUserPortalKey(key),
 		AuthMethod:    "api_key",
 		CanRotate:     userPortalHasScope(principal.Scopes, service.APIKeyScopeWrite),
@@ -289,9 +299,16 @@ func (h *userPortalHandler) currentSSOSession(c echo.Context) (userPortalSession
 	}
 	teams := make([]userPortalTeamOptionResponse, 0, len(info.Teams))
 	for _, team := range info.Teams {
-		teams = append(teams, toUserPortalTeamOption(team))
+		option, err := h.toUserPortalTeamOption(ctx, team)
+		if err != nil {
+			return userPortalSessionResponse{}, err
+		}
+		teams = append(teams, option)
 	}
-	selected := toUserPortalTeamOption(info.Selected)
+	selected, err := h.toUserPortalTeamOption(ctx, info.Selected)
+	if err != nil {
+		return userPortalSessionResponse{}, err
+	}
 	response := userPortalSessionResponse{
 		Team:          selected.Team,
 		Key:           selected.Key,
@@ -634,14 +651,20 @@ func rejectEditableRotateBody(c echo.Context) error {
 	return nil
 }
 
-func toUserPortalTeam(team *domain.Profile) userPortalTeamResponse {
-	return userPortalTeamResponse{
-		ID:          team.ID,
-		Name:        team.Name,
-		Description: team.Description,
-		CreatedAt:   team.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:   team.UpdatedAt.Format(time.RFC3339),
+func (h *userPortalHandler) toUserPortalTeam(ctx context.Context, team *domain.Profile) (userPortalTeamResponse, error) {
+	effective, err := effectiveDreamingConfig(ctx, h.appConfig, team.Config)
+	if err != nil {
+		return userPortalTeamResponse{}, err
 	}
+	return userPortalTeamResponse{
+		ID:                team.ID,
+		Name:              team.Name,
+		Description:       team.Description,
+		Config:            team.Config,
+		DreamingEffective: effective,
+		CreatedAt:         team.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:         team.UpdatedAt.Format(time.RFC3339),
+	}, nil
 }
 
 func toUserPortalKey(key *domain.APIKey) userPortalKeyResponse {
@@ -659,13 +682,17 @@ func toUserPortalKey(key *domain.APIKey) userPortalKeyResponse {
 	}
 }
 
-func toUserPortalTeamOption(item domain.SSOTeamProfile) userPortalTeamOptionResponse {
+func (h *userPortalHandler) toUserPortalTeamOption(ctx context.Context, item domain.SSOTeamProfile) (userPortalTeamOptionResponse, error) {
+	team, err := h.toUserPortalTeam(ctx, &item.Team)
+	if err != nil {
+		return userPortalTeamOptionResponse{}, err
+	}
 	return userPortalTeamOptionResponse{
-		Team:          toUserPortalTeam(&item.Team),
+		Team:          team,
 		Key:           toUserPortalKey(&item.Profile),
 		CanRotate:     false,
 		CanManageTeam: item.Profile.GetRole() == service.APIKeyRoleManager,
-	}
+	}, nil
 }
 
 func userPortalHasScope(scopes []string, required string) bool {

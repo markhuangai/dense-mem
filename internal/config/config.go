@@ -89,6 +89,7 @@ type Config struct {
 	ClaimWriteRateLimit          int
 	ClaimReadRateLimit           int
 	RecallValidatedClaimWeight   float64
+	RecallFeedbackEnabled        bool
 	PromoteTxTimeoutSeconds      int
 	SkillPackImportHistoryDays   int
 	AICommunityMaxNodes          int
@@ -154,6 +155,7 @@ func (c *Config) GetAIVerifierMaxConcurrency() int       { return c.AIVerifierMa
 func (c *Config) GetClaimWriteRateLimit() int            { return c.ClaimWriteRateLimit }
 func (c *Config) GetClaimReadRateLimit() int             { return c.ClaimReadRateLimit }
 func (c *Config) GetRecallValidatedClaimWeight() float64 { return c.RecallValidatedClaimWeight }
+func (c *Config) GetRecallFeedbackEnabled() bool         { return c.RecallFeedbackEnabled }
 func (c *Config) GetPromoteTxTimeoutSeconds() int        { return c.PromoteTxTimeoutSeconds }
 func (c *Config) GetSkillPackImportHistoryDays() int     { return c.SkillPackImportHistoryDays }
 func (c *Config) GetAICommunityMaxNodes() int            { return c.AICommunityMaxNodes }
@@ -394,6 +396,11 @@ func Load() (Config, error) {
 	}
 
 	cfg.RecallValidatedClaimWeight, err = parseFloatOrDefault("RECALL_VALIDATED_CLAIM_WEIGHT", 0.5)
+	if err != nil {
+		return cfg, err
+	}
+
+	cfg.RecallFeedbackEnabled, err = parseBoolOrDefault("RECALL_FEEDBACK_ENABLED", false)
 	if err != nil {
 		return cfg, err
 	}

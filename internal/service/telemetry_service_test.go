@@ -94,6 +94,24 @@ func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {
 	require.NotEmpty(t, httpErrorCardQuery)
 	require.Contains(t, httpErrorCardQuery, `status_class=~"4xx|5xx"`)
 	require.NotContains(t, httpErrorCardQuery, `status_class="4xx|5xx"`)
+	require.Condition(t, func() bool {
+		for _, query := range queries {
+			if strings.Contains(query, `densemem_recall_feedback_total`) &&
+				strings.Contains(query, `used="true"`) {
+				return true
+			}
+		}
+		return false
+	})
+	require.Condition(t, func() bool {
+		for _, query := range queries {
+			if strings.Contains(query, `histogram_quantile(0.95`) &&
+				strings.Contains(query, `densemem_recall_duration_seconds_bucket`) {
+				return true
+			}
+		}
+		return false
+	})
 }
 
 func TestPrometheusTelemetryService_RejectsInvalidWindow(t *testing.T) {
@@ -155,6 +173,8 @@ func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
 	require.Equal(t, `{kind="total"}`, telemetrySelectorWithRaw("", `kind="total"`))
 	require.Equal(t, `{status_class=~"4xx|5xx"}`, telemetrySelector(TelemetryScope{}, map[string]string{"status_class": `~"4xx|5xx"`}))
 	require.Equal(t, `{job="dense-mem-demo",status_class=~"4xx|5xx"}`, telemetrySelector(TelemetryScope{}, mergeTelemetryLabels(map[string]string{"job": "dense-mem-demo"}, map[string]string{"status_class": `~"4xx|5xx"`})))
+	require.Equal(t, `100 * (sum(increase(densemem_recall_feedback_total{used="true"}[1h]))) / (sum(increase(densemem_recall_feedback_total[1h])))`, telemetryRecallFeedbackRate(TelemetryScope{}, nil, map[string]string{"used": "true"}, "1h"))
+	require.Equal(t, `1000 * histogram_quantile(0.95, sum(rate(densemem_recall_duration_seconds_bucket[1m])) by (le))`, telemetryRangeHistogramQuantile("densemem_recall_duration_seconds", "", "", "1m", 0.95, 1000))
 
 	scope, err = normalizeTelemetryScope(TelemetryFilter{Scope: "self", TeamID: &teamID, ProfileID: &profileID})
 	require.NoError(t, err)
