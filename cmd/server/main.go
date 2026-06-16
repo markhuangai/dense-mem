@@ -323,6 +323,7 @@ func main() {
 	communityListSvc := communityservice.NewListCommunitiesService(neo4jClient)
 	recallFactSearcher := recallservice.NewFactSearcher(profileScopeEnforcer)
 	recallClaimSearcher := recallservice.NewClaimSearcher(profileScopeEnforcer)
+	recallCommunityExpander := recallservice.NewCommunityExpander(profileScopeEnforcer)
 
 	var (
 		claimVerifyRegistrySvc   claimservice.VerifyClaimService = unavailableVerifyClaimService{}
@@ -366,6 +367,7 @@ func main() {
 			cfg.GetRecallValidatedClaimWeight(),
 			logger,
 			discoverabilityMetrics,
+			recallservice.WithCommunityExpander(recallCommunityExpander),
 		)
 		recallRegistrySvc = tieredRecallSvc
 		recallHTTPSvc = tieredRecallSvc
@@ -423,6 +425,8 @@ func main() {
 	communityProbeCancel()
 	if communityAvailable {
 		communityDetectRegistrySvc = communityservice.NewLeidenService(pgDB.GetDB(), neo4jClient, &cfg, slog.Default())
+	} else {
+		slog.Default().Warn("community scheduler: GDS unavailable, scheduler not started")
 	}
 
 	// Tool registry is the single source of truth for MCP / HTTP catalog / OpenAPI.
@@ -647,6 +651,20 @@ func main() {
 	dreamSchedulerCtx, dreamSchedulerCancel := context.WithCancel(context.Background())
 	defer dreamSchedulerCancel()
 	go dreamservice.NewScheduler(dreamSvc, profileService, slog.Default()).Start(dreamSchedulerCtx)
+	communitySchedulerCancel := func() {}
+	if communityAvailable {
+		communitySchedulerCtx, cancel := context.WithCancel(context.Background())
+		communitySchedulerCancel = cancel
+		defer communitySchedulerCancel()
+		go communityservice.NewScheduler(
+			communityDetectRegistrySvc,
+			profileService,
+			appConfigService,
+			discoverabilityMetrics,
+			slog.Default(),
+			communityservice.WithSchedulerRunStore(communityservice.NewPostgresSchedulerRunStore(pgDB.GetDB())),
+		).Start(communitySchedulerCtx)
+	}
 
 	httpAddr := os.Getenv("HTTP_ADDR")
 	if httpAddr == "" {
@@ -668,6 +686,7 @@ func main() {
 
 	logger.Info("shutting down server")
 	dreamSchedulerCancel()
+	communitySchedulerCancel()
 
 	// Graceful shutdown with 10-second timeout
 	if err := http.ShutdownServer(e, logger); err != nil {

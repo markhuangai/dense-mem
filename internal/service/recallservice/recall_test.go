@@ -153,6 +153,26 @@ func (f *fakeClaimSearcher) SearchValidated(ctx context.Context, profileID strin
 	return out, nil
 }
 
+type fakeCommunityExpander struct {
+	expansion   CommunityExpansion
+	err         error
+	calls       int
+	lastProfile string
+	lastQuery   string
+	lastOptions CommunityExpansionOptions
+}
+
+func (f *fakeCommunityExpander) Expand(ctx context.Context, profileID string, query string, opts CommunityExpansionOptions) (CommunityExpansion, error) {
+	f.calls++
+	f.lastProfile = profileID
+	f.lastQuery = query
+	f.lastOptions = opts
+	if f.err != nil {
+		return CommunityExpansion{}, f.err
+	}
+	return f.expansion, nil
+}
+
 type fakeFactGetter struct {
 	facts          map[string]*domain.Fact
 	callCount      int32
@@ -742,6 +762,164 @@ func TestRecallService_RRFScoreOrdering(t *testing.T) {
 	if topScore <= midScore {
 		t.Errorf("top score %v must exceed single-branch score %v", topScore, midScore)
 	}
+}
+
+func TestRecallService_CommunityExpansionDisabledByDefault(t *testing.T) {
+	sem := &fakeSemanticSearcher{hits: []semanticsearch.SearchHit{{ID: "f-direct", Type: "fragment"}}}
+	kw := &fakeKeywordSearcher{}
+	expander := &fakeCommunityExpander{
+		expansion: CommunityExpansion{
+			SelectedCommunities: 1,
+			Fragments: []CommunityFragmentRecallResult{
+				{FragmentID: "f-community", ProfileID: "pA", Score: 0.8},
+			},
+		},
+	}
+	svc := NewRecallServiceWithTiers(
+		&stubEmbedding{DimensionsResult: 4},
+		sem,
+		kw,
+		&fakeHydrator{},
+		nil,
+		nil,
+		nil,
+		nil,
+		0,
+		nil,
+		nil,
+		WithCommunityExpander(expander),
+	)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "q", Limit: 5})
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Equal(t, "f-direct", out[0].Fragment.FragmentID)
+	require.Equal(t, 0, expander.calls)
+}
+
+func TestRecallService_CommunityExpansionNoCommunityFallback(t *testing.T) {
+	sem := &fakeSemanticSearcher{hits: []semanticsearch.SearchHit{{ID: "f-direct", Type: "fragment"}}}
+	kw := &fakeKeywordSearcher{}
+	expander := &fakeCommunityExpander{}
+	svc := NewRecallServiceWithTiers(
+		&stubEmbedding{DimensionsResult: 4},
+		sem,
+		kw,
+		&fakeHydrator{},
+		nil,
+		nil,
+		nil,
+		nil,
+		0,
+		nil,
+		nil,
+		WithCommunityExpander(expander),
+	)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "q", Limit: 5, UseCommunities: true})
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Equal(t, "f-direct", out[0].Fragment.FragmentID)
+	require.Equal(t, 1, expander.calls)
+	require.Equal(t, "pA", expander.lastProfile)
+}
+
+func TestRecallService_CommunityExpansionFiltersProfile(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	expander := &fakeCommunityExpander{
+		expansion: CommunityExpansion{
+			SelectedCommunities: 1,
+			Facts: []FactRecallResult{
+				{FactID: "fact-other", ProfileID: "pB", RecordedAt: now},
+				{FactID: "fact-own", ProfileID: "pA", RecordedAt: now},
+			},
+			Fragments: []CommunityFragmentRecallResult{
+				{FragmentID: "frag-other", ProfileID: "pB", Score: 0.5},
+				{FragmentID: "frag-own", ProfileID: "pA", Score: 0.4},
+			},
+		},
+	}
+	svc := NewRecallServiceWithTiers(
+		&stubEmbedding{DimensionsResult: 4},
+		&fakeSemanticSearcher{},
+		&fakeKeywordSearcher{},
+		&fakeHydrator{frags: map[string]*domain.Fragment{
+			"frag-other": {FragmentID: "frag-other", ProfileID: "pB"},
+			"frag-own":   {FragmentID: "frag-own", ProfileID: "pA"},
+		}},
+		nil,
+		&fakeFactGetter{facts: map[string]*domain.Fact{
+			"fact-other": {FactID: "fact-other", ProfileID: "pB", Status: domain.FactStatusActive, RecordedAt: now, TruthScore: 1},
+			"fact-own":   {FactID: "fact-own", ProfileID: "pA", Status: domain.FactStatusActive, RecordedAt: now, TruthScore: 0.9},
+		}},
+		nil,
+		nil,
+		0,
+		nil,
+		nil,
+		WithCommunityExpander(expander),
+	)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "q", Limit: 5, UseCommunities: true})
+	require.NoError(t, err)
+	require.Len(t, out, 2)
+	require.NotNil(t, out[0].Fact)
+	require.Equal(t, "fact-own", out[0].Fact.FactID)
+	require.NotNil(t, out[1].Fragment)
+	require.Equal(t, "frag-own", out[1].Fragment.FragmentID)
+}
+
+func TestRecallService_CommunityExpansionFillsUnusedSlotsAfterDirectRecall(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	sem := &fakeSemanticSearcher{hits: []semanticsearch.SearchHit{{ID: "f-direct", Type: "fragment"}}}
+	expander := &fakeCommunityExpander{
+		expansion: CommunityExpansion{
+			SelectedCommunities: 1,
+			Facts: []FactRecallResult{
+				{FactID: "fact-community", ProfileID: "pA", RecordedAt: now},
+			},
+			Claims: []ClaimRecallResult{
+				{ClaimID: "claim-community", ProfileID: "pA", RecordedAt: now},
+			},
+			Fragments: []CommunityFragmentRecallResult{
+				{FragmentID: "fragment-community", ProfileID: "pA", Score: 0.7},
+			},
+		},
+	}
+	svc := NewRecallServiceWithTiers(
+		&stubEmbedding{DimensionsResult: 4},
+		sem,
+		&fakeKeywordSearcher{},
+		&fakeHydrator{frags: map[string]*domain.Fragment{
+			"f-direct":           {FragmentID: "f-direct", ProfileID: "pA"},
+			"fragment-community": {FragmentID: "fragment-community", ProfileID: "pA"},
+		}},
+		nil,
+		&fakeFactGetter{facts: map[string]*domain.Fact{
+			"fact-community": {FactID: "fact-community", ProfileID: "pA", Status: domain.FactStatusActive, RecordedAt: now, TruthScore: 0.9},
+		}},
+		nil,
+		&fakeClaimGetter{claims: map[string]*domain.Claim{
+			"claim-community": {ClaimID: "claim-community", ProfileID: "pA", Status: domain.StatusValidated, RecordedAt: now, ExtractConf: 0.8},
+		}},
+		0,
+		nil,
+		nil,
+		WithCommunityExpander(expander),
+	)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "q", Limit: 3, UseCommunities: true})
+	require.NoError(t, err)
+	require.Len(t, out, 3)
+	require.NotNil(t, out[0].Fact)
+	require.Equal(t, "fact-community", out[0].Fact.FactID)
+	require.NotNil(t, out[1].Claim)
+	require.Equal(t, "claim-community", out[1].Claim.ClaimID)
+	require.NotNil(t, out[2].Fragment)
+	require.Equal(t, "f-direct", out[2].Fragment.FragmentID)
+	require.Equal(t, DefaultCommunityExpansionCommunityLimit, expander.lastOptions.CommunityLimit)
+	require.Equal(t, DefaultCommunityExpansionMembersPerCommunity, expander.lastOptions.MembersPerCommunity)
+	require.Equal(t, DefaultCommunityExpansionCommunityLimit*DefaultCommunityExpansionMembersPerCommunity, expander.lastOptions.MaxCandidates)
 }
 
 func idsOf(hits []RecallHit) []string {

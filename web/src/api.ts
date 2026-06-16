@@ -205,6 +205,25 @@ export type SSOConfig = {
   items: SSOConfigItem[];
 };
 
+export type GeneralRuntimeConfig = {
+  timezone: string;
+};
+
+export type GeneralConfigItem = SSOConfigItem;
+
+export type GeneralConfig = {
+  update_time: string;
+  items: GeneralConfigItem[];
+  effective: GeneralRuntimeConfig;
+};
+
+export type GeneralConfigInput = {
+  items: Array<{
+    key: string;
+    value: string;
+  }>;
+};
+
 export type SSOConfigInput = {
   items: Array<{
     key: string;
@@ -237,6 +256,29 @@ export type DreamingConfig = {
 };
 
 export type DreamingConfigInput = {
+  items: Array<{
+    key: string;
+    value: string;
+  }>;
+};
+
+export type CommunityDetectionRuntimeConfig = {
+  enabled: boolean;
+  start_time_local: string;
+  timezone: string;
+  max_concurrency: number;
+  jitter_seconds: number;
+};
+
+export type CommunityDetectionConfigItem = SSOConfigItem;
+
+export type CommunityDetectionConfig = {
+  update_time: string;
+  items: CommunityDetectionConfigItem[];
+  effective: CommunityDetectionRuntimeConfig;
+};
+
+export type CommunityDetectionConfigInput = {
   items: Array<{
     key: string;
     value: string;
@@ -486,6 +528,14 @@ export class ControlApi {
     return this.requestEnvelope<{ status: string }>(`/sso/providers/${providerId}/mappings/${mappingId}`, { method: "DELETE" });
   }
 
+  getGeneralConfig(): Promise<GeneralConfig> {
+    return this.requestEnvelope<GeneralConfig>("/config/general");
+  }
+
+  updateGeneralConfig(input: GeneralConfigInput): Promise<GeneralConfig> {
+    return this.requestEnvelope<GeneralConfig>("/config/general", { method: "PATCH", body: input });
+  }
+
   getSSOConfig(): Promise<SSOConfig> {
     return this.requestEnvelope<SSOConfig>("/config/sso");
   }
@@ -500,6 +550,14 @@ export class ControlApi {
 
   updateDreamingConfig(input: DreamingConfigInput): Promise<DreamingConfig> {
     return this.requestEnvelope<DreamingConfig>("/config/dreaming", { method: "PATCH", body: input });
+  }
+
+  getCommunityDetectionConfig(): Promise<CommunityDetectionConfig> {
+    return this.requestEnvelope<CommunityDetectionConfig>("/config/community-detection");
+  }
+
+  updateCommunityDetectionConfig(input: CommunityDetectionConfigInput): Promise<CommunityDetectionConfig> {
+    return this.requestEnvelope<CommunityDetectionConfig>("/config/community-detection", { method: "PATCH", body: input });
   }
 
   getOperationLogConfig(): Promise<OperationLogConfig> {

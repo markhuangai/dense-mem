@@ -21,7 +21,7 @@ const (
 	CycleDream      = "dream"
 
 	DefaultStartTimeLocal = "03:00"
-	DefaultTimezone       = "UTC"
+	DefaultTimezone       = "Local"
 	DefaultMaxOutputs     = 5
 )
 

@@ -343,6 +343,7 @@ func main() {
 	communityListSvc := communityservice.NewListCommunitiesService(neo4jClient)
 	recallFactSearcher := recallservice.NewFactSearcher(profileScopeEnforcer)
 	recallClaimSearcher := recallservice.NewClaimSearcher(profileScopeEnforcer)
+	recallCommunityExpander := recallservice.NewCommunityExpander(profileScopeEnforcer)
 
 	var (
 		claimVerifyRegistrySvc   claimservice.VerifyClaimService = unavailableVerifyClaimService{}
@@ -386,6 +387,7 @@ func main() {
 			cfg.GetRecallValidatedClaimWeight(),
 			logger,
 			discoverabilityMetrics,
+			recallservice.WithCommunityExpander(recallCommunityExpander),
 		)
 		recallRegistrySvc = tieredRecallSvc
 		recallHTTPSvc = tieredRecallSvc
@@ -400,6 +402,8 @@ func main() {
 	communityProbeCancel()
 	if communityAvailable {
 		communityDetectRegistrySvc = communityservice.NewLeidenService(pgDB.GetDB(), neo4jClient, &cfg, slog.Default())
+	} else {
+		slog.Default().Warn("community scheduler: GDS unavailable, scheduler not started")
 	}
 
 	runtimeServices := serverRuntimeServices{
@@ -720,6 +724,21 @@ func main() {
 		}()
 	}
 
+	communitySchedulerCancel := func() {}
+	if communityAvailable {
+		communitySchedulerCtx, cancel := context.WithCancel(context.Background())
+		communitySchedulerCancel = cancel
+		defer communitySchedulerCancel()
+		go communityservice.NewScheduler(
+			communityDetectRegistrySvc,
+			profileService,
+			appConfigService,
+			discoverabilityMetrics,
+			slog.Default(),
+			communityservice.WithSchedulerRunStore(communityservice.NewPostgresSchedulerRunStore(pgDB.GetDB())),
+		).Start(communitySchedulerCtx)
+	}
+
 	logger.Info("starting server", observability.String("addr", config.DefaultHTTPAddr))
 
 	// Start server in a goroutine
@@ -735,6 +754,7 @@ func main() {
 	<-quit
 
 	logger.Info("shutting down server")
+	communitySchedulerCancel()
 
 	// Graceful shutdown with 10-second timeout
 	if err := http.ShutdownServer(e, logger); err != nil {

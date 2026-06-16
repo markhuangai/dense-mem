@@ -83,6 +83,27 @@ describe("ControlApi", () => {
     }));
   });
 
+  it("reads and updates general config", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
+      data: {
+        update_time: "2026-06-16T09:00:00Z",
+        items: [{ key: "APP_TIMEZONE", value: "Local", effective_value: "Local", updated_at: "2026-06-16T09:00:00Z" }],
+        effective: { timezone: "Local" },
+      },
+    }), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const api = new ControlApi("secret", "/control/api");
+    await api.getGeneralConfig();
+    await api.updateGeneralConfig({ items: [{ key: "APP_TIMEZONE", value: "America/New_York" }] });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/control/api/config/general", expect.objectContaining({ method: "GET" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/control/api/config/general", expect.objectContaining({
+      method: "PATCH",
+      body: JSON.stringify({ items: [{ key: "APP_TIMEZONE", value: "America/New_York" }] }),
+    }));
+  });
+
   it("reads and updates dreaming config", async () => {
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
       data: {
@@ -110,6 +131,33 @@ describe("ControlApi", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(2, "/control/api/config/dreaming", expect.objectContaining({
       method: "PATCH",
       body: JSON.stringify({ items: [{ key: "DREAMING_START_TIME_LOCAL", value: "02:30" }] }),
+    }));
+  });
+
+  it("reads and updates community detection config", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
+      data: {
+        update_time: "2026-06-15T03:30:00Z",
+        items: [{ key: "COMMUNITY_DETECTION_ENABLED", value: "false", effective_value: "false", updated_at: "2026-06-15T03:30:00Z" }],
+        effective: {
+          enabled: false,
+          start_time_local: "03:30",
+          timezone: "Local",
+          max_concurrency: 1,
+          jitter_seconds: 600,
+        },
+      },
+    }), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const api = new ControlApi("secret", "/control/api");
+    await api.getCommunityDetectionConfig();
+    await api.updateCommunityDetectionConfig({ items: [{ key: "COMMUNITY_DETECTION_ENABLED", value: "true" }] });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/control/api/config/community-detection", expect.objectContaining({ method: "GET" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/control/api/config/community-detection", expect.objectContaining({
+      method: "PATCH",
+      body: JSON.stringify({ items: [{ key: "COMMUNITY_DETECTION_ENABLED", value: "true" }] }),
     }));
   });
 
