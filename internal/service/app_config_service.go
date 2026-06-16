@@ -678,7 +678,7 @@ func normalizeGeneralConfigValues(values map[string]string) (map[string]string, 
 				trimmed = DefaultAppTimezone
 			}
 			if _, err := time.LoadLocation(trimmed); err != nil {
-				return nil, fmt.Errorf("%w: APP_TIMEZONE is not a valid IANA timezone", ErrInvalidAppConfig)
+				return nil, fmt.Errorf("%w: APP_TIMEZONE must be a valid IANA timezone or Local", ErrInvalidAppConfig)
 			}
 		}
 		normalized[key] = trimmed

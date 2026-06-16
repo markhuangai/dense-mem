@@ -370,6 +370,7 @@ func TestAppConfigServiceValidation(t *testing.T) {
 
 	_, err = svc.UpdateGeneralSettings(ctx, map[string]string{domain.AppConfigTimezone: "Nope/Zone"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
+	require.ErrorContains(t, err, "APP_TIMEZONE must be a valid IANA timezone or Local")
 
 	_, err = svc.UpdateSSOSettings(ctx, map[string]string{domain.AppConfigUpdateTimeKey: "v2"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
