@@ -223,6 +223,35 @@ func TestCommunitySchedulerRunProfileReleasesRunStoreReservationOnCancellation(t
 	require.False(t, scheduler.alreadyRan("profile-1", "2026-06-15"))
 }
 
+func TestCommunitySchedulerRunProfileRecordsTimeoutWithoutReleasingReservation(t *testing.T) {
+	store := &communitySchedulerRunStoreStub{
+		reserved: map[string]bool{"profile-1|2026-06-15": true},
+	}
+	detector := &communitySchedulerDetectorStub{
+		detectFunc: func(context.Context, string) error {
+			return context.DeadlineExceeded
+		},
+	}
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	scheduler := NewScheduler(
+		detector,
+		&communitySchedulerProfileStub{},
+		&communitySchedulerConfigStub{},
+		metrics,
+		discardCommunitySchedulerLogger(),
+		WithSchedulerRunStore(store),
+	)
+	now := time.Date(2026, 6, 15, 3, 30, 0, 0, time.UTC)
+	scheduler.now = func() time.Time { return now }
+
+	scheduler.runProfile(context.Background(), schedulerJob{profileID: "profile-1", runDate: "2026-06-15", dueAt: now})
+
+	require.Empty(t, store.releaseKeys)
+	require.True(t, store.reserved["profile-1|2026-06-15"])
+	require.True(t, scheduler.alreadyRan("profile-1", "2026-06-15"))
+	require.Equal(t, 1, metrics.CommunityDetectCount("error"))
+}
+
 func TestCommunitySchedulerStopsOnProfileListError(t *testing.T) {
 	profileSvc := &communitySchedulerProfileStub{err: errors.New("list failed")}
 	detector := &communitySchedulerDetectorStub{}

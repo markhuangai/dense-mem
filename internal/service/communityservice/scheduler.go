@@ -187,12 +187,12 @@ func (s *Scheduler) runProfile(ctx context.Context, job schedulerJob) {
 	err := s.detector.Detect(detectCtx, job.profileID, DetectOptions{})
 	duration := s.now().Sub(started)
 	if err != nil {
-		if detectCtx.Err() != nil {
+		if parentErr := ctx.Err(); parentErr != nil {
 			s.releaseRunReservation(ctx, job.profileID, job.runDate)
 			s.logger.Warn("community scheduler: detection canceled",
 				slog.String("profile_id", job.profileID),
 				slog.String("run_date", job.runDate),
-				slog.String("context_error", detectCtx.Err().Error()),
+				slog.String("context_error", parentErr.Error()),
 				slog.String("error", err.Error()),
 			)
 			return

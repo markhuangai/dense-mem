@@ -9,8 +9,14 @@ import (
 
 func TestBuildDefault_RecallInvokerForwardsCommunityOption(t *testing.T) {
 	rec := &capturingRecall{}
-	reg, _ := BuildDefault(Dependencies{Recall: rec})
-	tool, _ := reg.Get("recall_memory")
+	reg, err := BuildDefault(Dependencies{Recall: rec})
+	if err != nil {
+		t.Fatalf("BuildDefault: %v", err)
+	}
+	tool, ok := reg.Get("recall_memory")
+	if !ok {
+		t.Fatal("Get(recall_memory): not found")
+	}
 
 	properties, ok := tool.InputSchema["properties"].(map[string]any)
 	if !ok {
