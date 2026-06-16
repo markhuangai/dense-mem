@@ -205,6 +205,25 @@ export type SSOConfig = {
   items: SSOConfigItem[];
 };
 
+export type GeneralRuntimeConfig = {
+  timezone: string;
+};
+
+export type GeneralConfigItem = SSOConfigItem;
+
+export type GeneralConfig = {
+  update_time: string;
+  items: GeneralConfigItem[];
+  effective: GeneralRuntimeConfig;
+};
+
+export type GeneralConfigInput = {
+  items: Array<{
+    key: string;
+    value: string;
+  }>;
+};
+
 export type SSOConfigInput = {
   items: Array<{
     key: string;
@@ -507,6 +526,14 @@ export class ControlApi {
 
   deleteSSOGroupMapping(providerId: string, mappingId: string): Promise<{ status: string }> {
     return this.requestEnvelope<{ status: string }>(`/sso/providers/${providerId}/mappings/${mappingId}`, { method: "DELETE" });
+  }
+
+  getGeneralConfig(): Promise<GeneralConfig> {
+    return this.requestEnvelope<GeneralConfig>("/config/general");
+  }
+
+  updateGeneralConfig(input: GeneralConfigInput): Promise<GeneralConfig> {
+    return this.requestEnvelope<GeneralConfig>("/config/general", { method: "PATCH", body: input });
   }
 
   getSSOConfig(): Promise<SSOConfig> {

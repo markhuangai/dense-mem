@@ -171,6 +171,8 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 	api.POST("/security/bans", control.createSecurityBan)
 	api.DELETE("/security/bans/:ip", control.deleteSecurityBan)
 	if telemetry.Config != nil {
+		api.GET("/config/general", control.getGeneralConfig)
+		api.PATCH("/config/general", control.updateGeneralConfig)
 		api.GET("/config/sso", control.getSSOConfig)
 		api.PATCH("/config/sso", control.updateSSOConfig)
 		api.GET("/config/dreaming", control.getDreamingConfig)

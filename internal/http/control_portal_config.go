@@ -12,6 +12,39 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service"
 )
 
+func (h *controlPortalHandler) getGeneralConfig(c echo.Context) error {
+	if h.appConfig == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "app config service unavailable")
+	}
+	settings, err := h.appConfig.GetGeneralSettings(c.Request().Context())
+	if err != nil {
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlGeneralConfig(settings)})
+}
+
+func (h *controlPortalHandler) updateGeneralConfig(c echo.Context) error {
+	if h.appConfig == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "app config service unavailable")
+	}
+	var body controlGeneralConfigRequest
+	if err := c.Bind(&body); err != nil {
+		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
+	}
+	values := make(map[string]string, len(body.Items))
+	for _, item := range body.Items {
+		values[item.Key] = item.Value
+	}
+	settings, err := h.appConfig.UpdateGeneralSettings(c.Request().Context(), values, "control", c.RealIP(), "")
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidAppConfig) {
+			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
+		}
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlGeneralConfig(settings)})
+}
+
 func (h *controlPortalHandler) getSSOConfig(c echo.Context) error {
 	if h.appConfig == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "app config service unavailable")
@@ -144,6 +177,10 @@ func (h *controlPortalHandler) updateOperationLogConfig(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlOperationLogConfig(settings)})
 }
 
+type controlGeneralConfigRequest struct {
+	Items []controlSSOConfigItemRequest `json:"items"`
+}
+
 type controlSSOConfigRequest struct {
 	Items []controlSSOConfigItemRequest `json:"items"`
 }
@@ -163,6 +200,12 @@ type controlOperationLogConfigRequest struct {
 type controlSSOConfigItemRequest struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
+}
+
+type controlGeneralConfigResponse struct {
+	UpdateTime string                         `json:"update_time"`
+	Items      []controlSSOConfigItemResponse `json:"items"`
+	Effective  domain.GeneralRuntimeConfig    `json:"effective"`
 }
 
 type controlSSOConfigResponse struct {
@@ -193,6 +236,26 @@ type controlSSOConfigItemResponse struct {
 	Value          string `json:"value"`
 	EffectiveValue string `json:"effective_value"`
 	UpdatedAt      string `json:"updated_at"`
+}
+
+func toControlGeneralConfig(settings *domain.GeneralConfigSettings) controlGeneralConfigResponse {
+	if settings == nil {
+		return controlGeneralConfigResponse{Items: []controlSSOConfigItemResponse{}}
+	}
+	items := make([]controlSSOConfigItemResponse, 0, len(settings.Items))
+	for _, item := range settings.Items {
+		items = append(items, controlSSOConfigItemResponse{
+			Key:            item.Key,
+			Value:          item.Value,
+			EffectiveValue: item.EffectiveValue,
+			UpdatedAt:      item.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+	return controlGeneralConfigResponse{
+		UpdateTime: settings.UpdateTime,
+		Items:      items,
+		Effective:  settings.Effective,
+	}
 }
 
 func toControlSSOConfig(settings *domain.SSOConfigSettings) controlSSOConfigResponse {

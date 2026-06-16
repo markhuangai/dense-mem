@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { CommunityDetectionConfig, ControlMetrics, Dream, DreamRun, DreamStatus, DreamingConfig, OperationLog, OperationLogConfig, SecurityBan, SecuritySettings, SSOConfig, Team, TeamProfile } from "./api";
+import { CommunityDetectionConfig, ControlMetrics, Dream, DreamRun, DreamStatus, DreamingConfig, GeneralConfig, OperationLog, OperationLogConfig, SecurityBan, SecuritySettings, SSOConfig, Team, TeamProfile } from "./api";
 
 const profileA: Team = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -101,13 +101,22 @@ const ssoConfigSnapshot: SSOConfig = {
   ],
 };
 
+const generalConfigSnapshot: GeneralConfig = {
+  update_time: "2026-06-16T09:00:00Z",
+  items: [
+    { key: "APP_TIMEZONE", value: "Local", effective_value: "Local", updated_at: "2026-06-16T09:00:00Z" },
+  ],
+  effective: {
+    timezone: "Local",
+  },
+};
+
 const dreamingConfigSnapshot: DreamingConfig = {
   update_time: "2026-06-11T03:00:00Z",
   items: [
     { key: "DREAMING_ENABLED", value: "false", effective_value: "false", updated_at: "2026-06-11T03:00:00Z" },
     { key: "DREAMING_FORCE_ENABLED", value: "false", effective_value: "false", updated_at: "2026-06-11T03:00:00Z" },
     { key: "DREAMING_START_TIME_LOCAL", value: "03:00", effective_value: "03:00", updated_at: "2026-06-11T03:00:00Z" },
-    { key: "DREAMING_TIMEZONE", value: "UTC", effective_value: "UTC", updated_at: "2026-06-11T03:00:00Z" },
     { key: "DREAMING_REFLECT_ENABLED", value: "true", effective_value: "true", updated_at: "2026-06-11T03:00:00Z" },
     { key: "DREAMING_REEVALUATE_ENABLED", value: "true", effective_value: "true", updated_at: "2026-06-11T03:00:00Z" },
     { key: "DREAMING_DREAM_ENABLED", value: "true", effective_value: "true", updated_at: "2026-06-11T03:00:00Z" },
@@ -117,7 +126,7 @@ const dreamingConfigSnapshot: DreamingConfig = {
     enabled: false,
     force_enabled: false,
     start_time_local: "03:00",
-    timezone: "UTC",
+    timezone: "Local",
     reflect_enabled: true,
     reevaluate_enabled: true,
     dream_enabled: true,
@@ -140,7 +149,6 @@ const communityDetectionConfigSnapshot: CommunityDetectionConfig = {
   items: [
     { key: "COMMUNITY_DETECTION_ENABLED", value: "false", effective_value: "false", updated_at: "2026-06-15T03:30:00Z" },
     { key: "COMMUNITY_DETECTION_START_TIME_LOCAL", value: "03:30", effective_value: "03:30", updated_at: "2026-06-15T03:30:00Z" },
-    { key: "COMMUNITY_DETECTION_TIMEZONE", value: "Local", effective_value: "Local", updated_at: "2026-06-15T03:30:00Z" },
     { key: "COMMUNITY_DETECTION_MAX_CONCURRENCY", value: "1", effective_value: "1", updated_at: "2026-06-15T03:30:00Z" },
     { key: "COMMUNITY_DETECTION_JITTER_SECONDS", value: "600", effective_value: "600", updated_at: "2026-06-15T03:30:00Z" },
   ],
@@ -553,6 +561,7 @@ describe("App", () => {
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
     await userEvent.click(screen.getByRole("button", { name: /^Config$/i }));
+    await userEvent.click(within(await screen.findByRole("tablist", { name: /config sections/i })).getByRole("tab", { name: /^sso$/i }));
 
     expect((await screen.findByRole("tablist", { name: /config sections/i })).closest(".surface")).toBeNull();
     expect(await screen.findByRole("heading", { name: "SSO" })).toBeInTheDocument();
@@ -569,6 +578,33 @@ describe("App", () => {
       );
     });
     expect(await screen.findByText("Saved")).toBeInTheDocument();
+  });
+
+  it("edits global timezone config", async () => {
+    const fetchMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+
+    render(<App />);
+    await screen.findByRole("button", { name: /Default/ });
+    await userEvent.click(screen.getByRole("button", { name: /^Config$/i }));
+
+    expect(await screen.findByRole("heading", { name: "General" })).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText("Timezone", { selector: "select" }), "America/New_York");
+    await userEvent.click(screen.getByRole("button", { name: /save config/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/config/general"),
+        expect.objectContaining({
+          method: "PATCH",
+          body: expect.stringContaining(`"APP_TIMEZONE"`),
+        }),
+      );
+    });
+    const patchCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/config/general") && init?.method === "PATCH");
+    expect(patchCall).toBeDefined();
+    const body = JSON.parse(String(patchCall?.[1]?.body));
+    expect(body.items).toEqual([{ key: "APP_TIMEZONE", value: "America/New_York" }]);
   });
 
   it("edits operation log runtime config from the config subnavigation", async () => {
@@ -612,8 +648,6 @@ describe("App", () => {
     expect(enabledToggle).toHaveAttribute("type", "checkbox");
     expect(enabledToggle).not.toBeChecked();
     await userEvent.click(enabledToggle);
-    await userEvent.selectOptions(screen.getByLabelText("Timezone", { selector: "select" }), "America/New_York");
-    await userEvent.click(screen.getByRole("button", { name: /clear timezone override/i }));
     await userEvent.clear(screen.getByLabelText("Cycle start time"));
     await userEvent.type(screen.getByLabelText("Cycle start time"), "02:30");
     await userEvent.click(screen.getByRole("button", { name: /save config/i }));
@@ -633,7 +667,6 @@ describe("App", () => {
     expect(body.items).toEqual(expect.arrayContaining([
       { key: "DREAMING_ENABLED", value: "true" },
       { key: "DREAMING_FORCE_ENABLED", value: "false" },
-      { key: "DREAMING_TIMEZONE", value: "" },
       { key: "DREAMING_START_TIME_LOCAL", value: "02:30" },
     ]));
     expect(await screen.findByText("Saved")).toBeInTheDocument();
@@ -652,7 +685,6 @@ describe("App", () => {
     const enabledToggle = screen.getByLabelText("Enable scheduled detection", { selector: "input" });
     expect(enabledToggle).not.toBeChecked();
     await userEvent.click(enabledToggle);
-    await userEvent.selectOptions(screen.getByLabelText("Timezone", { selector: "select" }), "UTC");
     await userEvent.clear(screen.getByLabelText("Jitter seconds"));
     await userEvent.type(screen.getByLabelText("Jitter seconds"), "0");
     await userEvent.click(screen.getByRole("button", { name: /save config/i }));
@@ -671,7 +703,6 @@ describe("App", () => {
     const body = JSON.parse(String(patchCall?.[1]?.body));
     expect(body.items).toEqual(expect.arrayContaining([
       { key: "COMMUNITY_DETECTION_ENABLED", value: "true" },
-      { key: "COMMUNITY_DETECTION_TIMEZONE", value: "UTC" },
       { key: "COMMUNITY_DETECTION_JITTER_SECONDS", value: "0" },
     ]));
   });
@@ -709,6 +740,7 @@ function mockPortalFetch({
   let currentProfiles = teams;
   let currentKeys = keys;
   let currentBans = bans;
+  let currentGeneralConfig = structuredClone(generalConfigSnapshot);
   let currentSSOConfig = structuredClone(ssoConfigSnapshot);
   let currentDreamingConfig = structuredClone(dreamingConfigSnapshot);
   let currentCommunityDetectionConfig = structuredClone(communityDetectionConfigSnapshot);
@@ -726,6 +758,21 @@ function mockPortalFetch({
     }
     if (url.includes("/metrics") && method === "GET") {
       return jsonResponse({ data: metricsSnapshot });
+    }
+    if (url.endsWith("/config/general") && method === "GET") {
+      return jsonResponse({ data: currentGeneralConfig });
+    }
+    if (url.endsWith("/config/general") && method === "PATCH") {
+      const body = JSON.parse(String(init?.body));
+      currentGeneralConfig = {
+        ...currentGeneralConfig,
+        update_time: "2026-06-16T09:01:00Z",
+        items: currentGeneralConfig.items.map((item) => {
+          const update = body.items.find((candidate: { key: string }) => candidate.key === item.key);
+          return update ? { ...item, value: update.value, updated_at: "2026-06-16T09:01:00Z" } : item;
+        }),
+      };
+      return jsonResponse({ data: currentGeneralConfig });
     }
     if (url.endsWith("/config/sso") && method === "GET") {
       return jsonResponse({ data: currentSSOConfig });

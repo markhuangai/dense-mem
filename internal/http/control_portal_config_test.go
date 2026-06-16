@@ -18,10 +18,12 @@ import (
 )
 
 type controlAppConfigSvc struct {
+	generalSettings      *domain.GeneralConfigSettings
 	settings             *domain.SSOConfigSettings
 	dreamingSettings     *domain.DreamingConfigSettings
 	communitySettings    *domain.CommunityDetectionConfigSettings
 	operationLogSettings *domain.OperationLogConfigSettings
+	generalValues        map[string]string
 	values               map[string]string
 	dreamingValues       map[string]string
 	communityValues      map[string]string
@@ -30,6 +32,30 @@ type controlAppConfigSvc struct {
 	updateErr            error
 	dreamingRuntime      domain.DreamingRuntimeConfig
 	dreamingRuntimeErr   error
+}
+
+func (s *controlAppConfigSvc) GetGeneralSettings(context.Context) (*domain.GeneralConfigSettings, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	return s.generalSettings, nil
+}
+
+func (s *controlAppConfigSvc) UpdateGeneralSettings(_ context.Context, values map[string]string, _, _, _ string) (*domain.GeneralConfigSettings, error) {
+	if s.updateErr != nil {
+		return nil, s.updateErr
+	}
+	if s.generalValues == nil {
+		s.generalValues = make(map[string]string)
+	}
+	for key, value := range values {
+		s.generalValues[key] = value
+	}
+	return s.generalSettings, nil
+}
+
+func (s *controlAppConfigSvc) GeneralRuntimeConfig(context.Context) (domain.GeneralRuntimeConfig, error) {
+	return domain.GeneralRuntimeConfig{}, nil
 }
 
 func (s *controlAppConfigSvc) GetSSOSettings(context.Context) (*domain.SSOConfigSettings, error) {
@@ -126,6 +152,53 @@ func (s *controlAppConfigSvc) UpdateOperationLogSettings(_ context.Context, valu
 
 func (s *controlAppConfigSvc) OperationLogRuntimeConfig(context.Context) (domain.OperationLogRuntimeConfig, error) {
 	return domain.OperationLogRuntimeConfig{}, nil
+}
+
+func TestControlPortalGeneralConfigFlows(t *testing.T) {
+	now := time.Date(2026, 6, 16, 9, 0, 0, 0, time.UTC)
+	appConfig := &controlAppConfigSvc{
+		generalSettings: &domain.GeneralConfigSettings{
+			UpdateTime: now.Format(time.RFC3339Nano),
+			Items: []domain.GeneralConfigItem{{
+				Key:            domain.AppConfigTimezone,
+				Value:          "Local",
+				EffectiveValue: "Local",
+				UpdatedAt:      now,
+			}},
+			Effective: domain.GeneralRuntimeConfig{Timezone: "Local"},
+		},
+	}
+	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+		ControlHTTPAddr:    "127.0.0.1:8090",
+		ControlPortalToken: "secret",
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
+		Config: appConfig,
+	}, HealthConfig{}, nil)
+	require.NoError(t, err)
+
+	do := func(method, path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer secret")
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := do(http.MethodGet, "/control/api/config/general", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"timezone":"Local"`)
+
+	rec = do(http.MethodPatch, "/control/api/config/general", `{"items":[{"key":"APP_TIMEZONE","value":"America/New_York"}]}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "America/New_York", appConfig.generalValues[domain.AppConfigTimezone])
+
+	rec = do(http.MethodPatch, "/control/api/config/general", "{")
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+
+	appConfig.updateErr = service.ErrInvalidAppConfig
+	rec = do(http.MethodPatch, "/control/api/config/general", `{"items":[{"key":"APP_TIMEZONE","value":"Nope/Zone"}]}`)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
 func TestControlPortalSSOConfigFlows(t *testing.T) {
@@ -348,6 +421,7 @@ func TestControlPortalOperationLogConfigFlows(t *testing.T) {
 }
 
 func TestControlConfigNilResponses(t *testing.T) {
+	require.Empty(t, toControlGeneralConfig(nil).Items)
 	require.Empty(t, toControlSSOConfig(nil).Items)
 	require.Empty(t, toControlDreamingConfig(nil).Items)
 	require.Empty(t, toControlCommunityDetectionConfig(nil).Items)

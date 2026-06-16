@@ -5,13 +5,22 @@ SELECT set_config('app.tx_mode', 'system', true);
 SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
 
+WITH existing_custom_timezone AS (
+    SELECT value
+    FROM app_config
+    WHERE key LIKE '%\_TIMEZONE' ESCAPE '\'
+      AND key <> 'APP_TIMEZONE'
+      AND value NOT IN ('', 'UTC', 'Local')
+    ORDER BY updated_at DESC, key ASC
+    LIMIT 1
+)
 INSERT INTO app_config (key, value)
-VALUES
-    ('COMMUNITY_DETECTION_ENABLED', 'false'),
-    ('COMMUNITY_DETECTION_START_TIME_LOCAL', '03:30'),
-    ('COMMUNITY_DETECTION_MAX_CONCURRENCY', '1'),
-    ('COMMUNITY_DETECTION_JITTER_SECONDS', '600')
+VALUES ('APP_TIMEZONE', COALESCE((SELECT value FROM existing_custom_timezone), 'Local'))
 ON CONFLICT (key) DO NOTHING;
+
+DELETE FROM app_config
+WHERE key LIKE '%\_TIMEZONE' ESCAPE '\'
+  AND key <> 'APP_TIMEZONE';
 
 UPDATE app_config
 SET value = regexp_replace(
@@ -32,12 +41,7 @@ SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
 
 DELETE FROM app_config
-WHERE key IN (
-    'COMMUNITY_DETECTION_ENABLED',
-    'COMMUNITY_DETECTION_START_TIME_LOCAL',
-    'COMMUNITY_DETECTION_MAX_CONCURRENCY',
-    'COMMUNITY_DETECTION_JITTER_SECONDS'
-);
+WHERE key = 'APP_TIMEZONE';
 
 UPDATE app_config
 SET value = regexp_replace(
