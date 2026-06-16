@@ -1,4 +1,5 @@
 -- +goose Up
+-- +goose StatementBegin
 DO $$
 BEGIN
     IF EXISTS (
@@ -15,8 +16,10 @@ BEGIN
             ALTER COLUMN run_date TYPE DATE USING run_date::DATE;
     END IF;
 END $$;
+-- +goose StatementEnd
 
 -- +goose Down
+-- +goose StatementBegin
 DO $$
 BEGIN
     IF EXISTS (
@@ -34,3 +37,4 @@ BEGIN
             CHECK (run_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
     END IF;
 END $$;
+-- +goose StatementEnd
