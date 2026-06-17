@@ -240,7 +240,7 @@ func telemetryCardSpecs(scope TelemetryScope, baseLabels map[string]string, wind
 		{ID: "p95_recall_latency", Label: "P95 recall latency", Unit: "ms", Query: telemetryHistogramQuantile("densemem_recall_duration_seconds", scope, baseLabels, nil, window, 0.95, 1000)},
 		{ID: "llm_recall_used_rate", Label: "LLM recall used", Unit: "percent", Query: telemetryRecallFeedbackRate(scope, baseLabels, map[string]string{"used": "true"}, window)},
 		{ID: "llm_recall_answer_supported_rate", Label: "LLM answer supported", Unit: "percent", Query: telemetryRecallFeedbackRate(scope, baseLabels, map[string]string{"answer_supported": "true"}, window)},
-		{ID: "llm_recall_quality_score", Label: "LLM recall quality", Unit: "percent", Query: telemetryHistogramAverage("densemem_recall_feedback_quality_score", scope, baseLabels, nil, window, 100)},
+		{ID: "llm_recall_quality_score", Label: "LLM recall quality", Unit: "percent", Query: telemetrySparseHistogramAverage("densemem_recall_feedback_quality_score", scope, baseLabels, nil, window, 100)},
 		{ID: "llm_recall_missing_context_rate", Label: "LLM missing context", Unit: "percent", Query: telemetryRecallFeedbackRate(scope, baseLabels, map[string]string{"missing_context": "true"}, window)},
 		{ID: "llm_recall_irrelevant_rate", Label: "LLM irrelevant recall", Unit: "percent", Query: telemetryRecallFeedbackRate(scope, baseLabels, map[string]string{"irrelevant": "true"}, window)},
 		{ID: "promotions", Label: "Promotions", Unit: "promotions", Query: telemetryIncrease("densemem_promotion_outcome_total", scope, baseLabels, map[string]string{"outcome": "promoted"}, window)},
@@ -270,7 +270,7 @@ func telemetrySeriesSpecs(selector string, rateWindow string) []telemetryQuerySp
 		{ID: "recall_p95_latency", Label: "Recall p95 latency", Unit: "ms", Query: telemetryRangeHistogramQuantile("densemem_recall_duration_seconds", selector, "", rateWindow, 0.95, 1000)},
 		{ID: "llm_recall_used_rate", Label: "LLM recall used", Unit: "percent", Query: telemetryRangeRecallFeedbackRate(selector, `used="true"`, rateWindow)},
 		{ID: "llm_recall_answer_supported_rate", Label: "LLM answer supported", Unit: "percent", Query: telemetryRangeRecallFeedbackRate(selector, `answer_supported="true"`, rateWindow)},
-		{ID: "llm_recall_quality_score", Label: "LLM recall quality", Unit: "percent", Query: telemetryRangeHistogramAverage("densemem_recall_feedback_quality_score", selector, "", rateWindow, 100)},
+		{ID: "llm_recall_quality_score", Label: "LLM recall quality", Unit: "percent", Query: telemetryRangeSparseHistogramAverage("densemem_recall_feedback_quality_score", selector, "", rateWindow, 100)},
 		{ID: "llm_recall_missing_context_rate", Label: "LLM missing context", Unit: "percent", Query: telemetryRangeRecallFeedbackRate(selector, `missing_context="true"`, rateWindow)},
 		{ID: "llm_recall_irrelevant_rate", Label: "LLM irrelevant recall", Unit: "percent", Query: telemetryRangeRecallFeedbackRate(selector, `irrelevant="true"`, rateWindow)},
 		{ID: "claim_verify_latency", Label: "Claim-to-verify", Unit: "ms", Query: telemetryRangeHistogramAverage("densemem_memory_funnel_latency_seconds", selector, `stage="claim_to_verify"`, rateWindow, 1000)},
@@ -302,13 +302,30 @@ func telemetryHistogramQuantile(metric string, scope TelemetryScope, baseLabels 
 }
 
 func telemetryRecallFeedbackRate(scope TelemetryScope, baseLabels map[string]string, extra map[string]string, window string) string {
-	matched := telemetryIncrease("densemem_recall_feedback_total", scope, baseLabels, extra, window)
-	all := telemetryIncrease("densemem_recall_feedback_total", scope, baseLabels, nil, window)
+	matched := telemetrySparseCounterIncrease("densemem_recall_feedback_total", scope, baseLabels, extra, window)
+	all := telemetrySparseCounterIncrease("densemem_recall_feedback_total", scope, baseLabels, nil, window)
 	return fmt.Sprintf("100 * (%s) / (%s)", matched, all)
 }
 
 func telemetryGaugeSum(metric string, scope TelemetryScope, baseLabels map[string]string, extra map[string]string) string {
 	return fmt.Sprintf("sum(%s%s)", metric, telemetrySelector(scope, mergeTelemetryLabels(baseLabels, extra)))
+}
+
+func telemetrySparseCounterIncrease(metric string, scope TelemetryScope, baseLabels map[string]string, extra map[string]string, window string) string {
+	return telemetrySparseCounterIncreaseForSelector(metric, telemetrySelector(scope, mergeTelemetryLabels(baseLabels, extra)), window)
+}
+
+func telemetrySparseCounterIncreaseForSelector(metric string, selector string, window string) string {
+	ranged := fmt.Sprintf("increase(%s%s[%s])", metric, selector, window)
+	current := fmt.Sprintf("%s%s", metric, selector)
+	offset := fmt.Sprintf("%s%s offset %s", metric, selector, window)
+	return fmt.Sprintf("sum(%s + ((%s unless %s) or (0 * %s)))", ranged, current, offset, ranged)
+}
+
+func telemetrySparseHistogramAverage(metric string, scope TelemetryScope, baseLabels map[string]string, extra map[string]string, window string, multiplier float64) string {
+	sum := telemetrySparseCounterIncrease(metric+"_sum", scope, baseLabels, extra, window)
+	count := telemetrySparseCounterIncrease(metric+"_count", scope, baseLabels, extra, window)
+	return fmt.Sprintf("%g * (%s) / (%s)", multiplier, sum, count)
 }
 
 func telemetryRangeHistogramAverage(metric string, selector string, raw string, rateWindow string, multiplier float64) string {
@@ -327,7 +344,18 @@ func telemetryRangeHistogramQuantile(metric string, selector string, raw string,
 
 func telemetryRangeRecallFeedbackRate(selector string, raw string, rateWindow string) string {
 	matchedSelector := telemetrySelectorWithRaw(selector, raw)
-	return fmt.Sprintf("100 * sum(rate(densemem_recall_feedback_total%s[%s])) / sum(rate(densemem_recall_feedback_total%s[%s]))", matchedSelector, rateWindow, selector, rateWindow)
+	matched := telemetrySparseCounterIncreaseForSelector("densemem_recall_feedback_total", matchedSelector, rateWindow)
+	all := telemetrySparseCounterIncreaseForSelector("densemem_recall_feedback_total", selector, rateWindow)
+	return fmt.Sprintf("100 * (%s) / (%s)", matched, all)
+}
+
+func telemetryRangeSparseHistogramAverage(metric string, selector string, raw string, rateWindow string, multiplier float64) string {
+	if raw != "" {
+		selector = telemetrySelectorWithRaw(selector, raw)
+	}
+	sum := telemetrySparseCounterIncreaseForSelector(metric+"_sum", selector, rateWindow)
+	count := telemetrySparseCounterIncreaseForSelector(metric+"_count", selector, rateWindow)
+	return fmt.Sprintf("%g * (%s) / (%s)", multiplier, sum, count)
 }
 
 func telemetryRangeGauge(metric string, selector string, raw string) string {
