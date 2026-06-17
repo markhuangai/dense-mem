@@ -48,6 +48,8 @@ type scopedReaderAdapter struct {
 	inner neo4j.ScopedReader
 }
 
+const startupTimeout = 5 * time.Minute
+
 func (a *scopedReaderAdapter) ScopedRead(ctx context.Context, profileID string, query string, params map[string]any) (any, []map[string]any, error) {
 	summary, rows, err := a.inner.ScopedRead(ctx, profileID, query, params)
 	return summary, rows, err
@@ -101,9 +103,8 @@ func main() {
 	validation.SetEmbeddingDimensions(cfg.GetEmbeddingDimensions())
 	middleware.SetAuthVerificationConcurrency(cfg.AuthVerifyMaxConcurrency)
 
-	// Create root context with timeout for startup. A cold database may need
-	// time to apply migrations before schema-dependent checks can run.
-	startupCtx, startupCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// A cold Neo4j instance can need several minutes to create schema indexes.
+	startupCtx, startupCancel := context.WithTimeout(context.Background(), startupTimeout)
 	defer startupCancel()
 
 	// Initialize Postgres connection (REQUIRED for production)
