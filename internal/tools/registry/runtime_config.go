@@ -14,17 +14,16 @@ const SubmitRecallFeedbackToolName = "submit_recall_feedback"
 var ErrToolDisabled = errors.New("tool disabled")
 
 // RecallFeedbackConfigProvider is the runtime config surface needed by
-// recall-feedback tool discovery and execution.
+// recall-feedback request generation and execution.
 type RecallFeedbackConfigProvider interface {
 	RecallFeedbackRuntimeConfig(ctx context.Context) (domain.RecallFeedbackRuntimeConfig, error)
 }
 
 // ToolVisible reports whether a registered tool should be visible for a request.
-func ToolVisible(ctx context.Context, tool Tool, cfg RecallFeedbackConfigProvider) bool {
-	if tool.Name != SubmitRecallFeedbackToolName {
-		return true
-	}
-	return RecallFeedbackEnabled(ctx, cfg)
+// Tool schemas stay stable across long-lived clients; runtime config gates
+// recall feedback requests and submissions instead of discovery.
+func ToolVisible(_ context.Context, _ Tool, _ RecallFeedbackConfigProvider) bool {
+	return true
 }
 
 // RecallFeedbackEnabled fails closed because this feature controls optional

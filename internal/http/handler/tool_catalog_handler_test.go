@@ -152,7 +152,7 @@ func TestToolCatalogHandler_FullV1Surface(t *testing.T) {
 	}
 }
 
-func TestToolCatalogHandler_HidesDisabledRecallFeedbackTool(t *testing.T) {
+func TestToolCatalogHandler_ListsRecallFeedbackToolWithRuntimeDisabled(t *testing.T) {
 	reg := registry.New()
 	if err := reg.Register(registry.Tool{
 		Name:           registry.SubmitRecallFeedbackToolName,
@@ -174,8 +174,8 @@ func TestToolCatalogHandler_HidesDisabledRecallFeedbackTool(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d; want 200. body=%s", rec.Code, rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), registry.SubmitRecallFeedbackToolName) {
-		t.Fatalf("disabled recall feedback tool leaked into catalog: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), registry.SubmitRecallFeedbackToolName) {
+		t.Fatalf("recall feedback tool missing from catalog: %s", rec.Body.String())
 	}
 }
 

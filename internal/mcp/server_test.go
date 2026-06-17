@@ -239,7 +239,7 @@ func TestMCP_ToolsListMirrorsRegistry(t *testing.T) {
 	}
 }
 
-func TestMCP_ToolsListAndCallHideRuntimeDisabledRecallFeedback(t *testing.T) {
+func TestMCP_ToolsListKeepsRecallFeedbackDiscoverableWhenRuntimeDisabled(t *testing.T) {
 	logger, _ := testLogger(t)
 	reg := registry.New()
 	_ = reg.Register(registry.Tool{
@@ -247,7 +247,7 @@ func TestMCP_ToolsListAndCallHideRuntimeDisabledRecallFeedback(t *testing.T) {
 		Description: "feedback",
 		InputSchema: map[string]any{"type": "object"},
 		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
-			return map[string]any{"recorded": true}, nil
+			return nil, registry.ErrToolDisabled
 		},
 	})
 	s := NewServerWithScopesTeamContextAndRuntimeConfig(reg, "pA", []string{"read"}, TeamContext{}, logger, recallFeedbackConfigStub{enabled: false})
@@ -268,10 +268,15 @@ func TestMCP_ToolsListAndCallHideRuntimeDisabledRecallFeedback(t *testing.T) {
 	if err := json.Unmarshal(listResp.Result, &listPayload); err != nil {
 		t.Fatalf("result unmarshal: %v", err)
 	}
+	found := false
 	for _, tool := range listPayload.Tools {
 		if tool.Name == registry.SubmitRecallFeedbackToolName {
-			t.Fatalf("tools/list exposed disabled recall feedback tool: %s", out)
+			found = true
+			break
 		}
+	}
+	if !found {
+		t.Fatalf("tools/list did not expose recall feedback tool: %s", out)
 	}
 
 	out = runRPC(t, s, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"submit_recall_feedback","arguments":{}}}`)
