@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import { Check, Clock, ListFilter, MessageSquare, Moon, Network, RefreshCw, Settings, X } from "lucide-react";
 import { CommunityDetectionConfig, CommunityDetectionConfigItem, ControlApi, DreamingConfig, DreamingConfigItem, GeneralConfig, GeneralConfigItem, OperationLogConfig, OperationLogConfigItem, RecallFeedbackConfig, RecallFeedbackConfigItem, SSOConfig, SSOConfigItem } from "../api";
 import { SectionHeading } from "../ui/components";
@@ -237,7 +237,7 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function loadConfig() {
+  const loadConfig = useCallback(async () => {
     setLoading(true);
     setError("");
     setMessage("");
@@ -250,11 +250,11 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
     } finally {
       setLoading(false);
     }
-  }
+  }, [load]);
 
   useEffect(() => {
     void loadConfig();
-  }, []);
+  }, [loadConfig]);
 
   async function saveConfig(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

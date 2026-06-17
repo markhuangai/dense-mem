@@ -12,7 +12,7 @@ import (
 )
 
 func TestRecallService_TierHitDisplacesFragmentBeforeHydration(t *testing.T) {
-	sem := &fakeSemanticSearcher{hits: []semanticsearch.SearchHit{{ID: "fragment-1"}}}
+	sem := &fakeSemanticSearcher{hits: []semanticsearch.SearchHit{{ID: "fragment-1", ProfileID: "pA"}}}
 	kw := &fakeKeywordSearcher{}
 	hydrator := &fakeHydrator{}
 	factSearcher := &fakeFactSearcher{

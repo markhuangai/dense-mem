@@ -42,7 +42,14 @@ export async function requestJson<T>(url: string, options: JsonRequestOptions = 
   });
 
   const text = await response.text();
-  const payload = text ? JSON.parse(text) : null;
+  let payload: unknown = null;
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = null;
+    }
+  }
 
   if (!response.ok) {
     throw new ApiError(response.status, errorMessage(payload, response.statusText));
