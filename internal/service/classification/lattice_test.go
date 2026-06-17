@@ -147,8 +147,8 @@ func TestLattice(t *testing.T) {
 		}
 		got := l.Max(a, b)
 		require.Equal(t, "internal", got["confidentiality"])
-		require.Equal(t, "alpha", got["custom_dim"],   "unknown key from a should be present")
-		require.Equal(t, "beta", got["another_dim"],   "unknown key from b should be present")
+		require.Equal(t, "alpha", got["custom_dim"], "unknown key from a should be present")
+		require.Equal(t, "beta", got["another_dim"], "unknown key from b should be present")
 	})
 
 	t.Run("unknown key in both inputs uses b value as stable tie-break", func(t *testing.T) {

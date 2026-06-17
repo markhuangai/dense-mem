@@ -24,8 +24,8 @@ type DiscoverabilityHarness interface {
 
 // EmbeddingBehavior configures the mock embedding server response.
 type EmbeddingBehavior struct {
-	StatusCode int      // 0 == success
-	Delay      int      // ms stall before reply
+	StatusCode int // 0 == success
+	Delay      int // ms stall before reply
 	Vector     []float32
 	ErrorBody  string
 }
@@ -35,12 +35,12 @@ const DefaultEmbeddingVectorSize = 1536
 
 // discoverabilityHarness is the concrete implementation of DiscoverabilityHarness.
 type discoverabilityHarness struct {
-	server     *httptest.Server
-	token      string
-	behavior   EmbeddingBehavior
-	callCount  int
+	server      *httptest.Server
+	token       string
+	behavior    EmbeddingBehavior
+	callCount   int
 	callCountMu sync.Mutex
-	t          *testing.T
+	t           *testing.T
 }
 
 // NewDiscoverabilityHarness creates a new DiscoverabilityHarness instance.
@@ -187,7 +187,7 @@ func (h *discoverabilityHarness) generateVector(input string) []float32 {
 		// Use hash bytes cyclically to generate normalized float values
 		byteIdx := i % len(hashStr)
 		// Normalize to range [-1, 1] based on byte value
-		vector[i] = float32(hashStr[byteIdx]) / 128.0 - 1.0
+		vector[i] = float32(hashStr[byteIdx])/128.0 - 1.0
 	}
 
 	return vector

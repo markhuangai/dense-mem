@@ -19,6 +19,7 @@ func TestClientIPFromContext_EmptyWhenUnset(t *testing.T) {
 }
 
 func TestClientIPFromContext_NilSafe(t *testing.T) {
+	//lint:ignore SA1012 ClientIPFromContext intentionally accepts nil for defensive request logging paths.
 	if got := ClientIPFromContext(nil); got != "" {
 		t.Errorf("ClientIPFromContext(nil) = %q; want empty string", got)
 	}

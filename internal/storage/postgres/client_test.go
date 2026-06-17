@@ -72,7 +72,6 @@ func skipIfNoPostgres(t *testing.T, ctx context.Context) (string, func()) {
 	return dsn, cleanup
 }
 
-
 // TestOpenSuccess verifies successful connection and ping.
 func TestOpenSuccess(t *testing.T) {
 	ctx := context.Background()

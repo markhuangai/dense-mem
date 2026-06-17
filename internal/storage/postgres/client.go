@@ -20,8 +20,8 @@ type PostgresClient interface {
 
 // DB wraps a GORM database connection with configured pool settings.
 type DB struct {
-	db     *gorm.DB
-	sqlDB  *sql.DB
+	db    *gorm.DB
+	sqlDB *sql.DB
 }
 
 // Ensure DB implements PostgresClient

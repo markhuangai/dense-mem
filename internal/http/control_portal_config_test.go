@@ -519,13 +519,104 @@ func TestControlConfigNilResponses(t *testing.T) {
 	require.Empty(t, toControlRecallFeedbackConfig(nil).Items)
 }
 
-func TestControlPortalOperationLogConfigUnavailable(t *testing.T) {
-	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-	h := &controlPortalHandler{}
+func TestControlPortalConfigUnavailableHandlers(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(*controlPortalHandler, echo.Context) error
+	}{
+		{name: "get general", call: func(h *controlPortalHandler, c echo.Context) error { return h.getGeneralConfig(c) }},
+		{name: "update general", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateGeneralConfig(c) }},
+		{name: "get sso", call: func(h *controlPortalHandler, c echo.Context) error { return h.getSSOConfig(c) }},
+		{name: "update sso", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateSSOConfig(c) }},
+		{name: "get dreaming", call: func(h *controlPortalHandler, c echo.Context) error { return h.getDreamingConfig(c) }},
+		{name: "update dreaming", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateDreamingConfig(c) }},
+		{name: "get community", call: func(h *controlPortalHandler, c echo.Context) error { return h.getCommunityDetectionConfig(c) }},
+		{name: "update community", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateCommunityDetectionConfig(c) }},
+		{name: "get operation logs", call: func(h *controlPortalHandler, c echo.Context) error { return h.getOperationLogConfig(c) }},
+		{name: "update operation logs", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateOperationLogConfig(c) }},
+		{name: "get recall feedback", call: func(h *controlPortalHandler, c echo.Context) error { return h.getRecallFeedbackConfig(c) }},
+		{name: "update recall feedback", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateRecallFeedbackConfig(c) }},
+	}
 
-	require.ErrorContains(t, h.getOperationLogConfig(c), "app config service unavailable")
-	require.ErrorContains(t, h.updateOperationLogConfig(c), "app config service unavailable")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.ErrorContains(t, tt.call(&controlPortalHandler{}, newControlConfigContext(http.MethodPatch, `{}`)), "app config service unavailable")
+		})
+	}
+}
+
+func TestControlPortalConfigGetErrors(t *testing.T) {
+	h := &controlPortalHandler{appConfig: &controlAppConfigSvc{getErr: errors.New("repo failed")}}
+	tests := []struct {
+		name string
+		call func(echo.Context) error
+	}{
+		{name: "general", call: h.getGeneralConfig},
+		{name: "sso", call: h.getSSOConfig},
+		{name: "dreaming", call: h.getDreamingConfig},
+		{name: "community detection", call: h.getCommunityDetectionConfig},
+		{name: "operation logs", call: h.getOperationLogConfig},
+		{name: "recall feedback", call: h.getRecallFeedbackConfig},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.ErrorContains(t, tt.call(newControlConfigContext(http.MethodGet, "")), "repo failed")
+		})
+	}
+}
+
+func TestControlPortalConfigUpdateBackendErrors(t *testing.T) {
+	backendErr := errors.New("db failed")
+	tests := []struct {
+		name string
+		call func(*controlPortalHandler, echo.Context) error
+		body string
+	}{
+		{
+			name: "general",
+			call: func(h *controlPortalHandler, c echo.Context) error { return h.updateGeneralConfig(c) },
+			body: `{"items":[{"key":"APP_TIMEZONE","value":"UTC"}]}`,
+		},
+		{
+			name: "dreaming",
+			call: func(h *controlPortalHandler, c echo.Context) error { return h.updateDreamingConfig(c) },
+			body: `{"items":[{"key":"DREAMING_ENABLED","value":"true"}]}`,
+		},
+		{
+			name: "community detection",
+			call: func(h *controlPortalHandler, c echo.Context) error { return h.updateCommunityDetectionConfig(c) },
+			body: `{"items":[{"key":"COMMUNITY_DETECTION_ENABLED","value":"true"}]}`,
+		},
+		{
+			name: "operation logs",
+			call: func(h *controlPortalHandler, c echo.Context) error { return h.updateOperationLogConfig(c) },
+			body: `{"items":[{"key":"OPERATION_LOG_RETENTION_DAYS","value":"45"}]}`,
+		},
+		{
+			name: "recall feedback",
+			call: func(h *controlPortalHandler, c echo.Context) error { return h.updateRecallFeedbackConfig(c) },
+			body: `{"items":[{"key":"RECALL_FEEDBACK_ENABLED","value":"true"}]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &controlPortalHandler{appConfig: &controlAppConfigSvc{updateErr: backendErr}}
+			require.ErrorIs(t, tt.call(h, newControlConfigContext(http.MethodPatch, tt.body)), backendErr)
+		})
+	}
+}
+
+func TestControlPortalOperationLogConfigUnavailable(t *testing.T) {
+	require.ErrorContains(t, (&controlPortalHandler{}).getOperationLogConfig(newControlConfigContext(http.MethodGet, "")), "app config service unavailable")
+	require.ErrorContains(t, (&controlPortalHandler{}).updateOperationLogConfig(newControlConfigContext(http.MethodPatch, `{}`)), "app config service unavailable")
+}
+
+func newControlConfigContext(method, body string) echo.Context {
+	e := echo.New()
+	req := httptest.NewRequest(method, "/", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	return e.NewContext(req, rec)
 }

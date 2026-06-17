@@ -116,6 +116,17 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	usageMW := middleware.UsageMetricsMiddleware(deps.UsageMetrics)
 	rateLimitMW := middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService)
 	lastUsedMW := middleware.LastUsedMiddleware(deps.APIKeyRepo)
+	protectedGroup := func(prefix string) *echo.Group {
+		group := e.Group(prefix)
+		group.Use(authMW)
+		group.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
+		group.Use(middleware.AuthorizeProfile(profileAuthzSvc))
+		group.Use(deps.PostAuthMiddleware...)
+		group.Use(usageMW)
+		group.Use(rateLimitMW)
+		group.Use(lastUsedMW)
+		return group
+	}
 
 	// Profile handler for profile operations
 	profileHandler := handler.NewProfileHandler(deps.ProfileSvc)
@@ -132,14 +143,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	auditHandler := handler.NewAuditHandler(deps.AuditService)
 
 	registerTeamScopedRoutes := func(prefix string, legacyAPIKeyPaths bool) {
-		group := e.Group(prefix)
-		group.Use(authMW)
-		group.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
-		group.Use(middleware.AuthorizeProfile(profileAuthzSvc))
-		group.Use(deps.PostAuthMiddleware...)
-		group.Use(usageMW)
-		group.Use(rateLimitMW)
-		group.Use(lastUsedMW)
+		group := protectedGroup(prefix)
 
 		group.GET("", profileHandler.Get, middleware.RequireScopes("read"))
 		group.PATCH("", profileHandler.Patch, middleware.RequireRole(service.APIKeyRoleManager), middleware.BindAndValidate[dto.UpdateProfileRequest](middleware.UpdateProfileBodyKey))
@@ -180,14 +184,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 
 	// Fragment routes — canonical /api/v1/fragments (AC-50)
 	// Middleware: auth -> profile resolution(header) -> profile authorization -> rate limit
-	fragmentGroup := e.Group("/api/v1/fragments")
-	fragmentGroup.Use(authMW)
-	fragmentGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
-	fragmentGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
-	fragmentGroup.Use(deps.PostAuthMiddleware...)
-	fragmentGroup.Use(usageMW)
-	fragmentGroup.Use(rateLimitMW)
-	fragmentGroup.Use(lastUsedMW)
+	fragmentGroup := protectedGroup("/api/v1/fragments")
 
 	if handlers.FragmentCreate != nil {
 		fragmentGroup.POST("", handlers.FragmentCreate, middleware.RequireScopes("write"))
@@ -207,14 +204,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 
 	// Claim routes — canonical /api/v1/claims (AC-16, knowledge pipeline Phase 2)
 	// Middleware: auth -> profile resolution(header) -> profile authorization -> rate limit
-	claimGroup := e.Group("/api/v1/claims")
-	claimGroup.Use(authMW)
-	claimGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
-	claimGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
-	claimGroup.Use(deps.PostAuthMiddleware...)
-	claimGroup.Use(usageMW)
-	claimGroup.Use(rateLimitMW)
-	claimGroup.Use(lastUsedMW)
+	claimGroup := protectedGroup("/api/v1/claims")
 
 	if handlers.ClaimCreate != nil {
 		claimGroup.POST("", handlers.ClaimCreate, middleware.RequireScopes("write"))
@@ -237,14 +227,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 
 	// Fact routes — canonical /api/v1/facts (AC-41, knowledge pipeline Phase 4)
 	// Middleware: auth -> profile resolution(header) -> profile authorization -> rate limit
-	factGroup := e.Group("/api/v1/facts")
-	factGroup.Use(authMW)
-	factGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
-	factGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
-	factGroup.Use(deps.PostAuthMiddleware...)
-	factGroup.Use(usageMW)
-	factGroup.Use(rateLimitMW)
-	factGroup.Use(lastUsedMW)
+	factGroup := protectedGroup("/api/v1/facts")
 
 	if handlers.FactGet != nil {
 		factGroup.GET("/:id", handlers.FactGet, middleware.RequireScopes("read"))
@@ -257,14 +240,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	}
 
 	// Community routes — canonical /api/v1/communities
-	communityGroup := e.Group("/api/v1/communities")
-	communityGroup.Use(authMW)
-	communityGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
-	communityGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
-	communityGroup.Use(deps.PostAuthMiddleware...)
-	communityGroup.Use(usageMW)
-	communityGroup.Use(rateLimitMW)
-	communityGroup.Use(lastUsedMW)
+	communityGroup := protectedGroup("/api/v1/communities")
 
 	if handlers.CommunityList != nil {
 		communityGroup.GET("", handlers.CommunityList, middleware.RequireScopes("read"))
@@ -274,14 +250,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	}
 
 	// MCP Streamable HTTP endpoint.
-	mcpGroup := e.Group("/mcp")
-	mcpGroup.Use(authMW)
-	mcpGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
-	mcpGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
-	mcpGroup.Use(deps.PostAuthMiddleware...)
-	mcpGroup.Use(usageMW)
-	mcpGroup.Use(rateLimitMW)
-	mcpGroup.Use(lastUsedMW)
+	mcpGroup := protectedGroup("/mcp")
 	if handlers.MCPPost != nil {
 		mcpGroup.POST("", handlers.MCPPost)
 	}
@@ -290,14 +259,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	}
 
 	// Tool routes
-	toolGroup := e.Group("/api/v1/tools")
-	toolGroup.Use(authMW)
-	toolGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
-	toolGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
-	toolGroup.Use(deps.PostAuthMiddleware...)
-	toolGroup.Use(usageMW)
-	toolGroup.Use(rateLimitMW)
-	toolGroup.Use(lastUsedMW)
+	toolGroup := protectedGroup("/api/v1/tools")
 
 	if handlers.ToolCatalog != nil {
 		toolGroup.GET("", handlers.ToolCatalog, middleware.RequireScopes("read"))
@@ -331,27 +293,13 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 
 	// Recall route — canonical GET /api/v1/recall (AC-55, AC-62)
 	// Middleware: auth -> profile resolution(header) -> profile authorization -> rate limit
-	recallGroup := e.Group("/api/v1/recall")
-	recallGroup.Use(authMW)
-	recallGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
-	recallGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
-	recallGroup.Use(deps.PostAuthMiddleware...)
-	recallGroup.Use(usageMW)
-	recallGroup.Use(rateLimitMW)
-	recallGroup.Use(lastUsedMW)
+	recallGroup := protectedGroup("/api/v1/recall")
 
 	if handlers.Recall != nil {
 		recallGroup.GET("", handlers.Recall, middleware.RequireScopes("read"))
 	}
 
-	dreamingGroup := e.Group("/api/v1/dreaming")
-	dreamingGroup.Use(authMW)
-	dreamingGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
-	dreamingGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
-	dreamingGroup.Use(deps.PostAuthMiddleware...)
-	dreamingGroup.Use(usageMW)
-	dreamingGroup.Use(rateLimitMW)
-	dreamingGroup.Use(lastUsedMW)
+	dreamingGroup := protectedGroup("/api/v1/dreaming")
 	if handlers.DreamingStatus != nil {
 		dreamingGroup.GET("/status", handlers.DreamingStatus, middleware.RequireScopes("read"))
 	}
@@ -359,14 +307,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 		dreamingGroup.GET("/runs", handlers.DreamingRuns, middleware.RequireScopes("read"))
 	}
 
-	dreamGroup := e.Group("/api/v1/dreams")
-	dreamGroup.Use(authMW)
-	dreamGroup.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
-	dreamGroup.Use(middleware.AuthorizeProfile(profileAuthzSvc))
-	dreamGroup.Use(deps.PostAuthMiddleware...)
-	dreamGroup.Use(usageMW)
-	dreamGroup.Use(rateLimitMW)
-	dreamGroup.Use(lastUsedMW)
+	dreamGroup := protectedGroup("/api/v1/dreams")
 	if handlers.DreamList != nil {
 		dreamGroup.GET("", handlers.DreamList, middleware.RequireScopes("read"))
 	}

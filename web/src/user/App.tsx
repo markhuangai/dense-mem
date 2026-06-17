@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3,
   FileText,
@@ -13,7 +13,6 @@ import {
   Sun,
   Users,
 } from "lucide-react";
-import { TelemetryDashboard } from "../telemetry/TelemetryDashboard";
 import { TelemetrySnapshot, TelemetryWindowKey } from "../telemetry/types";
 import {
   Claim,
@@ -26,9 +25,11 @@ import {
   UserApi,
   UserSession,
 } from "./api";
-import { TeamManagementPanel } from "./TeamManagementPanel";
-import { UserDreamsPanel } from "./DreamsPanel";
 import { AuthShell, PortalShell, SecretBox, SectionHeading } from "../ui/components";
+
+const TelemetryDashboard = lazy(() => import("../telemetry/TelemetryDashboard").then((module) => ({ default: module.TelemetryDashboard })));
+const TeamManagementPanel = lazy(() => import("./TeamManagementPanel").then((module) => ({ default: module.TeamManagementPanel })));
+const UserDreamsPanel = lazy(() => import("./DreamsPanel").then((module) => ({ default: module.UserDreamsPanel })));
 
 const TOKEN_STORAGE_KEY = "denseMem.userApiKey";
 const THEME_STORAGE_KEY = "denseMem.userTheme";
@@ -349,48 +350,54 @@ function UserPortal({
       detailLabel="Knowledge details"
       error={error}
     >
-      {activeTab === "search" && <SearchPanel api={api} />}
-      {activeTab === "dreams" && <UserDreamsPanel api={api} />}
-      {activeTab === "usage" && <UserTelemetryPanel api={api} />}
-      {activeTab === "facts" && <FactsPanel api={api} />}
-      {activeTab === "claims" && <ClaimsPanel api={api} />}
-      {activeTab === "fragments" && <FragmentsPanel api={api} />}
-      {activeTab === "communities" && <CommunitiesPanel api={api} />}
-      {activeTab === "team" && session?.can_manage_team && (
-        <TeamManagementPanel
-          api={api}
-          session={session}
-          onTeamUpdated={(team) => setSession((current) => current ? { ...current, team } : current)}
-        />
-      )}
-      {activeTab === "key" && session && (
-        <KeyPanel
-          api={api}
-          session={session}
-          onRotated={(rotated) => {
-            if (authMode === "api_key") {
-              sessionStorage.setItem(TOKEN_STORAGE_KEY, rotated.api_key);
-              onTokenChange(rotated.api_key);
-            }
-            setSession((current) => current ? {
-              ...current,
-              key: rotated.key,
-              can_rotate: rotated.key.scopes.includes("write"),
-              can_manage_team: rotated.key.role === "manager",
-            } : current);
-          }}
-          onSSOKeyChanged={(key) => {
-            setSession((current) => current ? {
-              ...current,
-              personal_key: key,
-              can_create_personal_key: false,
-              can_rotate_personal_key: key.scopes.includes("write") && (current.personal_key_max_scopes ?? []).includes("write"),
-            } : current);
-          }}
-        />
-      )}
+      <Suspense fallback={<LazyPanelFallback />}>
+        {activeTab === "search" && <SearchPanel api={api} />}
+        {activeTab === "dreams" && <UserDreamsPanel api={api} />}
+        {activeTab === "usage" && <UserTelemetryPanel api={api} />}
+        {activeTab === "facts" && <FactsPanel api={api} />}
+        {activeTab === "claims" && <ClaimsPanel api={api} />}
+        {activeTab === "fragments" && <FragmentsPanel api={api} />}
+        {activeTab === "communities" && <CommunitiesPanel api={api} />}
+        {activeTab === "team" && session?.can_manage_team && (
+          <TeamManagementPanel
+            api={api}
+            session={session}
+            onTeamUpdated={(team) => setSession((current) => current ? { ...current, team } : current)}
+          />
+        )}
+        {activeTab === "key" && session && (
+          <KeyPanel
+            api={api}
+            session={session}
+            onRotated={(rotated) => {
+              if (authMode === "api_key") {
+                sessionStorage.setItem(TOKEN_STORAGE_KEY, rotated.api_key);
+                onTokenChange(rotated.api_key);
+              }
+              setSession((current) => current ? {
+                ...current,
+                key: rotated.key,
+                can_rotate: rotated.key.scopes.includes("write"),
+                can_manage_team: rotated.key.role === "manager",
+              } : current);
+            }}
+            onSSOKeyChanged={(key) => {
+              setSession((current) => current ? {
+                ...current,
+                personal_key: key,
+                can_create_personal_key: false,
+                can_rotate_personal_key: key.scopes.includes("write") && (current.personal_key_max_scopes ?? []).includes("write"),
+              } : current);
+            }}
+          />
+        )}
+      </Suspense>
     </PortalShell>
   );
+}
+
+function LazyPanelFallback() {
+  return <div className="table-placeholder">Loading</div>;
 }
 
 function UserTelemetryPanel({ api }: { api: UserApi }) {

@@ -20,13 +20,10 @@
     "playwright:mock:user": "playwright test --config playwright.user.config.ts"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "^5.0.4",
     "lucide-react": "^0.468.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
-    "recharts": "^3.8.1",
-    "typescript": "^5.9.3",
-    "vite": "^7.1.9"
+    "recharts": "^3.8.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.1",
@@ -36,7 +33,10 @@
     "@types/node": "^25.6.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.0.4",
     "jsdom": "^25.0.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.9",
     "vitest": "^3.2.4"
   }
 }

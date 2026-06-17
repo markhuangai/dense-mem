@@ -32,8 +32,8 @@ func (e *TimeoutError) Is(target error) bool {
 
 // RateLimitError wraps ErrEmbeddingRateLimit with additional context.
 type RateLimitError struct {
-	Provider  string
-	Message   string
+	Provider   string
+	Message    string
 	RetryAfter int
 }
 

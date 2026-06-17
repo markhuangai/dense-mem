@@ -11,7 +11,7 @@ import (
 // and readiness probes in container orchestration environments.
 func registerPublicRoutes(e *echo.Echo, healthConfig HealthConfig) {
 	// Health endpoint - simple liveness check with optional degraded status
-	// Returns 200 {"status":"ok"} or 200 {"status":"ok","degraded":true,"reason":"..."} 
+	// Returns 200 {"status":"ok"} or 200 {"status":"ok","degraded":true,"reason":"..."}
 	// when running in in-memory mode.
 	e.GET("/health", handleHealth(healthConfig))
 

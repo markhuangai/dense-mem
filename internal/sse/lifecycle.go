@@ -73,9 +73,9 @@ var _ StreamLifecycle = (*streamLifecycle)(nil)
 
 // redisConcurrencyLimiter implements ConcurrencyLimiter using Redis.
 type redisConcurrencyLimiter struct {
-	redisClient  RedisClientForLifecycle
-	maxStreams   int
-	counterTTL   int64 // TTL in seconds for the counter key
+	redisClient RedisClientForLifecycle
+	maxStreams  int
+	counterTTL  int64 // TTL in seconds for the counter key
 }
 
 // Ensure redisConcurrencyLimiter implements ConcurrencyLimiter.

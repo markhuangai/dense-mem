@@ -1,4 +1,6 @@
 import type { ControlTelemetryQuery, TelemetrySnapshot } from "./telemetry/types";
+import { requestJson } from "./http";
+export { ApiError } from "./http";
 
 export type Team = {
   id: string;
@@ -400,16 +402,6 @@ export type DreamListResponse = {
   next_cursor?: string;
 };
 
-export class ApiError extends Error {
-  status: number;
-
-  constructor(status: number, message: string) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-  }
-}
-
 type RequestOptions = {
   method?: string;
   body?: unknown;
@@ -645,35 +637,10 @@ export class ControlApi {
   }
 
   private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    return requestJson<T>(`${this.baseUrl}${path}`, {
       method: options.method ?? "GET",
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-        "Content-Type": "application/json",
-      },
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      token: this.token,
+      body: options.body,
     });
-
-    const text = await response.text();
-    const payload = text ? JSON.parse(text) : null;
-
-    if (!response.ok) {
-      throw new ApiError(response.status, errorMessage(payload, response.statusText));
-    }
-
-    return payload as T;
   }
-}
-
-function errorMessage(payload: unknown, fallback: string): string {
-  if (payload && typeof payload === "object") {
-    const obj = payload as Record<string, unknown>;
-    if (typeof obj.message === "string") {
-      return obj.message;
-    }
-    if (typeof obj.error === "string") {
-      return obj.error;
-    }
-  }
-  return fallback || "Request failed";
 }

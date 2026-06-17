@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentcodec"
+	"github.com/markhuangai/dense-mem/internal/service/graphrow"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
@@ -221,53 +221,10 @@ func (s *getClaimServiceImpl) GetByIDs(ctx context.Context, profileID string, cl
 //   - lists from collect() as []any
 //   - maps as map[string]any
 func rowToClaim(profileID string, row map[string]any) *domain.Claim {
-	strVal := func(key string) string {
-		v, _ := row[key].(string)
-		return v
-	}
-
-	intVal := func(key string) int {
-		switch v := row[key].(type) {
-		case int64:
-			return int(v)
-		case int:
-			return v
-		}
-		return 0
-	}
-
-	float64Val := func(key string) float64 {
-		v, _ := row[key].(float64)
-		return v
-	}
-
-	// timePtr returns nil when the property is absent or not a time.Time.
-	timePtr := func(key string) *time.Time {
-		v, ok := row[key].(time.Time)
-		if !ok {
-			return nil
-		}
-		return &v
-	}
-
-	// timeVal returns a zero time.Time when the property is absent.
-	timeVal := func(key string) time.Time {
-		v, _ := row[key].(time.Time)
-		return v
-	}
-
 	// supported_by is the result of collect(sf.fragment_id); the driver returns
 	// it as []any. Filter out empty strings that Neo4j may emit when the OPTIONAL
 	// MATCH found no matching SourceFragment (collect on a null produces []).
-	var supportedBy []string
-	if raw, ok := row["supported_by"].([]any); ok {
-		supportedBy = make([]string, 0, len(raw))
-		for _, v := range raw {
-			if s, ok := v.(string); ok && s != "" {
-				supportedBy = append(supportedBy, s)
-			}
-		}
-	}
+	supportedBy := graphrow.StringSlice(row, "supported_by")
 
 	var classification map[string]any
 	if decoded := fragmentcodec.DecodeOptionalMap(row["classification"]); decoded != nil {
@@ -276,110 +233,50 @@ func rowToClaim(profileID string, row map[string]any) *domain.Claim {
 		classification = decoded
 	}
 
-	var evidence []domain.Evidence
-	if raw, ok := row["evidence"].([]any); ok {
-		evidence = make([]domain.Evidence, 0, len(raw))
-		for _, item := range raw {
-			m, ok := item.(map[string]any)
-			if !ok {
-				continue
-			}
-			fragmentID, _ := m["fragment_id"].(string)
-			if fragmentID == "" {
-				continue
-			}
-			evidence = append(evidence, domain.Evidence{
-				FragmentID:        fragmentID,
-				Speaker:           strFromMap(m, "speaker"),
-				SpanStart:         intFromMap(m, "span_start"),
-				SpanEnd:           intFromMap(m, "span_end"),
-				ExtractConf:       float64FromMap(m, "extract_conf"),
-				ExtractionModel:   strFromMap(m, "extraction_model"),
-				ExtractionVersion: strFromMap(m, "extraction_version"),
-				PipelineRunID:     strFromMap(m, "pipeline_run_id"),
-				Authority:         domain.Authority(strFromMap(m, "authority")),
-			})
-		}
-	}
-
 	return &domain.Claim{
-		ClaimID:              strVal("claim_id"),
+		ClaimID:              graphrow.String(row, "claim_id"),
 		ProfileID:            profileID,
-		OwnerProfileID:       firstNonEmpty(strVal("owner_profile_id"), strVal("created_by_profile_id")),
-		OwnerProfileName:     firstNonEmpty(strVal("owner_profile_name"), strVal("created_by_profile_name")),
-		CreatedByProfileID:   strVal("created_by_profile_id"),
-		CreatedByProfileName: strVal("created_by_profile_name"),
+		OwnerProfileID:       graphrow.FirstNonEmpty(graphrow.String(row, "owner_profile_id"), graphrow.String(row, "created_by_profile_id")),
+		OwnerProfileName:     graphrow.FirstNonEmpty(graphrow.String(row, "owner_profile_name"), graphrow.String(row, "created_by_profile_name")),
+		CreatedByProfileID:   graphrow.String(row, "created_by_profile_id"),
+		CreatedByProfileName: graphrow.String(row, "created_by_profile_name"),
 
-		Subject:   strVal("subject"),
-		Predicate: strVal("predicate"),
-		Object:    strVal("object"),
+		Subject:   graphrow.String(row, "subject"),
+		Predicate: graphrow.String(row, "predicate"),
+		Object:    graphrow.String(row, "object"),
 
-		Modality:  domain.ClaimModality(strVal("modality")),
-		Polarity:  domain.ClaimPolarity(strVal("polarity")),
-		Speaker:   strVal("speaker"),
-		SpanStart: intVal("span_start"),
-		SpanEnd:   intVal("span_end"),
+		Modality:  domain.ClaimModality(graphrow.String(row, "modality")),
+		Polarity:  domain.ClaimPolarity(graphrow.String(row, "polarity")),
+		Speaker:   graphrow.String(row, "speaker"),
+		SpanStart: graphrow.Int(row, "span_start"),
+		SpanEnd:   graphrow.Int(row, "span_end"),
 
-		ValidFrom:  timePtr("valid_from"),
-		ValidTo:    timePtr("valid_to"),
-		RecordedAt: timeVal("recorded_at"),
-		RecordedTo: timePtr("recorded_to"),
+		ValidFrom:  graphrow.TimePtr(row, "valid_from"),
+		ValidTo:    graphrow.TimePtr(row, "valid_to"),
+		RecordedAt: graphrow.Time(row, "recorded_at"),
+		RecordedTo: graphrow.TimePtr(row, "recorded_to"),
 
-		ExtractConf:    float64Val("extract_conf"),
-		ResolutionConf: float64Val("resolution_conf"),
-		SourceQuality:  float64Val("source_quality"),
+		ExtractConf:    graphrow.Float64(row, "extract_conf"),
+		ResolutionConf: graphrow.Float64(row, "resolution_conf"),
+		SourceQuality:  graphrow.Float64(row, "source_quality"),
 
-		EntailmentVerdict:    domain.EntailmentVerdict(strVal("entailment_verdict")),
-		Status:               domain.ClaimStatus(strVal("status")),
-		LastVerifierResponse: strVal("last_verifier_response"),
-		VerifiedAt:           timePtr("verified_at"),
+		EntailmentVerdict:    domain.EntailmentVerdict(graphrow.String(row, "entailment_verdict")),
+		Status:               domain.ClaimStatus(graphrow.String(row, "status")),
+		LastVerifierResponse: graphrow.String(row, "last_verifier_response"),
+		VerifiedAt:           graphrow.TimePtr(row, "verified_at"),
 
-		ExtractionModel:   strVal("extraction_model"),
-		ExtractionVersion: strVal("extraction_version"),
-		VerifierModel:     strVal("verifier_model"),
-		PipelineRunID:     strVal("pipeline_run_id"),
+		ExtractionModel:   graphrow.String(row, "extraction_model"),
+		ExtractionVersion: graphrow.String(row, "extraction_version"),
+		VerifierModel:     graphrow.String(row, "verifier_model"),
+		PipelineRunID:     graphrow.String(row, "pipeline_run_id"),
 
-		ContentHash:    strVal("content_hash"),
-		IdempotencyKey: strVal("idempotency_key"),
+		ContentHash:    graphrow.String(row, "content_hash"),
+		IdempotencyKey: graphrow.String(row, "idempotency_key"),
 
 		Classification:               classification,
-		ClassificationLatticeVersion: strVal("classification_lattice_version"),
+		ClassificationLatticeVersion: graphrow.String(row, "classification_lattice_version"),
 
 		SupportedBy: supportedBy,
-		Evidence:    evidence,
+		Evidence:    graphrow.Evidence(row, "evidence"),
 	}
-}
-
-func strFromMap(m map[string]any, key string) string {
-	v, _ := m[key].(string)
-	return v
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func intFromMap(m map[string]any, key string) int {
-	switch v := m[key].(type) {
-	case int64:
-		return int(v)
-	case int:
-		return v
-	}
-	return 0
-}
-
-func float64FromMap(m map[string]any, key string) float64 {
-	switch v := m[key].(type) {
-	case float64:
-		return v
-	case float32:
-		return float64(v)
-	}
-	return 0
 }
