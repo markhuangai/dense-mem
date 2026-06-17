@@ -74,10 +74,10 @@ ai:
   profiles:
     local_proxy:
       adapter: ai-sdk-agentool
-      context_window_tokens: 1000000
+      context_window_tokens: 200000
       provider:
         type: openai-compatible
-        model: qwen3.7-plus
+        model: kimi-k2.5
         base_url:
           from_bundle: GITVIBE_AI_BASE_URL
         api_key:
