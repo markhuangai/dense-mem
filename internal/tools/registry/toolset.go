@@ -348,7 +348,7 @@ func recallMemoryTool(deps Dependencies) Tool {
 				out["feedback_request"] = map[string]any{
 					"requested": true,
 					"recall_id": "rec_" + uuid.NewString(),
-					"tool":      "submit_recall_feedback",
+					"tool":      SubmitRecallFeedbackToolName,
 					"fields": []string{
 						"used",
 						"answer_supported",

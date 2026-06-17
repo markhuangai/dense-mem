@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -63,7 +64,7 @@ func TestSubmitRecallFeedbackDisabledByRuntimeConfig(t *testing.T) {
 		"missing_context":  false,
 		"irrelevant":       false,
 	})
-	if err == nil || !strings.Contains(err.Error(), "tool disabled") {
+	if err == nil || !errors.Is(err, ErrToolDisabled) {
 		t.Fatalf("err = %v; want disabled tool", err)
 	}
 }
@@ -99,7 +100,7 @@ func TestRecallMemoryFeedbackRequestAndSubmit(t *testing.T) {
 		t.Fatalf("feedback_request missing or wrong type: %v", out["feedback_request"])
 	}
 	recallID, _ := request["recall_id"].(string)
-	if !strings.HasPrefix(recallID, "rec_") || request["tool"] != "submit_recall_feedback" {
+	if !strings.HasPrefix(recallID, "rec_") || request["tool"] != SubmitRecallFeedbackToolName {
 		t.Fatalf("feedback_request = %v", request)
 	}
 

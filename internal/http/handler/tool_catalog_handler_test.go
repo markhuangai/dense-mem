@@ -171,6 +171,9 @@ func TestToolCatalogHandler_HidesDisabledRecallFeedbackTool(t *testing.T) {
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200. body=%s", rec.Code, rec.Body.String())
+	}
 	if strings.Contains(rec.Body.String(), registry.SubmitRecallFeedbackToolName) {
 		t.Fatalf("disabled recall feedback tool leaked into catalog: %s", rec.Body.String())
 	}

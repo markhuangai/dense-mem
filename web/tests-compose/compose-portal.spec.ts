@@ -128,72 +128,77 @@ test("prometheus telemetry is scraped and rendered in control panel and user por
 });
 
 test("MCP recall feedback is submitted and scraped through compose telemetry", async ({ request }) => {
-  await enableRecallFeedback(request);
+  const recallFeedbackWasEnabled = await recallFeedbackEnabled(request);
+  await setRecallFeedback(request, true);
 
-  await mcpCall(request, "initialize", {
-    protocolVersion: "2024-11-05",
-    capabilities: {},
-    clientInfo: { name: "compose-recall-feedback", version: "1.0.0" },
-  });
+  try {
+    await mcpCall(request, "initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "compose-recall-feedback", version: "1.0.0" },
+    });
 
-  const toolsResponse = await mcpCall(request, "tools/list", {});
-  expect(mcpToolNames(toolsResponse)).toEqual(expect.arrayContaining(["recall_memory", "submit_recall_feedback"]));
+    const toolsResponse = await mcpCall(request, "tools/list", {});
+    expect(mcpToolNames(toolsResponse)).toEqual(expect.arrayContaining(["recall_memory", "submit_recall_feedback"]));
 
-  const recallPayload = mcpToolPayload(await mcpCall(request, "tools/call", {
-    name: "recall_memory",
-    arguments: {
-      query: "compose e2e recall feedback",
-      limit: 5,
-    },
-  }));
+    const recallPayload = mcpToolPayload(await mcpCall(request, "tools/call", {
+      name: "recall_memory",
+      arguments: {
+        query: "compose e2e recall feedback",
+        limit: 5,
+      },
+    }));
 
-  expect(Array.isArray(recallPayload.results)).toBe(true);
-  expect(isRecord(recallPayload.feedback_request)).toBe(true);
-  const feedbackRequest = recallPayload.feedback_request as Record<string, unknown>;
-  expect(feedbackRequest.requested).toBe(true);
-  expect(feedbackRequest.tool).toBe("submit_recall_feedback");
-  expect(typeof feedbackRequest.recall_id).toBe("string");
-  expect(String(feedbackRequest.recall_id)).toMatch(/^rec_/);
+    expect(Array.isArray(recallPayload.results)).toBe(true);
+    expect(isRecord(recallPayload.feedback_request)).toBe(true);
+    const feedbackRequest = recallPayload.feedback_request as Record<string, unknown>;
+    expect(feedbackRequest.requested).toBe(true);
+    expect(feedbackRequest.tool).toBe("submit_recall_feedback");
+    expect(typeof feedbackRequest.recall_id).toBe("string");
+    expect(String(feedbackRequest.recall_id)).toMatch(/^rec_/);
 
-  const submitPayload = mcpToolPayload(await mcpCall(request, "tools/call", {
-    name: "submit_recall_feedback",
-    arguments: {
-      recall_id: feedbackRequest.recall_id,
-      used: true,
-      answer_supported: true,
-      quality: "high",
-      missing_context: false,
-      irrelevant: false,
-    },
-  }));
-  expect(submitPayload.recorded).toBe(true);
+    const submitPayload = mcpToolPayload(await mcpCall(request, "tools/call", {
+      name: "submit_recall_feedback",
+      arguments: {
+        recall_id: feedbackRequest.recall_id,
+        used: true,
+        answer_supported: true,
+        quality: "high",
+        missing_context: false,
+        irrelevant: false,
+      },
+    }));
+    expect(submitPayload.recorded).toBe(true);
 
-  await expect.poll(
-    () => prometheusQueryValue(request, `sum(densemem_recall_feedback_total{used="true",answer_supported="true",quality="high",missing_context="false",irrelevant="false"})`),
-    {
-      intervals: [1_000, 5_000, 10_000],
-      timeout: 120_000,
-    },
-  ).toBeGreaterThan(0);
+    await expect.poll(
+      () => prometheusQueryValue(request, `sum(densemem_recall_feedback_total{used="true",answer_supported="true",quality="high",missing_context="false",irrelevant="false"})`),
+      {
+        intervals: [1_000, 5_000, 10_000],
+        timeout: 120_000,
+      },
+    ).toBeGreaterThan(0);
 
-  await expect.poll(
-    () => prometheusQueryValue(request, "sum(densemem_recall_feedback_quality_score_count)"),
-    {
-      intervals: [1_000, 5_000, 10_000],
-      timeout: 120_000,
-    },
-  ).toBeGreaterThan(0);
+    await expect.poll(
+      () => prometheusQueryValue(request, "sum(densemem_recall_feedback_quality_score_count)"),
+      {
+        intervals: [1_000, 5_000, 10_000],
+        timeout: 120_000,
+      },
+    ).toBeGreaterThan(0);
 
-  const telemetryResponse = await request.get(`${userUrl}/ui/api/telemetry?window=15m`, { headers: bearer(seedApiKey) });
-  expect(telemetryResponse.status()).toBe(200);
-  const telemetryBody = await telemetryResponse.json() as TelemetryResponse;
-  expect(telemetryLabels(telemetryBody.data?.cards)).toEqual(expect.arrayContaining([
-    "LLM recall used",
-    "LLM answer supported",
-    "LLM recall quality",
-    "LLM missing context",
-    "LLM irrelevant recall",
-  ]));
+    const telemetryResponse = await request.get(`${userUrl}/ui/api/telemetry?window=15m`, { headers: bearer(seedApiKey) });
+    expect(telemetryResponse.status()).toBe(200);
+    const telemetryBody = await telemetryResponse.json() as TelemetryResponse;
+    expect(telemetryLabels(telemetryBody.data?.cards)).toEqual(expect.arrayContaining([
+      "LLM recall used",
+      "LLM answer supported",
+      "LLM recall quality",
+      "LLM missing context",
+      "LLM irrelevant recall",
+    ]));
+  } finally {
+    await setRecallFeedback(request, recallFeedbackWasEnabled);
+  }
 });
 
 test("user portal logs in with a real API key and shows only that profile", async ({ page, request }, testInfo) => {
@@ -305,13 +310,24 @@ async function createTeamProfile(request: APIRequestContext, name: string, scope
   return payload.data;
 }
 
-async function enableRecallFeedback(request: APIRequestContext) {
-  const response = await request.patch(`${controlUrl}/control/api/config/recall-feedback`, {
+async function recallFeedbackEnabled(request: APIRequestContext) {
+  const response = await request.get(`${controlUrl}/control/api/config/recall-feedback`, {
     headers: bearer(controlToken),
-    data: { items: [{ key: "RECALL_FEEDBACK_ENABLED", value: "true" }] },
   });
   if (response.status() !== 200) {
-    throw new Error(`enable recall feedback failed: ${response.status()} ${await response.text()}`);
+    throw new Error(`get recall feedback config failed: ${response.status()} ${await response.text()}`);
+  }
+  const payload = await response.json() as { data?: { effective?: { enabled?: boolean } } };
+  return payload.data?.effective?.enabled === true;
+}
+
+async function setRecallFeedback(request: APIRequestContext, enabled: boolean) {
+  const response = await request.patch(`${controlUrl}/control/api/config/recall-feedback`, {
+    headers: bearer(controlToken),
+    data: { items: [{ key: "RECALL_FEEDBACK_ENABLED", value: enabled ? "true" : "false" }] },
+  });
+  if (response.status() !== 200) {
+    throw new Error(`set recall feedback failed: ${response.status()} ${await response.text()}`);
   }
 }
 

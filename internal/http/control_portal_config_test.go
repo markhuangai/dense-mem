@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -174,6 +175,19 @@ func (s *controlAppConfigSvc) UpdateRecallFeedbackSettings(_ context.Context, va
 	}
 	for key, value := range values {
 		s.recallValues[key] = value
+	}
+	if raw, ok := values[domain.AppConfigRecallFeedbackEnabled]; ok {
+		enabled, _ := strconv.ParseBool(raw)
+		s.recallRuntime.Enabled = enabled
+		if s.recallSettings != nil {
+			s.recallSettings.Effective.Enabled = enabled
+			for i := range s.recallSettings.Items {
+				if s.recallSettings.Items[i].Key == domain.AppConfigRecallFeedbackEnabled {
+					s.recallSettings.Items[i].Value = raw
+					s.recallSettings.Items[i].EffectiveValue = strconv.FormatBool(enabled)
+				}
+			}
+		}
 	}
 	return s.recallSettings, nil
 }
@@ -486,6 +500,7 @@ func TestControlPortalRecallFeedbackConfigFlows(t *testing.T) {
 	rec = do(http.MethodPatch, "/control/api/config/recall-feedback", `{"items":[{"key":"RECALL_FEEDBACK_ENABLED","value":"true"}]}`)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "true", appConfig.recallValues[domain.AppConfigRecallFeedbackEnabled])
+	require.Contains(t, rec.Body.String(), `"enabled":true`)
 
 	rec = do(http.MethodPatch, "/control/api/config/recall-feedback", "{")
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)

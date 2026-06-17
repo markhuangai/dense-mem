@@ -253,11 +253,51 @@ func TestMCP_ToolsListAndCallHideRuntimeDisabledRecallFeedback(t *testing.T) {
 	s := NewServerWithScopesTeamContextAndRuntimeConfig(reg, "pA", []string{"read"}, TeamContext{}, logger, recallFeedbackConfigStub{enabled: false})
 
 	out := runRPC(t, s, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
-	if strings.Contains(out, registry.SubmitRecallFeedbackToolName) {
-		t.Fatalf("tools/list exposed disabled recall feedback tool: %s", out)
+	var listResp rpcResp
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &listResp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if listResp.Error != nil {
+		t.Fatalf("tools/list error = %+v", listResp.Error)
+	}
+	var listPayload struct {
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(listResp.Result, &listPayload); err != nil {
+		t.Fatalf("result unmarshal: %v", err)
+	}
+	for _, tool := range listPayload.Tools {
+		if tool.Name == registry.SubmitRecallFeedbackToolName {
+			t.Fatalf("tools/list exposed disabled recall feedback tool: %s", out)
+		}
 	}
 
 	out = runRPC(t, s, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"submit_recall_feedback","arguments":{}}}`)
+	var resp rpcResp
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Error == nil || resp.Error.Code != errCodeMethodNotFound {
+		t.Fatalf("tools/call error = %+v; want method not found", resp.Error)
+	}
+}
+
+func TestMCP_ToolsCallMapsDisabledInvokeToNotFound(t *testing.T) {
+	logger, _ := testLogger(t)
+	reg := registry.New()
+	_ = reg.Register(registry.Tool{
+		Name:        registry.SubmitRecallFeedbackToolName,
+		Description: "feedback",
+		InputSchema: map[string]any{"type": "object"},
+		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+			return nil, registry.ErrToolDisabled
+		},
+	})
+	s := NewServerWithScopesTeamContextAndRuntimeConfig(reg, "pA", []string{"read"}, TeamContext{}, logger, recallFeedbackConfigStub{enabled: true})
+
+	out := runRPC(t, s, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"submit_recall_feedback","arguments":{}}}`)
 	var resp rpcResp
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)

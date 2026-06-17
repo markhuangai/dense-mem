@@ -11,6 +11,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -232,6 +233,9 @@ func (s *Server) handleToolsCall(ctx context.Context, raw json.RawMessage) (map[
 	}
 	result, err := tool.Invoke(ctx, s.profileID, args)
 	if err != nil {
+		if errors.Is(err, registry.ErrToolDisabled) {
+			return nil, &rpcError{Code: errCodeMethodNotFound, Message: fmt.Sprintf("tool not found: %s", params.Name)}
+		}
 		s.logger.Error("mcp: tool invocation failed", err,
 			observability.String("tool", params.Name),
 			observability.ProfileID(s.profileID),
