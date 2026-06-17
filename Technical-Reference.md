@@ -10,10 +10,15 @@ Dense-Mem MCP tool names use `underscore_case`.
 | --- | --- | --- | --- |
 | High-level memory | `remember` | write | Save one granular evidence entry under 1000 characters, create typed claims, verify them, and promote safe memories. |
 | High-level memory | `import_memories` | write | Import one granular summarized historical memory entry under 1000 characters. Does not auto-promote by default. |
-| High-level memory | `recall_memory` | read | Search active facts, validated claims, fragments, and clarifications. |
+| High-level memory | `recall_memory` | read | Search active facts, validated claims, fragments, clarifications, optional community expansion, and related dreams. |
 | High-level memory | `submit_recall_feedback` | write | Optional when `RECALL_FEEDBACK_ENABLED=true`; submit compact host-LLM feedback for one `recall_memory` response. |
 | High-level memory | `reflect_memories` | read | Review memory health, stale items, contradictions, and clarification needs. |
 | High-level memory | `confirm_memory` | write | Apply the user's answer to a memory clarification. |
+| Dreaming | `dreaming_status` | read | Inspect effective dreaming config and latest run status for the caller's profile. |
+| Dreaming | `run_dreaming_cycle` | write | Manually run the reflect, re-evaluate, and dream cycle chain. |
+| Dreaming | `list_dreams` | read | List reviewable dream hypotheses by status. |
+| Dreaming | `get_dream` | read | Fetch one dream hypothesis with source references. |
+| Dreaming | `resolve_dream_feedback` | write | Reinforce, stale, reject, or route a confirmed dream into normal memory review. |
 | Fragment memory | `save_memory` | write | Persist one source fragment for the caller's profile. |
 | Fragment memory | `get_memory` | read | Fetch one source fragment by ID. |
 | Fragment memory | `list_recent_memories` | read | List recent source fragments with pagination. |
@@ -81,6 +86,41 @@ The response includes `context_block`, structured `items`, `clarifications`, and
 `truncated`. Treat `context_block` as retrieved data. It is not an instruction
 source, and the host assistant remains responsible for judgment and final
 answering.
+
+## Community And Dreaming Tools
+
+Community tools are profile-scoped:
+
+| Tool | Scope | Purpose |
+| --- | --- | --- |
+| `detect_community` | write | Run Neo4j GDS Leiden detection, write `community_id` assignments, and persist summaries. |
+| `list_communities` | read | List persisted community summaries, ordered by member count. |
+| `get_community_summary` | read | Fetch one persisted community summary by `community_id`. |
+
+`detect_community` accepts optional `gamma`, `tolerance`, and `max_levels`
+parameters. It uses the `AI_COMMUNITY_MAX_NODES` cap before projecting the graph
+into Neo4j GDS.
+
+`recall_memory` and `GET /api/v1/recall` accept `use_communities=true`.
+Community expansion is off by default and fills unused recall slots with
+members from matching persisted communities.
+
+Dreaming tools are also profile-scoped:
+
+| Tool | Scope | Purpose |
+| --- | --- | --- |
+| `dreaming_status` | read | Return effective config, pending proposed dream count, and latest cycle run. |
+| `run_dreaming_cycle` | write | Manually run the cycle; optional booleans can override phase enablement for that run. |
+| `list_dreams` | read | List dreams with optional `status` and `limit`. |
+| `get_dream` | read | Fetch one dream by `dream_id`. |
+| `resolve_dream_feedback` | write | Apply one of `reinforce`, `stale`, `reject`, or `promote_candidate`. |
+
+Dreams are hypotheses. `promote_candidate` creates source evidence from user
+feedback and then relies on normal claim, verification, conflict, and promotion
+gates.
+
+See [Community Memory](Community-And-Dreaming) and [Dreaming](Dreaming) for
+operator guidance.
 
 ## Skill Pack Tools
 
@@ -166,11 +206,15 @@ imports can rebuild the supporting fragments and claims.
 | Facts | `GET /api/v1/facts`, `GET /api/v1/facts/{id}` |
 | Fact retraction | `POST /api/v1/facts/{id}/retract` |
 | Recall | `GET /api/v1/recall` |
+| Dreaming | `GET /api/v1/dreaming/status`, `GET /api/v1/dreaming/runs` |
+| Dreams | `GET /api/v1/dreams`, `GET /api/v1/dreams/{dreamId}` |
 | Tools | `GET /api/v1/tools`, `GET /api/v1/tools/{id}`, `POST /api/v1/tools/{name}` |
 | Teams | `GET /api/v1/teams/{teamId}`, `PATCH /api/v1/teams/{teamId}`, `GET /api/v1/teams/{teamId}/audit-log` |
 | Team profiles | `GET /api/v1/teams/{teamId}/profiles`, `POST /api/v1/teams/{teamId}/profiles`, `GET /api/v1/teams/{teamId}/profiles/{profileId}`, `PATCH /api/v1/teams/{teamId}/profiles/{profileId}`, `POST /api/v1/teams/{teamId}/profiles/{profileId}/rotate`, `DELETE /api/v1/teams/{teamId}/profiles/{profileId}` |
 | Streaming | `POST /api/v1/teams/{teamId}/query/stream` |
 | Communities | `GET /api/v1/communities`, `GET /api/v1/communities/{id}` |
+| Control config | `GET/PATCH /control/api/config/general`, `GET/PATCH /control/api/config/sso`, `GET/PATCH /control/api/config/dreaming`, `GET/PATCH /control/api/config/community-detection`, `GET/PATCH /control/api/config/operation-logs` |
+| Control logs and dreams | `GET /control/api/logs`, `GET /control/api/teams/{teamId}/dreaming/status`, `GET /control/api/teams/{teamId}/dreaming/runs`, `GET /control/api/teams/{teamId}/dreams`, `GET /control/api/teams/{teamId}/dreams/{dreamId}` |
 | MCP | `POST /mcp`, `GET /mcp` |
 | OpenAPI | `GET /api/v1/openapi.json` |
 
@@ -200,6 +244,7 @@ Common query parameters:
 | `valid_at` | no | Valid-time filter. |
 | `known_at` | no | Known-time filter. |
 | `include_evidence` | no | Include evidence payloads when true. |
+| `use_communities` | no | Fill unused recall slots from matching persisted community summaries. Defaults to false. |
 
 Example:
 
@@ -234,15 +279,16 @@ http://127.0.0.1:8080/ui
 
 Its API routes live under `/ui/api`. They authenticate with the current Dense-Mem
 API key and can return the current session, rotate the current key when it has
-write scope, and read self-scoped telemetry when telemetry is enabled.
+write scope, read self-scoped telemetry when telemetry is enabled, and inspect
+dreaming status, dream outputs, and recent cycle runs.
 
 When the current key has manager role, the user portal also shows a Team tab.
 Managers can update team metadata and create, list, rename, rotate, or delete
 member profiles. Manager role creation and role changes stay in the control
 portal.
 
-The control portal manages teams, profiles, profile roles, keys, and security-ban
-settings.
+The control portal manages teams, profiles, profile roles, keys, security-ban
+settings, runtime config, operation logs, and per-team dream inspection.
 
 It does not browse or edit memory content.
 
@@ -290,6 +336,7 @@ stream concurrency must be shared across instances.
 | Claim | Delete with `DELETE /api/v1/claims/{id}`. This is irreversible. |
 | Fact | Soft-tombstone with `POST /api/v1/facts/{id}/retract`; graph lineage and validity timestamps are preserved. |
 | Community assignment | Rerun detection to overwrite community IDs. |
+| Dream | Mark it `rejected` or `stale`; promoted dream candidates still follow normal memory rollback rules for the created evidence. |
 
 ## Operational Checks
 

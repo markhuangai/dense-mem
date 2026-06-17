@@ -27,6 +27,7 @@ call when they need to save or recall information.
 | Team memory | "Remember the frontend team uses Bun and strict TypeScript." |
 | AI assistant continuity | "Before answering, recall what you know about this project." |
 | Safer corrections | "Actually, keep the new preference and replace the old one." |
+| Memory exploration | "Find related memory clusters and review any dream hypotheses before planning." |
 
 ## How It Works In One Minute
 
@@ -57,6 +58,8 @@ flowchart LR
 | Connect Claude Code, Codex, or another MCP client | [MCP Clients](MCP-Clients) |
 | Understand memory conflicts and corrections | [Conflicts And Corrections](Conflicts-And-Corrections) |
 | Export or import reusable knowledge | [Skill Packs](Skill-Packs) |
+| Use community-aware recall | [Community Memory](Community-And-Dreaming) |
+| Review dream hypotheses | [Dreaming](Dreaming) |
 | Manage teams, profiles, and API keys | [Portals And API Keys](Portals-And-API-Keys) |
 | Enable Prometheus metrics and dashboards | [Telemetry](Telemetry) |
 | Publish Dense-Mem with HTTPS or Redis | [Public HTTPS And Redis](Public-HTTPS-And-Redis) |

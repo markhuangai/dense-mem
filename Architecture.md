@@ -25,11 +25,13 @@ flowchart TB
     Registry["Tool registry"]
     Memory["Memory orchestration"]
     Recall["Recall service"]
+    Communities["Community detection"]
+    Dreaming["Dreaming cycles"]
     Embeds["Embedding provider client"]
   end
 
   subgraph Storage["Storage"]
-    Postgres["Postgres teams, profiles, audit"]
+    Postgres["Postgres teams, profiles, audit, app config, operation logs"]
     Neo4j["Neo4j graph and vector indexes"]
     Redis["Redis optional shared limits"]
     Prometheus["Prometheus optional telemetry"]
@@ -42,10 +44,14 @@ flowchart TB
   Portal --> REST
   Registry --> Memory
   Registry --> Recall
+  Registry --> Communities
+  Registry --> Dreaming
   Memory --> Embeds
   Recall --> Embeds
   Memory --> Neo4j
   Recall --> Neo4j
+  Communities --> Neo4j
+  Dreaming --> Neo4j
   REST --> Postgres
   REST --> Redis
   Metrics --> Prometheus
@@ -61,6 +67,7 @@ flowchart TB
 | Embeddings | Fragment embeddings and recall-query embeddings | No vectors for normal use |
 | Retrieval | Facts, claims, fragments, and clarifications | Choosing how to use recalled context |
 | Corrections | Conflict detection and supersession records | Asking the user which memory is correct |
+| Hypotheses | Community summaries and dream records | Deciding which hypotheses to ask the user to confirm |
 | Operations | Teams, profiles, API keys, audit metadata, user portal, control portal | Client-side MCP configuration |
 
 Dense-Mem is intentionally narrow. It does not replace the assistant. It gives
@@ -154,9 +161,13 @@ REST and OpenAPI remain available for non-MCP integrations and operations.
 | Component | Purpose |
 | --- | --- |
 | Postgres | Teams, profiles, key metadata, audit records, migrations. |
-| Neo4j | Memory graph, claims, facts, relationships, vector indexes. |
+| Neo4j | Memory graph, claims, facts, relationships, communities, dreams, vector indexes. |
 | Redis | Optional for one server; required for multi-instance shared limits. |
 | Prometheus | Optional telemetry store for the `/ui` app and control portal dashboards. |
+
+App config and operation logs also live in Postgres. App config drives runtime
+settings such as `APP_TIMEZONE`, scheduled dreaming, scheduled community
+detection, SSO public settings, and operation-log retention.
 
 ## Embedding Ownership
 

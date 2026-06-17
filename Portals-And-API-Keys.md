@@ -4,8 +4,8 @@ Dense-Mem has two portal surfaces:
 
 | Portal | URL | Auth | Purpose |
 | --- | --- | --- | --- |
-| User portal | `http://127.0.0.1:8080/ui` | Dense-Mem API key, or SSO when configured | Current key/session, self telemetry, current-key rotation, SSO team selection, and bounded team management for manager access. |
-| Control portal | `http://127.0.0.1:8090/` | `CONTROL_PORTAL_TOKEN` | Teams, profiles, profile roles, keys, security bans, control telemetry. |
+| User portal | `http://127.0.0.1:8080/ui` | Dense-Mem API key, or SSO when configured | Current key/session, self telemetry, dream review, current-key rotation, SSO team selection, and bounded team management for manager access. |
+| Control portal | `http://127.0.0.1:8090/` | `CONTROL_PORTAL_TOKEN` | Teams, profiles, profile roles, keys, runtime config, operation logs, security bans, control telemetry, and per-team dream inspection. |
 
 Keep the control portal private. It is not meant to be a public admin site.
 
@@ -23,6 +23,7 @@ Use it to:
 - view the authenticated team and profile session
 - rotate the current key when the key has write scope
 - view self-scoped telemetry when telemetry is enabled
+- inspect dreaming status, dream outputs, and recent cycle runs
 - manage same-team member profiles when the current key has manager role
 - sign in with SSO when SSO is configured for the deployment
 - switch between teams granted by the current SSO identity
@@ -330,6 +331,9 @@ Use it to:
 - create read-only or read-write API keys
 - rotate keys
 - delete profiles or keys
+- configure SSO, `APP_TIMEZONE`, dreaming, community detection, and operation-log retention
+- inspect operation logs
+- inspect per-team dream status, outputs, and cycle runs
 - review usage and telemetry
 - review or update IP ban settings
 

@@ -56,6 +56,15 @@ Keep the control portal on `127.0.0.1` for local use. It manages API keys.
 Manager/member profile access is not controlled by a feature flag. It is active
 after the RBAC migration and is stored in the `team_profiles.role` column.
 
+## General Runtime Settings
+
+These settings are stored in Postgres `app_config` and can be edited from the
+control portal Config tab.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `APP_TIMEZONE` | `Local` | Shared timezone for scheduled dreaming and community detection. Use an IANA timezone such as `America/New_York` in production. |
+
 ## SSO Settings
 
 SSO is optional. Leave `SSO_PUBLIC_BASE_URL` empty when the deployment should
@@ -261,6 +270,63 @@ scrape token, and sets `TELEMETRY_PROMETHEUS_JOB=dense-mem` by default.
 
 See [Telemetry](Telemetry) for portal usage, demo telemetry, and troubleshooting.
 
+## Dreaming
+
+Dreaming is optional and disabled by default. It creates reviewable hypotheses,
+not facts. Confirmed dream feedback enters the normal memory pipeline as
+evidence.
+
+These settings are stored in Postgres `app_config` and can be edited from the
+control portal Config tab.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `DREAMING_ENABLED` | `false` | Enables scheduled dreaming when the effective team config allows it. |
+| `DREAMING_FORCE_ENABLED` | `false` | Forces scheduled dreaming on even when team config disables it. |
+| `DREAMING_START_TIME_LOCAL` | `03:00` | Local HH:MM start time. |
+| `DREAMING_REFLECT_ENABLED` | `true` | Runs the memory reflection phase. |
+| `DREAMING_REEVALUATE_ENABLED` | `true` | Re-evaluates existing dreams. |
+| `DREAMING_DREAM_ENABLED` | `true` | Generates new dream hypotheses. |
+| `DREAMING_MAX_OUTPUTS` | `5` | Maximum new dreams per cycle, from 1 to 50. |
+
+The schedule uses `APP_TIMEZONE` and runs at most once per profile per local
+day. See [Dreaming](Dreaming).
+
+## Community Detection
+
+Community detection is optional and disabled by default. It groups related graph
+nodes and persists profile-scoped community summaries for later inspection and
+opt-in recall expansion.
+
+These settings are stored in Postgres `app_config` and can be edited from the
+control portal Config tab.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `COMMUNITY_DETECTION_ENABLED` | `false` | Enables scheduled community detection across profiles. |
+| `COMMUNITY_DETECTION_START_TIME_LOCAL` | `03:30` | Local HH:MM start time. |
+| `COMMUNITY_DETECTION_MAX_CONCURRENCY` | `1` | Concurrent profile detection runs, from 1 to 8. |
+| `COMMUNITY_DETECTION_JITTER_SECONDS` | `600` | Stable per-profile jitter after the scheduled time, from 0 to 3600 seconds. |
+
+The schedule uses `APP_TIMEZONE`. Manual detection is also available through the
+`detect_community` MCP tool.
+
+`AI_COMMUNITY_MAX_NODES` is still an environment variable because it controls a
+startup/runtime safety cap for Neo4j GDS projections.
+
+See [Community Memory](Community-And-Dreaming).
+
+## Operation Logs
+
+Operation logs are database-backed server logs shown in the control portal Logs
+tab. They are separate from Prometheus telemetry.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `OPERATION_LOG_RETENTION_DAYS` | `30` | Number of days to keep operation logs, from 1 to 365. |
+
+The server flushes logs in batches and prunes old rows hourly.
+
 ## Runtime Limits
 
 | Variable | Default | Meaning |
@@ -280,7 +346,7 @@ See [Telemetry](Telemetry) for portal usage, demo telemetry, and troubleshooting
 | `RECALL_VALIDATED_CLAIM_WEIGHT` | `0.5` | Extra recall score weight for validated claims. |
 | `RECALL_FEEDBACK_ENABLED` | `false` | Registers `submit_recall_feedback` and adds feedback requests to `recall_memory` responses. |
 | `PROMOTE_TX_TIMEOUT_SECONDS` | `10` | Claim promotion transaction timeout. |
-| `AI_COMMUNITY_MAX_NODES` | `500000` | Maximum Neo4j nodes considered by AI community analysis. |
+| `AI_COMMUNITY_MAX_NODES` | `500000` | Maximum Neo4j nodes considered by manual or scheduled community detection. |
 
 ## Logging
 

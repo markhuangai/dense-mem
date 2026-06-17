@@ -13,10 +13,15 @@ For exact environment variable defaults, see [Configuration](Configuration#telem
 | User portal | Self-scoped telemetry for the authenticated API key. |
 | Control portal | Team, profile, route, dependency, and system telemetry views. |
 | Prometheus | Metrics scraped from a token-protected `/metrics` endpoint. |
+| Operation logs | Database-backed application log inspection in the control portal. |
 
 Telemetry does not expose memory content. It is operational data about requests,
 latency, usage, recall, promotion, embedding, verifier, and related runtime
 activity.
+
+Operation logs are separate from Prometheus telemetry. They store structured
+server log records in Postgres for control-portal troubleshooting and are
+retained according to `OPERATION_LOG_RETENTION_DAYS`.
 
 ## Enable Telemetry Locally
 
@@ -65,7 +70,21 @@ http://127.0.0.1:8090/
 ```
 
 Use `CONTROL_PORTAL_TOKEN`. The control portal can show broader team, profile,
-route, dependency, and system views.
+route, dependency, system, operation-log, and dream-cycle views.
+
+## Operation Logs
+
+The control portal Logs tab reads database-backed operation logs. Logs can be
+filtered by severity and sorted by timestamp or severity.
+
+Retention is controlled by:
+
+```text
+OPERATION_LOG_RETENTION_DAYS=30
+```
+
+This setting is managed from the control portal Config tab. The allowed range is
+1 to 365 days.
 
 ## Online Recall Feedback
 
@@ -173,3 +192,4 @@ The demo overlay scrapes `demo:8091` on the private Compose network and uses
 | `/metrics` returns unauthorized | `TELEMETRY_SCRAPE_TOKEN` matches the value Prometheus received. |
 | Dashboard is empty | Generate some authenticated traffic, then refresh after one scrape interval. |
 | Shared Prometheus shows wrong data | Set `TELEMETRY_PROMETHEUS_JOB` to the intended scrape job. |
+| Logs tab is empty | Generate server activity, wait a few seconds for the batch flush, then refresh. |

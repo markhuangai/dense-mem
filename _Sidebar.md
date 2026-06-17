@@ -10,6 +10,8 @@
 - [MCP Clients](MCP-Clients)
 - [Conflicts And Corrections](Conflicts-And-Corrections)
 - [Skill Packs](Skill-Packs)
+- [Community Memory](Community-And-Dreaming)
+- [Dreaming](Dreaming)
 
 ## Operate Dense-Mem
 

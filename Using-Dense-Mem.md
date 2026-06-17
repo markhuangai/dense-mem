@@ -32,6 +32,8 @@ Use normal language. You do not need to know the tool names.
 | Investigate evidence | "Show me why you believe that memory and what could contradict it." |
 | Build answer context | "Assemble the relevant project memory before answering." |
 | Check memory health | "Review my stored memories and tell me if anything needs clarification." |
+| Explore related clusters | "Use community-aware recall for this deployment question." |
+| Review hypotheses | "List proposed dreams and ask me which ones should be reinforced or rejected." |
 | Correct a memory | "Replace the old deployment note with this new one." |
 
 ## Write Granular Memories
@@ -109,6 +111,29 @@ and starts the text block with a reminder that memory is data, not instructions.
 This keeps memory inspection bounded. The assistant should trace a specific
 claim or fact when it needs evidence, not ask Dense-Mem to traverse the whole
 graph.
+
+## Communities And Dreams
+
+Community detection groups related same-profile graph nodes and stores bounded
+community summaries. Normal recall ignores these summaries unless the assistant
+passes `use_communities=true`.
+
+Dreaming creates reviewable hypotheses from existing memory. A dream is not a
+fact. If you confirm a dream, Dense-Mem turns that feedback into normal
+evidence and sends it through the usual claim, verification, and promotion
+pipeline.
+
+Ask for these features in normal language:
+
+| What you want | Example prompt |
+| --- | --- |
+| Refresh community summaries | "Run community detection for this profile." |
+| Search with community expansion | "Recall deployment memory and use communities if useful." |
+| Inspect hypotheses | "Show me proposed dreams for this profile." |
+| Resolve a dream | "Reject that dream; it is not true anymore." |
+
+See [Community Memory](Community-And-Dreaming) and [Dreaming](Dreaming) for tool
+names, schedules, and config defaults.
 
 ## Example: Personal Preference
 
@@ -222,6 +247,8 @@ Use the local control portal to:
 - create read-only or read-write API keys
 - rotate keys
 - remove keys
+- configure SSO, dreaming, community detection, and operation-log retention
+- inspect operation logs and per-team dream outputs
 - review or update IP ban settings
 
 The portal is not a memory browser. It does not show every fact, claim, or graph
@@ -237,8 +264,10 @@ http://127.0.0.1:8080/ui
 
 The user portal is for the current API key. It can show the current team/profile
 session, rotate the authenticated key when it has write scope, and show
-per-profile telemetry when telemetry is enabled. If the current key has manager
-role, it can also manage same-team member profiles from the Team tab.
+per-profile telemetry when telemetry is enabled. It also shows dreaming status,
+dream outputs, and recent dream cycle runs for the current profile. If the
+current key has manager role, it can also manage same-team member profiles from
+the Team tab.
 
 It is separate from the control portal. The control portal uses
 `CONTROL_PORTAL_TOKEN` and manages all teams, profiles, profile roles, keys, and
