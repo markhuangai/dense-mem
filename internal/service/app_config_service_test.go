@@ -229,6 +229,35 @@ func TestAppConfigServiceOperationLogSettingsDefaultsAndUpdate(t *testing.T) {
 	assert.Equal(t, 45, runtime.RetentionDays)
 }
 
+func TestAppConfigServiceRecallFeedbackSettingsDefaultsAndUpdate(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
+	repo := newAppConfigRepoStub(now, map[string]string{
+		domain.AppConfigUpdateTimeKey: now.Format(time.RFC3339Nano),
+	})
+	svc := NewAppConfigService(repo, nil)
+	svc.now = func() time.Time { return now }
+
+	settings, err := svc.GetRecallFeedbackSettings(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "false", recallFeedbackConfigItemForTest(settings, domain.AppConfigRecallFeedbackEnabled).EffectiveValue)
+
+	runtime, err := svc.RecallFeedbackRuntimeConfig(ctx)
+	require.NoError(t, err)
+	assert.False(t, runtime.Enabled)
+
+	now = now.Add(time.Minute)
+	updated, err := svc.UpdateRecallFeedbackSettings(ctx, map[string]string{
+		domain.AppConfigRecallFeedbackEnabled: "true",
+	}, "control", "127.0.0.1", "corr")
+	require.NoError(t, err)
+	assert.Equal(t, "true", recallFeedbackConfigItemForTest(updated, domain.AppConfigRecallFeedbackEnabled).EffectiveValue)
+
+	runtime, err = svc.RecallFeedbackRuntimeConfig(ctx)
+	require.NoError(t, err)
+	assert.True(t, runtime.Enabled)
+}
+
 func TestAppConfigServiceSSOCookieSecureEffectiveDefault(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC)
@@ -428,6 +457,12 @@ func TestAppConfigServiceValidation(t *testing.T) {
 
 	_, err = svc.UpdateOperationLogSettings(ctx, map[string]string{domain.AppConfigOperationLogRetentionDays: "0"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
+	_, err = svc.UpdateRecallFeedbackSettings(ctx, map[string]string{"unknown": "value"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
+	_, err = svc.UpdateRecallFeedbackSettings(ctx, map[string]string{domain.AppConfigRecallFeedbackEnabled: "maybe"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
 }
 
 func TestAppConfigServiceAuditNoopAndUnavailableBranches(t *testing.T) {
@@ -471,6 +506,7 @@ func TestAppConfigServiceAuditNoopAndUnavailableBranches(t *testing.T) {
 	assert.Nil(t, dreamingSettingsPayload(nil))
 	assert.Nil(t, communityDetectionSettingsPayload(nil))
 	assert.Nil(t, operationLogSettingsPayload(nil))
+	assert.Nil(t, recallFeedbackSettingsPayload(nil))
 }
 
 func TestAppConfigServiceInitialLoadAndRefreshErrors(t *testing.T) {
@@ -547,6 +583,9 @@ func newAppConfigRepoStub(now time.Time, values map[string]string) *appConfigRep
 		entries[key] = domain.AppConfigEntry{Key: key, Value: "", UpdatedAt: now}
 	}
 	for _, key := range editableOperationLogConfigKeys() {
+		entries[key] = domain.AppConfigEntry{Key: key, Value: "", UpdatedAt: now}
+	}
+	for _, key := range editableRecallFeedbackConfigKeys() {
 		entries[key] = domain.AppConfigEntry{Key: key, Value: "", UpdatedAt: now}
 	}
 	entries[domain.AppConfigUpdateTimeKey] = domain.AppConfigEntry{Key: domain.AppConfigUpdateTimeKey, Value: now.Format(time.RFC3339Nano), UpdatedAt: now}
@@ -644,6 +683,15 @@ func operationLogConfigItemForTest(settings *domain.OperationLogConfigSettings, 
 		}
 	}
 	return domain.OperationLogConfigItem{}
+}
+
+func recallFeedbackConfigItemForTest(settings *domain.RecallFeedbackConfigSettings, key string) domain.RecallFeedbackConfigItem {
+	for _, item := range settings.Items {
+		if item.Key == key {
+			return item
+		}
+	}
+	return domain.RecallFeedbackConfigItem{}
 }
 
 type appConfigAuditStub struct {

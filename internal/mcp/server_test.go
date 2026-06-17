@@ -9,10 +9,19 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
+
+type recallFeedbackConfigStub struct {
+	enabled bool
+}
+
+func (s recallFeedbackConfigStub) RecallFeedbackRuntimeConfig(context.Context) (domain.RecallFeedbackRuntimeConfig, error) {
+	return domain.RecallFeedbackRuntimeConfig{Enabled: s.enabled}, nil
+}
 
 // TestServerIgnoresProfileOverride verifies that a caller cannot override the
 // server's fixed profile by injecting profile_id into tool arguments (AC-61 /
@@ -227,6 +236,34 @@ func TestMCP_ToolsListMirrorsRegistry(t *testing.T) {
 	}
 	if _, ok := payload.Tools[0]["inputSchema"]; !ok {
 		t.Errorf("missing inputSchema")
+	}
+}
+
+func TestMCP_ToolsListAndCallHideRuntimeDisabledRecallFeedback(t *testing.T) {
+	logger, _ := testLogger(t)
+	reg := registry.New()
+	_ = reg.Register(registry.Tool{
+		Name:        registry.SubmitRecallFeedbackToolName,
+		Description: "feedback",
+		InputSchema: map[string]any{"type": "object"},
+		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+			return map[string]any{"recorded": true}, nil
+		},
+	})
+	s := NewServerWithScopesTeamContextAndRuntimeConfig(reg, "pA", []string{"read"}, TeamContext{}, logger, recallFeedbackConfigStub{enabled: false})
+
+	out := runRPC(t, s, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
+	if strings.Contains(out, registry.SubmitRecallFeedbackToolName) {
+		t.Fatalf("tools/list exposed disabled recall feedback tool: %s", out)
+	}
+
+	out = runRPC(t, s, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"submit_recall_feedback","arguments":{}}}`)
+	var resp rpcResp
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Error == nil || resp.Error.Code != errCodeMethodNotFound {
+		t.Fatalf("tools/call error = %+v; want method not found", resp.Error)
 	}
 }
 

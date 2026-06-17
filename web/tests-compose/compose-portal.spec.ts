@@ -128,6 +128,8 @@ test("prometheus telemetry is scraped and rendered in control panel and user por
 });
 
 test("MCP recall feedback is submitted and scraped through compose telemetry", async ({ request }) => {
+  await enableRecallFeedback(request);
+
   await mcpCall(request, "initialize", {
     protocolVersion: "2024-11-05",
     capabilities: {},
@@ -301,6 +303,16 @@ async function createTeamProfile(request: APIRequestContext, name: string, scope
   }
   const payload = await response.json() as { data: CreatedProfile };
   return payload.data;
+}
+
+async function enableRecallFeedback(request: APIRequestContext) {
+  const response = await request.patch(`${controlUrl}/control/api/config/recall-feedback`, {
+    headers: bearer(controlToken),
+    data: { items: [{ key: "RECALL_FEEDBACK_ENABLED", value: "true" }] },
+  });
+  if (response.status() !== 200) {
+    throw new Error(`enable recall feedback failed: ${response.status()} ${await response.text()}`);
+  }
 }
 
 async function prometheusResultCount(request: APIRequestContext, query: string) {

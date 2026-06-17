@@ -25,7 +25,8 @@ import (
 
 // ToolExecuteHandler executes a registry-backed tool over HTTP.
 type ToolExecuteHandler struct {
-	reg registry.Registry
+	reg                  registry.Registry
+	recallFeedbackConfig registry.RecallFeedbackConfigProvider
 }
 
 // ToolExecuteHandlerInterface is the companion interface for ToolExecuteHandler.
@@ -38,6 +39,12 @@ var _ ToolExecuteHandlerInterface = (*ToolExecuteHandler)(nil)
 // NewToolExecuteHandler constructs a ToolExecuteHandler.
 func NewToolExecuteHandler(reg registry.Registry) *ToolExecuteHandler {
 	return &ToolExecuteHandler{reg: reg}
+}
+
+// NewToolExecuteHandlerWithRuntimeConfig constructs a ToolExecuteHandler with
+// runtime feature visibility.
+func NewToolExecuteHandlerWithRuntimeConfig(reg registry.Registry, recallFeedbackConfig registry.RecallFeedbackConfigProvider) *ToolExecuteHandler {
+	return &ToolExecuteHandler{reg: reg, recallFeedbackConfig: recallFeedbackConfig}
 }
 
 // Handle executes POST /api/v1/tools/:name against the shared tool registry.
@@ -61,6 +68,9 @@ func (h *ToolExecuteHandler) Handle(c echo.Context) error {
 
 	tool, ok := h.reg.Get(name)
 	if !ok {
+		return httperr.New(httperr.NOT_FOUND, "tool not found")
+	}
+	if !registry.ToolVisible(ctx, tool, h.recallFeedbackConfig) {
 		return httperr.New(httperr.NOT_FOUND, "tool not found")
 	}
 	if !principalCanSeeTool(principal, tool) {
@@ -92,7 +102,8 @@ func (h *ToolExecuteHandler) Handle(c echo.Context) error {
 
 // ToolReadHandler returns one tool descriptor from the catalog.
 type ToolReadHandler struct {
-	reg registry.Registry
+	reg                  registry.Registry
+	recallFeedbackConfig registry.RecallFeedbackConfigProvider
 }
 
 // ToolReadHandlerInterface is the companion interface for ToolReadHandler.
@@ -107,6 +118,12 @@ func NewToolReadHandler(reg registry.Registry) *ToolReadHandler {
 	return &ToolReadHandler{reg: reg}
 }
 
+// NewToolReadHandlerWithRuntimeConfig constructs a ToolReadHandler with runtime
+// feature visibility.
+func NewToolReadHandlerWithRuntimeConfig(reg registry.Registry, recallFeedbackConfig registry.RecallFeedbackConfigProvider) *ToolReadHandler {
+	return &ToolReadHandler{reg: reg, recallFeedbackConfig: recallFeedbackConfig}
+}
+
 // Handle serves GET /api/v1/tools/:id.
 func (h *ToolReadHandler) Handle(c echo.Context) error {
 	name := c.Param("id")
@@ -116,6 +133,9 @@ func (h *ToolReadHandler) Handle(c echo.Context) error {
 
 	tool, ok := h.reg.Get(name)
 	if !ok {
+		return httperr.New(httperr.NOT_FOUND, "tool not found")
+	}
+	if !registry.ToolVisible(c.Request().Context(), tool, h.recallFeedbackConfig) {
 		return httperr.New(httperr.NOT_FOUND, "tool not found")
 	}
 
@@ -161,6 +181,8 @@ func mapToolExecuteError(err error) *httperr.APIError {
 	switch {
 	case errors.Is(err, registry.ErrToolUnavailable):
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "tool unavailable")
+	case errors.Is(err, registry.ErrToolDisabled):
+		return httperr.New(httperr.NOT_FOUND, "tool not found")
 	case errors.Is(err, ownership.ErrOwnerMismatch):
 		return httperr.New(httperr.FORBIDDEN, "only the owner profile can modify this knowledge")
 	case errors.Is(err, claimservice.ErrSupportingFragmentMissing):

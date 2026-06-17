@@ -37,9 +37,9 @@ type Dependencies struct {
 	Recall         recallservice.RecallService
 	Metrics        observability.DiscoverabilityMetrics
 
-	// RecallFeedbackEnabled controls whether recall_memory asks host LLMs for
-	// online feedback and whether submit_recall_feedback is registered.
-	RecallFeedbackEnabled bool
+	// RecallFeedbackConfig controls whether recall_memory asks host LLMs for
+	// online feedback and whether submit_recall_feedback is visible/callable.
+	RecallFeedbackConfig RecallFeedbackConfigProvider
 
 	// Search / graph tools (v1)
 	KeywordSearch               keywordsearch.KeywordSearchService
@@ -123,9 +123,7 @@ func defaultTools(deps Dependencies) []Tool {
 		inspectSkillPackTool(deps),
 		importSkillPackTool(deps),
 		rollbackSkillPackImportTool(deps),
-	}
-	if deps.RecallFeedbackEnabled {
-		tools = append(tools, submitRecallFeedbackTool(deps))
+		submitRecallFeedbackTool(deps),
 	}
 	return tools
 }
@@ -346,7 +344,7 @@ func recallMemoryTool(deps Dependencies) Tool {
 				results = append(results, m)
 			}
 			out := map[string]any{"results": results, "clarifications": []any{}, "related_dreams": []any{}}
-			if deps.RecallFeedbackEnabled {
+			if RecallFeedbackEnabled(ctx, deps.RecallFeedbackConfig) {
 				out["feedback_request"] = map[string]any{
 					"requested": true,
 					"recall_id": "rec_" + uuid.NewString(),
@@ -380,8 +378,8 @@ func recallMemoryTool(deps Dependencies) Tool {
 
 func submitRecallFeedbackTool(deps Dependencies) Tool {
 	return Tool{
-		Name:        "submit_recall_feedback",
-		Description: "Submit compact host-LLM online feedback for a recall_memory response. Call this after answering when recall_memory returned feedback_request.requested=true. Do not include user content.",
+		Name:        SubmitRecallFeedbackToolName,
+		Description: "Submit compact host-LLM online feedback for a recall_memory response. Call this before the final answer after deciding whether recalled context informed the answer. Use only when recall_memory returned feedback_request.requested=true. Do not include user content.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"required": []string{
@@ -408,8 +406,11 @@ func submitRecallFeedbackTool(deps Dependencies) Tool {
 				"recorded": map[string]any{"type": "boolean"},
 			},
 		},
-		RequiredScopes: []string{"write"},
+		RequiredScopes: []string{"read"},
 		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+			if !RecallFeedbackEnabled(ctx, deps.RecallFeedbackConfig) {
+				return nil, ErrToolDisabled
+			}
 			if deps.Metrics == nil {
 				return nil, ErrToolUnavailable
 			}

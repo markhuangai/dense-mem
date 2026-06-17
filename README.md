@@ -161,9 +161,9 @@ scrape job when Prometheus is shared.
 
 Online recall-quality cards use `densemem_recall_feedback_total` and
 `densemem_recall_feedback_quality_score`. They stay at zero until
-`RECALL_FEEDBACK_ENABLED=true` registers the `submit_recall_feedback` tool and a
-host LLM submits compact feedback for `recall_memory` results. Normal production
-recall traffic still contributes request volume, result count, and latency.
+recall feedback is enabled from the control portal config panel and a host LLM
+submits compact feedback for `recall_memory` results. Normal production recall
+traffic still contributes request volume, result count, and latency.
 
 For the disposable demo image, keep the control portal disabled and use the
 demo telemetry overlay instead:

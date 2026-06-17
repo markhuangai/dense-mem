@@ -23,15 +23,19 @@ type controlAppConfigSvc struct {
 	dreamingSettings     *domain.DreamingConfigSettings
 	communitySettings    *domain.CommunityDetectionConfigSettings
 	operationLogSettings *domain.OperationLogConfigSettings
+	recallSettings       *domain.RecallFeedbackConfigSettings
 	generalValues        map[string]string
 	values               map[string]string
 	dreamingValues       map[string]string
 	communityValues      map[string]string
 	operationLogValues   map[string]string
+	recallValues         map[string]string
 	getErr               error
 	updateErr            error
 	dreamingRuntime      domain.DreamingRuntimeConfig
 	dreamingRuntimeErr   error
+	recallRuntime        domain.RecallFeedbackRuntimeConfig
+	recallRuntimeErr     error
 }
 
 func (s *controlAppConfigSvc) GetGeneralSettings(context.Context) (*domain.GeneralConfigSettings, error) {
@@ -152,6 +156,30 @@ func (s *controlAppConfigSvc) UpdateOperationLogSettings(_ context.Context, valu
 
 func (s *controlAppConfigSvc) OperationLogRuntimeConfig(context.Context) (domain.OperationLogRuntimeConfig, error) {
 	return domain.OperationLogRuntimeConfig{}, nil
+}
+
+func (s *controlAppConfigSvc) GetRecallFeedbackSettings(context.Context) (*domain.RecallFeedbackConfigSettings, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	return s.recallSettings, nil
+}
+
+func (s *controlAppConfigSvc) UpdateRecallFeedbackSettings(_ context.Context, values map[string]string, _, _, _ string) (*domain.RecallFeedbackConfigSettings, error) {
+	if s.updateErr != nil {
+		return nil, s.updateErr
+	}
+	if s.recallValues == nil {
+		s.recallValues = make(map[string]string)
+	}
+	for key, value := range values {
+		s.recallValues[key] = value
+	}
+	return s.recallSettings, nil
+}
+
+func (s *controlAppConfigSvc) RecallFeedbackRuntimeConfig(context.Context) (domain.RecallFeedbackRuntimeConfig, error) {
+	return s.recallRuntime, s.recallRuntimeErr
 }
 
 func TestControlPortalGeneralConfigFlows(t *testing.T) {
@@ -420,12 +448,60 @@ func TestControlPortalOperationLogConfigFlows(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
+func TestControlPortalRecallFeedbackConfigFlows(t *testing.T) {
+	now := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
+	appConfig := &controlAppConfigSvc{
+		recallSettings: &domain.RecallFeedbackConfigSettings{
+			UpdateTime: now.Format(time.RFC3339Nano),
+			Items: []domain.RecallFeedbackConfigItem{{
+				Key:            domain.AppConfigRecallFeedbackEnabled,
+				Value:          "false",
+				EffectiveValue: "false",
+				UpdatedAt:      now,
+			}},
+			Effective: domain.RecallFeedbackRuntimeConfig{Enabled: false},
+		},
+	}
+	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+		ControlHTTPAddr:    "127.0.0.1:8090",
+		ControlPortalToken: "secret",
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
+		Config: appConfig,
+	}, HealthConfig{}, nil)
+	require.NoError(t, err)
+
+	do := func(method, path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer secret")
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := do(http.MethodGet, "/control/api/config/recall-feedback", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"enabled":false`)
+
+	rec = do(http.MethodPatch, "/control/api/config/recall-feedback", `{"items":[{"key":"RECALL_FEEDBACK_ENABLED","value":"true"}]}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "true", appConfig.recallValues[domain.AppConfigRecallFeedbackEnabled])
+
+	rec = do(http.MethodPatch, "/control/api/config/recall-feedback", "{")
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+
+	appConfig.updateErr = service.ErrInvalidAppConfig
+	rec = do(http.MethodPatch, "/control/api/config/recall-feedback", `{"items":[{"key":"RECALL_FEEDBACK_ENABLED","value":"maybe"}]}`)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+}
+
 func TestControlConfigNilResponses(t *testing.T) {
 	require.Empty(t, toControlGeneralConfig(nil).Items)
 	require.Empty(t, toControlSSOConfig(nil).Items)
 	require.Empty(t, toControlDreamingConfig(nil).Items)
 	require.Empty(t, toControlCommunityDetectionConfig(nil).Items)
 	require.Empty(t, toControlOperationLogConfig(nil).Items)
+	require.Empty(t, toControlRecallFeedbackConfig(nil).Items)
 }
 
 func TestControlPortalOperationLogConfigUnavailable(t *testing.T) {

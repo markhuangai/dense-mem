@@ -5,23 +5,33 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
-func TestBuildDefault_RegistersRecallFeedbackToolWhenEnabled(t *testing.T) {
-	reg, err := BuildDefault(Dependencies{RecallFeedbackEnabled: true})
+type stubRecallFeedbackConfig struct {
+	enabled bool
+	err     error
+}
+
+func (s stubRecallFeedbackConfig) RecallFeedbackRuntimeConfig(context.Context) (domain.RecallFeedbackRuntimeConfig, error) {
+	return domain.RecallFeedbackRuntimeConfig{Enabled: s.enabled}, s.err
+}
+
+func TestBuildDefault_RegistersRecallFeedbackTool(t *testing.T) {
+	reg, err := BuildDefault(Dependencies{})
 	if err != nil {
 		t.Fatalf("BuildDefault: %v", err)
 	}
 	if _, ok := reg.Get("submit_recall_feedback"); !ok {
-		t.Fatal("submit_recall_feedback not registered when recall feedback is enabled")
+		t.Fatal("submit_recall_feedback not registered")
 	}
 }
 
 func TestSubmitRecallFeedbackRejectsInvalidQuality(t *testing.T) {
 	reg, _ := BuildDefault(Dependencies{
-		RecallFeedbackEnabled: true,
-		Metrics:               observability.NewInMemoryDiscoverabilityMetrics(),
+		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
 	})
 	tool, _ := reg.Get("submit_recall_feedback")
 
@@ -35,6 +45,26 @@ func TestSubmitRecallFeedbackRejectsInvalidQuality(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "submit_recall_feedback: quality must be one of") {
 		t.Fatalf("err = %v; want invalid quality", err)
+	}
+}
+
+func TestSubmitRecallFeedbackDisabledByRuntimeConfig(t *testing.T) {
+	reg, _ := BuildDefault(Dependencies{
+		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: false},
+		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+	})
+	tool, _ := reg.Get("submit_recall_feedback")
+
+	_, err := tool.Invoke(context.Background(), "profile-feedback", map[string]any{
+		"recall_id":        "rec_1",
+		"used":             true,
+		"answer_supported": true,
+		"quality":          "high",
+		"missing_context":  false,
+		"irrelevant":       false,
+	})
+	if err == nil || !strings.Contains(err.Error(), "tool disabled") {
+		t.Fatalf("err = %v; want disabled tool", err)
 	}
 }
 
@@ -54,9 +84,9 @@ func TestRecallMemoryFeedbackRequestDisabledByDefault(t *testing.T) {
 func TestRecallMemoryFeedbackRequestAndSubmit(t *testing.T) {
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
 	reg, _ := BuildDefault(Dependencies{
-		Recall:                stubRecallWithHit{},
-		Metrics:               metrics,
-		RecallFeedbackEnabled: true,
+		Recall:               stubRecallWithHit{},
+		Metrics:              metrics,
+		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
 	})
 	recallTool, _ := reg.Get("recall_memory")
 

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
@@ -25,6 +26,14 @@ import (
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
+
+type handlerRecallFeedbackConfigStub struct {
+	enabled bool
+}
+
+func (s handlerRecallFeedbackConfigStub) RecallFeedbackRuntimeConfig(context.Context) (domain.RecallFeedbackRuntimeConfig, error) {
+	return domain.RecallFeedbackRuntimeConfig{Enabled: s.enabled}, nil
+}
 
 func TestToolExecuteHandler_RejectsMissingRequiredField(t *testing.T) {
 	reg := registry.New()
@@ -293,6 +302,36 @@ func TestToolExecuteHandler_AdditionalBranches(t *testing.T) {
 		require.Equal(t, http.StatusInternalServerError, rec.Code)
 	})
 
+	t.Run("runtime disabled tool is not found", func(t *testing.T) {
+		reg := registry.New()
+		require.NoError(t, reg.Register(registry.Tool{
+			Name:           registry.SubmitRecallFeedbackToolName,
+			InputSchema:    map[string]any{"type": "object"},
+			RequiredScopes: []string{"read"},
+			Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+				return map[string]any{"recorded": true}, nil
+			},
+		}))
+		h := NewToolExecuteHandlerWithRuntimeConfig(reg, handlerRecallFeedbackConfigStub{enabled: false})
+		e := newTestEcho()
+		profileID := uuid.New()
+		e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+			return func(c echo.Context) error {
+				ctx := middleware.SetResolvedProfileIDForTest(c.Request().Context(), profileID)
+				ctx = middleware.SetPrincipalForTest(ctx, &middleware.Principal{Scopes: []string{"read"}})
+				c.SetRequest(c.Request().WithContext(ctx))
+				return next(c)
+			}
+		})
+		e.POST("/api/v1/tools/:name", h.Handle)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/submit_recall_feedback", strings.NewReader(`{}`))
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusNotFound, rec.Code)
+	})
+
 	t.Run("success strips forged tenant fields", func(t *testing.T) {
 		reg := registry.New()
 		var gotInput map[string]any
@@ -395,6 +434,25 @@ func TestToolReadHandler_Handle(t *testing.T) {
 
 		require.Equal(t, http.StatusNotFound, rec.Code)
 	})
+
+	t.Run("runtime disabled tool descriptor is not found", func(t *testing.T) {
+		runtimeReg := registry.New()
+		require.NoError(t, runtimeReg.Register(registry.Tool{
+			Name:           registry.SubmitRecallFeedbackToolName,
+			Description:    "feedback",
+			InputSchema:    map[string]any{"type": "object"},
+			RequiredScopes: []string{"read"},
+		}))
+		runtimeHandler := NewToolReadHandlerWithRuntimeConfig(runtimeReg, handlerRecallFeedbackConfigStub{enabled: false})
+		e := newTestEcho()
+		e.GET("/api/v1/tools/:id", runtimeHandler.Handle)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/tools/submit_recall_feedback", nil)
+		rec := httptest.NewRecorder()
+
+		e.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusNotFound, rec.Code)
+	})
 }
 
 func TestMapToolExecuteError(t *testing.T) {
@@ -404,6 +462,7 @@ func TestMapToolExecuteError(t *testing.T) {
 		code httperr.ErrorCode
 	}{
 		{"tool unavailable", registry.ErrToolUnavailable, httperr.SERVICE_UNAVAILABLE},
+		{"tool disabled", registry.ErrToolDisabled, httperr.NOT_FOUND},
 		{"supporting fragment missing", claimservice.ErrSupportingFragmentMissing, httperr.ErrSupportingFragmentMissing},
 		{"claim not found", claimservice.ErrClaimNotFound, httperr.ErrClaimNotFound},
 		{"fact not found", factservice.ErrFactNotFound, httperr.ErrFactNotFound},

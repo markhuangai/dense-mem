@@ -37,7 +37,7 @@
 </p>
 
 <p align="center">
-  <a href="https://zenodo.org/records/20469578"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.20469578.svg" alt="DOI: 10.5281/zenodo.20469578" /></a>
+  <a href="https://zenodo.org/records/20519039"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.20519039.svg" alt="DOI: 10.5281/zenodo.20519039" /></a>
 </p>
 
 Dense-Mem 是一层给 MCP 客户端使用的持久记忆服务。它把来源、claims、facts、
@@ -50,7 +50,7 @@ Dense-Mem 负责把记忆状态存稳、管住，并返回可以解释给用户�
 
 Dense-Mem 也是这篇研究预印本的一部分：
 [Governed Enterprise AI Memory Beyond RAG: From Vector Retrieval to Permissioned
-Knowledge Graphs](https://zenodo.org/records/20469578)。
+Knowledge Graphs](https://zenodo.org/records/20519039)。
 
 ## 项目介绍视频
 
@@ -122,6 +122,51 @@ Control portal: http://127.0.0.1:8090/
 URL、model 和 dimensions 提供 OpenAI 默认值：`https://api.openai.com/v1`、
 `text-embedding-3-small`、`1536`。因此最小本地部署只需要补上 `AI_API_KEY`。
 如果切换到其他 embedding provider 或 model，请一起覆盖这些配置。
+
+### Telemetry Overlay
+
+Prometheus telemetry 默认关闭，是可选功能。要为 `/ui` 应用和 control portal
+dashboards 收集 usage、performance、verifier token、embedding token、recall
+和 promotion metrics，可以把基础 stack 和 telemetry overlay 一起启动：
+
+```bash
+curl -fsSLo prometheus.yml \
+  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/prometheus.yml
+curl -fsSLo docker-compose.telemetry.yml \
+  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/docker-compose.telemetry.yml
+
+export TELEMETRY_SCRAPE_TOKEN="$(openssl rand -hex 32)"
+docker compose -f docker-compose.yml -f docker-compose.telemetry.yml up -d
+```
+
+这个 overlay 会在 `127.0.0.1:9090` 启动 Prometheus，保留 30 天样本，把
+`TELEMETRY_SCRAPE_TOKEN` 作为 scrape secret 传给 Prometheus，并让 Dense-Mem
+使用 `http://prometheus:9090` 查询 telemetry。它也会设置
+`TELEMETRY_PROMETHEUS_JOB=dense-mem`，这样在共享 Prometheus 时 dashboard
+只查询 `dense-mem` scrape job。
+
+在线 recall quality 卡片使用 `densemem_recall_feedback_total` 和
+`densemem_recall_feedback_quality_score`。在 control portal config panel
+开启 recall feedback，并且宿主 LLM 为 `recall_memory` 结果提交 compact
+feedback 之前，这些卡片会保持为零。正常生产 recall 流量仍然会贡献请求量、
+结果数和延迟指标。
+
+对于一次性 demo image，保持 control portal 关闭，改用 demo telemetry
+overlay：
+
+```bash
+curl -fsSLo prometheus.demo.yml \
+  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/prometheus.demo.yml
+curl -fsSLo docker-compose.demo.telemetry.yml \
+  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/docker-compose.demo.telemetry.yml
+
+export TELEMETRY_SCRAPE_TOKEN="$(openssl rand -hex 32)"
+docker compose -f docker-compose.yml -f docker-compose.demo.telemetry.yml up -d
+```
+
+demo overlay 会在私有 Compose network 上 scrape `demo:8091`，并设置
+`TELEMETRY_PROMETHEUS_JOB=dense-mem-demo`。不要把这个 metrics listener
+公开到公网。
 
 ## 能力对比
 

@@ -304,6 +304,25 @@ export type OperationLogConfigInput = {
   }>;
 };
 
+export type RecallFeedbackRuntimeConfig = {
+  enabled: boolean;
+};
+
+export type RecallFeedbackConfigItem = SSOConfigItem;
+
+export type RecallFeedbackConfig = {
+  update_time: string;
+  items: RecallFeedbackConfigItem[];
+  effective: RecallFeedbackRuntimeConfig;
+};
+
+export type RecallFeedbackConfigInput = {
+  items: Array<{
+    key: string;
+    value: string;
+  }>;
+};
+
 export type OperationLog = {
   id: string;
   timestamp: string;
@@ -566,6 +585,14 @@ export class ControlApi {
 
   updateOperationLogConfig(input: OperationLogConfigInput): Promise<OperationLogConfig> {
     return this.requestEnvelope<OperationLogConfig>("/config/operation-logs", { method: "PATCH", body: input });
+  }
+
+  getRecallFeedbackConfig(): Promise<RecallFeedbackConfig> {
+    return this.requestEnvelope<RecallFeedbackConfig>("/config/recall-feedback");
+  }
+
+  updateRecallFeedbackConfig(input: RecallFeedbackConfigInput): Promise<RecallFeedbackConfig> {
+    return this.requestEnvelope<RecallFeedbackConfig>("/config/recall-feedback", { method: "PATCH", body: input });
   }
 
   listOperationLogs(query: OperationLogQuery = {}): Promise<Page<OperationLog>> {

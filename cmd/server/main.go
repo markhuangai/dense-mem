@@ -436,7 +436,7 @@ func main() {
 		FragmentList:                fragmentListSvc,
 		Recall:                      recallRegistrySvc,
 		Metrics:                     discoverabilityMetrics,
-		RecallFeedbackEnabled:       cfg.GetRecallFeedbackEnabled(),
+		RecallFeedbackConfig:        appConfigService,
 		KeywordSearch:               keywordSearchService,
 		SemanticSearch:              semanticSearchService,
 		GraphQuery:                  graphQueryService,
@@ -502,10 +502,10 @@ func main() {
 	factRetractHandler := handler.NewFactRetractHandler(factRetractSvc)
 	communityReadHandler := handler.NewCommunityReadHandler(communityGetSvc)
 	communityListHandler := handler.NewCommunityListHandler(communityListSvc)
-	toolCatalogHandler := handler.NewToolCatalogHandler(toolRegistry)
-	toolReadHandler := handler.NewToolReadHandler(toolRegistry)
-	toolExecuteHandler := handler.NewToolExecuteHandler(toolRegistry)
-	mcpHandler := handler.NewMCPHandlerWithLifecycle(toolRegistry, logger, streamLifecycle)
+	toolCatalogHandler := handler.NewToolCatalogHandlerWithRuntimeConfig(toolRegistry, appConfigService)
+	toolReadHandler := handler.NewToolReadHandlerWithRuntimeConfig(toolRegistry, appConfigService)
+	toolExecuteHandler := handler.NewToolExecuteHandlerWithRuntimeConfig(toolRegistry, appConfigService)
+	mcpHandler := handler.NewMCPHandlerWithLifecycleAndRuntimeConfig(toolRegistry, logger, streamLifecycle, appConfigService)
 	openAPIAISafeHandler := handler.NewOpenAPIHandler(openAPIGen, openapi.SpecVariantAISafe)
 	openAPIFullHandler := handler.NewOpenAPIHandler(openAPIGen, openapi.SpecVariantFull)
 
