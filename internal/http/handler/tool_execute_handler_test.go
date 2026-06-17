@@ -309,7 +309,7 @@ func TestToolExecuteHandler_AdditionalBranches(t *testing.T) {
 			InputSchema:    map[string]any{"type": "object"},
 			RequiredScopes: []string{"read"},
 			Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
-				return map[string]any{"recorded": true}, nil
+				return nil, registry.ErrToolDisabled
 			},
 		}))
 		h := NewToolExecuteHandlerWithRuntimeConfig(reg, handlerRecallFeedbackConfigStub{enabled: false})
@@ -435,7 +435,7 @@ func TestToolReadHandler_Handle(t *testing.T) {
 		require.Equal(t, http.StatusNotFound, rec.Code)
 	})
 
-	t.Run("runtime disabled tool descriptor is not found", func(t *testing.T) {
+	t.Run("runtime disabled tool descriptor is visible", func(t *testing.T) {
 		runtimeReg := registry.New()
 		require.NoError(t, runtimeReg.Register(registry.Tool{
 			Name:           registry.SubmitRecallFeedbackToolName,
@@ -451,7 +451,8 @@ func TestToolReadHandler_Handle(t *testing.T) {
 
 		e.ServeHTTP(rec, req)
 
-		require.Equal(t, http.StatusNotFound, rec.Code)
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.Contains(t, rec.Body.String(), `"name":"submit_recall_feedback"`)
 	})
 }
 
