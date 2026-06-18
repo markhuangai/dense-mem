@@ -13,6 +13,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/fulltextquery"
 	"github.com/markhuangai/dense-mem/internal/http/dto"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	neo4jstorage "github.com/markhuangai/dense-mem/internal/storage/neo4j"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -344,26 +345,31 @@ func (s *service) ResolveFeedback(ctx context.Context, profileID string, req Res
 	if dreamID == "" {
 		return nil, fmt.Errorf("resolve dream feedback: dream_id is required")
 	}
+	decision := strings.TrimSpace(req.Decision)
 	dream, err := s.Get(ctx, profileID, dreamID)
 	if err != nil {
+		s.recordDreamFeedback(ctx, decision, nil, "error")
 		return nil, err
 	}
-	decision := strings.TrimSpace(req.Decision)
 	switch decision {
 	case "reject":
 		if err := s.updateDreamStatus(ctx, profileID, dreamID, domain.DreamStatusRejected, strings.TrimSpace(req.Feedback)); err != nil {
+			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}
 	case "stale":
 		if err := s.updateDreamStatus(ctx, profileID, dreamID, domain.DreamStatusStale, strings.TrimSpace(req.Feedback)); err != nil {
+			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}
 	case "reinforce":
 		if err := s.updateDreamStatus(ctx, profileID, dreamID, domain.DreamStatusReinforced, strings.TrimSpace(req.Feedback)); err != nil {
+			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}
 	case "promote_candidate":
 		if s.deps.FragmentCreate == nil {
+			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, fmt.Errorf("resolve dream feedback: fragment create service is required")
 		}
 		content := dreamPromotionContent(dream, req.Feedback)
@@ -383,24 +389,43 @@ func (s *service) ResolveFeedback(ctx context.Context, profileID string, req Res
 			SourceQuality: 0.75,
 		})
 		if err != nil {
+			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}
 		if err := s.linkDreamPromotion(ctx, profileID, dream.DreamID, fragment.Fragment.FragmentID); err != nil {
+			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}
 		if err := s.updateDreamStatus(ctx, profileID, dreamID, domain.DreamStatusPromoted, strings.TrimSpace(req.Feedback)); err != nil {
+			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}
 		updated, _ := s.Get(ctx, profileID, dreamID)
+		s.recordDreamFeedback(ctx, decision, dream, "ok")
 		return &ResolveFeedbackResult{Dream: updated, Fragment: fragment}, nil
 	default:
+		s.recordDreamFeedback(ctx, decision, dream, "error")
 		return nil, fmt.Errorf("%w: %s", ErrInvalidDreamStatus, decision)
 	}
 	updated, err := s.Get(ctx, profileID, dreamID)
 	if err != nil {
+		s.recordDreamFeedback(ctx, decision, dream, "error")
 		return nil, err
 	}
+	s.recordDreamFeedback(ctx, decision, dream, "ok")
 	return &ResolveFeedbackResult{Dream: updated}, nil
+}
+
+func (s *service) recordDreamFeedback(ctx context.Context, decision string, dream *domain.Dream, outcome string) {
+	fromStatus := ""
+	if dream != nil {
+		fromStatus = string(dream.Status)
+	}
+	observability.RecordDreamFeedback(ctx, s.deps.Metrics, observability.DreamFeedback{
+		Decision:   decision,
+		Outcome:    outcome,
+		FromStatus: fromStatus,
+	})
 }
 
 func (s *service) Status(ctx context.Context, profileID string) (*StatusResult, error) {

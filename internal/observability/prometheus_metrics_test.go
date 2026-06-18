@@ -37,6 +37,7 @@ func TestPrometheusMetrics_RecordsScopedMetrics(t *testing.T) {
 	metrics.ObserveRecallLatencyFor(ctx, 42)
 	metrics.ObserveRecallFor(ctx, 42, 3, "ok")
 	metrics.ObserveRecallFeedbackFor(ctx, RecallFeedback{Used: true, AnswerSupported: true, Quality: "high", MissingContext: false, Irrelevant: false})
+	metrics.ObserveDreamFeedbackFor(ctx, DreamFeedback{Decision: "promote_candidate", Outcome: "ok", FromStatus: "reinforced"})
 	metrics.ObserveMemoryFunnelLatencyFor(ctx, "claim_to_verify", 2.5, "verified")
 	metrics.IncFragmentCreateFor(ctx, "created")
 	metrics.IncClaimCreateFor(ctx, "duplicate", "content_hash")
@@ -72,6 +73,9 @@ func TestPrometheusMetrics_RecordsScopedMetrics(t *testing.T) {
 		`missing_context="false"`,
 		`irrelevant="false"`,
 		`densemem_recall_feedback_quality_score_bucket{`,
+		`densemem_dream_feedback_total{`,
+		`decision="promote_candidate"`,
+		`from_status="reinforced"`,
 		`densemem_memory_funnel_latency_seconds_bucket{`,
 		`stage="claim_to_verify"`,
 		`densemem_claim_create_total{`,
@@ -106,6 +110,7 @@ func TestPrometheusMetrics_RecordsUnknownLabelsAndFallbackHelpers(t *testing.T) 
 	metrics.ObserveRecallLatency(2)
 	metrics.ObserveRecall(2, 0, "")
 	metrics.ObserveRecallFeedback(RecallFeedback{Quality: "bad"})
+	metrics.ObserveDreamFeedback(DreamFeedback{})
 	metrics.ObserveMemoryFunnelLatency("", 1, "")
 	metrics.IncFragmentCreate("")
 	metrics.IncClaimCreate("", "")
@@ -126,6 +131,7 @@ func TestPrometheusMetrics_RecordsUnknownLabelsAndFallbackHelpers(t *testing.T) 
 	RecordRecallLatency(ctx, metrics, 1)
 	RecordRecall(ctx, metrics, 1, 2, "ok")
 	RecordRecallFeedback(ctx, metrics, RecallFeedback{Used: true, AnswerSupported: false, Quality: "medium", MissingContext: true, Irrelevant: false})
+	RecordDreamFeedback(ctx, metrics, DreamFeedback{Decision: "reject", Outcome: "error", FromStatus: "proposed"})
 	RecordMemoryFunnelLatency(ctx, metrics, "claim_to_promotion", 5, "promoted")
 	RecordFragmentCreate(ctx, metrics, "created")
 	RecordClaimCreate(ctx, metrics, "created", "")
@@ -144,6 +150,7 @@ func TestPrometheusMetrics_RecordsUnknownLabelsAndFallbackHelpers(t *testing.T) 
 	RecordRecallLatency(ctx, fallback, 30)
 	RecordRecall(ctx, fallback, 30, 4, "ok")
 	RecordRecallFeedback(ctx, fallback, RecallFeedback{Used: true, AnswerSupported: true, Quality: "high"})
+	RecordDreamFeedback(ctx, fallback, DreamFeedback{Decision: "stale", Outcome: "ok", FromStatus: "reinforced"})
 	RecordMemoryFunnelLatency(ctx, fallback, "claim_to_verify", 3, "verified")
 	RecordFragmentCreate(ctx, fallback, "created")
 	RecordClaimCreate(ctx, fallback, "duplicate", "exact")
@@ -415,6 +422,7 @@ func TestNoopDiscoverabilityMetrics_ConsumesCalls(t *testing.T) {
 	metrics.ObserveRecallLatency(1)
 	metrics.ObserveRecall(1, 2, "ok")
 	metrics.ObserveRecallFeedback(RecallFeedback{Used: true, AnswerSupported: true, Quality: "high"})
+	metrics.ObserveDreamFeedback(DreamFeedback{Decision: "reinforce", Outcome: "ok", FromStatus: "proposed"})
 	metrics.ObserveMemoryFunnelLatency("claim_to_verify", 1, "verified")
 	metrics.IncFragmentCreate("created")
 	metrics.IncClaimCreate("duplicate", "exact")
@@ -497,6 +505,10 @@ func assertFallbackRecorded(t *testing.T, metrics *InMemoryDiscoverabilityMetric
 	if len(recallFeedback) != 1 || recallFeedback[0].Quality != "high" || recallFeedback[0].QualityScore != 1 {
 		t.Fatalf("fallback recall feedback samples = %+v", recallFeedback)
 	}
+	dreamFeedback := metrics.DreamFeedbackSamples()
+	if len(dreamFeedback) != 1 || dreamFeedback[0].Decision != "stale" || dreamFeedback[0].Outcome != "ok" || dreamFeedback[0].FromStatus != "reinforced" {
+		t.Fatalf("fallback dream feedback samples = %+v", dreamFeedback)
+	}
 	funnel := metrics.MemoryFunnelSamples()
 	if len(funnel) != 1 || funnel[0].Stage != "claim_to_verify" || funnel[0].Outcome != "verified" {
 		t.Fatalf("fallback funnel samples = %+v", funnel)
@@ -531,6 +543,7 @@ func exerciseNilMetricHelpers(ctx context.Context) {
 	RecordRecallLatency(ctx, nil, 1)
 	RecordRecall(ctx, nil, 1, 1, "ok")
 	RecordRecallFeedback(ctx, nil, RecallFeedback{Used: true, AnswerSupported: true, Quality: "high"})
+	RecordDreamFeedback(ctx, nil, DreamFeedback{Decision: "reinforce", Outcome: "ok", FromStatus: "proposed"})
 	RecordMemoryFunnelLatency(ctx, nil, "stage", 1, "ok")
 	RecordFragmentCreate(ctx, nil, "created")
 	RecordClaimCreate(ctx, nil, "created", "")

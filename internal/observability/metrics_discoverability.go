@@ -19,6 +19,8 @@ type DiscoverabilityMetrics interface {
 	ObserveRecall(durationMs float64, resultCount int, outcome string)
 	// ObserveRecallFeedback records one host-LLM online recall feedback event.
 	ObserveRecallFeedback(feedback RecallFeedback)
+	// ObserveDreamFeedback records one bounded dream-feedback decision event.
+	ObserveDreamFeedback(feedback DreamFeedback)
 	// ObserveMemoryFunnelLatency records latency between memory pipeline stages.
 	ObserveMemoryFunnelLatency(stage string, seconds float64, outcome string)
 	// IncFragmentCreate bumps the fragment-create outcome counter.
@@ -64,6 +66,7 @@ func (noopMetrics) IncEmbeddingError(string)                {}
 func (noopMetrics) ObserveRecallLatency(float64)            {}
 func (noopMetrics) ObserveRecall(float64, int, string)      {}
 func (noopMetrics) ObserveRecallFeedback(RecallFeedback)    {}
+func (noopMetrics) ObserveDreamFeedback(DreamFeedback)      {}
 func (noopMetrics) ObserveMemoryFunnelLatency(string, float64, string) {
 }
 func (noopMetrics) IncFragmentCreate(string)            {}
@@ -86,6 +89,7 @@ type InMemoryDiscoverabilityMetrics struct {
 	recallLatencies        []float64
 	recallSamples          []RecallSample
 	recallFeedbackSamples  []RecallFeedbackSample
+	dreamFeedbackSamples   []DreamFeedbackSample
 	memoryFunnelSamples    []MemoryFunnelSample
 	fragmentOutcomes       map[string]int
 	claimCreateSamples     []ClaimCreateSample
@@ -140,6 +144,20 @@ type RecallFeedbackSample struct {
 	QualityScore    float64
 	MissingContext  bool
 	Irrelevant      bool
+}
+
+// DreamFeedback is one bounded dream-feedback decision.
+type DreamFeedback struct {
+	Decision   string
+	Outcome    string
+	FromStatus string
+}
+
+// DreamFeedbackSample is one recorded dream-feedback decision.
+type DreamFeedbackSample struct {
+	Decision   string
+	Outcome    string
+	FromStatus string
 }
 
 // MemoryFunnelSample is one observed pipeline-stage latency.
@@ -206,6 +224,17 @@ func (m *InMemoryDiscoverabilityMetrics) ObserveRecallFeedback(feedback RecallFe
 	})
 }
 
+// ObserveDreamFeedback records one bounded dream-feedback decision event.
+func (m *InMemoryDiscoverabilityMetrics) ObserveDreamFeedback(feedback DreamFeedback) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.dreamFeedbackSamples = append(m.dreamFeedbackSamples, DreamFeedbackSample{
+		Decision:   normalizeDreamFeedbackDecision(feedback.Decision),
+		Outcome:    normalizeDreamFeedbackOutcome(feedback.Outcome),
+		FromStatus: normalizeDreamStatusLabel(feedback.FromStatus),
+	})
+}
+
 // ObserveMemoryFunnelLatency records one memory-pipeline stage latency.
 func (m *InMemoryDiscoverabilityMetrics) ObserveMemoryFunnelLatency(stage string, seconds float64, outcome string) {
 	m.mu.Lock()
@@ -260,6 +289,15 @@ func (m *InMemoryDiscoverabilityMetrics) RecallFeedbackSamples() []RecallFeedbac
 	defer m.mu.Unlock()
 	out := make([]RecallFeedbackSample, len(m.recallFeedbackSamples))
 	copy(out, m.recallFeedbackSamples)
+	return out
+}
+
+// DreamFeedbackSamples returns a copy of the recorded dream feedback.
+func (m *InMemoryDiscoverabilityMetrics) DreamFeedbackSamples() []DreamFeedbackSample {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]DreamFeedbackSample, len(m.dreamFeedbackSamples))
+	copy(out, m.dreamFeedbackSamples)
 	return out
 }
 
