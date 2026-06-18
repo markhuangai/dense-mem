@@ -239,7 +239,7 @@ func TestMCP_ToolsListMirrorsRegistry(t *testing.T) {
 	}
 }
 
-func TestMCP_ToolsListKeepsRecallFeedbackDiscoverableWhenRuntimeDisabled(t *testing.T) {
+func TestMCP_ToolsListHidesRecallFeedbackWhenRuntimeDisabled(t *testing.T) {
 	logger, _ := testLogger(t)
 	reg := registry.New()
 	_ = reg.Register(registry.Tool{
@@ -275,8 +275,8 @@ func TestMCP_ToolsListKeepsRecallFeedbackDiscoverableWhenRuntimeDisabled(t *test
 			break
 		}
 	}
-	if !found {
-		t.Fatalf("tools/list did not expose recall feedback tool: %s", out)
+	if found {
+		t.Fatalf("tools/list exposed disabled recall feedback tool: %s", out)
 	}
 
 	out = runRPC(t, s, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"submit_recall_session_feedback","arguments":{}}}`)

@@ -41,6 +41,18 @@ describe("ControlApi", () => {
     });
   });
 
+  it("throws ApiError for malformed JSON success responses", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{", { status: 200 })));
+
+    const api = new ControlApi("secret", "/control/api");
+
+    await expect(api.session()).rejects.toMatchObject({
+      name: "ApiError",
+      status: 200,
+      message: "Invalid JSON response",
+    });
+  });
+
   it("requests metrics with window and team filters", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       data: {

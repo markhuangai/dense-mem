@@ -3,6 +3,7 @@ package validation
 import (
 	"encoding/json"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -61,13 +62,9 @@ func maxBytesValidator(fl validator.FieldLevel) bool {
 		return true // No limit specified
 	}
 
-	// Parse the max bytes manually
-	var max int64
-	for _, c := range maxBytes {
-		if c < '0' || c > '9' {
-			return true // Invalid parameter, skip validation
-		}
-		max = max*10 + int64(c-'0')
+	max, err := strconv.ParseInt(maxBytes, 10, 64)
+	if err != nil || max < 0 {
+		return false
 	}
 
 	// Serialize to JSON to check size

@@ -89,6 +89,22 @@ func TestRecallMemoryRecallEventDisabledByDefault(t *testing.T) {
 	}
 }
 
+func TestRecallMemoryRecallEventRequiresMetrics(t *testing.T) {
+	reg, _ := BuildDefault(Dependencies{
+		Recall:               stubRecallWithHit{},
+		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+	})
+	tool, _ := reg.Get("recall_memory")
+
+	out, err := tool.Invoke(context.Background(), "profile-feedback", map[string]any{"query": "q"})
+	if err != nil {
+		t.Fatalf("recall_memory Invoke: %v", err)
+	}
+	if _, ok := out["recall_event"]; ok {
+		t.Fatalf("recall_event present without metrics: %v", out["recall_event"])
+	}
+}
+
 func TestRecallMemoryRecallEventAndSessionSubmit(t *testing.T) {
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
 	reg, _ := BuildDefault(Dependencies{

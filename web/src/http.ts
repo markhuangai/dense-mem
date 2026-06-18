@@ -47,6 +47,9 @@ export async function requestJson<T>(url: string, options: JsonRequestOptions = 
     try {
       payload = JSON.parse(text);
     } catch {
+      if (response.ok) {
+        throw new ApiError(response.status, "Invalid JSON response");
+      }
       payload = null;
     }
   }

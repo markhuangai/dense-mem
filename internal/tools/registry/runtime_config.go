@@ -20,9 +20,10 @@ type RecallFeedbackConfigProvider interface {
 }
 
 // ToolVisible reports whether a registered tool should be visible for a request.
-// Tool schemas stay stable across long-lived clients; runtime config gates
-// recall feedback requests and submissions instead of discovery.
-func ToolVisible(_ context.Context, _ Tool, _ RecallFeedbackConfigProvider) bool {
+func ToolVisible(ctx context.Context, tool Tool, cfg RecallFeedbackConfigProvider) bool {
+	if tool.Name == SubmitRecallSessionFeedbackToolName {
+		return RecallFeedbackEnabled(ctx, cfg)
+	}
 	return true
 }
 

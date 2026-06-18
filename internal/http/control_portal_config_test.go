@@ -177,7 +177,10 @@ func (s *controlAppConfigSvc) UpdateRecallFeedbackSettings(_ context.Context, va
 		s.recallValues[key] = value
 	}
 	if raw, ok := values[domain.AppConfigRecallFeedbackEnabled]; ok {
-		enabled, _ := strconv.ParseBool(raw)
+		enabled, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, service.ErrInvalidAppConfig
+		}
 		s.recallRuntime.Enabled = enabled
 		if s.recallSettings != nil {
 			s.recallSettings.Effective.Enabled = enabled

@@ -63,7 +63,13 @@ func TimePtr(row map[string]any, key string) *time.Time {
 func StringSlice(row map[string]any, key string) []string {
 	switch raw := row[key].(type) {
 	case []string:
-		return append([]string(nil), raw...)
+		values := make([]string, 0, len(raw))
+		for _, value := range raw {
+			if value != "" {
+				values = append(values, value)
+			}
+		}
+		return values
 	case []any:
 		values := make([]string, 0, len(raw))
 		for _, item := range raw {

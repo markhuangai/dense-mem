@@ -435,7 +435,7 @@ func TestToolReadHandler_Handle(t *testing.T) {
 		require.Equal(t, http.StatusNotFound, rec.Code)
 	})
 
-	t.Run("runtime disabled tool descriptor is visible", func(t *testing.T) {
+	t.Run("runtime disabled tool descriptor is not found", func(t *testing.T) {
 		runtimeReg := registry.New()
 		require.NoError(t, runtimeReg.Register(registry.Tool{
 			Name:           registry.SubmitRecallSessionFeedbackToolName,
@@ -451,8 +451,7 @@ func TestToolReadHandler_Handle(t *testing.T) {
 
 		e.ServeHTTP(rec, req)
 
-		require.Equal(t, http.StatusOK, rec.Code)
-		require.Contains(t, rec.Body.String(), `"name":"submit_recall_session_feedback"`)
+		require.Equal(t, http.StatusNotFound, rec.Code)
 	})
 }
 

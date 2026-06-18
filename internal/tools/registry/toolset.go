@@ -343,7 +343,7 @@ func recallMemoryTool(deps Dependencies) Tool {
 				results = append(results, m)
 			}
 			out := map[string]any{"results": results, "clarifications": []any{}, "related_dreams": []any{}}
-			if RecallFeedbackEnabled(ctx, deps.RecallFeedbackConfig) {
+			if RecallFeedbackEnabled(ctx, deps.RecallFeedbackConfig) && deps.Metrics != nil {
 				out["recall_event"] = map[string]any{
 					"recall_id":       "rec_" + uuid.NewString(),
 					"feedback_tool":   SubmitRecallSessionFeedbackToolName,

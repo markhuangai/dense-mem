@@ -1,4 +1,5 @@
-import { FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Component, FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import {
   BarChart3,
   FileText,
@@ -350,50 +351,84 @@ function UserPortal({
       detailLabel="Knowledge details"
       error={error}
     >
-      <Suspense fallback={<LazyPanelFallback />}>
-        {activeTab === "search" && <SearchPanel api={api} />}
-        {activeTab === "dreams" && <UserDreamsPanel api={api} />}
-        {activeTab === "usage" && <UserTelemetryPanel api={api} />}
-        {activeTab === "facts" && <FactsPanel api={api} />}
-        {activeTab === "claims" && <ClaimsPanel api={api} />}
-        {activeTab === "fragments" && <FragmentsPanel api={api} />}
-        {activeTab === "communities" && <CommunitiesPanel api={api} />}
-        {activeTab === "team" && session?.can_manage_team && (
-          <TeamManagementPanel
-            api={api}
-            session={session}
-            onTeamUpdated={(team) => setSession((current) => current ? { ...current, team } : current)}
-          />
-        )}
-        {activeTab === "key" && session && (
-          <KeyPanel
-            api={api}
-            session={session}
-            onRotated={(rotated) => {
-              if (authMode === "api_key") {
-                sessionStorage.setItem(TOKEN_STORAGE_KEY, rotated.api_key);
-                onTokenChange(rotated.api_key);
-              }
-              setSession((current) => current ? {
-                ...current,
-                key: rotated.key,
-                can_rotate: rotated.key.scopes.includes("write"),
-                can_manage_team: rotated.key.role === "manager",
-              } : current);
-            }}
-            onSSOKeyChanged={(key) => {
-              setSession((current) => current ? {
-                ...current,
-                personal_key: key,
-                can_create_personal_key: false,
-                can_rotate_personal_key: key.scopes.includes("write") && (current.personal_key_max_scopes ?? []).includes("write"),
-              } : current);
-            }}
-          />
-        )}
-      </Suspense>
+      <LazyPanelErrorBoundary key={activeTab}>
+        <Suspense fallback={<LazyPanelFallback />}>
+          {activeTab === "search" && <SearchPanel api={api} />}
+          {activeTab === "dreams" && <UserDreamsPanel api={api} />}
+          {activeTab === "usage" && <UserTelemetryPanel api={api} />}
+          {activeTab === "facts" && <FactsPanel api={api} />}
+          {activeTab === "claims" && <ClaimsPanel api={api} />}
+          {activeTab === "fragments" && <FragmentsPanel api={api} />}
+          {activeTab === "communities" && <CommunitiesPanel api={api} />}
+          {activeTab === "team" && session?.can_manage_team && (
+            <TeamManagementPanel
+              api={api}
+              session={session}
+              onTeamUpdated={(team) => setSession((current) => current ? { ...current, team } : current)}
+            />
+          )}
+          {activeTab === "key" && session && (
+            <KeyPanel
+              api={api}
+              session={session}
+              onRotated={(rotated) => {
+                if (authMode === "api_key") {
+                  sessionStorage.setItem(TOKEN_STORAGE_KEY, rotated.api_key);
+                  onTokenChange(rotated.api_key);
+                }
+                setSession((current) => current ? {
+                  ...current,
+                  key: rotated.key,
+                  can_rotate: rotated.key.scopes.includes("write"),
+                  can_manage_team: rotated.key.role === "manager",
+                } : current);
+              }}
+              onSSOKeyChanged={(key) => {
+                setSession((current) => current ? {
+                  ...current,
+                  personal_key: key,
+                  can_create_personal_key: false,
+                  can_rotate_personal_key: key.scopes.includes("write") && (current.personal_key_max_scopes ?? []).includes("write"),
+                } : current);
+              }}
+            />
+          )}
+        </Suspense>
+      </LazyPanelErrorBoundary>
     </PortalShell>
   );
+}
+
+type LazyPanelErrorBoundaryProps = {
+  children: ReactNode;
+};
+
+type LazyPanelErrorBoundaryState = {
+  hasError: boolean;
+};
+
+class LazyPanelErrorBoundary extends Component<LazyPanelErrorBoundaryProps, LazyPanelErrorBoundaryState> {
+  state: LazyPanelErrorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): LazyPanelErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <section className="surface">
+          <SectionHeading title="Panel unavailable" />
+          <p className="field-error" role="alert">This panel could not load.</p>
+          <button className="ghost-button" type="button" onClick={() => window.location.reload()}>
+            <RefreshCw size={17} aria-hidden="true" />
+            Reload
+          </button>
+        </section>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 function LazyPanelFallback() {
