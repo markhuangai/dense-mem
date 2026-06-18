@@ -37,6 +37,13 @@ type TelemetryResponse = {
   };
 };
 
+type TelemetryCard = {
+  id?: string;
+  label?: string;
+  value?: number;
+  unit?: string;
+};
+
 test("control panel logs in against compose and creates a team", async ({ page }, testInfo) => {
   await openControlPanel(page);
   await expect(page.getByRole("button", { name: new RegExp(escapeRegExp(seedTeamName)) })).toBeVisible();
@@ -127,7 +134,7 @@ test("prometheus telemetry is scraped and rendered in control panel and user por
   await expectNoShellOverlap(page);
 });
 
-test("MCP recall feedback is submitted and scraped through compose telemetry", async ({ request }) => {
+test("MCP recall feedback is submitted and surfaced through compose telemetry", async ({ page, request }) => {
   const recallFeedbackWasEnabled = await recallFeedbackEnabled(request);
   await setRecallFeedback(request, true);
 
@@ -196,6 +203,40 @@ test("MCP recall feedback is submitted and scraped through compose telemetry", a
       "LLM missing context",
       "LLM irrelevant recall",
     ]));
+
+    await expect.poll(
+      () => telemetryCardValue(request, "llm_recall_used_rate").catch(() => -1),
+      {
+        intervals: [1_000, 5_000, 10_000],
+        timeout: 120_000,
+      },
+    ).toBe(100);
+    await expect.poll(
+      () => telemetryCardValue(request, "llm_recall_answer_supported_rate").catch(() => -1),
+      {
+        intervals: [1_000, 5_000, 10_000],
+        timeout: 120_000,
+      },
+    ).toBe(100);
+    await expect.poll(
+      () => telemetryCardValue(request, "llm_recall_quality_score").catch(() => -1),
+      {
+        intervals: [1_000, 5_000, 10_000],
+        timeout: 120_000,
+      },
+    ).toBe(100);
+
+    const finalTelemetry = await userTelemetry(request);
+    expect(cardValue(finalTelemetry, "llm_recall_missing_context_rate")).toBe(0);
+    expect(cardValue(finalTelemetry, "llm_recall_irrelevant_rate")).toBe(0);
+
+    await openUserPortal(page, seedApiKey);
+    await page.getByRole("button", { name: "Usage" }).click();
+    const usageTotals = page.getByLabel("Usage totals");
+    await expect(usageTotals).toContainText("LLM recall used");
+    await expect(usageTotals).toContainText("LLM answer supported");
+    await expect(usageTotals).toContainText("LLM recall quality");
+    await expect(usageTotals).toContainText("100%");
   } finally {
     await setRecallFeedback(request, recallFeedbackWasEnabled);
   }
@@ -244,9 +285,9 @@ test("write user key regenerates itself and invalidates the old key", async ({ p
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: /Regenerate key/i }).click();
 
-  const rotatedKey = page.getByLabel("Knowledge details").locator(".secret-box code").first();
-  await expect(rotatedKey).toHaveText(/^dm_/);
-  const newApiKey = (await rotatedKey.textContent()) ?? "";
+  const rotatedKey = page.getByLabel("Generated API key");
+  await expect(rotatedKey).toHaveValue(/^dm_/);
+  const newApiKey = await rotatedKey.inputValue();
   expect(newApiKey).not.toBe(writable.api_key);
   await expect
     .poll(() => page.evaluate(() => sessionStorage.getItem("denseMem.userApiKey")))
@@ -425,6 +466,30 @@ function telemetryLabels(value: unknown) {
   return value
     .map((item) => (isRecord(item) && typeof item.label === "string" ? item.label : ""))
     .filter(Boolean);
+}
+
+async function userTelemetry(request: APIRequestContext) {
+  const response = await request.get(`${userUrl}/ui/api/telemetry?window=15m`, { headers: bearer(seedApiKey) });
+  if (response.status() !== 200) {
+    throw new Error(`user telemetry failed: ${response.status()} ${await response.text()}`);
+  }
+  return await response.json() as TelemetryResponse;
+}
+
+async function telemetryCardValue(request: APIRequestContext, id: string) {
+  return cardValue(await userTelemetry(request), id);
+}
+
+function cardValue(body: TelemetryResponse, id: string) {
+  const cards = body.data?.cards;
+  if (!Array.isArray(cards)) {
+    throw new Error("telemetry cards must be an array");
+  }
+  const card = cards.find((item): item is TelemetryCard => isRecord(item) && item.id === id);
+  if (!card || typeof card.value !== "number") {
+    throw new Error(`telemetry card ${id} missing numeric value`);
+  }
+  return card.value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

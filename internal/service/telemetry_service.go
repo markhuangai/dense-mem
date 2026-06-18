@@ -317,9 +317,13 @@ func telemetrySparseCounterIncrease(metric string, scope TelemetryScope, baseLab
 
 func telemetrySparseCounterIncreaseForSelector(metric string, selector string, window string) string {
 	ranged := fmt.Sprintf("increase(%s%s[%s])", metric, selector, window)
-	current := fmt.Sprintf("%s%s", metric, selector)
+	first := fmt.Sprintf("min_over_time(%s%s[%s])", metric, selector, window)
 	offset := fmt.Sprintf("%s%s offset %s", metric, selector, window)
-	return fmt.Sprintf("sum(%s + ((%s unless %s) or (0 * %s)))", ranged, current, offset, ranged)
+	current := fmt.Sprintf("%s%s", metric, selector)
+	sampleCount := fmt.Sprintf("count_over_time(%s%s[%s])", metric, selector, window)
+	targetScrapeCount := fmt.Sprintf("count_over_time(up[%s])", window)
+	fallback := fmt.Sprintf("((%s unless %s) or (%s * (%s >= bool 0) * (%s < bool on(job, instance) group_left() %s)) or (0 * %s))", first, offset, first, current, sampleCount, targetScrapeCount, ranged)
+	return fmt.Sprintf("sum(%s + %s)", ranged, fallback)
 }
 
 func telemetrySparseHistogramAverage(metric string, scope TelemetryScope, baseLabels map[string]string, extra map[string]string, window string, multiplier float64) string {
