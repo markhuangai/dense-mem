@@ -400,7 +400,11 @@ func (s *service) ResolveFeedback(ctx context.Context, profileID string, req Res
 			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}
-		updated, _ := s.Get(ctx, profileID, dreamID)
+		updated, err := s.Get(ctx, profileID, dreamID)
+		if err != nil {
+			s.recordDreamFeedback(ctx, decision, dream, "error")
+			return nil, err
+		}
 		s.recordDreamFeedback(ctx, decision, dream, "ok")
 		return &ResolveFeedbackResult{Dream: updated, Fragment: fragment}, nil
 	default:

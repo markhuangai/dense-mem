@@ -74,8 +74,6 @@ func TestPrometheusMetrics_RecordsScopedMetrics(t *testing.T) {
 		`irrelevant="false"`,
 		`densemem_recall_feedback_quality_score_bucket{`,
 		`densemem_dream_feedback_total{`,
-		`decision="promote_candidate"`,
-		`from_status="reinforced"`,
 		`densemem_memory_funnel_latency_seconds_bucket{`,
 		`stage="claim_to_verify"`,
 		`densemem_claim_create_total{`,
@@ -88,6 +86,11 @@ func TestPrometheusMetrics_RecordsScopedMetrics(t *testing.T) {
 			t.Fatalf("scraped metrics missing %q\n%s", want, body)
 		}
 	}
+	requirePrometheusMetricLabels(t, body, "densemem_dream_feedback_total",
+		`decision="promote_candidate"`,
+		`outcome="ok"`,
+		`from_status="reinforced"`,
+	)
 	for _, blocked := range []string{
 		`team_name=`,
 		`profile_name=`,
@@ -177,6 +180,11 @@ func TestPrometheusMetrics_RecordsUnknownLabelsAndFallbackHelpers(t *testing.T) 
 			t.Fatalf("scraped metrics missing %q\n%s", want, body)
 		}
 	}
+	requirePrometheusMetricLabels(t, body, "densemem_dream_feedback_total",
+		`decision="unknown"`,
+		`outcome="unknown"`,
+		`from_status="unknown"`,
+	)
 }
 
 func TestPrometheusMetricLabelHelpers(t *testing.T) {
@@ -480,6 +488,26 @@ func scrapePrometheusMetrics(t *testing.T, metrics *PrometheusMetrics) string {
 		t.Fatalf("metrics status = %d; want 200", rec.Code)
 	}
 	return rec.Body.String()
+}
+
+func requirePrometheusMetricLabels(t *testing.T, body, metric string, labels ...string) {
+	t.Helper()
+	for _, line := range strings.Split(body, "\n") {
+		if !strings.HasPrefix(line, metric+"{") {
+			continue
+		}
+		matched := true
+		for _, label := range labels {
+			if !strings.Contains(line, label) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return
+		}
+	}
+	t.Fatalf("scraped metrics missing %s label tuple %v\n%s", metric, labels, body)
 }
 
 func assertFallbackRecorded(t *testing.T, metrics *InMemoryDiscoverabilityMetrics) {

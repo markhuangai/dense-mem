@@ -376,6 +376,36 @@ func TestDreamServiceResolveFeedbackPromotesCandidate(t *testing.T) {
 	}, errorMetrics.DreamFeedbackSamples())
 }
 
+func TestDreamServiceResolveFeedbackPromoteCandidateRefetchError(t *testing.T) {
+	now := time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC)
+	graph := &cycleRunGraphStub{
+		executeWrites: true,
+		readErr:       errors.New("read failed"),
+		readErrAfter:  3,
+		dreamRows:     []map[string]any{{"d": dreamTestNode("dream-1", "profile-1", now)}},
+	}
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	svc := New(Dependencies{
+		Graph:          graph,
+		FragmentCreate: &dreamFragmentCreateStub{},
+		Metrics:        metrics,
+		Now:            func() time.Time { return now },
+	})
+
+	res, err := svc.ResolveFeedback(context.Background(), "profile-1", ResolveFeedbackRequest{
+		DreamID:  "dream-1",
+		Decision: "promote_candidate",
+		Feedback: "confirmed by user",
+	})
+
+	require.ErrorContains(t, err, "read failed")
+	require.Nil(t, res)
+	require.Equal(t, 2, graph.writes)
+	require.Equal(t, []observability.DreamFeedbackSample{
+		{Decision: "promote_candidate", Outcome: "error", FromStatus: "proposed"},
+	}, metrics.DreamFeedbackSamples())
+}
+
 func TestDreamServiceEffectiveConfigUsesProfileOverrides(t *testing.T) {
 	profileID := uuid.New()
 	svc := New(Dependencies{
@@ -637,7 +667,9 @@ func (s dreamProfileStub) List(context.Context, int, int) ([]*domain.Profile, er
 type cycleRunGraphStub struct {
 	existingRun    bool
 	writes         int
+	readCalls      int
 	readErr        error
+	readErrAfter   int
 	writeErr       error
 	executeWrites  bool
 	writeQueries   []string
@@ -649,8 +681,9 @@ type cycleRunGraphStub struct {
 }
 
 func (s *cycleRunGraphStub) ScopedRead(_ context.Context, _ string, query string, params map[string]any) (neo4j.ResultSummary, []map[string]any, error) {
+	s.readCalls++
 	s.lastReadParams = params
-	if s.readErr != nil {
+	if s.readErr != nil && (s.readErrAfter == 0 || s.readCalls >= s.readErrAfter) {
 		return nil, nil, s.readErr
 	}
 	if s.existingRun && strings.Contains(query, "DreamCycleRun") {
