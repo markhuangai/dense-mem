@@ -35,6 +35,7 @@ func clearEnv() {
 		"AI_VERIFIER_API_URL",
 		"AI_VERIFIER_API_KEY",
 		"AI_VERIFIER_MODEL",
+		"AI_VERIFIER_DISABLE_TEMPERATURE",
 		"AI_VERIFIER_TIMEOUT_SECONDS",
 		"AI_VERIFIER_MAX_CONCURRENCY",
 		"CLAIM_WRITE_RATE_LIMIT",
@@ -661,8 +662,30 @@ func TestLoadVerifierConfig_SeparateEndpoint(t *testing.T) {
 	if got := cfg.GetAIVerifierModel(); got != "local-verifier" {
 		t.Errorf("GetAIVerifierModel() = %q, want %q", got, "local-verifier")
 	}
+	if cfg.GetAIVerifierDisableTemperature() {
+		t.Error("GetAIVerifierDisableTemperature() = true, want false")
+	}
 	if got := cfg.GetAIVerifierTimeoutSeconds(); got != 45 {
 		t.Errorf("GetAIVerifierTimeoutSeconds() = %d, want %d", got, 45)
+	}
+}
+
+func TestLoadVerifierConfig_DisableTemperature(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+	setRequiredEmbeddingEnv()
+	os.Setenv("AI_VERIFIER_DISABLE_TEMPERATURE", "true")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned unexpected error: %v", err)
+	}
+
+	if !cfg.GetAIVerifierDisableTemperature() {
+		t.Fatal("GetAIVerifierDisableTemperature() = false, want true")
+	}
+	if !AIVerifierTemperatureDisabled(&cfg) {
+		t.Fatal("AIVerifierTemperatureDisabled() = false, want true")
 	}
 }
 
@@ -737,6 +760,9 @@ func TestLoadKnowledgeConfigDefaults(t *testing.T) {
 
 	if got := cfg.GetAIVerifierModel(); got != "gpt-4o-mini" {
 		t.Errorf("GetAIVerifierModel() = %q, want %q", got, "gpt-4o-mini")
+	}
+	if cfg.GetAIVerifierDisableTemperature() {
+		t.Error("GetAIVerifierDisableTemperature() = true, want false")
 	}
 	if got := cfg.GetAIVerifierMaxConcurrency(); got != 5 {
 		t.Errorf("GetAIVerifierMaxConcurrency() = %d, want %d", got, 5)
@@ -819,6 +845,7 @@ func TestLoadValidation_RemainingInvalidEnvironmentBranches(t *testing.T) {
 		{"invalid sse streams", func() { os.Setenv("SSE_MAX_CONCURRENT_STREAMS", "bad") }, "SSE_MAX_CONCURRENT_STREAMS"},
 		{"invalid embedding dimensions", func() { os.Setenv("AI_API_EMBEDDING_DIMENSIONS", "bad") }, "AI_API_EMBEDDING_DIMENSIONS"},
 		{"invalid embedding timeout", func() { os.Setenv("AI_API_EMBEDDING_TIMEOUT_SECONDS", "bad") }, "AI_API_EMBEDDING_TIMEOUT_SECONDS"},
+		{"invalid verifier disable temperature", func() { os.Setenv("AI_VERIFIER_DISABLE_TEMPERATURE", "bad") }, "AI_VERIFIER_DISABLE_TEMPERATURE"},
 		{"invalid verifier timeout", func() { os.Setenv("AI_VERIFIER_TIMEOUT_SECONDS", "bad") }, "AI_VERIFIER_TIMEOUT_SECONDS"},
 		{"invalid verifier concurrency", func() { os.Setenv("AI_VERIFIER_MAX_CONCURRENCY", "bad") }, "AI_VERIFIER_MAX_CONCURRENCY"},
 		{"invalid claim write rate", func() { os.Setenv("CLAIM_WRITE_RATE_LIMIT", "bad") }, "CLAIM_WRITE_RATE_LIMIT"},

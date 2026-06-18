@@ -136,6 +136,10 @@ the URL, model, and dimensions (`https://api.openai.com/v1`,
 fill in `AI_API_KEY`. Override those values together when using a different
 embedding provider or model.
 
+Verifier calls send `temperature: 0` by default. Set
+`AI_VERIFIER_DISABLE_TEMPERATURE=true` to omit the field for providers or models
+that reject temperature.
+
 ### Telemetry Overlay
 
 Prometheus telemetry is optional and off by default. To collect usage,

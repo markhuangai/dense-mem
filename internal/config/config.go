@@ -53,6 +53,20 @@ type ConfigProvider interface {
 	GetControlPortalToken() string
 }
 
+type aiVerifierTemperatureConfig interface {
+	GetAIVerifierDisableTemperature() bool
+}
+
+// AIVerifierTemperatureDisabled returns true when a config provider exposes
+// the verifier temperature omission flag.
+func AIVerifierTemperatureDisabled(cfg ConfigProvider) bool {
+	if cfg == nil {
+		return false
+	}
+	temperatureConfig, ok := cfg.(aiVerifierTemperatureConfig)
+	return ok && temperatureConfig.GetAIVerifierDisableTemperature()
+}
+
 // Config holds all configuration for the application.
 // All fields are populated from environment variables with sensible defaults.
 type Config struct {
@@ -84,6 +98,7 @@ type Config struct {
 	AIVerifierAPIURL             string
 	AIVerifierAPIKey             string `json:"-"`
 	AIVerifierModel              string
+	AIVerifierDisableTemperature bool
 	AIVerifierTimeoutSeconds     int
 	AIVerifierMaxConcurrency     int
 	ClaimWriteRateLimit          int
@@ -144,6 +159,9 @@ func (c *Config) GetAIVerifierAPIKey() string {
 	return c.AIAPIKey
 }
 func (c *Config) GetAIVerifierModel() string { return c.AIVerifierModel }
+func (c *Config) GetAIVerifierDisableTemperature() bool {
+	return c.AIVerifierDisableTemperature
+}
 func (c *Config) GetAIVerifierTimeoutSeconds() int {
 	if c.AIVerifierTimeoutSeconds > 0 {
 		return c.AIVerifierTimeoutSeconds
@@ -343,6 +361,10 @@ func Load() (Config, error) {
 		cfg.AIVerifierAPIKey = cfg.AIAPIKey
 	}
 	cfg.AIVerifierModel = getEnvOrDefault("AI_VERIFIER_MODEL", "gpt-4o-mini")
+	cfg.AIVerifierDisableTemperature, err = parseBoolOrDefault("AI_VERIFIER_DISABLE_TEMPERATURE", false)
+	if err != nil {
+		return cfg, err
+	}
 
 	if err := applyIntEnvSpecs(&cfg, []intEnvSpec{
 		{"AI_VERIFIER_TIMEOUT_SECONDS", 60, func(c *Config, value int) { c.AIVerifierTimeoutSeconds = value }},

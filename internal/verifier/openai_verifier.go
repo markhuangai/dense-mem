@@ -21,8 +21,7 @@ const (
 	openAIVerifierDefaultTimeout = 60 * time.Second
 
 	// openAIVerifierSystemPrompt is the fixed system instruction for all verification calls.
-	// Temperature is set to 0 and a strict JSON schema is enforced, so this prompt focuses
-	// solely on the task semantics and output contract.
+	// Temperature is set to 0 when included, and a strict JSON schema is enforced.
 	openAIVerifierSystemPrompt = `You are a fact-verification assistant. Given a claim and a list of evidence items, determine whether the evidence supports ("entailed"), contradicts ("contradicted"), or is insufficient to assess ("insufficient") the claim.
 
 Respond ONLY with a JSON object conforming to the required schema:
@@ -67,7 +66,7 @@ type openAIVerifierResponseFormat struct {
 type openAIVerifierRequest struct {
 	Model          string                       `json:"model"`
 	Messages       []openAIVerifierMessage      `json:"messages"`
-	Temperature    float64                      `json:"temperature"`
+	Temperature    *float64                     `json:"temperature,omitempty"`
 	ResponseFormat openAIVerifierResponseFormat `json:"response_format"`
 }
 
@@ -100,11 +99,12 @@ type openAIVerifierResult struct {
 // It is safe for concurrent use: all fields are set during construction and
 // never mutated thereafter.
 type OpenAIVerifier struct {
-	baseURL    string
-	apiKey     string
-	model      string
-	httpClient *http.Client
-	metrics    observability.DiscoverabilityMetrics
+	baseURL            string
+	apiKey             string
+	model              string
+	disableTemperature bool
+	httpClient         *http.Client
+	metrics            observability.DiscoverabilityMetrics
 }
 
 // Compile-time assertion that OpenAIVerifier implements Verifier.
@@ -124,11 +124,12 @@ func NewOpenAIVerifier(cfg config.ConfigProvider, httpClient *http.Client) *Open
 	}
 
 	return &OpenAIVerifier{
-		baseURL:    cfg.GetAIVerifierAPIURL(),
-		apiKey:     cfg.GetAIVerifierAPIKey(),
-		model:      cfg.GetAIVerifierModel(),
-		httpClient: client,
-		metrics:    observability.NoopDiscoverabilityMetrics(),
+		baseURL:            cfg.GetAIVerifierAPIURL(),
+		apiKey:             cfg.GetAIVerifierAPIKey(),
+		model:              cfg.GetAIVerifierModel(),
+		disableTemperature: config.AIVerifierTemperatureDisabled(cfg),
+		httpClient:         client,
+		metrics:            observability.NoopDiscoverabilityMetrics(),
 	}
 }
 
@@ -179,7 +180,7 @@ func (v *OpenAIVerifier) Verify(ctx context.Context, req Request) (Response, err
 			{Role: "system", Content: openAIVerifierSystemPrompt},
 			{Role: "user", Content: string(userJSON)},
 		},
-		Temperature: 0,
+		Temperature: openAIVerifierTemperature(v.disableTemperature),
 		ResponseFormat: openAIVerifierResponseFormat{
 			Type: "json_schema",
 			JSONSchema: openAIVerifierJSONSchema{
@@ -323,6 +324,14 @@ func (v *OpenAIVerifier) Verify(ctx context.Context, req Request) (Response, err
 		Reasoning:  result.Rationale,
 		RawJSON:    rawContent,
 	}, nil
+}
+
+func openAIVerifierTemperature(disabled bool) *float64 {
+	if disabled {
+		return nil
+	}
+	temperature := 0.0
+	return &temperature
 }
 
 // prepareEvidence converts a single evidence string into the list format

@@ -57,7 +57,7 @@ type openAIConflictDecisionResponseFormat struct {
 type openAIConflictDecisionRequest struct {
 	Model          string                               `json:"model"`
 	Messages       []openAIConflictDecisionMessage      `json:"messages"`
-	Temperature    float64                              `json:"temperature"`
+	Temperature    *float64                             `json:"temperature,omitempty"`
 	ResponseFormat openAIConflictDecisionResponseFormat `json:"response_format"`
 }
 
@@ -80,10 +80,11 @@ type openAIConflictDecisionResult struct {
 }
 
 type OpenAIConflictDecider struct {
-	baseURL    string
-	apiKey     string
-	model      string
-	httpClient *http.Client
+	baseURL            string
+	apiKey             string
+	model              string
+	disableTemperature bool
+	httpClient         *http.Client
 }
 
 var _ ConflictDecider = (*OpenAIConflictDecider)(nil)
@@ -98,10 +99,11 @@ func NewOpenAIConflictDecider(cfg config.ConfigProvider, httpClient *http.Client
 		client = &http.Client{Timeout: timeout}
 	}
 	return &OpenAIConflictDecider{
-		baseURL:    cfg.GetAIVerifierAPIURL(),
-		apiKey:     cfg.GetAIVerifierAPIKey(),
-		model:      cfg.GetAIVerifierModel(),
-		httpClient: client,
+		baseURL:            cfg.GetAIVerifierAPIURL(),
+		apiKey:             cfg.GetAIVerifierAPIKey(),
+		model:              cfg.GetAIVerifierModel(),
+		disableTemperature: config.AIVerifierTemperatureDisabled(cfg),
+		httpClient:         client,
 	}
 }
 
@@ -121,7 +123,7 @@ func (d *OpenAIConflictDecider) Decide(ctx context.Context, req ConflictDecision
 			{Role: "system", Content: openAIConflictDeciderSystemPrompt},
 			{Role: "user", Content: string(userJSON)},
 		},
-		Temperature: 0,
+		Temperature: openAIConflictDecisionTemperature(d.disableTemperature),
 		ResponseFormat: openAIConflictDecisionResponseFormat{
 			Type: "json_schema",
 			JSONSchema: openAIConflictDecisionJSONSchema{
@@ -245,4 +247,12 @@ func (d *OpenAIConflictDecider) Decide(ctx context.Context, req ConflictDecision
 		Model:      d.model,
 		RawJSON:    rawContent,
 	}, nil
+}
+
+func openAIConflictDecisionTemperature(disabled bool) *float64 {
+	if disabled {
+		return nil
+	}
+	temperature := 0.0
+	return &temperature
 }
