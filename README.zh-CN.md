@@ -123,6 +123,9 @@ URL、model 和 dimensions 提供 OpenAI 默认值：`https://api.openai.com/v1`
 `text-embedding-3-small`、`1536`。因此最小本地部署只需要补上 `AI_API_KEY`。
 如果切换到其他 embedding provider 或 model，请一起覆盖这些配置。
 
+Verifier 调用默认发送 `temperature: 0`。如果 provider 或 model 拒绝
+temperature 字段，设置 `AI_VERIFIER_DISABLE_TEMPERATURE=true` 可以省略该字段。
+
 ### Telemetry Overlay
 
 Prometheus telemetry 默认关闭，是可选功能。要为 `/ui` 应用和 control portal
