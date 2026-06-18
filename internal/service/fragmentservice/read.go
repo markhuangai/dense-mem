@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentcodec"
+	"github.com/markhuangai/dense-mem/internal/service/graphrow"
 	"github.com/markhuangai/dense-mem/internal/storage/neo4j"
 )
 
@@ -154,96 +154,48 @@ func (s *getFragmentService) GetByIDs(ctx context.Context, profileID string, fra
 func mapRowToFragment(row map[string]any) *domain.Fragment {
 	f := &domain.Fragment{}
 
-	if v, ok := row["fragment_id"].(string); ok {
-		f.FragmentID = v
-	}
-	if v, ok := row["team_id"].(string); ok {
-		f.ProfileID = v
-	}
-	if v, ok := row["owner_profile_id"].(string); ok {
-		f.OwnerProfileID = v
-	}
-	if v, ok := row["owner_profile_name"].(string); ok {
-		f.OwnerProfileName = v
-	}
-	if v, ok := row["created_by_profile_id"].(string); ok {
-		f.CreatedByProfileID = v
-	}
-	if v, ok := row["created_by_profile_name"].(string); ok {
-		f.CreatedByProfileName = v
-	}
+	f.FragmentID = graphrow.String(row, "fragment_id")
+	f.ProfileID = graphrow.String(row, "team_id")
+	f.OwnerProfileID = graphrow.String(row, "owner_profile_id")
+	f.OwnerProfileName = graphrow.String(row, "owner_profile_name")
+	f.CreatedByProfileID = graphrow.String(row, "created_by_profile_id")
+	f.CreatedByProfileName = graphrow.String(row, "created_by_profile_name")
 	if f.OwnerProfileID == "" {
 		f.OwnerProfileID = f.CreatedByProfileID
 	}
 	if f.OwnerProfileName == "" {
 		f.OwnerProfileName = f.CreatedByProfileName
 	}
-	if v, ok := row["content"].(string); ok {
-		f.Content = v
-	}
-	if v, ok := row["source"].(string); ok {
-		f.Source = v
-	}
+	f.Content = graphrow.String(row, "content")
+	f.Source = graphrow.String(row, "source")
 
 	f.SourceType = neo4j.CoerceSourceType(row["source_type"])
-	if v, ok := row["authority"].(string); ok && v != "" {
+	if v := graphrow.String(row, "authority"); v != "" {
 		f.Authority = domain.Authority(v)
 	} else {
 		f.Authority = domain.AuthorityUnknown
 	}
 
-	if v, ok := row["labels"].([]any); ok {
-		labels := make([]string, 0, len(v))
-		for _, item := range v {
-			if s, ok := item.(string); ok {
-				labels = append(labels, s)
-			}
-		}
-		f.Labels = labels
-	}
+	f.Labels = graphrow.StringSlice(row, "labels")
 	if v := fragmentcodec.DecodeOptionalMap(row["metadata"]); v != nil {
 		f.Metadata = v
 	} else if v := fragmentcodec.DecodeOptionalMap(row["metadata_json"]); v != nil {
 		f.Metadata = v
 	}
-	if v, ok := row["content_hash"].(string); ok {
-		f.ContentHash = v
-	}
-	if v, ok := row["idempotency_key"].(string); ok {
-		f.IdempotencyKey = v
-	}
-	if v, ok := row["embedding_model"].(string); ok {
-		f.EmbeddingModel = v
-	}
-	switch dim := row["embedding_dimensions"].(type) {
-	case int64:
-		f.EmbeddingDimensions = int(dim)
-	case int:
-		f.EmbeddingDimensions = dim
-	}
-	switch sq := row["source_quality"].(type) {
-	case float64:
-		f.SourceQuality = sq
-	case float32:
-		f.SourceQuality = float64(sq)
-	}
+	f.ContentHash = graphrow.String(row, "content_hash")
+	f.IdempotencyKey = graphrow.String(row, "idempotency_key")
+	f.EmbeddingModel = graphrow.String(row, "embedding_model")
+	f.EmbeddingDimensions = graphrow.Int(row, "embedding_dimensions")
+	f.SourceQuality = graphrow.Float64(row, "source_quality")
 	if v := fragmentcodec.DecodeOptionalMap(row["classification"]); v != nil {
 		f.Classification = v
 	} else if v := fragmentcodec.DecodeOptionalMap(row["classification_json"]); v != nil {
 		f.Classification = v
 	}
-	if v, ok := row["recorded_to"].(time.Time); ok {
-		f.RecordedTo = &v
-	}
-	if v, ok := row["retracted_at"].(time.Time); ok {
-		f.RetractedAt = &v
-	}
-	if v, ok := row["created_at"].(time.Time); ok {
-		f.CreatedAt = v
-	}
-	if v, ok := row["updated_at"].(time.Time); ok {
-		f.UpdatedAt = v
-	}
+	f.RecordedTo = graphrow.TimePtr(row, "recorded_to")
+	f.RetractedAt = graphrow.TimePtr(row, "retracted_at")
+	f.CreatedAt = graphrow.Time(row, "created_at")
+	f.UpdatedAt = graphrow.Time(row, "updated_at")
 
 	return f
 }

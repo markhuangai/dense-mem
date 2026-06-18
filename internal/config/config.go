@@ -266,6 +266,23 @@ func parseBoolOrDefault(key string, defaultValue bool) (bool, error) {
 	return parsed, nil
 }
 
+type intEnvSpec struct {
+	key          string
+	defaultValue int
+	apply        func(*Config, int)
+}
+
+func applyIntEnvSpecs(cfg *Config, specs []intEnvSpec) error {
+	for _, spec := range specs {
+		value, err := parseIntOrDefault(spec.key, spec.defaultValue)
+		if err != nil {
+			return err
+		}
+		spec.apply(cfg, value)
+	}
+	return nil
+}
+
 // Load reads configuration from environment variables and returns a Config.
 // Returns a typed ValidationError for any validation failures.
 func Load() (Config, error) {
@@ -282,61 +299,24 @@ func Load() (Config, error) {
 	cfg.RedisPassword = os.Getenv("REDIS_PASSWORD")
 
 	// Integer fields with defaults
-	cfg.RedisDB, err = parseIntOrDefault("REDIS_DB", 0)
-	if err != nil {
-		return cfg, err
-	}
-
-	cfg.HTTPMaxBodyBytes, err = parseIntOrDefault("HTTP_MAX_BODY_BYTES", 1048576)
-	if err != nil {
-		return cfg, err
-	}
-
-	cfg.AuthVerifyMaxConcurrency, err = parseIntOrDefault("AUTH_VERIFY_MAX_CONCURRENCY", 8)
-	if err != nil {
-		return cfg, err
-	}
-
-	cfg.GraphQueryDefaultTimeoutSeconds, err = parseIntOrDefault("GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS", 10)
-	if err != nil {
-		return cfg, err
-	}
-
-	cfg.GraphQueryMaxTimeoutSeconds, err = parseIntOrDefault("GRAPH_QUERY_MAX_TIMEOUT_SECONDS", 30)
-	if err != nil {
-		return cfg, err
-	}
-
-	cfg.RateLimitPerMinute, err = parseIntOrDefault("RATE_LIMIT_PER_MINUTE", 100)
-	if err != nil {
-		return cfg, err
-	}
-
 	// Fragment rate-limit tiers (AC-54): writes are stricter than reads because
 	// a fragment create triggers an embedding call (external network + cost)
 	// plus a graph write, whereas a read is a single indexed lookup.
-	cfg.FragmentCreateRateLimit, err = parseIntOrDefault("FRAGMENT_CREATE_RATE_LIMIT", 60)
-	if err != nil {
-		return cfg, err
-	}
-
-	cfg.FragmentReadRateLimit, err = parseIntOrDefault("FRAGMENT_READ_RATE_LIMIT", 300)
-	if err != nil {
-		return cfg, err
-	}
-
-	cfg.SSEHeartbeatSeconds, err = parseIntOrDefault("SSE_HEARTBEAT_SECONDS", 30)
-	if err != nil {
-		return cfg, err
-	}
-
-	cfg.SSEMaxDurationSeconds, err = parseIntOrDefault("SSE_MAX_DURATION_SECONDS", 300)
-	if err != nil {
-		return cfg, err
-	}
-
-	cfg.SSEMaxConcurrentStreams, err = parseIntOrDefault("SSE_MAX_CONCURRENT_STREAMS", 10)
-	if err != nil {
+	if err := applyIntEnvSpecs(&cfg, []intEnvSpec{
+		{"REDIS_DB", 0, func(c *Config, value int) { c.RedisDB = value }},
+		{"HTTP_MAX_BODY_BYTES", 1048576, func(c *Config, value int) { c.HTTPMaxBodyBytes = value }},
+		{"AUTH_VERIFY_MAX_CONCURRENCY", 8, func(c *Config, value int) { c.AuthVerifyMaxConcurrency = value }},
+		{"GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS", 10, func(c *Config, value int) { c.GraphQueryDefaultTimeoutSeconds = value }},
+		{"GRAPH_QUERY_MAX_TIMEOUT_SECONDS", 30, func(c *Config, value int) { c.GraphQueryMaxTimeoutSeconds = value }},
+		{"RATE_LIMIT_PER_MINUTE", 100, func(c *Config, value int) { c.RateLimitPerMinute = value }},
+		{"FRAGMENT_CREATE_RATE_LIMIT", 60, func(c *Config, value int) { c.FragmentCreateRateLimit = value }},
+		{"FRAGMENT_READ_RATE_LIMIT", 300, func(c *Config, value int) { c.FragmentReadRateLimit = value }},
+		{"SSE_HEARTBEAT_SECONDS", 30, func(c *Config, value int) { c.SSEHeartbeatSeconds = value }},
+		{"SSE_MAX_DURATION_SECONDS", 300, func(c *Config, value int) { c.SSEMaxDurationSeconds = value }},
+		{"SSE_MAX_CONCURRENT_STREAMS", 10, func(c *Config, value int) { c.SSEMaxConcurrentStreams = value }},
+		{"AI_API_EMBEDDING_DIMENSIONS", 0, func(c *Config, value int) { c.AIEmbeddingDimensions = value }},
+		{"AI_API_EMBEDDING_TIMEOUT_SECONDS", 30, func(c *Config, value int) { c.AIEmbeddingTimeoutSeconds = value }},
+	}); err != nil {
 		return cfg, err
 	}
 
@@ -345,15 +325,6 @@ func Load() (Config, error) {
 	cfg.AIAPIKey = os.Getenv("AI_API_KEY")
 	cfg.AIEmbeddingModel = os.Getenv("AI_API_EMBEDDING_MODEL")
 
-	cfg.AIEmbeddingDimensions, err = parseIntOrDefault("AI_API_EMBEDDING_DIMENSIONS", 0)
-	if err != nil {
-		return cfg, err
-	}
-
-	cfg.AIEmbeddingTimeoutSeconds, err = parseIntOrDefault("AI_API_EMBEDDING_TIMEOUT_SECONDS", 30)
-	if err != nil {
-		return cfg, err
-	}
 	if cfg.AIEmbeddingDimensions > 0 {
 		cfg.EmbeddingDimensions = cfg.AIEmbeddingDimensions
 	} else {
@@ -373,23 +344,12 @@ func Load() (Config, error) {
 	}
 	cfg.AIVerifierModel = getEnvOrDefault("AI_VERIFIER_MODEL", "gpt-4o-mini")
 
-	cfg.AIVerifierTimeoutSeconds, err = parseIntOrDefault("AI_VERIFIER_TIMEOUT_SECONDS", 60)
-	if err != nil {
-		return cfg, err
-	}
-
-	cfg.AIVerifierMaxConcurrency, err = parseIntOrDefault("AI_VERIFIER_MAX_CONCURRENCY", 5)
-	if err != nil {
-		return cfg, err
-	}
-
-	cfg.ClaimWriteRateLimit, err = parseIntOrDefault("CLAIM_WRITE_RATE_LIMIT", 60)
-	if err != nil {
-		return cfg, err
-	}
-
-	cfg.ClaimReadRateLimit, err = parseIntOrDefault("CLAIM_READ_RATE_LIMIT", 300)
-	if err != nil {
+	if err := applyIntEnvSpecs(&cfg, []intEnvSpec{
+		{"AI_VERIFIER_TIMEOUT_SECONDS", 60, func(c *Config, value int) { c.AIVerifierTimeoutSeconds = value }},
+		{"AI_VERIFIER_MAX_CONCURRENCY", 5, func(c *Config, value int) { c.AIVerifierMaxConcurrency = value }},
+		{"CLAIM_WRITE_RATE_LIMIT", 60, func(c *Config, value int) { c.ClaimWriteRateLimit = value }},
+		{"CLAIM_READ_RATE_LIMIT", 300, func(c *Config, value int) { c.ClaimReadRateLimit = value }},
+	}); err != nil {
 		return cfg, err
 	}
 
@@ -398,18 +358,11 @@ func Load() (Config, error) {
 		return cfg, err
 	}
 
-	cfg.PromoteTxTimeoutSeconds, err = parseIntOrDefault("PROMOTE_TX_TIMEOUT_SECONDS", 10)
-	if err != nil {
-		return cfg, err
-	}
-
-	cfg.SkillPackImportHistoryDays, err = parseIntOrDefault("SKILL_PACK_IMPORT_HISTORY_DAYS", 30)
-	if err != nil {
-		return cfg, err
-	}
-
-	cfg.AICommunityMaxNodes, err = parseIntOrDefault("AI_COMMUNITY_MAX_NODES", 500000)
-	if err != nil {
+	if err := applyIntEnvSpecs(&cfg, []intEnvSpec{
+		{"PROMOTE_TX_TIMEOUT_SECONDS", 10, func(c *Config, value int) { c.PromoteTxTimeoutSeconds = value }},
+		{"SKILL_PACK_IMPORT_HISTORY_DAYS", 30, func(c *Config, value int) { c.SkillPackImportHistoryDays = value }},
+		{"AI_COMMUNITY_MAX_NODES", 500000, func(c *Config, value int) { c.AICommunityMaxNodes = value }},
+	}); err != nil {
 		return cfg, err
 	}
 
@@ -421,8 +374,9 @@ func Load() (Config, error) {
 	}
 	cfg.TelemetryPrometheusURL = os.Getenv("TELEMETRY_PROMETHEUS_URL")
 	cfg.TelemetryPrometheusJob = strings.TrimSpace(os.Getenv("TELEMETRY_PROMETHEUS_JOB"))
-	cfg.TelemetryQueryTimeoutSeconds, err = parseIntOrDefault("TELEMETRY_QUERY_TIMEOUT_SECONDS", 5)
-	if err != nil {
+	if err := applyIntEnvSpecs(&cfg, []intEnvSpec{
+		{"TELEMETRY_QUERY_TIMEOUT_SECONDS", 5, func(c *Config, value int) { c.TelemetryQueryTimeoutSeconds = value }},
+	}); err != nil {
 		return cfg, err
 	}
 	cfg.TelemetryScrapeToken = os.Getenv("TELEMETRY_SCRAPE_TOKEN")

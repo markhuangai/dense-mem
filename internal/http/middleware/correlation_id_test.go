@@ -92,7 +92,7 @@ func TestGetCorrelationID(t *testing.T) {
 	t.Run("returns correlation ID from context", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		req = req.WithContext(req.Context())
-		
+
 		// Manually set the value using context.WithValue
 		ctxWithValue := req.Context()
 		// We can't easily test this without the middleware, so we test via middleware

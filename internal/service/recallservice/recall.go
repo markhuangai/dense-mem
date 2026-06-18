@@ -118,6 +118,7 @@ type RecallHit struct {
 	SemanticRank int              `json:"semantic_rank"` // 1-based; 0 if absent from that branch
 	KeywordRank  int              `json:"keyword_rank"`  // 1-based; 0 if absent from that branch
 	FinalScore   float64          `json:"final_score"`
+	fragmentID   string
 }
 
 // RecallService is the external contract consumed by handlers and the tool
@@ -418,52 +419,28 @@ func (s *recallService) Recall(ctx context.Context, profileID string, req Recall
 		return merged[i].id < merged[j].id
 	})
 
-	if len(merged) > limit {
-		merged = merged[:limit]
-	}
+	// Collect tier-1 (active facts) and tier-1.5 (validated claims) enrichment.
+	tierHits := s.enrichTierHits(ctx, profileID, limit, req)
 
-	// Hydrate fragment hits (tier 2).
-	fragmentHits := make([]RecallHit, 0, len(merged))
-	fragmentsByID, batchFragments := s.batchHydrateFragments(ctx, profileID, merged)
+	// Merge tier hits with unhydrated fragment candidates, sort by (tier ASC,
+	// score DESC), then hydrate only selected fragment winners.
+	all := append([]RecallHit{}, tierHits...)
 	for _, m := range merged {
-		var frag *domain.Fragment
-		if batchFragments {
-			frag = fragmentsByID[m.id]
-			if frag == nil {
-				s.logHydrateError(m.id, errors.New("fragment not found"))
-				continue
-			}
-		} else {
-			var err error
-			frag, err = s.hydrator.GetByID(ctx, profileID, m.id)
-			if err != nil {
-				// A winning id may vanish due to a concurrent delete or retraction
-				// (AC-44). In both cases we skip the id rather than failing the whole
-				// recall so that the remaining results are still returned to the caller.
-				s.logHydrateError(m.id, err)
-				continue
-			}
-		}
-		fragmentHits = append(fragmentHits, RecallHit{
-			Fragment:     frag,
+		all = append(all, RecallHit{
 			Tier:         TierFragment,
 			Score:        m.FinalScore,
 			SemanticRank: m.SemanticRank,
 			KeywordRank:  m.KeywordRank,
 			FinalScore:   m.FinalScore,
+			fragmentID:   m.id,
 		})
 	}
-
-	// Collect tier-1 (active facts) and tier-1.5 (validated claims) enrichment.
-	tierHits := s.enrichTierHits(ctx, profileID, limit, req)
-
-	// Merge fragment hits with tier hits, sort by (tier ASC, score DESC).
-	all := append(tierHits, fragmentHits...) //nolint:gocritic
 	sortRecallHits(all)
 
 	if len(all) > limit {
 		all = all[:limit]
 	}
+	all = s.hydrateSelectedFragments(ctx, profileID, all)
 	if req.UseCommunities && len(all) < limit {
 		all = append(all, s.enrichCommunityHits(ctx, profileID, limit-len(all), req, all)...)
 		sortRecallHits(all)
@@ -473,6 +450,51 @@ func (s *recallService) Recall(ctx context.Context, profileID string, req Recall
 	}
 	resultCount = len(all)
 	return all, nil
+}
+
+func (s *recallService) hydrateSelectedFragments(ctx context.Context, profileID string, hits []RecallHit) []RecallHit {
+	entries := make([]rrfEntry, 0, len(hits))
+	for _, hit := range hits {
+		if hit.Tier == TierFragment && hit.Fragment == nil && hit.fragmentID != "" {
+			entries = append(entries, rrfEntry{id: hit.fragmentID})
+		}
+	}
+	fragmentsByID, batchFragments := s.batchHydrateFragments(ctx, profileID, entries)
+
+	out := make([]RecallHit, 0, len(hits))
+	for _, hit := range hits {
+		if hit.Tier != TierFragment || hit.Fragment != nil {
+			out = append(out, hit)
+			continue
+		}
+		if hit.fragmentID == "" {
+			continue
+		}
+
+		var frag *domain.Fragment
+		if batchFragments {
+			frag = fragmentsByID[hit.fragmentID]
+			if frag == nil {
+				s.logHydrateError(hit.fragmentID, errors.New("fragment not found"))
+				continue
+			}
+		} else {
+			var err error
+			frag, err = s.hydrator.GetByID(ctx, profileID, hit.fragmentID)
+			if err != nil {
+				// A winning id may vanish due to a concurrent delete or retraction
+				// (AC-44). In both cases we skip the id rather than failing the whole
+				// recall so that the remaining results are still returned to the caller.
+				s.logHydrateError(hit.fragmentID, err)
+				continue
+			}
+		}
+
+		hit.Fragment = frag
+		hit.fragmentID = ""
+		out = append(out, hit)
+	}
+	return out
 }
 
 func (s *recallService) batchHydrateFragments(ctx context.Context, profileID string, merged []rrfEntry) (map[string]*domain.Fragment, bool) {

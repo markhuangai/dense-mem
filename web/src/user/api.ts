@@ -1,4 +1,6 @@
 import type { TelemetrySnapshot, UserTelemetryQuery } from "../telemetry/types";
+import { requestJson } from "../http";
+export { ApiError } from "../http";
 
 export type UserTeam = {
   id: string;
@@ -207,16 +209,6 @@ export type RecallHit = {
   final_score: number;
 };
 
-export class ApiError extends Error {
-  status: number;
-
-  constructor(status: number, message: string) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-  }
-}
-
 type RequestOptions = {
   method?: string;
   body?: unknown;
@@ -360,53 +352,15 @@ export class UserApi {
 
   private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
     const method = options.method ?? "GET";
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-    if (this.token) {
-      headers.Authorization = `Bearer ${this.token}`;
-    } else if (method !== "GET" && method !== "HEAD") {
-      const csrf = readCookie("dense_mem_sso_csrf");
-      if (csrf) {
-        headers["X-Dense-Mem-CSRF"] = csrf;
-      }
-    }
-    const response = await fetch(path, {
+    return requestJson<T>(path, {
       method,
-      headers,
+      token: this.token || undefined,
       credentials: this.token ? "same-origin" : "include",
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      body: options.body,
+      csrf: this.token ? undefined : {
+        cookieName: "dense_mem_sso_csrf",
+        headerName: "X-Dense-Mem-CSRF",
+      },
     });
-
-    const text = await response.text();
-    const payload = text ? JSON.parse(text) : null;
-
-    if (!response.ok) {
-      throw new ApiError(response.status, errorMessage(payload, response.statusText));
-    }
-
-    return payload as T;
   }
-}
-
-function readCookie(name: string): string {
-  const prefix = `${name}=`;
-  return document.cookie
-    .split(";")
-    .map((part) => part.trim())
-    .find((part) => part.startsWith(prefix))
-    ?.slice(prefix.length) ?? "";
-}
-
-function errorMessage(payload: unknown, fallback: string): string {
-  if (payload && typeof payload === "object") {
-    const record = payload as Record<string, unknown>;
-    if (typeof record.message === "string") {
-      return record.message;
-    }
-    if (typeof record.error === "string") {
-      return record.error;
-    }
-  }
-  return fallback || "Request failed.";
 }

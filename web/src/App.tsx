@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, lazy, Suspense, useEffect, useMemo, useState } from "react";
 import {
   Ban,
   BarChart3,
@@ -22,15 +22,16 @@ import {
   Team,
   TeamProfile,
 } from "./api";
-import { MetricsPanel } from "./control/MetricsPanel";
-import { SecurityPanel } from "./control/SecurityPanel";
-import { SSOPanel } from "./control/SSOPanel";
-import { ConfigPanel } from "./control/ConfigPanel";
-import { ControlDreamsPanel } from "./control/DreamsPanel";
-import { LogsPanel } from "./control/LogsPanel";
 import { TeamDreamingConfigForm } from "./teamDreamingConfig";
 import { displayKeySuffix, formatDate, profilePermissionLabel, profileRoleLabel, readError, shortId } from "./control/utils";
 import { AuthShell, PortalShell, SecretBox, SectionHeading } from "./ui/components";
+
+const MetricsPanel = lazy(() => import("./control/MetricsPanel").then((module) => ({ default: module.MetricsPanel })));
+const SecurityPanel = lazy(() => import("./control/SecurityPanel").then((module) => ({ default: module.SecurityPanel })));
+const SSOPanel = lazy(() => import("./control/SSOPanel").then((module) => ({ default: module.SSOPanel })));
+const ConfigPanel = lazy(() => import("./control/ConfigPanel").then((module) => ({ default: module.ConfigPanel })));
+const ControlDreamsPanel = lazy(() => import("./control/DreamsPanel").then((module) => ({ default: module.ControlDreamsPanel })));
+const LogsPanel = lazy(() => import("./control/LogsPanel").then((module) => ({ default: module.LogsPanel })));
 
 const TOKEN_STORAGE_KEY = "denseMem.controlToken";
 const THEME_STORAGE_KEY = "denseMem.controlTheme";
@@ -259,39 +260,45 @@ function Portal({
       detailLabel="Team details"
       error={error}
     >
-      {activeTab === "teams" && (
-        <>
-          <section className="surface">
-            <SectionHeading title="Create team" />
-            <TeamCreateForm api={api} onCreated={(team) => void loadTeams(team.id)} />
-          </section>
-          {selectedTeam ? (
-            <TeamEditor
-              api={api}
-              team={selectedTeam}
-              onUpdated={(team) => {
-                setTeams((current) => current.map((item) => (item.id === team.id ? team : item)));
-              }}
-              onDeleted={() => void loadTeams()}
-            />
-          ) : (
-            <div className="empty-state">{loadState === "loading" ? "Loading" : "No teams"}</div>
-          )}
-        </>
-      )}
-      {activeTab === "profiles" && (
-        selectedTeam ? <TeamProfilesPanel api={api} team={selectedTeam} /> : <div className="empty-state">Select a team</div>
-      )}
-      {activeTab === "dreams" && (
-        selectedTeam ? <ControlDreamsPanel api={api} team={selectedTeam} /> : <div className="empty-state">Select a team</div>
-      )}
-      {activeTab === "metrics" && <MetricsPanel api={api} teams={teams} />}
-      {activeTab === "logs" && <LogsPanel api={api} teams={teams} />}
-      {activeTab === "security" && <SecurityPanel api={api} />}
-      {activeTab === "sso" && <SSOPanel api={api} teams={teams} />}
-      {activeTab === "config" && <ConfigPanel api={api} />}
+      <Suspense fallback={<LazyPanelFallback />}>
+        {activeTab === "teams" && (
+          <>
+            <section className="surface">
+              <SectionHeading title="Create team" />
+              <TeamCreateForm api={api} onCreated={(team) => void loadTeams(team.id)} />
+            </section>
+            {selectedTeam ? (
+              <TeamEditor
+                api={api}
+                team={selectedTeam}
+                onUpdated={(team) => {
+                  setTeams((current) => current.map((item) => (item.id === team.id ? team : item)));
+                }}
+                onDeleted={() => void loadTeams()}
+              />
+            ) : (
+              <div className="empty-state">{loadState === "loading" ? "Loading" : "No teams"}</div>
+            )}
+          </>
+        )}
+        {activeTab === "profiles" && (
+          selectedTeam ? <TeamProfilesPanel api={api} team={selectedTeam} /> : <div className="empty-state">Select a team</div>
+        )}
+        {activeTab === "dreams" && (
+          selectedTeam ? <ControlDreamsPanel api={api} team={selectedTeam} /> : <div className="empty-state">Select a team</div>
+        )}
+        {activeTab === "metrics" && <MetricsPanel api={api} teams={teams} />}
+        {activeTab === "logs" && <LogsPanel api={api} teams={teams} />}
+        {activeTab === "security" && <SecurityPanel api={api} />}
+        {activeTab === "sso" && <SSOPanel api={api} teams={teams} />}
+        {activeTab === "config" && <ConfigPanel api={api} />}
+      </Suspense>
     </PortalShell>
   );
+}
+
+function LazyPanelFallback() {
+  return <div className="table-placeholder">Loading</div>;
 }
 
 function readTheme(): Theme {

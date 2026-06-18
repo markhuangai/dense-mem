@@ -509,6 +509,32 @@ func TestAppConfigServiceAuditNoopAndUnavailableBranches(t *testing.T) {
 	assert.Nil(t, recallFeedbackSettingsPayload(nil))
 }
 
+func TestAppConfigServiceUnavailableMethods(t *testing.T) {
+	ctx := context.Background()
+	var svc *AppConfigServiceImpl
+
+	_, err := svc.GetGeneralSettings(ctx)
+	require.ErrorContains(t, err, "app config service is unavailable")
+	_, err = svc.GeneralRuntimeConfig(ctx)
+	require.ErrorContains(t, err, "app config service is unavailable")
+	_, err = svc.GetDreamingSettings(ctx)
+	require.ErrorContains(t, err, "app config service is unavailable")
+	_, err = svc.DreamingRuntimeConfig(ctx)
+	require.ErrorContains(t, err, "app config service is unavailable")
+	_, err = svc.GetCommunityDetectionSettings(ctx)
+	require.ErrorContains(t, err, "app config service is unavailable")
+	_, err = svc.CommunityDetectionRuntimeConfig(ctx)
+	require.ErrorContains(t, err, "app config service is unavailable")
+	_, err = svc.GetOperationLogSettings(ctx)
+	require.ErrorContains(t, err, "app config service is unavailable")
+	_, err = svc.OperationLogRuntimeConfig(ctx)
+	require.ErrorContains(t, err, "app config service is unavailable")
+	_, err = svc.GetRecallFeedbackSettings(ctx)
+	require.ErrorContains(t, err, "app config service is unavailable")
+	_, err = svc.RecallFeedbackRuntimeConfig(ctx)
+	require.ErrorContains(t, err, "app config service is unavailable")
+}
+
 func TestAppConfigServiceInitialLoadAndRefreshErrors(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC)
