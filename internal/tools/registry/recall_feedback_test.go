@@ -76,6 +76,27 @@ func TestSubmitRecallSessionFeedbackDisabledByRuntimeConfig(t *testing.T) {
 	}
 }
 
+func TestToolVisibleGatesRecallFeedbackTool(t *testing.T) {
+	ctx := context.Background()
+	feedbackTool := Tool{Name: SubmitRecallSessionFeedbackToolName}
+
+	if !ToolVisible(ctx, Tool{Name: "recall_memory"}, nil) {
+		t.Fatal("non-feedback tool should be visible without runtime config")
+	}
+	if ToolVisible(ctx, feedbackTool, nil) {
+		t.Fatal("feedback tool should be hidden without runtime config")
+	}
+	if ToolVisible(ctx, feedbackTool, stubRecallFeedbackConfig{enabled: false}) {
+		t.Fatal("feedback tool should be hidden when runtime config disables it")
+	}
+	if !ToolVisible(ctx, feedbackTool, stubRecallFeedbackConfig{enabled: true}) {
+		t.Fatal("feedback tool should be visible when runtime config enables it")
+	}
+	if ToolVisible(ctx, feedbackTool, stubRecallFeedbackConfig{enabled: true, err: errors.New("config unavailable")}) {
+		t.Fatal("feedback tool should be hidden when runtime config is unavailable")
+	}
+}
+
 func TestRecallMemoryRecallEventDisabledByDefault(t *testing.T) {
 	reg, _ := BuildDefault(Dependencies{Recall: stubRecallWithHit{}})
 	tool, _ := reg.Get("recall_memory")
