@@ -288,9 +288,9 @@ func TestNewClient_ConfigValidation(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name     string
-		cfg      *testConfig
-		wantErr  bool
+		name        string
+		cfg         *testConfig
+		wantErr     bool
 		errContains string
 	}{
 		{
@@ -301,7 +301,7 @@ func TestNewClient_ConfigValidation(t *testing.T) {
 				password: "password",
 				database: "neo4j",
 			},
-			wantErr: true,
+			wantErr:     true,
 			errContains: "URI is empty",
 		},
 		{
@@ -312,7 +312,7 @@ func TestNewClient_ConfigValidation(t *testing.T) {
 				password: "password",
 				database: "neo4j",
 			},
-			wantErr: true,
+			wantErr:     true,
 			errContains: "user is empty",
 		},
 		{
@@ -323,7 +323,7 @@ func TestNewClient_ConfigValidation(t *testing.T) {
 				password: "",
 				database: "neo4j",
 			},
-			wantErr: true,
+			wantErr:     true,
 			errContains: "password is empty",
 		},
 	}

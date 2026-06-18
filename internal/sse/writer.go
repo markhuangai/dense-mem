@@ -12,7 +12,7 @@ import (
 var (
 	ErrFlusherNotSupported = errors.New("http.Flusher not supported by ResponseWriter")
 	ErrStreamClosed        = errors.New("SSE stream is closed")
-	ErrEvidenceTooLarge   = errors.New("evidence payload exceeds maximum size")
+	ErrEvidenceTooLarge    = errors.New("evidence payload exceeds maximum size")
 )
 
 // SSEWriter is the interface for writing Server-Sent Events.

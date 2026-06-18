@@ -42,8 +42,8 @@ const (
 	ErrVerifierMalformedResponse ErrorCode = "verifier_malformed_response"
 
 	// Policy / predicate violations (422)
-	ErrPredicateNotPoliced   ErrorCode = "predicate_not_policed"
-	ErrUnsupportedPolicy     ErrorCode = "unsupported_policy"
+	ErrPredicateNotPoliced    ErrorCode = "predicate_not_policed"
+	ErrUnsupportedPolicy      ErrorCode = "unsupported_policy"
 	ErrCommunityGraphTooLarge ErrorCode = "community_graph_too_large"
 
 	// State-machine conflicts (409)
@@ -112,7 +112,7 @@ func NewWithDetails(code ErrorCode, message string, details []ErrorDetail) *APIE
 	return &APIError{
 		Code:    code,
 		Message: message,
-		Details:   details,
+		Details: details,
 	}
 }
 

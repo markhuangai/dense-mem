@@ -539,6 +539,19 @@ async function mockApi(page: Page, state: { teams: TestProfile[]; keys: TestKey[
         }),
       });
     }
+    if (url.includes("/config/recall-feedback") && method === "GET") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          data: {
+            update_time: "2026-06-16T12:00:00Z",
+            items: [{ key: "RECALL_FEEDBACK_ENABLED", value: "false", effective_value: "false", updated_at: "2026-06-16T12:00:00Z" }],
+            effective: { enabled: false },
+          },
+        }),
+      });
+    }
     if (url.includes("/control/api/logs") && method === "GET") {
       const parsedUrl = new URL(url);
       const limit = Number(parsedUrl.searchParams.get("limit") ?? "100");

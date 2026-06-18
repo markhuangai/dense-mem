@@ -151,6 +151,7 @@ ai:
           required: true
           tools: 
             - recall_memory
+            - submit_recall_session_feedback
             - assemble_context
             - get_memory
             - get_fact
@@ -165,6 +166,7 @@ ai:
           required: true
           tools: 
             - recall_memory
+            - submit_recall_session_feedback
             - assemble_context
             - get_memory
             - get_fact
@@ -179,6 +181,7 @@ ai:
           required: true
           tools: 
             - recall_memory
+            - submit_recall_session_feedback
             - assemble_context
             - get_memory
             - get_fact
@@ -193,6 +196,7 @@ ai:
           required: true
           tools: 
             - recall_memory
+            - submit_recall_session_feedback
             - assemble_context
             - get_memory
             - get_fact

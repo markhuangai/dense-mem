@@ -37,6 +37,13 @@ type TelemetryResponse = {
   };
 };
 
+type TelemetryCard = {
+  id?: string;
+  label?: string;
+  value?: number;
+  unit?: string;
+};
+
 test("control panel logs in against compose and creates a team", async ({ page }, testInfo) => {
   await openControlPanel(page);
   await expect(page.getByRole("button", { name: new RegExp(escapeRegExp(seedTeamName)) })).toBeVisible();
@@ -127,71 +134,115 @@ test("prometheus telemetry is scraped and rendered in control panel and user por
   await expectNoShellOverlap(page);
 });
 
-test("MCP recall feedback is submitted and scraped through compose telemetry", async ({ request }) => {
-  await mcpCall(request, "initialize", {
-    protocolVersion: "2024-11-05",
-    capabilities: {},
-    clientInfo: { name: "compose-recall-feedback", version: "1.0.0" },
-  });
+test("MCP recall feedback is submitted and surfaced through compose telemetry", async ({ page, request }) => {
+  const recallFeedbackWasEnabled = await recallFeedbackEnabled(request);
+  await setRecallFeedback(request, true);
 
-  const toolsResponse = await mcpCall(request, "tools/list", {});
-  expect(mcpToolNames(toolsResponse)).toEqual(expect.arrayContaining(["recall_memory", "submit_recall_feedback"]));
+  try {
+    await mcpCall(request, "initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "compose-recall-feedback", version: "1.0.0" },
+    });
 
-  const recallPayload = mcpToolPayload(await mcpCall(request, "tools/call", {
-    name: "recall_memory",
-    arguments: {
-      query: "compose e2e recall feedback",
-      limit: 5,
-    },
-  }));
+    const toolsResponse = await mcpCall(request, "tools/list", {});
+    expect(mcpToolNames(toolsResponse)).toEqual(expect.arrayContaining(["recall_memory", "submit_recall_session_feedback"]));
 
-  expect(Array.isArray(recallPayload.results)).toBe(true);
-  expect(isRecord(recallPayload.feedback_request)).toBe(true);
-  const feedbackRequest = recallPayload.feedback_request as Record<string, unknown>;
-  expect(feedbackRequest.requested).toBe(true);
-  expect(feedbackRequest.tool).toBe("submit_recall_feedback");
-  expect(typeof feedbackRequest.recall_id).toBe("string");
-  expect(String(feedbackRequest.recall_id)).toMatch(/^rec_/);
+    const recallPayload = mcpToolPayload(await mcpCall(request, "tools/call", {
+      name: "recall_memory",
+      arguments: {
+        query: "compose e2e recall feedback",
+        limit: 5,
+      },
+    }));
 
-  const submitPayload = mcpToolPayload(await mcpCall(request, "tools/call", {
-    name: "submit_recall_feedback",
-    arguments: {
-      recall_id: feedbackRequest.recall_id,
-      used: true,
-      answer_supported: true,
-      quality: "high",
-      missing_context: false,
-      irrelevant: false,
-    },
-  }));
-  expect(submitPayload.recorded).toBe(true);
+    expect(Array.isArray(recallPayload.results)).toBe(true);
+    expect(isRecord(recallPayload.recall_event)).toBe(true);
+    const recallEvent = recallPayload.recall_event as Record<string, unknown>;
+    expect(recallEvent.feedback_tool).toBe("submit_recall_session_feedback");
+    expect(recallEvent.feedback_timing).toBe("deferred_until_final_answer");
+    expect(typeof recallEvent.recall_id).toBe("string");
+    expect(String(recallEvent.recall_id)).toMatch(/^rec_/);
 
-  await expect.poll(
-    () => prometheusQueryValue(request, `sum(densemem_recall_feedback_total{used="true",answer_supported="true",quality="high",missing_context="false",irrelevant="false"})`),
-    {
-      intervals: [1_000, 5_000, 10_000],
-      timeout: 120_000,
-    },
-  ).toBeGreaterThan(0);
+    const submitPayload = mcpToolPayload(await mcpCall(request, "tools/call", {
+      name: "submit_recall_session_feedback",
+      arguments: {
+        recalls: [{
+          recall_id: recallEvent.recall_id,
+          used: true,
+          answer_supported: true,
+          quality: "high",
+          missing_context: false,
+          irrelevant: false,
+        }],
+      },
+    }));
+    expect(submitPayload.recorded).toBe(true);
+    expect(submitPayload.recorded_count).toBe(1);
 
-  await expect.poll(
-    () => prometheusQueryValue(request, "sum(densemem_recall_feedback_quality_score_count)"),
-    {
-      intervals: [1_000, 5_000, 10_000],
-      timeout: 120_000,
-    },
-  ).toBeGreaterThan(0);
+    await expect.poll(
+      () => prometheusQueryValue(request, `sum(densemem_recall_feedback_total{used="true",answer_supported="true",quality="high",missing_context="false",irrelevant="false"})`),
+      {
+        intervals: [1_000, 5_000, 10_000],
+        timeout: 120_000,
+      },
+    ).toBeGreaterThan(0);
 
-  const telemetryResponse = await request.get(`${userUrl}/ui/api/telemetry?window=15m`, { headers: bearer(seedApiKey) });
-  expect(telemetryResponse.status()).toBe(200);
-  const telemetryBody = await telemetryResponse.json() as TelemetryResponse;
-  expect(telemetryLabels(telemetryBody.data?.cards)).toEqual(expect.arrayContaining([
-    "LLM recall used",
-    "LLM answer supported",
-    "LLM recall quality",
-    "LLM missing context",
-    "LLM irrelevant recall",
-  ]));
+    await expect.poll(
+      () => prometheusQueryValue(request, "sum(densemem_recall_feedback_quality_score_count)"),
+      {
+        intervals: [1_000, 5_000, 10_000],
+        timeout: 120_000,
+      },
+    ).toBeGreaterThan(0);
+
+    const telemetryResponse = await request.get(`${userUrl}/ui/api/telemetry?window=15m`, { headers: bearer(seedApiKey) });
+    expect(telemetryResponse.status()).toBe(200);
+    const telemetryBody = await telemetryResponse.json() as TelemetryResponse;
+    expect(telemetryLabels(telemetryBody.data?.cards)).toEqual(expect.arrayContaining([
+      "LLM recall used",
+      "LLM answer supported",
+      "LLM recall quality",
+      "LLM missing context",
+      "LLM irrelevant recall",
+    ]));
+
+    await expect.poll(
+      () => telemetryCardValue(request, "llm_recall_used_rate").catch(() => -1),
+      {
+        intervals: [1_000, 5_000, 10_000],
+        timeout: 120_000,
+      },
+    ).toBe(100);
+    await expect.poll(
+      () => telemetryCardValue(request, "llm_recall_answer_supported_rate").catch(() => -1),
+      {
+        intervals: [1_000, 5_000, 10_000],
+        timeout: 120_000,
+      },
+    ).toBe(100);
+    await expect.poll(
+      () => telemetryCardValue(request, "llm_recall_quality_score").catch(() => -1),
+      {
+        intervals: [1_000, 5_000, 10_000],
+        timeout: 120_000,
+      },
+    ).toBe(100);
+
+    const finalTelemetry = await userTelemetry(request);
+    expect(cardValue(finalTelemetry, "llm_recall_missing_context_rate")).toBe(0);
+    expect(cardValue(finalTelemetry, "llm_recall_irrelevant_rate")).toBe(0);
+
+    await openUserPortal(page, seedApiKey);
+    await page.getByRole("button", { name: "Usage" }).click();
+    const usageTotals = page.getByLabel("Usage totals");
+    await expect(usageTotals).toContainText("LLM recall used");
+    await expect(usageTotals).toContainText("LLM answer supported");
+    await expect(usageTotals).toContainText("LLM recall quality");
+    await expect(usageTotals).toContainText("100%");
+  } finally {
+    await setRecallFeedback(request, recallFeedbackWasEnabled);
+  }
 });
 
 test("user portal logs in with a real API key and shows only that profile", async ({ page, request }, testInfo) => {
@@ -237,9 +288,9 @@ test("write user key regenerates itself and invalidates the old key", async ({ p
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: /Regenerate key/i }).click();
 
-  const rotatedKey = page.getByLabel("Knowledge details").locator(".secret-box code").first();
-  await expect(rotatedKey).toHaveText(/^dm_/);
-  const newApiKey = (await rotatedKey.textContent()) ?? "";
+  const rotatedKey = page.getByLabel("Generated API key");
+  await expect(rotatedKey).toHaveValue(/^dm_/);
+  const newApiKey = await rotatedKey.inputValue();
   expect(newApiKey).not.toBe(writable.api_key);
   await expect
     .poll(() => page.evaluate(() => sessionStorage.getItem("denseMem.userApiKey")))
@@ -301,6 +352,27 @@ async function createTeamProfile(request: APIRequestContext, name: string, scope
   }
   const payload = await response.json() as { data: CreatedProfile };
   return payload.data;
+}
+
+async function recallFeedbackEnabled(request: APIRequestContext) {
+  const response = await request.get(`${controlUrl}/control/api/config/recall-feedback`, {
+    headers: bearer(controlToken),
+  });
+  if (response.status() !== 200) {
+    throw new Error(`get recall feedback config failed: ${response.status()} ${await response.text()}`);
+  }
+  const payload = await response.json() as { data?: { effective?: { enabled?: boolean } } };
+  return payload.data?.effective?.enabled === true;
+}
+
+async function setRecallFeedback(request: APIRequestContext, enabled: boolean) {
+  const response = await request.patch(`${controlUrl}/control/api/config/recall-feedback`, {
+    headers: bearer(controlToken),
+    data: { items: [{ key: "RECALL_FEEDBACK_ENABLED", value: enabled ? "true" : "false" }] },
+  });
+  if (response.status() !== 200) {
+    throw new Error(`set recall feedback failed: ${response.status()} ${await response.text()}`);
+  }
 }
 
 async function prometheusResultCount(request: APIRequestContext, query: string) {
@@ -397,6 +469,30 @@ function telemetryLabels(value: unknown) {
   return value
     .map((item) => (isRecord(item) && typeof item.label === "string" ? item.label : ""))
     .filter(Boolean);
+}
+
+async function userTelemetry(request: APIRequestContext) {
+  const response = await request.get(`${userUrl}/ui/api/telemetry?window=15m`, { headers: bearer(seedApiKey) });
+  if (response.status() !== 200) {
+    throw new Error(`user telemetry failed: ${response.status()} ${await response.text()}`);
+  }
+  return await response.json() as TelemetryResponse;
+}
+
+async function telemetryCardValue(request: APIRequestContext, id: string) {
+  return cardValue(await userTelemetry(request), id);
+}
+
+function cardValue(body: TelemetryResponse, id: string) {
+  const cards = body.data?.cards;
+  if (!Array.isArray(cards)) {
+    throw new Error("telemetry cards must be an array");
+  }
+  const card = cards.find((item): item is TelemetryCard => isRecord(item) && item.id === id);
+  if (!card || typeof card.value !== "number") {
+    throw new Error(`telemetry card ${id} missing numeric value`);
+  }
+  return card.value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

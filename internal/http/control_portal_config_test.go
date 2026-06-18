@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -23,15 +24,19 @@ type controlAppConfigSvc struct {
 	dreamingSettings     *domain.DreamingConfigSettings
 	communitySettings    *domain.CommunityDetectionConfigSettings
 	operationLogSettings *domain.OperationLogConfigSettings
+	recallSettings       *domain.RecallFeedbackConfigSettings
 	generalValues        map[string]string
 	values               map[string]string
 	dreamingValues       map[string]string
 	communityValues      map[string]string
 	operationLogValues   map[string]string
+	recallValues         map[string]string
 	getErr               error
 	updateErr            error
 	dreamingRuntime      domain.DreamingRuntimeConfig
 	dreamingRuntimeErr   error
+	recallRuntime        domain.RecallFeedbackRuntimeConfig
+	recallRuntimeErr     error
 }
 
 func (s *controlAppConfigSvc) GetGeneralSettings(context.Context) (*domain.GeneralConfigSettings, error) {
@@ -152,6 +157,46 @@ func (s *controlAppConfigSvc) UpdateOperationLogSettings(_ context.Context, valu
 
 func (s *controlAppConfigSvc) OperationLogRuntimeConfig(context.Context) (domain.OperationLogRuntimeConfig, error) {
 	return domain.OperationLogRuntimeConfig{}, nil
+}
+
+func (s *controlAppConfigSvc) GetRecallFeedbackSettings(context.Context) (*domain.RecallFeedbackConfigSettings, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	return s.recallSettings, nil
+}
+
+func (s *controlAppConfigSvc) UpdateRecallFeedbackSettings(_ context.Context, values map[string]string, _, _, _ string) (*domain.RecallFeedbackConfigSettings, error) {
+	if s.updateErr != nil {
+		return nil, s.updateErr
+	}
+	if s.recallValues == nil {
+		s.recallValues = make(map[string]string)
+	}
+	for key, value := range values {
+		s.recallValues[key] = value
+	}
+	if raw, ok := values[domain.AppConfigRecallFeedbackEnabled]; ok {
+		enabled, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, service.ErrInvalidAppConfig
+		}
+		s.recallRuntime.Enabled = enabled
+		if s.recallSettings != nil {
+			s.recallSettings.Effective.Enabled = enabled
+			for i := range s.recallSettings.Items {
+				if s.recallSettings.Items[i].Key == domain.AppConfigRecallFeedbackEnabled {
+					s.recallSettings.Items[i].Value = raw
+					s.recallSettings.Items[i].EffectiveValue = strconv.FormatBool(enabled)
+				}
+			}
+		}
+	}
+	return s.recallSettings, nil
+}
+
+func (s *controlAppConfigSvc) RecallFeedbackRuntimeConfig(context.Context) (domain.RecallFeedbackRuntimeConfig, error) {
+	return s.recallRuntime, s.recallRuntimeErr
 }
 
 func TestControlPortalGeneralConfigFlows(t *testing.T) {
@@ -420,21 +465,161 @@ func TestControlPortalOperationLogConfigFlows(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
+func TestControlPortalRecallFeedbackConfigFlows(t *testing.T) {
+	now := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
+	appConfig := &controlAppConfigSvc{
+		recallSettings: &domain.RecallFeedbackConfigSettings{
+			UpdateTime: now.Format(time.RFC3339Nano),
+			Items: []domain.RecallFeedbackConfigItem{{
+				Key:            domain.AppConfigRecallFeedbackEnabled,
+				Value:          "false",
+				EffectiveValue: "false",
+				UpdatedAt:      now,
+			}},
+			Effective: domain.RecallFeedbackRuntimeConfig{Enabled: false},
+		},
+	}
+	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+		ControlHTTPAddr:    "127.0.0.1:8090",
+		ControlPortalToken: "secret",
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
+		Config: appConfig,
+	}, HealthConfig{}, nil)
+	require.NoError(t, err)
+
+	do := func(method, path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer secret")
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := do(http.MethodGet, "/control/api/config/recall-feedback", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"enabled":false`)
+
+	rec = do(http.MethodPatch, "/control/api/config/recall-feedback", `{"items":[{"key":"RECALL_FEEDBACK_ENABLED","value":"true"}]}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "true", appConfig.recallValues[domain.AppConfigRecallFeedbackEnabled])
+	require.Contains(t, rec.Body.String(), `"enabled":true`)
+
+	rec = do(http.MethodPatch, "/control/api/config/recall-feedback", "{")
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+
+	appConfig.updateErr = service.ErrInvalidAppConfig
+	rec = do(http.MethodPatch, "/control/api/config/recall-feedback", `{"items":[{"key":"RECALL_FEEDBACK_ENABLED","value":"maybe"}]}`)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+}
+
 func TestControlConfigNilResponses(t *testing.T) {
 	require.Empty(t, toControlGeneralConfig(nil).Items)
 	require.Empty(t, toControlSSOConfig(nil).Items)
 	require.Empty(t, toControlDreamingConfig(nil).Items)
 	require.Empty(t, toControlCommunityDetectionConfig(nil).Items)
 	require.Empty(t, toControlOperationLogConfig(nil).Items)
+	require.Empty(t, toControlRecallFeedbackConfig(nil).Items)
+}
+
+func TestControlPortalConfigUnavailableHandlers(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(*controlPortalHandler, echo.Context) error
+	}{
+		{name: "get general", call: func(h *controlPortalHandler, c echo.Context) error { return h.getGeneralConfig(c) }},
+		{name: "update general", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateGeneralConfig(c) }},
+		{name: "get sso", call: func(h *controlPortalHandler, c echo.Context) error { return h.getSSOConfig(c) }},
+		{name: "update sso", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateSSOConfig(c) }},
+		{name: "get dreaming", call: func(h *controlPortalHandler, c echo.Context) error { return h.getDreamingConfig(c) }},
+		{name: "update dreaming", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateDreamingConfig(c) }},
+		{name: "get community", call: func(h *controlPortalHandler, c echo.Context) error { return h.getCommunityDetectionConfig(c) }},
+		{name: "update community", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateCommunityDetectionConfig(c) }},
+		{name: "get operation logs", call: func(h *controlPortalHandler, c echo.Context) error { return h.getOperationLogConfig(c) }},
+		{name: "update operation logs", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateOperationLogConfig(c) }},
+		{name: "get recall feedback", call: func(h *controlPortalHandler, c echo.Context) error { return h.getRecallFeedbackConfig(c) }},
+		{name: "update recall feedback", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateRecallFeedbackConfig(c) }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.ErrorContains(t, tt.call(&controlPortalHandler{}, newControlConfigContext(http.MethodPatch, `{}`)), "app config service unavailable")
+		})
+	}
+}
+
+func TestControlPortalConfigGetErrors(t *testing.T) {
+	h := &controlPortalHandler{appConfig: &controlAppConfigSvc{getErr: errors.New("repo failed")}}
+	tests := []struct {
+		name string
+		call func(echo.Context) error
+	}{
+		{name: "general", call: h.getGeneralConfig},
+		{name: "sso", call: h.getSSOConfig},
+		{name: "dreaming", call: h.getDreamingConfig},
+		{name: "community detection", call: h.getCommunityDetectionConfig},
+		{name: "operation logs", call: h.getOperationLogConfig},
+		{name: "recall feedback", call: h.getRecallFeedbackConfig},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.ErrorContains(t, tt.call(newControlConfigContext(http.MethodGet, "")), "repo failed")
+		})
+	}
+}
+
+func TestControlPortalConfigUpdateBackendErrors(t *testing.T) {
+	backendErr := errors.New("db failed")
+	tests := []struct {
+		name string
+		call func(*controlPortalHandler, echo.Context) error
+		body string
+	}{
+		{
+			name: "general",
+			call: func(h *controlPortalHandler, c echo.Context) error { return h.updateGeneralConfig(c) },
+			body: `{"items":[{"key":"APP_TIMEZONE","value":"UTC"}]}`,
+		},
+		{
+			name: "dreaming",
+			call: func(h *controlPortalHandler, c echo.Context) error { return h.updateDreamingConfig(c) },
+			body: `{"items":[{"key":"DREAMING_ENABLED","value":"true"}]}`,
+		},
+		{
+			name: "community detection",
+			call: func(h *controlPortalHandler, c echo.Context) error { return h.updateCommunityDetectionConfig(c) },
+			body: `{"items":[{"key":"COMMUNITY_DETECTION_ENABLED","value":"true"}]}`,
+		},
+		{
+			name: "operation logs",
+			call: func(h *controlPortalHandler, c echo.Context) error { return h.updateOperationLogConfig(c) },
+			body: `{"items":[{"key":"OPERATION_LOG_RETENTION_DAYS","value":"45"}]}`,
+		},
+		{
+			name: "recall feedback",
+			call: func(h *controlPortalHandler, c echo.Context) error { return h.updateRecallFeedbackConfig(c) },
+			body: `{"items":[{"key":"RECALL_FEEDBACK_ENABLED","value":"true"}]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &controlPortalHandler{appConfig: &controlAppConfigSvc{updateErr: backendErr}}
+			require.ErrorIs(t, tt.call(h, newControlConfigContext(http.MethodPatch, tt.body)), backendErr)
+		})
+	}
 }
 
 func TestControlPortalOperationLogConfigUnavailable(t *testing.T) {
-	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-	h := &controlPortalHandler{}
+	require.ErrorContains(t, (&controlPortalHandler{}).getOperationLogConfig(newControlConfigContext(http.MethodGet, "")), "app config service unavailable")
+	require.ErrorContains(t, (&controlPortalHandler{}).updateOperationLogConfig(newControlConfigContext(http.MethodPatch, `{}`)), "app config service unavailable")
+}
 
-	require.ErrorContains(t, h.getOperationLogConfig(c), "app config service unavailable")
-	require.ErrorContains(t, h.updateOperationLogConfig(c), "app config service unavailable")
+func newControlConfigContext(method, body string) echo.Context {
+	e := echo.New()
+	req := httptest.NewRequest(method, "/", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	return e.NewContext(req, rec)
 }

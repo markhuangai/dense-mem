@@ -157,7 +157,7 @@ func TestCleanupProfileState_IteratesFullScan(t *testing.T) {
 
 	// Verify all keys are deleted by checking a sample
 	for i := 0; i < keyCount; i += 50 {
-		assert.Equal(t, int64(0), redisClient.Exists(ctx, keys[i]).Val(), 
+		assert.Equal(t, int64(0), redisClient.Exists(ctx, keys[i]).Val(),
 			"Key %s should be deleted", keys[i])
 	}
 }

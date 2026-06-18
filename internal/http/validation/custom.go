@@ -3,6 +3,7 @@ package validation
 import (
 	"encoding/json"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -36,11 +37,11 @@ func init() {
 // notBlankValidator validates that a string is not blank (not empty and not only whitespace).
 func notBlankValidator(fl validator.FieldLevel) bool {
 	field := fl.Field()
-	
+
 	if field.Kind() != reflect.String {
 		return true // Only applies to strings
 	}
-	
+
 	value := field.String()
 	return strings.TrimSpace(value) != ""
 }
@@ -49,33 +50,29 @@ func notBlankValidator(fl validator.FieldLevel) bool {
 // The parameter is the maximum number of bytes allowed.
 func maxBytesValidator(fl validator.FieldLevel) bool {
 	field := fl.Field()
-	
+
 	// Only apply to maps and slices
 	if field.Kind() != reflect.Map && field.Kind() != reflect.Slice && field.Kind() != reflect.Array {
 		return true
 	}
-	
+
 	// Get the max bytes from the tag parameter
 	maxBytes := fl.Param()
 	if maxBytes == "" {
 		return true // No limit specified
 	}
-	
-	// Parse the max bytes manually
-	var max int64
-	for _, c := range maxBytes {
-		if c < '0' || c > '9' {
-			return true // Invalid parameter, skip validation
-		}
-		max = max*10 + int64(c-'0')
+
+	max, err := strconv.ParseInt(maxBytes, 10, 64)
+	if err != nil || max < 0 {
+		return false
 	}
-	
+
 	// Serialize to JSON to check size
 	data, err := json.Marshal(field.Interface())
 	if err != nil {
 		return false // Cannot serialize, fail validation
 	}
-	
+
 	return int64(len(data)) <= max
 }
 

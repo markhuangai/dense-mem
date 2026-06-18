@@ -28,6 +28,8 @@ const (
 	AppConfigCommunityDetectionJitterSeconds  = "COMMUNITY_DETECTION_JITTER_SECONDS"
 
 	AppConfigOperationLogRetentionDays = "OPERATION_LOG_RETENTION_DAYS"
+
+	AppConfigRecallFeedbackEnabled = "RECALL_FEEDBACK_ENABLED"
 )
 
 type AppConfigEntry struct {
@@ -88,4 +90,25 @@ type OperationLogConfigItem struct {
 // OperationLogRuntimeConfig is the effective operation log runtime config.
 type OperationLogRuntimeConfig struct {
 	RetentionDays int `json:"retention_days"`
+}
+
+// RecallFeedbackConfigSettings is the editable runtime configuration for
+// host-LLM recall feedback telemetry.
+type RecallFeedbackConfigSettings struct {
+	UpdateTime string                      `json:"update_time"`
+	Items      []RecallFeedbackConfigItem  `json:"items"`
+	Effective  RecallFeedbackRuntimeConfig `json:"effective"`
+}
+
+// RecallFeedbackConfigItem is one control-panel editable recall feedback config entry.
+type RecallFeedbackConfigItem struct {
+	Key            string    `json:"key"`
+	Value          string    `json:"value"`
+	EffectiveValue string    `json:"effective_value"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// RecallFeedbackRuntimeConfig is the effective recall feedback runtime config.
+type RecallFeedbackRuntimeConfig struct {
+	Enabled bool `json:"enabled"`
 }

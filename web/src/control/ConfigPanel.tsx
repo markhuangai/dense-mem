@@ -1,10 +1,10 @@
-import { FormEvent, useEffect, useState } from "react";
-import { Check, Clock, ListFilter, Moon, Network, RefreshCw, Settings, X } from "lucide-react";
-import { CommunityDetectionConfig, CommunityDetectionConfigItem, ControlApi, DreamingConfig, DreamingConfigItem, GeneralConfig, GeneralConfigItem, OperationLogConfig, OperationLogConfigItem, SSOConfig, SSOConfigItem } from "../api";
+import { FormEvent, useCallback, useEffect, useState } from "react";
+import { Check, Clock, ListFilter, MessageSquare, Moon, Network, RefreshCw, Settings, X } from "lucide-react";
+import { CommunityDetectionConfig, CommunityDetectionConfigItem, ControlApi, DreamingConfig, DreamingConfigItem, GeneralConfig, GeneralConfigItem, OperationLogConfig, OperationLogConfigItem, RecallFeedbackConfig, RecallFeedbackConfigItem, SSOConfig, SSOConfigItem } from "../api";
 import { SectionHeading } from "../ui/components";
 import { formatDate, readError } from "./utils";
 
-type ConfigTab = "general" | "sso" | "dreaming" | "community" | "operation-logs";
+type ConfigTab = "general" | "sso" | "dreaming" | "community" | "operation-logs" | "recall-feedback";
 
 const CONFIG_LABELS: Record<string, string> = {
   APP_TIMEZONE: "Timezone",
@@ -26,6 +26,7 @@ const CONFIG_LABELS: Record<string, string> = {
   COMMUNITY_DETECTION_MAX_CONCURRENCY: "Max concurrency",
   COMMUNITY_DETECTION_JITTER_SECONDS: "Jitter seconds",
   OPERATION_LOG_RETENTION_DAYS: "Retention days",
+  RECALL_FEEDBACK_ENABLED: "Enable recall feedback",
 };
 
 const CONFIG_PLACEHOLDERS: Record<string, string> = {
@@ -111,6 +112,16 @@ export function ConfigPanel({ api }: { api: ControlApi }) {
           <span>Community</span>
         </button>
         <button
+          className={activeTab === "recall-feedback" ? "tab-button active" : "tab-button"}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "recall-feedback"}
+          onClick={() => setActiveTab("recall-feedback")}
+        >
+          <MessageSquare size={16} aria-hidden="true" />
+          <span>Recall</span>
+        </button>
+        <button
           className={activeTab === "operation-logs" ? "tab-button active" : "tab-button"}
           type="button"
           role="tab"
@@ -125,360 +136,113 @@ export function ConfigPanel({ api }: { api: ControlApi }) {
       {activeTab === "sso" && <SSOConfigPanel api={api} />}
       {activeTab === "dreaming" && <DreamingConfigPanel api={api} />}
       {activeTab === "community" && <CommunityDetectionConfigPanel api={api} />}
+      {activeTab === "recall-feedback" && <RecallFeedbackConfigPanel api={api} />}
       {activeTab === "operation-logs" && <OperationLogConfigPanel api={api} />}
     </>
   );
 }
 
+type ConfigItem = GeneralConfigItem | SSOConfigItem | DreamingConfigItem | CommunityDetectionConfigItem | OperationLogConfigItem | RecallFeedbackConfigItem;
+type RuntimeConfig = {
+  update_time: string;
+  items: ConfigItem[];
+};
+type RuntimeConfigInput = {
+  items: Array<{
+    key: string;
+    value: string;
+  }>;
+};
+
 function GeneralConfigPanel({ api }: { api: ControlApi }) {
-  const [config, setConfig] = useState<GeneralConfig | null>(null);
-  const [draft, setDraft] = useState<Record<string, string>>({});
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  async function loadConfig() {
-    setLoading(true);
-    setError("");
-    setMessage("");
-    try {
-      const next = await api.getGeneralConfig();
-      setConfig(next);
-      setDraft(Object.fromEntries(next.items.map((item) => [item.key, item.value])));
-    } catch (err) {
-      setError(readError(err));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void loadConfig();
-  }, []);
-
-  async function saveConfig(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setLoading(true);
-    setError("");
-    setMessage("");
-    try {
-      const next = await api.updateGeneralConfig({
-        items: Object.entries(draft).map(([key, value]) => ({ key, value })),
-      });
-      setConfig(next);
-      setDraft(Object.fromEntries(next.items.map((item) => [item.key, item.value])));
-      setMessage("Saved");
-    } catch (err) {
-      setError(readError(err));
-    } finally {
-      setLoading(false);
-    }
-  }
-
   return (
-    <section className="surface">
-      <SectionHeading
-        title="General"
-        actions={(
-          <div className="button-row">
-            {config?.update_time && <span className="form-meta">{formatDate(config.update_time)}</span>}
-            <button className="icon-button" type="button" aria-label="Refresh general config" onClick={() => void loadConfig()}>
-              <RefreshCw size={16} aria-hidden="true" />
-            </button>
-          </div>
-        )}
-      />
-      {error && <div className="banner error" role="alert">{error}</div>}
-      {message && <div className="banner neutral">{message}</div>}
-      {loading && !config ? (
-        <div className="table-placeholder compact">Loading</div>
-      ) : (
-        <form className="edit-grid" onSubmit={saveConfig}>
-          {(config?.items ?? []).map((item) => (
-            <ConfigField
-              key={item.key}
-              item={item}
-              value={draft[item.key] ?? ""}
-              onChange={(value) => setDraft((current) => ({ ...current, [item.key]: value }))}
-            />
-          ))}
-          <div className="button-row span">
-            <button className="primary-button" type="submit" disabled={loading || !config}>
-              <Check size={16} aria-hidden="true" />
-              Save config
-            </button>
-          </div>
-        </form>
-      )}
-    </section>
+    <RuntimeConfigPanel
+      title="General"
+      refreshLabel="Refresh general config"
+      load={() => api.getGeneralConfig()}
+      save={(input) => api.updateGeneralConfig(input)}
+    />
   );
 }
 
 function SSOConfigPanel({ api }: { api: ControlApi }) {
-  const [config, setConfig] = useState<SSOConfig | null>(null);
-  const [draft, setDraft] = useState<Record<string, string>>({});
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  async function loadConfig() {
-    setLoading(true);
-    setError("");
-    setMessage("");
-    try {
-      const next = await api.getSSOConfig();
-      setConfig(next);
-      setDraft(Object.fromEntries(next.items.map((item) => [item.key, item.value])));
-    } catch (err) {
-      setError(readError(err));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void loadConfig();
-  }, []);
-
-  async function saveConfig(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setLoading(true);
-    setError("");
-    setMessage("");
-    try {
-      const next = await api.updateSSOConfig({
-        items: Object.entries(draft).map(([key, value]) => ({ key, value })),
-      });
-      setConfig(next);
-      setDraft(Object.fromEntries(next.items.map((item) => [item.key, item.value])));
-      setMessage("Saved");
-    } catch (err) {
-      setError(readError(err));
-    } finally {
-      setLoading(false);
-    }
-  }
-
   return (
-    <section className="surface">
-      <SectionHeading
-        title="SSO"
-        actions={(
-          <div className="button-row">
-            {config?.update_time && <span className="form-meta">{formatDate(config.update_time)}</span>}
-            <button className="icon-button" type="button" aria-label="Refresh SSO config" onClick={() => void loadConfig()}>
-              <RefreshCw size={16} aria-hidden="true" />
-            </button>
-          </div>
-        )}
-      />
-      {error && <div className="banner error" role="alert">{error}</div>}
-      {message && <div className="banner neutral">{message}</div>}
-      {loading && !config ? (
-        <div className="table-placeholder compact">Loading</div>
-      ) : (
-        <form className="edit-grid" onSubmit={saveConfig}>
-          {(config?.items ?? []).map((item) => (
-            <ConfigField
-              key={item.key}
-              item={item}
-              value={draft[item.key] ?? ""}
-              onChange={(value) => setDraft((current) => ({ ...current, [item.key]: value }))}
-            />
-          ))}
-          <div className="button-row span">
-            <button className="primary-button" type="submit" disabled={loading || !config}>
-              <Check size={16} aria-hidden="true" />
-              Save config
-            </button>
-          </div>
-        </form>
-      )}
-    </section>
+    <RuntimeConfigPanel
+      title="SSO"
+      refreshLabel="Refresh SSO config"
+      load={() => api.getSSOConfig()}
+      save={(input) => api.updateSSOConfig(input)}
+    />
   );
 }
 
 function DreamingConfigPanel({ api }: { api: ControlApi }) {
-  const [config, setConfig] = useState<DreamingConfig | null>(null);
-  const [draft, setDraft] = useState<Record<string, string>>({});
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  async function loadConfig() {
-    setLoading(true);
-    setError("");
-    setMessage("");
-    try {
-      const next = await api.getDreamingConfig();
-      setConfig(next);
-      setDraft(Object.fromEntries(next.items.map((item) => [item.key, item.value])));
-    } catch (err) {
-      setError(readError(err));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void loadConfig();
-  }, []);
-
-  async function saveConfig(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setLoading(true);
-    setError("");
-    setMessage("");
-    try {
-      const next = await api.updateDreamingConfig({
-        items: Object.entries(draft).map(([key, value]) => ({ key, value })),
-      });
-      setConfig(next);
-      setDraft(Object.fromEntries(next.items.map((item) => [item.key, item.value])));
-      setMessage("Saved");
-    } catch (err) {
-      setError(readError(err));
-    } finally {
-      setLoading(false);
-    }
-  }
-
   return (
-    <section className="surface">
-      <SectionHeading
-        title="Dreaming"
-        actions={(
-          <div className="button-row">
-            {config?.update_time && <span className="form-meta">{formatDate(config.update_time)}</span>}
-            <button className="icon-button" type="button" aria-label="Refresh dreaming config" onClick={() => void loadConfig()}>
-              <RefreshCw size={16} aria-hidden="true" />
-            </button>
-          </div>
-        )}
-      />
-      {error && <div className="banner error" role="alert">{error}</div>}
-      {message && <div className="banner neutral">{message}</div>}
-      {loading && !config ? (
-        <div className="table-placeholder compact">Loading</div>
-      ) : (
-        <form className="edit-grid" onSubmit={saveConfig}>
-          {(config?.items ?? []).map((item) => (
-            <ConfigField
-              key={item.key}
-              item={item}
-              value={draft[item.key] ?? ""}
-              onChange={(value) => setDraft((current) => ({ ...current, [item.key]: value }))}
-            />
-          ))}
-          <div className="button-row span">
-            <button className="primary-button" type="submit" disabled={loading || !config}>
-              <Check size={16} aria-hidden="true" />
-              Save config
-            </button>
-          </div>
-        </form>
-      )}
-    </section>
+    <RuntimeConfigPanel
+      title="Dreaming"
+      refreshLabel="Refresh dreaming config"
+      load={() => api.getDreamingConfig()}
+      save={(input) => api.updateDreamingConfig(input)}
+    />
   );
 }
 
 function CommunityDetectionConfigPanel({ api }: { api: ControlApi }) {
-  const [config, setConfig] = useState<CommunityDetectionConfig | null>(null);
-  const [draft, setDraft] = useState<Record<string, string>>({});
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  async function loadConfig() {
-    setLoading(true);
-    setError("");
-    setMessage("");
-    try {
-      const next = await api.getCommunityDetectionConfig();
-      setConfig(next);
-      setDraft(Object.fromEntries(next.items.map((item) => [item.key, item.value])));
-    } catch (err) {
-      setError(readError(err));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void loadConfig();
-  }, []);
-
-  async function saveConfig(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setLoading(true);
-    setError("");
-    setMessage("");
-    try {
-      const next = await api.updateCommunityDetectionConfig({
-        items: Object.entries(draft).map(([key, value]) => ({ key, value })),
-      });
-      setConfig(next);
-      setDraft(Object.fromEntries(next.items.map((item) => [item.key, item.value])));
-      setMessage("Saved");
-    } catch (err) {
-      setError(readError(err));
-    } finally {
-      setLoading(false);
-    }
-  }
-
   return (
-    <section className="surface">
-      <SectionHeading
-        title="Community Detection"
-        actions={(
-          <div className="button-row">
-            {config?.update_time && <span className="form-meta">{formatDate(config.update_time)}</span>}
-            <button className="icon-button" type="button" aria-label="Refresh community detection config" onClick={() => void loadConfig()}>
-              <RefreshCw size={16} aria-hidden="true" />
-            </button>
-          </div>
-        )}
-      />
-      {error && <div className="banner error" role="alert">{error}</div>}
-      {message && <div className="banner neutral">{message}</div>}
-      {loading && !config ? (
-        <div className="table-placeholder compact">Loading</div>
-      ) : (
-        <form className="edit-grid" onSubmit={saveConfig}>
-          {(config?.items ?? []).map((item) => (
-            <ConfigField
-              key={item.key}
-              item={item}
-              value={draft[item.key] ?? ""}
-              onChange={(value) => setDraft((current) => ({ ...current, [item.key]: value }))}
-            />
-          ))}
-          <div className="button-row span">
-            <button className="primary-button" type="submit" disabled={loading || !config}>
-              <Check size={16} aria-hidden="true" />
-              Save config
-            </button>
-          </div>
-        </form>
-      )}
-    </section>
+    <RuntimeConfigPanel
+      title="Community Detection"
+      refreshLabel="Refresh community detection config"
+      load={() => api.getCommunityDetectionConfig()}
+      save={(input) => api.updateCommunityDetectionConfig(input)}
+    />
   );
 }
 
 function OperationLogConfigPanel({ api }: { api: ControlApi }) {
-  const [config, setConfig] = useState<OperationLogConfig | null>(null);
+  return (
+    <RuntimeConfigPanel
+      title="Operation Logs"
+      refreshLabel="Refresh operation log config"
+      load={() => api.getOperationLogConfig()}
+      save={(input) => api.updateOperationLogConfig(input)}
+    />
+  );
+}
+
+function RecallFeedbackConfigPanel({ api }: { api: ControlApi }) {
+  return (
+    <RuntimeConfigPanel
+      title="Recall Feedback"
+      refreshLabel="Refresh recall feedback config"
+      load={() => api.getRecallFeedbackConfig()}
+      save={(input) => api.updateRecallFeedbackConfig(input)}
+    />
+  );
+}
+
+function RuntimeConfigPanel<T extends RuntimeConfig>({
+  title,
+  refreshLabel,
+  load,
+  save,
+}: {
+  title: string;
+  refreshLabel: string;
+  load: () => Promise<T>;
+  save: (input: RuntimeConfigInput) => Promise<T>;
+}) {
+  const [config, setConfig] = useState<T | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function loadConfig() {
+  const loadConfig = useCallback(async () => {
     setLoading(true);
     setError("");
     setMessage("");
     try {
-      const next = await api.getOperationLogConfig();
+      const next = await load();
       setConfig(next);
       setDraft(Object.fromEntries(next.items.map((item) => [item.key, item.value])));
     } catch (err) {
@@ -486,11 +250,11 @@ function OperationLogConfigPanel({ api }: { api: ControlApi }) {
     } finally {
       setLoading(false);
     }
-  }
+  }, [load]);
 
   useEffect(() => {
     void loadConfig();
-  }, []);
+  }, [loadConfig]);
 
   async function saveConfig(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -498,7 +262,7 @@ function OperationLogConfigPanel({ api }: { api: ControlApi }) {
     setError("");
     setMessage("");
     try {
-      const next = await api.updateOperationLogConfig({
+      const next = await save({
         items: Object.entries(draft).map(([key, value]) => ({ key, value })),
       });
       setConfig(next);
@@ -514,11 +278,11 @@ function OperationLogConfigPanel({ api }: { api: ControlApi }) {
   return (
     <section className="surface">
       <SectionHeading
-        title="Operation Logs"
+        title={title}
         actions={(
           <div className="button-row">
             {config?.update_time && <span className="form-meta">{formatDate(config.update_time)}</span>}
-            <button className="icon-button" type="button" aria-label="Refresh operation log config" onClick={() => void loadConfig()}>
+            <button className="icon-button" type="button" aria-label={refreshLabel} onClick={() => void loadConfig()}>
               <RefreshCw size={16} aria-hidden="true" />
             </button>
           </div>
@@ -555,7 +319,7 @@ function ConfigField({
   value,
   onChange,
 }: {
-  item: GeneralConfigItem | SSOConfigItem | DreamingConfigItem | CommunityDetectionConfigItem | OperationLogConfigItem;
+  item: GeneralConfigItem | SSOConfigItem | DreamingConfigItem | CommunityDetectionConfigItem | OperationLogConfigItem | RecallFeedbackConfigItem;
   value: string;
   onChange: (value: string) => void;
 }) {
@@ -574,7 +338,7 @@ function ConfigField({
     );
   }
 
-  if ((item.key.startsWith("DREAMING_") || item.key.startsWith("COMMUNITY_DETECTION_")) && item.key.endsWith("_ENABLED")) {
+  if ((item.key.startsWith("DREAMING_") || item.key.startsWith("COMMUNITY_DETECTION_") || item.key.startsWith("RECALL_FEEDBACK_")) && item.key.endsWith("_ENABLED")) {
     const checked = (value || item.effective_value) === "true";
     return (
       <>

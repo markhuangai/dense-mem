@@ -50,6 +50,8 @@ type scopedReaderAdapter struct {
 	inner neo4j.ScopedReader
 }
 
+const startupTimeout = 5 * time.Minute
+
 func (a *scopedReaderAdapter) ScopedRead(ctx context.Context, profileID string, query string, params map[string]any) (any, []map[string]any, error) {
 	summary, rows, err := a.inner.ScopedRead(ctx, profileID, query, params)
 	return summary, rows, err
@@ -108,9 +110,8 @@ func main() {
 	validation.SetEmbeddingDimensions(cfg.GetEmbeddingDimensions())
 	middleware.SetAuthVerificationConcurrency(cfg.AuthVerifyMaxConcurrency)
 
-	// Create root context with timeout for startup. A cold database may need
-	// time to apply migrations before schema-dependent checks can run.
-	startupCtx, startupCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// A cold Neo4j instance can need several minutes to create schema indexes.
+	startupCtx, startupCancel := context.WithTimeout(context.Background(), startupTimeout)
 	defer startupCancel()
 
 	// Initialize Postgres connection (REQUIRED for production)
@@ -488,7 +489,7 @@ func main() {
 		FragmentList:                fragmentListSvc,
 		Recall:                      recallRegistrySvc,
 		Metrics:                     discoverabilityMetrics,
-		RecallFeedbackEnabled:       cfg.GetRecallFeedbackEnabled(),
+		RecallFeedbackConfig:        appConfigService,
 		KeywordSearch:               keywordSearchService,
 		SemanticSearch:              semanticSearchService,
 		GraphQuery:                  graphQueryService,
@@ -554,10 +555,10 @@ func main() {
 	factRetractHandler := handler.NewFactRetractHandler(factRetractSvc)
 	communityReadHandler := handler.NewCommunityReadHandler(communityGetSvc)
 	communityListHandler := handler.NewCommunityListHandler(communityListSvc)
-	toolCatalogHandler := handler.NewToolCatalogHandler(toolRegistry)
-	toolReadHandler := handler.NewToolReadHandler(toolRegistry)
-	toolExecuteHandler := handler.NewToolExecuteHandler(toolRegistry)
-	mcpHandler := handler.NewMCPHandlerWithLifecycle(toolRegistry, logger, streamLifecycle)
+	toolCatalogHandler := handler.NewToolCatalogHandlerWithRuntimeConfig(toolRegistry, appConfigService)
+	toolReadHandler := handler.NewToolReadHandlerWithRuntimeConfig(toolRegistry, appConfigService)
+	toolExecuteHandler := handler.NewToolExecuteHandlerWithRuntimeConfig(toolRegistry, appConfigService)
+	mcpHandler := handler.NewMCPHandlerWithLifecycleAndRuntimeConfig(toolRegistry, logger, streamLifecycle, appConfigService)
 	openAPIAISafeHandler := handler.NewOpenAPIHandler(openAPIGen, openapi.SpecVariantAISafe)
 	openAPIFullHandler := handler.NewOpenAPIHandler(openAPIGen, openapi.SpecVariantFull)
 

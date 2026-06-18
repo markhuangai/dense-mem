@@ -163,12 +163,12 @@ func TestLoadSupportingFragments(t *testing.T) {
 			rowsByProfile: map[string][]map[string]any{
 				profileID: {
 					{
-						"fragment_id":          "frag-json",
-						"content":              "json encoded",
-						"source_quality":       0.55,
-						"classification":       nil,
-						"classification_json":  `{"confidentiality":"internal","pii":"none"}`,
-						"authority":            "primary",
+						"fragment_id":         "frag-json",
+						"content":             "json encoded",
+						"source_quality":      0.55,
+						"classification":      nil,
+						"classification_json": `{"confidentiality":"internal","pii":"none"}`,
+						"authority":           "primary",
 					},
 				},
 			},

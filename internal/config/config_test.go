@@ -40,7 +40,6 @@ func clearEnv() {
 		"CLAIM_WRITE_RATE_LIMIT",
 		"CLAIM_READ_RATE_LIMIT",
 		"RECALL_VALIDATED_CLAIM_WEIGHT",
-		"RECALL_FEEDBACK_ENABLED",
 		"PROMOTE_TX_TIMEOUT_SECONDS",
 		"AI_COMMUNITY_MAX_NODES",
 		"CONTROL_HTTP_ADDR",
@@ -134,9 +133,6 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.TelemetryPrometheusJob != "" {
 		t.Errorf("TelemetryPrometheusJob default = %q, want empty", cfg.TelemetryPrometheusJob)
 	}
-	if cfg.GetRecallFeedbackEnabled() {
-		t.Error("GetRecallFeedbackEnabled() default = true, want false")
-	}
 }
 
 func TestLoadTelemetryConfig(t *testing.T) {
@@ -190,21 +186,6 @@ func TestLoadTelemetryConfigRequiresScrapeToken(t *testing.T) {
 	}
 	if validationErr.Field != "TELEMETRY_SCRAPE_TOKEN" {
 		t.Errorf("ValidationError.Field = %q, want TELEMETRY_SCRAPE_TOKEN", validationErr.Field)
-	}
-}
-
-func TestLoadRecallFeedbackConfig(t *testing.T) {
-	clearEnv()
-	setRequiredEnv()
-	os.Setenv("RECALL_FEEDBACK_ENABLED", "true")
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() returned unexpected error: %v", err)
-	}
-
-	if !cfg.GetRecallFeedbackEnabled() {
-		t.Fatal("GetRecallFeedbackEnabled() = false, want true")
 	}
 }
 

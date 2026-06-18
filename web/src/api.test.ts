@@ -26,6 +26,33 @@ describe("ControlApi", () => {
     await expect(api.session()).rejects.toMatchObject(new ApiError(401, "invalid token"));
   });
 
+  it("throws ApiError with status text for non-JSON error responses", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("<html>bad gateway</html>", {
+      status: 502,
+      statusText: "Bad Gateway",
+    })));
+
+    const api = new ControlApi("bad", "/control/api");
+
+    await expect(api.session()).rejects.toMatchObject({
+      name: "ApiError",
+      status: 502,
+      message: "Bad Gateway",
+    });
+  });
+
+  it("throws ApiError for malformed JSON success responses", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{", { status: 200 })));
+
+    const api = new ControlApi("secret", "/control/api");
+
+    await expect(api.session()).rejects.toMatchObject({
+      name: "ApiError",
+      status: 200,
+      message: "Invalid JSON response",
+    });
+  });
+
   it("requests metrics with window and team filters", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       data: {

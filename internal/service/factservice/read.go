@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentcodec"
+	"github.com/markhuangai/dense-mem/internal/service/graphrow"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
@@ -207,41 +207,6 @@ func (s *getFactServiceImpl) GetByIDs(ctx context.Context, profileID string, fac
 // from the row — ScopedRead has already enforced profile isolation at the
 // query level, so the row is guaranteed to belong to that profile.
 func rowToFact(profileID string, row map[string]any) *domain.Fact {
-	strVal := func(key string) string {
-		v, _ := row[key].(string)
-		return v
-	}
-
-	float64Val := func(key string) float64 {
-		v, _ := row[key].(float64)
-		return v
-	}
-
-	// timePtr returns nil when the property is absent or not a time.Time.
-	timePtr := func(key string) *time.Time {
-		v, ok := row[key].(time.Time)
-		if !ok {
-			return nil
-		}
-		return &v
-	}
-
-	// timeVal returns a zero time.Time when the property is absent.
-	timeVal := func(key string) time.Time {
-		v, _ := row[key].(time.Time)
-		return v
-	}
-
-	var labels []string
-	if raw, ok := row["labels"].([]any); ok {
-		labels = make([]string, 0, len(raw))
-		for _, v := range raw {
-			if s, ok := v.(string); ok && s != "" {
-				labels = append(labels, s)
-			}
-		}
-	}
-
 	var classification map[string]any
 	if decoded := fragmentcodec.DecodeOptionalMap(row["classification"]); decoded != nil {
 		classification = decoded
@@ -251,72 +216,41 @@ func rowToFact(profileID string, row map[string]any) *domain.Fact {
 
 	metadata := fragmentcodec.DecodeOptionalMap(row["metadata"])
 
-	var evidence []domain.Evidence
-	if raw, ok := row["evidence"].([]any); ok {
-		evidence = make([]domain.Evidence, 0, len(raw))
-		for _, item := range raw {
-			m, ok := item.(map[string]any)
-			if !ok {
-				continue
-			}
-			fragmentID, _ := m["fragment_id"].(string)
-			if fragmentID == "" {
-				continue
-			}
-			evidence = append(evidence, domain.Evidence{
-				FragmentID:        fragmentID,
-				Speaker:           factStrFromMap(m, "speaker"),
-				SpanStart:         factIntFromMap(m, "span_start"),
-				SpanEnd:           factIntFromMap(m, "span_end"),
-				ExtractConf:       factFloat64FromMap(m, "extract_conf"),
-				ExtractionModel:   factStrFromMap(m, "extraction_model"),
-				ExtractionVersion: factStrFromMap(m, "extraction_version"),
-				PipelineRunID:     factStrFromMap(m, "pipeline_run_id"),
-				Authority:         domain.Authority(factStrFromMap(m, "authority")),
-			})
-		}
-	}
-
 	return &domain.Fact{
-		FactID:                strVal("fact_id"),
+		FactID:                graphrow.String(row, "fact_id"),
 		ProfileID:             profileID,
-		OwnerProfileID:        firstNonEmpty(strVal("owner_profile_id"), strVal("created_by_profile_id"), strVal("promoted_by_profile_id")),
-		OwnerProfileName:      firstNonEmpty(strVal("owner_profile_name"), strVal("created_by_profile_name"), strVal("promoted_by_profile_name")),
-		CreatedByProfileID:    strVal("created_by_profile_id"),
-		CreatedByProfileName:  strVal("created_by_profile_name"),
-		PromotedByProfileID:   strVal("promoted_by_profile_id"),
-		PromotedByProfileName: strVal("promoted_by_profile_name"),
+		OwnerProfileID:        firstNonEmpty(graphrow.String(row, "owner_profile_id"), graphrow.String(row, "created_by_profile_id"), graphrow.String(row, "promoted_by_profile_id")),
+		OwnerProfileName:      firstNonEmpty(graphrow.String(row, "owner_profile_name"), graphrow.String(row, "created_by_profile_name"), graphrow.String(row, "promoted_by_profile_name")),
+		CreatedByProfileID:    graphrow.String(row, "created_by_profile_id"),
+		CreatedByProfileName:  graphrow.String(row, "created_by_profile_name"),
+		PromotedByProfileID:   graphrow.String(row, "promoted_by_profile_id"),
+		PromotedByProfileName: graphrow.String(row, "promoted_by_profile_name"),
 
-		Subject:   strVal("subject"),
-		Predicate: strVal("predicate"),
-		Object:    strVal("object"),
+		Subject:   graphrow.String(row, "subject"),
+		Predicate: graphrow.String(row, "predicate"),
+		Object:    graphrow.String(row, "object"),
 
-		Status:         domain.FactStatus(strVal("status")),
-		AuthorityState: strVal("authority_state"),
-		TruthScore:     float64Val("truth_score"),
+		Status:         domain.FactStatus(graphrow.String(row, "status")),
+		AuthorityState: graphrow.String(row, "authority_state"),
+		TruthScore:     graphrow.Float64(row, "truth_score"),
 
-		ValidFrom:       timePtr("valid_from"),
-		ValidTo:         timePtr("valid_to"),
-		RecordedAt:      timeVal("recorded_at"),
-		RecordedTo:      timePtr("recorded_to"),
-		RetractedAt:     timePtr("retracted_at"),
-		LastConfirmedAt: timePtr("last_confirmed_at"),
+		ValidFrom:       graphrow.TimePtr(row, "valid_from"),
+		ValidTo:         graphrow.TimePtr(row, "valid_to"),
+		RecordedAt:      graphrow.Time(row, "recorded_at"),
+		RecordedTo:      graphrow.TimePtr(row, "recorded_to"),
+		RetractedAt:     graphrow.TimePtr(row, "retracted_at"),
+		LastConfirmedAt: graphrow.TimePtr(row, "last_confirmed_at"),
 
-		PromotedFromClaimID: strVal("promoted_from_claim_id"),
+		PromotedFromClaimID: graphrow.String(row, "promoted_from_claim_id"),
 
 		Classification:               classification,
-		ClassificationLatticeVersion: strVal("classification_lattice_version"),
+		ClassificationLatticeVersion: graphrow.String(row, "classification_lattice_version"),
 
-		SourceQuality: float64Val("source_quality"),
-		Labels:        labels,
+		SourceQuality: graphrow.Float64(row, "source_quality"),
+		Labels:        graphrow.StringSlice(row, "labels"),
 		Metadata:      metadata,
-		Evidence:      evidence,
+		Evidence:      graphrow.Evidence(row, "evidence"),
 	}
-}
-
-func factStrFromMap(m map[string]any, key string) string {
-	v, _ := m[key].(string)
-	return v
 }
 
 func firstNonEmpty(values ...string) string {
@@ -326,24 +260,4 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func factIntFromMap(m map[string]any, key string) int {
-	switch v := m[key].(type) {
-	case int64:
-		return int(v)
-	case int:
-		return v
-	}
-	return 0
-}
-
-func factFloat64FromMap(m map[string]any, key string) float64 {
-	switch v := m[key].(type) {
-	case float64:
-		return v
-	case float32:
-		return float64(v)
-	}
-	return 0
 }

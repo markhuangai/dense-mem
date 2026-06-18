@@ -39,6 +39,9 @@ type AppConfigService interface {
 	GetOperationLogSettings(ctx context.Context) (*domain.OperationLogConfigSettings, error)
 	UpdateOperationLogSettings(ctx context.Context, values map[string]string, actorRole, clientIP, correlationID string) (*domain.OperationLogConfigSettings, error)
 	OperationLogRuntimeConfig(ctx context.Context) (domain.OperationLogRuntimeConfig, error)
+	GetRecallFeedbackSettings(ctx context.Context) (*domain.RecallFeedbackConfigSettings, error)
+	UpdateRecallFeedbackSettings(ctx context.Context, values map[string]string, actorRole, clientIP, correlationID string) (*domain.RecallFeedbackConfigSettings, error)
+	RecallFeedbackRuntimeConfig(ctx context.Context) (domain.RecallFeedbackRuntimeConfig, error)
 }
 
 type AppConfigServiceImpl struct {
@@ -60,6 +63,7 @@ type appConfigCache struct {
 	dreaming   domain.DreamingConfigSettings
 	community  domain.CommunityDetectionConfigSettings
 	opLogs     domain.OperationLogConfigSettings
+	recall     domain.RecallFeedbackConfigSettings
 	checkedAt  time.Time
 }
 
@@ -364,6 +368,10 @@ func buildAppConfigCache(entries map[string]domain.AppConfigEntry, checkedAt tim
 	if err != nil {
 		return nil, err
 	}
+	recall, err := recallFeedbackRuntimeConfigFromEntries(entries)
+	if err != nil {
+		return nil, err
+	}
 	return &appConfigCache{
 		updateTime: updateEntry.Value,
 		entries:    cloneAppConfigEntries(entries),
@@ -373,6 +381,7 @@ func buildAppConfigCache(entries map[string]domain.AppConfigEntry, checkedAt tim
 		dreaming:   dreaming,
 		community:  community,
 		opLogs:     opLogs,
+		recall:     recall,
 		checkedAt:  checkedAt,
 	}, nil
 }
@@ -911,6 +920,7 @@ func cloneAppConfigCache(cache *appConfigCache) *appConfigCache {
 	copy.dreaming.Items = append([]domain.DreamingConfigItem(nil), cache.dreaming.Items...)
 	copy.community.Items = append([]domain.CommunityDetectionConfigItem(nil), cache.community.Items...)
 	copy.opLogs.Items = append([]domain.OperationLogConfigItem(nil), cache.opLogs.Items...)
+	copy.recall.Items = append([]domain.RecallFeedbackConfigItem(nil), cache.recall.Items...)
 	return &copy
 }
 

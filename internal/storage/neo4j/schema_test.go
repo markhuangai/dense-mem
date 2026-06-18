@@ -234,6 +234,48 @@ func unitLogger() observability.LogProvider {
 // Unit tests — no build tag, no Neo4j required (AC-3, AC-4, AC-5)
 // ============================================================================
 
+func TestEnsureSchema_DropsPlainIndexBeforeSameNamedUniqueConstraint(t *testing.T) {
+	ctx := context.Background()
+	dreamIndexDropped := false
+	client := &recordingClient{
+		runErrFor: func(cypher string) error {
+			if strings.Contains(cypher, "DROP INDEX dream_dream_id_unique") {
+				dreamIndexDropped = true
+			}
+			if strings.Contains(cypher, "CREATE CONSTRAINT dream_dream_id_unique") && !dreamIndexDropped {
+				return fmt.Errorf("Neo4jError: Neo.ClientError.Schema.IndexWithNameAlreadyExists (There already exists an index called 'dream_dream_id_unique'.)")
+			}
+			return nil
+		},
+	}
+	bs := NewSchemaBootstrapper(client, 1536, unitLogger())
+
+	err := bs.EnsureSchema(ctx)
+	require.NoError(t, err)
+
+	dropIndex := queryIndex(client.queries, "DROP INDEX dream_dream_id_unique")
+	createIndex := queryIndex(client.queries, "CREATE CONSTRAINT dream_dream_id_unique")
+	require.NotEqual(t, -1, dropIndex, "EnsureSchema must drop blocking plain dream index")
+	require.NotEqual(t, -1, createIndex, "EnsureSchema must create dream unique constraint")
+	require.Less(t, dropIndex, createIndex, "blocking plain index must be dropped before creating the same-named constraint")
+}
+
+func TestEnsureSchema_IgnoresConstraintOwnedUniqueIndexDrop(t *testing.T) {
+	ctx := context.Background()
+	client := &recordingClient{
+		runErrFor: func(cypher string) error {
+			if strings.Contains(cypher, "DROP INDEX dream_dream_id_unique") {
+				return fmt.Errorf("Neo4jError: Neo.ClientError.Schema.IndexBelongsToConstraint (Index belongs to constraint 'dream_dream_id_unique'.)")
+			}
+			return nil
+		},
+	}
+	bs := NewSchemaBootstrapper(client, 1536, unitLogger())
+
+	err := bs.EnsureSchema(ctx)
+	require.NoError(t, err)
+}
+
 // TestEnsureSchema_ClaimCompositeIndexes verifies that EnsureSchema issues
 // Claim composite indexes with team_id as the leading key (AC-3).
 func TestEnsureSchema_ClaimCompositeIndexes(t *testing.T) {

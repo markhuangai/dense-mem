@@ -177,6 +177,39 @@ func (h *controlPortalHandler) updateOperationLogConfig(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlOperationLogConfig(settings)})
 }
 
+func (h *controlPortalHandler) getRecallFeedbackConfig(c echo.Context) error {
+	if h.appConfig == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "app config service unavailable")
+	}
+	settings, err := h.appConfig.GetRecallFeedbackSettings(c.Request().Context())
+	if err != nil {
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlRecallFeedbackConfig(settings)})
+}
+
+func (h *controlPortalHandler) updateRecallFeedbackConfig(c echo.Context) error {
+	if h.appConfig == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "app config service unavailable")
+	}
+	var body controlRecallFeedbackConfigRequest
+	if err := c.Bind(&body); err != nil {
+		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
+	}
+	values := make(map[string]string, len(body.Items))
+	for _, item := range body.Items {
+		values[item.Key] = item.Value
+	}
+	settings, err := h.appConfig.UpdateRecallFeedbackSettings(c.Request().Context(), values, "control", c.RealIP(), "")
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidAppConfig) {
+			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
+		}
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlRecallFeedbackConfig(settings)})
+}
+
 type controlGeneralConfigRequest struct {
 	Items []controlSSOConfigItemRequest `json:"items"`
 }
@@ -194,6 +227,10 @@ type controlCommunityDetectionConfigRequest struct {
 }
 
 type controlOperationLogConfigRequest struct {
+	Items []controlSSOConfigItemRequest `json:"items"`
+}
+
+type controlRecallFeedbackConfigRequest struct {
 	Items []controlSSOConfigItemRequest `json:"items"`
 }
 
@@ -229,6 +266,12 @@ type controlOperationLogConfigResponse struct {
 	UpdateTime string                           `json:"update_time"`
 	Items      []controlSSOConfigItemResponse   `json:"items"`
 	Effective  domain.OperationLogRuntimeConfig `json:"effective"`
+}
+
+type controlRecallFeedbackConfigResponse struct {
+	UpdateTime string                             `json:"update_time"`
+	Items      []controlSSOConfigItemResponse     `json:"items"`
+	Effective  domain.RecallFeedbackRuntimeConfig `json:"effective"`
 }
 
 type controlSSOConfigItemResponse struct {
@@ -331,6 +374,26 @@ func toControlOperationLogConfig(settings *domain.OperationLogConfigSettings) co
 		})
 	}
 	return controlOperationLogConfigResponse{
+		UpdateTime: settings.UpdateTime,
+		Items:      items,
+		Effective:  settings.Effective,
+	}
+}
+
+func toControlRecallFeedbackConfig(settings *domain.RecallFeedbackConfigSettings) controlRecallFeedbackConfigResponse {
+	if settings == nil {
+		return controlRecallFeedbackConfigResponse{Items: []controlSSOConfigItemResponse{}}
+	}
+	items := make([]controlSSOConfigItemResponse, 0, len(settings.Items))
+	for _, item := range settings.Items {
+		items = append(items, controlSSOConfigItemResponse{
+			Key:            item.Key,
+			Value:          item.Value,
+			EffectiveValue: item.EffectiveValue,
+			UpdatedAt:      item.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+	return controlRecallFeedbackConfigResponse{
 		UpdateTime: settings.UpdateTime,
 		Items:      items,
 		Effective:  settings.Effective,

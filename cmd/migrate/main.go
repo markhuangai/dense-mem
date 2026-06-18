@@ -14,6 +14,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
+const migrationTimeout = 5 * time.Minute
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintf(os.Stderr, "Usage: %s <up|down|status|backfill-neo4j>\n", os.Args[0])
@@ -36,8 +38,7 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), migrationTimeout)
 	defer cancel()
 
 	// Execute command

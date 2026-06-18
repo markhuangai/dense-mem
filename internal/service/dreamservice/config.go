@@ -148,28 +148,3 @@ func boolFromAny(raw any) (bool, bool) {
 		return false, false
 	}
 }
-
-func stringFromAny(raw any) (string, bool) {
-	switch v := raw.(type) {
-	case string:
-		return v, true
-	default:
-		return "", false
-	}
-}
-
-func intFromAny(raw any) (int, bool) {
-	switch v := raw.(type) {
-	case int:
-		return v, true
-	case int64:
-		return int(v), true
-	case float64:
-		return int(v), true
-	case string:
-		parsed, err := strconv.Atoi(strings.TrimSpace(v))
-		return parsed, err == nil
-	default:
-		return 0, false
-	}
-}

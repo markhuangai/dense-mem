@@ -19,9 +19,9 @@ var validCategories = map[string]bool{
 
 // Errors for key validation
 var (
-	ErrEmptyProfileID   = errors.New("profileID cannot be empty")
-	ErrInvalidCategory  = errors.New("category must be one of: ratelimit, stream")
-	ErrEmptyIdentifier  = errors.New("identifier cannot be empty")
+	ErrEmptyProfileID  = errors.New("profileID cannot be empty")
+	ErrInvalidCategory = errors.New("category must be one of: ratelimit, stream")
+	ErrEmptyIdentifier = errors.New("identifier cannot be empty")
 )
 
 // KeyBuilder constructs Redis keys with mandatory profile prefix.

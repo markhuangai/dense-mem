@@ -85,7 +85,13 @@ export function TelemetryDashboard({
                   </div>
                   <div className="telemetry-chart-body">
                     {!hasSamples && <div className="chart-empty-label">No samples</div>}
-                    <ResponsiveContainer width="100%" height="100%" minWidth={280} minHeight={180}>
+                    <ResponsiveContainer
+                      width="100%"
+                      height="100%"
+                      minWidth={280}
+                      minHeight={180}
+                      initialDimension={{ width: 640, height: 240 }}
+                    >
                       <LineChart data={chartPoints} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
                         <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
                         <XAxis

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,9 +10,18 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
+
+type catalogRecallFeedbackConfigStub struct {
+	enabled bool
+}
+
+func (s catalogRecallFeedbackConfigStub) RecallFeedbackRuntimeConfig(context.Context) (domain.RecallFeedbackRuntimeConfig, error) {
+	return domain.RecallFeedbackRuntimeConfig{Enabled: s.enabled}, nil
+}
 
 // TestToolCatalogHandler_ReturnsRegisteredTools — backpressure test + AC-32.
 func TestToolCatalogHandler_ReturnsRegisteredTools(t *testing.T) {
@@ -139,6 +149,33 @@ func TestToolCatalogHandler_FullV1Surface(t *testing.T) {
 		if seen[name] {
 			t.Errorf("legacy hyphenated tool %q must not appear in catalog", name)
 		}
+	}
+}
+
+func TestToolCatalogHandler_HidesRecallFeedbackToolWithRuntimeDisabled(t *testing.T) {
+	reg := registry.New()
+	if err := reg.Register(registry.Tool{
+		Name:           registry.SubmitRecallSessionFeedbackToolName,
+		Description:    "feedback",
+		InputSchema:    map[string]any{"type": "object"},
+		RequiredScopes: []string{"read"},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	h := NewToolCatalogHandlerWithRuntimeConfig(reg, catalogRecallFeedbackConfigStub{enabled: false})
+
+	e := echo.New()
+	e.GET("/api/v1/tools", h.Handle)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tools", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200. body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), registry.SubmitRecallSessionFeedbackToolName) {
+		t.Fatalf("disabled recall feedback tool leaked into catalog: %s", rec.Body.String())
 	}
 }
 

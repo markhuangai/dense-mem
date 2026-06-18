@@ -101,6 +101,17 @@ func isUnsupportedRelationshipConstraintError(err error) bool {
 		strings.Contains(msg, "unsupported administration command")
 }
 
+func isConstraintOwnedIndexDropError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "belongs to constraint") ||
+		strings.Contains(msg, "belongs to a constraint") ||
+		strings.Contains(msg, "constraint-backed index")
+}
+
 // EnsureSchema creates all required constraints and indexes if they don't exist.
 // All CREATE statements use IF NOT EXISTS for idempotency.
 func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
@@ -118,6 +129,31 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 
 	if err := s.backfillLegacyTeamID(ctx); err != nil {
 		return err
+	}
+
+	// Older deployments may have created plain indexes with names that are now
+	// used by unique constraints. Neo4j does not treat that as "exists" for
+	// CREATE CONSTRAINT IF NOT EXISTS, so remove only those blocking indexes.
+	uniqueConstraintIndexDrops := []string{
+		"DROP INDEX sourcefragment_fragment_id_unique IF EXISTS",
+		"DROP INDEX claim_claim_id_unique IF EXISTS",
+		"DROP INDEX fact_fact_id_unique IF EXISTS",
+		"DROP INDEX dream_dream_id_unique IF EXISTS",
+	}
+
+	for _, cypher := range uniqueConstraintIndexDrops {
+		_, err := s.client.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			_, err := tx.Run(ctx, cypher, nil)
+			return nil, err
+		})
+		if err != nil {
+			if isConstraintOwnedIndexDropError(err) {
+				s.logger.Debug("constraint-owned index already present", observability.String("query", cypher))
+				continue
+			}
+			return fmt.Errorf("failed to drop legacy unique-constraint index: %w", err)
+		}
+		s.logger.Debug("Dropped legacy unique-constraint index", observability.String("query", cypher))
 	}
 
 	// Create unique constraints

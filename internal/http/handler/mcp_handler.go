@@ -20,9 +20,10 @@ import (
 
 // MCPHandler serves the MCP Streamable HTTP endpoint at /mcp.
 type MCPHandler struct {
-	reg       registry.Registry
-	logger    observability.LogProvider
-	lifecycle sse.StreamLifecycle
+	reg                  registry.Registry
+	logger               observability.LogProvider
+	lifecycle            sse.StreamLifecycle
+	recallFeedbackConfig registry.RecallFeedbackConfigProvider
 }
 
 // MCPHandlerInterface is the companion interface for MCPHandler.
@@ -40,6 +41,12 @@ func NewMCPHandler(reg registry.Registry, logger observability.LogProvider) *MCP
 
 func NewMCPHandlerWithLifecycle(reg registry.Registry, logger observability.LogProvider, lifecycle sse.StreamLifecycle) *MCPHandler {
 	return &MCPHandler{reg: reg, logger: logger, lifecycle: lifecycle}
+}
+
+// NewMCPHandlerWithLifecycleAndRuntimeConfig constructs a Streamable HTTP MCP
+// handler with runtime feature visibility.
+func NewMCPHandlerWithLifecycleAndRuntimeConfig(reg registry.Registry, logger observability.LogProvider, lifecycle sse.StreamLifecycle, recallFeedbackConfig registry.RecallFeedbackConfigProvider) *MCPHandler {
+	return &MCPHandler{reg: reg, logger: logger, lifecycle: lifecycle, recallFeedbackConfig: recallFeedbackConfig}
 }
 
 // HandlePost serves POST /mcp. It accepts a single JSON-RPC request and returns
@@ -69,7 +76,7 @@ func (h *MCPHandler) HandlePost(c echo.Context) error {
 		team.Name = resolvedTeam.Name
 		team.Description = resolvedTeam.Description
 	}
-	server := mcp.NewServerWithScopesAndTeamContext(h.reg, profileID.String(), principal.Scopes, team, h.logger)
+	server := mcp.NewServerWithScopesTeamContextAndRuntimeConfig(h.reg, profileID.String(), principal.Scopes, team, h.logger, h.recallFeedbackConfig)
 	responsePayload := server.HandlePayload(ctx, payload)
 
 	if acceptsEventStream(c.Request().Header.Get("Accept")) {

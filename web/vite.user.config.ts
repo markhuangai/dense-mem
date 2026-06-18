@@ -29,6 +29,22 @@ function serveUserPortalAtUi(): Plugin {
   };
 }
 
+function manualVendorChunks(id: string) {
+  if (!id.includes("node_modules")) {
+    return undefined;
+  }
+  if (id.includes("/recharts/")) {
+    return "vendor-charts";
+  }
+  if (id.includes("/lucide-react/")) {
+    return "vendor-icons";
+  }
+  if (id.includes("/react/") || id.includes("/react-dom/") || id.includes("/scheduler/")) {
+    return "vendor-react";
+  }
+  return undefined;
+}
+
 export default defineConfig({
   base: "/ui/",
   plugins: [serveUserPortalAtUi(), react()],
@@ -38,6 +54,9 @@ export default defineConfig({
     rollupOptions: {
       input: {
         index: resolve(__dirname, "user.html"),
+      },
+      output: {
+        manualChunks: manualVendorChunks,
       },
     },
   },

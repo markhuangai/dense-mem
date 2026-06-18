@@ -11,6 +11,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -39,11 +40,12 @@ const (
 
 // Server is an MCP server bound to a shared tool registry.
 type Server struct {
-	registry  registry.Registry
-	profileID string
-	scopes    []string
-	team      TeamContext
-	logger    observability.LogProvider
+	registry             registry.Registry
+	profileID            string
+	scopes               []string
+	team                 TeamContext
+	logger               observability.LogProvider
+	recallFeedbackConfig registry.RecallFeedbackConfigProvider
 }
 
 // TeamContext is non-secret team metadata made visible in MCP discovery so
@@ -66,12 +68,19 @@ func NewServerWithScopes(reg registry.Registry, profileID string, scopes []strin
 // NewServerWithScopesAndTeamContext constructs a Server with request-scoped team
 // metadata for MCP discovery surfaces.
 func NewServerWithScopesAndTeamContext(reg registry.Registry, profileID string, scopes []string, team TeamContext, logger observability.LogProvider) *Server {
+	return NewServerWithScopesTeamContextAndRuntimeConfig(reg, profileID, scopes, team, logger, nil)
+}
+
+// NewServerWithScopesTeamContextAndRuntimeConfig constructs a Server with
+// request-scoped team metadata and runtime feature visibility.
+func NewServerWithScopesTeamContextAndRuntimeConfig(reg registry.Registry, profileID string, scopes []string, team TeamContext, logger observability.LogProvider, recallFeedbackConfig registry.RecallFeedbackConfigProvider) *Server {
 	return &Server{
-		registry:  reg,
-		profileID: profileID,
-		scopes:    append([]string(nil), scopes...),
-		team:      normalizeTeamContext(team),
-		logger:    logger,
+		registry:             reg,
+		profileID:            profileID,
+		scopes:               append([]string(nil), scopes...),
+		team:                 normalizeTeamContext(team),
+		logger:               logger,
+		recallFeedbackConfig: recallFeedbackConfig,
 	}
 }
 
@@ -113,7 +122,7 @@ func (s *Server) dispatch(ctx context.Context, req rpcRequest) rpcResponse {
 	case "initialize":
 		return okResponse(req.ID, s.handleInitialize())
 	case "tools/list":
-		return okResponse(req.ID, s.handleToolsList())
+		return okResponse(req.ID, s.handleToolsList(ctx))
 	case "tools/call":
 		result, rpcErr := s.handleToolsCall(ctx, req.Params)
 		if rpcErr != nil {
@@ -154,10 +163,13 @@ func (s *Server) handleInitialize() map[string]any {
 
 // handleToolsList returns registered tools mapped to MCP tool descriptors.
 // The registry is already the source of truth so this is a pure transform.
-func (s *Server) handleToolsList() map[string]any {
+func (s *Server) handleToolsList(ctx context.Context) map[string]any {
 	listed := s.registry.List()
 	out := make([]map[string]any, 0, len(listed))
 	for _, t := range listed {
+		if !registry.ToolVisible(ctx, t, s.recallFeedbackConfig) {
+			continue
+		}
 		if !s.canUseTool(t) {
 			continue
 		}
@@ -198,6 +210,9 @@ func (s *Server) handleToolsCall(ctx context.Context, raw json.RawMessage) (map[
 	if !ok {
 		return nil, &rpcError{Code: errCodeMethodNotFound, Message: fmt.Sprintf("tool not found: %s", params.Name)}
 	}
+	if !registry.ToolVisible(ctx, tool, s.recallFeedbackConfig) {
+		return nil, &rpcError{Code: errCodeMethodNotFound, Message: fmt.Sprintf("tool not found: %s", params.Name)}
+	}
 	if !s.canUseTool(tool) {
 		return nil, &rpcError{Code: errCodeToolFailure, Message: "insufficient scope for tool"}
 	}
@@ -218,6 +233,9 @@ func (s *Server) handleToolsCall(ctx context.Context, raw json.RawMessage) (map[
 	}
 	result, err := tool.Invoke(ctx, s.profileID, args)
 	if err != nil {
+		if errors.Is(err, registry.ErrToolDisabled) {
+			return nil, &rpcError{Code: errCodeMethodNotFound, Message: fmt.Sprintf("tool not found: %s", params.Name)}
+		}
 		s.logger.Error("mcp: tool invocation failed", err,
 			observability.String("tool", params.Name),
 			observability.ProfileID(s.profileID),

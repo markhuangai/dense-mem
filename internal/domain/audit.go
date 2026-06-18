@@ -48,16 +48,16 @@ type AuditLogEntry struct {
 // Ensure AuditLogEntry implements AuditEntryModel
 var _ AuditEntryModel = (*AuditLogEntry)(nil)
 
-func (a *AuditLogEntry) GetID() uuid.UUID               { return a.ID }
-func (a *AuditLogEntry) GetProfileID() *uuid.UUID       { return a.ProfileID }
-func (a *AuditLogEntry) GetTimestamp() time.Time        { return a.Timestamp }
-func (a *AuditLogEntry) GetOperation() string           { return a.Operation }
-func (a *AuditLogEntry) GetEntityType() string          { return a.EntityType }
-func (a *AuditLogEntry) GetEntityID() string            { return a.EntityID }
+func (a *AuditLogEntry) GetID() uuid.UUID                 { return a.ID }
+func (a *AuditLogEntry) GetProfileID() *uuid.UUID         { return a.ProfileID }
+func (a *AuditLogEntry) GetTimestamp() time.Time          { return a.Timestamp }
+func (a *AuditLogEntry) GetOperation() string             { return a.Operation }
+func (a *AuditLogEntry) GetEntityType() string            { return a.EntityType }
+func (a *AuditLogEntry) GetEntityID() string              { return a.EntityID }
 func (a *AuditLogEntry) GetBeforePayload() map[string]any { return a.BeforePayload }
 func (a *AuditLogEntry) GetAfterPayload() map[string]any  { return a.AfterPayload }
-func (a *AuditLogEntry) GetActorKeyID() *uuid.UUID      { return a.ActorKeyID }
-func (a *AuditLogEntry) GetActorRole() string           { return a.ActorRole }
-func (a *AuditLogEntry) GetClientIP() string            { return a.ClientIP }
-func (a *AuditLogEntry) GetCorrelationID() string       { return a.CorrelationID }
-func (a *AuditLogEntry) GetMetadata() map[string]any    { return a.Metadata }
+func (a *AuditLogEntry) GetActorKeyID() *uuid.UUID        { return a.ActorKeyID }
+func (a *AuditLogEntry) GetActorRole() string             { return a.ActorRole }
+func (a *AuditLogEntry) GetClientIP() string              { return a.ClientIP }
+func (a *AuditLogEntry) GetCorrelationID() string         { return a.CorrelationID }
+func (a *AuditLogEntry) GetMetadata() map[string]any      { return a.Metadata }
