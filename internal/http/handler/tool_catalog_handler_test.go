@@ -155,7 +155,7 @@ func TestToolCatalogHandler_FullV1Surface(t *testing.T) {
 func TestToolCatalogHandler_ListsRecallFeedbackToolWithRuntimeDisabled(t *testing.T) {
 	reg := registry.New()
 	if err := reg.Register(registry.Tool{
-		Name:           registry.SubmitRecallFeedbackToolName,
+		Name:           registry.SubmitRecallSessionFeedbackToolName,
 		Description:    "feedback",
 		InputSchema:    map[string]any{"type": "object"},
 		RequiredScopes: []string{"read"},
@@ -174,7 +174,7 @@ func TestToolCatalogHandler_ListsRecallFeedbackToolWithRuntimeDisabled(t *testin
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d; want 200. body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), registry.SubmitRecallFeedbackToolName) {
+	if !strings.Contains(rec.Body.String(), registry.SubmitRecallSessionFeedbackToolName) {
 		t.Fatalf("recall feedback tool missing from catalog: %s", rec.Body.String())
 	}
 }

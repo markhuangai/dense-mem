@@ -305,7 +305,7 @@ func TestToolExecuteHandler_AdditionalBranches(t *testing.T) {
 	t.Run("runtime disabled tool is not found", func(t *testing.T) {
 		reg := registry.New()
 		require.NoError(t, reg.Register(registry.Tool{
-			Name:           registry.SubmitRecallFeedbackToolName,
+			Name:           registry.SubmitRecallSessionFeedbackToolName,
 			InputSchema:    map[string]any{"type": "object"},
 			RequiredScopes: []string{"read"},
 			Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
@@ -325,7 +325,7 @@ func TestToolExecuteHandler_AdditionalBranches(t *testing.T) {
 		})
 		e.POST("/api/v1/tools/:name", h.Handle)
 
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/submit_recall_feedback", strings.NewReader(`{}`))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/submit_recall_session_feedback", strings.NewReader(`{}`))
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, req)
 
@@ -438,7 +438,7 @@ func TestToolReadHandler_Handle(t *testing.T) {
 	t.Run("runtime disabled tool descriptor is visible", func(t *testing.T) {
 		runtimeReg := registry.New()
 		require.NoError(t, runtimeReg.Register(registry.Tool{
-			Name:           registry.SubmitRecallFeedbackToolName,
+			Name:           registry.SubmitRecallSessionFeedbackToolName,
 			Description:    "feedback",
 			InputSchema:    map[string]any{"type": "object"},
 			RequiredScopes: []string{"read"},
@@ -446,13 +446,13 @@ func TestToolReadHandler_Handle(t *testing.T) {
 		runtimeHandler := NewToolReadHandlerWithRuntimeConfig(runtimeReg, handlerRecallFeedbackConfigStub{enabled: false})
 		e := newTestEcho()
 		e.GET("/api/v1/tools/:id", runtimeHandler.Handle)
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/tools/submit_recall_feedback", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/tools/submit_recall_session_feedback", nil)
 		rec := httptest.NewRecorder()
 
 		e.ServeHTTP(rec, req)
 
 		require.Equal(t, http.StatusOK, rec.Code)
-		require.Contains(t, rec.Body.String(), `"name":"submit_recall_feedback"`)
+		require.Contains(t, rec.Body.String(), `"name":"submit_recall_session_feedback"`)
 	})
 }
 

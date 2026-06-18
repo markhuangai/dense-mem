@@ -7,7 +7,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-const SubmitRecallFeedbackToolName = "submit_recall_feedback"
+const SubmitRecallSessionFeedbackToolName = "submit_recall_session_feedback"
 
 // ErrToolDisabled is returned when a registered tool is unavailable under the
 // current runtime feature configuration.

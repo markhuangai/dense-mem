@@ -146,7 +146,7 @@ test("MCP recall feedback is submitted and surfaced through compose telemetry", 
     });
 
     const toolsResponse = await mcpCall(request, "tools/list", {});
-    expect(mcpToolNames(toolsResponse)).toEqual(expect.arrayContaining(["recall_memory", "submit_recall_feedback"]));
+    expect(mcpToolNames(toolsResponse)).toEqual(expect.arrayContaining(["recall_memory", "submit_recall_session_feedback"]));
 
     const recallPayload = mcpToolPayload(await mcpCall(request, "tools/call", {
       name: "recall_memory",
@@ -157,25 +157,28 @@ test("MCP recall feedback is submitted and surfaced through compose telemetry", 
     }));
 
     expect(Array.isArray(recallPayload.results)).toBe(true);
-    expect(isRecord(recallPayload.feedback_request)).toBe(true);
-    const feedbackRequest = recallPayload.feedback_request as Record<string, unknown>;
-    expect(feedbackRequest.requested).toBe(true);
-    expect(feedbackRequest.tool).toBe("submit_recall_feedback");
-    expect(typeof feedbackRequest.recall_id).toBe("string");
-    expect(String(feedbackRequest.recall_id)).toMatch(/^rec_/);
+    expect(isRecord(recallPayload.recall_event)).toBe(true);
+    const recallEvent = recallPayload.recall_event as Record<string, unknown>;
+    expect(recallEvent.feedback_tool).toBe("submit_recall_session_feedback");
+    expect(recallEvent.feedback_timing).toBe("deferred_until_final_answer");
+    expect(typeof recallEvent.recall_id).toBe("string");
+    expect(String(recallEvent.recall_id)).toMatch(/^rec_/);
 
     const submitPayload = mcpToolPayload(await mcpCall(request, "tools/call", {
-      name: "submit_recall_feedback",
+      name: "submit_recall_session_feedback",
       arguments: {
-        recall_id: feedbackRequest.recall_id,
-        used: true,
-        answer_supported: true,
-        quality: "high",
-        missing_context: false,
-        irrelevant: false,
+        recalls: [{
+          recall_id: recallEvent.recall_id,
+          used: true,
+          answer_supported: true,
+          quality: "high",
+          missing_context: false,
+          irrelevant: false,
+        }],
       },
     }));
     expect(submitPayload.recorded).toBe(true);
+    expect(submitPayload.recorded_count).toBe(1);
 
     await expect.poll(
       () => prometheusQueryValue(request, `sum(densemem_recall_feedback_total{used="true",answer_supported="true",quality="high",missing_context="false",irrelevant="false"})`),
