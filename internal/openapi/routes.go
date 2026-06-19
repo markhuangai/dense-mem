@@ -97,7 +97,7 @@ func DefaultRoutes() []RouteDescriptor {
 		{Method: "POST", Path: "/api/v1/tools/run_dreaming_cycle", OperationID: "runDreamingCycleTool", ToolName: "run_dreaming_cycle", AISafe: true, Description: "Run the fixed reflect, re-evaluate, dream cycle for the caller's team."},
 		{Method: "POST", Path: "/api/v1/tools/list_dreams", OperationID: "listDreamsTool", ToolName: "list_dreams", AISafe: true, Description: "List reviewable dream hypotheses."},
 		{Method: "POST", Path: "/api/v1/tools/get_dream", OperationID: "getDreamTool", ToolName: "get_dream", AISafe: true, Description: "Fetch one dream hypothesis and its source references."},
-		{Method: "POST", Path: "/api/v1/tools/resolve_dream_feedback", OperationID: "resolveDreamFeedbackTool", ToolName: "resolve_dream_feedback", AISafe: true, Description: "Apply user feedback to a dream hypothesis without directly promoting facts."},
+		{Method: "POST", Path: "/api/v1/tools/resolve_dream_feedback", OperationID: "resolveDreamFeedbackTool", ToolName: "resolve_dream_feedback", AISafe: true, Description: "Apply evidence-driven user feedback to a dream hypothesis without directly promoting facts."},
 
 		// --- Advanced tool routes (full variant only) ---
 		{Method: "POST", Path: "/api/v1/tools/graph_query", OperationID: "graphQueryTool", ToolName: "graph_query", Description: "Advanced: read-only Cypher query."},

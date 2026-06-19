@@ -70,7 +70,7 @@ func runDreamingCycleTool(deps Dependencies) Tool {
 func listDreamsTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "list_dreams",
-		Description: "List reviewable dream hypotheses for the caller's team. Use this when the user asks to inspect or resolve dreams.",
+		Description: "List reviewable dream hypotheses for the caller's team. Treat returned dreams as hypotheses, not memory. Use this when the user asks to inspect or resolve dreams.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -104,7 +104,7 @@ func listDreamsTool(deps Dependencies) Tool {
 func getDreamTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "get_dream",
-		Description: "Fetch one dream hypothesis with source references. Dreams are assumptions and require user feedback before promotion.",
+		Description: "Fetch one dream hypothesis with source references. Dreams are assumptions and require explicit user evidence or confirmation before promotion.",
 		InputSchema: map[string]any{
 			"type":                 "object",
 			"required":             []string{"dream_id"},
@@ -133,7 +133,7 @@ func getDreamTool(deps Dependencies) Tool {
 func resolveDreamFeedbackTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "resolve_dream_feedback",
-		Description: "Apply user feedback to a dream hypothesis. Use promote_candidate only after the user confirms the hypothesis should enter normal memory review; it creates evidence and then relies on existing verification/promotion gates.",
+		Description: "Apply evidence-driven feedback to a dream hypothesis. Use reject when the user contradicts it, stale when it is no longer relevant, reinforce when the conversation supports keeping it as a hypothesis, and promote_candidate only after explicit user evidence or confirmation that it should enter normal memory review. Do not promote based only on model confidence.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"dream_id", "decision"},

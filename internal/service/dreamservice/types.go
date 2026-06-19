@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -62,6 +63,7 @@ type Dependencies struct {
 	Locker         CycleLocker
 	Postgres       *gorm.DB
 	Generator      Generator
+	Metrics        observability.DiscoverabilityMetrics
 	Now            func() time.Time
 }
 

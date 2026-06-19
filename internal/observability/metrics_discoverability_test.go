@@ -11,6 +11,7 @@ func TestNoopDiscoverabilityMetrics_NeverPanics(t *testing.T) {
 	m.ObserveRecallLatency(5)
 	m.ObserveRecall(5, 2, "ok")
 	m.ObserveRecallFeedback(RecallFeedback{Used: true, AnswerSupported: true, Quality: "high"})
+	m.ObserveDreamFeedback(DreamFeedback{Decision: "reinforce", Outcome: "ok", FromStatus: "proposed"})
 	m.ObserveMemoryFunnelLatency("claim_to_verify", 1, "verified")
 	m.IncFragmentCreate("created")
 	m.IncClaimCreate("created", "")
@@ -98,6 +99,31 @@ func TestInMemoryDiscoverabilityMetrics_RecordsRecallFeedback(t *testing.T) {
 	}
 }
 
+func TestInMemoryDiscoverabilityMetrics_RecordsDreamFeedback(t *testing.T) {
+	m := NewInMemoryDiscoverabilityMetrics()
+	m.ObserveDreamFeedback(DreamFeedback{
+		Decision:   "promote_candidate",
+		Outcome:    "ok",
+		FromStatus: "reinforced",
+	})
+	m.ObserveDreamFeedback(DreamFeedback{
+		Decision:   "sounds_good",
+		Outcome:    "maybe",
+		FromStatus: "draft",
+	})
+
+	samples := m.DreamFeedbackSamples()
+	if len(samples) != 2 {
+		t.Fatalf("dream feedback samples = %d; want 2", len(samples))
+	}
+	if samples[0].Decision != "promote_candidate" || samples[0].Outcome != "ok" || samples[0].FromStatus != "reinforced" {
+		t.Errorf("sample[0] = %+v", samples[0])
+	}
+	if samples[1].Decision != "unknown" || samples[1].Outcome != "unknown" || samples[1].FromStatus != "unknown" {
+		t.Errorf("sample[1] = %+v", samples[1])
+	}
+}
+
 func TestInMemoryDiscoverabilityMetrics_RecordsMemoryFunnelLatency(t *testing.T) {
 	m := NewInMemoryDiscoverabilityMetrics()
 	m.ObserveMemoryFunnelLatency("claim_to_verify", 2.5, "verified")
@@ -135,6 +161,7 @@ func TestInMemoryDiscoverabilityMetrics_ConcurrentSafe(t *testing.T) {
 			m.ObserveRecallLatency(1)
 			m.ObserveRecall(1, 1, "ok")
 			m.ObserveRecallFeedback(RecallFeedback{Used: true, AnswerSupported: true, Quality: "high"})
+			m.ObserveDreamFeedback(DreamFeedback{Decision: "reinforce", Outcome: "ok", FromStatus: "proposed"})
 			m.ObserveMemoryFunnelLatency("claim_to_verify", 1, "verified")
 			m.IncFragmentCreate("created")
 		}()
@@ -150,6 +177,9 @@ func TestInMemoryDiscoverabilityMetrics_ConcurrentSafe(t *testing.T) {
 	}
 	if got := len(m.RecallFeedbackSamples()); got != 50 {
 		t.Errorf("recall feedback samples = %d; want 50", got)
+	}
+	if got := len(m.DreamFeedbackSamples()); got != 50 {
+		t.Errorf("dream feedback samples = %d; want 50", got)
 	}
 }
 
