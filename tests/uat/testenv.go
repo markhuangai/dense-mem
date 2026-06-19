@@ -362,7 +362,6 @@ func (te *TestEnv) Setup(ctx context.Context) error {
 	fragmentDeleteSvc := fragmentservice.NewDeleteFragmentService(profileScopeEnforcer, readerAdapter, fragmentAuditor, slog.Default())
 
 	toolRegistry, err := registry.BuildDefault(registry.Dependencies{
-		FragmentGet:  fragmentGetSvc,
 		FragmentList: fragmentListSvc,
 	})
 	if err != nil {

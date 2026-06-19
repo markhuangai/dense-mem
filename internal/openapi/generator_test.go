@@ -35,6 +35,10 @@ func TestGenerator_AISafeExcludesRuntimeOnlyRoutes(t *testing.T) {
 	if _, present := paths["/api/v1/fragments"]; !present {
 		t.Errorf("ai-safe spec must include /api/v1/fragments")
 	}
+	fragmentsPath := paths["/api/v1/fragments"].(map[string]any)
+	if _, present := fragmentsPath["post"]; present {
+		t.Errorf("ai-safe spec must not include raw fragment creation")
+	}
 }
 
 func TestGenerator_FullIncludesRuntimeOnlyRoutes(t *testing.T) {
@@ -49,6 +53,10 @@ func TestGenerator_FullIncludesRuntimeOnlyRoutes(t *testing.T) {
 	}
 	if _, present := paths["/api/v1/fragments"]; !present {
 		t.Errorf("full spec must include /api/v1/fragments")
+	}
+	fragmentsPath := paths["/api/v1/fragments"].(map[string]any)
+	if _, present := fragmentsPath["post"]; !present {
+		t.Errorf("full spec must include raw fragment creation")
 	}
 }
 
@@ -132,12 +140,12 @@ func TestGenerator_SchemasDerivedFromRegistry(t *testing.T) {
 	components := spec["components"].(map[string]any)
 	schemas := components["schemas"].(map[string]any)
 
-	// save_memory -> SavememoryInput/Output per schemaNameFor naming
-	if _, has := schemas["SavememoryInput"]; !has {
-		t.Errorf("registry-derived schema SavememoryInput missing; have keys: %v", keysOf(schemas))
+	// remember -> RememberInput/Output per schemaNameFor naming
+	if _, has := schemas["RememberInput"]; !has {
+		t.Errorf("registry-derived schema RememberInput missing; have keys: %v", keysOf(schemas))
 	}
-	if _, has := schemas["SavememoryOutput"]; !has {
-		t.Errorf("registry-derived schema SavememoryOutput missing")
+	if _, has := schemas["RememberOutput"]; !has {
+		t.Errorf("registry-derived schema RememberOutput missing")
 	}
 	if _, has := schemas["ErrorResponse"]; !has {
 		t.Errorf("ErrorResponse schema missing")
@@ -168,7 +176,7 @@ func TestGenerator_JSONRoundTrips(t *testing.T) {
 
 func TestGenerator_PathParamsDeclared(t *testing.T) {
 	g := New(testRegistry(t), DefaultRoutes())
-	spec, err := g.Generate(SpecVariantAISafe)
+	spec, err := g.Generate(SpecVariantFull)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}

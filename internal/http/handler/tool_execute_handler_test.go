@@ -38,7 +38,7 @@ func (s handlerRecallFeedbackConfigStub) RecallFeedbackRuntimeConfig(context.Con
 func TestToolExecuteHandler_RejectsMissingRequiredField(t *testing.T) {
 	reg := registry.New()
 	err := reg.Register(registry.Tool{
-		Name:           "save_memory",
+		Name:           "remember",
 		InputSchema:    map[string]any{"type": "object", "required": []string{"content"}, "properties": map[string]any{"content": map[string]any{"type": "string"}}, "additionalProperties": false},
 		RequiredScopes: []string{"write"},
 		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
@@ -66,7 +66,7 @@ func TestToolExecuteHandler_RejectsMissingRequiredField(t *testing.T) {
 
 	e.POST("/api/v1/tools/:name", h.Handle)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/save_memory", strings.NewReader(`{}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/remember", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Profile-ID", profileID.String())
 	rec := httptest.NewRecorder()
@@ -84,7 +84,7 @@ func TestToolExecuteHandler_RejectsUnknownNonTenantFieldWhenAdditionalProperties
 	reg := registry.New()
 	called := false
 	err := reg.Register(registry.Tool{
-		Name:           "get_memory",
+		Name:           "example_tool",
 		InputSchema:    map[string]any{"type": "object", "properties": map[string]any{"id": map[string]any{"type": "string"}}, "additionalProperties": false},
 		RequiredScopes: []string{"read"},
 		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
@@ -113,7 +113,7 @@ func TestToolExecuteHandler_RejectsUnknownNonTenantFieldWhenAdditionalProperties
 
 	e.POST("/api/v1/tools/:name", h.Handle)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/get_memory", strings.NewReader(`{"id":"frag-1","unexpected":"forged"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/example_tool", strings.NewReader(`{"id":"frag-1","unexpected":"forged"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Profile-ID", profileID.String())
 	rec := httptest.NewRecorder()
@@ -132,7 +132,7 @@ func TestToolExecuteHandler_StripsTenantFieldsBeforeStrictValidation(t *testing.
 	reg := registry.New()
 	var gotInput map[string]any
 	err := reg.Register(registry.Tool{
-		Name:           "get_memory",
+		Name:           "example_tool",
 		InputSchema:    map[string]any{"type": "object", "properties": map[string]any{"id": map[string]any{"type": "string"}}, "additionalProperties": false},
 		RequiredScopes: []string{"read"},
 		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
@@ -161,7 +161,7 @@ func TestToolExecuteHandler_StripsTenantFieldsBeforeStrictValidation(t *testing.
 
 	e.POST("/api/v1/tools/:name", h.Handle)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/get_memory", strings.NewReader(`{"id":"frag-1","team_id":"forged","profile_id":"forged-profile"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/example_tool", strings.NewReader(`{"id":"frag-1","team_id":"forged","profile_id":"forged-profile"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Profile-ID", profileID.String())
 	rec := httptest.NewRecorder()
@@ -175,7 +175,7 @@ func TestToolExecuteHandler_StripsTenantFieldsBeforeStrictValidation(t *testing.
 func TestToolExecuteHandler_MapsEmbeddingFailureToServiceUnavailable(t *testing.T) {
 	reg := registry.New()
 	err := reg.Register(registry.Tool{
-		Name:           "save_memory",
+		Name:           "remember",
 		InputSchema:    map[string]any{"type": "object", "required": []string{"content"}, "properties": map[string]any{"content": map[string]any{"type": "string"}}, "additionalProperties": false},
 		RequiredScopes: []string{"write"},
 		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
@@ -203,7 +203,7 @@ func TestToolExecuteHandler_MapsEmbeddingFailureToServiceUnavailable(t *testing.
 
 	e.POST("/api/v1/tools/:name", h.Handle)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/save_memory", strings.NewReader(`{"content":"hello"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/remember", strings.NewReader(`{"content":"hello"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Profile-ID", profileID.String())
 	rec := httptest.NewRecorder()

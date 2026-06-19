@@ -198,7 +198,7 @@ func TestMCP_ToolsListMirrorsRegistry(t *testing.T) {
 	logger, _ := testLogger(t)
 	reg := registry.New()
 	_ = reg.Register(registry.Tool{
-		Name:        "save_memory",
+		Name:        "remember",
 		Description: "store",
 		InputSchema: map[string]any{"type": "object"},
 	})
@@ -210,8 +210,8 @@ func TestMCP_ToolsListMirrorsRegistry(t *testing.T) {
 	s := NewServer(reg, "pA", logger)
 
 	out := runRPC(t, s, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
-	if !strings.Contains(out, `"save_memory"`) {
-		t.Errorf("tools/list missing save_memory; got %s", out)
+	if !strings.Contains(out, `"remember"`) {
+		t.Errorf("tools/list missing remember; got %s", out)
 	}
 	if !strings.Contains(out, `"recall_memory"`) {
 		t.Errorf("tools/list missing recall_memory; got %s", out)
@@ -230,8 +230,8 @@ func TestMCP_ToolsListMirrorsRegistry(t *testing.T) {
 	if len(payload.Tools) != 2 {
 		t.Fatalf("tools count = %d; want 2", len(payload.Tools))
 	}
-	// Registry.List is sorted, so save_memory comes after recall_memory.
-	if payload.Tools[0]["name"] != "recall_memory" || payload.Tools[1]["name"] != "save_memory" {
+	// Registry.List is sorted, so remember comes after recall_memory.
+	if payload.Tools[0]["name"] != "recall_memory" || payload.Tools[1]["name"] != "remember" {
 		t.Errorf("unsorted: %v", payload.Tools)
 	}
 	if _, ok := payload.Tools[0]["inputSchema"]; !ok {
@@ -362,7 +362,7 @@ func TestMCP_ToolsCallInvokesRegistry(t *testing.T) {
 	var gotProfile string
 	var gotArgs map[string]any
 	_ = reg.Register(registry.Tool{
-		Name:        "save_memory",
+		Name:        "remember",
 		Description: "store",
 		InputSchema: map[string]any{"type": "object"},
 		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
@@ -373,7 +373,7 @@ func TestMCP_ToolsCallInvokesRegistry(t *testing.T) {
 	})
 	s := NewServer(reg, "pA", logger)
 
-	out := runRPC(t, s, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"save_memory","arguments":{"text":"hello"}}}`)
+	out := runRPC(t, s, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"remember","arguments":{"text":"hello"}}}`)
 	if gotProfile != "pA" {
 		t.Errorf("profileID = %q; want pA", gotProfile)
 	}

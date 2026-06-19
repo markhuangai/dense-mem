@@ -177,7 +177,7 @@ func TestUAT10_ToolCatalogAndOpenAPI(t *testing.T) {
 	toolset := readFile(t, "internal/tools/registry/toolset.go")
 	// AI-facing verbs use underscore_case consistently.
 	for _, name := range []string{
-		"save_memory", "get_memory", "list_recent_memories", "recall_memory",
+		"list_recent_memories", "recall_memory", "remember",
 		"keyword_search", "semantic_search", "graph_query",
 	} {
 		assert.Contains(t, toolset, name,
@@ -196,7 +196,6 @@ func TestUAT10_ToolCatalogAndOpenAPI(t *testing.T) {
 
 	// In-process contract check: BuildDefault advertises every canonical tool
 	// even with zero service wiring, so discovery never silently drops entries.
-	// Phase 8 (knowledge pipeline) added 9 new tools on top of the original 7.
 	reg, err := registry.BuildDefault(registry.Dependencies{})
 	require.NoError(t, err)
 	list := reg.List()
@@ -205,8 +204,8 @@ func TestUAT10_ToolCatalogAndOpenAPI(t *testing.T) {
 		seen[tl.Name] = true
 	}
 	for _, name := range []string{
-		// Original 7 (Phase 1 canonical set)
-		"save_memory", "get_memory", "list_recent_memories", "recall_memory",
+		// Canonical memory/search set
+		"list_recent_memories", "recall_memory", "remember",
 		"keyword_search", "semantic_search", "graph_query",
 		// Phase 8 knowledge pipeline tools
 		"post_claim", "get_claim", "list_claims",
@@ -220,14 +219,14 @@ func TestUAT10_ToolCatalogAndOpenAPI(t *testing.T) {
 	for _, name := range []string{"keyword-search", "semantic-search", "graph-query"} {
 		assert.False(t, seen[name], "registry must not list legacy hyphenated tool %q", name)
 	}
-	assert.GreaterOrEqual(t, len(list), 7, "BuildDefault must register at least the original 7 canonical tools")
+	assert.GreaterOrEqual(t, len(list), 6, "BuildDefault must register at least the canonical memory/search tools")
 
-	// save_memory stays part of the stable catalog even when the write service is
+	// remember stays part of the stable catalog even when the memory service is
 	// not wired in this test harness.
-	save, ok := reg.Get("save_memory")
+	remember, ok := reg.Get("remember")
 	require.True(t, ok)
-	assert.Contains(t, save.RequiredScopes, "write",
-		"save_memory must require the write scope")
+	assert.Contains(t, remember.RequiredScopes, "write",
+		"remember must require the write scope")
 }
 
 // UAT-11: MCP Streamable HTTP derives profile scope from the API key and reuses

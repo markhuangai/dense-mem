@@ -8,65 +8,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 )
 
-func dreamingStatusTool(deps Dependencies) Tool {
-	return Tool{
-		Name:        "dreaming_status",
-		Description: "Inspect the effective dreaming-cycle config and latest run status for the caller's team. Dreams are hypotheses, not facts.",
-		InputSchema: map[string]any{
-			"type":                 "object",
-			"properties":           map[string]any{},
-			"additionalProperties": false,
-		},
-		OutputSchema:   map[string]any{"type": "object"},
-		RequiredScopes: []string{"read"},
-		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
-			_ = input
-			if deps.Dreams == nil {
-				return nil, ErrToolUnavailable
-			}
-			res, err := deps.Dreams.Status(ctx, profileID)
-			if err != nil {
-				return nil, err
-			}
-			return structToMap(res)
-		},
-	}
-}
-
-func runDreamingCycleTool(deps Dependencies) Tool {
-	return Tool{
-		Name:        "run_dreaming_cycle",
-		Description: "Manually run the fixed reflect -> re-evaluate -> dream cycle chain for the caller's team. Disabled phases are skipped unless explicitly overridden. This never promotes facts directly.",
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"reflect_enabled":    map[string]any{"type": "boolean"},
-				"reevaluate_enabled": map[string]any{"type": "boolean"},
-				"dream_enabled":      map[string]any{"type": "boolean"},
-				"max_outputs":        map[string]any{"type": "integer", "minimum": 1, "maximum": 50},
-			},
-			"additionalProperties": false,
-		},
-		OutputSchema:   map[string]any{"type": "object"},
-		RequiredScopes: []string{"write"},
-		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
-			if deps.Dreams == nil {
-				return nil, ErrToolUnavailable
-			}
-			var req dreamservice.RunCycleRequest
-			if err := remapInput(input, &req); err != nil {
-				return nil, fmt.Errorf("run_dreaming_cycle: invalid input: %w", err)
-			}
-			req.Manual = true
-			res, err := deps.Dreams.RunCycle(ctx, profileID, req)
-			if err != nil {
-				return nil, err
-			}
-			return structToMap(res)
-		},
-	}
-}
-
 func listDreamsTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "list_dreams",

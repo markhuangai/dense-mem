@@ -75,10 +75,10 @@ func DefaultRoutes() []RouteDescriptor {
 		{Method: "GET", Path: "/api/v1/communities", OperationID: "listCommunities", ResponseSchema: "ListCommunitiesResponse", AISafe: true, Tags: []string{"community"}, Description: "List persisted community summaries for the caller's profile."},
 		{Method: "GET", Path: "/api/v1/communities/{id}", OperationID: "getCommunitySummary", ResponseSchema: "CommunityResponse", AISafe: true, Tags: []string{"community"}, Description: "Fetch one persisted community summary by community_id."},
 
-		// --- Fragments (AI-safe) ---
-		{Method: "POST", Path: "/api/v1/fragments", OperationID: "createFragment", ToolName: "save_memory", AISafe: true, Description: "Save a new memory fragment."},
+		// --- Fragments ---
+		{Method: "POST", Path: "/api/v1/fragments", OperationID: "createFragment", Description: "Create a source fragment."},
 		{Method: "GET", Path: "/api/v1/fragments", OperationID: "listFragments", ToolName: "list_recent_memories", AISafe: true, Description: "List recent fragments (keyset pagination)."},
-		{Method: "GET", Path: "/api/v1/fragments/{id}", OperationID: "getFragment", ToolName: "get_memory", AISafe: true, Description: "Fetch a single fragment by id."},
+		{Method: "GET", Path: "/api/v1/fragments/{id}", OperationID: "getFragment", Description: "Fetch a single fragment by id."},
 		{Method: "DELETE", Path: "/api/v1/fragments/{id}", OperationID: "deleteFragment", AISafe: true, Description: "Hard-delete a fragment."},
 		// Phase 6: soft tombstone (AC-48)
 		{Method: "POST", Path: "/api/v1/fragments/{id}/retract", OperationID: "retractFragment", ResponseSchema: "RetractFragmentResponse", AISafe: true, Tags: []string{"knowledge"}, Description: "Soft-tombstone a fragment; preserves graph lineage and triggers fact revalidation."},
@@ -93,8 +93,6 @@ func DefaultRoutes() []RouteDescriptor {
 			"503": "Embedding provider unavailable.",
 		}},
 		{Method: "POST", Path: "/api/v1/tools/recall_memory", OperationID: "recallMemory", ToolName: "recall_memory", AISafe: true, Description: "Hybrid semantic + keyword recall over fragments."},
-		{Method: "POST", Path: "/api/v1/tools/dreaming_status", OperationID: "dreamingStatusTool", ToolName: "dreaming_status", AISafe: true, Description: "Inspect effective dreaming-cycle config and pending dream hypotheses."},
-		{Method: "POST", Path: "/api/v1/tools/run_dreaming_cycle", OperationID: "runDreamingCycleTool", ToolName: "run_dreaming_cycle", AISafe: true, Description: "Run the fixed reflect, re-evaluate, dream cycle for the caller's team."},
 		{Method: "POST", Path: "/api/v1/tools/list_dreams", OperationID: "listDreamsTool", ToolName: "list_dreams", AISafe: true, Description: "List reviewable dream hypotheses."},
 		{Method: "POST", Path: "/api/v1/tools/get_dream", OperationID: "getDreamTool", ToolName: "get_dream", AISafe: true, Description: "Fetch one dream hypothesis and its source references."},
 		{Method: "POST", Path: "/api/v1/tools/resolve_dream_feedback", OperationID: "resolveDreamFeedbackTool", ToolName: "resolve_dream_feedback", AISafe: true, Description: "Apply evidence-driven user feedback to a dream hypothesis without directly promoting facts."},

@@ -31,11 +31,9 @@ import (
 // canonical v1 tool catalog.
 type Dependencies struct {
 	// Fragment tools (v1)
-	FragmentCreate fragmentservice.CreateFragmentService
-	FragmentGet    fragmentservice.GetFragmentService
-	FragmentList   fragmentservice.ListFragmentsService
-	Recall         recallservice.RecallService
-	Metrics        observability.DiscoverabilityMetrics
+	FragmentList fragmentservice.ListFragmentsService
+	Recall       recallservice.RecallService
+	Metrics      observability.DiscoverabilityMetrics
 
 	// RecallFeedbackConfig controls whether recall_memory emits deferred
 	// recall events and whether session feedback submission is callable.
@@ -86,9 +84,7 @@ func BuildDefault(deps Dependencies) (Registry, error) {
 
 func defaultTools(deps Dependencies) []Tool {
 	tools := []Tool{
-		// v1 fragment + search tools
-		saveMemoryTool(deps),
-		getMemoryTool(deps),
+		// v1 fragment read + search tools
 		listRecentMemoriesTool(deps),
 		recallMemoryTool(deps),
 		traceMemoryTool(deps),
@@ -97,8 +93,6 @@ func defaultTools(deps Dependencies) []Tool {
 		importMemoriesTool(deps),
 		reflectMemoriesTool(deps),
 		confirmMemoryTool(deps),
-		dreamingStatusTool(deps),
-		runDreamingCycleTool(deps),
 		listDreamsTool(deps),
 		getDreamTool(deps),
 		resolveDreamFeedbackTool(deps),
@@ -126,100 +120,6 @@ func defaultTools(deps Dependencies) []Tool {
 		submitRecallSessionFeedbackTool(deps),
 	}
 	return tools
-}
-
-// --- save_memory -----------------------------------------------------------
-
-func saveMemoryTool(deps Dependencies) Tool {
-	return Tool{
-		Name:        "save_memory",
-		Description: "Persist one granular SourceFragment for the caller's profile. Keep each entry under 1000 characters and split large scenarios into claim-worthy evidence pieces so future claims can attach to precise support. The server produces the embedding; text and metadata are stored with an audit entry. Supports idempotency via idempotency_key or content hash.",
-		InputSchema: map[string]any{
-			"type":     "object",
-			"required": []string{"content"},
-			"properties": map[string]any{
-				"content":         memoryEntryString("Fragment text."),
-				"source_type":     schemaEnum([]string{"conversation", "document", "observation", "manual"}),
-				"source":          schemaString("Free-form provenance.", 256),
-				"authority":       schemaEnum([]string{"authoritative", "primary", "secondary", "inferred", "unknown"}),
-				"idempotency_key": schemaString("Client-supplied dedupe key (scoped to profile).", 128),
-				"labels":          map[string]any{"type": "array", "items": map[string]any{"type": "string", "maxLength": 64}, "maxItems": 20},
-				"metadata":        map[string]any{"type": "object", "additionalProperties": true},
-			},
-			"additionalProperties": false,
-		},
-		OutputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"id":           map[string]any{"type": "string"},
-				"status":       schemaEnum([]string{"created", "duplicate"}),
-				"duplicate_of": map[string]any{"type": "string"},
-				"created_at":   map[string]any{"type": "string", "format": "date-time"},
-			},
-		},
-		RequiredScopes: []string{"write"},
-		Invoke:         saveMemoryInvoker(deps.FragmentCreate),
-	}
-}
-
-func saveMemoryInvoker(svc fragmentservice.CreateFragmentService) ToolInvoker {
-	return func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
-		if svc == nil {
-			return nil, ErrToolUnavailable
-		}
-		var req dto.CreateFragmentRequest
-		if err := remapInput(input, &req); err != nil {
-			return nil, fmt.Errorf("save_memory: invalid input: %w", err)
-		}
-		res, err := svc.Create(ctx, profileID, &req)
-		if err != nil {
-			return nil, err
-		}
-		status := "created"
-		if res.Duplicate {
-			status = "duplicate"
-		}
-		out := map[string]any{
-			"id":         res.Fragment.FragmentID,
-			"status":     status,
-			"created_at": res.Fragment.CreatedAt,
-		}
-		if res.DuplicateOf != "" {
-			out["duplicate_of"] = res.DuplicateOf
-		}
-		return out, nil
-	}
-}
-
-// --- get_memory ------------------------------------------------------------
-
-func getMemoryTool(deps Dependencies) Tool {
-	return Tool{
-		Name:        "get_memory",
-		Description: "Fetch a single SourceFragment by id within the caller's profile scope.",
-		InputSchema: map[string]any{
-			"type":                 "object",
-			"required":             []string{"id"},
-			"properties":           map[string]any{"id": schemaString("Fragment id.", 128)},
-			"additionalProperties": false,
-		},
-		OutputSchema:   fragmentObjectSchema(),
-		RequiredScopes: []string{"read"},
-		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
-			if deps.FragmentGet == nil {
-				return nil, ErrToolUnavailable
-			}
-			id, _ := input["id"].(string)
-			if id == "" {
-				return nil, errors.New("get_memory: id is required")
-			}
-			frag, err := deps.FragmentGet.GetByID(ctx, profileID, id)
-			if err != nil {
-				return nil, err
-			}
-			return structToMap(frag)
-		},
-	}
 }
 
 // --- list_recent_memories --------------------------------------------------
