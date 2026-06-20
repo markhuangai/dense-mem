@@ -76,9 +76,9 @@ func DefaultRoutes() []RouteDescriptor {
 		{Method: "GET", Path: "/api/v1/communities/{id}", OperationID: "getCommunitySummary", ResponseSchema: "CommunityResponse", AISafe: true, Tags: []string{"community"}, Description: "Fetch one persisted community summary by community_id."},
 
 		// --- Fragments ---
-		{Method: "POST", Path: "/api/v1/fragments", OperationID: "createFragment", Description: "Create a source fragment."},
+		{Method: "POST", Path: "/api/v1/fragments", OperationID: "createFragment", RequestSchema: "CreateFragmentRequest", ResponseSchema: "FragmentResponse", SuccessStatus: 201, Description: "Create a source fragment."},
 		{Method: "GET", Path: "/api/v1/fragments", OperationID: "listFragments", ToolName: "list_recent_memories", AISafe: true, Description: "List recent fragments (keyset pagination)."},
-		{Method: "GET", Path: "/api/v1/fragments/{id}", OperationID: "getFragment", Description: "Fetch a single fragment by id."},
+		{Method: "GET", Path: "/api/v1/fragments/{id}", OperationID: "getFragment", ResponseSchema: "FragmentResponse", Description: "Fetch a single fragment by id."},
 		{Method: "DELETE", Path: "/api/v1/fragments/{id}", OperationID: "deleteFragment", AISafe: true, Description: "Hard-delete a fragment."},
 		// Phase 6: soft tombstone (AC-48)
 		{Method: "POST", Path: "/api/v1/fragments/{id}/retract", OperationID: "retractFragment", ResponseSchema: "RetractFragmentResponse", AISafe: true, Tags: []string{"knowledge"}, Description: "Soft-tombstone a fragment; preserves graph lineage and triggers fact revalidation."},

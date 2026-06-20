@@ -60,6 +60,61 @@ func TestGenerator_FullIncludesRuntimeOnlyRoutes(t *testing.T) {
 	}
 }
 
+func TestGenerator_FullFragmentRoutesUseExplicitSchemas(t *testing.T) {
+	g := New(testRegistry(t), DefaultRoutes())
+	spec, err := g.Generate(SpecVariantFull)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	paths := spec["paths"].(map[string]any)
+	fragmentsPath := paths["/api/v1/fragments"].(map[string]any)
+	createOp := fragmentsPath["post"].(map[string]any)
+
+	reqBody, ok := createOp["requestBody"].(map[string]any)
+	if !ok {
+		t.Fatal("POST /api/v1/fragments requestBody missing")
+	}
+	reqContent := reqBody["content"].(map[string]any)
+	reqJSON := reqContent["application/json"].(map[string]any)
+	reqSchema := reqJSON["schema"].(map[string]any)
+	if got := reqSchema["$ref"]; got != "#/components/schemas/CreateFragmentRequest" {
+		t.Fatalf("POST /api/v1/fragments requestBody $ref = %v; want #/components/schemas/CreateFragmentRequest", got)
+	}
+
+	responses := createOp["responses"].(map[string]any)
+	resp201, ok := responses["201"].(map[string]any)
+	if !ok {
+		t.Fatalf("POST /api/v1/fragments 201 response missing; have: %v", keysOf(responses))
+	}
+	resp201Content := resp201["content"].(map[string]any)
+	resp201JSON := resp201Content["application/json"].(map[string]any)
+	resp201Schema := resp201JSON["schema"].(map[string]any)
+	if got := resp201Schema["$ref"]; got != "#/components/schemas/FragmentResponse" {
+		t.Fatalf("POST /api/v1/fragments 201 response $ref = %v; want #/components/schemas/FragmentResponse", got)
+	}
+
+	fragmentByIDPath := paths["/api/v1/fragments/{id}"].(map[string]any)
+	getOp := fragmentByIDPath["get"].(map[string]any)
+	getResponses := getOp["responses"].(map[string]any)
+	resp200 := getResponses["200"].(map[string]any)
+	resp200Content := resp200["content"].(map[string]any)
+	resp200JSON := resp200Content["application/json"].(map[string]any)
+	resp200Schema := resp200JSON["schema"].(map[string]any)
+	if got := resp200Schema["$ref"]; got != "#/components/schemas/FragmentResponse" {
+		t.Fatalf("GET /api/v1/fragments/{id} 200 response $ref = %v; want #/components/schemas/FragmentResponse", got)
+	}
+
+	components := spec["components"].(map[string]any)
+	schemas := components["schemas"].(map[string]any)
+	if _, has := schemas["CreateFragmentRequest"]; !has {
+		t.Fatalf("CreateFragmentRequest schema missing from components")
+	}
+	if _, has := schemas["FragmentResponse"]; !has {
+		t.Fatalf("FragmentResponse schema missing from components")
+	}
+}
+
 func TestGenerator_ValidOpenAPIVersion(t *testing.T) {
 	g := New(testRegistry(t), DefaultRoutes())
 	spec, err := g.Generate(SpecVariantFull)
