@@ -1,10 +1,9 @@
 package openapi
 
-// knowledgeSchemas returns component-schema definitions for the knowledge
-// pipeline entities (Claim, Fact, Community). These schemas are merged into
-// every generated spec so that routes can reference them via explicit
-// RequestSchema / ResponseSchema fields on RouteDescriptor — decoupled from
-// MCP tool registration, which may complete later.
+// knowledgeSchemas returns component-schema definitions for REST resources that
+// need explicit schema refs. These schemas are merged into every generated spec
+// so routes can reference them via RouteDescriptor fields, decoupled from MCP
+// tool registration.
 //
 // Schema names follow the PascalCase component convention used throughout this
 // package. They are intentionally separate from tool-derived schemas (which
@@ -12,6 +11,149 @@ package openapi
 // evolution of the REST surface vs. the tool surface.
 func knowledgeSchemas() map[string]any {
 	return map[string]any{
+		// CreateFragmentRequest is the raw REST request body for creating a
+		// source fragment. The server generates embeddings before persistence.
+		"CreateFragmentRequest": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"content": map[string]any{
+					"type":        "string",
+					"description": "Fragment text.",
+					"maxLength":   8192,
+				},
+				"source_type": map[string]any{
+					"type": "string",
+					"enum": []string{"conversation", "document", "observation", "manual"},
+				},
+				"source": map[string]any{
+					"type":      "string",
+					"maxLength": 256,
+				},
+				"authority": map[string]any{
+					"type": "string",
+					"enum": []string{"authoritative", "primary", "secondary", "inferred", "unknown"},
+				},
+				"idempotency_key": map[string]any{
+					"type":      "string",
+					"maxLength": 128,
+				},
+				"labels": map[string]any{
+					"type":     "array",
+					"items":    map[string]any{"type": "string", "maxLength": 64},
+					"maxItems": 20,
+				},
+				"metadata": map[string]any{
+					"type":                 "object",
+					"additionalProperties": true,
+				},
+				"source_quality": map[string]any{
+					"type":    "number",
+					"format":  "float",
+					"minimum": 0,
+					"maximum": 1,
+				},
+				"classification": map[string]any{
+					"type":                 "object",
+					"additionalProperties": true,
+				},
+			},
+			"required": []string{"content"},
+		},
+
+		// FragmentResponse mirrors internal/http/dto.FragmentResponse and
+		// intentionally excludes the embedding vector.
+		"FragmentResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id": map[string]any{
+					"type":   "string",
+					"format": "uuid",
+				},
+				"fragment_id": map[string]any{
+					"type":   "string",
+					"format": "uuid",
+				},
+				"team_id": map[string]any{
+					"type":   "string",
+					"format": "uuid",
+				},
+				"owner_profile_id": map[string]any{
+					"type":   "string",
+					"format": "uuid",
+				},
+				"owner_profile_name": map[string]any{
+					"type": "string",
+				},
+				"created_by_profile_id": map[string]any{
+					"type":   "string",
+					"format": "uuid",
+				},
+				"created_by_profile_name": map[string]any{
+					"type": "string",
+				},
+				"content": map[string]any{
+					"type": "string",
+				},
+				"source_type": map[string]any{
+					"type": "string",
+				},
+				"source": map[string]any{
+					"type": "string",
+				},
+				"authority": map[string]any{
+					"type": "string",
+				},
+				"labels": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"type": "string"},
+				},
+				"metadata": map[string]any{
+					"type":                 "object",
+					"additionalProperties": true,
+				},
+				"content_hash": map[string]any{
+					"type": "string",
+				},
+				"idempotency_key": map[string]any{
+					"type": "string",
+				},
+				"embedding_model": map[string]any{
+					"type": "string",
+				},
+				"embedding_dimensions": map[string]any{
+					"type": "integer",
+				},
+				"source_quality": map[string]any{
+					"type":   "number",
+					"format": "float",
+				},
+				"classification": map[string]any{
+					"type":                 "object",
+					"additionalProperties": true,
+				},
+				"status": map[string]any{
+					"type": "string",
+				},
+				"recorded_to": map[string]any{
+					"type":   "string",
+					"format": "date-time",
+				},
+				"retracted_at": map[string]any{
+					"type":   "string",
+					"format": "date-time",
+				},
+				"created_at": map[string]any{
+					"type":   "string",
+					"format": "date-time",
+				},
+				"updated_at": map[string]any{
+					"type":   "string",
+					"format": "date-time",
+				},
+			},
+			"required": []string{"id", "fragment_id", "content", "source_type", "content_hash", "embedding_model", "embedding_dimensions", "source_quality", "created_at", "updated_at"},
+		},
+
 		// ClaimRequest is the request body for creating a candidate claim from
 		// one or more supporting fragments.
 		"ClaimRequest": map[string]any{

@@ -220,9 +220,8 @@ Dense-Mem 不是 agent brain、planner，也不是外部真相裁判。它负责
 | `reflect_memories` | 查看 active facts、candidate/disputed claims、contradictions、stale memories 和 clarification needs。 |
 | `confirm_memory` | 应用用户对 clarification task 的回答：接受 claim 并 supersede 可比较的 active facts，或保留/拒绝它。 |
 
-高级调用方仍然可以使用低层工具：`save_memory`、`post_claim`、`verify_claim`、
-`promote_claim`、搜索工具、graph query tools、community tools 和 retraction
-tools。
+高级调用方仍然可以使用低层工具：`post_claim`、`verify_claim`、`promote_claim`、
+搜索工具、graph query tools、community tools 和 retraction tools。
 
 记忆在系统里的主路径如下：
 

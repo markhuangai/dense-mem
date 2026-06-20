@@ -103,10 +103,9 @@ test('read-only profile key only sees and calls read-scoped MCP tools', async ({
     const list = listResponse as { result: { tools: Array<{ name: string }> } };
     const toolNames = list.result.tools.map((tool) => tool.name);
 
-    expect(toolNames).toContain('recall_memory');
-    expect(toolNames).not.toContain('remember');
-    expect(toolNames).not.toContain('save_memory');
-    expect(toolNames).not.toContain('confirm_memory');
+	expect(toolNames).toContain('recall_memory');
+	expect(toolNames).not.toContain('remember');
+	expect(toolNames).not.toContain('confirm_memory');
 
     const writeCall = await mcp.call('tools/call', {
       name: 'remember',

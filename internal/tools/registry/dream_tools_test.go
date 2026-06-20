@@ -13,35 +13,6 @@ func TestBuildDefault_DreamInvokers(t *testing.T) {
 	dreams := &stubDreamService{}
 	reg, _ := BuildDefault(Dependencies{Dreams: dreams})
 
-	statusTool, _ := reg.Get("dreaming_status")
-	statusOut, err := statusTool.Invoke(context.Background(), "profile-dream", map[string]any{})
-	if err != nil {
-		t.Fatalf("dreaming_status Invoke: %v", err)
-	}
-	if statusOut["pending_count"] != float64(1) {
-		t.Fatalf("dreaming_status pending_count = %v, want 1", statusOut["pending_count"])
-	}
-
-	runTool, _ := reg.Get("run_dreaming_cycle")
-	runOut, err := runTool.Invoke(context.Background(), "profile-dream", map[string]any{
-		"reflect_enabled":    false,
-		"reevaluate_enabled": true,
-		"dream_enabled":      true,
-		"max_outputs":        float64(4),
-	})
-	if err != nil {
-		t.Fatalf("run_dreaming_cycle Invoke: %v", err)
-	}
-	if runOut["status"] != "completed" {
-		t.Fatalf("run_dreaming_cycle status = %v, want completed", runOut["status"])
-	}
-	if !dreams.lastRunReq.Manual || dreams.lastRunReq.ReflectEnabled == nil || *dreams.lastRunReq.ReflectEnabled {
-		t.Fatalf("run_dreaming_cycle request = %+v, want manual with reflect override false", dreams.lastRunReq)
-	}
-	if dreams.lastRunReq.ReevaluateEnabled == nil || !*dreams.lastRunReq.ReevaluateEnabled || dreams.lastRunReq.MaxOutputs != 4 {
-		t.Fatalf("run_dreaming_cycle request = %+v, want reevaluate true and max outputs 4", dreams.lastRunReq)
-	}
-
 	listTool, _ := reg.Get("list_dreams")
 	listOut, err := listTool.Invoke(context.Background(), "profile-dream", map[string]any{
 		"limit":  float64(3),

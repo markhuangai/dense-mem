@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
@@ -20,30 +19,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/tools/keywordsearch"
 	"github.com/markhuangai/dense-mem/internal/tools/semanticsearch"
 )
-
-type stubCreate struct {
-	called      int
-	lastProfile string
-	lastReq     *dto.CreateFragmentRequest
-}
-
-func (s *stubCreate) Create(ctx context.Context, profileID string, req *dto.CreateFragmentRequest) (*fragmentservice.CreateResult, error) {
-	s.called++
-	s.lastProfile = profileID
-	s.lastReq = req
-	return &fragmentservice.CreateResult{
-		Fragment: &domain.Fragment{FragmentID: "f-1", ProfileID: profileID, Content: req.Content},
-	}, nil
-}
-
-type stubGet struct{}
-
-func (stubGet) GetByID(ctx context.Context, profileID, fragmentID string) (*domain.Fragment, error) {
-	if fragmentID == "miss" {
-		return nil, fragmentservice.ErrFragmentNotFound
-	}
-	return &domain.Fragment{FragmentID: fragmentID, ProfileID: profileID, Content: "hello"}, nil
-}
 
 type stubList struct{}
 
@@ -91,10 +66,10 @@ func TestBuildDefault_RegistersV1ToolSurface(t *testing.T) {
 		t.Fatalf("BuildDefault: %v", err)
 	}
 	required := []string{
-		"save_memory", "get_memory", "list_recent_memories", "recall_memory",
+		"list_recent_memories", "recall_memory",
 		"trace_memory", "assemble_context",
 		"remember", "import_memories", "reflect_memories", "confirm_memory",
-		"dreaming_status", "run_dreaming_cycle", "list_dreams", "get_dream", "resolve_dream_feedback",
+		"list_dreams", "get_dream", "resolve_dream_feedback",
 		"keyword_search", "semantic_search", "graph_query",
 		"find_skill_pack_candidates", "export_skill_pack", "inspect_skill_pack",
 		"import_skill_pack", "rollback_skill_pack_import",
@@ -116,15 +91,15 @@ func TestBuildDefault_RegistersV1ToolSurface(t *testing.T) {
 
 func TestBuildDefault_SchemaFieldsPopulated(t *testing.T) {
 	reg, _ := BuildDefault(Dependencies{})
-	tool, _ := reg.Get("save_memory")
+	tool, _ := reg.Get("remember")
 	if tool.Description == "" {
-		t.Error("save_memory description is empty")
+		t.Error("remember description is empty")
 	}
 	if tool.InputSchema == nil || tool.OutputSchema == nil {
-		t.Error("save_memory schemas must not be nil")
+		t.Error("remember schemas must not be nil")
 	}
 	if len(tool.RequiredScopes) == 0 {
-		t.Error("save_memory must declare required scopes")
+		t.Error("remember must declare required scopes")
 	}
 }
 
@@ -179,88 +154,16 @@ func TestValidateInputRejectsNestedMemoryClaimViolations(t *testing.T) {
 	}
 }
 
-func TestValidateInputRejectsNestedSaveMemoryFields(t *testing.T) {
-	reg, err := BuildDefault(Dependencies{})
-	if err != nil {
-		t.Fatalf("BuildDefault: %v", err)
-	}
-	tool, ok := reg.Get("save_memory")
-	if !ok {
-		t.Fatal("save_memory tool not registered")
-	}
-
-	properties := tool.InputSchema["properties"].(map[string]any)
-	contentSchema := properties["content"].(map[string]any)
-	if got, want := contentSchema["maxLength"], memoryEntryMaxLength; got != want {
-		t.Fatalf("save_memory content maxLength = %v; want %d", got, want)
-	}
-	if err := ValidateInput(tool, map[string]any{
-		"content": strings.Repeat("x", memoryEntryMaxLength+1),
-	}); err == nil || !strings.Contains(err.Error(), "Split large scenarios") {
-		t.Fatalf("ValidateInput long content error = %v; want split guidance", err)
-	}
-
-	if err := ValidateInput(tool, map[string]any{
-		"content":     "hello",
-		"source_type": "webhook",
-	}); err == nil || !strings.Contains(err.Error(), "source_type") {
-		t.Fatalf("ValidateInput invalid enum error = %v; want source_type validation", err)
-	}
-
-	if err := ValidateInput(tool, map[string]any{
-		"content": "hello",
-		"labels":  []any{strings.Repeat("x", 65)},
-	}); err == nil || !strings.Contains(err.Error(), "labels[0]") {
-		t.Fatalf("ValidateInput invalid label error = %v; want labels[0] validation", err)
-	}
-}
-
-func TestBuildDefault_SaveInvokerCallsService(t *testing.T) {
-	create := &stubCreate{}
-	reg, _ := BuildDefault(Dependencies{
-		FragmentCreate: create,
-	})
-	tool, _ := reg.Get("save_memory")
-	out, err := tool.Invoke(context.Background(), "pA", map[string]any{"content": "hello"})
-	if err != nil {
-		t.Fatalf("Invoke: %v", err)
-	}
-	if create.called != 1 {
-		t.Errorf("service called %d times; want 1", create.called)
-	}
-	if create.lastProfile != "pA" {
-		t.Errorf("service profile = %q; want pA", create.lastProfile)
-	}
-	if out["status"] != "created" {
-		t.Errorf("output status = %v; want created", out["status"])
-	}
-	if out["id"] != "f-1" {
-		t.Errorf("output id = %v; want f-1", out["id"])
-	}
-}
-
-func TestBuildDefault_InvokerReturnsUnavailableWhenDepsMissing(t *testing.T) {
-	reg, _ := BuildDefault(Dependencies{}) // nothing wired
-	tool, _ := reg.Get("save_memory")
-	_, err := tool.Invoke(context.Background(), "pA", map[string]any{"content": "x"})
-	if !errors.Is(err, ErrToolUnavailable) {
-		t.Errorf("err = %v; want ErrToolUnavailable", err)
-	}
-}
-
 func TestBuildDefault_V1InvokersReturnUnavailableWhenDepsMissing(t *testing.T) {
 	reg, _ := BuildDefault(Dependencies{})
 	cases := []struct {
 		name  string
 		input map[string]any
 	}{
-		{name: "get_memory", input: map[string]any{"id": "fragment-1"}},
 		{name: "list_recent_memories", input: map[string]any{}},
 		{name: "recall_memory", input: map[string]any{"query": "hello"}},
 		{name: "trace_memory", input: map[string]any{"type": "fact", "id": "fact-1"}},
 		{name: "assemble_context", input: map[string]any{"query": "hello"}},
-		{name: "dreaming_status", input: map[string]any{}},
-		{name: "run_dreaming_cycle", input: map[string]any{}},
 		{name: "list_dreams", input: map[string]any{}},
 		{name: "get_dream", input: map[string]any{"dream_id": "dream-1"}},
 		{name: "resolve_dream_feedback", input: map[string]any{"dream_id": "dream-1", "decision": "reject"}},
@@ -287,12 +190,6 @@ func TestBuildDefault_V1InvokerInvalidInputBranches(t *testing.T) {
 		want string
 	}{
 		{
-			name: "save_memory",
-			deps: Dependencies{FragmentCreate: &stubCreate{}},
-			in:   map[string]any{"content": func() {}},
-			want: "save_memory: invalid input",
-		},
-		{
 			name: "recall_memory",
 			deps: Dependencies{Recall: stubRecall{}},
 			in:   map[string]any{"query": func() {}},
@@ -311,12 +208,6 @@ func TestBuildDefault_V1InvokerInvalidInputBranches(t *testing.T) {
 			want: "semantic_search: invalid input",
 		},
 		{
-			name: "run_dreaming_cycle",
-			deps: Dependencies{Dreams: &stubDreamService{}},
-			in:   map[string]any{"max_outputs": func() {}},
-			want: "run_dreaming_cycle: invalid input",
-		},
-		{
 			name: "resolve_dream_feedback",
 			deps: Dependencies{Dreams: &stubDreamService{}},
 			in:   map[string]any{"dream_id": func() {}, "decision": "reject"},
@@ -333,18 +224,6 @@ func TestBuildDefault_V1InvokerInvalidInputBranches(t *testing.T) {
 				t.Fatalf("err = %v; want %q", err, tc.want)
 			}
 		})
-	}
-}
-
-func TestBuildDefault_GetInvokerWraps(t *testing.T) {
-	reg, _ := BuildDefault(Dependencies{FragmentGet: stubGet{}})
-	tool, _ := reg.Get("get_memory")
-	out, err := tool.Invoke(context.Background(), "pA", map[string]any{"id": "f-42"})
-	if err != nil {
-		t.Fatalf("Invoke: %v", err)
-	}
-	if out["id"] != "f-42" {
-		t.Errorf("out[id] = %v; want f-42", out["id"])
 	}
 }
 
@@ -641,31 +520,6 @@ func TestImportSkillPackReturnsRecoverableResultOnPartialError(t *testing.T) {
 }
 
 func TestBuildDefault_FragmentInvokerEdgeBranches(t *testing.T) {
-	t.Run("save duplicate includes duplicate_of", func(t *testing.T) {
-		reg, _ := BuildDefault(Dependencies{FragmentCreate: duplicateCreate{}})
-		tool, _ := reg.Get("save_memory")
-
-		out, err := tool.Invoke(context.Background(), "profileA", map[string]any{"content": "hello"})
-
-		if err != nil {
-			t.Fatalf("save_memory Invoke: %v", err)
-		}
-		if out["status"] != "duplicate" || out["duplicate_of"] != "fragment-original" {
-			t.Fatalf("save_memory duplicate out = %v", out)
-		}
-	})
-
-	t.Run("get memory requires id", func(t *testing.T) {
-		reg, _ := BuildDefault(Dependencies{FragmentGet: stubGet{}})
-		tool, _ := reg.Get("get_memory")
-
-		_, err := tool.Invoke(context.Background(), "profileA", map[string]any{})
-
-		if err == nil || !strings.Contains(err.Error(), "id is required") {
-			t.Fatalf("get_memory err = %v, want id required", err)
-		}
-	})
-
 	t.Run("list memory maps options and cursor", func(t *testing.T) {
 		list := &stubListCapture{}
 		reg, _ := BuildDefault(Dependencies{FragmentList: list})
@@ -730,16 +584,6 @@ func (stubMemoryReflectError) Reflect(ctx context.Context, profileID string, req
 
 func (stubMemoryReflectError) ConfirmMemory(ctx context.Context, profileID string, req memoryservice.ConfirmRequest) (*memoryservice.ConfirmResult, error) {
 	return &memoryservice.ConfirmResult{}, nil
-}
-
-type duplicateCreate struct{}
-
-func (duplicateCreate) Create(ctx context.Context, profileID string, req *dto.CreateFragmentRequest) (*fragmentservice.CreateResult, error) {
-	return &fragmentservice.CreateResult{
-		Fragment:    &domain.Fragment{FragmentID: "fragment-duplicate", ProfileID: profileID, Content: req.Content},
-		Duplicate:   true,
-		DuplicateOf: "fragment-original",
-	}, nil
 }
 
 type stubListCapture struct {

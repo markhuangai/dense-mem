@@ -74,7 +74,7 @@ function readOnlyWriteRoutes(profileId: string): RouteCase[] {
     { method: 'DELETE', path: `/api/v1/claims/${ID}` },
     { method: 'POST', path: `/api/v1/claims/${ID}/verify`, data: { verifier_model: 'test-verifier' } },
     { method: 'POST', path: `/api/v1/claims/${ID}/promote`, data: { policy: 'single_supporter' } },
-    { method: 'POST', path: '/api/v1/tools/save_memory', data: { content: 'denied' } },
+    { method: 'POST', path: '/api/v1/tools/remember', data: { content: 'denied' } },
   ];
 }
 

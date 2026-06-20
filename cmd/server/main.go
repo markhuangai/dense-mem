@@ -433,8 +433,6 @@ func main() {
 
 	// Tool registry is the single source of truth for MCP / HTTP catalog / OpenAPI.
 	toolRegistry, err := registry.BuildDefault(registry.Dependencies{
-		FragmentCreate:              fragmentCreateRegistrySvc,
-		FragmentGet:                 fragmentGetSvc,
 		FragmentList:                fragmentListSvc,
 		Recall:                      recallRegistrySvc,
 		Metrics:                     discoverabilityMetrics,

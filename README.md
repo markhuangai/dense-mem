@@ -238,9 +238,9 @@ memory, applies explicit gates, and returns structured outcomes.
 | `reflect_memories` | Reviews active facts, candidate or disputed claims, contradictions, stale memories, and clarification needs. |
 | `confirm_memory` | Applies the user's answer to a clarification task, either accepting a claim and superseding comparable active facts or keeping/rejecting it. |
 
-Low-level tools remain available for advanced callers: `save_memory`,
-`post_claim`, `verify_claim`, `promote_claim`, search tools, graph query tools,
-community tools, and retraction tools.
+Low-level tools remain available for advanced callers: `post_claim`,
+`verify_claim`, `promote_claim`, search tools, graph query tools, community
+tools, and retraction tools.
 
 Memory moves through this path:
 

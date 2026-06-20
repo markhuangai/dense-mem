@@ -24,6 +24,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentdedupe"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
+	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 	neo4jstorage "github.com/markhuangai/dense-mem/internal/storage/neo4j"
 	pgclient "github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -184,6 +185,14 @@ func startWritableMemoryServer(t *testing.T, env *TestEnv) (*httptest.Server, fr
 	)
 	factGetSvc := factservice.NewGetFactService(profileScopeEnforcer)
 	factListSvc := factservice.NewListFactsService(profileScopeEnforcer)
+	memorySvc := memoryservice.New(memoryservice.Dependencies{
+		FragmentCreate: fragmentCreateSvc,
+		ClaimCreate:    claimCreateSvc,
+		ClaimGet:       claimGetSvc,
+		ClaimList:      claimListSvc,
+		FactPromote:    factPromoteSvc,
+		FactList:       factListSvc,
+	})
 	skillPackSvc := skillpackservice.New(skillpackservice.Dependencies{
 		FragmentCreate: fragmentCreateSvc,
 		ClaimCreate:    claimCreateSvc,
@@ -198,16 +207,15 @@ func startWritableMemoryServer(t *testing.T, env *TestEnv) (*httptest.Server, fr
 	})
 
 	reg, err := registry.BuildDefault(registry.Dependencies{
-		FragmentCreate: fragmentCreateSvc,
-		FragmentGet:    fragmentGetSvc,
-		FragmentList:   fragmentListSvc,
-		ClaimCreate:    claimCreateSvc,
-		ClaimGet:       claimGetSvc,
-		ClaimList:      claimListSvc,
-		FactPromote:    factPromoteSvc,
-		FactGet:        factGetSvc,
-		FactList:       factListSvc,
-		SkillPack:      skillPackSvc,
+		FragmentList: fragmentListSvc,
+		ClaimCreate:  claimCreateSvc,
+		ClaimGet:     claimGetSvc,
+		ClaimList:    claimListSvc,
+		FactPromote:  factPromoteSvc,
+		FactGet:      factGetSvc,
+		FactList:     factListSvc,
+		Memory:       memorySvc,
+		SkillPack:    skillPackSvc,
 	})
 	require.NoError(t, err)
 
@@ -255,7 +263,7 @@ func createProfileAndKey(t *testing.T, ctx context.Context, env *TestEnv) (strin
 	return profile.ID.String(), rawKey
 }
 
-func TestUATMCPRuntime_SaveMemoryPersistsAndReadsBack(t *testing.T) {
+func TestUATMCPRuntime_RememberPersistsAndReadsBack(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -276,22 +284,22 @@ func TestUATMCPRuntime_SaveMemoryPersistsAndReadsBack(t *testing.T) {
 	})
 	require.NotNil(t, initResp["result"], "initialize must succeed")
 
-	saveResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
-		"name": "save_memory",
+	rememberResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
+		"name": "remember",
 		"arguments": map[string]any{
 			"content":         "MCP persisted memory for runtime verification.",
-			"source_type":     "manual",
-			"authority":       "primary",
-			"idempotency_key": "uat-mcp-runtime-save",
+			"idempotency_key": "uat-mcp-runtime-remember",
 			"labels":          []string{"uat", "mcp"},
 			"metadata": map[string]any{
 				"origin": "uat",
 			},
 		},
 	}))
-	require.Equal(t, "created", saveResp["status"])
+	fragmentResp, ok := rememberResp["fragment"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "created", fragmentResp["status"])
 
-	fragmentID, ok := saveResp["id"].(string)
+	fragmentID, ok := fragmentResp["id"].(string)
 	require.True(t, ok)
 	require.NotEmpty(t, fragmentID)
 
@@ -299,17 +307,6 @@ func TestUATMCPRuntime_SaveMemoryPersistsAndReadsBack(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "MCP persisted memory for runtime verification.", stored.Content)
 	require.Equal(t, "primary", string(stored.Authority))
-
-	getResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
-		"name": "get_memory",
-		"arguments": map[string]any{
-			"id":         fragmentID,
-			"profile_id": "foreign-profile-should-be-ignored",
-		},
-	}))
-	require.Equal(t, fragmentID, getResp["id"])
-	require.Equal(t, "MCP persisted memory for runtime verification.", getResp["content"])
-	require.Equal(t, "primary", getResp["authority"])
 
 	listResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
 		"name": "list_recent_memories",
@@ -326,16 +323,16 @@ func TestUATMCPRuntime_SaveMemoryPersistsAndReadsBack(t *testing.T) {
 	require.Equal(t, fragmentID, first["id"])
 
 	dupResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
-		"name": "save_memory",
+		"name": "remember",
 		"arguments": map[string]any{
 			"content":         "MCP persisted memory for runtime verification.",
-			"source_type":     "manual",
-			"authority":       "primary",
-			"idempotency_key": "uat-mcp-runtime-save",
+			"idempotency_key": "uat-mcp-runtime-remember",
 		},
 	}))
-	require.Equal(t, "duplicate", dupResp["status"])
-	require.Equal(t, fragmentID, dupResp["duplicate_of"])
+	dupFragment, ok := dupResp["fragment"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "duplicate", dupFragment["status"])
+	require.Equal(t, fragmentID, dupFragment["duplicate_of"])
 }
 
 func TestUATMCPRuntime_SkillPackReviewImportAndRollback(t *testing.T) {
