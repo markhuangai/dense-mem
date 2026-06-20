@@ -271,7 +271,7 @@ func recallMemoryTool(deps Dependencies) Tool {
 func submitRecallSessionFeedbackTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        SubmitRecallSessionFeedbackToolName,
-		Description: "Submit one compact host-LLM recall evaluation after finishing all context gathering and before the final answer. Use this once for recall_event.recall_id values returned by recall_memory during the turn. Do not call immediately after exploratory context-building recall; wait until you know which recalls informed the answer. Do not include user content.",
+		Description: "Submit recall feedback, session feedback, or a recall quality evaluation after finishing all context gathering and before the final answer. Use this when recall_memory returns recall_event.feedback_tool=submit_recall_session_feedback; pass recall_event.recall_id once you know which recalls informed the answer. Do not call immediately after exploratory context-building recall. Do not include user content.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"recalls"},
