@@ -65,7 +65,7 @@ ai:
       dense_mem:
         transport: stdio
         command: npx
-        args: ["-y", "dense-mem-mcp-proxy"]
+        args: [ "-y", "dense-mem-mcp-proxy" ]
         env:
           DENSE_MEM_API_KEY:
             from_bundle: DENSE_MEM_API_KEY
@@ -73,33 +73,25 @@ ai:
             from_bundle: DENSE_MEM_MCP_URL
   profiles:
     local_proxy:
-      adapter: ai-sdk-agentool
-      context_window_tokens: 200000
-      provider:
-        type: openai-compatible
-        model: kimi-k2.5
-        base_url:
-          from_bundle: GITVIBE_AI_BASE_URL
-        api_key:
+      adapter: claude-code-sdk
+      env:
+        ANTHROPIC_API_KEY:
           from_bundle: GITVIBE_AI_API_KEY
+        ANTHROPIC_BASE_URL:
+          from_bundle: GITVIBE_AI_BASE_URL
+        ANTHROPIC_DEFAULT_OPUS_MODEL: kimi-k2.5
+        ANTHROPIC_DEFAULT_SONNET_MODEL: kimi-k2.5
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: kimi-k2.5
+        ANTHROPIC_MODEL: opus
+        CLAUDE_CODE_SUBAGENT_MODEL: opus
+      model: opus
       reasoning:
         effort: high
       provider_options:
-        openai:
-          reasoningEffort: high
-          reasoningSummary: concise
         anthropic:
           effort: high
-    codex_5.5_high:
-      adapter: cli-codex
-      auth_json:
-        from_bundle: CODEX_AUTH_JSON
-      model: gpt-5.5
-      reasoning:
-        effort: high
-        summary: concise
     codex_5.5_xhigh:
-      adapter: cli-codex
+      adapter: codex-sdk
       auth_json:
         from_bundle: CODEX_AUTH_JSON
       model: gpt-5.5
@@ -108,7 +100,7 @@ ai:
         summary: concise
   role_groups:
     swarm:
-      synthesizer: codex_5.5_high
+      synthesizer: codex_5.5_xhigh
       parallel: 6
       roles:
         - role: correctness.md
@@ -149,7 +141,7 @@ ai:
       mcp:
         dense_mem:
           required: true
-          tools: 
+          tools:
             - recall_memory
             - submit_recall_session_feedback
             - assemble_context
@@ -164,7 +156,7 @@ ai:
       mcp:
         dense_mem:
           required: true
-          tools: 
+          tools:
             - recall_memory
             - submit_recall_session_feedback
             - assemble_context
@@ -175,11 +167,11 @@ ai:
             - list_communities
             - get_community_summary
     materialize:
-      profile: codex_5.5_high
+      profile: codex_5.5_xhigh
       mcp:
         dense_mem:
           required: true
-          tools: 
+          tools:
             - recall_memory
             - submit_recall_session_feedback
             - assemble_context
@@ -194,7 +186,7 @@ ai:
       mcp:
         dense_mem:
           required: true
-          tools: 
+          tools:
             - recall_memory
             - submit_recall_session_feedback
             - assemble_context
