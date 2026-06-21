@@ -17,7 +17,7 @@ const (
 	openAIConflictDeciderProvider       = "openai"
 	openAIConflictDeciderDefaultTimeout = 60 * time.Second
 
-	openAIConflictDeciderSystemPrompt = `You decide how to handle a dense-mem skill-pack import item against local knowledge.
+	openAIConflictDeciderSystemPrompt = `You decide how to handle a Dense-Mem memory-pack import item against local knowledge.
 
 Prefer preserving and extending the local knowledge base. Exact active duplicates should be skipped. Items that match superseded local facts are usually stale and should be skipped or demoted to a claim unless the source is explicitly trusted and clearly newer or more authoritative. Use supersede_local only when the imported item should replace active local facts. Use demote_to_claim when a source_fact is useful evidence but should not become an active fact.
 
@@ -127,7 +127,7 @@ func (d *OpenAIConflictDecider) Decide(ctx context.Context, req ConflictDecision
 		ResponseFormat: openAIConflictDecisionResponseFormat{
 			Type: "json_schema",
 			JSONSchema: openAIConflictDecisionJSONSchema{
-				Name:   "skill_pack_conflict_decision",
+				Name:   "memory_pack_conflict_decision",
 				Strict: true,
 				Schema: conflictDecisionResponseSchema,
 			},

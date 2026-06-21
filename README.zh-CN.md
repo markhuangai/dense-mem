@@ -219,9 +219,20 @@ Dense-Mem 不是 agent brain、planner，也不是外部真相裁判。它负责
 | `recall_memory` | 为已认证团队检索 facts、validated claims、fragments 和 `clarifications[]`。 |
 | `reflect_memories` | 查看 active facts、candidate/disputed claims、contradictions、stale memories 和 clarification needs。 |
 | `confirm_memory` | 应用用户对 clarification task 的回答：接受 claim 并 supersede 可比较的 active facts，或保留/拒绝它。 |
+| `find_memory_pack_candidates` | 查找可以导出为 portable memory pack 的 facts 和 validated claims。 |
+| `export_memory_pack` | 把选中的记忆导出成可审阅、可分享的 JSON artifact。 |
+| `inspect_memory_pack` | 解析 memory-pack artifact 或 URL，并在不写入记忆的情况下报告 duplicates、conflicts 和 required decisions。 |
+| `import_memory_pack` | 以 review 或 trusted 模式导入 memory pack，并记录可回滚的变更 ledger。 |
+| `rollback_memory_pack_import` | 在 ledger 状态足够时回滚一次 memory-pack import 的变更。 |
 
 高级调用方仍然可以使用低层工具：`post_claim`、`verify_claim`、`promote_claim`、
 搜索工具、graph query tools、community tools 和 retraction tools。
+
+旧的 `*_skill_pack*` tool names 仍会作为隐藏兼容 alias 被接受，但新客户端应使用
+`*_memory_pack*`。Dense-Mem 也通过 `prompts/list` 和 `prompts/get` 暴露 MCP
+prompts；首个内置 prompt `export_memory_as_agent_skill` 会引导 LLM recall
+Dense-Mem 经验，并草拟可分享的 Agent Skill `SKILL.md` 文件，不依赖
+memory-pack import/export。
 
 记忆在系统里的主路径如下：
 
@@ -259,7 +270,7 @@ Dense-Mem 用同一个 registry 支撑三种 discoverability surface：
 |---------|------|---------|
 | Tool catalog | `GET /api/v1/tools` | 运行时 tool discovery |
 | Runtime OpenAPI | `GET /api/v1/openapi.json` | Agents、codegen、integrations |
-| MCP Streamable HTTP | `POST /mcp`, `GET /mcp` | 主 HTTP 服务上的 MCP clients |
+| MCP Streamable HTTP | `POST /mcp`, `GET /mcp` | 主 HTTP 服务上的 MCP clients，包含 tools 和内置 prompts |
 
 完整 route list 和 client examples 在 wiki：
 [Technical Reference](https://github.com/markhuangai/dense-mem/wiki/Technical-Reference)

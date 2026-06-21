@@ -112,14 +112,14 @@ func (s *service) addFactSupport(ctx context.Context, profileID string, item *Sk
 	fragmentIDs := supportFragmentIDsForFact(fact)
 	if fact.PromotedFromClaimID != "" {
 		if s.deps.ClaimGet == nil {
-			return fmt.Errorf("skill pack export: claim get service is required to export support for fact %s", fact.FactID)
+			return fmt.Errorf("memory pack export: claim get service is required to export support for fact %s", fact.FactID)
 		}
 		claim, err := s.deps.ClaimGet.Get(ctx, profileID, fact.PromotedFromClaimID)
 		if err != nil {
 			return err
 		}
 		if claim == nil {
-			return fmt.Errorf("skill pack export: promoted claim %s not found for fact %s", fact.PromotedFromClaimID, fact.FactID)
+			return fmt.Errorf("memory pack export: promoted claim %s not found for fact %s", fact.PromotedFromClaimID, fact.FactID)
 		}
 		item.SupportClaimIDs = append(item.SupportClaimIDs, claim.ClaimID)
 		fragmentIDs = append(fragmentIDs, builder.addClaim(claim)...)
@@ -144,7 +144,7 @@ func (s *service) addSupportFragments(ctx context.Context, profileID string, ite
 		return err
 	}
 	if missing := missingSupportFragments(fragmentIDs, fragments); len(missing) > 0 {
-		return fmt.Errorf("skill pack export: support fragments not found or retracted: %s", strings.Join(missing, ", "))
+		return fmt.Errorf("memory pack export: support fragments not found or retracted: %s", strings.Join(missing, ", "))
 	}
 	builder.addFragments(fragments)
 	item.SupportFragmentIDs = uniqueStrings(append(item.SupportFragmentIDs, fragmentIDs...))
@@ -232,8 +232,8 @@ func (s *service) importSupportFragment(ctx context.Context, profileID, importID
 	metadata := map[string]any{}
 	metadata["imported"] = true
 	metadata["import_id"] = importID
-	metadata["skill_pack_hash"] = artifactHash
-	metadata["skill_pack_schema"] = pack.SchemaVersion
+	metadata["memory_pack_hash"] = artifactHash
+	metadata["memory_pack_schema"] = pack.SchemaVersion
 	metadata["source_fragment_id"] = originalID
 	fragmentRes, err := s.deps.FragmentCreate.Create(ctx, profileID, &dto.CreateFragmentRequest{
 		Content:        fragment.Content,
@@ -284,12 +284,12 @@ func claimFromItem(item SkillPackItem, mode, artifactHash string, idx int, impor
 		Object:            item.Object,
 		Modality:          domain.ModalityAssertion,
 		Polarity:          domain.PolarityPlus,
-		Speaker:           "skill_pack",
+		Speaker:           "memory_pack",
 		ExtractConf:       confidenceFor(mode, item.SourceKind),
 		ResolutionConf:    confidenceFor(mode, item.SourceKind),
-		IdempotencyKey:    fmt.Sprintf("skill-pack:%s:%d", artifactHash, idx),
+		IdempotencyKey:    fmt.Sprintf("memory-pack:%s:%d", artifactHash, idx),
 		SupportedBy:       supportedBy,
-		ExtractionModel:   "skill_pack_import",
+		ExtractionModel:   "memory_pack_import",
 		ExtractionVersion: SchemaVersion,
 		PipelineRunID:     importID,
 	}
@@ -303,7 +303,7 @@ func claimFromItem(item SkillPackItem, mode, artifactHash string, idx int, impor
 
 func skillPackImportKey(kind, artifactHash, sourceID string) string {
 	sum := sha256.Sum256([]byte(kind + ":" + artifactHash + ":" + sourceID))
-	return "skill-pack:" + kind + ":" + hex.EncodeToString(sum[:])
+	return "memory-pack:" + kind + ":" + hex.EncodeToString(sum[:])
 }
 
 func skillPackFilename(name string) string {
@@ -324,9 +324,9 @@ func skillPackFilename(name string) string {
 	}
 	slug := strings.Trim(b.String(), "-")
 	if slug == "" {
-		slug = "skill-pack"
+		slug = "memory-pack"
 	}
-	return slug + ".skill-pack.json"
+	return slug + ".memory-pack.json"
 }
 
 func appendImportLabel(labels []string) []string {
@@ -343,8 +343,8 @@ func appendImportLabel(labels []string) []string {
 		seen[label] = struct{}{}
 		out = append(out, label)
 	}
-	if _, exists := seen["skill_pack_import"]; !exists && len(out) < 20 {
-		out = append(out, "skill_pack_import")
+	if _, exists := seen["memory_pack_import"]; !exists && len(out) < 20 {
+		out = append(out, "memory_pack_import")
 	}
 	return out
 }

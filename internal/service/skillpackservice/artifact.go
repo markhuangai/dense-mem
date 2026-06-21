@@ -19,8 +19,8 @@ const (
 )
 
 var (
-	ErrInvalidArtifact = errors.New("invalid skill pack artifact")
-	ErrHashMismatch    = errors.New("skill pack hash mismatch")
+	ErrInvalidArtifact = errors.New("invalid memory pack artifact")
+	ErrHashMismatch    = errors.New("memory pack hash mismatch")
 )
 
 func canonicalArtifact(pack SkillPack) ([]byte, string, error) {
@@ -29,7 +29,7 @@ func canonicalArtifact(pack SkillPack) ([]byte, string, error) {
 	}
 	data, err := json.Marshal(pack)
 	if err != nil {
-		return nil, "", fmt.Errorf("skill pack canonicalize: %w", err)
+		return nil, "", fmt.Errorf("memory pack canonicalize: %w", err)
 	}
 	sum := sha256.Sum256(data)
 	return data, hex.EncodeToString(sum[:]), nil
@@ -68,7 +68,7 @@ func ensureSingleJSONValue(dec *json.Decoder) error {
 }
 
 func validatePack(pack SkillPack) error {
-	if pack.SchemaVersion != SchemaVersion {
+	if pack.SchemaVersion != SchemaVersion && pack.SchemaVersion != LegacySchemaVersion {
 		return fmt.Errorf("%w: schema_version must be %q", ErrInvalidArtifact, SchemaVersion)
 	}
 	if strings.TrimSpace(pack.Name) == "" {

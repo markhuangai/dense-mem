@@ -39,7 +39,7 @@ func (s *service) FindCandidates(ctx context.Context, profileID string, req Find
 	limit := clampLimit(req.Limit, 20, skillPackListPageLimit)
 	query := strings.ToLower(strings.TrimSpace(req.Query))
 	if query == "" {
-		return nil, errors.New("skill pack candidates: query is required")
+		return nil, errors.New("memory pack candidates: query is required")
 	}
 
 	if candidates, err := s.graphOps.findCandidates(ctx, profileID, req.Query, limit); err != nil {
@@ -107,7 +107,7 @@ func (s *service) FindCandidates(ctx context.Context, profileID string, req Find
 
 func (s *service) Export(ctx context.Context, profileID string, req ExportRequest) (*ExportResult, error) {
 	if strings.TrimSpace(req.Name) == "" {
-		return nil, errors.New("skill pack export: name is required")
+		return nil, errors.New("memory pack export: name is required")
 	}
 	exportedAt := time.Now().UTC()
 	pack := SkillPack{
@@ -122,17 +122,17 @@ func (s *service) Export(ctx context.Context, profileID string, req ExportReques
 
 	for _, factID := range req.FactIDs {
 		if s.deps.FactGet == nil {
-			return nil, errors.New("skill pack export: fact get service is required")
+			return nil, errors.New("memory pack export: fact get service is required")
 		}
 		fact, err := s.deps.FactGet.Get(ctx, profileID, factID)
 		if err != nil {
 			return nil, err
 		}
 		if fact == nil {
-			return nil, fmt.Errorf("skill pack export: fact %s not found", factID)
+			return nil, fmt.Errorf("memory pack export: fact %s not found", factID)
 		}
 		if !allowedPredicate(fact.Predicate) {
-			return nil, fmt.Errorf("skill pack export: fact %s predicate %q is not supported", factID, fact.Predicate)
+			return nil, fmt.Errorf("memory pack export: fact %s predicate %q is not supported", factID, fact.Predicate)
 		}
 		item := SkillPackItem{
 			Subject:    fact.Subject,
@@ -151,20 +151,20 @@ func (s *service) Export(ctx context.Context, profileID string, req ExportReques
 
 	for _, claimID := range req.ClaimIDs {
 		if s.deps.ClaimGet == nil {
-			return nil, errors.New("skill pack export: claim get service is required")
+			return nil, errors.New("memory pack export: claim get service is required")
 		}
 		claim, err := s.deps.ClaimGet.Get(ctx, profileID, claimID)
 		if err != nil {
 			return nil, err
 		}
 		if claim == nil {
-			return nil, fmt.Errorf("skill pack export: claim %s not found", claimID)
+			return nil, fmt.Errorf("memory pack export: claim %s not found", claimID)
 		}
 		if claim.Status != domain.StatusValidated {
-			return nil, fmt.Errorf("skill pack export: claim %s must be validated", claimID)
+			return nil, fmt.Errorf("memory pack export: claim %s must be validated", claimID)
 		}
 		if !allowedPredicate(claim.Predicate) {
-			return nil, fmt.Errorf("skill pack export: claim %s predicate %q is not supported", claimID, claim.Predicate)
+			return nil, fmt.Errorf("memory pack export: claim %s predicate %q is not supported", claimID, claim.Predicate)
 		}
 		item := SkillPackItem{
 			Subject:    claim.Subject,
@@ -216,16 +216,16 @@ func (s *service) Inspect(ctx context.Context, profileID string, req InspectRequ
 
 func (s *service) Import(ctx context.Context, profileID string, req ImportRequest) (*ImportResult, error) {
 	if req.Mode != ModeReview && req.Mode != ModeTrusted {
-		return nil, errors.New("skill pack import: mode must be review or trusted")
+		return nil, errors.New("memory pack import: mode must be review or trusted")
 	}
 	if req.Mode == ModeTrusted && strings.TrimSpace(req.URL) != "" && strings.TrimSpace(req.ExpectedSHA256) == "" {
-		return nil, errors.New("skill pack import: trusted URL imports require expected_sha256")
+		return nil, errors.New("memory pack import: trusted URL imports require expected_sha256")
 	}
 	if s.deps.Ledger == nil {
-		return nil, errors.New("skill pack import: import ledger is required")
+		return nil, errors.New("memory pack import: import ledger is required")
 	}
 	if s.deps.FragmentCreate == nil || s.deps.ClaimCreate == nil {
-		return nil, errors.New("skill pack import: fragment and claim services are required")
+		return nil, errors.New("memory pack import: fragment and claim services are required")
 	}
 
 	pack, hash, _, sourceURL, err := s.loadArtifact(ctx, req.Artifact, req.ArtifactJSON, req.URL, req.ExpectedSHA256)
@@ -289,7 +289,7 @@ func (s *service) Import(ctx context.Context, profileID string, req ImportReques
 			"artifact_hash": hash,
 			"error":         out.Error,
 		}); err != nil {
-			out.Error = fmt.Sprintf("%s; skill pack import status update failed: %v", out.Error, err)
+			out.Error = fmt.Sprintf("%s; memory pack import status update failed: %v", out.Error, err)
 		}
 		return out, nil
 	}
@@ -297,9 +297,9 @@ func (s *service) Import(ctx context.Context, profileID string, req ImportReques
 		out.Items = append(out.Items, result)
 		out.Status = domain.SkillPackImportStatusFailed
 		if result.Error == "" {
-			out.Error = fmt.Sprintf("skill pack import: item %d failed", result.Index)
+			out.Error = fmt.Sprintf("memory pack import: item %d failed", result.Index)
 		} else {
-			out.Error = fmt.Sprintf("skill pack import: item %d: %s", result.Index, result.Error)
+			out.Error = fmt.Sprintf("memory pack import: item %d: %s", result.Index, result.Error)
 		}
 		if err := s.deps.Ledger.UpdateImportStatus(ctx, profileID, importID, out.Status, out.AppliedCount, out.SkippedCount, map[string]any{
 			"mode":              req.Mode,
@@ -307,7 +307,7 @@ func (s *service) Import(ctx context.Context, profileID string, req ImportReques
 			"failed_item_index": result.Index,
 			"error":             out.Error,
 		}); err != nil {
-			out.Error = fmt.Sprintf("%s; skill pack import status update failed: %v", out.Error, err)
+			out.Error = fmt.Sprintf("%s; memory pack import status update failed: %v", out.Error, err)
 		}
 		return out, nil
 	}
@@ -317,14 +317,14 @@ func (s *service) Import(ctx context.Context, profileID string, req ImportReques
 		SourceType:     "document",
 		Source:         importSource(pack, sourceURL),
 		Authority:      importAuthority(req.Mode),
-		IdempotencyKey: "skill-pack:" + hash,
-		Labels:         []string{"skill_pack_import"},
+		IdempotencyKey: "memory-pack:" + hash,
+		Labels:         []string{"memory_pack_import"},
 		Metadata: map[string]any{
-			"imported":          true,
-			"import_id":         importID,
-			"skill_pack_hash":   hash,
-			"skill_pack_schema": pack.SchemaVersion,
-			"source_url":        sourceURL,
+			"imported":           true,
+			"import_id":          importID,
+			"memory_pack_hash":   hash,
+			"memory_pack_schema": pack.SchemaVersion,
+			"source_url":         sourceURL,
 		},
 		SourceQuality: sourceQuality(req.Mode),
 	})
@@ -401,7 +401,7 @@ func (s *service) Import(ctx context.Context, profileID string, req ImportReques
 		// Return a recoverable result: callers need import_id to roll back
 		// graph changes already covered by durable change records.
 		out.Status = "status_update_failed"
-		out.Error = fmt.Sprintf("skill pack import status update failed: %v", err)
+		out.Error = fmt.Sprintf("memory pack import status update failed: %v", err)
 		return out, nil
 	}
 	return out, nil
@@ -409,17 +409,17 @@ func (s *service) Import(ctx context.Context, profileID string, req ImportReques
 
 func (s *service) Rollback(ctx context.Context, profileID string, req RollbackRequest) (*RollbackResult, error) {
 	if strings.TrimSpace(req.ImportID) == "" {
-		return nil, errors.New("skill pack rollback: import_id is required")
+		return nil, errors.New("memory pack rollback: import_id is required")
 	}
 	if s.deps.Ledger == nil {
-		return nil, errors.New("skill pack rollback: import ledger is required")
+		return nil, errors.New("memory pack rollback: import ledger is required")
 	}
 	record, err := s.deps.Ledger.GetImport(ctx, profileID, req.ImportID)
 	if err != nil {
 		return nil, err
 	}
 	if record.Status == domain.SkillPackImportStatusRolledBack {
-		return nil, errors.New("skill pack rollback: import already rolled back")
+		return nil, errors.New("memory pack rollback: import already rolled back")
 	}
 	changes, err := s.deps.Ledger.ListChanges(ctx, profileID, req.ImportID)
 	if err != nil {
@@ -478,7 +478,7 @@ func (s *service) loadArtifact(ctx context.Context, artifact *SkillPack, artifac
 	case artifact != nil:
 		pack = *artifact
 	default:
-		err = errors.New("skill pack: artifact_json, artifact, or url is required")
+		err = errors.New("memory pack: artifact_json, artifact, or url is required")
 	}
 	if err != nil {
 		return SkillPack{}, "", "", "", err
@@ -533,7 +533,7 @@ func (s *service) inspectItem(ctx context.Context, profileID string, idx int, it
 	if !allowedPredicate(item.Predicate) {
 		out.Status = "unsupported_predicate"
 		out.Severity = "high"
-		out.Message = "predicate is not allowed for skill packs"
+		out.Message = "predicate is not allowed for memory packs"
 		return out, nil
 	}
 	if s.deps.FactList != nil {
@@ -819,7 +819,7 @@ func importSource(pack SkillPack, sourceURL string) string {
 	if sourceURL != "" {
 		return sourceURL
 	}
-	return "skill_pack:" + pack.Name
+	return "memory_pack:" + pack.Name
 }
 
 func fragmentContent(pack SkillPack, hash string) string {

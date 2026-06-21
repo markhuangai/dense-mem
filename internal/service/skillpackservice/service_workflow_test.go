@@ -18,7 +18,7 @@ func TestFindCandidatesFallsBackToFactAndClaimLists(t *testing.T) {
 			FactID:        "fact-1",
 			Subject:       "assistant",
 			Predicate:     "has_skill",
-			Object:        "skill pack regression testing",
+			Object:        "memory pack regression testing",
 			Status:        domain.FactStatusActive,
 			RecordedAt:    time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC),
 			RecordedTo:    nil,
@@ -35,7 +35,7 @@ func TestFindCandidatesFallsBackToFactAndClaimLists(t *testing.T) {
 	})
 
 	res, err := svc.FindCandidates(context.Background(), "team-1", FindCandidatesRequest{
-		Query: "skill pack",
+		Query: "memory pack",
 		Limit: 10,
 	})
 	if err != nil {
@@ -47,7 +47,6 @@ func TestFindCandidatesFallsBackToFactAndClaimLists(t *testing.T) {
 	if res.Candidates[0].ID != "fact-1" || res.Candidates[0].Item.SourceKind != SourceKindFact {
 		t.Fatalf("candidate = %+v, want fact-1 source_fact", res.Candidates[0])
 	}
-
 	claimRes, err := svc.FindCandidates(context.Background(), "team-1", FindCandidatesRequest{
 		Query: "portable memory",
 		Limit: 10,
@@ -61,7 +60,6 @@ func TestFindCandidatesFallsBackToFactAndClaimLists(t *testing.T) {
 	if claimRes.Candidates[0].ID != "claim-1" || claimRes.Candidates[0].Item.SourceKind != SourceKindValidatedClaim {
 		t.Fatalf("candidate = %+v, want claim-1 source_validated_claim", claimRes.Candidates[0])
 	}
-
 	if _, err := svc.FindCandidates(context.Background(), "team-1", FindCandidatesRequest{}); err == nil {
 		t.Fatal("empty query should fail")
 	}
@@ -69,7 +67,7 @@ func TestFindCandidatesFallsBackToFactAndClaimLists(t *testing.T) {
 
 func TestFindCandidatesListErrorBranches(t *testing.T) {
 	factErrSvc := New(Dependencies{FactList: fakeFactList{err: errors.New("fact list failed")}})
-	if _, err := factErrSvc.FindCandidates(context.Background(), "team-1", FindCandidatesRequest{Query: "skill pack"}); err == nil || !strings.Contains(err.Error(), "fact list failed") {
+	if _, err := factErrSvc.FindCandidates(context.Background(), "team-1", FindCandidatesRequest{Query: "memory pack"}); err == nil || !strings.Contains(err.Error(), "fact list failed") {
 		t.Fatalf("fact list err = %v, want fact list failed", err)
 	}
 
@@ -77,7 +75,7 @@ func TestFindCandidatesListErrorBranches(t *testing.T) {
 		FactList:  fakeFactList{},
 		ClaimList: fakeClaimList{err: errors.New("claim list failed")},
 	})
-	if _, err := claimErrSvc.FindCandidates(context.Background(), "team-1", FindCandidatesRequest{Query: "skill pack"}); err == nil || !strings.Contains(err.Error(), "claim list failed") {
+	if _, err := claimErrSvc.FindCandidates(context.Background(), "team-1", FindCandidatesRequest{Query: "memory pack"}); err == nil || !strings.Contains(err.Error(), "claim list failed") {
 		t.Fatalf("claim list err = %v, want claim list failed", err)
 	}
 
@@ -168,7 +166,7 @@ func TestLoadArtifactBranches(t *testing.T) {
 }
 
 func TestParseArtifactJSONValidationBranches(t *testing.T) {
-	valid := `{"schema_version":"dense-mem.skill_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"manual"}]}`
+	valid := `{"schema_version":"dense-mem.memory_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"manual"}]}`
 	pack, err := parseArtifactJSON([]byte(valid))
 	if err != nil {
 		t.Fatalf("parse valid artifact: %v", err)
@@ -176,19 +174,35 @@ func TestParseArtifactJSONValidationBranches(t *testing.T) {
 	if pack.Name != "Pack" || len(pack.Items) != 1 {
 		t.Fatalf("pack = %+v", pack)
 	}
-
+	legacy := `{"schema_version":"dense-mem.skill_pack.v1","name":"Legacy Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing legacy imports","source_kind":"manual"}]}`
+	legacyPack, err := parseArtifactJSON([]byte(legacy))
+	if err != nil {
+		t.Fatalf("parse legacy artifact: %v", err)
+	}
+	_, legacyHash, err := canonicalArtifact(legacyPack)
+	if err != nil {
+		t.Fatalf("canonical legacy artifact: %v", err)
+	}
+	svc := New(Dependencies{}).(*service)
+	loaded, gotHash, canonical, _, err := svc.loadArtifact(context.Background(), nil, legacy, "", legacyHash)
+	if err != nil {
+		t.Fatalf("load legacy artifact with expected hash: %v", err)
+	}
+	if loaded.SchemaVersion != LegacySchemaVersion || gotHash != legacyHash || !strings.Contains(canonical, LegacySchemaVersion) {
+		t.Fatalf("legacy load schema=%q hash=%q canonical=%s", loaded.SchemaVersion, gotHash, canonical)
+	}
 	cases := []struct {
 		name string
 		data string
 	}{
 		{name: "empty", data: ""},
-		{name: "unknown field", data: `{"schema_version":"dense-mem.skill_pack.v1","name":"Pack","extra":true,"items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"manual"}]}`},
+		{name: "unknown field", data: `{"schema_version":"dense-mem.memory_pack.v1","name":"Pack","extra":true,"items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"manual"}]}`},
 		{name: "multiple values", data: valid + ` {}`},
 		{name: "bad schema", data: `{"schema_version":"wrong","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"manual"}]}`},
-		{name: "missing name", data: `{"schema_version":"dense-mem.skill_pack.v1","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"manual"}]}`},
-		{name: "missing items", data: `{"schema_version":"dense-mem.skill_pack.v1","name":"Pack","items":[]}`},
-		{name: "bad predicate", data: `{"schema_version":"dense-mem.skill_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"bad","object":"testing","source_kind":"manual"}]}`},
-		{name: "bad source", data: `{"schema_version":"dense-mem.skill_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"bad"}]}`},
+		{name: "missing name", data: `{"schema_version":"dense-mem.memory_pack.v1","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"manual"}]}`},
+		{name: "missing items", data: `{"schema_version":"dense-mem.memory_pack.v1","name":"Pack","items":[]}`},
+		{name: "bad predicate", data: `{"schema_version":"dense-mem.memory_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"bad","object":"testing","source_kind":"manual"}]}`},
+		{name: "bad source", data: `{"schema_version":"dense-mem.memory_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"bad"}]}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -197,19 +211,18 @@ func TestParseArtifactJSONValidationBranches(t *testing.T) {
 			}
 		})
 	}
-
 	if _, err := parseArtifactJSON([]byte(strings.Repeat("x", maxArtifactBytes+1))); !errors.Is(err, ErrInvalidArtifact) {
 		t.Fatalf("oversized parse err = %v, want ErrInvalidArtifact", err)
 	}
-	supported := `{"schema_version":"dense-mem.skill_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"source_validated_claim","source_id":"claim-1","support_claim_ids":["claim-1"],"support_fragment_ids":["fragment-1"]}],"support":{"claims":[{"claim_id":"claim-1","subject":"assistant","predicate":"has_skill","object":"testing","supported_by":["fragment-1"]}],"fragments":[{"fragment_id":"fragment-1","content":"testing evidence","source_type":"conversation"}]}}`
+	supported := `{"schema_version":"dense-mem.memory_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"source_validated_claim","source_id":"claim-1","support_claim_ids":["claim-1"],"support_fragment_ids":["fragment-1"]}],"support":{"claims":[{"claim_id":"claim-1","subject":"assistant","predicate":"has_skill","object":"testing","supported_by":["fragment-1"]}],"fragments":[{"fragment_id":"fragment-1","content":"testing evidence","source_type":"conversation"}]}}`
 	if pack, err := parseArtifactJSON([]byte(supported)); err != nil || pack.Support == nil || len(pack.Support.Claims) != 1 {
 		t.Fatalf("parse supported artifact pack=%+v err=%v, want support", pack, err)
 	}
-	danglingItemClaim := `{"schema_version":"dense-mem.skill_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"source_validated_claim","support_claim_ids":["missing"]}],"support":{"fragments":[{"fragment_id":"fragment-1","content":"testing evidence"}]}}`
+	danglingItemClaim := `{"schema_version":"dense-mem.memory_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"source_validated_claim","support_claim_ids":["missing"]}],"support":{"fragments":[{"fragment_id":"fragment-1","content":"testing evidence"}]}}`
 	if _, err := parseArtifactJSON([]byte(danglingItemClaim)); !errors.Is(err, ErrInvalidArtifact) || !strings.Contains(err.Error(), "missing claim") {
 		t.Fatalf("dangling item claim err = %v, want missing claim ErrInvalidArtifact", err)
 	}
-	danglingClaimFragment := `{"schema_version":"dense-mem.skill_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"source_validated_claim","support_claim_ids":["claim-1"]}],"support":{"claims":[{"claim_id":"claim-1","subject":"assistant","predicate":"has_skill","object":"testing","supported_by":["missing"]}]}}`
+	danglingClaimFragment := `{"schema_version":"dense-mem.memory_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"source_validated_claim","support_claim_ids":["claim-1"]}],"support":{"claims":[{"claim_id":"claim-1","subject":"assistant","predicate":"has_skill","object":"testing","supported_by":["missing"]}]}}`
 	if _, err := parseArtifactJSON([]byte(danglingClaimFragment)); !errors.Is(err, ErrInvalidArtifact) || !strings.Contains(err.Error(), "missing fragment") {
 		t.Fatalf("dangling claim fragment err = %v, want missing fragment ErrInvalidArtifact", err)
 	}
@@ -356,7 +369,7 @@ func TestFindCandidatesDoesNotReuseScopedParams(t *testing.T) {
 	svc := New(Dependencies{Graph: graph})
 
 	res, err := svc.FindCandidates(context.Background(), "team-1", FindCandidatesRequest{
-		Query: "skill pack",
+		Query: "memory pack",
 		Limit: 5,
 	})
 	if err != nil {
@@ -377,7 +390,7 @@ func TestFindCandidatesGraphFactFastPathAndReadError(t *testing.T) {
 	graph := &factCandidateGraph{}
 	svc := New(Dependencies{Graph: graph})
 	res, err := svc.FindCandidates(context.Background(), "team-1", FindCandidatesRequest{
-		Query: "skill pack",
+		Query: "memory pack",
 		Limit: 1,
 	})
 	if err != nil {
@@ -391,7 +404,7 @@ func TestFindCandidatesGraphFactFastPathAndReadError(t *testing.T) {
 	}
 
 	readErrSvc := New(Dependencies{Graph: &recordingGraph{readErr: errors.New("graph read failed")}})
-	if _, err := readErrSvc.FindCandidates(context.Background(), "team-1", FindCandidatesRequest{Query: "skill pack"}); err == nil || !strings.Contains(err.Error(), "graph read failed") {
+	if _, err := readErrSvc.FindCandidates(context.Background(), "team-1", FindCandidatesRequest{Query: "memory pack"}); err == nil || !strings.Contains(err.Error(), "graph read failed") {
 		t.Fatalf("graph read err = %v, want graph read failed", err)
 	}
 }
@@ -448,7 +461,7 @@ func TestReviewImportWritesFragmentClaimAndLedger(t *testing.T) {
 		Items: []SkillPackItem{{
 			Subject:    "assistant",
 			Predicate:  "has_skill",
-			Object:     "imports skill packs in review mode",
+			Object:     "imports memory packs in review mode",
 			SourceKind: SourceKindManual,
 		}},
 	}

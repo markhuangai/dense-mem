@@ -335,7 +335,7 @@ func TestUATMCPRuntime_RememberPersistsAndReadsBack(t *testing.T) {
 	require.Equal(t, fragmentID, dupFragment["duplicate_of"])
 }
 
-func TestUATMCPRuntime_SkillPackReviewImportAndRollback(t *testing.T) {
+func TestUATMCPRuntime_MemoryPackReviewImportAndRollback(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -350,7 +350,7 @@ func TestUATMCPRuntime_SkillPackReviewImportAndRollback(t *testing.T) {
 		"protocolVersion": "2024-11-05",
 		"capabilities":    map[string]any{},
 		"clientInfo": map[string]any{
-			"name":    "uat-skill-pack",
+			"name":    "uat-memory-pack",
 			"version": "1.0.0",
 		},
 	})
@@ -370,23 +370,23 @@ func TestUATMCPRuntime_SkillPackReviewImportAndRollback(t *testing.T) {
 		toolNames[name] = struct{}{}
 	}
 	for _, name := range []string{
-		"export_skill_pack",
-		"inspect_skill_pack",
-		"import_skill_pack",
-		"rollback_skill_pack_import",
+		"export_memory_pack",
+		"inspect_memory_pack",
+		"import_memory_pack",
+		"rollback_memory_pack_import",
 	} {
 		_, ok := toolNames[name]
 		require.True(t, ok, "MCP tool %s should be exposed", name)
 	}
 
 	exportResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
-		"name": "export_skill_pack",
+		"name": "export_memory_pack",
 		"arguments": map[string]any{
-			"name": "UAT skill pack",
+			"name": "UAT memory pack",
 			"manual_items": []map[string]any{{
 				"subject":     "assistant",
 				"predicate":   "has_skill",
-				"object":      "imports and rolls back skill packs through MCP",
+				"object":      "imports and rolls back memory packs through MCP",
 				"source_kind": "manual",
 			}},
 		},
@@ -399,7 +399,7 @@ func TestUATMCPRuntime_SkillPackReviewImportAndRollback(t *testing.T) {
 	require.Len(t, artifactHash, 64)
 
 	inspectResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
-		"name": "inspect_skill_pack",
+		"name": "inspect_memory_pack",
 		"arguments": map[string]any{
 			"artifact_json":   artifactJSON,
 			"expected_sha256": artifactHash,
@@ -414,7 +414,7 @@ func TestUATMCPRuntime_SkillPackReviewImportAndRollback(t *testing.T) {
 	require.Equal(t, "new", firstInspect["status"])
 
 	importResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
-		"name": "import_skill_pack",
+		"name": "import_memory_pack",
 		"arguments": map[string]any{
 			"artifact_json":   artifactJSON,
 			"expected_sha256": artifactHash,
@@ -453,7 +453,7 @@ func TestUATMCPRuntime_SkillPackReviewImportAndRollback(t *testing.T) {
 	require.Equal(t, artifactHash, record.ArtifactHash)
 
 	rollbackResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
-		"name": "rollback_skill_pack_import",
+		"name": "rollback_memory_pack_import",
 		"arguments": map[string]any{
 			"import_id": importID,
 		},
@@ -480,7 +480,7 @@ func TestUATMCPRuntime_SkillPackReviewImportAndRollback(t *testing.T) {
 	require.Equal(t, "rolled_back", record.Status)
 }
 
-func TestUATMCPRuntime_SkillPackTrustedImportValidatesPromotesAndRollback(t *testing.T) {
+func TestUATMCPRuntime_MemoryPackTrustedImportValidatesPromotesAndRollback(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -497,7 +497,7 @@ func TestUATMCPRuntime_SkillPackTrustedImportValidatesPromotesAndRollback(t *tes
 		"protocolVersion": "2024-11-05",
 		"capabilities":    map[string]any{},
 		"clientInfo": map[string]any{
-			"name":    "uat-skill-pack-trusted",
+			"name":    "uat-memory-pack-trusted",
 			"version": "1.0.0",
 		},
 	})
@@ -505,13 +505,13 @@ func TestUATMCPRuntime_SkillPackTrustedImportValidatesPromotesAndRollback(t *tes
 
 	t.Run("trusted manual item validates claim and rolls back", func(t *testing.T) {
 		exportResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
-			"name": "export_skill_pack",
+			"name": "export_memory_pack",
 			"arguments": map[string]any{
-				"name": "Trusted validation skill pack",
+				"name": "Trusted validation memory pack",
 				"manual_items": []map[string]any{{
 					"subject":     "assistant",
 					"predicate":   "has_skill",
-					"object":      "trusted validation through skill packs",
+					"object":      "trusted validation through memory packs",
 					"source_kind": "manual",
 				}},
 			},
@@ -522,7 +522,7 @@ func TestUATMCPRuntime_SkillPackTrustedImportValidatesPromotesAndRollback(t *tes
 		require.True(t, ok)
 
 		importResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
-			"name": "import_skill_pack",
+			"name": "import_memory_pack",
 			"arguments": map[string]any{
 				"artifact_json":   artifactJSON,
 				"expected_sha256": artifactHash,
@@ -556,7 +556,7 @@ func TestUATMCPRuntime_SkillPackTrustedImportValidatesPromotesAndRollback(t *tes
 		require.Equal(t, importID, claimRows[0]["import_id"])
 		require.Equal(t, "validated", claimRows[0]["status"])
 		require.Equal(t, "entailed", claimRows[0]["entailment_verdict"])
-		require.Equal(t, "skill_pack.source_trust", claimRows[0]["verifier_model"])
+		require.Equal(t, "memory_pack.source_trust", claimRows[0]["verifier_model"])
 
 		record, err := ledger.GetImport(ctx, profileID, importID)
 		require.NoError(t, err)
@@ -564,7 +564,7 @@ func TestUATMCPRuntime_SkillPackTrustedImportValidatesPromotesAndRollback(t *tes
 		require.Equal(t, "trusted", record.Mode)
 
 		rollbackResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
-			"name": "rollback_skill_pack_import",
+			"name": "rollback_memory_pack_import",
 			"arguments": map[string]any{
 				"import_id": importID,
 			},
@@ -593,13 +593,13 @@ func TestUATMCPRuntime_SkillPackTrustedImportValidatesPromotesAndRollback(t *tes
 
 	t.Run("trusted source fact promotes fact, exports candidate, and rolls back", func(t *testing.T) {
 		exportResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
-			"name": "export_skill_pack",
+			"name": "export_memory_pack",
 			"arguments": map[string]any{
-				"name": "Trusted fact skill pack",
+				"name": "Trusted fact memory pack",
 				"manual_items": []map[string]any{{
 					"subject":     "assistant",
 					"predicate":   "has_skill",
-					"object":      "trusted fact promotion through skill packs",
+					"object":      "trusted fact promotion through memory packs",
 					"source_kind": "source_fact",
 				}},
 			},
@@ -610,7 +610,7 @@ func TestUATMCPRuntime_SkillPackTrustedImportValidatesPromotesAndRollback(t *tes
 		require.True(t, ok)
 
 		importResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
-			"name": "import_skill_pack",
+			"name": "import_memory_pack",
 			"arguments": map[string]any{
 				"artifact_json":   artifactJSON,
 				"expected_sha256": artifactHash,
@@ -645,7 +645,7 @@ func TestUATMCPRuntime_SkillPackTrustedImportValidatesPromotesAndRollback(t *tes
 		require.Equal(t, importID, claimRows[0]["import_id"])
 		require.Equal(t, "superseded", claimRows[0]["status"])
 		require.Equal(t, "entailed", claimRows[0]["entailment_verdict"])
-		require.Equal(t, "skill_pack.source_trust", claimRows[0]["verifier_model"])
+		require.Equal(t, "memory_pack.source_trust", claimRows[0]["verifier_model"])
 
 		_, factRows, err := profileScopeEnforcer.ScopedRead(ctx, profileID, `
 			MATCH (f:Fact {team_id: $profileId, fact_id: $factId})
@@ -663,10 +663,10 @@ func TestUATMCPRuntime_SkillPackTrustedImportValidatesPromotesAndRollback(t *tes
 		require.Equal(t, claimID, factRows[0]["promoted_from_claim_id"])
 		require.Equal(t, "assistant", factRows[0]["subject"])
 		require.Equal(t, "has_skill", factRows[0]["predicate"])
-		require.Equal(t, "trusted fact promotion through skill packs", factRows[0]["object"])
+		require.Equal(t, "trusted fact promotion through memory packs", factRows[0]["object"])
 
 		candidatesResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
-			"name": "find_skill_pack_candidates",
+			"name": "find_memory_pack_candidates",
 			"arguments": map[string]any{
 				"query": "trusted fact promotion",
 				"limit": 5,
@@ -681,7 +681,7 @@ func TestUATMCPRuntime_SkillPackTrustedImportValidatesPromotesAndRollback(t *tes
 		require.Equal(t, "fact", firstCandidate["type"])
 
 		factExportResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
-			"name": "export_skill_pack",
+			"name": "export_memory_pack",
 			"arguments": map[string]any{
 				"name":     "Export promoted trusted fact",
 				"fact_ids": []string{factID},
@@ -697,7 +697,7 @@ func TestUATMCPRuntime_SkillPackTrustedImportValidatesPromotesAndRollback(t *tes
 		firstItem, ok := items[0].(map[string]any)
 		require.True(t, ok)
 		require.Equal(t, "source_fact", firstItem["source_kind"])
-		require.Equal(t, "trusted fact promotion through skill packs", firstItem["object"])
+		require.Equal(t, "trusted fact promotion through memory packs", firstItem["object"])
 
 		record, err := ledger.GetImport(ctx, profileID, importID)
 		require.NoError(t, err)
@@ -705,7 +705,7 @@ func TestUATMCPRuntime_SkillPackTrustedImportValidatesPromotesAndRollback(t *tes
 		require.Equal(t, "trusted", record.Mode)
 
 		rollbackResp := toolResult(t, mcp.call(t, "tools/call", map[string]any{
-			"name": "rollback_skill_pack_import",
+			"name": "rollback_memory_pack_import",
 			"arguments": map[string]any{
 				"import_id": importID,
 			},

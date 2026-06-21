@@ -13,7 +13,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-// SkillPackImportRepository persists skill-pack import batches and their
+// SkillPackImportRepository persists memory-pack import batches and their
 // rollback ledger.
 type SkillPackImportRepository interface {
 	CreateImport(ctx context.Context, record domain.SkillPackImport) error
@@ -38,7 +38,7 @@ func NewSkillPackImportRepository(db *gorm.DB, rls postgres.RLSHelper) *SkillPac
 func (r *SkillPackImportRepositoryImpl) CreateImport(ctx context.Context, record domain.SkillPackImport) error {
 	summaryJSON, err := encodeJSON(record.Summary)
 	if err != nil {
-		return fmt.Errorf("skill pack import create: encode summary: %w", err)
+		return fmt.Errorf("memory pack import create: encode summary: %w", err)
 	}
 	err = r.withTeamTx(ctx, record.TeamID, func(tx *gorm.DB) error {
 		return tx.Exec(`
@@ -70,7 +70,7 @@ func (r *SkillPackImportRepositoryImpl) CreateImport(ctx context.Context, record
 		).Error
 	})
 	if err != nil {
-		return fmt.Errorf("skill pack import create: %w", err)
+		return fmt.Errorf("memory pack import create: %w", err)
 	}
 	return nil
 }
@@ -78,7 +78,7 @@ func (r *SkillPackImportRepositoryImpl) CreateImport(ctx context.Context, record
 func (r *SkillPackImportRepositoryImpl) UpdateImportStatus(ctx context.Context, teamID, importID, status string, appliedCount, skippedCount int, summary map[string]any) error {
 	summaryJSON, err := encodeJSON(summary)
 	if err != nil {
-		return fmt.Errorf("skill pack import update: encode summary: %w", err)
+		return fmt.Errorf("memory pack import update: encode summary: %w", err)
 	}
 	now := time.Now().UTC()
 	err = r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
@@ -94,7 +94,7 @@ func (r *SkillPackImportRepositoryImpl) UpdateImportStatus(ctx context.Context, 
 		`, teamID, importID, status, appliedCount, skippedCount, string(summaryJSON), now).Error
 	})
 	if err != nil {
-		return fmt.Errorf("skill pack import update: %w", err)
+		return fmt.Errorf("memory pack import update: %w", err)
 	}
 	return nil
 }
@@ -111,7 +111,7 @@ func (r *SkillPackImportRepositoryImpl) MarkRolledBack(ctx context.Context, team
 		`, teamID, importID, now).Error
 	})
 	if err != nil {
-		return fmt.Errorf("skill pack import rollback mark: %w", err)
+		return fmt.Errorf("memory pack import rollback mark: %w", err)
 	}
 	return nil
 }
@@ -135,7 +135,7 @@ func (r *SkillPackImportRepositoryImpl) GetImport(ctx context.Context, teamID, i
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("skill pack import get: %w", err)
+		return nil, fmt.Errorf("memory pack import get: %w", err)
 	}
 	return out, nil
 }
@@ -143,11 +143,11 @@ func (r *SkillPackImportRepositoryImpl) GetImport(ctx context.Context, teamID, i
 func (r *SkillPackImportRepositoryImpl) AppendChange(ctx context.Context, change domain.SkillPackImportChange) error {
 	beforeJSON, err := encodeJSON(change.BeforeState)
 	if err != nil {
-		return fmt.Errorf("skill pack change append: encode before: %w", err)
+		return fmt.Errorf("memory pack change append: encode before: %w", err)
 	}
 	afterJSON, err := encodeJSON(change.AfterState)
 	if err != nil {
-		return fmt.Errorf("skill pack change append: encode after: %w", err)
+		return fmt.Errorf("memory pack change append: encode after: %w", err)
 	}
 	err = r.withTeamTx(ctx, change.TeamID, func(tx *gorm.DB) error {
 		return tx.Exec(`
@@ -171,7 +171,7 @@ func (r *SkillPackImportRepositoryImpl) AppendChange(ctx context.Context, change
 		).Error
 	})
 	if err != nil {
-		return fmt.Errorf("skill pack change append: %w", err)
+		return fmt.Errorf("memory pack change append: %w", err)
 	}
 	return nil
 }
@@ -201,7 +201,7 @@ func (r *SkillPackImportRepositoryImpl) ListChanges(ctx context.Context, teamID,
 		return rows.Err()
 	})
 	if err != nil {
-		return nil, fmt.Errorf("skill pack changes list: %w", err)
+		return nil, fmt.Errorf("memory pack changes list: %w", err)
 	}
 	return out, nil
 }

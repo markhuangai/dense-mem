@@ -42,6 +42,8 @@ func clearEnv() {
 		"CLAIM_READ_RATE_LIMIT",
 		"RECALL_VALIDATED_CLAIM_WEIGHT",
 		"PROMOTE_TX_TIMEOUT_SECONDS",
+		"MEMORY_PACK_IMPORT_HISTORY_DAYS",
+		"SKILL_PACK_IMPORT_HISTORY_DAYS",
 		"AI_COMMUNITY_MAX_NODES",
 		"CONTROL_HTTP_ADDR",
 		"CONTROL_PORTAL_TOKEN",
@@ -782,9 +784,43 @@ func TestLoadKnowledgeConfigDefaults(t *testing.T) {
 	if got := cfg.GetSkillPackImportHistoryDays(); got != 30 {
 		t.Errorf("GetSkillPackImportHistoryDays() = %d, want %d", got, 30)
 	}
+	if got := cfg.GetMemoryPackImportHistoryDays(); got != 30 {
+		t.Errorf("GetMemoryPackImportHistoryDays() = %d, want %d", got, 30)
+	}
 	if got := cfg.GetAICommunityMaxNodes(); got != 500000 {
 		t.Errorf("GetAICommunityMaxNodes() = %d, want %d", got, 500000)
 	}
+}
+
+func TestLoadMemoryPackImportHistoryEnv(t *testing.T) {
+	t.Run("new env wins", func(t *testing.T) {
+		clearEnv()
+		setRequiredEnv()
+		os.Setenv("MEMORY_PACK_IMPORT_HISTORY_DAYS", "14")
+		os.Setenv("SKILL_PACK_IMPORT_HISTORY_DAYS", "60")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() returned unexpected error: %v", err)
+		}
+		if got := cfg.GetMemoryPackImportHistoryDays(); got != 14 {
+			t.Fatalf("GetMemoryPackImportHistoryDays() = %d, want 14", got)
+		}
+	})
+
+	t.Run("legacy env fallback", func(t *testing.T) {
+		clearEnv()
+		setRequiredEnv()
+		os.Setenv("SKILL_PACK_IMPORT_HISTORY_DAYS", "21")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() returned unexpected error: %v", err)
+		}
+		if got := cfg.GetMemoryPackImportHistoryDays(); got != 21 {
+			t.Fatalf("GetMemoryPackImportHistoryDays() = %d, want 21", got)
+		}
+	})
 }
 
 func TestLoadControlPortalValidation(t *testing.T) {

@@ -71,8 +71,8 @@ func TestBuildDefault_RegistersV1ToolSurface(t *testing.T) {
 		"remember", "import_memories", "reflect_memories", "confirm_memory",
 		"list_dreams", "get_dream", "resolve_dream_feedback",
 		"keyword_search", "semantic_search", "graph_query",
-		"find_skill_pack_candidates", "export_skill_pack", "inspect_skill_pack",
-		"import_skill_pack", "rollback_skill_pack_import",
+		"find_memory_pack_candidates", "export_memory_pack", "inspect_memory_pack",
+		"import_memory_pack", "rollback_memory_pack_import",
 	}
 	for _, name := range required {
 		if _, ok := reg.Get(name); !ok {
@@ -82,6 +82,29 @@ func TestBuildDefault_RegistersV1ToolSurface(t *testing.T) {
 	for _, name := range []string{"keyword-search", "semantic-search", "graph-query"} {
 		if _, ok := reg.Get(name); ok {
 			t.Errorf("legacy hyphenated tool %q must not be registered", name)
+		}
+	}
+	listed := map[string]struct{}{}
+	for _, tool := range reg.List() {
+		listed[tool.Name] = struct{}{}
+	}
+	for _, legacy := range []string{
+		"find_skill_pack_candidates",
+		"export_skill_pack",
+		"inspect_skill_pack",
+		"import_skill_pack",
+		"rollback_skill_pack_import",
+	} {
+		tool, ok := reg.Get(legacy)
+		if !ok {
+			t.Errorf("legacy tool alias %q should resolve", legacy)
+			continue
+		}
+		if strings.Contains(tool.Name, "skill_pack") {
+			t.Errorf("legacy alias %q resolved to non-canonical tool %q", legacy, tool.Name)
+		}
+		if _, ok := listed[legacy]; ok {
+			t.Errorf("legacy alias %q must not be listed", legacy)
 		}
 	}
 	if _, ok := reg.Get("submit_recall_session_feedback"); !ok {
@@ -353,11 +376,11 @@ func TestBuildDefaultSkillPackTools_InvokeSuccessAndInvalidInput(t *testing.T) {
 		wantField string
 		wantValue any
 	}{
-		{name: "find_skill_pack_candidates", input: map[string]any{"query": "skill packs", "limit": float64(5)}, wantField: "candidates"},
-		{name: "export_skill_pack", input: map[string]any{"name": "Pack", "manual_items": []any{map[string]any{"subject": "assistant", "predicate": "has_skill", "object": "testing", "source_kind": "manual"}}}, wantField: "sha256", wantValue: strings.Repeat("a", 64)},
-		{name: "inspect_skill_pack", input: map[string]any{"artifact_json": `{"schema_version":"dense-mem.skill_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"manual"}]}`}, wantField: "artifact_hash", wantValue: "hash"},
-		{name: "import_skill_pack", input: map[string]any{"mode": "review", "artifact_json": `{"schema_version":"dense-mem.skill_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"manual"}]}`}, wantField: "import_id", wantValue: "import-1"},
-		{name: "rollback_skill_pack_import", input: map[string]any{"import_id": "import-1"}, wantField: "status", wantValue: "rolled_back"},
+		{name: "find_memory_pack_candidates", input: map[string]any{"query": "memory packs", "limit": float64(5)}, wantField: "candidates"},
+		{name: "export_memory_pack", input: map[string]any{"name": "Pack", "manual_items": []any{map[string]any{"subject": "assistant", "predicate": "has_skill", "object": "testing", "source_kind": "manual"}}}, wantField: "sha256", wantValue: strings.Repeat("a", 64)},
+		{name: "inspect_memory_pack", input: map[string]any{"artifact_json": `{"schema_version":"dense-mem.memory_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"manual"}]}`}, wantField: "artifact_hash", wantValue: "hash"},
+		{name: "import_memory_pack", input: map[string]any{"mode": "review", "artifact_json": `{"schema_version":"dense-mem.memory_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"manual"}]}`}, wantField: "import_id", wantValue: "import-1"},
+		{name: "rollback_memory_pack_import", input: map[string]any{"import_id": "import-1"}, wantField: "status", wantValue: "rolled_back"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -383,11 +406,11 @@ func TestBuildDefaultSkillPackTools_InvokeSuccessAndInvalidInput(t *testing.T) {
 		in   map[string]any
 		want string
 	}{
-		{name: "find_skill_pack_candidates", in: map[string]any{"query": func() {}}, want: "find_skill_pack_candidates: invalid input"},
-		{name: "export_skill_pack", in: map[string]any{"name": func() {}}, want: "export_skill_pack: invalid input"},
-		{name: "inspect_skill_pack", in: map[string]any{"artifact_json": func() {}}, want: "inspect_skill_pack: invalid input"},
-		{name: "import_skill_pack", in: map[string]any{"mode": func() {}}, want: "import_skill_pack: invalid input"},
-		{name: "rollback_skill_pack_import", in: map[string]any{"import_id": func() {}}, want: "rollback_skill_pack_import: invalid input"},
+		{name: "find_memory_pack_candidates", in: map[string]any{"query": func() {}}, want: "find_memory_pack_candidates: invalid input"},
+		{name: "export_memory_pack", in: map[string]any{"name": func() {}}, want: "export_memory_pack: invalid input"},
+		{name: "inspect_memory_pack", in: map[string]any{"artifact_json": func() {}}, want: "inspect_memory_pack: invalid input"},
+		{name: "import_memory_pack", in: map[string]any{"mode": func() {}}, want: "import_memory_pack: invalid input"},
+		{name: "rollback_memory_pack_import", in: map[string]any{"import_id": func() {}}, want: "rollback_memory_pack_import: invalid input"},
 	} {
 		t.Run(tc.name+" invalid input", func(t *testing.T) {
 			tool, _ := reg.Get(tc.name)
@@ -418,34 +441,34 @@ func TestSkillPackSchemasDoNotCapItemsAtOneHundred(t *testing.T) {
 		}
 	}
 	artifact := map[string]any{
-		"schema_version": "dense-mem.skill_pack.v1",
+		"schema_version": "dense-mem.memory_pack.v1",
 		"name":           "Pack",
 		"items":          items,
 	}
 
-	exportTool, _ := reg.Get("export_skill_pack")
+	exportTool, _ := reg.Get("export_memory_pack")
 	if err := ValidateInput(exportTool, map[string]any{"name": "Pack", "fact_ids": factIDs}); err != nil {
-		t.Fatalf("export_skill_pack ValidateInput: %v", err)
+		t.Fatalf("export_memory_pack ValidateInput: %v", err)
 	}
-	inspectTool, _ := reg.Get("inspect_skill_pack")
+	inspectTool, _ := reg.Get("inspect_memory_pack")
 	if err := ValidateInput(inspectTool, map[string]any{"artifact": artifact}); err != nil {
-		t.Fatalf("inspect_skill_pack ValidateInput: %v", err)
+		t.Fatalf("inspect_memory_pack ValidateInput: %v", err)
 	}
-	importTool, _ := reg.Get("import_skill_pack")
+	importTool, _ := reg.Get("import_memory_pack")
 	if err := ValidateInput(importTool, map[string]any{
 		"artifact":           artifact,
 		"mode":               "review",
 		"selected_items":     selectedItems,
 		"conflict_decisions": conflictDecisions,
 	}); err != nil {
-		t.Fatalf("import_skill_pack ValidateInput: %v", err)
+		t.Fatalf("import_memory_pack ValidateInput: %v", err)
 	}
 }
 
 func TestSkillPackSchemasAcceptSupportGraph(t *testing.T) {
 	reg, _ := BuildDefault(Dependencies{SkillPack: &stubSkillPackService{}})
 	artifact := map[string]any{
-		"schema_version": "dense-mem.skill_pack.v1",
+		"schema_version": "dense-mem.memory_pack.v1",
 		"name":           "Supported pack",
 		"items": []any{map[string]any{
 			"subject":              "assistant",
@@ -474,17 +497,17 @@ func TestSkillPackSchemasAcceptSupportGraph(t *testing.T) {
 		},
 	}
 
-	exportTool, _ := reg.Get("export_skill_pack")
+	exportTool, _ := reg.Get("export_memory_pack")
 	if err := ValidateInput(exportTool, map[string]any{"name": "Pack", "claim_ids": []any{"claim-1"}, "include_support": false}); err != nil {
-		t.Fatalf("export_skill_pack support flag ValidateInput: %v", err)
+		t.Fatalf("export_memory_pack support flag ValidateInput: %v", err)
 	}
-	inspectTool, _ := reg.Get("inspect_skill_pack")
+	inspectTool, _ := reg.Get("inspect_memory_pack")
 	if err := ValidateInput(inspectTool, map[string]any{"artifact": artifact}); err != nil {
-		t.Fatalf("inspect_skill_pack support artifact ValidateInput: %v", err)
+		t.Fatalf("inspect_memory_pack support artifact ValidateInput: %v", err)
 	}
-	importTool, _ := reg.Get("import_skill_pack")
+	importTool, _ := reg.Get("import_memory_pack")
 	if err := ValidateInput(importTool, map[string]any{"artifact": artifact, "mode": "review"}); err != nil {
-		t.Fatalf("import_skill_pack support artifact ValidateInput: %v", err)
+		t.Fatalf("import_memory_pack support artifact ValidateInput: %v", err)
 	}
 }
 
@@ -499,14 +522,14 @@ func TestImportSkillPackReturnsRecoverableResultOnPartialError(t *testing.T) {
 		importErr: errors.New("update failed"),
 	}
 	reg, _ := BuildDefault(Dependencies{SkillPack: skillPack})
-	tool, _ := reg.Get("import_skill_pack")
+	tool, _ := reg.Get("import_memory_pack")
 
 	out, err := tool.Invoke(context.Background(), "profile-skill", map[string]any{
 		"mode":          "review",
-		"artifact_json": `{"schema_version":"dense-mem.skill_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"manual"}]}`,
+		"artifact_json": `{"schema_version":"dense-mem.memory_pack.v1","name":"Pack","items":[{"subject":"assistant","predicate":"has_skill","object":"testing","source_kind":"manual"}]}`,
 	})
 	if err != nil {
-		t.Fatalf("import_skill_pack Invoke: %v", err)
+		t.Fatalf("import_memory_pack Invoke: %v", err)
 	}
 	if out["import_id"] != "import-rollback" {
 		t.Fatalf("import_id = %v; want import-rollback", out["import_id"])
@@ -789,7 +812,7 @@ func (s *stubSkillPackService) Export(ctx context.Context, profileID string, req
 		CanonicalJSON: "{}",
 		SHA256:        strings.Repeat("a", 64),
 		ItemCount:     1,
-		Filename:      "pack.skill-pack.json",
+		Filename:      "pack.memory-pack.json",
 		ContentType:   "application/json",
 	}, nil
 }

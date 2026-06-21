@@ -29,7 +29,7 @@ func packWithItem(sourceKind string) *SkillPack {
 		Items: []SkillPackItem{{
 			Subject:    "assistant",
 			Predicate:  "has_skill",
-			Object:     "tests skill packs",
+			Object:     "tests memory packs",
 			SourceKind: sourceKind,
 		}},
 	}
@@ -81,7 +81,7 @@ func (g *mutatingScopedGraph) ScopedRead(_ context.Context, _ string, _ string, 
 		"type":      "claim",
 		"subject":   "assistant",
 		"predicate": "has_skill",
-		"object":    "skill pack regression testing",
+		"object":    "memory pack regression testing",
 	}}, nil
 }
 
@@ -104,7 +104,7 @@ func (g *factCandidateGraph) ScopedRead(_ context.Context, _ string, _ string, _
 		"type":      "fact",
 		"subject":   "assistant",
 		"predicate": "has_skill",
-		"object":    "skill pack regression testing",
+		"object":    "memory pack regression testing",
 	}}, nil
 }
 
@@ -338,7 +338,7 @@ func (f fakeFactPromote) Promote(_ context.Context, profileID, claimID string) (
 		ProfileID:           profileID,
 		Subject:             "assistant",
 		Predicate:           "has_skill",
-		Object:              "tests skill packs",
+		Object:              "tests memory packs",
 		Status:              domain.FactStatusActive,
 		PromotedFromClaimID: claimID,
 		RecordedAt:          time.Now().UTC(),

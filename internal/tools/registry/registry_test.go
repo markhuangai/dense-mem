@@ -31,6 +31,40 @@ func TestRegistry_RejectDuplicate(t *testing.T) {
 	}
 }
 
+func TestRegistry_AliasesResolveWithoutListing(t *testing.T) {
+	r := New()
+	if err := r.Register(Tool{Name: "export_memory_pack", Aliases: []string{"export_skill_pack"}}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	tool, ok := r.Get("export_skill_pack")
+	if !ok {
+		t.Fatal("Get(alias) returned ok=false")
+	}
+	if tool.Name != "export_memory_pack" {
+		t.Fatalf("alias resolved to %q, want export_memory_pack", tool.Name)
+	}
+	list := r.List()
+	if len(list) != 1 || list[0].Name != "export_memory_pack" {
+		t.Fatalf("List() = %+v, want only canonical tool", list)
+	}
+}
+
+func TestRegistry_RejectAliasConflicts(t *testing.T) {
+	r := New()
+	if err := r.Register(Tool{Name: "export_memory_pack", Aliases: []string{"export_skill_pack"}}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if err := r.Register(Tool{Name: "export_skill_pack"}); err == nil {
+		t.Fatal("Register should reject a tool name already used as an alias")
+	}
+	if err := r.Register(Tool{Name: "inspect_memory_pack", Aliases: []string{"export_skill_pack"}}); err == nil {
+		t.Fatal("Register should reject duplicate aliases")
+	}
+	if err := r.Register(Tool{Name: "rollback_memory_pack_import", Aliases: []string{"rollback_skill_pack_import", "rollback_skill_pack_import"}}); err == nil {
+		t.Fatal("Register should reject duplicate aliases on one tool")
+	}
+}
+
 func TestRegistry_RejectEmptyName(t *testing.T) {
 	r := New()
 	if err := r.Register(Tool{Name: ""}); err == nil {

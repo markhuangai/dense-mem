@@ -237,10 +237,22 @@ memory, applies explicit gates, and returns structured outcomes.
 | `assemble_context` | Builds a bounded prompt-ready context block plus structured facts, claims, fragments, and clarifications. |
 | `reflect_memories` | Reviews active facts, candidate or disputed claims, contradictions, stale memories, and clarification needs. |
 | `confirm_memory` | Applies the user's answer to a clarification task, either accepting a claim and superseding comparable active facts or keeping/rejecting it. |
+| `find_memory_pack_candidates` | Finds facts and validated claims that can be exported into a portable memory pack. |
+| `export_memory_pack` | Exports selected memory into a signed JSON artifact for review or sharing. |
+| `inspect_memory_pack` | Parses a memory-pack artifact or URL and reports duplicates, conflicts, and required decisions without writing memory. |
+| `import_memory_pack` | Imports a reviewed or trusted memory pack with ledgered changes and rollback support. |
+| `rollback_memory_pack_import` | Rolls back changes from a prior memory-pack import when the ledger has enough state. |
 
 Low-level tools remain available for advanced callers: `post_claim`,
 `verify_claim`, `promote_claim`, search tools, graph query tools, community
 tools, and retraction tools.
+
+The older `*_skill_pack*` tool names remain accepted as hidden compatibility
+aliases, but new clients should use `*_memory_pack*`. Dense-Mem also exposes MCP
+prompts through `prompts/list` and `prompts/get`; the first bundled prompt,
+`export_memory_as_agent_skill`, guides an LLM to recall Dense-Mem experience and
+draft a shareable Agent Skill `SKILL.md` file without relying on memory-pack
+import/export.
 
 Memory moves through this path:
 
@@ -281,7 +293,7 @@ Dense-Mem exposes three discoverability surfaces backed by one registry:
 |---------|------|---------|
 | Tool catalog | `GET /api/v1/tools` | Runtime tool discovery |
 | Runtime OpenAPI | `GET /api/v1/openapi.json` | Agents, codegen, integrations |
-| MCP Streamable HTTP | `POST /mcp`, `GET /mcp` | MCP clients over the main HTTP service |
+| MCP Streamable HTTP | `POST /mcp`, `GET /mcp` | MCP clients over the main HTTP service, including tools and bundled prompts |
 
 The full route list and client examples live in the wiki
 [Technical Reference](https://github.com/markhuangai/dense-mem/wiki/Technical-Reference)

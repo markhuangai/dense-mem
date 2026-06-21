@@ -1,0 +1,50 @@
+package promptcatalog
+
+import (
+	"errors"
+	"strings"
+	"testing"
+)
+
+func TestDefaultCatalogListsExportMemoryAsAgentSkill(t *testing.T) {
+	catalog, err := Default()
+	if err != nil {
+		t.Fatalf("Default: %v", err)
+	}
+	prompts := catalog.List()
+	if len(prompts) != 1 {
+		t.Fatalf("prompts len = %d, want 1", len(prompts))
+	}
+	if prompts[0].Name != "export_memory_as_agent_skill" {
+		t.Fatalf("prompt name = %q", prompts[0].Name)
+	}
+	if len(prompts[0].Arguments) == 0 || prompts[0].Arguments[0].Name != "topic" || !prompts[0].Arguments[0].Required {
+		t.Fatalf("arguments = %+v", prompts[0].Arguments)
+	}
+}
+
+func TestDefaultCatalogRenderValidatesAndRenders(t *testing.T) {
+	catalog, err := Default()
+	if err != nil {
+		t.Fatalf("Default: %v", err)
+	}
+	if _, _, err := catalog.Render("export_memory_as_agent_skill", map[string]string{}); !errors.Is(err, ErrMissingArgument) || !strings.Contains(err.Error(), "topic") {
+		t.Fatalf("missing topic err = %v, want ErrMissingArgument", err)
+	}
+	if _, _, err := catalog.Render("missing", map[string]string{"topic": "incident response"}); !errors.Is(err, ErrPromptNotFound) {
+		t.Fatalf("missing prompt err = %v, want ErrPromptNotFound", err)
+	}
+	_, text, err := catalog.Render("export_memory_as_agent_skill", map[string]string{
+		"topic":       "incident response",
+		"skill_name":  "incident-response",
+		"scope_notes": "internal runbooks only",
+	})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	for _, want := range []string{"incident response", "incident-response", "internal runbooks only", "SKILL.md"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("rendered text missing %q: %s", want, text)
+		}
+	}
+}

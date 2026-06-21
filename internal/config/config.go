@@ -173,6 +173,7 @@ func (c *Config) GetClaimWriteRateLimit() int            { return c.ClaimWriteRa
 func (c *Config) GetClaimReadRateLimit() int             { return c.ClaimReadRateLimit }
 func (c *Config) GetRecallValidatedClaimWeight() float64 { return c.RecallValidatedClaimWeight }
 func (c *Config) GetPromoteTxTimeoutSeconds() int        { return c.PromoteTxTimeoutSeconds }
+func (c *Config) GetMemoryPackImportHistoryDays() int    { return c.SkillPackImportHistoryDays }
 func (c *Config) GetSkillPackImportHistoryDays() int     { return c.SkillPackImportHistoryDays }
 func (c *Config) GetAICommunityMaxNodes() int            { return c.AICommunityMaxNodes }
 func (c *Config) GetControlHTTPAddr() string             { return c.ControlHTTPAddr }
@@ -284,6 +285,13 @@ func parseBoolOrDefault(key string, defaultValue bool) (bool, error) {
 	return parsed, nil
 }
 
+func parseMemoryPackImportHistoryDays(defaultValue int) (int, error) {
+	if strings.TrimSpace(os.Getenv("MEMORY_PACK_IMPORT_HISTORY_DAYS")) != "" {
+		return parseIntOrDefault("MEMORY_PACK_IMPORT_HISTORY_DAYS", defaultValue)
+	}
+	return parseIntOrDefault("SKILL_PACK_IMPORT_HISTORY_DAYS", defaultValue)
+}
+
 type intEnvSpec struct {
 	key          string
 	defaultValue int
@@ -382,7 +390,14 @@ func Load() (Config, error) {
 
 	if err := applyIntEnvSpecs(&cfg, []intEnvSpec{
 		{"PROMOTE_TX_TIMEOUT_SECONDS", 10, func(c *Config, value int) { c.PromoteTxTimeoutSeconds = value }},
-		{"SKILL_PACK_IMPORT_HISTORY_DAYS", 30, func(c *Config, value int) { c.SkillPackImportHistoryDays = value }},
+	}); err != nil {
+		return cfg, err
+	}
+	cfg.SkillPackImportHistoryDays, err = parseMemoryPackImportHistoryDays(30)
+	if err != nil {
+		return cfg, err
+	}
+	if err := applyIntEnvSpecs(&cfg, []intEnvSpec{
 		{"AI_COMMUNITY_MAX_NODES", 500000, func(c *Config, value int) { c.AICommunityMaxNodes = value }},
 	}); err != nil {
 		return cfg, err
@@ -456,7 +471,7 @@ func Load() (Config, error) {
 		{"CLAIM_WRITE_RATE_LIMIT", cfg.ClaimWriteRateLimit},
 		{"CLAIM_READ_RATE_LIMIT", cfg.ClaimReadRateLimit},
 		{"PROMOTE_TX_TIMEOUT_SECONDS", cfg.PromoteTxTimeoutSeconds},
-		{"SKILL_PACK_IMPORT_HISTORY_DAYS", cfg.SkillPackImportHistoryDays},
+		{"MEMORY_PACK_IMPORT_HISTORY_DAYS", cfg.SkillPackImportHistoryDays},
 		{"AI_COMMUNITY_MAX_NODES", cfg.AICommunityMaxNodes},
 		{"TELEMETRY_QUERY_TIMEOUT_SECONDS", cfg.TelemetryQueryTimeoutSeconds},
 	}

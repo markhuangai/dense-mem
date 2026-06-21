@@ -144,8 +144,8 @@ func TestExportIncludesSelectedFactSupportGraph(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Export with support: %v", err)
 	}
-	if res.Filename != "blog-writing.skill-pack.json" || res.ContentType != "application/json" {
-		t.Fatalf("file metadata = %q/%q, want blog-writing.skill-pack.json/application/json", res.Filename, res.ContentType)
+	if res.Filename != "blog-writing.memory-pack.json" || res.ContentType != "application/json" {
+		t.Fatalf("file metadata = %q/%q, want blog-writing.memory-pack.json/application/json", res.Filename, res.ContentType)
 	}
 	if len(res.Artifact.Items) != 1 {
 		t.Fatalf("items len = %d, want 1", len(res.Artifact.Items))
@@ -789,11 +789,11 @@ func TestRequiredDecisionAndLedgerHelperBranches(t *testing.T) {
 		Object:               "trusted import",
 		Status:               domain.StatusValidated,
 		EntailmentVerdict:    domain.VerdictEntailed,
-		VerifierModel:        "skill_pack.source_trust",
+		VerifierModel:        "memory_pack.source_trust",
 		LastVerifierResponse: "trusted source",
 		VerifiedAt:           &verifiedAt,
 	}, "")
-	if state["verifier_model"] != "skill_pack.source_trust" ||
+	if state["verifier_model"] != "memory_pack.source_trust" ||
 		state["last_verifier_response"] != "trusted source" ||
 		state["verified_at"] != verifiedAt.Format(time.RFC3339Nano) {
 		t.Fatalf("claim state = %v, want verifier fields", state)
@@ -807,10 +807,10 @@ func TestSkillPackSmallHelpers(t *testing.T) {
 	if New(Dependencies{HistoryDays: 2}).(*service).retain != 48*time.Hour {
 		t.Fatal("HistoryDays should configure import retention")
 	}
-	if tripleMatches("skill pack", "assistant", "has_skill", "skill pack testing") != true {
+	if tripleMatches("memory pack", "assistant", "has_skill", "memory pack testing") != true {
 		t.Fatal("triple should match all query terms")
 	}
-	if tripleMatches("missing", "assistant", "has_skill", "skill pack testing") {
+	if tripleMatches("missing", "assistant", "has_skill", "memory pack testing") {
 		t.Fatal("triple should not match missing term")
 	}
 	if clampLimit(0, 20, 100) != 20 || clampLimit(200, 20, 100) != 100 || clampLimit(5, 20, 100) != 5 {
@@ -825,7 +825,7 @@ func TestSkillPackSmallHelpers(t *testing.T) {
 	if importAuthority(ModeTrusted) != "authoritative" || importAuthority(ModeReview) != "secondary" {
 		t.Fatal("importAuthority returned unexpected values")
 	}
-	if importSource(SkillPack{Name: "Pack"}, "") != "skill_pack:Pack" || importSource(SkillPack{Name: "Pack"}, "https://example.com/p.json") != "https://example.com/p.json" {
+	if importSource(SkillPack{Name: "Pack"}, "") != "memory_pack:Pack" || importSource(SkillPack{Name: "Pack"}, "https://example.com/p.json") != "https://example.com/p.json" {
 		t.Fatal("importSource returned unexpected value")
 	}
 	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
