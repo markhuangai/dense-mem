@@ -123,6 +123,9 @@ URL、model 和 dimensions 提供 OpenAI 默认值：`https://api.openai.com/v1`
 `text-embedding-3-small`、`1536`。因此最小本地部署只需要补上 `AI_API_KEY`。
 如果切换到其他 embedding provider 或 model，请一起覆盖这些配置。
 
+Verifier 调用默认发送 `temperature: 0`。如果 provider 或 model 拒绝
+temperature 字段，设置 `AI_VERIFIER_DISABLE_TEMPERATURE=true` 可以省略该字段。
+
 ### Telemetry Overlay
 
 Prometheus telemetry 默认关闭，是可选功能。要为 `/ui` 应用和 control portal
@@ -217,9 +220,8 @@ Dense-Mem 不是 agent brain、planner，也不是外部真相裁判。它负责
 | `reflect_memories` | 查看 active facts、candidate/disputed claims、contradictions、stale memories 和 clarification needs。 |
 | `confirm_memory` | 应用用户对 clarification task 的回答：接受 claim 并 supersede 可比较的 active facts，或保留/拒绝它。 |
 
-高级调用方仍然可以使用低层工具：`save_memory`、`post_claim`、`verify_claim`、
-`promote_claim`、搜索工具、graph query tools、community tools 和 retraction
-tools。
+高级调用方仍然可以使用低层工具：`post_claim`、`verify_claim`、`promote_claim`、
+搜索工具、graph query tools、community tools 和 retraction tools。
 
 记忆在系统里的主路径如下：
 

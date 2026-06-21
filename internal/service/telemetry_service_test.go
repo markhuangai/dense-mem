@@ -105,6 +105,16 @@ func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {
 	})
 	require.Condition(t, func() bool {
 		for _, query := range queries {
+			if strings.Contains(query, `densemem_dream_feedback_total`) &&
+				strings.Contains(query, `decision="promote_candidate"`) &&
+				strings.Contains(query, `outcome="ok"`) {
+				return true
+			}
+		}
+		return false
+	})
+	require.Condition(t, func() bool {
+		for _, query := range queries {
 			if strings.Contains(query, `histogram_quantile(0.95`) &&
 				strings.Contains(query, `densemem_recall_duration_seconds_bucket`) {
 				return true
@@ -186,6 +196,22 @@ func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
 	rangeFeedbackQuery := telemetryRangeRecallFeedbackRate(`{job="dense-mem"}`, `used="true"`, "1m")
 	require.Contains(t, rangeFeedbackQuery, `min_over_time(densemem_recall_feedback_total{job="dense-mem",used="true"}[1m]) unless densemem_recall_feedback_total{job="dense-mem",used="true"} offset 1m`)
 	require.Contains(t, rangeFeedbackQuery, `count_over_time(densemem_recall_feedback_total{job="dense-mem",used="true"}[1m]) < bool on(job, instance) group_left() count_over_time(up[1m])`)
+	require.Condition(t, func() bool {
+		for _, spec := range telemetryCardSpecs(TelemetryScope{}, nil, "1h") {
+			if spec.ID == "dream_feedbacks" {
+				return strings.Contains(spec.Query, `densemem_dream_feedback_total`)
+			}
+		}
+		return false
+	})
+	require.Condition(t, func() bool {
+		for _, spec := range telemetrySeriesSpecs(`{job="dense-mem"}`, "1m") {
+			if spec.ID == "dream_promote_candidates" {
+				return strings.Contains(spec.Query, `decision="promote_candidate",outcome="ok"`)
+			}
+		}
+		return false
+	})
 	require.Equal(t, `1000 * histogram_quantile(0.95, sum(rate(densemem_recall_duration_seconds_bucket[1m])) by (le))`, telemetryRangeHistogramQuantile("densemem_recall_duration_seconds", "", "", "1m", 0.95, 1000))
 
 	scope, err = normalizeTelemetryScope(TelemetryFilter{Scope: "self", TeamID: &teamID, ProfileID: &profileID})

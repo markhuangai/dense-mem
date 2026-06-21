@@ -33,6 +33,7 @@ type ScopedDiscoverabilityMetrics interface {
 	ObserveRecallLatencyFor(ctx context.Context, durationMs float64)
 	ObserveRecallFor(ctx context.Context, durationMs float64, resultCount int, outcome string)
 	ObserveRecallFeedbackFor(ctx context.Context, feedback RecallFeedback)
+	ObserveDreamFeedbackFor(ctx context.Context, feedback DreamFeedback)
 	ObserveMemoryFunnelLatencyFor(ctx context.Context, stage string, seconds float64, outcome string)
 	IncFragmentCreateFor(ctx context.Context, outcome string)
 	IncClaimCreateFor(ctx context.Context, outcome string, dedupeReason string)
@@ -63,6 +64,7 @@ type PrometheusMetrics struct {
 	recallResults   *prometheus.HistogramVec
 	recallFeedback  *prometheus.CounterVec
 	recallQuality   *prometheus.HistogramVec
+	dreamFeedback   *prometheus.CounterVec
 	memoryFunnel    *prometheus.HistogramVec
 	fragmentCreates *prometheus.CounterVec
 	claimCreates    *prometheus.CounterVec
@@ -147,6 +149,10 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 			Help:    "Numeric host LLM online recall quality score.",
 			Buckets: []float64{0, 0.5, 1},
 		}, identityLabels()),
+		dreamFeedback: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_dream_feedback_total",
+			Help: "Dream feedback decision events with bounded labels.",
+		}, append(identityLabels(), "decision", "outcome", "from_status")),
 		memoryFunnel: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "densemem_memory_funnel_latency_seconds",
 			Help:    "Latency between memory pipeline stages.",
@@ -201,7 +207,7 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		m.embeddingCalls, m.embeddingErrors, m.embeddingDur, m.embeddingTokens,
 		m.verifierCalls, m.verifierDur, m.verifierTokens,
 		m.recallCalls, m.recallDur, m.recallResults,
-		m.recallFeedback, m.recallQuality, m.memoryFunnel,
+		m.recallFeedback, m.recallQuality, m.dreamFeedback, m.memoryFunnel,
 		m.fragmentCreates, m.claimCreates, m.verifyVerdicts, m.promotions,
 		m.promoteWait, m.retractions, m.revalidation,
 		m.communityRuns, m.communityDur, m.communityNodes,
@@ -292,6 +298,19 @@ func (m *PrometheusMetrics) ObserveRecallFeedbackFor(ctx context.Context, feedba
 	)
 	m.recallFeedback.WithLabelValues(labels...).Inc()
 	m.recallQuality.WithLabelValues(identityValues(ctx)...).Observe(recallFeedbackQualityScore(quality))
+}
+
+func (m *PrometheusMetrics) ObserveDreamFeedback(feedback DreamFeedback) {
+	m.ObserveDreamFeedbackFor(context.Background(), feedback)
+}
+
+func (m *PrometheusMetrics) ObserveDreamFeedbackFor(ctx context.Context, feedback DreamFeedback) {
+	labels := append(identityValues(ctx),
+		normalizeDreamFeedbackDecision(feedback.Decision),
+		normalizeDreamFeedbackOutcome(feedback.Outcome),
+		normalizeDreamStatusLabel(feedback.FromStatus),
+	)
+	m.dreamFeedback.WithLabelValues(labels...).Inc()
 }
 
 func (m *PrometheusMetrics) ObserveMemoryFunnelLatency(stage string, seconds float64, outcome string) {
@@ -450,6 +469,33 @@ func recallFeedbackQualityScore(quality string) float64 {
 	}
 }
 
+func normalizeDreamFeedbackDecision(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "reinforce", "stale", "reject", "promote_candidate":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return unknownMetricLabel
+	}
+}
+
+func normalizeDreamFeedbackOutcome(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "ok", "error":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return unknownMetricLabel
+	}
+}
+
+func normalizeDreamStatusLabel(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "proposed", "reinforced", "stale", "rejected", "promoted":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return unknownMetricLabel
+	}
+}
+
 func boolLabel(value bool) string {
 	if value {
 		return "true"
@@ -560,6 +606,17 @@ func RecordRecallFeedback(ctx context.Context, metrics DiscoverabilityMetrics, f
 		return
 	}
 	metrics.ObserveRecallFeedback(feedback)
+}
+
+func RecordDreamFeedback(ctx context.Context, metrics DiscoverabilityMetrics, feedback DreamFeedback) {
+	if metrics == nil {
+		return
+	}
+	if scoped, ok := metrics.(ScopedDiscoverabilityMetrics); ok {
+		scoped.ObserveDreamFeedbackFor(ctx, feedback)
+		return
+	}
+	metrics.ObserveDreamFeedback(feedback)
 }
 
 func RecordMemoryFunnelLatency(ctx context.Context, metrics DiscoverabilityMetrics, stage string, seconds float64, outcome string) {

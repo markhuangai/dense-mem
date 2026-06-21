@@ -8,24 +8,24 @@ import (
 
 func TestRegistry_RegisterAndList(t *testing.T) {
 	r := New()
-	if err := r.Register(Tool{Name: "save_memory", Description: "store a fragment"}); err != nil {
+	if err := r.Register(Tool{Name: "remember", Description: "store memory"}); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	list := r.List()
 	if len(list) != 1 {
 		t.Fatalf("List length = %d; want 1", len(list))
 	}
-	if list[0].Name != "save_memory" {
-		t.Errorf("List[0].Name = %q; want save_memory", list[0].Name)
+	if list[0].Name != "remember" {
+		t.Errorf("List[0].Name = %q; want remember", list[0].Name)
 	}
 }
 
 func TestRegistry_RejectDuplicate(t *testing.T) {
 	r := New()
-	if err := r.Register(Tool{Name: "save_memory"}); err != nil {
+	if err := r.Register(Tool{Name: "remember"}); err != nil {
 		t.Fatalf("first register: %v", err)
 	}
-	err := r.Register(Tool{Name: "save_memory"})
+	err := r.Register(Tool{Name: "remember"})
 	if err == nil {
 		t.Fatal("duplicate Register expected to return an error")
 	}
@@ -70,7 +70,7 @@ func TestRegistry_InvokeProxiesToBoundFunc(t *testing.T) {
 	called := false
 	var gotProfile string
 	if err := r.Register(Tool{
-		Name: "save_memory",
+		Name: "remember",
 		Invoke: func(ctx context.Context, profileID string, _ map[string]any) (map[string]any, error) {
 			called = true
 			gotProfile = profileID
@@ -79,7 +79,7 @@ func TestRegistry_InvokeProxiesToBoundFunc(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	tool, ok := r.Get("save_memory")
+	tool, ok := r.Get("remember")
 	if !ok {
 		t.Fatal("Get returned ok=false for just-registered tool")
 	}
@@ -118,12 +118,12 @@ func TestRegistry_List_SortedAlphabetically(t *testing.T) {
 	r := New()
 	_ = r.Register(Tool{Name: "semantic_search"})
 	_ = r.Register(Tool{Name: "graph_query"})
-	_ = r.Register(Tool{Name: "save_memory"})
+	_ = r.Register(Tool{Name: "remember"})
 	got := r.List()
 	if len(got) != 3 {
 		t.Fatalf("List length = %d; want 3", len(got))
 	}
-	want := []string{"graph_query", "save_memory", "semantic_search"}
+	want := []string{"graph_query", "remember", "semantic_search"}
 	for i, n := range want {
 		if got[i].Name != n {
 			t.Errorf("List[%d] = %q; want %q", i, got[i].Name, n)
@@ -137,10 +137,9 @@ func TestRegistry_List_SortedAlphabetically(t *testing.T) {
 func TestToolRegistry_ListReturnsAllRegistered(t *testing.T) {
 	r := New()
 	names := []string{
-		"save_memory",
-		"get_memory",
 		"list_recent_memories",
 		"recall_memory",
+		"remember",
 		"keyword_search",
 		"semantic_search",
 		"graph_query",

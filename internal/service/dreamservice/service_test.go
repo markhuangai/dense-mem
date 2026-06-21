@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/http/dto"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -290,7 +291,8 @@ func TestDreamServiceReadPaths(t *testing.T) {
 func TestDreamServiceResolveFeedback(t *testing.T) {
 	now := time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC)
 	graph := &cycleRunGraphStub{executeWrites: true, dreamRows: []map[string]any{{"d": dreamTestNode("dream-1", "profile-1", now)}}}
-	svc := New(Dependencies{Graph: graph})
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	svc := New(Dependencies{Graph: graph, Metrics: metrics})
 
 	res, err := svc.ResolveFeedback(context.Background(), "profile-1", ResolveFeedbackRequest{
 		DreamID:  "dream-1",
@@ -321,6 +323,12 @@ func TestDreamServiceResolveFeedback(t *testing.T) {
 		Decision: "unknown",
 	})
 	require.ErrorIs(t, err, ErrInvalidDreamStatus)
+	require.Equal(t, []observability.DreamFeedbackSample{
+		{Decision: "reject", Outcome: "ok", FromStatus: "proposed"},
+		{Decision: "stale", Outcome: "ok", FromStatus: "proposed"},
+		{Decision: "reinforce", Outcome: "ok", FromStatus: "proposed"},
+		{Decision: "unknown", Outcome: "error", FromStatus: "proposed"},
+	}, metrics.DreamFeedbackSamples())
 
 	_, err = svc.ResolveFeedback(context.Background(), "profile-1", ResolveFeedbackRequest{Decision: "reject"})
 	require.ErrorContains(t, err, "dream_id is required")
@@ -330,9 +338,11 @@ func TestDreamServiceResolveFeedbackPromotesCandidate(t *testing.T) {
 	now := time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC)
 	graph := &cycleRunGraphStub{executeWrites: true, dreamRows: []map[string]any{{"d": dreamTestNode("dream-1", "profile-1", now)}}}
 	create := &dreamFragmentCreateStub{}
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
 	svc := New(Dependencies{
 		Graph:          graph,
 		FragmentCreate: create,
+		Metrics:        metrics,
 		Now:            func() time.Time { return now },
 	})
 
@@ -351,12 +361,49 @@ func TestDreamServiceResolveFeedbackPromotesCandidate(t *testing.T) {
 	require.Equal(t, 2, graph.writes)
 	require.True(t, hasDreamWriteQuery(graph.writeQueries, "PROMOTED_TO"))
 	require.True(t, hasDreamWriteQuery(graph.writeQueries, "SET d.status = $status"))
+	require.Equal(t, []observability.DreamFeedbackSample{
+		{Decision: "promote_candidate", Outcome: "ok", FromStatus: "proposed"},
+	}, metrics.DreamFeedbackSamples())
 
-	_, err = New(Dependencies{Graph: graph}).ResolveFeedback(context.Background(), "profile-1", ResolveFeedbackRequest{
+	errorMetrics := observability.NewInMemoryDiscoverabilityMetrics()
+	_, err = New(Dependencies{Graph: graph, Metrics: errorMetrics}).ResolveFeedback(context.Background(), "profile-1", ResolveFeedbackRequest{
 		DreamID:  "dream-1",
 		Decision: "promote_candidate",
 	})
 	require.ErrorContains(t, err, "fragment create service is required")
+	require.Equal(t, []observability.DreamFeedbackSample{
+		{Decision: "promote_candidate", Outcome: "error", FromStatus: "proposed"},
+	}, errorMetrics.DreamFeedbackSamples())
+}
+
+func TestDreamServiceResolveFeedbackPromoteCandidateRefetchError(t *testing.T) {
+	now := time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC)
+	graph := &cycleRunGraphStub{
+		executeWrites: true,
+		readErr:       errors.New("read failed"),
+		readErrAfter:  3,
+		dreamRows:     []map[string]any{{"d": dreamTestNode("dream-1", "profile-1", now)}},
+	}
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	svc := New(Dependencies{
+		Graph:          graph,
+		FragmentCreate: &dreamFragmentCreateStub{},
+		Metrics:        metrics,
+		Now:            func() time.Time { return now },
+	})
+
+	res, err := svc.ResolveFeedback(context.Background(), "profile-1", ResolveFeedbackRequest{
+		DreamID:  "dream-1",
+		Decision: "promote_candidate",
+		Feedback: "confirmed by user",
+	})
+
+	require.ErrorContains(t, err, "read failed")
+	require.Nil(t, res)
+	require.Equal(t, 2, graph.writes)
+	require.Equal(t, []observability.DreamFeedbackSample{
+		{Decision: "promote_candidate", Outcome: "error", FromStatus: "proposed"},
+	}, metrics.DreamFeedbackSamples())
 }
 
 func TestDreamServiceEffectiveConfigUsesProfileOverrides(t *testing.T) {
@@ -620,7 +667,9 @@ func (s dreamProfileStub) List(context.Context, int, int) ([]*domain.Profile, er
 type cycleRunGraphStub struct {
 	existingRun    bool
 	writes         int
+	readCalls      int
 	readErr        error
+	readErrAfter   int
 	writeErr       error
 	executeWrites  bool
 	writeQueries   []string
@@ -632,8 +681,9 @@ type cycleRunGraphStub struct {
 }
 
 func (s *cycleRunGraphStub) ScopedRead(_ context.Context, _ string, query string, params map[string]any) (neo4j.ResultSummary, []map[string]any, error) {
+	s.readCalls++
 	s.lastReadParams = params
-	if s.readErr != nil {
+	if s.readErr != nil && (s.readErrAfter == 0 || s.readCalls >= s.readErrAfter) {
 		return nil, nil, s.readErr
 	}
 	if s.existingRun && strings.Contains(query, "DreamCycleRun") {

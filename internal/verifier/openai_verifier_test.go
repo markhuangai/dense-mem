@@ -58,7 +58,8 @@ func TestOpenAIVerifier(t *testing.T) {
 			var reqBody openAIVerifierRequest
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
 			assert.Equal(t, "gpt-4o-mini", reqBody.Model)
-			assert.Equal(t, float64(0), reqBody.Temperature)
+			require.NotNil(t, reqBody.Temperature)
+			assert.Equal(t, float64(0), *reqBody.Temperature)
 			assert.Equal(t, "json_schema", reqBody.ResponseFormat.Type)
 			assert.True(t, reqBody.ResponseFormat.JSONSchema.Strict)
 			require.Len(t, reqBody.Messages, 2)
@@ -106,6 +107,28 @@ func TestOpenAIVerifier(t *testing.T) {
 			AIVerifierAPIKey: "verifier-key",
 			AIVerifierModel:  "verifier-model",
 		}
+		v := NewOpenAIVerifier(cfg, srv.Client())
+
+		got, err := v.Verify(context.Background(), Request{ProfileID: "p", Predicate: "claim"})
+
+		require.NoError(t, err)
+		assert.Equal(t, "entailed", got.Verdict)
+	})
+
+	t.Run("DisableTemperatureOmitsField", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var raw map[string]json.RawMessage
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&raw))
+			if _, ok := raw["temperature"]; ok {
+				t.Fatal("temperature field was present, want omitted")
+			}
+
+			verifierSuccessHandler("entailed", 0.9, "Temperature was omitted.")(w, r)
+		}))
+		defer srv.Close()
+
+		cfg := newTestVerifierConfig(srv.URL, "k", "m")
+		cfg.AIVerifierDisableTemperature = true
 		v := NewOpenAIVerifier(cfg, srv.Client())
 
 		got, err := v.Verify(context.Background(), Request{ProfileID: "p", Predicate: "claim"})

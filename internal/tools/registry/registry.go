@@ -1,8 +1,8 @@
 // Package registry is the single source of truth for the dense-mem tool catalog.
 //
-// Every AI-exposed verb (save_memory, recall_memory, list_recent_memories,
-// get_memory, plus the lower-level keyword_search / semantic_search / graph_query
-// primitives) is registered once here with its name, description, JSON Schemas,
+// Every AI-exposed verb (remember, recall_memory, list_recent_memories,
+// plus the lower-level keyword_search / semantic_search / graph_query primitives)
+// is registered once here with its name, description, JSON Schemas,
 // required scopes, and a bound invoker. HTTP handlers, the
 // catalog endpoint (Unit 21), the OpenAPI generator (Unit 23), and the MCP
 // server (Unit 24) all read from this registry instead of duplicating schemas.

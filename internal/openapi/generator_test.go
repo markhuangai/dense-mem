@@ -35,6 +35,10 @@ func TestGenerator_AISafeExcludesRuntimeOnlyRoutes(t *testing.T) {
 	if _, present := paths["/api/v1/fragments"]; !present {
 		t.Errorf("ai-safe spec must include /api/v1/fragments")
 	}
+	fragmentsPath := paths["/api/v1/fragments"].(map[string]any)
+	if _, present := fragmentsPath["post"]; present {
+		t.Errorf("ai-safe spec must not include raw fragment creation")
+	}
 }
 
 func TestGenerator_FullIncludesRuntimeOnlyRoutes(t *testing.T) {
@@ -49,6 +53,65 @@ func TestGenerator_FullIncludesRuntimeOnlyRoutes(t *testing.T) {
 	}
 	if _, present := paths["/api/v1/fragments"]; !present {
 		t.Errorf("full spec must include /api/v1/fragments")
+	}
+	fragmentsPath := paths["/api/v1/fragments"].(map[string]any)
+	if _, present := fragmentsPath["post"]; !present {
+		t.Errorf("full spec must include raw fragment creation")
+	}
+}
+
+func TestGenerator_FullFragmentRoutesUseExplicitSchemas(t *testing.T) {
+	g := New(testRegistry(t), DefaultRoutes())
+	spec, err := g.Generate(SpecVariantFull)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	paths := spec["paths"].(map[string]any)
+	fragmentsPath := paths["/api/v1/fragments"].(map[string]any)
+	createOp := fragmentsPath["post"].(map[string]any)
+
+	reqBody, ok := createOp["requestBody"].(map[string]any)
+	if !ok {
+		t.Fatal("POST /api/v1/fragments requestBody missing")
+	}
+	reqContent := reqBody["content"].(map[string]any)
+	reqJSON := reqContent["application/json"].(map[string]any)
+	reqSchema := reqJSON["schema"].(map[string]any)
+	if got := reqSchema["$ref"]; got != "#/components/schemas/CreateFragmentRequest" {
+		t.Fatalf("POST /api/v1/fragments requestBody $ref = %v; want #/components/schemas/CreateFragmentRequest", got)
+	}
+
+	responses := createOp["responses"].(map[string]any)
+	resp201, ok := responses["201"].(map[string]any)
+	if !ok {
+		t.Fatalf("POST /api/v1/fragments 201 response missing; have: %v", keysOf(responses))
+	}
+	resp201Content := resp201["content"].(map[string]any)
+	resp201JSON := resp201Content["application/json"].(map[string]any)
+	resp201Schema := resp201JSON["schema"].(map[string]any)
+	if got := resp201Schema["$ref"]; got != "#/components/schemas/FragmentResponse" {
+		t.Fatalf("POST /api/v1/fragments 201 response $ref = %v; want #/components/schemas/FragmentResponse", got)
+	}
+
+	fragmentByIDPath := paths["/api/v1/fragments/{id}"].(map[string]any)
+	getOp := fragmentByIDPath["get"].(map[string]any)
+	getResponses := getOp["responses"].(map[string]any)
+	resp200 := getResponses["200"].(map[string]any)
+	resp200Content := resp200["content"].(map[string]any)
+	resp200JSON := resp200Content["application/json"].(map[string]any)
+	resp200Schema := resp200JSON["schema"].(map[string]any)
+	if got := resp200Schema["$ref"]; got != "#/components/schemas/FragmentResponse" {
+		t.Fatalf("GET /api/v1/fragments/{id} 200 response $ref = %v; want #/components/schemas/FragmentResponse", got)
+	}
+
+	components := spec["components"].(map[string]any)
+	schemas := components["schemas"].(map[string]any)
+	if _, has := schemas["CreateFragmentRequest"]; !has {
+		t.Fatalf("CreateFragmentRequest schema missing from components")
+	}
+	if _, has := schemas["FragmentResponse"]; !has {
+		t.Fatalf("FragmentResponse schema missing from components")
 	}
 }
 
@@ -132,12 +195,12 @@ func TestGenerator_SchemasDerivedFromRegistry(t *testing.T) {
 	components := spec["components"].(map[string]any)
 	schemas := components["schemas"].(map[string]any)
 
-	// save_memory -> SavememoryInput/Output per schemaNameFor naming
-	if _, has := schemas["SavememoryInput"]; !has {
-		t.Errorf("registry-derived schema SavememoryInput missing; have keys: %v", keysOf(schemas))
+	// remember -> RememberInput/Output per schemaNameFor naming
+	if _, has := schemas["RememberInput"]; !has {
+		t.Errorf("registry-derived schema RememberInput missing; have keys: %v", keysOf(schemas))
 	}
-	if _, has := schemas["SavememoryOutput"]; !has {
-		t.Errorf("registry-derived schema SavememoryOutput missing")
+	if _, has := schemas["RememberOutput"]; !has {
+		t.Errorf("registry-derived schema RememberOutput missing")
 	}
 	if _, has := schemas["ErrorResponse"]; !has {
 		t.Errorf("ErrorResponse schema missing")
@@ -168,7 +231,7 @@ func TestGenerator_JSONRoundTrips(t *testing.T) {
 
 func TestGenerator_PathParamsDeclared(t *testing.T) {
 	g := New(testRegistry(t), DefaultRoutes())
-	spec, err := g.Generate(SpecVariantAISafe)
+	spec, err := g.Generate(SpecVariantFull)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}

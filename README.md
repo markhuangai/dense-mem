@@ -136,6 +136,10 @@ the URL, model, and dimensions (`https://api.openai.com/v1`,
 fill in `AI_API_KEY`. Override those values together when using a different
 embedding provider or model.
 
+Verifier calls send `temperature: 0` by default. Set
+`AI_VERIFIER_DISABLE_TEMPERATURE=true` to omit the field for providers or models
+that reject temperature.
+
 ### Telemetry Overlay
 
 Prometheus telemetry is optional and off by default. To collect usage,
@@ -234,9 +238,9 @@ memory, applies explicit gates, and returns structured outcomes.
 | `reflect_memories` | Reviews active facts, candidate or disputed claims, contradictions, stale memories, and clarification needs. |
 | `confirm_memory` | Applies the user's answer to a clarification task, either accepting a claim and superseding comparable active facts or keeping/rejecting it. |
 
-Low-level tools remain available for advanced callers: `save_memory`,
-`post_claim`, `verify_claim`, `promote_claim`, search tools, graph query tools,
-community tools, and retraction tools.
+Low-level tools remain available for advanced callers: `post_claim`,
+`verify_claim`, `promote_claim`, search tools, graph query tools, community
+tools, and retraction tools.
 
 Memory moves through this path:
 

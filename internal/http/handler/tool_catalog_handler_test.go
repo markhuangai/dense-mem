@@ -27,8 +27,8 @@ func (s catalogRecallFeedbackConfigStub) RecallFeedbackRuntimeConfig(context.Con
 func TestToolCatalogHandler_ReturnsRegisteredTools(t *testing.T) {
 	reg := registry.New()
 	if err := reg.Register(registry.Tool{
-		Name:           "save_memory",
-		Description:    "store a fragment",
+		Name:           "remember",
+		Description:    "store memory evidence and typed claims",
 		InputSchema:    map[string]any{"type": "object"},
 		OutputSchema:   map[string]any{"type": "object"},
 		RequiredScopes: []string{"write"},
@@ -54,8 +54,8 @@ func TestToolCatalogHandler_ReturnsRegisteredTools(t *testing.T) {
 	if len(resp.Tools) != 1 {
 		t.Fatalf("Tools length = %d; want 1", len(resp.Tools))
 	}
-	if resp.Tools[0].Name != "save_memory" {
-		t.Errorf("Tools[0].Name = %q; want save_memory", resp.Tools[0].Name)
+	if resp.Tools[0].Name != "remember" {
+		t.Errorf("Tools[0].Name = %q; want remember", resp.Tools[0].Name)
 	}
 	if len(resp.Tools[0].RequiredScopes) == 0 {
 		t.Error("Tools[0].RequiredScopes empty")
@@ -132,8 +132,9 @@ func TestToolCatalogHandler_FullV1Surface(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	expected := []string{
-		"save_memory", "get_memory", "list_recent_memories", "recall_memory",
-		"dreaming_status", "run_dreaming_cycle", "list_dreams", "get_dream", "resolve_dream_feedback",
+		"list_recent_memories", "recall_memory",
+		"remember", "import_memories", "reflect_memories", "confirm_memory",
+		"list_dreams", "get_dream", "resolve_dream_feedback",
 		"keyword_search", "semantic_search", "graph_query",
 	}
 	seen := make(map[string]bool, len(resp.Tools))

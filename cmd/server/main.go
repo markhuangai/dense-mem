@@ -393,6 +393,7 @@ func main() {
 		Locker:         dreamservice.NewPostgresCycleLocker(),
 		Postgres:       pgDB.GetDB(),
 		Generator:      dreamservice.NewHeuristicGenerator(cfg.GetAIVerifierModel()),
+		Metrics:        discoverabilityMetrics,
 	})
 	contextSvc := contextservice.New(contextservice.Dependencies{
 		Reader:      profileScopeEnforcer,
@@ -432,8 +433,6 @@ func main() {
 
 	// Tool registry is the single source of truth for MCP / HTTP catalog / OpenAPI.
 	toolRegistry, err := registry.BuildDefault(registry.Dependencies{
-		FragmentCreate:              fragmentCreateRegistrySvc,
-		FragmentGet:                 fragmentGetSvc,
 		FragmentList:                fragmentListSvc,
 		Recall:                      recallRegistrySvc,
 		Metrics:                     discoverabilityMetrics,
