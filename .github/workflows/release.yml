@@ -46,7 +46,7 @@ jobs:
               await github.rest.repos.getReleaseByTag({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                tag_name: tag,
+                tag: tag,
               });
               core.setFailed(`${tag} already exists as a GitHub Release`);
             } catch (error) {
@@ -277,7 +277,7 @@ jobs:
               await github.rest.repos.getReleaseByTag({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                tag_name: tag,
+                tag: tag,
               });
               core.setFailed(`${tag} already exists as a GitHub Release`);
             } catch (error) {
