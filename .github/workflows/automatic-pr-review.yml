@@ -27,7 +27,6 @@ jobs:
       runner: docker-runner
       timeout_minutes: 60
       max_turns: 200
-      dry-run: false
       source-comment: ""
     secrets:
       GITVIBE_AI_ENV_JSON: ${{ secrets.GITVIBE_AI_ENV_JSON }}
