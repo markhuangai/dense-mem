@@ -1,20 +1,29 @@
 import { useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { InfoTooltip, SectionHeading } from "../ui/components";
-import { Dream, DreamRun, DreamStatus, UserApi } from "./api";
+import { Dream, DreamQuery, DreamRun, DreamSort, DreamStatus, UserApi } from "./api";
 
 const DREAM_STATUSES = ["", "proposed", "reinforced", "stale", "rejected", "promoted"];
+const DREAM_PAGE_SIZES = [10, 25, 50, 100];
+const DREAM_SORTS: Array<{ value: DreamSort; label: string }> = [
+  { value: "updated_at", label: "Updated" },
+  { value: "created_at", label: "Created" },
+  { value: "last_evaluated_at", label: "Evaluated" },
+];
+const DEFAULT_DREAM_QUERY: DreamQuery = { status: "", limit: 25, sort: "updated_at", direction: "desc", cursor: "" };
 
 export function UserDreamsPanel({ api }: { api: UserApi }) {
   const [status, setStatus] = useState<DreamStatus | null>(null);
   const [runs, setRuns] = useState<DreamRun[]>([]);
   const [dreams, setDreams] = useState<Dream[]>([]);
-  const [dreamStatus, setDreamStatus] = useState("");
+  const [dreamQuery, setDreamQuery] = useState<DreamQuery>(DEFAULT_DREAM_QUERY);
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
+  const [nextCursor, setNextCursor] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const requestSeqRef = useRef(0);
 
-  async function loadData(nextStatus = dreamStatus) {
+  async function loadData(nextQuery = dreamQuery, nextCursorStack = cursorStack) {
     const requestSeq = requestSeqRef.current + 1;
     requestSeqRef.current = requestSeq;
     setLoading(true);
@@ -23,7 +32,7 @@ export function UserDreamsPanel({ api }: { api: UserApi }) {
       const [nextStatusResult, nextRuns, nextDreams] = await Promise.all([
         api.dreamingStatus(),
         api.listDreamingRuns(10),
-        api.listDreams(nextStatus, 50),
+        api.listDreams(nextQuery),
       ]);
       if (requestSeq !== requestSeqRef.current) {
         return;
@@ -31,6 +40,9 @@ export function UserDreamsPanel({ api }: { api: UserApi }) {
       setStatus(nextStatusResult);
       setRuns(nextRuns);
       setDreams(nextDreams.items);
+      setDreamQuery(nextQuery);
+      setCursorStack(nextCursorStack);
+      setNextCursor(nextDreams.next_cursor ?? "");
     } catch (err) {
       if (requestSeq !== requestSeqRef.current) {
         return;
@@ -44,8 +56,13 @@ export function UserDreamsPanel({ api }: { api: UserApi }) {
   }
 
   useEffect(() => {
-    void loadData();
+    void loadData({ ...dreamQuery, cursor: "" }, []);
   }, [api]);
+
+  const pageNumber = cursorStack.length + 1;
+  const dreamSort = dreamQuery.sort ?? "updated_at";
+  const dreamDirection = dreamQuery.direction ?? "desc";
+  const dreamLimit = dreamQuery.limit ?? DEFAULT_DREAM_QUERY.limit ?? 25;
 
   return (
     <>
@@ -70,20 +87,44 @@ export function UserDreamsPanel({ api }: { api: UserApi }) {
       </section>
 
       <section className="surface">
-        <SectionHeading title="Dream Outputs" meta={dreams.length} />
-        <div className="metrics-toolbar">
+        <SectionHeading title="Dream Outputs" meta={`Page ${pageNumber}`} />
+        <div className="metrics-toolbar dream-list-toolbar">
           <label>
             Status
             <select
-              value={dreamStatus}
+              value={dreamQuery.status ?? ""}
               onChange={(event) => {
-                setDreamStatus(event.target.value);
-                void loadData(event.target.value);
+                void loadData({ ...dreamQuery, status: event.target.value, cursor: "" }, []);
               }}
             >
               {DREAM_STATUSES.map((statusOption) => (
                 <option value={statusOption} key={statusOption}>{statusOption || "All"}</option>
               ))}
+            </select>
+          </label>
+          <label>
+            Sort
+            <select
+              value={dreamSort}
+              onChange={(event) => {
+                void loadData({ ...dreamQuery, sort: event.target.value as DreamSort, cursor: "" }, []);
+              }}
+            >
+              {DREAM_SORTS.map((sortOption) => (
+                <option value={sortOption.value} key={sortOption.value}>{sortOption.label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Direction
+            <select
+              value={dreamDirection}
+              onChange={(event) => {
+                void loadData({ ...dreamQuery, direction: event.target.value as DreamQuery["direction"], cursor: "" }, []);
+              }}
+            >
+              <option value="desc">Desc</option>
+              <option value="asc">Asc</option>
             </select>
           </label>
         </div>
@@ -92,8 +133,46 @@ export function UserDreamsPanel({ api }: { api: UserApi }) {
         ) : dreams.length === 0 ? (
           <div className="table-placeholder">No dreams</div>
         ) : (
-          <DreamTable dreams={dreams} />
+          <DreamTable dreams={dreams} sort={dreamSort} />
         )}
+        <div className="table-actions">
+          <span className="form-meta">Page {pageNumber} · {dreams.length} rows</span>
+          <label className="table-page-size">
+            Rows
+            <select
+              value={dreamLimit}
+              disabled={loading}
+              onChange={(event) => {
+                void loadData({ ...dreamQuery, limit: Number(event.target.value), cursor: "" }, []);
+              }}
+            >
+              {DREAM_PAGE_SIZES.map((pageSize) => (
+                <option value={pageSize} key={pageSize}>{pageSize}</option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="ghost-button"
+            type="button"
+            disabled={loading || cursorStack.length === 0}
+            onClick={() => {
+              const previousStack = cursorStack.slice(0, -1);
+              void loadData({ ...dreamQuery, cursor: cursorStack[cursorStack.length - 1] ?? "" }, previousStack);
+            }}
+          >
+            Previous
+          </button>
+          <button
+            className="ghost-button"
+            type="button"
+            disabled={loading || !nextCursor}
+            onClick={() => {
+              void loadData({ ...dreamQuery, cursor: nextCursor }, [...cursorStack, dreamQuery.cursor ?? ""]);
+            }}
+          >
+            Next
+          </button>
+        </div>
       </section>
 
       <section className="surface">
@@ -119,13 +198,13 @@ function StatusItem({ label, value }: { label: string; value: string | number })
   );
 }
 
-function DreamTable({ dreams }: { dreams: Dream[] }) {
+function DreamTable({ dreams, sort }: { dreams: Dream[]; sort: DreamSort }) {
   return (
     <div className="table-wrap">
       <table className="data-table dreams-table">
         <thead>
           <tr>
-            <th>Updated</th>
+            <th>{dreamDateHeader(sort)}</th>
             <th>Status</th>
             <th>Hypothesis</th>
             <th>Confidence</th>
@@ -135,18 +214,18 @@ function DreamTable({ dreams }: { dreams: Dream[] }) {
         <tbody>
           {dreams.map((dream) => (
             <tr key={dream.dream_id}>
-              <td>{formatDate(dream.updated_at)}</td>
+              <td>{formatDreamDate(dream, sort)}</td>
               <td><span className={dreamStatusClass(dream.status)}>{dream.status}</span></td>
-	              <td>
-	                <div className="dream-hypothesis-cell">
-	                  <strong>{dream.hypothesis}</strong>
-	                  {dream.rationale && (
-	                    <InfoTooltip label={`Why this hypothesis: ${dream.hypothesis}`}>
-	                      {dream.rationale}
-	                    </InfoTooltip>
-	                  )}
-	                </div>
-	              </td>
+              <td>
+                <div className="dream-hypothesis-cell">
+                  <strong>{dream.hypothesis}</strong>
+                  {dream.rationale && (
+                    <InfoTooltip label={`Why this hypothesis: ${dream.hypothesis}`}>
+                      {dream.rationale}
+                    </InfoTooltip>
+                  )}
+                </div>
+              </td>
               <td>{Math.round(dream.confidence * 100)}%</td>
               <td><code>{dream.cycle_run_id?.slice(0, 8) || "-"}</code></td>
             </tr>
@@ -155,6 +234,19 @@ function DreamTable({ dreams }: { dreams: Dream[] }) {
       </table>
     </div>
   );
+}
+
+function dreamDateHeader(sort: DreamSort): string {
+  return DREAM_SORTS.find((option) => option.value === sort)?.label ?? "Updated";
+}
+
+function formatDreamDate(dream: Dream, sort: DreamSort): string {
+  const value = sort === "created_at"
+    ? dream.created_at
+    : sort === "last_evaluated_at"
+      ? dream.last_evaluated_at
+      : dream.updated_at;
+  return value ? formatDate(value) : "-";
 }
 
 function RunTable({ runs }: { runs: DreamRun[] }) {

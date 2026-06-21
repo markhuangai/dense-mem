@@ -69,10 +69,16 @@ describe("UserApi", () => {
     }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await new UserApi("dm_key").listDreams("proposed", 50, "current-dream");
+    const result = await new UserApi("dm_key").listDreams({
+      status: "proposed",
+      limit: 50,
+      cursor: "current-dream",
+      sort: "last_evaluated_at",
+      direction: "desc",
+    });
 
     expect(result.next_cursor).toBe("next-dream");
-    expect(fetchMock).toHaveBeenCalledWith("/api/v1/dreams?limit=50&status=proposed&cursor=current-dream", expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/dreams?limit=50&status=proposed&cursor=current-dream&sort=last_evaluated_at&direction=desc", expect.objectContaining({
       headers: expect.objectContaining({ Authorization: "Bearer dm_key" }),
     }));
   });

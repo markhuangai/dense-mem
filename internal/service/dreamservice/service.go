@@ -3,8 +3,10 @@ package dreamservice
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -24,7 +26,22 @@ const (
 	defaultListLimit = 20
 	maxListLimit     = 100
 	lockTimeout      = 30 * time.Second
+
+	DreamSortUpdatedAt       = "updated_at"
+	DreamSortCreatedAt       = "created_at"
+	DreamSortLastEvaluatedAt = "last_evaluated_at"
+	DreamDirectionAsc        = "asc"
+	DreamDirectionDesc       = "desc"
 )
+
+var ErrInvalidDreamCursor = errors.New("invalid cursor")
+
+type dreamCursor struct {
+	Sort      string
+	Direction string
+	SortAt    time.Time
+	DreamID   string
+}
 
 type service struct {
 	deps Dependencies
@@ -42,6 +59,79 @@ func New(deps Dependencies) Service {
 		deps.Generator = NewHeuristicGenerator("")
 	}
 	return &service{deps: deps, now: now}
+}
+
+func normalizeDreamSort(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case DreamSortCreatedAt:
+		return DreamSortCreatedAt
+	case DreamSortLastEvaluatedAt:
+		return DreamSortLastEvaluatedAt
+	default:
+		return DreamSortUpdatedAt
+	}
+}
+
+func normalizeDreamDirection(value string) string {
+	if strings.ToLower(strings.TrimSpace(value)) == DreamDirectionAsc {
+		return DreamDirectionAsc
+	}
+	return DreamDirectionDesc
+}
+
+func encodeDreamCursor(c dreamCursor) string {
+	raw := fmt.Sprintf("%s|%s|%s|%s", c.Sort, c.Direction, c.SortAt.UTC().Format(time.RFC3339Nano), c.DreamID)
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+func decodeDreamCursor(cursor string, sort string, direction string) (time.Time, string, error) {
+	if strings.TrimSpace(cursor) == "" {
+		return time.Time{}, "", nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("%w: %v", ErrInvalidDreamCursor, err)
+	}
+	parts := strings.SplitN(string(raw), "|", 4)
+	if len(parts) != 4 || parts[0] == "" || parts[1] == "" || parts[3] == "" {
+		return time.Time{}, "", ErrInvalidDreamCursor
+	}
+	if parts[0] != sort || parts[1] != direction {
+		return time.Time{}, "", fmt.Errorf("%w: sort changed", ErrInvalidDreamCursor)
+	}
+	sortAt, err := time.Parse(time.RFC3339Nano, parts[2])
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("%w: %v", ErrInvalidDreamCursor, err)
+	}
+	return sortAt.UTC(), parts[3], nil
+}
+
+func dreamSortExpression(sort string) string {
+	switch sort {
+	case DreamSortCreatedAt:
+		return "d.created_at"
+	case DreamSortLastEvaluatedAt:
+		return "coalesce(d.last_evaluated_at, datetime({epochMillis: 0}))"
+	default:
+		return "d.updated_at"
+	}
+}
+
+func dreamSortTime(dream *domain.Dream, sort string) time.Time {
+	if dream == nil {
+		return time.Time{}
+	}
+	switch sort {
+	case DreamSortCreatedAt:
+		return dream.CreatedAt
+	case DreamSortLastEvaluatedAt:
+		if dream.LastEvaluatedAt != nil {
+			return *dream.LastEvaluatedAt
+		}
+		return time.Unix(0, 0).UTC()
+	default:
+		return dream.UpdatedAt
+	}
 }
 
 func (s *service) RunCycle(ctx context.Context, profileID string, req RunCycleRequest) (*RunCycleResult, error) {
@@ -229,15 +319,39 @@ func (s *service) List(ctx context.Context, profileID string, opts ListOptions) 
 		limit = maxListLimit
 	}
 	statusFilter := strings.TrimSpace(opts.Status)
-	query := `
+	sortField := normalizeDreamSort(opts.Sort)
+	direction := normalizeDreamDirection(opts.Direction)
+	cursorAt, cursorDreamID, err := decodeDreamCursor(opts.Cursor, sortField, direction)
+	if err != nil {
+		return nil, "", fmt.Errorf("dream list: %w", err)
+	}
+	sortExpression := dreamSortExpression(sortField)
+	comparator := "<"
+	orderDirection := "DESC"
+	if direction == DreamDirectionAsc {
+		comparator = ">"
+		orderDirection = "ASC"
+	}
+	var cursorAtParam any
+	var cursorDreamIDParam any
+	if !cursorAt.IsZero() {
+		cursorAtParam = cursorAt
+		cursorDreamIDParam = cursorDreamID
+	}
+	query := fmt.Sprintf(`
 MATCH (d:Dream {team_id: $profileId})
+WITH d, %s AS sort_at
 WHERE ($status = '' OR d.status = $status)
+  AND ($cursorAt IS NULL OR sort_at %s $cursorAt
+       OR (sort_at = $cursorAt AND d.dream_id > $cursorDreamID))
 RETURN d
-ORDER BY d.updated_at DESC, d.dream_id ASC
-LIMIT $limit`
+ORDER BY sort_at %s, d.dream_id ASC
+LIMIT $limit`, sortExpression, comparator, orderDirection)
 	_, rows, err := s.deps.Graph.ScopedRead(ctx, profileID, query, map[string]any{
-		"status": statusFilter,
-		"limit":  int64(limit),
+		"status":        statusFilter,
+		"cursorAt":      cursorAtParam,
+		"cursorDreamID": cursorDreamIDParam,
+		"limit":         int64(limit + 1),
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("dream list: %w", err)
@@ -252,7 +366,18 @@ LIMIT $limit`
 			dreams = append(dreams, dream)
 		}
 	}
-	return dreams, "", nil
+	nextCursor := ""
+	if len(dreams) > limit {
+		last := dreams[limit-1]
+		nextCursor = encodeDreamCursor(dreamCursor{
+			Sort:      sortField,
+			Direction: direction,
+			SortAt:    dreamSortTime(last, sortField),
+			DreamID:   last.DreamID,
+		})
+		dreams = dreams[:limit]
+	}
+	return dreams, nextCursor, nil
 }
 
 func (s *service) Get(ctx context.Context, profileID, dreamID string) (*domain.Dream, error) {
