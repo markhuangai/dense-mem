@@ -139,7 +139,7 @@ jobs:
             const request = {
               owner: context.repo.owner,
               repo: context.repo.repo,
-              tag_name: tag,
+              tag: tag,
             };
 
             try {
