@@ -32,7 +32,7 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
-    uses: markhuangai/git-vibe/.github/workflows/review.yml@d0f38d4f8ec3c037eb015aeaa4a6325bb703e21c
+    uses: markhuangai/git-vibe/.github/workflows/review.yml@dev
     with:
       pr-number: ${{ github.event.inputs.pr-number }}
       runner: docker-runner
