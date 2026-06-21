@@ -10,8 +10,7 @@ on:
       - main
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 concurrency:
   group: release-prerelease-main
@@ -25,6 +24,8 @@ jobs:
         github.event.workflow_run.conclusion == 'success' &&
         github.event.workflow_run.event == 'push'
       }}
+    permissions:
+      contents: write
     runs-on: docker-runner
     outputs:
       tag: ${{ steps.version.outputs.tag }}
@@ -169,6 +170,9 @@ jobs:
     name: Publish prerelease image
     needs: prepare-prerelease
     if: needs.prepare-prerelease.outputs.should_publish == 'true'
+    permissions:
+      contents: read
+      packages: write
     uses: ./.github/workflows/publish-image.yml
     with:
       tag: ${{ needs.prepare-prerelease.outputs.tag }}
@@ -177,6 +181,9 @@ jobs:
     name: Publish demo image
     needs: prepare-prerelease
     if: needs.prepare-prerelease.outputs.should_publish == 'true'
+    permissions:
+      contents: read
+      packages: write
     uses: ./.github/workflows/publish-demo-image.yml
     with:
       tag: ${{ needs.prepare-prerelease.outputs.tag }}
