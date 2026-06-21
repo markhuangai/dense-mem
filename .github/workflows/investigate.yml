@@ -1,3 +1,4 @@
+# GitVibe managed workflow wrapper
 name: GitVibe investigate
 run-name: "[git-vibe][investigate]: Issue #${{ inputs.issue-number }}"
 
@@ -18,11 +19,6 @@ on:
         required: false
         type: number
         default: 90
-      dry-run:
-        description: Validate without writing to GitHub.
-        required: false
-        type: boolean
-        default: false
       source-comment:
         description: JSON source comment metadata for replying to command comments.
         required: false
@@ -41,7 +37,6 @@ jobs:
       runner: docker-runner
       timeout_minutes: ${{ fromJSON(github.event.inputs.timeout_minutes) }}
       max_turns: ${{ fromJSON(github.event.inputs.max_turns) }}
-      dry-run: ${{ fromJSON(github.event.inputs.dry-run) }}
       source-comment: ${{ github.event.inputs.source-comment }}
     secrets:
       GITVIBE_AI_ENV_JSON: ${{ secrets.GITVIBE_AI_ENV_JSON }}
