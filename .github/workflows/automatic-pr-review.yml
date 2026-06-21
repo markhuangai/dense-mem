@@ -5,7 +5,6 @@ on:
   pull_request_target:
     types: [opened, reopened, synchronize, ready_for_review]
     branches:
-      - dev
       - main
 
 concurrency:
@@ -21,7 +20,7 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
-    uses: markhuangai/git-vibe/.github/workflows/review.yml@dev
+    uses: markhuangai/git-vibe/.github/workflows/review.yml@d0f38d4f8ec3c037eb015aeaa4a6325bb703e21c
     with:
       pr-number: ${{ format('{0}', github.event.pull_request.number) }}
       runner: docker-runner
