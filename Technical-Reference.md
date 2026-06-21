@@ -39,11 +39,11 @@ Dense-Mem MCP tool names use `underscore_case`.
 | Communities | `detect_community` | write | Run community detection for the caller's profile graph. |
 | Communities | `get_community_summary` | read | Fetch one persisted community summary. |
 | Communities | `list_communities` | read | List persisted community summaries. |
-| Skill packs | `find_skill_pack_candidates` | read | Find facts and validated claims that could be exported. |
-| Skill packs | `export_skill_pack` | read | Export selected facts, claims, and manual triples into canonical JSON. |
-| Skill packs | `inspect_skill_pack` | read | Inspect an artifact or HTTPS URL without writing memory. |
-| Skill packs | `import_skill_pack` | write | Import a skill pack in review or trusted mode. |
-| Skill packs | `rollback_skill_pack_import` | write | Roll back an applied import when affected graph entities are unchanged. |
+| Memory packs | `find_memory_pack_candidates` | read | Find facts and validated claims that could be exported. |
+| Memory packs | `export_memory_pack` | read | Export selected facts, claims, and manual triples into canonical JSON with a SHA-256 hash. |
+| Memory packs | `inspect_memory_pack` | read | Inspect an artifact or HTTPS URL without writing memory. |
+| Memory packs | `import_memory_pack` | write | Import a memory pack in review or trusted mode. |
+| Memory packs | `rollback_memory_pack_import` | write | Roll back an applied import when affected graph entities are unchanged. |
 
 For memory writes, split large scenarios into semantic entries before calling
 `remember`, `import_memories`, or `save_memory`. Store one decision, fact,
@@ -122,40 +122,58 @@ gates.
 See [Community Memory](Community-And-Dreaming) and [Dreaming](Dreaming) for
 operator guidance.
 
-## Skill Pack Tools
+## MCP Prompt Catalog
 
-For workflow guidance, see [Skill Packs](Skill-Packs). This section is the
+Dense-Mem advertises MCP prompt support during `initialize` when bundled prompts
+are available.
+
+| Method | Purpose |
+| --- | --- |
+| `prompts/list` | List bundled prompt templates and their arguments. |
+| `prompts/get` | Render one prompt by name with string arguments. |
+
+The first bundled prompt is `export_memory_as_agent_skill`. It helps an LLM
+recall Dense-Mem context for a topic and draft a shareable Agent Skill
+`SKILL.md` file. It is separate from memory-pack import/export; generated skill
+files are not automatically imported into memory.
+
+## Memory Pack Tools
+
+For workflow guidance, see [Memory Packs](Memory-Packs). This section is the
 compact tool and artifact reference.
 
 | Tool | Scope | Purpose |
 | --- | --- | --- |
-| `find_skill_pack_candidates` | read | Find facts and validated claims that could be exported. |
-| `export_skill_pack` | read | Export selected facts, validated claims, and manual triples into canonical JSON with a SHA-256 hash. |
-| `inspect_skill_pack` | read | Parse an artifact or HTTPS URL, verify an optional hash, and report duplicates or conflicts without writing memory. |
-| `import_skill_pack` | write | Import a skill pack in `review` or `trusted` mode. |
-| `rollback_skill_pack_import` | write | Roll back an applied import when the affected graph entities have not changed since import. |
+| `find_memory_pack_candidates` | read | Find facts and validated claims that could be exported. |
+| `export_memory_pack` | read | Export selected facts, validated claims, and manual triples into canonical JSON with a SHA-256 hash. |
+| `inspect_memory_pack` | read | Parse an artifact or HTTPS URL, verify an optional hash, and report duplicates or conflicts without writing memory. |
+| `import_memory_pack` | write | Import a memory pack in `review` or `trusted` mode. |
+| `rollback_memory_pack_import` | write | Roll back an applied import when the affected graph entities have not changed since import. |
 
-`export_skill_pack` returns file-ready artifact data:
+The older `*_skill_pack*` tool names remain accepted as hidden compatibility
+aliases, and legacy `dense-mem.skill_pack.v1` artifacts are still accepted.
+
+`export_memory_pack` returns file-ready artifact data:
 
 | Field | Meaning |
 | --- | --- |
-| `artifact` | Parsed skill-pack object. |
+| `artifact` | Parsed memory-pack object. |
 | `canonical_json` | Canonical JSON bytes to save as the portable file. |
 | `sha256` | Integrity hash for the canonical JSON. |
-| `filename` | Suggested `.skill-pack.json` filename. |
+| `filename` | Suggested `.memory-pack.json` filename. |
 | `content_type` | MIME type for the exported file. |
 
 The artifact includes `exported_at` so consumers can see when the portable
-skill bundle was created. Imports do not treat original claim validity windows
-as part of the exported skill.
+memory bundle was created. Imports do not treat original claim validity windows
+as part of the exported memory pack.
 
-Skill packs preserve the selected skill triples and, when available, the support
-graph that explains why those triples worked. This makes imported skills carry
-the original experience, not only the final fact.
+Memory packs preserve the selected memory triples and, when available, the
+support graph that explains why those triples worked. This makes imported memory
+carry the original experience, not only the final fact.
 
 ```json
 {
-  "schema_version": "dense-mem.skill_pack.v1",
+  "schema_version": "dense-mem.memory_pack.v1",
   "name": "blog-writing",
   "description": "Reusable blog-writing workflow",
   "exported_at": "2026-06-02T01:30:00Z",

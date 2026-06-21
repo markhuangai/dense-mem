@@ -57,7 +57,7 @@ flowchart LR
 | Learn what to do after it is running | [Using Dense-Mem](Using-Dense-Mem) |
 | Connect Claude Code, Codex, or another MCP client | [MCP Clients](MCP-Clients) |
 | Understand memory conflicts and corrections | [Conflicts And Corrections](Conflicts-And-Corrections) |
-| Export or import reusable knowledge | [Skill Packs](Skill-Packs) |
+| Export or import reusable knowledge | [Memory Packs](Memory-Packs) |
 | Use community-aware recall | [Community Memory](Community-And-Dreaming) |
 | Review dream hypotheses | [Dreaming](Dreaming) |
 | Manage teams, profiles, and API keys | [Portals And API Keys](Portals-And-API-Keys) |

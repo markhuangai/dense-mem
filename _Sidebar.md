@@ -9,7 +9,7 @@
 - [Everyday Memory](Using-Dense-Mem)
 - [MCP Clients](MCP-Clients)
 - [Conflicts And Corrections](Conflicts-And-Corrections)
-- [Skill Packs](Skill-Packs)
+- [Memory Packs](Memory-Packs)
 - [Community Memory](Community-And-Dreaming)
 - [Dreaming](Dreaming)
 

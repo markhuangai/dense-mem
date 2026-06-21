@@ -1,13 +1,13 @@
-# Skill Packs
+# Memory Packs
 
-Skill packs package selected Dense-Mem knowledge into portable JSON. Use them
-for reusable skills such as workflows, project conventions, or operational
-patterns that should move between teams or profiles.
+Memory packs package selected Dense-Mem knowledge into portable JSON. Use them
+to import or export memories such as workflows, project conventions, operational
+patterns, and their supporting evidence between teams or profiles.
 
 For exact tool schemas and artifact fields, see
-[Technical Reference](Technical-Reference#skill-pack-tools).
+[Technical Reference](Technical-Reference#memory-pack-tools).
 
-## When To Use A Skill Pack
+## When To Use A Memory Pack
 
 | Use case | Example |
 | --- | --- |
@@ -16,22 +16,26 @@ For exact tool schemas and artifact fields, see
 | Preserve support evidence | Export the facts plus supporting claims and fragments. |
 | Review an external pack | Inspect a pack before importing anything. |
 
-Do not use skill packs for secrets, credentials, or personal data that should not
-move between profiles.
+Do not use memory packs for secrets, credentials, or personal data that should
+not move between profiles.
 
 ## Workflow
 
 | Step | Tool | Writes memory? |
 | --- | --- | --- |
-| Find candidates | `find_skill_pack_candidates` | No |
-| Export selected items | `export_skill_pack` | No |
-| Inspect a pack | `inspect_skill_pack` | No |
-| Import a pack | `import_skill_pack` | Yes |
-| Roll back an import | `rollback_skill_pack_import` | Yes |
+| Find candidates | `find_memory_pack_candidates` | No |
+| Export selected items | `export_memory_pack` | No |
+| Inspect a pack | `inspect_memory_pack` | No |
+| Import a pack | `import_memory_pack` | Yes |
+| Roll back an import | `rollback_memory_pack_import` | Yes |
 
-`inspect_skill_pack` is the no-write review path. `import_skill_pack` creates an
-import ledger entry and can create or update claims and facts depending on mode,
-selected items, and conflict decisions.
+The older `*_skill_pack*` tool names remain accepted as hidden compatibility
+aliases, and legacy `dense-mem.skill_pack.v1` artifacts can still be parsed.
+New clients should use the memory-pack names.
+
+`inspect_memory_pack` is the no-write review path. `import_memory_pack` creates
+an import ledger entry and can create or update claims and facts depending on
+mode, selected items, and conflict decisions.
 
 ## Find Candidates
 
@@ -43,7 +47,7 @@ selected items, and conflict decisions.
 ```
 
 Candidates come from existing active facts and validated claims with supported
-skill-pack predicates.
+memory-pack predicates.
 
 ## Export A Pack
 
@@ -62,7 +66,7 @@ The export result includes:
 | --- | --- |
 | `canonical_json` | The portable JSON artifact. |
 | `sha256` | Integrity hash for the canonical artifact. |
-| `filename` | Suggested `.skill-pack.json` filename. |
+| `filename` | Suggested `.memory-pack.json` filename. |
 
 Keep `include_support=true` unless you intentionally need to omit source
 evidence.
@@ -83,7 +87,7 @@ For a remote artifact, use an HTTPS URL:
 
 ```json
 {
-  "url": "https://example.com/blog-writing.skill-pack.json",
+  "url": "https://example.com/blog-writing.memory-pack.json",
   "expected_sha256": "..."
 }
 ```
@@ -138,3 +142,15 @@ Supported conflict actions are:
 
 Rollback uses the import ledger. It aborts when affected graph entities changed
 after import, because reverting those changes could erase unrelated later work.
+
+## Agent Skill Export Prompt
+
+Memory packs are for importing and exporting memory artifacts. Dense-Mem also
+ships MCP prompts for file-based sharing when an assistant should turn selected
+experience into an Agent Skill instead of creating a memory-pack artifact.
+
+Use `prompts/list` to discover bundled prompts and `prompts/get` to render one.
+The first bundled prompt is `export_memory_as_agent_skill`; it asks the LLM to
+recall Dense-Mem context for a topic and draft a shareable `SKILL.md` file plus
+optional reference files. The generated skill file is not automatically imported
+back into memory.

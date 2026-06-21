@@ -87,6 +87,21 @@ confirm_memory
 Read-only keys will not see write-scoped tools such as `remember` or
 `confirm_memory`.
 
+## Check Bundled Prompts
+
+Dense-Mem also exposes MCP prompts for reusable LLM workflows:
+
+```bash
+curl -s "http://127.0.0.1:8080/mcp" \
+  -H "Authorization: Bearer $DENSE_MEM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"prompts/list","params":{}}'
+```
+
+The response should include `export_memory_as_agent_skill`, a prompt that helps
+an LLM recall Dense-Mem context for a topic and draft a shareable Agent Skill
+`SKILL.md` file.
+
 ## What To Ask
 
 Use normal language:
