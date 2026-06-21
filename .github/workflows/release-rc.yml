@@ -7,14 +7,14 @@ on:
     types:
       - completed
     branches:
-      - dev
+      - main
 
 permissions:
   contents: write
   packages: write
 
 concurrency:
-  group: release-prerelease-dev
+  group: release-prerelease-main
   cancel-in-progress: false
 
 jobs:
@@ -47,12 +47,12 @@ jobs:
 
           git fetch --tags --force origin \
             '+refs/tags/*:refs/tags/*' \
-            '+refs/heads/dev:refs/remotes/origin/dev'
+            '+refs/heads/main:refs/remotes/origin/main'
           git rev-parse --verify "${HEAD_SHA}^{commit}" >/dev/null
 
-          current_dev="$(git rev-parse refs/remotes/origin/dev)"
-          if [[ "${current_dev}" != "${HEAD_SHA}" ]]; then
-            echo "dev advanced to ${current_dev}; skipping stale CI head ${HEAD_SHA}"
+          current_main="$(git rev-parse refs/remotes/origin/main)"
+          if [[ "${current_main}" != "${HEAD_SHA}" ]]; then
+            echo "main advanced to ${current_main}; skipping stale CI head ${HEAD_SHA}"
             echo "tag=" >> "$GITHUB_OUTPUT"
             echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
             exit 0

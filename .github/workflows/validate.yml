@@ -37,7 +37,7 @@ jobs:
       contents: read
       discussions: write
       issues: write
-    uses: markhuangai/git-vibe/.github/workflows/validate.yml@dev
+    uses: markhuangai/git-vibe/.github/workflows/validate.yml@main
     with:
       issue-number: ${{ github.event.inputs.issue-number }}
       discussion-number: ${{ github.event.inputs.discussion-number }}
