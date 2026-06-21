@@ -198,9 +198,15 @@ describe("ControlApi", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const api = new ControlApi("secret", "/control/api");
-    const result = await api.listTeamDreams("team-1", { limit: 50, status: "proposed", cursor: "current-dream" });
+    const result = await api.listTeamDreams("team-1", {
+      limit: 50,
+      status: "proposed",
+      cursor: "current-dream",
+      sort: "created_at",
+      direction: "asc",
+    });
 
     expect(result.next_cursor).toBe("next-dream");
-    expect(fetchMock).toHaveBeenCalledWith("/control/api/teams/team-1/dreams?limit=50&status=proposed&cursor=current-dream", expect.any(Object));
+    expect(fetchMock).toHaveBeenCalledWith("/control/api/teams/team-1/dreams?limit=50&status=proposed&cursor=current-dream&sort=created_at&direction=asc", expect.any(Object));
   });
 });

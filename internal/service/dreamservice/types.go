@@ -106,9 +106,11 @@ type RunCycleResult struct {
 }
 
 type ListOptions struct {
-	Limit  int
-	Cursor string
-	Status string
+	Limit     int
+	Cursor    string
+	Status    string
+	Sort      string
+	Direction string
 }
 
 type ResolveFeedbackRequest struct {

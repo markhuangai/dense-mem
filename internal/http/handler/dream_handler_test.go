@@ -29,6 +29,7 @@ type dreamHandlerServiceStub struct {
 	runsLimit  int
 	profileIDs []string
 	getErr     error
+	listErr    error
 }
 
 func (s *dreamHandlerServiceStub) RunCycle(context.Context, string, dreamservice.RunCycleRequest) (*dreamservice.RunCycleResult, error) {
@@ -38,6 +39,9 @@ func (s *dreamHandlerServiceStub) RunCycle(context.Context, string, dreamservice
 func (s *dreamHandlerServiceStub) List(_ context.Context, profileID string, opts dreamservice.ListOptions) ([]*domain.Dream, string, error) {
 	s.profileIDs = append(s.profileIDs, profileID)
 	s.listOpts = opts
+	if s.listErr != nil {
+		return nil, "", s.listErr
+	}
 	return s.dreams, s.nextCursor, nil
 }
 
@@ -121,7 +125,7 @@ func TestDreamHandlerRoutes(t *testing.T) {
 	}{
 		{path: "/api/v1/dreaming/status", want: `"pending_count":2`},
 		{path: "/api/v1/dreaming/runs?limit=3", want: `"run_id":"run-1"`},
-		{path: "/api/v1/dreams?limit=4&status=proposed&cursor=next", want: `"next_cursor":"after-dream-1"`},
+		{path: "/api/v1/dreams?limit=4&status=proposed&cursor=next&sort=created_at&direction=asc", want: `"next_cursor":"after-dream-1"`},
 		{path: "/api/v1/dreams/dream-1", want: `"dream_id":"dream-1"`},
 	}
 	for _, tt := range tests {
@@ -132,7 +136,7 @@ func TestDreamHandlerRoutes(t *testing.T) {
 		assert.Contains(t, rec.Body.String(), tt.want)
 	}
 	assert.Equal(t, 3, svc.runsLimit)
-	assert.Equal(t, dreamservice.ListOptions{Limit: 4, Status: "proposed", Cursor: "next"}, svc.listOpts)
+	assert.Equal(t, dreamservice.ListOptions{Limit: 4, Status: "proposed", Cursor: "next", Sort: "created_at", Direction: "asc"}, svc.listOpts)
 	assert.Contains(t, svc.profileIDs, profileID.String())
 }
 
@@ -173,6 +177,25 @@ func TestDreamHandlerValidationAndNotFound(t *testing.T) {
 	e.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	assert.Contains(t, rec.Body.String(), "status must be one of")
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/dreams?sort=bad", nil)
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Contains(t, rec.Body.String(), "sort must be updated_at")
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/dreams?direction=sideways", nil)
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Contains(t, rec.Body.String(), "direction must be asc or desc")
+
+	svc.listErr = dreamservice.ErrInvalidDreamCursor
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/dreams?cursor=bad", nil)
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Contains(t, rec.Body.String(), "invalid cursor")
 
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/dreams/dream-missing", nil)
 	rec = httptest.NewRecorder()

@@ -46,6 +46,7 @@ type controlDreamServiceStub struct {
 	runsLimit  int
 	profileID  string
 	getErr     error
+	listErr    error
 }
 
 func (s *controlDreamServiceStub) RunCycle(context.Context, string, dreamservice.RunCycleRequest) (*dreamservice.RunCycleResult, error) {
@@ -55,6 +56,9 @@ func (s *controlDreamServiceStub) RunCycle(context.Context, string, dreamservice
 func (s *controlDreamServiceStub) List(_ context.Context, profileID string, opts dreamservice.ListOptions) ([]*domain.Dream, string, error) {
 	s.profileID = profileID
 	s.listOpts = opts
+	if s.listErr != nil {
+		return nil, "", s.listErr
+	}
 	return s.dreams, s.nextCursor, nil
 }
 
@@ -168,12 +172,12 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), `"run_id":"run-1"`)
 	assert.Equal(t, 3, dreams.runsLimit)
 
-	rec = do("/control/api/teams/" + teamID.String() + "/dreams?limit=4&status=proposed&cursor=next")
+	rec = do("/control/api/teams/" + teamID.String() + "/dreams?limit=4&status=proposed&cursor=next&sort=last_evaluated_at&direction=asc")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "A control dream appears")
 	assert.Contains(t, rec.Body.String(), `"next_cursor":"after-control-dream-1"`)
 	assert.Equal(t, teamID.String(), dreams.profileID)
-	assert.Equal(t, dreamservice.ListOptions{Limit: 4, Status: "proposed", Cursor: "next"}, dreams.listOpts)
+	assert.Equal(t, dreamservice.ListOptions{Limit: 4, Status: "proposed", Cursor: "next", Sort: "last_evaluated_at", Direction: "asc"}, dreams.listOpts)
 
 	rec = do("/control/api/teams/" + teamID.String() + "/dreams/dream-1")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -213,6 +217,16 @@ func TestControlPortalObservabilityValidation(t *testing.T) {
 	c = e.NewContext(req, rec)
 	_, err = controlDreamListOptions(c)
 	require.ErrorContains(t, err, "status must be one of")
+
+	req = httptest.NewRequest(http.MethodGet, "/control/api/dreams?sort=bad", nil)
+	c = e.NewContext(req, rec)
+	_, err = controlDreamListOptions(c)
+	require.ErrorContains(t, err, "sort must be updated_at")
+
+	req = httptest.NewRequest(http.MethodGet, "/control/api/dreams?direction=sideways", nil)
+	c = e.NewContext(req, rec)
+	_, err = controlDreamListOptions(c)
+	require.ErrorContains(t, err, "direction must be asc or desc")
 }
 
 func TestControlPortalObservabilityUnavailableAndNotFound(t *testing.T) {
@@ -237,6 +251,15 @@ func TestControlPortalObservabilityUnavailableAndNotFound(t *testing.T) {
 	c.SetParamValues(teamID.String(), "dream-missing")
 	err := h.getTeamDream(c)
 	require.ErrorContains(t, err, "dream not found")
+
+	h.dreams = &controlDreamServiceStub{listErr: dreamservice.ErrInvalidDreamCursor}
+	req = httptest.NewRequest(http.MethodGet, "/control/api/teams/"+teamID.String()+"/dreams?cursor=bad", nil)
+	rec = httptest.NewRecorder()
+	c = e.NewContext(req, rec)
+	c.SetParamNames("teamId")
+	c.SetParamValues(teamID.String())
+	err = h.listTeamDreams(c)
+	require.ErrorContains(t, err, "invalid cursor")
 }
 
 func TestControlDependencySnapshotErrorAndDegraded(t *testing.T) {

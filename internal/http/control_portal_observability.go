@@ -91,6 +91,9 @@ func (h *controlPortalHandler) listTeamDreams(c echo.Context) error {
 	}
 	dreams, nextCursor, err := h.dreams.List(c.Request().Context(), profileID.String(), opts)
 	if err != nil {
+		if errors.Is(err, dreamservice.ErrInvalidDreamCursor) {
+			return httperr.New(httperr.VALIDATION_ERROR, "invalid cursor")
+		}
 		return err
 	}
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": controlDreamListResponse{Items: dreams, NextCursor: nextCursor}})
@@ -163,10 +166,24 @@ func controlDreamListOptions(c echo.Context) (dreamservice.ListOptions, error) {
 	if status != "" && !domain.DreamStatus(status).IsValid() {
 		return dreamservice.ListOptions{}, httperr.New(httperr.VALIDATION_ERROR, "status must be one of proposed, reinforced, stale, rejected, promoted")
 	}
+	sort := strings.TrimSpace(c.QueryParam("sort"))
+	switch sort {
+	case "", dreamservice.DreamSortUpdatedAt, dreamservice.DreamSortCreatedAt, dreamservice.DreamSortLastEvaluatedAt:
+	default:
+		return dreamservice.ListOptions{}, httperr.New(httperr.VALIDATION_ERROR, "sort must be updated_at, created_at, or last_evaluated_at")
+	}
+	direction := strings.TrimSpace(c.QueryParam("direction"))
+	switch direction {
+	case "", dreamservice.DreamDirectionAsc, dreamservice.DreamDirectionDesc:
+	default:
+		return dreamservice.ListOptions{}, httperr.New(httperr.VALIDATION_ERROR, "direction must be asc or desc")
+	}
 	return dreamservice.ListOptions{
-		Limit:  limit,
-		Status: status,
-		Cursor: strings.TrimSpace(c.QueryParam("cursor")),
+		Limit:     limit,
+		Status:    status,
+		Cursor:    strings.TrimSpace(c.QueryParam("cursor")),
+		Sort:      sort,
+		Direction: direction,
 	}, nil
 }
 

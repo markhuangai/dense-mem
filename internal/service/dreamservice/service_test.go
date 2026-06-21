@@ -676,12 +676,14 @@ type cycleRunGraphStub struct {
 	dreamRows      []map[string]any
 	runRows        []map[string]any
 	inputRows      []map[string]any
+	lastReadQuery  string
 	lastReadParams map[string]any
 	recordsFor     func(query string, params map[string]any) []*neo4j.Record
 }
 
 func (s *cycleRunGraphStub) ScopedRead(_ context.Context, _ string, query string, params map[string]any) (neo4j.ResultSummary, []map[string]any, error) {
 	s.readCalls++
+	s.lastReadQuery = query
 	s.lastReadParams = params
 	if s.readErr != nil && (s.readErrAfter == 0 || s.readCalls >= s.readErrAfter) {
 		return nil, nil, s.readErr
@@ -914,6 +916,10 @@ func (s *dreamFragmentCreateStub) Create(_ context.Context, profileID string, re
 }
 
 func dreamTestNode(dreamID, profileID string, now time.Time) neo4j.Node {
+	return dreamTestNodeWithTimes(dreamID, profileID, now, now, now)
+}
+
+func dreamTestNodeWithTimes(dreamID, profileID string, createdAt, updatedAt, lastEvaluatedAt time.Time) neo4j.Node {
 	return neo4j.Node{Props: map[string]any{
 		"dream_id":           dreamID,
 		"team_id":            profileID,
@@ -930,9 +936,9 @@ func dreamTestNode(dreamID, profileID string, now time.Time) neo4j.Node {
 		"content_hash":       "hash",
 		"source_refs_json":   `[{"type":"fact","id":"fact-1"}]`,
 		"invalidated_reason": "",
-		"created_at":         now,
-		"updated_at":         now,
-		"last_evaluated_at":  now,
+		"created_at":         createdAt,
+		"updated_at":         updatedAt,
+		"last_evaluated_at":  lastEvaluatedAt,
 	}}
 }
 

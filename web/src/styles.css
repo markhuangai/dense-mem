@@ -714,6 +714,17 @@ button:disabled {
   border-top: 1px solid var(--border);
 }
 
+.dream-list-toolbar {
+  grid-template-columns: repeat(3, minmax(130px, 190px));
+}
+
+.dream-list-toolbar label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .metrics-block {
   margin-top: 16px;
 }

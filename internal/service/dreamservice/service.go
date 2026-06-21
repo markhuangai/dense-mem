@@ -21,9 +21,7 @@ import (
 )
 
 const (
-	defaultListLimit = 20
-	maxListLimit     = 100
-	lockTimeout      = 30 * time.Second
+	lockTimeout = 30 * time.Second
 )
 
 type service struct {
@@ -229,15 +227,39 @@ func (s *service) List(ctx context.Context, profileID string, opts ListOptions) 
 		limit = maxListLimit
 	}
 	statusFilter := strings.TrimSpace(opts.Status)
-	query := `
+	sortField := normalizeDreamSort(opts.Sort)
+	direction := normalizeDreamDirection(opts.Direction)
+	cursorAt, cursorDreamID, err := decodeDreamCursor(opts.Cursor, sortField, direction)
+	if err != nil {
+		return nil, "", fmt.Errorf("dream list: %w", err)
+	}
+	sortExpression := dreamSortExpression(sortField)
+	comparator := "<"
+	orderDirection := "DESC"
+	if direction == DreamDirectionAsc {
+		comparator = ">"
+		orderDirection = "ASC"
+	}
+	var cursorAtParam any
+	var cursorDreamIDParam any
+	if !cursorAt.IsZero() {
+		cursorAtParam = cursorAt
+		cursorDreamIDParam = cursorDreamID
+	}
+	query := fmt.Sprintf(`
 MATCH (d:Dream {team_id: $profileId})
+WITH d, %s AS sort_at
 WHERE ($status = '' OR d.status = $status)
+  AND ($cursorAt IS NULL OR sort_at %s $cursorAt
+       OR (sort_at = $cursorAt AND d.dream_id > $cursorDreamID))
 RETURN d
-ORDER BY d.updated_at DESC, d.dream_id ASC
-LIMIT $limit`
+ORDER BY sort_at %s, d.dream_id ASC
+LIMIT $limit`, sortExpression, comparator, orderDirection)
 	_, rows, err := s.deps.Graph.ScopedRead(ctx, profileID, query, map[string]any{
-		"status": statusFilter,
-		"limit":  int64(limit),
+		"status":        statusFilter,
+		"cursorAt":      cursorAtParam,
+		"cursorDreamID": cursorDreamIDParam,
+		"limit":         int64(limit + 1),
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("dream list: %w", err)
@@ -252,7 +274,18 @@ LIMIT $limit`
 			dreams = append(dreams, dream)
 		}
 	}
-	return dreams, "", nil
+	nextCursor := ""
+	if len(dreams) > limit {
+		last := dreams[limit-1]
+		nextCursor = encodeDreamCursor(dreamCursor{
+			Sort:      sortField,
+			Direction: direction,
+			SortAt:    dreamSortTime(last, sortField),
+			DreamID:   last.DreamID,
+		})
+		dreams = dreams[:limit]
+	}
+	return dreams, nextCursor, nil
 }
 
 func (s *service) Get(ctx context.Context, profileID, dreamID string) (*domain.Dream, error) {

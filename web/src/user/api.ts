@@ -169,8 +169,20 @@ export type Dream = {
   generator_model?: string;
   source_refs?: Array<{ type: string; id: string }>;
   invalidated_reason?: string;
+  last_evaluated_at?: string;
   created_at: string;
   updated_at: string;
+};
+
+export type DreamSort = "updated_at" | "created_at" | "last_evaluated_at";
+export type DreamDirection = "asc" | "desc";
+
+export type DreamQuery = {
+  limit?: number;
+  status?: Dream["status"] | "";
+  cursor?: string;
+  sort?: DreamSort;
+  direction?: DreamDirection;
 };
 
 export type DreamRun = {
@@ -338,13 +350,19 @@ export class UserApi {
     return payload.data;
   }
 
-  async listDreams(status = "", limit = 20, cursor = ""): Promise<ListResponse<Dream>> {
-    const params = new URLSearchParams({ limit: String(limit) });
-    if (status) {
-      params.set("status", status);
+  async listDreams(query: DreamQuery = {}): Promise<ListResponse<Dream>> {
+    const params = new URLSearchParams({ limit: String(query.limit ?? 20) });
+    if (query.status) {
+      params.set("status", query.status);
     }
-    if (cursor) {
-      params.set("cursor", cursor);
+    if (query.cursor) {
+      params.set("cursor", query.cursor);
+    }
+    if (query.sort) {
+      params.set("sort", query.sort);
+    }
+    if (query.direction) {
+      params.set("direction", query.direction);
     }
     const payload = await this.request<Envelope<ListResponse<Dream>>>(`/api/v1/dreams?${params.toString()}`);
     return payload.data;
