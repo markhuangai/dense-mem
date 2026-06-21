@@ -11,6 +11,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/promptcatalog"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
@@ -238,6 +239,7 @@ func TestMCP_PromptsGetErrors(t *testing.T) {
 	}{
 		{"missing params", `{"jsonrpc":"2.0","id":1,"method":"prompts/get"}`, errCodeInvalidParams},
 		{"missing required arg", `{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{"name":"export_memory_as_agent_skill","arguments":{}}}`, errCodeInvalidParams},
+		{"non-string optional arg", `{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{"name":"export_memory_as_agent_skill","arguments":{"topic":"review workflows","skill_name":123}}}`, errCodeInvalidParams},
 		{"unknown prompt", `{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{"name":"missing","arguments":{}}}`, errCodeMethodNotFound},
 	}
 	for _, tc := range cases {
@@ -251,6 +253,19 @@ func TestMCP_PromptsGetErrors(t *testing.T) {
 				t.Fatalf("error = %+v; want code %d", resp.Error, tc.code)
 			}
 		})
+	}
+}
+
+func TestDefaultPromptCatalogLogsLoadFailure(t *testing.T) {
+	logger, logBuf := testLogger(t)
+	catalog := promptCatalogOrEmpty(logger, func() (promptcatalog.Catalog, error) {
+		return promptcatalog.Catalog{}, errors.New("manifest missing")
+	})
+	if prompts := catalog.List(); len(prompts) != 0 {
+		t.Fatalf("prompts len = %d, want 0", len(prompts))
+	}
+	if log := logBuf.String(); !strings.Contains(log, "mcp: prompt catalog unavailable") || !strings.Contains(log, "manifest missing") {
+		t.Fatalf("log = %s, want prompt catalog warning", log)
 	}
 }
 

@@ -238,7 +238,7 @@ memory, applies explicit gates, and returns structured outcomes.
 | `reflect_memories` | Reviews active facts, candidate or disputed claims, contradictions, stale memories, and clarification needs. |
 | `confirm_memory` | Applies the user's answer to a clarification task, either accepting a claim and superseding comparable active facts or keeping/rejecting it. |
 | `find_memory_pack_candidates` | Finds facts and validated claims that can be exported into a portable memory pack. |
-| `export_memory_pack` | Exports selected memory into a signed JSON artifact for review or sharing. |
+| `export_memory_pack` | Exports selected memory into canonical JSON with a SHA-256 integrity hash for review or sharing. |
 | `inspect_memory_pack` | Parses a memory-pack artifact or URL and reports duplicates, conflicts, and required decisions without writing memory. |
 | `import_memory_pack` | Imports a reviewed or trusted memory pack with ledgered changes and rollback support. |
 | `rollback_memory_pack_import` | Rolls back changes from a prior memory-pack import when the ledger has enough state. |

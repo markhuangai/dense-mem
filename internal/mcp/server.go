@@ -83,7 +83,7 @@ func NewServerWithScopesTeamContextAndRuntimeConfig(reg registry.Registry, profi
 		team:                 normalizeTeamContext(team),
 		logger:               logger,
 		recallFeedbackConfig: recallFeedbackConfig,
-		prompts:              defaultPromptCatalog(),
+		prompts:              defaultPromptCatalog(logger),
 	}
 }
 
@@ -220,9 +220,14 @@ func (s *Server) handlePromptsGet(raw json.RawMessage) (map[string]any, *rpcErro
 	}
 	args := map[string]string{}
 	for key, value := range params.Arguments {
-		if text, ok := value.(string); ok {
-			args[key] = text
+		text, ok := value.(string)
+		if !ok {
+			return nil, &rpcError{
+				Code:    errCodeInvalidParams,
+				Message: fmt.Sprintf("argument %q must be a string", key),
+			}
 		}
+		args[key] = text
 	}
 	prompt, text, err := s.prompts.Render(params.Name, args)
 	if err != nil {
@@ -452,9 +457,16 @@ func slugifyMCPName(value string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-func defaultPromptCatalog() promptcatalog.Catalog {
-	catalog, err := promptcatalog.Default()
+func defaultPromptCatalog(logger observability.LogProvider) promptcatalog.Catalog {
+	return promptCatalogOrEmpty(logger, promptcatalog.Default)
+}
+
+func promptCatalogOrEmpty(logger observability.LogProvider, load func() (promptcatalog.Catalog, error)) promptcatalog.Catalog {
+	catalog, err := load()
 	if err != nil {
+		if logger != nil {
+			logger.Warn("mcp: prompt catalog unavailable", observability.String("error", err.Error()))
+		}
 		return promptcatalog.Catalog{}
 	}
 	return catalog

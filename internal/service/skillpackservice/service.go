@@ -824,7 +824,7 @@ func importSource(pack SkillPack, sourceURL string) string {
 
 func fragmentContent(pack SkillPack, hash string) string {
 	var b strings.Builder
-	b.WriteString("Skill pack import: ")
+	b.WriteString("Memory pack import: ")
 	b.WriteString(pack.Name)
 	b.WriteString("\nSHA-256: ")
 	b.WriteString(hash)

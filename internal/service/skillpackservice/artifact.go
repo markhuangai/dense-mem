@@ -69,7 +69,12 @@ func ensureSingleJSONValue(dec *json.Decoder) error {
 
 func validatePack(pack SkillPack) error {
 	if pack.SchemaVersion != SchemaVersion && pack.SchemaVersion != LegacySchemaVersion {
-		return fmt.Errorf("%w: schema_version must be %q", ErrInvalidArtifact, SchemaVersion)
+		return fmt.Errorf(
+			"%w: schema_version must be %q or %q",
+			ErrInvalidArtifact,
+			SchemaVersion,
+			LegacySchemaVersion,
+		)
 	}
 	if strings.TrimSpace(pack.Name) == "" {
 		return fmt.Errorf("%w: name is required", ErrInvalidArtifact)

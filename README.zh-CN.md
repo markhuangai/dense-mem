@@ -220,7 +220,7 @@ Dense-Mem 不是 agent brain、planner，也不是外部真相裁判。它负责
 | `reflect_memories` | 查看 active facts、candidate/disputed claims、contradictions、stale memories 和 clarification needs。 |
 | `confirm_memory` | 应用用户对 clarification task 的回答：接受 claim 并 supersede 可比较的 active facts，或保留/拒绝它。 |
 | `find_memory_pack_candidates` | 查找可以导出为 portable memory pack 的 facts 和 validated claims。 |
-| `export_memory_pack` | 把选中的记忆导出成可审阅、可分享的 JSON artifact。 |
+| `export_memory_pack` | 把选中的记忆导出成带 SHA-256 integrity hash 的 canonical JSON artifact，便于审阅或分享。 |
 | `inspect_memory_pack` | 解析 memory-pack artifact 或 URL，并在不写入记忆的情况下报告 duplicates、conflicts 和 required decisions。 |
 | `import_memory_pack` | 以 review 或 trusted 模式导入 memory pack，并记录可回滚的变更 ledger。 |
 | `rollback_memory_pack_import` | 在 ledger 状态足够时回滚一次 memory-pack import 的变更。 |
