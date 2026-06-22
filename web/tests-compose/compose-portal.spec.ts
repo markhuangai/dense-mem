@@ -30,12 +30,16 @@ type PrometheusQueryResponse = {
 };
 
 type TelemetryResponse = {
-  data?: {
-    available?: boolean;
-    cards?: unknown;
-    series?: unknown;
-  };
-};
+	  data?: {
+	    available?: boolean;
+	    cards?: unknown;
+	    windowed_cards?: unknown;
+	    current_cards?: unknown;
+	    series?: unknown;
+	    activity_series?: unknown;
+	    state_series?: unknown;
+	  };
+	};
 
 type TelemetryCard = {
   id?: string;
@@ -109,30 +113,44 @@ test("prometheus telemetry is scraped and rendered in control panel and user por
   const telemetryResponse = await request.get(`${userUrl}/ui/api/telemetry?window=15m`, { headers: bearer(seedApiKey) });
   expect(telemetryResponse.status()).toBe(200);
   const telemetryBody = await telemetryResponse.json() as TelemetryResponse;
-  expect(telemetryBody.data?.available).toBe(true);
-  expect(Array.isArray(telemetryBody.data?.cards)).toBe(true);
-  assertTelemetrySeries(telemetryBody);
-  const cardLabels = telemetryLabels(telemetryBody.data?.cards);
-  const seriesLabels = telemetryLabels(telemetryBody.data?.series);
-  expect(cardLabels.length).toBeGreaterThan(0);
-  expect(seriesLabels.length).toBeGreaterThan(0);
+	  expect(telemetryBody.data?.available).toBe(true);
+	  expect(Array.isArray(telemetryBody.data?.cards)).toBe(true);
+	  expect(Array.isArray(telemetryBody.data?.windowed_cards)).toBe(true);
+	  expect(Array.isArray(telemetryBody.data?.current_cards)).toBe(true);
+	  assertTelemetrySeries(telemetryBody);
+	  const windowedCardLabels = telemetryLabels(telemetryBody.data?.windowed_cards);
+	  const currentCardLabels = telemetryLabels(telemetryBody.data?.current_cards);
+	  const activitySeriesLabels = telemetryLabels(telemetryBody.data?.activity_series);
+	  const stateSeriesLabels = telemetryLabels(telemetryBody.data?.state_series);
+	  expect(windowedCardLabels.length).toBeGreaterThan(0);
+	  expect(currentCardLabels.length).toBeGreaterThan(0);
+	  expect(activitySeriesLabels.length).toBeGreaterThan(0);
+	  expect(stateSeriesLabels.length).toBeGreaterThan(0);
 
-  await openControlPanel(page);
-  await page.getByRole("button", { name: /^Metrics$/ }).click();
-  await expect(page.getByRole("heading", { name: "Telemetry" })).toBeVisible();
-  await expect(page.getByLabel("Telemetry totals")).toContainText("HTTP requests");
-  await expect(page.getByLabel("Telemetry charts")).toContainText("HTTP requests");
+	  await openControlPanel(page);
+	  await page.getByRole("button", { name: /^Metrics$/ }).click();
+	  await expect(page.getByRole("heading", { name: "Telemetry" })).toBeVisible();
+	  await expect(page.getByLabel("Telemetry totals")).toContainText("HTTP requests");
+	  await expect(page.getByLabel("Telemetry current state")).toContainText("Pending claims");
+	  await expect(page.getByLabel("Telemetry charts")).toContainText("HTTP requests");
+	  await expect(page.getByLabel("Telemetry state history")).toContainText("Pending claims");
 
-  await openUserPortal(page, seedApiKey);
-  await page.getByRole("button", { name: "Usage" }).click();
-  for (const label of cardLabels) {
-    await expect(page.getByLabel("Usage totals")).toContainText(label);
-  }
-  for (const label of seriesLabels) {
-    await expect(page.getByLabel("Usage charts")).toContainText(label);
-  }
-  await expectNoShellOverlap(page);
-});
+	  await openUserPortal(page, seedApiKey);
+	  await page.getByRole("button", { name: "Usage" }).click();
+	  for (const label of windowedCardLabels) {
+	    await expect(page.getByLabel("Usage totals")).toContainText(label);
+	  }
+	  for (const label of currentCardLabels) {
+	    await expect(page.getByLabel("Usage current state")).toContainText(label);
+	  }
+	  for (const label of activitySeriesLabels) {
+	    await expect(page.getByLabel("Usage charts")).toContainText(label);
+	  }
+	  for (const label of stateSeriesLabels) {
+	    await expect(page.getByLabel("Usage state history")).toContainText(label);
+	  }
+	  await expectNoShellOverlap(page);
+	});
 
 test("MCP recall feedback is submitted and surfaced through compose telemetry", async ({ page, request }) => {
   const recallFeedbackWasEnabled = await recallFeedbackEnabled(request);
@@ -447,11 +465,13 @@ function mcpToolPayload(response: Record<string, unknown>) {
 }
 
 function assertTelemetrySeries(body: TelemetryResponse) {
-  const series = body.data?.series;
-  expect(Array.isArray(series)).toBe(true);
-  if (!Array.isArray(series)) {
-    throw new Error("telemetry series must be an array");
-  }
+	const series = body.data?.series;
+	expect(Array.isArray(series)).toBe(true);
+	expect(Array.isArray(body.data?.activity_series)).toBe(true);
+	expect(Array.isArray(body.data?.state_series)).toBe(true);
+	if (!Array.isArray(series)) {
+		throw new Error("telemetry series must be an array");
+	}
   expect(series.length).toBeGreaterThan(0);
   for (const item of series) {
     expect(isRecord(item)).toBe(true);

@@ -163,6 +163,8 @@ const telemetrySeries = [
   ],
 }));
 
+const currentTelemetryIds = new Set(["pending_claims", "validated_claims", "disputed_claims", "revalidation_backlog"]);
+
 const telemetry = {
   available: true,
   window: {
@@ -174,7 +176,11 @@ const telemetry = {
   },
   scope: { type: "self", team_id: team.id, profile_id: readKey.id },
   cards: telemetryCards,
+  windowed_cards: telemetryCards.filter((card) => !currentTelemetryIds.has(card.id)),
+  current_cards: telemetryCards.filter((card) => currentTelemetryIds.has(card.id)),
   series: telemetrySeries,
+  activity_series: telemetrySeries.filter((series) => !currentTelemetryIds.has(series.id)),
+  state_series: telemetrySeries.filter((series) => currentTelemetryIds.has(series.id)),
 };
 
 test("API key login, recall, and read-only knowledge tabs", async ({ page }) => {
@@ -193,12 +199,20 @@ test("API key login, recall, and read-only knowledge tabs", async ({ page }) => 
 
   await page.getByRole("button", { name: "Usage" }).click();
   const usageTotals = page.getByLabel("Usage totals");
-  for (const card of telemetryCards) {
+  for (const card of telemetry.windowed_cards) {
     await expect(usageTotals).toContainText(card.label);
   }
+  const usageCurrentState = page.getByLabel("Usage current state");
+  for (const card of telemetry.current_cards) {
+    await expect(usageCurrentState).toContainText(card.label);
+  }
   const usageCharts = page.getByLabel("Usage charts");
-  for (const series of telemetrySeries) {
+  for (const series of telemetry.activity_series) {
     await expect(usageCharts).toContainText(series.label);
+  }
+  const usageStateHistory = page.getByLabel("Usage state history");
+  for (const series of telemetry.state_series) {
+    await expect(usageStateHistory).toContainText(series.label);
   }
 
   await page.getByRole("button", { name: "Facts" }).click();
@@ -232,7 +246,7 @@ test("write key regenerates only through the self-rotate endpoint", async ({ pag
   await page.getByRole("button", { name: /Regenerate key/i }).click();
 
   const details = page.getByLabel("Knowledge details");
-  await expect(details.getByText("dm_new_plaintext")).toBeVisible();
+  await expect(details.getByLabel("Generated API key")).toHaveValue("dm_new_plaintext");
   await expect(details.getByText("******new123")).toBeVisible();
   await expect.poll(() => page.evaluate(() => sessionStorage.getItem("denseMem.userApiKey"))).toBe("dm_new_plaintext");
   expect(calls.rotateBodies).toEqual(["{}"]);

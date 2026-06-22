@@ -19,6 +19,17 @@
   margin-bottom: 16px;
 }
 
+.telemetry-section {
+  margin-top: 16px;
+}
+
+.telemetry-section > h3 {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.2;
+}
+
 .telemetry-chart-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));

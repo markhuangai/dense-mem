@@ -140,6 +140,8 @@ const telemetrySeries = [
   ],
 }));
 
+const currentTelemetryIds = new Set(["pending_claims", "validated_claims", "disputed_claims", "revalidation_backlog"]);
+
 const telemetry = {
   available: true,
   window: {
@@ -151,7 +153,11 @@ const telemetry = {
   },
   scope: { type: "system" },
   cards: telemetryCards,
+  windowed_cards: telemetryCards.filter((card) => !currentTelemetryIds.has(card.id)),
+  current_cards: telemetryCards.filter((card) => currentTelemetryIds.has(card.id)),
   series: telemetrySeries,
+  activity_series: telemetrySeries.filter((series) => !currentTelemetryIds.has(series.id)),
+  state_series: telemetrySeries.filter((series) => currentTelemetryIds.has(series.id)),
 };
 
 const operationLogs = [
@@ -317,12 +323,20 @@ test("metrics tab renders operational totals and filter queries", async ({ page 
   await page.getByRole("button", { name: /^Metrics$/ }).click();
 
   const telemetryTotals = page.getByLabel("Telemetry totals");
-  for (const card of telemetryCards) {
+  for (const card of telemetry.windowed_cards) {
     await expect(telemetryTotals).toContainText(card.label);
   }
+  const telemetryCurrentState = page.getByLabel("Telemetry current state");
+  for (const card of telemetry.current_cards) {
+    await expect(telemetryCurrentState).toContainText(card.label);
+  }
   const telemetryCharts = page.getByLabel("Telemetry charts");
-  for (const series of telemetrySeries) {
+  for (const series of telemetry.activity_series) {
     await expect(telemetryCharts).toContainText(series.label);
+  }
+  const telemetryStateHistory = page.getByLabel("Telemetry state history");
+  for (const series of telemetry.state_series) {
+    await expect(telemetryStateHistory).toContainText(series.label);
   }
 
   const summary = page.getByLabel("Request metrics");

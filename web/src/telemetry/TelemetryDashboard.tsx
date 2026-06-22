@@ -13,6 +13,13 @@ import { TelemetrySnapshot, TelemetryWindowKey, telemetryWindowOptions } from ".
 import { SectionHeading, SummaryCard } from "../ui/components";
 import "./telemetry.css";
 
+const currentStateCardIds = new Set([
+  "pending_claims",
+  "validated_claims",
+  "disputed_claims",
+  "revalidation_backlog",
+]);
+
 type TelemetryDashboardProps = {
   title: string;
   snapshot: TelemetrySnapshot | null;
@@ -34,6 +41,11 @@ export function TelemetryDashboard({
   onWindowChange,
   onRefresh,
 }: TelemetryDashboardProps) {
+  const windowedCards = snapshot ? telemetryWindowedCards(snapshot) : [];
+  const currentCards = snapshot ? telemetryCurrentCards(snapshot) : [];
+  const activitySeries = snapshot ? telemetryActivitySeries(snapshot) : [];
+  const stateSeries = snapshot ? telemetryStateSeries(snapshot) : [];
+
   return (
     <div className="telemetry-dashboard">
       <SectionHeading
@@ -66,80 +78,174 @@ export function TelemetryDashboard({
 
       {snapshot && (
         <>
-          <div className="telemetry-card-grid" aria-label={`${title} totals`}>
-            {snapshot.cards.map((card) => (
-              <SummaryCard key={card.id} label={card.label} value={formatTelemetryValue(card.value, card.unit)} />
-            ))}
-          </div>
-          <div className="telemetry-chart-grid" aria-label={`${title} charts`}>
-            {snapshot.series.map((series) => {
-              const samplePoints = Array.isArray(series.points) ? series.points : [];
-              const hasSamples = samplePoints.length > 0;
-              const chartPoints = telemetryChartPoints(samplePoints, snapshot.window.from, snapshot.window.to);
-
-              return (
-                <div className="telemetry-chart" key={series.id}>
-                  <div className="telemetry-chart-head">
-                    <h3>{series.label}</h3>
-                    <span>{series.unit}</span>
-                  </div>
-                  <div className="telemetry-chart-body">
-                    {!hasSamples && <div className="chart-empty-label">No samples</div>}
-                    <ResponsiveContainer
-                      width="100%"
-                      height="100%"
-                      minWidth={280}
-                      minHeight={180}
-                      initialDimension={{ width: 640, height: 240 }}
-                    >
-                      <LineChart data={chartPoints} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
-                        <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
-                        <XAxis
-                          dataKey="timestamp"
-                          tickFormatter={formatTelemetryTick}
-                          tick={{ fill: "var(--muted)", fontSize: 11 }}
-                          minTickGap={28}
-                        />
-                        <YAxis
-                          width={44}
-                          tick={{ fill: "var(--muted)", fontSize: 11 }}
-                          tickFormatter={(value) => formatTelemetryAxisTick(Number(value), series.unit)}
-                          domain={telemetryYAxisDomain(samplePoints)}
-                        />
-                        <Tooltip
-                          contentStyle={{
-                            background: "var(--panel)",
-                            border: "1px solid var(--border)",
-                            borderRadius: 7,
-                            color: "var(--text)",
-                          }}
-                          labelFormatter={(label) => formatTelemetryTime(String(label))}
-                          formatter={(value) => [formatTelemetryValue(Number(value), series.unit), series.label]}
-                        />
-                        {hasSamples && (
-                          <Line
-                            type="monotone"
-                            dataKey="value"
-                            stroke="var(--accent)"
-                            strokeWidth={2}
-                            dot={false}
-                            isAnimationActive={false}
-                          />
-                        )}
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <TelemetryCardSection
+            title="Windowed activity"
+            ariaLabel={`${title} totals`}
+            cards={windowedCards}
+          />
+          <TelemetryCardSection
+            title="Current knowledge state"
+            ariaLabel={`${title} current state`}
+            cards={currentCards}
+          />
+          <TelemetryChartSection
+            title="Activity charts"
+            ariaLabel={`${title} charts`}
+            series={activitySeries}
+            from={snapshot.window.from}
+            to={snapshot.window.to}
+          />
+          <TelemetryChartSection
+            title="State history"
+            ariaLabel={`${title} state history`}
+            series={stateSeries}
+            from={snapshot.window.from}
+            to={snapshot.window.to}
+          />
         </>
       )}
     </div>
   );
 }
 
+function TelemetryCardSection({ title, ariaLabel, cards }: {
+  title: string;
+  ariaLabel: string;
+  cards: TelemetrySnapshot["cards"];
+}) {
+  if (cards.length === 0) {
+    return null;
+  }
+  return (
+    <section className="telemetry-section">
+      <h3>{title}</h3>
+      <div className="telemetry-card-grid" aria-label={ariaLabel}>
+        {cards.map((card) => (
+          <SummaryCard key={card.id} label={card.label} value={formatTelemetryCardValue(card)} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function TelemetryChartSection({ title, ariaLabel, series, from, to }: {
+  title: string;
+  ariaLabel: string;
+  series: TelemetrySnapshot["series"];
+  from: string;
+  to: string;
+}) {
+  if (series.length === 0) {
+    return null;
+  }
+  return (
+    <section className="telemetry-section">
+      <h3>{title}</h3>
+      <div className="telemetry-chart-grid" aria-label={ariaLabel}>
+        {series.map((item) => {
+          const samplePoints = Array.isArray(item.points) ? item.points : [];
+          const hasSamples = samplePoints.length > 0;
+          const chartPoints = telemetryChartPoints(samplePoints, from, to);
+
+          return (
+            <div className="telemetry-chart" key={item.id}>
+              <div className="telemetry-chart-head">
+                <h3>{item.label}</h3>
+                <span>{item.unit}</span>
+              </div>
+              <div className="telemetry-chart-body">
+                {!hasSamples && <div className="chart-empty-label">No samples</div>}
+                <ResponsiveContainer
+                  width="100%"
+                  height="100%"
+                  minWidth={280}
+                  minHeight={180}
+                  initialDimension={{ width: 640, height: 240 }}
+                >
+                  <LineChart data={chartPoints} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+                    <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
+                    <XAxis
+                      dataKey="timestamp"
+                      tickFormatter={formatTelemetryTick}
+                      tick={{ fill: "var(--muted)", fontSize: 11 }}
+                      minTickGap={28}
+                    />
+                    <YAxis
+                      width={44}
+                      tick={{ fill: "var(--muted)", fontSize: 11 }}
+                      tickFormatter={(value) => formatTelemetryAxisTick(Number(value), item.unit)}
+                      domain={telemetryYAxisDomain(samplePoints)}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        background: "var(--panel)",
+                        border: "1px solid var(--border)",
+                        borderRadius: 7,
+                        color: "var(--text)",
+                      }}
+                      labelFormatter={(label) => formatTelemetryTime(String(label))}
+                      formatter={(value) => [formatTelemetryValue(Number(value), item.unit), item.label]}
+                    />
+                    {hasSamples && (
+                      <Line
+                        type="monotone"
+                        dataKey="value"
+                        stroke="var(--accent)"
+                        strokeWidth={2}
+                        dot={false}
+                        isAnimationActive={false}
+                      />
+                    )}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+export function telemetryWindowedCards(snapshot: TelemetrySnapshot) {
+  if (Array.isArray(snapshot.windowed_cards)) {
+    return snapshot.windowed_cards;
+  }
+  return snapshot.cards.filter((card) => !currentStateCardIds.has(card.id));
+}
+
+export function telemetryCurrentCards(snapshot: TelemetrySnapshot) {
+  if (Array.isArray(snapshot.current_cards)) {
+    return snapshot.current_cards;
+  }
+  return snapshot.cards.filter((card) => currentStateCardIds.has(card.id));
+}
+
+export function telemetryActivitySeries(snapshot: TelemetrySnapshot) {
+  if (Array.isArray(snapshot.activity_series)) {
+    return snapshot.activity_series;
+  }
+  return snapshot.series.filter((series) => !currentStateCardIds.has(series.id));
+}
+
+export function telemetryStateSeries(snapshot: TelemetrySnapshot) {
+  if (Array.isArray(snapshot.state_series)) {
+    return snapshot.state_series;
+  }
+  return snapshot.series.filter((series) => currentStateCardIds.has(series.id));
+}
+
+export function formatTelemetryCardValue(card: Pick<TelemetrySnapshot["cards"][number], "available" | "unit" | "value">) {
+  if (card.available === false || !Number.isFinite(card.value)) {
+    return "No data";
+  }
+  return formatTelemetryValue(card.value, card.unit);
+}
+
 export function formatTelemetryValue(value: number, unit: string) {
+  if (!Number.isFinite(value)) {
+    return "No data";
+  }
   if (unit === "percent") {
     return `${value.toFixed(value >= 10 ? 0 : 1)}%`;
   }
