@@ -191,10 +191,10 @@ func TestUserPortalSessionShowsOnlyAuthenticatedKey(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), "Other")
 }
 
-func TestUserPortalTelemetry(t *testing.T) {
+func TestUserPortalTelemetryMemberUsesSelfScope(t *testing.T) {
 	teamID := uuid.New()
 	keyID := uuid.New()
-	authKey, rawKey := userPortalTestKey(t, teamID, keyID, "Mine", []string{"read"})
+	authKey, rawKey := userPortalTestKey(t, teamID, keyID, "Mine", []string{"read", "write"})
 	telemetry := &controlTelemetrySvc{snapshot: &service.TelemetrySnapshot{
 		Available: true,
 		Window:    service.TelemetryWindow{Key: "15m"},
@@ -212,6 +212,7 @@ func TestUserPortalTelemetry(t *testing.T) {
 	require.Equal(t, "self", telemetry.filter.Scope)
 	require.Equal(t, teamID, *telemetry.filter.TeamID)
 	require.Equal(t, keyID, *telemetry.filter.ProfileID)
+	require.Equal(t, 1, telemetry.calls)
 
 	req = httptest.NewRequest(http.MethodGet, "/ui/api/telemetry?window=30m&scope=team", nil)
 	req.Header.Set("Authorization", "Bearer "+rawKey)
@@ -221,17 +222,80 @@ func TestUserPortalTelemetry(t *testing.T) {
 	require.Equal(t, "15m", telemetry.filter.Window)
 	require.Equal(t, "self", telemetry.filter.Scope)
 	require.Equal(t, keyID, *telemetry.filter.ProfileID)
+	require.Equal(t, 1, telemetry.calls)
 
 	req = httptest.NewRequest(http.MethodGet, "/ui/api/telemetry?scope=profile", nil)
 	req.Header.Set("Authorization", "Bearer "+rawKey)
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusForbidden, rec.Code)
+	require.Equal(t, 1, telemetry.calls)
+}
 
-	noTelemetry := userPortalTestServer(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.APIKey{authKey}}, "")
-	req = httptest.NewRequest(http.MethodGet, "/ui/api/telemetry", nil)
+func TestUserPortalTelemetryManagerUsesTeamScope(t *testing.T) {
+	teamID := uuid.New()
+	keyID := uuid.New()
+	authKey, rawKey := userPortalTestKey(t, teamID, keyID, "Manager", []string{"read", "write"})
+	authKey.Role = service.APIKeyRoleManager
+	telemetry := &controlTelemetrySvc{snapshot: &service.TelemetrySnapshot{
+		Available: true,
+		Window:    service.TelemetryWindow{Key: "30m"},
+		Cards:     []service.TelemetryCard{{ID: "http_requests", Label: "HTTP requests", Unit: "requests", Value: 9}},
+	}}
+	server := userPortalTestServerWithTelemetry(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.APIKey{authKey}}, "", telemetry)
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/telemetry?window=30m", nil)
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"available":true`)
+	require.Equal(t, "30m", telemetry.filter.Window)
+	require.Equal(t, "team", telemetry.filter.Scope)
+	require.Equal(t, teamID, *telemetry.filter.TeamID)
+	require.Nil(t, telemetry.filter.ProfileID)
+	require.Equal(t, 1, telemetry.calls)
+
+	req = httptest.NewRequest(http.MethodGet, "/ui/api/telemetry?window=15m&scope=team", nil)
 	req.Header.Set("Authorization", "Bearer "+rawKey)
 	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "15m", telemetry.filter.Window)
+	require.Equal(t, "team", telemetry.filter.Scope)
+	require.Nil(t, telemetry.filter.ProfileID)
+	require.Equal(t, 2, telemetry.calls)
+
+	req = httptest.NewRequest(http.MethodGet, "/ui/api/telemetry?scope=self", nil)
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	require.Equal(t, 2, telemetry.calls)
+}
+
+func TestUserPortalTelemetryReadOnlyForbidden(t *testing.T) {
+	teamID := uuid.New()
+	authKey, rawKey := userPortalTestKey(t, teamID, uuid.New(), "Read only", []string{"read"})
+	telemetry := &controlTelemetrySvc{snapshot: &service.TelemetrySnapshot{Available: true}}
+	server := userPortalTestServerWithTelemetry(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.APIKey{authKey}}, "", telemetry)
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/telemetry", nil)
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	require.Equal(t, 0, telemetry.calls)
+}
+
+func TestUserPortalTelemetryUnavailable(t *testing.T) {
+	teamID := uuid.New()
+	authKey, rawKey := userPortalTestKey(t, teamID, uuid.New(), "Mine", []string{"read", "write"})
+
+	noTelemetry := userPortalTestServer(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.APIKey{authKey}}, "")
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/telemetry", nil)
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	rec := httptest.NewRecorder()
 	noTelemetry.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 }

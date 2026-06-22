@@ -197,23 +197,7 @@ test("API key login, recall, and read-only knowledge tabs", async ({ page }) => 
   await expect(page.getByText("project-x").first()).toBeVisible();
   await expect(page.getByText("Dense-Mem").first()).toBeVisible();
 
-  await page.getByRole("button", { name: "Usage" }).click();
-  const usageTotals = page.getByLabel("Usage totals");
-  for (const card of telemetry.windowed_cards) {
-    await expect(usageTotals).toContainText(card.label);
-  }
-  const usageCurrentState = page.getByLabel("Usage current state");
-  for (const card of telemetry.current_cards) {
-    await expect(usageCurrentState).toContainText(card.label);
-  }
-  const usageCharts = page.getByLabel("Usage charts");
-  for (const series of telemetry.activity_series) {
-    await expect(usageCharts).toContainText(series.label);
-  }
-  const usageStateHistory = page.getByLabel("Usage state history");
-  for (const series of telemetry.state_series) {
-    await expect(usageStateHistory).toContainText(series.label);
-  }
+  await expect(page.getByRole("button", { name: "Usage" })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Facts" }).click();
   await expect(page.getByText("works_on: project-x")).toBeVisible();
@@ -227,6 +211,7 @@ test("API key login, recall, and read-only knowledge tabs", async ({ page }) => 
   await page.getByRole("button", { name: "Communities" }).click();
   await expect(page.getByText("Project work around Dense-Mem.")).toBeVisible();
   expect(calls.disallowedProfileCalls).toEqual([]);
+  expect(calls.telemetryRequests).toEqual([]);
 });
 
 test("read-only key cannot regenerate itself", async ({ page }) => {
@@ -251,6 +236,34 @@ test("write key regenerates only through the self-rotate endpoint", async ({ pag
   await expect.poll(() => page.evaluate(() => sessionStorage.getItem("denseMem.userApiKey"))).toBe("dm_new_plaintext");
   expect(calls.rotateBodies).toEqual(["{}"]);
   expect(calls.disallowedProfileCalls).toEqual([]);
+});
+
+test("write member key shows own usage telemetry", async ({ page }) => {
+  const calls = await mockUserApi(page, { key: writeKey, canRotate: true });
+  await openUserPortal(page, "dm_write");
+
+  await page.getByRole("button", { name: "Usage" }).click();
+  await expectUsageDashboard(page, "My key usage", telemetry);
+  expect(calls.telemetryRequests.length).toBeGreaterThan(0);
+  expect(calls.telemetryRequests.every((url) => url.includes("/ui/api/telemetry?window=1h"))).toBe(true);
+  expect(calls.telemetryRequests.every((url) => !url.includes("scope="))).toBe(true);
+  expect(calls.disallowedProfileCalls).toEqual([]);
+});
+
+test("manager key shows team usage telemetry", async ({ page }) => {
+  const calls = await mockUserApi(page, {
+    key: managerKey,
+    canManageTeam: true,
+    canRotate: true,
+    profiles: [managerKey, memberProfile],
+  });
+  await openUserPortal(page, "dm_manager");
+
+  await page.getByRole("button", { name: "Usage" }).click();
+  await expectUsageDashboard(page, "Team usage", telemetry);
+  expect(calls.telemetryRequests.length).toBeGreaterThan(0);
+  expect(calls.telemetryRequests.every((url) => url.includes("/ui/api/telemetry?window=1h"))).toBe(true);
+  expect(calls.telemetryRequests.every((url) => !url.includes("scope="))).toBe(true);
 });
 
 test("invalid API key shows login error", async ({ page }) => {
@@ -353,6 +366,25 @@ async function expectNoShellOverlap(page: Page) {
   }
 }
 
+async function expectUsageDashboard(page: Page, title: string, snapshot: typeof telemetry) {
+  const usageTotals = page.getByLabel(`${title} totals`);
+  for (const card of snapshot.windowed_cards) {
+    await expect(usageTotals).toContainText(card.label);
+  }
+  const usageCurrentState = page.getByLabel(`${title} current state`);
+  for (const card of snapshot.current_cards) {
+    await expect(usageCurrentState).toContainText(card.label);
+  }
+  const usageCharts = page.getByLabel(`${title} charts`);
+  for (const series of snapshot.activity_series) {
+    await expect(usageCharts).toContainText(series.label);
+  }
+  const usageStateHistory = page.getByLabel(`${title} state history`);
+  for (const series of snapshot.state_series) {
+    await expect(usageStateHistory).toContainText(series.label);
+  }
+}
+
 function rectanglesOverlap(
   first: { left: number; top: number; right: number; bottom: number },
   second: { left: number; top: number; right: number; bottom: number },
@@ -367,6 +399,7 @@ async function mockUserApi(
   const calls = {
     rotateBodies: [] as string[],
     disallowedProfileCalls: [] as string[],
+    telemetryRequests: [] as string[],
   };
   let currentTeam = { ...team };
   let currentKey = { ...state.key };
@@ -461,10 +494,11 @@ async function mockUserApi(
   });
 
   await page.route("**/ui/api/telemetry**", async (route) => {
+    calls.telemetryRequests.push(route.request().url());
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ data: telemetry }),
+      body: JSON.stringify({ data: telemetryForKey(currentKey) }),
     });
   });
 
@@ -499,4 +533,13 @@ async function mockUserApi(
   });
 
   return calls;
+}
+
+function telemetryForKey(key: TestKey) {
+  return {
+    ...telemetry,
+    scope: key.role === "manager"
+      ? { type: "team", team_id: team.id }
+      : { type: "self", team_id: team.id, profile_id: key.id },
+  };
 }

@@ -41,7 +41,7 @@ describe("UserApi", () => {
     }));
   });
 
-  it("requests self-scoped telemetry", async () => {
+  it("requests role-derived telemetry", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       data: {
         available: true,

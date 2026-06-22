@@ -30,16 +30,35 @@ type PrometheusQueryResponse = {
 };
 
 type TelemetryResponse = {
-	  data?: {
-	    available?: boolean;
-	    cards?: unknown;
-	    windowed_cards?: unknown;
-	    current_cards?: unknown;
-	    series?: unknown;
-	    activity_series?: unknown;
-	    state_series?: unknown;
-	  };
-	};
+  data?: {
+    available?: boolean;
+    scope?: {
+      type?: string;
+      team_id?: string;
+      profile_id?: string;
+    };
+    cards?: unknown;
+    windowed_cards?: unknown;
+    current_cards?: unknown;
+    series?: unknown;
+    activity_series?: unknown;
+    state_series?: unknown;
+  };
+};
+
+type UserSessionResponse = {
+  data?: {
+    can_manage_team?: boolean;
+    key?: {
+      id?: string;
+      scopes?: string[];
+      role?: string;
+    };
+    team?: {
+      id?: string;
+    };
+  };
+};
 
 type TelemetryCard = {
   id?: string;
@@ -101,6 +120,10 @@ test("control panel keeps security settings display-only against compose", async
 test("prometheus telemetry is scraped and rendered in control panel and user portal", async ({ page, request }) => {
   const sessionResponse = await request.get(`${userUrl}/ui/api/session`, { headers: bearer(seedApiKey) });
   expect(sessionResponse.status()).toBe(200);
+  const sessionBody = await sessionResponse.json() as UserSessionResponse;
+  expect(sessionBody.data?.key?.scopes).toEqual(expect.arrayContaining(["write"]));
+  const expectedScope = sessionBody.data?.can_manage_team ? "team" : "self";
+  const expectedUsageTitle = sessionBody.data?.can_manage_team ? "Team usage" : "My key usage";
 
   await expect.poll(
     () => prometheusResultCount(request, `densemem_http_requests_total{route="/ui/api/session"}`),
@@ -113,44 +136,49 @@ test("prometheus telemetry is scraped and rendered in control panel and user por
   const telemetryResponse = await request.get(`${userUrl}/ui/api/telemetry?window=15m`, { headers: bearer(seedApiKey) });
   expect(telemetryResponse.status()).toBe(200);
   const telemetryBody = await telemetryResponse.json() as TelemetryResponse;
-	  expect(telemetryBody.data?.available).toBe(true);
-	  expect(Array.isArray(telemetryBody.data?.cards)).toBe(true);
-	  expect(Array.isArray(telemetryBody.data?.windowed_cards)).toBe(true);
-	  expect(Array.isArray(telemetryBody.data?.current_cards)).toBe(true);
-	  assertTelemetrySeries(telemetryBody);
-	  const windowedCardLabels = telemetryLabels(telemetryBody.data?.windowed_cards);
-	  const currentCardLabels = telemetryLabels(telemetryBody.data?.current_cards);
-	  const activitySeriesLabels = telemetryLabels(telemetryBody.data?.activity_series);
-	  const stateSeriesLabels = telemetryLabels(telemetryBody.data?.state_series);
-	  expect(windowedCardLabels.length).toBeGreaterThan(0);
-	  expect(currentCardLabels.length).toBeGreaterThan(0);
-	  expect(activitySeriesLabels.length).toBeGreaterThan(0);
-	  expect(stateSeriesLabels.length).toBeGreaterThan(0);
+  expect(telemetryBody.data?.available).toBe(true);
+  expect(telemetryBody.data?.scope?.type).toBe(expectedScope);
+  expect(telemetryBody.data?.scope?.team_id).toBe(sessionBody.data?.team?.id);
+  if (expectedScope === "self") {
+    expect(telemetryBody.data?.scope?.profile_id).toBe(sessionBody.data?.key?.id);
+  }
+  expect(Array.isArray(telemetryBody.data?.cards)).toBe(true);
+  expect(Array.isArray(telemetryBody.data?.windowed_cards)).toBe(true);
+  expect(Array.isArray(telemetryBody.data?.current_cards)).toBe(true);
+  assertTelemetrySeries(telemetryBody);
+  const windowedCardLabels = telemetryLabels(telemetryBody.data?.windowed_cards);
+  const currentCardLabels = telemetryLabels(telemetryBody.data?.current_cards);
+  const activitySeriesLabels = telemetryLabels(telemetryBody.data?.activity_series);
+  const stateSeriesLabels = telemetryLabels(telemetryBody.data?.state_series);
+  expect(windowedCardLabels.length).toBeGreaterThan(0);
+  expect(currentCardLabels.length).toBeGreaterThan(0);
+  expect(activitySeriesLabels.length).toBeGreaterThan(0);
+  expect(stateSeriesLabels.length).toBeGreaterThan(0);
 
-	  await openControlPanel(page);
-	  await page.getByRole("button", { name: /^Metrics$/ }).click();
-	  await expect(page.getByRole("heading", { name: "Telemetry" })).toBeVisible();
-	  await expect(page.getByLabel("Telemetry totals")).toContainText("HTTP requests");
-	  await expect(page.getByLabel("Telemetry current state")).toContainText("Pending claims");
-	  await expect(page.getByLabel("Telemetry charts")).toContainText("HTTP requests");
-	  await expect(page.getByLabel("Telemetry state history")).toContainText("Pending claims");
+  await openControlPanel(page);
+  await page.getByRole("button", { name: /^Metrics$/ }).click();
+  await expect(page.getByRole("heading", { name: "Telemetry" })).toBeVisible();
+  await expect(page.getByLabel("Telemetry totals")).toContainText("HTTP requests");
+  await expect(page.getByLabel("Telemetry current state")).toContainText("Pending claims");
+  await expect(page.getByLabel("Telemetry charts")).toContainText("HTTP requests");
+  await expect(page.getByLabel("Telemetry state history")).toContainText("Pending claims");
 
-	  await openUserPortal(page, seedApiKey);
-	  await page.getByRole("button", { name: "Usage" }).click();
-	  for (const label of windowedCardLabels) {
-	    await expect(page.getByLabel("Usage totals")).toContainText(label);
-	  }
-	  for (const label of currentCardLabels) {
-	    await expect(page.getByLabel("Usage current state")).toContainText(label);
-	  }
-	  for (const label of activitySeriesLabels) {
-	    await expect(page.getByLabel("Usage charts")).toContainText(label);
-	  }
-	  for (const label of stateSeriesLabels) {
-	    await expect(page.getByLabel("Usage state history")).toContainText(label);
-	  }
-	  await expectNoShellOverlap(page);
-	});
+  await openUserPortal(page, seedApiKey);
+  await page.getByRole("button", { name: "Usage" }).click();
+  for (const label of windowedCardLabels) {
+    await expect(page.getByLabel(`${expectedUsageTitle} totals`)).toContainText(label);
+  }
+  for (const label of currentCardLabels) {
+    await expect(page.getByLabel(`${expectedUsageTitle} current state`)).toContainText(label);
+  }
+  for (const label of activitySeriesLabels) {
+    await expect(page.getByLabel(`${expectedUsageTitle} charts`)).toContainText(label);
+  }
+  for (const label of stateSeriesLabels) {
+    await expect(page.getByLabel(`${expectedUsageTitle} state history`)).toContainText(label);
+  }
+  await expectNoShellOverlap(page);
+});
 
 test("MCP recall feedback is submitted and surfaced through compose telemetry", async ({ page, request }) => {
   const recallFeedbackWasEnabled = await recallFeedbackEnabled(request);
@@ -253,7 +281,8 @@ test("MCP recall feedback is submitted and surfaced through compose telemetry", 
 
     await openUserPortal(page, seedApiKey);
     await page.getByRole("button", { name: "Usage" }).click();
-    const usageTotals = page.getByLabel("Usage totals");
+    const usageTitle = await userUsageTitle(request, seedApiKey);
+    const usageTotals = page.getByLabel(`${usageTitle} totals`);
     await expect(usageTotals).toContainText("LLM recall used");
     await expect(usageTotals).toContainText("LLM answer supported");
     await expect(usageTotals).toContainText("LLM recall quality");
@@ -293,9 +322,13 @@ test("read-only user key cannot regenerate itself", async ({ page, request }, te
   const readOnly = await createTeamProfile(request, uniqueName("Read only", testInfo), ["read"]);
 
   await openUserPortal(page, readOnly.api_key);
+  await expect(page.getByRole("button", { name: "Usage" })).toHaveCount(0);
   await page.getByRole("button", { name: /My key/i }).click();
 
   await expect(page.getByRole("button", { name: /Regenerate key/i })).toBeDisabled();
+
+  const telemetryResponse = await request.get(`${userUrl}/ui/api/telemetry?window=15m`, { headers: bearer(readOnly.api_key) });
+  expect(telemetryResponse.status()).toBe(403);
 });
 
 test("write user key regenerates itself and invalidates the old key", async ({ page, request }, testInfo) => {
@@ -497,6 +530,15 @@ async function userTelemetry(request: APIRequestContext) {
     throw new Error(`user telemetry failed: ${response.status()} ${await response.text()}`);
   }
   return await response.json() as TelemetryResponse;
+}
+
+async function userUsageTitle(request: APIRequestContext, apiKey: string) {
+  const response = await request.get(`${userUrl}/ui/api/session`, { headers: bearer(apiKey) });
+  if (response.status() !== 200) {
+    throw new Error(`user session failed: ${response.status()} ${await response.text()}`);
+  }
+  const body = await response.json() as UserSessionResponse;
+  return body.data?.can_manage_team ? "Team usage" : "My key usage";
 }
 
 async function telemetryCardValue(request: APIRequestContext, id: string) {

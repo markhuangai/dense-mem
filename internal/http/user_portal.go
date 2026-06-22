@@ -74,7 +74,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	api.Use(httpmw.RateLimitMiddleware(deps.RateLimitSvc, deps.Config, deps.AuditSvc))
 	api.Use(httpmw.LastUsedMiddleware(deps.APIKeyRepo))
 	api.GET("/session", portal.session)
-	api.GET("/telemetry", portal.telemetrySnapshot, httpmw.RequireScopes("read"))
+	api.GET("/telemetry", portal.telemetrySnapshot, httpmw.RequireScopes("write"))
 	api.POST("/key/rotate", portal.rotateCurrentKey, httpmw.RequireScopes("write"))
 	if deps.SSOService != nil {
 		api.POST("/sso/team", portal.switchSSOTeam, httpmw.RequireScopes("read"))
@@ -180,21 +180,9 @@ func (h *userPortalHandler) telemetrySnapshot(c echo.Context) error {
 		return httperr.New(httperr.FORBIDDEN, "authentication required")
 	}
 
-	scope := strings.TrimSpace(c.QueryParam("scope"))
-	if scope == "" {
-		scope = "self"
-	}
-	if scope != "self" {
-		return httperr.New(httperr.FORBIDDEN, "user portal telemetry is limited to the authenticated profile")
-	}
-
-	teamID := principal.GetTeamID()
-	profileID := principal.GetKeyID()
-	filter := service.TelemetryFilter{
-		Window:    strings.TrimSpace(c.QueryParam("window")),
-		Scope:     scope,
-		TeamID:    &teamID,
-		ProfileID: &profileID,
+	filter, err := userPortalTelemetryFilter(principal, c.QueryParam("window"), c.QueryParam("scope"))
+	if err != nil {
+		return err
 	}
 
 	snapshot, err := h.telemetry.Snapshot(ctx, filter)
@@ -202,6 +190,36 @@ func (h *userPortalHandler) telemetrySnapshot(c echo.Context) error {
 		return err
 	}
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": snapshot})
+}
+
+func userPortalTelemetryFilter(principal *httpmw.Principal, window, requestedScope string) (service.TelemetryFilter, error) {
+	teamID := principal.GetTeamID()
+	if teamID == uuid.Nil {
+		return service.TelemetryFilter{}, httperr.New(httperr.FORBIDDEN, "authenticated key is not team bound")
+	}
+
+	scope := "self"
+	var profileID *uuid.UUID
+	if principal.GetRole() == service.APIKeyRoleManager {
+		scope = "team"
+	} else {
+		keyID := principal.GetKeyID()
+		if keyID == uuid.Nil {
+			return service.TelemetryFilter{}, httperr.New(httperr.FORBIDDEN, "authenticated key is not profile bound")
+		}
+		profileID = &keyID
+	}
+
+	if requested := strings.TrimSpace(requestedScope); requested != "" && requested != scope {
+		return service.TelemetryFilter{}, httperr.New(httperr.FORBIDDEN, "user portal telemetry scope is determined by the authenticated key")
+	}
+
+	return service.TelemetryFilter{
+		Window:    strings.TrimSpace(window),
+		Scope:     scope,
+		TeamID:    &teamID,
+		ProfileID: profileID,
+	}, nil
 }
 
 func (h *userPortalHandler) rotateCurrentKey(c echo.Context) error {

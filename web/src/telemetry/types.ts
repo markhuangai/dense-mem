@@ -56,7 +56,6 @@ export type ControlTelemetryQuery = {
 
 export type UserTelemetryQuery = {
   window?: TelemetryWindowKey;
-  scope?: "self";
 };
 
 export const telemetryWindowOptions: { value: TelemetryWindowKey; label: string }[] = [

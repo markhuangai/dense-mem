@@ -45,6 +45,7 @@ export function TelemetryDashboard({
   const currentCards = snapshot ? telemetryCurrentCards(snapshot) : [];
   const activitySeries = snapshot ? telemetryActivitySeries(snapshot) : [];
   const stateSeries = snapshot ? telemetryStateSeries(snapshot) : [];
+  const windowControlId = `${title.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "") || "telemetry"}-telemetry-window`;
 
   return (
     <div className="telemetry-dashboard">
@@ -59,9 +60,9 @@ export function TelemetryDashboard({
       />
 
       <div className="metrics-toolbar telemetry-toolbar">
-        <label htmlFor={`${title}-telemetry-window`}>Telemetry range</label>
+        <label htmlFor={windowControlId}>Telemetry range</label>
         <select
-          id={`${title}-telemetry-window`}
+          id={windowControlId}
           value={windowKey}
           onChange={(event) => onWindowChange(event.target.value as TelemetryWindowKey)}
         >
