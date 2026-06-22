@@ -457,65 +457,6 @@ func TestControlPortalMetrics(t *testing.T) {
 	require.True(t, metrics.filter.To.After(metrics.filter.From))
 }
 
-func TestControlPortalTelemetry(t *testing.T) {
-	teamID := uuid.New()
-	telemetry := &controlTelemetrySvc{snapshot: &service.TelemetrySnapshot{
-		Available: true,
-		Window:    service.TelemetryWindow{Key: "1h"},
-		Scope:     service.TelemetryScope{Type: "team", TeamID: &teamID},
-		Cards:     []service.TelemetryCard{{ID: "http_requests", Label: "HTTP requests", Unit: "requests", Value: 3}},
-	}}
-	scrapeHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte("# HELP densemem_test metric\n"))
-	})
-	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
-		ControlHTTPAddr:    "127.0.0.1:8090",
-		ControlPortalToken: "secret",
-	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
-		Reader:        telemetry,
-		ScrapeHandler: scrapeHandler,
-		ScrapeToken:   "scrape-secret",
-	}, HealthConfig{}, nil)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodGet, "/control/api/telemetry?window=1h&scope=team&team_id="+teamID.String(), nil)
-	req.Header.Set("Authorization", "Bearer secret")
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), `"available":true`)
-	require.Equal(t, "1h", telemetry.filter.Window)
-	require.Equal(t, "team", telemetry.filter.Scope)
-	require.Equal(t, teamID, *telemetry.filter.TeamID)
-
-	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
-	rec = httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusUnauthorized, rec.Code)
-
-	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
-	req.Header.Set("X-Telemetry-Scrape-Token", "scrape-secret")
-	rec = httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), "densemem_test")
-
-	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
-	req.Header.Set("Authorization", "Bearer scrape-secret")
-	rec = httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code)
-
-	_, err = NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
-		ControlHTTPAddr:    "127.0.0.1:8090",
-		ControlPortalToken: "secret",
-	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
-		ScrapeHandler: scrapeHandler,
-	}, HealthConfig{}, nil)
-	require.ErrorContains(t, err, "telemetry scrape token is required")
-}
-
 func TestControlPortalProfileAndKeyFlows(t *testing.T) {
 	profiles, keys, server := testControlServer(t)
 

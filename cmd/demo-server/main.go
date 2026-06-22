@@ -691,6 +691,7 @@ func main() {
 			usageMetricsService,
 			http.ControlPortalTelemetry{
 				Reader:        telemetryReader,
+				HTTPMetrics:   telemetryHTTPMetrics,
 				ScrapeHandler: telemetryScrapeHandler,
 				ScrapeToken:   cfg.GetTelemetryScrapeToken(),
 				SSO:           ssoService,

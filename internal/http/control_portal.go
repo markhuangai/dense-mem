@@ -62,6 +62,7 @@ func NewControlPortalServerWithMetrics(
 
 type ControlPortalTelemetry struct {
 	Reader        service.TelemetryReader
+	HTTPMetrics   observability.HTTPMetrics
 	ScrapeHandler nethttp.Handler
 	ScrapeToken   string
 	SSO           *service.SSOService
@@ -134,6 +135,7 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, dreams: telemetry.Dreams, health: health, sso: telemetry.SSO, appConfig: telemetry.Config}
 	api := e.Group("/control/api")
 	api.Use(controlPortalMiddleware(cfg.GetControlPortalToken(), securitySvc))
+	api.Use(httpmw.TelemetryHTTPMiddleware(telemetry.HTTPMetrics))
 	api.GET("/session", control.session)
 	api.GET("/metrics", control.getMetrics)
 	api.GET("/telemetry", control.getTelemetry)

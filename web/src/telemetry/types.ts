@@ -19,6 +19,7 @@ export type TelemetryCard = {
   label: string;
   unit: string;
   value: number;
+  available?: boolean;
 };
 
 export type TelemetryPoint = {
@@ -39,7 +40,11 @@ export type TelemetrySnapshot = {
   window: TelemetryWindow;
   scope: TelemetryScope;
   cards: TelemetryCard[];
+  windowed_cards?: TelemetryCard[];
+  current_cards?: TelemetryCard[];
   series: TelemetrySeries[];
+  activity_series?: TelemetrySeries[];
+  state_series?: TelemetrySeries[];
 };
 
 export type ControlTelemetryQuery = {

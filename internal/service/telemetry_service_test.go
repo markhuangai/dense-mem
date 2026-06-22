@@ -28,12 +28,21 @@ func TestPrometheusTelemetryService_UnconfiguredReturnsUnavailableSnapshot(t *te
 	require.Equal(t, "30m", snapshot.Window.Key)
 	require.Equal(t, "telemetry backend is not configured", snapshot.Message)
 	require.NotEmpty(t, snapshot.Cards)
+	require.NotEmpty(t, snapshot.WindowedCards)
+	require.NotEmpty(t, snapshot.CurrentCards)
 	require.NotEmpty(t, snapshot.Series)
+	require.NotEmpty(t, snapshot.ActivitySeries)
+	require.NotEmpty(t, snapshot.StateSeries)
+	require.False(t, snapshot.Cards[0].Available)
 
 	payload, err := json.Marshal(snapshot)
 	require.NoError(t, err)
 	require.Contains(t, string(payload), `"points":[]`)
 	require.NotContains(t, string(payload), `"points":null`)
+	require.Contains(t, string(payload), `"windowed_cards"`)
+	require.Contains(t, string(payload), `"current_cards"`)
+	require.Contains(t, string(payload), `"activity_series"`)
+	require.Contains(t, string(payload), `"state_series"`)
 }
 
 func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {
@@ -67,7 +76,15 @@ func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, snapshot.Available)
 	require.Equal(t, 42.0, snapshot.Cards[0].Value)
+	require.True(t, snapshot.Cards[0].Available)
 	require.Equal(t, 2, len(snapshot.Series[0].Points))
+	require.Len(t, snapshot.Cards, len(snapshot.WindowedCards)+len(snapshot.CurrentCards))
+	require.Len(t, snapshot.Series, len(snapshot.ActivitySeries)+len(snapshot.StateSeries))
+	require.NotNil(t, telemetrySpecByID(snapshot.WindowedCards, "http_requests"))
+	require.Nil(t, telemetrySpecByID(snapshot.WindowedCards, "pending_claims"))
+	require.NotNil(t, telemetrySpecByID(snapshot.CurrentCards, "pending_claims"))
+	require.Nil(t, telemetrySeriesByID(snapshot.ActivitySeries, "pending_claims"))
+	require.NotNil(t, telemetrySeriesByID(snapshot.StateSeries, "pending_claims"))
 	require.Condition(t, func() bool {
 		for _, query := range queries {
 			if strings.Contains(query, `team_id="`+teamID.String()+`"`) && strings.Contains(query, `profile_id="`+profileID.String()+`"`) {
@@ -193,13 +210,14 @@ func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
 	qualityQuery := telemetrySparseHistogramAverage("densemem_recall_feedback_quality_score", TelemetryScope{}, nil, nil, "1h", 100)
 	require.Contains(t, qualityQuery, `min_over_time(densemem_recall_feedback_quality_score_sum[1h]) unless densemem_recall_feedback_quality_score_sum offset 1h`)
 	require.Contains(t, qualityQuery, `min_over_time(densemem_recall_feedback_quality_score_count[1h]) unless densemem_recall_feedback_quality_score_count offset 1h`)
+	require.Contains(t, feedbackRateQuery, `or vector(0)`)
 	rangeFeedbackQuery := telemetryRangeRecallFeedbackRate(`{job="dense-mem"}`, `used="true"`, "1m")
 	require.Contains(t, rangeFeedbackQuery, `min_over_time(densemem_recall_feedback_total{job="dense-mem",used="true"}[1m]) unless densemem_recall_feedback_total{job="dense-mem",used="true"} offset 1m`)
 	require.Contains(t, rangeFeedbackQuery, `count_over_time(densemem_recall_feedback_total{job="dense-mem",used="true"}[1m]) < bool on(job, instance) group_left() count_over_time(up[1m])`)
 	require.Condition(t, func() bool {
 		for _, spec := range telemetryCardSpecs(TelemetryScope{}, nil, "1h") {
 			if spec.ID == "dream_feedbacks" {
-				return strings.Contains(spec.Query, `densemem_dream_feedback_total`)
+				return strings.Contains(spec.Query, `min_over_time(densemem_dream_feedback_total[1h])`)
 			}
 		}
 		return false
@@ -213,6 +231,36 @@ func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
 		return false
 	})
 	require.Equal(t, `1000 * histogram_quantile(0.95, sum(rate(densemem_recall_duration_seconds_bucket[1m])) by (le))`, telemetryRangeHistogramQuantile("densemem_recall_duration_seconds", "", "", "1m", 0.95, 1000))
+	require.Contains(t, telemetryPromotionRate(TelemetryScope{}, nil, "1h"), `min_over_time(densemem_promotion_outcome_total{outcome="promoted"}[1h])`)
+	require.Contains(t, telemetryPromotionRate(TelemetryScope{}, nil, "1h"), `or vector(0)`)
+	require.Subset(t, telemetryQuerySpecIDs(telemetryWindowedCardSpecs(TelemetryScope{}, nil, "1h")), []string{
+		"embedding_requests",
+		"embedding_errors",
+		"verifier_requests",
+		"verify_verdicts",
+		"fragment_creates",
+		"claim_creates",
+		"retractions",
+		"facts_requeued",
+		"community_runs",
+		"avg_promote_lock_wait",
+		"avg_community_detect_latency",
+		"avg_community_projected_nodes",
+	})
+	require.Subset(t, telemetryQuerySpecIDs(telemetryActivitySeriesSpecs("", "1m")), []string{
+		"embedding_requests",
+		"embedding_errors",
+		"verifier_requests",
+		"verify_verdicts",
+		"fragment_creates",
+		"claim_creates",
+		"retractions",
+		"facts_requeued",
+		"community_runs",
+		"promote_lock_wait",
+		"community_detect_latency",
+		"community_projected_nodes",
+	})
 
 	scope, err = normalizeTelemetryScope(TelemetryFilter{Scope: "self", TeamID: &teamID, ProfileID: &profileID})
 	require.NoError(t, err)
@@ -231,6 +279,7 @@ func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
 		{json.RawMessage(`1770000000.5`), json.RawMessage(`"2.5"`)},
 		{json.RawMessage(`1770000001`)},
 		{json.RawMessage(`1770000002`), json.RawMessage(`"-1"`)},
+		{json.RawMessage(`1770000003`), json.RawMessage(`"NaN"`)},
 	})
 	require.NoError(t, err)
 	require.Len(t, points, 2)
@@ -239,7 +288,8 @@ func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
 
 	value, err := decodePrometheusValue(nil)
 	require.NoError(t, err)
-	require.Equal(t, 0.0, value)
+	require.False(t, value.Available)
+	require.Equal(t, 0.0, value.Value)
 
 	_, _, err = decodePrometheusPair([]json.RawMessage{json.RawMessage(`"bad"`), json.RawMessage(`"1"`)})
 	require.Error(t, err)
@@ -247,7 +297,8 @@ func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
 	require.Error(t, err)
 	_, value, err = decodePrometheusPair([]json.RawMessage{json.RawMessage(`1`), json.RawMessage(`"NaN"`)})
 	require.NoError(t, err)
-	require.Equal(t, 0.0, value)
+	require.False(t, value.Available)
+	require.Equal(t, 0.0, value.Value)
 }
 
 func TestPrometheusTelemetryService_QueryFailureBranches(t *testing.T) {
@@ -277,7 +328,8 @@ func TestPrometheusTelemetryService_QueryFailureBranches(t *testing.T) {
 
 	value, err := svc.queryInstant(context.Background(), "instant-empty")
 	require.NoError(t, err)
-	require.Equal(t, 0.0, value)
+	require.False(t, value.Available)
+	require.Equal(t, 0.0, value.Value)
 	_, err = svc.queryInstant(context.Background(), "instant-error")
 	require.ErrorContains(t, err, "bad instant")
 	_, err = svc.queryInstant(context.Background(), "bad-json")
@@ -368,6 +420,32 @@ func scopeLabels(scope TelemetryScope) map[string]string {
 		labels["profile_id"] = scope.ProfileID.String()
 	}
 	return labels
+}
+
+func telemetrySpecByID(cards []TelemetryCard, id string) *TelemetryCard {
+	for i := range cards {
+		if cards[i].ID == id {
+			return &cards[i]
+		}
+	}
+	return nil
+}
+
+func telemetrySeriesByID(series []TelemetrySeries, id string) *TelemetrySeries {
+	for i := range series {
+		if series[i].ID == id {
+			return &series[i]
+		}
+	}
+	return nil
+}
+
+func telemetryQuerySpecIDs(specs []telemetryQuerySpec) []string {
+	ids := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		ids = append(ids, spec.ID)
+	}
+	return ids
 }
 
 func mustMarshalStringMap(t *testing.T, value map[string]string) string {
