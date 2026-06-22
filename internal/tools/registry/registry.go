@@ -33,6 +33,7 @@ type Tool struct {
 	OutputSchema   map[string]any
 	RequiredScopes []string
 	Invoke         ToolInvoker
+	Aliases        []string
 }
 
 // Registry holds a set of Tools and answers register/list/get queries.
@@ -45,15 +46,19 @@ type Registry interface {
 
 // inMemoryRegistry is the default Registry implementation.
 type inMemoryRegistry struct {
-	mu    sync.RWMutex
-	tools map[string]Tool
+	mu      sync.RWMutex
+	tools   map[string]Tool
+	aliases map[string]string
 }
 
 var _ Registry = (*inMemoryRegistry)(nil)
 
 // New returns an empty in-memory Registry.
 func New() Registry {
-	return &inMemoryRegistry{tools: make(map[string]Tool)}
+	return &inMemoryRegistry{
+		tools:   make(map[string]Tool),
+		aliases: make(map[string]string),
+	}
 }
 
 // Register stores the tool. Returns an error when a tool with the same Name is
@@ -70,7 +75,35 @@ func (r *inMemoryRegistry) Register(tool Tool) error {
 	if _, exists := r.tools[tool.Name]; exists {
 		return fmt.Errorf("registry: tool %q already registered", tool.Name)
 	}
+	if canonical, exists := r.aliases[tool.Name]; exists {
+		return fmt.Errorf("registry: tool name %q already registered as alias for %q", tool.Name, canonical)
+	}
+	seenAliases := map[string]struct{}{}
+	for _, alias := range tool.Aliases {
+		if alias == "" {
+			return fmt.Errorf("registry: alias for tool %q must not be empty", tool.Name)
+		}
+		if !toolNamePattern.MatchString(alias) {
+			return fmt.Errorf("registry: alias %q for tool %q must match %s", alias, tool.Name, toolNamePatternText)
+		}
+		if alias == tool.Name {
+			return fmt.Errorf("registry: alias %q duplicates canonical tool name", alias)
+		}
+		if _, exists := r.tools[alias]; exists {
+			return fmt.Errorf("registry: alias %q for tool %q conflicts with registered tool", alias, tool.Name)
+		}
+		if canonical, exists := r.aliases[alias]; exists {
+			return fmt.Errorf("registry: alias %q for tool %q already registered for %q", alias, tool.Name, canonical)
+		}
+		if _, exists := seenAliases[alias]; exists {
+			return fmt.Errorf("registry: alias %q for tool %q is duplicated", alias, tool.Name)
+		}
+		seenAliases[alias] = struct{}{}
+	}
 	r.tools[tool.Name] = tool
+	for _, alias := range tool.Aliases {
+		r.aliases[alias] = tool.Name
+	}
 	return nil
 }
 
@@ -79,6 +112,14 @@ func (r *inMemoryRegistry) Get(name string) (Tool, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	t, ok := r.tools[name]
+	if ok {
+		return t, true
+	}
+	canonical, ok := r.aliases[name]
+	if !ok {
+		return Tool{}, false
+	}
+	t, ok = r.tools[canonical]
 	return t, ok
 }
 

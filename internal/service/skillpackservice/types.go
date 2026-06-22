@@ -11,7 +11,8 @@ import (
 )
 
 const (
-	SchemaVersion = "dense-mem.skill_pack.v1"
+	SchemaVersion       = "dense-mem.memory_pack.v1"
+	LegacySchemaVersion = "dense-mem.skill_pack.v1"
 
 	SourceKindFact           = "source_fact"
 	SourceKindValidatedClaim = "source_validated_claim"
@@ -27,7 +28,7 @@ const (
 	defaultHistoryRetention = 30 * 24 * time.Hour
 )
 
-// Service is the tool-facing skill-pack workflow.
+// Service is the tool-facing memory-pack workflow.
 type Service interface {
 	FindCandidates(ctx context.Context, profileID string, req FindCandidatesRequest) (*FindCandidatesResult, error)
 	Export(ctx context.Context, profileID string, req ExportRequest) (*ExportResult, error)

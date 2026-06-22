@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/promptcatalog"
 	"github.com/markhuangai/dense-mem/internal/tools"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
@@ -46,6 +47,7 @@ type Server struct {
 	team                 TeamContext
 	logger               observability.LogProvider
 	recallFeedbackConfig registry.RecallFeedbackConfigProvider
+	prompts              promptcatalog.Catalog
 }
 
 // TeamContext is non-secret team metadata made visible in MCP discovery so
@@ -81,6 +83,7 @@ func NewServerWithScopesTeamContextAndRuntimeConfig(reg registry.Registry, profi
 		team:                 normalizeTeamContext(team),
 		logger:               logger,
 		recallFeedbackConfig: recallFeedbackConfig,
+		prompts:              defaultPromptCatalog(logger),
 	}
 }
 
@@ -129,6 +132,14 @@ func (s *Server) dispatch(ctx context.Context, req rpcRequest) rpcResponse {
 			return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: rpcErr}
 		}
 		return okResponse(req.ID, result)
+	case "prompts/list":
+		return okResponse(req.ID, s.handlePromptsList())
+	case "prompts/get":
+		result, rpcErr := s.handlePromptsGet(req.Params)
+		if rpcErr != nil {
+			return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: rpcErr}
+		}
+		return okResponse(req.ID, result)
 	default:
 		s.logger.Warn("mcp: method not found", observability.String("method", req.Method))
 		return errorResponse(req.ID, errCodeMethodNotFound, fmt.Sprintf("method not found: %s", req.Method))
@@ -148,17 +159,95 @@ func (s *Server) handleInitialize() map[string]any {
 		serverInfo["description"] = description
 	}
 
+	capabilities := map[string]any{
+		"tools": map[string]any{},
+	}
+	if len(s.prompts.List()) > 0 {
+		capabilities["prompts"] = map[string]any{}
+	}
+
 	out := map[string]any{
 		"protocolVersion": ProtocolVersion,
-		"capabilities": map[string]any{
-			"tools": map[string]any{},
-		},
-		"serverInfo": serverInfo,
+		"capabilities":    capabilities,
+		"serverInfo":      serverInfo,
 	}
 	if instructions := s.instructions(); instructions != "" {
 		out["instructions"] = instructions
 	}
 	return out
+}
+
+func (s *Server) handlePromptsList() map[string]any {
+	listed := s.prompts.List()
+	out := make([]map[string]any, 0, len(listed))
+	for _, prompt := range listed {
+		args := make([]map[string]any, 0, len(prompt.Arguments))
+		for _, arg := range prompt.Arguments {
+			args = append(args, map[string]any{
+				"name":        arg.Name,
+				"description": arg.Description,
+				"required":    arg.Required,
+			})
+		}
+		item := map[string]any{
+			"name":        prompt.Name,
+			"description": prompt.Description,
+			"arguments":   args,
+		}
+		if prompt.Title != "" {
+			item["title"] = prompt.Title
+		}
+		out = append(out, item)
+	}
+	return map[string]any{"prompts": out}
+}
+
+type promptsGetParams struct {
+	Name      string         `json:"name"`
+	Arguments map[string]any `json:"arguments"`
+}
+
+func (s *Server) handlePromptsGet(raw json.RawMessage) (map[string]any, *rpcError) {
+	if len(raw) == 0 {
+		return nil, &rpcError{Code: errCodeInvalidParams, Message: "missing params"}
+	}
+	var params promptsGetParams
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return nil, &rpcError{Code: errCodeInvalidParams, Message: "invalid params"}
+	}
+	if params.Name == "" {
+		return nil, &rpcError{Code: errCodeInvalidParams, Message: "missing prompt name"}
+	}
+	args := map[string]string{}
+	for key, value := range params.Arguments {
+		text, ok := value.(string)
+		if !ok {
+			return nil, &rpcError{
+				Code:    errCodeInvalidParams,
+				Message: fmt.Sprintf("argument %q must be a string", key),
+			}
+		}
+		args[key] = text
+	}
+	prompt, text, err := s.prompts.Render(params.Name, args)
+	if err != nil {
+		if errors.Is(err, promptcatalog.ErrPromptNotFound) {
+			return nil, &rpcError{Code: errCodeMethodNotFound, Message: err.Error()}
+		}
+		return nil, &rpcError{Code: errCodeInvalidParams, Message: err.Error()}
+	}
+	return map[string]any{
+		"description": prompt.Description,
+		"messages": []map[string]any{
+			{
+				"role": "user",
+				"content": map[string]any{
+					"type": "text",
+					"text": text,
+				},
+			},
+		},
+	}, nil
 }
 
 // handleToolsList returns registered tools mapped to MCP tool descriptors.
@@ -366,6 +455,21 @@ func slugifyMCPName(value string) string {
 		}
 	}
 	return strings.Trim(b.String(), "-")
+}
+
+func defaultPromptCatalog(logger observability.LogProvider) promptcatalog.Catalog {
+	return promptCatalogOrEmpty(logger, promptcatalog.Default)
+}
+
+func promptCatalogOrEmpty(logger observability.LogProvider, load func() (promptcatalog.Catalog, error)) promptcatalog.Catalog {
+	catalog, err := load()
+	if err != nil {
+		if logger != nil {
+			logger.Warn("mcp: prompt catalog unavailable", observability.String("error", err.Error()))
+		}
+		return promptcatalog.Catalog{}
+	}
+	return catalog
 }
 
 func okResponse(id json.RawMessage, result any) rpcResponse {

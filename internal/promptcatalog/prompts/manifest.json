@@ -1,0 +1,25 @@
+[
+  {
+    "name": "export_memory_as_agent_skill",
+    "title": "Export Memory as Agent Skill",
+    "description": "Guide an LLM to turn recalled Dense-Mem experience into a shareable Agent Skill SKILL.md file.",
+    "arguments": [
+      {
+        "name": "topic",
+        "description": "Experience or memory area to export.",
+        "required": true
+      },
+      {
+        "name": "skill_name",
+        "description": "Optional target skill name.",
+        "required": false
+      },
+      {
+        "name": "scope_notes",
+        "description": "Optional constraints about what to include or exclude.",
+        "required": false
+      }
+    ],
+    "template": "export_memory_as_agent_skill.md"
+  }
+]

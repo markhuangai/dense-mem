@@ -197,7 +197,7 @@ func trustedClaimAfterState(claimID string, status domain.ClaimStatus) map[strin
 		"claim_id":           claimID,
 		"status":             string(status),
 		"entailment_verdict": string(domain.VerdictEntailed),
-		"verifier_model":     "skill_pack.source_trust",
+		"verifier_model":     "memory_pack.source_trust",
 	}
 }
 

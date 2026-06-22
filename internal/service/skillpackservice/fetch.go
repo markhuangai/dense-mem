@@ -16,7 +16,7 @@ type ArtifactHTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-var ErrUnsafeURL = errors.New("unsafe skill pack URL")
+var ErrUnsafeURL = errors.New("unsafe memory pack URL")
 
 func defaultHTTPClient() *http.Client {
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
@@ -56,22 +56,22 @@ func fetchArtifact(ctx context.Context, client ArtifactHTTPClient, rawURL string
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("skill pack fetch: %w", err)
+		return nil, fmt.Errorf("memory pack fetch: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("skill pack fetch: %w", err)
+		return nil, fmt.Errorf("memory pack fetch: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("skill pack fetch: status %d", resp.StatusCode)
+		return nil, fmt.Errorf("memory pack fetch: status %d", resp.StatusCode)
 	}
 	limited := io.LimitReader(resp.Body, maxArtifactBytes+1)
 	data, err := io.ReadAll(limited)
 	if err != nil {
-		return nil, fmt.Errorf("skill pack fetch: read: %w", err)
+		return nil, fmt.Errorf("memory pack fetch: read: %w", err)
 	}
 	if len(data) > maxArtifactBytes {
 		return nil, fmt.Errorf("%w: artifact exceeds %d bytes", ErrInvalidArtifact, maxArtifactBytes)

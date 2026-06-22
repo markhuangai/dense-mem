@@ -66,7 +66,7 @@ func TestImportItemErrorAndDuplicateBranches(t *testing.T) {
 		Object:               item.Object,
 		Status:               domain.StatusValidated,
 		EntailmentVerdict:    domain.VerdictEntailed,
-		VerifierModel:        "skill_pack.source_trust",
+		VerifierModel:        "memory_pack.source_trust",
 		LastVerifierResponse: "trusted source",
 	}
 	ledger := &fakeLedger{}
@@ -80,7 +80,7 @@ func TestImportItemErrorAndDuplicateBranches(t *testing.T) {
 	if validated.Status != "validated" || len(ledger.changes) != 1 {
 		t.Fatalf("validated = %+v changes=%d, want one claim change", validated, len(ledger.changes))
 	}
-	if ledger.changes[0].AfterState["verifier_model"] != "skill_pack.source_trust" {
+	if ledger.changes[0].AfterState["verifier_model"] != "memory_pack.source_trust" {
 		t.Fatalf("after state = %v, want final claim verifier fields", ledger.changes[0].AfterState)
 	}
 
@@ -363,7 +363,7 @@ func TestImportItemReviewDuplicateAndFactFinalClaimBranches(t *testing.T) {
 		Object:               factItem.Object,
 		Status:               domain.StatusSuperseded,
 		EntailmentVerdict:    domain.VerdictEntailed,
-		VerifierModel:        "skill_pack.source_trust",
+		VerifierModel:        "memory_pack.source_trust",
 		LastVerifierResponse: "trusted source",
 	}
 	factLedger := &fakeLedger{}
@@ -378,7 +378,7 @@ func TestImportItemReviewDuplicateAndFactFinalClaimBranches(t *testing.T) {
 	if promoted.Status != "promoted" || len(factLedger.changes) != 2 {
 		t.Fatalf("promoted = %+v changes=%d, want promoted with claim and fact changes", promoted, len(factLedger.changes))
 	}
-	if factLedger.changes[0].AfterState["verifier_model"] != "skill_pack.source_trust" {
+	if factLedger.changes[0].AfterState["verifier_model"] != "memory_pack.source_trust" {
 		t.Fatalf("after state = %v, want final claim verifier fields", factLedger.changes[0].AfterState)
 	}
 }

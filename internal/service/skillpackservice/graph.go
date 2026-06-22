@@ -122,7 +122,7 @@ func (g *graphOps) loadSupportFragments(ctx context.Context, profileID string, f
 		return out, nil
 	}
 	if !g.available() {
-		return nil, fmt.Errorf("skill pack export: graph store is required to export support fragments")
+		return nil, fmt.Errorf("memory pack export: graph store is required to export support fragments")
 	}
 	_, rows, err := g.graph.ScopedRead(ctx, profileID, `
 		MATCH (sf:SourceFragment {team_id: $profileId})
@@ -198,14 +198,14 @@ func (g *graphOps) tagClaim(ctx context.Context, profileID, claimID, importID, a
 
 func (g *graphOps) trustClaim(ctx context.Context, profileID, claimID, importID, artifactHash, sourceKind string) error {
 	if !g.available() {
-		return fmt.Errorf("skill pack import: graph store is required for trusted import")
+		return fmt.Errorf("memory pack import: graph store is required for trusted import")
 	}
 	now := time.Now().UTC()
 	_, err := g.graph.ScopedWrite(ctx, profileID, `
 		MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
 		SET c.status = 'validated',
 		    c.entailment_verdict = 'entailed',
-		    c.verifier_model = 'skill_pack.source_trust',
+		    c.verifier_model = 'memory_pack.source_trust',
 		    c.verified_at = $verifiedAt,
 		    c.import_id = $importId,
 		    c.import_bundle_hash = $artifactHash,
@@ -223,14 +223,14 @@ func (g *graphOps) trustClaim(ctx context.Context, profileID, claimID, importID,
 
 func (g *graphOps) trustExistingClaim(ctx context.Context, profileID, claimID string) error {
 	if !g.available() {
-		return fmt.Errorf("skill pack import: graph store is required for trusted import")
+		return fmt.Errorf("memory pack import: graph store is required for trusted import")
 	}
 	now := time.Now().UTC()
 	_, err := g.graph.ScopedWrite(ctx, profileID, `
 		MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
 		SET c.status = 'validated',
 		    c.entailment_verdict = 'entailed',
-		    c.verifier_model = 'skill_pack.source_trust',
+		    c.verifier_model = 'memory_pack.source_trust',
 		    c.verified_at = $verifiedAt
 	`, map[string]any{
 		"claimId":    claimID,
@@ -260,7 +260,7 @@ func (g *graphOps) tagFact(ctx context.Context, profileID, factID, importID, art
 
 func (g *graphOps) promotedFactIDForClaim(ctx context.Context, profileID, claimID string) (string, error) {
 	if !g.available() {
-		return "", fmt.Errorf("skill pack import: graph store is required for trusted import")
+		return "", fmt.Errorf("memory pack import: graph store is required for trusted import")
 	}
 	_, rows, err := g.graph.ScopedRead(ctx, profileID, `
 		MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})-[:PROMOTES_TO {team_id: $profileId}]->(f:Fact {team_id: $profileId})
@@ -281,7 +281,7 @@ func (g *graphOps) supersedeFacts(ctx context.Context, profileID string, factIDs
 		return nil
 	}
 	if !g.available() {
-		return fmt.Errorf("skill pack import: graph store is required to supersede facts")
+		return fmt.Errorf("memory pack import: graph store is required to supersede facts")
 	}
 	now := time.Now().UTC()
 	return g.graph.ScopedWriteTx(ctx, profileID, func(tx neo4jdriver.ManagedTransaction) error {
@@ -310,7 +310,7 @@ func (g *graphOps) supersedeFacts(ctx context.Context, profileID string, factIDs
 
 func (g *graphOps) deleteEntity(ctx context.Context, profileID, entityType, entityID string) error {
 	if !g.available() {
-		return fmt.Errorf("skill pack rollback: graph store is required")
+		return fmt.Errorf("memory pack rollback: graph store is required")
 	}
 	query, params, err := deleteEntityQuery(entityType, entityID)
 	if err != nil {
@@ -344,7 +344,7 @@ func deleteEntityQuery(entityType, entityID string) (string, map[string]any, err
 
 func (g *graphOps) restoreClaim(ctx context.Context, profileID, claimID, importID string, before map[string]any) error {
 	if !g.available() {
-		return fmt.Errorf("skill pack rollback: graph store is required")
+		return fmt.Errorf("memory pack rollback: graph store is required")
 	}
 	_, err := g.graph.ScopedWrite(ctx, profileID, `
 		MATCH (c:Claim {team_id: $profileId, claim_id: $claimId})
@@ -366,7 +366,7 @@ func (g *graphOps) restoreClaim(ctx context.Context, profileID, claimID, importI
 
 func (g *graphOps) restoreFact(ctx context.Context, profileID, factID, importID string, before map[string]any) error {
 	if !g.available() {
-		return fmt.Errorf("skill pack rollback: graph store is required")
+		return fmt.Errorf("memory pack rollback: graph store is required")
 	}
 	return g.graph.ScopedWriteTx(ctx, profileID, func(tx neo4jdriver.ManagedTransaction) error {
 		result, err := neo4jstorage.RunScoped(ctx, tx, profileID, `
@@ -399,7 +399,7 @@ func (g *graphOps) restoreFact(ctx context.Context, profileID, factID, importID 
 
 func (g *graphOps) currentState(ctx context.Context, profileID, entityType, entityID string) (map[string]any, error) {
 	if !g.available() {
-		return nil, fmt.Errorf("skill pack rollback: graph store is required")
+		return nil, fmt.Errorf("memory pack rollback: graph store is required")
 	}
 	query, params, err := currentStateQuery(entityType, entityID)
 	if err != nil {

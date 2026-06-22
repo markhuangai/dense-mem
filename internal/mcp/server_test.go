@@ -11,6 +11,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/promptcatalog"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
@@ -145,12 +146,126 @@ func TestMCP_Initialize(t *testing.T) {
 	if !ok || caps["tools"] == nil {
 		t.Errorf("capabilities.tools missing: %v", result["capabilities"])
 	}
+	if caps["prompts"] == nil {
+		t.Errorf("capabilities.prompts missing: %v", result["capabilities"])
+	}
 	info, _ := result["serverInfo"].(map[string]any)
 	if info["name"] != ServerName {
 		t.Errorf("serverInfo.name = %v; want %v", info["name"], ServerName)
 	}
 	if _, ok := result["instructions"]; ok {
 		t.Errorf("legacy initialize unexpectedly included team instructions: %v", result["instructions"])
+	}
+}
+
+func TestMCP_PromptsListAndGet(t *testing.T) {
+	logger, _ := testLogger(t)
+	reg := registry.New()
+	s := NewServer(reg, "pA", logger)
+
+	listOut := runRPC(t, s, `{"jsonrpc":"2.0","id":1,"method":"prompts/list","params":{}}`)
+	var listResp rpcResp
+	if err := json.Unmarshal([]byte(strings.TrimSpace(listOut)), &listResp); err != nil {
+		t.Fatalf("unmarshal list: %v", err)
+	}
+	if listResp.Error != nil {
+		t.Fatalf("prompts/list error = %+v", listResp.Error)
+	}
+	var listPayload struct {
+		Prompts []struct {
+			Name      string `json:"name"`
+			Arguments []struct {
+				Name     string `json:"name"`
+				Required bool   `json:"required"`
+			} `json:"arguments"`
+		} `json:"prompts"`
+	}
+	if err := json.Unmarshal(listResp.Result, &listPayload); err != nil {
+		t.Fatalf("list result unmarshal: %v", err)
+	}
+	if len(listPayload.Prompts) != 1 || listPayload.Prompts[0].Name != "export_memory_as_agent_skill" {
+		t.Fatalf("prompts/list = %+v", listPayload.Prompts)
+	}
+	foundTopic := false
+	for _, arg := range listPayload.Prompts[0].Arguments {
+		if arg.Name == "topic" && arg.Required {
+			foundTopic = true
+		}
+	}
+	if !foundTopic {
+		t.Fatalf("topic argument missing or not required: %+v", listPayload.Prompts[0].Arguments)
+	}
+
+	getOut := runRPC(t, s, `{"jsonrpc":"2.0","id":2,"method":"prompts/get","params":{"name":"export_memory_as_agent_skill","arguments":{"topic":"review workflows","skill_name":"review-workflows"}}}`)
+	var getResp rpcResp
+	if err := json.Unmarshal([]byte(strings.TrimSpace(getOut)), &getResp); err != nil {
+		t.Fatalf("unmarshal get: %v", err)
+	}
+	if getResp.Error != nil {
+		t.Fatalf("prompts/get error = %+v", getResp.Error)
+	}
+	var getPayload struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(getResp.Result, &getPayload); err != nil {
+		t.Fatalf("get result unmarshal: %v", err)
+	}
+	if len(getPayload.Messages) != 1 || getPayload.Messages[0].Role != "user" || getPayload.Messages[0].Content.Type != "text" {
+		t.Fatalf("messages = %+v", getPayload.Messages)
+	}
+	text := getPayload.Messages[0].Content.Text
+	for _, want := range []string{"review workflows", "review-workflows", "SKILL.md", "Exclude secrets"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("rendered prompt missing %q: %s", want, text)
+		}
+	}
+}
+
+func TestMCP_PromptsGetErrors(t *testing.T) {
+	logger, _ := testLogger(t)
+	reg := registry.New()
+	s := NewServer(reg, "pA", logger)
+
+	cases := []struct {
+		name string
+		req  string
+		code int
+	}{
+		{"missing params", `{"jsonrpc":"2.0","id":1,"method":"prompts/get"}`, errCodeInvalidParams},
+		{"missing required arg", `{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{"name":"export_memory_as_agent_skill","arguments":{}}}`, errCodeInvalidParams},
+		{"non-string optional arg", `{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{"name":"export_memory_as_agent_skill","arguments":{"topic":"review workflows","skill_name":123}}}`, errCodeInvalidParams},
+		{"unknown prompt", `{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{"name":"missing","arguments":{}}}`, errCodeMethodNotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := runRPC(t, s, tc.req)
+			var resp rpcResp
+			if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &resp); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if resp.Error == nil || resp.Error.Code != tc.code {
+				t.Fatalf("error = %+v; want code %d", resp.Error, tc.code)
+			}
+		})
+	}
+}
+
+func TestDefaultPromptCatalogLogsLoadFailure(t *testing.T) {
+	logger, logBuf := testLogger(t)
+	catalog := promptCatalogOrEmpty(logger, func() (promptcatalog.Catalog, error) {
+		return promptcatalog.Catalog{}, errors.New("manifest missing")
+	})
+	if prompts := catalog.List(); len(prompts) != 0 {
+		t.Fatalf("prompts len = %d, want 0", len(prompts))
+	}
+	if log := logBuf.String(); !strings.Contains(log, "mcp: prompt catalog unavailable") || !strings.Contains(log, "manifest missing") {
+		t.Fatalf("log = %s, want prompt catalog warning", log)
 	}
 }
 

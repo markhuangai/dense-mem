@@ -86,7 +86,7 @@ func TestImportRebuildsSelectedSupportLineage(t *testing.T) {
 		!slices.Contains(createdClaim.SupportedBy, "fragment-3") {
 		t.Fatalf("created claim supported_by = %+v, want recreated support fragments", createdClaim.SupportedBy)
 	}
-	if createdClaim.Speaker != "skill_pack" || createdClaim.ExtractConf != 0.8 || !strings.HasPrefix(createdClaim.IdempotencyKey, "skill-pack:claim:") {
+	if createdClaim.Speaker != "memory_pack" || createdClaim.ExtractConf != 0.8 || !strings.HasPrefix(createdClaim.IdempotencyKey, "memory-pack:claim:") {
 		t.Fatalf("created claim = %+v, want import defaults and support claim idempotency", createdClaim)
 	}
 	if len(ledger.changes) != 4 {
@@ -103,7 +103,7 @@ func TestImportSupportFragmentSourceQualityDistinguishesZeroFromOmitted(t *testi
 		Ledger:         &fakeLedger{},
 	})
 	artifactJSON := `{
-		"schema_version":"dense-mem.skill_pack.v1",
+		"schema_version":"dense-mem.memory_pack.v1",
 		"name":"Supported pack",
 		"items":[{
 			"subject":"assistant",
@@ -172,14 +172,14 @@ func TestSupportHelpersNormalizeAndDedupe(t *testing.T) {
 		t.Fatalf("missing fragments = %+v, want fragment-b", missing)
 	}
 	labels := appendImportLabel([]string{" a ", "a", "", "b"})
-	if !slices.Equal(labels, []string{"a", "b", "skill_pack_import"}) {
+	if !slices.Equal(labels, []string{"a", "b", "memory_pack_import"}) {
 		t.Fatalf("labels = %+v, want trimmed dedupe plus import label", labels)
 	}
 	fullLabels := []string{}
 	for i := 0; i < 20; i++ {
 		fullLabels = append(fullLabels, "label"+string(rune('a'+i)))
 	}
-	if got := appendImportLabel(fullLabels); len(got) != 20 || slices.Contains(got, "skill_pack_import") {
+	if got := appendImportLabel(fullLabels); len(got) != 20 || slices.Contains(got, "memory_pack_import") {
 		t.Fatalf("full labels = %+v, want no extra import label", got)
 	}
 }

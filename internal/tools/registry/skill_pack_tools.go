@@ -9,8 +9,9 @@ import (
 
 func findSkillPackCandidatesTool(deps Dependencies) Tool {
 	return Tool{
-		Name:        "find_skill_pack_candidates",
-		Description: "Find existing facts and validated claims that could be exported into a portable skill-pack artifact.",
+		Name:        "find_memory_pack_candidates",
+		Description: "Find existing facts and validated claims that could be exported into a portable memory-pack artifact.",
+		Aliases:     []string{"find_skill_pack_candidates"},
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"query"},
@@ -28,7 +29,7 @@ func findSkillPackCandidatesTool(deps Dependencies) Tool {
 			}
 			var req skillpackservice.FindCandidatesRequest
 			if err := remapInput(input, &req); err != nil {
-				return nil, fmt.Errorf("find_skill_pack_candidates: invalid input: %w", err)
+				return nil, fmt.Errorf("find_memory_pack_candidates: invalid input: %w", err)
 			}
 			res, err := deps.SkillPack.FindCandidates(ctx, profileID, req)
 			if err != nil {
@@ -41,14 +42,15 @@ func findSkillPackCandidatesTool(deps Dependencies) Tool {
 
 func exportSkillPackTool(deps Dependencies) Tool {
 	return Tool{
-		Name:        "export_skill_pack",
-		Description: "Export selected facts, validated claims, and manual triples into canonical dense-mem skill-pack JSON plus a SHA-256 integrity hash.",
+		Name:        "export_memory_pack",
+		Description: "Export selected facts, validated claims, and manual triples into canonical Dense-Mem memory-pack JSON plus a SHA-256 integrity hash.",
+		Aliases:     []string{"export_skill_pack"},
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"name"},
 			"properties": map[string]any{
-				"name":            schemaString("Skill pack name.", 256),
-				"description":     schemaString("Short skill pack description.", 1024),
+				"name":            schemaString("Memory pack name.", 256),
+				"description":     schemaString("Short memory pack description.", 1024),
 				"fact_ids":        map[string]any{"type": "array", "items": schemaString("Fact ID.", 128)},
 				"claim_ids":       map[string]any{"type": "array", "items": schemaString("Claim ID.", 128)},
 				"manual_items":    skillPackItemsSchema(),
@@ -64,7 +66,7 @@ func exportSkillPackTool(deps Dependencies) Tool {
 			}
 			var req skillpackservice.ExportRequest
 			if err := remapInput(input, &req); err != nil {
-				return nil, fmt.Errorf("export_skill_pack: invalid input: %w", err)
+				return nil, fmt.Errorf("export_memory_pack: invalid input: %w", err)
 			}
 			res, err := deps.SkillPack.Export(ctx, profileID, req)
 			if err != nil {
@@ -77,14 +79,15 @@ func exportSkillPackTool(deps Dependencies) Tool {
 
 func inspectSkillPackTool(deps Dependencies) Tool {
 	return Tool{
-		Name:        "inspect_skill_pack",
-		Description: "Parse a skill-pack artifact or HTTPS URL, verify its optional SHA-256 hash, and report duplicates and conflicts without writing memory.",
+		Name:        "inspect_memory_pack",
+		Description: "Parse a memory-pack artifact or HTTPS URL, verify its optional SHA-256 hash, and report duplicates and conflicts without writing memory. Legacy skill-pack artifacts are accepted.",
+		Aliases:     []string{"inspect_skill_pack"},
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"artifact":            skillPackSchema(),
-				"artifact_json":       schemaString("Skill pack JSON string.", 0),
-				"url":                 schemaString("HTTPS URL to a skill pack JSON artifact.", 2048),
+				"artifact_json":       schemaString("Memory pack JSON string.", 0),
+				"url":                 schemaString("HTTPS URL to a memory pack JSON artifact.", 2048),
 				"expected_sha256":     schemaString("Expected canonical artifact SHA-256.", 64),
 				"recommend_decisions": map[string]any{"type": "boolean", "description": "Ask the configured LLM decider to recommend actions for conflicts without writing memory."},
 			},
@@ -98,7 +101,7 @@ func inspectSkillPackTool(deps Dependencies) Tool {
 			}
 			var req skillpackservice.InspectRequest
 			if err := remapInput(input, &req); err != nil {
-				return nil, fmt.Errorf("inspect_skill_pack: invalid input: %w", err)
+				return nil, fmt.Errorf("inspect_memory_pack: invalid input: %w", err)
 			}
 			res, err := deps.SkillPack.Inspect(ctx, profileID, req)
 			if err != nil {
@@ -111,15 +114,16 @@ func inspectSkillPackTool(deps Dependencies) Tool {
 
 func importSkillPackTool(deps Dependencies) Tool {
 	return Tool{
-		Name:        "import_skill_pack",
-		Description: "Import a skill pack in review or trusted mode. Trusted URL imports require a SHA-256 hash and conflict decisions before local facts are superseded.",
+		Name:        "import_memory_pack",
+		Description: "Import a memory pack in review or trusted mode. Trusted URL imports require a SHA-256 hash and conflict decisions before local facts are superseded. Legacy skill-pack artifacts are accepted.",
+		Aliases:     []string{"import_skill_pack"},
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"mode"},
 			"properties": map[string]any{
 				"artifact":              skillPackSchema(),
-				"artifact_json":         schemaString("Skill pack JSON string.", 0),
-				"url":                   schemaString("HTTPS URL to a skill pack JSON artifact.", 2048),
+				"artifact_json":         schemaString("Memory pack JSON string.", 0),
+				"url":                   schemaString("HTTPS URL to a memory pack JSON artifact.", 2048),
 				"expected_sha256":       schemaString("Expected canonical artifact SHA-256.", 64),
 				"mode":                  schemaEnum([]string{"review", "trusted"}),
 				"selected_items":        map[string]any{"type": "array", "items": map[string]any{"type": "integer", "minimum": 0}},
@@ -136,7 +140,7 @@ func importSkillPackTool(deps Dependencies) Tool {
 			}
 			var req skillpackservice.ImportRequest
 			if err := remapInput(input, &req); err != nil {
-				return nil, fmt.Errorf("import_skill_pack: invalid input: %w", err)
+				return nil, fmt.Errorf("import_memory_pack: invalid input: %w", err)
 			}
 			res, err := deps.SkillPack.Import(ctx, profileID, req)
 			if err != nil {
@@ -158,12 +162,13 @@ func importSkillPackTool(deps Dependencies) Tool {
 
 func rollbackSkillPackImportTool(deps Dependencies) Tool {
 	return Tool{
-		Name:        "rollback_skill_pack_import",
-		Description: "Rollback an applied skill-pack import using the Postgres import ledger. Rollback aborts when affected graph entities changed after import.",
+		Name:        "rollback_memory_pack_import",
+		Description: "Rollback an applied memory-pack import using the Postgres import ledger. Rollback aborts when affected graph entities changed after import.",
+		Aliases:     []string{"rollback_skill_pack_import"},
 		InputSchema: map[string]any{
 			"type":                 "object",
 			"required":             []string{"import_id"},
-			"properties":           map[string]any{"import_id": schemaString("Skill pack import ID.", 128)},
+			"properties":           map[string]any{"import_id": schemaString("Memory pack import ID.", 128)},
 			"additionalProperties": false,
 		},
 		OutputSchema:   map[string]any{"type": "object"},
@@ -174,7 +179,7 @@ func rollbackSkillPackImportTool(deps Dependencies) Tool {
 			}
 			var req skillpackservice.RollbackRequest
 			if err := remapInput(input, &req); err != nil {
-				return nil, fmt.Errorf("rollback_skill_pack_import: invalid input: %w", err)
+				return nil, fmt.Errorf("rollback_memory_pack_import: invalid input: %w", err)
 			}
 			res, err := deps.SkillPack.Rollback(ctx, profileID, req)
 			if err != nil {
@@ -190,9 +195,9 @@ func skillPackSchema() map[string]any {
 		"type":     "object",
 		"required": []string{"schema_version", "name", "items"},
 		"properties": map[string]any{
-			"schema_version": schemaEnum([]string{"dense-mem.skill_pack.v1"}),
-			"name":           schemaString("Skill pack name.", 256),
-			"description":    schemaString("Short skill pack description.", 1024),
+			"schema_version": schemaEnum([]string{"dense-mem.memory_pack.v1", "dense-mem.skill_pack.v1"}),
+			"name":           schemaString("Memory pack name.", 256),
+			"description":    schemaString("Short memory pack description.", 1024),
 			"exported_at":    schemaString("RFC3339 export timestamp.", 64),
 			"items":          skillPackItemsSchema(),
 			"support":        skillPackSupportSchema(),
