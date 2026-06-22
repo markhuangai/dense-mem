@@ -275,9 +275,11 @@ type controlTelemetrySvc struct {
 	snapshot *service.TelemetrySnapshot
 	filter   service.TelemetryFilter
 	err      error
+	calls    int
 }
 
 func (s *controlTelemetrySvc) Snapshot(_ context.Context, filter service.TelemetryFilter) (*service.TelemetrySnapshot, error) {
+	s.calls++
 	s.filter = filter
 	if s.err != nil {
 		return nil, s.err

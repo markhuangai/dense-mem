@@ -54,6 +54,14 @@ function canShowMyKey(session: UserSession | null): boolean {
   return !session.can_manage_team && (session.can_create_personal_key || Boolean(session.personal_key));
 }
 
+function canShowUsage(session: UserSession | null): boolean {
+  return Boolean(session?.key.scopes.includes("write"));
+}
+
+function userTelemetryTitle(session: UserSession): string {
+  return session.can_manage_team ? "Team usage" : "My key usage";
+}
+
 export function UserPortalApp() {
   const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_STORAGE_KEY) ?? "");
   const [draftToken, setDraftToken] = useState(token);
@@ -279,10 +287,18 @@ function UserPortal({
     }
   }, [activeTab, session]);
 
+  useEffect(() => {
+    if (!canShowUsage(session) && activeTab === "usage") {
+      setActiveTab("search");
+    }
+  }, [activeTab, session]);
+
   const navItems = [
     { id: "search", label: "Recall", icon: <Search size={17} aria-hidden="true" />, active: activeTab === "search", onClick: () => setActiveTab("search") },
     { id: "dreams", label: "Dreams", icon: <Moon size={17} aria-hidden="true" />, active: activeTab === "dreams", onClick: () => setActiveTab("dreams") },
-    { id: "usage", label: "Usage", icon: <BarChart3 size={17} aria-hidden="true" />, active: activeTab === "usage", onClick: () => setActiveTab("usage") },
+    ...(canShowUsage(session) ? [
+      { id: "usage", label: "Usage", icon: <BarChart3 size={17} aria-hidden="true" />, active: activeTab === "usage", onClick: () => setActiveTab("usage") },
+    ] : []),
     { id: "facts", label: "Facts", icon: <ShieldCheck size={17} aria-hidden="true" />, active: activeTab === "facts", onClick: () => setActiveTab("facts") },
     { id: "claims", label: "Claims", icon: <GitBranch size={17} aria-hidden="true" />, active: activeTab === "claims", onClick: () => setActiveTab("claims") },
     { id: "fragments", label: "Fragments", icon: <FileText size={17} aria-hidden="true" />, active: activeTab === "fragments", onClick: () => setActiveTab("fragments") },
@@ -355,7 +371,7 @@ function UserPortal({
         <Suspense fallback={<LazyPanelFallback />}>
           {activeTab === "search" && <SearchPanel api={api} />}
           {activeTab === "dreams" && <UserDreamsPanel api={api} />}
-          {activeTab === "usage" && <UserTelemetryPanel api={api} />}
+          {activeTab === "usage" && session && canShowUsage(session) && <UserTelemetryPanel api={api} session={session} />}
           {activeTab === "facts" && <FactsPanel api={api} />}
           {activeTab === "claims" && <ClaimsPanel api={api} />}
           {activeTab === "fragments" && <FragmentsPanel api={api} />}
@@ -435,7 +451,7 @@ function LazyPanelFallback() {
   return <div className="table-placeholder">Loading</div>;
 }
 
-function UserTelemetryPanel({ api }: { api: UserApi }) {
+function UserTelemetryPanel({ api, session }: { api: UserApi; session: UserSession }) {
   const [snapshot, setSnapshot] = useState<TelemetrySnapshot | null>(null);
   const [windowKey, setWindowKey] = useState<TelemetryWindowKey>("1h");
   const [error, setError] = useState("");
@@ -460,7 +476,7 @@ function UserTelemetryPanel({ api }: { api: UserApi }) {
   return (
     <section className="surface">
       <TelemetryDashboard
-        title="Usage"
+        title={userTelemetryTitle(session)}
         snapshot={snapshot}
         windowKey={windowKey}
         loading={loading}

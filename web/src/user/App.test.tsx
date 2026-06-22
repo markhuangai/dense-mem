@@ -76,6 +76,37 @@ describe("UserPortalApp", () => {
     expect(await screen.findByRole("button", { name: /regenerate key/i })).toBeDisabled();
   });
 
+  it("hides usage telemetry for read-only keys", async () => {
+    const fetchMock = mockUserFetch(baseSession);
+    sessionStorage.setItem("denseMem.userApiKey", "dm_read");
+
+    render(<UserPortalApp />);
+    await screen.findByText("Research Team");
+
+    expect(screen.queryByRole("button", { name: /usage/i })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/ui/api/telemetry"))).toBe(false);
+  });
+
+  it("labels write-member telemetry as key usage", async () => {
+    const writeSession = {
+      ...baseSession,
+      key: { ...baseSession.key, scopes: ["read", "write"] },
+      can_rotate: true,
+    };
+    const fetchMock = mockUserFetch(writeSession);
+    sessionStorage.setItem("denseMem.userApiKey", "dm_write");
+
+    render(<UserPortalApp />);
+    await screen.findByText("Research Team");
+    await userEvent.click(screen.getByRole("button", { name: /usage/i }));
+
+    expect(await screen.findByLabelText("My key usage totals")).toHaveTextContent("HTTP requests");
+    expect(screen.queryByLabelText("Team usage totals")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/ui/api/telemetry?window=1h", expect.any(Object));
+    });
+  });
+
   it("rotates the current write-scoped key and stores the replacement", async () => {
     const writeSession = {
       ...baseSession,
@@ -229,6 +260,32 @@ describe("UserPortalApp", () => {
     expect(await screen.findByText("Saved")).toBeInTheDocument();
   });
 
+  it("labels manager telemetry as team usage", async () => {
+    const managerSession: UserSession = {
+      ...baseSession,
+      key: {
+        ...baseSession.key,
+        name: "Manager",
+        scopes: ["read", "write"],
+        role: "manager",
+      },
+      can_rotate: true,
+      can_manage_team: true,
+    };
+    const fetchMock = mockUserFetch(managerSession, [{ ...managerSession.key }]);
+    sessionStorage.setItem("denseMem.userApiKey", "dm_manager");
+
+    render(<UserPortalApp />);
+    await screen.findByText("Research Team");
+    await userEvent.click(screen.getByRole("button", { name: /usage/i }));
+
+    expect(await screen.findByLabelText("Team usage totals")).toHaveTextContent("HTTP requests");
+    expect(screen.queryByLabelText("My key usage totals")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/ui/api/telemetry?window=1h", expect.any(Object));
+    });
+  });
+
   it("uses server auth method for SSO cookie sessions and switches teams", async () => {
     const { initial, switched, secondKey } = ssoSessions();
     const fetchMock = mockSSOUserFetch(initial, switched);
@@ -358,6 +415,9 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = []) {
         },
       });
     }
+    if (url.startsWith("/ui/api/telemetry") && method === "GET") {
+      return jsonResponse({ data: telemetryForSession(session) });
+    }
     if (url === `/api/v1/teams/${currentTeam.id}` && method === "PATCH") {
       const body = JSON.parse(String(init?.body));
       currentTeam = { ...currentTeam, name: body.name ?? currentTeam.name, description: body.description ?? currentTeam.description, config: body.config ?? currentTeam.config };
@@ -405,6 +465,25 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = []) {
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
+}
+
+function telemetryForSession(session: UserSession) {
+  const teamScope = session.can_manage_team;
+  return {
+    available: true,
+    window: {
+      key: "1h",
+      from: "2026-05-02T12:00:00Z",
+      to: "2026-05-02T13:00:00Z",
+      step_seconds: 60,
+      retention_days: 30,
+    },
+    scope: teamScope
+      ? { type: "team", team_id: session.team.id }
+      : { type: "self", team_id: session.team.id, profile_id: session.key.id },
+    cards: [{ id: "http_requests", label: "HTTP requests", unit: "requests", value: 4 }],
+    series: [],
+  };
 }
 
 function ssoSessions() {
