@@ -84,7 +84,6 @@ jobs:
           images: ${{ steps.image.outputs.name }}
           tags: |
             type=raw,value=${{ steps.version.outputs.tag }}
-            type=sha,prefix=sha-
 
       - name: Build and push image
         uses: docker/build-push-action@v7
@@ -93,6 +92,7 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64/v8
           push: true
+          provenance: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
