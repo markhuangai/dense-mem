@@ -62,6 +62,11 @@ function userTelemetryTitle(session: UserSession): string {
   return session.can_manage_team ? "Team usage" : "My key usage";
 }
 
+function userTelemetryIdentity(session: UserSession): string {
+  const scope = session.can_manage_team ? "team" : "self";
+  return `${scope}:${session.team.id}:${session.key.id}`;
+}
+
 export function UserPortalApp() {
   const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_STORAGE_KEY) ?? "");
   const [draftToken, setDraftToken] = useState(token);
@@ -371,7 +376,9 @@ function UserPortal({
         <Suspense fallback={<LazyPanelFallback />}>
           {activeTab === "search" && <SearchPanel api={api} />}
           {activeTab === "dreams" && <UserDreamsPanel api={api} />}
-          {activeTab === "usage" && session && canShowUsage(session) && <UserTelemetryPanel api={api} session={session} />}
+          {activeTab === "usage" && session && canShowUsage(session) && (
+            <UserTelemetryPanel key={userTelemetryIdentity(session)} api={api} session={session} />
+          )}
           {activeTab === "facts" && <FactsPanel api={api} />}
           {activeTab === "claims" && <ClaimsPanel api={api} />}
           {activeTab === "fragments" && <FragmentsPanel api={api} />}

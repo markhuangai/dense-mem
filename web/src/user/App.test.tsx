@@ -316,6 +316,46 @@ describe("UserPortalApp", () => {
     expect(sessionStorage.getItem("denseMem.userApiKey")).toBeNull();
   });
 
+  it("reloads usage telemetry after switching SSO teams", async () => {
+    const { initial, switched, secondKey } = ssoSessions();
+    const firstKey = { ...initial.key, scopes: ["read", "write"] };
+    const nextKey = { ...secondKey, scopes: ["read", "write"] };
+    const writeInitial: UserSession = {
+      ...initial,
+      key: firstKey,
+      can_rotate: true,
+      teams: [
+        { team: initial.team, key: firstKey, can_rotate: true, can_manage_team: false },
+        { team: switched.team, key: nextKey, can_rotate: true, can_manage_team: true },
+      ],
+    };
+    const writeSwitched: UserSession = {
+      ...switched,
+      key: nextKey,
+      can_rotate: true,
+      teams: writeInitial.teams,
+    };
+    const fetchMock = mockSSOUserFetch(writeInitial, writeSwitched);
+
+    render(<UserPortalApp />);
+
+    expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /usage/i }));
+    expect(await screen.findByLabelText("My key usage totals")).toHaveTextContent("4");
+
+    await userEvent.selectOptions(screen.getByLabelText("Active team"), nextKey.id);
+
+    expect(await screen.findByRole("heading", { name: "Analytics Team" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByLabelText("Team usage totals")).toHaveTextContent("9");
+    });
+    expect(screen.queryByLabelText("My key usage totals")).not.toBeInTheDocument();
+    await waitFor(() => {
+      const telemetryCalls = fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/ui/api/telemetry?window=1h"));
+      expect(telemetryCalls.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
   it("keeps the SSO portal open when logout fails", async () => {
     const { initial, switched } = ssoSessions();
     mockSSOUserFetch(initial, switched, { logoutStatus: 500 });
@@ -481,7 +521,7 @@ function telemetryForSession(session: UserSession) {
     scope: teamScope
       ? { type: "team", team_id: session.team.id }
       : { type: "self", team_id: session.team.id, profile_id: session.key.id },
-    cards: [{ id: "http_requests", label: "HTTP requests", unit: "requests", value: 4 }],
+    cards: [{ id: "http_requests", label: "HTTP requests", unit: "requests", value: teamScope ? 9 : 4 }],
     series: [],
   };
 }
@@ -535,6 +575,9 @@ function mockSSOUserFetch(initial: UserSession, switched: UserSession, options: 
     if (url === "/ui/api/sso/team" && method === "POST") {
       current = switched;
       return jsonResponse({ data: current });
+    }
+    if (url.startsWith("/ui/api/telemetry") && method === "GET") {
+      return jsonResponse({ data: telemetryForSession(current) });
     }
     if (url === "/ui/api/sso/key" && method === "POST") {
       const body = JSON.parse(String(init?.body));
