@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -265,7 +266,12 @@ func recallMemoryTool(deps Dependencies) Tool {
 						ToolArgs:   recallFeedbackToolArgs(input, req),
 						ResultRefs: recallFeedbackResultRefs(hits),
 					})
-					if err == nil {
+					if err != nil {
+						slog.Default().Warn("recall feedback snapshot not recorded",
+							slog.String("recall_id", recallID),
+							slog.String("error", err.Error()),
+						)
+					} else {
 						out["recall_event"] = recallEvent
 					}
 				} else {
