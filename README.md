@@ -251,7 +251,8 @@ The older `*_skill_pack*` tool names remain accepted as hidden compatibility
 aliases, but new clients should use `*_memory_pack*`. Dense-Mem also exposes MCP
 prompts through `prompts/list` and `prompts/get`; the first bundled prompt,
 `export_memory_as_agent_skill`, guides an LLM to recall Dense-Mem experience and
-draft a shareable Agent Skill `SKILL.md` file without relying on memory-pack
+draft a self-contained, shareable Agent Skill `SKILL.md` file for recipients
+without access to the source memory instance, and without relying on memory-pack
 import/export.
 
 Memory moves through this path:

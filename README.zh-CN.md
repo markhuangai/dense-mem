@@ -231,8 +231,9 @@ Dense-Mem 不是 agent brain、planner，也不是外部真相裁判。它负责
 旧的 `*_skill_pack*` tool names 仍会作为隐藏兼容 alias 被接受，但新客户端应使用
 `*_memory_pack*`。Dense-Mem 也通过 `prompts/list` 和 `prompts/get` 暴露 MCP
 prompts；首个内置 prompt `export_memory_as_agent_skill` 会引导 LLM recall
-Dense-Mem 经验，并草拟可分享的 Agent Skill `SKILL.md` 文件，不依赖
-memory-pack import/export。
+Dense-Mem 经验，并草拟自包含、可分享的 Agent Skill `SKILL.md` 文件，
+让没有源 memory instance 访问权限的接收方也能使用，且不依赖 memory-pack
+import/export。
 
 记忆在系统里的主路径如下：
 
