@@ -60,18 +60,6 @@ func NewControlPortalServerWithMetrics(
 	)
 }
 
-type ControlPortalTelemetry struct {
-	Reader         service.TelemetryReader
-	HTTPMetrics    observability.HTTPMetrics
-	ScrapeHandler  nethttp.Handler
-	ScrapeToken    string
-	SSO            *service.SSOService
-	Config         service.AppConfigService
-	Logs           service.OperationLogReader
-	RecallFeedback service.RecallFeedbackEventReader
-	Dreams         dreamservice.Service
-}
-
 func NewControlPortalServerWithMetricsAndTelemetry(
 	cfg config.ConfigProvider,
 	profileSvc handler.ProfileServiceInterface,
@@ -207,20 +195,6 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 	}
 
 	return e, nil
-}
-
-type controlPortalHandler struct {
-	profiles       handler.ProfileServiceInterface
-	keys           handler.APIKeyServiceInterface
-	security       service.SecurityService
-	metrics        service.UsageMetricsReader
-	telemetry      service.TelemetryReader
-	operationLogs  service.OperationLogReader
-	recallFeedback service.RecallFeedbackEventReader
-	dreams         dreamservice.Service
-	health         HealthConfig
-	sso            *service.SSOService
-	appConfig      service.AppConfigService
 }
 
 func (h *controlPortalHandler) session(c echo.Context) error {
