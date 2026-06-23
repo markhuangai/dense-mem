@@ -60,7 +60,7 @@ export function RecallFeedbackPanel({ api, teams }: { api: ControlApi; teams: Te
     } catch (err) {
       setError(readError(err));
     } finally {
-      setDetailLoading("");
+      setDetailLoading((current) => (current === recallId ? "" : current));
     }
   }
 

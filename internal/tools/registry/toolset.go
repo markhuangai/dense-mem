@@ -252,19 +252,24 @@ func recallMemoryTool(deps Dependencies) Tool {
 			out := map[string]any{"results": results, "clarifications": []any{}, "related_dreams": []any{}}
 			if RecallFeedbackEnabled(ctx, deps.RecallFeedbackConfig) && deps.Metrics != nil {
 				recallID := "rec_" + uuid.NewString()
-				out["recall_event"] = map[string]any{
+				recallEvent := map[string]any{
 					"recall_id":       recallID,
 					"feedback_tool":   SubmitRecallSessionFeedbackToolName,
 					"feedback_timing": "deferred_until_final_answer",
 				}
 				if deps.RecallFeedbackEvents != nil {
-					_ = deps.RecallFeedbackEvents.RecordRecallSnapshot(ctx, domain.RecallFeedbackEvent{
+					err := deps.RecallFeedbackEvents.RecordRecallSnapshot(ctx, domain.RecallFeedbackEvent{
 						RecallID:   recallID,
 						ToolName:   "recall_memory",
 						Query:      req.Query,
 						ToolArgs:   recallFeedbackToolArgs(input, req),
 						ResultRefs: recallFeedbackResultRefs(hits),
 					})
+					if err == nil {
+						out["recall_event"] = recallEvent
+					}
+				} else {
+					out["recall_event"] = recallEvent
 				}
 			}
 			if deps.Memory != nil {
@@ -352,6 +357,8 @@ func submitRecallSessionFeedbackTool(deps Dependencies) Tool {
 			if len(req.Recalls) == 0 {
 				return nil, errors.New("submit_recall_session_feedback: recalls is required")
 			}
+			submissions := make([]domain.RecallFeedbackSubmission, 0, len(req.Recalls))
+			feedbacks := make([]observability.RecallFeedback, 0, len(req.Recalls))
 			for i, recall := range req.Recalls {
 				if strings.TrimSpace(recall.RecallID) == "" {
 					return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].recall_id is required", i)
@@ -362,25 +369,33 @@ func submitRecallSessionFeedbackTool(deps Dependencies) Tool {
 				default:
 					return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].quality must be one of high, medium, low", i)
 				}
-				observability.RecordRecallFeedback(ctx, deps.Metrics, observability.RecallFeedback{
+				submissions = append(submissions, domain.RecallFeedbackSubmission{
+					RecallID:        strings.TrimSpace(recall.RecallID),
 					Used:            recall.Used,
 					AnswerSupported: recall.AnswerSupported,
 					Quality:         quality,
 					MissingContext:  recall.MissingContext,
 					Irrelevant:      recall.Irrelevant,
 				})
-				if deps.RecallFeedbackEvents != nil {
-					_ = deps.RecallFeedbackEvents.RecordRecallFeedback(ctx, domain.RecallFeedbackSubmission{
-						RecallID:        strings.TrimSpace(recall.RecallID),
-						Used:            recall.Used,
-						AnswerSupported: recall.AnswerSupported,
-						Quality:         quality,
-						MissingContext:  recall.MissingContext,
-						Irrelevant:      recall.Irrelevant,
-					})
+				feedbacks = append(feedbacks, observability.RecallFeedback{
+					Used:            recall.Used,
+					AnswerSupported: recall.AnswerSupported,
+					Quality:         quality,
+					MissingContext:  recall.MissingContext,
+					Irrelevant:      recall.Irrelevant,
+				})
+			}
+			if deps.RecallFeedbackEvents != nil {
+				for i, submission := range submissions {
+					if err := deps.RecallFeedbackEvents.RecordRecallFeedback(ctx, submission); err != nil {
+						return nil, fmt.Errorf("submit_recall_session_feedback: failed to record recalls[%d]: %w", i, err)
+					}
 				}
 			}
-			return map[string]any{"recorded": true, "recorded_count": len(req.Recalls)}, nil
+			for _, feedback := range feedbacks {
+				observability.RecordRecallFeedback(ctx, deps.Metrics, feedback)
+			}
+			return map[string]any{"recorded": true, "recorded_count": len(submissions)}, nil
 		},
 	}
 }

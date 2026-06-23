@@ -283,6 +283,11 @@ func TestControlPortalObservabilityValidation(t *testing.T) {
 	_, err = controlRecallFeedbackEventsFilter(c)
 	require.ErrorContains(t, err, "from must be RFC3339")
 
+	req = httptest.NewRequest(http.MethodGet, "/control/api/recall-feedback-events?from=2026-06-24T00:00:00Z&to=2026-06-23T00:00:00Z", nil)
+	c = e.NewContext(req, rec)
+	_, err = controlRecallFeedbackEventsFilter(c)
+	require.ErrorContains(t, err, "from must be before or equal to to")
+
 	limit, err := controlDreamLimit("")
 	require.NoError(t, err)
 	assert.Equal(t, 20, limit)

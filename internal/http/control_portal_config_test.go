@@ -194,7 +194,7 @@ func (s *controlAppConfigSvc) UpdateRecallFeedbackSettings(_ context.Context, va
 	}
 	if raw, ok := values[domain.AppConfigRecallFeedbackRetentionDays]; ok {
 		retentionDays, err := strconv.Atoi(raw)
-		if err != nil {
+		if err != nil || retentionDays < 1 || retentionDays > 365 {
 			return nil, service.ErrInvalidAppConfig
 		}
 		s.recallRuntime.RetentionDays = retentionDays

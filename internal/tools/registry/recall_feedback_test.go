@@ -203,7 +203,7 @@ func TestRecallMemoryRecallEventAndSessionSubmit(t *testing.T) {
 	}
 }
 
-func TestRecallFeedbackRecorderErrorsDoNotFailTools(t *testing.T) {
+func TestRecallFeedbackRecorderErrorsSuppressRecallEventAndFailFeedbackSubmit(t *testing.T) {
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
 	reg, _ := BuildDefault(Dependencies{
 		Recall:               stubRecallWithHit{},
@@ -216,13 +216,14 @@ func TestRecallFeedbackRecorderErrorsDoNotFailTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recall_memory Invoke: %v", err)
 	}
-	event := out["recall_event"].(map[string]any)
-	recallID := event["recall_id"].(string)
+	if _, ok := out["recall_event"]; ok {
+		t.Fatalf("recall_event should be omitted when snapshot persistence fails: %v", out["recall_event"])
+	}
 
 	submitTool, _ := reg.Get("submit_recall_session_feedback")
 	_, err = submitTool.Invoke(context.Background(), "profile-feedback", map[string]any{
 		"recalls": []any{map[string]any{
-			"recall_id":        recallID,
+			"recall_id":        "rec_failed",
 			"used":             true,
 			"answer_supported": false,
 			"quality":          "low",
@@ -230,11 +231,11 @@ func TestRecallFeedbackRecorderErrorsDoNotFailTools(t *testing.T) {
 			"irrelevant":       false,
 		}},
 	})
-	if err != nil {
-		t.Fatalf("submit_recall_session_feedback Invoke: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "failed to record recalls[0]") {
+		t.Fatalf("submit_recall_session_feedback err = %v; want persistence failure", err)
 	}
-	if len(metrics.RecallFeedbackSamples()) != 1 {
-		t.Fatalf("metrics samples = %d; want 1", len(metrics.RecallFeedbackSamples()))
+	if len(metrics.RecallFeedbackSamples()) != 0 {
+		t.Fatalf("metrics samples = %d; want 0 after persistence failure", len(metrics.RecallFeedbackSamples()))
 	}
 }
 

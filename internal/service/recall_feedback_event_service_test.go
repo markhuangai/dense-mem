@@ -82,13 +82,21 @@ func TestRecallFeedbackEventServiceRecordsFeedbackOnlyAndPrunesRetention(t *test
 	require.NoError(t, svc.Prune(ctx))
 	require.Len(t, repo.pruneCutoffs, 1)
 	assert.Equal(t, now.AddDate(0, 0, -7), repo.pruneCutoffs[0])
+
+	err = NewRecallFeedbackEventService(repo, recallFeedbackRetentionStub{err: errors.New("config failed")}, nil).Prune(ctx)
+	require.ErrorContains(t, err, "failed to read recall feedback retention config")
+
+	err = NewRecallFeedbackEventService(repo, recallFeedbackRetentionStub{cfg: domain.RecallFeedbackRuntimeConfig{RetentionDays: 0}}, nil).Prune(ctx)
+	require.ErrorContains(t, err, "invalid recall feedback retention days")
 }
 
 func TestRecallFeedbackEventServiceGetResolvesResults(t *testing.T) {
+	teamID := uuid.New()
 	profileID := uuid.New()
 	repo := &recallFeedbackEventRepoStub{
 		event: &domain.RecallFeedbackEvent{
 			RecallID:  "rec_1",
+			TeamID:    &teamID,
 			ProfileID: &profileID,
 			ResultRefs: []domain.RecallFeedbackResultRef{{
 				Type: domain.RecallFeedbackResultTypeFact,
@@ -110,8 +118,30 @@ func TestRecallFeedbackEventServiceGetResolvesResults(t *testing.T) {
 	got, err := svc.GetRecallFeedbackEvent(context.Background(), "rec_1")
 	require.NoError(t, err)
 	require.NotNil(t, got)
-	assert.Equal(t, profileID.String(), resolver.profileID)
+	assert.Equal(t, teamID.String(), resolver.profileID)
 	assert.Len(t, got.ResolvedResults, 1)
+}
+
+func TestRecallFeedbackEventServiceGetFallsBackToProfileScopeForLegacyRows(t *testing.T) {
+	profileID := uuid.New()
+	repo := &recallFeedbackEventRepoStub{
+		event: &domain.RecallFeedbackEvent{
+			RecallID:  "rec_legacy",
+			ProfileID: &profileID,
+			ResultRefs: []domain.RecallFeedbackResultRef{{
+				Type: domain.RecallFeedbackResultTypeFragment,
+				ID:   "fragment-1",
+				Rank: 1,
+			}},
+		},
+	}
+	resolver := &recallFeedbackResolverStub{}
+	svc := NewRecallFeedbackEventService(repo, nil, resolver)
+
+	got, err := svc.GetRecallFeedbackEvent(context.Background(), "rec_legacy")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, profileID.String(), resolver.profileID)
 }
 
 func TestRecallFeedbackEventServiceStartShutdownLifecycle(t *testing.T) {

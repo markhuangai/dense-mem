@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS recall_feedback_events (
     quality TEXT NOT NULL DEFAULT '',
     missing_context BOOLEAN NULL,
     irrelevant BOOLEAN NULL,
+    CONSTRAINT recall_feedback_events_result_count_check
+        CHECK (result_count >= 0),
     CONSTRAINT recall_feedback_events_snapshot_state_check
         CHECK (snapshot_state IN ('captured', 'feedback_only')),
     CONSTRAINT recall_feedback_events_quality_check

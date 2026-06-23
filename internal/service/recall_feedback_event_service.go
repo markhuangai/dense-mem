@@ -125,12 +125,20 @@ func (s *RecallFeedbackEventServiceImpl) GetRecallFeedbackEvent(ctx context.Cont
 	if err != nil || event == nil {
 		return event, err
 	}
-	if s.resolver != nil && event.ProfileID != nil && len(event.ResultRefs) > 0 {
-		resolved, resolveErr := s.resolver.ResolveRecallFeedbackResults(ctx, event.ProfileID.String(), event.ResultRefs)
-		if resolveErr != nil {
-			return nil, resolveErr
+	if s.resolver != nil && len(event.ResultRefs) > 0 {
+		scopeID := ""
+		if event.TeamID != nil {
+			scopeID = event.TeamID.String()
+		} else if event.ProfileID != nil {
+			scopeID = event.ProfileID.String()
 		}
-		event.ResolvedResults = resolved
+		if scopeID != "" {
+			resolved, resolveErr := s.resolver.ResolveRecallFeedbackResults(ctx, scopeID, event.ResultRefs)
+			if resolveErr != nil {
+				return nil, resolveErr
+			}
+			event.ResolvedResults = resolved
+		}
 	}
 	return event, nil
 }
@@ -142,9 +150,13 @@ func (s *RecallFeedbackEventServiceImpl) Prune(ctx context.Context) error {
 	days := DefaultRecallFeedbackRetentionDays
 	if s.retention != nil {
 		cfg, err := s.retention.RecallFeedbackRuntimeConfig(ctx)
-		if err == nil && cfg.RetentionDays > 0 {
-			days = cfg.RetentionDays
+		if err != nil {
+			return fmt.Errorf("failed to read recall feedback retention config: %w", err)
 		}
+		if cfg.RetentionDays <= 0 {
+			return fmt.Errorf("invalid recall feedback retention days: %d", cfg.RetentionDays)
+		}
+		days = cfg.RetentionDays
 	}
 	cutoff := s.now().UTC().AddDate(0, 0, -days)
 	return s.repo.PruneBefore(ctx, cutoff)

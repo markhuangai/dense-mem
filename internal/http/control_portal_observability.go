@@ -248,6 +248,9 @@ func controlRecallFeedbackEventsFilter(c echo.Context) (domain.RecallFeedbackEve
 		return domain.RecallFeedbackEventFilter{}, err
 	}
 	filter.To = to
+	if filter.From != nil && filter.To != nil && filter.From.After(*filter.To) {
+		return domain.RecallFeedbackEventFilter{}, httperr.New(httperr.VALIDATION_ERROR, "from must be before or equal to to")
+	}
 	return filter, nil
 }
 
