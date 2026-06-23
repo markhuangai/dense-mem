@@ -79,9 +79,9 @@ ai:
           from_bundle: GITVIBE_AI_API_KEY
         ANTHROPIC_BASE_URL:
           from_bundle: GITVIBE_AI_BASE_URL
-        ANTHROPIC_DEFAULT_OPUS_MODEL: kimi-k2.5
-        ANTHROPIC_DEFAULT_SONNET_MODEL: kimi-k2.5
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: kimi-k2.5
+        ANTHROPIC_DEFAULT_OPUS_MODEL: qwen3.7-plus
+        ANTHROPIC_DEFAULT_SONNET_MODEL: qwen3.7-plus
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: qwen3.7-plus
         ANTHROPIC_MODEL: opus
         CLAUDE_CODE_SUBAGENT_MODEL: opus
       model: opus
