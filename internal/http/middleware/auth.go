@@ -250,6 +250,11 @@ func AuthMiddlewareWithOptions(repo repository.APIKeyRepository, auditSvc servic
 				ProfileID:   profileID,
 				ProfileName: profileName,
 			})
+			ctx = requestctx.WithActorCredential(ctx, requestctx.ActorCredential{
+				KeyID:      principal.KeyID,
+				AuthMethod: principal.AuthMethod,
+				Role:       principal.Role,
+			})
 
 			// Remove the Authorization header to prevent downstream access to raw key
 			req := c.Request().Clone(ctx)
@@ -303,6 +308,11 @@ func authenticateSSOSession(c echo.Context, authenticator SSOSessionAuthenticato
 		TeamName:    key.TeamName,
 		ProfileID:   profileID,
 		ProfileName: key.GetProfileName(),
+	})
+	ctx = requestctx.WithActorCredential(ctx, requestctx.ActorCredential{
+		KeyID:      principal.KeyID,
+		AuthMethod: principal.AuthMethod,
+		Role:       principal.Role,
 	})
 	c.SetRequest(c.Request().WithContext(ctx))
 	return nil

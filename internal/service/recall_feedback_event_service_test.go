@@ -1,0 +1,193 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
+)
+
+func TestRecallFeedbackEventServiceRecordsSnapshotWithActorContext(t *testing.T) {
+	ctx := context.Background()
+	teamID := uuid.New()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	ctx = requestctx.WithActorProfile(ctx, requestctx.ActorProfile{TeamID: teamID, ProfileID: profileID})
+	ctx = requestctx.WithActorCredential(ctx, requestctx.ActorCredential{KeyID: keyID, AuthMethod: "api_key", Role: "manager"})
+
+	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
+	repo := &recallFeedbackEventRepoStub{}
+	svc := NewRecallFeedbackEventService(repo, nil, nil)
+	svc.now = func() time.Time { return now }
+
+	err := svc.RecordRecallSnapshot(ctx, domain.RecallFeedbackEvent{
+		RecallID: "rec_1",
+		Query:    "query",
+		ToolArgs: map[string]any{"input": map[string]any{"query": "query"}},
+		ResultRefs: []domain.RecallFeedbackResultRef{{
+			Type: domain.RecallFeedbackResultTypeFragment,
+			ID:   "fragment-1",
+			Rank: 1,
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, repo.snapshots, 1)
+	got := repo.snapshots[0]
+	assert.Equal(t, "rec_1", got.RecallID)
+	assert.Equal(t, "query", got.Query)
+	assert.Equal(t, domain.RecallFeedbackSnapshotCaptured, got.SnapshotState)
+	assert.Equal(t, now, got.CreatedAt)
+	assert.Equal(t, &teamID, got.TeamID)
+	assert.Equal(t, &profileID, got.ProfileID)
+	assert.Equal(t, &keyID, got.KeyID)
+	assert.Equal(t, "api_key", got.AuthMethod)
+}
+
+func TestRecallFeedbackEventServiceRecordsFeedbackOnlyAndPrunesRetention(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
+	repo := &recallFeedbackEventRepoStub{}
+	retention := recallFeedbackRetentionStub{cfg: domain.RecallFeedbackRuntimeConfig{RetentionDays: 7}}
+	svc := NewRecallFeedbackEventService(repo, retention, nil)
+	svc.now = func() time.Time { return now }
+
+	err := svc.RecordRecallFeedback(ctx, domain.RecallFeedbackSubmission{
+		RecallID:        "rec_1",
+		Used:            true,
+		AnswerSupported: false,
+		Quality:         "low",
+		MissingContext:  true,
+		Irrelevant:      false,
+	})
+	require.NoError(t, err)
+	require.Len(t, repo.feedbacks, 1)
+	got := repo.feedbacks[0]
+	assert.Equal(t, domain.RecallFeedbackSnapshotFeedbackOnly, got.SnapshotState)
+	assert.NotNil(t, got.Used)
+	assert.True(t, *got.Used)
+	assert.NotNil(t, got.AnswerSupported)
+	assert.False(t, *got.AnswerSupported)
+	assert.Equal(t, "low", got.Quality)
+	assert.NotNil(t, got.MissingContext)
+	assert.True(t, *got.MissingContext)
+
+	require.NoError(t, svc.Prune(ctx))
+	require.Len(t, repo.pruneCutoffs, 1)
+	assert.Equal(t, now.AddDate(0, 0, -7), repo.pruneCutoffs[0])
+}
+
+func TestRecallFeedbackEventServiceGetResolvesResults(t *testing.T) {
+	profileID := uuid.New()
+	repo := &recallFeedbackEventRepoStub{
+		event: &domain.RecallFeedbackEvent{
+			RecallID:  "rec_1",
+			ProfileID: &profileID,
+			ResultRefs: []domain.RecallFeedbackResultRef{{
+				Type: domain.RecallFeedbackResultTypeFact,
+				ID:   "fact-1",
+				Rank: 1,
+			}},
+		},
+	}
+	resolver := &recallFeedbackResolverStub{
+		resolved: []domain.RecallFeedbackResolvedResult{{
+			Type:             domain.RecallFeedbackResultTypeFact,
+			ID:               "fact-1",
+			Rank:             1,
+			ResolutionStatus: "found",
+		}},
+	}
+	svc := NewRecallFeedbackEventService(repo, nil, resolver)
+
+	got, err := svc.GetRecallFeedbackEvent(context.Background(), "rec_1")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, profileID.String(), resolver.profileID)
+	assert.Len(t, got.ResolvedResults, 1)
+}
+
+func TestRecallFeedbackEventServiceUnavailableAndErrors(t *testing.T) {
+	ctx := context.Background()
+	var nilSvc *RecallFeedbackEventServiceImpl
+	_, err := nilSvc.ListRecallFeedbackEvents(ctx, domain.RecallFeedbackEventFilter{})
+	require.ErrorContains(t, err, "unavailable")
+	_, err = nilSvc.GetRecallFeedbackEvent(ctx, "rec_1")
+	require.ErrorContains(t, err, "unavailable")
+	require.NoError(t, nilSvc.RecordRecallSnapshot(ctx, domain.RecallFeedbackEvent{}))
+	require.NoError(t, nilSvc.RecordRecallFeedback(ctx, domain.RecallFeedbackSubmission{}))
+	require.NoError(t, nilSvc.Prune(ctx))
+
+	repo := &recallFeedbackEventRepoStub{recordErr: errors.New("record failed")}
+	svc := NewRecallFeedbackEventService(repo, nil, nil)
+	err = svc.RecordRecallSnapshot(ctx, domain.RecallFeedbackEvent{RecallID: "rec_1"})
+	require.ErrorContains(t, err, "record failed")
+
+	err = svc.RecordRecallSnapshot(ctx, domain.RecallFeedbackEvent{})
+	require.ErrorContains(t, err, "recall_id is required")
+	err = svc.RecordRecallFeedback(ctx, domain.RecallFeedbackSubmission{})
+	require.ErrorContains(t, err, "recall_id is required")
+}
+
+type recallFeedbackEventRepoStub struct {
+	snapshots    []domain.RecallFeedbackEvent
+	feedbacks    []domain.RecallFeedbackEvent
+	pruneCutoffs []time.Time
+	event        *domain.RecallFeedbackEvent
+	recordErr    error
+}
+
+func (s *recallFeedbackEventRepoStub) RecordSnapshot(_ context.Context, event domain.RecallFeedbackEvent) error {
+	if s.recordErr != nil {
+		return s.recordErr
+	}
+	s.snapshots = append(s.snapshots, event)
+	return nil
+}
+
+func (s *recallFeedbackEventRepoStub) RecordFeedback(_ context.Context, event domain.RecallFeedbackEvent) error {
+	if s.recordErr != nil {
+		return s.recordErr
+	}
+	s.feedbacks = append(s.feedbacks, event)
+	return nil
+}
+
+func (s *recallFeedbackEventRepoStub) List(_ context.Context, _ domain.RecallFeedbackEventFilter) (*domain.RecallFeedbackEventPage, error) {
+	return &domain.RecallFeedbackEventPage{}, nil
+}
+
+func (s *recallFeedbackEventRepoStub) Get(_ context.Context, _ string) (*domain.RecallFeedbackEvent, error) {
+	return s.event, nil
+}
+
+func (s *recallFeedbackEventRepoStub) PruneBefore(_ context.Context, cutoff time.Time) error {
+	s.pruneCutoffs = append(s.pruneCutoffs, cutoff)
+	return nil
+}
+
+type recallFeedbackRetentionStub struct {
+	cfg domain.RecallFeedbackRuntimeConfig
+	err error
+}
+
+func (s recallFeedbackRetentionStub) RecallFeedbackRuntimeConfig(context.Context) (domain.RecallFeedbackRuntimeConfig, error) {
+	return s.cfg, s.err
+}
+
+type recallFeedbackResolverStub struct {
+	profileID string
+	resolved  []domain.RecallFeedbackResolvedResult
+	err       error
+}
+
+func (s *recallFeedbackResolverStub) ResolveRecallFeedbackResults(_ context.Context, profileID string, _ []domain.RecallFeedbackResultRef) ([]domain.RecallFeedbackResolvedResult, error) {
+	s.profileID = profileID
+	return s.resolved, s.err
+}

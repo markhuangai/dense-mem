@@ -128,10 +128,12 @@ func TestRecallMemoryRecallEventRequiresMetrics(t *testing.T) {
 
 func TestRecallMemoryRecallEventAndSessionSubmit(t *testing.T) {
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	recorder := &stubRecallFeedbackRecorder{}
 	reg, _ := BuildDefault(Dependencies{
 		Recall:               stubRecallWithHit{},
 		Metrics:              metrics,
 		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+		RecallFeedbackEvents: recorder,
 	})
 	recallTool, _ := reg.Get("recall_memory")
 
@@ -146,6 +148,19 @@ func TestRecallMemoryRecallEventAndSessionSubmit(t *testing.T) {
 	recallID, _ := event["recall_id"].(string)
 	if !strings.HasPrefix(recallID, "rec_") || event["feedback_tool"] != SubmitRecallSessionFeedbackToolName || event["feedback_timing"] != "deferred_until_final_answer" {
 		t.Fatalf("recall_event = %v", event)
+	}
+	if len(recorder.snapshots) != 1 {
+		t.Fatalf("recorded snapshots = %d; want 1", len(recorder.snapshots))
+	}
+	snapshot := recorder.snapshots[0]
+	if snapshot.RecallID != recallID || snapshot.Query != "q" {
+		t.Fatalf("snapshot = %+v; want recall id and query", snapshot)
+	}
+	if len(snapshot.ResultRefs) != 1 || snapshot.ResultRefs[0].Type != domain.RecallFeedbackResultTypeFragment || snapshot.ResultRefs[0].ID != "fragment-hit" {
+		t.Fatalf("snapshot result refs = %+v", snapshot.ResultRefs)
+	}
+	if _, ok := snapshot.ToolArgs["input"].(map[string]any); !ok {
+		t.Fatalf("snapshot tool args = %#v; want input map", snapshot.ToolArgs)
 	}
 
 	submitTool, ok := reg.Get("submit_recall_session_feedback")
@@ -178,4 +193,67 @@ func TestRecallMemoryRecallEventAndSessionSubmit(t *testing.T) {
 	if !samples[0].Used || !samples[0].AnswerSupported || samples[0].Quality != "high" || samples[0].QualityScore != 1 {
 		t.Fatalf("recall feedback sample = %+v", samples[0])
 	}
+	if len(recorder.feedback) != 1 {
+		t.Fatalf("recorded feedback = %d; want 1", len(recorder.feedback))
+	}
+	if recorder.feedback[0].RecallID != recallID || recorder.feedback[0].Quality != "high" {
+		t.Fatalf("recorded feedback = %+v", recorder.feedback[0])
+	}
+}
+
+func TestRecallFeedbackRecorderErrorsDoNotFailTools(t *testing.T) {
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	reg, _ := BuildDefault(Dependencies{
+		Recall:               stubRecallWithHit{},
+		Metrics:              metrics,
+		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+		RecallFeedbackEvents: &stubRecallFeedbackRecorder{err: errors.New("record failed")},
+	})
+	recallTool, _ := reg.Get("recall_memory")
+	out, err := recallTool.Invoke(context.Background(), "profile-feedback", map[string]any{"query": "q"})
+	if err != nil {
+		t.Fatalf("recall_memory Invoke: %v", err)
+	}
+	event := out["recall_event"].(map[string]any)
+	recallID := event["recall_id"].(string)
+
+	submitTool, _ := reg.Get("submit_recall_session_feedback")
+	_, err = submitTool.Invoke(context.Background(), "profile-feedback", map[string]any{
+		"recalls": []any{map[string]any{
+			"recall_id":        recallID,
+			"used":             true,
+			"answer_supported": false,
+			"quality":          "low",
+			"missing_context":  true,
+			"irrelevant":       false,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("submit_recall_session_feedback Invoke: %v", err)
+	}
+	if len(metrics.RecallFeedbackSamples()) != 1 {
+		t.Fatalf("metrics samples = %d; want 1", len(metrics.RecallFeedbackSamples()))
+	}
+}
+
+type stubRecallFeedbackRecorder struct {
+	snapshots []domain.RecallFeedbackEvent
+	feedback  []domain.RecallFeedbackSubmission
+	err       error
+}
+
+func (s *stubRecallFeedbackRecorder) RecordRecallSnapshot(_ context.Context, event domain.RecallFeedbackEvent) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.snapshots = append(s.snapshots, event)
+	return nil
+}
+
+func (s *stubRecallFeedbackRecorder) RecordRecallFeedback(_ context.Context, feedback domain.RecallFeedbackSubmission) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.feedback = append(s.feedback, feedback)
+	return nil
 }
