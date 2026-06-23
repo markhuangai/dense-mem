@@ -5,9 +5,11 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/service/recallservice"
 )
 
 type stubRecallFeedbackConfig struct {
@@ -233,6 +235,90 @@ func TestRecallFeedbackRecorderErrorsDoNotFailTools(t *testing.T) {
 	}
 	if len(metrics.RecallFeedbackSamples()) != 1 {
 		t.Fatalf("metrics samples = %d; want 1", len(metrics.RecallFeedbackSamples()))
+	}
+}
+
+func TestRecallFeedbackHelpersCaptureArgsAndResultRefs(t *testing.T) {
+	validAt := time.Date(2026, 6, 22, 10, 0, 0, 0, time.UTC)
+	knownAt := time.Date(2026, 6, 23, 10, 0, 0, 0, time.UTC)
+	recordedAt := time.Date(2026, 6, 23, 9, 0, 0, 0, time.UTC)
+	retractedAt := time.Date(2026, 6, 23, 9, 30, 0, 0, time.UTC)
+
+	args := recallFeedbackToolArgs(map[string]any{
+		"query":            "why",
+		"limit":            float64(3),
+		"valid_at":         validAt.Format(time.RFC3339),
+		"known_at":         knownAt.Format(time.RFC3339),
+		"include_evidence": true,
+		"use_communities":  true,
+		"ignored":          "not persisted",
+	}, recallservice.RecallRequest{
+		Query:           "why",
+		Limit:           3,
+		ValidAt:         &validAt,
+		KnownAt:         &knownAt,
+		IncludeEvidence: true,
+		UseCommunities:  true,
+	})
+	input := args["input"].(map[string]any)
+	if _, ok := input["ignored"]; ok {
+		t.Fatalf("input copy persisted ignored key: %#v", input)
+	}
+	effective := args["effective"].(map[string]any)
+	if effective["valid_at"] != validAt.Format(time.RFC3339Nano) || effective["known_at"] != knownAt.Format(time.RFC3339Nano) {
+		t.Fatalf("effective time args = %#v", effective)
+	}
+
+	refs := recallFeedbackResultRefs([]recallservice.RecallHit{
+		{
+			Tier:       recallservice.TierActiveFact,
+			Score:      0.9,
+			FinalScore: 0.95,
+			Fact: &domain.Fact{
+				FactID:      "fact-1",
+				Status:      domain.FactStatusRetracted,
+				RecordedAt:  recordedAt,
+				ValidFrom:   &validAt,
+				ValidTo:     &knownAt,
+				RetractedAt: &retractedAt,
+			},
+		},
+		{
+			Tier: recallservice.TierValidatedClaim,
+			Claim: &domain.Claim{
+				ClaimID:    "claim-1",
+				Status:     domain.StatusValidated,
+				RecordedAt: recordedAt,
+				ValidFrom:  &validAt,
+				ValidTo:    &knownAt,
+			},
+		},
+		{
+			Tier:         recallservice.TierFragment,
+			SemanticRank: 2,
+			KeywordRank:  3,
+			Fragment: &domain.Fragment{
+				FragmentID:  "fragment-1",
+				Status:      domain.FragmentStatusRetracted,
+				CreatedAt:   recordedAt,
+				UpdatedAt:   knownAt,
+				RetractedAt: &retractedAt,
+			},
+		},
+		{},
+	})
+
+	if len(refs) != 3 {
+		t.Fatalf("refs = %#v; want 3 persisted refs", refs)
+	}
+	if refs[0].Type != domain.RecallFeedbackResultTypeFact || refs[0].ID != "fact-1" || refs[0].Score == nil || refs[0].FinalScore == nil || refs[0].RetractedAt == nil {
+		t.Fatalf("fact ref = %+v", refs[0])
+	}
+	if refs[1].Type != domain.RecallFeedbackResultTypeClaim || refs[1].ID != "claim-1" || refs[1].Score != nil || refs[1].FinalScore != nil {
+		t.Fatalf("claim ref = %+v", refs[1])
+	}
+	if refs[2].Type != domain.RecallFeedbackResultTypeFragment || refs[2].ID != "fragment-1" || refs[2].SemanticRank != 2 || refs[2].KeywordRank != 3 {
+		t.Fatalf("fragment ref = %+v", refs[2])
 	}
 }
 

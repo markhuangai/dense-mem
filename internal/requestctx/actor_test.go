@@ -49,6 +49,28 @@ func TestActorProfileFromContext_EmptyWhenUnsetOrWrongType(t *testing.T) {
 	}
 }
 
+func TestActorCredentialContext(t *testing.T) {
+	keyID := uuid.MustParse("00000000-0000-0000-0000-0000000000bb")
+	credential := ActorCredential{
+		KeyID:      keyID,
+		AuthMethod: "api_key",
+		Role:       "manager",
+	}
+	ctx := WithActorCredential(context.Background(), credential)
+
+	got, ok := ActorCredentialFromContext(ctx)
+	if !ok {
+		t.Fatal("ActorCredentialFromContext ok = false; want true")
+	}
+	if got != credential {
+		t.Fatalf("ActorCredentialFromContext = %#v; want %#v", got, credential)
+	}
+
+	if got, ok := ActorCredentialFromContext(context.Background()); ok || got != (ActorCredential{}) {
+		t.Fatalf("ActorCredentialFromContext unset = %#v, %v; want zero,false", got, ok)
+	}
+}
+
 func TestActorOwner_EmptyForMissingOrNilProfile(t *testing.T) {
 	profileID, profileName, ok := ActorOwner(context.Background())
 	if ok || profileID != "" || profileName != "" {

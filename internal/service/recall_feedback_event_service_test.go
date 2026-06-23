@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -113,6 +114,32 @@ func TestRecallFeedbackEventServiceGetResolvesResults(t *testing.T) {
 	assert.Len(t, got.ResolvedResults, 1)
 }
 
+func TestRecallFeedbackEventServiceStartShutdownLifecycle(t *testing.T) {
+	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
+	repo := &recallFeedbackEventRepoStub{pruneNotify: make(chan time.Time, 1)}
+	retention := recallFeedbackRetentionStub{cfg: domain.RecallFeedbackRuntimeConfig{RetentionDays: 1}}
+	svc := NewRecallFeedbackEventService(repo, retention, nil)
+	svc.now = func() time.Time { return now }
+
+	svc.Start(context.Background())
+	svc.Start(context.Background())
+	select {
+	case cutoff := <-repo.pruneNotify:
+		assert.Equal(t, now.AddDate(0, 0, -1), cutoff)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for startup prune")
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	require.NoError(t, svc.Shutdown(shutdownCtx))
+	require.NoError(t, svc.Shutdown(shutdownCtx))
+
+	var nilSvc *RecallFeedbackEventServiceImpl
+	nilSvc.Start(context.Background())
+	require.NoError(t, nilSvc.Shutdown(context.Background()))
+}
+
 func TestRecallFeedbackEventServiceUnavailableAndErrors(t *testing.T) {
 	ctx := context.Background()
 	var nilSvc *RecallFeedbackEventServiceImpl
@@ -136,9 +163,11 @@ func TestRecallFeedbackEventServiceUnavailableAndErrors(t *testing.T) {
 }
 
 type recallFeedbackEventRepoStub struct {
+	mu           sync.Mutex
 	snapshots    []domain.RecallFeedbackEvent
 	feedbacks    []domain.RecallFeedbackEvent
 	pruneCutoffs []time.Time
+	pruneNotify  chan time.Time
 	event        *domain.RecallFeedbackEvent
 	recordErr    error
 }
@@ -168,7 +197,15 @@ func (s *recallFeedbackEventRepoStub) Get(_ context.Context, _ string) (*domain.
 }
 
 func (s *recallFeedbackEventRepoStub) PruneBefore(_ context.Context, cutoff time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.pruneCutoffs = append(s.pruneCutoffs, cutoff)
+	if s.pruneNotify != nil {
+		select {
+		case s.pruneNotify <- cutoff:
+		default:
+		}
+	}
 	return nil
 }
 
