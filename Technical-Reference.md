@@ -133,9 +133,10 @@ are available.
 | `prompts/get` | Render one prompt by name with string arguments. |
 
 The first bundled prompt is `export_memory_as_agent_skill`. It helps an LLM
-recall Dense-Mem context for a topic and draft a shareable Agent Skill
-`SKILL.md` file. It is separate from memory-pack import/export; generated skill
-files are not automatically imported into memory.
+recall Dense-Mem context for a topic and draft a self-contained Agent Skill
+`SKILL.md` file for recipients without access to the source memory instance. It
+is separate from memory-pack import/export; generated skill files are not
+automatically imported into memory.
 
 ## Memory Pack Tools
 

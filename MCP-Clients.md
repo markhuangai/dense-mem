@@ -99,8 +99,9 @@ curl -s "http://127.0.0.1:8080/mcp" \
 ```
 
 The response should include `export_memory_as_agent_skill`, a prompt that helps
-an LLM recall Dense-Mem context for a topic and draft a shareable Agent Skill
-`SKILL.md` file.
+an LLM recall Dense-Mem context for a topic and draft a self-contained,
+shareable Agent Skill `SKILL.md` file for recipients who do not have access to
+the source memory instance.
 
 ## What To Ask
 

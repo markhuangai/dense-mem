@@ -151,6 +151,8 @@ experience into an Agent Skill instead of creating a memory-pack artifact.
 
 Use `prompts/list` to discover bundled prompts and `prompts/get` to render one.
 The first bundled prompt is `export_memory_as_agent_skill`; it asks the LLM to
-recall Dense-Mem context for a topic and draft a shareable `SKILL.md` file plus
-optional reference files. The generated skill file is not automatically imported
-back into memory.
+recall Dense-Mem context for a topic, distill durable rules and workflows into a
+self-contained `SKILL.md` file, and include optional reference files when useful.
+The generated skill should work for recipients without access to the source
+memory instance or MCP server, and it is not automatically imported back into
+memory.
