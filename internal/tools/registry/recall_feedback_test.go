@@ -5,9 +5,11 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/service/recallservice"
 )
 
 type stubRecallFeedbackConfig struct {
@@ -128,10 +130,12 @@ func TestRecallMemoryRecallEventRequiresMetrics(t *testing.T) {
 
 func TestRecallMemoryRecallEventAndSessionSubmit(t *testing.T) {
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	recorder := &stubRecallFeedbackRecorder{}
 	reg, _ := BuildDefault(Dependencies{
 		Recall:               stubRecallWithHit{},
 		Metrics:              metrics,
 		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+		RecallFeedbackEvents: recorder,
 	})
 	recallTool, _ := reg.Get("recall_memory")
 
@@ -146,6 +150,19 @@ func TestRecallMemoryRecallEventAndSessionSubmit(t *testing.T) {
 	recallID, _ := event["recall_id"].(string)
 	if !strings.HasPrefix(recallID, "rec_") || event["feedback_tool"] != SubmitRecallSessionFeedbackToolName || event["feedback_timing"] != "deferred_until_final_answer" {
 		t.Fatalf("recall_event = %v", event)
+	}
+	if len(recorder.snapshots) != 1 {
+		t.Fatalf("recorded snapshots = %d; want 1", len(recorder.snapshots))
+	}
+	snapshot := recorder.snapshots[0]
+	if snapshot.RecallID != recallID || snapshot.Query != "q" {
+		t.Fatalf("snapshot = %+v; want recall id and query", snapshot)
+	}
+	if len(snapshot.ResultRefs) != 1 || snapshot.ResultRefs[0].Type != domain.RecallFeedbackResultTypeFragment || snapshot.ResultRefs[0].ID != "fragment-hit" {
+		t.Fatalf("snapshot result refs = %+v", snapshot.ResultRefs)
+	}
+	if _, ok := snapshot.ToolArgs["input"].(map[string]any); !ok {
+		t.Fatalf("snapshot tool args = %#v; want input map", snapshot.ToolArgs)
 	}
 
 	submitTool, ok := reg.Get("submit_recall_session_feedback")
@@ -178,4 +195,152 @@ func TestRecallMemoryRecallEventAndSessionSubmit(t *testing.T) {
 	if !samples[0].Used || !samples[0].AnswerSupported || samples[0].Quality != "high" || samples[0].QualityScore != 1 {
 		t.Fatalf("recall feedback sample = %+v", samples[0])
 	}
+	if len(recorder.feedback) != 1 {
+		t.Fatalf("recorded feedback = %d; want 1", len(recorder.feedback))
+	}
+	if recorder.feedback[0].RecallID != recallID || recorder.feedback[0].Quality != "high" {
+		t.Fatalf("recorded feedback = %+v", recorder.feedback[0])
+	}
+}
+
+func TestRecallFeedbackRecorderErrorsSuppressRecallEventAndFailFeedbackSubmit(t *testing.T) {
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	reg, _ := BuildDefault(Dependencies{
+		Recall:               stubRecallWithHit{},
+		Metrics:              metrics,
+		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+		RecallFeedbackEvents: &stubRecallFeedbackRecorder{err: errors.New("record failed")},
+	})
+	recallTool, _ := reg.Get("recall_memory")
+	out, err := recallTool.Invoke(context.Background(), "profile-feedback", map[string]any{"query": "q"})
+	if err != nil {
+		t.Fatalf("recall_memory Invoke: %v", err)
+	}
+	if _, ok := out["recall_event"]; ok {
+		t.Fatalf("recall_event should be omitted when snapshot persistence fails: %v", out["recall_event"])
+	}
+
+	submitTool, _ := reg.Get("submit_recall_session_feedback")
+	_, err = submitTool.Invoke(context.Background(), "profile-feedback", map[string]any{
+		"recalls": []any{map[string]any{
+			"recall_id":        "rec_failed",
+			"used":             true,
+			"answer_supported": false,
+			"quality":          "low",
+			"missing_context":  true,
+			"irrelevant":       false,
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "failed to record recalls[0]") {
+		t.Fatalf("submit_recall_session_feedback err = %v; want persistence failure", err)
+	}
+	if len(metrics.RecallFeedbackSamples()) != 0 {
+		t.Fatalf("metrics samples = %d; want 0 after persistence failure", len(metrics.RecallFeedbackSamples()))
+	}
+}
+
+func TestRecallFeedbackHelpersCaptureArgsAndResultRefs(t *testing.T) {
+	validAt := time.Date(2026, 6, 22, 10, 0, 0, 0, time.UTC)
+	knownAt := time.Date(2026, 6, 23, 10, 0, 0, 0, time.UTC)
+	recordedAt := time.Date(2026, 6, 23, 9, 0, 0, 0, time.UTC)
+	retractedAt := time.Date(2026, 6, 23, 9, 30, 0, 0, time.UTC)
+
+	args := recallFeedbackToolArgs(map[string]any{
+		"query":            "why",
+		"limit":            float64(3),
+		"valid_at":         validAt.Format(time.RFC3339),
+		"known_at":         knownAt.Format(time.RFC3339),
+		"include_evidence": true,
+		"use_communities":  true,
+		"ignored":          "not persisted",
+	}, recallservice.RecallRequest{
+		Query:           "why",
+		Limit:           3,
+		ValidAt:         &validAt,
+		KnownAt:         &knownAt,
+		IncludeEvidence: true,
+		UseCommunities:  true,
+	})
+	input := args["input"].(map[string]any)
+	if _, ok := input["ignored"]; ok {
+		t.Fatalf("input copy persisted ignored key: %#v", input)
+	}
+	effective := args["effective"].(map[string]any)
+	if effective["valid_at"] != validAt.Format(time.RFC3339Nano) || effective["known_at"] != knownAt.Format(time.RFC3339Nano) {
+		t.Fatalf("effective time args = %#v", effective)
+	}
+
+	refs := recallFeedbackResultRefs([]recallservice.RecallHit{
+		{
+			Tier:       recallservice.TierActiveFact,
+			Score:      0.9,
+			FinalScore: 0.95,
+			Fact: &domain.Fact{
+				FactID:      "fact-1",
+				Status:      domain.FactStatusRetracted,
+				RecordedAt:  recordedAt,
+				ValidFrom:   &validAt,
+				ValidTo:     &knownAt,
+				RetractedAt: &retractedAt,
+			},
+		},
+		{
+			Tier: recallservice.TierValidatedClaim,
+			Claim: &domain.Claim{
+				ClaimID:    "claim-1",
+				Status:     domain.StatusValidated,
+				RecordedAt: recordedAt,
+				ValidFrom:  &validAt,
+				ValidTo:    &knownAt,
+			},
+		},
+		{
+			Tier:         recallservice.TierFragment,
+			SemanticRank: 2,
+			KeywordRank:  3,
+			Fragment: &domain.Fragment{
+				FragmentID:  "fragment-1",
+				Status:      domain.FragmentStatusRetracted,
+				CreatedAt:   recordedAt,
+				UpdatedAt:   knownAt,
+				RetractedAt: &retractedAt,
+			},
+		},
+		{},
+	})
+
+	if len(refs) != 3 {
+		t.Fatalf("refs = %#v; want 3 persisted refs", refs)
+	}
+	if refs[0].Type != domain.RecallFeedbackResultTypeFact || refs[0].ID != "fact-1" || refs[0].Score == nil || refs[0].FinalScore == nil || refs[0].RetractedAt == nil {
+		t.Fatalf("fact ref = %+v", refs[0])
+	}
+	if refs[1].Type != domain.RecallFeedbackResultTypeClaim || refs[1].ID != "claim-1" || refs[1].Score != nil || refs[1].FinalScore != nil {
+		t.Fatalf("claim ref = %+v", refs[1])
+	}
+	if refs[2].Type != domain.RecallFeedbackResultTypeFragment || refs[2].ID != "fragment-1" || refs[2].SemanticRank != 2 || refs[2].KeywordRank != 3 {
+		t.Fatalf("fragment ref = %+v", refs[2])
+	}
+}
+
+type stubRecallFeedbackRecorder struct {
+	snapshots []domain.RecallFeedbackEvent
+	feedback  []domain.RecallFeedbackSubmission
+	err       error
+}
+
+func (s *stubRecallFeedbackRecorder) RecordRecallSnapshot(_ context.Context, event domain.RecallFeedbackEvent) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.snapshots = append(s.snapshots, event)
+	return nil
+}
+
+func (s *stubRecallFeedbackRecorder) RecordRecallFeedback(_ context.Context, feedback domain.RecallFeedbackSubmission) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.feedback = append(s.feedback, feedback)
+	return nil
 }

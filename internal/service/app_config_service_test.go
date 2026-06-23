@@ -241,21 +241,26 @@ func TestAppConfigServiceRecallFeedbackSettingsDefaultsAndUpdate(t *testing.T) {
 	settings, err := svc.GetRecallFeedbackSettings(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, "false", recallFeedbackConfigItemForTest(settings, domain.AppConfigRecallFeedbackEnabled).EffectiveValue)
+	assert.Equal(t, "30", recallFeedbackConfigItemForTest(settings, domain.AppConfigRecallFeedbackRetentionDays).EffectiveValue)
 
 	runtime, err := svc.RecallFeedbackRuntimeConfig(ctx)
 	require.NoError(t, err)
 	assert.False(t, runtime.Enabled)
+	assert.Equal(t, DefaultRecallFeedbackRetentionDays, runtime.RetentionDays)
 
 	now = now.Add(time.Minute)
 	updated, err := svc.UpdateRecallFeedbackSettings(ctx, map[string]string{
-		domain.AppConfigRecallFeedbackEnabled: "true",
+		domain.AppConfigRecallFeedbackEnabled:       "true",
+		domain.AppConfigRecallFeedbackRetentionDays: "45",
 	}, "control", "127.0.0.1", "corr")
 	require.NoError(t, err)
 	assert.Equal(t, "true", recallFeedbackConfigItemForTest(updated, domain.AppConfigRecallFeedbackEnabled).EffectiveValue)
+	assert.Equal(t, "45", recallFeedbackConfigItemForTest(updated, domain.AppConfigRecallFeedbackRetentionDays).EffectiveValue)
 
 	runtime, err = svc.RecallFeedbackRuntimeConfig(ctx)
 	require.NoError(t, err)
 	assert.True(t, runtime.Enabled)
+	assert.Equal(t, 45, runtime.RetentionDays)
 }
 
 func TestAppConfigServiceSSOCookieSecureEffectiveDefault(t *testing.T) {
@@ -462,6 +467,12 @@ func TestAppConfigServiceValidation(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
 
 	_, err = svc.UpdateRecallFeedbackSettings(ctx, map[string]string{domain.AppConfigRecallFeedbackEnabled: "maybe"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
+	_, err = svc.UpdateRecallFeedbackSettings(ctx, map[string]string{domain.AppConfigRecallFeedbackRetentionDays: "0"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
+	_, err = svc.UpdateRecallFeedbackSettings(ctx, map[string]string{domain.AppConfigRecallFeedbackRetentionDays: "366"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
 }
 

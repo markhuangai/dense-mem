@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -38,6 +40,7 @@ type Dependencies struct {
 	// RecallFeedbackConfig controls whether recall_memory emits deferred
 	// recall events and whether session feedback submission is callable.
 	RecallFeedbackConfig RecallFeedbackConfigProvider
+	RecallFeedbackEvents RecallFeedbackEventRecorder
 
 	// Search / graph tools (v1)
 	KeywordSearch               keywordsearch.KeywordSearchService
@@ -62,6 +65,11 @@ type Dependencies struct {
 	Memory          memoryservice.Service
 	SkillPack       skillpackservice.Service
 	Dreams          dreamservice.Service
+}
+
+type RecallFeedbackEventRecorder interface {
+	RecordRecallSnapshot(ctx context.Context, event domain.RecallFeedbackEvent) error
+	RecordRecallFeedback(ctx context.Context, feedback domain.RecallFeedbackSubmission) error
 }
 
 // ErrToolUnavailable is the defensive fallback returned when a tool dependency
@@ -244,10 +252,30 @@ func recallMemoryTool(deps Dependencies) Tool {
 			}
 			out := map[string]any{"results": results, "clarifications": []any{}, "related_dreams": []any{}}
 			if RecallFeedbackEnabled(ctx, deps.RecallFeedbackConfig) && deps.Metrics != nil {
-				out["recall_event"] = map[string]any{
-					"recall_id":       "rec_" + uuid.NewString(),
+				recallID := "rec_" + uuid.NewString()
+				recallEvent := map[string]any{
+					"recall_id":       recallID,
 					"feedback_tool":   SubmitRecallSessionFeedbackToolName,
 					"feedback_timing": "deferred_until_final_answer",
+				}
+				if deps.RecallFeedbackEvents != nil {
+					err := deps.RecallFeedbackEvents.RecordRecallSnapshot(ctx, domain.RecallFeedbackEvent{
+						RecallID:   recallID,
+						ToolName:   "recall_memory",
+						Query:      req.Query,
+						ToolArgs:   recallFeedbackToolArgs(input, req),
+						ResultRefs: recallFeedbackResultRefs(hits),
+					})
+					if err != nil {
+						slog.Default().Warn("recall feedback snapshot not recorded",
+							slog.String("recall_id", recallID),
+							slog.String("error", err.Error()),
+						)
+					} else {
+						out["recall_event"] = recallEvent
+					}
+				} else {
+					out["recall_event"] = recallEvent
 				}
 			}
 			if deps.Memory != nil {
@@ -335,6 +363,8 @@ func submitRecallSessionFeedbackTool(deps Dependencies) Tool {
 			if len(req.Recalls) == 0 {
 				return nil, errors.New("submit_recall_session_feedback: recalls is required")
 			}
+			submissions := make([]domain.RecallFeedbackSubmission, 0, len(req.Recalls))
+			feedbacks := make([]observability.RecallFeedback, 0, len(req.Recalls))
 			for i, recall := range req.Recalls {
 				if strings.TrimSpace(recall.RecallID) == "" {
 					return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].recall_id is required", i)
@@ -345,7 +375,15 @@ func submitRecallSessionFeedbackTool(deps Dependencies) Tool {
 				default:
 					return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].quality must be one of high, medium, low", i)
 				}
-				observability.RecordRecallFeedback(ctx, deps.Metrics, observability.RecallFeedback{
+				submissions = append(submissions, domain.RecallFeedbackSubmission{
+					RecallID:        strings.TrimSpace(recall.RecallID),
+					Used:            recall.Used,
+					AnswerSupported: recall.AnswerSupported,
+					Quality:         quality,
+					MissingContext:  recall.MissingContext,
+					Irrelevant:      recall.Irrelevant,
+				})
+				feedbacks = append(feedbacks, observability.RecallFeedback{
 					Used:            recall.Used,
 					AnswerSupported: recall.AnswerSupported,
 					Quality:         quality,
@@ -353,9 +391,108 @@ func submitRecallSessionFeedbackTool(deps Dependencies) Tool {
 					Irrelevant:      recall.Irrelevant,
 				})
 			}
-			return map[string]any{"recorded": true, "recorded_count": len(req.Recalls)}, nil
+			if deps.RecallFeedbackEvents != nil {
+				for i, submission := range submissions {
+					if err := deps.RecallFeedbackEvents.RecordRecallFeedback(ctx, submission); err != nil {
+						return nil, fmt.Errorf("submit_recall_session_feedback: failed to record recalls[%d]: %w", i, err)
+					}
+				}
+			}
+			for _, feedback := range feedbacks {
+				observability.RecordRecallFeedback(ctx, deps.Metrics, feedback)
+			}
+			return map[string]any{"recorded": true, "recorded_count": len(submissions)}, nil
 		},
 	}
+}
+
+func recallFeedbackToolArgs(input map[string]any, req recallservice.RecallRequest) map[string]any {
+	effective := map[string]any{
+		"query":            req.Query,
+		"limit":            req.Limit,
+		"include_evidence": req.IncludeEvidence,
+		"use_communities":  req.UseCommunities,
+	}
+	if req.ValidAt != nil {
+		effective["valid_at"] = req.ValidAt.UTC().Format(time.RFC3339Nano)
+	}
+	if req.KnownAt != nil {
+		effective["known_at"] = req.KnownAt.UTC().Format(time.RFC3339Nano)
+	}
+	return map[string]any{
+		"input":     recallFeedbackInputCopy(input),
+		"effective": effective,
+	}
+}
+
+func recallFeedbackInputCopy(input map[string]any) map[string]any {
+	out := map[string]any{}
+	for _, key := range []string{"query", "limit", "valid_at", "known_at", "include_evidence", "use_communities"} {
+		if value, ok := input[key]; ok {
+			out[key] = value
+		}
+	}
+	return out
+}
+
+func recallFeedbackResultRefs(hits []recallservice.RecallHit) []domain.RecallFeedbackResultRef {
+	refs := make([]domain.RecallFeedbackResultRef, 0, len(hits))
+	for i := range hits {
+		hit := hits[i]
+		ref := domain.RecallFeedbackResultRef{
+			Rank:         i + 1,
+			Tier:         hit.Tier,
+			SemanticRank: hit.SemanticRank,
+			KeywordRank:  hit.KeywordRank,
+			Score:        floatPtrIfNonZero(hit.Score),
+			FinalScore:   floatPtrIfNonZero(hit.FinalScore),
+		}
+		switch {
+		case hit.Fact != nil:
+			ref.Type = domain.RecallFeedbackResultTypeFact
+			ref.ID = hit.Fact.FactID
+			ref.StatusAtRecall = string(hit.Fact.Status)
+			ref.RecordedAt = timePtrIfNonZero(hit.Fact.RecordedAt)
+			ref.ValidFrom = hit.Fact.ValidFrom
+			ref.ValidTo = hit.Fact.ValidTo
+			ref.RetractedAt = hit.Fact.RetractedAt
+		case hit.Claim != nil:
+			ref.Type = domain.RecallFeedbackResultTypeClaim
+			ref.ID = hit.Claim.ClaimID
+			ref.StatusAtRecall = string(hit.Claim.Status)
+			ref.RecordedAt = timePtrIfNonZero(hit.Claim.RecordedAt)
+			ref.ValidFrom = hit.Claim.ValidFrom
+			ref.ValidTo = hit.Claim.ValidTo
+		case hit.Fragment != nil:
+			ref.Type = domain.RecallFeedbackResultTypeFragment
+			ref.ID = hit.Fragment.FragmentID
+			ref.StatusAtRecall = string(hit.Fragment.Status)
+			if ref.StatusAtRecall == "" {
+				ref.StatusAtRecall = string(domain.FragmentStatusActive)
+			}
+			ref.CreatedAt = timePtrIfNonZero(hit.Fragment.CreatedAt)
+			ref.UpdatedAt = timePtrIfNonZero(hit.Fragment.UpdatedAt)
+			ref.RetractedAt = hit.Fragment.RetractedAt
+		}
+		if ref.Type != "" && ref.ID != "" {
+			refs = append(refs, ref)
+		}
+	}
+	return refs
+}
+
+func floatPtrIfNonZero(value float64) *float64 {
+	if value == 0 {
+		return nil
+	}
+	return &value
+}
+
+func timePtrIfNonZero(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	return &value
 }
 
 func recallHitToMap(hit recallservice.RecallHit) (map[string]any, error) {

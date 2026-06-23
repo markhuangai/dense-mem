@@ -29,7 +29,8 @@ const (
 
 	AppConfigOperationLogRetentionDays = "OPERATION_LOG_RETENTION_DAYS"
 
-	AppConfigRecallFeedbackEnabled = "RECALL_FEEDBACK_ENABLED"
+	AppConfigRecallFeedbackEnabled       = "RECALL_FEEDBACK_ENABLED"
+	AppConfigRecallFeedbackRetentionDays = "RECALL_FEEDBACK_RETENTION_DAYS"
 )
 
 type AppConfigEntry struct {
@@ -110,5 +111,6 @@ type RecallFeedbackConfigItem struct {
 
 // RecallFeedbackRuntimeConfig is the effective recall feedback runtime config.
 type RecallFeedbackRuntimeConfig struct {
-	Enabled bool `json:"enabled"`
+	Enabled       bool `json:"enabled"`
+	RetentionDays int  `json:"retention_days"`
 }

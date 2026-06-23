@@ -60,17 +60,6 @@ func NewControlPortalServerWithMetrics(
 	)
 }
 
-type ControlPortalTelemetry struct {
-	Reader        service.TelemetryReader
-	HTTPMetrics   observability.HTTPMetrics
-	ScrapeHandler nethttp.Handler
-	ScrapeToken   string
-	SSO           *service.SSOService
-	Config        service.AppConfigService
-	Logs          service.OperationLogReader
-	Dreams        dreamservice.Service
-}
-
 func NewControlPortalServerWithMetricsAndTelemetry(
 	cfg config.ConfigProvider,
 	profileSvc handler.ProfileServiceInterface,
@@ -132,7 +121,7 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		e.GET("/metrics", echo.WrapHandler(telemetry.ScrapeHandler), telemetryScrapeTokenMiddleware(telemetry.ScrapeToken))
 	}
 
-	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, dreams: telemetry.Dreams, health: health, sso: telemetry.SSO, appConfig: telemetry.Config}
+	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, dreams: telemetry.Dreams, health: health, sso: telemetry.SSO, appConfig: telemetry.Config}
 	api := e.Group("/control/api")
 	api.Use(controlPortalMiddleware(cfg.GetControlPortalToken(), securitySvc))
 	api.Use(httpmw.TelemetryHTTPMiddleware(telemetry.HTTPMetrics))
@@ -141,6 +130,10 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 	api.GET("/telemetry", control.getTelemetry)
 	if telemetry.Logs != nil {
 		api.GET("/logs", control.listOperationLogs)
+	}
+	if telemetry.RecallFeedback != nil {
+		api.GET("/recall-feedback-events", control.listRecallFeedbackEvents)
+		api.GET("/recall-feedback-events/:recallId", control.getRecallFeedbackEvent)
 	}
 	api.GET("/teams", control.listProfiles)
 	api.POST("/teams", control.createProfile)
@@ -202,19 +195,6 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 	}
 
 	return e, nil
-}
-
-type controlPortalHandler struct {
-	profiles      handler.ProfileServiceInterface
-	keys          handler.APIKeyServiceInterface
-	security      service.SecurityService
-	metrics       service.UsageMetricsReader
-	telemetry     service.TelemetryReader
-	operationLogs service.OperationLogReader
-	dreams        dreamservice.Service
-	health        HealthConfig
-	sso           *service.SSOService
-	appConfig     service.AppConfigService
 }
 
 func (h *controlPortalHandler) session(c echo.Context) error {

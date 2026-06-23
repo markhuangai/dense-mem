@@ -43,6 +43,46 @@ func (h *controlPortalHandler) listOperationLogs(c echo.Context) error {
 	})
 }
 
+func (h *controlPortalHandler) listRecallFeedbackEvents(c echo.Context) error {
+	if h.recallFeedback == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "recall feedback events unavailable")
+	}
+	filter, err := controlRecallFeedbackEventsFilter(c)
+	if err != nil {
+		return err
+	}
+	page, err := h.recallFeedback.ListRecallFeedbackEvents(c.Request().Context(), filter)
+	if err != nil {
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, handler.PaginationEnvelope{
+		Data: page.Items,
+		Pagination: handler.Pagination{
+			Limit:  filter.Limit,
+			Offset: filter.Offset,
+			Total:  page.Total,
+		},
+	})
+}
+
+func (h *controlPortalHandler) getRecallFeedbackEvent(c echo.Context) error {
+	if h.recallFeedback == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "recall feedback events unavailable")
+	}
+	recallID := strings.TrimSpace(c.Param("recallId"))
+	if recallID == "" {
+		return httperr.New(httperr.VALIDATION_ERROR, "recall ID is required")
+	}
+	event, err := h.recallFeedback.GetRecallFeedbackEvent(c.Request().Context(), recallID)
+	if err != nil {
+		return err
+	}
+	if event == nil {
+		return httperr.New(httperr.NOT_FOUND, "recall feedback event not found")
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": event})
+}
+
 func (h *controlPortalHandler) getTeamDreamingStatus(c echo.Context) error {
 	if h.dreams == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "dream service unavailable")
@@ -157,6 +197,63 @@ func controlOperationLogsFilter(c echo.Context) (domain.OperationLogFilter, erro
 	}, nil
 }
 
+func controlRecallFeedbackEventsFilter(c echo.Context) (domain.RecallFeedbackEventFilter, error) {
+	limit, offset := controlPagination(c)
+	if raw := strings.TrimSpace(c.QueryParam("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 500 {
+			return domain.RecallFeedbackEventFilter{}, httperr.New(httperr.VALIDATION_ERROR, "limit must be between 1 and 500")
+		}
+		limit = parsed
+	}
+	filter := domain.RecallFeedbackEventFilter{Limit: limit, Offset: offset}
+	if raw := strings.TrimSpace(c.QueryParam("team_id")); raw != "" {
+		id, err := parseControlUUID(raw, "team ID")
+		if err != nil {
+			return domain.RecallFeedbackEventFilter{}, err
+		}
+		filter.TeamID = &id
+	}
+	if raw := strings.TrimSpace(c.QueryParam("profile_id")); raw != "" {
+		id, err := parseControlUUID(raw, "profile ID")
+		if err != nil {
+			return domain.RecallFeedbackEventFilter{}, err
+		}
+		filter.ProfileID = &id
+	}
+	quality := strings.ToLower(strings.TrimSpace(c.QueryParam("quality")))
+	switch quality {
+	case "", "high", "medium", "low":
+		filter.Quality = quality
+	default:
+		return domain.RecallFeedbackEventFilter{}, httperr.New(httperr.VALIDATION_ERROR, "quality must be one of high, medium, low")
+	}
+	missingContext, err := optionalControlBool(c.QueryParam("missing_context"), "missing_context")
+	if err != nil {
+		return domain.RecallFeedbackEventFilter{}, err
+	}
+	filter.MissingContext = missingContext
+	irrelevant, err := optionalControlBool(c.QueryParam("irrelevant"), "irrelevant")
+	if err != nil {
+		return domain.RecallFeedbackEventFilter{}, err
+	}
+	filter.Irrelevant = irrelevant
+	from, err := optionalControlTime(c.QueryParam("from"), "from")
+	if err != nil {
+		return domain.RecallFeedbackEventFilter{}, err
+	}
+	filter.From = from
+	to, err := optionalControlTime(c.QueryParam("to"), "to")
+	if err != nil {
+		return domain.RecallFeedbackEventFilter{}, err
+	}
+	filter.To = to
+	if filter.From != nil && filter.To != nil && filter.From.After(*filter.To) {
+		return domain.RecallFeedbackEventFilter{}, httperr.New(httperr.VALIDATION_ERROR, "from must be before or equal to to")
+	}
+	return filter, nil
+}
+
 func controlDreamListOptions(c echo.Context) (dreamservice.ListOptions, error) {
 	limit, err := controlDreamLimit(c.QueryParam("limit"))
 	if err != nil {
@@ -197,6 +294,30 @@ func controlDreamLimit(raw string) (int, error) {
 		return 0, httperr.New(httperr.VALIDATION_ERROR, "limit must be between 1 and 100")
 	}
 	return parsed, nil
+}
+
+func optionalControlBool(raw string, name string) (*bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	parsed, err := strconv.ParseBool(raw)
+	if err != nil {
+		return nil, httperr.New(httperr.VALIDATION_ERROR, name+" must be true or false")
+	}
+	return &parsed, nil
+}
+
+func optionalControlTime(raw string, name string) (*time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return nil, httperr.New(httperr.VALIDATION_ERROR, name+" must be RFC3339")
+	}
+	return &parsed, nil
 }
 
 func controlDependencySnapshot(ctx context.Context, health HealthConfig) []controlDependencyResponse {

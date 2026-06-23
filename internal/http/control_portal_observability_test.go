@@ -36,6 +36,26 @@ func (s *controlOperationLogReaderStub) ListOperationLogs(_ context.Context, fil
 	return &domain.OperationLogPage{}, nil
 }
 
+type controlRecallFeedbackReaderStub struct {
+	page     *domain.RecallFeedbackEventPage
+	event    *domain.RecallFeedbackEvent
+	filter   domain.RecallFeedbackEventFilter
+	recallID string
+}
+
+func (s *controlRecallFeedbackReaderStub) ListRecallFeedbackEvents(_ context.Context, filter domain.RecallFeedbackEventFilter) (*domain.RecallFeedbackEventPage, error) {
+	s.filter = filter
+	if s.page != nil {
+		return s.page, nil
+	}
+	return &domain.RecallFeedbackEventPage{}, nil
+}
+
+func (s *controlRecallFeedbackReaderStub) GetRecallFeedbackEvent(_ context.Context, recallID string) (*domain.RecallFeedbackEvent, error) {
+	s.recallID = recallID
+	return s.event, nil
+}
+
 type controlDreamServiceStub struct {
 	status     *dreamservice.StatusResult
 	runs       []*dreamservice.RunCycleResult
@@ -109,6 +129,23 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 		}},
 		Total: 1,
 	}}
+	feedback := &controlRecallFeedbackReaderStub{page: &domain.RecallFeedbackEventPage{
+		Items: []domain.RecallFeedbackEvent{{
+			RecallID:      "rec_1",
+			CreatedAt:     now,
+			Query:         "why was recall bad?",
+			ResultCount:   1,
+			SnapshotState: domain.RecallFeedbackSnapshotCaptured,
+			Quality:       "low",
+		}},
+		Total: 1,
+	}, event: &domain.RecallFeedbackEvent{
+		RecallID:      "rec_1",
+		CreatedAt:     now,
+		Query:         "why was recall bad?",
+		ResultRefs:    []domain.RecallFeedbackResultRef{{Type: domain.RecallFeedbackResultTypeFragment, ID: "fragment-1", Rank: 1}},
+		SnapshotState: domain.RecallFeedbackSnapshotCaptured,
+	}}
 	dreams := &controlDreamServiceStub{
 		status: &dreamservice.StatusResult{PendingCount: 1},
 		runs: []*dreamservice.RunCycleResult{{
@@ -139,8 +176,9 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
 	}, profiles, &controlKeySvc{}, nil, ControlPortalTelemetry{
-		Logs:   logs,
-		Dreams: dreams,
+		Logs:           logs,
+		RecallFeedback: feedback,
+		Dreams:         dreams,
 	}, HealthConfig{}, nil)
 	require.NoError(t, err)
 
@@ -162,6 +200,24 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 		Sort:      "severity",
 		Direction: "asc",
 	}, logs.filter)
+
+	rec = do("/control/api/recall-feedback-events?limit=5&offset=2&quality=low&missing_context=true&irrelevant=false&from=2026-06-01T00:00:00Z&to=2026-06-23T00:00:00Z")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "why was recall bad?")
+	assert.Equal(t, 5, feedback.filter.Limit)
+	assert.Equal(t, 2, feedback.filter.Offset)
+	assert.Equal(t, "low", feedback.filter.Quality)
+	require.NotNil(t, feedback.filter.MissingContext)
+	assert.True(t, *feedback.filter.MissingContext)
+	require.NotNil(t, feedback.filter.Irrelevant)
+	assert.False(t, *feedback.filter.Irrelevant)
+	require.NotNil(t, feedback.filter.From)
+	require.NotNil(t, feedback.filter.To)
+
+	rec = do("/control/api/recall-feedback-events/rec_1")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "fragment-1")
+	assert.Equal(t, "rec_1", feedback.recallID)
 
 	rec = do("/control/api/teams/" + teamID.String() + "/dreaming/status")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -207,6 +263,31 @@ func TestControlPortalObservabilityValidation(t *testing.T) {
 	_, err = controlOperationLogsFilter(c)
 	require.ErrorContains(t, err, "direction must be asc or desc")
 
+	req = httptest.NewRequest(http.MethodGet, "/control/api/recall-feedback-events?limit=501", nil)
+	c = e.NewContext(req, rec)
+	_, err = controlRecallFeedbackEventsFilter(c)
+	require.ErrorContains(t, err, "limit must be between 1 and 500")
+
+	req = httptest.NewRequest(http.MethodGet, "/control/api/recall-feedback-events?quality=bad", nil)
+	c = e.NewContext(req, rec)
+	_, err = controlRecallFeedbackEventsFilter(c)
+	require.ErrorContains(t, err, "quality must be one of")
+
+	req = httptest.NewRequest(http.MethodGet, "/control/api/recall-feedback-events?missing_context=maybe", nil)
+	c = e.NewContext(req, rec)
+	_, err = controlRecallFeedbackEventsFilter(c)
+	require.ErrorContains(t, err, "missing_context must be true or false")
+
+	req = httptest.NewRequest(http.MethodGet, "/control/api/recall-feedback-events?from=bad", nil)
+	c = e.NewContext(req, rec)
+	_, err = controlRecallFeedbackEventsFilter(c)
+	require.ErrorContains(t, err, "from must be RFC3339")
+
+	req = httptest.NewRequest(http.MethodGet, "/control/api/recall-feedback-events?from=2026-06-24T00:00:00Z&to=2026-06-23T00:00:00Z", nil)
+	c = e.NewContext(req, rec)
+	_, err = controlRecallFeedbackEventsFilter(c)
+	require.ErrorContains(t, err, "from must be before or equal to to")
+
 	limit, err := controlDreamLimit("")
 	require.NoError(t, err)
 	assert.Equal(t, 20, limit)
@@ -237,6 +318,8 @@ func TestControlPortalObservabilityUnavailableAndNotFound(t *testing.T) {
 	h := &controlPortalHandler{}
 
 	require.ErrorContains(t, h.listOperationLogs(c), "operation logs unavailable")
+	require.ErrorContains(t, h.listRecallFeedbackEvents(c), "recall feedback events unavailable")
+	require.ErrorContains(t, h.getRecallFeedbackEvent(c), "recall feedback events unavailable")
 	require.ErrorContains(t, h.getTeamDreamingStatus(c), "dream service unavailable")
 	require.ErrorContains(t, h.listTeamDreamingRuns(c), "dream service unavailable")
 	require.ErrorContains(t, h.listTeamDreams(c), "dream service unavailable")
@@ -260,6 +343,15 @@ func TestControlPortalObservabilityUnavailableAndNotFound(t *testing.T) {
 	c.SetParamValues(teamID.String())
 	err = h.listTeamDreams(c)
 	require.ErrorContains(t, err, "invalid cursor")
+
+	h.recallFeedback = &controlRecallFeedbackReaderStub{}
+	req = httptest.NewRequest(http.MethodGet, "/control/api/recall-feedback-events/rec_missing", nil)
+	rec = httptest.NewRecorder()
+	c = e.NewContext(req, rec)
+	c.SetParamNames("recallId")
+	c.SetParamValues("rec_missing")
+	err = h.getRecallFeedbackEvent(c)
+	require.ErrorContains(t, err, "recall feedback event not found")
 }
 
 func TestControlDependencySnapshotErrorAndDegraded(t *testing.T) {

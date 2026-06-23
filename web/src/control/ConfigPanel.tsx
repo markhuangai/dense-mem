@@ -27,6 +27,7 @@ const CONFIG_LABELS: Record<string, string> = {
   COMMUNITY_DETECTION_JITTER_SECONDS: "Jitter seconds",
   OPERATION_LOG_RETENTION_DAYS: "Retention days",
   RECALL_FEEDBACK_ENABLED: "Enable recall feedback",
+  RECALL_FEEDBACK_RETENTION_DAYS: "Investigation retention days",
 };
 
 const CONFIG_PLACEHOLDERS: Record<string, string> = {
@@ -41,6 +42,7 @@ const CONFIG_PLACEHOLDERS: Record<string, string> = {
   COMMUNITY_DETECTION_MAX_CONCURRENCY: "1",
   COMMUNITY_DETECTION_JITTER_SECONDS: "600",
   OPERATION_LOG_RETENTION_DAYS: "30",
+  RECALL_FEEDBACK_RETENTION_DAYS: "30",
 };
 
 const FALLBACK_TIMEZONES = [
@@ -379,7 +381,7 @@ function ConfigField({
     );
   }
 
-  const numeric = item.key.endsWith("_SECONDS") || item.key === "DREAMING_MAX_OUTPUTS" || item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" || item.key === "OPERATION_LOG_RETENTION_DAYS";
+  const numeric = item.key.endsWith("_SECONDS") || item.key === "DREAMING_MAX_OUTPUTS" || item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" || item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS";
   const time = item.key === "DREAMING_START_TIME_LOCAL" || item.key === "COMMUNITY_DETECTION_START_TIME_LOCAL";
   const min = item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 0 : numeric ? 1 : undefined;
   return (
@@ -389,7 +391,7 @@ function ConfigField({
         id={item.key}
         type={time ? "time" : numeric ? "number" : "text"}
         min={min}
-        max={item.key === "DREAMING_MAX_OUTPUTS" ? 50 : item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" ? 8 : item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 3600 : item.key === "OPERATION_LOG_RETENTION_DAYS" ? 365 : undefined}
+        max={item.key === "DREAMING_MAX_OUTPUTS" ? 50 : item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" ? 8 : item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 3600 : item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS" ? 365 : undefined}
         placeholder={CONFIG_PLACEHOLDERS[item.key] ?? ""}
         value={value}
         onChange={(event) => onChange(event.target.value)}

@@ -176,6 +176,7 @@ func main() {
 	securityRepo := repository.NewSecurityRepository(pgDB.GetDB(), rlsHelper)
 	usageMetricsRepo := repository.NewUsageMetricsRepository(pgDB.GetDB(), rlsHelper)
 	operationLogRepo := repository.NewOperationLogRepository(pgDB.GetDB(), rlsHelper)
+	recallFeedbackEventRepo := repository.NewRecallFeedbackEventRepository(pgDB.GetDB(), rlsHelper)
 	skillPackImportRepo := repository.NewSkillPackImportRepository(pgDB.GetDB(), rlsHelper)
 
 	// ========================================
@@ -257,6 +258,9 @@ func main() {
 	factAuditor := &factAuditAdapter{inner: auditService}
 	dedupeLookup := fragmentdedupe.NewNeo4jDedupeLookup(readerAdapter)
 	claimDedupeLookup := claimdedupe.NewNeo4jDedupeLookup(readerAdapter)
+	recallFeedbackResolver := service.NewRecallFeedbackGraphResolver(readerAdapter)
+	recallFeedbackEventService := service.NewRecallFeedbackEventService(recallFeedbackEventRepo, appConfigService, recallFeedbackResolver)
+	recallFeedbackEventService.Start(context.Background())
 
 	// Embedding provider — startup enforces AI_* config before reaching this
 	// point. The unavailable stub is kept as a defensive fallback for this
@@ -437,6 +441,7 @@ func main() {
 		Recall:                      recallRegistrySvc,
 		Metrics:                     discoverabilityMetrics,
 		RecallFeedbackConfig:        appConfigService,
+		RecallFeedbackEvents:        recallFeedbackEventService,
 		KeywordSearch:               keywordSearchService,
 		SemanticSearch:              semanticSearchService,
 		GraphQuery:                  graphQueryService,
@@ -626,14 +631,15 @@ func main() {
 		apiKeyService,
 		usageMetricsService,
 		http.ControlPortalTelemetry{
-			Reader:        telemetryReader,
-			HTTPMetrics:   telemetryHTTPMetrics,
-			ScrapeHandler: telemetryScrapeHandler,
-			ScrapeToken:   cfg.GetTelemetryScrapeToken(),
-			SSO:           ssoService,
-			Config:        appConfigService,
-			Logs:          operationLogService,
-			Dreams:        dreamSvc,
+			Reader:         telemetryReader,
+			HTTPMetrics:    telemetryHTTPMetrics,
+			ScrapeHandler:  telemetryScrapeHandler,
+			ScrapeToken:    cfg.GetTelemetryScrapeToken(),
+			SSO:            ssoService,
+			Config:         appConfigService,
+			Logs:           operationLogService,
+			RecallFeedback: recallFeedbackEventService,
+			Dreams:         dreamSvc,
 		},
 		healthConfig,
 		logger,
@@ -706,5 +712,10 @@ func main() {
 	defer operationLogShutdownCancel()
 	if err := operationLogService.Shutdown(operationLogShutdownCtx); err != nil {
 		log.Printf("operation log shutdown error: %v", err)
+	}
+	recallFeedbackShutdownCtx, recallFeedbackShutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer recallFeedbackShutdownCancel()
+	if err := recallFeedbackEventService.Shutdown(recallFeedbackShutdownCtx); err != nil {
+		log.Printf("recall feedback event shutdown error: %v", err)
 	}
 }

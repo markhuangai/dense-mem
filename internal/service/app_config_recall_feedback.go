@@ -60,10 +60,12 @@ func recallFeedbackRuntimeConfigFromEntries(entries map[string]domain.AppConfigE
 		return domain.RecallFeedbackConfigSettings{}, err
 	}
 	enabled, enabledEffective := recallFeedbackConfigBool(normalized[domain.AppConfigRecallFeedbackEnabled], false)
-	runtime := domain.RecallFeedbackRuntimeConfig{Enabled: enabled}
+	retentionDays, retentionEffective := recallFeedbackConfigInt(normalized[domain.AppConfigRecallFeedbackRetentionDays], DefaultRecallFeedbackRetentionDays)
+	runtime := domain.RecallFeedbackRuntimeConfig{Enabled: enabled, RetentionDays: retentionDays}
 	updateTime := entries[domain.AppConfigUpdateTimeKey].Value
 	items := []domain.RecallFeedbackConfigItem{
 		recallFeedbackConfigItem(entries, domain.AppConfigRecallFeedbackEnabled, enabledEffective),
+		recallFeedbackConfigItem(entries, domain.AppConfigRecallFeedbackRetentionDays, retentionEffective),
 	}
 	return domain.RecallFeedbackConfigSettings{UpdateTime: updateTime, Items: items, Effective: runtime}, nil
 }
@@ -91,6 +93,15 @@ func normalizeRecallFeedbackConfigValues(values map[string]string) (map[string]s
 				}
 				trimmed = strconv.FormatBool(parsed)
 			}
+		case domain.AppConfigRecallFeedbackRetentionDays:
+			if trimmed == "" {
+				trimmed = strconv.Itoa(DefaultRecallFeedbackRetentionDays)
+			}
+			parsed, err := strconv.Atoi(trimmed)
+			if err != nil || parsed < 1 || parsed > 365 {
+				return nil, fmt.Errorf("%w: RECALL_FEEDBACK_RETENTION_DAYS must be between 1 and 365", ErrInvalidAppConfig)
+			}
+			trimmed = strconv.Itoa(parsed)
 		}
 		normalized[key] = trimmed
 	}
@@ -100,6 +111,7 @@ func normalizeRecallFeedbackConfigValues(values map[string]string) (map[string]s
 func editableRecallFeedbackConfigKeys() []string {
 	return []string{
 		domain.AppConfigRecallFeedbackEnabled,
+		domain.AppConfigRecallFeedbackRetentionDays,
 	}
 }
 
@@ -109,6 +121,14 @@ func recallFeedbackConfigBool(value string, fallback bool) (bool, string) {
 	}
 	parsed, _ := strconv.ParseBool(value)
 	return parsed, strconv.FormatBool(parsed)
+}
+
+func recallFeedbackConfigInt(value string, fallback int) (int, string) {
+	if strings.TrimSpace(value) == "" {
+		return fallback, strconv.Itoa(fallback)
+	}
+	parsed, _ := strconv.Atoi(value)
+	return parsed, strconv.Itoa(parsed)
 }
 
 func recallFeedbackConfigItem(entries map[string]domain.AppConfigEntry, key, effective string) domain.RecallFeedbackConfigItem {

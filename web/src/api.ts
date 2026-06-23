@@ -308,6 +308,7 @@ export type OperationLogConfigInput = {
 
 export type RecallFeedbackRuntimeConfig = {
   enabled: boolean;
+  retention_days: number;
 };
 
 export type RecallFeedbackConfigItem = SSOConfigItem;
@@ -345,6 +346,69 @@ export type OperationLogQuery = {
   severity?: OperationLog["severity"] | "";
   sort?: "timestamp" | "severity";
   direction?: "asc" | "desc";
+};
+
+export type RecallFeedbackResultRef = {
+  type: "fragment" | "claim" | "fact" | string;
+  id: string;
+  rank: number;
+  tier?: string;
+  score?: number;
+  final_score?: number;
+  semantic_rank?: number;
+  keyword_rank?: number;
+  status_at_recall?: string;
+  recorded_at?: string;
+  created_at?: string;
+  updated_at?: string;
+  valid_from?: string;
+  valid_to?: string;
+  retracted_at?: string;
+};
+
+export type RecallFeedbackResolvedResult = {
+  type: string;
+  id: string;
+  rank: number;
+  resolution_status: "found" | "missing" | string;
+  current_status?: string;
+  current?: Record<string, unknown>;
+  ref: RecallFeedbackResultRef;
+};
+
+export type RecallFeedbackEvent = {
+  recall_id: string;
+  created_at: string;
+  updated_at: string;
+  feedback_at?: string | null;
+  team_id?: string | null;
+  profile_id?: string | null;
+  key_id?: string | null;
+  auth_method: string;
+  tool_name: string;
+  query: string;
+  tool_args: Record<string, unknown> | null;
+  result_refs: RecallFeedbackResultRef[] | null;
+  result_count: number;
+  snapshot_state: "captured" | "feedback_only" | string;
+  used?: boolean | null;
+  answer_supported?: boolean | null;
+  quality?: "high" | "medium" | "low" | string;
+  missing_context?: boolean | null;
+  irrelevant?: boolean | null;
+  resolved_results?: RecallFeedbackResolvedResult[] | null;
+};
+
+export type RecallFeedbackEventQuery = {
+  limit?: number;
+  offset?: number;
+  team_id?: string;
+  profile_id?: string;
+  quality?: RecallFeedbackEvent["quality"] | "";
+  missing_context?: boolean | "";
+  irrelevant?: boolean | "";
+  from?: string;
+  to?: string;
 };
 
 export type Dream = {
@@ -612,6 +676,43 @@ export class ControlApi {
     }
     const suffix = params.toString() ? `?${params.toString()}` : "";
     return this.request<Page<OperationLog>>(`/logs${suffix}`);
+  }
+
+  listRecallFeedbackEvents(query: RecallFeedbackEventQuery = {}): Promise<Page<RecallFeedbackEvent>> {
+    const params = new URLSearchParams();
+    if (query.limit !== undefined) {
+      params.set("limit", String(query.limit));
+    }
+    if (query.offset !== undefined) {
+      params.set("offset", String(query.offset));
+    }
+    if (query.team_id) {
+      params.set("team_id", query.team_id);
+    }
+    if (query.profile_id) {
+      params.set("profile_id", query.profile_id);
+    }
+    if (query.quality) {
+      params.set("quality", query.quality);
+    }
+    if (query.missing_context !== undefined && query.missing_context !== "") {
+      params.set("missing_context", String(query.missing_context));
+    }
+    if (query.irrelevant !== undefined && query.irrelevant !== "") {
+      params.set("irrelevant", String(query.irrelevant));
+    }
+    if (query.from) {
+      params.set("from", query.from);
+    }
+    if (query.to) {
+      params.set("to", query.to);
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    return this.request<Page<RecallFeedbackEvent>>(`/recall-feedback-events${suffix}`);
+  }
+
+  getRecallFeedbackEvent(recallId: string): Promise<RecallFeedbackEvent> {
+    return this.requestEnvelope<RecallFeedbackEvent>(`/recall-feedback-events/${encodeURIComponent(recallId)}`);
   }
 
   getTeamDreamingStatus(teamId: string): Promise<DreamStatus> {

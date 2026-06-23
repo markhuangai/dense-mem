@@ -192,6 +192,22 @@ func (s *controlAppConfigSvc) UpdateRecallFeedbackSettings(_ context.Context, va
 			}
 		}
 	}
+	if raw, ok := values[domain.AppConfigRecallFeedbackRetentionDays]; ok {
+		retentionDays, err := strconv.Atoi(raw)
+		if err != nil || retentionDays < 1 || retentionDays > 365 {
+			return nil, service.ErrInvalidAppConfig
+		}
+		s.recallRuntime.RetentionDays = retentionDays
+		if s.recallSettings != nil {
+			s.recallSettings.Effective.RetentionDays = retentionDays
+			for i := range s.recallSettings.Items {
+				if s.recallSettings.Items[i].Key == domain.AppConfigRecallFeedbackRetentionDays {
+					s.recallSettings.Items[i].Value = raw
+					s.recallSettings.Items[i].EffectiveValue = strconv.Itoa(retentionDays)
+				}
+			}
+		}
+	}
 	return s.recallSettings, nil
 }
 
@@ -475,9 +491,15 @@ func TestControlPortalRecallFeedbackConfigFlows(t *testing.T) {
 				Value:          "false",
 				EffectiveValue: "false",
 				UpdatedAt:      now,
+			}, {
+				Key:            domain.AppConfigRecallFeedbackRetentionDays,
+				Value:          "30",
+				EffectiveValue: "30",
+				UpdatedAt:      now,
 			}},
-			Effective: domain.RecallFeedbackRuntimeConfig{Enabled: false},
+			Effective: domain.RecallFeedbackRuntimeConfig{Enabled: false, RetentionDays: 30},
 		},
+		recallRuntime: domain.RecallFeedbackRuntimeConfig{Enabled: false, RetentionDays: 30},
 	}
 	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
@@ -499,11 +521,14 @@ func TestControlPortalRecallFeedbackConfigFlows(t *testing.T) {
 	rec := do(http.MethodGet, "/control/api/config/recall-feedback", "")
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"enabled":false`)
+	require.Contains(t, rec.Body.String(), `"retention_days":30`)
 
-	rec = do(http.MethodPatch, "/control/api/config/recall-feedback", `{"items":[{"key":"RECALL_FEEDBACK_ENABLED","value":"true"}]}`)
+	rec = do(http.MethodPatch, "/control/api/config/recall-feedback", `{"items":[{"key":"RECALL_FEEDBACK_ENABLED","value":"true"},{"key":"RECALL_FEEDBACK_RETENTION_DAYS","value":"45"}]}`)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "true", appConfig.recallValues[domain.AppConfigRecallFeedbackEnabled])
+	require.Equal(t, "45", appConfig.recallValues[domain.AppConfigRecallFeedbackRetentionDays])
 	require.Contains(t, rec.Body.String(), `"enabled":true`)
+	require.Contains(t, rec.Body.String(), `"retention_days":45`)
 
 	rec = do(http.MethodPatch, "/control/api/config/recall-feedback", "{")
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)

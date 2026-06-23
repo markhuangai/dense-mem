@@ -5,6 +5,7 @@ import {
   KeyRound,
   ListFilter,
   LogOut,
+  MessageSquare,
   Moon,
   Pencil,
   Plus,
@@ -32,13 +33,14 @@ const SSOPanel = lazy(() => import("./control/SSOPanel").then((module) => ({ def
 const ConfigPanel = lazy(() => import("./control/ConfigPanel").then((module) => ({ default: module.ConfigPanel })));
 const ControlDreamsPanel = lazy(() => import("./control/DreamsPanel").then((module) => ({ default: module.ControlDreamsPanel })));
 const LogsPanel = lazy(() => import("./control/LogsPanel").then((module) => ({ default: module.LogsPanel })));
+const RecallFeedbackPanel = lazy(() => import("./control/RecallFeedbackPanel").then((module) => ({ default: module.RecallFeedbackPanel })));
 
 const TOKEN_STORAGE_KEY = "denseMem.controlToken";
 const THEME_STORAGE_KEY = "denseMem.controlTheme";
 
 type LoadState = "idle" | "loading" | "error";
 type Theme = "light" | "dark";
-type PortalTab = "teams" | "dreams" | "metrics" | "logs" | "profiles" | "security" | "sso" | "config";
+type PortalTab = "teams" | "dreams" | "metrics" | "recall-feedback" | "logs" | "profiles" | "security" | "sso" | "config";
 type ProfilePermission = "read" | "read_write";
 
 export function App() {
@@ -203,6 +205,13 @@ function Portal({
           onClick: () => setActiveTab("metrics"),
         },
         {
+          id: "recall-feedback",
+          label: "Recall Feedback",
+          icon: <MessageSquare size={17} aria-hidden="true" />,
+          active: activeTab === "recall-feedback",
+          onClick: () => setActiveTab("recall-feedback"),
+        },
+        {
           id: "dreams",
           label: "Dreams",
           icon: <Moon size={17} aria-hidden="true" />,
@@ -288,6 +297,7 @@ function Portal({
           selectedTeam ? <ControlDreamsPanel api={api} team={selectedTeam} /> : <div className="empty-state">Select a team</div>
         )}
         {activeTab === "metrics" && <MetricsPanel api={api} teams={teams} />}
+        {activeTab === "recall-feedback" && <RecallFeedbackPanel api={api} teams={teams} />}
         {activeTab === "logs" && <LogsPanel api={api} teams={teams} />}
         {activeTab === "security" && <SecurityPanel api={api} />}
         {activeTab === "sso" && <SSOPanel api={api} teams={teams} />}
