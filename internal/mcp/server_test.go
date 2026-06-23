@@ -220,7 +220,16 @@ func TestMCP_PromptsListAndGet(t *testing.T) {
 		t.Fatalf("messages = %+v", getPayload.Messages)
 	}
 	text := getPayload.Messages[0].Content.Text
-	for _, want := range []string{"review workflows", "review-workflows", "SKILL.md", "Exclude secrets"} {
+	for _, want := range []string{
+		"review workflows",
+		"review-workflows",
+		"SKILL.md",
+		"Exclude secrets",
+		"self-contained",
+		"recipients who do not have access",
+		"Do not tell the generated skill to query Dense-Mem",
+		"portability and privacy checks",
+	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("rendered prompt missing %q: %s", want, text)
 		}

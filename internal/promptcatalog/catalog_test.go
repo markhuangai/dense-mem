@@ -42,7 +42,16 @@ func TestDefaultCatalogRenderValidatesAndRenders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	for _, want := range []string{"incident response", "incident-response", "internal runbooks only", "SKILL.md"} {
+	for _, want := range []string{
+		"incident response",
+		"incident-response",
+		"internal runbooks only",
+		"SKILL.md",
+		"self-contained",
+		"recipients who do not have access",
+		"Do not tell the generated skill to query Dense-Mem",
+		"portability and privacy checks",
+	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("rendered text missing %q: %s", want, text)
 		}
