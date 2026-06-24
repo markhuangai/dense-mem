@@ -17,6 +17,10 @@
     grid-template-columns: minmax(190px, 230px) minmax(0, 1fr);
   }
 
+  .knowledge-explorer.inspector-closed {
+    grid-template-columns: minmax(190px, 230px) minmax(0, 1fr);
+  }
+
   .knowledge-inspector {
     position: static;
     grid-column: 1 / -1;

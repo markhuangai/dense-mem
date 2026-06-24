@@ -182,6 +182,38 @@ describe("UserPortalApp", () => {
     await userEvent.click(screen.getByRole("checkbox", { name: /fact/i }));
     expect(screen.getByLabelText("Inspector")).toHaveTextContent("Fragment");
     expect(screen.getByLabelText("Inspector")).toHaveTextContent("Alice is working on project-x with Dense-Mem.");
+
+    await userEvent.click(screen.getByRole("tab", { name: "Recall" }));
+    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Final score");
+    await userEvent.click(screen.getByRole("button", { name: "Sort by date" }));
+    expect(screen.getByRole("button", { name: "Sort by relevance" })).toHaveTextContent("Sort: Date");
+    await userEvent.click(screen.getByRole("button", { name: "Use compact density" }));
+    expect(screen.getByRole("button", { name: "Use comfortable density" })).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(screen.getByRole("button", { name: "Close details panel" }));
+    expect(screen.queryByLabelText("Inspector")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Open details" }));
+    expect(screen.getByLabelText("Inspector")).toBeInTheDocument();
+  });
+
+  it("resets stale source filters after a new recall search", async () => {
+    mockUserFetch(baseSession, [], { recallHits: [recallHits, [recallHits[0]]], communities: recallCommunities });
+    sessionStorage.setItem("denseMem.userApiKey", "dm_read");
+
+    render(<UserPortalApp />);
+    await screen.findByText("Research Team");
+    await userEvent.type(screen.getByLabelText("Keyword"), "project");
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+
+    await userEvent.selectOptions(await screen.findByLabelText("Source"), "notes");
+    expect(screen.getByRole("listbox", { name: "Recall result list" })).toHaveTextContent("Alice is working on project-x with Dense-Mem.");
+    expect(screen.getByRole("listbox", { name: "Recall result list" })).not.toHaveTextContent("works_on: project-x");
+
+    await userEvent.clear(screen.getByLabelText("Keyword"));
+    await userEvent.type(screen.getByLabelText("Keyword"), "alice");
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+
+    expect(await screen.findByLabelText("Source")).toHaveValue("all");
+    expect(screen.getByRole("listbox", { name: "Recall result list" })).toHaveTextContent("works_on: project-x");
   });
 
   it("labels write-member telemetry as key usage", async () => {
@@ -527,9 +559,10 @@ async function expectCurrentWorkspace(teamName: string) {
   expect(workspace).toHaveTextContent(teamName);
 }
 
-function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: { recallHits?: RecallHit[]; communities?: Community[] } = {}) {
+function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: { recallHits?: RecallHit[] | RecallHit[][]; communities?: Community[] } = {}) {
   let currentTeam = session.team;
   let currentProfiles = profiles;
+  let recallCallCount = 0;
   const rotatedSession = {
     ...session,
     key: { ...session.key, key_suffix: "new123", last_used_at: null },
@@ -601,12 +634,21 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: 
       return jsonResponse({ items: options.communities ?? [] });
     }
     if (url.startsWith("/api/v1/recall")) {
-      return jsonResponse({ data: options.recallHits ?? [] });
+      const configuredHits = options.recallHits ?? [];
+      const hits = isRecallSequence(configuredHits)
+        ? configuredHits[Math.min(recallCallCount, configuredHits.length - 1)] ?? []
+        : configuredHits;
+      recallCallCount += 1;
+      return jsonResponse({ data: hits });
     }
     return jsonResponse({ message: "not found" }, 404);
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
+}
+
+function isRecallSequence(value: RecallHit[] | RecallHit[][]): value is RecallHit[][] {
+  return Array.isArray(value[0]);
 }
 
 function telemetryForSession(session: UserSession) {

@@ -84,14 +84,21 @@ export function TeamOverviewPanel({
 }) {
   const [profiles, setProfiles] = useState<TeamProfile[]>([]);
   const [metrics, setMetrics] = useState<Awaited<ReturnType<ControlApi["getMetrics"]>> | null>(null);
+  const [metricsUnavailable, setMetricsUnavailable] = useState(false);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
+    setMetricsUnavailable(false);
     Promise.all([
       api.listTeamProfiles(team.id).then((page) => page.data).catch(() => [] as TeamProfile[]),
-      api.getMetrics({ team_id: team.id, window_minutes: 60 }).catch(() => null),
+      api.getMetrics({ team_id: team.id, window_minutes: 60 }).catch(() => {
+        if (active) {
+          setMetricsUnavailable(true);
+        }
+        return null;
+      }),
     ])
       .then(([nextProfiles, nextMetrics]) => {
         if (!active) {
@@ -99,6 +106,7 @@ export function TeamOverviewPanel({
         }
         setProfiles(nextProfiles);
         setMetrics(nextMetrics);
+        setMetricsUnavailable(nextMetrics === null);
       })
       .finally(() => {
         if (active) {
@@ -110,43 +118,51 @@ export function TeamOverviewPanel({
     };
   }, [api, team.id]);
 
-  const teamMetrics = metrics?.teams.find((item) => item.team_id === team.id);
-  const requests = teamMetrics?.requests ?? metrics?.system.requests ?? 0;
-  const errors = teamMetrics?.errors ?? metrics?.system.errors ?? 0;
+  const metricsReady = metrics !== null && !metricsUnavailable;
+  const metricsFailed = metricsUnavailable && !loading;
+  const teamMetrics = metricsReady ? metrics.teams.find((item) => item.team_id === team.id) : undefined;
+  const requests = metricsReady ? teamMetrics?.requests ?? metrics.system.requests : 0;
+  const errors = metricsReady ? teamMetrics?.errors ?? metrics.system.errors : 0;
   const health = requests === 0 ? 100 : Math.max(0, 100 - (errors / requests) * 100);
-  const dependencies = metrics?.dependencies ?? [];
+  const dependencies = metricsReady ? metrics.dependencies : [];
   const degradedDependencies = dependencies.filter((dependency) => dependency.status !== "ok");
   const managerCount = profiles.filter((profile) => profile.role === "manager").length;
   const readWriteCount = profiles.filter((profile) => profile.scopes?.includes("write")).length;
   const recentProfiles = [...profiles].sort((left, right) => right.created_at.localeCompare(left.created_at)).slice(0, 5);
+  const requestValue = metricsReady ? compactNumber(requests) : loading ? "..." : "n/a";
+  const errorValue = metricsReady ? compactNumber(errors) : loading ? "..." : "n/a";
+  const healthValue = metricsReady ? `${health.toFixed(1)}%` : loading ? "..." : "n/a";
+  const healthDetail = loading ? "Loading" : metricsFailed ? "Metrics unavailable" : "Operational";
+  const latencyValue = metricsReady ? `${Math.round(teamMetrics?.avg_latency_ms ?? metrics.system.avg_latency_ms)} ms` : "n/a";
+  const maxLatencyValue = metricsReady ? `${Math.round(teamMetrics?.max_latency_ms ?? metrics.system.max_latency_ms)} ms` : "n/a";
 
   return (
     <div className="team-overview" aria-label="Team overview">
       <div className="summary-strip" aria-label="Summary">
         <SummaryCard label="Profiles" value={profiles.length} detail={`${managerCount} managers`} />
-        <SummaryCard label="Requests" value={compactNumber(requests)} detail="Last hour" />
-        <SummaryCard label="Recall health" value={`${health.toFixed(1)}%`} detail={loading ? "Loading" : "Operational"} />
+        <SummaryCard label="Requests" value={requestValue} detail="Last hour" tone={metricsFailed ? "warning" : "neutral"} />
+        <SummaryCard label="Recall health" value={healthValue} detail={healthDetail} tone={metricsFailed ? "warning" : "neutral"} />
         <div className="health-stack" aria-label="Health summary">
-          <HealthLine label="Healthy" value={Math.max(0, dependencies.length - degradedDependencies.length)} tone="healthy" />
-          <HealthLine label="Degraded" value={degradedDependencies.length} tone={degradedDependencies.length > 0 ? "warning" : "healthy"} />
-          <HealthLine label="Errors" value={errors} tone={errors > 0 ? "danger" : "healthy"} />
+          <HealthLine label="Healthy" value={metricsReady ? Math.max(0, dependencies.length - degradedDependencies.length) : "n/a"} tone={metricsFailed ? "warning" : "healthy"} />
+          <HealthLine label="Degraded" value={metricsReady ? degradedDependencies.length : "n/a"} tone={metricsFailed || degradedDependencies.length > 0 ? "warning" : "healthy"} />
+          <HealthLine label="Errors" value={metricsReady ? errors : "n/a"} tone={errors > 0 ? "danger" : metricsFailed ? "warning" : "healthy"} />
         </div>
       </div>
 
       <div className="overview-grid">
         <section className="overview-panel" aria-label="Team activity">
-          <SectionHeading title="Team Activity (1h)" meta={loading ? "loading" : undefined} />
-          <MetricRow icon={<Activity size={15} aria-hidden="true" />} label="HTTP requests" value={compactNumber(requests)} trend={requests > 0 ? "+ active" : "idle"} />
-          <MetricRow icon={<Activity size={15} aria-hidden="true" />} label="Errors" value={compactNumber(errors)} trend={errors > 0 ? "review" : "clear"} tone={errors > 0 ? "danger" : "neutral"} />
+          <SectionHeading title="Team Activity (1h)" meta={loading ? "loading" : metricsFailed ? "metrics unavailable" : undefined} />
+          <MetricRow icon={<Activity size={15} aria-hidden="true" />} label="HTTP requests" value={requestValue} trend={metricsReady ? requests > 0 ? "+ active" : "idle" : "unavailable"} tone={metricsFailed ? "warning" : "neutral"} />
+          <MetricRow icon={<Activity size={15} aria-hidden="true" />} label="Errors" value={errorValue} trend={metricsReady ? errors > 0 ? "review" : "clear" : "unavailable"} tone={errors > 0 ? "danger" : metricsFailed ? "warning" : "neutral"} />
           <MetricRow icon={<Users size={15} aria-hidden="true" />} label="Writable profiles" value={readWriteCount} trend={`${profiles.length} total`} />
           <MetricRow icon={<Moon size={15} aria-hidden="true" />} label="Dreaming" value={team.dreaming_effective?.enabled ? "Enabled" : "Inherited"} trend={team.dreaming_effective?.source ?? "global"} />
         </section>
 
         <section className="overview-panel" aria-label="Top signals">
           <SectionHeading title="Top Signals" />
-          <MetricRow icon={<CheckCircle2 size={15} aria-hidden="true" />} label="Average latency" value={`${Math.round(teamMetrics?.avg_latency_ms ?? metrics?.system.avg_latency_ms ?? 0)} ms`} trend="p95 proxy" />
-          <MetricRow icon={<CheckCircle2 size={15} aria-hidden="true" />} label="Max latency" value={`${Math.round(teamMetrics?.max_latency_ms ?? metrics?.system.max_latency_ms ?? 0)} ms`} trend="last hour" />
-          <MetricRow icon={<CheckCircle2 size={15} aria-hidden="true" />} label="Dependency checks" value={dependencies.length || "n/a"} trend={degradedDependencies.length ? "attention" : "healthy"} tone={degradedDependencies.length ? "warning" : "neutral"} />
+          <MetricRow icon={<CheckCircle2 size={15} aria-hidden="true" />} label="Average latency" value={latencyValue} trend={metricsReady ? "p95 proxy" : "unavailable"} tone={metricsFailed ? "warning" : "neutral"} />
+          <MetricRow icon={<CheckCircle2 size={15} aria-hidden="true" />} label="Max latency" value={maxLatencyValue} trend={metricsReady ? "last hour" : "unavailable"} tone={metricsFailed ? "warning" : "neutral"} />
+          <MetricRow icon={<CheckCircle2 size={15} aria-hidden="true" />} label="Dependency checks" value={metricsReady ? dependencies.length || "n/a" : "n/a"} trend={metricsReady ? degradedDependencies.length ? "attention" : "healthy" : "unavailable"} tone={metricsFailed || degradedDependencies.length ? "warning" : "neutral"} />
           <MetricRow icon={<CheckCircle2 size={15} aria-hidden="true" />} label="Profile freshness" value={recentProfiles[0] ? formatDate(recentProfiles[0].created_at) : "No profiles"} trend="latest" />
         </section>
       </div>
@@ -155,14 +171,15 @@ export function TeamOverviewPanel({
         <SectionHeading title="Recent Alerts" actions={<button className="text-button" type="button" onClick={onOpenSettings}>Open settings</button>} />
         <div className="mini-table">
           <MiniTableRow columns={["Time", "Severity", "Alert", "Scope", "Status"]} heading />
-          {errors > 0 && <MiniTableRow columns={["Now", "High", "Request errors detected", "Team", "Open"]} />}
+          {metricsFailed && <MiniTableRow columns={["Now", "Medium", "Metrics unavailable", "Team", "Open"]} />}
+          {!metricsFailed && errors > 0 && <MiniTableRow columns={["Now", "High", "Request errors detected", "Team", "Open"]} />}
           {degradedDependencies.map((dependency) => (
             <MiniTableRow
               key={dependency.name}
               columns={["Now", "Medium", `${dependency.name} ${dependency.status}`, "Dependency", "Open"]}
             />
           ))}
-          {errors === 0 && degradedDependencies.length === 0 && (
+          {!metricsFailed && errors === 0 && degradedDependencies.length === 0 && (
             <MiniTableRow columns={[formatDate(team.updated_at), "Low", "No active alerts", "Team", "Clear"]} />
           )}
         </div>
@@ -197,7 +214,7 @@ function HealthLine({
   tone,
 }: {
   label: string;
-  value: number;
+  value: ReactNode;
   tone: "healthy" | "warning" | "danger";
 }) {
   return (

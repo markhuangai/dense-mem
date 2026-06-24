@@ -17,6 +17,9 @@ import { Claim, Community, Fact, Fragment, RecallHit, UserApi } from "./api";
 
 type RecallResultKind = "fact" | "claim" | "fragment";
 type RecallResultStatus = "verified" | "provisional" | "disputed" | "deprecated";
+type RecallSortMode = "relevance" | "date";
+type ResultDensity = "comfortable" | "compact";
+type InspectorTab = "evidence" | "lineage" | "recall";
 
 type IndexedRecallResult = {
   hit: RecallHit;
@@ -44,6 +47,10 @@ export function SearchPanel({ api }: { api: UserApi }) {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [sourceFilter, setSourceFilter] = useState("all");
+  const [sortMode, setSortMode] = useState<RecallSortMode>("relevance");
+  const [density, setDensity] = useState<ResultDensity>("comfortable");
+  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("evidence");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -63,6 +70,9 @@ export function SearchPanel({ api }: { api: UserApi }) {
       ]);
       setHits(nextHits);
       setCommunities(nextCommunities.items);
+      setSourceFilter("all");
+      setInspectorOpen(true);
+      setInspectorTab("evidence");
       setSelectedKey(nextHits[0] ? recallKey(nextHits[0], 0) : "");
     } catch (err) {
       setError(readError(err));
@@ -87,9 +97,10 @@ export function SearchPanel({ api }: { api: UserApi }) {
         && dateMatches(item, dateMode, startDate, endDate);
     })
   ), [indexedHits, enabledTypes, enabledStatuses, sourceFilter, dateMode, startDate, endDate]);
+  const sortedHits = useMemo(() => sortRecallResults(filteredHits, sortMode), [filteredHits, sortMode]);
   const selectedResult = useMemo(() => (
-    filteredHits.find((item) => item.key === selectedKey) ?? filteredHits[0] ?? null
-  ), [filteredHits, selectedKey]);
+    sortedHits.find((item) => item.key === selectedKey) ?? sortedHits[0] ?? null
+  ), [sortedHits, selectedKey]);
   const typeCounts = useMemo(() => indexedHits.reduce<Record<RecallResultKind, number>>((counts, item) => ({
     ...counts,
     [item.kind]: counts[item.kind] + 1,
@@ -133,7 +144,7 @@ export function SearchPanel({ api }: { api: UserApi }) {
   }
 
   return (
-    <section className="knowledge-explorer" aria-label="Knowledge explorer">
+    <section className={inspectorOpen ? "knowledge-explorer" : "knowledge-explorer inspector-closed"} aria-label="Knowledge explorer">
       <aside className="knowledge-filter-panel" aria-label="Knowledge filters">
         <SectionHeading
           title="Filters"
@@ -225,28 +236,52 @@ export function SearchPanel({ api }: { api: UserApi }) {
             <span>{query.trim() ? `for "${query.trim()}"` : "Search across facts, claims, and memory"}</span>
           </div>
           <div className="toolbar-actions">
-            <button className="select-like compact" type="button">Sort: Relevance <ChevronDown size={14} aria-hidden="true" /></button>
-            <button className="icon-button" type="button" aria-label="List density"><FileText size={16} aria-hidden="true" /></button>
+            <button
+              className="select-like compact"
+              type="button"
+              aria-label={`Sort by ${sortMode === "relevance" ? "date" : "relevance"}`}
+              onClick={() => setSortMode((current) => (current === "relevance" ? "date" : "relevance"))}
+            >
+              Sort: {sortMode === "relevance" ? "Relevance" : "Date"} <ChevronDown size={14} aria-hidden="true" />
+            </button>
+            <button
+              className={density === "compact" ? "icon-button active" : "icon-button"}
+              type="button"
+              aria-label={density === "compact" ? "Use comfortable density" : "Use compact density"}
+              aria-pressed={density === "compact"}
+              onClick={() => setDensity((current) => (current === "comfortable" ? "compact" : "comfortable"))}
+            >
+              <FileText size={16} aria-hidden="true" />
+            </button>
+            {!inspectorOpen && (
+              <button className="ghost-button compact" type="button" onClick={() => setInspectorOpen(true)}>
+                <FileText size={15} aria-hidden="true" />
+                Open details
+              </button>
+            )}
           </div>
         </div>
         {error && <div className="banner error" role="alert">{error}</div>}
         {loading && <div className="table-placeholder">Loading</div>}
         {!loading && (
           <RecallResults
-            items={filteredHits}
+            items={sortedHits}
             selectedKey={selectedResult?.key ?? ""}
             onSelect={setSelectedKey}
+            density={density}
           />
         )}
       </section>
 
-      <aside className="knowledge-inspector" aria-label="Inspector">
-        <div className="inspector-head">
-          <h2>Inspector</h2>
-          <button className="icon-button" type="button" aria-label="Close details panel"><X size={16} aria-hidden="true" /></button>
-        </div>
-        <KnowledgeInspector result={selectedResult} />
-      </aside>
+      {inspectorOpen && (
+        <aside className="knowledge-inspector" aria-label="Inspector">
+          <div className="inspector-head">
+            <h2>Inspector</h2>
+            <button className="icon-button" type="button" aria-label="Close details panel" onClick={() => setInspectorOpen(false)}><X size={16} aria-hidden="true" /></button>
+          </div>
+          <KnowledgeInspector result={selectedResult} activeTab={inspectorTab} onSelectTab={setInspectorTab} />
+        </aside>
+      )}
     </section>
   );
 }
@@ -255,16 +290,18 @@ function RecallResults({
   items,
   selectedKey,
   onSelect,
+  density,
 }: {
   items: IndexedRecallResult[];
   selectedKey: string;
   onSelect: (key: string) => void;
+  density: ResultDensity;
 }) {
   if (items.length === 0) {
     return <div className="table-placeholder">No recall results</div>;
   }
   return (
-    <div className="knowledge-list compact-list" role="listbox" aria-label="Recall result list">
+    <div className={density === "compact" ? "knowledge-list compact-list dense" : "knowledge-list compact-list"} role="listbox" aria-label="Recall result list">
       {items.map((result) => {
         const item = resultItem(result.hit);
         const status = recallResultStatus(item);
@@ -315,49 +352,111 @@ function RecallResults({
   );
 }
 
-function KnowledgeInspector({ result }: { result: IndexedRecallResult | null }) {
+function KnowledgeInspector({
+  result,
+  activeTab,
+  onSelectTab,
+}: {
+  result: IndexedRecallResult | null;
+  activeTab: InspectorTab;
+  onSelectTab: (tab: InspectorTab) => void;
+}) {
   if (!result) {
     return <div className="table-placeholder compact">Select a result</div>;
   }
 
   const item = resultItem(result.hit);
   const status = recallResultStatus(item);
+  const tabs: Array<{ id: InspectorTab; label: string }> = [
+    { id: "evidence", label: "Evidence" },
+    { id: "lineage", label: "Lineage" },
+    { id: "recall", label: "Recall" },
+  ];
   return (
     <article className="inspector-card">
       <div className="inspector-tabs" role="tablist" aria-label="Result sections">
-        <button className="inspector-tab active" type="button" role="tab" aria-selected="true">Evidence</button>
-        <button className="inspector-tab" type="button" role="tab">Lineage</button>
-        <button className="inspector-tab" type="button" role="tab">Recall</button>
+        {tabs.map((tab) => (
+          <button
+            className={tab.id === activeTab ? "inspector-tab active" : "inspector-tab"}
+            type="button"
+            role="tab"
+            aria-selected={tab.id === activeTab}
+            key={tab.id}
+            onClick={() => onSelectTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
       <div className="inspector-status-row">
         <span className="status-pill neutral">{recallResultKindLabel(result.kind)}</span>
         <span className={statusPillClass(status)}>{recallResultStatusLabel(status)}</span>
       </div>
       <h3>{itemTitle(item)}</h3>
-      <div className="inspector-section">
-        <h4>Evidence</h4>
-        <p>{itemBody(item)}</p>
-        <dl className="evidence-list">
-          <div>
-            <dt>Source</dt>
-            <dd>
-              {sourceLabel(item)}
-              <ExternalLink size={13} aria-hidden="true" />
-            </dd>
-          </div>
-          <div>
-            <dt>Collected</dt>
-            <dd>{itemDate(item)}</dd>
-          </div>
-          <div>
-            <dt>Confidence</dt>
-            <dd>
-              <span>{scoreLabel(result.hit.score ?? result.hit.final_score) || "n/a"}</span>
-              <span className="confidence-bar" style={{ "--confidence": confidencePercent(result.hit) } as CSSProperties} />
-            </dd>
-          </div>
-        </dl>
-      </div>
+      {activeTab === "evidence" && (
+        <div className="inspector-section" role="tabpanel">
+          <h4>Evidence</h4>
+          <p>{itemBody(item)}</p>
+          <dl className="evidence-list">
+            <div>
+              <dt>Source</dt>
+              <dd>
+                {sourceLabel(item)}
+                <ExternalLink size={13} aria-hidden="true" />
+              </dd>
+            </div>
+            <div>
+              <dt>Collected</dt>
+              <dd>{itemDate(item)}</dd>
+            </div>
+            <div>
+              <dt>Confidence</dt>
+              <dd>
+                <span>{scoreLabel(result.hit.score ?? result.hit.final_score) || "n/a"}</span>
+                <span className="confidence-bar" style={{ "--confidence": confidencePercent(result.hit) } as CSSProperties} />
+              </dd>
+            </div>
+          </dl>
+        </div>
+      )}
+      {activeTab === "lineage" && (
+        <div className="inspector-section" role="tabpanel">
+          <h4>Lineage</h4>
+          <dl className="evidence-list">
+            <div>
+              <dt>Derived from</dt>
+              <dd>{sourceLabel(item)}</dd>
+            </div>
+            <div>
+              <dt>Recorded</dt>
+              <dd>{itemDate(item)}</dd>
+            </div>
+            <div>
+              <dt>Status</dt>
+              <dd>{recallResultStatusLabel(status)}</dd>
+            </div>
+          </dl>
+        </div>
+      )}
+      {activeTab === "recall" && (
+        <div className="inspector-section" role="tabpanel">
+          <h4>Recall</h4>
+          <dl className="evidence-list">
+            <div>
+              <dt>Final score</dt>
+              <dd>{scoreLabel(result.hit.final_score ?? result.hit.score) || "n/a"}</dd>
+            </div>
+            <div>
+              <dt>Semantic rank</dt>
+              <dd>{rankLabel(result.hit.semantic_rank)}</dd>
+            </div>
+            <div>
+              <dt>Keyword rank</dt>
+              <dd>{rankLabel(result.hit.keyword_rank)}</dd>
+            </div>
+          </dl>
+        </div>
+      )}
       <dl className="inspector-details">
         <div>
           <dt>Tier</dt>
@@ -524,6 +623,20 @@ function dateMatches(item: Fact | Claim | Fragment | undefined, dateMode: "all" 
   return true;
 }
 
+function sortRecallResults(items: IndexedRecallResult[], sortMode: RecallSortMode): IndexedRecallResult[] {
+  if (sortMode === "relevance") {
+    return items;
+  }
+  return [...items].sort((left, right) => {
+    return itemTimestamp(right) - itemTimestamp(left);
+  });
+}
+
+function itemTimestamp(result: IndexedRecallResult): number {
+  const value = new Date(itemRawDate(resultItem(result.hit))).getTime();
+  return Number.isNaN(value) ? 0 : value;
+}
+
 function itemRawDate(item: Fact | Claim | Fragment | undefined): string {
   if (!item) {
     return "";
@@ -581,6 +694,10 @@ function scoreLabel(value: number | undefined): string {
     return "";
   }
   return value.toFixed(value >= 1 ? 0 : 3);
+}
+
+function rankLabel(value: number | undefined): string {
+  return value === undefined ? "n/a" : String(value);
 }
 
 function readError(error: unknown): string {

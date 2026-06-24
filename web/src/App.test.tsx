@@ -516,6 +516,18 @@ describe("App", () => {
     });
   });
 
+  it("marks team overview metrics unavailable when metrics cannot load", async () => {
+    mockPortalFetch({ teams: [profileA], keys: [keyA()], metrics: "error" });
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+
+    render(<App />);
+    await screen.findByRole("button", { name: /Default/ });
+
+    expect(await screen.findByLabelText("Team overview")).toHaveTextContent("Metrics unavailable");
+    expect(screen.getByLabelText("Team activity")).toHaveTextContent("unavailable");
+    expect(screen.getByLabelText("Top signals")).toHaveTextContent("n/a");
+  });
+
   it("shows operation log details, raw log expansion, and page size selection", async () => {
     const fetchMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
     sessionStorage.setItem("denseMem.controlToken", "secret");
@@ -734,6 +746,7 @@ function mockPortalFetch({
   bans = [],
   logs = operationLogsSnapshot,
   dreams = [dreamSnapshot],
+  metrics = metricsSnapshot,
 }: {
   teams: Team[];
   keys: TeamProfile[];
@@ -741,6 +754,7 @@ function mockPortalFetch({
   bans?: SecurityBan[];
   logs?: OperationLog[];
   dreams?: Dream[];
+  metrics?: ControlMetrics | "error";
 }) {
   let currentProfiles = teams;
   let currentKeys = keys;
@@ -762,7 +776,10 @@ function mockPortalFetch({
       return jsonResponse({ data: telemetrySnapshot });
     }
     if (url.includes("/metrics") && method === "GET") {
-      return jsonResponse({ data: metricsSnapshot });
+      if (metrics === "error") {
+        return jsonResponse({ code: "METRICS_UNAVAILABLE", message: "metrics unavailable", details: null }, 503);
+      }
+      return jsonResponse({ data: metrics });
     }
     if (url.endsWith("/config/general") && method === "GET") {
       return jsonResponse({ data: currentGeneralConfig });

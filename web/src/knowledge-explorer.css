@@ -8,6 +8,10 @@
   overflow: hidden;
 }
 
+.knowledge-explorer.inspector-closed {
+  grid-template-columns: minmax(210px, 250px) minmax(480px, 1fr);
+}
+
 .knowledge-filter-panel,
 .knowledge-results-panel,
 .knowledge-inspector {
@@ -72,16 +76,34 @@
   padding: 12px 14px;
 }
 
+.knowledge-list.dense {
+  gap: 7px;
+}
+
 .knowledge-item {
   padding: 13px 14px;
   background: var(--panel);
   border-radius: 6px;
 }
 
+.knowledge-list.dense .knowledge-item {
+  padding: 10px 12px;
+}
+
+.knowledge-list.dense .knowledge-item p {
+  display: none;
+}
+
 .knowledge-item.selected {
   background: color-mix(in srgb, var(--panel) 84%, var(--accent-soft));
   border-color: color-mix(in srgb, var(--accent) 64%, var(--border));
   box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.icon-button.active {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
 }
 
 .status-pill.success {
