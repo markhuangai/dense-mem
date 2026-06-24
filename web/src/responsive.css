@@ -124,32 +124,57 @@
     padding: 9px 8px;
   }
 
-  .key-table {
+  .key-table,
+  .dreams-table,
+  .dream-runs-table,
+  .logs-table {
     min-width: 0;
   }
 
-  .key-table thead {
+  .key-table thead,
+  .dreams-table thead,
+  .dream-runs-table thead,
+  .logs-table thead {
     display: none;
   }
 
   .key-table,
   .key-table tbody,
   .key-table tr,
-  .key-table td {
+  .key-table td,
+  .dreams-table,
+  .dreams-table tbody,
+  .dreams-table tr,
+  .dreams-table td,
+  .dream-runs-table,
+  .dream-runs-table tbody,
+  .dream-runs-table tr,
+  .dream-runs-table td,
+  .logs-table,
+  .logs-table tbody,
+  .logs-table tr,
+  .logs-table td {
     display: block;
     width: 100%;
   }
 
-  .key-table tr {
+  .key-table tr,
+  .dreams-table tr,
+  .dream-runs-table tr,
+  .logs-table tr {
     padding: 8px 0;
     border-bottom: 1px solid var(--border);
   }
 
-  .key-table td {
+  .key-table td,
+  .dreams-table td,
+  .dream-runs-table td,
+  .logs-table td {
     border-bottom: 0;
   }
 
-  .key-table .actions-cell {
+  .key-table .actions-cell,
+  .logs-table .actions-cell {
     width: 100%;
     text-align: left;
   }

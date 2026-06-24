@@ -228,6 +228,13 @@ func controlRecallFeedbackEventsFilter(c echo.Context) (domain.RecallFeedbackEve
 	default:
 		return domain.RecallFeedbackEventFilter{}, httperr.New(httperr.VALIDATION_ERROR, "quality must be one of high, medium, low")
 	}
+	includePending, err := optionalControlBool(c.QueryParam("include_pending"), "include_pending")
+	if err != nil {
+		return domain.RecallFeedbackEventFilter{}, err
+	}
+	if includePending != nil {
+		filter.IncludePending = *includePending
+	}
 	missingContext, err := optionalControlBool(c.QueryParam("missing_context"), "missing_context")
 	if err != nil {
 		return domain.RecallFeedbackEventFilter{}, err

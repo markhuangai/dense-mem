@@ -10,7 +10,7 @@ const QUALITIES = ["", "high", "medium", "low"];
 export function RecallFeedbackPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
   const [events, setEvents] = useState<RecallFeedbackEvent[]>([]);
   const [total, setTotal] = useState(0);
-  const [query, setQuery] = useState<RecallFeedbackEventQuery>({ limit: 100, offset: 0 });
+  const [query, setQuery] = useState<RecallFeedbackEventQuery>({ limit: 100, offset: 0, include_pending: false });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [expandedRecallId, setExpandedRecallId] = useState("");
@@ -128,6 +128,18 @@ export function RecallFeedbackPanel({ api, teams }: { api: ControlApi; teams: Te
             <option value="true">Yes</option>
             <option value="false">No</option>
           </select>
+        </label>
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={query.include_pending === true}
+            onChange={(event) => {
+              const next = { ...query, include_pending: event.currentTarget.checked, offset: 0 };
+              setQuery(next);
+              void loadEvents(next);
+            }}
+          />
+          Include pending
         </label>
         <label>
           Irrelevant

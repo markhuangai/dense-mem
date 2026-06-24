@@ -77,6 +77,7 @@ type RecallFeedbackEventFilter struct {
 	TeamID         *uuid.UUID
 	ProfileID      *uuid.UUID
 	Quality        string
+	IncludePending bool
 	MissingContext *bool
 	Irrelevant     *bool
 	From           *time.Time

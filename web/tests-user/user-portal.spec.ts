@@ -341,6 +341,20 @@ async function openUserPortal(page: Page, apiKey: string) {
 }
 
 async function expectNoShellOverlap(page: Page) {
+  const overflow = await page.evaluate(() => ({
+    viewportWidth: window.innerWidth,
+    documentWidth: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
+    tableWraps: Array.from(document.querySelectorAll(".table-wrap")).map((element) => ({
+      className: element.className,
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    })),
+  }));
+  expect(overflow.documentWidth).toBeLessThanOrEqual(overflow.viewportWidth + 1);
+  for (const tableWrap of overflow.tableWraps) {
+    expect(tableWrap.scrollWidth, `${tableWrap.className} overflowed horizontally`).toBeLessThanOrEqual(tableWrap.clientWidth + 1);
+  }
+
   const boxes = await page.locator(".topbar, .control-sidebar, .detail-pane").evaluateAll((elements) => (
     elements.map((element) => {
       const rect = element.getBoundingClientRect();

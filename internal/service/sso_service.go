@@ -622,20 +622,32 @@ func (s *SSOService) CurrentSession(ctx context.Context, sessionToken string) (*
 		s.debugSSOFailure("sso current session team list failed", err, append(ssoSessionLogAttrs(session), ssoUUIDLogAttr("identity_id", identity.ID))...)
 		return nil, err
 	}
-	teams := make([]domain.SSOTeamProfile, 0, len(allTeams))
-	var selected *domain.SSOTeamProfile
-	for _, team := range allTeams {
-		if _, err := s.ValidateAPIKeyPrincipal(ctx, &team.Profile); err != nil {
-			if errors.Is(err, ErrSSOAccessDenied) || errors.Is(err, ErrSSOEntitlementRefreshStale) {
-				continue
-			}
-			s.debugSSOFailure("sso current session team validation failed", err, append(ssoSessionLogAttrs(session), ssoAPIKeyLogAttrs(&team.Profile)...)...)
+	if changed, err := s.reconcileCurrentSessionTeamProfiles(ctx, *identity, allTeams); err != nil {
+		s.debugSSOFailure("sso current session team reconciliation failed", err, append(ssoSessionLogAttrs(session), ssoUUIDLogAttr("identity_id", identity.ID))...)
+		return nil, err
+	} else if changed {
+		allTeams, err = s.repo.ListTeamProfilesForIdentity(ctx, identity.ID)
+		if err != nil {
+			s.debugSSOFailure("sso current session reconciled team list failed", err, append(ssoSessionLogAttrs(session), ssoUUIDLogAttr("identity_id", identity.ID))...)
 			return nil, err
 		}
-		teams = append(teams, *team)
-		if team.Profile.ID == session.TeamProfileID {
-			copy := *team
-			selected = &copy
+	}
+	teams, selected, err := s.validCurrentSessionTeams(ctx, session, allTeams)
+	if err != nil {
+		return nil, err
+	}
+	if changed, err := s.reconcileCurrentSessionTeamProfiles(ctx, *identity, allTeams); err != nil {
+		s.debugSSOFailure("sso current session post-validation team reconciliation failed", err, append(ssoSessionLogAttrs(session), ssoUUIDLogAttr("identity_id", identity.ID))...)
+		return nil, err
+	} else if changed {
+		allTeams, err = s.repo.ListTeamProfilesForIdentity(ctx, identity.ID)
+		if err != nil {
+			s.debugSSOFailure("sso current session post-validation team list failed", err, append(ssoSessionLogAttrs(session), ssoUUIDLogAttr("identity_id", identity.ID))...)
+			return nil, err
+		}
+		teams, selected, err = s.validCurrentSessionTeams(ctx, session, allTeams)
+		if err != nil {
+			return nil, err
 		}
 	}
 	if selected == nil {

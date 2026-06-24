@@ -303,6 +303,8 @@ func recallFeedbackEventWhere(filter domain.RecallFeedbackEventFilter) (string, 
 	if filter.Quality != "" {
 		clauses = append(clauses, "quality = ?")
 		args = append(args, filter.Quality)
+	} else if !filter.IncludePending {
+		clauses = append(clauses, "quality <> ''")
 	}
 	if filter.MissingContext != nil {
 		clauses = append(clauses, "missing_context IS "+boolSQL(*filter.MissingContext))

@@ -201,12 +201,13 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 		Direction: "asc",
 	}, logs.filter)
 
-	rec = do("/control/api/recall-feedback-events?limit=5&offset=2&quality=low&missing_context=true&irrelevant=false&from=2026-06-01T00:00:00Z&to=2026-06-23T00:00:00Z")
+	rec = do("/control/api/recall-feedback-events?limit=5&offset=2&quality=low&include_pending=true&missing_context=true&irrelevant=false&from=2026-06-01T00:00:00Z&to=2026-06-23T00:00:00Z")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "why was recall bad?")
 	assert.Equal(t, 5, feedback.filter.Limit)
 	assert.Equal(t, 2, feedback.filter.Offset)
 	assert.Equal(t, "low", feedback.filter.Quality)
+	assert.True(t, feedback.filter.IncludePending)
 	require.NotNil(t, feedback.filter.MissingContext)
 	assert.True(t, *feedback.filter.MissingContext)
 	require.NotNil(t, feedback.filter.Irrelevant)
@@ -272,6 +273,11 @@ func TestControlPortalObservabilityValidation(t *testing.T) {
 	c = e.NewContext(req, rec)
 	_, err = controlRecallFeedbackEventsFilter(c)
 	require.ErrorContains(t, err, "quality must be one of")
+
+	req = httptest.NewRequest(http.MethodGet, "/control/api/recall-feedback-events?include_pending=maybe", nil)
+	c = e.NewContext(req, rec)
+	_, err = controlRecallFeedbackEventsFilter(c)
+	require.ErrorContains(t, err, "include_pending must be true or false")
 
 	req = httptest.NewRequest(http.MethodGet, "/control/api/recall-feedback-events?missing_context=maybe", nil)
 	c = e.NewContext(req, rec)

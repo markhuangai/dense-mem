@@ -405,6 +405,7 @@ export type RecallFeedbackEventQuery = {
   team_id?: string;
   profile_id?: string;
   quality?: RecallFeedbackEvent["quality"] | "";
+  include_pending?: boolean;
   missing_context?: boolean | "";
   irrelevant?: boolean | "";
   from?: string;
@@ -694,6 +695,9 @@ export class ControlApi {
     }
     if (query.quality) {
       params.set("quality", query.quality);
+    }
+    if (query.include_pending !== undefined) {
+      params.set("include_pending", String(query.include_pending));
     }
     if (query.missing_context !== undefined && query.missing_context !== "") {
       params.set("missing_context", String(query.missing_context));
