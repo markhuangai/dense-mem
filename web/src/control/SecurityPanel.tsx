@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Ban, RefreshCw, Trash2 } from "lucide-react";
 import { ControlApi, SecurityBan, SecuritySettings } from "../api";
-import { SectionHeading, SummaryCard } from "../ui/components";
+import { LoadingState, SectionHeading, SummaryCard } from "../ui/components";
 import { formatDate, readError } from "./utils";
 
 export function SecurityPanel({ api }: { api: ControlApi }) {
@@ -98,7 +98,7 @@ export function SecurityPanel({ api }: { api: ControlApi }) {
             <SummaryCard label="Ban duration" value={settings.ban_duration_seconds === 0 ? "Permanent" : `${settings.ban_duration_seconds}s`} />
           </>
         ) : (
-          <div className="table-placeholder compact">Loading rules</div>
+          <LoadingState label="Loading rules" compact />
         )}
       </div>
 

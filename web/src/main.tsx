@@ -7,6 +7,7 @@ import "./knowledge-explorer.css";
 import "./observability.css";
 import "./responsive.css";
 import "./admin-system.css";
+import "./admin-dashboard-components.css";
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

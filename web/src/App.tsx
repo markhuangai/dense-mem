@@ -28,7 +28,7 @@ import { TeamOverviewPanel, TeamWorkspaceShell } from "./control/TeamWorkspace";
 import type { TeamWorkspaceTab } from "./control/TeamWorkspace";
 import { TeamDreamingConfigForm } from "./teamDreamingConfig";
 import { displayKeySuffix, formatDate, profilePermissionLabel, profileRoleLabel, readError, shortId } from "./control/utils";
-import { AuthShell, PortalShell, SecretBox, SectionHeading } from "./ui/components";
+import { AuthShell, LoadingState, PortalShell, SecretBox, SectionHeading } from "./ui/components";
 
 const MetricsPanel = lazy(() => import("./control/MetricsPanel").then((module) => ({ default: module.MetricsPanel })));
 const SecurityPanel = lazy(() => import("./control/SecurityPanel").then((module) => ({ default: module.SecurityPanel })));
@@ -323,7 +323,7 @@ function Portal({
                 onDeleted={() => void loadTeams()}
               />
             ) : (
-              <div className="empty-state">{loadState === "loading" ? "Loading" : "No teams"}</div>
+              loadState === "loading" ? <LoadingState label="Loading teams" /> : <div className="empty-state">No teams</div>
             )}
           </>
         )}
@@ -339,7 +339,7 @@ function Portal({
 }
 
 function LazyPanelFallback() {
-  return <div className="table-placeholder">Loading</div>;
+  return <LoadingState label="Loading panel" />;
 }
 
 function readTheme(): Theme {
@@ -411,7 +411,7 @@ function TeamResourceRail({
 
   const listContent = (() => {
     if (loading && teams.length === 0) {
-      return <div className="table-placeholder compact">Loading</div>;
+      return <LoadingState label="Loading teams" compact />;
     }
 
     if (teams.length === 0) {
@@ -488,8 +488,8 @@ function TeamWorkspace({
     <TeamWorkspaceShell team={team} activeTab={activeTab} onSelectTab={onSelectTab}>
       {activeTab === "overview" && <TeamOverviewPanel api={api} team={team} onOpenSettings={() => onSelectTab("settings")} />}
       {activeTab === "profiles" && <TeamProfilesPanel api={api} team={team} embedded />}
-      {activeTab === "dreams" && (
-        <Suspense fallback={<div className="team-embedded-panel"><div className="table-placeholder">Loading</div></div>}>
+        {activeTab === "dreams" && (
+        <Suspense fallback={<div className="team-embedded-panel"><LoadingState label="Loading dreams" /></div>}>
           <ControlDreamsPanel api={api} team={team} embedded />
         </Suspense>
       )}
@@ -712,7 +712,7 @@ function TeamProfilesPanel({ api, team, embedded = false }: { api: ControlApi; t
           void loadKeys();
         }}
       />
-      {loading && <div className="table-placeholder">Loading</div>}
+      {loading && <LoadingState label="Loading profiles" />}
       {!loading && (
         <TeamProfileTable
           keys={keys}

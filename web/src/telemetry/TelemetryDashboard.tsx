@@ -10,7 +10,7 @@ import {
 } from "recharts";
 import { RefreshCw } from "lucide-react";
 import { TelemetrySnapshot, TelemetryWindowKey, telemetryWindowOptions } from "./types";
-import { SectionHeading, SummaryCard } from "../ui/components";
+import { LoadingState, SectionHeading, SummaryCard } from "../ui/components";
 import "./telemetry.css";
 
 const currentStateCardIds = new Set([
@@ -75,7 +75,7 @@ export function TelemetryDashboard({
 
       {error && <div className="banner error" role="alert">{error}</div>}
       {snapshot?.message && <div className="banner neutral">{snapshot.message}</div>}
-      {loading && !snapshot && <div className="table-placeholder compact">Loading telemetry</div>}
+      {loading && !snapshot && <LoadingState label="Loading telemetry" compact />}
 
       {snapshot && (
         <>

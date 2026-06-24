@@ -12,7 +12,7 @@ import {
   Star,
   X,
 } from "lucide-react";
-import { SectionHeading } from "../ui/components";
+import { LoadingState, SectionHeading } from "../ui/components";
 import { Claim, Community, Fact, Fragment, RecallHit, UserApi } from "./api";
 
 type RecallResultKind = "fact" | "claim" | "fragment";
@@ -262,7 +262,7 @@ export function SearchPanel({ api }: { api: UserApi }) {
           </div>
         </div>
         {error && <div className="banner error" role="alert">{error}</div>}
-        {loading && <div className="table-placeholder">Loading</div>}
+        {loading && <LoadingState label="Searching knowledge" />}
         {!loading && (
           <RecallResults
             items={sortedHits}

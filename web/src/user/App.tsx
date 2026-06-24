@@ -25,7 +25,7 @@ import {
   UserApi,
   UserSession,
 } from "./api";
-import { AuthShell, PortalShell, SecretBox, SectionHeading } from "../ui/components";
+import { AuthShell, LoadingState, PortalShell, SecretBox, SectionHeading } from "../ui/components";
 import { SearchPanel } from "./SearchPanel";
 
 const TelemetryDashboard = lazy(() => import("../telemetry/TelemetryDashboard").then((module) => ({ default: module.TelemetryDashboard })));
@@ -349,7 +349,6 @@ function UserPortal({
       navLabel="Knowledge navigation"
       navItemsLabel="Knowledge sections"
       navItems={navItems}
-      navPlacement="top"
       contextBar={session && (
         <UserContextBar
           session={session}
@@ -479,7 +478,7 @@ class LazyPanelErrorBoundary extends Component<LazyPanelErrorBoundaryProps, Lazy
 }
 
 function LazyPanelFallback() {
-  return <div className="table-placeholder">Loading</div>;
+  return <LoadingState label="Loading panel" />;
 }
 
 function UserTelemetryPanel({ api, session }: { api: UserApi; session: UserSession }) {
@@ -525,7 +524,7 @@ function FactsPanel({ api }: { api: UserApi }) {
     <section className="surface">
       <PanelHeading title="Facts" count={data?.items.length ?? 0} onRefresh={reload} />
       {error && <div className="banner error" role="alert">{error}</div>}
-      {loading && <div className="table-placeholder">Loading</div>}
+      {loading && <LoadingState label="Loading facts" />}
       {!loading && <FactList items={data?.items ?? []} />}
     </section>
   );
@@ -537,7 +536,7 @@ function ClaimsPanel({ api }: { api: UserApi }) {
     <section className="surface">
       <PanelHeading title="Claims" count={data?.items.length ?? 0} onRefresh={reload} />
       {error && <div className="banner error" role="alert">{error}</div>}
-      {loading && <div className="table-placeholder">Loading</div>}
+      {loading && <LoadingState label="Loading claims" />}
       {!loading && <ClaimList items={data?.items ?? []} />}
     </section>
   );
@@ -549,7 +548,7 @@ function FragmentsPanel({ api }: { api: UserApi }) {
     <section className="surface">
       <PanelHeading title="Fragments" count={data?.items.length ?? 0} onRefresh={reload} />
       {error && <div className="banner error" role="alert">{error}</div>}
-      {loading && <div className="table-placeholder">Loading</div>}
+      {loading && <LoadingState label="Loading fragments" />}
       {!loading && <FragmentList items={data?.items ?? []} />}
     </section>
   );
@@ -561,7 +560,7 @@ function CommunitiesPanel({ api }: { api: UserApi }) {
     <section className="surface">
       <PanelHeading title="Communities" count={data?.items.length ?? 0} onRefresh={reload} />
       {error && <div className="banner error" role="alert">{error}</div>}
-      {loading && <div className="table-placeholder">Loading</div>}
+      {loading && <LoadingState label="Loading communities" />}
       {!loading && <CommunityList items={data?.items ?? []} />}
     </section>
   );

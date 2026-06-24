@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SecretBox } from "./components";
+import { LoadingState, SecretBox } from "./components";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -34,5 +34,18 @@ describe("SecretBox", () => {
     });
 
     expect(copyButton.querySelector(".lucide-copy")).toBeInTheDocument();
+  });
+});
+
+describe("LoadingState", () => {
+  it("announces the loading label and renders animation parts", () => {
+    render(<LoadingState label="Loading telemetry" compact />);
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("Loading telemetry");
+    expect(status).toHaveClass("loading-state");
+    expect(status).toHaveClass("compact");
+    expect(status.querySelector(".loading-orbit")).toBeInTheDocument();
+    expect(status.querySelectorAll(".loading-skeleton span")).toHaveLength(3);
   });
 });

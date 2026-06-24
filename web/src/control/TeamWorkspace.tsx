@@ -134,7 +134,7 @@ export function TeamOverviewPanel({
   const requestValue = metricsReady ? compactNumber(requests) : loading ? "..." : "n/a";
   const errorValue = metricsReady ? compactNumber(errors) : loading ? "..." : "n/a";
   const healthValue = metricsReady ? `${health.toFixed(1)}%` : loading ? "..." : "n/a";
-  const healthDetail = loading ? "Loading" : metricsFailed ? "Metrics unavailable" : "Operational";
+  const healthDetail = loading ? <span className="inline-loading">Loading</span> : metricsFailed ? "Metrics unavailable" : "Operational";
   const latencyValue = metricsReady ? `${Math.round(teamMetrics?.avg_latency_ms ?? metrics.system.avg_latency_ms)} ms` : "n/a";
   const maxLatencyValue = metricsReady ? `${Math.round(teamMetrics?.max_latency_ms ?? metrics.system.max_latency_ms)} ms` : "n/a";
 
@@ -153,7 +153,7 @@ export function TeamOverviewPanel({
 
       <div className="overview-grid">
         <section className="overview-panel" aria-label="Team activity">
-          <SectionHeading title="Team Activity (1h)" meta={loading ? "loading" : metricsFailed ? "metrics unavailable" : undefined} />
+          <SectionHeading title="Team Activity (1h)" meta={loading ? <span className="inline-loading">Loading</span> : metricsFailed ? "metrics unavailable" : undefined} />
           <MetricRow icon={<Activity size={15} aria-hidden="true" />} label="HTTP requests" value={requestValue} trend={metricsReady ? requests > 0 ? "+ active" : "idle" : "unavailable"} tone={metricsFailed ? "warning" : "neutral"} />
           <MetricRow icon={<Activity size={15} aria-hidden="true" />} label="Errors" value={errorValue} trend={metricsReady ? errors > 0 ? "review" : "clear" : "unavailable"} tone={errors > 0 ? "danger" : metricsFailed ? "warning" : "neutral"} />
           <MetricRow icon={<Users size={15} aria-hidden="true" />} label="Writable profiles" value={readWriteCount} trend={`${profiles.length} total`} />
