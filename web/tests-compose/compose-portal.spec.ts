@@ -299,6 +299,8 @@ test("user portal logs in with a real API key and shows only that profile", asyn
   await openUserPortal(page, seedApiKey);
 
   await expect(page.getByText(seedTeamName)).toBeVisible();
+  await expect(page.getByLabel("Current workspace")).not.toContainText("default profile");
+  await page.getByRole("button", { name: /My key/i }).click();
   await expect(page.getByText("default profile")).toBeVisible();
   await expect(page.getByText(otherProfile.key.name)).toBeHidden();
 

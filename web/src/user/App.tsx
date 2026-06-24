@@ -152,7 +152,7 @@ export function UserPortalApp() {
       <AuthShell
         theme={theme}
         title="Dense-Mem Knowledge"
-        icon={<ShieldCheck size={20} aria-hidden="true" />}
+        icon={<span className="brand-initials" aria-hidden="true">DM</span>}
         onSubmit={submitToken}
         actions={(
           <button
@@ -320,8 +320,8 @@ function UserPortal({
   return (
     <PortalShell
       theme={theme}
-      title="Dense-Mem Knowledge"
-      icon={<ShieldCheck size={20} aria-hidden="true" />}
+      title="Knowledge"
+      icon={<span className="brand-initials" aria-hidden="true">DM</span>}
       topbarActions={(
         <>
           <button
@@ -349,6 +349,7 @@ function UserPortal({
       navLabel="Knowledge navigation"
       navItemsLabel="Knowledge sections"
       navItems={navItems}
+      navPlacement="top"
       contextBar={session && (
         <UserContextBar
           session={session}
@@ -425,7 +426,7 @@ function UserContextBar({
   onSwitchTeam: (profileId: string) => Promise<void>;
 }) {
   return (
-    <div className="session-context" aria-label="Current workspace">
+    <div className="session-context compact" aria-label="Current workspace">
       <span className="context-label">Team</span>
       {authMode === "sso" ? (
         <select
@@ -439,12 +440,8 @@ function UserContextBar({
           ))}
         </select>
       ) : (
-        <strong>{session.team.name}</strong>
+        <strong className="team-select-chip">{session.team.name}</strong>
       )}
-      <span className="context-divider" aria-hidden="true" />
-      <span className="context-label">Key</span>
-      <span>{session.key.name}</span>
-      <code>{displayKeySuffix(session.key.key_suffix)}</code>
     </div>
   );
 }

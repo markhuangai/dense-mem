@@ -316,7 +316,7 @@ test("API key creation shows plaintext once", async ({ page }) => {
   await mockApi(page, { teams: [team], keys: [] });
   await openPortal(page);
 
-  await page.getByRole("button", { name: /Profiles & API Keys/ }).click();
+  await page.getByRole("button", { name: /Team Profiles/ }).click();
   await page.getByLabel("Role").selectOption("member");
   await page.getByLabel("Permission").selectOption("read");
   await page.getByRole("button", { name: "Create profile" }).click();
@@ -330,11 +330,12 @@ test("team and profile names update and profile key regenerates", async ({ page 
   await mockApi(page, { teams: [team], keys: [key] });
   await openPortal(page);
 
+  await page.getByRole("button", { name: /Team Settings/ }).click();
   await page.locator("#team-name").fill("Renamed Team");
   await page.getByRole("button", { name: /^Save$/ }).click();
   await expect(page.getByRole("heading", { name: "Renamed Team" })).toBeVisible();
 
-  await page.getByRole("button", { name: /Profiles & API Keys/ }).click();
+  await page.getByRole("button", { name: /Team Profiles/ }).click();
   await page.getByLabel("Profile name default profile").fill("Research profile");
   await page.getByRole("button", { name: /Save profile default profile/ }).click();
   await expect(page.getByLabel("Profile name Research profile")).toHaveValue("Research profile");
@@ -348,7 +349,7 @@ test("team profile list and delete flow", async ({ page }) => {
   await mockApi(page, { teams: [team], keys: [key] });
   await openPortal(page);
 
-  await page.getByRole("button", { name: /Profiles & API Keys/ }).click();
+  await page.getByRole("button", { name: /Team Profiles/ }).click();
   await expect(page.getByText("******abc123")).toBeVisible();
   const keyRow = page.getByRole("row", { name: /abc123/ });
   await expect(keyRow).toContainText("Read/write");
@@ -442,7 +443,7 @@ test("recall feedback tab renders query, params, result ids, and resolved state"
   const calls = await mockApi(page, { teams: [team], keys: [key] });
   await openPortal(page);
 
-  await page.getByRole("button", { name: /^Recall Feedback$/ }).click();
+  await page.getByRole("button", { name: /^Feedback$/ }).click();
 
   await expect(page.getByText("Why was recall bad?")).toBeVisible();
   await expect(page.getByText("Pending recall waiting")).toHaveCount(0);
@@ -466,7 +467,7 @@ test("dream outputs keep rationale behind info tooltip", async ({ page }) => {
   await mockApi(page, { teams: [team], keys: [key] });
   await openPortal(page);
 
-  await page.getByRole("button", { name: /^Dreams$/ }).click();
+  await page.getByRole("button", { name: /Team Dreams/ }).click();
   await expect(page.locator(".resource-rail")).toBeVisible();
 
   await expect(page.getByLabel("Dreaming status")).toContainText("Global force");
@@ -511,6 +512,7 @@ test("team delete flow", async ({ page }) => {
   await mockApi(page, { teams: [team], keys: [key] });
   await openPortal(page);
 
+  await page.getByRole("button", { name: /Team Settings/ }).click();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: /^Delete$/ }).click();
 
@@ -537,10 +539,11 @@ test("responsive portal layout", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Teams" })).toBeVisible();
   const shellMinHeight = await page.locator(".app-shell").evaluate((element) => Number.parseFloat(getComputedStyle(element).minHeight));
   expect(shellMinHeight).toBeGreaterThanOrEqual((page.viewportSize()?.height ?? 0) - 1);
-  await expect(page.locator(".primary-rail")).toHaveCSS("border-radius", "8px");
-  await expect(page.locator(".resource-rail")).toHaveCSS("border-radius", "8px");
+  await expect(page.locator(".topbar")).toHaveCSS("border-bottom-width", "1px");
+  await expect(page.locator(".primary-rail")).toHaveCSS("border-right-width", "1px");
+  await expect(page.locator(".resource-rail")).toHaveCSS("border-right-width", "1px");
   await expect(page.locator(".surface").first()).toHaveCSS("border-radius", "8px");
-  await page.getByRole("button", { name: /Profiles & API Keys/ }).click();
+  await page.getByRole("button", { name: /Team Profiles/ }).click();
   await expect(page.getByRole("heading", { name: "Profiles" })).toBeVisible();
   await expectNoShellOverlap(page);
 

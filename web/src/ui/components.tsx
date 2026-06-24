@@ -30,6 +30,7 @@ type PortalShellProps = BrandProps & {
   navLabel: string;
   navItemsLabel: string;
   navItems: PortalNavItem[];
+  navPlacement?: "rail" | "top";
   contextBar?: ReactNode;
   resourceRail?: ReactNode;
   resourceRailLabel?: string;
@@ -103,6 +104,7 @@ export function PortalShell({
   navLabel,
   navItemsLabel,
   navItems,
+  navPlacement = "rail",
   contextBar,
   resourceRail,
   resourceRailLabel,
@@ -110,6 +112,13 @@ export function PortalShell({
   error,
   children,
 }: PortalShellProps) {
+  const topNav = navPlacement === "top";
+  const workspaceClassName = [
+    "workspace",
+    resourceRail ? "has-resource-rail" : "",
+    topNav ? "top-nav-workspace" : "",
+  ].filter(Boolean).join(" ");
+
   return (
     <main className="app-shell" data-theme={theme}>
       <header className="topbar">
@@ -120,21 +129,38 @@ export function PortalShell({
 
       {error && <div className="banner error" role="alert">{error}</div>}
 
-      <section className={resourceRail ? "workspace has-resource-rail" : "workspace"}>
-        <aside className="primary-rail" aria-label={navLabel}>
-          <nav className="rail-tabs" aria-label={navItemsLabel}>
-            {navItems.map((item) => (
-              <TabButton
-                key={item.id}
-                active={item.active}
-                disabled={item.disabled}
-                icon={item.icon}
-                label={item.label}
-                onClick={item.onClick}
-              />
-            ))}
-          </nav>
-        </aside>
+      <section className={workspaceClassName}>
+        {topNav ? (
+          <div className="top-nav-bar" aria-label={navLabel}>
+            <nav className="top-nav-tabs" aria-label={navItemsLabel}>
+              {navItems.map((item) => (
+                <TabButton
+                  key={item.id}
+                  active={item.active}
+                  disabled={item.disabled}
+                  icon={item.icon}
+                  label={item.label}
+                  onClick={item.onClick}
+                />
+              ))}
+            </nav>
+          </div>
+        ) : (
+          <aside className="primary-rail" aria-label={navLabel}>
+            <nav className="rail-tabs" aria-label={navItemsLabel}>
+              {navItems.map((item) => (
+                <TabButton
+                  key={item.id}
+                  active={item.active}
+                  disabled={item.disabled}
+                  icon={item.icon}
+                  label={item.label}
+                  onClick={item.onClick}
+                />
+              ))}
+            </nav>
+          </aside>
+        )}
         {resourceRail && (
           <aside className="resource-rail" aria-label={resourceRailLabel ?? "Resources"}>
             {resourceRail}

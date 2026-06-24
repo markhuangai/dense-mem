@@ -188,7 +188,7 @@ test("API key login, recall, and read-only knowledge tabs", async ({ page }) => 
   await openUserPortal(page, "dm_read");
 
   await expect(page.getByText("Research Team")).toBeVisible();
-  await expect(page.getByText("Mine")).toBeVisible();
+  await expect(page.getByLabel("Current workspace")).not.toContainText("Mine");
   await expect(page.getByText("Other profile")).toBeHidden();
 
   await page.getByLabel("Keyword").fill("project");
@@ -298,13 +298,14 @@ test("responsive user portal layout", async ({ page }) => {
   await mockUserApi(page, { key: readKey, canRotate: false });
   await openUserPortal(page, "dm_read");
 
-  await expect(page.getByRole("heading", { name: "Dense-Mem Knowledge" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Knowledge" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Recall" })).toBeVisible();
   const shellMinHeight = await page.locator(".app-shell").evaluate((element) => Number.parseFloat(getComputedStyle(element).minHeight));
   expect(shellMinHeight).toBeGreaterThanOrEqual((page.viewportSize()?.height ?? 0) - 1);
-  await expect(page.locator(".primary-rail")).toHaveCSS("border-radius", "8px");
+  await expect(page.locator(".primary-rail")).toHaveCount(0);
+  await expect(page.locator(".top-nav-bar")).toHaveCSS("border-bottom-width", "1px");
   await expect(page.locator(".resource-rail")).toHaveCount(0);
-  await expect(page.locator(".knowledge-results-panel")).toHaveCSS("border-radius", "8px");
+  await expect(page.locator(".knowledge-results-panel")).toHaveCSS("border-radius", "0px");
   await expectNoShellOverlap(page);
 
   if ((page.viewportSize()?.width ?? 1000) < 700) {
@@ -368,7 +369,7 @@ async function expectNoShellOverlap(page: Page) {
     expect(tableWrap.scrollWidth, `${tableWrap.className} overflowed horizontally`).toBeLessThanOrEqual(tableWrap.clientWidth + 1);
   }
 
-  const boxes = await page.locator(".topbar, .primary-rail, .resource-rail, .detail-pane").evaluateAll((elements) => (
+  const boxes = await page.locator(".topbar, .primary-rail, .top-nav-bar, .resource-rail, .detail-pane").evaluateAll((elements) => (
     elements.map((element) => {
       const rect = element.getBoundingClientRect();
       return {

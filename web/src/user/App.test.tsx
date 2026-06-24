@@ -130,7 +130,7 @@ describe("UserPortalApp", () => {
     await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
 
     await expectCurrentWorkspace("Research Team");
-    expect(await screen.findByText("Mine")).toBeInTheDocument();
+    expect(screen.getByLabelText("Current workspace")).not.toHaveTextContent("Mine");
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/profiles"))).toBe(false);
   });
 

@@ -1,9 +1,22 @@
-import { FormEvent, useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { CSSProperties, FormEvent, useMemo, useState } from "react";
+import {
+  Bookmark,
+  ChevronDown,
+  ExternalLink,
+  FileText,
+  GitBranch,
+  MoreVertical,
+  Plus,
+  Search,
+  ShieldCheck,
+  Star,
+  X,
+} from "lucide-react";
 import { SectionHeading } from "../ui/components";
 import { Claim, Community, Fact, Fragment, RecallHit, UserApi } from "./api";
 
 type RecallResultKind = "fact" | "claim" | "fragment";
+type RecallResultStatus = "verified" | "provisional" | "disputed" | "deprecated";
 
 type IndexedRecallResult = {
   hit: RecallHit;
@@ -21,6 +34,16 @@ export function SearchPanel({ api }: { api: UserApi }) {
     claim: true,
     fragment: true,
   });
+  const [enabledStatuses, setEnabledStatuses] = useState<Record<RecallResultStatus, boolean>>({
+    verified: true,
+    provisional: true,
+    disputed: false,
+    deprecated: false,
+  });
+  const [dateMode, setDateMode] = useState<"all" | "custom">("all");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [sourceFilter, setSourceFilter] = useState("all");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -55,8 +78,15 @@ export function SearchPanel({ api }: { api: UserApi }) {
     kind: recallResultKind(hit),
   })), [hits]);
   const filteredHits = useMemo(() => (
-    indexedHits.filter((item) => enabledTypes[item.kind])
-  ), [indexedHits, enabledTypes]);
+    indexedHits.filter((indexed) => {
+      const item = resultItem(indexed.hit);
+      const status = recallResultStatus(item);
+      return enabledTypes[indexed.kind]
+        && enabledStatuses[status]
+        && sourceMatches(item, sourceFilter)
+        && dateMatches(item, dateMode, startDate, endDate);
+    })
+  ), [indexedHits, enabledTypes, enabledStatuses, sourceFilter, dateMode, startDate, endDate]);
   const selectedResult = useMemo(() => (
     filteredHits.find((item) => item.key === selectedKey) ?? filteredHits[0] ?? null
   ), [filteredHits, selectedKey]);
@@ -64,12 +94,42 @@ export function SearchPanel({ api }: { api: UserApi }) {
     ...counts,
     [item.kind]: counts[item.kind] + 1,
   }), { fact: 0, claim: 0, fragment: 0 }), [indexedHits]);
+  const statusCounts = useMemo(() => indexedHits.reduce<Record<RecallResultStatus, number>>((counts, indexed) => {
+    const status = recallResultStatus(resultItem(indexed.hit));
+    return {
+      ...counts,
+      [status]: counts[status] + 1,
+    };
+  }, { verified: 0, provisional: 0, disputed: 0, deprecated: 0 }), [indexedHits]);
+  const sourceOptions = useMemo(() => {
+    const values = new Set<string>();
+    for (const hit of indexedHits) {
+      values.add(sourceLabel(resultItem(hit.hit)));
+    }
+    return Array.from(values).sort((left, right) => left.localeCompare(right));
+  }, [indexedHits]);
 
   function toggleType(kind: RecallResultKind) {
     setEnabledTypes((current) => ({
       ...current,
       [kind]: !current[kind],
     }));
+  }
+
+  function toggleStatus(status: RecallResultStatus) {
+    setEnabledStatuses((current) => ({
+      ...current,
+      [status]: !current[status],
+    }));
+  }
+
+  function clearFilters() {
+    setEnabledTypes({ fact: true, claim: true, fragment: true });
+    setEnabledStatuses({ verified: true, provisional: true, disputed: false, deprecated: false });
+    setDateMode("all");
+    setStartDate("");
+    setEndDate("");
+    setSourceFilter("all");
   }
 
   return (
@@ -81,28 +141,12 @@ export function SearchPanel({ api }: { api: UserApi }) {
             <button
               className="text-button"
               type="button"
-              onClick={() => setEnabledTypes({ fact: true, claim: true, fragment: true })}
+              onClick={clearFilters}
             >
-              Reset
+              Clear all
             </button>
           )}
         />
-        <form className="search-form stacked" onSubmit={submit}>
-          <label htmlFor="recall-query">Keyword</label>
-          <div className="search-input-wrap">
-            <Search size={16} aria-hidden="true" />
-            <input
-              id="recall-query"
-              placeholder="Search knowledge..."
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-          </div>
-          <button className="primary-button" type="submit" disabled={loading}>
-            <Search size={16} aria-hidden="true" />
-            Search
-          </button>
-        </form>
         <fieldset className="filter-stack">
           <legend>Type</legend>
           {(["fact", "claim", "fragment"] as RecallResultKind[]).map((kind) => (
@@ -117,9 +161,39 @@ export function SearchPanel({ api }: { api: UserApi }) {
             </label>
           ))}
         </fieldset>
+        <fieldset className="filter-stack">
+          <legend>Status</legend>
+          {(["verified", "provisional", "disputed", "deprecated"] as RecallResultStatus[]).map((status) => (
+            <label className="filter-row" key={status}>
+              <input type="checkbox" checked={enabledStatuses[status]} onChange={() => toggleStatus(status)} />
+              <span>{recallResultStatusLabel(status)}</span>
+              <small>{statusCounts[status]}</small>
+            </label>
+          ))}
+        </fieldset>
+        <div className="filter-stack">
+          <strong>Date</strong>
+          <select aria-label="Date range" value={dateMode} onChange={(event) => setDateMode(event.target.value as "all" | "custom")}>
+            <option value="all">All time</option>
+            <option value="custom">Custom</option>
+          </select>
+          {dateMode === "custom" && (
+            <>
+              <input aria-label="Start date" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+              <input aria-label="End date" type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+            </>
+          )}
+        </div>
+        <div className="filter-stack">
+          <strong>Source</strong>
+          <select aria-label="Source" value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}>
+            <option value="all">All sources</option>
+            {sourceOptions.map((source) => <option key={source} value={source}>{source}</option>)}
+          </select>
+        </div>
         {entities.length > 0 && (
           <div className="filter-stack" aria-label="Related entities">
-            <strong>Entities</strong>
+            <strong>Tag</strong>
             <div className="entity-strip">
               {entities.map((entity) => <span className="status-pill neutral" key={entity}>{entity}</span>)}
             </div>
@@ -128,10 +202,31 @@ export function SearchPanel({ api }: { api: UserApi }) {
       </aside>
 
       <section className="knowledge-results-panel" aria-label="Recall results">
+        <form className="knowledge-commandbar" onSubmit={submit}>
+          <label className="sr-only" htmlFor="recall-query">Keyword</label>
+          <div className="search-input-wrap large">
+            <Search size={17} aria-hidden="true" />
+            <input
+              id="recall-query"
+              aria-label="Keyword"
+              placeholder="Search knowledge..."
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </div>
+          <button className="primary-button compact" type="submit" disabled={loading}>
+            <Search size={16} aria-hidden="true" />
+            Search
+          </button>
+        </form>
         <div className="knowledge-results-toolbar">
           <div>
-            <h2>Recall</h2>
-            <span>{filteredHits.length} results</span>
+            <h2>{filteredHits.length.toLocaleString()} results</h2>
+            <span>{query.trim() ? `for "${query.trim()}"` : "Search across facts, claims, and memory"}</span>
+          </div>
+          <div className="toolbar-actions">
+            <button className="select-like compact" type="button">Sort: Relevance <ChevronDown size={14} aria-hidden="true" /></button>
+            <button className="icon-button" type="button" aria-label="List density"><FileText size={16} aria-hidden="true" /></button>
           </div>
         </div>
         {error && <div className="banner error" role="alert">{error}</div>}
@@ -146,10 +241,10 @@ export function SearchPanel({ api }: { api: UserApi }) {
       </section>
 
       <aside className="knowledge-inspector" aria-label="Inspector">
-        <SectionHeading
-          title="Inspector"
-          meta={selectedResult ? recallResultKindLabel(selectedResult.kind) : undefined}
-        />
+        <div className="inspector-head">
+          <h2>Inspector</h2>
+          <button className="icon-button" type="button" aria-label="Close details panel"><X size={16} aria-hidden="true" /></button>
+        </div>
         <KnowledgeInspector result={selectedResult} />
       </aside>
     </section>
@@ -171,7 +266,8 @@ function RecallResults({
   return (
     <div className="knowledge-list compact-list" role="listbox" aria-label="Recall result list">
       {items.map((result) => {
-        const item = result.hit.fact ?? result.hit.claim ?? result.hit.fragment;
+        const item = resultItem(result.hit);
+        const status = recallResultStatus(item);
         return (
           <article
             aria-selected={result.key === selectedKey}
@@ -192,11 +288,26 @@ function RecallResults({
             tabIndex={0}
           >
             <div className="knowledge-item-head">
-              <span className="status-pill neutral">{recallResultKindLabel(result.kind)}</span>
-              <small>{tierLabel(result.hit)} | {scoreLabel(result.hit.score ?? result.hit.final_score)}</small>
+              <div className="result-kicker">
+                {resultIcon(result.kind)}
+                <span className="status-pill neutral">{recallResultKindLabel(result.kind)}</span>
+                <span className={statusPillClass(status)}>{recallResultStatusLabel(status)}</span>
+              </div>
+              <div className="result-actions">
+                <button className="icon-button bare" type="button" aria-label={`Star ${itemTitle(item)}`}>
+                  <Star size={15} aria-hidden="true" />
+                </button>
+                <button className="icon-button bare" type="button" aria-label={`More actions ${itemTitle(item)}`}>
+                  <MoreVertical size={15} aria-hidden="true" />
+                </button>
+              </div>
             </div>
             <h3>{itemTitle(item)}</h3>
             <p>{itemBody(item)}</p>
+            <div className="result-meta-row">
+              <span>Source: {sourceLabel(item)}</span>
+              <time>{itemDate(item)}</time>
+            </div>
           </article>
         );
       })}
@@ -209,15 +320,44 @@ function KnowledgeInspector({ result }: { result: IndexedRecallResult | null }) 
     return <div className="table-placeholder compact">Select a result</div>;
   }
 
-  const item = result.hit.fact ?? result.hit.claim ?? result.hit.fragment;
+  const item = resultItem(result.hit);
+  const status = recallResultStatus(item);
   return (
     <article className="inspector-card">
-      <div className="knowledge-item-head">
+      <div className="inspector-tabs" role="tablist" aria-label="Result sections">
+        <button className="inspector-tab active" type="button" role="tab" aria-selected="true">Evidence</button>
+        <button className="inspector-tab" type="button" role="tab">Lineage</button>
+        <button className="inspector-tab" type="button" role="tab">Recall</button>
+      </div>
+      <div className="inspector-status-row">
         <span className="status-pill neutral">{recallResultKindLabel(result.kind)}</span>
-        <small>{scoreLabel(result.hit.score ?? result.hit.final_score)}</small>
+        <span className={statusPillClass(status)}>{recallResultStatusLabel(status)}</span>
       </div>
       <h3>{itemTitle(item)}</h3>
-      <p>{itemBody(item)}</p>
+      <div className="inspector-section">
+        <h4>Evidence</h4>
+        <p>{itemBody(item)}</p>
+        <dl className="evidence-list">
+          <div>
+            <dt>Source</dt>
+            <dd>
+              {sourceLabel(item)}
+              <ExternalLink size={13} aria-hidden="true" />
+            </dd>
+          </div>
+          <div>
+            <dt>Collected</dt>
+            <dd>{itemDate(item)}</dd>
+          </div>
+          <div>
+            <dt>Confidence</dt>
+            <dd>
+              <span>{scoreLabel(result.hit.score ?? result.hit.final_score) || "n/a"}</span>
+              <span className="confidence-bar" style={{ "--confidence": confidencePercent(result.hit) } as CSSProperties} />
+            </dd>
+          </div>
+        </dl>
+      </div>
       <dl className="inspector-details">
         <div>
           <dt>Tier</dt>
@@ -228,6 +368,16 @@ function KnowledgeInspector({ result }: { result: IndexedRecallResult | null }) 
           <dd>{recallResultKindLabel(result.kind)}</dd>
         </div>
       </dl>
+      <div className="inspector-actions">
+        <button className="ghost-button compact" type="button">
+          <Bookmark size={15} aria-hidden="true" />
+          Add to collection
+        </button>
+        <button className="ghost-button compact" type="button">
+          <Plus size={15} aria-hidden="true" />
+          Create claim
+        </button>
+      </div>
     </article>
   );
 }
@@ -305,8 +455,125 @@ function recallResultKindLabel(kind: RecallResultKind): string {
   return "Fragment";
 }
 
+function resultItem(hit: RecallHit): Fact | Claim | Fragment | undefined {
+  return hit.fact ?? hit.claim ?? hit.fragment;
+}
+
+function recallResultStatus(item: Fact | Claim | Fragment | undefined): RecallResultStatus {
+  const raw = item?.status?.toLowerCase() ?? "";
+  if (raw.includes("disputed") || raw.includes("contradicted") || raw.includes("rejected") || raw.includes("invalid")) {
+    return "disputed";
+  }
+  if (raw.includes("deprecated") || raw.includes("retracted") || raw.includes("stale") || raw.includes("superseded")) {
+    return "deprecated";
+  }
+  if (raw.includes("candidate") || raw.includes("pending") || raw.includes("provisional") || raw.includes("unverified") || raw.includes("draft")) {
+    return "provisional";
+  }
+  return "verified";
+}
+
+function recallResultStatusLabel(status: RecallResultStatus): string {
+  if (status === "verified") {
+    return "Verified";
+  }
+  if (status === "provisional") {
+    return "Provisional";
+  }
+  if (status === "disputed") {
+    return "Disputed";
+  }
+  return "Deprecated";
+}
+
+function statusPillClass(status: RecallResultStatus): string {
+  if (status === "verified") {
+    return "status-pill success";
+  }
+  if (status === "provisional") {
+    return "status-pill warning";
+  }
+  if (status === "disputed") {
+    return "status-pill danger";
+  }
+  return "status-pill neutral";
+}
+
+function sourceMatches(item: Fact | Claim | Fragment | undefined, sourceFilter: string): boolean {
+  return sourceFilter === "all" || sourceLabel(item) === sourceFilter;
+}
+
+function dateMatches(item: Fact | Claim | Fragment | undefined, dateMode: "all" | "custom", startDate: string, endDate: string): boolean {
+  if (dateMode === "all" || (!startDate && !endDate)) {
+    return true;
+  }
+  const raw = itemRawDate(item);
+  if (!raw) {
+    return false;
+  }
+  const itemTime = new Date(raw).getTime();
+  if (Number.isNaN(itemTime)) {
+    return false;
+  }
+  if (startDate && itemTime < startOfDay(startDate)) {
+    return false;
+  }
+  if (endDate && itemTime > endOfDay(endDate)) {
+    return false;
+  }
+  return true;
+}
+
+function itemRawDate(item: Fact | Claim | Fragment | undefined): string {
+  if (!item) {
+    return "";
+  }
+  return "content" in item ? item.created_at : item.recorded_at;
+}
+
+function startOfDay(value: string): number {
+  return new Date(`${value}T00:00:00`).getTime();
+}
+
+function endOfDay(value: string): number {
+  return new Date(`${value}T23:59:59.999`).getTime();
+}
+
+function resultIcon(kind: RecallResultKind) {
+  if (kind === "fact") {
+    return <ShieldCheck size={15} aria-hidden="true" />;
+  }
+  if (kind === "claim") {
+    return <GitBranch size={15} aria-hidden="true" />;
+  }
+  return <FileText size={15} aria-hidden="true" />;
+}
+
 function recallKey(hit: RecallHit, index: number): string {
   return hit.fact?.fact_id ?? hit.claim?.claim_id ?? hit.fragment?.fragment_id ?? String(index);
+}
+
+function sourceLabel(item: Fact | Claim | Fragment | undefined): string {
+  if (!item) {
+    return "unknown";
+  }
+  if ("content" in item) {
+    return item.source || item.source_type || "fragment";
+  }
+  return "knowledge graph";
+}
+
+function itemDate(item: Fact | Claim | Fragment | undefined): string {
+  if (!item) {
+    return "";
+  }
+  const raw = "content" in item ? item.created_at : item.recorded_at;
+  return new Date(raw).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function confidencePercent(hit: RecallHit): string {
+  const score = hit.score ?? hit.final_score ?? 0;
+  return `${Math.max(0, Math.min(1, score)) * 100}%`;
 }
 
 function scoreLabel(value: number | undefined): string {

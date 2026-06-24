@@ -130,7 +130,7 @@ it("shows recall feedback query, params, result ids, and resolved state", async 
 
   render(<App />);
   await screen.findByRole("button", { name: /Default/ });
-  await userEvent.click(screen.getByRole("button", { name: /^recall feedback$/i }));
+  await userEvent.click(screen.getByRole("button", { name: /^feedback$/i }));
 
   expect(await screen.findByText("Why was recall bad?")).toBeInTheDocument();
   expect(screen.queryByText("Pending recall waiting")).not.toBeInTheDocument();

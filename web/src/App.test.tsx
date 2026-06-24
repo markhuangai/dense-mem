@@ -332,7 +332,7 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /profiles & api keys/i }));
+    await userEvent.click(screen.getByRole("button", { name: /team profiles/i }));
     await userEvent.click(screen.getByRole("button", { name: /create profile/i }));
 
     expect(await screen.findByDisplayValue("dm_plain_once")).toHaveAccessibleName("Generated API key");
@@ -365,6 +365,7 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
+    await userEvent.click(screen.getByRole("button", { name: /team settings/i }));
 
     const teamName = screen.getByLabelText("Name", { selector: "#team-name" });
     await userEvent.clear(teamName);
@@ -372,7 +373,7 @@ describe("App", () => {
     await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
     expect(await screen.findByRole("heading", { name: "Renamed Team" })).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: /profiles & api keys/i }));
+    await userEvent.click(screen.getByRole("button", { name: /team profiles/i }));
     const profileName = await screen.findByLabelText("Profile name default profile");
     await userEvent.clear(profileName);
     await userEvent.type(profileName, "Research profile");
@@ -425,6 +426,7 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
+    await userEvent.click(screen.getByRole("button", { name: /team settings/i }));
 
     const scheduledToggle = screen.getByLabelText("Scheduled cycle", { selector: "input" });
     expect(scheduledToggle).not.toBeChecked();
@@ -450,7 +452,7 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /profiles & api keys/i }));
+    await userEvent.click(screen.getByRole("button", { name: /team profiles/i }));
 
     expect(await screen.findByText("******abc123")).toBeInTheDocument();
     const keyRow = screen.getByText("******abc123").closest("tr");
@@ -546,7 +548,7 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /^dreams$/i }));
+    await userEvent.click(screen.getByRole("button", { name: /team dreams/i }));
 
     expect(await screen.findByText("A may affect B.")).toBeInTheDocument();
     expect(screen.getByLabelText("Dreaming status")).toHaveTextContent("Global force");
@@ -716,6 +718,7 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
+    await userEvent.click(screen.getByRole("button", { name: /team settings/i }));
     await userEvent.click(screen.getByRole("button", { name: /^delete$/i }));
 
     await waitFor(() => {

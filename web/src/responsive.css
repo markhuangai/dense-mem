@@ -44,7 +44,12 @@
   }
 
   .topbar {
+    position: static;
     justify-items: start;
+  }
+
+  .topbar-actions {
+    grid-column: auto;
   }
 
   .topbar-context,
@@ -55,9 +60,18 @@
 
   .primary-rail,
   .resource-rail,
+  .top-nav-bar,
   .knowledge-filter-panel {
     position: static;
     max-height: none;
+  }
+
+  .top-nav-bar {
+    padding-inline: 0;
+  }
+
+  .top-nav-tabs {
+    width: 100%;
   }
 
   .primary-rail {
@@ -167,7 +181,11 @@
 
   .data-table th,
   .data-table td {
-    padding: 9px 8px;
+    padding: 9px 6px;
+  }
+
+  .table-wrap {
+    border-width: 0;
   }
 
   .key-table,
