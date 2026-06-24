@@ -29,10 +29,9 @@ type PortalShellProps = BrandProps & {
   topbarActions: ReactNode;
   navLabel: string;
   navItems: PortalNavItem[];
-  sidebarTitle: ReactNode;
-  sidebarMeta?: ReactNode;
-  sidebarSubtitle?: ReactNode;
-  sidebarBody?: ReactNode;
+  contextBar?: ReactNode;
+  resourceRail?: ReactNode;
+  resourceRailLabel?: string;
   detailLabel: string;
   error?: string;
   children: ReactNode;
@@ -102,10 +101,9 @@ export function PortalShell({
   topbarActions,
   navLabel,
   navItems,
-  sidebarTitle,
-  sidebarMeta,
-  sidebarSubtitle,
-  sidebarBody,
+  contextBar,
+  resourceRail,
+  resourceRailLabel,
   detailLabel,
   error,
   children,
@@ -114,14 +112,15 @@ export function PortalShell({
     <main className="app-shell" data-theme={theme}>
       <header className="topbar">
         <Brand title={title} icon={icon} />
+        {contextBar && <div className="topbar-context">{contextBar}</div>}
         <div className="topbar-actions">{topbarActions}</div>
       </header>
 
       {error && <div className="banner error" role="alert">{error}</div>}
 
-      <section className="workspace">
-        <aside className="control-sidebar" aria-label={navLabel}>
-          <nav className="portal-tabs" aria-label={navLabel.replace("navigation", "sections")}>
+      <section className={resourceRail ? "workspace has-resource-rail" : "workspace"}>
+        <aside className="primary-rail" aria-label={navLabel}>
+          <nav className="rail-tabs" aria-label={navLabel.replace("navigation", "sections")}>
             {navItems.map((item) => (
               <TabButton
                 key={item.id}
@@ -133,11 +132,12 @@ export function PortalShell({
               />
             ))}
           </nav>
-          <div className="sidebar-panel">
-            <SectionHeading title={sidebarTitle} subtitle={sidebarSubtitle} meta={sidebarMeta} />
-            {sidebarBody}
-          </div>
         </aside>
+        {resourceRail && (
+          <aside className="resource-rail" aria-label={resourceRailLabel ?? "Resources"}>
+            {resourceRail}
+          </aside>
+        )}
 
         <section className="detail-pane" aria-label={detailLabel}>
           {children}
@@ -162,7 +162,7 @@ export function TabButton({
 }) {
   return (
     <button
-      className={active ? "tab-button active" : "tab-button"}
+      className={active ? "rail-tab-button active" : "rail-tab-button"}
       type="button"
       aria-current={active ? "page" : undefined}
       disabled={disabled}

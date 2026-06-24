@@ -20,13 +20,13 @@ import {
   Community,
   Fact,
   Fragment,
-  RecallHit,
   RotateResponse,
   SSOProvider,
   UserApi,
   UserSession,
 } from "./api";
 import { AuthShell, PortalShell, SecretBox, SectionHeading } from "../ui/components";
+import { SearchPanel } from "./SearchPanel";
 
 const TelemetryDashboard = lazy(() => import("../telemetry/TelemetryDashboard").then((module) => ({ default: module.TelemetryDashboard })));
 const TeamManagementPanel = lazy(() => import("./TeamManagementPanel").then((module) => ({ default: module.TeamManagementPanel })));
@@ -348,26 +348,14 @@ function UserPortal({
       )}
       navLabel="Knowledge navigation"
       navItems={navItems}
-      sidebarTitle={session?.team.name ?? (loading ? "Loading" : "Team")}
-      sidebarSubtitle={session ? shortId(session.team.id) : undefined}
-      sidebarBody={session && (
-        <div className="key-summary">
-          {authMode === "sso" ? (
-            <select
-              aria-label="Active team"
-              value={session.key.id}
-              disabled={switchingTeam || ssoTeamOptions.length <= 1}
-              onChange={(event) => void switchSSOTeam(event.target.value)}
-            >
-              {ssoTeamOptions.map((item) => (
-                <option value={item.key.id} key={item.key.id}>{item.team.name}</option>
-              ))}
-            </select>
-          ) : (
-            <span>{session.key.name}</span>
-          )}
-          <code>{displayKeySuffix(session.key.key_suffix)}</code>
-        </div>
+      contextBar={session && (
+        <UserContextBar
+          session={session}
+          authMode={authMode}
+          switchingTeam={switchingTeam}
+          ssoTeamOptions={ssoTeamOptions}
+          onSwitchTeam={switchSSOTeam}
+        />
       )}
       detailLabel="Knowledge details"
       error={error}
@@ -419,6 +407,44 @@ function UserPortal({
         </Suspense>
       </LazyPanelErrorBoundary>
     </PortalShell>
+  );
+}
+
+function UserContextBar({
+  session,
+  authMode,
+  switchingTeam,
+  ssoTeamOptions,
+  onSwitchTeam,
+}: {
+  session: UserSession;
+  authMode: AuthMode;
+  switchingTeam: boolean;
+  ssoTeamOptions: UserSession["teams"];
+  onSwitchTeam: (profileId: string) => Promise<void>;
+}) {
+  return (
+    <div className="session-context" aria-label="Current workspace">
+      <span className="context-label">Team</span>
+      {authMode === "sso" ? (
+        <select
+          aria-label="Active team"
+          value={session.key.id}
+          disabled={switchingTeam || (ssoTeamOptions?.length ?? 0) <= 1}
+          onChange={(event) => void onSwitchTeam(event.target.value)}
+        >
+          {(ssoTeamOptions ?? []).map((item) => (
+            <option value={item.key.id} key={item.key.id}>{item.team.name}</option>
+          ))}
+        </select>
+      ) : (
+        <strong>{session.team.name}</strong>
+      )}
+      <span className="context-divider" aria-hidden="true" />
+      <span className="context-label">Key</span>
+      <span>{session.key.name}</span>
+      <code>{displayKeySuffix(session.key.key_suffix)}</code>
+    </div>
   );
 }
 
@@ -492,84 +518,6 @@ function UserTelemetryPanel({ api, session }: { api: UserApi; session: UserSessi
         onRefresh={() => void loadTelemetry()}
       />
     </section>
-  );
-}
-
-function SearchPanel({ api }: { api: UserApi }) {
-  const [query, setQuery] = useState("");
-  const [hits, setHits] = useState<RecallHit[]>([]);
-  const [communities, setCommunities] = useState<Community[]>([]);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const trimmed = query.trim();
-    if (!trimmed) {
-      setError("Query is required.");
-      return;
-    }
-    setLoading(true);
-    setError("");
-    try {
-      const [nextHits, nextCommunities] = await Promise.all([
-        api.recall(trimmed, 10),
-        api.listCommunities(20).catch(() => ({ items: [] as Community[] })),
-      ]);
-      setHits(nextHits);
-      setCommunities(nextCommunities.items);
-    } catch (err) {
-      setError(readError(err));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const entities = deriveEntities(hits, communities);
-
-  return (
-    <section className="surface">
-      <SectionHeading title="Recall" meta={hits.length} />
-      <form className="search-form" onSubmit={submit}>
-        <label htmlFor="recall-query">Keyword</label>
-        <input id="recall-query" value={query} onChange={(event) => setQuery(event.target.value)} />
-        <button className="primary-button" type="submit" disabled={loading}>
-          <Search size={16} aria-hidden="true" />
-          Search
-        </button>
-      </form>
-      {error && <div className="banner error" role="alert">{error}</div>}
-      {entities.length > 0 && (
-        <div className="entity-strip" aria-label="Related entities">
-          {entities.map((entity) => <span className="status-pill neutral" key={entity}>{entity}</span>)}
-        </div>
-      )}
-      {loading && <div className="table-placeholder">Loading</div>}
-      {!loading && <RecallResults hits={hits} />}
-    </section>
-  );
-}
-
-function RecallResults({ hits }: { hits: RecallHit[] }) {
-  if (hits.length === 0) {
-    return <div className="table-placeholder">No recall results</div>;
-  }
-  return (
-    <div className="knowledge-list">
-      {hits.map((hit, index) => {
-        const item = hit.fact ?? hit.claim ?? hit.fragment;
-        return (
-          <article className="knowledge-item" key={recallKey(hit, index)}>
-            <div className="knowledge-item-head">
-              <span className="status-pill neutral">{tierLabel(hit)}</span>
-              <small>{scoreLabel(hit.score ?? hit.final_score)}</small>
-            </div>
-            <h3>{itemTitle(item)}</h3>
-            <p>{itemBody(item)}</p>
-          </article>
-        );
-      })}
-    </div>
   );
 }
 
@@ -876,65 +824,6 @@ function useKnowledge<T>(load: () => Promise<T>, deps: unknown[]) {
   }, deps);
 
   return { data, loading, error, reload };
-}
-
-function deriveEntities(hits: RecallHit[], communities: Community[]): string[] {
-  const values = new Set<string>();
-  for (const hit of hits) {
-    const source = hit.fact ?? hit.claim;
-    if (source) {
-      addEntity(values, source.subject);
-      addEntity(values, source.object);
-      addEntity(values, source.predicate);
-    }
-  }
-  for (const community of communities) {
-    for (const entity of community.top_entities ?? []) {
-      addEntity(values, entity);
-    }
-  }
-  return Array.from(values).slice(0, 20);
-}
-
-function addEntity(values: Set<string>, value: string | undefined) {
-  const trimmed = value?.trim();
-  if (trimmed) {
-    values.add(trimmed);
-  }
-}
-
-function itemTitle(item: Fact | Claim | Fragment | undefined): string {
-  if (!item) {
-    return "Result";
-  }
-  if ("content" in item) {
-    return item.source || shortId(item.fragment_id || item.id);
-  }
-  return item.subject;
-}
-
-function itemBody(item: Fact | Claim | Fragment | undefined): string {
-  if (!item) {
-    return "";
-  }
-  if ("content" in item) {
-    return item.content;
-  }
-  return `${item.predicate}: ${item.object}`;
-}
-
-function tierLabel(hit: RecallHit): string {
-  if (hit.fact) {
-    return "Fact";
-  }
-  if (hit.claim) {
-    return "Claim";
-  }
-  return "Fragment";
-}
-
-function recallKey(hit: RecallHit, index: number): string {
-  return hit.fact?.fact_id ?? hit.claim?.claim_id ?? hit.fragment?.fragment_id ?? String(index);
 }
 
 function scoreLabel(value: number | undefined): string {

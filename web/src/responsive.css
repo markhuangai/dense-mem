@@ -6,7 +6,21 @@
   }
 
   .workspace {
-    grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+
+  .workspace.has-resource-rail {
+    grid-template-columns: 64px minmax(230px, 280px) minmax(0, 1fr);
+  }
+
+  .knowledge-explorer {
+    grid-template-columns: minmax(190px, 230px) minmax(0, 1fr);
+  }
+
+  .knowledge-inspector {
+    position: static;
+    grid-column: 1 / -1;
+    max-height: none;
   }
 
   .telemetry-card-grid {
@@ -25,12 +39,39 @@
     grid-template-columns: 1fr;
   }
 
-  .control-sidebar {
-    position: static;
+  .workspace.has-resource-rail {
+    grid-template-columns: 1fr;
   }
 
-  .portal-tabs {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+  .topbar {
+    justify-items: start;
+  }
+
+  .topbar-context,
+  .session-context {
+    width: 100%;
+    max-width: none;
+  }
+
+  .primary-rail,
+  .resource-rail,
+  .knowledge-filter-panel {
+    position: static;
+    max-height: none;
+  }
+
+  .primary-rail {
+    min-height: auto;
+    overflow-x: auto;
+  }
+
+  .rail-tabs {
+    display: flex;
+    min-width: max-content;
+  }
+
+  .rail-tab-button {
+    width: 76px;
   }
 
   .tab-button {
@@ -59,7 +100,8 @@
     grid-template-columns: 1fr 1fr;
   }
 
-  .search-form,
+  .search-form:not(.stacked),
+  .knowledge-explorer,
   .key-detail-grid {
     grid-template-columns: 1fr;
   }
@@ -74,12 +116,15 @@
 
   .auth-panel,
   .surface,
-  .control-sidebar {
+  .resource-rail,
+  .knowledge-filter-panel,
+  .knowledge-results-panel,
+  .knowledge-inspector {
     padding: 14px;
   }
 
   .brand-row h1 {
-    font-size: 19px;
+    font-size: 15px;
   }
 
   .topbar-actions,
@@ -87,7 +132,7 @@
     flex-wrap: wrap;
   }
 
-  .portal-tabs,
+  .rail-tabs,
   .config-tabs,
   .security-summary,
   .metrics-summary,
@@ -98,8 +143,9 @@
     grid-template-columns: 1fr;
   }
 
-  .tab-button {
-    justify-content: flex-start;
+  .rail-tab-button {
+    width: 68px;
+    min-height: 54px;
   }
 
   .config-tabs .tab-button {

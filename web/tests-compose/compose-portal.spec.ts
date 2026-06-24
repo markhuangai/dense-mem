@@ -72,6 +72,7 @@ test("control panel logs in against compose and creates a team", async ({ page }
   await expect(page.getByRole("button", { name: new RegExp(escapeRegExp(seedTeamName)) })).toBeVisible();
 
   const teamName = uniqueName("Compose Team", testInfo);
+  await page.getByRole("button", { name: "New Team" }).click();
   await page.getByLabel("Name").first().fill(teamName);
   await page.getByLabel("Description").first().fill("created by compose e2e");
   await page.getByRole("button", { name: /^Create$/ }).click();
@@ -562,7 +563,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 async function expectNoShellOverlap(page: Page) {
-  const boxes = await page.locator(".topbar, .control-sidebar, .detail-pane").evaluateAll((elements) => (
+  const boxes = await page.locator(".topbar, .primary-rail, .resource-rail, .detail-pane").evaluateAll((elements) => (
     elements.map((element) => {
       const rect = element.getBoundingClientRect();
       return {

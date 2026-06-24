@@ -304,6 +304,7 @@ test("team creation flow", async ({ page }) => {
   await mockApi(page, { teams: [team], keys: [] });
   await openPortal(page);
 
+  await page.getByRole("button", { name: "New Team" }).click();
   await page.getByLabel("Name").first().fill("Work Team");
   await page.getByLabel("Description").first().fill("for work");
   await page.getByRole("button", { name: /^Create$/ }).click();
@@ -378,6 +379,7 @@ test("metrics tab renders operational totals and filter queries", async ({ page 
   await openPortal(page);
 
   await page.getByRole("button", { name: /^Metrics$/ }).click();
+  await expect(page.locator(".resource-rail")).toHaveCount(0);
 
   const telemetryTotals = page.getByLabel("Telemetry totals");
   for (const card of telemetry.windowed_cards) {
@@ -422,6 +424,7 @@ test("logs tab renders structured details and raw output", async ({ page }) => {
   await openPortal(page);
 
   await page.getByRole("button", { name: /^Logs$/ }).click();
+  await expect(page.locator(".resource-rail")).toHaveCount(0);
 
   await expect(page.getByText("GET /control/api/logs status 200")).toBeVisible();
   await expect(page.getByText("event=control_http_request")).toBeVisible();
@@ -464,6 +467,7 @@ test("dream outputs keep rationale behind info tooltip", async ({ page }) => {
   await openPortal(page);
 
   await page.getByRole("button", { name: /^Dreams$/ }).click();
+  await expect(page.locator(".resource-rail")).toBeVisible();
 
   await expect(page.getByLabel("Dreaming status")).toContainText("Global force");
   await expect(page.getByText("A may affect B.")).toBeVisible();
@@ -510,7 +514,7 @@ test("team delete flow", async ({ page }) => {
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: /^Delete$/ }).click();
 
-  await expect(page.getByLabel("Team details").getByText("No teams")).toBeVisible();
+  await expect(page.getByLabel("Control details").getByText("No teams")).toBeVisible();
 });
 
 test("auth token failure", async ({ page }) => {
@@ -533,7 +537,8 @@ test("responsive portal layout", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Teams" })).toBeVisible();
   const shellMinHeight = await page.locator(".app-shell").evaluate((element) => Number.parseFloat(getComputedStyle(element).minHeight));
   expect(shellMinHeight).toBeGreaterThanOrEqual((page.viewportSize()?.height ?? 0) - 1);
-  await expect(page.locator(".control-sidebar")).toHaveCSS("border-radius", "8px");
+  await expect(page.locator(".primary-rail")).toHaveCSS("border-radius", "8px");
+  await expect(page.locator(".resource-rail")).toHaveCSS("border-radius", "8px");
   await expect(page.locator(".surface").first()).toHaveCSS("border-radius", "8px");
   await page.getByRole("button", { name: /Profiles & API Keys/ }).click();
   await expect(page.getByRole("heading", { name: "Profiles" })).toBeVisible();
@@ -567,7 +572,7 @@ async function expectNoShellOverlap(page: Page) {
     expect(tableWrap.scrollWidth, `${tableWrap.className} overflowed horizontally`).toBeLessThanOrEqual(tableWrap.clientWidth + 1);
   }
 
-  const boxes = await page.locator(".topbar, .control-sidebar, .detail-pane").evaluateAll((elements) => (
+  const boxes = await page.locator(".topbar, .primary-rail, .resource-rail, .detail-pane").evaluateAll((elements) => (
     elements.map((element) => {
       const rect = element.getBoundingClientRect();
       return {

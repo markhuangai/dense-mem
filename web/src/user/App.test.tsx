@@ -60,7 +60,7 @@ describe("UserPortalApp", () => {
     await userEvent.type(screen.getByLabelText(/api key/i), "dm_key");
     await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
 
-    expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    await expectCurrentWorkspace("Research Team");
     expect(await screen.findByText("Mine")).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/profiles"))).toBe(false);
   });
@@ -292,7 +292,7 @@ describe("UserPortalApp", () => {
 
     render(<UserPortalApp />);
 
-    expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    await expectCurrentWorkspace("Research Team");
     expect(screen.getByRole("button", { name: /my key/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^team$/i })).not.toBeInTheDocument();
     const teamSelect = await screen.findByLabelText("Active team");
@@ -300,7 +300,7 @@ describe("UserPortalApp", () => {
 
     await userEvent.selectOptions(teamSelect, secondKey.id);
 
-    expect(await screen.findByRole("heading", { name: "Analytics Team" })).toBeInTheDocument();
+    await expectCurrentWorkspace("Analytics Team");
     expect(screen.queryByRole("button", { name: /my key/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^team$/i })).toBeInTheDocument();
     await waitFor(() => {
@@ -339,13 +339,13 @@ describe("UserPortalApp", () => {
 
     render(<UserPortalApp />);
 
-    expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    await expectCurrentWorkspace("Research Team");
     await userEvent.click(screen.getByRole("button", { name: /usage/i }));
     expect(await screen.findByLabelText("My key usage totals")).toHaveTextContent("4");
 
     await userEvent.selectOptions(screen.getByLabelText("Active team"), nextKey.id);
 
-    expect(await screen.findByRole("heading", { name: "Analytics Team" })).toBeInTheDocument();
+    await expectCurrentWorkspace("Analytics Team");
     await waitFor(() => {
       expect(screen.getByLabelText("Team usage totals")).toHaveTextContent("9");
     });
@@ -362,11 +362,11 @@ describe("UserPortalApp", () => {
 
     render(<UserPortalApp />);
 
-    expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    await expectCurrentWorkspace("Research Team");
     await userEvent.click(screen.getByRole("button", { name: /sign out/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("logout failed");
-    expect(screen.getByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Current workspace")).toHaveTextContent("Research Team");
     expect(screen.queryByLabelText(/api key/i)).not.toBeInTheDocument();
   });
 
@@ -384,7 +384,7 @@ describe("UserPortalApp", () => {
 
     render(<UserPortalApp />);
 
-    expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    await expectCurrentWorkspace("Research Team");
     await userEvent.click(screen.getByRole("button", { name: /my key/i }));
     await userEvent.click(screen.getByRole("button", { name: /create api key/i }));
 
@@ -416,7 +416,7 @@ describe("UserPortalApp", () => {
 
     render(<UserPortalApp />);
 
-    expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    await expectCurrentWorkspace("Research Team");
     await userEvent.click(screen.getByRole("button", { name: /my key/i }));
     await userEvent.click(screen.getByRole("button", { name: /create api key/i }));
 
@@ -424,6 +424,11 @@ describe("UserPortalApp", () => {
     expect(screen.getByRole("button", { name: /regenerate key/i })).toBeDisabled();
   });
 });
+
+async function expectCurrentWorkspace(teamName: string) {
+  const workspace = await screen.findByLabelText("Current workspace");
+  expect(workspace).toHaveTextContent(teamName);
+}
 
 function mockUserFetch(session: UserSession, profiles: UserKey[] = []) {
   let currentTeam = session.team;

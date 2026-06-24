@@ -10,6 +10,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Search,
   Settings,
   ShieldCheck,
   Sun,
@@ -135,6 +136,7 @@ function Portal({
   const [teams, setTeams] = useState<Team[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState("");
   const [activeTab, setActiveTab] = useState<PortalTab>("teams");
+  const [creatingTeam, setCreatingTeam] = useState(false);
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [error, setError] = useState("");
 
@@ -162,6 +164,7 @@ function Portal({
   }, []);
 
   const selectedTeam = teams.find((team) => team.id === selectedTeamId) ?? null;
+  const teamScopedTab = activeTab === "teams" || activeTab === "profiles" || activeTab === "dreams";
 
   return (
     <PortalShell
@@ -256,26 +259,47 @@ function Portal({
           onClick: () => setActiveTab("config"),
         },
       ]}
-      sidebarTitle="Teams"
-      sidebarMeta={teams.length}
-      sidebarBody={(
-        <TeamSelectList
+      resourceRailLabel="Teams"
+      resourceRail={teamScopedTab ? (
+        <TeamResourceRail
           teams={teams}
           selectedTeamId={selectedTeamId}
           loading={loadState === "loading"}
-          onSelect={setSelectedTeamId}
+          onCreate={() => {
+            setActiveTab("teams");
+            setCreatingTeam(true);
+            window.requestAnimationFrame(() => document.getElementById("new-team-name")?.focus());
+          }}
+          onSelect={(teamId) => {
+            setSelectedTeamId(teamId);
+          }}
         />
-      )}
-      detailLabel="Team details"
+      ) : undefined}
+      detailLabel="Control details"
       error={error}
     >
       <Suspense fallback={<LazyPanelFallback />}>
         {activeTab === "teams" && (
           <>
-            <section className="surface">
-              <SectionHeading title="Create team" />
-              <TeamCreateForm api={api} onCreated={(team) => void loadTeams(team.id)} />
-            </section>
+            {creatingTeam && (
+              <section className="surface">
+                <SectionHeading
+                  title="Create team"
+                  actions={(
+                    <button className="text-button" type="button" onClick={() => setCreatingTeam(false)}>
+                      Cancel
+                    </button>
+                  )}
+                />
+                <TeamCreateForm
+                  api={api}
+                  onCreated={(team) => {
+                    setCreatingTeam(false);
+                    void loadTeams(team.id);
+                  }}
+                />
+              </section>
+            )}
             {selectedTeam ? (
               <TeamEditor
                 api={api}
@@ -356,38 +380,84 @@ function TeamCreateForm({ api, onCreated }: { api: ControlApi; onCreated: (team:
   );
 }
 
-function TeamSelectList({
+function TeamResourceRail({
   teams,
   selectedTeamId,
   loading,
+  onCreate,
   onSelect,
 }: {
   teams: Team[];
   selectedTeamId: string;
   loading: boolean;
+  onCreate: () => void;
   onSelect: (teamId: string) => void;
 }) {
-  if (loading && teams.length === 0) {
-    return <div className="table-placeholder compact">Loading</div>;
-  }
+  const [query, setQuery] = useState("");
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const visibleTeams = normalizedQuery
+    ? teams.filter((team) => (
+      team.name.toLocaleLowerCase().includes(normalizedQuery)
+        || team.id.toLocaleLowerCase().includes(normalizedQuery)
+    ))
+    : teams;
 
-  if (teams.length === 0) {
-    return <div className="table-placeholder compact">No teams</div>;
-  }
+  const listContent = (() => {
+    if (loading && teams.length === 0) {
+      return <div className="table-placeholder compact">Loading</div>;
+    }
+
+    if (teams.length === 0) {
+      return <div className="table-placeholder compact">No teams</div>;
+    }
+
+    if (visibleTeams.length === 0) {
+      return <div className="table-placeholder compact">No matching teams</div>;
+    }
+
+    return (
+      <div className="team-list">
+        {visibleTeams.map((team) => (
+          <button
+            key={team.id}
+            className={team.id === selectedTeamId ? "team-list-item selected" : "team-list-item"}
+            type="button"
+            onClick={() => onSelect(team.id)}
+          >
+            <span className="team-list-primary">
+              <span className="status-dot" aria-hidden="true" />
+              <span>{team.name}</span>
+            </span>
+            <small>{formatDate(team.updated_at)}</small>
+          </button>
+        ))}
+      </div>
+    );
+  })();
 
   return (
-    <div className="team-list">
-      {teams.map((team) => (
-        <button
-          key={team.id}
-          className={team.id === selectedTeamId ? "team-list-item selected" : "team-list-item"}
-          type="button"
-          onClick={() => onSelect(team.id)}
-        >
-          <span>{team.name}</span>
-          <small>{formatDate(team.updated_at)}</small>
-        </button>
-      ))}
+    <div className="resource-panel team-resource-panel">
+      <SectionHeading
+        title="Teams"
+        meta={teams.length}
+        actions={(
+          <button className="primary-button compact" type="button" onClick={onCreate}>
+            <Plus size={16} aria-hidden="true" />
+            New Team
+          </button>
+        )}
+      />
+      <label className="resource-search">
+        <Search size={16} aria-hidden="true" />
+        <span className="sr-only">Search teams</span>
+        <input
+          aria-label="Search teams"
+          placeholder="Search teams..."
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+      </label>
+      {listContent}
     </div>
   );
 }
@@ -448,8 +518,20 @@ function TeamEditor({
   }
 
   return (
-    <section className="surface">
-      <SectionHeading title={team.name} meta={shortId(team.id)} />
+    <section className="surface team-detail-surface">
+      <div className="team-detail-header">
+        <span className="team-mark" aria-hidden="true">
+          <Users size={24} />
+        </span>
+        <div>
+          <div className="team-title-row">
+            <h2>{team.name}</h2>
+            <span className="status-pill neutral">Active</span>
+          </div>
+          <p>Created {formatDate(team.created_at)} | Team ID {shortId(team.id)}</p>
+        </div>
+      </div>
+      <SectionHeading title="Team settings" />
       <form className="edit-grid" onSubmit={save}>
         <label htmlFor="team-name">Name</label>
         <input id="team-name" value={name} onChange={(event) => setName(event.target.value)} />

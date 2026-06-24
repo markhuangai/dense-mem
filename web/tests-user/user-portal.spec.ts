@@ -196,6 +196,8 @@ test("API key login, recall, and read-only knowledge tabs", async ({ page }) => 
   await expect(page.getByRole("heading", { name: "Alice" }).first()).toBeVisible();
   await expect(page.getByText("project-x").first()).toBeVisible();
   await expect(page.getByText("Dense-Mem").first()).toBeVisible();
+  await expect(page.getByLabel("Knowledge filters")).toBeVisible();
+  await expect(page.getByLabel("Inspector")).toContainText("Fact");
 
   await expect(page.getByRole("button", { name: "Usage" })).toHaveCount(0);
 
@@ -290,8 +292,9 @@ test("responsive user portal layout", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Recall" })).toBeVisible();
   const shellMinHeight = await page.locator(".app-shell").evaluate((element) => Number.parseFloat(getComputedStyle(element).minHeight));
   expect(shellMinHeight).toBeGreaterThanOrEqual((page.viewportSize()?.height ?? 0) - 1);
-  await expect(page.locator(".control-sidebar")).toHaveCSS("border-radius", "8px");
-  await expect(page.locator(".surface").first()).toHaveCSS("border-radius", "8px");
+  await expect(page.locator(".primary-rail")).toHaveCSS("border-radius", "8px");
+  await expect(page.locator(".resource-rail")).toHaveCount(0);
+  await expect(page.locator(".knowledge-results-panel")).toHaveCSS("border-radius", "8px");
   await expectNoShellOverlap(page);
 
   if ((page.viewportSize()?.width ?? 1000) < 700) {
@@ -355,7 +358,7 @@ async function expectNoShellOverlap(page: Page) {
     expect(tableWrap.scrollWidth, `${tableWrap.className} overflowed horizontally`).toBeLessThanOrEqual(tableWrap.clientWidth + 1);
   }
 
-  const boxes = await page.locator(".topbar, .control-sidebar, .detail-pane").evaluateAll((elements) => (
+  const boxes = await page.locator(".topbar, .primary-rail, .resource-rail, .detail-pane").evaluateAll((elements) => (
     elements.map((element) => {
       const rect = element.getBoundingClientRect();
       return {

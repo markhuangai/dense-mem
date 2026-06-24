@@ -299,7 +299,8 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.type(screen.getByLabelText("Name", { selector: "#new-team-name" }), "ab");
+    await userEvent.click(screen.getByRole("button", { name: "New Team" }));
+    await userEvent.type(screen.getByLabelText("Name", { selector: "input#new-team-name" }), "ab");
     await userEvent.click(screen.getByRole("button", { name: /^create$/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Name must be at least 3 characters.");
@@ -317,8 +318,9 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.type(screen.getByLabelText("Name", { selector: "#new-team-name" }), "Work Team");
-    await userEvent.type(screen.getByLabelText("Description", { selector: "#new-team-description" }), "for work");
+    await userEvent.click(screen.getByRole("button", { name: "New Team" }));
+    await userEvent.type(screen.getByLabelText("Name", { selector: "input#new-team-name" }), "Work Team");
+    await userEvent.type(screen.getByLabelText("Description", { selector: "input#new-team-description" }), "for work");
     await userEvent.click(screen.getByRole("button", { name: /^create$/i }));
 
     expect(await screen.findByRole("heading", { name: "Work Team" })).toBeInTheDocument();
