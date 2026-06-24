@@ -1,15 +1,11 @@
 import { CSSProperties, FormEvent, useMemo, useState } from "react";
 import {
-  Bookmark,
   ChevronDown,
   ExternalLink,
   FileText,
   GitBranch,
-  MoreVertical,
-  Plus,
   Search,
   ShieldCheck,
-  Star,
   X,
 } from "lucide-react";
 import { LoadingState, SectionHeading } from "../ui/components";
@@ -330,14 +326,6 @@ function RecallResults({
                 <span className="status-pill neutral">{recallResultKindLabel(result.kind)}</span>
                 <span className={statusPillClass(status)}>{recallResultStatusLabel(status)}</span>
               </div>
-              <div className="result-actions">
-                <button className="icon-button bare" type="button" aria-label={`Star ${itemTitle(item)}`}>
-                  <Star size={15} aria-hidden="true" />
-                </button>
-                <button className="icon-button bare" type="button" aria-label={`More actions ${itemTitle(item)}`}>
-                  <MoreVertical size={15} aria-hidden="true" />
-                </button>
-              </div>
             </div>
             <h3>{itemTitle(item)}</h3>
             <p>{itemBody(item)}</p>
@@ -467,16 +455,6 @@ function KnowledgeInspector({
           <dd>{recallResultKindLabel(result.kind)}</dd>
         </div>
       </dl>
-      <div className="inspector-actions">
-        <button className="ghost-button compact" type="button">
-          <Bookmark size={15} aria-hidden="true" />
-          Add to collection
-        </button>
-        <button className="ghost-button compact" type="button">
-          <Plus size={15} aria-hidden="true" />
-          Create claim
-        </button>
-      </div>
     </article>
   );
 }

@@ -167,6 +167,10 @@ describe("UserPortalApp", () => {
 
     const resultList = await screen.findByRole("listbox", { name: "Recall result list" });
     expect(within(resultList).getAllByRole("option")).toHaveLength(3);
+    expect(screen.queryByRole("button", { name: /star/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /more actions/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add to collection" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create claim" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Inspector")).toHaveTextContent("Fact");
 
     const claimResult = within(resultList).getByText("uses: Dense-Mem").closest("[role='option']");
