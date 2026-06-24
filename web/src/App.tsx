@@ -192,6 +192,7 @@ function Portal({
         </>
       )}
       navLabel="Control navigation"
+      navItemsLabel="Control sections"
       navItems={[
         {
           id: "teams",

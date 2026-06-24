@@ -28,6 +28,7 @@ type PortalShellProps = BrandProps & {
   theme: ThemeName;
   topbarActions: ReactNode;
   navLabel: string;
+  navItemsLabel: string;
   navItems: PortalNavItem[];
   contextBar?: ReactNode;
   resourceRail?: ReactNode;
@@ -100,6 +101,7 @@ export function PortalShell({
   icon,
   topbarActions,
   navLabel,
+  navItemsLabel,
   navItems,
   contextBar,
   resourceRail,
@@ -120,7 +122,7 @@ export function PortalShell({
 
       <section className={resourceRail ? "workspace has-resource-rail" : "workspace"}>
         <aside className="primary-rail" aria-label={navLabel}>
-          <nav className="rail-tabs" aria-label={navLabel.replace("navigation", "sections")}>
+          <nav className="rail-tabs" aria-label={navItemsLabel}>
             {navItems.map((item) => (
               <TabButton
                 key={item.id}

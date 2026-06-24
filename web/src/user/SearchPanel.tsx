@@ -48,18 +48,22 @@ export function SearchPanel({ api }: { api: UserApi }) {
     }
   }
 
-  const entities = deriveEntities(hits, communities);
+  const entities = useMemo(() => deriveEntities(hits, communities), [hits, communities]);
   const indexedHits = useMemo(() => hits.map((hit, index) => ({
     hit,
     key: recallKey(hit, index),
     kind: recallResultKind(hit),
   })), [hits]);
-  const filteredHits = indexedHits.filter((item) => enabledTypes[item.kind]);
-  const selectedResult = filteredHits.find((item) => item.key === selectedKey) ?? filteredHits[0] ?? null;
-  const typeCounts = indexedHits.reduce<Record<RecallResultKind, number>>((counts, item) => ({
+  const filteredHits = useMemo(() => (
+    indexedHits.filter((item) => enabledTypes[item.kind])
+  ), [indexedHits, enabledTypes]);
+  const selectedResult = useMemo(() => (
+    filteredHits.find((item) => item.key === selectedKey) ?? filteredHits[0] ?? null
+  ), [filteredHits, selectedKey]);
+  const typeCounts = useMemo(() => indexedHits.reduce<Record<RecallResultKind, number>>((counts, item) => ({
     ...counts,
     [item.kind]: counts[item.kind] + 1,
-  }), { fact: 0, claim: 0, fragment: 0 });
+  }), { fact: 0, claim: 0, fragment: 0 }), [indexedHits]);
 
   function toggleType(kind: RecallResultKind) {
     setEnabledTypes((current) => ({
@@ -259,13 +263,11 @@ function itemBody(item: Fact | Claim | Fragment | undefined): string {
 }
 
 function tierLabel(hit: RecallHit): string {
-  if (hit.fact) {
-    return "Fact";
+  const tier = hit.tier?.trim();
+  if (tier) {
+    return `Tier ${tier}`;
   }
-  if (hit.claim) {
-    return "Claim";
-  }
-  return "Fragment";
+  return recallResultKindLabel(recallResultKind(hit));
 }
 
 function recallResultKind(hit: RecallHit): RecallResultKind {
