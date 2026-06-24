@@ -536,7 +536,8 @@ button:disabled {
 
 .table-wrap {
   width: 100%;
-  overflow-x: auto;
+  max-width: 100%;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel);
@@ -549,6 +550,7 @@ button:disabled {
 
 .data-table {
   width: 100%;
+  min-width: 0;
   border-collapse: collapse;
   table-layout: fixed;
 }
@@ -561,7 +563,9 @@ button:disabled {
   vertical-align: middle;
   font-size: 14px;
   line-height: 1.3;
+  min-width: 0;
   overflow-wrap: anywhere;
+  word-break: normal;
 }
 
 .data-table tbody tr:last-child td {
@@ -589,10 +593,6 @@ button:disabled {
   text-align: right;
 }
 
-.key-table {
-  min-width: 860px;
-}
-
 .key-table th:nth-child(1),
 .key-table td:nth-child(1) {
   width: 240px;
@@ -612,10 +612,6 @@ button:disabled {
   width: 108px;
 }
 
-.security-table {
-  min-width: 860px;
-}
-
 .security-table th:nth-child(1),
 .security-table td:nth-child(1) {
   width: 150px;
@@ -628,22 +624,14 @@ button:disabled {
   width: 124px;
 }
 
-.metrics-table {
-  min-width: 780px;
-}
-
 .metrics-table th:not(:first-child),
 .metrics-table td:not(:first-child) {
-  width: 116px;
-}
-
-.route-metrics-table {
-  min-width: 840px;
+  width: clamp(78px, 13%, 116px);
 }
 
 .route-metrics-table th:first-child,
 .route-metrics-table td:first-child {
-  width: 430px;
+  width: 38%;
 }
 
 .profile-name-cell,

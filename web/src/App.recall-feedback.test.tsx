@@ -100,6 +100,23 @@ const recallFeedbackEvents: RecallFeedbackEvent[] = [
       },
     ],
   },
+  {
+    recall_id: "rec_pending",
+    created_at: "2026-06-23T10:02:00Z",
+    updated_at: "2026-06-23T10:02:00Z",
+    feedback_at: null,
+    team_id: team.id,
+    profile_id: profile.id,
+    key_id: profile.id,
+    auth_method: "api_key",
+    tool_name: "recall_memory",
+    query: "Pending recall waiting",
+    tool_args: {},
+    result_refs: [],
+    result_count: 0,
+    snapshot_state: "captured",
+    quality: "",
+  },
 ];
 
 beforeEach(() => {
@@ -116,7 +133,17 @@ it("shows recall feedback query, params, result ids, and resolved state", async 
   await userEvent.click(screen.getByRole("button", { name: /^recall feedback$/i }));
 
   expect(await screen.findByText("Why was recall bad?")).toBeInTheDocument();
+  expect(screen.queryByText("Pending recall waiting")).not.toBeInTheDocument();
   expect(screen.getByText("missing context")).toBeInTheDocument();
+
+  await userEvent.click(screen.getByLabelText("Include pending"));
+  expect(await screen.findByText("Pending recall waiting")).toBeInTheDocument();
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("include_pending=true"),
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
 
   await userEvent.click(screen.getByRole("button", { name: /view recall feedback rec_1234567890/i }));
   expect(await screen.findByText("fragment-1")).toBeInTheDocument();
@@ -197,7 +224,13 @@ function mockPortalFetch() {
       const limit = Number(parsedUrl.searchParams.get("limit") ?? "100");
       const offset = Number(parsedUrl.searchParams.get("offset") ?? "0");
       const quality = parsedUrl.searchParams.get("quality") ?? "";
-      const filtered = quality ? recallFeedbackEvents.filter((event) => event.quality === quality) : recallFeedbackEvents;
+      const includePending = parsedUrl.searchParams.get("include_pending") === "true";
+      const filtered = recallFeedbackEvents.filter((event) => {
+        if (quality) {
+          return event.quality === quality;
+        }
+        return includePending || event.quality;
+      });
       return jsonResponse({
         data: filtered.slice(offset, offset + limit),
         pagination: { limit, offset, total: filtered.length },

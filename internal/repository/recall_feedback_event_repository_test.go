@@ -8,6 +8,8 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 func TestScanRecallFeedbackEventRejectsMalformedToolArgsJSON(t *testing.T) {
@@ -20,6 +22,21 @@ func TestScanRecallFeedbackEventRejectsMalformedResultRefsJSON(t *testing.T) {
 	rows := recallFeedbackEventRows(t, []byte("{}"), []byte("{bad-json"))
 	_, err := scanRecallFeedbackEvent(rows)
 	require.ErrorContains(t, err, "invalid recall_feedback_events.result_refs JSON")
+}
+
+func TestRecallFeedbackEventWhereExcludesPendingByDefault(t *testing.T) {
+	where, args := recallFeedbackEventWhere(domain.RecallFeedbackEventFilter{})
+	require.Contains(t, where, "quality <> ''")
+	require.Empty(t, args)
+
+	where, args = recallFeedbackEventWhere(domain.RecallFeedbackEventFilter{IncludePending: true})
+	require.NotContains(t, where, "quality <> ''")
+	require.Empty(t, args)
+
+	where, args = recallFeedbackEventWhere(domain.RecallFeedbackEventFilter{Quality: "low"})
+	require.Contains(t, where, "quality = ?")
+	require.NotContains(t, where, "quality <> ''")
+	require.Equal(t, []any{"low"}, args)
 }
 
 func recallFeedbackEventRows(t *testing.T, toolArgs []byte, resultRefs []byte) *sql.Rows {

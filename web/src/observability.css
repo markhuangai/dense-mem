@@ -21,7 +21,7 @@
 }
 
 .logs-table {
-  min-width: 1080px;
+  min-width: 0;
 }
 
 .logs-table th:nth-child(1),
@@ -58,7 +58,7 @@
 }
 
 .dreams-table {
-  min-width: 900px;
+  min-width: 0;
 }
 
 .dreams-table th:nth-child(4),
@@ -73,7 +73,7 @@
 }
 
 .dream-runs-table {
-  min-width: 760px;
+  min-width: 0;
 }
 
 .config-tabs {
