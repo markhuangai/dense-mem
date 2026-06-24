@@ -80,12 +80,12 @@
 
   .primary-rail {
     min-height: auto;
-    overflow-x: auto;
   }
 
   .rail-tabs {
     display: flex;
-    min-width: max-content;
+    flex-wrap: wrap;
+    min-width: 0;
   }
 
   .rail-tab-button {
@@ -151,7 +151,6 @@
   }
 
   .rail-tabs,
-  .config-tabs,
   .security-summary,
   .metrics-summary,
   .dreaming-effective-grid,
@@ -167,8 +166,9 @@
   }
 
   .config-tabs .tab-button {
-    flex: 1 1 100%;
-    width: 100%;
+    flex: 1 1 calc(33.333% - 6px);
+    min-width: 88px;
+    width: auto;
   }
 
   .table-actions {
@@ -196,7 +196,9 @@
   .dreams-table,
   .dream-runs-table,
   .logs-table {
+    max-width: 100%;
     min-width: 0;
+    overflow: hidden;
   }
 
   .key-table thead,
@@ -223,7 +225,10 @@
   .logs-table tr,
   .logs-table td {
     display: block;
+    max-width: 100%;
+    min-width: 0;
     width: 100%;
+    overflow: hidden;
   }
 
   .key-table tr,
@@ -239,6 +244,8 @@
   .dream-runs-table td,
   .logs-table td {
     border-bottom: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   .key-table .actions-cell,

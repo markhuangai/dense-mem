@@ -35,7 +35,7 @@
   display: grid;
   gap: 12px;
   max-height: calc(100vh - 48px);
-  overflow: auto;
+  overflow: hidden auto;
   padding: 14px;
   background: var(--panel);
   border: 1px solid var(--border);
@@ -52,6 +52,7 @@
 .detail-pane {
   min-width: 0;
   display: grid;
+  align-content: start;
   gap: 18px;
 }
 
@@ -637,10 +638,10 @@
 
 .top-nav-tabs {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   min-width: 0;
-  overflow-x: auto;
 }
 
 .top-nav-tabs .rail-tab-button {
@@ -710,6 +711,7 @@
 
 .team-workspace {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 0;
   padding: 0;
   overflow: hidden;
@@ -717,33 +719,61 @@
 
 .team-workspace-header {
   display: grid;
-  gap: 14px;
-  padding: 18px 20px 0;
+  align-content: start;
+  gap: 10px;
+  padding: 12px 16px 0;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
 
 .team-detail-header.compact {
+  gap: 10px;
+  min-height: 42px;
   padding-bottom: 0;
   border-bottom: 0;
 }
 
+.team-detail-header.compact > div { min-width: 0; }
+
+.team-detail-header.compact .team-mark {
+  width: 42px;
+  height: 42px;
+}
+
+.team-detail-header.compact .team-title-row {
+  flex-wrap: nowrap;
+}
+
+.team-detail-header.compact .team-title-row h2 {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 19px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-detail-header.compact p { margin-top: 3px; }
+
 .team-workspace-tabs {
   display: flex;
-  gap: 28px;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 22px;
+  min-height: 34px;
   min-width: 0;
-  overflow-x: auto;
 }
 
 .team-workspace-tab {
   position: relative;
-  min-height: 42px;
+  flex: 0 0 auto;
+  min-height: 34px;
   padding: 0;
   color: var(--muted);
   background: transparent;
   border: 0;
   font-size: 13px;
   font-weight: 720;
+  line-height: 1;
   cursor: pointer;
 }
 
@@ -765,12 +795,31 @@
   background: var(--accent);
 }
 
+.team-workspace-body {
+  min-height: 0;
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 14px;
+  overflow: hidden auto;
+  padding: 14px 16px;
+}
+
 .team-overview,
 .team-detail-surface,
 .team-embedded-panel {
+  min-width: 0;
   display: grid;
   gap: 14px;
-  padding: 18px 20px;
+  padding: 0;
+}
+
+.team-workspace-body > .overview-panel {
+  min-width: 0;
+}
+
+.team-workspace-body .table-wrap {
+  min-width: 0;
 }
 
 .summary-strip {

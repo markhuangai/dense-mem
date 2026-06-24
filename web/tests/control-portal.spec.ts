@@ -479,6 +479,23 @@ test("dream outputs keep rationale behind info tooltip", async ({ page }) => {
   await expect(rationale).toBeVisible();
 });
 
+test("team workspace header stays compact across team tabs", async ({ page }) => {
+  await mockApi(page, { teams: [team], keys: [key] });
+  await openPortal(page);
+
+  const heights: number[] = [];
+  const workspaceTabs = page.locator(".team-workspace-tabs");
+  for (const tab of ["Overview", "Profiles", "Dreams", "Settings"]) {
+    await workspaceTabs.getByRole("button", { name: `Team ${tab}` }).click();
+    const box = await page.locator(".team-workspace-header").boundingBox();
+    expect(box, `${tab} header was not rendered`).not.toBeNull();
+    heights.push(box?.height ?? 0);
+  }
+
+  expect(Math.max(...heights), `team header heights: ${heights.join(", ")}`).toBeLessThanOrEqual(125);
+  expect(Math.max(...heights) - Math.min(...heights), `team header heights: ${heights.join(", ")}`).toBeLessThanOrEqual(8);
+});
+
 test("config tab uses horizontal subnavigation", async ({ page }) => {
   await mockApi(page, { teams: [team], keys: [key] });
   await openPortal(page);
@@ -487,9 +504,14 @@ test("config tab uses horizontal subnavigation", async ({ page }) => {
 
   const tabs = page.getByRole("tablist", { name: "Config sections" });
   await expect(tabs).toBeVisible();
+  const tabsBox = await tabs.boundingBox();
+  expect(tabsBox, "config tabs were not rendered").not.toBeNull();
+  const maxTabsHeight = (page.viewportSize()?.width ?? 0) <= 620 ? 82 : 42;
+  expect(tabsBox?.height ?? 0).toBeLessThanOrEqual(maxTabsHeight);
   await expect.poll(() => tabs.evaluate((element) => element.closest(".surface") === null)).toBe(true);
   await tabs.getByRole("tab", { name: /^Logs$/ }).click();
   await expect(page.getByRole("heading", { name: "Operation Logs" })).toBeVisible();
+  await expectNoShellOverlap(page);
 });
 
 test("recall feedback retention config saves from control portal", async ({ page }) => {
@@ -569,10 +591,18 @@ async function expectNoShellOverlap(page: Page) {
       clientWidth: element.clientWidth,
       scrollWidth: element.scrollWidth,
     })),
+    navContainers: Array.from(document.querySelectorAll(".workspace, .detail-pane, .primary-rail, .top-nav-tabs, .rail-tabs, .team-workspace-tabs, .config-tabs")).map((element) => ({
+      className: element.className,
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    })),
   }));
   expect(overflow.documentWidth).toBeLessThanOrEqual(overflow.viewportWidth + 1);
   for (const tableWrap of overflow.tableWraps) {
     expect(tableWrap.scrollWidth, `${tableWrap.className} overflowed horizontally`).toBeLessThanOrEqual(tableWrap.clientWidth + 1);
+  }
+  for (const navContainer of overflow.navContainers) {
+    expect(navContainer.scrollWidth, `${navContainer.className} overflowed horizontally`).toBeLessThanOrEqual(navContainer.clientWidth + 1);
   }
 
   const boxes = await page.locator(".topbar, .primary-rail, .resource-rail, .detail-pane").evaluateAll((elements) => (

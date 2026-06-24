@@ -13,7 +13,7 @@ const DREAM_SORTS: Array<{ value: DreamSort; label: string }> = [
 ];
 const DEFAULT_DREAM_QUERY: DreamQuery = { status: "", limit: 25, sort: "updated_at", direction: "desc", cursor: "" };
 
-export function ControlDreamsPanel({ api, team }: { api: ControlApi; team: Team }) {
+export function ControlDreamsPanel({ api, team, embedded = false }: { api: ControlApi; team: Team; embedded?: boolean }) {
   const [status, setStatus] = useState<DreamStatus | null>(null);
   const [runs, setRuns] = useState<DreamRun[]>([]);
   const [dreams, setDreams] = useState<Dream[]>([]);
@@ -68,10 +68,11 @@ export function ControlDreamsPanel({ api, team }: { api: ControlApi; team: Team 
   const dreamSort = dreamQuery.sort ?? "updated_at";
   const dreamDirection = dreamQuery.direction ?? "desc";
   const dreamLimit = dreamQuery.limit ?? DEFAULT_DREAM_QUERY.limit ?? 25;
+  const panelClassName = embedded ? "overview-panel" : "surface";
 
   return (
     <>
-      <section className="surface">
+      <section className={panelClassName}>
         <SectionHeading
           title="Dreaming"
           meta={team.name}
@@ -92,7 +93,7 @@ export function ControlDreamsPanel({ api, team }: { api: ControlApi; team: Team 
         )}
       </section>
 
-      <section className="surface">
+      <section className={panelClassName}>
         <SectionHeading title="Dream Outputs" meta={`Page ${pageNumber}`} />
         <div className="metrics-toolbar dream-list-toolbar">
           <label>
@@ -181,7 +182,7 @@ export function ControlDreamsPanel({ api, team }: { api: ControlApi; team: Team 
         </div>
       </section>
 
-      <section className="surface">
+      <section className={panelClassName}>
         <SectionHeading title="Cycle Runs" meta={runs.length} />
         {runs.length === 0 ? <div className="table-placeholder">No runs</div> : <RunTable runs={runs} />}
       </section>

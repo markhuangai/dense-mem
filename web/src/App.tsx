@@ -43,7 +43,7 @@ const THEME_STORAGE_KEY = "denseMem.controlTheme";
 
 type LoadState = "idle" | "loading" | "error";
 type Theme = "light" | "dark";
-type PortalTab = "teams" | "dreams" | "metrics" | "recall-feedback" | "logs" | "profiles" | "security" | "sso" | "config";
+type PortalTab = "teams" | "metrics" | "recall-feedback" | "logs" | "security" | "sso" | "config";
 type ProfilePermission = "read" | "read_write";
 
 export function App() {
@@ -167,16 +167,12 @@ function Portal({
   }, []);
 
   const selectedTeam = teams.find((team) => team.id === selectedTeamId) ?? null;
-  const teamScopedTab = activeTab === "teams" || activeTab === "profiles" || activeTab === "dreams";
+  const teamScopedTab = activeTab === "teams";
 
   function openTeamWorkspace(nextTab: TeamWorkspaceTab) {
     setCreatingTeam(false);
     setTeamWorkspaceTab(nextTab);
-    if (nextTab === "profiles" || nextTab === "dreams") {
-      setActiveTab(nextTab);
-    } else {
-      setActiveTab("teams");
-    }
+    setActiveTab("teams");
   }
 
   return (
@@ -211,7 +207,7 @@ function Portal({
           id: "teams",
           label: "Teams",
           icon: <Users size={17} aria-hidden="true" />,
-          active: activeTab === "teams",
+          active: activeTab === "teams" && (teamWorkspaceTab === "overview" || teamWorkspaceTab === "settings"),
           onClick: () => openTeamWorkspace("overview"),
         },
         {
@@ -232,7 +228,7 @@ function Portal({
           id: "dreams",
           label: "Dreams",
           icon: <Moon size={17} aria-hidden="true" />,
-          active: activeTab === "dreams",
+          active: activeTab === "teams" && teamWorkspaceTab === "dreams",
           disabled: !selectedTeam,
           onClick: () => openTeamWorkspace("dreams"),
         },
@@ -247,7 +243,7 @@ function Portal({
           id: "profiles",
           label: "Profiles",
           icon: <KeyRound size={17} aria-hidden="true" />,
-          active: activeTab === "profiles",
+          active: activeTab === "teams" && teamWorkspaceTab === "profiles",
           disabled: !selectedTeam,
           onClick: () => openTeamWorkspace("profiles"),
         },
@@ -492,7 +488,11 @@ function TeamWorkspace({
     <TeamWorkspaceShell team={team} activeTab={activeTab} onSelectTab={onSelectTab}>
       {activeTab === "overview" && <TeamOverviewPanel api={api} team={team} onOpenSettings={() => onSelectTab("settings")} />}
       {activeTab === "profiles" && <TeamProfilesPanel api={api} team={team} embedded />}
-      {activeTab === "dreams" && <ControlDreamsPanel api={api} team={team} />}
+      {activeTab === "dreams" && (
+        <Suspense fallback={<div className="team-embedded-panel"><div className="table-placeholder">Loading</div></div>}>
+          <ControlDreamsPanel api={api} team={team} embedded />
+        </Suspense>
+      )}
       {activeTab === "settings" && (
         <TeamEditor
           api={api}

@@ -20,7 +20,9 @@ export function TeamWorkspaceShell({
   return (
     <section className="surface team-workspace">
       <TeamWorkspaceHeader team={team} activeTab={activeTab} onSelectTab={onSelectTab} />
-      {children}
+      <div className="team-workspace-body">
+        {children}
+      </div>
     </section>
   );
 }
