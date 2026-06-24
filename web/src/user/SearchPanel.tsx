@@ -169,19 +169,34 @@ function RecallResults({
     return <div className="table-placeholder">No recall results</div>;
   }
   return (
-    <div className="knowledge-list compact-list">
+    <div className="knowledge-list compact-list" role="listbox" aria-label="Recall result list">
       {items.map((result) => {
         const item = result.hit.fact ?? result.hit.claim ?? result.hit.fragment;
         return (
-          <article className={result.key === selectedKey ? "knowledge-item selected" : "knowledge-item"} key={result.key}>
-            <button className="knowledge-result-button" type="button" onClick={() => onSelect(result.key)}>
-              <div className="knowledge-item-head">
-                <span className="status-pill neutral">{recallResultKindLabel(result.kind)}</span>
-                <small>{tierLabel(result.hit)} | {scoreLabel(result.hit.score ?? result.hit.final_score)}</small>
-              </div>
-              <h3>{itemTitle(item)}</h3>
-              <p>{itemBody(item)}</p>
-            </button>
+          <article
+            aria-selected={result.key === selectedKey}
+            className={
+              result.key === selectedKey
+                ? "knowledge-item knowledge-result-option selected"
+                : "knowledge-item knowledge-result-option"
+            }
+            key={result.key}
+            onClick={() => onSelect(result.key)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onSelect(result.key);
+              }
+            }}
+            role="option"
+            tabIndex={0}
+          >
+            <div className="knowledge-item-head">
+              <span className="status-pill neutral">{recallResultKindLabel(result.kind)}</span>
+              <small>{tierLabel(result.hit)} | {scoreLabel(result.hit.score ?? result.hit.final_score)}</small>
+            </div>
+            <h3>{itemTitle(item)}</h3>
+            <p>{itemBody(item)}</p>
           </article>
         );
       })}

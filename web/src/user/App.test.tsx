@@ -1,8 +1,8 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UserPortalApp } from "./App";
-import { UserKey, UserSession } from "./api";
+import { Community, RecallHit, UserKey, UserSession } from "./api";
 
 const baseSession: UserSession = {
   team: {
@@ -45,6 +45,75 @@ const memberProfile: UserKey = {
   created_at: "2026-05-01T12:00:00Z",
 };
 
+const recallHits: RecallHit[] = [
+  {
+    tier: "canonical",
+    score: 0.94,
+    semantic_rank: 1,
+    keyword_rank: 1,
+    final_score: 0.94,
+    fact: {
+      fact_id: "fact-1",
+      subject: "Alice",
+      predicate: "works_on",
+      object: "project-x",
+      status: "active",
+      truth_score: 0.94,
+      recorded_at: "2026-05-02T12:00:00Z",
+    },
+  },
+  {
+    tier: "claim",
+    score: 0.84,
+    semantic_rank: 2,
+    keyword_rank: 2,
+    final_score: 0.84,
+    claim: {
+      claim_id: "claim-1",
+      subject: "Alice",
+      predicate: "uses",
+      object: "Dense-Mem",
+      modality: "assertion",
+      polarity: "+",
+      status: "validated",
+      entailment_verdict: "entailed",
+      extract_conf: 0.91,
+      resolution_conf: 0.88,
+      recorded_at: "2026-05-02T12:00:00Z",
+    },
+  },
+  {
+    tier: "raw",
+    score: 0.74,
+    semantic_rank: 3,
+    keyword_rank: 3,
+    final_score: 0.74,
+    fragment: {
+      id: "frag-1",
+      fragment_id: "frag-1",
+      content: "Alice is working on project-x with Dense-Mem.",
+      source_type: "manual",
+      source: "notes",
+      labels: ["project"],
+      status: "active",
+      created_at: "2026-05-02T12:00:00Z",
+      updated_at: "2026-05-02T12:00:00Z",
+    },
+  },
+];
+
+const recallCommunities: Community[] = [
+  {
+    community_id: "community-1",
+    level: 0,
+    summary: "Project work around Dense-Mem.",
+    member_count: 3,
+    top_entities: ["Alice", "project-x", "Dense-Mem"],
+    top_predicates: ["works_on", "uses"],
+    last_summarized_at: "2026-05-02T12:00:00Z",
+  },
+];
+
 beforeEach(() => {
   sessionStorage.clear();
   localStorage.clear();
@@ -85,6 +154,34 @@ describe("UserPortalApp", () => {
 
     expect(screen.queryByRole("button", { name: /usage/i })).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/ui/api/telemetry"))).toBe(false);
+  });
+
+  it("filters recall results and updates the inspector selection", async () => {
+    mockUserFetch(baseSession, [], { recallHits, communities: recallCommunities });
+    sessionStorage.setItem("denseMem.userApiKey", "dm_read");
+
+    render(<UserPortalApp />);
+    await screen.findByText("Research Team");
+    await userEvent.type(screen.getByLabelText("Keyword"), "project");
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+
+    const resultList = await screen.findByRole("listbox", { name: "Recall result list" });
+    expect(within(resultList).getAllByRole("option")).toHaveLength(3);
+    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Fact");
+
+    const claimResult = within(resultList).getByText("uses: Dense-Mem").closest("[role='option']");
+    expect(claimResult).not.toBeNull();
+    await userEvent.click(claimResult as HTMLElement);
+    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Claim");
+    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Tier claim");
+
+    await userEvent.click(screen.getByRole("checkbox", { name: /claim/i }));
+    expect(screen.getByRole("listbox", { name: "Recall result list" })).not.toHaveTextContent("uses: Dense-Mem");
+    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Fact");
+
+    await userEvent.click(screen.getByRole("checkbox", { name: /fact/i }));
+    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Fragment");
+    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Alice is working on project-x with Dense-Mem.");
   });
 
   it("labels write-member telemetry as key usage", async () => {
@@ -430,7 +527,7 @@ async function expectCurrentWorkspace(teamName: string) {
   expect(workspace).toHaveTextContent(teamName);
 }
 
-function mockUserFetch(session: UserSession, profiles: UserKey[] = []) {
+function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: { recallHits?: RecallHit[]; communities?: Community[] } = {}) {
   let currentTeam = session.team;
   let currentProfiles = profiles;
   const rotatedSession = {
@@ -501,10 +598,10 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = []) {
       return jsonResponse({ data: { status: "deleted" } });
     }
     if (url.startsWith("/api/v1/communities")) {
-      return jsonResponse({ items: [] });
+      return jsonResponse({ items: options.communities ?? [] });
     }
     if (url.startsWith("/api/v1/recall")) {
-      return jsonResponse({ data: [] });
+      return jsonResponse({ data: options.recallHits ?? [] });
     }
     return jsonResponse({ message: "not found" }, 404);
   });

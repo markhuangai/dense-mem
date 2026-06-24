@@ -405,15 +405,14 @@
   border-color: color-mix(in srgb, var(--accent) 44%, var(--border));
 }
 
-.knowledge-result-button {
-  width: 100%;
-  min-width: 0;
-  display: block;
-  color: inherit;
-  background: transparent;
-  padding: 0;
-  text-align: left;
+.knowledge-result-option {
   cursor: pointer;
+  outline: none;
+}
+
+.knowledge-result-option:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 64%, var(--border));
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .knowledge-item-head {

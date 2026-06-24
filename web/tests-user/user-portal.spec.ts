@@ -198,6 +198,16 @@ test("API key login, recall, and read-only knowledge tabs", async ({ page }) => 
   await expect(page.getByText("Dense-Mem").first()).toBeVisible();
   await expect(page.getByLabel("Knowledge filters")).toBeVisible();
   await expect(page.getByLabel("Inspector")).toContainText("Fact");
+  await expect(page.getByRole("listbox", { name: "Recall result list" }).getByRole("option")).toHaveCount(3);
+  await page.getByRole("option").filter({ hasText: "uses: Dense-Mem" }).click();
+  await expect(page.getByLabel("Inspector")).toContainText("Claim");
+  await expect(page.getByLabel("Inspector")).toContainText("Tier 1.5");
+  await page.getByRole("checkbox", { name: /Claim/ }).click();
+  await expect(page.getByRole("listbox", { name: "Recall result list" })).not.toContainText("uses: Dense-Mem");
+  await expect(page.getByLabel("Inspector")).toContainText("Fact");
+  await page.getByRole("checkbox", { name: /Fact/ }).click();
+  await expect(page.getByLabel("Inspector")).toContainText("Fragment");
+  await expect(page.getByLabel("Inspector")).toContainText("Alice is working on project-x with Dense-Mem.");
 
   await expect(page.getByRole("button", { name: "Usage" })).toHaveCount(0);
 
