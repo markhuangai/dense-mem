@@ -139,8 +139,8 @@ The feedback tool accepts one or more recall judgments:
       "quality": "low",
       "missing_context": true,
       "irrelevant": true,
-      "failure_reason": "Returned stale UI notes instead of the needed button handling pattern.",
-      "expected_context": "The existing SearchPanel disabled-state pattern.",
+      "failure_reason": "stale_or_retracted_results",
+      "expected_context": "Returned stale UI notes instead of the needed button handling pattern. The existing SearchPanel disabled-state pattern.",
       "irrelevant_result_refs": [
         { "type": "fragment", "id": "019...", "rank": 1 }
       ]
@@ -150,8 +150,10 @@ The feedback tool accepts one or more recall judgments:
 ```
 
 `failure_reason` is required when `quality` is `low`, `answer_supported` is
-`false`, `missing_context` is `true`, or `irrelevant` is `true`. Keep
-`failure_reason` and `expected_context` bounded and free of user content.
+`false`, `missing_context` is `true`, or `irrelevant` is `true`. Use one of
+`missing_context`, `irrelevant_results`, `stale_or_retracted_results`,
+`unsupported_answer`, `wrong_scope`, `ambiguous_query`, or `other`. Keep
+`expected_context` bounded and free of user content.
 
 Do not use `recall_id`, `failure_reason`, or `expected_context` as Prometheus
 labels. Prometheus labels stay bounded; the free-text details and judged
