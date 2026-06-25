@@ -245,7 +245,6 @@
   .logs-table td {
     border-bottom: 0;
     overflow-wrap: anywhere;
-    word-break: break-word;
   }
 
   .key-table .actions-cell,

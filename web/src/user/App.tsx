@@ -349,6 +349,7 @@ function UserPortal({
       navLabel="Knowledge navigation"
       navItemsLabel="Knowledge sections"
       navItems={navItems}
+      navPlacement="top"
       contextBar={session && (
         <UserContextBar
           session={session}

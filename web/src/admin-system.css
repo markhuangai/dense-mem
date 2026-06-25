@@ -251,8 +251,6 @@ body {
 .button-row,
 .secret-actions,
 .toolbar-actions,
-.result-actions,
-.inspector-actions,
 .table-actions {
   min-width: 0;
   display: flex;

@@ -130,6 +130,8 @@ describe("UserPortalApp", () => {
     await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
 
     await expectCurrentWorkspace("Research Team");
+    expect(screen.getByLabelText("Knowledge navigation")).toHaveClass("top-nav-bar");
+    expect(screen.getByLabelText("Knowledge sections")).toHaveClass("top-nav-tabs");
     expect(screen.getByLabelText("Current workspace")).not.toHaveTextContent("Mine");
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/profiles"))).toBe(false);
   });

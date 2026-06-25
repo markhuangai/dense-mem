@@ -62,9 +62,7 @@
 }
 
 .toolbar-actions,
-.result-kicker,
-.result-actions,
-.inspector-actions {
+.result-kicker {
   display: flex;
   align-items: center;
   gap: 8px;
