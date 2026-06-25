@@ -89,25 +89,26 @@ This setting is managed from the control portal Config tab. The allowed range is
 ## Online Recall Feedback
 
 Dense-Mem treats recall quality as online feedback from the host LLM. Production
-recall quality is measured from compact host judgments submitted after the
+recall quality is measured from bounded host judgments submitted after the
 answer, not from a separate labeled benchmark workflow.
 
 The intended online flow is:
 
 ```text
 host LLM calls recall_memory
-  -> Dense-Mem returns ranked results and, when enabled, a compact feedback request
+  -> Dense-Mem returns ranked results and, when enabled, a recall_event
   -> host LLM answers the user
-  -> host LLM submits recall feedback for that recall_id
+  -> host LLM submits one session-level recall evaluation
   -> Dense-Mem records bounded online recall-feedback metrics
+  -> Dense-Mem stores recall refs and failure details for investigation
   -> Prometheus scrapes the metrics
   -> portals display online recall quality
 ```
 
-The feedback request is off by default. Set `RECALL_FEEDBACK_ENABLED=true` to
-register `submit_recall_feedback` and add `feedback_request` to `recall_memory`
-responses. Leave it disabled when you want to avoid the extra tool-call and token
-overhead.
+The feedback request is off by default. Enable `RECALL_FEEDBACK_ENABLED` from
+the control portal Config tab to expose `submit_recall_session_feedback` and add
+`recall_event` to `recall_memory` responses. Leave it disabled when you want to
+avoid the extra tool-call and token overhead.
 
 Useful online feedback cards include:
 
@@ -126,21 +127,41 @@ densemem_recall_feedback_total
 densemem_recall_feedback_quality_score
 ```
 
-The feedback schema should stay compact:
+The feedback tool accepts one or more recall judgments:
 
 ```json
 {
-  "recall_id": "rec_...",
-  "used": true,
-  "answer_supported": true,
-  "quality": "high",
-  "missing_context": false,
-  "irrelevant": false
+  "recalls": [
+    {
+      "recall_id": "rec_...",
+      "used": true,
+      "answer_supported": false,
+      "quality": "low",
+      "missing_context": true,
+      "irrelevant": true,
+      "failure_reason": "Returned stale UI notes instead of the needed button handling pattern.",
+      "expected_context": "The existing SearchPanel disabled-state pattern.",
+      "irrelevant_result_refs": [
+        { "type": "fragment", "id": "019...", "rank": 1 }
+      ]
+    }
+  ]
 }
 ```
 
-Do not use `recall_id` as a Prometheus label. It is useful for linking one
-feedback submission to one recall event, but Prometheus labels must stay bounded.
+`failure_reason` is required when `quality` is `low`, `answer_supported` is
+`false`, `missing_context` is `true`, or `irrelevant` is `true`. Keep
+`failure_reason` and `expected_context` bounded and free of user content.
+
+Do not use `recall_id`, `failure_reason`, or `expected_context` as Prometheus
+labels. Prometheus labels stay bounded; the free-text details and judged
+irrelevant refs are stored in `recall_feedback_events` and surfaced in the
+control portal Feedback tab.
+
+For offline measurement, use stored `result_refs` plus submitted failure details
+to build labeled recall cases. The codebase includes a pure scoring helper for
+Recall@K, MRR, nDCG@K, and judged-bad-at-K so ranking changes can be compared
+against captured feedback before they change production recall behavior.
 
 ## Metrics Endpoint
 

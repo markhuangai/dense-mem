@@ -344,7 +344,7 @@ The server flushes logs in batches and prunes old rows hourly.
 | `CLAIM_WRITE_RATE_LIMIT` | `60` | Claim write limit per minute. |
 | `CLAIM_READ_RATE_LIMIT` | `300` | Claim read limit per minute. |
 | `RECALL_VALIDATED_CLAIM_WEIGHT` | `0.5` | Extra recall score weight for validated claims. |
-| `RECALL_FEEDBACK_ENABLED` | `false` | Registers `submit_recall_feedback` and adds feedback requests to `recall_memory` responses. |
+| `RECALL_FEEDBACK_ENABLED` | `false` | Exposes `submit_recall_session_feedback` and adds `recall_event` metadata to `recall_memory` responses. |
 | `PROMOTE_TX_TIMEOUT_SECONDS` | `10` | Claim promotion transaction timeout. |
 | `AI_COMMUNITY_MAX_NODES` | `500000` | Maximum Neo4j nodes considered by manual or scheduled community detection. |
 

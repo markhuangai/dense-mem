@@ -11,7 +11,7 @@ Dense-Mem MCP tool names use `underscore_case`.
 | High-level memory | `remember` | write | Save one granular evidence entry under 1000 characters, create typed claims, verify them, and promote safe memories. |
 | High-level memory | `import_memories` | write | Import one granular summarized historical memory entry under 1000 characters. Does not auto-promote by default. |
 | High-level memory | `recall_memory` | read | Search active facts, validated claims, fragments, clarifications, optional community expansion, and related dreams. |
-| High-level memory | `submit_recall_feedback` | write | Optional when `RECALL_FEEDBACK_ENABLED=true`; submit compact host-LLM feedback for one `recall_memory` response. |
+| High-level memory | `submit_recall_session_feedback` | read | Optional when `RECALL_FEEDBACK_ENABLED=true`; submit session-level host-LLM feedback for `recall_memory` events, including required failure reasons for negative judgments. |
 | High-level memory | `reflect_memories` | read | Review memory health, stale items, contradictions, and clarification needs. |
 | High-level memory | `confirm_memory` | write | Apply the user's answer to a memory clarification. |
 | Dreaming | `dreaming_status` | read | Inspect effective dreaming config and latest run status for the caller's profile. |
