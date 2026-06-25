@@ -303,6 +303,16 @@ const (
 	recallFeedbackJudgedRefMaxRank     = 50
 )
 
+var recallFeedbackFailureReasonValues = []string{
+	"missing_context",
+	"irrelevant_results",
+	"stale_or_retracted_results",
+	"unsupported_answer",
+	"wrong_scope",
+	"ambiguous_query",
+	"other",
+}
+
 type recallFeedbackJudgedResultRefInput struct {
 	Type string `json:"type"`
 	ID   string `json:"id"`
@@ -338,8 +348,12 @@ func submitRecallSessionFeedbackTool(deps Dependencies) Tool {
 							"quality":          schemaEnum([]string{"high", "medium", "low"}),
 							"missing_context":  map[string]any{"type": "boolean", "description": "Whether important memory context still appeared missing after investigation."},
 							"irrelevant":       map[string]any{"type": "boolean", "description": "Whether this recall's returned context was irrelevant."},
-							"failure_reason":   schemaString("Required when quality is low, answer_supported is false, missing_context is true, or irrelevant is true. Describe the recall failure without user content.", recallFeedbackExplanationMaxLength),
-							"expected_context": schemaString("Optional memory context that would have made the recall useful. Do not include user content.", recallFeedbackExplanationMaxLength),
+							"failure_reason": map[string]any{
+								"type":        "string",
+								"enum":        recallFeedbackFailureReasonValues,
+								"description": "Required when quality is low, answer_supported is false, missing_context is true, or irrelevant is true. Use expected_context for bounded prose details.",
+							},
+							"expected_context": schemaString("Optional detail about the memory context that would have made the recall useful. Do not include user content.", recallFeedbackExplanationMaxLength),
 							"irrelevant_result_refs": map[string]any{
 								"type":        "array",
 								"description": "Optional references to returned results judged irrelevant.",
@@ -417,8 +431,11 @@ func submitRecallSessionFeedbackTool(deps Dependencies) Tool {
 				if recallFeedbackNeedsFailureReason(quality, recall.AnswerSupported, recall.MissingContext, recall.Irrelevant) && failureReason == "" {
 					return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].failure_reason is required for negative feedback", i)
 				}
-				if runeLen(failureReason) > recallFeedbackExplanationMaxLength {
-					return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].failure_reason must be at most %d characters", i, recallFeedbackExplanationMaxLength)
+				if failureReason != "" {
+					failureReason = strings.ToLower(failureReason)
+					if !recallFeedbackFailureReasonAllowed(failureReason) {
+						return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].failure_reason must be one of %s", i, strings.Join(recallFeedbackFailureReasonValues, ", "))
+					}
 				}
 				if runeLen(expectedContext) > recallFeedbackExplanationMaxLength {
 					return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].expected_context must be at most %d characters", i, recallFeedbackExplanationMaxLength)
@@ -463,6 +480,15 @@ func submitRecallSessionFeedbackTool(deps Dependencies) Tool {
 
 func recallFeedbackNeedsFailureReason(quality string, answerSupported bool, missingContext bool, irrelevant bool) bool {
 	return quality == "low" || !answerSupported || missingContext || irrelevant
+}
+
+func recallFeedbackFailureReasonAllowed(reason string) bool {
+	for _, allowed := range recallFeedbackFailureReasonValues {
+		if reason == allowed {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeRecallFeedbackJudgedRefs(recallIndex int, refs []recallFeedbackJudgedResultRefInput) ([]domain.RecallFeedbackJudgedResultRef, error) {

@@ -77,8 +77,8 @@ func ScoreAtK(ranked []ResultRef, relevant []Judgment, irrelevant []ResultRef, k
 			if firstRelevantRank == 0 {
 				firstRelevantRank = i + 1
 			}
+			dcg += discountedGain(grade, i+1)
 		}
-		dcg += discountedGain(grade, i+1)
 	}
 	if metrics.RelevantTotal > 0 {
 		metrics.RecallAtK = float64(metrics.RelevantAtK) / float64(metrics.RelevantTotal)

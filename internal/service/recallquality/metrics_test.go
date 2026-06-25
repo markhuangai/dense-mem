@@ -46,3 +46,20 @@ func TestScoreAtKHandlesNoRelevantJudgments(t *testing.T) {
 	require.Zero(t, got.MRR)
 	require.Zero(t, got.NDCGAtK)
 }
+
+func TestScoreAtKDeduplicatesRelevantGainForNDCG(t *testing.T) {
+	got := ScoreAtK(
+		[]ResultRef{
+			{Type: "fragment", ID: "expected"},
+			{Type: "fragment", ID: "expected"},
+		},
+		[]Judgment{{Type: "fragment", ID: "expected", Grade: 3}},
+		nil,
+		2,
+	)
+
+	require.Equal(t, 1, got.RelevantAtK)
+	require.Equal(t, 1.0, got.RecallAtK)
+	require.Equal(t, 1.0, got.MRR)
+	require.Equal(t, 1.0, got.NDCGAtK)
+}

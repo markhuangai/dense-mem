@@ -78,6 +78,29 @@ func TestSubmitRecallSessionFeedbackRequiresFailureReasonForNegativeFeedback(t *
 	}
 }
 
+func TestSubmitRecallSessionFeedbackRejectsInvalidFailureReason(t *testing.T) {
+	reg, _ := BuildDefault(Dependencies{
+		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+	})
+	tool, _ := reg.Get("submit_recall_session_feedback")
+
+	_, err := tool.Invoke(context.Background(), "profile-feedback", map[string]any{
+		"recalls": []any{map[string]any{
+			"recall_id":        "rec-1",
+			"used":             true,
+			"answer_supported": false,
+			"quality":          "low",
+			"missing_context":  true,
+			"irrelevant":       false,
+			"failure_reason":   "returned stale UI redesign notes",
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "recalls[0].failure_reason must be one of") {
+		t.Fatalf("err = %v; want invalid failure reason", err)
+	}
+}
+
 func TestSubmitRecallSessionFeedbackDisabledByRuntimeConfig(t *testing.T) {
 	reg, _ := BuildDefault(Dependencies{
 		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: false},
@@ -139,8 +162,8 @@ func TestSubmitRecallSessionFeedbackRecordsFailureDetails(t *testing.T) {
 			"quality":          "low",
 			"missing_context":  true,
 			"irrelevant":       true,
-			"failure_reason":   " Returned stale UI redesign notes instead of the button disabled-state pattern. ",
-			"expected_context": " Existing SearchPanel button handling pattern. ",
+			"failure_reason":   " STALE_OR_RETRACTED_RESULTS ",
+			"expected_context": " Returned stale UI redesign notes instead of the button disabled-state pattern. Existing SearchPanel button handling pattern. ",
 			"irrelevant_result_refs": []any{map[string]any{
 				"type": "fragment",
 				"id":   " fragment-1 ",
@@ -155,10 +178,10 @@ func TestSubmitRecallSessionFeedbackRecordsFailureDetails(t *testing.T) {
 		t.Fatalf("recorded feedback = %d; want 1", len(recorder.feedback))
 	}
 	got := recorder.feedback[0]
-	if got.RecallID != "rec-1" || got.FailureReason != "Returned stale UI redesign notes instead of the button disabled-state pattern." {
+	if got.RecallID != "rec-1" || got.FailureReason != "stale_or_retracted_results" {
 		t.Fatalf("recorded feedback = %+v", got)
 	}
-	if got.ExpectedContext != "Existing SearchPanel button handling pattern." {
+	if got.ExpectedContext != "Returned stale UI redesign notes instead of the button disabled-state pattern. Existing SearchPanel button handling pattern." {
 		t.Fatalf("expected_context = %q", got.ExpectedContext)
 	}
 	if len(got.IrrelevantRefs) != 1 || got.IrrelevantRefs[0].ID != "fragment-1" || got.IrrelevantRefs[0].Rank != 1 {
@@ -299,7 +322,7 @@ func TestRecallFeedbackRecorderErrorsSuppressRecallEventAndFailFeedbackSubmit(t 
 			"quality":          "low",
 			"missing_context":  true,
 			"irrelevant":       false,
-			"failure_reason":   "snapshot was not recorded",
+			"failure_reason":   "other",
 		}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "failed to record recalls[0]") {
