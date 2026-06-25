@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { Braces, RefreshCw } from "lucide-react";
-import { ControlApi, RecallFeedbackEvent, RecallFeedbackEventQuery, RecallFeedbackResolvedResult, RecallFeedbackResultRef, Team } from "../api";
+import { ControlApi, RecallFeedbackEvent, RecallFeedbackEventQuery, RecallFeedbackJudgedResultRef, RecallFeedbackResolvedResult, RecallFeedbackResultRef, Team } from "../api";
 import { LoadingState, SectionHeading } from "../ui/components";
 import { formatDate, readError, shortId } from "./utils";
 
@@ -310,10 +310,46 @@ function RecallFeedbackDetail({ event }: { event: RecallFeedbackEvent }) {
         <span className="log-detail-chip">profile={event.profile_id ? shortId(event.profile_id) : "unknown"}</span>
         <span className="log-detail-chip">key={event.key_id ? shortId(event.key_id) : "unknown"}</span>
       </div>
+      <FeedbackFailureDetails event={event} />
       <ResultRefTable refs={refs} resolved={resolved} />
       <pre aria-label={`Raw recall feedback ${event.recall_id}`}>{JSON.stringify(rawEvent(event), null, 2)}</pre>
     </div>
   );
+}
+
+function FeedbackFailureDetails({ event }: { event: RecallFeedbackEvent }) {
+  const irrelevantRefs = event.irrelevant_result_refs ?? [];
+  const rows = [
+    event.failure_reason ? ["Failure reason", event.failure_reason] : null,
+    event.expected_context ? ["Expected context", event.expected_context] : null,
+    irrelevantRefs.length > 0 ? ["Irrelevant refs", irrelevantRefs.map(judgedRefLabel).join(", ")] : null,
+  ].filter((row): row is string[] => row !== null);
+  if (rows.length === 0) {
+    return null;
+  }
+  return (
+    <table className="data-table" aria-label="Recall feedback failure details">
+      <thead>
+        <tr>
+          <th>Signal</th>
+          <th>Value</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(([label, value]) => (
+          <tr key={label}>
+            <td>{label}</td>
+            <td>{value}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function judgedRefLabel(ref: RecallFeedbackJudgedResultRef): string {
+  const rank = ref.rank ? `#${ref.rank} ` : "";
+  return `${rank}${ref.type}:${ref.id}`;
 }
 
 function ResultRefTable({ refs, resolved }: { refs: RecallFeedbackResultRef[]; resolved: RecallFeedbackResolvedResult[] }) {
@@ -413,6 +449,9 @@ function rawEvent(event: RecallFeedbackEvent): Record<string, unknown> {
       quality: event.quality,
       missing_context: event.missing_context,
       irrelevant: event.irrelevant,
+      failure_reason: event.failure_reason,
+      expected_context: event.expected_context,
+      irrelevant_result_refs: event.irrelevant_result_refs ?? [],
     },
     result_refs: event.result_refs ?? [],
     resolved_results: event.resolved_results ?? [],

@@ -366,6 +366,12 @@ export type RecallFeedbackResultRef = {
   retracted_at?: string;
 };
 
+export type RecallFeedbackJudgedResultRef = {
+  type: "fragment" | "claim" | "fact" | string;
+  id: string;
+  rank?: number;
+};
+
 export type RecallFeedbackResolvedResult = {
   type: string;
   id: string;
@@ -396,6 +402,9 @@ export type RecallFeedbackEvent = {
   quality?: "high" | "medium" | "low" | string;
   missing_context?: boolean | null;
   irrelevant?: boolean | null;
+  failure_reason?: string;
+  expected_context?: string;
+  irrelevant_result_refs?: RecallFeedbackJudgedResultRef[] | null;
   resolved_results?: RecallFeedbackResolvedResult[] | null;
 };
 

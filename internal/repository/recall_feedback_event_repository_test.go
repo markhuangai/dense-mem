@@ -13,15 +13,34 @@ import (
 )
 
 func TestScanRecallFeedbackEventRejectsMalformedToolArgsJSON(t *testing.T) {
-	rows := recallFeedbackEventRows(t, []byte("{bad-json"), []byte("[]"))
+	rows := recallFeedbackEventRows(t, []byte("{bad-json"), []byte("[]"), []byte("[]"))
 	_, err := scanRecallFeedbackEvent(rows)
 	require.ErrorContains(t, err, "invalid recall_feedback_events.tool_args JSON")
 }
 
 func TestScanRecallFeedbackEventRejectsMalformedResultRefsJSON(t *testing.T) {
-	rows := recallFeedbackEventRows(t, []byte("{}"), []byte("{bad-json"))
+	rows := recallFeedbackEventRows(t, []byte("{}"), []byte("{bad-json"), []byte("[]"))
 	_, err := scanRecallFeedbackEvent(rows)
 	require.ErrorContains(t, err, "invalid recall_feedback_events.result_refs JSON")
+}
+
+func TestScanRecallFeedbackEventRejectsMalformedIrrelevantResultRefsJSON(t *testing.T) {
+	rows := recallFeedbackEventRows(t, []byte("{}"), []byte("[]"), []byte("{bad-json"))
+	_, err := scanRecallFeedbackEvent(rows)
+	require.ErrorContains(t, err, "invalid recall_feedback_events.irrelevant_result_refs JSON")
+}
+
+func TestScanRecallFeedbackEventReadsFailureDetails(t *testing.T) {
+	rows := recallFeedbackEventRows(t, []byte("{}"), []byte("[]"), []byte(`[{"type":"fragment","id":"fragment-1","rank":1}]`))
+	got, err := scanRecallFeedbackEvent(rows)
+	require.NoError(t, err)
+	require.Equal(t, "missing expected context", got.FailureReason)
+	require.Equal(t, "knowledge explorer listbox pattern", got.ExpectedContext)
+	require.Equal(t, []domain.RecallFeedbackJudgedResultRef{{
+		Type: domain.RecallFeedbackResultTypeFragment,
+		ID:   "fragment-1",
+		Rank: 1,
+	}}, got.IrrelevantRefs)
 }
 
 func TestRecallFeedbackEventWhereExcludesPendingByDefault(t *testing.T) {
@@ -39,7 +58,7 @@ func TestRecallFeedbackEventWhereExcludesPendingByDefault(t *testing.T) {
 	require.Equal(t, []any{"low"}, args)
 }
 
-func recallFeedbackEventRows(t *testing.T, toolArgs []byte, resultRefs []byte) *sql.Rows {
+func recallFeedbackEventRows(t *testing.T, toolArgs []byte, resultRefs []byte, irrelevantRefs []byte) *sql.Rows {
 	t.Helper()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -65,6 +84,9 @@ func recallFeedbackEventRows(t *testing.T, toolArgs []byte, resultRefs []byte) *
 		"quality",
 		"missing_context",
 		"irrelevant",
+		"failure_reason",
+		"expected_context",
+		"irrelevant_result_refs",
 	}).AddRow(
 		"rec_1",
 		time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC),
@@ -85,6 +107,9 @@ func recallFeedbackEventRows(t *testing.T, toolArgs []byte, resultRefs []byte) *
 		"",
 		nil,
 		nil,
+		"missing expected context",
+		"knowledge explorer listbox pattern",
+		irrelevantRefs,
 	)
 	mock.ExpectQuery("SELECT").WillReturnRows(rows)
 	sqlRows, err := db.QueryContext(context.Background(), "SELECT")

@@ -18,26 +18,29 @@ const (
 // RecallFeedbackEvent is the durable investigation record that connects a
 // recall_memory result set to deferred host-LLM session feedback.
 type RecallFeedbackEvent struct {
-	RecallID        string                         `json:"recall_id"`
-	CreatedAt       time.Time                      `json:"created_at"`
-	UpdatedAt       time.Time                      `json:"updated_at"`
-	FeedbackAt      *time.Time                     `json:"feedback_at,omitempty"`
-	TeamID          *uuid.UUID                     `json:"team_id,omitempty"`
-	ProfileID       *uuid.UUID                     `json:"profile_id,omitempty"`
-	KeyID           *uuid.UUID                     `json:"key_id,omitempty"`
-	AuthMethod      string                         `json:"auth_method"`
-	ToolName        string                         `json:"tool_name"`
-	Query           string                         `json:"query"`
-	ToolArgs        map[string]any                 `json:"tool_args"`
-	ResultRefs      []RecallFeedbackResultRef      `json:"result_refs"`
-	ResultCount     int                            `json:"result_count"`
-	SnapshotState   string                         `json:"snapshot_state"`
-	Used            *bool                          `json:"used,omitempty"`
-	AnswerSupported *bool                          `json:"answer_supported,omitempty"`
-	Quality         string                         `json:"quality,omitempty"`
-	MissingContext  *bool                          `json:"missing_context,omitempty"`
-	Irrelevant      *bool                          `json:"irrelevant,omitempty"`
-	ResolvedResults []RecallFeedbackResolvedResult `json:"resolved_results,omitempty"`
+	RecallID        string                          `json:"recall_id"`
+	CreatedAt       time.Time                       `json:"created_at"`
+	UpdatedAt       time.Time                       `json:"updated_at"`
+	FeedbackAt      *time.Time                      `json:"feedback_at,omitempty"`
+	TeamID          *uuid.UUID                      `json:"team_id,omitempty"`
+	ProfileID       *uuid.UUID                      `json:"profile_id,omitempty"`
+	KeyID           *uuid.UUID                      `json:"key_id,omitempty"`
+	AuthMethod      string                          `json:"auth_method"`
+	ToolName        string                          `json:"tool_name"`
+	Query           string                          `json:"query"`
+	ToolArgs        map[string]any                  `json:"tool_args"`
+	ResultRefs      []RecallFeedbackResultRef       `json:"result_refs"`
+	ResultCount     int                             `json:"result_count"`
+	SnapshotState   string                          `json:"snapshot_state"`
+	Used            *bool                           `json:"used,omitempty"`
+	AnswerSupported *bool                           `json:"answer_supported,omitempty"`
+	Quality         string                          `json:"quality,omitempty"`
+	MissingContext  *bool                           `json:"missing_context,omitempty"`
+	Irrelevant      *bool                           `json:"irrelevant,omitempty"`
+	FailureReason   string                          `json:"failure_reason,omitempty"`
+	ExpectedContext string                          `json:"expected_context,omitempty"`
+	IrrelevantRefs  []RecallFeedbackJudgedResultRef `json:"irrelevant_result_refs,omitempty"`
+	ResolvedResults []RecallFeedbackResolvedResult  `json:"resolved_results,omitempty"`
 }
 
 // RecallFeedbackResultRef is a content-free reference to one result returned by
@@ -68,6 +71,17 @@ type RecallFeedbackSubmission struct {
 	Quality         string
 	MissingContext  bool
 	Irrelevant      bool
+	FailureReason   string
+	ExpectedContext string
+	IrrelevantRefs  []RecallFeedbackJudgedResultRef
+}
+
+// RecallFeedbackJudgedResultRef is a host-LLM judgment about one returned
+// result, stored separately from bounded Prometheus labels.
+type RecallFeedbackJudgedResultRef struct {
+	Type string `json:"type"`
+	ID   string `json:"id"`
+	Rank int    `json:"rank,omitempty"`
 }
 
 // RecallFeedbackEventFilter controls control-portal event listing.

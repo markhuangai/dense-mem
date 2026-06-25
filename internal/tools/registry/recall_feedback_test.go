@@ -56,6 +56,28 @@ func TestSubmitRecallSessionFeedbackRejectsInvalidQuality(t *testing.T) {
 	}
 }
 
+func TestSubmitRecallSessionFeedbackRequiresFailureReasonForNegativeFeedback(t *testing.T) {
+	reg, _ := BuildDefault(Dependencies{
+		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+	})
+	tool, _ := reg.Get("submit_recall_session_feedback")
+
+	_, err := tool.Invoke(context.Background(), "profile-feedback", map[string]any{
+		"recalls": []any{map[string]any{
+			"recall_id":        "rec-1",
+			"used":             true,
+			"answer_supported": false,
+			"quality":          "medium",
+			"missing_context":  false,
+			"irrelevant":       false,
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "recalls[0].failure_reason is required for negative feedback") {
+		t.Fatalf("err = %v; want missing failure reason", err)
+	}
+}
+
 func TestSubmitRecallSessionFeedbackDisabledByRuntimeConfig(t *testing.T) {
 	reg, _ := BuildDefault(Dependencies{
 		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: false},
@@ -96,6 +118,54 @@ func TestToolVisibleGatesRecallFeedbackTool(t *testing.T) {
 	}
 	if ToolVisible(ctx, feedbackTool, stubRecallFeedbackConfig{enabled: true, err: errors.New("config unavailable")}) {
 		t.Fatal("feedback tool should be hidden when runtime config is unavailable")
+	}
+}
+
+func TestSubmitRecallSessionFeedbackRecordsFailureDetails(t *testing.T) {
+	recorder := &stubRecallFeedbackRecorder{}
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	reg, _ := BuildDefault(Dependencies{
+		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+		RecallFeedbackEvents: recorder,
+		Metrics:              metrics,
+	})
+	tool, _ := reg.Get("submit_recall_session_feedback")
+
+	_, err := tool.Invoke(context.Background(), "profile-feedback", map[string]any{
+		"recalls": []any{map[string]any{
+			"recall_id":        " rec-1 ",
+			"used":             true,
+			"answer_supported": false,
+			"quality":          "low",
+			"missing_context":  true,
+			"irrelevant":       true,
+			"failure_reason":   " Returned stale UI redesign notes instead of the button disabled-state pattern. ",
+			"expected_context": " Existing SearchPanel button handling pattern. ",
+			"irrelevant_result_refs": []any{map[string]any{
+				"type": "fragment",
+				"id":   " fragment-1 ",
+				"rank": 1,
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("submit_recall_session_feedback Invoke: %v", err)
+	}
+	if len(recorder.feedback) != 1 {
+		t.Fatalf("recorded feedback = %d; want 1", len(recorder.feedback))
+	}
+	got := recorder.feedback[0]
+	if got.RecallID != "rec-1" || got.FailureReason != "Returned stale UI redesign notes instead of the button disabled-state pattern." {
+		t.Fatalf("recorded feedback = %+v", got)
+	}
+	if got.ExpectedContext != "Existing SearchPanel button handling pattern." {
+		t.Fatalf("expected_context = %q", got.ExpectedContext)
+	}
+	if len(got.IrrelevantRefs) != 1 || got.IrrelevantRefs[0].ID != "fragment-1" || got.IrrelevantRefs[0].Rank != 1 {
+		t.Fatalf("irrelevant refs = %+v", got.IrrelevantRefs)
+	}
+	if len(metrics.RecallFeedbackSamples()) != 1 {
+		t.Fatalf("recall feedback samples = %d; want 1", len(metrics.RecallFeedbackSamples()))
 	}
 }
 
@@ -229,6 +299,7 @@ func TestRecallFeedbackRecorderErrorsSuppressRecallEventAndFailFeedbackSubmit(t 
 			"quality":          "low",
 			"missing_context":  true,
 			"irrelevant":       false,
+			"failure_reason":   "snapshot was not recorded",
 		}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "failed to record recalls[0]") {

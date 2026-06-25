@@ -103,6 +103,9 @@ func (s *RecallFeedbackEventServiceImpl) RecordRecallFeedback(ctx context.Contex
 		Quality:         strings.ToLower(strings.TrimSpace(feedback.Quality)),
 		MissingContext:  &missingContext,
 		Irrelevant:      &irrelevant,
+		FailureReason:   strings.TrimSpace(feedback.FailureReason),
+		ExpectedContext: strings.TrimSpace(feedback.ExpectedContext),
+		IrrelevantRefs:  feedback.IrrelevantRefs,
 	})
 	if event.RecallID == "" {
 		return fmt.Errorf("recall feedback event recall_id is required")
