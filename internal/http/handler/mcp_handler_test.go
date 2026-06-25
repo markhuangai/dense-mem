@@ -120,6 +120,22 @@ func TestMCPHandlerPostSSE(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "data: {")
 }
 
+func TestMCPHandlerPostNotificationAcceptedWithSSEAccept(t *testing.T) {
+	h := NewMCPHandler(registry.New(), testMCPLogger())
+	e := echo.New()
+	profileID := uuid.New()
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized"}`))
+	req.Header.Set(echo.HeaderAccept, "text/event-stream, application/json")
+	req = req.WithContext(mcpTestContext(req.Context(), profileID, []string{"read"}))
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := h.HandlePost(c)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusAccepted, rec.Code)
+	require.Empty(t, rec.Body.String())
+}
+
 func TestMCPHandlerToolsListFiltersByScope(t *testing.T) {
 	reg := registry.New()
 	require.NoError(t, reg.Register(registry.Tool{Name: "read_tool", Description: "read", RequiredScopes: []string{"read"}}))
