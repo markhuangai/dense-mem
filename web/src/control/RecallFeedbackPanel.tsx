@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { Braces, RefreshCw } from "lucide-react";
 import { ControlApi, RecallFeedbackEvent, RecallFeedbackEventQuery, RecallFeedbackResolvedResult, RecallFeedbackResultRef, Team } from "../api";
-import { SectionHeading } from "../ui/components";
+import { LoadingState, SectionHeading } from "../ui/components";
 import { formatDate, readError, shortId } from "./utils";
 
 const PAGE_SIZES = [25, 50, 100, 250, 500];
@@ -182,7 +182,7 @@ export function RecallFeedbackPanel({ api, teams }: { api: ControlApi; teams: Te
         </label>
       </div>
       {loading && events.length === 0 ? (
-        <div className="table-placeholder">Loading</div>
+        <LoadingState label="Loading recall feedback" />
       ) : events.length === 0 ? (
         <div className="table-placeholder">No recall feedback</div>
       ) : (
@@ -240,7 +240,7 @@ export function RecallFeedbackPanel({ api, teams }: { api: ControlApi; teams: Te
                       <tr className="log-raw-row">
                         <td colSpan={7}>
                           {detailLoading === event.recall_id && !detail ? (
-                            <div className="table-placeholder compact">Loading</div>
+                            <LoadingState label="Loading details" compact />
                           ) : (
                             <RecallFeedbackDetail event={detail ?? event} />
                           )}

@@ -3,7 +3,7 @@ import { RefreshCw } from "lucide-react";
 import { ControlApi, ControlMetrics, Team, TeamProfile } from "../api";
 import { TelemetryDashboard } from "../telemetry/TelemetryDashboard";
 import { TelemetrySnapshot, TelemetryWindowKey } from "../telemetry/types";
-import { SectionHeading, SummaryCard } from "../ui/components";
+import { LoadingState, SectionHeading, SummaryCard } from "../ui/components";
 import { dependencyStatusClass, formatCount, formatDate, formatLatency, formatPercent, readError, shortId } from "./utils";
 
 type TelemetryControlScope = "system" | "team" | "profile";
@@ -187,7 +187,7 @@ export function MetricsPanel({ api, teams }: { api: ControlApi; teams: Team[] })
         </select>
       </div>
 
-      {loading && !metrics && <div className="table-placeholder">Loading</div>}
+      {loading && !metrics && <LoadingState label="Loading usage rollup" />}
       {metrics && (
         <>
           <MetricsSummary metrics={metrics} />

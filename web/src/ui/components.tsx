@@ -28,11 +28,12 @@ type PortalShellProps = BrandProps & {
   theme: ThemeName;
   topbarActions: ReactNode;
   navLabel: string;
+  navItemsLabel: string;
   navItems: PortalNavItem[];
-  sidebarTitle: ReactNode;
-  sidebarMeta?: ReactNode;
-  sidebarSubtitle?: ReactNode;
-  sidebarBody?: ReactNode;
+  navPlacement?: "rail" | "top";
+  contextBar?: ReactNode;
+  resourceRail?: ReactNode;
+  resourceRailLabel?: string;
   detailLabel: string;
   error?: string;
   children: ReactNode;
@@ -71,6 +72,11 @@ type InfoTooltipProps = {
   children: ReactNode;
 };
 
+type LoadingStateProps = {
+  label?: string;
+  compact?: boolean;
+};
+
 export function Brand({ title, icon }: BrandProps) {
   return (
     <div className="brand-row">
@@ -101,47 +107,88 @@ export function PortalShell({
   icon,
   topbarActions,
   navLabel,
+  navItemsLabel,
   navItems,
-  sidebarTitle,
-  sidebarMeta,
-  sidebarSubtitle,
-  sidebarBody,
+  navPlacement = "rail",
+  contextBar,
+  resourceRail,
+  resourceRailLabel,
   detailLabel,
   error,
   children,
 }: PortalShellProps) {
+  const topNav = navPlacement === "top";
+  const workspaceClassName = [
+    "workspace",
+    resourceRail ? "has-resource-rail" : "",
+    topNav ? "top-nav-workspace" : "",
+  ].filter(Boolean).join(" ");
+  const portalContentClassName = [
+    "portal-content",
+    resourceRail ? "has-resource-rail" : "",
+    topNav ? "has-top-nav" : "",
+  ].filter(Boolean).join(" ");
+  const brand = <Brand title={title} icon={icon} />;
+
   return (
     <main className="app-shell" data-theme={theme}>
-      <header className="topbar">
-        <Brand title={title} icon={icon} />
-        <div className="topbar-actions">{topbarActions}</div>
-      </header>
+      <section className={workspaceClassName}>
+        {topNav ? (
+          null
+        ) : (
+          <aside className="primary-rail" aria-label={navLabel}>
+            <div className="rail-brand">{brand}</div>
+            <nav className="rail-tabs" aria-label={navItemsLabel}>
+              {navItems.map((item) => (
+                <TabButton
+                  key={item.id}
+                  active={item.active}
+                  disabled={item.disabled}
+                  icon={item.icon}
+                  label={item.label}
+                  onClick={item.onClick}
+                />
+              ))}
+            </nav>
+          </aside>
+        )}
+        <div className="portal-main">
+          <header className="topbar">
+            {topNav && brand}
+            {contextBar && <div className="topbar-context">{contextBar}</div>}
+            <div className="topbar-actions">{topbarActions}</div>
+          </header>
 
-      {error && <div className="banner error" role="alert">{error}</div>}
+          {error && <div className="banner error" role="alert">{error}</div>}
 
-      <section className="workspace">
-        <aside className="control-sidebar" aria-label={navLabel}>
-          <nav className="portal-tabs" aria-label={navLabel.replace("navigation", "sections")}>
-            {navItems.map((item) => (
-              <TabButton
-                key={item.id}
-                active={item.active}
-                disabled={item.disabled}
-                icon={item.icon}
-                label={item.label}
-                onClick={item.onClick}
-              />
-            ))}
-          </nav>
-          <div className="sidebar-panel">
-            <SectionHeading title={sidebarTitle} subtitle={sidebarSubtitle} meta={sidebarMeta} />
-            {sidebarBody}
+          <div className={portalContentClassName}>
+            {topNav && (
+              <div className="top-nav-bar" aria-label={navLabel}>
+                <nav className="top-nav-tabs" aria-label={navItemsLabel}>
+                  {navItems.map((item) => (
+                    <TabButton
+                      key={item.id}
+                      active={item.active}
+                      disabled={item.disabled}
+                      icon={item.icon}
+                      label={item.label}
+                      onClick={item.onClick}
+                    />
+                  ))}
+                </nav>
+              </div>
+            )}
+            {resourceRail && (
+              <aside className="resource-rail" aria-label={resourceRailLabel ?? "Resources"}>
+                {resourceRail}
+              </aside>
+            )}
+
+            <section className="detail-pane" aria-label={detailLabel}>
+              {children}
+            </section>
           </div>
-        </aside>
-
-        <section className="detail-pane" aria-label={detailLabel}>
-          {children}
-        </section>
+        </div>
       </section>
     </main>
   );
@@ -162,7 +209,7 @@ export function TabButton({
 }) {
   return (
     <button
-      className={active ? "tab-button active" : "tab-button"}
+      className={active ? "rail-tab-button active" : "rail-tab-button"}
       type="button"
       aria-current={active ? "page" : undefined}
       disabled={disabled}
@@ -192,6 +239,24 @@ export function SummaryCard({ label, value, detail, tone = "neutral" }: SummaryC
       <span>{label}</span>
       <strong>{value}</strong>
       {detail && <small>{detail}</small>}
+    </div>
+  );
+}
+
+export function LoadingState({ label = "Loading", compact = false }: LoadingStateProps) {
+  return (
+    <div
+      className={compact ? "table-placeholder loading-state compact" : "table-placeholder loading-state"}
+      role="status"
+      aria-live="polite"
+    >
+      <span className="loading-orbit" aria-hidden="true" />
+      <span className="loading-copy">{label}</span>
+      <span className="loading-skeleton" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </span>
     </div>
   );
 }

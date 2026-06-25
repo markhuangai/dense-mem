@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { Braces, RefreshCw } from "lucide-react";
 import { ControlApi, OperationLog, OperationLogQuery, Team } from "../api";
-import { SectionHeading } from "../ui/components";
+import { LoadingState, SectionHeading } from "../ui/components";
 import { formatDate, readError, shortId } from "./utils";
 
 const SEVERITIES = ["", "DEBUG", "INFO", "WARN", "ERROR"];
@@ -126,7 +126,7 @@ export function LogsPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
         </label>
       </div>
       {loading && logs.length === 0 ? (
-        <div className="table-placeholder">Loading</div>
+        <LoadingState label="Loading logs" />
       ) : logs.length === 0 ? (
         <div className="table-placeholder">No logs</div>
       ) : (

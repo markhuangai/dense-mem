@@ -1,0 +1,240 @@
+.knowledge-explorer {
+  grid-template-columns: minmax(210px, 250px) minmax(480px, 1fr) minmax(300px, 360px);
+  gap: 0;
+  min-height: calc(100vh - 80px);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.knowledge-explorer.inspector-closed {
+  grid-template-columns: minmax(210px, 250px) minmax(480px, 1fr);
+}
+
+.knowledge-filter-panel,
+.knowledge-results-panel,
+.knowledge-inspector {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.knowledge-filter-panel,
+.knowledge-inspector {
+  top: 64px;
+  max-height: calc(100vh - 80px);
+}
+
+.knowledge-filter-panel {
+  border-right: 1px solid var(--border);
+}
+
+.knowledge-inspector {
+  border-left: 1px solid var(--border);
+}
+
+.knowledge-results-panel {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  padding: 0;
+  background: var(--bg);
+}
+
+.knowledge-commandbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.search-input-wrap.large {
+  min-height: 40px;
+}
+
+.knowledge-results-toolbar {
+  margin: 0;
+  padding: 14px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.toolbar-actions,
+.result-kicker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.knowledge-list {
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.knowledge-list.dense {
+  gap: 7px;
+}
+
+.knowledge-item {
+  padding: 13px 14px;
+  background: var(--panel);
+  border-radius: 6px;
+}
+
+.knowledge-list.dense .knowledge-item {
+  padding: 10px 12px;
+}
+
+.knowledge-list.dense .knowledge-item p {
+  display: none;
+}
+
+.knowledge-item.selected {
+  background: color-mix(in srgb, var(--panel) 84%, var(--accent-soft));
+  border-color: color-mix(in srgb, var(--accent) 64%, var(--border));
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.icon-button.active {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
+}
+
+.status-pill.success {
+  color: #15803d;
+  background: color-mix(in srgb, #22c55e 14%, transparent);
+  border: 1px solid color-mix(in srgb, #22c55e 28%, transparent);
+}
+
+.status-pill.warning {
+  color: #b45309;
+  background: color-mix(in srgb, #f59e0b 16%, transparent);
+  border: 1px solid color-mix(in srgb, #f59e0b 30%, transparent);
+}
+
+.status-pill.danger {
+  color: #b91c1c;
+  background: color-mix(in srgb, #ef4444 14%, transparent);
+  border: 1px solid color-mix(in srgb, #ef4444 28%, transparent);
+}
+
+.icon-button.bare {
+  width: 26px;
+  min-height: 26px;
+  color: var(--subtle);
+  background: transparent;
+  border: 0;
+}
+
+.result-meta-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  color: var(--subtle);
+  font-size: 12px;
+}
+
+.inspector-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.inspector-head h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 760;
+}
+
+.inspector-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-bottom: 1px solid var(--border);
+}
+
+.inspector-tab {
+  position: relative;
+  min-height: 38px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 740;
+  cursor: pointer;
+}
+
+.inspector-tab.active {
+  color: var(--accent-strong);
+}
+
+.inspector-tab.active::after {
+  position: absolute;
+  right: 10px;
+  bottom: -1px;
+  left: 10px;
+  height: 2px;
+  content: "";
+  background: var(--accent);
+}
+
+.inspector-status-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.inspector-section {
+  display: grid;
+  gap: 10px;
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.inspector-section h4 {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.evidence-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.evidence-list div {
+  display: grid;
+  grid-template-columns: minmax(86px, auto) minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.evidence-list dt {
+  color: var(--subtle);
+  font-size: 12px;
+}
+
+.evidence-list dd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.confidence-bar {
+  width: 92px;
+  height: 5px;
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg, var(--accent) var(--confidence), var(--border) 0);
+}

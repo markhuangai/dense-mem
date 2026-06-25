@@ -1,8 +1,8 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UserPortalApp } from "./App";
-import { UserKey, UserSession } from "./api";
+import { Community, RecallHit, UserKey, UserSession } from "./api";
 
 const baseSession: UserSession = {
   team: {
@@ -45,6 +45,75 @@ const memberProfile: UserKey = {
   created_at: "2026-05-01T12:00:00Z",
 };
 
+const recallHits: RecallHit[] = [
+  {
+    tier: "canonical",
+    score: 0.94,
+    semantic_rank: 1,
+    keyword_rank: 1,
+    final_score: 0.94,
+    fact: {
+      fact_id: "fact-1",
+      subject: "Alice",
+      predicate: "works_on",
+      object: "project-x",
+      status: "active",
+      truth_score: 0.94,
+      recorded_at: "2026-05-02T12:00:00Z",
+    },
+  },
+  {
+    tier: "claim",
+    score: 0.84,
+    semantic_rank: 2,
+    keyword_rank: 2,
+    final_score: 0.84,
+    claim: {
+      claim_id: "claim-1",
+      subject: "Alice",
+      predicate: "uses",
+      object: "Dense-Mem",
+      modality: "assertion",
+      polarity: "+",
+      status: "validated",
+      entailment_verdict: "entailed",
+      extract_conf: 0.91,
+      resolution_conf: 0.88,
+      recorded_at: "2026-05-02T12:00:00Z",
+    },
+  },
+  {
+    tier: "raw",
+    score: 0.74,
+    semantic_rank: 3,
+    keyword_rank: 3,
+    final_score: 0.74,
+    fragment: {
+      id: "frag-1",
+      fragment_id: "frag-1",
+      content: "Alice is working on project-x with Dense-Mem.",
+      source_type: "manual",
+      source: "notes",
+      labels: ["project"],
+      status: "active",
+      created_at: "2026-05-02T12:00:00Z",
+      updated_at: "2026-05-02T12:00:00Z",
+    },
+  },
+];
+
+const recallCommunities: Community[] = [
+  {
+    community_id: "community-1",
+    level: 0,
+    summary: "Project work around Dense-Mem.",
+    member_count: 3,
+    top_entities: ["Alice", "project-x", "Dense-Mem"],
+    top_predicates: ["works_on", "uses"],
+    last_summarized_at: "2026-05-02T12:00:00Z",
+  },
+];
+
 beforeEach(() => {
   sessionStorage.clear();
   localStorage.clear();
@@ -60,8 +129,10 @@ describe("UserPortalApp", () => {
     await userEvent.type(screen.getByLabelText(/api key/i), "dm_key");
     await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
 
-    expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
-    expect(await screen.findByText("Mine")).toBeInTheDocument();
+    await expectCurrentWorkspace("Research Team");
+    expect(screen.getByLabelText("Knowledge navigation")).toHaveClass("top-nav-bar");
+    expect(screen.getByLabelText("Knowledge sections")).toHaveClass("top-nav-tabs");
+    expect(screen.getByLabelText("Current workspace")).not.toHaveTextContent("Mine");
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/profiles"))).toBe(false);
   });
 
@@ -85,6 +156,70 @@ describe("UserPortalApp", () => {
 
     expect(screen.queryByRole("button", { name: /usage/i })).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/ui/api/telemetry"))).toBe(false);
+  });
+
+  it("filters recall results and updates the inspector selection", async () => {
+    mockUserFetch(baseSession, [], { recallHits, communities: recallCommunities });
+    sessionStorage.setItem("denseMem.userApiKey", "dm_read");
+
+    render(<UserPortalApp />);
+    await screen.findByText("Research Team");
+    await userEvent.type(screen.getByLabelText("Keyword"), "project");
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+
+    const resultList = await screen.findByRole("listbox", { name: "Recall result list" });
+    expect(within(resultList).getAllByRole("option")).toHaveLength(3);
+    expect(screen.queryByRole("button", { name: /star/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /more actions/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add to collection" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create claim" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Fact");
+
+    const claimResult = within(resultList).getByText("uses: Dense-Mem").closest("[role='option']");
+    expect(claimResult).not.toBeNull();
+    await userEvent.click(claimResult as HTMLElement);
+    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Claim");
+    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Tier claim");
+
+    await userEvent.click(screen.getByRole("checkbox", { name: /claim/i }));
+    expect(screen.getByRole("listbox", { name: "Recall result list" })).not.toHaveTextContent("uses: Dense-Mem");
+    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Fact");
+
+    await userEvent.click(screen.getByRole("checkbox", { name: /fact/i }));
+    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Fragment");
+    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Alice is working on project-x with Dense-Mem.");
+
+    await userEvent.click(screen.getByRole("tab", { name: "Recall" }));
+    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Final score");
+    await userEvent.click(screen.getByRole("button", { name: "Sort by date" }));
+    expect(screen.getByRole("button", { name: "Sort by relevance" })).toHaveTextContent("Sort: Date");
+    await userEvent.click(screen.getByRole("button", { name: "Use compact density" }));
+    expect(screen.getByRole("button", { name: "Use comfortable density" })).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(screen.getByRole("button", { name: "Close details panel" }));
+    expect(screen.queryByLabelText("Inspector")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Open details" }));
+    expect(screen.getByLabelText("Inspector")).toBeInTheDocument();
+  });
+
+  it("resets stale source filters after a new recall search", async () => {
+    mockUserFetch(baseSession, [], { recallHits: [recallHits, [recallHits[0]]], communities: recallCommunities });
+    sessionStorage.setItem("denseMem.userApiKey", "dm_read");
+
+    render(<UserPortalApp />);
+    await screen.findByText("Research Team");
+    await userEvent.type(screen.getByLabelText("Keyword"), "project");
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+
+    await userEvent.selectOptions(await screen.findByLabelText("Source"), "notes");
+    expect(screen.getByRole("listbox", { name: "Recall result list" })).toHaveTextContent("Alice is working on project-x with Dense-Mem.");
+    expect(screen.getByRole("listbox", { name: "Recall result list" })).not.toHaveTextContent("works_on: project-x");
+
+    await userEvent.clear(screen.getByLabelText("Keyword"));
+    await userEvent.type(screen.getByLabelText("Keyword"), "alice");
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+
+    expect(await screen.findByLabelText("Source")).toHaveValue("all");
+    expect(screen.getByRole("listbox", { name: "Recall result list" })).toHaveTextContent("works_on: project-x");
   });
 
   it("labels write-member telemetry as key usage", async () => {
@@ -292,7 +427,7 @@ describe("UserPortalApp", () => {
 
     render(<UserPortalApp />);
 
-    expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    await expectCurrentWorkspace("Research Team");
     expect(screen.getByRole("button", { name: /my key/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^team$/i })).not.toBeInTheDocument();
     const teamSelect = await screen.findByLabelText("Active team");
@@ -300,7 +435,7 @@ describe("UserPortalApp", () => {
 
     await userEvent.selectOptions(teamSelect, secondKey.id);
 
-    expect(await screen.findByRole("heading", { name: "Analytics Team" })).toBeInTheDocument();
+    await expectCurrentWorkspace("Analytics Team");
     expect(screen.queryByRole("button", { name: /my key/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^team$/i })).toBeInTheDocument();
     await waitFor(() => {
@@ -339,13 +474,13 @@ describe("UserPortalApp", () => {
 
     render(<UserPortalApp />);
 
-    expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    await expectCurrentWorkspace("Research Team");
     await userEvent.click(screen.getByRole("button", { name: /usage/i }));
     expect(await screen.findByLabelText("My key usage totals")).toHaveTextContent("4");
 
     await userEvent.selectOptions(screen.getByLabelText("Active team"), nextKey.id);
 
-    expect(await screen.findByRole("heading", { name: "Analytics Team" })).toBeInTheDocument();
+    await expectCurrentWorkspace("Analytics Team");
     await waitFor(() => {
       expect(screen.getByLabelText("Team usage totals")).toHaveTextContent("9");
     });
@@ -362,11 +497,11 @@ describe("UserPortalApp", () => {
 
     render(<UserPortalApp />);
 
-    expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    await expectCurrentWorkspace("Research Team");
     await userEvent.click(screen.getByRole("button", { name: /sign out/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("logout failed");
-    expect(screen.getByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Current workspace")).toHaveTextContent("Research Team");
     expect(screen.queryByLabelText(/api key/i)).not.toBeInTheDocument();
   });
 
@@ -384,7 +519,7 @@ describe("UserPortalApp", () => {
 
     render(<UserPortalApp />);
 
-    expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    await expectCurrentWorkspace("Research Team");
     await userEvent.click(screen.getByRole("button", { name: /my key/i }));
     await userEvent.click(screen.getByRole("button", { name: /create api key/i }));
 
@@ -416,7 +551,7 @@ describe("UserPortalApp", () => {
 
     render(<UserPortalApp />);
 
-    expect(await screen.findByRole("heading", { name: "Research Team" })).toBeInTheDocument();
+    await expectCurrentWorkspace("Research Team");
     await userEvent.click(screen.getByRole("button", { name: /my key/i }));
     await userEvent.click(screen.getByRole("button", { name: /create api key/i }));
 
@@ -425,9 +560,15 @@ describe("UserPortalApp", () => {
   });
 });
 
-function mockUserFetch(session: UserSession, profiles: UserKey[] = []) {
+async function expectCurrentWorkspace(teamName: string) {
+  const workspace = await screen.findByLabelText("Current workspace");
+  expect(workspace).toHaveTextContent(teamName);
+}
+
+function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: { recallHits?: RecallHit[] | RecallHit[][]; communities?: Community[] } = {}) {
   let currentTeam = session.team;
   let currentProfiles = profiles;
+  let recallCallCount = 0;
   const rotatedSession = {
     ...session,
     key: { ...session.key, key_suffix: "new123", last_used_at: null },
@@ -496,15 +637,24 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = []) {
       return jsonResponse({ data: { status: "deleted" } });
     }
     if (url.startsWith("/api/v1/communities")) {
-      return jsonResponse({ items: [] });
+      return jsonResponse({ items: options.communities ?? [] });
     }
     if (url.startsWith("/api/v1/recall")) {
-      return jsonResponse({ data: [] });
+      const configuredHits = options.recallHits ?? [];
+      const hits = isRecallSequence(configuredHits)
+        ? configuredHits[Math.min(recallCallCount, configuredHits.length - 1)] ?? []
+        : configuredHits;
+      recallCallCount += 1;
+      return jsonResponse({ data: hits });
     }
     return jsonResponse({ message: "not found" }, 404);
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
+}
+
+function isRecallSequence(value: RecallHit[] | RecallHit[][]): value is RecallHit[][] {
+  return Array.isArray(value[0]);
 }
 
 function telemetryForSession(session: UserSession) {

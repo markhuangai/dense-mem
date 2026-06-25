@@ -304,6 +304,7 @@ test("team creation flow", async ({ page }) => {
   await mockApi(page, { teams: [team], keys: [] });
   await openPortal(page);
 
+  await page.getByRole("button", { name: "New Team" }).click();
   await page.getByLabel("Name").first().fill("Work Team");
   await page.getByLabel("Description").first().fill("for work");
   await page.getByRole("button", { name: /^Create$/ }).click();
@@ -315,7 +316,7 @@ test("API key creation shows plaintext once", async ({ page }) => {
   await mockApi(page, { teams: [team], keys: [] });
   await openPortal(page);
 
-  await page.getByRole("button", { name: /Profiles & API Keys/ }).click();
+  await page.getByRole("button", { name: /Team Profiles/ }).click();
   await page.getByLabel("Role").selectOption("member");
   await page.getByLabel("Permission").selectOption("read");
   await page.getByRole("button", { name: "Create profile" }).click();
@@ -329,11 +330,12 @@ test("team and profile names update and profile key regenerates", async ({ page 
   await mockApi(page, { teams: [team], keys: [key] });
   await openPortal(page);
 
+  await page.getByRole("button", { name: /Team Settings/ }).click();
   await page.locator("#team-name").fill("Renamed Team");
   await page.getByRole("button", { name: /^Save$/ }).click();
   await expect(page.getByRole("heading", { name: "Renamed Team" })).toBeVisible();
 
-  await page.getByRole("button", { name: /Profiles & API Keys/ }).click();
+  await page.getByRole("button", { name: /Team Profiles/ }).click();
   await page.getByLabel("Profile name default profile").fill("Research profile");
   await page.getByRole("button", { name: /Save profile default profile/ }).click();
   await expect(page.getByLabel("Profile name Research profile")).toHaveValue("Research profile");
@@ -347,7 +349,7 @@ test("team profile list and delete flow", async ({ page }) => {
   await mockApi(page, { teams: [team], keys: [key] });
   await openPortal(page);
 
-  await page.getByRole("button", { name: /Profiles & API Keys/ }).click();
+  await page.getByRole("button", { name: /Team Profiles/ }).click();
   await expect(page.getByText("******abc123")).toBeVisible();
   const keyRow = page.getByRole("row", { name: /abc123/ });
   await expect(keyRow).toContainText("Read/write");
@@ -378,6 +380,7 @@ test("metrics tab renders operational totals and filter queries", async ({ page 
   await openPortal(page);
 
   await page.getByRole("button", { name: /^Metrics$/ }).click();
+  await expect(page.locator(".resource-rail")).toHaveCount(0);
 
   const telemetryTotals = page.getByLabel("Telemetry totals");
   for (const card of telemetry.windowed_cards) {
@@ -422,6 +425,7 @@ test("logs tab renders structured details and raw output", async ({ page }) => {
   await openPortal(page);
 
   await page.getByRole("button", { name: /^Logs$/ }).click();
+  await expect(page.locator(".resource-rail")).toHaveCount(0);
 
   await expect(page.getByText("GET /control/api/logs status 200")).toBeVisible();
   await expect(page.getByText("event=control_http_request")).toBeVisible();
@@ -439,7 +443,7 @@ test("recall feedback tab renders query, params, result ids, and resolved state"
   const calls = await mockApi(page, { teams: [team], keys: [key] });
   await openPortal(page);
 
-  await page.getByRole("button", { name: /^Recall Feedback$/ }).click();
+  await page.getByRole("button", { name: /^Feedback$/ }).click();
 
   await expect(page.getByText("Why was recall bad?")).toBeVisible();
   await expect(page.getByText("Pending recall waiting")).toHaveCount(0);
@@ -463,7 +467,8 @@ test("dream outputs keep rationale behind info tooltip", async ({ page }) => {
   await mockApi(page, { teams: [team], keys: [key] });
   await openPortal(page);
 
-  await page.getByRole("button", { name: /^Dreams$/ }).click();
+  await page.getByRole("button", { name: /Team Dreams/ }).click();
+  await expect(page.locator(".resource-rail")).toBeVisible();
 
   await expect(page.getByLabel("Dreaming status")).toContainText("Global force");
   await expect(page.getByText("A may affect B.")).toBeVisible();
@@ -474,6 +479,23 @@ test("dream outputs keep rationale behind info tooltip", async ({ page }) => {
   await expect(rationale).toBeVisible();
 });
 
+test("team workspace header stays compact across team tabs", async ({ page }) => {
+  await mockApi(page, { teams: [team], keys: [key] });
+  await openPortal(page);
+
+  const heights: number[] = [];
+  const workspaceTabs = page.locator(".team-workspace-tabs");
+  for (const tab of ["Overview", "Profiles", "Dreams", "Settings"]) {
+    await workspaceTabs.getByRole("button", { name: `Team ${tab}` }).click();
+    const box = await page.locator(".team-workspace-header").boundingBox();
+    expect(box, `${tab} header was not rendered`).not.toBeNull();
+    heights.push(box?.height ?? 0);
+  }
+
+  expect(Math.max(...heights), `team header heights: ${heights.join(", ")}`).toBeLessThanOrEqual(125);
+  expect(Math.max(...heights) - Math.min(...heights), `team header heights: ${heights.join(", ")}`).toBeLessThanOrEqual(8);
+});
+
 test("config tab uses horizontal subnavigation", async ({ page }) => {
   await mockApi(page, { teams: [team], keys: [key] });
   await openPortal(page);
@@ -482,9 +504,14 @@ test("config tab uses horizontal subnavigation", async ({ page }) => {
 
   const tabs = page.getByRole("tablist", { name: "Config sections" });
   await expect(tabs).toBeVisible();
+  const tabsBox = await tabs.boundingBox();
+  expect(tabsBox, "config tabs were not rendered").not.toBeNull();
+  const maxTabsHeight = (page.viewportSize()?.width ?? 0) <= 620 ? 82 : 42;
+  expect(tabsBox?.height ?? 0).toBeLessThanOrEqual(maxTabsHeight);
   await expect.poll(() => tabs.evaluate((element) => element.closest(".surface") === null)).toBe(true);
   await tabs.getByRole("tab", { name: /^Logs$/ }).click();
   await expect(page.getByRole("heading", { name: "Operation Logs" })).toBeVisible();
+  await expectNoShellOverlap(page);
 });
 
 test("recall feedback retention config saves from control portal", async ({ page }) => {
@@ -507,10 +534,11 @@ test("team delete flow", async ({ page }) => {
   await mockApi(page, { teams: [team], keys: [key] });
   await openPortal(page);
 
+  await page.getByRole("button", { name: /Team Settings/ }).click();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: /^Delete$/ }).click();
 
-  await expect(page.getByLabel("Team details").getByText("No teams")).toBeVisible();
+  await expect(page.getByLabel("Control details").getByText("No teams")).toBeVisible();
 });
 
 test("auth token failure", async ({ page }) => {
@@ -533,9 +561,11 @@ test("responsive portal layout", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Teams" })).toBeVisible();
   const shellMinHeight = await page.locator(".app-shell").evaluate((element) => Number.parseFloat(getComputedStyle(element).minHeight));
   expect(shellMinHeight).toBeGreaterThanOrEqual((page.viewportSize()?.height ?? 0) - 1);
-  await expect(page.locator(".control-sidebar")).toHaveCSS("border-radius", "8px");
+  await expect(page.locator(".topbar")).toHaveCSS("border-bottom-width", "1px");
+  await expect(page.locator(".primary-rail")).toHaveCSS("border-right-width", "1px");
+  await expect(page.locator(".resource-rail")).toHaveCSS("border-right-width", "1px");
   await expect(page.locator(".surface").first()).toHaveCSS("border-radius", "8px");
-  await page.getByRole("button", { name: /Profiles & API Keys/ }).click();
+  await page.getByRole("button", { name: /Team Profiles/ }).click();
   await expect(page.getByRole("heading", { name: "Profiles" })).toBeVisible();
   await expectNoShellOverlap(page);
 
@@ -561,13 +591,21 @@ async function expectNoShellOverlap(page: Page) {
       clientWidth: element.clientWidth,
       scrollWidth: element.scrollWidth,
     })),
+    navContainers: Array.from(document.querySelectorAll(".workspace, .detail-pane, .primary-rail, .top-nav-tabs, .rail-tabs, .team-workspace-tabs, .config-tabs")).map((element) => ({
+      className: element.className,
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    })),
   }));
   expect(overflow.documentWidth).toBeLessThanOrEqual(overflow.viewportWidth + 1);
   for (const tableWrap of overflow.tableWraps) {
     expect(tableWrap.scrollWidth, `${tableWrap.className} overflowed horizontally`).toBeLessThanOrEqual(tableWrap.clientWidth + 1);
   }
+  for (const navContainer of overflow.navContainers) {
+    expect(navContainer.scrollWidth, `${navContainer.className} overflowed horizontally`).toBeLessThanOrEqual(navContainer.clientWidth + 1);
+  }
 
-  const boxes = await page.locator(".topbar, .control-sidebar, .detail-pane").evaluateAll((elements) => (
+  const boxes = await page.locator(".topbar, .primary-rail, .resource-rail, .detail-pane").evaluateAll((elements) => (
     elements.map((element) => {
       const rect = element.getBoundingClientRect();
       return {

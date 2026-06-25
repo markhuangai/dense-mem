@@ -299,7 +299,8 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.type(screen.getByLabelText("Name", { selector: "#new-team-name" }), "ab");
+    await userEvent.click(screen.getByRole("button", { name: "New Team" }));
+    await userEvent.type(screen.getByLabelText("Name", { selector: "input#new-team-name" }), "ab");
     await userEvent.click(screen.getByRole("button", { name: /^create$/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Name must be at least 3 characters.");
@@ -317,8 +318,9 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.type(screen.getByLabelText("Name", { selector: "#new-team-name" }), "Work Team");
-    await userEvent.type(screen.getByLabelText("Description", { selector: "#new-team-description" }), "for work");
+    await userEvent.click(screen.getByRole("button", { name: "New Team" }));
+    await userEvent.type(screen.getByLabelText("Name", { selector: "input#new-team-name" }), "Work Team");
+    await userEvent.type(screen.getByLabelText("Description", { selector: "input#new-team-description" }), "for work");
     await userEvent.click(screen.getByRole("button", { name: /^create$/i }));
 
     expect(await screen.findByRole("heading", { name: "Work Team" })).toBeInTheDocument();
@@ -330,7 +332,7 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /profiles & api keys/i }));
+    await userEvent.click(screen.getByRole("button", { name: /team profiles/i }));
     await userEvent.click(screen.getByRole("button", { name: /create profile/i }));
 
     expect(await screen.findByDisplayValue("dm_plain_once")).toHaveAccessibleName("Generated API key");
@@ -363,6 +365,7 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
+    await userEvent.click(screen.getByRole("button", { name: /team settings/i }));
 
     const teamName = screen.getByLabelText("Name", { selector: "#team-name" });
     await userEvent.clear(teamName);
@@ -370,7 +373,7 @@ describe("App", () => {
     await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
     expect(await screen.findByRole("heading", { name: "Renamed Team" })).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: /profiles & api keys/i }));
+    await userEvent.click(screen.getByRole("button", { name: /team profiles/i }));
     const profileName = await screen.findByLabelText("Profile name default profile");
     await userEvent.clear(profileName);
     await userEvent.type(profileName, "Research profile");
@@ -423,6 +426,7 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
+    await userEvent.click(screen.getByRole("button", { name: /team settings/i }));
 
     const scheduledToggle = screen.getByLabelText("Scheduled cycle", { selector: "input" });
     expect(scheduledToggle).not.toBeChecked();
@@ -448,7 +452,7 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /profiles & api keys/i }));
+    await userEvent.click(screen.getByRole("button", { name: /team profiles/i }));
 
     expect(await screen.findByText("******abc123")).toBeInTheDocument();
     const keyRow = screen.getByText("******abc123").closest("tr");
@@ -512,6 +516,18 @@ describe("App", () => {
     });
   });
 
+  it("marks team overview metrics unavailable when metrics cannot load", async () => {
+    mockPortalFetch({ teams: [profileA], keys: [keyA()], metrics: "error" });
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+
+    render(<App />);
+    await screen.findByRole("button", { name: /Default/ });
+
+    expect(await screen.findByLabelText("Team overview")).toHaveTextContent("Metrics unavailable");
+    expect(screen.getByLabelText("Team activity")).toHaveTextContent("unavailable");
+    expect(screen.getByLabelText("Top signals")).toHaveTextContent("n/a");
+  });
+
   it("shows operation log details, raw log expansion, and page size selection", async () => {
     const fetchMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
     sessionStorage.setItem("denseMem.controlToken", "secret");
@@ -544,7 +560,7 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /^dreams$/i }));
+    await userEvent.click(screen.getByRole("button", { name: /team dreams/i }));
 
     expect(await screen.findByText("A may affect B.")).toBeInTheDocument();
     expect(screen.getByLabelText("Dreaming status")).toHaveTextContent("Global force");
@@ -714,6 +730,7 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
+    await userEvent.click(screen.getByRole("button", { name: /team settings/i }));
     await userEvent.click(screen.getByRole("button", { name: /^delete$/i }));
 
     await waitFor(() => {
@@ -729,6 +746,7 @@ function mockPortalFetch({
   bans = [],
   logs = operationLogsSnapshot,
   dreams = [dreamSnapshot],
+  metrics = metricsSnapshot,
 }: {
   teams: Team[];
   keys: TeamProfile[];
@@ -736,6 +754,7 @@ function mockPortalFetch({
   bans?: SecurityBan[];
   logs?: OperationLog[];
   dreams?: Dream[];
+  metrics?: ControlMetrics | "error";
 }) {
   let currentProfiles = teams;
   let currentKeys = keys;
@@ -757,7 +776,10 @@ function mockPortalFetch({
       return jsonResponse({ data: telemetrySnapshot });
     }
     if (url.includes("/metrics") && method === "GET") {
-      return jsonResponse({ data: metricsSnapshot });
+      if (metrics === "error") {
+        return jsonResponse({ code: "METRICS_UNAVAILABLE", message: "metrics unavailable", details: null }, 503);
+      }
+      return jsonResponse({ data: metrics });
     }
     if (url.endsWith("/config/general") && method === "GET") {
       return jsonResponse({ data: currentGeneralConfig });

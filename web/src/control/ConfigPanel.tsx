@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { Check, Clock, ListFilter, MessageSquare, Moon, Network, RefreshCw, Settings, X } from "lucide-react";
 import { CommunityDetectionConfig, CommunityDetectionConfigItem, ControlApi, DreamingConfig, DreamingConfigItem, GeneralConfig, GeneralConfigItem, OperationLogConfig, OperationLogConfigItem, RecallFeedbackConfig, RecallFeedbackConfigItem, SSOConfig, SSOConfigItem } from "../api";
-import { SectionHeading } from "../ui/components";
+import { LoadingState, SectionHeading } from "../ui/components";
 import { formatDate, readError } from "./utils";
 
 type ConfigTab = "general" | "sso" | "dreaming" | "community" | "operation-logs" | "recall-feedback";
@@ -293,7 +293,7 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
       {error && <div className="banner error" role="alert">{error}</div>}
       {message && <div className="banner neutral">{message}</div>}
       {loading && !config ? (
-        <div className="table-placeholder compact">Loading</div>
+        <LoadingState label="Loading config" compact />
       ) : (
         <form className="edit-grid" onSubmit={saveConfig}>
           {(config?.items ?? []).map((item) => (

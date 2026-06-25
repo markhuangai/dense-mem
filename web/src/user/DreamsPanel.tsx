@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
-import { InfoTooltip, SectionHeading } from "../ui/components";
+import { InfoTooltip, LoadingState, SectionHeading } from "../ui/components";
 import { Dream, DreamQuery, DreamRun, DreamSort, DreamStatus, UserApi } from "./api";
 
 const DREAM_STATUSES = ["", "proposed", "reinforced", "stale", "rejected", "promoted"];
@@ -129,7 +129,7 @@ export function UserDreamsPanel({ api }: { api: UserApi }) {
           </label>
         </div>
         {loading && dreams.length === 0 ? (
-          <div className="table-placeholder">Loading</div>
+          <LoadingState label="Loading dreams" />
         ) : dreams.length === 0 ? (
           <div className="table-placeholder">No dreams</div>
         ) : (
@@ -178,7 +178,7 @@ export function UserDreamsPanel({ api }: { api: UserApi }) {
       <section className="surface">
         <SectionHeading title="Cycle Runs" meta={runs.length} />
         {loading && runs.length === 0 ? (
-          <div className="table-placeholder">Loading</div>
+          <LoadingState label="Loading runs" />
         ) : runs.length === 0 ? (
           <div className="table-placeholder">No runs</div>
         ) : (

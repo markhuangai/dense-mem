@@ -10,6 +10,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Search,
   Settings,
   ShieldCheck,
   Sun,
@@ -23,9 +24,11 @@ import {
   Team,
   TeamProfile,
 } from "./api";
+import { TeamOverviewPanel, TeamWorkspaceShell } from "./control/TeamWorkspace";
+import type { TeamWorkspaceTab } from "./control/TeamWorkspace";
 import { TeamDreamingConfigForm } from "./teamDreamingConfig";
 import { displayKeySuffix, formatDate, profilePermissionLabel, profileRoleLabel, readError, shortId } from "./control/utils";
-import { AuthShell, PortalShell, SecretBox, SectionHeading } from "./ui/components";
+import { AuthShell, LoadingState, PortalShell, SecretBox, SectionHeading } from "./ui/components";
 
 const MetricsPanel = lazy(() => import("./control/MetricsPanel").then((module) => ({ default: module.MetricsPanel })));
 const SecurityPanel = lazy(() => import("./control/SecurityPanel").then((module) => ({ default: module.SecurityPanel })));
@@ -40,7 +43,7 @@ const THEME_STORAGE_KEY = "denseMem.controlTheme";
 
 type LoadState = "idle" | "loading" | "error";
 type Theme = "light" | "dark";
-type PortalTab = "teams" | "dreams" | "metrics" | "recall-feedback" | "logs" | "profiles" | "security" | "sso" | "config";
+type PortalTab = "teams" | "metrics" | "recall-feedback" | "logs" | "security" | "sso" | "config";
 type ProfilePermission = "read" | "read_write";
 
 export function App() {
@@ -88,7 +91,7 @@ export function App() {
       <AuthShell
         theme={theme}
         title="Dense-Mem Control"
-        icon={<ShieldCheck size={20} aria-hidden="true" />}
+        icon={<span className="brand-initials" aria-hidden="true">DM</span>}
         onSubmit={submitToken}
         actions={(
           <button
@@ -135,6 +138,8 @@ function Portal({
   const [teams, setTeams] = useState<Team[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState("");
   const [activeTab, setActiveTab] = useState<PortalTab>("teams");
+  const [teamWorkspaceTab, setTeamWorkspaceTab] = useState<TeamWorkspaceTab>("overview");
+  const [creatingTeam, setCreatingTeam] = useState(false);
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [error, setError] = useState("");
 
@@ -162,12 +167,19 @@ function Portal({
   }, []);
 
   const selectedTeam = teams.find((team) => team.id === selectedTeamId) ?? null;
+  const teamScopedTab = activeTab === "teams";
+
+  function openTeamWorkspace(nextTab: TeamWorkspaceTab) {
+    setCreatingTeam(false);
+    setTeamWorkspaceTab(nextTab);
+    setActiveTab("teams");
+  }
 
   return (
     <PortalShell
       theme={theme}
       title="Dense-Mem Control"
-      icon={<ShieldCheck size={20} aria-hidden="true" />}
+      icon={<span className="brand-initials" aria-hidden="true">DM</span>}
       topbarActions={(
         <>
           <button
@@ -189,13 +201,14 @@ function Portal({
         </>
       )}
       navLabel="Control navigation"
+      navItemsLabel="Control sections"
       navItems={[
         {
           id: "teams",
           label: "Teams",
           icon: <Users size={17} aria-hidden="true" />,
-          active: activeTab === "teams",
-          onClick: () => setActiveTab("teams"),
+          active: activeTab === "teams" && (teamWorkspaceTab === "overview" || teamWorkspaceTab === "settings"),
+          onClick: () => openTeamWorkspace("overview"),
         },
         {
           id: "metrics",
@@ -206,7 +219,7 @@ function Portal({
         },
         {
           id: "recall-feedback",
-          label: "Recall Feedback",
+          label: "Feedback",
           icon: <MessageSquare size={17} aria-hidden="true" />,
           active: activeTab === "recall-feedback",
           onClick: () => setActiveTab("recall-feedback"),
@@ -215,9 +228,9 @@ function Portal({
           id: "dreams",
           label: "Dreams",
           icon: <Moon size={17} aria-hidden="true" />,
-          active: activeTab === "dreams",
+          active: activeTab === "teams" && teamWorkspaceTab === "dreams",
           disabled: !selectedTeam,
-          onClick: () => setActiveTab("dreams"),
+          onClick: () => openTeamWorkspace("dreams"),
         },
         {
           id: "logs",
@@ -228,11 +241,11 @@ function Portal({
         },
         {
           id: "profiles",
-          label: "Profiles & API Keys",
+          label: "Profiles",
           icon: <KeyRound size={17} aria-hidden="true" />,
-          active: activeTab === "profiles",
+          active: activeTab === "teams" && teamWorkspaceTab === "profiles",
           disabled: !selectedTeam,
-          onClick: () => setActiveTab("profiles"),
+          onClick: () => openTeamWorkspace("profiles"),
         },
         {
           id: "security",
@@ -256,45 +269,63 @@ function Portal({
           onClick: () => setActiveTab("config"),
         },
       ]}
-      sidebarTitle="Teams"
-      sidebarMeta={teams.length}
-      sidebarBody={(
-        <TeamSelectList
+      resourceRailLabel="Teams"
+      resourceRail={teamScopedTab ? (
+        <TeamResourceRail
           teams={teams}
           selectedTeamId={selectedTeamId}
           loading={loadState === "loading"}
-          onSelect={setSelectedTeamId}
+          onCreate={() => {
+            setActiveTab("teams");
+            setTeamWorkspaceTab("overview");
+            setCreatingTeam(true);
+            window.requestAnimationFrame(() => document.getElementById("new-team-name")?.focus());
+          }}
+          onSelect={(teamId) => {
+            setSelectedTeamId(teamId);
+          }}
         />
-      )}
-      detailLabel="Team details"
+      ) : undefined}
+      detailLabel="Control details"
       error={error}
     >
       <Suspense fallback={<LazyPanelFallback />}>
-        {activeTab === "teams" && (
+        {teamScopedTab && (
           <>
-            <section className="surface">
-              <SectionHeading title="Create team" />
-              <TeamCreateForm api={api} onCreated={(team) => void loadTeams(team.id)} />
-            </section>
+            {creatingTeam && (
+              <section className="surface">
+                <SectionHeading
+                  title="Create team"
+                  actions={(
+                    <button className="text-button" type="button" onClick={() => setCreatingTeam(false)}>
+                      Cancel
+                    </button>
+                  )}
+                />
+                <TeamCreateForm
+                  api={api}
+                  onCreated={(team) => {
+                    setCreatingTeam(false);
+                    void loadTeams(team.id);
+                  }}
+                />
+              </section>
+            )}
             {selectedTeam ? (
-              <TeamEditor
+              <TeamWorkspace
                 api={api}
                 team={selectedTeam}
+                activeTab={teamWorkspaceTab}
+                onSelectTab={openTeamWorkspace}
                 onUpdated={(team) => {
                   setTeams((current) => current.map((item) => (item.id === team.id ? team : item)));
                 }}
                 onDeleted={() => void loadTeams()}
               />
             ) : (
-              <div className="empty-state">{loadState === "loading" ? "Loading" : "No teams"}</div>
+              loadState === "loading" ? <LoadingState label="Loading teams" /> : <div className="empty-state">No teams</div>
             )}
           </>
-        )}
-        {activeTab === "profiles" && (
-          selectedTeam ? <TeamProfilesPanel api={api} team={selectedTeam} /> : <div className="empty-state">Select a team</div>
-        )}
-        {activeTab === "dreams" && (
-          selectedTeam ? <ControlDreamsPanel api={api} team={selectedTeam} /> : <div className="empty-state">Select a team</div>
         )}
         {activeTab === "metrics" && <MetricsPanel api={api} teams={teams} />}
         {activeTab === "recall-feedback" && <RecallFeedbackPanel api={api} teams={teams} />}
@@ -308,7 +339,7 @@ function Portal({
 }
 
 function LazyPanelFallback() {
-  return <div className="table-placeholder">Loading</div>;
+  return <LoadingState label="Loading panel" />;
 }
 
 function readTheme(): Theme {
@@ -356,39 +387,121 @@ function TeamCreateForm({ api, onCreated }: { api: ControlApi; onCreated: (team:
   );
 }
 
-function TeamSelectList({
+function TeamResourceRail({
   teams,
   selectedTeamId,
   loading,
+  onCreate,
   onSelect,
 }: {
   teams: Team[];
   selectedTeamId: string;
   loading: boolean;
+  onCreate: () => void;
   onSelect: (teamId: string) => void;
 }) {
-  if (loading && teams.length === 0) {
-    return <div className="table-placeholder compact">Loading</div>;
-  }
+  const [query, setQuery] = useState("");
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const visibleTeams = normalizedQuery
+    ? teams.filter((team) => (
+      team.name.toLocaleLowerCase().includes(normalizedQuery)
+        || team.id.toLocaleLowerCase().includes(normalizedQuery)
+    ))
+    : teams;
 
-  if (teams.length === 0) {
-    return <div className="table-placeholder compact">No teams</div>;
-  }
+  const listContent = (() => {
+    if (loading && teams.length === 0) {
+      return <LoadingState label="Loading teams" compact />;
+    }
+
+    if (teams.length === 0) {
+      return <div className="table-placeholder compact">No teams</div>;
+    }
+
+    if (visibleTeams.length === 0) {
+      return <div className="table-placeholder compact">No matching teams</div>;
+    }
+
+    return (
+      <div className="team-list">
+        {visibleTeams.map((team) => (
+          <button
+            key={team.id}
+            className={team.id === selectedTeamId ? "team-list-item selected" : "team-list-item"}
+            type="button"
+            onClick={() => onSelect(team.id)}
+          >
+            <span className="team-list-primary">
+              <span className="status-dot" aria-hidden="true" />
+              <span>{team.name}</span>
+            </span>
+            <small>{formatDate(team.updated_at)}</small>
+          </button>
+        ))}
+      </div>
+    );
+  })();
 
   return (
-    <div className="team-list">
-      {teams.map((team) => (
-        <button
-          key={team.id}
-          className={team.id === selectedTeamId ? "team-list-item selected" : "team-list-item"}
-          type="button"
-          onClick={() => onSelect(team.id)}
-        >
-          <span>{team.name}</span>
-          <small>{formatDate(team.updated_at)}</small>
-        </button>
-      ))}
+    <div className="resource-panel team-resource-panel">
+      <SectionHeading
+        title="Teams"
+        meta={teams.length}
+        actions={(
+          <button className="primary-button compact" type="button" onClick={onCreate}>
+            <Plus size={16} aria-hidden="true" />
+            New Team
+          </button>
+        )}
+      />
+      <label className="resource-search">
+        <Search size={16} aria-hidden="true" />
+        <span className="sr-only">Search teams</span>
+        <input
+          aria-label="Search teams"
+          placeholder="Search teams..."
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+      </label>
+      {listContent}
     </div>
+  );
+}
+
+function TeamWorkspace({
+  api,
+  team,
+  activeTab,
+  onSelectTab,
+  onUpdated,
+  onDeleted,
+}: {
+  api: ControlApi;
+  team: Team;
+  activeTab: TeamWorkspaceTab;
+  onSelectTab: (tab: TeamWorkspaceTab) => void;
+  onUpdated: (team: Team) => void;
+  onDeleted: () => void;
+}) {
+  return (
+    <TeamWorkspaceShell team={team} activeTab={activeTab} onSelectTab={onSelectTab}>
+      {activeTab === "overview" && <TeamOverviewPanel api={api} team={team} onOpenSettings={() => onSelectTab("settings")} />}
+      {activeTab === "profiles" && <TeamProfilesPanel api={api} team={team} embedded />}
+        {activeTab === "dreams" && (
+        <Suspense fallback={<div className="team-embedded-panel"><LoadingState label="Loading dreams" /></div>}>
+          <ControlDreamsPanel api={api} team={team} embedded />
+        </Suspense>
+      )}
+      {activeTab === "settings" && (
+        <TeamEditor
+          api={api}
+          team={team}
+          onUpdated={onUpdated}
+          onDeleted={onDeleted}
+        />
+      )}
+    </TeamWorkspaceShell>
   );
 }
 
@@ -448,8 +561,8 @@ function TeamEditor({
   }
 
   return (
-    <section className="surface">
-      <SectionHeading title={team.name} meta={shortId(team.id)} />
+    <section className="team-detail-surface">
+      <SectionHeading title="Team settings" />
       <form className="edit-grid" onSubmit={save}>
         <label htmlFor="team-name">Name</label>
         <input id="team-name" value={name} onChange={(event) => setName(event.target.value)} />
@@ -482,7 +595,7 @@ function TeamEditor({
   );
 }
 
-function TeamProfilesPanel({ api, team }: { api: ControlApi; team: Team }) {
+function TeamProfilesPanel({ api, team, embedded = false }: { api: ControlApi; team: Team; embedded?: boolean }) {
   const [keys, setKeys] = useState<TeamProfile[]>([]);
   const [createdKey, setCreatedKey] = useState<CreatedTeamProfile | null>(null);
   const [error, setError] = useState("");
@@ -585,7 +698,7 @@ function TeamProfilesPanel({ api, team }: { api: ControlApi; team: Team }) {
   }
 
   return (
-    <section className="surface">
+    <section className={embedded ? "team-embedded-panel" : "surface"}>
       <SectionHeading title="Profiles" meta={keys.length} />
       {createdKey && <CreatedKeyNotice createdKey={createdKey} onDismiss={() => setCreatedKey(null)} />}
       {error && <div className="banner error" role="alert">{error}</div>}
@@ -599,7 +712,7 @@ function TeamProfilesPanel({ api, team }: { api: ControlApi; team: Team }) {
           void loadKeys();
         }}
       />
-      {loading && <div className="table-placeholder">Loading</div>}
+      {loading && <LoadingState label="Loading profiles" />}
       {!loading && (
         <TeamProfileTable
           keys={keys}

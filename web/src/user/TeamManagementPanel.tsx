@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { CreatedTeamProfile, UserApi, UserKey, UserSession, UserTeam } from "./api";
-import { SecretBox, SectionHeading } from "../ui/components";
+import { LoadingState, SecretBox, SectionHeading } from "../ui/components";
 import { TeamDreamingConfigForm } from "../teamDreamingConfig";
 
 type ProfilePermission = "read" | "read_write";
@@ -186,7 +186,7 @@ export function TeamManagementPanel({
             await loadProfiles();
           }}
         />
-        {loading && <div className="table-placeholder">Loading</div>}
+        {loading && <LoadingState label="Loading profiles" />}
         {!loading && (
           <ManagedProfileTable
             profiles={profiles}

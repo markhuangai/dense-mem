@@ -6,7 +6,25 @@
   }
 
   .workspace {
-    grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+
+  .workspace.has-resource-rail {
+    grid-template-columns: 64px minmax(230px, 280px) minmax(0, 1fr);
+  }
+
+  .knowledge-explorer {
+    grid-template-columns: minmax(190px, 230px) minmax(0, 1fr);
+  }
+
+  .knowledge-explorer.inspector-closed {
+    grid-template-columns: minmax(190px, 230px) minmax(0, 1fr);
+  }
+
+  .knowledge-inspector {
+    position: static;
+    grid-column: 1 / -1;
+    max-height: none;
   }
 
   .telemetry-card-grid {
@@ -25,12 +43,53 @@
     grid-template-columns: 1fr;
   }
 
-  .control-sidebar {
-    position: static;
+  .workspace.has-resource-rail {
+    grid-template-columns: 1fr;
   }
 
-  .portal-tabs {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+  .topbar {
+    position: static;
+    justify-items: start;
+  }
+
+  .topbar-actions {
+    grid-column: auto;
+  }
+
+  .topbar-context,
+  .session-context {
+    width: 100%;
+    max-width: none;
+  }
+
+  .primary-rail,
+  .resource-rail,
+  .top-nav-bar,
+  .knowledge-filter-panel {
+    position: static;
+    max-height: none;
+  }
+
+  .top-nav-bar {
+    padding-inline: 0;
+  }
+
+  .top-nav-tabs {
+    width: 100%;
+  }
+
+  .primary-rail {
+    min-height: auto;
+  }
+
+  .rail-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+
+  .rail-tab-button {
+    width: 76px;
   }
 
   .tab-button {
@@ -59,7 +118,8 @@
     grid-template-columns: 1fr 1fr;
   }
 
-  .search-form,
+  .search-form:not(.stacked),
+  .knowledge-explorer,
   .key-detail-grid {
     grid-template-columns: 1fr;
   }
@@ -74,12 +134,15 @@
 
   .auth-panel,
   .surface,
-  .control-sidebar {
+  .resource-rail,
+  .knowledge-filter-panel,
+  .knowledge-results-panel,
+  .knowledge-inspector {
     padding: 14px;
   }
 
   .brand-row h1 {
-    font-size: 19px;
+    font-size: 15px;
   }
 
   .topbar-actions,
@@ -87,8 +150,7 @@
     flex-wrap: wrap;
   }
 
-  .portal-tabs,
-  .config-tabs,
+  .rail-tabs,
   .security-summary,
   .metrics-summary,
   .dreaming-effective-grid,
@@ -98,13 +160,15 @@
     grid-template-columns: 1fr;
   }
 
-  .tab-button {
-    justify-content: flex-start;
+  .rail-tab-button {
+    width: 68px;
+    min-height: 54px;
   }
 
   .config-tabs .tab-button {
-    flex: 1 1 100%;
-    width: 100%;
+    flex: 1 1 calc(33.333% - 6px);
+    min-width: 88px;
+    width: auto;
   }
 
   .table-actions {
@@ -121,14 +185,20 @@
 
   .data-table th,
   .data-table td {
-    padding: 9px 8px;
+    padding: 9px 6px;
+  }
+
+  .table-wrap {
+    border-width: 0;
   }
 
   .key-table,
   .dreams-table,
   .dream-runs-table,
   .logs-table {
+    max-width: 100%;
     min-width: 0;
+    overflow: hidden;
   }
 
   .key-table thead,
@@ -155,7 +225,10 @@
   .logs-table tr,
   .logs-table td {
     display: block;
+    max-width: 100%;
+    min-width: 0;
     width: 100%;
+    overflow: hidden;
   }
 
   .key-table tr,
@@ -171,6 +244,7 @@
   .dream-runs-table td,
   .logs-table td {
     border-bottom: 0;
+    overflow-wrap: anywhere;
   }
 
   .key-table .actions-cell,
