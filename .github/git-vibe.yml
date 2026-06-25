@@ -49,6 +49,9 @@ event_delivery:
 github_auth:
   mode: github-app
 
+safety:
+  prompt_injection_gate: true
+  
 tests:
   commands: []
 
