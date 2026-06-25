@@ -692,6 +692,32 @@ func TestMCP_UnknownMethodReturnsError(t *testing.T) {
 	}
 }
 
+func TestMCP_HandlePayloadResultNotifications(t *testing.T) {
+	logger, _ := testLogger(t)
+	reg := registry.New()
+	s := NewServer(reg, "pA", logger)
+
+	notification := s.HandlePayloadResult(context.Background(), []byte(`{"jsonrpc":"2.0","method":"notifications/initialized"}`))
+	if notification.Respond {
+		t.Fatalf("notification Respond = true, payload = %q", string(notification.Payload))
+	}
+	if len(notification.Payload) != 0 {
+		t.Fatalf("notification payload = %q; want empty", string(notification.Payload))
+	}
+
+	invalid := s.HandlePayloadResult(context.Background(), []byte(`{"jsonrpc":"2.0"}`))
+	if !invalid.Respond {
+		t.Fatal("invalid no-id payload Respond = false; want error response")
+	}
+	var resp rpcResp
+	if err := json.Unmarshal(invalid.Payload, &resp); err != nil {
+		t.Fatalf("unmarshal invalid response: %v", err)
+	}
+	if resp.Error == nil || resp.Error.Code != errCodeMethodNotFound {
+		t.Fatalf("invalid no-id error = %+v; want method not found", resp.Error)
+	}
+}
+
 func TestMCP_HandlePayloadProducesOnlyJSONRPC(t *testing.T) {
 	logger, logBuf := testLogger(t)
 	reg := registry.New()

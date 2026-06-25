@@ -49,8 +49,9 @@ func NewMCPHandlerWithLifecycleAndRuntimeConfig(reg registry.Registry, logger ob
 	return &MCPHandler{reg: reg, logger: logger, lifecycle: lifecycle, recallFeedbackConfig: recallFeedbackConfig}
 }
 
-// HandlePost serves POST /mcp. It accepts a single JSON-RPC request and returns
-// either application/json or a one-shot text/event-stream response, depending on Accept.
+// HandlePost serves POST /mcp. It accepts a single JSON-RPC payload and returns
+// either 202 for notifications, application/json, or a one-shot text/event-stream
+// response, depending on the payload and Accept.
 func (h *MCPHandler) HandlePost(c echo.Context) error {
 	ctx := c.Request().Context()
 	profileID, ok := middleware.GetResolvedProfileID(ctx)
@@ -77,13 +78,16 @@ func (h *MCPHandler) HandlePost(c echo.Context) error {
 		team.Description = resolvedTeam.Description
 	}
 	server := mcp.NewServerWithScopesTeamContextAndRuntimeConfig(h.reg, profileID.String(), principal.Scopes, team, h.logger, h.recallFeedbackConfig)
-	responsePayload := server.HandlePayload(ctx, payload)
-
-	if acceptsEventStream(c.Request().Header.Get("Accept")) {
-		return writeMCPSSE(c, responsePayload)
+	response := server.HandlePayloadResult(ctx, payload)
+	if !response.Respond {
+		return c.NoContent(http.StatusAccepted)
 	}
 
-	return c.Blob(http.StatusOK, "application/json", responsePayload)
+	if acceptsEventStream(c.Request().Header.Get("Accept")) {
+		return writeMCPSSE(c, response.Payload)
+	}
+
+	return c.Blob(http.StatusOK, "application/json", response.Payload)
 }
 
 // HandleGet serves GET /mcp as an SSE stream for Streamable HTTP clients.

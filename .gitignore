@@ -60,3 +60,4 @@ temp/
 telemetry-scrape-token
 prometheus.yml
 .env.mcp
+.codex

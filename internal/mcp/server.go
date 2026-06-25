@@ -109,14 +109,31 @@ type rpcError struct {
 	Data    any    `json:"data,omitempty"`
 }
 
+// PayloadResult describes whether a JSON-RPC payload produced a response.
+type PayloadResult struct {
+	Payload []byte
+	Respond bool
+}
+
 // HandlePayload handles one JSON-RPC request payload and returns one JSON-RPC response payload.
 func (s *Server) HandlePayload(ctx context.Context, payload []byte) []byte {
+	result := s.HandlePayloadResult(ctx, payload)
+	return result.Payload
+}
+
+// HandlePayloadResult handles one JSON-RPC payload and reports whether the
+// transport should write a response. Valid JSON-RPC notifications have no id and
+// must not receive a JSON-RPC response.
+func (s *Server) HandlePayloadResult(ctx context.Context, payload []byte) PayloadResult {
 	var req rpcRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
 		s.logger.Warn("mcp: parse error", observability.String("error", err.Error()))
-		return mustMarshalResponse(errorResponse(nil, errCodeParseError, "parse error"))
+		return PayloadResult{Payload: mustMarshalResponse(errorResponse(nil, errCodeParseError, "parse error")), Respond: true}
 	}
-	return mustMarshalResponse(s.dispatch(ctx, req))
+	if req.isNotification() {
+		return PayloadResult{Respond: false}
+	}
+	return PayloadResult{Payload: mustMarshalResponse(s.dispatch(ctx, req)), Respond: true}
 }
 
 // dispatch routes a single request to the right handler.
@@ -144,6 +161,10 @@ func (s *Server) dispatch(ctx context.Context, req rpcRequest) rpcResponse {
 		s.logger.Warn("mcp: method not found", observability.String("method", req.Method))
 		return errorResponse(req.ID, errCodeMethodNotFound, fmt.Sprintf("method not found: %s", req.Method))
 	}
+}
+
+func (r rpcRequest) isNotification() bool {
+	return len(r.ID) == 0 && r.JSONRPC == "2.0" && r.Method != ""
 }
 
 // handleInitialize returns the server's capability block.
