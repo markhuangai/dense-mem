@@ -66,6 +66,13 @@ func TestRecallFeedbackEventServiceRecordsFeedbackOnlyAndPrunesRetention(t *test
 		Quality:         "low",
 		MissingContext:  true,
 		Irrelevant:      false,
+		FailureReason:   "missing expected context",
+		ExpectedContext: "knowledge explorer listbox pattern",
+		IrrelevantRefs: []domain.RecallFeedbackJudgedResultRef{{
+			Type: domain.RecallFeedbackResultTypeFragment,
+			ID:   "fragment-1",
+			Rank: 1,
+		}},
 	})
 	require.NoError(t, err)
 	require.Len(t, repo.feedbacks, 1)
@@ -78,6 +85,13 @@ func TestRecallFeedbackEventServiceRecordsFeedbackOnlyAndPrunesRetention(t *test
 	assert.Equal(t, "low", got.Quality)
 	assert.NotNil(t, got.MissingContext)
 	assert.True(t, *got.MissingContext)
+	assert.Equal(t, "missing expected context", got.FailureReason)
+	assert.Equal(t, "knowledge explorer listbox pattern", got.ExpectedContext)
+	assert.Equal(t, []domain.RecallFeedbackJudgedResultRef{{
+		Type: domain.RecallFeedbackResultTypeFragment,
+		ID:   "fragment-1",
+		Rank: 1,
+	}}, got.IrrelevantRefs)
 
 	require.NoError(t, svc.Prune(ctx))
 	require.Len(t, repo.pruneCutoffs, 1)
