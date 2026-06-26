@@ -56,7 +56,7 @@ func TestSubmitRecallSessionFeedbackRejectsInvalidQuality(t *testing.T) {
 	}
 }
 
-func TestSubmitRecallSessionFeedbackRequiresFailureReasonForNegativeFeedback(t *testing.T) {
+func TestSubmitRecallSessionFeedbackRequiresCommentForNonHighFeedback(t *testing.T) {
 	reg, _ := BuildDefault(Dependencies{
 		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
 		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
@@ -67,20 +67,22 @@ func TestSubmitRecallSessionFeedbackRequiresFailureReasonForNegativeFeedback(t *
 		"recalls": []any{map[string]any{
 			"recall_id":        "rec-1",
 			"used":             true,
-			"answer_supported": false,
+			"answer_supported": true,
 			"quality":          "medium",
 			"missing_context":  false,
 			"irrelevant":       false,
 		}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "recalls[0].failure_reason is required for negative feedback") {
-		t.Fatalf("err = %v; want missing failure reason", err)
+	if err == nil || !strings.Contains(err.Error(), "recalls[0].feedback_comment is required") {
+		t.Fatalf("err = %v; want missing feedback comment", err)
 	}
 }
 
-func TestSubmitRecallSessionFeedbackRejectsInvalidFailureReason(t *testing.T) {
+func TestSubmitRecallSessionFeedbackAcceptsLegacyCommentFields(t *testing.T) {
+	recorder := &stubRecallFeedbackRecorder{}
 	reg, _ := BuildDefault(Dependencies{
 		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+		RecallFeedbackEvents: recorder,
 		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
 	})
 	tool, _ := reg.Get("submit_recall_session_feedback")
@@ -93,11 +95,14 @@ func TestSubmitRecallSessionFeedbackRejectsInvalidFailureReason(t *testing.T) {
 			"quality":          "low",
 			"missing_context":  true,
 			"irrelevant":       false,
-			"failure_reason":   "returned stale UI redesign notes",
+			"failure_reason":   "legacy fallback comment",
 		}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "recalls[0].failure_reason must be one of") {
-		t.Fatalf("err = %v; want invalid failure reason", err)
+	if err != nil {
+		t.Fatalf("submit_recall_session_feedback Invoke: %v", err)
+	}
+	if len(recorder.feedback) != 1 || recorder.feedback[0].FeedbackComment != "legacy fallback comment" {
+		t.Fatalf("recorded feedback = %+v", recorder.feedback)
 	}
 }
 
@@ -162,8 +167,7 @@ func TestSubmitRecallSessionFeedbackRecordsFailureDetails(t *testing.T) {
 			"quality":          "low",
 			"missing_context":  true,
 			"irrelevant":       true,
-			"failure_reason":   " STALE_OR_RETRACTED_RESULTS ",
-			"expected_context": " Returned stale UI redesign notes instead of the button disabled-state pattern. Existing SearchPanel button handling pattern. ",
+			"feedback_comment": " Returned stale UI redesign notes instead of the button disabled-state pattern. Existing SearchPanel button handling pattern. ",
 			"irrelevant_result_refs": []any{map[string]any{
 				"type": "fragment",
 				"id":   " fragment-1 ",
@@ -178,11 +182,11 @@ func TestSubmitRecallSessionFeedbackRecordsFailureDetails(t *testing.T) {
 		t.Fatalf("recorded feedback = %d; want 1", len(recorder.feedback))
 	}
 	got := recorder.feedback[0]
-	if got.RecallID != "rec-1" || got.FailureReason != "stale_or_retracted_results" {
+	if got.RecallID != "rec-1" {
 		t.Fatalf("recorded feedback = %+v", got)
 	}
-	if got.ExpectedContext != "Returned stale UI redesign notes instead of the button disabled-state pattern. Existing SearchPanel button handling pattern." {
-		t.Fatalf("expected_context = %q", got.ExpectedContext)
+	if got.FeedbackComment != "Returned stale UI redesign notes instead of the button disabled-state pattern. Existing SearchPanel button handling pattern." {
+		t.Fatalf("feedback_comment = %q", got.FeedbackComment)
 	}
 	if len(got.IrrelevantRefs) != 1 || got.IrrelevantRefs[0].ID != "fragment-1" || got.IrrelevantRefs[0].Rank != 1 {
 		t.Fatalf("irrelevant refs = %+v", got.IrrelevantRefs)
@@ -322,7 +326,7 @@ func TestRecallFeedbackRecorderErrorsSuppressRecallEventAndFailFeedbackSubmit(t 
 			"quality":          "low",
 			"missing_context":  true,
 			"irrelevant":       false,
-			"failure_reason":   "other",
+			"feedback_comment": "persistence failure should stop metrics recording",
 		}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "failed to record recalls[0]") {

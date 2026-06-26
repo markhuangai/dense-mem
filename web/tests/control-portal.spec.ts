@@ -229,8 +229,7 @@ const recallFeedbackEvents = [
     quality: "low",
     missing_context: true,
     irrelevant: false,
-    failure_reason: "stale_or_retracted_results",
-    expected_context: "Returned stale UI notes instead of the requested button pattern. SearchPanel disabled-state and listbox accessibility pattern.",
+    feedback_comment: "Returned stale UI notes instead of the requested button pattern. SearchPanel disabled-state and listbox accessibility pattern.",
     irrelevant_result_refs: [{ type: "fragment", id: "fragment-1", rank: 1 }],
     resolved_results: [
       {
@@ -458,12 +457,11 @@ test("recall feedback tab renders query, params, result ids, and resolved state"
   await page.getByRole("button", { name: /View recall feedback rec_1234567890/ }).click();
   const resultRefs = page.getByRole("table", { name: "Recall feedback result refs" });
   await expect(resultRefs.getByRole("row", { name: /fragment-1/ })).toBeVisible();
-  const failureDetails = page.getByRole("table", { name: "Recall feedback failure details" });
-  await expect(failureDetails.getByText("stale_or_retracted_results")).toBeVisible();
-  await expect(failureDetails.getByText("Returned stale UI notes instead of the requested button pattern. SearchPanel disabled-state and listbox accessibility pattern.")).toBeVisible();
-  await expect(failureDetails.getByText("#1 fragment:fragment-1")).toBeVisible();
+  const commentDetails = page.getByRole("table", { name: "Recall feedback comment details" });
+  await expect(commentDetails.getByText("Returned stale UI notes instead of the requested button pattern. SearchPanel disabled-state and listbox accessibility pattern.")).toBeVisible();
+  await expect(commentDetails.getByText("#1 fragment:fragment-1")).toBeVisible();
   await expect(resultRefs.getByText("The old fragment has been retracted.")).toBeVisible();
-  await expect(page.getByLabel(/Raw recall feedback rec_1234567890/)).toContainText('"failure_reason"');
+  await expect(page.getByLabel(/Raw recall feedback rec_1234567890/)).toContainText('"feedback_comment"');
   await expectNoShellOverlap(page);
 
   await page.getByLabel("Quality").selectOption("low");

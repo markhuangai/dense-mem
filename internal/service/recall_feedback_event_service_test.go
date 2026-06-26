@@ -66,8 +66,7 @@ func TestRecallFeedbackEventServiceRecordsFeedbackOnlyAndPrunesRetention(t *test
 		Quality:         "low",
 		MissingContext:  true,
 		Irrelevant:      false,
-		FailureReason:   "missing expected context",
-		ExpectedContext: "knowledge explorer listbox pattern",
+		FeedbackComment: "knowledge explorer listbox pattern was missing",
 		IrrelevantRefs: []domain.RecallFeedbackJudgedResultRef{{
 			Type: domain.RecallFeedbackResultTypeFragment,
 			ID:   "fragment-1",
@@ -85,8 +84,7 @@ func TestRecallFeedbackEventServiceRecordsFeedbackOnlyAndPrunesRetention(t *test
 	assert.Equal(t, "low", got.Quality)
 	assert.NotNil(t, got.MissingContext)
 	assert.True(t, *got.MissingContext)
-	assert.Equal(t, "missing expected context", got.FailureReason)
-	assert.Equal(t, "knowledge explorer listbox pattern", got.ExpectedContext)
+	assert.Equal(t, "knowledge explorer listbox pattern was missing", got.FeedbackComment)
 	assert.Equal(t, []domain.RecallFeedbackJudgedResultRef{{
 		Type: domain.RecallFeedbackResultTypeFragment,
 		ID:   "fragment-1",

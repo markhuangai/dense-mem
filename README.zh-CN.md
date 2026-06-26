@@ -151,9 +151,10 @@ docker compose -f docker-compose.yml -f docker-compose.telemetry.yml up -d
 在线 recall quality 卡片使用 `densemem_recall_feedback_total` 和
 `densemem_recall_feedback_quality_score`。在 control portal config panel
 开启 recall feedback，并且宿主 LLM 为 `recall_memory` 结果提交 feedback
-之前，这些卡片会保持为零。负向 feedback 需要有界的 `failure_reason` enum，
-也可以包含 expected context 和 irrelevant result refs，供离线分析使用。
-Prometheus 仍然只接收有界 labels；自由文本详情保存在 recall feedback
+之前，这些卡片会保持为零。只有质量为 `high` 且没有负向 flags 的 feedback
+可以省略 `feedback_comment`；`medium`、`low` 或带负向 flags 的 feedback
+需要有界 comment，也可以包含 irrelevant result refs，供离线分析使用。
+Prometheus 仍然只接收有界 labels；自由文本 comment 保存在 recall feedback
 investigation records 中。正常生产 recall 流量仍然会贡献请求量、结果数和延迟指标。
 
 对于一次性 demo image，保持 control portal 关闭，改用 demo telemetry

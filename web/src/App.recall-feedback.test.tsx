@@ -82,8 +82,7 @@ const recallFeedbackEvents: RecallFeedbackEvent[] = [
     quality: "low",
     missing_context: true,
     irrelevant: false,
-    failure_reason: "stale_or_retracted_results",
-    expected_context: "Returned stale UI notes instead of the requested button pattern. SearchPanel disabled-state and listbox accessibility pattern.",
+    feedback_comment: "Returned stale UI notes instead of the requested button pattern. SearchPanel disabled-state and listbox accessibility pattern.",
     irrelevant_result_refs: [{ type: "fragment", id: "fragment-1", rank: 1 }],
     resolved_results: [
       {
@@ -150,12 +149,11 @@ it("shows recall feedback query, params, result ids, and resolved state", async 
 
   await userEvent.click(screen.getByRole("button", { name: /view recall feedback rec_1234567890/i }));
   expect(await screen.findByText("fragment-1")).toBeInTheDocument();
-  const failureDetails = screen.getByRole("table", { name: /Recall feedback failure details/i });
-  expect(within(failureDetails).getByText("stale_or_retracted_results")).toBeInTheDocument();
-  expect(within(failureDetails).getByText("Returned stale UI notes instead of the requested button pattern. SearchPanel disabled-state and listbox accessibility pattern.")).toBeInTheDocument();
-  expect(within(failureDetails).getByText("#1 fragment:fragment-1")).toBeInTheDocument();
+  const commentDetails = screen.getByRole("table", { name: /Recall feedback comment details/i });
+  expect(within(commentDetails).getByText("Returned stale UI notes instead of the requested button pattern. SearchPanel disabled-state and listbox accessibility pattern.")).toBeInTheDocument();
+  expect(within(commentDetails).getByText("#1 fragment:fragment-1")).toBeInTheDocument();
   expect(screen.getByText("The old fragment has been retracted.")).toBeInTheDocument();
-  expect(screen.getByLabelText(/Raw recall feedback rec_1234567890/i)).toHaveTextContent('"failure_reason"');
+  expect(screen.getByLabelText(/Raw recall feedback rec_1234567890/i)).toHaveTextContent('"feedback_comment"');
 
   await userEvent.selectOptions(screen.getByLabelText("Quality"), "low");
   await waitFor(() => {
