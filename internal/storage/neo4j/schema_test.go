@@ -238,6 +238,15 @@ func TestEnsureSchema_DropsPlainIndexBeforeSameNamedUniqueConstraint(t *testing.
 	ctx := context.Background()
 	dreamIndexDropped := false
 	client := &recordingClient{
+		resultRecordsFor: func(cypher string) []*neo4j.Record {
+			if strings.Contains(cypher, "SHOW INDEXES") {
+				return []*neo4j.Record{{
+					Keys:   []string{"owningConstraint"},
+					Values: []any{nil},
+				}}
+			}
+			return nil
+		},
 		runErrFor: func(cypher string) error {
 			if strings.Contains(cypher, "DROP INDEX dream_dream_id_unique") {
 				dreamIndexDropped = true
@@ -263,7 +272,31 @@ func TestEnsureSchema_DropsPlainIndexBeforeSameNamedUniqueConstraint(t *testing.
 func TestEnsureSchema_IgnoresConstraintOwnedUniqueIndexDrop(t *testing.T) {
 	ctx := context.Background()
 	client := &recordingClient{
+		resultRecordsFor: func(cypher string) []*neo4j.Record {
+			if strings.Contains(cypher, "SHOW INDEXES") {
+				return []*neo4j.Record{{
+					Keys:   []string{"owningConstraint"},
+					Values: []any{"dream_dream_id_unique"},
+				}}
+			}
+			return nil
+		},
+	}
+	bs := NewSchemaBootstrapper(client, 1536, unitLogger())
+
+	err := bs.EnsureSchema(ctx)
+	require.NoError(t, err)
+	assert.False(t, hasQuery(client.queries, "DROP INDEX dream_dream_id_unique"),
+		"EnsureSchema must not attempt to drop constraint-owned index names")
+}
+
+func TestEnsureSchema_FallsBackWhenLegacyUniqueIndexInspectionFails(t *testing.T) {
+	ctx := context.Background()
+	client := &recordingClient{
 		runErrFor: func(cypher string) error {
+			if strings.Contains(cypher, "SHOW INDEXES") {
+				return fmt.Errorf("Neo4jError: unsupported SHOW INDEXES column")
+			}
 			if strings.Contains(cypher, "DROP INDEX dream_dream_id_unique") {
 				return fmt.Errorf("Neo4jError: Neo.ClientError.Schema.IndexBelongsToConstraint (Index belongs to constraint 'dream_dream_id_unique'.)")
 			}
@@ -274,6 +307,8 @@ func TestEnsureSchema_IgnoresConstraintOwnedUniqueIndexDrop(t *testing.T) {
 
 	err := bs.EnsureSchema(ctx)
 	require.NoError(t, err)
+	assert.True(t, hasQuery(client.queries, "DROP INDEX dream_dream_id_unique"),
+		"EnsureSchema must keep legacy drop fallback when index metadata inspection is unavailable")
 }
 
 // TestEnsureSchema_ClaimCompositeIndexes verifies that EnsureSchema issues
