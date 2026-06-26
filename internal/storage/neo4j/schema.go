@@ -112,6 +112,45 @@ func isConstraintOwnedIndexDropError(err error) bool {
 		strings.Contains(msg, "constraint-backed index")
 }
 
+type legacyUniqueConstraintIndex struct {
+	name string
+	drop string
+}
+
+type legacyIndexStatus struct {
+	exists            bool
+	ownedByConstraint bool
+}
+
+func (s *SchemaBootstrapper) legacyUniqueConstraintIndexStatus(ctx context.Context, name string) (legacyIndexStatus, error) {
+	result, err := s.client.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		res, err := tx.Run(ctx,
+			"SHOW INDEXES YIELD name, owningConstraint WHERE name = $name RETURN owningConstraint",
+			map[string]any{"name": name},
+		)
+		if err != nil {
+			return nil, err
+		}
+		return res.Collect(ctx)
+	})
+	if err != nil {
+		return legacyIndexStatus{}, err
+	}
+
+	records, ok := result.([]*neo4j.Record)
+	if !ok || len(records) == 0 {
+		return legacyIndexStatus{}, nil
+	}
+	for _, record := range records {
+		if raw, ok := record.Get("owningConstraint"); ok {
+			if constraintName, ok := raw.(string); ok && strings.TrimSpace(constraintName) != "" {
+				return legacyIndexStatus{exists: true, ownedByConstraint: true}, nil
+			}
+		}
+	}
+	return legacyIndexStatus{exists: true}, nil
+}
+
 // EnsureSchema creates all required constraints and indexes if they don't exist.
 // All CREATE statements use IF NOT EXISTS for idempotency.
 func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
@@ -134,26 +173,42 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 	// Older deployments may have created plain indexes with names that are now
 	// used by unique constraints. Neo4j does not treat that as "exists" for
 	// CREATE CONSTRAINT IF NOT EXISTS, so remove only those blocking indexes.
-	uniqueConstraintIndexDrops := []string{
-		"DROP INDEX sourcefragment_fragment_id_unique IF EXISTS",
-		"DROP INDEX claim_claim_id_unique IF EXISTS",
-		"DROP INDEX fact_fact_id_unique IF EXISTS",
-		"DROP INDEX dream_dream_id_unique IF EXISTS",
+	uniqueConstraintIndexes := []legacyUniqueConstraintIndex{
+		{name: "sourcefragment_fragment_id_unique", drop: "DROP INDEX sourcefragment_fragment_id_unique IF EXISTS"},
+		{name: "claim_claim_id_unique", drop: "DROP INDEX claim_claim_id_unique IF EXISTS"},
+		{name: "fact_fact_id_unique", drop: "DROP INDEX fact_fact_id_unique IF EXISTS"},
+		{name: "dream_dream_id_unique", drop: "DROP INDEX dream_dream_id_unique IF EXISTS"},
 	}
 
-	for _, cypher := range uniqueConstraintIndexDrops {
-		_, err := s.client.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-			_, err := tx.Run(ctx, cypher, nil)
+	for _, idx := range uniqueConstraintIndexes {
+		status, err := s.legacyUniqueConstraintIndexStatus(ctx, idx.name)
+		if err == nil {
+			if !status.exists {
+				continue
+			}
+			if status.ownedByConstraint {
+				s.logger.Debug("constraint-owned index already present", observability.String("name", idx.name))
+				continue
+			}
+		} else {
+			s.logger.Debug("could not inspect legacy unique-constraint index; falling back to drop attempt",
+				observability.String("name", idx.name),
+				observability.String("error", err.Error()),
+			)
+		}
+
+		_, err = s.client.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			_, err := tx.Run(ctx, idx.drop, nil)
 			return nil, err
 		})
 		if err != nil {
 			if isConstraintOwnedIndexDropError(err) {
-				s.logger.Debug("constraint-owned index already present", observability.String("query", cypher))
+				s.logger.Debug("constraint-owned index already present", observability.String("name", idx.name))
 				continue
 			}
 			return fmt.Errorf("failed to drop legacy unique-constraint index: %w", err)
 		}
-		s.logger.Debug("Dropped legacy unique-constraint index", observability.String("query", cypher))
+		s.logger.Debug("Dropped legacy unique-constraint index", observability.String("name", idx.name))
 	}
 
 	// Create unique constraints
