@@ -95,7 +95,7 @@ func reflectMemoriesTool(deps Dependencies) Tool {
 			"additionalProperties": false,
 		},
 		OutputSchema:   map[string]any{"type": "object"},
-		RequiredScopes: []string{"read"},
+		RequiredScopes: []string{"write"},
 		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
 			if deps.Memory == nil {
 				return nil, ErrToolUnavailable

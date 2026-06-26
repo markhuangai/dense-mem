@@ -395,7 +395,7 @@ func submitRecallSessionFeedbackTool(deps Dependencies) Tool {
 				"recorded_count": map[string]any{"type": "integer"},
 			},
 		},
-		RequiredScopes: []string{"read"},
+		RequiredScopes: []string{"write"},
 		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
 			if !RecallFeedbackEnabled(ctx, deps.RecallFeedbackConfig) {
 				return nil, ErrToolDisabled

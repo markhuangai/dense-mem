@@ -39,8 +39,12 @@ func TestBuildDefault_RegistersRecallSessionFeedbackTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildDefault: %v", err)
 	}
-	if _, ok := reg.Get("submit_recall_session_feedback"); !ok {
+	tool, ok := reg.Get("submit_recall_session_feedback")
+	if !ok {
 		t.Fatal("submit_recall_session_feedback not registered")
+	}
+	if got := strings.Join(tool.RequiredScopes, ","); got != "write" {
+		t.Fatalf("submit_recall_session_feedback scopes = %v; want [write]", tool.RequiredScopes)
 	}
 	if _, ok := reg.Get("submit_recall_feedback"); ok {
 		t.Fatal("deprecated submit_recall_feedback must not be registered")

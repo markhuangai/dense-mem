@@ -573,10 +573,7 @@ func TestMCP_MemoryToolsScopeProfileAndClarifications(t *testing.T) {
 
 	readOnly := NewServerWithScopes(reg, "profileA", []string{"read"}, logger)
 	listOut := runRPC(t, readOnly, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
-	if !strings.Contains(listOut, `"reflect_memories"`) {
-		t.Fatalf("read-scoped list missing reflect_memories: %s", listOut)
-	}
-	if strings.Contains(listOut, `"remember"`) || strings.Contains(listOut, `"confirm_memory"`) {
+	if strings.Contains(listOut, `"remember"`) || strings.Contains(listOut, `"reflect_memories"`) || strings.Contains(listOut, `"confirm_memory"`) {
 		t.Fatalf("read-scoped list exposed write tools: %s", listOut)
 	}
 

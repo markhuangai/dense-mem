@@ -80,7 +80,7 @@ func TestBuildDefaultMemoryTools_InvokeAndScope(t *testing.T) {
 	}{
 		{"remember", map[string]any{"content": "hello"}, "write"},
 		{"import_memories", map[string]any{"summary": "old chats"}, "write"},
-		{"reflect_memories", map[string]any{}, "read"},
+		{"reflect_memories", map[string]any{}, "write"},
 		{"confirm_memory", map[string]any{"claim_id": "claim-1", "decision": "keep_existing"}, "write"},
 	}
 	for _, tc := range cases {
