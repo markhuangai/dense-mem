@@ -1,4 +1,4 @@
-package docs_test
+package integration
 
 import (
 	"os"

@@ -32,4 +32,13 @@ func TestToolsetHelperBranches(t *testing.T) {
 	if args["query"] != "keep" {
 		t.Fatalf("StripTenantOverrideArgs query = %v, want keep", args["query"])
 	}
+	if HasTenantOverrideArgs(map[string]any{"query": "keep"}) {
+		t.Fatal("HasTenantOverrideArgs returned true without tenant keys")
+	}
+	if !HasTenantOverrideArgs(map[string]any{"team_id": "team-1"}) {
+		t.Fatal("HasTenantOverrideArgs returned false for team_id")
+	}
+	if !HasTenantOverrideArgs(map[string]any{"profile_id": "profile-1"}) {
+		t.Fatal("HasTenantOverrideArgs returned false for profile_id")
+	}
 }

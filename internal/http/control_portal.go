@@ -178,6 +178,8 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		api.PATCH("/config/operation-logs", control.updateOperationLogConfig)
 		api.GET("/config/recall-feedback", control.getRecallFeedbackConfig)
 		api.PATCH("/config/recall-feedback", control.updateRecallFeedbackConfig)
+		api.GET("/config/evaluation", control.getEvaluationConfig)
+		api.PATCH("/config/evaluation", control.updateEvaluationConfig)
 	}
 	if telemetry.SSO != nil {
 		api.GET("/sso/providers", control.listSSOProviders)

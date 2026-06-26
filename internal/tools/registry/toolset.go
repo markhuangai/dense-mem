@@ -15,6 +15,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
@@ -41,6 +42,8 @@ type Dependencies struct {
 	// recall events and whether session feedback submission is callable.
 	RecallFeedbackConfig RecallFeedbackConfigProvider
 	RecallFeedbackEvents RecallFeedbackEventRecorder
+	EvaluationConfig     EvaluationConfigProvider
+	EvaluationAudit      EvaluationAuditAppender
 
 	// Search / graph tools (v1)
 	KeywordSearch               keywordsearch.KeywordSearchService
@@ -49,27 +52,33 @@ type Dependencies struct {
 	GraphQueryMaxTimeoutSeconds int
 
 	// Knowledge pipeline tools
-	ClaimCreate     claimservice.CreateClaimService
-	ClaimGet        claimservice.GetClaimService
-	ClaimList       claimservice.ListClaimsService
-	ClaimVerify     claimservice.VerifyClaimService
-	FactPromote     factservice.PromoteClaimService
-	FactGet         factservice.GetFactService
-	FactList        factservice.ListFactsService
-	FactRetract     factservice.RetractFactService
-	FragmentRetract fragmentservice.RetractFragmentService
-	CommunityDetect communityservice.DetectCommunityService
-	CommunityGet    communityservice.GetCommunitySummaryService
-	CommunityList   communityservice.ListCommunitiesService
-	Context         contextservice.Service
-	Memory          memoryservice.Service
-	SkillPack       skillpackservice.Service
-	Dreams          dreamservice.Service
+	FragmentGet       fragmentservice.GetFragmentService
+	ClaimCreate       claimservice.CreateClaimService
+	ClaimGet          claimservice.GetClaimService
+	ClaimList         claimservice.ListClaimsService
+	ClaimListFiltered claimservice.ListClaimsFilteredService
+	ClaimVerify       claimservice.VerifyClaimService
+	FactPromote       factservice.PromoteClaimService
+	FactGet           factservice.GetFactService
+	FactList          factservice.ListFactsService
+	FactRetract       factservice.RetractFactService
+	FragmentRetract   fragmentservice.RetractFragmentService
+	CommunityDetect   communityservice.DetectCommunityService
+	CommunityGet      communityservice.GetCommunitySummaryService
+	CommunityList     communityservice.ListCommunitiesService
+	Context           contextservice.Service
+	Memory            memoryservice.Service
+	SkillPack         skillpackservice.Service
+	Dreams            dreamservice.Service
 }
 
 type RecallFeedbackEventRecorder interface {
 	RecordRecallSnapshot(ctx context.Context, event domain.RecallFeedbackEvent) error
 	RecordRecallFeedback(ctx context.Context, feedback domain.RecallFeedbackSubmission) error
+}
+
+type EvaluationAuditAppender interface {
+	Append(ctx context.Context, entry service.AuditLogEntry) error
 }
 
 // ErrToolUnavailable is the defensive fallback returned when a tool dependency
@@ -126,6 +135,13 @@ func defaultTools(deps Dependencies) []Tool {
 		importSkillPackTool(deps),
 		rollbackSkillPackImportTool(deps),
 		submitRecallSessionFeedbackTool(deps),
+		evalGetManifestTool(deps),
+		evalListKnowledgeRefsTool(deps),
+		evalGetKnowledgeItemTool(deps),
+		evalListRecallFeedbackEventsTool(deps),
+		evalGetRecallFeedbackEventTool(deps),
+		evalRunRecallCaseTool(deps),
+		evalScoreRetrievalCaseTool(deps),
 	}
 	return tools
 }

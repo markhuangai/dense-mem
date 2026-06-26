@@ -21,6 +21,19 @@ func (s stubRecallFeedbackConfig) RecallFeedbackRuntimeConfig(context.Context) (
 	return domain.RecallFeedbackRuntimeConfig{Enabled: s.enabled}, s.err
 }
 
+type stubEvaluationConfig struct {
+	enabled bool
+	err     error
+}
+
+func (s stubEvaluationConfig) RecallFeedbackRuntimeConfig(context.Context) (domain.RecallFeedbackRuntimeConfig, error) {
+	return domain.RecallFeedbackRuntimeConfig{}, nil
+}
+
+func (s stubEvaluationConfig) EvaluationRuntimeConfig(context.Context) (domain.EvaluationRuntimeConfig, error) {
+	return domain.EvaluationRuntimeConfig{Enabled: s.enabled}, s.err
+}
+
 func TestBuildDefault_RegistersRecallSessionFeedbackTool(t *testing.T) {
 	reg, err := BuildDefault(Dependencies{})
 	if err != nil {
@@ -31,6 +44,22 @@ func TestBuildDefault_RegistersRecallSessionFeedbackTool(t *testing.T) {
 	}
 	if _, ok := reg.Get("submit_recall_feedback"); ok {
 		t.Fatal("deprecated submit_recall_feedback must not be registered")
+	}
+}
+
+func TestBuildDefault_RegistersEvaluationToolsWithReadWriteScope(t *testing.T) {
+	reg, err := BuildDefault(Dependencies{})
+	if err != nil {
+		t.Fatalf("BuildDefault: %v", err)
+	}
+	for name := range evaluationToolNames {
+		tool, ok := reg.Get(name)
+		if !ok {
+			t.Fatalf("%s not registered", name)
+		}
+		if got := strings.Join(tool.RequiredScopes, ","); got != "read,write" {
+			t.Fatalf("%s scopes = %v; want [read write]", name, tool.RequiredScopes)
+		}
 	}
 }
 
@@ -146,6 +175,30 @@ func TestToolVisibleGatesRecallFeedbackTool(t *testing.T) {
 	}
 	if ToolVisible(ctx, feedbackTool, stubRecallFeedbackConfig{enabled: true, err: errors.New("config unavailable")}) {
 		t.Fatal("feedback tool should be hidden when runtime config is unavailable")
+	}
+}
+
+func TestToolVisibleGatesEvaluationTools(t *testing.T) {
+	ctx := context.Background()
+	evalTool := Tool{Name: "eval_get_manifest"}
+
+	if !ToolVisible(ctx, Tool{Name: "recall_memory"}, nil) {
+		t.Fatal("non-evaluation tool should be visible without runtime config")
+	}
+	if ToolVisible(ctx, evalTool, nil) {
+		t.Fatal("evaluation tool should be hidden without runtime config")
+	}
+	if ToolVisible(ctx, evalTool, stubRecallFeedbackConfig{enabled: true}) {
+		t.Fatal("evaluation tool should be hidden when runtime config cannot provide evaluation settings")
+	}
+	if ToolVisible(ctx, evalTool, stubEvaluationConfig{enabled: false}) {
+		t.Fatal("evaluation tool should be hidden when evaluation mode is disabled")
+	}
+	if !ToolVisible(ctx, evalTool, stubEvaluationConfig{enabled: true}) {
+		t.Fatal("evaluation tool should be visible when evaluation mode is enabled")
+	}
+	if ToolVisible(ctx, evalTool, stubEvaluationConfig{enabled: true, err: errors.New("config unavailable")}) {
+		t.Fatal("evaluation tool should be hidden when runtime config is unavailable")
 	}
 }
 
