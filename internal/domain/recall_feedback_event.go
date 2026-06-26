@@ -37,8 +37,7 @@ type RecallFeedbackEvent struct {
 	Quality         string                          `json:"quality,omitempty"`
 	MissingContext  *bool                           `json:"missing_context,omitempty"`
 	Irrelevant      *bool                           `json:"irrelevant,omitempty"`
-	FailureReason   string                          `json:"failure_reason,omitempty"`
-	ExpectedContext string                          `json:"expected_context,omitempty"`
+	FeedbackComment string                          `json:"feedback_comment,omitempty"`
 	IrrelevantRefs  []RecallFeedbackJudgedResultRef `json:"irrelevant_result_refs,omitempty"`
 	ResolvedResults []RecallFeedbackResolvedResult  `json:"resolved_results,omitempty"`
 }
@@ -71,8 +70,7 @@ type RecallFeedbackSubmission struct {
 	Quality         string
 	MissingContext  bool
 	Irrelevant      bool
-	FailureReason   string
-	ExpectedContext string
+	FeedbackComment string
 	IrrelevantRefs  []RecallFeedbackJudgedResultRef
 }
 

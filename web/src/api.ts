@@ -402,8 +402,7 @@ export type RecallFeedbackEvent = {
   quality?: "high" | "medium" | "low" | string;
   missing_context?: boolean | null;
   irrelevant?: boolean | null;
-  failure_reason?: string;
-  expected_context?: string;
+  feedback_comment?: string;
   irrelevant_result_refs?: RecallFeedbackJudgedResultRef[] | null;
   resolved_results?: RecallFeedbackResolvedResult[] | null;
 };

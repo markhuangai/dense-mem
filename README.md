@@ -166,10 +166,11 @@ scrape job when Prometheus is shared.
 Online recall-quality cards use `densemem_recall_feedback_total` and
 `densemem_recall_feedback_quality_score`. They stay at zero until
 recall feedback is enabled from the control portal config panel and a host LLM
-submits feedback for `recall_memory` results. Negative feedback requires a
-bounded `failure_reason` enum and can include expected context plus irrelevant
-result refs for offline analysis. Prometheus still receives only bounded labels;
-the free-text details stay in the recall feedback investigation records. Normal
+submits feedback for `recall_memory` results. Feedback only omits
+`feedback_comment` when quality is `high` with no negative flags; medium, low,
+or flagged feedback includes a bounded comment and can include irrelevant result
+refs for offline analysis. Prometheus still receives only bounded labels; the
+free-text comment stays in the recall feedback investigation records. Normal
 production recall traffic still contributes request volume, result count, and
 latency.
 

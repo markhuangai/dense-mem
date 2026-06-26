@@ -103,8 +103,7 @@ func (s *RecallFeedbackEventServiceImpl) RecordRecallFeedback(ctx context.Contex
 		Quality:         strings.ToLower(strings.TrimSpace(feedback.Quality)),
 		MissingContext:  &missingContext,
 		Irrelevant:      &irrelevant,
-		FailureReason:   strings.TrimSpace(feedback.FailureReason),
-		ExpectedContext: strings.TrimSpace(feedback.ExpectedContext),
+		FeedbackComment: strings.TrimSpace(feedback.FeedbackComment),
 		IrrelevantRefs:  feedback.IrrelevantRefs,
 	})
 	if event.RecallID == "" {

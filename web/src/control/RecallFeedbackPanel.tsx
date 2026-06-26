@@ -310,25 +310,24 @@ function RecallFeedbackDetail({ event }: { event: RecallFeedbackEvent }) {
         <span className="log-detail-chip">profile={event.profile_id ? shortId(event.profile_id) : "unknown"}</span>
         <span className="log-detail-chip">key={event.key_id ? shortId(event.key_id) : "unknown"}</span>
       </div>
-      <FeedbackFailureDetails event={event} />
+      <FeedbackCommentDetails event={event} />
       <ResultRefTable refs={refs} resolved={resolved} />
       <pre aria-label={`Raw recall feedback ${event.recall_id}`}>{JSON.stringify(rawEvent(event), null, 2)}</pre>
     </div>
   );
 }
 
-function FeedbackFailureDetails({ event }: { event: RecallFeedbackEvent }) {
+function FeedbackCommentDetails({ event }: { event: RecallFeedbackEvent }) {
   const irrelevantRefs = event.irrelevant_result_refs ?? [];
   const rows = [
-    event.failure_reason ? ["Failure reason", event.failure_reason] : null,
-    event.expected_context ? ["Expected context", event.expected_context] : null,
+    event.feedback_comment ? ["Feedback comment", event.feedback_comment] : null,
     irrelevantRefs.length > 0 ? ["Irrelevant refs", irrelevantRefs.map(judgedRefLabel).join(", ")] : null,
   ].filter((row): row is string[] => row !== null);
   if (rows.length === 0) {
     return null;
   }
   return (
-    <table className="data-table" aria-label="Recall feedback failure details">
+    <table className="data-table" aria-label="Recall feedback comment details">
       <thead>
         <tr>
           <th>Signal</th>
@@ -449,8 +448,7 @@ function rawEvent(event: RecallFeedbackEvent): Record<string, unknown> {
       quality: event.quality,
       missing_context: event.missing_context,
       irrelevant: event.irrelevant,
-      failure_reason: event.failure_reason,
-      expected_context: event.expected_context,
+      feedback_comment: event.feedback_comment,
       irrelevant_result_refs: event.irrelevant_result_refs ?? [],
     },
     result_refs: event.result_refs ?? [],

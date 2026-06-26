@@ -30,12 +30,11 @@ func TestScanRecallFeedbackEventRejectsMalformedIrrelevantResultRefsJSON(t *test
 	require.ErrorContains(t, err, "invalid recall_feedback_events.irrelevant_result_refs JSON")
 }
 
-func TestScanRecallFeedbackEventReadsFailureDetails(t *testing.T) {
+func TestScanRecallFeedbackEventReadsFeedbackComment(t *testing.T) {
 	rows := recallFeedbackEventRows(t, []byte("{}"), []byte("[]"), []byte(`[{"type":"fragment","id":"fragment-1","rank":1}]`))
 	got, err := scanRecallFeedbackEvent(rows)
 	require.NoError(t, err)
-	require.Equal(t, "missing expected context", got.FailureReason)
-	require.Equal(t, "knowledge explorer listbox pattern", got.ExpectedContext)
+	require.Equal(t, "knowledge explorer listbox pattern was missing", got.FeedbackComment)
 	require.Equal(t, []domain.RecallFeedbackJudgedResultRef{{
 		Type: domain.RecallFeedbackResultTypeFragment,
 		ID:   "fragment-1",
@@ -84,8 +83,7 @@ func recallFeedbackEventRows(t *testing.T, toolArgs []byte, resultRefs []byte, i
 		"quality",
 		"missing_context",
 		"irrelevant",
-		"failure_reason",
-		"expected_context",
+		"feedback_comment",
 		"irrelevant_result_refs",
 	}).AddRow(
 		"rec_1",
@@ -107,8 +105,7 @@ func recallFeedbackEventRows(t *testing.T, toolArgs []byte, resultRefs []byte, i
 		"",
 		nil,
 		nil,
-		"missing expected context",
-		"knowledge explorer listbox pattern",
+		"knowledge explorer listbox pattern was missing",
 		irrelevantRefs,
 	)
 	mock.ExpectQuery("SELECT").WillReturnRows(rows)
