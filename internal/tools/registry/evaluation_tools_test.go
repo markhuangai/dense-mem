@@ -241,8 +241,8 @@ func TestEvalManifestAndKnowledgeTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("eval_list_knowledge_refs edge Invoke: %v", err)
 	}
-	if graph.profileID != "profile-eval" || graph.params["limit"] != int64(4) || len(edgePage["items"].([]map[string]any)) != 1 {
-		t.Fatalf("edge export graph call/page = %q/%v/%v", graph.profileID, graph.params, edgePage)
+	if graph.profileID != "profile-eval" || !strings.Contains(graph.query, "LIMIT 4") || len(graph.params) != 0 || len(edgePage["items"].([]map[string]any)) != 1 {
+		t.Fatalf("edge export graph call/page = %q/%q/%v/%v", graph.profileID, graph.query, graph.params, edgePage)
 	}
 
 	getTool, _ := reg.Get("eval_get_knowledge_item")
@@ -664,12 +664,14 @@ func (s *evalCommunityStore) Get(_ context.Context, _ string, communityID string
 
 type evalGraphQuery struct {
 	profileID string
+	query     string
 	params    map[string]any
 	rows      []map[string]any
 }
 
-func (s *evalGraphQuery) Execute(_ context.Context, profileID string, _ string, params map[string]any) (*graphquery.GraphQueryResult, error) {
+func (s *evalGraphQuery) Execute(_ context.Context, profileID string, query string, params map[string]any) (*graphquery.GraphQueryResult, error) {
 	s.profileID = profileID
+	s.query = query
 	s.params = params
 	return &graphquery.GraphQueryResult{Rows: s.rows}, nil
 }

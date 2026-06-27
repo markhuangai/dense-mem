@@ -447,7 +447,7 @@ func evalListEdges(ctx context.Context, deps Dependencies, profileID string, lim
 	if deps.GraphQuery == nil {
 		return nil, ErrToolUnavailable
 	}
-	res, err := deps.GraphQuery.Execute(ctx, profileID, `
+	query := fmt.Sprintf(`
 MATCH (a {team_id: $profileId})-[rel]->(b {team_id: $profileId})
 WHERE rel.team_id = $profileId
 RETURN type(rel) AS edge_type,
@@ -455,7 +455,8 @@ RETURN type(rel) AS edge_type,
        coalesce(a.fact_id, a.claim_id, a.fragment_id, a.community_id, '') AS from_id,
        labels(b) AS to_labels,
        coalesce(b.fact_id, b.claim_id, b.fragment_id, b.community_id, '') AS to_id
-LIMIT $limit`, map[string]any{"limit": int64(limit)})
+LIMIT %d`, limit)
+	res, err := deps.GraphQuery.Execute(ctx, profileID, query, nil)
 	if err != nil {
 		return nil, err
 	}
