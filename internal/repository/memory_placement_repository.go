@@ -402,6 +402,19 @@ func readPlacementRunLocked(ctx context.Context, tx *gorm.DB, where string, args
 }
 
 func readPlacementRunWithLock(ctx context.Context, tx *gorm.DB, where string, lock bool, args ...any) (*domain.MemoryPlacementRun, error) {
+	run, found, err := scanSinglePlacementRun(ctx, tx, where, lock, args...)
+	if err != nil || !found {
+		return nil, err
+	}
+	items, err := readPlacementItemsWithLock(ctx, tx, run.IngestID, lock)
+	if err != nil {
+		return nil, err
+	}
+	run.Items = items
+	return &run, nil
+}
+
+func scanSinglePlacementRun(ctx context.Context, tx *gorm.DB, where string, lock bool, args ...any) (domain.MemoryPlacementRun, bool, error) {
 	lockClause := ""
 	if lock {
 		lockClause = " FOR UPDATE"
@@ -415,40 +428,23 @@ func readPlacementRunWithLock(ctx context.Context, tx *gorm.DB, where string, lo
 		LIMIT 1`+lockClause+`
 	`, args...).Rows()
 	if err != nil {
-		return nil, err
+		return domain.MemoryPlacementRun{}, false, err
 	}
+	defer rows.Close()
 	if !rows.Next() {
 		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return nil, err
+			return domain.MemoryPlacementRun{}, false, err
 		}
-		if err := rows.Close(); err != nil {
-			return nil, err
-		}
-		return nil, nil
+		return domain.MemoryPlacementRun{}, false, nil
 	}
 	run, err := scanPlacementRun(rows)
 	if err != nil {
-		_ = rows.Close()
-		return nil, err
+		return domain.MemoryPlacementRun{}, false, err
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, err
+		return domain.MemoryPlacementRun{}, false, err
 	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	items, err := readPlacementItemsWithLock(ctx, tx, run.IngestID, lock)
-	if err != nil {
-		return nil, err
-	}
-	run.Items = items
-	return &run, nil
-}
-
-func readPlacementItems(ctx context.Context, tx *gorm.DB, ingestID string) ([]domain.MemoryPlacementItem, error) {
-	return readPlacementItemsWithLock(ctx, tx, ingestID, false)
+	return run, true, nil
 }
 
 func readPlacementItemsWithLock(ctx context.Context, tx *gorm.DB, ingestID string, lock bool) ([]domain.MemoryPlacementItem, error) {

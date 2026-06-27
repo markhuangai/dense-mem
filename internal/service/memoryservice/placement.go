@@ -234,6 +234,7 @@ func (s *service) StartPlacementWorker(ctx context.Context, interval time.Durati
 	if interval <= 0 {
 		interval = time.Minute
 	}
+	kickCh := s.placementKick
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -252,6 +253,7 @@ func (s *service) StartPlacementWorker(ctx context.Context, interval time.Durati
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+			case <-kickCh:
 			}
 		}
 	}()
@@ -272,18 +274,13 @@ func (s *service) ProcessNextPlacement(ctx context.Context) (bool, error) {
 }
 
 func (s *service) kickPlacementWorker() {
-	if s.deps.PlacementStore == nil {
+	if s.deps.PlacementStore == nil || s.placementKick == nil {
 		return
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		if _, err := s.ProcessNextPlacement(ctx); err != nil {
-			s.log().Warn("memory placement processing failed",
-				slog.String("error", err.Error()),
-			)
-		}
-	}()
+	select {
+	case s.placementKick <- struct{}{}:
+	default:
+	}
 }
 
 func (s *service) processPlacementRun(ctx context.Context, run *domain.MemoryPlacementRun) error {

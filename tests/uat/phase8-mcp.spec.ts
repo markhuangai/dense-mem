@@ -84,16 +84,17 @@ test('UAT-11b: MCP endpoint exposes required memory tools', async () => {
         'rollback_memory_pack_import',
       ]),
     );
-    expect(toolNames).not.toEqual(
-      expect.arrayContaining([
-        'list_recent_memories',
-        'keyword_search',
-        'semantic_search',
-        'graph_query',
-        'post_claim',
-        'get_fact',
-      ]),
-    );
+    const removedTools = [
+      'list_recent_memories',
+      'keyword_search',
+      'semantic_search',
+      'graph_query',
+      'post_claim',
+      'get_fact',
+    ];
+    for (const toolName of removedTools) {
+      expect(toolNames).not.toContain(toolName);
+    }
   } finally {
     await mcp.close();
   }

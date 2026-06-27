@@ -69,11 +69,15 @@ type Dependencies struct {
 
 // New constructs a high-level memory Service.
 func New(deps Dependencies) *service {
-	return &service{deps: deps}
+	return &service{
+		deps:          deps,
+		placementKick: make(chan struct{}, 1),
+	}
 }
 
 type service struct {
-	deps Dependencies
+	deps          Dependencies
+	placementKick chan struct{}
 }
 
 // TypedClaimInput is a trusted migration or verifier-extracted memory

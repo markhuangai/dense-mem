@@ -472,6 +472,30 @@ func TestStartPlacementWorkerProcessesQueuedRun(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+func TestRememberSignalsPlacementWorker(t *testing.T) {
+	store := &statefulPlacementStore{}
+	svc := New(Dependencies{
+		FragmentCreate: &stubFragmentCreate{},
+		PlacementStore: store,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	svc.StartPlacementWorker(ctx, time.Hour)
+
+	res, err := svc.Remember(ctx, "profile-1", RememberRequest{
+		Evidence: []EvidenceInput{{Content: "Reject this memory as incorrect."}},
+	})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, res.IngestID)
+	require.Eventually(t, func() bool {
+		savedRun := store.savedRunCopy()
+		return savedRun.Status == domain.MemoryPlacementCompleted &&
+			len(savedRun.Items) == 1 &&
+			savedRun.Items[0].Category == domain.MemoryPlacementRejectedFalse
+	}, time.Second, 10*time.Millisecond)
+}
+
 func TestStartPlacementWorkerSkipsMissingStore(t *testing.T) {
 	svc := New(Dependencies{})
 
