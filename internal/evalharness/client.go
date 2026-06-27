@@ -46,17 +46,14 @@ func (c *HTTPClient) CallTool(ctx context.Context, name string, input any, out a
 func (c *HTTPClient) ImportCorpus(ctx context.Context, corpus []CorpusItem) (KnowledgeMapping, error) {
 	mapping := KnowledgeMapping{BySourceDocID: map[string]Ref{}}
 	for _, item := range corpus {
-		input := map[string]any{
+		evidence := map[string]any{
 			"content":         item.Content,
 			"source":          firstNonEmpty(item.SourceDataset, item.Title, "eval-seed"),
 			"idempotency_key": "eval:" + item.SourceDocID,
 			"labels":          item.Labels,
 			"metadata":        seedMetadata(item),
-			"auto_promote":    false,
 		}
-		if len(item.Claims) > 0 {
-			input["claims"] = item.Claims
-		}
+		input := map[string]any{"evidence": []map[string]any{evidence}}
 		var out map[string]any
 		if err := c.CallTool(ctx, "remember", input, &out); err != nil {
 			return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)
@@ -65,9 +62,45 @@ func (c *HTTPClient) ImportCorpus(ctx context.Context, corpus []CorpusItem) (Kno
 		if fragmentID == "" {
 			return mapping, fmt.Errorf("import %s: remember response missing fragment id", item.SourceDocID)
 		}
+		if ingestID := stringValue(out["ingest_id"]); ingestID != "" {
+			if err := c.WaitForMemoryPlacement(ctx, ingestID, 2*time.Minute); err != nil {
+				return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)
+			}
+		}
 		mapping.BySourceDocID[item.SourceDocID] = Ref{Type: "fragment", ID: fragmentID, SourceDocID: item.SourceDocID}
 	}
 	return mapping, nil
+}
+
+func (c *HTTPClient) WaitForMemoryPlacement(ctx context.Context, ingestID string, timeout time.Duration) error {
+	if strings.TrimSpace(ingestID) == "" {
+		return nil
+	}
+	if timeout <= 0 {
+		timeout = 2 * time.Minute
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		var out map[string]any
+		if err := c.CallTool(ctx, "get_memory_placement", map[string]any{"ingest_id": ingestID}, &out); err != nil {
+			return err
+		}
+		status := nestedString(out, "placement", "status")
+		if status == "completed" || status == "failed" {
+			if status == "failed" {
+				return fmt.Errorf("memory placement %s failed", ingestID)
+			}
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("memory placement %s did not complete within %s", ingestID, timeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
 }
 
 func (c *HTTPClient) ExportFragmentMapping(ctx context.Context, limit int) (KnowledgeMapping, error) {
@@ -177,7 +210,15 @@ func seedMetadata(item CorpusItem) map[string]any {
 
 func fragmentIDFromRemember(out map[string]any) string {
 	fragment, _ := out["fragment"].(map[string]any)
-	return firstNonEmpty(stringValue(fragment["id"]), stringValue(fragment["fragment_id"]))
+	if id := firstNonEmpty(stringValue(fragment["id"]), stringValue(fragment["fragment_id"])); id != "" {
+		return id
+	}
+	evidence, _ := out["evidence"].([]any)
+	if len(evidence) == 0 {
+		return ""
+	}
+	first, _ := evidence[0].(map[string]any)
+	return firstNonEmpty(stringValue(first["id"]), stringValue(first["fragment_id"]))
 }
 
 func traceFromToolOutput(tc Case, out map[string]any) RecallTrace {

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -94,6 +95,7 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 		"eval:doc-beta":  "frag-beta",
 	}
 	var rememberCalls int
+	var placementPolls int
 	var recallCalls int
 	var controlPatched bool
 
@@ -117,12 +119,24 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Fatalf("decode remember body: %v", err)
 			}
-			id, ok := rememberIDs[input["idempotency_key"].(string)]
+			evidence := input["evidence"].([]any)
+			firstEvidence := evidence[0].(map[string]any)
+			idempotencyKey := firstEvidence["idempotency_key"].(string)
+			id, ok := rememberIDs[idempotencyKey]
 			if !ok {
 				t.Fatalf("remember input = %#v", input)
 			}
 			rememberCalls++
-			_ = json.NewEncoder(w).Encode(map[string]any{"fragment": map[string]any{"id": id}})
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ingest_id": strings.TrimPrefix(idempotencyKey, "eval:"),
+				"status":    "queued",
+				"evidence":  []map[string]any{{"id": id}},
+			})
+		case "/api/v1/tools/get_memory_placement":
+			placementPolls++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"placement": map[string]any{"status": "completed"},
+			})
 		case "/api/v1/tools/eval_list_knowledge_refs":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"items": []map[string]any{
@@ -176,8 +190,8 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 	if summary.ScoredCaseCount != 2 || summary.AverageRecallAtK != 1 || summary.AverageMRR != 1 {
 		t.Fatalf("summary = %+v", summary)
 	}
-	if !controlPatched || rememberCalls != 2 || recallCalls != 2 {
-		t.Fatalf("control/remember/recall calls = %v/%d/%d", controlPatched, rememberCalls, recallCalls)
+	if !controlPatched || rememberCalls != 2 || placementPolls != 2 || recallCalls != 2 {
+		t.Fatalf("control/remember/placement/recall calls = %v/%d/%d/%d", controlPatched, rememberCalls, placementPolls, recallCalls)
 	}
 }
 

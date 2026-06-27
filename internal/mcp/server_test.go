@@ -578,15 +578,15 @@ func TestMCP_MemoryToolsScopeProfileAndClarifications(t *testing.T) {
 	}
 
 	readWrite := NewServerWithScopes(reg, "profileA", []string{"read", "write"}, logger)
-	callOut := runRPC(t, readWrite, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"remember","arguments":{"profile_id":"profileB","content":"remember this"}}}`)
+	callOut := runRPC(t, readWrite, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"remember","arguments":{"profile_id":"profileB","evidence":[{"content":"remember this"}]}}}`)
 	if mem.lastProfile != "profileA" {
 		t.Fatalf("memory tool profile = %q; want profileA", mem.lastProfile)
 	}
 	if strings.Contains(callOut, "profileB") {
 		t.Fatalf("caller-supplied profile_id leaked into MCP result: %s", callOut)
 	}
-	if !strings.Contains(callOut, `\"clarifications\"`) || !strings.Contains(callOut, `\"memory_conflict\"`) {
-		t.Fatalf("clarification payload missing from MCP result: %s", callOut)
+	if !strings.Contains(callOut, `\"ingest_id\"`) || !strings.Contains(callOut, `\"queued\"`) {
+		t.Fatalf("placement payload missing from MCP result: %s", callOut)
 	}
 }
 
@@ -597,13 +597,22 @@ type mcpMemoryStub struct {
 func (s *mcpMemoryStub) Remember(ctx context.Context, profileID string, req memoryservice.RememberRequest) (*memoryservice.RememberResult, error) {
 	s.lastProfile = profileID
 	return &memoryservice.RememberResult{
-		Fragment: memoryservice.FragmentOutcome{ID: "fragment-1", Status: "created"},
-		Clarifications: []memoryservice.Clarification{{
-			ID:       "clarify:claim-1",
-			Type:     "memory_conflict",
-			Question: "Which memory should Dense-Mem keep?",
-			ClaimID:  "claim-1",
-		}},
+		IngestID: "ingest-1",
+		Status:   "queued",
+	}, nil
+}
+
+func (s *mcpMemoryStub) GetMemoryPlacement(ctx context.Context, profileID string, req memoryservice.PlacementStatusRequest) (*memoryservice.PlacementStatusResult, error) {
+	s.lastProfile = profileID
+	return &memoryservice.PlacementStatusResult{
+		Run: domain.MemoryPlacementRun{IngestID: req.IngestID, Status: domain.MemoryPlacementCompleted},
+	}, nil
+}
+
+func (s *mcpMemoryStub) DisputeMemoryPlacement(ctx context.Context, profileID string, req memoryservice.DisputeRequest) (*memoryservice.DisputeResult, error) {
+	s.lastProfile = profileID
+	return &memoryservice.DisputeResult{
+		Session: domain.MemoryDisputeSession{DisputeID: "dispute-1", Status: domain.MemoryDisputeOpen},
 	}, nil
 }
 

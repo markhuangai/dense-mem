@@ -60,6 +60,9 @@ func TestOpenAPIHandler_ServesAISafeVariant(t *testing.T) {
 	if _, has := paths["/api/v1/teams/{teamId}/query/stream"]; has {
 		t.Errorf("ai-safe response contained runtime-only path")
 	}
+	if _, has := paths["/mcp"]; has {
+		t.Errorf("ai-safe response contained runtime-only MCP path")
+	}
 }
 
 func TestOpenAPIHandler_ServesFullVariant(t *testing.T) {
@@ -80,8 +83,11 @@ func TestOpenAPIHandler_ServesFullVariant(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	paths := body["paths"].(map[string]any)
-	if _, has := paths["/api/v1/teams/{teamId}/query/stream"]; !has {
+	if _, has := paths["/mcp"]; !has {
 		t.Errorf("full response missing runtime-only path")
+	}
+	if _, has := paths["/api/v1/teams/{teamId}/query/stream"]; has {
+		t.Errorf("full response contained removed query stream path")
 	}
 }
 

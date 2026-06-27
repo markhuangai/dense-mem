@@ -57,3 +57,31 @@ func TestDefaultCatalogRenderValidatesAndRenders(t *testing.T) {
 		}
 	}
 }
+
+func TestCatalogListSortsByName(t *testing.T) {
+	catalog := Catalog{prompts: map[string]Prompt{
+		"zeta":  {Name: "zeta"},
+		"alpha": {Name: "alpha"},
+	}}
+
+	prompts := catalog.List()
+
+	if len(prompts) != 2 {
+		t.Fatalf("prompts len = %d, want 2", len(prompts))
+	}
+	if prompts[0].Name != "alpha" || prompts[1].Name != "zeta" {
+		t.Fatalf("prompts order = %q, %q; want alpha, zeta", prompts[0].Name, prompts[1].Name)
+	}
+}
+
+func TestCatalogRenderTemplateParseError(t *testing.T) {
+	catalog := Catalog{prompts: map[string]Prompt{
+		"bad": {Name: "bad", template: "{{if"},
+	}}
+
+	_, _, err := catalog.Render("bad", map[string]string{})
+
+	if err == nil || !strings.Contains(err.Error(), `parse prompt template "bad"`) {
+		t.Fatalf("Render error = %v, want parse prompt template error", err)
+	}
+}

@@ -12,6 +12,7 @@ import (
 func TestHTTPClientEvaluationFlow(t *testing.T) {
 	var controlPatched bool
 	var rememberCalls int
+	var placementPolls int
 	var exportCursors []string
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -41,11 +42,29 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 				t.Fatalf("decode remember body: %v", err)
 			}
 			rememberCalls++
-			metadata := input["metadata"].(map[string]any)
-			if input["idempotency_key"] != "eval:doc-alpha" || metadata["source_doc_id"] != "doc-alpha" || metadata["eval_seed"] != true {
+			evidence := input["evidence"].([]any)
+			firstEvidence := evidence[0].(map[string]any)
+			metadata := firstEvidence["metadata"].(map[string]any)
+			if firstEvidence["idempotency_key"] != "eval:doc-alpha" || metadata["source_doc_id"] != "doc-alpha" || metadata["eval_seed"] != true {
 				t.Fatalf("remember input = %#v", input)
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"fragment": map[string]any{"id": "fragment-alpha"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ingest_id": "ingest-alpha",
+				"status":    "queued",
+				"evidence":  []map[string]any{{"id": "fragment-alpha"}},
+			})
+		case "/api/v1/tools/get_memory_placement":
+			placementPolls++
+			var input map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatalf("decode placement body: %v", err)
+			}
+			if input["ingest_id"] != "ingest-alpha" {
+				t.Fatalf("placement input = %#v", input)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"placement": map[string]any{"status": "completed"},
+			})
 		case "/api/v1/tools/eval_list_knowledge_refs":
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -122,8 +141,8 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportCorpus: %v", err)
 	}
-	if mapping.BySourceDocID["doc-alpha"].ID != "fragment-alpha" || rememberCalls != 1 {
-		t.Fatalf("import mapping/calls = %+v/%d", mapping, rememberCalls)
+	if mapping.BySourceDocID["doc-alpha"].ID != "fragment-alpha" || rememberCalls != 1 || placementPolls != 1 {
+		t.Fatalf("import mapping/calls/polls = %+v/%d/%d", mapping, rememberCalls, placementPolls)
 	}
 
 	exported, err := client.ExportFragmentMapping(context.Background(), 1)

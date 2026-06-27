@@ -16,8 +16,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/recallservice"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 	"github.com/markhuangai/dense-mem/internal/tools/graphquery"
-	"github.com/markhuangai/dense-mem/internal/tools/keywordsearch"
-	"github.com/markhuangai/dense-mem/internal/tools/semanticsearch"
 )
 
 type stubList struct{}
@@ -32,45 +30,17 @@ func (stubGraphQuery) Execute(ctx context.Context, profileID string, query strin
 	return &graphquery.GraphQueryResult{}, nil
 }
 
-type stubKeywordSearch struct {
-	lastProfile string
-	lastReq     *keywordsearch.KeywordSearchRequest
-}
-
-func (s *stubKeywordSearch) Search(ctx context.Context, profileID string, req *keywordsearch.KeywordSearchRequest) (*keywordsearch.KeywordSearchResult, error) {
-	s.lastProfile = profileID
-	s.lastReq = req
-	return &keywordsearch.KeywordSearchResult{
-		Data: []keywordsearch.SearchHit{{ID: "kw-1", Type: "fragment", Content: "hello", ProfileID: profileID}},
-		Meta: keywordsearch.KeywordSearchMeta{LimitApplied: req.Limit},
-	}, nil
-}
-
-type stubSemanticSearch struct {
-	lastProfile string
-	lastReq     *semanticsearch.SemanticSearchRequest
-}
-
-func (s *stubSemanticSearch) Search(ctx context.Context, profileID string, req *semanticsearch.SemanticSearchRequest) (*semanticsearch.SemanticSearchResult, error) {
-	s.lastProfile = profileID
-	s.lastReq = req
-	return &semanticsearch.SemanticSearchResult{
-		Data: []semanticsearch.SearchHit{{ID: "sem-1", Type: "fragment", Content: req.Query, ProfileID: profileID}},
-		Meta: semanticsearch.SemanticSearchMeta{LimitApplied: req.Limit},
-	}, nil
-}
-
-func TestBuildDefault_RegistersV1ToolSurface(t *testing.T) {
+func TestBuildDefault_RegistersV2ToolSurface(t *testing.T) {
 	reg, err := BuildDefault(Dependencies{})
 	if err != nil {
 		t.Fatalf("BuildDefault: %v", err)
 	}
 	required := []string{
-		"list_recent_memories", "recall_memory",
+		"recall_memory",
 		"trace_memory", "assemble_context",
-		"remember", "import_memories", "reflect_memories", "confirm_memory",
+		"remember", "get_memory_placement", "dispute_memory_placement",
+		"import_memories", "reflect_memories", "confirm_memory",
 		"list_dreams", "get_dream", "resolve_dream_feedback",
-		"keyword_search", "semantic_search", "graph_query",
 		"find_memory_pack_candidates", "export_memory_pack", "inspect_memory_pack",
 		"import_memory_pack", "rollback_memory_pack_import",
 	}
@@ -82,6 +52,11 @@ func TestBuildDefault_RegistersV1ToolSurface(t *testing.T) {
 	for _, name := range []string{"keyword-search", "semantic-search", "graph-query"} {
 		if _, ok := reg.Get(name); ok {
 			t.Errorf("legacy hyphenated tool %q must not be registered", name)
+		}
+	}
+	for _, removed := range []string{"list_recent_memories", "keyword_search", "semantic_search", "graph_query"} {
+		if _, ok := reg.Get(removed); ok {
+			t.Errorf("removed tool %q must not be registered", removed)
 		}
 	}
 	listed := map[string]struct{}{}
@@ -126,31 +101,17 @@ func TestBuildDefault_SchemaFieldsPopulated(t *testing.T) {
 	}
 }
 
-func TestBuildDefault_GraphQueryTimeoutMaximumIsConfigurable(t *testing.T) {
-	reg, err := BuildDefault(Dependencies{GraphQuery: stubGraphQuery{}, GraphQueryMaxTimeoutSeconds: 5})
+func TestBuildDefault_DoesNotRegisterGraphQueryEvenWhenDependencyIsWired(t *testing.T) {
+	reg, err := BuildDefault(Dependencies{GraphQuery: stubGraphQuery{}})
 	if err != nil {
 		t.Fatalf("BuildDefault: %v", err)
 	}
-	tool, ok := reg.Get("graph_query")
-	if !ok {
-		t.Fatal("graph_query tool not registered")
-	}
-
-	properties := tool.InputSchema["properties"].(map[string]any)
-	timeoutSchema := properties["timeout_seconds"].(map[string]any)
-	if got, want := timeoutSchema["maximum"], 5; got != want {
-		t.Fatalf("timeout_seconds maximum = %v, want %d", got, want)
-	}
-	if err := ValidateInput(tool, map[string]any{"query": "RETURN 1", "timeout_seconds": float64(6)}); err == nil {
-		t.Fatal("ValidateInput expected timeout maximum error, got nil")
-	}
-	_, err = tool.Invoke(context.Background(), "profile-1", map[string]any{"query": "RETURN 1", "timeout_seconds": 6})
-	if err == nil || !strings.Contains(err.Error(), "less than or equal to 5") {
-		t.Fatalf("Invoke error = %v, want configured timeout maximum", err)
+	if _, ok := reg.Get("graph_query"); ok {
+		t.Fatal("graph_query must not be registered in the v2 client surface")
 	}
 }
 
-func TestValidateInputRejectsNestedMemoryClaimViolations(t *testing.T) {
+func TestValidateInputRejectsClientSuppliedRememberClaims(t *testing.T) {
 	reg, err := BuildDefault(Dependencies{})
 	if err != nil {
 		t.Fatalf("BuildDefault: %v", err)
@@ -161,38 +122,28 @@ func TestValidateInputRejectsNestedMemoryClaimViolations(t *testing.T) {
 	}
 
 	args := map[string]any{
-		"content": "The user likes Go.",
-		"claims": []any{map[string]any{
-			"subject":         "user",
-			"predicate":       "likes",
-			"object":          "Go",
-			"extract_conf":    float64(99),
-			"resolution_conf": float64(0.9),
-		}},
+		"evidence": []any{map[string]any{"content": "The user likes Go."}},
+		"claims":   []any{},
 	}
 
 	err = ValidateInput(tool, args)
-	if err == nil || !strings.Contains(err.Error(), "claims[0].extract_conf") {
-		t.Fatalf("ValidateInput error = %v; want nested confidence validation", err)
+	if err == nil || !strings.Contains(err.Error(), "unknown field: claims") {
+		t.Fatalf("ValidateInput error = %v; want claims rejected", err)
 	}
 }
 
-func TestBuildDefault_V1InvokersReturnUnavailableWhenDepsMissing(t *testing.T) {
+func TestBuildDefault_InvokersReturnUnavailableWhenDepsMissing(t *testing.T) {
 	reg, _ := BuildDefault(Dependencies{})
 	cases := []struct {
 		name  string
 		input map[string]any
 	}{
-		{name: "list_recent_memories", input: map[string]any{}},
 		{name: "recall_memory", input: map[string]any{"query": "hello"}},
 		{name: "trace_memory", input: map[string]any{"type": "fact", "id": "fact-1"}},
 		{name: "assemble_context", input: map[string]any{"query": "hello"}},
 		{name: "list_dreams", input: map[string]any{}},
 		{name: "get_dream", input: map[string]any{"dream_id": "dream-1"}},
 		{name: "resolve_dream_feedback", input: map[string]any{"dream_id": "dream-1", "decision": "reject"}},
-		{name: "keyword_search", input: map[string]any{"keywords": "hello"}},
-		{name: "semantic_search", input: map[string]any{"embedding": []any{float64(0.1)}}},
-		{name: "graph_query", input: map[string]any{"query": "MATCH (n) RETURN n"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -205,7 +156,7 @@ func TestBuildDefault_V1InvokersReturnUnavailableWhenDepsMissing(t *testing.T) {
 	}
 }
 
-func TestBuildDefault_V1InvokerInvalidInputBranches(t *testing.T) {
+func TestBuildDefault_InvokerInvalidInputBranches(t *testing.T) {
 	cases := []struct {
 		name string
 		deps Dependencies
@@ -217,18 +168,6 @@ func TestBuildDefault_V1InvokerInvalidInputBranches(t *testing.T) {
 			deps: Dependencies{Recall: stubRecall{}},
 			in:   map[string]any{"query": func() {}},
 			want: "recall_memory: invalid input",
-		},
-		{
-			name: "keyword_search",
-			deps: Dependencies{KeywordSearch: &stubKeywordSearch{}},
-			in:   map[string]any{"keywords": func() {}},
-			want: "keyword_search: invalid input",
-		},
-		{
-			name: "semantic_search",
-			deps: Dependencies{SemanticSearch: &stubSemanticSearch{}},
-			in:   map[string]any{"embedding": func() {}},
-			want: "semantic_search: invalid input",
 		},
 		{
 			name: "resolve_dream_feedback",
@@ -250,25 +189,6 @@ func TestBuildDefault_V1InvokerInvalidInputBranches(t *testing.T) {
 	}
 }
 
-func TestBuildDefault_ListInvokerWraps(t *testing.T) {
-	reg, _ := BuildDefault(Dependencies{FragmentList: stubList{}})
-	tool, _ := reg.Get("list_recent_memories")
-	out, err := tool.Invoke(context.Background(), "pA", map[string]any{})
-	if err != nil {
-		t.Fatalf("Invoke: %v", err)
-	}
-	items, ok := out["items"].([]map[string]any)
-	if !ok {
-		t.Fatalf("items has type %T; want []map[string]any", out["items"])
-	}
-	if len(items) != 1 {
-		t.Errorf("items length = %d; want 1", len(items))
-	}
-	if out["has_more"] != false {
-		t.Errorf("has_more = %v; want false", out["has_more"])
-	}
-}
-
 func TestBuildDefault_RecallInvokerCallsServiceWhenWired(t *testing.T) {
 	rec := stubRecall{}
 	reg, _ := BuildDefault(Dependencies{Recall: rec})
@@ -278,52 +198,15 @@ func TestBuildDefault_RecallInvokerCallsServiceWhenWired(t *testing.T) {
 	}
 }
 
-func TestBuildDefault_SearchAndRecallInvokers(t *testing.T) {
-	keyword := &stubKeywordSearch{}
-	semantic := &stubSemanticSearch{}
+func TestBuildDefault_RecallInvokerMapsReflectionAndDreams(t *testing.T) {
 	memory := &stubMemory{}
 	recall := stubRecallWithHit{}
 	dreams := &stubDreamService{}
 	reg, _ := BuildDefault(Dependencies{
-		KeywordSearch:  keyword,
-		SemanticSearch: semantic,
-		Recall:         recall,
-		Memory:         memory,
-		Dreams:         dreams,
-		GraphQuery:     stubGraphQuery{},
+		Recall: recall,
+		Memory: memory,
+		Dreams: dreams,
 	})
-
-	keywordTool, _ := reg.Get("keyword_search")
-	keywordOut, err := keywordTool.Invoke(context.Background(), "profile-search", map[string]any{
-		"keywords": "hello",
-		"limit":    float64(7),
-		"labels":   []any{"work"},
-	})
-	if err != nil {
-		t.Fatalf("keyword_search Invoke: %v", err)
-	}
-	if keyword.lastProfile != "profile-search" || keyword.lastReq.Query != "hello" || keyword.lastReq.Limit != 7 {
-		t.Fatalf("keyword_search request = profile %q req %+v", keyword.lastProfile, keyword.lastReq)
-	}
-	if keywordOut["meta"] == nil {
-		t.Fatalf("keyword_search output missing meta: %v", keywordOut)
-	}
-
-	semanticTool, _ := reg.Get("semantic_search")
-	semanticOut, err := semanticTool.Invoke(context.Background(), "profile-search", map[string]any{
-		"query":     "hello",
-		"embedding": []any{float64(0.1), float64(0.2)},
-		"limit":     float64(3),
-	})
-	if err != nil {
-		t.Fatalf("semantic_search Invoke: %v", err)
-	}
-	if semantic.lastProfile != "profile-search" || semantic.lastReq.Query != "hello" || semantic.lastReq.Limit != 3 {
-		t.Fatalf("semantic_search request = profile %q req %+v", semantic.lastProfile, semantic.lastReq)
-	}
-	if semanticOut["data"] == nil {
-		t.Fatalf("semantic_search output missing data: %v", semanticOut)
-	}
 
 	recallTool, _ := reg.Get("recall_memory")
 	recallOut, err := recallTool.Invoke(context.Background(), "profile-search", map[string]any{
@@ -350,19 +233,6 @@ func TestBuildDefault_SearchAndRecallInvokers(t *testing.T) {
 	}
 	if dreams.recallQuery != "hello" {
 		t.Fatalf("dream recall query = %q, want hello", dreams.recallQuery)
-	}
-
-	graphTool, _ := reg.Get("graph_query")
-	graphOut, err := graphTool.Invoke(context.Background(), "profile-search", map[string]any{
-		"query":           "MATCH (n) RETURN n",
-		"parameters":      map[string]any{"x": 1},
-		"timeout_seconds": float64(1),
-	})
-	if err != nil {
-		t.Fatalf("graph_query Invoke: %v", err)
-	}
-	if graphOut == nil {
-		t.Fatal("graph_query output is nil")
 	}
 }
 
@@ -542,30 +412,6 @@ func TestImportSkillPackReturnsRecoverableResultOnPartialError(t *testing.T) {
 	}
 }
 
-func TestBuildDefault_FragmentInvokerEdgeBranches(t *testing.T) {
-	t.Run("list memory maps options and cursor", func(t *testing.T) {
-		list := &stubListCapture{}
-		reg, _ := BuildDefault(Dependencies{FragmentList: list})
-		tool, _ := reg.Get("list_recent_memories")
-
-		out, err := tool.Invoke(context.Background(), "profileA", map[string]any{
-			"limit":       float64(5),
-			"cursor":      "next-1",
-			"source_type": "manual",
-		})
-
-		if err != nil {
-			t.Fatalf("list_recent_memories Invoke: %v", err)
-		}
-		if list.opts.Limit != 5 || list.opts.Cursor != "next-1" || list.opts.SourceType != "manual" {
-			t.Fatalf("list options = %+v", list.opts)
-		}
-		if out["has_more"] != true || out["next_cursor"] != "cursor-2" {
-			t.Fatalf("list output = %v", out)
-		}
-	})
-}
-
 type stubRecall struct{}
 
 func (stubRecall) Recall(ctx context.Context, profileID string, req recallservice.RecallRequest) ([]recallservice.RecallHit, error) {
@@ -597,6 +443,14 @@ func (stubMemoryReflectError) Remember(ctx context.Context, profileID string, re
 	return &memoryservice.RememberResult{}, nil
 }
 
+func (stubMemoryReflectError) GetMemoryPlacement(ctx context.Context, profileID string, req memoryservice.PlacementStatusRequest) (*memoryservice.PlacementStatusResult, error) {
+	return &memoryservice.PlacementStatusResult{}, nil
+}
+
+func (stubMemoryReflectError) DisputeMemoryPlacement(ctx context.Context, profileID string, req memoryservice.DisputeRequest) (*memoryservice.DisputeResult, error) {
+	return &memoryservice.DisputeResult{}, nil
+}
+
 func (stubMemoryReflectError) ImportMemories(ctx context.Context, profileID string, req memoryservice.ImportRequest) (*memoryservice.RememberResult, error) {
 	return &memoryservice.RememberResult{}, nil
 }
@@ -625,7 +479,22 @@ type stubMemory struct {
 func (s *stubMemory) Remember(ctx context.Context, profileID string, req memoryservice.RememberRequest) (*memoryservice.RememberResult, error) {
 	s.lastProfile = profileID
 	return &memoryservice.RememberResult{
-		Fragment: memoryservice.FragmentOutcome{ID: "fragment-1", Status: "created"},
+		IngestID: "ingest-1",
+		Status:   "queued",
+	}, nil
+}
+
+func (s *stubMemory) GetMemoryPlacement(ctx context.Context, profileID string, req memoryservice.PlacementStatusRequest) (*memoryservice.PlacementStatusResult, error) {
+	s.lastProfile = profileID
+	return &memoryservice.PlacementStatusResult{
+		Run: domain.MemoryPlacementRun{IngestID: req.IngestID, Status: domain.MemoryPlacementCompleted},
+	}, nil
+}
+
+func (s *stubMemory) DisputeMemoryPlacement(ctx context.Context, profileID string, req memoryservice.DisputeRequest) (*memoryservice.DisputeResult, error) {
+	s.lastProfile = profileID
+	return &memoryservice.DisputeResult{
+		Session: domain.MemoryDisputeSession{DisputeID: "dispute-1", Status: domain.MemoryDisputeOpen},
 	}, nil
 }
 

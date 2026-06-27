@@ -113,7 +113,7 @@ func TestToolCatalogHandler_ReturnsEmptyListForEmptyRegistry(t *testing.T) {
 	}
 }
 
-func TestToolCatalogHandler_FullV1Surface(t *testing.T) {
+func TestToolCatalogHandler_FullV2Surface(t *testing.T) {
 	reg, err := registry.BuildDefault(registry.Dependencies{})
 	if err != nil {
 		t.Fatalf("BuildDefault: %v", err)
@@ -132,10 +132,10 @@ func TestToolCatalogHandler_FullV1Surface(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	expected := []string{
-		"list_recent_memories", "recall_memory",
-		"remember", "import_memories", "reflect_memories", "confirm_memory",
+		"recall_memory", "trace_memory", "assemble_context",
+		"remember", "get_memory_placement", "dispute_memory_placement",
+		"import_memories", "reflect_memories", "confirm_memory",
 		"list_dreams", "get_dream", "resolve_dream_feedback",
-		"keyword_search", "semantic_search", "graph_query",
 	}
 	seen := make(map[string]bool, len(resp.Tools))
 	for _, te := range resp.Tools {
@@ -143,12 +143,12 @@ func TestToolCatalogHandler_FullV1Surface(t *testing.T) {
 	}
 	for _, name := range expected {
 		if !seen[name] {
-			t.Errorf("v1 tool %q missing from catalog", name)
+			t.Errorf("v2 tool %q missing from catalog", name)
 		}
 	}
-	for _, name := range []string{"keyword-search", "semantic-search", "graph-query"} {
+	for _, name := range []string{"keyword-search", "semantic-search", "graph-query", "keyword_search", "semantic_search", "graph_query", "post_claim", "get_fact", "list_recent_memories"} {
 		if seen[name] {
-			t.Errorf("legacy hyphenated tool %q must not appear in catalog", name)
+			t.Errorf("removed tool %q must not appear in catalog", name)
 		}
 	}
 }

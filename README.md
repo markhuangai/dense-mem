@@ -222,7 +222,7 @@ The README is the product overview. The full user documentation lives in the
 
 | Area | Dense-Mem owns | Host LLM owns |
 |------|----------------|---------------|
-| Memory writes | Evidence fragments, typed claims, verification, gates, promotion | Extracting candidate memories from chat text |
+| Memory writes | Evidence fragments, claim extraction, verification, gates, promotion | Submitting evidence from chat text |
 | Embeddings | Fragment embeddings and recall-query embeddings through the configured provider | No vectors for normal writes or recall |
 | Retrieval | Facts, validated claims, fragments, contradictions, clarification tasks | Choosing what to ask or cite in the conversation |
 | Truth changes | Comparable-conflict detection, confirmation-driven supersession | Asking the user which uncertain memory is correct |
@@ -235,8 +235,10 @@ memory, applies explicit gates, and returns structured outcomes.
 
 | Tool | Purpose |
 |------|---------|
-| `remember` | Normal chat-session memory insertion. Saves evidence, creates typed claims, verifies, promotes when gates pass, and returns structured outcomes. |
-| `import_memories` | Ingests summarized historical conversations. By default it records evidence and validated claims without auto-promotion. |
+| `remember` | Normal chat-session memory insertion. Saves evidence only and returns a placement run for Dense-Mem verifier processing. |
+| `get_memory_placement` | Polls the verifier-owned placement run returned by `remember`, including fragment-only, claim, fact, rejected, and needs-evidence outcomes. |
+| `dispute_memory_placement` | Starts or continues a bounded placement dispute with additional evidence; the verifier decides whether to promote or keep the placement rejected. |
+| `import_memories` | Trusted migration path for summarized historical conversations. It may carry explicit claims and can request auto-promotion. |
 | `recall_memory` | Retrieves facts, validated claims, fragments, and `clarifications[]` for the authenticated team. |
 | `trace_memory` | Expands one fact or claim into bounded evidence, promotion lineage, contradictions, and supersession links. |
 | `assemble_context` | Builds a bounded prompt-ready context block plus structured facts, claims, fragments, and clarifications. |
@@ -248,9 +250,10 @@ memory, applies explicit gates, and returns structured outcomes.
 | `import_memory_pack` | Imports a reviewed or trusted memory pack with ledgered changes and rollback support. |
 | `rollback_memory_pack_import` | Rolls back changes from a prior memory-pack import when the ledger has enough state. |
 
-Low-level tools remain available for advanced callers: `post_claim`,
-`verify_claim`, `promote_claim`, search tools, graph query tools, community
-tools, and retraction tools.
+Direct client tools for claim/fact promotion, raw fragment mutation, raw
+keyword/vector/graph search, community detection, and retractions are not part
+of the public client surface. Dense-Mem keeps the underlying logic server-side
+for verifier, recall, migration, and maintenance flows.
 
 The older `*_skill_pack*` tool names remain accepted as hidden compatibility
 aliases, but new clients should use `*_memory_pack*`. Dense-Mem also exposes MCP
@@ -263,10 +266,10 @@ import/export.
 Memory moves through this path:
 
 ```text
-source fragment -> typed claim -> verification -> promotion gate -> active fact
-                                                   |
-                                                   v
-                                            clarification task
+remember evidence -> verifier placement -> typed claim -> verification -> promotion gate -> active fact
+                         |                                                 |
+                         v                                                 v
+                  fragment-only / reject                              clarification task
 ```
 
 Comparable conflicts are not resolved silently. Dense-Mem returns

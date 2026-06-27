@@ -50,39 +50,6 @@ type RouteDescriptor struct {
 // surface in the generated OpenAPI doc.
 func DefaultRoutes() []RouteDescriptor {
 	return []RouteDescriptor{
-		// --- Claims (AI-safe, knowledge pipeline Phase 2 & 3) ---
-		{Method: "POST", Path: "/api/v1/claims", OperationID: "createClaim", RequestSchema: "ClaimRequest", ResponseSchema: "ClaimResponse", SuccessStatus: 201, AISafe: true, Tags: []string{"knowledge"}, Description: "Create a new candidate claim derived from a source fragment."},
-		{Method: "GET", Path: "/api/v1/claims/{id}", OperationID: "getClaim", ResponseSchema: "ClaimResponse", AISafe: true, Tags: []string{"knowledge"}, Description: "Fetch a single claim by id."},
-		{Method: "GET", Path: "/api/v1/claims", OperationID: "listClaims", AISafe: true, Tags: []string{"knowledge"}, Description: "List claims (keyset pagination)."},
-		{Method: "DELETE", Path: "/api/v1/claims/{id}", OperationID: "deleteClaim", AISafe: true, Tags: []string{"knowledge"}, Description: "Hard-delete a claim."},
-		// Phase 3: entailment verification (AC-28, AC-30)
-		{Method: "POST", Path: "/api/v1/claims/{id}/verify", OperationID: "verifyClaim", ResponseSchema: "VerifyClaimResponse", AISafe: true, Tags: []string{"knowledge"}, Description: "Run entailment verification for a candidate claim.", ExtraResponses: map[string]string{
-			"429": "Verifier rate-limited; retry after Retry-After seconds.",
-			"502": "Verifier returned a malformed response.",
-			"503": "Verifier provider unavailable.",
-			"504": "Verifier request timed out.",
-		}},
-		// Phase 4: fact promotion (AC-41, AC-42)
-		{Method: "POST", Path: "/api/v1/claims/{id}/promote", OperationID: "promoteClaim", ResponseSchema: "FactResponse", SuccessStatus: 201, AISafe: true, Tags: []string{"knowledge"}, Description: "Promote a validated claim to an authoritative fact.", ExtraResponses: map[string]string{
-			"409": "Claim not validated, gate rejected, claim marked disputed due to a comparable existing fact, or claim weaker than existing fact.",
-			"422": "Predicate not policed or unsupported promotion policy.",
-		}},
-
-		// --- Facts (AI-safe, knowledge pipeline Phase 4) ---
-		{Method: "GET", Path: "/api/v1/facts/{id}", OperationID: "getFact", ResponseSchema: "FactResponse", AISafe: true, Tags: []string{"knowledge"}, Description: "Fetch a single promoted fact by id."},
-		{Method: "GET", Path: "/api/v1/facts", OperationID: "listFacts", AISafe: true, Tags: []string{"knowledge"}, Description: "List promoted facts (keyset pagination)."},
-		{Method: "POST", Path: "/api/v1/facts/{id}/retract", OperationID: "retractFact", ResponseSchema: "RetractFactResponse", AISafe: true, Tags: []string{"knowledge"}, Description: "Soft-tombstone a fact; preserves graph lineage and validity timestamps."},
-		{Method: "GET", Path: "/api/v1/communities", OperationID: "listCommunities", ResponseSchema: "ListCommunitiesResponse", AISafe: true, Tags: []string{"community"}, Description: "List persisted community summaries for the caller's profile."},
-		{Method: "GET", Path: "/api/v1/communities/{id}", OperationID: "getCommunitySummary", ResponseSchema: "CommunityResponse", AISafe: true, Tags: []string{"community"}, Description: "Fetch one persisted community summary by community_id."},
-
-		// --- Fragments ---
-		{Method: "POST", Path: "/api/v1/fragments", OperationID: "createFragment", RequestSchema: "CreateFragmentRequest", ResponseSchema: "FragmentResponse", SuccessStatus: 201, Description: "Create a source fragment."},
-		{Method: "GET", Path: "/api/v1/fragments", OperationID: "listFragments", ToolName: "list_recent_memories", AISafe: true, Description: "List recent fragments (keyset pagination)."},
-		{Method: "GET", Path: "/api/v1/fragments/{id}", OperationID: "getFragment", ResponseSchema: "FragmentResponse", Description: "Fetch a single fragment by id."},
-		{Method: "DELETE", Path: "/api/v1/fragments/{id}", OperationID: "deleteFragment", AISafe: true, Description: "Hard-delete a fragment."},
-		// Phase 6: soft tombstone (AC-48)
-		{Method: "POST", Path: "/api/v1/fragments/{id}/retract", OperationID: "retractFragment", ResponseSchema: "RetractFragmentResponse", AISafe: true, Tags: []string{"knowledge"}, Description: "Soft-tombstone a fragment; preserves graph lineage and triggers fact revalidation."},
-
 		// --- Tool catalog (AI-safe) ---
 		{Method: "GET", Path: "/api/v1/tools", OperationID: "listTools", ResponseSchema: "ToolCatalogResponse", AISafe: true, Description: "List all registered tools."},
 		{Method: "POST", Path: "/api/v1/tools/{name}", OperationID: "executeTool", RequestSchema: "ToolExecuteRequest", ResponseSchema: "ToolExecuteResponse", Description: "Execute a registered tool by name. Discover per-tool schemas and scope requirements via GET /api/v1/tools first."},
@@ -93,14 +60,15 @@ func DefaultRoutes() []RouteDescriptor {
 			"503": "Embedding provider unavailable.",
 		}},
 		{Method: "POST", Path: "/api/v1/tools/recall_memory", OperationID: "recallMemory", ToolName: "recall_memory", AISafe: true, Description: "Hybrid semantic + keyword recall over fragments."},
+		{Method: "POST", Path: "/api/v1/tools/remember", OperationID: "rememberTool", ToolName: "remember", AISafe: true, Description: "Submit evidence for server-owned memory placement."},
+		{Method: "POST", Path: "/api/v1/tools/get_memory_placement", OperationID: "getMemoryPlacementTool", ToolName: "get_memory_placement", AISafe: true, Description: "Poll a server-owned memory placement run."},
+		{Method: "POST", Path: "/api/v1/tools/dispute_memory_placement", OperationID: "disputeMemoryPlacementTool", ToolName: "dispute_memory_placement", AISafe: true, Description: "Dispute a memory placement with more evidence."},
+		{Method: "POST", Path: "/api/v1/tools/import_memories", OperationID: "importMemoriesTool", ToolName: "import_memories", AISafe: true, Description: "Trusted historical import path that may include explicit claims."},
+		{Method: "POST", Path: "/api/v1/tools/reflect_memories", OperationID: "reflectMemoriesTool", ToolName: "reflect_memories", AISafe: true, Description: "Review memory health and unresolved clarification needs."},
+		{Method: "POST", Path: "/api/v1/tools/confirm_memory", OperationID: "confirmMemoryTool", ToolName: "confirm_memory", AISafe: true, Description: "Apply an explicit memory clarification decision."},
 		{Method: "POST", Path: "/api/v1/tools/list_dreams", OperationID: "listDreamsTool", ToolName: "list_dreams", AISafe: true, Description: "List reviewable dream hypotheses."},
 		{Method: "POST", Path: "/api/v1/tools/get_dream", OperationID: "getDreamTool", ToolName: "get_dream", AISafe: true, Description: "Fetch one dream hypothesis and its source references."},
 		{Method: "POST", Path: "/api/v1/tools/resolve_dream_feedback", OperationID: "resolveDreamFeedbackTool", ToolName: "resolve_dream_feedback", AISafe: true, Description: "Apply evidence-driven user feedback to a dream hypothesis without directly promoting facts."},
-
-		// --- Advanced tool routes (full variant only) ---
-		{Method: "POST", Path: "/api/v1/tools/graph_query", OperationID: "graphQueryTool", ToolName: "graph_query", Description: "Advanced: read-only Cypher query."},
-		{Method: "POST", Path: "/api/v1/tools/keyword_search", OperationID: "keywordSearchTool", ToolName: "keyword_search", Description: "Advanced: plain-text BM25 keyword search."},
-		{Method: "POST", Path: "/api/v1/tools/semantic_search", OperationID: "semanticSearchTool", ToolName: "semantic_search", Description: "Advanced: kNN vector search."},
 
 		// --- MCP Streamable HTTP (full runtime variant) ---
 		{Method: "POST", Path: "/mcp", OperationID: "mcpPost", Description: "MCP Streamable HTTP JSON-RPC endpoint."},
@@ -119,7 +87,5 @@ func DefaultRoutes() []RouteDescriptor {
 		// --- Audit log (full variant) ---
 		{Method: "GET", Path: "/api/v1/teams/{teamId}/audit-log", OperationID: "getAuditLog", Description: "Fetch the team's audit log."},
 
-		// --- SSE query stream (full variant) ---
-		{Method: "POST", Path: "/api/v1/teams/{teamId}/query/stream", OperationID: "queryStream", Description: "Server-sent event stream for long-running queries."},
 	}
 }

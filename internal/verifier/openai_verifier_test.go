@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,6 +24,17 @@ func newTestVerifierConfig(serverURL, apiKey, model string) *config.Config {
 		AIAPIKey:        apiKey,
 		AIVerifierModel: model,
 	}
+}
+
+func TestOpenAIVerifierSetMetricsNormalizesNil(t *testing.T) {
+	v := NewOpenAIVerifier(newTestVerifierConfig("", "", "m"), nil)
+
+	v.SetMetrics(nil)
+	require.NotNil(t, v.metrics)
+
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	v.SetMetrics(metrics)
+	require.Same(t, metrics, v.metrics)
 }
 
 // verifierSuccessHandler returns an HTTP handler that always replies with a

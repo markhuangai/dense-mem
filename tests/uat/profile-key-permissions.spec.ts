@@ -70,13 +70,14 @@ test('read-only profile key can read HTTP routes but cannot write', async ({ req
     });
     expect(listTools.status(), await listTools.text()).toBe(200);
 
-    const writeAttempt = await request.post(`${BASE_URL}/api/v1/fragments`, {
+    const writeAttempt = await request.post(`${BASE_URL}/api/v1/tools/remember`, {
       headers: authHeaders(created.apiKey),
       data: {
-        content: 'This write should be rejected for a read-only UAT key.',
-        source_quality: 0.9,
-        classification: { source: 'uat' },
-        labels: ['uat', 'permissions'],
+        evidence: [{
+          content: 'This write should be rejected for a read-only UAT key.',
+          source: 'uat',
+          labels: ['uat', 'permissions'],
+        }],
       },
     });
     expect(writeAttempt.status(), await writeAttempt.text()).toBe(403);
@@ -103,13 +104,13 @@ test('read-only profile key only sees and calls read-scoped MCP tools', async ({
     const list = listResponse as { result: { tools: Array<{ name: string }> } };
     const toolNames = list.result.tools.map((tool) => tool.name);
 
-	expect(toolNames).toContain('recall_memory');
-	expect(toolNames).not.toContain('remember');
-	expect(toolNames).not.toContain('confirm_memory');
+    expect(toolNames).toContain('recall_memory');
+    expect(toolNames).not.toContain('remember');
+    expect(toolNames).not.toContain('confirm_memory');
 
     const writeCall = await mcp.call('tools/call', {
       name: 'remember',
-      arguments: { content: 'This MCP write should be rejected.' },
+      arguments: { evidence: [{ content: 'This MCP write should be rejected.' }] },
     });
     expect(writeCall).toMatchObject({
       error: {

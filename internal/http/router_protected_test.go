@@ -154,34 +154,14 @@ func TestRegisterProtectedRoutesWithHandlersRegistersConfiguredSurface(t *testin
 	noContent := func(c echo.Context) error { return c.NoContent(204) }
 
 	RegisterProtectedRoutesWithHandlers(e, ProtectedDeps{}, ProtectedHandlers{
-		GetTool:         noContent,
-		ExecuteTool:     noContent,
-		GraphQuery:      noContent,
-		KeywordSearch:   noContent,
-		SemanticSearch:  noContent,
-		QueryStream:     noContent,
-		FragmentCreate:  noContent,
-		FragmentRead:    noContent,
-		FragmentList:    noContent,
-		FragmentDelete:  noContent,
-		FragmentRetract: noContent,
-		ToolCatalog:     noContent,
-		OpenAPIFull:     noContent,
-		MCPPost:         noContent,
-		MCPGet:          noContent,
-		APIKeySvc:       routerAPIKeyService{},
-		ClaimCreate:     noContent,
-		ClaimRead:       noContent,
-		ClaimList:       noContent,
-		ClaimDelete:     noContent,
-		ClaimVerify:     noContent,
-		ClaimPromote:    noContent,
-		FactGet:         noContent,
-		FactList:        noContent,
-		FactRetract:     noContent,
-		CommunityRead:   noContent,
-		CommunityList:   noContent,
-		Recall:          noContent,
+		GetTool:     noContent,
+		ExecuteTool: noContent,
+		ToolCatalog: noContent,
+		OpenAPIFull: noContent,
+		MCPPost:     noContent,
+		MCPGet:      noContent,
+		APIKeySvc:   routerAPIKeyService{},
+		Recall:      noContent,
 	})
 
 	routes := registeredRoutes(e)
@@ -189,7 +169,6 @@ func TestRegisterProtectedRoutesWithHandlersRegistersConfiguredSurface(t *testin
 		"GET /api/v1/teams/:teamId",
 		"PATCH /api/v1/teams/:teamId",
 		"GET /api/v1/teams/:teamId/audit-log",
-		"POST /api/v1/teams/:teamId/query/stream",
 		"GET /api/v1/teams/:teamId/profiles",
 		"POST /api/v1/teams/:teamId/profiles",
 		"GET /api/v1/teams/:teamId/profiles/:profileId",
@@ -202,6 +181,23 @@ func TestRegisterProtectedRoutesWithHandlersRegistersConfiguredSurface(t *testin
 		"GET /api/v1/profiles/:profileId/api-keys/:keyId",
 		"POST /api/v1/profiles/:profileId/api-keys/:keyId/rotate",
 		"DELETE /api/v1/profiles/:profileId/api-keys/:keyId",
+		"POST /mcp",
+		"GET /mcp",
+		"GET /api/v1/tools",
+		"GET /api/v1/tools/:id",
+		"POST /api/v1/tools/:name",
+		"GET /api/v1/openapi.json",
+		"GET /api/v1/recall",
+	}
+
+	for _, route := range required {
+		if !routes[route] {
+			t.Fatalf("route %q not registered", route)
+		}
+	}
+
+	removed := []string{
+		"POST /api/v1/teams/:teamId/query/stream",
 		"POST /api/v1/fragments",
 		"GET /api/v1/fragments",
 		"GET /api/v1/fragments/:id",
@@ -218,21 +214,13 @@ func TestRegisterProtectedRoutesWithHandlersRegistersConfiguredSurface(t *testin
 		"POST /api/v1/facts/:id/retract",
 		"GET /api/v1/communities",
 		"GET /api/v1/communities/:id",
-		"POST /mcp",
-		"GET /mcp",
-		"GET /api/v1/tools",
 		"POST /api/v1/tools/graph_query",
 		"POST /api/v1/tools/keyword_search",
 		"POST /api/v1/tools/semantic_search",
-		"GET /api/v1/tools/:id",
-		"POST /api/v1/tools/:name",
-		"GET /api/v1/openapi.json",
-		"GET /api/v1/recall",
 	}
-
-	for _, route := range required {
-		if !routes[route] {
-			t.Fatalf("route %q not registered", route)
+	for _, route := range removed {
+		if routes[route] {
+			t.Fatalf("removed route %q was registered", route)
 		}
 	}
 }

@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service"
@@ -26,14 +25,12 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/recallservice"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 	"github.com/markhuangai/dense-mem/internal/tools/graphquery"
-	"github.com/markhuangai/dense-mem/internal/tools/keywordsearch"
-	"github.com/markhuangai/dense-mem/internal/tools/semanticsearch"
 )
 
 // Dependencies is the wiring bundle that BuildDefault uses to construct the
 // canonical v1 tool catalog.
 type Dependencies struct {
-	// Fragment tools (v1)
+	// Memory retrieval and evaluation export dependencies.
 	FragmentList fragmentservice.ListFragmentsService
 	Recall       recallservice.RecallService
 	Metrics      observability.DiscoverabilityMetrics
@@ -45,27 +42,16 @@ type Dependencies struct {
 	EvaluationConfig     EvaluationConfigProvider
 	EvaluationAudit      EvaluationAuditAppender
 
-	// Search / graph tools (v1)
-	KeywordSearch               keywordsearch.KeywordSearchService
-	SemanticSearch              semanticsearch.SemanticSearchService
-	GraphQuery                  graphquery.GraphQueryService
-	GraphQueryMaxTimeoutSeconds int
-
 	// Knowledge pipeline tools
 	FragmentGet       fragmentservice.GetFragmentService
-	ClaimCreate       claimservice.CreateClaimService
 	ClaimGet          claimservice.GetClaimService
 	ClaimList         claimservice.ListClaimsService
 	ClaimListFiltered claimservice.ListClaimsFilteredService
-	ClaimVerify       claimservice.VerifyClaimService
-	FactPromote       factservice.PromoteClaimService
 	FactGet           factservice.GetFactService
 	FactList          factservice.ListFactsService
-	FactRetract       factservice.RetractFactService
-	FragmentRetract   fragmentservice.RetractFragmentService
-	CommunityDetect   communityservice.DetectCommunityService
 	CommunityGet      communityservice.GetCommunitySummaryService
 	CommunityList     communityservice.ListCommunitiesService
+	GraphQuery        graphquery.GraphQueryService
 	Context           contextservice.Service
 	Memory            memoryservice.Service
 	SkillPack         skillpackservice.Service
@@ -101,34 +87,19 @@ func BuildDefault(deps Dependencies) (Registry, error) {
 
 func defaultTools(deps Dependencies) []Tool {
 	tools := []Tool{
-		// v1 fragment read + search tools
-		listRecentMemoriesTool(deps),
+		// server-owned memory tools
 		recallMemoryTool(deps),
 		traceMemoryTool(deps),
 		assembleContextTool(deps),
 		rememberTool(deps),
+		getMemoryPlacementTool(deps),
+		disputeMemoryPlacementTool(deps),
 		importMemoriesTool(deps),
 		reflectMemoriesTool(deps),
 		confirmMemoryTool(deps),
 		listDreamsTool(deps),
 		getDreamTool(deps),
 		resolveDreamFeedbackTool(deps),
-		keywordSearchTool(deps),
-		semanticSearchTool(deps),
-		graphQueryTool(deps),
-		// knowledge pipeline tools
-		postClaimTool(deps),
-		getClaimTool(deps),
-		listClaimsTool(deps),
-		verifyClaimTool(deps),
-		promoteClaimTool(deps),
-		getFactTool(deps),
-		listFactsTool(deps),
-		retractFactTool(deps),
-		retractFragmentTool(deps),
-		detectCommunityTool(deps),
-		getCommunitySummaryTool(deps),
-		listCommunitiesTool(deps),
 		findSkillPackCandidatesTool(deps),
 		exportSkillPackTool(deps),
 		inspectSkillPackTool(deps),
@@ -144,65 +115,6 @@ func defaultTools(deps Dependencies) []Tool {
 		evalScoreRetrievalCaseTool(deps),
 	}
 	return tools
-}
-
-// --- list_recent_memories --------------------------------------------------
-
-func listRecentMemoriesTool(deps Dependencies) Tool {
-	return Tool{
-		Name:        "list_recent_memories",
-		Description: "List fragments in reverse chronological order with keyset pagination.",
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"limit":       map[string]any{"type": "integer", "minimum": 0, "maximum": 100},
-				"cursor":      schemaString("Keyset pagination cursor from a previous response.", 256),
-				"source_type": schemaEnum([]string{"conversation", "document", "observation", "manual"}),
-			},
-			"additionalProperties": false,
-		},
-		OutputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"items":       map[string]any{"type": "array", "items": fragmentObjectSchema()},
-				"next_cursor": map[string]any{"type": "string"},
-				"has_more":    map[string]any{"type": "boolean"},
-			},
-		},
-		RequiredScopes: []string{"read"},
-		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
-			if deps.FragmentList == nil {
-				return nil, ErrToolUnavailable
-			}
-			opts := fragmentservice.ListOptions{}
-			if v, ok := input["limit"].(float64); ok {
-				opts.Limit = int(v)
-			}
-			if v, ok := input["cursor"].(string); ok {
-				opts.Cursor = v
-			}
-			if v, ok := input["source_type"].(string); ok {
-				opts.SourceType = v
-			}
-			frags, nextCursor, err := deps.FragmentList.List(ctx, profileID, opts)
-			if err != nil {
-				return nil, err
-			}
-			items := make([]map[string]any, 0, len(frags))
-			for i := range frags {
-				m, err := structToMap(&frags[i])
-				if err != nil {
-					return nil, err
-				}
-				items = append(items, m)
-			}
-			return map[string]any{
-				"items":       items,
-				"next_cursor": nextCursor,
-				"has_more":    nextCursor != "",
-			}, nil
-		},
-	}
 }
 
 // --- recall_memory ---------------------------------------------------------
@@ -671,134 +583,6 @@ func recallHitToMap(hit recallservice.RecallHit) (map[string]any, error) {
 	}
 	out["tier"] = tier
 	return out, nil
-}
-
-// --- keyword_search --------------------------------------------------------
-
-func keywordSearchTool(deps Dependencies) Tool {
-	return Tool{
-		Name:        "keyword_search",
-		Description: "Advanced: plain-text BM25 search across fragments and fact predicates.",
-		InputSchema: map[string]any{
-			"type":     "object",
-			"required": []string{"keywords"},
-			"properties": map[string]any{
-				"keywords": schemaString("Search phrase.", 512),
-				"limit":    map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
-				"labels":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-				"valid_at": map[string]any{"type": "string", "format": "date-time"},
-				"known_at": map[string]any{"type": "string", "format": "date-time"},
-			},
-			"additionalProperties": false,
-		},
-		OutputSchema:   map[string]any{"type": "object"},
-		RequiredScopes: []string{"read"},
-		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
-			if deps.KeywordSearch == nil {
-				return nil, ErrToolUnavailable
-			}
-			var dtoReq dto.KeywordSearchRequest
-			if err := remapInput(input, &dtoReq); err != nil {
-				return nil, fmt.Errorf("keyword_search: invalid input: %w", err)
-			}
-			req := keywordsearch.KeywordSearchRequest{
-				Query:   dtoReq.Keywords,
-				Limit:   dtoReq.Limit,
-				Labels:  dtoReq.Labels,
-				ValidAt: dtoReq.ValidAt,
-				KnownAt: dtoReq.KnownAt,
-			}
-			res, err := deps.KeywordSearch.Search(ctx, profileID, &req)
-			if err != nil {
-				return nil, err
-			}
-			return structToMap(res)
-		},
-	}
-}
-
-// --- semantic_search -------------------------------------------------------
-
-func semanticSearchTool(deps Dependencies) Tool {
-	return Tool{
-		Name:        "semantic_search",
-		Description: "Advanced: kNN vector search. Caller supplies a pre-computed embedding vector.",
-		InputSchema: map[string]any{
-			"type":     "object",
-			"required": []string{"embedding"},
-			"properties": map[string]any{
-				"embedding": map[string]any{"type": "array", "items": map[string]any{"type": "number"}},
-				"query":     schemaString("Optional query string for logging.", 512),
-				"limit":     map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
-				"threshold": map[string]any{"type": "number", "minimum": 0, "maximum": 1},
-			},
-			"additionalProperties": false,
-		},
-		OutputSchema:   map[string]any{"type": "object"},
-		RequiredScopes: []string{"read"},
-		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
-			if deps.SemanticSearch == nil {
-				return nil, ErrToolUnavailable
-			}
-			var req semanticsearch.SemanticSearchRequest
-			if err := remapInput(input, &req); err != nil {
-				return nil, fmt.Errorf("semantic_search: invalid input: %w", err)
-			}
-			res, err := deps.SemanticSearch.Search(ctx, profileID, &req)
-			if err != nil {
-				return nil, err
-			}
-			return structToMap(res)
-		},
-	}
-}
-
-// --- graph_query -----------------------------------------------------------
-
-func graphQueryTool(deps Dependencies) Tool {
-	maxTimeoutSeconds := deps.GraphQueryMaxTimeoutSeconds
-	if maxTimeoutSeconds <= 0 {
-		maxTimeoutSeconds = 30
-	}
-	return Tool{
-		Name:        "graph_query",
-		Description: "Advanced: profile-scoped read-only Cypher. The server injects the profile filter and caps row count.",
-		InputSchema: map[string]any{
-			"type":     "object",
-			"required": []string{"query"},
-			"properties": map[string]any{
-				"query":           map[string]any{"type": "string", "maxLength": 5000},
-				"parameters":      map[string]any{"type": "object", "additionalProperties": true},
-				"timeout_seconds": map[string]any{"type": "integer", "minimum": 1, "maximum": maxTimeoutSeconds},
-			},
-			"additionalProperties": false,
-		},
-		OutputSchema:   map[string]any{"type": "object"},
-		RequiredScopes: []string{"read"},
-		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
-			if deps.GraphQuery == nil {
-				return nil, ErrToolUnavailable
-			}
-			query, _ := input["query"].(string)
-			if query == "" {
-				return nil, errors.New("graph_query: query is required")
-			}
-			params, _ := input["parameters"].(map[string]any)
-			if timeout, ok := intInput(input["timeout_seconds"]); ok && timeout > 0 {
-				if timeout > maxTimeoutSeconds {
-					return nil, fmt.Errorf("graph_query: timeout_seconds must be less than or equal to %d", maxTimeoutSeconds)
-				}
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
-				defer cancel()
-			}
-			res, err := deps.GraphQuery.Execute(ctx, profileID, query, params)
-			if err != nil {
-				return nil, err
-			}
-			return structToMap(res)
-		},
-	}
 }
 
 // --- schema + marshaling helpers ------------------------------------------

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -157,6 +158,41 @@ func TestRetryVerifier(t *testing.T) {
 		require.Equal(t, want, got)
 	})
 
+	t.Run("ProviderErrorAfterContextCancel_NotRetried", func(t *testing.T) {
+		var calls atomic.Int32
+		ctx, cancel := context.WithCancel(context.Background())
+		providerErr := &ProviderError{Provider: "stub", Message: "server error"}
+		inner := &stubVerifier{fn: func(_ context.Context, _ Request) (Response, error) {
+			calls.Add(1)
+			cancel()
+			return Response{}, providerErr
+		}}
+
+		svc := NewRetryVerifier(inner, newTestCfg(5))
+		_, err := svc.Verify(ctx, Request{ProfileID: "profile-A", Predicate: "claim"})
+
+		require.ErrorIs(t, err, ErrVerifierProvider)
+		require.Equal(t, int32(1), calls.Load())
+	})
+
+	t.Run("RateLimitRetryAfterStopsWhenContextCancelled", func(t *testing.T) {
+		rateErr := &RateLimitError{Provider: "stub", Message: "429", RetryAfter: 1}
+		inner := &stubVerifier{fn: func(_ context.Context, _ Request) (Response, error) {
+			return Response{}, rateErr
+		}}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go func() {
+			time.Sleep(5 * time.Millisecond)
+			cancel()
+		}()
+
+		svc := NewRetryVerifier(inner, newTestCfg(5))
+		_, err := svc.Verify(ctx, Request{ProfileID: "profile-A", Predicate: "claim"})
+
+		require.ErrorIs(t, err, ErrVerifierRateLimit)
+	})
+
 	t.Run("MalformedResponse_NotRetried", func(t *testing.T) {
 		var calls atomic.Int32
 
@@ -231,6 +267,23 @@ func TestRetryVerifier(t *testing.T) {
 // to profile A does not leak results to profile B queries. Profile isolation is
 // enforced by the inner Verifier; the retry wrapper must forward ProfileID
 // unchanged so the inner implementation can apply its boundary.
+func TestRetryVerifierDefaultsAndNoopLogger(t *testing.T) {
+	svc := NewRetryVerifier(&stubVerifier{}, newTestCfg(0), nil)
+	require.Len(t, svc.sem, 0)
+	require.Equal(t, 5, cap(svc.sem))
+	require.NotNil(t, svc.metrics)
+
+	svc.SetMetrics(nil)
+	require.NotNil(t, svc.metrics)
+
+	logger := noopLogProvider{}
+	logger.Info("info")
+	logger.Warn("warn")
+	logger.Debug("debug")
+	logger.Error("error", errors.New("boom"))
+	require.NotNil(t, logger.With(observability.String("key", "value")))
+}
+
 func TestRetryVerifier_CrossProfileIsolation(t *testing.T) {
 	const profileA = "profile-A"
 	const profileB = "profile-B"

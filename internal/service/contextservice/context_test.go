@@ -601,6 +601,14 @@ func (f *fakeMemory) ImportMemories(context.Context, string, memoryservice.Impor
 	return nil, errors.New("not implemented")
 }
 
+func (f *fakeMemory) GetMemoryPlacement(context.Context, string, memoryservice.PlacementStatusRequest) (*memoryservice.PlacementStatusResult, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (f *fakeMemory) DisputeMemoryPlacement(context.Context, string, memoryservice.DisputeRequest) (*memoryservice.DisputeResult, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (f *fakeMemory) Reflect(context.Context, string, memoryservice.ReflectRequest) (*memoryservice.ReflectResult, error) {
 	if f.err != nil {
 		return nil, f.err
