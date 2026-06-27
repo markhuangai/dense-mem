@@ -55,9 +55,9 @@ func TestUAT5_EmbeddingProviderStartup(t *testing.T) {
 		"dimension", "consistency service must reference dimensions")
 }
 
-// UAT-6: Fragment create happy path wiring (Unit 15–16).
+// UAT-6: Fragment create remains internal behind the evidence-first memory API.
 // AC trace: AC-17, AC-20, AC-23, AC-24, AC-25, AC-26, AC-49, AC-52, AC-54.
-func TestUAT6_FragmentCreateHappyPath(t *testing.T) {
+func TestUAT6_FragmentCreateInternalBehindRemember(t *testing.T) {
 	create := readFile(t, "internal/service/fragmentservice/create.go")
 
 	// The create service must persist all day-1 embedding metadata properties
@@ -71,18 +71,13 @@ func TestUAT6_FragmentCreateHappyPath(t *testing.T) {
 	assert.Contains(t, create, "CorrelationID",
 		"audit entry must carry CorrelationID (AC-54)")
 
-	// Handler must bind the shared DTO + be route-registered under /fragments.
-	handler := readFile(t, "internal/http/handler/fragment_create_handler.go")
-	assert.Contains(t, handler, "dto.CreateFragmentRequest",
-		"handler must bind DTO struct, not a local type")
-	assert.Contains(t, handler, "fragmentservice.CreateFragmentService",
-		"handler must depend on the service interface, not the concrete impl")
+	memory := readFile(t, "internal/service/memoryservice/memory.go")
+	assert.Contains(t, memory, "FragmentCreate",
+		"remember must keep fragment creation as an internal service dependency")
 
 	router := readFile(t, "internal/http/router_protected.go")
-	assert.Contains(t, router, `fragmentGroup.POST("", handlers.FragmentCreate`,
-		"POST /fragments must be wired under the canonical path (AC-50)")
-	assert.Contains(t, router, `middleware.RequireScopes("write")`,
-		"POST /fragments must require write scope")
+	assert.NotContains(t, router, "FragmentCreate",
+		"POST /fragments must not be mounted as a public client route")
 }
 
 // UAT-7: Fragment create validation rules live on the shared DTO (Unit 13).
@@ -140,54 +135,27 @@ func TestUAT8_FragmentDeduplication(t *testing.T) {
 		"create result must carry Duplicate flag for replay callers")
 }
 
-// UAT-9: Fragment read, list, and delete are registered under the canonical
-// path and scope (Unit 17–19).
+// UAT-9: Direct fragment read, list, and delete routes are removed from the client surface.
 // AC trace: AC-27, AC-28, AC-29, AC-30, AC-31, AC-42, AC-48, AC-50.
-func TestUAT9_FragmentReadListDelete(t *testing.T) {
+func TestUAT9_DirectFragmentRoutesRemoved(t *testing.T) {
 	router := readFile(t, "internal/http/router_protected.go")
 
-	assert.Contains(t, router, `fragmentGroup.GET("/:id", handlers.FragmentRead`,
-		"GET /fragments/:id must be wired")
-	assert.Contains(t, router, `fragmentGroup.GET("", handlers.FragmentList`,
-		"GET /fragments must be wired")
-	assert.Contains(t, router, `fragmentGroup.DELETE("/:id", handlers.FragmentDelete`,
-		"DELETE /fragments/:id must be wired")
-
-	// Reads use "read" scope, delete uses "write" scope — the scope boundary is
-	// the single point where over-permissive tokens get blocked.
-	readHandler := readFile(t, "internal/http/handler/fragment_read_handler.go")
-	assert.Contains(t, readHandler, "fragmentservice.GetFragmentService",
-		"read handler must depend on service interface")
-
-	listHandler := readFile(t, "internal/http/handler/fragment_list_handler.go")
-	assert.Contains(t, listHandler, "fragmentservice.ListFragmentsService",
-		"list handler must depend on service interface")
-	assert.Contains(t, listHandler, "NextCursor",
-		"list response must expose NextCursor for pagination (AC-30)")
-
-	deleteHandler := readFile(t, "internal/http/handler/fragment_delete_handler.go")
-	assert.Contains(t, deleteHandler, "fragmentservice.DeleteFragmentService",
-		"delete handler must depend on service interface")
+	assert.NotContains(t, router, "fragmentGroup",
+		"direct /fragments routes must not be mounted")
+	for _, path := range []string{
+		"internal/http/handler/fragment_read_handler.go",
+		"internal/http/handler/fragment_list_handler.go",
+		"internal/http/handler/fragment_delete_handler.go",
+	} {
+		_, err := os.Stat(repoPath(t, path))
+		require.ErrorIs(t, err, os.ErrNotExist, "%s must not exist as a direct public handler", path)
+	}
 }
 
 // UAT-10: Tool catalog + OpenAPI generator publish the same source-of-truth
 // (Unit 20–23).
 // AC trace: AC-32, AC-33, AC-34, AC-35, AC-50.
 func TestUAT10_ToolCatalogAndOpenAPI(t *testing.T) {
-	toolset := readFile(t, "internal/tools/registry/toolset.go")
-	// AI-facing verbs use underscore_case consistently.
-	for _, name := range []string{
-		"list_recent_memories", "recall_memory", "remember",
-		"keyword_search", "semantic_search", "graph_query",
-	} {
-		assert.Contains(t, toolset, name,
-			"registry must declare canonical tool %q", name)
-	}
-	for _, name := range []string{"keyword-search", "semantic-search", "graph-query"} {
-		assert.NotContains(t, toolset, name,
-			"registry must not declare legacy hyphenated tool %q", name)
-	}
-
 	generator := readFile(t, "internal/openapi/generator.go")
 	assert.Contains(t, generator, `"openapi": "3.0.3"`,
 		"OpenAPI generator must emit spec version 3.0.3 (AC-34)")
@@ -204,22 +172,21 @@ func TestUAT10_ToolCatalogAndOpenAPI(t *testing.T) {
 		seen[tl.Name] = true
 	}
 	for _, name := range []string{
-		// Canonical memory/search set
-		"list_recent_memories", "recall_memory", "remember",
-		"keyword_search", "semantic_search", "graph_query",
-		// Phase 8 knowledge pipeline tools
-		"post_claim", "get_claim", "list_claims",
-		"verify_claim", "promote_claim",
-		"get_fact", "list_facts",
-		"retract_fragment", "detect_community",
-		"get_community_summary", "list_communities",
+		"recall_memory", "remember", "get_memory_placement", "dispute_memory_placement",
+		"confirm_memory", "reflect_memories", "import_memories",
 	} {
 		assert.True(t, seen[name], "registry must list %q after BuildDefault", name)
 	}
-	for _, name := range []string{"keyword-search", "semantic-search", "graph-query"} {
-		assert.False(t, seen[name], "registry must not list legacy hyphenated tool %q", name)
+	for _, name := range []string{
+		"list_recent_memories", "keyword_search", "semantic_search", "graph_query",
+		"post_claim", "get_claim", "list_claims", "verify_claim", "promote_claim",
+		"get_fact", "list_facts", "retract_fragment", "detect_community",
+		"get_community_summary", "list_communities",
+		"keyword-search", "semantic-search", "graph-query",
+	} {
+		assert.False(t, seen[name], "registry must not list removed direct client tool %q", name)
 	}
-	assert.GreaterOrEqual(t, len(list), 6, "BuildDefault must register at least the canonical memory/search tools")
+	assert.GreaterOrEqual(t, len(list), 10, "BuildDefault must register the evidence-first memory surface")
 
 	// remember stays part of the stable catalog even when the memory service is
 	// not wired in this test harness.
@@ -234,7 +201,7 @@ func TestUAT10_ToolCatalogAndOpenAPI(t *testing.T) {
 // AC trace: AC-33, AC-37, AC-50.
 func TestUAT11_MCPHTTPDiscovery(t *testing.T) {
 	router := readFile(t, "internal/http/router_protected.go")
-	assert.Contains(t, router, `e.Group("/mcp")`,
+	assert.Contains(t, router, `protectedGroup("/mcp")`,
 		"MCP must be exposed at /mcp")
 	assert.Contains(t, router, "AuthMiddleware",
 		"MCP must use bearer auth")

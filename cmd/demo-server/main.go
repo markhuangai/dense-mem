@@ -36,7 +36,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/storage/neo4j"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
-	"github.com/markhuangai/dense-mem/internal/tools/graphquery"
 	"github.com/markhuangai/dense-mem/internal/tools/keywordsearch"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 	"github.com/markhuangai/dense-mem/internal/tools/semanticsearch"
@@ -105,8 +104,7 @@ func main() {
 	logger := observability.New(level)
 	slog.SetDefault(logger.Slog())
 
-	// Wire embedding dimension into request validator so the embedding_dim tag
-	// on dto.SemanticSearchRequest enforces the configured length at bind time.
+	// Wire embedding dimension into the shared request validator.
 	validation.SetEmbeddingDimensions(cfg.GetEmbeddingDimensions())
 	middleware.SetAuthVerificationConcurrency(cfg.AuthVerifyMaxConcurrency)
 
@@ -186,6 +184,7 @@ func main() {
 	securityRepo := repository.NewSecurityRepository(pgDB.GetDB(), rlsHelper)
 	usageMetricsRepo := repository.NewUsageMetricsRepository(pgDB.GetDB(), rlsHelper)
 	operationLogRepo := repository.NewOperationLogRepository(pgDB.GetDB(), rlsHelper)
+	memoryPlacementRepo := repository.NewMemoryPlacementRepository(pgDB.GetDB(), rlsHelper)
 	skillPackImportRepo := repository.NewSkillPackImportRepository(pgDB.GetDB(), rlsHelper)
 
 	// ========================================
@@ -226,22 +225,10 @@ func main() {
 	}
 
 	// ========================================
-	// Tool services
+	// Recall searchers
 	// ========================================
-	// Graph query service
-	cypherValidator := graphquery.NewCypherValidator()
-	graphQueryService := graphquery.NewGraphQueryService(profileScopeEnforcer, cypherValidator)
-	graphQueryService = graphquery.NewTimeoutService(graphQueryService, time.Duration(cfg.GraphQueryDefaultTimeoutSeconds)*time.Second)
-
-	// Keyword search services (fragment and fact searchers)
-	// These use the profileScopeEnforcer as their searcher interface
 	fragmentSearcher := keywordsearch.NewFragmentSearcher(profileScopeEnforcer)
-	factSearcher := keywordsearch.NewFactSearcher(profileScopeEnforcer)
-	keywordSearchService := keywordsearch.NewKeywordSearchService(fragmentSearcher, factSearcher)
-
-	// Semantic search service
 	embeddingSearcher := semanticsearch.NewEmbeddingSearcher(profileScopeEnforcer)
-	semanticSearchService := semanticsearch.NewSemanticSearchService(embeddingSearcher, cfg.GetEmbeddingDimensions())
 
 	// ========================================
 	// Discoverability: embedding, fragments, recall, registry, openapi
@@ -304,11 +291,9 @@ func main() {
 		fragmentCreateHTTPSvc = fragmentCreateRegistrySvc
 	}
 
-	// Read/list/delete work without embedding.
+	// Read/list work without embedding.
 	fragmentGetSvc := fragmentservice.NewGetFragmentService(readerAdapter)
 	fragmentListSvc := fragmentservice.NewListFragmentsService(readerAdapter)
-	fragmentDeleteSvc := fragmentservice.NewDeleteFragmentService(profileScopeEnforcer, readerAdapter, fragmentAuditor, slog.Default())
-	fragmentRetractSvc := fragmentservice.NewRetractFragmentService(profileScopeEnforcer, fragmentAuditor, slog.Default(), discoverabilityMetrics)
 
 	claimCreateSvc := claimservice.NewCreateClaimService(
 		claimDedupeLookup,
@@ -321,7 +306,6 @@ func main() {
 	claimGetSvc := claimservice.NewGetClaimService(profileScopeEnforcer, slog.Default())
 	claimListSvc := claimservice.NewListClaimsService(profileScopeEnforcer)
 	claimListFilteredSvc := claimservice.NewListClaimsFilteredService(profileScopeEnforcer)
-	claimDeleteSvc := claimservice.NewDeleteClaimService(profileScopeEnforcer, claimAuditor, slog.Default())
 
 	claimLock := postgres.NewClaimLock(discoverabilityMetrics)
 	factPromoteSvc := factservice.NewPromoteClaimService(
@@ -339,7 +323,6 @@ func main() {
 	}
 	factGetSvc := factservice.NewGetFactService(profileScopeEnforcer)
 	factListSvc := factservice.NewListFactsService(profileScopeEnforcer)
-	factRetractSvc := factservice.NewRetractFactService(profileScopeEnforcer, factAuditor, slog.Default())
 	communityGetSvc := communityservice.NewGetCommunitySummaryService(neo4jClient)
 	communityListSvc := communityservice.NewListCommunitiesService(neo4jClient)
 	recallFactSearcher := recallservice.NewFactSearcher(profileScopeEnforcer)
@@ -448,7 +431,12 @@ func main() {
 		FactPromote:    factPromoteSvc,
 		FactConfirm:    factConfirmSvc,
 		FactList:       factListSvc,
+		PlacementStore: memoryPlacementRepo,
+		Logger:         slog.Default(),
 	})
+	placementWorkerCtx, placementWorkerCancel := context.WithCancel(context.Background())
+	defer placementWorkerCancel()
+	memorySvc.StartPlacementWorker(placementWorkerCtx, time.Minute)
 	dreamSvc := dreamservice.New(dreamservice.Dependencies{
 		Graph:          profileScopeEnforcer,
 		Memory:         memorySvc,
@@ -485,34 +473,24 @@ func main() {
 
 	// Tool registry is the single source of truth for MCP / HTTP catalog / OpenAPI.
 	toolRegistry, err := registry.BuildDefault(registry.Dependencies{
-		FragmentList:                fragmentListSvc,
-		FragmentGet:                 fragmentGetSvc,
-		Recall:                      recallRegistrySvc,
-		Metrics:                     discoverabilityMetrics,
-		RecallFeedbackConfig:        appConfigService,
-		EvaluationConfig:            appConfigService,
-		EvaluationAudit:             auditService,
-		KeywordSearch:               keywordSearchService,
-		SemanticSearch:              semanticSearchService,
-		GraphQuery:                  graphQueryService,
-		GraphQueryMaxTimeoutSeconds: cfg.GraphQueryMaxTimeoutSeconds,
-		ClaimCreate:                 claimCreateSvc,
-		ClaimGet:                    claimGetSvc,
-		ClaimList:                   claimListSvc,
-		ClaimListFiltered:           claimListFilteredSvc,
-		ClaimVerify:                 claimVerifyRegistrySvc,
-		FactPromote:                 factPromoteSvc,
-		FactGet:                     factGetSvc,
-		FactList:                    factListSvc,
-		FactRetract:                 factRetractSvc,
-		FragmentRetract:             fragmentRetractSvc,
-		CommunityDetect:             communityDetectRegistrySvc,
-		CommunityGet:                communityGetSvc,
-		CommunityList:               communityListSvc,
-		Context:                     contextSvc,
-		Memory:                      memorySvc,
-		SkillPack:                   skillPackSvc,
-		Dreams:                      dreamSvc,
+		FragmentList:         fragmentListSvc,
+		FragmentGet:          fragmentGetSvc,
+		Recall:               recallRegistrySvc,
+		Metrics:              discoverabilityMetrics,
+		RecallFeedbackConfig: appConfigService,
+		EvaluationConfig:     appConfigService,
+		EvaluationAudit:      auditService,
+		ClaimGet:             claimGetSvc,
+		ClaimList:            claimListSvc,
+		ClaimListFiltered:    claimListFilteredSvc,
+		FactGet:              factGetSvc,
+		FactList:             factListSvc,
+		CommunityGet:         communityGetSvc,
+		CommunityList:        communityListSvc,
+		Context:              contextSvc,
+		Memory:               memorySvc,
+		SkillPack:            skillPackSvc,
+		Dreams:               dreamSvc,
 	})
 	if err != nil {
 		log.Fatalf("failed to build tool registry: %v", err)
@@ -533,31 +511,7 @@ func main() {
 	// ========================================
 	// Handlers
 	// ========================================
-	graphQueryHandler := handler.NewGraphQueryHandlerWithTimeouts(graphQueryService, time.Duration(cfg.GraphQueryMaxTimeoutSeconds)*time.Second)
-	keywordSearchHandler := handler.NewKeywordSearchHandler(keywordSearchService)
-	semanticSearchHandler := handler.NewSemanticSearchHandler(semanticSearchService)
-
-	// Query stream orchestrator and handler
-	queryStreamOrchestrator := handler.NewQueryStreamOrchestrator(graphQueryService, keywordSearchService, semanticSearchService)
-	queryStreamHandler := handler.NewQueryStreamHandler(queryStreamOrchestrator, streamLifecycle)
-
-	// Fragment + catalog + openapi handlers
-	fragmentCreateHandler := handler.NewFragmentCreateHandler(fragmentCreateHTTPSvc)
-	fragmentReadHandler := handler.NewFragmentReadHandler(fragmentGetSvc)
-	fragmentListHandler := handler.NewFragmentListHandler(fragmentListSvc)
-	fragmentDeleteHandler := handler.NewFragmentDeleteHandler(fragmentDeleteSvc)
-	fragmentRetractHandler := handler.NewFragmentRetractHandler(fragmentRetractSvc)
-	claimCreateHandler := handler.NewClaimCreateHandler(claimCreateSvc)
-	claimReadHandler := handler.NewClaimReadHandler(claimGetSvc)
-	claimListHandler := handler.NewClaimListHandlerWithFiltered(claimListSvc, claimListFilteredSvc)
-	claimDeleteHandler := handler.NewClaimDeleteHandler(claimDeleteSvc)
-	claimVerifyHandler := handler.NewClaimVerifyHandler(claimVerifyHTTPSvc)
-	claimPromoteHandler := handler.NewClaimPromoteHandler(factPromoteSvc)
-	factReadHandler := handler.NewFactReadHandler(factGetSvc)
-	factListHandler := handler.NewFactListHandler(factListSvc)
-	factRetractHandler := handler.NewFactRetractHandler(factRetractSvc)
-	communityReadHandler := handler.NewCommunityReadHandler(communityGetSvc)
-	communityListHandler := handler.NewCommunityListHandler(communityListSvc)
+	// Catalog + OpenAPI handlers.
 	toolCatalogHandler := handler.NewToolCatalogHandlerWithRuntimeConfig(toolRegistry, appConfigService)
 	toolReadHandler := handler.NewToolReadHandlerWithRuntimeConfig(toolRegistry, appConfigService)
 	toolExecuteHandler := handler.NewToolExecuteHandlerWithRuntimeConfig(toolRegistry, appConfigService)
@@ -626,40 +580,20 @@ func main() {
 	}
 
 	protectedHandlers := http.ProtectedHandlers{
-		APIKeySvc:       apiKeyService,
-		GraphQuery:      graphQueryHandler.Handle,
-		KeywordSearch:   keywordSearchHandler.Handle,
-		SemanticSearch:  semanticSearchHandler.Handle,
-		QueryStream:     queryStreamHandler.Handle,
-		FragmentRead:    fragmentReadHandler.Handle,
-		FragmentList:    fragmentListHandler.Handle,
-		FragmentDelete:  fragmentDeleteHandler.Handle,
-		FragmentRetract: fragmentRetractHandler.Handle,
-		ClaimCreate:     claimCreateHandler.Handle,
-		ClaimRead:       claimReadHandler.Handle,
-		ClaimList:       claimListHandler.Handle,
-		ClaimDelete:     claimDeleteHandler.Handle,
-		ClaimVerify:     claimVerifyHandler.Handle,
-		ClaimPromote:    claimPromoteHandler.Handle,
-		FactGet:         factReadHandler.Handle,
-		FactList:        factListHandler.Handle,
-		FactRetract:     factRetractHandler.Handle,
-		CommunityRead:   communityReadHandler.Handle,
-		CommunityList:   communityListHandler.Handle,
-		ToolCatalog:     toolCatalogHandler.Handle,
-		GetTool:         toolReadHandler.Handle,
-		ExecuteTool:     toolExecuteHandler.Handle,
-		MCPPost:         mcpHandler.HandlePost,
-		MCPGet:          mcpHandler.HandleGet,
-		OpenAPIAISafe:   openAPIAISafeHandler.Handle,
-		OpenAPIFull:     openAPIFullHandler.Handle,
-		Recall:          recallHandler.Handle,
-		DreamingStatus:  dreamHandler.Status,
-		DreamingRuns:    dreamHandler.Runs,
-		DreamList:       dreamHandler.List,
-		DreamGet:        dreamHandler.Get,
+		APIKeySvc:      apiKeyService,
+		ToolCatalog:    toolCatalogHandler.Handle,
+		GetTool:        toolReadHandler.Handle,
+		ExecuteTool:    toolExecuteHandler.Handle,
+		MCPPost:        mcpHandler.HandlePost,
+		MCPGet:         mcpHandler.HandleGet,
+		OpenAPIAISafe:  openAPIAISafeHandler.Handle,
+		OpenAPIFull:    openAPIFullHandler.Handle,
+		Recall:         recallHandler.Handle,
+		DreamingStatus: dreamHandler.Status,
+		DreamingRuns:   dreamHandler.Runs,
+		DreamList:      dreamHandler.List,
+		DreamGet:       dreamHandler.Get,
 	}
-	protectedHandlers.FragmentCreate = fragmentCreateHandler.Handle
 
 	http.RegisterProtectedRoutesWithHandlers(e, protectedDeps, protectedHandlers)
 	http.RegisterUserPortal(e, http.UserPortalDeps{
@@ -759,6 +693,7 @@ func main() {
 	<-quit
 
 	logger.Info("shutting down server")
+	placementWorkerCancel()
 	communitySchedulerCancel()
 
 	// Graceful shutdown with 10-second timeout

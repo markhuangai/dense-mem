@@ -152,12 +152,6 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 		// its own permission check for defense-in-depth.
 		group.GET("/audit-log", auditHandler.Get, middleware.RequireScopes("read"))
 
-		// Query stream SSE route. Requires Accept: text/event-stream header;
-		// query = read scope.
-		if handlers.QueryStream != nil {
-			group.POST("/query/stream", handlers.QueryStream, middleware.RequireScopes("read"))
-		}
-
 		if apiKeyHandler == nil {
 			return
 		}
@@ -182,73 +176,6 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	// Legacy aliases retained so old clients can rotate gradually.
 	registerTeamScopedRoutes("/api/v1/profiles/:profileId", true)
 
-	// Fragment routes — canonical /api/v1/fragments (AC-50)
-	// Middleware: auth -> profile resolution(header) -> profile authorization -> rate limit
-	fragmentGroup := protectedGroup("/api/v1/fragments")
-
-	if handlers.FragmentCreate != nil {
-		fragmentGroup.POST("", handlers.FragmentCreate, middleware.RequireScopes("write"))
-	}
-	if handlers.FragmentRead != nil {
-		fragmentGroup.GET("/:id", handlers.FragmentRead, middleware.RequireScopes("read"))
-	}
-	if handlers.FragmentList != nil {
-		fragmentGroup.GET("", handlers.FragmentList, middleware.RequireScopes("read"))
-	}
-	if handlers.FragmentDelete != nil {
-		fragmentGroup.DELETE("/:id", handlers.FragmentDelete, middleware.RequireScopes("write"))
-	}
-	if handlers.FragmentRetract != nil {
-		fragmentGroup.POST("/:id/retract", handlers.FragmentRetract, middleware.RequireScopes("write"))
-	}
-
-	// Claim routes — canonical /api/v1/claims (AC-16, knowledge pipeline Phase 2)
-	// Middleware: auth -> profile resolution(header) -> profile authorization -> rate limit
-	claimGroup := protectedGroup("/api/v1/claims")
-
-	if handlers.ClaimCreate != nil {
-		claimGroup.POST("", handlers.ClaimCreate, middleware.RequireScopes("write"))
-	}
-	if handlers.ClaimRead != nil {
-		claimGroup.GET("/:id", handlers.ClaimRead, middleware.RequireScopes("read"))
-	}
-	if handlers.ClaimList != nil {
-		claimGroup.GET("", handlers.ClaimList, middleware.RequireScopes("read"))
-	}
-	if handlers.ClaimDelete != nil {
-		claimGroup.DELETE("/:id", handlers.ClaimDelete, middleware.RequireScopes("write"))
-	}
-	if handlers.ClaimVerify != nil {
-		claimGroup.POST("/:id/verify", handlers.ClaimVerify, middleware.RequireScopes("write"))
-	}
-	if handlers.ClaimPromote != nil {
-		claimGroup.POST("/:id/promote", handlers.ClaimPromote, middleware.RequireScopes("write"))
-	}
-
-	// Fact routes — canonical /api/v1/facts (AC-41, knowledge pipeline Phase 4)
-	// Middleware: auth -> profile resolution(header) -> profile authorization -> rate limit
-	factGroup := protectedGroup("/api/v1/facts")
-
-	if handlers.FactGet != nil {
-		factGroup.GET("/:id", handlers.FactGet, middleware.RequireScopes("read"))
-	}
-	if handlers.FactList != nil {
-		factGroup.GET("", handlers.FactList, middleware.RequireScopes("read"))
-	}
-	if handlers.FactRetract != nil {
-		factGroup.POST("/:id/retract", handlers.FactRetract, middleware.RequireScopes("write"))
-	}
-
-	// Community routes — canonical /api/v1/communities
-	communityGroup := protectedGroup("/api/v1/communities")
-
-	if handlers.CommunityList != nil {
-		communityGroup.GET("", handlers.CommunityList, middleware.RequireScopes("read"))
-	}
-	if handlers.CommunityRead != nil {
-		communityGroup.GET("/:id", handlers.CommunityRead, middleware.RequireScopes("read"))
-	}
-
 	// MCP Streamable HTTP endpoint.
 	mcpGroup := protectedGroup("/mcp")
 	if handlers.MCPPost != nil {
@@ -263,16 +190,6 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 
 	if handlers.ToolCatalog != nil {
 		toolGroup.GET("", handlers.ToolCatalog, middleware.RequireScopes("read"))
-	}
-	// Search/query tools are read-scoped (no data mutation).
-	if handlers.GraphQuery != nil {
-		toolGroup.POST("/graph_query", handlers.GraphQuery, middleware.RequireScopes("read"))
-	}
-	if handlers.KeywordSearch != nil {
-		toolGroup.POST("/keyword_search", handlers.KeywordSearch, middleware.RequireScopes("read"))
-	}
-	if handlers.SemanticSearch != nil {
-		toolGroup.POST("/semantic_search", handlers.SemanticSearch, middleware.RequireScopes("read"))
 	}
 	if handlers.GetTool != nil {
 		toolGroup.GET("/:id", handlers.GetTool, middleware.RequireScopes("read"))
@@ -319,48 +236,19 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 // ProtectedHandlers holds handler functions for protected routes.
 // This is provided for later units that implement real handlers.
 type ProtectedHandlers struct {
-	ListProfiles   echo.HandlerFunc
-	CreateProfile  echo.HandlerFunc
-	GetProfile     echo.HandlerFunc
-	UpdateProfile  echo.HandlerFunc
-	DeleteProfile  echo.HandlerFunc
-	GetTool        echo.HandlerFunc
-	ExecuteTool    echo.HandlerFunc
-	GraphQuery     echo.HandlerFunc
-	KeywordSearch  echo.HandlerFunc
-	SemanticSearch echo.HandlerFunc
-	QueryStream    echo.HandlerFunc
-	FragmentCreate echo.HandlerFunc
-	FragmentRead   echo.HandlerFunc
-	FragmentList   echo.HandlerFunc
-	FragmentDelete echo.HandlerFunc
-	ToolCatalog    echo.HandlerFunc
-	OpenAPIAISafe  echo.HandlerFunc
-	OpenAPIFull    echo.HandlerFunc
-	MCPPost        echo.HandlerFunc
-	MCPGet         echo.HandlerFunc
-	APIKeySvc      handler.APIKeyServiceInterface // Service for API key routes
-	// Claim handlers — knowledge pipeline Phase 2 (AC-16)
-	ClaimCreate echo.HandlerFunc
-	ClaimRead   echo.HandlerFunc
-	ClaimList   echo.HandlerFunc
-	ClaimDelete echo.HandlerFunc
-	// ClaimVerify handles POST /api/v1/claims/:id/verify (Phase 3 entailment verification)
-	ClaimVerify echo.HandlerFunc
-	// ClaimPromote handles POST /api/v1/claims/:id/promote (Phase 4 fact promotion)
-	ClaimPromote echo.HandlerFunc
-	// FactGet handles GET /api/v1/facts/:id (Phase 4 fact retrieval)
-	FactGet echo.HandlerFunc
-	// FactList handles GET /api/v1/facts (Phase 4 fact listing)
-	FactList echo.HandlerFunc
-	// FactRetract handles POST /api/v1/facts/:id/retract.
-	FactRetract echo.HandlerFunc
-	// FragmentRetract handles POST /api/v1/fragments/:id/retract (Phase 6 soft tombstone)
-	FragmentRetract echo.HandlerFunc
-	// CommunityRead handles GET /api/v1/communities/:id.
-	CommunityRead echo.HandlerFunc
-	// CommunityList handles GET /api/v1/communities.
-	CommunityList echo.HandlerFunc
+	ListProfiles  echo.HandlerFunc
+	CreateProfile echo.HandlerFunc
+	GetProfile    echo.HandlerFunc
+	UpdateProfile echo.HandlerFunc
+	DeleteProfile echo.HandlerFunc
+	GetTool       echo.HandlerFunc
+	ExecuteTool   echo.HandlerFunc
+	ToolCatalog   echo.HandlerFunc
+	OpenAPIAISafe echo.HandlerFunc
+	OpenAPIFull   echo.HandlerFunc
+	MCPPost       echo.HandlerFunc
+	MCPGet        echo.HandlerFunc
+	APIKeySvc     handler.APIKeyServiceInterface // Service for API key routes
 	// Recall handles GET /api/v1/recall?q=...&limit=... (Phase 9 hybrid recall)
 	Recall         echo.HandlerFunc
 	DreamingStatus echo.HandlerFunc

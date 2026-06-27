@@ -4,13 +4,11 @@ package discoverability
 
 import (
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/tools/keywordsearch"
 )
 
@@ -62,36 +60,16 @@ func TestUAT2_BM25ScorePropagation(t *testing.T) {
 		"FactSearchResult must carry a Score field")
 }
 
-// UAT-3: Keyword search handler DTO binding (Unit 4). AC-6.
-func TestUAT3_KeywordSearchDTOBinding(t *testing.T) {
-	body, err := os.ReadFile(repoPath(t, "internal/http/handler/keyword_search_handler.go"))
-	require.NoError(t, err, "keyword_search_handler.go must exist — Unit 4 deliverable")
-	content := string(body)
-
-	assert.Contains(t, content, "dto.KeywordSearchRequest",
-		"handler must bind the shared DTO struct, not a local struct")
-
-	// The DTO itself must expose the Keywords field the handler reads — a schema
-	// drift here was the original bug Unit 4 fixed.
-	var req dto.KeywordSearchRequest
-	req.Keywords = "probe"
-	assert.Equal(t, "probe", req.Keywords,
-		"DTO exposes Keywords field consumed by the handler")
-	_ = strings.Contains // retain strings import for future assertions
+// UAT-3: Direct keyword search HTTP handlers are not part of the client surface.
+func TestUAT3_KeywordSearchHTTPHandlerRemoved(t *testing.T) {
+	_, err := os.Stat(repoPath(t, "internal/http/handler/keyword_search_handler.go"))
+	require.ErrorIs(t, err, os.ErrNotExist,
+		"keyword_search must remain an internal service, not a public HTTP handler")
 }
 
-// UAT-4: Graph query handler DTO binding (Unit 5). AC-7.
-func TestUAT4_GraphQueryDTOBinding(t *testing.T) {
-	body, err := os.ReadFile(repoPath(t, "internal/http/handler/graph_query_handler.go"))
-	require.NoError(t, err, "graph_query_handler.go must exist — Unit 5 deliverable")
-	content := string(body)
-
-	assert.Contains(t, content, "dto.GraphQueryRequest",
-		"handler must bind the shared DTO struct, not a local struct")
-
-	var req dto.GraphQueryRequest
-	req.Query = "MATCH (n) RETURN n LIMIT 1"
-	req.Parameters = map[string]any{"k": "v"}
-	assert.Equal(t, "MATCH (n) RETURN n LIMIT 1", req.Query)
-	assert.Equal(t, "v", req.Parameters["k"])
+// UAT-4: Direct graph query HTTP handlers are not part of the client surface.
+func TestUAT4_GraphQueryHTTPHandlerRemoved(t *testing.T) {
+	_, err := os.Stat(repoPath(t, "internal/http/handler/graph_query_handler.go"))
+	require.ErrorIs(t, err, os.ErrNotExist,
+		"graph_query must remain an internal/eval service, not a public HTTP handler")
 }

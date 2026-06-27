@@ -22,7 +22,7 @@ func TestBuildDefault_MemoryToolDescriptionsIncludeUsageTriggers(t *testing.T) {
 		},
 		{
 			name: "remember",
-			want: []string{"Use after the user states", "durable preference", "correction", "project decision"},
+			want: []string{"durable memory evidence", "project decision", "Dense-Mem decides"},
 		},
 		{
 			name: "import_memories",

@@ -887,6 +887,14 @@ func (s *dreamMemoryStub) ImportMemories(context.Context, string, memoryservice.
 	return &memoryservice.RememberResult{}, nil
 }
 
+func (s *dreamMemoryStub) GetMemoryPlacement(context.Context, string, memoryservice.PlacementStatusRequest) (*memoryservice.PlacementStatusResult, error) {
+	return &memoryservice.PlacementStatusResult{}, nil
+}
+
+func (s *dreamMemoryStub) DisputeMemoryPlacement(context.Context, string, memoryservice.DisputeRequest) (*memoryservice.DisputeResult, error) {
+	return &memoryservice.DisputeResult{}, nil
+}
+
 func (s *dreamMemoryStub) Reflect(context.Context, string, memoryservice.ReflectRequest) (*memoryservice.ReflectResult, error) {
 	s.reflects++
 	if s.err != nil {

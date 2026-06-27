@@ -153,10 +153,11 @@ func (s *stubConfirm) ConfirmMemory(_ context.Context, profileID string, req fac
 	}, nil
 }
 
-func TestRememberPromotesValidatedNonConflictingClaim(t *testing.T) {
+func TestImportMemoriesPromotesValidatedNonConflictingClaimWhenRequested(t *testing.T) {
 	create := &stubClaimCreate{}
 	verify := &stubClaimVerify{}
 	promote := &stubFactPromote{}
+	autoPromote := true
 	svc := New(Dependencies{
 		FragmentCreate: &stubFragmentCreate{},
 		ClaimCreate:    create,
@@ -164,8 +165,9 @@ func TestRememberPromotesValidatedNonConflictingClaim(t *testing.T) {
 		FactPromote:    promote,
 	})
 
-	res, err := svc.Remember(context.Background(), "profile-1", RememberRequest{
-		Content: "The user prefers vim.",
+	res, err := svc.ImportMemories(context.Background(), "profile-1", ImportRequest{
+		Summary:     "The user prefers vim.",
+		AutoPromote: &autoPromote,
 		Claims: []TypedClaimInput{{
 			Subject:        "user",
 			Predicate:      "prefers",
@@ -186,15 +188,15 @@ func TestRememberPromotesValidatedNonConflictingClaim(t *testing.T) {
 	require.Empty(t, res.Clarifications)
 }
 
-func TestRememberRejectsUnsupportedHighLevelPredicateBeforeClaimCreate(t *testing.T) {
+func TestImportMemoriesRejectsUnsupportedHighLevelPredicateBeforeClaimCreate(t *testing.T) {
 	create := &stubClaimCreate{}
 	svc := New(Dependencies{
 		FragmentCreate: &stubFragmentCreate{},
 		ClaimCreate:    create,
 	})
 
-	res, err := svc.Remember(context.Background(), "profile-1", RememberRequest{
-		Content: "The user lives at 123 Main St.",
+	res, err := svc.ImportMemories(context.Background(), "profile-1", ImportRequest{
+		Summary: "The user lives at 123 Main St.",
 		Claims: []TypedClaimInput{{
 			Subject:        "user",
 			Predicate:      "lives_at",
@@ -210,7 +212,7 @@ func TestRememberRejectsUnsupportedHighLevelPredicateBeforeClaimCreate(t *testin
 	require.Equal(t, 0, create.called)
 }
 
-func TestRememberRejectsInvalidTypedClaimBeforeClaimCreate(t *testing.T) {
+func TestImportMemoriesRejectsInvalidTypedClaimBeforeClaimCreate(t *testing.T) {
 	cases := []struct {
 		name  string
 		claim TypedClaimInput
@@ -250,8 +252,8 @@ func TestRememberRejectsInvalidTypedClaimBeforeClaimCreate(t *testing.T) {
 				ClaimCreate:    claimCreate,
 			})
 
-			res, err := svc.Remember(context.Background(), "profile-1", RememberRequest{
-				Content: "The user likes Go.",
+			res, err := svc.ImportMemories(context.Background(), "profile-1", ImportRequest{
+				Summary: "The user likes Go.",
 				Claims:  []TypedClaimInput{tc.claim},
 			})
 
@@ -265,8 +267,9 @@ func TestRememberRejectsInvalidTypedClaimBeforeClaimCreate(t *testing.T) {
 	}
 }
 
-func TestRememberReturnsStructuredPromotionOutcomes(t *testing.T) {
+func TestImportMemoriesReturnsStructuredPromotionOutcomesWhenRequested(t *testing.T) {
 	t.Run("weaker conflict is rejected without clarification", func(t *testing.T) {
+		autoPromote := true
 		svc := New(Dependencies{
 			FragmentCreate: &stubFragmentCreate{},
 			ClaimCreate:    &stubClaimCreate{},
@@ -274,8 +277,9 @@ func TestRememberReturnsStructuredPromotionOutcomes(t *testing.T) {
 			FactPromote:    &stubFactPromote{err: factservice.ErrPromotionRejected},
 		})
 
-		res, err := svc.Remember(context.Background(), "profile-1", RememberRequest{
-			Content: "The user has a different profile fact.",
+		res, err := svc.ImportMemories(context.Background(), "profile-1", ImportRequest{
+			Summary:     "The user has a different profile fact.",
+			AutoPromote: &autoPromote,
 			Claims: []TypedClaimInput{{
 				Subject:        "user",
 				Predicate:      "profile_fact",
@@ -291,6 +295,7 @@ func TestRememberReturnsStructuredPromotionOutcomes(t *testing.T) {
 	})
 
 	t.Run("comparable conflict returns clarification", func(t *testing.T) {
+		autoPromote := true
 		conflict := &domain.Fact{
 			FactID:    "fact-old",
 			ProfileID: "profile-1",
@@ -316,8 +321,9 @@ func TestRememberReturnsStructuredPromotionOutcomes(t *testing.T) {
 			FactList:       stubFactList{facts: []*domain.Fact{conflict}},
 		})
 
-		res, err := svc.Remember(context.Background(), "profile-1", RememberRequest{
-			Content: "The user has a conflicting profile fact.",
+		res, err := svc.ImportMemories(context.Background(), "profile-1", ImportRequest{
+			Summary:     "The user has a conflicting profile fact.",
+			AutoPromote: &autoPromote,
 			Claims: []TypedClaimInput{{
 				Subject:        "user",
 				Predicate:      "profile_fact",
@@ -408,67 +414,6 @@ func TestConfirmMemoryDelegatesConfirmation(t *testing.T) {
 	require.Equal(t, 1, confirm.called)
 	require.Equal(t, "accepted", res.Status)
 	require.Equal(t, "fact-confirmed", res.Fact.FactID)
-}
-
-func TestRememberReturnsFragmentCreateError(t *testing.T) {
-	svc := New(Dependencies{FragmentCreate: &stubFragmentCreate{err: errors.New("embed failed")}})
-
-	_, err := svc.Remember(context.Background(), "profile-1", RememberRequest{Content: "x"})
-
-	require.ErrorContains(t, err, "embed failed")
-}
-
-func TestRememberValidatesRequiredDependenciesAndContent(t *testing.T) {
-	t.Run("missing fragment create service", func(t *testing.T) {
-		svc := New(Dependencies{})
-
-		_, err := svc.Remember(context.Background(), "profile-1", RememberRequest{Content: "memory"})
-
-		require.ErrorContains(t, err, "fragment create service is required")
-	})
-
-	t.Run("empty content", func(t *testing.T) {
-		svc := New(Dependencies{FragmentCreate: &stubFragmentCreate{}})
-
-		_, err := svc.Remember(context.Background(), "profile-1", RememberRequest{})
-
-		require.ErrorContains(t, err, "content is required")
-	})
-}
-
-func TestRememberMapsFragmentRequestAndDuplicateOutcome(t *testing.T) {
-	fragmentCreate := &stubFragmentCreate{res: &fragmentservice.CreateResult{
-		Fragment: &domain.Fragment{
-			FragmentID: "fragment-dup",
-			ProfileID:  "profile-1",
-			Content:    "memory",
-			CreatedAt:  time.Now().UTC(),
-		},
-		Duplicate:   true,
-		DuplicateOf: "fragment-old",
-	}}
-	autoPromote := false
-	svc := New(Dependencies{FragmentCreate: fragmentCreate})
-
-	res, err := svc.Remember(context.Background(), "profile-1", RememberRequest{
-		Content:        "memory",
-		Source:         "chat",
-		IdempotencyKey: "idem-1",
-		Labels:         []string{"work"},
-		Metadata:       map[string]any{"channel": "cli"},
-		AutoPromote:    &autoPromote,
-	})
-
-	require.NoError(t, err)
-	require.Equal(t, "duplicate", res.Fragment.Status)
-	require.Equal(t, "fragment-old", res.Fragment.DuplicateOf)
-	require.Equal(t, "conversation", fragmentCreate.req.SourceType)
-	require.Equal(t, "primary", fragmentCreate.req.Authority)
-	require.Equal(t, "chat", fragmentCreate.req.Source)
-	require.Equal(t, "idem-1", fragmentCreate.req.IdempotencyKey)
-	require.Equal(t, []string{"work"}, fragmentCreate.req.Labels)
-	require.Equal(t, map[string]any{"channel": "cli"}, fragmentCreate.req.Metadata)
-	require.Equal(t, 0.95, fragmentCreate.req.SourceQuality)
 }
 
 func TestImportMemoriesAutoPromotesWhenRequested(t *testing.T) {
@@ -566,8 +511,8 @@ func TestRememberReturnsPerClaimErrorsWithoutCreatingClaims(t *testing.T) {
 			tc.deps.FragmentCreate = &stubFragmentCreate{}
 			svc := New(tc.deps)
 
-			res, err := svc.Remember(context.Background(), "profile-1", RememberRequest{
-				Content: "The user likes Go.",
+			res, err := svc.ImportMemories(context.Background(), "profile-1", ImportRequest{
+				Summary: "The user likes Go.",
 				Claims:  []TypedClaimInput{tc.in},
 			})
 
@@ -578,7 +523,8 @@ func TestRememberReturnsPerClaimErrorsWithoutCreatingClaims(t *testing.T) {
 	}
 }
 
-func TestRememberDoesNotPromoteUnvalidatedClaim(t *testing.T) {
+func TestImportMemoriesDoesNotPromoteUnvalidatedClaim(t *testing.T) {
+	autoPromote := true
 	promote := &stubFactPromote{}
 	svc := New(Dependencies{
 		FragmentCreate: &stubFragmentCreate{},
@@ -591,8 +537,9 @@ func TestRememberDoesNotPromoteUnvalidatedClaim(t *testing.T) {
 		FactPromote: promote,
 	})
 
-	res, err := svc.Remember(context.Background(), "profile-1", RememberRequest{
-		Content: "The user likes Go.",
+	res, err := svc.ImportMemories(context.Background(), "profile-1", ImportRequest{
+		Summary:     "The user likes Go.",
+		AutoPromote: &autoPromote,
 		Claims: []TypedClaimInput{{
 			Subject:        "user",
 			Predicate:      "likes",

@@ -355,11 +355,8 @@ func (te *TestEnv) Setup(ctx context.Context) error {
 	// still exposes the stable catalog and read/list/delete work.
 	profileScopeEnforcer := neo4jstorage.NewProfileScopeEnforcer(te.neo4jClient)
 	readerAdapter := &scopedReaderAdapter{inner: profileScopeEnforcer}
-	fragmentAuditor := &fragmentAuditAdapter{inner: te.auditService}
 
-	fragmentGetSvc := fragmentservice.NewGetFragmentService(readerAdapter)
 	fragmentListSvc := fragmentservice.NewListFragmentsService(readerAdapter)
-	fragmentDeleteSvc := fragmentservice.NewDeleteFragmentService(profileScopeEnforcer, readerAdapter, fragmentAuditor, slog.Default())
 
 	toolRegistry, err := registry.BuildDefault(registry.Dependencies{
 		FragmentList: fragmentListSvc,
@@ -370,21 +367,15 @@ func (te *TestEnv) Setup(ctx context.Context) error {
 
 	openAPIGen := openapi.New(toolRegistry, openapi.DefaultRoutes())
 
-	fragmentReadHandler := handler.NewFragmentReadHandler(fragmentGetSvc)
-	fragmentListHandler := handler.NewFragmentListHandler(fragmentListSvc)
-	fragmentDeleteHandler := handler.NewFragmentDeleteHandler(fragmentDeleteSvc)
 	toolCatalogHandler := handler.NewToolCatalogHandler(toolRegistry)
 	openAPIAISafeHandler := handler.NewOpenAPIHandler(openAPIGen, openapi.SpecVariantAISafe)
 	openAPIFullHandler := handler.NewOpenAPIHandler(openAPIGen, openapi.SpecVariantFull)
 
 	handlers := httpserver.ProtectedHandlers{
-		APIKeySvc:      te.apiKeySvc,
-		FragmentRead:   fragmentReadHandler.Handle,
-		FragmentList:   fragmentListHandler.Handle,
-		FragmentDelete: fragmentDeleteHandler.Handle,
-		ToolCatalog:    toolCatalogHandler.Handle,
-		OpenAPIAISafe:  openAPIAISafeHandler.Handle,
-		OpenAPIFull:    openAPIFullHandler.Handle,
+		APIKeySvc:     te.apiKeySvc,
+		ToolCatalog:   toolCatalogHandler.Handle,
+		OpenAPIAISafe: openAPIAISafeHandler.Handle,
+		OpenAPIFull:   openAPIFullHandler.Handle,
 	}
 
 	httpserver.RegisterProtectedRoutesWithHandlers(te.server, deps, handlers)

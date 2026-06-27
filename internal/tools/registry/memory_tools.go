@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
@@ -11,22 +12,16 @@ import (
 func rememberTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "remember",
-		Description: "Use after the user states a durable preference, correction, identity/profile fact, project decision, active goal, reusable instruction, or milestone that should persist across sessions. Store one granular chat-session memory evidence entry, create host-extracted typed personal-memory claims, verify them, and promote non-conflicting validated claims to facts. Do not store temporary task state, speculation, or one-off details as active memory. Keep each entry under 1000 characters and split large scenarios into precise supporting evidence pieces.",
+		Description: "Use after the user states durable memory evidence such as a preference, correction, project decision, active goal, reusable instruction, or milestone. Submit evidence only; Dense-Mem decides whether it remains a fragment, becomes a claim, becomes a fact, needs more evidence, or is rejected.",
 		InputSchema: map[string]any{
 			"type":     "object",
-			"required": []string{"content"},
+			"required": []string{"evidence"},
 			"properties": map[string]any{
-				"content":         memoryEntryString("Evidence text from the current conversation."),
-				"source":          schemaString("Free-form provenance.", 256),
-				"idempotency_key": schemaString("Dedupe key scoped to profile.", 128),
-				"labels":          map[string]any{"type": "array", "items": map[string]any{"type": "string", "maxLength": 64}, "maxItems": 20},
-				"metadata":        map[string]any{"type": "object", "additionalProperties": true},
-				"claims":          typedClaimsSchema(),
-				"auto_promote":    map[string]any{"type": "boolean", "description": "Defaults to true."},
+				"evidence": evidenceArraySchema(),
 			},
 			"additionalProperties": false,
 		},
-		OutputSchema:   memoryResultSchema(),
+		OutputSchema:   rememberPlacementResultSchema(),
 		RequiredScopes: []string{"write"},
 		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
 			if deps.Memory == nil {
@@ -43,6 +38,99 @@ func rememberTool(deps Dependencies) Tool {
 			return structToMap(res)
 		},
 	}
+}
+
+func getMemoryPlacementTool(deps Dependencies) Tool {
+	return Tool{
+		Name:        "get_memory_placement",
+		Description: "Poll the Dense-Mem verifier placement result returned by remember. Use after remember returns an ingest_id; wait about check_after_seconds before polling again if status is queued or processing.",
+		InputSchema: map[string]any{
+			"type":     "object",
+			"required": []string{"ingest_id"},
+			"properties": map[string]any{
+				"ingest_id": schemaString("Placement run ID returned by remember.", 128),
+			},
+			"additionalProperties": false,
+		},
+		OutputSchema:   placementStatusSchema(),
+		RequiredScopes: []string{"read"},
+		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+			if deps.Memory == nil {
+				return nil, ErrToolUnavailable
+			}
+			var req memoryservice.PlacementStatusRequest
+			if err := remapInput(input, &req); err != nil {
+				return nil, fmt.Errorf("get_memory_placement: invalid input: %w", err)
+			}
+			res, err := deps.Memory.GetMemoryPlacement(ctx, profileID, req)
+			if err != nil {
+				return nil, err
+			}
+			return structToMap(res)
+		},
+	}
+}
+
+func disputeMemoryPlacementTool(deps Dependencies) Tool {
+	return Tool{
+		Name:        "dispute_memory_placement",
+		Description: "Dispute a Dense-Mem placement by supplying evidence for the verifier to review. The dispute session ends when the verifier accepts a correction/promotion or explains why the placement remains rejected or unsupported.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"allOf": []any{
+				map[string]any{"anyOf": []any{
+					map[string]any{"required": []string{"ingest_id"}},
+					map[string]any{"required": []string{"dispute_id"}},
+				}},
+				map[string]any{"anyOf": []any{
+					map[string]any{"required": []string{"message"}},
+					map[string]any{"required": []string{"evidence"}},
+				}},
+			},
+			"properties": map[string]any{
+				"ingest_id":         schemaString("Placement run ID returned by remember.", 128),
+				"placement_item_id": schemaString("Specific placement item ID to dispute.", 128),
+				"dispute_id":        schemaString("Existing dispute session ID.", 128),
+				"message":           schemaString("Client explanation of the dispute.", 1000),
+				"evidence":          evidenceArraySchema(),
+			},
+			"additionalProperties": false,
+		},
+		OutputSchema:   map[string]any{"type": "object"},
+		RequiredScopes: []string{"write"},
+		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+			if deps.Memory == nil {
+				return nil, ErrToolUnavailable
+			}
+			var req memoryservice.DisputeRequest
+			if err := remapInput(input, &req); err != nil {
+				return nil, fmt.Errorf("dispute_memory_placement: invalid input: %w", err)
+			}
+			if err := validateDisputeRequest(req); err != nil {
+				return nil, err
+			}
+			res, err := deps.Memory.DisputeMemoryPlacement(ctx, profileID, req)
+			if err != nil {
+				return nil, err
+			}
+			return structToMap(res)
+		},
+	}
+}
+
+func validateDisputeRequest(req memoryservice.DisputeRequest) error {
+	if strings.TrimSpace(req.DisputeID) == "" && strings.TrimSpace(req.IngestID) == "" {
+		return errors.New("dispute_memory_placement: ingest_id or dispute_id is required")
+	}
+	if strings.TrimSpace(req.Message) != "" {
+		return nil
+	}
+	for _, evidence := range req.Evidence {
+		if strings.TrimSpace(evidence.Content) != "" {
+			return nil
+		}
+	}
+	return errors.New("dispute_memory_placement: message or evidence is required")
 }
 
 func importMemoriesTool(deps Dependencies) Tool {
@@ -151,6 +239,26 @@ func confirmMemoryTool(deps Dependencies) Tool {
 	}
 }
 
+func evidenceArraySchema() map[string]any {
+	return map[string]any{
+		"type":     "array",
+		"minItems": 1,
+		"maxItems": 20,
+		"items": map[string]any{
+			"type":     "object",
+			"required": []string{"content"},
+			"properties": map[string]any{
+				"content":         memoryEntryString("Evidence text from the current conversation."),
+				"source":          schemaString("Free-form provenance.", 256),
+				"idempotency_key": schemaString("Dedupe key scoped to profile.", 128),
+				"labels":          map[string]any{"type": "array", "items": map[string]any{"type": "string", "maxLength": 64}, "maxItems": 20},
+				"metadata":        map[string]any{"type": "object", "additionalProperties": true},
+			},
+			"additionalProperties": false,
+		},
+	}
+}
+
 func typedClaimsSchema() map[string]any {
 	return map[string]any{
 		"type": "array",
@@ -187,6 +295,29 @@ func memoryResultSchema() map[string]any {
 			"fragment":       map[string]any{"type": "object"},
 			"claims":         map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
 			"clarifications": clarificationArraySchema(),
+		},
+	}
+}
+
+func rememberPlacementResultSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"ingest_id":           map[string]any{"type": "string"},
+			"status":              schemaEnum([]string{"queued", "processing", "completed", "failed"}),
+			"check_after_seconds": map[string]any{"type": "integer"},
+			"status_tool":         map[string]any{"type": "string"},
+			"evidence":            map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
+			"items":               map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
+		},
+	}
+}
+
+func placementStatusSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"placement": map[string]any{"type": "object"},
 		},
 	}
 }

@@ -6,12 +6,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/http/dto"
+	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
@@ -44,6 +46,8 @@ var PersonalPredicates = map[string]struct{}{
 // clarification confirmation.
 type Service interface {
 	Remember(ctx context.Context, profileID string, req RememberRequest) (*RememberResult, error)
+	GetMemoryPlacement(ctx context.Context, profileID string, req PlacementStatusRequest) (*PlacementStatusResult, error)
+	DisputeMemoryPlacement(ctx context.Context, profileID string, req DisputeRequest) (*DisputeResult, error)
 	ImportMemories(ctx context.Context, profileID string, req ImportRequest) (*RememberResult, error)
 	Reflect(ctx context.Context, profileID string, req ReflectRequest) (*ReflectResult, error)
 	ConfirmMemory(ctx context.Context, profileID string, req ConfirmRequest) (*ConfirmResult, error)
@@ -59,19 +63,25 @@ type Dependencies struct {
 	FactPromote    factservice.PromoteClaimService
 	FactConfirm    factservice.ConfirmMemoryService
 	FactList       factservice.ListFactsService
+	PlacementStore repository.MemoryPlacementRepository
+	Logger         *slog.Logger
 }
 
 // New constructs a high-level memory Service.
-func New(deps Dependencies) Service {
-	return &service{deps: deps}
+func New(deps Dependencies) *service {
+	return &service{
+		deps:          deps,
+		placementKick: make(chan struct{}, 1),
+	}
 }
 
 type service struct {
-	deps Dependencies
+	deps          Dependencies
+	placementKick chan struct{}
 }
 
-// TypedClaimInput is the host-extracted memory candidate passed to remember
-// and import_memories.
+// TypedClaimInput is a trusted migration or verifier-extracted memory
+// candidate. Normal clients submit only evidence through remember.
 type TypedClaimInput struct {
 	Subject           string         `json:"subject"`
 	Predicate         string         `json:"predicate"`
@@ -89,17 +99,6 @@ type TypedClaimInput struct {
 	ExtractionVersion string         `json:"extraction_version,omitempty"`
 	PipelineRunID     string         `json:"pipeline_run_id,omitempty"`
 	Classification    map[string]any `json:"classification,omitempty"`
-}
-
-// RememberRequest stores chat-session evidence and optional typed memories.
-type RememberRequest struct {
-	Content        string            `json:"content"`
-	Source         string            `json:"source,omitempty"`
-	IdempotencyKey string            `json:"idempotency_key,omitempty"`
-	Labels         []string          `json:"labels,omitempty"`
-	Metadata       map[string]any    `json:"metadata,omitempty"`
-	Claims         []TypedClaimInput `json:"claims,omitempty"`
-	AutoPromote    *bool             `json:"auto_promote,omitempty"`
 }
 
 // ImportRequest stores summarized historical memory. Auto-promotion defaults
@@ -140,9 +139,15 @@ type FragmentOutcome struct {
 
 // RememberResult is the shared output for remember and import_memories.
 type RememberResult struct {
-	Fragment       FragmentOutcome `json:"fragment"`
-	Claims         []ClaimOutcome  `json:"claims"`
-	Clarifications []Clarification `json:"clarifications"`
+	IngestID          string                       `json:"ingest_id,omitempty"`
+	Status            string                       `json:"status,omitempty"`
+	CheckAfterSeconds int                          `json:"check_after_seconds,omitempty"`
+	StatusTool        string                       `json:"status_tool,omitempty"`
+	Evidence          []FragmentOutcome            `json:"evidence,omitempty"`
+	Items             []domain.MemoryPlacementItem `json:"items,omitempty"`
+	Fragment          FragmentOutcome              `json:"fragment,omitempty"`
+	Claims            []ClaimOutcome               `json:"claims,omitempty"`
+	Clarifications    []Clarification              `json:"clarifications,omitempty"`
 }
 
 // Clarification tells the host LLM what to ask the user.
@@ -190,26 +195,6 @@ type ConfirmResult struct {
 	Decision string       `json:"decision"`
 	Status   string       `json:"status"`
 	Fact     *domain.Fact `json:"fact,omitempty"`
-}
-
-// Remember stores normal chat-session memory evidence and processes typed
-// claims. Auto-promotion defaults to true for this path.
-func (s *service) Remember(ctx context.Context, profileID string, req RememberRequest) (*RememberResult, error) {
-	autoPromote := true
-	if req.AutoPromote != nil {
-		autoPromote = *req.AutoPromote
-	}
-	return s.ingest(ctx, profileID, ingestRequest{
-		content:        req.Content,
-		source:         req.Source,
-		sourceType:     "conversation",
-		authority:      "primary",
-		idempotencyKey: req.IdempotencyKey,
-		labels:         req.Labels,
-		metadata:       req.Metadata,
-		claims:         req.Claims,
-		autoPromote:    autoPromote,
-	})
 }
 
 // ImportMemories stores summarized historical memory. Auto-promotion defaults

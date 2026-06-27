@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -113,7 +114,7 @@ func TestToolCatalogHandler_ReturnsEmptyListForEmptyRegistry(t *testing.T) {
 	}
 }
 
-func TestToolCatalogHandler_FullV1Surface(t *testing.T) {
+func TestToolCatalogHandler_FullV2Surface(t *testing.T) {
 	reg, err := registry.BuildDefault(registry.Dependencies{})
 	if err != nil {
 		t.Fatalf("BuildDefault: %v", err)
@@ -132,24 +133,32 @@ func TestToolCatalogHandler_FullV1Surface(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	expected := []string{
-		"list_recent_memories", "recall_memory",
-		"remember", "import_memories", "reflect_memories", "confirm_memory",
-		"list_dreams", "get_dream", "resolve_dream_feedback",
-		"keyword_search", "semantic_search", "graph_query",
+		"assemble_context",
+		"confirm_memory",
+		"dispute_memory_placement",
+		"export_memory_pack",
+		"find_memory_pack_candidates",
+		"get_dream",
+		"get_memory_placement",
+		"import_memories",
+		"import_memory_pack",
+		"inspect_memory_pack",
+		"list_dreams",
+		"recall_memory",
+		"reflect_memories",
+		"remember",
+		"resolve_dream_feedback",
+		"rollback_memory_pack_import",
+		"trace_memory",
 	}
-	seen := make(map[string]bool, len(resp.Tools))
+	got := make([]string, 0, len(resp.Tools))
 	for _, te := range resp.Tools {
-		seen[te.Name] = true
+		got = append(got, te.Name)
 	}
-	for _, name := range expected {
-		if !seen[name] {
-			t.Errorf("v1 tool %q missing from catalog", name)
-		}
-	}
-	for _, name := range []string{"keyword-search", "semantic-search", "graph-query"} {
-		if seen[name] {
-			t.Errorf("legacy hyphenated tool %q must not appear in catalog", name)
-		}
+	slices.Sort(got)
+	slices.Sort(expected)
+	if !slices.Equal(got, expected) {
+		t.Fatalf("visible default catalog tools = %#v; want %#v", got, expected)
 	}
 }
 
