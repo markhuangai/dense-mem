@@ -78,7 +78,11 @@ func (r *MemoryPlacementRepositoryImpl) ClaimNextQueuedRun(ctx context.Context) 
 				SELECT ingest_id
 				FROM memory_placement_runs
 				WHERE status = 'queued'
-				   OR (status = 'processing' AND updated_at < now() - interval '5 minutes')
+				   OR (
+						status = 'processing'
+						AND started_at IS NOT NULL
+						AND updated_at < now() - interval '5 minutes'
+				   )
 				ORDER BY
 					CASE WHEN status = 'queued' THEN 0 ELSE 1 END,
 					created_at ASC

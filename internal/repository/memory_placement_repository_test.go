@@ -100,7 +100,7 @@ func TestReadPlacementRunClosesRunRowsBeforeReadingItems(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestClaimNextQueuedRunCanReclaimStaleProcessingRun(t *testing.T) {
+func TestClaimNextQueuedRunCanReclaimStartedStaleProcessingRun(t *testing.T) {
 	sqlDB, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sqlDB.Close() })
@@ -153,7 +153,7 @@ func TestClaimNextQueuedRunCanReclaimStaleProcessingRun(t *testing.T) {
 	})
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(`(?s)WITH next AS.*status = 'queued'.*status = 'processing' AND updated_at < now\(\) - interval '5 minutes'.*RETURNING run\.ingest_id::text`).
+	mock.ExpectQuery(`(?s)WITH next AS.*status = 'queued'.*status = 'processing'.*started_at IS NOT NULL.*updated_at < now\(\) - interval '5 minutes'.*RETURNING run\.ingest_id::text`).
 		WillReturnRows(sqlmock.NewRows([]string{"ingest_id"}).AddRow(ingestID)).
 		RowsWillBeClosed()
 	mock.ExpectCommit()
