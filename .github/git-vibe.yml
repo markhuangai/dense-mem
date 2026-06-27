@@ -146,12 +146,8 @@ ai:
           required: true
           tools:
             - recall_memory
-            - submit_recall_session_feedback
             - assemble_context
             - get_memory
-            - get_fact
-            - keyword_search
-            - semantic_search
             - list_communities
             - get_community_summary
     validate:
@@ -161,12 +157,8 @@ ai:
           required: true
           tools:
             - recall_memory
-            - submit_recall_session_feedback
             - assemble_context
             - get_memory
-            - get_fact
-            - keyword_search
-            - semantic_search
             - list_communities
             - get_community_summary
     materialize:
@@ -176,12 +168,8 @@ ai:
           required: true
           tools:
             - recall_memory
-            - submit_recall_session_feedback
             - assemble_context
             - get_memory
-            - get_fact
-            - keyword_search
-            - semantic_search
             - list_communities
             - get_community_summary
     review-matrix:
@@ -191,11 +179,7 @@ ai:
           required: true
           tools:
             - recall_memory
-            - submit_recall_session_feedback
             - assemble_context
             - get_memory
-            - get_fact
-            - keyword_search
-            - semantic_search
             - list_communities
             - get_community_summary
