@@ -122,7 +122,7 @@ func toolResult(t *testing.T, resp map[string]any) map[string]any {
 	return payload
 }
 
-func startWritableMemoryServer(t *testing.T, env *TestEnv) (*httptest.Server, fragmentservice.GetFragmentService) {
+func startWritableMemoryServer(t *testing.T, ctx context.Context, env *TestEnv) (*httptest.Server, fragmentservice.GetFragmentService) {
 	t.Helper()
 
 	cfgProvider := env.buildConfig()
@@ -194,9 +194,11 @@ func startWritableMemoryServer(t *testing.T, env *TestEnv) (*httptest.Server, fr
 		FactPromote:    factPromoteSvc,
 		FactList:       factListSvc,
 		PlacementStore: placementRepo,
-		Logger:         logger,
+		Logger:         logger.Slog(),
 	})
-	memorySvc.StartPlacementWorker(ctx, time.Second)
+	workerCtx, workerCancel := context.WithCancel(ctx)
+	t.Cleanup(workerCancel)
+	memorySvc.StartPlacementWorker(workerCtx, time.Second)
 	skillPackSvc := skillpackservice.New(skillpackservice.Dependencies{
 		FragmentCreate: fragmentCreateSvc,
 		ClaimCreate:    claimCreateSvc,
@@ -270,7 +272,7 @@ func TestUATMCPRuntime_RememberPersistsAndReadsBack(t *testing.T) {
 	defer cleanup()
 
 	profileID, rawAPIKey := createProfileAndKey(t, ctx, env)
-	serverURL, fragmentGetSvc := startWritableMemoryServer(t, env)
+	serverURL, fragmentGetSvc := startWritableMemoryServer(t, ctx, env)
 	mcp := &mcpHTTPClient{baseURL: serverURL.URL, apiKey: rawAPIKey}
 
 	initResp := mcp.call(t, "initialize", map[string]any{
@@ -349,7 +351,7 @@ func TestUATMCPRuntime_MemoryPackReviewImportAndRollback(t *testing.T) {
 	defer cleanup()
 
 	profileID, rawAPIKey := createProfileAndKey(t, ctx, env)
-	serverURL, _ := startWritableMemoryServer(t, env)
+	serverURL, _ := startWritableMemoryServer(t, ctx, env)
 	mcp := &mcpHTTPClient{baseURL: serverURL.URL, apiKey: rawAPIKey}
 
 	initResp := mcp.call(t, "initialize", map[string]any{
@@ -494,7 +496,7 @@ func TestUATMCPRuntime_MemoryPackTrustedImportValidatesPromotesAndRollback(t *te
 	defer cleanup()
 
 	profileID, rawAPIKey := createProfileAndKey(t, ctx, env)
-	serverURL, _ := startWritableMemoryServer(t, env)
+	serverURL, _ := startWritableMemoryServer(t, ctx, env)
 	mcp := &mcpHTTPClient{baseURL: serverURL.URL, apiKey: rawAPIKey}
 	profileScopeEnforcer := neo4jstorage.NewProfileScopeEnforcer(env.neo4jClient)
 	ledger := repository.NewSkillPackImportRepository(env.db, pgclient.NewRLS())

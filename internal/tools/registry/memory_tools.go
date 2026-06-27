@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
@@ -76,6 +77,16 @@ func disputeMemoryPlacementTool(deps Dependencies) Tool {
 		Description: "Dispute a Dense-Mem placement by supplying evidence for the verifier to review. The dispute session ends when the verifier accepts a correction/promotion or explains why the placement remains rejected or unsupported.",
 		InputSchema: map[string]any{
 			"type": "object",
+			"allOf": []any{
+				map[string]any{"anyOf": []any{
+					map[string]any{"required": []string{"ingest_id"}},
+					map[string]any{"required": []string{"dispute_id"}},
+				}},
+				map[string]any{"anyOf": []any{
+					map[string]any{"required": []string{"message"}},
+					map[string]any{"required": []string{"evidence"}},
+				}},
+			},
 			"properties": map[string]any{
 				"ingest_id":         schemaString("Placement run ID returned by remember.", 128),
 				"placement_item_id": schemaString("Specific placement item ID to dispute.", 128),
@@ -95,6 +106,9 @@ func disputeMemoryPlacementTool(deps Dependencies) Tool {
 			if err := remapInput(input, &req); err != nil {
 				return nil, fmt.Errorf("dispute_memory_placement: invalid input: %w", err)
 			}
+			if err := validateDisputeRequest(req); err != nil {
+				return nil, err
+			}
 			res, err := deps.Memory.DisputeMemoryPlacement(ctx, profileID, req)
 			if err != nil {
 				return nil, err
@@ -102,6 +116,21 @@ func disputeMemoryPlacementTool(deps Dependencies) Tool {
 			return structToMap(res)
 		},
 	}
+}
+
+func validateDisputeRequest(req memoryservice.DisputeRequest) error {
+	if strings.TrimSpace(req.DisputeID) == "" && strings.TrimSpace(req.IngestID) == "" {
+		return errors.New("dispute_memory_placement: ingest_id or dispute_id is required")
+	}
+	if strings.TrimSpace(req.Message) != "" {
+		return nil
+	}
+	for _, evidence := range req.Evidence {
+		if strings.TrimSpace(evidence.Content) != "" {
+			return nil
+		}
+	}
+	return errors.New("dispute_memory_placement: message or evidence is required")
 }
 
 func importMemoriesTool(deps Dependencies) Tool {

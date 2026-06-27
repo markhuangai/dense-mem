@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -79,10 +80,14 @@ func (c *HTTPClient) WaitForMemoryPlacement(ctx context.Context, ingestID string
 	if timeout <= 0 {
 		timeout = 2 * time.Minute
 	}
-	deadline := time.Now().Add(timeout)
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	for {
 		var out map[string]any
-		if err := c.CallTool(ctx, "get_memory_placement", map[string]any{"ingest_id": ingestID}, &out); err != nil {
+		if err := c.CallTool(waitCtx, "get_memory_placement", map[string]any{"ingest_id": ingestID}, &out); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return fmt.Errorf("memory placement %s did not complete within %s", ingestID, timeout)
+			}
 			return err
 		}
 		status := nestedString(out, "placement", "status")
@@ -92,12 +97,12 @@ func (c *HTTPClient) WaitForMemoryPlacement(ctx context.Context, ingestID string
 			}
 			return nil
 		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("memory placement %s did not complete within %s", ingestID, timeout)
-		}
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-waitCtx.Done():
+			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
+				return fmt.Errorf("memory placement %s did not complete within %s", ingestID, timeout)
+			}
+			return waitCtx.Err()
 		case <-time.After(time.Second):
 		}
 	}

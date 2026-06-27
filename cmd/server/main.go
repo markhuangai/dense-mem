@@ -369,7 +369,9 @@ func main() {
 		PlacementStore: memoryPlacementRepo,
 		Logger:         slog.Default(),
 	})
-	memorySvc.StartPlacementWorker(startupCtx, time.Minute)
+	placementWorkerCtx, placementWorkerCancel := context.WithCancel(context.Background())
+	defer placementWorkerCancel()
+	memorySvc.StartPlacementWorker(placementWorkerCtx, time.Minute)
 	dreamSvc := dreamservice.New(dreamservice.Dependencies{
 		Graph:          profileScopeEnforcer,
 		Memory:         memorySvc,
@@ -624,6 +626,7 @@ func main() {
 	<-quit
 
 	logger.Info("shutting down server")
+	placementWorkerCancel()
 	dreamSchedulerCancel()
 	communitySchedulerCancel()
 

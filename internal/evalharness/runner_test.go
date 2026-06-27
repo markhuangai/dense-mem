@@ -98,6 +98,7 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 	var placementPolls int
 	var recallCalls int
 	var controlPatched bool
+	placementIngests := map[string]bool{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -133,6 +134,15 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 				"evidence":  []map[string]any{{"id": id}},
 			})
 		case "/api/v1/tools/get_memory_placement":
+			var input map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatalf("decode placement body: %v", err)
+			}
+			ingestID, _ := input["ingest_id"].(string)
+			if ingestID != "doc-alpha" && ingestID != "doc-beta" {
+				t.Fatalf("placement input = %#v", input)
+			}
+			placementIngests[ingestID] = true
 			placementPolls++
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"placement": map[string]any{"status": "completed"},
@@ -192,6 +202,9 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 	}
 	if !controlPatched || rememberCalls != 2 || placementPolls != 2 || recallCalls != 2 {
 		t.Fatalf("control/remember/placement/recall calls = %v/%d/%d/%d", controlPatched, rememberCalls, placementPolls, recallCalls)
+	}
+	if !placementIngests["doc-alpha"] || !placementIngests["doc-beta"] {
+		t.Fatalf("placement ingests = %#v; want doc-alpha and doc-beta", placementIngests)
 	}
 }
 

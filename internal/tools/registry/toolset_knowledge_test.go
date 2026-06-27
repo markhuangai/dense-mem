@@ -107,6 +107,8 @@ func TestBuildDefaultMemoryTools_InvalidInputBranches(t *testing.T) {
 		{name: "remember", in: map[string]any{"evidence": func() {}}, want: "remember: invalid input"},
 		{name: "get_memory_placement", in: map[string]any{"ingest_id": func() {}}, want: "get_memory_placement: invalid input"},
 		{name: "dispute_memory_placement", in: map[string]any{"message": func() {}}, want: "dispute_memory_placement: invalid input"},
+		{name: "dispute_memory_placement", in: map[string]any{}, want: "dispute_memory_placement: ingest_id or dispute_id is required"},
+		{name: "dispute_memory_placement", in: map[string]any{"ingest_id": "ingest-1"}, want: "dispute_memory_placement: message or evidence is required"},
 		{name: "import_memories", in: map[string]any{"summary": func() {}}, want: "import_memories: invalid input"},
 		{name: "reflect_memories", in: map[string]any{"limit": func() {}}, want: "reflect_memories: invalid input"},
 		{name: "confirm_memory", in: map[string]any{"claim_id": func() {}}, want: "confirm_memory: invalid input"},

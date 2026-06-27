@@ -5,10 +5,12 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 	"github.com/stretchr/testify/require"
 )
@@ -30,7 +32,8 @@ func (s *stubPlacementStore) ClaimNextQueuedRun(context.Context) (*domain.Memory
 	return nil, nil
 }
 
-func (s *stubPlacementStore) SaveRun(context.Context, domain.MemoryPlacementRun) error {
+func (s *stubPlacementStore) SaveRun(_ context.Context, run domain.MemoryPlacementRun) error {
+	s.created = run
 	return nil
 }
 
@@ -46,7 +49,17 @@ func (s *stubPlacementStore) SaveDispute(context.Context, domain.MemoryDisputeSe
 	return nil
 }
 
+func (s *stubPlacementStore) CreateDisputeAndSaveRun(_ context.Context, _ domain.MemoryDisputeSession, run domain.MemoryPlacementRun) error {
+	s.created = run
+	return nil
+}
+
+func (s *stubPlacementStore) UpdateDisputeWithRun(context.Context, string, string, repository.DisputeRunUpdate) (*domain.MemoryDisputeSession, *domain.MemoryPlacementRun, error) {
+	return nil, nil, nil
+}
+
 type statefulPlacementStore struct {
+	mu           sync.Mutex
 	run          domain.MemoryPlacementRun
 	dispute      domain.MemoryDisputeSession
 	savedRun     domain.MemoryPlacementRun
@@ -54,56 +67,139 @@ type statefulPlacementStore struct {
 }
 
 func (s *statefulPlacementStore) CreateRun(_ context.Context, run domain.MemoryPlacementRun) error {
-	s.run = run
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.run = clonePlacementRun(run)
 	return nil
 }
 
 func (s *statefulPlacementStore) GetRun(_ context.Context, profileID, ingestID string) (*domain.MemoryPlacementRun, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.run.ProfileID != profileID || s.run.IngestID != ingestID {
 		return nil, nil
 	}
-	run := s.run
+	run := clonePlacementRun(s.run)
 	return &run, nil
 }
 
 func (s *statefulPlacementStore) ClaimNextQueuedRun(context.Context) (*domain.MemoryPlacementRun, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.run.Status != domain.MemoryPlacementQueued {
 		return nil, nil
 	}
-	run := s.run
+	run := clonePlacementRun(s.run)
 	s.run.Status = domain.MemoryPlacementProcessing
 	return &run, nil
 }
 
 func (s *statefulPlacementStore) SaveRun(_ context.Context, run domain.MemoryPlacementRun) error {
-	s.run = run
-	s.savedRun = run
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.run = clonePlacementRun(run)
+	s.savedRun = clonePlacementRun(run)
 	return nil
 }
 
 func (s *statefulPlacementStore) CreateDispute(_ context.Context, dispute domain.MemoryDisputeSession) error {
-	s.dispute = dispute
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dispute = cloneDisputeSession(dispute)
 	return nil
 }
 
 func (s *statefulPlacementStore) GetDispute(_ context.Context, profileID, disputeID string) (*domain.MemoryDisputeSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.dispute.ProfileID != profileID || s.dispute.DisputeID != disputeID {
 		return nil, nil
 	}
-	dispute := s.dispute
+	dispute := cloneDisputeSession(s.dispute)
 	return &dispute, nil
 }
 
 func (s *statefulPlacementStore) SaveDispute(_ context.Context, dispute domain.MemoryDisputeSession) error {
-	s.dispute = dispute
-	s.savedDispute = dispute
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dispute = cloneDisputeSession(dispute)
+	s.savedDispute = cloneDisputeSession(dispute)
 	return nil
 }
 
+func (s *statefulPlacementStore) CreateDisputeAndSaveRun(_ context.Context, dispute domain.MemoryDisputeSession, run domain.MemoryPlacementRun) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dispute = cloneDisputeSession(dispute)
+	s.savedDispute = cloneDisputeSession(dispute)
+	s.run = clonePlacementRun(run)
+	s.savedRun = clonePlacementRun(run)
+	return nil
+}
+
+func (s *statefulPlacementStore) UpdateDisputeWithRun(_ context.Context, profileID, disputeID string, update repository.DisputeRunUpdate) (*domain.MemoryDisputeSession, *domain.MemoryPlacementRun, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.dispute.ProfileID != profileID || s.dispute.DisputeID != disputeID {
+		return nil, nil, nil
+	}
+	if s.run.ProfileID != profileID || s.run.IngestID != s.dispute.IngestID {
+		session := cloneDisputeSession(s.dispute)
+		return &session, nil, nil
+	}
+	session := cloneDisputeSession(s.dispute)
+	run := clonePlacementRun(s.run)
+	if update != nil {
+		if err := update(&session, &run); err != nil {
+			return nil, nil, err
+		}
+	}
+	s.dispute = cloneDisputeSession(session)
+	s.savedDispute = cloneDisputeSession(session)
+	s.run = clonePlacementRun(run)
+	s.savedRun = clonePlacementRun(run)
+	savedSession := cloneDisputeSession(s.savedDispute)
+	savedRun := clonePlacementRun(s.savedRun)
+	return &savedSession, &savedRun, nil
+}
+
+func (s *statefulPlacementStore) savedRunCopy() domain.MemoryPlacementRun {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return clonePlacementRun(s.savedRun)
+}
+
+func (s *statefulPlacementStore) savedDisputeCopy() domain.MemoryDisputeSession {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return cloneDisputeSession(s.savedDispute)
+}
+
+func (s *statefulPlacementStore) disputeCreated() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.dispute.DisputeID != ""
+}
+
+func clonePlacementRun(run domain.MemoryPlacementRun) domain.MemoryPlacementRun {
+	run.Evidence = append([]domain.MemoryEvidence(nil), run.Evidence...)
+	run.Items = append([]domain.MemoryPlacementItem(nil), run.Items...)
+	return run
+}
+
+func cloneDisputeSession(session domain.MemoryDisputeSession) domain.MemoryDisputeSession {
+	session.Turns = append([]domain.MemoryDisputeTurn(nil), session.Turns...)
+	for i := range session.Turns {
+		session.Turns[i].Evidence = append([]domain.MemoryEvidence(nil), session.Turns[i].Evidence...)
+	}
+	return session
+}
+
 func TestRememberReturnsFragmentCreateError(t *testing.T) {
+	store := &stubPlacementStore{}
 	svc := New(Dependencies{
 		FragmentCreate: &stubFragmentCreate{err: errors.New("embed failed")},
-		PlacementStore: &stubPlacementStore{},
+		PlacementStore: store,
 	})
 
 	_, err := svc.Remember(context.Background(), "profile-1", RememberRequest{
@@ -111,6 +207,11 @@ func TestRememberReturnsFragmentCreateError(t *testing.T) {
 	})
 
 	require.ErrorContains(t, err, "embed failed")
+	require.Equal(t, domain.MemoryPlacementFailed, store.created.Status)
+	require.Equal(t, "embed failed", store.created.Error)
+	require.Len(t, store.created.Items, 1)
+	require.Equal(t, "failed", store.created.Items[0].Status)
+	require.Equal(t, "embed failed", store.created.Items[0].Error)
 }
 
 func TestRememberValidatesRequiredDependenciesAndEvidence(t *testing.T) {
@@ -294,15 +395,16 @@ func TestProcessPlacementRunClassifiesEvidenceItems(t *testing.T) {
 	err := svc.processPlacementRun(context.Background(), run)
 
 	require.NoError(t, err)
-	require.Equal(t, domain.MemoryPlacementCompleted, store.savedRun.Status)
-	require.NotNil(t, store.savedRun.StartedAt)
-	require.NotNil(t, store.savedRun.CompletedAt)
-	require.Equal(t, domain.MemoryPlacementNeedsEvidence, store.savedRun.Items[0].Category)
-	require.Equal(t, domain.MemoryPlacementRejectedFalse, store.savedRun.Items[1].Category)
-	require.Equal(t, domain.MemoryPlacementFragmentOnly, store.savedRun.Items[2].Category)
-	require.Equal(t, domain.MemoryPlacementPromotedFact, store.savedRun.Items[3].Category)
-	require.Equal(t, "claim-1", store.savedRun.Items[3].ClaimID)
-	require.Equal(t, "fact-1", store.savedRun.Items[3].FactID)
+	savedRun := store.savedRunCopy()
+	require.Equal(t, domain.MemoryPlacementCompleted, savedRun.Status)
+	require.NotNil(t, savedRun.StartedAt)
+	require.NotNil(t, savedRun.CompletedAt)
+	require.Equal(t, domain.MemoryPlacementNeedsEvidence, savedRun.Items[0].Category)
+	require.Equal(t, domain.MemoryPlacementRejectedFalse, savedRun.Items[1].Category)
+	require.Equal(t, domain.MemoryPlacementFragmentOnly, savedRun.Items[2].Category)
+	require.Equal(t, domain.MemoryPlacementPromotedFact, savedRun.Items[3].Category)
+	require.Equal(t, "claim-1", savedRun.Items[3].ClaimID)
+	require.Equal(t, "fact-1", savedRun.Items[3].FactID)
 	require.Equal(t, 1, promote.called)
 }
 
@@ -334,8 +436,9 @@ func TestProcessNextPlacementClaimsQueuedRun(t *testing.T) {
 
 	require.NoError(t, err)
 	require.True(t, processed)
-	require.Equal(t, domain.MemoryPlacementCompleted, store.savedRun.Status)
-	require.Equal(t, domain.MemoryPlacementPromotedFact, store.savedRun.Items[0].Category)
+	savedRun := store.savedRunCopy()
+	require.Equal(t, domain.MemoryPlacementCompleted, savedRun.Status)
+	require.Equal(t, domain.MemoryPlacementPromotedFact, savedRun.Items[0].Category)
 }
 
 func TestStartPlacementWorkerProcessesQueuedRun(t *testing.T) {
@@ -362,8 +465,10 @@ func TestStartPlacementWorkerProcessesQueuedRun(t *testing.T) {
 	svc.StartPlacementWorker(ctx, 0)
 
 	require.Eventually(t, func() bool {
-		return store.savedRun.Status == domain.MemoryPlacementCompleted &&
-			store.savedRun.Items[0].Category == domain.MemoryPlacementRejectedFalse
+		savedRun := store.savedRunCopy()
+		return savedRun.Status == domain.MemoryPlacementCompleted &&
+			len(savedRun.Items) == 1 &&
+			savedRun.Items[0].Category == domain.MemoryPlacementRejectedFalse
 	}, time.Second, 10*time.Millisecond)
 }
 
@@ -536,9 +641,10 @@ func TestDisputeMemoryPlacementAcceptsPromotedEvidence(t *testing.T) {
 	require.NotEmpty(t, res.Session.DisputeID)
 	require.Len(t, res.Session.Turns, 1)
 	require.Equal(t, "client", res.Session.Turns[0].Role)
-	require.Equal(t, domain.MemoryPlacementDisputeAccepted, store.savedRun.Items[0].Category)
-	require.Equal(t, "claim-1", store.savedRun.Items[0].ClaimID)
-	require.Equal(t, "fact-1", store.savedRun.Items[0].FactID)
+	savedRun := store.savedRunCopy()
+	require.Equal(t, domain.MemoryPlacementDisputeAccepted, savedRun.Items[0].Category)
+	require.Equal(t, "claim-1", savedRun.Items[0].ClaimID)
+	require.Equal(t, "fact-1", savedRun.Items[0].FactID)
 	require.Equal(t, 1, fragmentCreate.called)
 	require.Equal(t, "conversation", fragmentCreate.req.SourceType)
 	require.Equal(t, "primary", fragmentCreate.req.Authority)
@@ -586,9 +692,10 @@ func TestDisputeMemoryPlacementRejectsContradictoryEvidence(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, domain.MemoryDisputeRejectedExplained, res.Session.Status)
 	require.Contains(t, res.Session.FinalReason, "kept the placement rejected")
-	require.Equal(t, domain.MemoryPlacementDisputeRejected, store.savedRun.Items[0].Category)
-	require.Empty(t, store.savedRun.Items[0].ClaimID)
-	require.Empty(t, store.savedRun.Items[0].FactID)
+	savedRun := store.savedRunCopy()
+	require.Equal(t, domain.MemoryPlacementDisputeRejected, savedRun.Items[0].Category)
+	require.Empty(t, savedRun.Items[0].ClaimID)
+	require.Empty(t, savedRun.Items[0].FactID)
 	require.Equal(t, 0, promote.called)
 }
 
@@ -638,6 +745,67 @@ func TestDisputeMemoryPlacementValidationAndOpenBranches(t *testing.T) {
 		require.ErrorContains(t, err, "placement item not found")
 	})
 
+	t.Run("unknown placement item does not create dispute", func(t *testing.T) {
+		now := time.Now().UTC()
+		store := &statefulPlacementStore{run: domain.MemoryPlacementRun{
+			IngestID:  "ingest-1",
+			ProfileID: "profile-1",
+			Status:    domain.MemoryPlacementCompleted,
+			Items: []domain.MemoryPlacementItem{{
+				ItemID:        "item-1",
+				IngestID:      "ingest-1",
+				ProfileID:     "profile-1",
+				EvidenceIndex: 0,
+				FragmentID:    "fragment-1",
+				Category:      domain.MemoryPlacementNeedsEvidence,
+				Status:        "completed",
+				CreatedAt:     now,
+				UpdatedAt:     now,
+			}},
+		}}
+		svc := New(Dependencies{PlacementStore: store})
+
+		_, err := svc.DisputeMemoryPlacement(context.Background(), "profile-1", DisputeRequest{
+			IngestID:        "ingest-1",
+			PlacementItemID: "item-missing",
+			Message:         "Please review this.",
+		})
+
+		require.ErrorContains(t, err, "placement item not found")
+		require.False(t, store.disputeCreated())
+	})
+
+	t.Run("positive dispute evidence requires fragment create service", func(t *testing.T) {
+		now := time.Now().UTC()
+		store := &statefulPlacementStore{run: domain.MemoryPlacementRun{
+			IngestID:  "ingest-1",
+			ProfileID: "profile-1",
+			Status:    domain.MemoryPlacementCompleted,
+			Items: []domain.MemoryPlacementItem{{
+				ItemID:        "item-1",
+				IngestID:      "ingest-1",
+				ProfileID:     "profile-1",
+				EvidenceIndex: 0,
+				FragmentID:    "fragment-1",
+				Category:      domain.MemoryPlacementNeedsEvidence,
+				Status:        "completed",
+				CreatedAt:     now,
+				UpdatedAt:     now,
+			}},
+		}}
+		svc := New(Dependencies{PlacementStore: store})
+
+		_, err := svc.DisputeMemoryPlacement(context.Background(), "profile-1", DisputeRequest{
+			IngestID:        "ingest-1",
+			PlacementItemID: "item-1",
+			Message:         "This should be promoted.",
+			Evidence:        []EvidenceInput{{Content: "I prefer vim."}},
+		})
+
+		require.ErrorContains(t, err, "fragment create service is required")
+		require.False(t, store.disputeCreated())
+	})
+
 	t.Run("existing dispute remains open without enough evidence", func(t *testing.T) {
 		now := time.Now().UTC()
 		store := &statefulPlacementStore{
@@ -684,7 +852,64 @@ func TestDisputeMemoryPlacementValidationAndOpenBranches(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, domain.MemoryDisputeOpen, res.Session.Status)
 		require.Contains(t, res.Session.FinalReason, "needs more evidence")
-		require.Len(t, store.savedDispute.Turns, 1)
-		require.Equal(t, domain.MemoryPlacementNeedsEvidence, store.savedRun.Items[0].Category)
+		savedDispute := store.savedDisputeCopy()
+		savedRun := store.savedRunCopy()
+		require.Len(t, savedDispute.Turns, 1)
+		require.Equal(t, domain.MemoryPlacementNeedsEvidence, savedRun.Items[0].Category)
 	})
+}
+
+func TestDisputeMemoryPlacementPreservesConcurrentContinuationTurns(t *testing.T) {
+	now := time.Now().UTC()
+	store := &statefulPlacementStore{
+		run: domain.MemoryPlacementRun{
+			IngestID:  "ingest-1",
+			ProfileID: "profile-1",
+			Status:    domain.MemoryPlacementCompleted,
+			Items: []domain.MemoryPlacementItem{{
+				ItemID:        "item-1",
+				IngestID:      "ingest-1",
+				ProfileID:     "profile-1",
+				EvidenceIndex: 0,
+				FragmentID:    "fragment-1",
+				Category:      domain.MemoryPlacementNeedsEvidence,
+				Status:        "completed",
+				CreatedAt:     now,
+				UpdatedAt:     now,
+			}},
+		},
+		dispute: domain.MemoryDisputeSession{
+			DisputeID:       "dispute-1",
+			ProfileID:       "profile-1",
+			IngestID:        "ingest-1",
+			PlacementItemID: "item-1",
+			Status:          domain.MemoryDisputeOpen,
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		},
+	}
+	svc := New(Dependencies{PlacementStore: store})
+
+	const turnCount = 8
+	errs := make(chan error, turnCount)
+	var wg sync.WaitGroup
+	for i := 0; i < turnCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := svc.DisputeMemoryPlacement(context.Background(), "profile-1", DisputeRequest{
+				DisputeID: "dispute-1",
+				Message:   "Please review this again.",
+			})
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	savedDispute := store.savedDisputeCopy()
+	require.Len(t, savedDispute.Turns, turnCount)
 }

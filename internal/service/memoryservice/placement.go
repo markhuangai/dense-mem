@@ -72,7 +72,7 @@ func (s *service) Remember(ctx context.Context, profileID string, req RememberRe
 	run := domain.MemoryPlacementRun{
 		IngestID:          ingestID,
 		ProfileID:         profileID,
-		Status:            domain.MemoryPlacementQueued,
+		Status:            domain.MemoryPlacementProcessing,
 		CheckAfterSeconds: 60,
 		StatusTool:        "get_memory_placement",
 		Evidence:          make([]domain.MemoryEvidence, 0, len(req.Evidence)),
@@ -80,35 +80,11 @@ func (s *service) Remember(ctx context.Context, profileID string, req RememberRe
 		CreatedAt:         now,
 		UpdatedAt:         now,
 	}
-	fragments := make([]FragmentOutcome, 0, len(req.Evidence))
 	for i, evidence := range req.Evidence {
 		content := strings.TrimSpace(evidence.Content)
 		if content == "" {
 			return nil, fmt.Errorf("memory service: evidence[%d].content is required", i)
 		}
-		fragmentRes, err := s.deps.FragmentCreate.Create(ctx, profileID, &dto.CreateFragmentRequest{
-			Content:        content,
-			SourceType:     "conversation",
-			Source:         evidence.Source,
-			Authority:      "primary",
-			IdempotencyKey: evidence.IdempotencyKey,
-			Labels:         evidence.Labels,
-			Metadata:       evidence.Metadata,
-			SourceQuality:  defaultSourceQuality("primary"),
-		})
-		if err != nil {
-			return nil, err
-		}
-		status := "created"
-		if fragmentRes.Duplicate {
-			status = "duplicate"
-		}
-		fragments = append(fragments, FragmentOutcome{
-			ID:          fragmentRes.Fragment.FragmentID,
-			Status:      status,
-			DuplicateOf: fragmentRes.DuplicateOf,
-			CreatedAt:   fragmentRes.Fragment.CreatedAt,
-		})
 		run.Evidence = append(run.Evidence, domain.MemoryEvidence{
 			Index:          i,
 			Content:        content,
@@ -122,7 +98,6 @@ func (s *service) Remember(ctx context.Context, profileID string, req RememberRe
 			IngestID:      ingestID,
 			ProfileID:     profileID,
 			EvidenceIndex: i,
-			FragmentID:    fragmentRes.Fragment.FragmentID,
 			Category:      domain.MemoryPlacementFragmentOnly,
 			Status:        string(domain.MemoryPlacementQueued),
 			Reason:        "evidence stored; awaiting Dense-Mem verifier placement",
@@ -131,6 +106,48 @@ func (s *service) Remember(ctx context.Context, profileID string, req RememberRe
 		})
 	}
 	if err := s.deps.PlacementStore.CreateRun(ctx, run); err != nil {
+		return nil, err
+	}
+	fragments := make([]FragmentOutcome, 0, len(req.Evidence))
+	for i, evidence := range req.Evidence {
+		content := strings.TrimSpace(evidence.Content)
+		fragmentRes, err := s.deps.FragmentCreate.Create(ctx, profileID, &dto.CreateFragmentRequest{
+			Content:        content,
+			SourceType:     "conversation",
+			Source:         evidence.Source,
+			Authority:      "primary",
+			IdempotencyKey: evidence.IdempotencyKey,
+			Labels:         evidence.Labels,
+			Metadata:       evidence.Metadata,
+			SourceQuality:  defaultSourceQuality("primary"),
+		})
+		if err != nil {
+			failedAt := time.Now().UTC()
+			run.Status = domain.MemoryPlacementFailed
+			run.Error = err.Error()
+			run.UpdatedAt = failedAt
+			run.CompletedAt = &failedAt
+			run.Items[i].Status = "failed"
+			run.Items[i].Error = err.Error()
+			_ = s.deps.PlacementStore.SaveRun(ctx, run)
+			return nil, err
+		}
+		status := "created"
+		if fragmentRes.Duplicate {
+			status = "duplicate"
+		}
+		fragments = append(fragments, FragmentOutcome{
+			ID:          fragmentRes.Fragment.FragmentID,
+			Status:      status,
+			DuplicateOf: fragmentRes.DuplicateOf,
+			CreatedAt:   fragmentRes.Fragment.CreatedAt,
+		})
+		run.Items[i].FragmentID = fragmentRes.Fragment.FragmentID
+	}
+	queuedAt := time.Now().UTC()
+	run.Status = domain.MemoryPlacementQueued
+	run.UpdatedAt = queuedAt
+	if err := s.deps.PlacementStore.SaveRun(ctx, run); err != nil {
 		return nil, err
 	}
 	s.kickPlacementWorker()
@@ -167,74 +184,44 @@ func (s *service) DisputeMemoryPlacement(ctx context.Context, profileID string, 
 		return nil, errors.New("memory service: placement store is required")
 	}
 	now := time.Now().UTC()
-	var session *domain.MemoryDisputeSession
 	if strings.TrimSpace(req.DisputeID) != "" {
-		loaded, err := s.deps.PlacementStore.GetDispute(ctx, profileID, req.DisputeID)
+		session, run, err := s.deps.PlacementStore.UpdateDisputeWithRun(ctx, profileID, req.DisputeID, func(session *domain.MemoryDisputeSession, run *domain.MemoryPlacementRun) error {
+			return s.applyDisputeTurn(ctx, profileID, run, session, req, now)
+		})
 		if err != nil {
 			return nil, err
 		}
-		if loaded == nil {
+		if session == nil {
 			return nil, errors.New("memory service: dispute not found")
 		}
-		session = loaded
-	} else {
-		if strings.TrimSpace(req.IngestID) == "" {
-			return nil, errors.New("memory service: ingest_id is required")
+		if run == nil {
+			return nil, errors.New("memory service: placement not found")
 		}
-		created := domain.MemoryDisputeSession{
-			DisputeID:       uuid.NewString(),
-			ProfileID:       profileID,
-			IngestID:        strings.TrimSpace(req.IngestID),
-			PlacementItemID: strings.TrimSpace(req.PlacementItemID),
-			Status:          domain.MemoryDisputeOpen,
-			CreatedAt:       now,
-			UpdatedAt:       now,
-		}
-		if err := s.deps.PlacementStore.CreateDispute(ctx, created); err != nil {
-			return nil, err
-		}
-		session = &created
+		return &DisputeResult{Session: *session, Placement: run}, nil
 	}
-
-	session.Turns = append(session.Turns, domain.MemoryDisputeTurn{
-		At:       now,
-		Role:     "client",
-		Message:  strings.TrimSpace(req.Message),
-		Evidence: disputeEvidence(req.Evidence),
-	})
-	session.Status = domain.MemoryDisputeProcessing
-	session.UpdatedAt = now
-
-	run, err := s.deps.PlacementStore.GetRun(ctx, profileID, session.IngestID)
+	if strings.TrimSpace(req.IngestID) == "" {
+		return nil, errors.New("memory service: ingest_id is required")
+	}
+	run, err := s.deps.PlacementStore.GetRun(ctx, profileID, strings.TrimSpace(req.IngestID))
 	if err != nil {
 		return nil, err
 	}
 	if run == nil {
 		return nil, errors.New("memory service: placement not found")
 	}
-
-	finalReason, accepted, rejected, err := s.applyDisputeEvidence(ctx, profileID, run, session, req)
-	if err != nil {
+	session := &domain.MemoryDisputeSession{
+		DisputeID:       uuid.NewString(),
+		ProfileID:       profileID,
+		IngestID:        strings.TrimSpace(req.IngestID),
+		PlacementItemID: strings.TrimSpace(req.PlacementItemID),
+		Status:          domain.MemoryDisputeOpen,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	if err := s.applyDisputeTurn(ctx, profileID, run, session, req, now); err != nil {
 		return nil, err
 	}
-	switch {
-	case accepted:
-		session.Status = domain.MemoryDisputeAcceptedPromoted
-		session.FinalReason = finalReason
-		session.CompletedAt = &now
-	case rejected:
-		session.Status = domain.MemoryDisputeRejectedExplained
-		session.FinalReason = finalReason
-		session.CompletedAt = &now
-	default:
-		session.Status = domain.MemoryDisputeOpen
-		session.FinalReason = "Dense-Mem verifier needs more evidence before changing the placement."
-	}
-	session.UpdatedAt = now
-	if err := s.deps.PlacementStore.SaveDispute(ctx, *session); err != nil {
-		return nil, err
-	}
-	if err := s.deps.PlacementStore.SaveRun(ctx, *run); err != nil {
+	if err := s.deps.PlacementStore.CreateDisputeAndSaveRun(ctx, *session, *run); err != nil {
 		return nil, err
 	}
 	return &DisputeResult{Session: *session, Placement: run}, nil
@@ -353,10 +340,42 @@ func (s *service) processPlacementRun(ctx context.Context, run *domain.MemoryPla
 	return s.deps.PlacementStore.SaveRun(ctx, *run)
 }
 
+func (s *service) applyDisputeTurn(ctx context.Context, profileID string, run *domain.MemoryPlacementRun, session *domain.MemoryDisputeSession, req DisputeRequest, now time.Time) error {
+	session.Turns = append(session.Turns, domain.MemoryDisputeTurn{
+		At:       now,
+		Role:     "client",
+		Message:  strings.TrimSpace(req.Message),
+		Evidence: disputeEvidence(req.Evidence),
+	})
+	session.Status = domain.MemoryDisputeProcessing
+	session.UpdatedAt = now
+
+	finalReason, accepted, rejected, err := s.applyDisputeEvidence(ctx, profileID, run, session, req)
+	if err != nil {
+		return err
+	}
+	switch {
+	case accepted:
+		session.Status = domain.MemoryDisputeAcceptedPromoted
+		session.FinalReason = finalReason
+		session.CompletedAt = &now
+	case rejected:
+		session.Status = domain.MemoryDisputeRejectedExplained
+		session.FinalReason = finalReason
+		session.CompletedAt = &now
+	default:
+		session.Status = domain.MemoryDisputeOpen
+		session.FinalReason = "Dense-Mem verifier needs more evidence before changing the placement."
+	}
+	session.UpdatedAt = now
+	return nil
+}
+
 func (s *service) applyDisputeEvidence(ctx context.Context, profileID string, run *domain.MemoryPlacementRun, session *domain.MemoryDisputeSession, req DisputeRequest) (string, bool, bool, error) {
 	target := findPlacementItem(run, session.PlacementItemID)
-	if target == nil && len(run.Items) > 0 {
+	if target == nil && strings.TrimSpace(session.PlacementItemID) == "" && len(run.Items) > 0 {
 		target = &run.Items[0]
+		session.PlacementItemID = target.ItemID
 	}
 	if target == nil {
 		return "", false, false, errors.New("memory service: placement item not found")
@@ -367,6 +386,9 @@ func (s *service) applyDisputeEvidence(ctx context.Context, profileID string, ru
 		target.Reason = "Dense-Mem verifier kept the placement rejected because the dispute evidence contradicts the memory."
 		target.UpdatedAt = time.Now().UTC()
 		return target.Reason, false, true, nil
+	}
+	if hasDisputeEvidence(req.Evidence) && s.deps.FragmentCreate == nil {
+		return "", false, false, errors.New("memory service: fragment create service is required")
 	}
 	for _, evidence := range req.Evidence {
 		content := strings.TrimSpace(evidence.Content)
@@ -535,6 +557,15 @@ func findPlacementItem(run *domain.MemoryPlacementRun, itemID string) *domain.Me
 func evidenceLooksFalse(evidence []EvidenceInput) bool {
 	for _, item := range evidence {
 		if looksFalse(item.Content) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDisputeEvidence(evidence []EvidenceInput) bool {
+	for _, item := range evidence {
+		if strings.TrimSpace(item.Content) != "" {
 			return true
 		}
 	}
