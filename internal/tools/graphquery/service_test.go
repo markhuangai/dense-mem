@@ -188,6 +188,34 @@ func TestGraphQueryCapsOrRejectsLimit(t *testing.T) {
 	}
 }
 
+func TestGraphQueryServicePreservesLiteralLimit(t *testing.T) {
+	ctx := context.Background()
+	profileID := "test-profile-id"
+	var capturedQuery string
+
+	mockReader := &mockScopedReader{
+		scopedReadFunc: func(ctx context.Context, pid string, query string, params map[string]any) (neo4j.ResultSummary, []map[string]any, error) {
+			assert.Equal(t, profileID, pid)
+			capturedQuery = query
+			assert.Empty(t, params)
+			return nil, []map[string]any{{"edge_type": "SUPPORTED_BY"}}, nil
+		},
+	}
+
+	svc := NewGraphQueryService(mockReader, &mockValidator{})
+	result, err := svc.Execute(ctx, profileID, `
+MATCH (a {team_id: $profileId})-[rel]->(b {team_id: $profileId})
+WHERE rel.team_id = $profileId
+RETURN type(rel) AS edge_type
+LIMIT 4`, nil)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.RowCapApplied)
+	assert.Contains(t, capturedQuery, "LIMIT 4")
+	assert.NotContains(t, capturedQuery, "LIMIT 1000")
+}
+
 // TestGraphQuerySanitizesSyntaxError tests that Neo4j syntax errors are sanitized.
 func TestGraphQuerySanitizesSyntaxError(t *testing.T) {
 	tests := []struct {

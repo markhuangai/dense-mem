@@ -1,0 +1,26 @@
+{
+  "schema_version": "dense-mem.eval.seed.v1",
+  "seed_id": "local_pr_v1",
+  "description": "Deterministic local-only PR-scale synthetic retrieval seed for Dense-Mem RAG accuracy baselines.",
+  "generated_at": "2026-06-26T00:00:00Z",
+  "corpus_file": "corpus.jsonl",
+  "cases_file": "cases.jsonl",
+  "qrels_file": "qrels.jsonl",
+  "answers_file": "answers.jsonl",
+  "hard_negatives_file": "hard_negatives.jsonl",
+  "transforms_file": "transforms.jsonl",
+  "licenses_file": "licenses.md",
+  "counts": {
+    "cases": 200,
+    "corpus": 2000,
+    "docs_per_case": 10,
+    "hard_negatives": 1800
+  },
+  "sources": [
+    {
+      "name": "densemem_synthetic_pr_v1",
+      "license": "Project-local synthetic fixture",
+      "notes": "Fixed project-local synthetic fixture; no production data or external corpus content."
+    }
+  ]
+}

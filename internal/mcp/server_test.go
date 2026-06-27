@@ -24,6 +24,10 @@ func (s recallFeedbackConfigStub) RecallFeedbackRuntimeConfig(context.Context) (
 	return domain.RecallFeedbackRuntimeConfig{Enabled: s.enabled}, nil
 }
 
+func (s recallFeedbackConfigStub) EvaluationRuntimeConfig(context.Context) (domain.EvaluationRuntimeConfig, error) {
+	return domain.EvaluationRuntimeConfig{Enabled: s.enabled}, nil
+}
+
 // TestServerIgnoresProfileOverride verifies that a caller cannot override the
 // server's fixed profile by injecting profile_id into tool arguments (AC-61 /
 // R4 — single-profile enforcement).
@@ -65,6 +69,38 @@ func TestServerIgnoresProfileOverride(t *testing.T) {
 	// Other args must be passed through.
 	if gotArgs["text"] != "hello" {
 		t.Errorf("text arg = %v; want hello", gotArgs["text"])
+	}
+}
+
+func TestServerRejectsProfileOverrideForEvaluationTools(t *testing.T) {
+	logger, _ := testLogger(t)
+	reg := registry.New()
+	called := false
+	_ = reg.Register(registry.Tool{
+		Name:           "eval_get_manifest",
+		Description:    "evaluation probe",
+		InputSchema:    map[string]any{"type": "object"},
+		RequiredScopes: []string{"read", "write"},
+		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+			called = true
+			return map[string]any{"ok": true}, nil
+		},
+	})
+	s := NewServerWithScopesTeamContextAndRuntimeConfig(reg, "pA", []string{"read", "write"}, TeamContext{}, logger, recallFeedbackConfigStub{enabled: true})
+
+	out := runRPC(t, s, `{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"eval_get_manifest","arguments":{"profile_id":"pB"}}}`)
+	var resp rpcResp
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &resp); err != nil {
+		t.Fatalf("unmarshal: %v — out=%q", err, out)
+	}
+	if resp.Error == nil || resp.Error.Code != errCodeInvalidParams {
+		t.Fatalf("expected invalid params; got %+v", resp.Error)
+	}
+	if !strings.Contains(resp.Error.Message, "evaluation tools do not accept team_id or profile_id") {
+		t.Fatalf("error message = %q", resp.Error.Message)
+	}
+	if called {
+		t.Fatal("evaluation tool must not run when tenant selectors are present")
 	}
 }
 
@@ -537,10 +573,7 @@ func TestMCP_MemoryToolsScopeProfileAndClarifications(t *testing.T) {
 
 	readOnly := NewServerWithScopes(reg, "profileA", []string{"read"}, logger)
 	listOut := runRPC(t, readOnly, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
-	if !strings.Contains(listOut, `"reflect_memories"`) {
-		t.Fatalf("read-scoped list missing reflect_memories: %s", listOut)
-	}
-	if strings.Contains(listOut, `"remember"`) || strings.Contains(listOut, `"confirm_memory"`) {
+	if strings.Contains(listOut, `"remember"`) || strings.Contains(listOut, `"reflect_memories"`) || strings.Contains(listOut, `"confirm_memory"`) {
 		t.Fatalf("read-scoped list exposed write tools: %s", listOut)
 	}
 

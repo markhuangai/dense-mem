@@ -2,3 +2,7 @@ package-lock.json
 **/package-lock.json
 .env
 .env.*
+tests/eval/cache/**
+tests/eval/runs/**
+tests/eval/seeds/local_train_100k_v1/**
+tests/eval/snapshots/**

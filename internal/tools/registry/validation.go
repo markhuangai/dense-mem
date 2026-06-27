@@ -50,6 +50,17 @@ func StripTenantOverrideArgs(args map[string]any) {
 	delete(args, "profile_id")
 }
 
+// HasTenantOverrideArgs reports whether caller input contains forbidden tenant
+// selectors.
+func HasTenantOverrideArgs(args map[string]any) bool {
+	if args == nil {
+		return false
+	}
+	_, hasTeamID := args["team_id"]
+	_, hasProfileID := args["profile_id"]
+	return hasTeamID || hasProfileID
+}
+
 func validateSchemaValue(name string, value any, schema map[string]any) error {
 	expected, _ := schema["type"].(string)
 	switch expected {

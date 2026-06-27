@@ -1,0 +1,174 @@
+package evalharness
+
+import "time"
+
+const SeedSchemaVersion = "dense-mem.eval.seed.v1"
+
+// SeedManifest describes a local-only evaluation seed pack.
+type SeedManifest struct {
+	SchemaVersion       string         `json:"schema_version"`
+	SeedID              string         `json:"seed_id"`
+	Description         string         `json:"description,omitempty"`
+	GeneratedAt         string         `json:"generated_at,omitempty"`
+	CorpusFile          string         `json:"corpus_file"`
+	CasesFile           string         `json:"cases_file"`
+	QrelsFile           string         `json:"qrels_file"`
+	AnswersFile         string         `json:"answers_file,omitempty"`
+	HardNegativesFile   string         `json:"hard_negatives_file,omitempty"`
+	TransformsFile      string         `json:"transforms_file,omitempty"`
+	LicensesFile        string         `json:"licenses_file,omitempty"`
+	EmbeddingProvider   string         `json:"embedding_provider,omitempty"`
+	EmbeddingModel      string         `json:"embedding_model,omitempty"`
+	EmbeddingDimensions int            `json:"embedding_dimensions,omitempty"`
+	Counts              map[string]int `json:"counts,omitempty"`
+	Sources             []SeedSource   `json:"sources,omitempty"`
+}
+
+type SeedSource struct {
+	Name    string `json:"name"`
+	URL     string `json:"url,omitempty"`
+	License string `json:"license,omitempty"`
+	Notes   string `json:"notes,omitempty"`
+}
+
+type CorpusItem struct {
+	SourceDocID   string         `json:"source_doc_id"`
+	Title         string         `json:"title,omitempty"`
+	Content       string         `json:"content"`
+	SourceDataset string         `json:"source_dataset,omitempty"`
+	SourceType    string         `json:"source_type,omitempty"`
+	Authority     string         `json:"authority,omitempty"`
+	SourceQuality float64        `json:"source_quality,omitempty"`
+	Labels        []string       `json:"labels,omitempty"`
+	Metadata      map[string]any `json:"metadata,omitempty"`
+	Claims        []TypedClaim   `json:"claims,omitempty"`
+}
+
+type TypedClaim struct {
+	Subject        string   `json:"subject"`
+	Predicate      string   `json:"predicate"`
+	Object         string   `json:"object"`
+	ExtractConf    float64  `json:"extract_conf"`
+	ResolutionConf float64  `json:"resolution_conf"`
+	SupportedBy    []string `json:"supported_by,omitempty"`
+}
+
+type Case struct {
+	CaseID           string   `json:"case_id"`
+	Query            string   `json:"query"`
+	TaskType         string   `json:"task_type,omitempty"`
+	Difficulty       string   `json:"difficulty,omitempty"`
+	Slices           []string `json:"slices,omitempty"`
+	ExpectedBehavior string   `json:"expected_behavior,omitempty"`
+	ValidAt          string   `json:"valid_at,omitempty"`
+	KnownAt          string   `json:"known_at,omitempty"`
+	Limit            int      `json:"limit,omitempty"`
+}
+
+type Ref struct {
+	Type        string  `json:"type"`
+	ID          string  `json:"id,omitempty"`
+	SourceDocID string  `json:"source_doc_id,omitempty"`
+	Rank        int     `json:"rank,omitempty"`
+	Grade       float64 `json:"grade,omitempty"`
+	Reason      string  `json:"reason,omitempty"`
+}
+
+type QRel struct {
+	CaseID         string `json:"case_id"`
+	RequiredRefs   []Ref  `json:"required_refs"`
+	AcceptableRefs []Ref  `json:"acceptable_refs,omitempty"`
+	BadRefs        []Ref  `json:"bad_refs,omitempty"`
+}
+
+type AnswerLabel struct {
+	CaseID             string   `json:"case_id"`
+	ReferenceAnswer    string   `json:"reference_answer,omitempty"`
+	MustInclude        []string `json:"must_include,omitempty"`
+	MustNotInclude     []string `json:"must_not_include,omitempty"`
+	ExpectedBehavior   string   `json:"expected_behavior,omitempty"`
+	GroundednessPolicy string   `json:"groundedness_policy,omitempty"`
+}
+
+type SuiteCase struct {
+	CaseID string   `json:"case_id"`
+	Weight float64  `json:"weight,omitempty"`
+	Slices []string `json:"slices,omitempty"`
+}
+
+type KnowledgeMapping struct {
+	BySourceDocID map[string]Ref `json:"by_source_doc_id"`
+}
+
+type RecallTrace struct {
+	CaseID            string         `json:"case_id"`
+	Query             string         `json:"query"`
+	RankedRefs        []Ref          `json:"ranked_refs"`
+	ContextRefs       []Ref          `json:"context_refs,omitempty"`
+	LatencyMS         int64          `json:"latency_ms,omitempty"`
+	ContextBlockChars int            `json:"context_block_chars,omitempty"`
+	Raw               map[string]any `json:"raw,omitempty"`
+}
+
+type RetrievalScore struct {
+	CaseID             string  `json:"case_id"`
+	K                  int     `json:"k"`
+	RelevantAtK        int     `json:"relevant_at_k"`
+	RelevantTotal      int     `json:"relevant_total"`
+	BadAtK             int     `json:"bad_at_k"`
+	RecallAtK          float64 `json:"recall_at_k"`
+	MRR                float64 `json:"mrr"`
+	NDCGAtK            float64 `json:"ndcg_at_k"`
+	MissingRequired    []Ref   `json:"missing_required_refs,omitempty"`
+	BadRefsAtK         []Ref   `json:"bad_refs_at_k,omitempty"`
+	UnmappedSourceRefs []Ref   `json:"unmapped_source_refs,omitempty"`
+	LatencyMS          int64   `json:"latency_ms,omitempty"`
+}
+
+type Summary struct {
+	RunID              string              `json:"run_id"`
+	Mode               string              `json:"mode"`
+	SeedID             string              `json:"seed_id"`
+	SeedHash           string              `json:"seed_hash"`
+	SuitePath          string              `json:"suite_path"`
+	CaseCount          int                 `json:"case_count"`
+	ScoredCaseCount    int                 `json:"scored_case_count"`
+	UnmappedSourceRefs int                 `json:"unmapped_source_refs"`
+	AverageRecallAtK   float64             `json:"average_recall_at_k"`
+	AverageMRR         float64             `json:"average_mrr"`
+	AverageNDCGAtK     float64             `json:"average_ndcg_at_k"`
+	AverageBadAtK      float64             `json:"average_bad_at_k"`
+	Slices             map[string]SliceAvg `json:"slices,omitempty"`
+	CreatedAt          time.Time           `json:"created_at"`
+}
+
+type SliceAvg struct {
+	CaseCount        int     `json:"case_count"`
+	AverageRecallAtK float64 `json:"average_recall_at_k"`
+	AverageMRR       float64 `json:"average_mrr"`
+	AverageNDCGAtK   float64 `json:"average_ndcg_at_k"`
+	AverageBadAtK    float64 `json:"average_bad_at_k"`
+}
+
+type RunConfig struct {
+	RunID           string `json:"run_id"`
+	Mode            string `json:"mode"`
+	SeedManifest    string `json:"seed_manifest"`
+	SeedHash        string `json:"seed_hash"`
+	SuitePath       string `json:"suite_path"`
+	BaseURL         string `json:"base_url,omitempty"`
+	ControlURL      string `json:"control_url,omitempty"`
+	ImportSeed      bool   `json:"import_seed"`
+	TracesPath      string `json:"traces_path,omitempty"`
+	BaselineRunPath string `json:"baseline_run_path,omitempty"`
+}
+
+type Comparison struct {
+	BaselineRunID  string  `json:"baseline_run_id"`
+	CandidateRunID string  `json:"candidate_run_id"`
+	SeedHash       string  `json:"seed_hash"`
+	RecallDelta    float64 `json:"recall_delta"`
+	MRRDelta       float64 `json:"mrr_delta"`
+	NDCGDelta      float64 `json:"ndcg_delta"`
+	BadAtKDelta    float64 `json:"bad_at_k_delta"`
+}

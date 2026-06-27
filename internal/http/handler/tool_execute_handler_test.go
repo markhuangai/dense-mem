@@ -35,6 +35,10 @@ func (s handlerRecallFeedbackConfigStub) RecallFeedbackRuntimeConfig(context.Con
 	return domain.RecallFeedbackRuntimeConfig{Enabled: s.enabled}, nil
 }
 
+func (s handlerRecallFeedbackConfigStub) EvaluationRuntimeConfig(context.Context) (domain.EvaluationRuntimeConfig, error) {
+	return domain.EvaluationRuntimeConfig{Enabled: s.enabled}, nil
+}
+
 func TestToolExecuteHandler_RejectsMissingRequiredField(t *testing.T) {
 	reg := registry.New()
 	err := reg.Register(registry.Tool{
@@ -170,6 +174,55 @@ func TestToolExecuteHandler_StripsTenantFieldsBeforeStrictValidation(t *testing.
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, map[string]any{"id": "frag-1"}, gotInput)
+}
+
+func TestToolExecuteHandler_RejectsTenantFieldsForEvaluationTools(t *testing.T) {
+	reg := registry.New()
+	called := false
+	err := reg.Register(registry.Tool{
+		Name:           "eval_get_manifest",
+		InputSchema:    map[string]any{"type": "object", "additionalProperties": true},
+		RequiredScopes: []string{"read", "write"},
+		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+			called = true
+			return map[string]any{"ok": true}, nil
+		},
+	})
+	require.NoError(t, err)
+
+	h := NewToolExecuteHandlerWithRuntimeConfig(reg, handlerRecallFeedbackConfigStub{enabled: true})
+	e := newTestEcho()
+	profileID := uuid.New()
+
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			ctx := middleware.SetResolvedProfileIDForTest(c.Request().Context(), profileID)
+			ctx = middleware.SetPrincipalForTest(ctx, &middleware.Principal{
+				KeyID:  uuid.New(),
+				Role:   "user",
+				Scopes: []string{"read", "write"},
+			})
+			c.SetRequest(c.Request().WithContext(ctx))
+			return next(c)
+		}
+	})
+
+	e.POST("/api/v1/tools/:name", h.Handle)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/eval_get_manifest", strings.NewReader(`{"team_id":"forged","x":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Profile-ID", profileID.String())
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.False(t, called, "evaluation tool must not run when tenant selectors are present")
+
+	var apiErr httperr.APIError
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &apiErr))
+	assert.Equal(t, httperr.VALIDATION_ERROR, apiErr.Code)
+	assert.Contains(t, apiErr.Message, "evaluation tools do not accept team_id or profile_id")
 }
 
 func TestToolExecuteHandler_MapsEmbeddingFailureToServiceUnavailable(t *testing.T) {

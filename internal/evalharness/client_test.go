@@ -1,0 +1,238 @@
+package evalharness
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+func TestHTTPClientEvaluationFlow(t *testing.T) {
+	var controlPatched bool
+	var rememberCalls int
+	var exportCursors []string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Fatalf("content-type = %q; want application/json", r.Header.Get("Content-Type"))
+		}
+		switch r.URL.Path {
+		case "/control/api/config/evaluation":
+			if r.Method != http.MethodPatch || r.Header.Get("Authorization") != "Bearer control-token" {
+				t.Fatalf("control request = %s %s auth %q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+			}
+			var body map[string][]map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode control body: %v", err)
+			}
+			if len(body["items"]) != 2 || body["items"][1]["value"] != "100" {
+				t.Fatalf("control body = %#v", body)
+			}
+			controlPatched = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+		case "/api/v1/tools/remember":
+			if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer api-key" {
+				t.Fatalf("remember request = %s auth %q", r.Method, r.Header.Get("Authorization"))
+			}
+			var input map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatalf("decode remember body: %v", err)
+			}
+			rememberCalls++
+			metadata := input["metadata"].(map[string]any)
+			if input["idempotency_key"] != "eval:doc-alpha" || metadata["source_doc_id"] != "doc-alpha" || metadata["eval_seed"] != true {
+				t.Fatalf("remember input = %#v", input)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"fragment": map[string]any{"id": "fragment-alpha"}})
+		case "/api/v1/tools/eval_list_knowledge_refs":
+			var input map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatalf("decode export body: %v", err)
+			}
+			cursor, _ := input["cursor"].(string)
+			exportCursors = append(exportCursors, cursor)
+			if cursor == "" {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"items": []map[string]any{{
+						"id":       "fragment-alpha",
+						"metadata": map[string]any{"source_doc_id": "doc-alpha"},
+					}},
+					"next_cursor": "next",
+					"has_more":    true,
+				})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"items": []map[string]any{{
+					"id":       "fragment-beta",
+					"metadata": map[string]any{"source_doc_id": "doc-beta"},
+				}},
+				"next_cursor": "",
+				"has_more":    false,
+			})
+		case "/api/v1/tools/eval_run_recall_case":
+			var input map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatalf("decode recall body: %v", err)
+			}
+			if input["case_id"] != "case-alpha" || input["limit"] != float64(3) || input["valid_at"] != "2026-06-25T00:00:00Z" {
+				t.Fatalf("recall input = %#v", input)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"query": "alpha query",
+				"ranked_refs": []map[string]any{{
+					"type": "fragment",
+					"id":   "fragment-alpha",
+					"rank": 1,
+				}},
+				"context_refs": []map[string]any{{
+					"type": "fragment",
+					"id":   "fragment-alpha",
+					"rank": 1,
+				}},
+				"latency_ms":          42,
+				"context_block_chars": 128,
+			})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{
+		BaseURL:      server.URL + "/",
+		APIKey:       "api-key",
+		ControlURL:   server.URL + "/",
+		ControlToken: "control-token",
+		Client:       server.Client(),
+	}
+
+	if err := client.EnableEvaluationMode(context.Background(), 0); err != nil {
+		t.Fatalf("EnableEvaluationMode: %v", err)
+	}
+	mapping, err := client.ImportCorpus(context.Background(), []CorpusItem{{
+		SourceDocID:   "doc-alpha",
+		Title:         "Alpha",
+		Content:       "Alpha content",
+		SourceDataset: "fixture",
+		Metadata:      map[string]any{"topic": "letters"},
+	}})
+	if err != nil {
+		t.Fatalf("ImportCorpus: %v", err)
+	}
+	if mapping.BySourceDocID["doc-alpha"].ID != "fragment-alpha" || rememberCalls != 1 {
+		t.Fatalf("import mapping/calls = %+v/%d", mapping, rememberCalls)
+	}
+
+	exported, err := client.ExportFragmentMapping(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ExportFragmentMapping: %v", err)
+	}
+	if exported.BySourceDocID["doc-beta"].ID != "fragment-beta" || len(exportCursors) != 2 || exportCursors[1] != "next" {
+		t.Fatalf("export mapping/cursors = %+v/%v", exported, exportCursors)
+	}
+
+	trace, err := client.RunRecallCase(context.Background(), Case{
+		CaseID:  "case-alpha",
+		Query:   "alpha query",
+		Limit:   3,
+		ValidAt: "2026-06-25T00:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("RunRecallCase: %v", err)
+	}
+	if trace.CaseID != "case-alpha" || trace.Query != "alpha query" || trace.LatencyMS != 42 || trace.ContextBlockChars != 128 {
+		t.Fatalf("trace = %+v", trace)
+	}
+	if len(trace.RankedRefs) != 1 || trace.RankedRefs[0].ID != "fragment-alpha" || len(trace.ContextRefs) != 1 {
+		t.Fatalf("trace refs = %+v/%+v", trace.RankedRefs, trace.ContextRefs)
+	}
+	if !controlPatched {
+		t.Fatal("control config was not patched")
+	}
+}
+
+func TestHTTPClientErrors(t *testing.T) {
+	client := &HTTPClient{}
+	if err := client.CallTool(context.Background(), "remember", map[string]any{}, nil); err == nil || err.Error() != "base URL is required" {
+		t.Fatalf("missing base URL err = %v", err)
+	}
+	client.BaseURL = "http://example.test"
+	if err := client.CallTool(context.Background(), "remember", map[string]any{}, nil); err == nil || err.Error() != "API key is required" {
+		t.Fatalf("missing API key err = %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "nope", http.StatusTeapot)
+	}))
+	defer server.Close()
+
+	client = &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	err := client.CallTool(context.Background(), "remember", map[string]any{}, nil)
+	if err == nil || err.Error() != "POST "+server.URL+"/api/v1/tools/remember returned 418: nope" {
+		t.Fatalf("status error = %v", err)
+	}
+}
+
+func TestHTTPClientImportRejectsMissingFragmentID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"fragment": map[string]any{}})
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-1", Content: "content"}})
+	if err == nil || !strings.Contains(err.Error(), "remember response missing fragment id") {
+		t.Fatalf("ImportCorpus err = %v", err)
+	}
+}
+
+func TestHTTPClientDecodeHelpers(t *testing.T) {
+	if got := refsFromAny("not-array"); got != nil {
+		t.Fatalf("refsFromAny non-array = %#v; want nil", got)
+	}
+	refs := refsFromAny([]any{"skip", map[string]any{
+		"type": " fragment ",
+		"id":   " fragment-1 ",
+		"rank": json.Number("4"),
+	}})
+	if len(refs) != 1 || refs[0].Type != "fragment" || refs[0].ID != "fragment-1" || refs[0].Rank != 4 {
+		t.Fatalf("refsFromAny = %+v", refs)
+	}
+	if stringValue(json.Number("9")) != "9" || stringValue(9) != "" {
+		t.Fatalf("stringValue json/default branches failed")
+	}
+	for _, tc := range []struct {
+		value any
+		want  int
+	}{
+		{value: int(1), want: 1},
+		{value: int64(2), want: 2},
+		{value: float64(3), want: 3},
+		{value: json.Number("4"), want: 4},
+		{value: "x", want: 0},
+	} {
+		if got := intValue(tc.value); got != tc.want {
+			t.Fatalf("intValue(%#v) = %d; want %d", tc.value, got, tc.want)
+		}
+	}
+	for _, tc := range []struct {
+		value any
+		want  int64
+	}{
+		{value: int64(5), want: 5},
+		{value: int(6), want: 6},
+		{value: float64(7), want: 7},
+		{value: json.Number("8"), want: 8},
+		{value: "x", want: 0},
+	} {
+		if got := int64Value(tc.value); got != tc.want {
+			t.Fatalf("int64Value(%#v) = %d; want %d", tc.value, got, tc.want)
+		}
+	}
+	if firstNonEmpty(" ", "\t", "value") != "value" {
+		t.Fatalf("firstNonEmpty did not skip blank values")
+	}
+}

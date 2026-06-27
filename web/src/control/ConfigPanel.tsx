@@ -1,10 +1,10 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { Check, Clock, ListFilter, MessageSquare, Moon, Network, RefreshCw, Settings, X } from "lucide-react";
-import { CommunityDetectionConfig, CommunityDetectionConfigItem, ControlApi, DreamingConfig, DreamingConfigItem, GeneralConfig, GeneralConfigItem, OperationLogConfig, OperationLogConfigItem, RecallFeedbackConfig, RecallFeedbackConfigItem, SSOConfig, SSOConfigItem } from "../api";
+import { CommunityDetectionConfig, CommunityDetectionConfigItem, ControlApi, DreamingConfig, DreamingConfigItem, EvaluationConfig, EvaluationConfigItem, GeneralConfig, GeneralConfigItem, OperationLogConfig, OperationLogConfigItem, RecallFeedbackConfig, RecallFeedbackConfigItem, SSOConfig, SSOConfigItem } from "../api";
 import { LoadingState, SectionHeading } from "../ui/components";
 import { formatDate, readError } from "./utils";
 
-type ConfigTab = "general" | "sso" | "dreaming" | "community" | "operation-logs" | "recall-feedback";
+type ConfigTab = "general" | "sso" | "dreaming" | "community" | "operation-logs" | "recall-feedback" | "evaluation";
 
 const CONFIG_LABELS: Record<string, string> = {
   APP_TIMEZONE: "Timezone",
@@ -28,6 +28,8 @@ const CONFIG_LABELS: Record<string, string> = {
   OPERATION_LOG_RETENTION_DAYS: "Retention days",
   RECALL_FEEDBACK_ENABLED: "Enable recall feedback",
   RECALL_FEEDBACK_RETENTION_DAYS: "Investigation retention days",
+  EVALUATION_MODE_ENABLED: "Evaluation mode",
+  EVALUATION_EXPORT_MAX_PAGE_SIZE: "Max export page size",
 };
 
 const CONFIG_PLACEHOLDERS: Record<string, string> = {
@@ -43,6 +45,7 @@ const CONFIG_PLACEHOLDERS: Record<string, string> = {
   COMMUNITY_DETECTION_JITTER_SECONDS: "600",
   OPERATION_LOG_RETENTION_DAYS: "30",
   RECALL_FEEDBACK_RETENTION_DAYS: "30",
+  EVALUATION_EXPORT_MAX_PAGE_SIZE: "100",
 };
 
 const FALLBACK_TIMEZONES = [
@@ -124,6 +127,16 @@ export function ConfigPanel({ api }: { api: ControlApi }) {
           <span>Recall</span>
         </button>
         <button
+          className={activeTab === "evaluation" ? "tab-button active" : "tab-button"}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "evaluation"}
+          onClick={() => setActiveTab("evaluation")}
+        >
+          <Settings size={16} aria-hidden="true" />
+          <span>Evaluation</span>
+        </button>
+        <button
           className={activeTab === "operation-logs" ? "tab-button active" : "tab-button"}
           type="button"
           role="tab"
@@ -139,12 +152,13 @@ export function ConfigPanel({ api }: { api: ControlApi }) {
       {activeTab === "dreaming" && <DreamingConfigPanel api={api} />}
       {activeTab === "community" && <CommunityDetectionConfigPanel api={api} />}
       {activeTab === "recall-feedback" && <RecallFeedbackConfigPanel api={api} />}
+      {activeTab === "evaluation" && <EvaluationConfigPanel api={api} />}
       {activeTab === "operation-logs" && <OperationLogConfigPanel api={api} />}
     </>
   );
 }
 
-type ConfigItem = GeneralConfigItem | SSOConfigItem | DreamingConfigItem | CommunityDetectionConfigItem | OperationLogConfigItem | RecallFeedbackConfigItem;
+type ConfigItem = GeneralConfigItem | SSOConfigItem | DreamingConfigItem | CommunityDetectionConfigItem | OperationLogConfigItem | RecallFeedbackConfigItem | EvaluationConfigItem;
 type RuntimeConfig = {
   update_time: string;
   items: ConfigItem[];
@@ -218,6 +232,17 @@ function RecallFeedbackConfigPanel({ api }: { api: ControlApi }) {
       refreshLabel="Refresh recall feedback config"
       load={() => api.getRecallFeedbackConfig()}
       save={(input) => api.updateRecallFeedbackConfig(input)}
+    />
+  );
+}
+
+function EvaluationConfigPanel({ api }: { api: ControlApi }) {
+  return (
+    <RuntimeConfigPanel
+      title="Evaluation"
+      refreshLabel="Refresh evaluation config"
+      load={() => api.getEvaluationConfig()}
+      save={(input) => api.updateEvaluationConfig(input)}
     />
   );
 }
@@ -321,7 +346,7 @@ function ConfigField({
   value,
   onChange,
 }: {
-  item: GeneralConfigItem | SSOConfigItem | DreamingConfigItem | CommunityDetectionConfigItem | OperationLogConfigItem | RecallFeedbackConfigItem;
+  item: GeneralConfigItem | SSOConfigItem | DreamingConfigItem | CommunityDetectionConfigItem | OperationLogConfigItem | RecallFeedbackConfigItem | EvaluationConfigItem;
   value: string;
   onChange: (value: string) => void;
 }) {
@@ -340,7 +365,7 @@ function ConfigField({
     );
   }
 
-  if ((item.key.startsWith("DREAMING_") || item.key.startsWith("COMMUNITY_DETECTION_") || item.key.startsWith("RECALL_FEEDBACK_")) && item.key.endsWith("_ENABLED")) {
+  if ((item.key.startsWith("DREAMING_") || item.key.startsWith("COMMUNITY_DETECTION_") || item.key.startsWith("RECALL_FEEDBACK_") || item.key.startsWith("EVALUATION_")) && item.key.endsWith("_ENABLED")) {
     const checked = (value || item.effective_value) === "true";
     return (
       <>
@@ -381,7 +406,7 @@ function ConfigField({
     );
   }
 
-  const numeric = item.key.endsWith("_SECONDS") || item.key === "DREAMING_MAX_OUTPUTS" || item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" || item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS";
+  const numeric = item.key.endsWith("_SECONDS") || item.key === "DREAMING_MAX_OUTPUTS" || item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" || item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS" || item.key === "EVALUATION_EXPORT_MAX_PAGE_SIZE";
   const time = item.key === "DREAMING_START_TIME_LOCAL" || item.key === "COMMUNITY_DETECTION_START_TIME_LOCAL";
   const min = item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 0 : numeric ? 1 : undefined;
   return (
@@ -391,7 +416,7 @@ function ConfigField({
         id={item.key}
         type={time ? "time" : numeric ? "number" : "text"}
         min={min}
-        max={item.key === "DREAMING_MAX_OUTPUTS" ? 50 : item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" ? 8 : item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 3600 : item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS" ? 365 : undefined}
+        max={item.key === "DREAMING_MAX_OUTPUTS" ? 50 : item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" ? 8 : item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 3600 : item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS" ? 365 : item.key === "EVALUATION_EXPORT_MAX_PAGE_SIZE" ? 500 : undefined}
         placeholder={CONFIG_PLACEHOLDERS[item.key] ?? ""}
         value={value}
         onChange={(event) => onChange(event.target.value)}

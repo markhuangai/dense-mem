@@ -21,13 +21,13 @@ type Judgment struct {
 
 // Metrics captures one query's offline ranking quality at K.
 type Metrics struct {
-	K             int
-	RelevantAtK   int
-	RelevantTotal int
-	BadAtK        int
-	RecallAtK     float64
-	MRR           float64
-	NDCGAtK       float64
+	K             int     `json:"k"`
+	RelevantAtK   int     `json:"relevant_at_k"`
+	RelevantTotal int     `json:"relevant_total"`
+	BadAtK        int     `json:"bad_at_k"`
+	RecallAtK     float64 `json:"recall_at_k"`
+	MRR           float64 `json:"mrr"`
+	NDCGAtK       float64 `json:"ndcg_at_k"`
 }
 
 // ScoreAtK scores ranked results against relevant and judged-irrelevant refs.

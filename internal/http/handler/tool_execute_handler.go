@@ -87,6 +87,9 @@ func (h *ToolExecuteHandler) Handle(c echo.Context) error {
 			return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
 		}
 	}
+	if registry.IsEvaluationTool(tool.Name) && registry.HasTenantOverrideArgs(args) {
+		return httperr.New(httperr.VALIDATION_ERROR, "evaluation tools do not accept team_id or profile_id")
+	}
 	registry.StripTenantOverrideArgs(args)
 	if err := registry.ValidateInput(tool, args); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, err.Error())

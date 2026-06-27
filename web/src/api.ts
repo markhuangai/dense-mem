@@ -326,6 +326,26 @@ export type RecallFeedbackConfigInput = {
   }>;
 };
 
+export type EvaluationRuntimeConfig = {
+  enabled: boolean;
+  export_max_page_size: number;
+};
+
+export type EvaluationConfigItem = SSOConfigItem;
+
+export type EvaluationConfig = {
+  update_time: string;
+  items: EvaluationConfigItem[];
+  effective: EvaluationRuntimeConfig;
+};
+
+export type EvaluationConfigInput = {
+  items: Array<{
+    key: string;
+    value: string;
+  }>;
+};
+
 export type OperationLog = {
   id: string;
   timestamp: string;
@@ -664,6 +684,14 @@ export class ControlApi {
 
   updateRecallFeedbackConfig(input: RecallFeedbackConfigInput): Promise<RecallFeedbackConfig> {
     return this.requestEnvelope<RecallFeedbackConfig>("/config/recall-feedback", { method: "PATCH", body: input });
+  }
+
+  getEvaluationConfig(): Promise<EvaluationConfig> {
+    return this.requestEnvelope<EvaluationConfig>("/config/evaluation");
+  }
+
+  updateEvaluationConfig(input: EvaluationConfigInput): Promise<EvaluationConfig> {
+    return this.requestEnvelope<EvaluationConfig>("/config/evaluation", { method: "PATCH", body: input });
   }
 
   listOperationLogs(query: OperationLogQuery = {}): Promise<Page<OperationLog>> {

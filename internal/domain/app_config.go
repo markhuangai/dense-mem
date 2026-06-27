@@ -31,6 +31,9 @@ const (
 
 	AppConfigRecallFeedbackEnabled       = "RECALL_FEEDBACK_ENABLED"
 	AppConfigRecallFeedbackRetentionDays = "RECALL_FEEDBACK_RETENTION_DAYS"
+
+	AppConfigEvaluationModeEnabled   = "EVALUATION_MODE_ENABLED"
+	AppConfigEvaluationExportMaxPage = "EVALUATION_EXPORT_MAX_PAGE_SIZE"
 )
 
 type AppConfigEntry struct {
@@ -113,4 +116,26 @@ type RecallFeedbackConfigItem struct {
 type RecallFeedbackRuntimeConfig struct {
 	Enabled       bool `json:"enabled"`
 	RetentionDays int  `json:"retention_days"`
+}
+
+// EvaluationConfigSettings is the editable runtime configuration for local
+// evaluation exports and recall tracing.
+type EvaluationConfigSettings struct {
+	UpdateTime string                  `json:"update_time"`
+	Items      []EvaluationConfigItem  `json:"items"`
+	Effective  EvaluationRuntimeConfig `json:"effective"`
+}
+
+// EvaluationConfigItem is one control-panel editable evaluation config entry.
+type EvaluationConfigItem struct {
+	Key            string    `json:"key"`
+	Value          string    `json:"value"`
+	EffectiveValue string    `json:"effective_value"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// EvaluationRuntimeConfig is the effective evaluation-mode runtime config.
+type EvaluationRuntimeConfig struct {
+	Enabled           bool `json:"enabled"`
+	ExportMaxPageSize int  `json:"export_max_page_size"`
 }
