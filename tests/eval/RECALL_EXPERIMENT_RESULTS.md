@@ -12,9 +12,9 @@ Baseline run: `tests/eval/runs/20260628T145353Z_current_logic_baseline_retry`
 
 ## Summary
 
-The best measured branch is `exp/recall-fragment-temporal-rerank`.
+The best measured branch is `exp/recall-historical-sibling-suppression`.
 
-It preserves perfect `recall@k=1.0000`, improves rank-1 quality, and reduces judged-bad context from `bad@k=0.6740` to `0.0990`.
+It preserves perfect `recall@k=1.0000`, improves rank-1 quality, and reduces judged-bad context from `bad@k=0.6740` to `0.0090`.
 
 ## Research Basis
 
@@ -44,7 +44,8 @@ References:
 | `exp/recall-authority-rerank` | `20260628T183921Z_authority_rerank` | 1.0000 | 0.9045 | 0.9294 | 0.5210 | 0.8150 | 0.1800 | Useful bad@k reduction |
 | `exp/recall-cue-currentness-combined` | `20260628T182617Z_cue_currentness_combined` | 1.0000 | 0.9975 | 0.9982 | 0.2660 | 0.9950 | 0.0010 | Better than either alone |
 | `exp/recall-cue-currentness-authority-combined` | `20260628T185425Z_cue_currentness_authority_combined` | 1.0000 | 0.9980 | 0.9985 | 0.1130 | 0.9960 | 0.0000 | Previous best |
-| `exp/recall-fragment-temporal-rerank` | `20260628T211142Z_fragment_temporal_rerank_date_priority` | 1.0000 | 0.9980 | 0.9985 | 0.0990 | 0.9960 | 0.0000 | Best current candidate |
+| `exp/recall-fragment-temporal-rerank` | `20260628T211142Z_fragment_temporal_rerank_date_priority` | 1.0000 | 0.9980 | 0.9985 | 0.0990 | 0.9960 | 0.0000 | Previous best |
+| `exp/recall-historical-sibling-suppression` | `20260628T212723Z_historical_sibling_suppression` | 1.0000 | 0.9985 | 0.9989 | 0.0090 | 0.9970 | 0.0000 | Best current candidate |
 
 ## Best Candidate Deltas
 
@@ -53,19 +54,19 @@ Against original baseline:
 | Metric | Delta |
 | --- | ---: |
 | recall@k | +0.0000 |
-| MRR | +0.0940 |
-| nDCG@k | +0.0695 |
-| bad@k | -0.5750 |
+| MRR | +0.0945 |
+| nDCG@k | +0.0699 |
+| bad@k | -0.6650 |
 | bad rank 1 | -0.1810 |
 
-Against cue+currentness+authority:
+Against date-priority fragment rerank:
 
 | Metric | Delta |
 | --- | ---: |
 | recall@k | +0.0000 |
-| MRR | +0.0000 |
-| nDCG@k | +0.0000 |
-| bad@k | -0.0140 |
+| MRR | +0.0005 |
+| nDCG@k | +0.0004 |
+| bad@k | -0.0900 |
 | bad rank 1 | +0.0000 |
 
 ## What Changed
@@ -76,28 +77,29 @@ The best branch keeps the existing hybrid semantic plus keyword RRF flow and add
 2. Currentness rerank: handles current/as-of/latest queries and demotes archived, obsolete, replaced, draft, copied, rollback, and proposed evidence.
 3. Authority rerank: handles require/canonical/authoritative queries and promotes authoritative/signed/canonical evidence while demoting informal chat, personal checklist, transcript, and unapproved evidence.
 4. Date-priority currentness rerank: carries raw fragment `created_at` and `updated_at` through semantic and keyword search, parses explicit `YYYY-MM-DD` dates in matching fragment content, and prevents undated "current/now" wording from receiving a positive lexical boost when a matching dated candidate exists.
+5. Historical sibling suppression: for selection queries, detects when a matching directive answer exists and applies a stronger penalty to historic action siblings such as `Before 2026 ... used ...`.
 
 All positive boosts require matching identifier-like tokens from the query, such as `OBS-001`, `NEG-001`, or `AUT-061`, when such identifiers exist. This guard prevents neighboring template records from receiving accidental boosts.
 
 ## Remaining Gaps
 
-The best branch still has `bad@k=0.0990`.
+The best branch still has `bad@k=0.0090`.
 
 Residual bad evidence is concentrated in:
 
 | Slice | Avg bad@k | Notes |
 | --- | ---: | --- |
-| `explicit_negation` | 1.0000 | Required record is rank 1, but one misleading negation sibling remains in top-k. |
 | `obsolete_correction` | 0.1000 | Date-priority rerank reduced stale correction context, but some stale records remain in top-k. |
 | `unit_trap` | 0.0000 | No bad context, but MRR is still below perfect due rank-1 misses. |
-| `retraction` | 0.0000 | No bad context, but MRR is still below perfect due rank-1 misses. |
+| `explicit_negation` | 0.0000 | Historical sibling suppression removed the remaining bad context. |
+| `retraction` | 0.0000 | No bad context and rank 1 is now perfect in this slice. |
 
 ## Recommendation
 
-Merge candidate to main should start from `exp/recall-fragment-temporal-rerank`, not the isolated branches.
+Merge candidate to main should start from `exp/recall-historical-sibling-suppression`, not the isolated branches.
 
 Next improvement experiments should target context suppression after rank 1 is correct:
 
-1. Explicit-negation sibling suppression for queries where the required answer is rank 1 but a negated sibling remains in top-k.
-2. A safer context-window filter that can remove low-authority/stale hard negatives after the required item is selected.
-3. Unit/retraction rank polish, because those are now rank-quality issues without bad context contamination.
+1. Obsolete-correction context suppression, because it is the only remaining bad-context slice.
+2. Unit-trap rank polish, because that slice still has no bad context but MRR remains below perfect.
+3. Broader temporal parsing beyond ISO `YYYY-MM-DD`, including natural language dates, before relying on date-priority rerank outside the synthetic seed.

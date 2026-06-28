@@ -948,6 +948,46 @@ func TestRecallService_CueRerankPrefersDirectiveEvidence(t *testing.T) {
 	require.Equal(t, "f-required", out[0].Fragment.FragmentID)
 }
 
+func TestRecallService_CueRerankSuppressesHistoricalSiblingWhenDirectiveExists(t *testing.T) {
+	query := "Which pager should alerts for queue NEG-001 use?"
+	stale := "Before 2026, queue NEG-001 used pager-001-red for alerts."
+	sem := &fakeSemanticSearcher{
+		hits: []semanticsearch.SearchHit{
+			{ID: "f-stale", Type: "fragment", Content: stale},
+		},
+	}
+	kw := &fakeKeywordSearcher{
+		hits: []keywordsearch.FragmentSearchResult{
+			{
+				FragmentID: "f-required",
+				Content:    "Routing policy dated 2026-06-28. Alerts for queue NEG-001 must use pager-001-green. Do not use pager-001-red for this queue.",
+			},
+			{FragmentID: "f-stale", Content: stale},
+			{FragmentID: "f-filler-1", Content: "Queue NEG-001 inventory reference for alert routing review."},
+			{FragmentID: "f-filler-2", Content: "Queue NEG-001 runbook index entry for pager ownership audits."},
+			{FragmentID: "f-filler-3", Content: "Queue NEG-001 on-call calendar note for escalation metadata."},
+			{FragmentID: "f-filler-4", Content: "Queue NEG-001 dashboard bookmark for support handoff."},
+		},
+	}
+	svc := NewRecallService(&stubEmbedding{DimensionsResult: 4}, sem, kw, &fakeHydrator{}, nil, nil)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: query, Limit: 5})
+
+	require.NoError(t, err)
+	require.Len(t, out, 5)
+	for _, hit := range out {
+		require.NotEqual(t, "f-stale", hit.Fragment.FragmentID)
+	}
+}
+
+func TestHistoricalSelectionAdjustmentRequiresDirectiveFrame(t *testing.T) {
+	query := "Which pager should alerts for queue NEG-001 use?"
+	stale := "Before 2026, queue NEG-001 used pager-001-red for alerts."
+
+	require.Zero(t, historicalSelectionAdjustment(query, stale, selectionCueFrame{}))
+	require.Negative(t, historicalSelectionAdjustment(query, stale, selectionCueFrame{hasDirectiveMatch: true}))
+}
+
 func TestRecallCueAdjustmentRequiresQueryIdentifiersForBoosts(t *testing.T) {
 	query := "Which endpoint should the west-030 region use for billing sync?"
 	neighborTemplate := "Export routing rule. Enterprise tenants such as tenant CND-030 enterprise must use endpoint-enterprise-030."

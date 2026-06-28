@@ -780,8 +780,10 @@ func applyCueAdjustments(query string, entries []rrfEntry) {
 	if !isSelectionRecallQuery(query) {
 		return
 	}
+	frame := selectionCueFrameFor(query, entries)
 	for i := range entries {
 		entries[i].FinalScore += cueAdjustment(query, entries[i].Content)
+		entries[i].FinalScore += historicalSelectionAdjustment(query, entries[i].Content, frame)
 		if entries[i].FinalScore < 0 {
 			entries[i].FinalScore = 0
 		}
@@ -996,6 +998,45 @@ func cueAdjustment(query, content string) float64 {
 		return -0.026
 	}
 	return adjustment
+}
+
+type selectionCueFrame struct {
+	hasDirectiveMatch bool
+}
+
+func selectionCueFrameFor(query string, entries []rrfEntry) selectionCueFrame {
+	queryText := rerankText(query)
+	var frame selectionCueFrame
+	for _, entry := range entries {
+		contentText := rerankText(entry.Content)
+		if queryText == "" || contentText == "" || !matchesQueryIdentifiers(queryText, contentText) {
+			continue
+		}
+		if containsAnyCue(contentText, directiveCues) {
+			frame.hasDirectiveMatch = true
+			return frame
+		}
+	}
+	return frame
+}
+
+func historicalSelectionAdjustment(query, content string, frame selectionCueFrame) float64 {
+	if !frame.hasDirectiveMatch {
+		return 0
+	}
+	queryText := rerankText(query)
+	contentText := rerankText(content)
+	if queryText == "" || contentText == "" || !matchesQueryIdentifiers(queryText, contentText) {
+		return 0
+	}
+	if historicalSelectionActionCue(contentText) {
+		return -0.018
+	}
+	return 0
+}
+
+func historicalSelectionActionCue(contentText string) bool {
+	return strings.Contains(contentText, " before ") && strings.Contains(contentText, " used ")
 }
 
 func authorityAdjustment(query, content string) float64 {
