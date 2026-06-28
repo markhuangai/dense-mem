@@ -878,6 +878,31 @@ func TestRecallService_CurrentnessRerankDatedFragmentBeatsUndatedCurrentCue(t *t
 	require.Equal(t, "f-new-dated", out[0].Fragment.FragmentID)
 }
 
+func TestRecallService_CurrentnessRerankHandlesActiveDecisionQueries(t *testing.T) {
+	query := "What is the active launch decision for notice RET-046?"
+	required := "Retraction update dated 2026-06-28. Earlier approval for notice RET-046 was withdrawn. The active decision is launch-paused-046."
+	stale := "Original announcement said notice RET-046 was launch-approved-046 before the retraction."
+	sem := &fakeSemanticSearcher{
+		hits: []semanticsearch.SearchHit{
+			{ID: "f-stale", Type: "fragment", Content: stale},
+			{ID: "f-required", Type: "fragment", Content: required},
+		},
+	}
+	kw := &fakeKeywordSearcher{
+		hits: []keywordsearch.FragmentSearchResult{
+			{FragmentID: "f-required", Content: required},
+			{FragmentID: "f-stale", Content: stale},
+		},
+	}
+	svc := NewRecallService(&stubEmbedding{DimensionsResult: 4}, sem, kw, &fakeHydrator{}, nil, nil)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: query, Limit: 5})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, out)
+	require.Equal(t, "f-required", out[0].Fragment.FragmentID)
+}
+
 func TestCurrentnessTemporalAdjustmentRequiresQueryIdentifiers(t *testing.T) {
 	query := "Who is the current owner for account TMP-001?"
 	newest := time.Date(2026, 6, 26, 0, 0, 0, 0, time.UTC)
@@ -913,6 +938,31 @@ func TestCurrentnessTemporalFramePrefersContentDatesOverBulkImportTimes(t *testi
 	require.False(t, frame.useFragmentTimestamp)
 	require.Positive(t, currentnessTemporalAdjustment(query, entries[0], frame))
 	require.Negative(t, currentnessTemporalAdjustment(query, entries[1], frame))
+}
+
+func TestFilterNonPositiveRRFEntriesDropsZeroScoresWhenPositiveExists(t *testing.T) {
+	entries := []rrfEntry{
+		{id: "positive", FinalScore: 0.01},
+		{id: "zero", FinalScore: 0},
+	}
+
+	out := filterNonPositiveRRFEntries(entries)
+
+	require.Len(t, out, 1)
+	require.Equal(t, "positive", out[0].id)
+}
+
+func TestFilterNonPositiveRRFEntriesKeepsAllZeroScoresWhenNoPositiveExists(t *testing.T) {
+	entries := []rrfEntry{
+		{id: "zero-1", FinalScore: 0},
+		{id: "zero-2", FinalScore: 0},
+	}
+
+	out := filterNonPositiveRRFEntries(entries)
+
+	require.Len(t, out, 2)
+	require.Equal(t, "zero-1", out[0].id)
+	require.Equal(t, "zero-2", out[1].id)
 }
 
 func TestRecallService_CueRerankPrefersDirectiveEvidence(t *testing.T) {

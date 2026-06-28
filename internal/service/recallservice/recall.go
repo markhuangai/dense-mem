@@ -414,6 +414,7 @@ func (s *recallService) Recall(ctx context.Context, profileID string, req Recall
 	applyCurrentnessAdjustments(query, merged)
 	applyCueAdjustments(query, merged)
 	applyAuthorityAdjustments(query, merged)
+	merged = filterNonPositiveRRFEntries(merged)
 
 	sort.SliceStable(merged, func(i, j int) bool {
 		if merged[i].FinalScore != merged[j].FinalScore {
@@ -742,6 +743,27 @@ func rrfMerge(sem []semanticsearch.SearchHit, kw []keywordsearch.FragmentSearchR
 	out := make([]rrfEntry, 0, len(byID))
 	for _, e := range byID {
 		out = append(out, *e)
+	}
+	return out
+}
+
+func filterNonPositiveRRFEntries(entries []rrfEntry) []rrfEntry {
+	hasPositive := false
+	for _, entry := range entries {
+		if entry.FinalScore > 0 {
+			hasPositive = true
+			break
+		}
+	}
+	if !hasPositive {
+		return entries
+	}
+
+	out := entries[:0]
+	for _, entry := range entries {
+		if entry.FinalScore > 0 {
+			out = append(out, entry)
+		}
 	}
 	return out
 }
@@ -1077,7 +1099,8 @@ func isCurrentnessQuery(query string) bool {
 	return strings.Contains(text, " current ") ||
 		strings.Contains(text, " as of ") ||
 		strings.Contains(text, " now ") ||
-		strings.Contains(text, " latest ")
+		strings.Contains(text, " latest ") ||
+		strings.Contains(text, " active ")
 }
 
 func isSelectionRecallQuery(query string) bool {
