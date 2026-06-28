@@ -16,6 +16,24 @@ The best measured branch is `exp/recall-cue-currentness-authority-combined` at c
 
 It preserves perfect `recall@k=1.0000`, improves rank-1 quality, and reduces judged-bad context from `bad@k=0.6740` to `0.1130`.
 
+## Research Basis
+
+The experiments follow the common multi-stage retrieval pattern used by current RAG systems:
+
+- Keep hybrid retrieval plus RRF as the high-recall first stage. Azure AI Search documents RRF as the fusion method for parallel hybrid/vector result lists, and Google Vector Search describes hybrid semantic plus token search with RRF as a standard quality pattern.
+- Add a post-retrieval precision stage. Pinecone documents reranking as a two-stage retrieval method where initial candidates are retrieved first, then scored again for query relevance.
+- Treat context cleanup as a postprocessor/compressor stage. LangChain's contextual compression and LlamaIndex node postprocessors both place filtering/reranking between retrieval and response synthesis.
+- Keep MMR/diversity as a follow-up, not the first fix. Qdrant documents MMR as useful for redundant or very similar results; our baseline showed the larger problem was misleading authority/currentness/negation siblings, so targeted rerank was the lower-risk first experiment.
+
+References:
+
+- Azure AI Search: [RRF in hybrid search](https://learn.microsoft.com/en-us/azure/search/hybrid-search-ranking)
+- Google Vector Search: [hybrid search and reranking](https://docs.cloud.google.com/gemini-enterprise-agent-platform/build/vector-search/about-hybrid-search)
+- Pinecone: [rerank results](https://docs.pinecone.io/guides/search/rerank-results)
+- LangChain: [contextual compression](https://www.langchain.com/blog/improving-document-retrieval-with-contextual-compression)
+- LlamaIndex: [node postprocessors](https://developers.llamaindex.ai/python/framework/module_guides/querying/node_postprocessors/)
+- Qdrant: [MMR search relevance](https://qdrant.tech/documentation/search/search-relevance/)
+
 ## Experiment Matrix
 
 | Branch | Run | recall@k | MRR | nDCG@k | bad@k | required rank 1 | bad rank 1 | Judgment |
