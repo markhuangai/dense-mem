@@ -411,6 +411,7 @@ func (s *recallService) Recall(ctx context.Context, profileID string, req Recall
 	filteredKw := filterKeywordFragments(kwHits, profileID)
 
 	merged := rrfMerge(filteredSem, filteredKw)
+	applyCurrentnessAdjustments(query, merged)
 
 	sort.SliceStable(merged, func(i, j int) bool {
 		if merged[i].FinalScore != merged[j].FinalScore {
@@ -692,6 +693,7 @@ func (s *recallService) batchHydrateClaims(ctx context.Context, profileID string
 // rrfEntry is the internal accumulator keyed by fragment id.
 type rrfEntry struct {
 	id           string
+	Content      string
 	SemanticRank int
 	KeywordRank  int
 	FinalScore   float64
@@ -708,6 +710,9 @@ func rrfMerge(sem []semanticsearch.SearchHit, kw []keywordsearch.FragmentSearchR
 			e = &rrfEntry{id: h.ID}
 			byID[h.ID] = e
 		}
+		if e.Content == "" {
+			e.Content = h.Content
+		}
 		if e.SemanticRank == 0 || rank < e.SemanticRank {
 			e.SemanticRank = rank
 		}
@@ -720,6 +725,9 @@ func rrfMerge(sem []semanticsearch.SearchHit, kw []keywordsearch.FragmentSearchR
 			e = &rrfEntry{id: h.FragmentID}
 			byID[h.FragmentID] = e
 		}
+		if e.Content == "" {
+			e.Content = h.Content
+		}
 		if e.KeywordRank == 0 || rank < e.KeywordRank {
 			e.KeywordRank = rank
 		}
@@ -730,6 +738,161 @@ func rrfMerge(sem []semanticsearch.SearchHit, kw []keywordsearch.FragmentSearchR
 		out = append(out, *e)
 	}
 	return out
+}
+
+func applyCurrentnessAdjustments(query string, entries []rrfEntry) {
+	if !isCurrentnessQuery(query) {
+		return
+	}
+	for i := range entries {
+		entries[i].FinalScore += currentnessAdjustment(query, entries[i].Content)
+		if entries[i].FinalScore < 0 {
+			entries[i].FinalScore = 0
+		}
+	}
+}
+
+func currentnessAdjustment(query, content string) float64 {
+	queryText := rerankText(query)
+	contentText := rerankText(content)
+	if queryText == "" || contentText == "" {
+		return 0
+	}
+
+	adjustment := 0.0
+	hasCurrentCue := containsAnyRerankCue(contentText, currentnessPositiveCues)
+	if hasCurrentCue && rerankMatchesQueryIdentifiers(queryText, contentText) {
+		adjustment += 0.024
+	}
+	if containsAnyRerankCue(contentText, currentnessStrongStaleCues) {
+		if hasCurrentCue {
+			adjustment -= 0.006
+		} else {
+			adjustment -= 0.024
+		}
+	}
+	if containsAnyRerankCue(contentText, currentnessWeakStaleCues) {
+		adjustment -= 0.012
+	}
+
+	if adjustment > 0.028 {
+		return 0.028
+	}
+	if adjustment < -0.028 {
+		return -0.028
+	}
+	return adjustment
+}
+
+func isCurrentnessQuery(query string) bool {
+	text := rerankText(query)
+	return strings.Contains(text, " current ") ||
+		strings.Contains(text, " as of ") ||
+		strings.Contains(text, " now ") ||
+		strings.Contains(text, " latest ")
+}
+
+func rerankMatchesQueryIdentifiers(queryText, contentText string) bool {
+	identifiers := rerankIdentifiers(queryText)
+	if len(identifiers) == 0 {
+		return true
+	}
+	for _, identifier := range identifiers {
+		if !strings.Contains(contentText, " "+identifier+" ") {
+			return false
+		}
+	}
+	return true
+}
+
+func rerankIdentifiers(text string) []string {
+	fields := strings.Fields(text)
+	out := make([]string, 0, len(fields))
+	seen := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		if _, ok := seen[field]; ok {
+			continue
+		}
+		if rerankIdentifierToken(field) {
+			out = append(out, field)
+			seen[field] = struct{}{}
+		}
+	}
+	return out
+}
+
+func rerankIdentifierToken(token string) bool {
+	hasDigit := false
+	for _, r := range token {
+		if r >= '0' && r <= '9' {
+			hasDigit = true
+			break
+		}
+	}
+	return hasDigit && strings.Contains(token, "-")
+}
+
+func rerankText(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return ""
+	}
+	replacer := strings.NewReplacer(
+		"\n", " ",
+		"\t", " ",
+		".", " ",
+		",", " ",
+		":", " ",
+		";", " ",
+		"?", " ",
+		"!", " ",
+		"(", " ",
+		")", " ",
+	)
+	return " " + strings.Join(strings.Fields(replacer.Replace(value)), " ") + " "
+}
+
+func containsAnyRerankCue(text string, cues []string) bool {
+	for _, cue := range cues {
+		if strings.Contains(text, cue) {
+			return true
+		}
+	}
+	return false
+}
+
+var currentnessPositiveCues = []string{
+	" current ",
+	" now ",
+	" active ",
+	" valid on ",
+	" update dated ",
+}
+
+var currentnessStrongStaleCues = []string{
+	" archived ",
+	" obsolete ",
+	" replaced ",
+	" rejected ",
+	" not active ",
+	" not approved ",
+}
+
+var currentnessWeakStaleCues = []string{
+	" legacy ",
+	" previous ",
+	" previously ",
+	" before ",
+	" older ",
+	" old ",
+	" draft ",
+	" suggested ",
+	" copied ",
+	" rollback ",
+	" incident review ",
+	" proposed ",
+	" once ",
+	" future proposal ",
 }
 
 func factMatchesRecallWindow(f *domain.Fact, validAt, knownAt *time.Time) bool {

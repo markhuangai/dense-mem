@@ -764,6 +764,46 @@ func TestRecallService_RRFScoreOrdering(t *testing.T) {
 	}
 }
 
+func TestRecallService_CurrentnessRerankPrefersCurrentUpdate(t *testing.T) {
+	query := "What is the current deployment window for service OBS-001?"
+	sem := &fakeSemanticSearcher{
+		hits: []semanticsearch.SearchHit{
+			{
+				ID:      "f-archived",
+				Type:    "fragment",
+				Content: "Archived 2025 calendar. service OBS-001 deployed at 02:01 UTC before the correction.",
+			},
+		},
+	}
+	kw := &fakeKeywordSearcher{
+		hits: []keywordsearch.FragmentSearchResult{
+			{
+				FragmentID: "f-current",
+				Content:    "Current release calendar update dated 2026-06-28. service OBS-001 now deploys at 03:01 UTC.",
+			},
+			{
+				FragmentID: "f-archived",
+				Content:    "Archived 2025 calendar. service OBS-001 deployed at 02:01 UTC before the correction.",
+			},
+		},
+	}
+	emb := &stubEmbedding{DimensionsResult: 4}
+	svc := NewRecallService(emb, sem, kw, &fakeHydrator{}, nil, nil)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: query, Limit: 5})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, out)
+	require.Equal(t, "f-current", out[0].Fragment.FragmentID)
+}
+
+func TestCurrentnessAdjustmentRequiresQueryIdentifiersForBoosts(t *testing.T) {
+	query := "What is the current deployment window for service OBS-001?"
+	neighbor := "Current release calendar update dated 2026-06-28. service OBS-002 now deploys at 03:02 UTC."
+
+	require.Zero(t, currentnessAdjustment(query, neighbor))
+}
+
 func TestRecallService_CommunityExpansionDisabledByDefault(t *testing.T) {
 	sem := &fakeSemanticSearcher{hits: []semanticsearch.SearchHit{{ID: "f-direct", Type: "fragment"}}}
 	kw := &fakeKeywordSearcher{}
