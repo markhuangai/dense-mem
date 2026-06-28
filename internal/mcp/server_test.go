@@ -590,12 +590,42 @@ func TestMCP_MemoryToolsScopeProfileAndClarifications(t *testing.T) {
 	}
 }
 
+func TestMCP_RememberAcceptsLegacyContentCallAsEvidence(t *testing.T) {
+	logger, _ := testLogger(t)
+	mem := &mcpMemoryStub{}
+	reg, err := registry.BuildDefault(registry.Dependencies{Memory: mem})
+	if err != nil {
+		t.Fatalf("BuildDefault: %v", err)
+	}
+	server := NewServerWithScopes(reg, "profileA", []string{"read", "write"}, logger)
+
+	out := runRPC(t, server, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"remember","arguments":{"content":"legacy client content","labels":["decision","security"],"source":"chat: compatibility","idempotency_key":"legacy-content-call","auto_promote":true,"claims":[{"subject":"client","predicate":"uses","object":"old remember shape","extract_conf":0.99,"resolution_conf":0.99}]}}}`)
+	if strings.Contains(out, `"error"`) {
+		t.Fatalf("legacy remember call failed: %s", out)
+	}
+	if len(mem.lastRemember.Evidence) != 1 {
+		t.Fatalf("remember evidence count = %d; want 1", len(mem.lastRemember.Evidence))
+	}
+	evidence := mem.lastRemember.Evidence[0]
+	if evidence.Content != "legacy client content" {
+		t.Fatalf("remember evidence content = %q", evidence.Content)
+	}
+	if evidence.Source != "chat: compatibility" || evidence.IdempotencyKey != "legacy-content-call" {
+		t.Fatalf("remember evidence provenance = %#v", evidence)
+	}
+	if len(evidence.Labels) != 2 || evidence.Labels[0] != "decision" || evidence.Labels[1] != "security" {
+		t.Fatalf("remember evidence labels = %#v", evidence.Labels)
+	}
+}
+
 type mcpMemoryStub struct {
-	lastProfile string
+	lastProfile  string
+	lastRemember memoryservice.RememberRequest
 }
 
 func (s *mcpMemoryStub) Remember(ctx context.Context, profileID string, req memoryservice.RememberRequest) (*memoryservice.RememberResult, error) {
 	s.lastProfile = profileID
+	s.lastRemember = req
 	return &memoryservice.RememberResult{
 		IngestID: "ingest-1",
 		Status:   "queued",

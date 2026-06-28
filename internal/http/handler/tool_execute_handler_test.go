@@ -176,6 +176,60 @@ func TestToolExecuteHandler_StripsTenantFieldsBeforeStrictValidation(t *testing.
 	require.Equal(t, map[string]any{"id": "frag-1"}, gotInput)
 }
 
+func TestToolExecuteHandler_NormalizesInputBeforeStrictValidation(t *testing.T) {
+	reg := registry.New()
+	var gotInput map[string]any
+	err := reg.Register(registry.Tool{
+		Name: "remember",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"required":             []string{"evidence"},
+			"properties":           map[string]any{"evidence": map[string]any{"type": "array"}},
+			"additionalProperties": false,
+		},
+		RequiredScopes: []string{"write"},
+		NormalizeInput: func(input map[string]any) map[string]any {
+			return map[string]any{
+				"evidence": []any{map[string]any{"content": input["content"]}},
+			}
+		},
+		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+			gotInput = input
+			return map[string]any{"ok": true}, nil
+		},
+	})
+	require.NoError(t, err)
+
+	h := NewToolExecuteHandler(reg)
+	e := newTestEcho()
+	profileID := uuid.New()
+
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			ctx := middleware.SetResolvedProfileIDForTest(c.Request().Context(), profileID)
+			ctx = middleware.SetPrincipalForTest(ctx, &middleware.Principal{
+				KeyID:  uuid.New(),
+				Role:   "user",
+				Scopes: []string{"write"},
+			})
+			c.SetRequest(c.Request().WithContext(ctx))
+			return next(c)
+		}
+	})
+
+	e.POST("/api/v1/tools/:name", h.Handle)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/remember", strings.NewReader(`{"content":"hello"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Profile-ID", profileID.String())
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, []any{map[string]any{"content": "hello"}}, gotInput["evidence"])
+}
+
 func TestToolExecuteHandler_RejectsTenantFieldsForEvaluationTools(t *testing.T) {
 	reg := registry.New()
 	called := false

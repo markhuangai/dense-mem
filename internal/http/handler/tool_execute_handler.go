@@ -91,6 +91,7 @@ func (h *ToolExecuteHandler) Handle(c echo.Context) error {
 		return httperr.New(httperr.VALIDATION_ERROR, "evaluation tools do not accept team_id or profile_id")
 	}
 	registry.StripTenantOverrideArgs(args)
+	args = registry.NormalizeInput(tool, args)
 	if err := registry.ValidateInput(tool, args); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, err.Error())
 	}

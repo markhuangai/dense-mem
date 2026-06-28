@@ -23,10 +23,12 @@ func rememberTool(deps Dependencies) Tool {
 		},
 		OutputSchema:   rememberPlacementResultSchema(),
 		RequiredScopes: []string{"write"},
+		NormalizeInput: normalizeRememberInput,
 		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
 			if deps.Memory == nil {
 				return nil, ErrToolUnavailable
 			}
+			input = normalizeRememberInput(input)
 			var req memoryservice.RememberRequest
 			if err := remapInput(input, &req); err != nil {
 				return nil, fmt.Errorf("remember: invalid input: %w", err)
@@ -38,6 +40,37 @@ func rememberTool(deps Dependencies) Tool {
 			return structToMap(res)
 		},
 	}
+}
+
+func normalizeRememberInput(input map[string]any) map[string]any {
+	out := make(map[string]any, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	delete(out, "claims")
+	delete(out, "auto_promote")
+	if _, ok := out["evidence"]; ok {
+		delete(out, "content")
+		delete(out, "source")
+		delete(out, "idempotency_key")
+		delete(out, "labels")
+		delete(out, "metadata")
+		return out
+	}
+	content, ok := out["content"]
+	if !ok {
+		return out
+	}
+	evidence := map[string]any{"content": content}
+	for _, key := range []string{"source", "idempotency_key", "labels", "metadata"} {
+		if value, ok := out[key]; ok {
+			evidence[key] = value
+			delete(out, key)
+		}
+	}
+	delete(out, "content")
+	out["evidence"] = []any{evidence}
+	return out
 }
 
 func getMemoryPlacementTool(deps Dependencies) Tool {

@@ -23,6 +23,10 @@ var toolNamePattern = regexp.MustCompile(toolNamePatternText)
 // has to parse headers or context keys — the registry stays transport-agnostic.
 type ToolInvoker func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error)
 
+// ToolInputNormalizer rewrites backward-compatible call shapes into the
+// canonical input shape before schema validation and invocation.
+type ToolInputNormalizer func(input map[string]any) map[string]any
+
 // Tool is the metadata + executor bundle for a single registered tool.
 type Tool struct {
 	Name           string
@@ -31,6 +35,7 @@ type Tool struct {
 	OutputSchema   map[string]any
 	RequiredScopes []string
 	Invoke         ToolInvoker
+	NormalizeInput ToolInputNormalizer
 	Aliases        []string
 }
 
@@ -132,4 +137,17 @@ func (r *inMemoryRegistry) List() []Tool {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// NormalizeInput applies a tool-specific backward-compatibility rewrite, when
+// one is registered. The returned map is the input that should be validated and
+// passed to Invoke.
+func NormalizeInput(tool Tool, args map[string]any) map[string]any {
+	if args == nil {
+		args = map[string]any{}
+	}
+	if tool.NormalizeInput == nil {
+		return args
+	}
+	return tool.NormalizeInput(args)
 }
