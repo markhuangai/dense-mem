@@ -413,6 +413,7 @@ func (s *recallService) Recall(ctx context.Context, profileID string, req Recall
 	merged := rrfMerge(filteredSem, filteredKw)
 	applyCurrentnessAdjustments(query, merged)
 	applyCueAdjustments(query, merged)
+	applyAuthorityAdjustments(query, merged)
 
 	sort.SliceStable(merged, func(i, j int) bool {
 		if merged[i].FinalScore != merged[j].FinalScore {
@@ -765,6 +766,18 @@ func applyCueAdjustments(query string, entries []rrfEntry) {
 	}
 }
 
+func applyAuthorityAdjustments(query string, entries []rrfEntry) {
+	if !isAuthorityRecallQuery(query) {
+		return
+	}
+	for i := range entries {
+		entries[i].FinalScore += authorityAdjustment(query, entries[i].Content)
+		if entries[i].FinalScore < 0 {
+			entries[i].FinalScore = 0
+		}
+	}
+}
+
 func currentnessAdjustment(query, content string) float64 {
 	queryText := rerankText(query)
 	contentText := rerankText(content)
@@ -833,6 +846,39 @@ func cueAdjustment(query, content string) float64 {
 	return adjustment
 }
 
+func authorityAdjustment(query, content string) float64 {
+	queryText := rerankText(query)
+	contentText := rerankText(content)
+	if queryText == "" || contentText == "" {
+		return 0
+	}
+
+	adjustment := 0.0
+	boostAllowed := authorityMatchesQueryIdentifiers(queryText, contentText)
+	if boostAllowed {
+		if containsAnyAuthorityCue(contentText, authorityPositiveCues) {
+			adjustment += 0.026
+		}
+		if containsAnyAuthorityCue(contentText, authorityDirectiveCues) {
+			adjustment += 0.006
+		}
+	}
+	if containsAnyAuthorityCue(contentText, authorityStrongNegativeCues) {
+		adjustment -= 0.028
+	}
+	if containsAnyAuthorityCue(contentText, authorityWeakNegativeCues) {
+		adjustment -= 0.018
+	}
+
+	if adjustment > 0.034 {
+		return 0.034
+	}
+	if adjustment < -0.034 {
+		return -0.034
+	}
+	return adjustment
+}
+
 func isCurrentnessQuery(query string) bool {
 	text := rerankText(query)
 	return strings.Contains(text, " current ") ||
@@ -848,6 +894,28 @@ func isSelectionRecallQuery(query string) bool {
 
 func rerankMatchesQueryIdentifiers(queryText, contentText string) bool {
 	identifiers := rerankIdentifiers(queryText)
+	return identifiersMatchContent(identifiers, contentText)
+}
+
+func matchesQueryIdentifiers(queryText, contentText string) bool {
+	return rerankMatchesQueryIdentifiers(queryText, contentText)
+}
+
+func isAuthorityRecallQuery(query string) bool {
+	text := rerankText(query)
+	return strings.Contains(text, " authoritative ") ||
+		strings.Contains(text, " canonical ") ||
+		strings.Contains(text, " require ") ||
+		strings.Contains(text, " requires ") ||
+		strings.Contains(text, " required ")
+}
+
+func authorityMatchesQueryIdentifiers(queryText, contentText string) bool {
+	identifiers := rerankIdentifiers(queryText)
+	return identifiersMatchContent(identifiers, contentText)
+}
+
+func identifiersMatchContent(identifiers []string, contentText string) bool {
 	if len(identifiers) == 0 {
 		return true
 	}
@@ -857,10 +925,6 @@ func rerankMatchesQueryIdentifiers(queryText, contentText string) bool {
 		}
 	}
 	return true
-}
-
-func matchesQueryIdentifiers(queryText, contentText string) bool {
-	return rerankMatchesQueryIdentifiers(queryText, contentText)
 }
 
 func rerankIdentifiers(text string) []string {
@@ -920,6 +984,10 @@ func containsAnyRerankCue(text string, cues []string) bool {
 }
 
 func containsAnyCue(text string, cues []string) bool {
+	return containsAnyRerankCue(text, cues)
+}
+
+func containsAnyAuthorityCue(text string, cues []string) bool {
 	return containsAnyRerankCue(text, cues)
 }
 
@@ -1000,6 +1068,40 @@ var conditionalQueryCues = []string{
 	" standard ",
 	" tenant ",
 	" exception ",
+}
+
+var authorityPositiveCues = []string{
+	" authoritative ",
+	" signed by ",
+	" approved ",
+	" official ",
+	" canonical ",
+	" source of truth ",
+}
+
+var authorityDirectiveCues = []string{
+	" requires ",
+	" require ",
+	" required ",
+	" must use ",
+	" must be ",
+}
+
+var authorityStrongNegativeCues = []string{
+	" informal chat ",
+	" not approved ",
+	" unapproved ",
+	" personal checklist ",
+	" meeting transcript ",
+}
+
+var authorityWeakNegativeCues = []string{
+	" suggested ",
+	" as an option ",
+	" while testing ",
+	" before ",
+	" draft ",
+	" note about ",
 }
 
 func factMatchesRecallWindow(f *domain.Fact, validAt, knownAt *time.Time) bool {

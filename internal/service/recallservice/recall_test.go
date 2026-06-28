@@ -844,6 +844,46 @@ func TestRecallCueAdjustmentRequiresQueryIdentifiersForBoosts(t *testing.T) {
 	require.Zero(t, cueAdjustment(query, neighborTemplate))
 }
 
+func TestRecallService_AuthorityRerankPrefersSignedRunbook(t *testing.T) {
+	query := "Which procedure does runbook AUT-061 require?"
+	sem := &fakeSemanticSearcher{
+		hits: []semanticsearch.SearchHit{
+			{
+				ID:      "f-chat",
+				Type:    "fragment",
+				Content: "An informal chat suggested procedure-061-chat for runbook AUT-061, but it was not approved.",
+			},
+		},
+	}
+	kw := &fakeKeywordSearcher{
+		hits: []keywordsearch.FragmentSearchResult{
+			{
+				FragmentID: "f-required",
+				Content:    "Authoritative runbook signed by operations. runbook AUT-061 requires procedure-061-canonical.",
+			},
+			{
+				FragmentID: "f-chat",
+				Content:    "An informal chat suggested procedure-061-chat for runbook AUT-061, but it was not approved.",
+			},
+		},
+	}
+	emb := &stubEmbedding{DimensionsResult: 4}
+	svc := NewRecallService(emb, sem, kw, &fakeHydrator{}, nil, nil)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: query, Limit: 5})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, out)
+	require.Equal(t, "f-required", out[0].Fragment.FragmentID)
+}
+
+func TestAuthorityAdjustmentRequiresQueryIdentifiersForBoosts(t *testing.T) {
+	query := "Which procedure does runbook AUT-061 require?"
+	neighbor := "Authoritative runbook signed by operations. runbook AUT-062 requires procedure-062-canonical."
+
+	require.Zero(t, authorityAdjustment(query, neighbor))
+}
+
 func TestRecallService_CommunityExpansionDisabledByDefault(t *testing.T) {
 	sem := &fakeSemanticSearcher{hits: []semanticsearch.SearchHit{{ID: "f-direct", Type: "fragment"}}}
 	kw := &fakeKeywordSearcher{}
