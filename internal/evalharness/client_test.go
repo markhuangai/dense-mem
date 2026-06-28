@@ -195,6 +195,41 @@ func TestHTTPClientErrors(t *testing.T) {
 	}
 }
 
+func TestHTTPClientRunRecallCaseRetriesTransientStatus(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/tools/eval_run_recall_case" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		calls++
+		if calls == 1 {
+			http.Error(w, `{"code":"SERVICE_UNAVAILABLE","message":"embedding provider unavailable"}`, http.StatusServiceUnavailable)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"query": "retry query",
+			"ranked_refs": []map[string]any{{
+				"type": "fragment",
+				"id":   "fragment-retry",
+				"rank": 1,
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	trace, err := client.RunRecallCase(context.Background(), Case{CaseID: "case-retry", Query: "retry query"})
+	if err != nil {
+		t.Fatalf("RunRecallCase retry: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d; want 2", calls)
+	}
+	if len(trace.RankedRefs) != 1 || trace.RankedRefs[0].ID != "fragment-retry" {
+		t.Fatalf("trace = %+v", trace)
+	}
+}
+
 func TestHTTPClientImportRejectsMissingFragmentID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"fragment": map[string]any{}})

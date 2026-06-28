@@ -88,6 +88,40 @@ func TestRunBaselineWithTraceFileWritesArtifactsAndComparison(t *testing.T) {
 	}
 }
 
+func TestRunWritesGateResultAndFailsThreshold(t *testing.T) {
+	dir := writeEvalFixture(t)
+	tracesPath := filepath.Join(dir, "traces.jsonl")
+	if err := writeJSONL(tracesPath, []RecallTrace{
+		{CaseID: "case-1", Query: "What is alpha?", RankedRefs: []Ref{{Type: "fragment", ID: "frag-alpha", Rank: 1}}},
+		{CaseID: "case-2", Query: "What is beta?", RankedRefs: []Ref{{Type: "fragment", ID: "frag-beta", Rank: 1}}},
+	}); err != nil {
+		t.Fatalf("write traces: %v", err)
+	}
+	out := filepath.Join(dir, "gated-run")
+	minRecall := 0.5
+
+	summary, err := Run(context.Background(), RunOptions{
+		Mode:             "baseline",
+		SeedManifestPath: filepath.Join(dir, "seed_manifest.json"),
+		SuitePath:        filepath.Join(dir, "suite.jsonl"),
+		TracesPath:       tracesPath,
+		OutDir:           out,
+		RunID:            "gated-test",
+		Gates:            GateOptions{MinRecallAtK: &minRecall},
+	})
+	if err == nil || !strings.Contains(err.Error(), "gate check failed") {
+		t.Fatalf("Run gated err = %v; want gate failure", err)
+	}
+	if summary.AverageRecallAtK != 0 {
+		t.Fatalf("summary = %+v; want trace file without mapping to score zero recall", summary)
+	}
+	for _, name := range []string{"summary.json", "retrieval_scores.jsonl", "gate_result.json"} {
+		if !fileExists(filepath.Join(out, name)) {
+			t.Fatalf("missing gated artifact %s", name)
+		}
+	}
+}
+
 func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 	dir := writeEvalFixture(t)
 	rememberIDs := map[string]string{
@@ -248,6 +282,67 @@ func TestRunRejectsInvalidOptionsAndSuite(t *testing.T) {
 	}
 }
 
+func TestRunValidationRejectsCrossFileInconsistency(t *testing.T) {
+	t.Run("manifest count mismatch", func(t *testing.T) {
+		dir := writeEvalFixture(t)
+		manifest := SeedManifest{
+			SchemaVersion: SeedSchemaVersion,
+			SeedID:        "fixture",
+			CorpusFile:    "corpus.jsonl",
+			CasesFile:     "cases.jsonl",
+			QrelsFile:     "qrels.jsonl",
+			Counts:        map[string]int{"cases": 3},
+		}
+		if err := writeJSONFile(filepath.Join(dir, "seed_manifest.json"), manifest); err != nil {
+			t.Fatalf("write manifest: %v", err)
+		}
+		_, err := Run(context.Background(), RunOptions{
+			Mode:             "validate",
+			SeedManifestPath: filepath.Join(dir, "seed_manifest.json"),
+			SuitePath:        filepath.Join(dir, "suite.jsonl"),
+		})
+		if err == nil || !strings.Contains(err.Error(), "manifest count cases=3 mismatch") {
+			t.Fatalf("Run err = %v; want count mismatch", err)
+		}
+	})
+
+	t.Run("qrel source missing from corpus", func(t *testing.T) {
+		dir := writeEvalFixture(t)
+		if err := writeJSONL(filepath.Join(dir, "qrels.jsonl"), []QRel{
+			{CaseID: "case-1", RequiredRefs: []Ref{{Type: "fragment", SourceDocID: "doc-missing", Grade: 1}}},
+			{CaseID: "case-2", RequiredRefs: []Ref{{Type: "fragment", SourceDocID: "doc-beta", Grade: 1}}},
+		}); err != nil {
+			t.Fatalf("write qrels: %v", err)
+		}
+		_, err := Run(context.Background(), RunOptions{
+			Mode:             "validate",
+			SeedManifestPath: filepath.Join(dir, "seed_manifest.json"),
+			SuitePath:        filepath.Join(dir, "suite.jsonl"),
+		})
+		if err == nil || !strings.Contains(err.Error(), `source_doc_id "doc-missing" missing from corpus`) {
+			t.Fatalf("Run err = %v; want missing source_doc_id", err)
+		}
+	})
+
+	t.Run("adversarial case missing bad refs", func(t *testing.T) {
+		dir := writeEvalFixture(t)
+		if err := writeJSONL(filepath.Join(dir, "cases.jsonl"), []Case{
+			{CaseID: "case-1", Query: "What is alpha?", Slices: []string{"adversarial"}, Limit: 2},
+			{CaseID: "case-2", Query: "What is beta?", Slices: []string{"direct"}, Limit: 2},
+		}); err != nil {
+			t.Fatalf("write cases: %v", err)
+		}
+		_, err := Run(context.Background(), RunOptions{
+			Mode:             "validate",
+			SeedManifestPath: filepath.Join(dir, "seed_manifest.json"),
+			SuitePath:        filepath.Join(dir, "suite.jsonl"),
+		})
+		if err == nil || !strings.Contains(err.Error(), `adversarial case "case-1" has no bad_refs`) {
+			t.Fatalf("Run err = %v; want adversarial bad_refs error", err)
+		}
+	})
+}
+
 func TestRunLiveSuiteAndCompareErrorBranches(t *testing.T) {
 	_, err := runLiveSuite(context.Background(), &HTTPClient{}, []SuiteCase{{CaseID: "case-1"}}, map[string]Case{
 		"case-1": {CaseID: "case-1", Query: "query"},
@@ -316,14 +411,48 @@ func TestScoreTracesUsesMappingAndPenalizesUnmappedRefs(t *testing.T) {
 	if scores[0].RecallAtK != 1 || scores[0].BadAtK != 1 || len(scores[0].MissingRequired) != 0 {
 		t.Fatalf("score[0] = %+v", scores[0])
 	}
+	if scores[0].FirstRequiredRank != 1 || scores[0].FirstBadRank != 2 {
+		t.Fatalf("score[0] ranks = %+v", scores[0])
+	}
 	if scores[1].RelevantTotal != 1 || scores[1].RecallAtK != 0 || len(scores[1].UnmappedSourceRefs) != 1 {
 		t.Fatalf("score[1] = %+v", scores[1])
 	}
-	if summary.AverageRecallAtK != 0.5 || summary.AverageBadAtK != 0.5 || summary.UnmappedSourceRefs != 1 {
+	if summary.AverageRecallAtK != 0.5 || summary.AverageBadAtK != 0.5 || summary.RequiredRank1Rate != 0.5 || summary.BadRank1Rate != 0 || summary.UnmappedSourceRefs != 1 {
 		t.Fatalf("summary = %+v", summary)
 	}
 	if summary.Slices["direct"].CaseCount != 2 {
 		t.Fatalf("slice summary = %+v", summary.Slices)
+	}
+}
+
+func TestEvaluateGates(t *testing.T) {
+	minRecall := 0.8
+	minRank1 := 0.5
+	maxBad := 0.25
+	maxBadRank1 := 0.1
+	gates := GateOptions{
+		MinRecallAtK:         &minRecall,
+		MinRequiredRank1Rate: &minRank1,
+		MaxAverageBadAtK:     &maxBad,
+		MaxBadRank1Rate:      &maxBadRank1,
+	}
+	passed := EvaluateGates(Summary{
+		AverageRecallAtK:  0.9,
+		RequiredRank1Rate: 0.6,
+		AverageBadAtK:     0.1,
+		BadRank1Rate:      0,
+	}, gates)
+	if !passed.Passed || len(passed.Failures) != 0 {
+		t.Fatalf("passed gate = %+v", passed)
+	}
+	failed := EvaluateGates(Summary{
+		AverageRecallAtK:  0.7,
+		RequiredRank1Rate: 0.4,
+		AverageBadAtK:     0.3,
+		BadRank1Rate:      0.2,
+	}, gates)
+	if failed.Passed || len(failed.Failures) != 4 {
+		t.Fatalf("failed gate = %+v; want four failures", failed)
 	}
 }
 

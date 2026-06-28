@@ -48,6 +48,8 @@ func ScoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, mapping Know
 		RecallAtK:          metrics.RecallAtK,
 		MRR:                metrics.MRR,
 		NDCGAtK:            metrics.NDCGAtK,
+		FirstRequiredRank:  firstRank(trace.RankedRefs, qrel.RequiredRefs, mapping),
+		FirstBadRank:       firstRank(trace.RankedRefs, qrel.BadRefs, mapping),
 		MissingRequired:    missingRequiredRefs(qrel.RequiredRefs, trace.RankedRefs, mapping, k),
 		BadRefsAtK:         badRefsAtK(qrel.BadRefs, trace.RankedRefs, mapping, k),
 		UnmappedSourceRefs: append(unmappedRequired, unmappedBad...),
@@ -79,12 +81,20 @@ func SummarizeScores(runID, mode, seedID, seedHash, suitePath string, suite []Su
 		summary.AverageNDCGAtK += score.NDCGAtK
 		summary.AverageBadAtK += float64(score.BadAtK)
 		summary.UnmappedSourceRefs += len(score.UnmappedSourceRefs)
+		if score.FirstRequiredRank == 1 {
+			summary.RequiredRank1Rate++
+		}
+		if score.FirstBadRank == 1 {
+			summary.BadRank1Rate++
+		}
 	}
 	denom := float64(len(scores))
 	summary.AverageRecallAtK /= denom
 	summary.AverageMRR /= denom
 	summary.AverageNDCGAtK /= denom
 	summary.AverageBadAtK /= denom
+	summary.RequiredRank1Rate /= denom
+	summary.BadRank1Rate /= denom
 
 	type accum struct {
 		count  int
@@ -140,6 +150,51 @@ func CompareSummaries(baseline, candidate Summary) (Comparison, error) {
 		NDCGDelta:      candidate.AverageNDCGAtK - baseline.AverageNDCGAtK,
 		BadAtKDelta:    candidate.AverageBadAtK - baseline.AverageBadAtK,
 	}, nil
+}
+
+func EvaluateGates(summary Summary, gates GateOptions) GateResult {
+	result := GateResult{
+		Passed:     true,
+		Thresholds: map[string]float64{},
+		Metrics: map[string]float64{
+			"average_recall_at_k": summary.AverageRecallAtK,
+			"required_rank1_rate": summary.RequiredRank1Rate,
+			"average_bad_at_k":    summary.AverageBadAtK,
+			"bad_rank1_rate":      summary.BadRank1Rate,
+		},
+	}
+	checkMin := func(name string, value float64, threshold *float64) {
+		if threshold == nil {
+			return
+		}
+		result.Thresholds[name] = *threshold
+		if value < *threshold {
+			result.Passed = false
+			result.Failures = append(result.Failures, fmt.Sprintf("%s %.4f below minimum %.4f", name, value, *threshold))
+		}
+	}
+	checkMax := func(name string, value float64, threshold *float64) {
+		if threshold == nil {
+			return
+		}
+		result.Thresholds[name] = *threshold
+		if value > *threshold {
+			result.Passed = false
+			result.Failures = append(result.Failures, fmt.Sprintf("%s %.4f above maximum %.4f", name, value, *threshold))
+		}
+	}
+	checkMin("average_recall_at_k", summary.AverageRecallAtK, gates.MinRecallAtK)
+	checkMin("required_rank1_rate", summary.RequiredRank1Rate, gates.MinRequiredRank1Rate)
+	checkMax("average_bad_at_k", summary.AverageBadAtK, gates.MaxAverageBadAtK)
+	checkMax("bad_rank1_rate", summary.BadRank1Rate, gates.MaxBadRank1Rate)
+	return result
+}
+
+func (g GateOptions) Any() bool {
+	return g.MinRecallAtK != nil ||
+		g.MinRequiredRank1Rate != nil ||
+		g.MaxAverageBadAtK != nil ||
+		g.MaxBadRank1Rate != nil
 }
 
 func remapJudgments(refs []Ref, mapping KnowledgeMapping) ([]recallquality.Judgment, []Ref) {
@@ -204,6 +259,26 @@ func badRefsAtK(bad []Ref, ranked []Ref, mapping KnowledgeMapping, k int) []Ref 
 		}
 	}
 	return out
+}
+
+func firstRank(ranked []Ref, refs []Ref, mapping KnowledgeMapping) int {
+	keys := map[string]struct{}{}
+	for _, ref := range refs {
+		resolved, ok := resolveRef(ref, mapping)
+		if !ok {
+			continue
+		}
+		keys[refKey(resolved.Type, resolved.ID)] = struct{}{}
+	}
+	if len(keys) == 0 {
+		return 0
+	}
+	for i, ref := range ranked {
+		if _, ok := keys[refKey(ref.Type, ref.ID)]; ok {
+			return i + 1
+		}
+	}
+	return 0
 }
 
 func topKSet(ranked []Ref, k int) map[string]bool {

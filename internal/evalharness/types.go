@@ -119,6 +119,8 @@ type RetrievalScore struct {
 	RecallAtK          float64 `json:"recall_at_k"`
 	MRR                float64 `json:"mrr"`
 	NDCGAtK            float64 `json:"ndcg_at_k"`
+	FirstRequiredRank  int     `json:"first_required_rank,omitempty"`
+	FirstBadRank       int     `json:"first_bad_rank,omitempty"`
 	MissingRequired    []Ref   `json:"missing_required_refs,omitempty"`
 	BadRefsAtK         []Ref   `json:"bad_refs_at_k,omitempty"`
 	UnmappedSourceRefs []Ref   `json:"unmapped_source_refs,omitempty"`
@@ -138,6 +140,8 @@ type Summary struct {
 	AverageMRR         float64             `json:"average_mrr"`
 	AverageNDCGAtK     float64             `json:"average_ndcg_at_k"`
 	AverageBadAtK      float64             `json:"average_bad_at_k"`
+	RequiredRank1Rate  float64             `json:"required_rank1_rate"`
+	BadRank1Rate       float64             `json:"bad_rank1_rate"`
 	Slices             map[string]SliceAvg `json:"slices,omitempty"`
 	CreatedAt          time.Time           `json:"created_at"`
 }
@@ -171,4 +175,18 @@ type Comparison struct {
 	MRRDelta       float64 `json:"mrr_delta"`
 	NDCGDelta      float64 `json:"ndcg_delta"`
 	BadAtKDelta    float64 `json:"bad_at_k_delta"`
+}
+
+type GateOptions struct {
+	MinRecallAtK         *float64 `json:"min_recall_at_k,omitempty"`
+	MinRequiredRank1Rate *float64 `json:"min_required_rank1_rate,omitempty"`
+	MaxAverageBadAtK     *float64 `json:"max_average_bad_at_k,omitempty"`
+	MaxBadRank1Rate      *float64 `json:"max_bad_rank1_rate,omitempty"`
+}
+
+type GateResult struct {
+	Passed     bool               `json:"passed"`
+	Thresholds map[string]float64 `json:"thresholds"`
+	Metrics    map[string]float64 `json:"metrics"`
+	Failures   []string           `json:"failures,omitempty"`
 }

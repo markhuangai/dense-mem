@@ -1,6 +1,7 @@
 package evalharness
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -22,6 +23,7 @@ type RunOptions struct {
 	TracesPath       string
 	MaxPageSize      int
 	RunID            string
+	Gates            GateOptions
 }
 
 func Run(ctx context.Context, opts RunOptions) (Summary, error) {
@@ -46,7 +48,7 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	if err != nil {
 		return Summary{}, err
 	}
-	if err := validateSuite(cases, qrels, suite); err != nil {
+	if err := validateRunInputs(opts.SeedManifestPath, manifest, corpus, cases, qrels, suite); err != nil {
 		return Summary{}, err
 	}
 	runConfig := RunConfig{
@@ -124,6 +126,17 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			return Summary{}, err
 		}
 	}
+	if opts.Gates.Any() {
+		gate := EvaluateGates(summary, opts.Gates)
+		if opts.OutDir != "" {
+			if err := writeJSONFile(filepath.Join(opts.OutDir, "gate_result.json"), gate); err != nil {
+				return Summary{}, err
+			}
+		}
+		if !gate.Passed {
+			return summary, fmt.Errorf("gate check failed: %s", strings.Join(gate.Failures, "; "))
+		}
+	}
 	return summary, nil
 }
 
@@ -177,9 +190,15 @@ func loadRunInputs(manifestPath, suitePath string) (*SeedManifest, []CorpusItem,
 	return manifest, corpus, cases, qrels, suite, seedHash, nil
 }
 
-func validateSuite(cases []Case, qrels []QRel, suite []SuiteCase) error {
+func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []CorpusItem, cases []Case, qrels []QRel, suite []SuiteCase) error {
+	if err := validateManifestCounts(manifestPath, manifest, corpus, cases, qrels); err != nil {
+		return err
+	}
 	caseIndex := IndexCases(cases)
 	qrelIndex := IndexQrels(qrels)
+	if len(qrelIndex) != len(qrels) {
+		return fmt.Errorf("duplicate qrels case_id detected")
+	}
 	for _, suiteCase := range suite {
 		if _, ok := caseIndex[suiteCase.CaseID]; !ok {
 			return fmt.Errorf("suite case %q missing from seed cases", suiteCase.CaseID)
@@ -188,7 +207,136 @@ func validateSuite(cases []Case, qrels []QRel, suite []SuiteCase) error {
 			return fmt.Errorf("suite case %q missing from seed qrels", suiteCase.CaseID)
 		}
 	}
+	corpusIndex := map[string]struct{}{}
+	for _, item := range corpus {
+		corpusIndex[item.SourceDocID] = struct{}{}
+	}
+	for _, qrel := range qrels {
+		if _, ok := caseIndex[qrel.CaseID]; !ok {
+			return fmt.Errorf("qrels case %q missing from seed cases", qrel.CaseID)
+		}
+		if err := validateQRelRefs(qrel.CaseID, "required_refs", qrel.RequiredRefs, corpusIndex); err != nil {
+			return err
+		}
+		if err := validateQRelRefs(qrel.CaseID, "acceptable_refs", qrel.AcceptableRefs, corpusIndex); err != nil {
+			return err
+		}
+		if err := validateQRelRefs(qrel.CaseID, "bad_refs", qrel.BadRefs, corpusIndex); err != nil {
+			return err
+		}
+	}
+	for _, c := range cases {
+		if hasSlice(c.Slices, "adversarial") && len(qrelIndex[c.CaseID].BadRefs) == 0 {
+			return fmt.Errorf("adversarial case %q has no bad_refs", c.CaseID)
+		}
+	}
 	return nil
+}
+
+func validateManifestCounts(manifestPath string, manifest *SeedManifest, corpus []CorpusItem, cases []Case, qrels []QRel) error {
+	if manifest == nil || len(manifest.Counts) == 0 {
+		return nil
+	}
+	if err := validateCount(manifest.Counts, "cases", len(cases)); err != nil {
+		return err
+	}
+	if err := validateCount(manifest.Counts, "corpus", len(corpus)); err != nil {
+		return err
+	}
+	if err := validateCount(manifest.Counts, "qrels", len(qrels)); err != nil {
+		return err
+	}
+	if expected, ok := manifest.Counts["docs_per_case"]; ok {
+		if len(cases) == 0 {
+			return fmt.Errorf("manifest count docs_per_case=%d but seed has no cases", expected)
+		}
+		if len(corpus)%len(cases) != 0 {
+			return fmt.Errorf("manifest count docs_per_case=%d mismatch: corpus=%d cases=%d", expected, len(corpus), len(cases))
+		}
+		actual := len(corpus) / len(cases)
+		if actual != expected {
+			return fmt.Errorf("manifest count docs_per_case=%d mismatch: got %d", expected, actual)
+		}
+	}
+	for _, optional := range []struct {
+		countName string
+		fileName  string
+	}{
+		{countName: "answers", fileName: manifest.AnswersFile},
+		{countName: "hard_negatives", fileName: manifest.HardNegativesFile},
+		{countName: "transforms", fileName: manifest.TransformsFile},
+	} {
+		expected, ok := manifest.Counts[optional.countName]
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(optional.fileName) == "" {
+			return fmt.Errorf("manifest count %s=%d but file is not set", optional.countName, expected)
+		}
+		actual, err := countSeedJSONLRows(manifestPath, optional.fileName)
+		if err != nil {
+			return err
+		}
+		if actual != expected {
+			return fmt.Errorf("manifest count %s=%d mismatch: got %d", optional.countName, expected, actual)
+		}
+	}
+	return nil
+}
+
+func validateCount(counts map[string]int, name string, actual int) error {
+	expected, ok := counts[name]
+	if !ok {
+		return nil
+	}
+	if actual != expected {
+		return fmt.Errorf("manifest count %s=%d mismatch: got %d", name, expected, actual)
+	}
+	return nil
+}
+
+func validateQRelRefs(caseID, field string, refs []Ref, corpusIndex map[string]struct{}) error {
+	for _, ref := range refs {
+		if strings.TrimSpace(ref.SourceDocID) == "" {
+			continue
+		}
+		if _, ok := corpusIndex[ref.SourceDocID]; !ok {
+			return fmt.Errorf("qrels case %q %s source_doc_id %q missing from corpus", caseID, field, ref.SourceDocID)
+		}
+	}
+	return nil
+}
+
+func hasSlice(slices []string, want string) bool {
+	for _, slice := range slices {
+		if strings.EqualFold(strings.TrimSpace(slice), want) {
+			return true
+		}
+	}
+	return false
+}
+
+func countSeedJSONLRows(manifestPath, rel string) (int, error) {
+	path := resolveSeedPath(manifestPath, rel)
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	count := 0
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		count++
+	}
+	if err := scanner.Err(); err != nil {
+		return 0, fmt.Errorf("%s: %w", path, err)
+	}
+	return count, nil
 }
 
 func runLiveSuite(ctx context.Context, client *HTTPClient, suite []SuiteCase, cases map[string]Case) ([]RecallTrace, error) {

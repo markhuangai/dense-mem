@@ -20,6 +20,17 @@ type HTTPClient struct {
 	Client       *http.Client
 }
 
+type HTTPStatusError struct {
+	Method     string
+	URL        string
+	StatusCode int
+	Body       string
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("%s %s returned %d: %s", e.Method, e.URL, e.StatusCode, e.Body)
+}
+
 func (c *HTTPClient) EnableEvaluationMode(ctx context.Context, maxPageSize int) error {
 	if strings.TrimSpace(c.ControlURL) == "" || strings.TrimSpace(c.ControlToken) == "" {
 		return nil
@@ -157,10 +168,32 @@ func (c *HTTPClient) RunRecallCase(ctx context.Context, tc Case) (RecallTrace, e
 		input["known_at"] = tc.KnownAt
 	}
 	var out map[string]any
-	if err := c.CallTool(ctx, "eval_run_recall_case", input, &out); err != nil {
+	if err := c.callToolWithRetry(ctx, "eval_run_recall_case", input, &out); err != nil {
 		return RecallTrace{}, err
 	}
 	return traceFromToolOutput(tc, out), nil
+}
+
+func (c *HTTPClient) callToolWithRetry(ctx context.Context, name string, input any, out any) error {
+	const maxAttempts = 4
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		err := c.CallTool(ctx, name, input, out)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if !isTransientHTTPError(err) || attempt == maxAttempts {
+			return err
+		}
+		delay := time.Duration(attempt) * 750 * time.Millisecond
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+	return lastErr
 }
 
 func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, input any, out any) error {
@@ -191,7 +224,12 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, inp
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("%s %s returned %d: %s", method, url, resp.StatusCode, strings.TrimSpace(string(payload)))
+		return &HTTPStatusError{
+			Method:     method,
+			URL:        url,
+			StatusCode: resp.StatusCode,
+			Body:       strings.TrimSpace(string(payload)),
+		}
 	}
 	if out == nil {
 		_, _ = io.Copy(io.Discard, resp.Body)
@@ -200,6 +238,23 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, inp
 	decoder := json.NewDecoder(resp.Body)
 	decoder.UseNumber()
 	return decoder.Decode(out)
+}
+
+func isTransientHTTPError(err error) bool {
+	var statusErr *HTTPStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	switch statusErr.StatusCode {
+	case http.StatusTooManyRequests,
+		http.StatusInternalServerError,
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
 }
 
 func seedMetadata(item CorpusItem) map[string]any {
