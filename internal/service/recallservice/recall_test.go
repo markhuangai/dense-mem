@@ -804,6 +804,46 @@ func TestCurrentnessAdjustmentRequiresQueryIdentifiersForBoosts(t *testing.T) {
 	require.Zero(t, currentnessAdjustment(query, neighbor))
 }
 
+func TestRecallService_CueRerankPrefersDirectiveEvidence(t *testing.T) {
+	query := "Which pager should alerts for queue NEG-001 use?"
+	sem := &fakeSemanticSearcher{
+		hits: []semanticsearch.SearchHit{
+			{
+				ID:      "f-stale",
+				Type:    "fragment",
+				Content: "Before 2026, queue NEG-001 used pager-001-red for alerts.",
+			},
+		},
+	}
+	kw := &fakeKeywordSearcher{
+		hits: []keywordsearch.FragmentSearchResult{
+			{
+				FragmentID: "f-required",
+				Content:    "Routing policy dated 2026-06-28. Alerts for queue NEG-001 must use pager-001-green.",
+			},
+			{
+				FragmentID: "f-stale",
+				Content:    "Before 2026, queue NEG-001 used pager-001-red for alerts.",
+			},
+		},
+	}
+	emb := &stubEmbedding{DimensionsResult: 4}
+	svc := NewRecallService(emb, sem, kw, &fakeHydrator{}, nil, nil)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: query, Limit: 5})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, out)
+	require.Equal(t, "f-required", out[0].Fragment.FragmentID)
+}
+
+func TestRecallCueAdjustmentRequiresQueryIdentifiersForBoosts(t *testing.T) {
+	query := "Which endpoint should the west-030 region use for billing sync?"
+	neighborTemplate := "Export routing rule. Enterprise tenants such as tenant CND-030 enterprise must use endpoint-enterprise-030."
+
+	require.Zero(t, cueAdjustment(query, neighborTemplate))
+}
+
 func TestRecallService_CommunityExpansionDisabledByDefault(t *testing.T) {
 	sem := &fakeSemanticSearcher{hits: []semanticsearch.SearchHit{{ID: "f-direct", Type: "fragment"}}}
 	kw := &fakeKeywordSearcher{}

@@ -412,6 +412,7 @@ func (s *recallService) Recall(ctx context.Context, profileID string, req Recall
 
 	merged := rrfMerge(filteredSem, filteredKw)
 	applyCurrentnessAdjustments(query, merged)
+	applyCueAdjustments(query, merged)
 
 	sort.SliceStable(merged, func(i, j int) bool {
 		if merged[i].FinalScore != merged[j].FinalScore {
@@ -752,6 +753,18 @@ func applyCurrentnessAdjustments(query string, entries []rrfEntry) {
 	}
 }
 
+func applyCueAdjustments(query string, entries []rrfEntry) {
+	if !isSelectionRecallQuery(query) {
+		return
+	}
+	for i := range entries {
+		entries[i].FinalScore += cueAdjustment(query, entries[i].Content)
+		if entries[i].FinalScore < 0 {
+			entries[i].FinalScore = 0
+		}
+	}
+}
+
 func currentnessAdjustment(query, content string) float64 {
 	queryText := rerankText(query)
 	contentText := rerankText(content)
@@ -784,12 +797,53 @@ func currentnessAdjustment(query, content string) float64 {
 	return adjustment
 }
 
+func cueAdjustment(query, content string) float64 {
+	queryText := rerankText(query)
+	contentText := rerankText(content)
+	if queryText == "" || contentText == "" {
+		return 0
+	}
+
+	adjustment := 0.0
+	boostAllowed := matchesQueryIdentifiers(queryText, contentText)
+	if boostAllowed {
+		if containsAnyCue(contentText, directiveCues) {
+			adjustment += 0.022
+		}
+		if containsAnyCue(contentText, canonicalCues) {
+			adjustment += 0.004
+		}
+	}
+	if containsAnyCue(contentText, strongDisqualifierCues) {
+		adjustment -= 0.022
+	}
+	if containsAnyCue(contentText, weakDisqualifierCues) {
+		adjustment -= 0.012
+	}
+	if boostAllowed && containsAnyCue(queryText, conditionalQueryCues) && containsAnyCue(contentText, conditionalQueryCues) && containsAnyCue(contentText, directiveCues) {
+		adjustment += 0.006
+	}
+
+	if adjustment > 0.026 {
+		return 0.026
+	}
+	if adjustment < -0.026 {
+		return -0.026
+	}
+	return adjustment
+}
+
 func isCurrentnessQuery(query string) bool {
 	text := rerankText(query)
 	return strings.Contains(text, " current ") ||
 		strings.Contains(text, " as of ") ||
 		strings.Contains(text, " now ") ||
 		strings.Contains(text, " latest ")
+}
+
+func isSelectionRecallQuery(query string) bool {
+	text := rerankText(query)
+	return strings.Contains(text, " which ") && (strings.Contains(text, " use ") || strings.Contains(text, " should "))
 }
 
 func rerankMatchesQueryIdentifiers(queryText, contentText string) bool {
@@ -803,6 +857,10 @@ func rerankMatchesQueryIdentifiers(queryText, contentText string) bool {
 		}
 	}
 	return true
+}
+
+func matchesQueryIdentifiers(queryText, contentText string) bool {
+	return rerankMatchesQueryIdentifiers(queryText, contentText)
 }
 
 func rerankIdentifiers(text string) []string {
@@ -861,6 +919,10 @@ func containsAnyRerankCue(text string, cues []string) bool {
 	return false
 }
 
+func containsAnyCue(text string, cues []string) bool {
+	return containsAnyRerankCue(text, cues)
+}
+
 var currentnessPositiveCues = []string{
 	" current ",
 	" now ",
@@ -893,6 +955,51 @@ var currentnessWeakStaleCues = []string{
 	" proposed ",
 	" once ",
 	" future proposal ",
+}
+
+var directiveCues = []string{
+	" must use ",
+	" must be ",
+	" should use ",
+	" should be ",
+	" is assigned ",
+}
+
+var canonicalCues = []string{
+	" canonical ",
+	" current ",
+	" policy ",
+	" rule ",
+	" registry ",
+}
+
+var strongDisqualifierCues = []string{
+	" does not apply ",
+	" not about ",
+	" rejected ",
+	" unapproved ",
+	" forbidden ",
+	" false positive ",
+	" false positives ",
+}
+
+var weakDisqualifierCues = []string{
+	" legacy ",
+	" previously ",
+	" before ",
+	" once ",
+	" removed ",
+	" fallback ",
+	" draft ",
+	" rumor ",
+	" troubleshooting note ",
+}
+
+var conditionalQueryCues = []string{
+	" enterprise ",
+	" standard ",
+	" tenant ",
+	" exception ",
 }
 
 func factMatchesRecallWindow(f *domain.Fact, validAt, knownAt *time.Time) bool {
