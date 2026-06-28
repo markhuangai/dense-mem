@@ -965,6 +965,54 @@ func TestFilterNonPositiveRRFEntriesKeepsAllZeroScoresWhenNoPositiveExists(t *te
 	require.Equal(t, "zero-2", out[1].id)
 }
 
+func TestRecallService_IdentifierSpecificityPrefersExactJobID(t *testing.T) {
+	query := "What timeout should job UNT-013 use?"
+	neighbor := "Runtime configuration. job UNT-003 must use a timeout of 13 minutes."
+	required := "Runtime configuration. job UNT-013 must use a timeout of 23 minutes."
+	sem := &fakeSemanticSearcher{
+		hits: []semanticsearch.SearchHit{
+			{ID: "f-neighbor", Type: "fragment", Content: neighbor},
+			{ID: "f-filler-1", Type: "fragment", Content: "Runtime configuration. job UNT-001 must use a timeout of 11 minutes."},
+			{ID: "f-filler-2", Type: "fragment", Content: "Runtime configuration. job UNT-041 must use a timeout of 11 minutes."},
+			{ID: "f-required", Type: "fragment", Content: required},
+		},
+	}
+	kw := &fakeKeywordSearcher{
+		hits: []keywordsearch.FragmentSearchResult{
+			{FragmentID: "f-required", Content: required},
+			{FragmentID: "f-filler-1", Content: "Runtime configuration. job UNT-001 must use a timeout of 11 minutes."},
+			{FragmentID: "f-neighbor", Content: neighbor},
+		},
+	}
+	svc := NewRecallService(&stubEmbedding{DimensionsResult: 4}, sem, kw, &fakeHydrator{}, nil, nil)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: query, Limit: 5})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, out)
+	require.Equal(t, "f-required", out[0].Fragment.FragmentID)
+}
+
+func TestIdentifierSpecificityAdjustmentRequiresExactIdentifier(t *testing.T) {
+	queryText := rerankText("What timeout should job UNT-013 use?")
+
+	require.Positive(t, identifierSpecificityAdjustment(queryText, "Runtime configuration. job UNT-013 must use a timeout of 23 minutes."))
+	require.Zero(t, identifierSpecificityAdjustment(queryText, "Runtime configuration. job UNT-003 must use a timeout of 13 minutes."))
+}
+
+func TestApplyIdentifierSpecificityAdjustmentsRequiresUnitValueQuery(t *testing.T) {
+	entries := []rrfEntry{
+		{
+			Content:    "Current release calendar update dated 2026-06-28. service OBS-001 now deploys at 03:01 UTC.",
+			FinalScore: 0.02,
+		},
+	}
+
+	applyIdentifierSpecificityAdjustments("What is the current deployment window for service OBS-001?", entries)
+
+	require.Equal(t, 0.02, entries[0].FinalScore)
+}
+
 func TestRecallService_CueRerankPrefersDirectiveEvidence(t *testing.T) {
 	query := "Which pager should alerts for queue NEG-001 use?"
 	sem := &fakeSemanticSearcher{

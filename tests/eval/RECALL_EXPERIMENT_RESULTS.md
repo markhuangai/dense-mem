@@ -12,9 +12,9 @@ Baseline run: `tests/eval/runs/20260628T145353Z_current_logic_baseline_retry`
 
 ## Summary
 
-The best measured branch is `exp/recall-zero-score-context-filter`.
+The best measured branch is `exp/recall-identifier-specificity-rerank`.
 
-It preserves perfect `recall@k=1.0000`, improves rank-1 quality, and reduces judged-bad context from `bad@k=0.6740` to `0.0000`.
+It reaches perfect measured local eval metrics on this seed: `recall@k=1.0000`, `MRR=1.0000`, `nDCG@k=1.0000`, `bad@k=0.0000`, and `bad_rank1=0.0000`.
 
 ## Research Basis
 
@@ -46,7 +46,8 @@ References:
 | `exp/recall-cue-currentness-authority-combined` | `20260628T185425Z_cue_currentness_authority_combined` | 1.0000 | 0.9980 | 0.9985 | 0.1130 | 0.9960 | 0.0000 | Previous best |
 | `exp/recall-fragment-temporal-rerank` | `20260628T211142Z_fragment_temporal_rerank_date_priority` | 1.0000 | 0.9980 | 0.9985 | 0.0990 | 0.9960 | 0.0000 | Previous best |
 | `exp/recall-historical-sibling-suppression` | `20260628T212723Z_historical_sibling_suppression` | 1.0000 | 0.9985 | 0.9989 | 0.0090 | 0.9970 | 0.0000 | Previous best |
-| `exp/recall-zero-score-context-filter` | `20260628T215221Z_zero_score_filter_active_currentness` | 1.0000 | 0.9985 | 0.9989 | 0.0000 | 0.9970 | 0.0000 | Best current candidate |
+| `exp/recall-zero-score-context-filter` | `20260628T215221Z_zero_score_filter_active_currentness` | 1.0000 | 0.9985 | 0.9989 | 0.0000 | 0.9970 | 0.0000 | Previous best |
+| `exp/recall-identifier-specificity-rerank` | `20260628T221954Z_unit_identifier_specificity_rerank` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best current candidate |
 
 ## Best Candidate Deltas
 
@@ -55,19 +56,19 @@ Against original baseline:
 | Metric | Delta |
 | --- | ---: |
 | recall@k | +0.0000 |
-| MRR | +0.0945 |
-| nDCG@k | +0.0699 |
+| MRR | +0.0960 |
+| nDCG@k | +0.0710 |
 | bad@k | -0.6740 |
 | bad rank 1 | -0.1810 |
 
-Against historical sibling suppression:
+Against zero-score context filter:
 
 | Metric | Delta |
 | --- | ---: |
 | recall@k | +0.0000 |
-| MRR | +0.0000 |
-| nDCG@k | +0.0000 |
-| bad@k | -0.0090 |
+| MRR | +0.0015 |
+| nDCG@k | +0.0011 |
+| bad@k | +0.0000 |
 | bad rank 1 | +0.0000 |
 
 ## What Changed
@@ -80,28 +81,28 @@ The best branch keeps the existing hybrid semantic plus keyword RRF flow and add
 4. Date-priority currentness rerank: carries raw fragment `created_at` and `updated_at` through semantic and keyword search, parses explicit `YYYY-MM-DD` dates in matching fragment content, and prevents undated "current/now" wording from receiving a positive lexical boost when a matching dated candidate exists.
 5. Historical sibling suppression: for selection queries, detects when a matching directive answer exists and applies a stronger penalty to historic action siblings such as `Before 2026 ... used ...`.
 6. Zero-score context filter: after post-RRF adjustments, drops non-positive fragment candidates when at least one positive fragment candidate exists, preventing strongly demoted stale fragments from filling remaining context slots. The branch also treats `active` queries as currentness queries so active retraction updates are reranked consistently.
+7. Unit identifier specificity rerank: for timeout/job value queries, gives a small boost to fragments containing the exact identifier from the query. This fixes neighboring job collisions such as `UNT-003` outranking `UNT-013` while avoiding the broader exact-ID boost that reintroduced bad context in other slices.
 
 All positive boosts require matching identifier-like tokens from the query, such as `OBS-001`, `NEG-001`, or `AUT-061`, when such identifiers exist. This guard prevents neighboring template records from receiving accidental boosts.
 
 ## Remaining Gaps
 
-The best branch has `bad@k=0.0000` on this seed.
+The best branch has perfect measured metrics on this seed.
 
-Residual rank-quality work is concentrated in:
+Remaining work is now about generalization beyond this synthetic seed:
 
-| Slice | Avg bad@k | MRR | Notes |
-| --- | ---: | ---: | --- |
-| `unit_trap` | 0.0000 | 0.9833 | No bad context, but MRR is still below perfect due rank-1 misses. |
-| `obsolete_correction` | 0.0000 | 1.0000 | Zero-score context filtering removed the remaining stale context. |
-| `explicit_negation` | 0.0000 | 1.0000 | Historical sibling suppression removed the remaining bad context. |
-| `retraction` | 0.0000 | 1.0000 | Active-currentness rerank keeps retraction updates at rank 1. |
+| Area | Current metric | Notes |
+| --- | ---: | --- |
+| `unit_trap` | MRR 1.0000, bad@k 0.0000 | Scoped exact-ID boost fixed remaining neighboring-job rank misses. |
+| All adversarial slices | bad@k 0.0000 | No judged-bad context remains in top-k on local_eval_1k_v2. |
+| Non-synthetic workloads | Not measured | Need validation because zero-score filtering can intentionally return fewer than `limit` fragments. |
 
 ## Recommendation
 
-Merge candidate to main should start from `exp/recall-zero-score-context-filter`, not the isolated branches.
+Merge candidate to main should start from `exp/recall-identifier-specificity-rerank`, not the isolated branches.
 
-Next improvement experiments should target remaining rank quality and generalization:
+Next improvement experiments should target generalization:
 
-1. Unit-trap rank polish, because that slice still has no bad context but MRR remains below perfect.
-2. Verify zero-score filtering against non-synthetic workloads, because returning fewer than `limit` fragments is intentional but changes context volume.
-3. Broader temporal parsing beyond ISO `YYYY-MM-DD`, including natural language dates, before relying on date-priority rerank outside the synthetic seed.
+1. Validate zero-score filtering against non-synthetic workloads, because returning fewer than `limit` fragments is intentional but changes context volume.
+2. Broader temporal parsing beyond ISO `YYYY-MM-DD`, including natural language dates, before relying on date-priority rerank outside the synthetic seed.
+3. Replace hard-coded cue lists with learned or configurable rerank features if future seeds expose broader language variation.
