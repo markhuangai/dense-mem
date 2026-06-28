@@ -804,6 +804,117 @@ func TestCurrentnessAdjustmentRequiresQueryIdentifiersForBoosts(t *testing.T) {
 	require.Zero(t, currentnessAdjustment(query, neighbor))
 }
 
+func TestRecallService_CurrentnessRerankPrefersNewerDatedFragment(t *testing.T) {
+	query := "Who is the current owner for account TMP-001?"
+	oldCreated := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
+	newCreated := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	sem := &fakeSemanticSearcher{
+		hits: []semanticsearch.SearchHit{
+			{
+				ID:        "f-old-current",
+				Type:      "fragment",
+				Content:   "Current owner record. account TMP-001 owner is alice.",
+				CreatedAt: oldCreated,
+				UpdatedAt: oldCreated,
+			},
+		},
+	}
+	kw := &fakeKeywordSearcher{
+		hits: []keywordsearch.FragmentSearchResult{
+			{
+				FragmentID: "f-new-dated",
+				Content:    "Owner record dated 2026-06-26. account TMP-001 owner is bob.",
+				CreatedAt:  newCreated,
+				UpdatedAt:  newCreated,
+			},
+		},
+	}
+	emb := &stubEmbedding{DimensionsResult: 4}
+	svc := NewRecallService(emb, sem, kw, &fakeHydrator{}, nil, nil)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: query, Limit: 5})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, out)
+	require.Equal(t, "f-new-dated", out[0].Fragment.FragmentID)
+}
+
+func TestRecallService_CurrentnessRerankDatedFragmentBeatsUndatedCurrentCue(t *testing.T) {
+	query := "Who is the current owner for account TMP-001?"
+	oldCreated := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
+	newCreated := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	oldCurrent := semanticsearch.SearchHit{
+		ID:        "f-old-current",
+		Type:      "fragment",
+		Content:   "Current owner record. account TMP-001 owner is alice.",
+		CreatedAt: oldCreated,
+		UpdatedAt: oldCreated,
+	}
+	sem := &fakeSemanticSearcher{
+		hits: []semanticsearch.SearchHit{oldCurrent},
+	}
+	kw := &fakeKeywordSearcher{
+		hits: []keywordsearch.FragmentSearchResult{
+			{
+				FragmentID: "f-old-current",
+				Content:    oldCurrent.Content,
+				CreatedAt:  oldCreated,
+				UpdatedAt:  oldCreated,
+			},
+			{
+				FragmentID: "f-new-dated",
+				Content:    "Owner record dated 2026-06-26. account TMP-001 owner is bob.",
+				CreatedAt:  newCreated,
+				UpdatedAt:  newCreated,
+			},
+		},
+	}
+	svc := NewRecallService(&stubEmbedding{DimensionsResult: 4}, sem, kw, &fakeHydrator{}, nil, nil)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: query, Limit: 5})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, out)
+	require.Equal(t, "f-new-dated", out[0].Fragment.FragmentID)
+}
+
+func TestCurrentnessTemporalAdjustmentRequiresQueryIdentifiers(t *testing.T) {
+	query := "Who is the current owner for account TMP-001?"
+	newest := time.Date(2026, 6, 26, 0, 0, 0, 0, time.UTC)
+	frame := currentnessTemporalFrame{hasContentDate: true, newestContentDate: newest}
+	neighbor := rrfEntry{
+		Content:   "Owner record dated 2026-06-26. account TMP-002 owner is bob.",
+		CreatedAt: newest,
+		UpdatedAt: newest,
+	}
+
+	require.Zero(t, currentnessTemporalAdjustment(query, neighbor, frame))
+}
+
+func TestCurrentnessTemporalFramePrefersContentDatesOverBulkImportTimes(t *testing.T) {
+	query := "What is the current deployment window for service OBS-001?"
+	importedAt := time.Date(2026, 6, 28, 20, 0, 0, 0, time.UTC)
+	entries := []rrfEntry{
+		{
+			Content:   "Current release calendar update dated 2026-06-28. service OBS-001 now deploys at 03:01 UTC.",
+			CreatedAt: importedAt,
+			UpdatedAt: importedAt,
+		},
+		{
+			Content:   "Draft migration plan suggested 02:01 UTC for service OBS-001, but the plan was replaced.",
+			CreatedAt: importedAt,
+			UpdatedAt: importedAt,
+		},
+	}
+
+	frame := currentnessTemporalFrameFor(query, entries)
+
+	require.True(t, frame.hasContentDate)
+	require.False(t, frame.useFragmentTimestamp)
+	require.Positive(t, currentnessTemporalAdjustment(query, entries[0], frame))
+	require.Negative(t, currentnessTemporalAdjustment(query, entries[1], frame))
+}
+
 func TestRecallService_CueRerankPrefersDirectiveEvidence(t *testing.T) {
 	query := "Which pager should alerts for queue NEG-001 use?"
 	sem := &fakeSemanticSearcher{

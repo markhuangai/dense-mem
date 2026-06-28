@@ -57,9 +57,10 @@ func (s *neo4jFragmentSearcher) SearchContent(ctx context.Context, profileID str
 	// Build the Cypher query with full-text index search.
 	// Uses db.index.fulltext.queryNodes for content search.
 	cypherQuery := `CALL db.index.fulltext.queryNodes('fragment_content_idx', $searchQuery) YIELD node AS f, score
-WHERE ` + whereClause + `
-RETURN f.fragment_id AS fragment_id, f.content AS content, f.labels AS labels, f.metadata AS metadata, f.team_id AS team_id, score
-LIMIT $limit`
+	WHERE ` + whereClause + `
+	RETURN f.fragment_id AS fragment_id, f.content AS content, f.labels AS labels, f.metadata AS metadata, f.team_id AS team_id,
+	       f.created_at AS created_at, f.updated_at AS updated_at, score
+	LIMIT $limit`
 
 	// Build params
 	params := map[string]any{
@@ -88,6 +89,8 @@ LIMIT $limit`
 			Labels:     getLabels(row, "labels"),
 			Metadata:   getMetadata(row, "metadata"),
 			ProfileID:  getString(row, "team_id"),
+			CreatedAt:  getTimeVal(row, "created_at"),
+			UpdatedAt:  getTimeVal(row, "updated_at"),
 		}
 	}
 

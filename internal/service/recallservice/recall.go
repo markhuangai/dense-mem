@@ -696,6 +696,8 @@ func (s *recallService) batchHydrateClaims(ctx context.Context, profileID string
 type rrfEntry struct {
 	id           string
 	Content      string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 	SemanticRank int
 	KeywordRank  int
 	FinalScore   float64
@@ -715,6 +717,7 @@ func rrfMerge(sem []semanticsearch.SearchHit, kw []keywordsearch.FragmentSearchR
 		if e.Content == "" {
 			e.Content = h.Content
 		}
+		mergeRRFEntryTimes(e, h.CreatedAt, h.UpdatedAt)
 		if e.SemanticRank == 0 || rank < e.SemanticRank {
 			e.SemanticRank = rank
 		}
@@ -730,6 +733,7 @@ func rrfMerge(sem []semanticsearch.SearchHit, kw []keywordsearch.FragmentSearchR
 		if e.Content == "" {
 			e.Content = h.Content
 		}
+		mergeRRFEntryTimes(e, h.CreatedAt, h.UpdatedAt)
 		if e.KeywordRank == 0 || rank < e.KeywordRank {
 			e.KeywordRank = rank
 		}
@@ -742,12 +746,30 @@ func rrfMerge(sem []semanticsearch.SearchHit, kw []keywordsearch.FragmentSearchR
 	return out
 }
 
+func mergeRRFEntryTimes(entry *rrfEntry, createdAt, updatedAt time.Time) {
+	if entry == nil {
+		return
+	}
+	if !createdAt.IsZero() && (entry.CreatedAt.IsZero() || createdAt.Before(entry.CreatedAt)) {
+		entry.CreatedAt = createdAt
+	}
+	if !updatedAt.IsZero() && (entry.UpdatedAt.IsZero() || updatedAt.After(entry.UpdatedAt)) {
+		entry.UpdatedAt = updatedAt
+	}
+}
+
 func applyCurrentnessAdjustments(query string, entries []rrfEntry) {
 	if !isCurrentnessQuery(query) {
 		return
 	}
+	temporalFrame := currentnessTemporalFrameFor(query, entries)
 	for i := range entries {
-		entries[i].FinalScore += currentnessAdjustment(query, entries[i].Content)
+		lexicalAdjustment := currentnessAdjustment(query, entries[i].Content)
+		if temporalFrame.hasContentDate && lexicalAdjustment > 0 && latestISODateInText(entries[i].Content).IsZero() {
+			lexicalAdjustment = 0
+		}
+		entries[i].FinalScore += lexicalAdjustment
+		entries[i].FinalScore += currentnessTemporalAdjustment(query, entries[i], temporalFrame)
 		if entries[i].FinalScore < 0 {
 			entries[i].FinalScore = 0
 		}
@@ -808,6 +830,136 @@ func currentnessAdjustment(query, content string) float64 {
 		return -0.028
 	}
 	return adjustment
+}
+
+type currentnessTemporalFrame struct {
+	hasContentDate       bool
+	newestContentDate    time.Time
+	useFragmentTimestamp bool
+	newestFragmentTime   time.Time
+}
+
+func currentnessTemporalAdjustment(query string, entry rrfEntry, frame currentnessTemporalFrame) float64 {
+	if !frame.hasContentDate && !frame.useFragmentTimestamp {
+		return 0
+	}
+	queryText := rerankText(query)
+	contentText := rerankText(entry.Content)
+	if queryText == "" || contentText == "" || !rerankMatchesQueryIdentifiers(queryText, contentText) {
+		return 0
+	}
+
+	if frame.hasContentDate {
+		contentDate := latestISODateInText(entry.Content)
+		if contentDate.IsZero() {
+			return -0.006
+		}
+		return contentDateTemporalDelta(frame.newestContentDate.Sub(contentDate))
+	}
+
+	fragmentTime := latestFragmentTimestamp(entry.CreatedAt, entry.UpdatedAt)
+	if fragmentTime.IsZero() {
+		return 0
+	}
+	return fragmentTimestampTemporalDelta(frame.newestFragmentTime.Sub(fragmentTime))
+}
+
+func contentDateTemporalDelta(age time.Duration) float64 {
+	if age < 0 {
+		age = 0
+	}
+	switch {
+	case age == 0:
+		return 0.028
+	case age <= 72*time.Hour:
+		return 0.014
+	case age >= 7*24*time.Hour:
+		return -0.026
+	case age >= 24*time.Hour:
+		return -0.018
+	default:
+		return 0
+	}
+}
+
+func fragmentTimestampTemporalDelta(age time.Duration) float64 {
+	if age < 0 {
+		age = 0
+	}
+	switch {
+	case age == 0:
+		return 0.014
+	case age <= 72*time.Hour:
+		return 0.007
+	case age >= 7*24*time.Hour:
+		return -0.014
+	case age >= 24*time.Hour:
+		return -0.010
+	default:
+		return 0
+	}
+}
+
+func currentnessTemporalFrameFor(query string, entries []rrfEntry) currentnessTemporalFrame {
+	queryText := rerankText(query)
+	var frame currentnessTemporalFrame
+	var oldestFragmentTime time.Time
+	for _, entry := range entries {
+		contentText := rerankText(entry.Content)
+		if queryText == "" || contentText == "" || !rerankMatchesQueryIdentifiers(queryText, contentText) {
+			continue
+		}
+		if contentDate := latestISODateInText(entry.Content); !contentDate.IsZero() {
+			frame.hasContentDate = true
+			if frame.newestContentDate.IsZero() || contentDate.After(frame.newestContentDate) {
+				frame.newestContentDate = contentDate
+			}
+		}
+		fragmentTime := latestFragmentTimestamp(entry.CreatedAt, entry.UpdatedAt)
+		if fragmentTime.IsZero() {
+			continue
+		}
+		if oldestFragmentTime.IsZero() || fragmentTime.Before(oldestFragmentTime) {
+			oldestFragmentTime = fragmentTime
+		}
+		if frame.newestFragmentTime.IsZero() || fragmentTime.After(frame.newestFragmentTime) {
+			frame.newestFragmentTime = fragmentTime
+		}
+	}
+	if !frame.hasContentDate && !oldestFragmentTime.IsZero() && frame.newestFragmentTime.Sub(oldestFragmentTime) >= 24*time.Hour {
+		frame.useFragmentTimestamp = true
+	}
+	return frame
+}
+
+func latestFragmentTimestamp(createdAt, updatedAt time.Time) time.Time {
+	latest := createdAt
+	if updatedAt.After(latest) {
+		latest = updatedAt
+	}
+	if latest.IsZero() {
+		return time.Time{}
+	}
+	return latest.UTC()
+}
+
+func latestISODateInText(value string) time.Time {
+	var latest time.Time
+	for _, field := range strings.Fields(value) {
+		token := strings.Trim(field, ".,:;!?()[]{}\"'")
+		if len(token) != len("2006-01-02") {
+			continue
+		}
+		parsed, err := time.Parse("2006-01-02", token)
+		if err != nil {
+			continue
+		}
+		parsed = parsed.UTC()
+		if latest.IsZero() || parsed.After(latest) {
+			latest = parsed
+		}
+	}
+	return latest
 }
 
 func cueAdjustment(query, content string) float64 {

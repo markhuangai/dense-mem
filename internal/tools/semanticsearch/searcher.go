@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 
@@ -41,7 +42,8 @@ func (s *neo4jEmbeddingSearcher) QueryVectorIndex(ctx context.Context, profileID
 	// Uses db.index.vector.queryNodes for vector similarity search.
 	cypherQuery := `CALL db.index.vector.queryNodes('fragment_embedding_idx', $limit, $embedding) YIELD node AS f, score
 WHERE f.team_id = $profileId AND ` + fragmentActive + `
-RETURN f.fragment_id AS id, f.content AS content, score, f.labels AS labels, f.metadata AS metadata, f.team_id AS team_id`
+	RETURN f.fragment_id AS id, f.content AS content, score, f.labels AS labels, f.metadata AS metadata, f.team_id AS team_id,
+	       f.created_at AS created_at, f.updated_at AS updated_at`
 
 	// Build params - convert float32 slice to any slice for Neo4j
 	embeddingAny := make([]any, len(embedding))
@@ -71,6 +73,8 @@ RETURN f.fragment_id AS id, f.content AS content, score, f.labels AS labels, f.m
 			Labels:    getLabelsVal(row, "labels"),
 			Metadata:  getMetadataVal(row, "metadata"),
 			ProfileID: getStringVal(row, "team_id"),
+			CreatedAt: getTimeVal(row, "created_at"),
+			UpdatedAt: getTimeVal(row, "updated_at"),
 		}
 	}
 
@@ -98,6 +102,13 @@ func getFloat64Val(row map[string]any, key string) float64 {
 		}
 	}
 	return 0.0
+}
+
+func getTimeVal(row map[string]any, key string) time.Time {
+	if val, ok := row[key].(time.Time); ok {
+		return val
+	}
+	return time.Time{}
 }
 
 func getLabelsVal(row map[string]any, key string) []string {
