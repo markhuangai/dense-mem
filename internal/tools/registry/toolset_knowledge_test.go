@@ -96,6 +96,60 @@ func TestBuildDefaultMemoryTools_InvokeAndScope(t *testing.T) {
 	}
 }
 
+func TestRememberNormalizesLegacyContentWithoutPromotionHints(t *testing.T) {
+	mem := &stubMemory{}
+	reg, _ := BuildDefault(Dependencies{Memory: mem})
+	tool, ok := reg.Get("remember")
+	if !ok {
+		t.Fatal("remember not registered")
+	}
+	legacy := map[string]any{
+		"content":         "legacy content should be stored as evidence",
+		"source":          "chat: compatibility",
+		"idempotency_key": "legacy-remember-content",
+		"labels":          []any{"decision", "security"},
+		"metadata":        map[string]any{"origin": "legacy-client"},
+		"auto_promote":    true,
+		"claims": []any{map[string]any{
+			"subject":         "client",
+			"predicate":       "uses",
+			"object":          "old remember shape",
+			"extract_conf":    0.99,
+			"resolution_conf": 0.99,
+		}},
+	}
+
+	normalized := NormalizeInput(tool, legacy)
+	if _, ok := normalized["claims"]; ok {
+		t.Fatal("legacy claims must not survive remember normalization")
+	}
+	if _, ok := normalized["auto_promote"]; ok {
+		t.Fatal("legacy auto_promote must not survive remember normalization")
+	}
+	if err := ValidateInput(tool, normalized); err != nil {
+		t.Fatalf("ValidateInput normalized legacy remember: %v", err)
+	}
+	if _, err := tool.Invoke(context.Background(), "profile-memory", legacy); err != nil {
+		t.Fatalf("legacy remember Invoke: %v", err)
+	}
+	if len(mem.lastRemember.Evidence) != 1 {
+		t.Fatalf("remember evidence count = %d; want 1", len(mem.lastRemember.Evidence))
+	}
+	evidence := mem.lastRemember.Evidence[0]
+	if evidence.Content != "legacy content should be stored as evidence" {
+		t.Fatalf("remember evidence content = %q", evidence.Content)
+	}
+	if evidence.Source != "chat: compatibility" || evidence.IdempotencyKey != "legacy-remember-content" {
+		t.Fatalf("remember evidence provenance = %#v", evidence)
+	}
+	if len(evidence.Labels) != 2 || evidence.Labels[0] != "decision" || evidence.Labels[1] != "security" {
+		t.Fatalf("remember evidence labels = %#v", evidence.Labels)
+	}
+	if evidence.Metadata["origin"] != "legacy-client" {
+		t.Fatalf("remember evidence metadata = %#v", evidence.Metadata)
+	}
+}
+
 func TestBuildDefaultMemoryTools_InvalidInputBranches(t *testing.T) {
 	reg, _ := BuildDefault(Dependencies{Memory: &stubMemory{}})
 

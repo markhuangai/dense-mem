@@ -341,6 +341,7 @@ func (s *Server) handleToolsCall(ctx context.Context, raw json.RawMessage) (map[
 	// team. The HTTP API derives scope from the bearer key; local registries
 	// may still receive a construction-time team for tests.
 	registry.StripTenantOverrideArgs(args)
+	args = registry.NormalizeInput(tool, args)
 	if err := registry.ValidateInput(tool, args); err != nil {
 		return nil, &rpcError{Code: errCodeInvalidParams, Message: err.Error()}
 	}

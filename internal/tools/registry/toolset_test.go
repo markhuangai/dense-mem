@@ -473,11 +473,13 @@ func (s *stubListCapture) List(ctx context.Context, profileID string, opts fragm
 }
 
 type stubMemory struct {
-	lastProfile string
+	lastProfile  string
+	lastRemember memoryservice.RememberRequest
 }
 
 func (s *stubMemory) Remember(ctx context.Context, profileID string, req memoryservice.RememberRequest) (*memoryservice.RememberResult, error) {
 	s.lastProfile = profileID
+	s.lastRemember = req
 	return &memoryservice.RememberResult{
 		IngestID: "ingest-1",
 		Status:   "queued",
