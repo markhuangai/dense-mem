@@ -12,9 +12,11 @@ Baseline run: `tests/eval/runs/20260628T145353Z_current_logic_baseline_retry`
 
 ## Summary
 
-The best measured branch for the stable reusable-team eval loop is `exp/recall-typed-evidence-temporal-cues`.
+The current combined branch is `exp/recall-temporal-verifier-context`.
 
-It reaches perfect measured local eval metrics on this seed, using the already-imported reusable team and `--import-seed=false`: `recall@k=1.0000`, `MRR=1.0000`, `nDCG@k=1.0000`, `bad@k=0.0000`, and `bad_rank1=0.0000`. It also passes the focused live `local_tiered_v1` fact/claim seed.
+It reaches perfect measured local eval metrics on this seed, using the already-imported reusable team and `--import-seed=false`: `recall@k=1.0000`, `MRR=1.0000`, `nDCG@k=1.0000`, `bad@k=0.0000`, and `bad_rank1=0.0000`. It also passes the focused live `local_tiered_v1` fact/claim seed after sending claim `valid_from` / `valid_to` scope into the verifier.
+
+The `local_eval_1k_v2` run for this branch is a regression check against the stable imported team. It does not fully exercise the new verifier/write-path behavior because those records were imported before this branch. A full 1k write-path measurement would require re-importing `local_eval_1k_v2`.
 
 `bad@k` is the average count of judged-bad references in the returned top-k. `bad_rank1` is the share of cases where the top-ranked reference is judged bad. Both indicate bad output; `bad@k > 0` still matters even when `bad_rank1 = 0`, because the context can contain misleading evidence below rank 1.
 
@@ -33,6 +35,7 @@ The current eval process reuses a stable imported `local_eval_1k_v2` team and do
 | `exp/recall-month-name-temporal-cues` | `20260629T_month_name_temporal_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good; preserves reusable 1k metrics while adding month-name date support for fragment currentness. |
 | `exp/recall-typed-content-temporal-cues` | `20260629T_typed_content_temporal_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good; preserves reusable 1k metrics while adding typed fact/claim content-date currentness fallback. |
 | `exp/recall-typed-evidence-temporal-cues` | `20260629T_typed_evidence_temporal_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good; preserves reusable 1k metrics while adding supporting-fragment date fallback for typed facts and claims. |
+| `exp/recall-temporal-verifier-context` | `20260629T_temporal_verifier_context_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good regression check; preserves reusable 1k metrics while adding verifier temporal scope. This is not a full write-path 1k measurement because the stable corpus was already imported. |
 
 Delta from reusable-team current logic to vector overfetch: `recall@k +0.0270`, `MRR +0.0426`, `nDCG@k +0.0388`, `bad@k -0.1010`.
 
@@ -52,8 +55,11 @@ The `local_eval_1k_v2` suite mostly measures fragment retrieval. `local_tiered_v
 | `exp/recall-month-name-temporal-cues` | `20260629T_month_name_temporal_local_tiered_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good month-name temporal coverage: a `June 27, 2026` fragment update outranks an undated fragment that says current. |
 | `exp/recall-typed-content-temporal-cues` | `20260629T_typed_content_temporal_local_tiered_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good typed content-date coverage: facts and claims with no `valid_from` rank by dates present in their triple text before falling back to `recorded_at`. |
 | `exp/recall-typed-evidence-temporal-cues` | `20260629T_typed_evidence_temporal_local_tiered_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good typed evidence-date coverage: facts and claims with no `valid_from` or triple date rank by dates in supporting source fragments before falling back to `recorded_at`. |
+| `exp/recall-temporal-verifier-context` | `20260629T_temporal_verifier_context_local_tiered_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good live import coverage: claim verification receives `valid_from` / `valid_to`, so later updates outside a claim's validity window do not incorrectly contradict the scoped claim. |
 
 This branch also fixes the eval harness so qrels can resolve `source_doc_id` as a fragment, claim, or fact, fixes optional `valid_from` / `valid_to` persistence for claim creation and fact promotion, and fails typed live eval imports when required refs are not mapped after import.
+
+Before `exp/recall-temporal-verifier-context`, the updated verifier model failed the focused valid-window import with `local_tiered_v1_fact_valid_window_old` unmapped after import. The old claim was marked `disputed` because the verifier received only `subject predicate object` plus supporting fragment text; it did not receive the claim's time bounds.
 
 ## Research Basis
 
@@ -95,6 +101,7 @@ References:
 | `exp/recall-month-name-temporal-cues` | `20260629T_month_name_temporal_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best candidate with relative plus month-name temporal phrase support |
 | `exp/recall-typed-content-temporal-cues` | `20260629T_typed_content_temporal_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best candidate with typed fact/claim content-date fallback |
 | `exp/recall-typed-evidence-temporal-cues` | `20260629T_typed_evidence_temporal_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best candidate with typed supporting-evidence date fallback |
+| `exp/recall-temporal-verifier-context` | `20260629T_temporal_verifier_context_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best combined branch; 1k no-import regression only for the verifier/write-path change |
 
 ## Best Candidate Deltas
 
@@ -139,6 +146,7 @@ The best branch keeps the existing hybrid semantic plus keyword RRF flow and add
 15. Month-name temporal fragment cues: currentness rerank now parses dates such as `June 27, 2026`, `Jun 27`, and `27 June 2026`, using the fragment timestamp's year when the content omits a year. This handles dated updates that do not use ISO date format.
 16. Typed fact/claim content-date fallback: currentness sorting for active facts and validated claims now uses `valid_from` first, then parses temporal dates from the hydrated triple text, then falls back to `recorded_at`. Community expansion uses the same helper, so direct and expanded recall sort typed hits consistently.
 17. Typed fact/claim evidence-date fallback: when `valid_from` and triple text do not contain a date, currentness sorting batches and reads supporting fragments from fact/claim evidence, parses temporal dates from those fragment contents, then falls back to `recorded_at`. The response still strips evidence unless `include_evidence` is requested.
+18. Verifier temporal scope: claim verification now passes `valid_from` / `valid_to` into the verifier request, and the OpenAI verifier includes those bounds in the JSON payload. This prevents later or earlier evidence outside a claim's stated validity window from being treated as a contradiction for the scoped claim.
 
 All positive boosts require matching identifier-like tokens from the query, such as `OBS-001`, `NEG-001`, or `AUT-061`, when such identifiers exist. This guard prevents neighboring template records from receiving accidental boosts.
 
@@ -153,18 +161,20 @@ Remaining work is now about generalization beyond this synthetic seed:
 | `unit_trap` | MRR 1.0000, bad@k 0.0000 | Scoped exact-ID boost fixed remaining neighboring-job rank misses. |
 | All adversarial slices | bad@k 0.0000 | No judged-bad context remains in top-k on local_eval_1k_v2. |
 | Non-synthetic workloads | Not measured | Need validation because zero-score filtering can intentionally return fewer than `limit` fragments. |
-| Tiered facts/claims/fragments | Expanded `local_tiered_v1` live candidate: recall@k 1.0000, required rank 1 1.0000, bad@k 0.0000 | Fourteen-case seed now covers same-tier fact/claim currentness, typed fact/claim content-date fallback without `valid_from`, typed supporting-evidence date fallback, fact-over-fragment, claim-over-fragment, cross-identifier fact filtering, `valid_at` temporal windows, evidence-source fragment intent, relative temporal fragment currentness, and month-name temporal fragment currentness. Keep expanding before treating it as broad acceptance coverage. |
+| Tiered facts/claims/fragments | Expanded `local_tiered_v1` live candidate: recall@k 1.0000, required rank 1 1.0000, bad@k 0.0000 | Fourteen-case seed now covers same-tier fact/claim currentness, typed fact/claim content-date fallback without `valid_from`, typed supporting-evidence date fallback, fact-over-fragment, claim-over-fragment, cross-identifier fact filtering, `valid_at` temporal windows, evidence-source fragment intent, relative temporal fragment currentness, month-name temporal fragment currentness, and verifier temporal scope. Keep expanding before treating it as broad acceptance coverage. |
 | Typed source text dates | Partially measured | Supporting fragment dates are now measured for typed fact/claim currentness. Recall still cannot recover dates if extraction/import drops both typed temporal fields and evidence links, or if the relevant source date is outside the hydrated supporting fragments. |
+| Write-path 1k coverage | Not fully measured on this branch | The 1k run for `exp/recall-temporal-verifier-context` reused the stable imported team. A full write-path measurement requires re-importing `local_eval_1k_v2`, because the verifier only runs during import/promotion. |
 
 ## Recommendation
 
-Merge candidate to main should start from `exp/recall-typed-evidence-temporal-cues`, which builds on `exp/recall-typed-content-temporal-cues`.
+Merge candidate to main should start from `exp/recall-temporal-verifier-context`, which builds on `exp/recall-typed-evidence-temporal-cues`.
 
 Next improvement experiments should target generalization:
 
 1. Validate zero-score filtering against non-synthetic workloads, because returning fewer than `limit` fragments is intentional but changes context volume.
 2. Measure typed evidence-date fallback latency on non-synthetic or larger typed workloads, because it adds supporting fragment hydration for typed currentness hits.
 3. Decide whether claim/fact extraction should preserve source dates as `valid_from`, triple text, or structured metadata; recall now has an evidence fallback, but typed temporal fields remain cheaper and more explicit.
-4. Broader temporal parsing beyond relative phrases and month names, including weekdays, ambiguous numeric dates, and non-English date forms, before relying on natural-language date priority outside the synthetic seed.
-5. Keep expanding `local_tiered_v1` now that live typed fact/claim/fragment scoring is stable.
-6. Replace hard-coded cue lists with learned or configurable rerank features if future seeds expose broader language variation.
+4. Run a full `local_eval_1k_v2` import for `exp/recall-temporal-verifier-context` when the hour-scale cost is worth measuring write-path behavior across the full synthetic corpus.
+5. Broader temporal parsing beyond relative phrases and month names, including weekdays, ambiguous numeric dates, and non-English date forms, before relying on natural-language date priority outside the synthetic seed.
+6. Keep expanding `local_tiered_v1` now that live typed fact/claim/fragment scoring is stable.
+7. Replace hard-coded cue lists with learned or configurable rerank features if future seeds expose broader language variation.

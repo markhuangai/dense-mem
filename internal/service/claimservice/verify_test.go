@@ -20,11 +20,13 @@ import (
 // preset Response/error pair so tests can drive each verdict branch without a
 // live LLM.
 type stubVerifier struct {
-	resp verifier.Response
-	err  error
+	resp    verifier.Response
+	err     error
+	lastReq verifier.Request
 }
 
-func (s *stubVerifier) Verify(_ context.Context, _ verifier.Request) (verifier.Response, error) {
+func (s *stubVerifier) Verify(_ context.Context, req verifier.Request) (verifier.Response, error) {
+	s.lastReq = req
 	return s.resp, s.err
 }
 
@@ -254,6 +256,47 @@ func TestVerifyClaimInsufficient(t *testing.T) {
 
 	require.Len(t, writer.written, 1)
 	require.Equal(t, 1, metrics.VerifyVerdictCount("inconclusive"))
+}
+
+func TestVerifyClaimPassesTemporalScopeToVerifier(t *testing.T) {
+	ctx := context.Background()
+	validFrom := time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)
+	validTo := time.Date(2026, 6, 27, 0, 0, 0, 0, time.UTC)
+	row := baseVerifyClaimRow(verifyTestClaimID, verifyTestProfileA, "frag-1")
+	row["valid_from"] = validFrom
+	row["valid_to"] = validTo
+	row["subject"] = "service TIER-W-001 owner"
+	row["predicate"] = "uses"
+	row["object"] = "owner-coral"
+
+	claimRows := map[string][]map[string]any{
+		verifyTestProfileA: {row},
+	}
+	fragRows := map[string][]map[string]any{
+		verifyTestProfileA: {
+			{"fragment_id": "frag-1", "content": "Since 2026-06-20, service TIER-W-001 owner uses owner-coral.", "source_quality": 0.9, "classification": nil},
+		},
+	}
+	writer := &stubClaimWriter{}
+	verif := &stubVerifier{
+		resp: verifier.Response{
+			Verdict:    "entailed",
+			Confidence: 0.95,
+			Reasoning:  "temporal claim supported",
+			RawJSON:    `{"verdict":"entailed"}`,
+		},
+	}
+	svc := buildVerifyService(claimRows, fragRows, writer, verif, "verifier-model", nil, nil)
+
+	got, err := svc.Verify(ctx, verifyTestProfileA, verifyTestClaimID)
+
+	require.NoError(t, err)
+	require.Equal(t, domain.StatusValidated, got.Status)
+	require.NotNil(t, verif.lastReq.ValidFrom)
+	require.NotNil(t, verif.lastReq.ValidTo)
+	require.Equal(t, validFrom, *verif.lastReq.ValidFrom)
+	require.Equal(t, validTo, *verif.lastReq.ValidTo)
+	require.Equal(t, "service TIER-W-001 owner uses owner-coral", verif.lastReq.Predicate)
 }
 
 // ---------------------------------------------------------------------------

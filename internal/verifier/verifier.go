@@ -3,7 +3,10 @@
 // receive a structured verdict with an optional raw JSON payload.
 package verifier
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Request is the input to a verification call. It carries the claim text
 // and the profile that owns the claim (required for isolation).
@@ -18,6 +21,11 @@ type Request struct {
 	// Context provides optional supporting evidence that the verifier
 	// may use when assessing the predicate.
 	Context string
+
+	// ValidFrom and ValidTo describe the claim's temporal scope when known.
+	// Implementations should omit them from provider payloads when nil.
+	ValidFrom *time.Time
+	ValidTo   *time.Time
 }
 
 // Response is the structured result of a verification call.

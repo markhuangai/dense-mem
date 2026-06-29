@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -122,6 +123,37 @@ func TestOpenAIVerifier(t *testing.T) {
 		v := NewOpenAIVerifier(cfg, srv.Client())
 
 		got, err := v.Verify(context.Background(), Request{ProfileID: "p", Predicate: "claim"})
+
+		require.NoError(t, err)
+		assert.Equal(t, "entailed", got.Verdict)
+	})
+
+	t.Run("IncludesTemporalScopeWhenProvided", func(t *testing.T) {
+		validFrom := time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)
+		validTo := time.Date(2026, 6, 27, 0, 0, 0, 0, time.UTC)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var reqBody openAIVerifierRequest
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
+			require.Len(t, reqBody.Messages, 2)
+			var userPayload map[string]any
+			require.NoError(t, json.Unmarshal([]byte(reqBody.Messages[1].Content), &userPayload))
+			assert.Equal(t, "service TIER-W-001 owner uses owner-coral", userPayload["claim"])
+			assert.Equal(t, "2026-06-20T00:00:00Z", userPayload["valid_from"])
+			assert.Equal(t, "2026-06-27T00:00:00Z", userPayload["valid_to"])
+
+			verifierSuccessHandler("entailed", 0.9, "Temporal scope was included.")(w, r)
+		}))
+		defer srv.Close()
+
+		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
+
+		got, err := v.Verify(context.Background(), Request{
+			ProfileID: "p",
+			Predicate: "service TIER-W-001 owner uses owner-coral",
+			Context:   "Since 2026-06-20, service TIER-W-001 owner uses owner-coral.",
+			ValidFrom: &validFrom,
+			ValidTo:   &validTo,
+		})
 
 		require.NoError(t, err)
 		assert.Equal(t, "entailed", got.Verdict)
