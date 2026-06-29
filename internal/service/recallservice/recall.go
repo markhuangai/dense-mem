@@ -598,8 +598,12 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 				}
 				hydrated = append(hydrated, hydratedFactRecallCandidate{Fact: f, AuthorityState: authorityState})
 			}
-			evidenceFragments := s.batchHydrateEvidenceFragments(ctx, profileID, factEvidenceSets(hydrated))
-			temporalFrame := typedCurrentnessTemporalFrameForFacts(req.Query, hydrated, evidenceFragments)
+			var evidenceFragments map[string]*domain.Fragment
+			var temporalFrame typedCurrentnessTemporalFrame
+			if isCurrentnessQuery(req.Query) {
+				evidenceFragments = s.batchHydrateEvidenceFragments(ctx, profileID, factEvidenceSets(hydrated))
+				temporalFrame = typedCurrentnessTemporalFrameForFacts(req.Query, hydrated, evidenceFragments)
+			}
 			for _, candidate := range hydrated {
 				f := candidate.Fact
 				f.AuthorityState = candidate.AuthorityState
@@ -668,8 +672,12 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 				}
 				hydrated = append(hydrated, c)
 			}
-			evidenceFragments := s.batchHydrateEvidenceFragments(ctx, profileID, claimEvidenceSets(hydrated))
-			temporalFrame := typedCurrentnessTemporalFrameForClaims(req.Query, hydrated, evidenceFragments)
+			var evidenceFragments map[string]*domain.Fragment
+			var temporalFrame typedCurrentnessTemporalFrame
+			if isCurrentnessQuery(req.Query) {
+				evidenceFragments = s.batchHydrateEvidenceFragments(ctx, profileID, claimEvidenceSets(hydrated))
+				temporalFrame = typedCurrentnessTemporalFrameForClaims(req.Query, hydrated, evidenceFragments)
+			}
 			for _, c := range hydrated {
 				temporalRank := typedTemporalRankTimeForRecallWithEvidence(req.Query, c.ValidFrom, c.ValidTo, c.RecordedAt, c.Evidence, evidenceFragments, temporalFrame, c.Subject, c.Predicate, c.Object)
 				if !req.IncludeEvidence {

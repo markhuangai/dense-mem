@@ -174,6 +174,10 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 
 	// Step 2: compute content_hash.
 	contentHash := claimidentity.ContentHash(claim.Subject, claim.Predicate, claim.Object, claim.ValidFrom, claim.ValidTo)
+	legacyContentHash := ""
+	if claim.IdempotencyKey == "" && claim.ValidTo == nil {
+		legacyContentHash = claimidentity.LegacyContentHashWithoutValidTo(claim.Subject, claim.Predicate, claim.Object, claim.ValidFrom)
+	}
 	ownerID, ownerName, _ := requestctx.ActorOwner(ctx)
 	identityScopeID := profileID
 	if ownerID != "" {
@@ -221,6 +225,20 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 				Duplicate:   true,
 				DuplicateOf: existing.ClaimID,
 			}, nil
+		}
+		if legacyContentHash != "" && legacyContentHash != contentHash {
+			existing, err := s.lookup.ByContentHash(ctx, profileID, legacyContentHash)
+			if err != nil {
+				return nil, fmt.Errorf("claim create: legacy content-hash lookup: %w", err)
+			}
+			if existing != nil {
+				observability.RecordClaimCreate(ctx, s.metrics, "duplicate", "content_hash")
+				return &CreateResult{
+					Claim:       existing,
+					Duplicate:   true,
+					DuplicateOf: existing.ClaimID,
+				}, nil
+			}
 		}
 	}
 

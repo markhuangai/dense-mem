@@ -189,6 +189,45 @@ func TestCreateClaimDedupeAndDefaults(t *testing.T) {
 		require.Equal(t, "content_hash", samples[0].DedupeReason)
 	})
 
+	t.Run("legacy content hash hit returns existing nil-validTo claim without write", func(t *testing.T) {
+		validFrom := time.Date(2026, 6, 29, 9, 0, 0, 123, time.UTC)
+		input := &domain.Claim{
+			Subject:   "Sun",
+			Predicate: "is",
+			Object:    "star",
+			ValidFrom: &validFrom,
+		}
+		currentHash := claimidentity.ContentHash(input.Subject, input.Predicate, input.Object, input.ValidFrom, nil)
+		legacyHash := claimidentity.LegacyContentHashWithoutValidTo(input.Subject, input.Predicate, input.Object, input.ValidFrom)
+		require.NotEqual(t, currentHash, legacyHash)
+
+		existing := &domain.Claim{ClaimID: "legacy-hash-dupe-id", ProfileID: profileID}
+		lookup := &stubClaimDedupeLookup{
+			byIdempotencyKey: map[string]*domain.Claim{},
+			byContentHash: map[string]*domain.Claim{
+				profileID + ":" + legacyHash: existing,
+			},
+		}
+		writer := &stubClaimWriter{}
+		reader := &stubScopedReader{rowsByProfile: map[string][]map[string]any{}}
+		metrics := observability.NewInMemoryDiscoverabilityMetrics()
+
+		svc := NewCreateClaimService(lookup, reader, writer, nil, nil, metrics)
+
+		got, err := svc.Create(ctx, profileID, input)
+
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		require.True(t, got.Duplicate, "legacy content hash match must be flagged as duplicate")
+		require.Equal(t, "legacy-hash-dupe-id", got.DuplicateOf)
+		require.Equal(t, existing, got.Claim)
+		require.Empty(t, writer.written, "legacy duplicate hit must not write to the graph")
+		samples := metrics.ClaimCreateSamples()
+		require.Len(t, samples, 1)
+		require.Equal(t, "duplicate", samples[0].Outcome)
+		require.Equal(t, "content_hash", samples[0].DedupeReason)
+	})
+
 	t.Run("fresh claim computes status, verdict, recorded_at, source_quality, classification", func(t *testing.T) {
 		lookup := &stubClaimDedupeLookup{
 			byIdempotencyKey: map[string]*domain.Claim{},

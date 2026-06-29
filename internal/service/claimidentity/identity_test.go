@@ -78,15 +78,14 @@ func TestContentHash_CanonicalForm(t *testing.T) {
 	assert.Equal(t, want, got, "canonical form must be subject|predicate|object|validFromUTC|validToUTC")
 }
 
-// TestContentHash_NilValidFrom verifies that a nil validFrom produces a
-// canonical input that ends with a trailing "|" (empty string suffix after the
-// last pipe), per R1 binding resolution.
+// TestContentHash_NilValidFrom verifies that nil validity bounds produce empty
+// canonical segments.
 func TestContentHash_NilValidFrom(t *testing.T) {
-	// Canonical input must be "s|p|o|" (empty suffix — NOT "none").
+	// Canonical input must be "s|p|o||" (empty valid_from and valid_to, NOT "none").
 	expected := sha256.Sum256([]byte("s|p|o||"))
 	want := hex.EncodeToString(expected[:])
 	got := ContentHash("s", "p", "o", nil, nil)
-	assert.Equal(t, want, got, "nil validFrom must produce canonical form ending with trailing '|'")
+	assert.Equal(t, want, got, "nil validity bounds must produce empty canonical segments")
 
 	// Regression guard: the new hash must differ from the old "none" sentinel.
 	oldHash := hex.EncodeToString(func() []byte {
@@ -95,6 +94,32 @@ func TestContentHash_NilValidFrom(t *testing.T) {
 	}())
 	assert.NotEqual(t, oldHash, got,
 		"nil-validFrom hash must differ from the deprecated 'none' sentinel hash (silent regression guard)")
+}
+
+func TestContentHash_PreservesSubsecondPrecision(t *testing.T) {
+	a := time.Date(2024, 1, 15, 12, 0, 0, 1, time.UTC)
+	b := time.Date(2024, 1, 15, 12, 0, 0, 2, time.UTC)
+
+	assert.NotEqual(t,
+		ContentHash("s", "p", "o", &a, nil),
+		ContentHash("s", "p", "o", &b, nil),
+		"validFrom nanoseconds must participate in the content hash",
+	)
+	assert.NotEqual(t,
+		ContentHash("s", "p", "o", nil, &a),
+		ContentHash("s", "p", "o", nil, &b),
+		"validTo nanoseconds must participate in the content hash",
+	)
+}
+
+func TestLegacyContentHashWithoutValidTo(t *testing.T) {
+	ts := time.Date(2024, 6, 1, 0, 0, 0, 123, time.UTC)
+	expected := sha256.Sum256([]byte("s|p|o|2024-06-01T00:00:00Z"))
+	want := hex.EncodeToString(expected[:])
+
+	got := LegacyContentHashWithoutValidTo("s", "p", "o", &ts)
+	assert.Equal(t, want, got, "legacy compatibility hash must match the old four-field canonical form")
+	assert.NotEqual(t, got, ContentHash("s", "p", "o", &ts, nil))
 }
 
 // TestContentHash_ValidFromNormalizedToUTC verifies timezone normalization.

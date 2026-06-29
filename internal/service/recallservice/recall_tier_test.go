@@ -269,6 +269,53 @@ func TestRecallService_EnrichTierHitsRetainsEvidenceWhenRequested(t *testing.T) 
 	require.Equal(t, 0.8, out[1].Score)
 }
 
+func TestRecallService_EnrichTierHitsHydratesEvidenceOnlyForCurrentness(t *testing.T) {
+	run := func(query string) int32 {
+		hydrator := &fakeHydrator{}
+		svc := &recallService{
+			factSearcher: &fakeFactSearcher{results: []FactRecallResult{
+				{FactID: "fact-1", ProfileID: "pA"},
+			}},
+			factGet: &fakeFactGetter{facts: map[string]*domain.Fact{
+				"fact-1": {
+					FactID:     "fact-1",
+					ProfileID:  "pA",
+					Subject:    "service OBS-001",
+					Predicate:  "owner",
+					Object:     "team-blue",
+					RecordedAt: time.Now().UTC(),
+					TruthScore: 0.9,
+					Evidence:   []domain.Evidence{{FragmentID: "fragment-fact"}},
+				},
+			}},
+			claimSearcher: &fakeClaimSearcher{results: []ClaimRecallResult{
+				{ClaimID: "claim-1", ProfileID: "pA"},
+			}},
+			claimGet: &fakeClaimGetter{claims: map[string]*domain.Claim{
+				"claim-1": {
+					ClaimID:     "claim-1",
+					ProfileID:   "pA",
+					Subject:     "service OBS-001",
+					Predicate:   "owner",
+					Object:      "team-blue",
+					RecordedAt:  time.Now().UTC(),
+					ExtractConf: 0.8,
+					Evidence:    []domain.Evidence{{FragmentID: "fragment-claim"}},
+				},
+			}},
+			hydrator:    hydrator,
+			claimWeight: 1,
+		}
+
+		out := svc.enrichTierHits(context.Background(), "pA", 10, RecallRequest{Query: query})
+		require.Len(t, out, 2)
+		return atomic.LoadInt32(&hydrator.batchCallCount) + atomic.LoadInt32(&hydrator.callCount)
+	}
+
+	require.Equal(t, int32(0), run("deployment owner for service OBS-001"))
+	require.Equal(t, int32(2), run("current deployment owner for service OBS-001"))
+}
+
 func TestRecallService_CurrentnessRanksNewerFactsAndClaimsWithinTier(t *testing.T) {
 	oldTime := time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
 	newTime := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
