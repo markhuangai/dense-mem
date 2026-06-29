@@ -34,11 +34,12 @@ Delta from vector overfetch to tier fact/claim branch on `local_eval_1k_v2`: all
 
 ## Fact/Claim Tier Coverage
 
-The `local_eval_1k_v2` suite mostly measures fragment retrieval. `local_tiered_v1` adds a focused typed coverage surface for active facts and validated claims:
+The `local_eval_1k_v2` suite mostly measures fragment retrieval. `local_tiered_v1` adds a focused typed coverage surface for active facts and validated claims. Current expanded seed hash: `sha256:81b4b86011d2a07a44392908ef83821fc9fec32936fc09b762aad3d00461d356`.
 
 | Branch | Run | recall@k | MRR | nDCG@k | bad@k | required rank 1 | bad rank 1 | Judgment |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| `exp/recall-tier-fact-claim-vector-overfetch` | `20260629T020842Z_local_tiered_vector_fact_claim_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good focused coverage for fact-vs-fact and claim-vs-claim currentness ordering. |
+| `exp/recall-tier-fact-claim-vector-overfetch` | `20260629T020842Z_local_tiered_vector_fact_claim_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good initial coverage for fact-vs-fact and claim-vs-claim currentness ordering. |
+| `exp/recall-tier-fact-claim-vector-overfetch` | `20260629T022642Z_local_tiered_expanded_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good expanded coverage for same-tier currentness, fact-over-fragment, claim-over-fragment, and cross-identifier fact filtering. |
 
 This branch also fixes the eval harness so qrels can resolve `source_doc_id` as a fragment, claim, or fact, and fixes optional `valid_from` / `valid_to` persistence for claim creation and fact promotion.
 
@@ -126,7 +127,7 @@ Remaining work is now about generalization beyond this synthetic seed:
 | `unit_trap` | MRR 1.0000, bad@k 0.0000 | Scoped exact-ID boost fixed remaining neighboring-job rank misses. |
 | All adversarial slices | bad@k 0.0000 | No judged-bad context remains in top-k on local_eval_1k_v2. |
 | Non-synthetic workloads | Not measured | Need validation because zero-score filtering can intentionally return fewer than `limit` fragments. |
-| Tiered facts/claims | `local_tiered_v1` live candidate: recall@k 1.0000, required rank 1 1.0000, bad@k 0.0000 | Focused two-case seed passes; expand this suite before treating it as broad fact/claim acceptance coverage. |
+| Tiered facts/claims | Expanded `local_tiered_v1` live candidate: recall@k 1.0000, required rank 1 1.0000, bad@k 0.0000 | Five-case seed now covers same-tier fact/claim currentness, fact-over-fragment, claim-over-fragment, and cross-identifier fact filtering. Keep expanding before treating it as broad acceptance coverage. |
 
 ## Recommendation
 
@@ -136,5 +137,5 @@ Next improvement experiments should target generalization:
 
 1. Validate zero-score filtering against non-synthetic workloads, because returning fewer than `limit` fragments is intentional but changes context volume.
 2. Broader temporal parsing beyond ISO `YYYY-MM-DD`, including natural language dates, before relying on date-priority rerank outside the synthetic seed.
-3. Expand `local_tiered_v1` beyond two cases now that live typed fact/claim scoring is stable.
+3. Keep expanding `local_tiered_v1` now that live typed fact/claim scoring is stable.
 4. Replace hard-coded cue lists with learned or configurable rerank features if future seeds expose broader language variation.
