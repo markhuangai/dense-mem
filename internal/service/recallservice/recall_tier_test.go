@@ -269,6 +269,226 @@ func TestRecallService_EnrichTierHitsRetainsEvidenceWhenRequested(t *testing.T) 
 	require.Equal(t, 0.8, out[1].Score)
 }
 
+func TestRecallService_CurrentnessRanksNewerFactsAndClaimsWithinTier(t *testing.T) {
+	oldTime := time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
+	newTime := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+	factSearcher := &fakeFactSearcher{results: []FactRecallResult{
+		{FactID: "fact-old", ProfileID: "pA", ValidFrom: &oldTime, RecordedAt: oldTime},
+		{FactID: "fact-new", ProfileID: "pA", ValidFrom: &newTime, RecordedAt: newTime},
+	}}
+	claimSearcher := &fakeClaimSearcher{results: []ClaimRecallResult{
+		{ClaimID: "claim-old", ProfileID: "pA", ValidFrom: &oldTime, RecordedAt: oldTime},
+		{ClaimID: "claim-new", ProfileID: "pA", ValidFrom: &newTime, RecordedAt: newTime},
+	}}
+	factGetter := &fakeFactGetter{facts: map[string]*domain.Fact{
+		"fact-old": {FactID: "fact-old", ProfileID: "pA", Subject: "service OBS-001 owner", Predicate: "uses", Object: "owner-alice", ValidFrom: &oldTime, RecordedAt: oldTime, TruthScore: 0.99},
+		"fact-new": {FactID: "fact-new", ProfileID: "pA", Subject: "service OBS-001 owner", Predicate: "uses", Object: "owner-bob", ValidFrom: &newTime, RecordedAt: newTime, TruthScore: 0.20},
+	}}
+	claimGetter := &fakeClaimGetter{claims: map[string]*domain.Claim{
+		"claim-old": {ClaimID: "claim-old", ProfileID: "pA", Subject: "service OBS-001 owner", Predicate: "uses", Object: "owner-alice", ValidFrom: &oldTime, RecordedAt: oldTime, ExtractConf: 0.99},
+		"claim-new": {ClaimID: "claim-new", ProfileID: "pA", Subject: "service OBS-001 owner", Predicate: "uses", Object: "owner-bob", ValidFrom: &newTime, RecordedAt: newTime, ExtractConf: 0.20},
+	}}
+	svc := NewRecallServiceWithTiers(
+		&stubEmbedding{DimensionsResult: 4},
+		&fakeSemanticSearcher{},
+		&fakeKeywordSearcher{},
+		&fakeHydrator{},
+		factSearcher,
+		factGetter,
+		claimSearcher,
+		claimGetter,
+		0,
+		nil,
+		nil,
+	)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "What is the current deployment owner for service OBS-001?", Limit: 4})
+
+	require.NoError(t, err)
+	require.Len(t, out, 4)
+	require.Equal(t, "fact-new", out[0].Fact.FactID)
+	require.Equal(t, "fact-old", out[1].Fact.FactID)
+	require.Equal(t, "claim-new", out[2].Claim.ClaimID)
+	require.Equal(t, "claim-old", out[3].Claim.ClaimID)
+}
+
+func TestRecallService_TierCurrentnessOverfetchesBeforeFinalLimit(t *testing.T) {
+	oldTime := time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
+	newTime := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+
+	t.Run("fact", func(t *testing.T) {
+		factSearcher := &fakeFactSearcher{
+			respectLimit: true,
+			results: []FactRecallResult{
+				{FactID: "fact-old", ProfileID: "pA", ValidFrom: &oldTime, RecordedAt: oldTime},
+				{FactID: "fact-new", ProfileID: "pA", ValidFrom: &newTime, RecordedAt: newTime},
+			},
+		}
+		factGetter := &fakeFactGetter{facts: map[string]*domain.Fact{
+			"fact-old": {FactID: "fact-old", ProfileID: "pA", Subject: "service TIER-F-001 owner", Predicate: "uses", Object: "owner-alice", ValidFrom: &oldTime, RecordedAt: oldTime, TruthScore: 0.99},
+			"fact-new": {FactID: "fact-new", ProfileID: "pA", Subject: "service TIER-F-001 owner", Predicate: "uses", Object: "owner-bob", ValidFrom: &newTime, RecordedAt: newTime, TruthScore: 0.20},
+		}}
+		svc := NewRecallServiceWithTiers(
+			&stubEmbedding{DimensionsResult: 4},
+			&fakeSemanticSearcher{},
+			&fakeKeywordSearcher{},
+			&fakeHydrator{},
+			factSearcher,
+			factGetter,
+			nil,
+			nil,
+			0,
+			nil,
+			nil,
+		)
+
+		out, err := svc.Recall(context.Background(), "pA", RecallRequest{
+			Query: "What is the current owner for service TIER-F-001?",
+			Limit: 1,
+		})
+
+		require.NoError(t, err)
+		require.Len(t, out, 1)
+		require.Equal(t, OverfetchMultiplier, factSearcher.lastLimit)
+		require.Equal(t, "fact-new", out[0].Fact.FactID)
+	})
+
+	t.Run("claim", func(t *testing.T) {
+		claimSearcher := &fakeClaimSearcher{
+			respectLimit: true,
+			results: []ClaimRecallResult{
+				{ClaimID: "claim-old", ProfileID: "pA", ValidFrom: &oldTime, RecordedAt: oldTime},
+				{ClaimID: "claim-new", ProfileID: "pA", ValidFrom: &newTime, RecordedAt: newTime},
+			},
+		}
+		claimGetter := &fakeClaimGetter{claims: map[string]*domain.Claim{
+			"claim-old": {ClaimID: "claim-old", ProfileID: "pA", Subject: "service TIER-C-001 pager", Predicate: "uses", Object: "pager-red", ValidFrom: &oldTime, RecordedAt: oldTime, ExtractConf: 0.99},
+			"claim-new": {ClaimID: "claim-new", ProfileID: "pA", Subject: "service TIER-C-001 pager", Predicate: "uses", Object: "pager-green", ValidFrom: &newTime, RecordedAt: newTime, ExtractConf: 0.20},
+		}}
+		svc := NewRecallServiceWithTiers(
+			&stubEmbedding{DimensionsResult: 4},
+			&fakeSemanticSearcher{},
+			&fakeKeywordSearcher{},
+			&fakeHydrator{},
+			nil,
+			nil,
+			claimSearcher,
+			claimGetter,
+			1,
+			nil,
+			nil,
+		)
+
+		out, err := svc.Recall(context.Background(), "pA", RecallRequest{
+			Query: "What is the latest pager for service TIER-C-001?",
+			Limit: 1,
+		})
+
+		require.NoError(t, err)
+		require.Len(t, out, 1)
+		require.Equal(t, OverfetchMultiplier, claimSearcher.lastLimit)
+		require.Equal(t, "claim-new", out[0].Claim.ClaimID)
+	})
+}
+
+func TestRecallService_TierIdentifierFilterSkipsCrossIdentifierFact(t *testing.T) {
+	now := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+	factSearcher := &fakeFactSearcher{results: []FactRecallResult{
+		{FactID: "fact-other", ProfileID: "pA", RecordedAt: now},
+	}}
+	claimSearcher := &fakeClaimSearcher{results: []ClaimRecallResult{
+		{ClaimID: "claim-right", ProfileID: "pA", RecordedAt: now},
+	}}
+	factGetter := &fakeFactGetter{facts: map[string]*domain.Fact{
+		"fact-other": {
+			FactID:     "fact-other",
+			ProfileID:  "pA",
+			Subject:    "service TIER-F-001 owner",
+			Predicate:  "uses",
+			Object:     "owner-bob",
+			RecordedAt: now,
+			TruthScore: 0.9,
+		},
+	}}
+	claimGetter := &fakeClaimGetter{claims: map[string]*domain.Claim{
+		"claim-right": {
+			ClaimID:     "claim-right",
+			ProfileID:   "pA",
+			Subject:     "service TIER-C-001 pager",
+			Predicate:   "uses",
+			Object:      "pager-green",
+			RecordedAt:  now,
+			ExtractConf: 0.7,
+		},
+	}}
+	svc := NewRecallServiceWithTiers(
+		&stubEmbedding{DimensionsResult: 4},
+		&fakeSemanticSearcher{},
+		&fakeKeywordSearcher{},
+		&fakeHydrator{},
+		factSearcher,
+		factGetter,
+		claimSearcher,
+		claimGetter,
+		1,
+		nil,
+		nil,
+	)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{
+		Query: "What is the latest pager for service TIER-C-001?",
+		Limit: 1,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Nil(t, out[0].Fact)
+	require.Equal(t, "claim-right", out[0].Claim.ClaimID)
+}
+
+func TestRecallService_NonCurrentTierOrderingKeepsScoreOrder(t *testing.T) {
+	oldTime := time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
+	newTime := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+	factSearcher := &fakeFactSearcher{results: []FactRecallResult{
+		{FactID: "fact-new", ProfileID: "pA", ValidFrom: &newTime, RecordedAt: newTime},
+		{FactID: "fact-old", ProfileID: "pA", ValidFrom: &oldTime, RecordedAt: oldTime},
+	}}
+	claimSearcher := &fakeClaimSearcher{results: []ClaimRecallResult{
+		{ClaimID: "claim-new", ProfileID: "pA", ValidFrom: &newTime, RecordedAt: newTime},
+		{ClaimID: "claim-old", ProfileID: "pA", ValidFrom: &oldTime, RecordedAt: oldTime},
+	}}
+	factGetter := &fakeFactGetter{facts: map[string]*domain.Fact{
+		"fact-old": {FactID: "fact-old", ProfileID: "pA", Subject: "service OBS-001 owner", Predicate: "uses", Object: "owner-alice", ValidFrom: &oldTime, RecordedAt: oldTime, TruthScore: 0.99},
+		"fact-new": {FactID: "fact-new", ProfileID: "pA", Subject: "service OBS-001 owner", Predicate: "uses", Object: "owner-bob", ValidFrom: &newTime, RecordedAt: newTime, TruthScore: 0.20},
+	}}
+	claimGetter := &fakeClaimGetter{claims: map[string]*domain.Claim{
+		"claim-old": {ClaimID: "claim-old", ProfileID: "pA", Subject: "service OBS-001 owner", Predicate: "uses", Object: "owner-alice", ValidFrom: &oldTime, RecordedAt: oldTime, ExtractConf: 0.99},
+		"claim-new": {ClaimID: "claim-new", ProfileID: "pA", Subject: "service OBS-001 owner", Predicate: "uses", Object: "owner-bob", ValidFrom: &newTime, RecordedAt: newTime, ExtractConf: 0.20},
+	}}
+	svc := NewRecallServiceWithTiers(
+		&stubEmbedding{DimensionsResult: 4},
+		&fakeSemanticSearcher{},
+		&fakeKeywordSearcher{},
+		&fakeHydrator{},
+		factSearcher,
+		factGetter,
+		claimSearcher,
+		claimGetter,
+		0,
+		nil,
+		nil,
+	)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "deployment owner for service OBS-001", Limit: 4})
+
+	require.NoError(t, err)
+	require.Len(t, out, 4)
+	require.Equal(t, "fact-old", out[0].Fact.FactID)
+	require.Equal(t, "fact-new", out[1].Fact.FactID)
+	require.Equal(t, "claim-old", out[2].Claim.ClaimID)
+	require.Equal(t, "claim-new", out[3].Claim.ClaimID)
+}
+
 func TestRecallService_EnrichTierHitsSearchErrorsAreLoggedAndSkipped(t *testing.T) {
 	logger := &fakeLogger{}
 	svc := &recallService{

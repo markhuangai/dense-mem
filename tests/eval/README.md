@@ -32,8 +32,15 @@ tests/eval/
       hard_negatives.jsonl
       transforms.jsonl
       licenses.md
+    local_tiered_v1/
+      seed_manifest.json
+      corpus.jsonl
+      cases.jsonl
+      qrels.jsonl
+      licenses.md
   suites/
     local_eval_1k_v2.jsonl
+    local_tiered_v1.jsonl
   runs/
     .gitignore
   cache/
@@ -66,6 +73,14 @@ has one location, but it is intentionally ignored by git because it is hundreds
 of MB. Before using it for a reported run, validate its manifest and keep the
 run artifacts with the seed hash.
 
+`local_tiered_v1` is a small committed seed for the fact and validated-claim
+recall tiers. It contains two rank-1 currentness cases and four corpus rows.
+Rows with typed claims are imported through `import_memories`, so the runner can
+score `fragment`, `claim`, and `fact` refs instead of only fragment refs. Fact
+rows request `auto_promote`; live runs depend on the configured verifier and
+promotion path creating active facts. The current seed hash is
+`sha256:4fc8e2fb711fae332906377a6fd36ea02e9bead6315975ff971fb4003693766c`.
+
 ## Commands
 
 Validate the default committed seed and suite:
@@ -84,6 +99,28 @@ go run ./cmd/eval-runner \
   --out tests/eval/runs/local_train_100k_v1_validate
 ```
 
+Validate the tiered fact/claim seed:
+
+```bash
+go run ./cmd/eval-runner \
+  --mode validate \
+  --seed tests/eval/seeds/local_tiered_v1/seed_manifest.json \
+  --suite tests/eval/suites/local_tiered_v1.jsonl
+```
+
+Run the tiered seed against a local server:
+
+```bash
+DENSE_MEM_API_KEY=<read-write-key> \
+DENSE_MEM_CONTROL_TOKEN=<control-token> \
+go run ./cmd/eval-runner \
+  --mode candidate \
+  --import-seed \
+  --seed tests/eval/seeds/local_tiered_v1/seed_manifest.json \
+  --suite tests/eval/suites/local_tiered_v1.jsonl \
+  --out tests/eval/runs/$(date -u +%Y%m%dT%H%M%SZ)_local_tiered_candidate
+```
+
 Run a local live baseline against an already configured local instance:
 
 ```bash
@@ -99,16 +136,17 @@ scripts/eval-local.sh \
   --out tests/eval/runs/$(date -u +%Y%m%dT%H%M%SZ)_baseline
 ```
 
-Live seed imports call `remember` and then poll `get_memory_placement` for each
-corpus row. `local_eval_1k_v2` has 4,000 corpus rows, so one-shot import needs
-at least 8,000 tool requests before export and recall cases. For disposable
-eval compose runs, raise `RATE_LIMIT_PER_MINUTE` in `.env` before starting the
-server, then restart the server.
+Live seed imports call `remember` for fragment-only rows and `import_memories`
+for rows with typed claims. Fragment-only imports poll `get_memory_placement`
+for each corpus row. `local_eval_1k_v2` has 4,000 corpus rows, so one-shot
+import needs at least 8,000 tool requests before export and recall cases. For
+disposable eval compose runs, raise `RATE_LIMIT_PER_MINUTE` in `.env` before
+starting the server, then restart the server.
 
 The runner enables `EVALUATION_MODE_ENABLED`, imports corpus rows through
-`remember`, exports fragment mappings through `eval_list_knowledge_refs`, runs
-cases through `eval_run_recall_case`, scores with deterministic retrieval
-metrics, and writes:
+`remember` or `import_memories`, exports fragment/claim/fact mappings through
+`eval_list_knowledge_refs`, runs cases through `eval_run_recall_case`, scores
+with deterministic retrieval metrics, and writes:
 
 ```text
 run_config.json
@@ -145,9 +183,12 @@ ranked_refs + qrels.required_refs + qrels.bad_refs
   -> bad_rank1_rate
 ```
 
-`source_doc_id` labels are remapped to Dense-Mem fragment IDs after import or
-export. Unmapped required refs are reported in `unmapped_source_refs` and still
-penalize the denominator, so mapping problems cannot silently inflate scores.
+`source_doc_id` labels are remapped to Dense-Mem refs after import or export.
+The mapping keeps a backward-compatible default fragment ref and also supports
+type-aware refs for seeds that use the same `source_doc_id` as a fragment,
+claim, and fact. Unmapped required refs are reported in `unmapped_source_refs`
+and still penalize the denominator, so mapping problems cannot silently inflate
+scores.
 
 Validation also checks manifest counts, qrel source-doc coverage, suite case
 coverage, and adversarial cases having explicit `bad_refs`.

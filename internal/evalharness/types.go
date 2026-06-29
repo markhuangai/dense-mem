@@ -42,15 +42,26 @@ type CorpusItem struct {
 	Labels        []string       `json:"labels,omitempty"`
 	Metadata      map[string]any `json:"metadata,omitempty"`
 	Claims        []TypedClaim   `json:"claims,omitempty"`
+	AutoPromote   bool           `json:"auto_promote,omitempty"`
 }
 
 type TypedClaim struct {
-	Subject        string   `json:"subject"`
-	Predicate      string   `json:"predicate"`
-	Object         string   `json:"object"`
-	ExtractConf    float64  `json:"extract_conf"`
-	ResolutionConf float64  `json:"resolution_conf"`
-	SupportedBy    []string `json:"supported_by,omitempty"`
+	Subject           string         `json:"subject"`
+	Predicate         string         `json:"predicate"`
+	Object            string         `json:"object"`
+	Modality          string         `json:"modality,omitempty"`
+	Polarity          string         `json:"polarity,omitempty"`
+	Speaker           string         `json:"speaker,omitempty"`
+	ExtractConf       float64        `json:"extract_conf"`
+	ResolutionConf    float64        `json:"resolution_conf"`
+	IdempotencyKey    string         `json:"idempotency_key,omitempty"`
+	ValidFrom         *time.Time     `json:"valid_from,omitempty"`
+	ValidTo           *time.Time     `json:"valid_to,omitempty"`
+	SupportedBy       []string       `json:"supported_by,omitempty"`
+	ExtractionModel   string         `json:"extraction_model,omitempty"`
+	ExtractionVersion string         `json:"extraction_version,omitempty"`
+	PipelineRunID     string         `json:"pipeline_run_id,omitempty"`
+	Classification    map[string]any `json:"classification,omitempty"`
 }
 
 type Case struct {
@@ -97,7 +108,8 @@ type SuiteCase struct {
 }
 
 type KnowledgeMapping struct {
-	BySourceDocID map[string]Ref `json:"by_source_doc_id"`
+	BySourceDocID        map[string]Ref            `json:"by_source_doc_id"`
+	BySourceDocIDAndType map[string]map[string]Ref `json:"by_source_doc_id_and_type,omitempty"`
 }
 
 type RecallTrace struct {

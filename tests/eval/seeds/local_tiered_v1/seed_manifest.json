@@ -1,0 +1,25 @@
+{
+  "schema_version": "dense-mem.eval.seed.v1",
+  "seed_id": "local_tiered_v1",
+  "description": "Small local eval seed for fact and claim recall tiers, focused on currentness ordering within the same tier.",
+  "generated_at": "2026-06-28T22:50:00Z",
+  "corpus_file": "corpus.jsonl",
+  "cases_file": "cases.jsonl",
+  "qrels_file": "qrels.jsonl",
+  "licenses_file": "licenses.md",
+  "embedding_provider": "configured-runtime",
+  "embedding_model": "configured-runtime",
+  "counts": {
+    "corpus": 4,
+    "cases": 2,
+    "qrels": 2,
+    "docs_per_case": 2
+  },
+  "sources": [
+    {
+      "name": "Dense-Mem synthetic tiered recall seed",
+      "license": "Apache-2.0",
+      "notes": "Synthetic fixture authored for local recall evaluation."
+    }
+  ]
+}

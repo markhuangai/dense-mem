@@ -118,10 +118,11 @@ func (f *fakeHydrator) GetByIDs(ctx context.Context, profileID string, fragmentI
 }
 
 type fakeFactSearcher struct {
-	results   []FactRecallResult
-	lastQuery string
-	lastLimit int
-	err       error
+	results      []FactRecallResult
+	lastQuery    string
+	lastLimit    int
+	err          error
+	respectLimit bool
 }
 
 func (f *fakeFactSearcher) SearchActive(ctx context.Context, profileID string, query string, limit int) ([]FactRecallResult, error) {
@@ -132,14 +133,18 @@ func (f *fakeFactSearcher) SearchActive(ctx context.Context, profileID string, q
 	}
 	out := make([]FactRecallResult, len(f.results))
 	copy(out, f.results)
+	if f.respectLimit && limit >= 0 && len(out) > limit {
+		out = out[:limit]
+	}
 	return out, nil
 }
 
 type fakeClaimSearcher struct {
-	results   []ClaimRecallResult
-	lastQuery string
-	lastLimit int
-	err       error
+	results      []ClaimRecallResult
+	lastQuery    string
+	lastLimit    int
+	err          error
+	respectLimit bool
 }
 
 func (f *fakeClaimSearcher) SearchValidated(ctx context.Context, profileID string, query string, limit int) ([]ClaimRecallResult, error) {
@@ -150,6 +155,9 @@ func (f *fakeClaimSearcher) SearchValidated(ctx context.Context, profileID strin
 	}
 	out := make([]ClaimRecallResult, len(f.results))
 	copy(out, f.results)
+	if f.respectLimit && limit >= 0 && len(out) > limit {
+		out = out[:limit]
+	}
 	return out, nil
 }
 

@@ -119,6 +119,7 @@ type RecallHit struct {
 	KeywordRank  int              `json:"keyword_rank"`  // 1-based; 0 if absent from that branch
 	FinalScore   float64          `json:"final_score"`
 	fragmentID   string
+	temporalRank time.Time
 }
 
 // RecallService is the external contract consumed by handlers and the tool
@@ -425,7 +426,7 @@ func (s *recallService) Recall(ctx context.Context, profileID string, req Recall
 	})
 
 	// Collect tier-1 (active facts) and tier-1.5 (validated claims) enrichment.
-	tierHits := s.enrichTierHits(ctx, profileID, limit, req)
+	tierHits := s.enrichTierHits(ctx, profileID, overfetch, req)
 
 	// Merge tier hits with unhydrated fragment candidates, sort by (tier ASC,
 	// score DESC), then hydrate only selected fragment winners.
@@ -570,6 +571,9 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 				if !factMatchesRecallWindow(f, req.ValidAt, req.KnownAt) {
 					continue
 				}
+				if !factMatchesQueryIdentifiers(req.Query, f) {
+					continue
+				}
 				authorityState := candidate.AuthorityState
 				if authorityState == "" {
 					authorityState = "authoritative"
@@ -585,9 +589,10 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 					tier = TierConflict
 				}
 				hits = append(hits, RecallHit{
-					Fact:  f,
-					Tier:  tier,
-					Score: f.TruthScore,
+					Fact:         f,
+					Tier:         tier,
+					Score:        f.TruthScore,
+					temporalRank: temporalRankTimeForRecall(req.Query, f.ValidFrom, f.RecordedAt),
 				})
 			}
 		}
@@ -632,6 +637,9 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 				if !claimMatchesRecallWindow(c, req.ValidAt, req.KnownAt) {
 					continue
 				}
+				if !claimMatchesQueryIdentifiers(req.Query, c) {
+					continue
+				}
 				if !req.IncludeEvidence {
 					claimCopy := *c
 					claimCopy.Evidence = nil
@@ -639,9 +647,10 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 				}
 				score := c.ExtractConf * s.claimWeight
 				hits = append(hits, RecallHit{
-					Claim: c,
-					Tier:  TierValidatedClaim,
-					Score: score,
+					Claim:        c,
+					Tier:         TierValidatedClaim,
+					Score:        score,
+					temporalRank: temporalRankTimeForRecall(req.Query, c.ValidFrom, c.RecordedAt),
 				})
 			}
 		}
@@ -998,6 +1007,40 @@ func latestFragmentTimestamp(createdAt, updatedAt time.Time) time.Time {
 	return latest.UTC()
 }
 
+func temporalRankTimeForRecall(query string, validFrom *time.Time, recordedAt time.Time) time.Time {
+	if !isCurrentnessQuery(query) {
+		return time.Time{}
+	}
+	if validFrom != nil && !validFrom.IsZero() {
+		return validFrom.UTC()
+	}
+	if !recordedAt.IsZero() {
+		return recordedAt.UTC()
+	}
+	return time.Time{}
+}
+
+func factMatchesQueryIdentifiers(query string, fact *domain.Fact) bool {
+	if fact == nil {
+		return false
+	}
+	return knowledgeTripleMatchesQueryIdentifiers(query, fact.Subject, fact.Predicate, fact.Object)
+}
+
+func claimMatchesQueryIdentifiers(query string, claim *domain.Claim) bool {
+	if claim == nil {
+		return false
+	}
+	return knowledgeTripleMatchesQueryIdentifiers(query, claim.Subject, claim.Predicate, claim.Object)
+}
+
+func knowledgeTripleMatchesQueryIdentifiers(query string, parts ...string) bool {
+	queryText := rerankText(query)
+	if len(rerankIdentifiers(queryText)) == 0 {
+		return true
+	}
+	return rerankMatchesQueryIdentifiers(queryText, rerankText(strings.Join(parts, " ")))
+}
 func latestISODateInText(value string) time.Time {
 	var latest time.Time
 	for _, field := range strings.Fields(value) {

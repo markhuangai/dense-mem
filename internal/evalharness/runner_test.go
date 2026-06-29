@@ -425,6 +425,40 @@ func TestScoreTracesUsesMappingAndPenalizesUnmappedRefs(t *testing.T) {
 	}
 }
 
+func TestResolveRefPrefersTypeAwareSourceMapping(t *testing.T) {
+	mapping := newKnowledgeMapping()
+	addSourceMapping(&mapping, Ref{Type: "fragment", ID: "fragment-tiered", SourceDocID: "doc-tiered"}, true)
+	addSourceMapping(&mapping, Ref{Type: "claim", ID: "claim-tiered", SourceDocID: "doc-tiered"}, false)
+	addSourceMapping(&mapping, Ref{Type: "fact", ID: "fact-tiered", SourceDocID: "doc-tiered"}, false)
+
+	fragment, ok := resolveRef(Ref{Type: "fragment", SourceDocID: "doc-tiered"}, mapping)
+	if !ok || fragment.ID != "fragment-tiered" {
+		t.Fatalf("fragment resolve = %+v, %v", fragment, ok)
+	}
+	claim, ok := resolveRef(Ref{Type: "claim", SourceDocID: "doc-tiered"}, mapping)
+	if !ok || claim.ID != "claim-tiered" {
+		t.Fatalf("claim resolve = %+v, %v", claim, ok)
+	}
+	fact, ok := resolveRef(Ref{Type: "fact", SourceDocID: "doc-tiered"}, mapping)
+	if !ok || fact.ID != "fact-tiered" {
+		t.Fatalf("fact resolve = %+v, %v", fact, ok)
+	}
+	fallback, ok := resolveRef(Ref{SourceDocID: "doc-tiered"}, mapping)
+	if !ok || fallback.ID != "fragment-tiered" {
+		t.Fatalf("fallback resolve = %+v, %v", fallback, ok)
+	}
+	legacySourceDoc, ok := resolveRef(Ref{Type: "source_doc", SourceDocID: "doc-tiered"}, mapping)
+	if !ok || legacySourceDoc.ID != "fragment-tiered" || legacySourceDoc.Type != "fragment" {
+		t.Fatalf("legacy source_doc resolve = %+v, %v", legacySourceDoc, ok)
+	}
+
+	fragmentOnly := newKnowledgeMapping()
+	addSourceMapping(&fragmentOnly, Ref{Type: "fragment", ID: "fragment-only", SourceDocID: "doc-fragment-only"}, true)
+	if resolved, ok := resolveRef(Ref{Type: "fact", SourceDocID: "doc-fragment-only"}, fragmentOnly); ok {
+		t.Fatalf("fact ref resolved to fragment mapping: %+v", resolved)
+	}
+}
+
 func TestEvaluateGates(t *testing.T) {
 	minRecall := 0.8
 	minRank1 := 0.5

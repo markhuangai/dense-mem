@@ -12,9 +12,9 @@ Baseline run: `tests/eval/runs/20260628T145353Z_current_logic_baseline_retry`
 
 ## Summary
 
-The best measured branch for the stable reusable-team eval loop is `exp/recall-vector-overfetch-reuse-fix`.
+The best measured branch for the stable reusable-team eval loop is `exp/recall-tier-fact-claim-vector-overfetch`.
 
-It reaches perfect measured local eval metrics on this seed, using the already-imported reusable team and `--import-seed=false`: `recall@k=1.0000`, `MRR=1.0000`, `nDCG@k=1.0000`, `bad@k=0.0000`, and `bad_rank1=0.0000`.
+It reaches perfect measured local eval metrics on this seed, using the already-imported reusable team and `--import-seed=false`: `recall@k=1.0000`, `MRR=1.0000`, `nDCG@k=1.0000`, `bad@k=0.0000`, and `bad_rank1=0.0000`. It also passes the focused live `local_tiered_v1` fact/claim seed.
 
 `bad@k` is the average count of judged-bad references in the returned top-k. `bad_rank1` is the share of cases where the top-ranked reference is judged bad. Both indicate bad output; `bad@k > 0` still matters even when `bad_rank1 = 0`, because the context can contain misleading evidence below rank 1.
 
@@ -26,8 +26,21 @@ The current eval process reuses a stable imported `local_eval_1k_v2` team and do
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | `exp/recall-identifier-specificity-rerank` | `20260629T013827Z_local_eval_1k_current_logic_reuse_baseline` | 0.9730 | 0.9574 | 0.9612 | 0.1010 | 0.9500 | 0.0000 | Current logic on the reusable team; not good enough because global vector neighbors crowd out same-team candidates before tenant filtering. |
 | `exp/recall-vector-overfetch-reuse-fix` | `20260629T014939Z_local_eval_1k_vector_overfetch_reuse_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good; queries more vector candidates before the existing team/status filter, then caps returned hits to the requested limit. |
+| `exp/recall-tier-fact-claim-vector-overfetch` | `20260629T020934Z_local_eval_1k_vector_tier_fact_claim_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good; preserves vector-overfetch fragment metrics while adding typed fact/claim eval and tier currentness logic. |
 
 Delta from reusable-team current logic to vector overfetch: `recall@k +0.0270`, `MRR +0.0426`, `nDCG@k +0.0388`, `bad@k -0.1010`.
+
+Delta from vector overfetch to tier fact/claim branch on `local_eval_1k_v2`: all measured deltas are `0.0000`.
+
+## Fact/Claim Tier Coverage
+
+The `local_eval_1k_v2` suite mostly measures fragment retrieval. `local_tiered_v1` adds a focused typed coverage surface for active facts and validated claims:
+
+| Branch | Run | recall@k | MRR | nDCG@k | bad@k | required rank 1 | bad rank 1 | Judgment |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `exp/recall-tier-fact-claim-vector-overfetch` | `20260629T020842Z_local_tiered_vector_fact_claim_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good focused coverage for fact-vs-fact and claim-vs-claim currentness ordering. |
+
+This branch also fixes the eval harness so qrels can resolve `source_doc_id` as a fragment, claim, or fact, and fixes optional `valid_from` / `valid_to` persistence for claim creation and fact promotion.
 
 ## Research Basis
 
@@ -62,6 +75,7 @@ References:
 | `exp/recall-zero-score-context-filter` | `20260628T215221Z_zero_score_filter_active_currentness` | 1.0000 | 0.9985 | 0.9989 | 0.0000 | 0.9970 | 0.0000 | Previous best |
 | `exp/recall-identifier-specificity-rerank` | `20260628T221954Z_unit_identifier_specificity_rerank` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best candidate on its original imported team |
 | `exp/recall-vector-overfetch-reuse-fix` | `20260629T014939Z_local_eval_1k_vector_overfetch_reuse_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best candidate for reusable-team loop |
+| `exp/recall-tier-fact-claim-vector-overfetch` | `20260629T020934Z_local_eval_1k_vector_tier_fact_claim_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best candidate for fragments plus focused fact/claim coverage |
 
 ## Best Candidate Deltas
 
@@ -97,6 +111,7 @@ The best branch keeps the existing hybrid semantic plus keyword RRF flow and add
 6. Zero-score context filter: after post-RRF adjustments, drops non-positive fragment candidates when at least one positive fragment candidate exists, preventing strongly demoted stale fragments from filling remaining context slots. The branch also treats `active` queries as currentness queries so active retraction updates are reranked consistently.
 7. Unit identifier specificity rerank: for timeout/job value queries, gives a small boost to fragments containing the exact identifier from the query. This fixes neighboring job collisions such as `UNT-003` outranking `UNT-013` while avoiding the broader exact-ID boost that reintroduced bad context in other slices.
 8. Vector tenant overfetch: asks Neo4j's global vector index for additional candidates before the existing `team_id` and active-status filter, then caps returned semantic hits to the requested limit. This fixes same-team candidate starvation when repeated eval imports make the global vector index crowded with other teams' near neighbors.
+9. Tier fact/claim currentness: for currentness queries, active facts and validated claims sort within their tier by newest `valid_from`, falling back to `recorded_at`. Tier search now uses the internal overfetch size before final truncation, and hydrated fact/claim hits must match explicit query identifiers before tier precedence can place them above other results.
 
 All positive boosts require matching identifier-like tokens from the query, such as `OBS-001`, `NEG-001`, or `AUT-061`, when such identifiers exist. This guard prevents neighboring template records from receiving accidental boosts.
 
@@ -111,13 +126,15 @@ Remaining work is now about generalization beyond this synthetic seed:
 | `unit_trap` | MRR 1.0000, bad@k 0.0000 | Scoped exact-ID boost fixed remaining neighboring-job rank misses. |
 | All adversarial slices | bad@k 0.0000 | No judged-bad context remains in top-k on local_eval_1k_v2. |
 | Non-synthetic workloads | Not measured | Need validation because zero-score filtering can intentionally return fewer than `limit` fragments. |
+| Tiered facts/claims | `local_tiered_v1` live candidate: recall@k 1.0000, required rank 1 1.0000, bad@k 0.0000 | Focused two-case seed passes; expand this suite before treating it as broad fact/claim acceptance coverage. |
 
 ## Recommendation
 
-Merge candidate to main should start from `exp/recall-vector-overfetch-reuse-fix`, which builds on `exp/recall-identifier-specificity-rerank`.
+Merge candidate to main should start from `exp/recall-tier-fact-claim-vector-overfetch`, which builds on `exp/recall-vector-overfetch-reuse-fix`.
 
 Next improvement experiments should target generalization:
 
 1. Validate zero-score filtering against non-synthetic workloads, because returning fewer than `limit` fragments is intentional but changes context volume.
 2. Broader temporal parsing beyond ISO `YYYY-MM-DD`, including natural language dates, before relying on date-priority rerank outside the synthetic seed.
-3. Replace hard-coded cue lists with learned or configurable rerank features if future seeds expose broader language variation.
+3. Expand `local_tiered_v1` beyond two cases now that live typed fact/claim scoring is stable.
+4. Replace hard-coded cue lists with learned or configurable rerank features if future seeds expose broader language variation.

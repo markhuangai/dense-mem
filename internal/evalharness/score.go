@@ -302,14 +302,7 @@ func resolveRef(ref Ref, mapping KnowledgeMapping) (Ref, bool) {
 	if strings.TrimSpace(ref.SourceDocID) == "" {
 		return Ref{}, false
 	}
-	resolved, ok := mapping.BySourceDocID[ref.SourceDocID]
-	if !ok || strings.TrimSpace(resolved.ID) == "" {
-		return Ref{}, false
-	}
-	if resolved.Type == "" {
-		resolved.Type = ref.Type
-	}
-	return resolved, true
+	return resolveSourceMapping(mapping, ref.SourceDocID, ref.Type)
 }
 
 func refKey(t, id string) string {

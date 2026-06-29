@@ -106,9 +106,10 @@ func (s *recallService) communityFactHits(ctx context.Context, profileID string,
 			tier = TierConflict
 		}
 		hits = append(hits, RecallHit{
-			Fact:  f,
-			Tier:  tier,
-			Score: f.TruthScore,
+			Fact:         f,
+			Tier:         tier,
+			Score:        f.TruthScore,
+			temporalRank: temporalRankTimeForRecall(req.Query, f.ValidFrom, f.RecordedAt),
 		})
 	}
 	return hits
@@ -166,9 +167,10 @@ func (s *recallService) communityClaimHits(ctx context.Context, profileID string
 			c = &claimCopy
 		}
 		hits = append(hits, RecallHit{
-			Claim: c,
-			Tier:  TierValidatedClaim,
-			Score: c.ExtractConf * s.claimWeight,
+			Claim:        c,
+			Tier:         TierValidatedClaim,
+			Score:        c.ExtractConf * s.claimWeight,
+			temporalRank: temporalRankTimeForRecall(req.Query, c.ValidFrom, c.RecordedAt),
 		})
 	}
 	return hits
@@ -240,6 +242,16 @@ func sortRecallHits(hits []RecallHit) {
 	sort.SliceStable(hits, func(i, j int) bool {
 		if hits[i].Tier != hits[j].Tier {
 			return hits[i].Tier < hits[j].Tier
+		}
+		if !hits[i].temporalRank.IsZero() || !hits[j].temporalRank.IsZero() {
+			switch {
+			case hits[i].temporalRank.IsZero():
+				return false
+			case hits[j].temporalRank.IsZero():
+				return true
+			case !hits[i].temporalRank.Equal(hits[j].temporalRank):
+				return hits[i].temporalRank.After(hits[j].temporalRank)
+			}
 		}
 		return hits[i].Score > hits[j].Score
 	})

@@ -56,8 +56,14 @@ func (c *HTTPClient) CallTool(ctx context.Context, name string, input any, out a
 }
 
 func (c *HTTPClient) ImportCorpus(ctx context.Context, corpus []CorpusItem) (KnowledgeMapping, error) {
-	mapping := KnowledgeMapping{BySourceDocID: map[string]Ref{}}
+	mapping := newKnowledgeMapping()
 	for _, item := range corpus {
+		if len(item.Claims) > 0 {
+			if err := c.importMemoryCorpusItem(ctx, item, &mapping); err != nil {
+				return mapping, err
+			}
+			continue
+		}
 		evidence := map[string]any{
 			"content":         item.Content,
 			"source":          firstNonEmpty(item.SourceDataset, item.Title, "eval-seed"),
@@ -79,9 +85,46 @@ func (c *HTTPClient) ImportCorpus(ctx context.Context, corpus []CorpusItem) (Kno
 				return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)
 			}
 		}
-		mapping.BySourceDocID[item.SourceDocID] = Ref{Type: "fragment", ID: fragmentID, SourceDocID: item.SourceDocID}
+		addSourceMapping(&mapping, Ref{Type: "fragment", ID: fragmentID, SourceDocID: item.SourceDocID}, true)
 	}
 	return mapping, nil
+}
+
+func (c *HTTPClient) importMemoryCorpusItem(ctx context.Context, item CorpusItem, mapping *KnowledgeMapping) error {
+	input := map[string]any{
+		"summary":         item.Content,
+		"source":          firstNonEmpty(item.SourceDataset, item.Title, "eval-seed"),
+		"idempotency_key": "eval:" + item.SourceDocID,
+		"labels":          item.Labels,
+		"metadata":        seedMetadata(item),
+		"claims":          seedTypedClaims(item),
+	}
+	if item.AutoPromote {
+		input["auto_promote"] = true
+	}
+	var out map[string]any
+	if err := c.CallTool(ctx, "import_memories", input, &out); err != nil {
+		return fmt.Errorf("import %s: %w", item.SourceDocID, err)
+	}
+	fragmentID := fragmentIDFromRemember(out)
+	if fragmentID == "" {
+		return fmt.Errorf("import %s: import_memories response missing fragment id", item.SourceDocID)
+	}
+	addSourceMapping(mapping, Ref{Type: "fragment", ID: fragmentID, SourceDocID: item.SourceDocID}, true)
+	claims, _ := out["claims"].([]any)
+	for _, raw := range claims {
+		claim, _ := raw.(map[string]any)
+		claimID := stringValue(claim["claim_id"])
+		if claimID != "" {
+			addSourceMapping(mapping, Ref{Type: "claim", ID: claimID, SourceDocID: item.SourceDocID}, false)
+		}
+		fact, _ := claim["fact"].(map[string]any)
+		factID := firstNonEmpty(stringValue(fact["fact_id"]), stringValue(fact["id"]))
+		if factID != "" {
+			addSourceMapping(mapping, Ref{Type: "fact", ID: factID, SourceDocID: item.SourceDocID}, false)
+		}
+	}
+	return nil
 }
 
 func (c *HTTPClient) WaitForMemoryPlacement(ctx context.Context, ingestID string, timeout time.Duration) error {
@@ -120,35 +163,50 @@ func (c *HTTPClient) WaitForMemoryPlacement(ctx context.Context, ingestID string
 }
 
 func (c *HTTPClient) ExportFragmentMapping(ctx context.Context, limit int) (KnowledgeMapping, error) {
+	return c.exportKnowledgeMapping(ctx, limit, []string{"fragment"})
+}
+
+func (c *HTTPClient) ExportKnowledgeMapping(ctx context.Context, limit int) (KnowledgeMapping, error) {
+	return c.exportKnowledgeMapping(ctx, limit, []string{"fragment", "claim", "fact"})
+}
+
+func (c *HTTPClient) exportKnowledgeMapping(ctx context.Context, limit int, kinds []string) (KnowledgeMapping, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	mapping := KnowledgeMapping{BySourceDocID: map[string]Ref{}}
-	cursor := ""
-	for {
-		input := map[string]any{"type": "fragment", "limit": limit, "metadata_only": false}
-		if cursor != "" {
-			input["cursor"] = cursor
-		}
-		var out struct {
-			Items      []map[string]any `json:"items"`
-			NextCursor string           `json:"next_cursor"`
-			HasMore    bool             `json:"has_more"`
-		}
-		if err := c.CallTool(ctx, "eval_list_knowledge_refs", input, &out); err != nil {
-			return mapping, err
-		}
-		for _, item := range out.Items {
-			sourceDocID := nestedString(item, "metadata", "source_doc_id")
-			id := stringValue(item["id"])
-			if sourceDocID != "" && id != "" {
-				mapping.BySourceDocID[sourceDocID] = Ref{Type: "fragment", ID: id, SourceDocID: sourceDocID}
+	mapping := newKnowledgeMapping()
+	claimSourceDocIDs := map[string]string{}
+	for _, kind := range kinds {
+		cursor := ""
+		for {
+			input := map[string]any{"type": kind, "limit": limit, "metadata_only": false}
+			if cursor != "" {
+				input["cursor"] = cursor
 			}
+			var out struct {
+				Items      []map[string]any `json:"items"`
+				NextCursor string           `json:"next_cursor"`
+				HasMore    bool             `json:"has_more"`
+			}
+			if err := c.CallTool(ctx, "eval_list_knowledge_refs", input, &out); err != nil {
+				return mapping, err
+			}
+			for _, item := range out.Items {
+				sourceDocID := sourceDocIDFromKnowledgeItem(kind, item, claimSourceDocIDs)
+				id := knowledgeItemID(kind, item)
+				if sourceDocID == "" || id == "" {
+					continue
+				}
+				addSourceMapping(&mapping, Ref{Type: kind, ID: id, SourceDocID: sourceDocID}, kind == "fragment")
+				if kind == "claim" {
+					claimSourceDocIDs[id] = sourceDocID
+				}
+			}
+			if !out.HasMore || out.NextCursor == "" {
+				break
+			}
+			cursor = out.NextCursor
 		}
-		if !out.HasMore || out.NextCursor == "" {
-			break
-		}
-		cursor = out.NextCursor
 	}
 	return mapping, nil
 }
@@ -266,6 +324,89 @@ func seedMetadata(item CorpusItem) map[string]any {
 	out["source_dataset"] = item.SourceDataset
 	out["eval_seed"] = true
 	return out
+}
+
+func seedTypedClaims(item CorpusItem) []map[string]any {
+	claims := make([]map[string]any, 0, len(item.Claims))
+	metadata := seedMetadata(item)
+	for i, claim := range item.Claims {
+		classification := map[string]any{}
+		for key, value := range claim.Classification {
+			classification[key] = value
+		}
+		for key, value := range metadata {
+			classification[key] = value
+		}
+		claimInput := map[string]any{
+			"subject":         claim.Subject,
+			"predicate":       claim.Predicate,
+			"object":          claim.Object,
+			"extract_conf":    claim.ExtractConf,
+			"resolution_conf": claim.ResolutionConf,
+			"classification":  classification,
+		}
+		if claim.Modality != "" {
+			claimInput["modality"] = claim.Modality
+		}
+		if claim.Polarity != "" {
+			claimInput["polarity"] = claim.Polarity
+		}
+		if claim.Speaker != "" {
+			claimInput["speaker"] = claim.Speaker
+		}
+		if claim.IdempotencyKey != "" {
+			claimInput["idempotency_key"] = claim.IdempotencyKey
+		} else {
+			claimInput["idempotency_key"] = fmt.Sprintf("eval:%s:claim:%d", item.SourceDocID, i+1)
+		}
+		if claim.ValidFrom != nil {
+			claimInput["valid_from"] = claim.ValidFrom.UTC().Format(time.RFC3339Nano)
+		}
+		if claim.ValidTo != nil {
+			claimInput["valid_to"] = claim.ValidTo.UTC().Format(time.RFC3339Nano)
+		}
+		if len(claim.SupportedBy) > 0 {
+			claimInput["supported_by"] = claim.SupportedBy
+		}
+		if claim.ExtractionModel != "" {
+			claimInput["extraction_model"] = claim.ExtractionModel
+		}
+		if claim.ExtractionVersion != "" {
+			claimInput["extraction_version"] = claim.ExtractionVersion
+		}
+		if claim.PipelineRunID != "" {
+			claimInput["pipeline_run_id"] = claim.PipelineRunID
+		} else {
+			claimInput["pipeline_run_id"] = "eval:" + item.SourceDocID
+		}
+		claims = append(claims, claimInput)
+	}
+	return claims
+}
+
+func sourceDocIDFromKnowledgeItem(kind string, item map[string]any, claimSourceDocIDs map[string]string) string {
+	sourceDocID := firstNonEmpty(
+		nestedString(item, "metadata", "source_doc_id"),
+		nestedString(item, "classification", "source_doc_id"),
+		nestedString(item, "classification", "eval_source_doc_id"),
+	)
+	if sourceDocID != "" || kind != "fact" {
+		return sourceDocID
+	}
+	return claimSourceDocIDs[stringValue(item["promoted_from_claim_id"])]
+}
+
+func knowledgeItemID(kind string, item map[string]any) string {
+	switch kind {
+	case "fragment":
+		return firstNonEmpty(stringValue(item["fragment_id"]), stringValue(item["id"]))
+	case "claim":
+		return firstNonEmpty(stringValue(item["claim_id"]), stringValue(item["id"]))
+	case "fact":
+		return firstNonEmpty(stringValue(item["fact_id"]), stringValue(item["id"]))
+	default:
+		return stringValue(item["id"])
+	}
 }
 
 func fragmentIDFromRemember(out map[string]any) string {

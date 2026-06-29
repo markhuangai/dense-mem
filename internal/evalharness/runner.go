@@ -82,7 +82,7 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	}
 
 	var traces []RecallTrace
-	mapping := KnowledgeMapping{BySourceDocID: map[string]Ref{}}
+	mapping := newKnowledgeMapping()
 	if opts.TracesPath != "" {
 		traces, err = LoadRecallTraces(opts.TracesPath)
 		if err != nil {
@@ -104,13 +104,11 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 				return Summary{}, err
 			}
 		}
-		exported, err := client.ExportFragmentMapping(ctx, opts.MaxPageSize)
+		exported, err := client.ExportKnowledgeMapping(ctx, opts.MaxPageSize)
 		if err != nil {
 			return Summary{}, err
 		}
-		for sourceDocID, ref := range exported.BySourceDocID {
-			mapping.BySourceDocID[sourceDocID] = ref
-		}
+		mergeKnowledgeMapping(&mapping, exported)
 		traces, err = runLiveSuite(ctx, client, suite, IndexCases(cases))
 		if err != nil {
 			return Summary{}, err

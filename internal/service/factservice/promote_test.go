@@ -64,6 +64,13 @@ func (s *stubPromoteDB) ScopedWriteTx(
 
 var _ promoteDB = (*stubPromoteDB)(nil)
 
+func TestTimeParamDereferencesOptionalTime(t *testing.T) {
+	value := time.Date(2026, 6, 27, 0, 0, 0, 0, time.UTC)
+
+	require.Nil(t, timeParam(nil))
+	require.Equal(t, value, timeParam(&value))
+}
+
 type promotionStubResultSummary struct {
 	counters neo4j.Counters
 }

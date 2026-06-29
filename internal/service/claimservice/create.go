@@ -340,8 +340,8 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 		"speaker":                      newClaim.Speaker,
 		"spanStart":                    newClaim.SpanStart,
 		"spanEnd":                      newClaim.SpanEnd,
-		"validFrom":                    newClaim.ValidFrom,
-		"validTo":                      newClaim.ValidTo,
+		"validFrom":                    timeParam(newClaim.ValidFrom),
+		"validTo":                      timeParam(newClaim.ValidTo),
 		"recordedAt":                   newClaim.RecordedAt,
 		"extractConf":                  newClaim.ExtractConf,
 		"resolutionConf":               newClaim.ResolutionConf,
@@ -396,6 +396,13 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 	}
 
 	return &CreateResult{Claim: newClaim}, nil
+}
+
+func timeParam(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return value.UTC()
 }
 
 func validateCreateClaimInput(claim *domain.Claim) error {
