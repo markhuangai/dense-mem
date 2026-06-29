@@ -532,7 +532,7 @@ func TestRecallService_ClampsAndDefaultsLimit(t *testing.T) {
 	cases := []struct {
 		name     string
 		input    int
-		wantMult int // sem.lastLimit should equal wantMult * OverfetchMultiplier
+		wantMult int // sem.lastLimit should equal wantMult * OverfetchMultiplier for non-ID queries.
 	}{
 		{"zero defaults to 10", 0, DefaultLimit},
 		{"negative defaults to 10", -5, DefaultLimit},
@@ -555,6 +555,19 @@ func TestRecallService_ClampsAndDefaultsLimit(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRecallService_UsesIdentifierOverfetchFloorForLowLimitIDQueries(t *testing.T) {
+	sem := &fakeSemanticSearcher{}
+	kw := &fakeKeywordSearcher{}
+	emb := &stubEmbedding{DimensionsResult: 4}
+	svc := NewRecallService(emb, sem, kw, &fakeHydrator{}, nil, nil)
+
+	_, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "Who owns service TIER-Z-001?", Limit: 1})
+
+	require.NoError(t, err)
+	require.Equal(t, IdentifierOverfetchFloor, sem.lastLimit)
+	require.Equal(t, IdentifierOverfetchFloor, kw.lastLimit)
 }
 
 // TestRecallService_RejectsBlankQuery defends AC-38 at the service boundary.

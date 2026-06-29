@@ -349,7 +349,7 @@ func TestRecallService_TierCurrentnessOverfetchesBeforeFinalLimit(t *testing.T) 
 
 		require.NoError(t, err)
 		require.Len(t, out, 1)
-		require.Equal(t, OverfetchMultiplier, factSearcher.lastLimit)
+		require.Equal(t, recallOverfetchLimit("What is the current owner for service TIER-F-001?", 1), factSearcher.lastLimit)
 		require.Equal(t, "fact-new", out[0].Fact.FactID)
 	})
 
@@ -386,7 +386,7 @@ func TestRecallService_TierCurrentnessOverfetchesBeforeFinalLimit(t *testing.T) 
 
 		require.NoError(t, err)
 		require.Len(t, out, 1)
-		require.Equal(t, OverfetchMultiplier, claimSearcher.lastLimit)
+		require.Equal(t, recallOverfetchLimit("What is the latest pager for service TIER-C-001?", 1), claimSearcher.lastLimit)
 		require.Equal(t, "claim-new", out[0].Claim.ClaimID)
 	})
 }

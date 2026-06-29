@@ -46,6 +46,10 @@ const (
 	// fetches before merge. The global vector index is shared across profiles,
 	// so we overfetch and post-filter for profile isolation (AC-40).
 	OverfetchMultiplier = 10
+	// IdentifierOverfetchFloor is the minimum branch candidate pool for exact-ID
+	// queries. Low-limit exact-ID queries need enough candidates for rerank to
+	// see the same-ID row in crowded reusable eval teams.
+	IdentifierOverfetchFloor = 50
 	// RRFConstant is the k parameter in Reciprocal Rank Fusion.
 	RRFConstant = 60
 	// DefaultLimit is used when RecallRequest.Limit is zero.
@@ -361,7 +365,7 @@ func (s *recallService) Recall(ctx context.Context, profileID string, req Recall
 	}
 
 	limit := clampLimit(req.Limit)
-	overfetch := limit * OverfetchMultiplier
+	overfetch := recallOverfetchLimit(query, limit)
 
 	var (
 		wg      sync.WaitGroup
@@ -2051,6 +2055,14 @@ func clampLimit(req int) int {
 		return MinLimit
 	}
 	return req
+}
+
+func recallOverfetchLimit(query string, limit int) int {
+	overfetch := limit * OverfetchMultiplier
+	if len(rerankIdentifiers(rerankText(query))) > 0 && overfetch < IdentifierOverfetchFloor {
+		return IdentifierOverfetchFloor
+	}
+	return overfetch
 }
 
 // sanitizeEmbeddingError classifies the provider error type but strips any
