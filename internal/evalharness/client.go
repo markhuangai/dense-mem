@@ -430,13 +430,14 @@ func fragmentIDFromRemember(out map[string]any) string {
 
 func traceFromToolOutput(tc Case, out map[string]any) RecallTrace {
 	return RecallTrace{
-		CaseID:            tc.CaseID,
-		Query:             firstNonEmpty(stringValue(out["query"]), tc.Query),
-		RankedRefs:        refsFromAny(out["ranked_refs"]),
-		ContextRefs:       refsFromAny(out["context_refs"]),
-		LatencyMS:         int64Value(out["latency_ms"]),
-		ContextBlockChars: intValue(out["context_block_chars"]),
-		Raw:               out,
+		CaseID:              tc.CaseID,
+		Query:               firstNonEmpty(stringValue(out["query"]), tc.Query),
+		RankedRefs:          refsFromAny(out["ranked_refs"]),
+		ContextRefs:         refsFromAny(out["context_refs"]),
+		ContextEvidenceRefs: refsFromAny(out["context_evidence_refs"]),
+		LatencyMS:           int64Value(out["latency_ms"]),
+		ContextBlockChars:   intValue(out["context_block_chars"]),
+		Raw:                 out,
 	}
 }
 

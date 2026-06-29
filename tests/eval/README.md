@@ -94,8 +94,11 @@ fast when a required qrel ref is unmapped after import; bad refs may remain
 unmapped when promotion policy intentionally rejects them. Typed claim
 predicates must use the allowed import schema values, so typed content-date
 cases place natural-language dates in the subject text while keeping predicate
-`uses`. The current seed hash is
-`sha256:6131d4ae0f597a265cf46dc306779ef5c5137051f8a10284da973924d05242a5`.
+`uses`. Some qrels also include `required_evidence_refs` and
+`bad_evidence_refs`, which score supporting fragments attached to assembled
+fact/claim context separately from the top-level retrieved refs. The current
+seed hash is
+`sha256:626b6d33afb5bcc8d85e73d9f4d3b9e351fe8fff6997f184ba683db98125903e`.
 
 ## Commands
 
@@ -222,12 +225,29 @@ The original ranked metrics are unchanged. Use the context metrics when the
 question is whether a judged-bad item reached the final assembled context, not
 only whether it appeared in the raw ranked retrieval list.
 
+When a trace includes `context_evidence_refs` and the qrel includes
+`required_evidence_refs` or `bad_evidence_refs`, the runner scores supporting
+fragments separately and writes `evidence_*` metrics:
+
+```text
+context_evidence_refs + qrels.required_evidence_refs + qrels.bad_evidence_refs
+  -> average_evidence_recall_at_k
+  -> average_evidence_mrr
+  -> average_evidence_ndcg_at_k
+  -> average_evidence_bad_at_k
+  -> evidence_required_rank1_rate
+  -> evidence_bad_rank1_rate
+```
+
+Use evidence metrics when the top-level fact or claim is correct but its
+assembled supporting fragments may be stale, wrong, or missing.
+
 `source_doc_id` labels are remapped to Dense-Mem refs after import or export.
 The mapping keeps a backward-compatible default fragment ref and also supports
 type-aware refs for seeds that use the same `source_doc_id` as a fragment,
-claim, and fact. Unmapped required refs are reported in `unmapped_source_refs`
-and still penalize the denominator, so mapping problems cannot silently inflate
-scores.
+claim, and fact. This remapping also applies to evidence qrels. Unmapped
+required refs are reported in `unmapped_source_refs` and still penalize the
+denominator, so mapping problems cannot silently inflate scores.
 
 Validation also checks manifest counts, qrel source-doc coverage, suite case
 coverage, and adversarial cases having explicit `bad_refs`.

@@ -37,6 +37,10 @@ func main() {
 	registerFloatGate("min-context-required-rank1-rate", "minimum share of context-scored cases with a required ref first in context", &opts.Gates.MinContextRequiredRank1Rate, validateRate)
 	registerFloatGate("max-average-context-bad-at-k", "maximum average bad context refs@k allowed when context refs are present", &opts.Gates.MaxAverageContextBadAtK, validateNonNegative)
 	registerFloatGate("max-context-bad-rank1-rate", "maximum share of context-scored cases with a bad ref first in context", &opts.Gates.MaxContextBadRank1Rate, validateRate)
+	registerFloatGate("min-evidence-recall-at-k", "minimum average evidence recall@k required when evidence qrels are present", &opts.Gates.MinEvidenceRecallAtK, validateRate)
+	registerFloatGate("min-evidence-required-rank1-rate", "minimum share of evidence-scored cases with a required evidence ref first", &opts.Gates.MinEvidenceRequiredRank1Rate, validateRate)
+	registerFloatGate("max-average-evidence-bad-at-k", "maximum average bad evidence refs@k allowed when evidence qrels are present", &opts.Gates.MaxAverageEvidenceBadAtK, validateNonNegative)
+	registerFloatGate("max-evidence-bad-rank1-rate", "maximum share of evidence-scored cases with a bad evidence ref first", &opts.Gates.MaxEvidenceBadRank1Rate, validateRate)
 	flag.Parse()
 
 	ctx := context.Background()
@@ -53,6 +57,14 @@ func main() {
 				comparison.ContextMRRDelta,
 				comparison.ContextNDCGDelta,
 				comparison.ContextBadAtKDelta,
+			)
+		}
+		if comparison.EvidenceRecallDelta != 0 || comparison.EvidenceMRRDelta != 0 || comparison.EvidenceNDCGDelta != 0 || comparison.EvidenceBadAtKDelta != 0 {
+			msg += fmt.Sprintf(" evidence_recall_delta=%.4f evidence_mrr_delta=%.4f evidence_ndcg_delta=%.4f evidence_bad_at_k_delta=%.4f",
+				comparison.EvidenceRecallDelta,
+				comparison.EvidenceMRRDelta,
+				comparison.EvidenceNDCGDelta,
+				comparison.EvidenceBadAtKDelta,
 			)
 		}
 		fmt.Println(msg)
@@ -87,6 +99,17 @@ func main() {
 			summary.AverageContextBadAtK,
 			summary.ContextRequiredRank1Rate,
 			summary.ContextBadRank1Rate,
+		)
+	}
+	if summary.EvidenceScoredCaseCount > 0 {
+		msg += fmt.Sprintf(" evidence_scored=%d evidence_recall_at_k=%.4f evidence_mrr=%.4f evidence_ndcg_at_k=%.4f evidence_bad_at_k=%.4f evidence_required_rank1=%.4f evidence_bad_rank1=%.4f",
+			summary.EvidenceScoredCaseCount,
+			summary.AverageEvidenceRecallAtK,
+			summary.AverageEvidenceMRR,
+			summary.AverageEvidenceNDCGAtK,
+			summary.AverageEvidenceBadAtK,
+			summary.EvidenceRequiredRank1Rate,
+			summary.EvidenceBadRank1Rate,
 		)
 	}
 	fmt.Printf("%s out=%s\n", msg, opts.OutDir)

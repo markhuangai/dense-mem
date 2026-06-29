@@ -147,7 +147,7 @@ func validateRequiredQRelMappings(qrels map[string]QRel, suite []SuiteCase, mapp
 		if !ok {
 			return fmt.Errorf("suite case %q missing from seed qrels", suiteCase.CaseID)
 		}
-		for _, ref := range qrel.RequiredRefs {
+		for _, ref := range append(qrel.RequiredRefs, qrel.RequiredEvidenceRefs...) {
 			if strings.TrimSpace(ref.SourceDocID) == "" {
 				continue
 			}
@@ -241,6 +241,12 @@ func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []Cor
 			return err
 		}
 		if err := validateQRelRefs(qrel.CaseID, "bad_refs", qrel.BadRefs, corpusIndex); err != nil {
+			return err
+		}
+		if err := validateQRelRefs(qrel.CaseID, "required_evidence_refs", qrel.RequiredEvidenceRefs, corpusIndex); err != nil {
+			return err
+		}
+		if err := validateQRelRefs(qrel.CaseID, "bad_evidence_refs", qrel.BadEvidenceRefs, corpusIndex); err != nil {
 			return err
 		}
 	}

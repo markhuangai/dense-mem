@@ -12,13 +12,13 @@ Baseline run: `tests/eval/runs/20260628T145353Z_current_logic_baseline_retry`
 
 ## Summary
 
-The current combined branch is `exp/eval-context-ref-scoring`.
+The current combined branch is `exp/eval-lineage-context-coverage`.
 
-It reaches perfect measured local eval metrics on this seed using the already-imported reusable team and `--import-seed=false`: `recall@k=1.0000`, `MRR=1.0000`, `nDCG@k=1.0000`, `bad@k=0.0000`, and `bad_rank1=0.0000`. The latest run also scores assembled context explicitly: `context_scored=1000`, `context_recall@k=1.0000`, `context_bad@k=0.0000`, and `context_bad_rank1=0.0000`. It also passes the focused live `local_tiered_v1` fact/claim seed after sending temporal scope through verifier and context assembly paths.
+It reaches perfect measured local eval metrics on this seed using the already-imported reusable team and `--import-seed=false`: `recall@k=1.0000`, `MRR=1.0000`, `nDCG@k=1.0000`, `bad@k=0.0000`, and `bad_rank1=0.0000`. The latest run also scores assembled context explicitly: `context_scored=1000`, `context_recall@k=1.0000`, `context_bad@k=0.0000`, and `context_bad_rank1=0.0000`. It also passes the focused live `local_tiered_v1` fact/claim seed with evidence lineage scoring: `evidence_scored=2`, `evidence_recall@k=1.0000`, `evidence_bad@k=0.0000`, and `evidence_bad_rank1=0.0000`.
 
 The latest `local_eval_1k_v2` run for this branch is still a no-import regression check against the stable imported team. It does not fully exercise verifier/write-path behavior because those records were imported before the verifier-scope branch. A full 1k write-path measurement would require re-importing `local_eval_1k_v2`.
 
-`bad@k` is the average count of judged-bad references in the returned ranked top-k. `bad_rank1` is the share of cases where the top-ranked reference is judged bad. Both indicate bad ranked retrieval. `context_bad@k` and `context_bad_rank1` apply the same judgment to `context_refs`, so they answer whether judged-bad material reached assembled context. `bad@k > 0` or `context_bad@k > 0` still matters even when the matching rank-1 rate is zero, because misleading evidence can sit below rank 1.
+`bad@k` is the average count of judged-bad references in the returned ranked top-k. `bad_rank1` is the share of cases where the top-ranked reference is judged bad. Both indicate bad ranked retrieval. `context_bad@k` and `context_bad_rank1` apply the same judgment to `context_refs`, so they answer whether judged-bad material reached assembled context. `evidence_bad@k` and `evidence_bad_rank1` apply the same judgment to supporting fragments in `context_evidence_refs`. `bad@k > 0`, `context_bad@k > 0`, or `evidence_bad@k > 0` still matters even when the matching rank-1 rate is zero, because misleading material can sit below rank 1.
 
 ## Reusable-Team Baseline
 
@@ -38,6 +38,7 @@ The current eval process reuses a stable imported `local_eval_1k_v2` team and do
 | `exp/recall-temporal-verifier-context` | `20260629T_temporal_verifier_context_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good regression check; preserves reusable 1k metrics while adding verifier temporal scope. This is not a full write-path 1k measurement because the stable corpus was already imported. |
 | `exp/recall-context-valid-window-scope` | `20260629T_context_valid_window_scope_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good regression check; preserves reusable 1k metrics while adding temporal scope to context assembly. This is not a full write-path 1k measurement because the stable corpus was already imported. |
 | `exp/eval-context-ref-scoring` | `20260629T_eval_context_ref_scoring_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good scoring harness change; preserves ranked metrics and adds context metrics. Context-scored cases: 1000; `context_recall@k=1.0000`, `context_bad@k=0.0000`, `context_bad_rank1=0.0000`. |
+| `exp/eval-lineage-context-coverage` | `20260629T_lineage_context_coverage_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good lineage scoring change; preserves ranked/context metrics on 1000 no-import cases. This seed has no evidence qrels, so evidence gates are covered by `local_tiered_v1`. |
 
 Delta from reusable-team current logic to vector overfetch: `recall@k +0.0270`, `MRR +0.0426`, `nDCG@k +0.0388`, `bad@k -0.1010`.
 
@@ -45,7 +46,7 @@ Delta from vector overfetch to tier fact/claim branch on `local_eval_1k_v2`: all
 
 ## Fact/Claim Tier Coverage
 
-The `local_eval_1k_v2` suite mostly measures fragment retrieval. `local_tiered_v1` adds a focused typed coverage surface for active facts, validated claims, cross-tier source-evidence intent, typed content-date fallback, typed evidence-date fallback, and fragment natural-language temporal currentness. Current expanded seed hash: `sha256:6131d4ae0f597a265cf46dc306779ef5c5137051f8a10284da973924d05242a5`.
+The `local_eval_1k_v2` suite mostly measures fragment retrieval. `local_tiered_v1` adds a focused typed coverage surface for active facts, validated claims, cross-tier source-evidence intent, typed content-date fallback, typed evidence-date fallback, supporting-evidence qrels, and fragment natural-language temporal currentness. Current expanded seed hash: `sha256:626b6d33afb5bcc8d85e73d9f4d3b9e351fe8fff6997f184ba683db98125903e`.
 
 | Branch | Run | recall@k | MRR | nDCG@k | bad@k | required rank 1 | bad rank 1 | Judgment |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
@@ -60,6 +61,7 @@ The `local_eval_1k_v2` suite mostly measures fragment retrieval. `local_tiered_v
 | `exp/recall-temporal-verifier-context` | `20260629T_temporal_verifier_context_local_tiered_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good live import coverage: claim verification receives `valid_from` / `valid_to`, so later updates outside a claim's validity window do not incorrectly contradict the scoped claim. |
 | `exp/recall-context-valid-window-scope` | `20260629T_context_valid_window_scope_local_tiered_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good live import and context coverage on corrected seed hash `6131d4ae...`: windowed old fact/claim rows include `valid_to`, and `eval_run_recall_case` context assembly passes `valid_at` / `known_at` into recall. |
 | `exp/eval-context-ref-scoring` | `20260629T_eval_context_ref_scoring_local_tiered_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good scoring harness change; context gates passed on 14/14 cases with `context_recall@k=1.0000`, `context_bad@k=0.0000`, and `context_bad_rank1=0.0000`. |
+| `exp/eval-lineage-context-coverage` | `20260629T_lineage_context_coverage3_local_tiered_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good lineage coverage; context gates passed on 14/14 cases and evidence gates passed on 2/2 evidence-scored cases with `evidence_recall@k=1.0000`, `evidence_bad@k=0.0000`, and `evidence_bad_rank1=0.0000`. |
 
 This branch also fixes the eval harness so qrels can resolve `source_doc_id` as a fragment, claim, or fact, fixes optional `valid_from` / `valid_to` persistence for claim creation and fact promotion, and fails typed live eval imports when required refs are not mapped after import.
 
@@ -68,6 +70,8 @@ Before `exp/recall-temporal-verifier-context`, the updated verifier model failed
 During the lazy evidence hydration experiment, run `20260629T_lazy_evidence_temporal_hydration_local_tiered_candidate` regressed to `recall@k=0.9286` because `local_tiered_v1_claim_valid_window_old` remained a `candidate`: the fixture described a claim that was valid before the 2026-06-27 update but provided only `valid_from`. That branch was discarded. The seed now gives the old windowed fact and claim explicit `valid_to=2026-06-27T00:00:00Z`.
 
 The same investigation found that `eval_run_recall_case` passed `valid_at` / `known_at` to ranked recall but not to context assembly. Before the fix, the claim valid-window trace could rank the old claim while `context_refs` contained the future bad claim. `exp/recall-context-valid-window-scope` fixes that mismatch.
+
+The lineage coverage experiment then exposed a separate eval adapter gap: `eval_run_recall_case` defaulted omitted `include_evidence` to false for context assembly, so traces could contain the right fact/claim while dropping supporting fragments. `exp/eval-lineage-context-coverage` defaults eval evidence to true, emits `context_evidence_refs`, and hydrates fact/claim support fragments when recall hits arrive without lineage.
 
 ## Research Basis
 
@@ -112,6 +116,7 @@ References:
 | `exp/recall-temporal-verifier-context` | `20260629T_temporal_verifier_context_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best combined branch; 1k no-import regression only for the verifier/write-path change |
 | `exp/recall-context-valid-window-scope` | `20260629T_context_valid_window_scope_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best combined branch with context temporal scope; 1k no-import regression only |
 | `exp/eval-context-ref-scoring` | `20260629T_eval_context_ref_scoring_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best combined branch plus explicit context scoring; `context_bad@k=0.0000` on 1000 context-scored cases |
+| `exp/eval-lineage-context-coverage` | `20260629T_lineage_context_coverage_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best combined branch plus evidence-lineage scoring; 1k no-import context regression passed |
 
 ## Best Candidate Deltas
 
@@ -159,6 +164,7 @@ The best branch keeps the existing hybrid semantic plus keyword RRF flow and add
 18. Verifier temporal scope: claim verification now passes `valid_from` / `valid_to` into the verifier request, and the OpenAI verifier includes those bounds in the JSON payload. This prevents later or earlier evidence outside a claim's stated validity window from being treated as a contradiction for the scoped claim.
 19. Context temporal scope: `assemble_context` accepts `valid_at` / `known_at`, context assembly forwards them to recall, and `eval_run_recall_case` uses the same temporal window for `ranked_refs` and `context_refs`.
 20. Context scoring: eval summaries keep existing ranked metrics unchanged and add `context_*` metrics/gates when traces include `context_refs`, so final assembled context can fail independently from ranked retrieval.
+21. Evidence-lineage scoring: eval qrels can specify `required_evidence_refs` and `bad_evidence_refs`; traces emit `context_evidence_refs` from assembled supporting fragments; summaries and gates add `evidence_*` metrics. Context assembly now hydrates supporting fragments from promoted claims or full fact/claim records when recall hits do not carry lineage, and eval recall cases default omitted `include_evidence` to true.
 
 All positive boosts require matching identifier-like tokens from the query, such as `OBS-001`, `NEG-001`, or `AUT-061`, when such identifiers exist. This guard prevents neighboring template records from receiving accidental boosts.
 
@@ -173,20 +179,20 @@ Remaining work is now about generalization beyond this synthetic seed:
 | `unit_trap` | MRR 1.0000, bad@k 0.0000 | Scoped exact-ID boost fixed remaining neighboring-job rank misses. |
 | All adversarial slices | bad@k 0.0000; context_bad@k 0.0000 | No judged-bad ranked refs or assembled context refs remain in top-k on local_eval_1k_v2. |
 | Non-synthetic workloads | Not measured | Need validation because zero-score filtering can intentionally return fewer than `limit` fragments. |
-| Tiered facts/claims/fragments | Expanded `local_tiered_v1` live candidate: recall@k 1.0000, required rank 1 1.0000, bad@k 0.0000 | Fourteen-case seed now covers same-tier fact/claim currentness, typed fact/claim content-date fallback without `valid_from`, typed supporting-evidence date fallback, fact-over-fragment, claim-over-fragment, cross-identifier fact filtering, bounded `valid_at` temporal windows, evidence-source fragment intent, relative temporal fragment currentness, month-name temporal fragment currentness, verifier temporal scope, and matching temporal scope for eval context assembly. Keep expanding before treating it as broad acceptance coverage. |
-| Typed source text dates | Partially measured | Supporting fragment dates are now measured for typed fact/claim currentness. Recall still cannot recover dates if extraction/import drops both typed temporal fields and evidence links, or if the relevant source date is outside the hydrated supporting fragments. |
-| Write-path 1k coverage | Not fully measured on this branch | The 1k run for `exp/eval-context-ref-scoring` reused the stable imported team. A full write-path measurement requires re-importing `local_eval_1k_v2`, because the verifier only runs during import/promotion. |
+| Tiered facts/claims/fragments | Expanded `local_tiered_v1` live candidate: recall@k 1.0000, context_recall@k 1.0000, evidence_recall@k 1.0000, bad rates 0.0000 | Fourteen-case seed now covers same-tier fact/claim currentness, typed fact/claim content-date fallback without `valid_from`, typed supporting-evidence date fallback, supporting-evidence qrels, fact-over-fragment, claim-over-fragment, cross-identifier fact filtering, bounded `valid_at` temporal windows, evidence-source fragment intent, relative temporal fragment currentness, month-name temporal fragment currentness, verifier temporal scope, and matching temporal scope for eval context assembly. Keep expanding before treating it as broad acceptance coverage. |
+| Typed source text dates | Measured on focused seed | Supporting fragment dates are now measured for typed fact/claim currentness, and supporting fragments themselves are scored for the two evidence-date tiered cases. Recall still cannot recover dates if extraction/import drops both typed temporal fields and evidence links, or if the relevant source date is outside the hydrated supporting fragments. |
+| Write-path 1k coverage | Not fully measured on this branch | The 1k run for `exp/eval-lineage-context-coverage` reused the stable imported team. A full write-path measurement requires re-importing `local_eval_1k_v2`, because the verifier only runs during import/promotion. |
 
 ## Recommendation
 
-Merge candidate to main should start from `exp/eval-context-ref-scoring`, which builds on `exp/recall-context-valid-window-scope` and `exp/recall-temporal-verifier-context`.
+Merge candidate to main should start from `exp/eval-lineage-context-coverage`, which builds on `exp/eval-context-ref-scoring`, `exp/recall-context-valid-window-scope`, and `exp/recall-temporal-verifier-context`.
 
 Next improvement experiments should target generalization:
 
 1. Validate zero-score filtering against non-synthetic workloads, because returning fewer than `limit` fragments is intentional but changes context volume.
 2. Measure typed evidence-date fallback latency on non-synthetic or larger typed workloads, because it adds supporting fragment hydration for typed currentness hits.
 3. Decide whether claim/fact extraction should preserve source dates as `valid_from`, triple text, or structured metadata; recall now has an evidence fallback, but typed temporal fields remain cheaper and more explicit.
-4. Run a full `local_eval_1k_v2` import for `exp/recall-temporal-verifier-context` when the hour-scale cost is worth measuring write-path behavior across the full synthetic corpus.
+4. Run a full `local_eval_1k_v2` import for `exp/eval-lineage-context-coverage` when the hour-scale cost is worth measuring write-path behavior across the full synthetic corpus.
 5. Broader temporal parsing beyond relative phrases and month names, including weekdays, ambiguous numeric dates, and non-English date forms, before relying on natural-language date priority outside the synthetic seed.
 6. Keep expanding `local_tiered_v1` now that live typed fact/claim/fragment scoring is stable.
 7. Replace hard-coded cue lists with learned or configurable rerank features if future seeds expose broader language variation.

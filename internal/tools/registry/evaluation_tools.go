@@ -294,6 +294,7 @@ func evalRunRecallCaseTool(deps Dependencies) Tool {
 					return nil, err
 				}
 				out["context_refs"] = contextItemRefs(assembled.Items)
+				out["context_evidence_refs"] = contextEvidenceRefs(assembled.Items)
 				out["context_block_chars"] = len(assembled.ContextBlock)
 			}
 			return out, nil
@@ -309,11 +310,14 @@ func evalScoreRetrievalCaseTool(deps Dependencies) Tool {
 			"type":     "object",
 			"required": []string{"ranked_refs", "required_refs"},
 			"properties": map[string]any{
-				"k":             map[string]any{"type": "integer", "minimum": 1, "maximum": maxEvalK},
-				"ranked_refs":   evalRefArraySchema(false),
-				"context_refs":  evalRefArraySchema(false),
-				"required_refs": evalRefArraySchema(true),
-				"bad_refs":      evalRefArraySchema(false),
+				"k":                      map[string]any{"type": "integer", "minimum": 1, "maximum": maxEvalK},
+				"ranked_refs":            evalRefArraySchema(false),
+				"context_refs":           evalRefArraySchema(false),
+				"evidence_refs":          evalRefArraySchema(false),
+				"required_refs":          evalRefArraySchema(true),
+				"bad_refs":               evalRefArraySchema(false),
+				"required_evidence_refs": evalRefArraySchema(true),
+				"bad_evidence_refs":      evalRefArraySchema(false),
 			},
 			"additionalProperties": false,
 		},
@@ -341,6 +345,21 @@ func evalScoreRetrievalCaseTool(deps Dependencies) Tool {
 				out["context_recall_at_k"] = contextMetrics.RecallAtK
 				out["context_mrr"] = contextMetrics.MRR
 				out["context_ndcg_at_k"] = contextMetrics.NDCGAtK
+			}
+			if _, ok := input["evidence_refs"]; ok {
+				evidenceMetrics := recallquality.ScoreAtK(
+					evalResultRefs(input["evidence_refs"]),
+					evalJudgments(input["required_evidence_refs"]),
+					evalResultRefs(input["bad_evidence_refs"]),
+					k,
+				)
+				out["evidence_scored"] = true
+				out["evidence_relevant_at_k"] = evidenceMetrics.RelevantAtK
+				out["evidence_relevant_total"] = evidenceMetrics.RelevantTotal
+				out["evidence_bad_at_k"] = evidenceMetrics.BadAtK
+				out["evidence_recall_at_k"] = evidenceMetrics.RecallAtK
+				out["evidence_mrr"] = evidenceMetrics.MRR
+				out["evidence_ndcg_at_k"] = evidenceMetrics.NDCGAtK
 			}
 			return out, nil
 		},
@@ -632,7 +651,7 @@ func evalRecallRequest(input map[string]any) (recallservice.RecallRequest, error
 	req := recallservice.RecallRequest{
 		Query:           stringInput(input["query"]),
 		Limit:           intInputOrDefault(input["limit"], recallservice.DefaultLimit),
-		IncludeEvidence: boolInput(input["include_evidence"]),
+		IncludeEvidence: boolInputOrDefault(input["include_evidence"], true),
 		UseCommunities:  boolInput(input["use_communities"]),
 	}
 	if validAt, err := optionalTime(input["valid_at"]); err != nil {
@@ -649,7 +668,7 @@ func evalRecallRequest(input map[string]any) (recallservice.RecallRequest, error
 }
 
 func evalAssembleRequest(input map[string]any, recallReq recallservice.RecallRequest) contextservice.AssembleRequest {
-	includeEvidence := boolInput(input["include_evidence"])
+	includeEvidence := boolInputOrDefault(input["include_evidence"], recallReq.IncludeEvidence)
 	return contextservice.AssembleRequest{
 		Query:           recallReq.Query,
 		Limit:           recallReq.Limit,
@@ -729,6 +748,33 @@ func contextItemRefs(items []contextservice.ContextItem) []map[string]any {
 			"id":    item.ID,
 			"score": item.Score,
 		})
+	}
+	return refs
+}
+
+func contextEvidenceRefs(items []contextservice.ContextItem) []map[string]any {
+	refs := []map[string]any{}
+	seen := map[string]struct{}{}
+	rank := 1
+	for _, item := range items {
+		for _, fragment := range item.EvidenceFragments {
+			if fragment == nil || strings.TrimSpace(fragment.FragmentID) == "" {
+				continue
+			}
+			key := "fragment:" + fragment.FragmentID
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			refs = append(refs, map[string]any{
+				"rank":        rank,
+				"type":        "fragment",
+				"id":          fragment.FragmentID,
+				"parent_type": item.Type,
+				"parent_id":   item.ID,
+			})
+			rank++
+		}
 	}
 	return refs
 }
@@ -818,6 +864,14 @@ func intInputOrDefault(value any, fallback int) int {
 
 func boolInput(value any) bool {
 	parsed, _ := value.(bool)
+	return parsed
+}
+
+func boolInputOrDefault(value any, fallback bool) bool {
+	parsed, ok := value.(bool)
+	if !ok {
+		return fallback
+	}
 	return parsed
 }
 

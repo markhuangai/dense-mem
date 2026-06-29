@@ -332,7 +332,11 @@ func (s *service) contextItem(ctx context.Context, profileID string, hit recalls
 	case hit.Fact != nil:
 		item := ContextItem{Type: AnchorFact, ID: hit.Fact.FactID, Score: hit.Score, Fact: hit.Fact}
 		if includeEvidence {
-			fragments, _, err := s.loadFragments(ctx, profileID, supportIDsFromEvidence(hit.Fact.Evidence))
+			supportIDs, err := s.contextFactSupportIDs(ctx, profileID, hit.Fact)
+			if err != nil {
+				return ContextItem{}, err
+			}
+			fragments, _, err := s.loadFragments(ctx, profileID, supportIDs)
 			if err != nil {
 				return ContextItem{}, err
 			}
@@ -342,7 +346,11 @@ func (s *service) contextItem(ctx context.Context, profileID string, hit recalls
 	case hit.Claim != nil:
 		item := ContextItem{Type: AnchorClaim, ID: hit.Claim.ClaimID, Score: hit.Score, Claim: hit.Claim}
 		if includeEvidence {
-			fragments, _, err := s.loadFragments(ctx, profileID, supportIDsFromClaim(hit.Claim))
+			supportIDs, err := s.contextClaimSupportIDs(ctx, profileID, hit.Claim)
+			if err != nil {
+				return ContextItem{}, err
+			}
+			fragments, _, err := s.loadFragments(ctx, profileID, supportIDs)
 			if err != nil {
 				return ContextItem{}, err
 			}
@@ -354,6 +362,71 @@ func (s *service) contextItem(ctx context.Context, profileID string, hit recalls
 	default:
 		return ContextItem{}, nil
 	}
+}
+
+func (s *service) contextFactSupportIDs(ctx context.Context, profileID string, fact *domain.Fact) ([]string, error) {
+	if fact == nil {
+		return nil, nil
+	}
+	if fact.PromotedFromClaimID != "" {
+		supportIDs, err := s.contextClaimSupportIDsByID(ctx, profileID, fact.PromotedFromClaimID)
+		if err != nil {
+			return nil, err
+		}
+		if len(supportIDs) > 0 {
+			return supportIDs, nil
+		}
+	}
+	if supportIDs := supportIDsFromEvidence(fact.Evidence); len(supportIDs) > 0 {
+		return supportIDs, nil
+	}
+	if s.deps.FactGet == nil || fact.FactID == "" {
+		return nil, nil
+	}
+	fullFact, err := s.deps.FactGet.Get(ctx, profileID, fact.FactID)
+	if err != nil {
+		if errors.Is(err, factservice.ErrFactNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if fullFact == nil {
+		return nil, nil
+	}
+	if fullFact.PromotedFromClaimID != "" && fullFact.PromotedFromClaimID != fact.PromotedFromClaimID {
+		supportIDs, err := s.contextClaimSupportIDsByID(ctx, profileID, fullFact.PromotedFromClaimID)
+		if err != nil {
+			return nil, err
+		}
+		if len(supportIDs) > 0 {
+			return supportIDs, nil
+		}
+	}
+	return supportIDsFromEvidence(fullFact.Evidence), nil
+}
+
+func (s *service) contextClaimSupportIDs(ctx context.Context, profileID string, claim *domain.Claim) ([]string, error) {
+	if claim == nil {
+		return nil, nil
+	}
+	if supportIDs := supportIDsFromClaim(claim); len(supportIDs) > 0 {
+		return supportIDs, nil
+	}
+	return s.contextClaimSupportIDsByID(ctx, profileID, claim.ClaimID)
+}
+
+func (s *service) contextClaimSupportIDsByID(ctx context.Context, profileID, claimID string) ([]string, error) {
+	if s.deps.ClaimGet == nil || claimID == "" {
+		return nil, nil
+	}
+	claim, err := s.deps.ClaimGet.Get(ctx, profileID, claimID)
+	if err != nil {
+		if errors.Is(err, claimservice.ErrClaimNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return supportIDsFromClaim(claim), nil
 }
 
 func (s *service) loadFragments(ctx context.Context, profileID string, fragmentIDs []string) ([]*domain.Fragment, []string, error) {

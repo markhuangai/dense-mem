@@ -226,6 +226,71 @@ func TestAssembleContextRendersStructuredItemsAndClarifications(t *testing.T) {
 	require.Contains(t, got.ContextBlock, "[clarification:clarify-1]")
 }
 
+func TestAssembleContextHydratesFactEvidenceFromPromotedClaim(t *testing.T) {
+	ctx := context.Background()
+	fact := factFixture("fact-1", "go")
+	fact.PromotedFromClaimID = "claim-1"
+	recall := &fakeRecall{hits: []recallservice.RecallHit{{
+		Tier:  recallservice.TierActiveFact,
+		Score: 0.9,
+		Fact:  fact,
+	}}}
+	svc := New(Dependencies{
+		Recall: recall,
+		ClaimGet: &fakeClaimGet{claims: map[string]*domain.Claim{
+			"claim-1": claimFixture("claim-1", "uses", "go", []string{"fragment-1"}),
+		}},
+		FragmentGet: &fakeFragmentGet{fragments: map[string]*domain.Fragment{
+			"fragment-1": fragmentFixture("fragment-1", "The assistant uses Go."),
+		}},
+	})
+
+	got, err := svc.Assemble(ctx, "profile-a", AssembleRequest{Query: "what does the assistant use?", Limit: 1})
+
+	require.NoError(t, err)
+	require.Len(t, got.Items, 1)
+	require.Len(t, got.Items[0].EvidenceFragments, 1)
+	require.Equal(t, "fragment-1", got.Items[0].EvidenceFragments[0].FragmentID)
+	require.Contains(t, got.ContextBlock, "evidence [fragment:fragment-1]")
+}
+
+func TestAssembleContextHydratesEvidenceFromFullRecordsWhenRecallHitStripsLineage(t *testing.T) {
+	ctx := context.Background()
+	hitFact := factFixture("fact-1", "go")
+	fullFact := factFixture("fact-1", "go")
+	fullFact.Evidence = []domain.Evidence{{FragmentID: "fragment-fact"}}
+	hitClaim := claimFixture("claim-1", "uses", "go", nil)
+	fullClaim := claimFixture("claim-1", "uses", "go", []string{"fragment-claim"})
+	recall := &fakeRecall{hits: []recallservice.RecallHit{
+		{Tier: recallservice.TierActiveFact, Score: 0.9, Fact: hitFact},
+		{Tier: recallservice.TierValidatedClaim, Score: 0.7, Claim: hitClaim},
+	}}
+	svc := New(Dependencies{
+		Recall: recall,
+		FactGet: &fakeFactGet{facts: map[string]*domain.Fact{
+			"fact-1": fullFact,
+		}},
+		ClaimGet: &fakeClaimGet{claims: map[string]*domain.Claim{
+			"claim-1": fullClaim,
+		}},
+		FragmentGet: &fakeFragmentGet{fragments: map[string]*domain.Fragment{
+			"fragment-fact":  fragmentFixture("fragment-fact", "The assistant uses Go."),
+			"fragment-claim": fragmentFixture("fragment-claim", "The assistant keeps using Go."),
+		}},
+	})
+
+	got, err := svc.Assemble(ctx, "profile-a", AssembleRequest{Query: "what does the assistant use?", Limit: 2})
+
+	require.NoError(t, err)
+	require.Len(t, got.Items, 2)
+	require.Len(t, got.Items[0].EvidenceFragments, 1)
+	require.Equal(t, "fragment-fact", got.Items[0].EvidenceFragments[0].FragmentID)
+	require.Len(t, got.Items[1].EvidenceFragments, 1)
+	require.Equal(t, "fragment-claim", got.Items[1].EvidenceFragments[0].FragmentID)
+	require.Contains(t, got.ContextBlock, "evidence [fragment:fragment-fact]")
+	require.Contains(t, got.ContextBlock, "evidence [fragment:fragment-claim]")
+}
+
 func TestAssembleContextOptionsAndErrors(t *testing.T) {
 	ctx := context.Background()
 	includeEvidence := false

@@ -112,6 +112,11 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 					"id":   "fragment-alpha",
 					"rank": 1,
 				}},
+				"context_evidence_refs": []map[string]any{{
+					"type": "fragment",
+					"id":   "fragment-evidence",
+					"rank": 1,
+				}},
 				"latency_ms":          42,
 				"context_block_chars": 128,
 			})
@@ -166,8 +171,8 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 	if trace.CaseID != "case-alpha" || trace.Query != "alpha query" || trace.LatencyMS != 42 || trace.ContextBlockChars != 128 {
 		t.Fatalf("trace = %+v", trace)
 	}
-	if len(trace.RankedRefs) != 1 || trace.RankedRefs[0].ID != "fragment-alpha" || len(trace.ContextRefs) != 1 {
-		t.Fatalf("trace refs = %+v/%+v", trace.RankedRefs, trace.ContextRefs)
+	if len(trace.RankedRefs) != 1 || trace.RankedRefs[0].ID != "fragment-alpha" || len(trace.ContextRefs) != 1 || len(trace.ContextEvidenceRefs) != 1 {
+		t.Fatalf("trace refs = %+v/%+v/%+v", trace.RankedRefs, trace.ContextRefs, trace.ContextEvidenceRefs)
 	}
 	if !controlPatched {
 		t.Fatal("control config was not patched")
