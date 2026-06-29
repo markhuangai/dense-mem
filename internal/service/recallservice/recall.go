@@ -837,7 +837,7 @@ func applyCurrentnessAdjustments(query string, entries []rrfEntry) {
 	temporalFrame := currentnessTemporalFrameFor(query, entries)
 	for i := range entries {
 		lexicalAdjustment := currentnessAdjustment(query, entries[i].Content)
-		if temporalFrame.hasContentDate && lexicalAdjustment > 0 && latestISODateInText(entries[i].Content).IsZero() {
+		if temporalFrame.hasContentDate && lexicalAdjustment > 0 && latestTemporalDateInEntry(entries[i]).IsZero() {
 			lexicalAdjustment = 0
 		}
 		entries[i].FinalScore += lexicalAdjustment
@@ -924,7 +924,7 @@ func currentnessTemporalAdjustment(query string, entry rrfEntry, frame currentne
 	}
 
 	if frame.hasContentDate {
-		contentDate := latestISODateInText(entry.Content)
+		contentDate := latestTemporalDateInEntry(entry)
 		if contentDate.IsZero() {
 			return -0.006
 		}
@@ -983,7 +983,7 @@ func currentnessTemporalFrameFor(query string, entries []rrfEntry) currentnessTe
 		if queryText == "" || contentText == "" || !rerankMatchesQueryIdentifiers(queryText, contentText) {
 			continue
 		}
-		if contentDate := latestISODateInText(entry.Content); !contentDate.IsZero() {
+		if contentDate := latestTemporalDateInEntry(entry); !contentDate.IsZero() {
 			frame.hasContentDate = true
 			if frame.newestContentDate.IsZero() || contentDate.After(frame.newestContentDate) {
 				frame.newestContentDate = contentDate
@@ -1068,6 +1068,79 @@ func latestISODateInText(value string) time.Time {
 		}
 	}
 	return latest
+}
+
+func latestTemporalDateInEntry(entry rrfEntry) time.Time {
+	latest := latestISODateInText(entry.Content)
+	relative := latestRelativeDateInText(entry.Content, latestFragmentTimestamp(entry.CreatedAt, entry.UpdatedAt))
+	if !relative.IsZero() && (latest.IsZero() || relative.After(latest)) {
+		latest = relative
+	}
+	return latest
+}
+
+func latestRelativeDateInText(value string, anchor time.Time) time.Time {
+	if anchor.IsZero() {
+		return time.Time{}
+	}
+	text := rerankText(value)
+	if text == "" {
+		return time.Time{}
+	}
+	anchorDate := utcDate(anchor)
+	latest := time.Time{}
+	add := func(candidate time.Time) {
+		if !candidate.IsZero() && (latest.IsZero() || candidate.After(latest)) {
+			latest = candidate
+		}
+	}
+	fields := strings.Fields(text)
+	for i, field := range fields {
+		switch field {
+		case "today":
+			add(anchorDate)
+		case "yesterday":
+			add(anchorDate.AddDate(0, 0, -1))
+		case "ago":
+			if i >= 2 && (fields[i-1] == "day" || fields[i-1] == "days") {
+				if days, ok := relativeDayCount(fields[i-2]); ok {
+					add(anchorDate.AddDate(0, 0, -days))
+				}
+			}
+		case "week":
+			if i >= 1 && fields[i-1] == "last" {
+				add(anchorDate.AddDate(0, 0, -7))
+			}
+		}
+	}
+	return latest
+}
+
+func utcDate(value time.Time) time.Time {
+	value = value.UTC()
+	year, month, day := value.Date()
+	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+}
+
+func relativeDayCount(token string) (int, bool) {
+	switch token {
+	case "one", "a", "1":
+		return 1, true
+	case "two", "2":
+		return 2, true
+	case "three", "3":
+		return 3, true
+	case "four", "4":
+		return 4, true
+	case "five", "5":
+		return 5, true
+	case "six", "6":
+		return 6, true
+	case "seven", "7":
+		return 7, true
+	default:
+		return 0, false
+	}
 }
 
 func cueAdjustment(query, content string) float64 {

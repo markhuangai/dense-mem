@@ -1041,6 +1041,45 @@ func TestRecallService_CurrentnessRerankDatedFragmentBeatsUndatedCurrentCue(t *t
 	require.Equal(t, "f-new-dated", out[0].Fragment.FragmentID)
 }
 
+func TestRecallService_CurrentnessRerankPrefersRelativeDatedFragment(t *testing.T) {
+	query := "Who is the current owner for service TMP-002?"
+	importedAt := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
+	sem := &fakeSemanticSearcher{
+		hits: []semanticsearch.SearchHit{
+			{
+				ID:        "f-undated-current",
+				Type:      "fragment",
+				Content:   "Current owner note. service TMP-002 owner uses owner-moon.",
+				CreatedAt: importedAt,
+				UpdatedAt: importedAt,
+			},
+		},
+	}
+	kw := &fakeKeywordSearcher{
+		hits: []keywordsearch.FragmentSearchResult{
+			{
+				FragmentID: "f-relative-dated",
+				Content:    "Owner update from yesterday. service TMP-002 owner uses owner-sun.",
+				CreatedAt:  importedAt,
+				UpdatedAt:  importedAt,
+			},
+			{
+				FragmentID: "f-undated-current",
+				Content:    "Current owner note. service TMP-002 owner uses owner-moon.",
+				CreatedAt:  importedAt,
+				UpdatedAt:  importedAt,
+			},
+		},
+	}
+	svc := NewRecallService(&stubEmbedding{DimensionsResult: 4}, sem, kw, &fakeHydrator{}, nil, nil)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: query, Limit: 5})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, out)
+	require.Equal(t, "f-relative-dated", out[0].Fragment.FragmentID)
+}
+
 func TestRecallService_CurrentnessRerankHandlesActiveDecisionQueries(t *testing.T) {
 	query := "What is the active launch decision for notice RET-046?"
 	required := "Retraction update dated 2026-06-28. Earlier approval for notice RET-046 was withdrawn. The active decision is launch-paused-046."
@@ -1101,6 +1140,43 @@ func TestCurrentnessTemporalFramePrefersContentDatesOverBulkImportTimes(t *testi
 	require.False(t, frame.useFragmentTimestamp)
 	require.Positive(t, currentnessTemporalAdjustment(query, entries[0], frame))
 	require.Negative(t, currentnessTemporalAdjustment(query, entries[1], frame))
+}
+
+func TestLatestTemporalDateInEntryParsesRelativeDatesFromFragmentTimestamp(t *testing.T) {
+	anchor := time.Date(2026, 6, 28, 18, 30, 0, 0, time.UTC)
+	cases := []struct {
+		name    string
+		content string
+		want    time.Time
+	}{
+		{
+			name:    "yesterday",
+			content: "Owner update from yesterday. service TMP-002 owner uses owner-sun.",
+			want:    time.Date(2026, 6, 27, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name:    "numeric days ago",
+			content: "Owner update from 2 days ago. service TMP-002 owner uses owner-sun.",
+			want:    time.Date(2026, 6, 26, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name:    "word days ago",
+			content: "Owner update from two days ago. service TMP-002 owner uses owner-sun.",
+			want:    time.Date(2026, 6, 26, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name:    "last week",
+			content: "Owner update from last week. service TMP-002 owner uses owner-sun.",
+			want:    time.Date(2026, 6, 21, 0, 0, 0, 0, time.UTC),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := latestTemporalDateInEntry(rrfEntry{Content: tc.content, CreatedAt: anchor, UpdatedAt: anchor})
+
+			require.Equal(t, tc.want, got)
+		})
+	}
 }
 
 func TestFilterNonPositiveRRFEntriesDropsZeroScoresWhenPositiveExists(t *testing.T) {
