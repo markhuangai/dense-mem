@@ -109,6 +109,9 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			return Summary{}, err
 		}
 		mergeKnowledgeMapping(&mapping, exported)
+		if err := validateRequiredQRelMappings(IndexQrels(qrels), suite, mapping); err != nil {
+			return Summary{}, err
+		}
 		traces, err = runLiveSuite(ctx, client, suite, IndexCases(cases))
 		if err != nil {
 			return Summary{}, err
@@ -136,6 +139,24 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		}
 	}
 	return summary, nil
+}
+
+func validateRequiredQRelMappings(qrels map[string]QRel, suite []SuiteCase, mapping KnowledgeMapping) error {
+	for _, suiteCase := range suite {
+		qrel, ok := qrels[suiteCase.CaseID]
+		if !ok {
+			return fmt.Errorf("suite case %q missing from seed qrels", suiteCase.CaseID)
+		}
+		for _, ref := range qrel.RequiredRefs {
+			if strings.TrimSpace(ref.SourceDocID) == "" {
+				continue
+			}
+			if _, ok := resolveRef(ref, mapping); !ok {
+				return fmt.Errorf("required qrel ref for case %q is unmapped after import: type=%s source_doc_id=%s", suiteCase.CaseID, ref.Type, ref.SourceDocID)
+			}
+		}
+	}
+	return nil
 }
 
 func CompareRunDirs(baselineRunDir, candidateRunDir, outDir string) (Comparison, error) {

@@ -5,3 +5,4 @@
 {"case_id":"local_tiered_v1_cross_identifier_claim","weight":1,"slices":["tiered","cross_identifier","adversarial"]}
 {"case_id":"local_tiered_v1_fact_valid_window","weight":1,"slices":["tiered","fact_valid_window","temporal"]}
 {"case_id":"local_tiered_v1_claim_valid_window","weight":1,"slices":["tiered","claim_valid_window","temporal"]}
+{"case_id":"local_tiered_v1_evidence_source_fragment","weight":1,"slices":["tiered","evidence_source","cross_tier"]}

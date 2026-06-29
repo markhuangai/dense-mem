@@ -74,15 +74,19 @@ of MB. Before using it for a reported run, validate its manifest and keep the
 run artifacts with the seed hash.
 
 `local_tiered_v1` is a small committed seed for the fact and validated-claim
-recall tiers. It contains seven rank-1 cases and fourteen corpus rows covering
+recall tiers. It contains eight rank-1 cases and sixteen corpus rows covering
 same-tier fact/claim currentness, fact-over-fragment behavior,
-claim-over-fragment behavior, cross-identifier fact filtering, and `valid_at`
-temporal windows for facts, claims, and fragment fallback metadata.
+claim-over-fragment behavior, cross-identifier fact filtering, `valid_at`
+temporal windows for facts, claims, and fragment fallback metadata, and
+evidence-source intent where a query asks for the raw source note rather than
+the derived fact or claim.
 Rows with typed claims are imported through `import_memories`, so the runner can
 score `fragment`, `claim`, and `fact` refs instead of only fragment refs. Fact
 rows request `auto_promote`; live runs depend on the configured verifier and
-promotion path creating active facts. The current seed hash is
-`sha256:1794530d9dad4825a64d5e2da4d66f198f8e2db3cc65d09df5ea5a41059ea2ea`.
+promotion path creating active facts for required fact refs. The runner fails
+fast when a required qrel ref is unmapped after import; bad refs may remain
+unmapped when promotion policy intentionally rejects them. The current seed hash
+is `sha256:9e38bc287f5fe1542babd57008be71236eee059c63d23d63567addae592fbc1b`.
 
 ## Commands
 
@@ -145,6 +149,12 @@ for each corpus row. `local_eval_1k_v2` has 4,000 corpus rows, so one-shot
 import needs at least 8,000 tool requests before export and recall cases. For
 disposable eval compose runs, raise `RATE_LIMIT_PER_MINUTE` in `.env` before
 starting the server, then restart the server.
+
+For ranking/search-only experiments against `local_eval_1k_v2`, reuse the stable
+already-imported eval team and run with `--import-seed=false`. Re-import the 1k
+seed only when the stored data shape changes: seed corpus, embeddings,
+claim/fact extraction, import metadata, or write-path fields such as
+`valid_from` / `recorded_at`.
 
 The runner enables `EVALUATION_MODE_ENABLED`, imports corpus rows through
 `remember` or `import_memories`, exports fragment/claim/fact mappings through

@@ -120,6 +120,7 @@ type RecallHit struct {
 	FinalScore   float64          `json:"final_score"`
 	fragmentID   string
 	temporalRank time.Time
+	sortTier     string
 }
 
 // RecallService is the external contract consumed by handlers and the tool
@@ -430,10 +431,16 @@ func (s *recallService) Recall(ctx context.Context, profileID string, req Recall
 	// Collect tier-1 (active facts) and tier-1.5 (validated claims) enrichment.
 	tierHits := s.enrichTierHits(ctx, profileID, overfetch, req)
 
+	evidenceIntent := isEvidenceSourceQuery(query)
+
 	// Merge tier hits with unhydrated fragment candidates, sort by (tier ASC,
 	// score DESC), then hydrate only selected fragment winners.
 	all := append([]RecallHit{}, tierHits...)
 	for _, m := range merged {
+		sortTier := ""
+		if evidenceIntent {
+			sortTier = "0.5"
+		}
 		all = append(all, RecallHit{
 			Tier:         TierFragment,
 			Score:        m.FinalScore,
@@ -441,6 +448,7 @@ func (s *recallService) Recall(ctx context.Context, profileID string, req Recall
 			KeywordRank:  m.KeywordRank,
 			FinalScore:   m.FinalScore,
 			fragmentID:   m.id,
+			sortTier:     sortTier,
 		})
 	}
 	sortRecallHits(all)
@@ -1200,6 +1208,24 @@ func isAuthorityRecallQuery(query string) bool {
 		strings.Contains(text, " require ") ||
 		strings.Contains(text, " requires ") ||
 		strings.Contains(text, " required ")
+}
+
+func isEvidenceSourceQuery(query string) bool {
+	text := rerankText(query)
+	return strings.Contains(text, " which source ") ||
+		strings.Contains(text, " what source ") ||
+		strings.Contains(text, " source note ") ||
+		strings.Contains(text, " source document ") ||
+		strings.Contains(text, " supporting evidence ") ||
+		strings.Contains(text, " raw evidence ") ||
+		strings.Contains(text, " original evidence ") ||
+		strings.Contains(text, " raw fragment ") ||
+		strings.Contains(text, " source fragment ") ||
+		strings.Contains(text, " which note ") ||
+		strings.Contains(text, " what note ") ||
+		strings.Contains(text, " note says ") ||
+		strings.Contains(text, " note said ") ||
+		strings.Contains(text, " mentioned ")
 }
 
 func authorityMatchesQueryIdentifiers(queryText, contentText string) bool {

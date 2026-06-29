@@ -305,6 +305,70 @@ func TestHTTPClientImportCorpusUsesImportMemoriesForTypedClaims(t *testing.T) {
 	}
 }
 
+func TestHTTPClientImportCorpusRejectsTypedClaimErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"fragment": map[string]any{"id": "fragment-tiered"},
+			"claims": []map[string]any{{
+				"claim_id": "claim-tiered",
+				"error":    "claim verify: verifier call failed",
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{
+		SourceDocID: "doc-tiered",
+		Content:     "Service OBS-001 current owner is bob.",
+		Claims: []TypedClaim{{
+			Subject:        "service OBS-001",
+			Predicate:      "uses",
+			Object:         "owner bob",
+			ExtractConf:    0.95,
+			ResolutionConf: 0.95,
+		}},
+	}})
+
+	if err == nil || !strings.Contains(err.Error(), "claim verify: verifier call failed") {
+		t.Fatalf("ImportCorpus err = %v", err)
+	}
+}
+
+func TestHTTPClientImportCorpusAllowsUnpromotedAutoPromoteRows(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"fragment": map[string]any{"id": "fragment-tiered"},
+			"claims": []map[string]any{{
+				"claim_id": "claim-tiered",
+				"status":   "validated",
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	mapping, err := client.ImportCorpus(context.Background(), []CorpusItem{{
+		SourceDocID: "doc-tiered",
+		Content:     "Service OBS-001 current owner is bob.",
+		AutoPromote: true,
+		Claims: []TypedClaim{{
+			Subject:        "service OBS-001",
+			Predicate:      "uses",
+			Object:         "owner bob",
+			ExtractConf:    0.95,
+			ResolutionConf: 0.95,
+		}},
+	}})
+
+	if err != nil {
+		t.Fatalf("ImportCorpus err = %v", err)
+	}
+	if _, ok := mapping.BySourceDocIDAndType["doc-tiered"]["fact"]; ok {
+		t.Fatalf("fact mapping = %+v; want no fact mapping for unpromoted row", mapping.BySourceDocIDAndType)
+	}
+}
+
 func TestHTTPClientExportKnowledgeMappingIncludesClaimsAndFacts(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/tools/eval_list_knowledge_refs" {

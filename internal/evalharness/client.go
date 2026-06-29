@@ -112,8 +112,14 @@ func (c *HTTPClient) importMemoryCorpusItem(ctx context.Context, item CorpusItem
 	}
 	addSourceMapping(mapping, Ref{Type: "fragment", ID: fragmentID, SourceDocID: item.SourceDocID}, true)
 	claims, _ := out["claims"].([]any)
+	if len(item.Claims) > 0 && len(claims) != len(item.Claims) {
+		return fmt.Errorf("import %s: import_memories returned %d claim outcomes for %d typed claims", item.SourceDocID, len(claims), len(item.Claims))
+	}
 	for _, raw := range claims {
 		claim, _ := raw.(map[string]any)
+		if errText := stringValue(claim["error"]); errText != "" {
+			return fmt.Errorf("import %s: claim import failed: %s", item.SourceDocID, errText)
+		}
 		claimID := stringValue(claim["claim_id"])
 		if claimID != "" {
 			addSourceMapping(mapping, Ref{Type: "claim", ID: claimID, SourceDocID: item.SourceDocID}, false)
@@ -273,7 +279,7 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, inp
 	}
 	client := c.Client
 	if client == nil {
-		client = &http.Client{Timeout: 2 * time.Minute}
+		client = &http.Client{Timeout: 5 * time.Minute}
 	}
 	resp, err := client.Do(req)
 	if err != nil {

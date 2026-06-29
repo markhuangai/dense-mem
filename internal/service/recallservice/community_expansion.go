@@ -240,8 +240,10 @@ func defaultCommunityExpansionOptions() CommunityExpansionOptions {
 
 func sortRecallHits(hits []RecallHit) {
 	sort.SliceStable(hits, func(i, j int) bool {
-		if hits[i].Tier != hits[j].Tier {
-			return hits[i].Tier < hits[j].Tier
+		leftTier := recallSortTier(hits[i])
+		rightTier := recallSortTier(hits[j])
+		if leftTier != rightTier {
+			return leftTier < rightTier
 		}
 		if !hits[i].temporalRank.IsZero() || !hits[j].temporalRank.IsZero() {
 			switch {
@@ -255,6 +257,13 @@ func sortRecallHits(hits []RecallHit) {
 		}
 		return hits[i].Score > hits[j].Score
 	})
+}
+
+func recallSortTier(hit RecallHit) string {
+	if hit.sortTier != "" {
+		return hit.sortTier
+	}
+	return hit.Tier
 }
 
 func recallHitKeySet(hits []RecallHit) map[string]struct{} {

@@ -12,7 +12,7 @@ Baseline run: `tests/eval/runs/20260628T145353Z_current_logic_baseline_retry`
 
 ## Summary
 
-The best measured branch for the stable reusable-team eval loop is `exp/recall-tier-fact-claim-vector-overfetch`.
+The best measured branch for the stable reusable-team eval loop is `exp/recall-evidence-intent-fragments`.
 
 It reaches perfect measured local eval metrics on this seed, using the already-imported reusable team and `--import-seed=false`: `recall@k=1.0000`, `MRR=1.0000`, `nDCG@k=1.0000`, `bad@k=0.0000`, and `bad_rank1=0.0000`. It also passes the focused live `local_tiered_v1` fact/claim seed.
 
@@ -28,6 +28,7 @@ The current eval process reuses a stable imported `local_eval_1k_v2` team and do
 | `exp/recall-vector-overfetch-reuse-fix` | `20260629T014939Z_local_eval_1k_vector_overfetch_reuse_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good; queries more vector candidates before the existing team/status filter, then caps returned hits to the requested limit. |
 | `exp/recall-tier-fact-claim-vector-overfetch` | `20260629T020934Z_local_eval_1k_vector_tier_fact_claim_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good; preserves vector-overfetch fragment metrics while adding typed fact/claim eval and tier currentness logic. |
 | `exp/recall-tier-fact-claim-vector-overfetch` | `20260629T_temporal_metadata_no_identifier_filter_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good; preserves reusable 1k metrics while adding fragment temporal metadata filtering. |
+| `exp/recall-evidence-intent-fragments` | `20260629T_evidence_source_tight_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good; preserves reusable 1k metrics while adding evidence-source fragment intent and stricter typed eval import validation. |
 
 Delta from reusable-team current logic to vector overfetch: `recall@k +0.0270`, `MRR +0.0426`, `nDCG@k +0.0388`, `bad@k -0.1010`.
 
@@ -35,15 +36,16 @@ Delta from vector overfetch to tier fact/claim branch on `local_eval_1k_v2`: all
 
 ## Fact/Claim Tier Coverage
 
-The `local_eval_1k_v2` suite mostly measures fragment retrieval. `local_tiered_v1` adds a focused typed coverage surface for active facts and validated claims. Current expanded seed hash: `sha256:1794530d9dad4825a64d5e2da4d66f198f8e2db3cc65d09df5ea5a41059ea2ea`.
+The `local_eval_1k_v2` suite mostly measures fragment retrieval. `local_tiered_v1` adds a focused typed coverage surface for active facts, validated claims, and cross-tier source-evidence intent. Current expanded seed hash: `sha256:9e38bc287f5fe1542babd57008be71236eee059c63d23d63567addae592fbc1b`.
 
 | Branch | Run | recall@k | MRR | nDCG@k | bad@k | required rank 1 | bad rank 1 | Judgment |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | `exp/recall-tier-fact-claim-vector-overfetch` | `20260629T020842Z_local_tiered_vector_fact_claim_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good initial coverage for fact-vs-fact and claim-vs-claim currentness ordering. |
 | `exp/recall-tier-fact-claim-vector-overfetch` | `20260629T022642Z_local_tiered_expanded_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good expanded coverage for same-tier currentness, fact-over-fragment, claim-over-fragment, and cross-identifier fact filtering. |
 | `exp/recall-tier-fact-claim-vector-overfetch` | `20260629T_temporal_metadata_no_identifier_filter_local_tiered_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good temporal coverage for `valid_at` fact/claim windows and fragment metadata windows without broad fragment identifier filtering. |
+| `exp/recall-evidence-intent-fragments` | `20260629T_evidence_source_tight2_local_tiered_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good evidence-source coverage: source-note query returns the raw fragment even when a derived fact and claim exist. |
 
-This branch also fixes the eval harness so qrels can resolve `source_doc_id` as a fragment, claim, or fact, and fixes optional `valid_from` / `valid_to` persistence for claim creation and fact promotion.
+This branch also fixes the eval harness so qrels can resolve `source_doc_id` as a fragment, claim, or fact, fixes optional `valid_from` / `valid_to` persistence for claim creation and fact promotion, and fails typed live eval imports when required refs are not mapped after import.
 
 ## Research Basis
 
@@ -80,6 +82,7 @@ References:
 | `exp/recall-vector-overfetch-reuse-fix` | `20260629T014939Z_local_eval_1k_vector_overfetch_reuse_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best candidate for reusable-team loop |
 | `exp/recall-tier-fact-claim-vector-overfetch` | `20260629T020934Z_local_eval_1k_vector_tier_fact_claim_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best candidate for fragments plus focused fact/claim coverage |
 | `exp/recall-tier-fact-claim-vector-overfetch` | `20260629T_temporal_metadata_no_identifier_filter_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best candidate with fragment temporal metadata filtering |
+| `exp/recall-evidence-intent-fragments` | `20260629T_evidence_source_tight_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best candidate with evidence-source fragment intent and typed eval required-ref validation |
 
 ## Best Candidate Deltas
 
@@ -118,6 +121,8 @@ The best branch keeps the existing hybrid semantic plus keyword RRF flow and add
 9. Tier fact/claim currentness: for currentness queries, active facts and validated claims sort within their tier by newest `valid_from`, falling back to `recorded_at`. Tier search now uses the internal overfetch size before final truncation, and hydrated fact/claim hits must match explicit query identifiers before tier precedence can place them above other results.
 10. Fragment temporal metadata filtering: fragment searchers now decode current `metadata_json` as well as legacy `metadata`, and recall filters fragment candidates with structured `valid_from` / `valid_to` metadata when `valid_at` is supplied.
 11. ISO date identifier guard: ISO date tokens are excluded from identifier matching so `as of 2026-06-22` queries match the entity ID rather than requiring the content to repeat the query date. A broader fragment identifier filter was tested and rejected because it raised reusable 1k `bad@k` by surfacing same-identifier decoys below the correct rank-1 result.
+12. Evidence-source fragment intent: source-note/evidence/document/note queries temporarily sort fragment candidates above derived facts and claims while preserving public tier values. This is intentionally narrower than plain `source` so `source of truth` authority queries still prefer active facts.
+13. Typed eval import validation: live eval imports now fail before scoring when typed claim import returns an error or when a required qrel ref is unmapped after import. Bad refs may remain unmapped when promotion policy rejects them.
 
 All positive boosts require matching identifier-like tokens from the query, such as `OBS-001`, `NEG-001`, or `AUT-061`, when such identifiers exist. This guard prevents neighboring template records from receiving accidental boosts.
 
@@ -132,15 +137,15 @@ Remaining work is now about generalization beyond this synthetic seed:
 | `unit_trap` | MRR 1.0000, bad@k 0.0000 | Scoped exact-ID boost fixed remaining neighboring-job rank misses. |
 | All adversarial slices | bad@k 0.0000 | No judged-bad context remains in top-k on local_eval_1k_v2. |
 | Non-synthetic workloads | Not measured | Need validation because zero-score filtering can intentionally return fewer than `limit` fragments. |
-| Tiered facts/claims | Expanded `local_tiered_v1` live candidate: recall@k 1.0000, required rank 1 1.0000, bad@k 0.0000 | Seven-case seed now covers same-tier fact/claim currentness, fact-over-fragment, claim-over-fragment, cross-identifier fact filtering, and `valid_at` temporal windows. Keep expanding before treating it as broad acceptance coverage. |
+| Tiered facts/claims/fragments | Expanded `local_tiered_v1` live candidate: recall@k 1.0000, required rank 1 1.0000, bad@k 0.0000 | Eight-case seed now covers same-tier fact/claim currentness, fact-over-fragment, claim-over-fragment, cross-identifier fact filtering, `valid_at` temporal windows, and evidence-source fragment intent. Keep expanding before treating it as broad acceptance coverage. |
 
 ## Recommendation
 
-Merge candidate to main should start from `exp/recall-tier-fact-claim-vector-overfetch`, which builds on `exp/recall-vector-overfetch-reuse-fix`.
+Merge candidate to main should start from `exp/recall-evidence-intent-fragments`, which builds on `exp/recall-fragment-temporal-metadata`.
 
 Next improvement experiments should target generalization:
 
 1. Validate zero-score filtering against non-synthetic workloads, because returning fewer than `limit` fragments is intentional but changes context volume.
 2. Broader temporal parsing beyond ISO `YYYY-MM-DD`, including natural language dates, before relying on date-priority rerank outside the synthetic seed.
-3. Keep expanding `local_tiered_v1` now that live typed fact/claim scoring is stable.
+3. Keep expanding `local_tiered_v1` now that live typed fact/claim/fragment scoring is stable.
 4. Replace hard-coded cue lists with learned or configurable rerank features if future seeds expose broader language variation.

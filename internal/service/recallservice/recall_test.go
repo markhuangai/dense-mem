@@ -632,6 +632,102 @@ func TestRecallService_TierEnrichmentUsesQueryMatchedSearchers(t *testing.T) {
 	assert.Equal(t, int32(0), atomic.LoadInt32(&claimGetter.callCount))
 }
 
+func TestRecallService_EvidenceSourceQueryPrefersFragmentOverDerivedFact(t *testing.T) {
+	query := "Which source note says service TIER-E-001 owner uses owner-lumen?"
+	content := "Source note from ops. service TIER-E-001 owner uses owner-lumen."
+	sem := &fakeSemanticSearcher{
+		hits: []semanticsearch.SearchHit{{ID: "fragment-evidence", Type: "fragment", ProfileID: "pA", Content: content}},
+	}
+	kw := &fakeKeywordSearcher{
+		hits: []keywordsearch.FragmentSearchResult{{FragmentID: "fragment-evidence", ProfileID: "pA", Content: content}},
+	}
+	factSearcher := &fakeFactSearcher{
+		results: []FactRecallResult{{FactID: "fact-derived", ProfileID: "pA"}},
+	}
+	factGetter := &fakeFactGetter{
+		facts: map[string]*domain.Fact{
+			"fact-derived": {
+				FactID:     "fact-derived",
+				ProfileID:  "pA",
+				Subject:    "service TIER-E-001 owner",
+				Predicate:  "uses",
+				Object:     "owner-lumen",
+				Status:     domain.FactStatusActive,
+				TruthScore: 0.99,
+				RecordedAt: time.Now().UTC(),
+			},
+		},
+	}
+	svc := NewRecallServiceWithTiers(
+		&stubEmbedding{DimensionsResult: 4},
+		sem,
+		kw,
+		&fakeHydrator{},
+		factSearcher,
+		factGetter,
+		nil,
+		nil,
+		0,
+		nil,
+		nil,
+	)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: query, Limit: 1})
+
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.NotNil(t, out[0].Fragment)
+	require.Equal(t, "fragment-evidence", out[0].Fragment.FragmentID)
+}
+
+func TestRecallService_SourceOfTruthQueryKeepsFactTier(t *testing.T) {
+	query := "What is the source of truth owner for service TIER-E-001?"
+	content := "Source of truth runbook. service TIER-E-001 owner uses owner-lumen."
+	sem := &fakeSemanticSearcher{
+		hits: []semanticsearch.SearchHit{{ID: "fragment-source-of-truth", Type: "fragment", ProfileID: "pA", Content: content}},
+	}
+	kw := &fakeKeywordSearcher{
+		hits: []keywordsearch.FragmentSearchResult{{FragmentID: "fragment-source-of-truth", ProfileID: "pA", Content: content}},
+	}
+	factSearcher := &fakeFactSearcher{
+		results: []FactRecallResult{{FactID: "fact-authoritative", ProfileID: "pA"}},
+	}
+	factGetter := &fakeFactGetter{
+		facts: map[string]*domain.Fact{
+			"fact-authoritative": {
+				FactID:     "fact-authoritative",
+				ProfileID:  "pA",
+				Subject:    "service TIER-E-001 owner",
+				Predicate:  "uses",
+				Object:     "owner-lumen",
+				Status:     domain.FactStatusActive,
+				TruthScore: 0.99,
+				RecordedAt: time.Now().UTC(),
+			},
+		},
+	}
+	svc := NewRecallServiceWithTiers(
+		&stubEmbedding{DimensionsResult: 4},
+		sem,
+		kw,
+		&fakeHydrator{},
+		factSearcher,
+		factGetter,
+		nil,
+		nil,
+		0,
+		nil,
+		nil,
+	)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: query, Limit: 1})
+
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.NotNil(t, out[0].Fact)
+	require.Equal(t, "fact-authoritative", out[0].Fact.FactID)
+}
+
 func TestRecallService_TierEnrichmentDowngradesOverlayFacts(t *testing.T) {
 	factSearcher := &fakeFactSearcher{
 		results: []FactRecallResult{{

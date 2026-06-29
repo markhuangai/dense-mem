@@ -490,6 +490,40 @@ func TestEvaluateGates(t *testing.T) {
 	}
 }
 
+func TestValidateRequiredQRelMappingsRejectsUnmappedRequiredRefs(t *testing.T) {
+	qrels := map[string]QRel{
+		"case-1": {
+			CaseID:       "case-1",
+			RequiredRefs: []Ref{{Type: "fact", SourceDocID: "doc-required"}},
+			BadRefs:      []Ref{{Type: "fact", SourceDocID: "doc-bad"}},
+		},
+	}
+	suite := []SuiteCase{{CaseID: "case-1"}}
+	mapping := KnowledgeMapping{
+		BySourceDocID: map[string]Ref{
+			"doc-required": {Type: "fragment", ID: "fragment-required", SourceDocID: "doc-required"},
+			"doc-bad":      {Type: "fragment", ID: "fragment-bad", SourceDocID: "doc-bad"},
+		},
+		BySourceDocIDAndType: map[string]map[string]Ref{
+			"doc-bad": {
+				"fragment": {Type: "fragment", ID: "fragment-bad", SourceDocID: "doc-bad"},
+			},
+		},
+	}
+
+	err := validateRequiredQRelMappings(qrels, suite, mapping)
+
+	if err == nil || !strings.Contains(err.Error(), "required qrel ref for case \"case-1\" is unmapped") {
+		t.Fatalf("validateRequiredQRelMappings err = %v", err)
+	}
+	mapping.BySourceDocIDAndType["doc-required"] = map[string]Ref{
+		"fact": {Type: "fact", ID: "fact-required", SourceDocID: "doc-required"},
+	}
+	if err := validateRequiredQRelMappings(qrels, suite, mapping); err != nil {
+		t.Fatalf("validateRequiredQRelMappings mapped required ref: %v", err)
+	}
+}
+
 func TestScoreTracesErrorsAndRefEdges(t *testing.T) {
 	suite := []SuiteCase{{CaseID: "case-1"}}
 	cases := map[string]Case{"case-1": {CaseID: "case-1", Query: "query"}}
