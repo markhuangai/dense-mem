@@ -1202,6 +1202,10 @@ func latestTemporalDateInText(value string, anchor time.Time) time.Time {
 	if !relative.IsZero() && (latest.IsZero() || relative.After(latest)) {
 		latest = relative
 	}
+	weekday := latestWeekdayDateInText(value, anchor)
+	if !weekday.IsZero() && (latest.IsZero() || weekday.After(latest)) {
+		latest = weekday
+	}
 	return latest
 }
 
@@ -1288,6 +1292,37 @@ func latestRelativeDateInText(value string, anchor time.Time) time.Time {
 	return latest
 }
 
+func latestWeekdayDateInText(value string, anchor time.Time) time.Time {
+	if anchor.IsZero() {
+		return time.Time{}
+	}
+	text := rerankText(value)
+	if text == "" {
+		return time.Time{}
+	}
+	anchorDate := utcDate(anchor)
+	latest := time.Time{}
+	fields := strings.Fields(text)
+	for i, field := range fields {
+		weekday, ok := weekdayNumber(field)
+		if !ok {
+			continue
+		}
+		if i > 0 && fields[i-1] == "next" {
+			continue
+		}
+		daysBack := (int(anchorDate.Weekday()) - int(weekday) + 7) % 7
+		if i > 0 && fields[i-1] == "last" && daysBack == 0 {
+			daysBack = 7
+		}
+		candidate := anchorDate.AddDate(0, 0, -daysBack)
+		if latest.IsZero() || candidate.After(latest) {
+			latest = candidate
+		}
+	}
+	return latest
+}
+
 func monthNameNumber(token string) (time.Month, bool) {
 	switch token {
 	case "jan", "january":
@@ -1314,6 +1349,27 @@ func monthNameNumber(token string) (time.Month, bool) {
 		return time.November, true
 	case "dec", "december":
 		return time.December, true
+	default:
+		return 0, false
+	}
+}
+
+func weekdayNumber(token string) (time.Weekday, bool) {
+	switch token {
+	case "sun", "sunday":
+		return time.Sunday, true
+	case "mon", "monday":
+		return time.Monday, true
+	case "tue", "tues", "tuesday":
+		return time.Tuesday, true
+	case "wed", "wednesday":
+		return time.Wednesday, true
+	case "thu", "thur", "thurs", "thursday":
+		return time.Thursday, true
+	case "fri", "friday":
+		return time.Friday, true
+	case "sat", "saturday":
+		return time.Saturday, true
 	default:
 		return 0, false
 	}

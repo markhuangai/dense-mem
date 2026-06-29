@@ -908,6 +908,27 @@ func TestTemporalRankTimeForRecallPrefersValidFromOverTripleContentDate(t *testi
 	require.Equal(t, validFrom, got)
 }
 
+func TestLatestTemporalDateInTextParsesWeekdayNames(t *testing.T) {
+	anchor := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+
+	require.Equal(
+		t,
+		time.Date(2026, 6, 26, 0, 0, 0, 0, time.UTC),
+		latestTemporalDateInText("Owner update from Friday.", anchor),
+	)
+	require.Equal(
+		t,
+		time.Date(2026, 6, 26, 0, 0, 0, 0, time.UTC),
+		latestTemporalDateInText("Owner update from last Friday.", anchor),
+	)
+	require.Equal(
+		t,
+		time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC),
+		latestTemporalDateInText("Owner update from last Monday.", anchor),
+	)
+	require.Zero(t, latestTemporalDateInText("Owner update expected next Friday.", anchor))
+}
+
 func TestRecallService_EvidenceSourceQueryPrefersFragmentOverDerivedFact(t *testing.T) {
 	query := "Which source note says service TIER-E-001 owner uses owner-lumen?"
 	content := "Source note from ops. service TIER-E-001 owner uses owner-lumen."

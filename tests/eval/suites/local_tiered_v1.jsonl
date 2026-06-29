@@ -12,3 +12,4 @@
 {"case_id":"local_tiered_v1_evidence_source_fragment","weight":1,"slices":["tiered","evidence_source","cross_tier"]}
 {"case_id":"local_tiered_v1_fragment_relative_currentness","weight":1,"slices":["tiered","fragment_currentness","temporal","adversarial"]}
 {"case_id":"local_tiered_v1_fragment_month_name_currentness","weight":1,"slices":["tiered","fragment_currentness","temporal","adversarial"]}
+{"case_id":"local_tiered_v1_fragment_weekday_currentness","weight":1,"slices":["tiered","fragment_currentness","temporal","adversarial"]}
