@@ -49,11 +49,25 @@ func TestEvalScoreRetrievalCaseScoresAndAudits(t *testing.T) {
 			map[string]any{"type": "claim", "id": "claim-1"},
 			map[string]any{"type": "fact", "id": "fact-1"},
 		},
+		"context_refs": []any{
+			map[string]any{"type": "fact", "id": "fact-1"},
+			map[string]any{"type": "fragment", "id": "irrelevant-1"},
+		},
+		"evidence_refs": []any{
+			map[string]any{"type": "fragment", "id": "evidence-1"},
+			map[string]any{"type": "fragment", "id": "irrelevant-1"},
+		},
 		"required_refs": []any{
 			map[string]any{"type": "claim", "id": "claim-1", "grade": 2},
 			map[string]any{"type": "fact", "id": "fact-1", "grade": 1},
 		},
 		"bad_refs": []any{
+			map[string]any{"type": "fragment", "id": "irrelevant-1"},
+		},
+		"required_evidence_refs": []any{
+			map[string]any{"type": "fragment", "id": "evidence-1", "grade": 1},
+		},
+		"bad_evidence_refs": []any{
 			map[string]any{"type": "fragment", "id": "irrelevant-1"},
 		},
 	}
@@ -70,6 +84,18 @@ func TestEvalScoreRetrievalCaseScoresAndAudits(t *testing.T) {
 	}
 	if out["recall_at_k"] != float64(1) || out["mrr"] != float64(0.5) {
 		t.Fatalf("ranking metrics = %v", out)
+	}
+	if out["context_scored"] != true || out["context_relevant_at_k"] != 1 || out["context_bad_at_k"] != 1 {
+		t.Fatalf("context metrics = %v", out)
+	}
+	if out["context_recall_at_k"] != 0.5 || out["context_mrr"] != float64(1) {
+		t.Fatalf("context ranking metrics = %v", out)
+	}
+	if out["evidence_scored"] != true || out["evidence_relevant_at_k"] != 1 || out["evidence_bad_at_k"] != 1 {
+		t.Fatalf("evidence metrics = %v", out)
+	}
+	if out["evidence_recall_at_k"] != float64(1) || out["evidence_mrr"] != float64(1) {
+		t.Fatalf("evidence ranking metrics = %v", out)
 	}
 	if len(audit.entries) != 1 {
 		t.Fatalf("audit entries = %d; want 1", len(audit.entries))
@@ -389,13 +415,56 @@ func TestEvalRunRecallCaseMapsRequestsAndRefs(t *testing.T) {
 	if ctxSvc.req.IncludeEvidence == nil || !*ctxSvc.req.IncludeEvidence || ctxSvc.req.MaxChars != 2500 {
 		t.Fatalf("assemble request = %+v", ctxSvc.req)
 	}
+	if ctxSvc.req.ValidAt == nil || ctxSvc.req.KnownAt == nil {
+		t.Fatalf("assemble request times = %+v", ctxSvc.req)
+	}
+	if !ctxSvc.req.ValidAt.Equal(*recall.req.ValidAt) || !ctxSvc.req.KnownAt.Equal(*recall.req.KnownAt) {
+		t.Fatalf("assemble request times = %+v, recall times = %+v", ctxSvc.req, recall.req)
+	}
 	ranked := out["ranked_refs"].([]map[string]any)
 	if len(ranked) != 3 || ranked[0]["type"] != "fact" || ranked[1]["type"] != "claim" || ranked[2]["type"] != "fragment" {
 		t.Fatalf("ranked refs = %#v", ranked)
 	}
 	contextRefs := out["context_refs"].([]map[string]any)
-	if len(contextRefs) != 1 || contextRefs[0]["id"] != "fragment-context" || out["context_block_chars"] != len("context block") {
+	if len(contextRefs) != 1 || contextRefs[0]["id"] != "fact-context" || out["context_block_chars"] != len("context block") {
 		t.Fatalf("context output = %#v", out)
+	}
+	evidenceRefs := out["context_evidence_refs"].([]map[string]any)
+	if len(evidenceRefs) != 1 || evidenceRefs[0]["id"] != "fragment-evidence" || evidenceRefs[0]["parent_id"] != "fact-context" {
+		t.Fatalf("context evidence output = %#v", out)
+	}
+
+	out, err = tool.Invoke(context.Background(), "profile-eval", map[string]any{
+		"case_id": "case-default-evidence",
+		"query":   "does omitted include_evidence still score evidence?",
+	})
+	if err != nil {
+		t.Fatalf("eval_run_recall_case omitted include_evidence Invoke: %v", err)
+	}
+	if !recall.req.IncludeEvidence {
+		t.Fatalf("recall request IncludeEvidence = false; want default true")
+	}
+	if ctxSvc.req.IncludeEvidence == nil || !*ctxSvc.req.IncludeEvidence {
+		t.Fatalf("assemble request IncludeEvidence = %+v; want default true", ctxSvc.req.IncludeEvidence)
+	}
+	evidenceRefs = out["context_evidence_refs"].([]map[string]any)
+	if len(evidenceRefs) != 1 || evidenceRefs[0]["id"] != "fragment-evidence" {
+		t.Fatalf("default context evidence output = %#v", out)
+	}
+
+	_, err = tool.Invoke(context.Background(), "profile-eval", map[string]any{
+		"case_id":          "case-no-evidence",
+		"query":            "can eval disable evidence?",
+		"include_evidence": false,
+	})
+	if err != nil {
+		t.Fatalf("eval_run_recall_case include_evidence=false Invoke: %v", err)
+	}
+	if recall.req.IncludeEvidence {
+		t.Fatalf("recall request IncludeEvidence = true; want explicit false")
+	}
+	if ctxSvc.req.IncludeEvidence == nil || *ctxSvc.req.IncludeEvidence {
+		t.Fatalf("assemble request IncludeEvidence = %+v; want explicit false", ctxSvc.req.IncludeEvidence)
 	}
 
 	_, err = tool.Invoke(context.Background(), "profile-eval", map[string]any{
@@ -550,12 +619,27 @@ func TestEvalUnavailableConfigAuditAndParserBranches(t *testing.T) {
 	if len(refs) != 1 || refs[0].Type != "fact" || refs[0].ID != "fact-1" {
 		t.Fatalf("evalResultRefs = %+v", refs)
 	}
+	refs = evalResultRefs([]map[string]any{{"type": "fragment", "id": "fragment-1"}})
+	if len(refs) != 1 || refs[0].Type != "fragment" || refs[0].ID != "fragment-1" {
+		t.Fatalf("evalResultRefs direct maps = %+v", refs)
+	}
 	if judgments := evalJudgments("not-array"); judgments != nil {
 		t.Fatalf("evalJudgments non-array = %#v; want nil", judgments)
 	}
 	judgments := evalJudgments([]any{"skip", map[string]any{"type": "claim", "id": "claim-1"}})
 	if len(judgments) != 1 || judgments[0].Grade != 1 {
 		t.Fatalf("evalJudgments default grade = %+v", judgments)
+	}
+	judgments = evalJudgments([]map[string]any{{"type": "fact", "id": "fact-1", "grade": 2.0}})
+	if len(judgments) != 1 || judgments[0].Type != "fact" || judgments[0].ID != "fact-1" || judgments[0].Grade != 2 {
+		t.Fatalf("evalJudgments direct maps = %+v", judgments)
+	}
+	evidenceRefs := contextEvidenceRefs([]contextservice.ContextItem{
+		{Type: "fact", ID: "fact-1", EvidenceFragments: []*domain.Fragment{{FragmentID: "fragment-shared"}}},
+		{Type: "claim", ID: "claim-1", EvidenceFragments: []*domain.Fragment{{FragmentID: "fragment-shared"}}},
+	})
+	if len(evidenceRefs) != 2 || evidenceRefs[0]["parent_id"] != "fact-1" || evidenceRefs[1]["parent_id"] != "claim-1" {
+		t.Fatalf("contextEvidenceRefs shared fragment = %+v", evidenceRefs)
 	}
 
 	event := &domain.RecallFeedbackEvent{TeamID: &teamID}
@@ -748,9 +832,12 @@ func (s *evalContextCapture) Assemble(_ context.Context, _ string, req contextse
 	return &contextservice.AssembleResult{
 		ContextBlock: "context block",
 		Items: []contextservice.ContextItem{{
-			Type:  "fragment",
-			ID:    "fragment-context",
+			Type:  "fact",
+			ID:    "fact-context",
 			Score: 0.5,
+			EvidenceFragments: []*domain.Fragment{{
+				FragmentID: "fragment-evidence",
+			}},
 		}},
 	}, nil
 }

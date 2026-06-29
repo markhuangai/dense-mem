@@ -22,7 +22,9 @@ const (
 
 	// openAIVerifierSystemPrompt is the fixed system instruction for all verification calls.
 	// Temperature is set to 0 when included, and a strict JSON schema is enforced.
-	openAIVerifierSystemPrompt = `You are a fact-verification assistant. Given a claim and a list of evidence items, determine whether the evidence supports ("entailed"), contradicts ("contradicted"), or is insufficient to assess ("insufficient") the claim.
+	openAIVerifierSystemPrompt = `You are a fact-verification assistant. Given a claim, optional temporal validity bounds, and a list of evidence items, determine whether the evidence supports ("entailed"), contradicts ("contradicted"), or is insufficient to assess ("insufficient") the claim within the stated temporal scope.
+
+If valid_from or valid_to is provided, evaluate the claim for that time-bounded scope. Later or earlier evidence outside that scope should not contradict the claim unless it directly says the claim was false inside the scope.
 
 Respond ONLY with a JSON object conforming to the required schema:
 - "verdict": exactly one of "entailed", "contradicted", or "insufficient"
@@ -158,14 +160,23 @@ func (v *OpenAIVerifier) Verify(ctx context.Context, req Request) (Response, err
 
 	// Build the user payload as JSON so the LLM receives a machine-readable object.
 	type userPayload struct {
-		Claim    string   `json:"claim"`
-		Evidence []string `json:"evidence"`
+		Claim     string   `json:"claim"`
+		ValidFrom string   `json:"valid_from,omitempty"`
+		ValidTo   string   `json:"valid_to,omitempty"`
+		Evidence  []string `json:"evidence"`
 	}
-
-	userJSON, err := json.Marshal(userPayload{
+	payload := userPayload{
 		Claim:    req.Predicate,
 		Evidence: evidence,
-	})
+	}
+	if req.ValidFrom != nil && !req.ValidFrom.IsZero() {
+		payload.ValidFrom = req.ValidFrom.UTC().Format(time.RFC3339)
+	}
+	if req.ValidTo != nil && !req.ValidTo.IsZero() {
+		payload.ValidTo = req.ValidTo.UTC().Format(time.RFC3339)
+	}
+
+	userJSON, err := json.Marshal(payload)
 	if err != nil {
 		return Response{}, &ProviderError{
 			Provider: openAIVerifierProvider,

@@ -140,7 +140,7 @@ ON CREATE SET
 //
 // Algorithm:
 //  1. Pre-hash field-length guard (ValidateClaimIdentityInputs).
-//  2. Compute content_hash (SHA-256 of subject|predicate|object|valid_from).
+//  2. Compute content_hash (SHA-256 of subject|predicate|object|valid_from|valid_to).
 //  3. Derive deterministic claim_id:
 //     – UUIDv5(profileID, idempotencyKey) when key present, else
 //     – UUIDv5(profileID, contentHash).
@@ -173,7 +173,11 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 	}
 
 	// Step 2: compute content_hash.
-	contentHash := claimidentity.ContentHash(claim.Subject, claim.Predicate, claim.Object, claim.ValidFrom)
+	contentHash := claimidentity.ContentHash(claim.Subject, claim.Predicate, claim.Object, claim.ValidFrom, claim.ValidTo)
+	legacyContentHash := ""
+	if claim.IdempotencyKey == "" && claim.ValidTo == nil {
+		legacyContentHash = claimidentity.LegacyContentHashWithoutValidTo(claim.Subject, claim.Predicate, claim.Object, claim.ValidFrom)
+	}
 	ownerID, ownerName, _ := requestctx.ActorOwner(ctx)
 	identityScopeID := profileID
 	if ownerID != "" {
@@ -221,6 +225,20 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 				Duplicate:   true,
 				DuplicateOf: existing.ClaimID,
 			}, nil
+		}
+		if legacyContentHash != "" && legacyContentHash != contentHash {
+			existing, err := s.lookup.ByContentHash(ctx, profileID, legacyContentHash)
+			if err != nil {
+				return nil, fmt.Errorf("claim create: legacy content-hash lookup: %w", err)
+			}
+			if existing != nil {
+				observability.RecordClaimCreate(ctx, s.metrics, "duplicate", "content_hash")
+				return &CreateResult{
+					Claim:       existing,
+					Duplicate:   true,
+					DuplicateOf: existing.ClaimID,
+				}, nil
+			}
 		}
 	}
 
@@ -340,8 +358,8 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 		"speaker":                      newClaim.Speaker,
 		"spanStart":                    newClaim.SpanStart,
 		"spanEnd":                      newClaim.SpanEnd,
-		"validFrom":                    newClaim.ValidFrom,
-		"validTo":                      newClaim.ValidTo,
+		"validFrom":                    timeParam(newClaim.ValidFrom),
+		"validTo":                      timeParam(newClaim.ValidTo),
 		"recordedAt":                   newClaim.RecordedAt,
 		"extractConf":                  newClaim.ExtractConf,
 		"resolutionConf":               newClaim.ResolutionConf,
@@ -396,6 +414,13 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 	}
 
 	return &CreateResult{Claim: newClaim}, nil
+}
+
+func timeParam(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return value.UTC()
 }
 
 func validateCreateClaimInput(claim *domain.Claim) error {

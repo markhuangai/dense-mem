@@ -289,11 +289,12 @@ func evalRunRecallCaseTool(deps Dependencies) Tool {
 				"latency_ms":  time.Since(started).Milliseconds(),
 			}
 			if deps.Context != nil {
-				assembled, err := deps.Context.Assemble(ctx, profileID, evalAssembleRequest(input))
+				assembled, err := deps.Context.Assemble(ctx, profileID, evalAssembleRequest(input, req))
 				if err != nil {
 					return nil, err
 				}
 				out["context_refs"] = contextItemRefs(assembled.Items)
+				out["context_evidence_refs"] = contextEvidenceRefs(assembled.Items)
 				out["context_block_chars"] = len(assembled.ContextBlock)
 			}
 			return out, nil
@@ -304,15 +305,19 @@ func evalRunRecallCaseTool(deps Dependencies) Tool {
 func evalScoreRetrievalCaseTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "eval_score_retrieval_case",
-		Description: "Score one ranked retrieval case against required and bad refs using deterministic recallquality metrics.",
+		Description: "Score one ranked retrieval case and optional context refs against required and bad refs using deterministic recallquality metrics.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"ranked_refs", "required_refs"},
 			"properties": map[string]any{
-				"k":             map[string]any{"type": "integer", "minimum": 1, "maximum": maxEvalK},
-				"ranked_refs":   evalRefArraySchema(false),
-				"required_refs": evalRefArraySchema(true),
-				"bad_refs":      evalRefArraySchema(false),
+				"k":                      map[string]any{"type": "integer", "minimum": 1, "maximum": maxEvalK},
+				"ranked_refs":            evalRefArraySchema(false),
+				"context_refs":           evalRefArraySchema(false),
+				"evidence_refs":          evalRefArraySchema(false),
+				"required_refs":          evalRefArraySchema(true),
+				"bad_refs":               evalRefArraySchema(false),
+				"required_evidence_refs": evalRefArraySchema(true),
+				"bad_evidence_refs":      evalRefArraySchema(false),
 			},
 			"additionalProperties": false,
 		},
@@ -327,7 +332,36 @@ func evalScoreRetrievalCaseTool(deps Dependencies) Tool {
 			required := evalJudgments(input["required_refs"])
 			bad := evalResultRefs(input["bad_refs"])
 			metrics := recallquality.ScoreAtK(ranked, required, bad, k)
-			return structToMap(metrics)
+			out, err := structToMap(metrics)
+			if err != nil {
+				return nil, err
+			}
+			if _, ok := input["context_refs"]; ok {
+				contextMetrics := recallquality.ScoreAtK(evalResultRefs(input["context_refs"]), required, bad, k)
+				out["context_scored"] = true
+				out["context_relevant_at_k"] = contextMetrics.RelevantAtK
+				out["context_relevant_total"] = contextMetrics.RelevantTotal
+				out["context_bad_at_k"] = contextMetrics.BadAtK
+				out["context_recall_at_k"] = contextMetrics.RecallAtK
+				out["context_mrr"] = contextMetrics.MRR
+				out["context_ndcg_at_k"] = contextMetrics.NDCGAtK
+			}
+			if _, ok := input["evidence_refs"]; ok {
+				evidenceMetrics := recallquality.ScoreAtK(
+					evalResultRefs(input["evidence_refs"]),
+					evalJudgments(input["required_evidence_refs"]),
+					evalResultRefs(input["bad_evidence_refs"]),
+					k,
+				)
+				out["evidence_scored"] = true
+				out["evidence_relevant_at_k"] = evidenceMetrics.RelevantAtK
+				out["evidence_relevant_total"] = evidenceMetrics.RelevantTotal
+				out["evidence_bad_at_k"] = evidenceMetrics.BadAtK
+				out["evidence_recall_at_k"] = evidenceMetrics.RecallAtK
+				out["evidence_mrr"] = evidenceMetrics.MRR
+				out["evidence_ndcg_at_k"] = evidenceMetrics.NDCGAtK
+			}
+			return out, nil
 		},
 	}
 }
@@ -617,7 +651,7 @@ func evalRecallRequest(input map[string]any) (recallservice.RecallRequest, error
 	req := recallservice.RecallRequest{
 		Query:           stringInput(input["query"]),
 		Limit:           intInputOrDefault(input["limit"], recallservice.DefaultLimit),
-		IncludeEvidence: boolInput(input["include_evidence"]),
+		IncludeEvidence: boolInputOrDefault(input["include_evidence"], true),
 		UseCommunities:  boolInput(input["use_communities"]),
 	}
 	if validAt, err := optionalTime(input["valid_at"]); err != nil {
@@ -633,12 +667,14 @@ func evalRecallRequest(input map[string]any) (recallservice.RecallRequest, error
 	return req, nil
 }
 
-func evalAssembleRequest(input map[string]any) contextservice.AssembleRequest {
-	includeEvidence := boolInput(input["include_evidence"])
+func evalAssembleRequest(input map[string]any, recallReq recallservice.RecallRequest) contextservice.AssembleRequest {
+	includeEvidence := boolInputOrDefault(input["include_evidence"], recallReq.IncludeEvidence)
 	return contextservice.AssembleRequest{
-		Query:           stringInput(input["query"]),
-		Limit:           intInputOrDefault(input["limit"], recallservice.DefaultLimit),
+		Query:           recallReq.Query,
+		Limit:           recallReq.Limit,
 		IncludeEvidence: &includeEvidence,
+		ValidAt:         recallReq.ValidAt,
+		KnownAt:         recallReq.KnownAt,
 		MaxChars:        intInputOrDefault(input["max_context_chars"], 4000),
 	}
 }
@@ -716,6 +752,33 @@ func contextItemRefs(items []contextservice.ContextItem) []map[string]any {
 	return refs
 }
 
+func contextEvidenceRefs(items []contextservice.ContextItem) []map[string]any {
+	refs := []map[string]any{}
+	seen := map[string]struct{}{}
+	rank := 1
+	for _, item := range items {
+		for _, fragment := range item.EvidenceFragments {
+			if fragment == nil || strings.TrimSpace(fragment.FragmentID) == "" {
+				continue
+			}
+			key := "fragment:" + fragment.FragmentID + "|parent:" + item.Type + ":" + item.ID
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			refs = append(refs, map[string]any{
+				"rank":        rank,
+				"type":        "fragment",
+				"id":          fragment.FragmentID,
+				"parent_type": item.Type,
+				"parent_id":   item.ID,
+			})
+			rank++
+		}
+	}
+	return refs
+}
+
 func evalRefArraySchema(withGrade bool) map[string]any {
 	properties := map[string]any{
 		"type": schemaEnum([]string{"fragment", "claim", "fact", "community"}),
@@ -738,16 +801,12 @@ func evalRefArraySchema(withGrade bool) map[string]any {
 }
 
 func evalResultRefs(value any) []recallquality.ResultRef {
-	raw, ok := value.([]any)
-	if !ok {
+	maps := evalRefMaps(value)
+	if maps == nil {
 		return nil
 	}
-	refs := make([]recallquality.ResultRef, 0, len(raw))
-	for _, item := range raw {
-		m, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
+	refs := make([]recallquality.ResultRef, 0, len(maps))
+	for _, m := range maps {
 		refs = append(refs, recallquality.ResultRef{
 			Type: stringInput(m["type"]),
 			ID:   stringInput(m["id"]),
@@ -757,16 +816,12 @@ func evalResultRefs(value any) []recallquality.ResultRef {
 }
 
 func evalJudgments(value any) []recallquality.Judgment {
-	raw, ok := value.([]any)
-	if !ok {
+	maps := evalRefMaps(value)
+	if maps == nil {
 		return nil
 	}
-	refs := make([]recallquality.Judgment, 0, len(raw))
-	for _, item := range raw {
-		m, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
+	refs := make([]recallquality.Judgment, 0, len(maps))
+	for _, m := range maps {
 		grade := 1.0
 		if parsed, ok := schemaNumber(m["grade"]); ok {
 			grade = parsed
@@ -778,6 +833,23 @@ func evalJudgments(value any) []recallquality.Judgment {
 		})
 	}
 	return refs
+}
+
+func evalRefMaps(value any) []map[string]any {
+	switch raw := value.(type) {
+	case []any:
+		maps := make([]map[string]any, 0, len(raw))
+		for _, item := range raw {
+			if m, ok := item.(map[string]any); ok {
+				maps = append(maps, m)
+			}
+		}
+		return maps
+	case []map[string]any:
+		return raw
+	default:
+		return nil
+	}
 }
 
 func optionalTime(value any) (*time.Time, error) {
@@ -801,6 +873,14 @@ func intInputOrDefault(value any, fallback int) int {
 
 func boolInput(value any) bool {
 	parsed, _ := value.(bool)
+	return parsed
+}
+
+func boolInputOrDefault(value any, fallback bool) bool {
+	parsed, ok := value.(bool)
+	if !ok {
+		return fallback
+	}
 	return parsed
 }
 

@@ -9,6 +9,7 @@ import (
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 
 	"github.com/markhuangai/dense-mem/internal/fulltextquery"
+	"github.com/markhuangai/dense-mem/internal/service/fragmentcodec"
 	neo4jstore "github.com/markhuangai/dense-mem/internal/storage/neo4j"
 )
 
@@ -57,9 +58,11 @@ func (s *neo4jFragmentSearcher) SearchContent(ctx context.Context, profileID str
 	// Build the Cypher query with full-text index search.
 	// Uses db.index.fulltext.queryNodes for content search.
 	cypherQuery := `CALL db.index.fulltext.queryNodes('fragment_content_idx', $searchQuery) YIELD node AS f, score
-WHERE ` + whereClause + `
-RETURN f.fragment_id AS fragment_id, f.content AS content, f.labels AS labels, f.metadata AS metadata, f.team_id AS team_id, score
-LIMIT $limit`
+	WHERE ` + whereClause + `
+	RETURN f.fragment_id AS fragment_id, f.content AS content, f.labels AS labels, f.metadata AS metadata,
+	       f.metadata_json AS metadata_json, f.team_id AS team_id,
+	       f.created_at AS created_at, f.updated_at AS updated_at, score
+	LIMIT $limit`
 
 	// Build params
 	params := map[string]any{
@@ -86,8 +89,10 @@ LIMIT $limit`
 			Content:    getString(row, "content"),
 			Score:      getFloat64Val(row, "score"),
 			Labels:     getLabels(row, "labels"),
-			Metadata:   getMetadata(row, "metadata"),
+			Metadata:   getMetadata(row, "metadata", "metadata_json"),
 			ProfileID:  getString(row, "team_id"),
+			CreatedAt:  getTimeVal(row, "created_at"),
+			UpdatedAt:  getTimeVal(row, "updated_at"),
 		}
 	}
 
@@ -191,10 +196,10 @@ func getLabels(row map[string]any, key string) []string {
 	return nil
 }
 
-func getMetadata(row map[string]any, key string) map[string]any {
-	if val, ok := row[key]; ok {
-		if m, ok := val.(map[string]any); ok {
-			return m
+func getMetadata(row map[string]any, keys ...string) map[string]any {
+	for _, key := range keys {
+		if value := fragmentcodec.DecodeOptionalMap(row[key]); value != nil {
+			return value
 		}
 	}
 	return nil

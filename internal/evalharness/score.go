@@ -37,6 +37,8 @@ func ScoreTraces(runID, mode, seedID, seedHash, suitePath string, suite []SuiteC
 func ScoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, mapping KnowledgeMapping) RetrievalScore {
 	required, unmappedRequired := remapJudgments(qrel.RequiredRefs, mapping)
 	bad, unmappedBad := remapResultRefs(qrel.BadRefs, mapping)
+	requiredEvidence, unmappedRequiredEvidence := remapJudgments(qrel.RequiredEvidenceRefs, mapping)
+	badEvidence, unmappedBadEvidence := remapResultRefs(qrel.BadEvidenceRefs, mapping)
 	ranked := resultRefs(trace.RankedRefs)
 	metrics := recallquality.ScoreAtK(ranked, required, bad, k)
 	score := RetrievalScore{
@@ -48,10 +50,40 @@ func ScoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, mapping Know
 		RecallAtK:          metrics.RecallAtK,
 		MRR:                metrics.MRR,
 		NDCGAtK:            metrics.NDCGAtK,
+		FirstRequiredRank:  firstRank(trace.RankedRefs, qrel.RequiredRefs, mapping),
+		FirstBadRank:       firstRank(trace.RankedRefs, qrel.BadRefs, mapping),
 		MissingRequired:    missingRequiredRefs(qrel.RequiredRefs, trace.RankedRefs, mapping, k),
 		BadRefsAtK:         badRefsAtK(qrel.BadRefs, trace.RankedRefs, mapping, k),
-		UnmappedSourceRefs: append(unmappedRequired, unmappedBad...),
+		UnmappedSourceRefs: append(append(append(unmappedRequired, unmappedBad...), unmappedRequiredEvidence...), unmappedBadEvidence...),
 		LatencyMS:          trace.LatencyMS,
+	}
+	if trace.ContextRefs != nil {
+		contextMetrics := recallquality.ScoreAtK(resultRefs(trace.ContextRefs), required, bad, k)
+		score.ContextScored = true
+		score.ContextRelevantAtK = contextMetrics.RelevantAtK
+		score.ContextRelevantTotal = contextMetrics.RelevantTotal
+		score.ContextBadAtK = contextMetrics.BadAtK
+		score.ContextRecallAtK = contextMetrics.RecallAtK
+		score.ContextMRR = contextMetrics.MRR
+		score.ContextNDCGAtK = contextMetrics.NDCGAtK
+		score.ContextFirstRequiredRank = firstRank(trace.ContextRefs, qrel.RequiredRefs, mapping)
+		score.ContextFirstBadRank = firstRank(trace.ContextRefs, qrel.BadRefs, mapping)
+		score.ContextMissingRequired = missingRequiredRefs(qrel.RequiredRefs, trace.ContextRefs, mapping, k)
+		score.ContextBadRefsAtK = badRefsAtK(qrel.BadRefs, trace.ContextRefs, mapping, k)
+	}
+	if trace.ContextEvidenceRefs != nil && (len(qrel.RequiredEvidenceRefs) > 0 || len(qrel.BadEvidenceRefs) > 0) {
+		evidenceMetrics := recallquality.ScoreAtK(resultRefs(trace.ContextEvidenceRefs), requiredEvidence, badEvidence, k)
+		score.EvidenceScored = true
+		score.EvidenceRelevantAtK = evidenceMetrics.RelevantAtK
+		score.EvidenceRelevantTotal = evidenceMetrics.RelevantTotal
+		score.EvidenceBadAtK = evidenceMetrics.BadAtK
+		score.EvidenceRecallAtK = evidenceMetrics.RecallAtK
+		score.EvidenceMRR = evidenceMetrics.MRR
+		score.EvidenceNDCGAtK = evidenceMetrics.NDCGAtK
+		score.EvidenceFirstRequiredRank = firstRank(trace.ContextEvidenceRefs, qrel.RequiredEvidenceRefs, mapping)
+		score.EvidenceFirstBadRank = firstRank(trace.ContextEvidenceRefs, qrel.BadEvidenceRefs, mapping)
+		score.EvidenceMissingRequired = missingRequiredRefs(qrel.RequiredEvidenceRefs, trace.ContextEvidenceRefs, mapping, k)
+		score.EvidenceBadRefsAtK = badRefsAtK(qrel.BadEvidenceRefs, trace.ContextEvidenceRefs, mapping, k)
 	}
 	return score
 }
@@ -79,19 +111,81 @@ func SummarizeScores(runID, mode, seedID, seedHash, suitePath string, suite []Su
 		summary.AverageNDCGAtK += score.NDCGAtK
 		summary.AverageBadAtK += float64(score.BadAtK)
 		summary.UnmappedSourceRefs += len(score.UnmappedSourceRefs)
+		if score.ContextScored {
+			summary.ContextScoredCaseCount++
+			summary.AverageContextRecallAtK += score.ContextRecallAtK
+			summary.AverageContextMRR += score.ContextMRR
+			summary.AverageContextNDCGAtK += score.ContextNDCGAtK
+			summary.AverageContextBadAtK += float64(score.ContextBadAtK)
+			if score.ContextFirstRequiredRank == 1 {
+				summary.ContextRequiredRank1Rate++
+			}
+			if score.ContextFirstBadRank == 1 {
+				summary.ContextBadRank1Rate++
+			}
+		}
+		if score.EvidenceScored {
+			summary.EvidenceScoredCaseCount++
+			summary.AverageEvidenceRecallAtK += score.EvidenceRecallAtK
+			summary.AverageEvidenceMRR += score.EvidenceMRR
+			summary.AverageEvidenceNDCGAtK += score.EvidenceNDCGAtK
+			summary.AverageEvidenceBadAtK += float64(score.EvidenceBadAtK)
+			if score.EvidenceFirstRequiredRank == 1 {
+				summary.EvidenceRequiredRank1Rate++
+			}
+			if score.EvidenceFirstBadRank == 1 {
+				summary.EvidenceBadRank1Rate++
+			}
+		}
+		if score.FirstRequiredRank == 1 {
+			summary.RequiredRank1Rate++
+		}
+		if score.FirstBadRank == 1 {
+			summary.BadRank1Rate++
+		}
 	}
 	denom := float64(len(scores))
 	summary.AverageRecallAtK /= denom
 	summary.AverageMRR /= denom
 	summary.AverageNDCGAtK /= denom
 	summary.AverageBadAtK /= denom
+	summary.RequiredRank1Rate /= denom
+	summary.BadRank1Rate /= denom
+	if summary.ContextScoredCaseCount > 0 {
+		contextDenom := float64(summary.ContextScoredCaseCount)
+		summary.AverageContextRecallAtK /= contextDenom
+		summary.AverageContextMRR /= contextDenom
+		summary.AverageContextNDCGAtK /= contextDenom
+		summary.AverageContextBadAtK /= contextDenom
+		summary.ContextRequiredRank1Rate /= contextDenom
+		summary.ContextBadRank1Rate /= contextDenom
+	}
+	if summary.EvidenceScoredCaseCount > 0 {
+		evidenceDenom := float64(summary.EvidenceScoredCaseCount)
+		summary.AverageEvidenceRecallAtK /= evidenceDenom
+		summary.AverageEvidenceMRR /= evidenceDenom
+		summary.AverageEvidenceNDCGAtK /= evidenceDenom
+		summary.AverageEvidenceBadAtK /= evidenceDenom
+		summary.EvidenceRequiredRank1Rate /= evidenceDenom
+		summary.EvidenceBadRank1Rate /= evidenceDenom
+	}
 
 	type accum struct {
-		count  int
-		recall float64
-		mrr    float64
-		ndcg   float64
-		bad    float64
+		count          int
+		recall         float64
+		mrr            float64
+		ndcg           float64
+		bad            float64
+		contextCount   int
+		contextRecall  float64
+		contextMRR     float64
+		contextNDCG    float64
+		contextBad     float64
+		evidenceCount  int
+		evidenceRecall float64
+		evidenceMRR    float64
+		evidenceNDCG   float64
+		evidenceBad    float64
 	}
 	accums := map[string]*accum{}
 	for _, suiteCase := range suite {
@@ -112,17 +206,48 @@ func SummarizeScores(runID, mode, seedID, seedHash, suitePath string, suite []Su
 			a.mrr += score.MRR
 			a.ndcg += score.NDCGAtK
 			a.bad += float64(score.BadAtK)
+			if score.ContextScored {
+				a.contextCount++
+				a.contextRecall += score.ContextRecallAtK
+				a.contextMRR += score.ContextMRR
+				a.contextNDCG += score.ContextNDCGAtK
+				a.contextBad += float64(score.ContextBadAtK)
+			}
+			if score.EvidenceScored {
+				a.evidenceCount++
+				a.evidenceRecall += score.EvidenceRecallAtK
+				a.evidenceMRR += score.EvidenceMRR
+				a.evidenceNDCG += score.EvidenceNDCGAtK
+				a.evidenceBad += float64(score.EvidenceBadAtK)
+			}
 		}
 	}
 	for slice, a := range accums {
 		denom := float64(a.count)
-		summary.Slices[slice] = SliceAvg{
+		avg := SliceAvg{
 			CaseCount:        a.count,
 			AverageRecallAtK: a.recall / denom,
 			AverageMRR:       a.mrr / denom,
 			AverageNDCGAtK:   a.ndcg / denom,
 			AverageBadAtK:    a.bad / denom,
 		}
+		if a.contextCount > 0 {
+			contextDenom := float64(a.contextCount)
+			avg.ContextScoredCaseCount = a.contextCount
+			avg.AverageContextRecallAtK = a.contextRecall / contextDenom
+			avg.AverageContextMRR = a.contextMRR / contextDenom
+			avg.AverageContextNDCGAtK = a.contextNDCG / contextDenom
+			avg.AverageContextBadAtK = a.contextBad / contextDenom
+		}
+		if a.evidenceCount > 0 {
+			evidenceDenom := float64(a.evidenceCount)
+			avg.EvidenceScoredCaseCount = a.evidenceCount
+			avg.AverageEvidenceRecallAtK = a.evidenceRecall / evidenceDenom
+			avg.AverageEvidenceMRR = a.evidenceMRR / evidenceDenom
+			avg.AverageEvidenceNDCGAtK = a.evidenceNDCG / evidenceDenom
+			avg.AverageEvidenceBadAtK = a.evidenceBad / evidenceDenom
+		}
+		summary.Slices[slice] = avg
 	}
 	return summary
 }
@@ -132,14 +257,113 @@ func CompareSummaries(baseline, candidate Summary) (Comparison, error) {
 		return Comparison{}, fmt.Errorf("seed hash mismatch: baseline %s candidate %s", baseline.SeedHash, candidate.SeedHash)
 	}
 	return Comparison{
-		BaselineRunID:  baseline.RunID,
-		CandidateRunID: candidate.RunID,
-		SeedHash:       baseline.SeedHash,
-		RecallDelta:    candidate.AverageRecallAtK - baseline.AverageRecallAtK,
-		MRRDelta:       candidate.AverageMRR - baseline.AverageMRR,
-		NDCGDelta:      candidate.AverageNDCGAtK - baseline.AverageNDCGAtK,
-		BadAtKDelta:    candidate.AverageBadAtK - baseline.AverageBadAtK,
+		BaselineRunID:       baseline.RunID,
+		CandidateRunID:      candidate.RunID,
+		SeedHash:            baseline.SeedHash,
+		RecallDelta:         candidate.AverageRecallAtK - baseline.AverageRecallAtK,
+		MRRDelta:            candidate.AverageMRR - baseline.AverageMRR,
+		NDCGDelta:           candidate.AverageNDCGAtK - baseline.AverageNDCGAtK,
+		BadAtKDelta:         candidate.AverageBadAtK - baseline.AverageBadAtK,
+		ContextRecallDelta:  candidate.AverageContextRecallAtK - baseline.AverageContextRecallAtK,
+		ContextMRRDelta:     candidate.AverageContextMRR - baseline.AverageContextMRR,
+		ContextNDCGDelta:    candidate.AverageContextNDCGAtK - baseline.AverageContextNDCGAtK,
+		ContextBadAtKDelta:  candidate.AverageContextBadAtK - baseline.AverageContextBadAtK,
+		EvidenceRecallDelta: candidate.AverageEvidenceRecallAtK - baseline.AverageEvidenceRecallAtK,
+		EvidenceMRRDelta:    candidate.AverageEvidenceMRR - baseline.AverageEvidenceMRR,
+		EvidenceNDCGDelta:   candidate.AverageEvidenceNDCGAtK - baseline.AverageEvidenceNDCGAtK,
+		EvidenceBadAtKDelta: candidate.AverageEvidenceBadAtK - baseline.AverageEvidenceBadAtK,
 	}, nil
+}
+
+func EvaluateGates(summary Summary, gates GateOptions) GateResult {
+	result := GateResult{
+		Passed:     true,
+		Thresholds: map[string]float64{},
+		Metrics: map[string]float64{
+			"average_recall_at_k":          summary.AverageRecallAtK,
+			"required_rank1_rate":          summary.RequiredRank1Rate,
+			"average_bad_at_k":             summary.AverageBadAtK,
+			"bad_rank1_rate":               summary.BadRank1Rate,
+			"average_context_recall_at_k":  summary.AverageContextRecallAtK,
+			"context_required_rank1_rate":  summary.ContextRequiredRank1Rate,
+			"average_context_bad_at_k":     summary.AverageContextBadAtK,
+			"context_bad_rank1_rate":       summary.ContextBadRank1Rate,
+			"average_evidence_recall_at_k": summary.AverageEvidenceRecallAtK,
+			"evidence_required_rank1_rate": summary.EvidenceRequiredRank1Rate,
+			"average_evidence_bad_at_k":    summary.AverageEvidenceBadAtK,
+			"evidence_bad_rank1_rate":      summary.EvidenceBadRank1Rate,
+		},
+	}
+	checkMin := func(name string, value float64, threshold *float64) {
+		if threshold == nil {
+			return
+		}
+		result.Thresholds[name] = *threshold
+		if value < *threshold {
+			result.Passed = false
+			result.Failures = append(result.Failures, fmt.Sprintf("%s %.4f below minimum %.4f", name, value, *threshold))
+		}
+	}
+	checkMax := func(name string, value float64, threshold *float64) {
+		if threshold == nil {
+			return
+		}
+		result.Thresholds[name] = *threshold
+		if value > *threshold {
+			result.Passed = false
+			result.Failures = append(result.Failures, fmt.Sprintf("%s %.4f above maximum %.4f", name, value, *threshold))
+		}
+	}
+	checkMin("average_recall_at_k", summary.AverageRecallAtK, gates.MinRecallAtK)
+	checkMin("required_rank1_rate", summary.RequiredRank1Rate, gates.MinRequiredRank1Rate)
+	checkMax("average_bad_at_k", summary.AverageBadAtK, gates.MaxAverageBadAtK)
+	checkMax("bad_rank1_rate", summary.BadRank1Rate, gates.MaxBadRank1Rate)
+	if gates.ContextAny() {
+		if summary.ContextScoredCaseCount == 0 {
+			result.Passed = false
+			result.Failures = append(result.Failures, "context metrics unavailable: no traces included context_refs")
+		} else {
+			checkMin("average_context_recall_at_k", summary.AverageContextRecallAtK, gates.MinContextRecallAtK)
+			checkMin("context_required_rank1_rate", summary.ContextRequiredRank1Rate, gates.MinContextRequiredRank1Rate)
+			checkMax("average_context_bad_at_k", summary.AverageContextBadAtK, gates.MaxAverageContextBadAtK)
+			checkMax("context_bad_rank1_rate", summary.ContextBadRank1Rate, gates.MaxContextBadRank1Rate)
+		}
+	}
+	if gates.EvidenceAny() {
+		if summary.EvidenceScoredCaseCount == 0 {
+			result.Passed = false
+			result.Failures = append(result.Failures, "evidence metrics unavailable: no scored traces included evidence qrels and context_evidence_refs")
+		} else {
+			checkMin("average_evidence_recall_at_k", summary.AverageEvidenceRecallAtK, gates.MinEvidenceRecallAtK)
+			checkMin("evidence_required_rank1_rate", summary.EvidenceRequiredRank1Rate, gates.MinEvidenceRequiredRank1Rate)
+			checkMax("average_evidence_bad_at_k", summary.AverageEvidenceBadAtK, gates.MaxAverageEvidenceBadAtK)
+			checkMax("evidence_bad_rank1_rate", summary.EvidenceBadRank1Rate, gates.MaxEvidenceBadRank1Rate)
+		}
+	}
+	return result
+}
+
+func (g GateOptions) Any() bool {
+	return g.MinRecallAtK != nil ||
+		g.MinRequiredRank1Rate != nil ||
+		g.MaxAverageBadAtK != nil ||
+		g.MaxBadRank1Rate != nil ||
+		g.ContextAny() ||
+		g.EvidenceAny()
+}
+
+func (g GateOptions) ContextAny() bool {
+	return g.MinContextRecallAtK != nil ||
+		g.MinContextRequiredRank1Rate != nil ||
+		g.MaxAverageContextBadAtK != nil ||
+		g.MaxContextBadRank1Rate != nil
+}
+
+func (g GateOptions) EvidenceAny() bool {
+	return g.MinEvidenceRecallAtK != nil ||
+		g.MinEvidenceRequiredRank1Rate != nil ||
+		g.MaxAverageEvidenceBadAtK != nil ||
+		g.MaxEvidenceBadRank1Rate != nil
 }
 
 func remapJudgments(refs []Ref, mapping KnowledgeMapping) ([]recallquality.Judgment, []Ref) {
@@ -206,6 +430,26 @@ func badRefsAtK(bad []Ref, ranked []Ref, mapping KnowledgeMapping, k int) []Ref 
 	return out
 }
 
+func firstRank(ranked []Ref, refs []Ref, mapping KnowledgeMapping) int {
+	keys := map[string]struct{}{}
+	for _, ref := range refs {
+		resolved, ok := resolveRef(ref, mapping)
+		if !ok {
+			continue
+		}
+		keys[refKey(resolved.Type, resolved.ID)] = struct{}{}
+	}
+	if len(keys) == 0 {
+		return 0
+	}
+	for i, ref := range ranked {
+		if _, ok := keys[refKey(ref.Type, ref.ID)]; ok {
+			return i + 1
+		}
+	}
+	return 0
+}
+
 func topKSet(ranked []Ref, k int) map[string]bool {
 	if k > len(ranked) {
 		k = len(ranked)
@@ -227,14 +471,7 @@ func resolveRef(ref Ref, mapping KnowledgeMapping) (Ref, bool) {
 	if strings.TrimSpace(ref.SourceDocID) == "" {
 		return Ref{}, false
 	}
-	resolved, ok := mapping.BySourceDocID[ref.SourceDocID]
-	if !ok || strings.TrimSpace(resolved.ID) == "" {
-		return Ref{}, false
-	}
-	if resolved.Type == "" {
-		resolved.Type = ref.Type
-	}
-	return resolved, true
+	return resolveSourceMapping(mapping, ref.SourceDocID, ref.Type)
 }
 
 func refKey(t, id string) string {

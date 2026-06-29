@@ -27,15 +27,15 @@ const (
 func TestDeterministicClaimID(t *testing.T) {
 	t.Run("ContentHash is deterministic", func(t *testing.T) {
 		ts := time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC)
-		h1 := ContentHash("subject", "predicate", "object", &ts)
-		h2 := ContentHash("subject", "predicate", "object", &ts)
+		h1 := ContentHash("subject", "predicate", "object", &ts, nil)
+		h2 := ContentHash("subject", "predicate", "object", &ts, nil)
 		require.Equal(t, h1, h2, "same inputs must produce same content hash")
 		require.NotEmpty(t, h1, "content hash must not be empty")
 	})
 
 	t.Run("ContentHash without validFrom is deterministic", func(t *testing.T) {
-		h1 := ContentHash("s", "p", "o", nil)
-		h2 := ContentHash("s", "p", "o", nil)
+		h1 := ContentHash("s", "p", "o", nil, nil)
+		h2 := ContentHash("s", "p", "o", nil, nil)
 		require.Equal(t, h1, h2)
 	})
 
@@ -48,7 +48,7 @@ func TestDeterministicClaimID(t *testing.T) {
 	})
 
 	t.Run("ClaimIDFromHash is deterministic", func(t *testing.T) {
-		hash := ContentHash("subject", "predicate", "object", nil)
+		hash := ContentHash("subject", "predicate", "object", nil, nil)
 		id1, err := ClaimIDFromHash(profileA, hash)
 		require.NoError(t, err)
 		id2, err := ClaimIDFromHash(profileA, hash)
@@ -72,21 +72,20 @@ func TestDeterministicClaimID(t *testing.T) {
 // TestContentHash_CanonicalForm verifies the canonical concatenation format.
 func TestContentHash_CanonicalForm(t *testing.T) {
 	ts := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
-	expected := sha256.Sum256([]byte("subj|pred|obj|2024-06-01T00:00:00Z"))
+	expected := sha256.Sum256([]byte("subj|pred|obj|2024-06-01T00:00:00Z|"))
 	want := hex.EncodeToString(expected[:])
-	got := ContentHash("subj", "pred", "obj", &ts)
-	assert.Equal(t, want, got, "canonical form must be subject|predicate|object|RFC3339UTC")
+	got := ContentHash("subj", "pred", "obj", &ts, nil)
+	assert.Equal(t, want, got, "canonical form must be subject|predicate|object|validFromUTC|validToUTC")
 }
 
-// TestContentHash_NilValidFrom verifies that a nil validFrom produces a
-// canonical input that ends with a trailing "|" (empty string suffix after the
-// last pipe), per R1 binding resolution.
+// TestContentHash_NilValidFrom verifies that nil validity bounds produce empty
+// canonical segments.
 func TestContentHash_NilValidFrom(t *testing.T) {
-	// Canonical input must be "s|p|o|" (empty suffix — NOT "none").
-	expected := sha256.Sum256([]byte("s|p|o|"))
+	// Canonical input must be "s|p|o||" (empty valid_from and valid_to, NOT "none").
+	expected := sha256.Sum256([]byte("s|p|o||"))
 	want := hex.EncodeToString(expected[:])
-	got := ContentHash("s", "p", "o", nil)
-	assert.Equal(t, want, got, "nil validFrom must produce canonical form ending with trailing '|'")
+	got := ContentHash("s", "p", "o", nil, nil)
+	assert.Equal(t, want, got, "nil validity bounds must produce empty canonical segments")
 
 	// Regression guard: the new hash must differ from the old "none" sentinel.
 	oldHash := hex.EncodeToString(func() []byte {
@@ -97,6 +96,32 @@ func TestContentHash_NilValidFrom(t *testing.T) {
 		"nil-validFrom hash must differ from the deprecated 'none' sentinel hash (silent regression guard)")
 }
 
+func TestContentHash_PreservesSubsecondPrecision(t *testing.T) {
+	a := time.Date(2024, 1, 15, 12, 0, 0, 1, time.UTC)
+	b := time.Date(2024, 1, 15, 12, 0, 0, 2, time.UTC)
+
+	assert.NotEqual(t,
+		ContentHash("s", "p", "o", &a, nil),
+		ContentHash("s", "p", "o", &b, nil),
+		"validFrom nanoseconds must participate in the content hash",
+	)
+	assert.NotEqual(t,
+		ContentHash("s", "p", "o", nil, &a),
+		ContentHash("s", "p", "o", nil, &b),
+		"validTo nanoseconds must participate in the content hash",
+	)
+}
+
+func TestLegacyContentHashWithoutValidTo(t *testing.T) {
+	ts := time.Date(2024, 6, 1, 0, 0, 0, 123, time.UTC)
+	expected := sha256.Sum256([]byte("s|p|o|2024-06-01T00:00:00Z"))
+	want := hex.EncodeToString(expected[:])
+
+	got := LegacyContentHashWithoutValidTo("s", "p", "o", &ts)
+	assert.Equal(t, want, got, "legacy compatibility hash must match the old four-field canonical form")
+	assert.NotEqual(t, got, ContentHash("s", "p", "o", &ts, nil))
+}
+
 // TestContentHash_ValidFromNormalizedToUTC verifies timezone normalization.
 func TestContentHash_ValidFromNormalizedToUTC(t *testing.T) {
 	loc, err := time.LoadLocation("America/New_York")
@@ -105,14 +130,28 @@ func TestContentHash_ValidFromNormalizedToUTC(t *testing.T) {
 	eastern := time.Date(2024, 1, 15, 7, 0, 0, 0, loc)
 	utc := time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC)
 
-	hEast := ContentHash("s", "p", "o", &eastern)
-	hUTC := ContentHash("s", "p", "o", &utc)
+	hEast := ContentHash("s", "p", "o", &eastern, nil)
+	hUTC := ContentHash("s", "p", "o", &utc, nil)
 	assert.Equal(t, hEast, hUTC, "validFrom must be normalised to UTC before hashing")
+}
+
+func TestContentHash_ValidToNormalizedAndDistinct(t *testing.T) {
+	loc, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	eastern := time.Date(2024, 1, 16, 7, 0, 0, 0, loc)
+	utc := time.Date(2024, 1, 16, 12, 0, 0, 0, time.UTC)
+	other := time.Date(2024, 1, 17, 12, 0, 0, 0, time.UTC)
+
+	hEast := ContentHash("s", "p", "o", nil, &eastern)
+	hUTC := ContentHash("s", "p", "o", nil, &utc)
+	hOther := ContentHash("s", "p", "o", nil, &other)
+	assert.Equal(t, hEast, hUTC, "validTo must be normalised to UTC before hashing")
+	assert.NotEqual(t, hUTC, hOther, "validTo must participate in the content hash")
 }
 
 // TestContentHash_LowercaseHex verifies output format.
 func TestContentHash_LowercaseHex(t *testing.T) {
-	h := ContentHash("test", "is", "running", nil)
+	h := ContentHash("test", "is", "running", nil, nil)
 	assert.Equal(t, strings.ToLower(h), h, "hex output must be lowercase")
 	assert.Len(t, h, 64, "SHA-256 hex must be 64 characters")
 }
@@ -120,15 +159,15 @@ func TestContentHash_LowercaseHex(t *testing.T) {
 // TestContentHash_SensitiveToFieldChanges verifies that changing any field
 // changes the hash.
 func TestContentHash_SensitiveToFieldChanges(t *testing.T) {
-	base := ContentHash("subject", "predicate", "object", nil)
+	base := ContentHash("subject", "predicate", "object", nil, nil)
 
 	cases := []struct {
 		name string
 		hash string
 	}{
-		{"changed subject", ContentHash("SUBJECT", "predicate", "object", nil)},
-		{"changed predicate", ContentHash("subject", "PREDICATE", "object", nil)},
-		{"changed object", ContentHash("subject", "predicate", "OBJECT", nil)},
+		{"changed subject", ContentHash("SUBJECT", "predicate", "object", nil, nil)},
+		{"changed predicate", ContentHash("subject", "PREDICATE", "object", nil, nil)},
+		{"changed object", ContentHash("subject", "predicate", "OBJECT", nil, nil)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -168,7 +207,7 @@ func TestClaimIDFromHash_InvalidProfileID(t *testing.T) {
 
 // TestClaimIDFromHash_ProducesValidUUID verifies the output format.
 func TestClaimIDFromHash_ProducesValidUUID(t *testing.T) {
-	hash := ContentHash("subject", "predicate", "object", nil)
+	hash := ContentHash("subject", "predicate", "object", nil, nil)
 	id, err := ClaimIDFromHash(profileA, hash)
 	require.NoError(t, err)
 	assert.Len(t, id, 36, "ClaimIDFromHash must return a 36-character UUID string")
@@ -254,7 +293,7 @@ func TestDeterministicClaimID_CrossProfileIsolation(t *testing.T) {
 // TestClaimIDFromHash_CrossProfileIsolation mirrors the above for the
 // content-hash path.
 func TestClaimIDFromHash_CrossProfileIsolation(t *testing.T) {
-	hash := ContentHash("subject", "predicate", "object", nil)
+	hash := ContentHash("subject", "predicate", "object", nil, nil)
 
 	idA, err := ClaimIDFromHash(profileA, hash)
 	require.NoError(t, err)

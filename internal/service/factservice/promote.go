@@ -646,8 +646,8 @@ func (s *promoteClaimServiceImpl) createNewFact(
 				"object":                       fact.Object,
 				"status":                       string(fact.Status),
 				"truthScore":                   fact.TruthScore,
-				"validFrom":                    fact.ValidFrom,
-				"validTo":                      fact.ValidTo,
+				"validFrom":                    timeParam(fact.ValidFrom),
+				"validTo":                      timeParam(fact.ValidTo),
 				"recordedAt":                   fact.RecordedAt,
 				"promotedFromClaimId":          fact.PromotedFromClaimID,
 				"classificationJSON":           classificationJSON,
@@ -665,6 +665,13 @@ func (s *promoteClaimServiceImpl) createNewFact(
 		return nil, fmt.Errorf("promote: persist new fact: %w", err)
 	}
 	return fact, nil
+}
+
+func timeParam(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return value.UTC()
 }
 
 // linkClaimToExistingFact creates the PROMOTES_TO relationship from the Claim
@@ -895,6 +902,7 @@ RETURN
     c.resolution_conf                 AS resolution_conf,
     c.source_quality                  AS source_quality,
     c.valid_from                      AS valid_from,
+    c.valid_to                        AS valid_to,
     c.classification                  AS classification,
     c.classification_json             AS classification_json,
     c.classification_lattice_version  AS classification_lattice_version,

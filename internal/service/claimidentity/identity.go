@@ -30,20 +30,38 @@ const (
 
 // ContentHash returns the lowercase SHA-256 hex of the canonical form:
 //
-//	subject + "|" + predicate + "|" + object + "|" + normalized_valid_from
+//	subject + "|" + predicate + "|" + object + "|" + normalized_valid_from + "|" + normalized_valid_to
 //
-// normalized_valid_from is the RFC 3339 UTC representation of validFrom when
-// non-nil, or empty string when nil. When nil the canonical input ends with a
-// trailing "|" with no suffix after the last pipe.
+// normalized validity values are RFC 3339 Nano UTC representations when
+// non-nil, or empty strings when nil.
 //
 // No trimming or case-folding is applied to the input fields — the caller is
 // responsible for normalizing before invoking this function.
-func ContentHash(subject, predicate, object string, validFrom *time.Time) string {
-	normalizedValidFrom := ""
-	if validFrom != nil {
-		normalizedValidFrom = validFrom.UTC().Format(time.RFC3339)
-	}
+func ContentHash(subject, predicate, object string, validFrom, validTo *time.Time) string {
+	normalizedValidFrom := normalizedContentHashTime(validFrom, time.RFC3339Nano)
+	normalizedValidTo := normalizedContentHashTime(validTo, time.RFC3339Nano)
+	input := subject + "|" + predicate + "|" + object + "|" + normalizedValidFrom + "|" + normalizedValidTo
+	return hashInput(input)
+}
+
+// LegacyContentHashWithoutValidTo returns the pre-valid_to content hash shape.
+//
+// This exists only for compatibility lookup against claims written before
+// valid_to participated in content hashing.
+func LegacyContentHashWithoutValidTo(subject, predicate, object string, validFrom *time.Time) string {
+	normalizedValidFrom := normalizedContentHashTime(validFrom, time.RFC3339)
 	input := subject + "|" + predicate + "|" + object + "|" + normalizedValidFrom
+	return hashInput(input)
+}
+
+func normalizedContentHashTime(value *time.Time, layout string) string {
+	if value == nil {
+		return ""
+	}
+	return value.UTC().Format(layout)
+}
+
+func hashInput(input string) string {
 	hash := sha256.Sum256([]byte(input))
 	return hex.EncodeToString(hash[:])
 }

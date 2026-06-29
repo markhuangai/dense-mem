@@ -149,6 +149,8 @@ func (s *verifyClaimServiceImpl) Verify(ctx context.Context, profileID string, c
 		ProfileID: profileID,
 		Predicate: predicate,
 		Context:   strings.Join(contextParts, "\n"),
+		ValidFrom: claim.ValidFrom,
+		ValidTo:   claim.ValidTo,
 	}
 
 	// Step 4: call the verifier.

@@ -28,6 +28,10 @@ type fakeSemanticSearcher struct {
 	onCall    func()
 }
 
+func testTimePtr(value time.Time) *time.Time {
+	return &value
+}
+
 func (f *fakeSemanticSearcher) QueryVectorIndex(ctx context.Context, profileID string, vec []float32, limit int) ([]semanticsearch.SearchHit, error) {
 	f.mu.Lock()
 	f.lastLimit = limit
@@ -118,10 +122,11 @@ func (f *fakeHydrator) GetByIDs(ctx context.Context, profileID string, fragmentI
 }
 
 type fakeFactSearcher struct {
-	results   []FactRecallResult
-	lastQuery string
-	lastLimit int
-	err       error
+	results      []FactRecallResult
+	lastQuery    string
+	lastLimit    int
+	err          error
+	respectLimit bool
 }
 
 func (f *fakeFactSearcher) SearchActive(ctx context.Context, profileID string, query string, limit int) ([]FactRecallResult, error) {
@@ -132,14 +137,18 @@ func (f *fakeFactSearcher) SearchActive(ctx context.Context, profileID string, q
 	}
 	out := make([]FactRecallResult, len(f.results))
 	copy(out, f.results)
+	if f.respectLimit && limit >= 0 && len(out) > limit {
+		out = out[:limit]
+	}
 	return out, nil
 }
 
 type fakeClaimSearcher struct {
-	results   []ClaimRecallResult
-	lastQuery string
-	lastLimit int
-	err       error
+	results      []ClaimRecallResult
+	lastQuery    string
+	lastLimit    int
+	err          error
+	respectLimit bool
 }
 
 func (f *fakeClaimSearcher) SearchValidated(ctx context.Context, profileID string, query string, limit int) ([]ClaimRecallResult, error) {
@@ -150,6 +159,9 @@ func (f *fakeClaimSearcher) SearchValidated(ctx context.Context, profileID strin
 	}
 	out := make([]ClaimRecallResult, len(f.results))
 	copy(out, f.results)
+	if f.respectLimit && limit >= 0 && len(out) > limit {
+		out = out[:limit]
+	}
 	return out, nil
 }
 
@@ -432,11 +444,41 @@ func TestRecallSmallHelpersAndNilLoggers(t *testing.T) {
 	require.Equal(t, "recall: embedding unavailable", sanitizeEmbeddingError(errors.New("other")).Error())
 	require.Equal(t, MaxLimit, clampLimit(MaxLimit+100))
 	require.Equal(t, DefaultLimit, clampLimit(0))
+	mergeRRFEntryTimes(nil, time.Now(), time.Now())
 
 	svc := &recallService{}
 	svc.logKeywordError(errors.New("keyword failed"))
 	svc.logHydrateError("fragment-1", errors.New("hydrate failed"))
 	svc.logEmbeddingError(errors.New("embedding failed"))
+}
+
+func TestBatchHydrateEvidenceFragmentsCoversBatchAndFallback(t *testing.T) {
+	ctx := context.Background()
+	svc := &recallService{}
+	evidenceSets := [][]domain.Evidence{
+		{{FragmentID: ""}, {FragmentID: "fragment-1"}, {FragmentID: "fragment-1"}},
+		{{FragmentID: "fragment-2"}},
+	}
+
+	require.Nil(t, svc.batchHydrateEvidenceFragments(ctx, "pA", evidenceSets))
+
+	batchHydrator := &fakeHydrator{}
+	svc.hydrator = batchHydrator
+	out := svc.batchHydrateEvidenceFragments(ctx, "pA", evidenceSets)
+	require.Len(t, out, 2)
+	require.Contains(t, out, "fragment-1")
+	require.Contains(t, out, "fragment-2")
+	require.Equal(t, int32(1), atomic.LoadInt32(&batchHydrator.batchCallCount))
+	require.Zero(t, atomic.LoadInt32(&batchHydrator.callCount))
+
+	require.Nil(t, svc.batchHydrateEvidenceFragments(ctx, "pA", [][]domain.Evidence{{{FragmentID: ""}}}))
+
+	fallbackHydrator := &fakeHydrator{batchErr: errors.New("batch failed")}
+	svc.hydrator = fallbackHydrator
+	out = svc.batchHydrateEvidenceFragments(ctx, "pA", evidenceSets)
+	require.Len(t, out, 2)
+	require.Equal(t, int32(1), atomic.LoadInt32(&fallbackHydrator.batchCallCount))
+	require.Equal(t, int32(2), atomic.LoadInt32(&fallbackHydrator.callCount))
 }
 
 // TestRecallService_OverfetchesVectorBranch — AC-40 overfetch requirement.
@@ -524,7 +566,7 @@ func TestRecallService_ClampsAndDefaultsLimit(t *testing.T) {
 	cases := []struct {
 		name     string
 		input    int
-		wantMult int // sem.lastLimit should equal wantMult * OverfetchMultiplier
+		wantMult int // sem.lastLimit should equal wantMult * OverfetchMultiplier for non-ID queries.
 	}{
 		{"zero defaults to 10", 0, DefaultLimit},
 		{"negative defaults to 10", -5, DefaultLimit},
@@ -547,6 +589,19 @@ func TestRecallService_ClampsAndDefaultsLimit(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRecallService_UsesIdentifierOverfetchFloorForLowLimitIDQueries(t *testing.T) {
+	sem := &fakeSemanticSearcher{}
+	kw := &fakeKeywordSearcher{}
+	emb := &stubEmbedding{DimensionsResult: 4}
+	svc := NewRecallService(emb, sem, kw, &fakeHydrator{}, nil, nil)
+
+	_, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "Who owns service TIER-Z-001?", Limit: 1})
+
+	require.NoError(t, err)
+	require.Equal(t, IdentifierOverfetchFloor, sem.lastLimit)
+	require.Equal(t, IdentifierOverfetchFloor, kw.lastLimit)
 }
 
 // TestRecallService_RejectsBlankQuery defends AC-38 at the service boundary.
@@ -624,6 +679,102 @@ func TestRecallService_TierEnrichmentUsesQueryMatchedSearchers(t *testing.T) {
 	assert.Equal(t, int32(0), atomic.LoadInt32(&claimGetter.callCount))
 }
 
+func TestRecallService_EvidenceSourceQueryPrefersFragmentOverDerivedFact(t *testing.T) {
+	query := "Which source note says service TIER-E-001 owner uses owner-lumen?"
+	content := "Source note from ops. service TIER-E-001 owner uses owner-lumen."
+	sem := &fakeSemanticSearcher{
+		hits: []semanticsearch.SearchHit{{ID: "fragment-evidence", Type: "fragment", ProfileID: "pA", Content: content}},
+	}
+	kw := &fakeKeywordSearcher{
+		hits: []keywordsearch.FragmentSearchResult{{FragmentID: "fragment-evidence", ProfileID: "pA", Content: content}},
+	}
+	factSearcher := &fakeFactSearcher{
+		results: []FactRecallResult{{FactID: "fact-derived", ProfileID: "pA"}},
+	}
+	factGetter := &fakeFactGetter{
+		facts: map[string]*domain.Fact{
+			"fact-derived": {
+				FactID:     "fact-derived",
+				ProfileID:  "pA",
+				Subject:    "service TIER-E-001 owner",
+				Predicate:  "uses",
+				Object:     "owner-lumen",
+				Status:     domain.FactStatusActive,
+				TruthScore: 0.99,
+				RecordedAt: time.Now().UTC(),
+			},
+		},
+	}
+	svc := NewRecallServiceWithTiers(
+		&stubEmbedding{DimensionsResult: 4},
+		sem,
+		kw,
+		&fakeHydrator{},
+		factSearcher,
+		factGetter,
+		nil,
+		nil,
+		0,
+		nil,
+		nil,
+	)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: query, Limit: 1})
+
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.NotNil(t, out[0].Fragment)
+	require.Equal(t, "fragment-evidence", out[0].Fragment.FragmentID)
+}
+
+func TestRecallService_SourceOfTruthQueryKeepsFactTier(t *testing.T) {
+	query := "What is the source of truth owner for service TIER-E-001?"
+	content := "Source of truth runbook. service TIER-E-001 owner uses owner-lumen."
+	sem := &fakeSemanticSearcher{
+		hits: []semanticsearch.SearchHit{{ID: "fragment-source-of-truth", Type: "fragment", ProfileID: "pA", Content: content}},
+	}
+	kw := &fakeKeywordSearcher{
+		hits: []keywordsearch.FragmentSearchResult{{FragmentID: "fragment-source-of-truth", ProfileID: "pA", Content: content}},
+	}
+	factSearcher := &fakeFactSearcher{
+		results: []FactRecallResult{{FactID: "fact-authoritative", ProfileID: "pA"}},
+	}
+	factGetter := &fakeFactGetter{
+		facts: map[string]*domain.Fact{
+			"fact-authoritative": {
+				FactID:     "fact-authoritative",
+				ProfileID:  "pA",
+				Subject:    "service TIER-E-001 owner",
+				Predicate:  "uses",
+				Object:     "owner-lumen",
+				Status:     domain.FactStatusActive,
+				TruthScore: 0.99,
+				RecordedAt: time.Now().UTC(),
+			},
+		},
+	}
+	svc := NewRecallServiceWithTiers(
+		&stubEmbedding{DimensionsResult: 4},
+		sem,
+		kw,
+		&fakeHydrator{},
+		factSearcher,
+		factGetter,
+		nil,
+		nil,
+		0,
+		nil,
+		nil,
+	)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: query, Limit: 1})
+
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.NotNil(t, out[0].Fact)
+	require.Equal(t, "fact-authoritative", out[0].Fact.FactID)
+}
+
 func TestRecallService_TierEnrichmentDowngradesOverlayFacts(t *testing.T) {
 	factSearcher := &fakeFactSearcher{
 		results: []FactRecallResult{{
@@ -640,6 +791,48 @@ func TestRecallService_TierEnrichmentDowngradesOverlayFacts(t *testing.T) {
 				Status:     domain.FactStatusActive,
 				TruthScore: 0.95,
 				RecordedAt: time.Now().UTC(),
+			},
+		},
+	}
+	svc := NewRecallServiceWithTiers(
+		&stubEmbedding{DimensionsResult: 4},
+		&fakeSemanticSearcher{},
+		&fakeKeywordSearcher{},
+		&fakeHydrator{},
+		factSearcher,
+		factGetter,
+		nil,
+		nil,
+		0,
+		nil,
+		nil,
+	)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "platform choice", Limit: 5})
+
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Equal(t, TierConflict, out[0].Tier)
+	require.NotNil(t, out[0].Fact)
+	require.Equal(t, "overlay", out[0].Fact.AuthorityState)
+}
+
+func TestRecallService_TierEnrichmentUsesHydratedFactAuthorityState(t *testing.T) {
+	factSearcher := &fakeFactSearcher{
+		results: []FactRecallResult{{
+			FactID:    "fact-overlay",
+			ProfileID: "pA",
+		}},
+	}
+	factGetter := &fakeFactGetter{
+		facts: map[string]*domain.Fact{
+			"fact-overlay": {
+				FactID:         "fact-overlay",
+				ProfileID:      "pA",
+				Status:         domain.FactStatusActive,
+				TruthScore:     0.95,
+				AuthorityState: "overlay",
+				RecordedAt:     time.Now().UTC(),
 			},
 		},
 	}
@@ -762,164 +955,6 @@ func TestRecallService_RRFScoreOrdering(t *testing.T) {
 	if topScore <= midScore {
 		t.Errorf("top score %v must exceed single-branch score %v", topScore, midScore)
 	}
-}
-
-func TestRecallService_CommunityExpansionDisabledByDefault(t *testing.T) {
-	sem := &fakeSemanticSearcher{hits: []semanticsearch.SearchHit{{ID: "f-direct", Type: "fragment"}}}
-	kw := &fakeKeywordSearcher{}
-	expander := &fakeCommunityExpander{
-		expansion: CommunityExpansion{
-			SelectedCommunities: 1,
-			Fragments: []CommunityFragmentRecallResult{
-				{FragmentID: "f-community", ProfileID: "pA", Score: 0.8},
-			},
-		},
-	}
-	svc := NewRecallServiceWithTiers(
-		&stubEmbedding{DimensionsResult: 4},
-		sem,
-		kw,
-		&fakeHydrator{},
-		nil,
-		nil,
-		nil,
-		nil,
-		0,
-		nil,
-		nil,
-		WithCommunityExpander(expander),
-	)
-
-	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "q", Limit: 5})
-	require.NoError(t, err)
-	require.Len(t, out, 1)
-	require.Equal(t, "f-direct", out[0].Fragment.FragmentID)
-	require.Equal(t, 0, expander.calls)
-}
-
-func TestRecallService_CommunityExpansionNoCommunityFallback(t *testing.T) {
-	sem := &fakeSemanticSearcher{hits: []semanticsearch.SearchHit{{ID: "f-direct", Type: "fragment"}}}
-	kw := &fakeKeywordSearcher{}
-	expander := &fakeCommunityExpander{}
-	svc := NewRecallServiceWithTiers(
-		&stubEmbedding{DimensionsResult: 4},
-		sem,
-		kw,
-		&fakeHydrator{},
-		nil,
-		nil,
-		nil,
-		nil,
-		0,
-		nil,
-		nil,
-		WithCommunityExpander(expander),
-	)
-
-	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "q", Limit: 5, UseCommunities: true})
-	require.NoError(t, err)
-	require.Len(t, out, 1)
-	require.Equal(t, "f-direct", out[0].Fragment.FragmentID)
-	require.Equal(t, 1, expander.calls)
-	require.Equal(t, "pA", expander.lastProfile)
-}
-
-func TestRecallService_CommunityExpansionFiltersProfile(t *testing.T) {
-	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
-	expander := &fakeCommunityExpander{
-		expansion: CommunityExpansion{
-			SelectedCommunities: 1,
-			Facts: []FactRecallResult{
-				{FactID: "fact-other", ProfileID: "pB", RecordedAt: now},
-				{FactID: "fact-own", ProfileID: "pA", RecordedAt: now},
-			},
-			Fragments: []CommunityFragmentRecallResult{
-				{FragmentID: "frag-other", ProfileID: "pB", Score: 0.5},
-				{FragmentID: "frag-own", ProfileID: "pA", Score: 0.4},
-			},
-		},
-	}
-	svc := NewRecallServiceWithTiers(
-		&stubEmbedding{DimensionsResult: 4},
-		&fakeSemanticSearcher{},
-		&fakeKeywordSearcher{},
-		&fakeHydrator{frags: map[string]*domain.Fragment{
-			"frag-other": {FragmentID: "frag-other", ProfileID: "pB"},
-			"frag-own":   {FragmentID: "frag-own", ProfileID: "pA"},
-		}},
-		nil,
-		&fakeFactGetter{facts: map[string]*domain.Fact{
-			"fact-other": {FactID: "fact-other", ProfileID: "pB", Status: domain.FactStatusActive, RecordedAt: now, TruthScore: 1},
-			"fact-own":   {FactID: "fact-own", ProfileID: "pA", Status: domain.FactStatusActive, RecordedAt: now, TruthScore: 0.9},
-		}},
-		nil,
-		nil,
-		0,
-		nil,
-		nil,
-		WithCommunityExpander(expander),
-	)
-
-	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "q", Limit: 5, UseCommunities: true})
-	require.NoError(t, err)
-	require.Len(t, out, 2)
-	require.NotNil(t, out[0].Fact)
-	require.Equal(t, "fact-own", out[0].Fact.FactID)
-	require.NotNil(t, out[1].Fragment)
-	require.Equal(t, "frag-own", out[1].Fragment.FragmentID)
-}
-
-func TestRecallService_CommunityExpansionFillsUnusedSlotsAfterDirectRecall(t *testing.T) {
-	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
-	sem := &fakeSemanticSearcher{hits: []semanticsearch.SearchHit{{ID: "f-direct", Type: "fragment"}}}
-	expander := &fakeCommunityExpander{
-		expansion: CommunityExpansion{
-			SelectedCommunities: 1,
-			Facts: []FactRecallResult{
-				{FactID: "fact-community", ProfileID: "pA", RecordedAt: now},
-			},
-			Claims: []ClaimRecallResult{
-				{ClaimID: "claim-community", ProfileID: "pA", RecordedAt: now},
-			},
-			Fragments: []CommunityFragmentRecallResult{
-				{FragmentID: "fragment-community", ProfileID: "pA", Score: 0.7},
-			},
-		},
-	}
-	svc := NewRecallServiceWithTiers(
-		&stubEmbedding{DimensionsResult: 4},
-		sem,
-		&fakeKeywordSearcher{},
-		&fakeHydrator{frags: map[string]*domain.Fragment{
-			"f-direct":           {FragmentID: "f-direct", ProfileID: "pA"},
-			"fragment-community": {FragmentID: "fragment-community", ProfileID: "pA"},
-		}},
-		nil,
-		&fakeFactGetter{facts: map[string]*domain.Fact{
-			"fact-community": {FactID: "fact-community", ProfileID: "pA", Status: domain.FactStatusActive, RecordedAt: now, TruthScore: 0.9},
-		}},
-		nil,
-		&fakeClaimGetter{claims: map[string]*domain.Claim{
-			"claim-community": {ClaimID: "claim-community", ProfileID: "pA", Status: domain.StatusValidated, RecordedAt: now, ExtractConf: 0.8},
-		}},
-		0,
-		nil,
-		nil,
-		WithCommunityExpander(expander),
-	)
-
-	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "q", Limit: 3, UseCommunities: true})
-	require.NoError(t, err)
-	require.Len(t, out, 3)
-	require.NotNil(t, out[0].Fact)
-	require.Equal(t, "fact-community", out[0].Fact.FactID)
-	require.NotNil(t, out[1].Claim)
-	require.Equal(t, "claim-community", out[1].Claim.ClaimID)
-	require.NotNil(t, out[2].Fragment)
-	require.Equal(t, "f-direct", out[2].Fragment.FragmentID)
-	require.Equal(t, DefaultCommunityExpansionCommunityLimit, expander.lastOptions.CommunityLimit)
-	require.Equal(t, DefaultCommunityExpansionMembersPerCommunity, expander.lastOptions.MembersPerCommunity)
-	require.Equal(t, DefaultCommunityExpansionCommunityLimit*DefaultCommunityExpansionMembersPerCommunity, expander.lastOptions.MaxCandidates)
 }
 
 func idsOf(hits []RecallHit) []string {

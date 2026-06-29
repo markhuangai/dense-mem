@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 	"strconv"
+	"time"
 )
 
 const (
@@ -23,6 +24,8 @@ type SearchHit struct {
 	Labels    []string       `json:"labels"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
 	ProfileID string         `json:"team_id"` // For defense-in-depth post-filter
+	CreatedAt *time.Time     `json:"created_at,omitempty"`
+	UpdatedAt *time.Time     `json:"updated_at,omitempty"`
 }
 
 // SearchHitInterface is the companion interface for SearchHit.

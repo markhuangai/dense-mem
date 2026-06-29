@@ -159,6 +159,8 @@ type FragmentSearchResult struct {
 	Labels     []string       `json:"labels"`
 	Metadata   map[string]any `json:"metadata"`
 	ProfileID  string         `json:"team_id"`
+	CreatedAt  time.Time      `json:"created_at,omitempty"`
+	UpdatedAt  time.Time      `json:"updated_at,omitempty"`
 }
 
 // FactSearchResult represents a result from Fact predicate full-text search.

@@ -88,6 +88,40 @@ func TestRunBaselineWithTraceFileWritesArtifactsAndComparison(t *testing.T) {
 	}
 }
 
+func TestRunWritesGateResultAndFailsThreshold(t *testing.T) {
+	dir := writeEvalFixture(t)
+	tracesPath := filepath.Join(dir, "traces.jsonl")
+	if err := writeJSONL(tracesPath, []RecallTrace{
+		{CaseID: "case-1", Query: "What is alpha?", RankedRefs: []Ref{{Type: "fragment", ID: "frag-alpha", Rank: 1}}},
+		{CaseID: "case-2", Query: "What is beta?", RankedRefs: []Ref{{Type: "fragment", ID: "frag-beta", Rank: 1}}},
+	}); err != nil {
+		t.Fatalf("write traces: %v", err)
+	}
+	out := filepath.Join(dir, "gated-run")
+	minRecall := 0.5
+
+	summary, err := Run(context.Background(), RunOptions{
+		Mode:             "baseline",
+		SeedManifestPath: filepath.Join(dir, "seed_manifest.json"),
+		SuitePath:        filepath.Join(dir, "suite.jsonl"),
+		TracesPath:       tracesPath,
+		OutDir:           out,
+		RunID:            "gated-test",
+		Gates:            GateOptions{MinRecallAtK: &minRecall},
+	})
+	if err == nil || !strings.Contains(err.Error(), "gate check failed") {
+		t.Fatalf("Run gated err = %v; want gate failure", err)
+	}
+	if summary.AverageRecallAtK != 0 {
+		t.Fatalf("summary = %+v; want trace file without mapping to score zero recall", summary)
+	}
+	for _, name := range []string{"summary.json", "retrieval_scores.jsonl", "gate_result.json"} {
+		if !fileExists(filepath.Join(out, name)) {
+			t.Fatalf("missing gated artifact %s", name)
+		}
+	}
+}
+
 func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 	dir := writeEvalFixture(t)
 	rememberIDs := map[string]string{
@@ -248,6 +282,67 @@ func TestRunRejectsInvalidOptionsAndSuite(t *testing.T) {
 	}
 }
 
+func TestRunValidationRejectsCrossFileInconsistency(t *testing.T) {
+	t.Run("manifest count mismatch", func(t *testing.T) {
+		dir := writeEvalFixture(t)
+		manifest := SeedManifest{
+			SchemaVersion: SeedSchemaVersion,
+			SeedID:        "fixture",
+			CorpusFile:    "corpus.jsonl",
+			CasesFile:     "cases.jsonl",
+			QrelsFile:     "qrels.jsonl",
+			Counts:        map[string]int{"cases": 3},
+		}
+		if err := writeJSONFile(filepath.Join(dir, "seed_manifest.json"), manifest); err != nil {
+			t.Fatalf("write manifest: %v", err)
+		}
+		_, err := Run(context.Background(), RunOptions{
+			Mode:             "validate",
+			SeedManifestPath: filepath.Join(dir, "seed_manifest.json"),
+			SuitePath:        filepath.Join(dir, "suite.jsonl"),
+		})
+		if err == nil || !strings.Contains(err.Error(), "manifest count cases=3 mismatch") {
+			t.Fatalf("Run err = %v; want count mismatch", err)
+		}
+	})
+
+	t.Run("qrel source missing from corpus", func(t *testing.T) {
+		dir := writeEvalFixture(t)
+		if err := writeJSONL(filepath.Join(dir, "qrels.jsonl"), []QRel{
+			{CaseID: "case-1", RequiredRefs: []Ref{{Type: "fragment", SourceDocID: "doc-missing", Grade: 1}}},
+			{CaseID: "case-2", RequiredRefs: []Ref{{Type: "fragment", SourceDocID: "doc-beta", Grade: 1}}},
+		}); err != nil {
+			t.Fatalf("write qrels: %v", err)
+		}
+		_, err := Run(context.Background(), RunOptions{
+			Mode:             "validate",
+			SeedManifestPath: filepath.Join(dir, "seed_manifest.json"),
+			SuitePath:        filepath.Join(dir, "suite.jsonl"),
+		})
+		if err == nil || !strings.Contains(err.Error(), `source_doc_id "doc-missing" missing from corpus`) {
+			t.Fatalf("Run err = %v; want missing source_doc_id", err)
+		}
+	})
+
+	t.Run("adversarial case missing bad refs", func(t *testing.T) {
+		dir := writeEvalFixture(t)
+		if err := writeJSONL(filepath.Join(dir, "cases.jsonl"), []Case{
+			{CaseID: "case-1", Query: "What is alpha?", Slices: []string{"adversarial"}, Limit: 2},
+			{CaseID: "case-2", Query: "What is beta?", Slices: []string{"direct"}, Limit: 2},
+		}); err != nil {
+			t.Fatalf("write cases: %v", err)
+		}
+		_, err := Run(context.Background(), RunOptions{
+			Mode:             "validate",
+			SeedManifestPath: filepath.Join(dir, "seed_manifest.json"),
+			SuitePath:        filepath.Join(dir, "suite.jsonl"),
+		})
+		if err == nil || !strings.Contains(err.Error(), `adversarial case "case-1" has no bad_refs`) {
+			t.Fatalf("Run err = %v; want adversarial bad_refs error", err)
+		}
+	})
+}
+
 func TestRunLiveSuiteAndCompareErrorBranches(t *testing.T) {
 	_, err := runLiveSuite(context.Background(), &HTTPClient{}, []SuiteCase{{CaseID: "case-1"}}, map[string]Case{
 		"case-1": {CaseID: "case-1", Query: "query"},
@@ -316,14 +411,319 @@ func TestScoreTracesUsesMappingAndPenalizesUnmappedRefs(t *testing.T) {
 	if scores[0].RecallAtK != 1 || scores[0].BadAtK != 1 || len(scores[0].MissingRequired) != 0 {
 		t.Fatalf("score[0] = %+v", scores[0])
 	}
+	if scores[0].FirstRequiredRank != 1 || scores[0].FirstBadRank != 2 {
+		t.Fatalf("score[0] ranks = %+v", scores[0])
+	}
 	if scores[1].RelevantTotal != 1 || scores[1].RecallAtK != 0 || len(scores[1].UnmappedSourceRefs) != 1 {
 		t.Fatalf("score[1] = %+v", scores[1])
 	}
-	if summary.AverageRecallAtK != 0.5 || summary.AverageBadAtK != 0.5 || summary.UnmappedSourceRefs != 1 {
+	if summary.AverageRecallAtK != 0.5 || summary.AverageBadAtK != 0.5 || summary.RequiredRank1Rate != 0.5 || summary.BadRank1Rate != 0 || summary.UnmappedSourceRefs != 1 {
 		t.Fatalf("summary = %+v", summary)
 	}
 	if summary.Slices["direct"].CaseCount != 2 {
 		t.Fatalf("slice summary = %+v", summary.Slices)
+	}
+}
+
+func TestScoreTracesScoresContextRefsSeparately(t *testing.T) {
+	suite := []SuiteCase{{CaseID: "case-1", Slices: []string{"context"}}}
+	cases := map[string]Case{
+		"case-1": {CaseID: "case-1", Query: "alpha?", Limit: 2},
+	}
+	qrels := map[string]QRel{
+		"case-1": {
+			CaseID:       "case-1",
+			RequiredRefs: []Ref{{Type: "fragment", SourceDocID: "doc-alpha"}},
+			BadRefs:      []Ref{{Type: "fragment", SourceDocID: "doc-beta"}},
+		},
+	}
+	traces := []RecallTrace{{
+		CaseID:      "case-1",
+		Query:       "alpha?",
+		RankedRefs:  []Ref{{Type: "fragment", ID: "frag-alpha"}},
+		ContextRefs: []Ref{{Type: "fragment", ID: "frag-beta"}},
+	}}
+	mapping := KnowledgeMapping{BySourceDocID: map[string]Ref{
+		"doc-alpha": {Type: "fragment", ID: "frag-alpha", SourceDocID: "doc-alpha"},
+		"doc-beta":  {Type: "fragment", ID: "frag-beta", SourceDocID: "doc-beta"},
+	}}
+
+	scores, summary, err := ScoreTraces("run-1", "baseline", "seed-1", "sha256:test", "suite.jsonl", suite, cases, qrels, traces, mapping)
+	if err != nil {
+		t.Fatalf("ScoreTraces: %v", err)
+	}
+	score := scores[0]
+	if score.RecallAtK != 1 || score.BadAtK != 0 || score.FirstRequiredRank != 1 {
+		t.Fatalf("ranked score = %+v", score)
+	}
+	if !score.ContextScored || score.ContextRecallAtK != 0 || score.ContextBadAtK != 1 || score.ContextFirstBadRank != 1 {
+		t.Fatalf("context score = %+v", score)
+	}
+	if len(score.ContextMissingRequired) != 1 || len(score.ContextBadRefsAtK) != 1 {
+		t.Fatalf("context miss/bad refs = %+v", score)
+	}
+	if summary.AverageRecallAtK != 1 || summary.AverageBadAtK != 0 {
+		t.Fatalf("ranked summary = %+v", summary)
+	}
+	if summary.ContextScoredCaseCount != 1 || summary.AverageContextRecallAtK != 0 || summary.AverageContextBadAtK != 1 || summary.ContextBadRank1Rate != 1 {
+		t.Fatalf("context summary = %+v", summary)
+	}
+	if summary.Slices["context"].ContextScoredCaseCount != 1 || summary.Slices["context"].AverageContextBadAtK != 1 {
+		t.Fatalf("slice summary = %+v", summary.Slices)
+	}
+}
+
+func TestScoreTracesScoresContextEvidenceRefsSeparately(t *testing.T) {
+	suite := []SuiteCase{{CaseID: "case-1", Slices: []string{"evidence"}}}
+	cases := map[string]Case{
+		"case-1": {CaseID: "case-1", Query: "who owns alpha?", Limit: 2},
+	}
+	qrels := map[string]QRel{
+		"case-1": {
+			CaseID:               "case-1",
+			RequiredRefs:         []Ref{{Type: "fact", SourceDocID: "doc-fact"}},
+			RequiredEvidenceRefs: []Ref{{Type: "fragment", SourceDocID: "doc-source-good"}},
+			BadEvidenceRefs:      []Ref{{Type: "fragment", SourceDocID: "doc-source-bad"}},
+		},
+	}
+	traces := []RecallTrace{{
+		CaseID:              "case-1",
+		Query:               "who owns alpha?",
+		RankedRefs:          []Ref{{Type: "fact", ID: "fact-alpha"}},
+		ContextRefs:         []Ref{{Type: "fact", ID: "fact-alpha"}},
+		ContextEvidenceRefs: []Ref{{Type: "fragment", ID: "fragment-good"}, {Type: "fragment", ID: "fragment-bad"}},
+	}}
+	mapping := KnowledgeMapping{BySourceDocID: map[string]Ref{
+		"doc-fact":        {Type: "fact", ID: "fact-alpha", SourceDocID: "doc-fact"},
+		"doc-source-good": {Type: "fragment", ID: "fragment-good", SourceDocID: "doc-source-good"},
+		"doc-source-bad":  {Type: "fragment", ID: "fragment-bad", SourceDocID: "doc-source-bad"},
+	}}
+
+	scores, summary, err := ScoreTraces("run-1", "baseline", "seed-1", "sha256:test", "suite.jsonl", suite, cases, qrels, traces, mapping)
+	if err != nil {
+		t.Fatalf("ScoreTraces: %v", err)
+	}
+	score := scores[0]
+	if score.RecallAtK != 1 || score.ContextRecallAtK != 1 || score.ContextBadAtK != 0 {
+		t.Fatalf("top-level score = %+v", score)
+	}
+	if !score.EvidenceScored || score.EvidenceRecallAtK != 1 || score.EvidenceBadAtK != 1 || score.EvidenceFirstRequiredRank != 1 || score.EvidenceFirstBadRank != 2 {
+		t.Fatalf("evidence score = %+v", score)
+	}
+	if len(score.EvidenceBadRefsAtK) != 1 || len(score.EvidenceMissingRequired) != 0 {
+		t.Fatalf("evidence refs = %+v", score)
+	}
+	if summary.EvidenceScoredCaseCount != 1 || summary.AverageEvidenceRecallAtK != 1 || summary.AverageEvidenceBadAtK != 1 || summary.EvidenceRequiredRank1Rate != 1 {
+		t.Fatalf("evidence summary = %+v", summary)
+	}
+	if summary.Slices["evidence"].EvidenceScoredCaseCount != 1 || summary.Slices["evidence"].AverageEvidenceBadAtK != 1 {
+		t.Fatalf("slice summary = %+v", summary.Slices)
+	}
+}
+
+func TestResolveRefPrefersTypeAwareSourceMapping(t *testing.T) {
+	mapping := newKnowledgeMapping()
+	addSourceMapping(&mapping, Ref{Type: "fragment", ID: "fragment-tiered", SourceDocID: "doc-tiered"}, true)
+	addSourceMapping(&mapping, Ref{Type: "claim", ID: "claim-tiered", SourceDocID: "doc-tiered"}, false)
+	addSourceMapping(&mapping, Ref{Type: "fact", ID: "fact-tiered", SourceDocID: "doc-tiered"}, false)
+
+	fragment, ok := resolveRef(Ref{Type: "fragment", SourceDocID: "doc-tiered"}, mapping)
+	if !ok || fragment.ID != "fragment-tiered" {
+		t.Fatalf("fragment resolve = %+v, %v", fragment, ok)
+	}
+	claim, ok := resolveRef(Ref{Type: "claim", SourceDocID: "doc-tiered"}, mapping)
+	if !ok || claim.ID != "claim-tiered" {
+		t.Fatalf("claim resolve = %+v, %v", claim, ok)
+	}
+	fact, ok := resolveRef(Ref{Type: "fact", SourceDocID: "doc-tiered"}, mapping)
+	if !ok || fact.ID != "fact-tiered" {
+		t.Fatalf("fact resolve = %+v, %v", fact, ok)
+	}
+	fallback, ok := resolveRef(Ref{SourceDocID: "doc-tiered"}, mapping)
+	if !ok || fallback.ID != "fragment-tiered" {
+		t.Fatalf("fallback resolve = %+v, %v", fallback, ok)
+	}
+	legacySourceDoc, ok := resolveRef(Ref{Type: "source_doc", SourceDocID: "doc-tiered"}, mapping)
+	if !ok || legacySourceDoc.ID != "fragment-tiered" || legacySourceDoc.Type != "fragment" {
+		t.Fatalf("legacy source_doc resolve = %+v, %v", legacySourceDoc, ok)
+	}
+
+	fragmentOnly := newKnowledgeMapping()
+	addSourceMapping(&fragmentOnly, Ref{Type: "fragment", ID: "fragment-only", SourceDocID: "doc-fragment-only"}, true)
+	if resolved, ok := resolveRef(Ref{Type: "fact", SourceDocID: "doc-fragment-only"}, fragmentOnly); ok {
+		t.Fatalf("fact ref resolved to fragment mapping: %+v", resolved)
+	}
+
+	multi := newKnowledgeMapping()
+	addSourceMapping(&multi, Ref{Type: "claim", ID: "claim-1", SourceDocID: "doc-multi"}, false)
+	addSourceMapping(&multi, Ref{Type: "claim", ID: "claim-2", SourceDocID: "doc-multi"}, false)
+	addSourceMapping(&multi, Ref{Type: "claim", ID: "claim-1", SourceDocID: "doc-multi:claim:1"}, false)
+	addSourceMapping(&multi, Ref{Type: "claim", ID: "claim-2", SourceDocID: "doc-multi:claim:2"}, false)
+	if resolved, ok := resolveRef(Ref{Type: "claim", SourceDocID: "doc-multi"}, multi); ok {
+		t.Fatalf("ambiguous claim ref resolved: %+v", resolved)
+	}
+	aliased, ok := resolveRef(Ref{Type: "claim", SourceDocID: "doc-multi:claim:2"}, multi)
+	if !ok || aliased.ID != "claim-2" {
+		t.Fatalf("alias claim resolve = %+v, %v", aliased, ok)
+	}
+}
+
+func TestEvaluateGates(t *testing.T) {
+	minRecall := 0.8
+	minRank1 := 0.5
+	maxBad := 0.25
+	maxBadRank1 := 0.1
+	gates := GateOptions{
+		MinRecallAtK:         &minRecall,
+		MinRequiredRank1Rate: &minRank1,
+		MaxAverageBadAtK:     &maxBad,
+		MaxBadRank1Rate:      &maxBadRank1,
+	}
+	passed := EvaluateGates(Summary{
+		AverageRecallAtK:  0.9,
+		RequiredRank1Rate: 0.6,
+		AverageBadAtK:     0.1,
+		BadRank1Rate:      0,
+	}, gates)
+	if !passed.Passed || len(passed.Failures) != 0 {
+		t.Fatalf("passed gate = %+v", passed)
+	}
+	failed := EvaluateGates(Summary{
+		AverageRecallAtK:  0.7,
+		RequiredRank1Rate: 0.4,
+		AverageBadAtK:     0.3,
+		BadRank1Rate:      0.2,
+	}, gates)
+	if failed.Passed || len(failed.Failures) != 4 {
+		t.Fatalf("failed gate = %+v; want four failures", failed)
+	}
+}
+
+func TestEvaluateGatesChecksContextMetrics(t *testing.T) {
+	minRecall := 0.8
+	minRank1 := 0.5
+	maxBad := 0.25
+	maxBadRank1 := 0.1
+	gates := GateOptions{
+		MinContextRecallAtK:         &minRecall,
+		MinContextRequiredRank1Rate: &minRank1,
+		MaxAverageContextBadAtK:     &maxBad,
+		MaxContextBadRank1Rate:      &maxBadRank1,
+	}
+	passed := EvaluateGates(Summary{
+		ContextScoredCaseCount:   2,
+		AverageContextRecallAtK:  0.9,
+		ContextRequiredRank1Rate: 0.6,
+		AverageContextBadAtK:     0.1,
+		ContextBadRank1Rate:      0,
+	}, gates)
+	if !passed.Passed || len(passed.Failures) != 0 {
+		t.Fatalf("passed context gate = %+v", passed)
+	}
+	failed := EvaluateGates(Summary{
+		ContextScoredCaseCount:   2,
+		AverageContextRecallAtK:  0.7,
+		ContextRequiredRank1Rate: 0.4,
+		AverageContextBadAtK:     0.3,
+		ContextBadRank1Rate:      0.2,
+	}, gates)
+	if failed.Passed || len(failed.Failures) != 4 {
+		t.Fatalf("failed context gate = %+v; want four failures", failed)
+	}
+	unavailable := EvaluateGates(Summary{}, gates)
+	if unavailable.Passed || len(unavailable.Failures) != 1 || !strings.Contains(unavailable.Failures[0], "context metrics unavailable") {
+		t.Fatalf("unavailable context gate = %+v", unavailable)
+	}
+}
+
+func TestEvaluateGatesChecksEvidenceMetrics(t *testing.T) {
+	minRecall := 0.8
+	minRank1 := 0.5
+	maxBad := 0.25
+	maxBadRank1 := 0.1
+	gates := GateOptions{
+		MinEvidenceRecallAtK:         &minRecall,
+		MinEvidenceRequiredRank1Rate: &minRank1,
+		MaxAverageEvidenceBadAtK:     &maxBad,
+		MaxEvidenceBadRank1Rate:      &maxBadRank1,
+	}
+	passed := EvaluateGates(Summary{
+		EvidenceScoredCaseCount:   2,
+		AverageEvidenceRecallAtK:  0.9,
+		EvidenceRequiredRank1Rate: 0.6,
+		AverageEvidenceBadAtK:     0.1,
+		EvidenceBadRank1Rate:      0,
+	}, gates)
+	if !passed.Passed || len(passed.Failures) != 0 {
+		t.Fatalf("passed evidence gate = %+v", passed)
+	}
+	failed := EvaluateGates(Summary{
+		EvidenceScoredCaseCount:   2,
+		AverageEvidenceRecallAtK:  0.7,
+		EvidenceRequiredRank1Rate: 0.4,
+		AverageEvidenceBadAtK:     0.3,
+		EvidenceBadRank1Rate:      0.2,
+	}, gates)
+	if failed.Passed || len(failed.Failures) != 4 {
+		t.Fatalf("failed evidence gate = %+v; want four failures", failed)
+	}
+	unavailable := EvaluateGates(Summary{}, gates)
+	if unavailable.Passed || len(unavailable.Failures) != 1 || !strings.Contains(unavailable.Failures[0], "evidence metrics unavailable") {
+		t.Fatalf("unavailable evidence gate = %+v", unavailable)
+	}
+}
+
+func TestValidateRequiredQRelMappingsRejectsUnmappedRequiredRefs(t *testing.T) {
+	qrels := map[string]QRel{
+		"case-1": {
+			CaseID:               "case-1",
+			RequiredRefs:         []Ref{{Type: "fact", SourceDocID: "doc-required"}},
+			BadRefs:              []Ref{{Type: "fact", SourceDocID: "doc-bad"}},
+			RequiredEvidenceRefs: []Ref{{Type: "fragment", SourceDocID: "doc-required-evidence"}},
+			BadEvidenceRefs:      []Ref{{Type: "fragment", SourceDocID: "doc-bad-evidence"}},
+		},
+	}
+	suite := []SuiteCase{{CaseID: "case-1"}}
+	mapping := KnowledgeMapping{
+		BySourceDocID: map[string]Ref{
+			"doc-required": {Type: "fragment", ID: "fragment-required", SourceDocID: "doc-required"},
+			"doc-bad":      {Type: "fragment", ID: "fragment-bad", SourceDocID: "doc-bad"},
+		},
+		BySourceDocIDAndType: map[string]map[string][]Ref{
+			"doc-bad": {
+				"fragment": {{Type: "fragment", ID: "fragment-bad", SourceDocID: "doc-bad"}},
+			},
+		},
+	}
+
+	err := validateRequiredQRelMappings(qrels, suite, mapping)
+
+	if err == nil || !strings.Contains(err.Error(), "required qrel ref for case \"case-1\" is unmapped") {
+		t.Fatalf("validateRequiredQRelMappings err = %v", err)
+	}
+	mapping.BySourceDocIDAndType["doc-required"] = map[string][]Ref{
+		"fact": {{Type: "fact", ID: "fact-required", SourceDocID: "doc-required"}},
+	}
+	if err := validateRequiredQRelMappings(qrels, suite, mapping); err == nil || !strings.Contains(err.Error(), "doc-required-evidence") {
+		t.Fatalf("validateRequiredQRelMappings unmapped required evidence err = %v", err)
+	}
+	mapping.BySourceDocIDAndType["doc-required-evidence"] = map[string][]Ref{
+		"fragment": {{Type: "fragment", ID: "fragment-required-evidence", SourceDocID: "doc-required-evidence"}},
+	}
+	if err := validateRequiredQRelMappings(qrels, suite, mapping); err == nil || !strings.Contains(err.Error(), "doc-bad") {
+		t.Fatalf("validateRequiredQRelMappings unmapped bad ref err = %v", err)
+	}
+	mapping.BySourceDocIDAndType["doc-bad"] = map[string][]Ref{
+		"fact": {{Type: "fact", ID: "fact-bad", SourceDocID: "doc-bad"}},
+	}
+	if err := validateRequiredQRelMappings(qrels, suite, mapping); err == nil || !strings.Contains(err.Error(), "doc-bad-evidence") {
+		t.Fatalf("validateRequiredQRelMappings unmapped bad evidence err = %v", err)
+	}
+	mapping.BySourceDocIDAndType["doc-bad-evidence"] = map[string][]Ref{
+		"fragment": {{Type: "fragment", ID: "fragment-bad-evidence", SourceDocID: "doc-bad-evidence"}},
+	}
+	if err := validateRequiredQRelMappings(qrels, suite, mapping); err != nil {
+		t.Fatalf("validateRequiredQRelMappings mapped required and evidence refs: %v", err)
 	}
 }
 

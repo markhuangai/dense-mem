@@ -62,7 +62,7 @@ func (s *recallService) communityFactHits(ctx context.Context, profileID string,
 		filtered = append(filtered, candidate)
 	}
 	factsByID, batchFacts := s.batchHydrateFacts(ctx, profileID, filtered)
-	hits := make([]RecallHit, 0, len(filtered))
+	hydrated := make([]hydratedFactRecallCandidate, 0, len(filtered))
 	for _, candidate := range filtered {
 		var f *domain.Fact
 		if batchFacts {
@@ -88,11 +88,6 @@ func (s *recallService) communityFactHits(ctx context.Context, profileID string,
 		if !factMatchesRecallWindow(f, req.ValidAt, req.KnownAt) {
 			continue
 		}
-		if !req.IncludeEvidence {
-			factCopy := *f
-			factCopy.Evidence = nil
-			f = &factCopy
-		}
 		authorityState := candidate.AuthorityState
 		if authorityState == "" {
 			authorityState = f.AuthorityState
@@ -100,15 +95,33 @@ func (s *recallService) communityFactHits(ctx context.Context, profileID string,
 		if authorityState == "" {
 			authorityState = "authoritative"
 		}
-		f.AuthorityState = authorityState
+		hydrated = append(hydrated, hydratedFactRecallCandidate{Fact: f, AuthorityState: authorityState})
+	}
+	var evidenceFragments map[string]*domain.Fragment
+	var temporalFrame typedCurrentnessTemporalFrame
+	if isCurrentnessQuery(req.Query) {
+		evidenceFragments = s.batchHydrateEvidenceFragments(ctx, profileID, factEvidenceSets(hydrated))
+		temporalFrame = typedCurrentnessTemporalFrameForFacts(req.Query, hydrated, evidenceFragments)
+	}
+	hits := make([]RecallHit, 0, len(hydrated))
+	for _, candidate := range hydrated {
+		f := candidate.Fact
+		f.AuthorityState = candidate.AuthorityState
 		tier := TierActiveFact
-		if authorityState != "authoritative" {
+		if candidate.AuthorityState != "authoritative" {
 			tier = TierConflict
 		}
+		temporalRank := typedTemporalRankTimeForRecallWithEvidence(req.Query, f.ValidFrom, f.ValidTo, f.RecordedAt, f.Evidence, evidenceFragments, temporalFrame, f.Subject, f.Predicate, f.Object)
+		if !req.IncludeEvidence {
+			factCopy := *f
+			factCopy.Evidence = nil
+			f = &factCopy
+		}
 		hits = append(hits, RecallHit{
-			Fact:  f,
-			Tier:  tier,
-			Score: f.TruthScore,
+			Fact:         f,
+			Tier:         tier,
+			Score:        f.TruthScore,
+			temporalRank: temporalRank,
 		})
 	}
 	return hits
@@ -134,7 +147,7 @@ func (s *recallService) communityClaimHits(ctx context.Context, profileID string
 		filtered = append(filtered, candidate)
 	}
 	claimsByID, batchClaims := s.batchHydrateClaims(ctx, profileID, filtered)
-	hits := make([]RecallHit, 0, len(filtered))
+	hydrated := make([]*domain.Claim, 0, len(filtered))
 	for _, candidate := range filtered {
 		var c *domain.Claim
 		if batchClaims {
@@ -160,15 +173,27 @@ func (s *recallService) communityClaimHits(ctx context.Context, profileID string
 		if !claimMatchesRecallWindow(c, req.ValidAt, req.KnownAt) {
 			continue
 		}
+		hydrated = append(hydrated, c)
+	}
+	var evidenceFragments map[string]*domain.Fragment
+	var temporalFrame typedCurrentnessTemporalFrame
+	if isCurrentnessQuery(req.Query) {
+		evidenceFragments = s.batchHydrateEvidenceFragments(ctx, profileID, claimEvidenceSets(hydrated))
+		temporalFrame = typedCurrentnessTemporalFrameForClaims(req.Query, hydrated, evidenceFragments)
+	}
+	hits := make([]RecallHit, 0, len(hydrated))
+	for _, c := range hydrated {
+		temporalRank := typedTemporalRankTimeForRecallWithEvidence(req.Query, c.ValidFrom, c.ValidTo, c.RecordedAt, c.Evidence, evidenceFragments, temporalFrame, c.Subject, c.Predicate, c.Object)
 		if !req.IncludeEvidence {
 			claimCopy := *c
 			claimCopy.Evidence = nil
 			c = &claimCopy
 		}
 		hits = append(hits, RecallHit{
-			Claim: c,
-			Tier:  TierValidatedClaim,
-			Score: c.ExtractConf * s.claimWeight,
+			Claim:        c,
+			Tier:         TierValidatedClaim,
+			Score:        c.ExtractConf * s.claimWeight,
+			temporalRank: temporalRank,
 		})
 	}
 	return hits
@@ -238,11 +263,30 @@ func defaultCommunityExpansionOptions() CommunityExpansionOptions {
 
 func sortRecallHits(hits []RecallHit) {
 	sort.SliceStable(hits, func(i, j int) bool {
-		if hits[i].Tier != hits[j].Tier {
-			return hits[i].Tier < hits[j].Tier
+		leftTier := recallSortTier(hits[i])
+		rightTier := recallSortTier(hits[j])
+		if leftTier != rightTier {
+			return leftTier < rightTier
+		}
+		if !hits[i].temporalRank.IsZero() || !hits[j].temporalRank.IsZero() {
+			switch {
+			case hits[i].temporalRank.IsZero():
+				return false
+			case hits[j].temporalRank.IsZero():
+				return true
+			case !hits[i].temporalRank.Equal(hits[j].temporalRank):
+				return hits[i].temporalRank.After(hits[j].temporalRank)
+			}
 		}
 		return hits[i].Score > hits[j].Score
 	})
+}
+
+func recallSortTier(hit RecallHit) string {
+	if hit.sortTier != "" {
+		return hit.sortTier
+	}
+	return hit.Tier
 }
 
 func recallHitKeySet(hits []RecallHit) map[string]struct{} {

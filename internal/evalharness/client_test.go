@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHTTPClientEvaluationFlow(t *testing.T) {
@@ -111,6 +112,11 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 					"id":   "fragment-alpha",
 					"rank": 1,
 				}},
+				"context_evidence_refs": []map[string]any{{
+					"type": "fragment",
+					"id":   "fragment-evidence",
+					"rank": 1,
+				}},
 				"latency_ms":          42,
 				"context_block_chars": 128,
 			})
@@ -165,8 +171,8 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 	if trace.CaseID != "case-alpha" || trace.Query != "alpha query" || trace.LatencyMS != 42 || trace.ContextBlockChars != 128 {
 		t.Fatalf("trace = %+v", trace)
 	}
-	if len(trace.RankedRefs) != 1 || trace.RankedRefs[0].ID != "fragment-alpha" || len(trace.ContextRefs) != 1 {
-		t.Fatalf("trace refs = %+v/%+v", trace.RankedRefs, trace.ContextRefs)
+	if len(trace.RankedRefs) != 1 || trace.RankedRefs[0].ID != "fragment-alpha" || len(trace.ContextRefs) != 1 || len(trace.ContextEvidenceRefs) != 1 {
+		t.Fatalf("trace refs = %+v/%+v/%+v", trace.RankedRefs, trace.ContextRefs, trace.ContextEvidenceRefs)
 	}
 	if !controlPatched {
 		t.Fatal("control config was not patched")
@@ -195,6 +201,41 @@ func TestHTTPClientErrors(t *testing.T) {
 	}
 }
 
+func TestHTTPClientRunRecallCaseRetriesTransientStatus(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/tools/eval_run_recall_case" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		calls++
+		if calls == 1 {
+			http.Error(w, `{"code":"SERVICE_UNAVAILABLE","message":"embedding provider unavailable"}`, http.StatusServiceUnavailable)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"query": "retry query",
+			"ranked_refs": []map[string]any{{
+				"type": "fragment",
+				"id":   "fragment-retry",
+				"rank": 1,
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	trace, err := client.RunRecallCase(context.Background(), Case{CaseID: "case-retry", Query: "retry query"})
+	if err != nil {
+		t.Fatalf("RunRecallCase retry: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d; want 2", calls)
+	}
+	if len(trace.RankedRefs) != 1 || trace.RankedRefs[0].ID != "fragment-retry" {
+		t.Fatalf("trace = %+v", trace)
+	}
+}
+
 func TestHTTPClientImportRejectsMissingFragmentID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"fragment": map[string]any{}})
@@ -205,6 +246,190 @@ func TestHTTPClientImportRejectsMissingFragmentID(t *testing.T) {
 	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-1", Content: "content"}})
 	if err == nil || !strings.Contains(err.Error(), "remember response missing fragment id") {
 		t.Fatalf("ImportCorpus err = %v", err)
+	}
+}
+
+func TestHTTPClientImportCorpusUsesImportMemoriesForTypedClaims(t *testing.T) {
+	validFrom := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+	validTo := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/tools/import_memories" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		var input map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatalf("decode import_memories body: %v", err)
+		}
+		if input["summary"] != "Service OBS-001 current owner is bob." || input["auto_promote"] != true {
+			t.Fatalf("import_memories input = %#v", input)
+		}
+		claims := input["claims"].([]any)
+		claim := claims[0].(map[string]any)
+		classification := claim["classification"].(map[string]any)
+		if claim["idempotency_key"] != "eval:doc-tiered:claim:1" || classification["source_doc_id"] != "doc-tiered" || classification["eval_seed"] != true {
+			t.Fatalf("claim input = %#v", claim)
+		}
+		if claim["valid_from"] != validFrom.Format(time.RFC3339Nano) {
+			t.Fatalf("valid_from = %v", claim["valid_from"])
+		}
+		if claim["valid_to"] != validTo.Format(time.RFC3339Nano) {
+			t.Fatalf("valid_to = %v", claim["valid_to"])
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"fragment": map[string]any{"id": "fragment-tiered"},
+			"claims": []map[string]any{{
+				"claim_id": "claim-tiered",
+				"fact":     map[string]any{"fact_id": "fact-tiered"},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	mapping, err := client.ImportCorpus(context.Background(), []CorpusItem{{
+		SourceDocID: "doc-tiered",
+		Content:     "Service OBS-001 current owner is bob.",
+		AutoPromote: true,
+		Claims: []TypedClaim{{
+			Subject:        "service OBS-001",
+			Predicate:      "uses",
+			Object:         "owner bob",
+			ExtractConf:    0.95,
+			ResolutionConf: 0.95,
+			ValidFrom:      &validFrom,
+			ValidTo:        &validTo,
+		}},
+	}})
+
+	if err != nil {
+		t.Fatalf("ImportCorpus typed claims: %v", err)
+	}
+	if mapping.BySourceDocID["doc-tiered"].ID != "fragment-tiered" {
+		t.Fatalf("default mapping = %+v", mapping.BySourceDocID["doc-tiered"])
+	}
+	if mapping.BySourceDocIDAndType["doc-tiered"]["claim"][0].ID != "claim-tiered" {
+		t.Fatalf("claim mapping = %+v", mapping.BySourceDocIDAndType)
+	}
+	if mapping.BySourceDocIDAndType["doc-tiered"]["fact"][0].ID != "fact-tiered" {
+		t.Fatalf("fact mapping = %+v", mapping.BySourceDocIDAndType)
+	}
+	if mapping.BySourceDocIDAndType["doc-tiered:claim:1"]["claim"][0].ID != "claim-tiered" {
+		t.Fatalf("claim alias mapping = %+v", mapping.BySourceDocIDAndType)
+	}
+	if mapping.BySourceDocIDAndType["doc-tiered:fact:1"]["fact"][0].ID != "fact-tiered" {
+		t.Fatalf("fact alias mapping = %+v", mapping.BySourceDocIDAndType)
+	}
+}
+
+func TestHTTPClientImportCorpusRejectsTypedClaimErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"fragment": map[string]any{"id": "fragment-tiered"},
+			"claims": []map[string]any{{
+				"claim_id": "claim-tiered",
+				"error":    "claim verify: verifier call failed",
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{
+		SourceDocID: "doc-tiered",
+		Content:     "Service OBS-001 current owner is bob.",
+		Claims: []TypedClaim{{
+			Subject:        "service OBS-001",
+			Predicate:      "uses",
+			Object:         "owner bob",
+			ExtractConf:    0.95,
+			ResolutionConf: 0.95,
+		}},
+	}})
+
+	if err == nil || !strings.Contains(err.Error(), "claim verify: verifier call failed") {
+		t.Fatalf("ImportCorpus err = %v", err)
+	}
+}
+
+func TestHTTPClientImportCorpusAllowsUnpromotedAutoPromoteRows(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"fragment": map[string]any{"id": "fragment-tiered"},
+			"claims": []map[string]any{{
+				"claim_id": "claim-tiered",
+				"status":   "validated",
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	mapping, err := client.ImportCorpus(context.Background(), []CorpusItem{{
+		SourceDocID: "doc-tiered",
+		Content:     "Service OBS-001 current owner is bob.",
+		AutoPromote: true,
+		Claims: []TypedClaim{{
+			Subject:        "service OBS-001",
+			Predicate:      "uses",
+			Object:         "owner bob",
+			ExtractConf:    0.95,
+			ResolutionConf: 0.95,
+		}},
+	}})
+
+	if err != nil {
+		t.Fatalf("ImportCorpus err = %v", err)
+	}
+	if _, ok := mapping.BySourceDocIDAndType["doc-tiered"]["fact"]; ok {
+		t.Fatalf("fact mapping = %+v; want no fact mapping for unpromoted row", mapping.BySourceDocIDAndType)
+	}
+}
+
+func TestHTTPClientExportKnowledgeMappingIncludesClaimsAndFacts(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/tools/eval_list_knowledge_refs" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		var input map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatalf("decode eval_list_knowledge_refs body: %v", err)
+		}
+		switch input["type"] {
+		case "fragment":
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
+				"fragment_id": "fragment-tiered",
+				"metadata":    map[string]any{"source_doc_id": "doc-tiered"},
+			}}})
+		case "claim":
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
+				"claim_id":       "claim-tiered",
+				"classification": map[string]any{"source_doc_id": "doc-tiered"},
+			}}})
+		case "fact":
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
+				"fact_id":                "fact-tiered",
+				"promoted_from_claim_id": "claim-tiered",
+			}}})
+		default:
+			t.Fatalf("unexpected export type %v", input["type"])
+		}
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	mapping, err := client.ExportKnowledgeMapping(context.Background(), 100)
+
+	if err != nil {
+		t.Fatalf("ExportKnowledgeMapping: %v", err)
+	}
+	if mapping.BySourceDocID["doc-tiered"].ID != "fragment-tiered" {
+		t.Fatalf("default mapping = %+v", mapping.BySourceDocID["doc-tiered"])
+	}
+	if mapping.BySourceDocIDAndType["doc-tiered"]["claim"][0].ID != "claim-tiered" {
+		t.Fatalf("claim mapping = %+v", mapping.BySourceDocIDAndType)
+	}
+	if mapping.BySourceDocIDAndType["doc-tiered"]["fact"][0].ID != "fact-tiered" {
+		t.Fatalf("fact mapping = %+v", mapping.BySourceDocIDAndType)
 	}
 }
 

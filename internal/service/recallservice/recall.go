@@ -45,6 +45,10 @@ const (
 	// fetches before merge. The global vector index is shared across profiles,
 	// so we overfetch and post-filter for profile isolation (AC-40).
 	OverfetchMultiplier = 10
+	// IdentifierOverfetchFloor is the minimum branch candidate pool for exact-ID
+	// queries. Low-limit exact-ID queries need enough candidates for rerank to
+	// see the same-ID row in crowded reusable eval teams.
+	IdentifierOverfetchFloor = 50
 	// RRFConstant is the k parameter in Reciprocal Rank Fusion.
 	RRFConstant = 60
 	// DefaultLimit is used when RecallRequest.Limit is zero.
@@ -119,6 +123,8 @@ type RecallHit struct {
 	KeywordRank  int              `json:"keyword_rank"`  // 1-based; 0 if absent from that branch
 	FinalScore   float64          `json:"final_score"`
 	fragmentID   string
+	temporalRank time.Time
+	sortTier     string
 }
 
 // RecallService is the external contract consumed by handlers and the tool
@@ -358,7 +364,7 @@ func (s *recallService) Recall(ctx context.Context, profileID string, req Recall
 	}
 
 	limit := clampLimit(req.Limit)
-	overfetch := limit * OverfetchMultiplier
+	overfetch := recallOverfetchLimit(query, limit)
 
 	var (
 		wg      sync.WaitGroup
@@ -409,8 +415,15 @@ func (s *recallService) Recall(ctx context.Context, profileID string, req Recall
 
 	filteredSem := filterSemanticFragments(semHits, profileID)
 	filteredKw := filterKeywordFragments(kwHits, profileID)
+	filteredSem = filterSemanticFragmentsByWindow(filteredSem, req.ValidAt, req.KnownAt)
+	filteredKw = filterKeywordFragmentsByWindow(filteredKw, req.ValidAt, req.KnownAt)
 
 	merged := rrfMerge(filteredSem, filteredKw)
+	applyIdentifierSpecificityAdjustments(query, merged)
+	applyCurrentnessAdjustments(query, merged)
+	applyCueAdjustments(query, merged)
+	applyAuthorityAdjustments(query, merged)
+	merged = filterNonPositiveRRFEntries(merged)
 
 	sort.SliceStable(merged, func(i, j int) bool {
 		if merged[i].FinalScore != merged[j].FinalScore {
@@ -420,12 +433,18 @@ func (s *recallService) Recall(ctx context.Context, profileID string, req Recall
 	})
 
 	// Collect tier-1 (active facts) and tier-1.5 (validated claims) enrichment.
-	tierHits := s.enrichTierHits(ctx, profileID, limit, req)
+	tierHits := s.enrichTierHits(ctx, profileID, overfetch, req)
+
+	evidenceIntent := isEvidenceSourceQuery(query)
 
 	// Merge tier hits with unhydrated fragment candidates, sort by (tier ASC,
 	// score DESC), then hydrate only selected fragment winners.
 	all := append([]RecallHit{}, tierHits...)
 	for _, m := range merged {
+		sortTier := ""
+		if evidenceIntent {
+			sortTier = "0.5"
+		}
 		all = append(all, RecallHit{
 			Tier:         TierFragment,
 			Score:        m.FinalScore,
@@ -433,6 +452,7 @@ func (s *recallService) Recall(ctx context.Context, profileID string, req Recall
 			KeywordRank:  m.KeywordRank,
 			FinalScore:   m.FinalScore,
 			fragmentID:   m.id,
+			sortTier:     sortTier,
 		})
 	}
 	sortRecallHits(all)
@@ -546,6 +566,7 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 				filtered = append(filtered, candidate)
 			}
 			factsByID, batchFacts := s.batchHydrateFacts(ctx, profileID, filtered)
+			hydrated := make([]hydratedFactRecallCandidate, 0, len(filtered))
 			for _, candidate := range filtered {
 				var f *domain.Fact
 				if batchFacts {
@@ -565,24 +586,42 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 				if !factMatchesRecallWindow(f, req.ValidAt, req.KnownAt) {
 					continue
 				}
+				if !factMatchesQueryIdentifiers(req.Query, f) {
+					continue
+				}
 				authorityState := candidate.AuthorityState
+				if authorityState == "" {
+					authorityState = f.AuthorityState
+				}
 				if authorityState == "" {
 					authorityState = "authoritative"
 				}
+				hydrated = append(hydrated, hydratedFactRecallCandidate{Fact: f, AuthorityState: authorityState})
+			}
+			var evidenceFragments map[string]*domain.Fragment
+			var temporalFrame typedCurrentnessTemporalFrame
+			if isCurrentnessQuery(req.Query) {
+				evidenceFragments = s.batchHydrateEvidenceFragments(ctx, profileID, factEvidenceSets(hydrated))
+				temporalFrame = typedCurrentnessTemporalFrameForFacts(req.Query, hydrated, evidenceFragments)
+			}
+			for _, candidate := range hydrated {
+				f := candidate.Fact
+				f.AuthorityState = candidate.AuthorityState
+				tier := TierActiveFact
+				if candidate.AuthorityState != "authoritative" {
+					tier = TierConflict
+				}
+				temporalRank := typedTemporalRankTimeForRecallWithEvidence(req.Query, f.ValidFrom, f.ValidTo, f.RecordedAt, f.Evidence, evidenceFragments, temporalFrame, f.Subject, f.Predicate, f.Object)
 				if !req.IncludeEvidence {
 					factCopy := *f
 					factCopy.Evidence = nil
 					f = &factCopy
 				}
-				f.AuthorityState = authorityState
-				tier := TierActiveFact
-				if authorityState != "authoritative" {
-					tier = TierConflict
-				}
 				hits = append(hits, RecallHit{
-					Fact:  f,
-					Tier:  tier,
-					Score: f.TruthScore,
+					Fact:         f,
+					Tier:         tier,
+					Score:        f.TruthScore,
+					temporalRank: temporalRank,
 				})
 			}
 		}
@@ -608,6 +647,7 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 				filtered = append(filtered, candidate)
 			}
 			claimsByID, batchClaims := s.batchHydrateClaims(ctx, profileID, filtered)
+			hydrated := make([]*domain.Claim, 0, len(filtered))
 			for _, candidate := range filtered {
 				var c *domain.Claim
 				if batchClaims {
@@ -627,6 +667,19 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 				if !claimMatchesRecallWindow(c, req.ValidAt, req.KnownAt) {
 					continue
 				}
+				if !claimMatchesQueryIdentifiers(req.Query, c) {
+					continue
+				}
+				hydrated = append(hydrated, c)
+			}
+			var evidenceFragments map[string]*domain.Fragment
+			var temporalFrame typedCurrentnessTemporalFrame
+			if isCurrentnessQuery(req.Query) {
+				evidenceFragments = s.batchHydrateEvidenceFragments(ctx, profileID, claimEvidenceSets(hydrated))
+				temporalFrame = typedCurrentnessTemporalFrameForClaims(req.Query, hydrated, evidenceFragments)
+			}
+			for _, c := range hydrated {
+				temporalRank := typedTemporalRankTimeForRecallWithEvidence(req.Query, c.ValidFrom, c.ValidTo, c.RecordedAt, c.Evidence, evidenceFragments, temporalFrame, c.Subject, c.Predicate, c.Object)
 				if !req.IncludeEvidence {
 					claimCopy := *c
 					claimCopy.Evidence = nil
@@ -634,15 +687,21 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 				}
 				score := c.ExtractConf * s.claimWeight
 				hits = append(hits, RecallHit{
-					Claim: c,
-					Tier:  TierValidatedClaim,
-					Score: score,
+					Claim:        c,
+					Tier:         TierValidatedClaim,
+					Score:        score,
+					temporalRank: temporalRank,
 				})
 			}
 		}
 	}
 
 	return hits
+}
+
+type hydratedFactRecallCandidate struct {
+	Fact           *domain.Fact
+	AuthorityState string
 }
 
 func (s *recallService) batchHydrateFacts(ctx context.Context, profileID string, candidates []FactRecallResult) (map[string]*domain.Fact, bool) {
@@ -689,9 +748,71 @@ func (s *recallService) batchHydrateClaims(ctx context.Context, profileID string
 	return claims, true
 }
 
+func (s *recallService) batchHydrateEvidenceFragments(ctx context.Context, profileID string, evidenceSets [][]domain.Evidence) map[string]*domain.Fragment {
+	if s.hydrator == nil {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	entries := make([]rrfEntry, 0)
+	for _, evidence := range evidenceSets {
+		for _, item := range evidence {
+			if item.FragmentID == "" {
+				continue
+			}
+			if _, ok := seen[item.FragmentID]; ok {
+				continue
+			}
+			seen[item.FragmentID] = struct{}{}
+			entries = append(entries, rrfEntry{id: item.FragmentID})
+		}
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	fragments, ok := s.batchHydrateFragments(ctx, profileID, entries)
+	if ok {
+		return fragments
+	}
+	out := make(map[string]*domain.Fragment, len(entries))
+	for _, entry := range entries {
+		frag, err := s.hydrator.GetByID(ctx, profileID, entry.id)
+		if err != nil {
+			s.logHydrateError(entry.id, err)
+			continue
+		}
+		if frag != nil {
+			out[entry.id] = frag
+		}
+	}
+	return out
+}
+
+func factEvidenceSets(candidates []hydratedFactRecallCandidate) [][]domain.Evidence {
+	sets := make([][]domain.Evidence, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.Fact != nil {
+			sets = append(sets, candidate.Fact.Evidence)
+		}
+	}
+	return sets
+}
+
+func claimEvidenceSets(claims []*domain.Claim) [][]domain.Evidence {
+	sets := make([][]domain.Evidence, 0, len(claims))
+	for _, claim := range claims {
+		if claim != nil {
+			sets = append(sets, claim.Evidence)
+		}
+	}
+	return sets
+}
+
 // rrfEntry is the internal accumulator keyed by fragment id.
 type rrfEntry struct {
 	id           string
+	Content      string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 	SemanticRank int
 	KeywordRank  int
 	FinalScore   float64
@@ -708,6 +829,10 @@ func rrfMerge(sem []semanticsearch.SearchHit, kw []keywordsearch.FragmentSearchR
 			e = &rrfEntry{id: h.ID}
 			byID[h.ID] = e
 		}
+		if e.Content == "" {
+			e.Content = h.Content
+		}
+		mergeRRFEntryTimes(e, semanticHitTime(h.CreatedAt), semanticHitTime(h.UpdatedAt))
 		if e.SemanticRank == 0 || rank < e.SemanticRank {
 			e.SemanticRank = rank
 		}
@@ -720,6 +845,10 @@ func rrfMerge(sem []semanticsearch.SearchHit, kw []keywordsearch.FragmentSearchR
 			e = &rrfEntry{id: h.FragmentID}
 			byID[h.FragmentID] = e
 		}
+		if e.Content == "" {
+			e.Content = h.Content
+		}
+		mergeRRFEntryTimes(e, h.CreatedAt, h.UpdatedAt)
 		if e.KeywordRank == 0 || rank < e.KeywordRank {
 			e.KeywordRank = rank
 		}
@@ -732,90 +861,44 @@ func rrfMerge(sem []semanticsearch.SearchHit, kw []keywordsearch.FragmentSearchR
 	return out
 }
 
-func factMatchesRecallWindow(f *domain.Fact, validAt, knownAt *time.Time) bool {
-	if f == nil {
-		return false
+func semanticHitTime(value *time.Time) time.Time {
+	if value == nil {
+		return time.Time{}
 	}
-	if validAt != nil {
-		if f.ValidFrom != nil && f.ValidFrom.After(*validAt) {
-			return false
-		}
-		if f.ValidTo != nil && !f.ValidTo.After(*validAt) {
-			return false
-		}
-	}
-	if knownAt != nil {
-		if f.RecordedAt.After(*knownAt) {
-			return false
-		}
-		if f.RecordedTo != nil && !f.RecordedTo.After(*knownAt) {
-			return false
-		}
-	}
-	return true
+	return value.UTC()
 }
 
-func claimMatchesRecallWindow(c *domain.Claim, validAt, knownAt *time.Time) bool {
-	if c == nil {
-		return false
-	}
-	if validAt != nil {
-		if c.ValidFrom != nil && c.ValidFrom.After(*validAt) {
-			return false
-		}
-		if c.ValidTo != nil && !c.ValidTo.After(*validAt) {
-			return false
+func filterNonPositiveRRFEntries(entries []rrfEntry) []rrfEntry {
+	hasPositive := false
+	for _, entry := range entries {
+		if entry.FinalScore > 0 {
+			hasPositive = true
+			break
 		}
 	}
-	if knownAt != nil {
-		if c.RecordedAt.After(*knownAt) {
-			return false
-		}
-		if c.RecordedTo != nil && !c.RecordedTo.After(*knownAt) {
-			return false
+	if !hasPositive {
+		return entries
+	}
+
+	out := entries[:0]
+	for _, entry := range entries {
+		if entry.FinalScore > 0 {
+			out = append(out, entry)
 		}
 	}
-	return true
+	return out
 }
 
-func factCandidateMatchesRecallWindow(f FactRecallResult, validAt, knownAt *time.Time) bool {
-	if validAt != nil {
-		if f.ValidFrom != nil && f.ValidFrom.After(*validAt) {
-			return false
-		}
-		if f.ValidTo != nil && !f.ValidTo.After(*validAt) {
-			return false
-		}
+func mergeRRFEntryTimes(entry *rrfEntry, createdAt, updatedAt time.Time) {
+	if entry == nil {
+		return
 	}
-	if knownAt != nil {
-		if f.RecordedAt.After(*knownAt) {
-			return false
-		}
-		if f.RecordedTo != nil && !f.RecordedTo.After(*knownAt) {
-			return false
-		}
+	if !createdAt.IsZero() && (entry.CreatedAt.IsZero() || createdAt.Before(entry.CreatedAt)) {
+		entry.CreatedAt = createdAt
 	}
-	return true
-}
-
-func claimCandidateMatchesRecallWindow(c ClaimRecallResult, validAt, knownAt *time.Time) bool {
-	if validAt != nil {
-		if c.ValidFrom != nil && c.ValidFrom.After(*validAt) {
-			return false
-		}
-		if c.ValidTo != nil && !c.ValidTo.After(*validAt) {
-			return false
-		}
+	if !updatedAt.IsZero() && (entry.UpdatedAt.IsZero() || updatedAt.After(entry.UpdatedAt)) {
+		entry.UpdatedAt = updatedAt
 	}
-	if knownAt != nil {
-		if c.RecordedAt.After(*knownAt) {
-			return false
-		}
-		if c.RecordedTo != nil && !c.RecordedTo.After(*knownAt) {
-			return false
-		}
-	}
-	return true
 }
 
 // filterSemanticFragments drops hits outside the caller's profile and any
@@ -859,6 +942,14 @@ func clampLimit(req int) int {
 		return MinLimit
 	}
 	return req
+}
+
+func recallOverfetchLimit(query string, limit int) int {
+	overfetch := limit * OverfetchMultiplier
+	if len(rerankIdentifiers(rerankText(query))) > 0 && overfetch < IdentifierOverfetchFloor {
+		return IdentifierOverfetchFloor
+	}
+	return overfetch
 }
 
 // sanitizeEmbeddingError classifies the provider error type but strips any
