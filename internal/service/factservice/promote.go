@@ -902,6 +902,7 @@ RETURN
     c.resolution_conf                 AS resolution_conf,
     c.source_quality                  AS source_quality,
     c.valid_from                      AS valid_from,
+    c.valid_to                        AS valid_to,
     c.classification                  AS classification,
     c.classification_json             AS classification_json,
     c.classification_lattice_version  AS classification_lattice_version,

@@ -85,6 +85,7 @@ func rowToClaimForPromote(profileID string, row map[string]any) *domain.Claim {
 		ResolutionConf:               float64Val("resolution_conf"),
 		SourceQuality:                float64Val("source_quality"),
 		ValidFrom:                    timePtr("valid_from"),
+		ValidTo:                      timePtr("valid_to"),
 		Classification:               classification,
 		ClassificationLatticeVersion: strVal("classification_lattice_version"),
 		SupportedBy:                  supportedBy,

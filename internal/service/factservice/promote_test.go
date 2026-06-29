@@ -169,6 +169,7 @@ func makeClaimRow(claimID, subject, predicate, object, status string) map[string
 		"resolution_conf":                0.65,
 		"source_quality":                 0.8,
 		"valid_from":                     nil,
+		"valid_to":                       nil,
 		"classification":                 map[string]any{"confidentiality": "internal"},
 		"classification_lattice_version": "v1",
 		"supported_by":                   []any{"frag-1"},
@@ -231,6 +232,10 @@ func TestPromoteHappyPaths(t *testing.T) {
 	t.Run("multi_valued: creates new fact for validated claim", func(t *testing.T) {
 		// AC-35, AC-37, AC-39, AC-42
 		claimRow := makeClaimRow("claim-1", "Alice", "likes", "coffee", string(domain.StatusValidated))
+		validFrom := time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)
+		validTo := time.Date(2026, 6, 28, 0, 0, 0, 0, time.UTC)
+		claimRow["valid_from"] = validFrom
+		claimRow["valid_to"] = validTo
 		db := &stubPromoteDB{
 			responsesByCall: map[int][]map[string]any{
 				0: {claimRow}, // loadClaim
@@ -254,6 +259,10 @@ func TestPromoteHappyPaths(t *testing.T) {
 		require.Equal(t, "claim-1", got.PromotedFromClaimID)
 		require.Equal(t, "v1", got.ClassificationLatticeVersion)
 		require.InDelta(t, 0.80, got.SourceQuality, 1e-9)
+		require.NotNil(t, got.ValidFrom)
+		require.Equal(t, validFrom, *got.ValidFrom)
+		require.NotNil(t, got.ValidTo)
+		require.Equal(t, validTo, *got.ValidTo)
 		// TruthScore: 0.35*0.75 + 0.35*0.65 + 0.15*bool(1>=1) + 0.15*bool(0.8>=0.0=false)
 		// support_count_gate: len([frag-1])=1 >= 1 → true (0.15)
 		// max_quality_gate: MinMaxSourceQuality=0.0 → false (0.00)

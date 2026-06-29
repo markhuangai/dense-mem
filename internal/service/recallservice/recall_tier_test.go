@@ -312,6 +312,52 @@ func TestRecallService_CurrentnessRanksNewerFactsAndClaimsWithinTier(t *testing.
 	require.Equal(t, "claim-old", out[3].Claim.ClaimID)
 }
 
+func TestRecallService_CurrentnessDemotesExpiredFactsAndClaimsWithinTier(t *testing.T) {
+	currentStart := time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)
+	expiredStart := time.Date(2026, 6, 27, 0, 0, 0, 0, time.UTC)
+	expiredEnd := time.Date(2026, 6, 28, 0, 0, 0, 0, time.UTC)
+	earlierRecordedAt := time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
+	currentRecordedAt := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	factSearcher := &fakeFactSearcher{results: []FactRecallResult{
+		{FactID: "fact-expired", ProfileID: "pA", ValidFrom: &expiredStart, ValidTo: &expiredEnd, RecordedAt: earlierRecordedAt},
+		{FactID: "fact-current", ProfileID: "pA", ValidFrom: &currentStart, RecordedAt: currentRecordedAt},
+	}}
+	claimSearcher := &fakeClaimSearcher{results: []ClaimRecallResult{
+		{ClaimID: "claim-expired", ProfileID: "pA", ValidFrom: &expiredStart, ValidTo: &expiredEnd, RecordedAt: earlierRecordedAt},
+		{ClaimID: "claim-current", ProfileID: "pA", ValidFrom: &currentStart, RecordedAt: currentRecordedAt},
+	}}
+	factGetter := &fakeFactGetter{facts: map[string]*domain.Fact{
+		"fact-expired": {FactID: "fact-expired", ProfileID: "pA", Subject: "service OBS-002 owner", Predicate: "uses", Object: "owner-old-override", ValidFrom: &expiredStart, ValidTo: &expiredEnd, RecordedAt: earlierRecordedAt, TruthScore: 0.99},
+		"fact-current": {FactID: "fact-current", ProfileID: "pA", Subject: "service OBS-002 owner", Predicate: "uses", Object: "owner-current", ValidFrom: &currentStart, RecordedAt: currentRecordedAt, TruthScore: 0.20},
+	}}
+	claimGetter := &fakeClaimGetter{claims: map[string]*domain.Claim{
+		"claim-expired": {ClaimID: "claim-expired", ProfileID: "pA", Subject: "service OBS-002 pager", Predicate: "uses", Object: "pager-old-override", ValidFrom: &expiredStart, ValidTo: &expiredEnd, RecordedAt: earlierRecordedAt, ExtractConf: 0.99},
+		"claim-current": {ClaimID: "claim-current", ProfileID: "pA", Subject: "service OBS-002 pager", Predicate: "uses", Object: "pager-current", ValidFrom: &currentStart, RecordedAt: currentRecordedAt, ExtractConf: 0.20},
+	}}
+	svc := NewRecallServiceWithTiers(
+		&stubEmbedding{DimensionsResult: 4},
+		&fakeSemanticSearcher{},
+		&fakeKeywordSearcher{},
+		&fakeHydrator{},
+		factSearcher,
+		factGetter,
+		claimSearcher,
+		claimGetter,
+		0,
+		nil,
+		nil,
+	)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "What is the current owner and pager for service OBS-002?", Limit: 4})
+
+	require.NoError(t, err)
+	require.Len(t, out, 4)
+	require.Equal(t, "fact-current", out[0].Fact.FactID)
+	require.Equal(t, "fact-expired", out[1].Fact.FactID)
+	require.Equal(t, "claim-current", out[2].Claim.ClaimID)
+	require.Equal(t, "claim-expired", out[3].Claim.ClaimID)
+}
+
 func TestRecallService_TierCurrentnessOverfetchesBeforeFinalLimit(t *testing.T) {
 	oldTime := time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
 	newTime := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)

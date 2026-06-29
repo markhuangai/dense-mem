@@ -32,15 +32,8 @@ tests/eval/
       hard_negatives.jsonl
       transforms.jsonl
       licenses.md
-    local_tiered_v1/
-      seed_manifest.json
-      corpus.jsonl
-      cases.jsonl
-      qrels.jsonl
-      licenses.md
   suites/
     local_eval_1k_v2.jsonl
-    local_tiered_v1.jsonl
   runs/
     .gitignore
   cache/
@@ -73,33 +66,6 @@ has one location, but it is intentionally ignored by git because it is hundreds
 of MB. Before using it for a reported run, validate its manifest and keep the
 run artifacts with the seed hash.
 
-`local_tiered_v1` is a small committed seed for the fact and validated-claim
-recall tiers. It contains sixteen rank-1 cases and thirty-two corpus rows
-covering same-tier fact/claim currentness, typed fact/claim content-date
-currentness when `valid_from` is absent, typed fact/claim supporting-evidence
-date currentness when both `valid_from` and triple dates are absent,
-fact-over-fragment behavior, claim-over-fragment behavior, cross-identifier fact
-filtering, `valid_at` temporal windows for facts, claims, and fragment fallback
-metadata, and evidence-source intent where a query asks for the raw source note
-rather than the derived fact or claim. It also includes fragment-only relative
-temporal, month-name temporal, weekday temporal, and numeric temporal cases
-where dated updates must outrank undated notes that only say "current."
-Rows with typed claims are imported through `import_memories`, so the runner can
-score `fragment`, `claim`, and `fact` refs instead of only fragment refs. Fact
-rows request `auto_promote`; live runs depend on the configured verifier and
-promotion path creating active facts for required fact refs. Windowed old
-fact/claim rows include both `valid_from` and `valid_to` so the verifier and
-recall filters receive the same temporal scope as the qrels. The runner fails
-fast when a required qrel ref is unmapped after import; bad refs may remain
-unmapped when promotion policy intentionally rejects them. Typed claim
-predicates must use the allowed import schema values, so typed content-date
-cases place natural-language dates in the subject text while keeping predicate
-`uses`. Some qrels also include `required_evidence_refs` and
-`bad_evidence_refs`, which score supporting fragments attached to assembled
-fact/claim context separately from the top-level retrieved refs. The current
-seed hash is
-`sha256:c116307f643bbaa6a58572be92aefa46d21afca494a7be790f60de1c2fab2b72`.
-
 ## Commands
 
 Validate the default committed seed and suite:
@@ -116,28 +82,6 @@ go run ./cmd/eval-runner \
   --seed tests/eval/seeds/local_train_100k_v1/seed_manifest.json \
   --suite tests/eval/seeds/local_train_100k_v1/suite.jsonl \
   --out tests/eval/runs/local_train_100k_v1_validate
-```
-
-Validate the tiered fact/claim seed:
-
-```bash
-go run ./cmd/eval-runner \
-  --mode validate \
-  --seed tests/eval/seeds/local_tiered_v1/seed_manifest.json \
-  --suite tests/eval/suites/local_tiered_v1.jsonl
-```
-
-Run the tiered seed against a local server:
-
-```bash
-DENSE_MEM_API_KEY=<read-write-key> \
-DENSE_MEM_CONTROL_TOKEN=<control-token> \
-go run ./cmd/eval-runner \
-  --mode candidate \
-  --import-seed \
-  --seed tests/eval/seeds/local_tiered_v1/seed_manifest.json \
-  --suite tests/eval/suites/local_tiered_v1.jsonl \
-  --out tests/eval/runs/$(date -u +%Y%m%dT%H%M%SZ)_local_tiered_candidate
 ```
 
 Run a local live baseline against an already configured local instance:
