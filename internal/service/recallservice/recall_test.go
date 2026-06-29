@@ -1442,6 +1442,47 @@ func TestRecallService_CurrentnessRerankPrefersMonthNameDatedFragment(t *testing
 	require.Equal(t, "f-month-dated", out[0].Fragment.FragmentID)
 }
 
+func TestRecallService_CurrentnessRerankDemotesExpiredValidityRange(t *testing.T) {
+	query := "Who is the current owner for service TMP-004?"
+	importedAt := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	expired := "Current owner note from the old rollout. service TMP-004 owner uses owner-cinder. This assignment is valid through 2026-06-20."
+	current := "Current owner note. service TMP-004 owner uses owner-aurora."
+	sem := &fakeSemanticSearcher{
+		hits: []semanticsearch.SearchHit{
+			{
+				ID:        "f-expired-range",
+				Type:      "fragment",
+				Content:   expired,
+				CreatedAt: importedAt,
+				UpdatedAt: importedAt,
+			},
+		},
+	}
+	kw := &fakeKeywordSearcher{
+		hits: []keywordsearch.FragmentSearchResult{
+			{
+				FragmentID: "f-expired-range",
+				Content:    expired,
+				CreatedAt:  importedAt,
+				UpdatedAt:  importedAt,
+			},
+			{
+				FragmentID: "f-current",
+				Content:    current,
+				CreatedAt:  importedAt,
+				UpdatedAt:  importedAt,
+			},
+		},
+	}
+	svc := NewRecallService(&stubEmbedding{DimensionsResult: 4}, sem, kw, &fakeHydrator{}, nil, nil)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: query, Limit: 5})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, out)
+	require.Equal(t, "f-current", out[0].Fragment.FragmentID)
+}
+
 func TestRecallService_CurrentnessRerankHandlesActiveDecisionQueries(t *testing.T) {
 	query := "What is the active launch decision for notice RET-046?"
 	required := "Retraction update dated 2026-06-28. Earlier approval for notice RET-046 was withdrawn. The active decision is launch-paused-046."
@@ -1504,6 +1545,22 @@ func TestCurrentnessTemporalFramePrefersContentDatesOverBulkImportTimes(t *testi
 	require.Negative(t, currentnessTemporalAdjustment(query, entries[1], frame))
 }
 
+func TestExpiredValidityAdjustmentUsesAsOfTime(t *testing.T) {
+	query := "Who is the current owner for service TMP-004?"
+	entry := rrfEntry{
+		Content:   "Current owner note. service TMP-004 owner uses owner-cinder. This assignment is valid through June 30, 2026.",
+		CreatedAt: time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC),
+	}
+	frame := currentnessTemporalFrame{newestFragmentTime: entry.CreatedAt}
+
+	require.Zero(t, expiredValidityAdjustment(query, entry, frame))
+
+	frame.newestFragmentTime = time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+
+	require.Negative(t, expiredValidityAdjustment(query, entry, frame))
+}
+
 func TestLatestTemporalDateInEntryParsesRelativeDatesFromFragmentTimestamp(t *testing.T) {
 	anchor := time.Date(2026, 6, 28, 18, 30, 0, 0, time.UTC)
 	cases := []struct {
@@ -1554,6 +1611,21 @@ func TestLatestTemporalDateInEntryParsesRelativeDatesFromFragmentTimestamp(t *te
 			require.Equal(t, tc.want, got)
 		})
 	}
+}
+
+func TestLatestCurrentnessTemporalDateInEntryIgnoresValidityEndOnlyDate(t *testing.T) {
+	anchor := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	entry := rrfEntry{
+		Content:   "Current owner note. service TMP-004 owner uses owner-cinder. This assignment is valid through 2026-06-20.",
+		CreatedAt: anchor,
+		UpdatedAt: anchor,
+	}
+
+	require.Equal(t, time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC), latestValidityEndDateInEntry(entry))
+	require.Zero(t, latestCurrentnessTemporalDateInEntry(entry))
+
+	entry.Content = "Owner update dated 2026-06-27. service TMP-004 owner uses owner-aurora; the old assignment was valid through 2026-06-20."
+	require.Equal(t, time.Date(2026, 6, 27, 0, 0, 0, 0, time.UTC), latestCurrentnessTemporalDateInEntry(entry))
 }
 
 func TestFilterNonPositiveRRFEntriesDropsZeroScoresWhenPositiveExists(t *testing.T) {

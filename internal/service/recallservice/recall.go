@@ -919,11 +919,12 @@ func applyCurrentnessAdjustments(query string, entries []rrfEntry) {
 	temporalFrame := currentnessTemporalFrameFor(query, entries)
 	for i := range entries {
 		lexicalAdjustment := currentnessAdjustment(query, entries[i].Content)
-		if temporalFrame.hasContentDate && lexicalAdjustment > 0 && latestTemporalDateInEntry(entries[i]).IsZero() {
+		if temporalFrame.hasContentDate && lexicalAdjustment > 0 && latestCurrentnessTemporalDateInEntry(entries[i]).IsZero() {
 			lexicalAdjustment = 0
 		}
 		entries[i].FinalScore += lexicalAdjustment
 		entries[i].FinalScore += currentnessTemporalAdjustment(query, entries[i], temporalFrame)
+		entries[i].FinalScore += expiredValidityAdjustment(query, entries[i], temporalFrame)
 		if entries[i].FinalScore < 0 {
 			entries[i].FinalScore = 0
 		}
@@ -1006,7 +1007,7 @@ func currentnessTemporalAdjustment(query string, entry rrfEntry, frame currentne
 	}
 
 	if frame.hasContentDate {
-		contentDate := latestTemporalDateInEntry(entry)
+		contentDate := latestCurrentnessTemporalDateInEntry(entry)
 		if contentDate.IsZero() {
 			return -0.006
 		}
@@ -1056,6 +1057,36 @@ func fragmentTimestampTemporalDelta(age time.Duration) float64 {
 	}
 }
 
+func expiredValidityAdjustment(query string, entry rrfEntry, frame currentnessTemporalFrame) float64 {
+	queryText := rerankText(query)
+	contentText := rerankText(entry.Content)
+	if queryText == "" || contentText == "" || !rerankMatchesQueryIdentifiers(queryText, contentText) {
+		return 0
+	}
+	validityEnd := latestValidityEndDateInEntry(entry)
+	if validityEnd.IsZero() {
+		return 0
+	}
+	asOf := currentnessAsOfTime(query, entry, frame)
+	if asOf.IsZero() || !utcDate(asOf).After(utcDate(validityEnd)) {
+		return 0
+	}
+	return -0.04
+}
+
+func currentnessAsOfTime(query string, entry rrfEntry, frame currentnessTemporalFrame) time.Time {
+	if queryDate := latestTemporalDateInText(query, latestFragmentTimestamp(entry.CreatedAt, entry.UpdatedAt)); !queryDate.IsZero() {
+		return queryDate
+	}
+	if !frame.newestContentDate.IsZero() {
+		return frame.newestContentDate
+	}
+	if !frame.newestFragmentTime.IsZero() {
+		return frame.newestFragmentTime
+	}
+	return latestFragmentTimestamp(entry.CreatedAt, entry.UpdatedAt)
+}
+
 func currentnessTemporalFrameFor(query string, entries []rrfEntry) currentnessTemporalFrame {
 	queryText := rerankText(query)
 	var frame currentnessTemporalFrame
@@ -1065,7 +1096,7 @@ func currentnessTemporalFrameFor(query string, entries []rrfEntry) currentnessTe
 		if queryText == "" || contentText == "" || !rerankMatchesQueryIdentifiers(queryText, contentText) {
 			continue
 		}
-		if contentDate := latestTemporalDateInEntry(entry); !contentDate.IsZero() {
+		if contentDate := latestCurrentnessTemporalDateInEntry(entry); !contentDate.IsZero() {
 			frame.hasContentDate = true
 			if frame.newestContentDate.IsZero() || contentDate.After(frame.newestContentDate) {
 				frame.newestContentDate = contentDate
@@ -1236,6 +1267,22 @@ func latestTemporalDateInEntry(entry rrfEntry) time.Time {
 	return latestTemporalDateInText(entry.Content, latestFragmentTimestamp(entry.CreatedAt, entry.UpdatedAt))
 }
 
+func latestCurrentnessTemporalDateInEntry(entry rrfEntry) time.Time {
+	latest := latestTemporalDateInEntry(entry)
+	if latest.IsZero() {
+		return time.Time{}
+	}
+	validityEnd := latestValidityEndDateInEntry(entry)
+	if !validityEnd.IsZero() && utcDate(latest).Equal(utcDate(validityEnd)) {
+		return time.Time{}
+	}
+	return latest
+}
+
+func latestValidityEndDateInEntry(entry rrfEntry) time.Time {
+	return latestValidityEndDateInText(entry.Content, latestFragmentTimestamp(entry.CreatedAt, entry.UpdatedAt))
+}
+
 func latestTemporalDateInEvidence(query string, evidence []domain.Evidence, evidenceFragments map[string]*domain.Fragment) time.Time {
 	if len(evidence) == 0 || len(evidenceFragments) == 0 {
 		return time.Time{}
@@ -1285,6 +1332,100 @@ func latestTemporalDateInText(value string, anchor time.Time) time.Time {
 		latest = weekday
 	}
 	return latest
+}
+
+func latestValidityEndDateInText(value string, anchor time.Time) time.Time {
+	text := rerankText(value)
+	if text == "" {
+		return time.Time{}
+	}
+	fields := strings.Fields(text)
+	latest := time.Time{}
+	for i := range fields {
+		if !validityEndCueAt(fields, i) {
+			continue
+		}
+		for j := i + 1; j < len(fields) && j <= i+4; j++ {
+			candidate, ok := temporalDateAtFields(fields, j, anchor)
+			if !ok {
+				continue
+			}
+			if latest.IsZero() || candidate.After(latest) {
+				latest = candidate
+			}
+			break
+		}
+	}
+	return latest
+}
+
+func validityEndCueAt(fields []string, index int) bool {
+	if index < 0 || index >= len(fields) {
+		return false
+	}
+	field := fields[index]
+	if field == "valid" && index+1 < len(fields) && validityEndPreposition(fields[index+1]) {
+		return true
+	}
+	if validityEndPreposition(field) && index > 0 && fields[index-1] == "valid" {
+		return true
+	}
+	switch field {
+	case "expires", "expire", "expired", "expiration", "ends", "ended", "ending", "sunsets", "sunset", "retired":
+		return true
+	default:
+		return false
+	}
+}
+
+func validityEndPreposition(token string) bool {
+	switch token {
+	case "through", "until", "to", "before":
+		return true
+	default:
+		return false
+	}
+}
+
+func temporalDateAtFields(fields []string, index int, anchor time.Time) (time.Time, bool) {
+	if index < 0 || index >= len(fields) {
+		return time.Time{}, false
+	}
+	if parsed, err := time.Parse("2006-01-02", fields[index]); err == nil {
+		return parsed.UTC(), true
+	}
+	anchorYear := 0
+	if !anchor.IsZero() {
+		anchorYear = anchor.UTC().Year()
+	}
+	if parsed, ok := numericDateToken(fields[index], anchorYear); ok {
+		return parsed, true
+	}
+	if month, ok := monthNameNumber(fields[index]); ok {
+		if index+1 < len(fields) {
+			if day, ok := parseDayOfMonth(fields[index+1]); ok {
+				year := anchorYear
+				if index+2 < len(fields) {
+					if parsedYear, ok := parseYear(fields[index+2]); ok {
+						year = parsedYear
+					}
+				}
+				return calendarDate(year, month, day)
+			}
+		}
+	}
+	if day, ok := parseDayOfMonth(fields[index]); ok && index+1 < len(fields) {
+		if month, ok := monthNameNumber(fields[index+1]); ok {
+			year := anchorYear
+			if index+2 < len(fields) {
+				if parsedYear, ok := parseYear(fields[index+2]); ok {
+					year = parsedYear
+				}
+			}
+			return calendarDate(year, month, day)
+		}
+	}
+	return time.Time{}, false
 }
 
 func latestMonthNameDateInText(value string, anchor time.Time) time.Time {

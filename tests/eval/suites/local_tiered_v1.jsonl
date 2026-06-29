@@ -14,3 +14,4 @@
 {"case_id":"local_tiered_v1_fragment_month_name_currentness","weight":1,"slices":["tiered","fragment_currentness","temporal","adversarial"]}
 {"case_id":"local_tiered_v1_fragment_weekday_currentness","weight":1,"slices":["tiered","fragment_currentness","temporal","adversarial"]}
 {"case_id":"local_tiered_v1_fragment_numeric_currentness","weight":1,"slices":["tiered","fragment_currentness","temporal","adversarial"]}
+{"case_id":"local_tiered_v1_fragment_expired_range_v2_currentness","weight":1,"slices":["tiered","fragment_currentness","temporal_range","adversarial"]}
