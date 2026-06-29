@@ -49,6 +49,10 @@ func TestEvalScoreRetrievalCaseScoresAndAudits(t *testing.T) {
 			map[string]any{"type": "claim", "id": "claim-1"},
 			map[string]any{"type": "fact", "id": "fact-1"},
 		},
+		"context_refs": []any{
+			map[string]any{"type": "fact", "id": "fact-1"},
+			map[string]any{"type": "fragment", "id": "irrelevant-1"},
+		},
 		"required_refs": []any{
 			map[string]any{"type": "claim", "id": "claim-1", "grade": 2},
 			map[string]any{"type": "fact", "id": "fact-1", "grade": 1},
@@ -70,6 +74,12 @@ func TestEvalScoreRetrievalCaseScoresAndAudits(t *testing.T) {
 	}
 	if out["recall_at_k"] != float64(1) || out["mrr"] != float64(0.5) {
 		t.Fatalf("ranking metrics = %v", out)
+	}
+	if out["context_scored"] != true || out["context_relevant_at_k"] != 1 || out["context_bad_at_k"] != 1 {
+		t.Fatalf("context metrics = %v", out)
+	}
+	if out["context_recall_at_k"] != 0.5 || out["context_mrr"] != float64(1) {
+		t.Fatalf("context ranking metrics = %v", out)
 	}
 	if len(audit.entries) != 1 {
 		t.Fatalf("audit entries = %d; want 1", len(audit.entries))

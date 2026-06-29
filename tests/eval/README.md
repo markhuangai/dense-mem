@@ -205,6 +205,23 @@ ranked_refs + qrels.required_refs + qrels.bad_refs
   -> bad_rank1_rate
 ```
 
+When a trace includes `context_refs`, the runner also scores the assembled
+context with the same qrels and writes separate `context_*` metrics:
+
+```text
+context_refs + qrels.required_refs + qrels.bad_refs
+  -> average_context_recall_at_k
+  -> average_context_mrr
+  -> average_context_ndcg_at_k
+  -> average_context_bad_at_k
+  -> context_required_rank1_rate
+  -> context_bad_rank1_rate
+```
+
+The original ranked metrics are unchanged. Use the context metrics when the
+question is whether a judged-bad item reached the final assembled context, not
+only whether it appeared in the raw ranked retrieval list.
+
 `source_doc_id` labels are remapped to Dense-Mem refs after import or export.
 The mapping keeps a backward-compatible default fragment ref and also supports
 type-aware refs for seeds that use the same `source_doc_id` as a fragment,

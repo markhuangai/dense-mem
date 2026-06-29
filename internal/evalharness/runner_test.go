@@ -425,6 +425,54 @@ func TestScoreTracesUsesMappingAndPenalizesUnmappedRefs(t *testing.T) {
 	}
 }
 
+func TestScoreTracesScoresContextRefsSeparately(t *testing.T) {
+	suite := []SuiteCase{{CaseID: "case-1", Slices: []string{"context"}}}
+	cases := map[string]Case{
+		"case-1": {CaseID: "case-1", Query: "alpha?", Limit: 2},
+	}
+	qrels := map[string]QRel{
+		"case-1": {
+			CaseID:       "case-1",
+			RequiredRefs: []Ref{{Type: "fragment", SourceDocID: "doc-alpha"}},
+			BadRefs:      []Ref{{Type: "fragment", SourceDocID: "doc-beta"}},
+		},
+	}
+	traces := []RecallTrace{{
+		CaseID:      "case-1",
+		Query:       "alpha?",
+		RankedRefs:  []Ref{{Type: "fragment", ID: "frag-alpha"}},
+		ContextRefs: []Ref{{Type: "fragment", ID: "frag-beta"}},
+	}}
+	mapping := KnowledgeMapping{BySourceDocID: map[string]Ref{
+		"doc-alpha": {Type: "fragment", ID: "frag-alpha", SourceDocID: "doc-alpha"},
+		"doc-beta":  {Type: "fragment", ID: "frag-beta", SourceDocID: "doc-beta"},
+	}}
+
+	scores, summary, err := ScoreTraces("run-1", "baseline", "seed-1", "sha256:test", "suite.jsonl", suite, cases, qrels, traces, mapping)
+	if err != nil {
+		t.Fatalf("ScoreTraces: %v", err)
+	}
+	score := scores[0]
+	if score.RecallAtK != 1 || score.BadAtK != 0 || score.FirstRequiredRank != 1 {
+		t.Fatalf("ranked score = %+v", score)
+	}
+	if !score.ContextScored || score.ContextRecallAtK != 0 || score.ContextBadAtK != 1 || score.ContextFirstBadRank != 1 {
+		t.Fatalf("context score = %+v", score)
+	}
+	if len(score.ContextMissingRequired) != 1 || len(score.ContextBadRefsAtK) != 1 {
+		t.Fatalf("context miss/bad refs = %+v", score)
+	}
+	if summary.AverageRecallAtK != 1 || summary.AverageBadAtK != 0 {
+		t.Fatalf("ranked summary = %+v", summary)
+	}
+	if summary.ContextScoredCaseCount != 1 || summary.AverageContextRecallAtK != 0 || summary.AverageContextBadAtK != 1 || summary.ContextBadRank1Rate != 1 {
+		t.Fatalf("context summary = %+v", summary)
+	}
+	if summary.Slices["context"].ContextScoredCaseCount != 1 || summary.Slices["context"].AverageContextBadAtK != 1 {
+		t.Fatalf("slice summary = %+v", summary.Slices)
+	}
+}
+
 func TestResolveRefPrefersTypeAwareSourceMapping(t *testing.T) {
 	mapping := newKnowledgeMapping()
 	addSourceMapping(&mapping, Ref{Type: "fragment", ID: "fragment-tiered", SourceDocID: "doc-tiered"}, true)
@@ -487,6 +535,43 @@ func TestEvaluateGates(t *testing.T) {
 	}, gates)
 	if failed.Passed || len(failed.Failures) != 4 {
 		t.Fatalf("failed gate = %+v; want four failures", failed)
+	}
+}
+
+func TestEvaluateGatesChecksContextMetrics(t *testing.T) {
+	minRecall := 0.8
+	minRank1 := 0.5
+	maxBad := 0.25
+	maxBadRank1 := 0.1
+	gates := GateOptions{
+		MinContextRecallAtK:         &minRecall,
+		MinContextRequiredRank1Rate: &minRank1,
+		MaxAverageContextBadAtK:     &maxBad,
+		MaxContextBadRank1Rate:      &maxBadRank1,
+	}
+	passed := EvaluateGates(Summary{
+		ContextScoredCaseCount:   2,
+		AverageContextRecallAtK:  0.9,
+		ContextRequiredRank1Rate: 0.6,
+		AverageContextBadAtK:     0.1,
+		ContextBadRank1Rate:      0,
+	}, gates)
+	if !passed.Passed || len(passed.Failures) != 0 {
+		t.Fatalf("passed context gate = %+v", passed)
+	}
+	failed := EvaluateGates(Summary{
+		ContextScoredCaseCount:   2,
+		AverageContextRecallAtK:  0.7,
+		ContextRequiredRank1Rate: 0.4,
+		AverageContextBadAtK:     0.3,
+		ContextBadRank1Rate:      0.2,
+	}, gates)
+	if failed.Passed || len(failed.Failures) != 4 {
+		t.Fatalf("failed context gate = %+v; want four failures", failed)
+	}
+	unavailable := EvaluateGates(Summary{}, gates)
+	if unavailable.Passed || len(unavailable.Failures) != 1 || !strings.Contains(unavailable.Failures[0], "context metrics unavailable") {
+		t.Fatalf("unavailable context gate = %+v", unavailable)
 	}
 }
 

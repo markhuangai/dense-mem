@@ -33,6 +33,10 @@ func main() {
 	registerFloatGate("min-required-rank1-rate", "minimum share of cases with a required ref ranked first", &opts.Gates.MinRequiredRank1Rate, validateRate)
 	registerFloatGate("max-average-bad-at-k", "maximum average bad refs@k allowed for scoring modes", &opts.Gates.MaxAverageBadAtK, validateNonNegative)
 	registerFloatGate("max-bad-rank1-rate", "maximum share of cases with a bad ref ranked first", &opts.Gates.MaxBadRank1Rate, validateRate)
+	registerFloatGate("min-context-recall-at-k", "minimum average context recall@k required when context refs are present", &opts.Gates.MinContextRecallAtK, validateRate)
+	registerFloatGate("min-context-required-rank1-rate", "minimum share of context-scored cases with a required ref first in context", &opts.Gates.MinContextRequiredRank1Rate, validateRate)
+	registerFloatGate("max-average-context-bad-at-k", "maximum average bad context refs@k allowed when context refs are present", &opts.Gates.MaxAverageContextBadAtK, validateNonNegative)
+	registerFloatGate("max-context-bad-rank1-rate", "maximum share of context-scored cases with a bad ref first in context", &opts.Gates.MaxContextBadRank1Rate, validateRate)
 	flag.Parse()
 
 	ctx := context.Background()
@@ -41,8 +45,17 @@ func main() {
 		if err != nil {
 			exitf("compare: %v", err)
 		}
-		fmt.Printf("comparison written: recall_delta=%.4f mrr_delta=%.4f ndcg_delta=%.4f bad_at_k_delta=%.4f\n",
+		msg := fmt.Sprintf("comparison written: recall_delta=%.4f mrr_delta=%.4f ndcg_delta=%.4f bad_at_k_delta=%.4f",
 			comparison.RecallDelta, comparison.MRRDelta, comparison.NDCGDelta, comparison.BadAtKDelta)
+		if comparison.ContextRecallDelta != 0 || comparison.ContextMRRDelta != 0 || comparison.ContextNDCGDelta != 0 || comparison.ContextBadAtKDelta != 0 {
+			msg += fmt.Sprintf(" context_recall_delta=%.4f context_mrr_delta=%.4f context_ndcg_delta=%.4f context_bad_at_k_delta=%.4f",
+				comparison.ContextRecallDelta,
+				comparison.ContextMRRDelta,
+				comparison.ContextNDCGDelta,
+				comparison.ContextBadAtKDelta,
+			)
+		}
+		fmt.Println(msg)
 		return
 	}
 	if opts.OutDir == "" {
@@ -52,7 +65,7 @@ func main() {
 	if err != nil {
 		exitf("eval run: %v", err)
 	}
-	fmt.Printf("run_id=%s mode=%s seed_hash=%s cases=%d scored=%d recall_at_k=%.4f mrr=%.4f ndcg_at_k=%.4f bad_at_k=%.4f required_rank1=%.4f bad_rank1=%.4f out=%s\n",
+	msg := fmt.Sprintf("run_id=%s mode=%s seed_hash=%s cases=%d scored=%d recall_at_k=%.4f mrr=%.4f ndcg_at_k=%.4f bad_at_k=%.4f required_rank1=%.4f bad_rank1=%.4f",
 		summary.RunID,
 		summary.Mode,
 		summary.SeedHash,
@@ -64,8 +77,19 @@ func main() {
 		summary.AverageBadAtK,
 		summary.RequiredRank1Rate,
 		summary.BadRank1Rate,
-		opts.OutDir,
 	)
+	if summary.ContextScoredCaseCount > 0 {
+		msg += fmt.Sprintf(" context_scored=%d context_recall_at_k=%.4f context_mrr=%.4f context_ndcg_at_k=%.4f context_bad_at_k=%.4f context_required_rank1=%.4f context_bad_rank1=%.4f",
+			summary.ContextScoredCaseCount,
+			summary.AverageContextRecallAtK,
+			summary.AverageContextMRR,
+			summary.AverageContextNDCGAtK,
+			summary.AverageContextBadAtK,
+			summary.ContextRequiredRank1Rate,
+			summary.ContextBadRank1Rate,
+		)
+	}
+	fmt.Printf("%s out=%s\n", msg, opts.OutDir)
 }
 
 func registerFloatGate(name, usage string, target **float64, validate func(float64) error) {

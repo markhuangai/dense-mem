@@ -55,6 +55,20 @@ func ScoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, mapping Know
 		UnmappedSourceRefs: append(unmappedRequired, unmappedBad...),
 		LatencyMS:          trace.LatencyMS,
 	}
+	if trace.ContextRefs != nil {
+		contextMetrics := recallquality.ScoreAtK(resultRefs(trace.ContextRefs), required, bad, k)
+		score.ContextScored = true
+		score.ContextRelevantAtK = contextMetrics.RelevantAtK
+		score.ContextRelevantTotal = contextMetrics.RelevantTotal
+		score.ContextBadAtK = contextMetrics.BadAtK
+		score.ContextRecallAtK = contextMetrics.RecallAtK
+		score.ContextMRR = contextMetrics.MRR
+		score.ContextNDCGAtK = contextMetrics.NDCGAtK
+		score.ContextFirstRequiredRank = firstRank(trace.ContextRefs, qrel.RequiredRefs, mapping)
+		score.ContextFirstBadRank = firstRank(trace.ContextRefs, qrel.BadRefs, mapping)
+		score.ContextMissingRequired = missingRequiredRefs(qrel.RequiredRefs, trace.ContextRefs, mapping, k)
+		score.ContextBadRefsAtK = badRefsAtK(qrel.BadRefs, trace.ContextRefs, mapping, k)
+	}
 	return score
 }
 
@@ -81,6 +95,19 @@ func SummarizeScores(runID, mode, seedID, seedHash, suitePath string, suite []Su
 		summary.AverageNDCGAtK += score.NDCGAtK
 		summary.AverageBadAtK += float64(score.BadAtK)
 		summary.UnmappedSourceRefs += len(score.UnmappedSourceRefs)
+		if score.ContextScored {
+			summary.ContextScoredCaseCount++
+			summary.AverageContextRecallAtK += score.ContextRecallAtK
+			summary.AverageContextMRR += score.ContextMRR
+			summary.AverageContextNDCGAtK += score.ContextNDCGAtK
+			summary.AverageContextBadAtK += float64(score.ContextBadAtK)
+			if score.ContextFirstRequiredRank == 1 {
+				summary.ContextRequiredRank1Rate++
+			}
+			if score.ContextFirstBadRank == 1 {
+				summary.ContextBadRank1Rate++
+			}
+		}
 		if score.FirstRequiredRank == 1 {
 			summary.RequiredRank1Rate++
 		}
@@ -95,13 +122,27 @@ func SummarizeScores(runID, mode, seedID, seedHash, suitePath string, suite []Su
 	summary.AverageBadAtK /= denom
 	summary.RequiredRank1Rate /= denom
 	summary.BadRank1Rate /= denom
+	if summary.ContextScoredCaseCount > 0 {
+		contextDenom := float64(summary.ContextScoredCaseCount)
+		summary.AverageContextRecallAtK /= contextDenom
+		summary.AverageContextMRR /= contextDenom
+		summary.AverageContextNDCGAtK /= contextDenom
+		summary.AverageContextBadAtK /= contextDenom
+		summary.ContextRequiredRank1Rate /= contextDenom
+		summary.ContextBadRank1Rate /= contextDenom
+	}
 
 	type accum struct {
-		count  int
-		recall float64
-		mrr    float64
-		ndcg   float64
-		bad    float64
+		count         int
+		recall        float64
+		mrr           float64
+		ndcg          float64
+		bad           float64
+		contextCount  int
+		contextRecall float64
+		contextMRR    float64
+		contextNDCG   float64
+		contextBad    float64
 	}
 	accums := map[string]*accum{}
 	for _, suiteCase := range suite {
@@ -122,17 +163,33 @@ func SummarizeScores(runID, mode, seedID, seedHash, suitePath string, suite []Su
 			a.mrr += score.MRR
 			a.ndcg += score.NDCGAtK
 			a.bad += float64(score.BadAtK)
+			if score.ContextScored {
+				a.contextCount++
+				a.contextRecall += score.ContextRecallAtK
+				a.contextMRR += score.ContextMRR
+				a.contextNDCG += score.ContextNDCGAtK
+				a.contextBad += float64(score.ContextBadAtK)
+			}
 		}
 	}
 	for slice, a := range accums {
 		denom := float64(a.count)
-		summary.Slices[slice] = SliceAvg{
+		avg := SliceAvg{
 			CaseCount:        a.count,
 			AverageRecallAtK: a.recall / denom,
 			AverageMRR:       a.mrr / denom,
 			AverageNDCGAtK:   a.ndcg / denom,
 			AverageBadAtK:    a.bad / denom,
 		}
+		if a.contextCount > 0 {
+			contextDenom := float64(a.contextCount)
+			avg.ContextScoredCaseCount = a.contextCount
+			avg.AverageContextRecallAtK = a.contextRecall / contextDenom
+			avg.AverageContextMRR = a.contextMRR / contextDenom
+			avg.AverageContextNDCGAtK = a.contextNDCG / contextDenom
+			avg.AverageContextBadAtK = a.contextBad / contextDenom
+		}
+		summary.Slices[slice] = avg
 	}
 	return summary
 }
@@ -142,13 +199,17 @@ func CompareSummaries(baseline, candidate Summary) (Comparison, error) {
 		return Comparison{}, fmt.Errorf("seed hash mismatch: baseline %s candidate %s", baseline.SeedHash, candidate.SeedHash)
 	}
 	return Comparison{
-		BaselineRunID:  baseline.RunID,
-		CandidateRunID: candidate.RunID,
-		SeedHash:       baseline.SeedHash,
-		RecallDelta:    candidate.AverageRecallAtK - baseline.AverageRecallAtK,
-		MRRDelta:       candidate.AverageMRR - baseline.AverageMRR,
-		NDCGDelta:      candidate.AverageNDCGAtK - baseline.AverageNDCGAtK,
-		BadAtKDelta:    candidate.AverageBadAtK - baseline.AverageBadAtK,
+		BaselineRunID:      baseline.RunID,
+		CandidateRunID:     candidate.RunID,
+		SeedHash:           baseline.SeedHash,
+		RecallDelta:        candidate.AverageRecallAtK - baseline.AverageRecallAtK,
+		MRRDelta:           candidate.AverageMRR - baseline.AverageMRR,
+		NDCGDelta:          candidate.AverageNDCGAtK - baseline.AverageNDCGAtK,
+		BadAtKDelta:        candidate.AverageBadAtK - baseline.AverageBadAtK,
+		ContextRecallDelta: candidate.AverageContextRecallAtK - baseline.AverageContextRecallAtK,
+		ContextMRRDelta:    candidate.AverageContextMRR - baseline.AverageContextMRR,
+		ContextNDCGDelta:   candidate.AverageContextNDCGAtK - baseline.AverageContextNDCGAtK,
+		ContextBadAtKDelta: candidate.AverageContextBadAtK - baseline.AverageContextBadAtK,
 	}, nil
 }
 
@@ -157,10 +218,14 @@ func EvaluateGates(summary Summary, gates GateOptions) GateResult {
 		Passed:     true,
 		Thresholds: map[string]float64{},
 		Metrics: map[string]float64{
-			"average_recall_at_k": summary.AverageRecallAtK,
-			"required_rank1_rate": summary.RequiredRank1Rate,
-			"average_bad_at_k":    summary.AverageBadAtK,
-			"bad_rank1_rate":      summary.BadRank1Rate,
+			"average_recall_at_k":         summary.AverageRecallAtK,
+			"required_rank1_rate":         summary.RequiredRank1Rate,
+			"average_bad_at_k":            summary.AverageBadAtK,
+			"bad_rank1_rate":              summary.BadRank1Rate,
+			"average_context_recall_at_k": summary.AverageContextRecallAtK,
+			"context_required_rank1_rate": summary.ContextRequiredRank1Rate,
+			"average_context_bad_at_k":    summary.AverageContextBadAtK,
+			"context_bad_rank1_rate":      summary.ContextBadRank1Rate,
 		},
 	}
 	checkMin := func(name string, value float64, threshold *float64) {
@@ -187,6 +252,17 @@ func EvaluateGates(summary Summary, gates GateOptions) GateResult {
 	checkMin("required_rank1_rate", summary.RequiredRank1Rate, gates.MinRequiredRank1Rate)
 	checkMax("average_bad_at_k", summary.AverageBadAtK, gates.MaxAverageBadAtK)
 	checkMax("bad_rank1_rate", summary.BadRank1Rate, gates.MaxBadRank1Rate)
+	if gates.ContextAny() {
+		if summary.ContextScoredCaseCount == 0 {
+			result.Passed = false
+			result.Failures = append(result.Failures, "context metrics unavailable: no traces included context_refs")
+		} else {
+			checkMin("average_context_recall_at_k", summary.AverageContextRecallAtK, gates.MinContextRecallAtK)
+			checkMin("context_required_rank1_rate", summary.ContextRequiredRank1Rate, gates.MinContextRequiredRank1Rate)
+			checkMax("average_context_bad_at_k", summary.AverageContextBadAtK, gates.MaxAverageContextBadAtK)
+			checkMax("context_bad_rank1_rate", summary.ContextBadRank1Rate, gates.MaxContextBadRank1Rate)
+		}
+	}
 	return result
 }
 
@@ -194,7 +270,15 @@ func (g GateOptions) Any() bool {
 	return g.MinRecallAtK != nil ||
 		g.MinRequiredRank1Rate != nil ||
 		g.MaxAverageBadAtK != nil ||
-		g.MaxBadRank1Rate != nil
+		g.MaxBadRank1Rate != nil ||
+		g.ContextAny()
+}
+
+func (g GateOptions) ContextAny() bool {
+	return g.MinContextRecallAtK != nil ||
+		g.MinContextRequiredRank1Rate != nil ||
+		g.MaxAverageContextBadAtK != nil ||
+		g.MaxContextBadRank1Rate != nil
 }
 
 func remapJudgments(refs []Ref, mapping KnowledgeMapping) ([]recallquality.Judgment, []Ref) {

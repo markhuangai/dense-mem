@@ -304,13 +304,14 @@ func evalRunRecallCaseTool(deps Dependencies) Tool {
 func evalScoreRetrievalCaseTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "eval_score_retrieval_case",
-		Description: "Score one ranked retrieval case against required and bad refs using deterministic recallquality metrics.",
+		Description: "Score one ranked retrieval case and optional context refs against required and bad refs using deterministic recallquality metrics.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"ranked_refs", "required_refs"},
 			"properties": map[string]any{
 				"k":             map[string]any{"type": "integer", "minimum": 1, "maximum": maxEvalK},
 				"ranked_refs":   evalRefArraySchema(false),
+				"context_refs":  evalRefArraySchema(false),
 				"required_refs": evalRefArraySchema(true),
 				"bad_refs":      evalRefArraySchema(false),
 			},
@@ -327,7 +328,21 @@ func evalScoreRetrievalCaseTool(deps Dependencies) Tool {
 			required := evalJudgments(input["required_refs"])
 			bad := evalResultRefs(input["bad_refs"])
 			metrics := recallquality.ScoreAtK(ranked, required, bad, k)
-			return structToMap(metrics)
+			out, err := structToMap(metrics)
+			if err != nil {
+				return nil, err
+			}
+			if _, ok := input["context_refs"]; ok {
+				contextMetrics := recallquality.ScoreAtK(evalResultRefs(input["context_refs"]), required, bad, k)
+				out["context_scored"] = true
+				out["context_relevant_at_k"] = contextMetrics.RelevantAtK
+				out["context_relevant_total"] = contextMetrics.RelevantTotal
+				out["context_bad_at_k"] = contextMetrics.BadAtK
+				out["context_recall_at_k"] = contextMetrics.RecallAtK
+				out["context_mrr"] = contextMetrics.MRR
+				out["context_ndcg_at_k"] = contextMetrics.NDCGAtK
+			}
+			return out, nil
 		},
 	}
 }
