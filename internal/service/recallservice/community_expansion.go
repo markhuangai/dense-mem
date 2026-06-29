@@ -109,7 +109,7 @@ func (s *recallService) communityFactHits(ctx context.Context, profileID string,
 			Fact:         f,
 			Tier:         tier,
 			Score:        f.TruthScore,
-			temporalRank: temporalRankTimeForRecall(req.Query, f.ValidFrom, f.RecordedAt),
+			temporalRank: temporalRankTimeForRecall(req.Query, f.ValidFrom, f.RecordedAt, f.Subject, f.Predicate, f.Object),
 		})
 	}
 	return hits
@@ -170,7 +170,7 @@ func (s *recallService) communityClaimHits(ctx context.Context, profileID string
 			Claim:        c,
 			Tier:         TierValidatedClaim,
 			Score:        c.ExtractConf * s.claimWeight,
-			temporalRank: temporalRankTimeForRecall(req.Query, c.ValidFrom, c.RecordedAt),
+			temporalRank: temporalRankTimeForRecall(req.Query, c.ValidFrom, c.RecordedAt, c.Subject, c.Predicate, c.Object),
 		})
 	}
 	return hits

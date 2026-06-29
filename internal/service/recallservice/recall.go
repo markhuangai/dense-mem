@@ -603,7 +603,7 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 					Fact:         f,
 					Tier:         tier,
 					Score:        f.TruthScore,
-					temporalRank: temporalRankTimeForRecall(req.Query, f.ValidFrom, f.RecordedAt),
+					temporalRank: temporalRankTimeForRecall(req.Query, f.ValidFrom, f.RecordedAt, f.Subject, f.Predicate, f.Object),
 				})
 			}
 		}
@@ -661,7 +661,7 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 					Claim:        c,
 					Tier:         TierValidatedClaim,
 					Score:        score,
-					temporalRank: temporalRankTimeForRecall(req.Query, c.ValidFrom, c.RecordedAt),
+					temporalRank: temporalRankTimeForRecall(req.Query, c.ValidFrom, c.RecordedAt, c.Subject, c.Predicate, c.Object),
 				})
 			}
 		}
@@ -1018,12 +1018,15 @@ func latestFragmentTimestamp(createdAt, updatedAt time.Time) time.Time {
 	return latest.UTC()
 }
 
-func temporalRankTimeForRecall(query string, validFrom *time.Time, recordedAt time.Time) time.Time {
+func temporalRankTimeForRecall(query string, validFrom *time.Time, recordedAt time.Time, contentParts ...string) time.Time {
 	if !isCurrentnessQuery(query) {
 		return time.Time{}
 	}
 	if validFrom != nil && !validFrom.IsZero() {
 		return validFrom.UTC()
+	}
+	if contentDate := latestTemporalDateInText(strings.Join(contentParts, " "), recordedAt); !contentDate.IsZero() {
+		return contentDate
 	}
 	if !recordedAt.IsZero() {
 		return recordedAt.UTC()
@@ -1072,13 +1075,16 @@ func latestISODateInText(value string) time.Time {
 }
 
 func latestTemporalDateInEntry(entry rrfEntry) time.Time {
-	latest := latestISODateInText(entry.Content)
-	anchor := latestFragmentTimestamp(entry.CreatedAt, entry.UpdatedAt)
-	monthName := latestMonthNameDateInText(entry.Content, anchor)
+	return latestTemporalDateInText(entry.Content, latestFragmentTimestamp(entry.CreatedAt, entry.UpdatedAt))
+}
+
+func latestTemporalDateInText(value string, anchor time.Time) time.Time {
+	latest := latestISODateInText(value)
+	monthName := latestMonthNameDateInText(value, anchor)
 	if !monthName.IsZero() && (latest.IsZero() || monthName.After(latest)) {
 		latest = monthName
 	}
-	relative := latestRelativeDateInText(entry.Content, anchor)
+	relative := latestRelativeDateInText(value, anchor)
 	if !relative.IsZero() && (latest.IsZero() || relative.After(latest)) {
 		latest = relative
 	}

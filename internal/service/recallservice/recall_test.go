@@ -632,6 +632,132 @@ func TestRecallService_TierEnrichmentUsesQueryMatchedSearchers(t *testing.T) {
 	assert.Equal(t, int32(0), atomic.LoadInt32(&claimGetter.callCount))
 }
 
+func TestRecallService_CurrentnessRanksFactByTripleContentDate(t *testing.T) {
+	requiredRecordedAt := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	negativeRecordedAt := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	factSearcher := &fakeFactSearcher{
+		results: []FactRecallResult{
+			{FactID: "fact-required", ProfileID: "pA", RecordedAt: requiredRecordedAt},
+			{FactID: "fact-negative", ProfileID: "pA", RecordedAt: negativeRecordedAt},
+		},
+	}
+	factGetter := &fakeFactGetter{
+		facts: map[string]*domain.Fact{
+			"fact-required": {
+				FactID:     "fact-required",
+				ProfileID:  "pA",
+				Subject:    "service TIER-D-001 owner as of June 27, 2026",
+				Predicate:  "uses",
+				Object:     "owner-jade",
+				Status:     domain.FactStatusActive,
+				TruthScore: 0.7,
+				RecordedAt: requiredRecordedAt,
+			},
+			"fact-negative": {
+				FactID:     "fact-negative",
+				ProfileID:  "pA",
+				Subject:    "service TIER-D-001 owner as of June 20, 2026",
+				Predicate:  "uses",
+				Object:     "owner-onyx",
+				Status:     domain.FactStatusActive,
+				TruthScore: 0.99,
+				RecordedAt: negativeRecordedAt,
+			},
+		},
+	}
+	svc := NewRecallServiceWithTiers(
+		&stubEmbedding{DimensionsResult: 4},
+		&fakeSemanticSearcher{},
+		&fakeKeywordSearcher{},
+		&fakeHydrator{},
+		factSearcher,
+		factGetter,
+		nil,
+		nil,
+		0,
+		nil,
+		nil,
+	)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "Who is the current owner for service TIER-D-001?", Limit: 1})
+
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.NotNil(t, out[0].Fact)
+	require.Equal(t, "fact-required", out[0].Fact.FactID)
+}
+
+func TestRecallService_CurrentnessRanksClaimByTripleContentDate(t *testing.T) {
+	requiredRecordedAt := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	negativeRecordedAt := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	claimSearcher := &fakeClaimSearcher{
+		results: []ClaimRecallResult{
+			{ClaimID: "claim-required", ProfileID: "pA", RecordedAt: requiredRecordedAt},
+			{ClaimID: "claim-negative", ProfileID: "pA", RecordedAt: negativeRecordedAt},
+		},
+	}
+	claimGetter := &fakeClaimGetter{
+		claims: map[string]*domain.Claim{
+			"claim-required": {
+				ClaimID:     "claim-required",
+				ProfileID:   "pA",
+				Subject:     "service TIER-D-002 pager as of June 27, 2026",
+				Predicate:   "uses",
+				Object:      "pager-jade",
+				Status:      domain.StatusValidated,
+				ExtractConf: 0.2,
+				RecordedAt:  requiredRecordedAt,
+			},
+			"claim-negative": {
+				ClaimID:     "claim-negative",
+				ProfileID:   "pA",
+				Subject:     "service TIER-D-002 pager as of June 20, 2026",
+				Predicate:   "uses",
+				Object:      "pager-onyx",
+				Status:      domain.StatusValidated,
+				ExtractConf: 0.99,
+				RecordedAt:  negativeRecordedAt,
+			},
+		},
+	}
+	svc := NewRecallServiceWithTiers(
+		&stubEmbedding{DimensionsResult: 4},
+		&fakeSemanticSearcher{},
+		&fakeKeywordSearcher{},
+		&fakeHydrator{},
+		nil,
+		nil,
+		claimSearcher,
+		claimGetter,
+		0,
+		nil,
+		nil,
+	)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "What is the latest pager for service TIER-D-002?", Limit: 1})
+
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.NotNil(t, out[0].Claim)
+	require.Equal(t, "claim-required", out[0].Claim.ClaimID)
+}
+
+func TestTemporalRankTimeForRecallPrefersValidFromOverTripleContentDate(t *testing.T) {
+	validFrom := time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)
+	recordedAt := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+
+	got := temporalRankTimeForRecall(
+		"Who is the current owner for service TIER-D-003?",
+		&validFrom,
+		recordedAt,
+		"service TIER-D-003 owner as of June 27, 2026",
+		"uses",
+		"owner-jade",
+	)
+
+	require.Equal(t, validFrom, got)
+}
+
 func TestRecallService_EvidenceSourceQueryPrefersFragmentOverDerivedFact(t *testing.T) {
 	query := "Which source note says service TIER-E-001 owner uses owner-lumen?"
 	content := "Source note from ops. service TIER-E-001 owner uses owner-lumen."
