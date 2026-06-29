@@ -115,7 +115,7 @@ func (c *HTTPClient) importMemoryCorpusItem(ctx context.Context, item CorpusItem
 	if len(item.Claims) > 0 && len(claims) != len(item.Claims) {
 		return fmt.Errorf("import %s: import_memories returned %d claim outcomes for %d typed claims", item.SourceDocID, len(claims), len(item.Claims))
 	}
-	for _, raw := range claims {
+	for i, raw := range claims {
 		claim, _ := raw.(map[string]any)
 		if errText := stringValue(claim["error"]); errText != "" {
 			return fmt.Errorf("import %s: claim import failed: %s", item.SourceDocID, errText)
@@ -123,11 +123,13 @@ func (c *HTTPClient) importMemoryCorpusItem(ctx context.Context, item CorpusItem
 		claimID := stringValue(claim["claim_id"])
 		if claimID != "" {
 			addSourceMapping(mapping, Ref{Type: "claim", ID: claimID, SourceDocID: item.SourceDocID}, false)
+			addSourceMapping(mapping, Ref{Type: "claim", ID: claimID, SourceDocID: typedClaimSourceDocID(item.SourceDocID, i+1)}, false)
 		}
 		fact, _ := claim["fact"].(map[string]any)
 		factID := firstNonEmpty(stringValue(fact["fact_id"]), stringValue(fact["id"]))
 		if factID != "" {
 			addSourceMapping(mapping, Ref{Type: "fact", ID: factID, SourceDocID: item.SourceDocID}, false)
+			addSourceMapping(mapping, Ref{Type: "fact", ID: factID, SourceDocID: typedFactSourceDocID(item.SourceDocID, i+1)}, false)
 		}
 	}
 	return nil
@@ -182,6 +184,7 @@ func (c *HTTPClient) exportKnowledgeMapping(ctx context.Context, limit int, kind
 	}
 	mapping := newKnowledgeMapping()
 	claimSourceDocIDs := map[string]string{}
+	claimFactSourceDocIDs := map[string]string{}
 	for _, kind := range kinds {
 		cursor := ""
 		for {
@@ -198,14 +201,21 @@ func (c *HTTPClient) exportKnowledgeMapping(ctx context.Context, limit int, kind
 				return mapping, err
 			}
 			for _, item := range out.Items {
-				sourceDocID := sourceDocIDFromKnowledgeItem(kind, item, claimSourceDocIDs)
 				id := knowledgeItemID(kind, item)
-				if sourceDocID == "" || id == "" {
+				if id == "" {
 					continue
 				}
-				addSourceMapping(&mapping, Ref{Type: kind, ID: id, SourceDocID: sourceDocID}, kind == "fragment")
+				sourceDocIDs := sourceDocIDsFromKnowledgeItem(kind, item, claimSourceDocIDs, claimFactSourceDocIDs)
+				for _, sourceDocID := range sourceDocIDs {
+					addSourceMapping(&mapping, Ref{Type: kind, ID: id, SourceDocID: sourceDocID}, kind == "fragment")
+				}
 				if kind == "claim" {
-					claimSourceDocIDs[id] = sourceDocID
+					if len(sourceDocIDs) > 0 {
+						claimSourceDocIDs[id] = sourceDocIDs[0]
+					}
+					if factSourceDocID := factSourceDocIDForClaimSourceDocIDs(sourceDocIDs); factSourceDocID != "" {
+						claimFactSourceDocIDs[id] = factSourceDocID
+					}
 				}
 			}
 			if !out.HasMore || out.NextCursor == "" {
@@ -343,6 +353,8 @@ func seedTypedClaims(item CorpusItem) []map[string]any {
 		for key, value := range metadata {
 			classification[key] = value
 		}
+		classification["eval_claim_source_doc_id"] = typedClaimSourceDocID(item.SourceDocID, i+1)
+		classification["eval_fact_source_doc_id"] = typedFactSourceDocID(item.SourceDocID, i+1)
 		claimInput := map[string]any{
 			"subject":         claim.Subject,
 			"predicate":       claim.Predicate,
@@ -390,16 +402,79 @@ func seedTypedClaims(item CorpusItem) []map[string]any {
 	return claims
 }
 
-func sourceDocIDFromKnowledgeItem(kind string, item map[string]any, claimSourceDocIDs map[string]string) string {
+func sourceDocIDsFromKnowledgeItem(kind string, item map[string]any, claimSourceDocIDs, claimFactSourceDocIDs map[string]string) []string {
 	sourceDocID := firstNonEmpty(
 		nestedString(item, "metadata", "source_doc_id"),
 		nestedString(item, "classification", "source_doc_id"),
 		nestedString(item, "classification", "eval_source_doc_id"),
 	)
-	if sourceDocID != "" || kind != "fact" {
-		return sourceDocID
+	sourceDocIDs := []string{}
+	if sourceDocID != "" {
+		sourceDocIDs = append(sourceDocIDs, sourceDocID)
 	}
-	return claimSourceDocIDs[stringValue(item["promoted_from_claim_id"])]
+	switch kind {
+	case "claim":
+		sourceDocIDs = append(sourceDocIDs,
+			nestedString(item, "classification", "eval_claim_source_doc_id"),
+			typedClaimSourceDocIDFromIdempotencyKey(stringValue(item["idempotency_key"])),
+		)
+	case "fact":
+		if sourceDocID == "" {
+			sourceDocIDs = append(sourceDocIDs, claimSourceDocIDs[stringValue(item["promoted_from_claim_id"])])
+		}
+		sourceDocIDs = append(sourceDocIDs,
+			nestedString(item, "classification", "eval_fact_source_doc_id"),
+			claimFactSourceDocIDs[stringValue(item["promoted_from_claim_id"])],
+		)
+	}
+	return uniqueNonEmpty(sourceDocIDs)
+}
+
+func factSourceDocIDForClaimSourceDocIDs(sourceDocIDs []string) string {
+	for _, sourceDocID := range sourceDocIDs {
+		if factSourceDocID := typedFactSourceDocIDFromClaimSourceDocID(sourceDocID); factSourceDocID != "" {
+			return factSourceDocID
+		}
+	}
+	return ""
+}
+
+func typedClaimSourceDocID(sourceDocID string, index int) string {
+	return fmt.Sprintf("%s:claim:%d", sourceDocID, index)
+}
+
+func typedFactSourceDocID(sourceDocID string, index int) string {
+	return fmt.Sprintf("%s:fact:%d", sourceDocID, index)
+}
+
+func typedFactSourceDocIDFromClaimSourceDocID(sourceDocID string) string {
+	const marker = ":claim:"
+	index := strings.LastIndex(sourceDocID, marker)
+	if index == -1 {
+		return ""
+	}
+	return sourceDocID[:index] + ":fact:" + sourceDocID[index+len(marker):]
+}
+
+func typedClaimSourceDocIDFromIdempotencyKey(key string) string {
+	const prefix = "eval:"
+	key = strings.TrimSpace(key)
+	if !strings.HasPrefix(key, prefix) {
+		return ""
+	}
+	rest := strings.TrimPrefix(key, prefix)
+	const marker = ":claim:"
+	index := strings.LastIndex(rest, marker)
+	if index <= 0 || index+len(marker) >= len(rest) {
+		return ""
+	}
+	ordinal := rest[index+len(marker):]
+	for _, r := range ordinal {
+		if r < '0' || r > '9' {
+			return ""
+		}
+	}
+	return rest[:index] + marker + ordinal
 }
 
 func knowledgeItemID(kind string, item map[string]any) string {

@@ -134,6 +134,14 @@ func TestRerankAdjustmentsCoverCapsAndIdentifierGuards(t *testing.T) {
 	currentQuery := "Who is the current owner for service TMP-201?"
 	require.Zero(t, currentnessAdjustment("", "current service TMP-201"))
 	require.Positive(t, currentnessAdjustment(currentQuery, "Current service TMP-201 owner uses owner-green."))
+	require.Zero(t, currentnessAdjustment(
+		"Who is the current primary owner for account L0001?",
+		"Current account L0002 owner uses owner-red.",
+	))
+	require.Positive(t, currentnessAdjustment(
+		"Who is the current primary owner for account L0001?",
+		"Current account L0001 owner uses owner-green.",
+	))
 	require.InDelta(
 		t,
 		0.018,
@@ -172,7 +180,8 @@ func TestRerankAdjustmentsCoverCapsAndIdentifierGuards(t *testing.T) {
 		0.000001,
 	)
 	require.True(t, identifiersMatchContent(nil, ""))
-	require.Equal(t, []string{"tmp-204"}, rerankIdentifiers(rerankText("TMP-204 TMP-204 2026-06-29")))
+	require.Equal(t, []string{"tmp-204", "l0001"}, rerankIdentifiers(rerankText("TMP-204 TMP-204 L0001 2026-06-29 30s v2 local_eval_1k_v2 abc/123")))
+	require.Equal(t, IdentifierOverfetchFloor, recallOverfetchLimit("Who owns account L0001?", 1))
 }
 
 func TestApplyRerankAdjustmentsClampNegativeScoresAndSkipOtherQueries(t *testing.T) {
@@ -219,6 +228,9 @@ func TestFragmentMetadataRecallWindowCoversMetadataFormats(t *testing.T) {
 	after := base.Add(time.Hour)
 
 	got, ok := metadataTime(map[string]any{"recordedAt": base.Format(time.RFC3339Nano)}, "recorded_at", "recordedAt")
+	require.True(t, ok)
+	require.Equal(t, base, got)
+	got, ok = metadataTime(map[string]any{"recorded_at": "not-time", "recordedAt": base.Format(time.RFC3339Nano)}, "recorded_at", "recordedAt")
 	require.True(t, ok)
 	require.Equal(t, base, got)
 	_, ok = metadataTime(map[string]any{"recorded_at": "not-time"}, "recorded_at")

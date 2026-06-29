@@ -553,6 +553,19 @@ func TestResolveRefPrefersTypeAwareSourceMapping(t *testing.T) {
 	if resolved, ok := resolveRef(Ref{Type: "fact", SourceDocID: "doc-fragment-only"}, fragmentOnly); ok {
 		t.Fatalf("fact ref resolved to fragment mapping: %+v", resolved)
 	}
+
+	multi := newKnowledgeMapping()
+	addSourceMapping(&multi, Ref{Type: "claim", ID: "claim-1", SourceDocID: "doc-multi"}, false)
+	addSourceMapping(&multi, Ref{Type: "claim", ID: "claim-2", SourceDocID: "doc-multi"}, false)
+	addSourceMapping(&multi, Ref{Type: "claim", ID: "claim-1", SourceDocID: "doc-multi:claim:1"}, false)
+	addSourceMapping(&multi, Ref{Type: "claim", ID: "claim-2", SourceDocID: "doc-multi:claim:2"}, false)
+	if resolved, ok := resolveRef(Ref{Type: "claim", SourceDocID: "doc-multi"}, multi); ok {
+		t.Fatalf("ambiguous claim ref resolved: %+v", resolved)
+	}
+	aliased, ok := resolveRef(Ref{Type: "claim", SourceDocID: "doc-multi:claim:2"}, multi)
+	if !ok || aliased.ID != "claim-2" {
+		t.Fatalf("alias claim resolve = %+v, %v", aliased, ok)
+	}
 }
 
 func TestEvaluateGates(t *testing.T) {
@@ -667,6 +680,7 @@ func TestValidateRequiredQRelMappingsRejectsUnmappedRequiredRefs(t *testing.T) {
 			RequiredRefs:         []Ref{{Type: "fact", SourceDocID: "doc-required"}},
 			BadRefs:              []Ref{{Type: "fact", SourceDocID: "doc-bad"}},
 			RequiredEvidenceRefs: []Ref{{Type: "fragment", SourceDocID: "doc-required-evidence"}},
+			BadEvidenceRefs:      []Ref{{Type: "fragment", SourceDocID: "doc-bad-evidence"}},
 		},
 	}
 	suite := []SuiteCase{{CaseID: "case-1"}}
@@ -675,9 +689,9 @@ func TestValidateRequiredQRelMappingsRejectsUnmappedRequiredRefs(t *testing.T) {
 			"doc-required": {Type: "fragment", ID: "fragment-required", SourceDocID: "doc-required"},
 			"doc-bad":      {Type: "fragment", ID: "fragment-bad", SourceDocID: "doc-bad"},
 		},
-		BySourceDocIDAndType: map[string]map[string]Ref{
+		BySourceDocIDAndType: map[string]map[string][]Ref{
 			"doc-bad": {
-				"fragment": {Type: "fragment", ID: "fragment-bad", SourceDocID: "doc-bad"},
+				"fragment": {{Type: "fragment", ID: "fragment-bad", SourceDocID: "doc-bad"}},
 			},
 		},
 	}
@@ -687,14 +701,26 @@ func TestValidateRequiredQRelMappingsRejectsUnmappedRequiredRefs(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "required qrel ref for case \"case-1\" is unmapped") {
 		t.Fatalf("validateRequiredQRelMappings err = %v", err)
 	}
-	mapping.BySourceDocIDAndType["doc-required"] = map[string]Ref{
-		"fact": {Type: "fact", ID: "fact-required", SourceDocID: "doc-required"},
+	mapping.BySourceDocIDAndType["doc-required"] = map[string][]Ref{
+		"fact": {{Type: "fact", ID: "fact-required", SourceDocID: "doc-required"}},
 	}
 	if err := validateRequiredQRelMappings(qrels, suite, mapping); err == nil || !strings.Contains(err.Error(), "doc-required-evidence") {
 		t.Fatalf("validateRequiredQRelMappings unmapped required evidence err = %v", err)
 	}
-	mapping.BySourceDocIDAndType["doc-required-evidence"] = map[string]Ref{
-		"fragment": {Type: "fragment", ID: "fragment-required-evidence", SourceDocID: "doc-required-evidence"},
+	mapping.BySourceDocIDAndType["doc-required-evidence"] = map[string][]Ref{
+		"fragment": {{Type: "fragment", ID: "fragment-required-evidence", SourceDocID: "doc-required-evidence"}},
+	}
+	if err := validateRequiredQRelMappings(qrels, suite, mapping); err == nil || !strings.Contains(err.Error(), "doc-bad") {
+		t.Fatalf("validateRequiredQRelMappings unmapped bad ref err = %v", err)
+	}
+	mapping.BySourceDocIDAndType["doc-bad"] = map[string][]Ref{
+		"fact": {{Type: "fact", ID: "fact-bad", SourceDocID: "doc-bad"}},
+	}
+	if err := validateRequiredQRelMappings(qrels, suite, mapping); err == nil || !strings.Contains(err.Error(), "doc-bad-evidence") {
+		t.Fatalf("validateRequiredQRelMappings unmapped bad evidence err = %v", err)
+	}
+	mapping.BySourceDocIDAndType["doc-bad-evidence"] = map[string][]Ref{
+		"fragment": {{Type: "fragment", ID: "fragment-bad-evidence", SourceDocID: "doc-bad-evidence"}},
 	}
 	if err := validateRequiredQRelMappings(qrels, suite, mapping); err != nil {
 		t.Fatalf("validateRequiredQRelMappings mapped required and evidence refs: %v", err)

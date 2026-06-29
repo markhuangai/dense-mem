@@ -30,20 +30,23 @@ const (
 
 // ContentHash returns the lowercase SHA-256 hex of the canonical form:
 //
-//	subject + "|" + predicate + "|" + object + "|" + normalized_valid_from
+//	subject + "|" + predicate + "|" + object + "|" + normalized_valid_from + "|" + normalized_valid_to
 //
-// normalized_valid_from is the RFC 3339 UTC representation of validFrom when
-// non-nil, or empty string when nil. When nil the canonical input ends with a
-// trailing "|" with no suffix after the last pipe.
+// normalized validity values are RFC 3339 UTC representations when non-nil, or
+// empty strings when nil.
 //
 // No trimming or case-folding is applied to the input fields — the caller is
 // responsible for normalizing before invoking this function.
-func ContentHash(subject, predicate, object string, validFrom *time.Time) string {
+func ContentHash(subject, predicate, object string, validFrom, validTo *time.Time) string {
 	normalizedValidFrom := ""
 	if validFrom != nil {
 		normalizedValidFrom = validFrom.UTC().Format(time.RFC3339)
 	}
-	input := subject + "|" + predicate + "|" + object + "|" + normalizedValidFrom
+	normalizedValidTo := ""
+	if validTo != nil {
+		normalizedValidTo = validTo.UTC().Format(time.RFC3339)
+	}
+	input := subject + "|" + predicate + "|" + object + "|" + normalizedValidFrom + "|" + normalizedValidTo
 	hash := sha256.Sum256([]byte(input))
 	return hex.EncodeToString(hash[:])
 }

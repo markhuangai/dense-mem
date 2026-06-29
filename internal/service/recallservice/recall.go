@@ -591,6 +591,9 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 				}
 				authorityState := candidate.AuthorityState
 				if authorityState == "" {
+					authorityState = f.AuthorityState
+				}
+				if authorityState == "" {
 					authorityState = "authoritative"
 				}
 				hydrated = append(hydrated, hydratedFactRecallCandidate{Fact: f, AuthorityState: authorityState})
@@ -821,7 +824,7 @@ func rrfMerge(sem []semanticsearch.SearchHit, kw []keywordsearch.FragmentSearchR
 		if e.Content == "" {
 			e.Content = h.Content
 		}
-		mergeRRFEntryTimes(e, h.CreatedAt, h.UpdatedAt)
+		mergeRRFEntryTimes(e, semanticHitTime(h.CreatedAt), semanticHitTime(h.UpdatedAt))
 		if e.SemanticRank == 0 || rank < e.SemanticRank {
 			e.SemanticRank = rank
 		}
@@ -848,6 +851,13 @@ func rrfMerge(sem []semanticsearch.SearchHit, kw []keywordsearch.FragmentSearchR
 		out = append(out, *e)
 	}
 	return out
+}
+
+func semanticHitTime(value *time.Time) time.Time {
+	if value == nil {
+		return time.Time{}
+	}
+	return value.UTC()
 }
 
 func filterNonPositiveRRFEntries(entries []rrfEntry) []rrfEntry {

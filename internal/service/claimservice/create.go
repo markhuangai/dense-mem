@@ -140,7 +140,7 @@ ON CREATE SET
 //
 // Algorithm:
 //  1. Pre-hash field-length guard (ValidateClaimIdentityInputs).
-//  2. Compute content_hash (SHA-256 of subject|predicate|object|valid_from).
+//  2. Compute content_hash (SHA-256 of subject|predicate|object|valid_from|valid_to).
 //  3. Derive deterministic claim_id:
 //     – UUIDv5(profileID, idempotencyKey) when key present, else
 //     – UUIDv5(profileID, contentHash).
@@ -173,7 +173,7 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 	}
 
 	// Step 2: compute content_hash.
-	contentHash := claimidentity.ContentHash(claim.Subject, claim.Predicate, claim.Object, claim.ValidFrom)
+	contentHash := claimidentity.ContentHash(claim.Subject, claim.Predicate, claim.Object, claim.ValidFrom, claim.ValidTo)
 	ownerID, ownerName, _ := requestctx.ActorOwner(ctx)
 	identityScopeID := profileID
 	if ownerID != "" {

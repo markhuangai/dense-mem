@@ -60,8 +60,8 @@ func TestRecallService_CurrentnessRerankPrefersNewerDatedFragment(t *testing.T) 
 				ID:        "f-old-current",
 				Type:      "fragment",
 				Content:   "Current owner record. account TMP-001 owner is alice.",
-				CreatedAt: oldCreated,
-				UpdatedAt: oldCreated,
+				CreatedAt: testTimePtr(oldCreated),
+				UpdatedAt: testTimePtr(oldCreated),
 			},
 		},
 	}
@@ -152,8 +152,8 @@ func TestRecallService_CurrentnessRerankDatedFragmentBeatsUndatedCurrentCue(t *t
 		ID:        "f-old-current",
 		Type:      "fragment",
 		Content:   "Current owner record. account TMP-001 owner is alice.",
-		CreatedAt: oldCreated,
-		UpdatedAt: oldCreated,
+		CreatedAt: testTimePtr(oldCreated),
+		UpdatedAt: testTimePtr(oldCreated),
 	}
 	sem := &fakeSemanticSearcher{
 		hits: []semanticsearch.SearchHit{oldCurrent},
@@ -192,8 +192,8 @@ func TestRecallService_CurrentnessRerankPrefersRelativeDatedFragment(t *testing.
 				ID:        "f-undated-current",
 				Type:      "fragment",
 				Content:   "Current owner note. service TMP-002 owner uses owner-moon.",
-				CreatedAt: importedAt,
-				UpdatedAt: importedAt,
+				CreatedAt: testTimePtr(importedAt),
+				UpdatedAt: testTimePtr(importedAt),
 			},
 		},
 	}
@@ -231,8 +231,8 @@ func TestRecallService_CurrentnessRerankPrefersMonthNameDatedFragment(t *testing
 				ID:        "f-undated-current",
 				Type:      "fragment",
 				Content:   "Current owner note. service TMP-003 owner uses owner-moon.",
-				CreatedAt: importedAt,
-				UpdatedAt: importedAt,
+				CreatedAt: testTimePtr(importedAt),
+				UpdatedAt: testTimePtr(importedAt),
 			},
 		},
 	}
@@ -272,8 +272,8 @@ func TestRecallService_CurrentnessRerankDemotesExpiredValidityRange(t *testing.T
 				ID:        "f-expired-range",
 				Type:      "fragment",
 				Content:   expired,
-				CreatedAt: importedAt,
-				UpdatedAt: importedAt,
+				CreatedAt: testTimePtr(importedAt),
+				UpdatedAt: testTimePtr(importedAt),
 			},
 		},
 	}

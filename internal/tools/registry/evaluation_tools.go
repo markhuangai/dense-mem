@@ -761,7 +761,7 @@ func contextEvidenceRefs(items []contextservice.ContextItem) []map[string]any {
 			if fragment == nil || strings.TrimSpace(fragment.FragmentID) == "" {
 				continue
 			}
-			key := "fragment:" + fragment.FragmentID
+			key := "fragment:" + fragment.FragmentID + "|parent:" + item.Type + ":" + item.ID
 			if _, ok := seen[key]; ok {
 				continue
 			}
@@ -801,16 +801,12 @@ func evalRefArraySchema(withGrade bool) map[string]any {
 }
 
 func evalResultRefs(value any) []recallquality.ResultRef {
-	raw, ok := value.([]any)
-	if !ok {
+	maps := evalRefMaps(value)
+	if maps == nil {
 		return nil
 	}
-	refs := make([]recallquality.ResultRef, 0, len(raw))
-	for _, item := range raw {
-		m, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
+	refs := make([]recallquality.ResultRef, 0, len(maps))
+	for _, m := range maps {
 		refs = append(refs, recallquality.ResultRef{
 			Type: stringInput(m["type"]),
 			ID:   stringInput(m["id"]),
@@ -820,16 +816,12 @@ func evalResultRefs(value any) []recallquality.ResultRef {
 }
 
 func evalJudgments(value any) []recallquality.Judgment {
-	raw, ok := value.([]any)
-	if !ok {
+	maps := evalRefMaps(value)
+	if maps == nil {
 		return nil
 	}
-	refs := make([]recallquality.Judgment, 0, len(raw))
-	for _, item := range raw {
-		m, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
+	refs := make([]recallquality.Judgment, 0, len(maps))
+	for _, m := range maps {
 		grade := 1.0
 		if parsed, ok := schemaNumber(m["grade"]); ok {
 			grade = parsed
@@ -841,6 +833,23 @@ func evalJudgments(value any) []recallquality.Judgment {
 		})
 	}
 	return refs
+}
+
+func evalRefMaps(value any) []map[string]any {
+	switch raw := value.(type) {
+	case []any:
+		maps := make([]map[string]any, 0, len(raw))
+		for _, item := range raw {
+			if m, ok := item.(map[string]any); ok {
+				maps = append(maps, m)
+			}
+		}
+		return maps
+	case []map[string]any:
+		return raw
+	default:
+		return nil
+	}
 }
 
 func optionalTime(value any) (*time.Time, error) {

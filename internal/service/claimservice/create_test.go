@@ -160,7 +160,7 @@ func TestCreateClaimDedupeAndDefaults(t *testing.T) {
 			Predicate: "is",
 			Object:    "star",
 		}
-		expectedHash := claimidentity.ContentHash(input.Subject, input.Predicate, input.Object, nil)
+		expectedHash := claimidentity.ContentHash(input.Subject, input.Predicate, input.Object, nil, nil)
 
 		existing := &domain.Claim{ClaimID: "hash-dupe-id", ProfileID: profileID}
 		lookup := &stubClaimDedupeLookup{
@@ -220,8 +220,9 @@ func TestCreateClaimDedupeAndDefaults(t *testing.T) {
 			},
 		}
 
-		validFrom := time.Date(2026, 6, 27, 0, 0, 0, 0, time.UTC)
-		validTo := time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC)
+		loc := time.FixedZone("UTC-7", -7*60*60)
+		validFrom := time.Date(2026, 6, 27, 9, 0, 0, 0, loc)
+		validTo := time.Date(2026, 7, 27, 9, 0, 0, 0, loc)
 		input := &domain.Claim{
 			Subject:     "Water",
 			Predicate:   "is",
@@ -279,8 +280,8 @@ func TestCreateClaimDedupeAndDefaults(t *testing.T) {
 		classificationJSON, ok := writer.written[0]["classificationJSON"].(string)
 		require.True(t, ok, "claim writes must encode classification as JSON")
 		require.Equal(t, c.Classification, fragmentcodec.DecodeOptionalMap(classificationJSON))
-		require.Equal(t, validFrom, writer.written[0]["validFrom"])
-		require.Equal(t, validTo, writer.written[0]["validTo"])
+		require.Equal(t, validFrom.UTC(), writer.written[0]["validFrom"])
+		require.Equal(t, validTo.UTC(), writer.written[0]["validTo"])
 		_, hasLegacyClassification := writer.written[0]["classification"]
 		require.False(t, hasLegacyClassification, "legacy raw map classification param must not be used")
 	})
@@ -332,7 +333,7 @@ func TestCreateClaimDedupeAndDefaults(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, got)
 
-		hash := claimidentity.ContentHash(input.Subject, input.Predicate, input.Object, nil)
+		hash := claimidentity.ContentHash(input.Subject, input.Predicate, input.Object, nil, nil)
 		expectedID, idErr := claimidentity.ClaimIDFromHash(profileID, hash)
 		require.NoError(t, idErr)
 		require.Equal(t, expectedID, got.Claim.ClaimID,
@@ -707,7 +708,7 @@ func TestCreateClaimActorAndAuditBranches(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	expectedHash := claimidentity.ContentHash("Alice", "likes", "coffee", nil)
+	expectedHash := claimidentity.ContentHash("Alice", "likes", "coffee", nil, nil)
 	expectedClaimID, idErr := claimidentity.ClaimIDFromHash(actorID.String(), expectedHash)
 	require.NoError(t, idErr)
 	require.Equal(t, expectedClaimID, got.Claim.ClaimID)

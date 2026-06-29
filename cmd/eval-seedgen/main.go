@@ -541,7 +541,7 @@ func adversarialScenario(category categorySpec, i int) scenario {
 	}
 }
 
-func writeJSONFile(path string, value any) error {
+func writeJSONFile(path string, value any) (err error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -549,13 +549,18 @@ func writeJSONFile(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 	encoder := json.NewEncoder(f)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(value)
+	err = encoder.Encode(value)
+	return err
 }
 
-func writeJSONL[T any](path string, rows []T) error {
+func writeJSONL[T any](path string, rows []T) (err error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -563,10 +568,14 @@ func writeJSONL[T any](path string, rows []T) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 	encoder := json.NewEncoder(f)
 	for _, row := range rows {
-		if err := encoder.Encode(row); err != nil {
+		if err = encoder.Encode(row); err != nil {
 			return err
 		}
 	}

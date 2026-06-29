@@ -85,12 +85,20 @@ WHERE f.team_id = $profileId AND ` + fragmentActive + `
 			Labels:    getLabelsVal(row, "labels"),
 			Metadata:  getMetadataVal(row, "metadata", "metadata_json"),
 			ProfileID: getStringVal(row, "team_id"),
-			CreatedAt: getTimeVal(row, "created_at"),
-			UpdatedAt: getTimeVal(row, "updated_at"),
+			CreatedAt: timePtrIfNonZero(getTimeVal(row, "created_at")),
+			UpdatedAt: timePtrIfNonZero(getTimeVal(row, "updated_at")),
 		}
 	}
 
 	return hits, nil
+}
+
+func timePtrIfNonZero(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	value = value.UTC()
+	return &value
 }
 
 func vectorIndexQueryLimit(limit int) int {

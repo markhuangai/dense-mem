@@ -110,8 +110,8 @@ type SuiteCase struct {
 }
 
 type KnowledgeMapping struct {
-	BySourceDocID        map[string]Ref            `json:"by_source_doc_id"`
-	BySourceDocIDAndType map[string]map[string]Ref `json:"by_source_doc_id_and_type,omitempty"`
+	BySourceDocID        map[string]Ref              `json:"by_source_doc_id"`
+	BySourceDocIDAndType map[string]map[string][]Ref `json:"by_source_doc_id_and_type,omitempty"`
 }
 
 type RecallTrace struct {

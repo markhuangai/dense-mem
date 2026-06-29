@@ -5,7 +5,7 @@ import "strings"
 func newKnowledgeMapping() KnowledgeMapping {
 	return KnowledgeMapping{
 		BySourceDocID:        map[string]Ref{},
-		BySourceDocIDAndType: map[string]map[string]Ref{},
+		BySourceDocIDAndType: map[string]map[string][]Ref{},
 	}
 }
 
@@ -20,18 +20,30 @@ func addSourceMapping(mapping *KnowledgeMapping, ref Ref, defaultForSource bool)
 		mapping.BySourceDocID = map[string]Ref{}
 	}
 	if mapping.BySourceDocIDAndType == nil {
-		mapping.BySourceDocIDAndType = map[string]map[string]Ref{}
+		mapping.BySourceDocIDAndType = map[string]map[string][]Ref{}
 	}
 	ref.SourceDocID = sourceDocID
 	ref.Type = refType
 	ref.ID = refID
 	if mapping.BySourceDocIDAndType[sourceDocID] == nil {
-		mapping.BySourceDocIDAndType[sourceDocID] = map[string]Ref{}
+		mapping.BySourceDocIDAndType[sourceDocID] = map[string][]Ref{}
 	}
-	mapping.BySourceDocIDAndType[sourceDocID][refType] = ref
+	if !hasMappedRef(mapping.BySourceDocIDAndType[sourceDocID][refType], ref) {
+		mapping.BySourceDocIDAndType[sourceDocID][refType] = append(mapping.BySourceDocIDAndType[sourceDocID][refType], ref)
+	}
 	if defaultForSource || mapping.BySourceDocID[sourceDocID].ID == "" {
 		mapping.BySourceDocID[sourceDocID] = ref
 	}
+}
+
+func hasMappedRef(refs []Ref, want Ref) bool {
+	for _, ref := range refs {
+		if strings.TrimSpace(ref.Type) == strings.TrimSpace(want.Type) &&
+			strings.TrimSpace(ref.ID) == strings.TrimSpace(want.ID) {
+			return true
+		}
+	}
+	return false
 }
 
 func mergeKnowledgeMapping(dst *KnowledgeMapping, src KnowledgeMapping) {
@@ -39,14 +51,16 @@ func mergeKnowledgeMapping(dst *KnowledgeMapping, src KnowledgeMapping) {
 		addSourceMapping(dst, ref, true)
 	}
 	for sourceDocID, byType := range src.BySourceDocIDAndType {
-		for refType, ref := range byType {
-			if ref.SourceDocID == "" {
-				ref.SourceDocID = sourceDocID
+		for refType, refs := range byType {
+			for _, ref := range refs {
+				if ref.SourceDocID == "" {
+					ref.SourceDocID = sourceDocID
+				}
+				if ref.Type == "" {
+					ref.Type = refType
+				}
+				addSourceMapping(dst, ref, false)
 			}
-			if ref.Type == "" {
-				ref.Type = refType
-			}
-			addSourceMapping(dst, ref, false)
 		}
 	}
 }
@@ -62,8 +76,15 @@ func resolveSourceMapping(mapping KnowledgeMapping, sourceDocID, refType string)
 	}
 	if refType != "" && mapping.BySourceDocIDAndType != nil {
 		if byType := mapping.BySourceDocIDAndType[sourceDocID]; byType != nil {
-			if resolved := byType[refType]; strings.TrimSpace(resolved.ID) != "" {
-				return resolved, true
+			refs := byType[refType]
+			switch len(refs) {
+			case 0:
+				return Ref{}, false
+			case 1:
+				resolved := refs[0]
+				if strings.TrimSpace(resolved.ID) != "" {
+					return resolved, true
+				}
 			}
 			return Ref{}, false
 		}

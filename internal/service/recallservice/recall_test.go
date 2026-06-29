@@ -28,6 +28,10 @@ type fakeSemanticSearcher struct {
 	onCall    func()
 }
 
+func testTimePtr(value time.Time) *time.Time {
+	return &value
+}
+
 func (f *fakeSemanticSearcher) QueryVectorIndex(ctx context.Context, profileID string, vec []float32, limit int) ([]semanticsearch.SearchHit, error) {
 	f.mu.Lock()
 	f.lastLimit = limit
@@ -787,6 +791,48 @@ func TestRecallService_TierEnrichmentDowngradesOverlayFacts(t *testing.T) {
 				Status:     domain.FactStatusActive,
 				TruthScore: 0.95,
 				RecordedAt: time.Now().UTC(),
+			},
+		},
+	}
+	svc := NewRecallServiceWithTiers(
+		&stubEmbedding{DimensionsResult: 4},
+		&fakeSemanticSearcher{},
+		&fakeKeywordSearcher{},
+		&fakeHydrator{},
+		factSearcher,
+		factGetter,
+		nil,
+		nil,
+		0,
+		nil,
+		nil,
+	)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "platform choice", Limit: 5})
+
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Equal(t, TierConflict, out[0].Tier)
+	require.NotNil(t, out[0].Fact)
+	require.Equal(t, "overlay", out[0].Fact.AuthorityState)
+}
+
+func TestRecallService_TierEnrichmentUsesHydratedFactAuthorityState(t *testing.T) {
+	factSearcher := &fakeFactSearcher{
+		results: []FactRecallResult{{
+			FactID:    "fact-overlay",
+			ProfileID: "pA",
+		}},
+	}
+	factGetter := &fakeFactGetter{
+		facts: map[string]*domain.Fact{
+			"fact-overlay": {
+				FactID:         "fact-overlay",
+				ProfileID:      "pA",
+				Status:         domain.FactStatusActive,
+				TruthScore:     0.95,
+				AuthorityState: "overlay",
+				RecordedAt:     time.Now().UTC(),
 			},
 		},
 	}

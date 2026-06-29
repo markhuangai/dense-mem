@@ -619,12 +619,27 @@ func TestEvalUnavailableConfigAuditAndParserBranches(t *testing.T) {
 	if len(refs) != 1 || refs[0].Type != "fact" || refs[0].ID != "fact-1" {
 		t.Fatalf("evalResultRefs = %+v", refs)
 	}
+	refs = evalResultRefs([]map[string]any{{"type": "fragment", "id": "fragment-1"}})
+	if len(refs) != 1 || refs[0].Type != "fragment" || refs[0].ID != "fragment-1" {
+		t.Fatalf("evalResultRefs direct maps = %+v", refs)
+	}
 	if judgments := evalJudgments("not-array"); judgments != nil {
 		t.Fatalf("evalJudgments non-array = %#v; want nil", judgments)
 	}
 	judgments := evalJudgments([]any{"skip", map[string]any{"type": "claim", "id": "claim-1"}})
 	if len(judgments) != 1 || judgments[0].Grade != 1 {
 		t.Fatalf("evalJudgments default grade = %+v", judgments)
+	}
+	judgments = evalJudgments([]map[string]any{{"type": "fact", "id": "fact-1", "grade": 2.0}})
+	if len(judgments) != 1 || judgments[0].Type != "fact" || judgments[0].ID != "fact-1" || judgments[0].Grade != 2 {
+		t.Fatalf("evalJudgments direct maps = %+v", judgments)
+	}
+	evidenceRefs := contextEvidenceRefs([]contextservice.ContextItem{
+		{Type: "fact", ID: "fact-1", EvidenceFragments: []*domain.Fragment{{FragmentID: "fragment-shared"}}},
+		{Type: "claim", ID: "claim-1", EvidenceFragments: []*domain.Fragment{{FragmentID: "fragment-shared"}}},
+	})
+	if len(evidenceRefs) != 2 || evidenceRefs[0]["parent_id"] != "fact-1" || evidenceRefs[1]["parent_id"] != "claim-1" {
+		t.Fatalf("contextEvidenceRefs shared fragment = %+v", evidenceRefs)
 	}
 
 	event := &domain.RecallFeedbackEvent{TeamID: &teamID}

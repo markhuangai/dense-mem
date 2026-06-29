@@ -2,9 +2,11 @@ package semanticsearch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
@@ -554,6 +556,18 @@ func TestSemanticSearchDTOGettersAndErrors(t *testing.T) {
 	require.Equal(t, 7, meta.GetLimitApplied())
 	require.Equal(t, "bad request", NewValidationError("bad request").Error())
 	require.Equal(t, "embedding dimension mismatch: expected 3, got 2", NewDimensionMismatchError(3, 2).Error())
+}
+
+func TestSearchHitOmitsEmptyTimestamps(t *testing.T) {
+	raw, err := json.Marshal(SearchHit{ID: "fragment-1", Type: "fragment"})
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "created_at")
+	require.NotContains(t, string(raw), "updated_at")
+
+	createdAt := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	raw, err = json.Marshal(SearchHit{ID: "fragment-1", Type: "fragment", CreatedAt: &createdAt})
+	require.NoError(t, err)
+	require.Contains(t, string(raw), "created_at")
 }
 
 func TestSemanticSearchValidationThresholdAndDependencyErrors(t *testing.T) {

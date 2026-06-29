@@ -414,6 +414,23 @@ func TestCurrentnessAsOfTimeFallbacks(t *testing.T) {
 	require.Equal(t, updated, currentnessAsOfTime("current owner", entry, currentnessTemporalFrame{}))
 }
 
+func TestCurrentnessAsOfTimeUsesSharedRelativeQueryAnchor(t *testing.T) {
+	query := "Who was the current owner yesterday for service TMP-104?"
+	newest := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	older := newest.AddDate(0, 0, -7)
+	entries := []rrfEntry{
+		{Content: "service TMP-104 owner uses owner-blue.", CreatedAt: older, UpdatedAt: older},
+		{Content: "service TMP-104 owner uses owner-green.", CreatedAt: newest, UpdatedAt: newest},
+	}
+
+	frame := currentnessTemporalFrameFor(query, entries)
+
+	want := time.Date(2026, 6, 28, 0, 0, 0, 0, time.UTC)
+	require.Equal(t, want, frame.queryDate)
+	require.Equal(t, want, currentnessAsOfTime(query, entries[0], frame))
+	require.Equal(t, want, currentnessAsOfTime(query, entries[1], frame))
+}
+
 func TestTypedCurrentnessAsOfAndExpiryFallbacks(t *testing.T) {
 	recordedAt := time.Date(2026, 6, 21, 8, 0, 0, 0, time.UTC)
 	frameAsOf := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
@@ -435,6 +452,21 @@ func TestTypedCurrentnessAsOfAndExpiryFallbacks(t *testing.T) {
 	require.False(t, typedValidityExpiredForRecall("current owner", &validTo, time.Time{}, typedCurrentnessTemporalFrame{}))
 	require.False(t, typedValidityExpiredForRecall("current owner", &futureValidTo, recordedAt, typedCurrentnessTemporalFrame{asOf: frameAsOf}))
 	require.True(t, typedValidityExpiredForRecall("current owner", &validTo, recordedAt, typedCurrentnessTemporalFrame{asOf: frameAsOf}))
+}
+
+func TestTypedCurrentnessAsOfTimeUsesSharedRelativeQueryAnchor(t *testing.T) {
+	query := "Who was the current owner yesterday for service TMP-105?"
+	newest := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	older := newest.AddDate(0, 0, -7)
+	frame := typedCurrentnessTemporalFrameForFacts(query, []hydratedFactRecallCandidate{
+		{Fact: &domain.Fact{Subject: "service TMP-105 owner", Predicate: "uses", Object: "owner-blue", RecordedAt: older}},
+		{Fact: &domain.Fact{Subject: "service TMP-105 owner", Predicate: "uses", Object: "owner-green", RecordedAt: newest}},
+	}, nil)
+
+	want := time.Date(2026, 6, 28, 0, 0, 0, 0, time.UTC)
+	require.Equal(t, want, frame.queryDate)
+	require.Equal(t, want, typedCurrentnessAsOfTime(query, older, frame))
+	require.Equal(t, want, typedCurrentnessAsOfTime(query, newest, frame))
 }
 
 func TestTypedCurrentnessTemporalFramesSkipNilAndIdentifierMismatches(t *testing.T) {

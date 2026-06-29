@@ -13,6 +13,7 @@ type currentnessTemporalFrame struct {
 	newestContentDate    time.Time
 	useFragmentTimestamp bool
 	newestFragmentTime   time.Time
+	queryDate            time.Time
 }
 
 func currentnessTemporalAdjustment(query string, entry rrfEntry, frame currentnessTemporalFrame) float64 {
@@ -94,7 +95,14 @@ func expiredValidityAdjustment(query string, entry rrfEntry, frame currentnessTe
 }
 
 func currentnessAsOfTime(query string, entry rrfEntry, frame currentnessTemporalFrame) time.Time {
-	if queryDate := latestTemporalDateInText(query, latestFragmentTimestamp(entry.CreatedAt, entry.UpdatedAt)); !queryDate.IsZero() {
+	if !frame.queryDate.IsZero() {
+		return frame.queryDate.UTC()
+	}
+	anchor := currentnessQueryAnchor(frame)
+	if anchor.IsZero() {
+		anchor = latestFragmentTimestamp(entry.CreatedAt, entry.UpdatedAt)
+	}
+	if queryDate := latestTemporalDateInText(query, anchor); !queryDate.IsZero() {
 		return queryDate
 	}
 	if !frame.newestContentDate.IsZero() {
@@ -135,7 +143,18 @@ func currentnessTemporalFrameFor(query string, entries []rrfEntry) currentnessTe
 	if !frame.hasContentDate && !oldestFragmentTime.IsZero() && frame.newestFragmentTime.Sub(oldestFragmentTime) >= 24*time.Hour {
 		frame.useFragmentTimestamp = true
 	}
+	frame.queryDate = latestTemporalDateInText(query, currentnessQueryAnchor(frame))
 	return frame
+}
+
+func currentnessQueryAnchor(frame currentnessTemporalFrame) time.Time {
+	if !frame.newestContentDate.IsZero() {
+		return frame.newestContentDate
+	}
+	if !frame.newestFragmentTime.IsZero() {
+		return frame.newestFragmentTime
+	}
+	return time.Time{}
 }
 
 func latestFragmentTimestamp(createdAt, updatedAt time.Time) time.Time {
@@ -173,7 +192,8 @@ func temporalRankTimeForRecallWithEvidence(query string, validFrom *time.Time, r
 }
 
 type typedCurrentnessTemporalFrame struct {
-	asOf time.Time
+	asOf      time.Time
+	queryDate time.Time
 }
 
 func typedCurrentnessTemporalFrameForFacts(query string, facts []hydratedFactRecallCandidate, evidenceFragments map[string]*domain.Fragment) typedCurrentnessTemporalFrame {
@@ -188,6 +208,7 @@ func typedCurrentnessTemporalFrameForFacts(query string, facts []hydratedFactRec
 		}
 		updateTypedCurrentnessTemporalFrame(&frame, query, f.ValidFrom, f.RecordedAt, f.Evidence, evidenceFragments, f.Subject, f.Predicate, f.Object)
 	}
+	frame.queryDate = latestTemporalDateInText(query, frame.asOf)
 	return frame
 }
 
@@ -202,6 +223,7 @@ func typedCurrentnessTemporalFrameForClaims(query string, claims []*domain.Claim
 		}
 		updateTypedCurrentnessTemporalFrame(&frame, query, c.ValidFrom, c.RecordedAt, c.Evidence, evidenceFragments, c.Subject, c.Predicate, c.Object)
 	}
+	frame.queryDate = latestTemporalDateInText(query, frame.asOf)
 	return frame
 }
 
@@ -258,7 +280,14 @@ func typedValidityExpiredForRecall(query string, validTo *time.Time, recordedAt 
 }
 
 func typedCurrentnessAsOfTime(query string, recordedAt time.Time, frame typedCurrentnessTemporalFrame) time.Time {
-	if queryDate := latestTemporalDateInText(query, recordedAt); !queryDate.IsZero() {
+	if !frame.queryDate.IsZero() {
+		return frame.queryDate.UTC()
+	}
+	anchor := frame.asOf
+	if anchor.IsZero() {
+		anchor = recordedAt
+	}
+	if queryDate := latestTemporalDateInText(query, anchor); !queryDate.IsZero() {
 		return queryDate.UTC()
 	}
 	if !frame.asOf.IsZero() {

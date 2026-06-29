@@ -251,6 +251,7 @@ func TestHTTPClientImportRejectsMissingFragmentID(t *testing.T) {
 
 func TestHTTPClientImportCorpusUsesImportMemoriesForTypedClaims(t *testing.T) {
 	validFrom := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+	validTo := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/tools/import_memories" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
@@ -270,6 +271,9 @@ func TestHTTPClientImportCorpusUsesImportMemoriesForTypedClaims(t *testing.T) {
 		}
 		if claim["valid_from"] != validFrom.Format(time.RFC3339Nano) {
 			t.Fatalf("valid_from = %v", claim["valid_from"])
+		}
+		if claim["valid_to"] != validTo.Format(time.RFC3339Nano) {
+			t.Fatalf("valid_to = %v", claim["valid_to"])
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"fragment": map[string]any{"id": "fragment-tiered"},
@@ -293,6 +297,7 @@ func TestHTTPClientImportCorpusUsesImportMemoriesForTypedClaims(t *testing.T) {
 			ExtractConf:    0.95,
 			ResolutionConf: 0.95,
 			ValidFrom:      &validFrom,
+			ValidTo:        &validTo,
 		}},
 	}})
 
@@ -302,11 +307,17 @@ func TestHTTPClientImportCorpusUsesImportMemoriesForTypedClaims(t *testing.T) {
 	if mapping.BySourceDocID["doc-tiered"].ID != "fragment-tiered" {
 		t.Fatalf("default mapping = %+v", mapping.BySourceDocID["doc-tiered"])
 	}
-	if mapping.BySourceDocIDAndType["doc-tiered"]["claim"].ID != "claim-tiered" {
+	if mapping.BySourceDocIDAndType["doc-tiered"]["claim"][0].ID != "claim-tiered" {
 		t.Fatalf("claim mapping = %+v", mapping.BySourceDocIDAndType)
 	}
-	if mapping.BySourceDocIDAndType["doc-tiered"]["fact"].ID != "fact-tiered" {
+	if mapping.BySourceDocIDAndType["doc-tiered"]["fact"][0].ID != "fact-tiered" {
 		t.Fatalf("fact mapping = %+v", mapping.BySourceDocIDAndType)
+	}
+	if mapping.BySourceDocIDAndType["doc-tiered:claim:1"]["claim"][0].ID != "claim-tiered" {
+		t.Fatalf("claim alias mapping = %+v", mapping.BySourceDocIDAndType)
+	}
+	if mapping.BySourceDocIDAndType["doc-tiered:fact:1"]["fact"][0].ID != "fact-tiered" {
+		t.Fatalf("fact alias mapping = %+v", mapping.BySourceDocIDAndType)
 	}
 }
 
@@ -414,10 +425,10 @@ func TestHTTPClientExportKnowledgeMappingIncludesClaimsAndFacts(t *testing.T) {
 	if mapping.BySourceDocID["doc-tiered"].ID != "fragment-tiered" {
 		t.Fatalf("default mapping = %+v", mapping.BySourceDocID["doc-tiered"])
 	}
-	if mapping.BySourceDocIDAndType["doc-tiered"]["claim"].ID != "claim-tiered" {
+	if mapping.BySourceDocIDAndType["doc-tiered"]["claim"][0].ID != "claim-tiered" {
 		t.Fatalf("claim mapping = %+v", mapping.BySourceDocIDAndType)
 	}
-	if mapping.BySourceDocIDAndType["doc-tiered"]["fact"].ID != "fact-tiered" {
+	if mapping.BySourceDocIDAndType["doc-tiered"]["fact"][0].ID != "fact-tiered" {
 		t.Fatalf("fact mapping = %+v", mapping.BySourceDocIDAndType)
 	}
 }

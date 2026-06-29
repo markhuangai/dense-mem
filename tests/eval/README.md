@@ -107,8 +107,8 @@ disposable eval compose runs, raise `RATE_LIMIT_PER_MINUTE` in `.env` before
 starting the server, then restart the server.
 
 For ranking/search-only experiments against `local_eval_1k_v2`, reuse the stable
-already-imported eval team and run with `--import-seed=false`. Re-import the 1k
-seed only when the stored data shape changes: seed corpus, embeddings,
+already-imported eval team and omit `--import-seed`. Re-import the 1k seed only
+when the stored data shape changes: seed corpus, embeddings,
 claim/fact extraction, import metadata, or write-path fields such as
 `valid_from` / `recorded_at`.
 

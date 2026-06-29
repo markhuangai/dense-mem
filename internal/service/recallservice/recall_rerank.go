@@ -278,13 +278,30 @@ func rerankIdentifierToken(token string) bool {
 		return false
 	}
 	hasDigit := false
+	hasLetter := false
+	allAlnum := true
+	first := rune(0)
 	for _, r := range token {
+		if first == 0 {
+			first = r
+		}
 		if r >= '0' && r <= '9' {
 			hasDigit = true
-			break
+			continue
 		}
+		if r >= 'a' && r <= 'z' {
+			hasLetter = true
+			continue
+		}
+		allAlnum = false
 	}
-	return hasDigit && strings.Contains(token, "-")
+	if !hasDigit {
+		return false
+	}
+	if strings.Contains(token, "-") {
+		return true
+	}
+	return allAlnum && hasLetter && first >= 'a' && first <= 'z' && len(token) >= 4
 }
 
 func rerankText(value string) string {

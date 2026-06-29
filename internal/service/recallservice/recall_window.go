@@ -152,7 +152,7 @@ func metadataTime(metadata map[string]any, keys ...string) (time.Time, bool) {
 		case string:
 			parsed, err := time.Parse(time.RFC3339Nano, typed)
 			if err != nil {
-				return time.Time{}, false
+				continue
 			}
 			return parsed.UTC(), true
 		}

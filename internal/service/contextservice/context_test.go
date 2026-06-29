@@ -291,6 +291,33 @@ func TestAssembleContextHydratesEvidenceFromFullRecordsWhenRecallHitStripsLineag
 	require.Contains(t, got.ContextBlock, "evidence [fragment:fragment-claim]")
 }
 
+func TestAssembleContextTreatsSupportIDHydrationAsBestEffort(t *testing.T) {
+	ctx := context.Background()
+	fact := factFixture("fact-1", "go")
+	fact.PromotedFromClaimID = "claim-missing"
+	claim := claimFixture("claim-1", "uses", "go", nil)
+	recall := &fakeRecall{hits: []recallservice.RecallHit{
+		{Tier: recallservice.TierActiveFact, Score: 0.9, Fact: fact},
+		{Tier: recallservice.TierValidatedClaim, Score: 0.7, Claim: claim},
+	}}
+	svc := New(Dependencies{
+		Recall:   recall,
+		ClaimGet: &fakeClaimGet{claims: map[string]*domain.Claim{}},
+		FactGet:  &fakeFactGet{facts: map[string]*domain.Fact{}},
+	})
+
+	got, err := svc.Assemble(ctx, "profile-a", AssembleRequest{Query: "what does the assistant use?", Limit: 2})
+
+	require.NoError(t, err)
+	require.Len(t, got.Items, 2)
+	require.Equal(t, "fact-1", got.Items[0].ID)
+	require.Empty(t, got.Items[0].EvidenceFragments)
+	require.Equal(t, "claim-1", got.Items[1].ID)
+	require.Empty(t, got.Items[1].EvidenceFragments)
+	require.Contains(t, got.ContextBlock, "[fact:fact-1]")
+	require.Contains(t, got.ContextBlock, "[claim:claim-1]")
+}
+
 func TestAssembleContextOptionsAndErrors(t *testing.T) {
 	ctx := context.Background()
 	includeEvidence := false

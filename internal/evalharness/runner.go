@@ -147,12 +147,22 @@ func validateRequiredQRelMappings(qrels map[string]QRel, suite []SuiteCase, mapp
 		if !ok {
 			return fmt.Errorf("suite case %q missing from seed qrels", suiteCase.CaseID)
 		}
-		for _, ref := range append(qrel.RequiredRefs, qrel.RequiredEvidenceRefs...) {
-			if strings.TrimSpace(ref.SourceDocID) == "" {
-				continue
-			}
-			if _, ok := resolveRef(ref, mapping); !ok {
-				return fmt.Errorf("required qrel ref for case %q is unmapped after import: type=%s source_doc_id=%s", suiteCase.CaseID, ref.Type, ref.SourceDocID)
+		for _, refs := range []struct {
+			label string
+			refs  []Ref
+		}{
+			{"required", qrel.RequiredRefs},
+			{"required evidence", qrel.RequiredEvidenceRefs},
+			{"bad", qrel.BadRefs},
+			{"bad evidence", qrel.BadEvidenceRefs},
+		} {
+			for _, ref := range refs.refs {
+				if strings.TrimSpace(ref.SourceDocID) == "" {
+					continue
+				}
+				if _, ok := resolveRef(ref, mapping); !ok {
+					return fmt.Errorf("%s qrel ref for case %q is unmapped after import: type=%s source_doc_id=%s", refs.label, suiteCase.CaseID, ref.Type, ref.SourceDocID)
+				}
 			}
 		}
 	}
@@ -226,10 +236,7 @@ func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []Cor
 			return fmt.Errorf("suite case %q missing from seed qrels", suiteCase.CaseID)
 		}
 	}
-	corpusIndex := map[string]struct{}{}
-	for _, item := range corpus {
-		corpusIndex[item.SourceDocID] = struct{}{}
-	}
+	corpusIndex := sourceDocIDIndexForCorpus(corpus)
 	for _, qrel := range qrels {
 		if _, ok := caseIndex[qrel.CaseID]; !ok {
 			return fmt.Errorf("qrels case %q missing from seed cases", qrel.CaseID)
@@ -256,6 +263,21 @@ func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []Cor
 		}
 	}
 	return nil
+}
+
+func sourceDocIDIndexForCorpus(corpus []CorpusItem) map[string]struct{} {
+	corpusIndex := map[string]struct{}{}
+	for _, item := range corpus {
+		if strings.TrimSpace(item.SourceDocID) == "" {
+			continue
+		}
+		corpusIndex[item.SourceDocID] = struct{}{}
+		for i := range item.Claims {
+			corpusIndex[typedClaimSourceDocID(item.SourceDocID, i+1)] = struct{}{}
+			corpusIndex[typedFactSourceDocID(item.SourceDocID, i+1)] = struct{}{}
+		}
+	}
+	return corpusIndex
 }
 
 func validateManifestCounts(manifestPath string, manifest *SeedManifest, corpus []CorpusItem, cases []Case, qrels []QRel) error {

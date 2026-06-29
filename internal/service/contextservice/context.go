@@ -334,7 +334,7 @@ func (s *service) contextItem(ctx context.Context, profileID string, hit recalls
 		if includeEvidence {
 			supportIDs, err := s.contextFactSupportIDs(ctx, profileID, hit.Fact)
 			if err != nil {
-				return ContextItem{}, err
+				supportIDs = nil
 			}
 			fragments, _, err := s.loadFragments(ctx, profileID, supportIDs)
 			if err != nil {
@@ -348,7 +348,7 @@ func (s *service) contextItem(ctx context.Context, profileID string, hit recalls
 		if includeEvidence {
 			supportIDs, err := s.contextClaimSupportIDs(ctx, profileID, hit.Claim)
 			if err != nil {
-				return ContextItem{}, err
+				supportIDs = nil
 			}
 			fragments, _, err := s.loadFragments(ctx, profileID, supportIDs)
 			if err != nil {
