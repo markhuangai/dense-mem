@@ -1158,6 +1158,76 @@ func latestISODateInText(value string) time.Time {
 	return latest
 }
 
+func latestNumericDateInText(value string, anchor time.Time) time.Time {
+	anchorYear := 0
+	if !anchor.IsZero() {
+		anchorYear = anchor.UTC().Year()
+	}
+	latest := time.Time{}
+	for _, field := range strings.Fields(value) {
+		token := strings.Trim(strings.ToLower(field), ".,:;!?()[]{}\"'")
+		candidate, ok := numericDateToken(token, anchorYear)
+		if !ok {
+			continue
+		}
+		if latest.IsZero() || candidate.After(latest) {
+			latest = candidate
+		}
+	}
+	return latest
+}
+
+func numericDateToken(token string, anchorYear int) (time.Time, bool) {
+	parts := strings.Split(token, "/")
+	if len(parts) != 2 && len(parts) != 3 {
+		return time.Time{}, false
+	}
+	nums := make([]int, len(parts))
+	for i, part := range parts {
+		if part == "" {
+			return time.Time{}, false
+		}
+		value, err := strconv.Atoi(part)
+		if err != nil {
+			return time.Time{}, false
+		}
+		nums[i] = value
+	}
+	if len(parts) == 3 {
+		if year, ok := parseYear(parts[0]); ok {
+			return calendarDate(year, time.Month(nums[1]), nums[2])
+		}
+		year, ok := parseYear(parts[2])
+		if !ok {
+			return time.Time{}, false
+		}
+		month, day, ok := unambiguousNumericMonthDay(nums[0], nums[1])
+		if !ok {
+			return time.Time{}, false
+		}
+		return calendarDate(year, time.Month(month), day)
+	}
+	if anchorYear == 0 {
+		return time.Time{}, false
+	}
+	month, day, ok := unambiguousNumericMonthDay(nums[0], nums[1])
+	if !ok {
+		return time.Time{}, false
+	}
+	return calendarDate(anchorYear, time.Month(month), day)
+}
+
+func unambiguousNumericMonthDay(first, second int) (int, int, bool) {
+	switch {
+	case first >= 1 && first <= 12 && second > 12 && second <= 31:
+		return first, second, true
+	case first > 12 && first <= 31 && second >= 1 && second <= 12:
+		return second, first, true
+	default:
+		return 0, 0, false
+	}
+}
+
 func latestTemporalDateInEntry(entry rrfEntry) time.Time {
 	return latestTemporalDateInText(entry.Content, latestFragmentTimestamp(entry.CreatedAt, entry.UpdatedAt))
 }
@@ -1194,6 +1264,10 @@ func latestTemporalDateInEvidence(query string, evidence []domain.Evidence, evid
 
 func latestTemporalDateInText(value string, anchor time.Time) time.Time {
 	latest := latestISODateInText(value)
+	numeric := latestNumericDateInText(value, anchor)
+	if !numeric.IsZero() && (latest.IsZero() || numeric.After(latest)) {
+		latest = numeric
+	}
 	monthName := latestMonthNameDateInText(value, anchor)
 	if !monthName.IsZero() && (latest.IsZero() || monthName.After(latest)) {
 		latest = monthName

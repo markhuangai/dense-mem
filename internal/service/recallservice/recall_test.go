@@ -929,6 +929,19 @@ func TestLatestTemporalDateInTextParsesWeekdayNames(t *testing.T) {
 	require.Zero(t, latestTemporalDateInText("Owner update expected next Friday.", anchor))
 }
 
+func TestLatestTemporalDateInTextParsesUnambiguousNumericDates(t *testing.T) {
+	anchor := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	expected := time.Date(2026, 6, 27, 0, 0, 0, 0, time.UTC)
+
+	require.Equal(t, expected, latestTemporalDateInText("Owner update dated 6/27/2026.", anchor))
+	require.Equal(t, expected, latestTemporalDateInText("Owner update dated 27/6/2026.", anchor))
+	require.Equal(t, expected, latestTemporalDateInText("Owner update dated 2026/6/27.", anchor))
+	require.Equal(t, expected, latestTemporalDateInText("Owner update dated 6/27.", anchor))
+	require.Zero(t, latestTemporalDateInText("Owner update dated 6/7/2026.", anchor))
+	require.Zero(t, latestTemporalDateInText("Owner update dated 2/31/2026.", anchor))
+	require.Zero(t, latestTemporalDateInText("Owner update dated 6/27.", time.Time{}))
+}
+
 func TestRecallService_EvidenceSourceQueryPrefersFragmentOverDerivedFact(t *testing.T) {
 	query := "Which source note says service TIER-E-001 owner uses owner-lumen?"
 	content := "Source note from ops. service TIER-E-001 owner uses owner-lumen."

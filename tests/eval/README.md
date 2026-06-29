@@ -74,7 +74,7 @@ of MB. Before using it for a reported run, validate its manifest and keep the
 run artifacts with the seed hash.
 
 `local_tiered_v1` is a small committed seed for the fact and validated-claim
-recall tiers. It contains fifteen rank-1 cases and thirty corpus rows
+recall tiers. It contains sixteen rank-1 cases and thirty-two corpus rows
 covering same-tier fact/claim currentness, typed fact/claim content-date
 currentness when `valid_from` is absent, typed fact/claim supporting-evidence
 date currentness when both `valid_from` and triple dates are absent,
@@ -82,8 +82,8 @@ fact-over-fragment behavior, claim-over-fragment behavior, cross-identifier fact
 filtering, `valid_at` temporal windows for facts, claims, and fragment fallback
 metadata, and evidence-source intent where a query asks for the raw source note
 rather than the derived fact or claim. It also includes fragment-only relative
-temporal, month-name temporal, and weekday temporal cases where dated updates
-must outrank undated notes that only say "current."
+temporal, month-name temporal, weekday temporal, and numeric temporal cases
+where dated updates must outrank undated notes that only say "current."
 Rows with typed claims are imported through `import_memories`, so the runner can
 score `fragment`, `claim`, and `fact` refs instead of only fragment refs. Fact
 rows request `auto_promote`; live runs depend on the configured verifier and
@@ -98,7 +98,7 @@ cases place natural-language dates in the subject text while keeping predicate
 `bad_evidence_refs`, which score supporting fragments attached to assembled
 fact/claim context separately from the top-level retrieved refs. The current
 seed hash is
-`sha256:4a0ec3c81f693833a67b961d4d114f4f7248392c244073d2deb33e76616f8b9b`.
+`sha256:c116307f643bbaa6a58572be92aefa46d21afca494a7be790f60de1c2fab2b72`.
 
 ## Commands
 
