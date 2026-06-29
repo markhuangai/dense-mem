@@ -1080,6 +1080,45 @@ func TestRecallService_CurrentnessRerankPrefersRelativeDatedFragment(t *testing.
 	require.Equal(t, "f-relative-dated", out[0].Fragment.FragmentID)
 }
 
+func TestRecallService_CurrentnessRerankPrefersMonthNameDatedFragment(t *testing.T) {
+	query := "Who is the current owner for service TMP-003?"
+	importedAt := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
+	sem := &fakeSemanticSearcher{
+		hits: []semanticsearch.SearchHit{
+			{
+				ID:        "f-undated-current",
+				Type:      "fragment",
+				Content:   "Current owner note. service TMP-003 owner uses owner-moon.",
+				CreatedAt: importedAt,
+				UpdatedAt: importedAt,
+			},
+		},
+	}
+	kw := &fakeKeywordSearcher{
+		hits: []keywordsearch.FragmentSearchResult{
+			{
+				FragmentID: "f-month-dated",
+				Content:    "Owner update dated June 27, 2026. service TMP-003 owner uses owner-sun.",
+				CreatedAt:  importedAt,
+				UpdatedAt:  importedAt,
+			},
+			{
+				FragmentID: "f-undated-current",
+				Content:    "Current owner note. service TMP-003 owner uses owner-moon.",
+				CreatedAt:  importedAt,
+				UpdatedAt:  importedAt,
+			},
+		},
+	}
+	svc := NewRecallService(&stubEmbedding{DimensionsResult: 4}, sem, kw, &fakeHydrator{}, nil, nil)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: query, Limit: 5})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, out)
+	require.Equal(t, "f-month-dated", out[0].Fragment.FragmentID)
+}
+
 func TestRecallService_CurrentnessRerankHandlesActiveDecisionQueries(t *testing.T) {
 	query := "What is the active launch decision for notice RET-046?"
 	required := "Retraction update dated 2026-06-28. Earlier approval for notice RET-046 was withdrawn. The active decision is launch-paused-046."
@@ -1168,6 +1207,21 @@ func TestLatestTemporalDateInEntryParsesRelativeDatesFromFragmentTimestamp(t *te
 			name:    "last week",
 			content: "Owner update from last week. service TMP-002 owner uses owner-sun.",
 			want:    time.Date(2026, 6, 21, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name:    "month name with year",
+			content: "Owner update dated June 27, 2026. service TMP-002 owner uses owner-sun.",
+			want:    time.Date(2026, 6, 27, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name:    "abbreviated month with anchored year",
+			content: "Owner update dated Jun 27. service TMP-002 owner uses owner-sun.",
+			want:    time.Date(2026, 6, 27, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name:    "day before month",
+			content: "Owner update dated 27 June 2026. service TMP-002 owner uses owner-sun.",
+			want:    time.Date(2026, 6, 27, 0, 0, 0, 0, time.UTC),
 		},
 	}
 	for _, tc := range cases {

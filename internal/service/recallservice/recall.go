@@ -28,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1072,9 +1073,60 @@ func latestISODateInText(value string) time.Time {
 
 func latestTemporalDateInEntry(entry rrfEntry) time.Time {
 	latest := latestISODateInText(entry.Content)
-	relative := latestRelativeDateInText(entry.Content, latestFragmentTimestamp(entry.CreatedAt, entry.UpdatedAt))
+	anchor := latestFragmentTimestamp(entry.CreatedAt, entry.UpdatedAt)
+	monthName := latestMonthNameDateInText(entry.Content, anchor)
+	if !monthName.IsZero() && (latest.IsZero() || monthName.After(latest)) {
+		latest = monthName
+	}
+	relative := latestRelativeDateInText(entry.Content, anchor)
 	if !relative.IsZero() && (latest.IsZero() || relative.After(latest)) {
 		latest = relative
+	}
+	return latest
+}
+
+func latestMonthNameDateInText(value string, anchor time.Time) time.Time {
+	text := rerankText(value)
+	if text == "" {
+		return time.Time{}
+	}
+	anchorYear := 0
+	if !anchor.IsZero() {
+		anchorYear = anchor.UTC().Year()
+	}
+	latest := time.Time{}
+	fields := strings.Fields(text)
+	for i, field := range fields {
+		month, ok := monthNameNumber(field)
+		if !ok {
+			continue
+		}
+		if i+1 < len(fields) {
+			if day, ok := parseDayOfMonth(fields[i+1]); ok {
+				year := anchorYear
+				if i+2 < len(fields) {
+					if parsedYear, ok := parseYear(fields[i+2]); ok {
+						year = parsedYear
+					}
+				}
+				if candidate, ok := calendarDate(year, month, day); ok && (latest.IsZero() || candidate.After(latest)) {
+					latest = candidate
+				}
+			}
+		}
+		if i > 0 {
+			if day, ok := parseDayOfMonth(fields[i-1]); ok {
+				year := anchorYear
+				if i+1 < len(fields) {
+					if parsedYear, ok := parseYear(fields[i+1]); ok {
+						year = parsedYear
+					}
+				}
+				if candidate, ok := calendarDate(year, month, day); ok && (latest.IsZero() || candidate.After(latest)) {
+					latest = candidate
+				}
+			}
+		}
 	}
 	return latest
 }
@@ -1114,6 +1166,64 @@ func latestRelativeDateInText(value string, anchor time.Time) time.Time {
 		}
 	}
 	return latest
+}
+
+func monthNameNumber(token string) (time.Month, bool) {
+	switch token {
+	case "jan", "january":
+		return time.January, true
+	case "feb", "february":
+		return time.February, true
+	case "mar", "march":
+		return time.March, true
+	case "apr", "april":
+		return time.April, true
+	case "may":
+		return time.May, true
+	case "jun", "june":
+		return time.June, true
+	case "jul", "july":
+		return time.July, true
+	case "aug", "august":
+		return time.August, true
+	case "sep", "sept", "september":
+		return time.September, true
+	case "oct", "october":
+		return time.October, true
+	case "nov", "november":
+		return time.November, true
+	case "dec", "december":
+		return time.December, true
+	default:
+		return 0, false
+	}
+}
+
+func parseDayOfMonth(token string) (int, bool) {
+	day, err := strconv.Atoi(strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(token, "st"), "nd"), "rd"), "th"))
+	if err != nil || day < 1 || day > 31 {
+		return 0, false
+	}
+	return day, true
+}
+
+func parseYear(token string) (int, bool) {
+	year, err := strconv.Atoi(token)
+	if err != nil || year < 1900 || year > 3000 {
+		return 0, false
+	}
+	return year, true
+}
+
+func calendarDate(year int, month time.Month, day int) (time.Time, bool) {
+	if year == 0 || month < time.January || month > time.December || day < 1 || day > daysInMonth(year, month) {
+		return time.Time{}, false
+	}
+	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC), true
+}
+
+func daysInMonth(year int, month time.Month) int {
+	return time.Date(year, month+1, 0, 0, 0, 0, 0, time.UTC).Day()
 }
 
 func utcDate(value time.Time) time.Time {

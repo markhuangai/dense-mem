@@ -1,7 +1,7 @@
 {
   "schema_version": "dense-mem.eval.seed.v1",
   "seed_id": "local_tiered_v1",
-  "description": "Small local eval seed for fact and claim recall tiers, focused on same-tier currentness ordering, cross-tier fact/claim/fragment behavior, valid_at temporal windows, evidence-source intent, and relative temporal fragment currentness.",
+  "description": "Small local eval seed for fact and claim recall tiers, focused on same-tier currentness ordering, cross-tier fact/claim/fragment behavior, valid_at temporal windows, evidence-source intent, and natural-language temporal fragment currentness.",
   "generated_at": "2026-06-28T22:50:00Z",
   "corpus_file": "corpus.jsonl",
   "cases_file": "cases.jsonl",
@@ -10,9 +10,9 @@
   "embedding_provider": "configured-runtime",
   "embedding_model": "configured-runtime",
   "counts": {
-    "corpus": 18,
-    "cases": 9,
-    "qrels": 9,
+    "corpus": 20,
+    "cases": 10,
+    "qrels": 10,
     "docs_per_case": 2
   },
   "sources": [
