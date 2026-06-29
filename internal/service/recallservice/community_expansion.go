@@ -62,7 +62,7 @@ func (s *recallService) communityFactHits(ctx context.Context, profileID string,
 		filtered = append(filtered, candidate)
 	}
 	factsByID, batchFacts := s.batchHydrateFacts(ctx, profileID, filtered)
-	hits := make([]RecallHit, 0, len(filtered))
+	hydrated := make([]hydratedFactRecallCandidate, 0, len(filtered))
 	for _, candidate := range filtered {
 		var f *domain.Fact
 		if batchFacts {
@@ -88,11 +88,6 @@ func (s *recallService) communityFactHits(ctx context.Context, profileID string,
 		if !factMatchesRecallWindow(f, req.ValidAt, req.KnownAt) {
 			continue
 		}
-		if !req.IncludeEvidence {
-			factCopy := *f
-			factCopy.Evidence = nil
-			f = &factCopy
-		}
 		authorityState := candidate.AuthorityState
 		if authorityState == "" {
 			authorityState = f.AuthorityState
@@ -100,16 +95,28 @@ func (s *recallService) communityFactHits(ctx context.Context, profileID string,
 		if authorityState == "" {
 			authorityState = "authoritative"
 		}
-		f.AuthorityState = authorityState
+		hydrated = append(hydrated, hydratedFactRecallCandidate{Fact: f, AuthorityState: authorityState})
+	}
+	evidenceFragments := s.batchHydrateEvidenceFragments(ctx, profileID, factEvidenceSets(hydrated))
+	hits := make([]RecallHit, 0, len(hydrated))
+	for _, candidate := range hydrated {
+		f := candidate.Fact
+		f.AuthorityState = candidate.AuthorityState
 		tier := TierActiveFact
-		if authorityState != "authoritative" {
+		if candidate.AuthorityState != "authoritative" {
 			tier = TierConflict
+		}
+		temporalRank := temporalRankTimeForRecallWithEvidence(req.Query, f.ValidFrom, f.RecordedAt, f.Evidence, evidenceFragments, f.Subject, f.Predicate, f.Object)
+		if !req.IncludeEvidence {
+			factCopy := *f
+			factCopy.Evidence = nil
+			f = &factCopy
 		}
 		hits = append(hits, RecallHit{
 			Fact:         f,
 			Tier:         tier,
 			Score:        f.TruthScore,
-			temporalRank: temporalRankTimeForRecall(req.Query, f.ValidFrom, f.RecordedAt, f.Subject, f.Predicate, f.Object),
+			temporalRank: temporalRank,
 		})
 	}
 	return hits
@@ -135,7 +142,7 @@ func (s *recallService) communityClaimHits(ctx context.Context, profileID string
 		filtered = append(filtered, candidate)
 	}
 	claimsByID, batchClaims := s.batchHydrateClaims(ctx, profileID, filtered)
-	hits := make([]RecallHit, 0, len(filtered))
+	hydrated := make([]*domain.Claim, 0, len(filtered))
 	for _, candidate := range filtered {
 		var c *domain.Claim
 		if batchClaims {
@@ -161,6 +168,12 @@ func (s *recallService) communityClaimHits(ctx context.Context, profileID string
 		if !claimMatchesRecallWindow(c, req.ValidAt, req.KnownAt) {
 			continue
 		}
+		hydrated = append(hydrated, c)
+	}
+	evidenceFragments := s.batchHydrateEvidenceFragments(ctx, profileID, claimEvidenceSets(hydrated))
+	hits := make([]RecallHit, 0, len(hydrated))
+	for _, c := range hydrated {
+		temporalRank := temporalRankTimeForRecallWithEvidence(req.Query, c.ValidFrom, c.RecordedAt, c.Evidence, evidenceFragments, c.Subject, c.Predicate, c.Object)
 		if !req.IncludeEvidence {
 			claimCopy := *c
 			claimCopy.Evidence = nil
@@ -170,7 +183,7 @@ func (s *recallService) communityClaimHits(ctx context.Context, profileID string
 			Claim:        c,
 			Tier:         TierValidatedClaim,
 			Score:        c.ExtractConf * s.claimWeight,
-			temporalRank: temporalRankTimeForRecall(req.Query, c.ValidFrom, c.RecordedAt, c.Subject, c.Predicate, c.Object),
+			temporalRank: temporalRank,
 		})
 	}
 	return hits

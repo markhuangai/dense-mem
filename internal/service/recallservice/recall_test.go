@@ -742,6 +742,156 @@ func TestRecallService_CurrentnessRanksClaimByTripleContentDate(t *testing.T) {
 	require.Equal(t, "claim-required", out[0].Claim.ClaimID)
 }
 
+func TestRecallService_CurrentnessRanksFactByEvidenceFragmentDate(t *testing.T) {
+	requiredRecordedAt := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	negativeRecordedAt := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	factSearcher := &fakeFactSearcher{
+		results: []FactRecallResult{
+			{FactID: "fact-required", ProfileID: "pA", RecordedAt: requiredRecordedAt},
+			{FactID: "fact-negative", ProfileID: "pA", RecordedAt: negativeRecordedAt},
+		},
+	}
+	factGetter := &fakeFactGetter{
+		facts: map[string]*domain.Fact{
+			"fact-required": {
+				FactID:     "fact-required",
+				ProfileID:  "pA",
+				Subject:    "service TIER-S-001 owner",
+				Predicate:  "uses",
+				Object:     "owner-jade",
+				Status:     domain.FactStatusActive,
+				TruthScore: 0.7,
+				RecordedAt: requiredRecordedAt,
+				Evidence:   []domain.Evidence{{FragmentID: "fragment-required"}},
+			},
+			"fact-negative": {
+				FactID:     "fact-negative",
+				ProfileID:  "pA",
+				Subject:    "service TIER-S-001 owner",
+				Predicate:  "uses",
+				Object:     "owner-onyx",
+				Status:     domain.FactStatusActive,
+				TruthScore: 0.99,
+				RecordedAt: negativeRecordedAt,
+				Evidence:   []domain.Evidence{{FragmentID: "fragment-negative"}},
+			},
+		},
+	}
+	hydrator := &fakeHydrator{frags: map[string]*domain.Fragment{
+		"fragment-required": {
+			FragmentID: "fragment-required",
+			ProfileID:  "pA",
+			Content:    "Source update dated June 27, 2026. service TIER-S-001 owner uses owner-jade.",
+			CreatedAt:  requiredRecordedAt,
+			UpdatedAt:  requiredRecordedAt,
+		},
+		"fragment-negative": {
+			FragmentID: "fragment-negative",
+			ProfileID:  "pA",
+			Content:    "Source update dated June 20, 2026. service TIER-S-001 owner uses owner-onyx.",
+			CreatedAt:  negativeRecordedAt,
+			UpdatedAt:  negativeRecordedAt,
+		},
+	}}
+	svc := NewRecallServiceWithTiers(
+		&stubEmbedding{DimensionsResult: 4},
+		&fakeSemanticSearcher{},
+		&fakeKeywordSearcher{},
+		hydrator,
+		factSearcher,
+		factGetter,
+		nil,
+		nil,
+		0,
+		nil,
+		nil,
+	)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "Who is the current owner for service TIER-S-001?", Limit: 1})
+
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.NotNil(t, out[0].Fact)
+	require.Equal(t, "fact-required", out[0].Fact.FactID)
+	require.Nil(t, out[0].Fact.Evidence)
+	require.Equal(t, int32(1), atomic.LoadInt32(&hydrator.batchCallCount))
+}
+
+func TestRecallService_CurrentnessRanksClaimByEvidenceFragmentDate(t *testing.T) {
+	requiredRecordedAt := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	negativeRecordedAt := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	claimSearcher := &fakeClaimSearcher{
+		results: []ClaimRecallResult{
+			{ClaimID: "claim-required", ProfileID: "pA", RecordedAt: requiredRecordedAt},
+			{ClaimID: "claim-negative", ProfileID: "pA", RecordedAt: negativeRecordedAt},
+		},
+	}
+	claimGetter := &fakeClaimGetter{
+		claims: map[string]*domain.Claim{
+			"claim-required": {
+				ClaimID:     "claim-required",
+				ProfileID:   "pA",
+				Subject:     "service TIER-S-002 pager",
+				Predicate:   "uses",
+				Object:      "pager-jade",
+				Status:      domain.StatusValidated,
+				ExtractConf: 0.2,
+				RecordedAt:  requiredRecordedAt,
+				Evidence:    []domain.Evidence{{FragmentID: "fragment-required"}},
+			},
+			"claim-negative": {
+				ClaimID:     "claim-negative",
+				ProfileID:   "pA",
+				Subject:     "service TIER-S-002 pager",
+				Predicate:   "uses",
+				Object:      "pager-onyx",
+				Status:      domain.StatusValidated,
+				ExtractConf: 0.99,
+				RecordedAt:  negativeRecordedAt,
+				Evidence:    []domain.Evidence{{FragmentID: "fragment-negative"}},
+			},
+		},
+	}
+	hydrator := &fakeHydrator{frags: map[string]*domain.Fragment{
+		"fragment-required": {
+			FragmentID: "fragment-required",
+			ProfileID:  "pA",
+			Content:    "Source update dated June 27, 2026. service TIER-S-002 pager uses pager-jade.",
+			CreatedAt:  requiredRecordedAt,
+			UpdatedAt:  requiredRecordedAt,
+		},
+		"fragment-negative": {
+			FragmentID: "fragment-negative",
+			ProfileID:  "pA",
+			Content:    "Source update dated June 20, 2026. service TIER-S-002 pager uses pager-onyx.",
+			CreatedAt:  negativeRecordedAt,
+			UpdatedAt:  negativeRecordedAt,
+		},
+	}}
+	svc := NewRecallServiceWithTiers(
+		&stubEmbedding{DimensionsResult: 4},
+		&fakeSemanticSearcher{},
+		&fakeKeywordSearcher{},
+		hydrator,
+		nil,
+		nil,
+		claimSearcher,
+		claimGetter,
+		0,
+		nil,
+		nil,
+	)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: "What is the latest pager for service TIER-S-002?", Limit: 1})
+
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.NotNil(t, out[0].Claim)
+	require.Equal(t, "claim-required", out[0].Claim.ClaimID)
+	require.Nil(t, out[0].Claim.Evidence)
+	require.Equal(t, int32(1), atomic.LoadInt32(&hydrator.batchCallCount))
+}
+
 func TestTemporalRankTimeForRecallPrefersValidFromOverTripleContentDate(t *testing.T) {
 	validFrom := time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)
 	recordedAt := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)

@@ -563,6 +563,7 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 				filtered = append(filtered, candidate)
 			}
 			factsByID, batchFacts := s.batchHydrateFacts(ctx, profileID, filtered)
+			hydrated := make([]hydratedFactRecallCandidate, 0, len(filtered))
 			for _, candidate := range filtered {
 				var f *domain.Fact
 				if batchFacts {
@@ -589,21 +590,27 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 				if authorityState == "" {
 					authorityState = "authoritative"
 				}
+				hydrated = append(hydrated, hydratedFactRecallCandidate{Fact: f, AuthorityState: authorityState})
+			}
+			evidenceFragments := s.batchHydrateEvidenceFragments(ctx, profileID, factEvidenceSets(hydrated))
+			for _, candidate := range hydrated {
+				f := candidate.Fact
+				f.AuthorityState = candidate.AuthorityState
+				tier := TierActiveFact
+				if candidate.AuthorityState != "authoritative" {
+					tier = TierConflict
+				}
+				temporalRank := temporalRankTimeForRecallWithEvidence(req.Query, f.ValidFrom, f.RecordedAt, f.Evidence, evidenceFragments, f.Subject, f.Predicate, f.Object)
 				if !req.IncludeEvidence {
 					factCopy := *f
 					factCopy.Evidence = nil
 					f = &factCopy
 				}
-				f.AuthorityState = authorityState
-				tier := TierActiveFact
-				if authorityState != "authoritative" {
-					tier = TierConflict
-				}
 				hits = append(hits, RecallHit{
 					Fact:         f,
 					Tier:         tier,
 					Score:        f.TruthScore,
-					temporalRank: temporalRankTimeForRecall(req.Query, f.ValidFrom, f.RecordedAt, f.Subject, f.Predicate, f.Object),
+					temporalRank: temporalRank,
 				})
 			}
 		}
@@ -629,6 +636,7 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 				filtered = append(filtered, candidate)
 			}
 			claimsByID, batchClaims := s.batchHydrateClaims(ctx, profileID, filtered)
+			hydrated := make([]*domain.Claim, 0, len(filtered))
 			for _, candidate := range filtered {
 				var c *domain.Claim
 				if batchClaims {
@@ -651,6 +659,11 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 				if !claimMatchesQueryIdentifiers(req.Query, c) {
 					continue
 				}
+				hydrated = append(hydrated, c)
+			}
+			evidenceFragments := s.batchHydrateEvidenceFragments(ctx, profileID, claimEvidenceSets(hydrated))
+			for _, c := range hydrated {
+				temporalRank := temporalRankTimeForRecallWithEvidence(req.Query, c.ValidFrom, c.RecordedAt, c.Evidence, evidenceFragments, c.Subject, c.Predicate, c.Object)
 				if !req.IncludeEvidence {
 					claimCopy := *c
 					claimCopy.Evidence = nil
@@ -661,13 +674,18 @@ func (s *recallService) enrichTierHits(ctx context.Context, profileID string, li
 					Claim:        c,
 					Tier:         TierValidatedClaim,
 					Score:        score,
-					temporalRank: temporalRankTimeForRecall(req.Query, c.ValidFrom, c.RecordedAt, c.Subject, c.Predicate, c.Object),
+					temporalRank: temporalRank,
 				})
 			}
 		}
 	}
 
 	return hits
+}
+
+type hydratedFactRecallCandidate struct {
+	Fact           *domain.Fact
+	AuthorityState string
 }
 
 func (s *recallService) batchHydrateFacts(ctx context.Context, profileID string, candidates []FactRecallResult) (map[string]*domain.Fact, bool) {
@@ -712,6 +730,65 @@ func (s *recallService) batchHydrateClaims(ctx context.Context, profileID string
 		return nil, false
 	}
 	return claims, true
+}
+
+func (s *recallService) batchHydrateEvidenceFragments(ctx context.Context, profileID string, evidenceSets [][]domain.Evidence) map[string]*domain.Fragment {
+	if s.hydrator == nil {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	entries := make([]rrfEntry, 0)
+	for _, evidence := range evidenceSets {
+		for _, item := range evidence {
+			if item.FragmentID == "" {
+				continue
+			}
+			if _, ok := seen[item.FragmentID]; ok {
+				continue
+			}
+			seen[item.FragmentID] = struct{}{}
+			entries = append(entries, rrfEntry{id: item.FragmentID})
+		}
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	fragments, ok := s.batchHydrateFragments(ctx, profileID, entries)
+	if ok {
+		return fragments
+	}
+	out := make(map[string]*domain.Fragment, len(entries))
+	for _, entry := range entries {
+		frag, err := s.hydrator.GetByID(ctx, profileID, entry.id)
+		if err != nil {
+			s.logHydrateError(entry.id, err)
+			continue
+		}
+		if frag != nil {
+			out[entry.id] = frag
+		}
+	}
+	return out
+}
+
+func factEvidenceSets(candidates []hydratedFactRecallCandidate) [][]domain.Evidence {
+	sets := make([][]domain.Evidence, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.Fact != nil {
+			sets = append(sets, candidate.Fact.Evidence)
+		}
+	}
+	return sets
+}
+
+func claimEvidenceSets(claims []*domain.Claim) [][]domain.Evidence {
+	sets := make([][]domain.Evidence, 0, len(claims))
+	for _, claim := range claims {
+		if claim != nil {
+			sets = append(sets, claim.Evidence)
+		}
+	}
+	return sets
 }
 
 // rrfEntry is the internal accumulator keyed by fragment id.
@@ -1019,6 +1096,10 @@ func latestFragmentTimestamp(createdAt, updatedAt time.Time) time.Time {
 }
 
 func temporalRankTimeForRecall(query string, validFrom *time.Time, recordedAt time.Time, contentParts ...string) time.Time {
+	return temporalRankTimeForRecallWithEvidence(query, validFrom, recordedAt, nil, nil, contentParts...)
+}
+
+func temporalRankTimeForRecallWithEvidence(query string, validFrom *time.Time, recordedAt time.Time, evidence []domain.Evidence, evidenceFragments map[string]*domain.Fragment, contentParts ...string) time.Time {
 	if !isCurrentnessQuery(query) {
 		return time.Time{}
 	}
@@ -1027,6 +1108,9 @@ func temporalRankTimeForRecall(query string, validFrom *time.Time, recordedAt ti
 	}
 	if contentDate := latestTemporalDateInText(strings.Join(contentParts, " "), recordedAt); !contentDate.IsZero() {
 		return contentDate
+	}
+	if evidenceDate := latestTemporalDateInEvidence(query, evidence, evidenceFragments); !evidenceDate.IsZero() {
+		return evidenceDate
 	}
 	if !recordedAt.IsZero() {
 		return recordedAt.UTC()
@@ -1076,6 +1160,36 @@ func latestISODateInText(value string) time.Time {
 
 func latestTemporalDateInEntry(entry rrfEntry) time.Time {
 	return latestTemporalDateInText(entry.Content, latestFragmentTimestamp(entry.CreatedAt, entry.UpdatedAt))
+}
+
+func latestTemporalDateInEvidence(query string, evidence []domain.Evidence, evidenceFragments map[string]*domain.Fragment) time.Time {
+	if len(evidence) == 0 || len(evidenceFragments) == 0 {
+		return time.Time{}
+	}
+	queryText := rerankText(query)
+	latest := time.Time{}
+	for _, item := range evidence {
+		if item.FragmentID == "" {
+			continue
+		}
+		fragment := evidenceFragments[item.FragmentID]
+		if fragment == nil {
+			continue
+		}
+		contentText := rerankText(fragment.Content)
+		if queryText == "" || contentText == "" || !rerankMatchesQueryIdentifiers(queryText, contentText) {
+			continue
+		}
+		candidate := latestTemporalDateInEntry(rrfEntry{
+			Content:   fragment.Content,
+			CreatedAt: fragment.CreatedAt,
+			UpdatedAt: fragment.UpdatedAt,
+		})
+		if !candidate.IsZero() && (latest.IsZero() || candidate.After(latest)) {
+			latest = candidate
+		}
+	}
+	return latest
 }
 
 func latestTemporalDateInText(value string, anchor time.Time) time.Time {

@@ -12,7 +12,7 @@ Baseline run: `tests/eval/runs/20260628T145353Z_current_logic_baseline_retry`
 
 ## Summary
 
-The best measured branch for the stable reusable-team eval loop is `exp/recall-typed-content-temporal-cues`.
+The best measured branch for the stable reusable-team eval loop is `exp/recall-typed-evidence-temporal-cues`.
 
 It reaches perfect measured local eval metrics on this seed, using the already-imported reusable team and `--import-seed=false`: `recall@k=1.0000`, `MRR=1.0000`, `nDCG@k=1.0000`, `bad@k=0.0000`, and `bad_rank1=0.0000`. It also passes the focused live `local_tiered_v1` fact/claim seed.
 
@@ -32,6 +32,7 @@ The current eval process reuses a stable imported `local_eval_1k_v2` team and do
 | `exp/recall-relative-temporal-cues` | `20260629T_relative_temporal_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good; preserves reusable 1k metrics while adding relative temporal phrase support for fragment currentness. |
 | `exp/recall-month-name-temporal-cues` | `20260629T_month_name_temporal_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good; preserves reusable 1k metrics while adding month-name date support for fragment currentness. |
 | `exp/recall-typed-content-temporal-cues` | `20260629T_typed_content_temporal_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good; preserves reusable 1k metrics while adding typed fact/claim content-date currentness fallback. |
+| `exp/recall-typed-evidence-temporal-cues` | `20260629T_typed_evidence_temporal_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good; preserves reusable 1k metrics while adding supporting-fragment date fallback for typed facts and claims. |
 
 Delta from reusable-team current logic to vector overfetch: `recall@k +0.0270`, `MRR +0.0426`, `nDCG@k +0.0388`, `bad@k -0.1010`.
 
@@ -39,7 +40,7 @@ Delta from vector overfetch to tier fact/claim branch on `local_eval_1k_v2`: all
 
 ## Fact/Claim Tier Coverage
 
-The `local_eval_1k_v2` suite mostly measures fragment retrieval. `local_tiered_v1` adds a focused typed coverage surface for active facts, validated claims, cross-tier source-evidence intent, typed content-date fallback, and fragment natural-language temporal currentness. Current expanded seed hash: `sha256:a5ffe27e37b4a3c6c54467d555b55b119d6d492254380507869a6f1e3675dc7a`.
+The `local_eval_1k_v2` suite mostly measures fragment retrieval. `local_tiered_v1` adds a focused typed coverage surface for active facts, validated claims, cross-tier source-evidence intent, typed content-date fallback, typed evidence-date fallback, and fragment natural-language temporal currentness. Current expanded seed hash: `sha256:6dc8ef5f4461f4ba178a03cfebe2a64b5aa83af38742bd0810cf6b2598cf7628`.
 
 | Branch | Run | recall@k | MRR | nDCG@k | bad@k | required rank 1 | bad rank 1 | Judgment |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
@@ -50,6 +51,7 @@ The `local_eval_1k_v2` suite mostly measures fragment retrieval. `local_tiered_v
 | `exp/recall-relative-temporal-cues` | `20260629T_relative_temporal_local_tiered_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good relative temporal coverage: a "yesterday" fragment update outranks an undated fragment that says current. |
 | `exp/recall-month-name-temporal-cues` | `20260629T_month_name_temporal_local_tiered_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good month-name temporal coverage: a `June 27, 2026` fragment update outranks an undated fragment that says current. |
 | `exp/recall-typed-content-temporal-cues` | `20260629T_typed_content_temporal_local_tiered_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good typed content-date coverage: facts and claims with no `valid_from` rank by dates present in their triple text before falling back to `recorded_at`. |
+| `exp/recall-typed-evidence-temporal-cues` | `20260629T_typed_evidence_temporal_local_tiered_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good typed evidence-date coverage: facts and claims with no `valid_from` or triple date rank by dates in supporting source fragments before falling back to `recorded_at`. |
 
 This branch also fixes the eval harness so qrels can resolve `source_doc_id` as a fragment, claim, or fact, fixes optional `valid_from` / `valid_to` persistence for claim creation and fact promotion, and fails typed live eval imports when required refs are not mapped after import.
 
@@ -92,6 +94,7 @@ References:
 | `exp/recall-relative-temporal-cues` | `20260629T_relative_temporal_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best candidate with initial relative temporal phrase support |
 | `exp/recall-month-name-temporal-cues` | `20260629T_month_name_temporal_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best candidate with relative plus month-name temporal phrase support |
 | `exp/recall-typed-content-temporal-cues` | `20260629T_typed_content_temporal_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best candidate with typed fact/claim content-date fallback |
+| `exp/recall-typed-evidence-temporal-cues` | `20260629T_typed_evidence_temporal_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best candidate with typed supporting-evidence date fallback |
 
 ## Best Candidate Deltas
 
@@ -135,6 +138,7 @@ The best branch keeps the existing hybrid semantic plus keyword RRF flow and add
 14. Relative temporal fragment cues: currentness rerank now treats `today`, `yesterday`, `N days ago`, and `last week` as content dates anchored to the fragment's own timestamp. This lets a relative dated update outrank an undated fragment that merely says current.
 15. Month-name temporal fragment cues: currentness rerank now parses dates such as `June 27, 2026`, `Jun 27`, and `27 June 2026`, using the fragment timestamp's year when the content omits a year. This handles dated updates that do not use ISO date format.
 16. Typed fact/claim content-date fallback: currentness sorting for active facts and validated claims now uses `valid_from` first, then parses temporal dates from the hydrated triple text, then falls back to `recorded_at`. Community expansion uses the same helper, so direct and expanded recall sort typed hits consistently.
+17. Typed fact/claim evidence-date fallback: when `valid_from` and triple text do not contain a date, currentness sorting batches and reads supporting fragments from fact/claim evidence, parses temporal dates from those fragment contents, then falls back to `recorded_at`. The response still strips evidence unless `include_evidence` is requested.
 
 All positive boosts require matching identifier-like tokens from the query, such as `OBS-001`, `NEG-001`, or `AUT-061`, when such identifiers exist. This guard prevents neighboring template records from receiving accidental boosts.
 
@@ -149,17 +153,18 @@ Remaining work is now about generalization beyond this synthetic seed:
 | `unit_trap` | MRR 1.0000, bad@k 0.0000 | Scoped exact-ID boost fixed remaining neighboring-job rank misses. |
 | All adversarial slices | bad@k 0.0000 | No judged-bad context remains in top-k on local_eval_1k_v2. |
 | Non-synthetic workloads | Not measured | Need validation because zero-score filtering can intentionally return fewer than `limit` fragments. |
-| Tiered facts/claims/fragments | Expanded `local_tiered_v1` live candidate: recall@k 1.0000, required rank 1 1.0000, bad@k 0.0000 | Twelve-case seed now covers same-tier fact/claim currentness, typed fact/claim content-date fallback without `valid_from`, fact-over-fragment, claim-over-fragment, cross-identifier fact filtering, `valid_at` temporal windows, evidence-source fragment intent, relative temporal fragment currentness, and month-name temporal fragment currentness. Keep expanding before treating it as broad acceptance coverage. |
-| Typed source text dates | Not fully measured | Hydrated facts and claims expose triple text and typed temporal fields, not source fragment text. If extraction drops source dates from both `valid_from` and the triple, recall cannot recover that date without hydrating supporting fragments or changing extraction/import metadata. |
+| Tiered facts/claims/fragments | Expanded `local_tiered_v1` live candidate: recall@k 1.0000, required rank 1 1.0000, bad@k 0.0000 | Fourteen-case seed now covers same-tier fact/claim currentness, typed fact/claim content-date fallback without `valid_from`, typed supporting-evidence date fallback, fact-over-fragment, claim-over-fragment, cross-identifier fact filtering, `valid_at` temporal windows, evidence-source fragment intent, relative temporal fragment currentness, and month-name temporal fragment currentness. Keep expanding before treating it as broad acceptance coverage. |
+| Typed source text dates | Partially measured | Supporting fragment dates are now measured for typed fact/claim currentness. Recall still cannot recover dates if extraction/import drops both typed temporal fields and evidence links, or if the relevant source date is outside the hydrated supporting fragments. |
 
 ## Recommendation
 
-Merge candidate to main should start from `exp/recall-typed-content-temporal-cues`, which builds on `exp/recall-month-name-temporal-cues`.
+Merge candidate to main should start from `exp/recall-typed-evidence-temporal-cues`, which builds on `exp/recall-typed-content-temporal-cues`.
 
 Next improvement experiments should target generalization:
 
 1. Validate zero-score filtering against non-synthetic workloads, because returning fewer than `limit` fragments is intentional but changes context volume.
-2. Decide whether claim/fact extraction should preserve source dates as `valid_from`, triple text, or structured metadata; recall cannot parse dates that are absent from hydrated typed records.
-3. Broader temporal parsing beyond relative phrases and month names, including weekdays, ambiguous numeric dates, and non-English date forms, before relying on natural-language date priority outside the synthetic seed.
-4. Keep expanding `local_tiered_v1` now that live typed fact/claim/fragment scoring is stable.
-5. Replace hard-coded cue lists with learned or configurable rerank features if future seeds expose broader language variation.
+2. Measure typed evidence-date fallback latency on non-synthetic or larger typed workloads, because it adds supporting fragment hydration for typed currentness hits.
+3. Decide whether claim/fact extraction should preserve source dates as `valid_from`, triple text, or structured metadata; recall now has an evidence fallback, but typed temporal fields remain cheaper and more explicit.
+4. Broader temporal parsing beyond relative phrases and month names, including weekdays, ambiguous numeric dates, and non-English date forms, before relying on natural-language date priority outside the synthetic seed.
+5. Keep expanding `local_tiered_v1` now that live typed fact/claim/fragment scoring is stable.
+6. Replace hard-coded cue lists with learned or configurable rerank features if future seeds expose broader language variation.

@@ -74,15 +74,16 @@ of MB. Before using it for a reported run, validate its manifest and keep the
 run artifacts with the seed hash.
 
 `local_tiered_v1` is a small committed seed for the fact and validated-claim
-recall tiers. It contains twelve rank-1 cases and twenty-four corpus rows
+recall tiers. It contains fourteen rank-1 cases and twenty-eight corpus rows
 covering same-tier fact/claim currentness, typed fact/claim content-date
-currentness when `valid_from` is absent, fact-over-fragment behavior,
-claim-over-fragment behavior, cross-identifier fact filtering, `valid_at`
-temporal windows for facts, claims, and fragment fallback metadata, and
-evidence-source intent where a query asks for the raw source note rather than
-the derived fact or claim. It also includes fragment-only relative temporal and
-month-name temporal cases where dated updates must outrank undated notes that
-only say "current."
+currentness when `valid_from` is absent, typed fact/claim supporting-evidence
+date currentness when both `valid_from` and triple dates are absent,
+fact-over-fragment behavior, claim-over-fragment behavior, cross-identifier fact
+filtering, `valid_at` temporal windows for facts, claims, and fragment fallback
+metadata, and evidence-source intent where a query asks for the raw source note
+rather than the derived fact or claim. It also includes fragment-only relative
+temporal and month-name temporal cases where dated updates must outrank undated
+notes that only say "current."
 Rows with typed claims are imported through `import_memories`, so the runner can
 score `fragment`, `claim`, and `fact` refs instead of only fragment refs. Fact
 rows request `auto_promote`; live runs depend on the configured verifier and
@@ -92,7 +93,7 @@ unmapped when promotion policy intentionally rejects them. Typed claim
 predicates must use the allowed import schema values, so typed content-date
 cases place natural-language dates in the subject text while keeping predicate
 `uses`. The current seed hash is
-`sha256:a5ffe27e37b4a3c6c54467d555b55b119d6d492254380507869a6f1e3675dc7a`.
+`sha256:6dc8ef5f4461f4ba178a03cfebe2a64b5aa83af38742bd0810cf6b2598cf7628`.
 
 ## Commands
 

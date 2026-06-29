@@ -1,7 +1,9 @@
 {"case_id":"local_tiered_v1_fact_currentness","weight":1,"slices":["tiered","fact_currentness","adversarial"]}
 {"case_id":"local_tiered_v1_fact_content_date_currentness","weight":1,"slices":["tiered","fact_currentness","typed_content_date","temporal","adversarial"]}
+{"case_id":"local_tiered_v1_fact_evidence_date_currentness","weight":1,"slices":["tiered","fact_currentness","typed_evidence_date","temporal","adversarial"]}
 {"case_id":"local_tiered_v1_claim_currentness","weight":1,"slices":["tiered","claim_currentness","adversarial"]}
 {"case_id":"local_tiered_v1_claim_content_date_currentness","weight":1,"slices":["tiered","claim_currentness","typed_content_date","temporal","adversarial"]}
+{"case_id":"local_tiered_v1_claim_evidence_date_currentness","weight":1,"slices":["tiered","claim_currentness","typed_evidence_date","temporal","adversarial"]}
 {"case_id":"local_tiered_v1_fact_over_fragment","weight":1,"slices":["tiered","fact_over_fragment","cross_tier"]}
 {"case_id":"local_tiered_v1_claim_over_fragment","weight":1,"slices":["tiered","claim_over_fragment","cross_tier"]}
 {"case_id":"local_tiered_v1_cross_identifier_claim","weight":1,"slices":["tiered","cross_identifier","adversarial"]}
