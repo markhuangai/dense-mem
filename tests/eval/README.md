@@ -87,13 +87,15 @@ notes that only say "current."
 Rows with typed claims are imported through `import_memories`, so the runner can
 score `fragment`, `claim`, and `fact` refs instead of only fragment refs. Fact
 rows request `auto_promote`; live runs depend on the configured verifier and
-promotion path creating active facts for required fact refs. The runner fails
+promotion path creating active facts for required fact refs. Windowed old
+fact/claim rows include both `valid_from` and `valid_to` so the verifier and
+recall filters receive the same temporal scope as the qrels. The runner fails
 fast when a required qrel ref is unmapped after import; bad refs may remain
 unmapped when promotion policy intentionally rejects them. Typed claim
 predicates must use the allowed import schema values, so typed content-date
 cases place natural-language dates in the subject text while keeping predicate
 `uses`. The current seed hash is
-`sha256:6dc8ef5f4461f4ba178a03cfebe2a64b5aa83af38742bd0810cf6b2598cf7628`.
+`sha256:6131d4ae0f597a265cf46dc306779ef5c5137051f8a10284da973924d05242a5`.
 
 ## Commands
 

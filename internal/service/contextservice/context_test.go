@@ -229,6 +229,8 @@ func TestAssembleContextRendersStructuredItemsAndClarifications(t *testing.T) {
 func TestAssembleContextOptionsAndErrors(t *testing.T) {
 	ctx := context.Background()
 	includeEvidence := false
+	validAt := time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC)
+	knownAt := time.Date(2026, 6, 23, 0, 0, 0, 0, time.UTC)
 	recall := &fakeRecall{hits: []recallservice.RecallHit{
 		{Tier: recallservice.TierActiveFact, Score: 0.9, Fact: factFixture("fact-1", "go")},
 		{Tier: recallservice.TierValidatedClaim, Score: 0.7, Claim: claimFixture("claim-1", "uses", "go", []string{"fragment-1"})},
@@ -241,12 +243,16 @@ func TestAssembleContextOptionsAndErrors(t *testing.T) {
 		Limit:           50,
 		MaxChars:        50,
 		IncludeEvidence: &includeEvidence,
+		ValidAt:         &validAt,
+		KnownAt:         &knownAt,
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, "project context", got.Query)
 	require.Equal(t, 10, recall.lastReq.Limit)
 	require.False(t, recall.lastReq.IncludeEvidence)
+	require.Equal(t, &validAt, recall.lastReq.ValidAt)
+	require.Equal(t, &knownAt, recall.lastReq.KnownAt)
 	require.Len(t, got.Items, 2)
 	require.Empty(t, got.Items[0].EvidenceFragments)
 	require.Empty(t, got.Items[1].EvidenceFragments)

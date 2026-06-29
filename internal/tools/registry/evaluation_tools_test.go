@@ -389,6 +389,12 @@ func TestEvalRunRecallCaseMapsRequestsAndRefs(t *testing.T) {
 	if ctxSvc.req.IncludeEvidence == nil || !*ctxSvc.req.IncludeEvidence || ctxSvc.req.MaxChars != 2500 {
 		t.Fatalf("assemble request = %+v", ctxSvc.req)
 	}
+	if ctxSvc.req.ValidAt == nil || ctxSvc.req.KnownAt == nil {
+		t.Fatalf("assemble request times = %+v", ctxSvc.req)
+	}
+	if !ctxSvc.req.ValidAt.Equal(*recall.req.ValidAt) || !ctxSvc.req.KnownAt.Equal(*recall.req.KnownAt) {
+		t.Fatalf("assemble request times = %+v, recall times = %+v", ctxSvc.req, recall.req)
+	}
 	ranked := out["ranked_refs"].([]map[string]any)
 	if len(ranked) != 3 || ranked[0]["type"] != "fact" || ranked[1]["type"] != "claim" || ranked[2]["type"] != "fragment" {
 		t.Fatalf("ranked refs = %#v", ranked)

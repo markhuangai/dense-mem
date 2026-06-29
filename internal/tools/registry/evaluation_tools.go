@@ -289,7 +289,7 @@ func evalRunRecallCaseTool(deps Dependencies) Tool {
 				"latency_ms":  time.Since(started).Milliseconds(),
 			}
 			if deps.Context != nil {
-				assembled, err := deps.Context.Assemble(ctx, profileID, evalAssembleRequest(input))
+				assembled, err := deps.Context.Assemble(ctx, profileID, evalAssembleRequest(input, req))
 				if err != nil {
 					return nil, err
 				}
@@ -633,12 +633,14 @@ func evalRecallRequest(input map[string]any) (recallservice.RecallRequest, error
 	return req, nil
 }
 
-func evalAssembleRequest(input map[string]any) contextservice.AssembleRequest {
+func evalAssembleRequest(input map[string]any, recallReq recallservice.RecallRequest) contextservice.AssembleRequest {
 	includeEvidence := boolInput(input["include_evidence"])
 	return contextservice.AssembleRequest{
-		Query:           stringInput(input["query"]),
-		Limit:           intInputOrDefault(input["limit"], recallservice.DefaultLimit),
+		Query:           recallReq.Query,
+		Limit:           recallReq.Limit,
 		IncludeEvidence: &includeEvidence,
+		ValidAt:         recallReq.ValidAt,
+		KnownAt:         recallReq.KnownAt,
 		MaxChars:        intInputOrDefault(input["max_context_chars"], 4000),
 	}
 }

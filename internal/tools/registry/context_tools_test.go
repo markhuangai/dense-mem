@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
@@ -45,13 +46,21 @@ func TestBuildDefaultContextTools_InvokeAndScope(t *testing.T) {
 		t.Fatalf("assemble_context scopes = %v; want [read]", assembleTool.RequiredScopes)
 	}
 	contextOut, err := assembleTool.Invoke(context.Background(), "profile-context", map[string]any{
-		"query": "deployment memory",
+		"query":    "deployment memory",
+		"valid_at": "2026-06-22T00:00:00Z",
+		"known_at": "2026-06-23T00:00:00Z",
 	})
 	if err != nil {
 		t.Fatalf("assemble_context Invoke: %v", err)
 	}
 	if ctxSvc.lastProfile != "profile-context" || ctxSvc.lastAssemble.Query != "deployment memory" {
 		t.Fatalf("assemble_context routed profile/request = %q/%+v", ctxSvc.lastProfile, ctxSvc.lastAssemble)
+	}
+	if ctxSvc.lastAssemble.ValidAt == nil || ctxSvc.lastAssemble.ValidAt.Format(time.RFC3339) != "2026-06-22T00:00:00Z" {
+		t.Fatalf("assemble_context valid_at = %+v", ctxSvc.lastAssemble.ValidAt)
+	}
+	if ctxSvc.lastAssemble.KnownAt == nil || ctxSvc.lastAssemble.KnownAt.Format(time.RFC3339) != "2026-06-23T00:00:00Z" {
+		t.Fatalf("assemble_context known_at = %+v", ctxSvc.lastAssemble.KnownAt)
 	}
 	if contextOut["context_block"] != "Dense-Mem context." {
 		t.Fatalf("assemble_context context_block = %v", contextOut["context_block"])

@@ -60,6 +60,8 @@ func assembleContextTool(deps Dependencies) Tool {
 				"limit":            map[string]any{"type": "integer", "minimum": 0, "maximum": 10, "description": "Maximum recall hits. Defaults to 5."},
 				"max_chars":        map[string]any{"type": "integer", "minimum": 1000, "maximum": 8000, "description": "Maximum context_block characters. Defaults to 4000."},
 				"include_evidence": map[string]any{"type": "boolean", "description": "Include supporting SourceFragment content when available. Defaults to true."},
+				"valid_at":         map[string]any{"type": "string", "format": "date-time", "description": "Optional real-world validity time for temporal recall filtering."},
+				"known_at":         map[string]any{"type": "string", "format": "date-time", "description": "Optional system knowledge time for temporal recall filtering."},
 			},
 			"additionalProperties": false,
 		},

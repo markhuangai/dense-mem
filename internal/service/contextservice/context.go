@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
@@ -108,10 +109,12 @@ type TraceEdge struct {
 
 // AssembleRequest asks Dense-Mem to build a prompt-ready context block.
 type AssembleRequest struct {
-	Query           string `json:"query"`
-	Limit           int    `json:"limit,omitempty"`
-	MaxChars        int    `json:"max_chars,omitempty"`
-	IncludeEvidence *bool  `json:"include_evidence,omitempty"`
+	Query           string     `json:"query"`
+	Limit           int        `json:"limit,omitempty"`
+	MaxChars        int        `json:"max_chars,omitempty"`
+	IncludeEvidence *bool      `json:"include_evidence,omitempty"`
+	ValidAt         *time.Time `json:"valid_at,omitempty"`
+	KnownAt         *time.Time `json:"known_at,omitempty"`
 }
 
 // AssembleResult returns structured context and a bounded text block.
@@ -278,6 +281,8 @@ func (s *service) Assemble(ctx context.Context, profileID string, req AssembleRe
 	hits, err := s.deps.Recall.Recall(ctx, profileID, recallservice.RecallRequest{
 		Query:           query,
 		Limit:           limit,
+		ValidAt:         req.ValidAt,
+		KnownAt:         req.KnownAt,
 		IncludeEvidence: includeEvidence,
 	})
 	if err != nil {
