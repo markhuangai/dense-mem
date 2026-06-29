@@ -725,15 +725,16 @@ func TestKeywordFactResultMatchesWindow(t *testing.T) {
 func TestKeywordSearcherValueCoercionHelpers(t *testing.T) {
 	now := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 	row := map[string]any{
-		"string":       "value",
-		"number":       123,
-		"labels_any":   []any{"a", 2},
-		"labels_str":   []string{"x", "y"},
-		"metadata":     map[string]any{"k": "v"},
-		"score64":      float64(0.7),
-		"score32":      float32(0.5),
-		"recorded_at":  now,
-		"recorded_nil": "not-time",
+		"string":        "value",
+		"number":        123,
+		"labels_any":    []any{"a", 2},
+		"labels_str":    []string{"x", "y"},
+		"metadata":      map[string]any{"k": "v"},
+		"metadata_json": `{"j":"w"}`,
+		"score64":       float64(0.7),
+		"score32":       float32(0.5),
+		"recorded_at":   now,
+		"recorded_nil":  "not-time",
 	}
 
 	require.Equal(t, "value", getString(row, "string"))
@@ -743,6 +744,7 @@ func TestKeywordSearcherValueCoercionHelpers(t *testing.T) {
 	require.Equal(t, []string{"x", "y"}, getLabels(row, "labels_str"))
 	require.Nil(t, getLabels(row, "missing"))
 	require.Equal(t, map[string]any{"k": "v"}, getMetadata(row, "metadata"))
+	require.Equal(t, map[string]any{"j": "w"}, getMetadata(row, "missing", "metadata_json"))
 	require.Nil(t, getMetadata(row, "string"))
 	require.Equal(t, 0.7, getFloat64Val(row, "score64"))
 	require.Equal(t, 0.5, getFloat64Val(row, "score32"))

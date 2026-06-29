@@ -8,6 +8,7 @@ import (
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 
+	"github.com/markhuangai/dense-mem/internal/service/fragmentcodec"
 	neo4jstore "github.com/markhuangai/dense-mem/internal/storage/neo4j"
 )
 
@@ -49,7 +50,8 @@ func (s *neo4jEmbeddingSearcher) QueryVectorIndex(ctx context.Context, profileID
 	// Uses db.index.vector.queryNodes for vector similarity search.
 	cypherQuery := `CALL db.index.vector.queryNodes('fragment_embedding_idx', $limit, $embedding) YIELD node AS f, score
 WHERE f.team_id = $profileId AND ` + fragmentActive + `
-	RETURN f.fragment_id AS id, f.content AS content, score, f.labels AS labels, f.metadata AS metadata, f.team_id AS team_id,
+	RETURN f.fragment_id AS id, f.content AS content, score, f.labels AS labels, f.metadata AS metadata,
+	       f.metadata_json AS metadata_json, f.team_id AS team_id,
 	       f.created_at AS created_at, f.updated_at AS updated_at`
 
 	// Build params - convert float32 slice to any slice for Neo4j
@@ -81,7 +83,7 @@ WHERE f.team_id = $profileId AND ` + fragmentActive + `
 			Content:   getStringVal(row, "content"),
 			Score:     getFloat64Val(row, "score"),
 			Labels:    getLabelsVal(row, "labels"),
-			Metadata:  getMetadataVal(row, "metadata"),
+			Metadata:  getMetadataVal(row, "metadata", "metadata_json"),
 			ProfileID: getStringVal(row, "team_id"),
 			CreatedAt: getTimeVal(row, "created_at"),
 			UpdatedAt: getTimeVal(row, "updated_at"),
@@ -151,10 +153,10 @@ func getLabelsVal(row map[string]any, key string) []string {
 	return nil
 }
 
-func getMetadataVal(row map[string]any, key string) map[string]any {
-	if val, ok := row[key]; ok {
-		if m, ok := val.(map[string]any); ok {
-			return m
+func getMetadataVal(row map[string]any, keys ...string) map[string]any {
+	for _, key := range keys {
+		if value := fragmentcodec.DecodeOptionalMap(row[key]); value != nil {
+			return value
 		}
 	}
 	return nil

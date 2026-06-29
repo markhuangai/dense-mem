@@ -602,13 +602,14 @@ func TestSemanticSearchValidationThresholdAndDependencyErrors(t *testing.T) {
 
 func TestSemanticSearcherValueCoercionHelpers(t *testing.T) {
 	row := map[string]any{
-		"string":     "value",
-		"number":     123,
-		"score64":    float64(0.7),
-		"score32":    float32(0.5),
-		"labels_any": []any{"a", 2},
-		"labels_str": []string{"x", "y"},
-		"metadata":   map[string]any{"k": "v"},
+		"string":        "value",
+		"number":        123,
+		"score64":       float64(0.7),
+		"score32":       float32(0.5),
+		"labels_any":    []any{"a", 2},
+		"labels_str":    []string{"x", "y"},
+		"metadata":      map[string]any{"k": "v"},
+		"metadata_json": `{"j":"w"}`,
 	}
 
 	require.Equal(t, "value", getStringVal(row, "string"))
@@ -621,5 +622,6 @@ func TestSemanticSearcherValueCoercionHelpers(t *testing.T) {
 	require.Equal(t, []string{"x", "y"}, getLabelsVal(row, "labels_str"))
 	require.Nil(t, getLabelsVal(row, "missing"))
 	require.Equal(t, map[string]any{"k": "v"}, getMetadataVal(row, "metadata"))
+	require.Equal(t, map[string]any{"j": "w"}, getMetadataVal(row, "missing", "metadata_json"))
 	require.Nil(t, getMetadataVal(row, "string"))
 }

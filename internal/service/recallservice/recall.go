@@ -410,6 +410,8 @@ func (s *recallService) Recall(ctx context.Context, profileID string, req Recall
 
 	filteredSem := filterSemanticFragments(semHits, profileID)
 	filteredKw := filterKeywordFragments(kwHits, profileID)
+	filteredSem = filterSemanticFragmentsByWindow(filteredSem, req.ValidAt, req.KnownAt)
+	filteredKw = filterKeywordFragmentsByWindow(filteredKw, req.ValidAt, req.KnownAt)
 
 	merged := rrfMerge(filteredSem, filteredKw)
 	applyIdentifierSpecificityAdjustments(query, merged)
@@ -1126,7 +1128,7 @@ func historicalSelectionAdjustment(query, content string, frame selectionCueFram
 		return 0
 	}
 	if historicalSelectionActionCue(contentText) {
-		return -0.018
+		return -0.034
 	}
 	return 0
 }
@@ -1234,6 +1236,9 @@ func rerankIdentifiers(text string) []string {
 }
 
 func rerankIdentifierToken(token string) bool {
+	if _, err := time.Parse("2006-01-02", token); err == nil {
+		return false
+	}
 	hasDigit := false
 	for _, r := range token {
 		if r >= '0' && r <= '9' {
@@ -1478,6 +1483,72 @@ func claimCandidateMatchesRecallWindow(c ClaimRecallResult, validAt, knownAt *ti
 		}
 	}
 	return true
+}
+
+func filterSemanticFragmentsByWindow(hits []semanticsearch.SearchHit, validAt, knownAt *time.Time) []semanticsearch.SearchHit {
+	if validAt == nil && knownAt == nil {
+		return hits
+	}
+	out := hits[:0]
+	for _, hit := range hits {
+		if fragmentMetadataMatchesRecallWindow(hit.Metadata, validAt, knownAt) {
+			out = append(out, hit)
+		}
+	}
+	return out
+}
+
+func filterKeywordFragmentsByWindow(hits []keywordsearch.FragmentSearchResult, validAt, knownAt *time.Time) []keywordsearch.FragmentSearchResult {
+	if validAt == nil && knownAt == nil {
+		return hits
+	}
+	out := hits[:0]
+	for _, hit := range hits {
+		if fragmentMetadataMatchesRecallWindow(hit.Metadata, validAt, knownAt) {
+			out = append(out, hit)
+		}
+	}
+	return out
+}
+
+func fragmentMetadataMatchesRecallWindow(metadata map[string]any, validAt, knownAt *time.Time) bool {
+	if validAt != nil {
+		if validFrom, ok := metadataTime(metadata, "valid_from", "validFrom"); ok && validFrom.After(*validAt) {
+			return false
+		}
+		if validTo, ok := metadataTime(metadata, "valid_to", "validTo"); ok && !validTo.After(*validAt) {
+			return false
+		}
+	}
+	if knownAt != nil {
+		if recordedAt, ok := metadataTime(metadata, "recorded_at", "recordedAt"); ok && recordedAt.After(*knownAt) {
+			return false
+		}
+		if recordedTo, ok := metadataTime(metadata, "recorded_to", "recordedTo"); ok && !recordedTo.After(*knownAt) {
+			return false
+		}
+	}
+	return true
+}
+
+func metadataTime(metadata map[string]any, keys ...string) (time.Time, bool) {
+	for _, key := range keys {
+		value, ok := metadata[key]
+		if !ok {
+			continue
+		}
+		switch typed := value.(type) {
+		case time.Time:
+			return typed.UTC(), true
+		case string:
+			parsed, err := time.Parse(time.RFC3339Nano, typed)
+			if err != nil {
+				return time.Time{}, false
+			}
+			return parsed.UTC(), true
+		}
+	}
+	return time.Time{}, false
 }
 
 // filterSemanticFragments drops hits outside the caller's profile and any

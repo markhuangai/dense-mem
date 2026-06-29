@@ -847,6 +847,65 @@ func TestRecallService_CurrentnessRerankPrefersNewerDatedFragment(t *testing.T) 
 	require.Equal(t, "f-new-dated", out[0].Fragment.FragmentID)
 }
 
+func TestRecallService_ValidAtFiltersFutureFragmentMetadata(t *testing.T) {
+	query := "As of 2026-06-22, what owner did service TIER-W-001 use?"
+	validAt := time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC)
+	sem := &fakeSemanticSearcher{
+		hits: []semanticsearch.SearchHit{
+			{
+				ID:       "f-future",
+				Type:     "fragment",
+				Content:  "Since 2026-06-27, service TIER-W-001 owner uses owner-cobalt.",
+				Metadata: map[string]any{"valid_from": "2026-06-27T00:00:00Z"},
+			},
+			{
+				ID:       "f-old",
+				Type:     "fragment",
+				Content:  "Since 2026-06-20, service TIER-W-001 owner uses owner-coral.",
+				Metadata: map[string]any{"valid_from": "2026-06-20T00:00:00Z"},
+			},
+		},
+	}
+	kw := &fakeKeywordSearcher{
+		hits: []keywordsearch.FragmentSearchResult{
+			{
+				FragmentID: "f-future",
+				Content:    "Since 2026-06-27, service TIER-W-001 owner uses owner-cobalt.",
+				Metadata:   map[string]any{"valid_from": "2026-06-27T00:00:00Z"},
+			},
+			{
+				FragmentID: "f-old",
+				Content:    "Since 2026-06-20, service TIER-W-001 owner uses owner-coral.",
+				Metadata:   map[string]any{"valid_from": "2026-06-20T00:00:00Z"},
+			},
+		},
+	}
+	emb := &stubEmbedding{DimensionsResult: 4}
+	svc := NewRecallService(emb, sem, kw, &fakeHydrator{}, nil, nil)
+
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: query, Limit: 5, ValidAt: &validAt})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, out)
+	require.Equal(t, "f-old", out[0].Fragment.FragmentID)
+	for _, hit := range out {
+		if hit.Fragment != nil {
+			require.NotEqual(t, "f-future", hit.Fragment.FragmentID)
+		}
+	}
+}
+
+func TestFragmentMetadataKnownAtRequiresExplicitRecordedMetadata(t *testing.T) {
+	knownAt := time.Date(2026, 6, 28, 0, 0, 0, 0, time.UTC)
+
+	require.True(t, fragmentMetadataMatchesRecallWindow(nil, nil, &knownAt))
+	require.False(t, fragmentMetadataMatchesRecallWindow(
+		map[string]any{"recorded_at": "2026-06-29T00:00:00Z"},
+		nil,
+		&knownAt,
+	))
+}
+
 func TestRecallService_CurrentnessRerankDatedFragmentBeatsUndatedCurrentCue(t *testing.T) {
 	query := "Who is the current owner for account TMP-001?"
 	oldCreated := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
@@ -1008,6 +1067,12 @@ func TestIdentifierSpecificityAdjustmentRequiresExactIdentifier(t *testing.T) {
 	require.Zero(t, identifierSpecificityAdjustment(queryText, "Runtime configuration. job UNT-003 must use a timeout of 13 minutes."))
 }
 
+func TestRerankIdentifiersSkipsISODateTokens(t *testing.T) {
+	queryText := rerankText("As of 2026-06-22, what owner did service TIER-W-001 use?")
+
+	require.Equal(t, []string{"tier-w-001"}, rerankIdentifiers(queryText))
+}
+
 func TestApplyIdentifierSpecificityAdjustmentsRequiresUnitValueQuery(t *testing.T) {
 	entries := []rrfEntry{
 		{
@@ -1052,6 +1117,9 @@ func TestRecallService_CueRerankPrefersDirectiveEvidence(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, out)
 	require.Equal(t, "f-required", out[0].Fragment.FragmentID)
+	for _, hit := range out {
+		require.NotEqual(t, "f-stale", hit.Fragment.FragmentID)
+	}
 }
 
 func TestRecallService_CueRerankSuppressesHistoricalSiblingWhenDirectiveExists(t *testing.T) {

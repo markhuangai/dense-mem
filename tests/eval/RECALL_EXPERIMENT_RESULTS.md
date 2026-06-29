@@ -27,6 +27,7 @@ The current eval process reuses a stable imported `local_eval_1k_v2` team and do
 | `exp/recall-identifier-specificity-rerank` | `20260629T013827Z_local_eval_1k_current_logic_reuse_baseline` | 0.9730 | 0.9574 | 0.9612 | 0.1010 | 0.9500 | 0.0000 | Current logic on the reusable team; not good enough because global vector neighbors crowd out same-team candidates before tenant filtering. |
 | `exp/recall-vector-overfetch-reuse-fix` | `20260629T014939Z_local_eval_1k_vector_overfetch_reuse_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good; queries more vector candidates before the existing team/status filter, then caps returned hits to the requested limit. |
 | `exp/recall-tier-fact-claim-vector-overfetch` | `20260629T020934Z_local_eval_1k_vector_tier_fact_claim_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good; preserves vector-overfetch fragment metrics while adding typed fact/claim eval and tier currentness logic. |
+| `exp/recall-tier-fact-claim-vector-overfetch` | `20260629T_temporal_metadata_no_identifier_filter_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good; preserves reusable 1k metrics while adding fragment temporal metadata filtering. |
 
 Delta from reusable-team current logic to vector overfetch: `recall@k +0.0270`, `MRR +0.0426`, `nDCG@k +0.0388`, `bad@k -0.1010`.
 
@@ -34,12 +35,13 @@ Delta from vector overfetch to tier fact/claim branch on `local_eval_1k_v2`: all
 
 ## Fact/Claim Tier Coverage
 
-The `local_eval_1k_v2` suite mostly measures fragment retrieval. `local_tiered_v1` adds a focused typed coverage surface for active facts and validated claims. Current expanded seed hash: `sha256:81b4b86011d2a07a44392908ef83821fc9fec32936fc09b762aad3d00461d356`.
+The `local_eval_1k_v2` suite mostly measures fragment retrieval. `local_tiered_v1` adds a focused typed coverage surface for active facts and validated claims. Current expanded seed hash: `sha256:1794530d9dad4825a64d5e2da4d66f198f8e2db3cc65d09df5ea5a41059ea2ea`.
 
 | Branch | Run | recall@k | MRR | nDCG@k | bad@k | required rank 1 | bad rank 1 | Judgment |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | `exp/recall-tier-fact-claim-vector-overfetch` | `20260629T020842Z_local_tiered_vector_fact_claim_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good initial coverage for fact-vs-fact and claim-vs-claim currentness ordering. |
 | `exp/recall-tier-fact-claim-vector-overfetch` | `20260629T022642Z_local_tiered_expanded_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good expanded coverage for same-tier currentness, fact-over-fragment, claim-over-fragment, and cross-identifier fact filtering. |
+| `exp/recall-tier-fact-claim-vector-overfetch` | `20260629T_temporal_metadata_no_identifier_filter_local_tiered_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Good temporal coverage for `valid_at` fact/claim windows and fragment metadata windows without broad fragment identifier filtering. |
 
 This branch also fixes the eval harness so qrels can resolve `source_doc_id` as a fragment, claim, or fact, and fixes optional `valid_from` / `valid_to` persistence for claim creation and fact promotion.
 
@@ -77,6 +79,7 @@ References:
 | `exp/recall-identifier-specificity-rerank` | `20260628T221954Z_unit_identifier_specificity_rerank` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best candidate on its original imported team |
 | `exp/recall-vector-overfetch-reuse-fix` | `20260629T014939Z_local_eval_1k_vector_overfetch_reuse_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best candidate for reusable-team loop |
 | `exp/recall-tier-fact-claim-vector-overfetch` | `20260629T020934Z_local_eval_1k_vector_tier_fact_claim_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best candidate for fragments plus focused fact/claim coverage |
+| `exp/recall-tier-fact-claim-vector-overfetch` | `20260629T_temporal_metadata_no_identifier_filter_local_eval_1k_candidate` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 | Best candidate with fragment temporal metadata filtering |
 
 ## Best Candidate Deltas
 
@@ -113,6 +116,8 @@ The best branch keeps the existing hybrid semantic plus keyword RRF flow and add
 7. Unit identifier specificity rerank: for timeout/job value queries, gives a small boost to fragments containing the exact identifier from the query. This fixes neighboring job collisions such as `UNT-003` outranking `UNT-013` while avoiding the broader exact-ID boost that reintroduced bad context in other slices.
 8. Vector tenant overfetch: asks Neo4j's global vector index for additional candidates before the existing `team_id` and active-status filter, then caps returned semantic hits to the requested limit. This fixes same-team candidate starvation when repeated eval imports make the global vector index crowded with other teams' near neighbors.
 9. Tier fact/claim currentness: for currentness queries, active facts and validated claims sort within their tier by newest `valid_from`, falling back to `recorded_at`. Tier search now uses the internal overfetch size before final truncation, and hydrated fact/claim hits must match explicit query identifiers before tier precedence can place them above other results.
+10. Fragment temporal metadata filtering: fragment searchers now decode current `metadata_json` as well as legacy `metadata`, and recall filters fragment candidates with structured `valid_from` / `valid_to` metadata when `valid_at` is supplied.
+11. ISO date identifier guard: ISO date tokens are excluded from identifier matching so `as of 2026-06-22` queries match the entity ID rather than requiring the content to repeat the query date. A broader fragment identifier filter was tested and rejected because it raised reusable 1k `bad@k` by surfacing same-identifier decoys below the correct rank-1 result.
 
 All positive boosts require matching identifier-like tokens from the query, such as `OBS-001`, `NEG-001`, or `AUT-061`, when such identifiers exist. This guard prevents neighboring template records from receiving accidental boosts.
 
@@ -127,7 +132,7 @@ Remaining work is now about generalization beyond this synthetic seed:
 | `unit_trap` | MRR 1.0000, bad@k 0.0000 | Scoped exact-ID boost fixed remaining neighboring-job rank misses. |
 | All adversarial slices | bad@k 0.0000 | No judged-bad context remains in top-k on local_eval_1k_v2. |
 | Non-synthetic workloads | Not measured | Need validation because zero-score filtering can intentionally return fewer than `limit` fragments. |
-| Tiered facts/claims | Expanded `local_tiered_v1` live candidate: recall@k 1.0000, required rank 1 1.0000, bad@k 0.0000 | Five-case seed now covers same-tier fact/claim currentness, fact-over-fragment, claim-over-fragment, and cross-identifier fact filtering. Keep expanding before treating it as broad acceptance coverage. |
+| Tiered facts/claims | Expanded `local_tiered_v1` live candidate: recall@k 1.0000, required rank 1 1.0000, bad@k 0.0000 | Seven-case seed now covers same-tier fact/claim currentness, fact-over-fragment, claim-over-fragment, cross-identifier fact filtering, and `valid_at` temporal windows. Keep expanding before treating it as broad acceptance coverage. |
 
 ## Recommendation
 
