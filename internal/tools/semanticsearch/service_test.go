@@ -3,6 +3,7 @@ package semanticsearch
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -108,6 +109,47 @@ func TestQueryVectorIndex_UsesNeo4jParameterOrder(t *testing.T) {
 	searcher := NewEmbeddingSearcher(mockReader)
 	_, err := searcher.QueryVectorIndex(ctx, profileID, []float32{0.1, 0.2, 0.3}, 10)
 	require.NoError(t, err)
+}
+
+func TestQueryVectorIndex_OverfetchesBeforeTeamFilterAndCapsReturnedHits(t *testing.T) {
+	ctx := context.Background()
+	profileID := "profile-a-id"
+	requestedLimit := 10
+	rows := make([]map[string]any, 0, requestedLimit+2)
+	for i := 0; i < requestedLimit+2; i++ {
+		rows = append(rows, map[string]any{
+			"id":       "frag-" + strconv.Itoa(i),
+			"content":  "test content",
+			"score":    float64(1),
+			"labels":   []any{},
+			"metadata": map[string]any{},
+			"team_id":  profileID,
+		})
+	}
+
+	var capturedLimit any
+	mockReader := &mockScopedReader{
+		scopedReadFunc: func(ctx context.Context, pid string, query string, params map[string]any) (neo4j.ResultSummary, []map[string]any, error) {
+			capturedLimit = params["limit"]
+			return nil, rows, nil
+		},
+	}
+
+	searcher := NewEmbeddingSearcher(mockReader)
+	hits, err := searcher.QueryVectorIndex(ctx, profileID, []float32{0.1, 0.2, 0.3}, requestedLimit)
+
+	require.NoError(t, err)
+	require.Equal(t, requestedLimit*vectorIndexTeamFilterOverfetchMultiplier, capturedLimit)
+	require.Len(t, hits, requestedLimit)
+	require.Equal(t, "frag-0", hits[0].ID)
+	require.Equal(t, "frag-9", hits[9].ID)
+}
+
+func TestVectorIndexQueryLimitCapsOverfetchButNotRequestedLimit(t *testing.T) {
+	require.Equal(t, 0, vectorIndexQueryLimit(0))
+	require.Equal(t, 200, vectorIndexQueryLimit(10))
+	require.Equal(t, vectorIndexTeamFilterOverfetchMax, vectorIndexQueryLimit(100))
+	require.Equal(t, 2000, vectorIndexQueryLimit(2000))
 }
 
 // mockEmbeddingSearcher implements EmbeddingSearcherInterface for testing.

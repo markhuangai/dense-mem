@@ -22,6 +22,11 @@ type neo4jEmbeddingSearcher struct {
 	reader ScopedReaderInterface
 }
 
+const (
+	vectorIndexTeamFilterOverfetchMultiplier = 20
+	vectorIndexTeamFilterOverfetchMax        = 1000
+)
+
 // Ensure neo4jEmbeddingSearcher implements EmbeddingSearcherInterface.
 var _ EmbeddingSearcherInterface = (*neo4jEmbeddingSearcher)(nil)
 
@@ -33,6 +38,8 @@ func NewEmbeddingSearcher(reader ScopedReaderInterface) EmbeddingSearcherInterfa
 // QueryVectorIndex performs vector similarity search on SourceFragment embeddings.
 // Results are filtered by team_id and retract status in the Cypher query.
 func (s *neo4jEmbeddingSearcher) QueryVectorIndex(ctx context.Context, profileID string, embedding []float32, limit int) ([]SearchHit, error) {
+	queryLimit := vectorIndexQueryLimit(limit)
+
 	// Adapt FragmentActiveFilter (which uses the sf. node alias) to the f. alias used here.
 	// This excludes retracted SourceFragment nodes; legacy nodes without a status property
 	// are treated as active per the coalesce default (AC-44).
@@ -53,13 +60,16 @@ WHERE f.team_id = $profileId AND ` + fragmentActive + `
 
 	params := map[string]any{
 		"embedding": embeddingAny,
-		"limit":     limit,
+		"limit":     queryLimit,
 	}
 
 	// Execute via ScopedRead
 	_, results, err := s.reader.ScopedRead(ctx, profileID, cypherQuery, params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query vector index: %w", err)
+	}
+	if limit >= 0 && len(results) > limit {
+		results = results[:limit]
 	}
 
 	// Convert results to SearchHit
@@ -79,6 +89,20 @@ WHERE f.team_id = $profileId AND ` + fragmentActive + `
 	}
 
 	return hits, nil
+}
+
+func vectorIndexQueryLimit(limit int) int {
+	if limit <= 0 {
+		return limit
+	}
+	queryLimit := limit * vectorIndexTeamFilterOverfetchMultiplier
+	if queryLimit < limit || queryLimit > vectorIndexTeamFilterOverfetchMax {
+		queryLimit = vectorIndexTeamFilterOverfetchMax
+	}
+	if queryLimit < limit {
+		queryLimit = limit
+	}
+	return queryLimit
 }
 
 // Helper functions for extracting values from Neo4j result maps
