@@ -44,7 +44,7 @@ func relationalCorpusItem(seedID, sourceDocID, title, content, category, role st
 			"role":    role,
 		},
 		Claims:      []evalharness.TypedClaim{claim},
-		AutoPromote: role == "required",
+		AutoPromote: role == "required" || role == "hard_negative",
 	}
 }
 
