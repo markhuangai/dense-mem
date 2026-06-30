@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import type { Plugin } from "vite";
+import { denseMemVersion } from "./vite.version";
 
 function serveUserPortalAtUi(): Plugin {
   return {
@@ -48,6 +49,9 @@ function manualVendorChunks(id: string) {
 export default defineConfig({
   base: "/ui/",
   plugins: [serveUserPortalAtUi(), react()],
+  define: {
+    __DENSE_MEM_VERSION__: JSON.stringify(denseMemVersion()),
+  },
   build: {
     outDir: "user-dist",
     emptyOutDir: true,

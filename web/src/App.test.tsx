@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { CommunityDetectionConfig, ControlMetrics, Dream, DreamRun, DreamStatus, DreamingConfig, GeneralConfig, OperationLog, OperationLogConfig, SecurityBan, SecuritySettings, SSOConfig, Team, TeamProfile } from "./api";
+import { APP_VERSION } from "./version";
 
 const profileA: Team = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -281,6 +282,16 @@ beforeEach(() => {
 });
 
 describe("App", () => {
+  it("shows the current version in the control shell", async () => {
+    mockPortalFetch({ teams: [profileA], keys: [] });
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+
+    render(<App />);
+    await screen.findByRole("button", { name: /Default/ });
+
+    expect(screen.getByLabelText(`Current version ${APP_VERSION}`)).toBeInTheDocument();
+  });
+
   it("validates the token before opening the portal", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ message: "invalid token" }, 401));

@@ -1,5 +1,6 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
+import { denseMemVersion } from "./vite.version";
 
 function manualVendorChunks(id: string) {
   if (!id.includes("node_modules")) {
@@ -19,6 +20,9 @@ function manualVendorChunks(id: string) {
 
 export default defineConfig({
   plugins: [react()],
+  define: {
+    __DENSE_MEM_VERSION__: JSON.stringify(denseMemVersion()),
+  },
   build: {
     rollupOptions: {
       output: {

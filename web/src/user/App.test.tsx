@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UserPortalApp } from "./App";
 import { Community, RecallHit, UserKey, UserSession } from "./api";
+import { APP_VERSION } from "../version";
 
 const baseSession: UserSession = {
   team: {
@@ -122,6 +123,16 @@ beforeEach(() => {
 });
 
 describe("UserPortalApp", () => {
+  it("shows the current version in the user shell", async () => {
+    mockUserFetch(baseSession);
+    sessionStorage.setItem("denseMem.userApiKey", "dm_read");
+
+    render(<UserPortalApp />);
+    await screen.findByText("Research Team");
+
+    expect(screen.getByLabelText(`Current version ${APP_VERSION}`)).toBeInTheDocument();
+  });
+
   it("logs in with an API key and does not call team profile list APIs", async () => {
     const fetchMock = mockUserFetch(baseSession);
     render(<UserPortalApp />);

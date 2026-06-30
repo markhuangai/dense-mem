@@ -6,6 +6,7 @@ export type ThemeName = "light" | "dark";
 type BrandProps = {
   title: string;
   icon: ReactNode;
+  version?: string;
 };
 
 export type PortalNavItem = {
@@ -77,22 +78,36 @@ type LoadingStateProps = {
   compact?: boolean;
 };
 
-export function Brand({ title, icon }: BrandProps) {
+export function Brand({ title, icon, version }: BrandProps) {
   return (
     <div className="brand-row">
       <span className="brand-mark">{icon}</span>
-      <h1>{title}</h1>
+      <div className="brand-copy">
+        <h1>{title}</h1>
+        {version && (
+          <span className="version-badge" aria-label={`Current version ${version}`} title={version}>
+            {version}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
 
-export function AuthShell({ theme, title, icon, actions, children, onSubmit }: AuthShellProps) {
+export function AuthShell({ theme, title, icon, version, actions, children, onSubmit }: AuthShellProps) {
   return (
     <main className="auth-shell" data-theme={theme}>
       <form className="auth-panel" onSubmit={onSubmit}>
         <div className="brand-row">
           <span className="brand-mark">{icon}</span>
-          <h1>{title}</h1>
+          <div className="brand-copy">
+            <h1>{title}</h1>
+            {version && (
+              <span className="version-badge" aria-label={`Current version ${version}`} title={version}>
+                {version}
+              </span>
+            )}
+          </div>
           {actions}
         </div>
         {children}
@@ -105,6 +120,7 @@ export function PortalShell({
   theme,
   title,
   icon,
+  version,
   topbarActions,
   navLabel,
   navItemsLabel,
@@ -128,7 +144,7 @@ export function PortalShell({
     resourceRail ? "has-resource-rail" : "",
     topNav ? "has-top-nav" : "",
   ].filter(Boolean).join(" ");
-  const brand = <Brand title={title} icon={icon} />;
+  const brand = <Brand title={title} icon={icon} version={version} />;
 
   return (
     <main className="app-shell" data-theme={theme}>
