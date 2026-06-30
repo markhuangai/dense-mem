@@ -85,7 +85,7 @@ export function Brand({ title, icon, version }: BrandProps) {
       <div className="brand-copy">
         <h1>{title}</h1>
         {version && (
-          <span className="version-badge" aria-label={`Current version ${version}`}>
+          <span className="version-badge" aria-label={`Current version ${version}`} title={version}>
             {version}
           </span>
         )}
@@ -103,7 +103,7 @@ export function AuthShell({ theme, title, icon, version, actions, children, onSu
           <div className="brand-copy">
             <h1>{title}</h1>
             {version && (
-              <span className="version-badge" aria-label={`Current version ${version}`}>
+              <span className="version-badge" aria-label={`Current version ${version}`} title={version}>
                 {version}
               </span>
             )}
