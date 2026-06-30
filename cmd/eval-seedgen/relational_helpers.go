@@ -48,20 +48,31 @@ func relationalCorpusItem(seedID, sourceDocID, title, content, category, role st
 	}
 }
 
-func relationalClaim(subject, predicate, object, validFrom, validTo string) evalharness.TypedClaim {
+func relationalClaim(subject, relation, object, validFrom, validTo string) evalharness.TypedClaim {
+	polarity := "+"
+	relationshipObject := fmt.Sprintf("%s %s from %s to %s", relation, object, validFrom, validTo)
+	if relation == "not_associated_with" {
+		polarity = "-"
+		relationshipObject = fmt.Sprintf("associated_with %s from %s to %s", object, validFrom, validTo)
+	}
+
 	return evalharness.TypedClaim{
 		Subject:        subject,
-		Predicate:      predicate,
-		Object:         object,
-		Modality:       "asserted",
-		Polarity:       "positive",
+		Predicate:      "relationship_to",
+		Object:         relationshipObject,
+		Modality:       "assertion",
+		Polarity:       polarity,
 		ExtractConf:    0.98,
 		ResolutionConf: 0.98,
 		ValidFrom:      datePtr(validFrom),
 		ValidTo:        datePtr(validTo),
 		Classification: map[string]any{
-			"confidentiality": "public",
-			"pii":             "synthetic",
+			"confidentiality":          "public",
+			"pii":                      "synthetic",
+			"eval_relation_predicate":  relation,
+			"eval_relation_object":     object,
+			"eval_relation_valid_from": validFrom,
+			"eval_relation_valid_to":   validTo,
 		},
 	}
 }
