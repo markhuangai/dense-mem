@@ -186,6 +186,10 @@ func recallMemoryTool(deps Dependencies) Tool {
 				if err == nil {
 					relatedDreams = dreams
 					out["related_dreams"] = dreams
+				} else {
+					slog.Default().Warn("related dreams not fetched",
+						slog.String("error", err.Error()),
+					)
 				}
 			}
 			if RecallFeedbackEnabled(ctx, deps.RecallFeedbackConfig) && deps.Metrics != nil {

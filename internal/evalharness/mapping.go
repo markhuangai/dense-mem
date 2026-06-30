@@ -1,6 +1,9 @@
 package evalharness
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 func newKnowledgeMapping() KnowledgeMapping {
 	return KnowledgeMapping{
@@ -132,6 +135,11 @@ func mapExpectedDreams(mapping *KnowledgeMapping, expected []ExpectedDream) {
 	if mapping == nil || len(expected) == 0 || len(mapping.DreamSourceRefsByID) == 0 {
 		return
 	}
+	dreamIDs := make([]string, 0, len(mapping.DreamSourceRefsByID))
+	for dreamID := range mapping.DreamSourceRefsByID {
+		dreamIDs = append(dreamIDs, dreamID)
+	}
+	sort.Strings(dreamIDs)
 	for _, dream := range expected {
 		sourceDocID := strings.TrimSpace(dream.SourceDocID)
 		if sourceDocID == "" {
@@ -141,7 +149,8 @@ func mapExpectedDreams(mapping *KnowledgeMapping, expected []ExpectedDream) {
 		if !ok {
 			continue
 		}
-		for dreamID, got := range mapping.DreamSourceRefsByID {
+		for _, dreamID := range dreamIDs {
+			got := mapping.DreamSourceRefsByID[dreamID]
 			if sameRefSet(want, got) {
 				addSourceMapping(mapping, Ref{Type: "dream", ID: dreamID, SourceDocID: sourceDocID}, false)
 				break

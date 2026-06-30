@@ -71,7 +71,7 @@ func evalGetManifestTool(deps Dependencies) Tool {
 func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "eval_list_knowledge_refs",
-		Description: "Page through team-scoped facts, claims, fragments, communities, or graph edges for evaluation. Content is included unless metadata_only=true.",
+		Description: "Page through team-scoped facts, claims, fragments, communities, dreams, or graph edges for evaluation. Content is included unless metadata_only=true.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"type"},
@@ -116,7 +116,7 @@ func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 func evalGetKnowledgeItemTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "eval_get_knowledge_item",
-		Description: "Fetch one team-scoped fact, claim, fragment, or community with its evaluation metadata.",
+		Description: "Fetch one team-scoped fact, claim, fragment, community, or dream with its evaluation metadata.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"type", "id"},
