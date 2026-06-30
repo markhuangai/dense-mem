@@ -178,6 +178,10 @@ func (c *HTTPClient) ExportKnowledgeMapping(ctx context.Context, limit int) (Kno
 	return c.exportKnowledgeMapping(ctx, limit, []string{"fragment", "claim", "fact"})
 }
 
+func (c *HTTPClient) ExportDreamMapping(ctx context.Context, limit int) (KnowledgeMapping, error) {
+	return c.exportKnowledgeMapping(ctx, limit, []string{"dream"})
+}
+
 func (c *HTTPClient) exportKnowledgeMapping(ctx context.Context, limit int, kinds []string) (KnowledgeMapping, error) {
 	if limit <= 0 {
 		limit = 100
@@ -205,6 +209,9 @@ func (c *HTTPClient) exportKnowledgeMapping(ctx context.Context, limit int, kind
 				if id == "" {
 					continue
 				}
+				if kind == "dream" {
+					addDreamSourceRefs(&mapping, id, dreamSourceRefsFromKnowledgeItem(item))
+				}
 				sourceDocIDs := sourceDocIDsFromKnowledgeItem(kind, item, claimSourceDocIDs, claimFactSourceDocIDs)
 				for _, sourceDocID := range sourceDocIDs {
 					addSourceMapping(&mapping, Ref{Type: kind, ID: id, SourceDocID: sourceDocID}, kind == "fragment")
@@ -227,6 +234,21 @@ func (c *HTTPClient) exportKnowledgeMapping(ctx context.Context, limit int, kind
 	return mapping, nil
 }
 
+func (c *HTTPClient) RunDreamCycle(ctx context.Context, expectedDreams int) error {
+	if expectedDreams <= 0 {
+		return nil
+	}
+	input := map[string]any{
+		"manual":             true,
+		"reflect_enabled":    false,
+		"reevaluate_enabled": false,
+		"dream_enabled":      true,
+		"max_outputs":        expectedDreams,
+	}
+	var out map[string]any
+	return c.CallTool(ctx, "eval_run_dream_cycle", input, &out)
+}
+
 func (c *HTTPClient) RunRecallCase(ctx context.Context, tc Case) (RecallTrace, error) {
 	input := map[string]any{
 		"case_id": tc.CaseID,
@@ -240,6 +262,9 @@ func (c *HTTPClient) RunRecallCase(ctx context.Context, tc Case) (RecallTrace, e
 	}
 	if tc.KnownAt != "" {
 		input["known_at"] = tc.KnownAt
+	}
+	if tc.IncludeDreams {
+		input["include_dreams"] = true
 	}
 	var out map[string]any
 	if err := c.callToolWithRetry(ctx, "eval_run_recall_case", input, &out); err != nil {
@@ -430,6 +455,28 @@ func sourceDocIDsFromKnowledgeItem(kind string, item map[string]any, claimSource
 	return uniqueNonEmpty(sourceDocIDs)
 }
 
+func dreamSourceRefsFromKnowledgeItem(item map[string]any) []Ref {
+	raw, ok := item["source_refs"].([]any)
+	if !ok {
+		return nil
+	}
+	refs := make([]Ref, 0, len(raw))
+	for _, value := range raw {
+		m, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		ref := Ref{
+			Type: stringValue(m["type"]),
+			ID:   stringValue(m["id"]),
+		}
+		if ref.Type != "" && ref.ID != "" {
+			refs = append(refs, ref)
+		}
+	}
+	return refs
+}
+
 func factSourceDocIDForClaimSourceDocIDs(sourceDocIDs []string) string {
 	for _, sourceDocID := range sourceDocIDs {
 		if factSourceDocID := typedFactSourceDocIDFromClaimSourceDocID(sourceDocID); factSourceDocID != "" {
@@ -485,6 +532,8 @@ func knowledgeItemID(kind string, item map[string]any) string {
 		return firstNonEmpty(stringValue(item["claim_id"]), stringValue(item["id"]))
 	case "fact":
 		return firstNonEmpty(stringValue(item["fact_id"]), stringValue(item["id"]))
+	case "dream":
+		return firstNonEmpty(stringValue(item["dream_id"]), stringValue(item["id"]))
 	default:
 		return stringValue(item["id"])
 	}
@@ -510,6 +559,7 @@ func traceFromToolOutput(tc Case, out map[string]any) RecallTrace {
 		RankedRefs:          refsFromAny(out["ranked_refs"]),
 		ContextRefs:         refsFromAny(out["context_refs"]),
 		ContextEvidenceRefs: refsFromAny(out["context_evidence_refs"]),
+		DreamRefs:           refsFromAny(out["dream_refs"]),
 		LatencyMS:           int64Value(out["latency_ms"]),
 		ContextBlockChars:   intValue(out["context_block_chars"]),
 		Raw:                 out,

@@ -113,6 +113,22 @@ func (r *RecallFeedbackGraphResolver) fetchCurrent(ctx context.Context, profileI
 			       f.valid_to AS valid_to,
 			       f.retracted_at AS retracted_at
 		`
+	case domain.RecallFeedbackResultTypeDream:
+		query = `
+			MATCH (d:Dream {team_id: $profileId})
+			WHERE d.dream_id IN $ids
+			RETURN d.dream_id AS id,
+			       'dream' AS type,
+			       d.status AS status,
+			       d.hypothesis AS hypothesis,
+			       d.what_if AS what_if,
+			       d.possible_outcome AS possible_outcome,
+			       d.likelihood AS likelihood,
+			       d.confidence AS confidence,
+			       d.created_at AS created_at,
+			       d.updated_at AS updated_at,
+			       d.last_evaluated_at AS last_evaluated_at
+		`
 	default:
 		return map[string]map[string]any{}, nil
 	}

@@ -22,6 +22,16 @@ tests/eval/
       hard_negatives.jsonl
       transforms.jsonl
       licenses.md
+    local_eval_relational_1k_v1/
+      seed_manifest.json
+      corpus.jsonl
+      cases.jsonl
+      qrels.jsonl
+      answers.jsonl
+      hard_negatives.jsonl
+      transforms.jsonl
+      expected_dreams.jsonl
+      licenses.md
     local_train_100k_v1/     # local ignored fixture
       seed_manifest.json
       suite.jsonl
@@ -32,8 +42,10 @@ tests/eval/
       hard_negatives.jsonl
       transforms.jsonl
       licenses.md
+    local_train_relational_100k_v1/ # local ignored fixture
   suites/
     local_eval_1k_v2.jsonl
+    local_eval_relational_1k_v1.jsonl
   runs/
     .gitignore
   cache/
@@ -50,6 +62,13 @@ explicit negation, alias collisions, temporal validity, quoted false claims,
 scope collisions, authority conflicts, retractions, unit traps, and conditional
 exceptions.
 
+`local_eval_relational_1k_v1` is the committed relational recall seed. It
+contains 1,000 cases, 4,000 corpus rows, 2,000 hard negatives, 1,000 qrels, and
+100 expected dream hypotheses. Each case uses typed claims and promoted facts
+with overlapping entity relationships, time windows, aliases, source authority,
+negation, retractions, and close-neighbor distractors. The dream slice scores
+related hypotheses separately from validated memory results.
+
 The JSONL files are the source of truth for a run. Regenerate them only when
 intentionally changing the seed:
 
@@ -60,11 +79,24 @@ go run ./cmd/eval-seedgen \
   --suite tests/eval/suites/local_eval_1k_v2.jsonl
 ```
 
+Generate the relational held-out seed:
+
+```bash
+go run ./cmd/eval-seedgen --preset local_eval_relational_1k_v1
+```
+
 `local_train_100k_v1` is a large local-only materialized fixture pack for
 training or load experiments. It lives beside other seeds so fixed fixture data
 has one location, but it is intentionally ignored by git because it is hundreds
 of MB. Before using it for a reported run, validate its manifest and keep the
 run artifacts with the seed hash.
+
+`local_train_relational_100k_v1` is the matching ignored relational training
+fixture. Generate it only for local training/load work:
+
+```bash
+go run ./cmd/eval-seedgen --preset local_train_relational_100k_v1
+```
 
 ## Commands
 
@@ -72,6 +104,15 @@ Validate the default committed seed and suite:
 
 ```bash
 go run ./cmd/eval-runner --mode validate
+```
+
+Validate the committed relational seed and suite:
+
+```bash
+go run ./cmd/eval-runner \
+  --mode validate \
+  --seed tests/eval/seeds/local_eval_relational_1k_v1/seed_manifest.json \
+  --suite tests/eval/suites/local_eval_relational_1k_v1.jsonl
 ```
 
 Validate the local 100k seed and colocated suite:
@@ -113,9 +154,11 @@ claim/fact extraction, import metadata, or write-path fields such as
 `valid_from` / `recorded_at`.
 
 The runner enables `EVALUATION_MODE_ENABLED`, imports corpus rows through
-`remember` or `import_memories`, exports fragment/claim/fact mappings through
-`eval_list_knowledge_refs`, runs cases through `eval_run_recall_case`, scores
-with deterministic retrieval metrics, and writes:
+`remember` or `import_memories`, runs the eval-only dream cycle when a seed
+declares expected dreams and the run imports the seed, exports
+fragment/claim/fact/dream mappings through `eval_list_knowledge_refs`, runs
+cases through `eval_run_recall_case`, scores with deterministic retrieval
+metrics, and writes:
 
 ```text
 run_config.json
@@ -185,6 +228,23 @@ context_evidence_refs + qrels.required_evidence_refs + qrels.bad_evidence_refs
 
 Use evidence metrics when the top-level fact or claim is correct but its
 assembled supporting fragments may be stale, wrong, or missing.
+
+When a trace includes `dream_refs` and the qrel includes `required_dream_refs`
+or `bad_dream_refs`, the runner scores hypothesis recall separately:
+
+```text
+dream_refs + qrels.required_dream_refs + qrels.bad_dream_refs
+  -> average_dream_recall_at_k
+  -> average_dream_mrr
+  -> average_dream_ndcg_at_k
+  -> average_dream_bad_at_k
+  -> dream_required_rank1_rate
+  -> dream_bad_rank1_rate
+```
+
+Dream metrics do not change the ordinary ranked, context, or evidence metrics.
+Expected dream qrels are mapped through `expected_dreams.jsonl` by matching the
+dream source-ref set exported from `eval_list_knowledge_refs`.
 
 `source_doc_id` labels are remapped to Dense-Mem refs after import or export.
 The mapping keeps a backward-compatible default fragment ref and also supports

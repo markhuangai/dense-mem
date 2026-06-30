@@ -57,6 +57,10 @@ func TestEvalScoreRetrievalCaseScoresAndAudits(t *testing.T) {
 			map[string]any{"type": "fragment", "id": "evidence-1"},
 			map[string]any{"type": "fragment", "id": "irrelevant-1"},
 		},
+		"dream_refs": []any{
+			map[string]any{"type": "dream", "id": "dream-1"},
+			map[string]any{"type": "dream", "id": "dream-bad"},
+		},
 		"required_refs": []any{
 			map[string]any{"type": "claim", "id": "claim-1", "grade": 2},
 			map[string]any{"type": "fact", "id": "fact-1", "grade": 1},
@@ -69,6 +73,12 @@ func TestEvalScoreRetrievalCaseScoresAndAudits(t *testing.T) {
 		},
 		"bad_evidence_refs": []any{
 			map[string]any{"type": "fragment", "id": "irrelevant-1"},
+		},
+		"required_dream_refs": []any{
+			map[string]any{"type": "dream", "id": "dream-1", "grade": 1},
+		},
+		"bad_dream_refs": []any{
+			map[string]any{"type": "dream", "id": "dream-bad"},
 		},
 	}
 	if err := ValidateInput(tool, input); err != nil {
@@ -96,6 +106,12 @@ func TestEvalScoreRetrievalCaseScoresAndAudits(t *testing.T) {
 	}
 	if out["evidence_recall_at_k"] != float64(1) || out["evidence_mrr"] != float64(1) {
 		t.Fatalf("evidence ranking metrics = %v", out)
+	}
+	if out["dream_scored"] != true || out["dream_relevant_at_k"] != 1 || out["dream_bad_at_k"] != 1 {
+		t.Fatalf("dream metrics = %v", out)
+	}
+	if out["dream_recall_at_k"] != float64(1) || out["dream_mrr"] != float64(1) {
+		t.Fatalf("dream ranking metrics = %v", out)
 	}
 	if len(audit.entries) != 1 {
 		t.Fatalf("audit entries = %d; want 1", len(audit.entries))
@@ -180,6 +196,7 @@ func TestEvalManifestAndKnowledgeTools(t *testing.T) {
 		"from_id":   "claim-1",
 		"to_id":     "fragment-1",
 	}}}
+	dreams := &stubDreamService{}
 	reg, err := BuildDefault(Dependencies{
 		EvaluationAudit:   audit,
 		FragmentList:      fragments,
@@ -191,6 +208,7 @@ func TestEvalManifestAndKnowledgeTools(t *testing.T) {
 		CommunityList:     communities,
 		CommunityGet:      communities,
 		GraphQuery:        graph,
+		Dreams:            dreams,
 	})
 	if err != nil {
 		t.Fatalf("BuildDefault: %v", err)
@@ -271,6 +289,24 @@ func TestEvalManifestAndKnowledgeTools(t *testing.T) {
 		t.Fatalf("edge export graph call/page = %q/%q/%v/%v", graph.profileID, graph.query, graph.params, edgePage)
 	}
 
+	dreamPage, err := listTool.Invoke(ctx, "profile-eval", map[string]any{
+		"type":          "dream",
+		"status":        "proposed",
+		"cursor":        "dream-cursor",
+		"limit":         5,
+		"metadata_only": true,
+	})
+	if err != nil {
+		t.Fatalf("eval_list_knowledge_refs dream Invoke: %v", err)
+	}
+	dream := firstEvalItem(t, dreamPage)
+	if _, ok := dream["hypothesis"]; ok {
+		t.Fatalf("metadata-only dream returned hypothesis: %v", dream)
+	}
+	if dreams.lastListOpts.Status != "proposed" || dreams.lastListOpts.Cursor != "dream-cursor" || dreams.lastListOpts.Limit != 5 {
+		t.Fatalf("dream list opts = %+v", dreams.lastListOpts)
+	}
+
 	getTool, _ := reg.Get("eval_get_knowledge_item")
 	for _, tc := range []struct {
 		kind string
@@ -280,6 +316,7 @@ func TestEvalManifestAndKnowledgeTools(t *testing.T) {
 		{kind: "fragment", id: "fragment-1", key: "content"},
 		{kind: "claim", id: "claim-1", key: "object"},
 		{kind: "community", id: "community-1", key: "summary"},
+		{kind: "dream", id: "dream-1", key: "hypothesis"},
 	} {
 		itemOut, err := getTool.Invoke(ctx, "profile-eval", map[string]any{
 			"type":          tc.kind,
@@ -309,6 +346,44 @@ func TestEvalManifestAndKnowledgeTools(t *testing.T) {
 
 	if len(audit.entries) < 7 {
 		t.Fatalf("audit entries = %d; want eval tool calls", len(audit.entries))
+	}
+}
+
+func TestEvalRunDreamCycleToolInvokesDreamService(t *testing.T) {
+	audit := &evaluationAuditStub{}
+	dreams := &stubDreamService{}
+	reg, err := BuildDefault(Dependencies{
+		EvaluationAudit: audit,
+		Dreams:          dreams,
+	})
+	if err != nil {
+		t.Fatalf("BuildDefault: %v", err)
+	}
+	tool, _ := reg.Get("eval_run_dream_cycle")
+	out, err := tool.Invoke(context.Background(), "profile-eval", map[string]any{
+		"manual":             false,
+		"reflect_enabled":    false,
+		"reevaluate_enabled": false,
+		"dream_enabled":      true,
+		"max_outputs":        4,
+	})
+	if err != nil {
+		t.Fatalf("eval_run_dream_cycle Invoke: %v", err)
+	}
+	if out["run_id"] != "run-1" || out["team_id"] != "profile-eval" {
+		t.Fatalf("run output = %v", out)
+	}
+	if dreams.lastRunReq.Manual || dreams.lastRunReq.MaxOutputs != 4 {
+		t.Fatalf("run request = %+v", dreams.lastRunReq)
+	}
+	if dreams.lastRunReq.ReflectEnabled == nil || *dreams.lastRunReq.ReflectEnabled {
+		t.Fatalf("reflect flag = %+v", dreams.lastRunReq.ReflectEnabled)
+	}
+	if dreams.lastRunReq.DreamEnabled == nil || !*dreams.lastRunReq.DreamEnabled {
+		t.Fatalf("dream flag = %+v", dreams.lastRunReq.DreamEnabled)
+	}
+	if len(audit.entries) != 1 || audit.entries[0].EntityID != "eval_run_dream_cycle" {
+		t.Fatalf("audit entries = %+v", audit.entries)
 	}
 }
 
@@ -383,10 +458,12 @@ func TestEvalRunRecallCaseMapsRequestsAndRefs(t *testing.T) {
 	audit := &evaluationAuditStub{}
 	recall := &evalRecallCapture{}
 	ctxSvc := &evalContextCapture{}
+	dreams := &stubDreamService{}
 	reg, err := BuildDefault(Dependencies{
 		EvaluationAudit: audit,
 		Recall:          recall,
 		Context:         ctxSvc,
+		Dreams:          dreams,
 	})
 	if err != nil {
 		t.Fatalf("BuildDefault: %v", err)
@@ -400,6 +477,7 @@ func TestEvalRunRecallCaseMapsRequestsAndRefs(t *testing.T) {
 		"valid_at":          "2026-06-25T00:00:00Z",
 		"known_at":          "2026-06-26T00:00:00Z",
 		"include_evidence":  true,
+		"include_dreams":    true,
 		"use_communities":   true,
 		"max_context_chars": 2500,
 	})
@@ -432,6 +510,10 @@ func TestEvalRunRecallCaseMapsRequestsAndRefs(t *testing.T) {
 	evidenceRefs := out["context_evidence_refs"].([]map[string]any)
 	if len(evidenceRefs) != 1 || evidenceRefs[0]["id"] != "fragment-evidence" || evidenceRefs[0]["parent_id"] != "fact-context" {
 		t.Fatalf("context evidence output = %#v", out)
+	}
+	dreamRefs := out["dream_refs"].([]map[string]any)
+	if len(dreamRefs) != 1 || dreamRefs[0]["type"] != "dream" || dreamRefs[0]["id"] != "dream-1" || dreams.recallQuery != "what should the eval return?" {
+		t.Fatalf("dream refs = %#v query = %q", dreamRefs, dreams.recallQuery)
 	}
 
 	out, err = tool.Invoke(context.Background(), "profile-eval", map[string]any{
@@ -546,6 +628,7 @@ func TestEvalUnavailableConfigAuditAndParserBranches(t *testing.T) {
 		{"type": "claim"},
 		{"type": "fact"},
 		{"type": "community"},
+		{"type": "dream"},
 		{"type": "edge"},
 	} {
 		_, err = listTool.Invoke(context.Background(), "profile-eval", tc)

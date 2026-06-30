@@ -44,11 +44,11 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	if runID == "" {
 		runID = newRunID(mode)
 	}
-	manifest, corpus, cases, qrels, suite, seedHash, err := loadRunInputs(opts.SeedManifestPath, opts.SuitePath)
+	manifest, corpus, cases, qrels, expectedDreams, suite, seedHash, err := loadRunInputs(opts.SeedManifestPath, opts.SuitePath)
 	if err != nil {
 		return Summary{}, err
 	}
-	if err := validateRunInputs(opts.SeedManifestPath, manifest, corpus, cases, qrels, suite); err != nil {
+	if err := validateRunInputs(opts.SeedManifestPath, manifest, corpus, cases, qrels, expectedDreams, suite); err != nil {
 		return Summary{}, err
 	}
 	runConfig := RunConfig{
@@ -103,12 +103,25 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			if err != nil {
 				return Summary{}, err
 			}
+			if len(expectedDreams) > 0 {
+				if err := client.RunDreamCycle(ctx, len(expectedDreams)); err != nil {
+					return Summary{}, err
+				}
+			}
 		}
 		exported, err := client.ExportKnowledgeMapping(ctx, opts.MaxPageSize)
 		if err != nil {
 			return Summary{}, err
 		}
 		mergeKnowledgeMapping(&mapping, exported)
+		if len(expectedDreams) > 0 {
+			dreams, err := client.ExportDreamMapping(ctx, opts.MaxPageSize)
+			if err != nil {
+				return Summary{}, err
+			}
+			mergeKnowledgeMapping(&mapping, dreams)
+			mapExpectedDreams(&mapping, expectedDreams)
+		}
 		if err := validateRequiredQRelMappings(IndexQrels(qrels), suite, mapping); err != nil {
 			return Summary{}, err
 		}
@@ -155,6 +168,8 @@ func validateRequiredQRelMappings(qrels map[string]QRel, suite []SuiteCase, mapp
 			{"required evidence", qrel.RequiredEvidenceRefs},
 			{"bad", qrel.BadRefs},
 			{"bad evidence", qrel.BadEvidenceRefs},
+			{"required dream", qrel.RequiredDreamRefs},
+			{"bad dream", qrel.BadDreamRefs},
 		} {
 			for _, ref := range refs.refs {
 				if strings.TrimSpace(ref.SourceDocID) == "" {
@@ -191,35 +206,39 @@ func CompareRunDirs(baselineRunDir, candidateRunDir, outDir string) (Comparison,
 	return comparison, nil
 }
 
-func loadRunInputs(manifestPath, suitePath string) (*SeedManifest, []CorpusItem, []Case, []QRel, []SuiteCase, string, error) {
+func loadRunInputs(manifestPath, suitePath string) (*SeedManifest, []CorpusItem, []Case, []QRel, []ExpectedDream, []SuiteCase, string, error) {
 	manifest, err := LoadSeedManifest(manifestPath)
 	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
+		return nil, nil, nil, nil, nil, nil, "", err
 	}
 	corpus, err := LoadCorpus(manifestPath, manifest)
 	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
+		return nil, nil, nil, nil, nil, nil, "", err
 	}
 	cases, err := LoadCases(manifestPath, manifest)
 	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
+		return nil, nil, nil, nil, nil, nil, "", err
 	}
 	qrels, err := LoadQrels(manifestPath, manifest)
 	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
+		return nil, nil, nil, nil, nil, nil, "", err
+	}
+	expectedDreams, err := LoadExpectedDreams(manifestPath, manifest)
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, "", err
 	}
 	suite, err := LoadSuite(suitePath)
 	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
+		return nil, nil, nil, nil, nil, nil, "", err
 	}
 	seedHash, err := SeedHash(manifestPath, manifest)
 	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
+		return nil, nil, nil, nil, nil, nil, "", err
 	}
-	return manifest, corpus, cases, qrels, suite, seedHash, nil
+	return manifest, corpus, cases, qrels, expectedDreams, suite, seedHash, nil
 }
 
-func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []CorpusItem, cases []Case, qrels []QRel, suite []SuiteCase) error {
+func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []CorpusItem, cases []Case, qrels []QRel, expectedDreams []ExpectedDream, suite []SuiteCase) error {
 	if err := validateManifestCounts(manifestPath, manifest, corpus, cases, qrels); err != nil {
 		return err
 	}
@@ -237,6 +256,15 @@ func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []Cor
 		}
 	}
 	corpusIndex := sourceDocIDIndexForCorpus(corpus)
+	dreamIndex := sourceDocIDIndexForExpectedDreams(expectedDreams)
+	for _, dream := range expectedDreams {
+		if _, ok := caseIndex[dream.CaseID]; dream.CaseID != "" && !ok {
+			return fmt.Errorf("expected dream %q references missing case %q", dream.SourceDocID, dream.CaseID)
+		}
+		if err := validateQRelRefs(dream.CaseID, "expected_dream.source_refs", dream.SourceRefs, corpusIndex); err != nil {
+			return err
+		}
+	}
 	for _, qrel := range qrels {
 		if _, ok := caseIndex[qrel.CaseID]; !ok {
 			return fmt.Errorf("qrels case %q missing from seed cases", qrel.CaseID)
@@ -256,6 +284,15 @@ func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []Cor
 		if err := validateQRelRefs(qrel.CaseID, "bad_evidence_refs", qrel.BadEvidenceRefs, corpusIndex); err != nil {
 			return err
 		}
+		if err := validateQRelRefs(qrel.CaseID, "required_dream_refs", qrel.RequiredDreamRefs, dreamIndex); err != nil {
+			return err
+		}
+		if err := validateQRelRefs(qrel.CaseID, "acceptable_dream_refs", qrel.AcceptableDreamRefs, dreamIndex); err != nil {
+			return err
+		}
+		if err := validateQRelRefs(qrel.CaseID, "bad_dream_refs", qrel.BadDreamRefs, dreamIndex); err != nil {
+			return err
+		}
 	}
 	for _, c := range cases {
 		if hasSlice(c.Slices, "adversarial") && len(qrelIndex[c.CaseID].BadRefs) == 0 {
@@ -263,6 +300,16 @@ func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []Cor
 		}
 	}
 	return nil
+}
+
+func sourceDocIDIndexForExpectedDreams(dreams []ExpectedDream) map[string]struct{} {
+	index := map[string]struct{}{}
+	for _, dream := range dreams {
+		if strings.TrimSpace(dream.SourceDocID) != "" {
+			index[dream.SourceDocID] = struct{}{}
+		}
+	}
+	return index
 }
 
 func sourceDocIDIndexForCorpus(corpus []CorpusItem) map[string]struct{} {
@@ -312,6 +359,7 @@ func validateManifestCounts(manifestPath string, manifest *SeedManifest, corpus 
 		{countName: "answers", fileName: manifest.AnswersFile},
 		{countName: "hard_negatives", fileName: manifest.HardNegativesFile},
 		{countName: "transforms", fileName: manifest.TransformsFile},
+		{countName: "dreams", fileName: manifest.DreamsFile},
 	} {
 		expected, ok := manifest.Counts[optional.countName]
 		if !ok {

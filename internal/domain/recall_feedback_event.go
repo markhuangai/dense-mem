@@ -13,6 +13,7 @@ const (
 	RecallFeedbackResultTypeFragment = "fragment"
 	RecallFeedbackResultTypeClaim    = "claim"
 	RecallFeedbackResultTypeFact     = "fact"
+	RecallFeedbackResultTypeDream    = "dream"
 )
 
 // RecallFeedbackEvent is the durable investigation record that connects a
@@ -39,6 +40,7 @@ type RecallFeedbackEvent struct {
 	Irrelevant      *bool                           `json:"irrelevant,omitempty"`
 	FeedbackComment string                          `json:"feedback_comment,omitempty"`
 	IrrelevantRefs  []RecallFeedbackJudgedResultRef `json:"irrelevant_result_refs,omitempty"`
+	DreamFeedback   []RecallFeedbackDreamFeedback   `json:"dream_feedback,omitempty"`
 	ResolvedResults []RecallFeedbackResolvedResult  `json:"resolved_results,omitempty"`
 }
 
@@ -72,6 +74,7 @@ type RecallFeedbackSubmission struct {
 	Irrelevant      bool
 	FeedbackComment string
 	IrrelevantRefs  []RecallFeedbackJudgedResultRef
+	DreamFeedback   []RecallFeedbackDreamFeedback
 }
 
 // RecallFeedbackJudgedResultRef is a host-LLM judgment about one returned
@@ -80,6 +83,16 @@ type RecallFeedbackJudgedResultRef struct {
 	Type string `json:"type"`
 	ID   string `json:"id"`
 	Rank int    `json:"rank,omitempty"`
+}
+
+// RecallFeedbackDreamFeedback captures host-LLM quality judgments for
+// hypothesis-lane dreams without mutating dream status.
+type RecallFeedbackDreamFeedback struct {
+	DreamID         string `json:"dream_id"`
+	Used            bool   `json:"used"`
+	Quality         string `json:"quality"`
+	Contradicted    bool   `json:"contradicted"`
+	FeedbackComment string `json:"feedback_comment,omitempty"`
 }
 
 // RecallFeedbackEventFilter controls control-portal event listing.

@@ -39,6 +39,8 @@ func ScoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, mapping Know
 	bad, unmappedBad := remapResultRefs(qrel.BadRefs, mapping)
 	requiredEvidence, unmappedRequiredEvidence := remapJudgments(qrel.RequiredEvidenceRefs, mapping)
 	badEvidence, unmappedBadEvidence := remapResultRefs(qrel.BadEvidenceRefs, mapping)
+	requiredDreams, unmappedRequiredDreams := remapJudgments(qrel.RequiredDreamRefs, mapping)
+	badDreams, unmappedBadDreams := remapResultRefs(qrel.BadDreamRefs, mapping)
 	ranked := resultRefs(trace.RankedRefs)
 	metrics := recallquality.ScoreAtK(ranked, required, bad, k)
 	score := RetrievalScore{
@@ -54,7 +56,7 @@ func ScoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, mapping Know
 		FirstBadRank:       firstRank(trace.RankedRefs, qrel.BadRefs, mapping),
 		MissingRequired:    missingRequiredRefs(qrel.RequiredRefs, trace.RankedRefs, mapping, k),
 		BadRefsAtK:         badRefsAtK(qrel.BadRefs, trace.RankedRefs, mapping, k),
-		UnmappedSourceRefs: append(append(append(unmappedRequired, unmappedBad...), unmappedRequiredEvidence...), unmappedBadEvidence...),
+		UnmappedSourceRefs: append(append(append(append(append(unmappedRequired, unmappedBad...), unmappedRequiredEvidence...), unmappedBadEvidence...), unmappedRequiredDreams...), unmappedBadDreams...),
 		LatencyMS:          trace.LatencyMS,
 	}
 	if trace.ContextRefs != nil {
@@ -84,6 +86,20 @@ func ScoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, mapping Know
 		score.EvidenceFirstBadRank = firstRank(trace.ContextEvidenceRefs, qrel.BadEvidenceRefs, mapping)
 		score.EvidenceMissingRequired = missingRequiredRefs(qrel.RequiredEvidenceRefs, trace.ContextEvidenceRefs, mapping, k)
 		score.EvidenceBadRefsAtK = badRefsAtK(qrel.BadEvidenceRefs, trace.ContextEvidenceRefs, mapping, k)
+	}
+	if trace.DreamRefs != nil && (len(qrel.RequiredDreamRefs) > 0 || len(qrel.BadDreamRefs) > 0) {
+		dreamMetrics := recallquality.ScoreAtK(resultRefs(trace.DreamRefs), requiredDreams, badDreams, k)
+		score.DreamScored = true
+		score.DreamRelevantAtK = dreamMetrics.RelevantAtK
+		score.DreamRelevantTotal = dreamMetrics.RelevantTotal
+		score.DreamBadAtK = dreamMetrics.BadAtK
+		score.DreamRecallAtK = dreamMetrics.RecallAtK
+		score.DreamMRR = dreamMetrics.MRR
+		score.DreamNDCGAtK = dreamMetrics.NDCGAtK
+		score.DreamFirstRequiredRank = firstRank(trace.DreamRefs, qrel.RequiredDreamRefs, mapping)
+		score.DreamFirstBadRank = firstRank(trace.DreamRefs, qrel.BadDreamRefs, mapping)
+		score.DreamMissingRequired = missingRequiredRefs(qrel.RequiredDreamRefs, trace.DreamRefs, mapping, k)
+		score.DreamBadRefsAtK = badRefsAtK(qrel.BadDreamRefs, trace.DreamRefs, mapping, k)
 	}
 	return score
 }
@@ -137,6 +153,19 @@ func SummarizeScores(runID, mode, seedID, seedHash, suitePath string, suite []Su
 				summary.EvidenceBadRank1Rate++
 			}
 		}
+		if score.DreamScored {
+			summary.DreamScoredCaseCount++
+			summary.AverageDreamRecallAtK += score.DreamRecallAtK
+			summary.AverageDreamMRR += score.DreamMRR
+			summary.AverageDreamNDCGAtK += score.DreamNDCGAtK
+			summary.AverageDreamBadAtK += float64(score.DreamBadAtK)
+			if score.DreamFirstRequiredRank == 1 {
+				summary.DreamRequiredRank1Rate++
+			}
+			if score.DreamFirstBadRank == 1 {
+				summary.DreamBadRank1Rate++
+			}
+		}
 		if score.FirstRequiredRank == 1 {
 			summary.RequiredRank1Rate++
 		}
@@ -169,6 +198,15 @@ func SummarizeScores(runID, mode, seedID, seedHash, suitePath string, suite []Su
 		summary.EvidenceRequiredRank1Rate /= evidenceDenom
 		summary.EvidenceBadRank1Rate /= evidenceDenom
 	}
+	if summary.DreamScoredCaseCount > 0 {
+		dreamDenom := float64(summary.DreamScoredCaseCount)
+		summary.AverageDreamRecallAtK /= dreamDenom
+		summary.AverageDreamMRR /= dreamDenom
+		summary.AverageDreamNDCGAtK /= dreamDenom
+		summary.AverageDreamBadAtK /= dreamDenom
+		summary.DreamRequiredRank1Rate /= dreamDenom
+		summary.DreamBadRank1Rate /= dreamDenom
+	}
 
 	type accum struct {
 		count          int
@@ -186,6 +224,11 @@ func SummarizeScores(runID, mode, seedID, seedHash, suitePath string, suite []Su
 		evidenceMRR    float64
 		evidenceNDCG   float64
 		evidenceBad    float64
+		dreamCount     int
+		dreamRecall    float64
+		dreamMRR       float64
+		dreamNDCG      float64
+		dreamBad       float64
 	}
 	accums := map[string]*accum{}
 	for _, suiteCase := range suite {
@@ -220,6 +263,13 @@ func SummarizeScores(runID, mode, seedID, seedHash, suitePath string, suite []Su
 				a.evidenceNDCG += score.EvidenceNDCGAtK
 				a.evidenceBad += float64(score.EvidenceBadAtK)
 			}
+			if score.DreamScored {
+				a.dreamCount++
+				a.dreamRecall += score.DreamRecallAtK
+				a.dreamMRR += score.DreamMRR
+				a.dreamNDCG += score.DreamNDCGAtK
+				a.dreamBad += float64(score.DreamBadAtK)
+			}
 		}
 	}
 	for slice, a := range accums {
@@ -247,6 +297,14 @@ func SummarizeScores(runID, mode, seedID, seedHash, suitePath string, suite []Su
 			avg.AverageEvidenceNDCGAtK = a.evidenceNDCG / evidenceDenom
 			avg.AverageEvidenceBadAtK = a.evidenceBad / evidenceDenom
 		}
+		if a.dreamCount > 0 {
+			dreamDenom := float64(a.dreamCount)
+			avg.DreamScoredCaseCount = a.dreamCount
+			avg.AverageDreamRecallAtK = a.dreamRecall / dreamDenom
+			avg.AverageDreamMRR = a.dreamMRR / dreamDenom
+			avg.AverageDreamNDCGAtK = a.dreamNDCG / dreamDenom
+			avg.AverageDreamBadAtK = a.dreamBad / dreamDenom
+		}
 		summary.Slices[slice] = avg
 	}
 	return summary
@@ -272,6 +330,10 @@ func CompareSummaries(baseline, candidate Summary) (Comparison, error) {
 		EvidenceMRRDelta:    candidate.AverageEvidenceMRR - baseline.AverageEvidenceMRR,
 		EvidenceNDCGDelta:   candidate.AverageEvidenceNDCGAtK - baseline.AverageEvidenceNDCGAtK,
 		EvidenceBadAtKDelta: candidate.AverageEvidenceBadAtK - baseline.AverageEvidenceBadAtK,
+		DreamRecallDelta:    candidate.AverageDreamRecallAtK - baseline.AverageDreamRecallAtK,
+		DreamMRRDelta:       candidate.AverageDreamMRR - baseline.AverageDreamMRR,
+		DreamNDCGDelta:      candidate.AverageDreamNDCGAtK - baseline.AverageDreamNDCGAtK,
+		DreamBadAtKDelta:    candidate.AverageDreamBadAtK - baseline.AverageDreamBadAtK,
 	}, nil
 }
 

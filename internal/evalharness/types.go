@@ -16,6 +16,7 @@ type SeedManifest struct {
 	AnswersFile         string         `json:"answers_file,omitempty"`
 	HardNegativesFile   string         `json:"hard_negatives_file,omitempty"`
 	TransformsFile      string         `json:"transforms_file,omitempty"`
+	DreamsFile          string         `json:"dreams_file,omitempty"`
 	LicensesFile        string         `json:"licenses_file,omitempty"`
 	EmbeddingProvider   string         `json:"embedding_provider,omitempty"`
 	EmbeddingModel      string         `json:"embedding_model,omitempty"`
@@ -74,6 +75,7 @@ type Case struct {
 	ValidAt          string   `json:"valid_at,omitempty"`
 	KnownAt          string   `json:"known_at,omitempty"`
 	Limit            int      `json:"limit,omitempty"`
+	IncludeDreams    bool     `json:"include_dreams,omitempty"`
 }
 
 type Ref struct {
@@ -92,6 +94,20 @@ type QRel struct {
 	BadRefs              []Ref  `json:"bad_refs,omitempty"`
 	RequiredEvidenceRefs []Ref  `json:"required_evidence_refs,omitempty"`
 	BadEvidenceRefs      []Ref  `json:"bad_evidence_refs,omitempty"`
+	RequiredDreamRefs    []Ref  `json:"required_dream_refs,omitempty"`
+	AcceptableDreamRefs  []Ref  `json:"acceptable_dream_refs,omitempty"`
+	BadDreamRefs         []Ref  `json:"bad_dream_refs,omitempty"`
+}
+
+type ExpectedDream struct {
+	SourceDocID string         `json:"source_doc_id"`
+	CaseID      string         `json:"case_id,omitempty"`
+	Hypothesis  string         `json:"hypothesis,omitempty"`
+	SourceRefs  []Ref          `json:"source_refs"`
+	Acceptable  bool           `json:"acceptable,omitempty"`
+	Bad         bool           `json:"bad,omitempty"`
+	Labels      []string       `json:"labels,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
 }
 
 type AnswerLabel struct {
@@ -112,6 +128,7 @@ type SuiteCase struct {
 type KnowledgeMapping struct {
 	BySourceDocID        map[string]Ref              `json:"by_source_doc_id"`
 	BySourceDocIDAndType map[string]map[string][]Ref `json:"by_source_doc_id_and_type,omitempty"`
+	DreamSourceRefsByID  map[string][]Ref            `json:"dream_source_refs_by_id,omitempty"`
 }
 
 type RecallTrace struct {
@@ -120,6 +137,7 @@ type RecallTrace struct {
 	RankedRefs          []Ref          `json:"ranked_refs"`
 	ContextRefs         []Ref          `json:"context_refs,omitempty"`
 	ContextEvidenceRefs []Ref          `json:"context_evidence_refs,omitempty"`
+	DreamRefs           []Ref          `json:"dream_refs,omitempty"`
 	LatencyMS           int64          `json:"latency_ms,omitempty"`
 	ContextBlockChars   int            `json:"context_block_chars,omitempty"`
 	Raw                 map[string]any `json:"raw,omitempty"`
@@ -160,6 +178,17 @@ type RetrievalScore struct {
 	EvidenceFirstBadRank      int     `json:"evidence_first_bad_rank,omitempty"`
 	EvidenceMissingRequired   []Ref   `json:"evidence_missing_required_refs,omitempty"`
 	EvidenceBadRefsAtK        []Ref   `json:"evidence_bad_refs_at_k,omitempty"`
+	DreamScored               bool    `json:"dream_scored"`
+	DreamRelevantAtK          int     `json:"dream_relevant_at_k"`
+	DreamRelevantTotal        int     `json:"dream_relevant_total"`
+	DreamBadAtK               int     `json:"dream_bad_at_k"`
+	DreamRecallAtK            float64 `json:"dream_recall_at_k"`
+	DreamMRR                  float64 `json:"dream_mrr"`
+	DreamNDCGAtK              float64 `json:"dream_ndcg_at_k"`
+	DreamFirstRequiredRank    int     `json:"dream_first_required_rank,omitempty"`
+	DreamFirstBadRank         int     `json:"dream_first_bad_rank,omitempty"`
+	DreamMissingRequired      []Ref   `json:"dream_missing_required_refs,omitempty"`
+	DreamBadRefsAtK           []Ref   `json:"dream_bad_refs_at_k,omitempty"`
 	UnmappedSourceRefs        []Ref   `json:"unmapped_source_refs,omitempty"`
 	LatencyMS                 int64   `json:"latency_ms,omitempty"`
 }
@@ -174,6 +203,7 @@ type Summary struct {
 	ScoredCaseCount           int                 `json:"scored_case_count"`
 	ContextScoredCaseCount    int                 `json:"context_scored_case_count"`
 	EvidenceScoredCaseCount   int                 `json:"evidence_scored_case_count"`
+	DreamScoredCaseCount      int                 `json:"dream_scored_case_count"`
 	UnmappedSourceRefs        int                 `json:"unmapped_source_refs"`
 	AverageRecallAtK          float64             `json:"average_recall_at_k"`
 	AverageMRR                float64             `json:"average_mrr"`
@@ -193,6 +223,12 @@ type Summary struct {
 	AverageEvidenceBadAtK     float64             `json:"average_evidence_bad_at_k"`
 	EvidenceRequiredRank1Rate float64             `json:"evidence_required_rank1_rate"`
 	EvidenceBadRank1Rate      float64             `json:"evidence_bad_rank1_rate"`
+	AverageDreamRecallAtK     float64             `json:"average_dream_recall_at_k"`
+	AverageDreamMRR           float64             `json:"average_dream_mrr"`
+	AverageDreamNDCGAtK       float64             `json:"average_dream_ndcg_at_k"`
+	AverageDreamBadAtK        float64             `json:"average_dream_bad_at_k"`
+	DreamRequiredRank1Rate    float64             `json:"dream_required_rank1_rate"`
+	DreamBadRank1Rate         float64             `json:"dream_bad_rank1_rate"`
 	Slices                    map[string]SliceAvg `json:"slices,omitempty"`
 	CreatedAt                 time.Time           `json:"created_at"`
 }
@@ -201,6 +237,7 @@ type SliceAvg struct {
 	CaseCount                int     `json:"case_count"`
 	ContextScoredCaseCount   int     `json:"context_scored_case_count"`
 	EvidenceScoredCaseCount  int     `json:"evidence_scored_case_count"`
+	DreamScoredCaseCount     int     `json:"dream_scored_case_count"`
 	AverageRecallAtK         float64 `json:"average_recall_at_k"`
 	AverageMRR               float64 `json:"average_mrr"`
 	AverageNDCGAtK           float64 `json:"average_ndcg_at_k"`
@@ -213,6 +250,10 @@ type SliceAvg struct {
 	AverageEvidenceMRR       float64 `json:"average_evidence_mrr"`
 	AverageEvidenceNDCGAtK   float64 `json:"average_evidence_ndcg_at_k"`
 	AverageEvidenceBadAtK    float64 `json:"average_evidence_bad_at_k"`
+	AverageDreamRecallAtK    float64 `json:"average_dream_recall_at_k"`
+	AverageDreamMRR          float64 `json:"average_dream_mrr"`
+	AverageDreamNDCGAtK      float64 `json:"average_dream_ndcg_at_k"`
+	AverageDreamBadAtK       float64 `json:"average_dream_bad_at_k"`
 }
 
 type RunConfig struct {
@@ -244,6 +285,10 @@ type Comparison struct {
 	EvidenceMRRDelta    float64 `json:"evidence_mrr_delta"`
 	EvidenceNDCGDelta   float64 `json:"evidence_ndcg_delta"`
 	EvidenceBadAtKDelta float64 `json:"evidence_bad_at_k_delta"`
+	DreamRecallDelta    float64 `json:"dream_recall_delta"`
+	DreamMRRDelta       float64 `json:"dream_mrr_delta"`
+	DreamNDCGDelta      float64 `json:"dream_ndcg_delta"`
+	DreamBadAtKDelta    float64 `json:"dream_bad_at_k_delta"`
 }
 
 type GateOptions struct {

@@ -15,6 +15,7 @@ var evaluationToolNames = map[string]struct{}{
 	"eval_get_knowledge_item":          {},
 	"eval_list_recall_feedback_events": {},
 	"eval_get_recall_feedback_event":   {},
+	"eval_run_dream_cycle":             {},
 	"eval_run_recall_case":             {},
 	"eval_score_retrieval_case":        {},
 }

@@ -13,25 +13,31 @@ import (
 )
 
 func TestScanRecallFeedbackEventRejectsMalformedToolArgsJSON(t *testing.T) {
-	rows := recallFeedbackEventRows(t, []byte("{bad-json"), []byte("[]"), []byte("[]"))
+	rows := recallFeedbackEventRows(t, []byte("{bad-json"), []byte("[]"), []byte("[]"), []byte("[]"))
 	_, err := scanRecallFeedbackEvent(rows)
 	require.ErrorContains(t, err, "invalid recall_feedback_events.tool_args JSON")
 }
 
 func TestScanRecallFeedbackEventRejectsMalformedResultRefsJSON(t *testing.T) {
-	rows := recallFeedbackEventRows(t, []byte("{}"), []byte("{bad-json"), []byte("[]"))
+	rows := recallFeedbackEventRows(t, []byte("{}"), []byte("{bad-json"), []byte("[]"), []byte("[]"))
 	_, err := scanRecallFeedbackEvent(rows)
 	require.ErrorContains(t, err, "invalid recall_feedback_events.result_refs JSON")
 }
 
 func TestScanRecallFeedbackEventRejectsMalformedIrrelevantResultRefsJSON(t *testing.T) {
-	rows := recallFeedbackEventRows(t, []byte("{}"), []byte("[]"), []byte("{bad-json"))
+	rows := recallFeedbackEventRows(t, []byte("{}"), []byte("[]"), []byte("{bad-json"), []byte("[]"))
 	_, err := scanRecallFeedbackEvent(rows)
 	require.ErrorContains(t, err, "invalid recall_feedback_events.irrelevant_result_refs JSON")
 }
 
+func TestScanRecallFeedbackEventRejectsMalformedDreamFeedbackJSON(t *testing.T) {
+	rows := recallFeedbackEventRows(t, []byte("{}"), []byte("[]"), []byte("[]"), []byte("{bad-json"))
+	_, err := scanRecallFeedbackEvent(rows)
+	require.ErrorContains(t, err, "invalid recall_feedback_events.dream_feedback JSON")
+}
+
 func TestScanRecallFeedbackEventReadsFeedbackComment(t *testing.T) {
-	rows := recallFeedbackEventRows(t, []byte("{}"), []byte("[]"), []byte(`[{"type":"fragment","id":"fragment-1","rank":1}]`))
+	rows := recallFeedbackEventRows(t, []byte("{}"), []byte("[]"), []byte(`[{"type":"fragment","id":"fragment-1","rank":1}]`), []byte(`[{"dream_id":"dream-1","used":true,"quality":"medium","contradicted":false,"feedback_comment":"plausible but weak"}]`))
 	got, err := scanRecallFeedbackEvent(rows)
 	require.NoError(t, err)
 	require.Equal(t, "knowledge explorer listbox pattern was missing", got.FeedbackComment)
@@ -40,6 +46,13 @@ func TestScanRecallFeedbackEventReadsFeedbackComment(t *testing.T) {
 		ID:   "fragment-1",
 		Rank: 1,
 	}}, got.IrrelevantRefs)
+	require.Equal(t, []domain.RecallFeedbackDreamFeedback{{
+		DreamID:         "dream-1",
+		Used:            true,
+		Quality:         "medium",
+		Contradicted:    false,
+		FeedbackComment: "plausible but weak",
+	}}, got.DreamFeedback)
 }
 
 func TestRecallFeedbackEventWhereExcludesPendingByDefault(t *testing.T) {
@@ -57,7 +70,7 @@ func TestRecallFeedbackEventWhereExcludesPendingByDefault(t *testing.T) {
 	require.Equal(t, []any{"low"}, args)
 }
 
-func recallFeedbackEventRows(t *testing.T, toolArgs []byte, resultRefs []byte, irrelevantRefs []byte) *sql.Rows {
+func recallFeedbackEventRows(t *testing.T, toolArgs []byte, resultRefs []byte, irrelevantRefs []byte, dreamFeedback []byte) *sql.Rows {
 	t.Helper()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -85,6 +98,7 @@ func recallFeedbackEventRows(t *testing.T, toolArgs []byte, resultRefs []byte, i
 		"irrelevant",
 		"feedback_comment",
 		"irrelevant_result_refs",
+		"dream_feedback",
 	}).AddRow(
 		"rec_1",
 		time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC),
@@ -107,6 +121,7 @@ func recallFeedbackEventRows(t *testing.T, toolArgs []byte, resultRefs []byte, i
 		nil,
 		"knowledge explorer listbox pattern was missing",
 		irrelevantRefs,
+		dreamFeedback,
 	)
 	mock.ExpectQuery("SELECT").WillReturnRows(rows)
 	sqlRows, err := db.QueryContext(context.Background(), "SELECT")

@@ -59,6 +59,7 @@ func evalGetManifestTool(deps Dependencies) Tool {
 					"knowledge_refs",
 					"knowledge_item",
 					"recall_feedback_events",
+					"dream_cycle",
 					"recall_case",
 					"retrieval_scoring",
 				},
@@ -75,7 +76,7 @@ func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 			"type":     "object",
 			"required": []string{"type"},
 			"properties": map[string]any{
-				"type":          schemaEnum([]string{"fragment", "claim", "fact", "community", "edge"}),
+				"type":          schemaEnum([]string{"fragment", "claim", "fact", "community", "dream", "edge"}),
 				"limit":         map[string]any{"type": "integer", "minimum": 1, "maximum": 500},
 				"cursor":        schemaString("Opaque cursor from a previous response.", 512),
 				"status":        schemaString("Optional lifecycle status filter.", 64),
@@ -101,6 +102,8 @@ func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 				return evalListFacts(ctx, deps, profileID, input, limit, metadataOnly)
 			case "community":
 				return evalListCommunities(ctx, deps, profileID, limit, metadataOnly)
+			case "dream":
+				return evalListDreams(ctx, deps, profileID, input, limit, metadataOnly)
 			case "edge":
 				return evalListEdges(ctx, deps, profileID, limit)
 			default:
@@ -118,7 +121,7 @@ func evalGetKnowledgeItemTool(deps Dependencies) Tool {
 			"type":     "object",
 			"required": []string{"type", "id"},
 			"properties": map[string]any{
-				"type":          schemaEnum([]string{"fragment", "claim", "fact", "community"}),
+				"type":          schemaEnum([]string{"fragment", "claim", "fact", "community", "dream"}),
 				"id":            schemaString("Knowledge item ID.", 256),
 				"metadata_only": map[string]any{"type": "boolean"},
 			},
@@ -255,6 +258,7 @@ func evalRunRecallCaseTool(deps Dependencies) Tool {
 				"known_at":          map[string]any{"type": "string", "format": "date-time"},
 				"include_evidence":  map[string]any{"type": "boolean"},
 				"use_communities":   map[string]any{"type": "boolean"},
+				"include_dreams":    map[string]any{"type": "boolean"},
 				"max_context_chars": map[string]any{"type": "integer", "minimum": 1, "maximum": 20000},
 			},
 			"additionalProperties": false,
@@ -297,6 +301,13 @@ func evalRunRecallCaseTool(deps Dependencies) Tool {
 				out["context_evidence_refs"] = contextEvidenceRefs(assembled.Items)
 				out["context_block_chars"] = len(assembled.ContextBlock)
 			}
+			if boolInput(input["include_dreams"]) && deps.Dreams != nil {
+				dreams, err := deps.Dreams.Recall(ctx, profileID, req.Query, limit)
+				if err != nil {
+					return nil, err
+				}
+				out["dream_refs"] = dreamRefs(dreams)
+			}
 			return out, nil
 		},
 	}
@@ -314,10 +325,13 @@ func evalScoreRetrievalCaseTool(deps Dependencies) Tool {
 				"ranked_refs":            evalRefArraySchema(false),
 				"context_refs":           evalRefArraySchema(false),
 				"evidence_refs":          evalRefArraySchema(false),
+				"dream_refs":             evalRefArraySchema(false),
 				"required_refs":          evalRefArraySchema(true),
 				"bad_refs":               evalRefArraySchema(false),
 				"required_evidence_refs": evalRefArraySchema(true),
 				"bad_evidence_refs":      evalRefArraySchema(false),
+				"required_dream_refs":    evalRefArraySchema(true),
+				"bad_dream_refs":         evalRefArraySchema(false),
 			},
 			"additionalProperties": false,
 		},
@@ -360,6 +374,21 @@ func evalScoreRetrievalCaseTool(deps Dependencies) Tool {
 				out["evidence_recall_at_k"] = evidenceMetrics.RecallAtK
 				out["evidence_mrr"] = evidenceMetrics.MRR
 				out["evidence_ndcg_at_k"] = evidenceMetrics.NDCGAtK
+			}
+			if _, ok := input["dream_refs"]; ok {
+				dreamMetrics := recallquality.ScoreAtK(
+					evalResultRefs(input["dream_refs"]),
+					evalJudgments(input["required_dream_refs"]),
+					evalResultRefs(input["bad_dream_refs"]),
+					k,
+				)
+				out["dream_scored"] = true
+				out["dream_relevant_at_k"] = dreamMetrics.RelevantAtK
+				out["dream_relevant_total"] = dreamMetrics.RelevantTotal
+				out["dream_bad_at_k"] = dreamMetrics.BadAtK
+				out["dream_recall_at_k"] = dreamMetrics.RecallAtK
+				out["dream_mrr"] = dreamMetrics.MRR
+				out["dream_ndcg_at_k"] = dreamMetrics.NDCGAtK
 			}
 			return out, nil
 		},
@@ -535,6 +564,15 @@ func evalGetKnowledgeItem(ctx context.Context, deps Dependencies, profileID, kin
 			return nil, err
 		}
 		return structToMap(community)
+	case "dream":
+		if deps.Dreams == nil {
+			return nil, ErrToolUnavailable
+		}
+		dream, err := deps.Dreams.Get(ctx, profileID, id)
+		if err != nil {
+			return nil, err
+		}
+		return structToMap(dream)
 	default:
 		return nil, fmt.Errorf("eval_get_knowledge_item: unsupported type %q", kind)
 	}
@@ -710,6 +748,11 @@ func stripEvalContent(kind string, item map[string]any) {
 		delete(item, "object")
 	case "community":
 		delete(item, "summary")
+	case "dream":
+		delete(item, "hypothesis")
+		delete(item, "what_if")
+		delete(item, "possible_outcome")
+		delete(item, "rationale")
 	}
 }
 
@@ -781,7 +824,7 @@ func contextEvidenceRefs(items []contextservice.ContextItem) []map[string]any {
 
 func evalRefArraySchema(withGrade bool) map[string]any {
 	properties := map[string]any{
-		"type": schemaEnum([]string{"fragment", "claim", "fact", "community"}),
+		"type": schemaEnum([]string{"fragment", "claim", "fact", "community", "dream"}),
 		"id":   schemaString("Reference ID.", 256),
 	}
 	required := []string{"type", "id"}

@@ -170,7 +170,9 @@ submits feedback for `recall_memory` results. Feedback only omits
 `feedback_comment` when quality is `high` with no negative flags; medium, low,
 or flagged feedback includes a bounded comment and can include irrelevant result
 refs for offline analysis. Prometheus still receives only bounded labels; the
-free-text comment stays in the recall feedback investigation records. Normal
+free-text comment stays in the recall feedback investigation records. When
+related dreams are returned, feedback can also include bounded `dream_feedback`
+judgments without promoting or rejecting the dream automatically. Normal
 production recall traffic still contributes request volume, result count, and
 latency.
 
@@ -239,7 +241,7 @@ memory, applies explicit gates, and returns structured outcomes.
 | `get_memory_placement` | Polls the verifier-owned placement run returned by `remember`, including fragment-only, claim, fact, rejected, and needs-evidence outcomes. |
 | `dispute_memory_placement` | Starts or continues a bounded placement dispute with additional evidence; the verifier decides whether to promote or keep the placement rejected. |
 | `import_memories` | Trusted migration path for summarized historical conversations. It may carry explicit claims and can request auto-promotion. |
-| `recall_memory` | Retrieves facts, validated claims, fragments, and `clarifications[]` for the authenticated team. |
+| `recall_memory` | Retrieves facts, validated claims, fragments, `clarifications[]`, and hypothesis-only `related_dreams` for the authenticated team. |
 | `trace_memory` | Expands one fact or claim into bounded evidence, promotion lineage, contradictions, and supersession links. |
 | `assemble_context` | Builds a bounded prompt-ready context block plus structured facts, claims, fragments, and clarifications. |
 | `reflect_memories` | Reviews active facts, candidate or disputed claims, contradictions, stale memories, and clarification needs. |
