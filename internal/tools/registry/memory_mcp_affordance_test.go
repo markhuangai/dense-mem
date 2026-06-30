@@ -10,7 +10,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/recallservice"
 )
 
-func TestBuildDefault_MemoryToolDescriptionsIncludeUsageTriggers(t *testing.T) {
+func TestBuildDefault_MemoryToolDescriptionsIncludeRecallAffordances(t *testing.T) {
 	reg, _ := BuildDefault(Dependencies{})
 	cases := []struct {
 		name string
@@ -18,7 +18,7 @@ func TestBuildDefault_MemoryToolDescriptionsIncludeUsageTriggers(t *testing.T) {
 	}{
 		{
 			name: "recall_memory",
-			want: []string{"Use before answering", "prior user preferences", "project decisions", "active goals"},
+			want: []string{"prior user preferences", "project decisions", "active goals", "recall_event", "dream_feedback"},
 		},
 		{
 			name: "remember",

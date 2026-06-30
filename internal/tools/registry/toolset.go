@@ -123,7 +123,7 @@ func defaultTools(deps Dependencies) []Tool {
 func recallMemoryTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "recall_memory",
-		Description: "Use before answering when the task may depend on prior user preferences, corrections, project decisions, active goals, reusable instructions, identity/profile facts, or other remembered context. Hybrid semantic + keyword recall over stored facts, validated claims, and fragments for the caller's profile. related_dreams are hypotheses, not validated memory. When a recall_event is returned, keep its recall_id and submit one session-level recall evaluation, including dream quality feedback when related dreams influenced or contradicted the answer.",
+		Description: "Hybrid semantic + keyword recall over stored facts, validated claims, and fragments for the caller's profile. Useful for prior user preferences, corrections, project decisions, active goals, reusable instructions, identity/profile facts, and other remembered context. related_dreams are hypotheses, not validated memory. recall_event carries an id for later recall-quality feedback, including dream_feedback when related dreams influenced or contradicted the answer.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"query"},
@@ -255,7 +255,7 @@ type recallFeedbackDreamFeedbackInput struct {
 func submitRecallSessionFeedbackTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        SubmitRecallSessionFeedbackToolName,
-		Description: "Submit recall feedback, session feedback, or a recall quality evaluation after finishing all context gathering and before the final answer. Use this when recall_memory returns recall_event.feedback_tool=submit_recall_session_feedback; pass recall_event.recall_id once you know which recalls informed the answer. Do not call immediately after exploratory context-building recall. Include feedback_comment unless quality is high with no negative flags. Include dream_feedback for related dream hypotheses that were useful, weak, or contradicted. Do not include user content.",
+		Description: "Records session-level recall quality feedback for recall_memory events. Accepts recall_event.recall_id values, whether each recall was used, answer support, quality, missing or irrelevant context flags, optional feedback_comment, and dream_feedback for related dream hypotheses that were useful, weak, or contradicted.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"recalls"},
