@@ -12,6 +12,9 @@ func TestBuildRelationalCasePromotesFactBadRefs(t *testing.T) {
 		corpusBySourceDocID[item.SourceDocID] = item.AutoPromote
 	}
 
+	if len(generated.QRel.BadRefs) == 0 {
+		t.Fatalf("QRel.BadRefs is empty, want at least one bad fact ref")
+	}
 	for _, ref := range generated.QRel.BadRefs {
 		if ref.Type != "fact" {
 			t.Fatalf("bad ref type = %q, want fact", ref.Type)
