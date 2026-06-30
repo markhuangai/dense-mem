@@ -5,11 +5,13 @@ FROM node:22-alpine AS web-builder
 
 WORKDIR /web
 
+ARG IMAGE_VERSION=dev
+
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 
 COPY web/ ./
-RUN npm run build
+RUN DENSE_MEM_VERSION="${IMAGE_VERSION}" npm run build
 
 # ============================================================================
 # Build stage

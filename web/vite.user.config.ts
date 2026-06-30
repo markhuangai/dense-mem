@@ -1,8 +1,26 @@
+import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import type { Plugin } from "vite";
+
+function denseMemVersion() {
+  const configuredVersion = process.env.DENSE_MEM_VERSION ?? process.env.VITE_DENSE_MEM_VERSION ?? process.env.IMAGE_VERSION;
+  if (configuredVersion?.trim()) {
+    return configuredVersion.trim();
+  }
+
+  try {
+    const version = execFileSync("git", ["describe", "--tags", "--always", "--dirty"], {
+      cwd: resolve(__dirname, ".."),
+      stdio: ["ignore", "pipe", "ignore"],
+    }).toString().trim();
+    return version || "dev";
+  } catch {
+    return "dev";
+  }
+}
 
 function serveUserPortalAtUi(): Plugin {
   return {
@@ -48,6 +66,9 @@ function manualVendorChunks(id: string) {
 export default defineConfig({
   base: "/ui/",
   plugins: [serveUserPortalAtUi(), react()],
+  define: {
+    __DENSE_MEM_VERSION__: JSON.stringify(denseMemVersion()),
+  },
   build: {
     outDir: "user-dist",
     emptyOutDir: true,

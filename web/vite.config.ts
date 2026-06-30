@@ -1,5 +1,24 @@
+import { execFileSync } from "node:child_process";
+import { resolve } from "node:path";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
+
+function denseMemVersion() {
+  const configuredVersion = process.env.DENSE_MEM_VERSION ?? process.env.VITE_DENSE_MEM_VERSION ?? process.env.IMAGE_VERSION;
+  if (configuredVersion?.trim()) {
+    return configuredVersion.trim();
+  }
+
+  try {
+    const version = execFileSync("git", ["describe", "--tags", "--always", "--dirty"], {
+      cwd: resolve(__dirname, ".."),
+      stdio: ["ignore", "pipe", "ignore"],
+    }).toString().trim();
+    return version || "dev";
+  } catch {
+    return "dev";
+  }
+}
 
 function manualVendorChunks(id: string) {
   if (!id.includes("node_modules")) {
@@ -19,6 +38,9 @@ function manualVendorChunks(id: string) {
 
 export default defineConfig({
   plugins: [react()],
+  define: {
+    __DENSE_MEM_VERSION__: JSON.stringify(denseMemVersion()),
+  },
   build: {
     rollupOptions: {
       output: {

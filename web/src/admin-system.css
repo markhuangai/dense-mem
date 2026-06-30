@@ -201,6 +201,10 @@ body {
   letter-spacing: 0;
 }
 
+.rail-brand .version-badge {
+  color: var(--rail-muted);
+}
+
 .brand-mark {
   width: 38px;
   height: 38px;
