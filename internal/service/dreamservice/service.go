@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/fulltextquery"
-	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	neo4jstorage "github.com/markhuangai/dense-mem/internal/storage/neo4j"
@@ -406,46 +405,63 @@ func (s *service) ResolveFeedback(ctx context.Context, profileID string, req Res
 			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}
-	case "promote_candidate":
-		if s.deps.FragmentCreate == nil {
+	case "ignore":
+		s.recordDreamFeedback(ctx, decision, dream, "ok")
+		return &ResolveFeedbackResult{Dream: dream}, nil
+	case "confirm_true", "promote_candidate":
+		if s.deps.Memory == nil {
 			s.recordDreamFeedback(ctx, decision, dream, "error")
-			return nil, fmt.Errorf("resolve dream feedback: fragment create service is required")
+			return nil, fmt.Errorf("resolve dream feedback: memory service is required")
 		}
-		content := dreamPromotionContent(dream, req.Feedback)
-		fragment, err := s.deps.FragmentCreate.Create(ctx, profileID, &dto.CreateFragmentRequest{
-			Content:        content,
-			SourceType:     "conversation",
-			Source:         "dream_feedback:" + dream.DreamID,
-			Authority:      "primary",
-			IdempotencyKey: "dream-feedback:" + dream.DreamID,
-			Labels:         []string{"dream_feedback"},
-			Metadata: map[string]any{
-				"dream_id":         dream.DreamID,
-				"dream_status":     string(dream.Status),
-				"dream_likelihood": dream.Likelihood,
-				"dream_confidence": dream.Confidence,
-			},
-			SourceQuality: 0.75,
+		evidence, err := dreamResolutionEvidence(dream, "confirm_true", req.Feedback)
+		if err != nil {
+			s.recordDreamFeedback(ctx, decision, dream, "error")
+			return nil, err
+		}
+		memory, err := s.deps.Memory.Remember(ctx, profileID, memoryservice.RememberRequest{
+			Evidence: []memoryservice.EvidenceInput{evidence},
 		})
 		if err != nil {
 			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}
-		if err := s.linkDreamPromotion(ctx, profileID, dream.DreamID, fragment.Fragment.FragmentID); err != nil {
-			s.recordDreamFeedback(ctx, decision, dream, "error")
-			return nil, err
-		}
-		if err := s.updateDreamStatus(ctx, profileID, dreamID, domain.DreamStatusPromoted, strings.TrimSpace(req.Feedback)); err != nil {
-			s.recordDreamFeedback(ctx, decision, dream, "error")
-			return nil, err
-		}
-		updated, err := s.Get(ctx, profileID, dreamID)
-		if err != nil {
+		if err := s.deleteDream(ctx, profileID, dreamID); err != nil {
 			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}
 		s.recordDreamFeedback(ctx, decision, dream, "ok")
-		return &ResolveFeedbackResult{Dream: updated, Fragment: fragment}, nil
+		dream.Status = domain.DreamStatusPromoted
+		dream.InvalidatedReason = strings.TrimSpace(req.Feedback)
+		now := s.now().UTC()
+		dream.UpdatedAt = now
+		return &ResolveFeedbackResult{Dream: dream, Memory: memory, Deleted: true}, nil
+	case "confirm_false":
+		if s.deps.Memory == nil {
+			s.recordDreamFeedback(ctx, decision, dream, "error")
+			return nil, fmt.Errorf("resolve dream feedback: memory service is required")
+		}
+		evidence, err := dreamResolutionEvidence(dream, "confirm_false", req.Feedback)
+		if err != nil {
+			s.recordDreamFeedback(ctx, decision, dream, "error")
+			return nil, err
+		}
+		memory, err := s.deps.Memory.Remember(ctx, profileID, memoryservice.RememberRequest{
+			Evidence: []memoryservice.EvidenceInput{evidence},
+		})
+		if err != nil {
+			s.recordDreamFeedback(ctx, decision, dream, "error")
+			return nil, err
+		}
+		if err := s.deleteDream(ctx, profileID, dreamID); err != nil {
+			s.recordDreamFeedback(ctx, decision, dream, "error")
+			return nil, err
+		}
+		s.recordDreamFeedback(ctx, decision, dream, "ok")
+		dream.Status = domain.DreamStatusRejected
+		dream.InvalidatedReason = strings.TrimSpace(req.Feedback)
+		now := s.now().UTC()
+		dream.UpdatedAt = now
+		return &ResolveFeedbackResult{Dream: dream, Memory: memory, Deleted: true}, nil
 	default:
 		s.recordDreamFeedback(ctx, decision, dream, "error")
 		return nil, fmt.Errorf("%w: %s", ErrInvalidDreamStatus, decision)
@@ -704,17 +720,11 @@ SET d.status = $status,
 	})
 }
 
-func (s *service) linkDreamPromotion(ctx context.Context, profileID, dreamID, fragmentID string) error {
+func (s *service) deleteDream(ctx context.Context, profileID, dreamID string) error {
 	return s.deps.Graph.ScopedWriteTx(ctx, profileID, func(tx neo4j.ManagedTransaction) error {
 		res, err := neo4jstorage.RunScoped(ctx, tx, profileID, `
 MATCH (d:Dream {team_id: $profileId, dream_id: $dreamId})
-MATCH (sf:SourceFragment {team_id: $profileId, fragment_id: $fragmentId})
-MERGE (d)-[r:PROMOTED_TO {team_id: $profileId, target_type: 'fragment', target_id: $fragmentId}]->(sf)
-ON CREATE SET r.created_at = $createdAt`, map[string]any{
-			"dreamId":    dreamID,
-			"fragmentId": fragmentID,
-			"createdAt":  s.now().UTC(),
-		})
+DETACH DELETE d`, map[string]any{"dreamId": dreamID})
 		if err != nil {
 			return err
 		}
@@ -885,23 +895,6 @@ func dreamContentHash(d *domain.Dream) string {
 		string(data),
 	}, "\x00")))
 	return hex.EncodeToString(h[:])
-}
-
-func dreamPromotionContent(d *domain.Dream, feedback string) string {
-	parts := []string{
-		"Human confirmed a Dense-Mem dream hypothesis.",
-		"Hypothesis: " + d.Hypothesis,
-	}
-	if d.WhatIf != "" {
-		parts = append(parts, "What-if: "+d.WhatIf)
-	}
-	if d.PossibleOutcome != "" {
-		parts = append(parts, "Possible outcome: "+d.PossibleOutcome)
-	}
-	if strings.TrimSpace(feedback) != "" {
-		parts = append(parts, "Human feedback: "+strings.TrimSpace(feedback))
-	}
-	return strings.Join(parts, "\n")
 }
 
 func localRunDate(now time.Time, cfg EffectiveConfig) string {

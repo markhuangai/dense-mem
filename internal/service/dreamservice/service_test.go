@@ -9,9 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
@@ -318,6 +316,15 @@ func TestDreamServiceResolveFeedback(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 3, graph.writes)
 
+	ignoreRes, err := svc.ResolveFeedback(context.Background(), "profile-1", ResolveFeedbackRequest{
+		DreamID:  "dream-1",
+		Decision: "ignore",
+		Feedback: "not enough context to decide",
+	})
+	require.NoError(t, err)
+	require.False(t, ignoreRes.Deleted)
+	require.Equal(t, 3, graph.writes)
+
 	_, err = svc.ResolveFeedback(context.Background(), "profile-1", ResolveFeedbackRequest{
 		DreamID:  "dream-1",
 		Decision: "unknown",
@@ -327,6 +334,7 @@ func TestDreamServiceResolveFeedback(t *testing.T) {
 		{Decision: "reject", Outcome: "ok", FromStatus: "proposed"},
 		{Decision: "stale", Outcome: "ok", FromStatus: "proposed"},
 		{Decision: "reinforce", Outcome: "ok", FromStatus: "proposed"},
+		{Decision: "ignore", Outcome: "ok", FromStatus: "proposed"},
 		{Decision: "unknown", Outcome: "error", FromStatus: "proposed"},
 	}, metrics.DreamFeedbackSamples())
 
@@ -334,33 +342,37 @@ func TestDreamServiceResolveFeedback(t *testing.T) {
 	require.ErrorContains(t, err, "dream_id is required")
 }
 
-func TestDreamServiceResolveFeedbackPromotesCandidate(t *testing.T) {
+func TestDreamServiceResolveFeedbackPromotesCandidateThroughRemember(t *testing.T) {
 	now := time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC)
 	graph := &cycleRunGraphStub{executeWrites: true, dreamRows: []map[string]any{{"d": dreamTestNode("dream-1", "profile-1", now)}}}
-	create := &dreamFragmentCreateStub{}
+	memory := &dreamMemoryStub{rememberResult: &memoryservice.RememberResult{IngestID: "ingest-1", Status: "processing"}}
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
 	svc := New(Dependencies{
-		Graph:          graph,
-		FragmentCreate: create,
-		Metrics:        metrics,
-		Now:            func() time.Time { return now },
+		Graph:   graph,
+		Memory:  memory,
+		Metrics: metrics,
+		Now:     func() time.Time { return now },
 	})
 
 	res, err := svc.ResolveFeedback(context.Background(), "profile-1", ResolveFeedbackRequest{
 		DreamID:  "dream-1",
 		Decision: "promote_candidate",
-		Feedback: "confirmed by user",
+		Feedback: "User works at SAP from 2020 to 2024.",
 	})
 
 	require.NoError(t, err)
-	require.NotNil(t, res.Fragment)
-	require.Equal(t, "dream-fragment", res.Fragment.Fragment.FragmentID)
-	require.Equal(t, "profile-1", create.lastProfile)
-	require.Equal(t, "dream_feedback:dream-1", create.lastReq.Source)
-	require.Equal(t, "dream-1", create.lastReq.Metadata["dream_id"])
-	require.Equal(t, 2, graph.writes)
-	require.True(t, hasDreamWriteQuery(graph.writeQueries, "PROMOTED_TO"))
-	require.True(t, hasDreamWriteQuery(graph.writeQueries, "SET d.status = $status"))
+	require.True(t, res.Deleted)
+	require.Equal(t, domain.DreamStatusPromoted, res.Dream.Status)
+	require.Equal(t, "ingest-1", res.Memory.IngestID)
+	require.Equal(t, 1, memory.remembers)
+	require.Equal(t, "dream_feedback:dream-1", memory.lastRememberReq.Evidence[0].Source)
+	require.Equal(t, "dream-feedback:dream-1:confirm_true", memory.lastRememberReq.Evidence[0].IdempotencyKey)
+	require.Contains(t, memory.lastRememberReq.Evidence[0].Labels, "dream_confirmed")
+	require.Equal(t, "dream-1", memory.lastRememberReq.Evidence[0].Metadata["dream_id"])
+	require.Equal(t, "confirm_true", memory.lastRememberReq.Evidence[0].Metadata["dream_decision"])
+	require.True(t, strings.HasPrefix(memory.lastRememberReq.Evidence[0].Content, "User works at SAP"))
+	require.Equal(t, 1, graph.writes)
+	require.True(t, hasDreamWriteQuery(graph.writeQueries, "DETACH DELETE d"))
 	require.Equal(t, []observability.DreamFeedbackSample{
 		{Decision: "promote_candidate", Outcome: "ok", FromStatus: "proposed"},
 	}, metrics.DreamFeedbackSamples())
@@ -369,40 +381,42 @@ func TestDreamServiceResolveFeedbackPromotesCandidate(t *testing.T) {
 	_, err = New(Dependencies{Graph: graph, Metrics: errorMetrics}).ResolveFeedback(context.Background(), "profile-1", ResolveFeedbackRequest{
 		DreamID:  "dream-1",
 		Decision: "promote_candidate",
+		Feedback: "confirmed by user",
 	})
-	require.ErrorContains(t, err, "fragment create service is required")
+	require.ErrorContains(t, err, "memory service is required")
 	require.Equal(t, []observability.DreamFeedbackSample{
 		{Decision: "promote_candidate", Outcome: "error", FromStatus: "proposed"},
 	}, errorMetrics.DreamFeedbackSamples())
 }
 
-func TestDreamServiceResolveFeedbackPromoteCandidateRefetchError(t *testing.T) {
+func TestDreamServiceResolveFeedbackConfirmFalseThroughRemember(t *testing.T) {
 	now := time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC)
-	graph := &cycleRunGraphStub{
-		executeWrites: true,
-		readErr:       errors.New("read failed"),
-		readErrAfter:  3,
-		dreamRows:     []map[string]any{{"d": dreamTestNode("dream-1", "profile-1", now)}},
-	}
+	graph := &cycleRunGraphStub{executeWrites: true, dreamRows: []map[string]any{{"d": dreamTestNode("dream-1", "profile-1", now)}}}
+	memory := &dreamMemoryStub{rememberResult: &memoryservice.RememberResult{IngestID: "ingest-false", Status: "processing"}}
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
 	svc := New(Dependencies{
-		Graph:          graph,
-		FragmentCreate: &dreamFragmentCreateStub{},
-		Metrics:        metrics,
-		Now:            func() time.Time { return now },
+		Graph:   graph,
+		Memory:  memory,
+		Metrics: metrics,
+		Now:     func() time.Time { return now },
 	})
 
 	res, err := svc.ResolveFeedback(context.Background(), "profile-1", ResolveFeedbackRequest{
 		DreamID:  "dream-1",
-		Decision: "promote_candidate",
-		Feedback: "confirmed by user",
+		Decision: "confirm_false",
+		Feedback: "The user said this is not true.",
 	})
 
-	require.ErrorContains(t, err, "read failed")
-	require.Nil(t, res)
-	require.Equal(t, 2, graph.writes)
+	require.NoError(t, err)
+	require.True(t, res.Deleted)
+	require.Equal(t, domain.DreamStatusRejected, res.Dream.Status)
+	require.Equal(t, "ingest-false", res.Memory.IngestID)
+	require.Contains(t, memory.lastRememberReq.Evidence[0].Labels, "dream_rejected")
+	require.Equal(t, "confirm_false", memory.lastRememberReq.Evidence[0].Metadata["dream_decision"])
+	require.Contains(t, memory.lastRememberReq.Evidence[0].Content, "Incorrect dream hypothesis")
+	require.Contains(t, memory.lastRememberReq.Evidence[0].Content, "not true")
 	require.Equal(t, []observability.DreamFeedbackSample{
-		{Decision: "promote_candidate", Outcome: "error", FromStatus: "proposed"},
+		{Decision: "confirm_false", Outcome: "ok", FromStatus: "proposed"},
 	}, metrics.DreamFeedbackSamples())
 }
 
@@ -562,7 +576,12 @@ func TestDreamServiceInputRowsAndHelpers(t *testing.T) {
 		SourceRefs:      []domain.DreamSourceRef{{Type: "fact", ID: "fact-1"}},
 	}
 	require.NotEmpty(t, dreamContentHash(dream))
-	require.Contains(t, dreamPromotionContent(dream, "confirmed"), "Human feedback: confirmed")
+	evidence, err := dreamResolutionEvidence(dream, "confirm_true", "User works on Dense-Mem.")
+	require.NoError(t, err)
+	require.Contains(t, evidence.Content, "Dream decision: confirmed accurate")
+	require.Equal(t, "dream-feedback:dream-1:confirm_true", evidence.IdempotencyKey)
+	_, err = dreamResolutionEvidence(dream, "confirm_true", "")
+	require.ErrorContains(t, err, "feedback is required")
 	require.Equal(t, "2026-06-11", localRunDate(now, EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Timezone: "Nope/Zone"}}))
 	require.Equal(t, "stringer-value", stringFromMap(map[string]any{"x": testStringer("stringer-value")}, "x"))
 	require.True(t, boolFromMap(map[string]any{"x": true}, "x"))
@@ -886,12 +905,24 @@ func (s *dreamGeneratorStub) Model() string {
 }
 
 type dreamMemoryStub struct {
-	result   *memoryservice.ReflectResult
-	err      error
-	reflects int
+	result          *memoryservice.ReflectResult
+	err             error
+	reflects        int
+	remembers       int
+	rememberResult  *memoryservice.RememberResult
+	rememberErr     error
+	lastRememberReq memoryservice.RememberRequest
 }
 
-func (s *dreamMemoryStub) Remember(context.Context, string, memoryservice.RememberRequest) (*memoryservice.RememberResult, error) {
+func (s *dreamMemoryStub) Remember(_ context.Context, _ string, req memoryservice.RememberRequest) (*memoryservice.RememberResult, error) {
+	s.remembers++
+	s.lastRememberReq = req
+	if s.rememberErr != nil {
+		return nil, s.rememberErr
+	}
+	if s.rememberResult != nil {
+		return s.rememberResult, nil
+	}
 	return &memoryservice.RememberResult{}, nil
 }
 
@@ -920,19 +951,6 @@ func (s *dreamMemoryStub) Reflect(context.Context, string, memoryservice.Reflect
 
 func (s *dreamMemoryStub) ConfirmMemory(context.Context, string, memoryservice.ConfirmRequest) (*memoryservice.ConfirmResult, error) {
 	return &memoryservice.ConfirmResult{}, nil
-}
-
-type dreamFragmentCreateStub struct {
-	lastProfile string
-	lastReq     *dto.CreateFragmentRequest
-}
-
-func (s *dreamFragmentCreateStub) Create(_ context.Context, profileID string, req *dto.CreateFragmentRequest) (*fragmentservice.CreateResult, error) {
-	s.lastProfile = profileID
-	s.lastReq = req
-	return &fragmentservice.CreateResult{
-		Fragment: &domain.Fragment{FragmentID: "dream-fragment", ProfileID: profileID, Content: req.Content},
-	}, nil
 }
 
 func dreamTestNode(dreamID, profileID string, now time.Time) neo4j.Node {

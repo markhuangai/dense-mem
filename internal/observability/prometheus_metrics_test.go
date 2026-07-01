@@ -38,6 +38,7 @@ func TestPrometheusMetrics_RecordsScopedMetrics(t *testing.T) {
 	metrics.ObserveRecallFor(ctx, 42, 3, "ok")
 	metrics.ObserveRecallFeedbackFor(ctx, RecallFeedback{Used: true, AnswerSupported: true, Quality: "high", MissingContext: false, Irrelevant: false})
 	metrics.ObserveDreamFeedbackFor(ctx, DreamFeedback{Decision: "promote_candidate", Outcome: "ok", FromStatus: "reinforced"})
+	metrics.ObserveDreamFeedbackFor(ctx, DreamFeedback{Decision: "confirm_true", Outcome: "ok", FromStatus: "proposed"})
 	metrics.ObserveMemoryFunnelLatencyFor(ctx, "claim_to_verify", 2.5, "verified")
 	metrics.IncFragmentCreateFor(ctx, "created")
 	metrics.IncClaimCreateFor(ctx, "duplicate", "content_hash")
@@ -74,6 +75,7 @@ func TestPrometheusMetrics_RecordsScopedMetrics(t *testing.T) {
 		`irrelevant="false"`,
 		`densemem_recall_feedback_quality_score_bucket{`,
 		`densemem_dream_feedback_total{`,
+		`decision="confirm_true"`,
 		`densemem_memory_funnel_latency_seconds_bucket{`,
 		`stage="claim_to_verify"`,
 		`densemem_claim_create_total{`,

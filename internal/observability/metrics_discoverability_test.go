@@ -107,20 +107,28 @@ func TestInMemoryDiscoverabilityMetrics_RecordsDreamFeedback(t *testing.T) {
 		FromStatus: "reinforced",
 	})
 	m.ObserveDreamFeedback(DreamFeedback{
+		Decision:   "confirm_false",
+		Outcome:    "ok",
+		FromStatus: "proposed",
+	})
+	m.ObserveDreamFeedback(DreamFeedback{
 		Decision:   "sounds_good",
 		Outcome:    "maybe",
 		FromStatus: "draft",
 	})
 
 	samples := m.DreamFeedbackSamples()
-	if len(samples) != 2 {
-		t.Fatalf("dream feedback samples = %d; want 2", len(samples))
+	if len(samples) != 3 {
+		t.Fatalf("dream feedback samples = %d; want 3", len(samples))
 	}
 	if samples[0].Decision != "promote_candidate" || samples[0].Outcome != "ok" || samples[0].FromStatus != "reinforced" {
 		t.Errorf("sample[0] = %+v", samples[0])
 	}
-	if samples[1].Decision != "unknown" || samples[1].Outcome != "unknown" || samples[1].FromStatus != "unknown" {
+	if samples[1].Decision != "confirm_false" || samples[1].Outcome != "ok" || samples[1].FromStatus != "proposed" {
 		t.Errorf("sample[1] = %+v", samples[1])
+	}
+	if samples[2].Decision != "unknown" || samples[2].Outcome != "unknown" || samples[2].FromStatus != "unknown" {
+		t.Errorf("sample[2] = %+v", samples[2])
 	}
 }
 

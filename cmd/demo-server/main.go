@@ -438,15 +438,14 @@ func main() {
 	defer placementWorkerCancel()
 	memorySvc.StartPlacementWorker(placementWorkerCtx, time.Minute)
 	dreamSvc := dreamservice.New(dreamservice.Dependencies{
-		Graph:          profileScopeEnforcer,
-		Memory:         memorySvc,
-		FragmentCreate: fragmentCreateRegistrySvc,
-		AppConfig:      appConfigService,
-		Profiles:       profileService,
-		Locker:         dreamservice.NewPostgresCycleLocker(),
-		Postgres:       pgDB.GetDB(),
-		Generator:      dreamservice.NewHeuristicGenerator(cfg.GetAIVerifierModel()),
-		Metrics:        discoverabilityMetrics,
+		Graph:     profileScopeEnforcer,
+		Memory:    memorySvc,
+		AppConfig: appConfigService,
+		Profiles:  profileService,
+		Locker:    dreamservice.NewPostgresCycleLocker(),
+		Postgres:  pgDB.GetDB(),
+		Generator: dreamservice.NewHeuristicGenerator(cfg.GetAIVerifierModel()),
+		Metrics:   discoverabilityMetrics,
 	})
 	contextSvc := contextservice.New(contextservice.Dependencies{
 		Reader:      profileScopeEnforcer,

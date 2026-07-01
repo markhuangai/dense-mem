@@ -39,17 +39,33 @@ func TestBuildDefault_DreamInvokers(t *testing.T) {
 	}
 
 	resolveTool, _ := reg.Get("resolve_dream_feedback")
+	decisionSchema := resolveTool.InputSchema["properties"].(map[string]any)["decision"].(map[string]any)
+	decisionEnums := decisionSchema["enum"].([]string)
+	for _, decision := range []string{"ignore", "confirm_true", "confirm_false", "promote_candidate"} {
+		if !containsString(decisionEnums, decision) {
+			t.Fatalf("resolve_dream_feedback decision enum missing %q: %v", decision, decisionEnums)
+		}
+	}
 	resolveOut, err := resolveTool.Invoke(context.Background(), "profile-dream", map[string]any{
 		"dream_id": "dream-1",
-		"decision": "reinforce",
-		"feedback": "still plausible",
+		"decision": "confirm_true",
+		"feedback": "prior conversation confirms it",
 	})
 	if err != nil {
 		t.Fatalf("resolve_dream_feedback Invoke: %v", err)
 	}
-	if resolveOut["dream"] == nil || dreams.lastResolveReq.Decision != "reinforce" || dreams.lastResolveReq.Feedback != "still plausible" {
+	if resolveOut["dream"] == nil || dreams.lastResolveReq.Decision != "confirm_true" || dreams.lastResolveReq.Feedback != "prior conversation confirms it" {
 		t.Fatalf("resolve_dream_feedback output = %v request = %+v", resolveOut, dreams.lastResolveReq)
 	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 type stubDreamService struct {
