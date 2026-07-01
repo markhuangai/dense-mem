@@ -105,10 +105,11 @@ host LLM calls recall_memory
   -> portals display online recall quality
 ```
 
-The feedback request is off by default. Enable `RECALL_FEEDBACK_ENABLED` from
-the control portal Config tab to expose `submit_recall_session_feedback` and add
-`recall_event` to `recall_memory` responses. Leave it disabled when you want to
-avoid the extra tool-call and token overhead.
+The feedback request is off by default. Enable recall feedback from the control
+portal Config tab (`RECALL_FEEDBACK_ENABLED`) to expose
+`submit_recall_session_feedback` and add `recall_event` to `recall_memory`
+responses. Leave it disabled when you want to avoid the extra tool-call and
+token overhead.
 
 Useful online feedback cards include:
 
@@ -139,26 +140,38 @@ The feedback tool accepts one or more recall judgments:
       "quality": "low",
       "missing_context": true,
       "irrelevant": true,
-      "failure_reason": "stale_or_retracted_results",
-      "expected_context": "Returned stale UI notes instead of the needed button handling pattern. The existing SearchPanel disabled-state pattern.",
+      "feedback_comment": "Returned stale UI notes instead of the needed button handling pattern.",
       "irrelevant_result_refs": [
         { "type": "fragment", "id": "019...", "rank": 1 }
+      ],
+      "dream_feedback": [
+        {
+          "dream_id": "dream-123",
+          "used": true,
+          "quality": "medium",
+          "contradicted": false,
+          "feedback_comment": "Plausible but weak support."
+        }
       ]
     }
   ]
 }
 ```
 
-`failure_reason` is required when `quality` is `low`, `answer_supported` is
-`false`, `missing_context` is `true`, or `irrelevant` is `true`. Use one of
-`missing_context`, `irrelevant_results`, `stale_or_retracted_results`,
-`unsupported_answer`, `wrong_scope`, `ambiguous_query`, or `other`. Keep
-`expected_context` bounded and free of user content.
+`feedback_comment` is required unless `quality` is `high`, `answer_supported`
+is `true`, `missing_context` is `false`, and `irrelevant` is `false`. Keep it
+bounded and free of user content. `failure_reason` and `expected_context` are
+deprecated aliases for `feedback_comment`.
 
-Do not use `recall_id`, `failure_reason`, or `expected_context` as Prometheus
-labels. Prometheus labels stay bounded; the free-text details and judged
-irrelevant refs are stored in `recall_feedback_events` and surfaced in the
-control portal Feedback tab.
+`dream_feedback` records host-LLM judgments about `related_dreams` returned by
+`recall_memory`. It is quality feedback only; it does not reinforce, reject,
+stale, or promote the dream. Use `resolve_dream_feedback` when user evidence
+should change dream status.
+
+Do not use `recall_id`, `feedback_comment`, or dream IDs as Prometheus labels.
+Prometheus labels stay bounded; the free-text details, judged irrelevant refs,
+and dream-feedback judgments are stored in `recall_feedback_events` and surfaced
+in the control portal Feedback tab.
 
 For offline measurement, use stored `result_refs` plus submitted failure details
 to build labeled recall cases. The codebase includes a pure scoring helper for

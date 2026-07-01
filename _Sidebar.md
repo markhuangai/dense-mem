@@ -17,6 +17,7 @@
 
 - [Configuration](Configuration)
 - [Telemetry](Telemetry)
+- [Evaluation](Evaluation)
 - [Portals And API Keys](Portals-And-API-Keys)
 - [Public HTTPS And Redis](Public-HTTPS-And-Redis)
 

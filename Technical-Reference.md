@@ -11,7 +11,7 @@ Dense-Mem MCP tool names use `underscore_case`.
 | High-level memory | `remember` | write | Save one granular evidence entry under 1000 characters, create typed claims, verify them, and promote safe memories. |
 | High-level memory | `import_memories` | write | Import one granular summarized historical memory entry under 1000 characters. Does not auto-promote by default. |
 | High-level memory | `recall_memory` | read | Search active facts, validated claims, fragments, clarifications, optional community expansion, and related dreams. |
-| High-level memory | `submit_recall_session_feedback` | read | Optional when `RECALL_FEEDBACK_ENABLED=true`; submit session-level host-LLM feedback for `recall_memory` events, including required failure reasons for negative judgments. |
+| High-level memory | `submit_recall_session_feedback` | read | Optional when recall feedback is enabled; submit session-level host-LLM feedback for `recall_memory` events, including bounded `feedback_comment` and optional dream feedback. |
 | High-level memory | `reflect_memories` | read | Review memory health, stale items, contradictions, and clarification needs. |
 | High-level memory | `confirm_memory` | write | Apply the user's answer to a memory clarification. |
 | Dreaming | `dreaming_status` | read | Inspect effective dreaming config and latest run status for the caller's profile. |
@@ -44,6 +44,14 @@ Dense-Mem MCP tool names use `underscore_case`.
 | Memory packs | `inspect_memory_pack` | read | Inspect an artifact or HTTPS URL without writing memory. |
 | Memory packs | `import_memory_pack` | write | Import a memory pack in review or trusted mode. |
 | Memory packs | `rollback_memory_pack_import` | write | Roll back an applied import when affected graph entities are unchanged. |
+| Evaluation | `eval_get_manifest` | read/write | Return evaluation-mode runtime limits and capabilities. |
+| Evaluation | `eval_list_knowledge_refs` | read/write | Page through team-scoped exported evaluation refs. |
+| Evaluation | `eval_get_knowledge_item` | read/write | Fetch one exported evaluation item. |
+| Evaluation | `eval_run_recall_case` | read/write | Run one recall/context evaluation case. |
+| Evaluation | `eval_run_dream_cycle` | read/write | Run the eval dream phase, including deterministic seeded dreams. |
+| Evaluation | `eval_score_retrieval_case` | read/write | Score ranked refs against required and bad refs. |
+| Evaluation | `eval_list_recall_feedback_events` | read/write | Export recall-feedback events for offline analysis. |
+| Evaluation | `eval_get_recall_feedback_event` | read/write | Fetch one recall-feedback event for offline analysis. |
 
 For memory writes, split large scenarios into semantic entries before calling
 `remember`, `import_memories`, or `save_memory`. Store one decision, fact,
@@ -121,6 +129,13 @@ gates.
 
 See [Community Memory](Community-And-Dreaming) and [Dreaming](Dreaming) for
 operator guidance.
+
+## Evaluation Tools
+
+Evaluation tools are visible only when evaluation mode is enabled and require a
+read-write API key. They are intended for disposable local evaluation teams, not
+production memory. See [Evaluation](Evaluation) for seed packs, runner commands,
+scoring, and dream-hypothesis metrics.
 
 ## MCP Prompt Catalog
 

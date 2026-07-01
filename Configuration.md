@@ -270,6 +270,32 @@ scrape token, and sets `TELEMETRY_PROMETHEUS_JOB=dense-mem` by default.
 
 See [Telemetry](Telemetry) for portal usage, demo telemetry, and troubleshooting.
 
+## Recall Feedback
+
+Recall feedback is optional and disabled by default. These settings are stored
+in Postgres `app_config` and can be edited from the control portal Config tab;
+they are not environment-variable fallbacks.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `RECALL_FEEDBACK_ENABLED` | `false` | Exposes `submit_recall_session_feedback` and adds `recall_event` metadata to `recall_memory` responses. |
+| `RECALL_FEEDBACK_RETENTION_DAYS` | `30` | Number of days to keep recall-feedback event details, from 1 to 365. |
+
+See [Telemetry](Telemetry#online-recall-feedback).
+
+## Evaluation Mode
+
+Evaluation mode exposes local diagnostic tools for disposable eval teams. These
+settings are stored in Postgres `app_config` and can be edited from the control
+portal Config tab; do not enable them for production memory.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `EVALUATION_MODE_ENABLED` | `false` | Exposes eval-only MCP tools and APIs. |
+| `EVALUATION_EXPORT_MAX_PAGE_SIZE` | `100` | Maximum page size for evaluation export tools, from 1 to 500. |
+
+See [Evaluation](Evaluation).
+
 ## Dreaming
 
 Dreaming is optional and disabled by default. It creates reviewable hypotheses,
@@ -344,7 +370,6 @@ The server flushes logs in batches and prunes old rows hourly.
 | `CLAIM_WRITE_RATE_LIMIT` | `60` | Claim write limit per minute. |
 | `CLAIM_READ_RATE_LIMIT` | `300` | Claim read limit per minute. |
 | `RECALL_VALIDATED_CLAIM_WEIGHT` | `0.5` | Extra recall score weight for validated claims. |
-| `RECALL_FEEDBACK_ENABLED` | `false` | Exposes `submit_recall_session_feedback` and adds `recall_event` metadata to `recall_memory` responses. |
 | `PROMOTE_TX_TIMEOUT_SECONDS` | `10` | Claim promotion transaction timeout. |
 | `AI_COMMUNITY_MAX_NODES` | `500000` | Maximum Neo4j nodes considered by manual or scheduled community detection. |
 

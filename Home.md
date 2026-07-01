@@ -62,6 +62,7 @@ flowchart LR
 | Review dream hypotheses | [Dreaming](Dreaming) |
 | Manage teams, profiles, and API keys | [Portals And API Keys](Portals-And-API-Keys) |
 | Enable Prometheus metrics and dashboards | [Telemetry](Telemetry) |
+| Run local recall and dream evaluation | [Evaluation](Evaluation) |
 | Publish Dense-Mem with HTTPS or Redis | [Public HTTPS And Redis](Public-HTTPS-And-Redis) |
 | Review every important setting | [Configuration](Configuration) |
 | Understand the system design | [Architecture](Architecture) |
