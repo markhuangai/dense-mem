@@ -8,12 +8,13 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-func (s *service) materializeSeedDreams(ctx context.Context, profileID, runID string, seeds []SeedDream) (int, error) {
+func (s *service) materializeSeedDreams(ctx context.Context, profileID, runID string, seeds []SeedDream, maxOutputs int) (int, error) {
 	if len(seeds) == 0 {
 		return 0, nil
 	}
 	now := s.now().UTC()
 	created := 0
+	materialized := 0
 	for _, seed := range seeds {
 		dream := &domain.Dream{
 			DreamID:         uuid.NewString(),
@@ -35,11 +36,15 @@ func (s *service) materializeSeedDreams(ctx context.Context, profileID, runID st
 		if dream.Hypothesis == "" || len(dream.SourceRefs) == 0 {
 			continue
 		}
+		if maxOutputs > 0 && materialized >= maxOutputs {
+			break
+		}
 		dream.ContentHash = dreamContentHash(dream)
 		inserted, err := s.upsertDream(ctx, profileID, dream)
 		if err != nil {
 			return created, err
 		}
+		materialized++
 		if inserted {
 			created++
 		}

@@ -360,6 +360,17 @@ func TestEvalRunDreamCycleToolInvokesDreamService(t *testing.T) {
 		t.Fatalf("BuildDefault: %v", err)
 	}
 	tool, _ := reg.Get("eval_run_dream_cycle")
+	properties := tool.InputSchema["properties"].(map[string]any)
+	maxOutputs, ok := schemaNumber(properties["max_outputs"].(map[string]any)["maximum"])
+	if !ok || int(maxOutputs) != evalDreamCycleMaxOutputs {
+		t.Fatalf("max_outputs maximum = %v, %v", maxOutputs, ok)
+	}
+	seedDreamsSchema := properties["seed_dreams"].(map[string]any)
+	maxSeedDreams, ok := schemaNumber(seedDreamsSchema["maxItems"])
+	if !ok || int(maxSeedDreams) != evalDreamCycleMaxOutputs {
+		t.Fatalf("seed_dreams maxItems = %v, %v", maxSeedDreams, ok)
+	}
+
 	out, err := tool.Invoke(context.Background(), "profile-eval", map[string]any{
 		"manual":             false,
 		"reflect_enabled":    false,

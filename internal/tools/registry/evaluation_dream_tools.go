@@ -8,6 +8,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 )
 
+const evalDreamCycleMaxOutputs = 10000
+
 func evalRunDreamCycleTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "eval_run_dream_cycle",
@@ -19,10 +21,10 @@ func evalRunDreamCycleTool(deps Dependencies) Tool {
 				"reflect_enabled":    map[string]any{"type": "boolean"},
 				"reevaluate_enabled": map[string]any{"type": "boolean"},
 				"dream_enabled":      map[string]any{"type": "boolean"},
-				"max_outputs":        map[string]any{"type": "integer", "minimum": 1, "maximum": 1000},
+				"max_outputs":        map[string]any{"type": "integer", "minimum": 1, "maximum": evalDreamCycleMaxOutputs},
 				"seed_dreams": map[string]any{
 					"type":     "array",
-					"maxItems": 1000,
+					"maxItems": evalDreamCycleMaxOutputs,
 					"items": map[string]any{
 						"type": "object",
 						"properties": map[string]any{

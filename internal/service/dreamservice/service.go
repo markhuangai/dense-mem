@@ -96,7 +96,7 @@ func (s *service) RunCycle(ctx context.Context, profileID string, req RunCycleRe
 			result.ReevaluatedDreams = count
 		}
 		if dreamEnabled {
-			created, err := s.materializeSeedDreams(ctx, profileID, runID, req.SeedDreams)
+			created, err := s.materializeSeedDreams(ctx, profileID, runID, req.SeedDreams, cfg.MaxOutputs)
 			if err != nil {
 				return fmt.Errorf("dream phase: %w", err)
 			}
