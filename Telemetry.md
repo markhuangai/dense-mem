@@ -165,8 +165,9 @@ deprecated aliases for `feedback_comment`.
 
 `dream_feedback` records host-LLM judgments about `related_dreams` returned by
 `recall_memory`. It is quality feedback only; it does not reinforce, reject,
-stale, or promote the dream. Use `resolve_dream_feedback` when user evidence
-should change dream status.
+stale, promote, or remove the dream. Use `resolve_dream_feedback` when prior
+conversation context or user feedback confirms a dream as true or false and the
+confirmation should enter normal memory placement.
 
 Do not use `recall_id`, `feedback_comment`, or dream IDs as Prometheus labels.
 Prometheus labels stay bounded; the free-text details, judged irrelevant refs,

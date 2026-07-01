@@ -63,12 +63,14 @@ not override active facts.
 | `reinforced` | User feedback or later re-evaluation supports keeping it visible. |
 | `stale` | Source references disappeared or the hypothesis no longer appears useful. |
 | `rejected` | User rejected it. |
-| `promoted` | User confirmed it should enter normal memory review. |
+| `promoted` | User confirmed it as true and the confirmation entered normal memory placement. |
 
-`promote_candidate` creates a normal source fragment labeled `dream_feedback`.
-The created evidence then follows the usual claim, verification, conflict, and
-promotion gates. If verification fails or a conflict needs clarification, no
-active fact is created automatically.
+Confirmed dreams are routed through the normal `remember` placement flow with
+`dream_feedback` metadata. `confirm_true` and the backward-compatible
+`promote_candidate` decision submit confirmation evidence; `confirm_false`
+submits correction evidence. Processed dreams are removed from future dream
+recall after memory placement is created. If verification fails or a conflict
+needs clarification, no active fact is created automatically.
 
 ## MCP Tools
 
@@ -118,14 +120,14 @@ Resolve user feedback:
   "tool": "resolve_dream_feedback",
   "arguments": {
     "dream_id": "dream-123",
-    "decision": "promote_candidate",
+    "decision": "confirm_true",
     "feedback": "The user confirmed this should be remembered."
   }
 }
 ```
 
-Valid feedback decisions are `reinforce`, `stale`, `reject`, and
-`promote_candidate`.
+Valid feedback decisions are `ignore`, `reinforce`, `stale`, `reject`,
+`confirm_true`, `confirm_false`, and `promote_candidate`.
 
 ## Recall
 
@@ -142,7 +144,9 @@ Use related dreams to decide what to ask or review:
 ```
 
 Do not treat `related_dreams` as active memory. If a related dream matters,
-review it with the user and resolve it through `resolve_dream_feedback`.
+review it with the user or prior conversation context and resolve it through
+`resolve_dream_feedback`. Use `ignore` when no decision was made so the dream can
+remain available for future recall.
 
 ## REST And Portals
 

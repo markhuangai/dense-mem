@@ -18,7 +18,7 @@ Dense-Mem MCP tool names use `underscore_case`.
 | Dreaming | `run_dreaming_cycle` | write | Manually run the reflect, re-evaluate, and dream cycle chain. |
 | Dreaming | `list_dreams` | read | List reviewable dream hypotheses by status. |
 | Dreaming | `get_dream` | read | Fetch one dream hypothesis with source references. |
-| Dreaming | `resolve_dream_feedback` | write | Reinforce, stale, reject, or route a confirmed dream into normal memory review. |
+| Dreaming | `resolve_dream_feedback` | write | Record dream-specific decisions; confirmed true or false dreams enter normal memory placement and are removed from future dream recall. |
 | Fragment memory | `save_memory` | write | Persist one source fragment for the caller's profile. |
 | Fragment memory | `get_memory` | read | Fetch one source fragment by ID. |
 | Fragment memory | `list_recent_memories` | read | List recent source fragments with pagination. |
@@ -121,11 +121,12 @@ Dreaming tools are also profile-scoped:
 | `run_dreaming_cycle` | write | Manually run the cycle; optional booleans can override phase enablement for that run. |
 | `list_dreams` | read | List dreams with optional `status` and `limit`. |
 | `get_dream` | read | Fetch one dream by `dream_id`. |
-| `resolve_dream_feedback` | write | Apply one of `reinforce`, `stale`, `reject`, or `promote_candidate`. |
+| `resolve_dream_feedback` | write | Apply one of `ignore`, `reinforce`, `stale`, `reject`, `confirm_true`, `confirm_false`, or `promote_candidate`. |
 
-Dreams are hypotheses. `promote_candidate` creates source evidence from user
-feedback and then relies on normal claim, verification, conflict, and promotion
-gates.
+Dreams are hypotheses. `confirm_true`, `confirm_false`, and the
+backward-compatible `promote_candidate` decision create dream-labeled evidence
+through normal memory placement, then rely on normal claim, verification,
+conflict, and promotion gates.
 
 See [Community Memory](Community-And-Dreaming) and [Dreaming](Dreaming) for
 operator guidance.
