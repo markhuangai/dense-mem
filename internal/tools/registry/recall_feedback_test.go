@@ -230,6 +230,13 @@ func TestSubmitRecallSessionFeedbackRecordsFailureDetails(t *testing.T) {
 				"id":   " fragment-1 ",
 				"rank": 1,
 			}},
+			"dream_feedback": []any{map[string]any{
+				"dream_id":         " dream-1 ",
+				"used":             true,
+				"quality":          "medium",
+				"contradicted":     false,
+				"feedback_comment": " Plausible relationship but missing stronger source overlap. ",
+			}},
 		}},
 	})
 	if err != nil {
@@ -248,8 +255,45 @@ func TestSubmitRecallSessionFeedbackRecordsFailureDetails(t *testing.T) {
 	if len(got.IrrelevantRefs) != 1 || got.IrrelevantRefs[0].ID != "fragment-1" || got.IrrelevantRefs[0].Rank != 1 {
 		t.Fatalf("irrelevant refs = %+v", got.IrrelevantRefs)
 	}
+	if len(got.DreamFeedback) != 1 || got.DreamFeedback[0].DreamID != "dream-1" || got.DreamFeedback[0].Quality != "medium" || got.DreamFeedback[0].FeedbackComment != "Plausible relationship but missing stronger source overlap." {
+		t.Fatalf("dream feedback = %+v", got.DreamFeedback)
+	}
 	if len(metrics.RecallFeedbackSamples()) != 1 {
 		t.Fatalf("recall feedback samples = %d; want 1", len(metrics.RecallFeedbackSamples()))
+	}
+}
+
+func TestSubmitRecallSessionFeedbackAcceptsDreamIrrelevantRefs(t *testing.T) {
+	recorder := &stubRecallFeedbackRecorder{}
+	reg, _ := BuildDefault(Dependencies{
+		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+		RecallFeedbackEvents: recorder,
+		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+	})
+	tool, _ := reg.Get("submit_recall_session_feedback")
+
+	_, err := tool.Invoke(context.Background(), "profile-feedback", map[string]any{
+		"recalls": []any{map[string]any{
+			"recall_id":        "rec-1",
+			"used":             true,
+			"answer_supported": false,
+			"quality":          "low",
+			"missing_context":  false,
+			"irrelevant":       true,
+			"feedback_comment": "Dream hypothesis contradicted the retrieved facts.",
+			"irrelevant_result_refs": []any{map[string]any{
+				"type": "dream",
+				"id":   "dream-1",
+				"rank": 1,
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("submit_recall_session_feedback Invoke: %v", err)
+	}
+	got := recorder.feedback[0]
+	if len(got.IrrelevantRefs) != 1 || got.IrrelevantRefs[0].Type != domain.RecallFeedbackResultTypeDream {
+		t.Fatalf("irrelevant refs = %+v", got.IrrelevantRefs)
 	}
 }
 
@@ -354,6 +398,34 @@ func TestRecallMemoryRecallEventAndSessionSubmit(t *testing.T) {
 	}
 	if recorder.feedback[0].RecallID != recallID || recorder.feedback[0].Quality != "high" {
 		t.Fatalf("recorded feedback = %+v", recorder.feedback[0])
+	}
+}
+
+func TestRecallMemoryRecallEventIncludesDreamRefs(t *testing.T) {
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	recorder := &stubRecallFeedbackRecorder{}
+	reg, _ := BuildDefault(Dependencies{
+		Recall:               stubRecallWithHit{},
+		Dreams:               &stubDreamService{},
+		Metrics:              metrics,
+		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+		RecallFeedbackEvents: recorder,
+	})
+	recallTool, _ := reg.Get("recall_memory")
+
+	_, err := recallTool.Invoke(context.Background(), "profile-feedback", map[string]any{"query": "q"})
+	if err != nil {
+		t.Fatalf("recall_memory Invoke: %v", err)
+	}
+	if len(recorder.snapshots) != 1 {
+		t.Fatalf("recorded snapshots = %d; want 1", len(recorder.snapshots))
+	}
+	refs := recorder.snapshots[0].ResultRefs
+	if len(refs) != 2 {
+		t.Fatalf("snapshot result refs = %+v; want memory and dream refs", refs)
+	}
+	if refs[1].Type != domain.RecallFeedbackResultTypeDream || refs[1].ID != "dream-1" || refs[1].Tier != "dream" {
+		t.Fatalf("dream ref = %+v", refs[1])
 	}
 }
 
@@ -462,7 +534,7 @@ func TestRecallFeedbackHelpersCaptureArgsAndResultRefs(t *testing.T) {
 			},
 		},
 		{},
-	})
+	}, nil)
 
 	if len(refs) != 3 {
 		t.Fatalf("refs = %#v; want 3 persisted refs", refs)

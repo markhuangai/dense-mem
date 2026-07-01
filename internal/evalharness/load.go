@@ -91,6 +91,30 @@ func LoadQrels(manifestPath string, manifest *SeedManifest) ([]QRel, error) {
 	return qrels, nil
 }
 
+func LoadExpectedDreams(manifestPath string, manifest *SeedManifest) ([]ExpectedDream, error) {
+	if manifest == nil || strings.TrimSpace(manifest.DreamsFile) == "" {
+		return nil, nil
+	}
+	var dreams []ExpectedDream
+	if err := readJSONL(resolveSeedPath(manifestPath, manifest.DreamsFile), &dreams); err != nil {
+		return nil, err
+	}
+	seen := map[string]struct{}{}
+	for i, dream := range dreams {
+		if strings.TrimSpace(dream.SourceDocID) == "" {
+			return nil, fmt.Errorf("expected dream row %d missing source_doc_id", i+1)
+		}
+		if len(dream.SourceRefs) < 2 {
+			return nil, fmt.Errorf("expected dream row %d must contain at least two source_refs", i+1)
+		}
+		if _, ok := seen[dream.SourceDocID]; ok {
+			return nil, fmt.Errorf("duplicate expected dream source_doc_id %q", dream.SourceDocID)
+		}
+		seen[dream.SourceDocID] = struct{}{}
+	}
+	return dreams, nil
+}
+
 func LoadSuite(path string) ([]SuiteCase, error) {
 	var suite []SuiteCase
 	if err := readJSONL(path, &suite); err != nil {
@@ -120,7 +144,7 @@ func LoadRecallTraces(path string) ([]RecallTrace, error) {
 func SeedHash(manifestPath string, manifest *SeedManifest) (string, error) {
 	hash := sha256.New()
 	files := []string{manifestPath, resolveSeedPath(manifestPath, manifest.CorpusFile), resolveSeedPath(manifestPath, manifest.CasesFile), resolveSeedPath(manifestPath, manifest.QrelsFile)}
-	for _, optional := range []string{manifest.AnswersFile, manifest.HardNegativesFile, manifest.TransformsFile, manifest.LicensesFile} {
+	for _, optional := range []string{manifest.AnswersFile, manifest.HardNegativesFile, manifest.TransformsFile, manifest.DreamsFile, manifest.LicensesFile} {
 		if strings.TrimSpace(optional) != "" {
 			files = append(files, resolveSeedPath(manifestPath, optional))
 		}

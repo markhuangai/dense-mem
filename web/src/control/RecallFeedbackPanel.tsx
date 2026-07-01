@@ -450,6 +450,7 @@ function rawEvent(event: RecallFeedbackEvent): Record<string, unknown> {
       irrelevant: event.irrelevant,
       feedback_comment: event.feedback_comment,
       irrelevant_result_refs: event.irrelevant_result_refs ?? [],
+      dream_feedback: event.dream_feedback ?? [],
     },
     result_refs: event.result_refs ?? [],
     resolved_results: event.resolved_results ?? [],

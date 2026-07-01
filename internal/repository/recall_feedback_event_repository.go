@@ -97,6 +97,10 @@ func (r *RecallFeedbackEventRepositoryImpl) RecordFeedback(ctx context.Context, 
 	if err != nil {
 		return err
 	}
+	dreamFeedback, err := marshalRecallFeedbackDreamFeedback(event.DreamFeedback)
+	if err != nil {
+		return err
+	}
 	err = r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO recall_feedback_events (
@@ -104,13 +108,13 @@ func (r *RecallFeedbackEventRepositoryImpl) RecordFeedback(ctx context.Context, 
 				auth_method, tool_name, query, tool_args, result_refs,
 				result_count, snapshot_state, used, answer_supported,
 				quality, missing_context, irrelevant, feedback_comment,
-				irrelevant_result_refs
+				irrelevant_result_refs, dream_feedback
 			) VALUES (
 				$1, $2, $3, $4, $5, $6, $7,
 				$8, $9, $10, $11::jsonb, $12::jsonb,
 				$13, $14, $15, $16,
 				$17, $18, $19, $20,
-				$21::jsonb
+				$21::jsonb, $22::jsonb
 			)
 			ON CONFLICT (recall_id) DO UPDATE SET
 				updated_at = EXCLUDED.updated_at,
@@ -128,7 +132,8 @@ func (r *RecallFeedbackEventRepositoryImpl) RecordFeedback(ctx context.Context, 
 				missing_context = EXCLUDED.missing_context,
 				irrelevant = EXCLUDED.irrelevant,
 				feedback_comment = EXCLUDED.feedback_comment,
-				irrelevant_result_refs = EXCLUDED.irrelevant_result_refs
+				irrelevant_result_refs = EXCLUDED.irrelevant_result_refs,
+				dream_feedback = EXCLUDED.dream_feedback
 		`,
 			event.RecallID,
 			event.CreatedAt.UTC(),
@@ -151,6 +156,7 @@ func (r *RecallFeedbackEventRepositoryImpl) RecordFeedback(ctx context.Context, 
 			boolPtrValue(event.Irrelevant),
 			event.FeedbackComment,
 			string(irrelevantRefs),
+			string(dreamFeedback),
 		).Error
 	})
 	if err != nil {
@@ -278,6 +284,9 @@ func normalizeRecallFeedbackEvent(event domain.RecallFeedbackEvent) domain.Recal
 	if event.IrrelevantRefs == nil {
 		event.IrrelevantRefs = []domain.RecallFeedbackJudgedResultRef{}
 	}
+	if event.DreamFeedback == nil {
+		event.DreamFeedback = []domain.RecallFeedbackDreamFeedback{}
+	}
 	event.ResultCount = len(event.ResultRefs)
 	now := time.Now().UTC()
 	if event.CreatedAt.IsZero() {
@@ -344,7 +353,7 @@ func recallFeedbackEventColumns() string {
 		auth_method, tool_name, query, tool_args, result_refs,
 		result_count, snapshot_state, used, answer_supported,
 		quality, missing_context, irrelevant, feedback_comment,
-		irrelevant_result_refs
+		irrelevant_result_refs, dream_feedback
 	`
 }
 
@@ -362,6 +371,7 @@ func scanRecallFeedbackEvent(rows *sql.Rows) (domain.RecallFeedbackEvent, error)
 		missingContextRaw  sql.NullBool
 		irrelevantRaw      sql.NullBool
 		irrelevantRefsRaw  []byte
+		dreamFeedbackRaw   []byte
 	)
 	if err := rows.Scan(
 		&event.RecallID,
@@ -385,6 +395,7 @@ func scanRecallFeedbackEvent(rows *sql.Rows) (domain.RecallFeedbackEvent, error)
 		&irrelevantRaw,
 		&event.FeedbackComment,
 		&irrelevantRefsRaw,
+		&dreamFeedbackRaw,
 	); err != nil {
 		return domain.RecallFeedbackEvent{}, err
 	}
@@ -416,6 +427,12 @@ func scanRecallFeedbackEvent(rows *sql.Rows) (domain.RecallFeedbackEvent, error)
 			return domain.RecallFeedbackEvent{}, fmt.Errorf("invalid recall_feedback_events.irrelevant_result_refs JSON: %w", err)
 		}
 	}
+	event.DreamFeedback = []domain.RecallFeedbackDreamFeedback{}
+	if len(dreamFeedbackRaw) > 0 {
+		if err := json.Unmarshal(dreamFeedbackRaw, &event.DreamFeedback); err != nil {
+			return domain.RecallFeedbackEvent{}, fmt.Errorf("invalid recall_feedback_events.dream_feedback JSON: %w", err)
+		}
+	}
 	return event, nil
 }
 
@@ -442,6 +459,17 @@ func marshalRecallFeedbackJudgedRefs(refs []domain.RecallFeedbackJudgedResultRef
 	encoded, err := json.Marshal(refs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode recall feedback irrelevant result refs: %w", err)
+	}
+	return encoded, nil
+}
+
+func marshalRecallFeedbackDreamFeedback(feedback []domain.RecallFeedbackDreamFeedback) ([]byte, error) {
+	if feedback == nil {
+		feedback = []domain.RecallFeedbackDreamFeedback{}
+	}
+	encoded, err := json.Marshal(feedback)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode recall feedback dream feedback: %w", err)
 	}
 	return encoded, nil
 }

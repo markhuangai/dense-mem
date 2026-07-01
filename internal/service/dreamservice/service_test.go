@@ -854,14 +854,26 @@ func hasDreamWriteQuery(queries []string, substr string) bool {
 	return false
 }
 
+func countDreamWriteQuery(queries []string, substr string) int {
+	count := 0
+	for _, query := range queries {
+		if strings.Contains(query, substr) {
+			count++
+		}
+	}
+	return count
+}
+
 type dreamGeneratorStub struct {
 	model     string
 	generated []GeneratedDream
 	err       error
 	lastReq   GenerateRequest
+	calls     int
 }
 
 func (s *dreamGeneratorStub) Generate(_ context.Context, _ string, req GenerateRequest) ([]GeneratedDream, error) {
+	s.calls++
 	s.lastReq = req
 	return s.generated, s.err
 }

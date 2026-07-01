@@ -387,9 +387,17 @@ export type RecallFeedbackResultRef = {
 };
 
 export type RecallFeedbackJudgedResultRef = {
-  type: "fragment" | "claim" | "fact" | string;
+  type: "fragment" | "claim" | "fact" | "dream" | string;
   id: string;
   rank?: number;
+};
+
+export type RecallFeedbackDreamFeedback = {
+  dream_id: string;
+  used: boolean;
+  quality: "high" | "medium" | "low" | string;
+  contradicted: boolean;
+  feedback_comment?: string;
 };
 
 export type RecallFeedbackResolvedResult = {
@@ -424,6 +432,7 @@ export type RecallFeedbackEvent = {
   irrelevant?: boolean | null;
   feedback_comment?: string;
   irrelevant_result_refs?: RecallFeedbackJudgedResultRef[] | null;
+  dream_feedback?: RecallFeedbackDreamFeedback[] | null;
   resolved_results?: RecallFeedbackResolvedResult[] | null;
 };
 
