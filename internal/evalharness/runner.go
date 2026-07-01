@@ -104,7 +104,8 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 				return Summary{}, err
 			}
 			if len(expectedDreams) > 0 {
-				if err := client.RunDreamCycle(ctx, len(expectedDreams)); err != nil {
+				seeds := expectedDreamCycleSeeds(mapping, expectedDreams)
+				if err := client.RunDreamCycle(ctx, len(expectedDreams), seeds...); err != nil {
 					return Summary{}, err
 				}
 			}

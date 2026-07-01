@@ -27,6 +27,11 @@ type HTTPStatusError struct {
 	Body       string
 }
 
+type DreamCycleSeed struct {
+	Hypothesis string `json:"hypothesis"`
+	SourceRefs []Ref  `json:"source_refs"`
+}
+
 func (e *HTTPStatusError) Error() string {
 	return fmt.Sprintf("%s %s returned %d: %s", e.Method, e.URL, e.StatusCode, e.Body)
 }
@@ -234,7 +239,7 @@ func (c *HTTPClient) exportKnowledgeMapping(ctx context.Context, limit int, kind
 	return mapping, nil
 }
 
-func (c *HTTPClient) RunDreamCycle(ctx context.Context, expectedDreams int) error {
+func (c *HTTPClient) RunDreamCycle(ctx context.Context, expectedDreams int, seeds ...DreamCycleSeed) error {
 	if expectedDreams <= 0 {
 		return nil
 	}
@@ -244,6 +249,9 @@ func (c *HTTPClient) RunDreamCycle(ctx context.Context, expectedDreams int) erro
 		"reevaluate_enabled": false,
 		"dream_enabled":      true,
 		"max_outputs":        expectedDreams,
+	}
+	if len(seeds) > 0 {
+		input["seed_dreams"] = seeds
 	}
 	var out map[string]any
 	return c.CallTool(ctx, "eval_run_dream_cycle", input, &out)

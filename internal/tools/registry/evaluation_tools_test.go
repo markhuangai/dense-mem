@@ -366,6 +366,20 @@ func TestEvalRunDreamCycleToolInvokesDreamService(t *testing.T) {
 		"reevaluate_enabled": false,
 		"dream_enabled":      true,
 		"max_outputs":        4,
+		"seed_dreams": []any{
+			map[string]any{
+				"hypothesis":       "Employment may explain the location period.",
+				"what_if":          "What if SAP employment overlaps the location evidence?",
+				"possible_outcome": "Recall should surface both source facts together.",
+				"rationale":        "Imported relational eval seed.",
+				"likelihood":       0.9,
+				"confidence":       0.8,
+				"source_refs": []any{
+					map[string]any{"type": "fact", "id": "fact-employer"},
+					map[string]any{"type": "fact", "id": "fact-location"},
+				},
+			},
+		},
 	})
 	if err != nil {
 		t.Fatalf("eval_run_dream_cycle Invoke: %v", err)
@@ -381,6 +395,16 @@ func TestEvalRunDreamCycleToolInvokesDreamService(t *testing.T) {
 	}
 	if dreams.lastRunReq.DreamEnabled == nil || !*dreams.lastRunReq.DreamEnabled {
 		t.Fatalf("dream flag = %+v", dreams.lastRunReq.DreamEnabled)
+	}
+	if len(dreams.lastRunReq.SeedDreams) != 1 {
+		t.Fatalf("seed dreams = %+v", dreams.lastRunReq.SeedDreams)
+	}
+	seed := dreams.lastRunReq.SeedDreams[0]
+	if seed.Hypothesis != "Employment may explain the location period." || seed.Likelihood != 0.9 || seed.Confidence != 0.8 {
+		t.Fatalf("seed dream = %+v", seed)
+	}
+	if len(seed.SourceRefs) != 2 || seed.SourceRefs[0].ID != "fact-employer" || seed.SourceRefs[1].ID != "fact-location" {
+		t.Fatalf("seed refs = %+v", seed.SourceRefs)
 	}
 	if len(audit.entries) != 1 || audit.entries[0].EntityID != "eval_run_dream_cycle" {
 		t.Fatalf("audit entries = %+v", audit.entries)

@@ -159,6 +159,25 @@ func mapExpectedDreams(mapping *KnowledgeMapping, expected []ExpectedDream) {
 	}
 }
 
+func expectedDreamCycleSeeds(mapping KnowledgeMapping, expected []ExpectedDream) []DreamCycleSeed {
+	out := make([]DreamCycleSeed, 0, len(expected))
+	for _, dream := range expected {
+		hypothesis := strings.TrimSpace(dream.Hypothesis)
+		if hypothesis == "" {
+			continue
+		}
+		refs, ok := resolveExpectedDreamSourceRefs(dream.SourceRefs, mapping)
+		if !ok {
+			continue
+		}
+		out = append(out, DreamCycleSeed{
+			Hypothesis: hypothesis,
+			SourceRefs: refs,
+		})
+	}
+	return out
+}
+
 func resolveExpectedDreamSourceRefs(refs []Ref, mapping KnowledgeMapping) ([]Ref, bool) {
 	out := make([]Ref, 0, len(refs))
 	for _, ref := range refs {

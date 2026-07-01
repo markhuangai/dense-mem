@@ -79,11 +79,12 @@ type Service interface {
 }
 
 type RunCycleRequest struct {
-	Manual            bool  `json:"manual,omitempty"`
-	ReflectEnabled    *bool `json:"reflect_enabled,omitempty"`
-	ReevaluateEnabled *bool `json:"reevaluate_enabled,omitempty"`
-	DreamEnabled      *bool `json:"dream_enabled,omitempty"`
-	MaxOutputs        int   `json:"max_outputs,omitempty"`
+	Manual            bool        `json:"manual,omitempty"`
+	ReflectEnabled    *bool       `json:"reflect_enabled,omitempty"`
+	ReevaluateEnabled *bool       `json:"reevaluate_enabled,omitempty"`
+	DreamEnabled      *bool       `json:"dream_enabled,omitempty"`
+	MaxOutputs        int         `json:"max_outputs,omitempty"`
+	SeedDreams        []SeedDream `json:"seed_dreams,omitempty"`
 }
 
 type RunCycleResult struct {
@@ -162,6 +163,16 @@ type GeneratedDream struct {
 	Likelihood      float64
 	Confidence      float64
 	SourceRefs      []domain.DreamSourceRef
+}
+
+type SeedDream struct {
+	Hypothesis      string                  `json:"hypothesis"`
+	WhatIf          string                  `json:"what_if,omitempty"`
+	PossibleOutcome string                  `json:"possible_outcome,omitempty"`
+	Rationale       string                  `json:"rationale,omitempty"`
+	Likelihood      float64                 `json:"likelihood,omitempty"`
+	Confidence      float64                 `json:"confidence,omitempty"`
+	SourceRefs      []domain.DreamSourceRef `json:"source_refs"`
 }
 
 func boolValue(ptr *bool, fallback bool) bool {

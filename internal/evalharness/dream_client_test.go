@@ -43,11 +43,31 @@ func TestHTTPClientRunsDreamCycleAndExportsDreamMapping(t *testing.T) {
 	defer server.Close()
 
 	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
-	if err := client.RunDreamCycle(context.Background(), 2); err != nil {
+	if err := client.RunDreamCycle(context.Background(), 2, DreamCycleSeed{
+		Hypothesis: "Employment may explain the location period.",
+		SourceRefs: []Ref{
+			{Type: "fact", ID: "fact-employer"},
+			{Type: "fact", ID: "fact-location"},
+		},
+	}); err != nil {
 		t.Fatalf("RunDreamCycle: %v", err)
 	}
 	if runInput["manual"] != true || runInput["dream_enabled"] != true || runInput["max_outputs"] != float64(2) {
 		t.Fatalf("run dream cycle input = %#v", runInput)
+	}
+	seeds, ok := runInput["seed_dreams"].([]any)
+	if !ok || len(seeds) != 1 {
+		t.Fatalf("seed_dreams = %#v", runInput["seed_dreams"])
+	}
+	seed := seeds[0].(map[string]any)
+	if seed["hypothesis"] != "Employment may explain the location period." {
+		t.Fatalf("seed dream = %#v", seed)
+	}
+	seedRefs := seed["source_refs"].([]any)
+	firstRef := seedRefs[0].(map[string]any)
+	secondRef := seedRefs[1].(map[string]any)
+	if firstRef["id"] != "fact-employer" || secondRef["id"] != "fact-location" {
+		t.Fatalf("seed refs = %#v", seedRefs)
 	}
 
 	mapping, err := client.ExportDreamMapping(context.Background(), 25)
