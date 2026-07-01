@@ -74,14 +74,14 @@ func getDreamTool(deps Dependencies) Tool {
 func resolveDreamFeedbackTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "resolve_dream_feedback",
-		Description: "Apply evidence-driven feedback to a dream hypothesis. Use reject when the user contradicts it, stale when it is no longer relevant, reinforce when the conversation supports keeping it as a hypothesis, and promote_candidate only after explicit user evidence or confirmation that it should enter normal memory review. Do not promote based only on model confidence.",
+		Description: "Apply evidence-driven feedback to a dream hypothesis. Dreams are uncertain recall hints. Use ignore when no decision was made, reinforce when it remains useful but unconfirmed, reject or stale for manual lifecycle cleanup, confirm_true when prior conversation or user feedback confirms it should enter normal memory placement, and confirm_false when evidence confirms it is not true and correction evidence should enter normal memory placement. promote_candidate is accepted as a backward-compatible alias for confirm_true. Do not confirm based only on model confidence.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"dream_id", "decision"},
 			"properties": map[string]any{
 				"dream_id": schemaString("Dream id.", 128),
-				"decision": schemaEnum([]string{"reinforce", "stale", "reject", "promote_candidate"}),
-				"feedback": schemaString("User feedback or confirmation text.", 1024),
+				"decision": schemaEnum([]string{"ignore", "reinforce", "stale", "reject", "confirm_true", "confirm_false", "promote_candidate"}),
+				"feedback": schemaString("User feedback, prior-conversation evidence, or correction text. Required for confirm_true, confirm_false, and promote_candidate.", 1024),
 			},
 			"additionalProperties": false,
 		},

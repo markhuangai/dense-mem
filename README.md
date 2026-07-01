@@ -172,9 +172,11 @@ or flagged feedback includes a bounded comment and can include irrelevant result
 refs for offline analysis. Prometheus still receives only bounded labels; the
 free-text comment stays in the recall feedback investigation records. When
 related dreams are returned, feedback can also include bounded `dream_feedback`
-judgments without promoting or rejecting the dream automatically. Normal
-production recall traffic still contributes request volume, result count, and
-latency.
+judgments without promoting or rejecting the dream automatically. Confirmed true
+or false dreams should be resolved through `resolve_dream_feedback`, which
+records dream-specific telemetry and routes the confirmation evidence through
+normal memory placement. Normal production recall traffic still contributes
+request volume, result count, and latency.
 
 For the disposable demo image, keep the control portal disabled and use the
 demo telemetry overlay instead:
@@ -242,6 +244,7 @@ memory, applies explicit gates, and returns structured outcomes.
 | `dispute_memory_placement` | Starts or continues a bounded placement dispute with additional evidence; the verifier decides whether to promote or keep the placement rejected. |
 | `import_memories` | Trusted migration path for summarized historical conversations. It may carry explicit claims and can request auto-promotion. |
 | `recall_memory` | Retrieves facts, validated claims, fragments, `clarifications[]`, and hypothesis-only `related_dreams` for the authenticated team. |
+| `resolve_dream_feedback` | Records dream-specific decisions. `ignore` leaves the dream for future recall, while confirmed true or false dreams enter normal memory placement and are removed from future dream recall. |
 | `trace_memory` | Expands one fact or claim into bounded evidence, promotion lineage, contradictions, and supersession links. |
 | `assemble_context` | Builds a bounded prompt-ready context block plus structured facts, claims, fragments, and clarifications. |
 | `reflect_memories` | Reviews active facts, candidate or disputed claims, contradictions, stale memories, and clarification needs. |

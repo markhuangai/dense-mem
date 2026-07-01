@@ -471,7 +471,7 @@ func recallFeedbackQualityScore(quality string) float64 {
 
 func normalizeDreamFeedbackDecision(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "reinforce", "stale", "reject", "promote_candidate":
+	case "ignore", "reinforce", "stale", "reject", "confirm_true", "confirm_false", "promote_candidate":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return unknownMetricLabel

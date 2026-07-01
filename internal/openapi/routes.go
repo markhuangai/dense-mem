@@ -68,7 +68,7 @@ func DefaultRoutes() []RouteDescriptor {
 		{Method: "POST", Path: "/api/v1/tools/confirm_memory", OperationID: "confirmMemoryTool", ToolName: "confirm_memory", AISafe: true, Description: "Apply an explicit memory clarification decision."},
 		{Method: "POST", Path: "/api/v1/tools/list_dreams", OperationID: "listDreamsTool", ToolName: "list_dreams", AISafe: true, Description: "List reviewable dream hypotheses."},
 		{Method: "POST", Path: "/api/v1/tools/get_dream", OperationID: "getDreamTool", ToolName: "get_dream", AISafe: true, Description: "Fetch one dream hypothesis and its source references."},
-		{Method: "POST", Path: "/api/v1/tools/resolve_dream_feedback", OperationID: "resolveDreamFeedbackTool", ToolName: "resolve_dream_feedback", AISafe: true, Description: "Apply evidence-driven user feedback to a dream hypothesis without directly promoting facts."},
+		{Method: "POST", Path: "/api/v1/tools/resolve_dream_feedback", OperationID: "resolveDreamFeedbackTool", ToolName: "resolve_dream_feedback", AISafe: true, Description: "Apply evidence-driven feedback to a dream hypothesis and route confirmed true or false resolutions through memory placement."},
 
 		// --- MCP Streamable HTTP (full runtime variant) ---
 		{Method: "POST", Path: "/mcp", OperationID: "mcpPost", Description: "MCP Streamable HTTP JSON-RPC endpoint."},
@@ -86,6 +86,5 @@ func DefaultRoutes() []RouteDescriptor {
 
 		// --- Audit log (full variant) ---
 		{Method: "GET", Path: "/api/v1/teams/{teamId}/audit-log", OperationID: "getAuditLog", Description: "Fetch the team's audit log."},
-
 	}
 }

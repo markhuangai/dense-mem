@@ -55,16 +55,15 @@ type Generator interface {
 }
 
 type Dependencies struct {
-	Graph          ScopedGraph
-	Memory         memoryservice.Service
-	FragmentCreate fragmentservice.CreateFragmentService
-	AppConfig      AppConfig
-	Profiles       ProfileService
-	Locker         CycleLocker
-	Postgres       *gorm.DB
-	Generator      Generator
-	Metrics        observability.DiscoverabilityMetrics
-	Now            func() time.Time
+	Graph     ScopedGraph
+	Memory    memoryservice.Service
+	AppConfig AppConfig
+	Profiles  ProfileService
+	Locker    CycleLocker
+	Postgres  *gorm.DB
+	Generator Generator
+	Metrics   observability.DiscoverabilityMetrics
+	Now       func() time.Time
 }
 
 type Service interface {
@@ -121,8 +120,11 @@ type ResolveFeedbackRequest struct {
 }
 
 type ResolveFeedbackResult struct {
-	Dream    *domain.Dream                 `json:"dream"`
+	Dream *domain.Dream `json:"dream"`
+	// Deprecated: confirmed dream feedback now returns Memory placement.
 	Fragment *fragmentservice.CreateResult `json:"fragment,omitempty"`
+	Memory   *memoryservice.RememberResult `json:"memory,omitempty"`
+	Deleted  bool                          `json:"deleted,omitempty"`
 }
 
 type StatusResult struct {
