@@ -29,7 +29,6 @@ import type { TeamWorkspaceTab } from "./control/TeamWorkspace";
 import { TeamDreamingConfigForm } from "./teamDreamingConfig";
 import { displayKeySuffix, formatDate, profilePermissionLabel, profileRoleLabel, readError, shortId } from "./control/utils";
 import { AuthShell, LoadingState, PortalShell, SecretBox, SectionHeading } from "./ui/components";
-import { APP_VERSION } from "./version";
 
 const MetricsPanel = lazy(() => import("./control/MetricsPanel").then((module) => ({ default: module.MetricsPanel })));
 const SecurityPanel = lazy(() => import("./control/SecurityPanel").then((module) => ({ default: module.SecurityPanel })));
@@ -93,7 +92,6 @@ export function App() {
         theme={theme}
         title="Dense-Mem Control"
         icon={<span className="brand-initials" aria-hidden="true">DM</span>}
-        version={APP_VERSION}
         onSubmit={submitToken}
         actions={(
           <button
@@ -182,7 +180,6 @@ function Portal({
       theme={theme}
       title="Dense-Mem Control"
       icon={<span className="brand-initials" aria-hidden="true">DM</span>}
-      version={APP_VERSION}
       topbarActions={(
         <>
           <button

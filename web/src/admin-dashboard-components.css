@@ -535,7 +535,7 @@
   }
 
   .config-tabs .tab-button {
-    flex: 1 1 calc(25% - 5px);
+    flex: 1 1 calc(33.333% - 5px);
     min-width: 0;
   }
 

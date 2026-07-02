@@ -26,7 +26,6 @@ import {
   UserSession,
 } from "./api";
 import { AuthShell, LoadingState, PortalShell, SecretBox, SectionHeading } from "../ui/components";
-import { APP_VERSION } from "../version";
 import { SearchPanel } from "./SearchPanel";
 
 const TelemetryDashboard = lazy(() => import("../telemetry/TelemetryDashboard").then((module) => ({ default: module.TelemetryDashboard })));
@@ -154,7 +153,6 @@ export function UserPortalApp() {
         theme={theme}
         title="Dense-Mem Knowledge"
         icon={<span className="brand-initials" aria-hidden="true">DM</span>}
-        version={APP_VERSION}
         onSubmit={submitToken}
         actions={(
           <button
@@ -324,7 +322,6 @@ function UserPortal({
       theme={theme}
       title="Knowledge"
       icon={<span className="brand-initials" aria-hidden="true">DM</span>}
-      version={APP_VERSION}
       topbarActions={(
         <>
           <button
