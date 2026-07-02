@@ -217,9 +217,14 @@ Dense-Mem 不是 agent brain、planner，也不是外部真相裁判。它负责
 
 | Tool | 用途 |
 |------|------|
-| `remember` | 常规聊天记忆写入：保存证据、创建类型化 claims、验证，在 gates 通过时 promotion，并返回结构化结果。 |
-| `import_memories` | 导入整理过的历史对话。默认只记录证据和 validated claims，不自动 promotion。 |
-| `recall_memory` | 为已认证团队检索 facts、validated claims、fragments 和 `clarifications[]`。 |
+| `remember` | 常规聊天记忆写入：只保存证据，并返回一个 placement run 交给 Dense-Mem verifier 处理。 |
+| `get_memory_placement` | 轮询 `remember` 返回的 verifier placement run，包括 fragment-only、claim、fact、rejected 和 needs-evidence 等结果。 |
+| `dispute_memory_placement` | 使用额外证据发起或继续有界的 placement dispute；由 verifier 决定是 promotion 还是保持 rejected。 |
+| `import_memories` | 整理过的历史对话的可信迁移路径。可以携带显式 claims，并可请求自动 promotion。 |
+| `recall_memory` | 为已认证团队检索 facts、validated claims、fragments、`clarifications[]` 以及仅假设性的 `related_dreams`。 |
+| `resolve_dream_feedback` | 记录 dream 相关决策。`ignore` 保留 dream 供后续 recall；确认为真或假的 dream 进入正常记忆放置流程，并从后续 dream recall 中移除。 |
+| `trace_memory` | 将一个 fact 或 claim 展开为有界的证据、promotion 来源链、contradictions 和 supersession 链接。 |
+| `assemble_context` | 构建一个有界的、可直接放入 prompt 的上下文块，以及结构化的 facts、claims、fragments 和 clarifications。 |
 | `reflect_memories` | 查看 active facts、candidate/disputed claims、contradictions、stale memories 和 clarification needs。 |
 | `confirm_memory` | 应用用户对 clarification task 的回答：接受 claim 并 supersede 可比较的 active facts，或保留/拒绝它。 |
 | `find_memory_pack_candidates` | 查找可以导出为 portable memory pack 的 facts 和 validated claims。 |
