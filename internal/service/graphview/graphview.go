@@ -198,7 +198,7 @@ func normalizeQuery(query Query) (normalizedQuery, error) {
 		limit:           clamp(query.Limit, DefaultLimit, MaxLimit),
 		depth:           clamp(query.Depth, DefaultDepth, MaxDepth),
 	}
-	normalized.edgeLimit = int64(clamp(normalized.limit*4, 120, 720))
+	normalized.edgeLimit = int64(clampRange(normalized.limit*4, 120, 720))
 
 	if normalized.scope == ScopeLocal {
 		normalized.anchorType = normalizeType(query.AnchorType)
@@ -246,6 +246,16 @@ func normalizeType(raw string) string {
 func clamp(value, defaultValue, maxValue int) int {
 	if value <= 0 {
 		return defaultValue
+	}
+	if value > maxValue {
+		return maxValue
+	}
+	return value
+}
+
+func clampRange(value, minValue, maxValue int) int {
+	if value < minValue {
+		return minValue
 	}
 	if value > maxValue {
 		return maxValue

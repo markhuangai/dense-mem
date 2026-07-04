@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
@@ -93,6 +94,92 @@ func TestGraphOverviewClampsLimitAndUsesScopedQuery(t *testing.T) {
 	}
 }
 
+func TestGraphOverviewReturnsNormalizedEdgesAndDedupedNodes(t *testing.T) {
+	recordedAt := time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
+	reader := &fakeGraphReader{rowsByCall: [][]map[string]any{
+		{
+			{
+				"type":         "fact",
+				"id":           "fact-1",
+				"key":          "fact:fact-1",
+				"title":        strings.Repeat("a", 200),
+				"body":         strings.Repeat("b", 500),
+				"status":       "active",
+				"community_id": "community-1",
+				"source":       "seed",
+				"score":        0.91,
+				"recorded_at":  recordedAt,
+			},
+			{
+				"type":  "fact",
+				"id":    "fact-1",
+				"key":   "fact:fact-1",
+				"title": "duplicate",
+			},
+			{
+				"type": "claim",
+				"id":   "claim-1",
+			},
+		},
+		{
+			{
+				"id":           "edge-1",
+				"source":       "fact:fact-1",
+				"target":       "claim:claim-1",
+				"relationship": "SUPPORTED_BY",
+			},
+			{
+				"id":           "edge-1",
+				"source":       "fact:fact-1",
+				"target":       "claim:claim-1",
+				"relationship": "SUPPORTED_BY",
+			},
+			{
+				"source":       "claim:claim-1",
+				"target":       "fact:fact-1",
+				"relationship": "PROMOTES_TO",
+			},
+			{
+				"source": "fact:fact-1",
+			},
+		},
+	}}
+	svc := New(reader)
+
+	got, err := svc.Graph(context.Background(), "team-1", Query{Limit: 2})
+	if err != nil {
+		t.Fatalf("Graph returned error: %v", err)
+	}
+
+	if len(got.Nodes) != 1 {
+		t.Fatalf("nodes = %#v; want one valid deduped node", got.Nodes)
+	}
+	node := got.Nodes[0]
+	if len([]rune(node.Title)) != 163 || !strings.HasSuffix(node.Title, "...") {
+		t.Fatalf("title = %q; want truncated title", node.Title)
+	}
+	if len([]rune(node.Body)) != maxNodeBodyRunes+3 || node.Status != "active" || node.CommunityID != "community-1" || node.Source != "seed" || node.Score != 0.91 {
+		t.Fatalf("node = %#v; want normalized metadata", node)
+	}
+	if node.RecordedAt == nil || !node.RecordedAt.Equal(recordedAt) {
+		t.Fatalf("recorded_at = %v; want %v", node.RecordedAt, recordedAt)
+	}
+
+	if len(got.Edges) != 2 {
+		t.Fatalf("edges = %#v; want two normalized edges", got.Edges)
+	}
+	if got.Edges[1].ID != "claim:claim-1|PROMOTES_TO|fact:fact-1" || !got.Edges[1].Directed {
+		t.Fatalf("fallback edge = %#v", got.Edges[1])
+	}
+	edgeCall := reader.calls[1]
+	if edgeCall.params["edgeLimit"] != int64(120) {
+		t.Fatalf("edgeLimit = %#v; want minimum cap", edgeCall.params["edgeLimit"])
+	}
+	if keys, ok := edgeCall.params["nodeKeys"].([]string); !ok || len(keys) != 1 || keys[0] != "fact:fact-1" {
+		t.Fatalf("nodeKeys = %#v; want returned node keys", edgeCall.params["nodeKeys"])
+	}
+}
+
 func TestGraphLocalClampsDepthAndRejectsDynamicTraversalInput(t *testing.T) {
 	reader := &fakeGraphReader{rowsByCall: [][]map[string]any{{
 		{
@@ -157,6 +244,53 @@ func TestGraphLocalRejectsUnsupportedAnchorTypeBeforeRead(t *testing.T) {
 	}
 	if len(reader.calls) != 0 {
 		t.Fatalf("ScopedRead calls = %d; want 0", len(reader.calls))
+	}
+}
+
+func TestGraphLocalRequiresAnchorBeforeRead(t *testing.T) {
+	reader := &fakeGraphReader{}
+	svc := New(reader)
+
+	_, err := svc.Graph(context.Background(), "team-1", Query{Scope: ScopeLocal, AnchorType: "fact"})
+	if !errors.Is(err, ErrMissingAnchor) {
+		t.Fatalf("err = %v; want ErrMissingAnchor", err)
+	}
+	if len(reader.calls) != 0 {
+		t.Fatalf("ScopedRead calls = %d; want 0", len(reader.calls))
+	}
+}
+
+func TestGraphReaderErrorsAreWrapped(t *testing.T) {
+	reader := &fakeGraphReader{errByCall: []error{errors.New("neo4j unavailable")}}
+	svc := New(reader)
+
+	_, err := svc.Graph(context.Background(), "team-1", Query{})
+	if err == nil || !strings.Contains(err.Error(), "graph view nodes") {
+		t.Fatalf("err = %v; want wrapped node read error", err)
+	}
+
+	reader = &fakeGraphReader{
+		rowsByCall: [][]map[string]any{{
+			{"type": "fact", "id": "fact-1", "key": "fact:fact-1", "title": "fact"},
+		}},
+		errByCall: []error{nil, errors.New("edge read failed")},
+	}
+	svc = New(reader)
+	_, err = svc.Graph(context.Background(), "team-1", Query{})
+	if err == nil || !strings.Contains(err.Error(), "graph view edges") {
+		t.Fatalf("err = %v; want wrapped edge read error", err)
+	}
+}
+
+func TestGraphRejectsUnconfiguredReader(t *testing.T) {
+	_, err := (*service)(nil).Graph(context.Background(), "team-1", Query{})
+	if err == nil || !strings.Contains(err.Error(), "reader is not configured") {
+		t.Fatalf("err = %v; want reader configuration error", err)
+	}
+
+	_, err = New(nil).Graph(context.Background(), "team-1", Query{})
+	if err == nil || !strings.Contains(err.Error(), "reader is not configured") {
+		t.Fatalf("err = %v; want reader configuration error", err)
 	}
 }
 

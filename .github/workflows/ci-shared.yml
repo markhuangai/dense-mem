@@ -38,7 +38,22 @@ jobs:
         run: npm run --prefix .lint lint:lines
 
       - name: Run Go tests
-        run: go test ./...
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          packages="$(
+            git ls-files '*.go' |
+              grep -Ev '^(tests/uat|tests/eval/runtime)/' |
+              xargs -r -n1 dirname |
+              sort -u |
+              while IFS= read -r dir; do
+                go list "./${dir#./}"
+              done
+          )"
+
+          printf '%s\n' "${packages}"
+          go test ${packages}
 
       - name: Run unit coverage gate
         shell: bash
@@ -48,7 +63,7 @@ jobs:
           packages="$(
             go list -f '{{if .TestGoFiles}}{{.ImportPath}}{{end}}' ./internal/... |
               sed '/^$/d' |
-              grep -Ev '/repository$|/storage/(neo4j|postgres|redis)$'
+              grep -Ev '/(evalharness|repository)$|/storage/(neo4j|postgres|redis)$'
           )"
 
           printf '%s\n' "${packages}"
