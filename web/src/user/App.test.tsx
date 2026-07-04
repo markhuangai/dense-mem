@@ -278,11 +278,21 @@ describe("UserPortalApp", () => {
     await userEvent.click(screen.getByRole("button", { name: /graph/i }));
 
     expect(await screen.findByLabelText("Knowledge graph")).toBeInTheDocument();
+    const controls = screen.getByLabelText("Graph controls");
+    expect(within(controls).queryByLabelText("Limit")).not.toBeInTheDocument();
     expect((await screen.findAllByText("Alice works_on project-x")).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByLabelText("Graph totals")).toHaveTextContent("2");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment&depth=1&limit=80",
+        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment&depth=2",
+        expect.any(Object),
+      );
+    });
+    await userEvent.click(within(controls).getByRole("checkbox", { name: "Superseded" }));
+    await userEvent.click(within(controls).getByRole("button", { name: "Refresh" }));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment&depth=2&include_superseded=true",
         expect.any(Object),
       );
     });
@@ -298,7 +308,7 @@ describe("UserPortalApp", () => {
     const controls = await screen.findByLabelText("Graph controls");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment&depth=1&limit=80",
+        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment&depth=2",
         expect.any(Object),
       );
     });
@@ -329,7 +339,7 @@ describe("UserPortalApp", () => {
     expect(await screen.findByTestId("force-graph")).toHaveTextContent("Alice works_on project-x");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=local&types=fact%2Cclaim%2Cfragment%2Cdream&anchor_type=fact&anchor_id=fact-1&depth=1&limit=48",
+        "/ui/api/graph?scope=local&types=fact%2Cclaim%2Cfragment%2Cdream&anchor_type=fact&anchor_id=fact-1&depth=2&limit=48",
         expect.any(Object),
       );
     });

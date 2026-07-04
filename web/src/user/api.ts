@@ -263,6 +263,7 @@ export type GraphQuery = {
   anchorId?: string;
   depth?: number;
   limit?: number;
+  includeSuperseded?: boolean;
 };
 
 type RequestOptions = {
@@ -387,6 +388,9 @@ export class UserApi {
     }
     if (query.limit !== undefined) {
       params.set("limit", String(query.limit));
+    }
+    if (query.includeSuperseded) {
+      params.set("include_superseded", "true");
     }
     const suffix = params.toString() ? `?${params.toString()}` : "";
     const payload = await this.request<Envelope<GraphSnapshot>>(`/ui/api/graph${suffix}`);

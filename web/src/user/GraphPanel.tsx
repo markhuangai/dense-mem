@@ -38,8 +38,8 @@ export function GraphPanel({ api }: { api: UserApi }) {
   const [anchorType, setAnchorType] = useState<GraphNodeType>("fact");
   const [anchorId, setAnchorId] = useState("");
   const [types, setTypes] = useState<TypeFilter>(defaultTypes);
-  const [depth, setDepth] = useState(1);
-  const [limit, setLimit] = useState(80);
+  const [depth, setDepth] = useState(2);
+  const [includeSuperseded, setIncludeSuperseded] = useState(false);
   const [nodeSize, setNodeSize] = useState(5);
   const [linkDistance, setLinkDistance] = useState(92);
   const [showArrows, setShowArrows] = useState(true);
@@ -48,7 +48,7 @@ export function GraphPanel({ api }: { api: UserApi }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  async function loadGraph(query: GraphQuery = buildQuery({ searchText, scope, anchorType, anchorId, types, depth, limit })) {
+  async function loadGraph(query: GraphQuery = buildQuery({ searchText, scope, anchorType, anchorId, types, depth, includeSuperseded })) {
     if (query.types?.length === 0) {
       setError("Select at least one type.");
       return;
@@ -71,7 +71,7 @@ export function GraphPanel({ api }: { api: UserApi }) {
   }
 
   useEffect(() => {
-    void loadGraph(buildQuery({ searchText: "", scope: "overview", anchorType, anchorId: "", types, depth: 1, limit }));
+    void loadGraph(buildQuery({ searchText: "", scope: "overview", anchorType, anchorId: "", types, depth: 2, includeSuperseded }));
   }, [api]);
 
   const selectedNode = snapshot?.nodes.find((node) => node.key === selectedKey) ?? snapshot?.nodes[0] ?? null;
@@ -146,11 +146,6 @@ export function GraphPanel({ api }: { api: UserApi }) {
             <span>{depth}</span>
           </div>
           <div className="graph-slider-row">
-            <label htmlFor="graph-limit">Limit</label>
-            <input id="graph-limit" type="range" min={30} max={180} step={10} value={limit} onChange={(event) => setLimit(Number(event.target.value))} />
-            <span>{limit}</span>
-          </div>
-          <div className="graph-slider-row">
             <label htmlFor="graph-node-size">Node size</label>
             <input id="graph-node-size" type="range" min={3} max={9} step={1} value={nodeSize} onChange={(event) => setNodeSize(Number(event.target.value))} />
             <span>{nodeSize}</span>
@@ -168,6 +163,10 @@ export function GraphPanel({ api }: { api: UserApi }) {
           <label className="toggle-row compact-toggle">
             <span>Labels</span>
             <input type="checkbox" checked={showLabels} onChange={(event) => setShowLabels(event.target.checked)} />
+          </label>
+          <label className="toggle-row compact-toggle">
+            <span>Superseded</span>
+            <input type="checkbox" checked={includeSuperseded} onChange={(event) => setIncludeSuperseded(event.target.checked)} />
           </label>
           <label className="toggle-row compact-toggle">
             <span>Communities</span>
@@ -228,7 +227,7 @@ export function ResultGraphPreview({ api, anchor }: { api: UserApi; anchor: Grap
       scope: "local",
       anchorType: anchor.type,
       anchorId: anchor.id,
-      depth: 1,
+      depth: 2,
       limit: 48,
       types: ["fact", "claim", "fragment", "dream"],
     })
@@ -309,6 +308,7 @@ function GraphCanvas({
 }) {
   const graphRef = useRef<ForceGraphMethods<ForceNode, ForceLink> | undefined>(undefined);
   const { ref, width, height } = useElementSize<HTMLDivElement>(compact ? 220 : 620);
+  const canvasTheme = useCanvasTheme(ref);
   const graphData = useMemo(() => ({
     nodes: snapshot.nodes.map((node) => ({ ...node, id: node.key, val: nodeValue(node, nodeSize) })),
     links: snapshot.edges.map((edge) => ({ ...edge, source: edge.source, target: edge.target })),
@@ -344,6 +344,7 @@ function GraphCanvas({
           nodeSize,
           showLabels,
           compact,
+          theme: canvasTheme,
         })}
         nodePointerAreaPaint={(node, color, canvas) => paintNodeArea(node, color, canvas, nodeSize)}
         linkLabel={(link) => relationshipLabel(link.relationship)}
@@ -386,6 +387,61 @@ function useElementSize<T extends HTMLElement>(fallbackHeight: number) {
   }, [fallbackHeight]);
 
   return { ref, ...size };
+}
+
+type CanvasTheme = {
+  label: string;
+  stroke: string;
+  selectedStroke: string;
+};
+
+const defaultCanvasTheme: CanvasTheme = {
+  label: "rgba(20, 31, 29, 0.92)",
+  stroke: "rgba(255, 255, 255, 0.86)",
+  selectedStroke: "#111827",
+};
+
+function useCanvasTheme<T extends HTMLElement>(ref: { current: T | null }): CanvasTheme {
+  const [theme, setTheme] = useState(defaultCanvasTheme);
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) {
+      return;
+    }
+
+    const readTheme = () => {
+      const styles = getComputedStyle(node);
+      const shell = node.closest(".app-shell, .auth-shell");
+      const shellStyles = shell ? getComputedStyle(shell) : styles;
+      const isDark = shellStyles.getPropertyValue("color-scheme").includes("dark");
+      const next = {
+        label: cssVar(shellStyles, "--text", defaultCanvasTheme.label),
+        stroke: isDark ? "rgba(238, 247, 246, 0.82)" : defaultCanvasTheme.stroke,
+        selectedStroke: cssVar(shellStyles, "--accent-strong", defaultCanvasTheme.selectedStroke),
+      };
+      setTheme((current) => sameCanvasTheme(current, next) ? current : next);
+    };
+
+    readTheme();
+    const shell = node.closest(".app-shell, .auth-shell");
+    if (!shell || typeof MutationObserver === "undefined") {
+      return;
+    }
+    const observer = new MutationObserver(readTheme);
+    observer.observe(shell, { attributes: true, attributeFilter: ["data-theme", "class", "style"] });
+    return () => observer.disconnect();
+  }, [ref]);
+
+  return theme;
+}
+
+function cssVar(styles: CSSStyleDeclaration, name: string, fallback: string): string {
+  return styles.getPropertyValue(name).trim() || fallback;
+}
+
+function sameCanvasTheme(left: CanvasTheme, right: CanvasTheme): boolean {
+  return left.label === right.label && left.stroke === right.stroke && left.selectedStroke === right.selectedStroke;
 }
 
 function GraphStats({ snapshot }: { snapshot: GraphSnapshot | null }) {
@@ -449,7 +505,7 @@ function buildQuery({
   anchorId,
   types,
   depth,
-  limit,
+  includeSuperseded,
 }: {
   searchText: string;
   scope: "overview" | "local";
@@ -457,7 +513,7 @@ function buildQuery({
   anchorId: string;
   types: TypeFilter;
   depth: number;
-  limit: number;
+  includeSuperseded: boolean;
 }): GraphQuery {
   const enabledTypes = (Object.keys(types) as GraphNodeType[]).filter((type) => types[type]);
   return {
@@ -467,7 +523,7 @@ function buildQuery({
     anchorType: scope === "local" ? anchorType : undefined,
     anchorId: scope === "local" ? anchorId.trim() : undefined,
     depth,
-    limit,
+    includeSuperseded,
   };
 }
 
@@ -475,7 +531,7 @@ function drawNode(
   node: ForceNode,
   canvas: CanvasRenderingContext2D,
   globalScale: number,
-  opts: { colorMode: ColorMode; selected: boolean; nodeSize: number; showLabels: boolean; compact: boolean },
+  opts: { colorMode: ColorMode; selected: boolean; nodeSize: number; showLabels: boolean; compact: boolean; theme: CanvasTheme },
 ) {
   const radius = nodeValue(node, opts.nodeSize);
   const color = nodeColor(node, opts.colorMode);
@@ -484,7 +540,7 @@ function drawNode(
   canvas.fillStyle = color;
   canvas.fill();
   canvas.lineWidth = opts.selected ? 3 / globalScale : 1.2 / globalScale;
-  canvas.strokeStyle = opts.selected ? "#111827" : "rgba(255, 255, 255, 0.86)";
+  canvas.strokeStyle = opts.selected ? opts.theme.selectedStroke : opts.theme.stroke;
   canvas.stroke();
 
   if (!opts.compact && (opts.showLabels || globalScale > 1.4)) {
@@ -493,7 +549,7 @@ function drawNode(
     canvas.font = `${fontSize}px Inter, ui-sans-serif, system-ui`;
     canvas.textAlign = "center";
     canvas.textBaseline = "top";
-    canvas.fillStyle = "rgba(20, 31, 29, 0.92)";
+    canvas.fillStyle = opts.theme.label;
     canvas.fillText(label, node.x ?? 0, (node.y ?? 0) + radius + 3);
   }
 }

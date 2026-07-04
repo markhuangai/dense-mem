@@ -306,7 +306,7 @@ func TestUserPortalGraphUsesAuthenticatedTeamScope(t *testing.T) {
 	graph := &userPortalGraphSvc{}
 	server := userPortalTestServerWithGraph(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.APIKey{authKey}}, "", nil, graph)
 
-	req := httptest.NewRequest(http.MethodGet, "/ui/api/graph?scope=local&anchor_type=fact&anchor_id=fact-1&depth=2&limit=50&types=fact,claim&q=memory", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/graph?scope=local&anchor_type=fact&anchor_id=fact-1&depth=2&limit=50&types=fact,claim&q=memory&include_superseded=true", nil)
 	req.Header.Set("Authorization", "Bearer "+rawKey)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -320,6 +320,7 @@ func TestUserPortalGraphUsesAuthenticatedTeamScope(t *testing.T) {
 	require.Equal(t, "fact-1", graph.query.AnchorID)
 	require.Equal(t, 2, graph.query.Depth)
 	require.Equal(t, 50, graph.query.Limit)
+	require.True(t, graph.query.IncludeSuperseded)
 	require.Equal(t, []string{"fact", "claim"}, graph.query.Types)
 	require.Equal(t, "memory", graph.query.Query)
 }
