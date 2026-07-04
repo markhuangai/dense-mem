@@ -362,7 +362,6 @@ CALL {
   MATCH (c:Claim {team_id: $profileId})
   WHERE $includeClaim
     AND coalesce(c.status, 'candidate') <> 'rejected'
-    AND ($includeSuperseded OR coalesce(c.status, 'candidate') <> 'superseded')
     AND ($query = '' OR toLower(coalesce(c.subject, '') + ' ' + coalesce(c.predicate, '') + ' ' + coalesce(c.object, '')) CONTAINS $query)
   WITH c
   ORDER BY c.recorded_at DESC, c.claim_id ASC
@@ -448,7 +447,7 @@ MATCH (anchor)
 	      coalesce(anchor.status, '') IN ['active', 'needs_revalidation'] OR
 	      ($includeSuperseded AND coalesce(anchor.status, '') = 'superseded')
 	    )) OR
-	    ($anchorType = 'claim' AND anchor:Claim AND anchor.claim_id = $anchorID AND coalesce(anchor.status, 'candidate') <> 'rejected' AND ($includeSuperseded OR coalesce(anchor.status, 'candidate') <> 'superseded')) OR
+	    ($anchorType = 'claim' AND anchor:Claim AND anchor.claim_id = $anchorID AND coalesce(anchor.status, 'candidate') <> 'rejected') OR
 	    ($anchorType = 'fragment' AND anchor:SourceFragment AND anchor.fragment_id = $anchorID AND coalesce(anchor.status, 'active') <> 'retracted') OR
 	    ($anchorType = 'dream' AND anchor:Dream AND anchor.dream_id = $anchorID AND coalesce(anchor.status, '') IN ['proposed', 'reinforced'])
 	  )
@@ -469,7 +468,7 @@ WITH anchor, n
 	    coalesce(n.status, '') IN ['active', 'needs_revalidation'] OR
 	    ($includeSuperseded AND coalesce(n.status, '') = 'superseded')
 	  )) OR
-	  ($includeClaim AND n:Claim AND coalesce(n.status, 'candidate') <> 'rejected' AND ($includeSuperseded OR coalesce(n.status, 'candidate') <> 'superseded')) OR
+	  ($includeClaim AND n:Claim AND coalesce(n.status, 'candidate') <> 'rejected') OR
 	  ($includeFragment AND n:SourceFragment AND coalesce(n.status, 'active') <> 'retracted') OR
 	  ($includeDream AND n:Dream AND coalesce(n.status, '') IN ['proposed', 'reinforced'])
 	)

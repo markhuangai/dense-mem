@@ -83,6 +83,9 @@ func TestGraphOverviewClampsLimitAndUsesScopedQuery(t *testing.T) {
 	if strings.Count(nodeCall.query, "LIMIT $limit") < 4 {
 		t.Fatalf("node query should apply the limit per graph node type:\n%s", nodeCall.query)
 	}
+	if strings.Contains(nodeCall.query, "coalesce(c.status, 'candidate') <> 'superseded'") {
+		t.Fatalf("overview query must keep superseded claims as provenance bridge nodes:\n%s", nodeCall.query)
+	}
 	if nodeCall.params["limit"] != int64(MaxLimit) {
 		t.Fatalf("limit param = %#v; want %d", nodeCall.params["limit"], MaxLimit)
 	}
@@ -225,8 +228,12 @@ func TestGraphLocalClampsDepthAndRejectsDynamicTraversalInput(t *testing.T) {
 	if !strings.Contains(nodeCall.query, "*1..2") {
 		t.Fatalf("local query missing clamped depth:\n%s", nodeCall.query)
 	}
-	if !strings.Contains(nodeCall.query, "anchor.claim_id = $anchorID AND coalesce(anchor.status, 'candidate') <> 'rejected' AND ($includeSuperseded OR coalesce(anchor.status, 'candidate') <> 'superseded')") {
+	if !strings.Contains(nodeCall.query, "anchor.claim_id = $anchorID AND coalesce(anchor.status, 'candidate') <> 'rejected'") {
 		t.Fatalf("local query must filter rejected claim anchors:\n%s", nodeCall.query)
+	}
+	if strings.Contains(nodeCall.query, "coalesce(anchor.status, 'candidate') <> 'superseded") ||
+		strings.Contains(nodeCall.query, "coalesce(n.status, 'candidate') <> 'superseded") {
+		t.Fatalf("local query must keep superseded claims as provenance bridge nodes:\n%s", nodeCall.query)
 	}
 	if nodeCall.params["anchorType"] != "claim" || nodeCall.params["anchorID"] != "claim-1" {
 		t.Fatalf("anchor params = %#v", nodeCall.params)
