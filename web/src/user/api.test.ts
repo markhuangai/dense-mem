@@ -104,11 +104,12 @@ describe("UserApi", () => {
       anchorId: "fact-1",
       depth: 2,
       limit: 40,
+      includeSuperseded: true,
     });
 
     expect(result.scope).toBe("local");
     expect(fetchMock).toHaveBeenCalledWith(
-      "/ui/api/graph?scope=local&q=project+graph&types=fact%2Cclaim&anchor_type=fact&anchor_id=fact-1&depth=2&limit=40",
+      "/ui/api/graph?scope=local&q=project+graph&types=fact%2Cclaim&anchor_type=fact&anchor_id=fact-1&depth=2&limit=40&include_superseded=true",
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer dm_key" }),
       }),

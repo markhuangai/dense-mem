@@ -37,13 +37,14 @@ type Service interface {
 }
 
 type Query struct {
-	Scope      string
-	Query      string
-	Types      []string
-	AnchorType string
-	AnchorID   string
-	Depth      int
-	Limit      int
+	Scope             string
+	Query             string
+	Types             []string
+	AnchorType        string
+	AnchorID          string
+	Depth             int
+	Limit             int
+	IncludeSuperseded bool
 }
 
 type Snapshot struct {
@@ -95,17 +96,17 @@ func New(reader ScopedReader) Service {
 }
 
 type normalizedQuery struct {
-	scope           string
-	search          string
-	includeFact     bool
-	includeClaim    bool
-	includeFragment bool
-	includeDream    bool
-	anchorType      string
-	anchorID        string
-	depth           int
-	limit           int
-	edgeLimit       int64
+	scope             string
+	search            string
+	includeFact       bool
+	includeClaim      bool
+	includeFragment   bool
+	includeDream      bool
+	anchorType        string
+	anchorID          string
+	depth             int
+	limit             int
+	includeSuperseded bool
 }
 
 func (s *service) Graph(ctx context.Context, profileID string, query Query) (*Snapshot, error) {
@@ -137,7 +138,6 @@ func (s *service) Graph(ctx context.Context, profileID string, query Query) (*Sn
 		_, edgeRows, err := s.reader.ScopedRead(ctx, profileID, graphEdgesCypher, map[string]any{
 			"nodeKeys":          nodeKeys,
 			"relationshipTypes": relationshipTypes,
-			"edgeLimit":         normalized.edgeLimit,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("graph view edges: %w", err)
@@ -175,6 +175,7 @@ func (q normalizedQuery) params() map[string]any {
 		"anchorID":          q.anchorID,
 		"relationshipTypes": relationshipTypes,
 		"limit":             int64(q.limit),
+		"includeSuperseded": q.includeSuperseded,
 	}
 }
 
@@ -189,16 +190,16 @@ func normalizeQuery(query Query) (normalizedQuery, error) {
 
 	types := normalizeTypes(query.Types)
 	normalized := normalizedQuery{
-		scope:           scope,
-		search:          strings.ToLower(strings.TrimSpace(query.Query)),
-		includeFact:     types["fact"],
-		includeClaim:    types["claim"],
-		includeFragment: types["fragment"],
-		includeDream:    types["dream"],
-		limit:           clamp(query.Limit, DefaultLimit, MaxLimit),
-		depth:           clamp(query.Depth, DefaultDepth, MaxDepth),
+		scope:             scope,
+		search:            strings.ToLower(strings.TrimSpace(query.Query)),
+		includeFact:       types["fact"],
+		includeClaim:      types["claim"],
+		includeFragment:   types["fragment"],
+		includeDream:      types["dream"],
+		limit:             clamp(query.Limit, DefaultLimit, MaxLimit),
+		depth:             clamp(query.Depth, DefaultDepth, MaxDepth),
+		includeSuperseded: query.IncludeSuperseded,
 	}
-	normalized.edgeLimit = int64(clampRange(normalized.limit*4, 120, 720))
 
 	if normalized.scope == ScopeLocal {
 		normalized.anchorType = normalizeType(query.AnchorType)
@@ -246,16 +247,6 @@ func normalizeType(raw string) string {
 func clamp(value, defaultValue, maxValue int) int {
 	if value <= 0 {
 		return defaultValue
-	}
-	if value > maxValue {
-		return maxValue
-	}
-	return value
-}
-
-func clampRange(value, minValue, maxValue int) int {
-	if value < minValue {
-		return minValue
 	}
 	if value > maxValue {
 		return maxValue
@@ -345,78 +336,122 @@ const overviewNodesCypher = `
 CALL {
   MATCH (f:Fact {team_id: $profileId})
   WHERE $includeFact
-    AND coalesce(f.status, '') IN ['active', 'needs_revalidation']
+    AND (
+      coalesce(f.status, '') IN ['active', 'needs_revalidation'] OR
+      ($includeSuperseded AND coalesce(f.status, '') = 'superseded')
+    )
     AND ($query = '' OR toLower(coalesce(f.subject, '') + ' ' + coalesce(f.predicate, '') + ' ' + coalesce(f.object, '')) CONTAINS $query)
-  RETURN 'fact' AS type,
-         f.fact_id AS id,
-         'fact:' + f.fact_id AS key,
-         trim(coalesce(f.subject, '') + ' ' + coalesce(f.predicate, '') + ' ' + coalesce(f.object, '')) AS title,
-         coalesce(f.object, '') AS body,
-         coalesce(f.status, '') AS status,
-         toString(f.community_id) AS community_id,
-         '' AS source,
-         coalesce(f.truth_score, 0.0) AS score,
-         f.recorded_at AS recorded_at
-  UNION ALL
+  WITH f
+  ORDER BY f.recorded_at DESC, f.fact_id ASC
+  LIMIT $limit
+  RETURN collect({
+    type: 'fact',
+    id: f.fact_id,
+    key: 'fact:' + f.fact_id,
+    title: trim(coalesce(f.subject, '') + ' ' + coalesce(f.predicate, '') + ' ' + coalesce(f.object, '')),
+    body: coalesce(f.object, ''),
+    status: coalesce(f.status, ''),
+    community_id: toString(f.community_id),
+    source: '',
+    score: coalesce(f.truth_score, 0.0),
+    recorded_at: f.recorded_at
+  }) AS rows
+}
+WITH rows AS factRows
+CALL {
   MATCH (c:Claim {team_id: $profileId})
   WHERE $includeClaim
     AND coalesce(c.status, 'candidate') <> 'rejected'
+    AND ($includeSuperseded OR coalesce(c.status, 'candidate') <> 'superseded')
     AND ($query = '' OR toLower(coalesce(c.subject, '') + ' ' + coalesce(c.predicate, '') + ' ' + coalesce(c.object, '')) CONTAINS $query)
-  RETURN 'claim' AS type,
-         c.claim_id AS id,
-         'claim:' + c.claim_id AS key,
-         trim(coalesce(c.subject, '') + ' ' + coalesce(c.predicate, '') + ' ' + coalesce(c.object, '')) AS title,
-         coalesce(c.object, '') AS body,
-         coalesce(c.status, '') AS status,
-         toString(c.community_id) AS community_id,
-         '' AS source,
-         coalesce(c.resolution_conf, c.extract_conf, c.source_quality, 0.0) AS score,
-         c.recorded_at AS recorded_at
-  UNION ALL
+  WITH c
+  ORDER BY c.recorded_at DESC, c.claim_id ASC
+  LIMIT $limit
+  RETURN collect({
+    type: 'claim',
+    id: c.claim_id,
+    key: 'claim:' + c.claim_id,
+    title: trim(coalesce(c.subject, '') + ' ' + coalesce(c.predicate, '') + ' ' + coalesce(c.object, '')),
+    body: coalesce(c.object, ''),
+    status: coalesce(c.status, ''),
+    community_id: toString(c.community_id),
+    source: '',
+    score: coalesce(c.resolution_conf, c.extract_conf, c.source_quality, 0.0),
+    recorded_at: c.recorded_at
+  }) AS rows
+}
+WITH factRows, rows AS claimRows
+CALL {
   MATCH (sf:SourceFragment {team_id: $profileId})
   WHERE $includeFragment
     AND coalesce(sf.status, 'active') <> 'retracted'
     AND ($query = '' OR toLower(coalesce(sf.content, '') + ' ' + coalesce(sf.source, '')) CONTAINS $query)
-  RETURN 'fragment' AS type,
-         sf.fragment_id AS id,
-         'fragment:' + sf.fragment_id AS key,
-         substring(coalesce(sf.content, ''), 0, 160) AS title,
-         substring(coalesce(sf.content, ''), 0, 600) AS body,
-         coalesce(sf.status, 'active') AS status,
-         toString(sf.community_id) AS community_id,
-         coalesce(sf.source, '') AS source,
-         coalesce(sf.source_quality, 0.0) AS score,
-         sf.created_at AS recorded_at
-  UNION ALL
+  WITH sf
+  ORDER BY sf.created_at DESC, sf.fragment_id ASC
+  LIMIT $limit
+  RETURN collect({
+    type: 'fragment',
+    id: sf.fragment_id,
+    key: 'fragment:' + sf.fragment_id,
+    title: substring(coalesce(sf.content, ''), 0, 160),
+    body: substring(coalesce(sf.content, ''), 0, 600),
+    status: coalesce(sf.status, 'active'),
+    community_id: toString(sf.community_id),
+    source: coalesce(sf.source, ''),
+    score: coalesce(sf.source_quality, 0.0),
+    recorded_at: sf.created_at
+  }) AS rows
+}
+WITH factRows, claimRows, rows AS fragmentRows
+CALL {
   MATCH (d:Dream {team_id: $profileId})
   WHERE $includeDream
     AND coalesce(d.status, '') IN ['proposed', 'reinforced']
     AND ($query = '' OR toLower(coalesce(d.hypothesis, '') + ' ' + coalesce(d.what_if, '') + ' ' + coalesce(d.possible_outcome, '')) CONTAINS $query)
-  RETURN 'dream' AS type,
-         d.dream_id AS id,
-         'dream:' + d.dream_id AS key,
-         coalesce(d.hypothesis, '') AS title,
-         trim(coalesce(d.what_if, '') + ' ' + coalesce(d.possible_outcome, '')) AS body,
-         coalesce(d.status, '') AS status,
-         toString(d.community_id) AS community_id,
-         coalesce(d.generator_model, '') AS source,
-         coalesce(d.confidence, d.likelihood, 0.0) AS score,
-         d.updated_at AS recorded_at
+  WITH d
+  ORDER BY d.updated_at DESC, d.dream_id ASC
+  LIMIT $limit
+  RETURN collect({
+    type: 'dream',
+    id: d.dream_id,
+    key: 'dream:' + d.dream_id,
+    title: coalesce(d.hypothesis, ''),
+    body: trim(coalesce(d.what_if, '') + ' ' + coalesce(d.possible_outcome, '')),
+    status: coalesce(d.status, ''),
+    community_id: toString(d.community_id),
+    source: coalesce(d.generator_model, ''),
+    score: coalesce(d.confidence, d.likelihood, 0.0),
+    recorded_at: d.updated_at
+  }) AS rows
 }
-RETURN type, id, key, title, body, status, community_id, source, score, recorded_at
+WITH factRows + claimRows + fragmentRows + rows AS nodeRows
+UNWIND nodeRows AS row
+RETURN row.type AS type,
+       row.id AS id,
+       row.key AS key,
+       row.title AS title,
+       row.body AS body,
+       row.status AS status,
+       row.community_id AS community_id,
+       row.source AS source,
+       row.score AS score,
+       row.recorded_at AS recorded_at
 ORDER BY recorded_at DESC, key ASC
-LIMIT $limit`
+`
 
 func localNodesCypher(depth int) string {
 	return fmt.Sprintf(`
 MATCH (anchor)
-WHERE anchor.team_id = $profileId
-  AND (
-    ($anchorType = 'fact' AND anchor:Fact AND anchor.fact_id = $anchorID AND coalesce(anchor.status, '') IN ['active', 'needs_revalidation']) OR
-    ($anchorType = 'claim' AND anchor:Claim AND anchor.claim_id = $anchorID AND coalesce(anchor.status, 'candidate') <> 'rejected') OR
-    ($anchorType = 'fragment' AND anchor:SourceFragment AND anchor.fragment_id = $anchorID AND coalesce(anchor.status, 'active') <> 'retracted') OR
-    ($anchorType = 'dream' AND anchor:Dream AND anchor.dream_id = $anchorID AND coalesce(anchor.status, '') IN ['proposed', 'reinforced'])
-  )
+	WHERE anchor.team_id = $profileId
+	  AND (
+	    ($anchorType = 'fact' AND anchor:Fact AND anchor.fact_id = $anchorID AND (
+	      coalesce(anchor.status, '') IN ['active', 'needs_revalidation'] OR
+	      ($includeSuperseded AND coalesce(anchor.status, '') = 'superseded')
+	    )) OR
+	    ($anchorType = 'claim' AND anchor:Claim AND anchor.claim_id = $anchorID AND coalesce(anchor.status, 'candidate') <> 'rejected' AND ($includeSuperseded OR coalesce(anchor.status, 'candidate') <> 'superseded')) OR
+	    ($anchorType = 'fragment' AND anchor:SourceFragment AND anchor.fragment_id = $anchorID AND coalesce(anchor.status, 'active') <> 'retracted') OR
+	    ($anchorType = 'dream' AND anchor:Dream AND anchor.dream_id = $anchorID AND coalesce(anchor.status, '') IN ['proposed', 'reinforced'])
+	  )
 CALL {
   WITH anchor
   RETURN anchor AS n
@@ -429,12 +464,15 @@ CALL {
   RETURN DISTINCT n
 }
 WITH anchor, n
-WHERE elementId(n) = elementId(anchor) OR (
-  ($includeFact AND n:Fact AND coalesce(n.status, '') IN ['active', 'needs_revalidation']) OR
-  ($includeClaim AND n:Claim AND coalesce(n.status, 'candidate') <> 'rejected') OR
-  ($includeFragment AND n:SourceFragment AND coalesce(n.status, 'active') <> 'retracted') OR
-  ($includeDream AND n:Dream AND coalesce(n.status, '') IN ['proposed', 'reinforced'])
-)
+	WHERE elementId(n) = elementId(anchor) OR (
+	  ($includeFact AND n:Fact AND (
+	    coalesce(n.status, '') IN ['active', 'needs_revalidation'] OR
+	    ($includeSuperseded AND coalesce(n.status, '') = 'superseded')
+	  )) OR
+	  ($includeClaim AND n:Claim AND coalesce(n.status, 'candidate') <> 'rejected' AND ($includeSuperseded OR coalesce(n.status, 'candidate') <> 'superseded')) OR
+	  ($includeFragment AND n:SourceFragment AND coalesce(n.status, 'active') <> 'retracted') OR
+	  ($includeDream AND n:Dream AND coalesce(n.status, '') IN ['proposed', 'reinforced'])
+	)
 WITH DISTINCT anchor, n
 RETURN
        CASE
@@ -523,4 +561,4 @@ RETURN elementId(r) AS id,
        target_key AS target,
        type(r) AS relationship
 ORDER BY relationship ASC, source ASC, target ASC
-LIMIT $edgeLimit`
+`

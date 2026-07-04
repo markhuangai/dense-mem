@@ -2,10 +2,7 @@ import { Component, FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useSt
 import type { ReactNode } from "react";
 import {
   BarChart3,
-  FileText,
-  GitBranch,
   KeyRound,
-  Layers3,
   LogOut,
   Moon,
   Network,
@@ -17,10 +14,6 @@ import {
 } from "lucide-react";
 import { TelemetrySnapshot, TelemetryWindowKey } from "../telemetry/types";
 import {
-  Claim,
-  Community,
-  Fact,
-  Fragment,
   RotateResponse,
   SSOProvider,
   UserApi,
@@ -39,7 +32,7 @@ const THEME_STORAGE_KEY = "denseMem.userTheme";
 
 type Theme = "light" | "dark";
 type AuthMode = "none" | "api_key" | "sso";
-type UserTab = "search" | "graph" | "dreams" | "usage" | "facts" | "claims" | "fragments" | "communities" | "team" | "key";
+type UserTab = "search" | "graph" | "dreams" | "usage" | "team" | "key";
 type ProfilePermission = "read" | "read_write";
 
 function sessionAuthMode(session: UserSession): AuthMode {
@@ -307,10 +300,6 @@ function UserPortal({
     ...(canShowUsage(session) ? [
       { id: "usage", label: "Usage", icon: <BarChart3 size={17} aria-hidden="true" />, active: activeTab === "usage", onClick: () => setActiveTab("usage") },
     ] : []),
-    { id: "facts", label: "Facts", icon: <ShieldCheck size={17} aria-hidden="true" />, active: activeTab === "facts", onClick: () => setActiveTab("facts") },
-    { id: "claims", label: "Claims", icon: <GitBranch size={17} aria-hidden="true" />, active: activeTab === "claims", onClick: () => setActiveTab("claims") },
-    { id: "fragments", label: "Fragments", icon: <FileText size={17} aria-hidden="true" />, active: activeTab === "fragments", onClick: () => setActiveTab("fragments") },
-    { id: "communities", label: "Communities", icon: <Layers3 size={17} aria-hidden="true" />, active: activeTab === "communities", onClick: () => setActiveTab("communities") },
     ...(session?.can_manage_team ? [
       { id: "team", label: "Team", icon: <Users size={17} aria-hidden="true" />, active: activeTab === "team", onClick: () => setActiveTab("team") },
     ] : []),
@@ -373,10 +362,6 @@ function UserPortal({
           {activeTab === "usage" && session && canShowUsage(session) && (
             <UserTelemetryPanel key={userTelemetryIdentity(session)} api={api} session={session} />
           )}
-          {activeTab === "facts" && <FactsPanel api={api} />}
-          {activeTab === "claims" && <ClaimsPanel api={api} />}
-          {activeTab === "fragments" && <FragmentsPanel api={api} />}
-          {activeTab === "communities" && <CommunitiesPanel api={api} />}
           {activeTab === "team" && session?.can_manage_team && (
             <TeamManagementPanel
               api={api}
@@ -523,54 +508,6 @@ function UserTelemetryPanel({ api, session }: { api: UserApi; session: UserSessi
   );
 }
 
-function FactsPanel({ api }: { api: UserApi }) {
-  const { data, loading, error, reload } = useKnowledge(() => api.listFacts(20), [api]);
-  return (
-    <section className="surface">
-      <PanelHeading title="Facts" count={data?.items.length ?? 0} onRefresh={reload} />
-      {error && <div className="banner error" role="alert">{error}</div>}
-      {loading && <LoadingState label="Loading facts" />}
-      {!loading && <FactList items={data?.items ?? []} />}
-    </section>
-  );
-}
-
-function ClaimsPanel({ api }: { api: UserApi }) {
-  const { data, loading, error, reload } = useKnowledge(() => api.listClaims(20), [api]);
-  return (
-    <section className="surface">
-      <PanelHeading title="Claims" count={data?.items.length ?? 0} onRefresh={reload} />
-      {error && <div className="banner error" role="alert">{error}</div>}
-      {loading && <LoadingState label="Loading claims" />}
-      {!loading && <ClaimList items={data?.items ?? []} />}
-    </section>
-  );
-}
-
-function FragmentsPanel({ api }: { api: UserApi }) {
-  const { data, loading, error, reload } = useKnowledge(() => api.listFragments(20), [api]);
-  return (
-    <section className="surface">
-      <PanelHeading title="Fragments" count={data?.items.length ?? 0} onRefresh={reload} />
-      {error && <div className="banner error" role="alert">{error}</div>}
-      {loading && <LoadingState label="Loading fragments" />}
-      {!loading && <FragmentList items={data?.items ?? []} />}
-    </section>
-  );
-}
-
-function CommunitiesPanel({ api }: { api: UserApi }) {
-  const { data, loading, error, reload } = useKnowledge(() => api.listCommunities(20), [api]);
-  return (
-    <section className="surface">
-      <PanelHeading title="Communities" count={data?.items.length ?? 0} onRefresh={reload} />
-      {error && <div className="banner error" role="alert">{error}</div>}
-      {loading && <LoadingState label="Loading communities" />}
-      {!loading && <CommunityList items={data?.items ?? []} />}
-    </section>
-  );
-}
-
 function KeyPanel({
   api,
   session,
@@ -696,102 +633,6 @@ function KeyPanel({
   );
 }
 
-function PanelHeading({ title, count, onRefresh }: { title: string; count: number; onRefresh: () => void }) {
-  return (
-    <SectionHeading
-      title={title}
-      actions={(
-        <div className="button-row">
-          <span>{count}</span>
-          <button className="icon-button" type="button" aria-label={`Refresh ${title}`} onClick={onRefresh}>
-            <RefreshCw size={16} aria-hidden="true" />
-          </button>
-        </div>
-      )}
-    />
-  );
-}
-
-function FactList({ items }: { items: Fact[] }) {
-  if (items.length === 0) {
-    return <div className="table-placeholder">No facts</div>;
-  }
-  return (
-    <div className="knowledge-list">
-      {items.map((fact) => (
-        <article className="knowledge-item" key={fact.fact_id}>
-          <div className="knowledge-item-head">
-            <span className="status-pill neutral">{fact.status}</span>
-            <small>{scoreLabel(fact.truth_score)}</small>
-          </div>
-          <h3>{fact.subject}</h3>
-          <p>{fact.predicate}: {fact.object}</p>
-        </article>
-      ))}
-    </div>
-  );
-}
-
-function ClaimList({ items }: { items: Claim[] }) {
-  if (items.length === 0) {
-    return <div className="table-placeholder">No claims</div>;
-  }
-  return (
-    <div className="knowledge-list">
-      {items.map((claim) => (
-        <article className="knowledge-item" key={claim.claim_id}>
-          <div className="knowledge-item-head">
-            <span className="status-pill neutral">{claim.status}</span>
-            <small>{claim.entailment_verdict || claim.modality}</small>
-          </div>
-          <h3>{claim.subject}</h3>
-          <p>{claim.predicate}: {claim.object}</p>
-        </article>
-      ))}
-    </div>
-  );
-}
-
-function FragmentList({ items }: { items: Fragment[] }) {
-  if (items.length === 0) {
-    return <div className="table-placeholder">No fragments</div>;
-  }
-  return (
-    <div className="knowledge-list">
-      {items.map((fragment) => (
-        <article className="knowledge-item" key={fragment.fragment_id || fragment.id}>
-          <div className="knowledge-item-head">
-            <span className="status-pill neutral">{fragment.source_type || "fragment"}</span>
-            <small>{fragment.status || "active"}</small>
-          </div>
-          <h3>{fragment.source || shortId(fragment.fragment_id || fragment.id)}</h3>
-          <p>{fragment.content}</p>
-        </article>
-      ))}
-    </div>
-  );
-}
-
-function CommunityList({ items }: { items: Community[] }) {
-  if (items.length === 0) {
-    return <div className="table-placeholder">No communities</div>;
-  }
-  return (
-    <div className="knowledge-list">
-      {items.map((community) => (
-        <article className="knowledge-item" key={community.community_id}>
-          <div className="knowledge-item-head">
-            <span className="status-pill neutral">Level {community.level}</span>
-            <small>{community.member_count} members</small>
-          </div>
-          <h3>{community.top_entities?.slice(0, 3).join(", ") || shortId(community.community_id)}</h3>
-          <p>{community.summary}</p>
-        </article>
-      ))}
-    </div>
-  );
-}
-
 function CreatedKeyNotice({ apiKey, onDismiss }: { apiKey: string; onDismiss: () => void }) {
   return (
     <SecretBox
@@ -802,37 +643,6 @@ function CreatedKeyNotice({ apiKey, onDismiss }: { apiKey: string; onDismiss: ()
       onDismiss={onDismiss}
     />
   );
-}
-
-function useKnowledge<T>(load: () => Promise<T>, deps: unknown[]) {
-  const [data, setData] = useState<T | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  async function reload() {
-    setLoading(true);
-    setError("");
-    try {
-      setData(await load());
-    } catch (err) {
-      setError(readError(err));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void reload();
-  }, deps);
-
-  return { data, loading, error, reload };
-}
-
-function scoreLabel(value: number | undefined): string {
-  if (value === undefined || Number.isNaN(value)) {
-    return "";
-  }
-  return value.toFixed(value >= 1 ? 0 : 3);
 }
 
 function readTheme(): Theme {
@@ -849,10 +659,6 @@ function displayKeySuffix(suffix: string | null): string {
 
 function profileRoleLabel(role: UserSession["key"]["role"] | null | undefined): string {
   return role === "manager" ? "Manager" : "Member";
-}
-
-function shortId(id: string): string {
-  return id.length <= 8 ? id : id.slice(0, 8);
 }
 
 function formatDate(value: string): string {

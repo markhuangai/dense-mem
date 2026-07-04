@@ -80,6 +80,9 @@ func TestGraphOverviewClampsLimitAndUsesScopedQuery(t *testing.T) {
 			t.Fatalf("node query missing %q:\n%s", required, nodeCall.query)
 		}
 	}
+	if strings.Count(nodeCall.query, "LIMIT $limit") < 4 {
+		t.Fatalf("node query should apply the limit per graph node type:\n%s", nodeCall.query)
+	}
 	if nodeCall.params["limit"] != int64(MaxLimit) {
 		t.Fatalf("limit param = %#v; want %d", nodeCall.params["limit"], MaxLimit)
 	}
@@ -91,6 +94,9 @@ func TestGraphOverviewClampsLimitAndUsesScopedQuery(t *testing.T) {
 	}
 	if nodeCall.params["includeClaim"] != false || nodeCall.params["includeFragment"] != false {
 		t.Fatalf("unexpected default type params after explicit filter: %#v", nodeCall.params)
+	}
+	if nodeCall.params["includeSuperseded"] != false {
+		t.Fatalf("includeSuperseded = %#v; want false", nodeCall.params["includeSuperseded"])
 	}
 }
 
@@ -172,8 +178,8 @@ func TestGraphOverviewReturnsNormalizedEdgesAndDedupedNodes(t *testing.T) {
 		t.Fatalf("fallback edge = %#v", got.Edges[1])
 	}
 	edgeCall := reader.calls[1]
-	if edgeCall.params["edgeLimit"] != int64(120) {
-		t.Fatalf("edgeLimit = %#v; want minimum cap", edgeCall.params["edgeLimit"])
+	if _, exists := edgeCall.params["edgeLimit"]; exists || strings.Contains(edgeCall.query, "LIMIT $edgeLimit") {
+		t.Fatalf("edge query should not apply a separate edge cap: params=%#v\n%s", edgeCall.params, edgeCall.query)
 	}
 	if keys, ok := edgeCall.params["nodeKeys"].([]string); !ok || len(keys) != 1 || keys[0] != "fact:fact-1" {
 		t.Fatalf("nodeKeys = %#v; want returned node keys", edgeCall.params["nodeKeys"])
@@ -219,7 +225,7 @@ func TestGraphLocalClampsDepthAndRejectsDynamicTraversalInput(t *testing.T) {
 	if !strings.Contains(nodeCall.query, "*1..2") {
 		t.Fatalf("local query missing clamped depth:\n%s", nodeCall.query)
 	}
-	if !strings.Contains(nodeCall.query, "anchor.claim_id = $anchorID AND coalesce(anchor.status, 'candidate') <> 'rejected'") {
+	if !strings.Contains(nodeCall.query, "anchor.claim_id = $anchorID AND coalesce(anchor.status, 'candidate') <> 'rejected' AND ($includeSuperseded OR coalesce(anchor.status, 'candidate') <> 'superseded')") {
 		t.Fatalf("local query must filter rejected claim anchors:\n%s", nodeCall.query)
 	}
 	if nodeCall.params["anchorType"] != "claim" || nodeCall.params["anchorID"] != "claim-1" {
