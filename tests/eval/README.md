@@ -167,13 +167,16 @@ go run ./cmd/eval-runner \
 
 ## Reset Eval State
 
-This deletes the persistent eval database and generated public data:
+First stop the persistent eval stack:
 
 ```bash
 docker compose -p densemem_eval_full \
   -f docker-compose.yml \
   -f tests/eval/docker-compose.eval.yml \
   down
-
-rm -rf tests/eval/data tests/eval/runtime tests/eval/seeds tests/eval/suites tests/eval/runs
 ```
+
+Then delete the ignored eval directories only after confirming that no generated
+datasets, persistent database files, seeds, suites, or run artifacts need to be
+kept. The reset targets are `tests/eval/data`, `tests/eval/runtime`,
+`tests/eval/seeds`, `tests/eval/suites`, and `tests/eval/runs`.
