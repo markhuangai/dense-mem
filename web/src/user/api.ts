@@ -221,6 +221,50 @@ export type RecallHit = {
   final_score: number;
 };
 
+export type GraphNodeType = "fact" | "claim" | "fragment" | "dream";
+
+export type GraphNode = {
+  key: string;
+  id: string;
+  type: GraphNodeType | string;
+  title: string;
+  body?: string;
+  status?: string;
+  community_id?: string;
+  source?: string;
+  score?: number;
+  recorded_at?: string;
+};
+
+export type GraphEdge = {
+  id: string;
+  source: string;
+  target: string;
+  relationship: string;
+  directed: boolean;
+};
+
+export type GraphSnapshot = {
+  scope: "overview" | "local" | string;
+  query?: string;
+  anchor?: { type: GraphNodeType | string; id: string; key: string };
+  depth: number;
+  limit: number;
+  truncated: boolean;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+};
+
+export type GraphQuery = {
+  scope?: "overview" | "local";
+  q?: string;
+  types?: GraphNodeType[];
+  anchorType?: GraphNodeType;
+  anchorId?: string;
+  depth?: number;
+  limit?: number;
+};
+
 type RequestOptions = {
   method?: string;
   body?: unknown;
@@ -318,6 +362,34 @@ export class UserApi {
   async recall(query: string, limit = 10): Promise<RecallHit[]> {
     const params = new URLSearchParams({ query, limit: String(limit) });
     const payload = await this.request<Envelope<RecallHit[]>>(`/api/v1/recall?${params.toString()}`);
+    return payload.data;
+  }
+
+  async graph(query: GraphQuery = {}): Promise<GraphSnapshot> {
+    const params = new URLSearchParams();
+    if (query.scope) {
+      params.set("scope", query.scope);
+    }
+    if (query.q) {
+      params.set("q", query.q);
+    }
+    if (query.types?.length) {
+      params.set("types", query.types.join(","));
+    }
+    if (query.anchorType) {
+      params.set("anchor_type", query.anchorType);
+    }
+    if (query.anchorId) {
+      params.set("anchor_id", query.anchorId);
+    }
+    if (query.depth !== undefined) {
+      params.set("depth", String(query.depth));
+    }
+    if (query.limit !== undefined) {
+      params.set("limit", String(query.limit));
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    const payload = await this.request<Envelope<GraphSnapshot>>(`/ui/api/graph${suffix}`);
     return payload.data;
   }
 

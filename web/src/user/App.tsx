@@ -8,6 +8,7 @@ import {
   Layers3,
   LogOut,
   Moon,
+  Network,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -31,13 +32,14 @@ import { SearchPanel } from "./SearchPanel";
 const TelemetryDashboard = lazy(() => import("../telemetry/TelemetryDashboard").then((module) => ({ default: module.TelemetryDashboard })));
 const TeamManagementPanel = lazy(() => import("./TeamManagementPanel").then((module) => ({ default: module.TeamManagementPanel })));
 const UserDreamsPanel = lazy(() => import("./DreamsPanel").then((module) => ({ default: module.UserDreamsPanel })));
+const GraphPanel = lazy(() => import("./GraphPanel").then((module) => ({ default: module.GraphPanel })));
 
 const TOKEN_STORAGE_KEY = "denseMem.userApiKey";
 const THEME_STORAGE_KEY = "denseMem.userTheme";
 
 type Theme = "light" | "dark";
 type AuthMode = "none" | "api_key" | "sso";
-type UserTab = "search" | "dreams" | "usage" | "facts" | "claims" | "fragments" | "communities" | "team" | "key";
+type UserTab = "search" | "graph" | "dreams" | "usage" | "facts" | "claims" | "fragments" | "communities" | "team" | "key";
 type ProfilePermission = "read" | "read_write";
 
 function sessionAuthMode(session: UserSession): AuthMode {
@@ -300,6 +302,7 @@ function UserPortal({
 
   const navItems = [
     { id: "search", label: "Recall", icon: <Search size={17} aria-hidden="true" />, active: activeTab === "search", onClick: () => setActiveTab("search") },
+    { id: "graph", label: "Graph", icon: <Network size={17} aria-hidden="true" />, active: activeTab === "graph", onClick: () => setActiveTab("graph") },
     { id: "dreams", label: "Dreams", icon: <Moon size={17} aria-hidden="true" />, active: activeTab === "dreams", onClick: () => setActiveTab("dreams") },
     ...(canShowUsage(session) ? [
       { id: "usage", label: "Usage", icon: <BarChart3 size={17} aria-hidden="true" />, active: activeTab === "usage", onClick: () => setActiveTab("usage") },
@@ -365,6 +368,7 @@ function UserPortal({
       <LazyPanelErrorBoundary key={activeTab}>
         <Suspense fallback={<LazyPanelFallback />}>
           {activeTab === "search" && <SearchPanel api={api} />}
+          {activeTab === "graph" && <GraphPanel api={api} />}
           {activeTab === "dreams" && <UserDreamsPanel api={api} />}
           {activeTab === "usage" && session && canShowUsage(session) && (
             <UserTelemetryPanel key={userTelemetryIdentity(session)} api={api} session={session} />

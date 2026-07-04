@@ -42,9 +42,9 @@
 
 Dense-Mem gives MCP clients a durable memory layer with provenance, typed claims
 and facts, verification gates, server-side embeddings, recall, team isolation,
-REST/OpenAPI, and a token-protected control portal. The host LLM owns
-conversation and judgment; Dense-Mem owns durable memory state and returns
-structured outcomes the host can explain to users.
+REST/OpenAPI, a user portal with graph inspection, and a token-protected control
+portal. The host LLM owns conversation and judgment; Dense-Mem owns durable
+memory state and returns structured outcomes the host can explain to users.
 
 Under the hood, Dense-Mem is a standalone HTTP MCP memory server. HTTP MCP is
 the v1 supported MCP transport and is served at `/mcp` from the main HTTP
@@ -123,6 +123,11 @@ MCP/API:        http://127.0.0.1:8080/mcp
 User portal:    http://127.0.0.1:8080/ui
 Control portal: http://127.0.0.1:8090/
 ```
+
+The user portal includes recall, facts, claims, fragments, communities, dreams,
+and a bounded graph explorer for seeing facts, claims, evidence fragments, and
+dream hypotheses as connected memory. The graph view is a read-scoped UI
+endpoint, not a raw Cypher or unrestricted traversal API.
 
 Cold image pulls can take longer than 60 seconds. Redis and public HTTPS are
 intentionally omitted from the base example; use the expert example when you
@@ -203,6 +208,7 @@ metrics listener publicly.
 | Fact changes | Verification gates and promotion rules | Manual edits | Similarity updates can obscure history | Often tool-specific |
 | Conflict handling | Comparable conflicts return clarification tasks | Caller must notice | Similar vectors do not mean contradiction | Usually caller-managed |
 | Recall | Facts, claims, fragments, contradictions, and clarifications | Text search | Vector similarity | Varies |
+| Graph inspection | User portal graph view plus bounded `trace_memory` lineage | Manual cross-references | Usually external tooling | Varies |
 | Agent boundary | Host LLM judges; Dense-Mem stores and enforces | Blurred | Retrieval only | Often blurred |
 | Operations | Teams, profiles, API keys, audit metadata, REST, OpenAPI, MCP | Minimal | Database operations | Varies |
 

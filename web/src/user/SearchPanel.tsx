@@ -1,4 +1,4 @@
-import { CSSProperties, FormEvent, useMemo, useState } from "react";
+import { CSSProperties, FormEvent, lazy, Suspense, useMemo, useState } from "react";
 import {
   ChevronDown,
   ExternalLink,
@@ -9,13 +9,15 @@ import {
   X,
 } from "lucide-react";
 import { LoadingState, SectionHeading } from "../ui/components";
-import { Claim, Community, Fact, Fragment, RecallHit, UserApi } from "./api";
+import { Claim, Community, Fact, Fragment, GraphNodeType, RecallHit, UserApi } from "./api";
+
+const ResultGraphPreview = lazy(() => import("./GraphPanel").then((module) => ({ default: module.ResultGraphPreview })));
 
 type RecallResultKind = "fact" | "claim" | "fragment";
 type RecallResultStatus = "verified" | "provisional" | "disputed" | "deprecated";
 type RecallSortMode = "relevance" | "date";
 type ResultDensity = "comfortable" | "compact";
-type InspectorTab = "evidence" | "lineage" | "recall";
+type InspectorTab = "evidence" | "lineage" | "recall" | "graph";
 
 type IndexedRecallResult = {
   hit: RecallHit;
@@ -275,7 +277,7 @@ export function SearchPanel({ api }: { api: UserApi }) {
             <h2>Inspector</h2>
             <button className="icon-button" type="button" aria-label="Close details panel" onClick={() => setInspectorOpen(false)}><X size={16} aria-hidden="true" /></button>
           </div>
-          <KnowledgeInspector result={selectedResult} activeTab={inspectorTab} onSelectTab={setInspectorTab} />
+          <KnowledgeInspector api={api} result={selectedResult} activeTab={inspectorTab} onSelectTab={setInspectorTab} />
         </aside>
       )}
     </section>
@@ -341,10 +343,12 @@ function RecallResults({
 }
 
 function KnowledgeInspector({
+  api,
   result,
   activeTab,
   onSelectTab,
 }: {
+  api: UserApi;
   result: IndexedRecallResult | null;
   activeTab: InspectorTab;
   onSelectTab: (tab: InspectorTab) => void;
@@ -359,6 +363,7 @@ function KnowledgeInspector({
     { id: "evidence", label: "Evidence" },
     { id: "lineage", label: "Lineage" },
     { id: "recall", label: "Recall" },
+    { id: "graph", label: "Graph" },
   ];
   return (
     <article className="inspector-card">
@@ -445,6 +450,14 @@ function KnowledgeInspector({
           </dl>
         </div>
       )}
+      {activeTab === "graph" && (
+        <div className="inspector-section" role="tabpanel">
+          <h4>Graph</h4>
+          <Suspense fallback={<LoadingState label="Loading graph" compact />}>
+            <ResultGraphPreview api={api} anchor={recallGraphAnchor(result)} />
+          </Suspense>
+        </div>
+      )}
       <dl className="inspector-details">
         <div>
           <dt>Tier</dt>
@@ -457,6 +470,20 @@ function KnowledgeInspector({
       </dl>
     </article>
   );
+}
+
+function recallGraphAnchor(result: IndexedRecallResult): { type: GraphNodeType; id: string } | null {
+  if (result.hit.fact?.fact_id) {
+    return { type: "fact", id: result.hit.fact.fact_id };
+  }
+  if (result.hit.claim?.claim_id) {
+    return { type: "claim", id: result.hit.claim.claim_id };
+  }
+  const fragmentID = result.hit.fragment?.fragment_id ?? result.hit.fragment?.id;
+  if (fragmentID) {
+    return { type: "fragment", id: fragmentID };
+  }
+  return null;
 }
 
 function deriveEntities(hits: RecallHit[], communities: Community[]): string[] {

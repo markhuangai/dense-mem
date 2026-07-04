@@ -24,6 +24,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
+	"github.com/markhuangai/dense-mem/internal/service/graphview"
 )
 
 // UserPortalDeps holds the dependencies for the API-key user portal.
@@ -34,6 +35,7 @@ type UserPortalDeps struct {
 	RateLimitSvc    service.RateLimitServiceInterface
 	UsageMetrics    service.UsageMetricsRecorder
 	Telemetry       service.TelemetryReader
+	GraphView       graphview.Service
 	AuditSvc        service.AuditService
 	SecuritySvc     httpmw.SecurityBanService
 	SSOService      *service.SSOService
@@ -49,6 +51,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 		profiles:  deps.ProfileSvc,
 		keys:      deps.APIKeySvc,
 		telemetry: deps.Telemetry,
+		graph:     deps.GraphView,
 		sso:       deps.SSOService,
 		appConfig: deps.AppConfig,
 	}
@@ -75,6 +78,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	api.Use(httpmw.LastUsedMiddleware(deps.APIKeyRepo))
 	api.GET("/session", portal.session)
 	api.GET("/telemetry", portal.telemetrySnapshot, httpmw.RequireScopes("write"))
+	api.GET("/graph", portal.graphSnapshot, httpmw.RequireScopes("read"))
 	api.POST("/key/rotate", portal.rotateCurrentKey, httpmw.RequireScopes("write"))
 	if deps.SSOService != nil {
 		api.POST("/sso/team", portal.switchSSOTeam, httpmw.RequireScopes("read"))
@@ -93,6 +97,7 @@ type userPortalHandler struct {
 	profiles  handler.ProfileServiceInterface
 	keys      handler.APIKeyServiceInterface
 	telemetry service.TelemetryReader
+	graph     graphview.Service
 	sso       *service.SSOService
 	appConfig service.AppConfigService
 }
@@ -190,6 +195,68 @@ func (h *userPortalHandler) telemetrySnapshot(c echo.Context) error {
 		return err
 	}
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": snapshot})
+}
+
+func (h *userPortalHandler) graphSnapshot(c echo.Context) error {
+	if h.graph == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "graph view unavailable")
+	}
+	principal := httpmw.GetPrincipal(c.Request().Context())
+	if principal == nil {
+		return httperr.New(httperr.FORBIDDEN, "authentication required")
+	}
+	teamID := principal.GetTeamID()
+	if teamID == uuid.Nil {
+		return httperr.New(httperr.FORBIDDEN, "authenticated key is not team bound")
+	}
+
+	limit, err := userPortalOptionalIntQuery(c, "limit")
+	if err != nil {
+		return err
+	}
+	depth, err := userPortalOptionalIntQuery(c, "depth")
+	if err != nil {
+		return err
+	}
+
+	snapshot, err := h.graph.Graph(c.Request().Context(), teamID.String(), graphview.Query{
+		Scope:      c.QueryParam("scope"),
+		Query:      c.QueryParam("q"),
+		Types:      userPortalGraphTypes(c.QueryParam("types")),
+		AnchorType: c.QueryParam("anchor_type"),
+		AnchorID:   c.QueryParam("anchor_id"),
+		Depth:      depth,
+		Limit:      limit,
+	})
+	if err != nil {
+		if errors.Is(err, graphview.ErrMissingAnchor) || errors.Is(err, graphview.ErrInvalidAnchorType) {
+			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
+		}
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": snapshot})
+}
+
+func userPortalOptionalIntQuery(c echo.Context, name string) (int, error) {
+	raw := strings.TrimSpace(c.QueryParam(name))
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 0 {
+		return 0, httperr.New(httperr.VALIDATION_ERROR, name+" must be a non-negative integer")
+	}
+	return value, nil
+}
+
+func userPortalGraphTypes(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	return strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n'
+	})
 }
 
 func userPortalTelemetryFilter(principal *httpmw.Principal, window, requestedScope string) (service.TelemetryFilter, error) {
