@@ -13,7 +13,7 @@ packages="$(
 		xargs -r -n1 dirname |
 		sort -u |
 		while IFS= read -r dir; do
-			go list "./${dir#./}"
+			go list "./${dir#./}" 2>/dev/null || true
 		done
 )"
 

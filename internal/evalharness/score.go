@@ -84,7 +84,7 @@ func scoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, scoring scor
 	if len(qrel.RequiredEvidenceRefs) > 0 || len(qrel.BadEvidenceRefs) > 0 {
 		evidenceRefs := scoring.refsForQRel(trace.ContextEvidenceRefs, qrel.RequiredEvidenceRefs, qrel.BadEvidenceRefs)
 		evidenceAvailable := trace.ContextEvidenceRefs != nil
-		if len(evidenceRefs) == 0 && qrelTargetsOnlyType(qrel.RequiredEvidenceRefs, qrel.BadEvidenceRefs, mapping, "fragment") {
+		if trace.ContextEvidenceRefs == nil && qrelTargetsOnlyType(qrel.RequiredEvidenceRefs, qrel.BadEvidenceRefs, mapping, "fragment") {
 			evidenceRefs = fragmentRefs(trace.ContextRefs)
 			evidenceAvailable = evidenceRefs != nil
 		}

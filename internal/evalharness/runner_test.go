@@ -845,6 +845,40 @@ func TestScoreTracesScoresFragmentContextRefsAsEvidenceFallback(t *testing.T) {
 	}
 }
 
+func TestScoreTracesKeepsExplicitEmptyContextEvidenceRefs(t *testing.T) {
+	suite := []SuiteCase{{CaseID: "case-1", Slices: []string{"evidence"}}}
+	cases := map[string]Case{
+		"case-1": {CaseID: "case-1", Query: "which source backs alpha?", Limit: 2},
+	}
+	qrels := map[string]QRel{
+		"case-1": {
+			CaseID:               "case-1",
+			RequiredEvidenceRefs: []Ref{{Type: "fragment", SourceDocID: "doc-source-good"}},
+		},
+	}
+	traces := []RecallTrace{{
+		CaseID:              "case-1",
+		Query:               "which source backs alpha?",
+		ContextRefs:         []Ref{{Type: "fragment", ID: "fragment-good"}},
+		ContextEvidenceRefs: []Ref{},
+	}}
+	mapping := KnowledgeMapping{BySourceDocID: map[string]Ref{
+		"doc-source-good": {Type: "fragment", ID: "fragment-good", SourceDocID: "doc-source-good"},
+	}}
+
+	scores, summary, err := ScoreTraces("run-1", "baseline", "seed-1", "sha256:test", "suite.jsonl", suite, cases, qrels, traces, mapping)
+	if err != nil {
+		t.Fatalf("ScoreTraces: %v", err)
+	}
+	score := scores[0]
+	if !score.EvidenceScored || score.EvidenceRecallAtK != 0 || len(score.EvidenceMissingRequired) != 1 {
+		t.Fatalf("explicit empty evidence score = %+v; want scored miss without context fallback", score)
+	}
+	if summary.AverageEvidenceRecallAtK != 0 {
+		t.Fatalf("explicit empty evidence summary = %+v; want no evidence recall", summary)
+	}
+}
+
 func TestScoreTracesScoresDreamRefsSeparately(t *testing.T) {
 	suite := []SuiteCase{{CaseID: "case-1", Slices: []string{"dream_neighbor_hypothesis"}}}
 	cases := map[string]Case{

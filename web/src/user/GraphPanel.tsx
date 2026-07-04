@@ -49,6 +49,10 @@ export function GraphPanel({ api }: { api: UserApi }) {
   const [error, setError] = useState("");
 
   async function loadGraph(query: GraphQuery = buildQuery({ searchText, scope, anchorType, anchorId, types, depth, limit })) {
+    if (query.types?.length === 0) {
+      setError("Select at least one type.");
+      return;
+    }
     if (query.scope === "local" && (!query.anchorType || !query.anchorId)) {
       setError("Anchor ID is required for local graph.");
       return;
@@ -71,6 +75,7 @@ export function GraphPanel({ api }: { api: UserApi }) {
   }, [api]);
 
   const selectedNode = snapshot?.nodes.find((node) => node.key === selectedKey) ?? snapshot?.nodes[0] ?? null;
+  const hasSelectedTypes = Object.values(types).some(Boolean);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -170,7 +175,7 @@ export function GraphPanel({ api }: { api: UserApi }) {
           </label>
 
           <div className="button-row">
-            <button className="primary-button compact" type="submit" disabled={loading}>
+            <button className="primary-button compact" type="submit" disabled={loading || !hasSelectedTypes}>
               <RefreshCw size={16} aria-hidden="true" />
               Refresh
             </button>
@@ -458,7 +463,7 @@ function buildQuery({
   return {
     scope,
     q: searchText.trim() || undefined,
-    types: enabledTypes.length ? enabledTypes : ["fact", "claim", "fragment"],
+    types: enabledTypes,
     anchorType: scope === "local" ? anchorType : undefined,
     anchorId: scope === "local" ? anchorId.trim() : undefined,
     depth,

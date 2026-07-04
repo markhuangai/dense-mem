@@ -288,6 +288,33 @@ describe("UserPortalApp", () => {
     });
   });
 
+  it("blocks graph refresh when every type filter is disabled", async () => {
+    const fetchMock = mockUserFetch(baseSession, [], { graphSnapshot: overviewGraph });
+    sessionStorage.setItem("denseMem.userApiKey", "dm_read");
+
+    render(<UserPortalApp />);
+    await screen.findByText("Research Team");
+    await userEvent.click(screen.getByRole("button", { name: /graph/i }));
+    const controls = await screen.findByLabelText("Graph controls");
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment&depth=1&limit=80",
+        expect.any(Object),
+      );
+    });
+    const graphCallCount = () => fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/ui/api/graph")).length;
+    const beforeDisabledRefresh = graphCallCount();
+
+    await userEvent.click(within(controls).getByRole("checkbox", { name: "Fact" }));
+    await userEvent.click(within(controls).getByRole("checkbox", { name: "Claim" }));
+    await userEvent.click(within(controls).getByRole("checkbox", { name: "Fragment" }));
+
+    const refresh = within(controls).getByRole("button", { name: "Refresh" });
+    expect(refresh).toBeDisabled();
+    await userEvent.click(refresh);
+    expect(graphCallCount()).toBe(beforeDisabledRefresh);
+  });
+
   it("loads a local graph from the recall inspector", async () => {
     const fetchMock = mockUserFetch(baseSession, [], { recallHits, communities: recallCommunities, graphSnapshot: localGraph });
     sessionStorage.setItem("denseMem.userApiKey", "dm_read");

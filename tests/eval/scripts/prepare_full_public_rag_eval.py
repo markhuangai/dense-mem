@@ -328,6 +328,11 @@ def extract_zip(zip_path: Path, extract_root: Path) -> None:
         shutil.rmtree(extract_root)
     extract_root.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path) as zf:
+        root = extract_root.resolve()
+        for member in zf.infolist():
+            target = (extract_root / member.filename).resolve()
+            if target != root and root not in target.parents:
+                raise SystemExit(f"unsafe path in {zip_path}: {member.filename}")
         zf.extractall(extract_root)
 
 
