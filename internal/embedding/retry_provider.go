@@ -22,6 +22,12 @@ type RetryEmbeddingProvider struct {
 	metrics    observability.DiscoverabilityMetrics
 }
 
+type RetryEmbeddingOptions struct {
+	MaxRetries int
+	BaseDelay  time.Duration
+	MaxDelay   time.Duration
+}
+
 // Compile-time assertion that RetryEmbeddingProvider implements EmbeddingProviderInterface.
 var _ EmbeddingProviderInterface = (*RetryEmbeddingProvider)(nil)
 
@@ -44,11 +50,24 @@ func NewRetryEmbeddingProvider(inner EmbeddingProviderInterface, logger observab
 // NewRetryEmbeddingProviderWithKey creates a new retry wrapper with the API key
 // for sanitization purposes.
 func NewRetryEmbeddingProviderWithKey(inner EmbeddingProviderInterface, logger observability.LogProvider, apiKey string) *RetryEmbeddingProvider {
+	return NewRetryEmbeddingProviderWithKeyAndOptions(inner, logger, apiKey, RetryEmbeddingOptions{})
+}
+
+func NewRetryEmbeddingProviderWithKeyAndOptions(inner EmbeddingProviderInterface, logger observability.LogProvider, apiKey string, opts RetryEmbeddingOptions) *RetryEmbeddingProvider {
+	if opts.MaxRetries <= 0 {
+		opts.MaxRetries = 3
+	}
+	if opts.BaseDelay <= 0 {
+		opts.BaseDelay = 200 * time.Millisecond
+	}
+	if opts.MaxDelay <= 0 {
+		opts.MaxDelay = 5 * time.Second
+	}
 	return &RetryEmbeddingProvider{
 		inner:      inner,
-		maxRetries: 3,
-		baseDelay:  200 * time.Millisecond,
-		maxDelay:   5 * time.Second,
+		maxRetries: opts.MaxRetries,
+		baseDelay:  opts.BaseDelay,
+		maxDelay:   opts.MaxDelay,
 		logger:     logger,
 		apiKey:     apiKey,
 		metrics:    observability.NoopDiscoverabilityMetrics(),
@@ -97,7 +116,7 @@ func (p *RetryEmbeddingProvider) Embed(ctx context.Context, text string) ([]floa
 
 		// Don't sleep after the last attempt
 		if attempt < p.maxRetries {
-			delay := p.calculateDelay(attempt)
+			delay := p.retryDelay(attempt, err)
 			select {
 			case <-ctx.Done():
 				break
@@ -146,7 +165,7 @@ func (p *RetryEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string)
 
 		// Don't sleep after the last attempt
 		if attempt < p.maxRetries {
-			delay := p.calculateDelay(attempt)
+			delay := p.retryDelay(attempt, err)
 			select {
 			case <-ctx.Done():
 				break
@@ -253,6 +272,23 @@ func (p *RetryEmbeddingProvider) shouldRetry(err error) bool {
 	// Check for wrapped rate limit errors
 	var rateLimitErr *RateLimitError
 	return errors.As(err, &rateLimitErr)
+}
+
+func (p *RetryEmbeddingProvider) retryDelay(attempt int, err error) time.Duration {
+	var httpErr *ProviderHTTPError
+	if errors.As(err, &httpErr) {
+		if httpErr.RetryAfter > 0 {
+			return httpErr.RetryAfter
+		}
+		if httpErr.Status == 429 {
+			return 10 * time.Second
+		}
+	}
+	var rateLimitErr *RateLimitError
+	if errors.As(err, &rateLimitErr) && rateLimitErr.RetryAfter > 0 {
+		return time.Duration(rateLimitErr.RetryAfter) * time.Second
+	}
+	return p.calculateDelay(attempt)
 }
 
 // calculateDelay computes the backoff delay for the given attempt.

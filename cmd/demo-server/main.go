@@ -30,6 +30,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentdedupe"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
+	"github.com/markhuangai/dense-mem/internal/service/graphview"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/service/recallservice"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
@@ -456,6 +457,7 @@ func main() {
 		Memory:      memorySvc,
 		Dreams:      dreamSvc,
 	})
+	graphViewSvc := graphview.New(profileScopeEnforcer)
 	skillPackSvc := skillpackservice.New(skillpackservice.Dependencies{
 		FragmentCreate:  fragmentCreateRegistrySvc,
 		ClaimCreate:     claimCreateSvc,
@@ -602,6 +604,7 @@ func main() {
 		RateLimitSvc:    rateLimitService,
 		UsageMetrics:    usageMetricsService,
 		Telemetry:       telemetryReader,
+		GraphView:       graphViewSvc,
 		AuditSvc:        auditService,
 		SecuritySvc:     securityService,
 		SSOService:      ssoService,

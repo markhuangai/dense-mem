@@ -285,6 +285,19 @@ func TestRetryProvider_IsAvailable(t *testing.T) {
 	assert.True(t, p.IsAvailable())
 }
 
+func TestRetryProvider_WithOptions(t *testing.T) {
+	inner := &MockEmbeddingProvider{}
+	p := NewRetryEmbeddingProviderWithKeyAndOptions(inner, newTestLogger(), "key", RetryEmbeddingOptions{
+		MaxRetries: 12,
+		BaseDelay:  3 * time.Second,
+		MaxDelay:   45 * time.Second,
+	})
+
+	assert.Equal(t, 12, p.maxRetries)
+	assert.Equal(t, 3*time.Second, p.baseDelay)
+	assert.Equal(t, 45*time.Second, p.maxDelay)
+}
+
 func TestRetryProvider_BackoffDelays(t *testing.T) {
 	p := &RetryEmbeddingProvider{
 		maxRetries: 3,

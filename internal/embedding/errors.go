@@ -3,6 +3,7 @@ package embedding
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
 // ErrEmbeddingTimeout is returned when an embedding request times out.
@@ -76,9 +77,10 @@ func (e *ProviderError) Unwrap() error {
 // It captures the HTTP status code and message for proper error handling
 // and retry classification.
 type ProviderHTTPError struct {
-	Status  int
-	Message string
-	Body    string
+	Status     int
+	Message    string
+	Body       string
+	RetryAfter time.Duration
 }
 
 // Error implements the error interface.

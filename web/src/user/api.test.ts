@@ -83,6 +83,38 @@ describe("UserApi", () => {
     }));
   });
 
+  it("requests graph snapshots with scoped query params", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: {
+        scope: "local",
+        depth: 2,
+        limit: 40,
+        truncated: false,
+        nodes: [],
+        edges: [],
+      },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await new UserApi("dm_key").graph({
+      scope: "local",
+      q: "project graph",
+      types: ["fact", "claim"],
+      anchorType: "fact",
+      anchorId: "fact-1",
+      depth: 2,
+      limit: 40,
+    });
+
+    expect(result.scope).toBe("local");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/ui/api/graph?scope=local&q=project+graph&types=fact%2Cclaim&anchor_type=fact&anchor_id=fact-1&depth=2&limit=40",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer dm_key" }),
+      }),
+    );
+  });
+
   it("throws ApiError with server message", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ message: "invalid api key" }), { status: 401 })));
 

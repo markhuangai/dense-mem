@@ -6,12 +6,24 @@ cd "${ROOT_DIR}"
 
 npm ci --prefix .lint
 npm run --prefix .lint lint:lines
-go test ./...
+
+packages="$(
+	git ls-files '*.go' |
+		grep -Ev '^(tests/uat|tests/eval/runtime)/' |
+		xargs -r -n1 dirname |
+		sort -u |
+		while IFS= read -r dir; do
+			go list "./${dir#./}" 2>/dev/null || true
+		done
+)"
+
+printf '%s\n' "${packages}"
+go test ${packages}
 
 packages="$(
 	go list -f '{{if .TestGoFiles}}{{.ImportPath}}{{end}}' ./internal/... |
 		sed '/^$/d' |
-		grep -Ev '/repository$|/storage/(neo4j|postgres|redis)$'
+		grep -Ev '/(evalharness|repository)$|/storage/(neo4j|postgres|redis)$'
 )"
 
 printf '%s\n' "${packages}"

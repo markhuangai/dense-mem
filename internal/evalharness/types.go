@@ -76,6 +76,7 @@ type Case struct {
 	KnownAt          string   `json:"known_at,omitempty"`
 	Limit            int      `json:"limit,omitempty"`
 	IncludeDreams    bool     `json:"include_dreams,omitempty"`
+	UseCommunities   bool     `json:"use_communities,omitempty"`
 }
 
 type Ref struct {
@@ -257,16 +258,21 @@ type SliceAvg struct {
 }
 
 type RunConfig struct {
-	RunID           string `json:"run_id"`
-	Mode            string `json:"mode"`
-	SeedManifest    string `json:"seed_manifest"`
-	SeedHash        string `json:"seed_hash"`
-	SuitePath       string `json:"suite_path"`
-	BaseURL         string `json:"base_url,omitempty"`
-	ControlURL      string `json:"control_url,omitempty"`
-	ImportSeed      bool   `json:"import_seed"`
-	TracesPath      string `json:"traces_path,omitempty"`
-	BaselineRunPath string `json:"baseline_run_path,omitempty"`
+	RunID             string `json:"run_id"`
+	Mode              string `json:"mode"`
+	SeedManifest      string `json:"seed_manifest"`
+	SeedHash          string `json:"seed_hash"`
+	SuitePath         string `json:"suite_path"`
+	BaseURL           string `json:"base_url,omitempty"`
+	ControlURL        string `json:"control_url,omitempty"`
+	ImportSeed        bool   `json:"import_seed"`
+	ImportConcurrency int    `json:"import_concurrency,omitempty"`
+	DirectImport      bool   `json:"direct_import,omitempty"`
+	DirectImportBatch int    `json:"direct_import_batch,omitempty"`
+	DirectImportTeam  string `json:"direct_import_team,omitempty"`
+	TracesPath        string `json:"traces_path,omitempty"`
+	MappingPath       string `json:"mapping_path,omitempty"`
+	BaselineRunPath   string `json:"baseline_run_path,omitempty"`
 }
 
 type Comparison struct {
@@ -304,6 +310,10 @@ type GateOptions struct {
 	MinEvidenceRequiredRank1Rate *float64 `json:"min_evidence_required_rank1_rate,omitempty"`
 	MaxAverageEvidenceBadAtK     *float64 `json:"max_average_evidence_bad_at_k,omitempty"`
 	MaxEvidenceBadRank1Rate      *float64 `json:"max_evidence_bad_rank1_rate,omitempty"`
+	MinDreamRecallAtK            *float64 `json:"min_dream_recall_at_k,omitempty"`
+	MinDreamRequiredRank1Rate    *float64 `json:"min_dream_required_rank1_rate,omitempty"`
+	MaxAverageDreamBadAtK        *float64 `json:"max_average_dream_bad_at_k,omitempty"`
+	MaxDreamBadRank1Rate         *float64 `json:"max_dream_bad_rank1_rate,omitempty"`
 }
 
 type GateResult struct {

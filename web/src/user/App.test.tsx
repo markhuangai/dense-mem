@@ -2,7 +2,33 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UserPortalApp } from "./App";
-import { Community, RecallHit, UserKey, UserSession } from "./api";
+import { Community, GraphSnapshot, RecallHit, UserKey, UserSession } from "./api";
+
+vi.mock("react-force-graph-2d", async () => {
+  const React = await import("react");
+  return {
+    default: React.forwardRef(function MockForceGraph(props: {
+      graphData?: { nodes?: Array<{ key: string; title: string }> };
+      onNodeClick?: (node: { key: string; title: string }) => void;
+    }, ref) {
+      React.useImperativeHandle(ref, () => ({
+        d3Force: () => ({ distance: () => undefined }),
+        d3ReheatSimulation: () => undefined,
+        zoomToFit: () => undefined,
+      }));
+      const nodes = props.graphData?.nodes ?? [];
+      return (
+        <div data-testid="force-graph">
+          {nodes.map((node) => (
+            <button key={node.key} type="button" onClick={() => props.onNodeClick?.(node)}>
+              {node.title}
+            </button>
+          ))}
+        </div>
+      );
+    }),
+  };
+});
 
 const baseSession: UserSession = {
   team: {
@@ -114,6 +140,48 @@ const recallCommunities: Community[] = [
   },
 ];
 
+const overviewGraph: GraphSnapshot = {
+  scope: "overview",
+  depth: 1,
+  limit: 80,
+  truncated: false,
+  nodes: [
+    {
+      key: "fact:fact-1",
+      id: "fact-1",
+      type: "fact",
+      title: "Alice works_on project-x",
+      body: "project-x",
+      status: "active",
+      community_id: "community-1",
+      score: 0.94,
+      recorded_at: "2026-05-02T12:00:00Z",
+    },
+    {
+      key: "claim:claim-1",
+      id: "claim-1",
+      type: "claim",
+      title: "Alice uses Dense-Mem",
+      body: "Dense-Mem",
+      status: "validated",
+      community_id: "community-1",
+      score: 0.88,
+      recorded_at: "2026-05-02T12:00:00Z",
+    },
+  ],
+  edges: [
+    { id: "edge-1", source: "claim:claim-1", target: "fact:fact-1", relationship: "PROMOTES_TO", directed: true },
+  ],
+};
+
+const localGraph: GraphSnapshot = {
+  ...overviewGraph,
+  scope: "local",
+  anchor: { type: "fact", id: "fact-1", key: "fact:fact-1" },
+  depth: 1,
+  limit: 48,
+};
+
 beforeEach(() => {
   sessionStorage.clear();
   localStorage.clear();
@@ -199,6 +267,72 @@ describe("UserPortalApp", () => {
     expect(screen.queryByLabelText("Inspector")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Open details" }));
     expect(screen.getByLabelText("Inspector")).toBeInTheDocument();
+  });
+
+  it("opens the graph tab and loads the overview graph", async () => {
+    const fetchMock = mockUserFetch(baseSession, [], { graphSnapshot: overviewGraph });
+    sessionStorage.setItem("denseMem.userApiKey", "dm_read");
+
+    render(<UserPortalApp />);
+    await screen.findByText("Research Team");
+    await userEvent.click(screen.getByRole("button", { name: /graph/i }));
+
+    expect(await screen.findByLabelText("Knowledge graph")).toBeInTheDocument();
+    expect((await screen.findAllByText("Alice works_on project-x")).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByLabelText("Graph totals")).toHaveTextContent("2");
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment&depth=1&limit=80",
+        expect.any(Object),
+      );
+    });
+  });
+
+  it("blocks graph refresh when every type filter is disabled", async () => {
+    const fetchMock = mockUserFetch(baseSession, [], { graphSnapshot: overviewGraph });
+    sessionStorage.setItem("denseMem.userApiKey", "dm_read");
+
+    render(<UserPortalApp />);
+    await screen.findByText("Research Team");
+    await userEvent.click(screen.getByRole("button", { name: /graph/i }));
+    const controls = await screen.findByLabelText("Graph controls");
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment&depth=1&limit=80",
+        expect.any(Object),
+      );
+    });
+    const graphCallCount = () => fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/ui/api/graph")).length;
+    const beforeDisabledRefresh = graphCallCount();
+
+    await userEvent.click(within(controls).getByRole("checkbox", { name: "Fact" }));
+    await userEvent.click(within(controls).getByRole("checkbox", { name: "Claim" }));
+    await userEvent.click(within(controls).getByRole("checkbox", { name: "Fragment" }));
+
+    const refresh = within(controls).getByRole("button", { name: "Refresh" });
+    expect(refresh).toBeDisabled();
+    await userEvent.click(refresh);
+    expect(graphCallCount()).toBe(beforeDisabledRefresh);
+  });
+
+  it("loads a local graph from the recall inspector", async () => {
+    const fetchMock = mockUserFetch(baseSession, [], { recallHits, communities: recallCommunities, graphSnapshot: localGraph });
+    sessionStorage.setItem("denseMem.userApiKey", "dm_read");
+
+    render(<UserPortalApp />);
+    await screen.findByText("Research Team");
+    await userEvent.type(screen.getByLabelText("Keyword"), "project");
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+    await screen.findByRole("listbox", { name: "Recall result list" });
+    await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
+
+    expect(await screen.findByTestId("force-graph")).toHaveTextContent("Alice works_on project-x");
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/ui/api/graph?scope=local&types=fact%2Cclaim%2Cfragment%2Cdream&anchor_type=fact&anchor_id=fact-1&depth=1&limit=48",
+        expect.any(Object),
+      );
+    });
   });
 
   it("resets stale source filters after a new recall search", async () => {
@@ -565,7 +699,7 @@ async function expectCurrentWorkspace(teamName: string) {
   expect(workspace).toHaveTextContent(teamName);
 }
 
-function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: { recallHits?: RecallHit[] | RecallHit[][]; communities?: Community[] } = {}) {
+function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: { recallHits?: RecallHit[] | RecallHit[][]; communities?: Community[]; graphSnapshot?: GraphSnapshot } = {}) {
   let currentTeam = session.team;
   let currentProfiles = profiles;
   let recallCallCount = 0;
@@ -598,6 +732,9 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: 
     }
     if (url.startsWith("/ui/api/telemetry") && method === "GET") {
       return jsonResponse({ data: telemetryForSession(session) });
+    }
+    if (url.startsWith("/ui/api/graph") && method === "GET") {
+      return jsonResponse({ data: options.graphSnapshot ?? overviewGraph });
     }
     if (url === `/api/v1/teams/${currentTeam.id}` && method === "PATCH") {
       const body = JSON.parse(String(init?.body));

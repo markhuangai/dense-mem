@@ -1,270 +1,182 @@
-# Dense-Mem Evaluation Tests
+# Dense-Mem Public RAG Evaluation
 
-This directory contains local-only RAG evaluation assets and run artifacts.
-The benchmark path is intentionally separate from production data: a seed pack
-is imported into a disposable local Dense-Mem team, recall is run through the
-same tool surface used by clients, and deterministic retrieval scores are
-written under `tests/eval/runs/`.
+This directory prepares and runs public retrieval evals against a dedicated
+local Dense-Mem stack. Public dataset downloads, generated seed data, database
+files, and run artifacts are local-only and ignored by git.
 
-## Current Layout
+## Layout
 
 ```text
 tests/eval/
   README.md
-  seeds/
-    .gitignore
-    local_eval_1k_v2/
-      seed_manifest.json
-      corpus.jsonl
-      cases.jsonl
-      qrels.jsonl
-      answers.jsonl
-      hard_negatives.jsonl
-      transforms.jsonl
-      licenses.md
-    local_eval_relational_1k_v1/
-      seed_manifest.json
-      corpus.jsonl
-      cases.jsonl
-      qrels.jsonl
-      answers.jsonl
-      hard_negatives.jsonl
-      transforms.jsonl
-      expected_dreams.jsonl
-      licenses.md
-    local_train_100k_v1/     # local ignored fixture
-      seed_manifest.json
-      suite.jsonl
-      corpus.jsonl
-      cases.jsonl
-      qrels.jsonl
-      answers.jsonl
-      hard_negatives.jsonl
-      transforms.jsonl
-      licenses.md
-    local_train_relational_100k_v1/ # local ignored fixture
-  suites/
-    local_eval_1k_v2.jsonl
-    local_eval_relational_1k_v1.jsonl
-  runs/
-    .gitignore
-  cache/
-    embeddings/
-      .gitignore
-  snapshots/
-    .gitignore
+  docker-compose.eval.yml
+  scripts/
+    prepare_full_public_rag_eval.py
+  data/       # ignored: downloaded and extracted public datasets
+  runtime/    # ignored: persistent eval-only Postgres, Neo4j, Redis, Prometheus data
+  seeds/      # ignored: generated full Dense-Mem seed packs
+  suites/     # ignored: generated full eval suites
+  runs/       # ignored: eval run artifacts
 ```
 
-`local_eval_1k_v2` is the committed local acceptance seed. It contains 1,000
-cases, 4,000 corpus rows, 3,000 hard negatives, and 1,000 qrels. The split is
-100 sanity cases plus 900 adversarial cases across obsolete corrections,
-explicit negation, alias collisions, temporal validity, quoted false claims,
-scope collisions, authority conflicts, retractions, unit traps, and conditional
-exceptions.
+## Public Axes
 
-`local_eval_relational_1k_v1` is the committed relational recall seed. It
-contains 1,000 cases, 4,000 corpus rows, 2,000 hard negatives, 1,000 qrels, and
-100 expected dream hypotheses. Each case uses typed claims and promoted facts
-with overlapping entity relationships, time windows, aliases, source authority,
-negation, retractions, and close-neighbor distractors. The dream slice scores
-related hypotheses separately from validated memory results.
+| Axis | Default Dataset | Purpose |
+| --- | --- | --- |
+| `beir_standard` | BEIR `scifact` | Standard ad-hoc retrieval with public qrels. |
+| `msmarco_passage` | BEIR `msmarco` | Large web passage retrieval. |
+| `hotpotqa_multihop` | BEIR `hotpotqa` | Multi-hop retrieval with supporting-evidence qrels. |
 
-The JSONL files are the source of truth for a run. Regenerate them only when
-intentionally changing the seed:
+The preparation script consumes BEIR-format `corpus.jsonl`, `queries.jsonl`,
+and `qrels/*.tsv` files from:
+
+`https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/{dataset}.zip`
+
+It downloads complete upstream dataset packages, then materializes every corpus
+package locally. By default, it materializes a deterministic budgeted seed of
+about 5,000 corpus rows across the three axes. Use `--max-corpus-docs 0` only
+when intentionally opting into the complete upstream corpora. Evidence text is
+capped below the server's per-entry validation limit.
+
+## Prepare Budgeted Eval Data
 
 ```bash
-go run ./cmd/eval-seedgen \
-  --preset local_eval_1k_v2 \
-  --out tests/eval/seeds/local_eval_1k_v2 \
-  --suite tests/eval/suites/local_eval_1k_v2.jsonl
+python3 tests/eval/scripts/prepare_full_public_rag_eval.py \
+  --seed-id public_rag_3axis_5k_v1 \
+  --source-seed-id public_rag_3axis_full_v1 \
+  --max-corpus-docs 5000
 ```
 
-Generate the relational held-out seed:
+`--source-seed-id public_rag_3axis_full_v1` keeps source document ids compatible
+with the already-imported partial local corpus, so direct import can skip rows
+that were already embedded.
 
-```bash
-go run ./cmd/eval-seedgen --preset local_eval_relational_1k_v1
-```
-
-`local_train_100k_v1` is a large local-only materialized fixture pack for
-training or load experiments. It lives beside other seeds so fixed fixture data
-has one location, but it is intentionally ignored by git because it is hundreds
-of MB. Before using it for a reported run, validate its manifest and keep the
-run artifacts with the seed hash.
-
-`local_train_relational_100k_v1` is the matching ignored relational training
-fixture. Generate it only for local training/load work:
-
-```bash
-go run ./cmd/eval-seedgen --preset local_train_relational_100k_v1
-```
-
-## Commands
-
-Validate the default committed seed and suite:
-
-```bash
-go run ./cmd/eval-runner --mode validate
-```
-
-Validate the committed relational seed and suite:
-
-```bash
-go run ./cmd/eval-runner \
-  --mode validate \
-  --seed tests/eval/seeds/local_eval_relational_1k_v1/seed_manifest.json \
-  --suite tests/eval/suites/local_eval_relational_1k_v1.jsonl
-```
-
-Validate the local 100k seed and colocated suite:
-
-```bash
-go run ./cmd/eval-runner \
-  --mode validate \
-  --seed tests/eval/seeds/local_train_100k_v1/seed_manifest.json \
-  --suite tests/eval/seeds/local_train_100k_v1/suite.jsonl \
-  --out tests/eval/runs/local_train_100k_v1_validate
-```
-
-Run a local live baseline against an already configured local instance:
-
-```bash
-DENSE_MEM_API_KEY=<read-write-key> \
-DENSE_MEM_CONTROL_TOKEN=<control-token> \
-scripts/eval-local.sh \
-  --mode baseline \
-  --import-seed \
-  --min-recall-at-k 0.80 \
-  --min-required-rank1-rate 0.55 \
-  --max-average-bad-at-k 0.20 \
-  --max-bad-rank1-rate 0.05 \
-  --out tests/eval/runs/$(date -u +%Y%m%dT%H%M%SZ)_baseline
-```
-
-Live seed imports call `remember` for fragment-only rows and `import_memories`
-for rows with typed claims. Fragment-only imports poll `get_memory_placement`
-for each corpus row. `local_eval_1k_v2` has 4,000 corpus rows, so one-shot
-import needs at least 8,000 tool requests before export and recall cases. For
-disposable eval compose runs, raise `RATE_LIMIT_PER_MINUTE` in `.env` before
-starting the server, then restart the server.
-
-For ranking/search-only experiments against `local_eval_1k_v2`, reuse the stable
-already-imported eval team and omit `--import-seed`. Re-import the 1k seed only
-when the stored data shape changes: seed corpus, embeddings,
-claim/fact extraction, import metadata, or write-path fields such as
-`valid_from` / `recorded_at`.
-
-The runner enables `EVALUATION_MODE_ENABLED`, imports corpus rows through
-`remember` or `import_memories`, runs the eval-only dream cycle when a seed
-declares expected dreams and the run imports the seed, exports
-fragment/claim/fact/dream mappings through `eval_list_knowledge_refs`, runs
-cases through `eval_run_recall_case`, scores with deterministic retrieval
-metrics, and writes:
+The command writes:
 
 ```text
-run_config.json
-seed_manifest.json
-suite.jsonl
-knowledge_mapping.json
-recall_traces.jsonl
-retrieval_scores.jsonl
-summary.json
-gate_result.json       # when gate flags are set
-comparison.json        # compare mode only
+tests/eval/data/beir/
+tests/eval/seeds/public_rag_3axis_5k_v1/
+tests/eval/suites/public_rag_3axis_5k_v1.jsonl
 ```
 
-Compare a candidate run to a baseline:
+Generated files are intentionally ignored by git.
+
+## Start Persistent Eval Stack
+
+Use the eval compose override so database state is kept under
+`tests/eval/runtime/` instead of anonymous Docker volumes:
 
 ```bash
+docker compose -p densemem_eval_full \
+  -f docker-compose.yml \
+  -f tests/eval/docker-compose.eval.yml \
+  up -d --build
+```
+
+Do not use this stack for production or ad-hoc manual memory work. It is a
+reusable eval database.
+
+## Import Budgeted Corpus Once
+
+Provision an eval API key in the persistent stack, then import the generated
+seed with `import` mode. Public corpora should use the direct eval import path:
+it batches embedding requests and writes `SourceFragment` rows directly into
+the eval-only Neo4j database while still running recall through the public tool
+surface later.
+
+```bash
+set -a
+. ./.env
+set +a
+
+go run ./cmd/eval-runner \
+  --mode import \
+  --seed tests/eval/seeds/public_rag_3axis_5k_v1/seed_manifest.json \
+  --suite tests/eval/suites/public_rag_3axis_5k_v1.jsonl \
+  --out tests/eval/runs/import_public_rag_3axis_5k_v1 \
+  --import-seed \
+  --import-concurrency 4 \
+  --direct-import \
+  --direct-import-team-id "$(jq -r .team_id tests/eval/runs/eval_full_profile.json)" \
+  --direct-import-batch-size 512 \
+  --neo4j-uri bolt://127.0.0.1:${NEO4J_BOLT_HOST_PORT:-17687} \
+  --neo4j-user "${NEO4J_USER}" \
+  --neo4j-database "${NEO4J_DATABASE:-neo4j}" \
+  --max-page-size 500
+```
+
+`import` mode imports corpus rows, validates qrel mappings, and writes artifacts
+without running recall cases. Omit `--direct-import` only when intentionally
+validating the `remember` write path on a small corpus.
+
+For clean budgeted databases, the resumable monitor adopts an existing import
+PID from the import run directory, restarts direct import if it exits before the
+`counts.corpus` target is present in Neo4j, verifies the final fragment count,
+and then runs the baseline eval without reimporting:
+
+```bash
+tests/eval/scripts/run_full_public_rag_eval_until_done.sh
+```
+
+The monitor writes current progress to
+`tests/eval/runs/full_eval_monitor/status.json`. It checks progress every
+60 seconds by default; set `SLEEP_SECONDS` to override the cadence.
+
+If the eval database already contains more fragments than the current budgeted
+seed, run import mode directly and reuse the generated mapping artifact instead
+of the monitor's global-count loop.
+
+Re-import only when one of these changes:
+
+- public dataset contents or selected qrels split
+- Dense-Mem import behavior
+- embedding provider, model, or dimensions
+- database schema/migrations
+- seed generation logic
+
+## Run Recall Without Reimporting
+
+After the budgeted corpus has been imported into the persistent eval stack, run
+baseline/candidate suites without `--import-seed`. Reuse the mapping artifact
+from the import run so the runner does not need to export the whole knowledge
+map:
+
+```bash
+go run ./cmd/eval-runner \
+  --mode baseline \
+  --seed tests/eval/seeds/public_rag_3axis_5k_v1/seed_manifest.json \
+  --suite tests/eval/suites/public_rag_3axis_5k_v1.jsonl \
+  --out tests/eval/runs/before_public_rag_3axis_5k_v1 \
+  --mapping tests/eval/runs/import_public_rag_3axis_5k_v1/knowledge_mapping.json \
+  --max-page-size 500
+
+go run ./cmd/eval-runner \
+  --mode candidate \
+  --seed tests/eval/seeds/public_rag_3axis_5k_v1/seed_manifest.json \
+  --suite tests/eval/suites/public_rag_3axis_5k_v1.jsonl \
+  --out tests/eval/runs/after_public_rag_3axis_5k_v1 \
+  --mapping tests/eval/runs/import_public_rag_3axis_5k_v1/knowledge_mapping.json \
+  --max-page-size 500
+
 go run ./cmd/eval-runner \
   --mode compare \
-  --baseline-run tests/eval/runs/<baseline> \
-  --candidate-run tests/eval/runs/<candidate>
+  --baseline-run tests/eval/runs/before_public_rag_3axis_5k_v1 \
+  --candidate-run tests/eval/runs/after_public_rag_3axis_5k_v1 \
+  --out tests/eval/runs/compare_public_rag_3axis_5k_v1
 ```
 
-## Scoring
+## Reset Eval State
 
-Retrieval scoring is deterministic and uses:
+First stop the persistent eval stack:
 
-```text
-ranked_refs + qrels.required_refs + qrels.bad_refs
-  -> Recall@K
-  -> MRR
-  -> nDCG@K
-  -> Bad@K
-  -> required_rank1_rate
-  -> bad_rank1_rate
+```bash
+docker compose -p densemem_eval_full \
+  -f docker-compose.yml \
+  -f tests/eval/docker-compose.eval.yml \
+  down
 ```
 
-When a trace includes `context_refs`, the runner also scores the assembled
-context with the same qrels and writes separate `context_*` metrics:
-
-```text
-context_refs + qrels.required_refs + qrels.bad_refs
-  -> average_context_recall_at_k
-  -> average_context_mrr
-  -> average_context_ndcg_at_k
-  -> average_context_bad_at_k
-  -> context_required_rank1_rate
-  -> context_bad_rank1_rate
-```
-
-The original ranked metrics are unchanged. Use the context metrics when the
-question is whether a judged-bad item reached the final assembled context, not
-only whether it appeared in the raw ranked retrieval list.
-
-When a trace includes `context_evidence_refs` and the qrel includes
-`required_evidence_refs` or `bad_evidence_refs`, the runner scores supporting
-fragments separately and writes `evidence_*` metrics:
-
-```text
-context_evidence_refs + qrels.required_evidence_refs + qrels.bad_evidence_refs
-  -> average_evidence_recall_at_k
-  -> average_evidence_mrr
-  -> average_evidence_ndcg_at_k
-  -> average_evidence_bad_at_k
-  -> evidence_required_rank1_rate
-  -> evidence_bad_rank1_rate
-```
-
-Use evidence metrics when the top-level fact or claim is correct but its
-assembled supporting fragments may be stale, wrong, or missing.
-
-When a trace includes `dream_refs` and the qrel includes `required_dream_refs`
-or `bad_dream_refs`, the runner scores hypothesis recall separately:
-
-```text
-dream_refs + qrels.required_dream_refs + qrels.bad_dream_refs
-  -> average_dream_recall_at_k
-  -> average_dream_mrr
-  -> average_dream_ndcg_at_k
-  -> average_dream_bad_at_k
-  -> dream_required_rank1_rate
-  -> dream_bad_rank1_rate
-```
-
-Dream metrics do not change the ordinary ranked, context, or evidence metrics.
-Expected dream qrels are mapped through `expected_dreams.jsonl` by matching the
-dream source-ref set exported from `eval_list_knowledge_refs`.
-
-`source_doc_id` labels are remapped to Dense-Mem refs after import or export.
-The mapping keeps a backward-compatible default fragment ref and also supports
-type-aware refs for seeds that use the same `source_doc_id` as a fragment,
-claim, and fact. This remapping also applies to evidence qrels. Unmapped
-required refs are reported in `unmapped_source_refs` and still penalize the
-denominator, so mapping problems cannot silently inflate scores.
-
-Validation also checks manifest counts, qrel source-doc coverage, suite case
-coverage, and adversarial cases having explicit `bad_refs`.
-
-## Remaining Work
-
-Embeddings and materialized Postgres/Neo4j snapshots are cache artifacts. They
-should be reused when the seed hash, schema hash, embedding provider, model, and
-dimensions match; the JSONL seed remains the source of truth. Snapshot restore
-and embedding-cache reuse are not implemented in the runner yet.
-
-For fine-tuning, do not train on the same cases used for acceptance gates.
-Materialize or download training data separately, and keep committed local eval
-seeds and future release suites as held-out evaluation sets. The ignored 100k
-synthetic seed is useful for local load, reranker plumbing, and training-data
-format work, but it is too repetitive to be the only real fine-tuning corpus.
+Then delete the ignored eval directories only after confirming that no generated
+datasets, persistent database files, seeds, suites, or run artifacts need to be
+kept. The reset targets are `tests/eval/data`, `tests/eval/runtime`,
+`tests/eval/seeds`, `tests/eval/suites`, and `tests/eval/runs`.

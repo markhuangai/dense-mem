@@ -109,6 +109,53 @@ const communities = [
   },
 ];
 
+const graphSnapshot = {
+  scope: "overview",
+  depth: 1,
+  limit: 80,
+  truncated: false,
+  nodes: [
+    {
+      key: "fact:fact-1",
+      id: "fact-1",
+      type: "fact",
+      title: "Alice works_on project-x",
+      body: "project-x",
+      status: "active",
+      community_id: "community-1",
+      score: 0.94,
+      recorded_at: "2026-05-02T12:00:00Z",
+    },
+    {
+      key: "claim:claim-1",
+      id: "claim-1",
+      type: "claim",
+      title: "Alice uses Dense-Mem",
+      body: "Dense-Mem",
+      status: "validated",
+      community_id: "community-1",
+      score: 0.88,
+      recorded_at: "2026-05-02T12:00:00Z",
+    },
+    {
+      key: "fragment:frag-1",
+      id: "frag-1",
+      type: "fragment",
+      title: "Alice is working on project-x with Dense-Mem.",
+      body: "Alice is working on project-x with Dense-Mem.",
+      status: "active",
+      community_id: "community-1",
+      source: "notes",
+      score: 0.75,
+      recorded_at: "2026-05-02T12:00:00Z",
+    },
+  ],
+  edges: [
+    { id: "edge-1", source: "claim:claim-1", target: "fact:fact-1", relationship: "PROMOTES_TO", directed: true },
+    { id: "edge-2", source: "claim:claim-1", target: "fragment:frag-1", relationship: "SUPPORTED_BY", directed: true },
+  ],
+};
+
 const telemetryCards = [
   { id: "http_requests", label: "HTTP requests", unit: "requests", value: 9 },
   { id: "http_errors", label: "HTTP errors", unit: "requests", value: 1 },
@@ -224,6 +271,33 @@ test("API key login, recall, and read-only knowledge tabs", async ({ page }) => 
   await expect(page.getByText("Project work around Dense-Mem.")).toBeVisible();
   expect(calls.disallowedProfileCalls).toEqual([]);
   expect(calls.telemetryRequests).toEqual([]);
+});
+
+test("graph tab renders a nonblank memory graph", async ({ page }) => {
+  const calls = await mockUserApi(page, { key: readKey, canRotate: false });
+  await openUserPortal(page, "dm_read");
+
+  await page.getByRole("button", { name: "Graph" }).click();
+  await expect(page.getByLabel("Knowledge graph")).toBeVisible();
+  await expect(page.getByLabel("Graph inspector")).toContainText("Alice works_on project-x");
+  const canvas = page.locator(".graph-canvas canvas").first();
+  await expect(canvas).toBeVisible();
+  await expect.poll(async () => canvas.evaluate((element) => {
+    const canvasElement = element as HTMLCanvasElement;
+    const context = canvasElement.getContext("2d");
+    if (!context || canvasElement.width === 0 || canvasElement.height === 0) {
+      return 0;
+    }
+    const data = context.getImageData(0, 0, canvasElement.width, canvasElement.height).data;
+    let painted = 0;
+    for (let index = 3; index < data.length; index += 4) {
+      if (data[index] > 0) {
+        painted += 1;
+      }
+    }
+    return painted;
+  })).toBeGreaterThan(0);
+  expect(calls.graphRequests.some((url) => url.includes("/ui/api/graph?scope=overview"))).toBe(true);
 });
 
 test("read-only key cannot regenerate itself", async ({ page }) => {
@@ -428,6 +502,7 @@ async function mockUserApi(
     rotateBodies: [] as string[],
     disallowedProfileCalls: [] as string[],
     telemetryRequests: [] as string[],
+    graphRequests: [] as string[],
   };
   let currentTeam = { ...team };
   let currentKey = { ...state.key };
@@ -527,6 +602,15 @@ async function mockUserApi(
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({ data: telemetryForKey(currentKey) }),
+    });
+  });
+
+  await page.route("**/ui/api/graph**", async (route) => {
+    calls.graphRequests.push(route.request().url());
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ data: graphSnapshot }),
     });
   });
 

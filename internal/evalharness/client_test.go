@@ -3,9 +3,11 @@ package evalharness
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -97,7 +99,7 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Fatalf("decode recall body: %v", err)
 			}
-			if input["case_id"] != "case-alpha" || input["limit"] != float64(3) || input["valid_at"] != "2026-06-25T00:00:00Z" {
+			if input["case_id"] != "case-alpha" || input["limit"] != float64(3) || input["valid_at"] != "2026-06-25T00:00:00Z" || input["use_communities"] != true {
 				t.Fatalf("recall input = %#v", input)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -160,10 +162,11 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 	}
 
 	trace, err := client.RunRecallCase(context.Background(), Case{
-		CaseID:  "case-alpha",
-		Query:   "alpha query",
-		Limit:   3,
-		ValidAt: "2026-06-25T00:00:00Z",
+		CaseID:         "case-alpha",
+		Query:          "alpha query",
+		Limit:          3,
+		ValidAt:        "2026-06-25T00:00:00Z",
+		UseCommunities: true,
 	})
 	if err != nil {
 		t.Fatalf("RunRecallCase: %v", err)
@@ -318,6 +321,54 @@ func TestHTTPClientImportCorpusUsesImportMemoriesForTypedClaims(t *testing.T) {
 	}
 	if mapping.BySourceDocIDAndType["doc-tiered:fact:1"]["fact"][0].ID != "fact-tiered" {
 		t.Fatalf("fact alias mapping = %+v", mapping.BySourceDocIDAndType)
+	}
+}
+
+func TestHTTPClientImportCorpusWithConcurrency(t *testing.T) {
+	var active int32
+	var maxActive int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := atomic.AddInt32(&active, 1)
+		for {
+			seen := atomic.LoadInt32(&maxActive)
+			if current <= seen || atomic.CompareAndSwapInt32(&maxActive, seen, current) {
+				break
+			}
+		}
+		defer atomic.AddInt32(&active, -1)
+		time.Sleep(25 * time.Millisecond)
+
+		var input map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		evidence := input["evidence"].([]any)[0].(map[string]any)
+		sourceDocID := strings.TrimPrefix(evidence["idempotency_key"].(string), "eval:")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"fragment": map[string]any{"id": "fragment-" + sourceDocID},
+		})
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	mapping, err := client.ImportCorpusWithConcurrency(context.Background(), []CorpusItem{
+		{SourceDocID: "doc-1", Content: "content 1"},
+		{SourceDocID: "doc-2", Content: "content 2"},
+		{SourceDocID: "doc-3", Content: "content 3"},
+		{SourceDocID: "doc-4", Content: "content 4"},
+	}, 2)
+
+	if err != nil {
+		t.Fatalf("ImportCorpusWithConcurrency: %v", err)
+	}
+	if atomic.LoadInt32(&maxActive) < 2 {
+		t.Fatalf("max concurrent imports = %d, want at least 2", maxActive)
+	}
+	for i := 1; i <= 4; i++ {
+		sourceDocID := fmt.Sprintf("doc-%d", i)
+		if mapping.BySourceDocID[sourceDocID].ID != "fragment-"+sourceDocID {
+			t.Fatalf("mapping[%s] = %+v", sourceDocID, mapping.BySourceDocID[sourceDocID])
+		}
 	}
 }
 
