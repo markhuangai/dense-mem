@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UserPortalApp } from "./App";
-import { Community, GraphSnapshot, RecallHit, UserKey, UserSession } from "./api";
+import { GraphSnapshot, RecallHit, UserKey, UserSession } from "./api";
 
 vi.mock("react-force-graph-2d", async () => {
   const React = await import("react");
@@ -128,18 +128,6 @@ const recallHits: RecallHit[] = [
   },
 ];
 
-const recallCommunities: Community[] = [
-  {
-    community_id: "community-1",
-    level: 0,
-    summary: "Project work around Dense-Mem.",
-    member_count: 3,
-    top_entities: ["Alice", "project-x", "Dense-Mem"],
-    top_predicates: ["works_on", "uses"],
-    last_summarized_at: "2026-05-02T12:00:00Z",
-  },
-];
-
 const overviewGraph: GraphSnapshot = {
   scope: "overview",
   depth: 1,
@@ -201,6 +189,10 @@ describe("UserPortalApp", () => {
     expect(screen.getByLabelText("Knowledge navigation")).toHaveClass("top-nav-bar");
     expect(screen.getByLabelText("Knowledge sections")).toHaveClass("top-nav-tabs");
     expect(screen.getByLabelText("Current workspace")).not.toHaveTextContent("Mine");
+    expect(screen.queryByRole("button", { name: "Facts" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Claims" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Fragments" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Communities" })).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/profiles"))).toBe(false);
   });
 
@@ -227,7 +219,7 @@ describe("UserPortalApp", () => {
   });
 
   it("filters recall results and updates the inspector selection", async () => {
-    mockUserFetch(baseSession, [], { recallHits, communities: recallCommunities });
+    mockUserFetch(baseSession, [], { recallHits });
     sessionStorage.setItem("denseMem.userApiKey", "dm_read");
 
     render(<UserPortalApp />);
@@ -326,7 +318,7 @@ describe("UserPortalApp", () => {
   });
 
   it("loads a local graph from the recall inspector", async () => {
-    const fetchMock = mockUserFetch(baseSession, [], { recallHits, communities: recallCommunities, graphSnapshot: localGraph });
+    const fetchMock = mockUserFetch(baseSession, [], { recallHits, graphSnapshot: localGraph });
     sessionStorage.setItem("denseMem.userApiKey", "dm_read");
 
     render(<UserPortalApp />);
@@ -346,7 +338,7 @@ describe("UserPortalApp", () => {
   });
 
   it("resets stale source filters after a new recall search", async () => {
-    mockUserFetch(baseSession, [], { recallHits: [recallHits, [recallHits[0]]], communities: recallCommunities });
+    mockUserFetch(baseSession, [], { recallHits: [recallHits, [recallHits[0]]] });
     sessionStorage.setItem("denseMem.userApiKey", "dm_read");
 
     render(<UserPortalApp />);
@@ -709,7 +701,7 @@ async function expectCurrentWorkspace(teamName: string) {
   expect(workspace).toHaveTextContent(teamName);
 }
 
-function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: { recallHits?: RecallHit[] | RecallHit[][]; communities?: Community[]; graphSnapshot?: GraphSnapshot } = {}) {
+function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: { recallHits?: RecallHit[] | RecallHit[][]; graphSnapshot?: GraphSnapshot } = {}) {
   let currentTeam = session.team;
   let currentProfiles = profiles;
   let recallCallCount = 0;
@@ -782,9 +774,6 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: 
     if (url.includes(`/api/v1/teams/${currentTeam.id}/profiles/`) && method === "DELETE") {
       currentProfiles = currentProfiles.filter((profile) => !url.endsWith(`/profiles/${profile.id}`));
       return jsonResponse({ data: { status: "deleted" } });
-    }
-    if (url.startsWith("/api/v1/communities")) {
-      return jsonResponse({ items: options.communities ?? [] });
     }
     if (url.startsWith("/api/v1/recall")) {
       const configuredHits = options.recallHits ?? [];
@@ -904,9 +893,6 @@ function mockSSOUserFetch(initial: UserSession, switched: UserSession, options: 
         return jsonResponse({ message: "logout failed" }, options.logoutStatus);
       }
       return jsonResponse({ data: { status: "signed_out" } });
-    }
-    if (url.startsWith("/api/v1/communities")) {
-      return jsonResponse({ items: [] });
     }
     if (url.startsWith("/api/v1/recall")) {
       return jsonResponse({ data: [] });

@@ -97,18 +97,6 @@ const fragments = [
   },
 ];
 
-const communities = [
-  {
-    community_id: "community-1",
-    level: 0,
-    summary: "Project work around Dense-Mem.",
-    member_count: 3,
-    top_entities: ["Alice", "project-x", "Dense-Mem"],
-    top_predicates: ["works_on", "uses"],
-    last_summarized_at: "2026-05-02T12:00:00Z",
-  },
-];
-
 const graphSnapshot = {
   scope: "overview",
   depth: 1,
@@ -230,7 +218,7 @@ const telemetry = {
   state_series: telemetrySeries.filter((series) => currentTelemetryIds.has(series.id)),
 };
 
-test("API key login, recall, and read-only knowledge tabs", async ({ page }) => {
+test("API key login, recall, and read-only navigation", async ({ page }) => {
   const calls = await mockUserApi(page, { key: readKey, canRotate: false });
   await openUserPortal(page, "dm_read");
 
@@ -257,18 +245,10 @@ test("API key login, recall, and read-only knowledge tabs", async ({ page }) => 
   await expect(page.getByLabel("Inspector")).toContainText("Alice is working on project-x with Dense-Mem.");
 
   await expect(page.getByRole("button", { name: "Usage" })).toHaveCount(0);
-
-  await page.getByRole("button", { name: "Facts" }).click();
-  await expect(page.getByText("works_on: project-x")).toBeVisible();
-
-  await page.getByRole("button", { name: "Claims" }).click();
-  await expect(page.getByText("uses: Dense-Mem")).toBeVisible();
-
-  await page.getByRole("button", { name: "Fragments" }).click();
-  await expect(page.getByText("Alice is working on project-x with Dense-Mem.")).toBeVisible();
-
-  await page.getByRole("button", { name: "Communities" }).click();
-  await expect(page.getByText("Project work around Dense-Mem.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Facts" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Claims" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Fragments" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Communities" })).toHaveCount(0);
   expect(calls.disallowedProfileCalls).toEqual([]);
   expect(calls.telemetryRequests).toEqual([]);
 });
@@ -626,22 +606,6 @@ async function mockUserApi(
         ],
       }),
     });
-  });
-
-  await page.route("**/api/v1/facts**", async (route) => {
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: facts, has_more: false }) });
-  });
-
-  await page.route("**/api/v1/claims**", async (route) => {
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: claims, has_more: false }) });
-  });
-
-  await page.route("**/api/v1/fragments**", async (route) => {
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: fragments, has_more: false }) });
-  });
-
-  await page.route("**/api/v1/communities**", async (route) => {
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: communities, total: communities.length }) });
   });
 
   return calls;

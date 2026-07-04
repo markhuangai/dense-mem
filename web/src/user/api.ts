@@ -121,16 +121,6 @@ export type Fact = {
   labels?: string[];
 };
 
-export type Community = {
-  community_id: string;
-  level: number;
-  summary: string;
-  member_count: number;
-  top_entities?: string[];
-  top_predicates?: string[];
-  last_summarized_at: string;
-};
-
 export type ListResponse<T> = {
   items: T[];
   next_cursor?: string;
@@ -395,22 +385,6 @@ export class UserApi {
     const suffix = params.toString() ? `?${params.toString()}` : "";
     const payload = await this.request<Envelope<GraphSnapshot>>(`/ui/api/graph${suffix}`);
     return payload.data;
-  }
-
-  listFacts(limit = 20): Promise<ListResponse<Fact>> {
-    return this.request<ListResponse<Fact>>(`/api/v1/facts?limit=${limit}`);
-  }
-
-  listClaims(limit = 20): Promise<ListResponse<Claim>> {
-    return this.request<ListResponse<Claim>>(`/api/v1/claims?limit=${limit}`);
-  }
-
-  listFragments(limit = 20): Promise<ListResponse<Fragment>> {
-    return this.request<ListResponse<Fragment>>(`/api/v1/fragments?limit=${limit}`);
-  }
-
-  listCommunities(limit = 20): Promise<ListResponse<Community>> {
-    return this.request<ListResponse<Community>>(`/api/v1/communities?limit=${limit}`);
   }
 
   async dreamingStatus(): Promise<DreamStatus> {

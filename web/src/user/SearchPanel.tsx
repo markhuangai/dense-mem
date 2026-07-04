@@ -9,7 +9,7 @@ import {
   X,
 } from "lucide-react";
 import { LoadingState, SectionHeading } from "../ui/components";
-import { Claim, Community, Fact, Fragment, GraphNodeType, RecallHit, UserApi } from "./api";
+import { Claim, Fact, Fragment, GraphNodeType, RecallHit, UserApi } from "./api";
 
 const ResultGraphPreview = lazy(() => import("./GraphPanel").then((module) => ({ default: module.ResultGraphPreview })));
 
@@ -28,7 +28,6 @@ type IndexedRecallResult = {
 export function SearchPanel({ api }: { api: UserApi }) {
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<RecallHit[]>([]);
-  const [communities, setCommunities] = useState<Community[]>([]);
   const [selectedKey, setSelectedKey] = useState("");
   const [enabledTypes, setEnabledTypes] = useState<Record<RecallResultKind, boolean>>({
     fact: true,
@@ -62,12 +61,8 @@ export function SearchPanel({ api }: { api: UserApi }) {
     setLoading(true);
     setError("");
     try {
-      const [nextHits, nextCommunities] = await Promise.all([
-        api.recall(trimmed, 10),
-        api.listCommunities(20).catch(() => ({ items: [] as Community[] })),
-      ]);
+      const nextHits = await api.recall(trimmed, 10);
       setHits(nextHits);
-      setCommunities(nextCommunities.items);
       setSourceFilter("all");
       setInspectorOpen(true);
       setInspectorTab("evidence");
@@ -79,7 +74,7 @@ export function SearchPanel({ api }: { api: UserApi }) {
     }
   }
 
-  const entities = useMemo(() => deriveEntities(hits, communities), [hits, communities]);
+  const entities = useMemo(() => deriveEntities(hits), [hits]);
   const indexedHits = useMemo(() => hits.map((hit, index) => ({
     hit,
     key: recallKey(hit, index),
@@ -486,7 +481,7 @@ function recallGraphAnchor(result: IndexedRecallResult): { type: GraphNodeType; 
   return null;
 }
 
-function deriveEntities(hits: RecallHit[], communities: Community[]): string[] {
+function deriveEntities(hits: RecallHit[]): string[] {
   const values = new Set<string>();
   for (const hit of hits) {
     const source = hit.fact ?? hit.claim;
@@ -494,11 +489,6 @@ function deriveEntities(hits: RecallHit[], communities: Community[]): string[] {
       addEntity(values, source.subject);
       addEntity(values, source.object);
       addEntity(values, source.predicate);
-    }
-  }
-  for (const community of communities) {
-    for (const entity of community.top_entities ?? []) {
-      addEntity(values, entity);
     }
   }
   return Array.from(values).slice(0, 20);
