@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -138,8 +140,24 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 	}
 	defer resp.Body.Close()
 
+	rawBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", &ProviderError{
+			Provider: "openai",
+			Message:  "failed to read response",
+			Cause:    err,
+		}
+	}
+
 	var respBody openAIEmbeddingResponse
-	if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
+	if err := json.Unmarshal(rawBody, &respBody); err != nil {
+		if resp.StatusCode != http.StatusOK {
+			return nil, "", &ProviderHTTPError{
+				Status:     resp.StatusCode,
+				Message:    nonJSONHTTPMessage(rawBody),
+				RetryAfter: retryAfterDuration(resp.Header.Get("Retry-After")),
+			}
+		}
 		return nil, "", &ProviderError{
 			Provider: "openai",
 			Message:  "failed to decode response",
@@ -153,8 +171,9 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 			msg = respBody.Error.Message
 		}
 		return nil, "", &ProviderHTTPError{
-			Status:  resp.StatusCode,
-			Message: msg,
+			Status:     resp.StatusCode,
+			Message:    msg,
+			RetryAfter: retryAfterDuration(resp.Header.Get("Retry-After")),
 		}
 	}
 
@@ -181,6 +200,34 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 	}
 
 	return result, p.model, nil
+}
+
+func nonJSONHTTPMessage(body []byte) string {
+	msg := strings.TrimSpace(string(body))
+	if msg == "" {
+		return "non-JSON response"
+	}
+	const maxMessageLen = 240
+	if len(msg) > maxMessageLen {
+		msg = msg[:maxMessageLen] + "..."
+	}
+	return "non-JSON response: " + msg
+}
+
+func retryAfterDuration(value string) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.ParseFloat(value, 64); err == nil && seconds > 0 {
+		return time.Duration(seconds * float64(time.Second))
+	}
+	if retryAt, err := http.ParseTime(value); err == nil {
+		if delay := time.Until(retryAt); delay > 0 {
+			return delay
+		}
+	}
+	return 0
 }
 
 // ModelName returns the configured model identifier.

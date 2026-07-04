@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/evalharness"
@@ -15,16 +16,25 @@ func main() {
 	var opts evalharness.RunOptions
 	var baselineRun string
 	var candidateRun string
-	flag.StringVar(&opts.Mode, "mode", "validate", "validate, baseline, candidate, or compare")
-	flag.StringVar(&opts.SeedManifestPath, "seed", "tests/eval/seeds/local_eval_1k_v2/seed_manifest.json", "seed manifest path")
-	flag.StringVar(&opts.SuitePath, "suite", "tests/eval/suites/local_eval_1k_v2.jsonl", "suite JSONL path")
+	flag.StringVar(&opts.Mode, "mode", "validate", "validate, import, baseline, candidate, or compare")
+	flag.StringVar(&opts.SeedManifestPath, "seed", "tests/eval/seeds/public_rag_3axis_5k_v1/seed_manifest.json", "seed manifest path")
+	flag.StringVar(&opts.SuitePath, "suite", "tests/eval/suites/public_rag_3axis_5k_v1.jsonl", "suite JSONL path")
 	flag.StringVar(&opts.OutDir, "out", "", "output run directory")
 	flag.StringVar(&opts.BaseURL, "base-url", env("DENSE_MEM_BASE_URL", "http://127.0.0.1:8080"), "Dense-Mem HTTP base URL")
 	flag.StringVar(&opts.APIKey, "api-key", env("DENSE_MEM_API_KEY", ""), "read/write API key")
 	flag.StringVar(&opts.ControlURL, "control-url", env("DENSE_MEM_CONTROL_URL", "http://127.0.0.1:8090"), "control portal base URL")
 	flag.StringVar(&opts.ControlToken, "control-token", env("DENSE_MEM_CONTROL_TOKEN", ""), "control portal token")
 	flag.BoolVar(&opts.ImportSeed, "import-seed", false, "import corpus through remember before running cases")
+	flag.IntVar(&opts.ImportConcurrency, "import-concurrency", envInt("DENSE_MEM_EVAL_IMPORT_CONCURRENCY", 1), "maximum concurrent seed import requests")
+	flag.BoolVar(&opts.DirectImport, "direct-import", envBool("DENSE_MEM_EVAL_DIRECT_IMPORT", false), "import fragment-only corpus directly into Neo4j with batched embeddings")
+	flag.IntVar(&opts.DirectImportBatch, "direct-import-batch-size", envInt("DENSE_MEM_EVAL_DIRECT_IMPORT_BATCH_SIZE", 32), "maximum rows per direct-import embedding/write batch")
+	flag.StringVar(&opts.DirectImportTeam, "direct-import-team-id", env("DENSE_MEM_EVAL_DIRECT_IMPORT_TEAM_ID", ""), "team id for direct Neo4j eval import")
+	flag.StringVar(&opts.Neo4jURI, "neo4j-uri", env("DENSE_MEM_EVAL_NEO4J_URI", ""), "Neo4j URI override for direct eval import")
+	flag.StringVar(&opts.Neo4jUser, "neo4j-user", env("DENSE_MEM_EVAL_NEO4J_USER", ""), "Neo4j user override for direct eval import")
+	flag.StringVar(&opts.Neo4jPassword, "neo4j-password", env("DENSE_MEM_EVAL_NEO4J_PASSWORD", ""), "Neo4j password override for direct eval import")
+	flag.StringVar(&opts.Neo4jDatabase, "neo4j-database", env("DENSE_MEM_EVAL_NEO4J_DATABASE", ""), "Neo4j database override for direct eval import")
 	flag.StringVar(&opts.TracesPath, "traces", "", "offline recall_traces.jsonl path to score instead of running live")
+	flag.StringVar(&opts.MappingPath, "mapping", "", "offline knowledge_mapping.json path to use with --traces")
 	flag.IntVar(&opts.MaxPageSize, "max-page-size", 100, "evaluation export max page size")
 	flag.StringVar(&opts.RunID, "run-id", "", "optional stable run id")
 	flag.StringVar(&baselineRun, "baseline-run", "", "baseline run directory for compare mode")
@@ -41,6 +51,10 @@ func main() {
 	registerFloatGate("min-evidence-required-rank1-rate", "minimum share of evidence-scored cases with a required evidence ref first", &opts.Gates.MinEvidenceRequiredRank1Rate, validateRate)
 	registerFloatGate("max-average-evidence-bad-at-k", "maximum average bad evidence refs@k allowed when evidence qrels are present", &opts.Gates.MaxAverageEvidenceBadAtK, validateNonNegative)
 	registerFloatGate("max-evidence-bad-rank1-rate", "maximum share of evidence-scored cases with a bad evidence ref first", &opts.Gates.MaxEvidenceBadRank1Rate, validateRate)
+	registerFloatGate("min-dream-recall-at-k", "minimum average dream recall@k required when dream qrels are present", &opts.Gates.MinDreamRecallAtK, validateRate)
+	registerFloatGate("min-dream-required-rank1-rate", "minimum share of dream-scored cases with a required dream ref first", &opts.Gates.MinDreamRequiredRank1Rate, validateRate)
+	registerFloatGate("max-average-dream-bad-at-k", "maximum average bad dream refs@k allowed when dream qrels are present", &opts.Gates.MaxAverageDreamBadAtK, validateNonNegative)
+	registerFloatGate("max-dream-bad-rank1-rate", "maximum share of dream-scored cases with a bad dream ref first", &opts.Gates.MaxDreamBadRank1Rate, validateRate)
 	flag.Parse()
 
 	ctx := context.Background()
@@ -65,6 +79,14 @@ func main() {
 				comparison.EvidenceMRRDelta,
 				comparison.EvidenceNDCGDelta,
 				comparison.EvidenceBadAtKDelta,
+			)
+		}
+		if comparison.DreamRecallDelta != 0 || comparison.DreamMRRDelta != 0 || comparison.DreamNDCGDelta != 0 || comparison.DreamBadAtKDelta != 0 {
+			msg += fmt.Sprintf(" dream_recall_delta=%.4f dream_mrr_delta=%.4f dream_ndcg_delta=%.4f dream_bad_at_k_delta=%.4f",
+				comparison.DreamRecallDelta,
+				comparison.DreamMRRDelta,
+				comparison.DreamNDCGDelta,
+				comparison.DreamBadAtKDelta,
 			)
 		}
 		fmt.Println(msg)
@@ -112,6 +134,17 @@ func main() {
 			summary.EvidenceBadRank1Rate,
 		)
 	}
+	if summary.DreamScoredCaseCount > 0 {
+		msg += fmt.Sprintf(" dream_scored=%d dream_recall_at_k=%.4f dream_mrr=%.4f dream_ndcg_at_k=%.4f dream_bad_at_k=%.4f dream_required_rank1=%.4f dream_bad_rank1=%.4f",
+			summary.DreamScoredCaseCount,
+			summary.AverageDreamRecallAtK,
+			summary.AverageDreamMRR,
+			summary.AverageDreamNDCGAtK,
+			summary.AverageDreamBadAtK,
+			summary.DreamRequiredRank1Rate,
+			summary.DreamBadRank1Rate,
+		)
+	}
 	fmt.Printf("%s out=%s\n", msg, opts.OutDir)
 }
 
@@ -148,6 +181,30 @@ func env(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envInt(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func envBool(key string, fallback bool) bool {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func exitf(format string, args ...any) {

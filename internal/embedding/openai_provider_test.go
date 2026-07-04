@@ -105,6 +105,33 @@ func TestOpenAIProvider_Non200Response(t *testing.T) {
 	assert.Contains(t, httpErr.Message, "Invalid API key")
 }
 
+func TestOpenAIProvider_NonJSONServerErrorIsHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "2.5")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`upstream unavailable`))
+	}))
+	defer srv.Close()
+
+	cfg := &config.Config{
+		AIAPIURL:                  srv.URL,
+		AIAPIKey:                  "key",
+		AIEmbeddingModel:          "m",
+		AIEmbeddingDimensions:     2,
+		AIEmbeddingTimeoutSeconds: 5,
+	}
+	p := NewOpenAIEmbeddingProvider(cfg, srv.Client())
+
+	_, _, err := p.Embed(context.Background(), "test")
+	require.Error(t, err)
+	var httpErr *ProviderHTTPError
+	require.ErrorAs(t, err, &httpErr)
+	assert.Equal(t, http.StatusBadGateway, httpErr.Status)
+	assert.Contains(t, httpErr.Message, "non-JSON response")
+	assert.Contains(t, httpErr.Message, "upstream unavailable")
+	assert.Equal(t, 2500*time.Millisecond, httpErr.RetryAfter)
+}
+
 func TestOpenAIProvider_WrongDimensions(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Return embedding with wrong dimensions

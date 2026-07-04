@@ -94,6 +94,37 @@ func mergeKnowledgeMapping(dst *KnowledgeMapping, src KnowledgeMapping) {
 	}
 }
 
+func mergeFilteredKnowledgeMapping(dst *KnowledgeMapping, src KnowledgeMapping, keepSourceDocIDs map[string]struct{}) {
+	if len(keepSourceDocIDs) == 0 {
+		mergeKnowledgeMapping(dst, src)
+		return
+	}
+	for sourceDocID, ref := range src.BySourceDocID {
+		if _, ok := keepSourceDocIDs[sourceDocID]; ok {
+			addSourceMapping(dst, ref, true)
+		}
+	}
+	for sourceDocID, byType := range src.BySourceDocIDAndType {
+		if _, ok := keepSourceDocIDs[sourceDocID]; !ok {
+			continue
+		}
+		for refType, refs := range byType {
+			for _, ref := range refs {
+				if ref.SourceDocID == "" {
+					ref.SourceDocID = sourceDocID
+				}
+				if ref.Type == "" {
+					ref.Type = refType
+				}
+				addSourceMapping(dst, ref, false)
+			}
+		}
+	}
+	for dreamID, refs := range src.DreamSourceRefsByID {
+		addDreamSourceRefs(dst, dreamID, refs)
+	}
+}
+
 func resolveSourceMapping(mapping KnowledgeMapping, sourceDocID, refType string) (Ref, bool) {
 	sourceDocID = strings.TrimSpace(sourceDocID)
 	refType = strings.TrimSpace(refType)

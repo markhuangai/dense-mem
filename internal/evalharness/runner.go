@@ -11,19 +11,28 @@ import (
 )
 
 type RunOptions struct {
-	Mode             string
-	SeedManifestPath string
-	SuitePath        string
-	OutDir           string
-	BaseURL          string
-	APIKey           string
-	ControlURL       string
-	ControlToken     string
-	ImportSeed       bool
-	TracesPath       string
-	MaxPageSize      int
-	RunID            string
-	Gates            GateOptions
+	Mode              string
+	SeedManifestPath  string
+	SuitePath         string
+	OutDir            string
+	BaseURL           string
+	APIKey            string
+	ControlURL        string
+	ControlToken      string
+	ImportSeed        bool
+	ImportConcurrency int
+	DirectImport      bool
+	DirectImportBatch int
+	DirectImportTeam  string
+	Neo4jURI          string
+	Neo4jUser         string
+	Neo4jPassword     string
+	Neo4jDatabase     string
+	TracesPath        string
+	MappingPath       string
+	MaxPageSize       int
+	RunID             string
+	Gates             GateOptions
 }
 
 func Run(ctx context.Context, opts RunOptions) (Summary, error) {
@@ -31,7 +40,7 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	if mode == "" {
 		mode = "validate"
 	}
-	if mode != "validate" && mode != "baseline" && mode != "candidate" {
+	if mode != "validate" && mode != "import" && mode != "baseline" && mode != "candidate" {
 		return Summary{}, fmt.Errorf("unsupported mode %q", mode)
 	}
 	if opts.SeedManifestPath == "" {
@@ -44,23 +53,39 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	if runID == "" {
 		runID = newRunID(mode)
 	}
-	manifest, corpus, cases, qrels, expectedDreams, suite, seedHash, err := loadRunInputs(opts.SeedManifestPath, opts.SuitePath)
+	manifest, cases, qrels, expectedDreams, suite, seedHash, err := loadRunInputsWithoutCorpus(opts.SeedManifestPath, opts.SuitePath)
 	if err != nil {
 		return Summary{}, err
 	}
-	if err := validateRunInputs(opts.SeedManifestPath, manifest, corpus, cases, qrels, expectedDreams, suite); err != nil {
-		return Summary{}, err
+	var corpus []CorpusItem
+	if mode == "validate" || (opts.ImportSeed && mode != "import") {
+		corpus, err = LoadCorpus(opts.SeedManifestPath, manifest)
+		if err != nil {
+			return Summary{}, err
+		}
+		if err := validateRunInputs(opts.SeedManifestPath, manifest, corpus, cases, qrels, expectedDreams, suite); err != nil {
+			return Summary{}, err
+		}
+	} else {
+		if err := validateRunInputsWithoutCorpus(opts.SeedManifestPath, manifest, cases, qrels, expectedDreams, suite); err != nil {
+			return Summary{}, err
+		}
 	}
 	runConfig := RunConfig{
-		RunID:        runID,
-		Mode:         mode,
-		SeedManifest: opts.SeedManifestPath,
-		SeedHash:     seedHash,
-		SuitePath:    opts.SuitePath,
-		BaseURL:      opts.BaseURL,
-		ControlURL:   opts.ControlURL,
-		ImportSeed:   opts.ImportSeed,
-		TracesPath:   opts.TracesPath,
+		RunID:             runID,
+		Mode:              mode,
+		SeedManifest:      opts.SeedManifestPath,
+		SeedHash:          seedHash,
+		SuitePath:         opts.SuitePath,
+		BaseURL:           opts.BaseURL,
+		ControlURL:        opts.ControlURL,
+		ImportSeed:        opts.ImportSeed,
+		ImportConcurrency: opts.ImportConcurrency,
+		DirectImport:      opts.DirectImport,
+		DirectImportBatch: opts.DirectImportBatch,
+		DirectImportTeam:  opts.DirectImportTeam,
+		TracesPath:        opts.TracesPath,
+		MappingPath:       opts.MappingPath,
 	}
 	if mode == "validate" {
 		summary := Summary{
@@ -80,6 +105,12 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		}
 		return summary, nil
 	}
+	if mode == "import" && opts.TracesPath != "" {
+		return Summary{}, fmt.Errorf("import mode cannot use --traces")
+	}
+	if mode == "import" && !opts.ImportSeed {
+		return Summary{}, fmt.Errorf("import mode requires --import-seed")
+	}
 
 	var traces []RecallTrace
 	mapping := newKnowledgeMapping()
@@ -87,6 +118,11 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		traces, err = LoadRecallTraces(opts.TracesPath)
 		if err != nil {
 			return Summary{}, err
+		}
+		if opts.MappingPath != "" {
+			if err := readJSONFile(opts.MappingPath, &mapping); err != nil {
+				return Summary{}, err
+			}
 		}
 	} else {
 		client := &HTTPClient{
@@ -98,10 +134,41 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		if err := client.EnableEvaluationMode(ctx, opts.MaxPageSize); err != nil {
 			return Summary{}, err
 		}
-		if opts.ImportSeed {
-			mapping, err = client.ImportCorpus(ctx, corpus)
-			if err != nil {
+		mappingLoadedFromPath := false
+		if opts.MappingPath != "" {
+			if err := readJSONFile(opts.MappingPath, &mapping); err != nil {
 				return Summary{}, err
+			}
+			mappingLoadedFromPath = true
+		}
+		if opts.ImportSeed {
+			if mode == "import" {
+				keepSourceDocIDs := sourceDocIDsForQRelMappings(qrels, expectedDreams)
+				var imported KnowledgeMapping
+				if opts.DirectImport {
+					imported, _, err = DirectImportCorpusFile(ctx, resolveSeedPath(opts.SeedManifestPath, manifest.CorpusFile), DirectImportOptions{
+						TeamID:          opts.DirectImportTeam,
+						BatchSize:       opts.DirectImportBatch,
+						Concurrency:     opts.ImportConcurrency,
+						Neo4jURI:        opts.Neo4jURI,
+						Neo4jUser:       opts.Neo4jUser,
+						Neo4jPassword:   opts.Neo4jPassword,
+						Neo4jDatabase:   opts.Neo4jDatabase,
+						KeepSourceDocID: keepSourceDocIDs,
+					})
+				} else {
+					imported, _, err = client.ImportCorpusFileWithConcurrency(ctx, resolveSeedPath(opts.SeedManifestPath, manifest.CorpusFile), opts.ImportConcurrency, keepSourceDocIDs)
+				}
+				if err != nil {
+					return Summary{}, err
+				}
+				mergeKnowledgeMapping(&mapping, imported)
+			} else {
+				imported, err := client.ImportCorpusWithConcurrency(ctx, corpus, opts.ImportConcurrency)
+				if err != nil {
+					return Summary{}, err
+				}
+				mergeKnowledgeMapping(&mapping, imported)
 			}
 			if len(expectedDreams) > 0 {
 				seeds := expectedDreamCycleSeeds(mapping, expectedDreams)
@@ -110,11 +177,13 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 				}
 			}
 		}
-		exported, err := client.ExportKnowledgeMapping(ctx, opts.MaxPageSize)
-		if err != nil {
-			return Summary{}, err
+		if !mappingLoadedFromPath && mode != "import" {
+			exported, err := client.ExportKnowledgeMapping(ctx, opts.MaxPageSize)
+			if err != nil {
+				return Summary{}, err
+			}
+			mergeKnowledgeMapping(&mapping, exported)
 		}
-		mergeKnowledgeMapping(&mapping, exported)
 		if len(expectedDreams) > 0 {
 			dreams, err := client.ExportDreamMapping(ctx, opts.MaxPageSize)
 			if err != nil {
@@ -125,6 +194,24 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		}
 		if err := validateRequiredQRelMappings(IndexQrels(qrels), suite, mapping); err != nil {
 			return Summary{}, err
+		}
+		if mode == "import" {
+			summary := Summary{
+				RunID:           runID,
+				Mode:            mode,
+				SeedID:          manifest.SeedID,
+				SeedHash:        seedHash,
+				SuitePath:       opts.SuitePath,
+				CaseCount:       len(suite),
+				ScoredCaseCount: 0,
+				CreatedAt:       time.Now().UTC(),
+			}
+			if opts.OutDir != "" {
+				if err := writeImportArtifacts(opts.OutDir, manifest, suite, runConfig, mapping, summary); err != nil {
+					return Summary{}, err
+				}
+			}
+			return summary, nil
 		}
 		traces, err = runLiveSuite(ctx, client, suite, IndexCases(cases))
 		if err != nil {
@@ -239,6 +326,34 @@ func loadRunInputs(manifestPath, suitePath string) (*SeedManifest, []CorpusItem,
 	return manifest, corpus, cases, qrels, expectedDreams, suite, seedHash, nil
 }
 
+func loadRunInputsWithoutCorpus(manifestPath, suitePath string) (*SeedManifest, []Case, []QRel, []ExpectedDream, []SuiteCase, string, error) {
+	manifest, err := LoadSeedManifest(manifestPath)
+	if err != nil {
+		return nil, nil, nil, nil, nil, "", err
+	}
+	cases, err := LoadCases(manifestPath, manifest)
+	if err != nil {
+		return nil, nil, nil, nil, nil, "", err
+	}
+	qrels, err := LoadQrels(manifestPath, manifest)
+	if err != nil {
+		return nil, nil, nil, nil, nil, "", err
+	}
+	expectedDreams, err := LoadExpectedDreams(manifestPath, manifest)
+	if err != nil {
+		return nil, nil, nil, nil, nil, "", err
+	}
+	suite, err := LoadSuite(suitePath)
+	if err != nil {
+		return nil, nil, nil, nil, nil, "", err
+	}
+	seedHash, err := SeedHash(manifestPath, manifest)
+	if err != nil {
+		return nil, nil, nil, nil, nil, "", err
+	}
+	return manifest, cases, qrels, expectedDreams, suite, seedHash, nil
+}
+
 func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []CorpusItem, cases []Case, qrels []QRel, expectedDreams []ExpectedDream, suite []SuiteCase) error {
 	if err := validateManifestCounts(manifestPath, manifest, corpus, cases, qrels); err != nil {
 		return err
@@ -293,6 +408,41 @@ func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []Cor
 		}
 		if err := validateQRelRefs(qrel.CaseID, "bad_dream_refs", qrel.BadDreamRefs, dreamIndex); err != nil {
 			return err
+		}
+	}
+	for _, c := range cases {
+		if hasSlice(c.Slices, "adversarial") && len(qrelIndex[c.CaseID].BadRefs) == 0 {
+			return fmt.Errorf("adversarial case %q has no bad_refs", c.CaseID)
+		}
+	}
+	return nil
+}
+
+func validateRunInputsWithoutCorpus(manifestPath string, manifest *SeedManifest, cases []Case, qrels []QRel, expectedDreams []ExpectedDream, suite []SuiteCase) error {
+	if err := validateManifestCountsWithoutCorpus(manifestPath, manifest, cases, qrels); err != nil {
+		return err
+	}
+	caseIndex := IndexCases(cases)
+	qrelIndex := IndexQrels(qrels)
+	if len(qrelIndex) != len(qrels) {
+		return fmt.Errorf("duplicate qrels case_id detected")
+	}
+	for _, suiteCase := range suite {
+		if _, ok := caseIndex[suiteCase.CaseID]; !ok {
+			return fmt.Errorf("suite case %q missing from seed cases", suiteCase.CaseID)
+		}
+		if _, ok := qrelIndex[suiteCase.CaseID]; !ok {
+			return fmt.Errorf("suite case %q missing from seed qrels", suiteCase.CaseID)
+		}
+	}
+	for _, dream := range expectedDreams {
+		if _, ok := caseIndex[dream.CaseID]; dream.CaseID != "" && !ok {
+			return fmt.Errorf("expected dream %q references missing case %q", dream.SourceDocID, dream.CaseID)
+		}
+	}
+	for _, qrel := range qrels {
+		if _, ok := caseIndex[qrel.CaseID]; !ok {
+			return fmt.Errorf("qrels case %q missing from seed cases", qrel.CaseID)
 		}
 	}
 	for _, c := range cases {
@@ -378,6 +528,65 @@ func validateManifestCounts(manifestPath string, manifest *SeedManifest, corpus 
 		}
 	}
 	return nil
+}
+
+func validateManifestCountsWithoutCorpus(manifestPath string, manifest *SeedManifest, cases []Case, qrels []QRel) error {
+	if manifest == nil || len(manifest.Counts) == 0 {
+		return nil
+	}
+	if err := validateCount(manifest.Counts, "cases", len(cases)); err != nil {
+		return err
+	}
+	if err := validateCount(manifest.Counts, "qrels", len(qrels)); err != nil {
+		return err
+	}
+	for _, optional := range []struct {
+		countName string
+		fileName  string
+	}{
+		{countName: "answers", fileName: manifest.AnswersFile},
+		{countName: "hard_negatives", fileName: manifest.HardNegativesFile},
+		{countName: "transforms", fileName: manifest.TransformsFile},
+		{countName: "dreams", fileName: manifest.DreamsFile},
+	} {
+		expected, ok := manifest.Counts[optional.countName]
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(optional.fileName) == "" {
+			return fmt.Errorf("manifest count %s=%d but file is not set", optional.countName, expected)
+		}
+		actual, err := countSeedJSONLRows(manifestPath, optional.fileName)
+		if err != nil {
+			return err
+		}
+		if actual != expected {
+			return fmt.Errorf("manifest count %s=%d mismatch: got %d", optional.countName, expected, actual)
+		}
+	}
+	return nil
+}
+
+func sourceDocIDsForQRelMappings(qrels []QRel, dreams []ExpectedDream) map[string]struct{} {
+	out := map[string]struct{}{}
+	addRefs := func(refs []Ref) {
+		for _, ref := range refs {
+			if sourceDocID := strings.TrimSpace(ref.SourceDocID); sourceDocID != "" {
+				out[sourceDocID] = struct{}{}
+			}
+		}
+	}
+	for _, qrel := range qrels {
+		addRefs(qrel.RequiredRefs)
+		addRefs(qrel.AcceptableRefs)
+		addRefs(qrel.BadRefs)
+		addRefs(qrel.RequiredEvidenceRefs)
+		addRefs(qrel.BadEvidenceRefs)
+	}
+	for _, dream := range dreams {
+		addRefs(dream.SourceRefs)
+	}
+	return out
 }
 
 func validateCount(counts map[string]int, name string, actual int) error {
@@ -475,6 +684,13 @@ func writeRunArtifacts(outDir string, manifest *SeedManifest, suite []SuiteCase,
 		return err
 	}
 	return writeJSONL(filepath.Join(outDir, "retrieval_scores.jsonl"), scores)
+}
+
+func writeImportArtifacts(outDir string, manifest *SeedManifest, suite []SuiteCase, runConfig RunConfig, mapping KnowledgeMapping, summary Summary) error {
+	if err := writeValidationArtifacts(outDir, manifest, suite, runConfig, summary); err != nil {
+		return err
+	}
+	return writeJSONFile(filepath.Join(outDir, "knowledge_mapping.json"), mapping)
 }
 
 func newRunID(mode string) string {

@@ -14,6 +14,7 @@ func ScoreTraces(runID, mode, seedID, seedHash, suitePath string, suite []SuiteC
 	for _, trace := range traces {
 		traceByCase[trace.CaseID] = trace
 	}
+	scoring := newScoringContext(mapping)
 	scores := make([]RetrievalScore, 0, len(suite))
 	for _, suiteCase := range suite {
 		qrel, ok := qrels[suiteCase.CaseID]
@@ -28,20 +29,26 @@ func ScoreTraces(runID, mode, seedID, seedHash, suitePath string, suite []SuiteC
 		if k <= 0 {
 			k = 10
 		}
-		scores = append(scores, ScoreTrace(suiteCase.CaseID, k, qrel, trace, mapping))
+		scores = append(scores, scoreTrace(suiteCase.CaseID, k, qrel, trace, scoring))
 	}
 	summary := SummarizeScores(runID, mode, seedID, seedHash, suitePath, suite, cases, scores)
 	return scores, summary, nil
 }
 
 func ScoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, mapping KnowledgeMapping) RetrievalScore {
+	return scoreTrace(caseID, k, qrel, trace, newScoringContext(mapping))
+}
+
+func scoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, scoring scoringContext) RetrievalScore {
+	mapping := scoring.mapping
 	required, unmappedRequired := remapJudgments(qrel.RequiredRefs, mapping)
 	bad, unmappedBad := remapResultRefs(qrel.BadRefs, mapping)
 	requiredEvidence, unmappedRequiredEvidence := remapJudgments(qrel.RequiredEvidenceRefs, mapping)
 	badEvidence, unmappedBadEvidence := remapResultRefs(qrel.BadEvidenceRefs, mapping)
 	requiredDreams, unmappedRequiredDreams := remapJudgments(qrel.RequiredDreamRefs, mapping)
 	badDreams, unmappedBadDreams := remapResultRefs(qrel.BadDreamRefs, mapping)
-	ranked := resultRefs(trace.RankedRefs)
+	rankedRefs := scoring.refsForQRel(trace.RankedRefs, qrel.RequiredRefs, qrel.BadRefs)
+	ranked := resultRefs(rankedRefs)
 	metrics := recallquality.ScoreAtK(ranked, required, bad, k)
 	score := RetrievalScore{
 		CaseID:             caseID,
@@ -52,15 +59,16 @@ func ScoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, mapping Know
 		RecallAtK:          metrics.RecallAtK,
 		MRR:                metrics.MRR,
 		NDCGAtK:            metrics.NDCGAtK,
-		FirstRequiredRank:  firstRank(trace.RankedRefs, qrel.RequiredRefs, mapping),
-		FirstBadRank:       firstRank(trace.RankedRefs, qrel.BadRefs, mapping),
-		MissingRequired:    missingRequiredRefs(qrel.RequiredRefs, trace.RankedRefs, mapping, k),
-		BadRefsAtK:         badRefsAtK(qrel.BadRefs, trace.RankedRefs, mapping, k),
+		FirstRequiredRank:  firstRank(rankedRefs, qrel.RequiredRefs, mapping),
+		FirstBadRank:       firstRank(rankedRefs, qrel.BadRefs, mapping),
+		MissingRequired:    missingRequiredRefs(qrel.RequiredRefs, rankedRefs, mapping, k),
+		BadRefsAtK:         badRefsAtK(qrel.BadRefs, rankedRefs, mapping, k),
 		UnmappedSourceRefs: append(append(append(append(append(unmappedRequired, unmappedBad...), unmappedRequiredEvidence...), unmappedBadEvidence...), unmappedRequiredDreams...), unmappedBadDreams...),
 		LatencyMS:          trace.LatencyMS,
 	}
 	if trace.ContextRefs != nil {
-		contextMetrics := recallquality.ScoreAtK(resultRefs(trace.ContextRefs), required, bad, k)
+		contextRefs := scoring.refsForQRel(trace.ContextRefs, qrel.RequiredRefs, qrel.BadRefs)
+		contextMetrics := recallquality.ScoreAtK(resultRefs(contextRefs), required, bad, k)
 		score.ContextScored = true
 		score.ContextRelevantAtK = contextMetrics.RelevantAtK
 		score.ContextRelevantTotal = contextMetrics.RelevantTotal
@@ -68,24 +76,32 @@ func ScoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, mapping Know
 		score.ContextRecallAtK = contextMetrics.RecallAtK
 		score.ContextMRR = contextMetrics.MRR
 		score.ContextNDCGAtK = contextMetrics.NDCGAtK
-		score.ContextFirstRequiredRank = firstRank(trace.ContextRefs, qrel.RequiredRefs, mapping)
-		score.ContextFirstBadRank = firstRank(trace.ContextRefs, qrel.BadRefs, mapping)
-		score.ContextMissingRequired = missingRequiredRefs(qrel.RequiredRefs, trace.ContextRefs, mapping, k)
-		score.ContextBadRefsAtK = badRefsAtK(qrel.BadRefs, trace.ContextRefs, mapping, k)
+		score.ContextFirstRequiredRank = firstRank(contextRefs, qrel.RequiredRefs, mapping)
+		score.ContextFirstBadRank = firstRank(contextRefs, qrel.BadRefs, mapping)
+		score.ContextMissingRequired = missingRequiredRefs(qrel.RequiredRefs, contextRefs, mapping, k)
+		score.ContextBadRefsAtK = badRefsAtK(qrel.BadRefs, contextRefs, mapping, k)
 	}
-	if trace.ContextEvidenceRefs != nil && (len(qrel.RequiredEvidenceRefs) > 0 || len(qrel.BadEvidenceRefs) > 0) {
-		evidenceMetrics := recallquality.ScoreAtK(resultRefs(trace.ContextEvidenceRefs), requiredEvidence, badEvidence, k)
-		score.EvidenceScored = true
-		score.EvidenceRelevantAtK = evidenceMetrics.RelevantAtK
-		score.EvidenceRelevantTotal = evidenceMetrics.RelevantTotal
-		score.EvidenceBadAtK = evidenceMetrics.BadAtK
-		score.EvidenceRecallAtK = evidenceMetrics.RecallAtK
-		score.EvidenceMRR = evidenceMetrics.MRR
-		score.EvidenceNDCGAtK = evidenceMetrics.NDCGAtK
-		score.EvidenceFirstRequiredRank = firstRank(trace.ContextEvidenceRefs, qrel.RequiredEvidenceRefs, mapping)
-		score.EvidenceFirstBadRank = firstRank(trace.ContextEvidenceRefs, qrel.BadEvidenceRefs, mapping)
-		score.EvidenceMissingRequired = missingRequiredRefs(qrel.RequiredEvidenceRefs, trace.ContextEvidenceRefs, mapping, k)
-		score.EvidenceBadRefsAtK = badRefsAtK(qrel.BadEvidenceRefs, trace.ContextEvidenceRefs, mapping, k)
+	if len(qrel.RequiredEvidenceRefs) > 0 || len(qrel.BadEvidenceRefs) > 0 {
+		evidenceRefs := scoring.refsForQRel(trace.ContextEvidenceRefs, qrel.RequiredEvidenceRefs, qrel.BadEvidenceRefs)
+		evidenceAvailable := trace.ContextEvidenceRefs != nil
+		if len(evidenceRefs) == 0 && qrelTargetsOnlyType(qrel.RequiredEvidenceRefs, qrel.BadEvidenceRefs, mapping, "fragment") {
+			evidenceRefs = fragmentRefs(trace.ContextRefs)
+			evidenceAvailable = evidenceRefs != nil
+		}
+		if evidenceAvailable {
+			evidenceMetrics := recallquality.ScoreAtK(resultRefs(evidenceRefs), requiredEvidence, badEvidence, k)
+			score.EvidenceScored = true
+			score.EvidenceRelevantAtK = evidenceMetrics.RelevantAtK
+			score.EvidenceRelevantTotal = evidenceMetrics.RelevantTotal
+			score.EvidenceBadAtK = evidenceMetrics.BadAtK
+			score.EvidenceRecallAtK = evidenceMetrics.RecallAtK
+			score.EvidenceMRR = evidenceMetrics.MRR
+			score.EvidenceNDCGAtK = evidenceMetrics.NDCGAtK
+			score.EvidenceFirstRequiredRank = firstRank(evidenceRefs, qrel.RequiredEvidenceRefs, mapping)
+			score.EvidenceFirstBadRank = firstRank(evidenceRefs, qrel.BadEvidenceRefs, mapping)
+			score.EvidenceMissingRequired = missingRequiredRefs(qrel.RequiredEvidenceRefs, evidenceRefs, mapping, k)
+			score.EvidenceBadRefsAtK = badRefsAtK(qrel.BadEvidenceRefs, evidenceRefs, mapping, k)
+		}
 	}
 	if trace.DreamRefs != nil && (len(qrel.RequiredDreamRefs) > 0 || len(qrel.BadDreamRefs) > 0) {
 		dreamMetrics := recallquality.ScoreAtK(resultRefs(trace.DreamRefs), requiredDreams, badDreams, k)
@@ -354,6 +370,10 @@ func EvaluateGates(summary Summary, gates GateOptions) GateResult {
 			"evidence_required_rank1_rate": summary.EvidenceRequiredRank1Rate,
 			"average_evidence_bad_at_k":    summary.AverageEvidenceBadAtK,
 			"evidence_bad_rank1_rate":      summary.EvidenceBadRank1Rate,
+			"average_dream_recall_at_k":    summary.AverageDreamRecallAtK,
+			"dream_required_rank1_rate":    summary.DreamRequiredRank1Rate,
+			"average_dream_bad_at_k":       summary.AverageDreamBadAtK,
+			"dream_bad_rank1_rate":         summary.DreamBadRank1Rate,
 		},
 	}
 	checkMin := func(name string, value float64, threshold *float64) {
@@ -402,6 +422,17 @@ func EvaluateGates(summary Summary, gates GateOptions) GateResult {
 			checkMax("evidence_bad_rank1_rate", summary.EvidenceBadRank1Rate, gates.MaxEvidenceBadRank1Rate)
 		}
 	}
+	if gates.DreamAny() {
+		if summary.DreamScoredCaseCount == 0 {
+			result.Passed = false
+			result.Failures = append(result.Failures, "dream metrics unavailable: no scored traces included dream qrels and dream_refs")
+		} else {
+			checkMin("average_dream_recall_at_k", summary.AverageDreamRecallAtK, gates.MinDreamRecallAtK)
+			checkMin("dream_required_rank1_rate", summary.DreamRequiredRank1Rate, gates.MinDreamRequiredRank1Rate)
+			checkMax("average_dream_bad_at_k", summary.AverageDreamBadAtK, gates.MaxAverageDreamBadAtK)
+			checkMax("dream_bad_rank1_rate", summary.DreamBadRank1Rate, gates.MaxDreamBadRank1Rate)
+		}
+	}
 	return result
 }
 
@@ -411,7 +442,8 @@ func (g GateOptions) Any() bool {
 		g.MaxAverageBadAtK != nil ||
 		g.MaxBadRank1Rate != nil ||
 		g.ContextAny() ||
-		g.EvidenceAny()
+		g.EvidenceAny() ||
+		g.DreamAny()
 }
 
 func (g GateOptions) ContextAny() bool {
@@ -426,6 +458,13 @@ func (g GateOptions) EvidenceAny() bool {
 		g.MinEvidenceRequiredRank1Rate != nil ||
 		g.MaxAverageEvidenceBadAtK != nil ||
 		g.MaxEvidenceBadRank1Rate != nil
+}
+
+func (g GateOptions) DreamAny() bool {
+	return g.MinDreamRecallAtK != nil ||
+		g.MinDreamRequiredRank1Rate != nil ||
+		g.MaxAverageDreamBadAtK != nil ||
+		g.MaxDreamBadRank1Rate != nil
 }
 
 func remapJudgments(refs []Ref, mapping KnowledgeMapping) ([]recallquality.Judgment, []Ref) {
@@ -466,6 +505,153 @@ func resultRefs(refs []Ref) []recallquality.ResultRef {
 		out = append(out, recallquality.ResultRef{Type: ref.Type, ID: ref.ID})
 	}
 	return out
+}
+
+type scoringContext struct {
+	mapping              KnowledgeMapping
+	sourceDocIDsByRefKey map[string][]string
+}
+
+func newScoringContext(mapping KnowledgeMapping) scoringContext {
+	scoring := scoringContext{
+		mapping:              mapping,
+		sourceDocIDsByRefKey: map[string][]string{},
+	}
+	add := func(sourceDocID string, ref Ref) {
+		sourceDocID = strings.TrimSpace(sourceDocID)
+		ref.Type = strings.TrimSpace(ref.Type)
+		ref.ID = strings.TrimSpace(ref.ID)
+		if sourceDocID == "" || ref.Type == "" || ref.ID == "" {
+			return
+		}
+		key := refKey(ref.Type, ref.ID)
+		if !containsString(scoring.sourceDocIDsByRefKey[key], sourceDocID) {
+			scoring.sourceDocIDsByRefKey[key] = append(scoring.sourceDocIDsByRefKey[key], sourceDocID)
+		}
+	}
+	for sourceDocID, ref := range mapping.BySourceDocID {
+		add(sourceDocID, ref)
+	}
+	for sourceDocID, byType := range mapping.BySourceDocIDAndType {
+		for refType, refs := range byType {
+			for _, ref := range refs {
+				if ref.Type == "" {
+					ref.Type = refType
+				}
+				if ref.SourceDocID == "" {
+					ref.SourceDocID = sourceDocID
+				}
+				add(sourceDocID, ref)
+			}
+		}
+	}
+	for key := range scoring.sourceDocIDsByRefKey {
+		sort.Strings(scoring.sourceDocIDsByRefKey[key])
+	}
+	return scoring
+}
+
+func (s scoringContext) refsForQRel(refs []Ref, required []Ref, bad []Ref) []Ref {
+	if refs == nil {
+		return nil
+	}
+	targetTypes := qrelTargetTypes(required, bad, s.mapping)
+	if len(targetTypes) == 0 {
+		return refs
+	}
+	out := make([]Ref, 0, len(refs))
+	for _, ref := range refs {
+		resolved := ref
+		if _, ok := targetTypes[strings.TrimSpace(ref.Type)]; !ok {
+			if mapped, mappedOK := s.mapRefToTargetType(ref, targetTypes); mappedOK {
+				resolved = mapped
+				resolved.Rank = ref.Rank
+			}
+		}
+		out = append(out, resolved)
+	}
+	return out
+}
+
+func (s scoringContext) mapRefToTargetType(ref Ref, targetTypes map[string]struct{}) (Ref, bool) {
+	sourceDocIDs := s.sourceDocIDsByRefKey[refKey(ref.Type, ref.ID)]
+	if len(sourceDocIDs) == 0 {
+		return Ref{}, false
+	}
+	targetTypeList := sortedTargetTypes(targetTypes)
+	for _, sourceDocID := range sourceDocIDs {
+		byType := s.mapping.BySourceDocIDAndType[sourceDocID]
+		if byType == nil {
+			continue
+		}
+		for _, targetType := range targetTypeList {
+			refs := byType[targetType]
+			if len(refs) == 1 && strings.TrimSpace(refs[0].ID) != "" {
+				return refs[0], true
+			}
+		}
+	}
+	return Ref{}, false
+}
+
+func qrelTargetTypes(required []Ref, bad []Ref, mapping KnowledgeMapping) map[string]struct{} {
+	out := map[string]struct{}{}
+	add := func(ref Ref) {
+		resolved, ok := resolveRef(ref, mapping)
+		if !ok {
+			return
+		}
+		if refType := strings.TrimSpace(resolved.Type); refType != "" {
+			out[refType] = struct{}{}
+		}
+	}
+	for _, ref := range required {
+		add(ref)
+	}
+	for _, ref := range bad {
+		add(ref)
+	}
+	return out
+}
+
+func qrelTargetsOnlyType(required []Ref, bad []Ref, mapping KnowledgeMapping, targetType string) bool {
+	targetTypes := qrelTargetTypes(required, bad, mapping)
+	if len(targetTypes) != 1 {
+		return false
+	}
+	_, ok := targetTypes[targetType]
+	return ok
+}
+
+func fragmentRefs(refs []Ref) []Ref {
+	if refs == nil {
+		return nil
+	}
+	out := make([]Ref, 0, len(refs))
+	for _, ref := range refs {
+		if strings.TrimSpace(ref.Type) == "fragment" {
+			out = append(out, ref)
+		}
+	}
+	return out
+}
+
+func sortedTargetTypes(types map[string]struct{}) []string {
+	out := make([]string, 0, len(types))
+	for refType := range types {
+		out = append(out, refType)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func missingRequiredRefs(required []Ref, ranked []Ref, mapping KnowledgeMapping, k int) []Ref {

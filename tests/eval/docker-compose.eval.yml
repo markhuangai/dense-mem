@@ -1,0 +1,34 @@
+# Eval-only persistence override for the root docker-compose.yml.
+#
+# Use with:
+#   docker compose -p densemem_eval_full \
+#     -f docker-compose.yml \
+#     -f tests/eval/docker-compose.eval.yml up -d --build
+
+services:
+  server:
+    environment:
+      RATE_LIMIT_PER_MINUTE: "200000"
+      FRAGMENT_CREATE_RATE_LIMIT: "200000"
+      FRAGMENT_READ_RATE_LIMIT: "200000"
+      CLAIM_WRITE_RATE_LIMIT: "200000"
+      CLAIM_READ_RATE_LIMIT: "200000"
+
+  postgres:
+    volumes:
+      - ./tests/eval/runtime/postgres:/var/lib/postgresql
+
+  neo4j:
+    volumes:
+      - ./tests/eval/runtime/neo4j/data:/data
+      - ./tests/eval/runtime/neo4j/logs:/logs
+      - ./tests/eval/runtime/neo4j/plugins:/plugins
+
+  redis:
+    volumes:
+      - ./tests/eval/runtime/redis:/data
+
+  prometheus:
+    volumes:
+      - ./tests/eval/runtime/prometheus:/prometheus
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
