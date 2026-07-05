@@ -312,6 +312,38 @@ describe("UserPortalApp", () => {
     });
   });
 
+  it("refreshes selected graph node details when the graph reloads", async () => {
+    const refreshedDetails = {
+      ...graphNodeDetails,
+      "fact:fact-1": {
+        ...graphNodeDetails["fact:fact-1"],
+        body: "project-y",
+        community_id: "community-2",
+        score: 0.67,
+      },
+    };
+    const fetchMock = mockUserFetch(baseSession, [], { graphSnapshot: [overviewGraph, overviewGraph], graphNodeDetails: [graphNodeDetails, refreshedDetails] });
+    sessionStorage.setItem("denseMem.userApiKey", "dm_read");
+
+    render(<UserPortalApp />);
+    await screen.findByText("Research Team");
+    await userEvent.click(screen.getByRole("button", { name: /graph/i }));
+    const controls = await screen.findByLabelText("Graph controls");
+
+    await userEvent.click(within(screen.getByTestId("force-graph")).getByRole("button", { name: "Alice works_on project-x" }));
+    await waitFor(() => {
+      expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("0.940");
+    });
+
+    await userEvent.click(within(controls).getByRole("button", { name: "Refresh" }));
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/ui/api/node-detail?type=fact&id=fact-1"))).toHaveLength(2);
+    });
+    expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("community-2");
+    expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("0.670");
+  });
+
   it("blocks graph refresh when every type filter is disabled", async () => {
     const fetchMock = mockUserFetch(baseSession, [], { graphSnapshot: overviewGraph });
     sessionStorage.setItem("denseMem.userApiKey", "dm_read");
@@ -724,10 +756,12 @@ async function expectCurrentWorkspace(teamName: string) {
   expect(workspace).toHaveTextContent(teamName);
 }
 
-function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: { recallHits?: RecallHit[] | RecallHit[][]; graphSnapshot?: GraphSnapshot; graphNodeDetails?: Record<string, GraphNode> } = {}) {
+function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: { recallHits?: RecallHit[] | RecallHit[][]; graphSnapshot?: GraphSnapshot | GraphSnapshot[]; graphNodeDetails?: Record<string, GraphNode> | Record<string, GraphNode>[] } = {}) {
   let currentTeam = session.team;
   let currentProfiles = profiles;
   let recallCallCount = 0;
+  let graphCallCount = 0;
+  let graphNodeDetailCallCount = 0;
   const rotatedSession = {
     ...session,
     key: { ...session.key, key_suffix: "new123", last_used_at: null },
@@ -761,10 +795,11 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: 
     if (url.startsWith("/ui/api/node-detail") && method === "GET") {
       const params = new URLSearchParams(url.split("?")[1] ?? "");
       const key = `${params.get("type")}:${params.get("id")}`;
-      return jsonResponse({ data: (options.graphNodeDetails ?? graphNodeDetails)[key] ?? graphNodeDetails["fact:fact-1"] });
+      const details = optionValue(options.graphNodeDetails ?? graphNodeDetails, graphNodeDetailCallCount++);
+      return jsonResponse({ data: details[key] ?? graphNodeDetails["fact:fact-1"] });
     }
     if (url.startsWith("/ui/api/graph") && method === "GET") {
-      return jsonResponse({ data: options.graphSnapshot ?? overviewGraph });
+      return jsonResponse({ data: optionValue(options.graphSnapshot ?? overviewGraph, graphCallCount++) });
     }
     if (url === `/api/v1/teams/${currentTeam.id}` && method === "PATCH") {
       const body = JSON.parse(String(init?.body));
@@ -815,6 +850,10 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: 
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
+}
+
+function optionValue<T>(value: T | T[], index: number): T {
+  return Array.isArray(value) ? value[Math.min(index, value.length - 1)] : value;
 }
 
 function isRecallSequence(value: RecallHit[] | RecallHit[][]): value is RecallHit[][] {

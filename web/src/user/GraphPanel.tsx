@@ -49,6 +49,7 @@ export function GraphPanel({ api }: { api: UserApi }) {
   const [detailKey, setDetailKey] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
+  const [graphRevision, setGraphRevision] = useState(0);
 
   async function loadGraph(query: GraphQuery = buildQuery({ searchText, scope, anchorType, anchorId, types, depth, includeSuperseded })) {
     if (query.types?.length === 0) {
@@ -64,6 +65,11 @@ export function GraphPanel({ api }: { api: UserApi }) {
     try {
       const next = await api.graph(query);
       setSnapshot(next);
+      setSelectedDetail(null);
+      setDetailKey("");
+      setDetailError("");
+      setDetailLoading(false);
+      setGraphRevision((current) => current + 1);
       setSelectedKey((current) => next.nodes.some((node) => node.key === current) ? current : "");
     } catch (err) {
       setError(readError(err));
@@ -115,7 +121,7 @@ export function GraphPanel({ api }: { api: UserApi }) {
     return () => {
       active = false;
     };
-  }, [api, selectedNode?.key, selectedNode?.type, selectedNode?.id]);
+  }, [api, selectedNode?.key, selectedNode?.type, selectedNode?.id, graphRevision]);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
