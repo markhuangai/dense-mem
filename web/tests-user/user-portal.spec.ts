@@ -108,40 +108,61 @@ const graphSnapshot = {
       id: "fact-1",
       type: "fact",
       title: "Alice works_on project-x",
-      body: "project-x",
-      status: "active",
-      community_id: "community-1",
-      score: 0.94,
-      recorded_at: "2026-05-02T12:00:00Z",
     },
     {
       key: "claim:claim-1",
       id: "claim-1",
       type: "claim",
       title: "Alice uses Dense-Mem",
-      body: "Dense-Mem",
-      status: "validated",
-      community_id: "community-1",
-      score: 0.88,
-      recorded_at: "2026-05-02T12:00:00Z",
     },
     {
       key: "fragment:frag-1",
       id: "frag-1",
       type: "fragment",
       title: "Alice is working on project-x with Dense-Mem.",
-      body: "Alice is working on project-x with Dense-Mem.",
-      status: "active",
-      community_id: "community-1",
-      source: "notes",
-      score: 0.75,
-      recorded_at: "2026-05-02T12:00:00Z",
     },
   ],
   edges: [
     { id: "edge-1", source: "claim:claim-1", target: "fact:fact-1", relationship: "PROMOTES_TO", directed: true },
     { id: "edge-2", source: "claim:claim-1", target: "fragment:frag-1", relationship: "SUPPORTED_BY", directed: true },
   ],
+};
+
+const graphNodeDetails = {
+  "fact:fact-1": {
+    key: "fact:fact-1",
+    id: "fact-1",
+    type: "fact",
+    title: "Alice works_on project-x",
+    body: "project-x",
+    status: "active",
+    community_id: "community-1",
+    score: 0.94,
+    recorded_at: "2026-05-02T12:00:00Z",
+  },
+  "claim:claim-1": {
+    key: "claim:claim-1",
+    id: "claim-1",
+    type: "claim",
+    title: "Alice uses Dense-Mem",
+    body: "Dense-Mem",
+    status: "validated",
+    community_id: "community-1",
+    score: 0.88,
+    recorded_at: "2026-05-02T12:00:00Z",
+  },
+  "fragment:frag-1": {
+    key: "fragment:frag-1",
+    id: "frag-1",
+    type: "fragment",
+    title: "Alice is working on project-x with Dense-Mem.",
+    body: "Alice is working on project-x with Dense-Mem.",
+    status: "active",
+    community_id: "community-1",
+    source: "notes",
+    score: 0.75,
+    recorded_at: "2026-05-02T12:00:00Z",
+  },
 };
 
 const telemetryCards = [
@@ -259,7 +280,7 @@ test("graph tab renders a nonblank memory graph", async ({ page }) => {
 
   await page.getByRole("button", { name: "Graph" }).click();
   await expect(page.getByLabel("Knowledge graph")).toBeVisible();
-  await expect(page.getByLabel("Graph inspector")).toContainText("Alice works_on project-x");
+  await expect(page.getByLabel("Graph inspector")).toContainText("Select a node");
   const canvas = page.locator(".graph-canvas canvas").first();
   await expect(canvas).toBeVisible();
   await expect.poll(async () => canvas.evaluate((element) => {
@@ -582,6 +603,17 @@ async function mockUserApi(
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({ data: telemetryForKey(currentKey) }),
+    });
+  });
+
+  await page.route("**/ui/api/node-detail**", async (route) => {
+    const url = new URL(route.request().url());
+    const key = `${url.searchParams.get("type")}:${url.searchParams.get("id")}`;
+    const node = graphNodeDetails[key as keyof typeof graphNodeDetails] ?? graphNodeDetails["fact:fact-1"];
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ data: node }),
     });
   });
 

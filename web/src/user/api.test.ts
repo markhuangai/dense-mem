@@ -116,6 +116,29 @@ describe("UserApi", () => {
     );
   });
 
+  it("requests graph node details", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: {
+        key: "claim:claim-1",
+        id: "claim-1",
+        type: "claim",
+        title: "claim title",
+        body: "claim detail",
+      },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await new UserApi("dm_key").nodeDetail("claim", "claim-1");
+
+    expect(result.body).toBe("claim detail");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/ui/api/node-detail?type=claim&id=claim-1",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer dm_key" }),
+      }),
+    );
+  });
+
   it("throws ApiError with server message", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ message: "invalid api key" }), { status: 401 })));
 

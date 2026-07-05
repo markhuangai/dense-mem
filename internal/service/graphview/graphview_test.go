@@ -67,6 +67,9 @@ func TestGraphOverviewClampsLimitAndUsesScopedQuery(t *testing.T) {
 	if len(got.Nodes) != 1 || got.Nodes[0].Key != "fact:fact-1" {
 		t.Fatalf("nodes = %#v; want fact node", got.Nodes)
 	}
+	if got.Truncated {
+		t.Fatal("overview graph must not mark all-topology response truncated")
+	}
 	if len(reader.calls) != 2 {
 		t.Fatalf("read calls = %d; want nodes and edges reads", len(reader.calls))
 	}
@@ -75,13 +78,18 @@ func TestGraphOverviewClampsLimitAndUsesScopedQuery(t *testing.T) {
 	if nodeCall.profileID != "team-1" {
 		t.Fatalf("ScopedRead profile = %q; want team-1", nodeCall.profileID)
 	}
-	for _, required := range []string{"$profileId", "MATCH (f:Fact {team_id: $profileId})", "LIMIT $limit"} {
+	for _, required := range []string{
+		"$profileId",
+		"MATCH (f:Fact {team_id: $profileId})",
+		"MATCH (seed)-[r]-(neighbor)",
+		"type(r) IN $relationshipTypes",
+	} {
 		if !strings.Contains(nodeCall.query, required) {
 			t.Fatalf("node query missing %q:\n%s", required, nodeCall.query)
 		}
 	}
-	if strings.Count(nodeCall.query, "LIMIT $limit") < 4 {
-		t.Fatalf("node query should apply the limit per graph node type:\n%s", nodeCall.query)
+	if strings.Contains(nodeCall.query, "LIMIT $limit") || strings.Contains(nodeCall.query, "LIMIT $nodeLimit") {
+		t.Fatalf("overview query must not apply node limits:\n%s", nodeCall.query)
 	}
 	if !strings.Contains(nodeCall.query, "coalesce(c.status, 'candidate') <> 'rejected'") {
 		t.Fatalf("overview query must filter rejected claims:\n%s", nodeCall.query)
@@ -91,6 +99,9 @@ func TestGraphOverviewClampsLimitAndUsesScopedQuery(t *testing.T) {
 	}
 	if nodeCall.params["limit"] != int64(MaxLimit) {
 		t.Fatalf("limit param = %#v; want %d", nodeCall.params["limit"], MaxLimit)
+	}
+	if _, exists := nodeCall.params["nodeLimit"]; exists {
+		t.Fatalf("nodeLimit param must not be sent for unbounded overview: %#v", nodeCall.params)
 	}
 	if nodeCall.params["query"] != "graph" {
 		t.Fatalf("query param = %#v; want graph", nodeCall.params["query"])
@@ -106,21 +117,107 @@ func TestGraphOverviewClampsLimitAndUsesScopedQuery(t *testing.T) {
 	}
 }
 
-func TestGraphOverviewReturnsNormalizedEdgesAndDedupedNodes(t *testing.T) {
+func TestGraphOverviewExpandsNeighborsBeforeEdgeRead(t *testing.T) {
 	recordedAt := time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
 	reader := &fakeGraphReader{rowsByCall: [][]map[string]any{
 		{
 			{
-				"type":         "fact",
-				"id":           "fact-1",
-				"key":          "fact:fact-1",
-				"title":        strings.Repeat("a", 200),
-				"body":         strings.Repeat("b", 500),
-				"status":       "active",
-				"community_id": "community-1",
-				"source":       "seed",
-				"score":        0.91,
-				"recorded_at":  recordedAt,
+				"type":        "claim",
+				"id":          "claim-1",
+				"key":         "claim:claim-1",
+				"title":       "claim title",
+				"status":      "superseded",
+				"recorded_at": recordedAt,
+			},
+			{
+				"type":        "fact",
+				"id":          "fact-1",
+				"key":         "fact:fact-1",
+				"title":       "fact title",
+				"status":      "active",
+				"recorded_at": recordedAt.Add(-time.Minute),
+			},
+			{
+				"type":        "fragment",
+				"id":          "fragment-1",
+				"key":         "fragment:fragment-1",
+				"title":       "fragment title",
+				"status":      "active",
+				"recorded_at": recordedAt.Add(-2 * time.Minute),
+			},
+		},
+		{
+			{
+				"id":           "edge-promotes",
+				"source":       "claim:claim-1",
+				"target":       "fact:fact-1",
+				"relationship": "PROMOTES_TO",
+			},
+			{
+				"id":           "edge-supports",
+				"source":       "claim:claim-1",
+				"target":       "fragment:fragment-1",
+				"relationship": "SUPPORTED_BY",
+			},
+		},
+	}}
+	svc := New(reader)
+
+	got, err := svc.Graph(context.Background(), "team-1", Query{})
+	if err != nil {
+		t.Fatalf("Graph returned error: %v", err)
+	}
+
+	if len(got.Nodes) != 3 {
+		t.Fatalf("nodes = %#v; want expanded claim/fact/fragment neighborhood", got.Nodes)
+	}
+	if len(got.Edges) != 2 {
+		t.Fatalf("edges = %#v; want claim connected to fact and fragment", got.Edges)
+	}
+	claimDegree := 0
+	for _, edge := range got.Edges {
+		if edge.Source == "claim:claim-1" || edge.Target == "claim:claim-1" {
+			claimDegree++
+		}
+	}
+	if claimDegree != 2 {
+		t.Fatalf("claim degree = %d; want 2 edges", claimDegree)
+	}
+
+	nodeCall := reader.calls[0]
+	if !strings.Contains(nodeCall.query, "MATCH (seed)-[r]-(neighbor)") {
+		t.Fatalf("overview node query must expand one-hop neighbors:\n%s", nodeCall.query)
+	}
+	if nodeCall.params["includeFact"] != true || nodeCall.params["includeClaim"] != true || nodeCall.params["includeFragment"] != true || nodeCall.params["includeDream"] != true {
+		t.Fatalf("default overview types should include all graph node types: %#v", nodeCall.params)
+	}
+	if strings.Contains(nodeCall.query, "LIMIT $limit") || strings.Contains(nodeCall.query, "LIMIT $nodeLimit") {
+		t.Fatalf("overview node query must not cap returned nodes:\n%s", nodeCall.query)
+	}
+	if _, exists := nodeCall.params["nodeLimit"]; exists {
+		t.Fatalf("nodeLimit param must not be sent: %#v", nodeCall.params)
+	}
+
+	edgeCall := reader.calls[1]
+	keys, ok := edgeCall.params["nodeKeys"].([]string)
+	if !ok {
+		t.Fatalf("nodeKeys = %#v; want []string", edgeCall.params["nodeKeys"])
+	}
+	for _, want := range []string{"claim:claim-1", "fact:fact-1", "fragment:fragment-1"} {
+		if !containsString(keys, want) {
+			t.Fatalf("nodeKeys = %#v; missing %q", keys, want)
+		}
+	}
+}
+
+func TestGraphOverviewReturnsNormalizedEdgesAndDedupedNodes(t *testing.T) {
+	reader := &fakeGraphReader{rowsByCall: [][]map[string]any{
+		{
+			{
+				"type":  "fact",
+				"id":    "fact-1",
+				"key":   "fact:fact-1",
+				"title": strings.Repeat("a", 200),
 			},
 			{
 				"type":  "fact",
@@ -170,11 +267,8 @@ func TestGraphOverviewReturnsNormalizedEdgesAndDedupedNodes(t *testing.T) {
 	if len([]rune(node.Title)) != 163 || !strings.HasSuffix(node.Title, "...") {
 		t.Fatalf("title = %q; want truncated title", node.Title)
 	}
-	if len([]rune(node.Body)) != maxNodeBodyRunes+3 || node.Status != "active" || node.CommunityID != "community-1" || node.Source != "seed" || node.Score != 0.91 {
-		t.Fatalf("node = %#v; want normalized metadata", node)
-	}
-	if node.RecordedAt == nil || !node.RecordedAt.Equal(recordedAt) {
-		t.Fatalf("recorded_at = %v; want %v", node.RecordedAt, recordedAt)
+	if node.Body != "" || node.Status != "" || node.CommunityID != "" || node.Source != "" || node.Score != 0 || node.RecordedAt != nil {
+		t.Fatalf("overview node = %#v; want topology summary only", node)
 	}
 
 	if len(got.Edges) != 2 {
@@ -190,6 +284,80 @@ func TestGraphOverviewReturnsNormalizedEdgesAndDedupedNodes(t *testing.T) {
 	if keys, ok := edgeCall.params["nodeKeys"].([]string); !ok || len(keys) != 1 || keys[0] != "fact:fact-1" {
 		t.Fatalf("nodeKeys = %#v; want returned node keys", edgeCall.params["nodeKeys"])
 	}
+}
+
+func TestGraphNodeDetailReturnsFullNode(t *testing.T) {
+	recordedAt := time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
+	reader := &fakeGraphReader{rowsByCall: [][]map[string]any{{
+		{
+			"type":         "fact",
+			"id":           "fact-1",
+			"key":          "fact:fact-1",
+			"title":        "fact title",
+			"body":         strings.Repeat("body ", 120),
+			"status":       "active",
+			"community_id": "community-1",
+			"source":       "seed",
+			"score":        0.91,
+			"recorded_at":  recordedAt,
+		},
+	}}}
+	svc := New(reader)
+
+	got, err := svc.NodeDetail(context.Background(), "team-1", "facts", "fact-1")
+	if err != nil {
+		t.Fatalf("NodeDetail returned error: %v", err)
+	}
+
+	if got.Key != "fact:fact-1" || got.Type != "fact" || got.Title != "fact title" {
+		t.Fatalf("detail identity = %#v", got)
+	}
+	if len([]rune(got.Body)) > maxNodeBodyRunes+3 || !strings.HasSuffix(got.Body, "...") || got.Status != "active" || got.CommunityID != "community-1" || got.Source != "seed" || got.Score != 0.91 {
+		t.Fatalf("detail = %#v; want full normalized metadata", got)
+	}
+	if got.RecordedAt == nil || !got.RecordedAt.Equal(recordedAt) {
+		t.Fatalf("recorded_at = %v; want %v", got.RecordedAt, recordedAt)
+	}
+	call := reader.calls[0]
+	if call.profileID != "team-1" || call.params["nodeType"] != "fact" || call.params["nodeID"] != "fact-1" {
+		t.Fatalf("detail call = %#v", call)
+	}
+	if !strings.Contains(call.query, "$nodeType = 'fact'") || !strings.Contains(call.query, "$nodeType = 'fragment'") {
+		t.Fatalf("detail query missing type branches:\n%s", call.query)
+	}
+}
+
+func TestGraphNodeDetailValidatesInputAndMisses(t *testing.T) {
+	reader := &fakeGraphReader{}
+	svc := New(reader)
+
+	_, err := svc.NodeDetail(context.Background(), "team-1", "bad", "node-1")
+	if !errors.Is(err, ErrInvalidNodeType) {
+		t.Fatalf("err = %v; want invalid type", err)
+	}
+	_, err = svc.NodeDetail(context.Background(), "team-1", "fact", "")
+	if !errors.Is(err, ErrMissingNode) {
+		t.Fatalf("err = %v; want missing node", err)
+	}
+	if len(reader.calls) != 0 {
+		t.Fatalf("ScopedRead calls = %d; want 0", len(reader.calls))
+	}
+
+	reader = &fakeGraphReader{rowsByCall: [][]map[string]any{{}}}
+	svc = New(reader)
+	_, err = svc.NodeDetail(context.Background(), "team-1", "fact", "missing")
+	if !errors.Is(err, ErrNodeNotFound) {
+		t.Fatalf("err = %v; want ErrNodeNotFound", err)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestGraphLocalClampsDepthAndRejectsDynamicTraversalInput(t *testing.T) {

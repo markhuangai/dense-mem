@@ -387,6 +387,12 @@ export class UserApi {
     return payload.data;
   }
 
+  async nodeDetail(type: string, id: string): Promise<GraphNode> {
+    const params = new URLSearchParams({ type, id });
+    const payload = await this.request<Envelope<GraphNode>>(`/ui/api/node-detail?${params.toString()}`);
+    return payload.data;
+  }
+
   async dreamingStatus(): Promise<DreamStatus> {
     const payload = await this.request<Envelope<DreamStatus>>("/api/v1/dreaming/status");
     return payload.data;

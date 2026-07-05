@@ -26,6 +26,9 @@ const (
 var (
 	ErrMissingAnchor     = errors.New("graph local view requires anchor_type and anchor_id")
 	ErrInvalidAnchorType = errors.New("unsupported graph anchor_type")
+	ErrMissingNode       = errors.New("graph node detail requires type and id")
+	ErrInvalidNodeType   = errors.New("unsupported graph node type")
+	ErrNodeNotFound      = errors.New("graph node not found")
 )
 
 type ScopedReader interface {
@@ -34,6 +37,7 @@ type ScopedReader interface {
 
 type Service interface {
 	Graph(ctx context.Context, profileID string, query Query) (*Snapshot, error)
+	NodeDetail(ctx context.Context, profileID string, nodeType string, nodeID string) (*Node, error)
 }
 
 type Query struct {
@@ -145,12 +149,16 @@ func (s *service) Graph(ctx context.Context, profileID string, query Query) (*Sn
 		edges = edgesFromRows(edgeRows)
 	}
 
+	truncated := false
+	if normalized.scope == ScopeLocal {
+		truncated = len(nodes) >= normalized.limit
+	}
 	snapshot := &Snapshot{
 		Scope:     normalized.scope,
 		Query:     normalized.search,
 		Depth:     normalized.depth,
 		Limit:     normalized.limit,
-		Truncated: len(nodes) >= normalized.limit,
+		Truncated: truncated,
 		Nodes:     nodes,
 		Edges:     edges,
 	}
@@ -162,6 +170,33 @@ func (s *service) Graph(ctx context.Context, profileID string, query Query) (*Sn
 		}
 	}
 	return snapshot, nil
+}
+
+func (s *service) NodeDetail(ctx context.Context, profileID string, nodeType string, nodeID string) (*Node, error) {
+	if s == nil || s.reader == nil {
+		return nil, errors.New("graph view reader is not configured")
+	}
+	normalizedType := normalizeType(nodeType)
+	normalizedID := strings.TrimSpace(nodeID)
+	if normalizedType == "" && strings.TrimSpace(nodeType) != "" {
+		return nil, ErrInvalidNodeType
+	}
+	if normalizedType == "" || normalizedID == "" {
+		return nil, ErrMissingNode
+	}
+
+	_, rows, err := s.reader.ScopedRead(ctx, profileID, graphNodeDetailCypher, map[string]any{
+		"nodeType": normalizedType,
+		"nodeID":   normalizedID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("graph node detail: %w", err)
+	}
+	nodes := nodesFromRows(rows)
+	if len(nodes) == 0 {
+		return nil, ErrNodeNotFound
+	}
+	return &nodes[0], nil
 }
 
 func (q normalizedQuery) params() map[string]any {
@@ -225,6 +260,7 @@ func normalizeTypes(values []string) map[string]bool {
 		out["fact"] = true
 		out["claim"] = true
 		out["fragment"] = true
+		out["dream"] = true
 	}
 	return out
 }
@@ -341,101 +377,93 @@ CALL {
       ($includeSuperseded AND coalesce(f.status, '') = 'superseded')
     )
     AND ($query = '' OR toLower(coalesce(f.subject, '') + ' ' + coalesce(f.predicate, '') + ' ' + coalesce(f.object, '')) CONTAINS $query)
-  WITH f
-  ORDER BY f.recorded_at DESC, f.fact_id ASC
-  LIMIT $limit
-  RETURN collect({
-    type: 'fact',
-    id: f.fact_id,
-    key: 'fact:' + f.fact_id,
-    title: trim(coalesce(f.subject, '') + ' ' + coalesce(f.predicate, '') + ' ' + coalesce(f.object, '')),
-    body: coalesce(f.object, ''),
-    status: coalesce(f.status, ''),
-    community_id: toString(f.community_id),
-    source: '',
-    score: coalesce(f.truth_score, 0.0),
-    recorded_at: f.recorded_at
-  }) AS rows
+  RETURN collect(f) AS seeds
 }
-WITH rows AS factRows
+WITH seeds AS factSeeds
 CALL {
   MATCH (c:Claim {team_id: $profileId})
   WHERE $includeClaim
     AND coalesce(c.status, 'candidate') <> 'rejected'
     AND ($query = '' OR toLower(coalesce(c.subject, '') + ' ' + coalesce(c.predicate, '') + ' ' + coalesce(c.object, '')) CONTAINS $query)
-  WITH c
-  ORDER BY c.recorded_at DESC, c.claim_id ASC
-  LIMIT $limit
-  RETURN collect({
-    type: 'claim',
-    id: c.claim_id,
-    key: 'claim:' + c.claim_id,
-    title: trim(coalesce(c.subject, '') + ' ' + coalesce(c.predicate, '') + ' ' + coalesce(c.object, '')),
-    body: coalesce(c.object, ''),
-    status: coalesce(c.status, ''),
-    community_id: toString(c.community_id),
-    source: '',
-    score: coalesce(c.resolution_conf, c.extract_conf, c.source_quality, 0.0),
-    recorded_at: c.recorded_at
-  }) AS rows
+  RETURN collect(c) AS seeds
 }
-WITH factRows, rows AS claimRows
+WITH factSeeds, seeds AS claimSeeds
 CALL {
   MATCH (sf:SourceFragment {team_id: $profileId})
   WHERE $includeFragment
     AND coalesce(sf.status, 'active') <> 'retracted'
     AND ($query = '' OR toLower(coalesce(sf.content, '') + ' ' + coalesce(sf.source, '')) CONTAINS $query)
-  WITH sf
-  ORDER BY sf.created_at DESC, sf.fragment_id ASC
-  LIMIT $limit
-  RETURN collect({
-    type: 'fragment',
-    id: sf.fragment_id,
-    key: 'fragment:' + sf.fragment_id,
-    title: substring(coalesce(sf.content, ''), 0, 160),
-    body: substring(coalesce(sf.content, ''), 0, 600),
-    status: coalesce(sf.status, 'active'),
-    community_id: toString(sf.community_id),
-    source: coalesce(sf.source, ''),
-    score: coalesce(sf.source_quality, 0.0),
-    recorded_at: sf.created_at
-  }) AS rows
+  RETURN collect(sf) AS seeds
 }
-WITH factRows, claimRows, rows AS fragmentRows
+WITH factSeeds, claimSeeds, seeds AS fragmentSeeds
 CALL {
   MATCH (d:Dream {team_id: $profileId})
   WHERE $includeDream
     AND coalesce(d.status, '') IN ['proposed', 'reinforced']
     AND ($query = '' OR toLower(coalesce(d.hypothesis, '') + ' ' + coalesce(d.what_if, '') + ' ' + coalesce(d.possible_outcome, '')) CONTAINS $query)
-  WITH d
-  ORDER BY d.updated_at DESC, d.dream_id ASC
-  LIMIT $limit
-  RETURN collect({
-    type: 'dream',
-    id: d.dream_id,
-    key: 'dream:' + d.dream_id,
-    title: coalesce(d.hypothesis, ''),
-    body: trim(coalesce(d.what_if, '') + ' ' + coalesce(d.possible_outcome, '')),
-    status: coalesce(d.status, ''),
-    community_id: toString(d.community_id),
-    source: coalesce(d.generator_model, ''),
-    score: coalesce(d.confidence, d.likelihood, 0.0),
-    recorded_at: d.updated_at
-  }) AS rows
+  RETURN collect(d) AS seeds
 }
-WITH factRows + claimRows + fragmentRows + rows AS nodeRows
-UNWIND nodeRows AS row
-RETURN row.type AS type,
-       row.id AS id,
-       row.key AS key,
-       row.title AS title,
-       row.body AS body,
-       row.status AS status,
-       row.community_id AS community_id,
-       row.source AS source,
-       row.score AS score,
-       row.recorded_at AS recorded_at
-ORDER BY recorded_at DESC, key ASC
+WITH factSeeds + claimSeeds + fragmentSeeds + seeds AS seedRows
+UNWIND seedRows AS seed
+WITH DISTINCT seed
+CALL {
+  WITH seed
+  RETURN seed AS n, 1 AS seed_rank
+  UNION
+  WITH seed
+  MATCH (seed)-[r]-(neighbor)
+  WHERE r.team_id = $profileId
+    AND type(r) IN $relationshipTypes
+    AND neighbor.team_id = $profileId
+  RETURN neighbor AS n, 0 AS seed_rank
+}
+WITH n, max(seed_rank) AS seed_rank
+WHERE (
+  ($includeFact AND n:Fact AND (
+    coalesce(n.status, '') IN ['active', 'needs_revalidation'] OR
+    ($includeSuperseded AND coalesce(n.status, '') = 'superseded')
+  )) OR
+  ($includeClaim AND n:Claim AND coalesce(n.status, 'candidate') <> 'rejected') OR
+  ($includeFragment AND n:SourceFragment AND coalesce(n.status, 'active') <> 'retracted') OR
+  ($includeDream AND n:Dream AND coalesce(n.status, '') IN ['proposed', 'reinforced'])
+)
+WITH n, seed_rank,
+     CASE
+       WHEN n:Fact THEN 'fact:' + n.fact_id
+       WHEN n:Claim THEN 'claim:' + n.claim_id
+       WHEN n:SourceFragment THEN 'fragment:' + n.fragment_id
+       WHEN n:Dream THEN 'dream:' + n.dream_id
+       ELSE ''
+     END AS key,
+     CASE
+       WHEN n:Dream THEN n.updated_at
+       WHEN n:SourceFragment THEN n.created_at
+       ELSE n.recorded_at
+     END AS recorded_at
+RETURN
+       CASE
+         WHEN n:Fact THEN 'fact'
+         WHEN n:Claim THEN 'claim'
+         WHEN n:SourceFragment THEN 'fragment'
+         WHEN n:Dream THEN 'dream'
+         ELSE ''
+       END AS type,
+       CASE
+         WHEN n:Fact THEN n.fact_id
+         WHEN n:Claim THEN n.claim_id
+         WHEN n:SourceFragment THEN n.fragment_id
+         WHEN n:Dream THEN n.dream_id
+         ELSE ''
+       END AS id,
+       key AS key,
+       CASE
+         WHEN n:Fact THEN trim(coalesce(n.subject, '') + ' ' + coalesce(n.predicate, '') + ' ' + coalesce(n.object, ''))
+         WHEN n:Claim THEN trim(coalesce(n.subject, '') + ' ' + coalesce(n.predicate, '') + ' ' + coalesce(n.object, ''))
+         WHEN n:SourceFragment THEN substring(coalesce(n.content, ''), 0, 160)
+         WHEN n:Dream THEN coalesce(n.hypothesis, '')
+         ELSE ''
+       END AS title
+ORDER BY seed_rank DESC, recorded_at DESC, key ASC
 `
 
 func localNodesCypher(depth int) string {
@@ -472,7 +500,84 @@ WITH anchor, n
 	  ($includeFragment AND n:SourceFragment AND coalesce(n.status, 'active') <> 'retracted') OR
 	  ($includeDream AND n:Dream AND coalesce(n.status, '') IN ['proposed', 'reinforced'])
 	)
-WITH DISTINCT anchor, n
+WITH DISTINCT anchor, n,
+     CASE
+       WHEN n:Dream THEN n.updated_at
+       WHEN n:SourceFragment THEN n.created_at
+       ELSE n.recorded_at
+     END AS recorded_at
+RETURN
+       CASE
+         WHEN n:Fact THEN 'fact'
+         WHEN n:Claim THEN 'claim'
+         WHEN n:SourceFragment THEN 'fragment'
+         WHEN n:Dream THEN 'dream'
+         ELSE ''
+       END AS type,
+       CASE
+         WHEN n:Fact THEN n.fact_id
+         WHEN n:Claim THEN n.claim_id
+         WHEN n:SourceFragment THEN n.fragment_id
+         WHEN n:Dream THEN n.dream_id
+         ELSE ''
+       END AS id,
+       CASE
+         WHEN n:Fact THEN 'fact:' + n.fact_id
+         WHEN n:Claim THEN 'claim:' + n.claim_id
+         WHEN n:SourceFragment THEN 'fragment:' + n.fragment_id
+         WHEN n:Dream THEN 'dream:' + n.dream_id
+         ELSE ''
+       END AS key,
+	       CASE
+	         WHEN n:Fact THEN trim(coalesce(n.subject, '') + ' ' + coalesce(n.predicate, '') + ' ' + coalesce(n.object, ''))
+	         WHEN n:Claim THEN trim(coalesce(n.subject, '') + ' ' + coalesce(n.predicate, '') + ' ' + coalesce(n.object, ''))
+	         WHEN n:SourceFragment THEN substring(coalesce(n.content, ''), 0, 160)
+	         WHEN n:Dream THEN coalesce(n.hypothesis, '')
+	         ELSE ''
+	       END AS title
+	ORDER BY CASE WHEN elementId(n) = elementId(anchor) THEN 0 ELSE 1 END, recorded_at DESC, key ASC
+	LIMIT $limit`, depth)
+}
+
+const graphEdgesCypher = `
+MATCH (a)-[r]->(b)
+WHERE a.team_id = $profileId
+  AND b.team_id = $profileId
+  AND r.team_id = $profileId
+  AND type(r) IN $relationshipTypes
+WITH a, r, b,
+     CASE
+       WHEN a:Fact THEN 'fact:' + a.fact_id
+       WHEN a:Claim THEN 'claim:' + a.claim_id
+       WHEN a:SourceFragment THEN 'fragment:' + a.fragment_id
+       WHEN a:Dream THEN 'dream:' + a.dream_id
+       ELSE ''
+     END AS source_key,
+     CASE
+       WHEN b:Fact THEN 'fact:' + b.fact_id
+       WHEN b:Claim THEN 'claim:' + b.claim_id
+       WHEN b:SourceFragment THEN 'fragment:' + b.fragment_id
+       WHEN b:Dream THEN 'dream:' + b.dream_id
+       ELSE ''
+     END AS target_key
+WHERE source_key IN $nodeKeys
+  AND target_key IN $nodeKeys
+RETURN elementId(r) AS id,
+       source_key AS source,
+       target_key AS target,
+       type(r) AS relationship
+ORDER BY relationship ASC, source ASC, target ASC
+`
+
+const graphNodeDetailCypher = `
+MATCH (n)
+WHERE n.team_id = $profileId
+  AND (
+    ($nodeType = 'fact' AND n:Fact AND n.fact_id = $nodeID AND coalesce(n.status, '') IN ['active', 'needs_revalidation', 'superseded']) OR
+    ($nodeType = 'claim' AND n:Claim AND n.claim_id = $nodeID AND coalesce(n.status, 'candidate') <> 'rejected') OR
+    ($nodeType = 'fragment' AND n:SourceFragment AND n.fragment_id = $nodeID AND coalesce(n.status, 'active') <> 'retracted') OR
+    ($nodeType = 'dream' AND n:Dream AND n.dream_id = $nodeID AND coalesce(n.status, '') IN ['proposed', 'reinforced'])
+  )
 RETURN
        CASE
          WHEN n:Fact THEN 'fact'
@@ -505,7 +610,7 @@ RETURN
        CASE
          WHEN n:Fact THEN coalesce(n.object, '')
          WHEN n:Claim THEN coalesce(n.object, '')
-         WHEN n:SourceFragment THEN substring(coalesce(n.content, ''), 0, 600)
+         WHEN n:SourceFragment THEN coalesce(n.content, '')
          WHEN n:Dream THEN trim(coalesce(n.what_if, '') + ' ' + coalesce(n.possible_outcome, ''))
          ELSE ''
        END AS body,
@@ -528,36 +633,5 @@ RETURN
          WHEN n:SourceFragment THEN n.created_at
          ELSE n.recorded_at
        END AS recorded_at
-ORDER BY CASE WHEN elementId(n) = elementId(anchor) THEN 0 ELSE 1 END, recorded_at DESC, key ASC
-LIMIT $limit`, depth)
-}
-
-const graphEdgesCypher = `
-MATCH (a)-[r]->(b)
-WHERE a.team_id = $profileId
-  AND b.team_id = $profileId
-  AND r.team_id = $profileId
-  AND type(r) IN $relationshipTypes
-WITH a, r, b,
-     CASE
-       WHEN a:Fact THEN 'fact:' + a.fact_id
-       WHEN a:Claim THEN 'claim:' + a.claim_id
-       WHEN a:SourceFragment THEN 'fragment:' + a.fragment_id
-       WHEN a:Dream THEN 'dream:' + a.dream_id
-       ELSE ''
-     END AS source_key,
-     CASE
-       WHEN b:Fact THEN 'fact:' + b.fact_id
-       WHEN b:Claim THEN 'claim:' + b.claim_id
-       WHEN b:SourceFragment THEN 'fragment:' + b.fragment_id
-       WHEN b:Dream THEN 'dream:' + b.dream_id
-       ELSE ''
-     END AS target_key
-WHERE source_key IN $nodeKeys
-  AND target_key IN $nodeKeys
-RETURN elementId(r) AS id,
-       source_key AS source,
-       target_key AS target,
-       type(r) AS relationship
-ORDER BY relationship ASC, source ASC, target ASC
+LIMIT 1
 `
