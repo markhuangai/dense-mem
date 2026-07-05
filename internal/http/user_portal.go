@@ -79,6 +79,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	api.GET("/session", portal.session)
 	api.GET("/telemetry", portal.telemetrySnapshot, httpmw.RequireScopes("write"))
 	api.GET("/graph", portal.graphSnapshot, httpmw.RequireScopes("read"))
+	api.GET("/node-detail", portal.graphNodeDetail, httpmw.RequireScopes("read"))
 	api.POST("/key/rotate", portal.rotateCurrentKey, httpmw.RequireScopes("write"))
 	if deps.SSOService != nil {
 		api.POST("/sso/team", portal.switchSSOTeam, httpmw.RequireScopes("read"))
@@ -240,6 +241,32 @@ func (h *userPortalHandler) graphSnapshot(c echo.Context) error {
 		return err
 	}
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": snapshot})
+}
+
+func (h *userPortalHandler) graphNodeDetail(c echo.Context) error {
+	if h.graph == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "graph view unavailable")
+	}
+	principal := httpmw.GetPrincipal(c.Request().Context())
+	if principal == nil {
+		return httperr.New(httperr.FORBIDDEN, "authentication required")
+	}
+	teamID := principal.GetTeamID()
+	if teamID == uuid.Nil {
+		return httperr.New(httperr.FORBIDDEN, "authenticated key is not team bound")
+	}
+
+	node, err := h.graph.NodeDetail(c.Request().Context(), teamID.String(), c.QueryParam("type"), c.QueryParam("id"))
+	if err != nil {
+		if errors.Is(err, graphview.ErrMissingNode) || errors.Is(err, graphview.ErrInvalidNodeType) {
+			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
+		}
+		if errors.Is(err, graphview.ErrNodeNotFound) {
+			return httperr.New(httperr.NOT_FOUND, err.Error())
+		}
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": node})
 }
 
 func userPortalOptionalIntQuery(c echo.Context, name string) (int, error) {

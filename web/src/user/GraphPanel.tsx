@@ -14,7 +14,6 @@ import { LoadingState, SectionHeading } from "../ui/components";
 import { GraphEdge, GraphNode, GraphNodeType, GraphQuery, GraphSnapshot, UserApi } from "./api";
 
 type TypeFilter = Record<GraphNodeType, boolean>;
-type ColorMode = "type" | "community";
 type GraphAnchor = {
   type: GraphNodeType;
   id: string;
@@ -27,7 +26,7 @@ const defaultTypes: TypeFilter = {
   fact: true,
   claim: true,
   fragment: true,
-  dream: false,
+  dream: true,
 };
 
 export function GraphPanel({ api }: { api: UserApi }) {
@@ -43,10 +42,12 @@ export function GraphPanel({ api }: { api: UserApi }) {
   const [nodeSize, setNodeSize] = useState(5);
   const [linkDistance, setLinkDistance] = useState(92);
   const [showArrows, setShowArrows] = useState(true);
-  const [colorMode, setColorMode] = useState<ColorMode>("community");
   const [showLabels, setShowLabels] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [selectedDetail, setSelectedDetail] = useState<GraphNode | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
 
   async function loadGraph(query: GraphQuery = buildQuery({ searchText, scope, anchorType, anchorId, types, depth, includeSuperseded })) {
     if (query.types?.length === 0) {
@@ -62,7 +63,7 @@ export function GraphPanel({ api }: { api: UserApi }) {
     try {
       const next = await api.graph(query);
       setSnapshot(next);
-      setSelectedKey((current) => next.nodes.some((node) => node.key === current) ? current : next.anchor?.key ?? next.nodes[0]?.key ?? "");
+      setSelectedKey((current) => next.nodes.some((node) => node.key === current) ? current : "");
     } catch (err) {
       setError(readError(err));
     } finally {
@@ -74,8 +75,40 @@ export function GraphPanel({ api }: { api: UserApi }) {
     void loadGraph(buildQuery({ searchText: "", scope: "overview", anchorType, anchorId: "", types, depth: 2, includeSuperseded }));
   }, [api]);
 
-  const selectedNode = snapshot?.nodes.find((node) => node.key === selectedKey) ?? snapshot?.nodes[0] ?? null;
+  const selectedNode = selectedKey ? snapshot?.nodes.find((node) => node.key === selectedKey) ?? null : null;
   const hasSelectedTypes = Object.values(types).some(Boolean);
+
+  useEffect(() => {
+    if (!selectedNode) {
+      setSelectedDetail(null);
+      setDetailError("");
+      setDetailLoading(false);
+      return;
+    }
+    let active = true;
+    setSelectedDetail(null);
+    setDetailError("");
+    setDetailLoading(true);
+    api.nodeDetail(selectedNode.type, selectedNode.id)
+      .then((detail) => {
+        if (active) {
+          setSelectedDetail(detail);
+        }
+      })
+      .catch((err) => {
+        if (active) {
+          setDetailError(readError(err));
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setDetailLoading(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [api, selectedNode?.key, selectedNode?.type, selectedNode?.id]);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -168,10 +201,6 @@ export function GraphPanel({ api }: { api: UserApi }) {
             <span>Superseded</span>
             <input type="checkbox" checked={includeSuperseded} onChange={(event) => setIncludeSuperseded(event.target.checked)} />
           </label>
-          <label className="toggle-row compact-toggle">
-            <span>Communities</span>
-            <input type="checkbox" checked={colorMode === "community"} onChange={(event) => setColorMode(event.target.checked ? "community" : "type")} />
-          </label>
 
           <div className="button-row">
             <button className="primary-button compact" type="submit" disabled={loading || !hasSelectedTypes}>
@@ -190,7 +219,6 @@ export function GraphPanel({ api }: { api: UserApi }) {
             snapshot={snapshot}
             selectedKey={selectedKey}
             onSelect={setSelectedKey}
-            colorMode={colorMode}
             nodeSize={nodeSize}
             linkDistance={linkDistance}
             showArrows={showArrows}
@@ -202,7 +230,7 @@ export function GraphPanel({ api }: { api: UserApi }) {
 
       <aside className="graph-inspector" aria-label="Graph inspector">
         <GraphStats snapshot={snapshot} />
-        <NodeInspector node={selectedNode} />
+        <NodeInspector summary={selectedNode} detail={selectedDetail} loading={detailLoading} error={detailError} />
       </aside>
     </section>
   );
@@ -270,7 +298,6 @@ export function ResultGraphPreview({ api, anchor }: { api: UserApi; anchor: Grap
         snapshot={snapshot}
         selectedKey={selectedKey}
         onSelect={setSelectedKey}
-        colorMode="type"
         nodeSize={4}
         linkDistance={72}
         showArrows
@@ -289,7 +316,6 @@ function GraphCanvas({
   snapshot,
   selectedKey,
   onSelect,
-  colorMode,
   nodeSize,
   linkDistance,
   showArrows,
@@ -299,7 +325,6 @@ function GraphCanvas({
   snapshot: GraphSnapshot;
   selectedKey: string;
   onSelect: (key: string) => void;
-  colorMode: ColorMode;
   nodeSize: number;
   linkDistance: number;
   showArrows: boolean;
@@ -339,7 +364,6 @@ function GraphCanvas({
         nodeVal={(node) => node.val ?? nodeValue(node, nodeSize)}
         nodeLabel={(node) => `${nodeTypeLabel(node.type as GraphNodeType)}: ${node.title}`}
         nodeCanvasObject={(node, canvas, globalScale) => drawNode(node, canvas, globalScale, {
-          colorMode,
           selected: node.key === selectedKey,
           nodeSize,
           showLabels,
@@ -463,23 +487,26 @@ function GraphStats({ snapshot }: { snapshot: GraphSnapshot | null }) {
   );
 }
 
-function NodeInspector({ node }: { node: GraphNode | null }) {
-  if (!node) {
+function NodeInspector({ summary, detail, loading, error }: { summary: GraphNode | null; detail: GraphNode | null; loading: boolean; error: string }) {
+  if (!summary) {
     return <div className="table-placeholder compact">Select a node</div>;
   }
+  const node = detail ?? summary;
   return (
     <article className="graph-node-detail">
       <div className="result-kicker">
-        {nodeIcon(node.type)}
-        <span className="status-pill neutral">{nodeTypeLabel(node.type as GraphNodeType)}</span>
+        {nodeIcon(summary.type)}
+        <span className="status-pill neutral">{nodeTypeLabel(summary.type as GraphNodeType)}</span>
         {node.status && <span className="status-pill success">{node.status}</span>}
       </div>
-      <h3>{node.title || node.id}</h3>
+      <h3>{node.title || summary.title || summary.id}</h3>
+      {loading && <LoadingState label="Loading details" compact />}
+      {error && <div className="banner error" role="alert">{error}</div>}
       {node.body && <p>{node.body}</p>}
       <dl className="evidence-list">
         <div>
           <dt>ID</dt>
-          <dd>{node.id}</dd>
+          <dd>{summary.id}</dd>
         </div>
         <div>
           <dt>Community</dt>
@@ -531,10 +558,10 @@ function drawNode(
   node: ForceNode,
   canvas: CanvasRenderingContext2D,
   globalScale: number,
-  opts: { colorMode: ColorMode; selected: boolean; nodeSize: number; showLabels: boolean; compact: boolean; theme: CanvasTheme },
+  opts: { selected: boolean; nodeSize: number; showLabels: boolean; compact: boolean; theme: CanvasTheme },
 ) {
   const radius = nodeValue(node, opts.nodeSize);
-  const color = nodeColor(node, opts.colorMode);
+  const color = nodeColor(node);
   canvas.beginPath();
   canvas.arc(node.x ?? 0, node.y ?? 0, radius, 0, 2 * Math.PI, false);
   canvas.fillStyle = color;
@@ -561,16 +588,12 @@ function paintNodeArea(node: ForceNode, color: string, canvas: CanvasRenderingCo
   canvas.fill();
 }
 
-function nodeValue(node: Pick<GraphNode, "score" | "type">, nodeSize: number) {
-  const scoreBoost = Math.max(0, Math.min(1, node.score ?? 0)) * 4;
+function nodeValue(node: Pick<GraphNode, "type">, nodeSize: number) {
   const typeBoost = node.type === "fact" ? 1.4 : node.type === "dream" ? 0.6 : 1;
-  return nodeSize + scoreBoost + typeBoost;
+  return nodeSize + typeBoost;
 }
 
-function nodeColor(node: GraphNode, colorMode: ColorMode): string {
-  if (colorMode === "community" && node.community_id) {
-    return communityColor(node.community_id);
-  }
+function nodeColor(node: GraphNode): string {
   switch (node.type) {
     case "fact":
       return "#0f766e";
@@ -583,15 +606,6 @@ function nodeColor(node: GraphNode, colorMode: ColorMode): string {
     default:
       return "#64748b";
   }
-}
-
-function communityColor(communityID: string): string {
-  const palette = ["#0f766e", "#2563eb", "#ca8a04", "#dc2626", "#7c3aed", "#0891b2", "#65a30d", "#db2777"];
-  let hash = 0;
-  for (let index = 0; index < communityID.length; index += 1) {
-    hash = (hash * 31 + communityID.charCodeAt(index)) >>> 0;
-  }
-  return palette[hash % palette.length];
 }
 
 function relationshipColor(type: string): string {

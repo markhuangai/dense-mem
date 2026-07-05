@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UserPortalApp } from "./App";
-import { GraphSnapshot, RecallHit, UserKey, UserSession } from "./api";
+import { GraphNode, GraphSnapshot, RecallHit, UserKey, UserSession } from "./api";
 
 vi.mock("react-force-graph-2d", async () => {
   const React = await import("react");
@@ -139,27 +139,42 @@ const overviewGraph: GraphSnapshot = {
       id: "fact-1",
       type: "fact",
       title: "Alice works_on project-x",
-      body: "project-x",
-      status: "active",
-      community_id: "community-1",
-      score: 0.94,
-      recorded_at: "2026-05-02T12:00:00Z",
     },
     {
       key: "claim:claim-1",
       id: "claim-1",
       type: "claim",
       title: "Alice uses Dense-Mem",
-      body: "Dense-Mem",
-      status: "validated",
-      community_id: "community-1",
-      score: 0.88,
-      recorded_at: "2026-05-02T12:00:00Z",
     },
   ],
   edges: [
     { id: "edge-1", source: "claim:claim-1", target: "fact:fact-1", relationship: "PROMOTES_TO", directed: true },
   ],
+};
+
+const graphNodeDetails: Record<string, GraphNode> = {
+  "fact:fact-1": {
+    key: "fact:fact-1",
+    id: "fact-1",
+    type: "fact",
+    title: "Alice works_on project-x",
+    body: "project-x",
+    status: "active",
+    community_id: "community-1",
+    score: 0.94,
+    recorded_at: "2026-05-02T12:00:00Z",
+  },
+  "claim:claim-1": {
+    key: "claim:claim-1",
+    id: "claim-1",
+    type: "claim",
+    title: "Alice uses Dense-Mem",
+    body: "Dense-Mem",
+    status: "validated",
+    community_id: "community-1",
+    score: 0.88,
+    recorded_at: "2026-05-02T12:00:00Z",
+  },
 };
 
 const localGraph: GraphSnapshot = {
@@ -276,7 +291,7 @@ describe("UserPortalApp", () => {
     expect(screen.getByLabelText("Graph totals")).toHaveTextContent("2");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment&depth=2",
+        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment%2Cdream&depth=2",
         expect.any(Object),
       );
     });
@@ -284,7 +299,7 @@ describe("UserPortalApp", () => {
     await userEvent.click(within(controls).getByRole("button", { name: "Refresh" }));
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment&depth=2&include_superseded=true",
+        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment%2Cdream&depth=2&include_superseded=true",
         expect.any(Object),
       );
     });
@@ -300,7 +315,7 @@ describe("UserPortalApp", () => {
     const controls = await screen.findByLabelText("Graph controls");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment&depth=2",
+        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment%2Cdream&depth=2",
         expect.any(Object),
       );
     });
@@ -310,6 +325,7 @@ describe("UserPortalApp", () => {
     await userEvent.click(within(controls).getByRole("checkbox", { name: "Fact" }));
     await userEvent.click(within(controls).getByRole("checkbox", { name: "Claim" }));
     await userEvent.click(within(controls).getByRole("checkbox", { name: "Fragment" }));
+    await userEvent.click(within(controls).getByRole("checkbox", { name: "Dream" }));
 
     const refresh = within(controls).getByRole("button", { name: "Refresh" });
     expect(refresh).toBeDisabled();
@@ -701,7 +717,7 @@ async function expectCurrentWorkspace(teamName: string) {
   expect(workspace).toHaveTextContent(teamName);
 }
 
-function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: { recallHits?: RecallHit[] | RecallHit[][]; graphSnapshot?: GraphSnapshot } = {}) {
+function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: { recallHits?: RecallHit[] | RecallHit[][]; graphSnapshot?: GraphSnapshot; graphNodeDetails?: Record<string, GraphNode> } = {}) {
   let currentTeam = session.team;
   let currentProfiles = profiles;
   let recallCallCount = 0;
@@ -734,6 +750,11 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: 
     }
     if (url.startsWith("/ui/api/telemetry") && method === "GET") {
       return jsonResponse({ data: telemetryForSession(session) });
+    }
+    if (url.startsWith("/ui/api/node-detail") && method === "GET") {
+      const params = new URLSearchParams(url.split("?")[1] ?? "");
+      const key = `${params.get("type")}:${params.get("id")}`;
+      return jsonResponse({ data: (options.graphNodeDetails ?? graphNodeDetails)[key] ?? graphNodeDetails["fact:fact-1"] });
     }
     if (url.startsWith("/ui/api/graph") && method === "GET") {
       return jsonResponse({ data: options.graphSnapshot ?? overviewGraph });

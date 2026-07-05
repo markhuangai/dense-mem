@@ -164,10 +164,16 @@ func (s *userPortalRotateErrorKeySvc) RotateForProfile(context.Context, uuid.UUI
 }
 
 type userPortalGraphSvc struct {
-	profileID string
-	query     graphview.Query
-	calls     int
-	err       error
+	profileID        string
+	query            graphview.Query
+	calls            int
+	detailProfileID  string
+	detailType       string
+	detailID         string
+	detailCalls      int
+	err              error
+	nodeDetailErr    error
+	nodeDetailResult *graphview.Node
 }
 
 func (s *userPortalGraphSvc) Graph(_ context.Context, profileID string, query graphview.Query) (*graphview.Snapshot, error) {
@@ -185,6 +191,29 @@ func (s *userPortalGraphSvc) Graph(_ context.Context, profileID string, query gr
 			Type:  "fact",
 			Title: "fact title",
 		}},
+	}, nil
+}
+
+func (s *userPortalGraphSvc) NodeDetail(_ context.Context, profileID string, nodeType string, nodeID string) (*graphview.Node, error) {
+	s.detailProfileID = profileID
+	s.detailType = nodeType
+	s.detailID = nodeID
+	s.detailCalls++
+	if s.nodeDetailErr != nil {
+		return nil, s.nodeDetailErr
+	}
+	if s.nodeDetailResult != nil {
+		return s.nodeDetailResult, nil
+	}
+	return &graphview.Node{
+		Key:         "fact:fact-1",
+		ID:          "fact-1",
+		Type:        "fact",
+		Title:       "fact title",
+		Body:        "fact detail",
+		Status:      "active",
+		CommunityID: "community-1",
+		Score:       0.9,
 	}, nil
 }
 
@@ -338,6 +367,47 @@ func TestUserPortalGraphRequiresReadScope(t *testing.T) {
 
 	require.Equal(t, http.StatusForbidden, rec.Code)
 	require.Equal(t, 0, graph.calls)
+}
+
+func TestUserPortalGraphNodeDetailUsesAuthenticatedTeamScope(t *testing.T) {
+	teamID := uuid.New()
+	authKey, rawKey := userPortalTestKey(t, teamID, uuid.New(), "Reader", []string{"read"})
+	graph := &userPortalGraphSvc{}
+	server := userPortalTestServerWithGraph(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.APIKey{authKey}}, "", nil, graph)
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/node-detail?type=fact&id=fact-1", nil)
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"body":"fact detail"`)
+	require.Equal(t, 1, graph.detailCalls)
+	require.Equal(t, teamID.String(), graph.detailProfileID)
+	require.Equal(t, "fact", graph.detailType)
+	require.Equal(t, "fact-1", graph.detailID)
+}
+
+func TestUserPortalGraphNodeDetailMapsValidationAndNotFound(t *testing.T) {
+	teamID := uuid.New()
+	authKey, rawKey := userPortalTestKey(t, teamID, uuid.New(), "Reader", []string{"read"})
+	graph := &userPortalGraphSvc{nodeDetailErr: graphview.ErrMissingNode}
+	server := userPortalTestServerWithGraph(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.APIKey{authKey}}, "", nil, graph)
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/node-detail", nil)
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+
+	graph.nodeDetailErr = graphview.ErrNodeNotFound
+	req = httptest.NewRequest(http.MethodGet, "/ui/api/node-detail?type=fact&id=missing", nil)
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 func TestUserPortalTelemetryReadOnlyForbidden(t *testing.T) {

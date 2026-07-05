@@ -585,6 +585,17 @@ async function mockUserApi(
     });
   });
 
+  await page.route("**/ui/api/node-detail**", async (route) => {
+    const url = new URL(route.request().url());
+    const key = `${url.searchParams.get("type")}:${url.searchParams.get("id")}`;
+    const node = graphSnapshot.nodes.find((item) => item.key === key) ?? graphSnapshot.nodes[0];
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ data: node }),
+    });
+  });
+
   await page.route("**/ui/api/graph**", async (route) => {
     calls.graphRequests.push(route.request().url());
     await route.fulfill({
