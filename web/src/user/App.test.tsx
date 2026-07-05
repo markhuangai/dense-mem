@@ -289,6 +289,13 @@ describe("UserPortalApp", () => {
     expect(within(controls).queryByLabelText("Limit")).not.toBeInTheDocument();
     expect((await screen.findAllByText("Alice works_on project-x")).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByLabelText("Graph totals")).toHaveTextContent("2");
+    expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("Select a node");
+    await userEvent.click(within(screen.getByTestId("force-graph")).getByRole("button", { name: "Alice works_on project-x" }));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/ui/api/node-detail?type=fact&id=fact-1", expect.any(Object));
+    });
+    expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("community-1");
+    expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("0.940");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment%2Cdream&depth=2",

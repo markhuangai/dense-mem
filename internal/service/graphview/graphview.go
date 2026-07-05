@@ -406,22 +406,6 @@ CALL {
 WITH factSeeds + claimSeeds + fragmentSeeds + seeds AS seedRows
 UNWIND seedRows AS seed
 WITH DISTINCT seed
-WITH seed,
-     CASE
-       WHEN seed:Fact THEN seed.recorded_at
-       WHEN seed:Claim THEN seed.recorded_at
-       WHEN seed:SourceFragment THEN seed.created_at
-       WHEN seed:Dream THEN seed.updated_at
-       ELSE null
-     END AS seed_recorded_at,
-     CASE
-       WHEN seed:Fact THEN 'fact:' + seed.fact_id
-       WHEN seed:Claim THEN 'claim:' + seed.claim_id
-       WHEN seed:SourceFragment THEN 'fragment:' + seed.fragment_id
-       WHEN seed:Dream THEN 'dream:' + seed.dream_id
-       ELSE ''
-     END AS seed_key
-ORDER BY seed_recorded_at DESC, seed_key ASC
 CALL {
   WITH seed
   RETURN seed AS n, 1 AS seed_rank
@@ -456,7 +440,6 @@ WITH n, seed_rank,
        WHEN n:SourceFragment THEN n.created_at
        ELSE n.recorded_at
      END AS recorded_at
-ORDER BY seed_rank DESC, recorded_at DESC, key ASC
 RETURN
        CASE
          WHEN n:Fact THEN 'fact'

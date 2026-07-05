@@ -46,6 +46,7 @@ export function GraphPanel({ api }: { api: UserApi }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [selectedDetail, setSelectedDetail] = useState<GraphNode | null>(null);
+  const [detailKey, setDetailKey] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
 
@@ -77,16 +78,22 @@ export function GraphPanel({ api }: { api: UserApi }) {
 
   const selectedNode = selectedKey ? snapshot?.nodes.find((node) => node.key === selectedKey) ?? null : null;
   const hasSelectedTypes = Object.values(types).some(Boolean);
+  const selectedNodeKey = selectedNode?.key ?? "";
+  const activeDetail = selectedDetail?.key === selectedNodeKey ? selectedDetail : null;
+  const activeDetailLoading = detailKey === selectedNodeKey ? detailLoading : false;
+  const activeDetailError = detailKey === selectedNodeKey ? detailError : "";
 
   useEffect(() => {
     if (!selectedNode) {
       setSelectedDetail(null);
+      setDetailKey("");
       setDetailError("");
       setDetailLoading(false);
       return;
     }
     let active = true;
     setSelectedDetail(null);
+    setDetailKey(selectedNode.key);
     setDetailError("");
     setDetailLoading(true);
     api.nodeDetail(selectedNode.type, selectedNode.id)
@@ -230,7 +237,7 @@ export function GraphPanel({ api }: { api: UserApi }) {
 
       <aside className="graph-inspector" aria-label="Graph inspector">
         <GraphStats snapshot={snapshot} />
-        <NodeInspector summary={selectedNode} detail={selectedDetail} loading={detailLoading} error={detailError} />
+        <NodeInspector summary={selectedNode} detail={activeDetail} loading={activeDetailLoading} error={activeDetailError} />
       </aside>
     </section>
   );
