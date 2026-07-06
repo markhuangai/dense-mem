@@ -126,6 +126,59 @@ URL、model 和 dimensions 提供 OpenAI 默认值：`https://api.openai.com/v1`
 Verifier 调用默认发送 `temperature: 0`。如果 provider 或 model 拒绝
 temperature 字段，设置 `AI_VERIFIER_DISABLE_TEMPERATURE=true` 可以省略该字段。
 
+### 完全本地部署（Ollama）
+
+Dense-Mem 也可以完全不依赖托管 AI provider 运行。任何 OpenAI 兼容端点都能提供
+embedding 和 verification；如果 Docker 宿主机上运行着
+[Ollama](https://ollama.com)，先拉取两个模型，再把 `.env` 指向它们：
+
+```bash
+ollama pull nomic-embed-text
+ollama pull llama3.1:8b
+```
+
+```text
+AI_API_URL=http://host.docker.internal:11434/v1
+AI_API_KEY=ollama
+AI_API_EMBEDDING_MODEL=nomic-embed-text
+AI_API_EMBEDDING_DIMENSIONS=768
+AI_VERIFIER_MODEL=llama3.1:8b
+AI_VERIFIER_TIMEOUT_SECONDS=300
+```
+
+这条路径上有三个关键细节：
+
+- 使用 `host.docker.internal` 而不是 `127.0.0.1`；server 是从 compose 网络内部
+  调用 provider 的。基础 compose 示例已经把该域名映射到 Docker 宿主机，因此在
+  Linux（Docker 默认不定义该域名）上同样可用。
+- `AI_API_KEY` 必须非空，即使 Ollama 会忽略它；启动校验要求完整的 embedding
+  配置。
+- `AI_VERIFIER_MODEL` 要和 embedding 配置一起改。默认值是 `gpt-4o-mini`，在
+  Ollama 上并不存在。启动仍会成功，失败要到 claim 验证阶段才暴露。选择一个在
+  你的硬件上能在 verifier 超时之内响应的模型：7B-8B 级别的模型在笔记本上
+  验证起来很轻松，而更大的模型在加载期间可能超过默认的 60 秒超时，导致 claim
+  停在 `candidate_claim`，错误记录在 placement item 里。
+
+### 你的第一条记忆
+
+`remember` 存储 evidence 后立即返回 `ingest_id`；placement 是异步完成的。用该
+`ingest_id` 轮询 `get_memory_placement`，查看这条记忆的去向：
+
+| Category | 含义 |
+|----------|------|
+| `promoted_fact` | claim 被提取、验证并晋升为 active fact。 |
+| `validated_claim` | claim 通过了验证，但没有生成 fact。 |
+| `candidate_claim` | claim 被搁置，等待更强的支持；verifier 失败时错误在 item 的 `error` 字段里。 |
+| `fragment_only` | evidence 以可检索的形式存储，没有生成 typed claim。 |
+| `needs_more_evidence` | placement 需要更多 evidence 才能决定。 |
+| `rejected_false` | evidence 看起来是一条矛盾或 false-memory 更正。 |
+
+服务端的 claim 提取刻意保持保守：像 "I prefer ..."、"I like ..."、"I use ..."
+这样简单的第一人称陈述，是首次运行时看到 evidence 到 fact 完整路径的可靠方式。
+其他表述——包括 "Josh prefers ..." 这类第三人称形式——会作为 `fragment_only`
+的 evidence 保留，recall 仍会返回它们，只是排序低于 facts。`fragment_only`
+是正常结果，不是错误。
+
 ### Telemetry Overlay
 
 Prometheus telemetry 默认关闭，是可选功能。要为 `/ui` 应用和 control portal

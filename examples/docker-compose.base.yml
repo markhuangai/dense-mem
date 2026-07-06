@@ -101,6 +101,12 @@ services:
     ports:
       - "127.0.0.1:${DENSE_MEM_PORT:-8080}:8080"
       - "127.0.0.1:${CONTROL_PORTAL_PORT:-8090}:8090"
+    # Lets AI_API_URL reach an OpenAI-compatible provider running on the
+    # Docker host (for example Ollama at http://host.docker.internal:11434/v1).
+    # Docker Desktop defines host.docker.internal already; this mapping makes
+    # the same URL work on Linux.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
