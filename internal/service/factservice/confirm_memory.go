@@ -46,6 +46,9 @@ func (s *promoteClaimServiceImpl) doConfirmMemory(ctx context.Context, profileID
 	if err := ownership.RequireOwner(ctx, claim.OwnerProfileID); err != nil {
 		return nil, err
 	}
+	if claim.Status != domain.StatusDisputed {
+		return nil, fmt.Errorf("confirm memory: claim is not disputed: status=%s", claim.Status)
+	}
 
 	switch req.Decision {
 	case "accept_claim":
@@ -98,6 +101,12 @@ func (s *promoteClaimServiceImpl) confirmAcceptClaim(ctx context.Context, profil
 			return nil, fmt.Errorf("confirm memory: supersede conflicts: %w", err)
 		}
 	}
+	if len(alignments) > 0 {
+		if err := sameObjectConfirmPath(ctx, s.db, profileID, alignments); err != nil {
+			return nil, fmt.Errorf("confirm memory: same-object confirm: %w", err)
+		}
+		return s.confirmAcceptedExistingFact(ctx, profileID, req, claim, alignments[0], "existing team fact")
+	}
 
 	fact, err := s.createNewFact(ctx, profileID, claim, gate)
 	if err != nil {
@@ -131,13 +140,19 @@ func (s *promoteClaimServiceImpl) confirmAcceptClaimForOwner(
 			return nil, fmt.Errorf("confirm memory: supersede owner conflicts: %w", err)
 		}
 	}
-	if len(foreignConflicts) == 0 {
-		if len(ownAlignments) > 0 {
-			if err := sameObjectConfirmPath(ctx, s.db, profileID, ownAlignments); err != nil {
-				return nil, fmt.Errorf("confirm memory: same-object owner confirm: %w", err)
-			}
-			return s.confirmAcceptedExistingFact(ctx, profileID, req, claim, ownAlignments[0], "existing owner fact")
+	if len(ownAlignments) > 0 {
+		if err := sameObjectConfirmPath(ctx, s.db, profileID, ownAlignments); err != nil {
+			return nil, fmt.Errorf("confirm memory: same-object owner confirm: %w", err)
 		}
+		if err := overlayPath(ctx, s.db, profileID, ownAlignments[0].FactID, foreignConflicts); err != nil {
+			return nil, fmt.Errorf("confirm memory: link overlays: %w", err)
+		}
+		if err := alignPath(ctx, s.db, profileID, ownAlignments[0].FactID, foreignAlignments); err != nil {
+			return nil, fmt.Errorf("confirm memory: link alignments: %w", err)
+		}
+		return s.confirmAcceptedExistingFact(ctx, profileID, req, claim, ownAlignments[0], "existing owner fact")
+	}
+	if len(foreignConflicts) == 0 {
 		if len(foreignAlignments) > 0 {
 			return s.confirmAcceptedExistingFact(ctx, profileID, req, claim, foreignAlignments[0], "existing team fact")
 		}

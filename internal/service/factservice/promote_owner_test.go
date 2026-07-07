@@ -293,6 +293,53 @@ func TestPromoteOwnerScopedMutations(t *testing.T) {
 		require.Len(t, audit.entries, 1)
 		require.Equal(t, "fact-foreign-current", audit.entries[0].EntityID)
 	})
+
+	t.Run("confirm accept reuses own same fact while overlaying foreign conflict", func(t *testing.T) {
+		actorID := uuid.MustParse("00000000-0000-0000-0000-0000000000aa")
+		foreignOwnerID := uuid.MustParse("00000000-0000-0000-0000-0000000000bb")
+		actorCtx := requestctx.WithActorProfile(ctx, requestctx.ActorProfile{
+			ProfileID:   actorID,
+			ProfileName: "native",
+		})
+		claimRow := makeClaimRowForSingleCurrent("claim-confirm-owner-adopt", "Alice", "Acme Corp")
+		claimRow["status"] = string(domain.StatusDisputed)
+		claimRow["owner_profile_id"] = actorID.String()
+		claimRow["owner_profile_name"] = "native"
+
+		ownAlignment := makeFactRow("fact-owned-current", "Alice", "works_at", "active", time.Now().UTC())
+		ownAlignment["object"] = "Acme Corp"
+		ownAlignment["owner_profile_id"] = actorID.String()
+		ownAlignment["owner_profile_name"] = "native"
+		foreignConflict := makeFactRow("fact-foreign-conflict", "Alice", "works_at", "active", time.Now().UTC())
+		foreignConflict["object"] = "Other Corp"
+		foreignConflict["owner_profile_id"] = foreignOwnerID.String()
+		foreignConflict["owner_profile_name"] = "web"
+
+		db := &stubPromoteDB{
+			responsesByCall: map[int][]map[string]any{
+				0: {claimRow},
+				1: {ownAlignment, foreignConflict},
+			},
+		}
+		metrics := observability.NewInMemoryDiscoverabilityMetrics()
+		audit := &captureAuditEmitter{}
+		svc := newTestService(db, &stubClaimLocker{}, audit, metrics)
+
+		got, err := svc.ConfirmMemory(actorCtx, profileID, ConfirmMemoryRequest{
+			ClaimID:  "claim-confirm-owner-adopt",
+			Decision: "accept_claim",
+		})
+
+		require.NoError(t, err)
+		require.Equal(t, "accepted", got.Status)
+		require.NotNil(t, got.Fact)
+		require.Equal(t, "fact-owned-current", got.Fact.FactID)
+		require.Equal(t, actorID.String(), got.Fact.OwnerProfileID)
+		require.Equal(t, 3, db.writeTxCount, "same-object confirm, overlay, and claim adoption should be the only writes")
+		require.Equal(t, 1, metrics.PromotionOutcomeCount("promoted"))
+		require.Len(t, audit.entries, 1)
+		require.Equal(t, "fact-owned-current", audit.entries[0].EntityID)
+	})
 }
 
 func restorePromotionGate(predicate string, gate PromotionGate, ok bool) {

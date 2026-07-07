@@ -13,15 +13,16 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-// PromoteClaimService defines the interface for promoting a validated Claim to a Fact.
+// PromoteClaimService defines the interface for promoting a validated Claim to
+// a Fact, or linking it to an existing same-object team Fact when reuse is safe.
 //
 // A Claim must have EntailmentVerdict == VerdictEntailed and Status == StatusValidated
 // before it is eligible for promotion. Implementations are responsible for
-// persisting the new Fact node to the graph, creating the PROMOTES_TO edge,
-// and transitioning the Claim status to StatusSuperseded when appropriate.
+// persisting a new Fact node when needed, creating the PROMOTES_TO edge, and
+// transitioning the Claim status to StatusSuperseded when appropriate.
 type PromoteClaimService interface {
-	// Promote creates a Fact from the validated Claim identified by claimID
-	// within profileID. Returns the newly created Fact on success.
+	// Promote creates or reuses a Fact for the validated Claim identified by
+	// claimID within profileID. Returns the created or reused Fact on success.
 	// Returns an error if the Claim is not in a promotable state or does not
 	// belong to profileID.
 	Promote(ctx context.Context, profileID string, claimID string) (*domain.Fact, error)
