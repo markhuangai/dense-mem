@@ -333,6 +333,7 @@ describe("App", () => {
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
     await userEvent.click(screen.getByRole("button", { name: /team profiles/i }));
+    await userEvent.click(screen.getByLabelText("Recall feedback access"));
     await userEvent.click(screen.getByRole("button", { name: /create profile/i }));
 
     expect(await screen.findByDisplayValue("dm_plain_once")).toHaveAccessibleName("Generated API key");
@@ -343,7 +344,7 @@ describe("App", () => {
         expect.stringContaining(`/teams/${profileA.id}/profiles`),
         expect.objectContaining({
           method: "POST",
-          body: expect.stringContaining(`"scopes":["read","write"]`),
+          body: expect.stringContaining(`"scopes":["read","write","feedback:read"]`),
         }),
       );
       expect(fetchMock).toHaveBeenCalledWith(

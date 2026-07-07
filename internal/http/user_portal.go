@@ -702,8 +702,10 @@ func userPortalSSOCreateKeyRequest(body userPortalCreateSSOKeyRequest, identity 
 	if err != nil {
 		return service.CreateAPIKeyRequest{}, err
 	}
-	if userPortalHasScope(normalizedScopes, service.APIKeyScopeWrite) && !userPortalHasScope(maxScopes, service.APIKeyScopeWrite) {
-		return service.CreateAPIKeyRequest{}, httperr.New(httperr.FORBIDDEN, "cannot create api key above sso entitlement")
+	for _, scope := range normalizedScopes {
+		if !userPortalHasScope(maxScopes, scope) {
+			return service.CreateAPIKeyRequest{}, httperr.New(httperr.FORBIDDEN, "cannot create api key above sso entitlement")
+		}
 	}
 	if body.RateLimit <= 0 {
 		return service.CreateAPIKeyRequest{}, httperr.New(httperr.VALIDATION_ERROR, "rate_limit must be greater than zero")

@@ -20,7 +20,8 @@ export function displayKeySuffix(key: TeamProfile): string {
 }
 
 export function profilePermissionLabel(scopes: string[] | null | undefined): string {
-  return scopes?.includes("write") ? "Read/write" : "Read only";
+  const label = scopes?.includes("write") ? "Read/write" : "Read only";
+  return scopes?.includes("feedback:read") ? `${label} + feedback` : label;
 }
 
 export function profileRoleLabel(role: TeamProfile["role"] | null | undefined): string {

@@ -490,17 +490,19 @@ describe("UserPortalApp", () => {
     const newProfileName = screen.getByLabelText("Profile name", { selector: "#managed-profile-name" });
     await userEvent.clear(newProfileName);
     await userEvent.type(newProfileName, "Writer");
+    await userEvent.click(screen.getByLabelText("Recall feedback access"));
     await userEvent.click(screen.getByRole("button", { name: /create member profile/i }));
     expect(await screen.findByDisplayValue("dm_member_plaintext")).toBeInTheDocument();
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining(`/api/v1/teams/${baseSession.team.id}/profiles`),
-        expect.objectContaining({
-          method: "POST",
-          body: expect.not.stringContaining("role"),
-        }),
-      );
-    });
+	await waitFor(() => {
+		expect(fetchMock).toHaveBeenCalledWith(
+			expect.stringContaining(`/api/v1/teams/${baseSession.team.id}/profiles`),
+			expect.objectContaining({
+				method: "POST",
+				body: expect.not.stringContaining("role"),
+			}),
+		);
+		expect(fetchMock.mock.calls.map(([, init]) => String(init?.body ?? ""))).toContainEqual(expect.stringContaining(`"scopes":["read","write","feedback:read"]`));
+	});
 
     const memberName = await screen.findByLabelText("Profile name Reader");
     await userEvent.clear(memberName);

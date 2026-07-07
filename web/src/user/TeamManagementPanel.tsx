@@ -212,6 +212,7 @@ function ManagedProfileCreateForm({
 }) {
   const [name, setName] = useState("member profile");
   const [permission, setPermission] = useState<ProfilePermission>("read_write");
+  const [feedbackAccess, setFeedbackAccess] = useState(false);
   const [rateLimit, setRateLimit] = useState("120");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -233,7 +234,7 @@ function ManagedProfileCreateForm({
     try {
       await onCreate({
         name: trimmedName,
-        scopes: permission === "read" ? ["read"] : ["read", "write"],
+        scopes: [...(permission === "read" ? ["read"] : ["read", "write"]), ...(feedbackAccess ? ["feedback:read"] : [])],
         rate_limit: parsedRateLimit,
       });
       setName("member profile");
@@ -257,6 +258,10 @@ function ManagedProfileCreateForm({
         <option value="read_write">Read/write</option>
         <option value="read">Read only</option>
       </select>
+      <label className="toggle-row span" htmlFor="managed-profile-feedback-access">
+        <input id="managed-profile-feedback-access" type="checkbox" checked={feedbackAccess} onChange={(event) => setFeedbackAccess(event.target.checked)} />
+        <span>Recall feedback access</span>
+      </label>
       <label htmlFor="managed-profile-rate-limit">Rate limit</label>
       <input id="managed-profile-rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
       {error && <p className="field-error span" role="alert">{error}</p>}
@@ -423,7 +428,8 @@ function displayKeySuffix(suffix: string | null): string {
 }
 
 function profilePermissionLabel(scopes: string[] | null | undefined): string {
-  return scopes?.includes("write") ? "Read/write" : "Read only";
+  const label = scopes?.includes("write") ? "Read/write" : "Read only";
+  return scopes?.includes("feedback:read") ? `${label} + feedback` : label;
 }
 
 function profileRoleLabel(role: UserKey["role"] | null | undefined): string {

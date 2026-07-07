@@ -900,6 +900,7 @@ function TeamProfileCreateForm({
   const [name, setName] = useState("default profile");
   const [permission, setPermission] = useState<ProfilePermission>("read_write");
   const [role, setRole] = useState<ProfileRole>(defaultRole);
+  const [feedbackAccess, setFeedbackAccess] = useState(false);
   const [rateLimit, setRateLimit] = useState("120");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -930,7 +931,7 @@ function TeamProfileCreateForm({
     try {
       const created = await api.createTeamProfile(team.id, {
         name: name.trim(),
-        scopes: role === "manager" || permission === "read_write" ? ["read", "write"] : ["read"],
+        scopes: [...(role === "manager" || permission === "read_write" ? ["read", "write"] : ["read"]), ...(feedbackAccess ? ["feedback:read"] : [])],
         role,
         rate_limit: parsedRateLimit,
       });
@@ -968,6 +969,10 @@ function TeamProfileCreateForm({
           </select>
         </>
       )}
+      <label className="toggle-row span" htmlFor="team-profile-feedback-access">
+        <input id="team-profile-feedback-access" type="checkbox" checked={feedbackAccess} onChange={(event) => setFeedbackAccess(event.target.checked)} />
+        <span>Recall feedback access</span>
+      </label>
       <label htmlFor="rate-limit">Rate limit</label>
       <input id="rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
       {error && <p className="field-error span" role="alert">{error}</p>}

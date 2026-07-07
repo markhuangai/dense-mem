@@ -88,6 +88,21 @@ func TestUserPortalSSOCreateKeyRequestValidation(t *testing.T) {
 		require.ErrorContains(t, err, "cannot create api key above sso entitlement")
 	})
 
+	t.Run("caps feedback scope to entitlement", func(t *testing.T) {
+		req, err := userPortalSSOCreateKeyRequest(userPortalCreateSSOKeyRequest{
+			Scopes:    []string{service.APIKeyScopeRead, service.APIKeyScopeFeedbackRead},
+			RateLimit: 30,
+		}, identity, []string{service.APIKeyScopeRead, service.APIKeyScopeFeedbackRead})
+		require.NoError(t, err)
+		require.Equal(t, []string{service.APIKeyScopeRead, service.APIKeyScopeFeedbackRead}, req.Scopes)
+
+		_, err = userPortalSSOCreateKeyRequest(userPortalCreateSSOKeyRequest{
+			Scopes:    []string{service.APIKeyScopeRead, service.APIKeyScopeFeedbackRead},
+			RateLimit: 30,
+		}, identity, []string{service.APIKeyScopeRead})
+		require.ErrorContains(t, err, "cannot create api key above sso entitlement")
+	})
+
 	t.Run("rejects bad rate limit and expiry", func(t *testing.T) {
 		_, err := userPortalSSOCreateKeyRequest(userPortalCreateSSOKeyRequest{RateLimit: 0}, identity, []string{service.APIKeyScopeRead})
 		require.ErrorContains(t, err, "rate_limit must be greater than zero")

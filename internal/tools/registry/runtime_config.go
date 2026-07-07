@@ -7,17 +7,26 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-const SubmitRecallSessionFeedbackToolName = "submit_recall_session_feedback"
+const (
+	SubmitRecallSessionFeedbackToolName  = "submit_recall_session_feedback"
+	EvalListRecallFeedbackEventsToolName = "eval_list_recall_feedback_events"
+	EvalGetRecallFeedbackEventToolName   = "eval_get_recall_feedback_event"
+)
 
 var evaluationToolNames = map[string]struct{}{
-	"eval_get_manifest":                {},
-	"eval_list_knowledge_refs":         {},
-	"eval_get_knowledge_item":          {},
-	"eval_list_recall_feedback_events": {},
-	"eval_get_recall_feedback_event":   {},
-	"eval_run_dream_cycle":             {},
-	"eval_run_recall_case":             {},
-	"eval_score_retrieval_case":        {},
+	"eval_get_manifest":                  {},
+	"eval_list_knowledge_refs":           {},
+	"eval_get_knowledge_item":            {},
+	EvalListRecallFeedbackEventsToolName: {},
+	EvalGetRecallFeedbackEventToolName:   {},
+	"eval_run_dream_cycle":               {},
+	"eval_run_recall_case":               {},
+	"eval_score_retrieval_case":          {},
+}
+
+var recallFeedbackEventToolNames = map[string]struct{}{
+	EvalListRecallFeedbackEventsToolName: {},
+	EvalGetRecallFeedbackEventToolName:   {},
 }
 
 // IsEvaluationTool reports whether a tool belongs to the evaluation-only surface.
@@ -44,6 +53,9 @@ type EvaluationConfigProvider interface {
 // ToolVisible reports whether a registered tool should be visible for a request.
 func ToolVisible(ctx context.Context, tool Tool, cfg RecallFeedbackConfigProvider) bool {
 	if tool.Name == SubmitRecallSessionFeedbackToolName {
+		return RecallFeedbackEnabled(ctx, cfg)
+	}
+	if _, ok := recallFeedbackEventToolNames[tool.Name]; ok {
 		return RecallFeedbackEnabled(ctx, cfg)
 	}
 	if _, ok := evaluationToolNames[tool.Name]; ok {

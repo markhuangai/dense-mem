@@ -415,6 +415,7 @@ func TestNormalizeAPIKeyScopesRejectsUnsupportedSets(t *testing.T) {
 		scopes []string
 	}{
 		{name: "write without read", scopes: []string{"write"}},
+		{name: "feedback read without read", scopes: []string{"feedback:read"}},
 		{name: "unknown scope", scopes: []string{"read", "admin"}},
 		{name: "blank scope", scopes: []string{"read", " "}},
 	} {
@@ -768,7 +769,7 @@ func TestAPIKeyServiceCreateStandardKeyErrorAndAuditBranches(t *testing.T) {
 		mockProfileService.AssertExpectations(t)
 	})
 
-	t.Run("manager role forces read write scopes", func(t *testing.T) {
+	t.Run("manager role forces read write scopes without granting feedback by default", func(t *testing.T) {
 		mockRepo := new(MockAPIKeyRepository)
 		mockProfileService := new(MockProfileService)
 		mockAuditService := new(MockAuditService)

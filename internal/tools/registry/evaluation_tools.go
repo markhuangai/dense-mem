@@ -150,7 +150,7 @@ func evalGetKnowledgeItemTool(deps Dependencies) Tool {
 
 func evalListRecallFeedbackEventsTool(deps Dependencies) Tool {
 	return Tool{
-		Name:        "eval_list_recall_feedback_events",
+		Name:        EvalListRecallFeedbackEventsToolName,
 		Description: "Export team-scoped recall feedback events for diagnostics and hard-case mining.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -167,7 +167,7 @@ func evalListRecallFeedbackEventsTool(deps Dependencies) Tool {
 			"additionalProperties": false,
 		},
 		OutputSchema:   map[string]any{"type": "object"},
-		RequiredScopes: []string{"read", "write"},
+		RequiredScopes: []string{appservice.APIKeyScopeRead, appservice.APIKeyScopeFeedbackRead},
 		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
 			if deps.RecallFeedbackEvents == nil {
 				return nil, ErrToolUnavailable
@@ -179,7 +179,7 @@ func evalListRecallFeedbackEventsTool(deps Dependencies) Tool {
 				return nil, ErrToolUnavailable
 			}
 			limit := evalLimit(ctx, deps, input)
-			if err := auditEvaluationTool(ctx, deps, "eval_list_recall_feedback_events", limit, false, nil); err != nil {
+			if err := auditEvaluationTool(ctx, deps, EvalListRecallFeedbackEventsToolName, limit, false, nil); err != nil {
 				return nil, err
 			}
 			filter, err := evalRecallFeedbackFilter(ctx, profileID, input, limit)
@@ -201,7 +201,7 @@ func evalListRecallFeedbackEventsTool(deps Dependencies) Tool {
 
 func evalGetRecallFeedbackEventTool(deps Dependencies) Tool {
 	return Tool{
-		Name:        "eval_get_recall_feedback_event",
+		Name:        EvalGetRecallFeedbackEventToolName,
 		Description: "Fetch one team-scoped recall feedback event with resolved current graph state.",
 		InputSchema: map[string]any{
 			"type":     "object",
@@ -212,7 +212,7 @@ func evalGetRecallFeedbackEventTool(deps Dependencies) Tool {
 			"additionalProperties": false,
 		},
 		OutputSchema:   map[string]any{"type": "object"},
-		RequiredScopes: []string{"read", "write"},
+		RequiredScopes: []string{appservice.APIKeyScopeRead, appservice.APIKeyScopeFeedbackRead},
 		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
 			if deps.RecallFeedbackEvents == nil {
 				return nil, ErrToolUnavailable
@@ -223,7 +223,7 @@ func evalGetRecallFeedbackEventTool(deps Dependencies) Tool {
 			if !ok {
 				return nil, ErrToolUnavailable
 			}
-			if err := auditEvaluationTool(ctx, deps, "eval_get_recall_feedback_event", 1, false, nil); err != nil {
+			if err := auditEvaluationTool(ctx, deps, EvalGetRecallFeedbackEventToolName, 1, false, nil); err != nil {
 				return nil, err
 			}
 			recallID, _ := input["recall_id"].(string)

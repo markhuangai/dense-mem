@@ -303,8 +303,9 @@ function SSOMappingForm({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   function updateRole(role: ProfileRole) {
-    onChange({ ...draft, role, scopes: role === "manager" ? ["read", "write"] : draft.scopes });
+    onChange({ ...draft, role, scopes: role === "manager" ? ["read", "write", ...(draft.scopes.includes("feedback:read") ? ["feedback:read"] : [])] : draft.scopes });
   }
+  const feedbackAccess = draft.scopes.includes("feedback:read");
 
   return (
     <form className="inline-form sso-mapping-form" onSubmit={onSubmit}>
@@ -325,13 +326,17 @@ function SSOMappingForm({
           <select
             id="sso-map-permission"
             value={draft.scopes.includes("write") ? "read_write" : "read"}
-            onChange={(event) => onChange({ ...draft, scopes: event.target.value === "read_write" ? ["read", "write"] : ["read"] })}
+            onChange={(event) => onChange({ ...draft, scopes: [...(event.target.value === "read_write" ? ["read", "write"] : ["read"]), ...(feedbackAccess ? ["feedback:read"] : [])] })}
           >
             <option value="read">Read</option>
             <option value="read_write">Read/write</option>
           </select>
         </>
       )}
+      <label className="toggle-row span" htmlFor="sso-map-feedback-access">
+        <input id="sso-map-feedback-access" type="checkbox" checked={feedbackAccess} onChange={(event) => onChange({ ...draft, scopes: event.target.checked ? [...draft.scopes, "feedback:read"] : draft.scopes.filter((scope) => scope !== "feedback:read") })} />
+        <span>Recall feedback access</span>
+      </label>
       <label className="toggle-row span" htmlFor="sso-map-enabled">
         <span>Enabled</span>
         <input id="sso-map-enabled" type="checkbox" checked={draft.enabled} onChange={(event) => onChange({ ...draft, enabled: event.target.checked })} />

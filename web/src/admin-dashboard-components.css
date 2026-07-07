@@ -535,8 +535,22 @@
   }
 
   .config-tabs .tab-button {
-    flex: 1 1 calc(33.333% - 5px);
+    flex: 1 1 calc(25% - 5px);
     min-width: 0;
+    width: auto;
+    gap: 4px;
+    line-height: 1;
+  }
+
+  .config-tabs .tab-button svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .config-tabs .tab-button span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .team-workspace-header {

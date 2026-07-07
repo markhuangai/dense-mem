@@ -165,12 +165,6 @@
     min-height: 54px;
   }
 
-  .config-tabs .tab-button {
-    flex: 1 1 calc(33.333% - 6px);
-    min-width: 88px;
-    width: auto;
-  }
-
   .table-actions {
     flex-wrap: wrap;
   }

@@ -183,6 +183,17 @@ func TestDTOValidationAPIKeyCreate(t *testing.T) {
 		err := validation.ValidateStruct(&req)
 		assert.NoError(t, err)
 	})
+
+	t.Run("feedback scope request passes validation", func(t *testing.T) {
+		scopes := []string{"read", "write", "feedback:read"}
+		req := dto.CreateAPIKeyRequest{
+			Scopes:    &scopes,
+			RateLimit: 100,
+		}
+
+		err := validation.ValidateStruct(&req)
+		assert.NoError(t, err)
+	})
 }
 
 // TestNotBlankValidator verifies whitespace-only strings fail validation.
