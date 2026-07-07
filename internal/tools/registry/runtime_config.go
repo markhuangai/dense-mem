@@ -20,6 +20,11 @@ var evaluationToolNames = map[string]struct{}{
 	"eval_score_retrieval_case":        {},
 }
 
+var recallFeedbackEventToolNames = map[string]struct{}{
+	"eval_list_recall_feedback_events": {},
+	"eval_get_recall_feedback_event":   {},
+}
+
 // IsEvaluationTool reports whether a tool belongs to the evaluation-only surface.
 func IsEvaluationTool(name string) bool {
 	_, ok := evaluationToolNames[name]
@@ -44,6 +49,9 @@ type EvaluationConfigProvider interface {
 // ToolVisible reports whether a registered tool should be visible for a request.
 func ToolVisible(ctx context.Context, tool Tool, cfg RecallFeedbackConfigProvider) bool {
 	if tool.Name == SubmitRecallSessionFeedbackToolName {
+		return RecallFeedbackEnabled(ctx, cfg)
+	}
+	if _, ok := recallFeedbackEventToolNames[tool.Name]; ok {
 		return RecallFeedbackEnabled(ctx, cfg)
 	}
 	if _, ok := evaluationToolNames[tool.Name]; ok {

@@ -30,6 +30,10 @@ func TestAPIKeyServiceUpdateRoleBranches(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, role)
 
+		role, err = NormalizeAPIKeyRole("maintainer")
+		require.Error(t, err)
+		require.Empty(t, role)
+
 		role, err = NormalizeAPIKeyRole("owner")
 		require.Error(t, err)
 		require.Empty(t, role)

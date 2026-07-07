@@ -2,7 +2,6 @@ package factservice
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -156,129 +155,6 @@ func (s *promoteClaimServiceImpl) Promote(ctx context.Context, profileID string,
 	return fact, nil
 }
 
-// ConfirmMemory applies an explicit user clarification to a disputed claim.
-//
-// Supported decisions:
-//   - accept_claim: supersede active conflicting facts for the claim's
-//     (subject, predicate), then create a new active Fact from the claim.
-//   - keep_existing or reject_claim: reject the claim and keep active facts.
-func (s *promoteClaimServiceImpl) ConfirmMemory(ctx context.Context, profileID string, req ConfirmMemoryRequest) (*ConfirmMemoryResult, error) {
-	if req.ClaimID == "" {
-		return nil, errors.New("confirm memory: claim_id is required")
-	}
-
-	var out *ConfirmMemoryResult
-	lockErr := s.locker.WithClaimLock(ctx, s.pgDB, profileID, req.ClaimID, s.lockTimeout, func(_ *gorm.DB) error {
-		result, err := s.doConfirmMemory(ctx, profileID, req)
-		if err != nil {
-			return err
-		}
-		out = result
-		return nil
-	})
-	if lockErr != nil {
-		s.incMetric(ctx, "error")
-		return nil, lockErr
-	}
-	return out, nil
-}
-
-func (s *promoteClaimServiceImpl) doConfirmMemory(ctx context.Context, profileID string, req ConfirmMemoryRequest) (*ConfirmMemoryResult, error) {
-	claim, err := s.loadClaim(ctx, profileID, req.ClaimID)
-	if err != nil {
-		return nil, err
-	}
-	if err := ownership.RequireOwner(ctx, claim.OwnerProfileID); err != nil {
-		return nil, err
-	}
-
-	switch req.Decision {
-	case "accept_claim":
-		gate, ok := DefaultPromotionGates[claim.Predicate]
-		if !ok {
-			return nil, fmt.Errorf("%w: predicate=%s", ErrPredicateNotPoliced, claim.Predicate)
-		}
-		if gateErr := evaluateGates(claim, gate); gateErr != nil {
-			return nil, gateErr
-		}
-
-		activeFacts, err := findActiveFactsBySubjectPredicate(ctx, s.db, profileID, claim.Subject, claim.Predicate)
-		if err != nil {
-			return nil, fmt.Errorf("confirm memory: find active facts: %w", err)
-		}
-
-		conflicts := make([]*domain.Fact, 0, len(activeFacts))
-		alignments := make([]*domain.Fact, 0, len(activeFacts))
-		for _, fact := range activeFacts {
-			if fact.Object != claim.Object {
-				conflicts = append(conflicts, fact)
-			} else {
-				alignments = append(alignments, fact)
-			}
-		}
-		if actorOwnerID := ownership.ActorOwnerID(ctx); actorOwnerID != "" {
-			ownConflicts, foreignConflicts := splitFactsByOwner(conflicts, actorOwnerID)
-			_, foreignAlignments := splitFactsByOwner(alignments, actorOwnerID)
-			if len(ownConflicts) > 0 {
-				if err := supersedePath(ctx, s.db, profileID, ownConflicts, claim.ClaimID, claim.ValidFrom); err != nil {
-					return nil, fmt.Errorf("confirm memory: supersede owner conflicts: %w", err)
-				}
-			}
-			fact, err := s.createNewFact(ctx, profileID, claim, gate)
-			if err != nil {
-				return nil, err
-			}
-			if err := overlayPath(ctx, s.db, profileID, fact.FactID, foreignConflicts); err != nil {
-				return nil, fmt.Errorf("confirm memory: link overlays: %w", err)
-			}
-			if err := alignPath(ctx, s.db, profileID, fact.FactID, foreignAlignments); err != nil {
-				return nil, fmt.Errorf("confirm memory: link alignments: %w", err)
-			}
-			s.incMetric(ctx, "promoted")
-			s.recordPromotionFunnelLatency(ctx, claim, "promoted")
-			s.emitAudit(ctx, profileID, claim.ClaimID, fact.FactID, "claim.confirm.accept")
-			return &ConfirmMemoryResult{
-				ClaimID:  claim.ClaimID,
-				Decision: req.Decision,
-				Status:   "accepted",
-				Fact:     fact,
-			}, nil
-		}
-
-		if len(conflicts) > 0 {
-			if err := supersedePath(ctx, s.db, profileID, conflicts, claim.ClaimID, claim.ValidFrom); err != nil {
-				return nil, fmt.Errorf("confirm memory: supersede conflicts: %w", err)
-			}
-		}
-
-		fact, err := s.createNewFact(ctx, profileID, claim, gate)
-		if err != nil {
-			return nil, err
-		}
-		s.incMetric(ctx, "promoted")
-		s.recordPromotionFunnelLatency(ctx, claim, "promoted")
-		s.emitAudit(ctx, profileID, claim.ClaimID, fact.FactID, "claim.confirm.accept")
-		return &ConfirmMemoryResult{
-			ClaimID:  claim.ClaimID,
-			Decision: req.Decision,
-			Status:   "accepted",
-			Fact:     fact,
-		}, nil
-	case "keep_existing", "reject_claim":
-		if err := weakerPath(ctx, s.db, profileID, claim.ClaimID); err != nil {
-			return nil, fmt.Errorf("confirm memory: reject claim: %w", err)
-		}
-		s.emitAudit(ctx, profileID, claim.ClaimID, "", "claim.confirm.reject")
-		return &ConfirmMemoryResult{
-			ClaimID:  claim.ClaimID,
-			Decision: req.Decision,
-			Status:   "rejected",
-		}, nil
-	default:
-		return nil, fmt.Errorf("%w: %s", ErrInvalidConfirmationDecision, req.Decision)
-	}
-}
-
 // doPromote executes the promotion algorithm. It must be called while holding
 // the advisory lock for (profileID, claimID).
 //
@@ -384,7 +260,8 @@ func (s *promoteClaimServiceImpl) doPromote(ctx context.Context, profileID, clai
 //  3. At least one existing active fact has a different object:
 //     a. Claim weaker than any → weakerPath → ErrPromotionRejected.
 //     b. Claim comparable to any → comparablePath → ErrPromotionDeferredDisputed.
-//     c. Claim stronger than all → supersedePath → create new Fact.
+//     c. Claim stronger than all → supersedePath → reuse an existing same-object
+//     team Fact when one exists, otherwise create a new Fact.
 func (s *promoteClaimServiceImpl) handleSingleCurrent(
 	ctx context.Context,
 	profileID string,
@@ -437,6 +314,12 @@ func (s *promoteClaimServiceImpl) handleSingleCurrent(
 					return nil, fmt.Errorf("promote: link claim to existing owner fact: %w", err)
 				}
 				return ownSame[0], nil
+			}
+			if len(foreignSame) > 0 {
+				if err := s.linkClaimToExistingFact(ctx, profileID, claim.ClaimID, foreignSame[0].FactID); err != nil {
+					return nil, fmt.Errorf("promote: link claim to existing team fact: %w", err)
+				}
+				return foreignSame[0], nil
 			}
 			fact, err := s.createNewFact(ctx, profileID, claim, gate)
 			if err != nil {
@@ -507,10 +390,25 @@ func (s *promoteClaimServiceImpl) handleSingleCurrent(
 		return nil, ErrPromotionDeferredDisputed
 	}
 
-	// Claim is strictly stronger than all differing facts — supersede them all
-	// and create a new active Fact.
+	// Claim is strictly stronger than all differing facts — supersede them all,
+	// then reuse a same-object Fact when available before creating a new one.
 	if err := supersedePath(ctx, s.db, profileID, differingObj, claim.ClaimID, claim.ValidFrom); err != nil {
 		return nil, fmt.Errorf("promote: supersede path: %w", err)
+	}
+	if len(sameObj) > 0 {
+		if err := sameObjectConfirmPath(ctx, s.db, profileID, sameObj); err != nil {
+			return nil, fmt.Errorf("promote: same-object confirm after supersede: %w", err)
+		}
+		if err := s.linkClaimToExistingFact(ctx, profileID, claim.ClaimID, sameObj[0].FactID); err != nil {
+			return nil, fmt.Errorf("promote: link claim to existing fact after supersede: %w", err)
+		}
+		return sameObj[0], nil
+	}
+	if len(foreignSameForAlignment) > 0 {
+		if err := s.linkClaimToExistingFact(ctx, profileID, claim.ClaimID, foreignSameForAlignment[0].FactID); err != nil {
+			return nil, fmt.Errorf("promote: link claim to existing team fact after supersede: %w", err)
+		}
+		return foreignSameForAlignment[0], nil
 	}
 	fact, err := s.createNewFact(ctx, profileID, claim, gate)
 	if err != nil {

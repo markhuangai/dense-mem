@@ -279,6 +279,62 @@ func TestToolExecuteHandler_RejectsTenantFieldsForEvaluationTools(t *testing.T) 
 	assert.Contains(t, apiErr.Message, "evaluation tools do not accept team_id or profile_id")
 }
 
+func TestToolExecuteHandler_ProtectsRecallFeedbackEventToolsWithFeedbackScope(t *testing.T) {
+	reg := registry.New()
+	called := false
+	err := reg.Register(registry.Tool{
+		Name:           "eval_list_recall_feedback_events",
+		InputSchema:    map[string]any{"type": "object", "additionalProperties": false},
+		RequiredScopes: []string{"read", "feedback:read"},
+		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+			called = true
+			return map[string]any{"events": []any{}}, nil
+		},
+	})
+	require.NoError(t, err)
+
+	h := NewToolExecuteHandlerWithRuntimeConfig(reg, handlerRecallFeedbackConfigStub{enabled: true})
+	profileID := uuid.New()
+
+	for _, tc := range []struct {
+		name       string
+		scopes     []string
+		wantStatus int
+		wantCalled bool
+	}{
+		{name: "read write without feedback scope", scopes: []string{"read", "write"}, wantStatus: http.StatusForbidden},
+		{name: "read with feedback scope", scopes: []string{"read", "feedback:read"}, wantStatus: http.StatusOK, wantCalled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			called = false
+			e := newTestEcho()
+			e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+				return func(c echo.Context) error {
+					ctx := middleware.SetResolvedProfileIDForTest(c.Request().Context(), profileID)
+					ctx = middleware.SetPrincipalForTest(ctx, &middleware.Principal{
+						KeyID:  uuid.New(),
+						Role:   "user",
+						Scopes: tc.scopes,
+					})
+					c.SetRequest(c.Request().WithContext(ctx))
+					return next(c)
+				}
+			})
+			e.POST("/api/v1/tools/:name", h.Handle)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/eval_list_recall_feedback_events", strings.NewReader(`{}`))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Profile-ID", profileID.String())
+			rec := httptest.NewRecorder()
+
+			e.ServeHTTP(rec, req)
+
+			require.Equal(t, tc.wantStatus, rec.Code)
+			assert.Equal(t, tc.wantCalled, called)
+		})
+	}
+}
+
 func TestToolExecuteHandler_MapsEmbeddingFailureToServiceUnavailable(t *testing.T) {
 	reg := registry.New()
 	err := reg.Register(registry.Tool{

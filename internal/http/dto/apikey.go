@@ -7,12 +7,12 @@ import (
 // CreateAPIKeyRequest represents a request to create a new API key.
 // Validation rules:
 //   - Name: optional team profile name
-//   - Scopes: optional permission set; accepted values are read and write
+//   - Scopes: optional permission set; accepted values are read, write, and feedback:read
 //   - RateLimit: optional rate limit per minute
 //   - ExpiresAt: optional expiration time
 type CreateAPIKeyRequest struct {
 	Name      string    `json:"name" validate:"omitempty,min=1,max=100,notblank"`
-	Scopes    *[]string `json:"scopes,omitempty" validate:"omitempty,min=1,max=2,dive,notblank"`
+	Scopes    *[]string `json:"scopes,omitempty" validate:"omitempty,min=1,max=3,dive,notblank"`
 	RateLimit int       `json:"rate_limit"`
 	ExpiresAt *string   `json:"expires_at"`
 }

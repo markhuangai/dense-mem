@@ -19,8 +19,8 @@ import (
 )
 
 // CreateAPIKeyRequest represents a request to create a standard API key.
-// Every standard key belongs to one team profile. Scopes are limited to the two
-// supported permission sets: read-only or read/write.
+// Every standard key belongs to one team profile. Scopes are normalized into
+// canonical read/read-write sets with optional feedback read access.
 type CreateAPIKeyRequest struct {
 	Name               string     `json:"name"`
 	RateLimit          int        `json:"rate_limit"`
@@ -31,17 +31,26 @@ type CreateAPIKeyRequest struct {
 }
 
 const (
-	APIKeyScopeRead   = "read"
-	APIKeyScopeWrite  = "write"
-	APIKeyRoleManager = "manager"
-	APIKeyRoleMember  = "member"
+	APIKeyScopeRead         = "read"
+	APIKeyScopeWrite        = "write"
+	APIKeyScopeFeedbackRead = "feedback:read"
+	APIKeyRoleManager       = "manager"
+	APIKeyRoleMember        = "member"
 )
 
 var standardAPIKeyScopes = []string{APIKeyScopeRead, APIKeyScopeWrite}
 
+const apiKeyScopeValidationMessage = "api key scopes must be one of [read], [read, write], [read, feedback:read], or [read, write, feedback:read]"
+
 // StandardAPIKeyScopes returns the default read/write scope set.
 func StandardAPIKeyScopes() []string {
 	return append([]string(nil), standardAPIKeyScopes...)
+}
+
+// APIKeyScopeValidationMessage returns the user-facing validation message for
+// supported API-key scope sets.
+func APIKeyScopeValidationMessage() string {
+	return apiKeyScopeValidationMessage
 }
 
 // NormalizeAPIKeyScopes returns the canonical scope set for a key creation
@@ -51,26 +60,49 @@ func NormalizeAPIKeyScopes(scopes []string) ([]string, error) {
 		return StandardAPIKeyScopes(), nil
 	}
 
-	var hasRead, hasWrite bool
+	var hasRead, hasWrite, hasFeedbackRead bool
 	for _, raw := range scopes {
 		switch strings.ToLower(strings.TrimSpace(raw)) {
 		case APIKeyScopeRead:
 			hasRead = true
 		case APIKeyScopeWrite:
 			hasWrite = true
+		case APIKeyScopeFeedbackRead:
+			hasFeedbackRead = true
 		default:
-			return nil, httperr.New(httperr.VALIDATION_ERROR, "api key scopes must be either [read] or [read, write]")
+			return nil, httperr.New(httperr.VALIDATION_ERROR, apiKeyScopeValidationMessage)
 		}
 	}
 
-	switch {
-	case hasRead && hasWrite:
-		return StandardAPIKeyScopes(), nil
-	case hasRead:
-		return []string{APIKeyScopeRead}, nil
-	default:
-		return nil, httperr.New(httperr.VALIDATION_ERROR, "api key scopes must be either [read] or [read, write]")
+	if !hasRead {
+		return nil, httperr.New(httperr.VALIDATION_ERROR, apiKeyScopeValidationMessage)
 	}
+
+	normalized := []string{APIKeyScopeRead}
+	if hasWrite {
+		normalized = append(normalized, APIKeyScopeWrite)
+	}
+	if hasFeedbackRead {
+		normalized = append(normalized, APIKeyScopeFeedbackRead)
+	}
+	return normalized, nil
+}
+
+func managerAPIKeyScopes(scopes []string) []string {
+	normalized := StandardAPIKeyScopes()
+	if hasAPIKeyScope(scopes, APIKeyScopeFeedbackRead) {
+		normalized = append(normalized, APIKeyScopeFeedbackRead)
+	}
+	return normalized
+}
+
+func hasAPIKeyScope(scopes []string, target string) bool {
+	for _, scope := range scopes {
+		if scope == target {
+			return true
+		}
+	}
+	return false
 }
 
 func NormalizeAPIKeyRole(role string) (string, error) {
@@ -257,7 +289,7 @@ func (s *APIKeyServiceImpl) CreateStandardKey(ctx context.Context, profileID uui
 		}
 	}
 	if role == APIKeyRoleManager {
-		scopes = StandardAPIKeyScopes()
+		scopes = managerAPIKeyScopes(scopes)
 	}
 
 	name := strings.TrimSpace(req.Name)

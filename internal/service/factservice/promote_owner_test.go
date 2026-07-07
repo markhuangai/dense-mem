@@ -76,6 +76,77 @@ func TestPromoteOwnerScopedMutations(t *testing.T) {
 		require.Equal(t, profileID, db.lastWriteProfile)
 	})
 
+	t.Run("foreign same fact is reused without creating duplicate owner fact", func(t *testing.T) {
+		actorID := uuid.MustParse("00000000-0000-0000-0000-0000000000aa")
+		foreignOwnerID := uuid.MustParse("00000000-0000-0000-0000-0000000000bb")
+		actorCtx := requestctx.WithActorProfile(ctx, requestctx.ActorProfile{
+			ProfileID:   actorID,
+			ProfileName: "native",
+		})
+		claimRow := makeClaimRowForSingleCurrent("claim-adopt-foreign-same", "Alice", "Acme Corp")
+		claimRow["owner_profile_id"] = actorID.String()
+		claimRow["owner_profile_name"] = "native"
+		foreignSame := makeFactRow("fact-foreign-same", "Alice", "works_at", "active", time.Now().UTC())
+		foreignSame["object"] = "Acme Corp"
+		foreignSame["owner_profile_id"] = foreignOwnerID.String()
+		foreignSame["owner_profile_name"] = "web"
+
+		db := &stubPromoteDB{
+			responsesByCall: map[int][]map[string]any{
+				0: {claimRow},
+				1: {},
+				2: {foreignSame},
+			},
+		}
+		svc := newTestService(db, &stubClaimLocker{}, &captureAuditEmitter{}, observability.NewInMemoryDiscoverabilityMetrics())
+
+		got, err := svc.Promote(actorCtx, profileID, "claim-adopt-foreign-same")
+
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		require.Equal(t, "fact-foreign-same", got.FactID)
+		require.Equal(t, foreignOwnerID.String(), got.OwnerProfileID)
+		require.Equal(t, 1, db.writeTxCount, "only the claim-to-existing-fact link should be written")
+	})
+
+	t.Run("own conflict is superseded before reusing foreign same fact", func(t *testing.T) {
+		actorID := uuid.MustParse("00000000-0000-0000-0000-0000000000aa")
+		foreignOwnerID := uuid.MustParse("00000000-0000-0000-0000-0000000000bb")
+		actorCtx := requestctx.WithActorProfile(ctx, requestctx.ActorProfile{
+			ProfileID:   actorID,
+			ProfileName: "native",
+		})
+		claimRow := makeClaimRowForSingleCurrent("claim-adopt-after-own-conflict", "Alice", "Acme Corp")
+		claimRow["owner_profile_id"] = actorID.String()
+		claimRow["owner_profile_name"] = "native"
+		ownConflict := makeFactRow("fact-owned-old", "Alice", "works_at", "active", time.Now().UTC())
+		ownConflict["object"] = "Old Corp"
+		ownConflict["truth_score"] = 0.40
+		ownConflict["owner_profile_id"] = actorID.String()
+		ownConflict["owner_profile_name"] = "native"
+		foreignSame := makeFactRow("fact-foreign-current", "Alice", "works_at", "active", time.Now().UTC())
+		foreignSame["object"] = "Acme Corp"
+		foreignSame["owner_profile_id"] = foreignOwnerID.String()
+		foreignSame["owner_profile_name"] = "web"
+
+		db := &stubPromoteDB{
+			responsesByCall: map[int][]map[string]any{
+				0: {claimRow},
+				1: {},
+				2: {ownConflict, foreignSame},
+			},
+		}
+		svc := newTestService(db, &stubClaimLocker{}, &captureAuditEmitter{}, observability.NewInMemoryDiscoverabilityMetrics())
+
+		got, err := svc.Promote(actorCtx, profileID, "claim-adopt-after-own-conflict")
+
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		require.Equal(t, "fact-foreign-current", got.FactID)
+		require.Equal(t, foreignOwnerID.String(), got.OwnerProfileID)
+		require.Equal(t, 2, db.writeTxCount, "own supersession and claim adoption should be the only writes")
+	})
+
 	t.Run("versioned keeps foreign versions and links overlays", func(t *testing.T) {
 		const predicate = "employment_versioned_owner_test"
 		origGate, hadGate := DefaultPromotionGates[predicate]
@@ -174,6 +245,53 @@ func TestPromoteOwnerScopedMutations(t *testing.T) {
 		require.Equal(t, 1, metrics.PromotionOutcomeCount("promoted"))
 		require.Len(t, audit.entries, 1)
 		require.Equal(t, "claim.confirm.accept", audit.entries[0].Operation)
+	})
+
+	t.Run("confirm accept reuses foreign same fact after superseding own conflict", func(t *testing.T) {
+		actorID := uuid.MustParse("00000000-0000-0000-0000-0000000000aa")
+		foreignOwnerID := uuid.MustParse("00000000-0000-0000-0000-0000000000bb")
+		actorCtx := requestctx.WithActorProfile(ctx, requestctx.ActorProfile{
+			ProfileID:   actorID,
+			ProfileName: "native",
+		})
+		claimRow := makeClaimRowForSingleCurrent("claim-confirm-adopt", "Alice", "Acme Corp")
+		claimRow["status"] = string(domain.StatusDisputed)
+		claimRow["owner_profile_id"] = actorID.String()
+		claimRow["owner_profile_name"] = "native"
+
+		ownConflict := makeFactRow("fact-owned-conflict", "Alice", "works_at", "active", time.Now().UTC())
+		ownConflict["object"] = "Old Corp"
+		ownConflict["owner_profile_id"] = actorID.String()
+		ownConflict["owner_profile_name"] = "native"
+		foreignAlignment := makeFactRow("fact-foreign-current", "Alice", "works_at", "active", time.Now().UTC())
+		foreignAlignment["object"] = "Acme Corp"
+		foreignAlignment["owner_profile_id"] = foreignOwnerID.String()
+		foreignAlignment["owner_profile_name"] = "web"
+
+		db := &stubPromoteDB{
+			responsesByCall: map[int][]map[string]any{
+				0: {claimRow},
+				1: {ownConflict, foreignAlignment},
+			},
+		}
+		metrics := observability.NewInMemoryDiscoverabilityMetrics()
+		audit := &captureAuditEmitter{}
+		svc := newTestService(db, &stubClaimLocker{}, audit, metrics)
+
+		got, err := svc.ConfirmMemory(actorCtx, profileID, ConfirmMemoryRequest{
+			ClaimID:  "claim-confirm-adopt",
+			Decision: "accept_claim",
+		})
+
+		require.NoError(t, err)
+		require.Equal(t, "accepted", got.Status)
+		require.NotNil(t, got.Fact)
+		require.Equal(t, "fact-foreign-current", got.Fact.FactID)
+		require.Equal(t, foreignOwnerID.String(), got.Fact.OwnerProfileID)
+		require.Equal(t, 2, db.writeTxCount, "own supersession and claim adoption should be the only writes")
+		require.Equal(t, 1, metrics.PromotionOutcomeCount("promoted"))
+		require.Len(t, audit.entries, 1)
+		require.Equal(t, "fact-foreign-current", audit.entries[0].EntityID)
 	})
 }
 

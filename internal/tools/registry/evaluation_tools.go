@@ -167,7 +167,7 @@ func evalListRecallFeedbackEventsTool(deps Dependencies) Tool {
 			"additionalProperties": false,
 		},
 		OutputSchema:   map[string]any{"type": "object"},
-		RequiredScopes: []string{"read", "write"},
+		RequiredScopes: []string{appservice.APIKeyScopeRead, appservice.APIKeyScopeFeedbackRead},
 		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
 			if deps.RecallFeedbackEvents == nil {
 				return nil, ErrToolUnavailable
@@ -212,7 +212,7 @@ func evalGetRecallFeedbackEventTool(deps Dependencies) Tool {
 			"additionalProperties": false,
 		},
 		OutputSchema:   map[string]any{"type": "object"},
-		RequiredScopes: []string{"read", "write"},
+		RequiredScopes: []string{appservice.APIKeyScopeRead, appservice.APIKeyScopeFeedbackRead},
 		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
 			if deps.RecallFeedbackEvents == nil {
 				return nil, ErrToolUnavailable

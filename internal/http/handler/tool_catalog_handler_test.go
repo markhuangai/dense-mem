@@ -13,6 +13,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/http/dto"
+	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
@@ -22,6 +23,10 @@ type catalogRecallFeedbackConfigStub struct {
 
 func (s catalogRecallFeedbackConfigStub) RecallFeedbackRuntimeConfig(context.Context) (domain.RecallFeedbackRuntimeConfig, error) {
 	return domain.RecallFeedbackRuntimeConfig{Enabled: s.enabled}, nil
+}
+
+func (s catalogRecallFeedbackConfigStub) EvaluationRuntimeConfig(context.Context) (domain.EvaluationRuntimeConfig, error) {
+	return domain.EvaluationRuntimeConfig{Enabled: s.enabled}, nil
 }
 
 // TestToolCatalogHandler_ReturnsRegisteredTools — backpressure test + AC-32.
@@ -186,6 +191,60 @@ func TestToolCatalogHandler_HidesRecallFeedbackToolWithRuntimeDisabled(t *testin
 	}
 	if strings.Contains(rec.Body.String(), registry.SubmitRecallSessionFeedbackToolName) {
 		t.Fatalf("disabled recall feedback tool leaked into catalog: %s", rec.Body.String())
+	}
+}
+
+func TestToolCatalogHandler_HidesRecallFeedbackEventToolsWithoutScope(t *testing.T) {
+	reg := registry.New()
+	if err := reg.Register(registry.Tool{
+		Name:           "eval_list_recall_feedback_events",
+		Description:    "feedback events",
+		InputSchema:    map[string]any{"type": "object"},
+		RequiredScopes: []string{"read", "feedback:read"},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	h := NewToolCatalogHandlerWithRuntimeConfig(reg, catalogRecallFeedbackConfigStub{enabled: true})
+
+	e := echo.New()
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			ctx := middleware.SetPrincipalForTest(c.Request().Context(), &middleware.Principal{Scopes: []string{"read", "write"}})
+			c.SetRequest(c.Request().WithContext(ctx))
+			return next(c)
+		}
+	})
+	e.GET("/api/v1/tools", h.Handle)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tools", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200. body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "eval_list_recall_feedback_events") {
+		t.Fatalf("feedback event tool leaked without feedback scope: %s", rec.Body.String())
+	}
+
+	e = echo.New()
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			ctx := middleware.SetPrincipalForTest(c.Request().Context(), &middleware.Principal{Scopes: []string{"read", "feedback:read"}})
+			c.SetRequest(c.Request().WithContext(ctx))
+			return next(c)
+		}
+	})
+	e.GET("/api/v1/tools", h.Handle)
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/tools", nil)
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200. body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "eval_list_recall_feedback_events") {
+		t.Fatalf("feedback event tool hidden despite feedback scope: %s", rec.Body.String())
 	}
 }
 

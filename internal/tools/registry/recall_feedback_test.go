@@ -51,7 +51,7 @@ func TestBuildDefault_RegistersRecallSessionFeedbackTool(t *testing.T) {
 	}
 }
 
-func TestBuildDefault_RegistersEvaluationToolsWithReadWriteScope(t *testing.T) {
+func TestBuildDefault_RegistersEvaluationToolsWithRequiredScopes(t *testing.T) {
 	reg, err := BuildDefault(Dependencies{})
 	if err != nil {
 		t.Fatalf("BuildDefault: %v", err)
@@ -61,8 +61,12 @@ func TestBuildDefault_RegistersEvaluationToolsWithReadWriteScope(t *testing.T) {
 		if !ok {
 			t.Fatalf("%s not registered", name)
 		}
-		if got := strings.Join(tool.RequiredScopes, ","); got != "read,write" {
-			t.Fatalf("%s scopes = %v; want [read write]", name, tool.RequiredScopes)
+		want := "read,write"
+		if name == "eval_list_recall_feedback_events" || name == "eval_get_recall_feedback_event" {
+			want = "read,feedback:read"
+		}
+		if got := strings.Join(tool.RequiredScopes, ","); got != want {
+			t.Fatalf("%s scopes = %v; want %s", name, tool.RequiredScopes, want)
 		}
 	}
 }
@@ -179,6 +183,24 @@ func TestToolVisibleGatesRecallFeedbackTool(t *testing.T) {
 	}
 	if ToolVisible(ctx, feedbackTool, stubRecallFeedbackConfig{enabled: true, err: errors.New("config unavailable")}) {
 		t.Fatal("feedback tool should be hidden when runtime config is unavailable")
+	}
+}
+
+func TestToolVisibleGatesRecallFeedbackEventTools(t *testing.T) {
+	ctx := context.Background()
+	feedbackEventTool := Tool{Name: "eval_list_recall_feedback_events"}
+
+	if ToolVisible(ctx, feedbackEventTool, nil) {
+		t.Fatal("feedback event tool should be hidden without runtime config")
+	}
+	if ToolVisible(ctx, feedbackEventTool, stubRecallFeedbackConfig{enabled: false}) {
+		t.Fatal("feedback event tool should be hidden when recall feedback is disabled")
+	}
+	if !ToolVisible(ctx, feedbackEventTool, stubRecallFeedbackConfig{enabled: true}) {
+		t.Fatal("feedback event tool should be visible when recall feedback is enabled")
+	}
+	if ToolVisible(ctx, feedbackEventTool, stubEvaluationConfig{enabled: true}) {
+		t.Fatal("feedback event tool should not use broad evaluation mode as its visibility gate")
 	}
 }
 

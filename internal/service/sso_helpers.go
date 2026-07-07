@@ -430,7 +430,7 @@ func mergedEntitlementForTeam(mappings []*domain.SSOGroupMapping, teamID uuid.UU
 		entitlement.Scopes = []string{APIKeyScopeRead}
 	}
 	if entitlement.Role == APIKeyRoleManager {
-		entitlement.Scopes = StandardAPIKeyScopes()
+		entitlement.Scopes = managerAPIKeyScopes(entitlement.Scopes)
 	}
 	return entitlement, true
 }
@@ -468,6 +468,9 @@ func mergeScopes(left, right []string) []string {
 	}
 	if _, ok := set[APIKeyScopeWrite]; ok {
 		result = append(result, APIKeyScopeWrite)
+	}
+	if _, ok := set[APIKeyScopeFeedbackRead]; ok {
+		result = append(result, APIKeyScopeFeedbackRead)
 	}
 	return result
 }
@@ -657,7 +660,7 @@ func normalizeSSOGroupMapping(mapping *domain.SSOGroupMapping) error {
 	}
 	mapping.Role = role
 	if mapping.Role == APIKeyRoleManager {
-		mapping.Scopes = StandardAPIKeyScopes()
+		mapping.Scopes = managerAPIKeyScopes(mapping.Scopes)
 	}
 	return nil
 }

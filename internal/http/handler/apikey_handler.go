@@ -94,7 +94,7 @@ func (h *APIKeyHandler) Create(c echo.Context) error {
 	}
 	if body.Scopes != nil {
 		if len(*body.Scopes) == 0 {
-			return httperr.New(httperr.VALIDATION_ERROR, "api key scopes must be either [read] or [read, write]")
+			return httperr.New(httperr.VALIDATION_ERROR, service.APIKeyScopeValidationMessage())
 		}
 		req.Scopes = append([]string(nil), (*body.Scopes)...)
 	}
