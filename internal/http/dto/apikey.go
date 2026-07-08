@@ -17,10 +17,11 @@ type CreateAPIKeyRequest struct {
 	ExpiresAt *string   `json:"expires_at"`
 }
 
-// UpdateAPIKeyRequest represents a protected API request to rename a member
+// UpdateAPIKeyRequest represents a protected API request to update a member
 // team profile. Role changes are intentionally control-portal only.
 type UpdateAPIKeyRequest struct {
-	Name string `json:"name" validate:"required,min=1,max=100,notblank"`
+	Name   string    `json:"name" validate:"omitempty,min=1,max=100,notblank"`
+	Scopes *[]string `json:"scopes,omitempty" validate:"omitempty,min=1,max=3,dive,notblank"`
 }
 
 // APIKeyResponse represents a team profile and its single active API key in API responses.

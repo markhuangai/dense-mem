@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,6 +24,7 @@ type APIKeyServiceInterface interface {
 	CreateStandardKey(ctx context.Context, profileID uuid.UUID, req service.CreateAPIKeyRequest, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, string, error)
 	UpdateNameForProfile(ctx context.Context, profileID, id uuid.UUID, name string, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, error)
 	UpdateRoleForProfile(ctx context.Context, profileID, id uuid.UUID, role string, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, error)
+	UpdateScopesForProfile(ctx context.Context, profileID, id uuid.UUID, scopes []string, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, error)
 	RotateForProfile(ctx context.Context, profileID, id uuid.UUID, req service.CreateAPIKeyRequest, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, string, error)
 	ListByProfile(ctx context.Context, profileID uuid.UUID, limit, offset int) ([]*domain.APIKey, error)
 	CountByProfile(ctx context.Context, profileID uuid.UUID) (int64, error)
@@ -216,7 +218,7 @@ func (h *APIKeyHandler) Get(c echo.Context) error {
 }
 
 // Update handles PATCH /api/v1/teams/:teamId/profiles/:profileId.
-// Requires manager role and can only rename member profiles.
+// Requires manager role and can only update member profiles.
 func (h *APIKeyHandler) Update(c echo.Context) error {
 	ctx := c.Request().Context()
 	principal := middleware.GetPrincipal(ctx)
@@ -243,6 +245,14 @@ func (h *APIKeyHandler) Update(c echo.Context) error {
 	if !ok {
 		return httperr.New(httperr.VALIDATION_ERROR, "request body not found")
 	}
+	namePresent := strings.TrimSpace(body.Name) != ""
+	scopesPresent := body.Scopes != nil
+	if !namePresent && !scopesPresent {
+		return httperr.New(httperr.VALIDATION_ERROR, "profile name or scopes is required")
+	}
+	if namePresent && scopesPresent {
+		return httperr.New(httperr.VALIDATION_ERROR, "profile name and scopes must be updated separately")
+	}
 
 	if err := h.rejectManagerTarget(ctx, profileID, keyID); err != nil {
 		return err
@@ -256,7 +266,12 @@ func (h *APIKeyHandler) Update(c echo.Context) error {
 		actorRole = principal.Role
 	}
 
-	key, err := h.svc.UpdateNameForProfile(ctx, profileID, keyID, body.Name, actorKeyID, actorRole, c.RealIP(), middleware.GetCorrelationID(ctx))
+	var key *domain.APIKey
+	if namePresent {
+		key, err = h.svc.UpdateNameForProfile(ctx, profileID, keyID, body.Name, actorKeyID, actorRole, c.RealIP(), middleware.GetCorrelationID(ctx))
+	} else {
+		key, err = h.svc.UpdateScopesForProfile(ctx, profileID, keyID, *body.Scopes, actorKeyID, actorRole, c.RealIP(), middleware.GetCorrelationID(ctx))
+	}
 	if err != nil {
 		return err
 	}

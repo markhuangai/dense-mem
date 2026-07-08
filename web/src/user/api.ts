@@ -80,9 +80,9 @@ export type CreateTeamProfileInput = {
   expires_at?: string;
 };
 
-export type UpdateTeamProfileInput = {
-  name: string;
-};
+export type UpdateTeamProfileInput =
+  | { name: string; scopes?: never }
+  | { name?: never; scopes: string[] };
 
 export type Fragment = {
   fragment_id: string;

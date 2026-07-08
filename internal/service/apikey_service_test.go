@@ -60,8 +60,13 @@ func (m *MockAPIKeyRepository) UpdateNameForProfile(ctx context.Context, profile
 	return args.Get(0).(int64), args.Error(1)
 }
 
-func (m *MockAPIKeyRepository) UpdateRoleForProfile(ctx context.Context, profileID, id uuid.UUID, role string) (int64, error) {
-	args := m.Called(ctx, profileID, id, role)
+func (m *MockAPIKeyRepository) UpdateRoleForProfile(ctx context.Context, profileID, id uuid.UUID, role string, scopes []string) (int64, error) {
+	args := m.Called(ctx, profileID, id, role, scopes)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+func (m *MockAPIKeyRepository) UpdateScopesForProfile(ctx context.Context, profileID, id uuid.UUID, scopes []string) (int64, error) {
+	args := m.Called(ctx, profileID, id, scopes)
 	return args.Get(0).(int64), args.Error(1)
 }
 

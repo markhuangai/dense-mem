@@ -30,6 +30,10 @@ func (routerAPIKeyService) UpdateRoleForProfile(context.Context, uuid.UUID, uuid
 	return nil, nil
 }
 
+func (routerAPIKeyService) UpdateScopesForProfile(context.Context, uuid.UUID, uuid.UUID, []string, *string, string, string, string) (*domain.APIKey, error) {
+	return nil, nil
+}
+
 func (routerAPIKeyService) RotateForProfile(context.Context, uuid.UUID, uuid.UUID, service.CreateAPIKeyRequest, *string, string, string, string) (*domain.APIKey, string, error) {
 	return nil, "", nil
 }
@@ -101,7 +105,11 @@ func (r *routerAPIKeyRepo) UpdateNameForProfile(context.Context, uuid.UUID, uuid
 	return 0, nil
 }
 
-func (r *routerAPIKeyRepo) UpdateRoleForProfile(context.Context, uuid.UUID, uuid.UUID, string) (int64, error) {
+func (r *routerAPIKeyRepo) UpdateRoleForProfile(context.Context, uuid.UUID, uuid.UUID, string, []string) (int64, error) {
+	return 0, nil
+}
+
+func (r *routerAPIKeyRepo) UpdateScopesForProfile(context.Context, uuid.UUID, uuid.UUID, []string) (int64, error) {
 	return 0, nil
 }
 

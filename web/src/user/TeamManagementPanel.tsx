@@ -3,8 +3,7 @@ import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { CreatedTeamProfile, UserApi, UserKey, UserSession, UserTeam } from "./api";
 import { LoadingState, SecretBox, SectionHeading } from "../ui/components";
 import { TeamDreamingConfigForm } from "../teamDreamingConfig";
-
-type ProfilePermission = "read" | "read_write";
+import { normalizeProfileScopes, ProfilePermissionCheckboxes } from "../profilePermissions";
 
 export function TeamManagementPanel({
   api,
@@ -23,6 +22,7 @@ export function TeamManagementPanel({
   const [loading, setLoading] = useState(false);
   const [teamBusy, setTeamBusy] = useState(false);
   const [savingProfileId, setSavingProfileId] = useState("");
+  const [savingScopesProfileId, setSavingScopesProfileId] = useState("");
   const [rotatingProfileId, setRotatingProfileId] = useState("");
   const [deletingProfileId, setDeletingProfileId] = useState("");
 
@@ -86,6 +86,23 @@ export function TeamManagementPanel({
       setError(readError(err));
     } finally {
       setSavingProfileId("");
+    }
+  }
+
+  async function updateProfileScopes(profileId: string, scopes: string[]) {
+    const profile = profiles.find((item) => item.id === profileId);
+    if (profile?.role !== "member") {
+      return;
+    }
+    setSavingScopesProfileId(profileId);
+    setError("");
+    try {
+      const updated = await api.updateTeamProfile(session.team.id, profileId, { scopes });
+      setProfiles((current) => current.map((item) => (item.id === profileId ? updated : item)));
+    } catch (err) {
+      setError(readError(err));
+    } finally {
+      setSavingScopesProfileId("");
     }
   }
 
@@ -191,9 +208,11 @@ export function TeamManagementPanel({
           <ManagedProfileTable
             profiles={profiles}
             savingProfileId={savingProfileId}
+            savingScopesProfileId={savingScopesProfileId}
             rotatingProfileId={rotatingProfileId}
             deletingProfileId={deletingProfileId}
             onRename={(profileId, name) => void updateProfileName(profileId, name)}
+            onScopesChange={(profileId, scopes) => void updateProfileScopes(profileId, scopes)}
             onRotate={(profileId) => void rotateProfile(profileId)}
             onDelete={(profileId) => void deleteProfile(profileId)}
           />
@@ -211,8 +230,7 @@ function ManagedProfileCreateForm({
   onCreate: (input: { name: string; scopes: string[]; rate_limit: number }) => Promise<void>;
 }) {
   const [name, setName] = useState("member profile");
-  const [permission, setPermission] = useState<ProfilePermission>("read_write");
-  const [feedbackAccess, setFeedbackAccess] = useState(false);
+  const [scopes, setScopes] = useState<string[]>(["read", "write"]);
   const [rateLimit, setRateLimit] = useState("120");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -234,7 +252,7 @@ function ManagedProfileCreateForm({
     try {
       await onCreate({
         name: trimmedName,
-        scopes: [...(permission === "read" ? ["read"] : ["read", "write"]), ...(feedbackAccess ? ["feedback:read"] : [])],
+        scopes: normalizeProfileScopes(scopes),
         rate_limit: parsedRateLimit,
       });
       setName("member profile");
@@ -249,19 +267,13 @@ function ManagedProfileCreateForm({
     <form className="key-form" onSubmit={submit}>
       <label htmlFor="managed-profile-name">Profile name</label>
       <input id="managed-profile-name" value={name} onChange={(event) => setName(event.target.value)} />
-      <label htmlFor="managed-profile-permission">Permission</label>
-      <select
-        id="managed-profile-permission"
-        value={permission}
-        onChange={(event) => setPermission(event.target.value as ProfilePermission)}
-      >
-        <option value="read_write">Read/write</option>
-        <option value="read">Read only</option>
-      </select>
-      <label className="toggle-row span" htmlFor="managed-profile-feedback-access">
-        <input id="managed-profile-feedback-access" type="checkbox" checked={feedbackAccess} onChange={(event) => setFeedbackAccess(event.target.checked)} />
-        <span>Recall feedback access</span>
-      </label>
+      <label>Permission</label>
+      <ProfilePermissionCheckboxes
+        scopes={scopes}
+        disabled={busy || disabled}
+        ariaLabel="New member profile permissions"
+        onChange={(nextScopes) => setScopes(normalizeProfileScopes(nextScopes))}
+      />
       <label htmlFor="managed-profile-rate-limit">Rate limit</label>
       <input id="managed-profile-rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
       {error && <p className="field-error span" role="alert">{error}</p>}
@@ -276,17 +288,21 @@ function ManagedProfileCreateForm({
 function ManagedProfileTable({
   profiles,
   savingProfileId,
+  savingScopesProfileId,
   rotatingProfileId,
   deletingProfileId,
   onRename,
+  onScopesChange,
   onRotate,
   onDelete,
 }: {
   profiles: UserKey[];
   savingProfileId: string;
+  savingScopesProfileId: string;
   rotatingProfileId: string;
   deletingProfileId: string;
   onRename: (profileId: string, name: string) => void;
+  onScopesChange: (profileId: string, scopes: string[]) => void;
   onRotate: (profileId: string) => void;
   onDelete: (profileId: string) => void;
 }) {
@@ -313,9 +329,11 @@ function ManagedProfileTable({
               key={profile.id}
               profile={profile}
               saving={savingProfileId === profile.id}
+              savingScopes={savingScopesProfileId === profile.id}
               rotating={rotatingProfileId === profile.id}
               deleting={deletingProfileId === profile.id}
               onRename={onRename}
+              onScopesChange={onScopesChange}
               onRotate={onRotate}
               onDelete={onDelete}
             />
@@ -329,24 +347,28 @@ function ManagedProfileTable({
 function ManagedProfileRow({
   profile,
   saving,
+  savingScopes,
   rotating,
   deleting,
   onRename,
+  onScopesChange,
   onRotate,
   onDelete,
 }: {
   profile: UserKey;
   saving: boolean;
+  savingScopes: boolean;
   rotating: boolean;
   deleting: boolean;
   onRename: (profileId: string, name: string) => void;
+  onScopesChange: (profileId: string, scopes: string[]) => void;
   onRotate: (profileId: string) => void;
   onDelete: (profileId: string) => void;
 }) {
   const [draftName, setDraftName] = useState(profile.name);
   const trimmedDraft = draftName.trim();
   const isMember = profile.role === "member";
-  const busy = saving || rotating || deleting;
+  const busy = saving || savingScopes || rotating || deleting;
   const unchanged = trimmedDraft === profile.name;
 
   useEffect(() => {
@@ -376,7 +398,16 @@ function ManagedProfileRow({
         </div>
       </td>
       <td><code>{displayKeySuffix(profile.key_suffix)}</code></td>
-      <td>{profilePermissionLabel(profile.scopes)}</td>
+      <td>
+        <ProfilePermissionCheckboxes
+          scopes={profile.scopes}
+          forceWrite={profile.role === "manager"}
+          disabled={!isMember || busy}
+          ariaLabel={`Permissions for ${profile.name}`}
+          className="compact"
+          onChange={(scopes) => onScopesChange(profile.id, normalizeProfileScopes(scopes))}
+        />
+      </td>
       <td>{profileRoleLabel(profile.role)}</td>
       <td>{profile.last_used_at ? formatDate(profile.last_used_at) : "Never"}</td>
       <td className="actions-cell">
@@ -425,11 +456,6 @@ function readError(error: unknown): string {
 
 function displayKeySuffix(suffix: string | null): string {
   return suffix ? `******${suffix}` : "Unavailable";
-}
-
-function profilePermissionLabel(scopes: string[] | null | undefined): string {
-  const label = scopes?.includes("write") ? "Read/write" : "Read only";
-  return scopes?.includes("feedback:read") ? `${label} + feedback` : label;
 }
 
 function profileRoleLabel(role: UserKey["role"] | null | undefined): string {

@@ -20,17 +20,18 @@ import (
 )
 
 type apiKeyHandlerService struct {
-	key          *domain.APIKey
-	raw          string
-	keys         []*domain.APIKey
-	total        int64
-	createReq    service.CreateAPIKeyRequest
-	rotateReq    service.CreateAPIKeyRequest
-	updatedName  string
-	deletedKeyID uuid.UUID
-	err          error
-	listErr      error
-	countErr     error
+	key           *domain.APIKey
+	raw           string
+	keys          []*domain.APIKey
+	total         int64
+	createReq     service.CreateAPIKeyRequest
+	rotateReq     service.CreateAPIKeyRequest
+	updatedName   string
+	updatedScopes []string
+	deletedKeyID  uuid.UUID
+	err           error
+	listErr       error
+	countErr      error
 }
 
 func (s *apiKeyHandlerService) CreateStandardKey(_ context.Context, _ uuid.UUID, req service.CreateAPIKeyRequest, _ *string, actorRole, clientIP, _ string) (*domain.APIKey, string, error) {
@@ -50,6 +51,11 @@ func (s *apiKeyHandlerService) UpdateNameForProfile(_ context.Context, _ uuid.UU
 }
 
 func (s *apiKeyHandlerService) UpdateRoleForProfile(context.Context, uuid.UUID, uuid.UUID, string, *string, string, string, string) (*domain.APIKey, error) {
+	return s.key, s.err
+}
+
+func (s *apiKeyHandlerService) UpdateScopesForProfile(_ context.Context, _ uuid.UUID, _ uuid.UUID, scopes []string, _ *string, _ string, _ string, _ string) (*domain.APIKey, error) {
+	s.updatedScopes = append([]string{}, scopes...)
 	return s.key, s.err
 }
 
@@ -180,6 +186,33 @@ func TestAPIKeyHandlerCreateListGetRotateDelete(t *testing.T) {
 		}
 		if updateSvc.updatedName != "renamed profile" {
 			t.Fatalf("updated name = %q; want renamed profile", updateSvc.updatedName)
+		}
+	})
+
+	t.Run("update changes member profile scopes", func(t *testing.T) {
+		updateSvc := &apiKeyHandlerService{key: key}
+		h := NewAPIKeyHandler(updateSvc)
+		rec, err := runAPIKeyHandlerWithUpdateBody(t, http.MethodPatch, "/api/v1/teams/"+profileID.String()+"/profiles/"+keyID.String(), "/api/v1/teams/:teamId/profiles/:profileId", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, `{"scopes":["read","feedback:read"]}`, h.Update)
+		if err != nil {
+			t.Fatalf("Update error: %v", err)
+		}
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d; want 200", rec.Code)
+		}
+		if len(updateSvc.updatedScopes) != 2 || updateSvc.updatedScopes[0] != "read" || updateSvc.updatedScopes[1] != "feedback:read" {
+			t.Fatalf("updated scopes = %v; want read feedback:read", updateSvc.updatedScopes)
+		}
+	})
+
+	t.Run("update rejects mixed name and scopes", func(t *testing.T) {
+		updateSvc := &apiKeyHandlerService{key: key}
+		h := NewAPIKeyHandler(updateSvc)
+		_, err := runAPIKeyHandlerWithUpdateBody(t, http.MethodPatch, "/api/v1/teams/"+profileID.String()+"/profiles/"+keyID.String(), "/api/v1/teams/:teamId/profiles/:profileId", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, `{"name":"renamed profile","scopes":["read"]}`, h.Update)
+		if err == nil || !strings.Contains(err.Error(), "profile name and scopes must be updated separately") {
+			t.Fatalf("Update error = %v; want mixed update rejection", err)
+		}
+		if updateSvc.updatedName != "" || updateSvc.updatedScopes != nil {
+			t.Fatalf("delegated update name=%q scopes=%v; want none", updateSvc.updatedName, updateSvc.updatedScopes)
 		}
 	})
 

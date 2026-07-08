@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -191,7 +192,10 @@ type APIKeyService interface {
 	// UpdateNameForProfile renames the team profile without changing key material.
 	UpdateNameForProfile(ctx context.Context, profileID, id uuid.UUID, name string, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, error)
 	// UpdateRoleForProfile changes the team profile role without changing key material.
+	// Manager targets persist read/write scopes.
 	UpdateRoleForProfile(ctx context.Context, profileID, id uuid.UUID, role string, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, error)
+	// UpdateScopesForProfile changes the team profile scopes without changing key material.
+	UpdateScopesForProfile(ctx context.Context, profileID, id uuid.UUID, scopes []string, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, error)
 	// RotateForProfile rotates key material in place for a named team profile.
 	RotateForProfile(ctx context.Context, profileID, id uuid.UUID, req CreateAPIKeyRequest, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, string, error)
 }
@@ -357,7 +361,7 @@ func (s *APIKeyServiceImpl) CreateStandardKey(ctx context.Context, profileID uui
 }
 
 // UpdateRoleForProfile changes a team profile's administrative role without
-// changing key material or data scopes.
+// changing key material. Manager profiles always keep read/write access.
 func (s *APIKeyServiceImpl) UpdateRoleForProfile(ctx context.Context, profileID, id uuid.UUID, role string, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, error) {
 	normalizedRole, err := NormalizeAPIKeyRole(role)
 	if err != nil {
@@ -375,9 +379,14 @@ func (s *APIKeyServiceImpl) UpdateRoleForProfile(ctx context.Context, profileID,
 		return nil, httperr.New(httperr.NOT_FOUND, fmt.Sprintf("team profile with id '%s' not found", id.String()))
 	}
 	currentRole := key.GetRole()
-	if currentRole == normalizedRole {
+	nextScopes := append([]string(nil), key.Scopes...)
+	if normalizedRole == APIKeyRoleManager {
+		nextScopes = managerAPIKeyScopes(nextScopes)
+	}
+	if currentRole == normalizedRole && slices.Equal(key.Scopes, nextScopes) {
 		key.KeyHash = ""
 		key.Role = normalizedRole
+		key.Scopes = nextScopes
 		return key, nil
 	}
 
@@ -385,9 +394,10 @@ func (s *APIKeyServiceImpl) UpdateRoleForProfile(ctx context.Context, profileID,
 		"team_id":    profileID.String(),
 		"profile_id": key.ID.String(),
 		"role":       currentRole,
+		"scopes":     append([]string(nil), key.Scopes...),
 	}
 
-	rows, err := s.repo.UpdateRoleForProfile(ctx, profileID, id, normalizedRole)
+	rows, err := s.repo.UpdateRoleForProfile(ctx, profileID, id, normalizedRole, nextScopes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update team profile role: %w", err)
 	}
@@ -397,6 +407,7 @@ func (s *APIKeyServiceImpl) UpdateRoleForProfile(ctx context.Context, profileID,
 
 	key.KeyHash = ""
 	key.Role = normalizedRole
+	key.Scopes = nextScopes
 
 	profileIDStr := profileID.String()
 	if err := s.auditService.Append(ctx, AuditLogEntry{
@@ -409,6 +420,7 @@ func (s *APIKeyServiceImpl) UpdateRoleForProfile(ctx context.Context, profileID,
 			"team_id":    profileID.String(),
 			"profile_id": key.ID.String(),
 			"role":       normalizedRole,
+			"scopes":     nextScopes,
 		},
 		ActorKeyID:    actorKeyID,
 		ActorRole:     actorRole,
@@ -416,6 +428,73 @@ func (s *APIKeyServiceImpl) UpdateRoleForProfile(ctx context.Context, profileID,
 		CorrelationID: correlationID,
 	}); err != nil {
 		s.logAuditError(err, "UPDATE_ROLE", key.ID.String(), correlationID)
+	}
+
+	return key, nil
+}
+
+// UpdateScopesForProfile changes a team profile's data scopes without rotating
+// its key. Manager profiles always keep read/write and may only toggle feedback access.
+func (s *APIKeyServiceImpl) UpdateScopesForProfile(ctx context.Context, profileID, id uuid.UUID, scopes []string, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, error) {
+	if len(scopes) == 0 {
+		return nil, httperr.New(httperr.VALIDATION_ERROR, apiKeyScopeValidationMessage)
+	}
+	normalizedScopes, err := NormalizeAPIKeyScopes(scopes)
+	if err != nil {
+		return nil, err
+	}
+
+	key, err := s.repo.GetByIDForProfile(ctx, profileID, id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get team profile: %w", err)
+	}
+	if key == nil {
+		return nil, httperr.New(httperr.NOT_FOUND, fmt.Sprintf("team profile with id '%s' not found", id.String()))
+	}
+	if key.GetRole() == APIKeyRoleManager {
+		normalizedScopes = managerAPIKeyScopes(normalizedScopes)
+	}
+	if slices.Equal(key.Scopes, normalizedScopes) {
+		key.KeyHash = ""
+		key.Scopes = normalizedScopes
+		return key, nil
+	}
+
+	beforePayload := map[string]interface{}{
+		"team_id":    profileID.String(),
+		"profile_id": key.ID.String(),
+		"scopes":     append([]string{}, key.Scopes...),
+	}
+
+	rows, err := s.repo.UpdateScopesForProfile(ctx, profileID, id, normalizedScopes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update team profile scopes: %w", err)
+	}
+	if rows == 0 {
+		return nil, httperr.New(httperr.NOT_FOUND, fmt.Sprintf("team profile with id '%s' not found", id.String()))
+	}
+
+	key.KeyHash = ""
+	key.Scopes = normalizedScopes
+
+	profileIDStr := profileID.String()
+	if err := s.auditService.Append(ctx, AuditLogEntry{
+		ProfileID:     &profileIDStr,
+		Operation:     "UPDATE",
+		EntityType:    "team_profile",
+		EntityID:      key.ID.String(),
+		BeforePayload: beforePayload,
+		AfterPayload: map[string]interface{}{
+			"team_id":    profileID.String(),
+			"profile_id": key.ID.String(),
+			"scopes":     normalizedScopes,
+		},
+		ActorKeyID:    actorKeyID,
+		ActorRole:     actorRole,
+		ClientIP:      clientIP,
+		CorrelationID: correlationID,
+	}); err != nil {
+		s.logAuditError(err, "UPDATE_SCOPES", key.ID.String(), correlationID)
 	}
 
 	return key, nil

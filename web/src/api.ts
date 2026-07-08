@@ -56,8 +56,9 @@ export type CreateTeamProfileInput = {
 };
 
 export type UpdateTeamProfileInput =
-  | { name: string; role?: never }
-  | { name?: never; role: ProfileRole };
+  | { name: string; role?: never; scopes?: never }
+  | { name?: never; role: ProfileRole; scopes?: never }
+  | { name?: never; role?: never; scopes: string[] };
 
 export type CreatedTeamProfile = {
   api_key: string;

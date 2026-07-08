@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -177,6 +178,37 @@ func (s *controlKeySvc) UpdateRoleForProfile(_ context.Context, profileID, id uu
 	for _, key := range s.keys {
 		if key.ProfileID == profileID && key.ID == id {
 			key.Role = role
+			if role == service.APIKeyRoleManager {
+				hasFeedback := slices.Contains(key.Scopes, service.APIKeyScopeFeedbackRead)
+				key.Scopes = []string{service.APIKeyScopeRead, service.APIKeyScopeWrite}
+				if hasFeedback {
+					key.Scopes = append(key.Scopes, service.APIKeyScopeFeedbackRead)
+				}
+			}
+			return key, nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *controlKeySvc) UpdateScopesForProfile(_ context.Context, profileID, id uuid.UUID, scopes []string, _ *string, _ string, _ string, _ string) (*domain.APIKey, error) {
+	if s.updateErr != nil {
+		return nil, s.updateErr
+	}
+	normalized, err := service.NormalizeAPIKeyScopes(scopes)
+	if err != nil {
+		return nil, err
+	}
+	for _, key := range s.keys {
+		if key.ProfileID == profileID && key.ID == id {
+			if key.GetRole() == service.APIKeyRoleManager {
+				hasFeedback := slices.Contains(normalized, service.APIKeyScopeFeedbackRead)
+				normalized = []string{service.APIKeyScopeRead, service.APIKeyScopeWrite}
+				if hasFeedback {
+					normalized = append(normalized, service.APIKeyScopeFeedbackRead)
+				}
+			}
+			key.Scopes = normalized
 			return key, nil
 		}
 	}
@@ -513,7 +545,7 @@ func TestControlPortalProfileAndKeyFlows(t *testing.T) {
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-	require.Contains(t, rec.Body.String(), "profile name and role must be updated separately")
+	require.Contains(t, rec.Body.String(), "profile name, role, and scopes must be updated separately")
 	require.Equal(t, "Research Profile", keys.keys[len(keys.keys)-1].Name)
 	require.Empty(t, keys.keys[len(keys.keys)-1].Role)
 
@@ -526,6 +558,16 @@ func TestControlPortalProfileAndKeyFlows(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"role":"member"`)
 	require.Equal(t, "member", keys.keys[len(keys.keys)-1].Role)
+
+	scopesBody := `{"scopes":["read","feedback:read"]}`
+	req = httptest.NewRequest(http.MethodPatch, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String(), strings.NewReader(scopesBody))
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"scopes":["read","feedback:read"]`)
+	require.Equal(t, []string{"read", "feedback:read"}, keys.keys[len(keys.keys)-1].Scopes)
 
 	rotateBody := `{"name":"Research Profile","rate_limit":120}`
 	req = httptest.NewRequest(http.MethodPost, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String()+"/rotate", strings.NewReader(rotateBody))
@@ -601,6 +643,13 @@ func TestControlPortalAdditionalRouteBranches(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
 	keyID := keys.keys[0].ID
+	req = httptest.NewRequest(http.MethodPatch, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String(), strings.NewReader(`{"scopes":[]}`))
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+
 	req = httptest.NewRequest(http.MethodPost, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String()+"/rotate", strings.NewReader(`{"scopes":["read"]}`))
 	req.Header.Set("Authorization", "Bearer secret")
 	req.Header.Set("Content-Type", "application/json")

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/google/uuid"
@@ -61,18 +62,28 @@ func TestAPIKeyServiceUpdateRoleBranches(t *testing.T) {
 		mockRepo.AssertExpectations(t)
 	})
 
-	t.Run("updates role and writes audit", func(t *testing.T) {
+	t.Run("promotes read-only member to manager with write scope", func(t *testing.T) {
 		mockRepo := new(MockAPIKeyRepository)
 		mockAuditService := new(MockAuditService)
 		svc := NewAPIKeyService(mockRepo, new(MockProfileService), mockAuditService, nil, nil)
-		key := &domain.APIKey{ID: keyID, ProfileID: profileID, TeamID: profileID, Name: "research", Role: APIKeyRoleMember, KeyHash: "secret"}
+		key := &domain.APIKey{
+			ID:        keyID,
+			ProfileID: profileID,
+			TeamID:    profileID,
+			Name:      "research",
+			Role:      APIKeyRoleMember,
+			Scopes:    []string{APIKeyScopeRead, APIKeyScopeFeedbackRead},
+			KeyHash:   "secret",
+		}
+		wantScopes := []string{APIKeyScopeRead, APIKeyScopeWrite, APIKeyScopeFeedbackRead}
 		mockRepo.On("GetByIDForProfile", ctx, profileID, keyID).Return(key, nil)
-		mockRepo.On("UpdateRoleForProfile", ctx, profileID, keyID, APIKeyRoleManager).Return(int64(1), nil)
+		mockRepo.On("UpdateRoleForProfile", ctx, profileID, keyID, APIKeyRoleManager, wantScopes).Return(int64(1), nil)
 		mockAuditService.On("Append", ctx, mock.MatchedBy(func(entry AuditLogEntry) bool {
 			return entry.Operation == "UPDATE" &&
 				entry.EntityType == "team_profile" &&
 				entry.EntityID == keyID.String() &&
-				entry.AfterPayload["role"] == APIKeyRoleManager
+				entry.AfterPayload["role"] == APIKeyRoleManager &&
+				reflect.DeepEqual(entry.AfterPayload["scopes"], wantScopes)
 		})).Return(nil)
 
 		updated, err := svc.UpdateRoleForProfile(ctx, profileID, keyID, APIKeyRoleManager, nil, "system", "127.0.0.1", "corr")
@@ -81,6 +92,7 @@ func TestAPIKeyServiceUpdateRoleBranches(t *testing.T) {
 		require.NotNil(t, updated)
 		require.Empty(t, updated.KeyHash)
 		require.Equal(t, APIKeyRoleManager, updated.Role)
+		require.Equal(t, wantScopes, updated.Scopes)
 		mockRepo.AssertExpectations(t)
 		mockAuditService.AssertExpectations(t)
 	})
@@ -95,7 +107,7 @@ func TestAPIKeyServiceUpdateRoleBranches(t *testing.T) {
 
 		key := &domain.APIKey{ID: keyID, ProfileID: profileID, TeamID: profileID, Name: "research", Role: APIKeyRoleMember}
 		mockRepo.On("GetByIDForProfile", ctx, profileID, keyID).Return(key, nil).Once()
-		mockRepo.On("UpdateRoleForProfile", ctx, profileID, keyID, APIKeyRoleManager).Return(int64(0), nil).Once()
+		mockRepo.On("UpdateRoleForProfile", ctx, profileID, keyID, APIKeyRoleManager, StandardAPIKeyScopes()).Return(int64(0), nil).Once()
 		updated, err = svc.UpdateRoleForProfile(ctx, profileID, keyID, APIKeyRoleManager, nil, "system", "127.0.0.1", "corr")
 		require.Error(t, err)
 		require.Nil(t, updated)
@@ -114,13 +126,13 @@ func TestAPIKeyServiceUpdateRoleBranches(t *testing.T) {
 
 		key := &domain.APIKey{ID: keyID, ProfileID: profileID, TeamID: profileID, Name: "research", Role: APIKeyRoleMember}
 		mockRepo.On("GetByIDForProfile", ctx, profileID, keyID).Return(key, nil).Once()
-		mockRepo.On("UpdateRoleForProfile", ctx, profileID, keyID, APIKeyRoleManager).Return(int64(0), errors.New("update failed")).Once()
+		mockRepo.On("UpdateRoleForProfile", ctx, profileID, keyID, APIKeyRoleManager, StandardAPIKeyScopes()).Return(int64(0), errors.New("update failed")).Once()
 		updated, err = svc.UpdateRoleForProfile(ctx, profileID, keyID, APIKeyRoleManager, nil, "system", "127.0.0.1", "corr")
 		require.ErrorContains(t, err, "failed to update team profile role")
 		require.Nil(t, updated)
 
 		mockRepo.On("GetByIDForProfile", ctx, profileID, keyID).Return(key, nil).Once()
-		mockRepo.On("UpdateRoleForProfile", ctx, profileID, keyID, APIKeyRoleManager).Return(int64(1), nil).Once()
+		mockRepo.On("UpdateRoleForProfile", ctx, profileID, keyID, APIKeyRoleManager, StandardAPIKeyScopes()).Return(int64(1), nil).Once()
 		mockAuditService.On("Append", ctx, mock.AnythingOfType("service.AuditLogEntry")).Return(errors.New("audit failed")).Once()
 		updated, err = svc.UpdateRoleForProfile(ctx, profileID, keyID, APIKeyRoleManager, nil, "system", "127.0.0.1", "corr")
 		require.NoError(t, err)
