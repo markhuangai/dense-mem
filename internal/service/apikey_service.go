@@ -436,6 +436,9 @@ func (s *APIKeyServiceImpl) UpdateRoleForProfile(ctx context.Context, profileID,
 // UpdateScopesForProfile changes a team profile's data scopes without rotating
 // its key. Manager profiles always keep read/write and may only toggle feedback access.
 func (s *APIKeyServiceImpl) UpdateScopesForProfile(ctx context.Context, profileID, id uuid.UUID, scopes []string, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, error) {
+	if len(scopes) == 0 {
+		return nil, httperr.New(httperr.VALIDATION_ERROR, apiKeyScopeValidationMessage)
+	}
 	normalizedScopes, err := NormalizeAPIKeyScopes(scopes)
 	if err != nil {
 		return nil, err

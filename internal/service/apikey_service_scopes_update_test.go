@@ -117,4 +117,16 @@ func TestAPIKeyServiceUpdateScopesForProfile(t *testing.T) {
 		require.Nil(t, updated)
 		mockRepo.AssertNotCalled(t, "GetByIDForProfile", mock.Anything, mock.Anything, mock.Anything)
 	})
+
+	t.Run("empty scopes fail before lookup", func(t *testing.T) {
+		mockRepo := new(MockAPIKeyRepository)
+		svc := NewAPIKeyService(mockRepo, new(MockProfileService), new(MockAuditService), nil, nil)
+
+		updated, err := svc.UpdateScopesForProfile(ctx, profileID, keyID, []string{}, nil, "system", "127.0.0.1", "corr")
+
+		require.Error(t, err)
+		require.Nil(t, updated)
+		mockRepo.AssertNotCalled(t, "GetByIDForProfile", mock.Anything, mock.Anything, mock.Anything)
+		mockRepo.AssertNotCalled(t, "UpdateScopesForProfile", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	})
 }
