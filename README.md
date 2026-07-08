@@ -145,6 +145,64 @@ Verifier calls send `temperature: 0` by default. Set
 `AI_VERIFIER_DISABLE_TEMPERATURE=true` to omit the field for providers or models
 that reject temperature.
 
+### Fully Local Setup (Ollama)
+
+Dense-Mem also runs with no hosted AI provider at all. Any OpenAI-compatible
+endpoint can serve embeddings and verification; with [Ollama](https://ollama.com)
+on the Docker host, pull the two models once and point `.env` at them:
+
+```bash
+ollama pull nomic-embed-text
+ollama pull llama3.1:8b
+```
+
+```text
+AI_API_URL=http://host.docker.internal:11434/v1
+AI_API_KEY=ollama
+AI_API_EMBEDDING_MODEL=nomic-embed-text
+AI_API_EMBEDDING_DIMENSIONS=768
+AI_VERIFIER_MODEL=llama3.1:8b
+AI_VERIFIER_TIMEOUT_SECONDS=300
+```
+
+Three details matter on this path:
+
+- Use `host.docker.internal`, not `127.0.0.1`; the server calls the provider
+  from inside the compose network. The base compose example maps that name to
+  the Docker host so it also works on Linux, where Docker does not define it
+  by default.
+- `AI_API_KEY` must be non-empty even though Ollama ignores it; startup
+  validation requires a complete embedding configuration.
+- Change `AI_VERIFIER_MODEL` together with the embedding settings. The default
+  is `gpt-4o-mini`, which does not exist on Ollama. Startup still succeeds;
+  the failure only appears later, at claim-verification time. Pick a model
+  that answers within the verifier timeout on your hardware. A 7B-8B class
+  model verifies comfortably on a laptop; larger models can exceed the
+  default 60-second timeout while they load, leaving claims parked as
+  `candidate_claim` with the error recorded in the placement item.
+
+### Your First Memory
+
+`remember` stores evidence and returns an `ingest_id` immediately; placement
+happens asynchronously. Poll `get_memory_placement` with that `ingest_id` to
+see where the memory landed:
+
+| Category | Meaning |
+|----------|---------|
+| `promoted_fact` | A claim was extracted, verified, and promoted to an active fact. |
+| `validated_claim` | The claim verified but did not create a fact. |
+| `candidate_claim` | The claim is parked pending stronger support; check the item's `error` field for verifier failures. |
+| `fragment_only` | The text was stored as searchable evidence without a typed claim. |
+| `needs_more_evidence` | Placement wants more evidence before deciding. |
+| `rejected_false` | The evidence looked like a contradiction or false-memory correction. |
+
+Server-side claim extraction is deliberately conservative: simple first-person
+statements such as "I prefer ...", "I like ...", or "I use ..." are the
+reliable way to see the full evidence-to-fact path on a first run. Other
+phrasings, including third-person forms like "Josh prefers ...", are kept as
+`fragment_only` evidence, which recall still returns and ranks below facts.
+`fragment_only` is a normal outcome, not an error.
+
 ### Telemetry Overlay
 
 Prometheus telemetry is optional and off by default. To collect usage,
