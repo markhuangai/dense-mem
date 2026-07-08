@@ -60,6 +60,10 @@ func (m *mockAPIKeyRepository) UpdateRoleForProfile(ctx context.Context, profile
 	return 0, nil
 }
 
+func (m *mockAPIKeyRepository) UpdateScopesForProfile(ctx context.Context, profileID, id uuid.UUID, scopes []string) (int64, error) {
+	return 0, nil
+}
+
 func (m *mockAPIKeyRepository) DeleteForProfile(ctx context.Context, profileID, id uuid.UUID) (int64, error) {
 	return 0, nil
 }

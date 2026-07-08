@@ -333,7 +333,7 @@ describe("App", () => {
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
     await userEvent.click(screen.getByRole("button", { name: /team profiles/i }));
-    await userEvent.click(screen.getByLabelText("Recall feedback access"));
+    await userEvent.click(screen.getByLabelText("Recall feedback"));
     await userEvent.click(screen.getByRole("button", { name: /create profile/i }));
 
     expect(await screen.findByDisplayValue("dm_plain_once")).toHaveAccessibleName("Generated API key");
@@ -399,6 +399,19 @@ describe("App", () => {
       );
     });
 
+    const profileRow = (await screen.findByDisplayValue("Research profile")).closest("tr");
+    expect(profileRow).not.toBeNull();
+    await userEvent.click(within(profileRow as HTMLElement).getByLabelText("Recall feedback"));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining(`/teams/${profileA.id}/profiles/${keyA().id}`),
+        expect.objectContaining({
+          method: "PATCH",
+          body: expect.stringContaining(`"scopes":["read","write","feedback:read"]`),
+        }),
+      );
+    });
+
     await userEvent.click(screen.getByRole("button", { name: /regenerate key for profile Research profile/i }));
     expect(await screen.findByDisplayValue("dm_rotated_once")).toBeInTheDocument();
     await waitFor(() => {
@@ -458,7 +471,8 @@ describe("App", () => {
     expect(await screen.findByText("******abc123")).toBeInTheDocument();
     const keyRow = screen.getByText("******abc123").closest("tr");
     expect(keyRow).not.toBeNull();
-    expect(within(keyRow as HTMLElement).getByText("Read/write")).toBeInTheDocument();
+    expect(within(keyRow as HTMLElement).getByLabelText("Read")).toBeChecked();
+    expect(within(keyRow as HTMLElement).getByLabelText("Write")).toBeChecked();
     expect(within(keyRow as HTMLElement).getByLabelText("Profile role default profile")).toHaveValue("manager");
     expect(within(keyRow as HTMLElement).getByText(/May/i)).toBeInTheDocument();
     vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -899,7 +913,7 @@ function mockPortalFetch({
     if (url.includes("/profiles/") && method === "PATCH") {
       const body = JSON.parse(String(init?.body));
       const current = currentKeys.find((key) => url.endsWith(`/profiles/${key.id}`)) ?? keyA();
-      const updated = { ...current, name: body.name ?? current.name, role: body.role ?? current.role };
+      const updated = { ...current, name: body.name ?? current.name, role: body.role ?? current.role, scopes: body.scopes ?? current.scopes };
       currentKeys = currentKeys.map((key) => (key.id === updated.id ? updated : key));
       return jsonResponse({ data: updated });
     }

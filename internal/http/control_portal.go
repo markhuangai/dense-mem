@@ -412,16 +412,20 @@ func (h *controlPortalHandler) updateAPIKey(c echo.Context) error {
 	}
 	namePresent := strings.TrimSpace(body.Name) != ""
 	rolePresent := strings.TrimSpace(body.Role) != ""
-	if !namePresent && !rolePresent {
-		return httperr.New(httperr.VALIDATION_ERROR, "profile name or role is required")
+	scopesPresent := body.Scopes != nil
+	if !namePresent && !rolePresent && !scopesPresent {
+		return httperr.New(httperr.VALIDATION_ERROR, "profile name, role, or scopes is required")
 	}
-	if namePresent && rolePresent {
-		return httperr.New(httperr.VALIDATION_ERROR, "profile name and role must be updated separately")
+	if boolCount(namePresent, rolePresent, scopesPresent) > 1 {
+		return httperr.New(httperr.VALIDATION_ERROR, "profile name, role, and scopes must be updated separately")
 	}
 	if rolePresent {
 		if _, err := service.NormalizeAPIKeyRole(body.Role); err != nil {
 			return err
 		}
+	}
+	if scopesPresent && len(*body.Scopes) == 0 {
+		return httperr.New(httperr.VALIDATION_ERROR, service.APIKeyScopeValidationMessage())
 	}
 	var key *domain.APIKey
 	if namePresent {
@@ -432,6 +436,12 @@ func (h *controlPortalHandler) updateAPIKey(c echo.Context) error {
 	}
 	if rolePresent {
 		key, err = h.keys.UpdateRoleForProfile(c.Request().Context(), profileID, keyID, body.Role, nil, "control", c.RealIP(), "")
+		if err != nil {
+			return err
+		}
+	}
+	if scopesPresent {
+		key, err = h.keys.UpdateScopesForProfile(c.Request().Context(), profileID, keyID, *body.Scopes, nil, "control", c.RealIP(), "")
 		if err != nil {
 			return err
 		}
@@ -611,8 +621,9 @@ type controlCreateAPIKeyRequest struct {
 }
 
 type controlUpdateAPIKeyRequest struct {
-	Name string `json:"name"`
-	Role string `json:"role"`
+	Name   string    `json:"name"`
+	Role   string    `json:"role"`
+	Scopes *[]string `json:"scopes"`
 }
 
 type controlSecuritySettingsRequest struct {
@@ -814,7 +825,15 @@ func parseControlUUID(raw, label string) (uuid.UUID, error) {
 	}
 	return id, nil
 }
-
+func boolCount(values ...bool) int {
+	count := 0
+	for _, value := range values {
+		if value {
+			count++
+		}
+	}
+	return count
+}
 func controlTeamIDParam(c echo.Context) string {
 	if v := c.Param("teamId"); v != "" {
 		return v

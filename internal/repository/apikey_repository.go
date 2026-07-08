@@ -31,6 +31,8 @@ type APIKeyRepository interface {
 	UpdateNameForProfile(ctx context.Context, profileID, id uuid.UUID, name string) (int64, error)
 	// UpdateRoleForProfile changes a team profile role only when it belongs to profileID.
 	UpdateRoleForProfile(ctx context.Context, profileID, id uuid.UUID, role string) (int64, error)
+	// UpdateScopesForProfile changes a team profile scope set only when it belongs to profileID.
+	UpdateScopesForProfile(ctx context.Context, profileID, id uuid.UUID, scopes []string) (int64, error)
 	// RotateForProfile replaces key material for one team profile in place.
 	RotateForProfile(ctx context.Context, profileID, id uuid.UUID, keyHash, keyPrefix, keySuffix string, expiresAt *time.Time) (int64, error)
 	TouchLastUsed(ctx context.Context, id uuid.UUID) error
@@ -385,6 +387,29 @@ func (r *APIKeyRepositoryImpl) UpdateRoleForProfile(ctx context.Context, profile
 	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to update team profile role: %w", err)
+	}
+	return rowsAffected, nil
+}
+
+// UpdateScopesForProfile changes team profile scopes without changing key material.
+func (r *APIKeyRepositoryImpl) UpdateScopesForProfile(ctx context.Context, profileID, id uuid.UUID, scopes []string) (int64, error) {
+	now := time.Now().UTC()
+	var rowsAffected int64
+	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
+		res := tx.Exec(`
+			UPDATE team_profiles
+			SET scopes = $1,
+			    updated_at = $2
+			WHERE id = $3 AND team_id = $4 AND auth_source = 'api_key'
+		`, pq.Array(scopes), now, id, profileID)
+		if res.Error != nil {
+			return res.Error
+		}
+		rowsAffected = res.RowsAffected
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to update team profile scopes: %w", err)
 	}
 	return rowsAffected, nil
 }

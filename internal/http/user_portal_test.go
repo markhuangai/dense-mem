@@ -59,6 +59,9 @@ func (r *userPortalAuthRepo) UpdateNameForProfile(context.Context, uuid.UUID, uu
 func (r *userPortalAuthRepo) UpdateRoleForProfile(context.Context, uuid.UUID, uuid.UUID, string) (int64, error) {
 	return 0, nil
 }
+func (r *userPortalAuthRepo) UpdateScopesForProfile(context.Context, uuid.UUID, uuid.UUID, []string) (int64, error) {
+	return 0, nil
+}
 func (r *userPortalAuthRepo) RotateForProfile(context.Context, uuid.UUID, uuid.UUID, string, string, string, *time.Time) (int64, error) {
 	return 0, nil
 }
@@ -105,6 +108,18 @@ func (s *userPortalKeySvc) UpdateNameForProfile(context.Context, uuid.UUID, uuid
 }
 func (s *userPortalKeySvc) UpdateRoleForProfile(context.Context, uuid.UUID, uuid.UUID, string, *string, string, string, string) (*domain.APIKey, error) {
 	return nil, nil
+}
+func (s *userPortalKeySvc) UpdateScopesForProfile(_ context.Context, profileID, id uuid.UUID, scopes []string, _ *string, _ string, _ string, _ string) (*domain.APIKey, error) {
+	key, _ := s.GetByIDForProfile(context.Background(), profileID, id)
+	if key == nil {
+		return nil, httperr.New(httperr.NOT_FOUND, "key not found")
+	}
+	normalized, err := service.NormalizeAPIKeyScopes(scopes)
+	if err != nil {
+		return nil, err
+	}
+	key.Scopes = normalized
+	return key, nil
 }
 func (s *userPortalKeySvc) RotateForProfile(_ context.Context, profileID, id uuid.UUID, req service.CreateAPIKeyRequest, _ *string, _ string, _ string, _ string) (*domain.APIKey, string, error) {
 	key, _ := s.GetByIDForProfile(context.Background(), profileID, id)

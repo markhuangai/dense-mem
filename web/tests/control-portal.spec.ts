@@ -16,6 +16,7 @@ type TestKey = {
   name: string;
   key_suffix: string;
   scopes: string[];
+  role: "manager" | "member";
   rate_limit: number;
   last_used_at: string | null;
   expires_at: string | null;
@@ -28,6 +29,7 @@ const key: TestKey = {
   name: "default profile",
   key_suffix: "abc123",
   scopes: ["read", "write"],
+  role: "manager",
   rate_limit: 120,
   last_used_at: "2026-05-02T13:00:00Z",
   expires_at: null,
@@ -320,7 +322,7 @@ test("API key creation shows plaintext once", async ({ page }) => {
 
   await page.getByRole("button", { name: /Team Profiles/ }).click();
   await page.getByLabel("Role").selectOption("member");
-  await page.getByLabel("Permission").selectOption("read");
+  await page.getByLabel("Write").uncheck();
   await page.getByRole("button", { name: "Create profile" }).click();
 
   await expect(page.getByLabel("Generated API key")).toHaveValue("dm_plain_once");
@@ -354,7 +356,8 @@ test("team profile list and delete flow", async ({ page }) => {
   await page.getByRole("button", { name: /Team Profiles/ }).click();
   await expect(page.getByText("******abc123")).toBeVisible();
   const keyRow = page.getByRole("row", { name: /abc123/ });
-  await expect(keyRow).toContainText("Read/write");
+  await expect(keyRow.getByLabel("Read")).toBeChecked();
+  await expect(keyRow.getByLabel("Write")).toBeChecked();
   await expect(keyRow.getByText(/May/)).toBeVisible();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: /Delete profile default profile/ }).click();
@@ -825,16 +828,17 @@ async function mockApi(page: Page, state: { teams: TestProfile[]; keys: TestKey[
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { api_key: "dm_rotated_once", key: rotated } }) });
     }
     if (url.includes("/profiles/") && method === "PATCH") {
-      const body = route.request().postDataJSON() as { name: string };
-      const updated = { ...(keys.find((item) => url.endsWith(`/profiles/${item.id}`)) ?? key), name: body.name };
+      const body = route.request().postDataJSON() as { name?: string; role?: string; scopes?: string[] };
+      const current = keys.find((item) => url.endsWith(`/profiles/${item.id}`)) ?? key;
+      const updated = { ...current, name: body.name ?? current.name, role: body.role ?? current.role, scopes: body.scopes ?? current.scopes };
       keys = keys.map((item) => (item.id === updated.id ? updated : item));
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: updated }) });
     }
     if (url.endsWith("/profiles") && method === "POST") {
-      const body = route.request().postDataJSON() as { label?: string; name: string; scopes: string[] };
+      const body = route.request().postDataJSON() as { label?: string; name: string; role?: "manager" | "member"; scopes: string[] };
       expect(body.label).toBeUndefined();
       expect(body.scopes).toEqual(["read"]);
-      const created = { ...key, name: body.name, scopes: body.scopes };
+      const created = { ...key, name: body.name, role: body.role ?? "member", scopes: body.scopes };
       keys = [created, ...keys];
       return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ data: { api_key: "dm_plain_once", key: created } }) });
     }

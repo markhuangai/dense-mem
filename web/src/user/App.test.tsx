@@ -490,19 +490,16 @@ describe("UserPortalApp", () => {
     const newProfileName = screen.getByLabelText("Profile name", { selector: "#managed-profile-name" });
     await userEvent.clear(newProfileName);
     await userEvent.type(newProfileName, "Writer");
-    await userEvent.click(screen.getByLabelText("Recall feedback access"));
+    const createForm = screen.getByRole("button", { name: /create member profile/i }).closest("form");
+    expect(createForm).not.toBeNull();
+    await userEvent.click(within(createForm as HTMLElement).getByLabelText("Recall feedback"));
     await userEvent.click(screen.getByRole("button", { name: /create member profile/i }));
     expect(await screen.findByDisplayValue("dm_member_plaintext")).toBeInTheDocument();
-	await waitFor(() => {
-		expect(fetchMock).toHaveBeenCalledWith(
-			expect.stringContaining(`/api/v1/teams/${baseSession.team.id}/profiles`),
-			expect.objectContaining({
-				method: "POST",
-				body: expect.not.stringContaining("role"),
-			}),
-		);
-		expect(fetchMock.mock.calls.map(([, init]) => String(init?.body ?? ""))).toContainEqual(expect.stringContaining(`"scopes":["read","write","feedback:read"]`));
-	});
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining(`/api/v1/teams/${baseSession.team.id}/profiles`),
+      expect.objectContaining({ method: "POST", body: expect.not.stringContaining("role") }),
+    ));
+    expect(fetchMock.mock.calls.map(([, init]) => String(init?.body ?? ""))).toContainEqual(expect.stringContaining(`"scopes":["read","write","feedback:read"]`));
 
     const memberName = await screen.findByLabelText("Profile name Reader");
     await userEvent.clear(memberName);
@@ -517,6 +514,14 @@ describe("UserPortalApp", () => {
         }),
       );
     });
+
+    const memberRow = (await screen.findByDisplayValue("Reader Updated")).closest("tr");
+    expect(memberRow).not.toBeNull();
+    await userEvent.click(within(memberRow as HTMLElement).getByLabelText("Recall feedback"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining(`/api/v1/teams/${baseSession.team.id}/profiles/${memberProfile.id}`),
+      expect.objectContaining({ method: "PATCH", body: expect.stringContaining(`"scopes":["read","feedback:read"]`) }),
+    ));
 
     await userEvent.click(screen.getByRole("button", { name: /regenerate key for profile Reader Updated/i }));
     expect(await screen.findByDisplayValue("dm_member_rotated")).toBeInTheDocument();
@@ -832,7 +837,7 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: 
     if (url.includes(`/api/v1/teams/${currentTeam.id}/profiles/`) && method === "PATCH") {
       const body = JSON.parse(String(init?.body));
       const current = currentProfiles.find((profile) => url.endsWith(`/profiles/${profile.id}`)) ?? memberProfile;
-      const updated = { ...current, name: body.name ?? current.name };
+      const updated = { ...current, name: body.name ?? current.name, scopes: body.scopes ?? current.scopes };
       currentProfiles = currentProfiles.map((profile) => (profile.id === updated.id ? updated : profile));
       return jsonResponse({ data: updated });
     }

@@ -65,6 +65,11 @@ func (m *MockAPIKeyRepository) UpdateRoleForProfile(ctx context.Context, profile
 	return args.Get(0).(int64), args.Error(1)
 }
 
+func (m *MockAPIKeyRepository) UpdateScopesForProfile(ctx context.Context, profileID, id uuid.UUID, scopes []string) (int64, error) {
+	args := m.Called(ctx, profileID, id, scopes)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 func (m *MockAPIKeyRepository) DeleteForProfile(ctx context.Context, profileID, id uuid.UUID) (int64, error) {
 	args := m.Called(ctx, profileID, id)
 	return args.Get(0).(int64), args.Error(1)
