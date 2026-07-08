@@ -56,7 +56,7 @@ func (m *mockAPIKeyRepository) UpdateNameForProfile(ctx context.Context, profile
 	return 0, nil
 }
 
-func (m *mockAPIKeyRepository) UpdateRoleForProfile(ctx context.Context, profileID, id uuid.UUID, role string) (int64, error) {
+func (m *mockAPIKeyRepository) UpdateRoleForProfile(ctx context.Context, profileID, id uuid.UUID, role string, scopes []string) (int64, error) {
 	return 0, nil
 }
 

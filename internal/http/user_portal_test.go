@@ -56,7 +56,7 @@ func (r *userPortalAuthRepo) DeleteForProfile(context.Context, uuid.UUID, uuid.U
 func (r *userPortalAuthRepo) UpdateNameForProfile(context.Context, uuid.UUID, uuid.UUID, string) (int64, error) {
 	return 0, nil
 }
-func (r *userPortalAuthRepo) UpdateRoleForProfile(context.Context, uuid.UUID, uuid.UUID, string) (int64, error) {
+func (r *userPortalAuthRepo) UpdateRoleForProfile(context.Context, uuid.UUID, uuid.UUID, string, []string) (int64, error) {
 	return 0, nil
 }
 func (r *userPortalAuthRepo) UpdateScopesForProfile(context.Context, uuid.UUID, uuid.UUID, []string) (int64, error) {

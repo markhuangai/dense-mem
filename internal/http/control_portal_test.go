@@ -178,6 +178,13 @@ func (s *controlKeySvc) UpdateRoleForProfile(_ context.Context, profileID, id uu
 	for _, key := range s.keys {
 		if key.ProfileID == profileID && key.ID == id {
 			key.Role = role
+			if role == service.APIKeyRoleManager {
+				hasFeedback := slices.Contains(key.Scopes, service.APIKeyScopeFeedbackRead)
+				key.Scopes = []string{service.APIKeyScopeRead, service.APIKeyScopeWrite}
+				if hasFeedback {
+					key.Scopes = append(key.Scopes, service.APIKeyScopeFeedbackRead)
+				}
+			}
 			return key, nil
 		}
 	}

@@ -105,7 +105,7 @@ func (r *routerAPIKeyRepo) UpdateNameForProfile(context.Context, uuid.UUID, uuid
 	return 0, nil
 }
 
-func (r *routerAPIKeyRepo) UpdateRoleForProfile(context.Context, uuid.UUID, uuid.UUID, string) (int64, error) {
+func (r *routerAPIKeyRepo) UpdateRoleForProfile(context.Context, uuid.UUID, uuid.UUID, string, []string) (int64, error) {
 	return 0, nil
 }
 

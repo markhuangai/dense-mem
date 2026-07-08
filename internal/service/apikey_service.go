@@ -192,6 +192,7 @@ type APIKeyService interface {
 	// UpdateNameForProfile renames the team profile without changing key material.
 	UpdateNameForProfile(ctx context.Context, profileID, id uuid.UUID, name string, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, error)
 	// UpdateRoleForProfile changes the team profile role without changing key material.
+	// Manager targets persist read/write scopes.
 	UpdateRoleForProfile(ctx context.Context, profileID, id uuid.UUID, role string, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, error)
 	// UpdateScopesForProfile changes the team profile scopes without changing key material.
 	UpdateScopesForProfile(ctx context.Context, profileID, id uuid.UUID, scopes []string, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, error)
@@ -360,7 +361,7 @@ func (s *APIKeyServiceImpl) CreateStandardKey(ctx context.Context, profileID uui
 }
 
 // UpdateRoleForProfile changes a team profile's administrative role without
-// changing key material or data scopes.
+// changing key material. Manager profiles always keep read/write access.
 func (s *APIKeyServiceImpl) UpdateRoleForProfile(ctx context.Context, profileID, id uuid.UUID, role string, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.APIKey, error) {
 	normalizedRole, err := NormalizeAPIKeyRole(role)
 	if err != nil {
@@ -378,9 +379,14 @@ func (s *APIKeyServiceImpl) UpdateRoleForProfile(ctx context.Context, profileID,
 		return nil, httperr.New(httperr.NOT_FOUND, fmt.Sprintf("team profile with id '%s' not found", id.String()))
 	}
 	currentRole := key.GetRole()
-	if currentRole == normalizedRole {
+	nextScopes := append([]string(nil), key.Scopes...)
+	if normalizedRole == APIKeyRoleManager {
+		nextScopes = managerAPIKeyScopes(nextScopes)
+	}
+	if currentRole == normalizedRole && slices.Equal(key.Scopes, nextScopes) {
 		key.KeyHash = ""
 		key.Role = normalizedRole
+		key.Scopes = nextScopes
 		return key, nil
 	}
 
@@ -388,9 +394,10 @@ func (s *APIKeyServiceImpl) UpdateRoleForProfile(ctx context.Context, profileID,
 		"team_id":    profileID.String(),
 		"profile_id": key.ID.String(),
 		"role":       currentRole,
+		"scopes":     append([]string(nil), key.Scopes...),
 	}
 
-	rows, err := s.repo.UpdateRoleForProfile(ctx, profileID, id, normalizedRole)
+	rows, err := s.repo.UpdateRoleForProfile(ctx, profileID, id, normalizedRole, nextScopes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update team profile role: %w", err)
 	}
@@ -400,6 +407,7 @@ func (s *APIKeyServiceImpl) UpdateRoleForProfile(ctx context.Context, profileID,
 
 	key.KeyHash = ""
 	key.Role = normalizedRole
+	key.Scopes = nextScopes
 
 	profileIDStr := profileID.String()
 	if err := s.auditService.Append(ctx, AuditLogEntry{
@@ -412,6 +420,7 @@ func (s *APIKeyServiceImpl) UpdateRoleForProfile(ctx context.Context, profileID,
 			"team_id":    profileID.String(),
 			"profile_id": key.ID.String(),
 			"role":       normalizedRole,
+			"scopes":     nextScopes,
 		},
 		ActorKeyID:    actorKeyID,
 		ActorRole:     actorRole,

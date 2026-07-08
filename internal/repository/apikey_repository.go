@@ -29,8 +29,8 @@ type APIKeyRepository interface {
 	DeleteForProfile(ctx context.Context, profileID, id uuid.UUID) (int64, error)
 	// UpdateNameForProfile renames a team profile only when it belongs to profileID.
 	UpdateNameForProfile(ctx context.Context, profileID, id uuid.UUID, name string) (int64, error)
-	// UpdateRoleForProfile changes a team profile role only when it belongs to profileID.
-	UpdateRoleForProfile(ctx context.Context, profileID, id uuid.UUID, role string) (int64, error)
+	// UpdateRoleForProfile changes a team profile role and scope set only when it belongs to profileID.
+	UpdateRoleForProfile(ctx context.Context, profileID, id uuid.UUID, role string, scopes []string) (int64, error)
 	// UpdateScopesForProfile changes a team profile scope set only when it belongs to profileID.
 	UpdateScopesForProfile(ctx context.Context, profileID, id uuid.UUID, scopes []string) (int64, error)
 	// RotateForProfile replaces key material for one team profile in place.
@@ -368,17 +368,18 @@ func (r *APIKeyRepositoryImpl) UpdateNameForProfile(ctx context.Context, profile
 	return rowsAffected, nil
 }
 
-// UpdateRoleForProfile changes a team profile role without changing key material.
-func (r *APIKeyRepositoryImpl) UpdateRoleForProfile(ctx context.Context, profileID, id uuid.UUID, role string) (int64, error) {
+// UpdateRoleForProfile changes a team profile role and scopes without changing key material.
+func (r *APIKeyRepositoryImpl) UpdateRoleForProfile(ctx context.Context, profileID, id uuid.UUID, role string, scopes []string) (int64, error) {
 	now := time.Now().UTC()
 	var rowsAffected int64
 	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
 		res := tx.Exec(`
 			UPDATE team_profiles
 			SET role = $1,
-			    updated_at = $2
-			WHERE id = $3 AND team_id = $4 AND auth_source = 'api_key'
-		`, role, now, id, profileID)
+			    scopes = $2,
+			    updated_at = $3
+			WHERE id = $4 AND team_id = $5 AND auth_source = 'api_key'
+		`, role, pq.Array(scopes), now, id, profileID)
 		if res.Error != nil {
 			return res.Error
 		}
