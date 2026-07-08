@@ -828,7 +828,7 @@ async function mockApi(page: Page, state: { teams: TestProfile[]; keys: TestKey[
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { api_key: "dm_rotated_once", key: rotated } }) });
     }
     if (url.includes("/profiles/") && method === "PATCH") {
-      const body = route.request().postDataJSON() as { name?: string; role?: string; scopes?: string[] };
+      const body = route.request().postDataJSON() as { name?: string; role?: TestKey["role"]; scopes?: string[] };
       const current = keys.find((item) => url.endsWith(`/profiles/${item.id}`)) ?? key;
       const updated = { ...current, name: body.name ?? current.name, role: body.role ?? current.role, scopes: body.scopes ?? current.scopes };
       keys = keys.map((item) => (item.id === updated.id ? updated : item));
