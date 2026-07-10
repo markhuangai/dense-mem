@@ -716,7 +716,7 @@ func (s *cycleRunGraphStub) ScopedRead(_ context.Context, _ string, query string
 	if strings.Contains(query, "RETURN type, id, subject") {
 		return nil, s.inputRows, nil
 	}
-	if strings.Contains(query, "Dream") || strings.Contains(query, "dream_recall_idx") {
+	if strings.Contains(query, "Dream") || strings.Contains(query, "dream_recall") {
 		return nil, s.dreamRows, nil
 	}
 	return nil, nil, nil

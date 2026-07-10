@@ -302,10 +302,11 @@ func evalRunRecallCaseTool(deps Dependencies) Tool {
 				out["context_block_chars"] = len(assembled.ContextBlock)
 			}
 			if boolInput(input["include_dreams"]) && deps.Dreams != nil {
-				dreams, err := deps.Dreams.Recall(ctx, profileID, req.Query, limit)
+				dreams, err := deps.Dreams.Recall(ctx, profileID, req.Query, relatedDreamOverfetch)
 				if err != nil {
 					return nil, err
 				}
+				dreams = rerankRelatedDreams(req.Query, hits, dreams, relatedDreamLimit)
 				out["dream_refs"] = dreamRefs(dreams)
 			}
 			return out, nil

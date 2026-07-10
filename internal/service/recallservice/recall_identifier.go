@@ -1,17 +1,18 @@
 package recallservice
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/markhuangai/dense-mem/internal/recallident"
+)
 
 func applyIdentifierSpecificityAdjustments(query string, entries []rrfEntry) {
-	queryText := rerankText(query)
-	if !isUnitValueQueryText(queryText) {
-		return
-	}
-	if len(rerankIdentifiers(queryText)) == 0 {
+	queryAnchors := recallident.RankingAnchors(query)
+	if len(queryAnchors) == 0 {
 		return
 	}
 	for i := range entries {
-		entries[i].FinalScore += identifierSpecificityAdjustment(queryText, entries[i].Content)
+		entries[i].FinalScore += identifierSpecificityAdjustment(queryAnchors, entries[i].Content, entries[i].RecallText)
 	}
 }
 
@@ -21,13 +22,10 @@ func isUnitValueQueryText(queryText string) bool {
 		(strings.Contains(queryText, " use ") || strings.Contains(queryText, " should "))
 }
 
-func identifierSpecificityAdjustment(queryText, content string) float64 {
-	contentText := rerankText(content)
-	if queryText == "" || contentText == "" {
+func identifierSpecificityAdjustment(queryIdentifiers []string, contentParts ...string) float64 {
+	overlap := recallident.OverlapText(queryIdentifiers, contentParts...)
+	if overlap == 0 {
 		return 0
 	}
-	if !matchesQueryIdentifiers(queryText, contentText) {
-		return 0
-	}
-	return 0.004
+	return 0.004 * float64(overlap)
 }

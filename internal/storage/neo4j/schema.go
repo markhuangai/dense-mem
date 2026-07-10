@@ -17,6 +17,10 @@ const (
 	IndexFactRecall        = "fact_recall_idx"
 	IndexClaimRecall       = "claim_recall_idx"
 	IndexDreamRecall       = "dream_recall_idx"
+	IndexFragmentRecallV2  = "fragment_recall_v2_idx"
+	IndexFactRecallV2      = "fact_recall_v2_idx"
+	IndexClaimRecallV2     = "claim_recall_v2_idx"
+	IndexDreamRecallV2     = "dream_recall_v2_idx"
 
 	// Composite indexes for fragment deduplication and lookup (Unit 12)
 	IndexFragmentProfileIdempotency = "fragment_team_idempotency_idx"
@@ -357,16 +361,32 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 			"fact_predicate_idx",
 		},
 		{
+			"CREATE FULLTEXT INDEX fragment_recall_v2_idx IF NOT EXISTS FOR (sf:SourceFragment) ON EACH [sf.content, sf.source, sf.idempotency_key, sf.recall_text]",
+			IndexFragmentRecallV2,
+		},
+		{
 			"CREATE FULLTEXT INDEX fact_recall_idx IF NOT EXISTS FOR (f:Fact) ON EACH [f.subject, f.predicate, f.object]",
 			"fact_recall_idx",
+		},
+		{
+			"CREATE FULLTEXT INDEX fact_recall_v2_idx IF NOT EXISTS FOR (f:Fact) ON EACH [f.subject, f.predicate, f.object, f.recall_text]",
+			IndexFactRecallV2,
 		},
 		{
 			"CREATE FULLTEXT INDEX claim_recall_idx IF NOT EXISTS FOR (c:Claim) ON EACH [c.subject, c.predicate, c.object]",
 			"claim_recall_idx",
 		},
 		{
+			"CREATE FULLTEXT INDEX claim_recall_v2_idx IF NOT EXISTS FOR (c:Claim) ON EACH [c.subject, c.predicate, c.object, c.recall_text]",
+			IndexClaimRecallV2,
+		},
+		{
 			"CREATE FULLTEXT INDEX dream_recall_idx IF NOT EXISTS FOR (d:Dream) ON EACH [d.hypothesis, d.what_if, d.possible_outcome, d.rationale]",
 			IndexDreamRecall,
+		},
+		{
+			"CREATE FULLTEXT INDEX dream_recall_v2_idx IF NOT EXISTS FOR (d:Dream) ON EACH [d.hypothesis, d.what_if, d.possible_outcome, d.rationale, d.recall_text]",
+			IndexDreamRecallV2,
 		},
 	}
 
@@ -537,7 +557,96 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 		s.logger.Info("ensured index", observability.String("name", idx.name))
 	}
 
+	if err := s.backfillRecallSearchText(ctx); err != nil {
+		return err
+	}
+
 	s.logger.Info("Neo4j schema ensured successfully")
+	return nil
+}
+
+func (s *SchemaBootstrapper) backfillRecallSearchText(ctx context.Context) error {
+	backfills := []struct {
+		name   string
+		cypher string
+	}{
+		{
+			name: "sourcefragment_recall_text",
+			cypher: `
+MATCH (sf:SourceFragment)
+WHERE sf.recall_text IS NULL OR sf.identifier_tokens IS NULL
+SET sf.recall_text = coalesce(sf.recall_text, trim(
+  coalesce(sf.content, '') + ' ' +
+  coalesce(sf.source, '') + ' ' +
+  coalesce(sf.idempotency_key, '') + ' ' +
+  reduce(acc = '', label IN coalesce(sf.labels, []) | acc + ' ' + toString(label)) + ' ' +
+  coalesce(sf.metadata_json, '')
+)),
+sf.identifier_tokens = coalesce(sf.identifier_tokens, [])`,
+		},
+		{
+			name: "claim_recall_text",
+			cypher: `
+MATCH (c:Claim)
+WHERE c.recall_text IS NULL OR c.identifier_tokens IS NULL
+OPTIONAL MATCH (c)-[r:SUPPORTED_BY]->(sf:SourceFragment)
+WITH c, r, sf
+WHERE r IS NULL OR (r.team_id = c.team_id AND sf.team_id = c.team_id)
+WITH c, collect(coalesce(sf.recall_text, sf.content, '')) AS sourceTexts
+SET c.recall_text = coalesce(c.recall_text, trim(
+  coalesce(c.subject, '') + ' ' +
+  coalesce(c.predicate, '') + ' ' +
+  coalesce(c.object, '') + ' ' +
+  coalesce(c.idempotency_key, '') + ' ' +
+  coalesce(c.pipeline_run_id, '') + ' ' +
+  reduce(acc = '', text IN sourceTexts | acc + ' ' + text)
+)),
+c.identifier_tokens = coalesce(c.identifier_tokens, [])`,
+		},
+		{
+			name: "fact_recall_text",
+			cypher: `
+MATCH (f:Fact)
+WHERE f.recall_text IS NULL OR f.identifier_tokens IS NULL
+OPTIONAL MATCH (f)<-[r:PROMOTES_TO]-(c:Claim)
+WITH f, r, c
+WHERE r IS NULL OR (r.team_id = f.team_id AND c.team_id = f.team_id)
+WITH f, collect(coalesce(c.recall_text, '')) AS claimTexts
+SET f.recall_text = coalesce(f.recall_text, trim(
+  coalesce(f.subject, '') + ' ' +
+  coalesce(f.predicate, '') + ' ' +
+  coalesce(f.object, '') + ' ' +
+  coalesce(f.promoted_from_claim_id, '') + ' ' +
+  reduce(acc = '', text IN claimTexts | acc + ' ' + text)
+)),
+f.identifier_tokens = coalesce(f.identifier_tokens, [])`,
+		},
+		{
+			name: "dream_recall_text",
+			cypher: `
+MATCH (d:Dream)
+WHERE d.recall_text IS NULL OR d.identifier_tokens IS NULL
+SET d.recall_text = coalesce(d.recall_text, trim(
+  coalesce(d.hypothesis, '') + ' ' +
+  coalesce(d.what_if, '') + ' ' +
+  coalesce(d.possible_outcome, '') + ' ' +
+  coalesce(d.rationale, '') + ' ' +
+  coalesce(d.cycle_run_id, '') + ' ' +
+  coalesce(d.generator_model, '')
+)),
+d.identifier_tokens = coalesce(d.identifier_tokens, [])`,
+		},
+	}
+	for _, backfill := range backfills {
+		_, err := s.client.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			_, err := tx.Run(ctx, backfill.cypher, nil)
+			return nil, err
+		})
+		if err != nil {
+			return fmt.Errorf("failed to backfill recall search text %s: %w", backfill.name, err)
+		}
+		s.logger.Info("backfilled recall search text", observability.String("name", backfill.name))
+	}
 	return nil
 }
 

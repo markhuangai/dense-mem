@@ -11,6 +11,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/ownership"
+	"github.com/markhuangai/dense-mem/internal/recallident"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	classificationSvc "github.com/markhuangai/dense-mem/internal/service/classification"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentcodec"
@@ -522,6 +523,7 @@ func (s *promoteClaimServiceImpl) createNewFact(
 		ClassificationLatticeVersion: classificationSvc.LatticeVersion,
 		SourceQuality:                claim.SourceQuality,
 	}
+	fact.RecallText, fact.IdentifierTokens = factRecallFields(fact, claim)
 	classificationJSON, err := fragmentcodec.EncodeOptionalMap(fact.Classification)
 	if err != nil {
 		return nil, fmt.Errorf("promote: encode fact classification: %w", err)
@@ -551,6 +553,8 @@ func (s *promoteClaimServiceImpl) createNewFact(
 				"classificationJSON":           classificationJSON,
 				"classificationLatticeVersion": fact.ClassificationLatticeVersion,
 				"sourceQuality":                fact.SourceQuality,
+				"recallText":                   fact.RecallText,
+				"identifierTokens":             fact.IdentifierTokens,
 				"claimStatus":                  string(domain.StatusSuperseded),
 			},
 		)
@@ -563,6 +567,33 @@ func (s *promoteClaimServiceImpl) createNewFact(
 		return nil, fmt.Errorf("promote: persist new fact: %w", err)
 	}
 	return fact, nil
+}
+
+func factRecallFields(fact *domain.Fact, claim *domain.Claim) (string, []string) {
+	if fact == nil {
+		return "", nil
+	}
+	parts := []string{
+		fact.Subject,
+		fact.Predicate,
+		fact.Object,
+		fact.PromotedFromClaimID,
+	}
+	var tokenGroups [][]string
+	if claim != nil {
+		parts = append(parts,
+			claim.Subject,
+			claim.Predicate,
+			claim.Object,
+			claim.IdempotencyKey,
+			claim.PipelineRunID,
+			claim.RecallText,
+		)
+		tokenGroups = append(tokenGroups, claim.IdentifierTokens)
+	}
+	recallText, tokens := recallident.BuildRecallText(parts...)
+	tokenGroups = append([][]string{tokens}, tokenGroups...)
+	return recallText, recallident.MergeTokens(tokenGroups...)
 }
 
 func timeParam(value *time.Time) any {
@@ -800,11 +831,13 @@ RETURN
     c.resolution_conf                 AS resolution_conf,
     c.source_quality                  AS source_quality,
     c.valid_from                      AS valid_from,
-    c.valid_to                        AS valid_to,
-    c.classification                  AS classification,
-    c.classification_json             AS classification_json,
-    c.classification_lattice_version  AS classification_lattice_version,
-    collect(sf.fragment_id)           AS supported_by`
+	    c.valid_to                        AS valid_to,
+	    c.classification                  AS classification,
+	    c.classification_json             AS classification_json,
+	    c.classification_lattice_version  AS classification_lattice_version,
+	    c.recall_text                     AS recall_text,
+	    c.identifier_tokens               AS identifier_tokens,
+	    collect(sf.fragment_id)           AS supported_by`
 
 // idempotencyCheckCypher returns any Fact already reached from the Claim via a
 // PROMOTES_TO edge scoped to this profile. Zero rows means no prior promotion.
@@ -866,10 +899,12 @@ CREATE (f:Fact {
     valid_from:                    $validFrom,
     valid_to:                      $validTo,
     recorded_at:                   $recordedAt,
-    promoted_from_claim_id:        $promotedFromClaimId,
-    classification_json:           $classificationJSON,
-    classification_lattice_version: $classificationLatticeVersion,
-    source_quality:                $sourceQuality
-})
+	    promoted_from_claim_id:        $promotedFromClaimId,
+	    classification_json:           $classificationJSON,
+	    classification_lattice_version: $classificationLatticeVersion,
+	    source_quality:                $sourceQuality,
+	    recall_text:                   $recallText,
+	    identifier_tokens:             $identifierTokens
+	})
 CREATE (c)-[:PROMOTES_TO {team_id: $profileId}]->(f)
 SET c.status = $claimStatus`

@@ -97,6 +97,8 @@ RETURN
     c.classification                  AS classification,
     c.classification_json             AS classification_json,
     c.classification_lattice_version  AS classification_lattice_version,
+    c.recall_text                     AS recall_text,
+    c.identifier_tokens               AS identifier_tokens,
     c.owner_profile_id                AS owner_profile_id,
     c.owner_profile_name              AS owner_profile_name,
     collect(sf.fragment_id)           AS supported_by,
@@ -151,6 +153,8 @@ const getClaimsByIDCypher = `
 	    c.classification                  AS classification,
 	    c.classification_json             AS classification_json,
 	    c.classification_lattice_version  AS classification_lattice_version,
+	    c.recall_text                     AS recall_text,
+	    c.identifier_tokens               AS identifier_tokens,
 	    c.owner_profile_id                AS owner_profile_id,
 	    c.owner_profile_name              AS owner_profile_name,
 	    collect(sf.fragment_id)           AS supported_by,
@@ -275,6 +279,8 @@ func rowToClaim(profileID string, row map[string]any) *domain.Claim {
 
 		Classification:               classification,
 		ClassificationLatticeVersion: graphrow.String(row, "classification_lattice_version"),
+		RecallText:                   graphrow.String(row, "recall_text"),
+		IdentifierTokens:             graphrow.StringSlice(row, "identifier_tokens"),
 
 		SupportedBy: supportedBy,
 		Evidence:    graphrow.Evidence(row, "evidence"),

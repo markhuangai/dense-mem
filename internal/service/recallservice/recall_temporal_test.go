@@ -613,5 +613,26 @@ func TestIdentifierMatchingHelpersCoverNilAndMismatches(t *testing.T) {
 		"current owner for service TMP-104",
 		&domain.Claim{Subject: "service TMP-104 owner", Predicate: "uses", Object: "owner-green"},
 	))
-	require.True(t, knowledgeTripleMatchesQueryIdentifiers("current owner", "service TMP-999 owner"))
+	require.True(t, knowledgeTripleMatchesQueryIdentifiers("current owner", nil, "service TMP-999 owner"))
+	require.False(t, knowledgeTripleMatchesQueryIdentifiers(
+		"Radioiodine treatment of non-toxic multinodular goitre reduces thyroid volume.",
+		nil,
+		"issue DM-412",
+		"profile_fact",
+		"low recall ratings require deterministic identifier extraction at write and recall time",
+	))
+	require.False(t, knowledgeTripleMatchesQueryIdentifiers(
+		"how do we fix recall accuracy",
+		nil,
+		"issue DM-412",
+		"profile_fact",
+		"low recall ratings require deterministic identifier extraction at write and recall time",
+	))
+	require.True(t, knowledgeTripleMatchesQueryIdentifiers(
+		"low recall ratings",
+		nil,
+		"issue DM-412",
+		"profile_fact",
+		"low recall ratings require deterministic identifier extraction at write and recall time",
+	))
 }

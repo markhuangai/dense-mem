@@ -41,6 +41,8 @@ type Fragment struct {
 	Authority            Authority      `json:"authority,omitempty"`
 	Labels               []string       `json:"labels,omitempty"`
 	Metadata             map[string]any `json:"metadata,omitempty"`
+	RecallText           string         `json:"recall_text,omitempty"`
+	IdentifierTokens     []string       `json:"identifier_tokens,omitempty"`
 	ContentHash          string         `json:"content_hash"`
 	IdempotencyKey       string         `json:"idempotency_key,omitempty"`
 	EmbeddingModel       string         `json:"embedding_model"`

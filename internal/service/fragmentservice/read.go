@@ -60,10 +60,12 @@ func (s *getFragmentService) GetByID(ctx context.Context, profileID, fragmentID 
 		       sf.source AS source,
 		       sf.source_type AS source_type,
 		       sf.authority AS authority,
-		       sf.labels AS labels,
-		       sf.metadata AS metadata,
-		       sf.metadata_json AS metadata_json,
-		       sf.content_hash AS content_hash,
+			       sf.labels AS labels,
+			       sf.metadata AS metadata,
+			       sf.metadata_json AS metadata_json,
+			       sf.recall_text AS recall_text,
+			       sf.identifier_tokens AS identifier_tokens,
+			       sf.content_hash AS content_hash,
 		       sf.idempotency_key AS idempotency_key,
 		       sf.embedding_model AS embedding_model,
 		       sf.embedding_dimensions AS embedding_dimensions,
@@ -114,10 +116,12 @@ func (s *getFragmentService) GetByIDs(ctx context.Context, profileID string, fra
 		       sf.source AS source,
 		       sf.source_type AS source_type,
 		       sf.authority AS authority,
-		       sf.labels AS labels,
-		       sf.metadata AS metadata,
-		       sf.metadata_json AS metadata_json,
-		       sf.content_hash AS content_hash,
+			       sf.labels AS labels,
+			       sf.metadata AS metadata,
+			       sf.metadata_json AS metadata_json,
+			       sf.recall_text AS recall_text,
+			       sf.identifier_tokens AS identifier_tokens,
+			       sf.content_hash AS content_hash,
 		       sf.idempotency_key AS idempotency_key,
 		       sf.embedding_model AS embedding_model,
 		       sf.embedding_dimensions AS embedding_dimensions,
@@ -182,6 +186,8 @@ func mapRowToFragment(row map[string]any) *domain.Fragment {
 	} else if v := fragmentcodec.DecodeOptionalMap(row["metadata_json"]); v != nil {
 		f.Metadata = v
 	}
+	f.RecallText = graphrow.String(row, "recall_text")
+	f.IdentifierTokens = graphrow.StringSlice(row, "identifier_tokens")
 	f.ContentHash = graphrow.String(row, "content_hash")
 	f.IdempotencyKey = graphrow.String(row, "idempotency_key")
 	f.EmbeddingModel = graphrow.String(row, "embedding_model")

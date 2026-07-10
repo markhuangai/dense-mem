@@ -102,9 +102,11 @@ RETURN
     f.classification                 AS classification,
     f.classification_json            AS classification_json,
     f.classification_lattice_version AS classification_lattice_version,
-    f.source_quality                 AS source_quality,
-    f.labels                         AS labels,
+	    f.source_quality                 AS source_quality,
+	    f.labels                         AS labels,
 	    f.metadata                       AS metadata,
+	    f.recall_text                    AS recall_text,
+	    f.identifier_tokens              AS identifier_tokens,
 	    evidence                         AS evidence`
 
 const getFactsByIDCypher = `
@@ -158,10 +160,12 @@ const getFactsByIDCypher = `
 	    f.classification                 AS classification,
 	    f.classification_json            AS classification_json,
 	    f.classification_lattice_version AS classification_lattice_version,
-	    f.source_quality                 AS source_quality,
-	    f.labels                         AS labels,
-	    f.metadata                       AS metadata,
-	    evidence                         AS evidence`
+		    f.source_quality                 AS source_quality,
+		    f.labels                         AS labels,
+		    f.metadata                       AS metadata,
+		    f.recall_text                    AS recall_text,
+		    f.identifier_tokens              AS identifier_tokens,
+		    evidence                         AS evidence`
 
 // Get retrieves the fact identified by factID within profileID.
 //
@@ -246,10 +250,12 @@ func rowToFact(profileID string, row map[string]any) *domain.Fact {
 		Classification:               classification,
 		ClassificationLatticeVersion: graphrow.String(row, "classification_lattice_version"),
 
-		SourceQuality: graphrow.Float64(row, "source_quality"),
-		Labels:        graphrow.StringSlice(row, "labels"),
-		Metadata:      metadata,
-		Evidence:      graphrow.Evidence(row, "evidence"),
+		SourceQuality:    graphrow.Float64(row, "source_quality"),
+		Labels:           graphrow.StringSlice(row, "labels"),
+		Metadata:         metadata,
+		RecallText:       graphrow.String(row, "recall_text"),
+		IdentifierTokens: graphrow.StringSlice(row, "identifier_tokens"),
+		Evidence:         graphrow.Evidence(row, "evidence"),
 	}
 }
 

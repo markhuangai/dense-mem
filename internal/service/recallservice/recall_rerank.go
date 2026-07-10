@@ -42,8 +42,10 @@ func applyAuthorityAdjustments(query string, entries []rrfEntry) {
 	if !isAuthorityRecallQuery(query) {
 		return
 	}
+	frame := authorityFrameFor(query, entries)
 	for i := range entries {
 		entries[i].FinalScore += authorityAdjustment(query, entries[i].Content)
+		entries[i].FinalScore += authoritySuppressionAdjustment(entries[i].Content, frame)
 		if entries[i].FinalScore < 0 {
 			entries[i].FinalScore = 0
 		}
@@ -190,6 +192,37 @@ func authorityAdjustment(query, content string) float64 {
 	return adjustment
 }
 
+type authorityFrame struct {
+	hasPositiveAuthorityMatch bool
+}
+
+func authorityFrameFor(query string, entries []rrfEntry) authorityFrame {
+	queryText := rerankText(query)
+	var frame authorityFrame
+	for _, entry := range entries {
+		contentText := rerankText(entry.Content)
+		if queryText == "" || contentText == "" || !authorityMatchesQueryIdentifiers(queryText, contentText) {
+			continue
+		}
+		if containsAnyAuthorityCue(contentText, authorityPositiveCues) {
+			frame.hasPositiveAuthorityMatch = true
+			return frame
+		}
+	}
+	return frame
+}
+
+func authoritySuppressionAdjustment(content string, frame authorityFrame) float64 {
+	if !frame.hasPositiveAuthorityMatch {
+		return 0
+	}
+	contentText := rerankText(content)
+	if containsAnyAuthorityCue(contentText, authorityStrongNegativeCues) {
+		return -0.02
+	}
+	return 0
+}
+
 func isCurrentnessQuery(query string) bool {
 	text := rerankText(query)
 	return strings.Contains(text, " current ") ||
@@ -217,6 +250,7 @@ func isAuthorityRecallQuery(query string) bool {
 	text := rerankText(query)
 	return strings.Contains(text, " authoritative ") ||
 		strings.Contains(text, " canonical ") ||
+		strings.Contains(text, " source of truth ") ||
 		strings.Contains(text, " require ") ||
 		strings.Contains(text, " requires ") ||
 		strings.Contains(text, " required ")

@@ -174,6 +174,8 @@ type Claim struct {
 	// Classification must be a structured map, not a string blob (AC-7).
 	Classification               map[string]any `json:"classification,omitempty"`
 	ClassificationLatticeVersion string         `json:"classification_lattice_version,omitempty"`
+	RecallText                   string         `json:"recall_text,omitempty"`
+	IdentifierTokens             []string       `json:"identifier_tokens,omitempty"`
 
 	// Graph relationships: IDs of SourceFragments that support this claim.
 	SupportedBy []string   `json:"supported_by,omitempty"`

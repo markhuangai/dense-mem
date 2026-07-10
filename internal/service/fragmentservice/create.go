@@ -24,6 +24,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	httpvalidation "github.com/markhuangai/dense-mem/internal/http/validation"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/recallident"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentcodec"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentdedupe"
@@ -220,6 +221,7 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 	now := time.Now().UTC()
 	fragmentID := fragmentidentity.NewFragmentID()
 	ownerID, ownerName, _ := requestctx.ActorOwner(ctx)
+	recallText, identifierTokens := recallident.BuildFragmentRecallText(req.Content, req.Source, req.IdempotencyKey, req.Labels, req.Metadata)
 
 	fragment := &domain.Fragment{
 		FragmentID:           fragmentID,
@@ -234,6 +236,8 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 		Authority:            authority,
 		Labels:               req.Labels,
 		Metadata:             req.Metadata,
+		RecallText:           recallText,
+		IdentifierTokens:     identifierTokens,
 		ContentHash:          contentHash,
 		IdempotencyKey:       req.IdempotencyKey,
 		EmbeddingModel:       model,
@@ -267,9 +271,11 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 			source: $source,
 			source_type: $sourceType,
 			authority: $authority,
-			labels: $labels,
-			metadata_json: $metadataJSON,
-			embedding: $embedding,
+				labels: $labels,
+				metadata_json: $metadataJSON,
+				recall_text: $recallText,
+				identifier_tokens: $identifierTokens,
+				embedding: $embedding,
 			embedding_model: $embeddingModel,
 			embedding_dimensions: $embeddingDimensions,
 			source_quality: $sourceQuality,
@@ -293,6 +299,8 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 		"authority":            string(fragment.Authority),
 		"labels":               fragment.Labels,
 		"metadataJSON":         metadataJSON,
+		"recallText":           fragment.RecallText,
+		"identifierTokens":     fragment.IdentifierTokens,
 		"embedding":            vec,
 		"embeddingModel":       fragment.EmbeddingModel,
 		"embeddingDimensions":  fragment.EmbeddingDimensions,

@@ -630,6 +630,7 @@ func TestRecallService_TierEnrichmentUsesQueryMatchedSearchers(t *testing.T) {
 			"fact-1": {
 				FactID:     "fact-1",
 				ProfileID:  "pA",
+				Subject:    "mars mission",
 				Status:     domain.FactStatusActive,
 				TruthScore: 0.95,
 				RecordedAt: time.Now().UTC(),
@@ -641,6 +642,7 @@ func TestRecallService_TierEnrichmentUsesQueryMatchedSearchers(t *testing.T) {
 			"claim-1": {
 				ClaimID:     "claim-1",
 				ProfileID:   "pA",
+				Subject:     "mars mission",
 				Status:      domain.StatusValidated,
 				ExtractConf: 0.8,
 				RecordedAt:  time.Now().UTC(),
@@ -788,6 +790,7 @@ func TestRecallService_TierEnrichmentDowngradesOverlayFacts(t *testing.T) {
 			"fact-overlay": {
 				FactID:     "fact-overlay",
 				ProfileID:  "pA",
+				Subject:    "platform choice",
 				Status:     domain.FactStatusActive,
 				TruthScore: 0.95,
 				RecordedAt: time.Now().UTC(),
@@ -829,6 +832,7 @@ func TestRecallService_TierEnrichmentUsesHydratedFactAuthorityState(t *testing.T
 			"fact-overlay": {
 				FactID:         "fact-overlay",
 				ProfileID:      "pA",
+				Subject:        "platform choice",
 				Status:         domain.FactStatusActive,
 				TruthScore:     0.95,
 				AuthorityState: "overlay",

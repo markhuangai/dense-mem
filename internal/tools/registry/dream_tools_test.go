@@ -129,5 +129,6 @@ func stubDream(profileID string) *domain.Dream {
 		WhatIf:          "What if A and B interact?",
 		PossibleOutcome: "Review before promotion.",
 		Status:          domain.DreamStatusProposed,
+		SourceRefs:      []domain.DreamSourceRef{{Type: "fragment", ID: "fragment-hit"}},
 	}
 }

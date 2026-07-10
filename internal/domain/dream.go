@@ -48,6 +48,8 @@ type Dream struct {
 	CycleRunID        string           `json:"cycle_run_id,omitempty"`
 	GeneratorModel    string           `json:"generator_model,omitempty"`
 	ContentHash       string           `json:"content_hash,omitempty"`
+	RecallText        string           `json:"recall_text,omitempty"`
+	IdentifierTokens  []string         `json:"identifier_tokens,omitempty"`
 	SourceRefs        []DreamSourceRef `json:"source_refs,omitempty"`
 	LastEvaluatedAt   *time.Time       `json:"last_evaluated_at,omitempty"`
 	InvalidatedReason string           `json:"invalidated_reason,omitempty"`

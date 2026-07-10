@@ -7,6 +7,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/classification"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentcodec"
+	"github.com/markhuangai/dense-mem/internal/service/graphrow"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
@@ -51,8 +52,15 @@ const loadSupportingFragmentsQuery = `MATCH (sf:SourceFragment {team_id: $profil
 WHERE sf.fragment_id IN $fragmentIds
   AND coalesce(sf.status, 'active') <> 'retracted'
 RETURN sf.fragment_id  AS fragment_id,
-       sf.content       AS content,
-       sf.source_quality AS source_quality,
+	       sf.content       AS content,
+	       sf.source        AS source,
+	       sf.idempotency_key AS idempotency_key,
+	       sf.labels        AS labels,
+	       sf.metadata      AS metadata,
+	       sf.metadata_json AS metadata_json,
+	       sf.recall_text   AS recall_text,
+	       sf.identifier_tokens AS identifier_tokens,
+	       sf.source_quality AS source_quality,
        sf.classification AS classification,
        sf.classification_json AS classification_json,
        sf.authority AS authority`
@@ -91,7 +99,13 @@ func loadSupportingFragments(
 	for _, row := range rows {
 		fid, _ := row["fragment_id"].(string)
 		content, _ := row["content"].(string)
+		source := graphrow.String(row, "source")
+		idempotencyKey := graphrow.String(row, "idempotency_key")
 		sq, _ := row["source_quality"].(float64)
+		metadata := fragmentcodec.DecodeOptionalMap(row["metadata"])
+		if metadata == nil {
+			metadata = fragmentcodec.DecodeOptionalMap(row["metadata_json"])
+		}
 		classRaw := fragmentcodec.DecodeOptionalMap(row["classification"])
 		if classRaw == nil {
 			classRaw = fragmentcodec.DecodeOptionalMap(row["classification_json"])
@@ -111,12 +125,18 @@ func loadSupportingFragments(
 		merged = lattice.Max(merged, classStr)
 
 		fragments = append(fragments, &domain.Fragment{
-			FragmentID:     fid,
-			ProfileID:      profileID,
-			Content:        content,
-			SourceQuality:  sq,
-			Classification: classRaw,
-			Authority:      domain.Authority(authority),
+			FragmentID:       fid,
+			ProfileID:        profileID,
+			Content:          content,
+			Source:           source,
+			IdempotencyKey:   idempotencyKey,
+			Labels:           graphrow.StringSlice(row, "labels"),
+			Metadata:         metadata,
+			RecallText:       graphrow.String(row, "recall_text"),
+			IdentifierTokens: graphrow.StringSlice(row, "identifier_tokens"),
+			SourceQuality:    sq,
+			Classification:   classRaw,
+			Authority:        domain.Authority(authority),
 		})
 
 		if sq > maxSQ {

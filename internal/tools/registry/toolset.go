@@ -182,10 +182,10 @@ func recallMemoryTool(deps Dependencies) Tool {
 			out := map[string]any{"results": results, "clarifications": []any{}, "related_dreams": []any{}}
 			var relatedDreams []*domain.Dream
 			if deps.Dreams != nil {
-				dreams, err := deps.Dreams.Recall(ctx, profileID, req.Query, 5)
+				dreams, err := deps.Dreams.Recall(ctx, profileID, req.Query, relatedDreamOverfetch)
 				if err == nil {
-					relatedDreams = dreams
-					out["related_dreams"] = dreams
+					relatedDreams = rerankRelatedDreams(req.Query, hits, dreams, relatedDreamLimit)
+					out["related_dreams"] = relatedDreams
 				} else {
 					slog.Default().Warn("related dreams not fetched",
 						slog.String("error", err.Error()),

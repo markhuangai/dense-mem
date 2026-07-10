@@ -48,6 +48,19 @@ func rowToClaimForPromote(profileID string, row map[string]any) *domain.Claim {
 		v, _ := row[key].(time.Time)
 		return v
 	}
+	stringSlice := func(key string) []string {
+		raw, ok := row[key].([]any)
+		if !ok {
+			return nil
+		}
+		out := make([]string, 0, len(raw))
+		for _, v := range raw {
+			if s, ok := v.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
 
 	var supportedBy []string
 	if raw, ok := row["supported_by"].([]any); ok {
@@ -88,6 +101,8 @@ func rowToClaimForPromote(profileID string, row map[string]any) *domain.Claim {
 		ValidTo:                      timePtr("valid_to"),
 		Classification:               classification,
 		ClassificationLatticeVersion: strVal("classification_lattice_version"),
+		RecallText:                   strVal("recall_text"),
+		IdentifierTokens:             stringSlice("identifier_tokens"),
 		SupportedBy:                  supportedBy,
 	}
 }

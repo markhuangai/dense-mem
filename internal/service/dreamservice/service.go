@@ -13,6 +13,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/fulltextquery"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/recallident"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	neo4jstorage "github.com/markhuangai/dense-mem/internal/storage/neo4j"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -353,7 +354,7 @@ func (s *service) Recall(ctx context.Context, profileID, query string, limit int
 		limit = 20
 	}
 	_, rows, err := s.deps.Graph.ScopedRead(ctx, profileID, `
-CALL db.index.fulltext.queryNodes('dream_recall_idx', $searchQuery) YIELD node AS d, score
+	CALL db.index.fulltext.queryNodes('dream_recall_v2_idx', $searchQuery) YIELD node AS d, score
 WHERE d.team_id = $profileId
   AND d.status IN ['proposed', 'reinforced']
 RETURN d, score
@@ -547,6 +548,7 @@ LIMIT $totalLimit`
 }
 
 func (s *service) upsertDream(ctx context.Context, profileID string, dream *domain.Dream) (bool, error) {
+	dream.RecallText, dream.IdentifierTokens = dreamRecallFields(dream)
 	sourceJSON, err := json.Marshal(dream.SourceRefs)
 	if err != nil {
 		return false, fmt.Errorf("dream upsert: source refs: %w", err)
@@ -566,29 +568,33 @@ ON CREATE SET
   d.status = $status,
   d.cycle = $cycle,
   d.cycle_run_id = $cycleRunId,
-  d.generator_model = $generatorModel,
-  d.source_refs_json = $sourceRefsJSON,
+	  d.generator_model = $generatorModel,
+	  d.recall_text = $recallText,
+	  d.identifier_tokens = $identifierTokens,
+	  d.source_refs_json = $sourceRefsJSON,
   d.created_at = $createdAt,
   d.updated_at = $updatedAt
 ON MATCH SET
   d.updated_at = $updatedAt,
   d.last_evaluated_at = coalesce(d.last_evaluated_at, $updatedAt)
 RETURN d.dream_id AS dream_id, d.dream_id = $dreamId AS inserted`, map[string]any{
-			"contentHash":     dream.ContentHash,
-			"dreamId":         dream.DreamID,
-			"hypothesis":      dream.Hypothesis,
-			"whatIf":          dream.WhatIf,
-			"possibleOutcome": dream.PossibleOutcome,
-			"rationale":       dream.Rationale,
-			"likelihood":      dream.Likelihood,
-			"confidence":      dream.Confidence,
-			"status":          string(dream.Status),
-			"cycle":           dream.Cycle,
-			"cycleRunId":      dream.CycleRunID,
-			"generatorModel":  dream.GeneratorModel,
-			"sourceRefsJSON":  string(sourceJSON),
-			"createdAt":       dream.CreatedAt,
-			"updatedAt":       dream.UpdatedAt,
+			"contentHash":      dream.ContentHash,
+			"dreamId":          dream.DreamID,
+			"hypothesis":       dream.Hypothesis,
+			"whatIf":           dream.WhatIf,
+			"possibleOutcome":  dream.PossibleOutcome,
+			"rationale":        dream.Rationale,
+			"likelihood":       dream.Likelihood,
+			"confidence":       dream.Confidence,
+			"status":           string(dream.Status),
+			"cycle":            dream.Cycle,
+			"cycleRunId":       dream.CycleRunID,
+			"generatorModel":   dream.GeneratorModel,
+			"recallText":       dream.RecallText,
+			"identifierTokens": dream.IdentifierTokens,
+			"sourceRefsJSON":   string(sourceJSON),
+			"createdAt":        dream.CreatedAt,
+			"updatedAt":        dream.UpdatedAt,
 		})
 		if err != nil {
 			return err
@@ -857,6 +863,8 @@ func dreamFromRow(row map[string]any) (*domain.Dream, error) {
 		CycleRunID:        stringFromMap(props, "cycle_run_id"),
 		GeneratorModel:    stringFromMap(props, "generator_model"),
 		ContentHash:       stringFromMap(props, "content_hash"),
+		RecallText:        stringFromMap(props, "recall_text"),
+		IdentifierTokens:  stringSliceFromMap(props, "identifier_tokens"),
 		SourceRefs:        sourceRefs,
 		InvalidatedReason: stringFromMap(props, "invalidated_reason"),
 		CreatedAt:         timeFromMap(props, "created_at"),
@@ -897,6 +905,24 @@ func dreamContentHash(d *domain.Dream) string {
 	return hex.EncodeToString(h[:])
 }
 
+func dreamRecallFields(d *domain.Dream) (string, []string) {
+	if d == nil {
+		return "", nil
+	}
+	parts := []string{
+		d.Hypothesis,
+		d.WhatIf,
+		d.PossibleOutcome,
+		d.Rationale,
+		d.CycleRunID,
+		d.GeneratorModel,
+	}
+	for _, ref := range d.SourceRefs {
+		parts = append(parts, ref.Type, ref.ID)
+	}
+	return recallident.BuildRecallText(parts...)
+}
+
 func localRunDate(now time.Time, cfg EffectiveConfig) string {
 	loc, err := time.LoadLocation(cfg.Timezone)
 	if err != nil {
@@ -926,6 +952,20 @@ func stringFromMap(row map[string]any, key string) string {
 	default:
 		return ""
 	}
+}
+
+func stringSliceFromMap(row map[string]any, key string) []string {
+	raw, ok := row[key].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if value, ok := item.(string); ok && value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func boolFromMap(row map[string]any, key string) bool {

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/recallident"
 	"github.com/markhuangai/dense-mem/internal/tools/keywordsearch"
 	"github.com/markhuangai/dense-mem/internal/tools/semanticsearch"
 	"github.com/stretchr/testify/require"
@@ -202,6 +203,18 @@ func TestApplyRerankAdjustmentsClampNegativeScoresAndSkipOtherQueries(t *testing
 	require.Equal(t, 0.001, unchanged[0].FinalScore)
 }
 
+func TestApplyAuthorityAdjustmentsSuppressesInformalWhenAuthoritativeMatchExists(t *testing.T) {
+	entries := []rrfEntry{
+		{Content: "Authoritative source of truth. service TMP-208 owner is owner-green.", FinalScore: 0.03},
+		{Content: "Informal chat guessed service TMP-208 owner should be owner-red.", FinalScore: 0.01},
+	}
+
+	applyAuthorityAdjustments("What is the source of truth for service TMP-208 owner?", entries)
+
+	require.Positive(t, entries[0].FinalScore)
+	require.Zero(t, entries[1].FinalScore)
+}
+
 func TestIdentifierSpecificityAdjustmentsCoverQueryShapes(t *testing.T) {
 	entries := []rrfEntry{{Content: "job TMP-301 should use timeout 30s", FinalScore: 1}}
 	applyIdentifierSpecificityAdjustments("Which job should use timeout?", entries)
@@ -220,6 +233,141 @@ func TestIdentifierSpecificityAdjustmentsCoverQueryShapes(t *testing.T) {
 	require.InDelta(t, 1.004, entries[0].FinalScore, 0.000001)
 	require.Equal(t, 1.0, entries[1].FinalScore)
 	require.Equal(t, 1.0, entries[2].FinalScore)
+}
+
+func TestRecallService_NaturalLanguageIdentifierMatchesPreserveRRFOrder(t *testing.T) {
+	tests := []struct {
+		name            string
+		query           string
+		identifierMatch string
+	}{
+		{
+			name:            "camel case scientific term",
+			query:           "MicroRNA is involved in Neural Stem Cell differentiation.",
+			identifierMatch: "A broad overview of MicroRNA regulation.",
+		},
+		{
+			name:            "slash separated prose",
+			query:           "Which English-born Australian singer/songwriter was a judge on season 8?",
+			identifierMatch: "A singer/songwriter discography with no judging history.",
+		},
+		{
+			name:            "dotted abbreviation",
+			query:           "What were the effects of Pearl Harbor on the U.S. economy?",
+			identifierMatch: "A general overview of the U.S. economy.",
+		},
+		{
+			name:            "plural molecular term",
+			query:           "How do mRNAs affect protein production?",
+			identifierMatch: "An mRNAs glossary entry unrelated to protein production.",
+		},
+		{
+			name:            "mixed case molecular term",
+			query:           "How does miRNA regulate translation?",
+			identifierMatch: "A miRNA glossary entry unrelated to translation.",
+		},
+		{
+			name:            "hyphenated protein",
+			query:           "How does SHP-2 regulate MAPK signaling?",
+			identifierMatch: "A general SHP-2 catalog entry.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sem := &fakeSemanticSearcher{hits: []semanticsearch.SearchHit{
+				{ID: "relevant", Type: "fragment", Content: "The directly relevant answer without the query's identifier-like spelling."},
+				{ID: "identifier-match", Type: "fragment", Content: tt.identifierMatch},
+			}}
+			svc := NewRecallService(
+				&stubEmbedding{DimensionsResult: 4},
+				sem,
+				&fakeKeywordSearcher{},
+				&fakeHydrator{},
+				nil,
+				nil,
+			)
+
+			out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: tt.query, Limit: 2})
+
+			require.NoError(t, err)
+			require.Len(t, out, 2)
+			require.Equal(t, "relevant", out[0].Fragment.FragmentID)
+			require.Equal(t, "identifier-match", out[1].Fragment.FragmentID)
+		})
+	}
+}
+
+func TestApplyIdentifierSpecificityAdjustmentsKeepsStrictProjectAnchorBoosts(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		candidate string
+	}{
+		{
+			name:      "PR and commit",
+			query:     "What changed in PR #56 commit 2e4b0cc?",
+			candidate: "Implementation note for PR #56 at commit 2e4b0cc.",
+		},
+		{
+			name:      "repository path",
+			query:     "What changed in internal/service/recallservice/recall.go?",
+			candidate: "The change is in internal/service/recallservice/recall.go.",
+		},
+		{
+			name:      "file",
+			query:     "What changed in SearchPanel.tsx?",
+			candidate: "SearchPanel.tsx now renders the result count.",
+		},
+		{
+			name:      "tool",
+			query:     "How does eval_list_recall_feedback_events paginate?",
+			candidate: "eval_list_recall_feedback_events uses a stable cursor.",
+		},
+		{
+			name:      "scope",
+			query:     "Which operation requires feedback:read?",
+			candidate: "Listing feedback requires feedback:read.",
+		},
+		{
+			name:      "context qualified job",
+			query:     "What timeout should job UNT-013 use?",
+			candidate: "Runtime configuration says job UNT-013 uses 23 minutes.",
+		},
+		{
+			name:      "context qualified service",
+			query:     "What is the deployment window for service OBS-001?",
+			candidate: "The deployment window for service OBS-001 is 03:01 UTC.",
+		},
+		{
+			name:      "context qualified issue",
+			query:     "What is the source of truth for issue DM-412?",
+			candidate: "The source of truth for issue DM-412 is the recall runbook.",
+		},
+		{
+			name:      "database filename",
+			query:     "What is thumbs.db used for?",
+			candidate: "Windows uses thumbs.db as a thumbnail cache.",
+		},
+		{
+			name:      "executable filename",
+			query:     "What does smsvchost.exe install?",
+			candidate: "smsvchost.exe installs the background service.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entries := []rrfEntry{
+				{Content: tt.candidate, FinalScore: 0.01},
+				{Content: "General project documentation.", FinalScore: 0.011},
+			}
+
+			applyIdentifierSpecificityAdjustments(tt.query, entries)
+
+			require.Greater(t, entries[0].FinalScore, entries[1].FinalScore)
+		})
+	}
 }
 
 func TestFragmentMetadataRecallWindowCoversMetadataFormats(t *testing.T) {
@@ -303,11 +451,36 @@ func TestRecallService_IdentifierSpecificityPrefersExactJobID(t *testing.T) {
 	require.Equal(t, "f-required", out[0].Fragment.FragmentID)
 }
 
-func TestIdentifierSpecificityAdjustmentRequiresExactIdentifier(t *testing.T) {
-	queryText := rerankText("What timeout should job UNT-013 use?")
+func TestRecallService_IdentifierFilterUsesRecallText(t *testing.T) {
+	query := "What changed in PR #56 commit 2e4b0cc?"
+	sem := &fakeSemanticSearcher{
+		hits: []semanticsearch.SearchHit{
+			{ID: "f-neighbor", Type: "fragment", Content: "General recall feedback export pagination note."},
+		},
+	}
+	kw := &fakeKeywordSearcher{
+		hits: []keywordsearch.FragmentSearchResult{
+			{
+				FragmentID: "f-required",
+				Content:    "Feedback export pagination fix.",
+				RecallText: "Feedback export pagination fix. PR #56 commit 2e4b0cc evalListEdges LIMIT.",
+			},
+		},
+	}
+	svc := NewRecallService(&stubEmbedding{DimensionsResult: 4}, sem, kw, &fakeHydrator{}, nil, nil)
 
-	require.Positive(t, identifierSpecificityAdjustment(queryText, "Runtime configuration. job UNT-013 must use a timeout of 23 minutes."))
-	require.Zero(t, identifierSpecificityAdjustment(queryText, "Runtime configuration. job UNT-003 must use a timeout of 13 minutes."))
+	out, err := svc.Recall(context.Background(), "pA", RecallRequest{Query: query, Limit: 5})
+
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Equal(t, "f-required", out[0].Fragment.FragmentID)
+}
+
+func TestIdentifierSpecificityAdjustmentRequiresExactIdentifier(t *testing.T) {
+	queryIdentifiers := recallident.Extract("What timeout should job UNT-013 use?")
+
+	require.Positive(t, identifierSpecificityAdjustment(queryIdentifiers, "Runtime configuration. job UNT-013 must use a timeout of 23 minutes."))
+	require.Zero(t, identifierSpecificityAdjustment(queryIdentifiers, "Runtime configuration. job UNT-003 must use a timeout of 13 minutes."))
 }
 
 func TestRerankIdentifiersSkipsISODateTokens(t *testing.T) {
@@ -316,7 +489,7 @@ func TestRerankIdentifiersSkipsISODateTokens(t *testing.T) {
 	require.Equal(t, []string{"tier-w-001"}, rerankIdentifiers(queryText))
 }
 
-func TestApplyIdentifierSpecificityAdjustmentsRequiresUnitValueQuery(t *testing.T) {
+func TestApplyIdentifierSpecificityAdjustmentsAppliesToExactIdentifiers(t *testing.T) {
 	entries := []rrfEntry{
 		{
 			Content:    "Current release calendar update dated 2026-06-28. service OBS-001 now deploys at 03:01 UTC.",
@@ -326,7 +499,7 @@ func TestApplyIdentifierSpecificityAdjustmentsRequiresUnitValueQuery(t *testing.
 
 	applyIdentifierSpecificityAdjustments("What is the current deployment window for service OBS-001?", entries)
 
-	require.Equal(t, 0.02, entries[0].FinalScore)
+	require.Greater(t, entries[0].FinalScore, 0.02)
 }
 
 func TestRecallService_CueRerankPrefersDirectiveEvidence(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/recallident"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/claimidentity"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentcodec"
@@ -114,10 +115,12 @@ ON CREATE SET
     c.extraction_version             = $extractionVersion,
     c.pipeline_run_id                = $pipelineRunId,
     c.content_hash                   = $contentHash,
-    c.idempotency_key                = $idempotencyKey,
-    c.classification_json            = $classificationJSON,
-    c.classification_lattice_version = $classificationLatticeVersion,
-    c.owner_profile_id               = $ownerProfileId,
+	    c.idempotency_key                = $idempotencyKey,
+	    c.classification_json            = $classificationJSON,
+	    c.classification_lattice_version = $classificationLatticeVersion,
+	    c.recall_text                    = $recallText,
+	    c.identifier_tokens              = $identifierTokens,
+	    c.owner_profile_id               = $ownerProfileId,
     c.owner_profile_name             = $ownerProfileName,
     c.created_by_profile_id          = $createdByProfileId,
     c.created_by_profile_name        = $createdByProfileName
@@ -257,6 +260,7 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 	for k, v := range support.MergedClassification {
 		mergedClass[k] = v
 	}
+	recallText, identifierTokens := claimRecallFields(claim, support.Fragments, mergedClass)
 
 	newClaim := &domain.Claim{
 		ClaimID:              claimID,
@@ -295,7 +299,9 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 		ContentHash:    contentHash,
 		IdempotencyKey: claim.IdempotencyKey,
 		// Classification computed via lattice.
-		Classification: mergedClass,
+		Classification:   mergedClass,
+		RecallText:       recallText,
+		IdentifierTokens: identifierTokens,
 		// "v1" is the canonical lattice version. DefaultLattice (consumed by
 		// support.go in this package) is built against this schema version.
 		ClassificationLatticeVersion: "v1",
@@ -373,6 +379,8 @@ func (s *createClaimServiceImpl) Create(ctx context.Context, profileID string, c
 		"idempotencyKey":               newClaim.IdempotencyKey,
 		"classificationJSON":           classificationJSON,
 		"classificationLatticeVersion": newClaim.ClassificationLatticeVersion,
+		"recallText":                   newClaim.RecallText,
+		"identifierTokens":             newClaim.IdentifierTokens,
 		"ownerProfileId":               newClaim.OwnerProfileID,
 		"ownerProfileName":             newClaim.OwnerProfileName,
 		"createdByProfileId":           newClaim.CreatedByProfileID,
@@ -421,6 +429,44 @@ func timeParam(value *time.Time) any {
 		return nil
 	}
 	return value.UTC()
+}
+
+func claimRecallFields(claim *domain.Claim, fragments []*domain.Fragment, classification map[string]any) (string, []string) {
+	if claim == nil {
+		return "", nil
+	}
+	parts := []string{
+		claim.Subject,
+		claim.Predicate,
+		claim.Object,
+		claim.IdempotencyKey,
+		claim.PipelineRunID,
+		claim.ExtractionModel,
+		claim.ExtractionVersion,
+	}
+	for key, value := range classification {
+		parts = append(parts, key, fmt.Sprint(value))
+	}
+	tokenGroups := make([][]string, 0, len(fragments)+1)
+	for _, fragment := range fragments {
+		if fragment == nil {
+			continue
+		}
+		parts = append(parts,
+			fragment.Content,
+			fragment.Source,
+			fragment.IdempotencyKey,
+			fragment.RecallText,
+		)
+		parts = append(parts, fragment.Labels...)
+		for key, value := range fragment.Metadata {
+			parts = append(parts, key, fmt.Sprint(value))
+		}
+		tokenGroups = append(tokenGroups, fragment.IdentifierTokens)
+	}
+	recallText, tokens := recallident.BuildRecallText(parts...)
+	tokenGroups = append([][]string{tokens}, tokenGroups...)
+	return recallText, recallident.MergeTokens(tokenGroups...)
 }
 
 func validateCreateClaimInput(claim *domain.Claim) error {

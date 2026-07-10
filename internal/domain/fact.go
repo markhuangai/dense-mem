@@ -85,7 +85,9 @@ type Fact struct {
 	Labels []string `json:"labels,omitempty"`
 
 	// Metadata holds arbitrary additional data not captured by typed fields.
-	Metadata map[string]any `json:"metadata,omitempty"`
+	Metadata         map[string]any `json:"metadata,omitempty"`
+	RecallText       string         `json:"recall_text,omitempty"`
+	IdentifierTokens []string       `json:"identifier_tokens,omitempty"`
 
 	// Evidence exposes the supporting lineage used to ground the fact.
 	Evidence []Evidence `json:"evidence,omitempty"`

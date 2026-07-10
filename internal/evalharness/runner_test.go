@@ -845,7 +845,7 @@ func TestScoreTracesScoresFragmentContextRefsAsEvidenceFallback(t *testing.T) {
 	}
 }
 
-func TestScoreTracesKeepsExplicitEmptyContextEvidenceRefs(t *testing.T) {
+func TestScoreTracesUsesFragmentContextFallbackForExplicitEmptyEvidenceRefs(t *testing.T) {
 	suite := []SuiteCase{{CaseID: "case-1", Slices: []string{"evidence"}}}
 	cases := map[string]Case{
 		"case-1": {CaseID: "case-1", Query: "which source backs alpha?", Limit: 2},
@@ -871,11 +871,45 @@ func TestScoreTracesKeepsExplicitEmptyContextEvidenceRefs(t *testing.T) {
 		t.Fatalf("ScoreTraces: %v", err)
 	}
 	score := scores[0]
+	if !score.EvidenceScored || score.EvidenceRecallAtK != 1 || len(score.EvidenceMissingRequired) != 0 {
+		t.Fatalf("explicit empty fragment evidence score = %+v; want context fallback hit", score)
+	}
+	if summary.AverageEvidenceRecallAtK != 1 {
+		t.Fatalf("explicit empty fragment evidence summary = %+v; want evidence recall", summary)
+	}
+}
+
+func TestScoreTracesKeepsExplicitEmptyNonFragmentEvidenceRefs(t *testing.T) {
+	suite := []SuiteCase{{CaseID: "case-1", Slices: []string{"evidence"}}}
+	cases := map[string]Case{
+		"case-1": {CaseID: "case-1", Query: "which fact backs alpha?", Limit: 2},
+	}
+	qrels := map[string]QRel{
+		"case-1": {
+			CaseID:               "case-1",
+			RequiredEvidenceRefs: []Ref{{Type: "fact", SourceDocID: "doc-fact-good"}},
+		},
+	}
+	traces := []RecallTrace{{
+		CaseID:              "case-1",
+		Query:               "which fact backs alpha?",
+		ContextRefs:         []Ref{{Type: "fragment", ID: "fragment-good"}},
+		ContextEvidenceRefs: []Ref{},
+	}}
+	mapping := KnowledgeMapping{BySourceDocID: map[string]Ref{
+		"doc-fact-good": {Type: "fact", ID: "fact-good", SourceDocID: "doc-fact-good"},
+	}}
+
+	scores, summary, err := ScoreTraces("run-1", "baseline", "seed-1", "sha256:test", "suite.jsonl", suite, cases, qrels, traces, mapping)
+	if err != nil {
+		t.Fatalf("ScoreTraces: %v", err)
+	}
+	score := scores[0]
 	if !score.EvidenceScored || score.EvidenceRecallAtK != 0 || len(score.EvidenceMissingRequired) != 1 {
-		t.Fatalf("explicit empty evidence score = %+v; want scored miss without context fallback", score)
+		t.Fatalf("explicit empty non-fragment evidence score = %+v; want scored miss without fragment fallback", score)
 	}
 	if summary.AverageEvidenceRecallAtK != 0 {
-		t.Fatalf("explicit empty evidence summary = %+v; want no evidence recall", summary)
+		t.Fatalf("explicit empty non-fragment evidence summary = %+v; want no evidence recall", summary)
 	}
 }
 

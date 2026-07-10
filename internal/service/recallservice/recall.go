@@ -35,6 +35,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/recallident"
 	"github.com/markhuangai/dense-mem/internal/tools/keywordsearch"
 	"github.com/markhuangai/dense-mem/internal/tools/semanticsearch"
 )
@@ -436,14 +437,24 @@ func (s *recallService) Recall(ctx context.Context, profileID string, req Recall
 	tierHits := s.enrichTierHits(ctx, profileID, overfetch, req)
 
 	evidenceIntent := isEvidenceSourceQuery(query)
+	authorityIntent := isAuthorityRecallQuery(query)
+	queryIdentifiers := recallident.Extract(query)
+	queryHardAnchors := recallident.HardGateAnchors(queryIdentifiers)
+	queryRankingAnchors := recallident.RankingAnchors(query)
 
 	// Merge tier hits with unhydrated fragment candidates, sort by (tier ASC,
 	// score DESC), then hydrate only selected fragment winners.
 	all := append([]RecallHit{}, tierHits...)
 	for _, m := range merged {
+		rankingAnchorOverlap := recallident.OverlapText(queryRankingAnchors, m.Content, m.RecallText)
+		if len(queryHardAnchors) > 0 && !recallident.SatisfiesAnchors(queryHardAnchors, m.Content, m.RecallText) {
+			continue
+		}
 		sortTier := ""
 		if evidenceIntent {
 			sortTier = "0.5"
+		} else if rankingAnchorOverlap > 0 && !authorityIntent {
+			sortTier = "0.75"
 		}
 		all = append(all, RecallHit{
 			Tier:         TierFragment,
@@ -811,6 +822,7 @@ func claimEvidenceSets(claims []*domain.Claim) [][]domain.Evidence {
 type rrfEntry struct {
 	id           string
 	Content      string
+	RecallText   string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	SemanticRank int
@@ -832,6 +844,7 @@ func rrfMerge(sem []semanticsearch.SearchHit, kw []keywordsearch.FragmentSearchR
 		if e.Content == "" {
 			e.Content = h.Content
 		}
+		e.RecallText = appendRecallText(e.RecallText, h.Content)
 		mergeRRFEntryTimes(e, semanticHitTime(h.CreatedAt), semanticHitTime(h.UpdatedAt))
 		if e.SemanticRank == 0 || rank < e.SemanticRank {
 			e.SemanticRank = rank
@@ -848,6 +861,7 @@ func rrfMerge(sem []semanticsearch.SearchHit, kw []keywordsearch.FragmentSearchR
 		if e.Content == "" {
 			e.Content = h.Content
 		}
+		e.RecallText = appendRecallText(e.RecallText, h.RecallText)
 		mergeRRFEntryTimes(e, h.CreatedAt, h.UpdatedAt)
 		if e.KeywordRank == 0 || rank < e.KeywordRank {
 			e.KeywordRank = rank
@@ -859,6 +873,17 @@ func rrfMerge(sem []semanticsearch.SearchHit, kw []keywordsearch.FragmentSearchR
 		out = append(out, *e)
 	}
 	return out
+}
+
+func appendRecallText(existing, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return existing
+	}
+	if existing == "" {
+		return value
+	}
+	return existing + " " + value
 }
 
 func semanticHitTime(value *time.Time) time.Time {

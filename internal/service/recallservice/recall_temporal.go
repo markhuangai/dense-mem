@@ -4,8 +4,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/recallident"
 )
 
 type currentnessTemporalFrame struct {
@@ -303,23 +305,77 @@ func factMatchesQueryIdentifiers(query string, fact *domain.Fact) bool {
 	if fact == nil {
 		return false
 	}
-	return knowledgeTripleMatchesQueryIdentifiers(query, fact.Subject, fact.Predicate, fact.Object)
+	return knowledgeTripleMatchesQueryIdentifiers(query, fact.IdentifierTokens, fact.Subject, fact.Predicate, fact.Object, fact.RecallText)
 }
 
 func claimMatchesQueryIdentifiers(query string, claim *domain.Claim) bool {
 	if claim == nil {
 		return false
 	}
-	return knowledgeTripleMatchesQueryIdentifiers(query, claim.Subject, claim.Predicate, claim.Object)
+	return knowledgeTripleMatchesQueryIdentifiers(query, claim.IdentifierTokens, claim.Subject, claim.Predicate, claim.Object, claim.RecallText)
 }
 
-func knowledgeTripleMatchesQueryIdentifiers(query string, parts ...string) bool {
-	queryText := rerankText(query)
-	if len(rerankIdentifiers(queryText)) == 0 {
+func knowledgeTripleMatchesQueryIdentifiers(query string, candidateTokens []string, parts ...string) bool {
+	queryTokens := recallident.Extract(query)
+	if len(queryTokens) == 0 {
+		return typedLexicalOverlap(query, strings.Join(parts, " ")) >= typedLexicalOverlapThreshold(query)
+	}
+	if !recallident.SatisfiesStrongAnchors(queryTokens, append(parts, strings.Join(candidateTokens, " "))...) {
+		return false
+	}
+	if recallident.Overlap(queryTokens, candidateTokens) > 0 {
 		return true
 	}
-	return rerankMatchesQueryIdentifiers(queryText, rerankText(strings.Join(parts, " ")))
+	return recallident.OverlapText(queryTokens, strings.Join(parts, " ")) > 0
 }
+
+func typedLexicalOverlap(query, candidate string) int {
+	queryTerms := typedSignificantTerms(query)
+	candidateTerms := typedSignificantTerms(candidate)
+	if len(queryTerms) == 0 || len(candidateTerms) == 0 {
+		return 0
+	}
+	overlap := 0
+	for term := range queryTerms {
+		if _, ok := candidateTerms[term]; ok {
+			overlap++
+		}
+	}
+	return overlap
+}
+
+func typedLexicalOverlapThreshold(query string) int {
+	queryTerms := typedSignificantTerms(query)
+	if len(queryTerms) == 0 {
+		return 0
+	}
+	if len(queryTerms) <= 2 {
+		return 1
+	}
+	return 2
+}
+
+func typedSignificantTerms(text string) map[string]struct{} {
+	fields := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	out := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		if len(field) < 3 || typedRecallStopwords[field] {
+			continue
+		}
+		out[field] = struct{}{}
+	}
+	return out
+}
+
+var typedRecallStopwords = map[string]bool{
+	"about": true, "after": true, "and": true, "are": true, "before": true,
+	"can": true, "current": true, "for": true, "from": true, "how": true,
+	"into": true, "latest": true, "not": true, "now": true, "the": true,
+	"this": true, "what": true, "when": true, "which": true, "with": true,
+}
+
 func latestISODateInText(value string) time.Time {
 	var latest time.Time
 	for _, field := range strings.Fields(value) {

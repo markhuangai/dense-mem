@@ -155,6 +155,7 @@ func (h *SearchHit) GetProfileID() string {
 type FragmentSearchResult struct {
 	FragmentID string         `json:"fragment_id"`
 	Content    string         `json:"content"`
+	RecallText string         `json:"recall_text,omitempty"`
 	Score      float64        `json:"score"`
 	Labels     []string       `json:"labels"`
 	Metadata   map[string]any `json:"metadata"`

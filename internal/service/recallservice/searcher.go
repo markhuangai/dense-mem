@@ -56,7 +56,7 @@ func (s *neo4jFactSearcher) SearchActive(ctx context.Context, profileID string, 
 	}
 
 	cypher := `
-CALL db.index.fulltext.queryNodes('fact_recall_idx', $searchQuery) YIELD node AS f, score
+	CALL db.index.fulltext.queryNodes('fact_recall_v2_idx', $searchQuery) YIELD node AS f, score
 WHERE f.team_id = $profileId AND f.status = 'active'
 OPTIONAL MATCH (incomingOverlay:Fact {team_id: $profileId})-[:OVERLAYS {team_id: $profileId}]->(f)
 WITH f, score, count(incomingOverlay) AS incoming_overlay_count
@@ -109,7 +109,7 @@ func (s *neo4jClaimSearcher) SearchValidated(ctx context.Context, profileID stri
 	}
 
 	cypher := `
-CALL db.index.fulltext.queryNodes('claim_recall_idx', $searchQuery) YIELD node AS c, score
+	CALL db.index.fulltext.queryNodes('claim_recall_v2_idx', $searchQuery) YIELD node AS c, score
 WHERE c.team_id = $profileId AND c.status = 'validated'
 RETURN
     c.claim_id AS claim_id,
