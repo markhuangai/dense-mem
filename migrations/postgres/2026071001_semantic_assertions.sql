@@ -21,8 +21,6 @@ ALTER TABLE memory_placement_runs
 ALTER TABLE memory_placement_runs
     ADD CONSTRAINT memory_placement_runs_status_check
     CHECK (status IN ('queued', 'processing', 'awaiting_review', 'completed', 'failed')) NOT VALID;
-ALTER TABLE memory_placement_runs
-    VALIDATE CONSTRAINT memory_placement_runs_status_check;
 
 ALTER TABLE memory_placement_items
     ADD COLUMN IF NOT EXISTS evidence_indexes JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -59,8 +57,6 @@ ALTER TABLE memory_placement_items
         'assertion_quarantined',
         'assertion_rejected'
     )) NOT VALID;
-ALTER TABLE memory_placement_items
-    VALIDATE CONSTRAINT memory_placement_items_category_check;
 
 CREATE TABLE IF NOT EXISTS assertion_transition_events (
     event_id UUID PRIMARY KEY,
@@ -185,8 +181,6 @@ ALTER TABLE memory_placement_items
         'needs_more_evidence', 'rejected_false', 'accepted_promoted', 'rejected_explained'
     )) NOT VALID;
 ALTER TABLE memory_placement_items
-    VALIDATE CONSTRAINT memory_placement_items_category_check;
-ALTER TABLE memory_placement_items
     DROP COLUMN IF EXISTS security_signals,
     DROP COLUMN IF EXISTS reviewed_relationship,
     DROP COLUMN IF EXISTS proposed_relationship,
@@ -206,8 +200,6 @@ ALTER TABLE memory_placement_runs
 ALTER TABLE memory_placement_runs
     ADD CONSTRAINT memory_placement_runs_status_check
     CHECK (status IN ('queued', 'processing', 'completed', 'failed')) NOT VALID;
-ALTER TABLE memory_placement_runs
-    VALIDATE CONSTRAINT memory_placement_runs_status_check;
 ALTER TABLE memory_placement_runs
     DROP COLUMN IF EXISTS acknowledged_at,
     DROP COLUMN IF EXISTS requires_acknowledgement,

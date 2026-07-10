@@ -568,3 +568,12 @@ func TestSeedMemoryProposalUsesUnicodeCodePointOffsets(t *testing.T) {
 		t.Fatalf("seed normalization failed")
 	}
 }
+
+func TestAssertionSourceDocIDsRejectsMalformedEvidence(t *testing.T) {
+	_, err := assertionSourceDocIDs(map[string]any{
+		"assertion_id": "assertion-broken", "evidence_json": "{",
+	}, map[string]string{"fragment-1": "doc-1"})
+	if err == nil || !strings.Contains(err.Error(), "invalid evidence_json") {
+		t.Fatalf("assertionSourceDocIDs error = %v", err)
+	}
+}

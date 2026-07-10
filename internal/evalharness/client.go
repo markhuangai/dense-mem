@@ -438,7 +438,11 @@ func (c *HTTPClient) exportKnowledgeMapping(ctx context.Context, limit int, kind
 				}
 				sourceDocIDs := sourceDocIDsFromKnowledgeItem(kind, item, claimSourceDocIDs, claimFactSourceDocIDs)
 				if kind == "assertion" {
-					sourceDocIDs = append(sourceDocIDs, assertionSourceDocIDs(item, fragmentSourceDocIDs)...)
+					assertionDocIDs, err := assertionSourceDocIDs(item, fragmentSourceDocIDs)
+					if err != nil {
+						return mapping, fmt.Errorf("map assertion %s evidence: %w", id, err)
+					}
+					sourceDocIDs = append(sourceDocIDs, assertionDocIDs...)
 					sourceDocIDs = uniqueNonEmpty(sourceDocIDs)
 				}
 				for _, sourceDocID := range sourceDocIDs {
@@ -731,11 +735,13 @@ func sourceDocIDsFromKnowledgeItem(kind string, item map[string]any, claimSource
 	return uniqueNonEmpty(sourceDocIDs)
 }
 
-func assertionSourceDocIDs(item map[string]any, fragmentSourceDocIDs map[string]string) []string {
+func assertionSourceDocIDs(item map[string]any, fragmentSourceDocIDs map[string]string) ([]string, error) {
 	var spans []map[string]any
 	switch raw := item["evidence_json"].(type) {
 	case string:
-		_ = json.Unmarshal([]byte(raw), &spans)
+		if err := json.Unmarshal([]byte(raw), &spans); err != nil {
+			return nil, fmt.Errorf("invalid evidence_json: %w", err)
+		}
 	case []any:
 		for _, value := range raw {
 			if span, ok := value.(map[string]any); ok {
@@ -749,7 +755,7 @@ func assertionSourceDocIDs(item map[string]any, fragmentSourceDocIDs map[string]
 			sourceDocIDs = append(sourceDocIDs, sourceDocID)
 		}
 	}
-	return uniqueNonEmpty(sourceDocIDs)
+	return uniqueNonEmpty(sourceDocIDs), nil
 }
 
 func dreamSourceRefsFromKnowledgeItem(item map[string]any) []Ref {
