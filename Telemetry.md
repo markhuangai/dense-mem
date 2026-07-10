@@ -105,6 +105,10 @@ host LLM calls recall_memory
   -> portals display online recall quality
 ```
 
+Recall feedback is observational. Submitting it records metrics and
+investigation data; it does not retrain or change ranking automatically. See
+[Recall Ranking](Recall-Ranking#recall-feedback-is-record-only).
+
 The feedback request is off by default. Enable recall feedback from the control
 portal Config tab (`RECALL_FEEDBACK_ENABLED`) to expose
 `submit_recall_session_feedback` and add `recall_event` to `recall_memory`

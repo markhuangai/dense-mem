@@ -70,6 +70,9 @@ flowchart TB
 | Hypotheses | Community summaries and dream records | Deciding which hypotheses to ask the user to confirm |
 | Operations | Teams, profiles, API keys, audit metadata, user portal, control portal | Client-side MCP configuration |
 
+See [Recall Ranking](Recall-Ranking) for the candidate branches, exact-anchor
+rules, fusion, and tier ordering behind retrieval.
+
 Dense-Mem is intentionally narrow. It does not replace the assistant. It gives
 the assistant a reliable memory service.
 

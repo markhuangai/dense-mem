@@ -24,4 +24,5 @@
 ## Reference
 
 - [Architecture](Architecture)
+- [Recall Ranking](Recall-Ranking)
 - [Technical Reference](Technical-Reference)

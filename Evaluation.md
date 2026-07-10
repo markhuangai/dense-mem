@@ -123,6 +123,10 @@ The runner also scores assembled context refs when traces include
 `context_refs`, supporting evidence when traces include `context_evidence_refs`,
 and dream hypotheses when traces include `dream_refs`.
 
+See [Recall Ranking](Recall-Ranking#reading-evaluation-traces) for ranking trace
+fields and [Evaluation Semantics And Gates](Recall-Ranking#evaluation-semantics-and-gates)
+for cross-tier source mapping and fragment-only evidence fallback behavior.
+
 Dream metrics are separate:
 
 ```text

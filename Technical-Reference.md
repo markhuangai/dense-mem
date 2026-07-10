@@ -288,6 +288,10 @@ curl "http://localhost:8080/api/v1/recall?query=preferences" \
   -H "Authorization: Bearer $DENSE_MEM_API_KEY"
 ```
 
+See [Recall Ranking](Recall-Ranking) for candidate retrieval, reciprocal-rank
+fusion, effective tiers, identifier anchors, current limitations, and trace
+fields.
+
 ## Read-Only Keys
 
 Use read-only keys for automation that should search memory but never write it.
