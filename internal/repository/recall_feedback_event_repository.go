@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -22,12 +23,18 @@ type RecallFeedbackEventRepository interface {
 	PruneBefore(ctx context.Context, cutoff time.Time) error
 }
 
+type RecallMemoryReviewRepository interface {
+	EnqueueRecallMemoryReviews(ctx context.Context, reviews []domain.RecallMemoryReview) error
+	ListRecallMemoryReviews(ctx context.Context, recallID string) ([]domain.RecallMemoryReview, error)
+}
+
 type RecallFeedbackEventRepositoryImpl struct {
 	db  *gorm.DB
 	rls postgres.RLSHelper
 }
 
 var _ RecallFeedbackEventRepository = (*RecallFeedbackEventRepositoryImpl)(nil)
+var _ RecallMemoryReviewRepository = (*RecallFeedbackEventRepositoryImpl)(nil)
 
 func NewRecallFeedbackEventRepository(db *gorm.DB, rls postgres.RLSHelper) *RecallFeedbackEventRepositoryImpl {
 	return &RecallFeedbackEventRepositoryImpl{db: db, rls: rls}
@@ -252,6 +259,113 @@ func (r *RecallFeedbackEventRepositoryImpl) PruneBefore(ctx context.Context, cut
 		return fmt.Errorf("failed to prune recall feedback events: %w", err)
 	}
 	return nil
+}
+
+func (r *RecallFeedbackEventRepositoryImpl) EnqueueRecallMemoryReviews(ctx context.Context, reviews []domain.RecallMemoryReview) error {
+	if len(reviews) == 0 {
+		return nil
+	}
+	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		for _, review := range reviews {
+			reasons, err := json.Marshal(nonNilStrings(review.Reasons))
+			if err != nil {
+				return fmt.Errorf("encode recall memory review reasons: %w", err)
+			}
+			if err := tx.Exec(`
+				INSERT INTO recall_memory_review_queue (
+					review_id, profile_id, recall_id, knowledge_type, knowledge_id,
+					reasons, feedback_comment, status, created_at, updated_at, resolved_at
+				) VALUES (?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?)
+				ON CONFLICT (profile_id, recall_id, knowledge_type, knowledge_id) DO UPDATE SET
+					reasons = EXCLUDED.reasons,
+					feedback_comment = EXCLUDED.feedback_comment,
+					updated_at = EXCLUDED.updated_at
+			`,
+				review.ReviewID,
+				review.ProfileID,
+				review.RecallID,
+				review.KnowledgeType,
+				review.KnowledgeID,
+				string(reasons),
+				review.FeedbackComment,
+				firstNonEmptyReviewStatus(review.Status),
+				utcOrNow(review.CreatedAt),
+				utcOrNow(review.UpdatedAt),
+				timePtrValue(review.ResolvedAt),
+			).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to enqueue recall memory reviews: %w", err)
+	}
+	return nil
+}
+
+func (r *RecallFeedbackEventRepositoryImpl) ListRecallMemoryReviews(ctx context.Context, recallID string) ([]domain.RecallMemoryReview, error) {
+	recallID = strings.TrimSpace(recallID)
+	if recallID == "" {
+		return []domain.RecallMemoryReview{}, nil
+	}
+	reviews := []domain.RecallMemoryReview{}
+	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		rows, err := tx.Raw(`
+			SELECT review_id::text, profile_id::text, recall_id, knowledge_type, knowledge_id,
+			       reasons, feedback_comment, status, created_at, updated_at, resolved_at
+			FROM recall_memory_review_queue
+			WHERE recall_id = ?
+			ORDER BY created_at ASC, review_id ASC
+		`, recallID).Rows()
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var review domain.RecallMemoryReview
+			var profileID string
+			var reasonsRaw []byte
+			var resolvedAt sql.NullTime
+			if err := rows.Scan(
+				&review.ReviewID,
+				&profileID,
+				&review.RecallID,
+				&review.KnowledgeType,
+				&review.KnowledgeID,
+				&reasonsRaw,
+				&review.FeedbackComment,
+				&review.Status,
+				&review.CreatedAt,
+				&review.UpdatedAt,
+				&resolvedAt,
+			); err != nil {
+				return err
+			}
+			parsedProfileID, err := uuid.Parse(profileID)
+			if err != nil {
+				return fmt.Errorf("invalid recall memory review profile_id: %w", err)
+			}
+			review.ProfileID = parsedProfileID
+			if err := json.Unmarshal(reasonsRaw, &review.Reasons); err != nil {
+				return fmt.Errorf("invalid recall memory review reasons JSON: %w", err)
+			}
+			review.ResolvedAt = nullableTime(resolvedAt)
+			reviews = append(reviews, review)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list recall memory reviews: %w", err)
+	}
+	return reviews, nil
+}
+
+func firstNonEmptyReviewStatus(status string) string {
+	if status = strings.TrimSpace(status); status != "" {
+		return status
+	}
+	return "pending"
 }
 
 func (r *RecallFeedbackEventRepositoryImpl) withSystemTx(ctx context.Context, fn func(tx *gorm.DB) error) error {

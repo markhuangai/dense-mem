@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/service/assertionservice"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
@@ -20,11 +21,16 @@ import (
 )
 
 const (
-	AnchorFact  = "fact"
-	AnchorClaim = "claim"
+	AnchorFact      = "fact"
+	AnchorClaim     = "claim"
+	AnchorAssertion = "assertion"
 
 	defaultMaxRelated = 10
 	maxTraceRelated   = 20
+	defaultTraceDepth = 2
+	maxTraceDepth     = 4
+	defaultTraceEdges = 24
+	maxTraceEdges     = 100
 
 	defaultContextLimit = 5
 	maxContextLimit     = 10
@@ -54,6 +60,7 @@ type Dependencies struct {
 	Recall      recallservice.RecallService
 	Memory      memoryservice.Service
 	Dreams      dreamservice.Service
+	Assertions  *assertionservice.Service
 }
 
 // New constructs a context Service.
@@ -67,27 +74,38 @@ type service struct {
 
 // TraceRequest selects one memory anchor to expand.
 type TraceRequest struct {
-	Type             string `json:"type"`
-	ID               string `json:"id"`
-	MaxRelated       int    `json:"max_related,omitempty"`
-	IncludeFragments *bool  `json:"include_fragments,omitempty"`
+	Type              string   `json:"type"`
+	ID                string   `json:"id"`
+	MaxRelated        int      `json:"max_related,omitempty"`
+	IncludeFragments  *bool    `json:"include_fragments,omitempty"`
+	MaxDepth          int      `json:"max_depth,omitempty"`
+	MaxEdges          int      `json:"max_edges,omitempty"`
+	RelationshipTypes []string `json:"relationship_types,omitempty"`
+	Topic             string   `json:"topic,omitempty"`
+	MinRelevance      float64  `json:"min_relevance,omitempty"`
 }
 
 // TraceResult is a bounded graph lineage response for one anchor.
 type TraceResult struct {
-	Anchor              TraceAnchor        `json:"anchor"`
-	PromotedFromClaim   *domain.Claim      `json:"promoted_from_claim,omitempty"`
-	SupportingFragments []*domain.Fragment `json:"supporting_fragments,omitempty"`
-	Related             []RelatedMemory    `json:"related,omitempty"`
-	Edges               []TraceEdge        `json:"edges,omitempty"`
-	MissingFragmentIDs  []string           `json:"missing_fragment_ids,omitempty"`
+	Anchor              TraceAnchor                  `json:"anchor"`
+	PromotedFromClaim   *domain.Claim                `json:"promoted_from_claim,omitempty"`
+	SupportingFragments []*domain.Fragment           `json:"supporting_fragments,omitempty"`
+	Related             []RelatedMemory              `json:"related,omitempty"`
+	Edges               []TraceEdge                  `json:"edges,omitempty"`
+	MissingFragmentIDs  []string                     `json:"missing_fragment_ids,omitempty"`
+	SemanticNodes       []recallservice.SemanticNode `json:"semantic_nodes,omitempty"`
+	SemanticEdges       []recallservice.SemanticEdge `json:"semantic_edges,omitempty"`
+	Frontier            []recallservice.FrontierHint `json:"frontier,omitempty"`
+	VisitedEntityIDs    []string                     `json:"visited_entity_ids,omitempty"`
+	StoppedReason       string                       `json:"stopped_reason,omitempty"`
 }
 
 // TraceAnchor contains exactly one fact or claim.
 type TraceAnchor struct {
-	Type  string        `json:"type"`
-	Fact  *domain.Fact  `json:"fact,omitempty"`
-	Claim *domain.Claim `json:"claim,omitempty"`
+	Type      string            `json:"type"`
+	Fact      *domain.Fact      `json:"fact,omitempty"`
+	Claim     *domain.Claim     `json:"claim,omitempty"`
+	Assertion *domain.Assertion `json:"assertion,omitempty"`
 }
 
 // RelatedMemory is one bounded neighbor reached from the anchor.
@@ -129,13 +147,16 @@ type AssembleResult struct {
 
 // ContextItem is one recall hit prepared for context.
 type ContextItem struct {
-	Type              string             `json:"type"`
-	ID                string             `json:"id"`
-	Score             float64            `json:"score,omitempty"`
-	Fact              *domain.Fact       `json:"fact,omitempty"`
-	Claim             *domain.Claim      `json:"claim,omitempty"`
-	Fragment          *domain.Fragment   `json:"fragment,omitempty"`
-	EvidenceFragments []*domain.Fragment `json:"evidence_fragments,omitempty"`
+	Type              string                       `json:"type"`
+	ID                string                       `json:"id"`
+	Score             float64                      `json:"score,omitempty"`
+	Fact              *domain.Fact                 `json:"fact,omitempty"`
+	Claim             *domain.Claim                `json:"claim,omitempty"`
+	Fragment          *domain.Fragment             `json:"fragment,omitempty"`
+	Assertion         *domain.Assertion            `json:"assertion,omitempty"`
+	Paths             []recallservice.SemanticPath `json:"paths,omitempty"`
+	Frontier          []recallservice.FrontierHint `json:"frontier,omitempty"`
+	EvidenceFragments []*domain.Fragment           `json:"evidence_fragments,omitempty"`
 }
 
 // Trace expands one fact or claim anchor through allowed evidence and lineage
@@ -145,8 +166,8 @@ func (s *service) Trace(ctx context.Context, profileID string, req TraceRequest)
 		return nil, errors.New("context trace: profile id is required")
 	}
 	anchorType := strings.TrimSpace(req.Type)
-	if anchorType != AnchorFact && anchorType != AnchorClaim {
-		return nil, errors.New("context trace: type must be fact or claim")
+	if anchorType != AnchorFact && anchorType != AnchorClaim && anchorType != AnchorAssertion {
+		return nil, errors.New("context trace: type must be fact, claim, or assertion")
 	}
 	id := strings.TrimSpace(req.ID)
 	if id == "" {
@@ -163,6 +184,8 @@ func (s *service) Trace(ctx context.Context, profileID string, req TraceRequest)
 		return s.traceFact(ctx, profileID, id, maxRelated, includeFragments)
 	case AnchorClaim:
 		return s.traceClaim(ctx, profileID, id, maxRelated, includeFragments)
+	case AnchorAssertion:
+		return s.traceAssertion(ctx, profileID, id, req, includeFragments)
 	default:
 		return nil, errors.New("context trace: unsupported type")
 	}
@@ -329,6 +352,20 @@ func (s *service) Assemble(ctx context.Context, profileID string, req AssembleRe
 
 func (s *service) contextItem(ctx context.Context, profileID string, hit recallservice.RecallHit, includeEvidence bool) (ContextItem, error) {
 	switch {
+	case hit.Assertion != nil:
+		item := ContextItem{Type: AnchorAssertion, ID: hit.Assertion.AssertionID, Score: hit.Score, Assertion: hit.Assertion, Paths: hit.Paths, Frontier: hit.Frontier}
+		if includeEvidence {
+			ids := make([]string, 0, len(hit.Assertion.Evidence))
+			for _, evidence := range hit.Assertion.Evidence {
+				ids = append(ids, evidence.FragmentID)
+			}
+			fragments, _, err := s.loadFragments(ctx, profileID, ids)
+			if err != nil {
+				return ContextItem{}, err
+			}
+			item.EvidenceFragments = fragments
+		}
+		return item, nil
 	case hit.Fact != nil:
 		item := ContextItem{Type: AnchorFact, ID: hit.Fact.FactID, Score: hit.Score, Fact: hit.Fact}
 		if includeEvidence {
@@ -677,6 +714,7 @@ func renderContextBlock(query string, items []ContextItem, clarifications []memo
 	add("Query: " + singleLine(query, 300))
 	renderGroup(&b, add, "Facts", items, AnchorFact)
 	renderGroup(&b, add, "Claims", items, AnchorClaim)
+	renderGroup(&b, add, "Semantic assertions", items, AnchorAssertion)
 	renderGroup(&b, add, "Fragments", items, "fragment")
 	if len(clarifications) > 0 {
 		add("Clarifications:")
@@ -700,6 +738,25 @@ func renderGroup(_ *strings.Builder, add func(string) bool, heading string, item
 			wroteHeading = true
 		}
 		switch itemType {
+		case AnchorAssertion:
+			a := item.Assertion
+			if a == nil || len(item.Paths) == 0 || len(item.Paths[0].Edges) == 0 {
+				continue
+			}
+			edge := item.Paths[0].Edges[0]
+			nodeNames := map[string]string{}
+			for _, node := range item.Paths[0].Nodes {
+				nodeNames[node.Key] = node.Name
+			}
+			if !add(fmt.Sprintf("- [assertion:%s] %s -[%s]-> %s (tier %s, status %s, score %.4f)", a.AssertionID, singleLine(nodeNames[edge.Source], 160), edge.Relationship, singleLine(nodeNames[edge.Target], 220), a.Tier, a.Status, item.Score)) {
+				return
+			}
+			renderEvidence(add, item.EvidenceFragments)
+			for _, frontier := range item.Frontier {
+				if !add(fmt.Sprintf("  frontier %s -[%s/%s]-> %s [assertion:%s]", frontier.FromEntityID, frontier.Direction, frontier.Relationship, singleLine(frontier.Neighbor.Name, 160), frontier.AssertionID)) {
+					return
+				}
+			}
 		case AnchorFact:
 			f := item.Fact
 			if f == nil {

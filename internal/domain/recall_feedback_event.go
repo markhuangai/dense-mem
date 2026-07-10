@@ -10,10 +10,11 @@ const (
 	RecallFeedbackSnapshotCaptured     = "captured"
 	RecallFeedbackSnapshotFeedbackOnly = "feedback_only"
 
-	RecallFeedbackResultTypeFragment = "fragment"
-	RecallFeedbackResultTypeClaim    = "claim"
-	RecallFeedbackResultTypeFact     = "fact"
-	RecallFeedbackResultTypeDream    = "dream"
+	RecallFeedbackResultTypeFragment  = "fragment"
+	RecallFeedbackResultTypeClaim     = "claim"
+	RecallFeedbackResultTypeFact      = "fact"
+	RecallFeedbackResultTypeDream     = "dream"
+	RecallFeedbackResultTypeAssertion = "assertion"
 )
 
 // RecallFeedbackEvent is the durable investigation record that connects a
@@ -42,6 +43,7 @@ type RecallFeedbackEvent struct {
 	IrrelevantRefs  []RecallFeedbackJudgedResultRef `json:"irrelevant_result_refs,omitempty"`
 	DreamFeedback   []RecallFeedbackDreamFeedback   `json:"dream_feedback,omitempty"`
 	ResolvedResults []RecallFeedbackResolvedResult  `json:"resolved_results,omitempty"`
+	ReviewQueue     []RecallMemoryReview            `json:"review_queue,omitempty"`
 }
 
 // RecallFeedbackResultRef is a content-free reference to one result returned by
@@ -126,4 +128,20 @@ type RecallFeedbackResolvedResult struct {
 	CurrentStatus    string                  `json:"current_status,omitempty"`
 	Current          map[string]any          `json:"current,omitempty"`
 	Ref              RecallFeedbackResultRef `json:"ref"`
+}
+
+// RecallMemoryReview is a durable, non-mutating review task created from bad
+// recall feedback. Truth changes still require the normal verified placement flow.
+type RecallMemoryReview struct {
+	ReviewID        string     `json:"review_id"`
+	ProfileID       uuid.UUID  `json:"team_id"`
+	RecallID        string     `json:"recall_id"`
+	KnowledgeType   string     `json:"knowledge_type"`
+	KnowledgeID     string     `json:"knowledge_id"`
+	Reasons         []string   `json:"reasons"`
+	FeedbackComment string     `json:"feedback_comment,omitempty"`
+	Status          string     `json:"status"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	ResolvedAt      *time.Time `json:"resolved_at,omitempty"`
 }

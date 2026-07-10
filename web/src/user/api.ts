@@ -211,7 +211,7 @@ export type RecallHit = {
   final_score: number;
 };
 
-export type GraphNodeType = "fact" | "claim" | "fragment" | "dream";
+export type GraphNodeType = "entity" | "value" | "fact" | "claim" | "fragment" | "dream" | "community";
 
 export type GraphNode = {
   key: string;
@@ -223,7 +223,12 @@ export type GraphNode = {
   community_id?: string;
   source?: string;
   score?: number;
-  recorded_at?: string;
+	recorded_at?: string;
+	aliases?: string[];
+	entity_type?: string;
+	value_type?: string;
+	resolution_status?: string;
+	resolution_conf?: number;
 };
 
 export type GraphEdge = {
@@ -231,7 +236,22 @@ export type GraphEdge = {
   source: string;
   target: string;
   relationship: string;
-  directed: boolean;
+	directed: boolean;
+	assertion_id?: string;
+	predicate?: string;
+	tier?: string;
+	status?: string;
+	policy_family?: string;
+	polarity?: string;
+	modality?: string;
+	knowledge?: string;
+	support_count?: number;
+	source_group_count?: number;
+	evidence_ids?: string[];
+	valid_from?: string;
+	valid_to?: string;
+	recorded_at?: string;
+	recorded_to?: string;
 };
 
 export type GraphSnapshot = {

@@ -38,6 +38,10 @@ type TelemetryReader interface {
 	Snapshot(ctx context.Context, filter TelemetryFilter) (*TelemetrySnapshot, error)
 }
 
+type AssertionTransitionCountReader interface {
+	CountAssertionTransitions(ctx context.Context, teamID, actorProfileID string, from, to time.Time) (map[string]int64, error)
+}
+
 type TelemetryFilter struct {
 	Window    string
 	Scope     string
@@ -93,12 +97,19 @@ type TelemetryPoint struct {
 }
 
 type PrometheusTelemetryService struct {
-	baseURL       string
-	prometheusJob string
-	client        *http.Client
-	timeout       time.Duration
-	now           func() time.Time
-	logger        observability.LogProvider
+	baseURL                string
+	prometheusJob          string
+	client                 *http.Client
+	timeout                time.Duration
+	now                    func() time.Time
+	logger                 observability.LogProvider
+	assertionTransitionLog AssertionTransitionCountReader
+}
+
+func (s *PrometheusTelemetryService) SetAssertionTransitionCountReader(reader AssertionTransitionCountReader) {
+	if s != nil {
+		s.assertionTransitionLog = reader
+	}
 }
 
 func NewPrometheusTelemetryService(baseURL string, timeout time.Duration) *PrometheusTelemetryService {
@@ -181,6 +192,21 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 		}
 		windowedCards = append(windowedCards, TelemetryCard{ID: spec.ID, Label: spec.Label, Unit: spec.Unit, Value: scalar.Value, Available: scalar.Available})
 	}
+	if s.assertionTransitionLog != nil {
+		counts, countErr := s.assertionTransitionLog.CountAssertionTransitions(
+			queryCtx,
+			telemetryScopeUUID(scope.TeamID),
+			telemetryScopeUUID(scope.ProfileID),
+			from,
+			to,
+		)
+		if countErr != nil {
+			s.logAssertionTransitionCountFailure(windowKey, scope, countErr)
+			snapshot.Message = "telemetry lifecycle ledger query failed"
+			return snapshot, nil
+		}
+		overlayAssertionLifecycleCards(windowedCards, counts)
+	}
 
 	currentCardSpecs := telemetryCurrentCardSpecs(scope, baseLabels)
 	currentCards := make([]TelemetryCard, 0, len(currentCardSpecs))
@@ -252,6 +278,25 @@ func (s *PrometheusTelemetryService) logQueryFailure(kind string, spec telemetry
 	s.logger.Error("telemetry backend query failed", err, attrs...)
 }
 
+func (s *PrometheusTelemetryService) logAssertionTransitionCountFailure(window string, scope TelemetryScope, err error) {
+	if s == nil || s.logger == nil {
+		return
+	}
+	attrs := []observability.LogAttr{
+		observability.String("query_kind", "ledger"),
+		observability.String("query_id", "assertion_lifecycle"),
+		observability.String("window", window),
+		observability.String("scope", scope.Type),
+	}
+	if scope.TeamID != nil {
+		attrs = append(attrs, observability.String("team_id", scope.TeamID.String()))
+	}
+	if scope.ProfileID != nil {
+		attrs = append(attrs, observability.String("profile_id", scope.ProfileID.String()))
+	}
+	s.logger.Error("telemetry lifecycle ledger query failed", err, attrs...)
+}
+
 type telemetryQuerySpec struct {
 	ID    string
 	Label string
@@ -295,8 +340,16 @@ func telemetryWindowedCardSpecs(scope TelemetryScope, baseLabels map[string]stri
 		{ID: "dream_promote_candidates", Label: "Dream promote candidates", Unit: "events", Query: telemetrySparseCounterIncrease("densemem_dream_feedback_total", scope, baseLabels, map[string]string{"decision": "promote_candidate", "outcome": "ok"}, window)},
 		{ID: "fragment_creates", Label: "Fragment creates", Unit: "events", Query: telemetrySparseCounterIncrease("densemem_fragment_create_total", scope, baseLabels, nil, window)},
 		{ID: "claim_creates", Label: "Claim creates", Unit: "events", Query: telemetrySparseCounterIncrease("densemem_claim_create_total", scope, baseLabels, nil, window)},
-		{ID: "promotions", Label: "Promotions", Unit: "promotions", Query: telemetrySparseCounterIncrease("densemem_promotion_outcome_total", scope, baseLabels, map[string]string{"outcome": "promoted"}, window)},
-		{ID: "promotion_rate", Label: "Promotion rate", Unit: "percent", Query: telemetryPromotionRate(scope, baseLabels, window)},
+		{ID: "assertion_proposals", Label: "Assertion proposals", Unit: "assertions", Query: telemetryAssertionEventIncrease(scope, baseLabels, "proposed", window)},
+		{ID: "promotions", Label: "Fact promotions", Unit: "assertions", Query: telemetryAssertionEventIncrease(scope, baseLabels, "promoted", window)},
+		{ID: "validation_rate", Label: "Validation rate (accepted / proposed)", Unit: "percent", Query: telemetryAssertionRate(scope, baseLabels, []string{"validated", "promoted"}, []string{"proposed"}, window)},
+		{ID: "promotion_rate", Label: "Promotion rate (facts / accepted)", Unit: "percent", Query: telemetryPromotionRate(scope, baseLabels, window)},
+		{ID: "fact_yield_rate", Label: "Fact yield (facts / proposed)", Unit: "percent", Query: telemetryAssertionRate(scope, baseLabels, []string{"promoted"}, []string{"proposed"}, window)},
+		{ID: "rejection_rate", Label: "Rejection rate (rejected / proposed)", Unit: "percent", Query: telemetryAssertionRate(scope, baseLabels, []string{"rejected"}, []string{"proposed"}, window)},
+		{ID: "review_rate", Label: "Review rate (review / proposed)", Unit: "percent", Query: telemetryAssertionRate(scope, baseLabels, []string{"review_requested"}, []string{"proposed"}, window)},
+		{ID: "quarantine_rate", Label: "Quarantine rate (quarantined / proposed)", Unit: "percent", Query: telemetryAssertionRate(scope, baseLabels, []string{"quarantined"}, []string{"proposed"}, window)},
+		{ID: "correction_rate", Label: "Correction rate (corrected / resolved)", Unit: "percent", Query: telemetryAssertionRate(scope, baseLabels, []string{"corrected", "reversed"}, []string{"review_resolved"}, window)},
+		{ID: "reversal_rate", Label: "Window reversal / promotion event ratio", Unit: "percent", Query: telemetryAssertionRate(scope, baseLabels, []string{"reversed"}, []string{"promoted"}, window)},
 		{ID: "retractions", Label: "Retractions", Unit: "events", Query: telemetrySparseCounterIncrease("densemem_retractions_total", scope, baseLabels, nil, window)},
 		{ID: "facts_requeued", Label: "Facts requeued", Unit: "events", Query: telemetrySparseCounterIncrease("densemem_fact_needs_revalidation_total", scope, baseLabels, nil, window)},
 		{ID: "community_runs", Label: "Community runs", Unit: "runs", Query: telemetrySparseCounterIncrease("densemem_community_detect_total", scope, baseLabels, nil, window)},
@@ -339,7 +392,11 @@ func telemetryActivitySeriesSpecs(selector string, rateWindow string) []telemetr
 		{ID: "verifier_tokens", Label: "Verifier tokens", Unit: "tokens/s", Query: fmt.Sprintf("sum(rate(densemem_verifier_tokens_total%s[%s]))", telemetrySelectorWithRaw(selector, `kind="total"`), rateWindow)},
 		{ID: "verify_verdicts", Label: "Verify verdicts", Unit: "verdicts/s", Query: fmt.Sprintf("sum(rate(densemem_verify_verdict_total%s[%s]))", selector, rateWindow)},
 		{ID: "recalls", Label: "Recall requests", Unit: "requests/s", Query: fmt.Sprintf("sum(rate(densemem_recall_requests_total%s[%s]))", selector, rateWindow)},
-		{ID: "promotions", Label: "Promotions", Unit: "promotions/s", Query: fmt.Sprintf("sum(rate(densemem_promotion_outcome_total%s[%s]))", telemetrySelectorWithRaw(selector, `outcome="promoted"`), rateWindow)},
+		{ID: "assertion_proposals", Label: "Assertion proposals", Unit: "assertions/s", Query: fmt.Sprintf("sum(rate(densemem_assertion_transition_total%s[%s]))", telemetrySelectorWithRaw(selector, `event_type="proposed"`), rateWindow)},
+		{ID: "promotions", Label: "Fact promotions", Unit: "assertions/s", Query: fmt.Sprintf("sum(rate(densemem_assertion_transition_total%s[%s]))", telemetrySelectorWithRaw(selector, `event_type="promoted"`), rateWindow)},
+		{ID: "assertion_rejections", Label: "Assertion rejections", Unit: "assertions/s", Query: fmt.Sprintf("sum(rate(densemem_assertion_transition_total%s[%s]))", telemetrySelectorWithRaw(selector, `event_type="rejected"`), rateWindow)},
+		{ID: "assertion_reviews", Label: "Assertion reviews", Unit: "assertions/s", Query: fmt.Sprintf("sum(rate(densemem_assertion_transition_total%s[%s]))", telemetrySelectorWithRaw(selector, `event_type="review_requested"`), rateWindow)},
+		{ID: "assertion_quarantines", Label: "Assertion quarantines", Unit: "assertions/s", Query: fmt.Sprintf("sum(rate(densemem_assertion_transition_total%s[%s]))", telemetrySelectorWithRaw(selector, `event_type="quarantined"`), rateWindow)},
 		{ID: "recall_results", Label: "Recall results", Unit: "results", Query: telemetryRangeHistogramAverage("densemem_recall_results", selector, "", rateWindow, 1)},
 		{ID: "recall_p95_latency", Label: "Recall p95 latency", Unit: "ms", Query: telemetryRangeHistogramQuantile("densemem_recall_duration_seconds", selector, "", rateWindow, 0.95, 1000)},
 		{ID: "llm_recall_used_rate", Label: "LLM recall used", Unit: "percent", Query: telemetryRangeRecallFeedbackRate(selector, `used="true"`, rateWindow)},
@@ -411,8 +468,8 @@ func telemetrySparseCounterIncreaseForSelector(metric string, selector string, w
 	current := fmt.Sprintf("%s%s", metric, selector)
 	sampleCount := fmt.Sprintf("count_over_time(%s%s[%s])", metric, selector, window)
 	targetScrapeCount := fmt.Sprintf("count_over_time(up[%s])", window)
-	fallback := fmt.Sprintf("((%s unless %s) or (%s * (%s >= bool 0) * (%s < bool on(job, instance) group_left() %s)) or (0 * %s))", first, offset, first, current, sampleCount, targetScrapeCount, ranged)
-	return fmt.Sprintf("sum(%s + %s)", ranged, fallback)
+	fallback := fmt.Sprintf("((%s unless %s) or (%s * (%s >= bool 0) * (%s < bool on(job, instance) group_left() %s)) or (0 * %s))", first, offset, first, current, sampleCount, targetScrapeCount, first)
+	return fmt.Sprintf("sum((%s or (0 * %s)) + %s)", ranged, first, fallback)
 }
 
 func telemetrySparseHistogramAverage(metric string, scope TelemetryScope, baseLabels map[string]string, extra map[string]string, window string, multiplier float64) string {
@@ -456,13 +513,69 @@ func telemetryRangeGauge(metric string, selector string, raw string) string {
 }
 
 func telemetryPromotionRate(scope TelemetryScope, baseLabels map[string]string, window string) string {
-	promoted := telemetryOrZero(telemetrySparseCounterIncrease("densemem_promotion_outcome_total", scope, baseLabels, map[string]string{"outcome": "promoted"}, window))
-	all := telemetrySparseCounterIncrease("densemem_promotion_outcome_total", scope, baseLabels, nil, window)
-	return fmt.Sprintf("100 * (%s) / (%s)", promoted, all)
+	return telemetryAssertionRate(scope, baseLabels, []string{"promoted"}, []string{"validated", "promoted"}, window)
+}
+
+func telemetryAssertionEventIncrease(scope TelemetryScope, baseLabels map[string]string, eventType, window string) string {
+	return telemetrySparseCounterIncrease("densemem_assertion_transition_total", scope, baseLabels, map[string]string{"event_type": eventType}, window)
+}
+
+func telemetryAssertionRate(scope TelemetryScope, baseLabels map[string]string, numerator, denominator []string, window string) string {
+	sum := func(eventTypes []string) string {
+		queries := make([]string, 0, len(eventTypes))
+		for _, eventType := range eventTypes {
+			queries = append(queries, telemetryOrZero(telemetryAssertionEventIncrease(scope, baseLabels, eventType, window)))
+		}
+		if len(queries) == 0 {
+			return "vector(0)"
+		}
+		return "(" + strings.Join(queries, " + ") + ")"
+	}
+	return fmt.Sprintf("100 * (%s) / clamp_min(%s, 1)", sum(numerator), sum(denominator))
 }
 
 func telemetryOrZero(query string) string {
 	return fmt.Sprintf("((%s) or vector(0))", query)
+}
+
+func overlayAssertionLifecycleCards(cards []TelemetryCard, counts map[string]int64) {
+	proposed := counts["proposed"]
+	promoted := counts["promoted"]
+	accepted := counts["validated"] + promoted
+	values := map[string]float64{
+		"assertion_proposals": float64(proposed),
+		"promotions":          float64(promoted),
+		"validation_rate":     assertionLifecyclePercent(accepted, proposed),
+		"promotion_rate":      assertionLifecyclePercent(promoted, accepted),
+		"fact_yield_rate":     assertionLifecyclePercent(promoted, proposed),
+		"rejection_rate":      assertionLifecyclePercent(counts["rejected"], proposed),
+		"review_rate":         assertionLifecyclePercent(counts["review_requested"], proposed),
+		"quarantine_rate":     assertionLifecyclePercent(counts["quarantined"], proposed),
+		"correction_rate":     assertionLifecyclePercent(counts["corrected"]+counts["reversed"], counts["review_resolved"]),
+		"reversal_rate":       assertionLifecyclePercent(counts["reversed"], promoted),
+	}
+	for i := range cards {
+		value, ok := values[cards[i].ID]
+		if !ok {
+			continue
+		}
+		cards[i].Value = value
+		cards[i].Available = true
+	}
+}
+
+func assertionLifecyclePercent(numerator, denominator int64) float64 {
+	if denominator <= 0 {
+		return 0
+	}
+	return 100 * float64(numerator) / float64(denominator)
+}
+
+func telemetryScopeUUID(id *uuid.UUID) string {
+	if id == nil || *id == uuid.Nil {
+		return ""
+	}
+	return id.String()
 }
 
 func mergeTelemetryLabels(base map[string]string, extra map[string]string) map[string]string {

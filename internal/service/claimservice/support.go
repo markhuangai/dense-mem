@@ -43,13 +43,13 @@ type supportResult struct {
 // loadSupportingFragmentsQuery fetches active SourceFragment nodes by ID,
 // scoped to $profileId. The coalesce guard treats a missing status as 'active'
 // so that legacy nodes (written before the status field existed) are still
-// returned. Nodes whose status is 'retracted' are excluded.
+// returned. Quarantined and retracted nodes are excluded.
 //
 // Profile isolation: $profileId is injected automatically by ScopedRead;
 // callers MUST NOT include profileId in the params map.
 const loadSupportingFragmentsQuery = `MATCH (sf:SourceFragment {team_id: $profileId})
 WHERE sf.fragment_id IN $fragmentIds
-  AND coalesce(sf.status, 'active') <> 'retracted'
+  AND coalesce(sf.status, 'active') = 'active'
 RETURN sf.fragment_id  AS fragment_id,
        sf.content       AS content,
        sf.source_quality AS source_quality,
@@ -60,7 +60,7 @@ RETURN sf.fragment_id  AS fragment_id,
 // loadSupportingFragments fetches one or more SourceFragment nodes by ID,
 // scoped to profileID. It returns ErrSupportingFragmentMissing when any
 // requested fragment is absent from the result (either because it does not
-// exist, belongs to a different profile, or has been retracted).
+// exist, belongs to a different profile, or is not active).
 //
 // Classification maps from all fragments are merged via the default
 // classification lattice so callers receive a single consolidated view.

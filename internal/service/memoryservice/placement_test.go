@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -37,6 +38,14 @@ func (s *stubPlacementStore) SaveRun(_ context.Context, run domain.MemoryPlaceme
 	return nil
 }
 
+func (s *stubPlacementStore) SaveRunWithTransitions(_ context.Context, run domain.MemoryPlacementRun, _ []domain.AssertionTransitionEvent) error {
+	return s.SaveRun(context.Background(), run)
+}
+
+func (s *stubPlacementStore) AppendTransitionEvents(context.Context, []domain.AssertionTransitionEvent) error {
+	return nil
+}
+
 func (s *stubPlacementStore) CreateDispute(context.Context, domain.MemoryDisputeSession) error {
 	return nil
 }
@@ -64,6 +73,7 @@ type statefulPlacementStore struct {
 	dispute      domain.MemoryDisputeSession
 	savedRun     domain.MemoryPlacementRun
 	savedDispute domain.MemoryDisputeSession
+	transitions  []domain.AssertionTransitionEvent
 }
 
 func (s *statefulPlacementStore) CreateRun(_ context.Context, run domain.MemoryPlacementRun) error {
@@ -99,6 +109,23 @@ func (s *statefulPlacementStore) SaveRun(_ context.Context, run domain.MemoryPla
 	defer s.mu.Unlock()
 	s.run = clonePlacementRun(run)
 	s.savedRun = clonePlacementRun(run)
+	return nil
+}
+
+func (s *statefulPlacementStore) SaveRunWithTransitions(_ context.Context, run domain.MemoryPlacementRun, events []domain.AssertionTransitionEvent) error {
+	if err := s.SaveRun(context.Background(), run); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.transitions = append(s.transitions, events...)
+	return nil
+}
+
+func (s *statefulPlacementStore) AppendTransitionEvents(_ context.Context, events []domain.AssertionTransitionEvent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.transitions = append(s.transitions, events...)
 	return nil
 }
 
@@ -181,6 +208,12 @@ func (s *statefulPlacementStore) disputeCreated() bool {
 	return s.dispute.DisputeID != ""
 }
 
+func (s *statefulPlacementStore) transitionCopy() []domain.AssertionTransitionEvent {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]domain.AssertionTransitionEvent(nil), s.transitions...)
+}
+
 func clonePlacementRun(run domain.MemoryPlacementRun) domain.MemoryPlacementRun {
 	run.Evidence = append([]domain.MemoryEvidence(nil), run.Evidence...)
 	run.Items = append([]domain.MemoryPlacementItem(nil), run.Items...)
@@ -204,6 +237,7 @@ func TestRememberReturnsFragmentCreateError(t *testing.T) {
 
 	_, err := svc.Remember(context.Background(), "profile-1", RememberRequest{
 		Evidence: []EvidenceInput{{Content: "x"}},
+		Proposal: testMemoryProposal("x"),
 	})
 
 	require.ErrorContains(t, err, "embed failed")
@@ -276,6 +310,7 @@ func TestRememberQueuesPlacementAndMapsEvidenceFragments(t *testing.T) {
 			Labels:         []string{"work"},
 			Metadata:       map[string]any{"channel": "cli"},
 		}},
+		Proposal: testMemoryProposal("memory"),
 	})
 
 	require.NoError(t, err)
@@ -484,16 +519,35 @@ func TestRememberSignalsPlacementWorker(t *testing.T) {
 
 	res, err := svc.Remember(ctx, "profile-1", RememberRequest{
 		Evidence: []EvidenceInput{{Content: "Reject this memory as incorrect."}},
+		Proposal: testMemoryProposal("Reject this memory as incorrect."),
 	})
 
 	require.NoError(t, err)
 	require.NotEmpty(t, res.IngestID)
 	require.Eventually(t, func() bool {
 		savedRun := store.savedRunCopy()
-		return savedRun.Status == domain.MemoryPlacementCompleted &&
-			len(savedRun.Items) == 1 &&
-			savedRun.Items[0].Category == domain.MemoryPlacementRejectedFalse
+		return savedRun.Status == domain.MemoryPlacementFailed &&
+			strings.Contains(savedRun.Error, "graph reviewer is required")
 	}, time.Second, 10*time.Millisecond)
+}
+
+func testMemoryProposal(content string) domain.MemoryProposal {
+	return domain.MemoryProposal{
+		Entities: []domain.MemoryEntityProposal{
+			{Ref: "subject", Name: "Subject", Type: "concept"},
+			{Ref: "object", Name: "Object", Type: "concept"},
+		},
+		Relationships: []domain.MemoryRelationshipProposal{{
+			ProposalID:   "relationship-1",
+			SubjectRef:   "subject",
+			Predicate:    "relates_to",
+			ObjectRef:    "object",
+			PolicyFamily: domain.AssertionPolicyMultiState,
+			Polarity:     domain.PolarityPlus,
+			Modality:     domain.ModalityAssertion,
+			Evidence:     []domain.MemoryEvidenceRef{{EvidenceIndex: 0, Start: 0, End: len(content)}},
+		}},
+	}
 }
 
 func TestStartPlacementWorkerSkipsMissingStore(t *testing.T) {

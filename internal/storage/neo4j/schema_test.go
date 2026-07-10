@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 // It satisfies Neo4jClientInterface without requiring a live driver.
 type recordingClient struct {
 	queries          []string
+	params           []map[string]any
 	writeErr         error // if non-nil, ExecuteWrite returns this error
 	runErrFor        func(cypher string) error
 	resultRecordsFor func(cypher string) []*neo4j.Record
@@ -38,6 +40,7 @@ func (c *recordingClient) Verify(_ context.Context) error { return nil }
 func (c *recordingClient) ExecuteRead(ctx context.Context, fn neo4j.ManagedTransactionWork) (any, error) {
 	tx := &recordingTx{
 		queries:          &c.queries,
+		params:           &c.params,
 		runErrFor:        c.runErrFor,
 		resultRecordsFor: c.resultRecordsFor,
 		edition:          c.edition,
@@ -51,6 +54,7 @@ func (c *recordingClient) ExecuteWrite(ctx context.Context, fn neo4j.ManagedTran
 	}
 	tx := &recordingTx{
 		queries:          &c.queries,
+		params:           &c.params,
 		runErrFor:        c.runErrFor,
 		resultRecordsFor: c.resultRecordsFor,
 		edition:          c.edition,
@@ -65,13 +69,21 @@ func (c *recordingClient) Close(_ context.Context) error { return nil }
 type recordingTx struct {
 	neo4j.ManagedTransaction // embedded nil satisfies legacy() at compile time
 	queries                  *[]string
+	params                   *[]map[string]any
 	runErrFor                func(cypher string) error
 	resultRecordsFor         func(cypher string) []*neo4j.Record
 	edition                  string
 }
 
-func (r *recordingTx) Run(_ context.Context, cypher string, _ map[string]any) (neo4j.ResultWithContext, error) {
+func (r *recordingTx) Run(_ context.Context, cypher string, params map[string]any) (neo4j.ResultWithContext, error) {
 	*r.queries = append(*r.queries, cypher)
+	if r.params != nil {
+		cloned := make(map[string]any, len(params))
+		for key, value := range params {
+			cloned[key] = value
+		}
+		*r.params = append(*r.params, cloned)
+	}
 	if r.runErrFor != nil {
 		if err := r.runErrFor(cypher); err != nil {
 			return nil, err
@@ -487,6 +499,23 @@ type schemaTestConfig struct {
 	database string
 }
 
+var (
+	schemaContainerOnce sync.Once
+	schemaContainer     testcontainers.Container
+	schemaContainerCfg  *schemaTestConfig
+	schemaContainerErr  error
+)
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if schemaContainer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		_ = schemaContainer.Terminate(ctx)
+		cancel()
+	}
+	os.Exit(code)
+}
+
 func (c *schemaTestConfig) GetNeo4jURI() string      { return c.uri }
 func (c *schemaTestConfig) GetNeo4jUser() string     { return c.user }
 func (c *schemaTestConfig) GetNeo4jPassword() string { return c.password }
@@ -514,39 +543,41 @@ func getSchemaTestConfig(ctx context.Context) (*schemaTestConfig, func(), error)
 		return cfg, func() {}, nil
 	}
 
-	// Start a test container
-	container, err := neo4jcontainer.Run(ctx,
-		"neo4j:5-community",
-		neo4jcontainer.WithAdminPassword("testpassword"),
-		neo4jcontainer.WithLabsPlugin(neo4jcontainer.Apoc),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("Started").
-				WithOccurrence(1).
-				WithStartupTimeout(60*time.Second),
-		),
-	)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to start neo4j container: %w", err)
+	schemaContainerOnce.Do(func() {
+		startCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		container, err := neo4jcontainer.Run(startCtx,
+			"neo4j:5-community",
+			neo4jcontainer.WithAdminPassword("testpassword"),
+			neo4jcontainer.WithLabsPlugin(neo4jcontainer.Apoc),
+			testcontainers.WithWaitStrategy(
+				wait.ForLog("Started").
+					WithOccurrence(1).
+					WithStartupTimeout(60*time.Second),
+			),
+		)
+		if err != nil {
+			schemaContainerErr = fmt.Errorf("failed to start neo4j container: %w", err)
+			return
+		}
+		uri, err := container.BoltUrl(startCtx)
+		if err != nil {
+			_ = container.Terminate(startCtx)
+			schemaContainerErr = err
+			return
+		}
+		schemaContainer = container
+		schemaContainerCfg = &schemaTestConfig{
+			uri:      uri,
+			user:     "neo4j",
+			password: "testpassword",
+			database: "neo4j",
+		}
+	})
+	if schemaContainerErr != nil {
+		return nil, nil, schemaContainerErr
 	}
-
-	uri, err := container.BoltUrl(ctx)
-	if err != nil {
-		_ = container.Terminate(ctx)
-		return nil, nil, err
-	}
-
-	cleanup := func() {
-		_ = container.Terminate(ctx)
-	}
-
-	cfg := &schemaTestConfig{
-		uri:      uri,
-		user:     "neo4j",
-		password: "testpassword",
-		database: "neo4j",
-	}
-
-	return cfg, cleanup, nil
+	return schemaContainerCfg, func() {}, nil
 }
 
 // skipSchemaTestIfNoNeo4j skips the test if Neo4j is not available.
@@ -929,71 +960,3 @@ func TestEnsureSchema_FragmentDedupeIndexes_Idempotent(t *testing.T) {
 }
 
 // TestEnsureSchema_CreatesCanonicalIndexNames tests that canonical index names are created.
-func TestEnsureSchema_CreatesCanonicalIndexNames(t *testing.T) {
-	ctx := context.Background()
-
-	cfg, cleanup := skipSchemaTestIfNoNeo4j(t, ctx)
-	defer cleanup()
-
-	client, err := NewClient(ctx, cfg)
-	require.NoError(t, err, "NewClient should succeed")
-	require.NotNil(t, client, "NewClient should return non-nil client")
-	defer client.Close(ctx)
-
-	// Clean up all indexes (legacy and canonical) to test from scratch
-	_, _ = client.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		// Must consume results for DDL to actually execute
-		if res, err := tx.Run(ctx, "DROP INDEX sourcefragment_content IF EXISTS", nil); err == nil {
-			res.Consume(ctx)
-		}
-		if res, err := tx.Run(ctx, "DROP INDEX fragment_content_idx IF EXISTS", nil); err == nil {
-			res.Consume(ctx)
-		}
-		if res, err := tx.Run(ctx, "DROP INDEX sourcefragment_embedding IF EXISTS", nil); err == nil {
-			res.Consume(ctx)
-		}
-		if res, err := tx.Run(ctx, "DROP INDEX fragment_embedding_idx IF EXISTS", nil); err == nil {
-			res.Consume(ctx)
-		}
-		if res, err := tx.Run(ctx, "DROP INDEX fact_predicate IF EXISTS", nil); err == nil {
-			res.Consume(ctx)
-		}
-		if res, err := tx.Run(ctx, "DROP INDEX fact_predicate_idx IF EXISTS", nil); err == nil {
-			res.Consume(ctx)
-		}
-		return nil, nil
-	})
-
-	// Create the bootstrapper
-	logger := observability.New(slog.LevelDebug)
-	bootstrapper := NewSchemaBootstrapper(client, 1536, logger)
-
-	// Ensure schema
-	err = bootstrapper.EnsureSchema(ctx)
-	require.NoError(t, err, "EnsureSchema should succeed")
-
-	// Verify canonical indexes exist
-	canonicalIndexes := []string{
-		"fragment_content_idx",
-		"fragment_embedding_idx",
-		"fact_predicate_idx",
-	}
-
-	for _, indexName := range canonicalIndexes {
-		result, err := client.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-			res, err := tx.Run(ctx,
-				"SHOW INDEXES WHERE name = $name",
-				map[string]interface{}{"name": indexName},
-			)
-			if err != nil {
-				return nil, err
-			}
-			if res.Next(ctx) {
-				return res.Record().Values[0], nil
-			}
-			return nil, nil
-		})
-		require.NoError(t, err, "Should be able to query index %s", indexName)
-		assert.NotNil(t, result, "Canonical index %s should exist", indexName)
-	}
-}

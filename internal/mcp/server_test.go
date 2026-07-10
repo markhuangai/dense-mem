@@ -272,6 +272,33 @@ func TestMCP_PromptsListAndGet(t *testing.T) {
 	}
 }
 
+func TestMCP_LegacyMigrationPromptRequiresManagerRole(t *testing.T) {
+	logger, _ := testLogger(t)
+	reg := registry.New()
+	member := NewServerWithScopesTeamContextRoleAndRuntimeConfig(reg, "team-1", []string{"read", "write"}, TeamContext{}, "member", logger, nil)
+	manager := NewServerWithScopesTeamContextRoleAndRuntimeConfig(reg, "team-1", []string{"read", "write"}, TeamContext{}, "manager", logger, nil)
+
+	memberList := runRPC(t, member, `{"jsonrpc":"2.0","id":1,"method":"prompts/list","params":{}}`)
+	if strings.Contains(memberList, "migrate_legacy_memory_v2") {
+		t.Fatalf("member prompt list exposed manager migration workflow: %s", memberList)
+	}
+	memberGet := runRPC(t, member, `{"jsonrpc":"2.0","id":2,"method":"prompts/get","params":{"name":"migrate_legacy_memory_v2","arguments":{"legacy_type":"fragment","legacy_id":"fragment-1"}}}`)
+	if !strings.Contains(memberGet, `"code":-32601`) {
+		t.Fatalf("member prompt get should look not found: %s", memberGet)
+	}
+
+	managerList := runRPC(t, manager, `{"jsonrpc":"2.0","id":3,"method":"prompts/list","params":{}}`)
+	if !strings.Contains(managerList, "migrate_legacy_memory_v2") {
+		t.Fatalf("manager prompt list missing migration workflow: %s", managerList)
+	}
+	managerGet := runRPC(t, manager, `{"jsonrpc":"2.0","id":4,"method":"prompts/get","params":{"name":"migrate_legacy_memory_v2","arguments":{"legacy_type":"fragment","legacy_id":"fragment-1","legacy_content":"Mark demoed Dense-Mem."}}}`)
+	for _, want := range []string{"migration_refs", "DECOMPOSED_INTO", "fragment-1", "Mark demoed Dense-Mem."} {
+		if !strings.Contains(managerGet, want) {
+			t.Fatalf("manager prompt missing %q: %s", want, managerGet)
+		}
+	}
+}
+
 func TestMCP_PromptsGetErrors(t *testing.T) {
 	logger, _ := testLogger(t)
 	reg := registry.New()
@@ -578,7 +605,7 @@ func TestMCP_MemoryToolsScopeProfileAndClarifications(t *testing.T) {
 	}
 
 	readWrite := NewServerWithScopes(reg, "profileA", []string{"read", "write"}, logger)
-	callOut := runRPC(t, readWrite, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"remember","arguments":{"profile_id":"profileB","evidence":[{"content":"remember this"}]}}}`)
+	callOut := runRPC(t, readWrite, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"remember","arguments":{"profile_id":"profileB","evidence":[{"content":"Mark uses Neo4j."}],"proposal":{"entities":[{"ref":"mark","name":"Mark","type":"person"},{"ref":"neo4j","name":"Neo4j","type":"technology"}],"relationships":[{"proposal_id":"r1","subject_ref":"mark","predicate":"uses","object_ref":"neo4j","policy_family":"multi_state","polarity":"+","modality":"assertion","evidence":[{"evidence_index":0,"start":0,"end":16}] }]}}}}`)
 	if mem.lastProfile != "profileA" {
 		t.Fatalf("memory tool profile = %q; want profileA", mem.lastProfile)
 	}
@@ -590,7 +617,7 @@ func TestMCP_MemoryToolsScopeProfileAndClarifications(t *testing.T) {
 	}
 }
 
-func TestMCP_RememberAcceptsLegacyContentCallAsEvidence(t *testing.T) {
+func TestMCP_RememberRejectsLegacyContentShape(t *testing.T) {
 	logger, _ := testLogger(t)
 	mem := &mcpMemoryStub{}
 	reg, err := registry.BuildDefault(registry.Dependencies{Memory: mem})
@@ -600,21 +627,11 @@ func TestMCP_RememberAcceptsLegacyContentCallAsEvidence(t *testing.T) {
 	server := NewServerWithScopes(reg, "profileA", []string{"read", "write"}, logger)
 
 	out := runRPC(t, server, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"remember","arguments":{"content":"legacy client content","labels":["decision","security"],"source":"chat: compatibility","idempotency_key":"legacy-content-call","auto_promote":true,"claims":[{"subject":"client","predicate":"uses","object":"old remember shape","extract_conf":0.99,"resolution_conf":0.99}]}}}`)
-	if strings.Contains(out, `"error"`) {
-		t.Fatalf("legacy remember call failed: %s", out)
+	if !strings.Contains(out, `"error"`) || !strings.Contains(out, "evidence is required") {
+		t.Fatalf("legacy remember call should fail V2 validation: %s", out)
 	}
-	if len(mem.lastRemember.Evidence) != 1 {
-		t.Fatalf("remember evidence count = %d; want 1", len(mem.lastRemember.Evidence))
-	}
-	evidence := mem.lastRemember.Evidence[0]
-	if evidence.Content != "legacy client content" {
-		t.Fatalf("remember evidence content = %q", evidence.Content)
-	}
-	if evidence.Source != "chat: compatibility" || evidence.IdempotencyKey != "legacy-content-call" {
-		t.Fatalf("remember evidence provenance = %#v", evidence)
-	}
-	if len(evidence.Labels) != 2 || evidence.Labels[0] != "decision" || evidence.Labels[1] != "security" {
-		t.Fatalf("remember evidence labels = %#v", evidence.Labels)
+	if mem.lastProfile != "" {
+		t.Fatalf("legacy remember call reached memory service for %q", mem.lastProfile)
 	}
 }
 

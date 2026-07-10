@@ -3,7 +3,6 @@ package memoryservice
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -18,7 +17,10 @@ import (
 // placement. Normal clients do not submit extracted claims or promotion hints.
 type EvidenceInput struct {
 	Content        string         `json:"content"`
+	SourceType     string         `json:"source_type,omitempty"`
 	Source         string         `json:"source,omitempty"`
+	Authority      string         `json:"authority,omitempty"`
+	SourceGroup    string         `json:"source_group,omitempty"`
 	IdempotencyKey string         `json:"idempotency_key,omitempty"`
 	Labels         []string       `json:"labels,omitempty"`
 	Metadata       map[string]any `json:"metadata,omitempty"`
@@ -26,7 +28,9 @@ type EvidenceInput struct {
 
 // RememberRequest stores chat-session evidence for asynchronous placement.
 type RememberRequest struct {
-	Evidence []EvidenceInput `json:"evidence"`
+	Evidence      []EvidenceInput          `json:"evidence"`
+	Proposal      domain.MemoryProposal    `json:"proposal"`
+	MigrationRefs []domain.LegacyMemoryRef `json:"migration_refs,omitempty"`
 }
 
 // PlacementStatusRequest fetches one server-owned placement run.
@@ -37,6 +41,18 @@ type PlacementStatusRequest struct {
 // PlacementStatusResult is the public polling response for remember.
 type PlacementStatusResult struct {
 	Run domain.MemoryPlacementRun `json:"placement"`
+}
+
+type ResolvePlacementRequest struct {
+	IngestID          string                 `json:"ingest_id"`
+	PlacementItemID   string                 `json:"placement_item_id,omitempty"`
+	Decision          string                 `json:"decision"`
+	CorrectedProposal *domain.MemoryProposal `json:"corrected_proposal,omitempty"`
+	Evidence          []EvidenceInput        `json:"evidence,omitempty"`
+}
+
+type ResolvePlacementResult struct {
+	Placement domain.MemoryPlacementRun `json:"placement"`
 }
 
 // DisputeRequest starts or continues a bounded placement dispute session.
@@ -57,108 +73,7 @@ type DisputeResult struct {
 // Remember stores normal chat-session evidence and queues server-owned
 // placement. Client LLMs cannot submit claims or promotion hints on this path.
 func (s *service) Remember(ctx context.Context, profileID string, req RememberRequest) (*RememberResult, error) {
-	if s.deps.FragmentCreate == nil {
-		return nil, errors.New("memory service: fragment create service is required")
-	}
-	if s.deps.PlacementStore == nil {
-		return nil, errors.New("memory service: placement store is required")
-	}
-	if len(req.Evidence) == 0 {
-		return nil, errors.New("memory service: evidence is required")
-	}
-
-	ingestID := uuid.NewString()
-	now := time.Now().UTC()
-	run := domain.MemoryPlacementRun{
-		IngestID:          ingestID,
-		ProfileID:         profileID,
-		Status:            domain.MemoryPlacementProcessing,
-		CheckAfterSeconds: 60,
-		StatusTool:        "get_memory_placement",
-		Evidence:          make([]domain.MemoryEvidence, 0, len(req.Evidence)),
-		Items:             make([]domain.MemoryPlacementItem, 0, len(req.Evidence)),
-		CreatedAt:         now,
-		UpdatedAt:         now,
-	}
-	for i, evidence := range req.Evidence {
-		content := strings.TrimSpace(evidence.Content)
-		if content == "" {
-			return nil, fmt.Errorf("memory service: evidence[%d].content is required", i)
-		}
-		run.Evidence = append(run.Evidence, domain.MemoryEvidence{
-			Index:          i,
-			Content:        content,
-			Source:         evidence.Source,
-			IdempotencyKey: evidence.IdempotencyKey,
-			Labels:         append([]string(nil), evidence.Labels...),
-			Metadata:       evidence.Metadata,
-		})
-		run.Items = append(run.Items, domain.MemoryPlacementItem{
-			ItemID:        uuid.NewString(),
-			IngestID:      ingestID,
-			ProfileID:     profileID,
-			EvidenceIndex: i,
-			Category:      domain.MemoryPlacementFragmentOnly,
-			Status:        string(domain.MemoryPlacementQueued),
-			Reason:        "evidence stored; awaiting Dense-Mem verifier placement",
-			CreatedAt:     now,
-			UpdatedAt:     now,
-		})
-	}
-	if err := s.deps.PlacementStore.CreateRun(ctx, run); err != nil {
-		return nil, err
-	}
-	fragments := make([]FragmentOutcome, 0, len(req.Evidence))
-	for i, evidence := range req.Evidence {
-		content := strings.TrimSpace(evidence.Content)
-		fragmentRes, err := s.deps.FragmentCreate.Create(ctx, profileID, &dto.CreateFragmentRequest{
-			Content:        content,
-			SourceType:     "conversation",
-			Source:         evidence.Source,
-			Authority:      "primary",
-			IdempotencyKey: evidence.IdempotencyKey,
-			Labels:         evidence.Labels,
-			Metadata:       evidence.Metadata,
-			SourceQuality:  defaultSourceQuality("primary"),
-		})
-		if err != nil {
-			failedAt := time.Now().UTC()
-			run.Status = domain.MemoryPlacementFailed
-			run.Error = err.Error()
-			run.UpdatedAt = failedAt
-			run.CompletedAt = &failedAt
-			run.Items[i].Status = "failed"
-			run.Items[i].Error = err.Error()
-			_ = s.deps.PlacementStore.SaveRun(ctx, run)
-			return nil, err
-		}
-		status := "created"
-		if fragmentRes.Duplicate {
-			status = "duplicate"
-		}
-		fragments = append(fragments, FragmentOutcome{
-			ID:          fragmentRes.Fragment.FragmentID,
-			Status:      status,
-			DuplicateOf: fragmentRes.DuplicateOf,
-			CreatedAt:   fragmentRes.Fragment.CreatedAt,
-		})
-		run.Items[i].FragmentID = fragmentRes.Fragment.FragmentID
-	}
-	queuedAt := time.Now().UTC()
-	run.Status = domain.MemoryPlacementQueued
-	run.UpdatedAt = queuedAt
-	if err := s.deps.PlacementStore.SaveRun(ctx, run); err != nil {
-		return nil, err
-	}
-	s.kickPlacementWorker()
-	return &RememberResult{
-		IngestID:          ingestID,
-		Status:            string(domain.MemoryPlacementQueued),
-		CheckAfterSeconds: 60,
-		StatusTool:        "get_memory_placement",
-		Evidence:          fragments,
-		Items:             run.Items,
-	}, nil
+	return s.rememberV2(ctx, profileID, req)
 }
 
 func (s *service) GetMemoryPlacement(ctx context.Context, profileID string, req PlacementStatusRequest) (*PlacementStatusResult, error) {
@@ -284,57 +199,7 @@ func (s *service) kickPlacementWorker() {
 }
 
 func (s *service) processPlacementRun(ctx context.Context, run *domain.MemoryPlacementRun) error {
-	if run == nil {
-		return nil
-	}
-	now := time.Now().UTC()
-	run.Status = domain.MemoryPlacementProcessing
-	run.StartedAt = &now
-	run.UpdatedAt = now
-	if err := s.deps.PlacementStore.SaveRun(ctx, *run); err != nil {
-		return err
-	}
-
-	for i := range run.Items {
-		item := &run.Items[i]
-		evidence := evidenceForIndex(run.Evidence, item.EvidenceIndex)
-		if strings.TrimSpace(evidence.Content) == "" {
-			item.Category = domain.MemoryPlacementNeedsEvidence
-			item.Status = "completed"
-			item.Reason = "Dense-Mem verifier could not find evidence content for this placement item."
-			item.UpdatedAt = time.Now().UTC()
-			continue
-		}
-		if looksFalse(evidence.Content) {
-			item.Category = domain.MemoryPlacementRejectedFalse
-			item.Status = "completed"
-			item.Reason = "Dense-Mem verifier classified the evidence as a contradiction or false-memory correction."
-			item.UpdatedAt = time.Now().UTC()
-			continue
-		}
-		claim, ok := extractServerClaim(evidence, item.FragmentID)
-		if !ok {
-			item.Category = domain.MemoryPlacementFragmentOnly
-			item.Status = "completed"
-			item.Reason = "Evidence was stored as a fragment; the verifier found no supported personal-memory claim to extract."
-			item.UpdatedAt = time.Now().UTC()
-			continue
-		}
-		outcome, _ := s.processClaim(ctx, run.ProfileID, item.FragmentID, claim, true)
-		item.ClaimID = outcome.ClaimID
-		if outcome.Fact != nil {
-			item.FactID = outcome.Fact.FactID
-		}
-		item.Category, item.Reason = placementFromClaimOutcome(outcome)
-		item.Status = "completed"
-		item.Error = outcome.Error
-		item.UpdatedAt = time.Now().UTC()
-	}
-	completedAt := time.Now().UTC()
-	run.Status = domain.MemoryPlacementCompleted
-	run.CompletedAt = &completedAt
-	run.UpdatedAt = completedAt
-	return s.deps.PlacementStore.SaveRun(ctx, *run)
+	return s.processPlacementRunV2(ctx, run)
 }
 
 func (s *service) applyDisputeTurn(ctx context.Context, profileID string, run *domain.MemoryPlacementRun, session *domain.MemoryDisputeSession, req DisputeRequest, now time.Time) error {

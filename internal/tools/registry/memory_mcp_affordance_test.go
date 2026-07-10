@@ -22,15 +22,7 @@ func TestBuildDefault_MemoryToolDescriptionsIncludeRecallAffordances(t *testing.
 		},
 		{
 			name: "remember",
-			want: []string{"durable memory evidence", "project decision", "Dense-Mem decides"},
-		},
-		{
-			name: "import_memories",
-			want: []string{"historical conversations", "not normal live chat turns"},
-		},
-		{
-			name: "reflect_memories",
-			want: []string{"memory health", "clarifications"},
+			want: []string{"raw evidence", "smallest stable entities", "open-vocabulary semantic relationship", "independently"},
 		},
 	}
 	for _, tc := range cases {

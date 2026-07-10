@@ -684,3 +684,7 @@ func TestLeidenDetect_CrossProfileIsolation(t *testing.T) {
 	require.NotEqual(t, locker.locked[0], locker.locked[1],
 		"advisory lock must use distinct keys for different profiles")
 }
+
+func TestLeidenProjectionExcludesQuarantinedFragments(t *testing.T) {
+	require.Contains(t, leidenNodeQuery, "n:SourceFragment AND coalesce(n.status, 'active') = 'active'")
+}

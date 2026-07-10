@@ -93,10 +93,7 @@ func defaultTools(deps Dependencies) []Tool {
 		assembleContextTool(deps),
 		rememberTool(deps),
 		getMemoryPlacementTool(deps),
-		disputeMemoryPlacementTool(deps),
-		importMemoriesTool(deps),
-		reflectMemoriesTool(deps),
-		confirmMemoryTool(deps),
+		resolveMemoryPlacementTool(deps),
 		listDreamsTool(deps),
 		getDreamTool(deps),
 		resolveDreamFeedbackTool(deps),
@@ -451,9 +448,9 @@ func normalizeRecallFeedbackJudgedRefs(recallIndex int, refs []recallFeedbackJud
 	for i, ref := range refs {
 		refType := strings.TrimSpace(ref.Type)
 		switch refType {
-		case domain.RecallFeedbackResultTypeFragment, domain.RecallFeedbackResultTypeClaim, domain.RecallFeedbackResultTypeFact, domain.RecallFeedbackResultTypeDream:
+		case domain.RecallFeedbackResultTypeFragment, domain.RecallFeedbackResultTypeClaim, domain.RecallFeedbackResultTypeFact, domain.RecallFeedbackResultTypeDream, domain.RecallFeedbackResultTypeAssertion:
 		default:
-			return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].irrelevant_result_refs[%d].type must be one of fragment, claim, fact, dream", recallIndex, i)
+			return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].irrelevant_result_refs[%d].type must be one of fragment, claim, fact, dream, assertion", recallIndex, i)
 		}
 		id := strings.TrimSpace(ref.ID)
 		if id == "" {
@@ -563,6 +560,13 @@ func recallFeedbackResultRefs(hits []recallservice.RecallHit, dreams []*domain.D
 			FinalScore:   floatPtrIfNonZero(hit.FinalScore),
 		}
 		switch {
+		case hit.Assertion != nil:
+			ref.Type = domain.RecallFeedbackResultTypeAssertion
+			ref.ID = hit.Assertion.AssertionID
+			ref.StatusAtRecall = string(hit.Assertion.Status)
+			ref.RecordedAt = timePtrIfNonZero(hit.Assertion.RecordedAt)
+			ref.ValidFrom = hit.Assertion.ValidFrom
+			ref.ValidTo = hit.Assertion.ValidTo
 		case hit.Fact != nil:
 			ref.Type = domain.RecallFeedbackResultTypeFact
 			ref.ID = hit.Fact.FactID
@@ -673,6 +677,18 @@ func recallHitToMap(hit recallservice.RecallHit) (map[string]any, error) {
 		}
 		out["fact"] = fact
 	}
+	if hit.Assertion != nil {
+		if tier == "" {
+			tier = recallservice.TierAssertionCandidate
+		}
+		assertion, err := structToMap(hit.Assertion)
+		if err != nil {
+			return nil, err
+		}
+		out["assertion"] = assertion
+		out["paths"] = hit.Paths
+		out["frontier"] = hit.Frontier
+	}
 	if tier == "" {
 		return nil, errors.New("recall_memory: hit missing payload")
 	}
@@ -716,11 +732,14 @@ func recallHitObjectSchema() map[string]any {
 			properties[key] = value
 		}
 	}
-	properties["tier"] = map[string]any{"type": "string", "description": "1 = active Fact, 1.5 = validated Claim, 2 = SourceFragment."}
+	properties["tier"] = map[string]any{"type": "string", "description": "0.75/1.25/1.75 = V2 fact/validated/candidate assertion; 1/1.5/2 = legacy Fact/Claim/SourceFragment."}
 	properties["score"] = map[string]any{"type": "number", "description": "Tier-specific relevance or confidence score."}
 	properties["fragment"] = fragmentObjectSchema()
 	properties["claim"] = claimObjectSchema()
 	properties["fact"] = factObjectSchema()
+	properties["assertion"] = map[string]any{"type": "object"}
+	properties["paths"] = map[string]any{"type": "array", "items": map[string]any{"type": "object"}}
+	properties["frontier"] = map[string]any{"type": "array", "items": map[string]any{"type": "object"}}
 	properties["semantic_rank"] = map[string]any{"type": "integer", "description": "1-based rank from semantic branch; 0 if absent."}
 	properties["keyword_rank"] = map[string]any{"type": "integer", "description": "1-based rank from keyword branch; 0 if absent."}
 	properties["final_score"] = map[string]any{"type": "number", "description": "Reciprocal Rank Fusion score for fragment hits."}

@@ -7,7 +7,10 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
@@ -16,6 +19,72 @@ func TestScanRecallFeedbackEventRejectsMalformedToolArgsJSON(t *testing.T) {
 	rows := recallFeedbackEventRows(t, []byte("{bad-json"), []byte("[]"), []byte("[]"), []byte("[]"))
 	_, err := scanRecallFeedbackEvent(rows)
 	require.ErrorContains(t, err, "invalid recall_feedback_events.tool_args JSON")
+}
+
+func TestRecallMemoryReviewQueuePersistsAndReadsOrderedReviews(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
+	require.NoError(t, err)
+	repo := NewRecallFeedbackEventRepository(db, nil)
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	teamID := uuid.MustParse("22222222-2222-4222-8222-222222222222")
+	review := domain.RecallMemoryReview{
+		ReviewID: "11111111-1111-4111-8111-111111111111", ProfileID: teamID, RecallID: "recall-1",
+		KnowledgeType: domain.RecallFeedbackResultTypeAssertion, KnowledgeID: "assertion-1",
+		Reasons: []string{"irrelevant_result", "unsupported_answer"}, FeedbackComment: "wrong relation", CreatedAt: now, UpdatedAt: now,
+	}
+
+	require.NoError(t, repo.EnqueueRecallMemoryReviews(context.Background(), nil))
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO recall_memory_review_queue`).
+		WithArgs(review.ReviewID, review.ProfileID, review.RecallID, review.KnowledgeType, review.KnowledgeID,
+			`["irrelevant_result","unsupported_answer"]`, review.FeedbackComment, "pending", now, now, nil).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	require.NoError(t, repo.EnqueueRecallMemoryReviews(context.Background(), []domain.RecallMemoryReview{review}))
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT review_id::text, profile_id::text, recall_id.*FROM recall_memory_review_queue`).
+		WithArgs("recall-1").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"review_id", "profile_id", "recall_id", "knowledge_type", "knowledge_id", "reasons", "feedback_comment", "status", "created_at", "updated_at", "resolved_at",
+		}).AddRow(review.ReviewID, teamID.String(), review.RecallID, review.KnowledgeType, review.KnowledgeID,
+			[]byte(`["irrelevant_result","unsupported_answer"]`), review.FeedbackComment, "pending", now, now, nil)).
+		RowsWillBeClosed()
+	mock.ExpectCommit()
+	got, err := repo.ListRecallMemoryReviews(context.Background(), " recall-1 ")
+	require.NoError(t, err)
+	require.Equal(t, []domain.RecallMemoryReview{{
+		ReviewID: review.ReviewID, ProfileID: teamID, RecallID: review.RecallID, KnowledgeType: review.KnowledgeType,
+		KnowledgeID: review.KnowledgeID, Reasons: review.Reasons, FeedbackComment: review.FeedbackComment,
+		Status: "pending", CreatedAt: now, UpdatedAt: now,
+	}}, got)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	empty, err := repo.ListRecallMemoryReviews(context.Background(), "")
+	require.NoError(t, err)
+	require.Empty(t, empty)
+}
+
+func TestRecallMemoryReviewQueueRejectsMalformedStoredReasons(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
+	require.NoError(t, err)
+	repo := NewRecallFeedbackEventRepository(db, nil)
+	now := time.Now().UTC()
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`FROM recall_memory_review_queue`).WillReturnRows(sqlmock.NewRows([]string{
+		"review_id", "profile_id", "recall_id", "knowledge_type", "knowledge_id", "reasons", "feedback_comment", "status", "created_at", "updated_at", "resolved_at",
+	}).AddRow("review-1", uuid.NewString(), "recall-1", "fragment", "fragment-1", []byte(`{`), "", "pending", now, now, nil))
+	mock.ExpectRollback()
+	_, err = repo.ListRecallMemoryReviews(context.Background(), "recall-1")
+	require.ErrorContains(t, err, "invalid recall memory review reasons JSON")
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestScanRecallFeedbackEventRejectsMalformedResultRefsJSON(t *testing.T) {

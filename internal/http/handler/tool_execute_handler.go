@@ -235,6 +235,8 @@ func mapToolExecuteError(err error) *httperr.APIError {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "embedding provider unavailable")
 	case errors.Is(err, recallservice.ErrKeywordUnavailable):
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "keyword search unavailable")
+	case errors.Is(err, recallservice.ErrAssertionUnavailable):
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "semantic assertion search unavailable")
 	case strings.Contains(err.Error(), "invalid input"),
 		strings.Contains(err.Error(), "is required"),
 		strings.Contains(err.Error(), "invalid cursor"),

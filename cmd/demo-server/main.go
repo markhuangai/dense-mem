@@ -20,8 +20,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/validation"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/openapi"
+	"github.com/markhuangai/dense-mem/internal/placementreview"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
+	"github.com/markhuangai/dense-mem/internal/service/assertionservice"
 	"github.com/markhuangai/dense-mem/internal/service/claimdedupe"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
@@ -192,6 +194,7 @@ func main() {
 	// Neo4j profile scope enforcer and graph writer
 	// ========================================
 	profileScopeEnforcer := neo4j.NewProfileScopeEnforcer(neo4jClient)
+	assertionSvc := assertionservice.New(neo4j.NewAssertionStore(profileScopeEnforcer))
 	profileDataPurger := service.NewNeo4jProfileDataPurger(profileScopeEnforcer)
 
 	// ========================================
@@ -249,12 +252,14 @@ func main() {
 		discoverabilityMetrics = prometheusMetrics
 		telemetryHTTPMetrics = prometheusMetrics
 		telemetryScrapeHandler = prometheusMetrics.Handler()
-		telemetryReader = service.NewPrometheusTelemetryServiceWithJobAndLogger(
+		prometheusTelemetry := service.NewPrometheusTelemetryServiceWithJobAndLogger(
 			cfg.GetTelemetryPrometheusURL(),
 			time.Duration(cfg.GetTelemetryQueryTimeoutSeconds())*time.Second,
 			cfg.GetTelemetryPrometheusJob(),
 			logger,
 		)
+		prometheusTelemetry.SetAssertionTransitionCountReader(memoryPlacementRepo)
+		telemetryReader = prometheusTelemetry
 	}
 	// Adapters translate between neo4j's ScopedReader and the fragment services'
 	// local ScopedReader, and between fragmentservice's AuditLogEntry and the
@@ -270,9 +275,10 @@ func main() {
 	// point. The unavailable stub is kept as a defensive fallback for this
 	// wiring layer.
 	var (
-		retryEmbedder             *embedding.RetryEmbeddingProvider
-		fragmentCreateRegistrySvc fragmentservice.CreateFragmentService = unavailableFragmentCreateService{}
-		fragmentCreateHTTPSvc     fragmentservice.CreateFragmentService = unavailableFragmentCreateService{}
+		retryEmbedder                 *embedding.RetryEmbeddingProvider
+		fragmentCreateRegistrySvc     fragmentservice.CreateFragmentService = unavailableFragmentCreateService{}
+		fragmentQuarantineRegistrySvc fragmentservice.QuarantinedFragmentCreateService
+		fragmentCreateHTTPSvc         fragmentservice.CreateFragmentService = unavailableFragmentCreateService{}
 	)
 	if cfg.IsEmbeddingConfigured() {
 		openaiProvider := embedding.NewOpenAIEmbeddingProvider(&cfg, nil)
@@ -280,7 +286,7 @@ func main() {
 		retryEmbedder = embedding.NewRetryEmbeddingProviderWithKey(openaiProvider, logger, cfg.GetAIAPIKey())
 		retryEmbedder.SetMetrics(discoverabilityMetrics)
 
-		fragmentCreateRegistrySvc = fragmentservice.NewCreateFragmentService(
+		fragmentCreateServices := fragmentservice.NewCreateFragmentService(
 			retryEmbedder,
 			profileScopeEnforcer,
 			dedupeLookup,
@@ -289,6 +295,8 @@ func main() {
 			slog.Default(),
 			discoverabilityMetrics,
 		)
+		fragmentCreateRegistrySvc = fragmentCreateServices
+		fragmentQuarantineRegistrySvc = fragmentCreateServices
 		fragmentCreateHTTPSvc = fragmentCreateRegistrySvc
 	}
 
@@ -334,11 +342,15 @@ func main() {
 		claimVerifyRegistrySvc   claimservice.VerifyClaimService = unavailableVerifyClaimService{}
 		claimVerifyHTTPSvc       claimservice.VerifyClaimService = unavailableVerifyClaimService{}
 		skillPackConflictDecider skillpackservice.ConflictDecider
+		placementVerifier        verifier.Verifier
+		placementReviewer        placementreview.Reviewer
 	)
 	if verifierConfigured(&cfg) {
 		baseVerifier := verifier.NewOpenAIVerifier(&cfg, nil)
 		baseVerifier.SetMetrics(discoverabilityMetrics)
 		retryVerifier := verifier.NewRetryVerifier(baseVerifier, &cfg, logger)
+		placementVerifier = retryVerifier
+		placementReviewer = placementreview.NewOpenAIReviewer(&cfg, nil)
 		skillPackConflictDecider = skillpackservice.NewOpenAIConflictDecider(&cfg, nil)
 
 		claimVerifyRegistrySvc = claimservice.NewVerifyClaimService(
@@ -373,6 +385,7 @@ func main() {
 			logger,
 			discoverabilityMetrics,
 			recallservice.WithCommunityExpander(recallCommunityExpander),
+			recallservice.WithAssertionSearcher(recallservice.NewAssertionSearcher(profileScopeEnforcer)),
 		)
 		recallRegistrySvc = tieredRecallSvc
 		recallHTTPSvc = tieredRecallSvc
@@ -424,16 +437,23 @@ func main() {
 	communityDetectRegistrySvc = runtimeServices.CommunityDetectRegistrySvc
 
 	memorySvc := memoryservice.New(memoryservice.Dependencies{
-		FragmentCreate: fragmentCreateRegistrySvc,
-		ClaimCreate:    claimCreateSvc,
-		ClaimVerify:    claimVerifyRegistrySvc,
-		ClaimGet:       claimGetSvc,
-		ClaimList:      claimListSvc,
-		FactPromote:    factPromoteSvc,
-		FactConfirm:    factConfirmSvc,
-		FactList:       factListSvc,
-		PlacementStore: memoryPlacementRepo,
-		Logger:         slog.Default(),
+		FragmentCreate:     fragmentCreateRegistrySvc,
+		FragmentQuarantine: fragmentQuarantineRegistrySvc,
+		ClaimCreate:        claimCreateSvc,
+		ClaimVerify:        claimVerifyRegistrySvc,
+		ClaimGet:           claimGetSvc,
+		ClaimList:          claimListSvc,
+		FactPromote:        factPromoteSvc,
+		FactConfirm:        factConfirmSvc,
+		FactList:           factListSvc,
+		PlacementStore:     memoryPlacementRepo,
+		Assertions:         assertionSvc,
+		GraphReviewer:      placementReviewer,
+		Verifier:           placementVerifier,
+		Embedder:           retryEmbedder,
+		VerifierModel:      cfg.GetAIVerifierModel(),
+		Metrics:            discoverabilityMetrics,
+		Logger:             slog.Default(),
 	})
 	placementWorkerCtx, placementWorkerCancel := context.WithCancel(context.Background())
 	defer placementWorkerCancel()
@@ -456,6 +476,7 @@ func main() {
 		Recall:      recallRegistrySvc,
 		Memory:      memorySvc,
 		Dreams:      dreamSvc,
+		Assertions:  assertionSvc,
 	})
 	graphViewSvc := graphview.New(profileScopeEnforcer)
 	skillPackSvc := skillpackservice.New(skillpackservice.Dependencies{

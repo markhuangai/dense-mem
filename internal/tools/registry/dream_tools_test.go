@@ -50,12 +50,19 @@ func TestBuildDefault_DreamInvokers(t *testing.T) {
 		"dream_id": "dream-1",
 		"decision": "confirm_true",
 		"feedback": "prior conversation confirms it",
+		"proposal": structuredRememberInput("prior conversation confirms it")["proposal"],
 	})
 	if err != nil {
 		t.Fatalf("resolve_dream_feedback Invoke: %v", err)
 	}
 	if resolveOut["dream"] == nil || dreams.lastResolveReq.Decision != "confirm_true" || dreams.lastResolveReq.Feedback != "prior conversation confirms it" {
 		t.Fatalf("resolve_dream_feedback output = %v request = %+v", resolveOut, dreams.lastResolveReq)
+	}
+	if dreams.lastResolveReq.Proposal == nil {
+		t.Fatal("resolve_dream_feedback did not forward semantic proposal")
+	}
+	if _, err := resolveTool.Invoke(context.Background(), "profile-dream", map[string]any{"dream_id": "dream-1", "decision": "confirm_true", "feedback": "confirmed"}); err == nil || !strings.Contains(err.Error(), "require feedback and proposal") {
+		t.Fatalf("missing proposal err = %v", err)
 	}
 }
 

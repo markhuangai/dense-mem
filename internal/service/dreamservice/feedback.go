@@ -21,7 +21,10 @@ func dreamResolutionEvidence(d *domain.Dream, decision, feedback string) (memory
 	}
 	return memoryservice.EvidenceInput{
 		Content:        content,
+		SourceType:     string(domain.SourceTypeManual),
 		Source:         "dream_feedback:" + d.DreamID,
+		Authority:      string(domain.AuthorityAuthoritative),
+		SourceGroup:    "user-dream-feedback:" + d.DreamID,
 		IdempotencyKey: "dream-feedback:" + d.DreamID + ":" + decision,
 		Labels:         labels,
 		Metadata: map[string]any{
@@ -35,24 +38,7 @@ func dreamResolutionEvidence(d *domain.Dream, decision, feedback string) (memory
 }
 
 func dreamResolutionContent(d *domain.Dream, decision, feedback string) string {
-	trimmedFeedback := strings.TrimSpace(feedback)
-	parts := []string{}
-	if decision == "confirm_false" {
-		parts = append(parts, "Incorrect dream hypothesis: "+trimmedFeedback)
-	} else if trimmedFeedback != "" {
-		parts = append(parts, trimmedFeedback)
-	}
-	parts = append(parts, "Dense-Mem dream hypothesis: "+d.Hypothesis)
-	if d.WhatIf != "" {
-		parts = append(parts, "What-if: "+d.WhatIf)
-	}
-	if d.PossibleOutcome != "" {
-		parts = append(parts, "Possible outcome: "+d.PossibleOutcome)
-	}
-	if decision == "confirm_true" {
-		parts = append(parts, "Dream decision: confirmed accurate")
-	} else if decision == "confirm_false" {
-		parts = append(parts, "Dream decision: confirmed false")
-	}
-	return strings.Join(parts, "\n")
+	_ = d
+	_ = decision
+	return strings.TrimSpace(feedback)
 }

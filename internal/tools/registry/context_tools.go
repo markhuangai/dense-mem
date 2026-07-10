@@ -11,15 +11,20 @@ import (
 func traceMemoryTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "trace_memory",
-		Description: "Expand one fact or claim into bounded evidence and lineage. Use after recall when the answer needs supporting fragments, promotion lineage, contradiction links, or supersession history. This is not free graph traversal.",
+		Description: "Expand one fact, claim, or V2 assertion through bounded graph lineage. Assertion traces follow actual semantic relationship types, honor an optional relationship/topic filter, stop on relevance or hard budgets, and never revisit an entity.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"type", "id"},
 			"properties": map[string]any{
-				"type":              schemaEnum([]string{"fact", "claim"}),
-				"id":                schemaString("Fact or Claim ID to trace.", 128),
-				"max_related":       map[string]any{"type": "integer", "minimum": 0, "maximum": 20, "description": "Maximum related conflict/supersession neighbors. Defaults to 10."},
-				"include_fragments": map[string]any{"type": "boolean", "description": "Include supporting SourceFragment content. Defaults to true."},
+				"type":               schemaEnum([]string{"fact", "claim", "assertion"}),
+				"id":                 schemaString("Fact, Claim, or Assertion ID to trace.", 128),
+				"max_related":        map[string]any{"type": "integer", "minimum": 0, "maximum": 20, "description": "Maximum related conflict/supersession neighbors. Defaults to 10."},
+				"include_fragments":  map[string]any{"type": "boolean", "description": "Include supporting SourceFragment content. Defaults to true."},
+				"max_depth":          map[string]any{"type": "integer", "minimum": 1, "maximum": 4, "description": "Assertion traversal depth. Defaults to 2."},
+				"max_edges":          map[string]any{"type": "integer", "minimum": 1, "maximum": 100, "description": "Hard assertion edge budget. Defaults to 24."},
+				"relationship_types": map[string]any{"type": "array", "maxItems": 30, "items": schemaString("Actual semantic edge type, such as USES or DEMOED.", 64)},
+				"topic":              schemaString("Optional topic used for relevance stopping.", 256),
+				"min_relevance":      map[string]any{"type": "number", "minimum": 0, "maximum": 1},
 			},
 			"additionalProperties": false,
 		},
@@ -94,9 +99,10 @@ func traceMemoryResultSchema() map[string]any {
 			"anchor": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"type":  schemaEnum([]string{"fact", "claim"}),
-					"fact":  factObjectSchema(),
-					"claim": claimObjectSchema(),
+					"type":      schemaEnum([]string{"fact", "claim", "assertion"}),
+					"fact":      factObjectSchema(),
+					"claim":     claimObjectSchema(),
+					"assertion": map[string]any{"type": "object"},
 				},
 			},
 			"promoted_from_claim":  claimObjectSchema(),
@@ -104,6 +110,11 @@ func traceMemoryResultSchema() map[string]any {
 			"related":              map[string]any{"type": "array", "items": relatedMemorySchema()},
 			"edges":                map[string]any{"type": "array", "items": traceEdgeSchema()},
 			"missing_fragment_ids": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"semantic_nodes":       map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
+			"semantic_edges":       map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
+			"frontier":             map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
+			"visited_entity_ids":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"stopped_reason":       map[string]any{"type": "string"},
 		},
 	}
 }
@@ -151,12 +162,15 @@ func contextItemSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"type":               schemaEnum([]string{"fact", "claim", "fragment"}),
+			"type":               schemaEnum([]string{"fact", "claim", "fragment", "assertion"}),
 			"id":                 map[string]any{"type": "string"},
 			"score":              map[string]any{"type": "number"},
 			"fact":               factObjectSchema(),
 			"claim":              claimObjectSchema(),
 			"fragment":           fragmentObjectSchema(),
+			"assertion":          map[string]any{"type": "object"},
+			"paths":              map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
+			"frontier":           map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
 			"evidence_fragments": map[string]any{"type": "array", "items": fragmentObjectSchema()},
 		},
 	}

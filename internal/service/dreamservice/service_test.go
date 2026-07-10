@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
@@ -358,21 +359,27 @@ func TestDreamServiceResolveFeedbackPromotesCandidateThroughRemember(t *testing.
 		DreamID:  "dream-1",
 		Decision: "promote_candidate",
 		Feedback: "User works at SAP from 2020 to 2024.",
+		Proposal: dreamFeedbackProposal("User works at SAP from 2020 to 2024."),
 	})
 
 	require.NoError(t, err)
-	require.True(t, res.Deleted)
+	require.False(t, res.Deleted)
 	require.Equal(t, domain.DreamStatusPromoted, res.Dream.Status)
 	require.Equal(t, "ingest-1", res.Memory.IngestID)
 	require.Equal(t, 1, memory.remembers)
+	require.True(t, memory.trustedAuthority)
 	require.Equal(t, "dream_feedback:dream-1", memory.lastRememberReq.Evidence[0].Source)
 	require.Equal(t, "dream-feedback:dream-1:confirm_true", memory.lastRememberReq.Evidence[0].IdempotencyKey)
 	require.Contains(t, memory.lastRememberReq.Evidence[0].Labels, "dream_confirmed")
 	require.Equal(t, "dream-1", memory.lastRememberReq.Evidence[0].Metadata["dream_id"])
 	require.Equal(t, "confirm_true", memory.lastRememberReq.Evidence[0].Metadata["dream_decision"])
-	require.True(t, strings.HasPrefix(memory.lastRememberReq.Evidence[0].Content, "User works at SAP"))
+	require.Equal(t, "User works at SAP from 2020 to 2024.", memory.lastRememberReq.Evidence[0].Content)
+	require.Equal(t, "manual", memory.lastRememberReq.Evidence[0].SourceType)
+	require.Equal(t, "authoritative", memory.lastRememberReq.Evidence[0].Authority)
+	require.Equal(t, "user-dream-feedback:dream-1", memory.lastRememberReq.Evidence[0].SourceGroup)
+	require.Equal(t, *dreamFeedbackProposal("User works at SAP from 2020 to 2024."), memory.lastRememberReq.Proposal)
 	require.Equal(t, 1, graph.writes)
-	require.True(t, hasDreamWriteQuery(graph.writeQueries, "DETACH DELETE d"))
+	require.True(t, hasDreamWriteQuery(graph.writeQueries, "SET d.status = $status"))
 	require.Equal(t, []observability.DreamFeedbackSample{
 		{Decision: "promote_candidate", Outcome: "ok", FromStatus: "proposed"},
 	}, metrics.DreamFeedbackSamples())
@@ -387,37 +394,6 @@ func TestDreamServiceResolveFeedbackPromotesCandidateThroughRemember(t *testing.
 	require.Equal(t, []observability.DreamFeedbackSample{
 		{Decision: "promote_candidate", Outcome: "error", FromStatus: "proposed"},
 	}, errorMetrics.DreamFeedbackSamples())
-}
-
-func TestDreamServiceResolveFeedbackConfirmFalseThroughRemember(t *testing.T) {
-	now := time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC)
-	graph := &cycleRunGraphStub{executeWrites: true, dreamRows: []map[string]any{{"d": dreamTestNode("dream-1", "profile-1", now)}}}
-	memory := &dreamMemoryStub{rememberResult: &memoryservice.RememberResult{IngestID: "ingest-false", Status: "processing"}}
-	metrics := observability.NewInMemoryDiscoverabilityMetrics()
-	svc := New(Dependencies{
-		Graph:   graph,
-		Memory:  memory,
-		Metrics: metrics,
-		Now:     func() time.Time { return now },
-	})
-
-	res, err := svc.ResolveFeedback(context.Background(), "profile-1", ResolveFeedbackRequest{
-		DreamID:  "dream-1",
-		Decision: "confirm_false",
-		Feedback: "The user said this is not true.",
-	})
-
-	require.NoError(t, err)
-	require.True(t, res.Deleted)
-	require.Equal(t, domain.DreamStatusRejected, res.Dream.Status)
-	require.Equal(t, "ingest-false", res.Memory.IngestID)
-	require.Contains(t, memory.lastRememberReq.Evidence[0].Labels, "dream_rejected")
-	require.Equal(t, "confirm_false", memory.lastRememberReq.Evidence[0].Metadata["dream_decision"])
-	require.Contains(t, memory.lastRememberReq.Evidence[0].Content, "Incorrect dream hypothesis")
-	require.Contains(t, memory.lastRememberReq.Evidence[0].Content, "not true")
-	require.Equal(t, []observability.DreamFeedbackSample{
-		{Decision: "confirm_false", Outcome: "ok", FromStatus: "proposed"},
-	}, metrics.DreamFeedbackSamples())
 }
 
 func TestDreamServiceEffectiveConfigUsesProfileOverrides(t *testing.T) {
@@ -552,6 +528,7 @@ func TestDreamServiceInputRowsAndHelpers(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, inputs, 1)
 	require.Equal(t, "fact-1", inputs[0].ID)
+	require.Contains(t, graph.lastReadQuery, "coalesce(sf.status, 'active') = 'active'", "dream inputs must exclude quarantined evidence")
 
 	for sourceType, want := range map[string][2]string{
 		"fact":      {"Fact", "fact_id"},
@@ -578,7 +555,9 @@ func TestDreamServiceInputRowsAndHelpers(t *testing.T) {
 	require.NotEmpty(t, dreamContentHash(dream))
 	evidence, err := dreamResolutionEvidence(dream, "confirm_true", "User works on Dense-Mem.")
 	require.NoError(t, err)
-	require.Contains(t, evidence.Content, "Dream decision: confirmed accurate")
+	require.Equal(t, "User works on Dense-Mem.", evidence.Content)
+	require.Equal(t, "manual", evidence.SourceType)
+	require.Equal(t, "authoritative", evidence.Authority)
 	require.Equal(t, "dream-feedback:dream-1:confirm_true", evidence.IdempotencyKey)
 	_, err = dreamResolutionEvidence(dream, "confirm_true", "")
 	require.ErrorContains(t, err, "feedback is required")
@@ -597,6 +576,26 @@ func TestDreamServiceInputRowsAndHelpers(t *testing.T) {
 	require.NoError(t, err)
 	_, err = parseProfileID("not-a-uuid")
 	require.ErrorContains(t, err, "invalid profile id")
+}
+
+func dreamFeedbackProposal(content string) *domain.MemoryProposal {
+	proposal := domain.MemoryProposal{
+		Entities: []domain.MemoryEntityProposal{
+			{Ref: "user", Name: "User", Type: "person"},
+			{Ref: "project", Name: "Dense-Mem", Type: "project"},
+		},
+		Relationships: []domain.MemoryRelationshipProposal{{
+			ProposalID:   "dream-feedback-relationship",
+			SubjectRef:   "user",
+			Predicate:    "works_on",
+			ObjectRef:    "project",
+			PolicyFamily: domain.AssertionPolicyVersioned,
+			Polarity:     domain.PolarityPlus,
+			Modality:     domain.ModalityAssertion,
+			Evidence:     []domain.MemoryEvidenceRef{{EvidenceIndex: 0, Start: 0, End: len(content)}},
+		}},
+	}
+	return &proposal
 }
 
 func TestDreamServiceReadErrors(t *testing.T) {
@@ -905,18 +904,20 @@ func (s *dreamGeneratorStub) Model() string {
 }
 
 type dreamMemoryStub struct {
-	result          *memoryservice.ReflectResult
-	err             error
-	reflects        int
-	remembers       int
-	rememberResult  *memoryservice.RememberResult
-	rememberErr     error
-	lastRememberReq memoryservice.RememberRequest
+	result           *memoryservice.ReflectResult
+	err              error
+	reflects         int
+	remembers        int
+	rememberResult   *memoryservice.RememberResult
+	rememberErr      error
+	lastRememberReq  memoryservice.RememberRequest
+	trustedAuthority bool
 }
 
-func (s *dreamMemoryStub) Remember(_ context.Context, _ string, req memoryservice.RememberRequest) (*memoryservice.RememberResult, error) {
+func (s *dreamMemoryStub) Remember(ctx context.Context, _ string, req memoryservice.RememberRequest) (*memoryservice.RememberResult, error) {
 	s.remembers++
 	s.lastRememberReq = req
+	s.trustedAuthority = requestctx.TrustedMemoryAuthority(ctx)
 	if s.rememberErr != nil {
 		return nil, s.rememberErr
 	}

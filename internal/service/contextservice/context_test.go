@@ -226,6 +226,41 @@ func TestAssembleContextRendersStructuredItemsAndClarifications(t *testing.T) {
 	require.Contains(t, got.ContextBlock, "[clarification:clarify-1]")
 }
 
+func TestAssembleContextRendersSemanticAssertionEdgesEvidenceAndFrontier(t *testing.T) {
+	assertion := semanticTraceAssertion(domain.AssertionStatusActive, time.Now().UTC())
+	path := recallservice.SemanticPath{
+		Nodes: []recallservice.SemanticNode{
+			{Key: "entity:mark", ID: "mark", Type: "person", Name: "Mark"},
+			{Key: "entity:dense-mem", ID: "dense-mem", Type: "project", Name: "Dense-Mem"},
+		},
+		Edges: []recallservice.SemanticEdge{{
+			AssertionID: assertion.AssertionID, Source: "entity:mark", Target: "entity:dense-mem", Relationship: "WORKS_ON",
+			Tier: assertion.Tier, Status: assertion.Status,
+		}},
+	}
+	frontier := recallservice.FrontierHint{
+		FromEntityID: "dense-mem", Direction: "outgoing", Relationship: "USES", AssertionID: "assertion-2",
+		Neighbor: recallservice.SemanticNode{Key: "entity:neo4j", ID: "neo4j", Type: "technology", Name: "Neo4j"},
+	}
+	svc := New(Dependencies{
+		Recall: &fakeRecall{hits: []recallservice.RecallHit{{Assertion: assertion, Paths: []recallservice.SemanticPath{path}, Frontier: []recallservice.FrontierHint{frontier}, Score: 0.93}}},
+		FragmentGet: &fakeFragmentGet{fragments: map[string]*domain.Fragment{
+			"fragment-1": fragmentFixture("fragment-1", "Mark works on Dense-Mem."),
+		}},
+	})
+
+	got, err := svc.Assemble(context.Background(), "team-a", AssembleRequest{Query: "What does Mark work on?"})
+
+	require.NoError(t, err)
+	require.Len(t, got.Items, 1)
+	require.Equal(t, AnchorAssertion, got.Items[0].Type)
+	require.Len(t, got.Items[0].EvidenceFragments, 1)
+	require.Contains(t, got.ContextBlock, "Mark -[WORKS_ON]-> Dense-Mem")
+	require.Contains(t, got.ContextBlock, "tier validated_claim, status active")
+	require.Contains(t, got.ContextBlock, "evidence [fragment:fragment-1]")
+	require.Contains(t, got.ContextBlock, "frontier dense-mem -[outgoing/USES]-> Neo4j [assertion:assertion-2]")
+}
+
 func TestAssembleContextHydratesFactEvidenceFromPromotedClaim(t *testing.T) {
 	ctx := context.Background()
 	fact := factFixture("fact-1", "go")
@@ -480,7 +515,7 @@ func TestTraceValidation(t *testing.T) {
 	require.ErrorContains(t, err, "profile id is required")
 
 	_, err = svc.Trace(context.Background(), "profile-a", TraceRequest{Type: "free", ID: "x"})
-	require.ErrorContains(t, err, "type must be fact or claim")
+	require.ErrorContains(t, err, "type must be fact, claim, or assertion")
 
 	_, err = svc.Trace(context.Background(), "profile-a", TraceRequest{Type: AnchorFact})
 	require.ErrorContains(t, err, "id is required")

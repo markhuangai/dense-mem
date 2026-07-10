@@ -146,7 +146,7 @@ func (s *retractFragmentService) Retract(ctx context.Context, profileID, fragmen
 
 		// Step 3: collect affected facts and their remaining active support stats.
 		// The tombstoned fragment is now excluded from the active-source count because
-		// neo4jstorage.FragmentActiveFilter (coalesce(sf.status,'active') <> 'retracted')
+		// neo4jstorage.FragmentActiveFilter (coalesce(sf.status,'active') = 'active')
 		// filters it out (AC-44).
 		//
 		// SUPPORTED_BY direction: (Claim)-[:SUPPORTED_BY]->(SourceFragment).

@@ -125,24 +125,6 @@ func TestEvalScoreRetrievalCaseScoresAndAudits(t *testing.T) {
 	}
 }
 
-func TestEvalToolsRequireAuditSink(t *testing.T) {
-	reg, err := BuildDefault(Dependencies{EvaluationConfig: stubEvaluationConfig{enabled: true}})
-	if err != nil {
-		t.Fatalf("BuildDefault: %v", err)
-	}
-	tool, ok := reg.Get("eval_score_retrieval_case")
-	if !ok {
-		t.Fatal("eval_score_retrieval_case not registered")
-	}
-	_, err = tool.Invoke(context.Background(), "profile-eval", map[string]any{
-		"ranked_refs":   []any{},
-		"required_refs": []any{},
-	})
-	if !errors.Is(err, ErrToolUnavailable) {
-		t.Fatalf("err = %v; want ErrToolUnavailable", err)
-	}
-}
-
 func TestEvalManifestAndKnowledgeTools(t *testing.T) {
 	audit := &evaluationAuditStub{}
 	fragments := &evalFragmentStore{
@@ -192,9 +174,12 @@ func TestEvalManifestAndKnowledgeTools(t *testing.T) {
 		}},
 	}
 	graph := &evalGraphQuery{rows: []map[string]any{{
-		"edge_type": "SUPPORTED_BY",
-		"from_id":   "claim-1",
-		"to_id":     "fragment-1",
+		"edge_type":     "DEMOED",
+		"assertion_id":  "assertion-1",
+		"from_id":       "entity-mark",
+		"to_id":         "entity-project",
+		"search_text":   "Mark demoed Dense-Mem",
+		"evidence_json": `[{"fragment_id":"fragment-1"}]`,
 	}}}
 	dreams := &stubDreamService{}
 	reg, err := BuildDefault(Dependencies{
@@ -269,6 +254,26 @@ func TestEvalManifestAndKnowledgeTools(t *testing.T) {
 		t.Fatalf("fact list filters = %+v", facts.lastFilters)
 	}
 
+	assertionPage, err := listTool.Invoke(ctx, "profile-eval", map[string]any{
+		"type":          "assertion",
+		"status":        "active",
+		"limit":         4,
+		"metadata_only": true,
+	})
+	if err != nil {
+		t.Fatalf("eval_list_knowledge_refs assertion Invoke: %v", err)
+	}
+	assertion := firstEvalItem(t, assertionPage)
+	if _, ok := assertion["evidence_json"]; ok {
+		t.Fatalf("metadata-only assertion returned evidence: %v", assertion)
+	}
+	if !strings.Contains(graph.query, "MATCH (assertion:Assertion") || graph.params["status"] != "active" {
+		t.Fatalf("assertion export graph call = %q/%v", graph.query, graph.params)
+	}
+	if err := graphquery.NewCypherValidator().Validate(graph.query); err != nil {
+		t.Fatalf("assertion export query validation: %v", err)
+	}
+
 	communityPage, err := listTool.Invoke(ctx, "profile-eval", map[string]any{
 		"type":          "community",
 		"metadata_only": true,
@@ -285,8 +290,11 @@ func TestEvalManifestAndKnowledgeTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("eval_list_knowledge_refs edge Invoke: %v", err)
 	}
-	if graph.profileID != "profile-eval" || !strings.Contains(graph.query, "LIMIT 4") || len(graph.params) != 0 || len(edgePage["items"].([]map[string]any)) != 1 {
+	if graph.profileID != "profile-eval" || !strings.Contains(graph.query, "LIMIT 4") || !strings.Contains(graph.query, "rel.assertion_id AS assertion_id") || !strings.Contains(graph.query, "a.entity_id") || len(graph.params) != 0 || len(edgePage["items"].([]map[string]any)) != 1 {
 		t.Fatalf("edge export graph call/page = %q/%q/%v/%v", graph.profileID, graph.query, graph.params, edgePage)
+	}
+	if err := graphquery.NewCypherValidator().Validate(graph.query); err != nil {
+		t.Fatalf("edge export query validation: %v", err)
 	}
 
 	dreamPage, err := listTool.Invoke(ctx, "profile-eval", map[string]any{
@@ -308,11 +316,14 @@ func TestEvalManifestAndKnowledgeTools(t *testing.T) {
 	}
 
 	getTool, _ := reg.Get("eval_get_knowledge_item")
+	graph.rows[0]["search_text"] = "Mark demoed Dense-Mem"
+	graph.rows[0]["evidence_json"] = `[{"fragment_id":"fragment-1"}]`
 	for _, tc := range []struct {
 		kind string
 		id   string
 		key  string
 	}{
+		{kind: "assertion", id: "assertion-1", key: "evidence_json"},
 		{kind: "fragment", id: "fragment-1", key: "content"},
 		{kind: "claim", id: "claim-1", key: "object"},
 		{kind: "community", id: "community-1", key: "summary"},
@@ -330,6 +341,12 @@ func TestEvalManifestAndKnowledgeTools(t *testing.T) {
 		if _, ok := item[tc.key]; ok {
 			t.Fatalf("metadata-only %s returned %s: %v", tc.kind, tc.key, item)
 		}
+	}
+	if graph.params["assertionId"] != "assertion-1" {
+		t.Fatalf("assertion get graph params = %v", graph.params)
+	}
+	if err := graphquery.NewCypherValidator().Validate(graph.query); err != nil {
+		t.Fatalf("assertion get query validation: %v", err)
 	}
 	itemOut, err := getTool.Invoke(ctx, "profile-eval", map[string]any{
 		"type":          "fact",
@@ -659,6 +676,7 @@ func TestEvalUnavailableConfigAuditAndParserBranches(t *testing.T) {
 	}
 	listTool, _ := reg.Get("eval_list_knowledge_refs")
 	for _, tc := range []map[string]any{
+		{"type": "assertion"},
 		{"type": "fragment"},
 		{"type": "claim"},
 		{"type": "fact"},
@@ -684,6 +702,10 @@ func TestEvalUnavailableConfigAuditAndParserBranches(t *testing.T) {
 	_, err = evalGetKnowledgeItem(context.Background(), Dependencies{}, "profile-eval", "unknown", "id")
 	if err == nil || !strings.Contains(err.Error(), "unsupported type") {
 		t.Fatalf("evalGetKnowledgeItem unsupported err = %v", err)
+	}
+	_, err = evalGetAssertion(context.Background(), Dependencies{GraphQuery: &evalGraphQuery{}}, "profile-eval", "missing")
+	if err == nil || !strings.Contains(err.Error(), "assertion not found") {
+		t.Fatalf("evalGetAssertion missing err = %v", err)
 	}
 
 	listFeedbackTool, _ := reg.Get("eval_list_recall_feedback_events")

@@ -80,6 +80,8 @@ func TestRecallSearchersConvertRowsAndWrapErrors(t *testing.T) {
 	require.Contains(t, reader.lastQuery, "OVERLAYS")
 	require.Contains(t, reader.lastQuery, "incoming_overlay_count")
 	require.Contains(t, reader.lastQuery, "outgoing_overlay_count")
+	require.Contains(t, reader.lastQuery, "DECOMPOSED_INTO")
+	require.Contains(t, reader.lastQuery, ":Assertion {team_id: $profileId, status: 'active'}")
 
 	reader = &unitRecallScopedReader{rows: []map[string]any{{
 		"claim_id":    "claim-1",
@@ -92,6 +94,7 @@ func TestRecallSearchersConvertRowsAndWrapErrors(t *testing.T) {
 	require.Len(t, claims, 1)
 	require.Equal(t, "claim-1", claims[0].ClaimID)
 	require.InDelta(t, 0.5, claims[0].Score, 1e-9)
+	require.Contains(t, reader.lastQuery, "DECOMPOSED_INTO")
 
 	reader = &unitRecallScopedReader{err: errors.New("read failed")}
 	_, err = NewFactSearcher(reader).SearchActive(context.Background(), "profile-1", "alice", 5)
@@ -191,6 +194,8 @@ func TestCommunityExpanderSkipsEmptyAndAcceptsStaleCommunities(t *testing.T) {
 	require.Equal(t, []string{"profile-1", "profile-1"}, reader.profiles)
 	require.Contains(t, reader.queries[0], "MATCH (c:Community {team_id: $profileId})")
 	require.Contains(t, reader.queries[1], "UNWIND $communityIds AS communityId")
+	require.Contains(t, reader.queries[1], "coalesce(n.status, 'active') = 'active'", "community recall must exclude quarantined evidence")
+	require.Contains(t, reader.queries[1], "DECOMPOSED_INTO", "community recall must suppress migrated legacy members")
 	require.Equal(t, 10, reader.params[0]["limit"])
 	require.Equal(t, []string{"c-stale"}, reader.params[1]["communityIds"])
 	require.Equal(t, 5, reader.params[1]["membersPerCommunity"])

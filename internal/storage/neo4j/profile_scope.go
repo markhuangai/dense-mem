@@ -38,11 +38,10 @@ type ProfileScopeEnforcer interface {
 	ScopedWriteTx(ctx context.Context, profileID string, fn func(tx neo4j.ManagedTransaction) error) error
 }
 
-// FragmentActiveFilter is the Cypher WHERE-clause expression that excludes
-// retracted SourceFragment nodes from all read/dedupe queries. It uses
-// coalesce so that legacy nodes with no status property are treated as active
-// (AC-44).
-const FragmentActiveFilter = "coalesce(sf.status,'active') <> 'retracted'"
+// FragmentActiveFilter is the Cypher WHERE-clause expression that admits only
+// active SourceFragment nodes. Legacy nodes with no status remain active, while
+// quarantined and retracted evidence stay unavailable to model-backed readers.
+const FragmentActiveFilter = "coalesce(sf.status,'active') = 'active'"
 
 // profileScopeEnforcer enforces team_id scoping on all Neo4j operations.
 // It injects profileId into queries and validates that queries contain the required placeholder.

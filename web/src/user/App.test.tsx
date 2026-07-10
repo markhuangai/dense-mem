@@ -4,32 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UserPortalApp } from "./App";
 import { GraphNode, GraphSnapshot, RecallHit, UserKey, UserSession } from "./api";
 
-vi.mock("react-force-graph-2d", async () => {
-  const React = await import("react");
-  return {
-    default: React.forwardRef(function MockForceGraph(props: {
-      graphData?: { nodes?: Array<{ key: string; title: string }> };
-      onNodeClick?: (node: { key: string; title: string }) => void;
-    }, ref) {
-      React.useImperativeHandle(ref, () => ({
-        d3Force: () => ({ distance: () => undefined }),
-        d3ReheatSimulation: () => undefined,
-        zoomToFit: () => undefined,
-      }));
-      const nodes = props.graphData?.nodes ?? [];
-      return (
-        <div data-testid="force-graph">
-          {nodes.map((node) => (
-            <button key={node.key} type="button" onClick={() => props.onNodeClick?.(node)}>
-              {node.title}
-            </button>
-          ))}
-        </div>
-      );
-    }),
-  };
-});
-
 const baseSession: UserSession = {
   team: {
     id: "11111111-1111-4111-8111-111111111111",
@@ -290,7 +264,7 @@ describe("UserPortalApp", () => {
     expect((await screen.findAllByText("Alice works_on project-x")).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByLabelText("Graph totals")).toHaveTextContent("2");
     expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("Select a node");
-    await userEvent.click(within(screen.getByTestId("force-graph")).getByRole("button", { name: "Alice works_on project-x" }));
+	await userEvent.click(within(screen.getByTestId("sigma-graph")).getByRole("button", { name: "Alice works_on project-x" }));
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith("/ui/api/node-detail?type=fact&id=fact-1", expect.any(Object));
     });
@@ -298,18 +272,36 @@ describe("UserPortalApp", () => {
     expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("0.940");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment%2Cdream&depth=2",
+		"/ui/api/graph?scope=overview&types=entity%2Cvalue%2Cfact%2Cclaim%2Cfragment%2Cdream%2Ccommunity&depth=2&include_superseded=true",
         expect.any(Object),
       );
     });
-    await userEvent.click(within(controls).getByRole("checkbox", { name: "Superseded" }));
-    await userEvent.click(within(controls).getByRole("button", { name: "Refresh" }));
+	expect(within(controls).getByText(/all lifecycle states are included/i)).toBeInTheDocument();
+	await userEvent.click(within(controls).getByRole("button", { name: "Refresh" }));
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment%2Cdream&depth=2&include_superseded=true",
+		"/ui/api/graph?scope=overview&types=entity%2Cvalue%2Cfact%2Cclaim%2Cfragment%2Cdream%2Ccommunity&depth=2&include_superseded=true",
         expect.any(Object),
       );
     });
+  });
+
+  it("keeps graph controls available without initializing a renderer for an empty team graph", async () => {
+    mockUserFetch(baseSession, [], {
+      graphSnapshot: { ...overviewGraph, nodes: [], edges: [] },
+    });
+    sessionStorage.setItem("denseMem.userApiKey", "dm_read");
+
+    render(<UserPortalApp />);
+    await screen.findByText("Research Team");
+    await userEvent.click(screen.getByRole("button", { name: /graph/i }));
+
+    const controls = await screen.findByLabelText("Graph controls");
+    expect(screen.getByText("No graph nodes")).toBeInTheDocument();
+    expect(screen.queryByTestId("sigma-graph")).not.toBeInTheDocument();
+    for (const name of ["Entity", "Value", "Fact", "Claim", "Fragment", "Dream", "Community"]) {
+      expect(within(controls).getByRole("checkbox", { name })).toBeChecked();
+    }
   });
 
   it("refreshes selected graph node details when the graph reloads", async () => {
@@ -330,7 +322,7 @@ describe("UserPortalApp", () => {
     await userEvent.click(screen.getByRole("button", { name: /graph/i }));
     const controls = await screen.findByLabelText("Graph controls");
 
-    await userEvent.click(within(screen.getByTestId("force-graph")).getByRole("button", { name: "Alice works_on project-x" }));
+	await userEvent.click(within(screen.getByTestId("sigma-graph")).getByRole("button", { name: "Alice works_on project-x" }));
     await waitFor(() => {
       expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("0.940");
     });
@@ -354,17 +346,16 @@ describe("UserPortalApp", () => {
     const controls = await screen.findByLabelText("Graph controls");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment%2Cdream&depth=2",
+		"/ui/api/graph?scope=overview&types=entity%2Cvalue%2Cfact%2Cclaim%2Cfragment%2Cdream%2Ccommunity&depth=2&include_superseded=true",
         expect.any(Object),
       );
     });
     const graphCallCount = () => fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/ui/api/graph")).length;
     const beforeDisabledRefresh = graphCallCount();
 
-    await userEvent.click(within(controls).getByRole("checkbox", { name: "Fact" }));
-    await userEvent.click(within(controls).getByRole("checkbox", { name: "Claim" }));
-    await userEvent.click(within(controls).getByRole("checkbox", { name: "Fragment" }));
-    await userEvent.click(within(controls).getByRole("checkbox", { name: "Dream" }));
+	for (const name of ["Entity", "Value", "Fact", "Claim", "Fragment", "Dream", "Community"]) {
+	  await userEvent.click(within(controls).getByRole("checkbox", { name }));
+	}
 
     const refresh = within(controls).getByRole("button", { name: "Refresh" });
     expect(refresh).toBeDisabled();
@@ -383,7 +374,7 @@ describe("UserPortalApp", () => {
     await screen.findByRole("listbox", { name: "Recall result list" });
     await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
 
-    expect(await screen.findByTestId("force-graph")).toHaveTextContent("Alice works_on project-x");
+	expect(await screen.findByTestId("sigma-graph")).toHaveTextContent("Alice works_on project-x");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         "/ui/api/graph?scope=local&types=fact%2Cclaim%2Cfragment%2Cdream&anchor_type=fact&anchor_id=fact-1&depth=2&limit=48",

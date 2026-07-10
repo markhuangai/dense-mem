@@ -105,6 +105,16 @@
   font-weight: 740;
 }
 
+.graph-all-state-note {
+  padding: 9px 10px;
+  color: var(--subtle);
+  background: var(--panel-muted);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .graph-canvas-panel {
   position: relative;
   display: grid;
@@ -137,6 +147,12 @@
 
 .graph-canvas canvas {
   display: block;
+}
+
+.graph-canvas > div,
+.graph-canvas .sigma-container {
+  width: 100%;
+  height: 100%;
 }
 
 .graph-stat-grid {
@@ -184,6 +200,12 @@
   color: var(--muted);
   font-size: 13px;
   line-height: 1.45;
+}
+
+.graph-edge-detail h3,
+.graph-edge-detail dd,
+.graph-node-detail dd {
+  overflow-wrap: anywhere;
 }
 
 .graph-preview {

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -204,9 +205,10 @@ func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
 	require.Contains(t, feedbackRateQuery, `min_over_time(densemem_recall_feedback_total{used="true"}[1h]) unless densemem_recall_feedback_total{used="true"} offset 1h`)
 	require.Contains(t, feedbackRateQuery, `densemem_recall_feedback_total{used="true"} >= bool 0`)
 	require.Contains(t, feedbackRateQuery, `count_over_time(densemem_recall_feedback_total{used="true"}[1h]) < bool on(job, instance) group_left() count_over_time(up[1h])`)
-	require.Contains(t, feedbackRateQuery, `0 * increase(densemem_recall_feedback_total{used="true"}[1h])`)
+	require.Contains(t, feedbackRateQuery, `(increase(densemem_recall_feedback_total{used="true"}[1h]) or (0 * min_over_time(densemem_recall_feedback_total{used="true"}[1h])))`)
+	require.Contains(t, feedbackRateQuery, `or (0 * min_over_time(densemem_recall_feedback_total{used="true"}[1h]))`)
 	require.Contains(t, feedbackRateQuery, `min_over_time(densemem_recall_feedback_total[1h]) unless densemem_recall_feedback_total offset 1h`)
-	require.Contains(t, feedbackRateQuery, `0 * increase(densemem_recall_feedback_total[1h])`)
+	require.Contains(t, feedbackRateQuery, `(increase(densemem_recall_feedback_total[1h]) or (0 * min_over_time(densemem_recall_feedback_total[1h])))`)
 	qualityQuery := telemetrySparseHistogramAverage("densemem_recall_feedback_quality_score", TelemetryScope{}, nil, nil, "1h", 100)
 	require.Contains(t, qualityQuery, `min_over_time(densemem_recall_feedback_quality_score_sum[1h]) unless densemem_recall_feedback_quality_score_sum offset 1h`)
 	require.Contains(t, qualityQuery, `min_over_time(densemem_recall_feedback_quality_score_count[1h]) unless densemem_recall_feedback_quality_score_count offset 1h`)
@@ -231,8 +233,9 @@ func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
 		return false
 	})
 	require.Equal(t, `1000 * histogram_quantile(0.95, sum(rate(densemem_recall_duration_seconds_bucket[1m])) by (le))`, telemetryRangeHistogramQuantile("densemem_recall_duration_seconds", "", "", "1m", 0.95, 1000))
-	require.Contains(t, telemetryPromotionRate(TelemetryScope{}, nil, "1h"), `min_over_time(densemem_promotion_outcome_total{outcome="promoted"}[1h])`)
+	require.Contains(t, telemetryPromotionRate(TelemetryScope{}, nil, "1h"), `min_over_time(densemem_assertion_transition_total{event_type="promoted"}[1h])`)
 	require.Contains(t, telemetryPromotionRate(TelemetryScope{}, nil, "1h"), `or vector(0)`)
+	require.Contains(t, telemetryPromotionRate(TelemetryScope{}, nil, "1h"), `clamp_min(`)
 	require.Subset(t, telemetryQuerySpecIDs(telemetryWindowedCardSpecs(TelemetryScope{}, nil, "1h")), []string{
 		"embedding_requests",
 		"embedding_errors",
@@ -370,6 +373,101 @@ func TestPrometheusTelemetryService_LogsQueryFailure(t *testing.T) {
 	require.Contains(t, logger.attrs, "window=15m")
 	require.Contains(t, logger.attrs, "scope=system")
 	require.Contains(t, logger.attrs, "prometheus_query=sum(increase(densemem_http_requests_total[15m]))")
+}
+
+func TestPrometheusTelemetryService_UsesExactAssertionLifecycleLedger(t *testing.T) {
+	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/query":
+			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"value":[1770000000,"42.25"]}]}}`))
+		case "/api/v1/query_range":
+			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"values":[[1770000000,"1"]]}]}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer prom.Close()
+
+	teamID := uuid.MustParse("11111111-1111-4111-8111-111111111111")
+	profileID := uuid.MustParse("22222222-2222-4222-8222-222222222222")
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	counter := &assertionTransitionCountStub{counts: map[string]int64{
+		"proposed":         12,
+		"validated":        3,
+		"promoted":         6,
+		"rejected":         1,
+		"review_requested": 2,
+		"quarantined":      3,
+		"review_resolved":  4,
+		"corrected":        1,
+		"reversed":         1,
+	}}
+	svc := NewPrometheusTelemetryService(prom.URL, time.Second)
+	svc.now = func() time.Time { return now }
+	svc.SetAssertionTransitionCountReader(counter)
+
+	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{
+		Window: "15m", Scope: "self", TeamID: &teamID, ProfileID: &profileID,
+	})
+	require.NoError(t, err)
+	require.True(t, snapshot.Available)
+	require.Equal(t, teamID.String(), counter.teamID)
+	require.Equal(t, profileID.String(), counter.actorProfileID)
+	require.Equal(t, now.Add(-15*time.Minute), counter.from)
+	require.Equal(t, now, counter.to)
+	require.Equal(t, 12.0, telemetrySpecByID(snapshot.WindowedCards, "assertion_proposals").Value)
+	require.Equal(t, 6.0, telemetrySpecByID(snapshot.WindowedCards, "promotions").Value)
+	require.InDelta(t, 75, telemetrySpecByID(snapshot.WindowedCards, "validation_rate").Value, 0.000001)
+	require.InDelta(t, 200.0/3, telemetrySpecByID(snapshot.WindowedCards, "promotion_rate").Value, 0.000001)
+	require.InDelta(t, 50, telemetrySpecByID(snapshot.WindowedCards, "fact_yield_rate").Value, 0.000001)
+	require.InDelta(t, 100.0/12, telemetrySpecByID(snapshot.WindowedCards, "rejection_rate").Value, 0.000001)
+	require.InDelta(t, 100.0/6, telemetrySpecByID(snapshot.WindowedCards, "review_rate").Value, 0.000001)
+	require.InDelta(t, 25, telemetrySpecByID(snapshot.WindowedCards, "quarantine_rate").Value, 0.000001)
+	require.InDelta(t, 50, telemetrySpecByID(snapshot.WindowedCards, "correction_rate").Value, 0.000001)
+	require.InDelta(t, 100.0/6, telemetrySpecByID(snapshot.WindowedCards, "reversal_rate").Value, 0.000001)
+}
+
+func TestPrometheusTelemetryService_FailsClosedWhenLifecycleLedgerFails(t *testing.T) {
+	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"value":[1770000000,"42"]}]}}`))
+	}))
+	defer prom.Close()
+
+	logger := &captureTelemetryLogger{}
+	svc := NewPrometheusTelemetryServiceWithLogger(prom.URL, time.Second, logger)
+	svc.SetAssertionTransitionCountReader(&assertionTransitionCountStub{err: errors.New("ledger unavailable")})
+	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m", Scope: "system"})
+	require.NoError(t, err)
+	require.False(t, snapshot.Available)
+	require.Equal(t, "telemetry lifecycle ledger query failed", snapshot.Message)
+	require.Equal(t, "telemetry lifecycle ledger query failed", logger.message)
+	require.ErrorContains(t, logger.err, "ledger unavailable")
+	require.Contains(t, logger.attrs, "query_kind=ledger")
+	require.Contains(t, logger.attrs, "query_id=assertion_lifecycle")
+
+	var nilService *PrometheusTelemetryService
+	nilService.SetAssertionTransitionCountReader(&assertionTransitionCountStub{})
+	cards := []TelemetryCard{{ID: "promotion_rate", Value: 99}, {ID: "http_requests", Value: 7}}
+	overlayAssertionLifecycleCards(cards, nil)
+	require.Equal(t, 0.0, cards[0].Value)
+	require.Equal(t, 7.0, cards[1].Value)
+}
+
+type assertionTransitionCountStub struct {
+	counts         map[string]int64
+	err            error
+	teamID         string
+	actorProfileID string
+	from           time.Time
+	to             time.Time
+}
+
+func (s *assertionTransitionCountStub) CountAssertionTransitions(_ context.Context, teamID, actorProfileID string, from, to time.Time) (map[string]int64, error) {
+	s.teamID = teamID
+	s.actorProfileID = actorProfileID
+	s.from = from
+	s.to = to
+	return s.counts, s.err
 }
 
 type captureTelemetryLogger struct {

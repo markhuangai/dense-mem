@@ -44,6 +44,16 @@ func TestGenerator_AISafeExcludesRuntimeOnlyRoutes(t *testing.T) {
 	if _, present := paths["/api/v1/tools/remember"]; !present {
 		t.Errorf("ai-safe spec must include /api/v1/tools/remember")
 	}
+	for _, path := range []string{"/api/v1/tools/remember", "/api/v1/tools/get_memory_placement", "/api/v1/tools/resolve_memory_placement"} {
+		if _, present := paths[path]; !present {
+			t.Errorf("ai-safe spec must include %s", path)
+		}
+	}
+	for _, path := range []string{"/api/v1/tools/dispute_memory_placement", "/api/v1/tools/import_memories", "/api/v1/tools/reflect_memories", "/api/v1/tools/confirm_memory"} {
+		if _, present := paths[path]; present {
+			t.Errorf("ai-safe spec must not include removed path %s", path)
+		}
+	}
 }
 
 func TestGenerator_FullIncludesRuntimeOnlyRoutes(t *testing.T) {

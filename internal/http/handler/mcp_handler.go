@@ -77,7 +77,7 @@ func (h *MCPHandler) HandlePost(c echo.Context) error {
 		team.Name = resolvedTeam.Name
 		team.Description = resolvedTeam.Description
 	}
-	server := mcp.NewServerWithScopesTeamContextAndRuntimeConfig(h.reg, profileID.String(), principal.Scopes, team, h.logger, h.recallFeedbackConfig)
+	server := mcp.NewServerWithScopesTeamContextRoleAndRuntimeConfig(h.reg, profileID.String(), principal.Scopes, team, principal.Role, h.logger, h.recallFeedbackConfig)
 	response := server.HandlePayloadResult(ctx, payload)
 	if !response.Respond {
 		return c.NoContent(http.StatusAccepted)

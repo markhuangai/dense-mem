@@ -3,11 +3,16 @@ package claimservice
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSupportingFragmentQueryExcludesQuarantinedEvidence(t *testing.T) {
+	require.True(t, strings.Contains(loadSupportingFragmentsQuery, "coalesce(sf.status, 'active') = 'active'"))
+}
 
 // stubScopedReader implements supportedFragmentsReader for unit tests.
 // Rows are keyed by profileID so cross-profile isolation scenarios can be

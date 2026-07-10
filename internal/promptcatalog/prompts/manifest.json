@@ -21,5 +21,29 @@
       }
     ],
     "template": "export_memory_as_agent_skill.md"
+  },
+  {
+    "name": "migrate_legacy_memory_v2",
+    "title": "Migrate Legacy Memory to Semantic Edges",
+    "description": "Guide a manager LLM through one user-confirmed, independently verified legacy-memory decomposition into atomic semantic assertions.",
+    "required_role": "manager",
+    "arguments": [
+      {
+        "name": "legacy_type",
+        "description": "Legacy memory type: fragment, claim, fact, or dream.",
+        "required": true
+      },
+      {
+        "name": "legacy_id",
+        "description": "Team-scoped legacy memory ID.",
+        "required": true
+      },
+      {
+        "name": "legacy_content",
+        "description": "Exact legacy memory content when already available.",
+        "required": false
+      }
+    ],
+    "template": "migrate_legacy_memory_v2.md"
   }
 ]

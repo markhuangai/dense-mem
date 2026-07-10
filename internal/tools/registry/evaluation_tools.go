@@ -71,12 +71,12 @@ func evalGetManifestTool(deps Dependencies) Tool {
 func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "eval_list_knowledge_refs",
-		Description: "Page through team-scoped facts, claims, fragments, communities, dreams, or graph edges for evaluation. Content is included unless metadata_only=true.",
+		Description: "Page through team-scoped assertions, facts, claims, fragments, communities, dreams, or graph edges for evaluation. Content is included unless metadata_only=true.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"type"},
 			"properties": map[string]any{
-				"type":          schemaEnum([]string{"fragment", "claim", "fact", "community", "dream", "edge"}),
+				"type":          schemaEnum([]string{"assertion", "fragment", "claim", "fact", "community", "dream", "edge"}),
 				"limit":         map[string]any{"type": "integer", "minimum": 1, "maximum": 500},
 				"cursor":        schemaString("Opaque cursor from a previous response.", 512),
 				"status":        schemaString("Optional lifecycle status filter.", 64),
@@ -96,6 +96,8 @@ func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 			switch kind {
 			case "fragment":
 				return evalListFragments(ctx, deps, profileID, input, limit, metadataOnly)
+			case "assertion":
+				return evalListAssertions(ctx, deps, profileID, input, limit, metadataOnly)
 			case "claim":
 				return evalListClaims(ctx, deps, profileID, input, limit, metadataOnly)
 			case "fact":
@@ -116,12 +118,12 @@ func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 func evalGetKnowledgeItemTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "eval_get_knowledge_item",
-		Description: "Fetch one team-scoped fact, claim, fragment, community, or dream with its evaluation metadata.",
+		Description: "Fetch one team-scoped assertion, fact, claim, fragment, community, or dream with its evaluation metadata.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"type", "id"},
 			"properties": map[string]any{
-				"type":          schemaEnum([]string{"fragment", "claim", "fact", "community", "dream"}),
+				"type":          schemaEnum([]string{"assertion", "fragment", "claim", "fact", "community", "dream"}),
 				"id":            schemaString("Knowledge item ID.", 256),
 				"metadata_only": map[string]any{"type": "boolean"},
 			},
@@ -514,10 +516,18 @@ func evalListEdges(ctx context.Context, deps Dependencies, profileID string, lim
 MATCH (a {team_id: $profileId})-[rel]->(b {team_id: $profileId})
 WHERE rel.team_id = $profileId
 RETURN type(rel) AS edge_type,
+       rel.assertion_id AS assertion_id,
+       rel.predicate_key AS predicate_key,
+       rel.tier AS tier,
+       rel.status AS status,
+       rel.policy_family AS policy_family,
+       coalesce(rel.semantic_projection, false) AS semantic_projection,
        labels(a) AS from_labels,
-       coalesce(a.fact_id, a.claim_id, a.fragment_id, a.community_id, '') AS from_id,
+       coalesce(a.entity_id, a.value_id, a.assertion_id, a.fact_id, a.claim_id, a.fragment_id, a.dream_id, toString(a.community_id), '') AS from_id,
+       coalesce(a.graph_key, '') AS from_key,
        labels(b) AS to_labels,
-       coalesce(b.fact_id, b.claim_id, b.fragment_id, b.community_id, '') AS to_id
+       coalesce(b.entity_id, b.value_id, b.assertion_id, b.fact_id, b.claim_id, b.fragment_id, b.dream_id, toString(b.community_id), '') AS to_id,
+       coalesce(b.graph_key, '') AS to_key
 LIMIT %d`, limit)
 	res, err := deps.GraphQuery.Execute(ctx, profileID, query, nil)
 	if err != nil {
@@ -528,6 +538,8 @@ LIMIT %d`, limit)
 
 func evalGetKnowledgeItem(ctx context.Context, deps Dependencies, profileID, kind, id string) (map[string]any, error) {
 	switch kind {
+	case "assertion":
+		return evalGetAssertion(ctx, deps, profileID, id)
 	case "fragment":
 		if deps.FragmentGet == nil {
 			return nil, ErrToolUnavailable
@@ -742,6 +754,9 @@ func claimItems(claims []*domain.Claim, metadataOnly bool) ([]map[string]any, er
 
 func stripEvalContent(kind string, item map[string]any) {
 	switch kind {
+	case "assertion":
+		delete(item, "search_text")
+		delete(item, "evidence_json")
 	case "fragment":
 		delete(item, "content")
 	case "claim", "fact":
@@ -766,6 +781,10 @@ func recallHitRef(rank int, hit recallservice.RecallHit) map[string]any {
 		"keyword_rank":  hit.KeywordRank,
 	}
 	switch {
+	case hit.Assertion != nil:
+		ref["type"] = "assertion"
+		ref["id"] = hit.Assertion.AssertionID
+		ref["status"] = string(hit.Assertion.Status)
 	case hit.Fact != nil:
 		ref["type"] = "fact"
 		ref["id"] = hit.Fact.FactID
@@ -824,7 +843,7 @@ func contextEvidenceRefs(items []contextservice.ContextItem) []map[string]any {
 
 func evalRefArraySchema(withGrade bool) map[string]any {
 	properties := map[string]any{
-		"type": schemaEnum([]string{"fragment", "claim", "fact", "community", "dream"}),
+		"type": schemaEnum([]string{"assertion", "fragment", "claim", "fact", "community", "dream"}),
 		"id":   schemaString("Reference ID.", 256),
 	}
 	required := []string{"type", "id"}

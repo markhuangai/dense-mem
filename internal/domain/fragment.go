@@ -12,6 +12,8 @@ const (
 	FragmentStatusActive FragmentStatus = "active"
 	// FragmentStatusRetracted marks a fragment that has been withdrawn but not hard-deleted.
 	FragmentStatusRetracted FragmentStatus = "retracted"
+	// FragmentStatusQuarantined preserves unsafe evidence without activating it for model-backed retrieval.
+	FragmentStatusQuarantined FragmentStatus = "quarantined"
 )
 
 // SourceType represents the origin type of a Fragment.
@@ -51,7 +53,7 @@ type Fragment struct {
 	// Classification holds arbitrary key-value labels (e.g. topic, sentiment) produced
 	// during ingestion. Claims propagate these labels for upstream filtering.
 	Classification map[string]any `json:"classification,omitempty"`
-	// Status tracks the lifecycle state of the fragment (active or retracted).
+	// Status tracks whether the fragment is active, quarantined, or retracted.
 	// Defaults to active on creation. Hard-delete behavior is handled separately.
 	Status FragmentStatus `json:"status,omitempty"`
 	// RecordedTo is retained for backward-compatible responses on legacy rows.

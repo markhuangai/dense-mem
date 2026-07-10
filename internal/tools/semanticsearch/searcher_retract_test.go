@@ -30,8 +30,10 @@ func TestQueryVectorIndex_RetractedFragmentsFiltered(t *testing.T) {
 	_, err := s.QueryVectorIndex(context.Background(), "p1", []float32{0.1, 0.2, 0.3}, 10)
 	require.NoError(t, err)
 
-	assert.Contains(t, reader.capturedQuery, "coalesce(f.status,'active') <> 'retracted'",
+	assert.Contains(t, reader.capturedQuery, "coalesce(f.status,'active') = 'active'",
 		"QueryVectorIndex must include the retract filter in the WHERE clause (AC-44)")
+	assert.Contains(t, reader.capturedQuery, "DECOMPOSED_INTO",
+		"QueryVectorIndex must suppress legacy fragments replaced by active assertions")
 }
 
 // TestQueryVectorIndex_RetractedNodeNotReturned verifies the end-to-end
@@ -50,7 +52,7 @@ func TestQueryVectorIndex_RetractedNodeNotReturned(t *testing.T) {
 
 	assert.Equal(t, "frag-active", got[0].ID, "active fragment must be returned")
 
-	// The WHERE clause must reference the retract guard.
-	assert.Contains(t, reader.capturedQuery, "'retracted'",
-		"query must reference 'retracted' status to satisfy AC-44")
+	// The WHERE clause admits only active evidence, excluding quarantine too.
+	assert.Contains(t, reader.capturedQuery, "= 'active'",
+		"query must require active status")
 }

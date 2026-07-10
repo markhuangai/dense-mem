@@ -26,10 +26,6 @@ package recallservice
 import (
 	"context"
 	"errors"
-	"fmt"
-	"sort"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -66,7 +62,10 @@ const (
 	// TierValidatedClaim is the recall tier for validated Claim nodes.
 	TierValidatedClaim = "1.5"
 	// TierFragment is the recall tier for SourceFragment nodes (raw evidence).
-	TierFragment = "2"
+	TierFragment           = "2"
+	TierAssertionFact      = "0.75"
+	TierAssertionValidated = "1.25"
+	TierAssertionCandidate = "1.75"
 
 	// DefaultRecallValidatedClaimWeight scales validated-claim scores so that
 	// active facts outrank equivalent claims under the default weight.
@@ -91,6 +90,8 @@ var ErrEmbeddingUnavailable = errors.New("recall: embedding provider unavailable
 // ErrKeywordUnavailable is returned when the keyword branch fails.
 var ErrKeywordUnavailable = errors.New("recall: keyword search unavailable")
 
+var ErrAssertionUnavailable = errors.New("recall: semantic assertion search unavailable")
+
 // RecallRequest is the validated input to Recall. Validator tags are used by
 // HTTP handlers via the shared BindAndValidate middleware; the service also
 // enforces the clamp + non-empty invariants defensively.
@@ -114,17 +115,66 @@ type RecallRequest struct {
 // SemanticRank, KeywordRank, and FinalScore are populated for TierFragment hits
 // and preserved for backward compatibility.
 type RecallHit struct {
-	Fragment     *domain.Fragment `json:"fragment,omitempty"`
-	Claim        *domain.Claim    `json:"claim,omitempty"` // tier 1.5
-	Fact         *domain.Fact     `json:"fact,omitempty"`  // tier 1
-	Tier         string           `json:"tier,omitempty"`
-	Score        float64          `json:"score,omitempty"`
-	SemanticRank int              `json:"semantic_rank"` // 1-based; 0 if absent from that branch
-	KeywordRank  int              `json:"keyword_rank"`  // 1-based; 0 if absent from that branch
-	FinalScore   float64          `json:"final_score"`
+	Fragment     *domain.Fragment  `json:"fragment,omitempty"`
+	Claim        *domain.Claim     `json:"claim,omitempty"` // tier 1.5
+	Fact         *domain.Fact      `json:"fact,omitempty"`  // tier 1
+	Assertion    *domain.Assertion `json:"assertion,omitempty"`
+	Paths        []SemanticPath    `json:"paths,omitempty"`
+	Frontier     []FrontierHint    `json:"frontier,omitempty"`
+	Tier         string            `json:"tier,omitempty"`
+	Score        float64           `json:"score,omitempty"`
+	SemanticRank int               `json:"semantic_rank"` // 1-based; 0 if absent from that branch
+	KeywordRank  int               `json:"keyword_rank"`  // 1-based; 0 if absent from that branch
+	FinalScore   float64           `json:"final_score"`
 	fragmentID   string
 	temporalRank time.Time
 	sortTier     string
+}
+
+type SemanticNode struct {
+	Key  string `json:"key"`
+	ID   string `json:"id"`
+	Type string `json:"type"`
+	Name string `json:"name"`
+}
+
+type SemanticEdge struct {
+	AssertionID  string                 `json:"assertion_id"`
+	Source       string                 `json:"source"`
+	Target       string                 `json:"target"`
+	Relationship string                 `json:"relationship"`
+	Predicate    string                 `json:"predicate"`
+	Tier         domain.AssertionTier   `json:"tier"`
+	Status       domain.AssertionStatus `json:"status"`
+	Polarity     domain.ClaimPolarity   `json:"polarity"`
+	ValidFrom    *time.Time             `json:"valid_from,omitempty"`
+	ValidTo      *time.Time             `json:"valid_to,omitempty"`
+	EvidenceIDs  []string               `json:"evidence_ids,omitempty"`
+}
+
+type SemanticPath struct {
+	Nodes []SemanticNode `json:"nodes"`
+	Edges []SemanticEdge `json:"edges"`
+}
+
+type FrontierHint struct {
+	FromEntityID string               `json:"from_entity_id"`
+	Direction    string               `json:"direction"`
+	Relationship string               `json:"relationship"`
+	AssertionID  string               `json:"assertion_id"`
+	Neighbor     SemanticNode         `json:"neighbor"`
+	Tier         domain.AssertionTier `json:"tier"`
+}
+
+type AssertionRecallResult struct {
+	Assertion domain.Assertion
+	Score     float64
+	Path      SemanticPath
+	Frontier  []FrontierHint
+}
+
+type AssertionSearcher interface {
+	SearchActive(ctx context.Context, profileID, query string, embedding []float32, limit int, validAt, knownAt *time.Time) ([]AssertionRecallResult, error)
 }
 
 // RecallService is the external contract consumed by handlers and the tool
@@ -257,6 +307,12 @@ func WithCommunityExpander(expander CommunityExpander) RecallServiceOption {
 	}
 }
 
+func WithAssertionSearcher(searcher AssertionSearcher) RecallServiceOption {
+	return func(s *recallService) {
+		s.assertionSearcher = searcher
+	}
+}
+
 // recallService implements RecallService.
 type recallService struct {
 	embedder          EmbeddingProvider
@@ -269,6 +325,7 @@ type recallService struct {
 	claimGet          ClaimHydrator
 	claimWeight       float64 // weight applied to claim scores (default DefaultRecallValidatedClaimWeight)
 	communityExpander CommunityExpander
+	assertionSearcher AssertionSearcher
 	logger            observability.LogProvider
 	metrics           observability.DiscoverabilityMetrics
 }
@@ -345,132 +402,6 @@ func NewRecallServiceWithTiers(
 
 // Recall runs both branches in parallel, merges via RRF, and returns the top
 // `limit` hydrated fragments for the caller's profile.
-func (s *recallService) Recall(ctx context.Context, profileID string, req RecallRequest) ([]RecallHit, error) {
-	start := time.Now()
-	outcome := "ok"
-	resultCount := 0
-	defer func() {
-		observability.RecordRecall(ctx, s.metrics, float64(time.Since(start).Milliseconds()), resultCount, outcome)
-	}()
-
-	if profileID == "" {
-		outcome = "validation_error"
-		return nil, errors.New("recall: profile id is required")
-	}
-	query := strings.TrimSpace(req.Query)
-	if query == "" {
-		outcome = "validation_error"
-		return nil, errors.New("recall: query is required")
-	}
-
-	limit := clampLimit(req.Limit)
-	overfetch := recallOverfetchLimit(query, limit)
-
-	var (
-		wg      sync.WaitGroup
-		semHits []semanticsearch.SearchHit
-		semErr  error
-		kwHits  []keywordsearch.FragmentSearchResult
-		kwErr   error
-	)
-
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		vec, _, err := s.embedder.Embed(ctx, query)
-		if err != nil {
-			semErr = sanitizeEmbeddingError(err)
-			return
-		}
-		// vec is request-scoped: used only for this kNN query and never
-		// written to any store (AC-40 explicit).
-		hits, err := s.semantic.QueryVectorIndex(ctx, profileID, vec, overfetch)
-		if err != nil {
-			semErr = fmt.Errorf("recall: semantic branch: %w", err)
-			return
-		}
-		semHits = hits
-	}()
-	go func() {
-		defer wg.Done()
-		hits, err := s.keyword.SearchContent(ctx, profileID, query, nil, overfetch)
-		if err != nil {
-			kwErr = fmt.Errorf("recall: keyword branch: %w", err)
-			return
-		}
-		kwHits = hits
-	}()
-	wg.Wait()
-
-	if semErr != nil {
-		s.logEmbeddingError(semErr)
-		outcome = "embedding_unavailable"
-		return nil, ErrEmbeddingUnavailable
-	}
-	if kwErr != nil {
-		s.logKeywordError(kwErr)
-		outcome = "keyword_unavailable"
-		return nil, ErrKeywordUnavailable
-	}
-
-	filteredSem := filterSemanticFragments(semHits, profileID)
-	filteredKw := filterKeywordFragments(kwHits, profileID)
-	filteredSem = filterSemanticFragmentsByWindow(filteredSem, req.ValidAt, req.KnownAt)
-	filteredKw = filterKeywordFragmentsByWindow(filteredKw, req.ValidAt, req.KnownAt)
-
-	merged := rrfMerge(filteredSem, filteredKw)
-	applyIdentifierSpecificityAdjustments(query, merged)
-	applyCurrentnessAdjustments(query, merged)
-	applyCueAdjustments(query, merged)
-	applyAuthorityAdjustments(query, merged)
-	merged = filterNonPositiveRRFEntries(merged)
-
-	sort.SliceStable(merged, func(i, j int) bool {
-		if merged[i].FinalScore != merged[j].FinalScore {
-			return merged[i].FinalScore > merged[j].FinalScore
-		}
-		return merged[i].id < merged[j].id
-	})
-
-	// Collect tier-1 (active facts) and tier-1.5 (validated claims) enrichment.
-	tierHits := s.enrichTierHits(ctx, profileID, overfetch, req)
-
-	evidenceIntent := isEvidenceSourceQuery(query)
-
-	// Merge tier hits with unhydrated fragment candidates, sort by (tier ASC,
-	// score DESC), then hydrate only selected fragment winners.
-	all := append([]RecallHit{}, tierHits...)
-	for _, m := range merged {
-		sortTier := ""
-		if evidenceIntent {
-			sortTier = "0.5"
-		}
-		all = append(all, RecallHit{
-			Tier:         TierFragment,
-			Score:        m.FinalScore,
-			SemanticRank: m.SemanticRank,
-			KeywordRank:  m.KeywordRank,
-			FinalScore:   m.FinalScore,
-			fragmentID:   m.id,
-			sortTier:     sortTier,
-		})
-	}
-	sortRecallHits(all)
-
-	if len(all) > limit {
-		all = all[:limit]
-	}
-	all = s.hydrateSelectedFragments(ctx, profileID, all)
-	if req.UseCommunities && len(all) < limit {
-		all = append(all, s.enrichCommunityHits(ctx, profileID, limit-len(all), req, all)...)
-		sortRecallHits(all)
-		if len(all) > limit {
-			all = all[:limit]
-		}
-	}
-	resultCount = len(all)
-	return all, nil
-}
 
 func (s *recallService) hydrateSelectedFragments(ctx context.Context, profileID string, hits []RecallHit) []RecallHit {
 	entries := make([]rrfEntry, 0, len(hits))

@@ -11,12 +11,16 @@ import (
 
 // Canonical index names for Neo4j schema elements.
 const (
-	IndexFragmentContent   = "fragment_content_idx"
-	IndexFragmentEmbedding = "fragment_embedding_idx"
-	IndexFactPredicate     = "fact_predicate_idx"
-	IndexFactRecall        = "fact_recall_idx"
-	IndexClaimRecall       = "claim_recall_idx"
-	IndexDreamRecall       = "dream_recall_idx"
+	IndexFragmentContent    = "fragment_content_idx"
+	IndexFragmentEmbedding  = "fragment_embedding_idx"
+	IndexFactPredicate      = "fact_predicate_idx"
+	IndexFactRecall         = "fact_recall_idx"
+	IndexClaimRecall        = "claim_recall_idx"
+	IndexDreamRecall        = "dream_recall_idx"
+	IndexEntityRecall       = "entity_recall_idx"
+	IndexAssertionRecall    = "assertion_recall_idx"
+	IndexEntityEmbedding    = "entity_embedding_idx"
+	IndexAssertionEmbedding = "assertion_embedding_idx"
 
 	// Composite indexes for fragment deduplication and lookup (Unit 12)
 	IndexFragmentProfileIdempotency = "fragment_team_idempotency_idx"
@@ -217,6 +221,10 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 		"CREATE CONSTRAINT claim_claim_id_unique IF NOT EXISTS FOR (c:Claim) REQUIRE c.claim_id IS UNIQUE",
 		"CREATE CONSTRAINT fact_fact_id_unique IF NOT EXISTS FOR (f:Fact) REQUIRE f.fact_id IS UNIQUE",
 		"CREATE CONSTRAINT dream_dream_id_unique IF NOT EXISTS FOR (d:Dream) REQUIRE d.dream_id IS UNIQUE",
+		"CREATE CONSTRAINT entity_entity_id_unique IF NOT EXISTS FOR (e:Entity) REQUIRE e.entity_id IS UNIQUE",
+		"CREATE CONSTRAINT assertion_assertion_id_unique IF NOT EXISTS FOR (a:Assertion) REQUIRE a.assertion_id IS UNIQUE",
+		"CREATE CONSTRAINT value_value_id_unique IF NOT EXISTS FOR (v:Value) REQUIRE v.value_id IS UNIQUE",
+		"CREATE CONSTRAINT predicate_registry_id_unique IF NOT EXISTS FOR (p:Predicate) REQUIRE p.registry_id IS UNIQUE",
 	}
 
 	for _, cypher := range constraints {
@@ -304,6 +312,10 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 		"CREATE INDEX community_team_id_idx IF NOT EXISTS FOR (c:Community) ON (c.team_id)",
 		"CREATE INDEX dream_team_id_idx IF NOT EXISTS FOR (d:Dream) ON (d.team_id)",
 		"CREATE INDEX dreamrun_team_id_idx IF NOT EXISTS FOR (r:DreamCycleRun) ON (r.team_id)",
+		"CREATE INDEX entity_team_id_idx IF NOT EXISTS FOR (e:Entity) ON (e.team_id)",
+		"CREATE INDEX assertion_team_id_idx IF NOT EXISTS FOR (a:Assertion) ON (a.team_id)",
+		"CREATE INDEX value_team_id_idx IF NOT EXISTS FOR (v:Value) ON (v.team_id)",
+		"CREATE INDEX predicate_team_id_idx IF NOT EXISTS FOR (p:Predicate) ON (p.team_id)",
 	}
 
 	for _, cypher := range indexes {
@@ -328,6 +340,8 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 		"DROP INDEX fact_recall_idx IF EXISTS",
 		"DROP INDEX claim_recall_idx IF EXISTS",
 		"DROP INDEX dream_recall_idx IF EXISTS",
+		"DROP INDEX entity_recall_idx IF EXISTS",
+		"DROP INDEX assertion_recall_idx IF EXISTS",
 	}
 
 	for _, cypher := range legacyDrops {
@@ -368,6 +382,14 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 			"CREATE FULLTEXT INDEX dream_recall_idx IF NOT EXISTS FOR (d:Dream) ON EACH [d.hypothesis, d.what_if, d.possible_outcome, d.rationale]",
 			IndexDreamRecall,
 		},
+		{
+			"CREATE FULLTEXT INDEX entity_recall_idx IF NOT EXISTS FOR (e:Entity) ON EACH [e.canonical_name, e.normalized_name, e.aliases]",
+			IndexEntityRecall,
+		},
+		{
+			"CREATE FULLTEXT INDEX assertion_recall_idx IF NOT EXISTS FOR (a:Assertion) ON EACH [a.search_text, a.predicate_key]",
+			IndexAssertionRecall,
+		},
 	}
 
 	for _, idx := range fullTextIndexes {
@@ -381,20 +403,32 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 		s.logger.Info("ensured index", observability.String("name", idx.name))
 	}
 
-	// Create vector index with canonical name
-	vectorIndex := fmt.Sprintf(
-		"CREATE VECTOR INDEX fragment_embedding_idx IF NOT EXISTS FOR (sf:SourceFragment) ON sf.embedding OPTIONS {indexConfig: {`vector.dimensions`: %d, `vector.similarity_function`: 'cosine'}}",
-		s.embeddingDimensions,
-	)
-
-	_, err = s.client.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		_, err := tx.Run(ctx, vectorIndex, nil)
-		return nil, err
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create vector index: %w", err)
+	vectorIndexes := []struct {
+		name  string
+		label string
+		field string
+	}{
+		{IndexFragmentEmbedding, "SourceFragment", "embedding"},
+		{IndexEntityEmbedding, "Entity", "embedding"},
+		{IndexAssertionEmbedding, "Assertion", "embedding"},
 	}
-	s.logger.Info("ensured index", observability.String("name", "fragment_embedding_idx"))
+	for _, idx := range vectorIndexes {
+		vectorIndex := fmt.Sprintf(
+			"CREATE VECTOR INDEX %s IF NOT EXISTS FOR (n:%s) ON n.%s OPTIONS {indexConfig: {`vector.dimensions`: %d, `vector.similarity_function`: 'cosine'}}",
+			idx.name,
+			idx.label,
+			idx.field,
+			s.embeddingDimensions,
+		)
+		_, err = s.client.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			_, err := tx.Run(ctx, vectorIndex, nil)
+			return nil, err
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create vector index %s: %w", idx.name, err)
+		}
+		s.logger.Info("ensured index", observability.String("name", idx.name))
+	}
 
 	// Create composite indexes for fragment deduplication and lookup (Unit 12)
 	// These are ADDITIVE migrations - no DROP of existing indexes.
@@ -523,6 +557,26 @@ func (s *SchemaBootstrapper) EnsureSchema(ctx context.Context) error {
 		{
 			"CREATE INDEX dreamrun_profile_date_idx IF NOT EXISTS FOR (r:DreamCycleRun) ON (r.team_id, r.run_date)",
 			IndexDreamRunProfileDate,
+		},
+		{
+			"CREATE INDEX entity_team_name_type_idx IF NOT EXISTS FOR (e:Entity) ON (e.team_id, e.normalized_name, e.entity_type)",
+			"entity_team_name_type_idx",
+		},
+		{
+			"CREATE INDEX assertion_team_status_tier_idx IF NOT EXISTS FOR (a:Assertion) ON (a.team_id, a.status, a.tier)",
+			"assertion_team_status_tier_idx",
+		},
+		{
+			"CREATE INDEX assertion_team_predicate_idx IF NOT EXISTS FOR (a:Assertion) ON (a.team_id, a.predicate_key)",
+			"assertion_team_predicate_idx",
+		},
+		{
+			"CREATE INDEX assertion_team_recorded_idx IF NOT EXISTS FOR (a:Assertion) ON (a.team_id, a.recorded_at, a.assertion_id)",
+			"assertion_team_recorded_idx",
+		},
+		{
+			"CREATE INDEX predicate_team_key_idx IF NOT EXISTS FOR (p:Predicate) ON (p.team_id, p.predicate_key)",
+			"predicate_team_key_idx",
 		},
 	}
 

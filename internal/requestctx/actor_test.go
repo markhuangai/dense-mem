@@ -71,6 +71,15 @@ func TestActorCredentialContext(t *testing.T) {
 	}
 }
 
+func TestTrustedMemoryAuthorityContext(t *testing.T) {
+	if TrustedMemoryAuthority(context.Background()) {
+		t.Fatal("TrustedMemoryAuthority(background) = true, want false")
+	}
+	if !TrustedMemoryAuthority(WithTrustedMemoryAuthority(context.Background())) {
+		t.Fatal("TrustedMemoryAuthority(trusted context) = false, want true")
+	}
+}
+
 func TestActorOwner_EmptyForMissingOrNilProfile(t *testing.T) {
 	profileID, profileName, ok := ActorOwner(context.Background())
 	if ok || profileID != "" || profileName != "" {

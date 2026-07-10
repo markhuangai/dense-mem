@@ -1,5 +1,8 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import ForceGraph2D, { ForceGraphMethods, LinkObject, NodeObject } from "react-force-graph-2d";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import Graph from "graphology";
+import FA2Layout from "graphology-layout-forceatlas2/worker";
+import Sigma from "sigma";
+import { EdgeArrowProgram, EdgeLineProgram, NodeCircleProgram } from "sigma/rendering";
 import {
   ArrowRight,
   CircleDot,
@@ -19,26 +22,27 @@ type GraphAnchor = {
   id: string;
 };
 
-type ForceNode = NodeObject<GraphNode> & GraphNode;
-type ForceLink = LinkObject<GraphNode, GraphEdge> & GraphEdge;
-
 const defaultTypes: TypeFilter = {
-  fact: true,
-  claim: true,
-  fragment: true,
-  dream: true,
+	entity: true,
+	value: true,
+	fact: true,
+	claim: true,
+	fragment: true,
+	dream: true,
+	community: true,
 };
 
 export function GraphPanel({ api }: { api: UserApi }) {
   const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
-  const [selectedKey, setSelectedKey] = useState("");
+	const [selectedKey, setSelectedKey] = useState("");
+	const [selectedEdgeId, setSelectedEdgeId] = useState("");
   const [searchText, setSearchText] = useState("");
   const [scope, setScope] = useState<"overview" | "local">("overview");
   const [anchorType, setAnchorType] = useState<GraphNodeType>("fact");
   const [anchorId, setAnchorId] = useState("");
   const [types, setTypes] = useState<TypeFilter>(defaultTypes);
   const [depth, setDepth] = useState(2);
-  const [includeSuperseded, setIncludeSuperseded] = useState(false);
+	const [includeSuperseded] = useState(true);
   const [nodeSize, setNodeSize] = useState(5);
   const [linkDistance, setLinkDistance] = useState(92);
   const [showArrows, setShowArrows] = useState(true);
@@ -65,7 +69,8 @@ export function GraphPanel({ api }: { api: UserApi }) {
     try {
       const next = await api.graph(query);
       setSnapshot(next);
-      setSelectedDetail(null);
+		setSelectedDetail(null);
+		setSelectedEdgeId("");
       setDetailKey("");
       setDetailError("");
       setDetailLoading(false);
@@ -82,7 +87,8 @@ export function GraphPanel({ api }: { api: UserApi }) {
     void loadGraph(buildQuery({ searchText: "", scope: "overview", anchorType, anchorId: "", types, depth: 2, includeSuperseded }));
   }, [api]);
 
-  const selectedNode = selectedKey ? snapshot?.nodes.find((node) => node.key === selectedKey) ?? null : null;
+	const selectedNode = selectedKey ? snapshot?.nodes.find((node) => node.key === selectedKey) ?? null : null;
+	const selectedEdge = selectedEdgeId ? snapshot?.edges.find((edge) => edge.id === selectedEdgeId) ?? null : null;
   const hasSelectedTypes = Object.values(types).some(Boolean);
   const selectedNodeKey = selectedNode?.key ?? "";
   const activeDetail = selectedDetail?.key === selectedNodeKey ? selectedDetail : null;
@@ -166,10 +172,13 @@ export function GraphPanel({ api }: { api: UserApi }) {
             <div className="graph-anchor-grid">
               <label htmlFor="graph-anchor-type">Anchor type</label>
               <select id="graph-anchor-type" value={anchorType} onChange={(event) => setAnchorType(event.target.value as GraphNodeType)}>
+				<option value="entity">Entity</option>
+				<option value="value">Value</option>
                 <option value="fact">Fact</option>
                 <option value="claim">Claim</option>
                 <option value="fragment">Fragment</option>
                 <option value="dream">Dream</option>
+				<option value="community">Community</option>
               </select>
               <label htmlFor="graph-anchor-id">Anchor ID</label>
               <input id="graph-anchor-id" value={anchorId} onChange={(event) => setAnchorId(event.target.value)} />
@@ -178,7 +187,7 @@ export function GraphPanel({ api }: { api: UserApi }) {
 
           <fieldset className="graph-type-filter">
             <legend>Types</legend>
-            {(["fact", "claim", "fragment", "dream"] as GraphNodeType[]).map((type) => (
+			{(["entity", "value", "fact", "claim", "fragment", "dream", "community"] as GraphNodeType[]).map((type) => (
               <label className="filter-row" key={type}>
                 <input type="checkbox" checked={types[type]} onChange={() => toggleType(type)} />
                 <span>{nodeTypeLabel(type)}</span>
@@ -210,10 +219,7 @@ export function GraphPanel({ api }: { api: UserApi }) {
             <span>Labels</span>
             <input type="checkbox" checked={showLabels} onChange={(event) => setShowLabels(event.target.checked)} />
           </label>
-          <label className="toggle-row compact-toggle">
-            <span>Superseded</span>
-            <input type="checkbox" checked={includeSuperseded} onChange={(event) => setIncludeSuperseded(event.target.checked)} />
-          </label>
+		  <div className="graph-all-state-note">All lifecycle states are included. Embeddings and secret-like values are excluded.</div>
 
           <div className="button-row">
             <button className="primary-button compact" type="submit" disabled={loading || !hasSelectedTypes}>
@@ -227,11 +233,13 @@ export function GraphPanel({ api }: { api: UserApi }) {
       <section className="graph-canvas-panel" aria-label="Graph canvas">
         {error && <div className="banner error" role="alert">{error}</div>}
         {loading && !snapshot && <LoadingState label="Loading graph" />}
-        {snapshot && (
+        {snapshot && snapshot.nodes.length > 0 && (
           <GraphCanvas
             snapshot={snapshot}
-            selectedKey={selectedKey}
-            onSelect={setSelectedKey}
+			selectedKey={selectedKey}
+			selectedEdgeId={selectedEdgeId}
+			onSelect={(key) => { setSelectedKey(key); setSelectedEdgeId(""); }}
+			onSelectEdge={(id) => { setSelectedEdgeId(id); setSelectedKey(""); }}
             nodeSize={nodeSize}
             linkDistance={linkDistance}
             showArrows={showArrows}
@@ -241,9 +249,9 @@ export function GraphPanel({ api }: { api: UserApi }) {
         {!loading && snapshot && snapshot.nodes.length === 0 && <div className="table-placeholder">No graph nodes</div>}
       </section>
 
-      <aside className="graph-inspector" aria-label="Graph inspector">
-        <GraphStats snapshot={snapshot} />
-        <NodeInspector summary={selectedNode} detail={activeDetail} loading={activeDetailLoading} error={activeDetailError} />
+	  <aside className="graph-inspector" aria-label="Graph inspector">
+		<GraphStats snapshot={snapshot} />
+		{selectedEdge ? <EdgeInspector edge={selectedEdge} snapshot={snapshot} /> : <NodeInspector summary={selectedNode} detail={activeDetail} loading={activeDetailLoading} error={activeDetailError} />}
       </aside>
     </section>
   );
@@ -305,12 +313,17 @@ export function ResultGraphPreview({ api, anchor }: { api: UserApi; anchor: Grap
   if (!snapshot) {
     return <div className="table-placeholder compact">No graph data</div>;
   }
+  if (snapshot.nodes.length === 0) {
+    return <div className="table-placeholder compact">No graph nodes</div>;
+  }
   return (
     <div className="graph-preview">
-      <GraphCanvas
+	  <GraphCanvas
         snapshot={snapshot}
         selectedKey={selectedKey}
-        onSelect={setSelectedKey}
+		onSelect={setSelectedKey}
+		selectedEdgeId=""
+		onSelectEdge={() => undefined}
         nodeSize={4}
         linkDistance={72}
         showArrows
@@ -328,7 +341,9 @@ export function ResultGraphPreview({ api, anchor }: { api: UserApi; anchor: Grap
 function GraphCanvas({
   snapshot,
   selectedKey,
+  selectedEdgeId,
   onSelect,
+  onSelectEdge,
   nodeSize,
   linkDistance,
   showArrows,
@@ -337,93 +352,159 @@ function GraphCanvas({
 }: {
   snapshot: GraphSnapshot;
   selectedKey: string;
+  selectedEdgeId: string;
   onSelect: (key: string) => void;
+  onSelectEdge: (id: string) => void;
   nodeSize: number;
   linkDistance: number;
   showArrows: boolean;
   showLabels: boolean;
   compact?: boolean;
 }) {
-  const graphRef = useRef<ForceGraphMethods<ForceNode, ForceLink> | undefined>(undefined);
-  const { ref, width, height } = useElementSize<HTMLDivElement>(compact ? 220 : 620);
-  const canvasTheme = useCanvasTheme(ref);
-  const graphData = useMemo(() => ({
-    nodes: snapshot.nodes.map((node) => ({ ...node, id: node.key, val: nodeValue(node, nodeSize) })),
-    links: snapshot.edges.map((edge) => ({ ...edge, source: edge.source, target: edge.target })),
-  }), [snapshot.nodes, snapshot.edges, nodeSize]);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const rendererRef = useRef<Sigma | null>(null);
+  const selectNodeRef = useRef(onSelect);
+  const selectEdgeRef = useRef(onSelectEdge);
+  selectNodeRef.current = onSelect;
+  selectEdgeRef.current = onSelectEdge;
+  const canvasTheme = useCanvasTheme(containerRef);
 
   useEffect(() => {
-    const linkForce = graphRef.current?.d3Force("link") as { distance?: (value: number) => unknown } | undefined;
-    linkForce?.distance?.(linkDistance);
-    graphRef.current?.d3ReheatSimulation();
-  }, [linkDistance, graphData.links.length]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      graphRef.current?.zoomToFit(450, compact ? 28 : 54);
-    }, 120);
-    return () => window.clearTimeout(timer);
-  }, [snapshot.nodes.length, snapshot.edges.length, compact]);
-
-  return (
-    <div className={compact ? "graph-canvas compact" : "graph-canvas"} ref={ref}>
-      <ForceGraph2D<ForceNode, ForceLink>
-        ref={graphRef}
-        graphData={graphData}
-        nodeId="key"
-        width={width}
-        height={height}
-        backgroundColor="transparent"
-        nodeVal={(node) => node.val ?? nodeValue(node, nodeSize)}
-        nodeLabel={(node) => `${nodeTypeLabel(node.type as GraphNodeType)}: ${node.title}`}
-        nodeCanvasObject={(node, canvas, globalScale) => drawNode(node, canvas, globalScale, {
-          selected: node.key === selectedKey,
-          nodeSize,
-          showLabels,
-          compact,
-          theme: canvasTheme,
-        })}
-        nodePointerAreaPaint={(node, color, canvas) => paintNodeArea(node, color, canvas, nodeSize)}
-        linkLabel={(link) => relationshipLabel(link.relationship)}
-        linkColor={(link) => relationshipColor(link.relationship)}
-        linkWidth={(link) => selectedKey && (link.source === selectedKey || link.target === selectedKey || nodeKey(link.source) === selectedKey || nodeKey(link.target) === selectedKey) ? 2.2 : 1.2}
-        linkDirectionalArrowLength={showArrows ? 5 : 0}
-        linkDirectionalArrowRelPos={0.78}
-        linkDirectionalArrowColor={(link) => relationshipColor(link.relationship)}
-        onNodeClick={(node) => onSelect(node.key)}
-        cooldownTicks={compact ? 60 : 120}
-        d3VelocityDecay={0.36}
-        minZoom={0.2}
-        maxZoom={5}
-      />
-    </div>
-  );
-}
-
-function useElementSize<T extends HTMLElement>(fallbackHeight: number) {
-  const ref = useRef<T | null>(null);
-  const [size, setSize] = useState({ width: 640, height: fallbackHeight });
-
-  useEffect(() => {
-    const node = ref.current;
-    if (!node) {
+    const container = containerRef.current;
+    if (!container) {
       return;
     }
-    const observer = new ResizeObserver((entries) => {
-      const rect = entries[0]?.contentRect;
-      if (!rect) {
-        return;
-      }
-      setSize({
-        width: Math.max(280, Math.floor(rect.width)),
-        height: Math.max(180, Math.floor(rect.height || fallbackHeight)),
+    const graph = new Graph({ type: "directed", multi: true, allowSelfLoops: true });
+    const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+    snapshot.nodes.forEach((node, index) => {
+      const radius = Math.max(1, Math.sqrt(index + 1)) * linkDistance * 0.12;
+      graph.addNode(node.key, {
+        ...node,
+        x: Math.cos(index * goldenAngle) * radius,
+        y: Math.sin(index * goldenAngle) * radius,
+        label: node.title || node.id,
+        color: nodeColor(node),
+        size: nodeValue(node, nodeSize),
+        type: "circle",
       });
     });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [fallbackHeight]);
+    snapshot.edges.forEach((edge, index) => {
+      if (!graph.hasNode(edge.source) || !graph.hasNode(edge.target)) {
+        return;
+      }
+      graph.addDirectedEdgeWithKey(`${edge.id}:${index}`, edge.source, edge.target, {
+        ...edge,
+        snapshotEdgeId: edge.id,
+        label: relationshipLabel(edge.relationship),
+        color: relationshipColor(edge),
+        size: edge.tier === "fact" ? 2.2 : edge.status === "quarantined" ? 1.8 : 1.15,
+        type: showArrows ? "arrow" : "line",
+      });
+    });
 
-  return { ref, ...size };
+    const renderer = new Sigma(graph, container, {
+      allowInvalidContainer: true,
+      defaultNodeType: "circle",
+      defaultEdgeType: showArrows ? "arrow" : "line",
+      nodeProgramClasses: { circle: NodeCircleProgram },
+      edgeProgramClasses: { arrow: EdgeArrowProgram, line: EdgeLineProgram },
+      renderLabels: showLabels,
+      renderEdgeLabels: false,
+      labelColor: { color: canvasTheme.label },
+      edgeLabelColor: { color: canvasTheme.label },
+      labelRenderedSizeThreshold: compact ? 100 : 9,
+      labelDensity: compact ? 0.2 : 0.8,
+      labelGridCellSize: compact ? 140 : 90,
+      zIndex: true,
+      minCameraRatio: 0.04,
+      maxCameraRatio: 8,
+    });
+    rendererRef.current = renderer;
+    renderer.on("clickNode", ({ node }) => selectNodeRef.current(node));
+    renderer.on("clickEdge", ({ edge }) => {
+      const id = graph.getEdgeAttribute(edge, "snapshotEdgeId") as string;
+      if (id) {
+        selectEdgeRef.current(id);
+      }
+    });
+    renderer.getCamera().on("updated", (state) => {
+      renderer.setSetting("renderEdgeLabels", showLabels && !compact && state.ratio < 0.7);
+    });
+
+    let layout: FA2Layout | null = null;
+    let timer = 0;
+    if (graph.order > 1 && typeof Worker !== "undefined") {
+      layout = new FA2Layout(graph, {
+        settings: {
+          barnesHutOptimize: graph.order > 250,
+          adjustSizes: true,
+          edgeWeightInfluence: 0.7,
+          gravity: compact ? 1.4 : 0.8,
+          scalingRatio: Math.max(2, linkDistance / 26),
+          slowDown: graph.order > 1000 ? 12 : 5,
+        },
+      });
+      layout.start();
+      timer = window.setTimeout(() => {
+        layout?.stop();
+        renderer.getCamera().animatedReset({ duration: 350 });
+      }, compact ? 350 : Math.min(2200, 700 + graph.order));
+    } else {
+      renderer.getCamera().animatedReset({ duration: 0 });
+    }
+
+    return () => {
+      if (timer) {
+        window.clearTimeout(timer);
+      }
+      layout?.kill();
+      renderer.kill();
+      rendererRef.current = null;
+    };
+  }, [snapshot, nodeSize, linkDistance, showArrows, showLabels, compact, canvasTheme]);
+
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    if (!renderer) {
+      return;
+    }
+    const selectedEdge = snapshot.edges.find((edge) => edge.id === selectedEdgeId);
+    const selectedNodes = new Set(selectedEdge ? [selectedEdge.source, selectedEdge.target] : selectedKey ? [selectedKey] : []);
+    renderer.setSetting("nodeReducer", (node, data) => {
+      if (selectedNodes.size === 0) {
+        return data;
+      }
+      if (selectedNodes.has(node)) {
+        return { ...data, highlighted: true, size: Number(data.size ?? nodeSize) * 1.45, zIndex: 2 };
+      }
+      return { ...data, color: withAlpha(String(data.color ?? "#64748b"), 0.28), zIndex: 0 };
+    });
+    renderer.setSetting("edgeReducer", (edge, data) => {
+      const id = renderer.getGraph().getEdgeAttribute(edge, "snapshotEdgeId") as string;
+      if (!selectedEdgeId) {
+        return data;
+      }
+      return id === selectedEdgeId
+        ? { ...data, size: 3.4, zIndex: 2, forceLabel: true }
+        : { ...data, color: withAlpha(String(data.color ?? "#64748b"), 0.2), zIndex: 0 };
+    });
+    renderer.refresh();
+  }, [selectedKey, selectedEdgeId, snapshot.edges, nodeSize]);
+
+  return (
+	<div className={compact ? "graph-canvas compact" : "graph-canvas"} ref={containerRef} data-renderer="sigma-webgl" data-testid="sigma-graph">
+	  <div className="sr-only" aria-label="Graph keyboard navigation">
+		{snapshot.nodes.map((node) => (
+		  <button key={node.key} type="button" onClick={() => onSelect(node.key)}>{node.title || node.id}</button>
+		))}
+		{snapshot.edges.map((edge) => {
+		  const source = snapshot.nodes.find((node) => node.key === edge.source)?.title ?? edge.source;
+		  const target = snapshot.nodes.find((node) => node.key === edge.target)?.title ?? edge.target;
+		  return <button key={edge.id} type="button" onClick={() => onSelectEdge(edge.id)}>{source} {relationshipLabel(edge.relationship)} {target}</button>;
+		})}
+	  </div>
+	</div>
+  );
 }
 
 type CanvasTheme = {
@@ -500,6 +581,46 @@ function GraphStats({ snapshot }: { snapshot: GraphSnapshot | null }) {
   );
 }
 
+function EdgeInspector({ edge, snapshot }: { edge: GraphEdge; snapshot: GraphSnapshot | null }) {
+	const source = snapshot?.nodes.find((node) => node.key === edge.source);
+	const target = snapshot?.nodes.find((node) => node.key === edge.target);
+	return (
+	  <article className="graph-node-detail graph-edge-detail">
+		<div className="result-kicker">
+		  <GitBranch size={15} aria-hidden="true" />
+		  <span className="status-pill neutral">{relationshipLabel(edge.relationship)}</span>
+		  {edge.tier && <span className="status-pill success">{edge.tier}</span>}
+		  {edge.status && <span className="status-pill neutral">{edge.status}</span>}
+		</div>
+		<h3>{source?.title ?? edge.source} → {target?.title ?? edge.target}</h3>
+		{edge.knowledge && <p>{edge.knowledge}</p>}
+		<dl className="evidence-list">
+		  <DetailRow label="Relationship" value={edge.relationship} />
+		  <DetailRow label="Assertion" value={edge.assertion_id || "structural"} />
+		  <DetailRow label="Predicate" value={edge.predicate || "n/a"} />
+		  <DetailRow label="Policy" value={edge.policy_family || "n/a"} />
+		  <DetailRow label="Polarity" value={edge.polarity || "n/a"} />
+		  <DetailRow label="Support" value={`${edge.support_count ?? 0} spans / ${edge.source_group_count ?? 0} sources`} />
+		  <DetailRow label="Valid" value={formatTimeRange(edge.valid_from, edge.valid_to)} />
+		  <DetailRow label="Recorded" value={formatTimeRange(edge.recorded_at, edge.recorded_to)} />
+		  <DetailRow label="Evidence IDs" value={edge.evidence_ids?.join(", ") || "none"} />
+		</dl>
+	  </article>
+	);
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+	return <div><dt>{label}</dt><dd>{value}</dd></div>;
+}
+
+function formatTimeRange(from?: string, to?: string): string {
+	if (!from && !to) {
+	  return "unbounded";
+	}
+	const format = (value?: string) => value ? new Date(value).toISOString() : "∞";
+	return `${format(from)} → ${format(to)}`;
+}
+
 function NodeInspector({ summary, detail, loading, error }: { summary: GraphNode | null; detail: GraphNode | null; loading: boolean; error: string }) {
   if (!summary) {
     return <div className="table-placeholder compact">Select a node</div>;
@@ -529,11 +650,15 @@ function NodeInspector({ summary, detail, loading, error }: { summary: GraphNode
           <dt>Score</dt>
           <dd>{typeof node.score === "number" ? node.score.toFixed(3) : "n/a"}</dd>
         </div>
-        <div>
-          <dt>Recorded</dt>
-          <dd>{node.recorded_at ? new Date(node.recorded_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "n/a"}</dd>
-        </div>
-      </dl>
+		<div>
+		  <dt>Recorded</dt>
+		  <dd>{node.recorded_at ? new Date(node.recorded_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "n/a"}</dd>
+		</div>
+		{node.entity_type && <DetailRow label="Entity type" value={node.entity_type} />}
+		{node.value_type && <DetailRow label="Value type" value={node.value_type} />}
+		{node.resolution_status && <DetailRow label="Resolution" value={`${node.resolution_status} (${(node.resolution_conf ?? 0).toFixed(2)})`} />}
+		{node.aliases?.length ? <DetailRow label="Aliases" value={node.aliases.join(", ")} /> : null}
+	  </dl>
     </article>
   );
 }
@@ -567,62 +692,49 @@ function buildQuery({
   };
 }
 
-function drawNode(
-  node: ForceNode,
-  canvas: CanvasRenderingContext2D,
-  globalScale: number,
-  opts: { selected: boolean; nodeSize: number; showLabels: boolean; compact: boolean; theme: CanvasTheme },
-) {
-  const radius = nodeValue(node, opts.nodeSize);
-  const color = nodeColor(node);
-  canvas.beginPath();
-  canvas.arc(node.x ?? 0, node.y ?? 0, radius, 0, 2 * Math.PI, false);
-  canvas.fillStyle = color;
-  canvas.fill();
-  canvas.lineWidth = opts.selected ? 3 / globalScale : 1.2 / globalScale;
-  canvas.strokeStyle = opts.selected ? opts.theme.selectedStroke : opts.theme.stroke;
-  canvas.stroke();
-
-  if (!opts.compact && (opts.showLabels || globalScale > 1.4)) {
-    const label = truncateLabel(node.title || node.id, 26);
-    const fontSize = Math.max(8, 12 / globalScale);
-    canvas.font = `${fontSize}px Inter, ui-sans-serif, system-ui`;
-    canvas.textAlign = "center";
-    canvas.textBaseline = "top";
-    canvas.fillStyle = opts.theme.label;
-    canvas.fillText(label, node.x ?? 0, (node.y ?? 0) + radius + 3);
-  }
-}
-
-function paintNodeArea(node: ForceNode, color: string, canvas: CanvasRenderingContext2D, nodeSize: number) {
-  canvas.fillStyle = color;
-  canvas.beginPath();
-  canvas.arc(node.x ?? 0, node.y ?? 0, nodeValue(node, nodeSize) + 6, 0, 2 * Math.PI, false);
-  canvas.fill();
-}
-
 function nodeValue(node: Pick<GraphNode, "type">, nodeSize: number) {
-  const typeBoost = node.type === "fact" ? 1.4 : node.type === "dream" ? 0.6 : 1;
+	const typeBoost = node.type === "entity" ? 1.8 : node.type === "fact" ? 1.4 : node.type === "value" ? 0.2 : node.type === "dream" ? 0.6 : 1;
   return nodeSize + typeBoost;
 }
 
 function nodeColor(node: GraphNode): string {
   switch (node.type) {
+	case "entity":
+	  return "#7c3aed";
+	case "value":
+	  return "#64748b";
     case "fact":
       return "#0f766e";
     case "claim":
       return "#2563eb";
     case "fragment":
       return "#ca8a04";
-    case "dream":
-      return "#c026d3";
+	case "dream":
+	  return "#c026d3";
+	case "community":
+	  return "#0891b2";
     default:
       return "#64748b";
   }
 }
 
-function relationshipColor(type: string): string {
-  switch (type) {
+function relationshipColor(edge: GraphEdge): string {
+	if (edge.status === "quarantined" || edge.status === "rejected") {
+	  return "#dc2626";
+	}
+	if (edge.status === "needs_review") {
+	  return "#ea580c";
+	}
+	if (edge.status === "superseded" || edge.status === "retracted") {
+	  return "#94a3b8";
+	}
+	if (edge.tier === "fact") {
+	  return "#0f766e";
+	}
+	if (edge.tier === "validated_claim") {
+	  return "#2563eb";
+	}
+  switch (edge.relationship) {
     case "PROMOTES_TO":
       return "#0f766e";
     case "SUPPORTED_BY":
@@ -642,6 +754,17 @@ function relationshipColor(type: string): string {
   }
 }
 
+function withAlpha(color: string, alpha: number): string {
+	const normalized = color.replace("#", "");
+	if (!/^[0-9a-f]{6}$/i.test(normalized)) {
+	  return color;
+	}
+	const red = Number.parseInt(normalized.slice(0, 2), 16);
+	const green = Number.parseInt(normalized.slice(2, 4), 16);
+	const blue = Number.parseInt(normalized.slice(4, 6), 16);
+	return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
 function relationshipLabel(type: string): string {
   return type.toLowerCase().replaceAll("_", " ");
 }
@@ -659,6 +782,15 @@ function nodeTypeLabel(type: GraphNodeType | string): string {
   if (type === "dream") {
     return "Dream";
   }
+	if (type === "entity") {
+	  return "Entity";
+	}
+	if (type === "value") {
+	  return "Value";
+	}
+	if (type === "community") {
+	  return "Community";
+	}
   return "Node";
 }
 
@@ -673,20 +805,6 @@ function nodeIcon(type: string) {
     return <ArrowRight size={15} aria-hidden="true" />;
   }
   return <SlidersHorizontal size={15} aria-hidden="true" />;
-}
-
-function nodeKey(value: string | number | NodeObject<GraphNode> | undefined): string {
-  if (!value) {
-    return "";
-  }
-  if (typeof value === "string" || typeof value === "number") {
-    return String(value);
-  }
-  return value.key ?? "";
-}
-
-function truncateLabel(value: string, maxLength: number): string {
-  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 3)}...`;
 }
 
 function readError(error: unknown): string {

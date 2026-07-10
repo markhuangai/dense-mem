@@ -38,8 +38,7 @@ func TestBuildDefault_RegistersV2ToolSurface(t *testing.T) {
 	required := []string{
 		"recall_memory",
 		"trace_memory", "assemble_context",
-		"remember", "get_memory_placement", "dispute_memory_placement",
-		"import_memories", "reflect_memories", "confirm_memory",
+		"remember", "get_memory_placement", "resolve_memory_placement",
 		"list_dreams", "get_dream", "resolve_dream_feedback",
 		"find_memory_pack_candidates", "export_memory_pack", "inspect_memory_pack",
 		"import_memory_pack", "rollback_memory_pack_import",
@@ -54,7 +53,7 @@ func TestBuildDefault_RegistersV2ToolSurface(t *testing.T) {
 			t.Errorf("legacy hyphenated tool %q must not be registered", name)
 		}
 	}
-	for _, removed := range []string{"list_recent_memories", "keyword_search", "semantic_search", "graph_query"} {
+	for _, removed := range []string{"list_recent_memories", "keyword_search", "semantic_search", "graph_query", "dispute_memory_placement", "import_memories", "reflect_memories", "confirm_memory"} {
 		if _, ok := reg.Get(removed); ok {
 			t.Errorf("removed tool %q must not be registered", removed)
 		}
@@ -123,6 +122,7 @@ func TestValidateInputRejectsClientSuppliedRememberClaims(t *testing.T) {
 
 	args := map[string]any{
 		"evidence": []any{map[string]any{"content": "The user likes Go."}},
+		"proposal": structuredRememberInput("The user likes Go.")["proposal"],
 		"claims":   []any{},
 	}
 
@@ -491,6 +491,11 @@ func (s *stubMemory) GetMemoryPlacement(ctx context.Context, profileID string, r
 	return &memoryservice.PlacementStatusResult{
 		Run: domain.MemoryPlacementRun{IngestID: req.IngestID, Status: domain.MemoryPlacementCompleted},
 	}, nil
+}
+
+func (s *stubMemory) ResolveMemoryPlacement(ctx context.Context, profileID string, req memoryservice.ResolvePlacementRequest) (*memoryservice.ResolvePlacementResult, error) {
+	s.lastProfile = profileID
+	return &memoryservice.ResolvePlacementResult{Placement: domain.MemoryPlacementRun{IngestID: req.IngestID, Status: domain.MemoryPlacementCompleted}}, nil
 }
 
 func (s *stubMemory) DisputeMemoryPlacement(ctx context.Context, profileID string, req memoryservice.DisputeRequest) (*memoryservice.DisputeResult, error) {
