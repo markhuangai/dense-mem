@@ -93,17 +93,9 @@ ai:
       provider_options:
         anthropic:
           effort: high
-    codex_5.5_xhigh:
-      adapter: codex-sdk
-      auth_json:
-        from_bundle: CODEX_AUTH_JSON
-      model: gpt-5.5
-      reasoning:
-        effort: xhigh
-        summary: concise
   role_groups:
     swarm:
-      synthesizer: codex_5.5_xhigh
+      synthesizer: local_proxy
       parallel: 6
       roles:
         - role: correctness.md
@@ -162,7 +154,7 @@ ai:
             - list_communities
             - get_community_summary
     materialize:
-      profile: codex_5.5_xhigh
+      profile: local_proxy
       mcp:
         dense_mem:
           required: true
