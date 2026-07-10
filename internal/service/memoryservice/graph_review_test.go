@@ -78,7 +78,9 @@ func TestNormalizeReviewedResultValidatesReviewerAndSortsAtomicRelations(t *test
 	evidence := []domain.MemoryEvidence{{Index: 0, Content: "Mark works on Dense-Mem.", SourceGroup: "source-1"}}
 	proposal := graphReviewProposal(len(evidence[0].Content))
 	second := proposal.Relationships[0]
-	second.ProposalID = "a-relation"
+	second.ProposalID = " a-relation "
+	second.SubjectRef = " mark "
+	second.ObjectRef = " dense-mem "
 	second.Predicate = "contributed_to"
 	result := placementreview.Result{
 		Entities: []placementreview.ReviewedEntity{
@@ -94,6 +96,8 @@ func TestNormalizeReviewedResultValidatesReviewerAndSortsAtomicRelations(t *test
 	normalized, err := normalizeReviewedResult(evidence, result)
 	require.NoError(t, err)
 	require.Equal(t, "a-relation", normalized.Relationships[0].Proposal.ProposalID)
+	require.Equal(t, "mark", normalized.Relationships[0].Proposal.SubjectRef)
+	require.Equal(t, "dense-mem", normalized.Relationships[0].Proposal.ObjectRef)
 	require.Equal(t, "valid", normalized.Relationships[0].Rationale)
 
 	tests := []struct {

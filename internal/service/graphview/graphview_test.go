@@ -92,8 +92,8 @@ func TestGraphOverviewReturnsCompleteScopedPayloadRegardlessOfLimit(t *testing.T
 	if strings.Contains(nodeCall.query, "LIMIT $limit") || strings.Contains(nodeCall.query, "LIMIT $nodeLimit") {
 		t.Fatalf("overview query must not apply node limits:\n%s", nodeCall.query)
 	}
-	if strings.Contains(nodeCall.query, "<> 'rejected'") || strings.Contains(nodeCall.query, "<> 'superseded'") {
-		t.Fatalf("overview query must include every lifecycle state:\n%s", nodeCall.query)
+	if !strings.Contains(nodeCall.query, "$includeSuperseded OR coalesce(n.status") {
+		t.Fatalf("overview query must honor include_superseded:\n%s", nodeCall.query)
 	}
 	if nodeCall.params["limit"] != int64(MaxLimit) {
 		t.Fatalf("limit param = %#v; want %d", nodeCall.params["limit"], MaxLimit)
@@ -197,6 +197,12 @@ func TestGraphOverviewReadsEdgesForEveryReturnedNode(t *testing.T) {
 	}
 
 	edgeCall := reader.calls[1]
+	if edgeCall.params["includeSuperseded"] != false {
+		t.Fatalf("edge includeSuperseded = %#v; want false", edgeCall.params["includeSuperseded"])
+	}
+	if !strings.Contains(edgeCall.query, "MATCH (object:Entity|Value") || !strings.Contains(edgeCall.query, "$includeSuperseded OR assertion.status <> 'superseded'") {
+		t.Fatalf("edge query must use labeled object matching and lifecycle filtering:\n%s", edgeCall.query)
+	}
 	keys, ok := edgeCall.params["nodeKeys"].([]string)
 	if !ok {
 		t.Fatalf("nodeKeys = %#v; want []string", edgeCall.params["nodeKeys"])

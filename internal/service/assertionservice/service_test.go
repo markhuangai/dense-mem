@@ -29,6 +29,9 @@ func TestNormalizeGraphTokens(t *testing.T) {
 	require.Equal(t, "GAVE_DEMO_OF", RelationshipType(" Gave demo-of! "))
 	require.Empty(t, NormalizePredicate("---"))
 	require.Len(t, NormalizePredicate("abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnop"), 64)
+	require.NoError(t, ValidateRelationshipType("CONTRIBUTED_TO"))
+	require.ErrorContains(t, ValidateRelationshipType("USES BAD"), "unsafe")
+	require.ErrorContains(t, ValidateRelationshipType("MENTIONS"), "reserved")
 }
 
 func TestNewEntity(t *testing.T) {

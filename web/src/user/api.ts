@@ -206,9 +206,65 @@ export type RecallHit = {
   fragment?: Fragment;
   claim?: Claim;
   fact?: Fact;
+	assertion?: SemanticAssertion;
+	paths?: SemanticPath[];
+	frontier?: SemanticFrontierHint[];
   semantic_rank: number;
   keyword_rank: number;
   final_score: number;
+};
+
+export type SemanticAssertion = {
+	assertion_id: string;
+	team_id: string;
+	subject_entity_id: string;
+	predicate_key: string;
+	relationship_type: string;
+	object_entity_id?: string;
+	object_value?: { value_id: string; value_type: string; value: string; display?: string; unit?: string };
+	tier: string;
+	status: string;
+	policy_family: string;
+	polarity: string;
+	modality: string;
+	recorded_at: string;
+	valid_from?: string;
+	valid_to?: string;
+	support_count: number;
+	source_group_count: number;
+};
+
+export type SemanticPathNode = {
+	key: string;
+	id: string;
+	type: string;
+	name: string;
+};
+
+export type SemanticPathEdge = {
+	assertion_id: string;
+	source: string;
+	target: string;
+	relationship: string;
+	predicate: string;
+	tier: string;
+	status: string;
+	polarity: string;
+	evidence_ids?: string[];
+};
+
+export type SemanticPath = {
+	nodes: SemanticPathNode[];
+	edges: SemanticPathEdge[];
+};
+
+export type SemanticFrontierHint = {
+	from_entity_id: string;
+	direction: "incoming" | "outgoing" | string;
+	relationship: string;
+	assertion_id: string;
+	neighbor: SemanticPathNode;
+	tier: string;
 };
 
 export type GraphNodeType = "entity" | "value" | "fact" | "claim" | "fragment" | "dream" | "community";

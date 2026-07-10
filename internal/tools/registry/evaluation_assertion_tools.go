@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 )
 
 func evalListAssertions(ctx context.Context, deps Dependencies, profileID string, input map[string]any, limit int, metadataOnly bool) (map[string]any, error) {
@@ -11,8 +12,9 @@ func evalListAssertions(ctx context.Context, deps Dependencies, profileID string
 		return nil, ErrToolUnavailable
 	}
 	status, _ := input["status"].(string)
+	offset := cursorOffset(input["cursor"])
 	where := ""
-	params := map[string]any{}
+	params := map[string]any{"offset": int64(offset), "pageLimit": int64(limit + 1)}
 	if status != "" {
 		where = "\nWHERE assertion.status = $status"
 		params["status"] = status
@@ -39,18 +41,24 @@ RETURN assertion.assertion_id AS assertion_id,
        assertion.search_text AS search_text,
        assertion.evidence_json AS evidence_json
 ORDER BY assertion.recorded_at DESC, assertion.assertion_id ASC
-LIMIT %d`, where, limit)
+SKIP $offset
+LIMIT $pageLimit`, where)
 	res, err := deps.GraphQuery.Execute(ctx, profileID, query, params)
 	if err != nil {
 		return nil, err
 	}
 	items := res.Rows
+	nextCursor := ""
+	if len(items) > limit {
+		items = items[:limit]
+		nextCursor = strconv.Itoa(offset + limit)
+	}
 	if metadataOnly {
 		for i := range items {
 			stripEvalContent("assertion", items[i])
 		}
 	}
-	return map[string]any{"items": items, "next_cursor": "", "has_more": false}, nil
+	return evalPage(items, nextCursor), nil
 }
 
 func evalGetAssertion(ctx context.Context, deps Dependencies, profileID, assertionID string) (map[string]any, error) {

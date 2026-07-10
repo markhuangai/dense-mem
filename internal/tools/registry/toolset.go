@@ -299,6 +299,7 @@ func submitRecallSessionFeedbackTool(deps Dependencies) Tool {
 											domain.RecallFeedbackResultTypeClaim,
 											domain.RecallFeedbackResultTypeFact,
 											domain.RecallFeedbackResultTypeDream,
+											domain.RecallFeedbackResultTypeAssertion,
 										}),
 										"id":   schemaString("Result id from recall feedback result_refs.", recallFeedbackJudgedRefIDMaxLength),
 										"rank": map[string]any{"type": "integer", "minimum": 1, "maximum": recallFeedbackJudgedRefMaxRank},

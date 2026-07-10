@@ -51,6 +51,10 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 			if firstEvidence["idempotency_key"] != "eval:doc-alpha" || metadata["source_doc_id"] != "doc-alpha" || metadata["eval_seed"] != true {
 				t.Fatalf("remember input = %#v", input)
 			}
+			proposal := input["proposal"].(map[string]any)
+			if len(proposal["entities"].([]any)) == 0 || len(proposal["relationships"].([]any)) == 0 {
+				t.Fatalf("remember proposal = %#v", proposal)
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ingest_id": "ingest-alpha",
 				"status":    "queued",
@@ -252,39 +256,42 @@ func TestHTTPClientImportRejectsMissingFragmentID(t *testing.T) {
 	}
 }
 
-func TestHTTPClientImportCorpusUsesImportMemoriesForTypedClaims(t *testing.T) {
+func TestHTTPClientImportCorpusUsesV2RememberForTypedClaims(t *testing.T) {
 	validFrom := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
 	validTo := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/tools/import_memories" {
+		switch r.URL.Path {
+		case "/api/v1/tools/remember":
+			var input map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatalf("decode remember body: %v", err)
+			}
+			if _, exists := input["auto_promote"]; exists {
+				t.Fatalf("V2 remember must not carry client promotion hints: %#v", input)
+			}
+			proposal := input["proposal"].(map[string]any)
+			relationship := proposal["relationships"].([]any)[0].(map[string]any)
+			if relationship["proposal_id"] != "typed-claim-1" || relationship["predicate"] != "uses" {
+				t.Fatalf("typed relationship = %#v", relationship)
+			}
+			if relationship["valid_from"] != validFrom.Format(time.RFC3339Nano) || relationship["valid_to"] != validTo.Format(time.RFC3339Nano) {
+				t.Fatalf("typed relationship validity = %#v", relationship)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ingest_id": "ingest-tiered",
+				"evidence":  []map[string]any{{"id": "fragment-tiered"}},
+			})
+		case "/api/v1/tools/get_memory_placement":
+			_ = json.NewEncoder(w).Encode(map[string]any{"placement": map[string]any{
+				"status": "completed",
+				"items": []map[string]any{{
+					"assertion_id": "assertion-tiered", "tier": "fact",
+					"reviewed_relationship": map[string]any{"proposal_id": "typed-claim-1"},
+				}},
+			}})
+		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
-		var input map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			t.Fatalf("decode import_memories body: %v", err)
-		}
-		if input["summary"] != "Service OBS-001 current owner is bob." || input["auto_promote"] != true {
-			t.Fatalf("import_memories input = %#v", input)
-		}
-		claims := input["claims"].([]any)
-		claim := claims[0].(map[string]any)
-		classification := claim["classification"].(map[string]any)
-		if claim["idempotency_key"] != "eval:doc-tiered:claim:1" || classification["source_doc_id"] != "doc-tiered" || classification["eval_seed"] != true {
-			t.Fatalf("claim input = %#v", claim)
-		}
-		if claim["valid_from"] != validFrom.Format(time.RFC3339Nano) {
-			t.Fatalf("valid_from = %v", claim["valid_from"])
-		}
-		if claim["valid_to"] != validTo.Format(time.RFC3339Nano) {
-			t.Fatalf("valid_to = %v", claim["valid_to"])
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"fragment": map[string]any{"id": "fragment-tiered"},
-			"claims": []map[string]any{{
-				"claim_id": "claim-tiered",
-				"fact":     map[string]any{"fact_id": "fact-tiered"},
-			}},
-		})
 	}))
 	defer server.Close()
 
@@ -310,17 +317,14 @@ func TestHTTPClientImportCorpusUsesImportMemoriesForTypedClaims(t *testing.T) {
 	if mapping.BySourceDocID["doc-tiered"].ID != "fragment-tiered" {
 		t.Fatalf("default mapping = %+v", mapping.BySourceDocID["doc-tiered"])
 	}
-	if mapping.BySourceDocIDAndType["doc-tiered"]["claim"][0].ID != "claim-tiered" {
-		t.Fatalf("claim mapping = %+v", mapping.BySourceDocIDAndType)
+	if mapping.BySourceDocIDAndType["doc-tiered"]["assertion"][0].ID != "assertion-tiered" {
+		t.Fatalf("assertion mapping = %+v", mapping.BySourceDocIDAndType)
 	}
-	if mapping.BySourceDocIDAndType["doc-tiered"]["fact"][0].ID != "fact-tiered" {
-		t.Fatalf("fact mapping = %+v", mapping.BySourceDocIDAndType)
+	if mapping.BySourceDocIDAndType["doc-tiered:claim:1"]["assertion"][0].ID != "assertion-tiered" {
+		t.Fatalf("typed claim alias mapping = %+v", mapping.BySourceDocIDAndType)
 	}
-	if mapping.BySourceDocIDAndType["doc-tiered:claim:1"]["claim"][0].ID != "claim-tiered" {
-		t.Fatalf("claim alias mapping = %+v", mapping.BySourceDocIDAndType)
-	}
-	if mapping.BySourceDocIDAndType["doc-tiered:fact:1"]["fact"][0].ID != "fact-tiered" {
-		t.Fatalf("fact alias mapping = %+v", mapping.BySourceDocIDAndType)
+	if mapping.BySourceDocIDAndType["doc-tiered:fact:1"]["assertion"][0].ID != "assertion-tiered" {
+		t.Fatalf("typed fact alias mapping = %+v", mapping.BySourceDocIDAndType)
 	}
 }
 
@@ -372,15 +376,13 @@ func TestHTTPClientImportCorpusWithConcurrency(t *testing.T) {
 	}
 }
 
-func TestHTTPClientImportCorpusRejectsTypedClaimErrors(t *testing.T) {
+func TestHTTPClientImportCorpusRejectsFailedV2Placement(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"fragment": map[string]any{"id": "fragment-tiered"},
-			"claims": []map[string]any{{
-				"claim_id": "claim-tiered",
-				"error":    "claim verify: verifier call failed",
-			}},
-		})
+		if r.URL.Path == "/api/v1/tools/remember" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"ingest_id": "ingest-tiered", "evidence": []map[string]any{{"id": "fragment-tiered"}}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"placement": map[string]any{"status": "failed"}})
 	}))
 	defer server.Close()
 
@@ -397,20 +399,31 @@ func TestHTTPClientImportCorpusRejectsTypedClaimErrors(t *testing.T) {
 		}},
 	}})
 
-	if err == nil || !strings.Contains(err.Error(), "claim verify: verifier call failed") {
+	if err == nil || !strings.Contains(err.Error(), "memory placement ingest-tiered failed") {
 		t.Fatalf("ImportCorpus err = %v", err)
 	}
 }
 
-func TestHTTPClientImportCorpusAllowsUnpromotedAutoPromoteRows(t *testing.T) {
+func TestHTTPClientImportCorpusDoesNotForceAutoPromotion(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"fragment": map[string]any{"id": "fragment-tiered"},
-			"claims": []map[string]any{{
-				"claim_id": "claim-tiered",
-				"status":   "validated",
+		if r.URL.Path == "/api/v1/tools/remember" {
+			var input map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatalf("decode remember: %v", err)
+			}
+			if _, exists := input["auto_promote"]; exists {
+				t.Fatalf("remember input contains auto_promote: %#v", input)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"ingest_id": "ingest-tiered", "evidence": []map[string]any{{"id": "fragment-tiered"}}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"placement": map[string]any{
+			"status": "completed",
+			"items": []map[string]any{{
+				"assertion_id": "assertion-tiered", "tier": "validated_claim",
+				"reviewed_relationship": map[string]any{"proposal_id": "typed-claim-1"},
 			}},
-		})
+		}})
 	}))
 	defer server.Close()
 
@@ -431,8 +444,11 @@ func TestHTTPClientImportCorpusAllowsUnpromotedAutoPromoteRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportCorpus err = %v", err)
 	}
-	if _, ok := mapping.BySourceDocIDAndType["doc-tiered"]["fact"]; ok {
-		t.Fatalf("fact mapping = %+v; want no fact mapping for unpromoted row", mapping.BySourceDocIDAndType)
+	if mapping.BySourceDocIDAndType["doc-tiered:claim:1"]["assertion"][0].ID != "assertion-tiered" {
+		t.Fatalf("claim assertion mapping = %+v", mapping.BySourceDocIDAndType)
+	}
+	if _, ok := mapping.BySourceDocIDAndType["doc-tiered:fact:1"]; ok {
+		t.Fatalf("fact alias mapping = %+v; want none for unpromoted assertion", mapping.BySourceDocIDAndType)
 	}
 }
 
@@ -450,6 +466,11 @@ func TestHTTPClientExportKnowledgeMappingIncludesClaimsAndFacts(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
 				"fragment_id": "fragment-tiered",
 				"metadata":    map[string]any{"source_doc_id": "doc-tiered"},
+			}}})
+		case "assertion":
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
+				"assertion_id":  "assertion-tiered",
+				"evidence_json": `[{"fragment_id":"fragment-tiered","start":0,"end":10}]`,
 			}}})
 		case "claim":
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
@@ -481,6 +502,9 @@ func TestHTTPClientExportKnowledgeMappingIncludesClaimsAndFacts(t *testing.T) {
 	}
 	if mapping.BySourceDocIDAndType["doc-tiered"]["fact"][0].ID != "fact-tiered" {
 		t.Fatalf("fact mapping = %+v", mapping.BySourceDocIDAndType)
+	}
+	if mapping.BySourceDocIDAndType["doc-tiered"]["assertion"][0].ID != "assertion-tiered" {
+		t.Fatalf("assertion mapping = %+v", mapping.BySourceDocIDAndType)
 	}
 }
 
@@ -529,5 +553,18 @@ func TestHTTPClientDecodeHelpers(t *testing.T) {
 	}
 	if firstNonEmpty(" ", "\t", "value") != "value" {
 		t.Fatalf("firstNonEmpty did not skip blank values")
+	}
+}
+
+func TestSeedMemoryProposalUsesUnicodeCodePointOffsets(t *testing.T) {
+	item := CorpusItem{SourceDocID: "doc-unicode", Content: "Mark 🚀 Dense-Mem"}
+	proposal := seedMemoryProposal(item)
+	relationship := proposal["relationships"].([]map[string]any)[0]
+	evidence := relationship["evidence"].([]map[string]any)[0]
+	if evidence["end"] != 16 {
+		t.Fatalf("evidence end = %v; want 16 Unicode code points", evidence["end"])
+	}
+	if seedSourceType("web") != "document" || seedAuthority("public_qrels") != "secondary" {
+		t.Fatalf("seed normalization failed")
 	}
 }

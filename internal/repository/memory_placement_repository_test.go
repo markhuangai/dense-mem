@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -468,13 +469,18 @@ func TestUpdateDisputeWithRunLocksAndSavesInOneTransaction(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE memory_placement_runs`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE memory_placement_items`).
+	mock.ExpectExec(`DELETE FROM memory_placement_items`).
+		WithArgs(ingestID, profileID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO memory_placement_items`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	repo := NewMemoryPlacementRepository(db, nil)
+	replacementItemID := uuid.NewString()
 	session, run, err := repo.UpdateDisputeWithRun(context.Background(), profileID, disputeID, func(session *domain.MemoryDisputeSession, run *domain.MemoryPlacementRun) error {
 		session.FinalReason = "updated"
+		run.Items[0].ItemID = replacementItemID
 		run.Items[0].Category = domain.MemoryPlacementNeedsEvidence
 		run.Items[0].Reason = "updated"
 		return nil
@@ -485,5 +491,6 @@ func TestUpdateDisputeWithRunLocksAndSavesInOneTransaction(t *testing.T) {
 	require.NotNil(t, run)
 	require.Equal(t, "updated", session.FinalReason)
 	require.Equal(t, domain.MemoryPlacementNeedsEvidence, run.Items[0].Category)
+	require.Equal(t, replacementItemID, run.Items[0].ItemID)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

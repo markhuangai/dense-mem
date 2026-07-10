@@ -2,6 +2,7 @@ package memoryservice
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -264,6 +265,10 @@ func (s *service) correctPlacement(ctx context.Context, run *domain.MemoryPlacem
 		if s.deps.FragmentQuarantine == nil {
 			return nil, errors.New("memory service: quarantined fragment create service is required")
 		}
+		attemptID, err := correctionAttemptID(additional, proposal)
+		if err != nil {
+			return nil, fmt.Errorf("memory service: fingerprint correction: %w", err)
+		}
 		for i := range additional {
 			metadata := make(map[string]any, len(additional[i].Metadata)+2)
 			for key, value := range additional[i].Metadata {
@@ -273,6 +278,7 @@ func (s *service) correctPlacement(ctx context.Context, run *domain.MemoryPlacem
 			metadata["placement_stage"] = "correction"
 			additional[i].Metadata = metadata
 			if _, err := s.createPlacementFragment(ctx, run.ProfileID, additional[i], true); err != nil {
+				s.log().Error("memory service: failed to persist quarantined correction fragment", "ingest_id", run.IngestID, "evidence_index", additional[i].Index, "error", err)
 				return nil, err
 			}
 		}
@@ -281,7 +287,7 @@ func (s *service) correctPlacement(ctx context.Context, run *domain.MemoryPlacem
 		run.UpdatedAt = now
 		events := []domain.AssertionTransitionEvent{
 			{
-				EventID:    uuid.NewString(),
+				EventID:    correctionTransitionID(run.IngestID, attemptID, "proposed"),
 				ProfileID:  run.ProfileID,
 				IngestID:   run.IngestID,
 				EventType:  "proposed",
@@ -290,7 +296,7 @@ func (s *service) correctPlacement(ctx context.Context, run *domain.MemoryPlacem
 				OccurredAt: now,
 			},
 			{
-				EventID:    uuid.NewString(),
+				EventID:    correctionTransitionID(run.IngestID, attemptID, "quarantined"),
 				ProfileID:  run.ProfileID,
 				IngestID:   run.IngestID,
 				EventType:  "quarantined",
@@ -361,7 +367,7 @@ func (s *service) correctPlacement(ctx context.Context, run *domain.MemoryPlacem
 	run.Items = initialPlacementItems(run.IngestID, run.ProfileID, proposal.Relationships, now)
 	attachFragmentIDs(run.Items, fragmentIDs)
 	run.ReviewTasks = []domain.MemoryReviewTask{}
-	run.Security = assessEvidenceInjection(additional)
+	run.Security = security
 	run.Status = domain.MemoryPlacementQueued
 	run.RequiresAck = false
 	run.AcknowledgedAt = nil
@@ -373,6 +379,21 @@ func (s *service) correctPlacement(ctx context.Context, run *domain.MemoryPlacem
 	}
 	s.kickPlacementWorker()
 	return &ResolvePlacementResult{Placement: *run}, nil
+}
+
+func correctionAttemptID(evidence []domain.MemoryEvidence, proposal domain.MemoryProposal) (string, error) {
+	payload, err := json.Marshal(struct {
+		Evidence []domain.MemoryEvidence `json:"evidence"`
+		Proposal domain.MemoryProposal   `json:"proposal"`
+	}{Evidence: evidence, Proposal: proposal})
+	if err != nil {
+		return "", err
+	}
+	return uuid.NewSHA1(uuid.NameSpaceOID, payload).String(), nil
+}
+
+func correctionTransitionID(ingestID, attemptID, eventType string) string {
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(strings.Join([]string{ingestID, "correction", attemptID, eventType}, ":"))).String()
 }
 
 func correctionReviewTarget(run *domain.MemoryPlacementRun, itemID string) (*domain.MemoryPlacementItem, error) {

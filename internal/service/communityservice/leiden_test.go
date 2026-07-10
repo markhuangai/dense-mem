@@ -685,6 +685,8 @@ func TestLeidenDetect_CrossProfileIsolation(t *testing.T) {
 		"advisory lock must use distinct keys for different profiles")
 }
 
-func TestLeidenProjectionExcludesQuarantinedFragments(t *testing.T) {
+func TestLeidenProjectionExcludesNonRecallableStates(t *testing.T) {
 	require.Contains(t, leidenNodeQuery, "n:SourceFragment AND coalesce(n.status, 'active') = 'active'")
+	require.Contains(t, leidenNodeQuery, "n:Claim AND coalesce(n.status, '') = 'validated'")
+	require.Contains(t, leidenNodeQuery, "n:Fact AND coalesce(n.status, '') = 'active'")
 }

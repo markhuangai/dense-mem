@@ -589,6 +589,66 @@ func knowledgeSchemas() map[string]any {
 			"required": []string{"detected", "community_count", "node_count"},
 		},
 
+		"SemanticAssertionResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"assertion_id":       map[string]any{"type": "string"},
+				"team_id":            map[string]any{"type": "string"},
+				"owner_profile_id":   map[string]any{"type": "string"},
+				"subject_entity_id":  map[string]any{"type": "string"},
+				"predicate_key":      map[string]any{"type": "string"},
+				"relationship_type":  map[string]any{"type": "string"},
+				"object_entity_id":   map[string]any{"type": "string"},
+				"object_value":       map[string]any{"type": "object", "additionalProperties": true},
+				"tier":               map[string]any{"type": "string", "enum": []string{"candidate", "validated_claim", "fact", "dream"}},
+				"status":             map[string]any{"type": "string", "enum": []string{"active", "needs_review", "quarantined", "superseded", "disputed", "retracted", "rejected"}},
+				"policy_family":      map[string]any{"type": "string", "enum": []string{"event_append_only", "multi_state", "single_state", "versioned"}},
+				"polarity":           map[string]any{"type": "string"},
+				"modality":           map[string]any{"type": "string"},
+				"valid_from":         map[string]any{"type": "string", "format": "date-time"},
+				"valid_to":           map[string]any{"type": "string", "format": "date-time"},
+				"recorded_at":        map[string]any{"type": "string", "format": "date-time"},
+				"recorded_to":        map[string]any{"type": "string", "format": "date-time"},
+				"extract_conf":       map[string]any{"type": "number"},
+				"resolution_conf":    map[string]any{"type": "number"},
+				"source_quality":     map[string]any{"type": "number"},
+				"support_count":      map[string]any{"type": "integer"},
+				"source_group_count": map[string]any{"type": "integer"},
+				"evidence":           map[string]any{"type": "array", "items": map[string]any{"type": "object", "additionalProperties": true}},
+				"projection_version": map[string]any{"type": "string"},
+				"created_at":         map[string]any{"type": "string", "format": "date-time"},
+				"updated_at":         map[string]any{"type": "string", "format": "date-time"},
+			},
+		},
+
+		"SemanticPathResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"nodes": map[string]any{
+					"type": "array",
+					"items": map[string]any{"type": "object", "properties": map[string]any{
+						"key": map[string]any{"type": "string"}, "id": map[string]any{"type": "string"}, "type": map[string]any{"type": "string"}, "name": map[string]any{"type": "string"},
+					}},
+				},
+				"edges": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"type": "object", "additionalProperties": true},
+				},
+			},
+		},
+
+		"SemanticFrontierHintResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"from_entity_id": map[string]any{"type": "string"},
+				"direction":      map[string]any{"type": "string", "enum": []string{"incoming", "outgoing"}},
+				"relationship":   map[string]any{"type": "string"},
+				"assertion_id":   map[string]any{"type": "string"},
+				"neighbor":       map[string]any{"type": "object", "additionalProperties": true},
+				"tier":           map[string]any{"type": "string"},
+			},
+		},
+
 		// RecallHitResponse is one ranked result returned by GET /api/v1/recall.
 		// Tier classifies the knowledge-pipeline level:
 		//   "1"   = active Fact (highest authority)
@@ -599,8 +659,8 @@ func knowledgeSchemas() map[string]any {
 			"properties": map[string]any{
 				"tier": map[string]any{
 					"type":        "string",
-					"enum":        []string{"1", "1.5", "2"},
-					"description": "Knowledge-pipeline tier of this hit: 1=active fact, 1.5=validated claim, 2=source fragment.",
+					"enum":        []string{"0.75", "1", "1.25", "1.5", "1.75", "2"},
+					"description": "Knowledge-pipeline tier of this hit: 0.75/1.25/1.75=V2 fact/validated/candidate assertion; 1/1.5/2=legacy fact/claim/fragment.",
 				},
 				"score": map[string]any{
 					"type":        "number",
@@ -618,6 +678,18 @@ func knowledgeSchemas() map[string]any {
 				"fact": map[string]any{
 					"$ref":        "#/components/schemas/FactResponse",
 					"description": "Populated for tier-1 (active Fact) hits.",
+				},
+				"assertion": map[string]any{
+					"$ref":        "#/components/schemas/SemanticAssertionResponse",
+					"description": "Populated for semantic-edge V2 assertion hits.",
+				},
+				"paths": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"$ref": "#/components/schemas/SemanticPathResponse"},
+				},
+				"frontier": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"$ref": "#/components/schemas/SemanticFrontierHintResponse"},
 				},
 				"semantic_rank": map[string]any{
 					"type":        "integer",

@@ -20,7 +20,9 @@ ALTER TABLE memory_placement_runs
     DROP CONSTRAINT IF EXISTS memory_placement_runs_status_check;
 ALTER TABLE memory_placement_runs
     ADD CONSTRAINT memory_placement_runs_status_check
-    CHECK (status IN ('queued', 'processing', 'awaiting_review', 'completed', 'failed'));
+    CHECK (status IN ('queued', 'processing', 'awaiting_review', 'completed', 'failed')) NOT VALID;
+ALTER TABLE memory_placement_runs
+    VALIDATE CONSTRAINT memory_placement_runs_status_check;
 
 ALTER TABLE memory_placement_items
     ADD COLUMN IF NOT EXISTS evidence_indexes JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -56,12 +58,14 @@ ALTER TABLE memory_placement_items
         'assertion_needs_review',
         'assertion_quarantined',
         'assertion_rejected'
-    ));
+    )) NOT VALID;
+ALTER TABLE memory_placement_items
+    VALIDATE CONSTRAINT memory_placement_items_category_check;
 
 CREATE TABLE IF NOT EXISTS assertion_transition_events (
     event_id UUID PRIMARY KEY,
     profile_id UUID NOT NULL,
-    ingest_id UUID NULL REFERENCES memory_placement_runs(ingest_id) ON DELETE SET NULL,
+    ingest_id UUID NULL REFERENCES memory_placement_runs(ingest_id),
     placement_item_id UUID NULL,
     assertion_id TEXT NOT NULL DEFAULT '',
     event_type TEXT NOT NULL,
@@ -179,7 +183,9 @@ ALTER TABLE memory_placement_items
     CHECK (category IN (
         'fragment_only', 'candidate_claim', 'validated_claim', 'promoted_fact',
         'needs_more_evidence', 'rejected_false', 'accepted_promoted', 'rejected_explained'
-    ));
+    )) NOT VALID;
+ALTER TABLE memory_placement_items
+    VALIDATE CONSTRAINT memory_placement_items_category_check;
 ALTER TABLE memory_placement_items
     DROP COLUMN IF EXISTS security_signals,
     DROP COLUMN IF EXISTS reviewed_relationship,
@@ -199,7 +205,9 @@ ALTER TABLE memory_placement_runs
     DROP CONSTRAINT IF EXISTS memory_placement_runs_status_check;
 ALTER TABLE memory_placement_runs
     ADD CONSTRAINT memory_placement_runs_status_check
-    CHECK (status IN ('queued', 'processing', 'completed', 'failed'));
+    CHECK (status IN ('queued', 'processing', 'completed', 'failed')) NOT VALID;
+ALTER TABLE memory_placement_runs
+    VALIDATE CONSTRAINT memory_placement_runs_status_check;
 ALTER TABLE memory_placement_runs
     DROP COLUMN IF EXISTS acknowledged_at,
     DROP COLUMN IF EXISTS requires_acknowledgement,

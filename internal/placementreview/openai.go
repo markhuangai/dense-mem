@@ -227,14 +227,15 @@ func (r *OpenAIReviewer) ReviewGraph(ctx context.Context, input Request) (Result
 	defer httpResponse.Body.Close()
 
 	var response reviewAPIResponse
+	if httpResponse.StatusCode != http.StatusOK {
+		_ = json.NewDecoder(httpResponse.Body).Decode(&response)
+		if httpResponse.StatusCode == http.StatusTooManyRequests {
+			return Result{}, &verifier.RateLimitError{Provider: openAIProvider, Message: responseError(response, "rate limited")}
+		}
+		return Result{}, providerError(responseError(response, fmt.Sprintf("unexpected status %d", httpResponse.StatusCode)), nil)
+	}
 	if err := json.NewDecoder(httpResponse.Body).Decode(&response); err != nil {
 		return Result{}, malformedError("failed to decode graph review response", "")
-	}
-	if httpResponse.StatusCode == http.StatusTooManyRequests {
-		return Result{}, &verifier.RateLimitError{Provider: openAIProvider, Message: responseError(response, "rate limited")}
-	}
-	if httpResponse.StatusCode != http.StatusOK {
-		return Result{}, providerError(responseError(response, fmt.Sprintf("unexpected status %d", httpResponse.StatusCode)), nil)
 	}
 	if len(response.Choices) != 1 {
 		return Result{}, malformedError("graph review response must contain one choice", "")

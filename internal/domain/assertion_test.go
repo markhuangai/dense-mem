@@ -89,6 +89,28 @@ func TestTypedValueAndEvidenceSpanValidate(t *testing.T) {
 		mutate(&got)
 		require.Error(t, got.Validate())
 	}
+	for _, tc := range []struct {
+		valueType ValueType
+		value     string
+		valid     bool
+	}{
+		{ValueTypeNumber, "42.5", true},
+		{ValueTypeNumber, "not-a-number", false},
+		{ValueTypeNumber, "NaN", false},
+		{ValueTypeBoolean, "true", true},
+		{ValueTypeBoolean, "maybe", false},
+		{ValueTypeDate, "2026-07-10", true},
+		{ValueTypeDate, "10/07/2026", false},
+		{ValueTypeDateTime, "2026-07-10T12:00:00Z", true},
+		{ValueTypeDateTime, "tomorrow", false},
+	} {
+		got := TypedValue{ValueID: "typed-value", ValueType: tc.valueType, Value: tc.value}
+		if tc.valid {
+			require.NoError(t, got.Validate())
+		} else {
+			require.Error(t, got.Validate())
+		}
+	}
 
 	span := EvidenceSpan{FragmentID: "fragment-1", Start: 1, End: 3, SourceGroup: "turn-1"}
 	require.NoError(t, span.Validate())

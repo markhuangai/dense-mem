@@ -423,6 +423,9 @@ func updateAssertionStateTx(ctx context.Context, tx neo4jdriver.ManagedTransacti
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := assertionservice.ValidateRelationshipType(assertion.RelationshipType); err != nil {
+		return nil, nil, fmt.Errorf("assertion store: invalid relationship type: %w", err)
+	}
 	assertion.Tier = tier
 	assertion.Status = status
 	assertion.UpdatedAt = at
@@ -544,6 +547,9 @@ func writeAssertion(
 	assertion domain.Assertion,
 	entityNames map[string]string,
 ) ([]assertionservice.SupersededAssertion, error) {
+	if err := assertionservice.ValidateRelationshipType(assertion.RelationshipType); err != nil {
+		return nil, fmt.Errorf("assertion store: invalid relationship type: %w", err)
+	}
 	if assertion.ObjectValue != nil {
 		if err := writeValue(ctx, tx, profileID, *assertion.ObjectValue); err != nil {
 			return nil, err

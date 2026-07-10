@@ -15,6 +15,7 @@ const (
 	AUTH_REVOKED                        ErrorCode = "AUTH_REVOKED"
 	FORBIDDEN                           ErrorCode = "FORBIDDEN"
 	NOT_FOUND                           ErrorCode = "NOT_FOUND"
+	GONE                                ErrorCode = "GONE"
 	VALIDATION_ERROR                    ErrorCode = "VALIDATION_ERROR"
 	PROFILE_ID_REQUIRED                 ErrorCode = "PROFILE_ID_REQUIRED"
 	INVALID_UUID                        ErrorCode = "INVALID_UUID"

@@ -28,6 +28,16 @@ var reservedRelationshipTypes = map[string]struct{}{
 	"SUPERSEDED_BY":   {},
 }
 
+func ValidateRelationshipType(value string) error {
+	if !relationshipTypePattern.MatchString(value) {
+		return errors.New("relationship type is unsafe")
+	}
+	if _, reserved := reservedRelationshipTypes[value]; reserved {
+		return errors.New("relationship type is reserved")
+	}
+	return nil
+}
+
 type Bundle struct {
 	Entities   []domain.Entity    `json:"entities"`
 	Assertions []domain.Assertion `json:"assertions"`
@@ -300,11 +310,8 @@ func ValidateBundle(profileID string, bundle Bundle) error {
 				return fmt.Errorf("assertion bundle: assertion[%d] object is missing", i)
 			}
 		}
-		if !relationshipTypePattern.MatchString(assertion.RelationshipType) {
-			return fmt.Errorf("assertion bundle: assertion[%d] relationship type is unsafe", i)
-		}
-		if _, reserved := reservedRelationshipTypes[assertion.RelationshipType]; reserved {
-			return fmt.Errorf("assertion bundle: assertion[%d] relationship type is reserved", i)
+		if err := ValidateRelationshipType(assertion.RelationshipType); err != nil {
+			return fmt.Errorf("assertion bundle: assertion[%d]: %w", i, err)
 		}
 		if want := RelationshipType(assertion.PredicateKey); assertion.RelationshipType != want {
 			return fmt.Errorf("assertion bundle: assertion[%d] relationship type must be %q", i, want)

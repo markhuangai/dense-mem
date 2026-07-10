@@ -153,7 +153,13 @@ func (s *RecallFeedbackEventServiceImpl) GetRecallFeedbackEvent(ctx context.Cont
 		return nil, nil
 	}
 	if reviewRepo, ok := s.repo.(repository.RecallMemoryReviewRepository); ok {
-		reviews, reviewErr := reviewRepo.ListRecallMemoryReviews(ctx, event.RecallID)
+		scopeID := ""
+		if event.TeamID != nil {
+			scopeID = event.TeamID.String()
+		} else if event.ProfileID != nil {
+			scopeID = event.ProfileID.String()
+		}
+		reviews, reviewErr := reviewRepo.ListRecallMemoryReviews(ctx, scopeID, event.RecallID)
 		if reviewErr != nil {
 			return nil, reviewErr
 		}

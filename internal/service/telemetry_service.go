@@ -184,6 +184,10 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 	windowedCardSpecs := telemetryWindowedCardSpecs(scope, baseLabels, windowKey)
 	windowedCards := make([]TelemetryCard, 0, len(windowedCardSpecs))
 	for _, spec := range windowedCardSpecs {
+		if s.assertionTransitionLog != nil && isAssertionLifecycleCard(spec.ID) {
+			windowedCards = append(windowedCards, TelemetryCard{ID: spec.ID, Label: spec.Label, Unit: spec.Unit})
+			continue
+		}
 		scalar, queryErr := s.queryInstant(queryCtx, spec.Query)
 		if queryErr != nil {
 			s.logQueryFailure("instant", spec, windowKey, scope, queryErr)
@@ -561,6 +565,16 @@ func overlayAssertionLifecycleCards(cards []TelemetryCard, counts map[string]int
 		}
 		cards[i].Value = value
 		cards[i].Available = true
+	}
+}
+
+func isAssertionLifecycleCard(id string) bool {
+	switch id {
+	case "assertion_proposals", "promotions", "validation_rate", "promotion_rate", "fact_yield_rate",
+		"rejection_rate", "review_rate", "quarantine_rate", "correction_rate", "reversal_rate":
+		return true
+	default:
+		return false
 	}
 }
 

@@ -279,6 +279,7 @@ export function ResultGraphPreview({ api, anchor }: { api: UserApi; anchor: Grap
       depth: 2,
       limit: 48,
       types: ["fact", "claim", "fragment", "dream"],
+	  includeSuperseded: true,
     })
       .then((next) => {
         if (active) {
@@ -365,8 +366,17 @@ function GraphCanvas({
   const rendererRef = useRef<Sigma | null>(null);
   const selectNodeRef = useRef(onSelect);
   const selectEdgeRef = useRef(onSelectEdge);
+	const nodeSizeRef = useRef(nodeSize);
+	const linkDistanceRef = useRef(linkDistance);
+	const showArrowsRef = useRef(showArrows);
+	const showLabelsRef = useRef(showLabels);
+	const appliedLinkDistanceRef = useRef(linkDistance);
   selectNodeRef.current = onSelect;
   selectEdgeRef.current = onSelectEdge;
+	nodeSizeRef.current = nodeSize;
+	linkDistanceRef.current = linkDistance;
+	showArrowsRef.current = showArrows;
+	showLabelsRef.current = showLabels;
   const canvasTheme = useCanvasTheme(containerRef);
 
   useEffect(() => {
@@ -377,14 +387,15 @@ function GraphCanvas({
     const graph = new Graph({ type: "directed", multi: true, allowSelfLoops: true });
     const goldenAngle = Math.PI * (3 - Math.sqrt(5));
     snapshot.nodes.forEach((node, index) => {
-      const radius = Math.max(1, Math.sqrt(index + 1)) * linkDistance * 0.12;
+	  const radius = Math.max(1, Math.sqrt(index + 1)) * linkDistanceRef.current * 0.12;
       graph.addNode(node.key, {
         ...node,
+		snapshotNodeType: node.type,
         x: Math.cos(index * goldenAngle) * radius,
         y: Math.sin(index * goldenAngle) * radius,
         label: node.title || node.id,
         color: nodeColor(node),
-        size: nodeValue(node, nodeSize),
+		size: nodeValue(node, nodeSizeRef.current),
         type: "circle",
       });
     });
@@ -398,17 +409,17 @@ function GraphCanvas({
         label: relationshipLabel(edge.relationship),
         color: relationshipColor(edge),
         size: edge.tier === "fact" ? 2.2 : edge.status === "quarantined" ? 1.8 : 1.15,
-        type: showArrows ? "arrow" : "line",
+		type: showArrowsRef.current ? "arrow" : "line",
       });
     });
 
     const renderer = new Sigma(graph, container, {
       allowInvalidContainer: true,
       defaultNodeType: "circle",
-      defaultEdgeType: showArrows ? "arrow" : "line",
+	  defaultEdgeType: showArrowsRef.current ? "arrow" : "line",
       nodeProgramClasses: { circle: NodeCircleProgram },
       edgeProgramClasses: { arrow: EdgeArrowProgram, line: EdgeLineProgram },
-      renderLabels: showLabels,
+	  renderLabels: showLabelsRef.current,
       renderEdgeLabels: false,
       labelColor: { color: canvasTheme.label },
       edgeLabelColor: { color: canvasTheme.label },
@@ -427,9 +438,10 @@ function GraphCanvas({
         selectEdgeRef.current(id);
       }
     });
-    renderer.getCamera().on("updated", (state) => {
-      renderer.setSetting("renderEdgeLabels", showLabels && !compact && state.ratio < 0.7);
-    });
+	renderer.getCamera().on("updated", (state) => {
+	  renderer.setSetting("renderEdgeLabels", showLabelsRef.current && !compact && state.ratio < 0.7);
+	});
+	appliedLinkDistanceRef.current = linkDistanceRef.current;
 
     let layout: FA2Layout | null = null;
     let timer = 0;
@@ -440,7 +452,7 @@ function GraphCanvas({
           adjustSizes: true,
           edgeWeightInfluence: 0.7,
           gravity: compact ? 1.4 : 0.8,
-          scalingRatio: Math.max(2, linkDistance / 26),
+		  scalingRatio: Math.max(2, linkDistanceRef.current / 26),
           slowDown: graph.order > 1000 ? 12 : 5,
         },
       });
@@ -461,7 +473,52 @@ function GraphCanvas({
       renderer.kill();
       rendererRef.current = null;
     };
-  }, [snapshot, nodeSize, linkDistance, showArrows, showLabels, compact, canvasTheme]);
+	}, [snapshot, compact, canvasTheme]);
+
+	useEffect(() => {
+	  const renderer = rendererRef.current;
+	  if (!renderer) {
+		return;
+	  }
+	  const graph = renderer.getGraph();
+	  graph.forEachNode((node, attributes) => {
+		graph.setNodeAttribute(node, "size", nodeValue({ type: String(attributes.snapshotNodeType ?? "") }, nodeSize));
+	  });
+	  renderer.refresh();
+	}, [nodeSize]);
+
+	useEffect(() => {
+	  const renderer = rendererRef.current;
+	  if (!renderer) {
+		return;
+	  }
+	  const previous = appliedLinkDistanceRef.current;
+	  appliedLinkDistanceRef.current = linkDistance;
+	  if (previous <= 0 || previous === linkDistance) {
+		return;
+	  }
+	  const scale = linkDistance / previous;
+	  const graph = renderer.getGraph();
+	  graph.forEachNode((node, attributes) => {
+		graph.setNodeAttribute(node, "x", Number(attributes.x ?? 0) * scale);
+		graph.setNodeAttribute(node, "y", Number(attributes.y ?? 0) * scale);
+	  });
+	  renderer.refresh();
+	}, [linkDistance]);
+
+	useEffect(() => {
+	  const renderer = rendererRef.current;
+	  if (!renderer) {
+		return;
+	  }
+	  const edgeType = showArrows ? "arrow" : "line";
+	  const graph = renderer.getGraph();
+	  graph.forEachEdge((edge) => graph.setEdgeAttribute(edge, "type", edgeType));
+	  renderer.setSetting("defaultEdgeType", edgeType);
+	  renderer.setSetting("renderLabels", showLabels);
+	  renderer.setSetting("renderEdgeLabels", showLabels && !compact);
+	  renderer.refresh();
+	}, [showArrows, showLabels, compact]);
 
   useEffect(() => {
     const renderer = rendererRef.current;

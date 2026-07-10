@@ -41,9 +41,6 @@ func TestGenerator_AISafeExcludesRuntimeOnlyRoutes(t *testing.T) {
 	if _, present := paths["/api/v1/fragments"]; present {
 		t.Errorf("ai-safe spec must not include direct fragment routes")
 	}
-	if _, present := paths["/api/v1/tools/remember"]; !present {
-		t.Errorf("ai-safe spec must include /api/v1/tools/remember")
-	}
 	for _, path := range []string{"/api/v1/tools/remember", "/api/v1/tools/get_memory_placement", "/api/v1/tools/resolve_memory_placement"} {
 		if _, present := paths[path]; !present {
 			t.Errorf("ai-safe spec must include %s", path)

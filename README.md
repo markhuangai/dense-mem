@@ -40,11 +40,12 @@
   <a href="https://zenodo.org/records/20519039"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.20519039.svg" alt="DOI: 10.5281/zenodo.20519039" /></a>
 </p>
 
-Dense-Mem gives MCP clients a durable memory layer with provenance, typed claims
-and facts, verification gates, server-side embeddings, recall, team isolation,
-REST/OpenAPI, a user portal with graph inspection, and a token-protected control
-portal. The host LLM owns conversation and judgment; Dense-Mem owns durable
-memory state and returns structured outcomes the host can explain to users.
+Dense-Mem gives MCP clients a durable semantic memory layer with raw evidence,
+granular entities, open-vocabulary relationships, independent review and
+verification, server-side embeddings, bounded graph recall, team isolation,
+REST/OpenAPI, and inspectable lifecycle telemetry. The host LLM proposes the
+smallest useful knowledge units; Dense-Mem validates, stores, promotes, rejects,
+quarantines, and returns structured outcomes the host can explain to users.
 
 Under the hood, Dense-Mem is a standalone HTTP MCP memory server. HTTP MCP is
 the v1 supported MCP transport and is served at `/mcp` from the main HTTP
@@ -81,14 +82,20 @@ test Dense-Mem before self-hosting.
 AI agents need memory that can be trusted later, not only text that can be
 retrieved later.
 
-- Evidence is first-class. Memories start as source fragments before they become
-  claims or facts.
-- Facts pass through typed claims, verification, and promotion gates.
-- Comparable conflicts become `clarifications[]`; Dense-Mem does not silently
-  overwrite active facts.
-- The host LLM stays responsible for extracting candidates and asking the user
-  questions. Dense-Mem stays responsible for durable state, gates, audit
-  metadata, and recall.
+- Evidence is first-class. Every assertion retains exact Unicode evidence spans
+  back to source fragments.
+- Semantic edges use validated, open relationship types such as `WORKS_ON`,
+  `DEMOED`, or `USES`; they are not reduced to fixed `SUBJECT` and `OBJECT`
+  relationships. `SUPPORTED_BY` and `MENTIONS` remain provenance links, not the
+  semantic meaning of a memory.
+- An AI reviewer can split a client proposal into smaller atomic relationships;
+  an independent verifier then decides whether each relation is contradicted,
+  retained as a candidate, validated, or eligible for fact promotion.
+- Comparable current-state assertions follow explicit lifecycle policies and
+  are never silently overwritten.
+- The host LLM extracts candidates and asks the user about review tasks.
+  Dense-Mem owns durable state, gates, audit metadata, bounded traversal, and
+  exact lifecycle telemetry.
 - Operators keep control of storage, team/profile isolation, API keys, and data
   egress boundaries.
 
@@ -125,9 +132,11 @@ Control portal: http://127.0.0.1:8090/
 ```
 
 The user portal includes recall, facts, claims, fragments, communities, dreams,
-and a bounded graph explorer for seeing facts, claims, evidence fragments, and
-dream hypotheses as connected memory. The graph view is a read-scoped UI
-endpoint, not a raw Cypher or unrestricted traversal API.
+and a bounded graph explorer. Its default overview shows every node type and
+lifecycle state in the authenticated team, including granular entity/value
+nodes and direct semantic edges. Local exploration remains depth- and
+result-bounded with visited-node deduplication, so cycles do not cause an
+unbounded read. The graph endpoint is read-scoped, not raw Cypher.
 
 Cold image pulls can take longer than 60 seconds. Redis and public HTTPS are
 intentionally omitted from the base example; use the expert example when you
@@ -183,25 +192,57 @@ Three details matter on this path:
 
 ### Your First Memory
 
-`remember` stores evidence and returns an `ingest_id` immediately; placement
-happens asynchronously. Poll `get_memory_placement` with that `ingest_id` to
-see where the memory landed:
+`remember` accepts raw evidence and an atomic graph proposal, then returns an
+`ingest_id` immediately. Evidence spans use zero-based Unicode code-point
+offsets (`start` inclusive, `end` exclusive):
+
+```json
+{
+  "evidence": [{
+    "content": "Mark works on Dense-Mem, which uses Neo4j and PostgreSQL.",
+    "source_type": "conversation",
+    "source_group": "conversation:demo"
+  }],
+  "proposal": {
+    "entities": [
+      {"ref": "mark", "name": "Mark", "type": "person"},
+      {"ref": "dense-mem", "name": "Dense-Mem", "type": "project"},
+      {"ref": "neo4j", "name": "Neo4j", "type": "technology"},
+      {"ref": "postgresql", "name": "PostgreSQL", "type": "technology"}
+    ],
+    "relationships": [
+      {
+        "proposal_id": "mark-works-on-dense-mem",
+        "subject_ref": "mark",
+        "predicate": "works_on",
+        "object_ref": "dense-mem",
+        "policy_family": "versioned",
+        "polarity": "+",
+        "modality": "assertion",
+        "evidence": [{"evidence_index": 0, "start": 0, "end": 57}]
+      }
+    ]
+  }
+}
+```
+
+The reviewer may return more atomic relationships than the client proposed.
+Poll `get_memory_placement` with the `ingest_id` to inspect every item:
 
 | Category | Meaning |
 |----------|---------|
-| `promoted_fact` | A claim was extracted, verified, and promoted to an active fact. |
-| `validated_claim` | The claim verified but did not create a fact. |
-| `candidate_claim` | The claim is parked pending stronger support; check the item's `error` field for verifier failures. |
-| `fragment_only` | The text was stored as searchable evidence without a typed claim. |
-| `needs_more_evidence` | Placement wants more evidence before deciding. |
-| `rejected_false` | The evidence looked like a contradiction or false-memory correction. |
+| `assertion_fact` | Independent entailment plus trusted authority or two independent source groups satisfied the fact gate. |
+| `assertion_validated` | The relation was entailed but has not met the fact gate. |
+| `assertion_candidate` | Evidence is insufficient for validation; the relation remains discoverable at lower authority. |
+| `assertion_needs_review` | Identity, scope, conflict, or a legacy decomposition requires user confirmation. |
+| `assertion_quarantined` | Evidence matched the prompt-injection safety filter and is excluded from model-backed reads. |
+| `assertion_rejected` | The independent verifier contradicted the proposed relationship. |
 
-Server-side claim extraction is deliberately conservative: simple first-person
-statements such as "I prefer ...", "I like ...", or "I use ..." are the
-reliable way to see the full evidence-to-fact path on a first run. Other
-phrasings, including third-person forms like "Josh prefers ...", are kept as
-`fragment_only` evidence, which recall still returns and ranks below facts.
-`fragment_only` is a normal outcome, not an error.
+Use `resolve_memory_placement` only after showing the placement question to the
+user. `accept` and `reject` resolve a review item; `correct` submits new evidence
+and a replacement proposal through the same reviewer and verifier. Repeated
+independent evidence can promote a validated assertion to a fact without
+rewriting its provenance.
 
 ### Telemetry Overlay
 
@@ -241,6 +282,12 @@ records dream-specific telemetry and routes the confirmation evidence through
 normal memory placement. Normal production recall traffic still contributes
 request volume, result count, and latency.
 
+Promotion, validation, rejection, review, quarantine, correction, and reversal
+cards are computed from the append-only PostgreSQL assertion-transition ledger.
+Those window totals and rates are exact and remain tenant/profile scoped.
+Prometheus assertion counters provide operational time series; they are not
+used as a second, potentially divergent source for the exact lifecycle cards.
+
 For the disposable demo image, keep the control portal disabled and use the
 demo telemetry overlay instead:
 
@@ -260,15 +307,33 @@ metrics listener publicly.
 
 ## Compare
 
-| Capability | Dense-Mem | File memory | Vector DB | Generic MCP memory |
-|------------|-----------|-------------|-----------|--------------------|
-| Evidence provenance | Source fragments are stored before claims or facts | Usually absent or informal | Stores chunks, not truth history | Varies by implementation |
-| Fact changes | Verification gates and promotion rules | Manual edits | Similarity updates can obscure history | Often tool-specific |
-| Conflict handling | Comparable conflicts return clarification tasks | Caller must notice | Similar vectors do not mean contradiction | Usually caller-managed |
-| Recall | Facts, claims, fragments, contradictions, and clarifications | Text search | Vector similarity | Varies |
-| Graph inspection | User portal graph view plus bounded `trace_memory` lineage | Manual cross-references | Usually external tooling | Varies |
-| Agent boundary | Host LLM judges; Dense-Mem stores and enforces | Blurred | Retrieval only | Often blurred |
-| Operations | Teams, profiles, API keys, audit metadata, REST, OpenAPI, MCP | Minimal | Database operations | Varies |
+The closest architectural peer is Graphiti, not a chunk-only vector store.
+Mem0's current open-source algorithm removed its external graph-store path in
+favor of vector, BM25, and entity-linking score fusion; relationships are no
+longer returned as a directly traversable graph. See Mem0's official
+[migration note](https://docs.mem0.ai/platform/features/graph-memory). Graphiti
+builds temporal entity/relationship graphs from source episodes and supports
+hybrid semantic, keyword, and graph retrieval. See the official
+[Graphiti project](https://github.com/getzep/graphiti).
+
+| Capability | Dense-Mem semantic edge V2 | Mem0 OSS current | Graphiti |
+|------------|----------------------------|------------------|----------|
+| Durable unit | Evidence fragment plus atomic assertion | Extracted memory/fact in a vector collection | Episode-derived entity and relationship graph |
+| Relationships | Open Neo4j relationship types, returned as typed paths and bounded frontier hints | Entity links influence ranking; direct graph relations are not exposed by the current OSS algorithm | Temporal fact edges between entity nodes |
+| Truth lifecycle | Candidate → validated claim → fact, with reject, quarantine, review, correction, reversal, and supersession events | Add-only extraction with hash deduplication in the current OSS algorithm | Temporal invalidation preserves prior fact history |
+| Verification | Separate graph reviewer and independent verifier; fact gate requires authority or independent source groups | Extraction/ranking pipeline; no equivalent Dense-Mem fact gate documented | LLM extraction and temporal conflict handling |
+| Provenance | Exact evidence spans plus `SUPPORTED_BY`/`MENTIONS` and an append-only transition ledger | Original memory metadata | Every fact traces to source episodes |
+| Governance | Team/profile API keys, manager-only migration, user-confirmed review tasks, exact scoped telemetry | Identifier-scoped memory and application-managed policy | Flexible OSS graph core; surrounding governance is application-managed |
+| Recall | Vector + keyword + graph assertions; typed paths; topic-selectable, cycle-safe frontier | Semantic candidates reranked with BM25/entity signals | Semantic + keyword + graph traversal with temporal queries |
+
+### Design risks
+
+| Failure mode | Mitigation in Dense-Mem |
+|--------------|-------------------------|
+| Over-extraction creates noisy entities and an edge explosion. | Atomic proposal limits, independent review, canonical entity resolution, duplicate IDs, lifecycle states, and bounded recall keep noise inspectable instead of treating every edge as fact. |
+| Two model outputs based on one source falsely look like independent support. | Promotion counts stable `source_group` values, not model calls; two readers of one document remain one source. |
+| Dense or cyclic graphs cause loops, latency, or irrelevant context. | Recall returns ranked one-hop frontier hints; local graph and trace operations enforce depth/result limits and visited-node deduplication. |
+| A malicious memory instructs the reviewer or leaks a credential. | Evidence is treated as untrusted data, injection-shaped submissions are quarantined before model execution, and graph display redaction is an additional best-effort safeguard. |
 
 Redis is optional for single-node deployments and required for multi-instance
 deployments.
@@ -290,10 +355,10 @@ The README is the product overview. The full user documentation lives in the
 
 | Area | Dense-Mem owns | Host LLM owns |
 |------|----------------|---------------|
-| Memory writes | Evidence fragments, claim extraction, verification, gates, promotion | Submitting evidence from chat text |
+| Memory writes | Evidence fragments, independent graph review, verification, lifecycle policy, promotion | Submitting evidence plus the smallest entity/relationship proposal it can support |
 | Embeddings | Fragment embeddings and recall-query embeddings through the configured provider | No vectors for normal writes or recall |
-| Retrieval | Facts, validated claims, fragments, contradictions, clarification tasks | Choosing what to ask or cite in the conversation |
-| Truth changes | Comparable-conflict detection, confirmation-driven supersession | Asking the user which uncertain memory is correct |
+| Retrieval | Active semantic assertions, bounded typed paths/frontiers, legacy memory, and review tasks | Choosing which returned relationship frontier to follow or cite |
+| Truth changes | Policy-aware supersession, transition ledger, and user-authorized resolution | Asking the user whether an uncertain relation is true, false, or needs correction |
 | Operations | Teams, named profiles, API keys, audit metadata, control portal | Client-side MCP configuration |
 
 Dense-Mem is not an agent brain, planner, or external truth arbiter. It stores
@@ -303,16 +368,13 @@ memory, applies explicit gates, and returns structured outcomes.
 
 | Tool | Purpose |
 |------|---------|
-| `remember` | Normal chat-session memory insertion. Saves evidence only and returns a placement run for Dense-Mem verifier processing. |
-| `get_memory_placement` | Polls the verifier-owned placement run returned by `remember`, including fragment-only, claim, fact, rejected, and needs-evidence outcomes. |
-| `dispute_memory_placement` | Starts or continues a bounded placement dispute with additional evidence; the verifier decides whether to promote or keep the placement rejected. |
-| `import_memories` | Trusted migration path for summarized historical conversations. It may carry explicit claims and can request auto-promotion. |
-| `recall_memory` | Retrieves facts, validated claims, fragments, `clarifications[]`, and hypothesis-only `related_dreams` for the authenticated team. |
+| `remember` | Stores evidence plus granular entity and atomic open-relationship proposals; returns an asynchronous placement run. Manager keys may attach `migration_refs` for legacy decomposition. |
+| `get_memory_placement` | Polls each independently reviewed relation, including candidate, validated, fact, review, quarantine, and rejection outcomes. |
+| `resolve_memory_placement` | Acknowledges a completed run or applies a user-confirmed `accept`, `reject`, or evidence-backed `correct` decision. |
+| `recall_memory` | Retrieves active semantic assertions with typed paths and bounded next-hop frontier hints, plus legacy facts, claims, fragments, and hypothesis-only dreams. |
 | `resolve_dream_feedback` | Records dream-specific decisions. `ignore` leaves the dream for future recall, while confirmed true or false dreams enter normal memory placement and are removed from future dream recall. |
-| `trace_memory` | Expands one fact or claim into bounded evidence, promotion lineage, contradictions, and supersession links. |
-| `assemble_context` | Builds a bounded prompt-ready context block plus structured facts, claims, fragments, and clarifications. |
-| `reflect_memories` | Reviews active facts, candidate or disputed claims, contradictions, stale memories, and clarification needs. |
-| `confirm_memory` | Applies the user's answer to a clarification task, either accepting a claim and superseding comparable active facts or keeping/rejecting it. |
+| `trace_memory` | Expands an assertion, fact, or claim through a bounded, cycle-safe evidence and relationship trace. |
+| `assemble_context` | Builds bounded prompt-ready context from semantic assertions and legacy memory. |
 | `find_memory_pack_candidates` | Finds facts and validated claims that can be exported into a portable memory pack. |
 | `export_memory_pack` | Exports selected memory into canonical JSON with a SHA-256 integrity hash for review or sharing. |
 | `inspect_memory_pack` | Parses a memory-pack artifact or URL and reports duplicates, conflicts, and required decisions without writing memory. |
@@ -332,18 +394,35 @@ draft a self-contained, shareable Agent Skill `SKILL.md` file for recipients
 without access to the source memory instance, and without relying on memory-pack
 import/export.
 
+### Retired memory tools
+
+The V2 workflow removes legacy tools from MCP discovery and the tool catalog.
+Authenticated direct HTTP calls receive `410 Gone` with migration guidance:
+
+| Retired tool | Replacement |
+|--------------|-------------|
+| `dispute_memory_placement` | Read the run with `get_memory_placement`, confirm with the user, then call `resolve_memory_placement` with `correct` and new evidence when needed. |
+| `import_memories` | Call `remember` with V2 evidence/proposal fields. For existing project memory, a manager key also supplies `migration_refs`; the decomposed bundle stays inactive until the user accepts it. |
+| `reflect_memories` | Use `recall_memory`, `trace_memory`, and the detailed team graph view. |
+| `confirm_memory` | Use `resolve_memory_placement` with the relevant `placement_item_id` and the user's decision. |
+
 Memory moves through this path:
 
 ```text
-remember evidence -> verifier placement -> typed claim -> verification -> promotion gate -> active fact
-                         |                                                 |
-                         v                                                 v
-                  fragment-only / reject                              clarification task
+evidence + atomic proposal
+          |
+          v
+ independent graph reviewer --split/normalize--> entity -[OPEN_RELATION]-> entity/value
+          |                                                   |
+          v                                                   v
+ independent verifier ------------------------------> candidate / validated / fact
+          |                                                   |
+          +------------------------------------------> reject / quarantine / user review
 ```
 
-Comparable conflicts are not resolved silently. Dense-Mem returns
-`clarifications[]`, and the host LLM asks the user which memory is correct. After
-the user answers, the host calls `confirm_memory`.
+Comparable conflicts and ambiguous identities are not resolved silently.
+Dense-Mem returns placement review tasks, the host LLM asks the user, and the
+host calls `resolve_memory_placement` with the confirmed decision.
 
 ## Data Egress
 
@@ -354,6 +433,10 @@ your boundary; hosted providers do not. See the wiki
 [Configuration](https://github.com/markhuangai/dense-mem/wiki/Configuration) and
 [Technical Reference](https://github.com/markhuangai/dense-mem/wiki/Technical-Reference)
 for provider settings and egress details.
+
+The graph UI applies best-effort regex redaction for common secret shapes and
+never returns embeddings. That display safeguard is not a DLP system: do not
+submit API keys, passwords, tokens, or other credentials as memory content.
 
 ## Embedding Model Consistency
 

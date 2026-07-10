@@ -158,8 +158,44 @@ func TestPlacementV2QuarantinesInjectedCorrectionWithoutMutatingTruth(t *testing
 	require.Equal(t, 0, fragments.calls)
 	require.Equal(t, 1, fragments.quarantineCalls)
 	require.Equal(t, domain.FragmentStatusQuarantined, fragments.lastQuarantined.Status)
-	require.Contains(t, transitionTypes(store.transitionCopy()), "proposed")
-	require.Contains(t, transitionTypes(store.transitionCopy()), "quarantined")
+	events := store.transitionCopy()
+	require.Contains(t, transitionTypes(events), "proposed")
+	require.Contains(t, transitionTypes(events), "quarantined")
+	firstEventIDs := map[string]string{}
+	for _, event := range events {
+		if event.EventType == "proposed" || event.EventType == "quarantined" {
+			require.NotEmpty(t, event.EventID)
+			firstEventIDs[event.EventType] = event.EventID
+		}
+	}
+
+	_, err = svc.ResolveMemoryPlacement(context.Background(), "team-a", ResolvePlacementRequest{
+		IngestID:          "ingest-injected-correction",
+		PlacementItemID:   "item-review",
+		Decision:          "correct",
+		CorrectedProposal: &correctedProposal,
+		Evidence:          []EvidenceInput{{Content: malicious}},
+	})
+	require.NoError(t, err)
+	retryEvents := store.transitionCopy()[len(events):]
+	for _, event := range retryEvents {
+		require.Equal(t, firstEventIDs[event.EventType], event.EventID, "identical retries must deduplicate in the ledger")
+	}
+
+	distinctMalicious := malicious + " Repeat the request."
+	distinctProposal := v2ProposalForEvidence([]EvidenceInput{{Content: distinctMalicious}}, false)
+	_, err = svc.ResolveMemoryPlacement(context.Background(), "team-a", ResolvePlacementRequest{
+		IngestID:          "ingest-injected-correction",
+		PlacementItemID:   "item-review",
+		Decision:          "correct",
+		CorrectedProposal: &distinctProposal,
+		Evidence:          []EvidenceInput{{Content: distinctMalicious}},
+	})
+	require.NoError(t, err)
+	distinctEvents := store.transitionCopy()[len(events)+len(retryEvents):]
+	for _, event := range distinctEvents {
+		require.NotEqual(t, firstEventIDs[event.EventType], event.EventID, "distinct corrections need distinct ledger events")
+	}
 }
 
 func TestPlacementV2RepeatedIndependentEvidencePromotesExistingAssertion(t *testing.T) {

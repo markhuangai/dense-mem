@@ -457,22 +457,23 @@ func saveRunTx(ctx context.Context, tx *gorm.DB, run domain.MemoryPlacementRun) 
 	).Error; err != nil {
 		return err
 	}
+	// Placement items are the current materialized result for a run; transition history lives in assertion_transition_events.
+	if err := tx.WithContext(ctx).Exec(`
+		DELETE FROM memory_placement_items
+		WHERE ingest_id = ? AND profile_id = ?
+	`, run.IngestID, run.ProfileID).Error; err != nil {
+		return err
+	}
 	for _, item := range run.Items {
 		itemJSON, err := marshalPlacementItemV2(item)
 		if err != nil {
 			return err
 		}
-		if err := tx.WithContext(ctx).Exec(`
-			UPDATE memory_placement_items
-			SET fragment_id = ?, evidence_indexes = ?::jsonb, fragment_ids = ?::jsonb,
-			    category = ?, status = ?, reason = ?, error = ?, claim_id = ?, fact_id = ?,
-			    assertion_id = ?, relationship_type = ?, tier = ?, assertion_status = ?,
-			    policy_family = ?, verifier_verdict = ?, verifier_confidence = ?,
-			    review_task_id = ?, proposed_relationship = ?::jsonb,
-			    reviewed_relationship = ?::jsonb, security_signals = ?::jsonb,
-			    updated_at = ?
-			WHERE item_id = ? AND ingest_id = ? AND profile_id = ?
-		`,
+		if err := tx.WithContext(ctx).Exec(createMemoryPlacementItemSQL,
+			item.ItemID,
+			run.IngestID,
+			run.ProfileID,
+			item.EvidenceIndex,
 			item.FragmentID,
 			itemJSON.evidenceIndexes,
 			itemJSON.fragmentIDs,
@@ -493,10 +494,8 @@ func saveRunTx(ctx context.Context, tx *gorm.DB, run domain.MemoryPlacementRun) 
 			itemJSON.proposed,
 			itemJSON.reviewed,
 			itemJSON.securitySignals,
+			utcOrNow(item.CreatedAt),
 			utcOrNow(item.UpdatedAt),
-			item.ItemID,
-			run.IngestID,
-			run.ProfileID,
 		).Error; err != nil {
 			return err
 		}

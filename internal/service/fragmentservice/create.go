@@ -477,6 +477,13 @@ func (s *createFragmentService) CreateQuarantined(ctx context.Context, profileID
 		"updatedAt":            fragment.UpdatedAt,
 	})
 	if err != nil {
+		if s.logger != nil {
+			s.logger.Error("fragment quarantine: persist failed",
+				slog.String("team_id", profileID),
+				slog.String("fragment_id", fragment.FragmentID),
+				slog.String("error", err.Error()),
+			)
+		}
 		observability.RecordFragmentCreate(ctx, s.metrics, "error")
 		return nil, fmt.Errorf("failed to persist quarantined fragment: %w", err)
 	}

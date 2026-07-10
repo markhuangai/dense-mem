@@ -377,7 +377,7 @@ describe("UserPortalApp", () => {
 	expect(await screen.findByTestId("sigma-graph")).toHaveTextContent("Alice works_on project-x");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=local&types=fact%2Cclaim%2Cfragment%2Cdream&anchor_type=fact&anchor_id=fact-1&depth=2&limit=48",
+		"/ui/api/graph?scope=local&types=fact%2Cclaim%2Cfragment%2Cdream&anchor_type=fact&anchor_id=fact-1&depth=2&limit=48&include_superseded=true",
         expect.any(Object),
       );
     });

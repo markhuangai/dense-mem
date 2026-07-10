@@ -112,6 +112,9 @@ func (s *service) rememberV2(ctx context.Context, profileID string, req Remember
 	for i := range evidence {
 		fragment, err := s.createPlacementFragment(ctx, profileID, evidence[i], run.Security.Quarantined)
 		if err != nil {
+			if run.Security.Quarantined {
+				s.log().Error("memory service: failed to persist quarantined fragment", "ingest_id", run.IngestID, "evidence_index", i, "error", err)
+			}
 			return nil, s.failPlacement(ctx, &run, err)
 		}
 		status := "created"
@@ -480,7 +483,7 @@ func (s *service) assertionFromReview(ctx context.Context, run *domain.MemoryPla
 	status := domain.AssertionStatusActive
 	tier := domain.AssertionTierCandidate
 	eventType := "retained_candidate"
-	reason := "verified as a weak candidate"
+	var reason string
 	ambiguous := reviewed.Ambiguous || relationshipHasAmbiguousEntity(reviewed.Proposal, entities)
 	switch {
 	case ambiguous:

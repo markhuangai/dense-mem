@@ -48,7 +48,9 @@ const communityCountsCypher = `
 MATCH (n)
 WHERE n.team_id = $profileId
   AND n.community_id IS NOT NULL
-  AND (n:SourceFragment OR n:Claim OR n:Fact)
+  AND ((n:SourceFragment AND coalesce(n.status, 'active') = 'active')
+    OR (n:Claim AND coalesce(n.status, '') = 'validated')
+    OR (n:Fact AND coalesce(n.status, '') = 'active'))
 RETURN toString(n.community_id) AS community_id,
        count(n) AS member_count
 ORDER BY member_count DESC, community_id ASC`

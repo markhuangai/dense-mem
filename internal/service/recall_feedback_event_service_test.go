@@ -282,8 +282,14 @@ func (s *recallFeedbackQueueRepoStub) EnqueueRecallMemoryReviews(_ context.Conte
 	return nil
 }
 
-func (s *recallFeedbackQueueRepoStub) ListRecallMemoryReviews(_ context.Context, recallID string) ([]domain.RecallMemoryReview, error) {
+func (s *recallFeedbackQueueRepoStub) ListRecallMemoryReviews(_ context.Context, profileID, recallID string) ([]domain.RecallMemoryReview, error) {
 	if s.event == nil || s.event.RecallID != recallID {
+		return []domain.RecallMemoryReview{}, nil
+	}
+	if s.event.TeamID != nil && s.event.TeamID.String() != profileID {
+		return []domain.RecallMemoryReview{}, nil
+	}
+	if s.event.TeamID == nil && s.event.ProfileID != nil && s.event.ProfileID.String() != profileID {
 		return []domain.RecallMemoryReview{}, nil
 	}
 	return append([]domain.RecallMemoryReview(nil), s.reviews...), nil

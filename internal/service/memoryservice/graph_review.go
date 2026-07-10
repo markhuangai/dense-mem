@@ -123,7 +123,10 @@ func normalizeReviewedResult(evidence []domain.MemoryEvidence, result placementr
 	}
 	for i := range result.Relationships {
 		relationship := &result.Relationships[i]
+		relationship.Proposal.ProposalID = strings.TrimSpace(relationship.Proposal.ProposalID)
+		relationship.Proposal.SubjectRef = strings.TrimSpace(relationship.Proposal.SubjectRef)
 		relationship.Proposal.Predicate = strings.TrimSpace(relationship.Proposal.Predicate)
+		relationship.Proposal.ObjectRef = strings.TrimSpace(relationship.Proposal.ObjectRef)
 		relationship.Rationale = strings.TrimSpace(relationship.Rationale)
 		if !relationship.Atomic {
 			return placementreview.Result{}, fmt.Errorf("memory service: reviewer relationship[%d] is not atomic", i)

@@ -379,6 +379,10 @@ func TestPrometheusTelemetryService_UsesExactAssertionLifecycleLedger(t *testing
 	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/query":
+			if strings.Contains(r.URL.Query().Get("query"), "densemem_assertion_transition_total") {
+				http.Error(w, "lifecycle counters must come from the ledger", http.StatusServiceUnavailable)
+				return
+			}
 			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"value":[1770000000,"42.25"]}]}}`))
 		case "/api/v1/query_range":
 			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"values":[[1770000000,"1"]]}]}}`))
@@ -425,6 +429,8 @@ func TestPrometheusTelemetryService_UsesExactAssertionLifecycleLedger(t *testing
 	require.InDelta(t, 25, telemetrySpecByID(snapshot.WindowedCards, "quarantine_rate").Value, 0.000001)
 	require.InDelta(t, 50, telemetrySpecByID(snapshot.WindowedCards, "correction_rate").Value, 0.000001)
 	require.InDelta(t, 100.0/6, telemetrySpecByID(snapshot.WindowedCards, "reversal_rate").Value, 0.000001)
+	require.True(t, isAssertionLifecycleCard("promotion_rate"))
+	require.False(t, isAssertionLifecycleCard("http_requests"))
 }
 
 func TestPrometheusTelemetryService_FailsClosedWhenLifecycleLedgerFails(t *testing.T) {

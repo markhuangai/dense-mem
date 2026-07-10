@@ -319,6 +319,21 @@ func TestSubmitRecallSessionFeedbackAcceptsDreamIrrelevantRefs(t *testing.T) {
 	}
 }
 
+func TestSubmitRecallSessionFeedbackSchemaAcceptsAssertionRefs(t *testing.T) {
+	reg, _ := BuildDefault(Dependencies{})
+	tool, _ := reg.Get("submit_recall_session_feedback")
+	input := map[string]any{"recalls": []any{map[string]any{
+		"recall_id": "rec-assertion", "used": false, "answer_supported": false,
+		"quality": "low", "missing_context": false, "irrelevant": true,
+		"feedback_comment":       "The returned assertion was unrelated.",
+		"irrelevant_result_refs": []any{map[string]any{"type": "assertion", "id": "assertion-1"}},
+	}}}
+
+	if err := ValidateInput(tool, input); err != nil {
+		t.Fatalf("assertion feedback ref rejected by schema: %v", err)
+	}
+}
+
 func TestRecallMemoryRecallEventDisabledByDefault(t *testing.T) {
 	reg, _ := BuildDefault(Dependencies{Recall: stubRecallWithHit{}})
 	tool, _ := reg.Get("recall_memory")

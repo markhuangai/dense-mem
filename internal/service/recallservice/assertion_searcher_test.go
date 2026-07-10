@@ -51,6 +51,8 @@ func TestAssertionSearcherReturnsTypedPathsAndDeduplicatedFrontier(t *testing.T)
 	require.NotContains(t, reader.params[1]["entityIds"], "value-1")
 	require.Contains(t, reader.queries[0], "node.status = 'active'")
 	require.Contains(t, reader.queries[0], "END AS object_value")
+	require.Contains(t, reader.queries[1], "CALL {")
+	require.Contains(t, reader.queries[1], "RETURN from_entity_id")
 }
 
 func TestAssertionSearcherValidationEmptyAndErrorPaths(t *testing.T) {
@@ -83,9 +85,12 @@ func TestAssertionSearcherValidationEmptyAndErrorPaths(t *testing.T) {
 
 	bad := assertionSearchRow("assertion-1", "mark", "person", "entity:dense-mem", "dense-mem", "project", "Dense-Mem", time.Now())
 	bad["evidence_json"] = `{`
-	reader = &sequenceRecallScopedReader{rowSets: [][]map[string]any{{bad}}}
-	_, err = NewAssertionSearcher(reader).SearchActive(context.Background(), "team-a", "query", []float32{1}, 1, nil, nil)
-	require.Error(t, err)
+	reader = &sequenceRecallScopedReader{rowSets: [][]map[string]any{{bad}, {}}}
+	results, err := NewAssertionSearcher(reader).SearchActive(context.Background(), "team-a", "query", []float32{1}, 1, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Empty(t, results[0].Assertion.Evidence)
+	require.Equal(t, []string{"fragment-1"}, results[0].Path.Edges[0].EvidenceIDs)
 
 	require.Equal(t, 2, minInt(2, 3))
 	require.Equal(t, 2, minInt(3, 2))

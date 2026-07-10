@@ -2,6 +2,8 @@ package domain
 
 import (
 	"errors"
+	"math"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -141,13 +143,33 @@ type TypedValue struct {
 }
 
 func (v TypedValue) Validate() error {
+	value := strings.TrimSpace(v.Value)
 	switch {
 	case strings.TrimSpace(v.ValueID) == "":
 		return errors.New("value_id is required")
 	case !v.ValueType.IsValid():
 		return errors.New("value_type is invalid")
-	case strings.TrimSpace(v.Value) == "":
+	case value == "":
 		return errors.New("value is required")
+	}
+	switch v.ValueType {
+	case ValueTypeNumber:
+		number, err := strconv.ParseFloat(value, 64)
+		if err != nil || math.IsNaN(number) || math.IsInf(number, 0) {
+			return errors.New("value must be a finite number")
+		}
+	case ValueTypeBoolean:
+		if _, err := strconv.ParseBool(value); err != nil {
+			return errors.New("value must be a boolean")
+		}
+	case ValueTypeDate:
+		if _, err := time.Parse(time.DateOnly, value); err != nil {
+			return errors.New("value must be an ISO 8601 date")
+		}
+	case ValueTypeDateTime:
+		if _, err := time.Parse(time.RFC3339Nano, value); err != nil {
+			return errors.New("value must be an RFC 3339 date-time")
+		}
 	}
 	return nil
 }

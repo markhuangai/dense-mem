@@ -96,41 +96,45 @@ ORDER BY score DESC, node.recorded_at DESC, node.assertion_id ASC
 LIMIT $limit`
 
 const assertionFrontierCypher = `
-MATCH (source:Entity {team_id: $profileId})-[relationship]->(target)
-WHERE source.entity_id IN $entityIds
-  AND target.team_id = $profileId
-  AND relationship.team_id = $profileId
-  AND relationship.semantic_projection = true
-  AND relationship.status = 'active'
-  AND NOT relationship.assertion_id IN $assertionIds
-RETURN source.entity_id AS from_entity_id,
-       'outgoing' AS direction,
-       type(relationship) AS relationship_type,
-       relationship.assertion_id AS assertion_id,
-       relationship.tier AS tier,
-       target.graph_key AS neighbor_key,
-       CASE WHEN target:Entity THEN target.entity_id ELSE target.value_id END AS neighbor_id,
-       CASE WHEN target:Entity THEN target.canonical_name ELSE coalesce(target.display, target.value) END AS neighbor_name,
-       CASE WHEN target:Entity THEN target.entity_type ELSE 'value:' + target.value_type END AS neighbor_type,
-       coalesce(relationship.source_quality, 0) AS relevance
-UNION ALL
-MATCH (source)-[relationship]->(target:Entity {team_id: $profileId})
-WHERE target.entity_id IN $entityIds
-  AND source.team_id = $profileId
-  AND relationship.team_id = $profileId
-  AND relationship.semantic_projection = true
-  AND relationship.status = 'active'
-  AND NOT relationship.assertion_id IN $assertionIds
-RETURN target.entity_id AS from_entity_id,
-       'incoming' AS direction,
-       type(relationship) AS relationship_type,
-       relationship.assertion_id AS assertion_id,
-       relationship.tier AS tier,
-       source.graph_key AS neighbor_key,
-       CASE WHEN source:Entity THEN source.entity_id ELSE source.value_id END AS neighbor_id,
-       CASE WHEN source:Entity THEN source.canonical_name ELSE coalesce(source.display, source.value) END AS neighbor_name,
-       CASE WHEN source:Entity THEN source.entity_type ELSE 'value:' + source.value_type END AS neighbor_type,
-       coalesce(relationship.source_quality, 0) AS relevance
+CALL {
+  MATCH (source:Entity {team_id: $profileId})-[relationship]->(target)
+  WHERE source.entity_id IN $entityIds
+    AND target.team_id = $profileId
+    AND relationship.team_id = $profileId
+    AND relationship.semantic_projection = true
+    AND relationship.status = 'active'
+    AND NOT relationship.assertion_id IN $assertionIds
+  RETURN source.entity_id AS from_entity_id,
+         'outgoing' AS direction,
+         type(relationship) AS relationship_type,
+         relationship.assertion_id AS assertion_id,
+         relationship.tier AS tier,
+         target.graph_key AS neighbor_key,
+         CASE WHEN target:Entity THEN target.entity_id ELSE target.value_id END AS neighbor_id,
+         CASE WHEN target:Entity THEN target.canonical_name ELSE coalesce(target.display, target.value) END AS neighbor_name,
+         CASE WHEN target:Entity THEN target.entity_type ELSE 'value:' + target.value_type END AS neighbor_type,
+         coalesce(relationship.source_quality, 0) AS relevance
+  UNION ALL
+  MATCH (source)-[relationship]->(target:Entity {team_id: $profileId})
+  WHERE target.entity_id IN $entityIds
+    AND source.team_id = $profileId
+    AND relationship.team_id = $profileId
+    AND relationship.semantic_projection = true
+    AND relationship.status = 'active'
+    AND NOT relationship.assertion_id IN $assertionIds
+  RETURN target.entity_id AS from_entity_id,
+         'incoming' AS direction,
+         type(relationship) AS relationship_type,
+         relationship.assertion_id AS assertion_id,
+         relationship.tier AS tier,
+         source.graph_key AS neighbor_key,
+         CASE WHEN source:Entity THEN source.entity_id ELSE source.value_id END AS neighbor_id,
+         CASE WHEN source:Entity THEN source.canonical_name ELSE coalesce(source.display, source.value) END AS neighbor_name,
+         CASE WHEN source:Entity THEN source.entity_type ELSE 'value:' + source.value_type END AS neighbor_type,
+         coalesce(relationship.source_quality, 0) AS relevance
+}
+RETURN from_entity_id, direction, relationship_type, assertion_id, tier,
+       neighbor_key, neighbor_id, neighbor_name, neighbor_type, relevance
 ORDER BY relevance DESC, relationship_type ASC, assertion_id ASC
 LIMIT $frontierLimit`
 
@@ -260,8 +264,9 @@ func assertionRecallResultFromRow(profileID string, row map[string]any) (Asserti
 		assertion.UpdatedAt = *value
 	}
 	if raw := graphrow.String(row, "evidence_json"); raw != "" {
-		if err := json.Unmarshal([]byte(raw), &assertion.Evidence); err != nil {
-			return AssertionRecallResult{}, err
+		var evidence []domain.EvidenceSpan
+		if json.Unmarshal([]byte(raw), &evidence) == nil {
+			assertion.Evidence = evidence
 		}
 	}
 	objectKey := graphrow.String(row, "object_key")

@@ -148,6 +148,56 @@ func TestRecallHandler_ReturnsClaimAndFactHits(t *testing.T) {
 	}
 }
 
+func TestRecallHandler_ReturnsAssertionPathAndFrontier(t *testing.T) {
+	e := echo.New()
+	profileID := uuid.New()
+	svc := &stubRecallService{
+		recallFunc: func(ctx context.Context, pid string, req recallservice.RecallRequest) ([]recallservice.RecallHit, error) {
+			assertion := &domain.Assertion{
+				AssertionID:      "assertion-1",
+				ProfileID:        pid,
+				SubjectEntityID:  "mark",
+				ObjectEntityID:   "dense-mem",
+				PredicateKey:     "works_on",
+				RelationshipType: "WORKS_ON",
+				Tier:             domain.AssertionTierFact,
+				Status:           domain.AssertionStatusActive,
+			}
+			path := recallservice.SemanticPath{
+				Nodes: []recallservice.SemanticNode{
+					{Key: "entity:mark", ID: "mark", Type: "person", Name: "Mark"},
+					{Key: "entity:dense-mem", ID: "dense-mem", Type: "project", Name: "Dense-Mem"},
+				},
+				Edges: []recallservice.SemanticEdge{{AssertionID: assertion.AssertionID, Source: "entity:mark", Target: "entity:dense-mem", Relationship: "WORKS_ON"}},
+			}
+			frontier := recallservice.FrontierHint{FromEntityID: "mark", Direction: "outgoing", Relationship: "DEMOED", AssertionID: "assertion-2"}
+			return []recallservice.RecallHit{{Assertion: assertion, Paths: []recallservice.SemanticPath{path}, Frontier: []recallservice.FrontierHint{frontier}, Tier: recallservice.TierAssertionFact, Score: 0.91}}, nil
+		},
+	}
+	h := NewRecallHandler(svc)
+	e.HTTPErrorHandler = httperr.ErrorHandler
+	e.Use(injectProfileMiddleware(profileID))
+	e.GET("/api/v1/recall", h.Handle)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/recall?query=dense-mem", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200. body=%s", rec.Code, rec.Body.String())
+	}
+	var resp recallDataEnvelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Data) != 1 || resp.Data[0].Assertion == nil {
+		t.Fatalf("assertion response = %#v", resp.Data)
+	}
+	if resp.Data[0].Assertion.AssertionID != "assertion-1" || len(resp.Data[0].Paths) != 1 || len(resp.Data[0].Frontier) != 1 {
+		t.Fatalf("assertion payload incomplete: %#v", resp.Data[0])
+	}
+}
+
 // TestRecallHandler_CrossProfileIsolation verifies that recall for profile B
 // does not return results belonging to profile A. The service is responsible
 // for scoping all DB queries to the injected profileID; the handler must never
@@ -279,6 +329,11 @@ func TestRecallHandler_ServiceErrorMappings(t *testing.T) {
 		{
 			name: "keyword unavailable",
 			err:  recallservice.ErrKeywordUnavailable,
+			want: http.StatusServiceUnavailable,
+		},
+		{
+			name: "assertion unavailable",
+			err:  recallservice.ErrAssertionUnavailable,
 			want: http.StatusServiceUnavailable,
 		},
 		{

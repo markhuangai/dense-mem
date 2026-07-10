@@ -135,7 +135,9 @@ func TestOpenAIReviewerMapsProviderAndMalformedFailures(t *testing.T) {
 		wantText string
 	}{
 		{name: "rate limit", status: http.StatusTooManyRequests, body: `{"error":{"message":"slow down"}}`, wantKind: "rate_limit", wantText: "slow down"},
+		{name: "rate limit malformed body", status: http.StatusTooManyRequests, body: `{`, wantKind: "rate_limit", wantText: "rate limited"},
 		{name: "provider status", status: http.StatusBadGateway, body: `{"error":{"message":"upstream failed"}}`, wantKind: "provider", wantText: "upstream failed"},
+		{name: "provider malformed body", status: http.StatusBadGateway, body: `{`, wantKind: "provider", wantText: "unexpected status 502"},
 		{name: "invalid envelope", status: http.StatusOK, body: `{`, wantKind: "malformed", wantText: "decode graph review response"},
 		{name: "missing choice", status: http.StatusOK, body: `{"choices":[]}`, wantKind: "malformed", wantText: "must contain one choice"},
 		{name: "invalid content", status: http.StatusOK, body: `{"choices":[{"message":{"content":"{"}}]}`, wantKind: "malformed", wantText: "parse graph review result"},

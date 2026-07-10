@@ -47,14 +47,14 @@ func TestRecallMemoryReviewQueuePersistsAndReadsOrderedReviews(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(`(?s)SELECT review_id::text, profile_id::text, recall_id.*FROM recall_memory_review_queue`).
-		WithArgs("recall-1").
+		WithArgs(teamID.String(), "recall-1").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"review_id", "profile_id", "recall_id", "knowledge_type", "knowledge_id", "reasons", "feedback_comment", "status", "created_at", "updated_at", "resolved_at",
 		}).AddRow(review.ReviewID, teamID.String(), review.RecallID, review.KnowledgeType, review.KnowledgeID,
 			[]byte(`["irrelevant_result","unsupported_answer"]`), review.FeedbackComment, "pending", now, now, nil)).
 		RowsWillBeClosed()
 	mock.ExpectCommit()
-	got, err := repo.ListRecallMemoryReviews(context.Background(), " recall-1 ")
+	got, err := repo.ListRecallMemoryReviews(context.Background(), " "+teamID.String()+" ", " recall-1 ")
 	require.NoError(t, err)
 	require.Equal(t, []domain.RecallMemoryReview{{
 		ReviewID: review.ReviewID, ProfileID: teamID, RecallID: review.RecallID, KnowledgeType: review.KnowledgeType,
@@ -63,7 +63,10 @@ func TestRecallMemoryReviewQueuePersistsAndReadsOrderedReviews(t *testing.T) {
 	}}, got)
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	empty, err := repo.ListRecallMemoryReviews(context.Background(), "")
+	empty, err := repo.ListRecallMemoryReviews(context.Background(), teamID.String(), "")
+	require.NoError(t, err)
+	require.Empty(t, empty)
+	empty, err = repo.ListRecallMemoryReviews(context.Background(), "", "recall-1")
 	require.NoError(t, err)
 	require.Empty(t, empty)
 }
@@ -77,12 +80,13 @@ func TestRecallMemoryReviewQueueRejectsMalformedStoredReasons(t *testing.T) {
 	repo := NewRecallFeedbackEventRepository(db, nil)
 	now := time.Now().UTC()
 
+	profileID := uuid.NewString()
 	mock.ExpectBegin()
-	mock.ExpectQuery(`FROM recall_memory_review_queue`).WillReturnRows(sqlmock.NewRows([]string{
+	mock.ExpectQuery(`FROM recall_memory_review_queue`).WithArgs(profileID, "recall-1").WillReturnRows(sqlmock.NewRows([]string{
 		"review_id", "profile_id", "recall_id", "knowledge_type", "knowledge_id", "reasons", "feedback_comment", "status", "created_at", "updated_at", "resolved_at",
 	}).AddRow("review-1", uuid.NewString(), "recall-1", "fragment", "fragment-1", []byte(`{`), "", "pending", now, now, nil))
 	mock.ExpectRollback()
-	_, err = repo.ListRecallMemoryReviews(context.Background(), "recall-1")
+	_, err = repo.ListRecallMemoryReviews(context.Background(), profileID, "recall-1")
 	require.ErrorContains(t, err, "invalid recall memory review reasons JSON")
 	require.NoError(t, mock.ExpectationsWereMet())
 }

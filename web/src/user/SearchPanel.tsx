@@ -13,7 +13,7 @@ import { Claim, Fact, Fragment, GraphNodeType, RecallHit, UserApi } from "./api"
 
 const ResultGraphPreview = lazy(() => import("./GraphPanel").then((module) => ({ default: module.ResultGraphPreview })));
 
-type RecallResultKind = "fact" | "claim" | "fragment";
+type RecallResultKind = "assertion" | "fact" | "claim" | "fragment";
 type RecallResultStatus = "verified" | "provisional" | "disputed" | "deprecated";
 type RecallSortMode = "relevance" | "date";
 type ResultDensity = "comfortable" | "compact";
@@ -25,11 +25,23 @@ type IndexedRecallResult = {
   kind: RecallResultKind;
 };
 
+type AssertionDisplay = {
+	assertion_id: string;
+	subject: string;
+	predicate: string;
+	object: string;
+	status: string;
+	recorded_at: string;
+};
+
+type RecallDisplayItem = Fact | Claim | Fragment | AssertionDisplay;
+
 export function SearchPanel({ api }: { api: UserApi }) {
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<RecallHit[]>([]);
   const [selectedKey, setSelectedKey] = useState("");
   const [enabledTypes, setEnabledTypes] = useState<Record<RecallResultKind, boolean>>({
+	assertion: true,
     fact: true,
     claim: true,
     fragment: true,
@@ -97,7 +109,7 @@ export function SearchPanel({ api }: { api: UserApi }) {
   const typeCounts = useMemo(() => indexedHits.reduce<Record<RecallResultKind, number>>((counts, item) => ({
     ...counts,
     [item.kind]: counts[item.kind] + 1,
-  }), { fact: 0, claim: 0, fragment: 0 }), [indexedHits]);
+  }), { assertion: 0, fact: 0, claim: 0, fragment: 0 }), [indexedHits]);
   const statusCounts = useMemo(() => indexedHits.reduce<Record<RecallResultStatus, number>>((counts, indexed) => {
     const status = recallResultStatus(resultItem(indexed.hit));
     return {
@@ -128,7 +140,7 @@ export function SearchPanel({ api }: { api: UserApi }) {
   }
 
   function clearFilters() {
-    setEnabledTypes({ fact: true, claim: true, fragment: true });
+	setEnabledTypes({ assertion: true, fact: true, claim: true, fragment: true });
     setEnabledStatuses({ verified: true, provisional: true, disputed: false, deprecated: false });
     setDateMode("all");
     setStartDate("");
@@ -153,7 +165,7 @@ export function SearchPanel({ api }: { api: UserApi }) {
         />
         <fieldset className="filter-stack">
           <legend>Type</legend>
-          {(["fact", "claim", "fragment"] as RecallResultKind[]).map((kind) => (
+		  {(["assertion", "fact", "claim", "fragment"] as RecallResultKind[]).map((kind) => (
             <label className="filter-row" key={kind}>
               <input
                 type="checkbox"
@@ -226,7 +238,7 @@ export function SearchPanel({ api }: { api: UserApi }) {
         <div className="knowledge-results-toolbar">
           <div>
             <h2>{filteredHits.length.toLocaleString()} results</h2>
-            <span>{query.trim() ? `for "${query.trim()}"` : "Search across facts, claims, and memory"}</span>
+			<span>{query.trim() ? `for "${query.trim()}"` : "Search across semantic assertions and evidence"}</span>
           </div>
           <div className="toolbar-actions">
             <button
@@ -468,6 +480,10 @@ function KnowledgeInspector({
 }
 
 function recallGraphAnchor(result: IndexedRecallResult): { type: GraphNodeType; id: string } | null {
+	const assertionEntity = result.hit.paths?.[0]?.nodes.find((node) => !node.type.startsWith("value:"));
+	if (result.hit.assertion && assertionEntity?.id) {
+		return { type: "entity", id: assertionEntity.id };
+	}
   if (result.hit.fact?.fact_id) {
     return { type: "fact", id: result.hit.fact.fact_id };
   }
@@ -484,6 +500,13 @@ function recallGraphAnchor(result: IndexedRecallResult): { type: GraphNodeType; 
 function deriveEntities(hits: RecallHit[]): string[] {
   const values = new Set<string>();
   for (const hit of hits) {
+	for (const path of hit.paths ?? []) {
+	  for (const node of path.nodes) {
+		if (!node.type.startsWith("value:")) {
+		  addEntity(values, node.name);
+		}
+	  }
+	}
     const source = hit.fact ?? hit.claim;
     if (source) {
       addEntity(values, source.subject);
@@ -501,7 +524,7 @@ function addEntity(values: Set<string>, value: string | undefined) {
   }
 }
 
-function itemTitle(item: Fact | Claim | Fragment | undefined): string {
+function itemTitle(item: RecallDisplayItem | undefined): string {
   if (!item) {
     return "Result";
   }
@@ -511,7 +534,7 @@ function itemTitle(item: Fact | Claim | Fragment | undefined): string {
   return item.subject;
 }
 
-function itemBody(item: Fact | Claim | Fragment | undefined): string {
+function itemBody(item: RecallDisplayItem | undefined): string {
   if (!item) {
     return "";
   }
@@ -530,6 +553,9 @@ function tierLabel(hit: RecallHit): string {
 }
 
 function recallResultKind(hit: RecallHit): RecallResultKind {
+	if (hit.assertion) {
+	  return "assertion";
+	}
   if (hit.fact) {
     return "fact";
   }
@@ -540,6 +566,9 @@ function recallResultKind(hit: RecallHit): RecallResultKind {
 }
 
 function recallResultKindLabel(kind: RecallResultKind): string {
+	if (kind === "assertion") {
+	  return "Assertion";
+	}
   if (kind === "fact") {
     return "Fact";
   }
@@ -549,11 +578,29 @@ function recallResultKindLabel(kind: RecallResultKind): string {
   return "Fragment";
 }
 
-function resultItem(hit: RecallHit): Fact | Claim | Fragment | undefined {
-  return hit.fact ?? hit.claim ?? hit.fragment;
+function resultItem(hit: RecallHit): RecallDisplayItem | undefined {
+	const legacy = hit.fact ?? hit.claim ?? hit.fragment;
+	if (legacy) {
+	  return legacy;
+	}
+	if (!hit.assertion) {
+	  return undefined;
+	}
+	const path = hit.paths?.[0];
+	const edge = path?.edges[0];
+	const subject = path?.nodes.find((node) => node.key === edge?.source);
+	const object = path?.nodes.find((node) => node.key === edge?.target);
+	return {
+	  assertion_id: hit.assertion.assertion_id,
+	  subject: subject?.name || hit.assertion.subject_entity_id,
+	  predicate: edge?.relationship || hit.assertion.relationship_type || hit.assertion.predicate_key,
+	  object: object?.name || hit.assertion.object_value?.display || hit.assertion.object_value?.value || hit.assertion.object_entity_id || "unknown",
+	  status: hit.assertion.status,
+	  recorded_at: hit.assertion.recorded_at,
+	};
 }
 
-function recallResultStatus(item: Fact | Claim | Fragment | undefined): RecallResultStatus {
+function recallResultStatus(item: RecallDisplayItem | undefined): RecallResultStatus {
   const raw = item?.status?.toLowerCase() ?? "";
   if (raw.includes("disputed") || raw.includes("contradicted") || raw.includes("rejected") || raw.includes("invalid")) {
     return "disputed";
@@ -593,11 +640,11 @@ function statusPillClass(status: RecallResultStatus): string {
   return "status-pill neutral";
 }
 
-function sourceMatches(item: Fact | Claim | Fragment | undefined, sourceFilter: string): boolean {
+function sourceMatches(item: RecallDisplayItem | undefined, sourceFilter: string): boolean {
   return sourceFilter === "all" || sourceLabel(item) === sourceFilter;
 }
 
-function dateMatches(item: Fact | Claim | Fragment | undefined, dateMode: "all" | "custom", startDate: string, endDate: string): boolean {
+function dateMatches(item: RecallDisplayItem | undefined, dateMode: "all" | "custom", startDate: string, endDate: string): boolean {
   if (dateMode === "all" || (!startDate && !endDate)) {
     return true;
   }
@@ -632,7 +679,7 @@ function itemTimestamp(result: IndexedRecallResult): number {
   return Number.isNaN(value) ? 0 : value;
 }
 
-function itemRawDate(item: Fact | Claim | Fragment | undefined): string {
+function itemRawDate(item: RecallDisplayItem | undefined): string {
   if (!item) {
     return "";
   }
@@ -648,6 +695,9 @@ function endOfDay(value: string): number {
 }
 
 function resultIcon(kind: RecallResultKind) {
+	if (kind === "assertion") {
+	  return <GitBranch size={15} aria-hidden="true" />;
+	}
   if (kind === "fact") {
     return <ShieldCheck size={15} aria-hidden="true" />;
   }
@@ -658,20 +708,23 @@ function resultIcon(kind: RecallResultKind) {
 }
 
 function recallKey(hit: RecallHit, index: number): string {
-  return hit.fact?.fact_id ?? hit.claim?.claim_id ?? hit.fragment?.fragment_id ?? String(index);
+	return hit.assertion?.assertion_id ?? hit.fact?.fact_id ?? hit.claim?.claim_id ?? hit.fragment?.fragment_id ?? String(index);
 }
 
-function sourceLabel(item: Fact | Claim | Fragment | undefined): string {
+function sourceLabel(item: RecallDisplayItem | undefined): string {
   if (!item) {
     return "unknown";
   }
   if ("content" in item) {
     return item.source || item.source_type || "fragment";
   }
+	if ("assertion_id" in item) {
+	  return "semantic graph";
+	}
   return "knowledge graph";
 }
 
-function itemDate(item: Fact | Claim | Fragment | undefined): string {
+function itemDate(item: RecallDisplayItem | undefined): string {
   if (!item) {
     return "";
   }

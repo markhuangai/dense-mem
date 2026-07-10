@@ -25,7 +25,7 @@ type RecallFeedbackEventRepository interface {
 
 type RecallMemoryReviewRepository interface {
 	EnqueueRecallMemoryReviews(ctx context.Context, reviews []domain.RecallMemoryReview) error
-	ListRecallMemoryReviews(ctx context.Context, recallID string) ([]domain.RecallMemoryReview, error)
+	ListRecallMemoryReviews(ctx context.Context, profileID, recallID string) ([]domain.RecallMemoryReview, error)
 }
 
 type RecallFeedbackEventRepositoryImpl struct {
@@ -304,9 +304,10 @@ func (r *RecallFeedbackEventRepositoryImpl) EnqueueRecallMemoryReviews(ctx conte
 	return nil
 }
 
-func (r *RecallFeedbackEventRepositoryImpl) ListRecallMemoryReviews(ctx context.Context, recallID string) ([]domain.RecallMemoryReview, error) {
+func (r *RecallFeedbackEventRepositoryImpl) ListRecallMemoryReviews(ctx context.Context, profileID, recallID string) ([]domain.RecallMemoryReview, error) {
+	profileID = strings.TrimSpace(profileID)
 	recallID = strings.TrimSpace(recallID)
-	if recallID == "" {
+	if profileID == "" || recallID == "" {
 		return []domain.RecallMemoryReview{}, nil
 	}
 	reviews := []domain.RecallMemoryReview{}
@@ -315,9 +316,9 @@ func (r *RecallFeedbackEventRepositoryImpl) ListRecallMemoryReviews(ctx context.
 			SELECT review_id::text, profile_id::text, recall_id, knowledge_type, knowledge_id,
 			       reasons, feedback_comment, status, created_at, updated_at, resolved_at
 			FROM recall_memory_review_queue
-			WHERE recall_id = ?
+			WHERE profile_id = ? AND recall_id = ?
 			ORDER BY created_at ASC, review_id ASC
-		`, recallID).Rows()
+		`, profileID, recallID).Rows()
 		if err != nil {
 			return err
 		}

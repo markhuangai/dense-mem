@@ -3,8 +3,32 @@ package registry
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
+
+func TestEvalListAssertionsUsesOffsetCursorAndLookahead(t *testing.T) {
+	graph := &evalGraphQuery{rows: []map[string]any{
+		{"assertion_id": "assertion-3"},
+		{"assertion_id": "assertion-4"},
+		{"assertion_id": "assertion-5"},
+	}}
+
+	page, err := evalListAssertions(context.Background(), Dependencies{GraphQuery: graph}, "profile-eval", map[string]any{"cursor": "2"}, 2, false)
+	if err != nil {
+		t.Fatalf("evalListAssertions: %v", err)
+	}
+	items := page["items"].([]map[string]any)
+	if len(items) != 2 || items[0]["assertion_id"] != "assertion-3" || page["has_more"] != true || page["next_cursor"] != "4" {
+		t.Fatalf("assertion page = %#v", page)
+	}
+	if graph.params["offset"] != int64(2) || graph.params["pageLimit"] != int64(3) {
+		t.Fatalf("assertion pagination params = %#v", graph.params)
+	}
+	if !strings.Contains(graph.query, "SKIP $offset") || !strings.Contains(graph.query, "LIMIT $pageLimit") {
+		t.Fatalf("assertion pagination query = %q", graph.query)
+	}
+}
 
 func TestEvalScoreRetrievalCaseAcceptsSemanticAssertions(t *testing.T) {
 	reg, err := BuildDefault(Dependencies{

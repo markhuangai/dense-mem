@@ -10,9 +10,11 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 type HTTPClient struct {
@@ -289,20 +291,17 @@ func (c *HTTPClient) importCorpusGroup(ctx context.Context, corpus []CorpusItem)
 
 func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (KnowledgeMapping, error) {
 	mapping := newKnowledgeMapping()
-	if len(item.Claims) > 0 {
-		if err := c.importMemoryCorpusItem(ctx, item, &mapping); err != nil {
-			return mapping, err
-		}
-		return mapping, nil
-	}
 	evidence := map[string]any{
 		"content":         item.Content,
+		"source_type":     seedSourceType(item.SourceType),
 		"source":          firstNonEmpty(item.SourceDataset, item.Title, "eval-seed"),
+		"authority":       seedAuthority(item.Authority),
+		"source_group":    "eval:" + item.SourceDocID,
 		"idempotency_key": "eval:" + item.SourceDocID,
 		"labels":          item.Labels,
 		"metadata":        seedMetadata(item),
 	}
-	input := map[string]any{"evidence": []map[string]any{evidence}}
+	input := map[string]any{"evidence": []map[string]any{evidence}, "proposal": seedMemoryProposal(item)}
 	var out map[string]any
 	if err := c.callToolWithRetry(ctx, "remember", input, &out); err != nil {
 		return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)
@@ -311,12 +310,16 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (Kno
 	if fragmentID == "" {
 		return mapping, fmt.Errorf("import %s: remember response missing fragment id", item.SourceDocID)
 	}
+	var placement map[string]any
 	if ingestID := stringValue(out["ingest_id"]); ingestID != "" {
-		if err := c.WaitForMemoryPlacement(ctx, ingestID, 2*time.Minute); err != nil {
-			return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)
+		placementResult, waitErr := c.waitForMemoryPlacement(ctx, ingestID, 2*time.Minute)
+		if waitErr != nil {
+			return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, waitErr)
 		}
+		placement = placementResult
 	}
 	addSourceMapping(&mapping, Ref{Type: "fragment", ID: fragmentID, SourceDocID: item.SourceDocID}, true)
+	addPlacementAssertionMappings(&mapping, item, placement)
 	return mapping, nil
 }
 
@@ -349,54 +352,14 @@ func corpusImportGroupKey(item CorpusItem) string {
 	return "item:" + sourceDocID
 }
 
-func (c *HTTPClient) importMemoryCorpusItem(ctx context.Context, item CorpusItem, mapping *KnowledgeMapping) error {
-	input := map[string]any{
-		"summary":         item.Content,
-		"source":          firstNonEmpty(item.SourceDataset, item.Title, "eval-seed"),
-		"idempotency_key": "eval:" + item.SourceDocID,
-		"labels":          item.Labels,
-		"metadata":        seedMetadata(item),
-		"claims":          seedTypedClaims(item),
-	}
-	if item.AutoPromote {
-		input["auto_promote"] = true
-	}
-	var out map[string]any
-	if err := c.callToolWithRetry(ctx, "import_memories", input, &out); err != nil {
-		return fmt.Errorf("import %s: %w", item.SourceDocID, err)
-	}
-	fragmentID := fragmentIDFromRemember(out)
-	if fragmentID == "" {
-		return fmt.Errorf("import %s: import_memories response missing fragment id", item.SourceDocID)
-	}
-	addSourceMapping(mapping, Ref{Type: "fragment", ID: fragmentID, SourceDocID: item.SourceDocID}, true)
-	claims, _ := out["claims"].([]any)
-	if len(item.Claims) > 0 && len(claims) != len(item.Claims) {
-		return fmt.Errorf("import %s: import_memories returned %d claim outcomes for %d typed claims", item.SourceDocID, len(claims), len(item.Claims))
-	}
-	for i, raw := range claims {
-		claim, _ := raw.(map[string]any)
-		if errText := stringValue(claim["error"]); errText != "" {
-			return fmt.Errorf("import %s: claim import failed: %s", item.SourceDocID, errText)
-		}
-		claimID := stringValue(claim["claim_id"])
-		if claimID != "" {
-			addSourceMapping(mapping, Ref{Type: "claim", ID: claimID, SourceDocID: item.SourceDocID}, false)
-			addSourceMapping(mapping, Ref{Type: "claim", ID: claimID, SourceDocID: typedClaimSourceDocID(item.SourceDocID, i+1)}, false)
-		}
-		fact, _ := claim["fact"].(map[string]any)
-		factID := firstNonEmpty(stringValue(fact["fact_id"]), stringValue(fact["id"]))
-		if factID != "" {
-			addSourceMapping(mapping, Ref{Type: "fact", ID: factID, SourceDocID: item.SourceDocID}, false)
-			addSourceMapping(mapping, Ref{Type: "fact", ID: factID, SourceDocID: typedFactSourceDocID(item.SourceDocID, i+1)}, false)
-		}
-	}
-	return nil
+func (c *HTTPClient) WaitForMemoryPlacement(ctx context.Context, ingestID string, timeout time.Duration) error {
+	_, err := c.waitForMemoryPlacement(ctx, ingestID, timeout)
+	return err
 }
 
-func (c *HTTPClient) WaitForMemoryPlacement(ctx context.Context, ingestID string, timeout time.Duration) error {
+func (c *HTTPClient) waitForMemoryPlacement(ctx context.Context, ingestID string, timeout time.Duration) (map[string]any, error) {
 	if strings.TrimSpace(ingestID) == "" {
-		return nil
+		return nil, nil
 	}
 	if timeout <= 0 {
 		timeout = 2 * time.Minute
@@ -407,23 +370,24 @@ func (c *HTTPClient) WaitForMemoryPlacement(ctx context.Context, ingestID string
 		var out map[string]any
 		if err := c.callToolWithRetry(waitCtx, "get_memory_placement", map[string]any{"ingest_id": ingestID}, &out); err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
-				return fmt.Errorf("memory placement %s did not complete within %s", ingestID, timeout)
+				return nil, fmt.Errorf("memory placement %s did not complete within %s", ingestID, timeout)
 			}
-			return err
+			return nil, err
 		}
 		status := nestedString(out, "placement", "status")
 		if status == "completed" || status == "failed" {
 			if status == "failed" {
-				return fmt.Errorf("memory placement %s failed", ingestID)
+				return nil, fmt.Errorf("memory placement %s failed", ingestID)
 			}
-			return nil
+			placement, _ := out["placement"].(map[string]any)
+			return placement, nil
 		}
 		select {
 		case <-waitCtx.Done():
 			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
-				return fmt.Errorf("memory placement %s did not complete within %s", ingestID, timeout)
+				return nil, fmt.Errorf("memory placement %s did not complete within %s", ingestID, timeout)
 			}
-			return waitCtx.Err()
+			return nil, waitCtx.Err()
 		case <-time.After(time.Second):
 		}
 	}
@@ -434,7 +398,7 @@ func (c *HTTPClient) ExportFragmentMapping(ctx context.Context, limit int) (Know
 }
 
 func (c *HTTPClient) ExportKnowledgeMapping(ctx context.Context, limit int) (KnowledgeMapping, error) {
-	return c.exportKnowledgeMapping(ctx, limit, []string{"fragment", "claim", "fact"})
+	return c.exportKnowledgeMapping(ctx, limit, []string{"fragment", "assertion", "claim", "fact"})
 }
 
 func (c *HTTPClient) ExportDreamMapping(ctx context.Context, limit int) (KnowledgeMapping, error) {
@@ -448,6 +412,7 @@ func (c *HTTPClient) exportKnowledgeMapping(ctx context.Context, limit int, kind
 	mapping := newKnowledgeMapping()
 	claimSourceDocIDs := map[string]string{}
 	claimFactSourceDocIDs := map[string]string{}
+	fragmentSourceDocIDs := map[string]string{}
 	for _, kind := range kinds {
 		cursor := ""
 		for {
@@ -472,8 +437,15 @@ func (c *HTTPClient) exportKnowledgeMapping(ctx context.Context, limit int, kind
 					addDreamSourceRefs(&mapping, id, dreamSourceRefsFromKnowledgeItem(item))
 				}
 				sourceDocIDs := sourceDocIDsFromKnowledgeItem(kind, item, claimSourceDocIDs, claimFactSourceDocIDs)
+				if kind == "assertion" {
+					sourceDocIDs = append(sourceDocIDs, assertionSourceDocIDs(item, fragmentSourceDocIDs)...)
+					sourceDocIDs = uniqueNonEmpty(sourceDocIDs)
+				}
 				for _, sourceDocID := range sourceDocIDs {
 					addSourceMapping(&mapping, Ref{Type: kind, ID: id, SourceDocID: sourceDocID}, kind == "fragment")
+				}
+				if kind == "fragment" && len(sourceDocIDs) > 0 {
+					fragmentSourceDocIDs[id] = sourceDocIDs[0]
 				}
 				if kind == "claim" {
 					if len(sourceDocIDs) > 0 {
@@ -632,64 +604,103 @@ func seedMetadata(item CorpusItem) map[string]any {
 	return out
 }
 
-func seedTypedClaims(item CorpusItem) []map[string]any {
-	claims := make([]map[string]any, 0, len(item.Claims))
-	metadata := seedMetadata(item)
+func seedSourceType(value string) string {
+	switch normalized := strings.ToLower(strings.TrimSpace(value)); normalized {
+	case "conversation", "document", "observation", "manual":
+		return normalized
+	default:
+		return "document"
+	}
+}
+
+func seedAuthority(value string) string {
+	switch normalized := strings.ToLower(strings.TrimSpace(value)); normalized {
+	case "authoritative", "primary", "secondary", "inferred", "unknown":
+		return normalized
+	default:
+		return "secondary"
+	}
+}
+
+func seedMemoryProposal(item CorpusItem) map[string]any {
+	span := map[string]any{"evidence_index": 0, "start": 0, "end": utf8.RuneCountInString(item.Content)}
+	if len(item.Claims) == 0 {
+		return map[string]any{
+			"entities": []map[string]any{{
+				"ref": "source-document", "name": firstNonEmpty(item.Title, item.SourceDocID), "type": "document",
+			}},
+			"relationships": []map[string]any{{
+				"proposal_id": "document-content", "subject_ref": "source-document", "predicate": "contains_knowledge",
+				"object_value":  map[string]any{"type": "string", "value": item.Content},
+				"policy_family": "versioned", "polarity": "+", "modality": "assertion",
+				"evidence": []map[string]any{span},
+			}},
+		}
+	}
+
+	entities := make([]map[string]any, 0, len(item.Claims)*2)
+	relationships := make([]map[string]any, 0, len(item.Claims))
 	for i, claim := range item.Claims {
-		classification := map[string]any{}
-		for key, value := range claim.Classification {
-			classification[key] = value
-		}
-		for key, value := range metadata {
-			classification[key] = value
-		}
-		classification["eval_claim_source_doc_id"] = typedClaimSourceDocID(item.SourceDocID, i+1)
-		classification["eval_fact_source_doc_id"] = typedFactSourceDocID(item.SourceDocID, i+1)
-		claimInput := map[string]any{
-			"subject":         claim.Subject,
-			"predicate":       claim.Predicate,
-			"object":          claim.Object,
-			"extract_conf":    claim.ExtractConf,
-			"resolution_conf": claim.ResolutionConf,
-			"classification":  classification,
-		}
-		if claim.Modality != "" {
-			claimInput["modality"] = claim.Modality
-		}
-		if claim.Polarity != "" {
-			claimInput["polarity"] = claim.Polarity
-		}
-		if claim.Speaker != "" {
-			claimInput["speaker"] = claim.Speaker
-		}
-		if claim.IdempotencyKey != "" {
-			claimInput["idempotency_key"] = claim.IdempotencyKey
-		} else {
-			claimInput["idempotency_key"] = fmt.Sprintf("eval:%s:claim:%d", item.SourceDocID, i+1)
+		ordinal := i + 1
+		subjectRef := fmt.Sprintf("typed-subject-%d", ordinal)
+		objectRef := fmt.Sprintf("typed-object-%d", ordinal)
+		entities = append(entities,
+			map[string]any{"ref": subjectRef, "name": strings.TrimSpace(claim.Subject), "type": "concept"},
+			map[string]any{"ref": objectRef, "name": strings.TrimSpace(claim.Object), "type": "concept"},
+		)
+		relationship := map[string]any{
+			"proposal_id": fmt.Sprintf("typed-claim-%d", ordinal), "subject_ref": subjectRef,
+			"predicate": strings.TrimSpace(claim.Predicate), "object_ref": objectRef,
+			"policy_family": "versioned", "polarity": firstNonEmpty(claim.Polarity, "+"),
+			"modality": firstNonEmpty(claim.Modality, "assertion"), "evidence": []map[string]any{span},
 		}
 		if claim.ValidFrom != nil {
-			claimInput["valid_from"] = claim.ValidFrom.UTC().Format(time.RFC3339Nano)
+			relationship["valid_from"] = claim.ValidFrom.UTC().Format(time.RFC3339Nano)
 		}
 		if claim.ValidTo != nil {
-			claimInput["valid_to"] = claim.ValidTo.UTC().Format(time.RFC3339Nano)
+			relationship["valid_to"] = claim.ValidTo.UTC().Format(time.RFC3339Nano)
 		}
-		if len(claim.SupportedBy) > 0 {
-			claimInput["supported_by"] = claim.SupportedBy
-		}
-		if claim.ExtractionModel != "" {
-			claimInput["extraction_model"] = claim.ExtractionModel
-		}
-		if claim.ExtractionVersion != "" {
-			claimInput["extraction_version"] = claim.ExtractionVersion
-		}
-		if claim.PipelineRunID != "" {
-			claimInput["pipeline_run_id"] = claim.PipelineRunID
-		} else {
-			claimInput["pipeline_run_id"] = "eval:" + item.SourceDocID
-		}
-		claims = append(claims, claimInput)
+		relationships = append(relationships, relationship)
 	}
-	return claims
+	return map[string]any{"entities": entities, "relationships": relationships}
+}
+
+func addPlacementAssertionMappings(mapping *KnowledgeMapping, item CorpusItem, placement map[string]any) {
+	items, _ := placement["items"].([]any)
+	for _, raw := range items {
+		placed, _ := raw.(map[string]any)
+		assertionID := stringValue(placed["assertion_id"])
+		if assertionID == "" {
+			continue
+		}
+		ref := Ref{Type: "assertion", ID: assertionID, SourceDocID: item.SourceDocID}
+		addSourceMapping(mapping, ref, false)
+		proposalID := firstNonEmpty(
+			nestedString(placed, "reviewed_relationship", "proposal_id"),
+			nestedString(placed, "proposed_relationship", "proposal_id"),
+		)
+		ordinal := typedClaimOrdinal(proposalID)
+		if ordinal == 0 || ordinal > len(item.Claims) {
+			continue
+		}
+		addSourceMapping(mapping, Ref{Type: "assertion", ID: assertionID, SourceDocID: typedClaimSourceDocID(item.SourceDocID, ordinal)}, false)
+		if stringValue(placed["tier"]) == "fact" {
+			addSourceMapping(mapping, Ref{Type: "assertion", ID: assertionID, SourceDocID: typedFactSourceDocID(item.SourceDocID, ordinal)}, false)
+		}
+	}
+}
+
+func typedClaimOrdinal(proposalID string) int {
+	const prefix = "typed-claim-"
+	proposalID = strings.TrimSpace(proposalID)
+	if !strings.HasPrefix(proposalID, prefix) {
+		return 0
+	}
+	ordinal, err := strconv.Atoi(strings.TrimPrefix(proposalID, prefix))
+	if err != nil || ordinal <= 0 {
+		return 0
+	}
+	return ordinal
 }
 
 func sourceDocIDsFromKnowledgeItem(kind string, item map[string]any, claimSourceDocIDs, claimFactSourceDocIDs map[string]string) []string {
@@ -716,6 +727,27 @@ func sourceDocIDsFromKnowledgeItem(kind string, item map[string]any, claimSource
 			nestedString(item, "classification", "eval_fact_source_doc_id"),
 			claimFactSourceDocIDs[stringValue(item["promoted_from_claim_id"])],
 		)
+	}
+	return uniqueNonEmpty(sourceDocIDs)
+}
+
+func assertionSourceDocIDs(item map[string]any, fragmentSourceDocIDs map[string]string) []string {
+	var spans []map[string]any
+	switch raw := item["evidence_json"].(type) {
+	case string:
+		_ = json.Unmarshal([]byte(raw), &spans)
+	case []any:
+		for _, value := range raw {
+			if span, ok := value.(map[string]any); ok {
+				spans = append(spans, span)
+			}
+		}
+	}
+	sourceDocIDs := make([]string, 0, len(spans))
+	for _, span := range spans {
+		if sourceDocID := fragmentSourceDocIDs[stringValue(span["fragment_id"])]; sourceDocID != "" {
+			sourceDocIDs = append(sourceDocIDs, sourceDocID)
+		}
 	}
 	return uniqueNonEmpty(sourceDocIDs)
 }
@@ -793,6 +825,8 @@ func knowledgeItemID(kind string, item map[string]any) string {
 	switch kind {
 	case "fragment":
 		return firstNonEmpty(stringValue(item["fragment_id"]), stringValue(item["id"]))
+	case "assertion":
+		return firstNonEmpty(stringValue(item["assertion_id"]), stringValue(item["id"]))
 	case "claim":
 		return firstNonEmpty(stringValue(item["claim_id"]), stringValue(item["id"]))
 	case "fact":

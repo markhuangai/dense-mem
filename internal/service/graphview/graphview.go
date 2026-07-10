@@ -162,7 +162,8 @@ func (s *service) Graph(ctx context.Context, profileID string, query Query) (*Sn
 			nodeKeys = append(nodeKeys, node.Key)
 		}
 		_, edgeRows, err := s.reader.ScopedRead(ctx, profileID, graphEdgesCypher, map[string]any{
-			"nodeKeys": nodeKeys,
+			"nodeKeys":          nodeKeys,
+			"includeSuperseded": normalized.includeSuperseded,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("graph view edges: %w", err)
@@ -461,6 +462,7 @@ CALL {
   UNION ALL
   MATCH (n:Fact {team_id: $profileId})
   WHERE $includeFact
+	AND ($includeSuperseded OR coalesce(n.status, '') <> 'superseded')
     AND ($query = '' OR toLower(coalesce(n.subject, '') + ' ' + coalesce(n.predicate, '') + ' ' + coalesce(n.object, '')) CONTAINS $query)
   RETURN 'fact' AS type, n.fact_id AS id, 'fact:' + n.fact_id AS key,
          trim(coalesce(n.subject, '') + ' ' + coalesce(n.predicate, '') + ' ' + coalesce(n.object, '')) AS title,
@@ -471,6 +473,7 @@ CALL {
   UNION ALL
   MATCH (n:Claim {team_id: $profileId})
   WHERE $includeClaim
+	AND ($includeSuperseded OR coalesce(n.status, 'candidate') <> 'superseded')
     AND ($query = '' OR toLower(coalesce(n.subject, '') + ' ' + coalesce(n.predicate, '') + ' ' + coalesce(n.object, '')) CONTAINS $query)
   RETURN 'claim' AS type, n.claim_id AS id, 'claim:' + n.claim_id AS key,
          trim(coalesce(n.subject, '') + ' ' + coalesce(n.predicate, '') + ' ' + coalesce(n.object, '')) AS title,
@@ -481,6 +484,7 @@ CALL {
   UNION ALL
   MATCH (n:SourceFragment {team_id: $profileId})
   WHERE $includeFragment
+	AND ($includeSuperseded OR coalesce(n.status, 'active') <> 'superseded')
     AND ($query = '' OR toLower(coalesce(n.content, '') + ' ' + coalesce(n.source, '')) CONTAINS $query)
   RETURN 'fragment' AS type, n.fragment_id AS id, 'fragment:' + n.fragment_id AS key,
          substring(coalesce(n.content, ''), 0, 160) AS title,
@@ -491,6 +495,7 @@ CALL {
   UNION ALL
   MATCH (n:Dream {team_id: $profileId})
   WHERE $includeDream
+	AND ($includeSuperseded OR coalesce(n.status, '') <> 'superseded')
     AND ($query = '' OR toLower(coalesce(n.hypothesis, '') + ' ' + coalesce(n.what_if, '') + ' ' + coalesce(n.possible_outcome, '') + ' ' + coalesce(n.rationale, '')) CONTAINS $query)
   RETURN 'dream' AS type, n.dream_id AS id, 'dream:' + n.dream_id AS key,
          coalesce(n.hypothesis, '') AS title,
@@ -501,6 +506,7 @@ CALL {
   UNION ALL
   MATCH (n:Community {team_id: $profileId})
   WHERE $includeCommunity
+	AND ($includeSuperseded OR coalesce(n.status, 'active') <> 'superseded')
     AND ($query = '' OR toLower(coalesce(n.name, '') + ' ' + coalesce(n.summary, '')) CONTAINS $query)
   RETURN 'community' AS type, toString(n.community_id) AS id, 'community:' + toString(n.community_id) AS key,
          coalesce(n.name, 'Community ' + toString(n.community_id)) AS title,
@@ -539,15 +545,15 @@ CALL {
   RETURN DISTINCT n
 }
 WITH anchor, n
-	WHERE elementId(n) = elementId(anchor) OR (
-	  ($includeFact AND n:Fact) OR
+	WHERE elementId(n) = elementId(anchor) OR ((
+		  ($includeFact AND n:Fact) OR
 		  ($includeClaim AND n:Claim) OR
 		  ($includeFragment AND n:SourceFragment) OR
 		  ($includeDream AND n:Dream) OR
 		  ($includeEntity AND n:Entity) OR
 		  ($includeValue AND n:Value) OR
 		  ($includeCommunity AND n:Community)
-		)
+		) AND ($includeSuperseded OR coalesce(n.status, '') <> 'superseded'))
 WITH DISTINCT anchor, n,
 	     CASE
 	       WHEN n:Entity THEN n.last_seen_at
@@ -632,11 +638,12 @@ const graphEdgesCypher = `
 CALL {
   MATCH (assertion:Assertion {team_id: $profileId})
   MATCH (subject:Entity {team_id: $profileId, entity_id: assertion.subject_entity_id})
-  MATCH (object {team_id: $profileId})
+  MATCH (object:Entity|Value {team_id: $profileId})
   WHERE object.graph_key = CASE
     WHEN coalesce(assertion.object_entity_id, '') <> '' THEN 'entity:' + assertion.object_entity_id
     ELSE 'value:' + assertion.object_value_id
   END
+	AND ($includeSuperseded OR assertion.status <> 'superseded')
   OPTIONAL MATCH (assertion)-[:SUPPORTED_BY {team_id: $profileId}]->(fragment:SourceFragment {team_id: $profileId})
   WITH assertion, subject, object, collect(DISTINCT fragment.fragment_id) AS evidence_ids
   WHERE subject.graph_key IN $nodeKeys AND object.graph_key IN $nodeKeys
@@ -665,6 +672,7 @@ CALL {
     AND b.team_id = $profileId
     AND r.team_id = $profileId
     AND coalesce(r.semantic_projection, false) = false
+	AND ($includeSuperseded OR coalesce(r.status, '') <> 'superseded')
   WITH a, r, b,
      CASE
        WHEN a:Entity THEN 'entity:' + a.entity_id
