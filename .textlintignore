@@ -4,5 +4,6 @@ package-lock.json
 .env.*
 tests/eval/cache/**
 tests/eval/runs/**
+tests/eval/runtime/**
 tests/eval/seeds/local_train_100k_v1/**
 tests/eval/snapshots/**
