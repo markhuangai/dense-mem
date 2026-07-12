@@ -5,11 +5,13 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
 MODE="validate"
-SEED="tests/eval/seeds/public_rag_3axis_full_v1/seed_manifest.json"
-SUITE="tests/eval/suites/public_rag_3axis_full_v1.jsonl"
+SEED=""
+SUITE=""
 OUT=""
 IMPORT_SEED=0
 IMPORT_CONCURRENCY=""
+PLACEMENT_TIMEOUT=""
+RESUME_SOURCE_DOC_IDS=""
 COMPOSE_UP=0
 TRACES=""
 MAPPING=""
@@ -48,6 +50,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --import-concurrency)
       IMPORT_CONCURRENCY="$2"
+      shift 2
+      ;;
+    --placement-timeout)
+      PLACEMENT_TIMEOUT="$2"
+      shift 2
+      ;;
+    --resume-source-doc-ids)
+      RESUME_SOURCE_DOC_IDS="$2"
       shift 2
       ;;
     --compose-up)
@@ -109,11 +119,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "${MODE}" != "compare" && ( -z "${SEED}" || -z "${SUITE}" ) ]]; then
+  echo "--seed and --suite are required" >&2
+  exit 2
+fi
+
 if [[ "${COMPOSE_UP}" == "1" ]]; then
   docker compose -p "${DENSE_MEM_EVAL_COMPOSE_PROJECT:-densemem_eval}" -f docker-compose.yml up -d --build
 fi
 
-args=(go run ./cmd/eval-runner --mode "${MODE}" --seed "${SEED}" --suite "${SUITE}")
+args=(go run ./cmd/eval-runner --mode "${MODE}")
+if [[ "${MODE}" != "compare" ]]; then
+  args+=(--seed "${SEED}" --suite "${SUITE}")
+fi
 if [[ -n "${OUT}" ]]; then
   args+=(--out "${OUT}")
 fi
@@ -122,6 +140,12 @@ if [[ "${IMPORT_SEED}" == "1" ]]; then
 fi
 if [[ -n "${IMPORT_CONCURRENCY}" ]]; then
   args+=(--import-concurrency "${IMPORT_CONCURRENCY}")
+fi
+if [[ -n "${PLACEMENT_TIMEOUT}" ]]; then
+  args+=(--placement-timeout "${PLACEMENT_TIMEOUT}")
+fi
+if [[ -n "${RESUME_SOURCE_DOC_IDS}" ]]; then
+  args+=(--resume-source-doc-ids "${RESUME_SOURCE_DOC_IDS}")
 fi
 if [[ -n "${TRACES}" ]]; then
   args+=(--traces "${TRACES}")

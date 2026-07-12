@@ -154,6 +154,32 @@ func TestLoadFunctionsValidateSeedFiles(t *testing.T) {
 	}
 }
 
+func TestLoadCorpusRejectsLegacyTypedImportFields(t *testing.T) {
+	for _, field := range []string{"claims", "auto_promote"} {
+		t.Run(field, func(t *testing.T) {
+			dir := t.TempDir()
+			manifestPath := filepath.Join(dir, "seed_manifest.json")
+			manifest := SeedManifest{
+				SchemaVersion: SeedSchemaVersion,
+				SeedID:        "remember-only",
+				CorpusFile:    "corpus.jsonl",
+			}
+			if err := writeJSONFile(manifestPath, manifest); err != nil {
+				t.Fatalf("write manifest: %v", err)
+			}
+			line := `{"source_doc_id":"doc-1","content":"content","` + field + `":null}` + "\n"
+			if err := os.WriteFile(filepath.Join(dir, manifest.CorpusFile), []byte(line), 0o644); err != nil {
+				t.Fatalf("write corpus: %v", err)
+			}
+
+			_, err := LoadCorpus(manifestPath, &manifest)
+			if err == nil || !strings.Contains(err.Error(), `legacy corpus field "`+field+`" is not supported`) {
+				t.Fatalf("LoadCorpus err = %v", err)
+			}
+		})
+	}
+}
+
 func TestLoadErrorAndCommentBranches(t *testing.T) {
 	dir := t.TempDir()
 

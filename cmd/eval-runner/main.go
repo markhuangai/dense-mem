@@ -17,8 +17,8 @@ func main() {
 	var baselineRun string
 	var candidateRun string
 	flag.StringVar(&opts.Mode, "mode", "validate", "validate, import, baseline, candidate, or compare")
-	flag.StringVar(&opts.SeedManifestPath, "seed", "tests/eval/seeds/public_rag_3axis_5k_v1/seed_manifest.json", "seed manifest path")
-	flag.StringVar(&opts.SuitePath, "suite", "tests/eval/suites/public_rag_3axis_5k_v1.jsonl", "suite JSONL path")
+	flag.StringVar(&opts.SeedManifestPath, "seed", "", "seed manifest path (required except in compare mode)")
+	flag.StringVar(&opts.SuitePath, "suite", "", "suite JSONL path (required except in compare mode)")
 	flag.StringVar(&opts.OutDir, "out", "", "output run directory")
 	flag.StringVar(&opts.BaseURL, "base-url", env("DENSE_MEM_BASE_URL", "http://127.0.0.1:8080"), "Dense-Mem HTTP base URL")
 	flag.StringVar(&opts.APIKey, "api-key", env("DENSE_MEM_API_KEY", ""), "read/write API key")
@@ -26,13 +26,8 @@ func main() {
 	flag.StringVar(&opts.ControlToken, "control-token", env("DENSE_MEM_CONTROL_TOKEN", ""), "control portal token")
 	flag.BoolVar(&opts.ImportSeed, "import-seed", false, "import corpus through remember before running cases")
 	flag.IntVar(&opts.ImportConcurrency, "import-concurrency", envInt("DENSE_MEM_EVAL_IMPORT_CONCURRENCY", 1), "maximum concurrent seed import requests")
-	flag.BoolVar(&opts.DirectImport, "direct-import", envBool("DENSE_MEM_EVAL_DIRECT_IMPORT", false), "import fragment-only corpus directly into Neo4j with batched embeddings")
-	flag.IntVar(&opts.DirectImportBatch, "direct-import-batch-size", envInt("DENSE_MEM_EVAL_DIRECT_IMPORT_BATCH_SIZE", 32), "maximum rows per direct-import embedding/write batch")
-	flag.StringVar(&opts.DirectImportTeam, "direct-import-team-id", env("DENSE_MEM_EVAL_DIRECT_IMPORT_TEAM_ID", ""), "team id for direct Neo4j eval import")
-	flag.StringVar(&opts.Neo4jURI, "neo4j-uri", env("DENSE_MEM_EVAL_NEO4J_URI", ""), "Neo4j URI override for direct eval import")
-	flag.StringVar(&opts.Neo4jUser, "neo4j-user", env("DENSE_MEM_EVAL_NEO4J_USER", ""), "Neo4j user override for direct eval import")
-	flag.StringVar(&opts.Neo4jPassword, "neo4j-password", env("DENSE_MEM_EVAL_NEO4J_PASSWORD", ""), "Neo4j password override for direct eval import")
-	flag.StringVar(&opts.Neo4jDatabase, "neo4j-database", env("DENSE_MEM_EVAL_NEO4J_DATABASE", ""), "Neo4j database override for direct eval import")
+	flag.DurationVar(&opts.PlacementTimeout, "placement-timeout", envDuration("DENSE_MEM_EVAL_PLACEMENT_TIMEOUT", 2*time.Minute), "maximum time to wait for each memory placement")
+	flag.StringVar(&opts.ResumeSourceDocIDsPath, "resume-source-doc-ids", env("DENSE_MEM_EVAL_RESUME_SOURCE_DOC_IDS", ""), "newline-delimited source document IDs with completed placements")
 	flag.StringVar(&opts.TracesPath, "traces", "", "offline recall_traces.jsonl path to score instead of running live")
 	flag.StringVar(&opts.MappingPath, "mapping", "", "offline knowledge_mapping.json path to use with --traces")
 	flag.IntVar(&opts.MaxPageSize, "max-page-size", 100, "evaluation export max page size")
@@ -195,12 +190,12 @@ func envInt(key string, fallback int) int {
 	return parsed
 }
 
-func envBool(key string, fallback bool) bool {
+func envDuration(key string, fallback time.Duration) time.Duration {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
 		return fallback
 	}
-	parsed, err := strconv.ParseBool(value)
+	parsed, err := time.ParseDuration(value)
 	if err != nil {
 		return fallback
 	}

@@ -11,28 +11,23 @@ import (
 )
 
 type RunOptions struct {
-	Mode              string
-	SeedManifestPath  string
-	SuitePath         string
-	OutDir            string
-	BaseURL           string
-	APIKey            string
-	ControlURL        string
-	ControlToken      string
-	ImportSeed        bool
-	ImportConcurrency int
-	DirectImport      bool
-	DirectImportBatch int
-	DirectImportTeam  string
-	Neo4jURI          string
-	Neo4jUser         string
-	Neo4jPassword     string
-	Neo4jDatabase     string
-	TracesPath        string
-	MappingPath       string
-	MaxPageSize       int
-	RunID             string
-	Gates             GateOptions
+	Mode                   string
+	SeedManifestPath       string
+	SuitePath              string
+	OutDir                 string
+	BaseURL                string
+	APIKey                 string
+	ControlURL             string
+	ControlToken           string
+	ImportSeed             bool
+	ImportConcurrency      int
+	PlacementTimeout       time.Duration
+	ResumeSourceDocIDsPath string
+	TracesPath             string
+	MappingPath            string
+	MaxPageSize            int
+	RunID                  string
+	Gates                  GateOptions
 }
 
 func Run(ctx context.Context, opts RunOptions) (Summary, error) {
@@ -49,43 +44,45 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	if opts.SuitePath == "" {
 		return Summary{}, fmt.Errorf("suite path is required")
 	}
+	if strings.TrimSpace(opts.ResumeSourceDocIDsPath) != "" && (mode != "import" || !opts.ImportSeed) {
+		return Summary{}, fmt.Errorf("resume source document IDs require import mode with --import-seed")
+	}
+	if opts.PlacementTimeout < 0 {
+		return Summary{}, fmt.Errorf("placement timeout must not be negative")
+	}
+	if opts.PlacementTimeout == 0 {
+		opts.PlacementTimeout = 2 * time.Minute
+	}
 	runID := opts.RunID
 	if runID == "" {
 		runID = newRunID(mode)
 	}
-	manifest, cases, qrels, expectedDreams, suite, seedHash, err := loadRunInputsWithoutCorpus(opts.SeedManifestPath, opts.SuitePath)
+	manifest, corpus, cases, qrels, expectedDreams, suite, seedHash, err := loadRunInputs(opts.SeedManifestPath, opts.SuitePath)
 	if err != nil {
 		return Summary{}, err
 	}
-	var corpus []CorpusItem
-	if mode == "validate" || (opts.ImportSeed && mode != "import") {
-		corpus, err = LoadCorpus(opts.SeedManifestPath, manifest)
-		if err != nil {
-			return Summary{}, err
-		}
-		if err := validateRunInputs(opts.SeedManifestPath, manifest, corpus, cases, qrels, expectedDreams, suite); err != nil {
-			return Summary{}, err
-		}
-	} else {
-		if err := validateRunInputsWithoutCorpus(opts.SeedManifestPath, manifest, cases, qrels, expectedDreams, suite); err != nil {
-			return Summary{}, err
-		}
+	if err := validateRunInputs(opts.SeedManifestPath, manifest, corpus, cases, qrels, expectedDreams, suite); err != nil {
+		return Summary{}, err
+	}
+	importRoute := ""
+	if opts.ImportSeed {
+		importRoute = "remember"
 	}
 	runConfig := RunConfig{
-		RunID:             runID,
-		Mode:              mode,
-		SeedManifest:      opts.SeedManifestPath,
-		SeedHash:          seedHash,
-		SuitePath:         opts.SuitePath,
-		BaseURL:           opts.BaseURL,
-		ControlURL:        opts.ControlURL,
-		ImportSeed:        opts.ImportSeed,
-		ImportConcurrency: opts.ImportConcurrency,
-		DirectImport:      opts.DirectImport,
-		DirectImportBatch: opts.DirectImportBatch,
-		DirectImportTeam:  opts.DirectImportTeam,
-		TracesPath:        opts.TracesPath,
-		MappingPath:       opts.MappingPath,
+		RunID:                  runID,
+		Mode:                   mode,
+		SeedManifest:           opts.SeedManifestPath,
+		SeedHash:               seedHash,
+		SuitePath:              opts.SuitePath,
+		BaseURL:                opts.BaseURL,
+		ControlURL:             opts.ControlURL,
+		ImportSeed:             opts.ImportSeed,
+		ImportRoute:            importRoute,
+		ImportConcurrency:      opts.ImportConcurrency,
+		PlacementTimeout:       opts.PlacementTimeout.String(),
+		ResumeSourceDocIDsPath: opts.ResumeSourceDocIDsPath,
+		TracesPath:             opts.TracesPath,
+		MappingPath:            opts.MappingPath,
 	}
 	if mode == "validate" {
 		summary := Summary{
@@ -126,10 +123,11 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		}
 	} else {
 		client := &HTTPClient{
-			BaseURL:      opts.BaseURL,
-			APIKey:       opts.APIKey,
-			ControlURL:   opts.ControlURL,
-			ControlToken: opts.ControlToken,
+			BaseURL:          opts.BaseURL,
+			APIKey:           opts.APIKey,
+			ControlURL:       opts.ControlURL,
+			ControlToken:     opts.ControlToken,
+			PlacementTimeout: opts.PlacementTimeout,
 		}
 		if err := client.EnableEvaluationMode(ctx, opts.MaxPageSize); err != nil {
 			return Summary{}, err
@@ -141,28 +139,38 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			}
 			mappingLoadedFromPath = true
 		}
+		skipSourceDocIDs := map[string]struct{}{}
+		if path := strings.TrimSpace(opts.ResumeSourceDocIDsPath); path != "" {
+			checkpoint, err := loadSourceDocIDs(path)
+			if err != nil {
+				return Summary{}, fmt.Errorf("resume source document IDs: %w", err)
+			}
+			existing, err := client.ExportFragmentMapping(ctx, opts.MaxPageSize)
+			if err != nil {
+				return Summary{}, fmt.Errorf("resume fragment mapping: %w", err)
+			}
+			mergeKnowledgeMapping(&mapping, existing)
+			skipSourceDocIDs = completedMappedSourceDocIDs(checkpoint, existing)
+		}
 		if opts.ImportSeed {
 			if mode == "import" {
 				keepSourceDocIDs := sourceDocIDsForQRelMappings(qrels, expectedDreams)
-				var imported KnowledgeMapping
-				if opts.DirectImport {
-					imported, _, err = DirectImportCorpusFile(ctx, resolveSeedPath(opts.SeedManifestPath, manifest.CorpusFile), DirectImportOptions{
-						TeamID:          opts.DirectImportTeam,
-						BatchSize:       opts.DirectImportBatch,
-						Concurrency:     opts.ImportConcurrency,
-						Neo4jURI:        opts.Neo4jURI,
-						Neo4jUser:       opts.Neo4jUser,
-						Neo4jPassword:   opts.Neo4jPassword,
-						Neo4jDatabase:   opts.Neo4jDatabase,
-						KeepSourceDocID: keepSourceDocIDs,
-					})
-				} else {
-					imported, _, err = client.ImportCorpusFileWithConcurrency(ctx, resolveSeedPath(opts.SeedManifestPath, manifest.CorpusFile), opts.ImportConcurrency, keepSourceDocIDs)
-				}
+				imported, _, err := client.ImportCorpusFileWithConcurrency(
+					ctx,
+					resolveSeedPath(opts.SeedManifestPath, manifest.CorpusFile),
+					opts.ImportConcurrency,
+					keepSourceDocIDs,
+					skipSourceDocIDs,
+				)
 				if err != nil {
 					return Summary{}, err
 				}
 				mergeKnowledgeMapping(&mapping, imported)
+				exported, err := client.ExportKnowledgeMapping(ctx, opts.MaxPageSize)
+				if err != nil {
+					return Summary{}, err
+				}
+				mergeFilteredKnowledgeMapping(&mapping, exported, keepSourceDocIDs)
 			} else {
 				imported, err := client.ImportCorpusWithConcurrency(ctx, corpus, opts.ImportConcurrency)
 				if err != nil {
@@ -326,34 +334,6 @@ func loadRunInputs(manifestPath, suitePath string) (*SeedManifest, []CorpusItem,
 	return manifest, corpus, cases, qrels, expectedDreams, suite, seedHash, nil
 }
 
-func loadRunInputsWithoutCorpus(manifestPath, suitePath string) (*SeedManifest, []Case, []QRel, []ExpectedDream, []SuiteCase, string, error) {
-	manifest, err := LoadSeedManifest(manifestPath)
-	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
-	}
-	cases, err := LoadCases(manifestPath, manifest)
-	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
-	}
-	qrels, err := LoadQrels(manifestPath, manifest)
-	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
-	}
-	expectedDreams, err := LoadExpectedDreams(manifestPath, manifest)
-	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
-	}
-	suite, err := LoadSuite(suitePath)
-	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
-	}
-	seedHash, err := SeedHash(manifestPath, manifest)
-	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
-	}
-	return manifest, cases, qrels, expectedDreams, suite, seedHash, nil
-}
-
 func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []CorpusItem, cases []Case, qrels []QRel, expectedDreams []ExpectedDream, suite []SuiteCase) error {
 	if err := validateManifestCounts(manifestPath, manifest, corpus, cases, qrels); err != nil {
 		return err
@@ -418,41 +398,6 @@ func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []Cor
 	return nil
 }
 
-func validateRunInputsWithoutCorpus(manifestPath string, manifest *SeedManifest, cases []Case, qrels []QRel, expectedDreams []ExpectedDream, suite []SuiteCase) error {
-	if err := validateManifestCountsWithoutCorpus(manifestPath, manifest, cases, qrels); err != nil {
-		return err
-	}
-	caseIndex := IndexCases(cases)
-	qrelIndex := IndexQrels(qrels)
-	if len(qrelIndex) != len(qrels) {
-		return fmt.Errorf("duplicate qrels case_id detected")
-	}
-	for _, suiteCase := range suite {
-		if _, ok := caseIndex[suiteCase.CaseID]; !ok {
-			return fmt.Errorf("suite case %q missing from seed cases", suiteCase.CaseID)
-		}
-		if _, ok := qrelIndex[suiteCase.CaseID]; !ok {
-			return fmt.Errorf("suite case %q missing from seed qrels", suiteCase.CaseID)
-		}
-	}
-	for _, dream := range expectedDreams {
-		if _, ok := caseIndex[dream.CaseID]; dream.CaseID != "" && !ok {
-			return fmt.Errorf("expected dream %q references missing case %q", dream.SourceDocID, dream.CaseID)
-		}
-	}
-	for _, qrel := range qrels {
-		if _, ok := caseIndex[qrel.CaseID]; !ok {
-			return fmt.Errorf("qrels case %q missing from seed cases", qrel.CaseID)
-		}
-	}
-	for _, c := range cases {
-		if hasSlice(c.Slices, "adversarial") && len(qrelIndex[c.CaseID].BadRefs) == 0 {
-			return fmt.Errorf("adversarial case %q has no bad_refs", c.CaseID)
-		}
-	}
-	return nil
-}
-
 func sourceDocIDIndexForExpectedDreams(dreams []ExpectedDream) map[string]struct{} {
 	index := map[string]struct{}{}
 	for _, dream := range dreams {
@@ -470,10 +415,6 @@ func sourceDocIDIndexForCorpus(corpus []CorpusItem) map[string]struct{} {
 			continue
 		}
 		corpusIndex[item.SourceDocID] = struct{}{}
-		for i := range item.Claims {
-			corpusIndex[typedClaimSourceDocID(item.SourceDocID, i+1)] = struct{}{}
-			corpusIndex[typedFactSourceDocID(item.SourceDocID, i+1)] = struct{}{}
-		}
 	}
 	return corpusIndex
 }
@@ -530,43 +471,6 @@ func validateManifestCounts(manifestPath string, manifest *SeedManifest, corpus 
 	return nil
 }
 
-func validateManifestCountsWithoutCorpus(manifestPath string, manifest *SeedManifest, cases []Case, qrels []QRel) error {
-	if manifest == nil || len(manifest.Counts) == 0 {
-		return nil
-	}
-	if err := validateCount(manifest.Counts, "cases", len(cases)); err != nil {
-		return err
-	}
-	if err := validateCount(manifest.Counts, "qrels", len(qrels)); err != nil {
-		return err
-	}
-	for _, optional := range []struct {
-		countName string
-		fileName  string
-	}{
-		{countName: "answers", fileName: manifest.AnswersFile},
-		{countName: "hard_negatives", fileName: manifest.HardNegativesFile},
-		{countName: "transforms", fileName: manifest.TransformsFile},
-		{countName: "dreams", fileName: manifest.DreamsFile},
-	} {
-		expected, ok := manifest.Counts[optional.countName]
-		if !ok {
-			continue
-		}
-		if strings.TrimSpace(optional.fileName) == "" {
-			return fmt.Errorf("manifest count %s=%d but file is not set", optional.countName, expected)
-		}
-		actual, err := countSeedJSONLRows(manifestPath, optional.fileName)
-		if err != nil {
-			return err
-		}
-		if actual != expected {
-			return fmt.Errorf("manifest count %s=%d mismatch: got %d", optional.countName, expected, actual)
-		}
-	}
-	return nil
-}
-
 func sourceDocIDsForQRelMappings(qrels []QRel, dreams []ExpectedDream) map[string]struct{} {
 	out := map[string]struct{}{}
 	addRefs := func(refs []Ref) {
@@ -585,6 +489,36 @@ func sourceDocIDsForQRelMappings(qrels []QRel, dreams []ExpectedDream) map[strin
 	}
 	for _, dream := range dreams {
 		addRefs(dream.SourceRefs)
+	}
+	return out
+}
+
+func loadSourceDocIDs(path string) (map[string]struct{}, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	out := map[string]struct{}{}
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		if sourceDocID := strings.TrimSpace(scanner.Text()); sourceDocID != "" {
+			out[sourceDocID] = struct{}{}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func completedMappedSourceDocIDs(checkpoint map[string]struct{}, mapping KnowledgeMapping) map[string]struct{} {
+	out := map[string]struct{}{}
+	for sourceDocID := range checkpoint {
+		if len(mapping.BySourceDocIDAndType[sourceDocID]["fragment"]) > 0 {
+			out[sourceDocID] = struct{}{}
+		}
 	}
 	return out
 }

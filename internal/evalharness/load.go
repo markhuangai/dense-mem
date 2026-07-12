@@ -34,8 +34,11 @@ func LoadSeedManifest(path string) (*SeedManifest, error) {
 }
 
 func LoadCorpus(manifestPath string, manifest *SeedManifest) ([]CorpusItem, error) {
-	var items []CorpusItem
-	if err := readJSONL(resolveSeedPath(manifestPath, manifest.CorpusFile), &items); err != nil {
+	items := []CorpusItem{}
+	if err := scanCorpusFile(resolveSeedPath(manifestPath, manifest.CorpusFile), func(item CorpusItem) error {
+		items = append(items, item)
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 	seen := map[string]struct{}{}

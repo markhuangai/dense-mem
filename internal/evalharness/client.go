@@ -16,11 +16,12 @@ import (
 )
 
 type HTTPClient struct {
-	BaseURL      string
-	APIKey       string
-	ControlURL   string
-	ControlToken string
-	Client       *http.Client
+	BaseURL          string
+	APIKey           string
+	ControlURL       string
+	ControlToken     string
+	PlacementTimeout time.Duration
+	Client           *http.Client
 }
 
 type HTTPStatusError struct {
@@ -67,17 +68,21 @@ func (c *HTTPClient) ImportCorpus(ctx context.Context, corpus []CorpusItem) (Kno
 	return c.ImportCorpusWithConcurrency(ctx, corpus, 1)
 }
 
-func (c *HTTPClient) ImportCorpusFileWithConcurrency(ctx context.Context, path string, concurrency int, keepSourceDocIDs map[string]struct{}) (KnowledgeMapping, int, error) {
+func (c *HTTPClient) ImportCorpusFileWithConcurrency(ctx context.Context, path string, concurrency int, keepSourceDocIDs, skipSourceDocIDs map[string]struct{}) (KnowledgeMapping, int, error) {
 	if concurrency <= 1 {
-		return c.importCorpusFileSequential(ctx, path, keepSourceDocIDs)
+		return c.importCorpusFileSequential(ctx, path, keepSourceDocIDs, skipSourceDocIDs)
 	}
-	return c.importCorpusFileConcurrent(ctx, path, concurrency, keepSourceDocIDs)
+	return c.importCorpusFileConcurrent(ctx, path, concurrency, keepSourceDocIDs, skipSourceDocIDs)
 }
 
-func (c *HTTPClient) importCorpusFileSequential(ctx context.Context, path string, keepSourceDocIDs map[string]struct{}) (KnowledgeMapping, int, error) {
+func (c *HTTPClient) importCorpusFileSequential(ctx context.Context, path string, keepSourceDocIDs, skipSourceDocIDs map[string]struct{}) (KnowledgeMapping, int, error) {
 	mapping := newKnowledgeMapping()
 	count := 0
 	err := scanCorpusFile(path, func(item CorpusItem) error {
+		if shouldSkipCorpusItem(item, skipSourceDocIDs) {
+			count++
+			return nil
+		}
 		itemMapping, err := c.importCorpusItem(ctx, item)
 		if err != nil {
 			return err
@@ -89,25 +94,38 @@ func (c *HTTPClient) importCorpusFileSequential(ctx context.Context, path string
 	return mapping, count, err
 }
 
-func (c *HTTPClient) importCorpusFileConcurrent(ctx context.Context, path string, concurrency int, keepSourceDocIDs map[string]struct{}) (KnowledgeMapping, int, error) {
+func (c *HTTPClient) importCorpusFileConcurrent(ctx context.Context, path string, concurrency int, keepSourceDocIDs, skipSourceDocIDs map[string]struct{}) (KnowledgeMapping, int, error) {
 	mapping := newKnowledgeMapping()
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	scheduleCtx, stopScheduling := context.WithCancel(ctx)
+	defer stopScheduling()
 
 	type importResult struct {
 		mapping KnowledgeMapping
+		skipped bool
 		err     error
 	}
+	type importJob struct {
+		item    CorpusItem
+		skipped bool
+	}
 
-	jobs := make(chan CorpusItem)
+	jobs := make(chan importJob)
 	results := make(chan importResult)
 	var wg sync.WaitGroup
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for item := range jobs {
-				itemMapping, err := c.importCorpusItem(ctx, item)
+			for job := range jobs {
+				if job.skipped {
+					select {
+					case results <- importResult{skipped: true}:
+					case <-ctx.Done():
+						return
+					}
+					continue
+				}
+				itemMapping, err := c.importCorpusItem(ctx, job.item)
 				select {
 				case results <- importResult{mapping: itemMapping, err: err}:
 				case <-ctx.Done():
@@ -122,14 +140,14 @@ func (c *HTTPClient) importCorpusFileConcurrent(ctx context.Context, path string
 		defer close(jobs)
 		scanErr = scanCorpusFile(path, func(item CorpusItem) error {
 			select {
-			case jobs <- item:
+			case jobs <- importJob{item: item, skipped: shouldSkipCorpusItem(item, skipSourceDocIDs)}:
 				return nil
-			case <-ctx.Done():
-				return ctx.Err()
+			case <-scheduleCtx.Done():
+				return scheduleCtx.Err()
 			}
 		})
 		if scanErr != nil {
-			cancel()
+			stopScheduling()
 		}
 	}()
 
@@ -141,10 +159,14 @@ func (c *HTTPClient) importCorpusFileConcurrent(ctx context.Context, path string
 	count := 0
 	var firstErr error
 	for result := range results {
+		if result.skipped {
+			count++
+			continue
+		}
 		if result.err != nil {
 			if firstErr == nil {
 				firstErr = result.err
-				cancel()
+				stopScheduling()
 			}
 			continue
 		}
@@ -163,6 +185,14 @@ func (c *HTTPClient) importCorpusFileConcurrent(ctx context.Context, path string
 	return mapping, count, nil
 }
 
+func shouldSkipCorpusItem(item CorpusItem, skipSourceDocIDs map[string]struct{}) bool {
+	if len(skipSourceDocIDs) == 0 {
+		return false
+	}
+	_, ok := skipSourceDocIDs[strings.TrimSpace(item.SourceDocID)]
+	return ok
+}
+
 func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, corpus []CorpusItem, concurrency int) (KnowledgeMapping, error) {
 	mapping := newKnowledgeMapping()
 	groups := corpusImportGroups(corpus)
@@ -178,8 +208,8 @@ func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, corpus []C
 		concurrency = len(groups)
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	scheduleCtx, stopScheduling := context.WithCancel(ctx)
+	defer stopScheduling()
 
 	type importResult struct {
 		mapping KnowledgeMapping
@@ -209,7 +239,7 @@ func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, corpus []C
 		for _, group := range groups {
 			select {
 			case jobs <- group:
-			case <-ctx.Done():
+			case <-scheduleCtx.Done():
 				return
 			}
 		}
@@ -225,7 +255,7 @@ func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, corpus []C
 		if result.err != nil {
 			if firstErr == nil {
 				firstErr = result.err
-				cancel()
+				stopScheduling()
 			}
 			continue
 		}
@@ -252,11 +282,11 @@ func scanCorpusFile(path string, fn func(CorpusItem) error) error {
 	for scanner.Scan() {
 		lineNo++
 		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
+		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		var item CorpusItem
-		if err := json.Unmarshal([]byte(line), &item); err != nil {
+		item, err := decodeCorpusItem([]byte(line))
+		if err != nil {
 			return fmt.Errorf("%s:%d: %w", path, lineNo, err)
 		}
 		if strings.TrimSpace(item.SourceDocID) == "" {
@@ -275,6 +305,23 @@ func scanCorpusFile(path string, fn func(CorpusItem) error) error {
 	return nil
 }
 
+func decodeCorpusItem(line []byte) (CorpusItem, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(line, &fields); err != nil {
+		return CorpusItem{}, err
+	}
+	for _, field := range []string{"claims", "auto_promote"} {
+		if _, ok := fields[field]; ok {
+			return CorpusItem{}, fmt.Errorf("legacy corpus field %q is not supported; regenerate the seed for remember-only ingestion", field)
+		}
+	}
+	var item CorpusItem
+	if err := json.Unmarshal(line, &item); err != nil {
+		return CorpusItem{}, err
+	}
+	return item, nil
+}
+
 func (c *HTTPClient) importCorpusGroup(ctx context.Context, corpus []CorpusItem) (KnowledgeMapping, error) {
 	mapping := newKnowledgeMapping()
 	for _, item := range corpus {
@@ -289,12 +336,6 @@ func (c *HTTPClient) importCorpusGroup(ctx context.Context, corpus []CorpusItem)
 
 func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (KnowledgeMapping, error) {
 	mapping := newKnowledgeMapping()
-	if len(item.Claims) > 0 {
-		if err := c.importMemoryCorpusItem(ctx, item, &mapping); err != nil {
-			return mapping, err
-		}
-		return mapping, nil
-	}
 	evidence := map[string]any{
 		"content":         item.Content,
 		"source":          firstNonEmpty(item.SourceDataset, item.Title, "eval-seed"),
@@ -312,7 +353,7 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (Kno
 		return mapping, fmt.Errorf("import %s: remember response missing fragment id", item.SourceDocID)
 	}
 	if ingestID := stringValue(out["ingest_id"]); ingestID != "" {
-		if err := c.WaitForMemoryPlacement(ctx, ingestID, 2*time.Minute); err != nil {
+		if err := c.WaitForMemoryPlacement(ctx, ingestID, c.placementTimeout()); err != nil {
 			return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)
 		}
 	}
@@ -349,51 +390,6 @@ func corpusImportGroupKey(item CorpusItem) string {
 	return "item:" + sourceDocID
 }
 
-func (c *HTTPClient) importMemoryCorpusItem(ctx context.Context, item CorpusItem, mapping *KnowledgeMapping) error {
-	input := map[string]any{
-		"summary":         item.Content,
-		"source":          firstNonEmpty(item.SourceDataset, item.Title, "eval-seed"),
-		"idempotency_key": "eval:" + item.SourceDocID,
-		"labels":          item.Labels,
-		"metadata":        seedMetadata(item),
-		"claims":          seedTypedClaims(item),
-	}
-	if item.AutoPromote {
-		input["auto_promote"] = true
-	}
-	var out map[string]any
-	if err := c.callToolWithRetry(ctx, "import_memories", input, &out); err != nil {
-		return fmt.Errorf("import %s: %w", item.SourceDocID, err)
-	}
-	fragmentID := fragmentIDFromRemember(out)
-	if fragmentID == "" {
-		return fmt.Errorf("import %s: import_memories response missing fragment id", item.SourceDocID)
-	}
-	addSourceMapping(mapping, Ref{Type: "fragment", ID: fragmentID, SourceDocID: item.SourceDocID}, true)
-	claims, _ := out["claims"].([]any)
-	if len(item.Claims) > 0 && len(claims) != len(item.Claims) {
-		return fmt.Errorf("import %s: import_memories returned %d claim outcomes for %d typed claims", item.SourceDocID, len(claims), len(item.Claims))
-	}
-	for i, raw := range claims {
-		claim, _ := raw.(map[string]any)
-		if errText := stringValue(claim["error"]); errText != "" {
-			return fmt.Errorf("import %s: claim import failed: %s", item.SourceDocID, errText)
-		}
-		claimID := stringValue(claim["claim_id"])
-		if claimID != "" {
-			addSourceMapping(mapping, Ref{Type: "claim", ID: claimID, SourceDocID: item.SourceDocID}, false)
-			addSourceMapping(mapping, Ref{Type: "claim", ID: claimID, SourceDocID: typedClaimSourceDocID(item.SourceDocID, i+1)}, false)
-		}
-		fact, _ := claim["fact"].(map[string]any)
-		factID := firstNonEmpty(stringValue(fact["fact_id"]), stringValue(fact["id"]))
-		if factID != "" {
-			addSourceMapping(mapping, Ref{Type: "fact", ID: factID, SourceDocID: item.SourceDocID}, false)
-			addSourceMapping(mapping, Ref{Type: "fact", ID: factID, SourceDocID: typedFactSourceDocID(item.SourceDocID, i+1)}, false)
-		}
-	}
-	return nil
-}
-
 func (c *HTTPClient) WaitForMemoryPlacement(ctx context.Context, ingestID string, timeout time.Duration) error {
 	if strings.TrimSpace(ingestID) == "" {
 		return nil
@@ -414,6 +410,9 @@ func (c *HTTPClient) WaitForMemoryPlacement(ctx context.Context, ingestID string
 		status := nestedString(out, "placement", "status")
 		if status == "completed" || status == "failed" {
 			if status == "failed" {
+				if cause := nestedString(out, "placement", "error"); cause != "" {
+					return fmt.Errorf("memory placement %s failed: %s", ingestID, cause)
+				}
 				return fmt.Errorf("memory placement %s failed", ingestID)
 			}
 			return nil
@@ -427,6 +426,13 @@ func (c *HTTPClient) WaitForMemoryPlacement(ctx context.Context, ingestID string
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+func (c *HTTPClient) placementTimeout() time.Duration {
+	if c.PlacementTimeout > 0 {
+		return c.PlacementTimeout
+	}
+	return 2 * time.Minute
 }
 
 func (c *HTTPClient) ExportFragmentMapping(ctx context.Context, limit int) (KnowledgeMapping, error) {
@@ -446,8 +452,8 @@ func (c *HTTPClient) exportKnowledgeMapping(ctx context.Context, limit int, kind
 		limit = 100
 	}
 	mapping := newKnowledgeMapping()
-	claimSourceDocIDs := map[string]string{}
-	claimFactSourceDocIDs := map[string]string{}
+	fragmentSourceDocIDs := map[string][]string{}
+	claimSourceDocIDs := map[string][]string{}
 	for _, kind := range kinds {
 		cursor := ""
 		for {
@@ -471,17 +477,15 @@ func (c *HTTPClient) exportKnowledgeMapping(ctx context.Context, limit int, kind
 				if kind == "dream" {
 					addDreamSourceRefs(&mapping, id, dreamSourceRefsFromKnowledgeItem(item))
 				}
-				sourceDocIDs := sourceDocIDsFromKnowledgeItem(kind, item, claimSourceDocIDs, claimFactSourceDocIDs)
+				sourceDocIDs := sourceDocIDsFromKnowledgeItem(kind, item, fragmentSourceDocIDs, claimSourceDocIDs)
 				for _, sourceDocID := range sourceDocIDs {
 					addSourceMapping(&mapping, Ref{Type: kind, ID: id, SourceDocID: sourceDocID}, kind == "fragment")
 				}
-				if kind == "claim" {
-					if len(sourceDocIDs) > 0 {
-						claimSourceDocIDs[id] = sourceDocIDs[0]
-					}
-					if factSourceDocID := factSourceDocIDForClaimSourceDocIDs(sourceDocIDs); factSourceDocID != "" {
-						claimFactSourceDocIDs[id] = factSourceDocID
-					}
+				switch kind {
+				case "fragment":
+					fragmentSourceDocIDs[id] = sourceDocIDs
+				case "claim":
+					claimSourceDocIDs[id] = sourceDocIDs
 				}
 			}
 			if !out.HasMore || out.NextCursor == "" {
@@ -632,67 +636,7 @@ func seedMetadata(item CorpusItem) map[string]any {
 	return out
 }
 
-func seedTypedClaims(item CorpusItem) []map[string]any {
-	claims := make([]map[string]any, 0, len(item.Claims))
-	metadata := seedMetadata(item)
-	for i, claim := range item.Claims {
-		classification := map[string]any{}
-		for key, value := range claim.Classification {
-			classification[key] = value
-		}
-		for key, value := range metadata {
-			classification[key] = value
-		}
-		classification["eval_claim_source_doc_id"] = typedClaimSourceDocID(item.SourceDocID, i+1)
-		classification["eval_fact_source_doc_id"] = typedFactSourceDocID(item.SourceDocID, i+1)
-		claimInput := map[string]any{
-			"subject":         claim.Subject,
-			"predicate":       claim.Predicate,
-			"object":          claim.Object,
-			"extract_conf":    claim.ExtractConf,
-			"resolution_conf": claim.ResolutionConf,
-			"classification":  classification,
-		}
-		if claim.Modality != "" {
-			claimInput["modality"] = claim.Modality
-		}
-		if claim.Polarity != "" {
-			claimInput["polarity"] = claim.Polarity
-		}
-		if claim.Speaker != "" {
-			claimInput["speaker"] = claim.Speaker
-		}
-		if claim.IdempotencyKey != "" {
-			claimInput["idempotency_key"] = claim.IdempotencyKey
-		} else {
-			claimInput["idempotency_key"] = fmt.Sprintf("eval:%s:claim:%d", item.SourceDocID, i+1)
-		}
-		if claim.ValidFrom != nil {
-			claimInput["valid_from"] = claim.ValidFrom.UTC().Format(time.RFC3339Nano)
-		}
-		if claim.ValidTo != nil {
-			claimInput["valid_to"] = claim.ValidTo.UTC().Format(time.RFC3339Nano)
-		}
-		if len(claim.SupportedBy) > 0 {
-			claimInput["supported_by"] = claim.SupportedBy
-		}
-		if claim.ExtractionModel != "" {
-			claimInput["extraction_model"] = claim.ExtractionModel
-		}
-		if claim.ExtractionVersion != "" {
-			claimInput["extraction_version"] = claim.ExtractionVersion
-		}
-		if claim.PipelineRunID != "" {
-			claimInput["pipeline_run_id"] = claim.PipelineRunID
-		} else {
-			claimInput["pipeline_run_id"] = "eval:" + item.SourceDocID
-		}
-		claims = append(claims, claimInput)
-	}
-	return claims
-}
-
-func sourceDocIDsFromKnowledgeItem(kind string, item map[string]any, claimSourceDocIDs, claimFactSourceDocIDs map[string]string) []string {
+func sourceDocIDsFromKnowledgeItem(kind string, item map[string]any, fragmentSourceDocIDs, claimSourceDocIDs map[string][]string) []string {
 	sourceDocID := firstNonEmpty(
 		nestedString(item, "metadata", "source_doc_id"),
 		nestedString(item, "classification", "source_doc_id"),
@@ -704,20 +648,30 @@ func sourceDocIDsFromKnowledgeItem(kind string, item map[string]any, claimSource
 	}
 	switch kind {
 	case "claim":
-		sourceDocIDs = append(sourceDocIDs,
-			nestedString(item, "classification", "eval_claim_source_doc_id"),
-			typedClaimSourceDocIDFromIdempotencyKey(stringValue(item["idempotency_key"])),
-		)
-	case "fact":
-		if sourceDocID == "" {
-			sourceDocIDs = append(sourceDocIDs, claimSourceDocIDs[stringValue(item["promoted_from_claim_id"])])
+		for _, fragmentID := range stringsFromAny(item["supported_by"]) {
+			sourceDocIDs = append(sourceDocIDs, fragmentSourceDocIDs[fragmentID]...)
 		}
-		sourceDocIDs = append(sourceDocIDs,
-			nestedString(item, "classification", "eval_fact_source_doc_id"),
-			claimFactSourceDocIDs[stringValue(item["promoted_from_claim_id"])],
-		)
+	case "fact":
+		sourceDocIDs = append(sourceDocIDs, claimSourceDocIDs[stringValue(item["promoted_from_claim_id"])]...)
 	}
 	return uniqueNonEmpty(sourceDocIDs)
+}
+
+func stringsFromAny(value any) []string {
+	switch raw := value.(type) {
+	case []string:
+		return uniqueNonEmpty(raw)
+	case []any:
+		out := make([]string, 0, len(raw))
+		for _, item := range raw {
+			if value := stringValue(item); value != "" {
+				out = append(out, value)
+			}
+		}
+		return uniqueNonEmpty(out)
+	default:
+		return nil
+	}
 }
 
 func dreamSourceRefsFromKnowledgeItem(item map[string]any) []Ref {
@@ -740,53 +694,6 @@ func dreamSourceRefsFromKnowledgeItem(item map[string]any) []Ref {
 		}
 	}
 	return refs
-}
-
-func factSourceDocIDForClaimSourceDocIDs(sourceDocIDs []string) string {
-	for _, sourceDocID := range sourceDocIDs {
-		if factSourceDocID := typedFactSourceDocIDFromClaimSourceDocID(sourceDocID); factSourceDocID != "" {
-			return factSourceDocID
-		}
-	}
-	return ""
-}
-
-func typedClaimSourceDocID(sourceDocID string, index int) string {
-	return fmt.Sprintf("%s:claim:%d", sourceDocID, index)
-}
-
-func typedFactSourceDocID(sourceDocID string, index int) string {
-	return fmt.Sprintf("%s:fact:%d", sourceDocID, index)
-}
-
-func typedFactSourceDocIDFromClaimSourceDocID(sourceDocID string) string {
-	const marker = ":claim:"
-	index := strings.LastIndex(sourceDocID, marker)
-	if index == -1 {
-		return ""
-	}
-	return sourceDocID[:index] + ":fact:" + sourceDocID[index+len(marker):]
-}
-
-func typedClaimSourceDocIDFromIdempotencyKey(key string) string {
-	const prefix = "eval:"
-	key = strings.TrimSpace(key)
-	if !strings.HasPrefix(key, prefix) {
-		return ""
-	}
-	rest := strings.TrimPrefix(key, prefix)
-	const marker = ":claim:"
-	index := strings.LastIndex(rest, marker)
-	if index <= 0 || index+len(marker) >= len(rest) {
-		return ""
-	}
-	ordinal := rest[index+len(marker):]
-	for _, r := range ordinal {
-		if r < '0' || r > '9' {
-			return ""
-		}
-	}
-	return rest[:index] + marker + ordinal
 }
 
 func knowledgeItemID(kind string, item map[string]any) string {

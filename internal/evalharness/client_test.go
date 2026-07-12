@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -43,6 +44,12 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Fatalf("decode remember body: %v", err)
+			}
+			if _, ok := input["claims"]; ok {
+				t.Fatalf("remember input contains claims: %#v", input)
+			}
+			if _, ok := input["auto_promote"]; ok {
+				t.Fatalf("remember input contains auto_promote: %#v", input)
 			}
 			rememberCalls++
 			evidence := input["evidence"].([]any)
@@ -252,75 +259,62 @@ func TestHTTPClientImportRejectsMissingFragmentID(t *testing.T) {
 	}
 }
 
-func TestHTTPClientImportCorpusUsesImportMemoriesForTypedClaims(t *testing.T) {
-	validFrom := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
-	validTo := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+func TestHTTPClientImportCorpusReportsPlacementFailureCause(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/tools/import_memories" {
+		switch r.URL.Path {
+		case "/api/v1/tools/remember":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ingest_id": "ingest-failed",
+				"evidence":  []map[string]any{{"id": "fragment-failed"}},
+			})
+		case "/api/v1/tools/get_memory_placement":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"placement": map[string]any{
+					"status": "failed",
+					"error":  "verifier unavailable",
+				},
+			})
+		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
-		var input map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			t.Fatalf("decode import_memories body: %v", err)
-		}
-		if input["summary"] != "Service OBS-001 current owner is bob." || input["auto_promote"] != true {
-			t.Fatalf("import_memories input = %#v", input)
-		}
-		claims := input["claims"].([]any)
-		claim := claims[0].(map[string]any)
-		classification := claim["classification"].(map[string]any)
-		if claim["idempotency_key"] != "eval:doc-tiered:claim:1" || classification["source_doc_id"] != "doc-tiered" || classification["eval_seed"] != true {
-			t.Fatalf("claim input = %#v", claim)
-		}
-		if claim["valid_from"] != validFrom.Format(time.RFC3339Nano) {
-			t.Fatalf("valid_from = %v", claim["valid_from"])
-		}
-		if claim["valid_to"] != validTo.Format(time.RFC3339Nano) {
-			t.Fatalf("valid_to = %v", claim["valid_to"])
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"fragment": map[string]any{"id": "fragment-tiered"},
-			"claims": []map[string]any{{
-				"claim_id": "claim-tiered",
-				"fact":     map[string]any{"fact_id": "fact-tiered"},
-			}},
-		})
 	}))
 	defer server.Close()
 
 	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
-	mapping, err := client.ImportCorpus(context.Background(), []CorpusItem{{
-		SourceDocID: "doc-tiered",
-		Content:     "Service OBS-001 current owner is bob.",
-		AutoPromote: true,
-		Claims: []TypedClaim{{
-			Subject:        "service OBS-001",
-			Predicate:      "uses",
-			Object:         "owner bob",
-			ExtractConf:    0.95,
-			ResolutionConf: 0.95,
-			ValidFrom:      &validFrom,
-			ValidTo:        &validTo,
-		}},
-	}})
+	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-failed", Content: "content"}})
+	if err == nil || !strings.Contains(err.Error(), "memory placement ingest-failed failed: verifier unavailable") {
+		t.Fatalf("ImportCorpus err = %v", err)
+	}
+}
 
-	if err != nil {
-		t.Fatalf("ImportCorpus typed claims: %v", err)
+func TestHTTPClientImportCorpusHonorsPlacementTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/tools/remember":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ingest_id": "ingest-slow",
+				"evidence":  []map[string]any{{"id": "fragment-slow"}},
+			})
+		case "/api/v1/tools/get_memory_placement":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"placement": map[string]any{"status": "processing"},
+			})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	timeout := 10 * time.Millisecond
+	client := &HTTPClient{
+		BaseURL:          server.URL,
+		APIKey:           "api-key",
+		PlacementTimeout: timeout,
+		Client:           server.Client(),
 	}
-	if mapping.BySourceDocID["doc-tiered"].ID != "fragment-tiered" {
-		t.Fatalf("default mapping = %+v", mapping.BySourceDocID["doc-tiered"])
-	}
-	if mapping.BySourceDocIDAndType["doc-tiered"]["claim"][0].ID != "claim-tiered" {
-		t.Fatalf("claim mapping = %+v", mapping.BySourceDocIDAndType)
-	}
-	if mapping.BySourceDocIDAndType["doc-tiered"]["fact"][0].ID != "fact-tiered" {
-		t.Fatalf("fact mapping = %+v", mapping.BySourceDocIDAndType)
-	}
-	if mapping.BySourceDocIDAndType["doc-tiered:claim:1"]["claim"][0].ID != "claim-tiered" {
-		t.Fatalf("claim alias mapping = %+v", mapping.BySourceDocIDAndType)
-	}
-	if mapping.BySourceDocIDAndType["doc-tiered:fact:1"]["fact"][0].ID != "fact-tiered" {
-		t.Fatalf("fact alias mapping = %+v", mapping.BySourceDocIDAndType)
+	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-slow", Content: "content"}})
+	if err == nil || !strings.Contains(err.Error(), "memory placement ingest-slow did not complete within "+timeout.String()) {
+		t.Fatalf("ImportCorpus err = %v", err)
 	}
 }
 
@@ -372,67 +366,66 @@ func TestHTTPClientImportCorpusWithConcurrency(t *testing.T) {
 	}
 }
 
-func TestHTTPClientImportCorpusRejectsTypedClaimErrors(t *testing.T) {
+func TestHTTPClientConcurrentFileImportDrainsActiveRequestsAfterError(t *testing.T) {
+	startedTwo := make(chan struct{})
+	docTwoCompleted := make(chan struct{})
+	var started int32
+	var docTwoCanceled int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var input map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		evidence := input["evidence"].([]any)[0].(map[string]any)
+		sourceDocID := strings.TrimPrefix(evidence["idempotency_key"].(string), "eval:")
+		if atomic.AddInt32(&started, 1) == 2 {
+			close(startedTwo)
+		}
+		select {
+		case <-startedTwo:
+		case <-time.After(time.Second):
+			t.Fatal("both import requests did not start")
+		}
+
+		if sourceDocID == "doc-1" {
+			http.Error(w, "invalid evidence", http.StatusBadRequest)
+			return
+		}
+		select {
+		case <-r.Context().Done():
+			atomic.StoreInt32(&docTwoCanceled, 1)
+			return
+		case <-time.After(40 * time.Millisecond):
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"fragment": map[string]any{"id": "fragment-tiered"},
-			"claims": []map[string]any{{
-				"claim_id": "claim-tiered",
-				"error":    "claim verify: verifier call failed",
-			}},
+			"fragment": map[string]any{"id": "fragment-doc-2"},
 		})
+		close(docTwoCompleted)
 	}))
 	defer server.Close()
 
-	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
-	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{
-		SourceDocID: "doc-tiered",
-		Content:     "Service OBS-001 current owner is bob.",
-		Claims: []TypedClaim{{
-			Subject:        "service OBS-001",
-			Predicate:      "uses",
-			Object:         "owner bob",
-			ExtractConf:    0.95,
-			ResolutionConf: 0.95,
-		}},
-	}})
-
-	if err == nil || !strings.Contains(err.Error(), "claim verify: verifier call failed") {
-		t.Fatalf("ImportCorpus err = %v", err)
+	corpusPath := filepath.Join(t.TempDir(), "corpus.jsonl")
+	if err := writeJSONL(corpusPath, []CorpusItem{
+		{SourceDocID: "doc-1", Content: "bad content"},
+		{SourceDocID: "doc-2", Content: "valid content"},
+	}); err != nil {
+		t.Fatalf("write corpus: %v", err)
 	}
-}
-
-func TestHTTPClientImportCorpusAllowsUnpromotedAutoPromoteRows(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"fragment": map[string]any{"id": "fragment-tiered"},
-			"claims": []map[string]any{{
-				"claim_id": "claim-tiered",
-				"status":   "validated",
-			}},
-		})
-	}))
-	defer server.Close()
-
 	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
-	mapping, err := client.ImportCorpus(context.Background(), []CorpusItem{{
-		SourceDocID: "doc-tiered",
-		Content:     "Service OBS-001 current owner is bob.",
-		AutoPromote: true,
-		Claims: []TypedClaim{{
-			Subject:        "service OBS-001",
-			Predicate:      "uses",
-			Object:         "owner bob",
-			ExtractConf:    0.95,
-			ResolutionConf: 0.95,
-		}},
-	}})
-
-	if err != nil {
-		t.Fatalf("ImportCorpus err = %v", err)
+	mapping, _, err := client.ImportCorpusFileWithConcurrency(context.Background(), corpusPath, 2, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "invalid evidence") {
+		t.Fatalf("ImportCorpusFileWithConcurrency err = %v", err)
 	}
-	if _, ok := mapping.BySourceDocIDAndType["doc-tiered"]["fact"]; ok {
-		t.Fatalf("fact mapping = %+v; want no fact mapping for unpromoted row", mapping.BySourceDocIDAndType)
+	select {
+	case <-docTwoCompleted:
+	default:
+		t.Fatal("active doc-2 request did not finish")
+	}
+	if atomic.LoadInt32(&docTwoCanceled) != 0 {
+		t.Fatal("active doc-2 request was canceled after doc-1 failed")
+	}
+	if mapping.BySourceDocID["doc-2"].ID != "fragment-doc-2" {
+		t.Fatalf("doc-2 mapping = %+v", mapping.BySourceDocID["doc-2"])
 	}
 }
 
@@ -453,8 +446,8 @@ func TestHTTPClientExportKnowledgeMappingIncludesClaimsAndFacts(t *testing.T) {
 			}}})
 		case "claim":
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
-				"claim_id":       "claim-tiered",
-				"classification": map[string]any{"source_doc_id": "doc-tiered"},
+				"claim_id":     "claim-tiered",
+				"supported_by": []string{"fragment-tiered"},
 			}}})
 		case "fact":
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{

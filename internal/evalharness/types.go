@@ -42,27 +42,6 @@ type CorpusItem struct {
 	SourceQuality float64        `json:"source_quality,omitempty"`
 	Labels        []string       `json:"labels,omitempty"`
 	Metadata      map[string]any `json:"metadata,omitempty"`
-	Claims        []TypedClaim   `json:"claims,omitempty"`
-	AutoPromote   bool           `json:"auto_promote,omitempty"`
-}
-
-type TypedClaim struct {
-	Subject           string         `json:"subject"`
-	Predicate         string         `json:"predicate"`
-	Object            string         `json:"object"`
-	Modality          string         `json:"modality,omitempty"`
-	Polarity          string         `json:"polarity,omitempty"`
-	Speaker           string         `json:"speaker,omitempty"`
-	ExtractConf       float64        `json:"extract_conf"`
-	ResolutionConf    float64        `json:"resolution_conf"`
-	IdempotencyKey    string         `json:"idempotency_key,omitempty"`
-	ValidFrom         *time.Time     `json:"valid_from,omitempty"`
-	ValidTo           *time.Time     `json:"valid_to,omitempty"`
-	SupportedBy       []string       `json:"supported_by,omitempty"`
-	ExtractionModel   string         `json:"extraction_model,omitempty"`
-	ExtractionVersion string         `json:"extraction_version,omitempty"`
-	PipelineRunID     string         `json:"pipeline_run_id,omitempty"`
-	Classification    map[string]any `json:"classification,omitempty"`
 }
 
 type Case struct {
@@ -258,21 +237,21 @@ type SliceAvg struct {
 }
 
 type RunConfig struct {
-	RunID             string `json:"run_id"`
-	Mode              string `json:"mode"`
-	SeedManifest      string `json:"seed_manifest"`
-	SeedHash          string `json:"seed_hash"`
-	SuitePath         string `json:"suite_path"`
-	BaseURL           string `json:"base_url,omitempty"`
-	ControlURL        string `json:"control_url,omitempty"`
-	ImportSeed        bool   `json:"import_seed"`
-	ImportConcurrency int    `json:"import_concurrency,omitempty"`
-	DirectImport      bool   `json:"direct_import,omitempty"`
-	DirectImportBatch int    `json:"direct_import_batch,omitempty"`
-	DirectImportTeam  string `json:"direct_import_team,omitempty"`
-	TracesPath        string `json:"traces_path,omitempty"`
-	MappingPath       string `json:"mapping_path,omitempty"`
-	BaselineRunPath   string `json:"baseline_run_path,omitempty"`
+	RunID                  string `json:"run_id"`
+	Mode                   string `json:"mode"`
+	SeedManifest           string `json:"seed_manifest"`
+	SeedHash               string `json:"seed_hash"`
+	SuitePath              string `json:"suite_path"`
+	BaseURL                string `json:"base_url,omitempty"`
+	ControlURL             string `json:"control_url,omitempty"`
+	ImportSeed             bool   `json:"import_seed"`
+	ImportRoute            string `json:"import_route,omitempty"`
+	ImportConcurrency      int    `json:"import_concurrency,omitempty"`
+	PlacementTimeout       string `json:"placement_timeout,omitempty"`
+	ResumeSourceDocIDsPath string `json:"resume_source_doc_ids_path,omitempty"`
+	TracesPath             string `json:"traces_path,omitempty"`
+	MappingPath            string `json:"mapping_path,omitempty"`
+	BaselineRunPath        string `json:"baseline_run_path,omitempty"`
 }
 
 type Comparison struct {
