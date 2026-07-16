@@ -156,64 +156,6 @@ func TestRecallFeedbackEventServiceGetFallsBackToProfileScopeForLegacyRows(t *te
 	assert.Equal(t, profileID.String(), resolver.profileID)
 }
 
-func TestRecallFeedbackEventServiceQueuesBadResultsWithoutMutatingTruth(t *testing.T) {
-	teamID := uuid.New()
-	base := &recallFeedbackEventRepoStub{event: &domain.RecallFeedbackEvent{
-		RecallID: "rec_bad",
-		TeamID:   &teamID,
-		ResultRefs: []domain.RecallFeedbackResultRef{
-			{Type: domain.RecallFeedbackResultTypeAssertion, ID: "assertion-1", Rank: 1},
-			{Type: domain.RecallFeedbackResultTypeFact, ID: "fact-1", Rank: 2},
-		},
-	}}
-	repo := &recallFeedbackQueueRepoStub{recallFeedbackEventRepoStub: base}
-	svc := NewRecallFeedbackEventService(repo, nil, nil)
-	now := time.Date(2026, 7, 10, 4, 0, 0, 0, time.UTC)
-	svc.now = func() time.Time { return now }
-	ctx := requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{TeamID: teamID})
-
-	err := svc.RecordRecallFeedback(ctx, domain.RecallFeedbackSubmission{
-		RecallID:        "rec_bad",
-		AnswerSupported: false,
-		Quality:         "low",
-		Irrelevant:      true,
-		FeedbackComment: "The returned assertion is unrelated.",
-		IrrelevantRefs: []domain.RecallFeedbackJudgedResultRef{{
-			Type: domain.RecallFeedbackResultTypeAssertion,
-			ID:   "assertion-1",
-			Rank: 1,
-		}},
-	})
-	require.NoError(t, err)
-	require.Len(t, repo.reviews, 2)
-	assert.Equal(t, "assertion-1", repo.reviews[0].KnowledgeID)
-	assert.Equal(t, []string{"answer_unsupported", "irrelevant_result", "low_quality"}, repo.reviews[0].Reasons)
-	assert.Equal(t, "fact-1", repo.reviews[1].KnowledgeID)
-	assert.Equal(t, []string{"answer_unsupported", "low_quality"}, repo.reviews[1].Reasons)
-	assert.Equal(t, "pending", repo.reviews[0].Status)
-	assert.Equal(t, teamID, repo.reviews[0].ProfileID)
-
-	got, err := svc.GetRecallFeedbackEvent(ctx, "rec_bad")
-	require.NoError(t, err)
-	require.NotNil(t, got)
-	assert.Len(t, got.ReviewQueue, 2)
-}
-
-func TestRecallFeedbackEventServiceRejectsCrossTeamFeedbackAndRead(t *testing.T) {
-	teamA := uuid.New()
-	teamB := uuid.New()
-	repo := &recallFeedbackEventRepoStub{event: &domain.RecallFeedbackEvent{RecallID: "rec_a", TeamID: &teamA}}
-	svc := NewRecallFeedbackEventService(repo, nil, nil)
-	ctx := requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{TeamID: teamB})
-
-	err := svc.RecordRecallFeedback(ctx, domain.RecallFeedbackSubmission{RecallID: "rec_a", Quality: "low"})
-	require.ErrorContains(t, err, "not found")
-	assert.Empty(t, repo.feedbacks)
-	got, err := svc.GetRecallFeedbackEvent(ctx, "rec_a")
-	require.NoError(t, err)
-	assert.Nil(t, got)
-}
-
 func TestRecallFeedbackEventServiceStartShutdownLifecycle(t *testing.T) {
 	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
 	repo := &recallFeedbackEventRepoStub{pruneNotify: make(chan time.Time, 1)}
@@ -270,29 +212,6 @@ type recallFeedbackEventRepoStub struct {
 	pruneNotify  chan time.Time
 	event        *domain.RecallFeedbackEvent
 	recordErr    error
-}
-
-type recallFeedbackQueueRepoStub struct {
-	*recallFeedbackEventRepoStub
-	reviews []domain.RecallMemoryReview
-}
-
-func (s *recallFeedbackQueueRepoStub) EnqueueRecallMemoryReviews(_ context.Context, reviews []domain.RecallMemoryReview) error {
-	s.reviews = append([]domain.RecallMemoryReview(nil), reviews...)
-	return nil
-}
-
-func (s *recallFeedbackQueueRepoStub) ListRecallMemoryReviews(_ context.Context, profileID, recallID string) ([]domain.RecallMemoryReview, error) {
-	if s.event == nil || s.event.RecallID != recallID {
-		return []domain.RecallMemoryReview{}, nil
-	}
-	if s.event.TeamID != nil && s.event.TeamID.String() != profileID {
-		return []domain.RecallMemoryReview{}, nil
-	}
-	if s.event.TeamID == nil && s.event.ProfileID != nil && s.event.ProfileID.String() != profileID {
-		return []domain.RecallMemoryReview{}, nil
-	}
-	return append([]domain.RecallMemoryReview(nil), s.reviews...), nil
 }
 
 func (s *recallFeedbackEventRepoStub) RecordSnapshot(_ context.Context, event domain.RecallFeedbackEvent) error {

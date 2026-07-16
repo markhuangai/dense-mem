@@ -3,6 +3,7 @@ package memoryservice
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -11,6 +12,14 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/http/dto"
+	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/verifier"
+)
+
+const (
+	defaultPlacementMaxAttempts     = 5
+	defaultPlacementRetryBaseSecond = 5
+	defaultPlacementRetryMaxSecond  = 60
 )
 
 // EvidenceInput is a single client-supplied evidence item for server-owned
@@ -28,9 +37,7 @@ type EvidenceInput struct {
 
 // RememberRequest stores chat-session evidence for asynchronous placement.
 type RememberRequest struct {
-	Evidence      []EvidenceInput          `json:"evidence"`
-	Proposal      domain.MemoryProposal    `json:"proposal"`
-	MigrationRefs []domain.LegacyMemoryRef `json:"migration_refs,omitempty"`
+	Evidence []EvidenceInput `json:"evidence"`
 }
 
 // PlacementStatusRequest fetches one server-owned placement run.
@@ -41,18 +48,6 @@ type PlacementStatusRequest struct {
 // PlacementStatusResult is the public polling response for remember.
 type PlacementStatusResult struct {
 	Run domain.MemoryPlacementRun `json:"placement"`
-}
-
-type ResolvePlacementRequest struct {
-	IngestID          string                 `json:"ingest_id"`
-	PlacementItemID   string                 `json:"placement_item_id,omitempty"`
-	Decision          string                 `json:"decision"`
-	CorrectedProposal *domain.MemoryProposal `json:"corrected_proposal,omitempty"`
-	Evidence          []EvidenceInput        `json:"evidence,omitempty"`
-}
-
-type ResolvePlacementResult struct {
-	Placement domain.MemoryPlacementRun `json:"placement"`
 }
 
 // DisputeRequest starts or continues a bounded placement dispute session.
@@ -73,7 +68,165 @@ type DisputeResult struct {
 // Remember stores normal chat-session evidence and queues server-owned
 // placement. Client LLMs cannot submit claims or promotion hints on this path.
 func (s *service) Remember(ctx context.Context, profileID string, req RememberRequest) (*RememberResult, error) {
-	return s.rememberV2(ctx, profileID, req)
+	if s.deps.PlacementStore == nil {
+		return nil, errors.New("memory service: placement store is required")
+	}
+	if s.deps.SemanticStore == nil && s.deps.FragmentCreate == nil {
+		return nil, errors.New("memory service: semantic store is required")
+	}
+	if len(req.Evidence) == 0 {
+		return nil, errors.New("memory service: evidence is required")
+	}
+
+	teamID, teamName, ownerProfileID, ownerProfileName := semanticPrincipal(ctx, profileID)
+	ingestID := uuid.NewString()
+	now := time.Now().UTC()
+	run := domain.MemoryPlacementRun{
+		IngestID:          ingestID,
+		ProfileID:         teamID,
+		OwnerProfileID:    ownerProfileID,
+		Status:            domain.MemoryPlacementProcessing,
+		CheckAfterSeconds: 60,
+		StatusTool:        "get_memory_placement",
+		AvailableAt:       now,
+		Evidence:          make([]domain.MemoryEvidence, 0, len(req.Evidence)),
+		Items:             make([]domain.MemoryPlacementItem, 0, len(req.Evidence)),
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+	for i, evidence := range req.Evidence {
+		content := strings.TrimSpace(evidence.Content)
+		if content == "" {
+			return nil, fmt.Errorf("memory service: evidence[%d].content is required", i)
+		}
+		sourceType, err := parseSourceType(evidence.SourceType)
+		if err != nil {
+			return nil, fmt.Errorf("memory service: evidence[%d].source_type is invalid", i)
+		}
+		authority, err := parseAuthority(evidence.Authority)
+		if err != nil {
+			return nil, fmt.Errorf("memory service: evidence[%d].authority is invalid", i)
+		}
+		sourceGroup := strings.TrimSpace(evidence.SourceGroup)
+		if sourceGroup == "" {
+			sourceGroup = strings.TrimSpace(evidence.Source)
+		}
+		idempotencyKey := strings.TrimSpace(evidence.IdempotencyKey)
+		if idempotencyKey == "" {
+			idempotencyKey = fmt.Sprintf("%s:%d", ingestID, i)
+		}
+		run.Evidence = append(run.Evidence, domain.MemoryEvidence{
+			Index:          i,
+			Content:        content,
+			SourceType:     string(sourceType),
+			Source:         evidence.Source,
+			Authority:      string(authority),
+			SourceGroup:    sourceGroup,
+			IdempotencyKey: idempotencyKey,
+			Labels:         append([]string(nil), evidence.Labels...),
+			Metadata:       evidence.Metadata,
+		})
+		run.Items = append(run.Items, domain.MemoryPlacementItem{
+			ItemID:         uuid.NewString(),
+			IngestID:       ingestID,
+			ProfileID:      teamID,
+			OwnerProfileID: ownerProfileID,
+			EvidenceIndex:  i,
+			Category:       domain.MemoryPlacementFragmentOnly,
+			Status:         string(domain.MemoryPlacementQueued),
+			Reason:         "evidence stored; awaiting Dense-Mem verifier placement",
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		})
+	}
+	if err := s.deps.PlacementStore.CreateRun(ctx, run); err != nil {
+		return nil, err
+	}
+	fragments := make([]FragmentOutcome, 0, len(req.Evidence))
+	if s.deps.SemanticStore != nil {
+		stored, err := s.deps.SemanticStore.StoreRemember(ctx, repository.SemanticRememberInput{
+			TeamID:           teamID,
+			TeamName:         teamName,
+			OwnerProfileID:   ownerProfileID,
+			OwnerProfileName: ownerProfileName,
+			Evidence:         semanticEvidenceInputsFromMemory(run.Evidence),
+		})
+		if err != nil {
+			failedAt := time.Now().UTC()
+			run.Status = domain.MemoryPlacementFailed
+			run.Error = err.Error()
+			run.UpdatedAt = failedAt
+			run.CompletedAt = &failedAt
+			for i := range run.Items {
+				run.Items[i].Status = "failed"
+				run.Items[i].Error = err.Error()
+			}
+			_ = s.deps.PlacementStore.SaveRun(ctx, run)
+			return nil, err
+		}
+		for i, evidence := range stored.Evidence {
+			if i < len(run.Items) {
+				run.Items[i].FragmentID = evidence.FragmentID
+			}
+			fragments = append(fragments, FragmentOutcome{
+				ID:        evidence.FragmentID,
+				Status:    "stored",
+				CreatedAt: evidence.CreatedAt,
+			})
+		}
+	} else {
+		for i, evidence := range req.Evidence {
+			content := strings.TrimSpace(evidence.Content)
+			fragmentRes, err := s.deps.FragmentCreate.Create(ctx, teamID, &dto.CreateFragmentRequest{
+				Content:        content,
+				SourceType:     "conversation",
+				Source:         evidence.Source,
+				Authority:      "primary",
+				IdempotencyKey: evidence.IdempotencyKey,
+				Labels:         evidence.Labels,
+				Metadata:       evidence.Metadata,
+				SourceQuality:  defaultSourceQuality("primary"),
+			})
+			if err != nil {
+				failedAt := time.Now().UTC()
+				run.Status = domain.MemoryPlacementFailed
+				run.Error = err.Error()
+				run.UpdatedAt = failedAt
+				run.CompletedAt = &failedAt
+				run.Items[i].Status = "failed"
+				run.Items[i].Error = err.Error()
+				_ = s.deps.PlacementStore.SaveRun(ctx, run)
+				return nil, err
+			}
+			status := "created"
+			if fragmentRes.Duplicate {
+				status = "duplicate"
+			}
+			fragments = append(fragments, FragmentOutcome{
+				ID:          fragmentRes.Fragment.FragmentID,
+				Status:      status,
+				DuplicateOf: fragmentRes.DuplicateOf,
+				CreatedAt:   fragmentRes.Fragment.CreatedAt,
+			})
+			run.Items[i].FragmentID = fragmentRes.Fragment.FragmentID
+		}
+	}
+	queuedAt := time.Now().UTC()
+	run.Status = domain.MemoryPlacementQueued
+	run.AvailableAt = queuedAt
+	run.UpdatedAt = queuedAt
+	if err := s.deps.PlacementStore.SaveRun(ctx, run); err != nil {
+		return nil, err
+	}
+	s.kickPlacementWorker()
+	return &RememberResult{
+		IngestID:          ingestID,
+		Status:            string(domain.MemoryPlacementQueued),
+		CheckAfterSeconds: 60,
+		StatusTool:        "get_memory_placement",
+		Evidence:          fragments,
+		Items:             run.Items,
+	}, nil
 }
 
 func (s *service) GetMemoryPlacement(ctx context.Context, profileID string, req PlacementStatusRequest) (*PlacementStatusResult, error) {
@@ -199,7 +352,241 @@ func (s *service) kickPlacementWorker() {
 }
 
 func (s *service) processPlacementRun(ctx context.Context, run *domain.MemoryPlacementRun) error {
-	return s.processPlacementRunV2(ctx, run)
+	if run == nil {
+		return nil
+	}
+	if maxAttempts := s.placementMaxAttempts(); maxAttempts > 0 && run.Attempts > maxAttempts {
+		s.failPlacementRun(ctx, run, fmt.Errorf("memory placement exceeded max attempts (%d)", maxAttempts))
+		return nil
+	}
+	if s.deps.SemanticStore != nil {
+		return s.processSemanticPlacementRun(ctx, run)
+	}
+	now := time.Now().UTC()
+	run.Status = domain.MemoryPlacementProcessing
+	run.StartedAt = &now
+	run.UpdatedAt = now
+	if err := s.deps.PlacementStore.SaveRun(ctx, *run); err != nil {
+		return err
+	}
+
+	for i := range run.Items {
+		item := &run.Items[i]
+		evidence := evidenceForIndex(run.Evidence, item.EvidenceIndex)
+		if strings.TrimSpace(evidence.Content) == "" {
+			item.Category = domain.MemoryPlacementNeedsEvidence
+			item.Status = "completed"
+			item.Reason = "Dense-Mem verifier could not find evidence content for this placement item."
+			item.UpdatedAt = time.Now().UTC()
+			continue
+		}
+		if looksFalse(evidence.Content) {
+			item.Category = domain.MemoryPlacementRejectedFalse
+			item.Status = "completed"
+			item.Reason = "Dense-Mem verifier classified the evidence as a contradiction or false-memory correction."
+			item.UpdatedAt = time.Now().UTC()
+			continue
+		}
+		claim, ok := extractServerClaim(evidence, item.FragmentID)
+		if !ok {
+			item.Category = domain.MemoryPlacementFragmentOnly
+			item.Status = "completed"
+			item.Reason = "Evidence was stored as a fragment; the verifier found no supported personal-memory claim to extract."
+			item.UpdatedAt = time.Now().UTC()
+			continue
+		}
+		outcome, _ := s.processClaim(ctx, run.ProfileID, item.FragmentID, claim, true)
+		item.ClaimID = outcome.ClaimID
+		if outcome.Fact != nil {
+			item.FactID = outcome.Fact.FactID
+		}
+		item.Category, item.Reason = placementFromClaimOutcome(outcome)
+		item.Status = "completed"
+		item.Error = outcome.Error
+		item.UpdatedAt = time.Now().UTC()
+	}
+	completedAt := time.Now().UTC()
+	run.Status = domain.MemoryPlacementCompleted
+	run.CompletedAt = &completedAt
+	run.AvailableAt = completedAt
+	run.UpdatedAt = completedAt
+	return s.deps.PlacementStore.SaveRun(ctx, *run)
+}
+
+func (s *service) processSemanticPlacementRun(ctx context.Context, run *domain.MemoryPlacementRun) error {
+	now := time.Now().UTC()
+	run.Status = domain.MemoryPlacementProcessing
+	run.StartedAt = &now
+	run.UpdatedAt = now
+	if err := s.deps.PlacementStore.SaveRun(ctx, *run); err != nil {
+		return err
+	}
+
+	teamID := strings.TrimSpace(run.ProfileID)
+	ownerProfileID := strings.TrimSpace(run.OwnerProfileID)
+	if ownerProfileID == "" {
+		ownerProfileID = teamID
+	}
+	if s.deps.SemanticReviewer == nil {
+		err := errors.New("memory service: semantic reviewer is required")
+		s.failPlacementRun(ctx, run, err)
+		return err
+	}
+	review, err := s.deps.SemanticReviewer.ReviewSemantic(ctx, semanticReviewRequest{
+		RequestID: run.IngestID,
+		Evidence:  run.Evidence,
+	})
+	if err != nil {
+		retry, saveErr := s.retryOrFailPlacementRun(ctx, run, err)
+		if saveErr != nil {
+			return saveErr
+		}
+		if retry {
+			return nil
+		}
+		return err
+	}
+	reviewRelationships := annotateSemanticReviewRelationships(review)
+	verifierContext, err := s.deps.SemanticStore.LoadSemanticVerifierContext(ctx, teamID, reviewRelationships)
+	if err != nil {
+		s.failPlacementRun(ctx, run, err)
+		return err
+	}
+	relationships, err := verifySemanticRelationships(ctx, s.deps.SemanticVerifier, run.IngestID, reviewRelationships, verifierContext)
+	if err != nil {
+		retry, saveErr := s.retryOrFailPlacementRun(ctx, run, err)
+		if saveErr != nil {
+			return saveErr
+		}
+		if retry {
+			return nil
+		}
+		return err
+	}
+	stored, err := s.deps.SemanticStore.StoreRemember(ctx, repository.SemanticRememberInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerProfileID,
+		Evidence:       semanticEvidenceInputsFromMemory(run.Evidence),
+		Relationships:  relationships,
+	})
+	if err != nil {
+		s.failPlacementRun(ctx, run, err)
+		return err
+	}
+
+	outcomesByEvidence := semanticPlacementRelationshipOutcomes(relationships, stored)
+	for i := range run.Items {
+		item := &run.Items[i]
+		if item.FragmentID == "" && item.EvidenceIndex >= 0 && item.EvidenceIndex < len(stored.Evidence) {
+			item.FragmentID = stored.Evidence[item.EvidenceIndex].FragmentID
+		}
+		item.RelationshipOutcomes = append([]domain.MemoryPlacementRelationshipOutcome(nil), outcomesByEvidence[item.EvidenceIndex]...)
+		item.Category = domain.MemoryPlacementEvidenceProcessed
+		item.Status = "completed"
+		if len(item.RelationshipOutcomes) > 0 {
+			item.Reason = "Evidence was stored and bounded semantic outcomes are listed."
+		} else {
+			item.Reason = "Evidence was stored; no supported semantic relationship was extracted."
+		}
+		item.Error = ""
+		item.UpdatedAt = time.Now().UTC()
+	}
+	completedAt := time.Now().UTC()
+	run.Status = domain.MemoryPlacementCompleted
+	run.Error = ""
+	run.CompletedAt = &completedAt
+	run.AvailableAt = completedAt
+	run.UpdatedAt = completedAt
+	return s.deps.PlacementStore.SaveRun(ctx, *run)
+}
+
+func (s *service) retryOrFailPlacementRun(ctx context.Context, run *domain.MemoryPlacementRun, err error) (bool, error) {
+	if run == nil {
+		return false, nil
+	}
+	if !isRetryablePlacementError(err) || run.Attempts >= s.placementMaxAttempts() {
+		s.failPlacementRun(ctx, run, err)
+		return false, nil
+	}
+	now := time.Now().UTC()
+	delay := placementRetryDelay(run.Attempts)
+	availableAt := now.Add(delay)
+	run.Status = domain.MemoryPlacementQueued
+	run.CheckAfterSeconds = int(delay.Seconds())
+	run.Error = err.Error()
+	run.AvailableAt = availableAt
+	run.StartedAt = nil
+	run.CompletedAt = nil
+	run.UpdatedAt = now
+	for i := range run.Items {
+		run.Items[i].Status = string(domain.MemoryPlacementQueued)
+		run.Items[i].Error = err.Error()
+		run.Items[i].UpdatedAt = now
+	}
+	if saveErr := s.deps.PlacementStore.SaveRun(ctx, *run); saveErr != nil {
+		return false, saveErr
+	}
+	s.log().Warn(
+		"memory placement retry scheduled",
+		slog.String("ingest_id", run.IngestID),
+		slog.Int("attempt", run.Attempts),
+		slog.Int("max_attempts", s.placementMaxAttempts()),
+		slog.Int("retry_after_seconds", int(delay.Seconds())),
+		slog.String("error", err.Error()),
+	)
+	return true, nil
+}
+
+func (s *service) failPlacementRun(ctx context.Context, run *domain.MemoryPlacementRun, err error) {
+	if run == nil {
+		return
+	}
+	failedAt := time.Now().UTC()
+	run.Status = domain.MemoryPlacementFailed
+	if err != nil {
+		run.Error = err.Error()
+	}
+	run.AvailableAt = failedAt
+	run.UpdatedAt = failedAt
+	run.CompletedAt = &failedAt
+	for i := range run.Items {
+		run.Items[i].Status = "failed"
+		if err != nil {
+			run.Items[i].Error = err.Error()
+		}
+		run.Items[i].UpdatedAt = failedAt
+	}
+	_ = s.deps.PlacementStore.SaveRun(ctx, *run)
+}
+
+func (s *service) placementMaxAttempts() int {
+	if s.deps.PlacementMaxAttempts > 0 {
+		return s.deps.PlacementMaxAttempts
+	}
+	return defaultPlacementMaxAttempts
+}
+
+func placementRetryDelay(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	seconds := defaultPlacementRetryBaseSecond
+	for i := 1; i < attempt; i++ {
+		seconds *= 2
+		if seconds >= defaultPlacementRetryMaxSecond {
+			seconds = defaultPlacementRetryMaxSecond
+			break
+		}
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func isRetryablePlacementError(err error) bool {
+	return errors.Is(err, verifier.ErrVerifierTimeout) ||
+		errors.Is(err, verifier.ErrVerifierProvider) ||
+		errors.Is(err, verifier.ErrVerifierRateLimit) ||
+		errors.Is(err, verifier.ErrVerifierMalformedResponse) ||
+		errors.Is(err, context.DeadlineExceeded)
 }
 
 func (s *service) applyDisputeTurn(ctx context.Context, profileID string, run *domain.MemoryPlacementRun, session *domain.MemoryDisputeSession, req DisputeRequest, now time.Time) error {
@@ -428,26 +815,6 @@ func evidenceLooksFalse(evidence []EvidenceInput) bool {
 func hasDisputeEvidence(evidence []EvidenceInput) bool {
 	for _, item := range evidence {
 		if strings.TrimSpace(item.Content) != "" {
-			return true
-		}
-	}
-	return false
-}
-
-func looksFalse(value string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(value))
-	if normalized == "" {
-		return false
-	}
-	for _, marker := range []string{
-		"false memory",
-		"not true",
-		"incorrect",
-		"contradicts",
-		"contradicted",
-		"reject this memory",
-	} {
-		if strings.Contains(normalized, marker) {
 			return true
 		}
 	}

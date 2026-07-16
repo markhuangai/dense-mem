@@ -60,23 +60,36 @@ func TestServerBootstrapWiresKnowledgePipeline(t *testing.T) {
 	require.NotNil(t, ph.Recall, "ProtectedHandlers.Recall must be non-nil after handler assignment")
 }
 
-func TestRecallRegistryUsesTieredRecallService(t *testing.T) {
-	cases := []struct {
-		name string
-		path string
-	}{
-		{name: "server", path: "main.go"},
-		{name: "demo server", path: "../demo-server/main.go"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			body, err := os.ReadFile(tc.path)
-			require.NoError(t, err)
-			source := string(body)
+func TestRecallRegistryUsesSemanticRecallService(t *testing.T) {
+	body, err := os.ReadFile("main.go")
+	require.NoError(t, err)
+	source := string(body)
 
-			require.Contains(t, source, "tieredRecallSvc := recallservice.NewRecallServiceWithTiers(")
-			require.Contains(t, source, "recallRegistrySvc = tieredRecallSvc")
-			require.NotContains(t, source, "recallRegistrySvc = recallservice.NewRecallService(")
-		})
-	}
+	require.Contains(t, source, "recallRegistrySvc := recallservice.NewSemanticRecallServiceWithRanking(semanticRepo, semanticRecallRanking, retryEmbedder)")
+	require.NotContains(t, source, "tieredRecallSvc := recallservice.NewRecallServiceWithTiers(")
+	require.NotContains(t, source, "recallRegistrySvc = recallservice.NewRecallService(")
+}
+
+func TestServerMainWiresProtectedKnowledgeHandlers(t *testing.T) {
+	body, err := os.ReadFile("main.go")
+	require.NoError(t, err)
+	source := string(body)
+
+	require.Contains(t, source, "toolCatalogHandler := handler.NewToolCatalogHandlerWithRuntimeConfig(toolRegistry, appConfigService)")
+	require.Contains(t, source, "toolReadHandler := handler.NewToolReadHandlerWithRuntimeConfig(toolRegistry, appConfigService)")
+	require.Contains(t, source, "toolExecuteHandler := handler.NewToolExecuteHandlerWithRuntimeConfig(toolRegistry, appConfigService)")
+	require.Contains(t, source, "openAPIGen := openapi.New(toolRegistry, openapi.DefaultRoutes())")
+	require.Contains(t, source, "recallHandler := handler.NewRecallHandler(recallRegistrySvc)")
+	require.Contains(t, source, "dreamHandler := handler.NewDreamHandler(dreamSvc)")
+
+	require.Contains(t, source, "ToolCatalog:    toolCatalogHandler.Handle")
+	require.Contains(t, source, "GetTool:        toolReadHandler.Handle")
+	require.Contains(t, source, "ExecuteTool:    toolExecuteHandler.Handle")
+	require.Contains(t, source, "OpenAPIAISafe:  openAPIAISafeHandler.Handle")
+	require.Contains(t, source, "OpenAPIFull:    openAPIFullHandler.Handle")
+	require.Contains(t, source, "Recall:         recallHandler.Handle")
+	require.Contains(t, source, "DreamingStatus: dreamHandler.Status")
+	require.Contains(t, source, "DreamingRuns:   dreamHandler.Runs")
+	require.Contains(t, source, "DreamList:      dreamHandler.List")
+	require.Contains(t, source, "DreamGet:       dreamHandler.Get")
 }

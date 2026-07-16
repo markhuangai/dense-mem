@@ -37,6 +37,9 @@ type testPostgresConfig struct {
 }
 
 func (c *testPostgresConfig) GetPostgresDSN() string { return c.dsn }
+func (c *testPostgresConfig) GetPostgresReadDSN() string {
+	return ""
+}
 
 // getNeo4jTestConfig returns Neo4j config for testing
 func getNeo4jTestConfig(t *testing.T, ctx context.Context) (*testNeo4jConfig, func()) {

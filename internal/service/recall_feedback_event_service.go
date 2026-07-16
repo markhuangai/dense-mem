@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -111,26 +110,7 @@ func (s *RecallFeedbackEventServiceImpl) RecordRecallFeedback(ctx context.Contex
 	if event.RecallID == "" {
 		return fmt.Errorf("recall feedback event recall_id is required")
 	}
-	existing, err := s.repo.Get(ctx, event.RecallID)
-	if err != nil {
-		return err
-	}
-	if existing != nil && !recallFeedbackEventInScope(event, *existing) {
-		return fmt.Errorf("recall feedback event not found")
-	}
-	if err := s.repo.RecordFeedback(ctx, event); err != nil {
-		return err
-	}
-	queuer, ok := s.repo.(repository.RecallMemoryReviewRepository)
-	if !ok {
-		return nil
-	}
-	stored, err := s.repo.Get(ctx, event.RecallID)
-	if err != nil {
-		return err
-	}
-	reviews := recallMemoryReviews(stored, feedback, now)
-	return queuer.EnqueueRecallMemoryReviews(ctx, reviews)
+	return s.repo.RecordFeedback(ctx, event)
 }
 
 func (s *RecallFeedbackEventServiceImpl) ListRecallFeedbackEvents(ctx context.Context, filter domain.RecallFeedbackEventFilter) (*domain.RecallFeedbackEventPage, error) {
@@ -148,23 +128,6 @@ func (s *RecallFeedbackEventServiceImpl) GetRecallFeedbackEvent(ctx context.Cont
 	if err != nil || event == nil {
 		return event, err
 	}
-	requestEvent := s.enrich(ctx, domain.RecallFeedbackEvent{})
-	if !recallFeedbackEventInScope(requestEvent, *event) {
-		return nil, nil
-	}
-	if reviewRepo, ok := s.repo.(repository.RecallMemoryReviewRepository); ok {
-		scopeID := ""
-		if event.TeamID != nil {
-			scopeID = event.TeamID.String()
-		} else if event.ProfileID != nil {
-			scopeID = event.ProfileID.String()
-		}
-		reviews, reviewErr := reviewRepo.ListRecallMemoryReviews(ctx, scopeID, event.RecallID)
-		if reviewErr != nil {
-			return nil, reviewErr
-		}
-		event.ReviewQueue = reviews
-	}
 	if s.resolver != nil && len(event.ResultRefs) > 0 {
 		scopeID := ""
 		if event.TeamID != nil {
@@ -181,95 +144,6 @@ func (s *RecallFeedbackEventServiceImpl) GetRecallFeedbackEvent(ctx context.Cont
 		}
 	}
 	return event, nil
-}
-
-func recallFeedbackEventInScope(request, stored domain.RecallFeedbackEvent) bool {
-	if request.TeamID != nil {
-		return stored.TeamID != nil && *request.TeamID == *stored.TeamID
-	}
-	if request.ProfileID != nil {
-		return stored.ProfileID != nil && *request.ProfileID == *stored.ProfileID
-	}
-	return true
-}
-
-func recallMemoryReviews(event *domain.RecallFeedbackEvent, feedback domain.RecallFeedbackSubmission, now time.Time) []domain.RecallMemoryReview {
-	if event == nil {
-		return []domain.RecallMemoryReview{}
-	}
-	profileID := uuid.Nil
-	if event.TeamID != nil {
-		profileID = *event.TeamID
-	} else if event.ProfileID != nil {
-		profileID = *event.ProfileID
-	}
-	if profileID == uuid.Nil {
-		return []domain.RecallMemoryReview{}
-	}
-	reasonsByRef := map[string]map[string]struct{}{}
-	add := func(refType, id, reason string) {
-		refType = strings.ToLower(strings.TrimSpace(refType))
-		id = strings.TrimSpace(id)
-		switch refType {
-		case domain.RecallFeedbackResultTypeFragment, domain.RecallFeedbackResultTypeClaim,
-			domain.RecallFeedbackResultTypeFact, domain.RecallFeedbackResultTypeDream,
-			domain.RecallFeedbackResultTypeAssertion:
-		default:
-			return
-		}
-		if id == "" {
-			return
-		}
-		key := refType + "\x00" + id
-		if reasonsByRef[key] == nil {
-			reasonsByRef[key] = map[string]struct{}{}
-		}
-		reasonsByRef[key][reason] = struct{}{}
-	}
-	for _, ref := range feedback.IrrelevantRefs {
-		add(ref.Type, ref.ID, "irrelevant_result")
-	}
-	addAll := func(reason string) {
-		for _, ref := range event.ResultRefs {
-			add(ref.Type, ref.ID, reason)
-		}
-	}
-	if !feedback.AnswerSupported {
-		addAll("answer_unsupported")
-	}
-	if strings.EqualFold(strings.TrimSpace(feedback.Quality), "low") {
-		addAll("low_quality")
-	}
-	if feedback.Irrelevant && len(feedback.IrrelevantRefs) == 0 {
-		addAll("recall_marked_irrelevant")
-	}
-	keys := make([]string, 0, len(reasonsByRef))
-	for key := range reasonsByRef {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	reviews := make([]domain.RecallMemoryReview, 0, len(keys))
-	for _, key := range keys {
-		parts := strings.SplitN(key, "\x00", 2)
-		reasons := make([]string, 0, len(reasonsByRef[key]))
-		for reason := range reasonsByRef[key] {
-			reasons = append(reasons, reason)
-		}
-		sort.Strings(reasons)
-		reviews = append(reviews, domain.RecallMemoryReview{
-			ReviewID:        uuid.NewSHA1(uuid.NameSpaceOID, []byte("recall-review:"+event.RecallID+":"+key)).String(),
-			ProfileID:       profileID,
-			RecallID:        event.RecallID,
-			KnowledgeType:   parts[0],
-			KnowledgeID:     parts[1],
-			Reasons:         reasons,
-			FeedbackComment: strings.TrimSpace(feedback.FeedbackComment),
-			Status:          "pending",
-			CreatedAt:       now,
-			UpdatedAt:       now,
-		})
-	}
-	return reviews
 }
 
 func (s *RecallFeedbackEventServiceImpl) Prune(ctx context.Context) error {

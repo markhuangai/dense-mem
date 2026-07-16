@@ -13,7 +13,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/fulltextquery"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	neo4jstorage "github.com/markhuangai/dense-mem/internal/storage/neo4j"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -419,28 +418,23 @@ func (s *service) ResolveFeedback(ctx context.Context, profileID string, req Res
 			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}
-		if req.Proposal == nil {
-			s.recordDreamFeedback(ctx, decision, dream, "error")
-			return nil, fmt.Errorf("resolve dream feedback: proposal is required for %s", decision)
-		}
-		memory, err := s.deps.Memory.Remember(requestctx.WithTrustedMemoryAuthority(ctx), profileID, memoryservice.RememberRequest{
+		memory, err := s.deps.Memory.Remember(ctx, profileID, memoryservice.RememberRequest{
 			Evidence: []memoryservice.EvidenceInput{evidence},
-			Proposal: *req.Proposal,
 		})
 		if err != nil {
 			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}
-		if err := s.updateDreamStatus(ctx, profileID, dreamID, domain.DreamStatusPromoted, strings.TrimSpace(req.Feedback)); err != nil {
+		if err := s.deleteDream(ctx, profileID, dreamID); err != nil {
 			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}
 		s.recordDreamFeedback(ctx, decision, dream, "ok")
-		dream.Status = domain.DreamStatusPromoted
+		dream.Status = domain.DreamStatusSubmitted
 		dream.InvalidatedReason = strings.TrimSpace(req.Feedback)
 		now := s.now().UTC()
 		dream.UpdatedAt = now
-		return &ResolveFeedbackResult{Dream: dream, Memory: memory}, nil
+		return &ResolveFeedbackResult{Dream: dream, Memory: memory, Deleted: true}, nil
 	case "confirm_false":
 		if s.deps.Memory == nil {
 			s.recordDreamFeedback(ctx, decision, dream, "error")
@@ -451,19 +445,14 @@ func (s *service) ResolveFeedback(ctx context.Context, profileID string, req Res
 			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}
-		if req.Proposal == nil {
-			s.recordDreamFeedback(ctx, decision, dream, "error")
-			return nil, fmt.Errorf("resolve dream feedback: proposal is required for %s", decision)
-		}
-		memory, err := s.deps.Memory.Remember(requestctx.WithTrustedMemoryAuthority(ctx), profileID, memoryservice.RememberRequest{
+		memory, err := s.deps.Memory.Remember(ctx, profileID, memoryservice.RememberRequest{
 			Evidence: []memoryservice.EvidenceInput{evidence},
-			Proposal: *req.Proposal,
 		})
 		if err != nil {
 			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}
-		if err := s.updateDreamStatus(ctx, profileID, dreamID, domain.DreamStatusRejected, strings.TrimSpace(req.Feedback)); err != nil {
+		if err := s.deleteDream(ctx, profileID, dreamID); err != nil {
 			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}
@@ -472,7 +461,7 @@ func (s *service) ResolveFeedback(ctx context.Context, profileID string, req Res
 		dream.InvalidatedReason = strings.TrimSpace(req.Feedback)
 		now := s.now().UTC()
 		dream.UpdatedAt = now
-		return &ResolveFeedbackResult{Dream: dream, Memory: memory}, nil
+		return &ResolveFeedbackResult{Dream: dream, Memory: memory, Deleted: true}, nil
 	default:
 		s.recordDreamFeedback(ctx, decision, dream, "error")
 		return nil, fmt.Errorf("%w: %s", ErrInvalidDreamStatus, decision)
@@ -529,7 +518,7 @@ CALL {
   RETURN 'claim' AS type, c.claim_id AS id, c.subject AS subject, c.predicate AS predicate, c.object AS object, '' AS content, c.status AS status, c.recorded_at AS sort_at
   UNION ALL
   MATCH (sf:SourceFragment {team_id: $profileId})
-  WHERE coalesce(sf.status, 'active') = 'active'
+  WHERE coalesce(sf.status, 'active') <> 'retracted'
   RETURN 'fragment' AS type, sf.fragment_id AS id, '' AS subject, '' AS predicate, '' AS object, sf.content AS content, coalesce(sf.status, 'active') AS status, sf.created_at AS sort_at
 }
 RETURN type, id, subject, predicate, object, content, status

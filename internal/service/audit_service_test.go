@@ -22,6 +22,7 @@ type testConfig struct {
 func (c *testConfig) GetPostgresDSN() string {
 	return c.dsn
 }
+func (c *testConfig) GetPostgresReadDSN() string { return "" }
 
 // skipIfNoPostgres checks if postgres is available and returns a cleanup function.
 func skipIfNoPostgres(t *testing.T, ctx context.Context) (string, func()) {

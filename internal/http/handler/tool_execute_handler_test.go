@@ -530,31 +530,6 @@ func TestToolExecuteHandler_AdditionalBranches(t *testing.T) {
 	})
 }
 
-func TestToolExecuteHandler_RetiredToolReturnsMigrationGuidance(t *testing.T) {
-	h := NewToolExecuteHandler(registry.New())
-	e := newTestEcho()
-	profileID := uuid.New()
-	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			ctx := middleware.SetResolvedProfileIDForTest(c.Request().Context(), profileID)
-			ctx = middleware.SetPrincipalForTest(ctx, &middleware.Principal{Scopes: []string{"write"}})
-			c.SetRequest(c.Request().WithContext(ctx))
-			return next(c)
-		}
-	})
-	e.POST("/api/v1/tools/:name", h.Handle)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/import_memories", strings.NewReader(`{}`))
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusGone, rec.Code)
-	var apiErr httperr.APIError
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &apiErr))
-	require.Equal(t, httperr.GONE, apiErr.Code)
-	assert.Contains(t, apiErr.Message, "remember with manager-scoped migration_refs")
-}
-
 func TestToolReadHandler_Handle(t *testing.T) {
 	reg := registry.New()
 	require.NoError(t, reg.Register(registry.Tool{
@@ -621,21 +596,6 @@ func TestToolReadHandler_Handle(t *testing.T) {
 		e.ServeHTTP(rec, req)
 
 		require.Equal(t, http.StatusNotFound, rec.Code)
-	})
-
-	t.Run("retired id returns migration guidance", func(t *testing.T) {
-		e := newTestEcho()
-		e.GET("/api/v1/tools/:id", h.Handle)
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/tools/confirm_memory", nil)
-		rec := httptest.NewRecorder()
-
-		e.ServeHTTP(rec, req)
-
-		require.Equal(t, http.StatusGone, rec.Code)
-		var apiErr httperr.APIError
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &apiErr))
-		require.Equal(t, httperr.GONE, apiErr.Code)
-		assert.Contains(t, apiErr.Message, "resolve_memory_placement")
 	})
 
 	t.Run("runtime disabled tool descriptor is not found", func(t *testing.T) {

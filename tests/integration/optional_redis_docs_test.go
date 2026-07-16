@@ -10,9 +10,7 @@ import (
 
 func TestOptionalRedisDocs_CoreRepoFilesUpdated(t *testing.T) {
 	paths := []string{
-		"../../.claude/rules/architecture.md",
-		"../../.claude/rules/database.md",
-		"../../.claude/rules/profile-isolation.md",
+		"../../AGENTS.md",
 		"../../README.md",
 		"../../examples/.env.example",
 	}
@@ -42,12 +40,12 @@ func TestStandaloneMemoryDocs_NoLegacyDiscoveryReferences(t *testing.T) {
 		assert.NotContains(t, text, "Digital"+" Life")
 		assert.NotContains(t, text, "digital"+" life")
 		assert.NotContains(t, text, "digital"+"-life-extraction-discovery.md")
-		assert.Contains(t, text, "standalone HTTP MCP memory server")
+		assert.Contains(t, text, "standalone MCP Streamable HTTP memory server")
 	}
 }
 
 func TestOptionalRedisDocs_UsesRatelimitPrefix(t *testing.T) {
-	b, err := os.ReadFile("../../.claude/rules/profile-isolation.md")
+	b, err := os.ReadFile("../../AGENTS.md")
 	require.NoError(t, err)
 
 	text := string(b)

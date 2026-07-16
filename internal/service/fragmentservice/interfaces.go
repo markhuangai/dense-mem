@@ -25,17 +25,6 @@ type CreateFragmentService interface {
 	Create(ctx context.Context, profileID string, req *dto.CreateFragmentRequest) (*CreateResult, error)
 }
 
-// QuarantinedFragmentCreateService preserves unsafe evidence without embedding
-// it or making it available through active-fragment readers.
-type QuarantinedFragmentCreateService interface {
-	CreateQuarantined(ctx context.Context, profileID string, req *dto.CreateFragmentRequest) (*CreateResult, error)
-}
-
-type FragmentCreateServices interface {
-	CreateFragmentService
-	QuarantinedFragmentCreateService
-}
-
 // RetractFragmentService tombstones a fragment and recomputes affected facts.
 //
 // RETRACT VS DELETE: Retract is a soft tombstone (status='retracted', retracted_at=now).

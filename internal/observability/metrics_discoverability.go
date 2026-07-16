@@ -37,7 +37,6 @@ type DiscoverabilityMetrics interface {
 	// IncPromotionOutcome bumps the claim-to-fact promotion outcome counter.
 	// outcome must be one of: "promoted" | "skipped" | "error".
 	IncPromotionOutcome(outcome string)
-	IncAssertionTransition(eventType, tier, status string)
 	// ObservePromoteLockWait records how long a promotion waited for the row lock.
 	ObservePromoteLockWait(seconds float64)
 	// IncFragmentRetract bumps the fragment-retract counter.
@@ -70,16 +69,15 @@ func (noopMetrics) ObserveRecallFeedback(RecallFeedback)    {}
 func (noopMetrics) ObserveDreamFeedback(DreamFeedback)      {}
 func (noopMetrics) ObserveMemoryFunnelLatency(string, float64, string) {
 }
-func (noopMetrics) IncFragmentCreate(string)                      {}
-func (noopMetrics) IncClaimCreate(string, string)                 {}
-func (noopMetrics) IncVerifyVerdict(string)                       {}
-func (noopMetrics) IncPromotionOutcome(string)                    {}
-func (noopMetrics) IncAssertionTransition(string, string, string) {}
-func (noopMetrics) ObservePromoteLockWait(float64)                {}
-func (noopMetrics) IncFragmentRetract()                           {}
-func (noopMetrics) IncFactNeedsRevalidation()                     {}
-func (noopMetrics) IncCommunityDetect(string)                     {}
-func (noopMetrics) ObserveCommunityDetect(float64, int)           {}
+func (noopMetrics) IncFragmentCreate(string)            {}
+func (noopMetrics) IncClaimCreate(string, string)       {}
+func (noopMetrics) IncVerifyVerdict(string)             {}
+func (noopMetrics) IncPromotionOutcome(string)          {}
+func (noopMetrics) ObservePromoteLockWait(float64)      {}
+func (noopMetrics) IncFragmentRetract()                 {}
+func (noopMetrics) IncFactNeedsRevalidation()           {}
+func (noopMetrics) IncCommunityDetect(string)           {}
+func (noopMetrics) ObserveCommunityDetect(float64, int) {}
 
 // InMemoryDiscoverabilityMetrics is a test-friendly recorder. Tests can
 // inspect the captured samples to assert that a code path actually emitted
@@ -97,7 +95,6 @@ type InMemoryDiscoverabilityMetrics struct {
 	claimCreateSamples     []ClaimCreateSample
 	verifyVerdicts         map[string]int
 	promotionOutcomes      map[string]int
-	assertionTransitions   map[AssertionTransitionSample]int
 	promoteLockWaits       []float64
 	fragmentRetracts       int
 	factNeedsRevalidation  int
@@ -170,23 +167,16 @@ type MemoryFunnelSample struct {
 	Outcome string
 }
 
-type AssertionTransitionSample struct {
-	EventType string
-	Tier      string
-	Status    string
-}
-
 var _ DiscoverabilityMetrics = (*InMemoryDiscoverabilityMetrics)(nil)
 
 // NewInMemoryDiscoverabilityMetrics constructs a fresh recorder.
 func NewInMemoryDiscoverabilityMetrics() *InMemoryDiscoverabilityMetrics {
 	return &InMemoryDiscoverabilityMetrics{
-		embeddingErrors:      make(map[string]int),
-		fragmentOutcomes:     make(map[string]int),
-		verifyVerdicts:       make(map[string]int),
-		promotionOutcomes:    make(map[string]int),
-		assertionTransitions: make(map[AssertionTransitionSample]int),
-		communityDetectOuts:  make(map[string]int),
+		embeddingErrors:     make(map[string]int),
+		fragmentOutcomes:    make(map[string]int),
+		verifyVerdicts:      make(map[string]int),
+		promotionOutcomes:   make(map[string]int),
+		communityDetectOuts: make(map[string]int),
 	}
 }
 
@@ -346,18 +336,6 @@ func (m *InMemoryDiscoverabilityMetrics) IncPromotionOutcome(outcome string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.promotionOutcomes[outcome]++
-}
-
-func (m *InMemoryDiscoverabilityMetrics) IncAssertionTransition(eventType, tier, status string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.assertionTransitions[AssertionTransitionSample{EventType: eventType, Tier: tier, Status: status}]++
-}
-
-func (m *InMemoryDiscoverabilityMetrics) AssertionTransitionCount(eventType, tier, status string) int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.assertionTransitions[AssertionTransitionSample{EventType: eventType, Tier: tier, Status: status}]
 }
 
 // ObservePromoteLockWait records one promotion lock-wait duration.

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
@@ -37,33 +36,8 @@ func TestBuildDefaultContextTools_InvokeAndScope(t *testing.T) {
 	if anchor["type"] != "fact" {
 		t.Fatalf("trace_memory anchor = %v; want fact", anchor)
 	}
-
-	assembleTool, ok := reg.Get("assemble_context")
-	if !ok {
-		t.Fatal("assemble_context not registered")
-	}
-	if len(assembleTool.RequiredScopes) != 1 || assembleTool.RequiredScopes[0] != "read" {
-		t.Fatalf("assemble_context scopes = %v; want [read]", assembleTool.RequiredScopes)
-	}
-	contextOut, err := assembleTool.Invoke(context.Background(), "profile-context", map[string]any{
-		"query":    "deployment memory",
-		"valid_at": "2026-06-22T00:00:00Z",
-		"known_at": "2026-06-23T00:00:00Z",
-	})
-	if err != nil {
-		t.Fatalf("assemble_context Invoke: %v", err)
-	}
-	if ctxSvc.lastProfile != "profile-context" || ctxSvc.lastAssemble.Query != "deployment memory" {
-		t.Fatalf("assemble_context routed profile/request = %q/%+v", ctxSvc.lastProfile, ctxSvc.lastAssemble)
-	}
-	if ctxSvc.lastAssemble.ValidAt == nil || ctxSvc.lastAssemble.ValidAt.Format(time.RFC3339) != "2026-06-22T00:00:00Z" {
-		t.Fatalf("assemble_context valid_at = %+v", ctxSvc.lastAssemble.ValidAt)
-	}
-	if ctxSvc.lastAssemble.KnownAt == nil || ctxSvc.lastAssemble.KnownAt.Format(time.RFC3339) != "2026-06-23T00:00:00Z" {
-		t.Fatalf("assemble_context known_at = %+v", ctxSvc.lastAssemble.KnownAt)
-	}
-	if contextOut["context_block"] != "Dense-Mem context." {
-		t.Fatalf("assemble_context context_block = %v", contextOut["context_block"])
+	if _, ok := reg.Get("assemble_context"); ok {
+		t.Fatal("assemble_context must not be registered in the public v2 tool surface")
 	}
 }
 
@@ -75,12 +49,14 @@ func TestBuildDefaultContextTools_UnavailableAndInvalidInput(t *testing.T) {
 		input map[string]any
 	}{
 		{name: "trace_memory", input: map[string]any{"type": "fact", "id": "fact-1"}},
-		{name: "assemble_context", input: map[string]any{"query": "hello"}},
 	} {
 		tool, _ := reg.Get(tc.name)
 		if _, err := tool.Invoke(context.Background(), "profile-context", tc.input); !errors.Is(err, ErrToolUnavailable) {
 			t.Fatalf("%s err = %v; want ErrToolUnavailable", tc.name, err)
 		}
+	}
+	if _, ok := reg.Get("assemble_context"); ok {
+		t.Fatal("assemble_context must not be registered")
 	}
 
 	ctxSvc := &stubContextService{}
@@ -92,11 +68,6 @@ func TestBuildDefaultContextTools_UnavailableAndInvalidInput(t *testing.T) {
 	}
 	if _, err := traceTool.Invoke(context.Background(), "profile-context", map[string]any{"id": func() {}}); err == nil || !strings.Contains(err.Error(), "trace_memory: invalid input") {
 		t.Fatalf("trace_memory invalid input err = %v", err)
-	}
-
-	assembleTool, _ := reg.Get("assemble_context")
-	if _, err := assembleTool.Invoke(context.Background(), "profile-context", map[string]any{"query": func() {}}); err == nil || !strings.Contains(err.Error(), "assemble_context: invalid input") {
-		t.Fatalf("assemble_context invalid input err = %v", err)
 	}
 }
 

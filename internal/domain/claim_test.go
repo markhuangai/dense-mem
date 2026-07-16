@@ -171,7 +171,7 @@ func TestClaim(t *testing.T) {
 // TestClaim_CrossProfileIsolation verifies that claim slices respect ProfileID
 // boundaries — data from profile A must not appear in results scoped to profile B.
 // This reflects the invariant enforced at every repository layer per
-// .claude/rules/profile-isolation.md.
+// AGENTS.md.
 func TestClaim_CrossProfileIsolation(t *testing.T) {
 	profileA := "profile-A"
 	profileB := "profile-B"

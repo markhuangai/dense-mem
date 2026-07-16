@@ -22,10 +22,8 @@ func TestSearchContent_RetractedFragmentsFiltered(t *testing.T) {
 	require.NoError(t, err)
 
 	// The Cypher query must exclude retracted nodes via the coalesce guard.
-	assert.Contains(t, reader.capturedQuery, "coalesce(f.status,'active') = 'active'",
+	assert.Contains(t, reader.capturedQuery, "coalesce(f.status,'active') <> 'retracted'",
 		"SearchContent must include the retract filter in the WHERE clause (AC-44)")
-	assert.Contains(t, reader.capturedQuery, "DECOMPOSED_INTO",
-		"SearchContent must suppress legacy fragments replaced by active assertions")
 }
 
 // TestSearchContent_RetractedNodeNotReturned verifies the end-to-end behaviour:
@@ -50,9 +48,9 @@ func TestSearchContent_RetractedNodeNotReturned(t *testing.T) {
 	assert.Contains(t, ids, "frag-active", "active fragment must be returned")
 	assert.NotContains(t, ids, "frag-retracted", "retracted fragment must not appear in results")
 
-	// The query must admit only active evidence, which also excludes quarantine.
-	assert.True(t, strings.Contains(reader.capturedQuery, "= 'active'"),
-		"query must require active status")
+	// The query must include the retract guard.
+	assert.True(t, strings.Contains(reader.capturedQuery, "'retracted'"),
+		"query must reference 'retracted' status to satisfy AC-44")
 }
 
 // TestSearchContent_RetractedFilterPresentWithLabels verifies that the
@@ -64,7 +62,7 @@ func TestSearchContent_RetractedFilterPresentWithLabels(t *testing.T) {
 	_, err := s.SearchContent(context.Background(), "p1", "hello", []string{"science"}, 10)
 	require.NoError(t, err)
 
-	assert.Contains(t, reader.capturedQuery, "coalesce(f.status,'active') = 'active'",
+	assert.Contains(t, reader.capturedQuery, "coalesce(f.status,'active') <> 'retracted'",
 		"retract filter must be present even when label filter is applied")
 	assert.Contains(t, reader.capturedQuery, "ANY(label IN $labels WHERE label IN f.labels)",
 		"label filter must still be present when labels are provided")

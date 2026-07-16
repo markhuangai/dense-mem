@@ -53,6 +53,10 @@ func getTestConfig(ctx context.Context) (*testConfig, func(), error) {
 		return cfg, func() {}, nil
 	}
 
+	if os.Getenv("DENSE_MEM_TEST_NEO4J") != "1" {
+		return nil, nil, fmt.Errorf("set DENSE_MEM_TEST_NEO4J=1 to run legacy Neo4j testcontainer tests")
+	}
+
 	// Try to start a test container
 	container, err := neo4jcontainer.Run(ctx,
 		"neo4j:5-community",

@@ -219,7 +219,7 @@ const recallFeedbackEvents = [
     query: "Why was recall bad?",
     tool_args: {
       input: { query: "Why was recall bad?", limit: 5 },
-      effective: { query: "Why was recall bad?", limit: 5, include_evidence: false, use_communities: false },
+      effective: { query: "Why was recall bad?", limit: 5 },
     },
     result_refs: [
       { type: "fragment", id: "fragment-1", rank: 1, tier: "2", final_score: 0.74, status_at_recall: "active" },

@@ -11,20 +11,16 @@ import (
 func traceMemoryTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "trace_memory",
-		Description: "Expand one fact, claim, or V2 assertion through bounded graph lineage. Assertion traces follow actual semantic relationship types, honor an optional relationship/topic filter, stop on relevance or hard budgets, and never revisit an entity.",
+		Description: "Expand one v2 relationship_id into bounded evidence and lineage. Legacy fact/claim type+id inputs remain accepted when the graph-backed context service is wired.",
 		InputSchema: map[string]any{
-			"type":     "object",
-			"required": []string{"type", "id"},
+			"type": "object",
 			"properties": map[string]any{
-				"type":               schemaEnum([]string{"fact", "claim", "assertion"}),
-				"id":                 schemaString("Fact, Claim, or Assertion ID to trace.", 128),
-				"max_related":        map[string]any{"type": "integer", "minimum": 0, "maximum": 20, "description": "Maximum related conflict/supersession neighbors. Defaults to 10."},
-				"include_fragments":  map[string]any{"type": "boolean", "description": "Include supporting SourceFragment content. Defaults to true."},
-				"max_depth":          map[string]any{"type": "integer", "minimum": 1, "maximum": 4, "description": "Assertion traversal depth. Defaults to 2."},
-				"max_edges":          map[string]any{"type": "integer", "minimum": 1, "maximum": 100, "description": "Hard assertion edge budget. Defaults to 24."},
-				"relationship_types": map[string]any{"type": "array", "maxItems": 30, "items": schemaString("Actual semantic edge type, such as USES or DEMOED.", 64)},
-				"topic":              schemaString("Optional topic used for relevance stopping.", 256),
-				"min_relevance":      map[string]any{"type": "number", "minimum": 0, "maximum": 1},
+				"relationship_id":          schemaString("Relationship ID to trace.", 128),
+				"type":                     schemaEnum([]string{"relationship", "fact", "claim"}),
+				"id":                       schemaString("Legacy Fact/Claim ID or relationship ID when type=relationship.", 128),
+				"max_related":              map[string]any{"type": "integer", "minimum": 0, "maximum": 20, "description": "Maximum related conflict/supersession neighbors. Defaults to 10."},
+				"include_fragments":        map[string]any{"type": "boolean", "description": "Include supporting SourceFragment content. Defaults to true."},
+				"include_evidence_content": map[string]any{"type": "boolean", "description": "Include semantic evidence content. Defaults to true."},
 			},
 			"additionalProperties": false,
 		},
@@ -38,52 +34,10 @@ func traceMemoryTool(deps Dependencies) Tool {
 			if err := remapInput(input, &req); err != nil {
 				return nil, fmt.Errorf("trace_memory: invalid input: %w", err)
 			}
-			if req.Type == "" {
-				return nil, errors.New("trace_memory: type is required")
-			}
-			if req.ID == "" {
-				return nil, errors.New("trace_memory: id is required")
+			if req.RelationshipID == "" && (req.Type == "" || req.ID == "") {
+				return nil, errors.New("trace_memory: relationship_id or legacy type/id is required")
 			}
 			res, err := deps.Context.Trace(ctx, profileID, req)
-			if err != nil {
-				return nil, err
-			}
-			return structToMap(res)
-		},
-	}
-}
-
-func assembleContextTool(deps Dependencies) Tool {
-	return Tool{
-		Name:        "assemble_context",
-		Description: "Build a bounded prompt-ready Dense-Mem context block plus structured items. Use before answering when prior memory may matter and the host needs facts, claims, fragments, clarifications, and source IDs in one response.",
-		InputSchema: map[string]any{
-			"type":     "object",
-			"required": []string{"query"},
-			"properties": map[string]any{
-				"query":            schemaString("Natural-language context query.", 512),
-				"limit":            map[string]any{"type": "integer", "minimum": 0, "maximum": 10, "description": "Maximum recall hits. Defaults to 5."},
-				"max_chars":        map[string]any{"type": "integer", "minimum": 1000, "maximum": 8000, "description": "Maximum context_block characters. Defaults to 4000."},
-				"include_evidence": map[string]any{"type": "boolean", "description": "Include supporting SourceFragment content when available. Defaults to true."},
-				"valid_at":         map[string]any{"type": "string", "format": "date-time", "description": "Optional real-world validity time for temporal recall filtering."},
-				"known_at":         map[string]any{"type": "string", "format": "date-time", "description": "Optional system knowledge time for temporal recall filtering."},
-			},
-			"additionalProperties": false,
-		},
-		OutputSchema:   assembleContextResultSchema(),
-		RequiredScopes: []string{"read"},
-		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
-			if deps.Context == nil {
-				return nil, ErrToolUnavailable
-			}
-			var req contextservice.AssembleRequest
-			if err := remapInput(input, &req); err != nil {
-				return nil, fmt.Errorf("assemble_context: invalid input: %w", err)
-			}
-			if req.Query == "" {
-				return nil, errors.New("assemble_context: query is required")
-			}
-			res, err := deps.Context.Assemble(ctx, profileID, req)
 			if err != nil {
 				return nil, err
 			}
@@ -99,36 +53,19 @@ func traceMemoryResultSchema() map[string]any {
 			"anchor": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"type":      schemaEnum([]string{"fact", "claim", "assertion"}),
-					"fact":      factObjectSchema(),
-					"claim":     claimObjectSchema(),
-					"assertion": map[string]any{"type": "object"},
+					"type":         schemaEnum([]string{"fact", "claim"}),
+					"fact":         factObjectSchema(),
+					"claim":        claimObjectSchema(),
+					"relationship": semanticRelationshipObjectSchema(),
 				},
 			},
 			"promoted_from_claim":  claimObjectSchema(),
 			"supporting_fragments": map[string]any{"type": "array", "items": fragmentObjectSchema()},
+			"semantic_evidence":    map[string]any{"type": "array", "items": semanticEvidenceObjectSchema()},
+			"semantic_supports":    map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
 			"related":              map[string]any{"type": "array", "items": relatedMemorySchema()},
 			"edges":                map[string]any{"type": "array", "items": traceEdgeSchema()},
 			"missing_fragment_ids": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-			"semantic_nodes":       map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"semantic_edges":       map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"frontier":             map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"visited_entity_ids":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-			"stopped_reason":       map[string]any{"type": "string"},
-		},
-	}
-}
-
-func assembleContextResultSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"query":          map[string]any{"type": "string"},
-			"context_block":  map[string]any{"type": "string"},
-			"items":          map[string]any{"type": "array", "items": contextItemSchema()},
-			"clarifications": clarificationArraySchema(),
-			"related_dreams": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"truncated":      map[string]any{"type": "boolean"},
 		},
 	}
 }
@@ -154,24 +91,6 @@ func traceEdgeSchema() map[string]any {
 			"relationship": map[string]any{"type": "string"},
 			"to_type":      map[string]any{"type": "string"},
 			"to_id":        map[string]any{"type": "string"},
-		},
-	}
-}
-
-func contextItemSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"type":               schemaEnum([]string{"fact", "claim", "fragment", "assertion"}),
-			"id":                 map[string]any{"type": "string"},
-			"score":              map[string]any{"type": "number"},
-			"fact":               factObjectSchema(),
-			"claim":              claimObjectSchema(),
-			"fragment":           fragmentObjectSchema(),
-			"assertion":          map[string]any{"type": "object"},
-			"paths":              map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"frontier":           map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"evidence_fragments": map[string]any{"type": "array", "items": fragmentObjectSchema()},
 		},
 	}
 }

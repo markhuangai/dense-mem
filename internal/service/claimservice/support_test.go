@@ -3,16 +3,11 @@ package claimservice
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
 )
-
-func TestSupportingFragmentQueryExcludesQuarantinedEvidence(t *testing.T) {
-	require.True(t, strings.Contains(loadSupportingFragmentsQuery, "coalesce(sf.status, 'active') = 'active'"))
-}
 
 // stubScopedReader implements supportedFragmentsReader for unit tests.
 // Rows are keyed by profileID so cross-profile isolation scenarios can be
@@ -197,7 +192,7 @@ func TestLoadSupportingFragments(t *testing.T) {
 
 // TestLoadSupportingFragments_CrossProfileIsolation verifies that data from
 // profile A is not returned when querying as profile B, and vice versa.
-// This is a mandatory security test per .claude/rules/profile-isolation.md.
+// This is a mandatory security test per AGENTS.md.
 func TestLoadSupportingFragments_CrossProfileIsolation(t *testing.T) {
 	ctx := context.Background()
 	const profileA = "profile-a"

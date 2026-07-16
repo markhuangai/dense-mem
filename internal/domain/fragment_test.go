@@ -230,7 +230,6 @@ func TestFragmentStatus(t *testing.T) {
 	t.Run("constant values are correct strings", func(t *testing.T) {
 		assert.Equal(t, FragmentStatus("active"), FragmentStatusActive)
 		assert.Equal(t, FragmentStatus("retracted"), FragmentStatusRetracted)
-		assert.Equal(t, FragmentStatus("quarantined"), FragmentStatusQuarantined)
 	})
 
 	t.Run("fragment status field accepts active", func(t *testing.T) {
@@ -241,11 +240,6 @@ func TestFragmentStatus(t *testing.T) {
 	t.Run("fragment status field accepts retracted", func(t *testing.T) {
 		f := Fragment{Status: FragmentStatusRetracted}
 		assert.Equal(t, FragmentStatusRetracted, f.Status)
-	})
-
-	t.Run("fragment status field accepts quarantined", func(t *testing.T) {
-		f := Fragment{Status: FragmentStatusQuarantined}
-		assert.Equal(t, FragmentStatusQuarantined, f.Status)
 	})
 
 	t.Run("fragment recorded_to field is nil by default", func(t *testing.T) {

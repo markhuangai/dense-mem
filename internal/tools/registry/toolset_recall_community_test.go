@@ -2,14 +2,14 @@ package registry
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/markhuangai/dense-mem/internal/service/recallservice"
 )
 
-func TestBuildDefault_RecallInvokerForwardsCommunityOption(t *testing.T) {
-	rec := &capturingRecall{}
-	reg, err := BuildDefault(Dependencies{Recall: rec})
+func TestBuildDefault_RecallMemoryRejectsRemovedCommunityOption(t *testing.T) {
+	reg, err := BuildDefault(Dependencies{Recall: &capturingRecall{}})
 	if err != nil {
 		t.Fatalf("BuildDefault: %v", err)
 	}
@@ -22,15 +22,13 @@ func TestBuildDefault_RecallInvokerForwardsCommunityOption(t *testing.T) {
 	if !ok {
 		t.Fatalf("input schema properties has type %T", tool.InputSchema["properties"])
 	}
-	if _, ok := properties["use_communities"]; !ok {
-		t.Fatal("recall_memory schema missing use_communities")
+	if _, ok := properties["use_communities"]; ok {
+		t.Fatal("recall_memory schema retained removed use_communities")
 	}
 
-	if _, err := tool.Invoke(context.Background(), "pA", map[string]any{"query": "hello", "use_communities": true}); err != nil {
-		t.Fatalf("Invoke: %v", err)
-	}
-	if !rec.lastReq.UseCommunities {
-		t.Fatal("UseCommunities = false; want true")
+	err = ValidateInput(tool, map[string]any{"query": "hello", "use_communities": true})
+	if err == nil || !strings.Contains(err.Error(), "use_communities") {
+		t.Fatalf("ValidateInput error = %v", err)
 	}
 }
 

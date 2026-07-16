@@ -15,6 +15,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
+type embeddingConcurrencyConfig interface {
+	GetAIEmbeddingMaxConcurrency() int
+}
+
 // OpenAIEmbeddingProvider implements EmbeddingProviderInterface for OpenAI-compatible APIs.
 type OpenAIEmbeddingProvider struct {
 	baseURL    string
@@ -24,6 +28,7 @@ type OpenAIEmbeddingProvider struct {
 	timeout    time.Duration
 	httpClient *http.Client
 	metrics    observability.DiscoverabilityMetrics
+	sem        chan struct{}
 }
 
 // Compile-time assertion that OpenAIEmbeddingProvider implements EmbeddingProviderInterface.
@@ -35,6 +40,10 @@ func NewOpenAIEmbeddingProvider(cfg config.ConfigProvider, httpClient *http.Clie
 	timeout := time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second
 	if timeout == 0 {
 		timeout = 30 * time.Second
+	}
+	maxConcurrency := 8
+	if concurrencyConfig, ok := cfg.(embeddingConcurrencyConfig); ok && concurrencyConfig.GetAIEmbeddingMaxConcurrency() > 0 {
+		maxConcurrency = concurrencyConfig.GetAIEmbeddingMaxConcurrency()
 	}
 
 	client := httpClient
@@ -50,6 +59,7 @@ func NewOpenAIEmbeddingProvider(cfg config.ConfigProvider, httpClient *http.Clie
 		timeout:    timeout,
 		httpClient: client,
 		metrics:    observability.NoopDiscoverabilityMetrics(),
+		sem:        make(chan struct{}, maxConcurrency),
 	}
 }
 
@@ -101,6 +111,11 @@ type openAIEmbeddingResponse struct {
 
 // EmbedBatch returns embeddings for multiple texts in the same order as inputs.
 func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string) ([][]float32, string, error) {
+	if err := p.acquire(ctx); err != nil {
+		return nil, "", err
+	}
+	defer p.release()
+
 	url := strings.TrimSuffix(p.baseURL, "/") + "/embeddings"
 
 	reqBody := openAIEmbeddingRequest{
@@ -200,6 +215,25 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 	}
 
 	return result, p.model, nil
+}
+
+func (p *OpenAIEmbeddingProvider) acquire(ctx context.Context) error {
+	if p.sem == nil {
+		return nil
+	}
+	select {
+	case p.sem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (p *OpenAIEmbeddingProvider) release() {
+	if p.sem == nil {
+		return
+	}
+	<-p.sem
 }
 
 func nonJSONHTTPMessage(body []byte) string {

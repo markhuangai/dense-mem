@@ -15,8 +15,6 @@ func HTTPStatusCode(code ErrorCode) int {
 		return http.StatusForbidden
 	case NOT_FOUND:
 		return http.StatusNotFound
-	case GONE:
-		return http.StatusGone
 	case VALIDATION_ERROR:
 		return http.StatusUnprocessableEntity
 	case PROFILE_ID_REQUIRED, INVALID_UUID:
@@ -105,8 +103,6 @@ func echoHTTPErrorToAPIError(he *echo.HTTPError) *APIError {
 		return New(FORBIDDEN, message)
 	case http.StatusNotFound:
 		return New(NOT_FOUND, message)
-	case http.StatusGone:
-		return New(GONE, message)
 	case http.StatusConflict:
 		return New(CONFLICT, message)
 	case http.StatusTooManyRequests:

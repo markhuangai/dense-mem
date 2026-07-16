@@ -12,8 +12,8 @@ func TestDefaultCatalogListsExportMemoryAsAgentSkill(t *testing.T) {
 		t.Fatalf("Default: %v", err)
 	}
 	prompts := catalog.List()
-	if len(prompts) != 2 {
-		t.Fatalf("prompts len = %d, want 2", len(prompts))
+	if len(prompts) != 1 {
+		t.Fatalf("prompts len = %d, want 1", len(prompts))
 	}
 	if prompts[0].Name != "export_memory_as_agent_skill" {
 		t.Fatalf("prompt name = %q", prompts[0].Name)
@@ -54,29 +54,6 @@ func TestDefaultCatalogRenderValidatesAndRenders(t *testing.T) {
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("rendered text missing %q: %s", want, text)
-		}
-	}
-}
-
-func TestDefaultCatalogIncludesManagerLegacyMigrationPrompt(t *testing.T) {
-	catalog, err := Default()
-	if err != nil {
-		t.Fatalf("Default: %v", err)
-	}
-	prompt, text, err := catalog.Render("migrate_legacy_memory_v2", map[string]string{
-		"legacy_type":    "fragment",
-		"legacy_id":      "fragment-1",
-		"legacy_content": "Mark demoed Dense-Mem.",
-	})
-	if err != nil {
-		t.Fatalf("Render: %v", err)
-	}
-	if prompt.RequiredRole != "manager" {
-		t.Fatalf("required role = %q; want manager", prompt.RequiredRole)
-	}
-	for _, want := range []string{"fragment-1", "Mark demoed Dense-Mem.", "migration_refs", "DECOMPOSED_INTO", "complete bundle", "untrusted data"} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("migration prompt missing %q: %s", want, text)
 		}
 	}
 }

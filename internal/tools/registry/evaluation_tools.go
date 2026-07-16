@@ -14,16 +14,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	appservice "github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
-	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
-	"github.com/markhuangai/dense-mem/internal/service/recallquality"
-	"github.com/markhuangai/dense-mem/internal/service/recallservice"
-)
-
-const (
-	defaultEvalK = 10
-	maxEvalK     = 50
 )
 
 func evalGetManifestTool(deps Dependencies) Tool {
@@ -60,8 +52,6 @@ func evalGetManifestTool(deps Dependencies) Tool {
 					"knowledge_item",
 					"recall_feedback_events",
 					"dream_cycle",
-					"recall_case",
-					"retrieval_scoring",
 				},
 			}, nil
 		},
@@ -71,12 +61,12 @@ func evalGetManifestTool(deps Dependencies) Tool {
 func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "eval_list_knowledge_refs",
-		Description: "Page through team-scoped assertions, facts, claims, fragments, communities, dreams, or graph edges for evaluation. Content is included unless metadata_only=true.",
+		Description: "Page through team-scoped facts, claims, fragments, communities, dreams, or graph edges for evaluation. Content is included unless metadata_only=true.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"type"},
 			"properties": map[string]any{
-				"type":          schemaEnum([]string{"assertion", "fragment", "claim", "fact", "community", "dream", "edge"}),
+				"type":          schemaEnum([]string{"fragment", "claim", "fact", "community", "dream", "edge"}),
 				"limit":         map[string]any{"type": "integer", "minimum": 1, "maximum": 500},
 				"cursor":        schemaString("Opaque cursor from a previous response.", 512),
 				"status":        schemaString("Optional lifecycle status filter.", 64),
@@ -96,8 +86,6 @@ func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 			switch kind {
 			case "fragment":
 				return evalListFragments(ctx, deps, profileID, input, limit, metadataOnly)
-			case "assertion":
-				return evalListAssertions(ctx, deps, profileID, input, limit, metadataOnly)
 			case "claim":
 				return evalListClaims(ctx, deps, profileID, input, limit, metadataOnly)
 			case "fact":
@@ -118,12 +106,12 @@ func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 func evalGetKnowledgeItemTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "eval_get_knowledge_item",
-		Description: "Fetch one team-scoped assertion, fact, claim, fragment, community, or dream with its evaluation metadata.",
+		Description: "Fetch one team-scoped fact, claim, fragment, community, or dream with its evaluation metadata.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"type", "id"},
 			"properties": map[string]any{
-				"type":          schemaEnum([]string{"assertion", "fragment", "claim", "fact", "community", "dream"}),
+				"type":          schemaEnum([]string{"fragment", "claim", "fact", "community", "dream"}),
 				"id":            schemaString("Knowledge item ID.", 256),
 				"metadata_only": map[string]any{"type": "boolean"},
 			},
@@ -241,158 +229,6 @@ func evalGetRecallFeedbackEventTool(deps Dependencies) Tool {
 				return nil, err
 			}
 			return map[string]any{"event": out}, nil
-		},
-	}
-}
-
-func evalRunRecallCaseTool(deps Dependencies) Tool {
-	return Tool{
-		Name:        "eval_run_recall_case",
-		Description: "Run one recall/context evaluation case through the current Dense-Mem logic and return ranked refs plus context refs.",
-		InputSchema: map[string]any{
-			"type":     "object",
-			"required": []string{"case_id", "query"},
-			"properties": map[string]any{
-				"case_id":           schemaString("Evaluation case ID.", 256),
-				"query":             schemaString("Recall query.", 512),
-				"limit":             map[string]any{"type": "integer", "minimum": 1, "maximum": 50},
-				"valid_at":          map[string]any{"type": "string", "format": "date-time"},
-				"known_at":          map[string]any{"type": "string", "format": "date-time"},
-				"include_evidence":  map[string]any{"type": "boolean"},
-				"use_communities":   map[string]any{"type": "boolean"},
-				"include_dreams":    map[string]any{"type": "boolean"},
-				"max_context_chars": map[string]any{"type": "integer", "minimum": 1, "maximum": 20000},
-			},
-			"additionalProperties": false,
-		},
-		OutputSchema:   map[string]any{"type": "object"},
-		RequiredScopes: []string{"read", "write"},
-		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
-			if deps.Recall == nil {
-				return nil, ErrToolUnavailable
-			}
-			limit := intInputOrDefault(input["limit"], recallservice.DefaultLimit)
-			if err := auditEvaluationTool(ctx, deps, "eval_run_recall_case", limit, false, map[string]any{"case_id": input["case_id"]}); err != nil {
-				return nil, err
-			}
-			req, err := evalRecallRequest(input)
-			if err != nil {
-				return nil, err
-			}
-			started := time.Now()
-			hits, err := deps.Recall.Recall(ctx, profileID, req)
-			if err != nil {
-				return nil, err
-			}
-			ranked := make([]map[string]any, 0, len(hits))
-			for i, hit := range hits {
-				ranked = append(ranked, recallHitRef(i+1, hit))
-			}
-			out := map[string]any{
-				"case_id":     input["case_id"],
-				"query":       req.Query,
-				"ranked_refs": ranked,
-				"latency_ms":  time.Since(started).Milliseconds(),
-			}
-			if deps.Context != nil {
-				assembled, err := deps.Context.Assemble(ctx, profileID, evalAssembleRequest(input, req))
-				if err != nil {
-					return nil, err
-				}
-				out["context_refs"] = contextItemRefs(assembled.Items)
-				out["context_evidence_refs"] = contextEvidenceRefs(assembled.Items)
-				out["context_block_chars"] = len(assembled.ContextBlock)
-			}
-			if boolInput(input["include_dreams"]) && deps.Dreams != nil {
-				dreams, err := deps.Dreams.Recall(ctx, profileID, req.Query, limit)
-				if err != nil {
-					return nil, err
-				}
-				out["dream_refs"] = dreamRefs(dreams)
-			}
-			return out, nil
-		},
-	}
-}
-
-func evalScoreRetrievalCaseTool(deps Dependencies) Tool {
-	return Tool{
-		Name:        "eval_score_retrieval_case",
-		Description: "Score one ranked retrieval case and optional context refs against required and bad refs using deterministic recallquality metrics.",
-		InputSchema: map[string]any{
-			"type":     "object",
-			"required": []string{"ranked_refs", "required_refs"},
-			"properties": map[string]any{
-				"k":                      map[string]any{"type": "integer", "minimum": 1, "maximum": maxEvalK},
-				"ranked_refs":            evalRefArraySchema(false),
-				"context_refs":           evalRefArraySchema(false),
-				"evidence_refs":          evalRefArraySchema(false),
-				"dream_refs":             evalRefArraySchema(false),
-				"required_refs":          evalRefArraySchema(true),
-				"bad_refs":               evalRefArraySchema(false),
-				"required_evidence_refs": evalRefArraySchema(true),
-				"bad_evidence_refs":      evalRefArraySchema(false),
-				"required_dream_refs":    evalRefArraySchema(true),
-				"bad_dream_refs":         evalRefArraySchema(false),
-			},
-			"additionalProperties": false,
-		},
-		OutputSchema:   map[string]any{"type": "object"},
-		RequiredScopes: []string{"read", "write"},
-		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
-			k := intInputOrDefault(input["k"], defaultEvalK)
-			if err := auditEvaluationTool(ctx, deps, "eval_score_retrieval_case", k, false, nil); err != nil {
-				return nil, err
-			}
-			ranked := evalResultRefs(input["ranked_refs"])
-			required := evalJudgments(input["required_refs"])
-			bad := evalResultRefs(input["bad_refs"])
-			metrics := recallquality.ScoreAtK(ranked, required, bad, k)
-			out, err := structToMap(metrics)
-			if err != nil {
-				return nil, err
-			}
-			if _, ok := input["context_refs"]; ok {
-				contextMetrics := recallquality.ScoreAtK(evalResultRefs(input["context_refs"]), required, bad, k)
-				out["context_scored"] = true
-				out["context_relevant_at_k"] = contextMetrics.RelevantAtK
-				out["context_relevant_total"] = contextMetrics.RelevantTotal
-				out["context_bad_at_k"] = contextMetrics.BadAtK
-				out["context_recall_at_k"] = contextMetrics.RecallAtK
-				out["context_mrr"] = contextMetrics.MRR
-				out["context_ndcg_at_k"] = contextMetrics.NDCGAtK
-			}
-			if _, ok := input["evidence_refs"]; ok {
-				evidenceMetrics := recallquality.ScoreAtK(
-					evalResultRefs(input["evidence_refs"]),
-					evalJudgments(input["required_evidence_refs"]),
-					evalResultRefs(input["bad_evidence_refs"]),
-					k,
-				)
-				out["evidence_scored"] = true
-				out["evidence_relevant_at_k"] = evidenceMetrics.RelevantAtK
-				out["evidence_relevant_total"] = evidenceMetrics.RelevantTotal
-				out["evidence_bad_at_k"] = evidenceMetrics.BadAtK
-				out["evidence_recall_at_k"] = evidenceMetrics.RecallAtK
-				out["evidence_mrr"] = evidenceMetrics.MRR
-				out["evidence_ndcg_at_k"] = evidenceMetrics.NDCGAtK
-			}
-			if _, ok := input["dream_refs"]; ok {
-				dreamMetrics := recallquality.ScoreAtK(
-					evalResultRefs(input["dream_refs"]),
-					evalJudgments(input["required_dream_refs"]),
-					evalResultRefs(input["bad_dream_refs"]),
-					k,
-				)
-				out["dream_scored"] = true
-				out["dream_relevant_at_k"] = dreamMetrics.RelevantAtK
-				out["dream_relevant_total"] = dreamMetrics.RelevantTotal
-				out["dream_bad_at_k"] = dreamMetrics.BadAtK
-				out["dream_recall_at_k"] = dreamMetrics.RecallAtK
-				out["dream_mrr"] = dreamMetrics.MRR
-				out["dream_ndcg_at_k"] = dreamMetrics.NDCGAtK
-			}
-			return out, nil
 		},
 	}
 }
@@ -516,18 +352,10 @@ func evalListEdges(ctx context.Context, deps Dependencies, profileID string, lim
 MATCH (a {team_id: $profileId})-[rel]->(b {team_id: $profileId})
 WHERE rel.team_id = $profileId
 RETURN type(rel) AS edge_type,
-       rel.assertion_id AS assertion_id,
-       rel.predicate_key AS predicate_key,
-       rel.tier AS tier,
-       rel.status AS status,
-       rel.policy_family AS policy_family,
-       coalesce(rel.semantic_projection, false) AS semantic_projection,
        labels(a) AS from_labels,
-       coalesce(a.entity_id, a.value_id, a.assertion_id, a.fact_id, a.claim_id, a.fragment_id, a.dream_id, toString(a.community_id), '') AS from_id,
-       coalesce(a.graph_key, '') AS from_key,
+       coalesce(a.fact_id, a.claim_id, a.fragment_id, a.community_id, '') AS from_id,
        labels(b) AS to_labels,
-       coalesce(b.entity_id, b.value_id, b.assertion_id, b.fact_id, b.claim_id, b.fragment_id, b.dream_id, toString(b.community_id), '') AS to_id,
-       coalesce(b.graph_key, '') AS to_key
+       coalesce(b.fact_id, b.claim_id, b.fragment_id, b.community_id, '') AS to_id
 LIMIT %d`, limit)
 	res, err := deps.GraphQuery.Execute(ctx, profileID, query, nil)
 	if err != nil {
@@ -538,8 +366,6 @@ LIMIT %d`, limit)
 
 func evalGetKnowledgeItem(ctx context.Context, deps Dependencies, profileID, kind, id string) (map[string]any, error) {
 	switch kind {
-	case "assertion":
-		return evalGetAssertion(ctx, deps, profileID, id)
 	case "fragment":
 		if deps.FragmentGet == nil {
 			return nil, ErrToolUnavailable
@@ -697,38 +523,6 @@ func evalEventInScope(ctx context.Context, profileID string, event *domain.Recal
 	return event.TeamID != nil && *event.TeamID == parsed
 }
 
-func evalRecallRequest(input map[string]any) (recallservice.RecallRequest, error) {
-	req := recallservice.RecallRequest{
-		Query:           stringInput(input["query"]),
-		Limit:           intInputOrDefault(input["limit"], recallservice.DefaultLimit),
-		IncludeEvidence: boolInputOrDefault(input["include_evidence"], true),
-		UseCommunities:  boolInput(input["use_communities"]),
-	}
-	if validAt, err := optionalTime(input["valid_at"]); err != nil {
-		return req, err
-	} else {
-		req.ValidAt = validAt
-	}
-	if knownAt, err := optionalTime(input["known_at"]); err != nil {
-		return req, err
-	} else {
-		req.KnownAt = knownAt
-	}
-	return req, nil
-}
-
-func evalAssembleRequest(input map[string]any, recallReq recallservice.RecallRequest) contextservice.AssembleRequest {
-	includeEvidence := boolInputOrDefault(input["include_evidence"], recallReq.IncludeEvidence)
-	return contextservice.AssembleRequest{
-		Query:           recallReq.Query,
-		Limit:           recallReq.Limit,
-		IncludeEvidence: &includeEvidence,
-		ValidAt:         recallReq.ValidAt,
-		KnownAt:         recallReq.KnownAt,
-		MaxChars:        intInputOrDefault(input["max_context_chars"], 4000),
-	}
-}
-
 func evalPage(items []map[string]any, nextCursor string) map[string]any {
 	return map[string]any{
 		"items":       items,
@@ -754,9 +548,6 @@ func claimItems(claims []*domain.Claim, metadataOnly bool) ([]map[string]any, er
 
 func stripEvalContent(kind string, item map[string]any) {
 	switch kind {
-	case "assertion":
-		delete(item, "search_text")
-		delete(item, "evidence_json")
 	case "fragment":
 		delete(item, "content")
 	case "claim", "fact":
@@ -768,149 +559,6 @@ func stripEvalContent(kind string, item map[string]any) {
 		delete(item, "what_if")
 		delete(item, "possible_outcome")
 		delete(item, "rationale")
-	}
-}
-
-func recallHitRef(rank int, hit recallservice.RecallHit) map[string]any {
-	ref := map[string]any{
-		"rank":          rank,
-		"tier":          hit.Tier,
-		"score":         hit.Score,
-		"final_score":   hit.FinalScore,
-		"semantic_rank": hit.SemanticRank,
-		"keyword_rank":  hit.KeywordRank,
-	}
-	switch {
-	case hit.Assertion != nil:
-		ref["type"] = "assertion"
-		ref["id"] = hit.Assertion.AssertionID
-		ref["status"] = string(hit.Assertion.Status)
-	case hit.Fact != nil:
-		ref["type"] = "fact"
-		ref["id"] = hit.Fact.FactID
-		ref["status"] = string(hit.Fact.Status)
-	case hit.Claim != nil:
-		ref["type"] = "claim"
-		ref["id"] = hit.Claim.ClaimID
-		ref["status"] = string(hit.Claim.Status)
-	case hit.Fragment != nil:
-		ref["type"] = "fragment"
-		ref["id"] = hit.Fragment.FragmentID
-		ref["status"] = string(hit.Fragment.Status)
-	}
-	return ref
-}
-
-func contextItemRefs(items []contextservice.ContextItem) []map[string]any {
-	refs := make([]map[string]any, 0, len(items))
-	for i, item := range items {
-		refs = append(refs, map[string]any{
-			"rank":  i + 1,
-			"type":  item.Type,
-			"id":    item.ID,
-			"score": item.Score,
-		})
-	}
-	return refs
-}
-
-func contextEvidenceRefs(items []contextservice.ContextItem) []map[string]any {
-	refs := []map[string]any{}
-	seen := map[string]struct{}{}
-	rank := 1
-	for _, item := range items {
-		for _, fragment := range item.EvidenceFragments {
-			if fragment == nil || strings.TrimSpace(fragment.FragmentID) == "" {
-				continue
-			}
-			key := "fragment:" + fragment.FragmentID + "|parent:" + item.Type + ":" + item.ID
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			refs = append(refs, map[string]any{
-				"rank":        rank,
-				"type":        "fragment",
-				"id":          fragment.FragmentID,
-				"parent_type": item.Type,
-				"parent_id":   item.ID,
-			})
-			rank++
-		}
-	}
-	return refs
-}
-
-func evalRefArraySchema(withGrade bool) map[string]any {
-	properties := map[string]any{
-		"type": schemaEnum([]string{"assertion", "fragment", "claim", "fact", "community", "dream"}),
-		"id":   schemaString("Reference ID.", 256),
-	}
-	required := []string{"type", "id"}
-	if withGrade {
-		properties["grade"] = map[string]any{"type": "number", "minimum": 0}
-	}
-	return map[string]any{
-		"type":     "array",
-		"maxItems": 500,
-		"items": map[string]any{
-			"type":                 "object",
-			"required":             required,
-			"properties":           properties,
-			"additionalProperties": true,
-		},
-	}
-}
-
-func evalResultRefs(value any) []recallquality.ResultRef {
-	maps := evalRefMaps(value)
-	if maps == nil {
-		return nil
-	}
-	refs := make([]recallquality.ResultRef, 0, len(maps))
-	for _, m := range maps {
-		refs = append(refs, recallquality.ResultRef{
-			Type: stringInput(m["type"]),
-			ID:   stringInput(m["id"]),
-		})
-	}
-	return refs
-}
-
-func evalJudgments(value any) []recallquality.Judgment {
-	maps := evalRefMaps(value)
-	if maps == nil {
-		return nil
-	}
-	refs := make([]recallquality.Judgment, 0, len(maps))
-	for _, m := range maps {
-		grade := 1.0
-		if parsed, ok := schemaNumber(m["grade"]); ok {
-			grade = parsed
-		}
-		refs = append(refs, recallquality.Judgment{
-			Type:  stringInput(m["type"]),
-			ID:    stringInput(m["id"]),
-			Grade: grade,
-		})
-	}
-	return refs
-}
-
-func evalRefMaps(value any) []map[string]any {
-	switch raw := value.(type) {
-	case []any:
-		maps := make([]map[string]any, 0, len(raw))
-		for _, item := range raw {
-			if m, ok := item.(map[string]any); ok {
-				maps = append(maps, m)
-			}
-		}
-		return maps
-	case []map[string]any:
-		return raw
-	default:
-		return nil
 	}
 }
 
@@ -931,11 +579,6 @@ func intInputOrDefault(value any, fallback int) int {
 		return parsed
 	}
 	return fallback
-}
-
-func boolInput(value any) bool {
-	parsed, _ := value.(bool)
-	return parsed
 }
 
 func boolInputOrDefault(value any, fallback bool) bool {

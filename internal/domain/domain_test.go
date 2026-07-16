@@ -18,7 +18,7 @@ func TestDreamStatusIsValid(t *testing.T) {
 		DreamStatusReinforced,
 		DreamStatusStale,
 		DreamStatusRejected,
-		DreamStatusPromoted,
+		DreamStatusSubmitted,
 	} {
 		if !status.IsValid() {
 			t.Fatalf("status %q should be valid", status)

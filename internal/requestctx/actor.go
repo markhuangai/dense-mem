@@ -8,7 +8,6 @@ import (
 
 type actorContextKey struct{}
 type credentialContextKey struct{}
-type trustedMemoryAuthorityContextKey struct{}
 
 // ActorProfile identifies the authenticated team profile that initiated a
 // request. TeamID is the knowledge scope; ProfileID is the named member/client
@@ -49,15 +48,6 @@ func WithActorCredential(ctx context.Context, credential ActorCredential) contex
 func ActorCredentialFromContext(ctx context.Context) (ActorCredential, bool) {
 	credential, ok := ctx.Value(credentialContextKey{}).(ActorCredential)
 	return credential, ok
-}
-
-func WithTrustedMemoryAuthority(ctx context.Context) context.Context {
-	return context.WithValue(ctx, trustedMemoryAuthorityContextKey{}, true)
-}
-
-func TrustedMemoryAuthority(ctx context.Context) bool {
-	trusted, _ := ctx.Value(trustedMemoryAuthorityContextKey{}).(bool)
-	return trusted
 }
 
 // ActorOwner returns the profile identity used as the ownership boundary for

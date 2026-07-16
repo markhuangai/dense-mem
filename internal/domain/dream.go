@@ -10,14 +10,14 @@ const (
 	DreamStatusReinforced DreamStatus = "reinforced"
 	DreamStatusStale      DreamStatus = "stale"
 	DreamStatusRejected   DreamStatus = "rejected"
-	DreamStatusPromoted   DreamStatus = "promoted"
+	DreamStatusSubmitted  DreamStatus = "submitted"
 )
 
 // IsValid reports whether s is a supported DreamStatus value.
 func (s DreamStatus) IsValid() bool {
 	switch s {
 	case DreamStatusProposed, DreamStatusReinforced, DreamStatusStale,
-		DreamStatusRejected, DreamStatusPromoted:
+		DreamStatusRejected, DreamStatusSubmitted:
 		return true
 	default:
 		return false

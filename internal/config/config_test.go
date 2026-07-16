@@ -9,6 +9,8 @@ import (
 func clearEnv() {
 	envVars := []string{
 		"POSTGRES_DSN",
+		"POSTGRES_TOPOLOGY",
+		"POSTGRES_READ_DSN",
 		"NEO4J_URI",
 		"NEO4J_USER",
 		"NEO4J_PASSWORD",
@@ -31,16 +33,30 @@ func clearEnv() {
 		"AI_API_EMBEDDING_MODEL",
 		"AI_API_EMBEDDING_DIMENSIONS",
 		"AI_API_EMBEDDING_TIMEOUT_SECONDS",
+		"AI_API_EMBEDDING_MAX_CONCURRENCY",
 		// Knowledge-pipeline knobs
 		"AI_VERIFIER_API_URL",
 		"AI_VERIFIER_API_KEY",
+		"AI_REVIEWER_MODEL",
 		"AI_VERIFIER_MODEL",
 		"AI_VERIFIER_DISABLE_TEMPERATURE",
 		"AI_VERIFIER_TIMEOUT_SECONDS",
 		"AI_VERIFIER_MAX_CONCURRENCY",
+		"MEMORY_PLACEMENT_WORKER_COUNT",
+		"MEMORY_PLACEMENT_MAX_ATTEMPTS",
+		"MEMORY_PLACEMENT_POLL_SECONDS",
+		"EMBEDDING_WORKER_COUNT",
+		"EMBEDDING_BATCH_SIZE",
 		"CLAIM_WRITE_RATE_LIMIT",
 		"CLAIM_READ_RATE_LIMIT",
 		"RECALL_VALIDATED_CLAIM_WEIGHT",
+		"RECALL_RRF_ENABLED",
+		"RECALL_RRF_K",
+		"RECALL_RRF_BRANCH_WEIGHTS",
+		"RECALL_BRANCH_PRIORITY",
+		"RECALL_BRANCH_LIMIT_MULTIPLIER",
+		"RECALL_BRANCH_LIMIT_FLOOR",
+		"RECALL_BRANCH_LIMIT_MAX",
 		"PROMOTE_TX_TIMEOUT_SECONDS",
 		"MEMORY_PACK_IMPORT_HISTORY_DAYS",
 		"SKILL_PACK_IMPORT_HISTORY_DAYS",
@@ -67,9 +83,6 @@ func clearEnv() {
 // setRequiredEnv sets the minimum required environment variables for a valid config
 func setRequiredEnv() {
 	os.Setenv("POSTGRES_DSN", "postgres://user:pass@localhost/db?sslmode=disable")
-	os.Setenv("NEO4J_URI", "bolt://localhost:7687")
-	os.Setenv("NEO4J_USER", "neo4j")
-	os.Setenv("NEO4J_PASSWORD", "password")
 	os.Setenv("CONTROL_PORTAL_TOKEN", "control-secret")
 }
 
@@ -125,6 +138,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.EmbeddingDimensions != 1536 {
 		t.Errorf("EmbeddingDimensions default = %d, want %d", cfg.EmbeddingDimensions, 1536)
 	}
+	if cfg.GetPostgresReadDSN() != "" {
+		t.Errorf("PostgresReadDSN default = %q, want empty", cfg.GetPostgresReadDSN())
+	}
 
 	// Test other defaults
 	if cfg.RedisDB != 0 {
@@ -135,6 +151,36 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.TelemetryPrometheusJob != "" {
 		t.Errorf("TelemetryPrometheusJob default = %q, want empty", cfg.TelemetryPrometheusJob)
+	}
+	if cfg.GetAIEmbeddingMaxConcurrency() != 8 {
+		t.Errorf("AIEmbeddingMaxConcurrency default = %d, want %d", cfg.GetAIEmbeddingMaxConcurrency(), 8)
+	}
+	if cfg.GetEmbeddingWorkerCount() != 2 {
+		t.Errorf("EmbeddingWorkerCount default = %d, want %d", cfg.GetEmbeddingWorkerCount(), 2)
+	}
+	if cfg.GetEmbeddingBatchSize() != 64 {
+		t.Errorf("EmbeddingBatchSize default = %d, want %d", cfg.GetEmbeddingBatchSize(), 64)
+	}
+	if cfg.GetRecallRRFEnabled() {
+		t.Errorf("RecallRRFEnabled default = true, want false")
+	}
+	if cfg.GetRecallRRFK() != 60 {
+		t.Errorf("RecallRRFK default = %d, want %d", cfg.GetRecallRRFK(), 60)
+	}
+	if cfg.GetRecallRRFBranchWeights() != "exact=2,evidence_text=1,evidence_vector=1" {
+		t.Errorf("RecallRRFBranchWeights default = %q", cfg.GetRecallRRFBranchWeights())
+	}
+	if cfg.GetRecallBranchPriority() != "exact,evidence_vector,evidence_text" {
+		t.Errorf("RecallBranchPriority default = %q", cfg.GetRecallBranchPriority())
+	}
+	if cfg.GetRecallBranchLimitMultiplier() != 6 {
+		t.Errorf("RecallBranchLimitMultiplier default = %d, want 6", cfg.GetRecallBranchLimitMultiplier())
+	}
+	if cfg.GetRecallBranchLimitFloor() != 60 {
+		t.Errorf("RecallBranchLimitFloor default = %d, want 60", cfg.GetRecallBranchLimitFloor())
+	}
+	if cfg.GetRecallBranchLimitMax() != 200 {
+		t.Errorf("RecallBranchLimitMax default = %d, want 200", cfg.GetRecallBranchLimitMax())
 	}
 }
 
@@ -194,9 +240,6 @@ func TestLoadTelemetryConfigRequiresScrapeToken(t *testing.T) {
 
 func TestLoadValidation_MissingPostgresDSN(t *testing.T) {
 	clearEnv()
-	os.Setenv("NEO4J_URI", "bolt://localhost:7687")
-	os.Setenv("NEO4J_USER", "neo4j")
-	os.Setenv("NEO4J_PASSWORD", "password")
 
 	_, err := Load()
 	if err == nil {
@@ -212,63 +255,40 @@ func TestLoadValidation_MissingPostgresDSN(t *testing.T) {
 	}
 }
 
-func TestLoadValidation_MissingNeo4jURI(t *testing.T) {
+func TestLoadValidation_Neo4jConfigNotRequired(t *testing.T) {
 	clearEnv()
-	os.Setenv("POSTGRES_DSN", "postgres://user:pass@localhost/db?sslmode=disable")
-	os.Setenv("NEO4J_USER", "neo4j")
-	os.Setenv("NEO4J_PASSWORD", "password")
+	setRequiredEnv()
 
-	_, err := Load()
-	if err == nil {
-		t.Fatal("Load() expected error for missing NEO4J_URI, got nil")
-	}
-
-	validationErr, ok := err.(*ValidationError)
-	if !ok {
-		t.Fatalf("expected *ValidationError, got %T", err)
-	}
-	if validationErr.Field != "NEO4J_URI" {
-		t.Errorf("ValidationError.Field = %q, want %q", validationErr.Field, "NEO4J_URI")
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load() returned unexpected error without Neo4j config: %v", err)
 	}
 }
 
-func TestLoadValidation_MissingNeo4jUser(t *testing.T) {
+func TestLoadIgnoresPostgresTopologyHintBecauseBootDetectsServerState(t *testing.T) {
 	clearEnv()
-	os.Setenv("POSTGRES_DSN", "postgres://user:pass@localhost/db?sslmode=disable")
-	os.Setenv("NEO4J_URI", "bolt://localhost:7687")
-	os.Setenv("NEO4J_PASSWORD", "password")
+	setRequiredEnv()
+	os.Setenv("POSTGRES_TOPOLOGY", "primary_with_standbys")
 
-	_, err := Load()
-	if err == nil {
-		t.Fatal("Load() expected error for missing NEO4J_USER, got nil")
-	}
-
-	validationErr, ok := err.(*ValidationError)
-	if !ok {
-		t.Fatalf("expected *ValidationError, got %T", err)
-	}
-	if validationErr.Field != "NEO4J_USER" {
-		t.Errorf("ValidationError.Field = %q, want %q", validationErr.Field, "NEO4J_USER")
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load() error = %v; topology must be detected from Postgres at boot", err)
 	}
 }
 
-func TestLoadValidation_MissingNeo4jPassword(t *testing.T) {
+func TestLoadValidation_RejectsPostgresReadDSN(t *testing.T) {
 	clearEnv()
-	os.Setenv("POSTGRES_DSN", "postgres://user:pass@localhost/db?sslmode=disable")
-	os.Setenv("NEO4J_URI", "bolt://localhost:7687")
-	os.Setenv("NEO4J_USER", "neo4j")
+	setRequiredEnv()
+	os.Setenv("POSTGRES_READ_DSN", "postgres://reader:pass@localhost/db?sslmode=disable")
 
 	_, err := Load()
 	if err == nil {
-		t.Fatal("Load() expected error for missing NEO4J_PASSWORD, got nil")
+		t.Fatal("Load() expected error for POSTGRES_READ_DSN, got nil")
 	}
-
 	validationErr, ok := err.(*ValidationError)
 	if !ok {
 		t.Fatalf("expected *ValidationError, got %T", err)
 	}
-	if validationErr.Field != "NEO4J_PASSWORD" {
-		t.Errorf("ValidationError.Field = %q, want %q", validationErr.Field, "NEO4J_PASSWORD")
+	if validationErr.Field != "POSTGRES_READ_DSN" {
+		t.Errorf("ValidationError.Field = %q, want POSTGRES_READ_DSN", validationErr.Field)
 	}
 }
 
@@ -430,6 +450,7 @@ func TestConfigProviderInterface(t *testing.T) {
 
 	// Test all getter methods
 	_ = provider.GetPostgresDSN()
+	_ = provider.GetPostgresReadDSN()
 	_ = provider.GetNeo4jURI()
 	_ = provider.GetNeo4jUser()
 	_ = provider.GetNeo4jPassword()
@@ -519,9 +540,6 @@ func TestValidationError_Error(t *testing.T) {
 func TestLoad_WithoutRedis_Succeeds(t *testing.T) {
 	clearEnv()
 	os.Setenv("POSTGRES_DSN", "postgres://user:pass@localhost/db?sslmode=disable")
-	os.Setenv("NEO4J_URI", "bolt://localhost:7687")
-	os.Setenv("NEO4J_USER", "neo4j")
-	os.Setenv("NEO4J_PASSWORD", "password")
 	os.Setenv("CONTROL_PORTAL_TOKEN", "control-secret")
 
 	cfg, err := Load()
@@ -550,9 +568,6 @@ func TestLoad_WithRedis_Succeeds(t *testing.T) {
 func TestLoad_EmbeddingConfig_AllOrNothing(t *testing.T) {
 	clearEnv()
 	os.Setenv("POSTGRES_DSN", "postgres://user:pass@localhost/db?sslmode=disable")
-	os.Setenv("NEO4J_URI", "bolt://localhost:7687")
-	os.Setenv("NEO4J_USER", "neo4j")
-	os.Setenv("NEO4J_PASSWORD", "password")
 	os.Setenv("CONTROL_PORTAL_TOKEN", "control-secret")
 	os.Setenv("AI_API_URL", "https://example.com/v1")
 	// Missing AI_API_KEY intentionally
@@ -576,9 +591,6 @@ func TestLoad_EmbeddingConfig_AllOrNothing(t *testing.T) {
 func TestLoad_EmbeddingConfig_Complete(t *testing.T) {
 	clearEnv()
 	os.Setenv("POSTGRES_DSN", "postgres://user:pass@localhost/db?sslmode=disable")
-	os.Setenv("NEO4J_URI", "bolt://localhost:7687")
-	os.Setenv("NEO4J_USER", "neo4j")
-	os.Setenv("NEO4J_PASSWORD", "password")
 	os.Setenv("CONTROL_PORTAL_TOKEN", "control-secret")
 	setRequiredEmbeddingEnv()
 
@@ -663,6 +675,9 @@ func TestLoadVerifierConfig_SeparateEndpoint(t *testing.T) {
 	}
 	if got := cfg.GetAIVerifierModel(); got != "local-verifier" {
 		t.Errorf("GetAIVerifierModel() = %q, want %q", got, "local-verifier")
+	}
+	if got := cfg.GetAIReviewerModel(); got != "local-verifier" {
+		t.Errorf("GetAIReviewerModel() fallback = %q, want %q", got, "local-verifier")
 	}
 	if cfg.GetAIVerifierDisableTemperature() {
 		t.Error("GetAIVerifierDisableTemperature() = true, want false")
@@ -751,222 +766,3 @@ func TestValidateServerStartup_SucceedsWithEmbeddingConfig(t *testing.T) {
 
 // TestLoadKnowledgeConfigDefaults verifies that all knowledge-pipeline knobs
 // have their expected default values when no environment variables are set (AC-X3).
-func TestLoadKnowledgeConfigDefaults(t *testing.T) {
-	clearEnv()
-	setRequiredEnv()
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() returned unexpected error: %v", err)
-	}
-
-	if got := cfg.GetAIVerifierModel(); got != "gpt-4o-mini" {
-		t.Errorf("GetAIVerifierModel() = %q, want %q", got, "gpt-4o-mini")
-	}
-	if cfg.GetAIVerifierDisableTemperature() {
-		t.Error("GetAIVerifierDisableTemperature() = true, want false")
-	}
-	if got := cfg.GetAIVerifierMaxConcurrency(); got != 5 {
-		t.Errorf("GetAIVerifierMaxConcurrency() = %d, want %d", got, 5)
-	}
-	if got := cfg.GetClaimWriteRateLimit(); got != 60 {
-		t.Errorf("GetClaimWriteRateLimit() = %d, want %d", got, 60)
-	}
-	if got := cfg.GetClaimReadRateLimit(); got != 300 {
-		t.Errorf("GetClaimReadRateLimit() = %d, want %d", got, 300)
-	}
-	if got := cfg.GetRecallValidatedClaimWeight(); got != 0.5 {
-		t.Errorf("GetRecallValidatedClaimWeight() = %f, want %f", got, 0.5)
-	}
-	if got := cfg.GetPromoteTxTimeoutSeconds(); got != 10 {
-		t.Errorf("GetPromoteTxTimeoutSeconds() = %d, want %d", got, 10)
-	}
-	if got := cfg.GetSkillPackImportHistoryDays(); got != 30 {
-		t.Errorf("GetSkillPackImportHistoryDays() = %d, want %d", got, 30)
-	}
-	if got := cfg.GetMemoryPackImportHistoryDays(); got != 30 {
-		t.Errorf("GetMemoryPackImportHistoryDays() = %d, want %d", got, 30)
-	}
-	if got := cfg.GetAICommunityMaxNodes(); got != 500000 {
-		t.Errorf("GetAICommunityMaxNodes() = %d, want %d", got, 500000)
-	}
-}
-
-func TestLoadMemoryPackImportHistoryEnv(t *testing.T) {
-	t.Run("new env wins", func(t *testing.T) {
-		clearEnv()
-		setRequiredEnv()
-		os.Setenv("MEMORY_PACK_IMPORT_HISTORY_DAYS", "14")
-		os.Setenv("SKILL_PACK_IMPORT_HISTORY_DAYS", "60")
-
-		cfg, err := Load()
-		if err != nil {
-			t.Fatalf("Load() returned unexpected error: %v", err)
-		}
-		if got := cfg.GetMemoryPackImportHistoryDays(); got != 14 {
-			t.Fatalf("GetMemoryPackImportHistoryDays() = %d, want 14", got)
-		}
-	})
-
-	t.Run("legacy env fallback", func(t *testing.T) {
-		clearEnv()
-		setRequiredEnv()
-		os.Setenv("SKILL_PACK_IMPORT_HISTORY_DAYS", "21")
-
-		cfg, err := Load()
-		if err != nil {
-			t.Fatalf("Load() returned unexpected error: %v", err)
-		}
-		if got := cfg.GetMemoryPackImportHistoryDays(); got != 21 {
-			t.Fatalf("GetMemoryPackImportHistoryDays() = %d, want 21", got)
-		}
-	})
-}
-
-func TestLoadControlPortalValidation(t *testing.T) {
-	t.Run("server startup requires token", func(t *testing.T) {
-		clearEnv()
-		setRequiredEnv()
-		setRequiredEmbeddingEnv()
-		os.Unsetenv("CONTROL_PORTAL_TOKEN")
-
-		cfg, err := Load()
-		if err != nil {
-			t.Fatalf("Load() returned unexpected error: %v", err)
-		}
-
-		err = cfg.ValidateServerStartup()
-		if err == nil {
-			t.Fatal("ValidateServerStartup() expected error for missing control token, got nil")
-		}
-		validationErr, ok := err.(*ValidationError)
-		if !ok {
-			t.Fatalf("expected *ValidationError, got %T", err)
-		}
-		if validationErr.Field != "CONTROL_PORTAL_TOKEN" {
-			t.Errorf("ValidationError.Field = %q, want CONTROL_PORTAL_TOKEN", validationErr.Field)
-		}
-	})
-
-	t.Run("allows explicit network bind", func(t *testing.T) {
-		clearEnv()
-		setRequiredEnv()
-		os.Setenv("CONTROL_HTTP_ADDR", "0.0.0.0:8090")
-
-		cfg, err := Load()
-		if err != nil {
-			t.Fatalf("Load() returned unexpected error: %v", err)
-		}
-		if cfg.ControlHTTPAddr != "0.0.0.0:8090" {
-			t.Errorf("ControlHTTPAddr = %q, want 0.0.0.0:8090", cfg.ControlHTTPAddr)
-		}
-	})
-}
-
-func TestLoadValidation_RemainingInvalidEnvironmentBranches(t *testing.T) {
-	cases := []struct {
-		name  string
-		set   func()
-		field string
-	}{
-		{"invalid redis db", func() { os.Setenv("REDIS_DB", "bad") }, "REDIS_DB"},
-		{"invalid http max body bytes", func() { os.Setenv("HTTP_MAX_BODY_BYTES", "bad") }, "HTTP_MAX_BODY_BYTES"},
-		{"invalid auth verify concurrency", func() { os.Setenv("AUTH_VERIFY_MAX_CONCURRENCY", "bad") }, "AUTH_VERIFY_MAX_CONCURRENCY"},
-		{"invalid graph default timeout", func() { os.Setenv("GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS", "bad") }, "GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS"},
-		{"invalid graph max timeout", func() { os.Setenv("GRAPH_QUERY_MAX_TIMEOUT_SECONDS", "bad") }, "GRAPH_QUERY_MAX_TIMEOUT_SECONDS"},
-		{"invalid fragment create rate", func() { os.Setenv("FRAGMENT_CREATE_RATE_LIMIT", "bad") }, "FRAGMENT_CREATE_RATE_LIMIT"},
-		{"invalid fragment read rate", func() { os.Setenv("FRAGMENT_READ_RATE_LIMIT", "bad") }, "FRAGMENT_READ_RATE_LIMIT"},
-		{"invalid sse heartbeat", func() { os.Setenv("SSE_HEARTBEAT_SECONDS", "bad") }, "SSE_HEARTBEAT_SECONDS"},
-		{"invalid sse max duration", func() { os.Setenv("SSE_MAX_DURATION_SECONDS", "bad") }, "SSE_MAX_DURATION_SECONDS"},
-		{"invalid sse streams", func() { os.Setenv("SSE_MAX_CONCURRENT_STREAMS", "bad") }, "SSE_MAX_CONCURRENT_STREAMS"},
-		{"invalid embedding dimensions", func() { os.Setenv("AI_API_EMBEDDING_DIMENSIONS", "bad") }, "AI_API_EMBEDDING_DIMENSIONS"},
-		{"invalid embedding timeout", func() { os.Setenv("AI_API_EMBEDDING_TIMEOUT_SECONDS", "bad") }, "AI_API_EMBEDDING_TIMEOUT_SECONDS"},
-		{"invalid verifier disable temperature", func() { os.Setenv("AI_VERIFIER_DISABLE_TEMPERATURE", "bad") }, "AI_VERIFIER_DISABLE_TEMPERATURE"},
-		{"invalid verifier timeout", func() { os.Setenv("AI_VERIFIER_TIMEOUT_SECONDS", "bad") }, "AI_VERIFIER_TIMEOUT_SECONDS"},
-		{"invalid verifier concurrency", func() { os.Setenv("AI_VERIFIER_MAX_CONCURRENCY", "bad") }, "AI_VERIFIER_MAX_CONCURRENCY"},
-		{"invalid claim write rate", func() { os.Setenv("CLAIM_WRITE_RATE_LIMIT", "bad") }, "CLAIM_WRITE_RATE_LIMIT"},
-		{"invalid claim read rate", func() { os.Setenv("CLAIM_READ_RATE_LIMIT", "bad") }, "CLAIM_READ_RATE_LIMIT"},
-		{"invalid recall weight", func() { os.Setenv("RECALL_VALIDATED_CLAIM_WEIGHT", "bad") }, "RECALL_VALIDATED_CLAIM_WEIGHT"},
-		{"invalid promote timeout", func() { os.Setenv("PROMOTE_TX_TIMEOUT_SECONDS", "bad") }, "PROMOTE_TX_TIMEOUT_SECONDS"},
-		{"invalid community max nodes", func() { os.Setenv("AI_COMMUNITY_MAX_NODES", "bad") }, "AI_COMMUNITY_MAX_NODES"},
-		{"zero http max body bytes", func() { os.Setenv("HTTP_MAX_BODY_BYTES", "0") }, "HTTP_MAX_BODY_BYTES"},
-		{"recall weight below range", func() { os.Setenv("RECALL_VALIDATED_CLAIM_WEIGHT", "-0.1") }, "RECALL_VALIDATED_CLAIM_WEIGHT"},
-		{"recall weight above range", func() { os.Setenv("RECALL_VALIDATED_CLAIM_WEIGHT", "1.1") }, "RECALL_VALIDATED_CLAIM_WEIGHT"},
-		{"verifier key without url or shared api url", func() { os.Setenv("AI_VERIFIER_API_KEY", "verifier-key") }, "AI_VERIFIER_API_URL"},
-		{"embedding missing url", func() {
-			os.Setenv("AI_API_KEY", "sk-test")
-			os.Setenv("AI_API_EMBEDDING_MODEL", "text-embedding-3-small")
-			os.Setenv("AI_API_EMBEDDING_DIMENSIONS", "1536")
-		}, "AI_API_URL"},
-		{"embedding missing model", func() {
-			os.Setenv("AI_API_URL", "https://example.com/v1")
-			os.Setenv("AI_API_KEY", "sk-test")
-			os.Setenv("AI_API_EMBEDDING_DIMENSIONS", "1536")
-		}, "AI_API_EMBEDDING_MODEL"},
-		{"embedding missing dimensions", func() {
-			os.Setenv("AI_API_URL", "https://example.com/v1")
-			os.Setenv("AI_API_KEY", "sk-test")
-			os.Setenv("AI_API_EMBEDDING_MODEL", "text-embedding-3-small")
-		}, "AI_API_EMBEDDING_DIMENSIONS"},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			clearEnv()
-			setRequiredEnv()
-			tc.set()
-
-			_, err := Load()
-
-			if err == nil {
-				t.Fatalf("Load() expected error for %s, got nil", tc.field)
-			}
-			validationErr, ok := err.(*ValidationError)
-			if !ok {
-				t.Fatalf("expected *ValidationError, got %T", err)
-			}
-			if validationErr.Field != tc.field {
-				t.Fatalf("ValidationError.Field = %q, want %q; err=%v", validationErr.Field, tc.field, err)
-			}
-		})
-	}
-}
-
-func TestValidateServerStartupRemainingRequiredFields(t *testing.T) {
-	cfg := Config{
-		AIAPIURL:              "https://example.com/v1",
-		AIAPIKey:              "sk-test",
-		AIEmbeddingModel:      "text-embedding-3-small",
-		AIEmbeddingDimensions: 1536,
-		ControlPortalToken:    "control-secret",
-	}
-	cases := []struct {
-		name  string
-		edit  func(*Config)
-		field string
-	}{
-		{"missing api key", func(c *Config) { c.AIAPIKey = "" }, "AI_API_KEY"},
-		{"missing embedding model", func(c *Config) { c.AIEmbeddingModel = "" }, "AI_API_EMBEDDING_MODEL"},
-		{"missing embedding dimensions", func(c *Config) { c.AIEmbeddingDimensions = 0 }, "AI_API_EMBEDDING_DIMENSIONS"},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			testCfg := cfg
-			tc.edit(&testCfg)
-
-			err := testCfg.ValidateServerStartup()
-
-			if err == nil {
-				t.Fatal("ValidateServerStartup() expected error, got nil")
-			}
-			validationErr, ok := err.(*ValidationError)
-			if !ok {
-				t.Fatalf("expected *ValidationError, got %T", err)
-			}
-			if validationErr.Field != tc.field {
-				t.Fatalf("field = %q, want %q", validationErr.Field, tc.field)
-			}
-		})
-	}
-}

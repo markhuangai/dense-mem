@@ -70,7 +70,6 @@ test('UAT-11b: MCP endpoint exposes required memory tools', async () => {
       expect.arrayContaining([
         'recall_memory',
         'trace_memory',
-        'assemble_context',
         'remember',
         'get_memory_placement',
         'dispute_memory_placement',

@@ -16,19 +16,16 @@ services:
 
   postgres:
     volumes:
-      - ./tests/eval/runtime/postgres:/var/lib/postgresql
-
-  neo4j:
-    volumes:
-      - ./tests/eval/runtime/neo4j/data:/data
-      - ./tests/eval/runtime/neo4j/logs:/logs
-      - ./tests/eval/runtime/neo4j/plugins:/plugins
+      - ${V1_COMPOSE_DATA_DIR:-./tests/eval/.runtime/v1}/postgres:/var/lib/postgresql
 
   redis:
     volumes:
-      - ./tests/eval/runtime/redis:/data
+      - ${V1_COMPOSE_DATA_DIR:-./tests/eval/.runtime/v1}/redis:/data
 
   prometheus:
+    # Docker creates a missing bind source as root. Running this local eval
+    # Prometheus container as root avoids write failures in fresh runtime dirs.
+    user: "0:0"
     volumes:
-      - ./tests/eval/runtime/prometheus:/prometheus
+      - ${V1_COMPOSE_DATA_DIR:-./tests/eval/.runtime/v1}/prometheus:/prometheus
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro

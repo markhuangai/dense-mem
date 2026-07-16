@@ -3,6 +3,7 @@ package evalharness
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,28 +12,25 @@ import (
 )
 
 type RunOptions struct {
-	Mode              string
-	SeedManifestPath  string
-	SuitePath         string
-	OutDir            string
-	BaseURL           string
-	APIKey            string
-	ControlURL        string
-	ControlToken      string
-	ImportSeed        bool
-	ImportConcurrency int
-	DirectImport      bool
-	DirectImportBatch int
-	DirectImportTeam  string
-	Neo4jURI          string
-	Neo4jUser         string
-	Neo4jPassword     string
-	Neo4jDatabase     string
-	TracesPath        string
-	MappingPath       string
-	MaxPageSize       int
-	RunID             string
-	Gates             GateOptions
+	Mode                   string
+	SeedManifestPath       string
+	SuitePath              string
+	OutDir                 string
+	BaseURL                string
+	APIKey                 string
+	ControlURL             string
+	ControlToken           string
+	ToolTransport          string
+	ImportSeed             bool
+	ImportConcurrency      int
+	PlacementTimeout       time.Duration
+	ResumeSourceDocIDsPath string
+	TracesPath             string
+	MappingPath            string
+	MaxPageSize            int
+	RunID                  string
+	Gates                  GateOptions
+	Judge                  JudgeOptions
 }
 
 func Run(ctx context.Context, opts RunOptions) (Summary, error) {
@@ -49,43 +47,83 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	if opts.SuitePath == "" {
 		return Summary{}, fmt.Errorf("suite path is required")
 	}
+	if strings.TrimSpace(opts.ResumeSourceDocIDsPath) != "" && (mode != "import" || !opts.ImportSeed) {
+		return Summary{}, fmt.Errorf("resume source document IDs require import mode with --import-seed")
+	}
+	if opts.PlacementTimeout < 0 {
+		return Summary{}, fmt.Errorf("placement timeout must not be negative")
+	}
+	toolTransport := strings.TrimSpace(opts.ToolTransport)
+	if toolTransport == "" {
+		toolTransport = "rest"
+	}
+	if toolTransport != "rest" && toolTransport != "mcp" {
+		return Summary{}, fmt.Errorf("unsupported tool transport %q", opts.ToolTransport)
+	}
+	opts.ToolTransport = toolTransport
+	if opts.PlacementTimeout == 0 {
+		opts.PlacementTimeout = 2 * time.Minute
+	}
+	if opts.Judge.Enabled {
+		if mode != "baseline" && mode != "candidate" {
+			return Summary{}, fmt.Errorf("ai judge is supported only in baseline or candidate mode")
+		}
+		if strings.TrimSpace(opts.Judge.BaseURL) == "" || strings.TrimSpace(opts.Judge.APIKey) == "" || strings.TrimSpace(opts.Judge.Model) == "" {
+			return Summary{}, fmt.Errorf("ai judge requires API URL, API key, and model")
+		}
+		if opts.Judge.Concurrency <= 0 {
+			opts.Judge.Concurrency = 1
+		}
+		if opts.Judge.Timeout < 0 {
+			return Summary{}, fmt.Errorf("ai judge timeout must not be negative")
+		}
+		if opts.Judge.Timeout == 0 {
+			opts.Judge.Timeout = 2 * time.Minute
+		}
+	}
 	runID := opts.RunID
 	if runID == "" {
 		runID = newRunID(mode)
 	}
-	manifest, cases, qrels, expectedDreams, suite, seedHash, err := loadRunInputsWithoutCorpus(opts.SeedManifestPath, opts.SuitePath)
+	manifest, corpus, cases, qrels, expectedDreams, suite, seedHash, err := loadRunInputs(opts.SeedManifestPath, opts.SuitePath)
 	if err != nil {
 		return Summary{}, err
 	}
-	var corpus []CorpusItem
-	if mode == "validate" || (opts.ImportSeed && mode != "import") {
-		corpus, err = LoadCorpus(opts.SeedManifestPath, manifest)
-		if err != nil {
-			return Summary{}, err
-		}
-		if err := validateRunInputs(opts.SeedManifestPath, manifest, corpus, cases, qrels, expectedDreams, suite); err != nil {
-			return Summary{}, err
-		}
-	} else {
-		if err := validateRunInputsWithoutCorpus(opts.SeedManifestPath, manifest, cases, qrels, expectedDreams, suite); err != nil {
-			return Summary{}, err
-		}
+	if err := validateRunInputs(opts.SeedManifestPath, manifest, corpus, cases, qrels, expectedDreams, suite, seedHash); err != nil {
+		return Summary{}, err
+	}
+	importRoute := ""
+	if opts.ImportSeed {
+		importRoute = "remember"
+	}
+	judgeTimeout := ""
+	judgeModel := ""
+	judgeConcurrency := 0
+	if opts.Judge.Enabled {
+		judgeTimeout = opts.Judge.Timeout.String()
+		judgeModel = strings.TrimSpace(opts.Judge.Model)
+		judgeConcurrency = opts.Judge.Concurrency
 	}
 	runConfig := RunConfig{
-		RunID:             runID,
-		Mode:              mode,
-		SeedManifest:      opts.SeedManifestPath,
-		SeedHash:          seedHash,
-		SuitePath:         opts.SuitePath,
-		BaseURL:           opts.BaseURL,
-		ControlURL:        opts.ControlURL,
-		ImportSeed:        opts.ImportSeed,
-		ImportConcurrency: opts.ImportConcurrency,
-		DirectImport:      opts.DirectImport,
-		DirectImportBatch: opts.DirectImportBatch,
-		DirectImportTeam:  opts.DirectImportTeam,
-		TracesPath:        opts.TracesPath,
-		MappingPath:       opts.MappingPath,
+		RunID:                  runID,
+		Mode:                   mode,
+		SeedManifest:           opts.SeedManifestPath,
+		SeedHash:               seedHash,
+		SuitePath:              opts.SuitePath,
+		BaseURL:                opts.BaseURL,
+		ControlURL:             opts.ControlURL,
+		ToolTransport:          opts.ToolTransport,
+		ImportSeed:             opts.ImportSeed,
+		ImportRoute:            importRoute,
+		ImportConcurrency:      opts.ImportConcurrency,
+		PlacementTimeout:       opts.PlacementTimeout.String(),
+		ResumeSourceDocIDsPath: opts.ResumeSourceDocIDsPath,
+		TracesPath:             opts.TracesPath,
+		MappingPath:            opts.MappingPath,
+		AIJudgeEnabled:         opts.Judge.Enabled,
+		AIJudgeModel:           judgeModel,
+		AIJudgeConcurrency:     judgeConcurrency,
+		AIJudgeTimeout:         judgeTimeout,
 	}
 	if mode == "validate" {
 		summary := Summary{
@@ -126,10 +164,12 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		}
 	} else {
 		client := &HTTPClient{
-			BaseURL:      opts.BaseURL,
-			APIKey:       opts.APIKey,
-			ControlURL:   opts.ControlURL,
-			ControlToken: opts.ControlToken,
+			BaseURL:          opts.BaseURL,
+			APIKey:           opts.APIKey,
+			ControlURL:       opts.ControlURL,
+			ControlToken:     opts.ControlToken,
+			PlacementTimeout: opts.PlacementTimeout,
+			ToolTransport:    opts.ToolTransport,
 		}
 		if err := client.EnableEvaluationMode(ctx, opts.MaxPageSize); err != nil {
 			return Summary{}, err
@@ -141,28 +181,38 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			}
 			mappingLoadedFromPath = true
 		}
+		skipSourceDocIDs := map[string]struct{}{}
+		if path := strings.TrimSpace(opts.ResumeSourceDocIDsPath); path != "" {
+			checkpoint, err := loadSourceDocIDs(path)
+			if err != nil {
+				return Summary{}, fmt.Errorf("resume source document IDs: %w", err)
+			}
+			existing, err := client.ExportFragmentMapping(ctx, opts.MaxPageSize)
+			if err != nil {
+				return Summary{}, fmt.Errorf("resume fragment mapping: %w", err)
+			}
+			mergeKnowledgeMapping(&mapping, existing)
+			skipSourceDocIDs = checkpoint
+		}
 		if opts.ImportSeed {
 			if mode == "import" {
 				keepSourceDocIDs := sourceDocIDsForQRelMappings(qrels, expectedDreams)
-				var imported KnowledgeMapping
-				if opts.DirectImport {
-					imported, _, err = DirectImportCorpusFile(ctx, resolveSeedPath(opts.SeedManifestPath, manifest.CorpusFile), DirectImportOptions{
-						TeamID:          opts.DirectImportTeam,
-						BatchSize:       opts.DirectImportBatch,
-						Concurrency:     opts.ImportConcurrency,
-						Neo4jURI:        opts.Neo4jURI,
-						Neo4jUser:       opts.Neo4jUser,
-						Neo4jPassword:   opts.Neo4jPassword,
-						Neo4jDatabase:   opts.Neo4jDatabase,
-						KeepSourceDocID: keepSourceDocIDs,
-					})
-				} else {
-					imported, _, err = client.ImportCorpusFileWithConcurrency(ctx, resolveSeedPath(opts.SeedManifestPath, manifest.CorpusFile), opts.ImportConcurrency, keepSourceDocIDs)
-				}
+				imported, _, err := client.ImportCorpusFileWithConcurrency(
+					ctx,
+					resolveSeedPath(opts.SeedManifestPath, manifest.CorpusFile),
+					opts.ImportConcurrency,
+					keepSourceDocIDs,
+					skipSourceDocIDs,
+				)
 				if err != nil {
 					return Summary{}, err
 				}
 				mergeKnowledgeMapping(&mapping, imported)
+				exported, err := client.ExportKnowledgeMapping(ctx, opts.MaxPageSize)
+				if err != nil {
+					return Summary{}, err
+				}
+				mergeFilteredKnowledgeMapping(&mapping, exported, keepSourceDocIDs)
 			} else {
 				imported, err := client.ImportCorpusWithConcurrency(ctx, corpus, opts.ImportConcurrency)
 				if err != nil {
@@ -228,6 +278,33 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			return Summary{}, err
 		}
 	}
+	if opts.Judge.Enabled {
+		answers, err := LoadAnswerLabels(opts.SeedManifestPath, manifest)
+		if err != nil {
+			return summary, fmt.Errorf("ai judge labels: %w", err)
+		}
+		if opts.OutDir != "" {
+			judgeScoresPath := filepath.Join(opts.OutDir, "judge_scores.jsonl")
+			if _, statErr := os.Stat(judgeScoresPath); statErr == nil {
+				resumeScores, loadErr := LoadJudgeScores(judgeScoresPath)
+				if loadErr != nil {
+					return summary, fmt.Errorf("ai judge resume scores: %w", loadErr)
+				}
+				opts.Judge.ResumeScores = resumeScores
+			} else if !os.IsNotExist(statErr) {
+				return summary, fmt.Errorf("ai judge resume scores: %w", statErr)
+			}
+		}
+		judgeScores, judgeSummary, err := RunAIJudge(ctx, opts.Judge, corpus, IndexCases(cases), IndexQrels(qrels), IndexAnswerLabels(answers), traces)
+		if opts.OutDir != "" {
+			if writeErr := writeJudgeArtifacts(opts.OutDir, judgeScores, judgeSummary, err); writeErr != nil {
+				return summary, writeErr
+			}
+		}
+		if err != nil {
+			return summary, fmt.Errorf("ai judge: %w", err)
+		}
+	}
 	if opts.Gates.Any() {
 		gate := EvaluateGates(summary, opts.Gates)
 		if opts.OutDir != "" {
@@ -285,6 +362,32 @@ func CompareRunDirs(baselineRunDir, candidateRunDir, outDir string) (Comparison,
 	if err != nil {
 		return Comparison{}, err
 	}
+	baselineJudge, baselineHasJudge, err := readOptionalJudgeSummary(filepath.Join(baselineRunDir, "judge_summary.json"))
+	if err != nil {
+		return Comparison{}, err
+	}
+	candidateJudge, candidateHasJudge, err := readOptionalJudgeSummary(filepath.Join(candidateRunDir, "judge_summary.json"))
+	if err != nil {
+		return Comparison{}, err
+	}
+	if baselineHasJudge != candidateHasJudge {
+		return Comparison{}, fmt.Errorf("ai judge artifacts must exist for both baseline and candidate")
+	}
+	if baselineHasJudge {
+		if baselineJudge.Model != candidateJudge.Model {
+			return Comparison{}, fmt.Errorf("ai judge model mismatch: baseline %s candidate %s", baselineJudge.Model, candidateJudge.Model)
+		}
+		if baselineJudge.CaseCount != candidateJudge.CaseCount {
+			return Comparison{}, fmt.Errorf("ai judge case count mismatch: baseline %d candidate %d", baselineJudge.CaseCount, candidateJudge.CaseCount)
+		}
+		comparison.AIJudgeCompared = true
+		comparison.AIJudgeModel = baselineJudge.Model
+		comparison.JudgePassRateDelta = candidateJudge.PassRate - baselineJudge.PassRate
+		comparison.JudgeAnswerabilityDelta = candidateJudge.AverageAnswerabilityScore - baselineJudge.AverageAnswerabilityScore
+		comparison.JudgeRelevanceDelta = candidateJudge.AverageRelevanceScore - baselineJudge.AverageRelevanceScore
+		comparison.JudgeCompletenessDelta = candidateJudge.AverageCompletenessScore - baselineJudge.AverageCompletenessScore
+		comparison.JudgeFaithfulnessDelta = candidateJudge.AverageFaithfulnessScore - baselineJudge.AverageFaithfulnessScore
+	}
 	if outDir == "" {
 		outDir = candidateRunDir
 	}
@@ -292,6 +395,17 @@ func CompareRunDirs(baselineRunDir, candidateRunDir, outDir string) (Comparison,
 		return Comparison{}, err
 	}
 	return comparison, nil
+}
+
+func readOptionalJudgeSummary(path string) (JudgeSummary, bool, error) {
+	var summary JudgeSummary
+	if err := readJSONFile(path, &summary); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return JudgeSummary{}, false, nil
+		}
+		return JudgeSummary{}, false, err
+	}
+	return summary, true, nil
 }
 
 func loadRunInputs(manifestPath, suitePath string) (*SeedManifest, []CorpusItem, []Case, []QRel, []ExpectedDream, []SuiteCase, string, error) {
@@ -326,36 +440,11 @@ func loadRunInputs(manifestPath, suitePath string) (*SeedManifest, []CorpusItem,
 	return manifest, corpus, cases, qrels, expectedDreams, suite, seedHash, nil
 }
 
-func loadRunInputsWithoutCorpus(manifestPath, suitePath string) (*SeedManifest, []Case, []QRel, []ExpectedDream, []SuiteCase, string, error) {
-	manifest, err := LoadSeedManifest(manifestPath)
-	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
-	}
-	cases, err := LoadCases(manifestPath, manifest)
-	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
-	}
-	qrels, err := LoadQrels(manifestPath, manifest)
-	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
-	}
-	expectedDreams, err := LoadExpectedDreams(manifestPath, manifest)
-	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
-	}
-	suite, err := LoadSuite(suitePath)
-	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
-	}
-	seedHash, err := SeedHash(manifestPath, manifest)
-	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
-	}
-	return manifest, cases, qrels, expectedDreams, suite, seedHash, nil
-}
-
-func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []CorpusItem, cases []Case, qrels []QRel, expectedDreams []ExpectedDream, suite []SuiteCase) error {
+func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []CorpusItem, cases []Case, qrels []QRel, expectedDreams []ExpectedDream, suite []SuiteCase, seedHash string) error {
 	if err := validateManifestCounts(manifestPath, manifest, corpus, cases, qrels); err != nil {
+		return err
+	}
+	if err := validateSeedValidationReport(manifestPath, manifest, seedHash); err != nil {
 		return err
 	}
 	caseIndex := IndexCases(cases)
@@ -418,37 +507,39 @@ func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []Cor
 	return nil
 }
 
-func validateRunInputsWithoutCorpus(manifestPath string, manifest *SeedManifest, cases []Case, qrels []QRel, expectedDreams []ExpectedDream, suite []SuiteCase) error {
-	if err := validateManifestCountsWithoutCorpus(manifestPath, manifest, cases, qrels); err != nil {
-		return err
+type seedValidationReport struct {
+	SchemaVersion string `json:"schema_version"`
+	SeedID        string `json:"seed_id"`
+	Status        string `json:"status"`
+	SeedHash      string `json:"seed_hash"`
+}
+
+func validateSeedValidationReport(manifestPath string, manifest *SeedManifest, seedHash string) error {
+	if manifest == nil {
+		return nil
 	}
-	caseIndex := IndexCases(cases)
-	qrelIndex := IndexQrels(qrels)
-	if len(qrelIndex) != len(qrels) {
-		return fmt.Errorf("duplicate qrels case_id detected")
+	reportFile := strings.TrimSpace(manifest.ValidationReportFile)
+	if reportFile == "" {
+		if strings.HasPrefix(manifest.SeedID, "public_6axis_") {
+			return fmt.Errorf("seed %q requires validation_report_file", manifest.SeedID)
+		}
+		return nil
 	}
-	for _, suiteCase := range suite {
-		if _, ok := caseIndex[suiteCase.CaseID]; !ok {
-			return fmt.Errorf("suite case %q missing from seed cases", suiteCase.CaseID)
-		}
-		if _, ok := qrelIndex[suiteCase.CaseID]; !ok {
-			return fmt.Errorf("suite case %q missing from seed qrels", suiteCase.CaseID)
-		}
+	var report seedValidationReport
+	if err := readJSONFile(resolveSeedPath(manifestPath, reportFile), &report); err != nil {
+		return fmt.Errorf("read validation report: %w", err)
 	}
-	for _, dream := range expectedDreams {
-		if _, ok := caseIndex[dream.CaseID]; dream.CaseID != "" && !ok {
-			return fmt.Errorf("expected dream %q references missing case %q", dream.SourceDocID, dream.CaseID)
-		}
+	if report.SchemaVersion != "dense-mem.eval.validation.v1" {
+		return fmt.Errorf("validation report schema_version %q is unsupported", report.SchemaVersion)
 	}
-	for _, qrel := range qrels {
-		if _, ok := caseIndex[qrel.CaseID]; !ok {
-			return fmt.Errorf("qrels case %q missing from seed cases", qrel.CaseID)
-		}
+	if report.SeedID != manifest.SeedID {
+		return fmt.Errorf("validation report seed_id %q does not match manifest seed_id %q", report.SeedID, manifest.SeedID)
 	}
-	for _, c := range cases {
-		if hasSlice(c.Slices, "adversarial") && len(qrelIndex[c.CaseID].BadRefs) == 0 {
-			return fmt.Errorf("adversarial case %q has no bad_refs", c.CaseID)
-		}
+	if report.Status != "passed" {
+		return fmt.Errorf("validation report status = %q, want passed", report.Status)
+	}
+	if report.SeedHash != seedHash {
+		return fmt.Errorf("validation report seed_hash %q does not match current seed hash %q", report.SeedHash, seedHash)
 	}
 	return nil
 }
@@ -470,10 +561,6 @@ func sourceDocIDIndexForCorpus(corpus []CorpusItem) map[string]struct{} {
 			continue
 		}
 		corpusIndex[item.SourceDocID] = struct{}{}
-		for i := range item.Claims {
-			corpusIndex[typedClaimSourceDocID(item.SourceDocID, i+1)] = struct{}{}
-			corpusIndex[typedFactSourceDocID(item.SourceDocID, i+1)] = struct{}{}
-		}
 	}
 	return corpusIndex
 }
@@ -530,43 +617,6 @@ func validateManifestCounts(manifestPath string, manifest *SeedManifest, corpus 
 	return nil
 }
 
-func validateManifestCountsWithoutCorpus(manifestPath string, manifest *SeedManifest, cases []Case, qrels []QRel) error {
-	if manifest == nil || len(manifest.Counts) == 0 {
-		return nil
-	}
-	if err := validateCount(manifest.Counts, "cases", len(cases)); err != nil {
-		return err
-	}
-	if err := validateCount(manifest.Counts, "qrels", len(qrels)); err != nil {
-		return err
-	}
-	for _, optional := range []struct {
-		countName string
-		fileName  string
-	}{
-		{countName: "answers", fileName: manifest.AnswersFile},
-		{countName: "hard_negatives", fileName: manifest.HardNegativesFile},
-		{countName: "transforms", fileName: manifest.TransformsFile},
-		{countName: "dreams", fileName: manifest.DreamsFile},
-	} {
-		expected, ok := manifest.Counts[optional.countName]
-		if !ok {
-			continue
-		}
-		if strings.TrimSpace(optional.fileName) == "" {
-			return fmt.Errorf("manifest count %s=%d but file is not set", optional.countName, expected)
-		}
-		actual, err := countSeedJSONLRows(manifestPath, optional.fileName)
-		if err != nil {
-			return err
-		}
-		if actual != expected {
-			return fmt.Errorf("manifest count %s=%d mismatch: got %d", optional.countName, expected, actual)
-		}
-	}
-	return nil
-}
-
 func sourceDocIDsForQRelMappings(qrels []QRel, dreams []ExpectedDream) map[string]struct{} {
 	out := map[string]struct{}{}
 	addRefs := func(refs []Ref) {
@@ -587,6 +637,26 @@ func sourceDocIDsForQRelMappings(qrels []QRel, dreams []ExpectedDream) map[strin
 		addRefs(dream.SourceRefs)
 	}
 	return out
+}
+
+func loadSourceDocIDs(path string) (map[string]struct{}, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	out := map[string]struct{}{}
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		if sourceDocID := strings.TrimSpace(scanner.Text()); sourceDocID != "" {
+			out[sourceDocID] = struct{}{}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func validateCount(counts map[string]int, name string, actual int) error {
@@ -691,6 +761,21 @@ func writeImportArtifacts(outDir string, manifest *SeedManifest, suite []SuiteCa
 		return err
 	}
 	return writeJSONFile(filepath.Join(outDir, "knowledge_mapping.json"), mapping)
+}
+
+func writeJudgeArtifacts(outDir string, scores []JudgeScore, summary JudgeSummary, judgeErr error) error {
+	if err := writeJSONL(filepath.Join(outDir, "judge_scores.jsonl"), scores); err != nil {
+		return err
+	}
+	if judgeErr != nil {
+		return writeJSONFile(filepath.Join(outDir, "judge_error.json"), map[string]any{
+			"model":      summary.Model,
+			"case_count": len(scores),
+			"error":      judgeErr.Error(),
+			"created_at": time.Now().UTC(),
+		})
+	}
+	return writeJSONFile(filepath.Join(outDir, "judge_summary.json"), summary)
 }
 
 func newRunID(mode string) string {

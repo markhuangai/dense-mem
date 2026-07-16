@@ -21,6 +21,7 @@ type profileRepoTestConfig struct {
 func (c *profileRepoTestConfig) GetPostgresDSN() string {
 	return c.dsn
 }
+func (c *profileRepoTestConfig) GetPostgresReadDSN() string { return "" }
 
 func setupProfileRepositoryTest(t *testing.T, ctx context.Context) (*ProfileRepositoryImpl, func()) {
 	t.Helper()

@@ -589,134 +589,88 @@ func knowledgeSchemas() map[string]any {
 			"required": []string{"detected", "community_count", "node_count"},
 		},
 
-		"SemanticAssertionResponse": map[string]any{
+		"RecallAuthor": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"assertion_id":       map[string]any{"type": "string"},
-				"team_id":            map[string]any{"type": "string"},
-				"owner_profile_id":   map[string]any{"type": "string"},
-				"subject_entity_id":  map[string]any{"type": "string"},
-				"predicate_key":      map[string]any{"type": "string"},
-				"relationship_type":  map[string]any{"type": "string"},
-				"object_entity_id":   map[string]any{"type": "string"},
-				"object_value":       map[string]any{"type": "object", "additionalProperties": true},
-				"tier":               map[string]any{"type": "string", "enum": []string{"candidate", "validated_claim", "fact", "dream"}},
-				"status":             map[string]any{"type": "string", "enum": []string{"active", "needs_review", "quarantined", "superseded", "disputed", "retracted", "rejected"}},
-				"policy_family":      map[string]any{"type": "string", "enum": []string{"event_append_only", "multi_state", "single_state", "versioned"}},
-				"polarity":           map[string]any{"type": "string"},
-				"modality":           map[string]any{"type": "string"},
-				"valid_from":         map[string]any{"type": "string", "format": "date-time"},
-				"valid_to":           map[string]any{"type": "string", "format": "date-time"},
-				"recorded_at":        map[string]any{"type": "string", "format": "date-time"},
-				"recorded_to":        map[string]any{"type": "string", "format": "date-time"},
-				"extract_conf":       map[string]any{"type": "number"},
-				"resolution_conf":    map[string]any{"type": "number"},
-				"source_quality":     map[string]any{"type": "number"},
-				"support_count":      map[string]any{"type": "integer"},
-				"source_group_count": map[string]any{"type": "integer"},
-				"evidence":           map[string]any{"type": "array", "items": map[string]any{"type": "object", "additionalProperties": true}},
-				"projection_version": map[string]any{"type": "string"},
-				"created_at":         map[string]any{"type": "string", "format": "date-time"},
-				"updated_at":         map[string]any{"type": "string", "format": "date-time"},
+				"profile_id": map[string]any{"type": "string"},
+				"name":       map[string]any{"type": "string"},
 			},
+			"additionalProperties": false,
 		},
-
-		"SemanticPathResponse": map[string]any{
+		"RecallEntity": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"nodes": map[string]any{
-					"type": "array",
-					"items": map[string]any{"type": "object", "properties": map[string]any{
-						"key": map[string]any{"type": "string"}, "id": map[string]any{"type": "string"}, "type": map[string]any{"type": "string"}, "name": map[string]any{"type": "string"},
-					}},
-				},
-				"edges": map[string]any{
-					"type":  "array",
-					"items": map[string]any{"type": "object", "additionalProperties": true},
-				},
+				"entity_id": map[string]any{"type": "string"},
+				"name":      map[string]any{"type": "string"},
+				"kind":      map[string]any{"type": "string"},
 			},
+			"required":             []string{"name"},
+			"additionalProperties": false,
 		},
-
-		"SemanticFrontierHintResponse": map[string]any{
+		"RecallObject": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"from_entity_id": map[string]any{"type": "string"},
-				"direction":      map[string]any{"type": "string", "enum": []string{"incoming", "outgoing"}},
-				"relationship":   map[string]any{"type": "string"},
-				"assertion_id":   map[string]any{"type": "string"},
-				"neighbor":       map[string]any{"type": "object", "additionalProperties": true},
-				"tier":           map[string]any{"type": "string"},
+				"entity_id": map[string]any{"type": "string"},
+				"name":      map[string]any{"type": "string"},
+				"kind":      map[string]any{"type": "string"},
+				"value":     map[string]any{"type": "string"},
+				"type":      map[string]any{"type": "string"},
 			},
+			"additionalProperties": false,
 		},
-
-		// RecallHitResponse is one ranked result returned by GET /api/v1/recall.
-		// Tier classifies the knowledge-pipeline level:
-		//   "1"   = active Fact (highest authority)
-		//   "1.5" = validated Claim
-		//   "2"   = SourceFragment (raw evidence)
-		"RecallHitResponse": map[string]any{
+		"RecallRelationship": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"tier": map[string]any{
-					"type":        "string",
-					"enum":        []string{"0.75", "1", "1.25", "1.5", "1.75", "2"},
-					"description": "Knowledge-pipeline tier of this hit: 0.75/1.25/1.75=V2 fact/validated/candidate assertion; 1/1.5/2=legacy fact/claim/fragment.",
-				},
-				"score": map[string]any{
-					"type":        "number",
-					"format":      "float",
-					"description": "Normalised relevance score after tier weighting.",
-				},
-				"fragment": map[string]any{
-					"$ref":        "#/components/schemas/FragmentResponse",
-					"description": "Populated for tier-2 (SourceFragment) hits.",
-				},
-				"claim": map[string]any{
-					"$ref":        "#/components/schemas/ClaimResponse",
-					"description": "Populated for tier-1.5 (validated Claim) hits.",
-				},
-				"fact": map[string]any{
-					"$ref":        "#/components/schemas/FactResponse",
-					"description": "Populated for tier-1 (active Fact) hits.",
-				},
-				"assertion": map[string]any{
-					"$ref":        "#/components/schemas/SemanticAssertionResponse",
-					"description": "Populated for semantic-edge V2 assertion hits.",
-				},
-				"paths": map[string]any{
-					"type":  "array",
-					"items": map[string]any{"$ref": "#/components/schemas/SemanticPathResponse"},
-				},
-				"frontier": map[string]any{
-					"type":  "array",
-					"items": map[string]any{"$ref": "#/components/schemas/SemanticFrontierHintResponse"},
-				},
-				"semantic_rank": map[string]any{
-					"type":        "integer",
-					"description": "1-based rank from the semantic branch; 0 if absent.",
-				},
-				"keyword_rank": map[string]any{
-					"type":        "integer",
-					"description": "1-based rank from the keyword branch; 0 if absent.",
-				},
-				"final_score": map[string]any{
-					"type":        "number",
-					"format":      "float",
-					"description": "Reciprocal Rank Fusion score (fragment hits only).",
-				},
+				"relationship_id": map[string]any{"type": "string"},
+				"subject":         map[string]any{"$ref": "#/components/schemas/RecallEntity"},
+				"predicate":       map[string]any{"type": "string"},
+				"object":          map[string]any{"$ref": "#/components/schemas/RecallObject"},
+				"polarity":        map[string]any{"type": "string", "enum": []string{"+", "-"}},
 			},
+			"required":             []string{"relationship_id", "subject", "predicate", "object"},
+			"additionalProperties": false,
 		},
-
-		// RecallResponse wraps the ranked list returned by GET /api/v1/recall.
+		"RecallEvidenceContext": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"evidence_id": map[string]any{"type": "string"},
+				"context":     map[string]any{"type": "string"},
+			},
+			"required":             []string{"evidence_id", "context"},
+			"additionalProperties": false,
+		},
+		"RecallDiscoveryPath": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"relationships": map[string]any{
+					"type":     "array",
+					"maxItems": 2,
+					"items":    map[string]any{"$ref": "#/components/schemas/RecallRelationship"},
+				},
+				"evidence_ids": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			},
+			"required":             []string{"relationships", "evidence_ids"},
+			"additionalProperties": false,
+		},
+		"RecallPayload": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"recall_id":          map[string]any{"type": "string"},
+				"results":            map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/RecallEvidenceContext"}},
+				"discovery_paths":    map[string]any{"type": "array", "maxItems": 5, "items": map[string]any{"$ref": "#/components/schemas/RecallDiscoveryPath"}},
+				"discovery_guidance": map[string]any{"type": "string"},
+				"related_hypotheses": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
+			},
+			"required":             []string{"recall_id", "results", "discovery_paths", "discovery_guidance", "related_hypotheses"},
+			"additionalProperties": false,
+		},
 		"RecallResponse": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"data": map[string]any{
-					"type":  "array",
-					"items": map[string]any{"$ref": "#/components/schemas/RecallHitResponse"},
-				},
+				"data": map[string]any{"$ref": "#/components/schemas/RecallPayload"},
 			},
-			"required": []string{"data"},
+			"required":             []string{"data"},
+			"additionalProperties": false,
 		},
 
 		// ToolCatalogEntry mirrors GET /api/v1/tools item payloads.

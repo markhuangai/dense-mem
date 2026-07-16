@@ -138,7 +138,6 @@ ai:
           required: true
           tools:
             - recall_memory
-            - assemble_context
             - get_memory
             - list_communities
             - get_community_summary
@@ -149,7 +148,6 @@ ai:
           required: true
           tools:
             - recall_memory
-            - assemble_context
             - get_memory
             - list_communities
             - get_community_summary
@@ -160,7 +158,6 @@ ai:
           required: true
           tools:
             - recall_memory
-            - assemble_context
             - get_memory
             - list_communities
             - get_community_summary
@@ -171,7 +168,6 @@ ai:
           required: true
           tools:
             - recall_memory
-            - assemble_context
             - get_memory
             - list_communities
             - get_community_summary

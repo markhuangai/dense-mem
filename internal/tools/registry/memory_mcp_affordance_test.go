@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -18,11 +19,19 @@ func TestBuildDefault_MemoryToolDescriptionsIncludeRecallAffordances(t *testing.
 	}{
 		{
 			name: "recall_memory",
-			want: []string{"prior user preferences", "project decisions", "active goals", "recall_event", "dream_feedback"},
+			want: []string{"prior user preferences", "project decisions", "active goals", "recall_id", "related_hypotheses"},
 		},
 		{
 			name: "remember",
-			want: []string{"raw evidence", "smallest stable entities", "open-vocabulary semantic relationship", "independently"},
+			want: []string{"durable memory evidence", "project decision", "Dense-Mem decides"},
+		},
+		{
+			name: "import_memories",
+			want: []string{"historical conversations", "not normal live chat turns"},
+		},
+		{
+			name: "reflect_memories",
+			want: []string{"memory health", "clarifications"},
 		},
 	}
 	for _, tc := range cases {
@@ -40,7 +49,39 @@ func TestBuildDefault_MemoryToolDescriptionsIncludeRecallAffordances(t *testing.
 	}
 }
 
-func TestBuildDefault_RecallInvokerMapsTieredHits(t *testing.T) {
+func TestRecallMemorySchemaSupportsBoundedFollowUpContext(t *testing.T) {
+	reg, _ := BuildDefault(Dependencies{})
+	tool, _ := reg.Get("recall_memory")
+	properties := tool.InputSchema["properties"].(map[string]any)
+	known, ok := properties["known_relationship_ids"].(map[string]any)
+	if !ok {
+		t.Fatal("recall_memory schema missing known_relationship_ids")
+	}
+	if known["maxItems"] != recallservice.MaxKnownRelationshipIDs || known["uniqueItems"] != true {
+		t.Fatalf("known_relationship_ids schema = %#v", known)
+	}
+	knownEvidence, ok := properties["known_evidence_ids"].(map[string]any)
+	if !ok {
+		t.Fatal("recall_memory schema missing known_evidence_ids")
+	}
+	if knownEvidence["maxItems"] != recallservice.MaxKnownEvidenceIDs || knownEvidence["uniqueItems"] != true {
+		t.Fatalf("known_evidence_ids schema = %#v", knownEvidence)
+	}
+	expand, ok := properties["expand_from_entity_ids"].(map[string]any)
+	if !ok {
+		t.Fatal("recall_memory schema missing expand_from_entity_ids")
+	}
+	if expand["maxItems"] != recallservice.MaxExpandFromEntityIDs || expand["uniqueItems"] != true {
+		t.Fatalf("expand_from_entity_ids schema = %#v", expand)
+	}
+	for _, removed := range []string{"mode", "include_evidence", "use_communities", "exclude_relationship_ids", "include_hypotheses"} {
+		if _, ok := properties[removed]; ok {
+			t.Fatalf("recall_memory schema retained removed input %q", removed)
+		}
+	}
+}
+
+func TestBuildDefault_RecallInvokerRendersCompactContext(t *testing.T) {
 	reg, _ := BuildDefault(Dependencies{Recall: stubRecallWithTieredHits{}})
 	tool, _ := reg.Get("recall_memory")
 
@@ -48,98 +89,60 @@ func TestBuildDefault_RecallInvokerMapsTieredHits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recall_memory Invoke: %v", err)
 	}
-	results := out["results"].([]map[string]any)
+	results := out["results"].([]any)
 	if len(results) != 3 {
 		t.Fatalf("results length = %d, want 3: %v", len(results), results)
 	}
-
-	fact := results[0]
-	if fact["tier"] != recallservice.TierActiveFact {
-		t.Fatalf("fact tier = %v, want %s", fact["tier"], recallservice.TierActiveFact)
+	fact := results[0].(map[string]any)
+	if fact["evidence_id"] != "fact-hit" || !strings.Contains(fact["context"].(string), "active MCP recall") {
+		t.Fatalf("fact result = %v", fact)
 	}
-	factPayload, ok := fact["fact"].(map[string]any)
-	if !ok || factPayload["fact_id"] != "fact-hit" || factPayload["subject"] != "Dense-Mem project" {
-		t.Fatalf("fact payload = %v, want fact-hit Dense-Mem project", fact["fact"])
+	if _, ok := fact["score"]; ok {
+		t.Fatalf("fact result leaked score: %v", fact)
 	}
-
-	claim := results[1]
-	if claim["tier"] != recallservice.TierValidatedClaim {
-		t.Fatalf("claim tier = %v, want %s", claim["tier"], recallservice.TierValidatedClaim)
+	if _, ok := fact["trace_available"]; ok {
+		t.Fatalf("fact result leaked trace_available: %v", fact)
 	}
-	claimPayload, ok := claim["claim"].(map[string]any)
-	if !ok || claimPayload["claim_id"] != "claim-hit" || claimPayload["predicate"] != "prefers" {
-		t.Fatalf("claim payload = %v, want claim-hit prefers", claim["claim"])
+	claim := results[1].(map[string]any)
+	if claim["evidence_id"] != "claim-hit" || !strings.Contains(claim["context"].(string), "active memory usage") {
+		t.Fatalf("claim result = %v", claim)
 	}
-	if _, ok := claimPayload["last_verifier_response"]; ok {
-		t.Fatalf("claim payload leaked last_verifier_response: %v", claimPayload)
+	if _, ok := claim["last_verifier_response"]; ok {
+		t.Fatalf("claim result leaked verifier response: %v", claim)
 	}
-
-	fragment := results[2]
-	if fragment["tier"] != recallservice.TierFragment || fragment["id"] != "fragment-hit" {
-		t.Fatalf("fragment result = %v, want tier-2 flat fragment-hit", fragment)
+	fragment := results[2].(map[string]any)
+	if fragment["evidence_id"] != "fragment-hit" || fragment["context"] != "preferences" {
+		t.Fatalf("fragment result = %v", fragment)
 	}
-	if fragment["score"] != 0.25 {
-		t.Fatalf("fragment score = %v, want 0.25", fragment["score"])
+	if out["recall_id"] == "" || out["discovery_guidance"] != recallservice.DiscoveryGuidance {
+		t.Fatalf("recall_id/guidance = %v/%v", out["recall_id"], out["discovery_guidance"])
 	}
-}
-
-func TestRecallHitToMapInfersTierAndScore(t *testing.T) {
-	fragmentHit, err := recallHitToMap(recallservice.RecallHit{
-		Fragment:   &domain.Fragment{FragmentID: "fragment-inferred", ProfileID: "profile-1"},
-		FinalScore: 0.33,
-	})
-	if err != nil {
-		t.Fatalf("fragment recallHitToMap: %v", err)
+	if paths, ok := out["discovery_paths"].([]any); !ok || len(paths) != 0 {
+		t.Fatalf("discovery_paths = %v, want empty", out["discovery_paths"])
 	}
-	if fragmentHit["tier"] != recallservice.TierFragment || fragmentHit["score"] != 0.33 {
-		t.Fatalf("fragment hit = %v, want inferred tier and final score", fragmentHit)
-	}
-
-	claimHit, err := recallHitToMap(recallservice.RecallHit{
-		Claim: &domain.Claim{
-			ClaimID:              "claim-inferred",
-			ProfileID:            "profile-1",
-			EntailmentVerdict:    domain.VerdictEntailed,
-			LastVerifierResponse: "internal verifier trace",
-			Status:               domain.StatusValidated,
-		},
-	})
-	if err != nil {
-		t.Fatalf("claim recallHitToMap: %v", err)
-	}
-	if claimHit["tier"] != recallservice.TierValidatedClaim {
-		t.Fatalf("claim hit tier = %v, want %s", claimHit["tier"], recallservice.TierValidatedClaim)
-	}
-	claimPayload := claimHit["claim"].(map[string]any)
-	if _, ok := claimPayload["last_verifier_response"]; ok {
-		t.Fatalf("claim hit leaked last_verifier_response: %v", claimPayload)
-	}
-
-	factHit, err := recallHitToMap(recallservice.RecallHit{
-		Fact: &domain.Fact{
-			FactID:    "fact-inferred",
-			ProfileID: "profile-1",
-			Status:    domain.FactStatusActive,
-		},
-	})
-	if err != nil {
-		t.Fatalf("fact recallHitToMap: %v", err)
-	}
-	if factHit["tier"] != recallservice.TierActiveFact {
-		t.Fatalf("fact hit tier = %v, want %s", factHit["tier"], recallservice.TierActiveFact)
+	for _, removed := range []string{"mode", "evidences", "connections", "fragments", "frontier_hints", "related_dreams", "clarifications", "next_page_cursor"} {
+		if _, ok := out[removed]; ok {
+			t.Fatalf("compact response retained removed field %q: %v", removed, out)
+		}
 	}
 }
 
-func TestRecallHitToMapReturnsSerializationError(t *testing.T) {
-	_, err := recallHitToMap(recallservice.RecallHit{
-		Fact: &domain.Fact{
-			FactID:    "bad-fact",
-			ProfileID: "profile-1",
-			Metadata:  map[string]any{"bad": func() {}},
-		},
-	})
-	if err == nil {
-		t.Fatal("recallHitToMap error = nil, want serialization error")
+func TestRecallMemoryOutputSchemaIsCompactAndMetadataFree(t *testing.T) {
+	reg, _ := BuildDefault(Dependencies{})
+	tool, _ := reg.Get("recall_memory")
+	raw, err := json.Marshal(tool.OutputSchema)
+	if err != nil {
+		t.Fatalf("json.Marshal(OutputSchema) error = %v", err)
+	}
+	for _, required := range []string{"recall_id", "results", "discovery_paths", "discovery_guidance", "related_hypotheses"} {
+		if !strings.Contains(string(raw), required) {
+			t.Fatalf("output schema missing %q: %s", required, raw)
+		}
+	}
+	for _, forbidden := range []string{"evidences", "connections", "clarifications", "fragments", "frontier_hints", "related_dreams", "contract_version", "embedding", "semantic_rank", "keyword_rank", "final_score"} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Fatalf("output schema contains %q: %s", forbidden, raw)
+		}
 	}
 }
 

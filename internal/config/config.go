@@ -16,6 +16,7 @@ const (
 // Consumers and tests depend on this abstraction rather than the concrete struct.
 type ConfigProvider interface {
 	GetPostgresDSN() string
+	GetPostgresReadDSN() string
 	GetNeo4jURI() string
 	GetNeo4jUser() string
 	GetNeo4jPassword() string
@@ -71,6 +72,7 @@ func AIVerifierTemperatureDisabled(cfg ConfigProvider) bool {
 // All fields are populated from environment variables with sensible defaults.
 type Config struct {
 	PostgresDSN                     string
+	PostgresReadDSN                 string
 	Neo4jURI                        string
 	Neo4jUser                       string
 	Neo4jPassword                   string
@@ -97,13 +99,27 @@ type Config struct {
 	// Knowledge-pipeline knobs (AC-X3)
 	AIVerifierAPIURL             string
 	AIVerifierAPIKey             string `json:"-"`
+	AIReviewerModel              string
 	AIVerifierModel              string
 	AIVerifierDisableTemperature bool
 	AIVerifierTimeoutSeconds     int
 	AIVerifierMaxConcurrency     int
+	MemoryPlacementWorkerCount   int
+	MemoryPlacementMaxAttempts   int
+	MemoryPlacementPollSeconds   int
+	EmbeddingWorkerCount         int
+	EmbeddingBatchSize           int
+	AIEmbeddingMaxConcurrency    int
 	ClaimWriteRateLimit          int
 	ClaimReadRateLimit           int
 	RecallValidatedClaimWeight   float64
+	RecallRRFEnabled             bool
+	RecallRRFK                   int
+	RecallRRFBranchWeights       string
+	RecallBranchPriority         string
+	RecallBranchLimitMultiplier  int
+	RecallBranchLimitFloor       int
+	RecallBranchLimitMax         int
 	PromoteTxTimeoutSeconds      int
 	SkillPackImportHistoryDays   int
 	AICommunityMaxNodes          int
@@ -121,6 +137,7 @@ var _ ConfigProvider = (*Config)(nil)
 
 // Getters for ConfigProvider interface
 func (c *Config) GetPostgresDSN() string            { return c.PostgresDSN }
+func (c *Config) GetPostgresReadDSN() string        { return c.PostgresReadDSN }
 func (c *Config) GetNeo4jURI() string               { return c.Neo4jURI }
 func (c *Config) GetNeo4jUser() string              { return c.Neo4jUser }
 func (c *Config) GetNeo4jPassword() string          { return c.Neo4jPassword }
@@ -141,6 +158,7 @@ func (c *Config) GetAIAPIKey() string               { return c.AIAPIKey }
 func (c *Config) GetAIEmbeddingModel() string       { return c.AIEmbeddingModel }
 func (c *Config) GetAIEmbeddingDimensions() int     { return c.AIEmbeddingDimensions }
 func (c *Config) GetAIEmbeddingTimeoutSeconds() int { return c.AIEmbeddingTimeoutSeconds }
+func (c *Config) GetAIEmbeddingMaxConcurrency() int { return c.AIEmbeddingMaxConcurrency }
 func (c *Config) IsEmbeddingConfigured() bool {
 	return c.AIAPIURL != "" && c.AIAPIKey != "" && c.AIEmbeddingModel != "" && c.AIEmbeddingDimensions > 0
 }
@@ -158,6 +176,12 @@ func (c *Config) GetAIVerifierAPIKey() string {
 	}
 	return c.AIAPIKey
 }
+func (c *Config) GetAIReviewerModel() string {
+	if strings.TrimSpace(c.AIReviewerModel) != "" {
+		return c.AIReviewerModel
+	}
+	return c.AIVerifierModel
+}
 func (c *Config) GetAIVerifierModel() string { return c.AIVerifierModel }
 func (c *Config) GetAIVerifierDisableTemperature() bool {
 	return c.AIVerifierDisableTemperature
@@ -169,9 +193,21 @@ func (c *Config) GetAIVerifierTimeoutSeconds() int {
 	return 60
 }
 func (c *Config) GetAIVerifierMaxConcurrency() int       { return c.AIVerifierMaxConcurrency }
+func (c *Config) GetMemoryPlacementWorkerCount() int     { return c.MemoryPlacementWorkerCount }
+func (c *Config) GetMemoryPlacementMaxAttempts() int     { return c.MemoryPlacementMaxAttempts }
+func (c *Config) GetMemoryPlacementPollSeconds() int     { return c.MemoryPlacementPollSeconds }
+func (c *Config) GetEmbeddingWorkerCount() int           { return c.EmbeddingWorkerCount }
+func (c *Config) GetEmbeddingBatchSize() int             { return c.EmbeddingBatchSize }
 func (c *Config) GetClaimWriteRateLimit() int            { return c.ClaimWriteRateLimit }
 func (c *Config) GetClaimReadRateLimit() int             { return c.ClaimReadRateLimit }
 func (c *Config) GetRecallValidatedClaimWeight() float64 { return c.RecallValidatedClaimWeight }
+func (c *Config) GetRecallRRFEnabled() bool              { return c.RecallRRFEnabled }
+func (c *Config) GetRecallRRFK() int                     { return c.RecallRRFK }
+func (c *Config) GetRecallRRFBranchWeights() string      { return c.RecallRRFBranchWeights }
+func (c *Config) GetRecallBranchPriority() string        { return c.RecallBranchPriority }
+func (c *Config) GetRecallBranchLimitMultiplier() int    { return c.RecallBranchLimitMultiplier }
+func (c *Config) GetRecallBranchLimitFloor() int         { return c.RecallBranchLimitFloor }
+func (c *Config) GetRecallBranchLimitMax() int           { return c.RecallBranchLimitMax }
 func (c *Config) GetPromoteTxTimeoutSeconds() int        { return c.PromoteTxTimeoutSeconds }
 func (c *Config) GetMemoryPackImportHistoryDays() int    { return c.SkillPackImportHistoryDays }
 func (c *Config) GetSkillPackImportHistoryDays() int     { return c.SkillPackImportHistoryDays }
@@ -317,6 +353,7 @@ func Load() (Config, error) {
 
 	// String fields with defaults
 	cfg.PostgresDSN = os.Getenv("POSTGRES_DSN")
+	cfg.PostgresReadDSN = strings.TrimSpace(os.Getenv("POSTGRES_READ_DSN"))
 	cfg.Neo4jURI = os.Getenv("NEO4J_URI")
 	cfg.Neo4jUser = os.Getenv("NEO4J_USER")
 	cfg.Neo4jPassword = os.Getenv("NEO4J_PASSWORD")
@@ -342,6 +379,7 @@ func Load() (Config, error) {
 		{"SSE_MAX_CONCURRENT_STREAMS", 10, func(c *Config, value int) { c.SSEMaxConcurrentStreams = value }},
 		{"AI_API_EMBEDDING_DIMENSIONS", 0, func(c *Config, value int) { c.AIEmbeddingDimensions = value }},
 		{"AI_API_EMBEDDING_TIMEOUT_SECONDS", 30, func(c *Config, value int) { c.AIEmbeddingTimeoutSeconds = value }},
+		{"AI_API_EMBEDDING_MAX_CONCURRENCY", 8, func(c *Config, value int) { c.AIEmbeddingMaxConcurrency = value }},
 	}); err != nil {
 		return cfg, err
 	}
@@ -369,6 +407,7 @@ func Load() (Config, error) {
 		cfg.AIVerifierAPIKey = cfg.AIAPIKey
 	}
 	cfg.AIVerifierModel = getEnvOrDefault("AI_VERIFIER_MODEL", "gpt-4o-mini")
+	cfg.AIReviewerModel = strings.TrimSpace(os.Getenv("AI_REVIEWER_MODEL"))
 	cfg.AIVerifierDisableTemperature, err = parseBoolOrDefault("AI_VERIFIER_DISABLE_TEMPERATURE", false)
 	if err != nil {
 		return cfg, err
@@ -377,6 +416,11 @@ func Load() (Config, error) {
 	if err := applyIntEnvSpecs(&cfg, []intEnvSpec{
 		{"AI_VERIFIER_TIMEOUT_SECONDS", 60, func(c *Config, value int) { c.AIVerifierTimeoutSeconds = value }},
 		{"AI_VERIFIER_MAX_CONCURRENCY", 5, func(c *Config, value int) { c.AIVerifierMaxConcurrency = value }},
+		{"MEMORY_PLACEMENT_WORKER_COUNT", 1, func(c *Config, value int) { c.MemoryPlacementWorkerCount = value }},
+		{"MEMORY_PLACEMENT_MAX_ATTEMPTS", 5, func(c *Config, value int) { c.MemoryPlacementMaxAttempts = value }},
+		{"MEMORY_PLACEMENT_POLL_SECONDS", 5, func(c *Config, value int) { c.MemoryPlacementPollSeconds = value }},
+		{"EMBEDDING_WORKER_COUNT", 2, func(c *Config, value int) { c.EmbeddingWorkerCount = value }},
+		{"EMBEDDING_BATCH_SIZE", 64, func(c *Config, value int) { c.EmbeddingBatchSize = value }},
 		{"CLAIM_WRITE_RATE_LIMIT", 60, func(c *Config, value int) { c.ClaimWriteRateLimit = value }},
 		{"CLAIM_READ_RATE_LIMIT", 300, func(c *Config, value int) { c.ClaimReadRateLimit = value }},
 	}); err != nil {
@@ -385,6 +429,20 @@ func Load() (Config, error) {
 
 	cfg.RecallValidatedClaimWeight, err = parseFloatOrDefault("RECALL_VALIDATED_CLAIM_WEIGHT", 0.5)
 	if err != nil {
+		return cfg, err
+	}
+	cfg.RecallRRFEnabled, err = parseBoolOrDefault("RECALL_RRF_ENABLED", false)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.RecallRRFBranchWeights = getEnvOrDefault("RECALL_RRF_BRANCH_WEIGHTS", "exact=2,evidence_text=1,evidence_vector=1")
+	cfg.RecallBranchPriority = getEnvOrDefault("RECALL_BRANCH_PRIORITY", "exact,evidence_vector,evidence_text")
+	if err := applyIntEnvSpecs(&cfg, []intEnvSpec{
+		{"RECALL_RRF_K", 60, func(c *Config, value int) { c.RecallRRFK = value }},
+		{"RECALL_BRANCH_LIMIT_MULTIPLIER", 6, func(c *Config, value int) { c.RecallBranchLimitMultiplier = value }},
+		{"RECALL_BRANCH_LIMIT_FLOOR", 60, func(c *Config, value int) { c.RecallBranchLimitFloor = value }},
+		{"RECALL_BRANCH_LIMIT_MAX", 200, func(c *Config, value int) { c.RecallBranchLimitMax = value }},
+	}); err != nil {
 		return cfg, err
 	}
 
@@ -425,24 +483,10 @@ func Load() (Config, error) {
 		}
 	}
 
-	if cfg.Neo4jURI == "" {
+	if cfg.PostgresReadDSN != "" {
 		return cfg, &ValidationError{
-			Field:   "NEO4J_URI",
-			Message: "required field is empty",
-		}
-	}
-
-	if cfg.Neo4jUser == "" {
-		return cfg, &ValidationError{
-			Field:   "NEO4J_USER",
-			Message: "required field is empty",
-		}
-	}
-
-	if cfg.Neo4jPassword == "" {
-		return cfg, &ValidationError{
-			Field:   "NEO4J_PASSWORD",
-			Message: "required field is empty",
+			Field:   "POSTGRES_READ_DSN",
+			Message: "read replicas are not supported in this release",
 		}
 	}
 
@@ -466,10 +510,20 @@ func Load() (Config, error) {
 		{"SSE_HEARTBEAT_SECONDS", cfg.SSEHeartbeatSeconds},
 		{"SSE_MAX_DURATION_SECONDS", cfg.SSEMaxDurationSeconds},
 		{"SSE_MAX_CONCURRENT_STREAMS", cfg.SSEMaxConcurrentStreams},
+		{"AI_API_EMBEDDING_MAX_CONCURRENCY", cfg.AIEmbeddingMaxConcurrency},
 		{"AI_VERIFIER_TIMEOUT_SECONDS", cfg.AIVerifierTimeoutSeconds},
 		{"AI_VERIFIER_MAX_CONCURRENCY", cfg.AIVerifierMaxConcurrency},
+		{"MEMORY_PLACEMENT_WORKER_COUNT", cfg.MemoryPlacementWorkerCount},
+		{"MEMORY_PLACEMENT_MAX_ATTEMPTS", cfg.MemoryPlacementMaxAttempts},
+		{"MEMORY_PLACEMENT_POLL_SECONDS", cfg.MemoryPlacementPollSeconds},
+		{"EMBEDDING_WORKER_COUNT", cfg.EmbeddingWorkerCount},
+		{"EMBEDDING_BATCH_SIZE", cfg.EmbeddingBatchSize},
 		{"CLAIM_WRITE_RATE_LIMIT", cfg.ClaimWriteRateLimit},
 		{"CLAIM_READ_RATE_LIMIT", cfg.ClaimReadRateLimit},
+		{"RECALL_RRF_K", cfg.RecallRRFK},
+		{"RECALL_BRANCH_LIMIT_MULTIPLIER", cfg.RecallBranchLimitMultiplier},
+		{"RECALL_BRANCH_LIMIT_FLOOR", cfg.RecallBranchLimitFloor},
+		{"RECALL_BRANCH_LIMIT_MAX", cfg.RecallBranchLimitMax},
 		{"PROMOTE_TX_TIMEOUT_SECONDS", cfg.PromoteTxTimeoutSeconds},
 		{"MEMORY_PACK_IMPORT_HISTORY_DAYS", cfg.SkillPackImportHistoryDays},
 		{"AI_COMMUNITY_MAX_NODES", cfg.AICommunityMaxNodes},
@@ -497,6 +551,30 @@ func Load() (Config, error) {
 		return cfg, &ValidationError{
 			Field:   "RECALL_VALIDATED_CLAIM_WEIGHT",
 			Message: fmt.Sprintf("must be between 0 and 1, got %f", cfg.RecallValidatedClaimWeight),
+		}
+	}
+	if cfg.EmbeddingWorkerCount > 16 {
+		return cfg, &ValidationError{
+			Field:   "EMBEDDING_WORKER_COUNT",
+			Message: fmt.Sprintf("must be between 1 and 16, got %d", cfg.EmbeddingWorkerCount),
+		}
+	}
+	if cfg.EmbeddingBatchSize > 256 {
+		return cfg, &ValidationError{
+			Field:   "EMBEDDING_BATCH_SIZE",
+			Message: fmt.Sprintf("must be between 1 and 256, got %d", cfg.EmbeddingBatchSize),
+		}
+	}
+	if cfg.AIEmbeddingMaxConcurrency > 64 {
+		return cfg, &ValidationError{
+			Field:   "AI_API_EMBEDDING_MAX_CONCURRENCY",
+			Message: fmt.Sprintf("must be between 1 and 64, got %d", cfg.AIEmbeddingMaxConcurrency),
+		}
+	}
+	if cfg.RecallBranchLimitMax < cfg.RecallBranchLimitFloor {
+		return cfg, &ValidationError{
+			Field:   "RECALL_BRANCH_LIMIT_MAX",
+			Message: fmt.Sprintf("must be greater than or equal to RECALL_BRANCH_LIMIT_FLOOR, got %d < %d", cfg.RecallBranchLimitMax, cfg.RecallBranchLimitFloor),
 		}
 	}
 

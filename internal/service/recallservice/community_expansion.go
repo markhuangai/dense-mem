@@ -307,6 +307,10 @@ func recallHitKey(hit RecallHit) (string, bool) {
 		return recallCandidateKey("claim", hit.Claim.ClaimID), true
 	case hit.Fragment != nil && hit.Fragment.FragmentID != "":
 		return recallCandidateKey("fragment", hit.Fragment.FragmentID), true
+	case hit.Relationship != nil && hit.Relationship.RelationshipID != "":
+		return recallCandidateKey("relationship", hit.Relationship.RelationshipID), true
+	case hit.Evidence != nil && hit.Evidence.FragmentID != "":
+		return recallCandidateKey("evidence", hit.Evidence.FragmentID), true
 	default:
 		return "", false
 	}

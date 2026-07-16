@@ -203,71 +203,63 @@ export type DreamStatus = {
 export type RecallHit = {
   tier?: string;
   score?: number;
+  relationship?: RecallRelationship;
+  evidences?: RecallEvidenceContext[];
   fragment?: Fragment;
   claim?: Claim;
   fact?: Fact;
-	assertion?: SemanticAssertion;
-	paths?: SemanticPath[];
-	frontier?: SemanticFrontierHint[];
-  semantic_rank: number;
-  keyword_rank: number;
-  final_score: number;
+  semantic_rank?: number;
+  keyword_rank?: number;
+  final_score?: number;
 };
 
-export type SemanticAssertion = {
-	assertion_id: string;
-	team_id: string;
-	subject_entity_id: string;
-	predicate_key: string;
-	relationship_type: string;
-	object_entity_id?: string;
-	object_value?: { value_id: string; value_type: string; value: string; display?: string; unit?: string };
-	tier: string;
-	status: string;
-	policy_family: string;
-	polarity: string;
-	modality: string;
-	recorded_at: string;
-	valid_from?: string;
-	valid_to?: string;
-	support_count: number;
-	source_group_count: number;
+export type RecallEntity = {
+  entity_id?: string;
+  name?: string;
+  kind?: string;
 };
 
-export type SemanticPathNode = {
-	key: string;
-	id: string;
-	type: string;
-	name: string;
+export type RecallObject = {
+  entity_id?: string;
+  name?: string;
+  kind?: string;
+  value?: string;
+  type?: string;
 };
 
-export type SemanticPathEdge = {
-	assertion_id: string;
-	source: string;
-	target: string;
-	relationship: string;
-	predicate: string;
-	tier: string;
-	status: string;
-	polarity: string;
-	evidence_ids?: string[];
+export type RecallRelationship = {
+  relationship_id: string;
+  subject?: RecallEntity;
+  predicate?: string;
+  object?: RecallObject;
+  tier?: string;
+  polarity?: string;
+  valid_from?: string;
+  valid_to?: string;
+  evidence_ids?: string[];
+  corroborating_relationship_ids?: string[];
+  conflicting_relationship_ids?: string[];
 };
 
-export type SemanticPath = {
-	nodes: SemanticPathNode[];
-	edges: SemanticPathEdge[];
+export type RecallEvidenceContext = {
+  evidence_id: string;
+  context: string;
 };
 
-export type SemanticFrontierHint = {
-	from_entity_id: string;
-	direction: "incoming" | "outgoing" | string;
-	relationship: string;
-	assertion_id: string;
-	neighbor: SemanticPathNode;
-	tier: string;
+export type RecallDiscoveryPath = {
+  relationships: RecallRelationship[];
+  evidence_ids: string[];
 };
 
-export type GraphNodeType = "entity" | "value" | "fact" | "claim" | "fragment" | "dream" | "community";
+export type RecallPayload = {
+  recall_id?: string;
+  results: RecallEvidenceContext[];
+  discovery_paths: RecallDiscoveryPath[];
+  discovery_guidance: string;
+  related_hypotheses?: unknown[];
+};
+
+export type GraphNodeType = "fact" | "claim" | "fragment" | "dream";
 
 export type GraphNode = {
   key: string;
@@ -279,12 +271,7 @@ export type GraphNode = {
   community_id?: string;
   source?: string;
   score?: number;
-	recorded_at?: string;
-	aliases?: string[];
-	entity_type?: string;
-	value_type?: string;
-	resolution_status?: string;
-	resolution_conf?: number;
+  recorded_at?: string;
 };
 
 export type GraphEdge = {
@@ -292,22 +279,7 @@ export type GraphEdge = {
   source: string;
   target: string;
   relationship: string;
-	directed: boolean;
-	assertion_id?: string;
-	predicate?: string;
-	tier?: string;
-	status?: string;
-	policy_family?: string;
-	polarity?: string;
-	modality?: string;
-	knowledge?: string;
-	support_count?: number;
-	source_group_count?: number;
-	evidence_ids?: string[];
-	valid_from?: string;
-	valid_to?: string;
-	recorded_at?: string;
-	recorded_to?: string;
+  directed: boolean;
 };
 
 export type GraphSnapshot = {
@@ -428,8 +400,44 @@ export class UserApi {
 
   async recall(query: string, limit = 10): Promise<RecallHit[]> {
     const params = new URLSearchParams({ query, limit: String(limit) });
-    const payload = await this.request<Envelope<RecallHit[]>>(`/api/v1/recall?${params.toString()}`);
-    return payload.data;
+    const payload = await this.request<Envelope<RecallHit[] | RecallPayload>>(`/api/v1/recall?${params.toString()}`);
+    if (Array.isArray(payload.data)) {
+      return payload.data;
+    }
+    if ("discovery_paths" in payload.data) {
+      return payload.data.results.map((evidence, index) => ({
+        fragment: {
+          fragment_id: evidence.evidence_id,
+          id: evidence.evidence_id,
+          content: evidence.context,
+          source_type: "semantic_evidence",
+          source: "recall",
+          status: "active",
+          created_at: "",
+          updated_at: "",
+        },
+        evidences: [evidence],
+        tier: "2",
+        score: 1,
+        final_score: 1,
+        semantic_rank: index + 1,
+      }));
+    }
+    const legacyPayload = payload.data as unknown as {
+      results: RecallRelationship[];
+      evidences: RecallEvidenceContext[];
+    };
+    const evidencesByID = new Map((legacyPayload.evidences ?? []).map((evidence) => [evidence.evidence_id, evidence]));
+    return (legacyPayload.results ?? []).map((relationship, index) => ({
+      relationship,
+      evidences: (relationship.evidence_ids ?? [])
+        .map((id) => evidencesByID.get(id))
+        .filter((evidence): evidence is RecallEvidenceContext => Boolean(evidence)),
+      tier: relationship.tier,
+      score: 1,
+      final_score: 1,
+      semantic_rank: index + 1,
+    }));
   }
 
   async graph(query: GraphQuery = {}): Promise<GraphSnapshot> {

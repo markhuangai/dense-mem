@@ -13,6 +13,8 @@ import (
 	"strings"
 )
 
+const MaxCorpusContentCodepoints = 999
+
 func LoadSeedManifest(path string) (*SeedManifest, error) {
 	var manifest SeedManifest
 	if err := readJSONFile(path, &manifest); err != nil {
@@ -34,8 +36,11 @@ func LoadSeedManifest(path string) (*SeedManifest, error) {
 }
 
 func LoadCorpus(manifestPath string, manifest *SeedManifest) ([]CorpusItem, error) {
-	var items []CorpusItem
-	if err := readJSONL(resolveSeedPath(manifestPath, manifest.CorpusFile), &items); err != nil {
+	items := []CorpusItem{}
+	if err := scanCorpusFile(resolveSeedPath(manifestPath, manifest.CorpusFile), func(item CorpusItem) error {
+		items = append(items, item)
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 	seen := map[string]struct{}{}
@@ -45,6 +50,9 @@ func LoadCorpus(manifestPath string, manifest *SeedManifest) ([]CorpusItem, erro
 		}
 		if strings.TrimSpace(item.Content) == "" {
 			return nil, fmt.Errorf("corpus row %d missing content", i+1)
+		}
+		if contentLen := len([]rune(item.Content)); contentLen > MaxCorpusContentCodepoints {
+			return nil, fmt.Errorf("corpus row %d content has %d code points; max is %d", i+1, contentLen, MaxCorpusContentCodepoints)
 		}
 		if _, ok := seen[item.SourceDocID]; ok {
 			return nil, fmt.Errorf("duplicate corpus source_doc_id %q", item.SourceDocID)
@@ -115,6 +123,27 @@ func LoadExpectedDreams(manifestPath string, manifest *SeedManifest) ([]Expected
 	return dreams, nil
 }
 
+func LoadAnswerLabels(manifestPath string, manifest *SeedManifest) ([]AnswerLabel, error) {
+	if manifest == nil || strings.TrimSpace(manifest.AnswersFile) == "" {
+		return nil, nil
+	}
+	var answers []AnswerLabel
+	if err := readJSONL(resolveSeedPath(manifestPath, manifest.AnswersFile), &answers); err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{}, len(answers))
+	for i, answer := range answers {
+		if strings.TrimSpace(answer.CaseID) == "" {
+			return nil, fmt.Errorf("answer row %d missing case_id", i+1)
+		}
+		if _, ok := seen[answer.CaseID]; ok {
+			return nil, fmt.Errorf("duplicate answer case_id %q", answer.CaseID)
+		}
+		seen[answer.CaseID] = struct{}{}
+	}
+	return answers, nil
+}
+
 func LoadSuite(path string) ([]SuiteCase, error) {
 	var suite []SuiteCase
 	if err := readJSONL(path, &suite); err != nil {
@@ -138,7 +167,18 @@ func LoadRecallTraces(path string) ([]RecallTrace, error) {
 	if err := readJSONL(path, &traces); err != nil {
 		return nil, err
 	}
+	for i := range traces {
+		traces[i] = normalizeRecallTrace(traces[i])
+	}
 	return traces, nil
+}
+
+func LoadJudgeScores(path string) ([]JudgeScore, error) {
+	var scores []JudgeScore
+	if err := readJSONL(path, &scores); err != nil {
+		return nil, err
+	}
+	return scores, nil
 }
 
 func SeedHash(manifestPath string, manifest *SeedManifest) (string, error) {
@@ -183,6 +223,14 @@ func IndexQrels(qrels []QRel) map[string]QRel {
 	out := make(map[string]QRel, len(qrels))
 	for _, qrel := range qrels {
 		out[qrel.CaseID] = qrel
+	}
+	return out
+}
+
+func IndexAnswerLabels(answers []AnswerLabel) map[string]AnswerLabel {
+	out := make(map[string]AnswerLabel, len(answers))
+	for _, answer := range answers {
+		out[answer.CaseID] = answer
 	}
 	return out
 }

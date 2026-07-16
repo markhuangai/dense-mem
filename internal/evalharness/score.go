@@ -2,6 +2,7 @@ package evalharness
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -50,21 +51,30 @@ func scoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, scoring scor
 	rankedRefs := scoring.refsForQRel(trace.RankedRefs, qrel.RequiredRefs, qrel.BadRefs)
 	ranked := resultRefs(rankedRefs)
 	metrics := recallquality.ScoreAtK(ranked, required, bad, k)
+	frontierRefs := scoring.refsForQRel(trace.FrontierRefs, qrel.RequiredRefs, qrel.BadRefs)
+	discoveryRefs := combineDiscoveryRefs(rankedRefs, k, frontierRefs)
+	discoveryMetrics := recallquality.ScoreAtK(resultRefs(discoveryRefs), required, bad, len(discoveryRefs))
 	score := RetrievalScore{
-		CaseID:             caseID,
-		K:                  metrics.K,
-		RelevantAtK:        metrics.RelevantAtK,
-		RelevantTotal:      metrics.RelevantTotal,
-		BadAtK:             metrics.BadAtK,
-		RecallAtK:          metrics.RecallAtK,
-		MRR:                metrics.MRR,
-		NDCGAtK:            metrics.NDCGAtK,
-		FirstRequiredRank:  firstRank(rankedRefs, qrel.RequiredRefs, mapping),
-		FirstBadRank:       firstRank(rankedRefs, qrel.BadRefs, mapping),
-		MissingRequired:    missingRequiredRefs(qrel.RequiredRefs, rankedRefs, mapping, k),
-		BadRefsAtK:         badRefsAtK(qrel.BadRefs, rankedRefs, mapping, k),
-		UnmappedSourceRefs: append(append(append(append(append(unmappedRequired, unmappedBad...), unmappedRequiredEvidence...), unmappedBadEvidence...), unmappedRequiredDreams...), unmappedBadDreams...),
-		LatencyMS:          trace.LatencyMS,
+		CaseID:                     caseID,
+		K:                          metrics.K,
+		RelevantAtK:                metrics.RelevantAtK,
+		RelevantTotal:              metrics.RelevantTotal,
+		BadAtK:                     metrics.BadAtK,
+		RecallAtK:                  metrics.RecallAtK,
+		MRR:                        metrics.MRR,
+		NDCGAtK:                    metrics.NDCGAtK,
+		FirstRequiredRank:          firstRank(rankedRefs, qrel.RequiredRefs, mapping),
+		FirstBadRank:               firstRank(rankedRefs, qrel.BadRefs, mapping),
+		MissingRequired:            missingRequiredRefs(qrel.RequiredRefs, rankedRefs, mapping, k),
+		BadRefsAtK:                 badRefsAtK(qrel.BadRefs, rankedRefs, mapping, k),
+		UnmappedSourceRefs:         append(append(append(append(append(unmappedRequired, unmappedBad...), unmappedRequiredEvidence...), unmappedBadEvidence...), unmappedRequiredDreams...), unmappedBadDreams...),
+		LatencyMS:                  trace.LatencyMS,
+		DiscoveryExposureCount:     len(discoveryRefs),
+		DiscoveryRelevant:          discoveryMetrics.RelevantAtK,
+		DiscoveryRelevantTotal:     discoveryMetrics.RelevantTotal,
+		DiscoveryRecall:            discoveryMetrics.RecallAtK,
+		DiscoveryFirstRequiredRank: firstRank(discoveryRefs, qrel.RequiredRefs, mapping),
+		DiscoveryMissingRequired:   missingRequiredRefs(qrel.RequiredRefs, discoveryRefs, mapping, len(discoveryRefs)),
 	}
 	if trace.ContextRefs != nil {
 		contextRefs := scoring.refsForQRel(trace.ContextRefs, qrel.RequiredRefs, qrel.BadRefs)
@@ -120,6 +130,36 @@ func scoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, scoring scor
 	return score
 }
 
+func combineDiscoveryRefs(direct []Ref, k int, frontier []Ref) []Ref {
+	if k < 0 {
+		k = 0
+	}
+	if k > len(direct) {
+		k = len(direct)
+	}
+	out := make([]Ref, 0, k+len(frontier))
+	seen := map[string]struct{}{}
+	appendRef := func(ref Ref) {
+		if strings.TrimSpace(ref.Type) == "" || strings.TrimSpace(ref.ID) == "" {
+			return
+		}
+		key := refKey(ref.Type, ref.ID)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		ref.Rank = len(out) + 1
+		out = append(out, ref)
+	}
+	for _, ref := range direct[:k] {
+		appendRef(ref)
+	}
+	for _, ref := range frontier {
+		appendRef(ref)
+	}
+	return out
+}
+
 func SummarizeScores(runID, mode, seedID, seedHash, suitePath string, suite []SuiteCase, cases map[string]Case, scores []RetrievalScore) Summary {
 	summary := Summary{
 		RunID:           runID,
@@ -136,12 +176,20 @@ func SummarizeScores(runID, mode, seedID, seedHash, suitePath string, suite []Su
 		return summary
 	}
 	scoreByCase := make(map[string]RetrievalScore, len(scores))
+	latencies := make([]int64, 0, len(scores))
 	for _, score := range scores {
 		scoreByCase[score.CaseID] = score
 		summary.AverageRecallAtK += score.RecallAtK
 		summary.AverageMRR += score.MRR
 		summary.AverageNDCGAtK += score.NDCGAtK
 		summary.AverageBadAtK += float64(score.BadAtK)
+		summary.AverageDiscoveryRecall += score.DiscoveryRecall
+		summary.AverageDiscoveryExposure += float64(score.DiscoveryExposureCount)
+		summary.AverageLatencyMS += float64(score.LatencyMS)
+		latencies = append(latencies, score.LatencyMS)
+		if score.DiscoveryFirstRequiredRank > 0 {
+			summary.DiscoveryRequiredFoundRate++
+		}
 		summary.UnmappedSourceRefs += len(score.UnmappedSourceRefs)
 		if score.ContextScored {
 			summary.ContextScoredCaseCount++
@@ -196,6 +244,12 @@ func SummarizeScores(runID, mode, seedID, seedHash, suitePath string, suite []Su
 	summary.AverageBadAtK /= denom
 	summary.RequiredRank1Rate /= denom
 	summary.BadRank1Rate /= denom
+	summary.AverageDiscoveryRecall /= denom
+	summary.DiscoveryRequiredFoundRate /= denom
+	summary.AverageDiscoveryExposure /= denom
+	summary.AverageLatencyMS /= denom
+	summary.P50LatencyMS = latencyPercentile(latencies, 0.50)
+	summary.P95LatencyMS = latencyPercentile(latencies, 0.95)
 	if summary.ContextScoredCaseCount > 0 {
 		contextDenom := float64(summary.ContextScoredCaseCount)
 		summary.AverageContextRecallAtK /= contextDenom
@@ -225,26 +279,29 @@ func SummarizeScores(runID, mode, seedID, seedHash, suitePath string, suite []Su
 	}
 
 	type accum struct {
-		count          int
-		recall         float64
-		mrr            float64
-		ndcg           float64
-		bad            float64
-		contextCount   int
-		contextRecall  float64
-		contextMRR     float64
-		contextNDCG    float64
-		contextBad     float64
-		evidenceCount  int
-		evidenceRecall float64
-		evidenceMRR    float64
-		evidenceNDCG   float64
-		evidenceBad    float64
-		dreamCount     int
-		dreamRecall    float64
-		dreamMRR       float64
-		dreamNDCG      float64
-		dreamBad       float64
+		count             int
+		recall            float64
+		mrr               float64
+		ndcg              float64
+		bad               float64
+		discoveryRecall   float64
+		discoveryExposure float64
+		latency           float64
+		contextCount      int
+		contextRecall     float64
+		contextMRR        float64
+		contextNDCG       float64
+		contextBad        float64
+		evidenceCount     int
+		evidenceRecall    float64
+		evidenceMRR       float64
+		evidenceNDCG      float64
+		evidenceBad       float64
+		dreamCount        int
+		dreamRecall       float64
+		dreamMRR          float64
+		dreamNDCG         float64
+		dreamBad          float64
 	}
 	accums := map[string]*accum{}
 	for _, suiteCase := range suite {
@@ -265,6 +322,9 @@ func SummarizeScores(runID, mode, seedID, seedHash, suitePath string, suite []Su
 			a.mrr += score.MRR
 			a.ndcg += score.NDCGAtK
 			a.bad += float64(score.BadAtK)
+			a.discoveryRecall += score.DiscoveryRecall
+			a.discoveryExposure += float64(score.DiscoveryExposureCount)
+			a.latency += float64(score.LatencyMS)
 			if score.ContextScored {
 				a.contextCount++
 				a.contextRecall += score.ContextRecallAtK
@@ -291,11 +351,14 @@ func SummarizeScores(runID, mode, seedID, seedHash, suitePath string, suite []Su
 	for slice, a := range accums {
 		denom := float64(a.count)
 		avg := SliceAvg{
-			CaseCount:        a.count,
-			AverageRecallAtK: a.recall / denom,
-			AverageMRR:       a.mrr / denom,
-			AverageNDCGAtK:   a.ndcg / denom,
-			AverageBadAtK:    a.bad / denom,
+			CaseCount:                a.count,
+			AverageRecallAtK:         a.recall / denom,
+			AverageMRR:               a.mrr / denom,
+			AverageNDCGAtK:           a.ndcg / denom,
+			AverageBadAtK:            a.bad / denom,
+			AverageDiscoveryRecall:   a.discoveryRecall / denom,
+			AverageDiscoveryExposure: a.discoveryExposure / denom,
+			AverageLatencyMS:         a.latency / denom,
 		}
 		if a.contextCount > 0 {
 			contextDenom := float64(a.contextCount)
@@ -331,26 +394,46 @@ func CompareSummaries(baseline, candidate Summary) (Comparison, error) {
 		return Comparison{}, fmt.Errorf("seed hash mismatch: baseline %s candidate %s", baseline.SeedHash, candidate.SeedHash)
 	}
 	return Comparison{
-		BaselineRunID:       baseline.RunID,
-		CandidateRunID:      candidate.RunID,
-		SeedHash:            baseline.SeedHash,
-		RecallDelta:         candidate.AverageRecallAtK - baseline.AverageRecallAtK,
-		MRRDelta:            candidate.AverageMRR - baseline.AverageMRR,
-		NDCGDelta:           candidate.AverageNDCGAtK - baseline.AverageNDCGAtK,
-		BadAtKDelta:         candidate.AverageBadAtK - baseline.AverageBadAtK,
-		ContextRecallDelta:  candidate.AverageContextRecallAtK - baseline.AverageContextRecallAtK,
-		ContextMRRDelta:     candidate.AverageContextMRR - baseline.AverageContextMRR,
-		ContextNDCGDelta:    candidate.AverageContextNDCGAtK - baseline.AverageContextNDCGAtK,
-		ContextBadAtKDelta:  candidate.AverageContextBadAtK - baseline.AverageContextBadAtK,
-		EvidenceRecallDelta: candidate.AverageEvidenceRecallAtK - baseline.AverageEvidenceRecallAtK,
-		EvidenceMRRDelta:    candidate.AverageEvidenceMRR - baseline.AverageEvidenceMRR,
-		EvidenceNDCGDelta:   candidate.AverageEvidenceNDCGAtK - baseline.AverageEvidenceNDCGAtK,
-		EvidenceBadAtKDelta: candidate.AverageEvidenceBadAtK - baseline.AverageEvidenceBadAtK,
-		DreamRecallDelta:    candidate.AverageDreamRecallAtK - baseline.AverageDreamRecallAtK,
-		DreamMRRDelta:       candidate.AverageDreamMRR - baseline.AverageDreamMRR,
-		DreamNDCGDelta:      candidate.AverageDreamNDCGAtK - baseline.AverageDreamNDCGAtK,
-		DreamBadAtKDelta:    candidate.AverageDreamBadAtK - baseline.AverageDreamBadAtK,
+		BaselineRunID:        baseline.RunID,
+		CandidateRunID:       candidate.RunID,
+		SeedHash:             baseline.SeedHash,
+		RecallDelta:          candidate.AverageRecallAtK - baseline.AverageRecallAtK,
+		MRRDelta:             candidate.AverageMRR - baseline.AverageMRR,
+		NDCGDelta:            candidate.AverageNDCGAtK - baseline.AverageNDCGAtK,
+		BadAtKDelta:          candidate.AverageBadAtK - baseline.AverageBadAtK,
+		DiscoveryRecallDelta: candidate.AverageDiscoveryRecall - baseline.AverageDiscoveryRecall,
+		LatencyDeltaMS:       candidate.AverageLatencyMS - baseline.AverageLatencyMS,
+		P50LatencyDeltaMS:    candidate.P50LatencyMS - baseline.P50LatencyMS,
+		P95LatencyDeltaMS:    candidate.P95LatencyMS - baseline.P95LatencyMS,
+		ContextRecallDelta:   candidate.AverageContextRecallAtK - baseline.AverageContextRecallAtK,
+		ContextMRRDelta:      candidate.AverageContextMRR - baseline.AverageContextMRR,
+		ContextNDCGDelta:     candidate.AverageContextNDCGAtK - baseline.AverageContextNDCGAtK,
+		ContextBadAtKDelta:   candidate.AverageContextBadAtK - baseline.AverageContextBadAtK,
+		EvidenceRecallDelta:  candidate.AverageEvidenceRecallAtK - baseline.AverageEvidenceRecallAtK,
+		EvidenceMRRDelta:     candidate.AverageEvidenceMRR - baseline.AverageEvidenceMRR,
+		EvidenceNDCGDelta:    candidate.AverageEvidenceNDCGAtK - baseline.AverageEvidenceNDCGAtK,
+		EvidenceBadAtKDelta:  candidate.AverageEvidenceBadAtK - baseline.AverageEvidenceBadAtK,
+		DreamRecallDelta:     candidate.AverageDreamRecallAtK - baseline.AverageDreamRecallAtK,
+		DreamMRRDelta:        candidate.AverageDreamMRR - baseline.AverageDreamMRR,
+		DreamNDCGDelta:       candidate.AverageDreamNDCGAtK - baseline.AverageDreamNDCGAtK,
+		DreamBadAtKDelta:     candidate.AverageDreamBadAtK - baseline.AverageDreamBadAtK,
 	}, nil
+}
+
+func latencyPercentile(values []int64, percentile float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	sorted := append([]int64(nil), values...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	index := int(math.Ceil(percentile*float64(len(sorted)))) - 1
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(sorted) {
+		index = len(sorted) - 1
+	}
+	return float64(sorted[index])
 }
 
 func EvaluateGates(summary Summary, gates GateOptions) GateResult {

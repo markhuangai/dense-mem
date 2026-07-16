@@ -7,6 +7,7 @@ import (
 	nethttp "net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,15 +19,14 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/validation"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/openapi"
-	"github.com/markhuangai/dense-mem/internal/placementreview"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
-	"github.com/markhuangai/dense-mem/internal/service/assertionservice"
 	"github.com/markhuangai/dense-mem/internal/service/claimdedupe"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
+	"github.com/markhuangai/dense-mem/internal/service/embeddingservice"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentdedupe"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
@@ -37,9 +37,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/storage/neo4j"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
-	"github.com/markhuangai/dense-mem/internal/tools/keywordsearch"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
-	"github.com/markhuangai/dense-mem/internal/tools/semanticsearch"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
@@ -104,7 +102,6 @@ func main() {
 	validation.SetEmbeddingDimensions(cfg.GetEmbeddingDimensions())
 	middleware.SetAuthVerificationConcurrency(cfg.AuthVerifyMaxConcurrency)
 
-	// A cold Neo4j instance can need several minutes to create schema indexes.
 	startupCtx, startupCancel := context.WithTimeout(context.Background(), startupTimeout)
 	defer startupCancel()
 
@@ -114,6 +111,10 @@ func main() {
 		log.Fatalf("failed to connect to postgres: %v", err)
 	}
 	defer pgDB.Close()
+
+	if err := postgres.ValidateSinglePrimaryTopology(startupCtx, pgDB.GetDB()); err != nil {
+		log.Fatalf("unsupported postgres deployment: %v", err)
+	}
 
 	logger.Info("running postgres migrations")
 	if err := postgres.RunUp(startupCtx, pgDB.GetDB()); err != nil {
@@ -132,24 +133,26 @@ func main() {
 		log.Fatalf("embedding consistency check failed: %v", err)
 	}
 
-	// Initialize Neo4j client with 5-second timeout
-	neo4jClient, err := neo4j.NewClient(startupCtx, &cfg)
-	if err != nil {
-		log.Fatalf("failed to connect to neo4j: %v", err)
-	}
-	defer neo4jClient.Close(context.Background())
+	legacyNeo4jBridgeEnabled := strings.EqualFold(strings.TrimSpace(os.Getenv("ENABLE_LEGACY_NEO4J_BRIDGE")), "true")
+	graphEnabled := legacyNeo4jBridgeEnabled && strings.TrimSpace(cfg.GetNeo4jURI()) != ""
+	var neo4jClient neo4j.Neo4jClientInterface
+	if graphEnabled {
+		client, err := neo4j.NewClient(startupCtx, &cfg)
+		if err != nil {
+			log.Fatalf("failed to connect to neo4j: %v", err)
+		}
+		neo4jClient = client
+		defer neo4jClient.Close(context.Background())
 
-	// ========================================
-	// Neo4j schema bootstrap
-	// ========================================
-	// Creates uniqueness constraints, team_id indexes, full-text indexes,
-	// vector index with configured dimensions, and composite fragment dedupe
-	// indexes. Idempotent; legacy index names are dropped and recreated with
-	// canonical names. Config loading makes EmbeddingDimensions match the
-	// configured AI embedding dimensions.
-	schemaBootstrapper := neo4j.NewSchemaBootstrapper(neo4jClient, cfg.GetEmbeddingDimensions(), logger)
-	if err := schemaBootstrapper.EnsureSchema(startupCtx); err != nil {
-		log.Fatalf("failed to bootstrap neo4j schema: %v", err)
+		schemaBootstrapper := neo4j.NewSchemaBootstrapper(neo4jClient, cfg.GetEmbeddingDimensions(), logger)
+		if err := schemaBootstrapper.EnsureSchema(startupCtx); err != nil {
+			log.Fatalf("failed to bootstrap neo4j schema: %v", err)
+		}
+	} else {
+		logger.Info("neo4j disabled; booting v2 postgres-only semantic memory runtime")
+		if strings.TrimSpace(cfg.GetNeo4jURI()) != "" && !legacyNeo4jBridgeEnabled {
+			logger.Warn("NEO4J_URI ignored because ENABLE_LEGACY_NEO4J_BRIDGE is not true")
+		}
 	}
 
 	// ========================================
@@ -179,14 +182,20 @@ func main() {
 	operationLogRepo := repository.NewOperationLogRepository(pgDB.GetDB(), rlsHelper)
 	recallFeedbackEventRepo := repository.NewRecallFeedbackEventRepository(pgDB.GetDB(), rlsHelper)
 	memoryPlacementRepo := repository.NewMemoryPlacementRepository(pgDB.GetDB(), rlsHelper)
+	semanticRepo := repository.NewSemanticRepository(pgDB.GetDB(), rlsHelper)
 	skillPackImportRepo := repository.NewSkillPackImportRepository(pgDB.GetDB(), rlsHelper)
 
 	// ========================================
-	// Neo4j profile scope enforcer and graph writer
+	// Optional Neo4j profile scope enforcer and graph writer
 	// ========================================
-	profileScopeEnforcer := neo4j.NewProfileScopeEnforcer(neo4jClient)
-	assertionSvc := assertionservice.New(neo4j.NewAssertionStore(profileScopeEnforcer))
-	profileDataPurger := service.NewNeo4jProfileDataPurger(profileScopeEnforcer)
+	var (
+		profileScopeEnforcer neo4j.ProfileScopeEnforcer
+		profileDataPurger    service.ProfileDataPurger
+	)
+	if graphEnabled {
+		profileScopeEnforcer = neo4j.NewProfileScopeEnforcer(neo4jClient)
+		profileDataPurger = service.NewNeo4jProfileDataPurger(profileScopeEnforcer)
+	}
 
 	// ========================================
 	// Service layer
@@ -210,12 +219,6 @@ func main() {
 	rateLimitService := backend.rateLimitService
 
 	// ========================================
-	// Recall searchers
-	// ========================================
-	fragmentSearcher := keywordsearch.NewFragmentSearcher(profileScopeEnforcer)
-	embeddingSearcher := semanticsearch.NewEmbeddingSearcher(profileScopeEnforcer)
-
-	// ========================================
 	// Discoverability: embedding, fragments, recall, registry, openapi
 	// ========================================
 	// Production startup uses the no-op metrics backend unless telemetry is
@@ -229,29 +232,36 @@ func main() {
 	)
 	if cfg.GetTelemetryEnabled() {
 		prometheusMetrics := observability.NewPrometheusMetrics()
-		prometheusMetrics.RegisterKnowledgeBacklogCollector(neo4jClient, logger)
+		if graphEnabled {
+			prometheusMetrics.RegisterKnowledgeBacklogCollector(neo4jClient, logger)
+		}
 		discoverabilityMetrics = prometheusMetrics
 		telemetryHTTPMetrics = prometheusMetrics
 		telemetryScrapeHandler = prometheusMetrics.Handler()
-		prometheusTelemetry := service.NewPrometheusTelemetryServiceWithJobAndLogger(
+		telemetryReader = service.NewPrometheusTelemetryServiceWithJobAndLogger(
 			cfg.GetTelemetryPrometheusURL(),
 			time.Duration(cfg.GetTelemetryQueryTimeoutSeconds())*time.Second,
 			cfg.GetTelemetryPrometheusJob(),
 			logger,
 		)
-		prometheusTelemetry.SetAssertionTransitionCountReader(memoryPlacementRepo)
-		telemetryReader = prometheusTelemetry
 	}
-	// Adapters translate between neo4j's ScopedReader and the fragment services'
-	// local ScopedReader, and between fragmentservice's AuditLogEntry and the
-	// canonical service.AuditLogEntry.
-	readerAdapter := &scopedReaderAdapter{inner: profileScopeEnforcer}
+	var readerAdapter *scopedReaderAdapter
+	if graphEnabled {
+		readerAdapter = &scopedReaderAdapter{inner: profileScopeEnforcer}
+	}
 	fragmentAuditor := &fragmentAuditAdapter{inner: auditService}
 	claimAuditor := &claimAuditAdapter{inner: auditService}
 	factAuditor := &factAuditAdapter{inner: auditService}
-	dedupeLookup := fragmentdedupe.NewNeo4jDedupeLookup(readerAdapter)
-	claimDedupeLookup := claimdedupe.NewNeo4jDedupeLookup(readerAdapter)
-	recallFeedbackResolver := service.NewRecallFeedbackGraphResolver(readerAdapter)
+	var (
+		dedupeLookup           fragmentdedupe.DedupeLookup
+		claimDedupeLookup      claimdedupe.DedupeLookup
+		recallFeedbackResolver service.RecallFeedbackResultResolver
+	)
+	if graphEnabled {
+		dedupeLookup = fragmentdedupe.NewNeo4jDedupeLookup(readerAdapter)
+		claimDedupeLookup = claimdedupe.NewNeo4jDedupeLookup(readerAdapter)
+		recallFeedbackResolver = service.NewRecallFeedbackGraphResolver(readerAdapter)
+	}
 	recallFeedbackEventService := service.NewRecallFeedbackEventService(recallFeedbackEventRepo, appConfigService, recallFeedbackResolver)
 	recallFeedbackEventService.Start(context.Background())
 
@@ -259,9 +269,8 @@ func main() {
 	// point. The unavailable stub is kept as a defensive fallback for this
 	// wiring layer.
 	var (
-		retryEmbedder                 *embedding.RetryEmbeddingProvider
-		fragmentCreateRegistrySvc     fragmentservice.CreateFragmentService = unavailableFragmentCreateService{}
-		fragmentQuarantineRegistrySvc fragmentservice.QuarantinedFragmentCreateService
+		retryEmbedder             *embedding.RetryEmbeddingProvider
+		fragmentCreateRegistrySvc fragmentservice.CreateFragmentService = unavailableFragmentCreateService{}
 	)
 	if cfg.IsEmbeddingConfigured() {
 		openaiProvider := embedding.NewOpenAIEmbeddingProvider(&cfg, nil)
@@ -269,70 +278,78 @@ func main() {
 		retryEmbedder = embedding.NewRetryEmbeddingProviderWithKey(openaiProvider, logger, cfg.GetAIAPIKey())
 		retryEmbedder.SetMetrics(discoverabilityMetrics)
 
-		fragmentCreateServices := fragmentservice.NewCreateFragmentService(
-			retryEmbedder,
+		if graphEnabled {
+			fragmentCreateRegistrySvc = fragmentservice.NewCreateFragmentService(
+				retryEmbedder,
+				profileScopeEnforcer,
+				dedupeLookup,
+				fragmentAuditor,
+				embeddingConsistencySvc,
+				slog.Default(),
+				discoverabilityMetrics,
+			)
+		}
+	}
+
+	var (
+		fragmentGetSvc       fragmentservice.GetFragmentService
+		fragmentListSvc      fragmentservice.ListFragmentsService
+		claimCreateSvc       claimservice.CreateClaimService
+		claimGetSvc          claimservice.GetClaimService
+		claimListSvc         claimservice.ListClaimsService
+		claimListFilteredSvc claimservice.ListClaimsFilteredService
+		factPromoteSvc       factservice.PromoteClaimService
+		factConfirmSvc       factservice.ConfirmMemoryService = unavailableConfirmMemoryService{}
+		factGetSvc           factservice.GetFactService
+		factListSvc          factservice.ListFactsService
+		communityGetSvc      communityservice.GetCommunitySummaryService
+		communityListSvc     communityservice.ListCommunitiesService
+	)
+	if graphEnabled {
+		fragmentGetSvc = fragmentservice.NewGetFragmentService(readerAdapter)
+		fragmentListSvc = fragmentservice.NewListFragmentsService(readerAdapter)
+		claimCreateSvc = claimservice.NewCreateClaimService(
+			claimDedupeLookup,
 			profileScopeEnforcer,
-			dedupeLookup,
-			fragmentAuditor,
-			embeddingConsistencySvc,
+			profileScopeEnforcer,
+			claimAuditor,
 			slog.Default(),
 			discoverabilityMetrics,
 		)
-		fragmentCreateRegistrySvc = fragmentCreateServices
-		fragmentQuarantineRegistrySvc = fragmentCreateServices
+		claimGetSvc = claimservice.NewGetClaimService(profileScopeEnforcer, slog.Default())
+		claimListSvc = claimservice.NewListClaimsService(profileScopeEnforcer)
+		claimListFilteredSvc = claimservice.NewListClaimsFilteredService(profileScopeEnforcer)
+
+		claimLock := postgres.NewClaimLock(discoverabilityMetrics)
+		factPromoteSvc = factservice.NewPromoteClaimService(
+			profileScopeEnforcer,
+			claimLock,
+			pgDB.GetDB(),
+			factAuditor,
+			slog.Default(),
+			discoverabilityMetrics,
+			time.Duration(cfg.GetPromoteTxTimeoutSeconds())*time.Second,
+		)
+		if confirmSvc, ok := factPromoteSvc.(factservice.ConfirmMemoryService); ok {
+			factConfirmSvc = confirmSvc
+		}
+		factGetSvc = factservice.NewGetFactService(profileScopeEnforcer)
+		factListSvc = factservice.NewListFactsService(profileScopeEnforcer)
+		communityGetSvc = communityservice.NewGetCommunitySummaryService(neo4jClient)
+		communityListSvc = communityservice.NewListCommunitiesService(neo4jClient)
 	}
-
-	// Read/list work without embedding.
-	fragmentGetSvc := fragmentservice.NewGetFragmentService(readerAdapter)
-	fragmentListSvc := fragmentservice.NewListFragmentsService(readerAdapter)
-
-	claimCreateSvc := claimservice.NewCreateClaimService(
-		claimDedupeLookup,
-		profileScopeEnforcer,
-		profileScopeEnforcer,
-		claimAuditor,
-		slog.Default(),
-		discoverabilityMetrics,
-	)
-	claimGetSvc := claimservice.NewGetClaimService(profileScopeEnforcer, slog.Default())
-	claimListSvc := claimservice.NewListClaimsService(profileScopeEnforcer)
-	claimListFilteredSvc := claimservice.NewListClaimsFilteredService(profileScopeEnforcer)
-
-	claimLock := postgres.NewClaimLock(discoverabilityMetrics)
-	factPromoteSvc := factservice.NewPromoteClaimService(
-		profileScopeEnforcer,
-		claimLock,
-		pgDB.GetDB(),
-		factAuditor,
-		slog.Default(),
-		discoverabilityMetrics,
-		time.Duration(cfg.GetPromoteTxTimeoutSeconds())*time.Second,
-	)
-	var factConfirmSvc factservice.ConfirmMemoryService = unavailableConfirmMemoryService{}
-	if confirmSvc, ok := factPromoteSvc.(factservice.ConfirmMemoryService); ok {
-		factConfirmSvc = confirmSvc
-	}
-	factGetSvc := factservice.NewGetFactService(profileScopeEnforcer)
-	factListSvc := factservice.NewListFactsService(profileScopeEnforcer)
-	communityGetSvc := communityservice.NewGetCommunitySummaryService(neo4jClient)
-	communityListSvc := communityservice.NewListCommunitiesService(neo4jClient)
-	recallFactSearcher := recallservice.NewFactSearcher(profileScopeEnforcer)
-	recallClaimSearcher := recallservice.NewClaimSearcher(profileScopeEnforcer)
-	recallCommunityExpander := recallservice.NewCommunityExpander(profileScopeEnforcer)
 
 	var (
 		claimVerifyRegistrySvc   claimservice.VerifyClaimService = unavailableVerifyClaimService{}
 		skillPackConflictDecider skillpackservice.ConflictDecider
-		placementVerifier        verifier.Verifier
-		placementReviewer        placementreview.Reviewer
+		semanticAIProvider       *memoryservice.OpenAISemanticProvider
 	)
 	if verifierConfigured(&cfg) {
 		baseVerifier := verifier.NewOpenAIVerifier(&cfg, nil)
 		baseVerifier.SetMetrics(discoverabilityMetrics)
 		retryVerifier := verifier.NewRetryVerifier(baseVerifier, &cfg, logger)
-		placementVerifier = retryVerifier
-		placementReviewer = placementreview.NewOpenAIReviewer(&cfg, nil)
 		skillPackConflictDecider = skillpackservice.NewOpenAIConflictDecider(&cfg, nil)
+		semanticAIProvider = memoryservice.NewOpenAISemanticProvider(&cfg, nil)
 
 		claimVerifyRegistrySvc = claimservice.NewVerifyClaimService(
 			profileScopeEnforcer,
@@ -346,53 +363,49 @@ func main() {
 		)
 	}
 
-	// Recall requires embedding (query vectors).
-	var (
-		recallRegistrySvc recallservice.RecallService = unavailableRecallService{}
-		recallHTTPSvc     recallservice.RecallService = unavailableRecallService{}
+	semanticRecallRanking, err := recallservice.NewSemanticRecallRankingProfile(
+		cfg.GetRecallRRFEnabled(),
+		cfg.GetRecallRRFK(),
+		cfg.GetRecallRRFBranchWeights(),
+		cfg.GetRecallBranchPriority(),
+		cfg.GetRecallBranchLimitMultiplier(),
+		cfg.GetRecallBranchLimitFloor(),
+		cfg.GetRecallBranchLimitMax(),
 	)
-	if cfg.IsEmbeddingConfigured() {
-		tieredRecallSvc := recallservice.NewRecallServiceWithTiers(
-			retryEmbedder,
-			embeddingSearcher,
-			fragmentSearcher,
-			fragmentGetSvc,
-			recallFactSearcher,
-			factGetSvc,
-			recallClaimSearcher,
-			claimGetSvc,
-			cfg.GetRecallValidatedClaimWeight(),
-			logger,
-			discoverabilityMetrics,
-			recallservice.WithCommunityExpander(recallCommunityExpander),
-			recallservice.WithAssertionSearcher(recallservice.NewAssertionSearcher(profileScopeEnforcer)),
-		)
-		recallRegistrySvc = tieredRecallSvc
-		recallHTTPSvc = tieredRecallSvc
+	if err != nil {
+		log.Fatalf("invalid semantic recall ranking profile: %v", err)
 	}
+	recallRegistrySvc := recallservice.NewSemanticRecallServiceWithRanking(semanticRepo, semanticRecallRanking, retryEmbedder)
 
 	memorySvc := memoryservice.New(memoryservice.Dependencies{
-		FragmentCreate:     fragmentCreateRegistrySvc,
-		FragmentQuarantine: fragmentQuarantineRegistrySvc,
-		ClaimCreate:        claimCreateSvc,
-		ClaimVerify:        claimVerifyRegistrySvc,
-		ClaimGet:           claimGetSvc,
-		ClaimList:          claimListSvc,
-		FactPromote:        factPromoteSvc,
-		FactConfirm:        factConfirmSvc,
-		FactList:           factListSvc,
-		PlacementStore:     memoryPlacementRepo,
-		Assertions:         assertionSvc,
-		GraphReviewer:      placementReviewer,
-		Verifier:           placementVerifier,
-		Embedder:           retryEmbedder,
-		VerifierModel:      cfg.GetAIVerifierModel(),
-		Metrics:            discoverabilityMetrics,
-		Logger:             slog.Default(),
+		FragmentCreate:       fragmentCreateRegistrySvc,
+		ClaimCreate:          claimCreateSvc,
+		ClaimVerify:          claimVerifyRegistrySvc,
+		ClaimGet:             claimGetSvc,
+		ClaimList:            claimListSvc,
+		FactPromote:          factPromoteSvc,
+		FactConfirm:          factConfirmSvc,
+		FactList:             factListSvc,
+		PlacementStore:       memoryPlacementRepo,
+		SemanticStore:        semanticRepo,
+		SemanticReviewer:     semanticAIProvider,
+		SemanticVerifier:     semanticAIProvider,
+		PlacementMaxAttempts: cfg.GetMemoryPlacementMaxAttempts(),
+		Logger:               slog.Default(),
 	})
 	placementWorkerCtx, placementWorkerCancel := context.WithCancel(context.Background())
 	defer placementWorkerCancel()
-	memorySvc.StartPlacementWorker(placementWorkerCtx, time.Minute)
+	for range cfg.GetMemoryPlacementWorkerCount() {
+		memorySvc.StartPlacementWorker(placementWorkerCtx, time.Duration(cfg.GetMemoryPlacementPollSeconds())*time.Second)
+	}
+	if retryEmbedder != nil {
+		semanticEmbeddingWorkerCtx, semanticEmbeddingWorkerCancel := context.WithCancel(context.Background())
+		defer semanticEmbeddingWorkerCancel()
+		embeddingSvc := embeddingservice.New(semanticRepo, retryEmbedder, slog.Default())
+		for range cfg.GetEmbeddingWorkerCount() {
+			embeddingSvc.StartWorker(semanticEmbeddingWorkerCtx, cfg.GetEmbeddingBatchSize(), time.Second)
+		}
+	}
 	dreamSvc := dreamservice.New(dreamservice.Dependencies{
 		Graph:     profileScopeEnforcer,
 		Memory:    memorySvc,
@@ -403,42 +416,40 @@ func main() {
 		Generator: dreamservice.NewHeuristicGenerator(cfg.GetAIVerifierModel()),
 		Metrics:   discoverabilityMetrics,
 	})
-	contextSvc := contextservice.New(contextservice.Dependencies{
-		Reader:      profileScopeEnforcer,
-		FactGet:     factGetSvc,
-		ClaimGet:    claimGetSvc,
-		FragmentGet: fragmentGetSvc,
-		Recall:      recallRegistrySvc,
-		Memory:      memorySvc,
-		Dreams:      dreamSvc,
-		Assertions:  assertionSvc,
-	})
-	graphViewSvc := graphview.New(profileScopeEnforcer)
-	skillPackSvc := skillpackservice.New(skillpackservice.Dependencies{
-		FragmentCreate:  fragmentCreateRegistrySvc,
-		ClaimCreate:     claimCreateSvc,
-		ClaimGet:        claimGetSvc,
-		ClaimList:       claimListSvc,
-		FactPromote:     factPromoteSvc,
-		FactGet:         factGetSvc,
-		FactList:        factListSvc,
-		ConflictDecider: skillPackConflictDecider,
-		Graph:           profileScopeEnforcer,
-		Ledger:          skillPackImportRepo,
-		HistoryDays:     cfg.GetMemoryPackImportHistoryDays(),
-	})
+	contextSvc := contextservice.NewSemantic(semanticRepo, recallRegistrySvc)
+	graphViewSvc := graphview.Service(unavailableGraphViewService{})
+	var skillPackSvc skillpackservice.Service
+	if graphEnabled {
+		graphViewSvc = graphview.New(profileScopeEnforcer)
+		skillPackSvc = skillpackservice.New(skillpackservice.Dependencies{
+			FragmentCreate:  fragmentCreateRegistrySvc,
+			ClaimCreate:     claimCreateSvc,
+			ClaimGet:        claimGetSvc,
+			ClaimList:       claimListSvc,
+			FactPromote:     factPromoteSvc,
+			FactGet:         factGetSvc,
+			FactList:        factListSvc,
+			ConflictDecider: skillPackConflictDecider,
+			Graph:           profileScopeEnforcer,
+			Ledger:          skillPackImportRepo,
+			HistoryDays:     cfg.GetMemoryPackImportHistoryDays(),
+		})
+	}
 
 	var (
 		communityDetectRegistrySvc communityservice.DetectCommunityService = unavailableCommunityDetectService{}
 	)
-	communityAvailabilitySvc := communityservice.NewAvailabilityService(neo4jClient, slog.Default())
-	communityProbeCtx, communityProbeCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	communityAvailable := communityAvailabilitySvc.ProbeGDS(communityProbeCtx)
-	communityProbeCancel()
-	if communityAvailable {
-		communityDetectRegistrySvc = communityservice.NewLeidenService(pgDB.GetDB(), neo4jClient, &cfg, slog.Default())
-	} else {
-		slog.Default().Warn("community scheduler: GDS unavailable, scheduler not started")
+	communityAvailable := false
+	if graphEnabled {
+		communityAvailabilitySvc := communityservice.NewAvailabilityService(neo4jClient, slog.Default())
+		communityProbeCtx, communityProbeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		communityAvailable = communityAvailabilitySvc.ProbeGDS(communityProbeCtx)
+		communityProbeCancel()
+		if communityAvailable {
+			communityDetectRegistrySvc = communityservice.NewLeidenService(pgDB.GetDB(), neo4jClient, &cfg, slog.Default())
+		} else {
+			slog.Default().Warn("community scheduler: GDS unavailable, scheduler not started")
+		}
 	}
 
 	// Tool registry is the single source of truth for MCP / HTTP catalog / OpenAPI.
@@ -462,11 +473,11 @@ func main() {
 		Memory:               memorySvc,
 		SkillPack:            skillPackSvc,
 		Dreams:               dreamSvc,
+		Hypotheses:           semanticRepo,
 	})
 	if err != nil {
 		log.Fatalf("failed to build tool registry: %v", err)
 	}
-
 	openAPIGen := openapi.New(toolRegistry, openapi.DefaultRoutes())
 
 	// ========================================
@@ -482,15 +493,13 @@ func main() {
 	// ========================================
 	// Handlers
 	// ========================================
-	// Catalog + OpenAPI handlers.
 	toolCatalogHandler := handler.NewToolCatalogHandlerWithRuntimeConfig(toolRegistry, appConfigService)
 	toolReadHandler := handler.NewToolReadHandlerWithRuntimeConfig(toolRegistry, appConfigService)
 	toolExecuteHandler := handler.NewToolExecuteHandlerWithRuntimeConfig(toolRegistry, appConfigService)
 	mcpHandler := handler.NewMCPHandlerWithLifecycleAndRuntimeConfig(toolRegistry, logger, streamLifecycle, appConfigService)
 	openAPIAISafeHandler := handler.NewOpenAPIHandler(openAPIGen, openapi.SpecVariantAISafe)
 	openAPIFullHandler := handler.NewOpenAPIHandler(openAPIGen, openapi.SpecVariantFull)
-
-	recallHandler := handler.NewRecallHandler(recallHTTPSvc)
+	recallHandler := handler.NewRecallHandler(recallRegistrySvc)
 	dreamHandler := handler.NewDreamHandler(dreamSvc)
 
 	// ========================================
@@ -500,9 +509,11 @@ func main() {
 		{Name: "postgres", Check: func(ctx context.Context) error {
 			return pgDB.Ping(ctx)
 		}},
-		{Name: "neo4j", Check: func(ctx context.Context) error {
+	}
+	if graphEnabled {
+		checks = append(checks, http.HealthCheck{Name: "neo4j", Check: func(ctx context.Context) error {
 			return neo4jClient.Verify(ctx)
-		}},
+		}})
 	}
 
 	if backend.redisPingFn != nil {

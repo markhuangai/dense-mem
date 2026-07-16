@@ -319,21 +319,6 @@ func TestSubmitRecallSessionFeedbackAcceptsDreamIrrelevantRefs(t *testing.T) {
 	}
 }
 
-func TestSubmitRecallSessionFeedbackSchemaAcceptsAssertionRefs(t *testing.T) {
-	reg, _ := BuildDefault(Dependencies{})
-	tool, _ := reg.Get("submit_recall_session_feedback")
-	input := map[string]any{"recalls": []any{map[string]any{
-		"recall_id": "rec-assertion", "used": false, "answer_supported": false,
-		"quality": "low", "missing_context": false, "irrelevant": true,
-		"feedback_comment":       "The returned assertion was unrelated.",
-		"irrelevant_result_refs": []any{map[string]any{"type": "assertion", "id": "assertion-1"}},
-	}}}
-
-	if err := ValidateInput(tool, input); err != nil {
-		t.Fatalf("assertion feedback ref rejected by schema: %v", err)
-	}
-}
-
 func TestRecallMemoryRecallEventDisabledByDefault(t *testing.T) {
 	reg, _ := BuildDefault(Dependencies{Recall: stubRecallWithHit{}})
 	tool, _ := reg.Get("recall_memory")
@@ -363,7 +348,7 @@ func TestRecallMemoryRecallEventRequiresMetrics(t *testing.T) {
 	}
 }
 
-func TestRecallMemoryRecallEventAndSessionSubmit(t *testing.T) {
+func TestRecallMemoryRecordsSnapshotAndSessionSubmit(t *testing.T) {
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
 	recorder := &stubRecallFeedbackRecorder{}
 	reg, _ := BuildDefault(Dependencies{
@@ -378,13 +363,12 @@ func TestRecallMemoryRecallEventAndSessionSubmit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recall_memory Invoke: %v", err)
 	}
-	event, ok := out["recall_event"].(map[string]any)
-	if !ok {
-		t.Fatalf("recall_event missing or wrong type: %v", out["recall_event"])
+	recallID, _ := out["recall_id"].(string)
+	if !strings.HasPrefix(recallID, "rec_") {
+		t.Fatalf("recall_id = %v", out["recall_id"])
 	}
-	recallID, _ := event["recall_id"].(string)
-	if !strings.HasPrefix(recallID, "rec_") || event["feedback_tool"] != SubmitRecallSessionFeedbackToolName || event["feedback_timing"] != "deferred_until_final_answer" {
-		t.Fatalf("recall_event = %v", event)
+	if _, ok := out["recall_event"]; ok {
+		t.Fatalf("recall_event should not be present in public output: %v", out["recall_event"])
 	}
 	if len(recorder.snapshots) != 1 {
 		t.Fatalf("recorded snapshots = %d; want 1", len(recorder.snapshots))
@@ -438,7 +422,7 @@ func TestRecallMemoryRecallEventAndSessionSubmit(t *testing.T) {
 	}
 }
 
-func TestRecallMemoryRecallEventIncludesDreamRefs(t *testing.T) {
+func TestRecallMemorySnapshotIncludesDreamRefs(t *testing.T) {
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
 	recorder := &stubRecallFeedbackRecorder{}
 	reg, _ := BuildDefault(Dependencies{
@@ -510,20 +494,24 @@ func TestRecallFeedbackHelpersCaptureArgsAndResultRefs(t *testing.T) {
 	retractedAt := time.Date(2026, 6, 23, 9, 30, 0, 0, time.UTC)
 
 	args := recallFeedbackToolArgs(map[string]any{
-		"query":            "why",
-		"limit":            float64(3),
-		"valid_at":         validAt.Format(time.RFC3339),
-		"known_at":         knownAt.Format(time.RFC3339),
-		"include_evidence": true,
-		"use_communities":  true,
-		"ignored":          "not persisted",
+		"query":    "why",
+		"limit":    float64(3),
+		"valid_at": validAt.Format(time.RFC3339),
+		"known_at": knownAt.Format(time.RFC3339),
+		"expand_from_entity_ids": []any{
+			"00000000-0000-0000-0000-000000000101",
+		},
+		"known_relationship_ids": []any{
+			"00000000-0000-0000-0000-000000000202",
+		},
+		"ignored": "not persisted",
 	}, recallservice.RecallRequest{
-		Query:           "why",
-		Limit:           3,
-		ValidAt:         &validAt,
-		KnownAt:         &knownAt,
-		IncludeEvidence: true,
-		UseCommunities:  true,
+		Query:                "why",
+		Limit:                3,
+		ValidAt:              &validAt,
+		KnownAt:              &knownAt,
+		ExpandFromEntityIDs:  []string{"00000000-0000-0000-0000-000000000101"},
+		KnownRelationshipIDs: []string{"00000000-0000-0000-0000-000000000202"},
 	})
 	input := args["input"].(map[string]any)
 	if _, ok := input["ignored"]; ok {

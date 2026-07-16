@@ -6,13 +6,14 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	dto "github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/service/recallservice"
 )
@@ -37,7 +38,7 @@ var _ recallservice.RecallService = (*stubRecallService)(nil)
 // recallDataEnvelope is the expected response shape for GET /api/v1/recall.
 // The handler wraps hits in {"data": [...]} via response.SuccessOK (AC-55, AC-62).
 type recallDataEnvelope struct {
-	Data []dto.RecallHitResponse `json:"data"`
+	Data recallservice.PublicRecallResponse `json:"data"`
 }
 
 // TestRecallHandler verifies the handler returns 200 with recall hits wrapped in {"data": [...]}.
@@ -77,15 +78,14 @@ func TestRecallHandler(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v. body=%s", err, rec.Body.String())
 	}
-	if len(resp.Data) != 1 {
-		t.Fatalf("data count = %d; want 1. body=%s", len(resp.Data), rec.Body.String())
+	if len(resp.Data.Results) != 1 {
+		t.Fatalf("result count = %d; want 1. body=%s", len(resp.Data.Results), rec.Body.String())
 	}
-	item := resp.Data[0]
-	if item.Tier != recallservice.TierFragment {
-		t.Errorf("tier = %q; want %q", item.Tier, recallservice.TierFragment)
+	if resp.Data.Results[0].EvidenceID != fragID {
+		t.Errorf("evidence_id mismatch: got result=%v; want evidence_id=%q", resp.Data.Results[0], fragID)
 	}
-	if item.Fragment == nil || item.Fragment.FragmentID != fragID {
-		t.Errorf("fragment_id mismatch: got fragment=%v; want fragment_id=%q", item.Fragment, fragID)
+	if resp.Data.DiscoveryGuidance != recallservice.DiscoveryGuidance {
+		t.Errorf("discovery guidance = %q", resp.Data.DiscoveryGuidance)
 	}
 }
 
@@ -137,49 +137,76 @@ func TestRecallHandler_ReturnsClaimAndFactHits(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v. body=%s", err, rec.Body.String())
 	}
-	if len(resp.Data) != 2 {
-		t.Fatalf("data count = %d; want 2. body=%s", len(resp.Data), rec.Body.String())
+	if len(resp.Data.Results) != 2 {
+		t.Fatalf("result count = %d; want 2. body=%s", len(resp.Data.Results), rec.Body.String())
 	}
-	if resp.Data[0].Claim == nil || resp.Data[0].Claim.ClaimID != "claim-abc" {
-		t.Fatalf("claim hit = %#v; want claim-abc", resp.Data[0].Claim)
+	if resp.Data.Results[0].EvidenceID != "claim-abc" || !strings.Contains(resp.Data.Results[0].Context, "blue") {
+		t.Fatalf("claim result = %#v; want claim-abc", resp.Data.Results[0])
 	}
-	if resp.Data[1].Fact == nil || resp.Data[1].Fact.FactID != "fact-abc" {
-		t.Fatalf("fact hit = %#v; want fact-abc", resp.Data[1].Fact)
+	if resp.Data.Results[1].EvidenceID != "fact-abc" || !strings.Contains(resp.Data.Results[1].Context, "wet") {
+		t.Fatalf("fact result = %#v; want fact-abc", resp.Data.Results[1])
 	}
 }
 
-func TestRecallHandler_ReturnsAssertionPathAndFrontier(t *testing.T) {
+func TestRecallHandler_ReturnsSemanticRelationshipAndEvidenceHits(t *testing.T) {
 	e := echo.New()
 	profileID := uuid.New()
+	now := time.Date(2026, 7, 12, 10, 0, 0, 0, time.UTC)
 	svc := &stubRecallService{
 		recallFunc: func(ctx context.Context, pid string, req recallservice.RecallRequest) ([]recallservice.RecallHit, error) {
-			assertion := &domain.Assertion{
-				AssertionID:      "assertion-1",
-				ProfileID:        pid,
-				SubjectEntityID:  "mark",
-				ObjectEntityID:   "dense-mem",
-				PredicateKey:     "works_on",
-				RelationshipType: "WORKS_ON",
-				Tier:             domain.AssertionTierFact,
-				Status:           domain.AssertionStatusActive,
-			}
-			path := recallservice.SemanticPath{
-				Nodes: []recallservice.SemanticNode{
-					{Key: "entity:mark", ID: "mark", Type: "person", Name: "Mark"},
-					{Key: "entity:dense-mem", ID: "dense-mem", Type: "project", Name: "Dense-Mem"},
+			return []recallservice.RecallHit{
+				{
+					Evidence: &domain.SemanticEvidenceFragment{
+						TeamID:         pid,
+						FragmentID:     "frag-support",
+						OwnerProfileID: "owner-1",
+						Content:        "Dense-Mem uses Postgres.",
+						Source:         "eval",
+						SourceDocID:    "doc-1",
+						SourceType:     domain.SourceTypeConversation,
+						Authority:      domain.AuthorityPrimary,
+						ContentHash:    "hash-1",
+						CreatedAt:      now,
+					},
+					Relationships: []domain.SemanticRelationship{{
+						TeamID:            pid,
+						RelationshipID:    "rel-abc",
+						OwnerProfileID:    "owner-1",
+						SubjectEntityID:   "entity-subject",
+						SubjectEntityName: "Dense-Mem",
+						Predicate:         "uses",
+						ObjectEntityID:    "entity-object",
+						ObjectValue:       "Postgres",
+						ObjectKind:        "concept",
+						Tier:              domain.SemanticTierValidatedClaim,
+						Status:            domain.SemanticStatusActive,
+						Confidence:        0.82,
+						RecordedAt:        now,
+						CreatedAt:         now,
+						UpdatedAt:         now,
+					}},
+					Supports: []domain.SemanticRelationshipSupport{{
+						TeamID:         pid,
+						RelationshipID: "rel-abc",
+						FragmentID:     "frag-support",
+						EvidenceIndex:  2,
+						Quote:          "Dense-Mem uses Postgres.",
+						CreatedAt:      now,
+					}},
+					Tier:       string(domain.SemanticTierValidatedClaim),
+					Score:      0.82,
+					FinalScore: 0.82,
 				},
-				Edges: []recallservice.SemanticEdge{{AssertionID: assertion.AssertionID, Source: "entity:mark", Target: "entity:dense-mem", Relationship: "WORKS_ON"}},
-			}
-			frontier := recallservice.FrontierHint{FromEntityID: "mark", Direction: "outgoing", Relationship: "DEMOED", AssertionID: "assertion-2"}
-			return []recallservice.RecallHit{{Assertion: assertion, Paths: []recallservice.SemanticPath{path}, Frontier: []recallservice.FrontierHint{frontier}, Tier: recallservice.TierAssertionFact, Score: 0.91}}, nil
+			}, nil
 		},
 	}
 	h := NewRecallHandler(svc)
 	e.HTTPErrorHandler = httperr.ErrorHandler
+
 	e.Use(injectProfileMiddleware(profileID))
 	e.GET("/api/v1/recall", h.Handle)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/recall?query=dense-mem", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/recall?query=v2+storage", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
@@ -188,13 +215,23 @@ func TestRecallHandler_ReturnsAssertionPathAndFrontier(t *testing.T) {
 	}
 	var resp recallDataEnvelope
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+		t.Fatalf("unmarshal: %v. body=%s", err, rec.Body.String())
 	}
-	if len(resp.Data) != 1 || resp.Data[0].Assertion == nil {
-		t.Fatalf("assertion response = %#v", resp.Data)
+	if len(resp.Data.Results) != 1 || len(resp.Data.DiscoveryPaths) != 1 {
+		t.Fatalf("result/path counts = %d/%d; want 1/1. body=%s", len(resp.Data.Results), len(resp.Data.DiscoveryPaths), rec.Body.String())
 	}
-	if resp.Data[0].Assertion.AssertionID != "assertion-1" || len(resp.Data[0].Paths) != 1 || len(resp.Data[0].Frontier) != 1 {
-		t.Fatalf("assertion payload incomplete: %#v", resp.Data[0])
+	result := resp.Data.Results[0]
+	if result.EvidenceID != "frag-support" || result.Context == "" {
+		t.Fatalf("evidence hit = %#v; want frag-support", result)
+	}
+	path := resp.Data.DiscoveryPaths[0]
+	if len(path.Relationships) != 1 || path.Relationships[0].RelationshipID != "rel-abc" || path.Relationships[0].Predicate != "uses" {
+		t.Fatalf("discovery path = %#v; want rel-abc uses", path)
+	}
+	for _, forbidden := range []string{"embedding-contract", "text-embedding-3-large", "hash-1", "idem-1"} {
+		if strings.Contains(rec.Body.String(), forbidden) {
+			t.Fatalf("response leaked %q: %s", forbidden, rec.Body.String())
+		}
 	}
 }
 
@@ -237,18 +274,18 @@ func TestRecallHandler_CrossProfileIsolation(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	for _, item := range resp.Data {
-		if item.Fragment != nil && item.Fragment.FragmentID == fragAID {
+	for _, item := range resp.Data.Results {
+		if item.EvidenceID == fragAID {
 			t.Errorf("profile A fragment %q leaked into profile B recall results (isolation violation)", fragAID)
 		}
 	}
 	// Explicitly verify profileB received no results (stub returns nil for B).
-	if len(resp.Data) != 0 {
-		t.Errorf("profile B recall returned %d items; want 0 (cross-profile data must be invisible)", len(resp.Data))
+	if len(resp.Data.Results) != 0 {
+		t.Errorf("profile B recall returned results; want none (cross-profile data must be invisible): %#v", resp.Data)
 	}
 }
 
-func TestRecallHandler_ForwardsCommunityExpansionOption(t *testing.T) {
+func TestRecallHandler_ForwardsFollowUpContext(t *testing.T) {
 	e := echo.New()
 	profileID := uuid.New()
 	var captured recallservice.RecallRequest
@@ -264,15 +301,24 @@ func TestRecallHandler_ForwardsCommunityExpansionOption(t *testing.T) {
 	e.Use(injectProfileMiddleware(profileID))
 	e.GET("/api/v1/recall", h.Handle)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/recall?query=anything&use_communities=true", nil)
+	relationshipID := uuid.NewString()
+	evidenceID := uuid.NewString()
+	entityID := uuid.NewString()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/recall?query=anything&known_evidence_ids="+evidenceID+"&known_relationship_ids="+relationshipID+"&expand_from_entity_ids="+entityID, nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d; want 200. body=%s", rec.Code, rec.Body.String())
 	}
-	if !captured.UseCommunities {
-		t.Fatal("UseCommunities = false; want true")
+	if len(captured.KnownEvidenceIDs) != 1 || captured.KnownEvidenceIDs[0] != evidenceID {
+		t.Fatalf("KnownEvidenceIDs = %#v; want %s", captured.KnownEvidenceIDs, evidenceID)
+	}
+	if len(captured.KnownRelationshipIDs) != 1 || captured.KnownRelationshipIDs[0] != relationshipID {
+		t.Fatalf("KnownRelationshipIDs = %#v; want %s", captured.KnownRelationshipIDs, relationshipID)
+	}
+	if len(captured.ExpandFromEntityIDs) != 1 || captured.ExpandFromEntityIDs[0] != entityID {
+		t.Fatalf("ExpandFromEntityIDs = %#v; want %s", captured.ExpandFromEntityIDs, entityID)
 	}
 }
 
@@ -329,11 +375,6 @@ func TestRecallHandler_ServiceErrorMappings(t *testing.T) {
 		{
 			name: "keyword unavailable",
 			err:  recallservice.ErrKeywordUnavailable,
-			want: http.StatusServiceUnavailable,
-		},
-		{
-			name: "assertion unavailable",
-			err:  recallservice.ErrAssertionUnavailable,
 			want: http.StatusServiceUnavailable,
 		},
 		{

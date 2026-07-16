@@ -245,7 +245,7 @@ var _ AuditEmitter = (*stubFailingAudit)(nil)
 
 // TestDeleteClaim_CrossProfileIsolation verifies that a claim belonging to
 // profile A cannot be deleted by profile B, and that no existence leak occurs.
-// This is a mandatory security test per .claude/rules/profile-isolation.md.
+// This is a mandatory security test per AGENTS.md.
 func TestDeleteClaim_CrossProfileIsolation(t *testing.T) {
 	ctx := context.Background()
 	const profileA = "00000000-0000-0000-0000-000000000001"

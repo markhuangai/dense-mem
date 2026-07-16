@@ -67,6 +67,12 @@ func TestLoadFunctionsValidateSeedFiles(t *testing.T) {
 	if _, err := LoadCorpus(manifestPath, loaded); err == nil || !strings.Contains(err.Error(), "duplicate corpus") {
 		t.Fatalf("LoadCorpus duplicate err = %v", err)
 	}
+	if err := writeJSONL(corpusPath, []CorpusItem{{SourceDocID: "doc-1", Content: strings.Repeat("世", MaxCorpusContentCodepoints+1)}}); err != nil {
+		t.Fatalf("write corpus: %v", err)
+	}
+	if _, err := LoadCorpus(manifestPath, loaded); err == nil || !strings.Contains(err.Error(), "code points") {
+		t.Fatalf("LoadCorpus over-limit err = %v", err)
+	}
 	if err := writeJSONL(corpusPath, []CorpusItem{{SourceDocID: "doc-1", Content: "one"}}); err != nil {
 		t.Fatalf("write corpus: %v", err)
 	}
@@ -151,6 +157,68 @@ func TestLoadFunctionsValidateSeedFiles(t *testing.T) {
 	}
 	if !strings.HasPrefix(hash, "sha256:") {
 		t.Fatalf("SeedHash = %q", hash)
+	}
+}
+
+func TestLoadCorpusRejectsLegacyTypedImportFields(t *testing.T) {
+	for _, field := range []string{"claims", "auto_promote"} {
+		t.Run(field, func(t *testing.T) {
+			dir := t.TempDir()
+			manifestPath := filepath.Join(dir, "seed_manifest.json")
+			manifest := SeedManifest{
+				SchemaVersion: SeedSchemaVersion,
+				SeedID:        "remember-only",
+				CorpusFile:    "corpus.jsonl",
+			}
+			if err := writeJSONFile(manifestPath, manifest); err != nil {
+				t.Fatalf("write manifest: %v", err)
+			}
+			line := `{"source_doc_id":"doc-1","content":"content","` + field + `":null}` + "\n"
+			if err := os.WriteFile(filepath.Join(dir, manifest.CorpusFile), []byte(line), 0o644); err != nil {
+				t.Fatalf("write corpus: %v", err)
+			}
+
+			_, err := LoadCorpus(manifestPath, &manifest)
+			if err == nil || !strings.Contains(err.Error(), `legacy corpus field "`+field+`" is not supported`) {
+				t.Fatalf("LoadCorpus err = %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadRecallTracesBackfillsLegacyV1ResultRefs(t *testing.T) {
+	dir := t.TempDir()
+	tracesPath := filepath.Join(dir, "recall_traces.jsonl")
+	trace := RecallTrace{
+		CaseID: "case-legacy",
+		Query:  "legacy query",
+		InitialResponse: map[string]any{
+			"results": []any{
+				map[string]any{
+					"id": "fragment-legacy",
+					"metadata": map[string]any{
+						"source_doc_id": "doc-legacy",
+					},
+				},
+			},
+		},
+	}
+	if err := writeJSONL(tracesPath, []RecallTrace{trace}); err != nil {
+		t.Fatalf("write traces: %v", err)
+	}
+
+	loaded, err := LoadRecallTraces(tracesPath)
+	if err != nil {
+		t.Fatalf("LoadRecallTraces: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("loaded traces = %d", len(loaded))
+	}
+	if len(loaded[0].RankedRefs) != 1 || loaded[0].RankedRefs[0].Type != "fragment" || loaded[0].RankedRefs[0].ID != "fragment-legacy" || loaded[0].RankedRefs[0].SourceDocID != "doc-legacy" {
+		t.Fatalf("ranked refs = %+v", loaded[0].RankedRefs)
+	}
+	if len(loaded[0].ContextEvidenceRefs) != 1 || loaded[0].ContextEvidenceRefs[0].Type != "fragment" || loaded[0].ContextEvidenceRefs[0].ID != "fragment-legacy" || loaded[0].ContextEvidenceRefs[0].SourceDocID != "doc-legacy" {
+		t.Fatalf("context evidence refs = %+v", loaded[0].ContextEvidenceRefs)
 	}
 }
 

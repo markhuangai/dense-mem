@@ -315,3 +315,55 @@ func TestCompareSummariesRejectsSeedMismatch(t *testing.T) {
 		t.Fatal("CompareSummaries expected seed mismatch error")
 	}
 }
+
+func TestScoreTraceKeepsDirectMetricsSeparateFromDiscoveryExposure(t *testing.T) {
+	score := ScoreTrace("case-1", 1, QRel{
+		CaseID:       "case-1",
+		RequiredRefs: []Ref{{Type: "relationship", ID: "relationship-required"}},
+	}, RecallTrace{
+		CaseID:       "case-1",
+		RankedRefs:   []Ref{{Type: "relationship", ID: "relationship-other"}},
+		FrontierRefs: []Ref{{Type: "relationship", ID: "relationship-required"}},
+	}, KnowledgeMapping{})
+
+	if score.RecallAtK != 0 || score.FirstRequiredRank != 0 {
+		t.Fatalf("direct score = %+v; want required relationship absent from initial top-k", score)
+	}
+	if score.DiscoveryRecall != 1 || score.DiscoveryFirstRequiredRank != 2 || score.DiscoveryExposureCount != 2 || len(score.DiscoveryMissingRequired) != 0 {
+		t.Fatalf("discovery score = %+v", score)
+	}
+}
+
+func TestSummarizeScoresReportsLatencyPercentilesAndComparisonDeltas(t *testing.T) {
+	suite := []SuiteCase{{CaseID: "case-1"}, {CaseID: "case-2"}, {CaseID: "case-3"}, {CaseID: "case-4"}}
+	cases := map[string]Case{}
+	for _, suiteCase := range suite {
+		cases[suiteCase.CaseID] = Case{CaseID: suiteCase.CaseID}
+	}
+	baseline := SummarizeScores("v1", "baseline", "seed", "sha256:same", "suite.jsonl", suite, cases, []RetrievalScore{
+		{CaseID: "case-1", LatencyMS: 10, DiscoveryRecall: 0.25, DiscoveryExposureCount: 2},
+		{CaseID: "case-2", LatencyMS: 20, DiscoveryRecall: 0.50, DiscoveryExposureCount: 3},
+		{CaseID: "case-3", LatencyMS: 30, DiscoveryRecall: 0.75, DiscoveryExposureCount: 4},
+		{CaseID: "case-4", LatencyMS: 100, DiscoveryRecall: 1.00, DiscoveryExposureCount: 5},
+	})
+	if baseline.AverageLatencyMS != 40 || baseline.P50LatencyMS != 20 || baseline.P95LatencyMS != 100 {
+		t.Fatalf("latency summary = %+v", baseline)
+	}
+	if baseline.AverageDiscoveryRecall != 0.625 || baseline.AverageDiscoveryExposure != 3.5 {
+		t.Fatalf("discovery summary = %+v", baseline)
+	}
+
+	candidate := baseline
+	candidate.RunID = "v2"
+	candidate.AverageDiscoveryRecall = 0.75
+	candidate.AverageLatencyMS = 35
+	candidate.P50LatencyMS = 18
+	candidate.P95LatencyMS = 90
+	comparison, err := CompareSummaries(baseline, candidate)
+	if err != nil {
+		t.Fatalf("CompareSummaries: %v", err)
+	}
+	if comparison.DiscoveryRecallDelta != 0.125 || comparison.LatencyDeltaMS != -5 || comparison.P50LatencyDeltaMS != -2 || comparison.P95LatencyDeltaMS != -10 {
+		t.Fatalf("comparison = %+v", comparison)
+	}
+}

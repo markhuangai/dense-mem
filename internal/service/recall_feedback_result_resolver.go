@@ -129,24 +129,6 @@ func (r *RecallFeedbackGraphResolver) fetchCurrent(ctx context.Context, profileI
 			       d.updated_at AS updated_at,
 			       d.last_evaluated_at AS last_evaluated_at
 		`
-	case domain.RecallFeedbackResultTypeAssertion:
-		query = `
-			MATCH (a:Assertion {team_id: $profileId})
-			WHERE a.assertion_id IN $ids
-			RETURN a.assertion_id AS id,
-			       'assertion' AS type,
-			       a.status AS status,
-			       a.subject_entity_id AS subject_entity_id,
-			       a.predicate_key AS predicate,
-			       a.object_entity_id AS object_entity_id,
-			       a.object_value_id AS object_value_id,
-			       a.relationship_type AS relationship_type,
-			       a.tier AS tier,
-			       a.recorded_at AS recorded_at,
-			       a.recorded_to AS recorded_to,
-			       a.valid_from AS valid_from,
-			       a.valid_to AS valid_to
-		`
 	default:
 		return map[string]map[string]any{}, nil
 	}

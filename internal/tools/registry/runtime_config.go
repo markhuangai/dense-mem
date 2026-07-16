@@ -20,8 +20,6 @@ var evaluationToolNames = map[string]struct{}{
 	EvalListRecallFeedbackEventsToolName: {},
 	EvalGetRecallFeedbackEventToolName:   {},
 	"eval_run_dream_cycle":               {},
-	"eval_run_recall_case":               {},
-	"eval_score_retrieval_case":          {},
 }
 
 var recallFeedbackEventToolNames = map[string]struct{}{

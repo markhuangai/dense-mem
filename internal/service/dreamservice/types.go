@@ -114,10 +114,9 @@ type ListOptions struct {
 }
 
 type ResolveFeedbackRequest struct {
-	DreamID  string                 `json:"dream_id"`
-	Decision string                 `json:"decision"`
-	Feedback string                 `json:"feedback,omitempty"`
-	Proposal *domain.MemoryProposal `json:"proposal,omitempty"`
+	DreamID  string `json:"dream_id"`
+	Decision string `json:"decision"`
+	Feedback string `json:"feedback,omitempty"`
 }
 
 type ResolveFeedbackResult struct {

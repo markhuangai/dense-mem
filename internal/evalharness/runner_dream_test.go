@@ -89,8 +89,25 @@ func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
 				"evidence":  []map[string]any{{"id": id}},
 			})
 		case "/api/v1/tools/get_memory_placement":
+			var input map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatalf("decode placement body: %v", err)
+			}
+			ingestID, _ := input["ingest_id"].(string)
+			evidenceID := "frag-employer"
+			relationshipID := "relationship-employer"
+			if ingestID == "doc-location" {
+				evidenceID = "frag-location"
+				relationshipID = "relationship-location"
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"placement": map[string]any{"status": "completed"},
+				"placement": map[string]any{
+					"status": "completed",
+					"items": []map[string]any{{
+						"fragment_id":     evidenceID,
+						"relationship_id": relationshipID,
+					}},
+				},
 			})
 		case "/api/v1/tools/eval_run_dream_cycle":
 			var input map[string]any
@@ -147,20 +164,26 @@ func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
 					"has_more":    false,
 				})
 			}
-		case "/api/v1/tools/eval_run_recall_case":
+		case "/api/v1/tools/recall_memory":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"query": "which hypothesis?",
-				"ranked_refs": []map[string]any{{
-					"type": "fragment",
-					"id":   "frag-employer",
-					"rank": 1,
+				"recall_id": "rec-dream",
+				"results": []map[string]any{{
+					"evidence_id": "frag-employer",
+					"context":     "Employer fact source.",
 				}},
-				"dream_refs": []map[string]any{{
-					"type": "dream",
-					"id":   "dream-expected",
-					"rank": 1,
+				"discovery_paths": []map[string]any{{
+					"relationships": []map[string]any{{
+						"relationship_id": "relationship-employer",
+						"subject":         map[string]any{"name": "Employer"},
+						"predicate":       "suggests",
+						"object":          map[string]any{"value": "location period"},
+					}},
+					"evidence_ids": []string{"frag-employer"},
 				}},
-				"latency_ms": 7,
+				"discovery_guidance": "focus follow-up",
+				"related_hypotheses": []map[string]any{{
+					"dream_id": "dream-expected",
+				}},
 			})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)

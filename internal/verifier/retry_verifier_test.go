@@ -20,6 +20,7 @@ type stubConfigProvider struct {
 }
 
 func (s *stubConfigProvider) GetPostgresDSN() string                 { return "" }
+func (s *stubConfigProvider) GetPostgresReadDSN() string             { return "" }
 func (s *stubConfigProvider) GetNeo4jURI() string                    { return "" }
 func (s *stubConfigProvider) GetNeo4jUser() string                   { return "" }
 func (s *stubConfigProvider) GetNeo4jPassword() string               { return "" }

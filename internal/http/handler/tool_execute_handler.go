@@ -36,13 +36,6 @@ type ToolExecuteHandlerInterface interface {
 
 var _ ToolExecuteHandlerInterface = (*ToolExecuteHandler)(nil)
 
-var retiredToolReplacements = map[string]string{
-	"confirm_memory":           "resolve_memory_placement",
-	"dispute_memory_placement": "resolve_memory_placement",
-	"import_memories":          "remember with manager-scoped migration_refs",
-	"reflect_memories":         "recall_memory and trace_memory",
-}
-
 // NewToolExecuteHandler constructs a ToolExecuteHandler.
 func NewToolExecuteHandler(reg registry.Registry) *ToolExecuteHandler {
 	return &ToolExecuteHandler{reg: reg}
@@ -71,9 +64,6 @@ func (h *ToolExecuteHandler) Handle(c echo.Context) error {
 	name := c.Param("name")
 	if name == "" {
 		return httperr.New(httperr.VALIDATION_ERROR, "tool name is required")
-	}
-	if replacement, retired := retiredToolReplacements[name]; retired {
-		return retiredToolError(name, replacement)
 	}
 
 	tool, ok := h.reg.Get(name)
@@ -144,9 +134,6 @@ func (h *ToolReadHandler) Handle(c echo.Context) error {
 	if name == "" {
 		return httperr.New(httperr.VALIDATION_ERROR, "tool id is required")
 	}
-	if replacement, retired := retiredToolReplacements[name]; retired {
-		return retiredToolError(name, replacement)
-	}
 
 	tool, ok := h.reg.Get(name)
 	if !ok {
@@ -170,13 +157,6 @@ func (h *ToolReadHandler) Handle(c echo.Context) error {
 		OutputSchema:   tool.OutputSchema,
 		RequiredScopes: tool.RequiredScopes,
 	})
-}
-
-func retiredToolError(name, replacement string) *httperr.APIError {
-	return httperr.New(
-		httperr.GONE,
-		"tool "+name+" was retired in semantic-edge-v2; use "+replacement+"; see README Memory Workflow migration",
-	)
 }
 
 func principalCanSeeTool(principal *middleware.Principal, tool registry.Tool) bool {
@@ -255,8 +235,6 @@ func mapToolExecuteError(err error) *httperr.APIError {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "embedding provider unavailable")
 	case errors.Is(err, recallservice.ErrKeywordUnavailable):
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "keyword search unavailable")
-	case errors.Is(err, recallservice.ErrAssertionUnavailable):
-		return httperr.New(httperr.SERVICE_UNAVAILABLE, "semantic assertion search unavailable")
 	case strings.Contains(err.Error(), "invalid input"),
 		strings.Contains(err.Error(), "is required"),
 		strings.Contains(err.Error(), "invalid cursor"),

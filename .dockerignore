@@ -22,9 +22,9 @@ server
 main
 migrate
 
-# VCP planning + claude tooling (not needed at build time)
+# VCP planning + local Codex tooling (not needed at build time)
 .vcp/
-.claude/
+.codex/
 
 # Docs and licensing (keep out of the build context to speed it up;
 # the binary is self-contained)

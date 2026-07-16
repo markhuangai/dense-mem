@@ -29,99 +29,34 @@ func (s *evaluationAuditStub) Append(_ context.Context, entry appservice.AuditLo
 	return nil
 }
 
-func TestEvalScoreRetrievalCaseScoresAndAudits(t *testing.T) {
-	audit := &evaluationAuditStub{}
+func TestEvalScoreRetrievalCaseWrapperNotRegistered(t *testing.T) {
 	reg, err := BuildDefault(Dependencies{
-		EvaluationAudit:  audit,
+		EvaluationAudit:  &evaluationAuditStub{},
 		EvaluationConfig: stubEvaluationConfig{enabled: true},
 	})
 	if err != nil {
 		t.Fatalf("BuildDefault: %v", err)
 	}
-	tool, ok := reg.Get("eval_score_retrieval_case")
-	if !ok {
-		t.Fatal("eval_score_retrieval_case not registered")
+	if _, ok := reg.Get("eval_score_retrieval_case"); ok {
+		t.Fatal("eval_score_retrieval_case must not be registered; scoring runs inside the eval harness")
 	}
-	input := map[string]any{
-		"k": 3,
-		"ranked_refs": []any{
-			map[string]any{"type": "fragment", "id": "irrelevant-1"},
-			map[string]any{"type": "claim", "id": "claim-1"},
-			map[string]any{"type": "fact", "id": "fact-1"},
-		},
-		"context_refs": []any{
-			map[string]any{"type": "fact", "id": "fact-1"},
-			map[string]any{"type": "fragment", "id": "irrelevant-1"},
-		},
-		"evidence_refs": []any{
-			map[string]any{"type": "fragment", "id": "evidence-1"},
-			map[string]any{"type": "fragment", "id": "irrelevant-1"},
-		},
-		"dream_refs": []any{
-			map[string]any{"type": "dream", "id": "dream-1"},
-			map[string]any{"type": "dream", "id": "dream-bad"},
-		},
-		"required_refs": []any{
-			map[string]any{"type": "claim", "id": "claim-1", "grade": 2},
-			map[string]any{"type": "fact", "id": "fact-1", "grade": 1},
-		},
-		"bad_refs": []any{
-			map[string]any{"type": "fragment", "id": "irrelevant-1"},
-		},
-		"required_evidence_refs": []any{
-			map[string]any{"type": "fragment", "id": "evidence-1", "grade": 1},
-		},
-		"bad_evidence_refs": []any{
-			map[string]any{"type": "fragment", "id": "irrelevant-1"},
-		},
-		"required_dream_refs": []any{
-			map[string]any{"type": "dream", "id": "dream-1", "grade": 1},
-		},
-		"bad_dream_refs": []any{
-			map[string]any{"type": "dream", "id": "dream-bad"},
-		},
+	if IsEvaluationTool("eval_score_retrieval_case") {
+		t.Fatal("eval_score_retrieval_case must not be part of the runtime evaluation tool allowlist")
 	}
-	if err := ValidateInput(tool, input); err != nil {
-		t.Fatalf("ValidateInput: %v", err)
-	}
+}
 
-	out, err := tool.Invoke(context.Background(), "profile-eval", input)
+func TestEvalToolsRequireAuditSink(t *testing.T) {
+	reg, err := BuildDefault(Dependencies{EvaluationConfig: stubEvaluationConfig{enabled: true}})
 	if err != nil {
-		t.Fatalf("eval_score_retrieval_case Invoke: %v", err)
+		t.Fatalf("BuildDefault: %v", err)
 	}
-	if out["k"] != float64(3) || out["relevant_at_k"] != float64(2) || out["bad_at_k"] != float64(1) {
-		t.Fatalf("score output = %v", out)
+	tool, ok := reg.Get("eval_get_manifest")
+	if !ok {
+		t.Fatal("eval_get_manifest not registered")
 	}
-	if out["recall_at_k"] != float64(1) || out["mrr"] != float64(0.5) {
-		t.Fatalf("ranking metrics = %v", out)
-	}
-	if out["context_scored"] != true || out["context_relevant_at_k"] != 1 || out["context_bad_at_k"] != 1 {
-		t.Fatalf("context metrics = %v", out)
-	}
-	if out["context_recall_at_k"] != 0.5 || out["context_mrr"] != float64(1) {
-		t.Fatalf("context ranking metrics = %v", out)
-	}
-	if out["evidence_scored"] != true || out["evidence_relevant_at_k"] != 1 || out["evidence_bad_at_k"] != 1 {
-		t.Fatalf("evidence metrics = %v", out)
-	}
-	if out["evidence_recall_at_k"] != float64(1) || out["evidence_mrr"] != float64(1) {
-		t.Fatalf("evidence ranking metrics = %v", out)
-	}
-	if out["dream_scored"] != true || out["dream_relevant_at_k"] != 1 || out["dream_bad_at_k"] != 1 {
-		t.Fatalf("dream metrics = %v", out)
-	}
-	if out["dream_recall_at_k"] != float64(1) || out["dream_mrr"] != float64(1) {
-		t.Fatalf("dream ranking metrics = %v", out)
-	}
-	if len(audit.entries) != 1 {
-		t.Fatalf("audit entries = %d; want 1", len(audit.entries))
-	}
-	entry := audit.entries[0]
-	if entry.Operation != "EVALUATION_TOOL_CALL" || entry.EntityID != "eval_score_retrieval_case" {
-		t.Fatalf("audit entry = %+v", entry)
-	}
-	if entry.Metadata["content_returned"] != false || entry.Metadata["page_size"] != 3 {
-		t.Fatalf("audit metadata = %+v", entry.Metadata)
+	_, err = tool.Invoke(context.Background(), "profile-eval", map[string]any{})
+	if !errors.Is(err, ErrToolUnavailable) {
+		t.Fatalf("err = %v; want ErrToolUnavailable", err)
 	}
 }
 
@@ -174,12 +109,9 @@ func TestEvalManifestAndKnowledgeTools(t *testing.T) {
 		}},
 	}
 	graph := &evalGraphQuery{rows: []map[string]any{{
-		"edge_type":     "DEMOED",
-		"assertion_id":  "assertion-1",
-		"from_id":       "entity-mark",
-		"to_id":         "entity-project",
-		"search_text":   "Mark demoed Dense-Mem",
-		"evidence_json": `[{"fragment_id":"fragment-1"}]`,
+		"edge_type": "SUPPORTED_BY",
+		"from_id":   "claim-1",
+		"to_id":     "fragment-1",
 	}}}
 	dreams := &stubDreamService{}
 	reg, err := BuildDefault(Dependencies{
@@ -254,26 +186,6 @@ func TestEvalManifestAndKnowledgeTools(t *testing.T) {
 		t.Fatalf("fact list filters = %+v", facts.lastFilters)
 	}
 
-	assertionPage, err := listTool.Invoke(ctx, "profile-eval", map[string]any{
-		"type":          "assertion",
-		"status":        "active",
-		"limit":         4,
-		"metadata_only": true,
-	})
-	if err != nil {
-		t.Fatalf("eval_list_knowledge_refs assertion Invoke: %v", err)
-	}
-	assertion := firstEvalItem(t, assertionPage)
-	if _, ok := assertion["evidence_json"]; ok {
-		t.Fatalf("metadata-only assertion returned evidence: %v", assertion)
-	}
-	if !strings.Contains(graph.query, "MATCH (assertion:Assertion") || graph.params["status"] != "active" {
-		t.Fatalf("assertion export graph call = %q/%v", graph.query, graph.params)
-	}
-	if err := graphquery.NewCypherValidator().Validate(graph.query); err != nil {
-		t.Fatalf("assertion export query validation: %v", err)
-	}
-
 	communityPage, err := listTool.Invoke(ctx, "profile-eval", map[string]any{
 		"type":          "community",
 		"metadata_only": true,
@@ -290,11 +202,8 @@ func TestEvalManifestAndKnowledgeTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("eval_list_knowledge_refs edge Invoke: %v", err)
 	}
-	if graph.profileID != "profile-eval" || !strings.Contains(graph.query, "LIMIT 4") || !strings.Contains(graph.query, "rel.assertion_id AS assertion_id") || !strings.Contains(graph.query, "a.entity_id") || len(graph.params) != 0 || len(edgePage["items"].([]map[string]any)) != 1 {
+	if graph.profileID != "profile-eval" || !strings.Contains(graph.query, "LIMIT 4") || len(graph.params) != 0 || len(edgePage["items"].([]map[string]any)) != 1 {
 		t.Fatalf("edge export graph call/page = %q/%q/%v/%v", graph.profileID, graph.query, graph.params, edgePage)
-	}
-	if err := graphquery.NewCypherValidator().Validate(graph.query); err != nil {
-		t.Fatalf("edge export query validation: %v", err)
 	}
 
 	dreamPage, err := listTool.Invoke(ctx, "profile-eval", map[string]any{
@@ -316,14 +225,11 @@ func TestEvalManifestAndKnowledgeTools(t *testing.T) {
 	}
 
 	getTool, _ := reg.Get("eval_get_knowledge_item")
-	graph.rows[0]["search_text"] = "Mark demoed Dense-Mem"
-	graph.rows[0]["evidence_json"] = `[{"fragment_id":"fragment-1"}]`
 	for _, tc := range []struct {
 		kind string
 		id   string
 		key  string
 	}{
-		{kind: "assertion", id: "assertion-1", key: "evidence_json"},
 		{kind: "fragment", id: "fragment-1", key: "content"},
 		{kind: "claim", id: "claim-1", key: "object"},
 		{kind: "community", id: "community-1", key: "summary"},
@@ -341,12 +247,6 @@ func TestEvalManifestAndKnowledgeTools(t *testing.T) {
 		if _, ok := item[tc.key]; ok {
 			t.Fatalf("metadata-only %s returned %s: %v", tc.kind, tc.key, item)
 		}
-	}
-	if graph.params["assertionId"] != "assertion-1" {
-		t.Fatalf("assertion get graph params = %v", graph.params)
-	}
-	if err := graphquery.NewCypherValidator().Validate(graph.query); err != nil {
-		t.Fatalf("assertion get query validation: %v", err)
 	}
 	itemOut, err := getTool.Invoke(ctx, "profile-eval", map[string]any{
 		"type":          "fact",
@@ -506,108 +406,16 @@ func TestEvalRecallFeedbackToolsFilterAndScope(t *testing.T) {
 	}
 }
 
-func TestEvalRunRecallCaseMapsRequestsAndRefs(t *testing.T) {
-	audit := &evaluationAuditStub{}
-	recall := &evalRecallCapture{}
-	ctxSvc := &evalContextCapture{}
-	dreams := &stubDreamService{}
-	reg, err := BuildDefault(Dependencies{
-		EvaluationAudit: audit,
-		Recall:          recall,
-		Context:         ctxSvc,
-		Dreams:          dreams,
-	})
+func TestEvalRunRecallCaseWrapperNotRegistered(t *testing.T) {
+	reg, err := BuildDefault(Dependencies{EvaluationAudit: &evaluationAuditStub{}})
 	if err != nil {
 		t.Fatalf("BuildDefault: %v", err)
 	}
-	tool, _ := reg.Get("eval_run_recall_case")
-
-	out, err := tool.Invoke(context.Background(), "profile-eval", map[string]any{
-		"case_id":           "case-1",
-		"query":             "what should the eval return?",
-		"limit":             3,
-		"valid_at":          "2026-06-25T00:00:00Z",
-		"known_at":          "2026-06-26T00:00:00Z",
-		"include_evidence":  true,
-		"include_dreams":    true,
-		"use_communities":   true,
-		"max_context_chars": 2500,
-	})
-	if err != nil {
-		t.Fatalf("eval_run_recall_case Invoke: %v", err)
+	if _, ok := reg.Get("eval_run_recall_case"); ok {
+		t.Fatal("eval_run_recall_case must not be registered; evaluator calls recall_memory directly")
 	}
-	if recall.profileID != "profile-eval" || recall.req.Query != "what should the eval return?" || recall.req.Limit != 3 || !recall.req.IncludeEvidence || !recall.req.UseCommunities {
-		t.Fatalf("recall request = %q/%+v", recall.profileID, recall.req)
-	}
-	if recall.req.ValidAt == nil || recall.req.KnownAt == nil {
-		t.Fatalf("recall request times = %+v", recall.req)
-	}
-	if ctxSvc.req.IncludeEvidence == nil || !*ctxSvc.req.IncludeEvidence || ctxSvc.req.MaxChars != 2500 {
-		t.Fatalf("assemble request = %+v", ctxSvc.req)
-	}
-	if ctxSvc.req.ValidAt == nil || ctxSvc.req.KnownAt == nil {
-		t.Fatalf("assemble request times = %+v", ctxSvc.req)
-	}
-	if !ctxSvc.req.ValidAt.Equal(*recall.req.ValidAt) || !ctxSvc.req.KnownAt.Equal(*recall.req.KnownAt) {
-		t.Fatalf("assemble request times = %+v, recall times = %+v", ctxSvc.req, recall.req)
-	}
-	ranked := out["ranked_refs"].([]map[string]any)
-	if len(ranked) != 3 || ranked[0]["type"] != "fact" || ranked[1]["type"] != "claim" || ranked[2]["type"] != "fragment" {
-		t.Fatalf("ranked refs = %#v", ranked)
-	}
-	contextRefs := out["context_refs"].([]map[string]any)
-	if len(contextRefs) != 1 || contextRefs[0]["id"] != "fact-context" || out["context_block_chars"] != len("context block") {
-		t.Fatalf("context output = %#v", out)
-	}
-	evidenceRefs := out["context_evidence_refs"].([]map[string]any)
-	if len(evidenceRefs) != 1 || evidenceRefs[0]["id"] != "fragment-evidence" || evidenceRefs[0]["parent_id"] != "fact-context" {
-		t.Fatalf("context evidence output = %#v", out)
-	}
-	dreamRefs := out["dream_refs"].([]map[string]any)
-	if len(dreamRefs) != 1 || dreamRefs[0]["type"] != "dream" || dreamRefs[0]["id"] != "dream-1" || dreams.recallQuery != "what should the eval return?" {
-		t.Fatalf("dream refs = %#v query = %q", dreamRefs, dreams.recallQuery)
-	}
-
-	out, err = tool.Invoke(context.Background(), "profile-eval", map[string]any{
-		"case_id": "case-default-evidence",
-		"query":   "does omitted include_evidence still score evidence?",
-	})
-	if err != nil {
-		t.Fatalf("eval_run_recall_case omitted include_evidence Invoke: %v", err)
-	}
-	if !recall.req.IncludeEvidence {
-		t.Fatalf("recall request IncludeEvidence = false; want default true")
-	}
-	if ctxSvc.req.IncludeEvidence == nil || !*ctxSvc.req.IncludeEvidence {
-		t.Fatalf("assemble request IncludeEvidence = %+v; want default true", ctxSvc.req.IncludeEvidence)
-	}
-	evidenceRefs = out["context_evidence_refs"].([]map[string]any)
-	if len(evidenceRefs) != 1 || evidenceRefs[0]["id"] != "fragment-evidence" {
-		t.Fatalf("default context evidence output = %#v", out)
-	}
-
-	_, err = tool.Invoke(context.Background(), "profile-eval", map[string]any{
-		"case_id":          "case-no-evidence",
-		"query":            "can eval disable evidence?",
-		"include_evidence": false,
-	})
-	if err != nil {
-		t.Fatalf("eval_run_recall_case include_evidence=false Invoke: %v", err)
-	}
-	if recall.req.IncludeEvidence {
-		t.Fatalf("recall request IncludeEvidence = true; want explicit false")
-	}
-	if ctxSvc.req.IncludeEvidence == nil || *ctxSvc.req.IncludeEvidence {
-		t.Fatalf("assemble request IncludeEvidence = %+v; want explicit false", ctxSvc.req.IncludeEvidence)
-	}
-
-	_, err = tool.Invoke(context.Background(), "profile-eval", map[string]any{
-		"case_id":  "case-bad-time",
-		"query":    "bad time",
-		"valid_at": "2026-06-25",
-	})
-	if err == nil || !strings.Contains(err.Error(), "time value must be RFC3339") {
-		t.Fatalf("invalid time err = %v", err)
+	if IsEvaluationTool("eval_run_recall_case") {
+		t.Fatal("eval_run_recall_case must not be part of the runtime evaluation tool allowlist")
 	}
 }
 
@@ -676,7 +484,6 @@ func TestEvalUnavailableConfigAuditAndParserBranches(t *testing.T) {
 	}
 	listTool, _ := reg.Get("eval_list_knowledge_refs")
 	for _, tc := range []map[string]any{
-		{"type": "assertion"},
 		{"type": "fragment"},
 		{"type": "claim"},
 		{"type": "fact"},
@@ -703,10 +510,6 @@ func TestEvalUnavailableConfigAuditAndParserBranches(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "unsupported type") {
 		t.Fatalf("evalGetKnowledgeItem unsupported err = %v", err)
 	}
-	_, err = evalGetAssertion(context.Background(), Dependencies{GraphQuery: &evalGraphQuery{}}, "profile-eval", "missing")
-	if err == nil || !strings.Contains(err.Error(), "assertion not found") {
-		t.Fatalf("evalGetAssertion missing err = %v", err)
-	}
 
 	listFeedbackTool, _ := reg.Get("eval_list_recall_feedback_events")
 	if _, err = listFeedbackTool.Invoke(context.Background(), "profile-eval", map[string]any{}); !errors.Is(err, ErrToolUnavailable) {
@@ -716,9 +519,8 @@ func TestEvalUnavailableConfigAuditAndParserBranches(t *testing.T) {
 	if _, err = getFeedbackTool.Invoke(context.Background(), "profile-eval", map[string]any{"recall_id": "recall-1"}); !errors.Is(err, ErrToolUnavailable) {
 		t.Fatalf("eval_get_recall_feedback_event err = %v; want ErrToolUnavailable", err)
 	}
-	runRecallTool, _ := reg.Get("eval_run_recall_case")
-	if _, err = runRecallTool.Invoke(context.Background(), "profile-eval", map[string]any{"case_id": "case-1", "query": "q"}); !errors.Is(err, ErrToolUnavailable) {
-		t.Fatalf("eval_run_recall_case err = %v; want ErrToolUnavailable", err)
+	if _, ok := reg.Get("eval_run_recall_case"); ok {
+		t.Fatal("eval_run_recall_case must not be registered")
 	}
 
 	keyID := uuid.MustParse("00000000-0000-0000-0000-000000000404")
@@ -752,36 +554,6 @@ func TestEvalUnavailableConfigAuditAndParserBranches(t *testing.T) {
 	if t0, err := optionalTime(""); err != nil || t0 != nil {
 		t.Fatalf("optionalTime empty = %v, %v; want nil nil", t0, err)
 	}
-	if refs := evalResultRefs("not-array"); refs != nil {
-		t.Fatalf("evalResultRefs non-array = %#v; want nil", refs)
-	}
-	refs := evalResultRefs([]any{"skip", map[string]any{"type": " fact ", "id": " fact-1 "}})
-	if len(refs) != 1 || refs[0].Type != "fact" || refs[0].ID != "fact-1" {
-		t.Fatalf("evalResultRefs = %+v", refs)
-	}
-	refs = evalResultRefs([]map[string]any{{"type": "fragment", "id": "fragment-1"}})
-	if len(refs) != 1 || refs[0].Type != "fragment" || refs[0].ID != "fragment-1" {
-		t.Fatalf("evalResultRefs direct maps = %+v", refs)
-	}
-	if judgments := evalJudgments("not-array"); judgments != nil {
-		t.Fatalf("evalJudgments non-array = %#v; want nil", judgments)
-	}
-	judgments := evalJudgments([]any{"skip", map[string]any{"type": "claim", "id": "claim-1"}})
-	if len(judgments) != 1 || judgments[0].Grade != 1 {
-		t.Fatalf("evalJudgments default grade = %+v", judgments)
-	}
-	judgments = evalJudgments([]map[string]any{{"type": "fact", "id": "fact-1", "grade": 2.0}})
-	if len(judgments) != 1 || judgments[0].Type != "fact" || judgments[0].ID != "fact-1" || judgments[0].Grade != 2 {
-		t.Fatalf("evalJudgments direct maps = %+v", judgments)
-	}
-	evidenceRefs := contextEvidenceRefs([]contextservice.ContextItem{
-		{Type: "fact", ID: "fact-1", EvidenceFragments: []*domain.Fragment{{FragmentID: "fragment-shared"}}},
-		{Type: "claim", ID: "claim-1", EvidenceFragments: []*domain.Fragment{{FragmentID: "fragment-shared"}}},
-	})
-	if len(evidenceRefs) != 2 || evidenceRefs[0]["parent_id"] != "fact-1" || evidenceRefs[1]["parent_id"] != "claim-1" {
-		t.Fatalf("contextEvidenceRefs shared fragment = %+v", evidenceRefs)
-	}
-
 	event := &domain.RecallFeedbackEvent{TeamID: &teamID}
 	if !evalEventInScope(context.Background(), teamID.String(), event) {
 		t.Fatal("evalEventInScope should accept matching profile fallback team")
@@ -930,11 +702,13 @@ func (s *evalRecallFeedbackStore) GetRecallFeedbackEvent(_ context.Context, reca
 }
 
 type evalRecallCapture struct {
+	calls     int
 	profileID string
 	req       recallservice.RecallRequest
 }
 
 func (s *evalRecallCapture) Recall(_ context.Context, profileID string, req recallservice.RecallRequest) ([]recallservice.RecallHit, error) {
+	s.calls++
 	s.profileID = profileID
 	s.req = req
 	return []recallservice.RecallHit{
@@ -960,7 +734,8 @@ func (s *evalRecallCapture) Recall(_ context.Context, profileID string, req reca
 }
 
 type evalContextCapture struct {
-	req contextservice.AssembleRequest
+	calls int
+	req   contextservice.AssembleRequest
 }
 
 func (s *evalContextCapture) Trace(context.Context, string, contextservice.TraceRequest) (*contextservice.TraceResult, error) {
@@ -968,6 +743,7 @@ func (s *evalContextCapture) Trace(context.Context, string, contextservice.Trace
 }
 
 func (s *evalContextCapture) Assemble(_ context.Context, _ string, req contextservice.AssembleRequest) (*contextservice.AssembleResult, error) {
+	s.calls++
 	s.req = req
 	return &contextservice.AssembleResult{
 		ContextBlock: "context block",

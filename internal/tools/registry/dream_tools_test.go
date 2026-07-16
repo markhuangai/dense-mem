@@ -50,19 +50,12 @@ func TestBuildDefault_DreamInvokers(t *testing.T) {
 		"dream_id": "dream-1",
 		"decision": "confirm_true",
 		"feedback": "prior conversation confirms it",
-		"proposal": structuredRememberInput("prior conversation confirms it")["proposal"],
 	})
 	if err != nil {
 		t.Fatalf("resolve_dream_feedback Invoke: %v", err)
 	}
 	if resolveOut["dream"] == nil || dreams.lastResolveReq.Decision != "confirm_true" || dreams.lastResolveReq.Feedback != "prior conversation confirms it" {
 		t.Fatalf("resolve_dream_feedback output = %v request = %+v", resolveOut, dreams.lastResolveReq)
-	}
-	if dreams.lastResolveReq.Proposal == nil {
-		t.Fatal("resolve_dream_feedback did not forward semantic proposal")
-	}
-	if _, err := resolveTool.Invoke(context.Background(), "profile-dream", map[string]any{"dream_id": "dream-1", "decision": "confirm_true", "feedback": "confirmed"}); err == nil || !strings.Contains(err.Error(), "require feedback and proposal") {
-		t.Fatalf("missing proposal err = %v", err)
 	}
 }
 
@@ -118,14 +111,14 @@ func (s *stubDreamService) ResolveFeedback(ctx context.Context, profileID string
 
 func (s *stubDreamService) Status(ctx context.Context, profileID string) (*dreamservice.StatusResult, error) {
 	return &dreamservice.StatusResult{
-		EffectiveConfig: dreamservice.EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: true, StartTimeLocal: "03:00", Timezone: "UTC", MaxOutputs: 5}},
+		EffectiveConfig: dreamservice.EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true, StartTimeLocal: "03:00", Timezone: "UTC", MaxOutputs: 5}},
 		LatestRun:       &dreamservice.RunCycleResult{RunID: "run-1", ProfileID: profileID, Status: "completed"},
 		PendingCount:    1,
 	}, nil
 }
 
 func (s *stubDreamService) EffectiveConfig(context.Context, string) (dreamservice.EffectiveConfig, error) {
-	return dreamservice.EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: true, StartTimeLocal: "03:00", Timezone: "UTC", MaxOutputs: 5}}, nil
+	return dreamservice.EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true, StartTimeLocal: "03:00", Timezone: "UTC", MaxOutputs: 5}}, nil
 }
 
 func stubDream(profileID string) *domain.Dream {

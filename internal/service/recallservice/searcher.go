@@ -58,9 +58,6 @@ func (s *neo4jFactSearcher) SearchActive(ctx context.Context, profileID string, 
 	cypher := `
 CALL db.index.fulltext.queryNodes('fact_recall_idx', $searchQuery) YIELD node AS f, score
 WHERE f.team_id = $profileId AND f.status = 'active'
-  AND NOT EXISTS {
-    MATCH (f)-[:DECOMPOSED_INTO {team_id: $profileId}]->(:Assertion {team_id: $profileId, status: 'active'})
-  }
 OPTIONAL MATCH (incomingOverlay:Fact {team_id: $profileId})-[:OVERLAYS {team_id: $profileId}]->(f)
 WITH f, score, count(incomingOverlay) AS incoming_overlay_count
 OPTIONAL MATCH (f)-[:OVERLAYS {team_id: $profileId}]->(outgoingOverlay:Fact {team_id: $profileId})
@@ -114,9 +111,6 @@ func (s *neo4jClaimSearcher) SearchValidated(ctx context.Context, profileID stri
 	cypher := `
 CALL db.index.fulltext.queryNodes('claim_recall_idx', $searchQuery) YIELD node AS c, score
 WHERE c.team_id = $profileId AND c.status = 'validated'
-  AND NOT EXISTS {
-    MATCH (c)-[:DECOMPOSED_INTO {team_id: $profileId}]->(:Assertion {team_id: $profileId, status: 'active'})
-  }
 RETURN
     c.claim_id AS claim_id,
     c.team_id AS team_id,
@@ -177,11 +171,8 @@ CALL {
     AND (
       (n:Fact AND coalesce(n.status, '') = 'active') OR
       (n:Claim AND coalesce(n.status, '') = 'validated') OR
-      (n:SourceFragment AND coalesce(n.status, 'active') = 'active')
+      (n:SourceFragment AND coalesce(n.status, 'active') <> 'retracted')
     )
-    AND NOT EXISTS {
-      MATCH (n)-[:DECOMPOSED_INTO {team_id: $profileId}]->(:Assertion {team_id: $profileId, status: 'active'})
-    }
   RETURN n
   ORDER BY
     CASE

@@ -44,7 +44,6 @@ type Server struct {
 	registry             registry.Registry
 	profileID            string
 	scopes               []string
-	role                 string
 	team                 TeamContext
 	logger               observability.LogProvider
 	recallFeedbackConfig registry.RecallFeedbackConfigProvider
@@ -77,17 +76,10 @@ func NewServerWithScopesAndTeamContext(reg registry.Registry, profileID string, 
 // NewServerWithScopesTeamContextAndRuntimeConfig constructs a Server with
 // request-scoped team metadata and runtime feature visibility.
 func NewServerWithScopesTeamContextAndRuntimeConfig(reg registry.Registry, profileID string, scopes []string, team TeamContext, logger observability.LogProvider, recallFeedbackConfig registry.RecallFeedbackConfigProvider) *Server {
-	return NewServerWithScopesTeamContextRoleAndRuntimeConfig(reg, profileID, scopes, team, "", logger, recallFeedbackConfig)
-}
-
-// NewServerWithScopesTeamContextRoleAndRuntimeConfig constructs a Server with
-// request-scoped team metadata, credential role, and runtime feature visibility.
-func NewServerWithScopesTeamContextRoleAndRuntimeConfig(reg registry.Registry, profileID string, scopes []string, team TeamContext, role string, logger observability.LogProvider, recallFeedbackConfig registry.RecallFeedbackConfigProvider) *Server {
 	return &Server{
 		registry:             reg,
 		profileID:            profileID,
 		scopes:               append([]string(nil), scopes...),
-		role:                 strings.ToLower(strings.TrimSpace(role)),
 		team:                 normalizeTeamContext(team),
 		logger:               logger,
 		recallFeedbackConfig: recallFeedbackConfig,
@@ -191,7 +183,7 @@ func (s *Server) handleInitialize() map[string]any {
 	capabilities := map[string]any{
 		"tools": map[string]any{},
 	}
-	if len(s.visiblePrompts()) > 0 {
+	if len(s.prompts.List()) > 0 {
 		capabilities["prompts"] = map[string]any{}
 	}
 
@@ -207,7 +199,7 @@ func (s *Server) handleInitialize() map[string]any {
 }
 
 func (s *Server) handlePromptsList() map[string]any {
-	listed := s.visiblePrompts()
+	listed := s.prompts.List()
 	out := make([]map[string]any, 0, len(listed))
 	for _, prompt := range listed {
 		args := make([]map[string]any, 0, len(prompt.Arguments))
@@ -247,10 +239,6 @@ func (s *Server) handlePromptsGet(raw json.RawMessage) (map[string]any, *rpcErro
 	if params.Name == "" {
 		return nil, &rpcError{Code: errCodeInvalidParams, Message: "missing prompt name"}
 	}
-	listed, ok := s.prompts.Get(params.Name)
-	if !ok || !s.promptVisible(listed) {
-		return nil, &rpcError{Code: errCodeMethodNotFound, Message: fmt.Sprintf("prompt not found: %s", params.Name)}
-	}
 	args := map[string]string{}
 	for key, value := range params.Arguments {
 		text, ok := value.(string)
@@ -281,22 +269,6 @@ func (s *Server) handlePromptsGet(raw json.RawMessage) (map[string]any, *rpcErro
 			},
 		},
 	}, nil
-}
-
-func (s *Server) visiblePrompts() []promptcatalog.Prompt {
-	listed := s.prompts.List()
-	out := make([]promptcatalog.Prompt, 0, len(listed))
-	for _, prompt := range listed {
-		if s.promptVisible(prompt) {
-			out = append(out, prompt)
-		}
-	}
-	return out
-}
-
-func (s *Server) promptVisible(prompt promptcatalog.Prompt) bool {
-	required := strings.ToLower(strings.TrimSpace(prompt.RequiredRole))
-	return required == "" || required == s.role
 }
 
 // handleToolsList returns registered tools mapped to MCP tool descriptors.

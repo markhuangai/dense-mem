@@ -12,16 +12,11 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/http/dto"
-	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/placementreview"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service/assertionservice"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 const (
@@ -58,36 +53,26 @@ type Service interface {
 	ConfirmMemory(ctx context.Context, profileID string, req ConfirmRequest) (*ConfirmResult, error)
 }
 
-type PlacementResolver interface {
-	ResolveMemoryPlacement(ctx context.Context, profileID string, req ResolvePlacementRequest) (*ResolvePlacementResult, error)
-}
-
 // Dependencies are the lower-level services used by the memory orchestrator.
 type Dependencies struct {
-	FragmentCreate     fragmentservice.CreateFragmentService
-	FragmentQuarantine fragmentservice.QuarantinedFragmentCreateService
-	ClaimCreate        claimservice.CreateClaimService
-	ClaimVerify        claimservice.VerifyClaimService
-	ClaimGet           claimservice.GetClaimService
-	ClaimList          claimservice.ListClaimsService
-	FactPromote        factservice.PromoteClaimService
-	FactConfirm        factservice.ConfirmMemoryService
-	FactList           factservice.ListFactsService
-	PlacementStore     repository.MemoryPlacementRepository
-	Assertions         *assertionservice.Service
-	GraphReviewer      placementreview.Reviewer
-	Verifier           verifier.Verifier
-	Embedder           embedding.EmbeddingProviderInterface
-	VerifierModel      string
-	Metrics            observability.DiscoverabilityMetrics
-	Logger             *slog.Logger
+	FragmentCreate       fragmentservice.CreateFragmentService
+	ClaimCreate          claimservice.CreateClaimService
+	ClaimVerify          claimservice.VerifyClaimService
+	ClaimGet             claimservice.GetClaimService
+	ClaimList            claimservice.ListClaimsService
+	FactPromote          factservice.PromoteClaimService
+	FactConfirm          factservice.ConfirmMemoryService
+	FactList             factservice.ListFactsService
+	PlacementStore       repository.MemoryPlacementRepository
+	SemanticStore        repository.SemanticRepository
+	SemanticReviewer     SemanticReviewer
+	SemanticVerifier     SemanticVerifier
+	PlacementMaxAttempts int
+	Logger               *slog.Logger
 }
 
 // New constructs a high-level memory Service.
 func New(deps Dependencies) *service {
-	if deps.Metrics == nil {
-		deps.Metrics = observability.NoopDiscoverabilityMetrics()
-	}
 	return &service{
 		deps:          deps,
 		placementKick: make(chan struct{}, 1),

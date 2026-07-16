@@ -3,9 +3,7 @@
 // SYNCHRONOUS EMBEDDING CONTRACT (AC-52):
 // This service implements synchronous embedding on the create path. The embedding is
 // generated before persistence, and failure to embed prevents the write entirely.
-// This ensures no active fragment exists without an embedding (AC-23).
-// Security-quarantined evidence uses CreateQuarantined, which deliberately
-// persists without any model call and is excluded from active readers.
+// This ensures no fragment exists without an embedding (AC-23).
 //
 // ASYNC EMBEDDING (DEFERRED):
 // An asynchronous embedding path is a future design option. If implemented, it would
@@ -54,7 +52,6 @@ type createFragmentService struct {
 
 // Compile-time assertion that createFragmentService implements CreateFragmentService.
 var _ CreateFragmentService = (*createFragmentService)(nil)
-var _ QuarantinedFragmentCreateService = (*createFragmentService)(nil)
 
 // AuditEmitter defines the interface for emitting audit events.
 // This is a subset of AuditService focused on fragment creation needs.
@@ -97,7 +94,7 @@ func NewCreateFragmentService(
 	consistency EmbeddingConsistencyChecker,
 	logger *slog.Logger,
 	metrics observability.DiscoverabilityMetrics,
-) FragmentCreateServices {
+) CreateFragmentService {
 	if metrics == nil {
 		metrics = observability.NoopDiscoverabilityMetrics()
 	}
@@ -374,145 +371,6 @@ func (s *createFragmentService) Create(ctx context.Context, profileID string, re
 		Fragment:  fragment,
 		Duplicate: false,
 	}, nil
-}
-
-// CreateQuarantined preserves prompt-injection evidence without sending its
-// content to an embedding, review, or verification provider. It deliberately
-// does not deduplicate against active fragments because quarantine must not
-// reuse evidence that could already be recallable.
-func (s *createFragmentService) CreateQuarantined(ctx context.Context, profileID string, req *dto.CreateFragmentRequest) (*CreateResult, error) {
-	if err := validateCreateFragmentRequest(req); err != nil {
-		observability.RecordFragmentCreate(ctx, s.metrics, "error")
-		return nil, err
-	}
-
-	sourceType := domain.SourceType(req.SourceType)
-	if sourceType == "" {
-		sourceType = domain.SourceTypeManual
-	}
-	authority := domain.Authority(req.Authority)
-	if authority == "" {
-		authority = domain.AuthorityUnknown
-	}
-	classification := make(map[string]any, len(req.Classification)+2)
-	for key, value := range req.Classification {
-		classification[key] = value
-	}
-	classification["security_status"] = string(domain.FragmentStatusQuarantined)
-	classification["recall_eligible"] = false
-
-	now := time.Now().UTC()
-	ownerID, ownerName, _ := requestctx.ActorOwner(ctx)
-	fragment := &domain.Fragment{
-		FragmentID:           fragmentidentity.NewFragmentID(),
-		ProfileID:            profileID,
-		OwnerProfileID:       ownerID,
-		OwnerProfileName:     ownerName,
-		CreatedByProfileID:   ownerID,
-		CreatedByProfileName: ownerName,
-		Content:              req.Content,
-		Source:               req.Source,
-		SourceType:           sourceType,
-		Authority:            authority,
-		Labels:               append([]string(nil), req.Labels...),
-		Metadata:             req.Metadata,
-		ContentHash:          fragmentidentity.ContentHash(req.Content).Hex,
-		IdempotencyKey:       req.IdempotencyKey,
-		SourceQuality:        0,
-		Classification:       classification,
-		Status:               domain.FragmentStatusQuarantined,
-		CreatedAt:            now,
-		UpdatedAt:            now,
-	}
-	metadataJSON, err := fragmentcodec.EncodeOptionalMap(fragment.Metadata)
-	if err != nil {
-		observability.RecordFragmentCreate(ctx, s.metrics, "error")
-		return nil, fmt.Errorf("failed to encode fragment metadata: %w", err)
-	}
-	classificationJSON, err := fragmentcodec.EncodeOptionalMap(fragment.Classification)
-	if err != nil {
-		observability.RecordFragmentCreate(ctx, s.metrics, "error")
-		return nil, fmt.Errorf("failed to encode fragment classification: %w", err)
-	}
-
-	query := `
-		CREATE (sf:SourceFragment {
-			team_id: $profileId,
-			fragment_id: $fragmentId,
-			content: $content,
-			content_hash: $contentHash,
-			idempotency_key: $idempotencyKey,
-			source: $source,
-			source_type: $sourceType,
-			authority: $authority,
-			labels: $labels,
-			metadata_json: $metadataJSON,
-			source_quality: 0.0,
-			classification_json: $classificationJSON,
-			status: $status,
-			owner_profile_id: $ownerProfileId,
-			owner_profile_name: $ownerProfileName,
-			created_by_profile_id: $createdByProfileId,
-			created_by_profile_name: $createdByProfileName,
-			created_at: $createdAt,
-			updated_at: $updatedAt
-		})`
-	_, err = s.writer.ScopedWrite(ctx, profileID, query, map[string]any{
-		"fragmentId":           fragment.FragmentID,
-		"content":              fragment.Content,
-		"contentHash":          fragment.ContentHash,
-		"idempotencyKey":       fragment.IdempotencyKey,
-		"source":               fragment.Source,
-		"sourceType":           string(fragment.SourceType),
-		"authority":            string(fragment.Authority),
-		"labels":               fragment.Labels,
-		"metadataJSON":         metadataJSON,
-		"classificationJSON":   classificationJSON,
-		"status":               string(fragment.Status),
-		"ownerProfileId":       fragment.OwnerProfileID,
-		"ownerProfileName":     fragment.OwnerProfileName,
-		"createdByProfileId":   fragment.CreatedByProfileID,
-		"createdByProfileName": fragment.CreatedByProfileName,
-		"createdAt":            fragment.CreatedAt,
-		"updatedAt":            fragment.UpdatedAt,
-	})
-	if err != nil {
-		if s.logger != nil {
-			s.logger.Error("fragment quarantine: persist failed",
-				slog.String("team_id", profileID),
-				slog.String("fragment_id", fragment.FragmentID),
-				slog.String("error", err.Error()),
-			)
-		}
-		observability.RecordFragmentCreate(ctx, s.metrics, "error")
-		return nil, fmt.Errorf("failed to persist quarantined fragment: %w", err)
-	}
-
-	if s.audit != nil {
-		auditEntry := AuditLogEntry{
-			ProfileID:     &profileID,
-			Operation:     "fragment.quarantine",
-			EntityType:    "fragment",
-			EntityID:      fragment.FragmentID,
-			CorrelationID: correlation.FromContext(ctx),
-			AfterPayload: map[string]interface{}{
-				"fragment_id":  fragment.FragmentID,
-				"team_id":      profileID,
-				"source_type":  string(fragment.SourceType),
-				"content_hash": fragment.ContentHash,
-				"status":       string(fragment.Status),
-			},
-		}
-		if err := s.audit.Append(ctx, auditEntry); err != nil && s.logger != nil {
-			s.logger.Warn("failed to emit audit event for quarantined fragment",
-				slog.String("team_id", profileID),
-				slog.String("fragment_id", fragment.FragmentID),
-				slog.String("error", err.Error()),
-			)
-		}
-	}
-	observability.RecordFragmentCreate(ctx, s.metrics, "quarantined")
-	return &CreateResult{Fragment: fragment}, nil
 }
 
 func validateCreateFragmentRequest(req *dto.CreateFragmentRequest) error {

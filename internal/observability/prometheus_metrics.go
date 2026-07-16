@@ -38,7 +38,6 @@ type ScopedDiscoverabilityMetrics interface {
 	IncFragmentCreateFor(ctx context.Context, outcome string)
 	IncClaimCreateFor(ctx context.Context, outcome string, dedupeReason string)
 	IncPromotionOutcomeFor(ctx context.Context, outcome string)
-	IncAssertionTransitionFor(ctx context.Context, eventType, tier, status string)
 	ObservePromoteLockWaitFor(ctx context.Context, seconds float64)
 	IncFragmentRetractFor(ctx context.Context)
 	IncFactNeedsRevalidationFor(ctx context.Context)
@@ -51,33 +50,32 @@ type ScopedDiscoverabilityMetrics interface {
 type PrometheusMetrics struct {
 	registry *prometheus.Registry
 
-	httpRequests         *prometheus.CounterVec
-	httpDuration         *prometheus.HistogramVec
-	embeddingCalls       *prometheus.CounterVec
-	embeddingErrors      *prometheus.CounterVec
-	embeddingDur         *prometheus.HistogramVec
-	embeddingTokens      *prometheus.CounterVec
-	verifierCalls        *prometheus.CounterVec
-	verifierDur          *prometheus.HistogramVec
-	verifierTokens       *prometheus.CounterVec
-	recallCalls          *prometheus.CounterVec
-	recallDur            *prometheus.HistogramVec
-	recallResults        *prometheus.HistogramVec
-	recallFeedback       *prometheus.CounterVec
-	recallQuality        *prometheus.HistogramVec
-	dreamFeedback        *prometheus.CounterVec
-	memoryFunnel         *prometheus.HistogramVec
-	fragmentCreates      *prometheus.CounterVec
-	claimCreates         *prometheus.CounterVec
-	verifyVerdicts       *prometheus.CounterVec
-	promotions           *prometheus.CounterVec
-	assertionTransitions *prometheus.CounterVec
-	promoteWait          *prometheus.HistogramVec
-	retractions          *prometheus.CounterVec
-	revalidation         *prometheus.CounterVec
-	communityRuns        *prometheus.CounterVec
-	communityDur         *prometheus.HistogramVec
-	communityNodes       *prometheus.HistogramVec
+	httpRequests    *prometheus.CounterVec
+	httpDuration    *prometheus.HistogramVec
+	embeddingCalls  *prometheus.CounterVec
+	embeddingErrors *prometheus.CounterVec
+	embeddingDur    *prometheus.HistogramVec
+	embeddingTokens *prometheus.CounterVec
+	verifierCalls   *prometheus.CounterVec
+	verifierDur     *prometheus.HistogramVec
+	verifierTokens  *prometheus.CounterVec
+	recallCalls     *prometheus.CounterVec
+	recallDur       *prometheus.HistogramVec
+	recallResults   *prometheus.HistogramVec
+	recallFeedback  *prometheus.CounterVec
+	recallQuality   *prometheus.HistogramVec
+	dreamFeedback   *prometheus.CounterVec
+	memoryFunnel    *prometheus.HistogramVec
+	fragmentCreates *prometheus.CounterVec
+	claimCreates    *prometheus.CounterVec
+	verifyVerdicts  *prometheus.CounterVec
+	promotions      *prometheus.CounterVec
+	promoteWait     *prometheus.HistogramVec
+	retractions     *prometheus.CounterVec
+	revalidation    *prometheus.CounterVec
+	communityRuns   *prometheus.CounterVec
+	communityDur    *prometheus.HistogramVec
+	communityNodes  *prometheus.HistogramVec
 }
 
 var _ DiscoverabilityMetrics = (*PrometheusMetrics)(nil)
@@ -176,10 +174,6 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 			Name: "densemem_promotion_outcome_total",
 			Help: "Claim-to-fact promotion outcomes.",
 		}, append(identityLabels(), "outcome")),
-		assertionTransitions: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "densemem_assertion_transition_total",
-			Help: "Semantic assertion lifecycle events with bounded labels.",
-		}, append(identityLabels(), "event_type", "tier", "status")),
 		promoteWait: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "densemem_promote_lock_wait_seconds",
 			Help:    "Promotion advisory lock wait duration.",
@@ -214,7 +208,7 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		m.verifierCalls, m.verifierDur, m.verifierTokens,
 		m.recallCalls, m.recallDur, m.recallResults,
 		m.recallFeedback, m.recallQuality, m.dreamFeedback, m.memoryFunnel,
-		m.fragmentCreates, m.claimCreates, m.verifyVerdicts, m.promotions, m.assertionTransitions,
+		m.fragmentCreates, m.claimCreates, m.verifyVerdicts, m.promotions,
 		m.promoteWait, m.retractions, m.revalidation,
 		m.communityRuns, m.communityDur, m.communityNodes,
 	)
@@ -360,14 +354,6 @@ func (m *PrometheusMetrics) IncPromotionOutcome(outcome string) {
 
 func (m *PrometheusMetrics) IncPromotionOutcomeFor(ctx context.Context, outcome string) {
 	m.promotions.WithLabelValues(append(identityValues(ctx), normalizeLabel(outcome))...).Inc()
-}
-
-func (m *PrometheusMetrics) IncAssertionTransition(eventType, tier, status string) {
-	m.IncAssertionTransitionFor(context.Background(), eventType, tier, status)
-}
-
-func (m *PrometheusMetrics) IncAssertionTransitionFor(ctx context.Context, eventType, tier, status string) {
-	m.assertionTransitions.WithLabelValues(append(identityValues(ctx), boundedAssertionEvent(eventType), boundedAssertionTier(tier), boundedAssertionStatus(status))...).Inc()
 }
 
 func (m *PrometheusMetrics) ObservePromoteLockWait(seconds float64) {
@@ -675,44 +661,6 @@ func RecordPromotionOutcome(ctx context.Context, metrics DiscoverabilityMetrics,
 		return
 	}
 	metrics.IncPromotionOutcome(outcome)
-}
-
-func RecordAssertionTransition(ctx context.Context, metrics DiscoverabilityMetrics, eventType, tier, status string) {
-	if metrics == nil {
-		return
-	}
-	if scoped, ok := metrics.(ScopedDiscoverabilityMetrics); ok {
-		scoped.IncAssertionTransitionFor(ctx, eventType, tier, status)
-		return
-	}
-	metrics.IncAssertionTransition(eventType, tier, status)
-}
-
-func boundedAssertionEvent(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "proposed", "retained_candidate", "validated", "promoted", "rejected", "quarantined", "review_requested", "review_resolved", "corrected", "reversed", "superseded", "acknowledged":
-		return strings.ToLower(strings.TrimSpace(value))
-	default:
-		return unknownMetricLabel
-	}
-}
-
-func boundedAssertionTier(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "candidate", "validated_claim", "fact", "dream":
-		return strings.ToLower(strings.TrimSpace(value))
-	default:
-		return unknownMetricLabel
-	}
-}
-
-func boundedAssertionStatus(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "active", "needs_review", "quarantined", "superseded", "disputed", "retracted", "rejected":
-		return strings.ToLower(strings.TrimSpace(value))
-	default:
-		return unknownMetricLabel
-	}
 }
 
 func RecordPromoteLockWait(ctx context.Context, metrics DiscoverabilityMetrics, seconds float64) {

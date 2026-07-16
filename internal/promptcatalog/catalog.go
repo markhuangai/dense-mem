@@ -26,12 +26,11 @@ type Argument struct {
 }
 
 type Prompt struct {
-	Name         string     `json:"name"`
-	Title        string     `json:"title,omitempty"`
-	Description  string     `json:"description"`
-	Arguments    []Argument `json:"arguments,omitempty"`
-	RequiredRole string     `json:"required_role,omitempty"`
-	template     string
+	Name        string     `json:"name"`
+	Title       string     `json:"title,omitempty"`
+	Description string     `json:"description"`
+	Arguments   []Argument `json:"arguments,omitempty"`
+	template    string
 }
 
 type manifestPrompt struct {

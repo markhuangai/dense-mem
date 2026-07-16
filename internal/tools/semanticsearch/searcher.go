@@ -50,9 +50,6 @@ func (s *neo4jEmbeddingSearcher) QueryVectorIndex(ctx context.Context, profileID
 	// Uses db.index.vector.queryNodes for vector similarity search.
 	cypherQuery := `CALL db.index.vector.queryNodes('fragment_embedding_idx', $limit, $embedding) YIELD node AS f, score
 WHERE f.team_id = $profileId AND ` + fragmentActive + `
-	AND NOT EXISTS {
-		MATCH (f)-[:DECOMPOSED_INTO {team_id: $profileId}]->(:Assertion {team_id: $profileId, status: 'active'})
-	}
 	RETURN f.fragment_id AS id, f.content AS content, score, f.labels AS labels, f.metadata AS metadata,
 	       f.metadata_json AS metadata_json, f.team_id AS team_id,
 	       f.created_at AS created_at, f.updated_at AS updated_at`

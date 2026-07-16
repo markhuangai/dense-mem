@@ -6,23 +6,24 @@ const SeedSchemaVersion = "dense-mem.eval.seed.v1"
 
 // SeedManifest describes a local-only evaluation seed pack.
 type SeedManifest struct {
-	SchemaVersion       string         `json:"schema_version"`
-	SeedID              string         `json:"seed_id"`
-	Description         string         `json:"description,omitempty"`
-	GeneratedAt         string         `json:"generated_at,omitempty"`
-	CorpusFile          string         `json:"corpus_file"`
-	CasesFile           string         `json:"cases_file"`
-	QrelsFile           string         `json:"qrels_file"`
-	AnswersFile         string         `json:"answers_file,omitempty"`
-	HardNegativesFile   string         `json:"hard_negatives_file,omitempty"`
-	TransformsFile      string         `json:"transforms_file,omitempty"`
-	DreamsFile          string         `json:"dreams_file,omitempty"`
-	LicensesFile        string         `json:"licenses_file,omitempty"`
-	EmbeddingProvider   string         `json:"embedding_provider,omitempty"`
-	EmbeddingModel      string         `json:"embedding_model,omitempty"`
-	EmbeddingDimensions int            `json:"embedding_dimensions,omitempty"`
-	Counts              map[string]int `json:"counts,omitempty"`
-	Sources             []SeedSource   `json:"sources,omitempty"`
+	SchemaVersion        string         `json:"schema_version"`
+	SeedID               string         `json:"seed_id"`
+	Description          string         `json:"description,omitempty"`
+	GeneratedAt          string         `json:"generated_at,omitempty"`
+	CorpusFile           string         `json:"corpus_file"`
+	CasesFile            string         `json:"cases_file"`
+	QrelsFile            string         `json:"qrels_file"`
+	AnswersFile          string         `json:"answers_file,omitempty"`
+	HardNegativesFile    string         `json:"hard_negatives_file,omitempty"`
+	TransformsFile       string         `json:"transforms_file,omitempty"`
+	DreamsFile           string         `json:"dreams_file,omitempty"`
+	LicensesFile         string         `json:"licenses_file,omitempty"`
+	ValidationReportFile string         `json:"validation_report_file,omitempty"`
+	EmbeddingProvider    string         `json:"embedding_provider,omitempty"`
+	EmbeddingModel       string         `json:"embedding_model,omitempty"`
+	EmbeddingDimensions  int            `json:"embedding_dimensions,omitempty"`
+	Counts               map[string]int `json:"counts,omitempty"`
+	Sources              []SeedSource   `json:"sources,omitempty"`
 }
 
 type SeedSource struct {
@@ -42,27 +43,6 @@ type CorpusItem struct {
 	SourceQuality float64        `json:"source_quality,omitempty"`
 	Labels        []string       `json:"labels,omitempty"`
 	Metadata      map[string]any `json:"metadata,omitempty"`
-	Claims        []TypedClaim   `json:"claims,omitempty"`
-	AutoPromote   bool           `json:"auto_promote,omitempty"`
-}
-
-type TypedClaim struct {
-	Subject           string         `json:"subject"`
-	Predicate         string         `json:"predicate"`
-	Object            string         `json:"object"`
-	Modality          string         `json:"modality,omitempty"`
-	Polarity          string         `json:"polarity,omitempty"`
-	Speaker           string         `json:"speaker,omitempty"`
-	ExtractConf       float64        `json:"extract_conf"`
-	ResolutionConf    float64        `json:"resolution_conf"`
-	IdempotencyKey    string         `json:"idempotency_key,omitempty"`
-	ValidFrom         *time.Time     `json:"valid_from,omitempty"`
-	ValidTo           *time.Time     `json:"valid_to,omitempty"`
-	SupportedBy       []string       `json:"supported_by,omitempty"`
-	ExtractionModel   string         `json:"extraction_model,omitempty"`
-	ExtractionVersion string         `json:"extraction_version,omitempty"`
-	PipelineRunID     string         `json:"pipeline_run_id,omitempty"`
-	Classification    map[string]any `json:"classification,omitempty"`
 }
 
 type Case struct {
@@ -136,6 +116,8 @@ type RecallTrace struct {
 	CaseID              string         `json:"case_id"`
 	Query               string         `json:"query"`
 	RankedRefs          []Ref          `json:"ranked_refs"`
+	InitialResponse     map[string]any `json:"initial_response,omitempty"`
+	FrontierRefs        []Ref          `json:"frontier_refs,omitempty"`
 	ContextRefs         []Ref          `json:"context_refs,omitempty"`
 	ContextEvidenceRefs []Ref          `json:"context_evidence_refs,omitempty"`
 	DreamRefs           []Ref          `json:"dream_refs,omitempty"`
@@ -145,93 +127,105 @@ type RecallTrace struct {
 }
 
 type RetrievalScore struct {
-	CaseID                    string  `json:"case_id"`
-	K                         int     `json:"k"`
-	RelevantAtK               int     `json:"relevant_at_k"`
-	RelevantTotal             int     `json:"relevant_total"`
-	BadAtK                    int     `json:"bad_at_k"`
-	RecallAtK                 float64 `json:"recall_at_k"`
-	MRR                       float64 `json:"mrr"`
-	NDCGAtK                   float64 `json:"ndcg_at_k"`
-	FirstRequiredRank         int     `json:"first_required_rank,omitempty"`
-	FirstBadRank              int     `json:"first_bad_rank,omitempty"`
-	MissingRequired           []Ref   `json:"missing_required_refs,omitempty"`
-	BadRefsAtK                []Ref   `json:"bad_refs_at_k,omitempty"`
-	ContextScored             bool    `json:"context_scored"`
-	ContextRelevantAtK        int     `json:"context_relevant_at_k"`
-	ContextRelevantTotal      int     `json:"context_relevant_total"`
-	ContextBadAtK             int     `json:"context_bad_at_k"`
-	ContextRecallAtK          float64 `json:"context_recall_at_k"`
-	ContextMRR                float64 `json:"context_mrr"`
-	ContextNDCGAtK            float64 `json:"context_ndcg_at_k"`
-	ContextFirstRequiredRank  int     `json:"context_first_required_rank,omitempty"`
-	ContextFirstBadRank       int     `json:"context_first_bad_rank,omitempty"`
-	ContextMissingRequired    []Ref   `json:"context_missing_required_refs,omitempty"`
-	ContextBadRefsAtK         []Ref   `json:"context_bad_refs_at_k,omitempty"`
-	EvidenceScored            bool    `json:"evidence_scored"`
-	EvidenceRelevantAtK       int     `json:"evidence_relevant_at_k"`
-	EvidenceRelevantTotal     int     `json:"evidence_relevant_total"`
-	EvidenceBadAtK            int     `json:"evidence_bad_at_k"`
-	EvidenceRecallAtK         float64 `json:"evidence_recall_at_k"`
-	EvidenceMRR               float64 `json:"evidence_mrr"`
-	EvidenceNDCGAtK           float64 `json:"evidence_ndcg_at_k"`
-	EvidenceFirstRequiredRank int     `json:"evidence_first_required_rank,omitempty"`
-	EvidenceFirstBadRank      int     `json:"evidence_first_bad_rank,omitempty"`
-	EvidenceMissingRequired   []Ref   `json:"evidence_missing_required_refs,omitempty"`
-	EvidenceBadRefsAtK        []Ref   `json:"evidence_bad_refs_at_k,omitempty"`
-	DreamScored               bool    `json:"dream_scored"`
-	DreamRelevantAtK          int     `json:"dream_relevant_at_k"`
-	DreamRelevantTotal        int     `json:"dream_relevant_total"`
-	DreamBadAtK               int     `json:"dream_bad_at_k"`
-	DreamRecallAtK            float64 `json:"dream_recall_at_k"`
-	DreamMRR                  float64 `json:"dream_mrr"`
-	DreamNDCGAtK              float64 `json:"dream_ndcg_at_k"`
-	DreamFirstRequiredRank    int     `json:"dream_first_required_rank,omitempty"`
-	DreamFirstBadRank         int     `json:"dream_first_bad_rank,omitempty"`
-	DreamMissingRequired      []Ref   `json:"dream_missing_required_refs,omitempty"`
-	DreamBadRefsAtK           []Ref   `json:"dream_bad_refs_at_k,omitempty"`
-	UnmappedSourceRefs        []Ref   `json:"unmapped_source_refs,omitempty"`
-	LatencyMS                 int64   `json:"latency_ms,omitempty"`
+	CaseID                     string  `json:"case_id"`
+	K                          int     `json:"k"`
+	RelevantAtK                int     `json:"relevant_at_k"`
+	RelevantTotal              int     `json:"relevant_total"`
+	BadAtK                     int     `json:"bad_at_k"`
+	RecallAtK                  float64 `json:"recall_at_k"`
+	MRR                        float64 `json:"mrr"`
+	NDCGAtK                    float64 `json:"ndcg_at_k"`
+	FirstRequiredRank          int     `json:"first_required_rank,omitempty"`
+	FirstBadRank               int     `json:"first_bad_rank,omitempty"`
+	MissingRequired            []Ref   `json:"missing_required_refs,omitempty"`
+	BadRefsAtK                 []Ref   `json:"bad_refs_at_k,omitempty"`
+	ContextScored              bool    `json:"context_scored"`
+	ContextRelevantAtK         int     `json:"context_relevant_at_k"`
+	ContextRelevantTotal       int     `json:"context_relevant_total"`
+	ContextBadAtK              int     `json:"context_bad_at_k"`
+	ContextRecallAtK           float64 `json:"context_recall_at_k"`
+	ContextMRR                 float64 `json:"context_mrr"`
+	ContextNDCGAtK             float64 `json:"context_ndcg_at_k"`
+	ContextFirstRequiredRank   int     `json:"context_first_required_rank,omitempty"`
+	ContextFirstBadRank        int     `json:"context_first_bad_rank,omitempty"`
+	ContextMissingRequired     []Ref   `json:"context_missing_required_refs,omitempty"`
+	ContextBadRefsAtK          []Ref   `json:"context_bad_refs_at_k,omitempty"`
+	EvidenceScored             bool    `json:"evidence_scored"`
+	EvidenceRelevantAtK        int     `json:"evidence_relevant_at_k"`
+	EvidenceRelevantTotal      int     `json:"evidence_relevant_total"`
+	EvidenceBadAtK             int     `json:"evidence_bad_at_k"`
+	EvidenceRecallAtK          float64 `json:"evidence_recall_at_k"`
+	EvidenceMRR                float64 `json:"evidence_mrr"`
+	EvidenceNDCGAtK            float64 `json:"evidence_ndcg_at_k"`
+	EvidenceFirstRequiredRank  int     `json:"evidence_first_required_rank,omitempty"`
+	EvidenceFirstBadRank       int     `json:"evidence_first_bad_rank,omitempty"`
+	EvidenceMissingRequired    []Ref   `json:"evidence_missing_required_refs,omitempty"`
+	EvidenceBadRefsAtK         []Ref   `json:"evidence_bad_refs_at_k,omitempty"`
+	DreamScored                bool    `json:"dream_scored"`
+	DreamRelevantAtK           int     `json:"dream_relevant_at_k"`
+	DreamRelevantTotal         int     `json:"dream_relevant_total"`
+	DreamBadAtK                int     `json:"dream_bad_at_k"`
+	DreamRecallAtK             float64 `json:"dream_recall_at_k"`
+	DreamMRR                   float64 `json:"dream_mrr"`
+	DreamNDCGAtK               float64 `json:"dream_ndcg_at_k"`
+	DreamFirstRequiredRank     int     `json:"dream_first_required_rank,omitempty"`
+	DreamFirstBadRank          int     `json:"dream_first_bad_rank,omitempty"`
+	DreamMissingRequired       []Ref   `json:"dream_missing_required_refs,omitempty"`
+	DreamBadRefsAtK            []Ref   `json:"dream_bad_refs_at_k,omitempty"`
+	UnmappedSourceRefs         []Ref   `json:"unmapped_source_refs,omitempty"`
+	LatencyMS                  int64   `json:"latency_ms,omitempty"`
+	DiscoveryExposureCount     int     `json:"discovery_exposure_count"`
+	DiscoveryRelevant          int     `json:"discovery_relevant"`
+	DiscoveryRelevantTotal     int     `json:"discovery_relevant_total"`
+	DiscoveryRecall            float64 `json:"discovery_recall"`
+	DiscoveryFirstRequiredRank int     `json:"discovery_first_required_rank,omitempty"`
+	DiscoveryMissingRequired   []Ref   `json:"discovery_missing_required_refs,omitempty"`
 }
 
 type Summary struct {
-	RunID                     string              `json:"run_id"`
-	Mode                      string              `json:"mode"`
-	SeedID                    string              `json:"seed_id"`
-	SeedHash                  string              `json:"seed_hash"`
-	SuitePath                 string              `json:"suite_path"`
-	CaseCount                 int                 `json:"case_count"`
-	ScoredCaseCount           int                 `json:"scored_case_count"`
-	ContextScoredCaseCount    int                 `json:"context_scored_case_count"`
-	EvidenceScoredCaseCount   int                 `json:"evidence_scored_case_count"`
-	DreamScoredCaseCount      int                 `json:"dream_scored_case_count"`
-	UnmappedSourceRefs        int                 `json:"unmapped_source_refs"`
-	AverageRecallAtK          float64             `json:"average_recall_at_k"`
-	AverageMRR                float64             `json:"average_mrr"`
-	AverageNDCGAtK            float64             `json:"average_ndcg_at_k"`
-	AverageBadAtK             float64             `json:"average_bad_at_k"`
-	RequiredRank1Rate         float64             `json:"required_rank1_rate"`
-	BadRank1Rate              float64             `json:"bad_rank1_rate"`
-	AverageContextRecallAtK   float64             `json:"average_context_recall_at_k"`
-	AverageContextMRR         float64             `json:"average_context_mrr"`
-	AverageContextNDCGAtK     float64             `json:"average_context_ndcg_at_k"`
-	AverageContextBadAtK      float64             `json:"average_context_bad_at_k"`
-	ContextRequiredRank1Rate  float64             `json:"context_required_rank1_rate"`
-	ContextBadRank1Rate       float64             `json:"context_bad_rank1_rate"`
-	AverageEvidenceRecallAtK  float64             `json:"average_evidence_recall_at_k"`
-	AverageEvidenceMRR        float64             `json:"average_evidence_mrr"`
-	AverageEvidenceNDCGAtK    float64             `json:"average_evidence_ndcg_at_k"`
-	AverageEvidenceBadAtK     float64             `json:"average_evidence_bad_at_k"`
-	EvidenceRequiredRank1Rate float64             `json:"evidence_required_rank1_rate"`
-	EvidenceBadRank1Rate      float64             `json:"evidence_bad_rank1_rate"`
-	AverageDreamRecallAtK     float64             `json:"average_dream_recall_at_k"`
-	AverageDreamMRR           float64             `json:"average_dream_mrr"`
-	AverageDreamNDCGAtK       float64             `json:"average_dream_ndcg_at_k"`
-	AverageDreamBadAtK        float64             `json:"average_dream_bad_at_k"`
-	DreamRequiredRank1Rate    float64             `json:"dream_required_rank1_rate"`
-	DreamBadRank1Rate         float64             `json:"dream_bad_rank1_rate"`
-	Slices                    map[string]SliceAvg `json:"slices,omitempty"`
-	CreatedAt                 time.Time           `json:"created_at"`
+	RunID                      string              `json:"run_id"`
+	Mode                       string              `json:"mode"`
+	SeedID                     string              `json:"seed_id"`
+	SeedHash                   string              `json:"seed_hash"`
+	SuitePath                  string              `json:"suite_path"`
+	CaseCount                  int                 `json:"case_count"`
+	ScoredCaseCount            int                 `json:"scored_case_count"`
+	ContextScoredCaseCount     int                 `json:"context_scored_case_count"`
+	EvidenceScoredCaseCount    int                 `json:"evidence_scored_case_count"`
+	DreamScoredCaseCount       int                 `json:"dream_scored_case_count"`
+	UnmappedSourceRefs         int                 `json:"unmapped_source_refs"`
+	AverageRecallAtK           float64             `json:"average_recall_at_k"`
+	AverageMRR                 float64             `json:"average_mrr"`
+	AverageNDCGAtK             float64             `json:"average_ndcg_at_k"`
+	AverageBadAtK              float64             `json:"average_bad_at_k"`
+	RequiredRank1Rate          float64             `json:"required_rank1_rate"`
+	BadRank1Rate               float64             `json:"bad_rank1_rate"`
+	AverageDiscoveryRecall     float64             `json:"average_discovery_recall"`
+	DiscoveryRequiredFoundRate float64             `json:"discovery_required_found_rate"`
+	AverageDiscoveryExposure   float64             `json:"average_discovery_exposure"`
+	AverageLatencyMS           float64             `json:"average_latency_ms"`
+	P50LatencyMS               float64             `json:"p50_latency_ms"`
+	P95LatencyMS               float64             `json:"p95_latency_ms"`
+	AverageContextRecallAtK    float64             `json:"average_context_recall_at_k"`
+	AverageContextMRR          float64             `json:"average_context_mrr"`
+	AverageContextNDCGAtK      float64             `json:"average_context_ndcg_at_k"`
+	AverageContextBadAtK       float64             `json:"average_context_bad_at_k"`
+	ContextRequiredRank1Rate   float64             `json:"context_required_rank1_rate"`
+	ContextBadRank1Rate        float64             `json:"context_bad_rank1_rate"`
+	AverageEvidenceRecallAtK   float64             `json:"average_evidence_recall_at_k"`
+	AverageEvidenceMRR         float64             `json:"average_evidence_mrr"`
+	AverageEvidenceNDCGAtK     float64             `json:"average_evidence_ndcg_at_k"`
+	AverageEvidenceBadAtK      float64             `json:"average_evidence_bad_at_k"`
+	EvidenceRequiredRank1Rate  float64             `json:"evidence_required_rank1_rate"`
+	EvidenceBadRank1Rate       float64             `json:"evidence_bad_rank1_rate"`
+	AverageDreamRecallAtK      float64             `json:"average_dream_recall_at_k"`
+	AverageDreamMRR            float64             `json:"average_dream_mrr"`
+	AverageDreamNDCGAtK        float64             `json:"average_dream_ndcg_at_k"`
+	AverageDreamBadAtK         float64             `json:"average_dream_bad_at_k"`
+	DreamRequiredRank1Rate     float64             `json:"dream_required_rank1_rate"`
+	DreamBadRank1Rate          float64             `json:"dream_bad_rank1_rate"`
+	Slices                     map[string]SliceAvg `json:"slices,omitempty"`
+	CreatedAt                  time.Time           `json:"created_at"`
 }
 
 type SliceAvg struct {
@@ -243,6 +237,9 @@ type SliceAvg struct {
 	AverageMRR               float64 `json:"average_mrr"`
 	AverageNDCGAtK           float64 `json:"average_ndcg_at_k"`
 	AverageBadAtK            float64 `json:"average_bad_at_k"`
+	AverageDiscoveryRecall   float64 `json:"average_discovery_recall"`
+	AverageDiscoveryExposure float64 `json:"average_discovery_exposure"`
+	AverageLatencyMS         float64 `json:"average_latency_ms"`
 	AverageContextRecallAtK  float64 `json:"average_context_recall_at_k"`
 	AverageContextMRR        float64 `json:"average_context_mrr"`
 	AverageContextNDCGAtK    float64 `json:"average_context_ndcg_at_k"`
@@ -258,43 +255,101 @@ type SliceAvg struct {
 }
 
 type RunConfig struct {
-	RunID             string `json:"run_id"`
-	Mode              string `json:"mode"`
-	SeedManifest      string `json:"seed_manifest"`
-	SeedHash          string `json:"seed_hash"`
-	SuitePath         string `json:"suite_path"`
-	BaseURL           string `json:"base_url,omitempty"`
-	ControlURL        string `json:"control_url,omitempty"`
-	ImportSeed        bool   `json:"import_seed"`
-	ImportConcurrency int    `json:"import_concurrency,omitempty"`
-	DirectImport      bool   `json:"direct_import,omitempty"`
-	DirectImportBatch int    `json:"direct_import_batch,omitempty"`
-	DirectImportTeam  string `json:"direct_import_team,omitempty"`
-	TracesPath        string `json:"traces_path,omitempty"`
-	MappingPath       string `json:"mapping_path,omitempty"`
-	BaselineRunPath   string `json:"baseline_run_path,omitempty"`
+	RunID                  string `json:"run_id"`
+	Mode                   string `json:"mode"`
+	SeedManifest           string `json:"seed_manifest"`
+	SeedHash               string `json:"seed_hash"`
+	SuitePath              string `json:"suite_path"`
+	BaseURL                string `json:"base_url,omitempty"`
+	ControlURL             string `json:"control_url,omitempty"`
+	ToolTransport          string `json:"tool_transport,omitempty"`
+	ImportSeed             bool   `json:"import_seed"`
+	ImportRoute            string `json:"import_route,omitempty"`
+	ImportConcurrency      int    `json:"import_concurrency,omitempty"`
+	PlacementTimeout       string `json:"placement_timeout,omitempty"`
+	ResumeSourceDocIDsPath string `json:"resume_source_doc_ids_path,omitempty"`
+	TracesPath             string `json:"traces_path,omitempty"`
+	MappingPath            string `json:"mapping_path,omitempty"`
+	BaselineRunPath        string `json:"baseline_run_path,omitempty"`
+	AIJudgeEnabled         bool   `json:"ai_judge_enabled,omitempty"`
+	AIJudgeModel           string `json:"ai_judge_model,omitempty"`
+	AIJudgeConcurrency     int    `json:"ai_judge_concurrency,omitempty"`
+	AIJudgeTimeout         string `json:"ai_judge_timeout,omitempty"`
+}
+
+type JudgeOptions struct {
+	Enabled      bool
+	BaseURL      string
+	APIKey       string
+	Model        string
+	Concurrency  int
+	Timeout      time.Duration
+	ResumeScores []JudgeScore
+}
+
+type JudgeScore struct {
+	CaseID                string   `json:"case_id"`
+	Model                 string   `json:"model"`
+	InputSHA256           string   `json:"input_sha256"`
+	Verdict               string   `json:"verdict"`
+	AnswerabilityScore    int      `json:"answerability_score"`
+	RelevanceScore        int      `json:"relevance_score"`
+	CompletenessScore     int      `json:"completeness_score"`
+	FaithfulnessScore     int      `json:"faithfulness_score"`
+	GeneratedAnswer       string   `json:"generated_answer"`
+	MissingInformation    []string `json:"missing_information"`
+	MisleadingInformation []string `json:"misleading_information"`
+	Rationale             string   `json:"rationale"`
+	LatencyMS             int64    `json:"latency_ms"`
+	Attempts              int      `json:"attempts"`
+	RawJSON               string   `json:"raw_json"`
+}
+
+type JudgeSummary struct {
+	Model                     string    `json:"model"`
+	CaseCount                 int       `json:"case_count"`
+	PassRate                  float64   `json:"pass_rate"`
+	PartialRate               float64   `json:"partial_rate"`
+	FailRate                  float64   `json:"fail_rate"`
+	AverageAnswerabilityScore float64   `json:"average_answerability_score"`
+	AverageRelevanceScore     float64   `json:"average_relevance_score"`
+	AverageCompletenessScore  float64   `json:"average_completeness_score"`
+	AverageFaithfulnessScore  float64   `json:"average_faithfulness_score"`
+	AverageLatencyMS          float64   `json:"average_latency_ms"`
+	CreatedAt                 time.Time `json:"created_at"`
 }
 
 type Comparison struct {
-	BaselineRunID       string  `json:"baseline_run_id"`
-	CandidateRunID      string  `json:"candidate_run_id"`
-	SeedHash            string  `json:"seed_hash"`
-	RecallDelta         float64 `json:"recall_delta"`
-	MRRDelta            float64 `json:"mrr_delta"`
-	NDCGDelta           float64 `json:"ndcg_delta"`
-	BadAtKDelta         float64 `json:"bad_at_k_delta"`
-	ContextRecallDelta  float64 `json:"context_recall_delta"`
-	ContextMRRDelta     float64 `json:"context_mrr_delta"`
-	ContextNDCGDelta    float64 `json:"context_ndcg_delta"`
-	ContextBadAtKDelta  float64 `json:"context_bad_at_k_delta"`
-	EvidenceRecallDelta float64 `json:"evidence_recall_delta"`
-	EvidenceMRRDelta    float64 `json:"evidence_mrr_delta"`
-	EvidenceNDCGDelta   float64 `json:"evidence_ndcg_delta"`
-	EvidenceBadAtKDelta float64 `json:"evidence_bad_at_k_delta"`
-	DreamRecallDelta    float64 `json:"dream_recall_delta"`
-	DreamMRRDelta       float64 `json:"dream_mrr_delta"`
-	DreamNDCGDelta      float64 `json:"dream_ndcg_delta"`
-	DreamBadAtKDelta    float64 `json:"dream_bad_at_k_delta"`
+	BaselineRunID           string  `json:"baseline_run_id"`
+	CandidateRunID          string  `json:"candidate_run_id"`
+	SeedHash                string  `json:"seed_hash"`
+	RecallDelta             float64 `json:"recall_delta"`
+	MRRDelta                float64 `json:"mrr_delta"`
+	NDCGDelta               float64 `json:"ndcg_delta"`
+	BadAtKDelta             float64 `json:"bad_at_k_delta"`
+	DiscoveryRecallDelta    float64 `json:"discovery_recall_delta"`
+	LatencyDeltaMS          float64 `json:"average_latency_delta_ms"`
+	P50LatencyDeltaMS       float64 `json:"p50_latency_delta_ms"`
+	P95LatencyDeltaMS       float64 `json:"p95_latency_delta_ms"`
+	ContextRecallDelta      float64 `json:"context_recall_delta"`
+	ContextMRRDelta         float64 `json:"context_mrr_delta"`
+	ContextNDCGDelta        float64 `json:"context_ndcg_delta"`
+	ContextBadAtKDelta      float64 `json:"context_bad_at_k_delta"`
+	EvidenceRecallDelta     float64 `json:"evidence_recall_delta"`
+	EvidenceMRRDelta        float64 `json:"evidence_mrr_delta"`
+	EvidenceNDCGDelta       float64 `json:"evidence_ndcg_delta"`
+	EvidenceBadAtKDelta     float64 `json:"evidence_bad_at_k_delta"`
+	DreamRecallDelta        float64 `json:"dream_recall_delta"`
+	DreamMRRDelta           float64 `json:"dream_mrr_delta"`
+	DreamNDCGDelta          float64 `json:"dream_ndcg_delta"`
+	DreamBadAtKDelta        float64 `json:"dream_bad_at_k_delta"`
+	AIJudgeCompared         bool    `json:"ai_judge_compared,omitempty"`
+	AIJudgeModel            string  `json:"ai_judge_model,omitempty"`
+	JudgePassRateDelta      float64 `json:"judge_pass_rate_delta,omitempty"`
+	JudgeAnswerabilityDelta float64 `json:"judge_answerability_delta,omitempty"`
+	JudgeRelevanceDelta     float64 `json:"judge_relevance_delta,omitempty"`
+	JudgeCompletenessDelta  float64 `json:"judge_completeness_delta,omitempty"`
+	JudgeFaithfulnessDelta  float64 `json:"judge_faithfulness_delta,omitempty"`
 }
 
 type GateOptions struct {

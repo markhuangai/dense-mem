@@ -248,7 +248,7 @@ const (
 	// leidenNodeQuery selects SourceFragment, Claim, and Fact nodes that
 	// belong to the given profile. Passed as the nodeQuery argument to GDS
 	// projection procedures; $profileId is supplied via the parameters map.
-	leidenNodeQuery = "MATCH (n) WHERE n.team_id = $profileId AND ((n:SourceFragment AND coalesce(n.status, 'active') = 'active') OR (n:Claim AND coalesce(n.status, '') = 'validated') OR (n:Fact AND coalesce(n.status, '') = 'active')) RETURN id(n) AS id"
+	leidenNodeQuery = "MATCH (n) WHERE n.team_id = $profileId AND (n:SourceFragment OR n:Claim OR n:Fact) RETURN id(n) AS id"
 
 	// leidenRelQuery selects only relationships whose source and target both
 	// belong to the same profile, preventing cross-profile edges from leaking

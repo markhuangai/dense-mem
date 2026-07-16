@@ -50,6 +50,7 @@ type testRateLimitConfig struct {
 }
 
 func (c *testRateLimitConfig) GetPostgresDSN() string            { return "" }
+func (c *testRateLimitConfig) GetPostgresReadDSN() string        { return "" }
 func (c *testRateLimitConfig) GetNeo4jURI() string               { return "" }
 func (c *testRateLimitConfig) GetNeo4jUser() string              { return "" }
 func (c *testRateLimitConfig) GetNeo4jPassword() string          { return "" }
@@ -157,6 +158,7 @@ type redisRateLimitConfig struct {
 }
 
 func (c *redisRateLimitConfig) GetPostgresDSN() string                 { return "" }
+func (c *redisRateLimitConfig) GetPostgresReadDSN() string             { return "" }
 func (c *redisRateLimitConfig) GetNeo4jURI() string                    { return "" }
 func (c *redisRateLimitConfig) GetNeo4jUser() string                   { return "" }
 func (c *redisRateLimitConfig) GetNeo4jPassword() string               { return "" }

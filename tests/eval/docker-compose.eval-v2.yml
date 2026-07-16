@@ -1,0 +1,44 @@
+# Eval-only v2 persistence override for the root docker-compose.yml.
+#
+# Use with:
+#   EVAL_COMPOSE_OVERRIDE=tests/eval/docker-compose.eval-v2.yml \
+#   EVAL_COMPOSE_PROJECT=densemem_eval_branch \
+#   EVAL_DATA_DIR=tests/eval/.runtime/branch \
+#   tests/eval/scripts/run_full_public_rag_eval_until_done.sh
+
+services:
+  server:
+    environment:
+      RATE_LIMIT_PER_MINUTE: "200000"
+      FRAGMENT_CREATE_RATE_LIMIT: "200000"
+      FRAGMENT_READ_RATE_LIMIT: "200000"
+      CLAIM_WRITE_RATE_LIMIT: "200000"
+      CLAIM_READ_RATE_LIMIT: "200000"
+      AI_VERIFIER_TIMEOUT_SECONDS: "240"
+      MEMORY_PLACEMENT_WORKER_COUNT: "30"
+      MEMORY_PLACEMENT_MAX_ATTEMPTS: "5"
+      MEMORY_PLACEMENT_POLL_SECONDS: "5"
+      EMBEDDING_WORKER_COUNT: "2"
+      EMBEDDING_BATCH_SIZE: "64"
+      AI_API_EMBEDDING_MAX_CONCURRENCY: "8"
+      RECALL_RRF_ENABLED: "${RECALL_RRF_ENABLED:-false}"
+      RECALL_RRF_K: "${RECALL_RRF_K:-60}"
+      RECALL_RRF_BRANCH_WEIGHTS: "${RECALL_RRF_BRANCH_WEIGHTS:-exact=2,evidence_text=1,evidence_vector=1}"
+      RECALL_BRANCH_PRIORITY: "${RECALL_BRANCH_PRIORITY:-exact,evidence_vector,evidence_text}"
+      RECALL_BRANCH_LIMIT_MULTIPLIER: "${RECALL_BRANCH_LIMIT_MULTIPLIER:-6}"
+      RECALL_BRANCH_LIMIT_FLOOR: "${RECALL_BRANCH_LIMIT_FLOOR:-60}"
+      RECALL_BRANCH_LIMIT_MAX: "${RECALL_BRANCH_LIMIT_MAX:-200}"
+
+  postgres:
+    volumes:
+      - ${V2_COMPOSE_DATA_DIR:-./tests/eval/.runtime/v2}/postgres:/var/lib/postgresql
+
+  redis:
+    volumes:
+      - ${V2_COMPOSE_DATA_DIR:-./tests/eval/.runtime/v2}/redis:/data
+
+  prometheus:
+    user: "0:0"
+    volumes:
+      - ${V2_COMPOSE_DATA_DIR:-./tests/eval/.runtime/v2}/prometheus:/prometheus
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro

@@ -20,13 +20,11 @@
     "playwright:mock:user": "playwright test --config playwright.user.config.ts"
   },
   "dependencies": {
-    "graphology": "^0.26.0",
-    "graphology-layout-forceatlas2": "^0.10.1",
     "lucide-react": "^0.468.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
-    "recharts": "^3.8.1",
-    "sigma": "^3.0.3"
+    "react-force-graph-2d": "^1.29.1",
+    "recharts": "^3.8.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.1",

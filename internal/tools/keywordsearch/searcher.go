@@ -46,10 +46,7 @@ func (s *neo4jFragmentSearcher) SearchContent(ctx context.Context, profileID str
 	fragmentActive := strings.ReplaceAll(neo4jstore.FragmentActiveFilter, "sf.", "f.")
 
 	// Build the base WHERE clause: profile isolation + retract filter.
-	baseWhere := `f.team_id = $profileId AND ` + fragmentActive + `
-		AND NOT EXISTS {
-			MATCH (f)-[:DECOMPOSED_INTO {team_id: $profileId}]->(:Assertion {team_id: $profileId, status: 'active'})
-		}`
+	baseWhere := "f.team_id = $profileId AND " + fragmentActive
 
 	// Optionally extend with label filter — appended as a separate AND condition so
 	// the label values remain a Cypher parameter (prevents injection, AC-6).

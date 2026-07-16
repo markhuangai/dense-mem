@@ -4,12 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -21,8 +19,6 @@ type MemoryPlacementRepository interface {
 	GetRun(ctx context.Context, profileID, ingestID string) (*domain.MemoryPlacementRun, error)
 	ClaimNextQueuedRun(ctx context.Context) (*domain.MemoryPlacementRun, error)
 	SaveRun(ctx context.Context, run domain.MemoryPlacementRun) error
-	SaveRunWithTransitions(ctx context.Context, run domain.MemoryPlacementRun, events []domain.AssertionTransitionEvent) error
-	AppendTransitionEvents(ctx context.Context, events []domain.AssertionTransitionEvent) error
 	CreateDispute(ctx context.Context, session domain.MemoryDisputeSession) error
 	GetDispute(ctx context.Context, profileID, disputeID string) (*domain.MemoryDisputeSession, error)
 	SaveDispute(ctx context.Context, session domain.MemoryDisputeSession) error
@@ -81,7 +77,10 @@ func (r *MemoryPlacementRepositoryImpl) ClaimNextQueuedRun(ctx context.Context) 
 			WITH next AS (
 				SELECT ingest_id
 				FROM memory_placement_runs
-				WHERE status = 'queued'
+				WHERE (
+						status = 'queued'
+						AND available_at <= now()
+					)
 				   OR (
 						status = 'processing'
 						AND started_at IS NOT NULL
@@ -95,6 +94,7 @@ func (r *MemoryPlacementRepositoryImpl) ClaimNextQueuedRun(ctx context.Context) 
 			)
 			UPDATE memory_placement_runs AS run
 			SET status = 'processing',
+			    attempts = run.attempts + 1,
 			    started_at = now(),
 			    updated_at = now()
 			FROM next
@@ -142,81 +142,6 @@ func (r *MemoryPlacementRepositoryImpl) SaveRun(ctx context.Context, run domain.
 		return fmt.Errorf("memory placement: save run: %w", err)
 	}
 	return nil
-}
-
-func (r *MemoryPlacementRepositoryImpl) SaveRunWithTransitions(ctx context.Context, run domain.MemoryPlacementRun, events []domain.AssertionTransitionEvent) error {
-	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		if err := saveRunTx(ctx, tx, run); err != nil {
-			return err
-		}
-		return appendTransitionEventsTx(ctx, tx, events)
-	})
-	if err != nil {
-		return fmt.Errorf("memory placement: save run with transitions: %w", err)
-	}
-	return nil
-}
-
-func (r *MemoryPlacementRepositoryImpl) AppendTransitionEvents(ctx context.Context, events []domain.AssertionTransitionEvent) error {
-	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		return appendTransitionEventsTx(ctx, tx, events)
-	})
-	if err != nil {
-		return fmt.Errorf("memory placement: append assertion transitions: %w", err)
-	}
-	return nil
-}
-
-func (r *MemoryPlacementRepositoryImpl) CountAssertionTransitions(ctx context.Context, teamID, actorProfileID string, from, to time.Time) (map[string]int64, error) {
-	teamID = strings.TrimSpace(teamID)
-	actorProfileID = strings.TrimSpace(actorProfileID)
-	if from.IsZero() || to.IsZero() || !to.After(from) {
-		return nil, errors.New("assertion transition count requires a valid time window")
-	}
-	for name, value := range map[string]string{"team_id": teamID, "actor_profile_id": actorProfileID} {
-		if value == "" {
-			continue
-		}
-		if _, err := uuid.Parse(value); err != nil {
-			return nil, fmt.Errorf("assertion transition count: invalid %s: %w", name, err)
-		}
-	}
-
-	counts := map[string]int64{}
-	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		rows, err := tx.Raw(`
-			WITH filters AS (
-				SELECT NULLIF(?, '')::uuid AS team_id,
-				       NULLIF(?, '')::uuid AS actor_profile_id
-			)
-			SELECT events.event_type, COUNT(*)::bigint
-			FROM assertion_transition_events AS events
-			LEFT JOIN memory_placement_runs AS runs ON runs.ingest_id = events.ingest_id
-			CROSS JOIN filters
-			WHERE events.occurred_at >= ?
-			  AND events.occurred_at <= ?
-			  AND (filters.team_id IS NULL OR events.profile_id = filters.team_id)
-			  AND (filters.actor_profile_id IS NULL OR runs.actor_profile_id = filters.actor_profile_id)
-			GROUP BY events.event_type
-		`, teamID, actorProfileID, from.UTC(), to.UTC()).Rows()
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var eventType string
-			var count int64
-			if err := rows.Scan(&eventType, &count); err != nil {
-				return err
-			}
-			counts[eventType] = count
-		}
-		return rows.Err()
-	})
-	if err != nil {
-		return nil, fmt.Errorf("memory placement: count assertion transitions: %w", err)
-	}
-	return counts, nil
 }
 
 func (r *MemoryPlacementRepositoryImpl) CreateDispute(ctx context.Context, session domain.MemoryDisputeSession) error {
@@ -322,93 +247,65 @@ func (r *MemoryPlacementRepositoryImpl) withSystemTx(ctx context.Context, fn fun
 	return r.db.WithContext(ctx).Transaction(fn)
 }
 
-const createMemoryPlacementRunSQL = `
-	INSERT INTO memory_placement_runs (
-		ingest_id, profile_id, actor_profile_id, actor_role, status, check_after_seconds, status_tool,
-		pipeline_version, evidence, proposal, review_tasks, security, migration_refs,
-		requires_acknowledgement, error, created_at, updated_at, started_at,
-		completed_at, acknowledged_at
-	) VALUES (
-		?, ?, nullif(?, '')::uuid, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb,
-		?, ?, ?, ?, ?, ?, ?
-	)`
-
-const createMemoryPlacementItemSQL = `
-	INSERT INTO memory_placement_items (
-		item_id, ingest_id, profile_id, evidence_index, fragment_id,
-		evidence_indexes, fragment_ids, category, status, reason, error,
-		claim_id, fact_id, assertion_id, relationship_type, tier,
-		assertion_status, policy_family, verifier_verdict, verifier_confidence,
-		review_task_id, proposed_relationship, reviewed_relationship,
-		security_signals, created_at, updated_at
-	) VALUES (
-		?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-		?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?
-	)`
-
 func createRunTx(ctx context.Context, tx *gorm.DB, run domain.MemoryPlacementRun) error {
 	evidence, err := json.Marshal(nonNilEvidence(run.Evidence))
 	if err != nil {
 		return fmt.Errorf("memory placement: marshal evidence: %w", err)
 	}
-	proposal, reviewTasks, security, migrationRefs, err := marshalPlacementRunV2(run)
-	if err != nil {
-		return err
-	}
-	if err := tx.WithContext(ctx).Exec(createMemoryPlacementRunSQL,
+	runOwnerProfileID := memoryPlacementOwnerProfileID(run.OwnerProfileID, run.ProfileID)
+	if err := tx.WithContext(ctx).Exec(`
+		INSERT INTO memory_placement_runs (
+			ingest_id, profile_id, owner_profile_id, status, check_after_seconds, status_tool,
+			attempts, evidence, error, available_at, created_at, updated_at, started_at, completed_at
+		) VALUES (
+			?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?
+		)
+	`,
 		run.IngestID,
 		run.ProfileID,
-		run.ActorProfileID,
-		run.ActorRole,
+		runOwnerProfileID,
 		string(run.Status),
 		run.CheckAfterSeconds,
 		run.StatusTool,
-		run.PipelineVersion,
+		run.Attempts,
 		string(evidence),
-		proposal,
-		reviewTasks,
-		security,
-		migrationRefs,
-		run.RequiresAck,
 		run.Error,
+		utcOrNow(run.AvailableAt),
 		utcOrNow(run.CreatedAt),
 		utcOrNow(run.UpdatedAt),
 		timePtrValue(run.StartedAt),
 		timePtrValue(run.CompletedAt),
-		timePtrValue(run.AcknowledgedAt),
 	).Error; err != nil {
 		return err
 	}
 	for _, item := range run.Items {
-		itemJSON, err := marshalPlacementItemV2(item)
+		relationshipOutcomes, err := json.Marshal(nonNilRelationshipOutcomes(item.RelationshipOutcomes))
 		if err != nil {
-			return err
+			return fmt.Errorf("memory placement: marshal relationship outcomes: %w", err)
 		}
-		if err := tx.WithContext(ctx).Exec(createMemoryPlacementItemSQL,
+		itemOwnerProfileID := memoryPlacementOwnerProfileID(item.OwnerProfileID, runOwnerProfileID)
+		if err := tx.WithContext(ctx).Exec(`
+			INSERT INTO memory_placement_items (
+				item_id, ingest_id, profile_id, owner_profile_id, evidence_index, fragment_id,
+				category, status, reason, error, claim_id, fact_id, relationship_outcomes,
+				created_at, updated_at
+			) VALUES (
+				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?
+			)
+		`,
 			item.ItemID,
 			run.IngestID,
 			run.ProfileID,
+			itemOwnerProfileID,
 			item.EvidenceIndex,
 			item.FragmentID,
-			itemJSON.evidenceIndexes,
-			itemJSON.fragmentIDs,
 			string(item.Category),
 			item.Status,
 			item.Reason,
 			item.Error,
 			item.ClaimID,
 			item.FactID,
-			item.AssertionID,
-			item.RelationshipType,
-			string(item.Tier),
-			string(item.AssertionStatus),
-			string(item.PolicyFamily),
-			item.VerifierVerdict,
-			item.VerifierConfidence,
-			item.ReviewTaskID,
-			itemJSON.proposed,
-			itemJSON.reviewed,
-			itemJSON.securitySignals,
+			string(relationshipOutcomes),
 			utcOrNow(item.CreatedAt),
 			utcOrNow(item.UpdatedAt),
 		).Error; err != nil {
@@ -423,79 +320,55 @@ func saveRunTx(ctx context.Context, tx *gorm.DB, run domain.MemoryPlacementRun) 
 	if err != nil {
 		return fmt.Errorf("memory placement: marshal evidence: %w", err)
 	}
-	proposal, reviewTasks, security, migrationRefs, err := marshalPlacementRunV2(run)
-	if err != nil {
-		return err
-	}
+	runOwnerProfileID := memoryPlacementOwnerProfileID(run.OwnerProfileID, run.ProfileID)
 	if err := tx.WithContext(ctx).Exec(`
 		UPDATE memory_placement_runs
-		SET actor_profile_id = nullif(?, '')::uuid, actor_role = ?, status = ?, check_after_seconds = ?, status_tool = ?, pipeline_version = ?,
-		    evidence = ?::jsonb, proposal = ?::jsonb, review_tasks = ?::jsonb,
-		    security = ?::jsonb, migration_refs = ?::jsonb, requires_acknowledgement = ?, error = ?, updated_at = ?,
-		    started_at = ?, completed_at = ?, acknowledged_at = ?
+		SET owner_profile_id = ?, status = ?, check_after_seconds = ?, status_tool = ?,
+		    attempts = ?, evidence = ?::jsonb, error = ?, available_at = ?, updated_at = ?,
+		    started_at = ?, completed_at = ?
 		WHERE ingest_id = ? AND profile_id = ?
 	`,
-		run.ActorProfileID,
-		run.ActorRole,
+		runOwnerProfileID,
 		string(run.Status),
 		run.CheckAfterSeconds,
 		run.StatusTool,
-		run.PipelineVersion,
+		run.Attempts,
 		string(evidence),
-		proposal,
-		reviewTasks,
-		security,
-		migrationRefs,
-		run.RequiresAck,
 		run.Error,
+		utcOrNow(run.AvailableAt),
 		utcOrNow(run.UpdatedAt),
 		timePtrValue(run.StartedAt),
 		timePtrValue(run.CompletedAt),
-		timePtrValue(run.AcknowledgedAt),
 		run.IngestID,
 		run.ProfileID,
 	).Error; err != nil {
 		return err
 	}
-	// Placement items are the current materialized result for a run; transition history lives in assertion_transition_events.
-	if err := tx.WithContext(ctx).Exec(`
-		DELETE FROM memory_placement_items
-		WHERE ingest_id = ? AND profile_id = ?
-	`, run.IngestID, run.ProfileID).Error; err != nil {
-		return err
-	}
 	for _, item := range run.Items {
-		itemJSON, err := marshalPlacementItemV2(item)
+		relationshipOutcomes, err := json.Marshal(nonNilRelationshipOutcomes(item.RelationshipOutcomes))
 		if err != nil {
-			return err
+			return fmt.Errorf("memory placement: marshal relationship outcomes: %w", err)
 		}
-		if err := tx.WithContext(ctx).Exec(createMemoryPlacementItemSQL,
-			item.ItemID,
-			run.IngestID,
-			run.ProfileID,
-			item.EvidenceIndex,
+		itemOwnerProfileID := memoryPlacementOwnerProfileID(item.OwnerProfileID, runOwnerProfileID)
+		if err := tx.WithContext(ctx).Exec(`
+		UPDATE memory_placement_items
+		SET owner_profile_id = ?, fragment_id = ?, category = ?, status = ?, reason = ?, error = ?,
+			    claim_id = ?, fact_id = ?, relationship_outcomes = ?::jsonb, updated_at = ?
+			WHERE item_id = ? AND ingest_id = ? AND profile_id = ?
+		`,
+			itemOwnerProfileID,
 			item.FragmentID,
-			itemJSON.evidenceIndexes,
-			itemJSON.fragmentIDs,
 			string(item.Category),
 			item.Status,
 			item.Reason,
 			item.Error,
 			item.ClaimID,
 			item.FactID,
-			item.AssertionID,
-			item.RelationshipType,
-			string(item.Tier),
-			string(item.AssertionStatus),
-			string(item.PolicyFamily),
-			item.VerifierVerdict,
-			item.VerifierConfidence,
-			item.ReviewTaskID,
-			itemJSON.proposed,
-			itemJSON.reviewed,
-			itemJSON.securitySignals,
-			utcOrNow(item.CreatedAt),
+			string(relationshipOutcomes),
 			utcOrNow(item.UpdatedAt),
+			item.ItemID,
+			run.IngestID,
+			run.ProfileID,
 		).Error; err != nil {
 			return err
 		}
@@ -578,10 +451,9 @@ func scanSinglePlacementRun(ctx context.Context, tx *gorm.DB, where string, lock
 		lockClause = " FOR UPDATE"
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT ingest_id::text, profile_id::text, COALESCE(actor_profile_id::text, ''), actor_role, status, check_after_seconds,
-		       status_tool, pipeline_version, evidence, proposal, review_tasks,
-		       security, migration_refs, requires_acknowledgement, error, created_at, updated_at,
-		       started_at, completed_at, acknowledged_at
+		SELECT ingest_id::text, profile_id::text, owner_profile_id, status, check_after_seconds,
+		       status_tool, attempts, evidence, error, available_at, created_at, updated_at,
+		       started_at, completed_at
 		FROM memory_placement_runs
 		`+where+`
 		LIMIT 1`+lockClause+`
@@ -612,12 +484,10 @@ func readPlacementItemsWithLock(ctx context.Context, tx *gorm.DB, ingestID strin
 		lockClause = " FOR UPDATE"
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT item_id::text, ingest_id::text, profile_id::text, evidence_index,
-		       fragment_id, evidence_indexes, fragment_ids, category, status, reason,
-		       error, claim_id, fact_id, assertion_id, relationship_type, tier,
-		       assertion_status, policy_family, verifier_verdict, verifier_confidence,
-		       review_task_id, proposed_relationship, reviewed_relationship,
-		       security_signals, created_at, updated_at
+		SELECT item_id::text, ingest_id::text, profile_id::text, owner_profile_id,
+		       evidence_index, fragment_id, category, status, reason, error, claim_id, fact_id,
+		       relationship_outcomes,
+		       created_at, updated_at
 		FROM memory_placement_items
 		WHERE ingest_id = ?
 		ORDER BY evidence_index ASC, created_at ASC`+lockClause+`
@@ -664,38 +534,27 @@ func readDisputeSession(ctx context.Context, tx *gorm.DB, clause string, args ..
 
 func scanPlacementRun(rows *sql.Rows) (domain.MemoryPlacementRun, error) {
 	var (
-		run          domain.MemoryPlacementRun
-		status       string
-		evidenceRaw  []byte
-		proposalRaw  []byte
-		reviewRaw    []byte
-		securityRaw  []byte
-		migrationRaw []byte
-		startedAt    sql.NullTime
-		completedAt  sql.NullTime
-		ackAt        sql.NullTime
+		run         domain.MemoryPlacementRun
+		status      string
+		evidenceRaw []byte
+		startedAt   sql.NullTime
+		completedAt sql.NullTime
 	)
 	if err := rows.Scan(
 		&run.IngestID,
 		&run.ProfileID,
-		&run.ActorProfileID,
-		&run.ActorRole,
+		&run.OwnerProfileID,
 		&status,
 		&run.CheckAfterSeconds,
 		&run.StatusTool,
-		&run.PipelineVersion,
+		&run.Attempts,
 		&evidenceRaw,
-		&proposalRaw,
-		&reviewRaw,
-		&securityRaw,
-		&migrationRaw,
-		&run.RequiresAck,
 		&run.Error,
+		&run.AvailableAt,
 		&run.CreatedAt,
 		&run.UpdatedAt,
 		&startedAt,
 		&completedAt,
-		&ackAt,
 	); err != nil {
 		return domain.MemoryPlacementRun{}, err
 	}
@@ -705,56 +564,39 @@ func scanPlacementRun(rows *sql.Rows) (domain.MemoryPlacementRun, error) {
 			return domain.MemoryPlacementRun{}, fmt.Errorf("invalid memory placement evidence JSON: %w", err)
 		}
 	}
-	if err := unmarshalPlacementRunV2(proposalRaw, reviewRaw, securityRaw, migrationRaw, &run); err != nil {
-		return domain.MemoryPlacementRun{}, err
-	}
 	run.StartedAt = nullableTime(startedAt)
 	run.CompletedAt = nullableTime(completedAt)
-	run.AcknowledgedAt = nullableTime(ackAt)
 	return run, nil
 }
 
 func scanPlacementItem(rows *sql.Rows) (domain.MemoryPlacementItem, error) {
 	var item domain.MemoryPlacementItem
 	var category string
-	var tier, assertionStatus, policyFamily string
-	var evidenceIndexesRaw, fragmentIDsRaw, proposedRaw, reviewedRaw, securityRaw []byte
+	var relationshipOutcomesRaw []byte
 	if err := rows.Scan(
 		&item.ItemID,
 		&item.IngestID,
 		&item.ProfileID,
+		&item.OwnerProfileID,
 		&item.EvidenceIndex,
 		&item.FragmentID,
-		&evidenceIndexesRaw,
-		&fragmentIDsRaw,
 		&category,
 		&item.Status,
 		&item.Reason,
 		&item.Error,
 		&item.ClaimID,
 		&item.FactID,
-		&item.AssertionID,
-		&item.RelationshipType,
-		&tier,
-		&assertionStatus,
-		&policyFamily,
-		&item.VerifierVerdict,
-		&item.VerifierConfidence,
-		&item.ReviewTaskID,
-		&proposedRaw,
-		&reviewedRaw,
-		&securityRaw,
+		&relationshipOutcomesRaw,
 		&item.CreatedAt,
 		&item.UpdatedAt,
 	); err != nil {
 		return domain.MemoryPlacementItem{}, err
 	}
 	item.Category = domain.MemoryPlacementCategory(category)
-	item.Tier = domain.AssertionTier(tier)
-	item.AssertionStatus = domain.AssertionStatus(assertionStatus)
-	item.PolicyFamily = domain.AssertionPolicyFamily(policyFamily)
-	if err := unmarshalPlacementItemV2(evidenceIndexesRaw, fragmentIDsRaw, proposedRaw, reviewedRaw, securityRaw, &item); err != nil {
-		return domain.MemoryPlacementItem{}, err
+	if len(relationshipOutcomesRaw) > 0 {
+		if err := json.Unmarshal(relationshipOutcomesRaw, &item.RelationshipOutcomes); err != nil {
+			return domain.MemoryPlacementItem{}, fmt.Errorf("invalid memory placement relationship outcomes JSON: %w", err)
+		}
 	}
 	return item, nil
 }
@@ -812,171 +654,24 @@ func nonNilEvidence(value []domain.MemoryEvidence) []domain.MemoryEvidence {
 	return value
 }
 
+func nonNilRelationshipOutcomes(value []domain.MemoryPlacementRelationshipOutcome) []domain.MemoryPlacementRelationshipOutcome {
+	if value == nil {
+		return []domain.MemoryPlacementRelationshipOutcome{}
+	}
+	return value
+}
+
+func memoryPlacementOwnerProfileID(ownerProfileID, fallbackProfileID string) string {
+	ownerProfileID = strings.TrimSpace(ownerProfileID)
+	if ownerProfileID != "" {
+		return ownerProfileID
+	}
+	return strings.TrimSpace(fallbackProfileID)
+}
+
 func nonNilTurns(value []domain.MemoryDisputeTurn) []domain.MemoryDisputeTurn {
 	if value == nil {
 		return []domain.MemoryDisputeTurn{}
-	}
-	return value
-}
-
-type placementItemJSON struct {
-	evidenceIndexes string
-	fragmentIDs     string
-	proposed        string
-	reviewed        string
-	securitySignals string
-}
-
-func marshalPlacementRunV2(run domain.MemoryPlacementRun) (string, string, string, string, error) {
-	proposal, err := json.Marshal(run.Proposal)
-	if err != nil {
-		return "", "", "", "", fmt.Errorf("memory placement: marshal proposal: %w", err)
-	}
-	reviewTasks := run.ReviewTasks
-	if reviewTasks == nil {
-		reviewTasks = []domain.MemoryReviewTask{}
-	}
-	review, err := json.Marshal(reviewTasks)
-	if err != nil {
-		return "", "", "", "", fmt.Errorf("memory placement: marshal review tasks: %w", err)
-	}
-	security, err := json.Marshal(run.Security)
-	if err != nil {
-		return "", "", "", "", fmt.Errorf("memory placement: marshal security: %w", err)
-	}
-	migrationRefs := run.MigrationRefs
-	if migrationRefs == nil {
-		migrationRefs = []domain.LegacyMemoryRef{}
-	}
-	migration, err := json.Marshal(migrationRefs)
-	if err != nil {
-		return "", "", "", "", fmt.Errorf("memory placement: marshal migration refs: %w", err)
-	}
-	return string(proposal), string(review), string(security), string(migration), nil
-}
-
-func marshalPlacementItemV2(item domain.MemoryPlacementItem) (placementItemJSON, error) {
-	values := []struct {
-		name  string
-		value any
-	}{
-		{"evidence indexes", nonNilInts(item.EvidenceIndexes)},
-		{"fragment ids", nonNilStrings(item.FragmentIDs)},
-		{"proposed relationship", item.ProposedRelationship},
-		{"reviewed relationship", item.ReviewedRelationship},
-		{"security signals", nonNilStrings(item.SecuritySignals)},
-	}
-	encoded := make([]string, len(values))
-	for i, value := range values {
-		data, err := json.Marshal(value.value)
-		if err != nil {
-			return placementItemJSON{}, fmt.Errorf("memory placement: marshal %s: %w", value.name, err)
-		}
-		encoded[i] = string(data)
-	}
-	return placementItemJSON{
-		evidenceIndexes: encoded[0],
-		fragmentIDs:     encoded[1],
-		proposed:        encoded[2],
-		reviewed:        encoded[3],
-		securitySignals: encoded[4],
-	}, nil
-}
-
-func unmarshalPlacementRunV2(proposalRaw, reviewRaw, securityRaw, migrationRaw []byte, run *domain.MemoryPlacementRun) error {
-	if len(proposalRaw) > 0 {
-		if err := json.Unmarshal(proposalRaw, &run.Proposal); err != nil {
-			return fmt.Errorf("invalid memory placement proposal JSON: %w", err)
-		}
-	}
-	if len(reviewRaw) > 0 {
-		if err := json.Unmarshal(reviewRaw, &run.ReviewTasks); err != nil {
-			return fmt.Errorf("invalid memory placement review tasks JSON: %w", err)
-		}
-	}
-	if len(securityRaw) > 0 {
-		if err := json.Unmarshal(securityRaw, &run.Security); err != nil {
-			return fmt.Errorf("invalid memory placement security JSON: %w", err)
-		}
-	}
-	if len(migrationRaw) > 0 {
-		if err := json.Unmarshal(migrationRaw, &run.MigrationRefs); err != nil {
-			return fmt.Errorf("invalid memory placement migration refs JSON: %w", err)
-		}
-	}
-	return nil
-}
-
-func unmarshalPlacementItemV2(evidenceIndexesRaw, fragmentIDsRaw, proposedRaw, reviewedRaw, securityRaw []byte, item *domain.MemoryPlacementItem) error {
-	values := []struct {
-		name string
-		raw  []byte
-		out  any
-	}{
-		{"evidence indexes", evidenceIndexesRaw, &item.EvidenceIndexes},
-		{"fragment ids", fragmentIDsRaw, &item.FragmentIDs},
-		{"proposed relationship", proposedRaw, &item.ProposedRelationship},
-		{"reviewed relationship", reviewedRaw, &item.ReviewedRelationship},
-		{"security signals", securityRaw, &item.SecuritySignals},
-	}
-	for _, value := range values {
-		if len(value.raw) == 0 {
-			continue
-		}
-		if err := json.Unmarshal(value.raw, value.out); err != nil {
-			return fmt.Errorf("invalid memory placement %s JSON: %w", value.name, err)
-		}
-	}
-	return nil
-}
-
-func appendTransitionEventsTx(ctx context.Context, tx *gorm.DB, events []domain.AssertionTransitionEvent) error {
-	for i, event := range events {
-		if strings.TrimSpace(event.EventID) == "" || strings.TrimSpace(event.ProfileID) == "" ||
-			strings.TrimSpace(event.EventType) == "" || strings.TrimSpace(event.ReasonCode) == "" || strings.TrimSpace(event.Source) == "" {
-			return fmt.Errorf("assertion transition[%d] requires event_id, team_id, event_type, reason_code, and source", i)
-		}
-		if err := tx.WithContext(ctx).Exec(`
-			INSERT INTO assertion_transition_events (
-				event_id, profile_id, ingest_id, placement_item_id, assertion_id,
-				event_type, from_tier, to_tier, from_status, to_status,
-				reason_code, source, occurred_at
-			) VALUES (
-				?, ?, nullif(?, '')::uuid, nullif(?, '')::uuid, ?,
-				?, ?, ?, ?, ?, ?, ?, ?
-			)
-			ON CONFLICT (event_id) DO NOTHING
-		`,
-			event.EventID,
-			event.ProfileID,
-			event.IngestID,
-			event.ItemID,
-			event.AssertionID,
-			event.EventType,
-			string(event.FromTier),
-			string(event.ToTier),
-			string(event.FromStatus),
-			string(event.ToStatus),
-			event.ReasonCode,
-			event.Source,
-			utcOrNow(event.OccurredAt),
-		).Error; err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func nonNilInts(value []int) []int {
-	if value == nil {
-		return []int{}
-	}
-	return value
-}
-
-func nonNilStrings(value []string) []string {
-	if value == nil {
-		return []string{}
 	}
 	return value
 }

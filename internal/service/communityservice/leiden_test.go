@@ -144,6 +144,7 @@ func (s *stubConfigProvider) GetAICommunityMaxNodes() int { return s.maxNodes }
 // Implement the remaining ConfigProvider methods with zero/empty returns so
 // the stub compiles as a config.ConfigProvider without importing that package.
 func (s *stubConfigProvider) GetPostgresDSN() string                 { return "" }
+func (s *stubConfigProvider) GetPostgresReadDSN() string             { return "" }
 func (s *stubConfigProvider) GetNeo4jURI() string                    { return "" }
 func (s *stubConfigProvider) GetNeo4jUser() string                   { return "" }
 func (s *stubConfigProvider) GetNeo4jPassword() string               { return "" }
@@ -628,7 +629,7 @@ func TestLeidenDetect(t *testing.T) {
 // profile A does not affect profile B's graph data.
 //
 // This test satisfies the mandatory cross-profile isolation requirement from
-// .claude/rules/profile-isolation.md.
+// AGENTS.md.
 func TestLeidenDetect_CrossProfileIsolation(t *testing.T) {
 	ctx := context.Background()
 
@@ -683,10 +684,4 @@ func TestLeidenDetect_CrossProfileIsolation(t *testing.T) {
 	// independently and never block each other.
 	require.NotEqual(t, locker.locked[0], locker.locked[1],
 		"advisory lock must use distinct keys for different profiles")
-}
-
-func TestLeidenProjectionExcludesNonRecallableStates(t *testing.T) {
-	require.Contains(t, leidenNodeQuery, "n:SourceFragment AND coalesce(n.status, 'active') = 'active'")
-	require.Contains(t, leidenNodeQuery, "n:Claim AND coalesce(n.status, '') = 'validated'")
-	require.Contains(t, leidenNodeQuery, "n:Fact AND coalesce(n.status, '') = 'active'")
 }

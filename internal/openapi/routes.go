@@ -55,14 +55,17 @@ func DefaultRoutes() []RouteDescriptor {
 		{Method: "POST", Path: "/api/v1/tools/{name}", OperationID: "executeTool", RequestSchema: "ToolExecuteRequest", ResponseSchema: "ToolExecuteResponse", Description: "Execute a registered tool by name. Discover per-tool schemas and scope requirements via GET /api/v1/tools first."},
 
 		// --- Recall (AI-safe) ---
-		{Method: "GET", Path: "/api/v1/recall", OperationID: "recallKnowledge", ResponseSchema: "RecallResponse", AISafe: true, Tags: []string{"knowledge"}, Description: "Hybrid semantic + keyword recall spanning all knowledge-pipeline tiers (facts, claims, fragments).", ExtraResponses: map[string]string{
+		{Method: "GET", Path: "/api/v1/recall", OperationID: "recallKnowledge", ResponseSchema: "RecallResponse", AISafe: true, Tags: []string{"knowledge"}, Description: "Retrieve bounded evidence contexts with compact relationship discovery paths.", ExtraResponses: map[string]string{
 			"400": "Missing or invalid query parameter.",
 			"503": "Embedding provider unavailable.",
 		}},
-		{Method: "POST", Path: "/api/v1/tools/recall_memory", OperationID: "recallMemory", ToolName: "recall_memory", AISafe: true, Description: "Hybrid semantic and keyword recall over active assertions and legacy memory."},
-		{Method: "POST", Path: "/api/v1/tools/remember", OperationID: "rememberTool", ToolName: "remember", AISafe: true, Description: "Submit raw evidence and atomic graph proposals for independent review, verification, and placement."},
-		{Method: "POST", Path: "/api/v1/tools/get_memory_placement", OperationID: "getMemoryPlacementTool", ToolName: "get_memory_placement", AISafe: true, Description: "Poll a semantic assertion placement run."},
-		{Method: "POST", Path: "/api/v1/tools/resolve_memory_placement", OperationID: "resolveMemoryPlacementTool", ToolName: "resolve_memory_placement", AISafe: true, Description: "Resolve a pending assertion review or acknowledge a completed placement."},
+		{Method: "POST", Path: "/api/v1/tools/recall_memory", OperationID: "recallMemory", ToolName: "recall_memory", AISafe: true, Description: "Retrieve compact active relationships with bounded evidence contexts and discovery guidance."},
+		{Method: "POST", Path: "/api/v1/tools/remember", OperationID: "rememberTool", ToolName: "remember", AISafe: true, Description: "Submit evidence for server-owned memory placement."},
+		{Method: "POST", Path: "/api/v1/tools/get_memory_placement", OperationID: "getMemoryPlacementTool", ToolName: "get_memory_placement", AISafe: true, Description: "Poll a server-owned memory placement run."},
+		{Method: "POST", Path: "/api/v1/tools/dispute_memory_placement", OperationID: "disputeMemoryPlacementTool", ToolName: "dispute_memory_placement", AISafe: true, Description: "Dispute a memory placement with more evidence."},
+		{Method: "POST", Path: "/api/v1/tools/import_memories", OperationID: "importMemoriesTool", ToolName: "import_memories", AISafe: true, Description: "Trusted historical import path that may include explicit claims."},
+		{Method: "POST", Path: "/api/v1/tools/reflect_memories", OperationID: "reflectMemoriesTool", ToolName: "reflect_memories", AISafe: true, Description: "Review memory health and unresolved clarification needs."},
+		{Method: "POST", Path: "/api/v1/tools/confirm_memory", OperationID: "confirmMemoryTool", ToolName: "confirm_memory", AISafe: true, Description: "Apply an explicit memory clarification decision."},
 		{Method: "POST", Path: "/api/v1/tools/list_dreams", OperationID: "listDreamsTool", ToolName: "list_dreams", AISafe: true, Description: "List reviewable dream hypotheses."},
 		{Method: "POST", Path: "/api/v1/tools/get_dream", OperationID: "getDreamTool", ToolName: "get_dream", AISafe: true, Description: "Fetch one dream hypothesis and its source references."},
 		{Method: "POST", Path: "/api/v1/tools/resolve_dream_feedback", OperationID: "resolveDreamFeedbackTool", ToolName: "resolve_dream_feedback", AISafe: true, Description: "Apply evidence-driven feedback to a dream hypothesis and route confirmed true or false resolutions through memory placement."},

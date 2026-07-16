@@ -37,8 +37,9 @@ func TestBuildDefault_RegistersV2ToolSurface(t *testing.T) {
 	}
 	required := []string{
 		"recall_memory",
-		"trace_memory", "assemble_context",
-		"remember", "get_memory_placement", "resolve_memory_placement",
+		"trace_memory",
+		"remember", "get_memory_placement", "dispute_memory_placement",
+		"import_memories", "reflect_memories", "confirm_memory",
 		"list_dreams", "get_dream", "resolve_dream_feedback",
 		"find_memory_pack_candidates", "export_memory_pack", "inspect_memory_pack",
 		"import_memory_pack", "rollback_memory_pack_import",
@@ -53,7 +54,7 @@ func TestBuildDefault_RegistersV2ToolSurface(t *testing.T) {
 			t.Errorf("legacy hyphenated tool %q must not be registered", name)
 		}
 	}
-	for _, removed := range []string{"list_recent_memories", "keyword_search", "semantic_search", "graph_query", "dispute_memory_placement", "import_memories", "reflect_memories", "confirm_memory"} {
+	for _, removed := range []string{"list_recent_memories", "keyword_search", "semantic_search", "graph_query", "assemble_context"} {
 		if _, ok := reg.Get(removed); ok {
 			t.Errorf("removed tool %q must not be registered", removed)
 		}
@@ -122,7 +123,6 @@ func TestValidateInputRejectsClientSuppliedRememberClaims(t *testing.T) {
 
 	args := map[string]any{
 		"evidence": []any{map[string]any{"content": "The user likes Go."}},
-		"proposal": structuredRememberInput("The user likes Go.")["proposal"],
 		"claims":   []any{},
 	}
 
@@ -140,7 +140,6 @@ func TestBuildDefault_InvokersReturnUnavailableWhenDepsMissing(t *testing.T) {
 	}{
 		{name: "recall_memory", input: map[string]any{"query": "hello"}},
 		{name: "trace_memory", input: map[string]any{"type": "fact", "id": "fact-1"}},
-		{name: "assemble_context", input: map[string]any{"query": "hello"}},
 		{name: "list_dreams", input: map[string]any{}},
 		{name: "get_dream", input: map[string]any{"dream_id": "dream-1"}},
 		{name: "resolve_dream_feedback", input: map[string]any{"dream_id": "dream-1", "decision": "reject"}},
@@ -198,7 +197,7 @@ func TestBuildDefault_RecallInvokerCallsServiceWhenWired(t *testing.T) {
 	}
 }
 
-func TestBuildDefault_RecallInvokerMapsReflectionAndDreams(t *testing.T) {
+func TestBuildDefault_RecallInvokerMapsEvidenceAndDreams(t *testing.T) {
 	memory := &stubMemory{}
 	recall := stubRecallWithHit{}
 	dreams := &stubDreamService{}
@@ -210,29 +209,25 @@ func TestBuildDefault_RecallInvokerMapsReflectionAndDreams(t *testing.T) {
 
 	recallTool, _ := reg.Get("recall_memory")
 	recallOut, err := recallTool.Invoke(context.Background(), "profile-search", map[string]any{
-		"query":            "hello",
-		"limit":            float64(2),
-		"include_evidence": true,
+		"query": "hello",
+		"limit": float64(2),
 	})
 	if err != nil {
 		t.Fatalf("recall_memory Invoke: %v", err)
 	}
-	results := recallOut["results"].([]map[string]any)
-	if len(results) != 1 || results[0]["id"] != "fragment-hit" {
+	results := recallOut["results"].([]any)
+	if len(results) != 1 || results[0].(map[string]any)["evidence_id"] != "fragment-hit" {
 		t.Fatalf("recall results = %v, want fragment-hit", results)
 	}
-	if results[0]["tier"] != recallservice.TierFragment {
-		t.Fatalf("fragment tier = %v, want %s", results[0]["tier"], recallservice.TierFragment)
-	}
-	fragment, ok := results[0]["fragment"].(map[string]any)
-	if !ok || fragment["id"] != "fragment-hit" {
-		t.Fatalf("fragment payload = %v, want nested fragment-hit", results[0]["fragment"])
-	}
-	if memory.lastProfile != "profile-search" {
-		t.Fatalf("recall reflection profile = %q, want profile-search", memory.lastProfile)
+	if memory.lastProfile != "" {
+		t.Fatalf("recall reflection profile = %q, want unused", memory.lastProfile)
 	}
 	if dreams.recallQuery != "hello" {
 		t.Fatalf("dream recall query = %q, want hello", dreams.recallQuery)
+	}
+	relatedHypotheses := recallOut["related_hypotheses"].([]any)
+	if len(relatedHypotheses) != 1 || relatedHypotheses[0].(map[string]any)["dream_id"] != "dream-1" {
+		t.Fatalf("related_hypotheses = %v, want dream-1", relatedHypotheses)
 	}
 }
 
@@ -491,11 +486,6 @@ func (s *stubMemory) GetMemoryPlacement(ctx context.Context, profileID string, r
 	return &memoryservice.PlacementStatusResult{
 		Run: domain.MemoryPlacementRun{IngestID: req.IngestID, Status: domain.MemoryPlacementCompleted},
 	}, nil
-}
-
-func (s *stubMemory) ResolveMemoryPlacement(ctx context.Context, profileID string, req memoryservice.ResolvePlacementRequest) (*memoryservice.ResolvePlacementResult, error) {
-	s.lastProfile = profileID
-	return &memoryservice.ResolvePlacementResult{Placement: domain.MemoryPlacementRun{IngestID: req.IngestID, Status: domain.MemoryPlacementCompleted}}, nil
 }
 
 func (s *stubMemory) DisputeMemoryPlacement(ctx context.Context, profileID string, req memoryservice.DisputeRequest) (*memoryservice.DisputeResult, error) {

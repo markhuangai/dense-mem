@@ -60,7 +60,6 @@ func TestErrorCodes(t *testing.T) {
 		{AUTH_REVOKED, "AUTH_REVOKED"},
 		{FORBIDDEN, "FORBIDDEN"},
 		{NOT_FOUND, "NOT_FOUND"},
-		{GONE, "GONE"},
 		{VALIDATION_ERROR, "VALIDATION_ERROR"},
 		{PROFILE_ID_REQUIRED, "PROFILE_ID_REQUIRED"},
 		{INVALID_UUID, "INVALID_UUID"},
@@ -126,7 +125,6 @@ func TestHTTPStatusCode(t *testing.T) {
 		{AUTH_REVOKED, http.StatusUnauthorized},
 		{FORBIDDEN, http.StatusForbidden},
 		{NOT_FOUND, http.StatusNotFound},
-		{GONE, http.StatusGone},
 		{VALIDATION_ERROR, http.StatusUnprocessableEntity}, // 422 for validation errors
 		{PROFILE_ID_REQUIRED, http.StatusBadRequest},
 		{INVALID_UUID, http.StatusBadRequest},
@@ -194,7 +192,6 @@ func TestEchoHTTPErrorToAPIErrorBranches(t *testing.T) {
 		{http.StatusUnauthorized, AUTH_INVALID},
 		{http.StatusForbidden, FORBIDDEN},
 		{http.StatusNotFound, NOT_FOUND},
-		{http.StatusGone, GONE},
 		{http.StatusConflict, CONFLICT},
 		{http.StatusTooManyRequests, RATE_LIMITED},
 		{http.StatusServiceUnavailable, SERVICE_UNAVAILABLE},

@@ -446,7 +446,7 @@ func TestPromotionSummaryContainsUpdates(t *testing.T) {
 // successful promotion result for profile A does not leak any data from or
 // references to profile B.
 //
-// This is a mandatory security test per .claude/rules/profile-isolation.md.
+// This is a mandatory security test per AGENTS.md.
 func TestPromoteHappyPaths_CrossProfileIsolation(t *testing.T) {
 	ctx := context.Background()
 	const profileA = "00000000-0000-0000-0000-000000000001"
@@ -626,7 +626,7 @@ func TestPromoteContradictionMatrix(t *testing.T) {
 	// TestPromoteContradictionMatrix_CrossProfileIsolation verifies that the
 	// contradiction matrix is never reached for a claim belonging to a different
 	// profile. Profile B querying profile A's claim must receive an error and no
-	// data — per .claude/rules/profile-isolation.md.
+	// data — per AGENTS.md.
 	t.Run("CrossProfileIsolation: profile B cannot trigger matrix on profile A's claim", func(t *testing.T) {
 		const profileA = "00000000-0000-0000-0000-000000000001"
 		const profileB = "00000000-0000-0000-0000-000000000002"

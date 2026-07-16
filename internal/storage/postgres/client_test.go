@@ -24,6 +24,7 @@ type testConfig struct {
 func (c *testConfig) GetPostgresDSN() string {
 	return c.dsn
 }
+func (c *testConfig) GetPostgresReadDSN() string { return "" }
 
 // getTestDSN returns the DSN to use for testing.
 // It checks DATABASE_URL environment variable first, then tries to start a test container.
@@ -35,7 +36,7 @@ func getTestDSN(ctx context.Context) (string, func(), error) {
 
 	// Try to start a test container
 	container, err := postgres.Run(ctx,
-		"postgres:18-alpine",
+		"pgvector/pgvector:0.8.2-pg18-trixie",
 		postgres.WithDatabase("testdb"),
 		postgres.WithUsername("testuser"),
 		postgres.WithPassword("testpass"),

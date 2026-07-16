@@ -23,13 +23,13 @@ Playwright end-to-end tests for the dense-mem knowledge pipeline API.
 | `auth-matrix.spec.ts` | Auth regression | Missing/invalid auth and read-only write denial matrix |
 | `cli-workflows.spec.ts` | Operator regression | Container CLI provision/list/rotate/delete workflow |
 | `control-portal-live.spec.ts` | Portal regression | Real browser portal flow against live backend |
-| `e2e-journey.spec.ts` | UAT-13, AC-X2, AC-X6, isolation | Full pipeline, trace, and context end-to-end |
+| `e2e-journey.spec.ts` | UAT-13, AC-X2, AC-X6, isolation | v2 production remember/placement/recall journey |
 
 ## Prerequisites
 
 1. A running dense-mem server (default `http://localhost:8080`)
-2. Neo4j reachable (default `bolt://localhost:7687`)
-3. Valid API key; cross-profile tests need a second API key
+2. Valid API key; cross-profile tests need a second API key
+3. Neo4j only for legacy graph/phase specs that still query it directly
 
 ## Environment Variables
 
@@ -109,6 +109,12 @@ creates two disposable teams with generated keys and sets `REQUIRE_API_KEY_B=1`,
 so the cross-profile isolation test fails instead of skipping if the secondary
 key was not provisioned.
 
+`e2e-journey.spec.ts` is the current production v2 smoke. It uses
+`POST /api/v1/tools/remember`, polls `get_memory_placement`, checks
+`recall_memory`, checks canonical `GET /api/v1/recall`, validates OpenAPI, and
+proves cross-team isolation. It does not use removed direct v1 fragment, claim,
+or fact routes.
+
 ## Helper Utilities (`helpers.ts`)
 
 | Export | Purpose |
@@ -117,28 +123,29 @@ key was not provisioned.
 | `headersForApiKey(apiKey)` | Auth headers for a specific API key |
 | `neo4jQuery(cypher, params)` | Direct Neo4j query for assertions |
 | `spawnMcp(env)` | Call the `/mcp` Streamable HTTP endpoint |
-| `seedFragmentForProfile(request, profileId, content, opts)` | Create a fragment via API |
-| `seedFragmentWithHeaders(request, headers, content, opts)` | Create a fragment with explicit auth headers |
-| `createAndVerifyClaim(request, profileId, opts)` | Create + verify a claim |
-| `createAndPromoteClaim(request, profileId, opts)` | Create + verify + promote a claim |
-| `createTwoSupportPromotedFact(request, profileId, subject)` | Promote two facts for same subject |
-| `createValidatedCandidateForVerify(request, profileId, opts)` | Create a validated claim |
+| `seedFragmentForProfile(request, profileId, content, opts)` | Legacy direct-route helper for older phase specs |
+| `seedFragmentWithHeaders(request, headers, content, opts)` | Legacy direct-route helper for older phase specs |
+| `createAndVerifyClaim(request, profileId, opts)` | Legacy claim helper for older phase specs |
+| `createAndPromoteClaim(request, profileId, opts)` | Legacy fact helper for older phase specs |
+| `createTwoSupportPromotedFact(request, profileId, subject)` | Legacy fact helper for older phase specs |
+| `createValidatedCandidateForVerify(request, profileId, opts)` | Legacy claim helper for older phase specs |
 
 ## Route Surface Under Test
 
 ```
 GET  /api/v1/recall
-POST /api/v1/claims
-GET  /api/v1/claims/:id
-POST /api/v1/claims/:id/verify
-POST /api/v1/claims/:id/promote
-GET  /api/v1/facts/:id
-GET  /api/v1/facts
-POST /api/v1/fragments
-POST /api/v1/fragments/:id/retract
-POST /api/v1/tools/detect_community
+GET  /api/v1/tools
+GET  /api/v1/tools/:id
+POST /api/v1/tools/:name
+POST /api/v1/tools/remember
+POST /api/v1/tools/get_memory_placement
+POST /api/v1/tools/recall_memory
 POST /api/v1/tools/trace_memory
-POST /api/v1/tools/assemble_context
+GET  /api/v1/openapi.json
+GET  /api/v1/dreaming/status
+GET  /api/v1/dreaming/runs
+GET  /api/v1/dreams
+GET  /api/v1/dreams/:dreamId
 GET  /api/v1/teams/:teamId
 PATCH /api/v1/teams/:teamId
 GET  /api/v1/teams/:teamId/audit-log
@@ -148,5 +155,10 @@ GET  /api/v1/teams/:teamId/profiles/:profileId
 POST /api/v1/teams/:teamId/profiles/:profileId/rotate
 DELETE /api/v1/teams/:teamId/profiles/:profileId
 POST /mcp
-GET  /api/v1/openapi.json
 ```
+
+Removed direct v1 routes such as `POST /api/v1/fragments`,
+`POST /api/v1/claims`, and `GET /api/v1/facts` are intentionally not part of
+the production v2 client surface. Older phase specs still document historical
+coverage and should be updated or run only against a legacy graph-enabled
+runtime.
