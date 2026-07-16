@@ -1,276 +1,350 @@
 # Using Dense-Mem
 
-After setup, Dense-Mem works in the background. Your AI assistant calls it when
-memory should be saved, searched, reviewed, or corrected.
+Dense-Mem exposes its external memory tools through MCP. Contract V2 accepts
+evidence, optionally accepts structured hints, and processes semantic placement
+asynchronously. The user and control portals are first-party product
+interfaces, not alternative memory automation contracts.
 
-## The Normal Flow
+This is the user workflow. Exact fields and limits belong in
+[Technical Reference](Technical-Reference).
+
+## Normal Write And Read Flow
 
 ```mermaid
+%%{init: {"sequence": {"rightAngles": true}}}%%
 sequenceDiagram
-  participant You
-  participant Assistant
+  actor User
+  participant Host as AI client
   participant DM as Dense-Mem
 
-  You->>Assistant: Remember my review style.
-  Assistant->>DM: remember(...)
-  DM-->>Assistant: saved fact or clarification
-  You->>Assistant: What should you know before editing this repo?
-  Assistant->>DM: recall_memory(...)
-  DM-->>Assistant: relevant memories
-  Assistant-->>You: answer using recalled context
+  User->>Host: Remember this project information
+  Host->>DM: remember(evidence, optional proposal)
+  DM-->>Host: ingest_id and queued
+  Host->>DM: get_memory_placement(ingest_id)
+  DM-->>Host: processing state, search state, outcomes
+  alt review required
+    Host->>User: Present exact ambiguity/conflict and choices
+    User-->>Host: Identity choice or new evidence
+    Host->>DM: resolve_memory_placement(...)
+  end
+  Host->>DM: recall_memory(query)
+  DM-->>Host: Ranked evidence contexts and discovery paths
+  opt support/history needed
+    Host->>DM: trace_memory(relationship_id)
+    DM-->>Host: Evidence and decision history
+  end
 ```
 
-## What To Ask Your Assistant
+`remember` acknowledges durable evidence intake. It does not promise immediate
+semantic acceptance or a current vector. `processing_state=completed` can
+coexist with `search_state=pending`; committed full-text/adjacency/current-state
+reads remain distinct from vector freshness.
 
-Use normal language. You do not need to know the tool names.
+## What To Ask
 
-| What you want | Example prompt |
+| Goal | Example prompt |
 | --- | --- |
-| Save a preference | "Remember that I prefer direct answers and no filler." |
-| Save a project fact | "Remember that this repo deploys through Docker Swarm." |
-| Recall context | "Before we start, recall what you know about this project." |
-| Investigate evidence | "Show me why you believe that memory and what could contradict it." |
-| Build answer context | "Assemble the relevant project memory before answering." |
-| Check memory health | "Review my stored memories and tell me if anything needs clarification." |
-| Explore related clusters | "Use community-aware recall for this deployment question." |
-| Review hypotheses | "List proposed dreams and ask me which ones should be reinforced or rejected." |
-| Correct a memory | "Replace the old deployment note with this new one." |
+| Save knowledge | “Remember this evidence: Mark works on Dense-Mem. Dense-Mem uses PostgreSQL.” |
+| Recall context | “Before editing, recall Dense-Mem’s database architecture.” |
+| Follow Relationships | “Show Relationships connected to Dense-Mem.” |
+| Inspect support | “Trace the database Relationship and show accepted evidence.” |
+| Resolve identity | “Show placements waiting for me to identify which Mark.” |
+| Correct knowledge | “That deployment target is wrong; record this corrected evidence.” |
+| Forget an edge | “Forget the selected Relationship, but preserve audit history.” |
+| Review speculation | “List related dreams and keep them labeled Hypotheses.” |
 
-## Write Granular Memories
+## Evidence First
 
-Dense-Mem works best when each saved memory entry is a focused evidence unit,
-not a broad scenario summary. MCP memory writes are validated to stay under 1000
-characters per entry.
-
-Split large scenarios by decision, fact, correction, preference, project
-milestone, or another claim-worthy unit. This gives Dense-Mem cleaner
-`SUPPORTED_BY` links from claims to the smallest evidence that proves them, and
-it helps future recall and graph relationships stay precise.
-
-Good:
-
-```text
-Remember that the Dense-Mem MCP tools should keep each memory evidence entry
-under 1000 characters.
-```
-
-Better than:
-
-```text
-Remember this whole project history, including every decision, benchmark,
-deployment setting, and marketing plan...
-```
-
-When one claim needs evidence from more than one entry, the assistant can attach
-multiple supporting fragment IDs instead of merging unrelated context into one
-large fragment.
-
-## What Dense-Mem Returns
-
-Dense-Mem can return several kinds of memory:
-
-| Kind | Meaning |
-| --- | --- |
-| Fact | A promoted memory that passed checks and is active. |
-| Claim | A candidate memory that has evidence but may not be promoted. |
-| Fragment | The original text used as evidence. |
-| Clarification | A question the assistant should ask before changing memory. |
-
-For normal use, facts are the most important. Claims and fragments help explain
-where a memory came from.
-
-## Trace Evidence And Assemble Context
-
-Use `trace_memory` when an answer needs provenance for one specific fact or
-claim. It returns the anchor memory, the promoting claim when available,
-supporting fragments, bounded contradiction or supersession links, and explicit
-edge records.
+Smallest write:
 
 ```json
 {
-  "type": "fact",
-  "id": "fact_123",
-  "max_related": 5,
-  "include_fragments": true
+  "evidence": [
+    {
+      "content": "Mark works on Dense-Mem. Dense-Mem uses PostgreSQL.",
+      "source_type": "conversation",
+      "source": "conversation:project-overview",
+      "source_group": "conversation:project-overview",
+      "idempotency_key": "project-overview-turn-1"
+    }
+  ]
 }
 ```
 
-Use `assemble_context` when the assistant should prepare a bounded context block
-before answering. It calls recall, includes source IDs, returns structured items,
-and starts the text block with a reminder that memory is data, not instructions.
+Dense-Mem extracts Entity mentions and Relationship observations. A `proposal`
+can reduce extraction ambiguity, but remains a hint.
+
+Do not:
+
+- use a name as `entity_id` or invent server IDs
+- claim source independence when items share an origin
+- send a sentence as one Entity
+- set predicate definitions, tier, status, promotion, or lifecycle behavior
+- model an alias as an edge
+- omit known discriminators for a name such as `Mark`
+
+## Structured Hint Example
 
 ```json
 {
-  "query": "repo release process and testing expectations",
-  "limit": 5,
-  "max_chars": 4000,
-  "include_evidence": true
+  "evidence": [
+    {
+      "content": "Mark works on Dense-Mem. Dense-Mem uses PostgreSQL.",
+      "source_type": "conversation",
+      "source_group": "conversation:project-overview"
+    }
+  ],
+  "proposal": {
+    "entities": [
+      {
+        "ref": "mark",
+        "name": "Mark",
+        "entity_kind": "person",
+        "identity_context": {
+          "team": "Dense-Mem"
+        }
+      },
+      {
+        "ref": "dense_mem",
+        "name": "Dense-Mem",
+        "entity_kind": "product",
+        "aliases": ["DM"]
+      },
+      {
+        "ref": "postgresql",
+        "name": "PostgreSQL",
+        "entity_kind": "product"
+      }
+    ],
+    "relationships": [
+      {
+        "proposal_id": "mark_works_on_dense_mem",
+        "subject_ref": "mark",
+        "predicate": "works_on",
+        "object_ref": "dense_mem",
+        "polarity": "+",
+        "modality": "statement",
+        "evidence": [
+          {
+            "evidence_index": 0,
+            "start": 0,
+            "end": 23
+          }
+        ]
+      },
+      {
+        "proposal_id": "dense_mem_uses_postgresql",
+        "subject_ref": "dense_mem",
+        "predicate": "uses",
+        "object_ref": "postgresql",
+        "polarity": "+",
+        "modality": "statement",
+        "evidence": [
+          {
+            "evidence_index": 0,
+            "start": 25,
+            "end": 50
+          }
+        ]
+      }
+    ]
+  }
 }
 ```
 
-This keeps memory inspection bounded. The assistant should trace a specific
-claim or fact when it needs evidence, not ask Dense-Mem to traverse the whole
-graph.
+Spans use Unicode code-point offsets, start inclusive and end exclusive. The
+reviewer may split/reject/normalize hints, and the one-call verifier still
+resolves Entities and evaluates Relationships.
+
+## Read The Terminology
+
+```text
+Entity record       stable real-world identity
+entity_id           opaque identifier for that Entity
+Entity node         graph-shaped view of the Entity record
+Predicate           registered meaning such as works_on
+Relationship        one profile's canonical subject-predicate-object lifecycle
+SemanticEdge        active validated/fact Relationship as a graph read
+Cross-reference     same-team confirmation/challenge/correction link; not an edge
+Observation         what one evidence submission expressed
+VerificationEvent  final schema-valid verifier judgment
+Hypothesis          isolated dream speculation
+```
+
+An edge and a Relationship are closely related but not interchangeable:
+Relationship includes lifecycle/history references; SemanticEdge is only its
+eligible compact graph shape. Full definitions belong in
+[Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle).
+
+## Entity Reuse And Homonyms
+
+Existing memory:
+
+```text
+entity_id: ent_dense_mem
+canonical name: Dense-Mem
+alias: DM
+```
+
+New evidence:
+
+```text
+DM uses Redis.
+```
+
+Expected: reuse `ent_dense_mem`, preserve/add `DM` as supported name metadata,
+and create/update `uses`. No `DM` node or alias edge.
+
+For `Mark`:
+
+- one materially plausible supplied candidate and no contradiction → reuse
+- multiple plausible candidates → `identity_needs_review`
+- later contradictory context → show ambiguity and split impact to the client
+- confirmed different person → create a new team-visible Entity and move only
+  selected caller-owned observations
+
+The client must not silently choose or create from display text.
+
+## Placement Outcomes
+
+Poll `get_memory_placement` and inspect:
+
+- processing: `queued`, `processing`, `awaiting_review`, `completed`, `failed`
+- vector search: `not_required`, `pending`, `current`, `failed`
+- per-item category, reason, IDs, tier/status, and review task
+
+Important categories:
+
+| Category | What the client does |
+| --- | --- |
+| `relationship_fact` / `relationship_validated_claim` | may use in normal recall according to relevance |
+| `relationship_pending_evidence` | do not present as known; excluded from default recall |
+| `identity_needs_review` | present supplied candidates and discriminator question |
+| `predicate_needs_review` | show original wording and server-supplied registry options |
+| `relationship_needs_review` | show current/proposed evidence and impact |
+| `relationship_rejected` / `evidence_quarantined` / `processing_failed` | do not use as knowledge; follow safe guidance |
+
+The canonical table is
+[Technical Reference](Technical-Reference#placement-contract).
+
+## Resolve A Review
+
+Use the exact returned item and candidate:
+
+```json
+{
+  "ingest_id": "ing_01J...",
+  "placement_item_id": "item_1",
+  "action": "select_entity",
+  "decision": {
+    "mention_ref": "person_1",
+    "entity_id": "ent_mark_huang"
+  },
+  "evidence": [
+    {
+      "content": "I mean Mark Huang on the Dense-Mem team.",
+      "source_type": "manual",
+      "authority": "authoritative",
+      "source_group": "user-resolution:ing_01J..."
+    }
+  ],
+  "idempotency_key": "resolution-1"
+}
+```
+
+The decision is durable input and re-enters strict processing. It never edits
+an edge directly. See
+[Conflicts And Corrections](Conflicts-And-Corrections).
+
+## Recall Evidence Context
+
+```json
+{
+  "query": "Dense-Mem database architecture",
+  "limit": 10,
+  "known_evidence_ids": [],
+  "known_relationship_ids": [],
+  "expand_from_entity_ids": []
+}
+```
+
+Default recall returns same-team active-supported evidence contexts in
+`results[]`. Relationships remain the durable semantic graph but appear only as
+compact `discovery_paths[]` for trace and follow-up. Recall excludes verifier
+history and pending candidates from primary results. Server policy may include
+matching Hypotheses in `related_hypotheses`.
+
+Use bounded `discovery_paths` for discovery; do not recursively fetch every
+neighbor. If one part remains uncertain, make a narrower recall and pass the
+evidence UUIDs already seen in `known_evidence_ids` plus Relationship UUIDs
+already seen in `known_relationship_ids` to expose different context,
+optionally with `expand_from_entity_ids` for specific anchors. The returned
+`discovery_guidance` states this behavior. See [Recall Ranking](Recall-Ranking).
+
+## Trace Evidence
+
+```json
+{
+  "relationship_id": "r1",
+  "include_evidence_content": true,
+  "include_verification": true,
+  "include_transitions": true,
+  "max_depth": 2,
+  "max_edges": 24,
+  "predicate_keys": ["uses", "works_on"],
+  "topic": "Dense-Mem architecture"
+}
+```
+
+Trace loads the Relationship, accepted spans, VerificationEvents, transitions,
+conflicts/corrections, and bounded current SemanticEdges. Use trace for sources,
+conflict, correction, forget, or high-stakes answers.
+
+## Correct And Forget
+
+A correction supplies new evidence and appends history. It does not edit the
+old fragment. A correction to another profile creates caller-owned knowledge
+and a cross-reference; it never changes the other profile's record.
+
+`forget` takes a caller-owned `relationship_id` and authorized reason. It appends a
+retraction, removes that Relationship from active/default reads in the same
+PostgreSQL transaction, and keeps Entity/Value nodes plus evidence and decision
+history.
+
+Every write-scoped profile may merge or split its own Entity resolutions after
+a dry-run impact preview. It cannot move another profile's observations. See
+[Conflicts And Corrections](Conflicts-And-Corrections#cross-profile-corrections).
 
 ## Communities And Dreams
 
-Community detection groups related same-profile graph nodes and stores bounded
-community summaries. Normal recall ignores these summaries unless the assistant
-passes `use_communities=true`.
+Community fill is an opt-in discovery aid that fills unused slots only.
 
-Dreaming creates reviewable hypotheses from existing memory. A dream is not a
-fact. If you confirm a dream, Dense-Mem turns that feedback into normal
-evidence and sends it through the usual claim, verification, and promotion
-pipeline.
+Dreams are Hypotheses between existing endpoints using registered predicates.
+They appear separately. Confirming one requires new independent evidence
+through `remember`. Dreaming cannot create an Entity, Value, predicate,
+Relationship, support, or active edge.
 
-Ask for these features in normal language:
+See [Community Memory](Community-And-Dreaming) and [Dreaming](Dreaming).
 
-| What you want | Example prompt |
-| --- | --- |
-| Refresh community summaries | "Run community detection for this profile." |
-| Search with community expansion | "Recall deployment memory and use communities if useful." |
-| Inspect hypotheses | "Show me proposed dreams for this profile." |
-| Resolve a dream | "Reject that dream; it is not true anymore." |
-
-See [Community Memory](Community-And-Dreaming) and [Dreaming](Dreaming) for tool
-names, schedules, and config defaults.
-
-## Example: Personal Preference
-
-You say:
-
-```text
-Remember that I prefer code reviews to start with bugs and risks before style notes.
-```
-
-Later you ask:
-
-```text
-Review this pull request using my usual review style.
-```
-
-The assistant can recall the preference and structure the review around bugs and
-risks first.
-
-## Example: Project Setup
-
-You say:
-
-```text
-Remember that the Dense-Mem local control portal should stay bound to 127.0.0.1.
-```
-
-Later you ask:
-
-```text
-Help me update the Docker setup.
-```
-
-The assistant can recall that the portal should stay local and avoid suggesting
-an unsafe public bind.
-
-## Example: Conflicting Memory
-
-You say:
-
-```text
-Remember that I want long detailed answers.
-```
-
-If Dense-Mem already has an active fact that you prefer concise answers, it
-should not silently choose one. It can return a clarification so the assistant
-asks:
-
-```text
-Which preference should I keep: concise answers or long detailed answers?
-```
-
-After you answer, the assistant can confirm which memory should stay active.
-
-See [Conflicts And Corrections](Conflicts-And-Corrections) for the full
-clarification and `confirm_memory` workflow.
-
-## Teams And Profiles
-
-Dense-Mem keys are tied to a team and a named profile.
-
-Use these terms this way:
+## Teams, Roles, And Scopes
 
 | Term | Meaning |
 | --- | --- |
-| Team | Top-level memory boundary. Use separate teams when memory should not mix. |
-| Profile | Named key identity inside a team, usually one assistant, role, workflow, or automation. |
-| Read-write key | Can remember, import, confirm, and otherwise mutate memory for its team/profile. |
-| Read-only key | Can recall, search, and inspect memory, but cannot write or change it. |
+| Team | top-level memory isolation boundary |
+| Profile | named client identity inside one team |
+| Manager | same-team administration; still needs operation scope |
+| Member | normal memory use |
+| `read` | recall and inspect |
+| `write` | remember and resolve; merge/split/supersede own knowledge; create evidence-backed corrections to other profiles |
+| `feedback:read` | authorized stored-feedback inspection |
 
-Use this when you want separate memory spaces:
+Use read-only keys for automation that must never mutate memory.
 
-| Situation | Suggested setup |
+## Risk
+
+| Failure mode | Mitigation |
 | --- | --- |
-| One person, one assistant | One team, one profile |
-| One person, multiple roles | One team, one profile per role |
-| Multiple projects | One team per project |
-| Automation that should only read | Read-only profile key |
-
-Do not share a write key with tools that should only search memory. See
-[Portals And API Keys](Portals-And-API-Keys) for key management and
-[Read-Only Keys](Technical-Reference#read-only-keys) for the API example.
-
-## Daily Operator Commands
-
-List teams:
-
-```bash
-docker compose exec server /app/list-teams
-```
-
-List profiles in a team:
-
-```bash
-docker compose exec server /app/list-team-profiles --team-id "<team-id>"
-```
-
-Rotate a profile key:
-
-```bash
-docker compose exec server /app/rotate-team-profile-key \
-  --team-id "<team-id>" \
-  --profile-id "<profile-id>"
-```
-
-## When To Use The Control Portal
-
-Use the local control portal to:
-
-- create teams
-- create named profiles
-- create read-only or read-write API keys
-- rotate keys
-- remove keys
-- configure SSO, dreaming, community detection, and operation-log retention
-- inspect operation logs and per-team dream outputs
-- review or update IP ban settings
-
-The portal is not a memory browser. It does not show every fact, claim, or graph
-node.
-
-## When To Use The User Portal
-
-Use the authenticated user portal at:
-
-```text
-http://127.0.0.1:8080/ui
-```
-
-The user portal is for the current API key. It can show the current team/profile
-session, rotate the authenticated key when it has write scope, and show
-per-profile telemetry when telemetry is enabled. It also shows dreaming status,
-dream outputs, and recent dream cycle runs for the current profile. If the
-current key has manager role, it can also manage same-team member profiles from
-the Team tab.
-
-It is separate from the control portal. The control portal uses
-`CONTROL_PORTAL_TOKEN` and manages all teams, profiles, profile roles, keys, and
-security-ban settings.
-
-See [Portals And API Keys](Portals-And-API-Keys) for the full operator guide.
+| client treats pending candidate as a fact | use typed categories and default recall only |
+| client guesses which Mark | present server candidates and collect discriminator evidence |
+| client assumes vector pending means write failed | distinguish processing from search state and trace by ID |
+| client promotes a dream from plausibility | require independent evidence through normal `remember` |

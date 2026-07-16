@@ -1,410 +1,244 @@
 # Portals And API Keys
 
-Dense-Mem has two portal surfaces:
+Dense-Mem has a team/user portal on the main listener and a deployment control
+portal on a separate private listener.
 
-| Portal | URL | Auth | Purpose |
+| Portal | Local URL | Authentication | Purpose |
 | --- | --- | --- | --- |
-| User portal | `http://127.0.0.1:8080/ui` | Dense-Mem API key, or SSO when configured | Current key/session, self telemetry, dream review, current-key rotation, SSO team selection, and bounded team management for manager access. |
-| Control portal | `http://127.0.0.1:8090/` | `CONTROL_PORTAL_TOKEN` | Teams, profiles, profile roles, keys, runtime config, operation logs, security bans, control telemetry, and per-team dream inspection. |
+| user | `http://127.0.0.1:8080/ui` | Dense-Mem key or configured SSO | same-team recall, graph/trace, reviews, keys, and self telemetry |
+| control | `http://127.0.0.1:8090/` | control-plane authentication | cross-team administration, config, security, logs, and operations |
 
-Keep the control portal private. It is not meant to be a public admin site.
+Keep the control portal private.
+
+## Boundary
+
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart LR
+  User["User/team manager"] --> Main["Main listener :8080"]
+  Main --> UI["/ui"]
+  Main --> MCP["/mcp"]
+  UI --> Team["Authenticated team boundary"]
+  MCP --> Team
+
+  Operator["Deployment operator"] --> Control["Control listener :8090"]
+  Control --> Admin["Cross-team control plane"]
+  Control --> Metrics["Protected metrics"]
+```
+
+A user key never becomes a control-plane credential. A control token must not be
+accepted by main memory routes.
+
+The user and control portals use first-party server handlers built for their
+own browser views. Those handlers are not a public client SDK or an alternative
+memory automation contract; external memory use goes through MCP.
+
+User-portal authentication remains either a Dense-Mem API key or configured
+SSO. API-key login continues to use the key-based authentication path; SSO uses
+its separate browser-session and CSRF contract. The portal does not imply that
+every API-key login is exchanged for an HttpOnly session.
 
 ## User Portal
 
-The user portal runs on the main Dense-Mem API server. For API-key login, it
-authenticates with the same API key used by MCP clients:
+The target user portal provides:
 
-```text
-Authorization: Bearer dm_...
+- authenticated team/profile/session display
+- ranked evidence recall with compact Relationship discovery paths
+- Entity/Value graph exploration
+- Relationship trace with evidence/history panels
+- placement review and correction workflow
+- separate Hypothesis/community views
+- self/team-scoped telemetry according to role
+- current-key rotation
+- same-team member management for managers
+- SSO login/team switching when configured
+
+It does not expose raw Cypher, embeddings, provider prompts, or cross-team
+candidates.
+
+## Graph Explorer
+
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart LR
+  Overview["Team graph overview"] --> Entity["Entity/Value nodes"]
+  Overview --> Edge["SemanticEdges"]
+  Edge --> Detail["Relationship detail"]
+  Detail --> Trace["Evidence, VerificationEvents,<br/>transitions, conflicts"]
+  Overview --> Overlay["Optional community/Hypothesis<br/>analytical overlays"]
 ```
 
-Use it to:
+The semantic graph contains only Entity/Value endpoints and active semantic
+edges. Evidence, observations, verification, and transitions are detail/trace
+records, not graph nodes. Hypotheses use distinct styling and never look like
+active knowledge.
 
-- view the authenticated team and profile session
-- rotate the current key when the key has write scope
-- view self-scoped telemetry when telemetry is enabled
-- inspect dreaming status, dream outputs, and recent cycle runs
-- manage same-team member profiles when the current key has manager role
-- sign in with SSO when SSO is configured for the deployment
-- switch between teams granted by the current SSO identity
-- create or rotate one SSO-owned personal API key per team for member SSO access
+Overview/local queries enforce node, edge, depth, time, and response-size
+budgets. Large teams should use search/local views rather than an unbounded full
+graph.
 
-The user portal cannot create arbitrary teams. Manager keys can update same-team
-metadata and create, list, rename, rotate, or delete member profiles. The user
-portal cannot create manager profiles or change roles; use the control portal
-for manager lifecycle changes.
+Parallel authored edges show an author badge and conflict state. The portal may
+visually group equivalent edges for clarity only when it retains every
+`relationship_id` and author in the expandable group; visual grouping never
+merges their lifecycle or data.
+
+## Placement Review
+
+The portal shows:
+
+- exact item and `relationship_id` when available
+- immutable owner/author profile and same-team conflict references
+- current versus proposed Relationship
+- Entity candidates and discriminator context
+- evidence/source handles
+- tier/status and search state
+- explicit decision effects
+
+Decisions append durable input and re-enter normal processing. The browser never
+edits a SemanticEdge or current-state row directly.
 
 ## User Portal SSO
 
-When SSO is configured, the user portal adds public SSO endpoints under the main
-Dense-Mem public base URL.
-
-Register this redirect URI with the OIDC provider:
-
-```text
-https://<dense-mem-host>/ui/api/sso/callback
-```
-
-This value is derived from `SSO_PUBLIC_BASE_URL`, so a deployment with:
-
-```text
-SSO_PUBLIC_BASE_URL=https://dense-mem.example.com
-```
-
-uses:
-
-```text
-https://dense-mem.example.com/ui/api/sso/callback
-```
-
-Dense-Mem exposes these user-portal SSO endpoints:
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/ui/api/sso/providers` | Lists enabled SSO providers for the login screen. |
-| `GET` | `/ui/api/sso/start/:providerId` | Starts OIDC login and redirects to the provider. |
-| `GET` | `/ui/api/sso/callback` | Receives the OIDC authorization code callback. |
-| `POST` | `/ui/api/sso/team` | Switches the current SSO browser session to another entitled team. |
-| `POST` | `/ui/api/sso/key` | Creates the current SSO member's owned API key for the selected team. |
-| `POST` | `/ui/api/sso/key/rotate` | Rotates the current SSO member's owned API key for the selected team. |
-| `POST` | `/ui/api/sso/logout` | Clears the local Dense-Mem SSO session cookies. |
-
-Do not use `/ui/api/sso/logout` as an OIDC post-logout redirect URI. It is a
-local API endpoint, not a browser landing page. Dense-Mem does not currently
-perform RP-initiated OIDC logout with `post_logout_redirect_uri`.
-
-SSO sessions and API keys are separate authentication sources. One SSO identity
-can be entitled to multiple teams, and the same provider group or role can map
-to many Dense-Mem teams. Dense-Mem creates one SSO team profile per entitled
-team for browser-session access, and `/ui` shows a team selector for those
-teams.
-
-The SSO team profile has no API key material and is not rotated into an API
-key. It only represents the browser SSO session for the selected team.
-
-SSO manager sessions see the Team tab and can manage same-team member profiles
-like a manager API-key login. Keys created from the Team tab are ordinary API
-keys.
-
-SSO member sessions see the My key tab. Each SSO identity can own at most one
-active personal API key per team. That key is stored as a normal
-`auth_source=api_key` key with SSO ownership metadata so `/ui` can find the
-owner's key. Future bearer-token login with that key uses the standard API-key
-implementation; it is not a hybrid SSO login and does not require later SSO
-entitlement refresh.
-
-The current SSO entitlement limits what the member can create or rotate from
-`/ui`:
-
-| SSO entitlement on selected team | My key behavior |
-| --- | --- |
-| Manager | Use the Team tab instead of My key. |
-| Member with read/write permission | Can create a read/write or read-only personal API key. Can rotate only if the existing personal key also has write scope. |
-| Member with read-only permission | Can create a read-only personal API key. Cannot rotate it from `/ui`. |
-
-If the provider requires a post-logout redirect URI, use the portal URL:
-
-```text
-https://<dense-mem-host>/ui
-```
-
-### SSO Login Visibility
-
-The user portal shows SSO login only when public SSO is ready:
-
-- `SSO_PUBLIC_BASE_URL` is an absolute `http` or `https` URL.
-- At least one SSO provider is enabled.
-- The provider has a valid issuer URL and client ID.
-- If the provider uses `Client secret env`, that environment variable exists
-  and is not empty.
-
-When these conditions are not met, `/ui` should only show API-key login and
-`GET /ui/api/sso/providers` should return no public providers. This is
-intentional for deployments such as the hosted demo.
-
-### Provider Fields
-
-Configure providers in the control portal SSO section.
-
-| Field | Meaning |
-| --- | --- |
-| Name | Display name shown on the user portal login screen. |
-| Kind | Use `OIDC` for standards-based OIDC providers. Use provider-specific kinds only when Dense-Mem has a provider-specific integration. |
-| Issuer URL | Provider issuer base URL, without `/.well-known/openid-configuration`. |
-| Client ID | OIDC application client ID. |
-| Client secret env | Environment variable name that contains the client secret. Leave empty for public PKCE clients. |
-| Scopes | Login scopes requested during the browser flow. Use at least `openid`, `profile`, and `email`. |
-| Group claims | Claim names that contain group, role, or entitlement values. |
-| Groups endpoint | Optional endpoint used when group claims are not present or when SSO entitlement refresh needs a provider lookup. |
-| Groups scopes | Scopes for the groups endpoint. If a groups endpoint is configured, these are also requested during browser login. |
-| Enabled | Enables the provider for login after the rest of the setup is correct. |
-
-Group mappings connect provider group values to Dense-Mem teams:
-
-| Mapping field | Meaning |
-| --- | --- |
-| Team | Dense-Mem team to grant access to. |
-| Group | Exact group or role value from the provider claim. |
-| Permission | Dense-Mem API scopes for member mappings, such as read-only or read/write. Manager mappings always grant read/write. |
-| Role | Dense-Mem profile role, either member or manager. Manager role grants the `/ui` Team tab for that team. |
-| Status | Disable a mapping without deleting it. |
-
-### Generic OIDC Group And Role Mapping
-
-Dense-Mem is not tied to a specific SSO vendor. Any OIDC provider can work when
-it can provide stable group, role, or entitlement values through one of these
-paths:
-
-- ID-token claims
-- UserInfo claims
-- a configured groups endpoint
-
-Set `Group claims` to the claim names that contain the values you want to map.
-Dense-Mem accepts common claim shapes:
-
-| Claim shape | Dense-Mem group values |
-| --- | --- |
-| `["admin", "writer"]` | `admin`, `writer` |
-| `"admin"` | `admin` |
-| `{ "admin": {...}, "writer": {...} }` | `admin`, `writer` |
-
-The group mapping `Group` field must exactly match one emitted value. This can
-be an IdP group name, a role key, an application role, or any stable entitlement
-string your provider emits.
-
-For claim-only providers, leave `Groups endpoint` and `Groups scopes` empty.
-Claim-derived entitlements are cached for the browser SSO session lifetime. For
-providers that do not emit usable group or role claims, configure
-`Groups endpoint` and the delegated or client-credential scopes it needs.
-
-Examples:
-
-| Provider style | Typical `Group claims` |
-| --- | --- |
-| Generic OIDC group claims | `groups` |
-| Entra ID or Azure AD groups | `groups` or provider-specific group endpoint |
-| Application roles | `roles` |
-| ZITADEL project roles | `urn:zitadel:iam:org:project:<project_id>:roles, urn:zitadel:iam:org:project:roles` |
-
-Use `LOG_LEVEL=debug` during setup and read `id_token_claim_names`,
-`userinfo_claim_names`, and `groups` in the SSO callback logs to confirm the
-right claim names and emitted values.
-
-### Example: ZITADEL Cloud With Project Roles
-
-For hosted ZITADEL, use the ZITADEL instance that owns the application as the
-issuer URL:
-
-```text
-https://<instance>.us1.zitadel.cloud
-```
-
-If you have multiple ZITADEL URLs, use the one whose
-`/.well-known/openid-configuration` issuer matches the application client ID.
-
-In ZITADEL:
-
-1. Create or open the project used for Dense-Mem.
-2. Create a web application that uses Authorization Code with PKCE.
-3. Add the Dense-Mem redirect URI:
-
-   ```text
-   https://<dense-mem-host>/ui/api/sso/callback
-   ```
-
-4. Copy the application client ID.
-5. Create project roles for Dense-Mem access.
-
-Example project role:
-
-| ZITADEL role field | Example |
-| --- | --- |
-| Key | `dense-mem-admin` |
-| Display name | `Dense-Mem Admin` |
-| Group | `dense-mem` |
-
-Dense-Mem matches the role key from the token claim. The ZITADEL role group is
-only a ZITADEL-side organizer unless your emitted claim contains that value.
-
-Assign the role to each user that should access Dense-Mem. For example, assign
-your own user the `dense-mem-admin` role before testing login.
-
-In Dense-Mem, configure the provider:
-
-| Dense-Mem field | Value |
-| --- | --- |
-| Name | `ZITADEL` |
-| Kind | `OIDC` |
-| Issuer URL | `https://<instance>.us1.zitadel.cloud` |
-| Client ID | ZITADEL application client ID |
-| Client secret env | Empty for a public PKCE app, or an environment variable name for a confidential app secret. |
-| Scopes | `openid, profile, email` |
-| Group claims | `urn:zitadel:iam:org:project:<project_id>:roles, urn:zitadel:iam:org:project:roles` |
-| Groups endpoint | Empty when using ZITADEL role claims. |
-| Groups scopes | Empty when using ZITADEL role claims. |
-| Enabled | Checked after the provider, roles, and mappings are ready. |
-
-If ZITADEL does not emit role claims, enable `Assert Roles on Authentication`
-on the project for UserInfo role claims, or `User Roles Inside ID Token` on the
-application for ID-token role claims. When required by your ZITADEL setup, add
-the project audience scope to `Scopes`:
-
-```text
-urn:zitadel:iam:org:project:id:<project_id>:aud
-```
-
-Create a Dense-Mem group mapping whose `Group` value is the ZITADEL role key:
-
-| Dense-Mem mapping field | Example |
-| --- | --- |
-| Team | `Mark` |
-| Group | `dense-mem-admin` |
-| Permission | Not shown for `Manager`; manager implies read/write. |
-| Role | `Manager` |
-| Status | `enabled` |
-
-With debug logging enabled, a successful claim read should show the ZITADEL role
-claim names and a group value matching the role key:
-
-```json
-{
-  "configured_group_claims": [
-    "urn:zitadel:iam:org:project:<project_id>:roles",
-    "urn:zitadel:iam:org:project:roles"
-  ],
-  "groups": ["dense-mem-admin"],
-  "groups_from_userinfo": true
-}
-```
-
-### SSO Troubleshooting
-
-Set `LOG_LEVEL=debug` while setting up SSO. The callback response now returns a
-safe setup hint, and the server log has provider and claim details.
-
-| Browser message | What to check |
-| --- | --- |
-| `sso setup failed: no groups found in configured claims` | `Group claims` does not match the token or UserInfo claim names, or the provider is not emitting the expected group or role claims. |
-| `sso setup failed: group lookup failed` | The groups endpoint, delegated scopes, or client credentials are wrong. |
-| `sso setup failed: no mapping matched the user groups` | The Dense-Mem mapping `Group` value does not exactly match the emitted role or group value. |
-| `sso setup failed: no enabled team entitlement matched` | A mapping exists, but it is disabled or does not grant an enabled team entitlement. |
-| `sso access denied` | The provider is disabled, the session is invalid, or entitlement validation failed after setup. |
-
-For claim-based setups, the usual fix is:
-
-1. Read `id_token_claim_names` and `userinfo_claim_names` in the debug log.
-2. Put the provider's group or role claim names in `Group claims`.
-3. Set the Dense-Mem mapping `Group` to the emitted group or role value.
-4. Confirm the user is assigned that group, role, or entitlement in the IdP.
-
-ZITADEL example references:
-
-- [Retrieve User Roles in ZITADEL](https://zitadel.com/docs/guides/integrate/retrieve-user-roles)
-- [Claims in ZITADEL](https://zitadel.com/docs/apis/openidoauth/claims)
-- [Applications in ZITADEL](https://zitadel.com/docs/guides/manage/console/applications-overview)
+OIDC setup, entitlement mapping, SSO-owned keys, and session behavior are in
+[User Portal SSO](User-Portal-SSO).
 
 ## Control Portal
 
-The control portal runs on a separate local port:
+The control portal manages:
 
-```text
-http://127.0.0.1:8090/
-```
+- teams and profiles
+- roles and key scopes
+- key creation, rotation, expiry, and revocation
+- SSO providers and mappings
+- global/team runtime configuration
+- versioned RRF enable/disable, branch, and deterministic-rerank profiles with
+  atomic activation/rollback
+- provider/embedding and search-index profile visibility without exposing
+  secret values
+- placement and embedding backlog/search freshness
+- PostgreSQL, pgvector, query, and backup health
+- operation/audit/security views
+- telemetry and feedback summaries
+- dream/community scheduler state
+- memory-pack import/rollback operations
+- boot-gated `2.1.x` legacy migration state, progress, errors, logs, and
+  authorized start/resume after preflight, plus post-migration Neo4j disconnect
+  guidance; passing hard gates trigger cutover without a second confirmation
 
-It accepts either:
+It is not a general memory editor. Semantic changes use versioned review,
+correction, merge/split, retraction, or import workflows with audit.
 
-```text
-Authorization: Bearer <CONTROL_PORTAL_TOKEN>
-```
+## API Keys
 
-or:
+A key belongs to one profile and one team. It has a role-derived actor plus
+explicit scopes.
 
-```text
-X-Control-Portal-Token: <CONTROL_PORTAL_TOKEN>
-```
+| Role | Purpose |
+| --- | --- |
+| `manager` | same-team profile/key/config administration where permitted |
+| `member` | normal same-team memory use |
 
-Use it to:
+| Scope | Purpose |
+| --- | --- |
+| `read` | recall, trace, Entity/Relationship inspection |
+| `write` | remember and placement/dream decisions; merge/split/supersede only caller-owned knowledge; create evidence-backed cross-profile corrections |
+| `feedback:read` | stored recall-feedback details |
 
-- create teams
-- create named profiles
-- set profile roles
-- create read-only or read-write API keys
-- rotate keys
-- delete profiles or keys
-- configure SSO, `APP_TIMEZONE`, dreaming, community detection, and operation-log retention
-- inspect operation logs
-- inspect per-team dream status, outputs, and cycle runs
-- review usage and telemetry
-- review or update IP ban settings
+Role does not imply scope. A manager key without `write` cannot remember.
 
-It does not browse or edit memory content.
+Use cases:
 
-## Operator CLI Commands
+| Key | Use |
+| --- | --- |
+| read-write member | main AI client |
+| read-only member | LLM host that must never mutate memory |
+| manager with minimal scopes | team administration |
+| SSO-owned personal key | user client tied to current entitlement |
 
-Create a team, default profile, and read-write key:
+## Create And Rotate
+
+The supported release may provide operator CLIs such as:
 
 ```bash
 docker compose exec server /app/provision-team --name "primary-memory"
-```
-
-List teams:
-
-```bash
 docker compose exec server /app/list-teams
-```
-
-List profiles in a team:
-
-```bash
 docker compose exec server /app/list-team-profiles --team-id "<team-id>"
-```
-
-Rotate a profile key:
-
-```bash
 docker compose exec server /app/rotate-team-profile-key \
   --team-id "<team-id>" \
   --profile-id "<profile-id>"
 ```
 
-Delete a profile key:
+Validate available flags with `--help` on the exact image. The raw key is
+returned once; store it in a secret manager.
 
-```bash
-docker compose exec server /app/delete-team-profile \
-  --team-id "<team-id>" \
-  --profile-id "<profile-id>"
+Team managers create and rotate profile keys through the Team tab. SSO members
+use the My key tab subject to their current entitlement. Deployment operators
+may use the release's supported provisioning CLI on the private host.
+
+Do not place raw keys in command history on shared machines; prefer a protected
+input/file mechanism supported by the client.
+
+## Rotation
+
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart LR
+  Create["Create replacement key"] --> Store["Store/test replacement"]
+  Store --> Switch["Switch clients"]
+  Switch --> Observe["Verify use/audit"]
+  Observe --> Revoke["Revoke old key"]
 ```
 
-## Roles And Scope Choices
+Rotation must allow a bounded overlap where policy permits. Never delete the old
+credential before confirming the replacement works unless compromise requires
+immediate revocation.
 
-Roles and scopes control different things:
+## Deletion And Revocation
 
-| Field | Values | Controls |
+Revocation stops future authentication but preserves audit and actor references.
+Profile deletion must fail or become deactivation when durable records still
+reference the actor. Do not cascade-delete knowledge/audit because a credential
+is removed.
+
+## SSO-Owned Keys
+
+An SSO-owned key is usable only while its external entitlement remains valid.
+Entitlement revalidation can revoke or deny it even when the local hash is
+valid. Manual rotation cannot sever that ownership silently.
+
+## Security Rules
+
+- keep control and metrics listeners private
+- use HTTPS beyond loopback
+- assign least privilege and separate automation keys
+- store only hashes in the database
+- never display a raw key again
+- audit create/rotate/revoke/role/scope changes
+- rate-limit authentication and key operations
+- revalidate same-team paths/IDs
+- do not copy keys into provider prompts, logs, or support bundles
+
+## Risks And Mitigations
+
+| Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
-| Role | `manager`, `member` | Team/profile administration. |
-| Scopes | `read`, `read` + `write` | Knowledge read/write behavior. |
+| Control portal exposed | public attacker can manage all teams | private listener/ingress and separate strong auth |
+| Manager overreach | manager key writes despite lacking `write` | independent role/scope checks |
+| Graph leaks provenance | overview renders evidence/verification as nodes | semantic-only graph plus authorized detail/trace panels |
+| Team visibility becomes write authority | B edits A's Relationship from the portal | show immutable owner and route B through its own remember/cross-reference workflow |
+| Key rotation outage | old key revoked before clients switch | create-test-switch-observe-revoke sequence |
+| SSO entitlement drift | removed user keeps a local personal key | periodic/request-time entitlement revalidation |
+| Profile deletion erases audit | cascading FK removes actor history | deactivate/tombstone actor and preserve durable references |
 
-The first profile in a new team defaults to `manager`. Later profiles default to
-`member`. During migration, existing teams assign `manager` to the earliest
-active profile and `member` to the rest.
+## Acceptance Invariants
 
-Manager keys can access the team-management APIs and the `/ui` Team tab. Member
-keys cannot, even when they have write scope.
-
-| Key type | Use it for |
-| --- | --- |
-| Read-write | Main assistants that should remember, import, confirm, and mutate memory. |
-| Read-only | Automation or tools that should recall and inspect memory but never write. |
-
-Do not share write keys with tools that only need recall.
-
-## API Example: Create A Read-Only Key
-
-```bash
-curl -X POST "http://127.0.0.1:8080/api/v1/teams/$TEAM_ID/profiles" \
-  -H "Authorization: Bearer $MANAGER_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"automation-readonly","scopes":["read"],"rate_limit":120}'
-```
-
-The raw API key is returned once. Store it privately.
+1. user portal reads only authenticated-team data
+2. control authentication is never accepted by main routes
+3. graph overview contains only semantic nodes/edges plus explicit analytical
+   overlays
+4. browser decisions use the canonical PostgreSQL write pipeline
+5. role and scopes remain independent
+6. raw API keys are returned once and never stored reversibly
+7. credential deletion preserves knowledge and audit history
+8. external memory automation uses MCP; portal handlers remain first-party UI
+   implementation details

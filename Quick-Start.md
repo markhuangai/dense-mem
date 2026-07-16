@@ -1,214 +1,244 @@
 # Quick Start
 
-This page gets Dense-Mem running locally with the fewest decisions.
+This is the target local setup and contract-v2 smoke test. Use a pinned release
+that advertises contract version 2. The current pre-refactor source still
+requires legacy components and cannot be validated against this target merely
+by following these commands.
 
-Use this path first. After it works, you can review [Configuration](Configuration)
-for advanced settings.
+## Local Shape
 
-## What You Will Set Up
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart LR
+  MCP["MCP client"] --> Server["Dense-Mem :8080"]
+  Browser["Browser"] --> UI["User portal :8080/ui"]
+  Operator["Operator"] --> Control["Control :8090"]
+  UI --> Server
+  Server --> PG[("PostgreSQL + pgvector<br/>knowledge, graph and search")]
+  Server --> AI["Reviewer, verifier,<br/>embedding providers"]
+  Control --> PG
+```
 
-You will run:
+One local server needs no Redis or public HTTPS. Redis becomes required when
+multiple server processes need shared coordination.
 
-- Dense-Mem server
-- Postgres for teams, profiles, keys, and audit records
-- Neo4j for memory graph and search indexes
-- a local user portal at `/ui` for the authenticated API key
-- a local control portal for creating teams, profiles, and API keys
-
-Redis and public HTTPS are optional. Skip them for your first setup.
-
-Dense-Mem provides two downloadable compose examples:
-
-| Example | Use it when |
-| --- | --- |
-| [docker-compose.base.yml](https://github.com/markhuangai/dense-mem/blob/main/examples/docker-compose.base.yml) | You want the easiest local-only setup. Start here. |
-| [docker-compose.expert.yml](https://github.com/markhuangai/dense-mem/blob/main/examples/docker-compose.expert.yml) | You need public HTTPS, Traefik, Redis, or advanced edge settings. |
-
-## Step 1: Get The Files
-
-Create a folder for Dense-Mem:
+## 1. Get A Pinned V2 Release
 
 ```bash
 mkdir dense-mem-local
 cd dense-mem-local
-```
 
-Download the [base local-only compose file](https://github.com/markhuangai/dense-mem/blob/main/examples/docker-compose.base.yml)
-and the [env template](https://github.com/markhuangai/dense-mem/blob/main/examples/.env.example):
+export DENSE_MEM_VERSION="vX.Y.Z"
 
-```bash
 curl -fsSLo docker-compose.yml \
-  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/docker-compose.base.yml
+  "https://raw.githubusercontent.com/markhuangai/dense-mem/$DENSE_MEM_VERSION/examples/docker-compose.base.yml"
 curl -fsSLo .env.example \
-  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/.env.example
-```
+  "https://raw.githubusercontent.com/markhuangai/dense-mem/$DENSE_MEM_VERSION/examples/.env.example"
 
-Create your local `.env` from the template:
-
-```bash
 cp .env.example .env
 ```
 
-The base compose file keeps Dense-Mem local to your machine. It does not publish
-the service to the internet.
+Verify the release tag, artifact checksum/signature, and release notes. Stop if
+the release does not advertise contract v2 and the PostgreSQL-only target.
 
-## Step 2: Fill In The Required Values
-
-Open `.env` and replace the placeholder values:
+## 2. Configure Required Values
 
 ```bash
-${EDITOR:-vi} .env
+vi .env
 ```
 
-For clarity, make the embedding provider explicit:
+Complete [Required Startup Settings](Configuration#required-startup-settings):
 
-```text
-POSTGRES_PASSWORD=choose-a-strong-postgres-password
-NEO4J_PASSWORD=choose-a-strong-neo4j-password
-CONTROL_PORTAL_TOKEN=choose-a-long-control-portal-token
-AI_API_KEY=your-ai-provider-api-key
-AI_API_URL=https://api.openai.com/v1
-AI_API_EMBEDDING_MODEL=text-embedding-3-small
-AI_API_EMBEDDING_DIMENSIONS=1536
-```
+- non-template PostgreSQL credentials
+- embedding provider, model, dimensions, document/normalization contract
+- pgvector distance and compatible exact/ANN search-index strategy
+- structure-reviewer and strict-verifier model contract
+- control authentication/encryption secrets
+- Redis only when the chosen topology requires it
 
-The control portal creates and rotates API keys. The base compose file binds it
-to `127.0.0.1`, so it is reachable only from your computer.
+Keep `.env` private. An embedding-contract change after data exists requires a
+vector rebuild. A search-index construction change requires reindexing but no
+provider calls. See [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec).
 
-The server requires a complete embedding configuration at startup:
-`AI_API_URL`, `AI_API_KEY`, `AI_API_EMBEDDING_MODEL`, and
-`AI_API_EMBEDDING_DIMENSIONS`. The compose examples provide OpenAI defaults for
-the URL, model, and dimensions, so the minimal local setup only needs
-`AI_API_KEY`. For another provider, change the URL, model, and dimension
-together before storing important memory. If you use OpenAI's
-`text-embedding-3-large`, set dimensions to `3072`.
-
-## Step 3: Start Dense-Mem
-
-Run:
+## 3. Start And Wait For Readiness
 
 ```bash
 docker compose up -d
-```
-
-Check that the containers are running:
-
-```bash
 docker compose ps
+
+curl -fsS http://127.0.0.1:8080/health
+curl -fsS http://127.0.0.1:8080/ready
 ```
 
-The local MCP endpoint is now reachable from your computer:
+Continue only when readiness confirms PostgreSQL migrations, `pgvector`,
+embedding/verifier contracts, and required coordination.
+
+An installation with v1 data must run the supported `2.1.x` bridge first. It
+starts in boot-gated maintenance, exposes migration status in the control
+portal and service logs, and automatically becomes ready only after every hard
+gate passes. A `2.2.0+` binary rejects an installation without the compatible
+marker. Follow [Release Process](Release-Process) instead of using the new-install
+smoke steps to bypass migration.
+
+Local surfaces:
 
 ```text
-http://127.0.0.1:8080/mcp
+MCP:            http://127.0.0.1:8080/mcp
+User portal:    http://127.0.0.1:8080/ui
+Control portal: http://127.0.0.1:8090/
 ```
 
-The authenticated user portal is:
+## 4. Create A Team And Key
 
-```text
-http://127.0.0.1:8080/ui
-```
-
-The local control portal is:
-
-```text
-http://127.0.0.1:8090/
-```
-
-## Step 4: Create Your First API Key
-
-Create a team and profile key:
+Use the exact release's CLI and verify `--help`:
 
 ```bash
-docker compose exec server /app/provision-team --name "primary-memory"
+docker compose exec server /app/provision-team \
+  --name "primary-memory"
 ```
 
-The command prints an API key once. Save it somewhere private.
-
-The output looks like this:
-
-```json
-{
-  "team_id": "11111111-2222-3333-4444-555555555555",
-  "team_name": "primary-memory",
-  "profile_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-  "profile_name": "default profile",
-  "scopes": ["read", "write"],
-  "api_key": "dm_default-prof_..."
-}
-```
-
-## Step 5: Connect An MCP Client
-
-Set the key in your terminal:
+The image may also expose `/app/provision-profile` as a compatibility name.
+Store the one-time raw key in a secret manager:
 
 ```bash
-export DENSE_MEM_API_KEY="dm_default-prof_..."
+export DENSE_MEM_API_KEY="dm_..."
 ```
 
-### Claude Code
+## 5. Connect And Discover
 
-```bash
-claude mcp add --transport http dense-mem http://localhost:8080/mcp \
-  --header "Authorization: Bearer $DENSE_MEM_API_KEY"
-```
+Follow [MCP Clients](MCP-Clients) and connect the LLM host. The host initializes
+the server and calls `tools/list`; verify:
 
-### Codex
+- contract version 2
+- `remember` accepts evidence plus optional hints
+- `get_memory_placement` returns processing and search state
+- `recall_memory` returns ranked evidence contexts plus compact relationship discovery paths
+- `trace_memory` accepts `relationship_id`
+- the tool list matches key scopes
 
-Add this to `~/.codex/config.toml`:
+When the model selects one of these tools, the host sends `tools/call` with its
+name and schema-valid arguments. See
+[MCP Memory Interface](Request-Lifecycle-And-Security#mcp-memory-interface).
 
-```toml
-[mcp_servers.dense_mem]
-url = "http://localhost:8080/mcp"
-bearer_token_env_var = "DENSE_MEM_API_KEY"
-tool_timeout_sec = 60
-enabled = true
-```
+Do not interpret older lifecycle or projection fields using this manual.
 
-## Step 6: Try A Memory
+## 6. Remember Evidence
 
-Ask your MCP client to remember something small:
+Ask the client:
 
 ```text
 Remember that I prefer concise explanations with concrete examples.
 ```
 
-Then ask:
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart LR
+  Ask["remember"] --> Intake["ingest_id + queued"]
+  Intake --> Poll["get_memory_placement"]
+  Poll --> State{"processing_state"}
+  State -- awaiting_review --> User["Present exact question"]
+  User --> Resolve["resolve_memory_placement"]
+  Resolve --> Poll
+  State -- failed --> Diagnose["Use safe error and correlation ID"]
+  State -- completed --> Search{"search_state"}
+  Search -- pending --> Recall["Recall may use current<br/>full-text/adjacency state"]
+  Search -- current --> Recall
+  Search -- failed --> Degraded["Vector freshness degraded;<br/>knowledge remains committed"]
+  Degraded --> Recall
+```
+
+Valid outcomes:
+
+- active `validated_claim` or `fact`
+- `candidate/pending_evidence` retained but excluded from active/default recall
+- review for identity, predicate, conflict, scope, or time
+- explicit rejected/quarantined/failed outcome
+
+The authoritative categories are in
+[Technical Reference](Technical-Reference#placement-contract).
+
+## 7. Recall And Trace
+
+Ask:
 
 ```text
 What do you remember about my explanation preferences?
 ```
 
-If your client is wired correctly, it should call Dense-Mem to save and recall
-the memory.
+Default recall returns compact active Relationships. Then ask:
 
-## Stop Or Restart
+```text
+Trace that preference Relationship and show its supporting evidence.
+```
 
-Stop the local stack:
+The client passes the returned `relationship_id` to `trace_memory`.
+
+## 8. Test Identity Reuse
+
+Remember:
+
+```text
+Dense-Mem is also called DM.
+DM uses PostgreSQL.
+```
+
+Expected:
+
+- one Dense-Mem Entity
+- `DM` as supported name metadata, not a node/edge
+- one `uses` Relationship to the PostgreSQL Entity
+
+Do not use an ambiguous first name for this initial smoke.
+
+## 9. Test Forget
+
+Use the traced caller-owned `relationship_id` and ask to forget that one
+Relationship. To correct another profile, remember new evidence under the
+caller and let Dense-Mem create a cross-reference.
+
+Expected:
+
+- an append-only retraction decision
+- no SemanticEdge/default recall result after commit
+- Entity/Value nodes and evidence/verification/history still available to
+  authorized trace
+
+## 10. Verify Boundaries
+
+The smoke passes when:
+
+- PostgreSQL contains durable ingest, identity, Relationship, and history state
+- eligible SemanticEdges are readable without another graph database
+- Redis is absent and one-process coordination is intentional
+- restart preserves memory
+- normal recall excludes candidates/evidence/history/Hypotheses
+- trace returns exact provenance
+- portal graph shows only Entity/Value nodes and eligible SemanticEdges
+- pending/failed vector work does not change semantic truth
+
+## Stop And Restart
 
 ```bash
 docker compose down
-```
-
-Start it again:
-
-```bash
 docker compose up -d
 ```
 
-Your data stays in Docker volumes unless you intentionally remove those volumes.
+Named volumes preserve PostgreSQL. Do not use `docker compose down -v` unless
+data destruction is explicitly intended, backed up, and approved.
 
-## Optional: Expert Compose
+## Risk
 
-Use the [expert compose file](https://github.com/markhuangai/dense-mem/blob/main/examples/docker-compose.expert.yml) only when you intentionally need public HTTPS, Traefik, Redis, or edge limits:
+| Failure mode | Mitigation |
+| --- | --- |
+| moving `main` uses a different schema/runtime | pin a release and verify discovery/version |
+| example secrets reach production | replace every template value and keep files private |
+| destructive Compose flag deletes memory | omit `-v`; back up and confirm before destructive cleanup |
+| vector pending is mistaken for failed remember | poll both processing and search state; trace source state |
 
-```bash
-curl -fsSLo docker-compose.yml \
-  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/docker-compose.expert.yml
-```
+## Next
 
-Read [Configuration](Configuration) before using the expert example.
-
-## Next Step
-
-Read [Using Dense-Mem](Using-Dense-Mem) for everyday use patterns and examples.
+- [Using Dense-Mem](Using-Dense-Mem)
+- [Configuration](Configuration)
+- [Operations Runbook](Operations-Runbook)
+- [Vector Search And Ranking](Vector-Search-And-Ranking)
+- [Public HTTPS And Redis](Public-HTTPS-And-Redis)

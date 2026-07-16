@@ -1,103 +1,176 @@
 # Dense-Mem
 
-Dense-Mem gives your AI tools a shared long-term memory.
+Dense-Mem gives AI clients a shared, evidence-backed semantic memory service.
 
-Most AI assistants remember only the current chat. Dense-Mem runs as your own
-memory service, so tools like Claude Code, Codex, or other MCP clients can store
-important facts, recall them later, and keep memory separate from any one chat
-window.
+This manual is the approved target contract for a full PostgreSQL + `pgvector`
+refactor. The current source still contains legacy behavior; pages label that
+gap when it matters. A code/design mismatch is implementation work, not a
+second valid architecture.
 
-You can use Dense-Mem when you want an assistant to remember:
+## What Dense-Mem Remembers
 
-- your project names, goals, and current priorities
-- preferences such as coding style, naming rules, and review standards
-- decisions already made in earlier sessions
-- important setup details for a repo or team
-- facts that should survive after the chat ends
+Dense-Mem is suited to:
 
-Dense-Mem is not an AI agent by itself. It is the memory system your AI tools
-call when they need to save or recall information.
+- project goals, systems, ownership, and current priorities
+- preferences and team agreements
+- decisions and corrections across sessions
+- time-scoped operational knowledge
+- provenance needed to explain a remembered Relationship
 
-## Common Use Cases
+Dense-Mem is not a truth oracle. A host LLM chooses when to call it. Dense-Mem
+stores exact evidence, extracts structure, resolves identity, verifies in one
+strict response, applies deterministic lifecycle rules, and preserves trace.
 
-| Use case | Example |
-| --- | --- |
-| Personal coding memory | "Remember that I prefer small pull requests and explicit error handling." |
-| Project memory | "Recall the deployment steps for my API service." |
-| Team memory | "Remember the frontend team uses Bun and strict TypeScript." |
-| AI assistant continuity | "Before answering, recall what you know about this project." |
-| Safer corrections | "Actually, keep the new preference and replace the old one." |
-| Memory exploration | "Find related memory clusters and review any dream hypotheses before planning." |
-
-## How It Works In One Minute
+## How It Works
 
 ```mermaid
-flowchart LR
-  User[You] --> Assistant[AI assistant]
-  Assistant --> DenseMem[Dense-Mem]
-  DenseMem --> Store[(Memory store)]
-  Store --> DenseMem
-  DenseMem --> Assistant
-  Assistant --> User
+%%{init: {"sequence": {"rightAngles": true}}}%%
+sequenceDiagram
+  actor User
+  participant Host as AI client
+  participant DM as Dense-Mem
+  participant PG as PostgreSQL + pgvector
+
+  User->>Host: Share evidence
+  Host->>DM: remember(evidence, optional proposal)
+  DM->>PG: Commit evidence and queued placement
+  DM-->>Host: ingest_id
+  DM->>DM: Extract mentions and observations
+  DM->>PG: Load Entity, predicate, and Relationship candidates
+  DM->>DM: One strict Entity + Relationship verifier request
+  DM->>DM: Apply deterministic lifecycle
+  DM->>PG: Commit current state, history, review, and search jobs
+  alt Review required
+    Host->>DM: get_memory_placement
+    DM-->>Host: Exact ambiguity/conflict and impact
+    Host->>User: Ask for evidence-backed choice
+    User-->>Host: Decision or new evidence
+    Host->>DM: resolve_memory_placement
+  end
+  Host->>DM: recall_memory(query)
+  DM->>PG: Evidence full-text and pgvector search
+  DM-->>Host: Ranked evidence contexts plus discovery paths
+  opt Support or correction detail needed
+    Host->>DM: trace_memory(relationship_id)
+    DM->>PG: Load normalized provenance/history
+    DM-->>Host: Evidence, verification, and lifecycle
+  end
 ```
 
-1. You tell an AI assistant something worth remembering.
-2. The assistant sends that memory to Dense-Mem.
-3. Dense-Mem stores the original evidence and checks whether it should become an
-   active fact.
-4. Later, the assistant asks Dense-Mem what it remembers.
-5. Dense-Mem returns relevant memory for the assistant to use.
+The convergence rule:
+
+```text
+same real identity      -> reuse the Entity
+same owner + relationship -> attach evidence to that Relationship
+another profile agrees  -> keep its authored Relationship and group on recall
+new real identity       -> create one Entity
+new relationship        -> create one Relationship
+actual ambiguity        -> review; do not guess
+insufficient evidence   -> pending candidate; no active edge/default recall
+dream speculation       -> Hypothesis only; no new node
+```
+
+Aliases are Entity-name metadata, never edges.
 
 ## Start Here
 
-| Goal | Page |
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart LR
+  Start["What do you need?"] --> Use["Use memory"]
+  Start --> Design["Understand the design"]
+  Start --> Run["Deploy and operate"]
+  Start --> Build["Implement the refactor"]
+  Use --> Workflow["Quick Start / Using Dense-Mem"]
+  Design --> Model["Architecture / identity /<br/>Relationship lifecycle"]
+  Run --> Ops["Configuration / security / runbook"]
+  Build --> Dev["Development / evaluation / release"]
+```
+
+| Goal | Canonical page |
 | --- | --- |
-| Try Dense-Mem before installing anything | [Hosted Demo](Hosted-Demo) |
-| Run Dense-Mem with the fewest choices | [Quick Start](Quick-Start) |
-| Learn what to do after it is running | [Using Dense-Mem](Using-Dense-Mem) |
-| Connect Claude Code, Codex, or another MCP client | [MCP Clients](MCP-Clients) |
-| Understand memory conflicts and corrections | [Conflicts And Corrections](Conflicts-And-Corrections) |
-| Export or import reusable knowledge | [Memory Packs](Memory-Packs) |
-| Use community-aware recall | [Community Memory](Community-And-Dreaming) |
-| Review dream hypotheses | [Dreaming](Dreaming) |
-| Manage teams, profiles, and API keys | [Portals And API Keys](Portals-And-API-Keys) |
-| Enable Prometheus metrics and dashboards | [Telemetry](Telemetry) |
-| Run local recall and dream evaluation | [Evaluation](Evaluation) |
-| Publish Dense-Mem with HTTPS or Redis | [Public HTTPS And Redis](Public-HTTPS-And-Redis) |
-| Review every important setting | [Configuration](Configuration) |
-| Understand the system design | [Architecture](Architecture) |
-| Read tool, API, and operations notes | [Technical Reference](Technical-Reference) |
+| System boundary | [Architecture](Architecture) |
+| Entity IDs, names, aliases, homonyms, merge/split | [Entity Identity And Resolution](Entity-Identity-And-Resolution) |
+| Predicate, Relationship, evidence, verification, tier/status, forget | [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle) |
+| `remember` process and strict verifier | [Memory Write Pipeline](Write-Pipeline) |
+| PostgreSQL, `pgvector`, Redis, queues, and recovery | [Data Model And Storage](Data-Model-And-Storage) |
+| Tenant keys, composite constraints, RLS, queues, and future team sharding | [PostgreSQL Cluster-Safe Schema](PostgreSQL-Cluster-Safe-Schema) |
+| Recall eligibility, branches, adjacency, and trace escalation | [Recall Ranking](Recall-Ranking) |
+| Embedding/cosine meaning, candidate fusion, RRF, and reranking | [Vector Search And Ranking](Vector-Search-And-Ranking) |
+| Exact/ANN execution, HNSW, halfvec, index lifecycle, and vector scale | [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec) |
+| Public MCP tool schemas | [Technical Reference](Technical-Reference) |
+| Local setup | [Quick Start](Quick-Start) |
+| Everyday client workflow | [Using Dense-Mem](Using-Dense-Mem) |
+| MCP clients | [MCP Clients](MCP-Clients) |
+| Conflict, correction, identity split, and forget | [Conflicts And Corrections](Conflicts-And-Corrections) |
+| Hypotheses | [Dreaming](Dreaming) |
+| Community discovery | [Community Memory](Community-And-Dreaming) |
+| Configuration and operation | [Configuration](Configuration), [Operations Runbook](Operations-Runbook) |
+| Security, portals, SSO, keys | [Request Lifecycle And Security](Request-Lifecycle-And-Security), [Portals And API Keys](Portals-And-API-Keys), [User Portal SSO](User-Portal-SSO) |
+| Telemetry, feedback, evaluation | [Telemetry](Telemetry), [Recall Feedback](Recall-Feedback), [Evaluation](Evaluation) |
+| Source refactor and release | [Development And Testing](Development-And-Testing), [Release Process](Release-Process) |
+| Manual ownership | [Documentation Maintenance](Documentation-Maintenance) |
 
-## What You Need
+## Semantic Model At A Glance
 
-For the easiest setup, you need:
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart LR
+  Fragment["EvidenceFragment"] --> Observation["RelationshipObservation"]
+  Observation --> Verification["VerificationEvent"]
+  Verification --> Record["RelationshipRecord"]
+  Record --> Edge["0..1 SemanticEdge read"]
+  Record --> Cross["Cross-profile references"]
+  Record --> Trace["Support and transition trace"]
+  Record -. "eligible input" .-> Dream["Hypothesis process"]
+```
 
-- a computer or server that can run Docker
-- an AI provider API key for embeddings
-- one command line window
-- one MCP client such as Claude Code or Codex
+- Entity is one team-scoped real-world identity.
+- `entity_id` is an opaque ID, not display text.
+- Value is a canonical typed scalar endpoint.
+- Predicate is the registered meaning such as `works_on`.
+- RelationshipRecord owns one profile's canonical subject-predicate-object
+  lifecycle and is readable across its team.
+- A profile corrects another profile by writing its own verified knowledge and
+  an immutable cross-reference, never by mutating the target.
+- SemanticEdge is the read shape of an `active validated_claim` or `fact`.
+- Hypothesis is isolated speculation between existing endpoints.
 
-The quick start keeps everything local by default. You can make Dense-Mem public
-later, after the local version works.
+Full definitions exist only in
+[Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle).
 
-## What Dense-Mem Stores
+## Storage At A Glance
 
-Dense-Mem stores evidence first. An evidence fragment is the text that supports a
-memory. From that evidence, Dense-Mem can create typed claims and promote safe,
-non-conflicting claims into active facts.
+| Component | Target responsibility |
+| --- | --- |
+| PostgreSQL | every durable knowledge/control record plus graph-shaped, full-text, and vector-ready reads |
+| `pgvector` | vector type/index inside PostgreSQL |
+| Redis | optional distributed coordination: limits, short leases/signals, SSE |
+| process memory | the same coordination interfaces for one process only |
 
-That means memory is not only a pile of notes. It keeps track of where a memory
-came from and whether it became an active fact.
+Neo4j is not in normal target runtime. The temporary `2.1.x` bridge reads it
+only for boot-gated migration and `2.2.0` removes that connection path. Redis
+never stores the only copy of an Entity, Relationship, evidence, review, key,
+or audit event.
 
 ## What Dense-Mem Does Not Do
 
 Dense-Mem does not:
 
-- replace your AI assistant
-- choose truth silently when memories conflict
-- browse the internet for facts
-- manage your whole application
-- expose the control portal as a public admin site by default
+- use a name as an Entity ID
+- create alias edges or a new Entity for every spelling
+- let an AI select arbitrary database IDs or assign tier/status
+- treat stored facts, graph context, or search hits as new evidence
+- infer a third fact merely because two facts form a plausible chain
+- expose insufficient candidates in the active graph/default recall
+- let dreaming create Entities, Values, predicates, or Relationships
+- erase nodes/history when a Relationship is forgotten
+- store durable memory only in Redis
+- browse the internet to validate a submitted claim
 
-If Dense-Mem sees a comparable conflict, the assistant should ask you which
-memory to keep.
+## Manual Status
+
+Canonical pages define the v2 architecture. Operational commands must be
+checked against the deployed contract/version.
+Update and evidence rules are in
+[Documentation Maintenance](Documentation-Maintenance).

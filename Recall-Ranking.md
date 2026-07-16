@@ -1,251 +1,422 @@
 # Recall Ranking
 
-Dense-Mem recall produces one primary ranked list containing active facts,
-validated claims, and source fragments. Clarifications and related dream
-hypotheses are assembled separately.
+Dense-Mem returns bounded evidence contexts as the primary recall result.
+Relationships remain the durable semantic graph and trace handle, but public
+recall exposes them as compact discovery paths instead of answer-sized result
+items. Verifier decisions and lifecycle history are loaded through trace reads.
+Hypotheses remain a separate result type.
 
-See [Technical Reference](Technical-Reference#recall-endpoint) for request
-parameters, [Evaluation](Evaluation) for runner commands, and
-[Telemetry](Telemetry#online-recall-feedback) for online feedback.
+This page is the single source of truth for the target recall path, eligibility,
+read shapes, and degradation contract. Cosine distance, vector query behavior,
+RRF, and post-fusion reranking are defined only in
+[Vector Search And Ranking](Vector-Search-And-Ranking). Public fields are in
+[Technical Reference](Technical-Reference#recall_memory). Relationship
+eligibility is owned by
+[Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle).
 
-## Ranking Pipeline
+## Read Shapes
 
-```text
-query
-  -> semantic fragment search ----\
-  -> keyword fragment search ------> reciprocal-rank fusion
-                                      -> query-aware fragment adjustments
-  -> active fact search -----------\
-  -> validated claim search --------> hydrate and filter typed memories
-                                      -> merge by effective tier
-                                      -> temporal order within a tier
-                                      -> tier-specific score
-                                      -> top K
-                                      -> optional community fill
-```
-
-The semantic and keyword fragment branches run concurrently. The semantic
-branch embeds the query and searches stored fragment embeddings. The keyword
-branch searches fragment content and recall text. Recall fails closed if either
-required fragment branch fails.
-
-Each branch normally requests ten times the final limit. A legacy
-digit-oriented identifier detector raises small candidate pools to at least 50
-rows. Branch results are then filtered by profile, fragment type, and requested
-time window before fusion. The larger identifier floor does not activate for
-every hard or ranking anchor; see [Current Limitations](#current-limitations).
-
-Fragment candidates are merged with reciprocal-rank fusion (RRF):
-
-```text
-base_score =
-  1 / (60 + semantic_rank)
-  + 1 / (60 + keyword_rank)
-```
-
-A branch contributes nothing when a fragment is absent from that branch. RRF
-combines branch order rather than raw cosine and BM25 scores, which avoids
-normalizing two different score scales.
-
-After fusion, Dense-Mem applies deterministic query-aware adjustments:
-
-| Adjustment | Behavior |
-| --- | --- |
-| Identifier specificity | Adds `0.004` for each matching ranking anchor. |
-| Currentness | Rewards matching current or active cues and penalizes stale or expired alternatives for currentness queries. |
-| Selection cues | Rewards matching directives and penalizes disqualified or historical alternatives for “which ... should/use” queries. |
-| Authority | Rewards authoritative or canonical evidence and suppresses informal alternatives for source-of-truth or required-policy queries. |
-
-The adjusted value is the fragment's `final_score`. Adjustments can reduce a
-score to zero; when positive candidates exist, non-positive fragments are
-removed before final ranking.
-
-Active facts and validated claims are searched separately through their recall
-indexes. Candidates are hydrated and checked again against the profile, time
-window, and query. Active facts use truth score for within-tier ordering.
-Validated claims use extraction confidence multiplied by the configured claim
-weight. A failure in optional fact or claim enrichment is logged and skipped;
-fragment recall still completes.
-
-## Effective Tiers
-
-Dense-Mem sorts by effective tier before comparing scores.
-
-| Effective tier | Candidate |
-| --- | --- |
-| `0.5` | Source fragment for an explicit source, note, or evidence query. |
-| `0.75` | Source fragment matching a ranking anchor, unless the query asks for authority. |
-| `1` | Authoritative active fact. |
-| `1.25` | Active fact with overlay or conflict state. |
-| `1.5` | Validated claim. |
-| `2` | Other source fragment. |
-
-The `0.5` and `0.75` values are internal sort overrides. A returned source
-fragment still reports its public memory tier as `2`.
-
-Within the same effective tier, currentness queries can use temporal order.
-When temporal order does not decide the result, Dense-Mem compares the
-tier-specific score.
-
-Community expansion is opt-in. It fills unused result slots after direct recall
-and does not replace a complete direct result list.
-
-## Identifier Anchor Sets
-
-For source fragments, broad extraction does not by itself trigger hard gating
-or tier promotion. Typed fact and claim admission reuses broad extraction
-separately. Candidate overfetch uses an older detector rather than any of the
-three anchor sets below.
-
-| Set | Used for | Examples |
+| Operation | Primary result | Use |
 | --- | --- | --- |
-| Hard-gate anchors | Remove source fragments that do not contain every required exact anchor. | PR or issue references, 7-to-40-character hexadecimal-looking tokens, versions, scopes such as `feedback:read`, underscore tool names, recognized source/config filenames, and project-like paths. |
-| Ranking anchors | Add a small exact-match score adjustment and give a matching fragment effective tier `0.75`. | All hard-gate anchors, context-qualified IDs such as `job UNT-013` or `issue DM-412`, and selected filenames such as `thumbs.db` or `smsvchost.exe`. |
-| Strong anchors | Admit hydrated fact and claim candidates when a query contains identifier-like text. | A broader exact set that includes slash, colon, underscore, dotted, version, hash, and letter-number forms. |
+| `recall_memory(query)` | ranked evidence contexts plus compact Relationship discovery paths | normal answering and graph discovery |
+| `trace_memory(relationship_id)` | one Relationship with evidence and history | explanation, conflict, correction, and high-stakes inspection |
 
-Every hard-gate anchor is also a ranking anchor. One source-fragment candidate
-must contain every hard-gate anchor in the query; matches are not combined
-across several candidates. Each matching ranking anchor adds `0.004` to the
-fragment score. Any ranking-anchor match also activates effective tier `0.75`
-unless the query asks for an authoritative or required source.
+Public recall has no client-selected mode. Evidence text appears only in the
+top-level ranked `results[]` array. Relationship paths explain discovery and
+follow-up options; they are not the direct top-K scoring unit.
 
-Context-qualified ranking IDs require both an entity word and an ID-shaped
-value. Supported entity words are `account`, `bug`, `issue`, `job`, `project`,
-`queue`, `service`, `task`, and `ticket`.
+## Default Pipeline
 
-Source-fragment regression tests keep natural-language forms such as
-`MicroRNA`, `mRNAs`, `miRNA`, `SHP-2`, `U.S.`, and `singer/songwriter` out of
-hard and ranking anchors. These examples are not a complete grammar. Typed fact
-and claim matching still uses broad extracted tokens plus strong anchors.
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart LR
+  Query["Query, actor, and time scope"] --> Parse["Parse names, exact anchors,<br/>predicate and time hints"]
+  Query --> Embed["Create one query embedding"]
 
-## Current Limitations
+  Parse --> Text["PostgreSQL evidence<br/>full-text search"]
+  Embed --> Vector["pgvector evidence search"]
+  Text --> Filter["RLS, current evidence,<br/>time and request filters"]
+  Vector --> Filter
+  Filter --> Fuse["Evidence-ID fusion"]
+  Fuse --> Rerank["Deterministic evidence,<br/>query, anchor, and time rerank"]
+  Rerank --> Limit["Take top K under<br/>the context byte budget"]
+  Limit --> Compact["Evidence contexts"]
 
-The current anchor rules have five important limitations:
+  Parse --> Entity["Entity-name search"]
+  Embed --> EntityVector["pgvector Entity and<br/>Relationship search"]
+  Entity --> Frontier["Separate discovery<br/>frontier ranking"]
+  EntityVector --> Frontier
+  Limit --> Frontier
+  Frontier --> Paths["Compact discovery paths"]
 
-- Source-fragment hard gates use AND semantics. One candidate must contain
-  every hard anchor; evidence split across fragments cannot satisfy the gate
-  collectively.
-- Identifier overfetch uses an older digit-oriented detector rather than
-  `HardGateAnchors` or `RankingAnchors`. Exact filtering or promotion can
-  therefore activate without the larger candidate pool.
-- The hexadecimal detector accepts any standalone 7-to-40-character token
-  containing only hexadecimal characters. An ordinary all-letter word such as
-  `defaced` can be classified as an anchor.
-- Typed fact and claim admission is broader than source-fragment ranking.
-  Identifier-like natural language excluded by `RankingAnchors` can still
-  require exact identifier overlap in typed candidates.
-- A bare ID such as `PROJ-123` is not a ranking anchor unless a hard-anchor rule
-  recognizes it or a supported entity word qualifies it.
-
-Treat these as implementation constraints when diagnosing misses. The current
-rules do not guarantee that every identifier-shaped query receives the larger
-candidate pool or that matching evidence can satisfy a gate across multiple
-rows.
-
-## Related Dreams
-
-`recall_memory` retrieves related dreams after building the primary result
-list. Dream hypotheses are filtered and reranked separately using their source
-overlap with primary hits, identifier and lexical overlap, likelihood,
-confidence, and status.
-
-Related dreams remain in `related_dreams`; they do not become facts or enter
-the primary ranked list. See [Dreaming](Dreaming) for lifecycle and resolution
-behavior.
-
-## Recall Feedback Is Record Only
-
-When online recall feedback is enabled, `recall_memory` can return a
-`recall_event`. Dense-Mem stores bounded references to the returned results.
-After answering the user, the host can submit a judgment with
-`submit_recall_session_feedback`.
-
-The current feedback path records investigation data in
-`recall_feedback_events` and records bounded metrics. It does not automatically:
-
-- rewrite a memory
-- change a fact, claim, fragment, or dream
-- update an embedding or search index
-- alter a ranking weight
-- train a model
-
-A low or medium judgment changes recall behavior only after the feedback is
-turned into a labeled case, a code or configuration change is made, and that
-change passes evaluation.
-
-`dream_feedback` on a recall event is also record-only. Use
-`resolve_dream_feedback` when confirmed evidence should change a dream's status
-or enter the normal memory pipeline.
-
-## Reading Evaluation Traces
-
-`recall_traces.jsonl` contains normalized references plus the raw evaluation
-tool response.
-
-| Field | Meaning |
-| --- | --- |
-| `ranked_refs` | Final normalized primary results with type, ID, and rank. |
-| `raw.ranked_refs[].tier` | Public memory tier. It does not expose internal `0.5` or `0.75` overrides. |
-| `raw.ranked_refs[].semantic_rank` | One-based fragment rank from semantic search; `0` means absent. |
-| `raw.ranked_refs[].keyword_rank` | One-based fragment rank from keyword search; `0` means absent. |
-| `raw.ranked_refs[].final_score` | Post-adjustment fused score for a fragment. |
-| `raw.ranked_refs[].score` | Fragment final score, fact truth score, or weighted claim extraction confidence. |
-| `context_refs` | Normalized assembled-context order. |
-| `context_evidence_refs` | Supporting fragment refs attached to typed context items. |
-| `dream_refs` | Separately ranked dream refs when the case requests dreams. |
-| `latency_ms` | Duration of the primary recall invocation. |
-| `context_block_chars` | Size of the assembled context block. |
-
-For example, a fragment at semantic rank `4` and keyword rank `2` has this base
-score before query-aware adjustments:
-
-```text
-1 / (60 + 4) + 1 / (60 + 2) = 0.031754...
+  Compact --> Response["Response"]
+  Paths --> Response
+  Compact --> Hypothesis["Optional related_hypotheses<br/>in a separate field"]
+  Hypothesis --> Response
 ```
 
-The evaluation tool invokes primary recall once for `ranked_refs`; context
-assembly invokes recall again for `context_refs`. Treat the two lists as
-separate observations rather than assuming byte-for-byte equality.
+Initial recall ranks only directly searchable evidence. Relationship, Entity,
+and adjacency candidates form a separate discovery frontier after the evidence
+budget is chosen. Equivalent Relationships remain independently authored and
+traceable; public recall ranks evidence contexts that the client can read and
+uses Relationships as compact follow-up handles.
 
-`retrieval_scores.jsonl` records per-case Recall@K, MRR, nDCG@K, judged-bad
-refs, first-required rank, and missing required refs. It records parallel
-context, evidence, and dream fields when those axes are available.
+## PostgreSQL Read Sequence
 
-## Evaluation Semantics And Gates
+```mermaid
+%%{init: {"sequence": {"rightAngles": true}}}%%
+sequenceDiagram
+  autonumber
+  participant C as Caller
+  participant R as Recall service
+  participant E as Embedding provider
+  participant P as PostgreSQL
 
-Evaluation has two important normalization behaviors:
+  C->>R: recall_memory(query)
+  par Query preparation
+    R->>E: Embed query once
+  and Exact parsing
+    R->>R: Parse names, IDs, predicate hints, and time
+  end
+  par Initial evidence branches
+    R->>P: Team-scoped evidence full-text search
+  and Evidence vector branch
+    R->>P: Team-scoped pgvector evidence search
+  end
+  R->>R: Fuse evidence IDs, rerank, and budget context
+  par Discovery branches
+    R->>P: Entity, Relationship, and adjacency candidates
+  and Hypothesis branch
+    R->>P: Related same-team Hypotheses when enabled
+  end
+  R->>R: Select bounded novelty paths after top-K
+  R-->>C: Evidence results, discovery paths, and discovery guidance
+```
 
-- When a returned ref and a qrel target have different types but share one
-  unambiguous source-document mapping, the scorer can project the returned ref
-  to the qrel's target type. This measures source relevance across memory tiers;
-  it does not prove that the raw result had the requested fact or claim type.
-- When evidence qrels target only source fragments and
-  `context_evidence_refs` is empty, the scorer falls back to fragment entries in
-  `context_refs`. On a fragment-only seed, evidence metrics can therefore mirror
-  context retrieval instead of measuring a separate fact-to-claim-to-fragment
-  lineage path.
+PostgreSQL row-level security and explicit team predicates apply to source,
+search-document, and adjacency queries. The service authorizes hydrated rows
+again before returning them.
 
-Use the same scorer revision for baseline and candidate runs. Inspect raw trace
-types when validating tier behavior, and use typed cases with explicit evidence
-qrels when validating lineage.
+## Eligibility
 
-The comparison command requires matching seed hashes and reports candidate
-deltas for ranked, context, evidence, and dream metrics. A negative delta does
-not fail comparison mode automatically. The runner supports absolute minimum
-and maximum gates for recall, rank 1, judged-bad results, context, evidence, and
-dreams. A configured context, evidence, or dream gate fails closed when no
-cases were scored for that axis.
+An evidence fragment enters default recall only when:
 
-For ranking changes, use both:
+```text
+team_id = authenticated team
+owner_profile_id = any active profile in that team
+evidence is current for the requested valid_at and known_at
+its stable source revision, when present, is current
+evidence is not quarantined, supersession-pending, superseded, retracted, or erased
+request filters and exact anchors match this evidence
+```
 
-1. a broad non-regression suite for general retrieval
-2. a targeted suite for the changed failure mode
+Search freshness never decides whether committed evidence is true. Full-text
+and exact branches may use current committed evidence while vector rows are
+still pending. The vector branch requires a current vector whose source,
+document, and embedding-contract versions match.
 
-The generated `feedback_recall_hardcases_v1` suite covers exact identifiers,
-metadata recall text, authority, branch/run identifiers, and related-dream
-selection. Run it alongside a broad suite rather than using it as a replacement.
+A Relationship enters discovery paths or trace-near context only when:
 
-For a valid paired comparison, keep the seed hash, scorer revision, import
-method, database lifecycle, and runtime configuration the same. Review
-per-slice and per-case changes in addition to aggregate averages. See
-[Evaluation](Evaluation) for commands, artifacts, and gate flags.
+```text
+team_id = authenticated team
+owner_profile_id = any active profile in that team
+status = active
+tier IN (validated_claim, fact)
+validity and recorded-time filters match the request
+predicate, endpoint, and scope filters match
+```
+
+`candidate` Relationships are never eligible, even when their
+`status=pending_evidence` record is retained for dreaming or review.
+`retracted`, `superseded`, `rejected`, `quarantined`, `disputed`, and
+review-held records are also excluded.
+
+Canonical tier and status meanings belong only in
+[Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle#tier-and-status).
+
+## Retrieval Branches
+
+### Evidence full-text/vector
+
+One compact search document represents each searchable evidence source:
+
+```text
+evidence: exact source text, stable source/revision handles, source group, and provenance
+```
+
+Evidence search documents contain source text and provenance fields needed for
+authorized retrieval. They do not contain verifier rationale, Relationship
+tiers, or graph-derived summaries.
+
+### Relationship and Entity discovery
+
+Separate compact search documents may represent eligible Relationships and
+Entities for discovery. Relationship documents contain endpoint display names,
+predicate, object/value display, polarity, temporal bounds, owner, semantic
+group, and `relationship_id`. Entity documents contain canonical name, aliases,
+kind, and `entity_id`.
+
+Relationship documents do not concatenate evidence content or verifier
+rationales. Entity and Relationship discovery cannot move evidence up or down
+inside initial top-K.
+
+Search documents are derived PostgreSQL rows. Their source evidence,
+Relationship, or Entity remains authoritative. Vector eligibility additionally
+requires a vector whose source, document, and embedding-contract versions
+match.
+
+### Entity seeds and adjacency
+
+Entity search finds possible endpoints. PostgreSQL then expands only eligible
+Relationships touching those Entity IDs.
+
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart LR
+  Query["Who works on Dense-Mem?"] --> Seed["Entity seed<br/>Dense-Mem"]
+  Seed --> Incoming["Indexed incoming Relationships"]
+  Seed --> Outgoing["Indexed outgoing Relationships"]
+  Incoming --> Match["Predicate and query match"]
+  Outgoing --> Match
+  Match --> Results["Discovery path candidates"]
+```
+
+Expansion enforces configured seed, per-Entity fan-out, total-edge, depth,
+time, and byte budgets. It returns supporting evidence IDs plus compact
+relationship paths, and never runs an unbounded recursive traversal.
+
+### Exact anchors
+
+Server IDs, issue keys, versions, paths, scopes, hashes, and other hard
+identifiers use tested deterministic grammars. If the query contains a hard
+anchor, one candidate must itself satisfy every required anchor. Separate
+results cannot combine partial matches.
+
+An anchor parser must not use a broad “hex-looking word” rule that classifies
+ordinary language as an identifier.
+
+## Filtered `pgvector` Retrieval
+
+The initial vector branch searches only evidence search documents under the
+same team/time/contract scope. Discovery may separately search Relationship and
+Entity documents to choose follow-up paths. Exact/HNSW selection, cosine
+calculation, operators, iterative scans, half precision, exact reranking, and
+topology are defined only in
+[ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec). Embedding and distance meaning
+remains in
+[Vector Search And Ranking](Vector-Search-And-Ranking#cosine-similarity-and-distance).
+
+## Fusion And Ranking
+
+The active database-backed ranking profile selects RRF or explicit
+branch-priority fusion, then bounded deterministic reranking. The initial
+fusion unit is `(branch, evidence_id)`.
+
+Final selection applies required hard-anchor matching, query-derived phrase and
+exact signals, bounded support/source-group signals, and temporal intent.
+Hydration is not a second retrieval; it is a bounded `WHERE evidence_id IN (...)`
+read for already-selected evidence. Discovery paths are selected separately
+from bounded Relationship candidates after direct evidence ranking, exclude
+already-returned or caller-supplied known IDs where possible, may point at
+relevant evidence outside `results[]`, and remain follow-up hints rather than
+direct answer context.
+
+The formula, controls, worked examples, conflict treatment, tie-breaking, and
+optional future model-reranker boundary are defined only in
+[Vector Search And Ranking](Vector-Search-And-Ranking#reciprocal-rank-fusion).
+Score components, ranking/index profile versions, embedding-contract details,
+and branch health remain internal telemetry. The public result contains only
+context and stable trace/discovery handles.
+
+## Evidence Result And Discovery Path
+
+```json
+{
+  "results": [
+    {
+      "evidence_id": "e1",
+      "context": "Mark works on Dense-Mem."
+    }
+  ],
+  "discovery_paths": [
+    {
+      "relationships": [
+        {
+          "relationship_id": "r1",
+          "subject": {"entity_id": "mark-1", "name": "Mark"},
+          "predicate": "works_on",
+          "object": {"entity_id": "dense-mem", "name": "Dense-Mem"},
+          "polarity": "+"
+        }
+      ],
+      "evidence_ids": ["e1"]
+    }
+  ]
+}
+```
+
+The result excludes scores, tiers, embedding details, verifier rationale,
+failed provider attempts, and lifecycle transitions. `relationship_id` remains
+the trace handle inside discovery paths; detailed comparisons require trace.
+Direct ranking metrics score only `results[]`, not `discovery_paths[]`.
+
+## Discovery Paths
+
+A response may include bounded `discovery_paths` near the returned evidence or
+requested expansion entities. They are selected for relevance and novelty after
+the direct result budget is set, not as extra ranked answer rows.
+
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart LR
+  A["Mark"] ==>|"works_on"| B["Dense-Mem"]
+  B ==>|"uses"| C["PostgreSQL"]
+  B ==>|"uses"| D["Redis"]
+  A ==>|"maintains"| E["Wiki"]
+```
+
+Each path contains at most two compact Relationship edges plus supporting
+evidence IDs. A path may identify relevant evidence not returned in
+`results[]`, but it must not include unseen evidence text. It is a discovery
+hint, not evidence or automatic recursive expansion.
+
+The response tells the client to issue another focused `recall_memory` call
+when a specific part remains uncertain. The client may pass up to 200 UUIDs in
+`known_evidence_ids` and up to 200 UUIDs in `known_relationship_ids` so
+already-seen context does not occupy the next bounded result set. The client may
+also pass specific `expand_from_entity_ids` to ask for adjacent context. These
+fields are request-local and do not mutate memory.
+
+## Trace Mode
+
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart TD
+  Compact["Compact Relationship"] --> Need{"Need support or history?"}
+  Need -- No --> Answer["Use compact result"]
+  Need -- Yes --> Trace["trace_memory(relationship_id)"]
+  Trace --> PG["RelationshipRecord<br/>accepted evidence spans<br/>VerificationEvents<br/>transitions and conflicts"]
+  PG --> Answer
+```
+
+Trace is appropriate when the user asks why, requests sources, corrects or
+forgets knowledge, encounters conflict/identity uncertainty, or handles a
+high-stakes decision. Trace reads authoritative PostgreSQL history, not Redis
+or search documents.
+
+## Related Hypotheses
+
+Optional Hypothesis retrieval runs after primary ranking.
+
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart LR
+  Query["Query"] --> Related["Find matching source-linked Hypotheses"]
+  Primary["Primary Relationships"] --> Related
+  Related --> Filter["Team, status, source-version,<br/>and visibility filters"]
+  Filter --> Separate["Return related_hypotheses"]
+```
+
+Hypotheses never enter the Relationship list, receive a tier weight, or count as
+evidence. See [Dreaming](Dreaming).
+
+## Community Expansion
+
+A community is an optional derived cluster of eligible Relationships for
+discovery. It is unrelated to predicate behavior and does not replace the
+removed `policy_family` field.
+
+When explicitly enabled, community summaries may fill unused result slots only
+after direct ranking. They cannot replace a direct Relationship, become
+evidence, change tier, or become semantic nodes. The canonical boundary is in
+[Community And Dreaming](Community-And-Dreaming).
+
+## Failure, Degradation, And Freshness
+
+Ranking profiles declare which branches are required. An outage cannot silently
+change the profile.
+
+| Condition | Required behavior |
+| --- | --- |
+| authentication or team context invalid | reject |
+| required query embedding unavailable | return a dependency error |
+| optional vector branch unavailable | omit it and record the degraded branch in internal telemetry |
+| required full-text or Entity branch fails | return the branch error |
+| optional community or Hypothesis lookup fails | omit it and record degradation internally |
+| source Relationship read fails | fail; never reconstruct truth from a search document |
+| a document has `search_state=pending` | exact/full-text/adjacency may use current source state; vector branch uses only version-matched vectors |
+| trace read fails | fail trace; do not synthesize history |
+
+Internal telemetry:
+
+```text
+ranking_profile_version
+search_index_profile_version
+degraded_branches[]
+query_embedding_contract_version
+search_freshness:
+  pending_document_count
+  failed_document_count
+  oldest_pending_age_seconds
+```
+
+This reports derived search freshness to operators, not to the public recall
+client, and is not graph projection lag. Eligible SemanticEdges are read
+directly from committed PostgreSQL state.
+
+## Recall Feedback And Evaluation
+
+Feedback records query, result IDs, ranks, ranking version, judgment, and actor.
+It does not mutate weights or Relationship state directly. See
+[Recall Feedback](Recall-Feedback).
+
+Ranking changes require matched baseline/candidate data, the same seed and
+provider configuration, direct initial-response Recall@K/MRR/nDCG, separately
+reported frontier/discovery exposure, cross-team leakage checks,
+temporal/exact-anchor/graph/Hypothesis slices, and latency percentiles. Commands
+and release-policy decisions belong in [Evaluation](Evaluation).
+
+## Risks And Mitigations
+
+| Risk | Concrete failure mode | Mitigation |
+| --- | --- | --- |
+| Candidate contamination | an insufficient observation appears as a normal edge | database eligibility requires `active` plus `validated_claim/fact` |
+| Tier overwhelms relevance | unrelated fact outranks a direct validated claim | apply bounded tier weight after relevance fusion |
+| Evidence slows fast recall | every result joins verifier history and unbounded support rows | hydrate only selected evidence and compact discovery paths; trace explicitly by ID |
+| Filtered ANN misses | the vector branch returns an incomplete authorized candidate set | apply the team-shaped execution and exact-oracle contract in [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec) |
+| Same evidence repeats | several Relationships from one source produce many hits | deduplicate by `(branch, evidence_id)` before fusion |
+| Same meaning from several authors floods results | A, B, and C confirmations consume three top-K slots | rank evidence contexts while retaining author positions and trace handles in discovery/trace |
+| Strong correction hides history | B outranks A and A disappears completely | return bounded conflict refs and retain both in authorized trace/clarification |
+| Stale vector wins | an embedding from before a correction ranks the old meaning | require matching source/document/contract versions |
+| Hypothesis contaminates truth | dream output enters primary results | separate table, response field, eligibility path, and no tier weight |
+| Unbounded traversal | a hub Entity expands millions of Relationships | indexed adjacency plus strict seed, fan-out, depth, edge, time, and byte limits |
+
+## Recall Acceptance Invariants
+
+The recall refactor is incomplete until tests prove:
+
+1. default results contain current eligible evidence contexts without requiring
+   an active Relationship
+2. each evidence ID contributes at most once per retrieval branch before fusion
+3. public recall returns ranked evidence contexts and compact discovery paths,
+   not verifier history
+4. trace reconstructs accepted evidence and lifecycle lineage
+5. tier cannot bypass query relevance
+6. search hits, stored facts, and graph context never become evidence
+7. candidates, quarantined, disputed, superseded, retracted, and review-held
+   records never enter primary recall
+8. same-name Entity seeds cannot cross tenant or identity boundaries
+9. optional Hypotheses and communities never replace direct evidence results
+10. required-branch failures and optional degradation are explicit
+11. vector results match current source, embedding-contract, and active
+    search-index-profile versions
+12. bounded PostgreSQL adjacency terminates on hubs and cycles
+13. same-team eligible Relationships remain traceable regardless of author
+14. discovery paths identify owner profile when authorship affects meaning,
+    grouping, or conflict
+15. fragments from non-current source revisions never enter default recall or
+    contribute effective Relationship support
+15. cross-profile corroboration or challenge changes ranking only through
+    verified evidence and validated cross-references
+16. a preferred correction never deletes or mutates the lower-ranked author's
+    knowledge

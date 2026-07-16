@@ -1,205 +1,304 @@
 # Dreaming
 
-Dreaming is Dense-Mem's reviewable hypothesis layer. It looks at existing
-same-profile memory and proposes "what if this relationship matters?" ideas for
-a human or host assistant to review later.
+Dreaming is Dense-Mem's isolated process for proposing possible Relationships
+between existing semantic nodes. Its durable output is a `Hypothesis`.
 
-A dream is not a fact, claim, or evidence. It stays separate from active memory
-until user feedback sends it into the normal memory pipeline.
+A Hypothesis is not evidence, an Entity, a Value, a Relationship, a tier, or a
+SemanticEdge. Dreaming cannot create semantic nodes or predicate definitions.
 
-## How It Works
+## Boundary
 
 ```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Memory["Existing facts, claims, fragments"] --> Cycle["Dreaming cycle"]
-  Cycle --> Dream["Dream hypothesis"]
-  Dream --> Review["User or assistant review"]
-  Review --> Reject["Reject or mark stale"]
-  Review --> Reinforce["Reinforce"]
-  Review --> Promote["Promote candidate"]
-  Promote --> Fragment["SourceFragment evidence"]
-  Fragment --> Pipeline["Claim verification and promotion gates"]
+  Active["Active validated claims<br/>and facts"] --> Cycle["Dream cycle"]
+  Candidate["Eligible pending candidates"] --> Cycle
+  Nodes["Existing Entity / Value IDs"] --> Cycle
+  Cycle --> Hypothesis["Hypothesis only"]
+  Hypothesis --> Review{"Client review"}
+  Review -- ignore / reject --> Isolated["Keep or close in<br/>Hypothesis lifecycle"]
+  Review -- new evidence --> Remember["Normal remember"]
+  Remember --> Verify["Resolve and verify"]
+  Verify --> Relationship["Relationship lifecycle"]
 ```
 
-The cycle reads the caller's profile graph and writes `Dream` nodes back into
-that same profile scope. It never writes active facts directly.
+Likelihood, confidence, repetition, feedback, or source tier cannot promote a
+Hypothesis. Only new evidence entering `remember` can create or update a
+Relationship.
 
-## Cycle Phases
+## Eligible Inputs
 
-Dreaming always uses the same phase order. Disabled phases are skipped.
+Dreaming may read:
 
-| Phase | Purpose |
-| --- | --- |
-| `reflect` | Reads memory health, stale facts, disputed claims, and clarifications. |
-| `re_evaluate` | Rechecks existing proposed or reinforced dreams. Dreams with missing source references become stale; proposed dreams with intact sources become reinforced. |
-| `dream` | Generates new hypotheses from recent facts, claims, and fragments. |
+- compact active `validated_claim` and `fact` Relationships
+- a `candidate/pending_evidence` Relationship only when it has a final
+  schema-valid `insufficient` VerificationEvent
+- existing resolved Entity and typed-Value endpoints referenced by those
+  Relationships
+- registered predicate definitions
 
-The built-in generator is deterministic and conservative. It pairs same-profile
-memory items, records source references, and keeps the result as a hypothesis
-with likelihood and confidence scores.
+Equivalent cross-profile Relationships are grouped so copied positions do not
+multiply dream weight. When a conflict has a sufficiently preferred
+evidence-backed position, dreaming may use that position with all source
+Relationship IDs. An unresolved cross-profile conflict is excluded rather than
+used as a guessed premise.
 
-## Dream Records
+A pending candidate is eligible only when:
 
-Each dream stores:
+```text
+tier = candidate
+status = pending_evidence
+subject Entity already exists
+object Entity or Value already exists
+predicate is registered and valid for both endpoint kinds
+at least one schema-valid insufficient VerificationEvent exists
+no identity, predicate, scope, or temporal ambiguity is open
+```
 
-| Field | Meaning |
-| --- | --- |
-| `hypothesis` | The proposed relationship or idea. |
-| `what_if` | The question the dream asks. |
-| `possible_outcome` | What might change if the hypothesis is true. |
-| `rationale` | Why the generator proposed it. |
-| `likelihood` | Generator-estimated plausibility from 0 to 1. |
-| `confidence` | Generator confidence from 0 to 1. |
-| `source_refs` | Same-profile facts, claims, fragments, communities, or dreams used as sources. |
+Context retained after an unavailable verifier or invalid provider response is
+not yet an eligible candidate. Dense-Mem keeps that context in the placement
+ledger, but dreaming cannot use it until normal verification produces a valid
+material `insufficient` outcome. This prevents provider failure text from
+becoming a speculation seed.
 
-Treat all of this as review material. It is not an instruction source and does
-not override active facts.
+Dreaming must exclude quarantined, disputed, rejected, retracted, superseded,
+ambiguous, and review-held records. It must also exclude records whose only
+support comes from a non-current source revision, even while the replacement
+revision is still quarantined or awaiting placement.
 
-## Status Lifecycle
+## Allowed Output
+
+A dream may propose only a possible registered predicate between server-supplied
+existing endpoint IDs:
+
+```json
+{
+  "hypothesis_id": "hyp_01J...",
+  "team_id": "team-1",
+  "source_owner_profile_ids": ["profile-a", "profile-b"],
+  "subject_entity_id": "ent_dense_mem",
+  "predicate_key": "benefits_from",
+  "object_entity_id": "ent_search_freshness",
+  "object_value_id": null,
+  "statement": "Dense-Mem may benefit from explicit search freshness.",
+  "rationale": "Active recall and embedding-job Relationships suggest a useful connection.",
+  "likelihood": 0.68,
+  "confidence": 0.61,
+  "source_relationship_ids": ["r_recall", "r_embedding_job"],
+  "source_candidate_relationship_ids": ["r_candidate_freshness"],
+  "source_versions": {
+    "r_recall": 4,
+    "r_embedding_job": 2,
+    "r_candidate_freshness": 1
+  },
+  "generator_kind": "provider",
+  "generator_version": "dream-v2",
+  "status": "proposed",
+  "created_at": "2026-07-11T00:00:00Z"
+}
+```
+
+Exactly one object form is set. All endpoint, predicate, and source IDs come
+from immutable server allowlists and must belong to the same team.
+
+The generator cannot output:
+
+- a new Entity, Value, name, alias, or ID
+- an unknown predicate or registry change
+- a Relationship, support link, verification verdict, tier, or status change
+- evidence text claiming that the Hypothesis proves itself
+- a source ID outside the supplied input set
+
+If the idea requires a concept that has no existing semantic node, the dream
+item is rejected. A later user may introduce that concept through real evidence
+in `remember`.
+
+## Hypothesis Lifecycle
 
 | Status | Meaning |
 | --- | --- |
-| `proposed` | New hypothesis waiting for review. |
-| `reinforced` | User feedback or later re-evaluation supports keeping it visible. |
-| `stale` | Source references disappeared or the hypothesis no longer appears useful. |
-| `rejected` | User rejected it. |
-| `promoted` | User confirmed it as true and the confirmation entered normal memory placement. |
+| `proposed` | new and available for review |
+| `reinforced` | still useful after feedback or a later generation cycle |
+| `stale` | source state changed or the idea no longer applies |
+| `rejected` | explicitly rejected |
+| `submitted` | new evidence was sent to `remember`; placement outcome remains separate |
 
-Confirmed dreams are routed through the normal `remember` placement flow with
-`dream_feedback` metadata. `confirm_true` and the backward-compatible
-`promote_candidate` decision submit confirmation evidence; `confirm_false`
-submits correction evidence. Processed dreams are removed from future dream
-recall after memory placement is created. If verification fails or a conflict
-needs clarification, no active fact is created automatically.
+`submitted` does not mean accepted or factual. The linked `ingest_id` and any
+later `relationship_outcomes[]` relationship ID expose the actual placement
+outcome.
 
-## MCP Tools
+## Generation Flow
 
-Check effective config and latest run:
-
-```json
-{"tool": "dreaming_status", "arguments": {}}
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart TD
+  Start["Start team dream cycle"] --> Read["Read bounded eligible inputs<br/>in one PostgreSQL snapshot"]
+  Read --> Groups["Build diverse connected groups"]
+  Groups --> Generate["Generate structured edge-shaped ideas"]
+  Generate --> Schema{"Closed schema valid?"}
+  Schema -- No --> Reject["Reject generated item"]
+  Schema -- Yes --> Allow{"All IDs allowed and<br/>nodes/predicate still exist?"}
+  Allow -- No --> Reject
+  Allow -- Yes --> Existing{"Exact active Relationship<br/>already exists?"}
+  Existing -- Yes --> Reject
+  Existing -- No --> Recheck["Recheck source versions"]
+  Recheck --> Dedup["Deduplicate normalized identity<br/>and source set"]
+  Dedup --> Persist["Persist Hypothesis and cycle result"]
 ```
 
-Manually run a cycle:
+The generator receives compact current rows, not full evidence or verifier
+rationales. Source Relationship IDs explain origin but are not confirming
+evidence. A source candidate remains visibly identified as a candidate.
 
-```json
-{"tool": "run_dreaming_cycle", "arguments": {"max_outputs": 5}}
+An exact pending candidate may be the target of the Hypothesis. Dreaming still
+does not change that candidate; it only records why the possibility may be
+worth seeking new evidence for.
+
+## Scheduling And Concurrency
+
+The scheduler:
+
+1. finds due teams from database-backed effective configuration
+2. acquires a unique team/time-window PostgreSQL lease
+3. records a cycle run before generation
+4. enforces input, output, token, duration, and concurrency budgets
+5. records success, partial rejection, failure, or cancellation
+6. never uses Redis as the only run record
+
+```mermaid
+%%{init: {"sequence": {"rightAngles": true}}}%%
+sequenceDiagram
+  participant S as Scheduler
+  participant P as PostgreSQL
+  participant D as Dream service
+  participant A as Optional AI provider
+
+  S->>P: Claim due team and window
+  P-->>S: Durable cycle_run_id and eligible IDs
+  S->>D: Build bounded structured context
+  opt Provider-backed generation
+    D->>A: Existing endpoints, predicates, and source IDs
+    A-->>D: Structured Hypothesis proposals
+  end
+  D->>P: Validate IDs/versions and persist accepted Hypotheses
 ```
 
-Manual runs can execute while scheduled dreaming is disabled. Disabled phases
-are skipped unless the tool input explicitly overrides them for that run:
+Redis may coordinate distributed rate limits or wake workers. PostgreSQL owns
+leases, cycle results, and Hypotheses.
+
+Configuration names and defaults belong in
+[Configuration](Configuration#dreaming).
+
+## Client Workflow
+
+The feature uses:
+
+- `list_dreams`
+- `get_dream`
+- `resolve_dream_feedback`
+
+Exact public schemas belong in [Technical Reference](Technical-Reference).
+Feedback such as reject or stale changes only Hypothesis lifecycle.
+
+### Submit new evidence
+
+Confirming a Hypothesis requires evidence independent of the generated text:
 
 ```json
 {
-  "tool": "run_dreaming_cycle",
-  "arguments": {
-    "reflect_enabled": true,
-    "reevaluate_enabled": true,
-    "dream_enabled": true,
-    "max_outputs": 5
+  "hypothesis_id": "hyp_01J...",
+  "decision": "confirm_true",
+  "evidence": [
+    {
+      "content": "The user confirmed that Dense-Mem benefits from explicit search freshness.",
+      "source_type": "manual",
+      "authority": "authoritative",
+      "source_group": "user-dream-review:hyp_01J..."
+    }
+  ],
+  "proposal": {
+    "entities": [
+      {
+        "ref": "dense_mem",
+        "name": "Dense-Mem",
+        "known_entity_id": "ent_dense_mem"
+      },
+      {
+        "ref": "search_freshness",
+        "name": "search freshness",
+        "known_entity_id": "ent_search_freshness"
+      }
+    ],
+    "relationships": [
+      {
+        "proposal_id": "dense_mem_benefits_from_search_freshness",
+        "subject_ref": "dense_mem",
+        "predicate": "benefits_from",
+        "object_ref": "search_freshness",
+        "polarity": "+",
+        "evidence": [
+          {
+            "evidence_index": 0,
+            "start": 0,
+            "end": 73
+          }
+        ]
+      }
+    ]
   }
 }
 ```
 
-List proposed dreams:
+The server validates ID hints against the team and still runs the normal
+caller-owned `remember` verifier and lifecycle. The Hypothesis text is not
+copied into the evidence. A negative decision likewise needs correcting or
+explicitly negative evidence if it is meant to alter knowledge.
 
-```json
-{"tool": "list_dreams", "arguments": {"status": "proposed", "limit": 20}}
-```
+## Recall And Staleness
 
-Fetch one dream:
+`recall_memory` may return matching Hypotheses in `related_hypotheses` after
+primary Relationship ranking when dreaming is enabled for the team. This is a
+server-side policy decision, not a request flag. Hypotheses never enter the
+primary result list.
 
-```json
-{"tool": "get_dream", "arguments": {"dream_id": "dream-123"}}
-```
+A Hypothesis becomes stale when:
 
-Resolve user feedback:
+- a source Relationship is retracted, superseded, disputed, or hidden
+- a source candidate becomes rejected or its ambiguity reopens
+- a source revision changes and regeneration does not reinforce the idea
+- a retention rule expires it
+- a client marks it stale
 
-```json
-{
-  "tool": "resolve_dream_feedback",
-  "arguments": {
-    "dream_id": "dream-123",
-    "decision": "confirm_true",
-    "feedback": "The user confirmed this should be remembered."
-  }
-}
-```
+Staleness preserves the ledger record but excludes it from normal related
+Hypothesis retrieval.
 
-Valid feedback decisions are `ignore`, `reinforce`, `stale`, `reject`,
-`confirm_true`, `confirm_false`, and `promote_candidate`.
+## Risks And Mitigations
 
-## Recall
-
-`recall_memory` returns a `related_dreams` array when proposed or reinforced
-dreams match the query. These are separate from `results`.
-
-Use related dreams to decide what to ask or review:
-
-```json
-{
-  "query": "release planning",
-  "limit": 10
-}
-```
-
-Do not treat `related_dreams` as active memory. If a related dream matters,
-review it with the user or prior conversation context and resolve it through
-`resolve_dream_feedback`. Use `ignore` when no decision was made so the dream can
-remain available for future recall.
-
-## REST And Portals
-
-The authenticated user API exposes read-only dream inspection:
-
-| Route | Purpose |
-| --- | --- |
-| `GET /api/v1/dreaming/status` | Effective config, latest run, and pending count. |
-| `GET /api/v1/dreaming/runs` | Recent cycle runs. |
-| `GET /api/v1/dreams` | Dream list with optional `status`, `limit`, and `cursor`. |
-| `GET /api/v1/dreams/{dreamId}` | One dream. |
-
-The user portal shows the current profile's dreaming status, dream outputs, and
-recent cycle runs.
-
-The control portal can inspect the same dream data for a selected team and can
-edit global dreaming config from the Config tab.
-
-## Scheduled Dreaming
-
-Scheduled dreaming is disabled by default.
-
-| Setting | Default | Meaning |
+| Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
-| `DREAMING_ENABLED` | `false` | Enables scheduled dreaming when the effective team config allows it. |
-| `DREAMING_FORCE_ENABLED` | `false` | Forces dreaming on even when team config disables it. |
-| `DREAMING_START_TIME_LOCAL` | `03:00` | Local HH:MM start time. |
-| `DREAMING_REFLECT_ENABLED` | `true` | Runs the reflection phase. |
-| `DREAMING_REEVALUATE_ENABLED` | `true` | Runs the dream re-evaluation phase. |
-| `DREAMING_DREAM_ENABLED` | `true` | Runs new hypothesis generation. |
-| `DREAMING_MAX_OUTPUTS` | `5` | Maximum new dreams per cycle, from 1 to 50. |
-| `APP_TIMEZONE` | `Local` | Shared scheduler timezone. |
+| Candidate pollution | weak insufficient text becomes an active edge through dreaming | Hypothesis-only output; no lifecycle mutation; new evidence must enter `remember` |
+| Dream invents nodes | generator creates a new “search freshness” Entity to complete an idea | endpoint allowlists, existing-ID validation, and reject any unknown ID |
+| Dream invents predicates | plausible free-form verb becomes durable graph vocabulary | registry allowlist and rejection; only an authorized registry workflow can add predicates |
+| Provider failure becomes a seed | invalid verifier output is treated as an unverified candidate | require a final schema-valid `insufficient` event for candidate eligibility |
+| Circular evidence | generated statement is submitted as its own proof | require independent user/external evidence and reject Hypothesis/source text as support |
+| Primary recall contamination | Hypothesis is ranked with facts | separate table, response field, query path, and no Relationship tier |
+| Source drift | sources change between generation and persistence | store and compare source IDs/versions in the PostgreSQL transaction |
+| Duplicate cycles | two replicas generate the same window | unique team/window run key, durable lease, and normalized Hypothesis dedupe |
+| Profile copies amplify speculation | A/B/C repeat one source and make a dream appear stronger | semantic grouping plus original source-group dedupe |
+| Identity disagreement seeds false link | unresolved A/B split is treated as a stable endpoint | exclude unresolved cross-profile conflict groups |
 
-The scheduler checks once per minute and runs at most one scheduled cycle per
-profile per local day.
+## Acceptance Invariants
 
-Use an IANA timezone such as `America/New_York` for predictable production
-schedules. `Local` depends on the server/container local timezone.
-
-## When To Use It
-
-| Situation | Use dreaming? |
-| --- | --- |
-| You want normal memory recall | No. Use `recall_memory`. |
-| You want to inspect unresolved memory health | Maybe. Start with `reflect_memories`. |
-| You want possible connections between stored memories | Yes. Run or inspect dreams. |
-| You want to store a confirmed user fact | No. Use `remember` or `confirm_memory`; dreams are for hypotheses. |
-
-## Troubleshooting
-
-| Problem | Check |
-| --- | --- |
-| No scheduled dreams | `DREAMING_ENABLED=true`, effective team config, `APP_TIMEZONE`, and `DREAMING_START_TIME_LOCAL`. |
-| Manual run creates no dreams | The profile may have fewer than two usable memory inputs or duplicate hypotheses already exist. |
-| Dream was promoted but no fact appeared | `promote_candidate` creates evidence only; check claim verification, promotion gates, and clarifications. |
-| Related dreams seem wrong | Treat them as hypotheses, reject stale ones, and keep active facts as the source of truth. |
+1. dreaming creates no Entity, Value, predicate, Relationship, support, tier,
+   status change, or SemanticEdge
+2. every endpoint and source ID already exists in the same team
+3. every proposed predicate is registered for the endpoint kinds
+4. pending candidates are eligible only after schema-valid `insufficient`
+   verification
+5. primary recall never contains Hypotheses
+6. confirmation without new evidence fails
+7. submitted evidence enters the normal strict `remember` pipeline
+8. source changes can stale but never delete Hypothesis history
+9. cycle retries do not duplicate run or Hypothesis records
+10. equivalent authored Relationships do not multiply dream weight
+11. unresolved cross-profile conflict sets are not dream premises

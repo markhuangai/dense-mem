@@ -8,6 +8,7 @@
 
 - [Everyday Memory](Using-Dense-Mem)
 - [MCP Clients](MCP-Clients)
+- [Recall Feedback](Recall-Feedback)
 - [Conflicts And Corrections](Conflicts-And-Corrections)
 - [Memory Packs](Memory-Packs)
 - [Community Memory](Community-And-Dreaming)
@@ -16,13 +17,29 @@
 ## Operate Dense-Mem
 
 - [Configuration](Configuration)
+- [Portals And API Keys](Portals-And-API-Keys)
+- [User Portal SSO](User-Portal-SSO)
+- [Request Lifecycle And Security](Request-Lifecycle-And-Security)
+- [Public HTTPS And Redis](Public-HTTPS-And-Redis)
+- [Operations Runbook](Operations-Runbook)
 - [Telemetry](Telemetry)
 - [Evaluation](Evaluation)
-- [Portals And API Keys](Portals-And-API-Keys)
-- [Public HTTPS And Redis](Public-HTTPS-And-Redis)
 
-## Reference
+## Architecture And Process
 
 - [Architecture](Architecture)
+- [Entity Identity And Resolution](Entity-Identity-And-Resolution)
+- [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle)
+- [Memory Write Pipeline](Write-Pipeline)
+- [Data Model And Storage](Data-Model-And-Storage)
+- [PostgreSQL Cluster-Safe Schema](PostgreSQL-Cluster-Safe-Schema)
 - [Recall Ranking](Recall-Ranking)
+- [Vector Search And Ranking](Vector-Search-And-Ranking)
+- [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec)
 - [Technical Reference](Technical-Reference)
+
+## Contribute And Maintain
+
+- [Development And Testing](Development-And-Testing)
+- [Release Process](Release-Process)
+- [Documentation Maintenance](Documentation-Maintenance)

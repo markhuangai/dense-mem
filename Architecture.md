@@ -1,183 +1,369 @@
 # Architecture
 
-Dense-Mem separates memory from the AI assistant.
+Dense-Mem is a standalone memory service. The host LLM decides when memory is
+useful; Dense-Mem owns evidence intake, Entity resolution, Relationship
+lifecycle, durable provenance, retrieval, trace, and audit.
 
-The assistant still talks to the user and decides how to respond. Dense-Mem owns
-the memory database, evidence, embeddings, claims, facts, teams, profiles, and
-API keys.
+This page is the v2 architecture overview. Detailed rules live in the linked
+canonical pages.
 
 ## System Map
 
 ```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TB
-  subgraph Hosts["AI tools"]
-    Claude["Claude Code"]
-    Codex["Codex"]
-    Other["Other MCP clients"]
-  end
+  Client["LLM host / MCP client"] --> Access["Authenticated access layer"]
+  Browser["User and operator portals"] --> Access
+  Access --> Services["Team-scoped application services"]
 
-  subgraph DenseMem["Dense-Mem"]
-    MCP["/mcp Streamable HTTP"]
-    REST["REST API"]
-    UserPortal["User portal /ui"]
-    Portal["Control portal"]
-    Metrics["Metrics endpoint /metrics"]
-    Registry["Tool registry"]
-    Memory["Memory orchestration"]
-    Recall["Recall service"]
-    Communities["Community detection"]
-    Dreaming["Dreaming cycles"]
-    Embeds["Embedding provider client"]
-  end
+  Services --> Remember["Remember"]
+  Services --> Recall["Recall"]
+  Services --> Trace["Trace and correction"]
+  Services --> Control["Control plane"]
+  Services --> Dream["Dreaming"]
 
-  subgraph Storage["Storage"]
-    Postgres["Postgres teams, profiles, audit, app config, operation logs"]
-    Neo4j["Neo4j graph and vector indexes"]
-    Redis["Redis optional shared limits"]
-    Prometheus["Prometheus optional telemetry"]
-  end
+  Remember --> Providers["Reviewer, verifier,<br/>and embedding providers"]
+  Recall --> Providers
+  Dream --> Providers
 
-  Hosts --> MCP
-  MCP --> Registry
-  REST --> Registry
-  UserPortal --> REST
-  Portal --> REST
-  Registry --> Memory
-  Registry --> Recall
-  Registry --> Communities
-  Registry --> Dreaming
-  Memory --> Embeds
-  Recall --> Embeds
-  Memory --> Neo4j
-  Recall --> Neo4j
-  Communities --> Neo4j
-  Dreaming --> Neo4j
-  REST --> Postgres
-  REST --> Redis
-  Metrics --> Prometheus
-  REST --> Prometheus
-  Portal --> Prometheus
+  Remember --> PG[("PostgreSQL + pgvector<br/>single source of truth")]
+  Recall --> PG
+  Trace --> PG
+  Control --> PG
+  Dream --> PG
+
+  Services -. "optional coordination" .-> Redis[("Redis or one-process memory")]
 ```
 
-## Responsibility Boundary
+PostgreSQL is the only required database. It stores durable knowledge and
+control state and serves graph-shaped, full-text, and vector reads. `pgvector`
+is an extension inside PostgreSQL. Redis is optional coordination and never
+contains memory truth. Neo4j is not part of normal target runtime; the temporary
+`2.1.x` bridge reads it only in boot-gated migration mode.
 
-| Area | Dense-Mem owns | AI assistant owns |
-| --- | --- | --- |
-| Memory writes | Evidence, typed claims, verification, gates, promotion | Deciding what candidate memories to send |
-| Embeddings | Fragment embeddings and recall-query embeddings | No vectors for normal use |
-| Retrieval | Facts, claims, fragments, and clarifications | Choosing how to use recalled context |
-| Corrections | Conflict detection and supersession records | Asking the user which memory is correct |
-| Hypotheses | Community summaries and dream records | Deciding which hypotheses to ask the user to confirm |
-| Operations | Teams, profiles, API keys, audit metadata, user portal, control portal | Client-side MCP configuration |
+## Responsibility Boundaries
 
-See [Recall Ranking](Recall-Ranking) for the candidate branches, exact-anchor
-rules, fusion, and tier ordering behind retrieval.
+| Boundary | Responsibility |
+| --- | --- |
+| Access | listener separation, authentication, authorization, tenant/profile scope, request limits, deterministic injection scanning, and safe errors |
+| Application | remember, recall, trace, correction, dreaming, and control orchestration |
+| Domain | Entity identity, predicate vocabulary, Relationship identity/lifecycle, evidence acceptance, and Hypothesis rules |
+| PostgreSQL | durable ledger, current state, queues, review, audit, SemanticEdge queries, full-text, and `pgvector` |
+| Model providers | structured extraction, one-call verification, embeddings, and optional dream generation; no write authority |
+| Coordination | rate limits, leases/signals, and SSE concurrency; Redis when distributed, process memory when safely single-instance |
 
-Dense-Mem is intentionally narrow. It does not replace the assistant. It gives
-the assistant a reliable memory service.
+Store ownership and recovery belong in
+[Data Model And Storage](Data-Model-And-Storage). Listener and authorization
+boundaries belong in
+[Request Lifecycle And Security](Request-Lifecycle-And-Security).
 
-## Memory Model
-
-Dense-Mem uses three layers:
-
-| Layer | Plain meaning | Why it exists |
-| --- | --- | --- |
-| SourceFragment | Original evidence text | Preserves where a memory came from. |
-| Claim | A typed candidate assertion | Lets Dense-Mem check and gate possible memories. |
-| Fact | A promoted active memory | Gives assistants stable memory to recall. |
-
-The flow looks like this:
+## Request Paths
 
 ```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Fragment["SourceFragment evidence"] --> Claim["Claim candidate"]
-  Claim --> Verify["Verify claim"]
-  Verify --> Validated["Validated claim"]
-  Validated --> Promote["Promote claim"]
-  Promote --> Fact["Active fact"]
-  Fact --> Supersede["Supersede after correction"]
+  Request["Authenticated request"] --> Kind{"Operation"}
+  Kind -- remember --> Write["Stage evidence and queue placement"]
+  Kind -- recall --> Read["Search and bounded adjacency"]
+  Kind -- trace --> Trace["Read provenance and current graph"]
+  Kind -- review/correct --> Correct["Append decision and recompute"]
+  Kind -- control --> Admin["Manage scoped control state"]
+
+  Write --> PG["PostgreSQL transaction"]
+  Read --> PG
+  Trace --> PG
+  Correct --> PG
+  Admin --> PG
 ```
 
-Facts are not overwritten in place. Corrections create new facts and mark older
-comparable facts as superseded. That preserves history.
+The authenticated principal fixes team, profile, role, and scopes before any
+application service runs. A request never chooses its tenant.
 
-## Conflict Handling
+## Target Runtime Composition
 
-When a new memory conflicts with an active fact, Dense-Mem should return a
-clarification instead of guessing.
-
-```mermaid
-sequenceDiagram
-  participant Assistant
-  participant DM as Dense-Mem
-  participant User
-
-  Assistant->>DM: remember(candidate memory)
-  DM->>DM: verify, gate, compare active facts
-  DM-->>Assistant: clarification needed
-  Assistant->>User: Which memory should I keep?
-  User-->>Assistant: Keep the new one
-  Assistant->>DM: confirm_memory(accept_claim)
-  DM-->>Assistant: promoted and superseded result
-```
-
-This is important because memory systems should not silently decide what the user
-meant.
-
-## Team And Profile Isolation
-
-Every memory operation is scoped to the authenticated API key.
-
-An API key belongs to:
-
-- one team
-- one named profile
-- one profile role, either manager or member
-- one scope set, either read-only or read-write
-
-Clients do not need to send a team ID for normal memory routes. Dense-Mem derives
-the team and profile from the bearer key.
-
-Roles and scopes are separate. Scopes control knowledge access. Manager role
-controls team metadata and same-team member profile administration. Member keys
-cannot manage profiles, even with write scope.
-
-## Transport
-
-Dense-Mem uses MCP Streamable HTTP at:
+Dependency direction is inward: transports call application services;
+application services apply domain policy through ports; adapters implement
+storage, provider, and coordination ports.
 
 ```text
-/mcp
+cmd/server/
+  composition root
+
+internal/
+  domain/
+    evidence/
+    entity/
+    relationship/
+    verification/
+    hypothesis/
+  service/
+    remember/
+    recall/
+    trace/
+    correction/
+    dreaming/
+  repository/
+    knowledge/
+    search/
+    control/
+  storage/
+    postgres/
+      ledger/
+      current/
+      search/
+      queue/
+    redis/
+      coordination/
+  provider/
+    embedding/
+    reviewer/
+    verifier/
+    dream/
+  transport/
+    mcp/
+    http/
+    portal/
 ```
 
-Supported methods:
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart LR
+  Transport["MCP and first-party portals"] --> Application["Application services"]
+  Application --> Domain["Domain contracts and policy"]
+  Application --> Ports["Repository, provider,<br/>and coordination ports"]
+  PG["PostgreSQL adapter"] --> Ports
+  Redis["Optional Redis adapter"] --> Ports
+  AI["AI provider adapters"] --> Ports
+```
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `POST` | `/mcp` | JSON-RPC requests and notifications. |
-| `GET` | `/mcp` | Server-to-client SSE stream where supported. |
+This tree is a responsibility map, not a command to preserve or invent package
+names. Before implementation, map current packages and move code only where a
+boundary is otherwise unenforceable.
 
-REST and OpenAPI remain available for non-MCP integrations and operations.
+## Startup And Shutdown
 
-## Storage Choices
+```mermaid
+%%{init: {"sequence": {"rightAngles": true}}}%%
+sequenceDiagram
+  autonumber
+  participant S as Server
+  participant P as PostgreSQL
+  participant R as Redis or process memory
+  participant A as Model providers
+  participant W as Workers
+  participant H as HTTP
+  actor O as Operator
 
-| Component | Purpose |
+  S->>S: Load and validate configuration
+  S->>P: Connect and inspect release/migration state
+  S->>H: Start health and control surfaces
+  alt Migration required in 2.1.x
+    S->>H: Enter maintenance and log migration_required
+    O->>H: Start or resume after preflight
+    S->>A: Validate migration provider contracts
+    S->>P: Run official-pipeline migration and hard gates
+    P-->>S: Commit automatic cutover marker
+    S->>S: Close legacy migration adapter
+  else Compatible completed marker
+    S->>P: Continue normal release startup
+  end
+  S->>P: Apply compatible schema migrations
+  S->>P: Validate pgvector, embedding contract, and search-index profile
+  S->>R: Build required coordination backend
+  S->>A: Validate configured provider contracts
+  S->>W: Start placement, embedding, cleanup, and optional schedulers
+  S->>H: Enable main v2 data plane
+  H-->>S: Serve until termination
+  S->>H: Stop accepting traffic
+  S->>W: Drain or release work safely
+  S->>S: Close providers and adapters
+```
+
+PostgreSQL and a compatible completed migration marker are always readiness
+gates. Redis is a gate only when distributed
+coordination is required or explicitly configured as mandatory. A
+multi-instance deployment cannot silently fall back to process-local limits or
+leases.
+
+Provider readiness distinguishes required operations: an unavailable verifier
+may make write placement not-ready while authorized trace reads can still
+operate. Exact health and incident procedure belongs in
+[Operations Runbook](Operations-Runbook).
+
+## Semantic Model Boundary
+
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart LR
+  Evidence["Evidence fragments"] --> Observation["Relationship observations"]
+  Observation --> Verification["Verification events"]
+  Verification --> Current["Profile-owned Relationship current state"]
+  Current --> Cross["Cross-profile reference ledger"]
+  Current --> Edge["SemanticEdge read<br/>active validated/fact only"]
+  Current --> Trace["Trace with support and history"]
+  Current --> Dream["Optional isolated Hypotheses"]
+```
+
+- Entity and typed Value are the only semantic-node kinds.
+- A SemanticEdge is a graph-shaped read of one eligible Relationship row.
+- Relationship lifecycle is profile-owned and same-team readable; corrections
+  of another profile create caller-owned knowledge plus immutable references.
+- Names and aliases are Entity metadata.
+- Evidence, observations, verification, transitions, reviews, and Hypotheses
+  are ledger records, not semantic nodes.
+- Candidate Relationships have no active edge and do not enter default recall.
+- A Hypothesis can connect only existing endpoints and cannot change knowledge.
+
+Canonical ownership:
+
+| Concern | Canonical page |
 | --- | --- |
-| Postgres | Teams, profiles, key metadata, audit records, migrations. |
-| Neo4j | Memory graph, claims, facts, relationships, communities, dreams, vector indexes. |
-| Redis | Optional for one server; required for multi-instance shared limits. |
-| Prometheus | Optional telemetry store for the `/ui` app and control portal dashboards. |
+| Entity reuse, create, ambiguity, merge, and split | [Entity Identity And Resolution](Entity-Identity-And-Resolution) |
+| Predicate, Relationship identity, evidence, verification, tier, status, and forget | [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle) |
+| PostgreSQL, Redis, transactions, durable storage, jobs, and recovery | [Data Model And Storage](Data-Model-And-Storage) |
+| PostgreSQL tenant keys, table placement, RLS/query locality, and future team sharding | [PostgreSQL Cluster-Safe Schema](PostgreSQL-Cluster-Safe-Schema) |
+| pgvector exact/ANN execution, HNSW/halfvec, index load, and search topology | [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec) |
+| `remember` stage order and strict one-call verifier | [Memory Write Pipeline](Write-Pipeline) |
+| recall eligibility, PostgreSQL branches, and trace escalation | [Recall Ranking](Recall-Ranking) |
+| cosine distance, RRF, reranking, and conflict preference | [Vector Search And Ranking](Vector-Search-And-Ranking) |
+| Hypothesis generation boundary | [Dreaming](Dreaming) |
+| MCP discovery/execution and first-party portal boundary | [Request Lifecycle And Security](Request-Lifecycle-And-Security#mcp-memory-interface) |
 
-App config and operation logs also live in Postgres. App config drives runtime
-settings such as `APP_TIMEZONE`, scheduled dreaming, scheduled community
-detection, SSO public settings, and operation-log retention.
+## Write Boundary
 
-## Embedding Ownership
+Remember first validates and deterministically scans the bounded request, then
+atomically commits exact evidence, the scan event, and queued, guarded, or
+quarantined processing intent. A worker handling queued evidence extracts
+structure, retrieves immutable Entity/predicate candidates, makes one strict
+verifier request containing bounded `security_signals`, `entity_results`, and
+`relationship_results`, validates the whole response, applies deterministic
+policy, and commits all material outcomes in PostgreSQL.
 
-Dense-Mem embeds normal write and recall text itself.
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart LR
+  Request["Authenticated bounded request"] --> Scan{"Pass, guarded,<br/>or quarantine?"}
+  Scan -- quarantine --> StageQ["Commit quarantined intake"]
+  StageQ --> Quarantine["Restricted audit only"]
+  Scan -- pass or guarded --> Intake["Commit evidence and queue intent"]
+  Intake --> Extract["Structure extraction"]
+  Extract --> ExtractSignal{"Reviewer security signal?"}
+  ExtractSignal -- Yes --> Quarantine
+  ExtractSignal -- No --> Context["Server Entity/predicate context"]
+  Context --> Verify["One verifier response"]
+  Verify --> Validate["Closed-schema, security-signal,<br/>and allowlist validation"]
+  Validate --> Signal{"Model security signal?"}
+  Signal -- Yes --> Quarantine
+  Signal -- No --> Policy["Deterministic lifecycle"]
+  Policy --> Commit["One PostgreSQL transaction"]
+  Commit --> Immediate["Current rows, SemanticEdges,<br/>and full-text available"]
+  Commit --> Async["Versioned embedding job"]
+```
 
-Clients send text. Dense-Mem sends that text to the configured embedding
-provider, stores the resulting vectors, and checks that model dimensions stay
-consistent.
+Invalid verifier output is regenerated as a complete response. The application
+does not coerce it or commit a valid subset. Full details belong in
+[Memory Write Pipeline](Write-Pipeline#strict-verifier-contract).
 
-Client-supplied vectors are reserved for advanced search use cases.
+## Read Boundary
+
+Normal recall queries same-team active `validated_claim` and `fact`
+profile-owned Relationships through
+PostgreSQL full-text, `pgvector`, and bounded adjacency branches. It returns a
+compact authored Relationship, conflict/support handles, and
+`relationship_id`, not all evidence or verifier history.
+
+Trace fetches normalized provenance when the caller needs to understand,
+correct, or forget knowledge. Graph visualization uses the same semantic-node
+and SemanticEdge query shape; it is not another database or authority.
+
+## Consistency Boundary
+
+Core semantic state and its append-only history commit atomically in one
+PostgreSQL transaction.
+
+```mermaid
+%%{init: {"sequence": {"rightAngles": true}}}%%
+sequenceDiagram
+  participant W as Placement worker
+  participant P as PostgreSQL
+  participant E as Embedding worker
+
+  W->>P: Begin semantic transaction
+  W->>P: Append evidence decisions and transitions
+  W->>P: Update current Entity / Relationship rows
+  W->>P: Upsert search document and embedding job
+  W->>P: Commit
+  P-->>W: Authoritative state and SemanticEdge visibility
+  E->>P: Claim embedding job
+  E->>P: Write vector only for matching source version
+```
+
+Only embeddings are intentionally asynchronous because they are derived.
+`search_state` exposes their freshness. There is no cross-database graph
+projection, outbox, or graph-reconciliation loop in the target.
+
+## Host And Service Responsibilities
+
+| Area | Dense-Mem owns | Host LLM owns |
+| --- | --- | --- |
+| Remember | evidence persistence, extraction review, strict verification, identity resolution, lifecycle, and traceability | submitting evidence and the smallest supported hint |
+| Embeddings | evidence, Entity, Relationship, and query embeddings through configured providers | no normal-use vectors |
+| Recall | bounded retrieval, ranking, graph frontier, freshness, and trace handles | deciding which returned context to use, cite, or question |
+| Ambiguity | exact candidates, impact, review state, and safe decision application | presenting the ambiguity and collecting the user's evidence-backed choice |
+| Operations | isolation, profiles, roles, keys, portals, telemetry, backup, and recovery | client configuration and safe use of returned context |
+
+Dense-Mem is not an autonomous truth oracle. Models propose structured
+judgments; deterministic server rules control durable state.
+
+## Refactor Boundary
+
+The target should be implemented as reviewable vertical slices:
+
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart LR
+  Contract["1. Versioned domain contracts"] --> Schema["2. PostgreSQL schema<br/>and repositories"]
+  Schema --> Remember["3. Remember + strict verifier"]
+  Remember --> Recall["4. Recall + trace"]
+  Recall --> Dream["5. Candidate-safe dreaming"]
+  Dream --> Migration["6. 2.1.x official-pipeline<br/>legacy migration"]
+  Migration --> Cutover["7. Automatic cutover"]
+  Cutover --> Remove["8. Remove Neo4j bridge<br/>in 2.2.0"]
+```
+
+Each slice needs contract, tenant-isolation, idempotency, and failure tests
+before another slice relies on it. Legacy Neo4j data is migration input, not a
+second target model.
+
+## Risks And Mitigations
+
+| Risk | Concrete failure mode | Mitigation |
+| --- | --- | --- |
+| Target mistaken for shipped behavior | an operator uses v2 PostgreSQL-only recovery on the current runtime | label target status, expose contract/runtime versions, and gate cutover on release checks |
+| PostgreSQL graph query is unbounded | a hub Entity causes a recursive query to exhaust memory | partial adjacency indexes and strict seed/fan-out/depth/edge/time budgets |
+| ANN tenant filter loses recall | shared approximate search omits relevant team rows before hydration | enforce the team-shaped execution/topology gates in [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec) |
+| Provider controls truth | verifier returns `tier=fact` or an arbitrary ID and it reaches storage | closed schema excludes writes; allowlist validation and deterministic lifecycle |
+| Big-bang refactor stalls | every package changes before one end-to-end slice works | vertical slices, legacy adapters at boundaries, and passing acceptance invariants per slice |
+| Redis becomes a hidden database | replicas lose identity or review state after Redis restart | coordination-only ports and restart tests proving PostgreSQL is complete |
+
+## Architecture Invariants
+
+1. Authentication fixes the team; request data cannot override it.
+2. PostgreSQL is the only durable source of knowledge and control state.
+3. `pgvector` is part of PostgreSQL, not a separate authority.
+4. Redis and process memory contain no canonical memory.
+5. Entity and typed Value are the only semantic nodes.
+6. One active profile-owned `validated_claim` or `fact` Relationship produces
+   at most one SemanticEdge.
+7. Candidates and Hypotheses never enter default recall or active graph reads.
+8. Stored knowledge and search context can inform comparison but never count as
+   submitted evidence.
+9. Only deterministic policy after a valid complete verifier response changes
+   tier/status.
+10. Required recall failures are visible; optional degradation is reported.
+11. Embedding and search-index versions form explicit linked deployment
+    contracts with separate rebuild lifecycles.
+12. Normal target runtime has no Neo4j dependency; only the temporary `2.1.x`
+    migration gate may connect, and `2.2.0` removes that code.
+13. Same-team visibility never permits one profile to mutate another profile's
+    knowledge.

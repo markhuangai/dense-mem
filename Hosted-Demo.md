@@ -1,159 +1,134 @@
 # Hosted Demo
 
-Use the hosted demo when you want to test Dense-Mem before running Docker:
+Use the hosted demo to test the shared-memory experience with disposable data:
 
 ```text
 https://demo-dense-mem.markhuang.ai
 ```
 
-The demo generates a temporary isolated team and API key. The key lasts 24 hours.
-Use only disposable test data.
+The deployed demo may lag the v2 architecture. Check runtime tool discovery
+before using it to validate behavior. This page does not hardcode changing
+quotas; the demo UI/runtime response owns its current limits.
 
-## SSO Availability
+## Safety Boundary
 
-The hosted demo does not support SSO. The user portal on the demo should not
-show SSO login because no SSO provider is configured for that deployment.
+- use only disposable test data
+- never store secrets, credentials, personal data, production notes, or critical
+  memory
+- demo teams/keys expire and may be cleaned without recovery
+- SSO/control-plane access is not part of the public demo
+- a generated key grants access to that temporary team; protect it for its
+  lifetime
 
-Use the generated demo API key to access `/ui`, MCP, and API routes.
+## What The Demo Proves
 
-## Related Tutorials
+Several clients using one key share one isolated team memory.
 
-| Goal | Tutorial |
-| --- | --- |
-| Try Dense-Mem without installing anything | This hosted demo page |
-| Run your own local memory server | [Dense-Mem Quick Start: Give Claude Code and Codex the Same Memory](https://markhuang.ai/blog/dense-mem-personal-server-claude-code-codex) |
-| Host Dense-Mem on a public HTTPS server | [Secure Dense-Mem on Vultr with Traefik](https://markhuang.ai/blog/secure-dense-mem-vultr-traefik) |
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart LR
+  Browser["Demo page"] --> Provision["Temporary team/profile/key"]
+  Provision --> Key["One bearer key"]
+  Key --> Claude["Claude Code"]
+  Key --> Codex["Codex"]
+  Claude --> Demo["Hosted /mcp"]
+  Codex --> Demo
+  Demo --> Team[("Same temporary team")]
+  Team --> Expire["Expiry and cleanup"]
+```
 
-## What It Proves
+It proves cross-session/client access. It does not prove:
 
-Dense-Mem links AI instances by giving them the same external memory service.
-
-![Multiple AI client sessions sharing one temporary Dense-Mem demo key through one hosted memory hub](https://cdn.markhuang.ai/blog/dense-mem-hosted-demo-test-instance/shared-memory-flow.webp)
-
-If two clients use the same generated key, they can read and write the same
-temporary memory. If you generate a new key, you create a new isolated team.
-
-This is the core Dense-Mem capability: many AI sessions can use one memory
-service, so every linked assistant can work with more useful context.
-
-The AI model still reasons and responds. Dense-Mem stores evidence, claims,
-facts, recall results, and clarification tasks so the AI can work with more
-context instead of starting cold.
-
-## Limits
-
-| Limit | Demo value |
-| --- | --- |
-| Session lifetime | 24 hours |
-| Generated demo sessions | 10 per IP per day |
-| Authenticated requests | 300 |
-| Write attempts | 75 |
-| Save attempts | 30 |
-| Content stored | 128 KiB |
-| Claims | 30 |
-| Verifier attempts | 10 |
-| Promoted facts | 5 |
-| Recall calls | 50 |
-| Rate limit | 20 requests per minute |
-
-Do not store secrets, personal data, credentials, production notes, or anything
-critical. Expired demo teams and graph data are deleted.
+- production durability or backup
+- target contract-v2 conformance unless advertised
+- multi-instance/Redis correctness
+- your own provider/privacy policy
+- migration or high-load behavior
 
 ## Step 1: Generate A Key
 
-Open the hosted demo page:
-
-[https://demo-dense-mem.markhuang.ai](https://demo-dense-mem.markhuang.ai)
-
-The page creates a key automatically for the browser tab. You can also click
-**Generate New Key**.
-
-Copy the key:
+Open the demo page, generate a temporary key, then keep it in the client
+environment:
 
 ```bash
 export DENSE_MEM_API_KEY="dm_..."
 ```
 
-Use that same key in every client you want to link.
+Use the same key for clients that should share the demo team. Generate another
+key for isolation.
 
-## Step 2: Check MCP Tools
+## Step 2: Connect Clients
 
-```bash
-curl -s "https://demo-dense-mem.markhuang.ai/mcp" \
-  -H "Authorization: Bearer $DENSE_MEM_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
-```
-
-The response should include high-level tools such as:
+Follow [MCP Clients](MCP-Clients) with:
 
 ```text
-remember
-recall_memory
-reflect_memories
-confirm_memory
+https://demo-dense-mem.markhuang.ai/mcp
 ```
 
-## Step 3: Connect Claude Code
+Run tool discovery. For target v2, verify that discovery/server metadata
+advertises Dense-Mem contract version 2 and that `recall_memory` returns
+`relationship_id` handles.
 
-```bash
-claude mcp add --transport http dense-mem-demo \
-  https://demo-dense-mem.markhuang.ai/mcp \
-  --header "Authorization: Bearer $DENSE_MEM_API_KEY"
-```
+## Step 3: Test Shared Memory
 
-Ask:
+Client A:
 
 ```text
 Use Dense-Mem to remember that this demo project codename is river-lamp and I prefer concise answers with concrete commands.
 ```
 
-## Step 4: Connect Codex
-
-Add this to `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.dense_mem_demo]
-url = "https://demo-dense-mem.markhuang.ai/mcp"
-bearer_token_env_var = "DENSE_MEM_API_KEY"
-tool_timeout_sec = 60
-enabled = true
-```
-
-Restart Codex, then ask:
+Client B, using the same key:
 
 ```text
-Before answering, use Dense-Mem to recall what you know about my demo project codename and response style.
+Before answering, use Dense-Mem to recall the demo codename and response style.
 ```
 
-Expected result: Codex should recall the memory written by Claude Code because
-both clients use the same demo key.
-
-## Step 5: Try A New Session
-
-Start a new AI session with the same key configured and ask:
-
-```text
-What does Dense-Mem remember about this demo?
-```
-
-The assistant should recall memory from Dense-Mem instead of depending on the old
+A new chat with the same key should recall from Dense-Mem rather than the old
 chat transcript.
 
-## Step 6: Try A Conflict
+## Step 4: Test Trace
 
 Ask:
 
 ```text
-Remember that I prefer long narrative explanations in this demo.
+Show the Relationship Dense-Mem recalled for the demo codename and trace its supporting evidence.
 ```
 
-If the client uses the high-level memory workflow, Dense-Mem can return a
-clarification instead of silently replacing the earlier concise-answer
-preference. The assistant should ask which memory to keep.
+On v2, normal recall should be compact and trace should use
+`relationship_id` to expand evidence/verification/history.
+
+## Step 5: Test Identity Ambiguity
+
+Store two clearly distinguished people with the same first name, then submit an
+underspecified statement about that name. The safe v2 behavior is an
+`identity_needs_review` task and no speculative Entity/edge.
+
+Do not choose a candidate unless the evidence identifies which person.
+
+## Step 6: Test A Correction
+
+Ask to correct a prior preference and provide the new user statement as
+evidence. The safe behavior is:
+
+1. preserve prior evidence/history
+2. re-enter normal verification/policy
+3. commit the durable decision
+4. update PostgreSQL SemanticEdge/current rows atomically
+5. rebuild the versioned vector asynchronously
+6. expose processing and search state separately
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| tool names/fields differ | deployed contract version and `tools/list` |
+| another client sees nothing | both clients use exactly the same key |
+| placement is not searchable | inspect processing outcome, branch degradation, and search freshness |
+| review task appears | show the exact question; provide evidence/identity choice |
+| quota/expiry error | current limits on demo page/runtime response |
+| v2 behavior unavailable | demo has not been upgraded; use a pinned local v2 release |
 
 ## Next
 
-Use the demo to prove the concept. Use the local or Vultr tutorials above when
-you want your own server. Use [Quick Start](Quick-Start) and
-[Configuration](Configuration) for the manual reference.
+Use [Quick Start](Quick-Start) for a pinned local deployment and
+[Using Dense-Mem](Using-Dense-Mem) for the target workflow.

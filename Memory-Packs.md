@@ -1,158 +1,328 @@
 # Memory Packs
 
-Memory packs package selected Dense-Mem knowledge into portable JSON. Use them
-to import or export memories such as workflows, project conventions, operational
-patterns, and their supporting evidence between teams or profiles.
+Memory packs move selected Dense-Mem knowledge between teams or installations
+as reviewable, versioned JSON artifacts. They are portability packages, not
+database backups and not a path around normal identity resolution or
+verification.
 
-For exact tool schemas and artifact fields, see
-[Technical Reference](Technical-Reference#memory-pack-tools).
+This page owns the target `dense-mem.memory-pack.v2` artifact and workflow.
+Tool discovery and transport schemas are in
+[Technical Reference](Technical-Reference#memory-packs).
 
-## When To Use A Memory Pack
+## What A Pack Contains
 
-| Use case | Example |
-| --- | --- |
-| Reuse a workflow | Export a blog-writing workflow learned from project history. |
-| Share operational knowledge | Move a deployment checklist from one profile to another. |
-| Preserve support evidence | Export the facts plus supporting claims and fragments. |
-| Review an external pack | Inspect a pack before importing anything. |
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart LR
+  Selection["Selected active Relationships"] --> Entities["Referenced Entity records<br/>and supported names"]
+  Selection --> Predicates["Predicate definitions<br/>used by selection"]
+  Selection --> Evidence["Optional permitted<br/>evidence/provenance"]
+  Entities --> Pack["Versioned canonical JSON"]
+  Predicates --> Pack
+  Evidence --> Pack
+  Pack --> Hash["SHA-256 and optional signature"]
+```
 
-Do not use memory packs for secrets, credentials, or personal data that should
-not move between profiles.
+A pack can include:
+
+- selected active Relationship snapshots
+- each Relationship's source author as provenance metadata
+- source Entity descriptors and name metadata
+- typed Values and predicate keys used by those Relationships
+- temporal/polarity qualifiers
+- optional evidence fragments and accepted support spans
+- source tier/status as provenance, not destination instructions
+- export team/install identifiers as audit metadata
+- format/schema version, creation time, selection query, and content hash
+
+A pack excludes:
+
+- API keys, credentials, sessions, and SSO data
+- audit/security logs
+- raw embeddings and search documents
+- provider retry telemetry
+- Redis/in-process state
+- unresolved review work unless an explicit review-work extension is defined
+- dream Hypotheses unless an explicit Hypothesis extension is selected
+
+## Artifact Outline
+
+```json
+{
+  "format": "dense-mem.memory-pack.v2",
+  "pack_id": "pack_01J...",
+  "name": "dense-mem-architecture",
+  "description": "Selected architecture Relationships",
+  "created_at": "2026-07-11T00:00:00Z",
+  "source": {
+    "installation_id": "install-a",
+    "team_id": "team-a"
+  },
+  "entities": [],
+  "values": [],
+  "predicate_definitions": [],
+  "relationships": [],
+  "evidence_fragments": [],
+  "evidence_supports": [],
+  "extensions": {},
+  "content_sha256": "..."
+}
+```
+
+Source `entity_id` and `relationship_id` values are artifact-local references.
+They never become destination IDs merely because they appear in a pack.
+Source profile IDs and author names are also provenance only. Ordinary pack
+import never grants permission to impersonate that profile at the destination.
+
+Canonical JSON defines ordering, Unicode normalization, omitted/null behavior,
+number formatting, and hash exclusion fields. Export/import tests must share one
+canonicalizer.
 
 ## Workflow
 
-| Step | Tool | Writes memory? |
+```mermaid
+%%{init: {"sequence": {"rightAngles": true}}}%%
+sequenceDiagram
+  actor Operator
+  participant Source as Source team
+  participant Artifact as Pack artifact
+  participant Target as Target team
+  participant Profile as Destination profile
+  participant Ledger as Import ledger
+  participant Remember as Normal placement
+
+  Operator->>Source: find_memory_pack_candidates
+  Operator->>Source: export_memory_pack(selection)
+  Source-->>Artifact: Canonical JSON, hash, optional signature
+  Operator->>Target: inspect_memory_pack(artifact, destination profile)
+  Target-->>Operator: Mapping, duplicates, conflicts, risks
+  Operator->>Target: import_memory_pack(mode, decisions)
+  Target->>Profile: Bind authenticated owner_profile_id
+  Profile->>Ledger: Commit import plan and item idempotency
+  Profile->>Remember: Stage evidence and Relationship hints
+  Remember-->>Ledger: Placement IDs and outcomes
+  opt Rollback requested
+    Operator->>Target: rollback_memory_pack_import(import_id, dry_run)
+    Target-->>Operator: Safe/unsafe impact report
+  end
+```
+
+| Step | Writes durable state? | Semantic graph effect |
 | --- | --- | --- |
-| Find candidates | `find_memory_pack_candidates` | No |
-| Export selected items | `export_memory_pack` | No |
-| Inspect a pack | `inspect_memory_pack` | No |
-| Import a pack | `import_memory_pack` | Yes |
-| Roll back an import | `rollback_memory_pack_import` | Yes |
+| find candidates | no | none |
+| export | no | none |
+| inspect | no | none |
+| import | yes | normal PostgreSQL remember/placement path only |
+| rollback dry run | no | none |
+| confirmed rollback | yes | recompute affected current state and search jobs |
 
-The older `*_skill_pack*` tool names remain accepted as hidden compatibility
-aliases, and legacy `dense-mem.skill_pack.v1` artifacts can still be parsed.
-New clients should use the memory-pack names.
+## Find And Export
 
-`inspect_memory_pack` is the no-write review path. `import_memory_pack` creates
-an import ledger entry and can create or update claims and facts depending on
-mode, selected items, and conflict decisions.
-
-## Find Candidates
+Candidate search returns active Relationships eligible under export policy.
+Selection uses `relationship_id` values:
 
 ```json
 {
-  "query": "blog writing workflow",
-  "limit": 10
+  "query": "release workflow",
+  "limit": 20,
+  "predicate_keys": ["requires", "runs", "publishes"]
 }
 ```
 
-Candidates come from existing active facts and validated claims with supported
-memory-pack predicates.
-
-## Export A Pack
+Export:
 
 ```json
 {
-  "name": "blog-writing",
-  "description": "Reusable blog-writing workflow",
-  "fact_ids": ["fact_123"],
-  "include_support": true
+  "name": "release-workflow",
+  "description": "Reusable release Relationships",
+  "relationship_ids": ["r1", "r2", "r3"],
+  "include_evidence": true,
+  "include_entity_names": true
 }
 ```
 
-The export result includes:
+The export result returns canonical JSON, `content_sha256`, filename, counts,
+omissions, and signature metadata when configured.
 
-| Field | Meaning |
-| --- | --- |
-| `canonical_json` | The portable JSON artifact. |
-| `sha256` | Integrity hash for the canonical artifact. |
-| `filename` | Suggested `.memory-pack.json` filename. |
+An export must fail or report explicit omissions when selected Relationships
+refer to evidence the caller cannot read.
 
-Keep `include_support=true` unless you intentionally need to omit source
-evidence.
+## Inspect Before Import
 
-## Inspect Before Importing
+Inspection validates without writing:
 
-```json
-{
-  "artifact_json": "{...}",
-  "expected_sha256": "..."
-}
-```
-
-Inspection reports duplicates, conflicts, superseded matches, matching claims,
-and any decisions required before a trusted import can proceed.
-
-For a remote artifact, use an HTTPS URL:
-
-```json
-{
-  "url": "https://example.com/blog-writing.memory-pack.json",
-  "expected_sha256": "..."
-}
-```
-
-## Import Modes
-
-| Mode | Behavior |
-| --- | --- |
-| `review` | Imports selected items as reviewable claims. It does not promote source facts to active facts. |
-| `trusted` | Treats the pack as trusted source material and can validate claims, promote source facts, or supersede local facts when decisions allow it. |
-
-Trusted URL imports require `expected_sha256`.
-
-Example review import:
-
-```json
-{
-  "artifact_json": "{...}",
-  "mode": "review"
-}
-```
-
-Example trusted import with a conflict decision:
+1. size, format, and canonical hash
+2. optional signature/trust policy
+3. schema and extension compatibility
+4. duplicate artifact-local IDs
+5. evidence span bounds and source links
+6. predicate support
+7. destination Entity candidates
+8. possible duplicate/conflicting Relationships
+9. data-classification and provenance policy
+10. expected create/update/review counts
 
 ```json
 {
   "artifact_json": "{...}",
   "expected_sha256": "...",
-  "mode": "trusted",
-  "conflict_decisions": [
-    { "index": 0, "action": "demote_to_claim" }
-  ]
+  "mode": "review"
 }
 ```
 
-Supported conflict actions are:
+Remote URL inspection requires HTTPS, an expected hash, bounded download size,
+redirect limits, allow/deny network policy, and protection against private
+network/metadata endpoints.
 
-| Action | Meaning |
+## Import Modes
+
+| Mode | Meaning |
 | --- | --- |
-| `import_anyway` | Import despite the local match or conflict. |
-| `skip` | Do not import that item. |
-| `supersede_local` | Replace conflicting local active facts. |
-| `demote_to_claim` | Keep source-fact material as a claim instead of an active fact. |
+| `review` | treat pack content as untrusted external evidence; ambiguous identity/conflicts become review work |
+| `trusted` | accept configured signer/source authority as an input to lifecycle policy; still resolve Entities, validate evidence, and use the normal PostgreSQL pipeline |
 
-## Roll Back An Import
+Trusted does not mean:
 
-```json
-{
-  "import_id": "import_123"
-}
+- preserve source IDs
+- copy source tier/status directly
+- skip Entity ambiguity
+- skip Relationship verification
+- supersede local knowledge without policy
+- write a SemanticEdge/current-state row directly
+- preserve or select the source profile as destination owner
+- update a semantically matching Relationship owned by another destination profile
+
+Conflict decisions are bounded:
+
+| Decision | Effect |
+| --- | --- |
+| `skip` | do not stage that artifact item |
+| `import_for_review` | stage it without permission to replace current knowledge |
+| `map_entity` | map one source Entity ref to a supplied same-team candidate |
+| `confirm_new_entity` | permit resolution with destination discriminator evidence |
+| `accept_source_authority` | apply a configured trusted-source policy; does not force fact |
+
+A source `fact` may become a destination candidate, validated claim, fact, or
+review item depending on destination evidence and policy.
+
+## Destination Ownership
+
+One import is bound to the authenticated destination profile before inspection
+decisions are committed. Every Relationship created or updated by that import
+is owned by that profile. The source author stays in provenance so recall and
+trace can explain where the artifact came from, but it is not the destination
+`owner_profile_id`.
+
+If the same semantic meaning already exists:
+
+- under the destination owner, accepted evidence may attach to that existing
+  Relationship through the normal pipeline
+- under another same-team owner, import creates or reviews a destination-owned
+  Relationship and may append a cross-profile reference
+- under another team, it is not a candidate and must not be visible
+
+The audited v1-to-v2 migration is the only workflow allowed to preserve an
+original owner while acting as a system worker. Its separate contract is in
+[Release Process](Release-Process#5-run-the-official-v2-pipeline).
+
+## Identity And Relationship Mapping
+
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart TD
+  SourceEntity["Pack Entity ref"] --> Candidates["Destination candidate retrieval"]
+  Candidates --> Resolve{"reuse, create, or ambiguous"}
+  Resolve -- reuse --> Existing["Destination entity_id"]
+  Resolve -- create --> New["New destination entity_id"]
+  Resolve -- ambiguous --> Review["Import review item"]
+  Existing --> Rel["Recompute destination<br/>Relationship identity"]
+  New --> Rel
+  Rel --> Upsert{"Existing destination-owner<br/>Relationship?"}
+  Upsert -- Yes --> Support["Attach unique import support"]
+  Upsert -- No --> Other{"Equivalent other-owner<br/>Relationship?"}
+  Other -- Yes --> Cross["Create/review owned record<br/>and cross-reference"]
+  Other -- No --> CreateRel["Create owned destination record"]
 ```
 
-Rollback uses the import ledger. It aborts when affected graph entities changed
-after import, because reverting those changes could erase unrelated later work.
+Aliases remain Entity-name metadata. Pack import cannot create alias edges.
 
-## Agent Skill Export Prompt
+## Import Ledger
 
-Memory packs are for importing and exporting memory artifacts. Dense-Mem also
-ships MCP prompts for file-based sharing when an assistant should turn selected
-experience into an Agent Skill instead of creating a memory-pack artifact.
+Each import records:
 
-Use `prompts/list` to discover bundled prompts and `prompts/get` to render one.
-The first bundled prompt is `export_memory_as_agent_skill`; it asks the LLM to
-recall Dense-Mem context for a topic, distill durable rules and workflows into a
-self-contained `SKILL.md` file, and include optional reference files when useful.
-The generated skill should work for recipients without access to the source
-memory instance or MCP server, and it is not automatically imported back into
-memory.
+```text
+import_id
+pack hash/signature
+mode and actor
+source-to-destination Entity mapping
+source-to-destination Relationship mapping
+authenticated destination owner profile
+created observations/supports and support-decision events
+pre-import Relationship versions
+placement IDs and outcomes
+decisions and omissions
+pre-import search-document versions and states
+status and timestamps
+```
+
+The ledger makes retries idempotent and rollback auditable.
+
+## Rollback
+
+Rollback neutralizes only current effects attributable to the import, then
+recomputes affected state. It appends reversal/retraction records and never
+deletes the import ledger or restores a whole graph snapshot blindly.
+It can change only Relationships owned by the import's destination profile;
+cross-profile references are neutralized with append-only events and their
+targets remain untouched.
+
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart TD
+  Request["Rollback dry run"] --> Load["Load import ledger"]
+  Load --> Later{"Later observations, supports,<br/>merges, or decisions depend on import?"}
+  Later -- Yes --> Unsafe["Report blockers and manual plan"]
+  Later -- No --> Impact["Show support revocations,<br/>tier/status/edge changes"]
+  Impact --> Confirm{"Explicit confirmation?"}
+  Confirm -- No --> Stop["No write"]
+  Confirm -- Yes --> Tx["Append rollback transitions,<br/>recompute current state/search jobs"]
+```
+
+Rollback may lower tier or deactivate a Relationship after imported support is
+revoked from current policy. The original support/import history remains
+traceable. If later evidence independently supports it, the Relationship remains.
+A Relationship/Entity created by the import can be retired only when no later
+record depends on it.
+
+## Not A Backup
+
+A memory pack is selective and may omit control state, unresolved history,
+audit, exact provider metadata, and non-exportable evidence. Use
+[Operations Runbook](Operations-Runbook#backup) for recovery.
+
+## Risks And Mitigations
+
+| Risk | Concrete failure mode | Mitigation |
+| --- | --- | --- |
+| Source IDs collide | destination treats source `entity_id` as canonical | artifact-local refs and mandatory destination resolution |
+| Trusted import bypasses truth policy | signed pack copies fact tier directly | signature affects authority only; normal verification/lifecycle remains |
+| SSRF through URL import | server fetches cloud metadata/private services | HTTPS policy, IP/redirect validation, size/time limits, and expected hash |
+| Evidence disclosure | pack includes source content caller may not export | per-fragment authorization and explicit omission/failure report |
+| Rollback erases later work | imported Entity gained new Relationships after import | dry-run dependency graph and block unsafe automatic rollback |
+| Duplicate replay | same pack imported twice adds support repeatedly | team+pack-hash idempotency and item-level keys |
+| Malicious extension | unknown JSON changes semantics | reject unknown required extensions and ignore only explicitly optional ones |
+| Source author becomes an impersonation path | a pack from Profile A writes A-owned knowledge at the destination | bind one authenticated destination owner; retain source author as provenance only |
+| Cross-profile import overwrite | imported support changes another profile's matching Relationship | owner-scoped lookup/upsert and append-only cross-reference instead of target mutation |
+
+## Acceptance Invariants
+
+1. source IDs never become destination IDs without resolution
+2. import writes only through the canonical PostgreSQL write pipeline
+3. trusted mode cannot set tier/status directly
+4. pack retries do not duplicate observations or supports
+5. inspection writes nothing
+6. rollback preserves later independent evidence
+7. artifact hash is stable across supported implementations
+8. no credential, embedding, or Redis state is exportable
+9. ordinary import writes only destination-profile-owned Relationships
+10. rollback cannot mutate another profile's Relationship

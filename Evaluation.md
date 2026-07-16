@@ -1,164 +1,580 @@
 # Evaluation
 
-Dense-Mem's local evaluation harness measures recall and context assembly
-against deterministic seed data. It is intentionally separate from production
-memory: seed packs are imported into a disposable local team, recalled through
-the same tool surface clients use, and scored from exported refs.
+Evaluation decides whether the target architecture is correct, retrievable,
+isolated, recoverable, and fast under representative concurrent reads and
+writes. A single answer-quality score is insufficient.
 
-## Seed Packs
+## Current V2 Retrieval Evaluation
 
-Evaluation assets live in the main repository under `tests/eval/`.
+Semantic-memory comparisons are observational until a release gate is explicitly
+selected. They produce evidence for the next design decision; they do not
+declare v2 acceptable or unacceptable from a preselected Recall@K, nDCG, judge,
+or latency threshold.
 
-| Seed | Purpose |
+The active public comparison uses validated six-axis seeds generated locally and
+ignored by git:
+
+```text
+tests/eval/seeds/public_6axis_1k_v1
+tests/eval/seeds/public_6axis_5k_v1
+tests/eval/suites/public_6axis_1k_v1.jsonl
+tests/eval/suites/public_6axis_5k_v1.jsonl
+```
+
+`public_6axis_1k_v1` contains exactly 1,000 corpus rows and is the smoke
+comparison. `public_6axis_5k_v1` contains exactly 5,000 corpus rows and is the
+primary comparison. The 1k seed is a strict deterministic subset of the 5k seed.
+The six axes are SciFact, MS MARCO, HotpotQA, MuSiQue, QASPER, and LongMem
+Oracle. The corpus-row allocation is:
+
+| Axis | 1k rows | 5k rows |
+| --- | ---: | ---: |
+| SciFact | 90 | 500 |
+| MS MARCO | 90 | 500 |
+| HotpotQA | 90 | 500 |
+| MuSiQue | 160 | 1000 |
+| QASPER | 300 | 1400 |
+| LongMem Oracle | 270 | 1100 |
+
+Corpus evidence is split rather than truncated, every row is at most 999
+Unicode code points, and qrels resolve to generated `source_key` plus
+`source_revision` pairs before import. Seed validation, not recall quality, is
+a mandatory gate before any v1 or v2 stack starts.
+
+### Run protocol
+
+```text
+validated seed and suite
+  -> isolated runtime for each compared implementation
+  -> production MCP remember for every corpus evidence row
+  -> wait for every placement to reach a terminal successful state
+  -> export and validate complete remember outcomes
+  -> exactly one production recall_memory call per case
+  -> deterministic direct ranking report
+  -> separate discovery exposure report
+  -> AI-judge report over the initial response only
+  -> record final report and durable project-memory summary
+```
+
+Runs are sequential so provider contention does not bias recall latency. Each
+run records the server revision, evaluator revision and dirty-state
+fingerprint, seed/suite hashes, embedding configuration, reviewer/verifier
+model, judge model, transport, and isolated team ID. The reviewer/verifier
+model is configured by the runtime profile. The answer-quality judge model is
+recorded exactly. Import uses one evidence row per production `remember` call,
+and runner concurrency is part of the manifest.
+
+When v1 behavior and the seed are unchanged, the retained clean v1 trace and
+retrieval artifact may be reused. If the seed, v1 behavior, recall parser, or
+judge contract changes, regenerate the affected v1 artifact. V2 is reimported
+whenever remember logic, persisted semantic shape, verifier/reviewer prompt, or
+schema behavior changes. If only recall ranking changes, the existing successful
+v2 import may be reused after validating search freshness and placement state.
+
+The evaluator must not call `assemble_context`, embed the query again, perform a
+second retrieval, import through a shortcut, write the database directly, or let
+the judge discover missing facts. Final scoring requires every latest corpus
+evidence row to reach successful terminal placement; timed-out or failed
+production remembers must be repaired or reprocessed before recall scoring.
+Completed evidence rows are not restarted unless the production remember logic
+or persisted semantic shape changed. Monitor and resume logic count latest
+placement state per evidence `idempotency_key`, not raw placement-run rows.
+
+Direct Recall@K, MRR, nDCG@K, rank-one rate, and bad-result counts score only
+the initial ranked `results[]`. `discovery_paths` are navigation and trace
+hints, so discovery recall and exposure are secondary metrics and never improve
+the direct top-K score. The AI judge receives only the exact initial response
+and supplied gold data; it cannot follow guidance, recall again, or use outside
+knowledge. Recall latency reports average, p50, and p95.
+
+Optional diagnostic ablations may run after the main v2 report, but they must
+use the same production recall entry point with a named runtime profile, never
+gold labels or evaluator-only candidate manipulation. Useful ablations are:
+full-text-only, vector-only, no-discovery, and adjusted evidence branch limits.
+
+### Seed generation and validation
+
+Before seed generation, delete the existing ignored generated seed, suite, and
+`.runtime` contents after stopping eval compose projects and confirming their
+mounts. Preserve `tests/eval/data/`, source scripts, compose files, and tracked
+repository files. After cleanup, the final generated inventory must contain
+only the two six-axis seeds and their two suites.
+
+Generate into temporary staging directories, validate independently, regenerate
+cleanly and byte-compare, write `validation_report.json`, then atomically
+promote. Both 1k and 5k seeds must pass before any import, baseline, candidate,
+recall, judge, or comparison run. A failed validation promotes neither seed;
+fix the generator or mapping, regenerate both from scratch, and rerun all
+validation.
+
+Validation must prove exact counts, deterministic 1k subset of 5k, stable
+hashes, upstream hash/license metadata, unique same-scope source IDs, no
+oversized rows, no within-scope exact duplicate content, complete qrel
+resolution, grouped/alternative qrel semantics, no answer/qrel leakage in
+corpus metadata, BEIR positive completeness, QASPER original-unit mapping, and
+LongMem Oracle non-abstention sourcing. Final import and runner modes refuse a
+seed whose validation report is missing, failed, hash-mismatched, or produced
+by an incompatible validator.
+
+## Source Versus Runtime Boundary
+
+| Committed source | Local ignored runtime data |
 | --- | --- |
-| `local_eval_1k_v2` | Committed local acceptance seed with 1,000 cases, 4,000 corpus rows, 3,000 hard negatives, and 1,000 qrels. |
-| `local_eval_relational_1k_v1` | Committed relational recall seed with 1,000 cases, 4,000 corpus rows, 2,000 hard negatives, 1,000 qrels, and 100 expected dream hypotheses. |
-| `local_train_100k_v1` | Ignored local-only training or load fixture. |
-| `local_train_relational_100k_v1` | Ignored local-only relational training or load fixture. |
+| evaluation runner and harness code | downloaded/generated datasets |
+| generation, sampling, execution, and validation scripts | generated seeds and suites |
+| schemas, deterministic test definitions, and gate logic | isolated databases, run outputs, and logs |
+| documentation describing methodology and required gates | baseline/candidate results and generated comparison artifacts |
 
-The relational seed exercises overlapping entity relationships, time windows,
-aliases, source authority, negation, retractions, and close-neighbor
-distractors. It also scores expected dream hypotheses separately from validated
-memory results.
+Generated seeds, suites, results, and comparison artifacts stay under ignored
+evaluation paths such as `tests/eval/seeds/`, `tests/eval/suites/`, and
+`tests/eval/.runtime/`. They are local runtime data: never stage or commit them,
+and do not treat them as release documentation or release evidence. The manual
+defines how to evaluate and what must pass; it may include compact dated notes
+when a run changes methodology or comparability, but it does not replace the
+generated artifact files.
 
-Regenerate the committed acceptance seed only when intentionally changing the
-seed:
+## Pre-Evaluation Local Gate
 
-```bash
-go run ./cmd/eval-seedgen \
-  --preset local_eval_1k_v2 \
-  --out tests/eval/seeds/local_eval_1k_v2 \
-  --suite tests/eval/suites/local_eval_1k_v2.jsonl
-```
-
-Generate the relational held-out seed:
-
-```bash
-go run ./cmd/eval-seedgen --preset local_eval_relational_1k_v1
-```
-
-Generate the local-only relational training fixture:
-
-```bash
-go run ./cmd/eval-seedgen --preset local_train_relational_100k_v1
-```
-
-## Runner Commands
-
-Validate the default committed seed:
-
-```bash
-go run ./cmd/eval-runner --mode validate
-```
-
-Validate the committed relational seed:
-
-```bash
-go run ./cmd/eval-runner \
-  --mode validate \
-  --seed tests/eval/seeds/local_eval_relational_1k_v1/seed_manifest.json \
-  --suite tests/eval/suites/local_eval_relational_1k_v1.jsonl
-```
-
-Run a live local baseline against an already configured local instance:
-
-```bash
-DENSE_MEM_API_KEY=<read-write-key> \
-DENSE_MEM_CONTROL_TOKEN=<control-token> \
-scripts/eval-local.sh \
-  --mode baseline \
-  --import-seed \
-  --min-recall-at-k 0.80 \
-  --min-required-rank1-rate 0.55 \
-  --max-average-bad-at-k 0.20 \
-  --max-bad-rank1-rate 0.05 \
-  --out tests/eval/runs/$(date -u +%Y%m%dT%H%M%SZ)_baseline
-```
-
-Live imports call `remember` for fragment-only rows and `import_memories` for
-rows with typed claims. Fragment-only rows poll `get_memory_placement`, so a
-4,000-row seed can require thousands of tool requests before recall cases run.
-For disposable compose eval runs, raise `RATE_LIMIT_PER_MINUTE` before starting
-the server.
-
-## Evaluation Mode
-
-The runner enables `EVALUATION_MODE_ENABLED`, imports seed rows, optionally runs
-the eval-only dream cycle, exports knowledge refs, runs recall cases, and writes
-artifacts under `tests/eval/runs/`.
-
-Expected output files include:
+Before running or reporting the v2 evaluation, the branch must pass:
 
 ```text
-run_config.json
-seed_manifest.json
-suite.jsonl
-knowledge_mapping.json
-recall_traces.jsonl
-retrieval_scores.jsonl
-summary.json
-gate_result.json
-comparison.json
+go test ./... -count=1
+npm --prefix web run build
+npm --prefix web test -- --run
+npm --prefix web run playwright:mock
+scripts/e2e-compose.sh
+tests/uat/e2e-journey.spec.ts against an isolated compose stack
 ```
 
-Evaluation exports and recall traces are on by default whenever evaluation mode
-is enabled. Do not use production teams or production memory for primary RAG
-evaluation.
+The UAT journey is the current v2 production-surface smoke: `remember`,
+`get_memory_placement`, `recall_memory`, canonical `GET /api/v1/recall`,
+OpenAPI, and cross-team isolation. It must not depend on removed direct v1
+fragment, claim, or fact routes.
 
-## Scoring
+## Evaluation Dimensions
 
-Retrieval scoring is deterministic:
-
-```text
-ranked_refs + qrels.required_refs + qrels.bad_refs
-  -> Recall@K
-  -> MRR
-  -> nDCG@K
-  -> Bad@K
-  -> required_rank1_rate
-  -> bad_rank1_rate
-```
-
-The runner also scores assembled context refs when traces include
-`context_refs`, supporting evidence when traces include `context_evidence_refs`,
-and dream hypotheses when traces include `dream_refs`.
-
-See [Recall Ranking](Recall-Ranking#reading-evaluation-traces) for ranking trace
-fields and [Evaluation Semantics And Gates](Recall-Ranking#evaluation-semantics-and-gates)
-for cross-tier source mapping and fragment-only evidence fallback behavior.
-
-Dream metrics are separate:
-
-```text
-dream_refs + qrels.required_dream_refs + qrels.bad_dream_refs
-  -> average_dream_recall_at_k
-  -> average_dream_mrr
-  -> average_dream_ndcg_at_k
-  -> average_dream_bad_at_k
-  -> dream_required_rank1_rate
-  -> dream_bad_rank1_rate
-```
-
-Dream metrics do not change ordinary ranked, context, or evidence metrics.
-Expected dream qrels are mapped through `expected_dreams.jsonl` by matching the
-dream source-ref set exported from `eval_list_knowledge_refs`.
-
-## Eval-Only Tools
-
-Evaluation tools are visible only when evaluation mode is enabled and require a
-read-write API key. They fail closed when runtime config is unavailable.
-
-| Tool | Purpose |
+| Dimension | Question |
 | --- | --- |
-| `eval_get_manifest` | Return the evaluation-mode manifest, runtime limits, and available capabilities. |
-| `eval_list_knowledge_refs` | Page through team-scoped fragments, claims, facts, communities, dreams, or graph edges. |
-| `eval_get_knowledge_item` | Fetch one exported evaluation item. |
-| `eval_run_recall_case` | Run one recall/context evaluation case through current Dense-Mem logic. |
-| `eval_run_dream_cycle` | Run the dream phase during evaluation so expected dream hypotheses can be exported and scored. |
-| `eval_score_retrieval_case` | Score one set of ranked refs against required and bad refs. |
-| `eval_list_recall_feedback_events` | Export stored recall-feedback events for offline analysis. |
-| `eval_get_recall_feedback_event` | Fetch one stored recall-feedback event. |
+| semantic correctness | did evidence become the right Entity/Value/Relationship state and history? |
+| identity | did aliases converge and homonyms stay separable? |
+| verification contract | did invalid model output produce zero partial semantic writes? |
+| retrieval quality | did full-text/vector/adjacency return the intended active Relationships? |
+| vector fidelity | how close is filtered HNSW to exact team-filtered search? |
+| temporal/lifecycle | are candidate, conflict, supersession, retraction, and time handled correctly? |
+| provenance | can trace reconstruct exact evidence, verification, support, and transitions? |
+| isolation/security | can any actor see or affect another team, and can a profile mutate another profile's knowledge? |
+| performance/scaling | what happens under simultaneous remember/recall/trace/job load? |
+| operations | do restart, Redis loss, backup/restore, and vector rebuild preserve behavior? |
+| migration | does legacy data map without silent collapse or activation? |
 
-`eval_run_dream_cycle` accepts optional `seed_dreams` in evaluation mode. Seeded
-dreams are deterministic hypotheses with source refs; they are capped by
-`max_outputs` and remain hypotheses, not facts.
+## Reproducibility Manifest
+
+Every run records:
+
+```text
+run_id
+UTC start/end
+application commit and dirty-tree state
+Go/web dependency lock hashes
+contract and schema migration versions
+cluster-safe schema/key-contract version
+PostgreSQL and pgvector versions/config
+predicate registry version
+reviewer/verifier provider, model, prompt revision, and local contract hash
+embedding provider/model, dimensions, normalization, and document version
+search-index profile, distance/operator, and HNSW construction
+ranking profile and HNSW query parameters
+PostgreSQL topology, node/shard count, connection budget, and replica policy
+team-size/skew/concurrency dataset version
+random seeds and algorithm versions
+Redis mode/topology when used
+feature flags and hard limits
+```
+
+Secrets, unnecessary evidence content, provider raw responses, and vectors are
+excluded from the local run record.
+
+## Isolated Run Lifecycle
+
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart LR
+  Manifest["Freeze manifest"] --> DB["Create isolated PostgreSQL database"]
+  DB --> Migrate["Install pgvector and run migrations"]
+  Migrate --> Seed["Seed through MCP tools and<br/>first-party review workflows"]
+  Seed --> Poll["Poll processing and search state"]
+  Poll --> Integrity["Run semantic and RLS invariants"]
+  Integrity --> Cases["Run recall, trace, dream,<br/>correction and load cases"]
+  Cases --> Oracle["Compare ANN with exact<br/>and outputs with judgments"]
+  Oracle --> Outputs["Write ignored local<br/>runtime outputs"]
+  Outputs --> Cleanup["Stop isolated dependencies"]
+```
+
+Baseline and candidate use separate restored copies of the same seed snapshot.
+Do not run both against one mutable team or share vector-job state.
+
+If evaluation invokes a real provider, store stable request IDs, model/version,
+and bounded structured verdicts needed for comparison. A deterministic recorded
+provider may test protocol repeatability, but it cannot substitute for
+model-quality evaluation.
+
+## Seed Design
+
+Seed packs are generated locally from approved public or synthetic inputs and
+remain ignored runtime data. Commit the generator and validation logic, not the
+generated corpus, suite, or seed manifest.
+
+The corpus includes:
+
+- repeated paraphrases of the same Entity/Relationship
+- aliases, former names, title/kind drift, and two same-name people
+- one initially plausible Mark followed by later distinguishing conflict
+- Entity and typed-Value objects
+- registered predicate aliases and unknown predicates
+- state/event and one/many current-cardinality predicates
+- positive/negative polarity and temporal intervals
+- authoritative user evidence, dependent duplicates, and independent sources
+- entailed, contradicted, insufficient, conflict, update, and ambiguity cases
+- deterministic pass, guarded, and quarantine evidence, including quoted
+  security documentation that must not become a one-phrase false positive
+- reviewer and verifier security-signal cases, manager release, and unauthorized
+  release
+- stable source revisions, stale prior-revision tokens, explicit fragment
+  supersession, team-wide support revocation, and fact demotion
+- hub/cyclic graph shapes
+- candidate inputs eligible/ineligible for dreaming
+- cross-team near-duplicates designed to catch vector/RLS leaks
+- three writable same-team profiles with corroborating and conflicting
+  Relationships, cross-references, and profile-local merge/split corrections
+
+Seed through MCP `remember` and the first-party client-review workflow so runs
+exercise extraction, verification, policy, transactions, jobs, and interface
+contracts. Direct SQL is allowed only to create an explicitly labeled
+corruption/failure fixture.
+
+## Hard Semantic Invariants
+
+Every run fails immediately on:
+
+| Invariant | Required result |
+| --- | --- |
+| Entity identity | one real identity has one canonical ID; homonyms may have separate IDs |
+| semantic node kinds | only Entity and typed Value appear in graph-shaped reads |
+| Relationship identity | repeated same-owner evidence attaches to one record; another owner remains distinct and grouped |
+| edge eligibility | only `active validated_claim/fact` appears as SemanticEdge |
+| candidate isolation | `candidate/pending_evidence` appears in neither default recall nor active graph |
+| Hypothesis isolation | dream output changes no Entity/Value/Relationship/support/tier/status |
+| evidence lineage | every support resolves to an exact immutable span/source group; effective counts match latest support decisions |
+| fact promotion | authority or two genuinely independent accepted sources; stored facts are not new evidence |
+| source revision | one source lineage remains one independence group; exact prior token required; activation revokes old support team-wide |
+| fact demotion | loss of effective promotion basis demotes the same Relationship automatically |
+| injection boundary | deterministic quarantine calls no model; model signals commit no semantic subset; release requires manager plus write |
+| unknown predicate | observation/review only; no Relationship |
+| forget | no active edge; Entity/Value and ledger history remain |
+| append-only | evidence, material decisions, support, correction, and transition history is unchanged |
+| tenant isolation | zero cross-team rows/IDs across all branches and trace |
+| profile ownership | same-team eligible knowledge is readable, but lifecycle/support/merge/split changes affect caller-owned records only |
+| version safety | stale embedding job cannot update a newer document |
+
+## Identity Cases
+
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart TD
+  Case["Identity fixture"] --> Repeat["Repeated exact/paraphrased mention"]
+  Case --> Alias["Alias or former name"]
+  Case --> One["One plausible same-name candidate"]
+  Case --> Many["Several plausible homonyms"]
+  Case --> Late["Later contradictory context"]
+  Repeat --> OneID["One Entity"]
+  Alias --> OneID
+  One --> Reuse["Reuse unless contradiction"]
+  Many --> Review["Ambiguity review; no active dependent edge"]
+  Late --> Split["Client-confirmed selected-observation split"]
+```
+
+Measure false merge, false split, duplicate-candidate rate, ambiguity rate, and
+client-correction burden. A low duplicate count is not success if valid
+homonyms were collapsed.
+
+## Strict Verifier Evaluation
+
+Fault fixtures include:
+
+```text
+malformed JSON
+unknown field
+missing or extra result array
+extra predicate_results array
+missing, duplicate, or unknown ref
+candidate ID outside allowlist
+non-null ID on create/ambiguous
+unknown predicate key
+security signal with unknown evidence ID
+security signal with invalid or mismatched span
+wrong enum/type/range
+oversized string/array/output
+cross-array unresolved endpoint
+timeout and 429
+valid response after one full regeneration
+invalid response after retry budget
+```
+
+For every invalid attempt assert:
+
+- no Entity/Value/Relationship/support/transition is committed from that output
+- no partial array is spliced into a later response
+- no `VerificationEvent` represents the invalid attempt
+- staged evidence and safe processing failure remain traceable
+- a retry contains the original immutable request and validation pointers and
+  expects a complete response
+
+## Relationship And Fact Cases
+
+Required examples:
+
+1. one entailed ordinary source creates/updates an active
+   `validated_claim` under policy
+2. one entailed authoritative user source can produce `fact`
+3. two genuinely independent entailed accepted source groups can produce
+   `fact`
+4. duplicate copies or quoted common origin count once
+5. `Mark works_on Dense-Mem` and `Dense-Mem uses PostgreSQL` do not automatically
+   create `Mark uses PostgreSQL`
+6. a dream may propose that third connection as a Hypothesis using existing
+   nodes, but cannot activate it
+7. `insufficient` creates/retains a pending candidate only when endpoints and a
+   predicate resolve
+8. conflict/single-current replacement remains review-held until safe
+9. forget retracts from current reads without erasing trace
+10. B's entailed correction can remain active beside A's knowledge and link it
+    without changing A
+11. C recall prefers the better-supported applicable position while retaining
+    conflict refs, or asks for clarification when the margin is insufficient
+12. A can adopt B's exact evidence without duplicating its source group, then
+    supersede only A's prior Relationship
+
+## Recall Judgments
+
+Each case records query, allowed actor/team, expected relevant IDs, forbidden
+IDs, time scope, expected branch behavior, and optional Hypothesis/community
+expectations.
+
+Core metrics:
+
+| Metric | Meaning |
+| --- | --- |
+| Recall@K | relevant Relationship coverage |
+| MRR | first relevant rank |
+| nDCG@K | graded ranking quality |
+| exact-anchor success | all required hard anchors satisfied by one result |
+| judged-bad rate | top-K results explicitly unsafe/irrelevant |
+| trace completeness | expected evidence/verification/transition refs present |
+| candidate/Hypothesis leak count | must be zero in primary results |
+| cross-team leak count | must be zero |
+| cross-profile mutation count | must be zero |
+| conflict preference accuracy | stronger evidence-backed authored position ranks first |
+| conflict clarification accuracy | unresolved evidence margins produce clarification |
+| p50/p95/p99 latency | overall and per branch |
+
+Report results by tier, time, team size, degree, query type, and search-freshness
+state. Aggregate scores can hide a small-tenant or homonym failure.
+
+## Exact Versus HNSW Oracle
+
+For each vector dataset/query:
+
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart LR
+  Query["Same query vector and<br/>team/eligibility filters"] --> Exact["Exact distance top K"]
+  Query --> ANN["HNSW iterative top K"]
+  Exact --> Compare["Recall@K, rank overlap,<br/>latency, tuples, buffers"]
+  ANN --> Compare
+  Compare --> Gate{"Quality and latency<br/>both pass?"}
+```
+
+Datasets vary:
+
+- small/medium/large teams
+- many small tenants sharing one table
+- one large skewed tenant
+- selective status/tier/time/predicate filters
+- concurrent inserts/updates and reads
+- pending/stale/current embedding mixtures
+- single-primary, qualified hot-standby, and every advertised team-sharded
+  topology
+
+Exact filtered search is the quality oracle, not an assumed production path.
+Changing `ef_search`, iterative mode, topology/partitioning, index construction,
+RRF/reranking, or document format requires the applicable execution checks in
+[ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec) and fusion checks in
+[Vector Search And Ranking](Vector-Search-And-Ranking), plus a new matched run.
+
+## PostgreSQL Graph-Read Evaluation
+
+Evaluate point lookup, one-hop incoming/outgoing, predicate-filtered one-hop,
+and bounded multi-hop/recursive expansion under:
+
+- uniform and power-law degree
+- hubs and cycles
+- strict seed/fan-out/depth/edge/time caps
+- concurrent `remember` transactions and embedding jobs
+- tenant-filter selectivity and RLS
+- cold/warm cache conditions
+
+Record query plans, rows, buffers, temp spill, lock/wait time, stopped reason,
+and result parity with a deterministic in-test traversal oracle.
+
+The goal is not to prove PostgreSQL wins every graph workload. It is to prove
+Dense-Mem's bounded workload meets its SLO. If it cannot, capture the failing
+shape before proposing another store.
+
+## Concurrent Load Matrix
+
+| Workload | Example mix |
+| --- | --- |
+| write-heavy | remember intake + placement + embedding jobs |
+| read-heavy | full-text/vector/adjacency recall + trace |
+| mixed | 20% writes, 70% recall, 10% trace/control |
+| burst | many users submit and recall after a shared event |
+| correction | active recall while corrections/forget/splits commit |
+| optional jobs | dream/community runs beside core traffic |
+
+For each, record throughput, latency percentiles, errors, per-process and total
+connection-pool saturation, vector-semaphore waits, locks/deadlocks, WAL/disk,
+replica lag/cancellation, CPU/memory, HNSW quality, queue age, and tenant
+fairness.
+
+## Failure Injection
+
+Inject:
+
+- reviewer/verifier timeout, 429, malformed and partial response
+- deterministic scanner false-positive/false-negative fixtures, valid reviewer
+  and verifier security signals, and repeated quarantine after release
+- stale or unowned source revision, source-activation fanout overflow, and crash
+  before/after the atomic source pointer and support transition
+- embedding provider outage and wrong dimension
+- PostgreSQL connection loss, lock timeout, serialization failure, and worker
+  restart
+- standby replay lag, recovery-conflict cancellation, failover, and stale-route
+  prevention
+- one distributed worker missing the active pgvector index/profile
+- stale team placement epoch during rebalance/failover and attempted
+  alternate-shard write
+- cross-team composite-FK insert, missing-team repository lookup, and worker
+  claim without transaction-local team context
+- stale embedding job racing correction
+- Redis loss in one-process and multi-instance modes
+- crash before and after semantic transaction commit
+- backup restore followed by derived vector rebuild
+- dream/community source version change during generation
+
+Expected outcomes come from
+[Memory Write Pipeline](Write-Pipeline#failure-semantics) and
+[Operations Runbook](Operations-Runbook), not per-test invention.
+
+## Migration Evaluation
+
+Legacy Neo4j is read-only corpus input during `2.1.x` migration evaluation.
+
+Compare:
+
+- current non-superseded source knowledge versus terminal official-pipeline
+  outcomes, plus the superseded exclusion manifest
+- every team/original owner versus migrated owner and system migration actor
+- Entity duplicates/homonyms/aliases and unresolved review counts
+- Relationship identity collisions by polarity/scope/time
+- active/candidate/review/rejected outcomes produced by v2 policy rather than
+  copied v1 tiers
+- exact evidence/trace coverage where legacy provenance exists
+- default recall parity on approved cases
+- no newly activated unsupported candidate
+- required vector freshness, hard gate report, and automatic cutover marker
+
+Count parity alone cannot approve migration because a one-to-one copy may
+preserve duplicates or wrong semantics.
+
+## Local Runtime Outputs
+
+Suggested ignored local layout:
+
+```text
+tests/eval/.runtime/
+  final-v1/
+    1k/
+    5k/
+  final-v2/
+    1k/
+    5k/
+  final-comparison/
+    1k/
+    5k/
+```
+
+Runtime outputs may include stable IDs and bounded judgments but omit secrets
+and unapproved evidence/provider payloads. They may be regenerated or deleted
+without changing source or release documentation.
+
+## Release Gates
+
+These are future release criteria. They are intentionally not applied as a
+pass/fail gate to the initial v1/v2 comparison above; its report presents raw
+paired results and examples for review first.
+
+| Gate | Requirement |
+| --- | --- |
+| hard invariant | zero tenant, candidate, Hypothesis, duplicate-edge, append-only, and partial-commit violations |
+| verifier | every negative fixture rejects the whole response |
+| injection | no quarantined semantic/search state, no unauthorized release, and no model signal accepted as a safety clearance |
+| source lifecycle | stale/unowned revision changes nothing; accepted revision atomically revokes old effective support and recomputes tiers |
+| identity | false merge/split thresholds approved per dataset slice |
+| recall | agreed Recall@K/MRR/nDCG and judged-bad thresholds |
+| vector | HNSW Recall@K versus exact plus latency SLO |
+| performance | p95/p99 and throughput under target concurrent mix |
+| topology | single-primary plus every advertised HA/distributed topology passes parity, lag, failover, RLS, and bounded-load gates |
+| cluster-safe schema | zero nullable tenant rows, unscoped tenant keys/FKs/lookups, or cross-team references |
+| recovery | isolated PITR restore, vector rebuild, and smoke pass |
+| migration | every team/author accounted for, official-pipeline terminal outcomes complete, vectors current, hard gates pass, and automatic marker valid |
+
+A gate waiver names the failing slice, owner, expiry, user impact, and rollback.
+Security/tenant-leak and append-only/partial-write invariants are not waivable.
+Gate review reads the ignored local outputs; generated seeds, results, and
+comparisons are not added to the release evidence set.
+
+## Risks And Mitigations
+
+| Risk | Concrete failure mode | Mitigation |
+| --- | --- | --- |
+| Benchmark overfits one tenant | HNSW looks good globally but misses small-team matches | stratify by tenant size/filter and use exact filtered oracle |
+| Baseline/candidate contaminate | both runs share mutable vectors/jobs | isolated restored databases and frozen manifests |
+| Mocked success | fake repositories pass while RLS/locks/operators fail | real PostgreSQL + `pgvector` for storage gates |
+| Count parity hides semantic loss | migration maps every edge but collapses two Marks | identity/trace/collision cases plus client-reviewed sample |
+| Cross-profile correction mutates target | B's stronger evidence supersedes A automatically | A/B/C ownership fixtures and target-row version checks |
+| Provider variability hides regression | model change shifts identity/verdict output | record provider, model, prompt revision, and local contract hash; use repeated/paired runs |
+| Security corpus overfits keywords | detector passes benchmark but quarantines ordinary security prose | include quoted/adversarial minimal pairs and measure pass/guarded/quarantine confusion separately |
+| Source fixtures miss shared adoption | revision tests pass for one profile but leave another profile's fact active | use A/B/C adoption fixtures and verify effective support/tier/search state for every dependent owner |
+| Load test corrupts production | evaluation endpoints run on real teams | isolated credentials/database and production feature gate off |
+| Single-node benchmark hides cluster failure | local HNSW passes while a standby is stale or one shard lacks the index | topology manifest plus replica/shard parity, lag, failover, and plan gates |
+
+## Evaluation Acceptance
+
+1. no run finalizes with nonterminal placement/embedding work
+2. all manifests are complete and comparable
+3. hard semantic/isolation invariants run before quality scoring
+4. HNSW is always compared with exact team-filtered results
+5. concurrent read/write load includes tenant skew and hub graphs
+6. invalid verifier output proves zero partial semantic commit
+7. failure injection and recovery produce canonical expected outcomes
+8. migration reports identity/Relationship ambiguity, not only row counts
+9. RRF enabled/disabled profiles, deterministic reranking, and cross-profile
+   conflict preference are evaluated separately
+10. migration cannot pass with a missing author, nonterminal corpus item,
+    required stale vector, or cross-profile mutation
+11. every advertised PostgreSQL topology passes the same semantic, tenant,
+    exact/ANN, connection-budget, backup, and failover gates
+12. reviewer/verifier contracts contain bounded security signals but no model
+    schema version, stored-knowledge alignment, or stored Relationship IDs
+13. source revision activation, automatic demotion, and stale-token rejection
+    pass with same-team cross-profile adopters
