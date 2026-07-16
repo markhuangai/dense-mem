@@ -307,7 +307,7 @@ test("user portal logs in with a real API key and shows only that profile", asyn
 
   await page.getByRole("button", { name: "Recall" }).click();
   await expect(page.getByLabel("Recall results")).toBeVisible();
-  await expect(page.getByText("Search across facts, claims, and memory")).toBeVisible();
+  await expect(page.getByText("Search across evidence and relationships")).toBeVisible();
 
   await page.getByRole("button", { name: "Graph" }).click();
   await expect(page.getByLabel("Graph controls")).toBeVisible();

@@ -168,6 +168,7 @@ func (s *stubConfigProvider) GetAIEmbeddingTimeoutSeconds() int      { return 0 
 func (s *stubConfigProvider) IsEmbeddingConfigured() bool            { return false }
 func (s *stubConfigProvider) GetAIVerifierAPIURL() string            { return "" }
 func (s *stubConfigProvider) GetAIVerifierAPIKey() string            { return "" }
+func (s *stubConfigProvider) GetAIReviewerModel() string             { return "" }
 func (s *stubConfigProvider) GetAIVerifierModel() string             { return "" }
 func (s *stubConfigProvider) GetAIVerifierTimeoutSeconds() int       { return 0 }
 func (s *stubConfigProvider) GetAIVerifierMaxConcurrency() int       { return 0 }

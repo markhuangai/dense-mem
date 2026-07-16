@@ -172,8 +172,7 @@ func TestUAT10_ToolCatalogAndOpenAPI(t *testing.T) {
 		seen[tl.Name] = true
 	}
 	for _, name := range []string{
-		"recall_memory", "remember", "get_memory_placement", "dispute_memory_placement",
-		"confirm_memory", "reflect_memories", "import_memories",
+		"recall_memory", "remember", "get_memory_placement", "resolve_memory_placement",
 	} {
 		assert.True(t, seen[name], "registry must list %q after BuildDefault", name)
 	}

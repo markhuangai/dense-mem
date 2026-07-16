@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 	"github.com/stretchr/testify/require"
 )
@@ -127,6 +128,72 @@ func TestDisputeMemoryPlacementRejectsContradictoryEvidence(t *testing.T) {
 	require.Empty(t, savedRun.Items[0].ClaimID)
 	require.Empty(t, savedRun.Items[0].FactID)
 	require.Equal(t, 0, promote.called)
+}
+
+func TestDisputeMemoryPlacementReleaseQuarantineRequiresManager(t *testing.T) {
+	store := &statefulPlacementStore{run: quarantinedPlacementRun(time.Now().UTC())}
+	semanticStore := &stubSemanticStore{}
+	svc := New(Dependencies{
+		PlacementStore: store,
+		SemanticStore:  semanticStore,
+	})
+	ctx := requestctx.WithActorCredential(context.Background(), requestctx.ActorCredential{Role: "member"})
+
+	_, err := svc.DisputeMemoryPlacement(ctx, "profile-1", DisputeRequest{
+		IngestID:        "ingest-1",
+		PlacementItemID: "item-1",
+		Action:          releaseQuarantineAction,
+		Message:         "Reviewed the evidence and approved guarded processing.",
+	})
+
+	require.ErrorContains(t, err, "manager role is required")
+	require.Empty(t, semanticStore.securityEvents)
+	run, getErr := store.GetRun(context.Background(), "profile-1", "ingest-1")
+	require.NoError(t, getErr)
+	require.NotNil(t, run)
+	require.Equal(t, domain.MemoryPlacementCompleted, run.Status)
+	require.Equal(t, domain.MemoryPlacementEvidenceQuarantined, run.Items[0].Category)
+	require.Equal(t, "completed", run.Items[0].Status)
+}
+
+func TestDisputeMemoryPlacementReleaseQuarantineRequeuesGuardedEvidence(t *testing.T) {
+	store := &statefulPlacementStore{run: quarantinedPlacementRun(time.Now().UTC())}
+	semanticStore := &stubSemanticStore{}
+	svc := New(Dependencies{
+		PlacementStore: store,
+		SemanticStore:  semanticStore,
+	})
+	ctx := requestctx.WithActorCredential(context.Background(), requestctx.ActorCredential{Role: "manager"})
+
+	res, err := svc.DisputeMemoryPlacement(ctx, "profile-1", DisputeRequest{
+		IngestID:        "ingest-1",
+		PlacementItemID: "item-1",
+		Action:          releaseQuarantineAction,
+		Message:         "Reviewed the evidence and approved guarded processing.",
+	})
+
+	require.NoError(t, err)
+	require.Nil(t, res.Session)
+	require.NotNil(t, res.Placement)
+	require.False(t, store.disputeCreated())
+	require.Len(t, semanticStore.securityEvents, 1)
+	event := semanticStore.securityEvents[0]
+	require.Equal(t, domain.EvidenceSecurityEventQuarantineRelease, event.Assessment.EventKind)
+	require.Equal(t, domain.EvidenceSecurityGuarded, event.Assessment.Decision)
+	require.Equal(t, "Reviewed the evidence and approved guarded processing.", event.Assessment.Reason)
+	require.False(t, event.DeactivateSearch)
+
+	savedRun := store.savedRunCopy()
+	require.Equal(t, domain.MemoryPlacementQueued, savedRun.Status)
+	require.Equal(t, 0, savedRun.Attempts)
+	require.Nil(t, savedRun.StartedAt)
+	require.Nil(t, savedRun.CompletedAt)
+	require.Empty(t, savedRun.Error)
+	require.Equal(t, domain.EvidenceSecurityGuarded, savedRun.Evidence[0].SecurityDecision)
+	require.Equal(t, domain.MemoryPlacementFragmentOnly, savedRun.Items[0].Category)
+	require.Equal(t, string(domain.MemoryPlacementQueued), savedRun.Items[0].Status)
+	require.Contains(t, savedRun.Items[0].Reason, "released by a manager")
+	require.Empty(t, savedRun.Items[0].RelationshipOutcomes)
 }
 
 func TestDisputeMemoryPlacementValidationAndOpenBranches(t *testing.T) {
@@ -342,4 +409,38 @@ func TestDisputeMemoryPlacementPreservesConcurrentContinuationTurns(t *testing.T
 
 	savedDispute := store.savedDisputeCopy()
 	require.Len(t, savedDispute.Turns, turnCount)
+}
+
+func quarantinedPlacementRun(now time.Time) domain.MemoryPlacementRun {
+	completedAt := now
+	return domain.MemoryPlacementRun{
+		IngestID:       "ingest-1",
+		ProfileID:      "profile-1",
+		OwnerProfileID: "owner-1",
+		Status:         domain.MemoryPlacementCompleted,
+		Attempts:       2,
+		StatusTool:     "get_memory_placement",
+		AvailableAt:    now,
+		CompletedAt:    &completedAt,
+		Evidence: []domain.MemoryEvidence{{
+			Index:            0,
+			Content:          "Dense-Mem uses Postgres.",
+			SecurityDecision: domain.EvidenceSecurityQuarantine,
+		}},
+		Items: []domain.MemoryPlacementItem{{
+			ItemID:         "item-1",
+			IngestID:       "ingest-1",
+			ProfileID:      "profile-1",
+			OwnerProfileID: "owner-1",
+			EvidenceIndex:  0,
+			FragmentID:     "fragment-1",
+			Category:       domain.MemoryPlacementEvidenceQuarantined,
+			Status:         "completed",
+			Reason:         "Evidence was quarantined.",
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		}},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
 }

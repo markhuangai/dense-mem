@@ -40,7 +40,7 @@ function protectedRoutes(): RouteCase[] {
     { method: 'POST', path: '/api/v1/tools/recall_memory', data: { query: 'noop' } },
     { method: 'POST', path: '/api/v1/tools/remember', data: { evidence: [{ content: 'noop' }] } },
     { method: 'POST', path: '/api/v1/tools/get_memory_placement', data: { ingest_id: ID } },
-    { method: 'POST', path: '/api/v1/tools/dispute_memory_placement', data: { ingest_id: ID, message: 'noop' } },
+    { method: 'POST', path: '/api/v1/tools/resolve_memory_placement', data: { ingest_id: ID, message: 'noop' } },
     { method: 'GET', path: '/api/v1/recall?query=noop' },
     { method: 'POST', path: '/mcp', data: { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} } },
     { method: 'GET', path: '/mcp' },
@@ -55,7 +55,7 @@ function readOnlyWriteRoutes(profileId: string): RouteCase[] {
     { method: 'POST', path: `/api/v1/teams/${TEAM_ID}/profiles/${profileId}/rotate`, data: { name: 'denied rotate', rate_limit: 120 } },
     { method: 'DELETE', path: `/api/v1/teams/${TEAM_ID}/profiles/${profileId}` },
     { method: 'POST', path: '/api/v1/tools/remember', data: { evidence: [{ content: 'denied' }] } },
-    { method: 'POST', path: '/api/v1/tools/dispute_memory_placement', data: { ingest_id: ID, message: 'denied' } },
+    { method: 'POST', path: '/api/v1/tools/resolve_memory_placement', data: { ingest_id: ID, message: 'denied' } },
   ];
 }
 

@@ -70,6 +70,19 @@ func TestRecallRegistryUsesSemanticRecallService(t *testing.T) {
 	require.NotContains(t, source, "recallRegistrySvc = recallservice.NewRecallService(")
 }
 
+func TestServerMainDoesNotBootLegacyNeo4j(t *testing.T) {
+	body, err := os.ReadFile("main.go")
+	require.NoError(t, err)
+	source := string(body)
+
+	require.NotContains(t, source, "ENABLE_LEGACY_NEO4J_BRIDGE")
+	require.NotContains(t, source, "internal/storage/neo4j")
+	require.NotContains(t, source, "neo4j.NewClient(")
+	require.NotContains(t, source, "neo4j.NewSchemaBootstrapper(")
+	require.NotContains(t, source, "NewProfileScopeEnforcer(")
+	require.Contains(t, source, "NEO4J_URI ignored by normal server boot")
+}
+
 func TestServerMainWiresProtectedKnowledgeHandlers(t *testing.T) {
 	body, err := os.ReadFile("main.go")
 	require.NoError(t, err)

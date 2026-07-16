@@ -59,8 +59,9 @@ func (s *stubPlacementStore) UpdateDisputeWithRun(context.Context, string, strin
 }
 
 type stubSemanticStore struct {
-	inputs []repository.SemanticRememberInput
-	err    error
+	inputs         []repository.SemanticRememberInput
+	securityEvents []repository.SemanticEvidenceSecurityEventInput
+	err            error
 }
 
 func (s *stubSemanticStore) StoreRemember(_ context.Context, input repository.SemanticRememberInput) (*repository.SemanticRememberResult, error) {
@@ -95,12 +96,43 @@ func (s *stubSemanticStore) StoreRemember(_ context.Context, input repository.Se
 	return result, nil
 }
 
+func (s *stubSemanticStore) StoreEvidenceSecurityEvent(_ context.Context, input repository.SemanticEvidenceSecurityEventInput) error {
+	s.securityEvents = append(s.securityEvents, input)
+	return nil
+}
+
 func (s *stubSemanticStore) LoadSemanticVerifierContext(context.Context, string, []repository.SemanticRelationshipInput) (repository.SemanticVerifierContext, error) {
 	return repository.SemanticVerifierContext{}, nil
 }
 
 func (s *stubSemanticStore) TraceRelationship(context.Context, string, string) (*domain.SemanticTraceResult, error) {
 	return nil, nil
+}
+
+func TestPlacementRetryDelayBoundsAttempts(t *testing.T) {
+	require.Equal(t, time.Duration(defaultPlacementRetryBaseSecond)*time.Second, placementRetryDelay(0))
+	require.Equal(t, time.Duration(defaultPlacementRetryBaseSecond)*time.Second, placementRetryDelay(1))
+	require.Equal(t, time.Duration(defaultPlacementRetryBaseSecond*4)*time.Second, placementRetryDelay(3))
+	require.Equal(t, time.Duration(defaultPlacementRetryMaxSecond)*time.Second, placementRetryDelay(20))
+}
+
+func TestPlacementSecurityHelpers(t *testing.T) {
+	require.Equal(t, "", ownerProfileIDForRun(nil))
+	require.Equal(t, "team-1", ownerProfileIDForRun(&domain.MemoryPlacementRun{ProfileID: "team-1"}))
+	require.Equal(t, "owner-1", ownerProfileIDForRun(&domain.MemoryPlacementRun{ProfileID: "team-1", OwnerProfileID: "owner-1"}))
+
+	items := []domain.MemoryPlacementItem{
+		{EvidenceIndex: 0, Status: string(domain.MemoryPlacementQueued)},
+		{EvidenceIndex: 2, Status: string(domain.MemoryPlacementCompleted)},
+	}
+	require.Equal(t, string(domain.MemoryPlacementCompleted), placementItemForEvidenceIndex(items, 2).Status)
+	require.Nil(t, placementItemForEvidenceIndex(items, 3))
+
+	evidence := []domain.MemoryEvidence{{Index: 0}, {Index: 2}}
+	updateEvidenceSecurityDecision(evidence, 2, domain.EvidenceSecurityGuarded)
+	updateEvidenceSecurityDecision(evidence, 3, domain.EvidenceSecurityQuarantine)
+	require.Equal(t, domain.EvidenceSecurityGuarded, evidence[1].SecurityDecision)
+	require.Empty(t, evidence[0].SecurityDecision)
 }
 
 func (s *stubSemanticStore) SearchRecallLexicalCandidates(context.Context, domain.SemanticRecallSearchScope) (domain.SemanticRecallCandidateBatch, error) {
@@ -128,7 +160,7 @@ func (s *stubSemanticReviewer) ReviewSemantic(context.Context, semanticReviewReq
 	if s.err != nil {
 		return semanticReviewResult{}, s.err
 	}
-	if len(s.result.Relationships) > 0 {
+	if len(s.result.Relationships) > 0 || len(s.result.SecurityAssessments) > 0 || s.result.Model != "" {
 		return s.result, nil
 	}
 	return semanticReviewResult{
@@ -382,6 +414,102 @@ func TestProcessNextPlacementStoresSemanticRelationship(t *testing.T) {
 	require.Len(t, saved.Items[0].RelationshipOutcomes, 1)
 	require.NotEmpty(t, saved.Items[0].RelationshipOutcomes[0].RelationshipID)
 	require.Equal(t, "relationship_validated_claim", saved.Items[0].RelationshipOutcomes[0].Category)
+}
+
+func TestProcessNextPlacementQuarantinesReviewerSecuritySignal(t *testing.T) {
+	teamID := uuid.NewString()
+	store := &statefulPlacementStore{}
+	semanticStore := &stubSemanticStore{}
+	reviewer := &stubSemanticReviewer{result: semanticReviewResult{
+		Model: "stub-semantic-reviewer",
+		SecurityAssessments: []semanticEvidenceSecurityAssessment{{
+			EvidenceIndex: 0,
+			Assessment: domain.EvidenceSecurityAssessment{
+				Decision:  domain.EvidenceSecurityQuarantine,
+				EventKind: domain.EvidenceSecurityEventReviewerSignal,
+				Signals: []domain.EvidenceSecuritySignal{{
+					Kind:      domain.EvidenceSignalInstructionOverride,
+					Severity:  domain.EvidenceSecuritySeverityHigh,
+					SpanStart: 0,
+					SpanEnd:   9,
+					Quote:     "Dense-Mem",
+				}},
+			},
+		}},
+	}}
+	svc := New(Dependencies{
+		PlacementStore:   store,
+		SemanticStore:    semanticStore,
+		SemanticReviewer: reviewer,
+		SemanticVerifier: &stubSemanticVerifier{},
+	})
+	_, err := svc.Remember(context.Background(), teamID, RememberRequest{
+		Evidence: []EvidenceInput{{Content: "Dense-Mem uses Postgres."}},
+	})
+	require.NoError(t, err)
+
+	processed, err := svc.ProcessNextPlacement(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	require.Len(t, semanticStore.inputs, 1)
+	require.Empty(t, semanticStore.inputs[0].Relationships)
+	require.Len(t, semanticStore.securityEvents, 1)
+	require.Equal(t, domain.EvidenceSecurityEventReviewerSignal, semanticStore.securityEvents[0].Assessment.EventKind)
+	saved := store.savedRunCopy()
+	require.Equal(t, domain.MemoryPlacementCompleted, saved.Status)
+	require.Equal(t, domain.MemoryPlacementEvidenceQuarantined, saved.Items[0].Category)
+	require.Equal(t, domain.EvidenceSecurityQuarantine, saved.Evidence[0].SecurityDecision)
+}
+
+func TestProcessNextPlacementQuarantinesVerifierSecuritySignal(t *testing.T) {
+	teamID := uuid.NewString()
+	store := &statefulPlacementStore{}
+	semanticStore := &stubSemanticStore{}
+	svc := New(Dependencies{
+		PlacementStore:   store,
+		SemanticStore:    semanticStore,
+		SemanticReviewer: &stubSemanticReviewer{},
+		SemanticVerifier: &stubSemanticVerifier{resp: &semanticVerifierResponse{
+			RequestID:           "placeholder",
+			SecuritySignals:     []semanticSecuritySignal{{EvidenceID: semanticEvidenceID(0), Kind: string(domain.EvidenceSignalInstructionOverride), Start: 0, End: 9}},
+			EntityResults:       []semanticVerifierEntityResult{},
+			RelationshipResults: []semanticVerifierRelationshipResult{},
+		}},
+	})
+	_, err := svc.Remember(context.Background(), teamID, RememberRequest{
+		Evidence: []EvidenceInput{{Content: "Dense-Mem uses Postgres."}},
+	})
+	require.NoError(t, err)
+	req := buildSemanticVerifierRequestWithEvidenceAndContext(store.run.IngestID, []repository.SemanticRelationshipInput{{
+		SubjectName:   "Dense-Mem",
+		SubjectKind:   domain.SemanticEntityProject,
+		Predicate:     "uses",
+		Polarity:      domain.PolarityPlus,
+		ObjectName:    "Postgres",
+		ObjectKind:    domain.SemanticEntityConcept,
+		EvidenceIndex: 0,
+		Quote:         "Dense-Mem uses Postgres.",
+		SpanStart:     0,
+		SpanEnd:       len("Dense-Mem uses Postgres."),
+		Tier:          domain.SemanticTierCandidate,
+		Status:        domain.SemanticStatusActive,
+	}}, store.run.Evidence, repository.SemanticVerifierContext{})
+	resp := semanticVerifierResponseForRequest(req)
+	resp.SecuritySignals = []semanticSecuritySignal{{EvidenceID: semanticEvidenceID(0), Kind: string(domain.EvidenceSignalInstructionOverride), Start: 0, End: 9}}
+	svc.deps.SemanticVerifier = &stubSemanticVerifier{resp: &resp}
+
+	processed, err := svc.ProcessNextPlacement(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	require.Len(t, semanticStore.inputs, 1)
+	require.Empty(t, semanticStore.inputs[0].Relationships)
+	require.Len(t, semanticStore.securityEvents, 1)
+	require.Equal(t, domain.EvidenceSecurityEventVerifierSignal, semanticStore.securityEvents[0].Assessment.EventKind)
+	saved := store.savedRunCopy()
+	require.Equal(t, domain.MemoryPlacementCompleted, saved.Status)
+	require.Equal(t, domain.MemoryPlacementEvidenceQuarantined, saved.Items[0].Category)
 }
 
 func TestProcessNextPlacementRetriesTransientSemanticReviewerFailure(t *testing.T) {

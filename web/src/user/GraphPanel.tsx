@@ -4,7 +4,6 @@ import {
   ArrowRight,
   CircleDot,
   Focus,
-  GitBranch,
   Network,
   RefreshCw,
   Search,
@@ -23,10 +22,8 @@ type ForceNode = NodeObject<GraphNode> & GraphNode;
 type ForceLink = LinkObject<GraphNode, GraphEdge> & GraphEdge;
 
 const defaultTypes: TypeFilter = {
-  fact: true,
-  claim: true,
-  fragment: true,
-  dream: true,
+  entity: true,
+  value: true,
 };
 
 export function GraphPanel({ api }: { api: UserApi }) {
@@ -34,11 +31,10 @@ export function GraphPanel({ api }: { api: UserApi }) {
   const [selectedKey, setSelectedKey] = useState("");
   const [searchText, setSearchText] = useState("");
   const [scope, setScope] = useState<"overview" | "local">("overview");
-  const [anchorType, setAnchorType] = useState<GraphNodeType>("fact");
+  const [anchorType, setAnchorType] = useState<GraphNodeType>("entity");
   const [anchorId, setAnchorId] = useState("");
   const [types, setTypes] = useState<TypeFilter>(defaultTypes);
   const [depth, setDepth] = useState(2);
-  const [includeSuperseded, setIncludeSuperseded] = useState(false);
   const [nodeSize, setNodeSize] = useState(5);
   const [linkDistance, setLinkDistance] = useState(92);
   const [showArrows, setShowArrows] = useState(true);
@@ -51,7 +47,7 @@ export function GraphPanel({ api }: { api: UserApi }) {
   const [detailError, setDetailError] = useState("");
   const [graphRevision, setGraphRevision] = useState(0);
 
-  async function loadGraph(query: GraphQuery = buildQuery({ searchText, scope, anchorType, anchorId, types, depth, includeSuperseded })) {
+  async function loadGraph(query: GraphQuery = buildQuery({ searchText, scope, anchorType, anchorId, types, depth })) {
     if (query.types?.length === 0) {
       setError("Select at least one type.");
       return;
@@ -79,7 +75,7 @@ export function GraphPanel({ api }: { api: UserApi }) {
   }
 
   useEffect(() => {
-    void loadGraph(buildQuery({ searchText: "", scope: "overview", anchorType, anchorId: "", types, depth: 2, includeSuperseded }));
+    void loadGraph(buildQuery({ searchText: "", scope: "overview", anchorType, anchorId: "", types, depth: 2 }));
   }, [api]);
 
   const selectedNode = selectedKey ? snapshot?.nodes.find((node) => node.key === selectedKey) ?? null : null;
@@ -166,10 +162,8 @@ export function GraphPanel({ api }: { api: UserApi }) {
             <div className="graph-anchor-grid">
               <label htmlFor="graph-anchor-type">Anchor type</label>
               <select id="graph-anchor-type" value={anchorType} onChange={(event) => setAnchorType(event.target.value as GraphNodeType)}>
-                <option value="fact">Fact</option>
-                <option value="claim">Claim</option>
-                <option value="fragment">Fragment</option>
-                <option value="dream">Dream</option>
+                <option value="entity">Entity</option>
+                <option value="value">Value</option>
               </select>
               <label htmlFor="graph-anchor-id">Anchor ID</label>
               <input id="graph-anchor-id" value={anchorId} onChange={(event) => setAnchorId(event.target.value)} />
@@ -178,7 +172,7 @@ export function GraphPanel({ api }: { api: UserApi }) {
 
           <fieldset className="graph-type-filter">
             <legend>Types</legend>
-            {(["fact", "claim", "fragment", "dream"] as GraphNodeType[]).map((type) => (
+            {(["entity", "value"] as GraphNodeType[]).map((type) => (
               <label className="filter-row" key={type}>
                 <input type="checkbox" checked={types[type]} onChange={() => toggleType(type)} />
                 <span>{nodeTypeLabel(type)}</span>
@@ -210,11 +204,6 @@ export function GraphPanel({ api }: { api: UserApi }) {
             <span>Labels</span>
             <input type="checkbox" checked={showLabels} onChange={(event) => setShowLabels(event.target.checked)} />
           </label>
-          <label className="toggle-row compact-toggle">
-            <span>Superseded</span>
-            <input type="checkbox" checked={includeSuperseded} onChange={(event) => setIncludeSuperseded(event.target.checked)} />
-          </label>
-
           <div className="button-row">
             <button className="primary-button compact" type="submit" disabled={loading || !hasSelectedTypes}>
               <RefreshCw size={16} aria-hidden="true" />
@@ -270,7 +259,7 @@ export function ResultGraphPreview({ api, anchor }: { api: UserApi; anchor: Grap
       anchorId: anchor.id,
       depth: 2,
       limit: 48,
-      types: ["fact", "claim", "fragment", "dream"],
+      types: ["entity", "value"],
     })
       .then((next) => {
         if (active) {
@@ -545,7 +534,6 @@ function buildQuery({
   anchorId,
   types,
   depth,
-  includeSuperseded,
 }: {
   searchText: string;
   scope: "overview" | "local";
@@ -553,7 +541,6 @@ function buildQuery({
   anchorId: string;
   types: TypeFilter;
   depth: number;
-  includeSuperseded: boolean;
 }): GraphQuery {
   const enabledTypes = (Object.keys(types) as GraphNodeType[]).filter((type) => types[type]);
   return {
@@ -563,7 +550,6 @@ function buildQuery({
     anchorType: scope === "local" ? anchorType : undefined,
     anchorId: scope === "local" ? anchorId.trim() : undefined,
     depth,
-    includeSuperseded,
   };
 }
 
@@ -602,20 +588,16 @@ function paintNodeArea(node: ForceNode, color: string, canvas: CanvasRenderingCo
 }
 
 function nodeValue(node: Pick<GraphNode, "type">, nodeSize: number) {
-  const typeBoost = node.type === "fact" ? 1.4 : node.type === "dream" ? 0.6 : 1;
+  const typeBoost = node.type === "entity" ? 1.2 : 0.8;
   return nodeSize + typeBoost;
 }
 
 function nodeColor(node: GraphNode): string {
   switch (node.type) {
-    case "fact":
+    case "entity":
       return "#0f766e";
-    case "claim":
-      return "#2563eb";
-    case "fragment":
+    case "value":
       return "#ca8a04";
-    case "dream":
-      return "#c026d3";
     default:
       return "#64748b";
   }
@@ -623,22 +605,14 @@ function nodeColor(node: GraphNode): string {
 
 function relationshipColor(type: string): string {
   switch (type) {
-    case "PROMOTES_TO":
-      return "#0f766e";
-    case "SUPPORTED_BY":
-      return "#64748b";
-    case "CONTRADICTS":
+    case "contradicts":
       return "#dc2626";
-    case "SUPERSEDED_BY":
+    case "supersedes":
       return "#b45309";
-    case "OVERLAYS":
-      return "#ea580c";
-    case "ALIGNS_WITH":
+    case "corroborates":
       return "#16a34a";
-    case "DREAMS_FROM":
-      return "#c026d3";
     default:
-      return "#64748b";
+      return "#2563eb";
   }
 }
 
@@ -647,29 +621,20 @@ function relationshipLabel(type: string): string {
 }
 
 function nodeTypeLabel(type: GraphNodeType | string): string {
-  if (type === "fact") {
-    return "Fact";
+  if (type === "entity") {
+    return "Entity";
   }
-  if (type === "claim") {
-    return "Claim";
-  }
-  if (type === "fragment") {
-    return "Fragment";
-  }
-  if (type === "dream") {
-    return "Dream";
+  if (type === "value") {
+    return "Value";
   }
   return "Node";
 }
 
 function nodeIcon(type: string) {
-  if (type === "fact") {
+  if (type === "entity") {
     return <CircleDot size={15} aria-hidden="true" />;
   }
-  if (type === "claim") {
-    return <GitBranch size={15} aria-hidden="true" />;
-  }
-  if (type === "dream") {
+  if (type === "value") {
     return <ArrowRight size={15} aria-hidden="true" />;
   }
   return <SlidersHorizontal size={15} aria-hidden="true" />;

@@ -62,6 +62,19 @@ func semanticEvidenceInputs(input []EvidenceInput) []repository.SemanticEvidence
 	return out
 }
 
+func semanticEvidenceInputsWithSecurity(input []domain.MemoryEvidence, assessments []domain.EvidenceSecurityAssessment) []repository.SemanticEvidenceInput {
+	out := semanticEvidenceInputsFromMemory(input)
+	for i := range out {
+		if i >= len(assessments) {
+			continue
+		}
+		assessment := assessments[i]
+		out[i].SecurityDecision = assessment.Decision
+		out[i].SecurityAssessment = &assessment
+	}
+	return out
+}
+
 func semanticEvidenceInputsFromMemory(input []domain.MemoryEvidence) []repository.SemanticEvidenceInput {
 	out := make([]repository.SemanticEvidenceInput, 0, len(input))
 	for _, item := range input {

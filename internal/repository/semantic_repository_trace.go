@@ -21,8 +21,10 @@ func (r *SemanticRepositoryImpl) TraceRelationship(ctx context.Context, teamID s
 	err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
 		rows, err := tx.WithContext(ctx).Raw(`
 			SELECT `+semanticRelationshipColumns()+`
-			FROM semantic_relationship_records
-			WHERE team_id = ? AND relationship_id = ?
+			FROM semantic_relationship_records r
+			LEFT JOIN semantic_values value
+			  ON value.team_id = r.team_id AND value.value_id = r.object_value_id
+			WHERE r.team_id = ? AND r.relationship_id = ?
 			LIMIT 1
 		`, teamID, relationshipID).Rows()
 		if err != nil {

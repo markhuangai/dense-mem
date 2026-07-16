@@ -138,20 +138,17 @@ func TestToolCatalogHandler_FullV2Surface(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	expected := []string{
-		"confirm_memory",
-		"dispute_memory_placement",
 		"export_memory_pack",
 		"find_memory_pack_candidates",
 		"get_dream",
 		"get_memory_placement",
-		"import_memories",
 		"import_memory_pack",
 		"inspect_memory_pack",
 		"list_dreams",
 		"recall_memory",
-		"reflect_memories",
 		"remember",
 		"resolve_dream_feedback",
+		"resolve_memory_placement",
 		"rollback_memory_pack_import",
 		"trace_memory",
 	}

@@ -79,8 +79,9 @@ func demoE2EEnv(image string, port int) []string {
 		"NEO4J_PASSWORD=demo-neo4j-e2e",
 		"AI_API_URL=https://api.openai.com/v1",
 		"AI_API_KEY=demo-e2e-placeholder",
-		"AI_API_EMBEDDING_MODEL=text-embedding-3-small",
-		"AI_API_EMBEDDING_DIMENSIONS=1536",
+		"AI_API_EMBEDDING_MODEL=text-embedding-3-large",
+		"AI_API_EMBEDDING_DIMENSIONS=3072",
+		"AI_REVIEWER_MODEL=gpt-4o-mini",
 		"AI_VERIFIER_MODEL=gpt-4o-mini",
 	}
 }

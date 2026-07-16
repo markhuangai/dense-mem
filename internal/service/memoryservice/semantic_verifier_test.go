@@ -2,6 +2,7 @@ package memoryservice
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 	"strings"
@@ -30,7 +31,7 @@ func TestValidateSemanticVerifierResponseRequiresWholeCoverage(t *testing.T) {
 
 	err := validateSemanticVerifierResponse(req, resp)
 
-	require.ErrorContains(t, err, "relationship_results coverage mismatch")
+	require.ErrorContains(t, err, "relationship_results is required")
 }
 
 func TestValidateSemanticVerifierResponseRejectsUnknownFieldsByAllowlist(t *testing.T) {
@@ -104,7 +105,7 @@ func TestVerifySemanticRelationshipsWrapsInvalidVerifierResponseAsMalformed(t *t
 	relationships := semanticRelationshipsFixture()
 	req := buildSemanticVerifierRequest("verify-1", relationships)
 	resp := semanticVerifierResponseForRequest(req)
-	resp.EntityResults = nil
+	resp.EntityResults = []semanticVerifierEntityResult{}
 
 	_, err := verifySemanticRelationships(context.Background(), &stubSemanticVerifier{resp: &resp}, "verify-1", relationships)
 
@@ -112,11 +113,58 @@ func TestVerifySemanticRelationshipsWrapsInvalidVerifierResponseAsMalformed(t *t
 	require.ErrorContains(t, err, "entity_results coverage mismatch")
 }
 
+func TestValidateSemanticVerifierResponseRequiresSecuritySignals(t *testing.T) {
+	req, resp := semanticVerifierFixture()
+	resp.SecuritySignals = nil
+
+	err := validateSemanticVerifierResponse(req, resp)
+
+	require.ErrorContains(t, err, "security_signals is required")
+}
+
+func TestValidateSemanticVerifierResponseRejectsInvalidSecuritySignal(t *testing.T) {
+	req, resp := semanticVerifierFixture()
+	resp.SecuritySignals = []semanticSecuritySignal{{
+		EvidenceID: semanticEvidenceID(0),
+		Kind:       string(domain.EvidenceSignalInstructionOverride),
+		Start:      0,
+		End:        1000,
+	}}
+
+	err := validateSemanticVerifierResponse(req, resp)
+
+	require.ErrorContains(t, err, "span is invalid")
+}
+
+func TestVerifySemanticRelationshipsWithEvidenceReturnsVerifierSecuritySignals(t *testing.T) {
+	evidence := []domain.MemoryEvidence{{Index: 0, Content: "Dense-Mem uses Postgres."}}
+	relationships := semanticRelationshipsFixture()
+	relationships[0].EvidenceIndex = 0
+	req := buildSemanticVerifierRequestWithEvidenceAndContext("verify-1", relationships, evidence, repository.SemanticVerifierContext{})
+	resp := semanticVerifierResponseForRequest(req)
+	resp.EntityResults = []semanticVerifierEntityResult{}
+	resp.RelationshipResults = []semanticVerifierRelationshipResult{}
+	resp.SecuritySignals = []semanticSecuritySignal{{
+		EvidenceID: semanticEvidenceID(0),
+		Kind:       string(domain.EvidenceSignalInstructionOverride),
+		Start:      0,
+		End:        9,
+	}}
+
+	result, err := verifySemanticRelationshipsWithEvidence(context.Background(), &stubSemanticVerifier{resp: &resp}, "verify-1", relationships, evidence)
+
+	require.NoError(t, err)
+	require.Empty(t, result.Relationships)
+	require.Len(t, result.SecurityAssessments, 1)
+	require.Equal(t, 0, result.SecurityAssessments[0].EvidenceIndex)
+	require.Equal(t, domain.EvidenceSecurityEventVerifierSignal, result.SecurityAssessments[0].Assessment.EventKind)
+	require.Equal(t, "Dense-Mem", result.SecurityAssessments[0].Assessment.Signals[0].Quote)
+}
+
 func TestBuildSemanticVerifierRequestDefaultsRequestID(t *testing.T) {
 	req := buildSemanticVerifierRequest(" ", semanticRelationshipsFixture())
 
 	require.Equal(t, "semantic-placement", req.RequestID)
-	require.Equal(t, semanticVerifierSchemaVersion, req.SchemaVersion)
 	require.Contains(t, req.Relationships, semanticVerifierRelationshipRef(0))
 }
 
@@ -154,16 +202,10 @@ func TestBuildSemanticVerifierRequestIncludesBoundedContext(t *testing.T) {
 	relationship := req.Relationships[semanticVerifierRelationshipRef(0)]
 	require.Contains(t, relationship.AllowedPredicates, "uses")
 	require.Equal(t, []string{"uses"}, relationship.PredicateCandidates)
-	require.Contains(t, relationship.RelatedRelationship, "rel-existing")
-	require.Equal(t, []string{"rel-existing"}, relationship.ExistingRelationshipIDs)
-	require.Equal(t, []semanticVerifierRelationshipCandidate{{
-		RelationshipID: "rel-existing",
-		Subject:        "Dense-Mem",
-		Predicate:      "uses",
-		Object:         "Postgres",
-		Tier:           string(domain.SemanticTierValidatedClaim),
-		Status:         string(domain.SemanticStatusActive),
-	}}, relationship.ExistingRelationships)
+	raw, err := json.Marshal(req)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "existing_relationship")
+	require.NotContains(t, string(raw), "related_relationship")
 }
 
 func TestValidateSemanticVerifierResponseRejectsEntityContractViolations(t *testing.T) {
@@ -175,13 +217,6 @@ func TestValidateSemanticVerifierResponseRejectsEntityContractViolations(t *test
 		mutate  func(*semanticVerifierRequest, *semanticVerifierResponse)
 		wantErr string
 	}{
-		{
-			name: "schema version mismatch",
-			mutate: func(_ *semanticVerifierRequest, resp *semanticVerifierResponse) {
-				resp.SchemaVersion = "other"
-			},
-			wantErr: "schema_version mismatch",
-		},
 		{
 			name: "request id mismatch",
 			mutate: func(_ *semanticVerifierRequest, resp *semanticVerifierResponse) {
@@ -269,7 +304,7 @@ func TestValidateSemanticVerifierResponseRejectsEntityContractViolations(t *test
 		{
 			name: "coverage mismatch",
 			mutate: func(_ *semanticVerifierRequest, resp *semanticVerifierResponse) {
-				resp.EntityResults = nil
+				resp.EntityResults = []semanticVerifierEntityResult{}
 			},
 			wantErr: "entity_results coverage mismatch",
 		},
@@ -304,7 +339,6 @@ func TestValidateSemanticVerifierResponseRejectsEntityContractViolations(t *test
 
 func TestValidateSemanticVerifierResponseRejectsRelationshipContractViolations(t *testing.T) {
 	req, resp := semanticVerifierFixture()
-	relationshipRef := semanticVerifierRelationshipRef(0)
 
 	tests := []struct {
 		name    string
@@ -347,13 +381,6 @@ func TestValidateSemanticVerifierResponseRejectsRelationshipContractViolations(t
 			wantErr: "evidence_verdict is invalid",
 		},
 		{
-			name: "invalid knowledge alignment",
-			mutate: func(_ *semanticVerifierRequest, resp *semanticVerifierResponse) {
-				resp.RelationshipResults[0].KnowledgeAlignment = "same"
-			},
-			wantErr: "knowledge_alignment is invalid",
-		},
-		{
 			name: "resolved without predicate",
 			mutate: func(_ *semanticVerifierRequest, resp *semanticVerifierResponse) {
 				resp.RelationshipResults[0].PredicateKey = nil
@@ -375,50 +402,9 @@ func TestValidateSemanticVerifierResponseRejectsRelationshipContractViolations(t
 			wantErr: "predicate_status is invalid",
 		},
 		{
-			name: "too many related relationships",
-			mutate: func(_ *semanticVerifierRequest, resp *semanticVerifierResponse) {
-				resp.RelationshipResults[0].RelatedRelationshipIDs = make([]string, 65)
-				for i := range resp.RelationshipResults[0].RelatedRelationshipIDs {
-					resp.RelationshipResults[0].RelatedRelationshipIDs[i] = "rel"
-				}
-			},
-			wantErr: "related_relationship_ids exceeds limit",
-		},
-		{
-			name: "empty related id",
-			mutate: func(req *semanticVerifierRequest, resp *semanticVerifierResponse) {
-				req.Relationships[relationshipRef].RelatedRelationship["rel-existing"] = struct{}{}
-				resp.RelationshipResults[0].RelatedRelationshipIDs = []string{" "}
-			},
-			wantErr: "contains empty id",
-		},
-		{
-			name: "duplicate related id",
-			mutate: func(req *semanticVerifierRequest, resp *semanticVerifierResponse) {
-				req.Relationships[relationshipRef].RelatedRelationship["rel-existing"] = struct{}{}
-				resp.RelationshipResults[0].RelatedRelationshipIDs = []string{"rel-existing", "rel-existing"}
-			},
-			wantErr: "contains duplicate id",
-		},
-		{
-			name: "related outside allowlist",
-			mutate: func(req *semanticVerifierRequest, resp *semanticVerifierResponse) {
-				req.Relationships[relationshipRef].RelatedRelationship["rel-existing"] = struct{}{}
-				resp.RelationshipResults[0].RelatedRelationshipIDs = []string{"rel-outside"}
-			},
-			wantErr: "related_relationship_id is outside allowlist",
-		},
-		{
-			name: "related id with empty allowlist",
-			mutate: func(_ *semanticVerifierRequest, resp *semanticVerifierResponse) {
-				resp.RelationshipResults[0].RelatedRelationshipIDs = []string{"rel-outside"}
-			},
-			wantErr: "related_relationship_id is outside allowlist",
-		},
-		{
 			name: "coverage mismatch",
 			mutate: func(_ *semanticVerifierRequest, resp *semanticVerifierResponse) {
-				resp.RelationshipResults = nil
+				resp.RelationshipResults = []semanticVerifierRelationshipResult{}
 			},
 			wantErr: "relationship_results coverage mismatch",
 		},
@@ -519,8 +505,8 @@ func (s *stubSemanticVerifier) ModelName() string {
 
 func semanticVerifierResponseForRequest(req semanticVerifierRequest) semanticVerifierResponse {
 	resp := semanticVerifierResponse{
-		SchemaVersion:       req.SchemaVersion,
 		RequestID:           req.RequestID,
+		SecuritySignals:     []semanticSecuritySignal{},
 		EntityResults:       make([]semanticVerifierEntityResult, 0, len(req.Entities)),
 		RelationshipResults: make([]semanticVerifierRelationshipResult, 0, len(req.Relationships)),
 	}
@@ -557,14 +543,12 @@ func semanticVerifierResponseForRequest(req semanticVerifierRequest) semanticVer
 		}
 		predicate := predicates[0]
 		resp.RelationshipResults = append(resp.RelationshipResults, semanticVerifierRelationshipResult{
-			Ref:                    ref,
-			PredicateStatus:        "resolved",
-			PredicateKey:           &predicate,
-			EvidenceVerdict:        "entailed",
-			KnowledgeAlignment:     "novel",
-			RelatedRelationshipIDs: []string{},
-			Confidence:             0.7,
-			Rationale:              "evidence entails relationship",
+			Ref:             ref,
+			PredicateStatus: "resolved",
+			PredicateKey:    &predicate,
+			EvidenceVerdict: "entailed",
+			Confidence:      0.7,
+			Rationale:       "evidence entails relationship",
 		})
 	}
 	return resp
@@ -584,10 +568,14 @@ func semanticRelationshipsFixture() []repository.SemanticRelationshipInput {
 
 func cloneSemanticVerifierRequest(req semanticVerifierRequest) semanticVerifierRequest {
 	out := semanticVerifierRequest{
-		SchemaVersion: req.SchemaVersion,
 		RequestID:     req.RequestID,
+		Evidence:      append([]semanticVerifierEvidenceRequest(nil), req.Evidence...),
 		Entities:      map[string]semanticVerifierEntityRequest{},
 		Relationships: map[string]semanticVerifierRelationshipRequest{},
+		evidenceByID:  map[string]domain.MemoryEvidence{},
+	}
+	for key, evidence := range req.evidenceByID {
+		out.evidenceByID[key] = evidence
 	}
 	for key, entity := range req.Entities {
 		entity.Candidate = cloneStringSet(entity.Candidate)
@@ -596,10 +584,7 @@ func cloneSemanticVerifierRequest(req semanticVerifierRequest) semanticVerifierR
 	}
 	for key, relationship := range req.Relationships {
 		relationship.AllowedPredicates = cloneStringSet(relationship.AllowedPredicates)
-		relationship.RelatedRelationship = cloneStringSet(relationship.RelatedRelationship)
 		relationship.PredicateCandidates = append([]string(nil), relationship.PredicateCandidates...)
-		relationship.ExistingRelationshipIDs = append([]string(nil), relationship.ExistingRelationshipIDs...)
-		relationship.ExistingRelationships = append([]semanticVerifierRelationshipCandidate(nil), relationship.ExistingRelationships...)
 		out.Relationships[key] = relationship
 	}
 	return out
@@ -607,10 +592,14 @@ func cloneSemanticVerifierRequest(req semanticVerifierRequest) semanticVerifierR
 
 func cloneSemanticVerifierResponse(resp semanticVerifierResponse) semanticVerifierResponse {
 	out := resp
-	out.EntityResults = append([]semanticVerifierEntityResult(nil), resp.EntityResults...)
-	out.RelationshipResults = append([]semanticVerifierRelationshipResult(nil), resp.RelationshipResults...)
-	for i := range out.RelationshipResults {
-		out.RelationshipResults[i].RelatedRelationshipIDs = append([]string(nil), out.RelationshipResults[i].RelatedRelationshipIDs...)
+	if resp.SecuritySignals != nil {
+		out.SecuritySignals = append([]semanticSecuritySignal{}, resp.SecuritySignals...)
+	}
+	if resp.EntityResults != nil {
+		out.EntityResults = append([]semanticVerifierEntityResult{}, resp.EntityResults...)
+	}
+	if resp.RelationshipResults != nil {
+		out.RelationshipResults = append([]semanticVerifierRelationshipResult{}, resp.RelationshipResults...)
 	}
 	return out
 }

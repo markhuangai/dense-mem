@@ -675,6 +675,20 @@ func TestMemoryServiceHelpersCoverBoundaryValues(t *testing.T) {
 	require.True(t, isStale(&domain.Fact{RecordedAt: time.Now().UTC().Add(-31 * 24 * time.Hour)}, 30))
 }
 
+func TestActiveFactsHandlesMissingErrorAndSuccess(t *testing.T) {
+	require.Nil(t, New(Dependencies{}).activeFacts(context.Background(), "profile-1", "Dense-Mem", "uses"))
+	require.Nil(t, New(Dependencies{
+		FactList: stubFactList{err: errors.New("fact list failed")},
+	}).activeFacts(context.Background(), "profile-1", "Dense-Mem", "uses"))
+
+	fact := &domain.Fact{FactID: "fact-1", Subject: "Dense-Mem", Predicate: "uses", Object: "Postgres"}
+	got := New(Dependencies{
+		FactList: stubFactList{facts: []*domain.Fact{fact}},
+	}).activeFacts(context.Background(), "profile-1", "Dense-Mem", "uses")
+
+	require.Equal(t, []*domain.Fact{fact}, got)
+}
+
 func TestReflectReturnsDependencyErrors(t *testing.T) {
 	t.Run("fact list error", func(t *testing.T) {
 		svc := New(Dependencies{FactList: stubFactList{err: errors.New("fact list failed")}})

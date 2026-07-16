@@ -219,20 +219,14 @@ func (h *userPortalHandler) graphSnapshot(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	includeSuperseded, err := userPortalOptionalBoolQuery(c, "include_superseded")
-	if err != nil {
-		return err
-	}
-
 	snapshot, err := h.graph.Graph(c.Request().Context(), teamID.String(), graphview.Query{
-		Scope:             c.QueryParam("scope"),
-		Query:             c.QueryParam("q"),
-		Types:             userPortalGraphTypes(c.QueryParam("types")),
-		AnchorType:        c.QueryParam("anchor_type"),
-		AnchorID:          c.QueryParam("anchor_id"),
-		Depth:             depth,
-		Limit:             limit,
-		IncludeSuperseded: includeSuperseded,
+		Scope:      c.QueryParam("scope"),
+		Query:      c.QueryParam("q"),
+		Types:      userPortalGraphTypes(c.QueryParam("types")),
+		AnchorType: c.QueryParam("anchor_type"),
+		AnchorID:   c.QueryParam("anchor_id"),
+		Depth:      depth,
+		Limit:      limit,
 	})
 	if err != nil {
 		if errors.Is(err, graphview.ErrMissingAnchor) || errors.Is(err, graphview.ErrInvalidAnchorType) {

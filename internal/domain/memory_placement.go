@@ -28,15 +28,16 @@ const (
 )
 
 type MemoryEvidence struct {
-	Index          int            `json:"index"`
-	Content        string         `json:"content"`
-	SourceType     string         `json:"source_type,omitempty"`
-	Source         string         `json:"source,omitempty"`
-	Authority      string         `json:"authority,omitempty"`
-	SourceGroup    string         `json:"source_group,omitempty"`
-	IdempotencyKey string         `json:"idempotency_key,omitempty"`
-	Labels         []string       `json:"labels,omitempty"`
-	Metadata       map[string]any `json:"metadata,omitempty"`
+	Index            int                      `json:"index"`
+	Content          string                   `json:"content"`
+	SourceType       string                   `json:"source_type,omitempty"`
+	Source           string                   `json:"source,omitempty"`
+	Authority        string                   `json:"authority,omitempty"`
+	SourceGroup      string                   `json:"source_group,omitempty"`
+	IdempotencyKey   string                   `json:"idempotency_key,omitempty"`
+	Labels           []string                 `json:"labels,omitempty"`
+	Metadata         map[string]any           `json:"metadata,omitempty"`
+	SecurityDecision EvidenceSecurityDecision `json:"security_decision,omitempty"`
 }
 
 type MemoryPlacementRun struct {

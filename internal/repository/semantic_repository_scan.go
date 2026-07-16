@@ -13,11 +13,12 @@ import (
 )
 
 func semanticRelationshipColumns() string {
-	return `team_id::text, relationship_id::text, owner_profile_id::text,
-	        subject_entity_id::text, predicate, polarity, COALESCE(object_entity_id::text, ''),
-	        object_value, object_kind, tier, status, confidence, support_count,
-	        source_group_count, semantic_group_key, version, valid_from, valid_to,
-	        recorded_at, recorded_to, created_at, updated_at`
+	return `r.team_id::text, r.relationship_id::text, r.owner_profile_id::text,
+	        r.subject_entity_id::text, r.predicate, r.polarity, COALESCE(r.object_entity_id::text, ''),
+	        COALESCE(r.object_value_id::text, ''), COALESCE(value.display_value, ''),
+	        COALESCE(value.value_type, ''), r.tier, r.status, r.confidence, r.support_count,
+	        r.source_group_count, r.semantic_group_key, r.version, r.valid_from, r.valid_to,
+	        r.recorded_at, r.recorded_to, r.created_at, r.updated_at`
 }
 
 func semanticEvidenceColumns(alias string) string {
@@ -45,6 +46,7 @@ func scanSemanticRelationshipScore(rows *sql.Rows) (domain.SemanticRelationship,
 		&rel.Predicate,
 		&rel.Polarity,
 		&rel.ObjectEntityID,
+		&rel.ObjectValueID,
 		&rel.ObjectValue,
 		&rel.ObjectKind,
 		&tier,
@@ -84,6 +86,7 @@ func scanSemanticRelationship(rows *sql.Rows) (domain.SemanticRelationship, erro
 		&rel.Predicate,
 		&rel.Polarity,
 		&rel.ObjectEntityID,
+		&rel.ObjectValueID,
 		&rel.ObjectValue,
 		&rel.ObjectKind,
 		&tier,
@@ -129,6 +132,7 @@ func scanHydratedSemanticRelationshipScore(rows *sql.Rows) (domain.SemanticRelat
 		&rel.ObjectEntityID,
 		&rel.ObjectEntityName,
 		&objectEntityKind,
+		&rel.ObjectValueID,
 		&rel.ObjectValue,
 		&rel.ObjectKind,
 		&tier,

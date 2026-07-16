@@ -67,6 +67,7 @@ type Dependencies struct {
 	SemanticStore        repository.SemanticRepository
 	SemanticReviewer     SemanticReviewer
 	SemanticVerifier     SemanticVerifier
+	EvidenceScanner      EvidenceSecurityScanner
 	PlacementMaxAttempts int
 	Logger               *slog.Logger
 }

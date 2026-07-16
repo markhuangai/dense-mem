@@ -126,6 +126,17 @@ func semanticEntitySearchText(entity domain.SemanticEntity) string {
 	return strings.TrimSpace(entity.CanonicalName + " " + string(entity.Kind))
 }
 
+func semanticValueSearchText(value domain.SemanticValue) string {
+	return strings.TrimSpace(value.DisplayValue + " " + string(value.ValueType))
+}
+
+func valueVersion(value domain.SemanticValue) int64 {
+	if value.UpdatedAt.IsZero() {
+		return 1
+	}
+	return value.UpdatedAt.UnixNano()
+}
+
 func semanticRelationshipSearchText(subject, predicate string, polarity domain.ClaimPolarity, object string) string {
 	relation := strings.ReplaceAll(predicate, "_", " ")
 	if polarity == domain.PolarityMinus {

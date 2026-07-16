@@ -18,6 +18,7 @@ import (
 
 type SemanticRepository interface {
 	StoreRemember(ctx context.Context, input SemanticRememberInput) (*SemanticRememberResult, error)
+	StoreEvidenceSecurityEvent(ctx context.Context, input SemanticEvidenceSecurityEventInput) error
 	LoadSemanticVerifierContext(ctx context.Context, teamID string, relationships []SemanticRelationshipInput) (SemanticVerifierContext, error)
 	SearchRecallLexicalCandidates(ctx context.Context, scope domain.SemanticRecallSearchScope) (domain.SemanticRecallCandidateBatch, error)
 	SearchRecallVectorCandidates(ctx context.Context, scope domain.SemanticRecallSearchScope) (domain.SemanticRecallCandidateBatch, error)
@@ -36,15 +37,26 @@ type SemanticRememberInput struct {
 }
 
 type SemanticEvidenceInput struct {
-	Content        string
-	Source         string
-	SourceDocID    string
-	SourceGroup    string
-	SourceType     domain.SourceType
-	Authority      domain.Authority
-	Labels         []string
-	Metadata       map[string]any
-	IdempotencyKey string
+	Content            string
+	Source             string
+	SourceDocID        string
+	SourceGroup        string
+	SourceType         domain.SourceType
+	Authority          domain.Authority
+	Labels             []string
+	Metadata           map[string]any
+	IdempotencyKey     string
+	SecurityDecision   domain.EvidenceSecurityDecision
+	SecurityAssessment *domain.EvidenceSecurityAssessment
+}
+
+type SemanticEvidenceSecurityEventInput struct {
+	TeamID           string
+	OwnerProfileID   string
+	FragmentID       string
+	Content          string
+	Assessment       domain.EvidenceSecurityAssessment
+	DeactivateSearch bool
 }
 
 type SemanticRelationshipInput struct {
@@ -133,10 +145,18 @@ func (r *SemanticRepositoryImpl) StoreRemember(ctx context.Context, input Semant
 			if err != nil {
 				return err
 			}
+			if item.SecurityAssessment != nil {
+				if err := insertSemanticEvidenceSecurityEvent(ctx, tx, input, stored.FragmentID, *item.SecurityAssessment); err != nil {
+					return err
+				}
+			}
 			evidence = append(evidence, stored)
 		}
 		result.Evidence = evidence
-		for _, item := range evidence {
+		for i, item := range evidence {
+			if input.Evidence[i].SecurityDecision == domain.EvidenceSecurityQuarantine {
+				continue
+			}
 			if err := upsertSemanticSearchDocument(ctx, tx, semanticSearchDocumentInput{
 				TeamID:         input.TeamID,
 				OwnerProfileID: input.OwnerProfileID,
@@ -182,6 +202,8 @@ func (r *SemanticRepositoryImpl) StoreRemember(ctx context.Context, input Semant
 
 			objectEntityID := ""
 			objectEntityName := ""
+			objectValueID := ""
+			objectValueText := ""
 			if strings.TrimSpace(item.ObjectName) != "" {
 				object, err := upsertSemanticEntity(ctx, tx, input, item.ObjectName, item.ObjectKind)
 				if err != nil {
@@ -200,9 +222,26 @@ func (r *SemanticRepositoryImpl) StoreRemember(ctx context.Context, input Semant
 				}); err != nil {
 					return err
 				}
+			} else {
+				value, err := upsertSemanticValue(ctx, tx, input, item.ObjectValue)
+				if err != nil {
+					return err
+				}
+				objectValueID = value.ValueID
+				objectValueText = value.DisplayValue
+				if err := upsertSemanticSearchDocument(ctx, tx, semanticSearchDocumentInput{
+					TeamID:         input.TeamID,
+					OwnerProfileID: input.OwnerProfileID,
+					SourceType:     "value",
+					SourceID:       value.ValueID,
+					DocumentText:   semanticValueSearchText(value),
+					SourceVersion:  valueVersion(value),
+				}); err != nil {
+					return err
+				}
 			}
 
-			relationship, err := upsertSemanticRelationship(ctx, tx, input, item, subject.EntityID, objectEntityID)
+			relationship, err := upsertSemanticRelationship(ctx, tx, input, item, subject.EntityID, objectEntityID, objectValueID)
 			if err != nil {
 				return err
 			}
@@ -221,7 +260,7 @@ func (r *SemanticRepositoryImpl) StoreRemember(ctx context.Context, input Semant
 				if err := refreshSemanticRelationshipSupportCounts(ctx, tx, input.TeamID, relationship.RelationshipID); err != nil {
 					return err
 				}
-				objectText := firstNonEmpty(objectEntityName, item.ObjectValue)
+				objectText := firstNonEmpty(objectEntityName, objectValueText)
 				if err := upsertSemanticSearchDocument(ctx, tx, semanticSearchDocumentInput{
 					TeamID:         input.TeamID,
 					OwnerProfileID: input.OwnerProfileID,
@@ -321,6 +360,12 @@ func normalizeSemanticRememberInput(input SemanticRememberInput) SemanticRemembe
 		if input.Evidence[i].Authority == "" {
 			input.Evidence[i].Authority = domain.AuthorityPrimary
 		}
+		if input.Evidence[i].SecurityDecision == "" {
+			input.Evidence[i].SecurityDecision = domain.EvidenceSecurityPass
+		}
+		if input.Evidence[i].SecurityAssessment != nil && input.Evidence[i].SecurityAssessment.Decision == "" {
+			input.Evidence[i].SecurityAssessment.Decision = input.Evidence[i].SecurityDecision
+		}
 	}
 	for i := range input.Relationships {
 		input.Relationships[i].SubjectName = strings.TrimSpace(input.Relationships[i].SubjectName)
@@ -355,6 +400,14 @@ func validateSemanticRememberInput(input SemanticRememberInput) error {
 		}
 		if !evidence.SourceType.IsValid() {
 			return fmt.Errorf("evidence[%d].source_type is invalid", i)
+		}
+		if !evidence.SecurityDecision.IsValid() {
+			return fmt.Errorf("evidence[%d].security_decision is invalid", i)
+		}
+		if evidence.SecurityAssessment != nil {
+			if err := validateEvidenceSecurityAssessment(i, *evidence.SecurityAssessment, evidence.Content); err != nil {
+				return err
+			}
 		}
 	}
 	for i, relationship := range input.Relationships {
@@ -472,7 +525,7 @@ func loadSemanticRelationshipCandidates(ctx context.Context, tx *gorm.DB, teamID
 		       subject.canonical_name,
 		       r.predicate,
 		       COALESCE(object.canonical_name, '') AS object_name,
-		       r.object_value,
+		       COALESCE(value.display_value, '') AS object_value,
 		       r.tier,
 		       r.status
 		FROM semantic_relationship_records r
@@ -482,19 +535,22 @@ func loadSemanticRelationshipCandidates(ctx context.Context, tx *gorm.DB, teamID
 		LEFT JOIN semantic_entities object
 		  ON object.team_id = r.team_id
 		 AND object.entity_id = r.object_entity_id
+		LEFT JOIN semantic_values value
+		  ON value.team_id = r.team_id
+		 AND value.value_id = r.object_value_id
 		WHERE r.team_id = ?
 		  AND r.status NOT IN ('rejected', 'retracted', 'superseded')
 		  AND (
 		    lower(subject.canonical_name) = lower(?)
 		    OR (? <> '' AND lower(COALESCE(object.canonical_name, '')) = lower(?))
-		    OR (? <> '' AND lower(r.object_value) = lower(?))
+		    OR (? <> '' AND lower(COALESCE(value.display_value, '')) = lower(?))
 		  )
 		ORDER BY CASE
 		    WHEN lower(subject.canonical_name) = lower(?)
 		     AND r.predicate = ?
 		     AND (
 		       (? <> '' AND lower(COALESCE(object.canonical_name, '')) = lower(?))
-		       OR (? <> '' AND lower(r.object_value) = lower(?))
+		       OR (? <> '' AND lower(COALESCE(value.display_value, '')) = lower(?))
 		     ) THEN 0
 		    WHEN lower(subject.canonical_name) = lower(?) THEN 1
 		    ELSE 2
@@ -671,20 +727,26 @@ func upsertSemanticEntityName(ctx context.Context, tx *gorm.DB, teamID, entityID
 	`, teamID, entityID, name).Error
 }
 
-func upsertSemanticRelationship(ctx context.Context, tx *gorm.DB, input SemanticRememberInput, item SemanticRelationshipInput, subjectEntityID, objectEntityID string) (domain.SemanticRelationship, error) {
-	semanticGroupKey := semanticRelationshipGroupKey(subjectEntityID, item.Predicate, objectEntityID, item.ObjectValue, item.Polarity)
+func upsertSemanticRelationship(ctx context.Context, tx *gorm.DB, input SemanticRememberInput, item SemanticRelationshipInput, subjectEntityID, objectEntityID, objectValueID string) (domain.SemanticRelationship, error) {
+	semanticGroupKey := semanticRelationshipGroupKey(subjectEntityID, item.Predicate, objectEntityID, objectValueID, item.Polarity)
 	rows, err := tx.WithContext(ctx).Raw(`
-		INSERT INTO semantic_relationship_records (
-		    team_id, owner_profile_id, subject_entity_id, predicate,
-		    polarity, object_entity_id, object_value, object_kind, tier, status,
-		    confidence, semantic_group_key, search_state, recorded_at, created_at, updated_at
-		) VALUES (
-		    ?, ?, ?, ?, ?, nullif(?, '')::uuid, ?, ?, ?, ?, ?, ?, ?, now(), now(), now()
+		WITH inserted AS (
+			INSERT INTO semantic_relationship_records (
+			    team_id, owner_profile_id, subject_entity_id, predicate,
+			    polarity, object_entity_id, object_value_id, tier, status,
+			    confidence, semantic_group_key, search_state, recorded_at, created_at, updated_at
+			) VALUES (
+			    ?, ?, ?, ?, ?, nullif(?, '')::uuid, nullif(?, '')::uuid, ?, ?, ?, ?, ?, now(), now(), now()
+			)
+			ON CONFLICT DO NOTHING
+			RETURNING *
 		)
-		ON CONFLICT DO NOTHING
-		RETURNING `+semanticRelationshipColumns()+`
+		SELECT `+semanticRelationshipColumns()+`
+		FROM inserted r
+		LEFT JOIN semantic_values value
+		  ON value.team_id = r.team_id AND value.value_id = r.object_value_id
 	`, input.TeamID, input.OwnerProfileID, subjectEntityID, item.Predicate, string(item.Polarity),
-		objectEntityID, item.ObjectValue, string(item.ObjectKind), string(item.Tier),
+		objectEntityID, objectValueID, string(item.Tier),
 		string(item.Status), item.Confidence, semanticGroupKey, semanticRelationshipSearchState(item)).Rows()
 	if err != nil {
 		return domain.SemanticRelationship{}, err
@@ -716,16 +778,18 @@ func upsertSemanticRelationship(ctx context.Context, tx *gorm.DB, input Semantic
 
 	foundRows, err := tx.WithContext(ctx).Raw(`
 		SELECT `+semanticRelationshipColumns()+`
-		FROM semantic_relationship_records
-		WHERE team_id = ?
-		  AND owner_profile_id = ?
-		  AND subject_entity_id = ?
-		  AND predicate = ?
-		  AND polarity = ?
-		  AND COALESCE(object_entity_id, '00000000-0000-0000-0000-000000000000'::uuid) = COALESCE(nullif(?, '')::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
-		  AND object_value = ?
+		FROM semantic_relationship_records r
+		LEFT JOIN semantic_values value
+		  ON value.team_id = r.team_id AND value.value_id = r.object_value_id
+		WHERE r.team_id = ?
+		  AND r.owner_profile_id = ?
+		  AND r.subject_entity_id = ?
+		  AND r.predicate = ?
+		  AND r.polarity = ?
+		  AND COALESCE(r.object_entity_id, '00000000-0000-0000-0000-000000000000'::uuid) = COALESCE(nullif(?, '')::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+		  AND COALESCE(r.object_value_id, '00000000-0000-0000-0000-000000000000'::uuid) = COALESCE(nullif(?, '')::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
 		LIMIT 1
-	`, input.TeamID, input.OwnerProfileID, subjectEntityID, item.Predicate, string(item.Polarity), objectEntityID, item.ObjectValue).Rows()
+	`, input.TeamID, input.OwnerProfileID, subjectEntityID, item.Predicate, string(item.Polarity), objectEntityID, objectValueID).Rows()
 	if err != nil {
 		return domain.SemanticRelationship{}, err
 	}
@@ -769,11 +833,17 @@ func updateSemanticRelationshipLifecycle(ctx context.Context, tx *gorm.DB, input
 		return existing, nil
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
-		UPDATE semantic_relationship_records
-		SET tier = ?, status = ?, confidence = ?, search_state = ?,
-		    version = version + 1, updated_at = now()
-		WHERE team_id = ? AND relationship_id = ?
-		RETURNING `+semanticRelationshipColumns()+`
+		WITH updated AS (
+			UPDATE semantic_relationship_records
+			SET tier = ?, status = ?, confidence = ?, search_state = ?,
+			    version = version + 1, updated_at = now()
+			WHERE team_id = ? AND relationship_id = ?
+			RETURNING *
+		)
+		SELECT `+semanticRelationshipColumns()+`
+		FROM updated r
+		LEFT JOIN semantic_values value
+		  ON value.team_id = r.team_id AND value.value_id = r.object_value_id
 	`, string(tier), string(status), confidence, searchState, input.TeamID, existing.RelationshipID).Rows()
 	if err != nil {
 		return domain.SemanticRelationship{}, err

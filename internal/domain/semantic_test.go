@@ -56,3 +56,44 @@ func TestSemanticStatusAndHypothesisAreSeparate(t *testing.T) {
 		t.Fatal("hypothesis status must not accept relationship tiers")
 	}
 }
+
+func TestSemanticValueTypeContract(t *testing.T) {
+	valid := []SemanticValueType{
+		SemanticValueString,
+		SemanticValueNumber,
+		SemanticValueBoolean,
+		SemanticValueDate,
+		SemanticValueDateTime,
+	}
+	for _, valueType := range valid {
+		if !valueType.IsValid() {
+			t.Fatalf("value type %q should be valid", valueType)
+		}
+	}
+	for _, valueType := range []SemanticValueType{"", "entity", "timestamp"} {
+		if valueType.IsValid() {
+			t.Fatalf("value type %q should be invalid", valueType)
+		}
+	}
+}
+
+func TestSemanticRecallBranchContract(t *testing.T) {
+	valid := []SemanticRecallBranch{
+		SemanticRecallBranchExact,
+		SemanticRecallBranchEvidenceText,
+		SemanticRecallBranchRelationshipText,
+		SemanticRecallBranchEvidenceVector,
+		SemanticRecallBranchRelationshipVector,
+		SemanticRecallBranchAdjacency,
+	}
+	for _, branch := range valid {
+		if !branch.IsValid() {
+			t.Fatalf("recall branch %q should be valid", branch)
+		}
+	}
+	for _, branch := range []SemanticRecallBranch{"", "graph", "relationship"} {
+		if branch.IsValid() {
+			t.Fatalf("recall branch %q should be invalid", branch)
+		}
+	}
+}

@@ -91,9 +91,10 @@ prepare_identity() {
   SEED_HASH="$(jq -r '.seed_hash' "${VALIDATION_DIR}/summary.json")"
   SUITE_HASH="$(sha256sum "${SUITE}" | awk '{print $1}')"
   EMBEDDING_MODEL="${AI_API_EMBEDDING_MODEL:-}"
-  EMBEDDING_DIMENSIONS="${AI_API_EMBEDDING_DIMENSIONS:-1536}"
-  if [[ "${EMBEDDING_DIMENSIONS}" == "0" ]]; then
-    EMBEDDING_DIMENSIONS="1536"
+  EMBEDDING_DIMENSIONS="${AI_API_EMBEDDING_DIMENSIONS:-}"
+  if [[ -z "${EMBEDDING_DIMENSIONS}" || "${EMBEDDING_DIMENSIONS}" == "0" ]]; then
+    echo "AI_API_EMBEDDING_DIMENSIONS must be set for eval identity" >&2
+    return 1
   fi
   EMBEDDING_WORKER_COUNT="${EMBEDDING_WORKER_COUNT:-2}"
   EMBEDDING_BATCH_SIZE="${EMBEDDING_BATCH_SIZE:-64}"
@@ -112,6 +113,7 @@ prepare_identity() {
     --arg embedding_batch_size "${EMBEDDING_BATCH_SIZE}" \
     --arg embedding_max_concurrency "${EMBEDDING_MAX_CONCURRENCY}" \
     --arg embedding_endpoint_sha256 "${EMBEDDING_ENDPOINT_HASH}" \
+    --arg reviewer_model "${AI_REVIEWER_MODEL:-}" \
     --arg verifier_model "${AI_VERIFIER_MODEL:-}" \
     --arg judge_model "${AI_JUDGE_MODEL}" \
     --arg run_mode "${EVAL_RUN_MODE}" \
@@ -131,6 +133,7 @@ prepare_identity() {
       embedding_batch_size: ($embedding_batch_size | tonumber),
       embedding_max_concurrency: ($embedding_max_concurrency | tonumber),
       embedding_endpoint_sha256: $embedding_endpoint_sha256,
+      reviewer_model: $reviewer_model,
       verifier_model: $verifier_model,
       judge_model: $judge_model,
       run_mode: $run_mode,

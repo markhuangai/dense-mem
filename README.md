@@ -129,13 +129,13 @@ Cold image pulls can take longer than 60 seconds. Redis and public HTTPS are
 intentionally omitted from the base example; use the expert example when you
 need those deployment options.
 
-The server requires a complete embedding configuration at startup:
+The server requires complete embedding and semantic-review configuration at startup:
 `AI_API_URL`, `AI_API_KEY`, `AI_API_EMBEDDING_MODEL`, and
-`AI_API_EMBEDDING_DIMENSIONS`. The compose examples provide OpenAI defaults for
-the URL, model, and dimensions (`https://api.openai.com/v1`,
-`text-embedding-3-small`, `1536`), so the minimal local setup only needs you to
-fill in `AI_API_KEY`. Override those values together when using a different
-embedding provider or model.
+`AI_API_EMBEDDING_DIMENSIONS`, plus `AI_REVIEWER_MODEL` and
+`AI_VERIFIER_MODEL`. `examples/.env.example` provides OpenAI sample values for
+the URL, embedding model, dimensions, reviewer model, and verifier model, so
+the minimal local setup only needs you to fill in `AI_API_KEY`. Override those
+values together when using a different provider or model.
 
 Verifier calls send `temperature: 0` by default. Set
 `AI_VERIFIER_DISABLE_TEMPERATURE=true` to omit the field for providers or models
@@ -157,6 +157,7 @@ AI_API_URL=http://host.docker.internal:11434/v1
 AI_API_KEY=ollama
 AI_API_EMBEDDING_MODEL=nomic-embed-text
 AI_API_EMBEDDING_DIMENSIONS=768
+AI_REVIEWER_MODEL=llama3.1:8b
 AI_VERIFIER_MODEL=llama3.1:8b
 AI_VERIFIER_TIMEOUT_SECONDS=300
 ```
@@ -169,13 +170,11 @@ Three details matter on this path:
   by default.
 - `AI_API_KEY` must be non-empty even though Ollama ignores it; startup
   validation requires a complete embedding configuration.
-- Change `AI_VERIFIER_MODEL` together with the embedding settings. The default
-  is `gpt-4o-mini`, which does not exist on Ollama. Startup still succeeds;
-  the failure only appears later, at claim-verification time. Pick a model
-  that answers within the verifier timeout on your hardware. A 7B-8B class
-  model verifies comfortably on a laptop; larger models can exceed the
-  default 60-second timeout while they load, leaving claims parked as
-  `candidate_claim` with the error recorded in the placement item.
+- Set both `AI_REVIEWER_MODEL` and `AI_VERIFIER_MODEL` to models that exist on
+  the provider. They may be the same model. Pick models that answer within the
+  verifier timeout on your hardware; larger models can exceed the default
+  60-second timeout while they load, leaving placements parked with the error
+  recorded on the placement item.
 
 ### Your First Memory
 

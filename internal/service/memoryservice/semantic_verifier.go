@@ -14,13 +14,17 @@ import (
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
-const semanticVerifierSchemaVersion = "dense-mem-verifier/v1"
-
 type semanticVerifierRequest struct {
-	SchemaVersion string                                         `json:"schema_version"`
 	RequestID     string                                         `json:"request_id"`
+	Evidence      []semanticVerifierEvidenceRequest              `json:"evidence"`
 	Entities      map[string]semanticVerifierEntityRequest       `json:"entities"`
 	Relationships map[string]semanticVerifierRelationshipRequest `json:"relationships"`
+	evidenceByID  map[string]domain.MemoryEvidence               `json:"-"`
+}
+
+type semanticVerifierEvidenceRequest struct {
+	EvidenceID string `json:"evidence_id"`
+	Content    string `json:"content"`
 }
 
 type semanticVerifierEntityRequest struct {
@@ -37,29 +41,20 @@ type semanticVerifierEntityCandidate struct {
 }
 
 type semanticVerifierRelationshipRequest struct {
-	Ref                     string                                  `json:"ref"`
-	AllowedPredicates       map[string]struct{}                     `json:"-"`
-	PredicateCandidates     []string                                `json:"predicate_candidates"`
-	RelatedRelationship     map[string]struct{}                     `json:"-"`
-	ExistingRelationshipIDs []string                                `json:"existing_relationship_ids"`
-	ExistingRelationships   []semanticVerifierRelationshipCandidate `json:"existing_relationships"`
-	Statement               string                                  `json:"statement"`
-	EvidenceQuote           string                                  `json:"evidence_quote"`
-	InputIndex              int                                     `json:"-"`
-}
-
-type semanticVerifierRelationshipCandidate struct {
-	RelationshipID string `json:"relationship_id"`
-	Subject        string `json:"subject"`
-	Predicate      string `json:"predicate"`
-	Object         string `json:"object"`
-	Tier           string `json:"tier"`
-	Status         string `json:"status"`
+	Ref                 string              `json:"ref"`
+	AllowedPredicates   map[string]struct{} `json:"-"`
+	PredicateCandidates []string            `json:"predicate_candidates"`
+	Statement           string              `json:"statement"`
+	EvidenceID          string              `json:"evidence_id"`
+	EvidenceQuote       string              `json:"evidence_quote"`
+	SpanStart           int                 `json:"start"`
+	SpanEnd             int                 `json:"end"`
+	InputIndex          int                 `json:"-"`
 }
 
 type semanticVerifierResponse struct {
-	SchemaVersion       string                               `json:"schema_version"`
 	RequestID           string                               `json:"request_id"`
+	SecuritySignals     []semanticSecuritySignal             `json:"security_signals"`
 	EntityResults       []semanticVerifierEntityResult       `json:"entity_results"`
 	RelationshipResults []semanticVerifierRelationshipResult `json:"relationship_results"`
 }
@@ -73,21 +68,33 @@ type semanticVerifierEntityResult struct {
 }
 
 type semanticVerifierRelationshipResult struct {
-	Ref                    string   `json:"ref"`
-	PredicateStatus        string   `json:"predicate_status"`
-	PredicateKey           *string  `json:"predicate_key"`
-	EvidenceVerdict        string   `json:"evidence_verdict"`
-	KnowledgeAlignment     string   `json:"knowledge_alignment"`
-	RelatedRelationshipIDs []string `json:"related_relationship_ids"`
-	Confidence             float64  `json:"confidence"`
-	Rationale              string   `json:"rationale"`
+	Ref             string  `json:"ref"`
+	PredicateStatus string  `json:"predicate_status"`
+	PredicateKey    *string `json:"predicate_key"`
+	EvidenceVerdict string  `json:"evidence_verdict"`
+	Confidence      float64 `json:"confidence"`
+	Rationale       string  `json:"rationale"`
 }
 
 var semanticVerifierSchema = json.RawMessage(`{
   "type": "object",
   "properties": {
-    "schema_version": {"type": "string", "const": "dense-mem-verifier/v1"},
     "request_id": {"type": "string"},
+    "security_signals": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "properties": {
+          "evidence_id": {"type": "string", "minLength": 1, "maxLength": 128},
+          "kind": {"type": "string", "enum": ["role_control_spoofing", "instruction_override", "prompt_secret_extraction", "tool_exfiltration", "obfuscated_instruction", "hidden_control_markup"]},
+          "start": {"type": "integer", "minimum": 0},
+          "end": {"type": "integer", "minimum": 0}
+        },
+        "required": ["evidence_id", "kind", "start", "end"],
+        "additionalProperties": false
+      }
+    },
     "entity_results": {
       "type": "array",
       "items": {
@@ -109,48 +116,68 @@ var semanticVerifierSchema = json.RawMessage(`{
         "type": "object",
         "properties": {
           "ref": {"type": "string"},
-          "predicate_status": {"type": "string", "enum": ["resolved", "needs_review"]},
-          "predicate_key": {"type": ["string", "null"]},
-          "evidence_verdict": {"type": "string", "enum": ["entailed", "contradicted", "insufficient"]},
-          "knowledge_alignment": {"type": "string", "enum": ["novel", "duplicate", "corroborates", "conflicts", "updates_existing", "ambiguous"]},
-          "related_relationship_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 64},
-          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-          "rationale": {"type": "string", "minLength": 1, "maxLength": 1000}
-        },
-        "required": ["ref", "predicate_status", "predicate_key", "evidence_verdict", "knowledge_alignment", "related_relationship_ids", "confidence", "rationale"],
-        "additionalProperties": false
-      }
+	          "predicate_status": {"type": "string", "enum": ["resolved", "needs_review"]},
+	          "predicate_key": {"type": ["string", "null"]},
+	          "evidence_verdict": {"type": "string", "enum": ["entailed", "contradicted", "insufficient"]},
+	          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+	          "rationale": {"type": "string", "minLength": 1, "maxLength": 1000}
+	        },
+	        "required": ["ref", "predicate_status", "predicate_key", "evidence_verdict", "confidence", "rationale"],
+	        "additionalProperties": false
+	      }
     }
   },
-  "required": ["schema_version", "request_id", "entity_results", "relationship_results"],
+  "required": ["request_id", "security_signals", "entity_results", "relationship_results"],
   "additionalProperties": false
 }`)
 
+type semanticVerificationResult struct {
+	Relationships       []repository.SemanticRelationshipInput
+	SecurityAssessments []semanticEvidenceSecurityAssessment
+}
+
 func verifySemanticRelationships(ctx context.Context, provider SemanticVerifier, requestID string, relationships []repository.SemanticRelationshipInput, contexts ...repository.SemanticVerifierContext) ([]repository.SemanticRelationshipInput, error) {
+	result, err := verifySemanticRelationshipsWithEvidence(ctx, provider, requestID, relationships, nil, contexts...)
+	if err != nil {
+		return nil, err
+	}
+	return result.Relationships, nil
+}
+
+func verifySemanticRelationshipsWithEvidence(ctx context.Context, provider SemanticVerifier, requestID string, relationships []repository.SemanticRelationshipInput, evidence []domain.MemoryEvidence, contexts ...repository.SemanticVerifierContext) (semanticVerificationResult, error) {
 	if len(relationships) == 0 {
-		return nil, nil
+		return semanticVerificationResult{}, nil
 	}
 	if provider == nil {
-		return nil, errors.New("semantic verifier: provider is required")
+		return semanticVerificationResult{}, errors.New("semantic verifier: provider is required")
 	}
 	var verifierContext repository.SemanticVerifierContext
 	if len(contexts) > 0 {
 		verifierContext = contexts[0]
 	}
-	req := buildSemanticVerifierRequestWithContext(requestID, relationships, verifierContext)
+	req := buildSemanticVerifierRequestWithEvidenceAndContext(requestID, relationships, evidence, verifierContext)
 	resp, err := provider.VerifySemantic(ctx, req)
 	if err != nil {
-		return nil, err
+		return semanticVerificationResult{}, err
 	}
 	if err := validateSemanticVerifierResponse(req, resp); err != nil {
 		raw, _ := json.Marshal(resp)
-		return nil, &verifier.MalformedResponseError{
+		return semanticVerificationResult{}, &verifier.MalformedResponseError{
 			Provider: provider.ModelName(),
 			Message:  err.Error(),
 			RawJSON:  string(raw),
 		}
 	}
-	return applySemanticVerifierResponse(req, resp, relationships, provider.ModelName()), nil
+	assessments, err := verifierSecurityAssessments(req, resp)
+	if err != nil {
+		return semanticVerificationResult{}, err
+	}
+	if len(assessments) > 0 {
+		return semanticVerificationResult{SecurityAssessments: assessments}, nil
+	}
+	return semanticVerificationResult{
+		Relationships: applySemanticVerifierResponse(req, resp, relationships, provider.ModelName()),
+	}, nil
 }
 
 func buildSemanticVerifierRequest(requestID string, relationships []repository.SemanticRelationshipInput) semanticVerifierRequest {
@@ -158,8 +185,11 @@ func buildSemanticVerifierRequest(requestID string, relationships []repository.S
 }
 
 func buildSemanticVerifierRequestWithContext(requestID string, relationships []repository.SemanticRelationshipInput, verifierContext repository.SemanticVerifierContext) semanticVerifierRequest {
+	return buildSemanticVerifierRequestWithEvidenceAndContext(requestID, relationships, nil, verifierContext)
+}
+
+func buildSemanticVerifierRequestWithEvidenceAndContext(requestID string, relationships []repository.SemanticRelationshipInput, evidence []domain.MemoryEvidence, verifierContext repository.SemanticVerifierContext) semanticVerifierRequest {
 	req := semanticVerifierRequest{
-		SchemaVersion: semanticVerifierSchemaVersion,
 		RequestID:     strings.TrimSpace(requestID),
 		Entities:      map[string]semanticVerifierEntityRequest{},
 		Relationships: map[string]semanticVerifierRelationshipRequest{},
@@ -167,6 +197,7 @@ func buildSemanticVerifierRequestWithContext(requestID string, relationships []r
 	if req.RequestID == "" {
 		req.RequestID = "semantic-placement"
 	}
+	req.Evidence, req.evidenceByID = semanticVerifierEvidence(relationships, evidence)
 	for i, rel := range relationships {
 		subjectRef := semanticVerifierSubjectRef(i)
 		subjectReq := semanticVerifierEntityRequest{
@@ -187,18 +218,17 @@ func buildSemanticVerifierRequestWithContext(requestID string, relationships []r
 			req.Entities[objectRef] = objectReq
 		}
 		relationshipRef := semanticVerifierRelationshipRef(i)
-		relationshipCandidates := verifierContext.RelationshipCandidates[i]
-		predicateCandidates, relatedIDs, existingRelationships := semanticVerifierRelationshipCandidates(rel.Predicate, relationshipCandidates)
+		predicateCandidates := semanticVerifierPredicateCandidates(rel.Predicate)
 		req.Relationships[relationshipRef] = semanticVerifierRelationshipRequest{
-			Ref:                     relationshipRef,
-			AllowedPredicates:       stringSliceSet(predicateCandidates),
-			PredicateCandidates:     predicateCandidates,
-			RelatedRelationship:     stringSliceSet(relatedIDs),
-			ExistingRelationshipIDs: relatedIDs,
-			ExistingRelationships:   existingRelationships,
-			Statement:               semanticVerifierStatement(rel),
-			EvidenceQuote:           rel.Quote,
-			InputIndex:              i,
+			Ref:                 relationshipRef,
+			AllowedPredicates:   stringSliceSet(predicateCandidates),
+			PredicateCandidates: predicateCandidates,
+			Statement:           semanticVerifierStatement(rel),
+			EvidenceID:          semanticEvidenceID(rel.EvidenceIndex),
+			EvidenceQuote:       rel.Quote,
+			SpanStart:           semanticVerifierRuneOffset(rel, true),
+			SpanEnd:             semanticVerifierRuneOffset(rel, false),
+			InputIndex:          i,
 		}
 	}
 	return req
@@ -222,36 +252,13 @@ func applySemanticVerifierEntityCandidates(req *semanticVerifierEntityRequest, c
 	}
 }
 
-func semanticVerifierRelationshipCandidates(predicate string, candidates []repository.SemanticRelationshipCandidate) ([]string, []string, []semanticVerifierRelationshipCandidate) {
+func semanticVerifierPredicateCandidates(predicate string) []string {
 	predicateSet := map[string]struct{}{}
-	relatedSet := map[string]struct{}{}
 	predicate = strings.TrimSpace(predicate)
 	if predicate != "" {
 		predicateSet[predicate] = struct{}{}
 	}
-	existing := make([]semanticVerifierRelationshipCandidate, 0, len(candidates))
-	for _, candidate := range candidates {
-		if candidate.Predicate != "" {
-			predicateSet[strings.TrimSpace(candidate.Predicate)] = struct{}{}
-		}
-		id := strings.TrimSpace(candidate.RelationshipID)
-		if id != "" {
-			relatedSet[id] = struct{}{}
-		}
-		object := strings.TrimSpace(candidate.ObjectName)
-		if object == "" {
-			object = strings.TrimSpace(candidate.ObjectValue)
-		}
-		existing = append(existing, semanticVerifierRelationshipCandidate{
-			RelationshipID: id,
-			Subject:        strings.TrimSpace(candidate.SubjectName),
-			Predicate:      strings.TrimSpace(candidate.Predicate),
-			Object:         object,
-			Tier:           string(candidate.Tier),
-			Status:         string(candidate.Status),
-		})
-	}
-	return sortedStringSet(predicateSet), sortedStringSet(relatedSet), existing
+	return sortedStringSet(predicateSet)
 }
 
 func stringSliceSet(values []string) map[string]struct{} {
@@ -277,11 +284,21 @@ func sortedStringSet(values map[string]struct{}) []string {
 }
 
 func validateSemanticVerifierResponse(req semanticVerifierRequest, resp semanticVerifierResponse) error {
-	if resp.SchemaVersion != req.SchemaVersion {
-		return fmt.Errorf("semantic verifier: schema_version mismatch: expected %q", req.SchemaVersion)
-	}
 	if resp.RequestID != req.RequestID {
 		return fmt.Errorf("semantic verifier: request_id mismatch: expected %q", req.RequestID)
+	}
+	assessments, err := verifierSecurityAssessments(req, resp)
+	if err != nil {
+		return err
+	}
+	if resp.EntityResults == nil {
+		return errors.New("semantic verifier: entity_results is required")
+	}
+	if resp.RelationshipResults == nil {
+		return errors.New("semantic verifier: relationship_results is required")
+	}
+	if len(assessments) > 0 {
+		return nil
 	}
 	if err := validateSemanticEntityResults(req, resp.EntityResults); err != nil {
 		return err
@@ -356,9 +373,6 @@ func validateSemanticRelationshipResults(req semanticVerifierRequest, results []
 		if !semanticVerifierOneOf(result.EvidenceVerdict, "entailed", "contradicted", "insufficient") {
 			return fmt.Errorf("semantic verifier: relationship %q evidence_verdict is invalid", ref)
 		}
-		if !semanticVerifierOneOf(result.KnowledgeAlignment, "novel", "duplicate", "corroborates", "conflicts", "updates_existing", "ambiguous") {
-			return fmt.Errorf("semantic verifier: relationship %q knowledge_alignment is invalid", ref)
-		}
 		switch result.PredicateStatus {
 		case "resolved":
 			if result.PredicateKey == nil || strings.TrimSpace(*result.PredicateKey) == "" {
@@ -373,23 +387,6 @@ func validateSemanticRelationshipResults(req semanticVerifierRequest, results []
 			}
 		default:
 			return fmt.Errorf("semantic verifier: relationship %q predicate_status is invalid", ref)
-		}
-		if len(result.RelatedRelationshipIDs) > 64 {
-			return fmt.Errorf("semantic verifier: relationship %q related_relationship_ids exceeds limit", ref)
-		}
-		relatedSeen := map[string]struct{}{}
-		for _, id := range result.RelatedRelationshipIDs {
-			id = strings.TrimSpace(id)
-			if id == "" {
-				return fmt.Errorf("semantic verifier: relationship %q related_relationship_ids contains empty id", ref)
-			}
-			if _, ok := relatedSeen[id]; ok {
-				return fmt.Errorf("semantic verifier: relationship %q related_relationship_ids contains duplicate id", ref)
-			}
-			relatedSeen[id] = struct{}{}
-			if _, ok := expected.RelatedRelationship[id]; !ok {
-				return fmt.Errorf("semantic verifier: relationship %q related_relationship_id is outside allowlist", ref)
-			}
 		}
 	}
 	if len(seen) != len(req.Relationships) {
@@ -423,7 +420,7 @@ func applySemanticVerifierResponse(req semanticVerifierRequest, resp semanticVer
 		input.Confidence = result.Confidence
 		input.VerifierModel = strings.TrimSpace(verifierModel)
 		input.EvidenceVerdict = result.EvidenceVerdict
-		input.KnowledgeAlignment = result.KnowledgeAlignment
+		input.KnowledgeAlignment = "novel"
 		input.VerificationRationale = result.Rationale
 		input.VerificationRawJSON = string(rawResponse)
 		if !subjectOK || !objectOK || result.PredicateStatus != "resolved" || result.PredicateKey == nil {
@@ -447,13 +444,8 @@ func applySemanticVerifierResponse(req semanticVerifierRequest, resp semanticVer
 		input.Predicate = strings.TrimSpace(*result.PredicateKey)
 		switch result.EvidenceVerdict {
 		case "entailed":
-			if result.KnowledgeAlignment == "ambiguous" {
-				input.Tier = domain.SemanticTierCandidate
-				input.Status = domain.SemanticStatusNeedsReview
-			} else {
-				input.Tier = domain.SemanticTierValidatedClaim
-				input.Status = domain.SemanticStatusActive
-			}
+			input.Tier = domain.SemanticTierValidatedClaim
+			input.Status = domain.SemanticStatusActive
 		case "insufficient":
 			input.Tier = domain.SemanticTierCandidate
 			input.Status = domain.SemanticStatusPendingEvidence

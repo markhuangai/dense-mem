@@ -21,64 +21,23 @@ import (
 	"github.com/markhuangai/dense-mem/internal/openapi"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
-	"github.com/markhuangai/dense-mem/internal/service/claimdedupe"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/embeddingservice"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
-	"github.com/markhuangai/dense-mem/internal/service/fragmentdedupe"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 	"github.com/markhuangai/dense-mem/internal/service/graphview"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/service/recallservice"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 	"github.com/markhuangai/dense-mem/internal/sse"
-	"github.com/markhuangai/dense-mem/internal/storage/neo4j"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
-// scopedReaderAdapter bridges neo4j.ScopedReader (which returns
-// neo4j.ResultSummary) to the fragment services' local ScopedReader
-// interface (which returns `any` to avoid an import cycle).
-type scopedReaderAdapter struct {
-	inner neo4j.ScopedReader
-}
-
 const startupTimeout = 5 * time.Minute
-
-func (a *scopedReaderAdapter) ScopedRead(ctx context.Context, profileID string, query string, params map[string]any) (any, []map[string]any, error) {
-	summary, rows, err := a.inner.ScopedRead(ctx, profileID, query, params)
-	return summary, rows, err
-}
-
-// fragmentAuditAdapter bridges the fragmentservice.AuditLogEntry to the
-// canonical service.AuditLogEntry consumed by the audit repository. The
-// fragmentservice version is a structural duplicate restated to avoid an
-// import cycle; this adapter copies the fields across.
-type fragmentAuditAdapter struct {
-	inner service.AuditService
-}
-
-func (a *fragmentAuditAdapter) Append(ctx context.Context, entry fragmentservice.AuditLogEntry) error {
-	return a.inner.Append(ctx, service.AuditLogEntry{
-		ID:            entry.ID,
-		ProfileID:     entry.ProfileID,
-		Timestamp:     entry.Timestamp,
-		Operation:     entry.Operation,
-		EntityType:    entry.EntityType,
-		EntityID:      entry.EntityID,
-		AfterPayload:  entry.AfterPayload,
-		ActorKeyID:    entry.ActorKeyID,
-		ActorRole:     entry.ActorRole,
-		ClientIP:      entry.ClientIP,
-		CorrelationID: entry.CorrelationID,
-		Metadata:      entry.Metadata,
-	})
-}
 
 func main() {
 	// Load configuration from environment variables
@@ -133,26 +92,9 @@ func main() {
 		log.Fatalf("embedding consistency check failed: %v", err)
 	}
 
-	legacyNeo4jBridgeEnabled := strings.EqualFold(strings.TrimSpace(os.Getenv("ENABLE_LEGACY_NEO4J_BRIDGE")), "true")
-	graphEnabled := legacyNeo4jBridgeEnabled && strings.TrimSpace(cfg.GetNeo4jURI()) != ""
-	var neo4jClient neo4j.Neo4jClientInterface
-	if graphEnabled {
-		client, err := neo4j.NewClient(startupCtx, &cfg)
-		if err != nil {
-			log.Fatalf("failed to connect to neo4j: %v", err)
-		}
-		neo4jClient = client
-		defer neo4jClient.Close(context.Background())
-
-		schemaBootstrapper := neo4j.NewSchemaBootstrapper(neo4jClient, cfg.GetEmbeddingDimensions(), logger)
-		if err := schemaBootstrapper.EnsureSchema(startupCtx); err != nil {
-			log.Fatalf("failed to bootstrap neo4j schema: %v", err)
-		}
-	} else {
-		logger.Info("neo4j disabled; booting v2 postgres-only semantic memory runtime")
-		if strings.TrimSpace(cfg.GetNeo4jURI()) != "" && !legacyNeo4jBridgeEnabled {
-			logger.Warn("NEO4J_URI ignored because ENABLE_LEGACY_NEO4J_BRIDGE is not true")
-		}
+	logger.Info("neo4j disabled; booting v2 postgres-only semantic memory runtime")
+	if strings.TrimSpace(cfg.GetNeo4jURI()) != "" {
+		logger.Warn("NEO4J_URI ignored by normal server boot; use the explicit legacy migration workflow")
 	}
 
 	// ========================================
@@ -183,19 +125,8 @@ func main() {
 	recallFeedbackEventRepo := repository.NewRecallFeedbackEventRepository(pgDB.GetDB(), rlsHelper)
 	memoryPlacementRepo := repository.NewMemoryPlacementRepository(pgDB.GetDB(), rlsHelper)
 	semanticRepo := repository.NewSemanticRepository(pgDB.GetDB(), rlsHelper)
-	skillPackImportRepo := repository.NewSkillPackImportRepository(pgDB.GetDB(), rlsHelper)
 
-	// ========================================
-	// Optional Neo4j profile scope enforcer and graph writer
-	// ========================================
-	var (
-		profileScopeEnforcer neo4j.ProfileScopeEnforcer
-		profileDataPurger    service.ProfileDataPurger
-	)
-	if graphEnabled {
-		profileScopeEnforcer = neo4j.NewProfileScopeEnforcer(neo4jClient)
-		profileDataPurger = service.NewNeo4jProfileDataPurger(profileScopeEnforcer)
-	}
+	var profileDataPurger service.ProfileDataPurger
 
 	// ========================================
 	// Service layer
@@ -232,9 +163,6 @@ func main() {
 	)
 	if cfg.GetTelemetryEnabled() {
 		prometheusMetrics := observability.NewPrometheusMetrics()
-		if graphEnabled {
-			prometheusMetrics.RegisterKnowledgeBacklogCollector(neo4jClient, logger)
-		}
 		discoverabilityMetrics = prometheusMetrics
 		telemetryHTTPMetrics = prometheusMetrics
 		telemetryScrapeHandler = prometheusMetrics.Handler()
@@ -245,23 +173,7 @@ func main() {
 			logger,
 		)
 	}
-	var readerAdapter *scopedReaderAdapter
-	if graphEnabled {
-		readerAdapter = &scopedReaderAdapter{inner: profileScopeEnforcer}
-	}
-	fragmentAuditor := &fragmentAuditAdapter{inner: auditService}
-	claimAuditor := &claimAuditAdapter{inner: auditService}
-	factAuditor := &factAuditAdapter{inner: auditService}
-	var (
-		dedupeLookup           fragmentdedupe.DedupeLookup
-		claimDedupeLookup      claimdedupe.DedupeLookup
-		recallFeedbackResolver service.RecallFeedbackResultResolver
-	)
-	if graphEnabled {
-		dedupeLookup = fragmentdedupe.NewNeo4jDedupeLookup(readerAdapter)
-		claimDedupeLookup = claimdedupe.NewNeo4jDedupeLookup(readerAdapter)
-		recallFeedbackResolver = service.NewRecallFeedbackGraphResolver(readerAdapter)
-	}
+	var recallFeedbackResolver service.RecallFeedbackResultResolver
 	recallFeedbackEventService := service.NewRecallFeedbackEventService(recallFeedbackEventRepo, appConfigService, recallFeedbackResolver)
 	recallFeedbackEventService.Start(context.Background())
 
@@ -277,18 +189,6 @@ func main() {
 		openaiProvider.SetMetrics(discoverabilityMetrics)
 		retryEmbedder = embedding.NewRetryEmbeddingProviderWithKey(openaiProvider, logger, cfg.GetAIAPIKey())
 		retryEmbedder.SetMetrics(discoverabilityMetrics)
-
-		if graphEnabled {
-			fragmentCreateRegistrySvc = fragmentservice.NewCreateFragmentService(
-				retryEmbedder,
-				profileScopeEnforcer,
-				dedupeLookup,
-				fragmentAuditor,
-				embeddingConsistencySvc,
-				slog.Default(),
-				discoverabilityMetrics,
-			)
-		}
 	}
 
 	var (
@@ -305,62 +205,13 @@ func main() {
 		communityGetSvc      communityservice.GetCommunitySummaryService
 		communityListSvc     communityservice.ListCommunitiesService
 	)
-	if graphEnabled {
-		fragmentGetSvc = fragmentservice.NewGetFragmentService(readerAdapter)
-		fragmentListSvc = fragmentservice.NewListFragmentsService(readerAdapter)
-		claimCreateSvc = claimservice.NewCreateClaimService(
-			claimDedupeLookup,
-			profileScopeEnforcer,
-			profileScopeEnforcer,
-			claimAuditor,
-			slog.Default(),
-			discoverabilityMetrics,
-		)
-		claimGetSvc = claimservice.NewGetClaimService(profileScopeEnforcer, slog.Default())
-		claimListSvc = claimservice.NewListClaimsService(profileScopeEnforcer)
-		claimListFilteredSvc = claimservice.NewListClaimsFilteredService(profileScopeEnforcer)
-
-		claimLock := postgres.NewClaimLock(discoverabilityMetrics)
-		factPromoteSvc = factservice.NewPromoteClaimService(
-			profileScopeEnforcer,
-			claimLock,
-			pgDB.GetDB(),
-			factAuditor,
-			slog.Default(),
-			discoverabilityMetrics,
-			time.Duration(cfg.GetPromoteTxTimeoutSeconds())*time.Second,
-		)
-		if confirmSvc, ok := factPromoteSvc.(factservice.ConfirmMemoryService); ok {
-			factConfirmSvc = confirmSvc
-		}
-		factGetSvc = factservice.NewGetFactService(profileScopeEnforcer)
-		factListSvc = factservice.NewListFactsService(profileScopeEnforcer)
-		communityGetSvc = communityservice.NewGetCommunitySummaryService(neo4jClient)
-		communityListSvc = communityservice.NewListCommunitiesService(neo4jClient)
-	}
 
 	var (
-		claimVerifyRegistrySvc   claimservice.VerifyClaimService = unavailableVerifyClaimService{}
-		skillPackConflictDecider skillpackservice.ConflictDecider
-		semanticAIProvider       *memoryservice.OpenAISemanticProvider
+		claimVerifyRegistrySvc claimservice.VerifyClaimService = unavailableVerifyClaimService{}
+		semanticAIProvider     *memoryservice.OpenAISemanticProvider
 	)
 	if verifierConfigured(&cfg) {
-		baseVerifier := verifier.NewOpenAIVerifier(&cfg, nil)
-		baseVerifier.SetMetrics(discoverabilityMetrics)
-		retryVerifier := verifier.NewRetryVerifier(baseVerifier, &cfg, logger)
-		skillPackConflictDecider = skillpackservice.NewOpenAIConflictDecider(&cfg, nil)
 		semanticAIProvider = memoryservice.NewOpenAISemanticProvider(&cfg, nil)
-
-		claimVerifyRegistrySvc = claimservice.NewVerifyClaimService(
-			profileScopeEnforcer,
-			profileScopeEnforcer,
-			profileScopeEnforcer,
-			retryVerifier,
-			cfg.GetAIVerifierModel(),
-			claimAuditor,
-			slog.Default(),
-			discoverabilityMetrics,
-		)
 	}
 
 	semanticRecallRanking, err := recallservice.NewSemanticRecallRankingProfile(
@@ -407,7 +258,6 @@ func main() {
 		}
 	}
 	dreamSvc := dreamservice.New(dreamservice.Dependencies{
-		Graph:     profileScopeEnforcer,
 		Memory:    memorySvc,
 		AppConfig: appConfigService,
 		Profiles:  profileService,
@@ -417,40 +267,13 @@ func main() {
 		Metrics:   discoverabilityMetrics,
 	})
 	contextSvc := contextservice.NewSemantic(semanticRepo, recallRegistrySvc)
-	graphViewSvc := graphview.Service(unavailableGraphViewService{})
+	graphViewSvc := graphview.NewSemantic(semanticRepo)
 	var skillPackSvc skillpackservice.Service
-	if graphEnabled {
-		graphViewSvc = graphview.New(profileScopeEnforcer)
-		skillPackSvc = skillpackservice.New(skillpackservice.Dependencies{
-			FragmentCreate:  fragmentCreateRegistrySvc,
-			ClaimCreate:     claimCreateSvc,
-			ClaimGet:        claimGetSvc,
-			ClaimList:       claimListSvc,
-			FactPromote:     factPromoteSvc,
-			FactGet:         factGetSvc,
-			FactList:        factListSvc,
-			ConflictDecider: skillPackConflictDecider,
-			Graph:           profileScopeEnforcer,
-			Ledger:          skillPackImportRepo,
-			HistoryDays:     cfg.GetMemoryPackImportHistoryDays(),
-		})
-	}
 
 	var (
 		communityDetectRegistrySvc communityservice.DetectCommunityService = unavailableCommunityDetectService{}
 	)
 	communityAvailable := false
-	if graphEnabled {
-		communityAvailabilitySvc := communityservice.NewAvailabilityService(neo4jClient, slog.Default())
-		communityProbeCtx, communityProbeCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		communityAvailable = communityAvailabilitySvc.ProbeGDS(communityProbeCtx)
-		communityProbeCancel()
-		if communityAvailable {
-			communityDetectRegistrySvc = communityservice.NewLeidenService(pgDB.GetDB(), neo4jClient, &cfg, slog.Default())
-		} else {
-			slog.Default().Warn("community scheduler: GDS unavailable, scheduler not started")
-		}
-	}
 
 	// Tool registry is the single source of truth for MCP / HTTP catalog / OpenAPI.
 	toolRegistry, err := registry.BuildDefault(registry.Dependencies{
@@ -509,11 +332,6 @@ func main() {
 		{Name: "postgres", Check: func(ctx context.Context) error {
 			return pgDB.Ping(ctx)
 		}},
-	}
-	if graphEnabled {
-		checks = append(checks, http.HealthCheck{Name: "neo4j", Check: func(ctx context.Context) error {
-			return neo4jClient.Verify(ctx)
-		}})
 	}
 
 	if backend.redisPingFn != nil {

@@ -135,42 +135,42 @@ const overviewGraph: GraphSnapshot = {
   truncated: false,
   nodes: [
     {
-      key: "fact:fact-1",
-      id: "fact-1",
-      type: "fact",
-      title: "Alice works_on project-x",
+      key: "entity:entity-alice",
+      id: "entity-alice",
+      type: "entity",
+      title: "Alice",
     },
     {
-      key: "claim:claim-1",
-      id: "claim-1",
-      type: "claim",
-      title: "Alice uses Dense-Mem",
+      key: "entity:entity-dense-mem",
+      id: "entity-dense-mem",
+      type: "entity",
+      title: "Dense-Mem",
     },
   ],
   edges: [
-    { id: "edge-1", source: "claim:claim-1", target: "fact:fact-1", relationship: "PROMOTES_TO", directed: true },
+    { id: "rel-1", source: "entity:entity-alice", target: "entity:entity-dense-mem", relationship: "uses", directed: true },
   ],
 };
 
 const graphNodeDetails: Record<string, GraphNode> = {
-  "fact:fact-1": {
-    key: "fact:fact-1",
-    id: "fact-1",
-    type: "fact",
-    title: "Alice works_on project-x",
-    body: "project-x",
+  "entity:entity-alice": {
+    key: "entity:entity-alice",
+    id: "entity-alice",
+    type: "entity",
+    title: "Alice",
+    body: "person",
     status: "active",
     community_id: "community-1",
     score: 0.94,
     recorded_at: "2026-05-02T12:00:00Z",
   },
-  "claim:claim-1": {
-    key: "claim:claim-1",
-    id: "claim-1",
-    type: "claim",
-    title: "Alice uses Dense-Mem",
-    body: "Dense-Mem",
-    status: "validated",
+  "entity:entity-dense-mem": {
+    key: "entity:entity-dense-mem",
+    id: "entity-dense-mem",
+    type: "entity",
+    title: "Dense-Mem",
+    body: "project",
+    status: "active",
     community_id: "community-1",
     score: 0.88,
     recorded_at: "2026-05-02T12:00:00Z",
@@ -180,7 +180,7 @@ const graphNodeDetails: Record<string, GraphNode> = {
 const localGraph: GraphSnapshot = {
   ...overviewGraph,
   scope: "local",
-  anchor: { type: "fact", id: "fact-1", key: "fact:fact-1" },
+  anchor: { type: "entity", id: "entity-alice", key: "entity:entity-alice" },
   depth: 1,
   limit: 48,
 };
@@ -287,26 +287,18 @@ describe("UserPortalApp", () => {
     expect(await screen.findByLabelText("Knowledge graph")).toBeInTheDocument();
     const controls = screen.getByLabelText("Graph controls");
     expect(within(controls).queryByLabelText("Limit")).not.toBeInTheDocument();
-    expect((await screen.findAllByText("Alice works_on project-x")).length).toBeGreaterThanOrEqual(1);
+    expect((await screen.findAllByText("Alice")).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByLabelText("Graph totals")).toHaveTextContent("2");
     expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("Select a node");
-    await userEvent.click(within(screen.getByTestId("force-graph")).getByRole("button", { name: "Alice works_on project-x" }));
+    await userEvent.click(within(screen.getByTestId("force-graph")).getByRole("button", { name: "Alice" }));
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/ui/api/node-detail?type=fact&id=fact-1", expect.any(Object));
+      expect(fetchMock).toHaveBeenCalledWith("/ui/api/node-detail?type=entity&id=entity-alice", expect.any(Object));
     });
     expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("community-1");
     expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("0.940");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment%2Cdream&depth=2",
-        expect.any(Object),
-      );
-    });
-    await userEvent.click(within(controls).getByRole("checkbox", { name: "Superseded" }));
-    await userEvent.click(within(controls).getByRole("button", { name: "Refresh" }));
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment%2Cdream&depth=2&include_superseded=true",
+        "/ui/api/graph?scope=overview&types=entity%2Cvalue&depth=2",
         expect.any(Object),
       );
     });
@@ -315,8 +307,8 @@ describe("UserPortalApp", () => {
   it("refreshes selected graph node details when the graph reloads", async () => {
     const refreshedDetails = {
       ...graphNodeDetails,
-      "fact:fact-1": {
-        ...graphNodeDetails["fact:fact-1"],
+      "entity:entity-alice": {
+        ...graphNodeDetails["entity:entity-alice"],
         body: "project-y",
         community_id: "community-2",
         score: 0.67,
@@ -330,7 +322,7 @@ describe("UserPortalApp", () => {
     await userEvent.click(screen.getByRole("button", { name: /graph/i }));
     const controls = await screen.findByLabelText("Graph controls");
 
-    await userEvent.click(within(screen.getByTestId("force-graph")).getByRole("button", { name: "Alice works_on project-x" }));
+    await userEvent.click(within(screen.getByTestId("force-graph")).getByRole("button", { name: "Alice" }));
     await waitFor(() => {
       expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("0.940");
     });
@@ -338,7 +330,7 @@ describe("UserPortalApp", () => {
     await userEvent.click(within(controls).getByRole("button", { name: "Refresh" }));
 
     await waitFor(() => {
-      expect(fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/ui/api/node-detail?type=fact&id=fact-1"))).toHaveLength(2);
+      expect(fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/ui/api/node-detail?type=entity&id=entity-alice"))).toHaveLength(2);
     });
     expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("community-2");
     expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("0.670");
@@ -354,17 +346,15 @@ describe("UserPortalApp", () => {
     const controls = await screen.findByLabelText("Graph controls");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment%2Cdream&depth=2",
+        "/ui/api/graph?scope=overview&types=entity%2Cvalue&depth=2",
         expect.any(Object),
       );
     });
     const graphCallCount = () => fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/ui/api/graph")).length;
     const beforeDisabledRefresh = graphCallCount();
 
-    await userEvent.click(within(controls).getByRole("checkbox", { name: "Fact" }));
-    await userEvent.click(within(controls).getByRole("checkbox", { name: "Claim" }));
-    await userEvent.click(within(controls).getByRole("checkbox", { name: "Fragment" }));
-    await userEvent.click(within(controls).getByRole("checkbox", { name: "Dream" }));
+    await userEvent.click(within(controls).getByRole("checkbox", { name: "Entity" }));
+    await userEvent.click(within(controls).getByRole("checkbox", { name: "Value" }));
 
     const refresh = within(controls).getByRole("button", { name: "Refresh" });
     expect(refresh).toBeDisabled();
@@ -373,7 +363,24 @@ describe("UserPortalApp", () => {
   });
 
   it("loads a local graph from the recall inspector", async () => {
-    const fetchMock = mockUserFetch(baseSession, [], { recallHits, graphSnapshot: localGraph });
+    const v2RecallHits: RecallHit[] = [{
+      evidence: {
+        evidence_id: "evidence-1",
+        context: "Alice uses Dense-Mem for project memory.",
+      },
+      evidences: [{
+        evidence_id: "evidence-1",
+        context: "Alice uses Dense-Mem for project memory.",
+      }],
+      relationships: [{
+        relationship_id: "rel-1",
+        subject: { entity_id: "entity-alice", name: "Alice", kind: "person" },
+        predicate: "uses",
+        object: { entity_id: "entity-dense-mem", name: "Dense-Mem", kind: "project" },
+        polarity: "+",
+      }],
+    }];
+    const fetchMock = mockUserFetch(baseSession, [], { recallHits: v2RecallHits, graphSnapshot: localGraph });
     sessionStorage.setItem("denseMem.userApiKey", "dm_read");
 
     render(<UserPortalApp />);
@@ -383,10 +390,10 @@ describe("UserPortalApp", () => {
     await screen.findByRole("listbox", { name: "Recall result list" });
     await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
 
-    expect(await screen.findByTestId("force-graph")).toHaveTextContent("Alice works_on project-x");
+    expect(await screen.findByTestId("force-graph")).toHaveTextContent("Alice");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=local&types=fact%2Cclaim%2Cfragment%2Cdream&anchor_type=fact&anchor_id=fact-1&depth=2&limit=48",
+        "/ui/api/graph?scope=local&types=entity%2Cvalue&anchor_type=entity&anchor_id=entity-alice&depth=2&limit=48",
         expect.any(Object),
       );
     });
@@ -803,7 +810,7 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: 
       const params = new URLSearchParams(url.split("?")[1] ?? "");
       const key = `${params.get("type")}:${params.get("id")}`;
       const details = optionValue(options.graphNodeDetails ?? graphNodeDetails, graphNodeDetailCallCount++);
-      return jsonResponse({ data: details[key] ?? graphNodeDetails["fact:fact-1"] });
+      return jsonResponse({ data: details[key] ?? graphNodeDetails["entity:entity-alice"] });
     }
     if (url.startsWith("/ui/api/graph") && method === "GET") {
       return jsonResponse({ data: optionValue(options.graphSnapshot ?? overviewGraph, graphCallCount++) });
@@ -859,13 +866,9 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: 
   return fetchMock;
 }
 
-function optionValue<T>(value: T | T[], index: number): T {
-  return Array.isArray(value) ? value[Math.min(index, value.length - 1)] : value;
-}
+function optionValue<T>(value: T | T[], index: number): T { return Array.isArray(value) ? value[Math.min(index, value.length - 1)] : value; }
 
-function isRecallSequence(value: RecallHit[] | RecallHit[][]): value is RecallHit[][] {
-  return Array.isArray(value[0]);
-}
+function isRecallSequence(value: RecallHit[] | RecallHit[][]): value is RecallHit[][] { return Array.isArray(value[0]); }
 
 function telemetryForSession(session: UserSession) {
   const teamScope = session.can_manage_team;
@@ -992,8 +995,5 @@ function authorizationHeader(init?: RequestInit): string {
 }
 
 function jsonResponse(payload: unknown, status = 200) {
-  return new Response(JSON.stringify(payload), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
+  return new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } });
 }

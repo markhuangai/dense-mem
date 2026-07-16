@@ -573,7 +573,7 @@ func TestMCP_MemoryToolsScopeProfileAndClarifications(t *testing.T) {
 
 	readOnly := NewServerWithScopes(reg, "profileA", []string{"read"}, logger)
 	listOut := runRPC(t, readOnly, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
-	if strings.Contains(listOut, `"remember"`) || strings.Contains(listOut, `"reflect_memories"`) || strings.Contains(listOut, `"confirm_memory"`) {
+	if strings.Contains(listOut, `"remember"`) || strings.Contains(listOut, `"resolve_memory_placement"`) {
 		t.Fatalf("read-scoped list exposed write tools: %s", listOut)
 	}
 
@@ -590,7 +590,7 @@ func TestMCP_MemoryToolsScopeProfileAndClarifications(t *testing.T) {
 	}
 }
 
-func TestMCP_RememberAcceptsLegacyContentCallAsEvidence(t *testing.T) {
+func TestMCP_RememberRejectsLegacyContentCall(t *testing.T) {
 	logger, _ := testLogger(t)
 	mem := &mcpMemoryStub{}
 	reg, err := registry.BuildDefault(registry.Dependencies{Memory: mem})
@@ -600,21 +600,11 @@ func TestMCP_RememberAcceptsLegacyContentCallAsEvidence(t *testing.T) {
 	server := NewServerWithScopes(reg, "profileA", []string{"read", "write"}, logger)
 
 	out := runRPC(t, server, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"remember","arguments":{"content":"legacy client content","labels":["decision","security"],"source":"chat: compatibility","idempotency_key":"legacy-content-call","auto_promote":true,"claims":[{"subject":"client","predicate":"uses","object":"old remember shape","extract_conf":0.99,"resolution_conf":0.99}]}}}`)
-	if strings.Contains(out, `"error"`) {
-		t.Fatalf("legacy remember call failed: %s", out)
+	if !strings.Contains(out, `"code":-32602`) || !strings.Contains(out, `"message":"evidence is required"`) {
+		t.Fatalf("legacy remember call response = %s; want invalid params evidence error", out)
 	}
-	if len(mem.lastRemember.Evidence) != 1 {
-		t.Fatalf("remember evidence count = %d; want 1", len(mem.lastRemember.Evidence))
-	}
-	evidence := mem.lastRemember.Evidence[0]
-	if evidence.Content != "legacy client content" {
-		t.Fatalf("remember evidence content = %q", evidence.Content)
-	}
-	if evidence.Source != "chat: compatibility" || evidence.IdempotencyKey != "legacy-content-call" {
-		t.Fatalf("remember evidence provenance = %#v", evidence)
-	}
-	if len(evidence.Labels) != 2 || evidence.Labels[0] != "decision" || evidence.Labels[1] != "security" {
-		t.Fatalf("remember evidence labels = %#v", evidence.Labels)
+	if len(mem.lastRemember.Evidence) != 0 {
+		t.Fatalf("remember reached service with evidence = %#v", mem.lastRemember.Evidence)
 	}
 }
 
@@ -642,7 +632,7 @@ func (s *mcpMemoryStub) GetMemoryPlacement(ctx context.Context, profileID string
 func (s *mcpMemoryStub) DisputeMemoryPlacement(ctx context.Context, profileID string, req memoryservice.DisputeRequest) (*memoryservice.DisputeResult, error) {
 	s.lastProfile = profileID
 	return &memoryservice.DisputeResult{
-		Session: domain.MemoryDisputeSession{DisputeID: "dispute-1", Status: domain.MemoryDisputeOpen},
+		Session: &domain.MemoryDisputeSession{DisputeID: "dispute-1", Status: domain.MemoryDisputeOpen},
 	}, nil
 }
 

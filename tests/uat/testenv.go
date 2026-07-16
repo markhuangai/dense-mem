@@ -623,6 +623,7 @@ func (c *testConfig) IsEmbeddingConfigured() bool {
 }
 func (c *testConfig) GetAIVerifierAPIURL() string            { return c.aiAPIURL }
 func (c *testConfig) GetAIVerifierAPIKey() string            { return c.aiAPIKey }
+func (c *testConfig) GetAIReviewerModel() string             { return "gpt-4o-mini" }
 func (c *testConfig) GetAIVerifierModel() string             { return "gpt-4o-mini" }
 func (c *testConfig) GetAIVerifierTimeoutSeconds() int       { return 60 }
 func (c *testConfig) GetAIVerifierMaxConcurrency() int       { return 5 }

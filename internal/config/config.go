@@ -41,6 +41,7 @@ type ConfigProvider interface {
 	// Knowledge-pipeline knobs (AC-X3)
 	GetAIVerifierAPIURL() string
 	GetAIVerifierAPIKey() string
+	GetAIReviewerModel() string
 	GetAIVerifierModel() string
 	GetAIVerifierTimeoutSeconds() int
 	GetAIVerifierMaxConcurrency() int
@@ -177,12 +178,9 @@ func (c *Config) GetAIVerifierAPIKey() string {
 	return c.AIAPIKey
 }
 func (c *Config) GetAIReviewerModel() string {
-	if strings.TrimSpace(c.AIReviewerModel) != "" {
-		return c.AIReviewerModel
-	}
-	return c.AIVerifierModel
+	return strings.TrimSpace(c.AIReviewerModel)
 }
-func (c *Config) GetAIVerifierModel() string { return c.AIVerifierModel }
+func (c *Config) GetAIVerifierModel() string { return strings.TrimSpace(c.AIVerifierModel) }
 func (c *Config) GetAIVerifierDisableTemperature() bool {
 	return c.AIVerifierDisableTemperature
 }
@@ -246,6 +244,8 @@ func (c *Config) ValidateServerStartup() error {
 		{"AI_API_URL", c.AIAPIURL},
 		{"AI_API_KEY", c.AIAPIKey},
 		{"AI_API_EMBEDDING_MODEL", c.AIEmbeddingModel},
+		{"AI_REVIEWER_MODEL", c.GetAIReviewerModel()},
+		{"AI_VERIFIER_MODEL", c.GetAIVerifierModel()},
 		{"CONTROL_PORTAL_TOKEN", c.ControlPortalToken},
 	}
 	for _, item := range required {
@@ -391,8 +391,6 @@ func Load() (Config, error) {
 
 	if cfg.AIEmbeddingDimensions > 0 {
 		cfg.EmbeddingDimensions = cfg.AIEmbeddingDimensions
-	} else {
-		cfg.EmbeddingDimensions = 1536
 	}
 
 	// Knowledge-pipeline knobs (AC-X3)
@@ -406,7 +404,7 @@ func Load() (Config, error) {
 	if cfg.AIVerifierAPIKey == "" && !verifierAPIURLSet {
 		cfg.AIVerifierAPIKey = cfg.AIAPIKey
 	}
-	cfg.AIVerifierModel = getEnvOrDefault("AI_VERIFIER_MODEL", "gpt-4o-mini")
+	cfg.AIVerifierModel = strings.TrimSpace(os.Getenv("AI_VERIFIER_MODEL"))
 	cfg.AIReviewerModel = strings.TrimSpace(os.Getenv("AI_REVIEWER_MODEL"))
 	cfg.AIVerifierDisableTemperature, err = parseBoolOrDefault("AI_VERIFIER_DISABLE_TEMPERATURE", false)
 	if err != nil {

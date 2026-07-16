@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"os"
 	"testing"
 )
@@ -89,8 +90,13 @@ func setRequiredEnv() {
 func setRequiredEmbeddingEnv() {
 	os.Setenv("AI_API_URL", "https://example.com/v1")
 	os.Setenv("AI_API_KEY", "sk-test")
-	os.Setenv("AI_API_EMBEDDING_MODEL", "text-embedding-3-small")
-	os.Setenv("AI_API_EMBEDDING_DIMENSIONS", "1536")
+	os.Setenv("AI_API_EMBEDDING_MODEL", "text-embedding-3-large")
+	os.Setenv("AI_API_EMBEDDING_DIMENSIONS", "3072")
+}
+
+func setRequiredAIModelEnv() {
+	os.Setenv("AI_REVIEWER_MODEL", "reviewer-model")
+	os.Setenv("AI_VERIFIER_MODEL", "verifier-model")
 }
 
 func TestLoadDefaults(t *testing.T) {
@@ -135,8 +141,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.SSEMaxConcurrentStreams != 10 {
 		t.Errorf("SSEMaxConcurrentStreams default = %d, want %d", cfg.SSEMaxConcurrentStreams, 10)
 	}
-	if cfg.EmbeddingDimensions != 1536 {
-		t.Errorf("EmbeddingDimensions default = %d, want %d", cfg.EmbeddingDimensions, 1536)
+	if cfg.EmbeddingDimensions != 0 {
+		t.Errorf("EmbeddingDimensions default = %d, want %d", cfg.EmbeddingDimensions, 0)
 	}
 	if cfg.GetPostgresReadDSN() != "" {
 		t.Errorf("PostgresReadDSN default = %q, want empty", cfg.GetPostgresReadDSN())
@@ -474,6 +480,7 @@ func TestConfigProviderInterface(t *testing.T) {
 	_ = provider.IsEmbeddingConfigured()
 	_ = provider.GetAIVerifierAPIURL()
 	_ = provider.GetAIVerifierAPIKey()
+	_ = provider.GetAIReviewerModel()
 	_ = provider.GetAIVerifierModel()
 	_ = provider.GetAIVerifierTimeoutSeconds()
 	_ = provider.GetAIVerifierMaxConcurrency()
@@ -494,6 +501,7 @@ func TestConfigGetterFallbacksAndParsers(t *testing.T) {
 		FragmentReadRateLimit:    22,
 		AIAPIURL:                 "https://shared.example/v1",
 		AIAPIKey:                 "shared-key",
+		AIReviewerModel:          "reviewer-model",
 		AIVerifierModel:          "verifier-model",
 		AIVerifierTimeoutSeconds: 0,
 	}
@@ -509,6 +517,9 @@ func TestConfigGetterFallbacksAndParsers(t *testing.T) {
 	}
 	if got := cfg.GetAIVerifierTimeoutSeconds(); got != 60 {
 		t.Fatalf("GetAIVerifierTimeoutSeconds() fallback = %d, want 60", got)
+	}
+	if got := cfg.GetAIReviewerModel(); got != "reviewer-model" {
+		t.Fatalf("GetAIReviewerModel() = %q, want reviewer-model", got)
 	}
 
 	clearEnv()
@@ -601,11 +612,11 @@ func TestLoad_EmbeddingConfig_Complete(t *testing.T) {
 	if !cfg.IsEmbeddingConfigured() {
 		t.Error("IsEmbeddingConfigured() = false, want true")
 	}
-	if cfg.GetAIEmbeddingDimensions() != 1536 {
-		t.Errorf("GetAIEmbeddingDimensions() = %d, want %d", cfg.GetAIEmbeddingDimensions(), 1536)
+	if cfg.GetAIEmbeddingDimensions() != 3072 {
+		t.Errorf("GetAIEmbeddingDimensions() = %d, want %d", cfg.GetAIEmbeddingDimensions(), 3072)
 	}
-	if cfg.GetEmbeddingDimensions() != 1536 {
-		t.Errorf("GetEmbeddingDimensions() = %d, want %d", cfg.GetEmbeddingDimensions(), 1536)
+	if cfg.GetEmbeddingDimensions() != 3072 {
+		t.Errorf("GetEmbeddingDimensions() = %d, want %d", cfg.GetEmbeddingDimensions(), 3072)
 	}
 	if cfg.GetAIEmbeddingTimeoutSeconds() != 30 {
 		t.Errorf("GetAIEmbeddingTimeoutSeconds() = %d, want %d", cfg.GetAIEmbeddingTimeoutSeconds(), 30)
@@ -656,6 +667,7 @@ func TestLoadVerifierConfig_SeparateEndpoint(t *testing.T) {
 	setRequiredEmbeddingEnv()
 	os.Setenv("AI_VERIFIER_API_URL", "https://verifier.example.com/v1")
 	os.Setenv("AI_VERIFIER_API_KEY", "verifier-key")
+	os.Setenv("AI_REVIEWER_MODEL", "local-reviewer")
 	os.Setenv("AI_VERIFIER_MODEL", "local-verifier")
 	os.Setenv("AI_VERIFIER_TIMEOUT_SECONDS", "45")
 
@@ -676,8 +688,8 @@ func TestLoadVerifierConfig_SeparateEndpoint(t *testing.T) {
 	if got := cfg.GetAIVerifierModel(); got != "local-verifier" {
 		t.Errorf("GetAIVerifierModel() = %q, want %q", got, "local-verifier")
 	}
-	if got := cfg.GetAIReviewerModel(); got != "local-verifier" {
-		t.Errorf("GetAIReviewerModel() fallback = %q, want %q", got, "local-verifier")
+	if got := cfg.GetAIReviewerModel(); got != "local-reviewer" {
+		t.Errorf("GetAIReviewerModel() = %q, want %q", got, "local-reviewer")
 	}
 	if cfg.GetAIVerifierDisableTemperature() {
 		t.Error("GetAIVerifierDisableTemperature() = true, want false")
@@ -753,6 +765,7 @@ func TestValidateServerStartup_SucceedsWithEmbeddingConfig(t *testing.T) {
 	clearEnv()
 	setRequiredEnv()
 	setRequiredEmbeddingEnv()
+	setRequiredAIModelEnv()
 
 	cfg, err := Load()
 	if err != nil {
@@ -761,6 +774,27 @@ func TestValidateServerStartup_SucceedsWithEmbeddingConfig(t *testing.T) {
 
 	if err := cfg.ValidateServerStartup(); err != nil {
 		t.Fatalf("ValidateServerStartup() returned unexpected error: %v", err)
+	}
+}
+
+func TestEnvExampleDocumentsRequiredAIStartupConfig(t *testing.T) {
+	contents, err := os.ReadFile("../../examples/.env.example")
+	if err != nil {
+		t.Fatalf("ReadFile examples/.env.example: %v", err)
+	}
+
+	required := []string{
+		"AI_API_URL=",
+		"AI_API_KEY=",
+		"AI_API_EMBEDDING_MODEL=",
+		"AI_API_EMBEDDING_DIMENSIONS=",
+		"AI_REVIEWER_MODEL=",
+		"AI_VERIFIER_MODEL=",
+	}
+	for _, key := range required {
+		if !bytes.Contains(contents, []byte(key)) {
+			t.Fatalf("examples/.env.example missing %s", key)
+		}
 	}
 }
 

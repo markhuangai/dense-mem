@@ -38,8 +38,7 @@ func TestBuildDefault_RegistersV2ToolSurface(t *testing.T) {
 	required := []string{
 		"recall_memory",
 		"trace_memory",
-		"remember", "get_memory_placement", "dispute_memory_placement",
-		"import_memories", "reflect_memories", "confirm_memory",
+		"remember", "get_memory_placement", "resolve_memory_placement",
 		"list_dreams", "get_dream", "resolve_dream_feedback",
 		"find_memory_pack_candidates", "export_memory_pack", "inspect_memory_pack",
 		"import_memory_pack", "rollback_memory_pack_import",
@@ -54,7 +53,10 @@ func TestBuildDefault_RegistersV2ToolSurface(t *testing.T) {
 			t.Errorf("legacy hyphenated tool %q must not be registered", name)
 		}
 	}
-	for _, removed := range []string{"list_recent_memories", "keyword_search", "semantic_search", "graph_query", "assemble_context"} {
+	for _, removed := range []string{
+		"list_recent_memories", "keyword_search", "semantic_search", "graph_query", "assemble_context",
+		"dispute_memory_placement", "reflect_memories", "confirm_memory", "import_memories",
+	} {
 		if _, ok := reg.Get(removed); ok {
 			t.Errorf("removed tool %q must not be registered", removed)
 		}
@@ -470,6 +472,7 @@ func (s *stubListCapture) List(ctx context.Context, profileID string, opts fragm
 type stubMemory struct {
 	lastProfile  string
 	lastRemember memoryservice.RememberRequest
+	lastDispute  memoryservice.DisputeRequest
 }
 
 func (s *stubMemory) Remember(ctx context.Context, profileID string, req memoryservice.RememberRequest) (*memoryservice.RememberResult, error) {
@@ -490,8 +493,9 @@ func (s *stubMemory) GetMemoryPlacement(ctx context.Context, profileID string, r
 
 func (s *stubMemory) DisputeMemoryPlacement(ctx context.Context, profileID string, req memoryservice.DisputeRequest) (*memoryservice.DisputeResult, error) {
 	s.lastProfile = profileID
+	s.lastDispute = req
 	return &memoryservice.DisputeResult{
-		Session: domain.MemoryDisputeSession{DisputeID: "dispute-1", Status: domain.MemoryDisputeOpen},
+		Session: &domain.MemoryDisputeSession{DisputeID: "dispute-1", Status: domain.MemoryDisputeOpen},
 	}, nil
 }
 

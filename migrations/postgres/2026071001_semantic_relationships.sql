@@ -103,6 +103,33 @@ CREATE TABLE IF NOT EXISTS semantic_entity_names (
 CREATE UNIQUE INDEX IF NOT EXISTS semantic_entity_names_unique
     ON semantic_entity_names(team_id, entity_id, lower(name));
 
+CREATE TABLE IF NOT EXISTS semantic_values (
+    team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    value_id UUID NOT NULL DEFAULT gen_random_uuid(),
+    owner_profile_id UUID NOT NULL,
+    value_type TEXT NOT NULL DEFAULT 'string',
+    canonical_value TEXT NOT NULL,
+    display_value TEXT NOT NULL,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status TEXT NOT NULL DEFAULT 'active',
+    version BIGINT NOT NULL DEFAULT 1,
+    search_state TEXT NOT NULL DEFAULT 'pending',
+    search_document_version BIGINT NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (team_id, value_id),
+    FOREIGN KEY (team_id, owner_profile_id) REFERENCES semantic_profile_refs(team_id, profile_id) ON DELETE RESTRICT,
+    CONSTRAINT semantic_values_type_check CHECK (value_type IN ('string', 'number', 'boolean', 'date', 'date_time')),
+    CONSTRAINT semantic_values_canonical_nonempty CHECK (btrim(canonical_value) <> ''),
+    CONSTRAINT semantic_values_display_nonempty CHECK (btrim(display_value) <> ''),
+    CONSTRAINT semantic_values_status_check CHECK (status IN ('active', 'retracted')),
+    CONSTRAINT semantic_values_search_state_check CHECK (search_state IN ('not_required', 'pending', 'current', 'failed'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS semantic_values_identity_unique
+    ON semantic_values(team_id, value_type, canonical_value)
+    WHERE status = 'active';
+
 CREATE TABLE IF NOT EXISTS semantic_relationship_records (
     team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     relationship_id UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -111,8 +138,7 @@ CREATE TABLE IF NOT EXISTS semantic_relationship_records (
     predicate TEXT NOT NULL,
     polarity TEXT NOT NULL DEFAULT '+',
     object_entity_id UUID NULL,
-    object_value TEXT NOT NULL DEFAULT '',
-    object_kind TEXT NOT NULL DEFAULT '',
+    object_value_id UUID NULL,
     tier TEXT NOT NULL DEFAULT 'candidate',
     status TEXT NOT NULL DEFAULT 'pending_evidence',
     confidence DOUBLE PRECISION NOT NULL DEFAULT 0,
@@ -133,9 +159,10 @@ CREATE TABLE IF NOT EXISTS semantic_relationship_records (
     FOREIGN KEY (team_id, owner_profile_id) REFERENCES semantic_profile_refs(team_id, profile_id) ON DELETE RESTRICT,
     FOREIGN KEY (team_id, subject_entity_id) REFERENCES semantic_entities(team_id, entity_id) ON DELETE RESTRICT,
     FOREIGN KEY (team_id, object_entity_id) REFERENCES semantic_entities(team_id, entity_id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, object_value_id) REFERENCES semantic_values(team_id, value_id) ON DELETE RESTRICT,
     CONSTRAINT semantic_relationship_predicate_nonempty CHECK (btrim(predicate) <> ''),
     CONSTRAINT semantic_relationship_polarity_check CHECK (polarity IN ('+', '-')),
-    CONSTRAINT semantic_relationship_object_present CHECK (object_entity_id IS NOT NULL OR btrim(object_value) <> ''),
+    CONSTRAINT semantic_relationship_object_exactly_one CHECK ((object_entity_id IS NULL) <> (object_value_id IS NULL)),
     CONSTRAINT semantic_relationship_tier_check CHECK (tier IN ('candidate', 'validated_claim', 'fact')),
     CONSTRAINT semantic_relationship_status_check CHECK (status IN ('pending_evidence', 'active', 'needs_review', 'quarantined', 'disputed', 'rejected', 'retracted', 'superseded')),
     CONSTRAINT semantic_relationship_tier_status_check CHECK (
@@ -158,12 +185,18 @@ CREATE INDEX IF NOT EXISTS semantic_relationship_object_adjacency_idx
     ON semantic_relationship_records(team_id, object_entity_id, updated_at DESC, relationship_id)
     WHERE status = 'active' AND tier IN ('validated_claim', 'fact') AND object_entity_id IS NOT NULL;
 
+CREATE INDEX IF NOT EXISTS semantic_relationship_object_value_adjacency_idx
+    ON semantic_relationship_records(team_id, object_value_id, updated_at DESC, relationship_id)
+    WHERE status = 'active' AND tier IN ('validated_claim', 'fact') AND object_value_id IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS semantic_relationship_group_idx
     ON semantic_relationship_records(team_id, semantic_group_key, updated_at DESC, relationship_id)
     WHERE status = 'active' AND tier IN ('validated_claim', 'fact');
 
 CREATE UNIQUE INDEX IF NOT EXISTS semantic_relationship_identity_unique
-    ON semantic_relationship_records(team_id, owner_profile_id, subject_entity_id, predicate, polarity, COALESCE(object_entity_id, '00000000-0000-0000-0000-000000000000'::uuid), object_value);
+    ON semantic_relationship_records(team_id, owner_profile_id, subject_entity_id, predicate, polarity,
+        COALESCE(object_entity_id, '00000000-0000-0000-0000-000000000000'::uuid),
+        COALESCE(object_value_id, '00000000-0000-0000-0000-000000000000'::uuid));
 
 CREATE TABLE IF NOT EXISTS semantic_relationship_supports (
     team_id UUID NOT NULL,
@@ -265,7 +298,7 @@ CREATE TABLE IF NOT EXISTS semantic_search_documents (
     PRIMARY KEY (team_id, search_document_id),
     UNIQUE (team_id, source_type, source_id, document_version),
     FOREIGN KEY (team_id, owner_profile_id) REFERENCES semantic_profile_refs(team_id, profile_id) ON DELETE RESTRICT,
-    CONSTRAINT semantic_search_source_type_check CHECK (source_type IN ('evidence', 'relationship', 'entity')),
+    CONSTRAINT semantic_search_source_type_check CHECK (source_type IN ('evidence', 'relationship', 'entity', 'value')),
     CONSTRAINT semantic_search_text_nonempty CHECK (btrim(document_text) <> ''),
     CONSTRAINT semantic_search_state_check CHECK (search_state IN ('not_required', 'pending', 'current', 'failed')),
     CONSTRAINT semantic_search_embedding_dims_check CHECK (embedding IS NULL OR vector_dims(embedding) = 3072)
@@ -296,6 +329,11 @@ CREATE INDEX IF NOT EXISTS semantic_search_documents_entity_hnsw_idx
     ON semantic_search_documents
     USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops)
     WHERE embedding IS NOT NULL AND search_state = 'current' AND source_type = 'entity';
+
+CREATE INDEX IF NOT EXISTS semantic_search_documents_value_hnsw_idx
+    ON semantic_search_documents
+    USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops)
+    WHERE embedding IS NOT NULL AND search_state = 'current' AND source_type = 'value';
 
 CREATE TABLE IF NOT EXISTS semantic_embedding_jobs (
     team_id UUID NOT NULL,
@@ -356,7 +394,9 @@ SELECT
     r.polarity,
     r.object_entity_id,
     o.canonical_name AS object_name,
-    r.object_value,
+    r.object_value_id,
+    v.display_value AS object_value,
+    v.value_type AS object_value_type,
     r.tier,
     r.status,
     r.confidence,
@@ -366,6 +406,8 @@ JOIN semantic_entities s
   ON s.team_id = r.team_id AND s.entity_id = r.subject_entity_id
 LEFT JOIN semantic_entities o
   ON o.team_id = r.team_id AND o.entity_id = r.object_entity_id
+LEFT JOIN semantic_values v
+  ON v.team_id = r.team_id AND v.value_id = r.object_value_id
 WHERE r.status = 'active'
   AND r.tier IN ('validated_claim', 'fact');
 
@@ -394,6 +436,7 @@ BEGIN
         'semantic_evidence_fragments',
         'semantic_entities',
         'semantic_entity_names',
+        'semantic_values',
         'semantic_relationship_records',
         'semantic_relationship_supports',
         'semantic_relationship_observations',
@@ -450,6 +493,7 @@ DROP TABLE IF EXISTS semantic_verification_events;
 DROP TABLE IF EXISTS semantic_relationship_observations;
 DROP TABLE IF EXISTS semantic_relationship_supports;
 DROP TABLE IF EXISTS semantic_relationship_records;
+DROP TABLE IF EXISTS semantic_values;
 DROP TABLE IF EXISTS semantic_entity_names;
 DROP TABLE IF EXISTS semantic_entities;
 DROP TABLE IF EXISTS semantic_evidence_fragments;

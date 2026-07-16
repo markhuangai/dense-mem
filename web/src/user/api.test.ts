@@ -99,17 +99,16 @@ describe("UserApi", () => {
     const result = await new UserApi("dm_key").graph({
       scope: "local",
       q: "project graph",
-      types: ["fact", "claim"],
-      anchorType: "fact",
-      anchorId: "fact-1",
+      types: ["entity", "value"],
+      anchorType: "entity",
+      anchorId: "entity-1",
       depth: 2,
       limit: 40,
-      includeSuperseded: true,
     });
 
     expect(result.scope).toBe("local");
     expect(fetchMock).toHaveBeenCalledWith(
-      "/ui/api/graph?scope=local&q=project+graph&types=fact%2Cclaim&anchor_type=fact&anchor_id=fact-1&depth=2&limit=40&include_superseded=true",
+      "/ui/api/graph?scope=local&q=project+graph&types=entity%2Cvalue&anchor_type=entity&anchor_id=entity-1&depth=2&limit=40",
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer dm_key" }),
       }),

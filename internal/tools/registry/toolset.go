@@ -76,7 +76,7 @@ type EvaluationAuditAppender interface {
 // error-returning services so callers receive a concrete provider error.
 var ErrToolUnavailable = errors.New("tool not available (dependency missing or not yet implemented)")
 
-// BuildDefault wires the v1 tool catalog into a new Registry. No global state.
+// BuildDefault wires the v2 tool catalog into a new Registry. No global state.
 // The caller owns the returned Registry and should wire explicit fallback
 // services when a capability is disabled by deployment configuration.
 func BuildDefault(deps Dependencies) (Registry, error) {
@@ -96,10 +96,7 @@ func defaultTools(deps Dependencies) []Tool {
 		traceMemoryTool(deps),
 		rememberTool(deps),
 		getMemoryPlacementTool(deps),
-		disputeMemoryPlacementTool(deps),
-		importMemoriesTool(deps),
-		reflectMemoriesTool(deps),
-		confirmMemoryTool(deps),
+		resolveMemoryPlacementTool(deps),
 		listDreamsTool(deps),
 		getDreamTool(deps),
 		resolveDreamFeedbackTool(deps),
@@ -656,8 +653,8 @@ func timePtrIfNonZero(value time.Time) *time.Time {
 // --- schema + marshaling helpers ------------------------------------------
 
 const (
-	memoryEntryMaxLength = 10000
-	memoryEntryGuidance  = "Store one coherent evidence item per entry; split only when distinct sources, turns, or documents should retain separate provenance."
+	memoryEntryMaxLength = 999
+	memoryEntryGuidance  = "Store one coherent evidence item per entry; split larger source material into multiple semantic evidence items instead of truncating it."
 )
 
 func memoryEntryString(description string) map[string]any {

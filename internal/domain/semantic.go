@@ -67,6 +67,25 @@ func (s SemanticRelationshipStatus) IsValid() bool {
 	}
 }
 
+type SemanticValueType string
+
+const (
+	SemanticValueString   SemanticValueType = "string"
+	SemanticValueNumber   SemanticValueType = "number"
+	SemanticValueBoolean  SemanticValueType = "boolean"
+	SemanticValueDate     SemanticValueType = "date"
+	SemanticValueDateTime SemanticValueType = "date_time"
+)
+
+func (t SemanticValueType) IsValid() bool {
+	switch t {
+	case SemanticValueString, SemanticValueNumber, SemanticValueBoolean, SemanticValueDate, SemanticValueDateTime:
+		return true
+	default:
+		return false
+	}
+}
+
 type SemanticHypothesisStatus string
 
 const (
@@ -119,6 +138,18 @@ type SemanticEntity struct {
 	UpdatedAt      time.Time          `json:"updated_at"`
 }
 
+type SemanticValue struct {
+	TeamID         string            `json:"team_id"`
+	ValueID        string            `json:"value_id"`
+	OwnerProfileID string            `json:"owner_profile_id"`
+	ValueType      SemanticValueType `json:"value_type"`
+	CanonicalValue string            `json:"canonical_value"`
+	DisplayValue   string            `json:"display_value"`
+	Metadata       map[string]any    `json:"metadata,omitempty"`
+	CreatedAt      time.Time         `json:"created_at"`
+	UpdatedAt      time.Time         `json:"updated_at"`
+}
+
 type SemanticRelationship struct {
 	TeamID                       string                     `json:"team_id"`
 	RelationshipID               string                     `json:"relationship_id"`
@@ -132,6 +163,7 @@ type SemanticRelationship struct {
 	ObjectEntityID               string                     `json:"object_entity_id,omitempty"`
 	ObjectEntityName             string                     `json:"object_entity_name,omitempty"`
 	ObjectEntityKind             SemanticEntityKind         `json:"object_entity_kind,omitempty"`
+	ObjectValueID                string                     `json:"object_value_id,omitempty"`
 	ObjectValue                  string                     `json:"object_value,omitempty"`
 	ObjectKind                   string                     `json:"object_kind,omitempty"`
 	Tier                         SemanticRelationshipTier   `json:"tier"`
@@ -273,4 +305,51 @@ type SemanticTraceResult struct {
 	Relationship *SemanticRelationship         `json:"relationship,omitempty"`
 	Supports     []SemanticRelationshipSupport `json:"supports,omitempty"`
 	Evidence     []SemanticEvidenceFragment    `json:"evidence,omitempty"`
+}
+
+type SemanticGraphQuery struct {
+	Scope      string
+	Query      string
+	Types      []string
+	AnchorType string
+	AnchorID   string
+	Depth      int
+	Limit      int
+}
+
+type SemanticGraphSnapshot struct {
+	Scope     string
+	Query     string
+	Anchor    *SemanticGraphAnchor
+	Depth     int
+	Limit     int
+	Truncated bool
+	Nodes     []SemanticGraphNode
+	Edges     []SemanticGraphEdge
+}
+
+type SemanticGraphAnchor struct {
+	Type string
+	ID   string
+	Key  string
+}
+
+type SemanticGraphNode struct {
+	Key        string
+	ID         string
+	Type       string
+	Title      string
+	Body       string
+	Status     string
+	Source     string
+	Score      float64
+	RecordedAt *time.Time
+}
+
+type SemanticGraphEdge struct {
+	ID           string
+	Source       string
+	Target       string
+	Relationship string
+	Directed     bool
 }

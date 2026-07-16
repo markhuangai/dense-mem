@@ -55,48 +55,6 @@ const memberProfile: TestKey = {
   role: "member",
 };
 
-const facts = [
-  {
-    fact_id: "fact-1",
-    subject: "Alice",
-    predicate: "works_on",
-    object: "project-x",
-    status: "active",
-    truth_score: 0.94,
-    recorded_at: "2026-05-02T12:00:00Z",
-  },
-];
-
-const claims = [
-  {
-    claim_id: "claim-1",
-    subject: "Alice",
-    predicate: "uses",
-    object: "Dense-Mem",
-    modality: "assertion",
-    polarity: "+",
-    status: "validated",
-    entailment_verdict: "entailed",
-    extract_conf: 0.91,
-    resolution_conf: 0.88,
-    recorded_at: "2026-05-02T12:00:00Z",
-  },
-];
-
-const fragments = [
-  {
-    id: "frag-1",
-    fragment_id: "frag-1",
-    content: "Alice is working on project-x with Dense-Mem.",
-    source_type: "manual",
-    source: "notes",
-    labels: ["project"],
-    status: "active",
-    created_at: "2026-05-02T12:00:00Z",
-    updated_at: "2026-05-02T12:00:00Z",
-  },
-];
-
 const graphSnapshot = {
   scope: "overview",
   depth: 1,
@@ -104,62 +62,61 @@ const graphSnapshot = {
   truncated: false,
   nodes: [
     {
-      key: "fact:fact-1",
-      id: "fact-1",
-      type: "fact",
-      title: "Alice works_on project-x",
+      key: "entity:entity-alice",
+      id: "entity-alice",
+      type: "entity",
+      title: "Alice",
     },
     {
-      key: "claim:claim-1",
-      id: "claim-1",
-      type: "claim",
-      title: "Alice uses Dense-Mem",
+      key: "entity:entity-dense-mem",
+      id: "entity-dense-mem",
+      type: "entity",
+      title: "Dense-Mem",
     },
     {
-      key: "fragment:frag-1",
-      id: "frag-1",
-      type: "fragment",
-      title: "Alice is working on project-x with Dense-Mem.",
+      key: "value:value-project-x",
+      id: "value-project-x",
+      type: "value",
+      title: "project-x",
     },
   ],
   edges: [
-    { id: "edge-1", source: "claim:claim-1", target: "fact:fact-1", relationship: "PROMOTES_TO", directed: true },
-    { id: "edge-2", source: "claim:claim-1", target: "fragment:frag-1", relationship: "SUPPORTED_BY", directed: true },
+    { id: "rel-1", source: "entity:entity-alice", target: "entity:entity-dense-mem", relationship: "uses", directed: true },
+    { id: "rel-2", source: "entity:entity-alice", target: "value:value-project-x", relationship: "works_on", directed: true },
   ],
 };
 
 const graphNodeDetails = {
-  "fact:fact-1": {
-    key: "fact:fact-1",
-    id: "fact-1",
-    type: "fact",
-    title: "Alice works_on project-x",
-    body: "project-x",
+  "entity:entity-alice": {
+    key: "entity:entity-alice",
+    id: "entity-alice",
+    type: "entity",
+    title: "Alice",
+    body: "person",
     status: "active",
     community_id: "community-1",
     score: 0.94,
     recorded_at: "2026-05-02T12:00:00Z",
   },
-  "claim:claim-1": {
-    key: "claim:claim-1",
-    id: "claim-1",
-    type: "claim",
-    title: "Alice uses Dense-Mem",
-    body: "Dense-Mem",
-    status: "validated",
+  "entity:entity-dense-mem": {
+    key: "entity:entity-dense-mem",
+    id: "entity-dense-mem",
+    type: "entity",
+    title: "Dense-Mem",
+    body: "project",
+    status: "active",
     community_id: "community-1",
     score: 0.88,
     recorded_at: "2026-05-02T12:00:00Z",
   },
-  "fragment:frag-1": {
-    key: "fragment:frag-1",
-    id: "frag-1",
-    type: "fragment",
-    title: "Alice is working on project-x with Dense-Mem.",
-    body: "Alice is working on project-x with Dense-Mem.",
+  "value:value-project-x": {
+    key: "value:value-project-x",
+    id: "value-project-x",
+    type: "value",
+    title: "project-x",
+    body: "string",
     status: "active",
     community_id: "community-1",
-    source: "notes",
     score: 0.75,
     recorded_at: "2026-05-02T12:00:00Z",
   },
@@ -253,16 +210,11 @@ test("API key login, recall, and read-only navigation", async ({ page }) => {
   await expect(page.getByText("project-x").first()).toBeVisible();
   await expect(page.getByText("Dense-Mem").first()).toBeVisible();
   await expect(page.getByLabel("Knowledge filters")).toBeVisible();
-  await expect(page.getByLabel("Inspector")).toContainText("Fact");
-  await expect(page.getByRole("listbox", { name: "Recall result list" }).getByRole("option")).toHaveCount(3);
-  await page.getByRole("option").filter({ hasText: "uses: Dense-Mem" }).click();
-  await expect(page.getByLabel("Inspector")).toContainText("Claim");
-  await expect(page.getByLabel("Inspector")).toContainText("Tier 1.5");
-  await page.getByRole("checkbox", { name: /Claim/ }).click();
-  await expect(page.getByRole("listbox", { name: "Recall result list" })).not.toContainText("uses: Dense-Mem");
-  await expect(page.getByLabel("Inspector")).toContainText("Fact");
-  await page.getByRole("checkbox", { name: /Fact/ }).click();
-  await expect(page.getByLabel("Inspector")).toContainText("Fragment");
+  await expect(page.getByLabel("Inspector")).toContainText("Evidence");
+  await expect(page.getByRole("listbox", { name: "Recall result list" }).getByRole("option")).toHaveCount(1);
+  await expect(page.getByRole("listbox", { name: "Recall result list" })).not.toContainText("recall");
+  await expect(page.getByRole("listbox", { name: "Recall result list" })).not.toContainText("Fragment");
+  await expect(page.getByRole("listbox", { name: "Recall result list" })).not.toContainText("Verified");
   await expect(page.getByLabel("Inspector")).toContainText("Alice is working on project-x with Dense-Mem.");
 
   await expect(page.getByRole("button", { name: "Usage" })).toHaveCount(0);
@@ -609,7 +561,7 @@ async function mockUserApi(
   await page.route("**/ui/api/node-detail**", async (route) => {
     const url = new URL(route.request().url());
     const key = `${url.searchParams.get("type")}:${url.searchParams.get("id")}`;
-    const node = graphNodeDetails[key as keyof typeof graphNodeDetails] ?? graphNodeDetails["fact:fact-1"];
+    const node = graphNodeDetails[key as keyof typeof graphNodeDetails] ?? graphNodeDetails["entity:entity-alice"];
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -631,11 +583,31 @@ async function mockUserApi(
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        data: [
-          { tier: "1", score: 0.94, fact: facts[0], semantic_rank: 0, keyword_rank: 0, final_score: 0 },
-          { tier: "1.5", score: 0.45, claim: claims[0], semantic_rank: 0, keyword_rank: 0, final_score: 0 },
-          { tier: "2", score: 0.02, fragment: fragments[0], semantic_rank: 1, keyword_rank: 2, final_score: 0.02 },
-        ],
+        data: {
+          recall_id: "rec_mock",
+          results: [{
+            evidence_id: "evidence-1",
+            context: "Alice is working on project-x with Dense-Mem.",
+          }],
+          discovery_paths: [{
+            evidence_ids: ["evidence-1"],
+            relationships: [{
+              relationship_id: "rel-1",
+              subject: { entity_id: "entity-alice", name: "Alice", kind: "person" },
+              predicate: "uses",
+              object: { entity_id: "entity-dense-mem", name: "Dense-Mem", kind: "project" },
+              polarity: "+",
+            }, {
+              relationship_id: "rel-2",
+              subject: { entity_id: "entity-alice", name: "Alice", kind: "person" },
+              predicate: "works_on",
+              object: { value_id: "value-project-x", value: "project-x", type: "string" },
+              polarity: "+",
+            }],
+          }],
+          discovery_guidance: "If you are uncertain, call recall_memory again with a focused query.",
+          related_hypotheses: [],
+        },
       }),
     });
   });

@@ -14,8 +14,11 @@ func TestLoadKnowledgeConfigDefaults(t *testing.T) {
 		t.Fatalf("Load() returned unexpected error: %v", err)
 	}
 
-	if got := cfg.GetAIVerifierModel(); got != "gpt-4o-mini" {
-		t.Errorf("GetAIVerifierModel() = %q, want %q", got, "gpt-4o-mini")
+	if got := cfg.GetAIReviewerModel(); got != "" {
+		t.Errorf("GetAIReviewerModel() = %q, want empty without env", got)
+	}
+	if got := cfg.GetAIVerifierModel(); got != "" {
+		t.Errorf("GetAIVerifierModel() = %q, want empty without env", got)
 	}
 	if cfg.GetAIVerifierDisableTemperature() {
 		t.Error("GetAIVerifierDisableTemperature() = true, want false")
@@ -76,7 +79,7 @@ func TestLoadKnowledgeConfigDefaults(t *testing.T) {
 	}
 }
 
-func TestLoadReviewerModelOverridesVerifierModel(t *testing.T) {
+func TestLoadReviewerAndVerifierModelsAreIndependent(t *testing.T) {
 	clearEnv()
 	setRequiredEnv()
 	os.Setenv("AI_VERIFIER_MODEL", "verifier-model")
@@ -131,6 +134,8 @@ func TestLoadControlPortalValidation(t *testing.T) {
 		clearEnv()
 		setRequiredEnv()
 		setRequiredEmbeddingEnv()
+		os.Setenv("AI_REVIEWER_MODEL", "reviewer-model")
+		os.Setenv("AI_VERIFIER_MODEL", "verifier-model")
 		os.Unsetenv("CONTROL_PORTAL_TOKEN")
 
 		cfg, err := Load()
@@ -253,6 +258,8 @@ func TestValidateServerStartupRemainingRequiredFields(t *testing.T) {
 		AIAPIKey:              "sk-test",
 		AIEmbeddingModel:      "text-embedding-3-small",
 		AIEmbeddingDimensions: 1536,
+		AIReviewerModel:       "reviewer-model",
+		AIVerifierModel:       "verifier-model",
 		ControlPortalToken:    "control-secret",
 	}
 	cases := []struct {
@@ -262,6 +269,8 @@ func TestValidateServerStartupRemainingRequiredFields(t *testing.T) {
 	}{
 		{"missing api key", func(c *Config) { c.AIAPIKey = "" }, "AI_API_KEY"},
 		{"missing embedding model", func(c *Config) { c.AIEmbeddingModel = "" }, "AI_API_EMBEDDING_MODEL"},
+		{"missing reviewer model", func(c *Config) { c.AIReviewerModel = "" }, "AI_REVIEWER_MODEL"},
+		{"missing verifier model", func(c *Config) { c.AIVerifierModel = "" }, "AI_VERIFIER_MODEL"},
 		{"missing embedding dimensions", func(c *Config) { c.AIEmbeddingDimensions = 0 }, "AI_API_EMBEDDING_DIMENSIONS"},
 	}
 

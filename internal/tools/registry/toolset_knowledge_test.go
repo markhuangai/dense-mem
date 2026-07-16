@@ -15,9 +15,8 @@ func TestBuildDefaultExposesV2MemoryBoundaryTools(t *testing.T) {
 		t.Fatalf("BuildDefault: %v", err)
 	}
 	required := []string{
-		"remember", "get_memory_placement", "dispute_memory_placement",
+		"remember", "get_memory_placement", "resolve_memory_placement",
 		"recall_memory", "trace_memory",
-		"import_memories", "reflect_memories", "confirm_memory",
 	}
 	for _, name := range required {
 		if _, ok := reg.Get(name); !ok {
@@ -29,6 +28,7 @@ func TestBuildDefaultExposesV2MemoryBoundaryTools(t *testing.T) {
 		"promote_claim", "get_fact", "list_facts",
 		"retract_fact", "retract_fragment", "detect_community", "get_community_summary", "list_communities",
 		"keyword_search", "semantic_search", "graph_query", "list_recent_memories", "assemble_context",
+		"dispute_memory_placement", "reflect_memories", "confirm_memory", "import_memories",
 	}
 	for _, name := range removed {
 		if _, ok := reg.Get(name); ok {
@@ -45,10 +45,7 @@ func TestBuildDefaultKnowledgeTools_ReturnUnavailableWhenDepsMissing(t *testing.
 	}{
 		{"remember", map[string]any{"evidence": []any{map[string]any{"content": "hello"}}}},
 		{"get_memory_placement", map[string]any{"ingest_id": "ingest-1"}},
-		{"dispute_memory_placement", map[string]any{"ingest_id": "ingest-1", "message": "more evidence"}},
-		{"import_memories", map[string]any{"summary": "hello"}},
-		{"reflect_memories", map[string]any{}},
-		{"confirm_memory", map[string]any{"claim_id": "claim-1", "decision": "keep_existing"}},
+		{"resolve_memory_placement", map[string]any{"ingest_id": "ingest-1", "message": "more evidence"}},
 		{"find_memory_pack_candidates", map[string]any{"query": "react testing"}},
 		{"export_memory_pack", map[string]any{"name": "React testing"}},
 		{"inspect_memory_pack", map[string]any{"artifact_json": `{"schema_version":"dense-mem.memory_pack.v1","name":"x","items":[{"subject":"assistant","predicate":"has_skill","object":"x","source_kind":"manual"}]}`}},
@@ -74,10 +71,8 @@ func TestBuildDefaultMemoryTools_InvokeAndScope(t *testing.T) {
 	}{
 		{"remember", map[string]any{"evidence": []any{map[string]any{"content": "hello"}}}, "write"},
 		{"get_memory_placement", map[string]any{"ingest_id": "ingest-1"}, "read"},
-		{"dispute_memory_placement", map[string]any{"ingest_id": "ingest-1", "message": "more evidence"}, "write"},
-		{"import_memories", map[string]any{"summary": "old chats"}, "write"},
-		{"reflect_memories", map[string]any{}, "write"},
-		{"confirm_memory", map[string]any{"claim_id": "claim-1", "decision": "keep_existing"}, "write"},
+		{"resolve_memory_placement", map[string]any{"ingest_id": "ingest-1", "message": "more evidence"}, "write"},
+		{"resolve_memory_placement", map[string]any{"ingest_id": "ingest-1", "evidence": []any{map[string]any{"content": "corrected evidence"}}}, "write"},
 	}
 	for _, tc := range cases {
 		tool, ok := reg.Get(tc.name)
@@ -94,59 +89,68 @@ func TestBuildDefaultMemoryTools_InvokeAndScope(t *testing.T) {
 			t.Fatalf("%s routed to %q; want profile-memory", tc.name, mem.lastProfile)
 		}
 	}
+
+	tool, _ := reg.Get("resolve_memory_placement")
+	_, err := tool.Invoke(context.Background(), "profile-memory", map[string]any{
+		"ingest_id":         "ingest-1",
+		"placement_item_id": "item-1",
+		"action":            "release_quarantine",
+		"message":           "Reviewed and approved guarded processing.",
+	})
+	if err != nil {
+		t.Fatalf("resolve_memory_placement release_quarantine Invoke: %v", err)
+	}
+	if mem.lastDispute.Action != "release_quarantine" || mem.lastDispute.PlacementItemID != "item-1" {
+		t.Fatalf("release request = %#v", mem.lastDispute)
+	}
 }
 
-func TestRememberNormalizesLegacyContentWithoutPromotionHints(t *testing.T) {
+func TestRememberRejectsLegacyContentAndPromotionHints(t *testing.T) {
 	mem := &stubMemory{}
 	reg, _ := BuildDefault(Dependencies{Memory: mem})
 	tool, ok := reg.Get("remember")
 	if !ok {
 		t.Fatal("remember not registered")
 	}
-	legacy := map[string]any{
-		"content":         "legacy content should be stored as evidence",
-		"source":          "chat: compatibility",
-		"idempotency_key": "legacy-remember-content",
-		"labels":          []any{"decision", "security"},
-		"metadata":        map[string]any{"origin": "legacy-client"},
-		"auto_promote":    true,
-		"claims": []any{map[string]any{
-			"subject":         "client",
-			"predicate":       "uses",
-			"object":          "old remember shape",
-			"extract_conf":    0.99,
-			"resolution_conf": 0.99,
-		}},
-	}
 
-	normalized := NormalizeInput(tool, legacy)
-	if _, ok := normalized["claims"]; ok {
-		t.Fatal("legacy claims must not survive remember normalization")
-	}
-	if _, ok := normalized["auto_promote"]; ok {
-		t.Fatal("legacy auto_promote must not survive remember normalization")
-	}
-	if err := ValidateInput(tool, normalized); err != nil {
-		t.Fatalf("ValidateInput normalized legacy remember: %v", err)
-	}
-	if _, err := tool.Invoke(context.Background(), "profile-memory", legacy); err != nil {
-		t.Fatalf("legacy remember Invoke: %v", err)
-	}
-	if len(mem.lastRemember.Evidence) != 1 {
-		t.Fatalf("remember evidence count = %d; want 1", len(mem.lastRemember.Evidence))
-	}
-	evidence := mem.lastRemember.Evidence[0]
-	if evidence.Content != "legacy content should be stored as evidence" {
-		t.Fatalf("remember evidence content = %q", evidence.Content)
-	}
-	if evidence.Source != "chat: compatibility" || evidence.IdempotencyKey != "legacy-remember-content" {
-		t.Fatalf("remember evidence provenance = %#v", evidence)
-	}
-	if len(evidence.Labels) != 2 || evidence.Labels[0] != "decision" || evidence.Labels[1] != "security" {
-		t.Fatalf("remember evidence labels = %#v", evidence.Labels)
-	}
-	if evidence.Metadata["origin"] != "legacy-client" {
-		t.Fatalf("remember evidence metadata = %#v", evidence.Metadata)
+	for _, tc := range []struct {
+		name  string
+		input map[string]any
+		want  string
+	}{
+		{name: "legacy content", input: map[string]any{"content": "legacy content"}, want: "evidence is required"},
+		{
+			name: "client claims",
+			input: map[string]any{
+				"evidence": []any{map[string]any{"content": "The user likes Go."}},
+				"claims":   []any{},
+			},
+			want: "unknown field: claims",
+		},
+		{
+			name: "auto promote",
+			input: map[string]any{
+				"evidence":     []any{map[string]any{"content": "The user likes Go."}},
+				"auto_promote": true,
+			},
+			want: "unknown field: auto_promote",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			normalized := NormalizeInput(tool, tc.input)
+			if _, ok := normalized["evidence"]; ok && tc.name == "legacy content" {
+				t.Fatal("legacy content must not be rewritten into evidence")
+			}
+			if err := ValidateInput(tool, normalized); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ValidateInput error = %v; want %q", err, tc.want)
+			}
+			if _, err := tool.Invoke(context.Background(), "profile-memory", tc.input); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Invoke error = %v; want %q", err, tc.want)
+			}
+			if len(mem.lastRemember.Evidence) != 0 {
+				t.Fatalf("remember reached service with evidence = %#v", mem.lastRemember.Evidence)
+			}
+		})
 	}
 }
 
@@ -160,12 +164,35 @@ func TestBuildDefaultMemoryTools_InvalidInputBranches(t *testing.T) {
 	}{
 		{name: "remember", in: map[string]any{"evidence": func() {}}, want: "remember: invalid input"},
 		{name: "get_memory_placement", in: map[string]any{"ingest_id": func() {}}, want: "get_memory_placement: invalid input"},
-		{name: "dispute_memory_placement", in: map[string]any{"message": func() {}}, want: "dispute_memory_placement: invalid input"},
-		{name: "dispute_memory_placement", in: map[string]any{}, want: "dispute_memory_placement: ingest_id or dispute_id is required"},
-		{name: "dispute_memory_placement", in: map[string]any{"ingest_id": "ingest-1"}, want: "dispute_memory_placement: message or evidence is required"},
-		{name: "import_memories", in: map[string]any{"summary": func() {}}, want: "import_memories: invalid input"},
-		{name: "reflect_memories", in: map[string]any{"limit": func() {}}, want: "reflect_memories: invalid input"},
-		{name: "confirm_memory", in: map[string]any{"claim_id": func() {}}, want: "confirm_memory: invalid input"},
+		{name: "resolve_memory_placement", in: map[string]any{"message": func() {}}, want: "resolve_memory_placement: invalid input"},
+		{name: "resolve_memory_placement", in: map[string]any{}, want: "resolve_memory_placement: ingest_id or dispute_id is required"},
+		{name: "resolve_memory_placement", in: map[string]any{"ingest_id": "ingest-1"}, want: "resolve_memory_placement: message or evidence is required"},
+		{
+			name: "resolve_memory_placement",
+			in:   map[string]any{"ingest_id": "ingest-1", "action": "release_quarantine", "message": "reviewed"},
+			want: "placement_item_id is required for release_quarantine",
+		},
+		{
+			name: "resolve_memory_placement",
+			in: map[string]any{
+				"ingest_id":         "ingest-1",
+				"placement_item_id": "item-1",
+				"action":            "release_quarantine",
+				"evidence":          []any{map[string]any{"content": "ignored"}},
+			},
+			want: "quarantine release reason is required",
+		},
+		{
+			name: "resolve_memory_placement",
+			in: map[string]any{
+				"ingest_id":         "ingest-1",
+				"placement_item_id": "item-1",
+				"action":            "release_quarantine",
+				"message":           "reviewed",
+				"evidence":          []any{map[string]any{"content": "ignored"}},
+			},
+			want: "evidence is not accepted for release_quarantine",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tool, _ := reg.Get(tc.name)
@@ -176,45 +203,19 @@ func TestBuildDefaultMemoryTools_InvalidInputBranches(t *testing.T) {
 		})
 	}
 
-	confirm, _ := reg.Get("confirm_memory")
-	if _, err := confirm.Invoke(context.Background(), "profile-memory", map[string]any{"decision": "keep_existing"}); err == nil || !strings.Contains(err.Error(), "claim_id is required") {
-		t.Fatalf("confirm missing claim_id err = %v", err)
+	if _, ok := reg.Get("confirm_memory"); ok {
+		t.Fatal("confirm_memory must not be registered in the v2 public tool surface")
 	}
-	if _, err := confirm.Invoke(context.Background(), "profile-memory", map[string]any{"claim_id": "claim-1"}); err == nil || !strings.Contains(err.Error(), "decision is required") {
-		t.Fatalf("confirm missing decision err = %v", err)
+	if _, ok := reg.Get("reflect_memories"); ok {
+		t.Fatal("reflect_memories must not be registered in the v2 public tool surface")
+	}
+	if _, ok := reg.Get("import_memories"); ok {
+		t.Fatal("import_memories must not be registered in the v2 public tool surface")
 	}
 }
 
 func TestBuildDefaultMemoryTools_GranularEntryValidation(t *testing.T) {
 	reg, _ := BuildDefault(Dependencies{Memory: &stubMemory{}})
-
-	cases := []struct {
-		toolName string
-		field    string
-	}{
-		{toolName: "import_memories", field: "summary"},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.toolName, func(t *testing.T) {
-			tool, ok := reg.Get(tc.toolName)
-			if !ok {
-				t.Fatalf("%s not registered", tc.toolName)
-			}
-			properties := tool.InputSchema["properties"].(map[string]any)
-			fieldSchema := properties[tc.field].(map[string]any)
-			if got, want := fieldSchema["maxLength"], memoryEntryMaxLength; got != want {
-				t.Fatalf("%s.%s maxLength = %v; want %d", tc.toolName, tc.field, got, want)
-			}
-
-			err := ValidateInput(tool, map[string]any{
-				tc.field: strings.Repeat("x", memoryEntryMaxLength+1),
-			})
-			if err == nil || !strings.Contains(err.Error(), "Store one coherent evidence item") {
-				t.Fatalf("ValidateInput long %s error = %v; want split guidance", tc.field, err)
-			}
-		})
-	}
 
 	remember, ok := reg.Get("remember")
 	if !ok {
@@ -233,6 +234,22 @@ func TestBuildDefaultMemoryTools_GranularEntryValidation(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "Store one coherent evidence item") {
 		t.Fatalf("ValidateInput long remember evidence error = %v; want split guidance", err)
+	}
+	if err := ValidateInput(remember, map[string]any{
+		"evidence": []any{map[string]any{"content": strings.Repeat("界", memoryEntryMaxLength)}},
+	}); err != nil {
+		t.Fatalf("ValidateInput non-ASCII exact max remember evidence: %v", err)
+	}
+
+	resolve, ok := reg.Get("resolve_memory_placement")
+	if !ok {
+		t.Fatal("resolve_memory_placement not registered")
+	}
+	resolveProperties := resolve.InputSchema["properties"].(map[string]any)
+	actionSchema := resolveProperties["action"].(map[string]any)
+	actionEnum, ok := actionSchema["enum"].([]string)
+	if !ok || len(actionEnum) != 1 || actionEnum[0] != "release_quarantine" {
+		t.Fatalf("resolve_memory_placement action enum = %#v", actionSchema["enum"])
 	}
 }
 

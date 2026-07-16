@@ -2,11 +2,13 @@ package graphview
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/graphrow"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
@@ -38,6 +40,11 @@ type ScopedReader interface {
 type Service interface {
 	Graph(ctx context.Context, profileID string, query Query) (*Snapshot, error)
 	NodeDetail(ctx context.Context, profileID string, nodeType string, nodeID string) (*Node, error)
+}
+
+type SemanticStore interface {
+	SemanticGraph(ctx context.Context, teamID string, query domain.SemanticGraphQuery) (*domain.SemanticGraphSnapshot, error)
+	SemanticGraphNodeDetail(ctx context.Context, teamID string, nodeType string, nodeID string) (*domain.SemanticGraphNode, error)
 }
 
 type Query struct {
@@ -99,9 +106,66 @@ func New(reader ScopedReader) Service {
 	return &service{reader: reader}
 }
 
+type semanticService struct {
+	store SemanticStore
+}
+
+var _ Service = (*semanticService)(nil)
+
+func NewSemantic(store SemanticStore) Service {
+	return &semanticService{store: store}
+}
+
+func (s *semanticService) Graph(ctx context.Context, teamID string, query Query) (*Snapshot, error) {
+	if s == nil || s.store == nil {
+		return nil, errors.New("semantic graph store is not configured")
+	}
+	normalized, err := normalizeSemanticGraphQuery(query)
+	if err != nil {
+		return nil, err
+	}
+	snapshot, err := s.store.SemanticGraph(ctx, teamID, domain.SemanticGraphQuery{
+		Scope:      normalized.scope,
+		Query:      normalized.search,
+		Types:      semanticGraphTypes(normalized.types),
+		AnchorType: normalized.anchorType,
+		AnchorID:   normalized.anchorID,
+		Depth:      normalized.depth,
+		Limit:      normalized.limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return snapshotFromSemantic(snapshot), nil
+}
+
+func (s *semanticService) NodeDetail(ctx context.Context, teamID string, nodeType string, nodeID string) (*Node, error) {
+	if s == nil || s.store == nil {
+		return nil, errors.New("semantic graph store is not configured")
+	}
+	normalizedType := normalizeSemanticGraphType(nodeType)
+	normalizedID := strings.TrimSpace(nodeID)
+	if normalizedType == "" && strings.TrimSpace(nodeType) != "" {
+		return nil, ErrInvalidNodeType
+	}
+	if normalizedType == "" || normalizedID == "" {
+		return nil, ErrMissingNode
+	}
+	node, err := s.store.SemanticGraphNodeDetail(ctx, teamID, normalizedType, normalizedID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNodeNotFound
+		}
+		return nil, err
+	}
+	result := nodeFromSemantic(*node)
+	return &result, nil
+}
+
 type normalizedQuery struct {
 	scope             string
 	search            string
+	types             map[string]bool
 	includeFact       bool
 	includeClaim      bool
 	includeFragment   bool
@@ -111,6 +175,115 @@ type normalizedQuery struct {
 	depth             int
 	limit             int
 	includeSuperseded bool
+}
+
+func normalizeSemanticGraphQuery(query Query) (normalizedQuery, error) {
+	scope := strings.ToLower(strings.TrimSpace(query.Scope))
+	if scope == "" {
+		scope = ScopeOverview
+	}
+	if scope != ScopeLocal {
+		scope = ScopeOverview
+	}
+	types := normalizeSemanticGraphTypes(query.Types)
+	normalized := normalizedQuery{
+		scope:  scope,
+		search: strings.ToLower(strings.TrimSpace(query.Query)),
+		types:  types,
+		limit:  clamp(query.Limit, DefaultLimit, MaxLimit),
+		depth:  clamp(query.Depth, DefaultDepth, MaxDepth),
+	}
+	if normalized.scope == ScopeLocal {
+		normalized.anchorType = normalizeSemanticGraphType(query.AnchorType)
+		normalized.anchorID = strings.TrimSpace(query.AnchorID)
+		if normalized.anchorType == "" && strings.TrimSpace(query.AnchorType) != "" {
+			return normalizedQuery{}, ErrInvalidAnchorType
+		}
+		if normalized.anchorType == "" || normalized.anchorID == "" {
+			return normalizedQuery{}, ErrMissingAnchor
+		}
+	}
+	return normalized, nil
+}
+
+func normalizeSemanticGraphTypes(values []string) map[string]bool {
+	out := map[string]bool{}
+	for _, raw := range values {
+		if normalized := normalizeSemanticGraphType(raw); normalized != "" {
+			out[normalized] = true
+		}
+	}
+	if len(out) == 0 {
+		out["entity"] = true
+		out["value"] = true
+	}
+	return out
+}
+
+func normalizeSemanticGraphType(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "entity", "entities":
+		return "entity"
+	case "value", "values":
+		return "value"
+	default:
+		return ""
+	}
+}
+
+func semanticGraphTypes(types map[string]bool) []string {
+	out := make([]string, 0, len(types))
+	for _, value := range []string{"entity", "value"} {
+		if types[value] {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func snapshotFromSemantic(snapshot *domain.SemanticGraphSnapshot) *Snapshot {
+	if snapshot == nil {
+		return &Snapshot{Nodes: []Node{}, Edges: []Edge{}}
+	}
+	out := &Snapshot{
+		Scope:     snapshot.Scope,
+		Query:     snapshot.Query,
+		Depth:     snapshot.Depth,
+		Limit:     snapshot.Limit,
+		Truncated: snapshot.Truncated,
+		Nodes:     make([]Node, 0, len(snapshot.Nodes)),
+		Edges:     make([]Edge, 0, len(snapshot.Edges)),
+	}
+	if snapshot.Anchor != nil {
+		out.Anchor = &Anchor{Type: snapshot.Anchor.Type, ID: snapshot.Anchor.ID, Key: snapshot.Anchor.Key}
+	}
+	for _, node := range snapshot.Nodes {
+		out.Nodes = append(out.Nodes, nodeFromSemantic(node))
+	}
+	for _, edge := range snapshot.Edges {
+		out.Edges = append(out.Edges, Edge{
+			ID:           edge.ID,
+			Source:       edge.Source,
+			Target:       edge.Target,
+			Relationship: edge.Relationship,
+			Directed:     edge.Directed,
+		})
+	}
+	return out
+}
+
+func nodeFromSemantic(node domain.SemanticGraphNode) Node {
+	return Node{
+		Key:        node.Key,
+		ID:         node.ID,
+		Type:       node.Type,
+		Title:      truncateText(node.Title, 160),
+		Body:       truncateText(node.Body, maxNodeBodyRunes),
+		Status:     node.Status,
+		Source:     node.Source,
+		Score:      node.Score,
+		RecordedAt: node.RecordedAt,
+	}
 }
 
 func (s *service) Graph(ctx context.Context, profileID string, query Query) (*Snapshot, error) {

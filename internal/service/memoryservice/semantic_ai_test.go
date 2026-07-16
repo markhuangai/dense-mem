@@ -3,6 +3,7 @@ package memoryservice
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -29,9 +30,10 @@ func TestOpenAISemanticProviderReviewSemanticUsesStructuredReview(t *testing.T) 
 		require.NoError(t, json.Unmarshal([]byte(captured.Messages[1].Content), &payload))
 		require.Equal(t, "review-1", payload.RequestID)
 		require.Equal(t, []semanticReviewEvidencePayload{{
-			Index:   5,
-			Content: "Dense-Mem uses Postgres.",
-			Source:  "seed",
+			Index:      5,
+			EvidenceID: "ev_5",
+			Content:    "Dense-Mem uses Postgres.",
+			Source:     "seed",
 			Units: []semanticReviewUnitPayload{{
 				UnitID: "e5_u1",
 				Text:   "Dense-Mem uses Postgres.",
@@ -39,6 +41,7 @@ func TestOpenAISemanticProviderReviewSemanticUsesStructuredReview(t *testing.T) 
 		}}, payload.Evidence)
 
 		writeSemanticChatContent(t, w, `{
+			"security_signals": [],
 			"relationships": [{
 				"ref": "r1",
 				"unit_id": "e5_u1",
@@ -99,7 +102,9 @@ func TestOpenAISemanticProviderVerifySemanticUsesStructuredVerifier(t *testing.T
 
 		var payload semanticVerifierRequest
 		require.NoError(t, json.Unmarshal([]byte(captured.Messages[1].Content), &payload))
-		require.Equal(t, semanticVerifierSchemaVersion, payload.SchemaVersion)
+		require.NotContains(t, captured.Messages[1].Content, "schema_version")
+		require.NotContains(t, captured.Messages[1].Content, "existing_relationship")
+		require.NotContains(t, captured.Messages[1].Content, "related_relationship")
 		require.Equal(t, "verify-1", payload.RequestID)
 		require.Contains(t, payload.Relationships, semanticVerifierRelationshipRef(0))
 
@@ -120,12 +125,15 @@ func TestOpenAISemanticProviderVerifySemanticUsesStructuredVerifier(t *testing.T
 	require.NoError(t, json.Unmarshal(captured.ResponseFormat.JSONSchema.Schema, &schema))
 	properties, ok := schema["properties"].(map[string]any)
 	require.True(t, ok)
-	schemaVersion, ok := properties["schema_version"].(map[string]any)
+	require.NotContains(t, properties, "schema_version")
+	require.NotContains(t, string(captured.ResponseFormat.JSONSchema.Schema), "knowledge_alignment")
+	require.NotContains(t, string(captured.ResponseFormat.JSONSchema.Schema), "related_relationship_ids")
+	require.Contains(t, properties, "security_signals")
+	required, ok := schema["required"].([]any)
 	require.True(t, ok)
-	require.Equal(t, "string", schemaVersion["type"])
-	require.Equal(t, semanticVerifierSchemaVersion, schemaVersion["const"])
+	require.NotContains(t, required, "schema_version")
+	require.Contains(t, required, "security_signals")
 	require.Equal(t, "verify-model", provider.ModelName())
-	require.Equal(t, semanticVerifierSchemaVersion, resp.SchemaVersion)
 	require.Equal(t, "verify-1", resp.RequestID)
 	require.Len(t, resp.EntityResults, 1)
 	require.Len(t, resp.RelationshipResults, 1)
@@ -142,7 +150,7 @@ func TestOpenAISemanticProviderVerifySemanticRepairsVerifierValidationErrors(t *
 
 		resp := semanticVerifierResponseForRequest(req)
 		if len(captured) == 1 {
-			resp.EntityResults = nil
+			resp.EntityResults = []semanticVerifierEntityResult{}
 			writeSemanticChatJSON(t, w, resp)
 			return
 		}
@@ -152,7 +160,7 @@ func TestOpenAISemanticProviderVerifySemanticRepairsVerifierValidationErrors(t *
 		require.Contains(t, request.Messages[2].Content, `"entity_results"`)
 		require.Equal(t, "user", request.Messages[3].Role)
 		require.Contains(t, request.Messages[3].Content, "entity_results coverage mismatch")
-		require.Contains(t, request.Messages[3].Content, `schema_version must be "dense-mem-verifier/v1"`)
+		require.NotContains(t, request.Messages[3].Content, "schema_version")
 		require.Contains(t, request.Messages[3].Content, `request_id must be "verify-1"`)
 		require.Contains(t, request.Messages[3].Content, "exactly one entity_results item")
 		writeSemanticChatJSON(t, w, resp)
@@ -192,17 +200,18 @@ func TestOpenAISemanticProviderReviewSemanticSkipsEmptyEvidence(t *testing.T) {
 	require.Empty(t, result.Model)
 }
 
-func TestOpenAISemanticProviderUsesVerifierModelAsDefaultReviewerAndTemperature(t *testing.T) {
+func TestOpenAISemanticProviderUsesExplicitReviewerModelAndTemperature(t *testing.T) {
 	var captured semanticChatRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&captured))
-		writeSemanticChatContent(t, w, `{"relationships": [], "skips": [{"unit_id": "e0_u1", "reason": "unsupported"}]}`)
+		writeSemanticChatContent(t, w, `{"security_signals": [], "relationships": [], "skips": [{"unit_id": "e0_u1", "reason": "unsupported"}]}`)
 	}))
 	defer server.Close()
 
 	provider := NewOpenAISemanticProvider(&config.Config{
 		AIVerifierAPIURL:         server.URL,
 		AIVerifierAPIKey:         "test-key",
+		AIReviewerModel:          "review-model",
 		AIVerifierModel:          "verify-model",
 		AIVerifierTimeoutSeconds: 5,
 	}, server.Client())
@@ -213,10 +222,10 @@ func TestOpenAISemanticProviderUsesVerifierModelAsDefaultReviewerAndTemperature(
 	})
 
 	require.NoError(t, err)
-	require.Equal(t, "verify-model", captured.Model)
+	require.Equal(t, "review-model", captured.Model)
 	require.NotNil(t, captured.Temperature)
 	require.Equal(t, 0.0, *captured.Temperature)
-	require.Equal(t, "verify-model", result.Model)
+	require.Equal(t, "review-model", result.Model)
 }
 
 func TestOpenAISemanticProviderReturnsProviderErrors(t *testing.T) {
@@ -292,7 +301,7 @@ func TestOpenAISemanticProviderRejectsMalformedProviderResponse(t *testing.T) {
 
 func TestOpenAISemanticProviderReviewSemanticRejectsMalformedStructuredContent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeSemanticChatContent(t, w, `{"relationships": [], "unexpected": true}`)
+		writeSemanticChatContent(t, w, `{"security_signals": [], "relationships": [], "unexpected": true}`)
 	}))
 	defer server.Close()
 
@@ -311,7 +320,6 @@ func TestOpenAISemanticProviderReviewSemanticRejectsMalformedStructuredContent(t
 func TestOpenAISemanticProviderVerifySemanticRejectsMalformedStructuredContent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeSemanticChatContent(t, w, `{
-			"schema_version": "dense-mem-verifier/v1",
 			"request_id": "verify-1",
 			"entity_results": [],
 			"relationship_results": [],
@@ -329,9 +337,50 @@ func TestOpenAISemanticProviderVerifySemanticRejectsMalformedStructuredContent(t
 	require.ErrorAs(t, err, &malformed)
 }
 
+func TestOpenAISemanticProviderVerifySemanticRejectsSchemaVersionField(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := semanticVerifierResponseForRequest(buildSemanticVerifierRequest("verify-1", semanticRelationshipsFixture()))
+		raw, err := json.Marshal(resp)
+		require.NoError(t, err)
+		raw = []byte(strings.Replace(string(raw), `{"request_id":`, `{"schema_version":"dense-mem-verifier/v1","request_id":`, 1))
+		writeSemanticChatContent(t, w, string(raw))
+	}))
+	defer server.Close()
+
+	provider := semanticProviderForTest(server)
+
+	_, err := provider.VerifySemantic(context.Background(), buildSemanticVerifierRequest("verify-1", semanticRelationshipsFixture()))
+
+	require.Error(t, err)
+	var malformed *verifier.MalformedResponseError
+	require.ErrorAs(t, err, &malformed)
+	require.Contains(t, err.Error(), "failed to decode")
+}
+
+func TestOpenAISemanticProviderVerifySemanticRejectsRemovedRelationshipFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := semanticVerifierResponseForRequest(buildSemanticVerifierRequest("verify-1", semanticRelationshipsFixture()))
+		raw, err := json.Marshal(resp)
+		require.NoError(t, err)
+		raw = []byte(strings.Replace(string(raw), `"confidence":0.7`, `"knowledge_alignment":"novel","related_relationship_ids":[],"confidence":0.7`, 1))
+		writeSemanticChatContent(t, w, string(raw))
+	}))
+	defer server.Close()
+
+	provider := semanticProviderForTest(server)
+
+	_, err := provider.VerifySemantic(context.Background(), buildSemanticVerifierRequest("verify-1", semanticRelationshipsFixture()))
+
+	require.Error(t, err)
+	var malformed *verifier.MalformedResponseError
+	require.ErrorAs(t, err, &malformed)
+	require.Contains(t, err.Error(), "failed to decode")
+}
+
 func TestOpenAISemanticProviderReviewSemanticRejectsConversionErrors(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeSemanticChatContent(t, w, `{
+			"security_signals": [],
 			"relationships": [{
 				"ref": "r1",
 				"unit_id": "missing",
@@ -362,6 +411,36 @@ func TestOpenAISemanticProviderReviewSemanticRejectsConversionErrors(t *testing.
 	require.ErrorAs(t, err, &malformed)
 }
 
+func TestOpenAISemanticProviderReviewSemanticReturnsSecuritySignals(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeSemanticChatContent(t, w, `{
+			"security_signals": [{
+				"evidence_id": "ev_0",
+				"kind": "instruction_override",
+				"start": 0,
+				"end": 9
+			}],
+			"relationships": [],
+			"skips": []
+		}`)
+	}))
+	defer server.Close()
+
+	provider := semanticProviderForTest(server)
+
+	result, err := provider.ReviewSemantic(context.Background(), semanticReviewRequest{
+		RequestID: "review-security",
+		Evidence:  []domain.MemoryEvidence{{Index: 0, Content: "Dense-Mem uses Postgres."}},
+	})
+
+	require.NoError(t, err)
+	require.Empty(t, result.Relationships)
+	require.Len(t, result.SecurityAssessments, 1)
+	require.Equal(t, 0, result.SecurityAssessments[0].EvidenceIndex)
+	require.Equal(t, domain.EvidenceSecurityEventReviewerSignal, result.SecurityAssessments[0].Assessment.EventKind)
+	require.Equal(t, "Dense-Mem", result.SecurityAssessments[0].Assessment.Signals[0].Quote)
+}
+
 func TestOpenAISemanticProviderReviewSemanticRepairsReviewerValidationErrors(t *testing.T) {
 	var captured []semanticChatRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -372,6 +451,7 @@ func TestOpenAISemanticProviderReviewSemanticRepairsReviewerValidationErrors(t *
 
 		if len(captured) == 1 {
 			writeSemanticChatContent(t, w, `{
+				"security_signals": [],
 				"relationships": [{
 					"ref": "EMBL-DDBJ-GenBank-collaboration",
 					"unit_id": "e0_u1",
@@ -398,6 +478,7 @@ func TestOpenAISemanticProviderReviewSemanticRepairsReviewerValidationErrors(t *
 		require.Contains(t, request.Messages[3].Content, "lower_snake_case")
 
 		writeSemanticChatContent(t, w, `{
+			"security_signals": [],
 			"relationships": [{
 				"ref": "r1",
 				"unit_id": "e0_u1",
@@ -442,6 +523,7 @@ func TestOpenAISemanticProviderReviewSemanticRepairIncludesExactQuoteContext(t *
 
 		if len(captured) == 1 {
 			writeSemanticChatContent(t, w, `{
+				"security_signals": [],
 				"relationships": [{
 					"ref": "r1",
 					"unit_id": "e0_u1",
@@ -468,6 +550,7 @@ func TestOpenAISemanticProviderReviewSemanticRepairIncludesExactQuoteContext(t *
 		require.Contains(t, request.Messages[3].Content, `unit "e0_u1" text "Dense-Mem stores durable memory in Postgres."`)
 
 		writeSemanticChatContent(t, w, `{
+			"security_signals": [],
 			"relationships": [{
 				"ref": "r1",
 				"unit_id": "e0_u1",
@@ -504,6 +587,7 @@ func TestOpenAISemanticProviderReviewSemanticRepairIncludesExactQuoteContext(t *
 func TestOpenAISemanticProviderReviewSemanticMapsWhitespaceNormalizedQuoteToExactEvidence(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeSemanticChatContent(t, w, `{
+			"security_signals": [],
 			"relationships": [{
 				"ref": "r1",
 				"unit_id": "e0_u1",
@@ -545,6 +629,7 @@ func TestOpenAISemanticProviderReviewSemanticRepairExplainsMissingObjectForm(t *
 		captured = append(captured, request)
 		if len(captured) == 1 {
 			writeSemanticChatContent(t, w, `{
+				"security_signals": [],
 				"relationships": [{
 					"ref": "r1",
 					"unit_id": "e0_u1",
@@ -569,6 +654,7 @@ func TestOpenAISemanticProviderReviewSemanticRepairExplainsMissingObjectForm(t *
 		require.Contains(t, request.Messages[3].Content, "set object_name for a named entity")
 		require.Contains(t, request.Messages[3].Content, "set object_value for a scalar/text value")
 		writeSemanticChatContent(t, w, `{
+			"security_signals": [],
 			"relationships": [{
 				"ref": "r1",
 				"unit_id": "e0_u1",
@@ -606,7 +692,7 @@ func TestOpenAISemanticProviderReviewSemanticRepairsMissingUnitInSameConversatio
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
 		captured = append(captured, request)
 		if len(captured) == 1 {
-			writeSemanticChatContent(t, w, `{"relationships": [], "skips": []}`)
+			writeSemanticChatContent(t, w, `{"security_signals": [], "relationships": [], "skips": []}`)
 			return
 		}
 
@@ -618,6 +704,7 @@ func TestOpenAISemanticProviderReviewSemanticRepairsMissingUnitInSameConversatio
 		require.Contains(t, request.Messages[3].Content, "unit coverage mismatch: missing [e0_u1]")
 		require.Contains(t, request.Messages[3].Content, "Replace the entire prior response")
 		writeSemanticChatContent(t, w, `{
+			"security_signals": [],
 			"relationships": [{
 				"ref": "r1",
 				"unit_id": "e0_u1",
@@ -655,6 +742,7 @@ func TestOpenAISemanticProviderReviewSemanticFailsAfterRepairAttempts(t *testing
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
 		writeSemanticChatContent(t, w, `{
+			"security_signals": [],
 			"relationships": [{
 				"ref": "r1",
 				"unit_id": "e0_u1",
@@ -696,166 +784,10 @@ func TestOpenAISemanticProviderRequiresConfiguration(t *testing.T) {
 	require.Equal(t, 60*time.Second, provider.client.Timeout)
 }
 
-func TestSemanticReviewConversionAcceptsStrictRelationship(t *testing.T) {
-	evidence := []domain.MemoryEvidence{{Index: 0, Content: "Dense-Mem stores durable memory in Postgres."}}
-	units := splitSemanticReviewUnits(0, evidence[0].Content)
-
-	relationships, err := convertSemanticReview(evidence, units, semanticReviewAPIResult{
-		Relationships: []semanticReviewRelationship{semanticReviewRelationshipFixture("r1", "e0_u1")},
-	})
-
-	require.NoError(t, err)
-	require.Len(t, relationships, 1)
-	rel := relationships[0]
-	require.Equal(t, "Dense-Mem", rel.SubjectName)
-	require.Equal(t, domain.SemanticEntityProject, rel.SubjectKind)
-	require.Equal(t, "stores_in", rel.Predicate)
-	require.Equal(t, domain.PolarityPlus, rel.Polarity)
-	require.Equal(t, domain.SemanticEntityProduct, rel.ObjectKind)
-	require.Equal(t, "Postgres", rel.ObjectName)
-	require.Equal(t, 0.8, rel.Confidence)
-	require.Equal(t, evidence[0].Content, rel.Quote)
-	require.Equal(t, 0, rel.SpanStart)
-	require.Equal(t, len(evidence[0].Content), rel.SpanEnd)
-}
-
-func TestSemanticReviewConversionRejectsFormerFallbacks(t *testing.T) {
-	evidence := []domain.MemoryEvidence{{Index: 0, Content: "Dense-Mem stores durable memory in Postgres."}}
-	units := splitSemanticReviewUnits(0, evidence[0].Content)
-	tests := []struct {
-		name    string
-		mutate  func(*semanticReviewRelationship)
-		wantErr string
-	}{
-		{
-			name: "unknown entity kind",
-			mutate: func(rel *semanticReviewRelationship) {
-				rel.SubjectKind = "unexpected-kind"
-			},
-			wantErr: "subject_kind is invalid",
-		},
-		{
-			name: "normalized predicate",
-			mutate: func(rel *semanticReviewRelationship) {
-				rel.Predicate = "Stores In"
-			},
-			wantErr: "predicate must be lower_snake_case ASCII",
-		},
-		{
-			name: "missing exact quote",
-			mutate: func(rel *semanticReviewRelationship) {
-				rel.Quote = "missing exact quote"
-			},
-			wantErr: `quote "missing exact quote" is not an exact substring`,
-		},
-		{
-			name: "clamped confidence",
-			mutate: func(rel *semanticReviewRelationship) {
-				rel.Confidence = -0.5
-			},
-			wantErr: "confidence is out of range",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rel := semanticReviewRelationshipFixture("r1", "e0_u1")
-			tt.mutate(&rel)
-			_, err := convertSemanticReview(evidence, units, semanticReviewAPIResult{
-				Relationships: []semanticReviewRelationship{rel},
-			})
-			require.ErrorContains(t, err, tt.wantErr)
-		})
-	}
-}
-
-func TestSemanticReviewConversionRequiresExactUnitCoverage(t *testing.T) {
-	evidence := []domain.MemoryEvidence{{Index: 0, Content: "Dense-Mem stores durable memory in Postgres. It supports semantic recall."}}
-	units := splitSemanticReviewUnits(0, evidence[0].Content)
-
-	_, err := convertSemanticReview(evidence, units, semanticReviewAPIResult{
-		Relationships: []semanticReviewRelationship{},
-	})
-	require.ErrorContains(t, err, "unit coverage mismatch: missing [e0_u1]")
-
-	relationships, err := convertSemanticReview(evidence, units, semanticReviewAPIResult{
-		Relationships: []semanticReviewRelationship{semanticReviewRelationshipFixture("r1", "e0_u1")},
-	})
-	require.NoError(t, err)
-	require.Len(t, relationships, 1)
-}
-
-func TestSemanticReviewConversionRejectsRelationshipAndSkipForSameUnit(t *testing.T) {
-	evidence := []domain.MemoryEvidence{{Index: 0, Content: "Dense-Mem stores durable memory in Postgres."}}
-	units := splitSemanticReviewUnits(0, evidence[0].Content)
-
-	_, err := convertSemanticReview(evidence, units, semanticReviewAPIResult{
-		Relationships: []semanticReviewRelationship{semanticReviewRelationshipFixture("r1", "e0_u1")},
-		Skips:         []semanticReviewSkip{{UnitID: "e0_u1", Reason: "duplicate"}},
-	})
-
-	require.ErrorContains(t, err, "cannot contain relationships and a skip")
-}
-
-func TestSemanticReviewConversionRejectsDuplicateReviewerRefs(t *testing.T) {
-	evidence := []domain.MemoryEvidence{{Index: 0, Content: "Dense-Mem stores durable memory in Postgres."}}
-	units := splitSemanticReviewUnits(0, evidence[0].Content)
-
-	_, err := convertSemanticReview(evidence, units, semanticReviewAPIResult{
-		Relationships: []semanticReviewRelationship{
-			semanticReviewRelationshipFixture("r1", "e0_u1"),
-			semanticReviewRelationshipFixture("r1", "e0_u1"),
-		},
-	})
-
-	require.ErrorContains(t, err, "duplicate relationship ref")
-}
-
-func TestSplitSemanticReviewUnitsPreservesEvidenceItemBoundary(t *testing.T) {
-	content := "On July 13, 2026, Dense-Mem used https://example.com/v2. It stored 42 facts."
-
-	units := splitSemanticReviewUnits(7, content)
-
-	require.Equal(t, []semanticReviewUnit{
-		{UnitID: "e7_u1", EvidenceIndex: 7, Text: content, Start: 0, End: len(content)},
-	}, units)
-}
-
-func semanticReviewRelationshipFixture(ref, unitID string) semanticReviewRelationship {
-	return semanticReviewRelationship{
-		Ref:         ref,
-		UnitID:      unitID,
-		SubjectName: "Dense-Mem",
-		SubjectKind: "project",
-		Predicate:   "stores_in",
-		Polarity:    "+",
-		ObjectName:  "Postgres",
-		ObjectKind:  "product",
-		Quote:       "Dense-Mem stores durable memory in Postgres.",
-		Confidence:  0.8,
-	}
-}
-
-func TestDecodeClosedJSONRejectsTrailingData(t *testing.T) {
-	var decoded semanticReviewAPIResult
-
-	err := decodeClosedJSON(`{"relationships": []} {}`, &decoded)
-
-	require.Error(t, err)
-	var malformed *verifier.MalformedResponseError
-	require.ErrorAs(t, err, &malformed)
-	require.Contains(t, err.Error(), "trailing data")
-}
-
-func TestDecodeClosedJSONRejectsUnknownFields(t *testing.T) {
-	var decoded semanticReviewAPIResult
-
-	err := decodeClosedJSON(`{"relationships": [], "extra": true}`, &decoded)
-
-	require.Error(t, err)
-	var malformed *verifier.MalformedResponseError
-	require.ErrorAs(t, err, &malformed)
-	require.Contains(t, err.Error(), "failed to decode")
+func TestMalformedMessagePrefersStructuredMessage(t *testing.T) {
+	require.Equal(t, " bad response ", malformedMessage(&verifier.MalformedResponseError{Message: " bad response "}))
+	require.Contains(t, malformedMessage(&verifier.MalformedResponseError{Message: " "}), "verifier malformed response")
+	require.Equal(t, "plain failure", malformedMessage(errors.New("plain failure")))
 }
 
 func semanticProviderForTest(server *httptest.Server) *OpenAISemanticProvider {

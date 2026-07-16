@@ -2,11 +2,13 @@ package graphview
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
@@ -20,6 +22,23 @@ type fakeGraphReader struct {
 	calls      []graphReadCall
 	rowsByCall [][]map[string]any
 	errByCall  []error
+}
+
+type semanticGraphCall struct {
+	teamID string
+	query  domain.SemanticGraphQuery
+}
+
+type fakeSemanticGraphStore struct {
+	graphCall   semanticGraphCall
+	nodeType    string
+	nodeID      string
+	graph       *domain.SemanticGraphSnapshot
+	node        *domain.SemanticGraphNode
+	graphErr    error
+	detailErr   error
+	graphCalls  int
+	detailCalls int
 }
 
 func (f *fakeGraphReader) ScopedRead(_ context.Context, profileID string, query string, params map[string]any) (neo4jdriver.ResultSummary, []map[string]any, error) {
@@ -36,6 +55,133 @@ func (f *fakeGraphReader) ScopedRead(_ context.Context, profileID string, query 
 		return nil, f.rowsByCall[idx], nil
 	}
 	return nil, nil, nil
+}
+
+func (f *fakeSemanticGraphStore) SemanticGraph(_ context.Context, teamID string, query domain.SemanticGraphQuery) (*domain.SemanticGraphSnapshot, error) {
+	f.graphCalls++
+	f.graphCall = semanticGraphCall{teamID: teamID, query: query}
+	if f.graphErr != nil {
+		return nil, f.graphErr
+	}
+	return f.graph, nil
+}
+
+func (f *fakeSemanticGraphStore) SemanticGraphNodeDetail(_ context.Context, teamID string, nodeType string, nodeID string) (*domain.SemanticGraphNode, error) {
+	f.detailCalls++
+	f.graphCall.teamID = teamID
+	f.nodeType = nodeType
+	f.nodeID = nodeID
+	if f.detailErr != nil {
+		return nil, f.detailErr
+	}
+	return f.node, nil
+}
+
+func TestSemanticGraphServiceNormalizesAndMapsSnapshot(t *testing.T) {
+	recorded := time.Date(2026, 7, 16, 20, 0, 0, 0, time.UTC)
+	store := &fakeSemanticGraphStore{graph: &domain.SemanticGraphSnapshot{
+		Scope:     "local",
+		Query:     "postgres",
+		Anchor:    &domain.SemanticGraphAnchor{Type: "entity", ID: "entity-1", Key: "entity:entity-1"},
+		Depth:     2,
+		Limit:     MaxLimit,
+		Truncated: true,
+		Nodes: []domain.SemanticGraphNode{{
+			Key: "entity:entity-1", ID: "entity-1", Type: "entity",
+			Title: strings.Repeat("A", 200), Body: strings.Repeat("B", maxNodeBodyRunes+20),
+			Status: "active", RecordedAt: &recorded,
+		}},
+		Edges: []domain.SemanticGraphEdge{{
+			ID: "rel-1", Source: "entity:entity-1", Target: "value:value-1", Relationship: "uses", Directed: true,
+		}},
+	}}
+	svc := NewSemantic(store)
+
+	got, err := svc.Graph(context.Background(), "team-1", Query{
+		Scope: "local", Query: " PostgreSQL ", Types: []string{"entities", "values", "facts"},
+		AnchorType: "entities", AnchorID: "entity-1", Depth: 99, Limit: 999,
+	})
+	if err != nil {
+		t.Fatalf("Graph returned error: %v", err)
+	}
+	if store.graphCall.teamID != "team-1" || store.graphCall.query.Depth != MaxDepth || store.graphCall.query.Limit != MaxLimit {
+		t.Fatalf("graph call = %#v", store.graphCall)
+	}
+	if strings.Join(store.graphCall.query.Types, ",") != "entity,value" {
+		t.Fatalf("types = %#v; want entity,value", store.graphCall.query.Types)
+	}
+	if got.Anchor == nil || got.Anchor.Key != "entity:entity-1" || len(got.Nodes) != 1 || len(got.Edges) != 1 {
+		t.Fatalf("snapshot = %#v", got)
+	}
+	if !strings.HasSuffix(got.Nodes[0].Title, "...") || !strings.HasSuffix(got.Nodes[0].Body, "...") {
+		t.Fatalf("node text was not truncated: %#v", got.Nodes[0])
+	}
+}
+
+func TestSemanticGraphServiceNodeDetailValidationAndNotFound(t *testing.T) {
+	if _, err := NewSemantic(&fakeSemanticGraphStore{}).Graph(context.Background(), "team", Query{Scope: "local"}); !errors.Is(err, ErrMissingAnchor) {
+		t.Fatalf("missing anchor error = %v; want ErrMissingAnchor", err)
+	}
+	if _, err := NewSemantic(&fakeSemanticGraphStore{}).Graph(context.Background(), "team", Query{Scope: "local", AnchorType: "fact", AnchorID: "id"}); !errors.Is(err, ErrInvalidAnchorType) {
+		t.Fatalf("invalid anchor type error = %v; want ErrInvalidAnchorType", err)
+	}
+	if _, err := NewSemantic(&fakeSemanticGraphStore{}).NodeDetail(context.Background(), "team", "fact", "id"); !errors.Is(err, ErrInvalidNodeType) {
+		t.Fatalf("invalid detail type error = %v; want ErrInvalidNodeType", err)
+	}
+	if _, err := NewSemantic(&fakeSemanticGraphStore{detailErr: sql.ErrNoRows}).NodeDetail(context.Background(), "team", "value", "value-1"); !errors.Is(err, ErrNodeNotFound) {
+		t.Fatalf("not found detail error = %v; want ErrNodeNotFound", err)
+	}
+	store := &fakeSemanticGraphStore{node: &domain.SemanticGraphNode{Key: "value:value-1", ID: "value-1", Type: "value", Title: "Postgres"}}
+	got, err := NewSemantic(store).NodeDetail(context.Background(), "team", "values", "value-1")
+	if err != nil {
+		t.Fatalf("NodeDetail returned error: %v", err)
+	}
+	if got.Key != "value:value-1" || store.nodeType != "value" || store.nodeID != "value-1" {
+		t.Fatalf("detail = %#v store = %#v", got, store)
+	}
+}
+
+func TestSemanticGraphServicePropagatesStoreErrors(t *testing.T) {
+	if _, err := NewSemantic(nil).Graph(context.Background(), "team", Query{}); err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("nil semantic graph store error = %v; want not configured", err)
+	}
+	if _, err := NewSemantic(nil).NodeDetail(context.Background(), "team", "entity", "entity-1"); err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("nil semantic node store error = %v; want not configured", err)
+	}
+
+	wantGraphErr := errors.New("graph read failed")
+	if _, err := NewSemantic(&fakeSemanticGraphStore{graphErr: wantGraphErr}).Graph(context.Background(), "team", Query{}); !errors.Is(err, wantGraphErr) {
+		t.Fatalf("graph error = %v; want %v", err, wantGraphErr)
+	}
+
+	wantDetailErr := errors.New("detail read failed")
+	if _, err := NewSemantic(&fakeSemanticGraphStore{detailErr: wantDetailErr}).NodeDetail(context.Background(), "team", "entity", "entity-1"); !errors.Is(err, wantDetailErr) {
+		t.Fatalf("detail error = %v; want %v", err, wantDetailErr)
+	}
+
+	got, err := NewSemantic(&fakeSemanticGraphStore{}).Graph(context.Background(), "team", Query{})
+	if err != nil {
+		t.Fatalf("nil snapshot graph returned error: %v", err)
+	}
+	if len(got.Nodes) != 0 || len(got.Edges) != 0 {
+		t.Fatalf("nil snapshot graph = %#v; want empty nodes and edges", got)
+	}
+}
+
+func TestNormalizeTypeAliases(t *testing.T) {
+	cases := map[string]string{
+		" facts ":         "fact",
+		"claims":          "claim",
+		"source_fragment": "fragment",
+		"sourcefragment":  "fragment",
+		"dreams":          "dream",
+		"entity":          "",
+	}
+	for raw, want := range cases {
+		if got := normalizeType(raw); got != want {
+			t.Fatalf("normalizeType(%q) = %q; want %q", raw, got, want)
+		}
+	}
 }
 
 func TestGraphOverviewClampsLimitAndUsesScopedQuery(t *testing.T) {

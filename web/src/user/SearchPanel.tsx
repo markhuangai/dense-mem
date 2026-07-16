@@ -9,16 +9,16 @@ import {
   X,
 } from "lucide-react";
 import { LoadingState, SectionHeading } from "../ui/components";
-import { Claim, Fact, Fragment, GraphNodeType, RecallHit, RecallRelationship, UserApi } from "./api";
+import { Claim, Fact, Fragment, GraphNodeType, RecallEvidenceContext, RecallHit, RecallRelationship, UserApi } from "./api";
 
 const ResultGraphPreview = lazy(() => import("./GraphPanel").then((module) => ({ default: module.ResultGraphPreview })));
 
-type RecallResultKind = "relationship" | "fact" | "claim" | "fragment";
+type RecallResultKind = "evidence" | "relationship" | "fact" | "claim" | "fragment";
 type RecallResultStatus = "verified" | "provisional" | "disputed" | "deprecated";
 type RecallSortMode = "relevance" | "date";
 type ResultDensity = "comfortable" | "compact";
 type InspectorTab = "evidence" | "lineage" | "recall" | "graph";
-type RecallDisplayItem = RecallRelationship | Fact | Claim | Fragment | undefined;
+type RecallDisplayItem = RecallEvidenceContext | RecallRelationship | Fact | Claim | Fragment | undefined;
 
 type IndexedRecallResult = {
   hit: RecallHit;
@@ -31,6 +31,7 @@ export function SearchPanel({ api }: { api: UserApi }) {
   const [hits, setHits] = useState<RecallHit[]>([]);
   const [selectedKey, setSelectedKey] = useState("");
   const [enabledTypes, setEnabledTypes] = useState<Record<RecallResultKind, boolean>>({
+    evidence: true,
     relationship: true,
     fact: true,
     claim: true,
@@ -87,7 +88,7 @@ export function SearchPanel({ api }: { api: UserApi }) {
       const item = resultItem(indexed.hit);
       const status = recallResultStatus(item);
       return enabledTypes[indexed.kind]
-        && enabledStatuses[status]
+        && (status === null || enabledStatuses[status])
         && sourceMatches(item, sourceFilter)
         && dateMatches(item, dateMode, startDate, endDate);
     })
@@ -99,9 +100,12 @@ export function SearchPanel({ api }: { api: UserApi }) {
   const typeCounts = useMemo(() => indexedHits.reduce<Record<RecallResultKind, number>>((counts, item) => ({
     ...counts,
     [item.kind]: counts[item.kind] + 1,
-  }), { relationship: 0, fact: 0, claim: 0, fragment: 0 }), [indexedHits]);
+  }), { evidence: 0, relationship: 0, fact: 0, claim: 0, fragment: 0 }), [indexedHits]);
   const statusCounts = useMemo(() => indexedHits.reduce<Record<RecallResultStatus, number>>((counts, indexed) => {
     const status = recallResultStatus(resultItem(indexed.hit));
+    if (status === null) {
+      return counts;
+    }
     return {
       ...counts,
       [status]: counts[status] + 1,
@@ -130,7 +134,7 @@ export function SearchPanel({ api }: { api: UserApi }) {
   }
 
   function clearFilters() {
-    setEnabledTypes({ relationship: true, fact: true, claim: true, fragment: true });
+    setEnabledTypes({ evidence: true, relationship: true, fact: true, claim: true, fragment: true });
     setEnabledStatuses({ verified: true, provisional: true, disputed: false, deprecated: false });
     setDateMode("all");
     setStartDate("");
@@ -155,7 +159,7 @@ export function SearchPanel({ api }: { api: UserApi }) {
         />
         <fieldset className="filter-stack">
           <legend>Type</legend>
-          {(["relationship", "fact", "claim", "fragment"] as RecallResultKind[]).map((kind) => (
+          {(["evidence", "relationship", "fact", "claim", "fragment"] as RecallResultKind[]).map((kind) => (
             <label className="filter-row" key={kind}>
               <input
                 type="checkbox"
@@ -228,7 +232,7 @@ export function SearchPanel({ api }: { api: UserApi }) {
         <div className="knowledge-results-toolbar">
           <div>
             <h2>{filteredHits.length.toLocaleString()} results</h2>
-            <span>{query.trim() ? `for "${query.trim()}"` : "Search across facts, claims, and memory"}</span>
+            <span>{query.trim() ? `for "${query.trim()}"` : "Search across evidence and relationships"}</span>
           </div>
           <div className="toolbar-actions">
             <button
@@ -323,7 +327,7 @@ function RecallResults({
               <div className="result-kicker">
                 {resultIcon(result.kind)}
                 <span className="status-pill neutral">{recallResultKindLabel(result.kind)}</span>
-                <span className={statusPillClass(status)}>{recallResultStatusLabel(status)}</span>
+                {status && <span className={statusPillClass(status)}>{recallResultStatusLabel(status)}</span>}
               </div>
             </div>
             <h3>{itemTitle(item)}</h3>
@@ -381,7 +385,7 @@ function KnowledgeInspector({
       </div>
       <div className="inspector-status-row">
         <span className="status-pill neutral">{recallResultKindLabel(result.kind)}</span>
-        <span className={statusPillClass(status)}>{recallResultStatusLabel(status)}</span>
+        {status && <span className={statusPillClass(status)}>{recallResultStatusLabel(status)}</span>}
       </div>
       <h3>{itemTitle(item)}</h3>
       {activeTab === "evidence" && (
@@ -434,7 +438,7 @@ function KnowledgeInspector({
             </div>
             <div>
               <dt>Status</dt>
-              <dd>{recallResultStatusLabel(status)}</dd>
+              <dd>{status ? recallResultStatusLabel(status) : "n/a"}</dd>
             </div>
           </dl>
         </div>
@@ -481,18 +485,21 @@ function KnowledgeInspector({
 }
 
 function recallGraphAnchor(result: IndexedRecallResult): { type: GraphNodeType; id: string } | null {
-  if (result.hit.relationship) {
-    return null;
+  const relationship = result.hit.relationship ?? result.hit.relationships?.[0];
+  if (relationship?.subject?.entity_id) {
+    return { type: "entity", id: relationship.subject.entity_id };
+  }
+  if (relationship?.object?.entity_id) {
+    return { type: "entity", id: relationship.object.entity_id };
+  }
+  if (relationship?.object?.value_id) {
+    return { type: "value", id: relationship.object.value_id };
   }
   if (result.hit.fact?.fact_id) {
-    return { type: "fact", id: result.hit.fact.fact_id };
+    return null;
   }
   if (result.hit.claim?.claim_id) {
-    return { type: "claim", id: result.hit.claim.claim_id };
-  }
-  const fragmentID = result.hit.fragment?.fragment_id ?? result.hit.fragment?.id;
-  if (fragmentID) {
-    return { type: "fragment", id: fragmentID };
+    return null;
   }
   return null;
 }
@@ -500,11 +507,12 @@ function recallGraphAnchor(result: IndexedRecallResult): { type: GraphNodeType; 
 function deriveEntities(hits: RecallHit[]): string[] {
   const values = new Set<string>();
   for (const hit of hits) {
-    if (hit.relationship) {
-      addEntity(values, hit.relationship.subject?.name);
-      addEntity(values, hit.relationship.predicate);
-      addEntity(values, hit.relationship.object?.name ?? hit.relationship.object?.value);
-      continue;
+    for (const relationship of [hit.relationship, ...(hit.relationships ?? [])]) {
+      if (relationship) {
+        addEntity(values, relationship.subject?.name);
+        addEntity(values, relationship.predicate);
+        addEntity(values, relationship.object?.name ?? relationship.object?.value);
+      }
     }
     const source = hit.fact ?? hit.claim;
     if (source) {
@@ -527,6 +535,9 @@ function itemTitle(item: RecallDisplayItem): string {
   if (!item) {
     return "Result";
   }
+  if (isEvidence(item)) {
+    return firstEvidenceLine(item.context) || shortId(item.evidence_id);
+  }
   if (isRelationship(item)) {
     return item.subject?.name || shortId(item.relationship_id);
   }
@@ -540,6 +551,9 @@ function itemBody(item: RecallDisplayItem): string {
   if (!item) {
     return "";
   }
+  if (isEvidence(item)) {
+    return item.context;
+  }
   if (isRelationship(item)) {
     const object = item.object?.name || item.object?.value || "";
     return [item.predicate, object].filter(Boolean).join(": ");
@@ -551,6 +565,9 @@ function itemBody(item: RecallDisplayItem): string {
 }
 
 function tierLabel(hit: RecallHit): string {
+  if (hit.evidence) {
+    return "Evidence";
+  }
   const tier = hit.tier?.trim();
   if (tier) {
     return `Tier ${tier}`;
@@ -559,6 +576,9 @@ function tierLabel(hit: RecallHit): string {
 }
 
 function recallResultKind(hit: RecallHit): RecallResultKind {
+  if (hit.evidence) {
+    return "evidence";
+  }
   if (hit.relationship) {
     return "relationship";
   }
@@ -572,6 +592,9 @@ function recallResultKind(hit: RecallHit): RecallResultKind {
 }
 
 function recallResultKindLabel(kind: RecallResultKind): string {
+  if (kind === "evidence") {
+    return "Evidence";
+  }
   if (kind === "relationship") {
     return "Relationship";
   }
@@ -585,10 +608,13 @@ function recallResultKindLabel(kind: RecallResultKind): string {
 }
 
 function resultItem(hit: RecallHit): RecallDisplayItem {
-  return hit.relationship ?? hit.fact ?? hit.claim ?? hit.fragment;
+  return hit.evidence ?? hit.relationship ?? hit.fact ?? hit.claim ?? hit.fragment;
 }
 
-function recallResultStatus(item: RecallDisplayItem): RecallResultStatus {
+function recallResultStatus(item: RecallDisplayItem): RecallResultStatus | null {
+  if (item && isEvidence(item)) {
+    return null;
+  }
   if (item && isRelationship(item)) {
     return item.tier === "candidate" ? "provisional" : "verified";
   }
@@ -674,6 +700,9 @@ function itemRawDate(item: RecallDisplayItem): string {
   if (!item) {
     return "";
   }
+  if (isEvidence(item)) {
+    return "";
+  }
   if (isRelationship(item)) {
     return item.valid_from ?? item.valid_to ?? "";
   }
@@ -689,6 +718,9 @@ function endOfDay(value: string): number {
 }
 
 function resultIcon(kind: RecallResultKind) {
+  if (kind === "evidence") {
+    return <FileText size={15} aria-hidden="true" />;
+  }
   if (kind === "relationship") {
     return <GitBranch size={15} aria-hidden="true" />;
   }
@@ -702,12 +734,15 @@ function resultIcon(kind: RecallResultKind) {
 }
 
 function recallKey(hit: RecallHit, index: number): string {
-  return hit.relationship?.relationship_id ?? hit.fact?.fact_id ?? hit.claim?.claim_id ?? hit.fragment?.fragment_id ?? String(index);
+  return hit.evidence?.evidence_id ?? hit.relationship?.relationship_id ?? hit.fact?.fact_id ?? hit.claim?.claim_id ?? hit.fragment?.fragment_id ?? String(index);
 }
 
 function sourceLabel(item: RecallDisplayItem): string {
   if (!item) {
     return "unknown";
+  }
+  if (isEvidence(item)) {
+    return "evidence";
   }
   if (isRelationship(item)) {
     return "relationship graph";
@@ -747,6 +782,14 @@ function rankLabel(value: number | undefined): string {
 
 function isRelationship(item: RecallDisplayItem): item is RecallRelationship {
   return Boolean(item && "relationship_id" in item);
+}
+
+function isEvidence(item: RecallDisplayItem): item is RecallEvidenceContext {
+  return Boolean(item && "evidence_id" in item && "context" in item);
+}
+
+function firstEvidenceLine(value: string): string {
+  return value.split(/\r?\n/).map((line) => line.trim()).find(Boolean)?.slice(0, 120) ?? "";
 }
 
 function readError(error: unknown): string {

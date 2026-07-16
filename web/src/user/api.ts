@@ -203,7 +203,9 @@ export type DreamStatus = {
 export type RecallHit = {
   tier?: string;
   score?: number;
+  evidence?: RecallEvidenceContext;
   relationship?: RecallRelationship;
+  relationships?: RecallRelationship[];
   evidences?: RecallEvidenceContext[];
   fragment?: Fragment;
   claim?: Claim;
@@ -211,6 +213,8 @@ export type RecallHit = {
   semantic_rank?: number;
   keyword_rank?: number;
   final_score?: number;
+  discovery_paths?: RecallDiscoveryPath[];
+  related_hypotheses?: unknown[];
 };
 
 export type RecallEntity = {
@@ -221,6 +225,7 @@ export type RecallEntity = {
 
 export type RecallObject = {
   entity_id?: string;
+  value_id?: string;
   name?: string;
   kind?: string;
   value?: string;
@@ -259,7 +264,7 @@ export type RecallPayload = {
   related_hypotheses?: unknown[];
 };
 
-export type GraphNodeType = "fact" | "claim" | "fragment" | "dream";
+export type GraphNodeType = "entity" | "value";
 
 export type GraphNode = {
   key: string;
@@ -301,7 +306,6 @@ export type GraphQuery = {
   anchorId?: string;
   depth?: number;
   limit?: number;
-  includeSuperseded?: boolean;
 };
 
 type RequestOptions = {
@@ -401,29 +405,20 @@ export class UserApi {
   async recall(query: string, limit = 10): Promise<RecallHit[]> {
     const params = new URLSearchParams({ query, limit: String(limit) });
     const payload = await this.request<Envelope<RecallHit[] | RecallPayload>>(`/api/v1/recall?${params.toString()}`);
-    if (Array.isArray(payload.data)) {
-      return payload.data;
+    const data = payload.data;
+    if (Array.isArray(data)) {
+      return data;
     }
-    if ("discovery_paths" in payload.data) {
-      return payload.data.results.map((evidence, index) => ({
-        fragment: {
-          fragment_id: evidence.evidence_id,
-          id: evidence.evidence_id,
-          content: evidence.context,
-          source_type: "semantic_evidence",
-          source: "recall",
-          status: "active",
-          created_at: "",
-          updated_at: "",
-        },
+    if (isRecallPayload(data)) {
+      return data.results.map((evidence) => ({
+        evidence,
         evidences: [evidence],
-        tier: "2",
-        score: 1,
-        final_score: 1,
-        semantic_rank: index + 1,
+        relationships: relationshipsForEvidence(data.discovery_paths, evidence.evidence_id),
+        discovery_paths: data.discovery_paths,
+        related_hypotheses: data.related_hypotheses ?? [],
       }));
     }
-    const legacyPayload = payload.data as unknown as {
+    const legacyPayload = data as unknown as {
       results: RecallRelationship[];
       evidences: RecallEvidenceContext[];
     };
@@ -462,9 +457,6 @@ export class UserApi {
     }
     if (query.limit !== undefined) {
       params.set("limit", String(query.limit));
-    }
-    if (query.includeSuperseded) {
-      params.set("include_superseded", "true");
     }
     const suffix = params.toString() ? `?${params.toString()}` : "";
     const payload = await this.request<Envelope<GraphSnapshot>>(`/ui/api/graph${suffix}`);
@@ -518,4 +510,26 @@ export class UserApi {
       },
     });
   }
+}
+
+function isRecallPayload(value: RecallPayload | unknown): value is RecallPayload {
+  return Boolean(value && typeof value === "object" && "discovery_paths" in value && "results" in value);
+}
+
+function relationshipsForEvidence(paths: RecallDiscoveryPath[], evidenceID: string): RecallRelationship[] {
+  const seen = new Set<string>();
+  const out: RecallRelationship[] = [];
+  for (const path of paths) {
+    if (!path.evidence_ids.includes(evidenceID)) {
+      continue;
+    }
+    for (const relationship of path.relationships) {
+      if (!relationship.relationship_id || seen.has(relationship.relationship_id)) {
+        continue;
+      }
+      seen.add(relationship.relationship_id);
+      out.push(relationship);
+    }
+  }
+  return out;
 }
