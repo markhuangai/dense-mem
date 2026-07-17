@@ -84,8 +84,7 @@ func TestBuildV2UATExecutableToolsRequireDependencies(t *testing.T) {
 		{
 			name: V2ToolListCommunities,
 			args: map[string]any{
-				"contract_version": domain.V2ContractVersion,
-				"limit":            float64(2),
+				"limit": float64(2),
 			},
 		},
 	}
@@ -129,8 +128,7 @@ func TestBuildV2UATWiresExecutableCommunityTools(t *testing.T) {
 		ProfileID: uuid.New(),
 	})
 	out, err := tool.Invoke(ctx, "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"limit":            float64(2),
+		"limit": float64(2),
 	})
 	if err != nil {
 		t.Fatalf("list_communities.Invoke: %v", err)
