@@ -180,6 +180,19 @@ func SeedHash(manifestPath string, manifest *SeedManifest) (string, error) {
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
+func FileHash(path string) (string, error) {
+	hash := sha256.New()
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	if _, err := io.Copy(hash, f); err != nil {
+		return "", err
+	}
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
+}
+
 func IndexCases(cases []Case) map[string]Case {
 	out := make(map[string]Case, len(cases))
 	for _, c := range cases {
