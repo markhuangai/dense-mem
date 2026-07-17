@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 const MaxCorpusContentCodepoints = 999
@@ -51,7 +52,7 @@ func LoadCorpus(manifestPath string, manifest *SeedManifest) ([]CorpusItem, erro
 		if strings.TrimSpace(item.Content) == "" {
 			return nil, fmt.Errorf("corpus row %d missing content", i+1)
 		}
-		if contentLen := len([]rune(item.Content)); contentLen > MaxCorpusContentCodepoints {
+		if contentLen := utf8.RuneCountInString(item.Content); contentLen > MaxCorpusContentCodepoints {
 			return nil, fmt.Errorf("corpus row %d content has %d code points; max is %d", i+1, contentLen, MaxCorpusContentCodepoints)
 		}
 		if _, ok := seen[item.SourceDocID]; ok {
