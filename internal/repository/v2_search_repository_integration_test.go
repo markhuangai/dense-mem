@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -112,10 +113,11 @@ func TestV2SearchEmbeddingCompletionRejectsStaleJobs(t *testing.T) {
 	require.Equal(t, int64(2), second.DocumentVersion)
 
 	err = repo.CompleteEmbeddingJob(ctx, V2CompleteEmbeddingJobInput{
-		TeamID:         teamID,
-		EmbeddingJobID: claimed[0].EmbeddingJobID,
-		WorkerID:       "worker-stale",
-		Embedding:      []float32{1, 0, 0},
+		TeamID:           teamID,
+		EmbeddingJobID:   claimed[0].EmbeddingJobID,
+		WorkerID:         "worker-stale",
+		ExpectedAttempts: claimed[0].Attempts,
+		Embedding:        []float32{1, 0, 0},
 	})
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrV2SearchStaleVersion), "err=%v", err)
@@ -142,6 +144,140 @@ func TestV2SearchEmbeddingCompletionRejectsStaleJobs(t *testing.T) {
 	require.Len(t, hits, 1)
 	assert.Equal(t, int64(2), hits[0].SourceVersion)
 	assert.Equal(t, int64(2), hits[0].DocumentVersion)
+}
+
+func TestV2EmbeddingJobsRecoverExpiredLeasesAndBoundRetries(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "search-lease-team")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "search-lease-owner")
+	profileKey, _ := insertV2SearchTestProfile(t, adminDB, rls, "search-lease", 3, "exact", "")
+	repo := NewV2SearchRepository(appDB, rls)
+
+	doc := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, profileKey, "lease recovery document", 1)
+	claimedByA, err := repo.ClaimEmbeddingJobs(ctx, V2ClaimEmbeddingJobsInput{
+		TeamID:   teamID,
+		WorkerID: "worker-a",
+		Limit:    1,
+		Lease:    time.Minute,
+	})
+	require.NoError(t, err)
+	require.Len(t, claimedByA, 1)
+	require.Equal(t, doc.SearchDocumentID, claimedByA[0].SearchDocumentID)
+	require.Equal(t, 1, claimedByA[0].Attempts)
+
+	require.NoError(t, rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE embedding_jobs
+			SET lease_until = now() - interval '1 second'
+			WHERE team_id = ?::uuid
+			  AND embedding_job_id = ?::uuid
+		`, teamID, claimedByA[0].EmbeddingJobID).Error
+	}))
+
+	claimedByB, err := repo.ClaimEmbeddingJobs(ctx, V2ClaimEmbeddingJobsInput{
+		TeamID:   teamID,
+		WorkerID: "worker-b",
+		Limit:    1,
+		Lease:    time.Minute,
+	})
+	require.NoError(t, err)
+	require.Len(t, claimedByB, 1)
+	require.Equal(t, claimedByA[0].EmbeddingJobID, claimedByB[0].EmbeddingJobID)
+	require.Equal(t, 2, claimedByB[0].Attempts)
+
+	err = repo.CompleteEmbeddingJob(ctx, V2CompleteEmbeddingJobInput{
+		TeamID:           teamID,
+		EmbeddingJobID:   claimedByA[0].EmbeddingJobID,
+		WorkerID:         "worker-a",
+		ExpectedAttempts: claimedByA[0].Attempts,
+		Embedding:        []float32{1, 0, 0},
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrV2EmbeddingLeaseLost), "err=%v", err)
+
+	failed, err := repo.FailEmbeddingJob(ctx, V2FailEmbeddingJobInput{
+		TeamID:           teamID,
+		EmbeddingJobID:   claimedByB[0].EmbeddingJobID,
+		WorkerID:         "worker-b",
+		ExpectedAttempts: claimedByB[0].Attempts,
+		Error:            strings.Repeat("provider timeout ", 80),
+		RetryAfter:       2 * time.Minute,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, failed)
+	assert.Equal(t, "queued", failed.Status)
+	assert.False(t, failed.Terminal)
+	assert.Equal(t, 2*time.Minute, failed.RetryAfter)
+
+	state := loadV2EmbeddingJobState(t, adminDB, rls, teamID, claimedByB[0].EmbeddingJobID)
+	assert.Equal(t, "queued", state.JobStatus)
+	assert.Equal(t, "pending", state.SearchState)
+	assert.LessOrEqual(t, len(state.Error), 512)
+
+	claimedTooEarly, err := repo.ClaimEmbeddingJobs(ctx, V2ClaimEmbeddingJobsInput{
+		TeamID:   teamID,
+		WorkerID: "worker-c",
+		Limit:    1,
+		Lease:    time.Minute,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, claimedTooEarly)
+
+	stats, err := repo.GetEmbeddingQueueStats(ctx, V2EmbeddingQueueStatsInput{
+		TeamID:              teamID,
+		EmbeddingContractID: doc.EmbeddingContractID,
+		EmbeddingDimensions: doc.EmbeddingDimensions,
+	})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, stats.Queued)
+	assert.True(t, stats.CutoverBlocking)
+
+	require.NoError(t, rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE embedding_jobs
+			SET available_at = now()
+			WHERE team_id = ?::uuid
+			  AND embedding_job_id = ?::uuid
+		`, teamID, claimedByB[0].EmbeddingJobID).Error
+	}))
+	claimedByC, err := repo.ClaimEmbeddingJobs(ctx, V2ClaimEmbeddingJobsInput{
+		TeamID:   teamID,
+		WorkerID: "worker-c",
+		Limit:    1,
+		Lease:    time.Minute,
+	})
+	require.NoError(t, err)
+	require.Len(t, claimedByC, 1)
+	require.Equal(t, 3, claimedByC[0].Attempts)
+
+	terminal, err := repo.FailEmbeddingJob(ctx, V2FailEmbeddingJobInput{
+		TeamID:           teamID,
+		EmbeddingJobID:   claimedByC[0].EmbeddingJobID,
+		WorkerID:         "worker-c",
+		ExpectedAttempts: claimedByC[0].Attempts,
+		Error:            "provider permanent failure",
+		Terminal:         true,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, terminal)
+	assert.Equal(t, "failed", terminal.Status)
+	assert.True(t, terminal.Terminal)
+
+	state = loadV2EmbeddingJobState(t, adminDB, rls, teamID, claimedByC[0].EmbeddingJobID)
+	assert.Equal(t, "failed", state.JobStatus)
+	assert.Equal(t, "failed", state.SearchState)
+	assert.True(t, state.CompletedAt.Valid)
+
+	stats, err = repo.GetEmbeddingQueueStats(ctx, V2EmbeddingQueueStatsInput{
+		TeamID:              teamID,
+		EmbeddingContractID: doc.EmbeddingContractID,
+		EmbeddingDimensions: doc.EmbeddingDimensions,
+	})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, stats.TerminalFailures)
+	assert.True(t, stats.CutoverBlocking)
 }
 
 func TestV2SearchReadinessAndHNSWPlan(t *testing.T) {
@@ -182,9 +318,19 @@ func TestV2SearchReadinessAndHNSWPlan(t *testing.T) {
 	assert.Contains(t, incompatible.Reasons[0].Message, "indexed expression")
 
 	doc := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, "default", "default profile hnsw text", 1)
+	blocked, err := repo.CheckSearchReadiness(ctx, "default")
+	require.NoError(t, err)
+	require.False(t, blocked.Ready)
+	require.NotEmpty(t, blocked.Reasons)
+	assert.Equal(t, "embedding_backlog_pending", blocked.Reasons[len(blocked.Reasons)-1].Code)
+
 	completeV2SearchJobsForTest(t, repo, teamID, map[string][]float32{
 		doc.SearchDocumentID: unitV2SearchVector(1536, 0),
 	})
+	readyAfterDrain, err := repo.CheckSearchReadiness(ctx, "default")
+	require.NoError(t, err)
+	require.True(t, readyAfterDrain.Ready, "readiness reasons: %+v", readyAfterDrain.Reasons)
+
 	query, err := v2VectorLiteral(unitV2SearchVector(1536, 0))
 	require.NoError(t, err)
 	err = rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
@@ -326,15 +472,52 @@ func completeV2SearchJobsForTest(
 			continue
 		}
 		err := repo.CompleteEmbeddingJob(context.Background(), V2CompleteEmbeddingJobInput{
-			TeamID:         teamID,
-			EmbeddingJobID: job.EmbeddingJobID,
-			WorkerID:       workerID,
-			Embedding:      vector,
+			TeamID:           teamID,
+			EmbeddingJobID:   job.EmbeddingJobID,
+			WorkerID:         workerID,
+			ExpectedAttempts: job.Attempts,
+			Embedding:        vector,
 		})
 		require.NoError(t, err)
 		completed++
 	}
 	require.Equal(t, len(vectorsByDocumentID), completed)
+}
+
+type v2EmbeddingJobState struct {
+	JobStatus   string
+	SearchState string
+	Error       string
+	CompletedAt sql.NullTime
+}
+
+func loadV2EmbeddingJobState(
+	t *testing.T,
+	db *gorm.DB,
+	rls *storagepostgres.RLS,
+	teamID string,
+	embeddingJobID string,
+) v2EmbeddingJobState {
+	t.Helper()
+	var state v2EmbeddingJobState
+	err := rls.WithMigrationTx(context.Background(), db, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT job.status, document.search_state, job.error, job.completed_at
+			FROM embedding_jobs AS job
+			JOIN search_documents AS document
+			  ON document.team_id = job.team_id
+			 AND document.search_document_id = job.search_document_id
+			WHERE job.team_id = ?::uuid
+			  AND job.embedding_job_id = ?::uuid
+		`, teamID, embeddingJobID).Row().Scan(
+			&state.JobStatus,
+			&state.SearchState,
+			&state.Error,
+			&state.CompletedAt,
+		)
+	})
+	require.NoError(t, err)
+	return state
 }
 
 func unitV2SearchVector(dimensions int, oneAt int) []float32 {

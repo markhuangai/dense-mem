@@ -121,6 +121,7 @@ type V2PlacementItem struct {
 type v2RLSHelper interface {
 	WithTeamTx(ctx context.Context, db *gorm.DB, teamID string, fn func(tx *gorm.DB) error) error
 	WithTeamProfileTx(ctx context.Context, db *gorm.DB, teamID string, profileID string, fn func(tx *gorm.DB) error) error
+	WithSystemTx(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) error) error
 }
 
 type V2LedgerRepositoryImpl struct {
