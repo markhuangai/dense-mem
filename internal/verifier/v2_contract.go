@@ -48,6 +48,16 @@ func V2ProviderProposalSchema() map[string]any {
 					"type":                 "object",
 					"required":             []string{"ref", "subject_ref", "original_predicate", "evidence"},
 					"additionalProperties": false,
+					"oneOf": []any{
+						map[string]any{
+							"required": []string{"object_ref"},
+							"not":      map[string]any{"required": []string{"object_value"}},
+						},
+						map[string]any{
+							"required": []string{"object_value"},
+							"not":      map[string]any{"required": []string{"object_ref"}},
+						},
+					},
 					"properties": map[string]any{
 						"ref":                map[string]any{"type": "string", "maxLength": 128},
 						"subject_ref":        map[string]any{"type": "string", "maxLength": 128},

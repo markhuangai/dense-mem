@@ -90,10 +90,16 @@ func (h *ToolExecuteHandler) Handle(c echo.Context) error {
 	if registry.IsEvaluationTool(tool.Name) && registry.HasTenantOverrideArgs(args) {
 		return httperr.New(httperr.VALIDATION_ERROR, "evaluation tools do not accept team_id or profile_id")
 	}
-	registry.StripTenantOverrideArgs(args)
-	args = registry.NormalizeInput(tool, args)
-	if err := registry.ValidateInput(tool, args); err != nil {
-		return httperr.New(httperr.VALIDATION_ERROR, err.Error())
+	if registry.IsV2ContractTool(tool) {
+		if err := registry.ValidateV2ContractInput(tool, args, principal.Scopes); err != nil {
+			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
+		}
+	} else {
+		registry.StripTenantOverrideArgs(args)
+		args = registry.NormalizeInput(tool, args)
+		if err := registry.ValidateInput(tool, args); err != nil {
+			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
+		}
 	}
 
 	out, err := tool.Invoke(ctx, profileID.String(), args)
