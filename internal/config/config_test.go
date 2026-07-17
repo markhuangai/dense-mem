@@ -1,7 +1,9 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -125,6 +127,41 @@ func clearEnv() {
 	}
 	for _, v := range envVars {
 		os.Unsetenv(v)
+	}
+}
+
+func TestConfigJSONExcludesAPICredentials(t *testing.T) {
+	cfg := Config{
+		AIAPIKey:             "ai-api-secret",
+		AIVerifierAPIKey:     "verifier-secret",
+		ControlPortalToken:   "control-secret",
+		TelemetryScrapeToken: "telemetry-secret",
+	}
+
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("json.Marshal(Config): %v", err)
+	}
+	encoded := string(data)
+	for _, secret := range []string{
+		"ai-api-secret",
+		"verifier-secret",
+		"control-secret",
+		"telemetry-secret",
+	} {
+		if strings.Contains(encoded, secret) {
+			t.Fatalf("serialized Config contains credential %q: %s", secret, encoded)
+		}
+	}
+	for _, field := range []string{
+		"AIAPIKey",
+		"AIVerifierAPIKey",
+		"ControlPortalToken",
+		"TelemetryScrapeToken",
+	} {
+		if strings.Contains(encoded, field) {
+			t.Fatalf("serialized Config contains credential field %q: %s", field, encoded)
+		}
 	}
 }
 
