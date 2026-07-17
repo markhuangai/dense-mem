@@ -103,11 +103,11 @@ validate_ledger() {
 			if (source == "pr71") {
 				print path > actual
 				pr71_count++
-				} else if (source == "wiki-gap") {
-					print path > actual_wiki_gaps
-					wiki_gap_count++
-					if (disp != "add" && disp != "replace") {
-						printf("line %d wiki-gap disposition must be add or replace\n", NR) > "/dev/stderr"
+			} else if (source == "wiki-gap") {
+				print path > actual_wiki_gaps
+				wiki_gap_count++
+				if (disp != "add" && disp != "replace") {
+					printf("line %d wiki-gap disposition must be add or replace\n", NR) > "/dev/stderr"
 					bad = 1
 				}
 			} else {
@@ -120,10 +120,10 @@ validate_ledger() {
 				printf("expected 189 pr71 rows, got %d\n", pr71_count) > "/dev/stderr"
 				bad = 1
 			}
-				if (wiki_gap_count != 10) {
-					printf("expected 10 wiki-gap rows, got %d\n", wiki_gap_count) > "/dev/stderr"
-					bad = 1
-				}
+			if (wiki_gap_count != 10) {
+				printf("expected 10 wiki-gap rows, got %d\n", wiki_gap_count) > "/dev/stderr"
+				bad = 1
+			}
 			exit bad ? 1 : 0
 		}
 	' "${ledger}"
