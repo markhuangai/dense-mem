@@ -42,6 +42,9 @@ func New(deps Dependencies) Service {
 }
 
 func (s *service) RunCycle(ctx context.Context, profileID string, req RunCycleRequest) (*RunCycleResult, error) {
+	if s.deps.V2Dreams != nil {
+		return s.runV2Cycle(ctx, req)
+	}
 	if strings.TrimSpace(profileID) == "" {
 		return nil, fmt.Errorf("dreaming cycle: profile id is required")
 	}
@@ -221,6 +224,9 @@ func (s *service) generateDreams(ctx context.Context, profileID, runID string, c
 }
 
 func (s *service) List(ctx context.Context, profileID string, opts ListOptions) ([]*domain.Dream, string, error) {
+	if s.deps.V2Dreams != nil {
+		return s.listV2Dreams(ctx, opts)
+	}
 	if s.deps.Graph == nil {
 		return nil, "", fmt.Errorf("dream list: graph is required")
 	}
@@ -294,6 +300,9 @@ LIMIT $limit`, sortExpression, comparator, orderDirection)
 }
 
 func (s *service) Get(ctx context.Context, profileID, dreamID string) (*domain.Dream, error) {
+	if s.deps.V2Dreams != nil {
+		return s.getV2Dream(ctx, dreamID)
+	}
 	if s.deps.Graph == nil {
 		return nil, fmt.Errorf("dream get: graph is required")
 	}
@@ -311,6 +320,9 @@ LIMIT 1`, map[string]any{"dreamId": dreamID})
 }
 
 func (s *service) ListRuns(ctx context.Context, profileID string, limit int) ([]*RunCycleResult, error) {
+	if s.deps.V2Dreams != nil {
+		return s.listV2Runs(ctx, limit)
+	}
 	if s.deps.Graph == nil {
 		return nil, fmt.Errorf("dream runs: graph is required")
 	}
@@ -339,6 +351,9 @@ LIMIT $limit`, map[string]any{"limit": int64(limit)})
 }
 
 func (s *service) Recall(ctx context.Context, profileID, query string, limit int) ([]*domain.Dream, error) {
+	if s.deps.V2Dreams != nil {
+		return s.recallV2Dreams(ctx, query, limit)
+	}
 	if s.deps.Graph == nil || strings.TrimSpace(query) == "" {
 		return nil, nil
 	}
@@ -379,6 +394,9 @@ LIMIT $limit`, map[string]any{
 }
 
 func (s *service) ResolveFeedback(ctx context.Context, profileID string, req ResolveFeedbackRequest) (*ResolveFeedbackResult, error) {
+	if s.deps.V2Dreams != nil {
+		return s.resolveV2Feedback(ctx, req)
+	}
 	dreamID := strings.TrimSpace(req.DreamID)
 	if dreamID == "" {
 		return nil, fmt.Errorf("resolve dream feedback: dream_id is required")
@@ -488,6 +506,9 @@ func (s *service) recordDreamFeedback(ctx context.Context, decision string, drea
 }
 
 func (s *service) Status(ctx context.Context, profileID string) (*StatusResult, error) {
+	if s.deps.V2Dreams != nil {
+		return s.v2Status(ctx)
+	}
 	cfg, err := s.EffectiveConfig(ctx, profileID)
 	if err != nil {
 		return nil, err

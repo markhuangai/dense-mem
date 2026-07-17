@@ -202,11 +202,34 @@ func ValidateV2ContractInput(tool Tool, args map[string]any, scopes []string) er
 		return validateV2ResolveMemoryPlacement(args)
 	case V2ToolCorrectEntityResolution:
 		return validateV2CorrectEntityResolution(args)
+	case V2ToolResolveDreamFeedback:
+		return validateV2ResolveDreamFeedback(args)
 	case V2ToolInspectMemoryPack, V2ToolImportMemoryPack:
 		return validateV2MemoryPackSource(args)
 	default:
 		return nil
 	}
+}
+
+func validateV2ResolveDreamFeedback(args map[string]any) error {
+	decision, _ := args["decision"].(string)
+	switch decision {
+	case "confirm_true", "confirm_false":
+		evidence, ok := args["evidence"].([]any)
+		if !ok || len(evidence) == 0 {
+			return fmt.Errorf("evidence is required for decision %s", decision)
+		}
+		for i, item := range evidence {
+			fields, ok := objectFields(item)
+			if !ok {
+				continue
+			}
+			if err := validateV2SourceRevisionFields(i, fields); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func ToolScopesSatisfied(tool Tool, scopes []string) bool {
@@ -676,7 +699,7 @@ func v2RecallFeedbackInputSchema() map[string]any {
 
 func v2ListDreamsInputSchema() map[string]any {
 	return v2ContractInput(nil, map[string]any{
-		"status": schemaEnum([]string{"proposed", "reinforced", "stale", "rejected", "promoted"}),
+		"status": schemaEnum([]string{"proposed", "reinforced", "stale", "rejected", "submitted"}),
 		"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
 	})
 }
@@ -698,7 +721,11 @@ func v2ResolveDreamFeedbackInputSchema() map[string]any {
 			"confirm_true",
 			"confirm_false",
 		}),
-		"feedback": schemaString("Evidence-backed feedback.", 1024),
+		"feedback":           schemaString("Bounded reviewer note.", 1024),
+		"evidence":           v2EvidenceArraySchema(),
+		"entity_hints":       v2EntityHintArraySchema(),
+		"relationship_hints": v2RelationshipHintArraySchema(),
+		"idempotency_key":    schemaString("Submission retry key scoped to team and profile.", 128),
 	})
 }
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
+	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
@@ -128,6 +129,63 @@ func v2UATTools(deps Dependencies) []Tool {
 				}
 				if res != nil && res.V2Semantic != nil {
 					return structToMap(res.V2Semantic)
+				}
+				return structToMap(res)
+			}
+		case V2ToolListDreams:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+				if deps.Dreams == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, tool.RequiredScopes); err != nil {
+					return nil, fmt.Errorf("list_dreams: invalid input: %w", err)
+				}
+				opts := dreamservice.ListOptions{}
+				if value, ok := input["limit"].(float64); ok {
+					opts.Limit = int(value)
+				}
+				if value, ok := input["status"].(string); ok {
+					opts.Status = value
+				}
+				dreams, next, err := deps.Dreams.List(ctx, profileID, opts)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{"dreams": dreams, "next_cursor": next}, nil
+			}
+		case V2ToolGetDream:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+				if deps.Dreams == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, tool.RequiredScopes); err != nil {
+					return nil, fmt.Errorf("get_dream: invalid input: %w", err)
+				}
+				id, _ := input["dream_id"].(string)
+				dream, err := deps.Dreams.Get(ctx, profileID, id)
+				if err != nil {
+					return nil, err
+				}
+				return structToMap(dream)
+			}
+		case V2ToolResolveDreamFeedback:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+				if deps.Dreams == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, tool.RequiredScopes); err != nil {
+					return nil, fmt.Errorf("resolve_dream_feedback: invalid input: %w", err)
+				}
+				var req dreamservice.ResolveFeedbackRequest
+				if err := remapInput(input, &req); err != nil {
+					return nil, fmt.Errorf("resolve_dream_feedback: invalid input: %w", err)
+				}
+				res, err := deps.Dreams.ResolveFeedback(ctx, profileID, req)
+				if err != nil {
+					return nil, err
 				}
 				return structToMap(res)
 			}

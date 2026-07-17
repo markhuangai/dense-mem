@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -55,15 +56,17 @@ type Generator interface {
 }
 
 type Dependencies struct {
-	Graph     ScopedGraph
-	Memory    memoryservice.Service
-	AppConfig AppConfig
-	Profiles  ProfileService
-	Locker    CycleLocker
-	Postgres  *gorm.DB
-	Generator Generator
-	Metrics   observability.DiscoverabilityMetrics
-	Now       func() time.Time
+	Graph      ScopedGraph
+	Memory     memoryservice.Service
+	V2Remember memoryservice.V2RememberService
+	V2Dreams   repository.V2DreamRepository
+	AppConfig  AppConfig
+	Profiles   ProfileService
+	Locker     CycleLocker
+	Postgres   *gorm.DB
+	Generator  Generator
+	Metrics    observability.DiscoverabilityMetrics
+	Now        func() time.Time
 }
 
 type Service interface {
@@ -114,17 +117,22 @@ type ListOptions struct {
 }
 
 type ResolveFeedbackRequest struct {
-	DreamID  string `json:"dream_id"`
-	Decision string `json:"decision"`
-	Feedback string `json:"feedback,omitempty"`
+	DreamID           string                                  `json:"dream_id"`
+	Decision          string                                  `json:"decision"`
+	Feedback          string                                  `json:"feedback,omitempty"`
+	Evidence          []memoryservice.V2RememberEvidenceInput `json:"evidence,omitempty"`
+	EntityHints       []map[string]any                        `json:"entity_hints,omitempty"`
+	RelationshipHints []map[string]any                        `json:"relationship_hints,omitempty"`
+	IdempotencyKey    string                                  `json:"idempotency_key,omitempty"`
 }
 
 type ResolveFeedbackResult struct {
 	Dream *domain.Dream `json:"dream"`
 	// Deprecated: confirmed dream feedback now returns Memory placement.
-	Fragment *fragmentservice.CreateResult `json:"fragment,omitempty"`
-	Memory   *memoryservice.RememberResult `json:"memory,omitempty"`
-	Deleted  bool                          `json:"deleted,omitempty"`
+	Fragment *fragmentservice.CreateResult   `json:"fragment,omitempty"`
+	Memory   *memoryservice.RememberResult   `json:"memory,omitempty"`
+	V2Memory *memoryservice.V2RememberResult `json:"v2_memory,omitempty"`
+	Deleted  bool                            `json:"deleted,omitempty"`
 }
 
 type StatusResult struct {
@@ -158,13 +166,18 @@ type DreamInput struct {
 }
 
 type GeneratedDream struct {
-	Hypothesis      string
-	WhatIf          string
-	PossibleOutcome string
-	Rationale       string
-	Likelihood      float64
-	Confidence      float64
-	SourceRefs      []domain.DreamSourceRef
+	Hypothesis       string
+	WhatIf           string
+	PossibleOutcome  string
+	Rationale        string
+	Likelihood       float64
+	Confidence       float64
+	SubjectEntityID  string
+	PredicateKey     string
+	PredicateVersion int
+	ObjectEntityID   string
+	ObjectValueID    string
+	SourceRefs       []domain.DreamSourceRef
 }
 
 type SeedDream struct {

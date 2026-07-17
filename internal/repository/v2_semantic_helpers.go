@@ -340,7 +340,7 @@ func normalizeV2CreateHypothesisInput(input V2CreateHypothesisInput) V2CreateHyp
 	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
 	input.Status = strings.TrimSpace(input.Status)
 	if input.Status == "" {
-		input.Status = "candidate"
+		input.Status = "proposed"
 	}
 	return input
 }
@@ -353,7 +353,7 @@ func validateV2CreateHypothesisInput(input V2CreateHypothesisInput) error {
 		return fmt.Errorf("owner_profile_id is required: %w", err)
 	}
 	switch input.Status {
-	case "candidate", "reinforced", "rejected", "promoted_candidate", "stale":
+	case "proposed", "reinforced", "rejected", "submitted", "stale":
 		return nil
 	default:
 		return fmt.Errorf("unsupported hypothesis status %q", input.Status)
