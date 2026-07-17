@@ -81,7 +81,9 @@ def main() -> int:
     suite_path = root / "suites" / f"{seed_id}.jsonl"
     stage_dir = root / "seeds" / f".{seed_id}.staging"
     stage_suite = root / "suites" / f".{seed_id}.jsonl.staging"
+    install_tx_dir = root / "seeds" / f".{seed_id}.install-tx"
 
+    recover_install_transaction(seed_dir, suite_path, install_tx_dir)
     if seed_dir.exists() and not args.force:
         raise SystemExit(f"{seed_dir} already exists; use --force to rebuild")
     if stage_dir.exists():
@@ -97,10 +99,7 @@ def main() -> int:
     seed_hash = stable_seed_hash(stage_dir)
     write_validation_report(stage_dir, seed_id, args.size, seed_hash, generated)
 
-    if seed_dir.exists():
-        shutil.rmtree(seed_dir)
-    os.replace(stage_dir, seed_dir)
-    os.replace(stage_suite, suite_path)
+    install_generated_seed(stage_dir, stage_suite, seed_dir, suite_path, install_tx_dir)
     print(f"wrote {seed_dir}")
     print(f"wrote {suite_path}")
     return 0
@@ -149,10 +148,64 @@ def source_lock_entry(root: Path, axis: str) -> dict[str, Any]:
     if not lock_path.exists():
         raise SystemExit(f"missing source lock {lock_path}")
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    if lock.get("lock_id") != ID_NAMESPACE:
+        raise SystemExit(f"{lock_path} lock_id = {lock.get('lock_id')!r}; want {ID_NAMESPACE!r}")
     for entry in lock.get("sources", []):
         if entry.get("axis") == axis:
             return entry
     raise SystemExit(f"{lock_path} missing source lock entry for {axis}")
+
+
+def install_generated_seed(stage_dir: Path, stage_suite: Path, seed_dir: Path, suite_path: Path, tx_dir: Path) -> None:
+    recover_install_transaction(seed_dir, suite_path, tx_dir)
+    if tx_dir.exists():
+        shutil.rmtree(tx_dir)
+    tx_dir.mkdir(parents=True)
+    write_json(tx_dir / "manifest.json", {
+        "seed_dir": str(seed_dir),
+        "suite_path": str(suite_path),
+    })
+    seed_backup = tx_dir / "seed_dir.backup"
+    suite_backup = tx_dir / "suite_path.backup"
+    try:
+        if seed_dir.exists():
+            os.replace(seed_dir, seed_backup)
+        if suite_path.exists():
+            os.replace(suite_path, suite_backup)
+        os.replace(stage_dir, seed_dir)
+        os.replace(stage_suite, suite_path)
+    except BaseException:
+        recover_install_transaction(seed_dir, suite_path, tx_dir)
+        raise
+    else:
+        shutil.rmtree(tx_dir)
+
+
+def recover_install_transaction(seed_dir: Path, suite_path: Path, tx_dir: Path) -> None:
+    if not tx_dir.exists():
+        return
+    manifest_path = tx_dir / "manifest.json"
+    if not manifest_path.exists():
+        shutil.rmtree(tx_dir)
+        return
+    seed_backup = tx_dir / "seed_dir.backup"
+    suite_backup = tx_dir / "suite_path.backup"
+    remove_path(seed_dir)
+    remove_path(suite_path)
+    if seed_backup.exists():
+        seed_dir.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(seed_backup, seed_dir)
+    if suite_backup.exists():
+        suite_path.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(suite_backup, suite_path)
+    shutil.rmtree(tx_dir)
+
+
+def remove_path(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    elif path.exists():
+        path.unlink()
 
 
 def verify_locked_artifact(axis: str, path: Path, entry: dict[str, Any]) -> None:
