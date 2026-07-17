@@ -384,7 +384,7 @@ func TestCreateClaimDedupeAndDefaults(t *testing.T) {
 
 // TestCreateClaim_CrossProfileIsolation verifies that data from profile A is
 // not accessible when creating a claim as profile B. This is a mandatory
-// security test per .claude/rules/profile-isolation.md.
+// security test per AGENTS.md.
 func TestCreateClaim_CrossProfileIsolation(t *testing.T) {
 	ctx := context.Background()
 	const profileA = "00000000-0000-0000-0000-000000000001"

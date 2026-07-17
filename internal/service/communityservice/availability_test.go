@@ -207,7 +207,7 @@ func TestSweepOrphanGraphs(t *testing.T) {
 // TestSweepOrphanGraphs_CrossProfileIsolation verifies that sweeping with a
 // profile-A-scoped prefix does not drop profile-B graphs. This is the
 // mandatory cross-profile isolation test required by
-// .claude/rules/profile-isolation.md.
+// AGENTS.md.
 func TestSweepOrphanGraphs_CrossProfileIsolation(t *testing.T) {
 	ctx := context.Background()
 

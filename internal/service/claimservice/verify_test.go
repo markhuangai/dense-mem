@@ -431,7 +431,7 @@ func TestVerifyClaimAuditEmitted(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// AC-30: profile isolation (mandatory per .claude/rules/profile-isolation.md)
+// AC-30: profile isolation (mandatory per AGENTS.md)
 // ---------------------------------------------------------------------------
 
 // TestVerifyClaim_CrossProfileIsolation verifies that a claim belonging to

@@ -628,7 +628,7 @@ func TestLeidenDetect(t *testing.T) {
 // profile A does not affect profile B's graph data.
 //
 // This test satisfies the mandatory cross-profile isolation requirement from
-// .claude/rules/profile-isolation.md.
+// AGENTS.md.
 func TestLeidenDetect_CrossProfileIsolation(t *testing.T) {
 	ctx := context.Background()
 

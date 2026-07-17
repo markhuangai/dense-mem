@@ -121,7 +121,7 @@ func TestVerifier(t *testing.T) {
 
 // TestVerifier_CrossProfileIsolation verifies that a verifier implementation
 // scoped to profile A does not leak data to profile B. The stub enforces the
-// profile_id boundary as required by .claude/rules/profile-isolation.md.
+// profile_id boundary as required by AGENTS.md.
 func TestVerifier_CrossProfileIsolation(t *testing.T) {
 	const profileA = "profile-A"
 	const profileB = "profile-B"

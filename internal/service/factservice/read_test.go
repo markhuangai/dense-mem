@@ -235,7 +235,7 @@ func TestGetFact(t *testing.T) {
 // TestGetFact_CrossProfileIsolation verifies that a fact belonging to profile A
 // is not returned when querying as profile B, and that existence under the
 // other profile is not leaked. This is a mandatory security test per
-// .claude/rules/profile-isolation.md.
+// AGENTS.md.
 func TestGetFact_CrossProfileIsolation(t *testing.T) {
 	ctx := context.Background()
 	const profileA = "00000000-0000-0000-0000-000000000001"

@@ -96,7 +96,7 @@ func TestFact(t *testing.T) {
 // TestFact_CrossProfileIsolation verifies that fact slices respect ProfileID
 // boundaries — data from profile A must not appear in results scoped to profile B.
 // This reflects the invariant enforced at every repository layer per
-// .claude/rules/profile-isolation.md.
+// AGENTS.md.
 func TestFact_CrossProfileIsolation(t *testing.T) {
 	profileA := "profile-A"
 	profileB := "profile-B"
