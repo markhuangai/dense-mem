@@ -54,6 +54,9 @@ func main() {
 	flag.Parse()
 
 	ctx := context.Background()
+	if strings.TrimSpace(opts.Mode) == "compare" && strings.TrimSpace(opts.ReleaseGatePolicyPath) != "" {
+		exitf("compare: release gate policy requires baseline or candidate mode")
+	}
 	if opts.Mode == "compare" {
 		comparison, err := evalharness.CompareRunDirs(baselineRun, candidateRun, opts.OutDir)
 		if err != nil {

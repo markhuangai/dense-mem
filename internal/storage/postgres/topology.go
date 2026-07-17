@@ -29,19 +29,27 @@ func DetectTopology(ctx context.Context, db *gorm.DB) (TopologyInfo, error) {
 		DistributedExtensionID string
 	}
 	err := db.WithContext(ctx).Raw(`
+		WITH distributed_indicators AS (
+			SELECT extname AS id
+			FROM pg_extension
+			WHERE extname IN ('citus', 'pg_shard')
+			UNION ALL
+			SELECT 'pg_dist_node'
+			WHERE to_regclass('pg_catalog.pg_dist_node') IS NOT NULL
+				OR to_regclass('public.pg_dist_node') IS NOT NULL
+			UNION ALL
+			SELECT 'pg_dist_partition'
+			WHERE to_regclass('pg_catalog.pg_dist_partition') IS NOT NULL
+				OR to_regclass('public.pg_dist_partition') IS NOT NULL
+		)
 		SELECT
 			pg_is_in_recovery() AS in_recovery,
 			current_setting('transaction_read_only') AS transaction_read_only,
-			EXISTS (
-				SELECT 1
-				FROM pg_extension
-				WHERE extname IN ('citus')
-			) AS distributed_extension,
+			EXISTS (SELECT 1 FROM distributed_indicators) AS distributed_extension,
 			COALESCE((
-				SELECT extname
-				FROM pg_extension
-				WHERE extname IN ('citus')
-				ORDER BY extname
+				SELECT id
+				FROM distributed_indicators
+				ORDER BY id
 				LIMIT 1
 			), '') AS distributed_extension_id
 	`).Scan(&row).Error
