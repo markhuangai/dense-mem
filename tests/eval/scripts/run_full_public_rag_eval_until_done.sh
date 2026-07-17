@@ -39,6 +39,7 @@ STATUS_JSON="${MONITOR_DIR}/status.json"
 PLACEMENT_SUMMARY="${MONITOR_DIR}/placement_summary.json"
 RESUME_SOURCE_DOC_IDS="${MONITOR_DIR}/completed_source_doc_ids.txt"
 FAILED_SOURCE_DOC_IDS="${MONITOR_DIR}/failed_source_doc_ids.txt"
+RELEASE_GATE_POLICY="${RELEASE_GATE_POLICY:-}"
 
 mkdir -p "${IMPORT_DIR}" "${BASELINE_DIR}" "${MONITOR_DIR}" "${VALIDATION_DIR}" "$(dirname "${RUNNER}")"
 
@@ -494,14 +495,22 @@ run_baseline() {
     return 0
   fi
 
-  log "starting_baseline_eval"
-  "${RUNNER}" \
-    --mode baseline \
-    --seed "${SEED}" \
-    --suite "${SUITE}" \
-    --out "${BASELINE_DIR}" \
-    --mapping "${IMPORT_DIR}/knowledge_mapping.json" \
+  local -a baseline_args
+  baseline_args=(
+    "${RUNNER}"
+    --mode baseline
+    --seed "${SEED}"
+    --suite "${SUITE}"
+    --out "${BASELINE_DIR}"
+    --mapping "${IMPORT_DIR}/knowledge_mapping.json"
     --max-page-size 500
+  )
+  if [[ -n "${RELEASE_GATE_POLICY}" ]]; then
+    baseline_args+=(--release-gate-policy "${RELEASE_GATE_POLICY}")
+  fi
+
+  log "starting_baseline_eval"
+  "${baseline_args[@]}"
   log "baseline_eval_finished path=${BASELINE_DIR}/summary.json"
 }
 

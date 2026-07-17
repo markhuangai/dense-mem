@@ -1,0 +1,85 @@
+{
+  "schema_version": "dense-mem.eval.source_lock.v1",
+  "lock_id": "public_6axis_v1",
+  "id_namespace": "public_6axis_v1",
+  "generator": {
+    "six_axis": "tests/eval/scripts/prepare_public_6axis_eval.py",
+    "beir_utility": "tests/eval/scripts/prepare_full_public_rag_eval.py",
+    "semantic_utility": "tests/eval/scripts/prepare_public_semantic_eval.py",
+    "seed_schema_version": "dense-mem.eval.seed.v1",
+    "validation_schema_version": "dense-mem.eval.validation.v1",
+    "max_evidence_codepoints": 999
+  },
+  "generated_seeds": {
+    "required_release_gate": {
+      "seed_id": "public_6axis_1k_v1",
+      "corpus_rows": 1000,
+      "suite_path": "tests/eval/suites/public_6axis_1k_v1.jsonl",
+      "seed_path": "tests/eval/seeds/public_6axis_1k_v1/seed_manifest.json",
+      "seed_hash": "sha256:eb09124331228e59898a93740104ab978b9974e3ebf7f7fc2e09728ef95b3d78"
+    },
+    "diagnostic_only": {
+      "seed_id": "public_6axis_5k_v1",
+      "corpus_rows": 5000,
+      "suite_path": "tests/eval/suites/public_6axis_5k_v1.jsonl",
+      "seed_path": "tests/eval/seeds/public_6axis_5k_v1/seed_manifest.json"
+    }
+  },
+  "axis_budgets": {
+    "public_6axis_1k_v1": {
+      "scifact": 90,
+      "msmarco": 90,
+      "hotpotqa": 90,
+      "musique": 160,
+      "qasper": 300,
+      "longmem_oracle": 270
+    },
+    "public_6axis_5k_v1": {
+      "scifact": 500,
+      "msmarco": 500,
+      "hotpotqa": 500,
+      "musique": 1000,
+      "qasper": 1400,
+      "longmem_oracle": 1100
+    }
+  },
+  "sources": [
+    {
+      "axis": "scifact",
+      "dataset": "BEIR SciFact",
+      "url": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip",
+      "local_cache": "tests/eval/data/beir/scifact.zip"
+    },
+    {
+      "axis": "msmarco",
+      "dataset": "BEIR MS MARCO",
+      "url": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/msmarco.zip",
+      "local_cache": "tests/eval/data/beir/msmarco.zip"
+    },
+    {
+      "axis": "hotpotqa",
+      "dataset": "BEIR HotpotQA",
+      "url": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/hotpotqa.zip",
+      "local_cache": "tests/eval/data/beir/hotpotqa.zip"
+    },
+    {
+      "axis": "musique",
+      "dataset": "MuSiQue answerable dev v1.0",
+      "source": "Google Drive file id 1tGdADlNjWFaHLeZZGShh2IRcpO6Lv24h",
+      "local_cache": "tests/eval/data/public_semantic/musique_v1.0.zip"
+    },
+    {
+      "axis": "qasper",
+      "dataset": "QASPER train/dev v0.3",
+      "url": "https://qasper-dataset.s3.us-west-2.amazonaws.com/qasper-train-dev-v0.3.tgz",
+      "local_cache": "tests/eval/data/public_semantic/qasper-train-dev-v0.3.tgz"
+    },
+    {
+      "axis": "longmem_oracle",
+      "dataset": "LongMemEval-S cleaned",
+      "url": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json",
+      "local_cache": "tests/eval/data/public_semantic/longmemeval_s_cleaned.json"
+    }
+  ],
+  "artifact_policy": "Downloaded datasets, generated seeds, generated suites, imports, runtime databases, run outputs, and comparison artifacts are ignored local runtime data and must not be committed."
+}

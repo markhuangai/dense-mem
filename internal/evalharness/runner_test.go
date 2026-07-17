@@ -396,6 +396,60 @@ func TestRunValidationRejectsCrossFileInconsistency(t *testing.T) {
 			t.Fatalf("Run err = %v; want adversarial bad_refs error", err)
 		}
 	})
+
+	t.Run("public six axis seed requires validation report", func(t *testing.T) {
+		dir := writeEvalFixture(t)
+		manifest := SeedManifest{
+			SchemaVersion: SeedSchemaVersion,
+			SeedID:        "public_6axis_1k_v1",
+			CorpusFile:    "corpus.jsonl",
+			CasesFile:     "cases.jsonl",
+			QrelsFile:     "qrels.jsonl",
+		}
+		if err := writeJSONFile(filepath.Join(dir, "seed_manifest.json"), manifest); err != nil {
+			t.Fatalf("write manifest: %v", err)
+		}
+		_, err := Run(context.Background(), RunOptions{
+			Mode:             "validate",
+			SeedManifestPath: filepath.Join(dir, "seed_manifest.json"),
+			SuitePath:        filepath.Join(dir, "suite.jsonl"),
+		})
+		if err == nil || !strings.Contains(err.Error(), `requires validation_report_file`) {
+			t.Fatalf("Run err = %v; want validation_report_file error", err)
+		}
+	})
+
+	t.Run("validation report hash must match current seed", func(t *testing.T) {
+		dir := writeEvalFixture(t)
+		manifest := SeedManifest{
+			SchemaVersion:        SeedSchemaVersion,
+			SeedID:               "public_6axis_1k_v1",
+			CorpusFile:           "corpus.jsonl",
+			CasesFile:            "cases.jsonl",
+			QrelsFile:            "qrels.jsonl",
+			ValidationReportFile: "validation_report.json",
+		}
+		if err := writeJSONFile(filepath.Join(dir, "seed_manifest.json"), manifest); err != nil {
+			t.Fatalf("write manifest: %v", err)
+		}
+		report := seedValidationReport{
+			SchemaVersion: "dense-mem.eval.validation.v1",
+			SeedID:        "public_6axis_1k_v1",
+			Status:        "passed",
+			SeedHash:      "sha256:stale",
+		}
+		if err := writeJSONFile(filepath.Join(dir, "validation_report.json"), report); err != nil {
+			t.Fatalf("write validation report: %v", err)
+		}
+		_, err := Run(context.Background(), RunOptions{
+			Mode:             "validate",
+			SeedManifestPath: filepath.Join(dir, "seed_manifest.json"),
+			SuitePath:        filepath.Join(dir, "suite.jsonl"),
+		})
+		if err == nil || !strings.Contains(err.Error(), "does not match current seed hash") {
+			t.Fatalf("Run err = %v; want validation seed hash mismatch", err)
+		}
+	})
 }
 
 func TestRunValidateLoadsAndValidatesExpectedDreams(t *testing.T) {

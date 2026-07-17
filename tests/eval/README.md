@@ -27,6 +27,8 @@ tests/eval/
   README.md
   docker-compose.eval.yml
   scripts/
+    prepare_public_6axis_eval.py
+    prepare_public_semantic_eval.py
     prepare_full_public_rag_eval.py
     run_full_public_rag_eval_until_done.sh
   data/                 # downloaded public datasets
@@ -43,36 +45,57 @@ tests/eval/
     runs/
 ```
 
-## Public axes
+## Public Six-Axis Gate
 
 | Axis | Dataset | Purpose |
 | --- | --- | --- |
-| `beir_standard` | BEIR `scifact` | Standard ad-hoc retrieval with public qrels. |
-| `msmarco_passage` | BEIR `msmarco` | Web passage retrieval. |
-| `hotpotqa_multihop` | BEIR `hotpotqa` | Multi-hop retrieval with supporting-evidence qrels. |
+| `scifact` | BEIR SciFact | Scientific claim/document retrieval. |
+| `msmarco` | BEIR MS MARCO | Web-passage retrieval. |
+| `hotpotqa` | BEIR HotpotQA | Public multi-hop document retrieval. |
+| `musique` | MuSiQue answerable dev v1.0 | 2/3/4-hop relationship retrieval. |
+| `qasper` | QASPER train/dev v0.3 | Paper QA evidence retrieval. |
+| `longmem_oracle` | LongMemEval-S cleaned | Long-memory chat recall over non-abstention oracle rows. |
 
-The preparation script consumes BEIR-format `corpus.jsonl`, `queries.jsonl`,
-and `qrels/*.tsv` files from the public BEIR packages. A seed corpus row is
-plain evidence: `source_doc_id`, `content`, and optional source metadata.
-Legacy `claims` and `auto_promote` fields are rejected because they bypass
-production extraction and placement.
+The V2 release train uses `public_6axis_1k_v1` as the hard deterministic
+release gate. `public_6axis_5k_v1` is diagnostic only unless a later roadmap
+issue promotes it.
+
+The approved gate policy is committed at:
+
+```text
+tests/eval/baselines/v2.1.1_public_6axis_1k_baseline.json
+```
+
+A seed corpus row is plain evidence: `source_doc_id`, `content`, and optional
+source metadata. Content is split rather than truncated, and the Go harness
+rejects any corpus row above 999 Unicode code points. Legacy `claims` and
+`auto_promote` fields are rejected because they bypass production extraction
+and placement.
 
 ## Prepare a seed
 
-For example, generate a deterministic 5,000-document pack:
+Generate the required 1k seed:
 
 ```bash
-python3 tests/eval/scripts/prepare_full_public_rag_eval.py \
-  --seed-id public_rag_3axis_5k_v2 \
-  --source-seed-id public_rag_3axis_full_v1 \
-  --max-corpus-docs 5000
+python3 tests/eval/scripts/prepare_public_6axis_eval.py \
+  --size 1000 \
+  --force
+```
+
+Generate the optional diagnostic 5k seed:
+
+```bash
+python3 tests/eval/scripts/prepare_public_6axis_eval.py \
+  --size 5000 \
+  --force
 ```
 
 Use the checked local paths explicitly in every command:
 
 ```bash
-SEED=tests/eval/seeds/public_rag_3axis_5k_v2/seed_manifest.json
-SUITE=tests/eval/suites/public_rag_3axis_5k_v2.jsonl
+SEED=tests/eval/seeds/public_6axis_1k_v1/seed_manifest.json
+SUITE=tests/eval/suites/public_6axis_1k_v1.jsonl
+RELEASE_GATE=tests/eval/baselines/v2.1.1_public_6axis_1k_baseline.json
 ```
 
 The runner has no default seed or suite. This prevents an invocation from
@@ -133,6 +156,10 @@ scripts/eval-local.sh \
   --out tests/eval/runtime/v1/runs/validate
 ```
 
+For `public_6axis_*` seeds, validation also requires the generated
+`validation_report.json` named by the seed manifest. The report must have
+status `passed` and its seed hash must match the current generated files.
+
 ## Import once, resume, and run recall
 
 The long-running monitor is on-demand; nothing starts it automatically. It
@@ -143,6 +170,7 @@ suite:
 ```bash
 SEED="${SEED}" \
 SUITE="${SUITE}" \
+RELEASE_GATE_POLICY="${RELEASE_GATE}" \
 IMPORT_CONCURRENCY=3 \
 PLACEMENT_TIMEOUT=10m \
 tests/eval/scripts/run_full_public_rag_eval_until_done.sh
@@ -204,6 +232,7 @@ go run ./cmd/eval-runner \
   --suite "${SUITE}" \
   --out tests/eval/runtime/v1/runs/baseline-rerun \
   --mapping tests/eval/runtime/v1/runs/import/knowledge_mapping.json \
+  --release-gate-policy "${RELEASE_GATE}" \
   --max-page-size 500
 ```
 

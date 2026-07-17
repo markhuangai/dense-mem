@@ -13,6 +13,8 @@ import (
 	"strings"
 )
 
+const MaxCorpusContentCodepoints = 999
+
 func LoadSeedManifest(path string) (*SeedManifest, error) {
 	var manifest SeedManifest
 	if err := readJSONFile(path, &manifest); err != nil {
@@ -48,6 +50,9 @@ func LoadCorpus(manifestPath string, manifest *SeedManifest) ([]CorpusItem, erro
 		}
 		if strings.TrimSpace(item.Content) == "" {
 			return nil, fmt.Errorf("corpus row %d missing content", i+1)
+		}
+		if contentLen := len([]rune(item.Content)); contentLen > MaxCorpusContentCodepoints {
+			return nil, fmt.Errorf("corpus row %d content has %d code points; max is %d", i+1, contentLen, MaxCorpusContentCodepoints)
 		}
 		if _, ok := seen[item.SourceDocID]; ok {
 			return nil, fmt.Errorf("duplicate corpus source_doc_id %q", item.SourceDocID)

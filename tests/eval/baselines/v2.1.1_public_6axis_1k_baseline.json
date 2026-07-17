@@ -1,0 +1,35 @@
+{
+  "schema_version": "dense-mem.eval.release_gate.v1",
+  "gate_id": "v2.1.1-public-6axis-1k",
+  "release": "v2.1.1",
+  "description": "Hard deterministic 1k public evaluation gate for the V2 release train. Generated corpus, suites, imports, runtime databases, and comparison artifacts are local-only and ignored.",
+  "seed_id": "public_6axis_1k_v1",
+  "seed_hash": "sha256:eb09124331228e59898a93740104ab978b9974e3ebf7f7fc2e09728ef95b3d78",
+  "required_case_count": 206,
+  "required_scored_case_count": 206,
+  "baseline_summary": {
+    "run_id": "approved-v1-public-6axis-1k",
+    "mode": "baseline",
+    "case_count": 206,
+    "scored_case_count": 206,
+    "average_recall_at_k": 0.8429611650485437,
+    "average_mrr": 0.8069155493912774,
+    "average_ndcg_at_k": 0.7865053770719829,
+    "required_rank1_rate": 0.7621359223300971,
+    "average_bad_at_k": 0,
+    "bad_rank1_rate": 0,
+    "unmapped_source_refs": 0
+  },
+  "minimums": {
+    "average_recall_at_k": 0.8429611650485437,
+    "average_mrr": 0.8069155493912774,
+    "average_ndcg_at_k": 0.7865053770719829,
+    "required_rank1_rate": 0.7621359223300971
+  },
+  "maximums": {
+    "average_bad_at_k": 0,
+    "bad_rank1_rate": 0,
+    "unmapped_source_refs": 0
+  },
+  "generated_artifacts_policy": "Do not commit generated seed, suite, downloaded data, import, runtime database, run output, or comparison artifacts. Regenerate locally from tracked scripts and validate the generated validation_report.json before running this gate."
+}

@@ -27,6 +27,7 @@ type RunOptions struct {
 	MappingPath            string
 	MaxPageSize            int
 	RunID                  string
+	ReleaseGatePolicyPath  string
 	Gates                  GateOptions
 }
 
@@ -37,6 +38,9 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	}
 	if mode != "validate" && mode != "import" && mode != "baseline" && mode != "candidate" {
 		return Summary{}, fmt.Errorf("unsupported mode %q", mode)
+	}
+	if opts.ReleaseGatePolicyPath != "" && mode != "baseline" && mode != "candidate" {
+		return Summary{}, fmt.Errorf("release gate policy requires baseline or candidate mode")
 	}
 	if opts.SeedManifestPath == "" {
 		return Summary{}, fmt.Errorf("seed manifest path is required")
@@ -61,7 +65,7 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	if err != nil {
 		return Summary{}, err
 	}
-	if err := validateRunInputs(opts.SeedManifestPath, manifest, corpus, cases, qrels, expectedDreams, suite); err != nil {
+	if err := validateRunInputs(opts.SeedManifestPath, manifest, corpus, cases, qrels, expectedDreams, suite, seedHash); err != nil {
 		return Summary{}, err
 	}
 	importRoute := ""
@@ -74,6 +78,7 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		SeedManifest:           opts.SeedManifestPath,
 		SeedHash:               seedHash,
 		SuitePath:              opts.SuitePath,
+		ReleaseGatePolicyPath:  opts.ReleaseGatePolicyPath,
 		BaseURL:                opts.BaseURL,
 		ControlURL:             opts.ControlURL,
 		ImportSeed:             opts.ImportSeed,
@@ -247,6 +252,21 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			return summary, fmt.Errorf("gate check failed: %s", strings.Join(gate.Failures, "; "))
 		}
 	}
+	if opts.ReleaseGatePolicyPath != "" {
+		policy, err := LoadReleaseGatePolicy(opts.ReleaseGatePolicyPath)
+		if err != nil {
+			return summary, fmt.Errorf("release gate policy: %w", err)
+		}
+		releaseGate := EvaluateReleaseGate(summary, policy)
+		if opts.OutDir != "" {
+			if err := writeJSONFile(filepath.Join(opts.OutDir, "release_gate_result.json"), releaseGate); err != nil {
+				return Summary{}, err
+			}
+		}
+		if !releaseGate.Passed {
+			return summary, fmt.Errorf("release gate check failed: %s", strings.Join(releaseGate.Failures, "; "))
+		}
+	}
 	return summary, nil
 }
 
@@ -334,8 +354,11 @@ func loadRunInputs(manifestPath, suitePath string) (*SeedManifest, []CorpusItem,
 	return manifest, corpus, cases, qrels, expectedDreams, suite, seedHash, nil
 }
 
-func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []CorpusItem, cases []Case, qrels []QRel, expectedDreams []ExpectedDream, suite []SuiteCase) error {
+func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []CorpusItem, cases []Case, qrels []QRel, expectedDreams []ExpectedDream, suite []SuiteCase, seedHash string) error {
 	if err := validateManifestCounts(manifestPath, manifest, corpus, cases, qrels); err != nil {
+		return err
+	}
+	if err := validateSeedValidationReport(manifestPath, manifest, seedHash); err != nil {
 		return err
 	}
 	caseIndex := IndexCases(cases)
@@ -394,6 +417,43 @@ func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []Cor
 		if hasSlice(c.Slices, "adversarial") && len(qrelIndex[c.CaseID].BadRefs) == 0 {
 			return fmt.Errorf("adversarial case %q has no bad_refs", c.CaseID)
 		}
+	}
+	return nil
+}
+
+type seedValidationReport struct {
+	SchemaVersion string `json:"schema_version"`
+	SeedID        string `json:"seed_id"`
+	Status        string `json:"status"`
+	SeedHash      string `json:"seed_hash"`
+}
+
+func validateSeedValidationReport(manifestPath string, manifest *SeedManifest, seedHash string) error {
+	if manifest == nil {
+		return nil
+	}
+	reportFile := strings.TrimSpace(manifest.ValidationReportFile)
+	if reportFile == "" {
+		if strings.HasPrefix(manifest.SeedID, "public_6axis_") {
+			return fmt.Errorf("seed %q requires validation_report_file", manifest.SeedID)
+		}
+		return nil
+	}
+	var report seedValidationReport
+	if err := readJSONFile(resolveSeedPath(manifestPath, reportFile), &report); err != nil {
+		return fmt.Errorf("read validation report: %w", err)
+	}
+	if report.SchemaVersion != "dense-mem.eval.validation.v1" {
+		return fmt.Errorf("validation report schema_version %q is unsupported", report.SchemaVersion)
+	}
+	if report.SeedID != manifest.SeedID {
+		return fmt.Errorf("validation report seed_id %q does not match manifest seed_id %q", report.SeedID, manifest.SeedID)
+	}
+	if report.Status != "passed" {
+		return fmt.Errorf("validation report status = %q, want passed", report.Status)
+	}
+	if report.SeedHash != seedHash {
+		return fmt.Errorf("validation report seed_hash %q does not match current seed hash %q", report.SeedHash, seedHash)
 	}
 	return nil
 }

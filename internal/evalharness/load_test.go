@@ -61,6 +61,12 @@ func TestLoadFunctionsValidateSeedFiles(t *testing.T) {
 	if _, err := LoadCorpus(manifestPath, loaded); err == nil || !strings.Contains(err.Error(), "missing content") {
 		t.Fatalf("LoadCorpus missing content err = %v", err)
 	}
+	if err := writeJSONL(corpusPath, []CorpusItem{{SourceDocID: "doc-1", Content: strings.Repeat("x", MaxCorpusContentCodepoints+1)}}); err != nil {
+		t.Fatalf("write corpus: %v", err)
+	}
+	if _, err := LoadCorpus(manifestPath, loaded); err == nil || !strings.Contains(err.Error(), "max is 999") {
+		t.Fatalf("LoadCorpus oversized content err = %v", err)
+	}
 	if err := writeJSONL(corpusPath, []CorpusItem{{SourceDocID: "doc-1", Content: "one"}, {SourceDocID: "doc-1", Content: "dupe"}}); err != nil {
 		t.Fatalf("write corpus: %v", err)
 	}

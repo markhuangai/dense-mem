@@ -6,23 +6,24 @@ const SeedSchemaVersion = "dense-mem.eval.seed.v1"
 
 // SeedManifest describes a local-only evaluation seed pack.
 type SeedManifest struct {
-	SchemaVersion       string         `json:"schema_version"`
-	SeedID              string         `json:"seed_id"`
-	Description         string         `json:"description,omitempty"`
-	GeneratedAt         string         `json:"generated_at,omitempty"`
-	CorpusFile          string         `json:"corpus_file"`
-	CasesFile           string         `json:"cases_file"`
-	QrelsFile           string         `json:"qrels_file"`
-	AnswersFile         string         `json:"answers_file,omitempty"`
-	HardNegativesFile   string         `json:"hard_negatives_file,omitempty"`
-	TransformsFile      string         `json:"transforms_file,omitempty"`
-	DreamsFile          string         `json:"dreams_file,omitempty"`
-	LicensesFile        string         `json:"licenses_file,omitempty"`
-	EmbeddingProvider   string         `json:"embedding_provider,omitempty"`
-	EmbeddingModel      string         `json:"embedding_model,omitempty"`
-	EmbeddingDimensions int            `json:"embedding_dimensions,omitempty"`
-	Counts              map[string]int `json:"counts,omitempty"`
-	Sources             []SeedSource   `json:"sources,omitempty"`
+	SchemaVersion        string         `json:"schema_version"`
+	SeedID               string         `json:"seed_id"`
+	Description          string         `json:"description,omitempty"`
+	GeneratedAt          string         `json:"generated_at,omitempty"`
+	CorpusFile           string         `json:"corpus_file"`
+	CasesFile            string         `json:"cases_file"`
+	QrelsFile            string         `json:"qrels_file"`
+	AnswersFile          string         `json:"answers_file,omitempty"`
+	HardNegativesFile    string         `json:"hard_negatives_file,omitempty"`
+	TransformsFile       string         `json:"transforms_file,omitempty"`
+	DreamsFile           string         `json:"dreams_file,omitempty"`
+	LicensesFile         string         `json:"licenses_file,omitempty"`
+	ValidationReportFile string         `json:"validation_report_file,omitempty"`
+	EmbeddingProvider    string         `json:"embedding_provider,omitempty"`
+	EmbeddingModel       string         `json:"embedding_model,omitempty"`
+	EmbeddingDimensions  int            `json:"embedding_dimensions,omitempty"`
+	Counts               map[string]int `json:"counts,omitempty"`
+	Sources              []SeedSource   `json:"sources,omitempty"`
 }
 
 type SeedSource struct {
@@ -242,6 +243,7 @@ type RunConfig struct {
 	SeedManifest           string `json:"seed_manifest"`
 	SeedHash               string `json:"seed_hash"`
 	SuitePath              string `json:"suite_path"`
+	ReleaseGatePolicyPath  string `json:"release_gate_policy_path,omitempty"`
 	BaseURL                string `json:"base_url,omitempty"`
 	ControlURL             string `json:"control_url,omitempty"`
 	ImportSeed             bool   `json:"import_seed"`
@@ -300,4 +302,59 @@ type GateResult struct {
 	Thresholds map[string]float64 `json:"thresholds"`
 	Metrics    map[string]float64 `json:"metrics"`
 	Failures   []string           `json:"failures,omitempty"`
+}
+
+type ReleaseGatePolicy struct {
+	SchemaVersion            string                    `json:"schema_version"`
+	GateID                   string                    `json:"gate_id"`
+	Release                  string                    `json:"release"`
+	Description              string                    `json:"description,omitempty"`
+	SeedID                   string                    `json:"seed_id"`
+	SeedHash                 string                    `json:"seed_hash"`
+	RequiredCaseCount        int                       `json:"required_case_count"`
+	RequiredScoredCaseCount  int                       `json:"required_scored_case_count"`
+	BaselineSummary          ReleaseGateBaseline       `json:"baseline_summary"`
+	Minimums                 ReleaseGateMetricMinimums `json:"minimums"`
+	Maximums                 ReleaseGateMetricMaximums `json:"maximums"`
+	GeneratedArtifactsPolicy string                    `json:"generated_artifacts_policy,omitempty"`
+}
+
+type ReleaseGateBaseline struct {
+	RunID              string  `json:"run_id,omitempty"`
+	Mode               string  `json:"mode,omitempty"`
+	ScoredCaseCount    int     `json:"scored_case_count"`
+	CaseCount          int     `json:"case_count"`
+	AverageRecallAtK   float64 `json:"average_recall_at_k"`
+	AverageMRR         float64 `json:"average_mrr"`
+	AverageNDCGAtK     float64 `json:"average_ndcg_at_k"`
+	RequiredRank1Rate  float64 `json:"required_rank1_rate"`
+	AverageBadAtK      float64 `json:"average_bad_at_k"`
+	BadRank1Rate       float64 `json:"bad_rank1_rate"`
+	UnmappedSourceRefs int     `json:"unmapped_source_refs"`
+}
+
+type ReleaseGateMetricMinimums struct {
+	AverageRecallAtK  float64 `json:"average_recall_at_k"`
+	AverageMRR        float64 `json:"average_mrr"`
+	AverageNDCGAtK    float64 `json:"average_ndcg_at_k"`
+	RequiredRank1Rate float64 `json:"required_rank1_rate"`
+}
+
+type ReleaseGateMetricMaximums struct {
+	AverageBadAtK      float64 `json:"average_bad_at_k"`
+	BadRank1Rate       float64 `json:"bad_rank1_rate"`
+	UnmappedSourceRefs int     `json:"unmapped_source_refs"`
+}
+
+type ReleaseGateResult struct {
+	Passed    bool               `json:"passed"`
+	GateID    string             `json:"gate_id"`
+	Release   string             `json:"release"`
+	SeedID    string             `json:"seed_id"`
+	SeedHash  string             `json:"seed_hash"`
+	Failures  []string           `json:"failures,omitempty"`
+	Metrics   map[string]float64 `json:"metrics"`
+	Minimums  map[string]float64 `json:"minimums"`
+	Maximums  map[string]float64 `json:"maximums"`
+	CreatedAt time.Time          `json:"created_at"`
 }
