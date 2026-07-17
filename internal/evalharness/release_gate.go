@@ -3,6 +3,7 @@ package evalharness
 import (
 	"fmt"
 	"math"
+	"os"
 	"strings"
 	"time"
 )
@@ -10,8 +11,16 @@ import (
 const ReleaseGatePolicySchemaVersion = "dense-mem.eval.release_gate.v1"
 
 func LoadReleaseGatePolicy(path string) (ReleaseGatePolicy, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ReleaseGatePolicy{}, err
+	}
+	return LoadReleaseGatePolicyBytes(path, data)
+}
+
+func LoadReleaseGatePolicyBytes(path string, data []byte) (ReleaseGatePolicy, error) {
 	var policy ReleaseGatePolicy
-	if err := readJSONFile(path, &policy); err != nil {
+	if err := readJSONBytes(path, data, &policy); err != nil {
 		return ReleaseGatePolicy{}, err
 	}
 	if err := validateReleaseGatePolicy(policy); err != nil {

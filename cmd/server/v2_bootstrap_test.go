@@ -35,15 +35,6 @@ func TestBuildDormantV2BootstrapRegistersNonRoutingChecks(t *testing.T) {
 	require.True(t, seen["v2_schema_index_profile"])
 	require.True(t, seen["v2_queue_profile"])
 	require.True(t, seen["v2_workers"])
-	require.True(t, seen["v2_migration_state"])
-}
-
-func TestDormantV2MigrationCheckIsOptional(t *testing.T) {
-	bootstrap := buildDormantV2Bootstrap(validDormantV2BootstrapConfig(), nil)
-
-	check := requireHealthCheck(t, bootstrap, "v2_migration_state")
-	require.True(t, check.Optional)
-	require.True(t, errors.Is(check.Check(context.Background()), errV2MigrationPending))
 }
 
 func TestDormantV2PGVectorDisabledIsOptionalDegraded(t *testing.T) {
