@@ -37,7 +37,7 @@
 </p>
 
 <p align="center">
-  <a href="https://zenodo.org/records/20519039"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.20519039.svg" alt="DOI: 10.5281/zenodo.20519039" /></a>
+  <a href="https://doi.org/10.5281/zenodo.21403316"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.21403316.svg" alt="DOI: 10.5281/zenodo.21403316" /></a>
 </p>
 
 Dense-Mem gives MCP clients a durable memory layer with provenance, typed claims
@@ -52,7 +52,7 @@ process.
 
 Dense-Mem is part of the research preprint
 [Governed Enterprise AI Memory Beyond RAG: From Vector Retrieval to Permissioned
-Knowledge Graphs](https://zenodo.org/records/20519039).
+Knowledge Graphs](https://zenodo.org/records/21403316).
 
 ## Project Intro
 
