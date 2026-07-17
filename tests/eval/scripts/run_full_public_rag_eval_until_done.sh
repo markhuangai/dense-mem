@@ -88,11 +88,12 @@ load_env() {
   local eval_neo4j_bolt_host_port="${NEO4J_BOLT_HOST_PORT}"
   local eval_redis_port="${REDIS_PORT}"
   local eval_prometheus_port="${PROMETHEUS_PORT}"
-  local eval_prometheus_container_name="${PROMETHEUS_CONTAINER_NAME}"
-  local eval_compose_data_dir="${V1_COMPOSE_DATA_DIR}"
-  local requested_api_key="${DENSE_MEM_API_KEY:-}"
-  local requested_control_token="${DENSE_MEM_CONTROL_TOKEN:-}"
-  local requested_team_id="${EVAL_TEAM_ID:-}"
+	local eval_prometheus_container_name="${PROMETHEUS_CONTAINER_NAME}"
+	local eval_compose_data_dir="${V1_COMPOSE_DATA_DIR}"
+	local eval_release_gate_policy="${RELEASE_GATE_POLICY}"
+	local requested_api_key="${DENSE_MEM_API_KEY:-}"
+	local requested_control_token="${DENSE_MEM_CONTROL_TOKEN:-}"
+	local requested_team_id="${EVAL_TEAM_ID:-}"
   if [[ ! -f .env ]]; then
     echo ".env is required for the eval stack" >&2
     return 1
@@ -109,11 +110,12 @@ load_env() {
   export NEO4J_BOLT_HOST_PORT="${eval_neo4j_bolt_host_port}"
   export REDIS_PORT="${eval_redis_port}"
   export PROMETHEUS_PORT="${eval_prometheus_port}"
-  export PROMETHEUS_CONTAINER_NAME="${eval_prometheus_container_name}"
-  export V1_COMPOSE_DATA_DIR="${eval_compose_data_dir}"
-  if [[ -n "${requested_api_key}" ]]; then
-    export DENSE_MEM_API_KEY="${requested_api_key}"
-  fi
+	export PROMETHEUS_CONTAINER_NAME="${eval_prometheus_container_name}"
+	export V1_COMPOSE_DATA_DIR="${eval_compose_data_dir}"
+	export RELEASE_GATE_POLICY="${eval_release_gate_policy}"
+	if [[ -n "${requested_api_key}" ]]; then
+		export DENSE_MEM_API_KEY="${requested_api_key}"
+	fi
   if [[ -n "${requested_control_token}" ]]; then
     export DENSE_MEM_CONTROL_TOKEN="${requested_control_token}"
   fi
