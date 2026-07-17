@@ -21,9 +21,8 @@ func TestBuildV2UATWiresExecutableMemoryPackTools(t *testing.T) {
 		t.Fatal("BuildV2UAT did not register executable find_memory_pack_candidates")
 	}
 	findOut, err := find.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"query":            "PostgreSQL",
-		"limit":            float64(7),
+		"query": "PostgreSQL",
+		"limit": float64(7),
 	})
 	if err != nil {
 		t.Fatalf("find_memory_pack_candidates.Invoke: %v", err)
@@ -37,15 +36,14 @@ func TestBuildV2UATWiresExecutableMemoryPackTools(t *testing.T) {
 		t.Fatal("BuildV2UAT did not register executable export_memory_pack")
 	}
 	exportOut, err := export.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
 		"name":             "PostgreSQL pack",
 		"relationship_ids": []any{"relationship-v2"},
-		"include_support":  false,
+		"include_evidence": false,
 	})
 	if err != nil {
 		t.Fatalf("export_memory_pack.Invoke: %v", err)
 	}
-	if exportOut["sha256"] != "hash-v2" || stub.exportReq.Name != "PostgreSQL pack" || len(stub.exportReq.RelationshipIDs) != 1 {
+	if exportOut["content_sha256"] != "hash-v2" || stub.exportReq.Name != "PostgreSQL pack" || len(stub.exportReq.RelationshipIDs) != 1 {
 		t.Fatalf("export output = %#v req = %#v", exportOut, stub.exportReq)
 	}
 	if stub.exportReq.IncludeSupport == nil || *stub.exportReq.IncludeSupport {
@@ -57,13 +55,13 @@ func TestBuildV2UATWiresExecutableMemoryPackTools(t *testing.T) {
 		t.Fatal("BuildV2UAT did not register executable inspect_memory_pack")
 	}
 	inspectOut, err := inspect.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"artifact_json":    "{}",
+		"artifact_json": "{}",
+		"mode":          "review",
 	})
 	if err != nil {
 		t.Fatalf("inspect_memory_pack.Invoke: %v", err)
 	}
-	if inspectOut["artifact_hash"] != "hash-v2" || stub.inspectReq.ArtifactJSON != "{}" {
+	if inspectOut["content_sha256"] != "hash-v2" || stub.inspectReq.ArtifactJSON != "{}" {
 		t.Fatalf("inspect output = %#v req = %#v", inspectOut, stub.inspectReq)
 	}
 
@@ -72,15 +70,13 @@ func TestBuildV2UATWiresExecutableMemoryPackTools(t *testing.T) {
 		t.Fatal("BuildV2UAT did not register executable import_memory_pack")
 	}
 	importOut, err := importTool.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version":  domain.V2ContractVersion,
-		"artifact_json":     "{}",
-		"mode":              "review",
-		"selected_item_ids": []any{"item-1"},
+		"artifact_json": "{}",
+		"mode":          "review",
 	})
 	if err != nil {
 		t.Fatalf("import_memory_pack.Invoke: %v", err)
 	}
-	if importOut["import_id"] != "import-v2" || stub.importReq.Mode != "review" || len(stub.importReq.SelectedItemIDs) != 1 {
+	if importOut["import_id"] != "import-v2" || stub.importReq.Mode != "review" {
 		t.Fatalf("import output = %#v req = %#v", importOut, stub.importReq)
 	}
 
@@ -89,15 +85,13 @@ func TestBuildV2UATWiresExecutableMemoryPackTools(t *testing.T) {
 		t.Fatal("BuildV2UAT did not register executable rollback_memory_pack_import")
 	}
 	rollbackOut, err := rollback.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"import_id":        "import-v2",
-		"dry_run":          true,
-		"confirm":          true,
+		"import_id": "import-v2",
+		"dry_run":   true,
 	})
 	if err != nil {
 		t.Fatalf("rollback_memory_pack_import.Invoke: %v", err)
 	}
-	if rollbackOut["status"] != "safe" || !stub.rollbackReq.DryRun || !stub.rollbackReq.Confirm {
+	if rollbackOut["safe"] != true || !stub.rollbackReq.DryRun || stub.rollbackReq.Confirm {
 		t.Fatalf("rollback output = %#v req = %#v", rollbackOut, stub.rollbackReq)
 	}
 }
@@ -112,10 +106,9 @@ func TestBuildV2UATMemoryPackImportRejectsTenantOverride(t *testing.T) {
 		t.Fatal("BuildV2UAT did not register import_memory_pack")
 	}
 	_, err = tool.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"team_id":          "attacker-team",
-		"artifact_json":    "{}",
-		"mode":             "review",
+		"team_id":       "attacker-team",
+		"artifact_json": "{}",
+		"mode":          "review",
 	})
 	if err == nil || !strings.Contains(err.Error(), "team_id") {
 		t.Fatalf("import_memory_pack.Invoke err = %v, want tenant override rejection", err)
@@ -145,9 +138,11 @@ func (s *stubV2SkillPackService) FindCandidatesV2(_ context.Context, req skillpa
 func (s *stubV2SkillPackService) ExportV2(_ context.Context, req skillpackservice.V2ExportRequest) (*skillpackservice.V2ExportResult, error) {
 	s.exportReq = req
 	return &skillpackservice.V2ExportResult{
-		SHA256:      "hash-v2",
-		ItemCount:   1,
-		ContentType: "application/json",
+		CanonicalJSON: "{}",
+		SHA256:        "hash-v2",
+		ItemCount:     1,
+		Filename:      "postgresql-pack.memory-pack.json",
+		ContentType:   "application/json",
 	}, nil
 }
 
@@ -168,6 +163,7 @@ func (s *stubV2SkillPackService) ImportV2(_ context.Context, req skillpackservic
 		ArtifactHash: "hash-v2",
 		Mode:         req.Mode,
 		Status:       domain.SkillPackImportStatusApplied,
+		IngestID:     "ingest-v2",
 		AppliedCount: 1,
 	}, nil
 }

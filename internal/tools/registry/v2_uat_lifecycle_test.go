@@ -23,11 +23,10 @@ func TestBuildV2UATWiresExecutableResolveMemoryPlacementForget(t *testing.T) {
 		t.Fatal("BuildV2UAT resolve_memory_placement invoker is nil")
 	}
 	out, err := resolve.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"action":           string(domain.V2ResolveForget),
-		"relationship_id":  "relationship-v2",
-		"message":          "forget this relationship",
-		"idempotency_key":  "forget-1",
+		"action":          string(domain.V2ResolveForget),
+		"relationship_id": "relationship-v2",
+		"reason":          "forget this relationship",
+		"idempotency_key": "forget-1",
 		"evidence": []any{
 			map[string]any{"content": "The user asked to forget it."},
 		},
@@ -35,10 +34,13 @@ func TestBuildV2UATWiresExecutableResolveMemoryPlacementForget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve_memory_placement.Invoke: %v", err)
 	}
-	if out["decision_id"] != "decision-v2" || out["status"] != string(domain.V2PlacementRunCompleted) {
+	if out["decision_id"] != "decision-v2" || out["processing_state"] != string(domain.V2PlacementRunCompleted) {
 		t.Fatalf("resolve output = %#v", out)
 	}
-	if stub.req.Action != domain.V2ResolveForget || stub.req.RelationshipID != "relationship-v2" {
+	if stub.req.ContractVersion != domain.V2ContractVersion ||
+		stub.req.Action != domain.V2ResolveForget ||
+		stub.req.RelationshipID != "relationship-v2" ||
+		stub.req.Message != "forget this relationship" {
 		t.Fatalf("stub request not populated: %#v", stub.req)
 	}
 }
@@ -53,12 +55,11 @@ func TestBuildV2UATResolveMemoryPlacementRejectsTenantOverride(t *testing.T) {
 		t.Fatal("BuildV2UAT did not register resolve_memory_placement")
 	}
 	_, err = resolve.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"team_id":          "attacker-team",
-		"action":           string(domain.V2ResolveForget),
-		"relationship_id":  "relationship-v2",
-		"message":          "forget this relationship",
-		"idempotency_key":  "forget-1",
+		"team_id":         "attacker-team",
+		"action":          string(domain.V2ResolveForget),
+		"relationship_id": "relationship-v2",
+		"reason":          "forget this relationship",
+		"idempotency_key": "forget-1",
 		"evidence": []any{
 			map[string]any{"content": "The user asked to forget it."},
 		},
@@ -82,12 +83,12 @@ func TestBuildV2UATWiresExecutableCorrectEntityResolution(t *testing.T) {
 		t.Fatal("BuildV2UAT correct_entity_resolution invoker is nil")
 	}
 	out, err := correct.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version":         domain.V2ContractVersion,
-		"action":                   string(domain.V2EntityCorrectionSplit),
-		"source_entity_id":         "entity-source",
-		"selected_observation_ids": []any{"obs-1"},
-		"dry_run":                  true,
-		"idempotency_key":          "split-1",
+		"operation":             string(domain.V2EntityCorrectionSplit),
+		"source_entity_id":      "entity-source",
+		"target_entity_id":      nil,
+		"owned_observation_ids": []any{"obs-1"},
+		"dry_run":               true,
+		"idempotency_key":       "split-1",
 		"evidence": []any{
 			map[string]any{"content": "The selected Mark mention is a different person."},
 		},
@@ -95,10 +96,13 @@ func TestBuildV2UATWiresExecutableCorrectEntityResolution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("correct_entity_resolution.Invoke: %v", err)
 	}
-	if out["plan_token"] != "plan-v2" || out["impact_summary"] != "split planned" {
+	if out["impact_token"] != "plan-v2" {
 		t.Fatalf("correct output = %#v", out)
 	}
-	if stub.correctReq.Action != domain.V2EntityCorrectionSplit || stub.correctReq.SourceEntityID != "entity-source" {
+	if stub.correctReq.ContractVersion != domain.V2ContractVersion ||
+		stub.correctReq.Action != domain.V2EntityCorrectionSplit ||
+		stub.correctReq.SourceEntityID != "entity-source" ||
+		strings.Join(stub.correctReq.SelectedObservationIDs, ",") != "obs-1" {
 		t.Fatalf("stub correct request not populated: %#v", stub.correctReq)
 	}
 }
@@ -113,12 +117,11 @@ func TestBuildV2UATCorrectEntityResolutionRejectsTenantOverride(t *testing.T) {
 		t.Fatal("BuildV2UAT did not register correct_entity_resolution")
 	}
 	_, err = correct.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version":         domain.V2ContractVersion,
-		"team_id":                  "attacker-team",
-		"action":                   string(domain.V2EntityCorrectionSplit),
-		"source_entity_id":         "entity-source",
-		"selected_observation_ids": []any{"obs-1"},
-		"dry_run":                  true,
+		"team_id":               "attacker-team",
+		"operation":             string(domain.V2EntityCorrectionSplit),
+		"source_entity_id":      "entity-source",
+		"owned_observation_ids": []any{"obs-1"},
+		"dry_run":               true,
 	})
 	if err == nil || !strings.Contains(err.Error(), "team_id") {
 		t.Fatalf("correct_entity_resolution.Invoke err = %v, want tenant override rejection", err)
