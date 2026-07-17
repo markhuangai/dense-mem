@@ -17,6 +17,7 @@ TRACES=""
 MAPPING=""
 BASELINE_RUN=""
 CANDIDATE_RUN=""
+RELEASE_GATE_POLICY=""
 MIN_RECALL_AT_K=""
 MIN_REQUIRED_RANK1_RATE=""
 MAX_AVERAGE_BAD_AT_K=""
@@ -78,6 +79,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --candidate-run)
       CANDIDATE_RUN="$2"
+      shift 2
+      ;;
+    --release-gate-policy)
+      RELEASE_GATE_POLICY="$2"
       shift 2
       ;;
     --min-recall-at-k)
@@ -158,6 +163,9 @@ if [[ -n "${BASELINE_RUN}" ]]; then
 fi
 if [[ -n "${CANDIDATE_RUN}" ]]; then
   args+=(--candidate-run "${CANDIDATE_RUN}")
+fi
+if [[ -n "${RELEASE_GATE_POLICY}" ]]; then
+  args+=(--release-gate-policy "${RELEASE_GATE_POLICY}")
 fi
 if [[ -n "${MIN_RECALL_AT_K}" ]]; then
   args+=(--min-recall-at-k "${MIN_RECALL_AT_K}")

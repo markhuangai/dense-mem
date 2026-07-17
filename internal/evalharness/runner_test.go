@@ -129,6 +129,20 @@ func TestRunBaselineWithTraceFileAndMappingScoresArtifacts(t *testing.T) {
 	if runConfig.MappingPath != mappingPath {
 		t.Fatalf("run config mapping path = %q, want %q", runConfig.MappingPath, mappingPath)
 	}
+	if runConfig.MappingHash == "" {
+		t.Fatal("run config mapping hash is empty")
+	}
+	var persistedMapping KnowledgeMapping
+	if err := readJSONFile(filepath.Join(out, "knowledge_mapping.json"), &persistedMapping); err != nil {
+		t.Fatalf("read persisted mapping: %v", err)
+	}
+	persistedHash, err := canonicalJSONHash(persistedMapping)
+	if err != nil {
+		t.Fatalf("hash persisted mapping: %v", err)
+	}
+	if runConfig.MappingHash != persistedHash {
+		t.Fatalf("run config mapping hash = %q, persisted hash = %q", runConfig.MappingHash, persistedHash)
+	}
 }
 
 func TestRunWritesGateResultAndFailsThreshold(t *testing.T) {
@@ -394,6 +408,60 @@ func TestRunValidationRejectsCrossFileInconsistency(t *testing.T) {
 		})
 		if err == nil || !strings.Contains(err.Error(), `adversarial case "case-1" has no bad_refs`) {
 			t.Fatalf("Run err = %v; want adversarial bad_refs error", err)
+		}
+	})
+
+	t.Run("public six axis seed requires validation report", func(t *testing.T) {
+		dir := writeEvalFixture(t)
+		manifest := SeedManifest{
+			SchemaVersion: SeedSchemaVersion,
+			SeedID:        "public_6axis_1k_v1",
+			CorpusFile:    "corpus.jsonl",
+			CasesFile:     "cases.jsonl",
+			QrelsFile:     "qrels.jsonl",
+		}
+		if err := writeJSONFile(filepath.Join(dir, "seed_manifest.json"), manifest); err != nil {
+			t.Fatalf("write manifest: %v", err)
+		}
+		_, err := Run(context.Background(), RunOptions{
+			Mode:             "validate",
+			SeedManifestPath: filepath.Join(dir, "seed_manifest.json"),
+			SuitePath:        filepath.Join(dir, "suite.jsonl"),
+		})
+		if err == nil || !strings.Contains(err.Error(), `requires validation_report_file`) {
+			t.Fatalf("Run err = %v; want validation_report_file error", err)
+		}
+	})
+
+	t.Run("validation report hash must match current seed", func(t *testing.T) {
+		dir := writeEvalFixture(t)
+		manifest := SeedManifest{
+			SchemaVersion:        SeedSchemaVersion,
+			SeedID:               "public_6axis_1k_v1",
+			CorpusFile:           "corpus.jsonl",
+			CasesFile:            "cases.jsonl",
+			QrelsFile:            "qrels.jsonl",
+			ValidationReportFile: "validation_report.json",
+		}
+		if err := writeJSONFile(filepath.Join(dir, "seed_manifest.json"), manifest); err != nil {
+			t.Fatalf("write manifest: %v", err)
+		}
+		report := seedValidationReport{
+			SchemaVersion: "dense-mem.eval.validation.v1",
+			SeedID:        "public_6axis_1k_v1",
+			Status:        "passed",
+			SeedHash:      "sha256:stale",
+		}
+		if err := writeJSONFile(filepath.Join(dir, "validation_report.json"), report); err != nil {
+			t.Fatalf("write validation report: %v", err)
+		}
+		_, err := Run(context.Background(), RunOptions{
+			Mode:             "validate",
+			SeedManifestPath: filepath.Join(dir, "seed_manifest.json"),
+			SuitePath:        filepath.Join(dir, "suite.jsonl"),
+		})
+		if err == nil || !strings.Contains(err.Error(), "does not match current seed hash") {
+			t.Fatalf("Run err = %v; want validation seed hash mismatch", err)
 		}
 	})
 }
