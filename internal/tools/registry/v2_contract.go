@@ -429,13 +429,16 @@ func validateV2UniqueStringArray(args map[string]any, field string) error {
 
 func v2ContractInput(required []string, properties map[string]any) map[string]any {
 	v2RequireNonEmptyStrings(required, properties)
-	return map[string]any{
+	schema := map[string]any{
 		"type":                 "object",
-		"required":             required,
 		"properties":           properties,
 		"additionalProperties": false,
 		"x-contract-version":   domain.V2ContractVersion,
 	}
+	if len(required) > 0 {
+		schema["required"] = required
+	}
+	return schema
 }
 
 func v2RememberInputSchema() map[string]any {
