@@ -112,7 +112,9 @@ func EvaluateReleaseGate(summary Summary, policy ReleaseGatePolicy) ReleaseGateR
 	if checkObservedRate("bad_rank1_rate", summary.BadRank1Rate) {
 		checkMax("bad_rank1_rate", summary.BadRank1Rate, policy.Maximums.BadRank1Rate)
 	}
-	if summary.UnmappedSourceRefs > policy.Maximums.UnmappedSourceRefs {
+	if summary.UnmappedSourceRefs < 0 {
+		fail("unmapped_source_refs must be non-negative, got %d", summary.UnmappedSourceRefs)
+	} else if summary.UnmappedSourceRefs > policy.Maximums.UnmappedSourceRefs {
 		fail("unmapped_source_refs %d above maximum %d", summary.UnmappedSourceRefs, policy.Maximums.UnmappedSourceRefs)
 	}
 	return result
