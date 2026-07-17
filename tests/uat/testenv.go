@@ -575,6 +575,7 @@ func (te *TestEnv) buildConfigConcrete() config.Config {
 
 // testConfig implements config.ConfigProvider
 type testConfig struct {
+	config.Config
 	postgresDSN             string
 	neo4jURI                string
 	neo4jUser               string

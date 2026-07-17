@@ -501,120 +501,6 @@ func TestLoadOverrides(t *testing.T) {
 	}
 }
 
-func TestConfigProviderInterface(t *testing.T) {
-	clearEnv()
-	setRequiredEnv()
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() returned unexpected error: %v", err)
-	}
-
-	// Verify Config implements ConfigProvider
-	var provider ConfigProvider = &cfg
-
-	// Test all getter methods
-	_ = provider.GetPostgresDSN()
-	_ = provider.GetNeo4jURI()
-	_ = provider.GetNeo4jUser()
-	_ = provider.GetNeo4jPassword()
-	_ = provider.GetNeo4jDatabase()
-	_ = provider.GetRedisAddr()
-	_ = provider.GetRedisPassword()
-	_ = provider.GetRedisDB()
-	_ = provider.GetHTTPMaxBodyBytes()
-	_ = provider.GetRateLimitPerMinute()
-	_ = provider.GetFragmentCreateRateLimit()
-	_ = provider.GetFragmentReadRateLimit()
-	_ = provider.GetSSEHeartbeatSeconds()
-	_ = provider.GetSSEMaxDurationSeconds()
-	_ = provider.GetSSEMaxConcurrentStreams()
-	_ = provider.GetEmbeddingDimensions()
-	_ = provider.GetAIAPIURL()
-	_ = provider.GetAIAPIKey()
-	_ = provider.GetAIEmbeddingModel()
-	_ = provider.GetAIEmbeddingDimensions()
-	_ = provider.GetAIEmbeddingTimeoutSeconds()
-	_ = provider.IsEmbeddingConfigured()
-	_ = provider.GetAIVerifierAPIURL()
-	_ = provider.GetAIVerifierAPIKey()
-	_ = provider.GetAIVerifierModel()
-	_ = provider.GetAIVerifierTimeoutSeconds()
-	_ = provider.GetAIVerifierMaxConcurrency()
-	_ = provider.GetClaimWriteRateLimit()
-	_ = provider.GetClaimReadRateLimit()
-	_ = provider.GetRecallValidatedClaimWeight()
-	_ = provider.GetPromoteTxTimeoutSeconds()
-	_ = provider.GetSkillPackImportHistoryDays()
-	_ = provider.GetAICommunityMaxNodes()
-	_ = provider.GetControlHTTPAddr()
-	_ = provider.GetControlPortalToken()
-
-	_ = cfg.GetPostgresMaxOpenConns()
-	_ = cfg.GetPostgresMaxIdleConns()
-	_ = cfg.GetPostgresConnMaxLifetimeSeconds()
-	_ = cfg.GetPostgresVectorMaxConcurrency()
-	_ = cfg.GetPGVectorExtensionRequired()
-	_ = cfg.GetPostgresStatementTimeoutSeconds()
-	_ = cfg.GetPostgresLockTimeoutSeconds()
-	_ = cfg.GetAIEmbeddingMaxConcurrency()
-	_ = cfg.GetAIReviewerModel()
-	_ = cfg.GetAIVerifierCooldownPollSeconds()
-	_ = cfg.GetAIVerifierMaxEntityResults()
-	_ = cfg.GetAIVerifierMaxRelationshipResults()
-	_ = cfg.GetAIVerifierMaxInputBytes()
-	_ = cfg.GetAIVerifierMaxOutputBytes()
-	_ = cfg.GetAIVerifierMaxResponseRegenerations()
-	_ = cfg.GetRelationshipMatchMaxCandidates()
-	_ = cfg.GetMemoryPlacementWorkerCount()
-	_ = cfg.GetMemoryPlacementLeaseSeconds()
-	_ = cfg.GetMemoryPlacementHeartbeatSeconds()
-	_ = cfg.GetMemoryPlacementPollSeconds()
-	_ = cfg.GetMemoryPlacementMaxAttempts()
-	_ = cfg.GetEmbeddingWorkerCount()
-	_ = cfg.GetEmbeddingBatchSize()
-	_ = cfg.GetEmbeddingJobLeaseSeconds()
-	_ = cfg.GetEmbeddingJobPollSeconds()
-	_ = cfg.GetEmbeddingJobMaxAttempts()
-	_ = cfg.GetEmbeddingJobRetryMaxSeconds()
-	_ = cfg.GetEmbeddingPendingStaleSeconds()
-	_ = cfg.GetSearchDocumentFormatVersion()
-	_ = cfg.GetEmbeddingNormalizationVersion()
-	_ = cfg.GetPGVectorDistance()
-	_ = cfg.GetPGVectorANNStrategy()
-	_ = cfg.GetPGVectorHNSWM()
-	_ = cfg.GetPGVectorHNSWEFConstruction()
-	_ = cfg.GetPGVectorIndexBuildMaxConcurrency()
-	_ = cfg.GetRecallRRFEnabled()
-	_ = cfg.GetRecallRRFK()
-	_ = cfg.GetRecallRRFBranchWeights()
-	_ = cfg.GetRecallBranchPriority()
-	_ = cfg.GetRecallBranchLimitMultiplier()
-	_ = cfg.GetRecallBranchLimitFloor()
-	_ = cfg.GetRecallBranchLimitMax()
-	_ = cfg.GetRecallDeterministicRerankEnabled()
-	_ = cfg.GetRecallMaxEntitySeeds()
-	_ = cfg.GetRecallDiscoveryRelationshipsPerEvidence()
-	_ = cfg.GetRecallMaxGraphDepth()
-	_ = cfg.GetRecallMaxEdges()
-	_ = cfg.GetRecallGraphTimeoutMilliseconds()
-	_ = cfg.GetRecallRequiredBranchProfile()
-	_ = cfg.GetPGVectorExactFilteredMaxRows()
-	_ = cfg.GetPGVectorHNSWEFSearch()
-	_ = cfg.GetPGVectorHNSWIterativeScan()
-	_ = cfg.GetPGVectorHNSWMaxScanTuples()
-	_ = cfg.GetPGVectorHNSWScanMemMultiplier()
-	_ = cfg.GetPredicateRegistryVersion()
-	_ = cfg.GetPredicateRegistryCacheTTLSeconds()
-	_ = cfg.GetPredicateUnknownAction()
-	_ = cfg.GetRedisTLSEnabled()
-	_ = cfg.GetDistributedCoordinationRequired()
-	_ = cfg.GetRememberRateLimitPerMinute()
-	_ = cfg.GetRecallRateLimitPerMinute()
-	_ = cfg.GetTraceRateLimitPerMinute()
-	_ = cfg.GetV2BootMode()
-}
-
 func TestConfigGetterFallbacksAndParsers(t *testing.T) {
 	cfg := &Config{
 		HTTPMaxBodyBytes:         2048,
@@ -650,6 +536,114 @@ func TestConfigGetterFallbacksAndParsers(t *testing.T) {
 	t.Setenv("FEATURE_FLAG", "not-bool")
 	if _, err := parseBoolOrDefault("FEATURE_FLAG", true); err == nil {
 		t.Fatal("parseBoolOrDefault invalid value: want error")
+	}
+}
+
+func TestLoadValidation_RemainingInvalidEnvironmentBranches(t *testing.T) {
+	cases := []struct {
+		name  string
+		set   func()
+		field string
+	}{
+		{"invalid redis db", func() { os.Setenv("REDIS_DB", "bad") }, "REDIS_DB"},
+		{"invalid http max body bytes", func() { os.Setenv("HTTP_MAX_BODY_BYTES", "bad") }, "HTTP_MAX_BODY_BYTES"},
+		{"invalid auth verify concurrency", func() { os.Setenv("AUTH_VERIFY_MAX_CONCURRENCY", "bad") }, "AUTH_VERIFY_MAX_CONCURRENCY"},
+		{"invalid graph default timeout", func() { os.Setenv("GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS", "bad") }, "GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS"},
+		{"invalid graph max timeout", func() { os.Setenv("GRAPH_QUERY_MAX_TIMEOUT_SECONDS", "bad") }, "GRAPH_QUERY_MAX_TIMEOUT_SECONDS"},
+		{"invalid fragment create rate", func() { os.Setenv("FRAGMENT_CREATE_RATE_LIMIT", "bad") }, "FRAGMENT_CREATE_RATE_LIMIT"},
+		{"invalid fragment read rate", func() { os.Setenv("FRAGMENT_READ_RATE_LIMIT", "bad") }, "FRAGMENT_READ_RATE_LIMIT"},
+		{"invalid sse heartbeat", func() { os.Setenv("SSE_HEARTBEAT_SECONDS", "bad") }, "SSE_HEARTBEAT_SECONDS"},
+		{"invalid sse max duration", func() { os.Setenv("SSE_MAX_DURATION_SECONDS", "bad") }, "SSE_MAX_DURATION_SECONDS"},
+		{"invalid sse streams", func() { os.Setenv("SSE_MAX_CONCURRENT_STREAMS", "bad") }, "SSE_MAX_CONCURRENT_STREAMS"},
+		{"invalid embedding dimensions", func() { os.Setenv("AI_API_EMBEDDING_DIMENSIONS", "bad") }, "AI_API_EMBEDDING_DIMENSIONS"},
+		{"invalid embedding timeout", func() { os.Setenv("AI_API_EMBEDDING_TIMEOUT_SECONDS", "bad") }, "AI_API_EMBEDDING_TIMEOUT_SECONDS"},
+		{"invalid verifier disable temperature", func() { os.Setenv("AI_VERIFIER_DISABLE_TEMPERATURE", "bad") }, "AI_VERIFIER_DISABLE_TEMPERATURE"},
+		{"invalid verifier timeout", func() { os.Setenv("AI_VERIFIER_TIMEOUT_SECONDS", "bad") }, "AI_VERIFIER_TIMEOUT_SECONDS"},
+		{"invalid verifier concurrency", func() { os.Setenv("AI_VERIFIER_MAX_CONCURRENCY", "bad") }, "AI_VERIFIER_MAX_CONCURRENCY"},
+		{"invalid claim write rate", func() { os.Setenv("CLAIM_WRITE_RATE_LIMIT", "bad") }, "CLAIM_WRITE_RATE_LIMIT"},
+		{"invalid claim read rate", func() { os.Setenv("CLAIM_READ_RATE_LIMIT", "bad") }, "CLAIM_READ_RATE_LIMIT"},
+		{"invalid recall weight", func() { os.Setenv("RECALL_VALIDATED_CLAIM_WEIGHT", "bad") }, "RECALL_VALIDATED_CLAIM_WEIGHT"},
+		{"invalid promote timeout", func() { os.Setenv("PROMOTE_TX_TIMEOUT_SECONDS", "bad") }, "PROMOTE_TX_TIMEOUT_SECONDS"},
+		{"invalid community max nodes", func() { os.Setenv("AI_COMMUNITY_MAX_NODES", "bad") }, "AI_COMMUNITY_MAX_NODES"},
+		{"zero http max body bytes", func() { os.Setenv("HTTP_MAX_BODY_BYTES", "0") }, "HTTP_MAX_BODY_BYTES"},
+		{"recall weight below range", func() { os.Setenv("RECALL_VALIDATED_CLAIM_WEIGHT", "-0.1") }, "RECALL_VALIDATED_CLAIM_WEIGHT"},
+		{"recall weight above range", func() { os.Setenv("RECALL_VALIDATED_CLAIM_WEIGHT", "1.1") }, "RECALL_VALIDATED_CLAIM_WEIGHT"},
+		{"verifier key without url or shared api url", func() { os.Setenv("AI_VERIFIER_API_KEY", "verifier-key") }, "AI_VERIFIER_API_URL"},
+		{"embedding missing url", func() {
+			os.Setenv("AI_API_KEY", "sk-test")
+			os.Setenv("AI_API_EMBEDDING_MODEL", "text-embedding-3-small")
+			os.Setenv("AI_API_EMBEDDING_DIMENSIONS", "1536")
+		}, "AI_API_URL"},
+		{"embedding missing model", func() {
+			os.Setenv("AI_API_URL", "https://example.com/v1")
+			os.Setenv("AI_API_KEY", "sk-test")
+			os.Setenv("AI_API_EMBEDDING_DIMENSIONS", "1536")
+		}, "AI_API_EMBEDDING_MODEL"},
+		{"embedding missing dimensions", func() {
+			os.Setenv("AI_API_URL", "https://example.com/v1")
+			os.Setenv("AI_API_KEY", "sk-test")
+			os.Setenv("AI_API_EMBEDDING_MODEL", "text-embedding-3-small")
+		}, "AI_API_EMBEDDING_DIMENSIONS"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnv()
+			setRequiredEnv()
+			tc.set()
+
+			_, err := Load()
+
+			if err == nil {
+				t.Fatalf("Load() expected error for %s, got nil", tc.field)
+			}
+			validationErr, ok := err.(*ValidationError)
+			if !ok {
+				t.Fatalf("expected *ValidationError, got %T", err)
+			}
+			if validationErr.Field != tc.field {
+				t.Fatalf("ValidationError.Field = %q, want %q; err=%v", validationErr.Field, tc.field, err)
+			}
+		})
+	}
+}
+
+func TestValidateServerStartupRemainingRequiredFields(t *testing.T) {
+	cfg := Config{
+		AIAPIURL:              "https://example.com/v1",
+		AIAPIKey:              "sk-test",
+		AIEmbeddingModel:      "text-embedding-3-small",
+		AIEmbeddingDimensions: 1536,
+		ControlPortalToken:    "control-secret",
+	}
+	cases := []struct {
+		name  string
+		edit  func(*Config)
+		field string
+	}{
+		{"missing api key", func(c *Config) { c.AIAPIKey = "" }, "AI_API_KEY"},
+		{"missing embedding model", func(c *Config) { c.AIEmbeddingModel = "" }, "AI_API_EMBEDDING_MODEL"},
+		{"missing embedding dimensions", func(c *Config) { c.AIEmbeddingDimensions = 0 }, "AI_API_EMBEDDING_DIMENSIONS"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			testCfg := cfg
+			tc.edit(&testCfg)
+
+			err := testCfg.ValidateServerStartup()
+
+			if err == nil {
+				t.Fatal("ValidateServerStartup() expected error, got nil")
+			}
+			validationErr, ok := err.(*ValidationError)
+			if !ok {
+				t.Fatalf("expected *ValidationError, got %T", err)
+			}
+			if validationErr.Field != tc.field {
+				t.Fatalf("field = %q, want %q", validationErr.Field, tc.field)
+			}
+		})
 	}
 }
 

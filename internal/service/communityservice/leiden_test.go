@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
@@ -136,6 +137,7 @@ var _ communitySummaryStore = (*stubCommunitySummaryStore)(nil)
 // stubConfigProvider is a minimal test-only implementation of
 // config.ConfigProvider that returns only the fields relevant to Leiden.
 type stubConfigProvider struct {
+	config.Config
 	maxNodes int
 }
 
