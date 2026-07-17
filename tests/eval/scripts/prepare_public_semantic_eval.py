@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import html.parser
 import json
+import os
 import re
 import shutil
 import tarfile
@@ -26,8 +27,12 @@ DEFAULT_SEED_ID = "public_semantic_3axis_1k_v1"
 MAX_EVIDENCE_CODEPOINTS = 999
 
 MUSIQUE_DRIVE_ID = "1tGdADlNjWFaHLeZZGShh2IRcpO6Lv24h"
+MUSIQUE_SHA256 = "98f839bf2fd5319f5c688aed77901a6d5c30b3b9f9f691ab9a8ecafb045ee0cd"
 QASPER_TRAIN_DEV_URL = "https://qasper-dataset.s3.us-west-2.amazonaws.com/qasper-train-dev-v0.3.tgz"
-LONGMEMEVAL_S_URL = "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json"
+QASPER_SHA256 = "a28fdf966db827bcee3d873107d6b6669864fb7ca8fbf73a192f5e39191bdb5a"
+LONGMEMEVAL_S_REVISION = "98d7416c24c778c2fee6e6f3006e7a073259d48f"
+LONGMEMEVAL_S_URL = f"https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/{LONGMEMEVAL_S_REVISION}/longmemeval_s_cleaned.json"
+LONGMEMEVAL_S_SHA256 = "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442"
 
 MUSIQUE_QUOTAS = {2: 150, 3: 150, 4: 150}
 QASPER_QUOTAS = {
@@ -48,6 +53,8 @@ LONGMEMEVAL_QUOTAS = {
     "knowledge-update": 20,
     "multi-session": 20,
 }
+
+DETERMINISTIC_GENERATED_AT = "1970-01-01T00:00:00Z"
 
 
 @dataclass
@@ -149,20 +156,37 @@ def main() -> int:
 def ensure_sources(data_root: Path, allow_download: bool) -> None:
     data_root.mkdir(parents=True, exist_ok=True)
     sources = [
-        (data_root / "qasper-train-dev-v0.3.tgz", QASPER_TRAIN_DEV_URL),
-        (data_root / "longmemeval_s_cleaned.json", LONGMEMEVAL_S_URL),
+        (data_root / "qasper-train-dev-v0.3.tgz", QASPER_TRAIN_DEV_URL, QASPER_SHA256),
+        (data_root / "longmemeval_s_cleaned.json", LONGMEMEVAL_S_URL, LONGMEMEVAL_S_SHA256),
     ]
-    for path, url in sources:
+    for path, url, sha256 in sources:
         if path.exists():
+            verify_sha256(path, sha256)
             continue
         if not allow_download:
             raise SystemExit(f"missing {path} and --no-download was set")
         download_file(url, path)
+        verify_sha256(path, sha256)
     musique_zip = data_root / "musique_v1.0.zip"
     if not musique_zip.exists():
         if not allow_download:
             raise SystemExit(f"missing {musique_zip} and --no-download was set")
         download_google_drive(MUSIQUE_DRIVE_ID, musique_zip)
+    verify_sha256(musique_zip, MUSIQUE_SHA256)
+
+
+def verify_sha256(path: Path, expected: str) -> None:
+    got = file_sha256(path)
+    if got != expected:
+        raise SystemExit(f"{path} sha256 {got}; want {expected}")
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def download_file(url: str, path: Path) -> None:
@@ -591,9 +615,9 @@ def seed_row(
     required: bool,
     metadata: dict[str, Any],
 ) -> SeedRow:
-    labels = ["eval", "public_semantic", dataset, "required" if required else "distractor"]
+    labels = ["eval", "public_semantic", dataset]
     merged_metadata = dict(metadata)
-    merged_metadata.update({"case_id": case_id, "required": required, "source_doc_id": source_doc_id})
+    merged_metadata.update({"case_id": case_id, "source_doc_id": source_doc_id})
     return SeedRow(
         source_doc_id=source_doc_id,
         title=clean_text(title),
@@ -737,7 +761,7 @@ def write_seed(seed_dir: Path, suite_path: Path, seed_id: str, cases: list[SeedC
         "schema_version": SCHEMA_VERSION,
         "seed_id": seed_id,
         "description": "Public semantic 3-axis seed: MuSiQue multi-hop, QASPER paper QA, LongMemEval-S memory QA.",
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "generated_at": deterministic_generated_at(),
         "corpus_file": "corpus.jsonl",
         "cases_file": "cases.jsonl",
         "qrels_file": "qrels.jsonl",
@@ -789,6 +813,11 @@ def validate_cases(cases: list[SeedCase], expected_cases: int) -> None:
                 raise SystemExit(f"{row.source_doc_id} has empty content")
             if len(row.content) > MAX_EVIDENCE_CODEPOINTS:
                 raise SystemExit(f"{row.source_doc_id} has {len(row.content)} code points")
+            for forbidden in ("required", "distractor"):
+                if forbidden in row.labels:
+                    raise SystemExit(f"{row.source_doc_id} leaks relevance label {forbidden}")
+                if forbidden in row.metadata:
+                    raise SystemExit(f"{row.source_doc_id} leaks relevance metadata {forbidden}")
     summary = quota_summary(cases)
     if expected_cases == 1000:
         expected = {
@@ -856,6 +885,17 @@ def sanitize_id(value: str) -> str:
         return value
     digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:16]
     return f"{value[:200]}:{digest}"
+
+
+def deterministic_generated_at() -> str:
+    raw = os.environ.get("SOURCE_DATE_EPOCH", "").strip()
+    if not raw:
+        return DETERMINISTIC_GENERATED_AT
+    try:
+        epoch = int(raw)
+    except ValueError as exc:
+        raise SystemExit("SOURCE_DATE_EPOCH must be an integer Unix timestamp") from exc
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))
 
 
 def seed_hash(seed_dir: Path) -> str:
