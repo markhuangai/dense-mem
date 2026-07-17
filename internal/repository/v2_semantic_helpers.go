@@ -1,0 +1,984 @@
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/lib/pq"
+	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
+)
+
+type v2PredicateDefinition struct {
+	Key                 string
+	Version             int
+	AllowedSubjectKinds []string
+	AllowedObjectKinds  []string
+	RelationshipKind    string
+	CurrentCardinality  string
+}
+
+type v2RelationshipRecordState struct {
+	Record     *V2RelationshipRecord
+	Created    bool
+	Changed    bool
+	FromTier   string
+	FromStatus string
+}
+
+type v2TransitionInput struct {
+	TeamID              string
+	OwnerProfileID      string
+	RelationshipID      string
+	FromTier            string
+	FromStatus          string
+	ToTier              string
+	ToStatus            string
+	Reason              string
+	VerificationEventID string
+	SupportDecisionID   string
+}
+
+func normalizeV2CreateEntityInput(input V2CreateEntityInput) V2CreateEntityInput {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.EntityKind = strings.TrimSpace(input.EntityKind)
+	input.CanonicalName = strings.TrimSpace(input.CanonicalName)
+	if input.EntityKind == "" {
+		input.EntityKind = string(domain.V2EntityKindOther)
+	}
+	return input
+}
+
+func validateV2CreateEntityInput(input V2CreateEntityInput) error {
+	if _, err := uuid.Parse(input.TeamID); err != nil {
+		return fmt.Errorf("team_id is required: %w", err)
+	}
+	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
+		return fmt.Errorf("owner_profile_id is required: %w", err)
+	}
+	if !v2Contains(domain.V2EntityKinds(), input.EntityKind) {
+		return fmt.Errorf("unsupported entity_kind %q", input.EntityKind)
+	}
+	if input.CanonicalName == "" {
+		return errors.New("canonical_name is required")
+	}
+	return nil
+}
+
+func normalizeV2AddEntityNameInput(input V2AddEntityNameInput) V2AddEntityNameInput {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.EntityID = strings.TrimSpace(input.EntityID)
+	input.DisplayName = strings.TrimSpace(input.DisplayName)
+	input.NameKind = strings.TrimSpace(input.NameKind)
+	input.Locale = strings.TrimSpace(input.Locale)
+	if input.NameKind == "" {
+		input.NameKind = "alias"
+	}
+	return input
+}
+
+func validateV2AddEntityNameInput(input V2AddEntityNameInput) error {
+	if _, err := uuid.Parse(input.TeamID); err != nil {
+		return fmt.Errorf("team_id is required: %w", err)
+	}
+	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
+		return fmt.Errorf("owner_profile_id is required: %w", err)
+	}
+	if _, err := uuid.Parse(input.EntityID); err != nil {
+		return fmt.Errorf("entity_id is required: %w", err)
+	}
+	if input.DisplayName == "" {
+		return errors.New("display_name is required")
+	}
+	if input.NameKind != "canonical" && input.NameKind != "alias" && input.NameKind != "former" {
+		return fmt.Errorf("unsupported name_kind %q", input.NameKind)
+	}
+	return nil
+}
+
+func normalizeV2UpsertValueInput(input V2UpsertValueInput) V2UpsertValueInput {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.ValueType = strings.TrimSpace(input.ValueType)
+	input.CanonicalValue = strings.TrimSpace(input.CanonicalValue)
+	input.Unit = strings.TrimSpace(input.Unit)
+	input.Display = strings.TrimSpace(input.Display)
+	if input.Display == "" {
+		input.Display = input.CanonicalValue
+	}
+	if input.NormalizationVersion == 0 {
+		input.NormalizationVersion = 1
+	}
+	return input
+}
+
+func validateV2UpsertValueInput(input V2UpsertValueInput) error {
+	if _, err := uuid.Parse(input.TeamID); err != nil {
+		return fmt.Errorf("team_id is required: %w", err)
+	}
+	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
+		return fmt.Errorf("owner_profile_id is required: %w", err)
+	}
+	if !v2Contains(domain.V2ValueTypes(), input.ValueType) {
+		return fmt.Errorf("unsupported value_type %q", input.ValueType)
+	}
+	if input.CanonicalValue == "" {
+		return errors.New("canonical_value is required")
+	}
+	if input.NormalizationVersion < 1 {
+		return errors.New("normalization_version must be greater than zero")
+	}
+	return nil
+}
+
+func normalizeV2ApplyRelationshipDecisionInput(input V2ApplyRelationshipDecisionInput) V2ApplyRelationshipDecisionInput {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.IngestID = strings.TrimSpace(input.IngestID)
+	input.PlacementItemID = strings.TrimSpace(input.PlacementItemID)
+	input.SubjectRef = strings.TrimSpace(input.SubjectRef)
+	input.SubjectEntityID = strings.TrimSpace(input.SubjectEntityID)
+	input.OriginalPredicate = strings.TrimSpace(input.OriginalPredicate)
+	input.PredicateKey = strings.TrimSpace(input.PredicateKey)
+	input.ObjectRef = strings.TrimSpace(input.ObjectRef)
+	input.ObjectEntityID = strings.TrimSpace(input.ObjectEntityID)
+	input.ObjectValueID = strings.TrimSpace(input.ObjectValueID)
+	input.Polarity = strings.TrimSpace(input.Polarity)
+	input.ScopeKey = strings.TrimSpace(input.ScopeKey)
+	input.EvidenceVerdict = strings.TrimSpace(input.EvidenceVerdict)
+	input.Rationale = strings.TrimSpace(input.Rationale)
+	input.Model = strings.TrimSpace(input.Model)
+	input.ResponseHash = strings.TrimSpace(input.ResponseHash)
+	if input.PredicateVersion == 0 {
+		input.PredicateVersion = 1
+	}
+	if input.OriginalPredicate == "" {
+		input.OriginalPredicate = input.PredicateKey
+	}
+	if input.SubjectRef == "" {
+		input.SubjectRef = input.SubjectEntityID
+	}
+	if input.ObjectRef == "" {
+		input.ObjectRef = input.ObjectEntityID
+		if input.ObjectRef == "" {
+			input.ObjectRef = input.ObjectValueID
+		}
+	}
+	if input.Polarity == "" {
+		input.Polarity = "+"
+	}
+	if input.EvidenceVerdict == "" {
+		input.EvidenceVerdict = string(domain.V2VerificationEntailed)
+	}
+	if input.Support != nil {
+		input.Support.FragmentID = strings.TrimSpace(input.Support.FragmentID)
+		input.Support.SourceGroupKey = strings.TrimSpace(input.Support.SourceGroupKey)
+		input.Support.SourceID = strings.TrimSpace(input.Support.SourceID)
+		input.Support.SourceRevisionID = strings.TrimSpace(input.Support.SourceRevisionID)
+		input.Support.Quote = strings.TrimSpace(input.Support.Quote)
+		input.Support.Authority = strings.TrimSpace(input.Support.Authority)
+		if input.Support.Authority == "" {
+			input.Support.Authority = "primary"
+		}
+	}
+	return input
+}
+
+func validateV2ApplyRelationshipDecisionInput(input V2ApplyRelationshipDecisionInput) error {
+	for label, value := range map[string]string{
+		"team_id":           input.TeamID,
+		"owner_profile_id":  input.OwnerProfileID,
+		"ingest_id":         input.IngestID,
+		"subject_entity_id": input.SubjectEntityID,
+	} {
+		if _, err := uuid.Parse(value); err != nil {
+			return fmt.Errorf("%s is required: %w", label, err)
+		}
+	}
+	if input.PlacementItemID != "" {
+		if _, err := uuid.Parse(input.PlacementItemID); err != nil {
+			return fmt.Errorf("placement_item_id is invalid: %w", err)
+		}
+	}
+	if input.PredicateKey == "" {
+		return errors.New("predicate_key is required")
+	}
+	if input.PredicateVersion < 1 {
+		return errors.New("predicate_version must be greater than zero")
+	}
+	if (input.ObjectEntityID == "") == (input.ObjectValueID == "") {
+		return errors.New("exactly one object endpoint is required")
+	}
+	if input.ObjectEntityID != "" {
+		if _, err := uuid.Parse(input.ObjectEntityID); err != nil {
+			return fmt.Errorf("object_entity_id is invalid: %w", err)
+		}
+	}
+	if input.ObjectValueID != "" {
+		if _, err := uuid.Parse(input.ObjectValueID); err != nil {
+			return fmt.Errorf("object_value_id is invalid: %w", err)
+		}
+	}
+	if input.Polarity != "+" && input.Polarity != "-" {
+		return fmt.Errorf("unsupported polarity %q", input.Polarity)
+	}
+	if !v2Contains(domain.V2VerificationVerdicts(), input.EvidenceVerdict) {
+		return fmt.Errorf("unsupported evidence_verdict %q", input.EvidenceVerdict)
+	}
+	if input.Confidence != nil && (*input.Confidence < 0 || *input.Confidence > 1) {
+		return errors.New("confidence must be between 0 and 1")
+	}
+	if input.ValidFrom != nil && input.ValidTo != nil && input.ValidTo.Before(*input.ValidFrom) {
+		return errors.New("valid_to must be greater than or equal to valid_from")
+	}
+	if input.EvidenceVerdict == string(domain.V2VerificationEntailed) {
+		if input.Support == nil {
+			return errors.New("entailed relationship decisions require support")
+		}
+		if err := validateV2EvidenceSupportInput(*input.Support); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateV2EvidenceSupportInput(input V2EvidenceSupportInput) error {
+	if _, err := uuid.Parse(input.FragmentID); err != nil {
+		return fmt.Errorf("support.fragment_id is required: %w", err)
+	}
+	if input.SourceID != "" {
+		if _, err := uuid.Parse(input.SourceID); err != nil {
+			return fmt.Errorf("support.source_id is invalid: %w", err)
+		}
+	}
+	if input.SourceRevisionID != "" {
+		if _, err := uuid.Parse(input.SourceRevisionID); err != nil {
+			return fmt.Errorf("support.source_revision_id is invalid: %w", err)
+		}
+	}
+	if input.SourceGroupKey == "" {
+		return errors.New("support.source_group_key is required")
+	}
+	if input.SpanStart < 0 || input.SpanEnd <= input.SpanStart {
+		return errors.New("support span is invalid")
+	}
+	if input.Authority != "primary" && input.Authority != "secondary" &&
+		input.Authority != "derived" && input.Authority != "authoritative" {
+		return fmt.Errorf("unsupported support authority %q", input.Authority)
+	}
+	return nil
+}
+
+func normalizeV2RetractRelationshipInput(input V2RetractRelationshipInput) V2RetractRelationshipInput {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.RelationshipID = strings.TrimSpace(input.RelationshipID)
+	input.Reason = strings.TrimSpace(input.Reason)
+	if input.Reason == "" {
+		input.Reason = "forget"
+	}
+	return input
+}
+
+func validateV2RetractRelationshipInput(input V2RetractRelationshipInput) error {
+	if _, err := uuid.Parse(input.TeamID); err != nil {
+		return fmt.Errorf("team_id is required: %w", err)
+	}
+	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
+		return fmt.Errorf("owner_profile_id is required: %w", err)
+	}
+	if _, err := uuid.Parse(input.RelationshipID); err != nil {
+		return fmt.Errorf("relationship_id is required: %w", err)
+	}
+	return nil
+}
+
+func normalizeV2AppendCrossReferenceInput(input V2AppendCrossReferenceInput) V2AppendCrossReferenceInput {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.AuthorProfileID = strings.TrimSpace(input.AuthorProfileID)
+	input.SourceRelationshipID = strings.TrimSpace(input.SourceRelationshipID)
+	input.TargetRelationshipID = strings.TrimSpace(input.TargetRelationshipID)
+	input.Kind = strings.TrimSpace(input.Kind)
+	input.VerificationEventID = strings.TrimSpace(input.VerificationEventID)
+	return input
+}
+
+func validateV2AppendCrossReferenceInput(input V2AppendCrossReferenceInput) error {
+	for label, value := range map[string]string{
+		"team_id":                input.TeamID,
+		"author_profile_id":      input.AuthorProfileID,
+		"source_relationship_id": input.SourceRelationshipID,
+		"target_relationship_id": input.TargetRelationshipID,
+		"verification_event_id":  input.VerificationEventID,
+	} {
+		if _, err := uuid.Parse(value); err != nil {
+			return fmt.Errorf("%s is required: %w", label, err)
+		}
+	}
+	if input.SourceRelationshipVersion < 1 || input.TargetRelationshipVersion < 1 {
+		return errors.New("relationship versions must be greater than zero")
+	}
+	if !v2Contains(domain.V2CrossReferenceKinds(), input.Kind) {
+		return fmt.Errorf("unsupported cross reference kind %q", input.Kind)
+	}
+	return nil
+}
+
+func normalizeV2CreateHypothesisInput(input V2CreateHypothesisInput) V2CreateHypothesisInput {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.Status = strings.TrimSpace(input.Status)
+	if input.Status == "" {
+		input.Status = "candidate"
+	}
+	return input
+}
+
+func validateV2CreateHypothesisInput(input V2CreateHypothesisInput) error {
+	if _, err := uuid.Parse(input.TeamID); err != nil {
+		return fmt.Errorf("team_id is required: %w", err)
+	}
+	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
+		return fmt.Errorf("owner_profile_id is required: %w", err)
+	}
+	switch input.Status {
+	case "candidate", "reinforced", "rejected", "promoted_candidate", "stale":
+		return nil
+	default:
+		return fmt.Errorf("unsupported hypothesis status %q", input.Status)
+	}
+}
+
+func insertV2EntityName(ctx context.Context, tx *gorm.DB, input V2AddEntityNameInput) (string, error) {
+	metadata, err := marshalV2JSON(input.Metadata)
+	if err != nil {
+		return "", err
+	}
+	rows, err := tx.WithContext(ctx).Raw(`
+		INSERT INTO entity_names (
+		    team_id, entity_id, owner_profile_id, display_name, normalized_name,
+		    name_kind, locale, metadata
+		) VALUES (
+		    ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?::jsonb
+		)
+		RETURNING entity_name_id::text
+	`, input.TeamID, input.EntityID, input.OwnerProfileID, input.DisplayName,
+		normalizeV2Name(input.DisplayName), input.NameKind, input.Locale,
+		string(metadata)).Rows()
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return "", rows.Err()
+	}
+	var nameID string
+	if err := rows.Scan(&nameID); err != nil {
+		return "", err
+	}
+	return nameID, rows.Err()
+}
+
+func loadV2PredicateDefinition(ctx context.Context, tx *gorm.DB, predicateKey string, version int) (*v2PredicateDefinition, error) {
+	rows, err := tx.WithContext(ctx).Raw(`
+		SELECT predicate_key, version, allowed_subject_kinds, allowed_object_kinds,
+		       relationship_kind, current_cardinality
+		FROM predicate_definitions
+		WHERE predicate_key = ?
+		  AND version = ?
+		  AND lifecycle_state = 'active'
+	`, predicateKey, version).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, gorm.ErrRecordNotFound
+	}
+	var loaded v2PredicateDefinition
+	var subjectKinds pq.StringArray
+	var objectKinds pq.StringArray
+	if err := rows.Scan(&loaded.Key, &loaded.Version, &subjectKinds, &objectKinds,
+		&loaded.RelationshipKind, &loaded.CurrentCardinality); err != nil {
+		return nil, err
+	}
+	loaded.AllowedSubjectKinds = []string(subjectKinds)
+	loaded.AllowedObjectKinds = []string(objectKinds)
+	return &loaded, rows.Err()
+}
+
+func validateV2RelationshipEndpointKinds(ctx context.Context, tx *gorm.DB, input V2ApplyRelationshipDecisionInput, predicate *v2PredicateDefinition) error {
+	subjectKind, err := loadV2EntityKind(ctx, tx, input.TeamID, input.SubjectEntityID)
+	if err != nil {
+		return err
+	}
+	if len(predicate.AllowedSubjectKinds) > 0 && !v2Contains(predicate.AllowedSubjectKinds, subjectKind) {
+		return fmt.Errorf("predicate %q does not allow subject kind %q", predicate.Key, subjectKind)
+	}
+	var objectKind string
+	if input.ObjectEntityID != "" {
+		objectKind, err = loadV2EntityKind(ctx, tx, input.TeamID, input.ObjectEntityID)
+	} else {
+		objectKind, err = loadV2ValueType(ctx, tx, input.TeamID, input.ObjectValueID)
+	}
+	if err != nil {
+		return err
+	}
+	if len(predicate.AllowedObjectKinds) > 0 && !v2Contains(predicate.AllowedObjectKinds, objectKind) {
+		return fmt.Errorf("predicate %q does not allow object kind %q", predicate.Key, objectKind)
+	}
+	return nil
+}
+
+func loadV2EntityKind(ctx context.Context, tx *gorm.DB, teamID, entityID string) (string, error) {
+	var kind string
+	row := tx.WithContext(ctx).Raw(`
+		SELECT entity_kind
+		FROM entity_records
+		WHERE team_id = ?::uuid
+		  AND entity_id = ?::uuid
+	`, teamID, entityID).Row()
+	if err := row.Scan(&kind); err != nil {
+		return "", err
+	}
+	return kind, nil
+}
+
+func loadV2ValueType(ctx context.Context, tx *gorm.DB, teamID, valueID string) (string, error) {
+	var valueType string
+	row := tx.WithContext(ctx).Raw(`
+		SELECT value_type
+		FROM value_records
+		WHERE team_id = ?::uuid
+		  AND value_id = ?::uuid
+	`, teamID, valueID).Row()
+	if err := row.Scan(&valueType); err != nil {
+		return "", err
+	}
+	return valueType, nil
+}
+
+func insertV2PredicateReview(
+	ctx context.Context,
+	tx *gorm.DB,
+	input V2ApplyRelationshipDecisionInput,
+) (*V2RelationshipDecisionResult, error) {
+	observationInput := input
+	observationInput.PredicateKey = ""
+	observationInput.PredicateVersion = 0
+	observationID, err := insertV2RelationshipObservation(ctx, tx, observationInput, "")
+	if err != nil {
+		return nil, err
+	}
+	payload, err := marshalV2JSON(map[string]any{
+		"original_predicate": input.OriginalPredicate,
+		"predicate_key":      input.PredicateKey,
+	})
+	if err != nil {
+		return nil, err
+	}
+	rows, err := tx.WithContext(ctx).Raw(`
+		INSERT INTO review_tasks (
+		    team_id, owner_profile_id, ingest_id, placement_item_id,
+		    observation_id, task_type, reason, payload
+		) VALUES (
+		    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid,
+		    ?::uuid, 'predicate_needs_review', 'unknown_predicate', ?::jsonb
+		)
+		RETURNING review_task_id::text
+	`, input.TeamID, input.OwnerProfileID, input.IngestID, input.PlacementItemID,
+		observationID, string(payload)).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	var reviewTaskID string
+	if err := rows.Scan(&reviewTaskID); err != nil {
+		return nil, err
+	}
+	return &V2RelationshipDecisionResult{
+		ObservationID: observationID,
+		ReviewTaskID:  reviewTaskID,
+	}, rows.Err()
+}
+
+func insertV2RelationshipObservation(ctx context.Context, tx *gorm.DB, input V2ApplyRelationshipDecisionInput, relationshipID string) (string, error) {
+	evidence := []map[string]any{}
+	if input.Support != nil {
+		evidence = append(evidence, map[string]any{
+			"fragment_id": input.Support.FragmentID,
+			"start":       input.Support.SpanStart,
+			"end":         input.Support.SpanEnd,
+		})
+	}
+	evidenceJSON, err := marshalV2JSONArray(evidence)
+	if err != nil {
+		return "", err
+	}
+	metadata, err := marshalV2JSON(input.ObservationMetadata)
+	if err != nil {
+		return "", err
+	}
+	rows, err := tx.WithContext(ctx).Raw(`
+		INSERT INTO relationship_observations (
+		    team_id, relationship_id, ingest_id, placement_item_id, owner_profile_id,
+		    subject_ref, original_predicate, object_ref, subject_entity_id,
+		    predicate_key, predicate_version, object_entity_id, object_value_id,
+		    polarity, scope_key, valid_from, valid_to, evidence, metadata
+		) VALUES (
+		    ?::uuid, NULLIF(?, '')::uuid, ?::uuid, NULLIF(?, '')::uuid, ?::uuid,
+		    ?, ?, ?, ?::uuid, NULLIF(?, ''), NULLIF(?, 0),
+		    NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, NULLIF(?, ''),
+		    ?, ?, ?::jsonb, ?::jsonb
+		)
+		RETURNING observation_id::text
+	`, input.TeamID, relationshipID, input.IngestID, input.PlacementItemID, input.OwnerProfileID,
+		input.SubjectRef, input.OriginalPredicate, input.ObjectRef, input.SubjectEntityID,
+		input.PredicateKey, input.PredicateVersion, input.ObjectEntityID, input.ObjectValueID,
+		input.Polarity, input.ScopeKey, v2TimeArg(input.ValidFrom), v2TimeArg(input.ValidTo), string(evidenceJSON),
+		string(metadata)).Rows()
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return "", rows.Err()
+	}
+	var observationID string
+	if err := rows.Scan(&observationID); err != nil {
+		return "", err
+	}
+	return observationID, rows.Err()
+}
+
+func insertV2VerificationEvent(ctx context.Context, tx *gorm.DB, input V2ApplyRelationshipDecisionInput, observationID string) (string, error) {
+	metadata, err := marshalV2JSON(nil)
+	if err != nil {
+		return "", err
+	}
+	rows, err := tx.WithContext(ctx).Raw(`
+		INSERT INTO verification_events (
+		    team_id, observation_id, owner_profile_id, evidence_verdict,
+		    confidence, rationale, model, response_hash, metadata
+		) VALUES (
+		    ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?::jsonb
+		)
+		RETURNING verification_event_id::text
+	`, input.TeamID, observationID, input.OwnerProfileID, input.EvidenceVerdict,
+		v2ConfidenceArg(input.Confidence), input.Rationale, input.Model, input.ResponseHash,
+		string(metadata)).Rows()
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return "", rows.Err()
+	}
+	var verificationID string
+	if err := rows.Scan(&verificationID); err != nil {
+		return "", err
+	}
+	return verificationID, rows.Err()
+}
+
+func upsertV2RelationshipRecord(
+	ctx context.Context,
+	tx *gorm.DB,
+	input V2ApplyRelationshipDecisionInput,
+	predicate *v2PredicateDefinition,
+	tier string,
+	status string,
+	semanticGroupKey string,
+) (*v2RelationshipRecordState, error) {
+	metadata, err := marshalV2JSON(input.RelationshipMetadata)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := tx.WithContext(ctx).Raw(`
+		INSERT INTO relationship_records (
+		    team_id, owner_profile_id, semantic_group_key, subject_entity_id,
+		    predicate_key, predicate_version, object_entity_id, object_value_id,
+		    relationship_kind, current_cardinality, tier, status, polarity,
+		    scope_key, valid_from, valid_to, metadata
+		) VALUES (
+		    ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid,
+		    ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?::jsonb
+		)
+		ON CONFLICT ON CONSTRAINT relationship_records_identity_unique DO NOTHING
+		RETURNING team_id::text, relationship_id::text, owner_profile_id::text,
+		          semantic_group_key, subject_entity_id::text, predicate_key,
+		          predicate_version, COALESCE(object_entity_id::text, ''),
+		          COALESCE(object_value_id::text, ''), relationship_kind,
+		          current_cardinality, tier, status, polarity, COALESCE(scope_key, ''),
+		          support_count, source_group_count, version
+	`, input.TeamID, input.OwnerProfileID, semanticGroupKey, input.SubjectEntityID,
+		input.PredicateKey, input.PredicateVersion, input.ObjectEntityID, input.ObjectValueID,
+		predicate.RelationshipKind, predicate.CurrentCardinality, tier, status, input.Polarity,
+		input.ScopeKey, v2TimeArg(input.ValidFrom), v2TimeArg(input.ValidTo), string(metadata)).Rows()
+	if err != nil {
+		return nil, err
+	}
+	inserted, scanErr := scanV2RelationshipRows(rows)
+	closeErr := rows.Close()
+	if scanErr != nil {
+		return nil, scanErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if inserted != nil {
+		return &v2RelationshipRecordState{Record: inserted, Created: true, Changed: true}, nil
+	}
+	existing, err := selectV2RelationshipByIdentity(ctx, tx, input)
+	if err != nil {
+		return nil, err
+	}
+	state := &v2RelationshipRecordState{Record: existing}
+	if existing.Tier != tier || existing.Status != status {
+		state.Changed = true
+		state.FromTier = existing.Tier
+		state.FromStatus = existing.Status
+		result := tx.WithContext(ctx).Exec(`
+			UPDATE relationship_records
+			SET tier = ?,
+			    status = ?,
+			    relationship_kind = ?,
+			    current_cardinality = ?,
+			    semantic_group_key = ?,
+			    version = version + 1,
+			    updated_at = now()
+			WHERE team_id = ?::uuid
+			  AND relationship_id = ?::uuid
+			  AND owner_profile_id = ?::uuid
+		`, tier, status, predicate.RelationshipKind, predicate.CurrentCardinality,
+			semanticGroupKey, input.TeamID, existing.RelationshipID, input.OwnerProfileID)
+		if result.Error != nil {
+			return nil, result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil, ErrV2SemanticOwnerMismatch
+		}
+		updated, err := loadV2RelationshipRecord(ctx, tx, input.TeamID, existing.RelationshipID)
+		if err != nil {
+			return nil, err
+		}
+		state.Record = updated
+	}
+	return state, nil
+}
+
+func selectV2RelationshipByIdentity(ctx context.Context, tx *gorm.DB, input V2ApplyRelationshipDecisionInput) (*V2RelationshipRecord, error) {
+	rows, err := tx.WithContext(ctx).Raw(`
+		SELECT team_id::text, relationship_id::text, owner_profile_id::text,
+		       semantic_group_key, subject_entity_id::text, predicate_key,
+		       predicate_version, COALESCE(object_entity_id::text, ''),
+		       COALESCE(object_value_id::text, ''), relationship_kind,
+		       current_cardinality, tier, status, polarity, COALESCE(scope_key, ''),
+		       support_count, source_group_count, version
+		FROM relationship_records
+		WHERE team_id = ?::uuid
+		  AND owner_profile_id = ?::uuid
+		  AND subject_entity_id = ?::uuid
+		  AND predicate_key = ?
+		  AND object_entity_id IS NOT DISTINCT FROM NULLIF(?, '')::uuid
+		  AND object_value_id IS NOT DISTINCT FROM NULLIF(?, '')::uuid
+		  AND polarity = ?
+		  AND valid_from IS NOT DISTINCT FROM ?
+		  AND valid_to IS NOT DISTINCT FROM ?
+		  AND scope_key IS NOT DISTINCT FROM NULLIF(?, '')
+		FOR UPDATE
+	`, input.TeamID, input.OwnerProfileID, input.SubjectEntityID, input.PredicateKey,
+		input.ObjectEntityID, input.ObjectValueID, input.Polarity, v2TimeArg(input.ValidFrom),
+		v2TimeArg(input.ValidTo), input.ScopeKey).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	record, err := scanV2RelationshipRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	if record == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return record, rows.Err()
+}
+
+func loadV2RelationshipRecord(ctx context.Context, tx *gorm.DB, teamID, relationshipID string) (*V2RelationshipRecord, error) {
+	rows, err := tx.WithContext(ctx).Raw(`
+		SELECT team_id::text, relationship_id::text, owner_profile_id::text,
+		       semantic_group_key, subject_entity_id::text, predicate_key,
+		       predicate_version, COALESCE(object_entity_id::text, ''),
+		       COALESCE(object_value_id::text, ''), relationship_kind,
+		       current_cardinality, tier, status, polarity, COALESCE(scope_key, ''),
+		       support_count, source_group_count, version
+		FROM relationship_records
+		WHERE team_id = ?::uuid
+		  AND relationship_id = ?::uuid
+	`, teamID, relationshipID).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	record, err := scanV2RelationshipRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	if record == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return record, rows.Err()
+}
+
+func scanV2RelationshipRows(rows *sql.Rows) (*V2RelationshipRecord, error) {
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	loaded := V2RelationshipRecord{}
+	if err := rows.Scan(&loaded.TeamID, &loaded.RelationshipID, &loaded.OwnerProfileID,
+		&loaded.SemanticGroupKey, &loaded.SubjectEntityID, &loaded.PredicateKey,
+		&loaded.PredicateVersion, &loaded.ObjectEntityID, &loaded.ObjectValueID,
+		&loaded.RelationshipKind, &loaded.CurrentCardinality, &loaded.Tier,
+		&loaded.Status, &loaded.Polarity, &loaded.ScopeKey, &loaded.SupportCount,
+		&loaded.SourceGroupCount, &loaded.Version); err != nil {
+		return nil, err
+	}
+	return &loaded, nil
+}
+
+func insertV2RelationshipSupport(
+	ctx context.Context,
+	tx *gorm.DB,
+	input V2ApplyRelationshipDecisionInput,
+	relationshipID string,
+	observationID string,
+	verificationID string,
+) (string, string, error) {
+	metadata, err := marshalV2JSON(input.Support.Metadata)
+	if err != nil {
+		return "", "", err
+	}
+	rows, err := tx.WithContext(ctx).Raw(`
+		WITH inserted AS (
+			INSERT INTO relationship_evidence_supports (
+			    team_id, relationship_id, observation_id, verification_event_id,
+			    fragment_id, owner_profile_id, source_group_key, source_id,
+			    source_revision_id, span_start, span_end, quote, authority, metadata
+			) VALUES (
+			    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid,
+			    ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?, ?::jsonb
+			)
+			ON CONFLICT ON CONSTRAINT relationship_supports_identity_unique DO NOTHING
+			RETURNING support_id::text, true AS created
+		)
+		SELECT support_id, created FROM inserted
+		UNION ALL
+		SELECT support_id::text, false AS created
+		FROM relationship_evidence_supports
+		WHERE team_id = ?::uuid
+		  AND relationship_id = ?::uuid
+		  AND fragment_id = ?::uuid
+		  AND span_start = ?
+		  AND span_end = ?
+		LIMIT 1
+	`, input.TeamID, relationshipID, observationID, verificationID,
+		input.Support.FragmentID, input.OwnerProfileID, input.Support.SourceGroupKey,
+		input.Support.SourceID, input.Support.SourceRevisionID, input.Support.SpanStart,
+		input.Support.SpanEnd, input.Support.Quote, input.Support.Authority, string(metadata),
+		input.TeamID, relationshipID, input.Support.FragmentID, input.Support.SpanStart,
+		input.Support.SpanEnd).Rows()
+	if err != nil {
+		return "", "", err
+	}
+	if !rows.Next() {
+		_ = rows.Close()
+		return "", "", rows.Err()
+	}
+	var supportID string
+	var created bool
+	if err := rows.Scan(&supportID, &created); err != nil {
+		_ = rows.Close()
+		return "", "", err
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return "", "", err
+	}
+	if err := rows.Close(); err != nil {
+		return "", "", err
+	}
+	if !created {
+		return supportID, "", nil
+	}
+	decisionID, err := insertV2SupportDecision(ctx, tx, input.TeamID, input.OwnerProfileID, supportID, relationshipID, "grant", "verifier_entailed")
+	if err != nil {
+		return "", "", err
+	}
+	return supportID, decisionID, nil
+}
+
+func insertV2SupportDecision(ctx context.Context, tx *gorm.DB, teamID, ownerProfileID, supportID, relationshipID, decision, reason string) (string, error) {
+	rows, err := tx.WithContext(ctx).Raw(`
+		INSERT INTO relationship_support_decision_events (
+		    team_id, support_id, relationship_id, owner_profile_id, actor_profile_id,
+		    decision, reason
+		) VALUES (
+		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?
+		)
+		RETURNING support_decision_id::text
+	`, teamID, supportID, relationshipID, ownerProfileID, ownerProfileID, decision, reason).Rows()
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return "", rows.Err()
+	}
+	var decisionID string
+	if err := rows.Scan(&decisionID); err != nil {
+		return "", err
+	}
+	return decisionID, rows.Err()
+}
+
+func refreshV2RelationshipSupportCounts(ctx context.Context, tx *gorm.DB, teamID, relationshipID string) error {
+	return tx.WithContext(ctx).Exec(`
+		WITH latest AS (
+			SELECT DISTINCT ON (support_id)
+			       support_id,
+			       decision
+			FROM relationship_support_decision_events
+			WHERE team_id = ?::uuid
+			  AND relationship_id = ?::uuid
+			ORDER BY support_id, created_at DESC, support_decision_id DESC
+		),
+		counts AS (
+			SELECT COUNT(*)::int AS support_count,
+			       COUNT(DISTINCT support.source_group_key)::int AS source_group_count
+			FROM relationship_evidence_supports AS support
+			JOIN latest
+			  ON latest.support_id = support.support_id
+			WHERE support.team_id = ?::uuid
+			  AND support.relationship_id = ?::uuid
+			  AND latest.decision IN ('grant', 'reinstate')
+		)
+		UPDATE relationship_records AS relationship
+		SET support_count = counts.support_count,
+		    source_group_count = counts.source_group_count,
+		    version = relationship.version + CASE
+		        WHEN relationship.support_count <> counts.support_count
+		          OR relationship.source_group_count <> counts.source_group_count
+		        THEN 1 ELSE 0 END,
+		    updated_at = now()
+		FROM counts
+		WHERE relationship.team_id = ?::uuid
+		  AND relationship.relationship_id = ?::uuid
+	`, teamID, relationshipID, teamID, relationshipID, teamID, relationshipID).Error
+}
+
+func insertV2RelationshipTransition(ctx context.Context, tx *gorm.DB, input v2TransitionInput) error {
+	return tx.WithContext(ctx).Exec(`
+		INSERT INTO relationship_transition_events (
+		    team_id, relationship_id, owner_profile_id, from_tier, from_status,
+		    to_tier, to_status, reason, verification_event_id, support_decision_id
+		) VALUES (
+		    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, ''), NULLIF(?, ''),
+		    ?, ?, ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid
+		)
+	`, input.TeamID, input.RelationshipID, input.OwnerProfileID, input.FromTier,
+		input.FromStatus, input.ToTier, input.ToStatus, input.Reason,
+		input.VerificationEventID, input.SupportDecisionID).Error
+}
+
+func v2TierStatusForVerdict(verdict string, promoteToFact bool) (string, string) {
+	switch verdict {
+	case string(domain.V2VerificationContradicted):
+		return string(domain.V2RelationshipTierCandidate), string(domain.V2RelationshipStatusRejected)
+	case string(domain.V2VerificationInsufficient):
+		return string(domain.V2RelationshipTierCandidate), string(domain.V2RelationshipStatusPendingEvidence)
+	default:
+		if promoteToFact {
+			return string(domain.V2RelationshipTierFact), string(domain.V2RelationshipStatusActive)
+		}
+		return string(domain.V2RelationshipTierValidatedClaim), string(domain.V2RelationshipStatusActive)
+	}
+}
+
+func v2SemanticGroupKey(input V2ApplyRelationshipDecisionInput) string {
+	objectID := input.ObjectEntityID
+	if objectID == "" {
+		objectID = "value:" + input.ObjectValueID
+	} else {
+		objectID = "entity:" + objectID
+	}
+	parts := []string{
+		input.SubjectEntityID,
+		input.PredicateKey,
+		objectID,
+		input.Polarity,
+		input.ScopeKey,
+		v2TimeKey(input.ValidFrom),
+		v2TimeKey(input.ValidTo),
+	}
+	return "sg:" + strings.TrimPrefix(sha256Hex(strings.Join(parts, "\x00")), "sha256:")
+}
+
+func v2TimeKey(value *time.Time) string {
+	if value == nil {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339Nano)
+}
+
+func normalizeV2Name(value string) string {
+	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(value))), " ")
+}
+
+func marshalV2JSONArray(value []map[string]any) ([]byte, error) {
+	if value == nil {
+		value = []map[string]any{}
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("marshal json array: %w", err)
+	}
+	return data, nil
+}
+
+func v2TimeArg(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return value.UTC()
+}
+
+func v2ConfidenceArg(value *float64) any {
+	if value == nil {
+		return nil
+	}
+	return sql.NullFloat64{Float64: *value, Valid: true}
+}
+
+func v2Contains(values []string, value string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}

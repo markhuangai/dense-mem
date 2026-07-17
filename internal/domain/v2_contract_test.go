@@ -46,4 +46,24 @@ func TestV2ContractEnums(t *testing.T) {
 			t.Fatalf("V2RelationshipOutcomeCategories missing %s", category)
 		}
 	}
+	for _, tier := range []string{"candidate", "validated_claim", "fact"} {
+		if !slices.Contains(V2RelationshipTiers(), tier) {
+			t.Fatalf("V2RelationshipTiers missing %s", tier)
+		}
+	}
+	for _, status := range []string{"active", "pending_evidence", "disputed", "retracted"} {
+		if !slices.Contains(V2RelationshipStatuses(), status) {
+			t.Fatalf("V2RelationshipStatuses missing %s", status)
+		}
+	}
+	for _, verdict := range []string{"entailed", "contradicted", "insufficient"} {
+		if !slices.Contains(V2VerificationVerdicts(), verdict) {
+			t.Fatalf("V2VerificationVerdicts missing %s", verdict)
+		}
+	}
+	for _, kind := range []string{"confirms", "challenges", "corrects", "adopts_evidence_from"} {
+		if !slices.Contains(V2CrossReferenceKinds(), kind) {
+			t.Fatalf("V2CrossReferenceKinds missing %s", kind)
+		}
+	}
 }
