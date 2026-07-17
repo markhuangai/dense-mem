@@ -248,6 +248,8 @@ type RunConfig struct {
 	ReleaseGatePolicyHash  string `json:"release_gate_policy_hash,omitempty"`
 	BaseURL                string `json:"base_url,omitempty"`
 	ControlURL             string `json:"control_url,omitempty"`
+	ToolTransport          string `json:"tool_transport"`
+	ToolContract           string `json:"tool_contract"`
 	ImportSeed             bool   `json:"import_seed"`
 	ImportRoute            string `json:"import_route,omitempty"`
 	ImportConcurrency      int    `json:"import_concurrency,omitempty"`
@@ -255,6 +257,7 @@ type RunConfig struct {
 	ResumeSourceDocIDsPath string `json:"resume_source_doc_ids_path,omitempty"`
 	TracesPath             string `json:"traces_path,omitempty"`
 	MappingPath            string `json:"mapping_path,omitempty"`
+	MappingHash            string `json:"mapping_sha256,omitempty"`
 	BaselineRunPath        string `json:"baseline_run_path,omitempty"`
 }
 

@@ -21,6 +21,7 @@ type HTTPClient struct {
 	ControlURL       string
 	ControlToken     string
 	PlacementTimeout time.Duration
+	ToolTransport    string
 	Client           *http.Client
 }
 
@@ -61,7 +62,78 @@ func (c *HTTPClient) CallTool(ctx context.Context, name string, input any, out a
 	if strings.TrimSpace(c.APIKey) == "" {
 		return fmt.Errorf("API key is required")
 	}
-	return c.doJSON(ctx, http.MethodPost, endpoint(c.BaseURL, "/api/v1/tools/"+name), c.APIKey, input, out)
+	switch strings.ToLower(strings.TrimSpace(c.ToolTransport)) {
+	case "", "rest":
+		return c.doJSON(ctx, http.MethodPost, endpoint(c.BaseURL, "/api/v1/tools/"+name), c.APIKey, input, out)
+	case "mcp":
+		return c.callMCPTool(ctx, name, input, out)
+	default:
+		return fmt.Errorf("unsupported tool transport %q", c.ToolTransport)
+	}
+}
+
+func (c *HTTPClient) callMCPTool(ctx context.Context, name string, input any, out any) error {
+	arguments, ok := input.(map[string]any)
+	if !ok {
+		payload, err := json.Marshal(input)
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(payload, &arguments); err != nil {
+			return fmt.Errorf("mcp tool arguments must be an object: %w", err)
+		}
+	}
+	body := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      time.Now().UnixNano(),
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      name,
+			"arguments": arguments,
+		},
+	}
+	var rpc mcpToolResponse
+	if err := c.doJSON(ctx, http.MethodPost, endpoint(c.BaseURL, "/mcp"), c.APIKey, body, &rpc); err != nil {
+		return err
+	}
+	if rpc.Error != nil {
+		return fmt.Errorf("mcp tools/call %s returned %d: %s", name, rpc.Error.Code, rpc.Error.Message)
+	}
+	if out == nil {
+		return nil
+	}
+	for _, content := range rpc.Result.Content {
+		if content.Type != "text" || strings.TrimSpace(content.Text) == "" {
+			continue
+		}
+		decoder := json.NewDecoder(strings.NewReader(content.Text))
+		decoder.UseNumber()
+		if err := decoder.Decode(out); err != nil {
+			return fmt.Errorf("decode mcp tools/call %s result: %w", name, err)
+		}
+		return nil
+	}
+	return fmt.Errorf("mcp tools/call %s returned no JSON text content", name)
+}
+
+type mcpToolResponse struct {
+	JSONRPC string        `json:"jsonrpc"`
+	Result  mcpToolResult `json:"result"`
+	Error   *mcpToolError `json:"error,omitempty"`
+}
+
+type mcpToolResult struct {
+	Content []mcpToolContent `json:"content"`
+}
+
+type mcpToolContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+type mcpToolError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
 }
 
 func (c *HTTPClient) ImportCorpus(ctx context.Context, corpus []CorpusItem) (KnowledgeMapping, error) {

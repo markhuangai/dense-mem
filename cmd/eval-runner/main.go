@@ -24,6 +24,7 @@ func main() {
 	flag.StringVar(&opts.APIKey, "api-key", env("DENSE_MEM_API_KEY", ""), "read/write API key")
 	flag.StringVar(&opts.ControlURL, "control-url", env("DENSE_MEM_CONTROL_URL", "http://127.0.0.1:8090"), "control portal base URL")
 	flag.StringVar(&opts.ControlToken, "control-token", env("DENSE_MEM_CONTROL_TOKEN", ""), "control portal token")
+	flag.StringVar(&opts.ToolTransport, "tool-transport", env("DENSE_MEM_EVAL_TOOL_TRANSPORT", "mcp"), "tool transport: mcp or rest")
 	flag.BoolVar(&opts.ImportSeed, "import-seed", false, "import corpus through remember before running cases")
 	flag.IntVar(&opts.ImportConcurrency, "import-concurrency", envInt("DENSE_MEM_EVAL_IMPORT_CONCURRENCY", 1), "maximum concurrent seed import requests")
 	flag.DurationVar(&opts.PlacementTimeout, "placement-timeout", envDuration("DENSE_MEM_EVAL_PLACEMENT_TIMEOUT", 2*time.Minute), "maximum time to wait for each memory placement")

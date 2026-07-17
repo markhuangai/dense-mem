@@ -20,6 +20,7 @@ type RunOptions struct {
 	APIKey                 string
 	ControlURL             string
 	ControlToken           string
+	ToolTransport          string
 	ImportSeed             bool
 	ImportConcurrency      int
 	PlacementTimeout       time.Duration
@@ -104,6 +105,8 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		ReleaseGatePolicyHash:  releaseGatePolicyHash,
 		BaseURL:                opts.BaseURL,
 		ControlURL:             opts.ControlURL,
+		ToolTransport:          opts.ToolTransport,
+		ToolContract:           toolContract(opts.ToolTransport),
 		ImportSeed:             opts.ImportSeed,
 		ImportRoute:            importRoute,
 		ImportConcurrency:      opts.ImportConcurrency,
@@ -112,23 +115,23 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		TracesPath:             opts.TracesPath,
 		MappingPath:            opts.MappingPath,
 	}
-	if mode == "validate" {
-		summary := Summary{
-			RunID:           runID,
-			Mode:            mode,
-			SeedID:          manifest.SeedID,
-			SeedHash:        seedHash,
-			SuitePath:       opts.SuitePath,
-			CaseCount:       len(suite),
-			ScoredCaseCount: 0,
-			CreatedAt:       time.Now().UTC(),
-		}
+	if mode == "validate" || (releaseGateInput != nil && !releaseGateInput.Passed) {
 		if opts.OutDir != "" {
-			if err := writeValidationArtifacts(opts.OutDir, manifest, suite, runConfig, summary); err != nil {
+			if err := writeValidationArtifacts(opts.OutDir, manifest, suite, runConfig, inputSummary); err != nil {
 				return Summary{}, err
 			}
+			if releaseGateInput != nil {
+				if err := writeJSONFile(filepath.Join(opts.OutDir, "release_gate_input_result.json"), releaseGateInput); err != nil {
+					return Summary{}, err
+				}
+			}
 		}
-		return summary, nil
+		if releaseGateInput != nil && !releaseGateInput.Passed {
+			return inputSummary, fmt.Errorf("release gate input check failed: %s", strings.Join(releaseGateInput.Failures, "; "))
+		}
+		if mode == "validate" {
+			return inputSummary, nil
+		}
 	}
 	if mode == "import" && opts.TracesPath != "" {
 		return Summary{}, fmt.Errorf("import mode cannot use --traces")
@@ -156,6 +159,7 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			ControlURL:       opts.ControlURL,
 			ControlToken:     opts.ControlToken,
 			PlacementTimeout: opts.PlacementTimeout,
+			ToolTransport:    opts.ToolTransport,
 		}
 		if err := client.EnableEvaluationMode(ctx, opts.MaxPageSize); err != nil {
 			return Summary{}, err
@@ -232,6 +236,11 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			return Summary{}, err
 		}
 		if mode == "import" {
+			mappingHash, err := canonicalJSONHash(mapping)
+			if err != nil {
+				return Summary{}, fmt.Errorf("hash import mapping: %w", err)
+			}
+			runConfig.MappingHash = mappingHash
 			summary := Summary{
 				RunID:           runID,
 				Mode:            mode,
@@ -254,6 +263,11 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			return Summary{}, err
 		}
 	}
+	mappingHash, err := canonicalJSONHash(mapping)
+	if err != nil {
+		return Summary{}, fmt.Errorf("hash run mapping: %w", err)
+	}
+	runConfig.MappingHash = mappingHash
 
 	scores, summary, err := ScoreTraces(runID, mode, manifest.SeedID, seedHash, opts.SuitePath, suite, IndexCases(cases), IndexQrels(qrels), traces, mapping)
 	if err != nil {
@@ -291,6 +305,13 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		return summary, errors.New(strings.Join(gateFailures, "; "))
 	}
 	return summary, nil
+}
+
+func toolContract(transport string) string {
+	if transport == "mcp" {
+		return "mcp.tools/call.v1"
+	}
+	return "rest.tools.v1"
 }
 
 func validateRequiredQRelMappings(qrels map[string]QRel, suite []SuiteCase, mapping KnowledgeMapping) error {
