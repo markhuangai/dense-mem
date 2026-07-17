@@ -15,11 +15,19 @@ func TestValidateInputSchemaBranches(t *testing.T) {
 			"required":             []any{"name", "count"},
 			"additionalProperties": false,
 			"properties": map[string]any{
-				"name":    map[string]any{"type": "string", "minLength": 2, "maxLength": 5},
-				"count":   map[string]any{"type": "integer", "minimum": 1, "maximum": 3},
-				"ratio":   map[string]any{"type": "number", "minimum": 0.25, "maximum": 0.75},
-				"enabled": map[string]any{"type": "boolean"},
-				"mode":    map[string]any{"type": "string", "enum": []any{"fast", "safe"}},
+				"name":     map[string]any{"type": "string", "minLength": 2, "maxLength": 5},
+				"count":    map[string]any{"type": "integer", "minimum": 1, "maximum": 3},
+				"ratio":    map[string]any{"type": "number", "minimum": 0.25, "maximum": 0.75},
+				"enabled":  map[string]any{"type": "boolean"},
+				"nullable": map[string]any{"type": []any{"string", "null"}, "maxLength": 5},
+				"at": map[string]any{
+					"type": []any{"string", "null"}, "format": "date-time", "x-enforce-format": true,
+				},
+				"bounded": map[string]any{
+					"type": "object", "additionalProperties": true,
+					"maxProperties": 2, "x-max-bytes": 64, "x-max-depth": 2,
+				},
+				"mode": map[string]any{"type": "string", "enum": []any{"fast", "safe"}},
 				"nested": map[string]any{
 					"type":                 "object",
 					"required":             []string{"id"},
@@ -39,13 +47,16 @@ func TestValidateInputSchemaBranches(t *testing.T) {
 	}
 
 	valid := map[string]any{
-		"name":    "mark",
-		"count":   json.Number("2"),
-		"ratio":   float32(0.5),
-		"enabled": true,
-		"mode":    "fast",
-		"nested":  map[string]string{"id": "n1"},
-		"items":   []any{json.Number("1"), float64(2)},
+		"name":     "mark",
+		"count":    json.Number("2"),
+		"ratio":    float32(0.5),
+		"enabled":  true,
+		"nullable": nil,
+		"at":       "2026-07-17T00:00:00Z",
+		"bounded":  map[string]any{"key": "ok"},
+		"mode":     "fast",
+		"nested":   map[string]string{"id": "n1"},
+		"items":    []any{json.Number("1"), float64(2)},
 	}
 	if err := ValidateInput(tool, valid); err != nil {
 		t.Fatalf("ValidateInput valid input: %v", err)
@@ -85,9 +96,14 @@ func TestValidateInputSchemaBranches(t *testing.T) {
 		{"number min", map[string]any{"name": "ok", "count": 1, "ratio": 0.1}, "greater than or equal to 0.25"},
 		{"number max", map[string]any{"name": "ok", "count": 1, "ratio": 0.9}, "less than or equal to 0.75"},
 		{"boolean type", map[string]any{"name": "ok", "count": 1, "enabled": "yes"}, "enabled must be a boolean"},
+		{"union type", map[string]any{"name": "ok", "count": 1, "nullable": true}, "nullable must be one of"},
+		{"date-time format", map[string]any{"name": "ok", "count": 1, "at": "17 July"}, "valid RFC 3339"},
 		{"object type", map[string]any{"name": "ok", "count": 1, "nested": "bad"}, "nested must be an object"},
 		{"object required", map[string]any{"name": "ok", "count": 1, "nested": map[string]any{}}, "nested.id is required"},
 		{"object additional", map[string]any{"name": "ok", "count": 1, "nested": map[string]any{"id": "n1", "extra": true}}, "nested.extra is not allowed"},
+		{"object max properties", map[string]any{"name": "ok", "count": 1, "bounded": map[string]any{"a": 1, "b": 2, "c": 3}}, "maximum property count"},
+		{"object max bytes", map[string]any{"name": "ok", "count": 1, "bounded": map[string]any{"a": strings.Repeat("x", 80)}}, "maximum encoded size"},
+		{"object max depth", map[string]any{"name": "ok", "count": 1, "bounded": map[string]any{"a": map[string]any{"b": map[string]any{"c": true}}}}, "maximum nesting depth"},
 		{"array type", map[string]any{"name": "ok", "count": 1, "items": "bad"}, "items must be an array"},
 		{"array min", map[string]any{"name": "ok", "count": 1, "items": []any{}}, "at least 1"},
 		{"array max", map[string]any{"name": "ok", "count": 1, "items": []any{1, 2, 3}}, "maximum item count"},
@@ -102,6 +118,22 @@ func TestValidateInputSchemaBranches(t *testing.T) {
 				t.Fatalf("ValidateInput error = %v, want containing %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestValidateInputDateTimeEnforcementIsOptIn(t *testing.T) {
+	dateTime := map[string]any{"type": "string", "format": "date-time"}
+	tool := Tool{InputSchema: map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"at": dateTime},
+	}}
+	args := map[string]any{"at": "17 July"}
+	if err := ValidateInput(tool, args); err != nil {
+		t.Fatalf("annotation-only format changed existing validation: %v", err)
+	}
+	dateTime["x-enforce-format"] = true
+	if err := ValidateInput(tool, args); err == nil {
+		t.Fatal("enforced date-time accepted invalid RFC 3339 input")
 	}
 }
 

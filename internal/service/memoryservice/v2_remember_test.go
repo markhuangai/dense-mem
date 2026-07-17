@@ -57,7 +57,7 @@ func TestV2RememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.
 	if result.Status != string(domain.V2PlacementRunQueued) {
 		t.Fatalf("status = %q", result.Status)
 	}
-	if len(result.Items) != 1 || result.Items[0].Category != string(domain.V2EvidenceNeedsReview) {
+	if len(result.Items) != 1 || result.Items[0].Category != string(domain.V2EvidenceProcessed) {
 		t.Fatalf("items = %#v", result.Items)
 	}
 

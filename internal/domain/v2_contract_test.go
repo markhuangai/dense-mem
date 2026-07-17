@@ -40,6 +40,7 @@ func TestV2ContractEnums(t *testing.T) {
 		"relationship_pending_evidence",
 		"relationship_needs_review",
 		"predicate_needs_review",
+		"relationship_rejected",
 		"identity_needs_review",
 	} {
 		if !slices.Contains(V2RelationshipOutcomeCategories(), category) {
@@ -66,7 +67,15 @@ func TestV2ContractEnums(t *testing.T) {
 			t.Fatalf("V2CrossReferenceKinds missing %s", kind)
 		}
 	}
-	for _, state := range []string{"not_required", "pending", "current", "stale", "failed"} {
+	for _, status := range []string{"queued", "processing", "awaiting_review", "completed", "failed"} {
+		if !slices.Contains(V2PlacementRunStatuses(), status) {
+			t.Fatalf("V2PlacementRunStatuses missing %s", status)
+		}
+	}
+	if slices.Contains(V2PlacementRunStatuses(), "stale") {
+		t.Fatal("V2PlacementRunStatuses contains non-canonical stale state")
+	}
+	for _, state := range []string{"not_required", "pending", "current", "failed"} {
 		if !slices.Contains(V2SearchProjectionStates(), state) {
 			t.Fatalf("V2SearchProjectionStates missing %s", state)
 		}
@@ -75,6 +84,9 @@ func TestV2ContractEnums(t *testing.T) {
 		if !slices.Contains(V2PlacementRunStatuses(), status) {
 			t.Fatalf("V2PlacementRunStatuses missing %s", status)
 		}
+	}
+	if slices.Contains(V2SearchProjectionStates(), "stale") {
+		t.Fatal("V2SearchProjectionStates contains non-canonical stale state")
 	}
 	for _, state := range []string{"building", "active", "failed", "deprecated", "retired"} {
 		if !slices.Contains(V2SearchProfileStates(), state) {
@@ -90,5 +102,31 @@ func TestV2ContractEnums(t *testing.T) {
 		if !slices.Contains(V2EmbeddingJobStatuses(), status) {
 			t.Fatalf("V2EmbeddingJobStatuses missing %s", status)
 		}
+	}
+	for _, category := range []string{"evidence_processed", "evidence_quarantined", "processing_failed"} {
+		if !slices.Contains(V2EvidenceItemCategories(), category) {
+			t.Fatalf("V2EvidenceItemCategories missing %s", category)
+		}
+	}
+	if slices.Contains(V2EvidenceItemCategories(), "evidence_needs_review") {
+		t.Fatal("V2EvidenceItemCategories contains non-canonical evidence_needs_review category")
+	}
+}
+
+func TestV2ContractUsesTypedPublicIDs(t *testing.T) {
+	ids := []any{
+		V2IngestID("ing-1"),
+		V2PlacementItemID("item-1"),
+		V2EvidenceID("ev-1"),
+		V2ObservationID("obs-1"),
+		V2EntityID("ent-1"),
+		V2ValueID("value-1"),
+		V2RelationshipID("rel-1"),
+		V2HypothesisID("hyp-1"),
+		V2CommunityID("community-1"),
+		V2MemoryPackID("pack-1"),
+	}
+	if len(ids) != 10 {
+		t.Fatalf("typed ID count = %d", len(ids))
 	}
 }
