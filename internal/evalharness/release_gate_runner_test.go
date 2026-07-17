@@ -44,6 +44,7 @@ func TestRunRejectsReleaseGatePolicyBeforeArtifacts(t *testing.T) {
 		TracesPath:            filepath.Join(dir, "traces.jsonl"),
 		OutDir:                out,
 		RunID:                 "release-gate-early",
+		ToolTransport:         "mcp",
 		ReleaseGatePolicyPath: policyPath,
 	})
 
@@ -95,6 +96,7 @@ func TestRunWritesReleaseGateResultWhenLegacyGateFails(t *testing.T) {
 		OutDir:                out,
 		RunID:                 "legacy-gated-test",
 		Gates:                 GateOptions{MinRecallAtK: &minRecall},
+		ToolTransport:         "mcp",
 		ReleaseGatePolicyPath: policyPath,
 	})
 	if err == nil || !strings.Contains(err.Error(), "gate check failed") {
