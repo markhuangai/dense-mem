@@ -2,6 +2,7 @@ package evalharness
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -191,6 +192,19 @@ func FileHash(path string) (string, error) {
 		return "", err
 	}
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func canonicalJSONHash(value any) (string, error) {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	var canonical bytes.Buffer
+	if err := json.Compact(&canonical, payload); err != nil {
+		return "", err
+	}
+	hash := sha256.Sum256(canonical.Bytes())
+	return "sha256:" + hex.EncodeToString(hash[:]), nil
 }
 
 func IndexCases(cases []Case) map[string]Case {
