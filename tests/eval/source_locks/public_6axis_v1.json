@@ -49,6 +49,7 @@
       "dataset": "BEIR SciFact",
       "url": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip",
       "local_cache": "tests/eval/data/beir/scifact.zip",
+      "source_version": "BEIR public.ukp zip 2021-04-20T14:21:44Z etag 607ee378-2af84f",
       "content_length": 2816079,
       "last_modified": "2021-04-20T14:21:44Z",
       "etag": "607ee378-2af84f",
@@ -60,20 +61,24 @@
       "dataset": "BEIR MS MARCO",
       "url": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/msmarco.zip",
       "local_cache": "tests/eval/data/beir/msmarco.zip",
+      "source_version": "BEIR public.ukp zip 2021-04-12T13:50:21Z etag 6074501d-4081f4c8",
       "content_length": 1082258632,
       "last_modified": "2021-04-12T13:50:21Z",
       "etag": "6074501d-4081f4c8",
-      "md5": "444067daf65d982533ea17ebd59501e4"
+      "md5": "444067daf65d982533ea17ebd59501e4",
+      "sha256": "f46aed8343564261c27228b7cf22dde5c9a70143fe34dc3c589bd5322308712a"
     },
     {
       "axis": "hotpotqa",
       "dataset": "BEIR HotpotQA",
       "url": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/hotpotqa.zip",
       "local_cache": "tests/eval/data/beir/hotpotqa.zip",
+      "source_version": "BEIR public.ukp zip 2021-01-15T13:41:27Z etag 60019b87-26fba286",
       "content_length": 654025350,
       "last_modified": "2021-01-15T13:41:27Z",
       "etag": "60019b87-26fba286",
-      "md5": "f412724f78b0d91183a0e86805e16114"
+      "md5": "f412724f78b0d91183a0e86805e16114",
+      "sha256": "c62459dbc91d31329584507b1fa564b3b1abcee58800967113054ee0f5a15c62"
     },
     {
       "axis": "musique",
