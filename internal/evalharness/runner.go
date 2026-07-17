@@ -3,6 +3,7 @@ package evalharness
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -263,6 +264,7 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			return Summary{}, err
 		}
 	}
+	var gateFailures []string
 	if opts.Gates.Any() {
 		gate := EvaluateGates(summary, opts.Gates)
 		if opts.OutDir != "" {
@@ -271,7 +273,7 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			}
 		}
 		if !gate.Passed {
-			return summary, fmt.Errorf("gate check failed: %s", strings.Join(gate.Failures, "; "))
+			gateFailures = append(gateFailures, fmt.Sprintf("gate check failed: %s", strings.Join(gate.Failures, "; ")))
 		}
 	}
 	if releaseGatePolicy != nil {
@@ -282,8 +284,11 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			}
 		}
 		if !releaseGate.Passed {
-			return summary, fmt.Errorf("release gate check failed: %s", strings.Join(releaseGate.Failures, "; "))
+			gateFailures = append(gateFailures, fmt.Sprintf("release gate check failed: %s", strings.Join(releaseGate.Failures, "; ")))
 		}
+	}
+	if len(gateFailures) > 0 {
+		return summary, errors.New(strings.Join(gateFailures, "; "))
 	}
 	return summary, nil
 }
