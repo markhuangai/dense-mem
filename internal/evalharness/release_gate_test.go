@@ -151,6 +151,11 @@ func TestEvaluateReleaseGateRejectsInvalidObservedMetrics(t *testing.T) {
 			edit: func(summary *Summary) { summary.BadRank1Rate = math.Inf(1) },
 			want: "bad_rank1_rate must be a finite value between 0 and 1",
 		},
+		{
+			name: "negative unmapped source refs",
+			edit: func(summary *Summary) { summary.UnmappedSourceRefs = -1 },
+			want: "unmapped_source_refs must be non-negative",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
