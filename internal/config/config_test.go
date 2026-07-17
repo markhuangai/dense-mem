@@ -218,6 +218,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.GetV2BootMode() != V2BootModeOff {
 		t.Errorf("V2BootMode default = %q, want %q", cfg.GetV2BootMode(), V2BootModeOff)
 	}
+	if cfg.GetV2LegacyMigrationRequired() {
+		t.Error("V2LegacyMigrationRequired default = true, want false")
+	}
 	if cfg.IsV2BootEnabled() {
 		t.Error("IsV2BootEnabled() = true, want false")
 	}
@@ -613,6 +616,7 @@ func TestConfigProviderInterface(t *testing.T) {
 	_ = cfg.GetRecallRateLimitPerMinute()
 	_ = cfg.GetTraceRateLimitPerMinute()
 	_ = cfg.GetV2BootMode()
+	_ = cfg.GetV2LegacyMigrationRequired()
 }
 
 func TestConfigGetterFallbacksAndParsers(t *testing.T) {

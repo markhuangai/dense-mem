@@ -176,6 +176,7 @@ type Config struct {
 	ControlHTTPAddr                         string
 	ControlPortalToken                      string `json:"-"`
 	V2BootMode                              string
+	V2LegacyMigrationRequired               bool
 	TelemetryEnabled                        bool
 	TelemetryPrometheusURL                  string
 	TelemetryPrometheusJob                  string
@@ -320,6 +321,7 @@ func (c *Config) GetAICommunityMaxNodes() int              { return c.AICommunit
 func (c *Config) GetControlHTTPAddr() string               { return c.ControlHTTPAddr }
 func (c *Config) GetControlPortalToken() string            { return c.ControlPortalToken }
 func (c *Config) GetV2BootMode() string                    { return c.V2BootMode }
+func (c *Config) GetV2LegacyMigrationRequired() bool       { return c.V2LegacyMigrationRequired }
 func (c *Config) GetTelemetryEnabled() bool                { return c.TelemetryEnabled }
 func (c *Config) GetTelemetryPrometheusURL() string        { return c.TelemetryPrometheusURL }
 func (c *Config) GetTelemetryPrometheusJob() string        { return c.TelemetryPrometheusJob }
@@ -567,6 +569,10 @@ func Load() (Config, error) {
 	cfg.RedisAddr = os.Getenv("REDIS_ADDR")
 	cfg.RedisPassword = os.Getenv("REDIS_PASSWORD")
 	cfg.V2BootMode = strings.TrimSpace(getEnvOrDefault("V2_BOOT_MODE", V2BootModeOff))
+	cfg.V2LegacyMigrationRequired, err = parseBoolOrDefault("V2_LEGACY_MIGRATION_REQUIRED", false)
+	if err != nil {
+		return cfg, err
+	}
 
 	// Integer fields with defaults
 	// Fragment rate-limit tiers (AC-54): writes are stricter than reads because

@@ -58,6 +58,7 @@ func TestValidateV2DormantStartup(t *testing.T) {
 		setRequiredEnv()
 		setRequiredV2Env()
 		os.Setenv("V2_BOOT_MODE", V2BootModeDormant)
+		os.Setenv("V2_LEGACY_MIGRATION_REQUIRED", "true")
 
 		cfg, err := Load()
 		if err != nil {
@@ -66,6 +67,9 @@ func TestValidateV2DormantStartup(t *testing.T) {
 
 		if !cfg.IsV2BootEnabled() {
 			t.Fatal("IsV2BootEnabled() = false, want true")
+		}
+		if !cfg.GetV2LegacyMigrationRequired() {
+			t.Fatal("GetV2LegacyMigrationRequired() = false, want true")
 		}
 		if err := cfg.ValidateV2DormantStartup(); err != nil {
 			t.Fatalf("ValidateV2DormantStartup() returned unexpected error: %v", err)

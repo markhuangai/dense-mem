@@ -93,6 +93,15 @@ func v2LedgerAppDSN(t *testing.T, dsn string) string {
 func truncateV2LedgerFixtures(tx *gorm.DB) error {
 	return tx.Exec(`
 		TRUNCATE
+			v2_compatibility_markers,
+			v2_migration_operator_actions,
+			v2_migration_gate_results,
+			v2_migration_exclusions,
+			v2_migration_errors,
+			v2_migration_checkpoints,
+			v2_migration_source_maps,
+			v2_migration_corpus_items,
+			v2_migration_runs,
 			recall_feedback_events,
 			embedding_jobs,
 			search_documents,
