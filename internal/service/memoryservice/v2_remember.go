@@ -229,7 +229,7 @@ func v2CanonicalRequestHash(req V2RememberRequest) (string, error) {
 func v2RememberResultFromLedger(created *repository.V2CreateIngestResult) *V2RememberResult {
 	items := make([]V2RememberItemResult, 0, len(created.Items))
 	for _, item := range created.Items {
-		category := string(domain.V2EvidenceNeedsReview)
+		category := string(domain.V2EvidenceProcessed)
 		if item.Category == "quarantined" || item.Status == "quarantined" {
 			category = string(domain.V2EvidenceQuarantined)
 		}

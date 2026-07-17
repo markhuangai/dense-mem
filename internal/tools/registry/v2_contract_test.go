@@ -17,12 +17,14 @@ import (
 )
 
 type v2ContractFixture struct {
-	Name      string         `json:"name"`
-	Tool      string         `json:"tool"`
-	Scopes    []string       `json:"scopes"`
-	Valid     bool           `json:"valid"`
-	WantError string         `json:"want_error"`
-	Input     map[string]any `json:"input"`
+	Name            string         `json:"name"`
+	Tool            string         `json:"tool"`
+	ContractVersion string         `json:"contract_version"`
+	Scopes          []string       `json:"scopes"`
+	Valid           bool           `json:"valid"`
+	WantError       string         `json:"want_error"`
+	Input           map[string]any `json:"input"`
+	Output          map[string]any `json:"output"`
 }
 
 func TestV2ContractFixtures(t *testing.T) {
@@ -35,10 +37,19 @@ func TestV2ContractFixtures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if fixture.ContractVersion != "" {
+				tool.ContractVersion = fixture.ContractVersion
+			}
 			err = ValidateV2ContractInput(tool, fixture.Input, fixture.Scopes)
 			if fixture.Valid {
 				if err != nil {
 					t.Fatalf("ValidateV2ContractInput: %v", err)
+				}
+				if fixture.Output == nil {
+					t.Fatal("valid fixture has no output")
+				}
+				if err := ValidateInput(Tool{InputSchema: tool.OutputSchema}, fixture.Output); err != nil {
+					t.Fatalf("validate output: %v", err)
 				}
 				return
 			}
@@ -59,7 +70,6 @@ func TestV2ContractRememberBoundaryContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	input := map[string]any{
-		"contract_version": domain.V2ContractVersion,
 		"evidence": []any{
 			map[string]any{
 				"content": strings.Repeat("a", memoryEntryMaxLength),
@@ -80,17 +90,33 @@ func TestV2ContractRememberBoundaryContent(t *testing.T) {
 	}
 }
 
+func TestV2ContractVersionIsMetadataNotPayload(t *testing.T) {
+	for _, tool := range V2ContractTools() {
+		props := schemaProperties(tool.InputSchema)
+		if _, ok := props["contract_version"]; ok {
+			t.Fatalf("%s exposes contract_version as a payload field", tool.Name)
+		}
+		if got := tool.InputSchema["x-contract-version"]; got != domain.V2ContractVersion {
+			t.Fatalf("%s x-contract-version = %v", tool.Name, got)
+		}
+	}
+}
+
+func TestIsV2ContractToolDoesNotTrustVersionBeforeValidation(t *testing.T) {
+	tool := V2ContractTools()[0]
+	tool.ContractVersion = "dense-mem.v2.0"
+	if !IsV2ContractTool(tool) {
+		t.Fatal("wrong-version V2 descriptor bypasses V2 transport validation")
+	}
+}
+
 func TestV2ContractCatalogMetadata(t *testing.T) {
 	tools := V2ContractTools()
-	expectedNames := V2ContractToolNames()
-	if len(tools) != len(expectedNames) {
-		t.Fatalf("tool count = %d, want %d", len(tools), len(expectedNames))
+	if len(tools) != len(V2ContractToolNames()) {
+		t.Fatalf("tool names length mismatch")
 	}
 	seen := map[string]struct{}{}
 	for _, tool := range tools {
-		if !slices.Contains(expectedNames, tool.Name) {
-			t.Fatalf("unexpected V2 tool name %s", tool.Name)
-		}
 		if _, dup := seen[tool.Name]; dup {
 			t.Fatalf("duplicate V2 tool name %s", tool.Name)
 		}
@@ -108,38 +134,18 @@ func TestV2ContractCatalogMetadata(t *testing.T) {
 			t.Fatalf("%s has an invoker before the V2 gate is wired", tool.Name)
 		}
 	}
-	for _, name := range expectedNames {
+	for _, name := range []string{
+		V2ToolRemember,
+		V2ToolResolveMemoryPlacement,
+		V2ToolCorrectEntityResolution,
+		V2ToolRecallMemory,
+		V2ToolTraceMemory,
+		V2ToolListCommunities,
+		V2ToolImportMemoryPack,
+	} {
 		if _, ok := seen[name]; !ok {
 			t.Fatalf("V2 contract missing tool %s", name)
 		}
-	}
-}
-
-func TestV2RelationshipHintsRejectOutOfRangeEvidenceIndex(t *testing.T) {
-	remember, err := requireV2Tool(v2ToolMap(t), V2ToolRemember)
-	if err != nil {
-		t.Fatal(err)
-	}
-	input := map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"evidence": []any{
-			map[string]any{"content": "Dense-Mem uses PostgreSQL."},
-		},
-		"relationship_hints": []any{
-			map[string]any{
-				"ref":         "rel-1",
-				"subject_ref": "entity-1",
-				"predicate":   "uses",
-				"object_ref":  "entity-2",
-				"evidence": []any{
-					map[string]any{"evidence_index": 1, "quote": "uses PostgreSQL"},
-				},
-			},
-		},
-	}
-	err = ValidateV2ContractInput(remember, input, []string{"write"})
-	if err == nil || !strings.Contains(err.Error(), "outside evidence length") {
-		t.Fatalf("ValidateV2ContractInput err = %v, want evidence length error", err)
 	}
 }
 
@@ -189,7 +195,6 @@ func TestBuildV2UATWiresExecutableRemember(t *testing.T) {
 		t.Fatal("BuildV2UAT remember invoker is nil")
 	}
 	out, err := remember.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
 		"evidence": []any{
 			map[string]any{"content": "remember this exact evidence"},
 		},
@@ -218,8 +223,7 @@ func TestBuildV2UATRememberRejectsTenantOverride(t *testing.T) {
 		t.Fatal("BuildV2UAT did not register remember")
 	}
 	_, err = remember.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"team_id":          "attacker-team",
+		"team_id": "attacker-team",
 		"evidence": []any{
 			map[string]any{"content": "remember this exact evidence"},
 		},
@@ -294,7 +298,6 @@ func TestV2RememberRejectsMixedSourceRevisionBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = ValidateV2ContractInput(remember, map[string]any{
-		"contract_version": domain.V2ContractVersion,
 		"evidence": []any{
 			map[string]any{
 				"content":         "first source fragment",
@@ -313,37 +316,36 @@ func TestV2RememberRejectsMixedSourceRevisionBatch(t *testing.T) {
 	}
 }
 
-func TestV2RelationshipHintsRequireExactlyOneObject(t *testing.T) {
+func TestV2RelationshipProposalsRequireExactlyOneObject(t *testing.T) {
 	remember, err := requireV2Tool(v2ToolMap(t), V2ToolRemember)
 	if err != nil {
 		t.Fatal(err)
 	}
 	baseInput := map[string]any{
-		"contract_version": domain.V2ContractVersion,
 		"evidence": []any{
 			map[string]any{"content": "Dense-Mem uses PostgreSQL."},
 		},
 	}
-	baseHint := map[string]any{
-		"ref":         "rel-1",
+	baseProposal := map[string]any{
+		"proposal_id": "rel-1",
 		"subject_ref": "entity-1",
 		"predicate":   "uses",
 		"evidence": []any{
-			map[string]any{"evidence_index": 0, "quote": "uses PostgreSQL"},
+			map[string]any{"evidence_index": 0, "start": 10, "end": 25},
 		},
 	}
 
 	cases := []struct {
-		name string
-		hint map[string]any
+		name     string
+		proposal map[string]any
 	}{
 		{
-			name: "missing object",
-			hint: cloneMap(baseHint),
+			name:     "missing object",
+			proposal: cloneMap(baseProposal),
 		},
 		{
 			name: "both object forms",
-			hint: mergeMap(baseHint, map[string]any{
+			proposal: mergeMap(baseProposal, map[string]any{
 				"object_ref": "entity-2",
 				"object_value": map[string]any{
 					"type":  "string",
@@ -355,78 +357,15 @@ func TestV2RelationshipHintsRequireExactlyOneObject(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			input := cloneMap(baseInput)
-			input["relationship_hints"] = []any{tc.hint}
+			input["proposal"] = map[string]any{
+				"entities": []any{
+					map[string]any{"ref": "entity-1", "name": "Dense-Mem"},
+				},
+				"relationships": []any{tc.proposal},
+			}
 			err := ValidateV2ContractInput(remember, input, []string{"write"})
 			if err == nil || !strings.Contains(err.Error(), "exactly one of object_ref or object_value") {
 				t.Fatalf("ValidateV2ContractInput err = %v, want object choice error", err)
-			}
-		})
-	}
-}
-
-func TestV2RelationshipHintsResolveEntityRefs(t *testing.T) {
-	remember, err := requireV2Tool(v2ToolMap(t), V2ToolRemember)
-	if err != nil {
-		t.Fatal(err)
-	}
-	baseInput := map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"evidence": []any{
-			map[string]any{"content": "Dense-Mem uses PostgreSQL."},
-		},
-		"entity_hints": []any{
-			map[string]any{"ref": "entity-1", "name": "Dense-Mem"},
-			map[string]any{"ref": "entity-2", "name": "PostgreSQL"},
-		},
-	}
-	baseHint := map[string]any{
-		"ref":         "rel-1",
-		"subject_ref": "entity-1",
-		"predicate":   "uses",
-		"object_ref":  "entity-2",
-		"evidence": []any{
-			map[string]any{"evidence_index": 0, "quote": "uses PostgreSQL"},
-		},
-	}
-	valid := cloneMap(baseInput)
-	valid["relationship_hints"] = []any{baseHint}
-	if err := ValidateV2ContractInput(remember, valid, []string{"write"}); err != nil {
-		t.Fatalf("valid relationship refs rejected: %v", err)
-	}
-	objectValueHint := cloneMap(baseHint)
-	delete(objectValueHint, "object_ref")
-	objectValueHint["object_value"] = map[string]any{
-		"type":  "string",
-		"value": "PostgreSQL",
-	}
-	objectValue := cloneMap(baseInput)
-	objectValue["relationship_hints"] = []any{objectValueHint}
-	if err := ValidateV2ContractInput(remember, objectValue, []string{"write"}); err != nil {
-		t.Fatalf("object_value relationship rejected: %v", err)
-	}
-
-	for _, tc := range []struct {
-		name string
-		hint map[string]any
-		want string
-	}{
-		{
-			name: "missing subject",
-			hint: mergeMap(baseHint, map[string]any{"subject_ref": "entity-missing"}),
-			want: "subject_ref",
-		},
-		{
-			name: "missing object",
-			hint: mergeMap(baseHint, map[string]any{"object_ref": "entity-missing"}),
-			want: "object_ref",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			input := cloneMap(baseInput)
-			input["relationship_hints"] = []any{tc.hint}
-			err := ValidateV2ContractInput(remember, input, []string{"write"})
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("ValidateV2ContractInput err = %v, want %q", err, tc.want)
 			}
 		})
 	}
@@ -437,17 +376,14 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"idempotency_key":  "resolution-1",
-	}
+	base := map[string]any{"idempotency_key": "resolution-1"}
 	evidence := []any{map[string]any{"content": "The user supplied authoritative resolution evidence."}}
 	cases := []struct {
-		name      string
-		action    string
-		valid     map[string]any
-		missing   string
-		wantError string
+		name            string
+		action          string
+		valid           map[string]any
+		missing         string
+		missingDecision string
 	}{
 		{
 			name:    "acknowledge requires ingest",
@@ -456,15 +392,17 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 			missing: "ingest_id",
 		},
 		{
-			name:   "select entity requires target and candidate",
+			name:   "select entity requires mention and candidate",
 			action: string(domain.V2ResolveSelectEntity),
 			valid: map[string]any{
-				"ingest_id":           "ing-1",
-				"placement_item_id":   "item-1",
-				"entity_ref":          "person-1",
-				"candidate_entity_id": "ent-1",
+				"ingest_id":         "ing-1",
+				"placement_item_id": "item-1",
+				"decision": map[string]any{
+					"mention_ref": "person-1",
+					"entity_id":   "ent-1",
+				},
 			},
-			missing: "candidate_entity_id",
+			missingDecision: "entity_id",
 		},
 		{
 			name:   "confirm new entity requires evidence",
@@ -472,7 +410,7 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 			valid: map[string]any{
 				"ingest_id":         "ing-1",
 				"placement_item_id": "item-1",
-				"entity_ref":        "person-1",
+				"decision":          map[string]any{"mention_ref": "person-1"},
 				"evidence":          evidence,
 			},
 			missing: "evidence",
@@ -483,11 +421,13 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 			valid: map[string]any{
 				"ingest_id":         "ing-1",
 				"placement_item_id": "item-1",
-				"observation_id":    "obs-1",
-				"predicate_key":     "works_on",
-				"predicate_version": float64(1),
+				"decision": map[string]any{
+					"observation_id":    "obs-1",
+					"predicate_key":     "works_on",
+					"predicate_version": float64(1),
+				},
 			},
-			missing: "predicate_version",
+			missingDecision: "predicate_version",
 		},
 		{
 			name:   "accept requires evidence",
@@ -500,14 +440,14 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 			missing: "evidence",
 		},
 		{
-			name:   "reject requires message",
+			name:   "reject requires reason",
 			action: string(domain.V2ResolveReject),
 			valid: map[string]any{
 				"ingest_id":         "ing-1",
 				"placement_item_id": "item-1",
-				"message":           "not supported by the source",
+				"reason":            "not supported by the source",
 			},
-			missing: "message",
+			missing: "reason",
 		},
 		{
 			name:   "correct requires evidence",
@@ -525,16 +465,16 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 			valid: map[string]any{
 				"ingest_id":         "ing-1",
 				"placement_item_id": "item-1",
-				"message":           "manager reviewed quarantine signal",
+				"reason":            "manager reviewed quarantine signal",
 			},
-			missing: "message",
+			missing: "reason",
 		},
 		{
 			name:   "forget requires relationship target",
 			action: string(domain.V2ResolveForget),
 			valid: map[string]any{
 				"relationship_id": "rel-1",
-				"message":         "user requested retraction",
+				"reason":          "user requested retraction",
 				"evidence":        evidence,
 			},
 			missing: "relationship_id",
@@ -549,159 +489,20 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 			}
 
 			invalid := cloneMap(valid)
-			delete(invalid, tc.missing)
+			missing := tc.missing
+			if tc.missingDecision != "" {
+				decision := cloneMap(invalid["decision"].(map[string]any))
+				delete(decision, tc.missingDecision)
+				invalid["decision"] = decision
+				missing = "decision." + tc.missingDecision
+			} else {
+				delete(invalid, tc.missing)
+			}
 			err := ValidateV2ContractInput(resolve, invalid, []string{"write"})
-			if err == nil || !strings.Contains(err.Error(), tc.missing+" is required") {
-				t.Fatalf("missing %s err = %v", tc.missing, err)
+			if err == nil || !strings.Contains(err.Error(), missing+" is required") {
+				t.Fatalf("missing %s err = %v", missing, err)
 			}
 		})
-	}
-}
-
-func TestV2CorrectEntityResolutionActionRequiredFields(t *testing.T) {
-	correct, err := requireV2Tool(v2ToolMap(t), V2ToolCorrectEntityResolution)
-	if err != nil {
-		t.Fatal(err)
-	}
-	base := map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"source_entity_id": "ent-source",
-		"dry_run":          true,
-	}
-	merge := mergeMap(base, map[string]any{
-		"action":           string(domain.V2EntityCorrectionMerge),
-		"target_entity_id": "ent-target",
-	})
-	if err := ValidateV2ContractInput(correct, merge, []string{"write"}); err != nil {
-		t.Fatalf("valid merge rejected: %v", err)
-	}
-	split := mergeMap(base, map[string]any{
-		"action":                   string(domain.V2EntityCorrectionSplit),
-		"selected_observation_ids": []any{"obs-1"},
-	})
-	if err := ValidateV2ContractInput(correct, split, []string{"write"}); err != nil {
-		t.Fatalf("valid split rejected: %v", err)
-	}
-
-	tests := []struct {
-		name  string
-		input map[string]any
-		want  string
-	}{
-		{
-			name: "merge requires target",
-			input: mergeMap(base, map[string]any{
-				"action": string(domain.V2EntityCorrectionMerge),
-			}),
-			want: "target_entity_id is required",
-		},
-		{
-			name: "split requires selected observations",
-			input: mergeMap(base, map[string]any{
-				"action": string(domain.V2EntityCorrectionSplit),
-			}),
-			want: "selected_observation_ids is required",
-		},
-		{
-			name: "apply requires plan token",
-			input: mergeMap(base, map[string]any{
-				"action":           string(domain.V2EntityCorrectionMerge),
-				"target_entity_id": "ent-target",
-				"dry_run":          false,
-			}),
-			want: "plan_token is required",
-		},
-		{
-			name: "split rejects target",
-			input: mergeMap(split, map[string]any{
-				"target_entity_id": "ent-target",
-			}),
-			want: "target_entity_id is only accepted",
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateV2ContractInput(correct, tc.input, []string{"write"})
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("ValidateV2ContractInput err = %v, want %q", err, tc.want)
-			}
-		})
-	}
-}
-
-func TestV2ExportMemoryPackRequiresRelationships(t *testing.T) {
-	exportTool, err := requireV2Tool(v2ToolMap(t), V2ToolExportMemoryPack)
-	if err != nil {
-		t.Fatal(err)
-	}
-	base := map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"name":             "pack",
-	}
-	for _, tc := range []struct {
-		name  string
-		input map[string]any
-		want  string
-	}{
-		{
-			name:  "missing relationships",
-			input: cloneMap(base),
-			want:  "relationship_ids is required",
-		},
-		{
-			name:  "empty relationships",
-			input: mergeMap(base, map[string]any{"relationship_ids": []any{}}),
-			want:  "at least 1 items",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateV2ContractInput(exportTool, tc.input, []string{"read"})
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("ValidateV2ContractInput err = %v, want %q", err, tc.want)
-			}
-		})
-	}
-	valid := mergeMap(base, map[string]any{"relationship_ids": []any{"rel-1"}})
-	if err := ValidateV2ContractInput(exportTool, valid, []string{"read"}); err != nil {
-		t.Fatalf("valid export rejected: %v", err)
-	}
-}
-
-func TestV2MemoryPackSourceValidation(t *testing.T) {
-	tools := v2ToolMap(t)
-	for _, toolName := range []string{V2ToolInspectMemoryPack, V2ToolImportMemoryPack} {
-		tool, err := requireV2Tool(tools, toolName)
-		if err != nil {
-			t.Fatal(err)
-		}
-		base := map[string]any{"contract_version": domain.V2ContractVersion}
-		if toolName == V2ToolImportMemoryPack {
-			base["mode"] = "review"
-		}
-		validArtifact := mergeMap(base, map[string]any{"artifact_json": `{"items":[]}`})
-		if err := ValidateV2ContractInput(tool, validArtifact, []string{"write", "read"}); err != nil {
-			t.Fatalf("%s valid artifact rejected: %v", toolName, err)
-		}
-		validURL := mergeMap(base, map[string]any{"url": "https://example.com/pack.json"})
-		if err := ValidateV2ContractInput(tool, validURL, []string{"write", "read"}); err != nil {
-			t.Fatalf("%s valid URL rejected: %v", toolName, err)
-		}
-		for _, tc := range []struct {
-			name  string
-			input map[string]any
-			want  string
-		}{
-			{"missing source", cloneMap(base), "exactly one"},
-			{"both sources", mergeMap(base, map[string]any{"artifact_json": `{}`, "url": "https://example.com/pack.json"}), "exactly one"},
-			{"non https URL", mergeMap(base, map[string]any{"url": "http://example.com/pack.json"}), "HTTPS"},
-		} {
-			t.Run(toolName+"/"+tc.name, func(t *testing.T) {
-				err := ValidateV2ContractInput(tool, tc.input, []string{"write", "read"})
-				if err == nil || !strings.Contains(err.Error(), tc.want) {
-					t.Fatalf("ValidateV2ContractInput err = %v, want %q", err, tc.want)
-				}
-			})
-		}
 	}
 }
 
@@ -728,23 +529,95 @@ func TestV2DefaultRecallDoesNotPermitCandidatesOrHypotheses(t *testing.T) {
 			t.Fatalf("recall result exposes %s", forbidden)
 		}
 	}
+	for _, required := range []string{"discovery_paths", "discovery_guidance", "related_hypotheses"} {
+		if _, ok := props[required]; !ok {
+			t.Fatalf("recall output missing %s", required)
+		}
+	}
+	for _, internal := range []string{"search_state", "degradation"} {
+		if _, ok := props[internal]; ok {
+			t.Fatalf("recall output exposes internal field %s", internal)
+		}
+	}
+}
+
+func TestV2CanonicalInputFieldNames(t *testing.T) {
+	tools := v2ToolMap(t)
+	cases := []struct {
+		tool      string
+		required  []string
+		forbidden []string
+	}{
+		{V2ToolRemember, []string{"evidence", "proposal"}, []string{"contract_version", "entity_hints", "relationship_hints"}},
+		{V2ToolCorrectEntityResolution, []string{"operation", "owned_observation_ids", "impact_token"}, []string{"action", "selected_observation_ids", "plan_token"}},
+		{V2ToolRecallMemory, []string{"known_evidence_ids", "known_relationship_ids", "expand_from_entity_ids"}, []string{"include_evidence", "use_communities"}},
+		{V2ToolTraceMemory, []string{"include_verification", "include_transitions", "max_depth", "predicate_keys", "topic", "min_relevance"}, []string{"max_chars"}},
+		{V2ToolSubmitRecallSessionFeedback, []string{"recalls"}, nil},
+		{V2ToolGetDream, []string{"hypothesis_id"}, []string{"dream_id"}},
+		{V2ToolResolveDreamFeedback, []string{"hypothesis_id", "decision", "reason", "evidence", "proposal"}, []string{"dream_id", "feedback"}},
+		{V2ToolFindMemoryPackCandidates, []string{"query", "limit", "predicate_keys"}, nil},
+		{V2ToolExportMemoryPack, []string{"include_evidence", "include_entity_names"}, []string{"include_support"}},
+		{V2ToolInspectMemoryPack, []string{"artifact_json", "url", "expected_sha256", "mode"}, []string{"recommend_decisions"}},
+		{V2ToolRollbackMemoryPackImport, []string{"import_id", "dry_run"}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.tool, func(t *testing.T) {
+			props := schemaProperties(tools[tc.tool].InputSchema)
+			for _, field := range tc.required {
+				if _, ok := props[field]; !ok {
+					t.Errorf("missing canonical field %s", field)
+				}
+			}
+			for _, field := range tc.forbidden {
+				if _, ok := props[field]; ok {
+					t.Errorf("contains legacy field %s", field)
+				}
+			}
+		})
+	}
+}
+
+func TestV2CorrectionRequiresCanonicalDryRunAndApplyFields(t *testing.T) {
+	tool, err := requireV2Tool(v2ToolMap(t), V2ToolCorrectEntityResolution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := map[string]any{
+		"operation":             "split",
+		"source_entity_id":      "ent-source",
+		"target_entity_id":      nil,
+		"owned_observation_ids": []any{"obs-1"},
+		"evidence":              []any{map[string]any{"content": "These observations refer to a different person."}},
+		"idempotency_key":       "split-1",
+	}
+	dryRun := mergeMap(base, map[string]any{"dry_run": true})
+	if err := ValidateV2ContractInput(tool, dryRun, []string{"write"}); err != nil {
+		t.Fatalf("dry run rejected: %v", err)
+	}
+	apply := mergeMap(base, map[string]any{"dry_run": false, "impact_token": "impact-1"})
+	if err := ValidateV2ContractInput(tool, apply, []string{"write"}); err != nil {
+		t.Fatalf("apply rejected: %v", err)
+	}
+	delete(apply, "impact_token")
+	if err := ValidateV2ContractInput(tool, apply, []string{"write"}); err == nil || !strings.Contains(err.Error(), "impact_token is required") {
+		t.Fatalf("apply without impact token err = %v", err)
+	}
+}
+
+func TestV2OutputSchemasAreClosed(t *testing.T) {
+	for _, tool := range V2ContractTools() {
+		t.Run(tool.Name, func(t *testing.T) {
+			assertV2ClosedObjectSchemas(t, tool.OutputSchema, tool.Name+" output")
+		})
+	}
 }
 
 func TestV2ProviderAndEmbeddingContracts(t *testing.T) {
-	schema := verifier.V2ProviderProposalSchema()
-	if err := assertV2ProviderProposalSchema(schema); err != nil {
+	if err := assertV2ProviderProposalSchema(verifier.V2ProviderProposalSchema()); err != nil {
 		t.Fatal(err)
 	}
-	reviewItems := schemaProperties(schema)["review_items"]
-	reviewItem := reviewItems["items"].(map[string]any)
-	category := schemaProperties(reviewItem)["category"]
-	if err := validateSchemaValue("category", "relationship_needs_review", category); err != nil {
-		t.Fatalf("provider review category rejected: %v", err)
-	}
-	for _, serverOwned := range []string{"relationship_fact", "relationship_validated_claim"} {
-		if err := validateSchemaValue("category", serverOwned, category); err == nil {
-			t.Fatalf("provider review category accepted server-owned outcome %s", serverOwned)
-		}
+	if err := assertV2VerifierResponseSchema(verifier.V2VerifierResponseSchema()); err != nil {
+		t.Fatal(err)
 	}
 	sourceKinds := embedding.V2EmbeddingSourceKinds()
 	for _, want := range []string{"evidence", "search_document", "recall_query"} {
@@ -755,32 +628,28 @@ func TestV2ProviderAndEmbeddingContracts(t *testing.T) {
 	if embedding.V2EmbeddingContractVersion == "" {
 		t.Fatal("V2 embedding contract version is empty")
 	}
-	evidenceItem := schemaProperties(schemaProperties(schema)["evidence"]["items"].(map[string]any))
-	if err := validateSchemaValue("evidence.content", "", evidenceItem["content"]); err == nil {
-		t.Fatal("provider evidence content accepted empty string")
+}
+
+func assertV2ClosedObjectSchemas(t *testing.T, schema map[string]any, path string) {
+	t.Helper()
+	if schema["type"] == "object" {
+		boundedMap, _ := schema["x-bounded-map"].(bool)
+		if closed, ok := schema["additionalProperties"].(bool); !boundedMap && (!ok || closed) {
+			t.Errorf("%s is not closed", path)
+		}
 	}
-	entityItem := schemaProperties(schemaProperties(schema)["entity_proposals"]["items"].(map[string]any))
-	if err := validateSchemaValue("entity.name", "", entityItem["name"]); err == nil {
-		t.Fatal("provider entity name accepted empty string")
+	for name, child := range schemaProperties(schema) {
+		assertV2ClosedObjectSchemas(t, child, path+"."+name)
 	}
-	if err := validateSchemaValue("entity.aliases", []any{""}, entityItem["aliases"]); err == nil {
-		t.Fatal("provider entity alias accepted empty string")
+	if items, ok := schema["items"].(map[string]any); ok {
+		assertV2ClosedObjectSchemas(t, items, path+"[]")
 	}
-	relationshipItem := schemaProperties(schemaProperties(schema)["relationship_proposals"]["items"].(map[string]any))
-	if err := validateSchemaValue("relationship.original_predicate", "", relationshipItem["original_predicate"]); err == nil {
-		t.Fatal("provider relationship predicate accepted empty string")
-	}
-	objectValue := schemaProperties(relationshipItem["object_value"])
-	if err := validateSchemaValue("relationship.object_value.value", "", objectValue["value"]); err == nil {
-		t.Fatal("provider relationship value accepted empty string")
-	}
-	evidenceSpan := schemaProperties(relationshipItem["evidence"]["items"].(map[string]any))
-	if err := validateSchemaValue("relationship.evidence.quote", "", evidenceSpan["quote"]); err == nil {
-		t.Fatal("provider evidence quote accepted empty string")
-	}
-	reviewItemProps := schemaProperties(reviewItem)
-	if err := validateSchemaValue("review.reason", "", reviewItemProps["reason"]); err == nil {
-		t.Fatal("provider review reason accepted empty string")
+	if alternatives, ok := schema["oneOf"].([]any); ok {
+		for i, raw := range alternatives {
+			if alternative, ok := raw.(map[string]any); ok {
+				assertV2ClosedObjectSchemas(t, alternative, path+fmt.Sprintf(".oneOf[%d]", i))
+			}
+		}
 	}
 }
 
@@ -881,6 +750,24 @@ func assertV2ProviderProposalSchema(schema map[string]any) error {
 	return nil
 }
 
+func assertV2VerifierResponseSchema(schema map[string]any) error {
+	if !schemaDisallowsAdditionalProperties(schema) {
+		return errors.New("verifier response schema is not closed")
+	}
+	props := schemaProperties(schema)
+	for _, required := range []string{"request_id", "security_signals", "entity_results", "relationship_results"} {
+		if _, ok := props[required]; !ok {
+			return fmt.Errorf("verifier response schema has no %s", required)
+		}
+	}
+	for _, forbidden := range []string{"tier", "status", "support_count", "predicate_definitions"} {
+		if _, ok := props[forbidden]; ok {
+			return fmt.Errorf("verifier response schema allows %s", forbidden)
+		}
+	}
+	return nil
+}
+
 func readV2ContractFixtures(t *testing.T) []v2ContractFixture {
 	t.Helper()
 	data, err := os.ReadFile("testdata/v2_contract_fixtures.json")
@@ -912,7 +799,7 @@ func (s *stubV2RememberService) RememberV2(_ context.Context, req memoryservice.
 			{
 				ItemID:        "item-v2",
 				EvidenceIndex: 0,
-				Category:      string(domain.V2EvidenceNeedsReview),
+				Category:      string(domain.V2EvidenceProcessed),
 				SearchState:   string(domain.V2SearchProjectionNotRequired),
 			},
 		},

@@ -1,6 +1,8 @@
 package openapi
 
 import (
+	"encoding/json"
+	"os"
 	"reflect"
 	"testing"
 
@@ -49,6 +51,13 @@ func TestV2ContractOpenAPIDerivesSchemasFromRegistry(t *testing.T) {
 	if !reflect.DeepEqual(schemas[rememberInput], remember.InputSchema) {
 		t.Fatalf("remember schema not derived from registry")
 	}
+	rememberProps := remember.InputSchema["properties"].(map[string]any)
+	if _, ok := rememberProps["contract_version"]; ok {
+		t.Fatal("remember OpenAPI schema exposes payload contract_version")
+	}
+	if remember.InputSchema["x-contract-version"] != domain.V2ContractVersion {
+		t.Fatalf("remember OpenAPI x-contract-version = %v", remember.InputSchema["x-contract-version"])
+	}
 	correct, _ := reg.Get(registry.V2ToolCorrectEntityResolution)
 	correctInput := schemaNameFor(registry.V2ToolCorrectEntityResolution, "Input")
 	if !reflect.DeepEqual(schemas[correctInput], correct.InputSchema) {
@@ -64,6 +73,17 @@ func TestV2ContractOpenAPIDerivesSchemasFromRegistry(t *testing.T) {
 	if got := reqSchema["$ref"]; got != "#/components/schemas/"+rememberInput {
 		t.Fatalf("remember request ref = %v", got)
 	}
+	if !reflect.DeepEqual(schemas["DenseMemV2Error"], registry.V2PublicErrorSchema()) {
+		t.Fatal("V2 public error schema not derived from registry contract")
+	}
+	responses := rememberPost["responses"].(map[string]any)
+	badRequest := responses["400"].(map[string]any)
+	errorContent := badRequest["content"].(map[string]any)
+	errorMedia := errorContent["application/json"].(map[string]any)
+	errorSchema := errorMedia["schema"].(map[string]any)
+	if got := errorSchema["$ref"]; got != "#/components/schemas/DenseMemV2Error" {
+		t.Fatalf("remember 400 schema ref = %v", got)
+	}
 
 	toolCatalogEntry := schemas["ToolCatalogEntry"].(map[string]any)
 	toolCatalogProps := toolCatalogEntry["properties"].(map[string]any)
@@ -72,4 +92,55 @@ func TestV2ContractOpenAPIDerivesSchemasFromRegistry(t *testing.T) {
 			t.Fatalf("ToolCatalogEntry schema missing %s", field)
 		}
 	}
+}
+
+func TestV2ContractOpenAPIRoundTripsGoldenFixtures(t *testing.T) {
+	reg := registry.New()
+	for _, tool := range registry.V2ContractTools() {
+		if err := reg.Register(tool); err != nil {
+			t.Fatal(err)
+		}
+	}
+	doc, err := NewWithInfo(reg, nil, BuildInfo{Version: domain.V2ContractVersion}).Generate(SpecVariantFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	components := doc["components"].(map[string]any)
+	schemas := components["schemas"].(map[string]any)
+	for _, fixture := range readOpenAPIV2ContractFixtures(t) {
+		if !fixture.Valid {
+			continue
+		}
+		t.Run(fixture.Name, func(t *testing.T) {
+			input := schemas[schemaNameFor(fixture.Tool, "Input")].(map[string]any)
+			if err := registry.ValidateInput(registry.Tool{InputSchema: input}, fixture.Input); err != nil {
+				t.Fatalf("OpenAPI input schema: %v", err)
+			}
+			output := schemas[schemaNameFor(fixture.Tool, "Output")].(map[string]any)
+			if err := registry.ValidateInput(registry.Tool{InputSchema: output}, fixture.Output); err != nil {
+				t.Fatalf("OpenAPI output schema: %v", err)
+			}
+		})
+	}
+}
+
+type openAPIV2ContractFixture struct {
+	Name   string         `json:"name"`
+	Tool   string         `json:"tool"`
+	Valid  bool           `json:"valid"`
+	Input  map[string]any `json:"input"`
+	Output map[string]any `json:"output"`
+}
+
+func readOpenAPIV2ContractFixtures(t *testing.T) []openAPIV2ContractFixture {
+	t.Helper()
+	data, err := os.ReadFile("../tools/registry/testdata/v2_contract_fixtures.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixtures []openAPIV2ContractFixture
+	if err := json.Unmarshal(data, &fixtures); err != nil {
+		t.Fatal(err)
+	}
+	return fixtures
 }
