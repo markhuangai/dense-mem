@@ -71,7 +71,7 @@ func TestV2MemoryPackExportInspectAndImportStagesRemember(t *testing.T) {
 		Items: []memoryservice.V2RememberItemResult{{
 			ItemID:        "placement-item-1",
 			EvidenceIndex: 0,
-			Category:      string(domain.V2EvidenceNeedsReview),
+			Category:      string(domain.V2EvidenceProcessed),
 			SearchState:   string(domain.V2SearchProjectionPending),
 		}},
 		SearchState: string(domain.V2SearchProjectionPending),

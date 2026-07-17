@@ -24,8 +24,7 @@ func TestBuildV2UATRecallRecordsFeedbackSnapshot(t *testing.T) {
 	}
 	recall, _ := reg.Get(V2ToolRecallMemory)
 	out, err := recall.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"query":            "PostgreSQL memory",
+		"query": "PostgreSQL memory",
 	})
 	if err != nil {
 		t.Fatalf("recall_memory.Invoke: %v", err)
@@ -58,7 +57,6 @@ func TestV2RecallFeedbackSnapshotHelpersCoverOptionalBranches(t *testing.T) {
 	validAt := time.Date(2026, 7, 17, 14, 0, 0, 0, time.UTC)
 	knownAt := validAt.Add(time.Hour)
 	args := v2RecallFeedbackToolArgs(map[string]any{
-		"contract_version":       domain.V2ContractVersion,
 		"query":                  "PostgreSQL memory",
 		"known_evidence_ids":     []any{"evidence-v2"},
 		"known_relationship_ids": []any{"relationship-v2"},
