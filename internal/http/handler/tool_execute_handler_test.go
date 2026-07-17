@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -311,7 +313,7 @@ func TestToolExecuteHandler_RejectsTenantFieldsForV2ContractTools(t *testing.T) 
 	req := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/tools/remember",
-		strings.NewReader(`{"contract_version":"dense-mem.v2.1","team_id":"forged","evidence":[{"content":"hello"}]}`),
+		strings.NewReader(`{"team_id":"forged","evidence":[{"content":"hello"}]}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Profile-ID", profileID.String())
@@ -326,6 +328,87 @@ func TestToolExecuteHandler_RejectsTenantFieldsForV2ContractTools(t *testing.T) 
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &apiErr))
 	assert.Equal(t, httperr.VALIDATION_ERROR, apiErr.Code)
 	assert.Contains(t, apiErr.Message, "team_id and profile_id are not accepted")
+}
+
+func TestToolExecuteHandler_RoundTripsV2ContractFixtures(t *testing.T) {
+	fixtures := readHandlerV2ContractFixtures(t)
+	tools := map[string]registry.Tool{}
+	for _, tool := range registry.V2ContractTools() {
+		tools[tool.Name] = tool
+	}
+
+	for _, fixture := range fixtures {
+		t.Run(fixture.Name, func(t *testing.T) {
+			tool, ok := tools[fixture.Tool]
+			require.True(t, ok, "fixture tool must exist")
+			if fixture.ContractVersion != "" {
+				tool.ContractVersion = fixture.ContractVersion
+			}
+			tool.Visibility = "active"
+			called := false
+			var invoked map[string]any
+			tool.Invoke = func(_ context.Context, _ string, input map[string]any) (map[string]any, error) {
+				called = true
+				invoked = input
+				return fixture.Output, nil
+			}
+			reg := registry.New()
+			require.NoError(t, reg.Register(tool))
+
+			h := NewToolExecuteHandlerWithRuntimeConfig(reg, handlerRecallFeedbackConfigStub{enabled: true})
+			e := newTestEcho()
+			profileID := uuid.New()
+			e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+				return func(c echo.Context) error {
+					ctx := middleware.SetResolvedProfileIDForTest(c.Request().Context(), profileID)
+					ctx = middleware.SetPrincipalForTest(ctx, &middleware.Principal{
+						KeyID: uuid.New(), Role: "user", Scopes: fixture.Scopes,
+					})
+					c.SetRequest(c.Request().WithContext(ctx))
+					return next(c)
+				}
+			})
+			e.POST("/api/v2/tools/:name", h.Handle)
+
+			body, err := json.Marshal(fixture.Input)
+			require.NoError(t, err)
+			req := httptest.NewRequest(http.MethodPost, "/api/v2/tools/"+fixture.Tool, strings.NewReader(string(body)))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+
+			if !fixture.Valid {
+				assert.NotEqual(t, http.StatusOK, rec.Code, rec.Body.String())
+				assert.False(t, called, "invalid fixture invoked tool")
+				return
+			}
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			assert.True(t, called)
+			assert.True(t, reflect.DeepEqual(invoked, fixture.Input), "invoked input = %#v", invoked)
+			var output map[string]any
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &output))
+			assert.True(t, reflect.DeepEqual(output, fixture.Output), "output = %#v", output)
+		})
+	}
+}
+
+type handlerV2ContractFixture struct {
+	Name            string         `json:"name"`
+	Tool            string         `json:"tool"`
+	ContractVersion string         `json:"contract_version"`
+	Scopes          []string       `json:"scopes"`
+	Valid           bool           `json:"valid"`
+	Input           map[string]any `json:"input"`
+	Output          map[string]any `json:"output"`
+}
+
+func readHandlerV2ContractFixtures(t *testing.T) []handlerV2ContractFixture {
+	t.Helper()
+	data, err := os.ReadFile("../../tools/registry/testdata/v2_contract_fixtures.json")
+	require.NoError(t, err)
+	var fixtures []handlerV2ContractFixture
+	require.NoError(t, json.Unmarshal(data, &fixtures))
+	return fixtures
 }
 
 func TestToolExecuteHandler_ProtectsRecallFeedbackEventToolsWithFeedbackScope(t *testing.T) {

@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
@@ -27,11 +28,16 @@ func v2UATTools(deps Dependencies) []Tool {
 				if err := remapInput(input, &req); err != nil {
 					return nil, fmt.Errorf("remember: invalid input: %w", err)
 				}
+				req.ContractVersion = domain.V2ContractVersion
 				res, err := deps.V2Remember.RememberV2(ctx, req)
 				if err != nil {
 					return nil, err
 				}
-				return structToMap(res)
+				out, err := structToMap(res)
+				if err != nil {
+					return nil, err
+				}
+				return v2ProcessingStatePublicOutput(out), nil
 			}
 		case V2ToolRecallMemory:
 			tool := tools[i]
@@ -46,6 +52,7 @@ func v2UATTools(deps Dependencies) []Tool {
 				if err := remapInput(input, &req); err != nil {
 					return nil, fmt.Errorf("recall_memory: invalid input: %w", err)
 				}
+				req.ContractVersion = domain.V2ContractVersion
 				res, err := deps.V2Recall.RecallV2(ctx, req)
 				if err != nil {
 					return nil, err
@@ -66,11 +73,16 @@ func v2UATTools(deps Dependencies) []Tool {
 				if err := remapInput(input, &req); err != nil {
 					return nil, fmt.Errorf("get_memory_placement: invalid input: %w", err)
 				}
+				req.ContractVersion = domain.V2ContractVersion
 				res, err := deps.V2Remember.GetMemoryPlacementV2(ctx, req)
 				if err != nil {
 					return nil, err
 				}
-				return structToMap(res)
+				out, err := structToMap(res)
+				if err != nil {
+					return nil, err
+				}
+				return v2ProcessingStatePublicOutput(out), nil
 			}
 		case V2ToolResolveMemoryPlacement:
 			tool := tools[i]
@@ -85,11 +97,17 @@ func v2UATTools(deps Dependencies) []Tool {
 				if err := remapInput(input, &req); err != nil {
 					return nil, fmt.Errorf("resolve_memory_placement: invalid input: %w", err)
 				}
+				req.ContractVersion = domain.V2ContractVersion
+				applyV2ResolveMemoryPlacementPublicInput(input, &req)
 				res, err := deps.V2Lifecycle.ResolveMemoryPlacementV2(ctx, req)
 				if err != nil {
 					return nil, err
 				}
-				return structToMap(res)
+				out, err := structToMap(res)
+				if err != nil {
+					return nil, err
+				}
+				return v2ResolveMemoryPlacementPublicOutput(out), nil
 			}
 		case V2ToolCorrectEntityResolution:
 			tool := tools[i]
@@ -104,11 +122,17 @@ func v2UATTools(deps Dependencies) []Tool {
 				if err := remapInput(input, &req); err != nil {
 					return nil, fmt.Errorf("correct_entity_resolution: invalid input: %w", err)
 				}
+				req.ContractVersion = domain.V2ContractVersion
+				applyV2CorrectEntityResolutionPublicInput(input, &req)
 				res, err := deps.V2Lifecycle.CorrectEntityResolutionV2(ctx, req)
 				if err != nil {
 					return nil, err
 				}
-				return structToMap(res)
+				out, err := structToMap(res)
+				if err != nil {
+					return nil, err
+				}
+				return v2CorrectEntityResolutionPublicOutput(out), nil
 			}
 		case V2ToolTraceMemory:
 			tool := tools[i]
@@ -152,7 +176,7 @@ func v2UATTools(deps Dependencies) []Tool {
 				if err != nil {
 					return nil, err
 				}
-				return map[string]any{"dreams": dreams, "next_cursor": next}, nil
+				return map[string]any{"dreams": v2DreamPublicSummaries(dreams), "next_cursor": next}, nil
 			}
 		case V2ToolGetDream:
 			tool := tools[i]
@@ -163,12 +187,12 @@ func v2UATTools(deps Dependencies) []Tool {
 				if err := ValidateV2ContractInput(tool, input, tool.RequiredScopes); err != nil {
 					return nil, fmt.Errorf("get_dream: invalid input: %w", err)
 				}
-				id, _ := input["dream_id"].(string)
+				id, _ := input["hypothesis_id"].(string)
 				dream, err := deps.Dreams.Get(ctx, profileID, id)
 				if err != nil {
 					return nil, err
 				}
-				return structToMap(dream)
+				return map[string]any{"hypothesis": v2DreamPublicHypothesis(dream)}, nil
 			}
 		case V2ToolResolveDreamFeedback:
 			tool := tools[i]
@@ -180,18 +204,123 @@ func v2UATTools(deps Dependencies) []Tool {
 					return nil, fmt.Errorf("resolve_dream_feedback: invalid input: %w", err)
 				}
 				var req dreamservice.ResolveFeedbackRequest
-				if err := remapInput(input, &req); err != nil {
+				if err := remapInput(v2DreamFeedbackServiceInput(input), &req); err != nil {
 					return nil, fmt.Errorf("resolve_dream_feedback: invalid input: %w", err)
 				}
 				res, err := deps.Dreams.ResolveFeedback(ctx, profileID, req)
 				if err != nil {
 					return nil, err
 				}
-				return structToMap(res)
+				return v2DreamFeedbackPublicOutput(res), nil
 			}
 		}
 	}
 	return tools
+}
+
+func v2DreamFeedbackServiceInput(input map[string]any) map[string]any {
+	out := make(map[string]any, len(input)+2)
+	for key, value := range input {
+		out[key] = value
+	}
+	if value, ok := input["hypothesis_id"]; ok {
+		out["dream_id"] = value
+	}
+	if value, ok := input["reason"]; ok {
+		out["feedback"] = value
+	}
+	return out
+}
+
+func v2DreamFeedbackPublicOutput(res *dreamservice.ResolveFeedbackResult) map[string]any {
+	out := map[string]any{
+		"hypothesis_id": "",
+		"status":        "",
+	}
+	if res == nil || res.Dream == nil {
+		return out
+	}
+	out["hypothesis_id"] = res.Dream.DreamID
+	out["status"] = string(res.Dream.Status)
+	if res.V2Memory != nil && res.V2Memory.IngestID != "" {
+		out["ingest_id"] = res.V2Memory.IngestID
+	}
+	return out
+}
+
+func v2DreamPublicSummaries(dreams []*domain.Dream) []any {
+	out := make([]any, 0, len(dreams))
+	for _, dream := range dreams {
+		out = append(out, v2DreamPublicSummary(dream))
+	}
+	return out
+}
+
+func v2DreamPublicSummary(dream *domain.Dream) map[string]any {
+	hypothesis := v2DreamPublicHypothesis(dream)
+	return map[string]any{
+		"hypothesis_id":           hypothesis["hypothesis_id"],
+		"subject_entity_id":       hypothesis["subject_entity_id"],
+		"predicate_key":           hypothesis["predicate_key"],
+		"object_entity_id":        hypothesis["object_entity_id"],
+		"object_value_id":         hypothesis["object_value_id"],
+		"statement":               hypothesis["statement"],
+		"status":                  hypothesis["status"],
+		"source_relationship_ids": hypothesis["source_relationship_ids"],
+		"generator_kind":          hypothesis["generator_kind"],
+		"generator_version":       hypothesis["generator_version"],
+		"created_at":              hypothesis["created_at"],
+	}
+}
+
+func v2DreamPublicHypothesis(dream *domain.Dream) map[string]any {
+	out := map[string]any{
+		"hypothesis_id":                     "",
+		"source_owner_profile_ids":          []string{},
+		"subject_entity_id":                 "",
+		"predicate_key":                     "",
+		"object_entity_id":                  nil,
+		"object_value_id":                   nil,
+		"statement":                         "",
+		"rationale":                         "",
+		"likelihood":                        0,
+		"confidence":                        0,
+		"source_relationship_ids":           []string{},
+		"source_candidate_relationship_ids": []string{},
+		"source_versions":                   map[string]int{},
+		"generator_kind":                    "deterministic",
+		"generator_version":                 "unknown",
+		"status":                            string(domain.DreamStatusProposed),
+		"created_at":                        time.Time{}.UTC().Format(time.RFC3339Nano),
+	}
+	if dream == nil {
+		return out
+	}
+	out["hypothesis_id"] = dream.DreamID
+	out["statement"] = dream.Hypothesis
+	out["rationale"] = dream.Rationale
+	out["likelihood"] = dream.Likelihood
+	out["confidence"] = dream.Confidence
+	out["source_relationship_ids"] = v2DreamSourceIDs(dream.SourceRefs, "relationship")
+	out["source_candidate_relationship_ids"] = v2DreamSourceIDs(dream.SourceRefs, "candidate_relationship")
+	if dream.GeneratorModel != "" {
+		out["generator_version"] = dream.GeneratorModel
+	}
+	out["status"] = string(dream.Status)
+	if !dream.CreatedAt.IsZero() {
+		out["created_at"] = dream.CreatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return out
+}
+
+func v2DreamSourceIDs(refs []domain.DreamSourceRef, sourceType string) []string {
+	out := []string{}
+	for _, ref := range refs {
+		if ref.Type == sourceType && ref.ID != "" {
+			out = append(out, ref.ID)
+		}
+	}
+	return out
 }
 
 func recordV2RecallFeedbackSnapshot(
@@ -265,7 +394,6 @@ const v2FeedbackTimeFormat = "2006-01-02T15:04:05.999999999Z07:00"
 func v2RecallFeedbackInputCopy(input map[string]any) map[string]any {
 	out := map[string]any{}
 	for _, key := range []string{
-		"contract_version",
 		"query",
 		"limit",
 		"valid_at",
@@ -316,4 +444,92 @@ func v2RecallFeedbackResultRefs(res *memoryservice.V2RecallResult) []domain.Reca
 		}
 	}
 	return refs
+}
+
+func applyV2ResolveMemoryPlacementPublicInput(input map[string]any, req *memoryservice.V2ResolveMemoryPlacementRequest) {
+	if reason, ok := input["reason"].(string); ok {
+		req.Message = reason
+	}
+	decision, ok := objectFields(input["decision"])
+	if !ok {
+		return
+	}
+	if value, ok := decision["mention_ref"].(string); ok {
+		req.EntityRef = value
+	}
+	if value, ok := decision["entity_id"].(string); ok {
+		req.CandidateEntityID = value
+	}
+	if value, ok := decision["observation_id"].(string); ok {
+		req.ObservationID = value
+	}
+	if value, ok := decision["predicate_key"].(string); ok {
+		req.PredicateKey = value
+	}
+	if value, ok := intInput(decision["predicate_version"]); ok {
+		req.PredicateVersion = value
+	}
+}
+
+func applyV2CorrectEntityResolutionPublicInput(input map[string]any, req *memoryservice.V2CorrectEntityResolutionRequest) {
+	if operation, ok := input["operation"].(string); ok {
+		req.Action = domain.V2EntityCorrectionAction(operation)
+	}
+	req.SelectedObservationIDs = v2StringSliceFromInput(input["owned_observation_ids"])
+	if token, ok := input["impact_token"].(string); ok {
+		req.PlanToken = token
+	}
+}
+
+func v2StringSliceFromInput(raw any) []string {
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if value, ok := item.(string); ok {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func v2ResolveMemoryPlacementPublicOutput(out map[string]any) map[string]any {
+	return v2ProcessingStatePublicOutput(out)
+}
+
+func v2ProcessingStatePublicOutput(out map[string]any) map[string]any {
+	if status, ok := out["status"]; ok {
+		out["processing_state"] = status
+		delete(out, "status")
+	}
+	return out
+}
+
+func v2CorrectEntityResolutionPublicOutput(out map[string]any) map[string]any {
+	if token, ok := out["plan_token"]; ok {
+		out["impact_token"] = token
+		delete(out, "plan_token")
+	}
+	if selected, ok := out["selected_ids"]; ok {
+		out["selected_observation_ids"] = selected
+		delete(out, "selected_ids")
+	}
+	if blocked, ok := out["blocked_ids"]; ok {
+		out["blocked_observation_ids"] = blocked
+		delete(out, "blocked_ids")
+	}
+	if _, ok := out["relationship_changes"]; !ok {
+		out["relationship_changes"] = []any{}
+	}
+	if _, ok := out["entity_candidates"]; !ok {
+		out["entity_candidates"] = []any{}
+	}
+	if _, ok := out["unchanged_cross_profile_references"]; !ok {
+		out["unchanged_cross_profile_references"] = []any{}
+	}
+	delete(out, "impact_summary")
+	delete(out, "degradation")
+	return out
 }
