@@ -16,7 +16,8 @@
       "corpus_rows": 1000,
       "suite_path": "tests/eval/suites/public_6axis_1k_v1.jsonl",
       "seed_path": "tests/eval/seeds/public_6axis_1k_v1/seed_manifest.json",
-      "seed_hash": "sha256:eb09124331228e59898a93740104ab978b9974e3ebf7f7fc2e09728ef95b3d78"
+      "seed_hash": "sha256:ca1da9dccad1a84a281ca6e2e18582fba0882feb6b99f359c96f4355bd2cdf76",
+      "suite_hash": "sha256:14c1229aad134e732392e08f7113ec12b710489d96a80750e9060a161730ea75"
     },
     "diagnostic_only": {
       "seed_id": "public_6axis_5k_v1",

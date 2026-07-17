@@ -40,6 +40,14 @@ PLACEMENT_SUMMARY="${MONITOR_DIR}/placement_summary.json"
 RESUME_SOURCE_DOC_IDS="${MONITOR_DIR}/completed_source_doc_ids.txt"
 FAILED_SOURCE_DOC_IDS="${MONITOR_DIR}/failed_source_doc_ids.txt"
 RELEASE_GATE_POLICY="${RELEASE_GATE_POLICY:-}"
+if [[ -n "${RELEASE_GATE_POLICY}" ]]; then
+  if [[ ! -f "${RELEASE_GATE_POLICY}" ]]; then
+    echo "release gate policy not found: ${RELEASE_GATE_POLICY}" >&2
+    exit 2
+  fi
+  RELEASE_GATE_POLICY="$(realpath "${RELEASE_GATE_POLICY}")"
+fi
+RELEASE_GATE_POLICY_HASH=""
 
 mkdir -p "${IMPORT_DIR}" "${BASELINE_DIR}" "${MONITOR_DIR}" "${VALIDATION_DIR}" "$(dirname "${RUNNER}")"
 
@@ -170,14 +178,14 @@ placement_counts() {
                ORDER BY created_at DESC, ingest_id DESC
              ) AS row_num
       FROM memory_placement_runs
-      WHERE profile_id = :'team_id'::uuid
+      WHERE profile_id = '${EVAL_TEAM_ID}'::uuid
         AND evidence -> 0 ->> 'idempotency_key' LIKE 'eval:%'
     ), latest AS (
       SELECT status FROM ranked WHERE row_num = 1
     ), historical AS (
       SELECT count(*) AS attempts
       FROM memory_placement_runs
-      WHERE profile_id = :'team_id'::uuid
+      WHERE profile_id = '${EVAL_TEAM_ID}'::uuid
         AND evidence -> 0 ->> 'idempotency_key' LIKE 'eval:%'
     )
     SELECT count(*),
@@ -203,7 +211,7 @@ write_resume_files() {
                ORDER BY created_at DESC, ingest_id DESC
              ) AS row_num
       FROM memory_placement_runs
-      WHERE profile_id = :'team_id'::uuid
+      WHERE profile_id = '${EVAL_TEAM_ID}'::uuid
         AND evidence -> 0 ->> 'idempotency_key' LIKE 'eval:%'
     )
     SELECT source_doc_id
@@ -220,7 +228,7 @@ write_resume_files() {
                ORDER BY created_at DESC, ingest_id DESC
              ) AS row_num
       FROM memory_placement_runs
-      WHERE profile_id = :'team_id'::uuid
+      WHERE profile_id = '${EVAL_TEAM_ID}'::uuid
         AND evidence -> 0 ->> 'idempotency_key' LIKE 'eval:%'
     )
     SELECT source_doc_id
@@ -243,7 +251,7 @@ write_placement_summary() {
                ORDER BY created_at DESC, ingest_id DESC
              ) AS row_num
       FROM memory_placement_runs
-      WHERE profile_id = :'team_id'::uuid
+      WHERE profile_id = '${EVAL_TEAM_ID}'::uuid
         AND evidence -> 0 ->> 'idempotency_key' LIKE 'eval:%'
     ), latest AS (
       SELECT ingest_id, status FROM ranked WHERE row_num = 1
@@ -292,7 +300,7 @@ write_placement_summary() {
       FROM (
         SELECT status, count(*) AS status_count
         FROM memory_placement_runs
-        WHERE profile_id = :'team_id'::uuid
+        WHERE profile_id = '${EVAL_TEAM_ID}'::uuid
           AND evidence -> 0 ->> 'idempotency_key' LIKE 'eval:%'
         GROUP BY status
         ORDER BY status
@@ -388,13 +396,16 @@ prepare_identity() {
 
   SEED_HASH="$(jq -r '.seed_hash' "${VALIDATION_DIR}/summary.json")"
   SUITE_HASH="$(sha256sum "${SUITE}" | awk '{print $1}')"
+  if [[ -n "${RELEASE_GATE_POLICY}" ]]; then
+    RELEASE_GATE_POLICY_HASH="$(sha256sum "${RELEASE_GATE_POLICY}" | awk '{print "sha256:" $1}')"
+  fi
   EMBEDDING_MODEL="${AI_API_EMBEDDING_MODEL:-}"
   EMBEDDING_DIMENSIONS="${AI_API_EMBEDDING_DIMENSIONS:-1536}"
   if [[ "${EMBEDDING_DIMENSIONS}" == "0" ]]; then
     EMBEDDING_DIMENSIONS="1536"
   fi
   EMBEDDING_ENDPOINT_HASH="$(printf '%s' "${AI_API_URL:-}" | sha256sum | awk '{print $1}')"
-  export SEED_HASH SUITE_HASH
+  export SEED_HASH SUITE_HASH RELEASE_GATE_POLICY_HASH
 
   local candidate="${MONITOR_DIR}/requested_dataset_identity.json"
   jq -n \
@@ -482,6 +493,10 @@ run_baseline() {
     log "import_artifact_seed_hash_mismatch"
     return 1
   fi
+  if [[ "$(jq -r '.suite_hash // empty' "${IMPORT_DIR}/run_config.json")" != "sha256:${SUITE_HASH}" ]]; then
+    log "import_artifact_suite_hash_mismatch"
+    return 1
+  fi
   if [[ "$(jq -r '.import_route // empty' "${IMPORT_DIR}/run_config.json")" != "remember" ]]; then
     log "import_artifact_route_is_not_remember"
     return 1
@@ -491,6 +506,10 @@ run_baseline() {
       log "baseline_seed_hash_mismatch path=${BASELINE_DIR}/summary.json"
       return 1
     fi
+    if [[ "$(jq -r '.suite_hash // empty' "${BASELINE_DIR}/run_config.json")" != "sha256:${SUITE_HASH}" ]]; then
+      log "baseline_suite_hash_mismatch path=${BASELINE_DIR}/run_config.json"
+      return 1
+    fi
     if [[ -n "${RELEASE_GATE_POLICY}" ]]; then
       if [[ ! -s "${BASELINE_DIR}/release_gate_result.json" ]]; then
         log "baseline_gate_result_missing policy=${RELEASE_GATE_POLICY}"
@@ -498,6 +517,10 @@ run_baseline() {
       fi
       if [[ "$(jq -r '.release_gate_policy_path // empty' "${BASELINE_DIR}/run_config.json")" != "${RELEASE_GATE_POLICY}" ]]; then
         log "baseline_gate_policy_mismatch policy=${RELEASE_GATE_POLICY}"
+        return 1
+      fi
+      if [[ "$(jq -r '.release_gate_policy_hash // empty' "${BASELINE_DIR}/run_config.json")" != "${RELEASE_GATE_POLICY_HASH}" ]]; then
+        log "baseline_gate_policy_hash_mismatch policy=${RELEASE_GATE_POLICY}"
         return 1
       fi
       if [[ "$(jq -r '.passed // false' "${BASELINE_DIR}/release_gate_result.json")" != "true" ]]; then
