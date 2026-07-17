@@ -3,6 +3,7 @@ package registry
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
@@ -173,6 +174,10 @@ func V2ContractToolNames() []string {
 	return names
 }
 
+func IsV2ContractTool(tool Tool) bool {
+	return tool.ContractVersion == domain.V2ContractVersion
+}
+
 func ValidateV2ContractInput(tool Tool, args map[string]any, scopes []string) error {
 	if tool.ContractVersion != domain.V2ContractVersion {
 		return fmt.Errorf(
@@ -196,6 +201,8 @@ func ValidateV2ContractInput(tool Tool, args map[string]any, scopes []string) er
 		return validateV2Remember(args)
 	case V2ToolRecallMemory:
 		return validateV2Recall(args)
+	case V2ToolResolveMemoryPlacement:
+		return validateV2ResolveMemoryPlacement(args)
 	case V2ToolCorrectEntityResolution:
 		return validateV2UniqueStringArray(args, "selected_observation_ids")
 	default:
@@ -233,7 +240,10 @@ func validateV2Remember(args map[string]any) error {
 	if err := validateV2UniqueObjectRefs(args, "entity_hints", "ref"); err != nil {
 		return err
 	}
-	return validateV2UniqueObjectRefs(args, "relationship_hints", "ref")
+	if err := validateV2UniqueObjectRefs(args, "relationship_hints", "ref"); err != nil {
+		return err
+	}
+	return validateV2RelationshipObjectChoice(args, "relationship_hints")
 }
 
 func validateV2Recall(args map[string]any) error {
@@ -249,6 +259,48 @@ func validateV2Recall(args map[string]any) error {
 	return nil
 }
 
+func validateV2ResolveMemoryPlacement(args map[string]any) error {
+	action, _ := args["action"].(string)
+	switch domain.V2ResolveAction(action) {
+	case domain.V2ResolveAcknowledge:
+		return validateV2RequiredFields(args, "ingest_id")
+	case domain.V2ResolveSelectEntity:
+		return validateV2RequiredFields(args,
+			"ingest_id",
+			"placement_item_id",
+			"entity_ref",
+			"candidate_entity_id",
+		)
+	case domain.V2ResolveConfirmNewEntity:
+		return validateV2RequiredFields(args,
+			"ingest_id",
+			"placement_item_id",
+			"entity_ref",
+			"evidence",
+		)
+	case domain.V2ResolveSelectPredicate:
+		return validateV2RequiredFields(args,
+			"ingest_id",
+			"placement_item_id",
+			"observation_id",
+			"predicate_key",
+			"predicate_version",
+		)
+	case domain.V2ResolveAccept:
+		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "evidence")
+	case domain.V2ResolveReject:
+		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "message")
+	case domain.V2ResolveCorrect:
+		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "evidence")
+	case domain.V2ResolveReleaseQuarantine:
+		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "message")
+	case domain.V2ResolveForget:
+		return validateV2RequiredFields(args, "relationship_id", "message", "evidence")
+	default:
+		return nil
+	}
+}
+
 func validateV2SourceRevisionFields(index int, fields map[string]any) error {
 	_, hasSourceKey := fields["source_key"]
 	_, hasSourceRevision := fields["source_revision"]
@@ -261,6 +313,19 @@ func validateV2SourceRevisionFields(index int, fields map[string]any) error {
 			"evidence[%d]: previous_source_revision requires source_key and source_revision",
 			index,
 		)
+	}
+	return nil
+}
+
+func validateV2RequiredFields(args map[string]any, fields ...string) error {
+	for _, field := range fields {
+		value, ok := args[field]
+		if !ok {
+			return fmt.Errorf("%s is required for action %s", field, args["action"])
+		}
+		if text, ok := value.(string); ok && strings.TrimSpace(text) == "" {
+			return fmt.Errorf("%s is required for action %s", field, args["action"])
+		}
 	}
 	return nil
 }
@@ -311,6 +376,30 @@ func validateV2UniqueObjectRefs(args map[string]any, field string, refField stri
 			return fmt.Errorf("%s[%d].%s: duplicate ref %q", field, i, refField, value)
 		}
 		seen[value] = struct{}{}
+	}
+	return nil
+}
+
+func validateV2RelationshipObjectChoice(args map[string]any, field string) error {
+	raw, ok := args[field]
+	if !ok {
+		return nil
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	for i, item := range items {
+		fields, ok := objectFields(item)
+		if !ok {
+			continue
+		}
+		objectRef, hasObjectRef := fields["object_ref"].(string)
+		hasObjectRef = hasObjectRef && strings.TrimSpace(objectRef) != ""
+		_, hasObjectValue := fields["object_value"]
+		if hasObjectRef == hasObjectValue {
+			return fmt.Errorf("%s[%d]: exactly one of object_ref or object_value is required", field, i)
+		}
 	}
 	return nil
 }
@@ -392,6 +481,16 @@ func v2RelationshipHintArraySchema() map[string]any {
 		"items": map[string]any{
 			"type":     "object",
 			"required": []string{"ref", "subject_ref", "predicate", "evidence"},
+			"oneOf": []any{
+				map[string]any{
+					"required": []string{"object_ref"},
+					"not":      map[string]any{"required": []string{"object_value"}},
+				},
+				map[string]any{
+					"required": []string{"object_value"},
+					"not":      map[string]any{"required": []string{"object_ref"}},
+				},
+			},
 			"properties": map[string]any{
 				"ref":         schemaString("Client-local Relationship proposal ref.", 128),
 				"subject_ref": schemaString("Entity proposal ref.", 128),
@@ -791,6 +890,18 @@ func assertV2ProviderProposalSchema(schema map[string]any) error {
 	}
 	if _, ok := props["predicate_options"]; !ok {
 		return errors.New("provider proposal schema has no predicate_options")
+	}
+	relationshipProposals, ok := props["relationship_proposals"]
+	if !ok {
+		return errors.New("provider proposal schema has no relationship_proposals")
+	}
+	items, ok := relationshipProposals["items"].(map[string]any)
+	if !ok {
+		return errors.New("provider relationship_proposals schema has no item schema")
+	}
+	oneOf, ok := items["oneOf"].([]any)
+	if !ok || len(oneOf) != 2 {
+		return errors.New("provider relationship proposal schema must require exactly one object form")
 	}
 	return nil
 }
