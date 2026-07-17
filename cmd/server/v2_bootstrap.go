@@ -13,7 +13,6 @@ import (
 )
 
 var (
-	errV2MigrationPending    = errors.New("v2 migration marker pending")
 	errV2PGVectorDegraded    = errors.New("pgvector extension requirement disabled")
 	errV2QueueNotReady       = errors.New("v2 queue readiness failed")
 	errV2SchemaIndexNotReady = errors.New("v2 schema/index readiness failed")
@@ -88,13 +87,6 @@ func buildDormantV2Bootstrap(cfg config.Config, db *gorm.DB) dormantV2Bootstrap 
 				Name: "v2_workers",
 				Check: func(context.Context) error {
 					return validateV2WorkerReadiness(cfg)
-				},
-			},
-			{
-				Name:     "v2_migration_state",
-				Optional: true,
-				Check: func(context.Context) error {
-					return errV2MigrationPending
 				},
 			},
 		},

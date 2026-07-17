@@ -5,9 +5,6 @@ SELECT set_config('app.tx_mode', 'migration', true);
 SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_team_profiles_team_id_id_unique
-    ON team_profiles(team_id, id);
-
 CREATE OR REPLACE FUNCTION prevent_v2_append_only_mutation()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -16,15 +13,15 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE TABLE IF NOT EXISTS semantic_team_refs (
-    team_id UUID NOT NULL PRIMARY KEY REFERENCES teams(id) ON DELETE RESTRICT
+    team_id UUID NOT NULL PRIMARY KEY REFERENCES teams(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS semantic_profile_refs (
     team_id UUID NOT NULL,
     profile_id UUID NOT NULL,
     PRIMARY KEY (team_id, profile_id),
-    FOREIGN KEY (team_id) REFERENCES semantic_team_refs(team_id) ON DELETE RESTRICT,
-    FOREIGN KEY (team_id, profile_id) REFERENCES team_profiles(team_id, id) ON DELETE RESTRICT
+    FOREIGN KEY (team_id) REFERENCES semantic_team_refs(team_id) ON DELETE CASCADE,
+    FOREIGN KEY (team_id, profile_id) REFERENCES team_profiles(team_id, id) ON DELETE CASCADE
 );
 
 INSERT INTO semantic_team_refs (team_id)
@@ -50,6 +47,7 @@ CREATE TABLE IF NOT EXISTS knowledge_ingests (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at TIMESTAMPTZ NULL,
     PRIMARY KEY (team_id, ingest_id),
+    CONSTRAINT knowledge_ingests_owner_ref_unique UNIQUE (team_id, ingest_id, owner_profile_id),
     FOREIGN KEY (team_id, owner_profile_id) REFERENCES semantic_profile_refs(team_id, profile_id) ON DELETE RESTRICT,
     CONSTRAINT knowledge_ingests_status_check
         CHECK (status IN ('queued', 'guarded', 'quarantined', 'processing', 'completed', 'failed')),
@@ -77,6 +75,7 @@ CREATE TABLE IF NOT EXISTS evidence_sources (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (team_id, source_id),
+    CONSTRAINT evidence_sources_owner_ref_unique UNIQUE (team_id, source_id, owner_profile_id),
     FOREIGN KEY (team_id, owner_profile_id) REFERENCES semantic_profile_refs(team_id, profile_id) ON DELETE RESTRICT,
     CONSTRAINT evidence_sources_key_nonempty CHECK (btrim(source_key) <> ''),
     CONSTRAINT evidence_sources_kind_check CHECK (source_kind IN ('conversation', 'document', 'integration', 'manual')),
@@ -99,9 +98,17 @@ CREATE TABLE IF NOT EXISTS evidence_source_revisions (
     envelope JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (team_id, source_revision_id),
+    CONSTRAINT evidence_source_revisions_owner_ref_unique UNIQUE (team_id, source_revision_id, owner_profile_id),
+    CONSTRAINT evidence_source_revisions_source_owner_ref_unique UNIQUE (
+        team_id, source_id, source_revision_id, owner_profile_id
+    ),
     FOREIGN KEY (team_id, source_id) REFERENCES evidence_sources(team_id, source_id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, source_id, owner_profile_id) REFERENCES evidence_sources(team_id, source_id, owner_profile_id) ON DELETE RESTRICT,
     FOREIGN KEY (team_id, owner_profile_id) REFERENCES semantic_profile_refs(team_id, profile_id) ON DELETE RESTRICT,
     FOREIGN KEY (team_id, supersedes_revision_id) REFERENCES evidence_source_revisions(team_id, source_revision_id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, source_id, supersedes_revision_id, owner_profile_id)
+        REFERENCES evidence_source_revisions(team_id, source_id, source_revision_id, owner_profile_id)
+        ON DELETE RESTRICT,
     CONSTRAINT evidence_source_revisions_token_nonempty CHECK (btrim(revision_token) <> ''),
     CONSTRAINT evidence_source_revisions_hash_nonempty CHECK (btrim(content_hash) <> ''),
     CONSTRAINT evidence_source_revisions_envelope_object_check CHECK (jsonb_typeof(envelope) = 'object')
@@ -115,8 +122,8 @@ ALTER TABLE evidence_sources
 
 ALTER TABLE evidence_sources
     ADD CONSTRAINT evidence_sources_current_revision_fk
-    FOREIGN KEY (team_id, current_revision_id)
-    REFERENCES evidence_source_revisions(team_id, source_revision_id)
+    FOREIGN KEY (team_id, source_id, current_revision_id, owner_profile_id)
+    REFERENCES evidence_source_revisions(team_id, source_id, source_revision_id, owner_profile_id)
     ON DELETE RESTRICT
     DEFERRABLE INITIALLY IMMEDIATE;
 
@@ -138,13 +145,23 @@ CREATE TABLE IF NOT EXISTS evidence_fragments (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (team_id, fragment_id),
     UNIQUE (team_id, ingest_id, evidence_index),
+    CONSTRAINT evidence_fragments_owner_ref_unique UNIQUE (team_id, fragment_id, ingest_id, owner_profile_id),
     FOREIGN KEY (team_id, ingest_id) REFERENCES knowledge_ingests(team_id, ingest_id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, ingest_id, owner_profile_id) REFERENCES knowledge_ingests(team_id, ingest_id, owner_profile_id) ON DELETE RESTRICT,
     FOREIGN KEY (team_id, owner_profile_id) REFERENCES semantic_profile_refs(team_id, profile_id) ON DELETE RESTRICT,
     FOREIGN KEY (team_id, source_id) REFERENCES evidence_sources(team_id, source_id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, source_id, owner_profile_id) REFERENCES evidence_sources(team_id, source_id, owner_profile_id) ON DELETE RESTRICT,
     FOREIGN KEY (team_id, source_revision_id) REFERENCES evidence_source_revisions(team_id, source_revision_id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, source_id, source_revision_id, owner_profile_id)
+        REFERENCES evidence_source_revisions(team_id, source_id, source_revision_id, owner_profile_id)
+        ON DELETE RESTRICT,
     CONSTRAINT evidence_fragments_index_check CHECK (evidence_index >= 0),
     CONSTRAINT evidence_fragments_content_nonempty CHECK (btrim(content) <> ''),
     CONSTRAINT evidence_fragments_hash_nonempty CHECK (btrim(content_hash) <> ''),
+    CONSTRAINT evidence_fragments_source_revision_pair_check CHECK (
+        (source_id IS NULL AND source_revision_id IS NULL)
+        OR (source_id IS NOT NULL AND source_revision_id IS NOT NULL)
+    ),
     CONSTRAINT evidence_fragments_source_type_check CHECK (source_type IN ('conversation', 'document', 'observation', 'manual')),
     CONSTRAINT evidence_fragments_authority_check CHECK (authority IN ('primary', 'secondary', 'derived')),
     CONSTRAINT evidence_fragments_metadata_object_check CHECK (jsonb_typeof(metadata) = 'object')
@@ -171,8 +188,13 @@ CREATE TABLE IF NOT EXISTS evidence_security_events (
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (team_id, security_event_id),
+    CONSTRAINT evidence_security_events_owner_ref_unique UNIQUE (team_id, security_event_id, owner_profile_id),
     FOREIGN KEY (team_id, fragment_id) REFERENCES evidence_fragments(team_id, fragment_id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, fragment_id, ingest_id, owner_profile_id)
+        REFERENCES evidence_fragments(team_id, fragment_id, ingest_id, owner_profile_id)
+        ON DELETE RESTRICT,
     FOREIGN KEY (team_id, ingest_id) REFERENCES knowledge_ingests(team_id, ingest_id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, ingest_id, owner_profile_id) REFERENCES knowledge_ingests(team_id, ingest_id, owner_profile_id) ON DELETE RESTRICT,
     FOREIGN KEY (team_id, owner_profile_id) REFERENCES semantic_profile_refs(team_id, profile_id) ON DELETE RESTRICT,
     FOREIGN KEY (team_id, actor_profile_id) REFERENCES semantic_profile_refs(team_id, profile_id) ON DELETE RESTRICT,
     CONSTRAINT evidence_security_event_kind_check
@@ -201,6 +223,9 @@ CREATE TABLE IF NOT EXISTS evidence_security_signals (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (team_id, security_event_id, signal_index),
     FOREIGN KEY (team_id, security_event_id) REFERENCES evidence_security_events(team_id, security_event_id) ON DELETE CASCADE,
+    FOREIGN KEY (team_id, security_event_id, owner_profile_id)
+        REFERENCES evidence_security_events(team_id, security_event_id, owner_profile_id)
+        ON DELETE CASCADE,
     FOREIGN KEY (team_id, owner_profile_id) REFERENCES semantic_profile_refs(team_id, profile_id) ON DELETE RESTRICT,
     CONSTRAINT evidence_security_signal_index_check CHECK (signal_index >= 0),
     CONSTRAINT evidence_security_signal_kind_check CHECK (kind IN (
@@ -231,7 +256,11 @@ CREATE TABLE IF NOT EXISTS evidence_quarantines (
     PRIMARY KEY (team_id, quarantine_id),
     UNIQUE (team_id, fragment_id),
     FOREIGN KEY (team_id, fragment_id) REFERENCES evidence_fragments(team_id, fragment_id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, fragment_id, ingest_id, owner_profile_id)
+        REFERENCES evidence_fragments(team_id, fragment_id, ingest_id, owner_profile_id)
+        ON DELETE RESTRICT,
     FOREIGN KEY (team_id, ingest_id) REFERENCES knowledge_ingests(team_id, ingest_id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, ingest_id, owner_profile_id) REFERENCES knowledge_ingests(team_id, ingest_id, owner_profile_id) ON DELETE RESTRICT,
     FOREIGN KEY (team_id, owner_profile_id) REFERENCES semantic_profile_refs(team_id, profile_id) ON DELETE RESTRICT,
     FOREIGN KEY (team_id, released_by_profile_id) REFERENCES semantic_profile_refs(team_id, profile_id) ON DELETE RESTRICT,
     CONSTRAINT evidence_quarantines_status_check CHECK (status IN ('active', 'released')),
@@ -262,7 +291,10 @@ CREATE TABLE IF NOT EXISTS placement_runs (
     completed_at TIMESTAMPTZ NULL,
     PRIMARY KEY (team_id, placement_run_id),
     UNIQUE (team_id, ingest_id),
+    CONSTRAINT placement_runs_ingest_owner_ref_unique UNIQUE (team_id, placement_run_id, ingest_id, owner_profile_id),
+    CONSTRAINT placement_runs_owner_ref_unique UNIQUE (team_id, placement_run_id, owner_profile_id),
     FOREIGN KEY (team_id, ingest_id) REFERENCES knowledge_ingests(team_id, ingest_id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, ingest_id, owner_profile_id) REFERENCES knowledge_ingests(team_id, ingest_id, owner_profile_id) ON DELETE RESTRICT,
     FOREIGN KEY (team_id, owner_profile_id) REFERENCES semantic_profile_refs(team_id, profile_id) ON DELETE RESTRICT,
     CONSTRAINT placement_runs_status_check
         CHECK (status IN ('queued', 'guarded', 'quarantined', 'processing', 'completed', 'failed')),
@@ -295,10 +327,18 @@ CREATE TABLE IF NOT EXISTS placement_items (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (team_id, placement_item_id),
     UNIQUE (team_id, placement_run_id, evidence_index),
+    CONSTRAINT placement_items_run_owner_ref_unique UNIQUE (team_id, placement_item_id, placement_run_id, owner_profile_id),
     FOREIGN KEY (team_id, placement_run_id) REFERENCES placement_runs(team_id, placement_run_id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, placement_run_id, ingest_id, owner_profile_id)
+        REFERENCES placement_runs(team_id, placement_run_id, ingest_id, owner_profile_id)
+        ON DELETE RESTRICT,
     FOREIGN KEY (team_id, ingest_id) REFERENCES knowledge_ingests(team_id, ingest_id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, ingest_id, owner_profile_id) REFERENCES knowledge_ingests(team_id, ingest_id, owner_profile_id) ON DELETE RESTRICT,
     FOREIGN KEY (team_id, owner_profile_id) REFERENCES semantic_profile_refs(team_id, profile_id) ON DELETE RESTRICT,
     FOREIGN KEY (team_id, fragment_id) REFERENCES evidence_fragments(team_id, fragment_id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, fragment_id, ingest_id, owner_profile_id)
+        REFERENCES evidence_fragments(team_id, fragment_id, ingest_id, owner_profile_id)
+        ON DELETE RESTRICT,
     CONSTRAINT placement_items_index_check CHECK (evidence_index >= 0),
     CONSTRAINT placement_items_status_check
         CHECK (status IN ('queued', 'processing', 'completed', 'failed', 'quarantined')),
@@ -322,7 +362,13 @@ CREATE TABLE IF NOT EXISTS placement_outcomes (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (team_id, outcome_id),
     FOREIGN KEY (team_id, placement_run_id) REFERENCES placement_runs(team_id, placement_run_id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, placement_run_id, owner_profile_id)
+        REFERENCES placement_runs(team_id, placement_run_id, owner_profile_id)
+        ON DELETE RESTRICT,
     FOREIGN KEY (team_id, placement_item_id) REFERENCES placement_items(team_id, placement_item_id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, placement_item_id, placement_run_id, owner_profile_id)
+        REFERENCES placement_items(team_id, placement_item_id, placement_run_id, owner_profile_id)
+        ON DELETE RESTRICT,
     FOREIGN KEY (team_id, owner_profile_id) REFERENCES semantic_profile_refs(team_id, profile_id) ON DELETE RESTRICT,
     CONSTRAINT placement_outcomes_kind_nonempty CHECK (btrim(outcome_kind) <> ''),
     CONSTRAINT placement_outcomes_status_nonempty CHECK (btrim(status) <> ''),
@@ -554,6 +600,5 @@ DROP TABLE IF EXISTS knowledge_ingests;
 DROP TABLE IF EXISTS semantic_profile_refs;
 DROP TABLE IF EXISTS semantic_team_refs;
 DROP FUNCTION IF EXISTS prevent_v2_append_only_mutation();
-DROP INDEX IF EXISTS idx_team_profiles_team_id_id_unique;
 
 -- +goose StatementEnd
