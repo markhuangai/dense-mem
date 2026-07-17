@@ -73,9 +73,15 @@ rejects any corpus row above 999 Unicode code points. Legacy `claims` and
 `auto_promote` fields are rejected because they bypass production extraction
 and placement.
 
-The approved gate policy is committed at:
+The committed policy pins the approved local gate identity: 237 cases, seed
+hash `sha256:ca1da9dccad1a84a281ca6e2e18582fba0882feb6b99f359c96f4355bd2cdf76`,
+and suite hash
+`sha256:14c1229aad134e732392e08f7113ec12b710489d96a80750e9060a161730ea75`.
 
-Generate the required 1k seed:
+Restore the approved local seed and suite when available. If the local copy is
+missing, rebuild it from the tracked source-locked scripts and validate that
+the generated seed hash, suite hash, and case count match the committed policy
+before running the release gate:
 
 ```bash
 python3 tests/eval/scripts/prepare_public_6axis_eval.py \
@@ -91,22 +97,18 @@ python3 tests/eval/scripts/prepare_public_6axis_eval.py \
   --force
 ```
 
-A seed corpus row is plain evidence: `source_doc_id`, `content`, and optional
-source metadata. Content is split rather than truncated, and the Go harness
-rejects any corpus row above 999 Unicode code points. Legacy `claims` and
-`auto_promote` fields are rejected because they bypass production extraction
-and placement.
-
 ## Use the approved local seed
 
 The hard gate consumes the existing approved `public_6axis_1k_v1` seed and
 suite. It does not generate, download, or replace them. Their required identity
-is pinned by the committed policy: 206 cases and seed hash
-`sha256:eb09124331228e59898a93740104ab978b9974e3ebf7f7fc2e09728ef95b3d78`.
+is pinned by the committed policy: 237 cases, seed hash
+`sha256:ca1da9dccad1a84a281ca6e2e18582fba0882feb6b99f359c96f4355bd2cdf76`,
+and suite hash
+`sha256:14c1229aad134e732392e08f7113ec12b710489d96a80750e9060a161730ea75`.
 
 Because these artifacts are ignored, a new worktree does not contain them.
-Restore the approved local copy at these paths; do not substitute a regenerated
-seed:
+Restore the approved local copy at these paths, or regenerate and validate a
+local copy that matches the committed policy exactly:
 
 ```bash
 SEED=tests/eval/seeds/public_6axis_1k_v1/seed_manifest.json
@@ -175,7 +177,8 @@ scripts/eval-local.sh \
 
 For `public_6axis_*` seeds, validation also requires the generated
 `validation_report.json` named by the seed manifest. The report must have
-status `passed` and its seed hash must match the current generated files.
+status `passed`, its seed hash must match the current generated files, and its
+suite hash must match the current suite.
 
 ## Import once, resume, and run recall
 
