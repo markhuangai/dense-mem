@@ -90,6 +90,9 @@ func (g *generator) Generate(variant SpecVariant) (map[string]any, error) {
 	// Fold tool input/output schemas from the registry into components.schemas
 	// so operations can $ref them (AC-34 derived-from-registry).
 	for _, t := range g.reg.List() {
+		if registry.IsV2ContractTool(t) {
+			schemas["DenseMemV2Error"] = cloneSchema(registry.V2PublicErrorSchema())
+		}
 		if t.InputSchema != nil {
 			schemas[schemaNameFor(t.Name, "Input")] = cloneSchema(t.InputSchema)
 		}
@@ -158,6 +161,15 @@ func (g *generator) buildOperation(r RouteDescriptor, schemas map[string]any) ma
 	// Merge caller-supplied extra responses (e.g. 202 Accepted for async routes).
 	for code, desc := range r.ExtraResponses {
 		responses[code] = errorResponse(desc)
+	}
+	if tool, ok := g.reg.Get(r.ToolName); ok && registry.IsV2ContractTool(tool) {
+		for _, code := range []string{"400", "401", "403", "404", "429", "500"} {
+			description := responses[code].(map[string]any)["description"].(string)
+			responses[code] = errorResponseWithSchema(description, "DenseMemV2Error")
+		}
+		for code, desc := range r.ExtraResponses {
+			responses[code] = errorResponseWithSchema(desc, "DenseMemV2Error")
+		}
 	}
 
 	op := map[string]any{
@@ -276,12 +288,16 @@ func securitySchemes() map[string]any {
 }
 
 func errorResponse(description string) map[string]any {
+	return errorResponseWithSchema(description, "ErrorResponse")
+}
+
+func errorResponseWithSchema(description string, schemaName string) map[string]any {
 	return map[string]any{
 		"description": description,
 		"content": map[string]any{
 			"application/json": map[string]any{
 				"schema": map[string]any{
-					"$ref": "#/components/schemas/ErrorResponse",
+					"$ref": "#/components/schemas/" + schemaName,
 				},
 			},
 		},
