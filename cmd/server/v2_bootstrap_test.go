@@ -118,6 +118,19 @@ func TestDormantV2ReadinessRejectsInvalidQueueProfile(t *testing.T) {
 	require.Equal(t, "MEMORY_PLACEMENT_HEARTBEAT_SECONDS", validationErr.Field)
 }
 
+func TestDormantV2ReadinessRejectsEmbeddingPollAtOrAboveLease(t *testing.T) {
+	cfg := validDormantV2BootstrapConfig()
+	cfg.EmbeddingJobPollSeconds = cfg.EmbeddingJobLeaseSeconds
+	bootstrap := buildDormantV2Bootstrap(cfg, nil)
+
+	err := requireHealthCheck(t, bootstrap, "v2_queue_profile").Check(context.Background())
+
+	require.True(t, errors.Is(err, errV2QueueNotReady), "err=%v", err)
+	var validationErr *config.ValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, "EMBEDDING_JOB_POLL_SECONDS", validationErr.Field)
+}
+
 func validDormantV2BootstrapConfig() config.Config {
 	return config.Config{
 		V2BootMode:                       config.V2BootModeDormant,

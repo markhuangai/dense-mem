@@ -185,6 +185,13 @@ func validateV2QueueReadiness(cfg config.Config) error {
 			errV2QueueNotReady,
 		)
 	}
+	if cfg.GetEmbeddingJobPollSeconds() >= cfg.GetEmbeddingJobLeaseSeconds() {
+		return wrapV2ReadinessError(
+			"EMBEDDING_JOB_POLL_SECONDS",
+			"must be lower than EMBEDDING_JOB_LEASE_SECONDS for v2 queue readiness",
+			errV2QueueNotReady,
+		)
+	}
 	if cfg.GetDistributedCoordinationRequired() && strings.TrimSpace(cfg.GetRedisAddr()) == "" {
 		return wrapV2ReadinessError(
 			"DISTRIBUTED_COORDINATION_REQUIRED",
