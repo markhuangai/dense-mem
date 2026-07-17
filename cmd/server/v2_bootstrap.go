@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -12,7 +13,13 @@ import (
 	"gorm.io/gorm"
 )
 
-var errV2MigrationPending = errors.New("v2 migration marker pending")
+var (
+	errV2MigrationPending    = errors.New("v2 migration marker pending")
+	errV2PGVectorDegraded    = errors.New("pgvector extension requirement disabled")
+	errV2QueueNotReady       = errors.New("v2 queue readiness failed")
+	errV2SchemaIndexNotReady = errors.New("v2 schema/index readiness failed")
+	errV2WorkersNotReady     = errors.New("v2 worker readiness failed")
+)
 
 type dormantV2Bootstrap struct {
 	Mode                 string
@@ -49,10 +56,11 @@ func buildDormantV2Bootstrap(cfg config.Config, db *gorm.DB, migration v2Migrati
 				},
 			},
 			{
-				Name: "v2_pgvector",
+				Name:     "v2_pgvector",
+				Optional: !cfg.GetPGVectorExtensionRequired(),
 				Check: func(ctx context.Context) error {
 					if !cfg.GetPGVectorExtensionRequired() {
-						return nil
+						return errV2PGVectorDegraded
 					}
 					return postgres.CheckPGVectorExtension(ctx, db)
 				},
@@ -70,9 +78,21 @@ func buildDormantV2Bootstrap(cfg config.Config, db *gorm.DB, migration v2Migrati
 				},
 			},
 			{
+				Name: "v2_schema_index_profile",
+				Check: func(context.Context) error {
+					return validateV2SchemaIndexReadiness(cfg)
+				},
+			},
+			{
+				Name: "v2_queue_profile",
+				Check: func(context.Context) error {
+					return validateV2QueueReadiness(cfg)
+				},
+			},
+			{
 				Name: "v2_workers",
 				Check: func(context.Context) error {
-					return nil
+					return validateV2WorkerReadiness(cfg)
 				},
 			},
 			{
@@ -103,6 +123,87 @@ func checkV2MigrationState(ctx context.Context, cfg config.Config, migration v2M
 	default:
 		return fmt.Errorf("%w: %s", errV2MigrationPending, status.State)
 	}
+}
+
+func validateV2WorkerReadiness(cfg config.Config) error {
+	if err := requirePositiveV2Readiness("MEMORY_PLACEMENT_WORKER_COUNT", cfg.GetMemoryPlacementWorkerCount(), errV2WorkersNotReady); err != nil {
+		return err
+	}
+	return requirePositiveV2Readiness("EMBEDDING_WORKER_COUNT", cfg.GetEmbeddingWorkerCount(), errV2WorkersNotReady)
+}
+
+func validateV2SchemaIndexReadiness(cfg config.Config) error {
+	required := []struct {
+		field string
+		value string
+	}{
+		{"SEARCH_DOCUMENT_FORMAT_VERSION", cfg.GetSearchDocumentFormatVersion()},
+		{"EMBEDDING_NORMALIZATION_VERSION", cfg.GetEmbeddingNormalizationVersion()},
+		{"PREDICATE_REGISTRY_VERSION", cfg.GetPredicateRegistryVersion()},
+		{"PGVECTOR_DISTANCE", cfg.GetPGVectorDistance()},
+		{"PGVECTOR_ANN_STRATEGY", cfg.GetPGVectorANNStrategy()},
+	}
+	for _, item := range required {
+		if strings.TrimSpace(item.value) == "" {
+			return wrapV2ReadinessError(item.field, "required for v2 schema/index readiness", errV2SchemaIndexNotReady)
+		}
+	}
+	if err := requirePositiveV2Readiness("PGVECTOR_HNSW_M", cfg.GetPGVectorHNSWM(), errV2SchemaIndexNotReady); err != nil {
+		return err
+	}
+	if err := requirePositiveV2Readiness("PGVECTOR_HNSW_EF_CONSTRUCTION", cfg.GetPGVectorHNSWEFConstruction(), errV2SchemaIndexNotReady); err != nil {
+		return err
+	}
+	return requirePositiveV2Readiness("PGVECTOR_INDEX_BUILD_MAX_CONCURRENCY", cfg.GetPGVectorIndexBuildMaxConcurrency(), errV2SchemaIndexNotReady)
+}
+
+func validateV2QueueReadiness(cfg config.Config) error {
+	checks := []struct {
+		field string
+		value int
+	}{
+		{"MEMORY_PLACEMENT_LEASE_SECONDS", cfg.GetMemoryPlacementLeaseSeconds()},
+		{"MEMORY_PLACEMENT_HEARTBEAT_SECONDS", cfg.GetMemoryPlacementHeartbeatSeconds()},
+		{"MEMORY_PLACEMENT_POLL_SECONDS", cfg.GetMemoryPlacementPollSeconds()},
+		{"MEMORY_PLACEMENT_MAX_ATTEMPTS", cfg.GetMemoryPlacementMaxAttempts()},
+		{"EMBEDDING_BATCH_SIZE", cfg.GetEmbeddingBatchSize()},
+		{"EMBEDDING_JOB_LEASE_SECONDS", cfg.GetEmbeddingJobLeaseSeconds()},
+		{"EMBEDDING_JOB_POLL_SECONDS", cfg.GetEmbeddingJobPollSeconds()},
+		{"EMBEDDING_JOB_MAX_ATTEMPTS", cfg.GetEmbeddingJobMaxAttempts()},
+		{"EMBEDDING_JOB_RETRY_MAX_SECONDS", cfg.GetEmbeddingJobRetryMaxSeconds()},
+		{"EMBEDDING_PENDING_STALE_SECONDS", cfg.GetEmbeddingPendingStaleSeconds()},
+	}
+	for _, check := range checks {
+		if err := requirePositiveV2Readiness(check.field, check.value, errV2QueueNotReady); err != nil {
+			return err
+		}
+	}
+	if cfg.GetMemoryPlacementHeartbeatSeconds() >= cfg.GetMemoryPlacementLeaseSeconds() {
+		return wrapV2ReadinessError(
+			"MEMORY_PLACEMENT_HEARTBEAT_SECONDS",
+			"must be lower than MEMORY_PLACEMENT_LEASE_SECONDS for v2 queue readiness",
+			errV2QueueNotReady,
+		)
+	}
+	if cfg.GetDistributedCoordinationRequired() && strings.TrimSpace(cfg.GetRedisAddr()) == "" {
+		return wrapV2ReadinessError(
+			"DISTRIBUTED_COORDINATION_REQUIRED",
+			"REDIS_ADDR is required for distributed v2 queue readiness",
+			errV2QueueNotReady,
+		)
+	}
+	return nil
+}
+
+func requirePositiveV2Readiness(field string, value int, sentinel error) error {
+	if value <= 0 {
+		return wrapV2ReadinessError(field, fmt.Sprintf("must be greater than 0, got %d", value), sentinel)
+	}
+	return nil
+}
+
+func wrapV2ReadinessError(field string, message string, sentinel error) error {
+	return fmt.Errorf("%w: %w", sentinel, &config.ValidationError{Field: field, Message: message})
 }
 
 func (b dormantV2Bootstrap) HealthChecks() []internalhttp.HealthCheck {

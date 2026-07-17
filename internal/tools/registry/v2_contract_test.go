@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -436,6 +437,74 @@ func TestV2RelationshipHintsRequireExactlyOneObject(t *testing.T) {
 	}
 }
 
+func TestV2RelationshipHintsResolveEntityRefs(t *testing.T) {
+	remember, err := requireV2Tool(v2ToolMap(t), V2ToolRemember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseInput := map[string]any{
+		"contract_version": domain.V2ContractVersion,
+		"evidence": []any{
+			map[string]any{"content": "Dense-Mem uses PostgreSQL."},
+		},
+		"entity_hints": []any{
+			map[string]any{"ref": "entity-1", "name": "Dense-Mem"},
+			map[string]any{"ref": "entity-2", "name": "PostgreSQL"},
+		},
+	}
+	baseHint := map[string]any{
+		"ref":         "rel-1",
+		"subject_ref": "entity-1",
+		"predicate":   "uses",
+		"object_ref":  "entity-2",
+		"evidence": []any{
+			map[string]any{"evidence_index": 0, "quote": "uses PostgreSQL"},
+		},
+	}
+	valid := cloneMap(baseInput)
+	valid["relationship_hints"] = []any{baseHint}
+	if err := ValidateV2ContractInput(remember, valid, []string{"write"}); err != nil {
+		t.Fatalf("valid relationship refs rejected: %v", err)
+	}
+	objectValueHint := cloneMap(baseHint)
+	delete(objectValueHint, "object_ref")
+	objectValueHint["object_value"] = map[string]any{
+		"type":  "string",
+		"value": "PostgreSQL",
+	}
+	objectValue := cloneMap(baseInput)
+	objectValue["relationship_hints"] = []any{objectValueHint}
+	if err := ValidateV2ContractInput(remember, objectValue, []string{"write"}); err != nil {
+		t.Fatalf("object_value relationship rejected: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		hint map[string]any
+		want string
+	}{
+		{
+			name: "missing subject",
+			hint: mergeMap(baseHint, map[string]any{"subject_ref": "entity-missing"}),
+			want: "subject_ref",
+		},
+		{
+			name: "missing object",
+			hint: mergeMap(baseHint, map[string]any{"object_ref": "entity-missing"}),
+			want: "object_ref",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := cloneMap(baseInput)
+			input["relationship_hints"] = []any{tc.hint}
+			err := ValidateV2ContractInput(remember, input, []string{"write"})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ValidateV2ContractInput err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 	resolve, err := requireV2Tool(v2ToolMap(t), V2ToolResolveMemoryPlacement)
 	if err != nil {
@@ -668,6 +737,44 @@ func TestV2CorrectEntityResolutionActionRequiredFields(t *testing.T) {
 	}
 }
 
+func TestV2ExportMemoryPackRequiresRelationships(t *testing.T) {
+	exportTool, err := requireV2Tool(v2ToolMap(t), V2ToolExportMemoryPack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := map[string]any{
+		"contract_version": domain.V2ContractVersion,
+		"name":             "pack",
+	}
+	for _, tc := range []struct {
+		name  string
+		input map[string]any
+		want  string
+	}{
+		{
+			name:  "missing relationships",
+			input: cloneMap(base),
+			want:  "relationship_ids is required",
+		},
+		{
+			name:  "empty relationships",
+			input: mergeMap(base, map[string]any{"relationship_ids": []any{}}),
+			want:  "at least 1 items",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateV2ContractInput(exportTool, tc.input, []string{"read"})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ValidateV2ContractInput err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+	valid := mergeMap(base, map[string]any{"relationship_ids": []any{"rel-1"}})
+	if err := ValidateV2ContractInput(exportTool, valid, []string{"read"}); err != nil {
+		t.Fatalf("valid export rejected: %v", err)
+	}
+}
+
 func TestV2MemoryPackSourceValidation(t *testing.T) {
 	tools := v2ToolMap(t)
 	for _, toolName := range []string{V2ToolInspectMemoryPack, V2ToolImportMemoryPack} {
@@ -756,6 +863,33 @@ func TestV2ProviderAndEmbeddingContracts(t *testing.T) {
 	if embedding.V2EmbeddingContractVersion == "" {
 		t.Fatal("V2 embedding contract version is empty")
 	}
+	evidenceItem := schemaProperties(schemaProperties(schema)["evidence"]["items"].(map[string]any))
+	if err := validateSchemaValue("evidence.content", "", evidenceItem["content"]); err == nil {
+		t.Fatal("provider evidence content accepted empty string")
+	}
+	entityItem := schemaProperties(schemaProperties(schema)["entity_proposals"]["items"].(map[string]any))
+	if err := validateSchemaValue("entity.name", "", entityItem["name"]); err == nil {
+		t.Fatal("provider entity name accepted empty string")
+	}
+	if err := validateSchemaValue("entity.aliases", []any{""}, entityItem["aliases"]); err == nil {
+		t.Fatal("provider entity alias accepted empty string")
+	}
+	relationshipItem := schemaProperties(schemaProperties(schema)["relationship_proposals"]["items"].(map[string]any))
+	if err := validateSchemaValue("relationship.original_predicate", "", relationshipItem["original_predicate"]); err == nil {
+		t.Fatal("provider relationship predicate accepted empty string")
+	}
+	objectValue := schemaProperties(relationshipItem["object_value"])
+	if err := validateSchemaValue("relationship.object_value.value", "", objectValue["value"]); err == nil {
+		t.Fatal("provider relationship value accepted empty string")
+	}
+	evidenceSpan := schemaProperties(relationshipItem["evidence"]["items"].(map[string]any))
+	if err := validateSchemaValue("relationship.evidence.quote", "", evidenceSpan["quote"]); err == nil {
+		t.Fatal("provider evidence quote accepted empty string")
+	}
+	reviewItemProps := schemaProperties(reviewItem)
+	if err := validateSchemaValue("review.reason", "", reviewItemProps["reason"]); err == nil {
+		t.Fatal("provider review reason accepted empty string")
+	}
 }
 
 func cloneMap(in map[string]any) map[string]any {
@@ -811,6 +945,48 @@ func v2ToolMap(t *testing.T) map[string]Tool {
 		tools[tool.Name] = tool
 	}
 	return tools
+}
+
+func requireV2Tool(tools map[string]Tool, name string) (Tool, error) {
+	tool, ok := tools[name]
+	if !ok {
+		return Tool{}, fmt.Errorf("missing V2 tool %s", name)
+	}
+	if tool.ContractVersion != domain.V2ContractVersion {
+		return Tool{}, fmt.Errorf("tool %s has wrong contract version", name)
+	}
+	if tool.FeatureGate != domain.V2FeatureGate || tool.Visibility != domain.V2ToolVisibility {
+		return Tool{}, fmt.Errorf("tool %s has wrong V2 gate metadata", name)
+	}
+	return tool, nil
+}
+
+func assertV2ProviderProposalSchema(schema map[string]any) error {
+	props := schemaProperties(schema)
+	if len(props) == 0 {
+		return errors.New("provider proposal schema has no properties")
+	}
+	for _, forbidden := range []string{"team_id", "profile_id", "tier", "status", "predicate_definitions"} {
+		if _, ok := props[forbidden]; ok {
+			return fmt.Errorf("provider proposal schema allows %s", forbidden)
+		}
+	}
+	if _, ok := props["predicate_options"]; !ok {
+		return errors.New("provider proposal schema has no predicate_options")
+	}
+	relationshipProposals, ok := props["relationship_proposals"]
+	if !ok {
+		return errors.New("provider proposal schema has no relationship_proposals")
+	}
+	items, ok := relationshipProposals["items"].(map[string]any)
+	if !ok {
+		return errors.New("provider relationship_proposals schema has no item schema")
+	}
+	oneOf, ok := items["oneOf"].([]any)
+	if !ok || len(oneOf) != 2 {
+		return errors.New("provider relationship proposal schema must require exactly one object form")
+	}
+	return nil
 }
 
 func readV2ContractFixtures(t *testing.T) []v2ContractFixture {

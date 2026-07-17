@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -15,47 +16,6 @@ const (
 	V2BootModeDormant = "dormant"
 	V2BootModeUAT     = "uat"
 )
-
-// ConfigProvider is the companion interface for Config.
-// Consumers and tests depend on this abstraction rather than the concrete struct.
-type ConfigProvider interface {
-	GetPostgresDSN() string
-	GetNeo4jURI() string
-	GetNeo4jUser() string
-	GetNeo4jPassword() string
-	GetNeo4jDatabase() string
-	GetRedisAddr() string
-	GetRedisPassword() string
-	GetRedisDB() int
-	GetHTTPMaxBodyBytes() int
-	GetRateLimitPerMinute() int
-	GetFragmentCreateRateLimit() int
-	GetFragmentReadRateLimit() int
-	GetSSEHeartbeatSeconds() int
-	GetSSEMaxDurationSeconds() int
-	GetSSEMaxConcurrentStreams() int
-	GetEmbeddingDimensions() int
-	GetAIAPIURL() string
-	GetAIAPIKey() string
-	GetAIEmbeddingModel() string
-	GetAIEmbeddingDimensions() int
-	GetAIEmbeddingTimeoutSeconds() int
-	IsEmbeddingConfigured() bool
-	// Knowledge-pipeline knobs (AC-X3)
-	GetAIVerifierAPIURL() string
-	GetAIVerifierAPIKey() string
-	GetAIVerifierModel() string
-	GetAIVerifierTimeoutSeconds() int
-	GetAIVerifierMaxConcurrency() int
-	GetClaimWriteRateLimit() int
-	GetClaimReadRateLimit() int
-	GetRecallValidatedClaimWeight() float64
-	GetPromoteTxTimeoutSeconds() int
-	GetSkillPackImportHistoryDays() int
-	GetAICommunityMaxNodes() int
-	GetControlHTTPAddr() string
-	GetControlPortalToken() string
-}
 
 type aiVerifierTemperatureConfig interface {
 	GetAIVerifierDisableTemperature() bool
@@ -531,6 +491,7 @@ func validateRRFBranchWeights(key, value string) error {
 		"evidence_text":   true,
 		"evidence_vector": true,
 	}
+	seen := map[string]bool{}
 	for _, part := range strings.Split(value, ",") {
 		chunks := strings.Split(strings.TrimSpace(part), "=")
 		if len(chunks) != 2 {
@@ -540,8 +501,12 @@ func validateRRFBranchWeights(key, value string) error {
 		if !allowed[branch] {
 			return &ValidationError{Field: key, Message: fmt.Sprintf("unsupported branch %q", branch)}
 		}
+		if seen[branch] {
+			return &ValidationError{Field: key, Message: fmt.Sprintf("duplicate branch %q", branch)}
+		}
+		seen[branch] = true
 		weight, err := strconv.ParseFloat(strings.TrimSpace(chunks[1]), 64)
-		if err != nil || weight <= 0 {
+		if err != nil || math.IsNaN(weight) || math.IsInf(weight, 0) || weight <= 0 {
 			return &ValidationError{Field: key, Message: fmt.Sprintf("invalid branch weight %q", chunks[1])}
 		}
 	}
