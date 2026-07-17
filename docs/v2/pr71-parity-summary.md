@@ -3,10 +3,12 @@
 This directory tracks the controlled replacement of PR #71 with the canonical
 wiki architecture. PR #71 is evidence, not the implementation plan.
 
-- `pr71-parity-ledger.tsv` contains one row for every file changed by PR #71
+- `pr71-path-manifest.txt` is the checked-in path manifest generated from the
+  git diff from `main@4293ba4` to PR #71 head `54b0fa5`.
+- `pr71-parity-ledger.tsv` contains one row for every path in that manifest
   plus wiki-required gaps absent from that branch.
-- `source=pr71` rows must exactly match the git diff from `main@4293ba4` to
-  PR #71 head `54b0fa5`.
+- `source=pr71` rows must exactly match `pr71-path-manifest.txt` so repository
+  checks do not require network access to fetch PR #71 commits.
 - `source=wiki-gap` rows name required work that PR #71 did not implement or
   implemented in a wiki-conflicting way.
 - `disposition` means `retain`, `replace`, `exclude`, or `add`.
