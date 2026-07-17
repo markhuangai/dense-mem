@@ -58,7 +58,7 @@ func TestV2RememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.
 	if result.Status != string(domain.V2PlacementRunQueued) {
 		t.Fatalf("status = %q", result.Status)
 	}
-	if len(result.Items) != 1 || result.Items[0].Category != string(domain.V2EvidenceNeedsReview) {
+	if len(result.Items) != 1 || result.Items[0].Category != string(domain.V2EvidenceProcessed) {
 		t.Fatalf("items = %#v", result.Items)
 	}
 	if result.Items[0].Version != 7 {
@@ -160,7 +160,7 @@ func TestV2GetMemoryPlacementUsesAuthenticatedOwnerAndReturnsCurrentVersion(t *t
 	require.Len(t, result.Items, 1)
 	require.Equal(t, itemID, result.Items[0].ItemID)
 	require.Equal(t, 4, result.Items[0].Version)
-	require.Equal(t, string(domain.V2EvidenceNeedsReview), result.Items[0].Category)
+	require.Equal(t, string(domain.V2EvidenceProcessed), result.Items[0].Category)
 	require.Equal(t, teamID.String(), ledger.placementInput.TeamID)
 	require.Equal(t, profileID.String(), ledger.placementInput.OwnerProfileID)
 	require.Equal(t, ingestID, ledger.placementInput.IngestID)

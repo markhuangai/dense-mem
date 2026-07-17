@@ -6,42 +6,36 @@ func v2TraceMemoryInputSchema() map[string]any {
 		"include_evidence_content": map[string]any{"type": "boolean"},
 		"include_verification":     map[string]any{"type": "boolean"},
 		"include_transitions":      map[string]any{"type": "boolean"},
-		"max_depth":                map[string]any{"type": "integer", "minimum": 1, "maximum": 4},
-		"max_edges":                map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
-		"max_chars":                map[string]any{"type": "integer", "minimum": 1, "maximum": 20000},
-		"predicate_keys":           v2StringArraySchema("Predicate key filter.", 100, 128),
-		"topic":                    schemaString("Optional bounded graph context search topic.", 512),
+		"max_depth":                map[string]any{"type": "integer", "minimum": 0, "maximum": 4},
+		"max_edges":                map[string]any{"type": "integer", "minimum": 0, "maximum": 100},
+		"predicate_keys":           v2StringArraySchema("Registered predicate key filter.", 30, 128),
+		"topic":                    v2NullableString("Optional graph-context topic.", 256),
+		"min_relevance":            v2NullableNumber("Optional graph-context relevance threshold.", 0, 1),
 	})
 }
 
 func v2TraceMemoryOutputSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"relationship":      map[string]any{"type": "object"},
-			"observations":      map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"evidence_supports": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"support_decision_events": map[string]any{
-				"type":  "array",
-				"items": map[string]any{"type": "object"},
-			},
-			"evidence_fragments":  map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"verification_events": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"transitions":         map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"cross_profile_references": map[string]any{
-				"type":  "array",
-				"items": map[string]any{"type": "object"},
-			},
-			"identity_corrections": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"supersession_lineage": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"search_documents":     map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"embedding_jobs":       map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"semantic_nodes":       map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"semantic_edges":       map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"visited_entity_ids":   v2StringArraySchema("Visited Entity ID.", 500, 128),
-			"degradation":          v2DegradationSchema(),
-			"stopped_reason":       schemaString("Trace budget stop reason.", 128),
-			"truncated":            map[string]any{"type": "boolean"},
-		},
+	required := []string{
+		"relationship", "observations", "evidence_supports", "support_decision_events",
+		"evidence_fragments", "verification_events", "transitions", "conflicts",
+		"cross_profile_references", "identity_corrections", "supersession_lineage",
+		"semantic_nodes", "semantic_edges", "visited_entity_ids", "stopped_reason",
 	}
+	return v2ClosedObject(required, map[string]any{
+		"relationship":             v2TraceRelationshipSchema(),
+		"observations":             v2Array(v2TraceObservationSchema(), 0, 500),
+		"evidence_supports":        v2Array(v2TraceEvidenceSupportSchema(), 0, 500),
+		"support_decision_events":  v2Array(v2TraceSupportDecisionSchema(), 0, 500),
+		"evidence_fragments":       v2Array(v2TraceEvidenceFragmentSchema(), 0, 500),
+		"verification_events":      v2Array(v2TraceVerificationSchema(), 0, 500),
+		"transitions":              v2Array(v2TraceTransitionSchema(), 0, 500),
+		"conflicts":                v2Array(v2TraceConflictSchema(), 0, 500),
+		"cross_profile_references": v2Array(v2CrossProfileReferenceSchema(), 0, 500),
+		"identity_corrections":     v2Array(v2TraceIdentityCorrectionSchema(), 0, 500),
+		"supersession_lineage":     v2Array(v2TraceRelationshipSchema(), 0, 500),
+		"semantic_nodes":           v2Array(v2SemanticNodeSchema(), 0, 500),
+		"semantic_edges":           v2Array(v2SemanticEdgeSchema(), 0, 500),
+		"visited_entity_ids":       v2StringArraySchema("Visited Entity ID.", 500, 128),
+		"stopped_reason":           v2NullableString("Trace budget stop reason.", 128),
+	})
 }
