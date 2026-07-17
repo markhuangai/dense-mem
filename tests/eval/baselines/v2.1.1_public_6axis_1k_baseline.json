@@ -31,5 +31,5 @@
     "bad_rank1_rate": 0,
     "unmapped_source_refs": 0
   },
-  "generated_artifacts_policy": "Do not commit generated seed, suite, downloaded data, import, runtime database, run output, or comparison artifacts. Regenerate locally from tracked scripts and validate the generated validation_report.json before running this gate."
+  "generated_artifacts_policy": "Do not commit the approved local seed or suite, downloaded data, imports, runtime databases, run outputs, or comparison artifacts. The gate must use the existing public_6axis_1k_v1 artifact and reject a missing or mismatched identity; it must not regenerate or replace the release seed."
 }

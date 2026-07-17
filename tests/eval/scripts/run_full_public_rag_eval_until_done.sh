@@ -6,6 +6,7 @@ cd "${ROOT_DIR}"
 
 : "${SEED:?Set SEED to the seed_manifest.json path}"
 : "${SUITE:?Set SUITE to the suite JSONL path}"
+: "${RELEASE_GATE_POLICY:?Set RELEASE_GATE_POLICY to the committed release gate policy path}"
 
 if [[ ! -f "${SEED}" ]]; then
   echo "seed manifest not found: ${SEED}" >&2
@@ -15,9 +16,14 @@ if [[ ! -f "${SUITE}" ]]; then
   echo "suite not found: ${SUITE}" >&2
   exit 2
 fi
+if [[ ! -f "${RELEASE_GATE_POLICY}" ]]; then
+  echo "release gate policy not found: ${RELEASE_GATE_POLICY}" >&2
+  exit 2
+fi
 
 SEED="$(realpath "${SEED}")"
 SUITE="$(realpath "${SUITE}")"
+RELEASE_GATE_POLICY="$(realpath "${RELEASE_GATE_POLICY}")"
 V1_DATA_DIR="$(realpath -m "${V1_DATA_DIR:-tests/eval/runtime/v1}")"
 export V1_COMPOSE_DATA_DIR="$(realpath -m "${V1_COMPOSE_DATA_DIR:-${V1_DATA_DIR}}")"
 
@@ -39,7 +45,6 @@ STATUS_JSON="${MONITOR_DIR}/status.json"
 PLACEMENT_SUMMARY="${MONITOR_DIR}/placement_summary.json"
 RESUME_SOURCE_DOC_IDS="${MONITOR_DIR}/completed_source_doc_ids.txt"
 FAILED_SOURCE_DOC_IDS="${MONITOR_DIR}/failed_source_doc_ids.txt"
-RELEASE_GATE_POLICY="${RELEASE_GATE_POLICY:-}"
 
 mkdir -p "${IMPORT_DIR}" "${BASELINE_DIR}" "${MONITOR_DIR}" "${VALIDATION_DIR}" "$(dirname "${RUNNER}")"
 
@@ -57,9 +62,29 @@ export NEO4J_BOLT_HOST_PORT="${NEO4J_BOLT_HOST_PORT:-17687}"
 export REDIS_PORT="${REDIS_PORT:-16380}"
 export PROMETHEUS_PORT="${PROMETHEUS_PORT:-19090}"
 export PROMETHEUS_CONTAINER_NAME="${PROMETHEUS_CONTAINER_NAME:-densemem-eval-v1-prometheus}"
+export DENSE_MEM_EVAL_TOOL_TRANSPORT="${DENSE_MEM_EVAL_TOOL_TRANSPORT:-mcp}"
+if [[ "${DENSE_MEM_EVAL_TOOL_TRANSPORT}" != "mcp" ]]; then
+  echo "the release gate requires DENSE_MEM_EVAL_TOOL_TRANSPORT=mcp" >&2
+  exit 2
+fi
 
 compose() {
   docker compose -p densemem_eval_full -f docker-compose.yml -f tests/eval/docker-compose.eval.yml "$@"
+}
+
+canonical_json_sha256() {
+  local digest
+  digest="$(jq -cS -j . "$1" | sha256sum | awk '{print $1}')"
+  printf 'sha256:%s\n' "${digest}"
+}
+
+server_image_id() {
+  local container_id
+  container_id="$(compose ps -q server)"
+  if [[ -z "${container_id}" ]]; then
+    return 1
+  fi
+  docker inspect --format '{{.Image}}' "${container_id}"
 }
 
 log() {
@@ -142,12 +167,12 @@ ensure_runner() {
 
 psql_eval() {
   local sql="$1"
-  compose exec -T postgres \
+  printf '%s\n' "${sql}" | compose exec -T postgres \
     psql -v ON_ERROR_STOP=1 \
       -U "${POSTGRES_USER:-densemem}" \
       -d "${POSTGRES_DB:-densemem}" \
       -v "team_id=${EVAL_TEAM_ID}" \
-      -At -F '|' -c "${sql}"
+      -At -F '|'
 }
 
 count_fragments() {
@@ -379,14 +404,19 @@ write_status() {
   mv "${tmp}" "${STATUS_JSON}"
 }
 
-prepare_identity() {
+validate_release_gate_seed() {
   "${RUNNER}" \
     --mode validate \
     --seed "${SEED}" \
     --suite "${SUITE}" \
+    --release-gate-policy "${RELEASE_GATE_POLICY}" \
     --out "${VALIDATION_DIR}"
 
   SEED_HASH="$(jq -r '.seed_hash' "${VALIDATION_DIR}/summary.json")"
+  export SEED_HASH
+}
+
+prepare_identity() {
   SUITE_HASH="$(sha256sum "${SUITE}" | awk '{print $1}')"
   EMBEDDING_MODEL="${AI_API_EMBEDDING_MODEL:-}"
   EMBEDDING_DIMENSIONS="${AI_API_EMBEDDING_DIMENSIONS:-1536}"
@@ -394,7 +424,9 @@ prepare_identity() {
     EMBEDDING_DIMENSIONS="1536"
   fi
   EMBEDDING_ENDPOINT_HASH="$(printf '%s' "${AI_API_URL:-}" | sha256sum | awk '{print $1}')"
-  export SEED_HASH SUITE_HASH
+  RELEASE_GATE_POLICY_HASH="$(canonical_json_sha256 "${RELEASE_GATE_POLICY}")"
+  RUNNER_HASH="sha256:$(sha256sum "${RUNNER}" | awk '{print $1}')"
+  export SUITE_HASH RELEASE_GATE_POLICY_HASH RUNNER_HASH
 
   local candidate="${MONITOR_DIR}/requested_dataset_identity.json"
   jq -n \
@@ -404,7 +436,13 @@ prepare_identity() {
     --arg embedding_model "${EMBEDDING_MODEL}" \
     --arg embedding_dimensions "${EMBEDDING_DIMENSIONS}" \
     --arg embedding_endpoint_sha256 "${EMBEDDING_ENDPOINT_HASH}" \
+    --arg reviewer_model "${AI_REVIEWER_MODEL:-}" \
+    --arg verifier_model "${AI_VERIFIER_MODEL:-}" \
     --arg team_id "${EVAL_TEAM_ID}" \
+    --arg release_gate_policy_sha256 "${RELEASE_GATE_POLICY_HASH}" \
+    --arg runner_sha256 "${RUNNER_HASH}" \
+    --arg server_image_id "${SERVER_IMAGE_ID}" \
+    --arg tool_transport "${DENSE_MEM_EVAL_TOOL_TRANSPORT}" \
     '{
       seed_id: $seed_id,
       seed_hash: $seed_hash,
@@ -412,13 +450,20 @@ prepare_identity() {
       embedding_model: $embedding_model,
       embedding_dimensions: ($embedding_dimensions | tonumber),
       embedding_endpoint_sha256: $embedding_endpoint_sha256,
+      reviewer_model: $reviewer_model,
+      verifier_model: $verifier_model,
       team_id: $team_id,
+      release_gate_policy_sha256: $release_gate_policy_sha256,
+      runner_sha256: $runner_sha256,
+      server_image_id: $server_image_id,
+      tool_transport: $tool_transport,
+      tool_contract: "mcp.tools/call.v1",
       import_route: "remember"
     }' > "${candidate}"
 
   if [[ -f "${IDENTITY_JSON}" ]]; then
     if ! cmp -s "${IDENTITY_JSON}" "${candidate}"; then
-      echo "eval runtime identity does not match the requested seed, suite, embedding config, or team" >&2
+      echo "eval runtime identity does not match the requested seed, policy, contract, runner, model config, or team" >&2
       diff -u <(jq -S . "${IDENTITY_JSON}") <(jq -S . "${candidate}") >&2 || true
       return 1
     fi
@@ -474,7 +519,7 @@ start_import() {
 }
 
 run_baseline() {
-  if [[ ! -s "${IMPORT_DIR}/knowledge_mapping.json" || ! -s "${IMPORT_DIR}/summary.json" ]]; then
+  if [[ ! -s "${IMPORT_DIR}/knowledge_mapping.json" || ! -s "${IMPORT_DIR}/summary.json" || ! -s "${IMPORT_DIR}/run_config.json" ]]; then
     log "import_artifacts_missing"
     return 1
   fi
@@ -486,24 +531,60 @@ run_baseline() {
     log "import_artifact_route_is_not_remember"
     return 1
   fi
+  local import_mapping_hash
+  if ! import_mapping_hash="$(canonical_json_sha256 "${IMPORT_DIR}/knowledge_mapping.json")"; then
+    log "import_mapping_invalid path=${IMPORT_DIR}/knowledge_mapping.json"
+    return 1
+  fi
+  if [[ "$(jq -r '.mapping_sha256 // empty' "${IMPORT_DIR}/run_config.json")" != "${import_mapping_hash}" ]]; then
+    log "import_mapping_hash_mismatch path=${IMPORT_DIR}/knowledge_mapping.json"
+    return 1
+  fi
+  if [[ "$(jq -r '.tool_transport // empty' "${IMPORT_DIR}/run_config.json")" != "mcp" || "$(jq -r '.tool_contract // empty' "${IMPORT_DIR}/run_config.json")" != "mcp.tools/call.v1" ]]; then
+    log "import_contract_mismatch path=${IMPORT_DIR}/run_config.json"
+    return 1
+  fi
   if [[ -s "${BASELINE_DIR}/summary.json" ]]; then
+    if [[ ! -s "${BASELINE_DIR}/run_config.json" || ! -s "${BASELINE_DIR}/knowledge_mapping.json" ]]; then
+      log "baseline_identity_artifacts_missing path=${BASELINE_DIR}"
+      return 1
+    fi
     if [[ "$(jq -r '.seed_hash // empty' "${BASELINE_DIR}/summary.json")" != "${SEED_HASH}" ]]; then
       log "baseline_seed_hash_mismatch path=${BASELINE_DIR}/summary.json"
       return 1
     fi
-    if [[ -n "${RELEASE_GATE_POLICY}" ]]; then
-      if [[ ! -s "${BASELINE_DIR}/release_gate_result.json" ]]; then
-        log "baseline_gate_result_missing policy=${RELEASE_GATE_POLICY}"
-        return 1
-      fi
-      if [[ "$(jq -r '.release_gate_policy_path // empty' "${BASELINE_DIR}/run_config.json")" != "${RELEASE_GATE_POLICY}" ]]; then
-        log "baseline_gate_policy_mismatch policy=${RELEASE_GATE_POLICY}"
-        return 1
-      fi
-      if [[ "$(jq -r '.passed // false' "${BASELINE_DIR}/release_gate_result.json")" != "true" ]]; then
-        log "baseline_gate_result_not_passed path=${BASELINE_DIR}/release_gate_result.json"
-        return 1
-      fi
+    if [[ ! -s "${BASELINE_DIR}/release_gate_result.json" ]]; then
+      log "baseline_gate_result_missing policy=${RELEASE_GATE_POLICY}"
+      return 1
+    fi
+    if [[ "$(jq -r '.release_gate_policy_path // empty' "${BASELINE_DIR}/run_config.json")" != "${RELEASE_GATE_POLICY}" ]]; then
+      log "baseline_gate_policy_mismatch policy=${RELEASE_GATE_POLICY}"
+      return 1
+    fi
+    if [[ "$(jq -r '.release_gate_policy_sha256 // empty' "${BASELINE_DIR}/run_config.json")" != "${RELEASE_GATE_POLICY_HASH}" ]]; then
+      log "baseline_gate_policy_hash_mismatch policy=${RELEASE_GATE_POLICY}"
+      return 1
+    fi
+    if [[ "$(jq -r '.mapping_sha256 // empty' "${BASELINE_DIR}/run_config.json")" != "${import_mapping_hash}" ]]; then
+      log "baseline_mapping_hash_mismatch path=${BASELINE_DIR}/run_config.json"
+      return 1
+    fi
+    if [[ "$(jq -r '.tool_transport // empty' "${BASELINE_DIR}/run_config.json")" != "mcp" || "$(jq -r '.tool_contract // empty' "${BASELINE_DIR}/run_config.json")" != "mcp.tools/call.v1" ]]; then
+      log "baseline_contract_mismatch path=${BASELINE_DIR}/run_config.json"
+      return 1
+    fi
+    local baseline_mapping_hash
+    if ! baseline_mapping_hash="$(canonical_json_sha256 "${BASELINE_DIR}/knowledge_mapping.json")"; then
+      log "baseline_mapping_invalid path=${BASELINE_DIR}/knowledge_mapping.json"
+      return 1
+    fi
+    if [[ "${baseline_mapping_hash}" != "${import_mapping_hash}" ]]; then
+      log "baseline_mapping_artifact_mismatch path=${BASELINE_DIR}/knowledge_mapping.json"
+      return 1
+    fi
+    if [[ "$(jq -r '.passed // false' "${BASELINE_DIR}/release_gate_result.json")" != "true" ]]; then
+      log "baseline_gate_result_not_passed path=${BASELINE_DIR}/release_gate_result.json"
+      return 1
     fi
     log "baseline_summary_exists path=${BASELINE_DIR}/summary.json"
     return 0
@@ -518,13 +599,14 @@ run_baseline() {
     --out "${BASELINE_DIR}"
     --mapping "${IMPORT_DIR}/knowledge_mapping.json"
     --max-page-size 500
+    --release-gate-policy "${RELEASE_GATE_POLICY}"
   )
-  if [[ -n "${RELEASE_GATE_POLICY}" ]]; then
-    baseline_args+=(--release-gate-policy "${RELEASE_GATE_POLICY}")
-  fi
 
   log "starting_baseline_eval"
-  "${baseline_args[@]}"
+  if ! "${baseline_args[@]}"; then
+    log "baseline_eval_failed path=${BASELINE_DIR}/release_gate_result.json"
+    return 1
+  fi
   log "baseline_eval_finished path=${BASELINE_DIR}/summary.json"
 }
 
@@ -534,12 +616,19 @@ main() {
     echo "another eval monitor is already running for ${MONITOR_DIR}" >&2
     return 1
   fi
-  load_env
   ensure_runner
+  validate_release_gate_seed
+  load_env
   if ! compose exec -T postgres true || ! compose exec -T neo4j true || ! compose exec -T server true; then
     echo "eval stack is not running; start it with the eval compose override" >&2
     return 1
   fi
+  SERVER_IMAGE_ID="$(server_image_id)"
+  if [[ -z "${SERVER_IMAGE_ID}" ]]; then
+    echo "could not resolve the local eval server image ID" >&2
+    return 1
+  fi
+  export SERVER_IMAGE_ID
   prepare_identity
 
   printf '%s\n' "$$" > "${MONITOR_DIR}/monitor.pid"

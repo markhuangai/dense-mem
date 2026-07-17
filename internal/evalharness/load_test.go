@@ -237,3 +237,37 @@ func TestLoadErrorAndCommentBranches(t *testing.T) {
 		t.Fatal("SeedHash missing optional file error = nil")
 	}
 }
+
+func TestCanonicalJSONHashIsStableAndDetectsMappingDrift(t *testing.T) {
+	first := map[string]any{
+		"by_source_doc_id": map[string]any{
+			"doc-b": map[string]any{"type": "fragment", "id": "fragment-b"},
+			"doc-a": map[string]any{"id": "fragment-a", "type": "fragment"},
+		},
+	}
+	second := map[string]any{
+		"by_source_doc_id": map[string]any{
+			"doc-a": map[string]any{"type": "fragment", "id": "fragment-a"},
+			"doc-b": map[string]any{"id": "fragment-b", "type": "fragment"},
+		},
+	}
+	firstHash, err := canonicalJSONHash(first)
+	if err != nil {
+		t.Fatalf("hash first mapping: %v", err)
+	}
+	secondHash, err := canonicalJSONHash(second)
+	if err != nil {
+		t.Fatalf("hash second mapping: %v", err)
+	}
+	if firstHash != secondHash {
+		t.Fatalf("canonical hashes differ: %s != %s", firstHash, secondHash)
+	}
+	second["by_source_doc_id"].(map[string]any)["doc-b"].(map[string]any)["id"] = "fragment-changed"
+	driftedHash, err := canonicalJSONHash(second)
+	if err != nil {
+		t.Fatalf("hash drifted mapping: %v", err)
+	}
+	if driftedHash == firstHash {
+		t.Fatalf("mapping drift retained hash %s", firstHash)
+	}
+}

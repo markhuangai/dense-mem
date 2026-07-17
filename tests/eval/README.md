@@ -6,9 +6,9 @@ dedicated local Dense-Mem stack. Corpus ingestion uses the same public
 
 ```text
 corpus row
-  -> POST /api/v1/tools/remember
+  -> POST /mcp, JSON-RPC tools/call remember
   -> asynchronous AI placement
-  -> POST /api/v1/tools/get_memory_placement
+  -> POST /mcp, JSON-RPC tools/call get_memory_placement
   -> recall suite
   -> qrel-based retrieval metrics
 ```
@@ -17,8 +17,9 @@ The evaluation harness does not use `import_memories`, direct Neo4j writes, or
 an answer-judge model. It measures retrieval against deterministic qrels and
 reports placement outcomes separately.
 
-Generated datasets, persistent databases, credentials, and run artifacts are
-local-only and ignored by git.
+The approved seed, generated diagnostic datasets, persistent databases,
+credentials, and run artifacts are local-only and ignored by git. The full
+release evaluation never runs in remote CI.
 
 ## Layout
 
@@ -32,8 +33,8 @@ tests/eval/
     prepare_full_public_rag_eval.py
     run_full_public_rag_eval_until_done.sh
   data/                 # downloaded public datasets
-  seeds/                # generated seed packs
-  suites/               # generated suites
+  seeds/                # approved or generated local seed packs
+  suites/               # approved or generated local suites
   runtime/v1/
     dataset_identity.json
     eval_profile.json
@@ -72,30 +73,30 @@ rejects any corpus row above 999 Unicode code points. Legacy `claims` and
 `auto_promote` fields are rejected because they bypass production extraction
 and placement.
 
-## Prepare a seed
+## Use the approved local seed
 
-Generate the required 1k seed:
+The hard gate consumes the existing approved `public_6axis_1k_v1` seed and
+suite. It does not generate, download, or replace them. Their required identity
+is pinned by the committed policy: 206 cases and seed hash
+`sha256:eb09124331228e59898a93740104ab978b9974e3ebf7f7fc2e09728ef95b3d78`.
 
-```bash
-python3 tests/eval/scripts/prepare_public_6axis_eval.py \
-  --size 1000 \
-  --force
-```
-
-Generate the optional diagnostic 5k seed:
-
-```bash
-python3 tests/eval/scripts/prepare_public_6axis_eval.py \
-  --size 5000 \
-  --force
-```
-
-Use the checked local paths explicitly in every command:
+Because these artifacts are ignored, a new worktree does not contain them.
+Restore the approved local copy at these paths; do not substitute a regenerated
+seed:
 
 ```bash
 SEED=tests/eval/seeds/public_6axis_1k_v1/seed_manifest.json
 SUITE=tests/eval/suites/public_6axis_1k_v1.jsonl
 RELEASE_GATE=tests/eval/baselines/v2.1.1_public_6axis_1k_baseline.json
+```
+
+The preparation script refuses `--size 1000` so it cannot overwrite the
+approved gate artifact. It may generate the optional diagnostic 5k seed:
+
+```bash
+python3 tests/eval/scripts/prepare_public_6axis_eval.py \
+  --size 5000 \
+  --force
 ```
 
 The runner has no default seed or suite. This prevents an invocation from
@@ -153,19 +154,22 @@ scripts/eval-local.sh \
   --mode validate \
   --seed "${SEED}" \
   --suite "${SUITE}" \
+  --release-gate-policy "${RELEASE_GATE}" \
   --out tests/eval/runtime/v1/runs/validate
 ```
 
-For `public_6axis_*` seeds, validation also requires the generated
+For `public_6axis_*` seeds, validation also requires the existing
 `validation_report.json` named by the seed manifest. The report must have
-status `passed` and its seed hash must match the current generated files.
+status `passed`. The runner recomputes the complete seed hash and requires it,
+the seed ID, and the case count to match the committed policy before any local
+stack or import work begins.
 
 ## Import once, resume, and run recall
 
-The long-running monitor is on-demand; nothing starts it automatically. It
-builds the current runner, validates the selected seed, imports through
-`remember`, waits for terminal placement, and then runs the baseline recall
-suite:
+The long-running monitor is local and on-demand; nothing starts it
+automatically or from remote CI. It builds the current runner, validates the
+selected seed against the policy, imports through MCP `tools/call` `remember`,
+waits for terminal placement, and then runs the baseline recall suite:
 
 ```bash
 SEED="${SEED}" \
@@ -194,10 +198,12 @@ One failed concurrent request stops scheduling new rows but allows already
 active requests to finish. A later monitor pass continues from the latest
 completed placements instead of restarting the corpus.
 
-The runtime identity contains the seed content hash, suite hash, embedding
-model/dimensions/endpoint hash, team ID, and `remember` route. A mismatch is a
-hard error. If data exists without an identity file, the monitor refuses to
-adopt or erase it.
+The runtime identity contains the seed and suite hashes, release-policy hash,
+MCP contract, runner binary hash, local server image ID, reviewer/verifier and
+embedding configuration, team ID, and `remember` route. Import and baseline
+artifacts also contain a canonical mapping hash. Any mismatch is a hard error.
+If data exists without an identity file, the monitor refuses to adopt or erase
+it.
 
 Progress and placement analysis are written to:
 
@@ -255,13 +261,19 @@ Reuse `tests/eval/runtime/v1` when all of these remain unchanged:
 
 - seed contents and source document IDs
 - suite contents
+- release policy and MCP tool contract
+- runner binary and local server image
 - embedding endpoint, model, and dimensions
+- reviewer and verifier models
+- canonical source-to-knowledge mapping
 - ingestion behavior and graph schema relevant to stored data
 - dedicated eval team
 
-Recall code and scoring changes can be evaluated repeatedly against the same
-persisted data. Changes to ingestion, embeddings, or stored graph semantics
-require a separately confirmed clean reingestion.
+Resume and repeat runs may reuse the persisted data only with the same runner
+binary and local server image. A changed runner, server image, ingestion path,
+embedding configuration, or stored graph semantics must use a separate
+`V1_DATA_DIR` and cleanly reimport the same approved seed. The monitor never
+generates or replaces that seed.
 
 ## Reset safety
 

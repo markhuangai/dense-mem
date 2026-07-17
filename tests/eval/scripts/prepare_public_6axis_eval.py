@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare validated six-axis public semantic eval seeds."""
+"""Prepare the diagnostic 5k six-axis seed; the approved 1k seed is immutable."""
 
 from __future__ import annotations
 
@@ -67,6 +67,8 @@ def main() -> int:
     parser.add_argument("--beir-base-url", default=beir.DEFAULT_BEIR_BASE_URL)
     args = parser.parse_args()
 
+    if args.size == 1000:
+        parser.error("public_6axis_1k_v1 is an approved local artifact and must not be regenerated")
     if args.max_evidence_codepoints != semantic.MAX_EVIDENCE_CODEPOINTS:
         parser.error("six-axis seeds must use max evidence length 999")
 
@@ -164,6 +166,8 @@ def install_generated_seed(stage_dir: Path, stage_suite: Path, seed_dir: Path, s
     write_json(tx_dir / "manifest.json", {
         "seed_dir": str(seed_dir),
         "suite_path": str(suite_path),
+        "seed_had_original": seed_dir.exists(),
+        "suite_had_original": suite_path.exists(),
     })
     seed_backup = tx_dir / "seed_dir.backup"
     suite_backup = tx_dir / "suite_path.backup"
@@ -188,17 +192,29 @@ def recover_install_transaction(seed_dir: Path, suite_path: Path, tx_dir: Path) 
     if not manifest_path.exists():
         shutil.rmtree(tx_dir)
         return
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     seed_backup = tx_dir / "seed_dir.backup"
     suite_backup = tx_dir / "suite_path.backup"
-    remove_path(seed_dir)
-    remove_path(suite_path)
-    if seed_backup.exists():
-        seed_dir.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(seed_backup, seed_dir)
-    if suite_backup.exists():
-        suite_path.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(suite_backup, suite_path)
+    recover_install_path(seed_dir, seed_backup, manifest.get("seed_had_original"))
+    recover_install_path(suite_path, suite_backup, manifest.get("suite_had_original"))
     shutil.rmtree(tx_dir)
+
+
+def recover_install_path(path: Path, backup: Path, had_original: Any) -> None:
+    if had_original is True:
+        if not backup.exists():
+            return
+        remove_path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(backup, path)
+        return
+    if had_original is False:
+        remove_path(path)
+        return
+    if backup.exists():
+        remove_path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(backup, path)
 
 
 def remove_path(path: Path) -> None:

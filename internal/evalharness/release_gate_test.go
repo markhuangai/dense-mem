@@ -1,11 +1,79 @@
 package evalharness
 
 import (
+	"context"
 	"math"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestRunValidateChecksReleaseGateInputBeforeLiveWork(t *testing.T) {
+	dir := writeEvalFixture(t)
+	manifestPath := filepath.Join(dir, "seed_manifest.json")
+	suitePath := filepath.Join(dir, "suite.jsonl")
+	_, _, _, _, _, _, seedHash, err := loadRunInputs(manifestPath, suitePath)
+	if err != nil {
+		t.Fatalf("load fixture: %v", err)
+	}
+	policy := releaseGateTestPolicy()
+	policy.SeedID = "fixture"
+	policy.SeedHash = seedHash
+	policyPath := filepath.Join(dir, "release_gate.json")
+	if err := writeJSONFile(policyPath, policy); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+	out := filepath.Join(dir, "validated")
+	if _, err := Run(context.Background(), RunOptions{
+		Mode:                  "validate",
+		SeedManifestPath:      manifestPath,
+		SuitePath:             suitePath,
+		ReleaseGatePolicyPath: policyPath,
+	}); err == nil || !strings.Contains(err.Error(), "requires MCP tool transport") {
+		t.Fatalf("Run release gate over REST err = %v", err)
+	}
+
+	if _, err := Run(context.Background(), RunOptions{
+		Mode:                  "validate",
+		SeedManifestPath:      manifestPath,
+		SuitePath:             suitePath,
+		OutDir:                out,
+		ReleaseGatePolicyPath: policyPath,
+		ToolTransport:         "mcp",
+	}); err != nil {
+		t.Fatalf("Run validate with approved input: %v", err)
+	}
+	var inputResult ReleaseGateInputResult
+	if err := readJSONFile(filepath.Join(out, "release_gate_input_result.json"), &inputResult); err != nil {
+		t.Fatalf("read input result: %v", err)
+	}
+	if !inputResult.Passed {
+		t.Fatalf("release gate input result = %+v", inputResult)
+	}
+	var runConfig RunConfig
+	if err := readJSONFile(filepath.Join(out, "run_config.json"), &runConfig); err != nil {
+		t.Fatalf("read run config: %v", err)
+	}
+	if runConfig.ReleaseGatePolicyHash == "" || runConfig.ToolTransport != "mcp" || runConfig.ToolContract != "mcp.tools/call.v1" {
+		t.Fatalf("release gate run config = %+v", runConfig)
+	}
+
+	policy.SeedHash = "sha256:unapproved"
+	if err := writeJSONFile(policyPath, policy); err != nil {
+		t.Fatalf("rewrite policy: %v", err)
+	}
+	_, err = Run(context.Background(), RunOptions{
+		Mode:                  "validate",
+		SeedManifestPath:      manifestPath,
+		SuitePath:             suitePath,
+		OutDir:                filepath.Join(dir, "rejected"),
+		ReleaseGatePolicyPath: policyPath,
+		ToolTransport:         "mcp",
+	})
+	if err == nil || !strings.Contains(err.Error(), "release gate input check failed") || !strings.Contains(err.Error(), "seed_hash") {
+		t.Fatalf("Run validate unapproved seed err = %v", err)
+	}
+}
 
 func TestCommittedReleaseGatePolicyMatchesApprovedBaseline(t *testing.T) {
 	policyPath := filepath.Join("..", "..", "tests", "eval", "baselines", "v2.1.1_public_6axis_1k_baseline.json")
@@ -107,6 +175,38 @@ func TestEvaluateReleaseGateRejectsDriftAndRegression(t *testing.T) {
 			}
 			if !strings.Contains(strings.Join(result.Failures, "\n"), tc.want) {
 				t.Fatalf("failures = %v; want %q", result.Failures, tc.want)
+			}
+		})
+	}
+}
+
+func TestEvaluateReleaseGateInputRejectsUnapprovedSeed(t *testing.T) {
+	policy := releaseGateTestPolicy()
+	passing := Summary{
+		SeedID:    policy.SeedID,
+		SeedHash:  policy.SeedHash,
+		CaseCount: policy.RequiredCaseCount,
+	}
+	if result := EvaluateReleaseGateInput(passing, policy); !result.Passed {
+		t.Fatalf("passing release gate input = %+v", result)
+	}
+
+	tests := []struct {
+		name string
+		edit func(*Summary)
+		want string
+	}{
+		{name: "seed id", edit: func(summary *Summary) { summary.SeedID = "other" }, want: "seed_id"},
+		{name: "seed hash", edit: func(summary *Summary) { summary.SeedHash = "sha256:other" }, want: "seed_hash"},
+		{name: "case count", edit: func(summary *Summary) { summary.CaseCount++ }, want: "case_count"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			summary := passing
+			tc.edit(&summary)
+			result := EvaluateReleaseGateInput(summary, policy)
+			if result.Passed || !strings.Contains(strings.Join(result.Failures, "\n"), tc.want) {
+				t.Fatalf("release gate input = %+v; want %q failure", result, tc.want)
 			}
 		})
 	}

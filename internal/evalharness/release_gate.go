@@ -20,6 +20,35 @@ func LoadReleaseGatePolicy(path string) (ReleaseGatePolicy, error) {
 	return policy, nil
 }
 
+func EvaluateReleaseGateInput(summary Summary, policy ReleaseGatePolicy) ReleaseGateInputResult {
+	result := ReleaseGateInputResult{
+		Passed:            true,
+		GateID:            policy.GateID,
+		Release:           policy.Release,
+		SeedID:            summary.SeedID,
+		SeedHash:          summary.SeedHash,
+		CaseCount:         summary.CaseCount,
+		RequiredSeedID:    policy.SeedID,
+		RequiredSeedHash:  policy.SeedHash,
+		RequiredCaseCount: policy.RequiredCaseCount,
+		CreatedAt:         time.Now().UTC(),
+	}
+	fail := func(format string, args ...any) {
+		result.Passed = false
+		result.Failures = append(result.Failures, fmt.Sprintf(format, args...))
+	}
+	if summary.SeedID != policy.SeedID {
+		fail("seed_id %q does not match policy seed_id %q", summary.SeedID, policy.SeedID)
+	}
+	if summary.SeedHash != policy.SeedHash {
+		fail("seed_hash %q does not match policy seed_hash %q", summary.SeedHash, policy.SeedHash)
+	}
+	if summary.CaseCount != policy.RequiredCaseCount {
+		fail("case_count %d does not match required %d", summary.CaseCount, policy.RequiredCaseCount)
+	}
+	return result
+}
+
 func EvaluateReleaseGate(summary Summary, policy ReleaseGatePolicy) ReleaseGateResult {
 	result := ReleaseGateResult{
 		Passed:   true,
