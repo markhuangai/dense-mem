@@ -161,13 +161,13 @@ def verify_locked_artifact(axis: str, path: Path, entry: dict[str, Any]) -> None
     content_length = entry.get("content_length")
     if content_length is not None and path.stat().st_size != int(content_length):
         raise SystemExit(f"{axis}: {path} size {path.stat().st_size}; want {content_length}")
-    checks = []
-    for algorithm in ("sha256", "md5"):
-        expected = str(entry.get(algorithm) or "").strip().lower()
-        if expected:
-            checks.append((algorithm, expected.removeprefix(f"{algorithm}:")))
-    if not checks:
-        raise SystemExit(f"{axis}: source lock must include sha256 or md5")
+    expected_sha256 = str(entry.get("sha256") or "").strip().lower()
+    if not expected_sha256:
+        raise SystemExit(f"{axis}: source lock must include sha256")
+    checks = [("sha256", expected_sha256.removeprefix("sha256:"))]
+    expected_md5 = str(entry.get("md5") or "").strip().lower()
+    if expected_md5:
+        checks.append(("md5", expected_md5.removeprefix("md5:")))
     for algorithm, expected in checks:
         got = file_digest(path, algorithm)
         if got != expected:
@@ -193,80 +193,6 @@ def empty_generated() -> dict[str, Any]:
         "sources": [],
         "axis_counts": {},
     }
-
-
-def derive_1k_from_5k(root: Path) -> dict[str, Any]:
-    seed_5k = root / "seeds" / "public_6axis_5k_v1"
-    suite_5k = root / "suites" / "public_6axis_5k_v1.jsonl"
-    if not seed_5k.exists() or not suite_5k.exists():
-        raise SystemExit("public_6axis_5k_v1 must exist before deriving public_6axis_1k_v1")
-    manifest = json.loads((seed_5k / "seed_manifest.json").read_text(encoding="utf-8"))
-    corpus_5k = load_jsonl(seed_5k / manifest["corpus_file"])
-    cases_5k = load_jsonl(seed_5k / manifest["cases_file"])
-    qrels_5k = load_jsonl(seed_5k / manifest["qrels_file"])
-    answers_5k = load_jsonl(seed_5k / manifest["answers_file"])
-    transforms_5k = load_jsonl(seed_5k / manifest["transforms_file"])
-    suite_rows_5k = load_jsonl(suite_5k)
-
-    selected_corpus: list[dict[str, Any]] = []
-    axis_counts = {axis: {"corpus": 0, "cases": 0} for axis in AXIS_BUDGETS[1000]}
-    selected_doc_ids: set[str] = set()
-    source_axis: dict[str, str] = {}
-    for row in corpus_5k:
-        axis = axis_key_for_row(row)
-        if axis_counts[axis]["corpus"] >= AXIS_BUDGETS[1000][axis]:
-            continue
-        selected_corpus.append(row)
-        source_doc_id = row["source_doc_id"]
-        selected_doc_ids.add(source_doc_id)
-        source_axis[source_doc_id] = axis
-        axis_counts[axis]["corpus"] += 1
-        if sum(count["corpus"] for count in axis_counts.values()) == 1000:
-            break
-    if len(selected_corpus) != 1000:
-        raise SystemExit(f"derived 1k corpus rows = {len(selected_corpus)}")
-
-    selected_case_ids: set[str] = set()
-    selected_qrels: list[dict[str, Any]] = []
-    for qrel in qrels_5k:
-        refs = qrel.get("required_refs") or []
-        if refs and all(ref.get("source_doc_id") in selected_doc_ids for ref in refs):
-            selected_qrels.append(qrel)
-            selected_case_ids.add(qrel["case_id"])
-            first_axis = source_axis.get(refs[0].get("source_doc_id", ""))
-            if first_axis:
-                axis_counts[first_axis]["cases"] += 1
-    selected_cases = [row for row in cases_5k if row["case_id"] in selected_case_ids]
-    selected_answers = [row for row in answers_5k if row["case_id"] in selected_case_ids]
-    selected_transforms = [row for row in transforms_5k if row["case_id"] in selected_case_ids]
-    selected_suite = [row for row in suite_rows_5k if row["case_id"] in selected_case_ids]
-    return {
-        "corpus": selected_corpus,
-        "cases": selected_cases,
-        "qrels": selected_qrels,
-        "answers": selected_answers,
-        "transforms": selected_transforms,
-        "suite": selected_suite,
-        "sources": manifest.get("sources") or [],
-        "axis_counts": axis_counts,
-    }
-
-
-def axis_key_for_row(row: dict[str, Any]) -> str:
-    dataset = str(row.get("source_dataset") or (row.get("metadata") or {}).get("dataset") or "")
-    if dataset == "beir/scifact" or dataset == "scifact":
-        return "scifact"
-    if dataset == "beir/msmarco" or dataset == "msmarco":
-        return "msmarco"
-    if dataset == "beir/hotpotqa" or dataset == "hotpotqa":
-        return "hotpotqa"
-    if dataset == "musique":
-        return "musique"
-    if dataset == "qasper":
-        return "qasper"
-    if dataset == "longmemeval_s":
-        return "longmem_oracle"
-    raise SystemExit(f"cannot classify corpus row axis for {row.get('source_doc_id')}: {dataset}")
 
 
 def add_beir_axis(out: dict[str, Any], root: Path, seed_id: str, axis_name: str, budget: int, args: argparse.Namespace) -> None:
