@@ -48,37 +48,67 @@
       "axis": "scifact",
       "dataset": "BEIR SciFact",
       "url": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip",
-      "local_cache": "tests/eval/data/beir/scifact.zip"
+      "local_cache": "tests/eval/data/beir/scifact.zip",
+      "source_version": "BEIR public.ukp zip 2021-04-20T14:21:44Z etag 607ee378-2af84f",
+      "content_length": 2816079,
+      "last_modified": "2021-04-20T14:21:44Z",
+      "etag": "607ee378-2af84f",
+      "md5": "5f7d1de60b170fc8027bb7898e2efca1",
+      "sha256": "536e14446a0ba56ed1398ab1055f39fe852686ecad24a6306c80c490fa8e0165"
     },
     {
       "axis": "msmarco",
       "dataset": "BEIR MS MARCO",
       "url": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/msmarco.zip",
-      "local_cache": "tests/eval/data/beir/msmarco.zip"
+      "local_cache": "tests/eval/data/beir/msmarco.zip",
+      "source_version": "BEIR public.ukp zip 2021-04-12T13:50:21Z etag 6074501d-4081f4c8",
+      "content_length": 1082258632,
+      "last_modified": "2021-04-12T13:50:21Z",
+      "etag": "6074501d-4081f4c8",
+      "md5": "444067daf65d982533ea17ebd59501e4",
+      "sha256": "f46aed8343564261c27228b7cf22dde5c9a70143fe34dc3c589bd5322308712a"
     },
     {
       "axis": "hotpotqa",
       "dataset": "BEIR HotpotQA",
       "url": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/hotpotqa.zip",
-      "local_cache": "tests/eval/data/beir/hotpotqa.zip"
+      "local_cache": "tests/eval/data/beir/hotpotqa.zip",
+      "source_version": "BEIR public.ukp zip 2021-01-15T13:41:27Z etag 60019b87-26fba286",
+      "content_length": 654025350,
+      "last_modified": "2021-01-15T13:41:27Z",
+      "etag": "60019b87-26fba286",
+      "md5": "f412724f78b0d91183a0e86805e16114",
+      "sha256": "c62459dbc91d31329584507b1fa564b3b1abcee58800967113054ee0f5a15c62"
     },
     {
       "axis": "musique",
       "dataset": "MuSiQue answerable dev v1.0",
       "source": "Google Drive file id 1tGdADlNjWFaHLeZZGShh2IRcpO6Lv24h",
-      "local_cache": "tests/eval/data/public_semantic/musique_v1.0.zip"
+      "local_cache": "tests/eval/data/public_semantic/musique_v1.0.zip",
+      "source_version": "answerable dev v1.0",
+      "sha256": "98f839bf2fd5319f5c688aed77901a6d5c30b3b9f9f691ab9a8ecafb045ee0cd"
     },
     {
       "axis": "qasper",
       "dataset": "QASPER train/dev v0.3",
       "url": "https://qasper-dataset.s3.us-west-2.amazonaws.com/qasper-train-dev-v0.3.tgz",
-      "local_cache": "tests/eval/data/public_semantic/qasper-train-dev-v0.3.tgz"
+      "local_cache": "tests/eval/data/public_semantic/qasper-train-dev-v0.3.tgz",
+      "source_version": "v0.3",
+      "s3_version_id": "PVl1ofaATXMYFgEb.9Rei3dJqZ4XzhBg",
+      "content_length": 10835856,
+      "last_modified": "2022-03-25T22:07:01Z",
+      "etag": "b83437b72f7a13f2d00da079288769df",
+      "md5": "b83437b72f7a13f2d00da079288769df",
+      "sha256": "a28fdf966db827bcee3d873107d6b6669864fb7ca8fbf73a192f5e39191bdb5a"
     },
     {
       "axis": "longmem_oracle",
       "dataset": "LongMemEval-S cleaned",
-      "url": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json",
-      "local_cache": "tests/eval/data/public_semantic/longmemeval_s_cleaned.json"
+      "url": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/98d7416c24c778c2fee6e6f3006e7a073259d48f/longmemeval_s_cleaned.json",
+      "local_cache": "tests/eval/data/public_semantic/longmemeval_s_cleaned.json",
+      "revision": "98d7416c24c778c2fee6e6f3006e7a073259d48f",
+      "content_length": 277383467,
+      "sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442"
     }
   ],
   "artifact_policy": "Downloaded datasets, generated seeds, generated suites, imports, runtime databases, run outputs, and comparison artifacts are ignored local runtime data and must not be committed."
