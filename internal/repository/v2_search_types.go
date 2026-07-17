@@ -17,6 +17,10 @@ type V2SearchRepository interface {
 	SearchExactVector(ctx context.Context, input V2ExactVectorSearchInput) ([]V2SearchHit, error)
 }
 
+type V2RecallRepository interface {
+	RecallEvidence(ctx context.Context, input V2RecallEvidenceInput) (*V2RecallEvidenceResult, error)
+}
+
 type V2SearchProfile struct {
 	ProfileKey            string
 	EmbeddingContractID   string
@@ -175,6 +179,36 @@ type V2SearchHit struct {
 	SourceVersion       int64
 	DocumentVersion     int64
 	EmbeddingContractID string
+	SearchState         string
 	Distance            float64
 	TextRank            float64
+}
+
+type V2RecallEvidenceInput struct {
+	TeamID               string
+	ProfileKey           string
+	Query                string
+	QueryEmbedding       []float32
+	Limit                int
+	ValidAt              *time.Time
+	KnownAt              *time.Time
+	KnownEvidenceIDs     []string
+	KnownRelationshipIDs []string
+	ExpandFromEntityIDs  []string
+}
+
+type V2RecallEvidenceResult struct {
+	TeamID      string
+	SearchState string
+	Results     []V2RecallEvidenceHit
+}
+
+type V2RecallEvidenceHit struct {
+	TeamID          string
+	EvidenceID      string
+	RelationshipIDs []string
+	Context         string
+	Rank            int
+	Score           float64
+	SearchState     string
 }

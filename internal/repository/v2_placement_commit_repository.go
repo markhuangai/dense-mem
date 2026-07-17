@@ -741,12 +741,31 @@ func applyV2PlacementRelationshipDecision(
 	if applied.Relationship == nil || applied.Relationship.Status != string(domain.V2RelationshipStatusActive) {
 		return nil
 	}
+	if decision.Support != nil && applied.SupportID != "" {
+		document, err := upsertV2PlacementEvidenceSearchDocument(ctx, tx, commit, decision.Support.FragmentID, applied.Relationship, applied.SupportID)
+		if err != nil {
+			return err
+		}
+		appendV2PlacementSearchDocument(result, document)
+	}
 	document, err := upsertV2PlacementRelationshipSearchDocument(ctx, tx, commit, applied.Relationship)
 	if err != nil {
 		return err
 	}
-	result.SearchDocuments = append(result.SearchDocuments, *document)
+	appendV2PlacementSearchDocument(result, document)
 	return nil
+}
+
+func appendV2PlacementSearchDocument(result *V2CommitPlacementSemanticResult, document *V2SearchDocumentResult) {
+	if result == nil || document == nil || document.SearchDocumentID == "" {
+		return
+	}
+	for _, existing := range result.SearchDocuments {
+		if existing.SearchDocumentID == document.SearchDocumentID {
+			return
+		}
+	}
+	result.SearchDocuments = append(result.SearchDocuments, *document)
 }
 
 func applyV2RelationshipDecisionInTx(

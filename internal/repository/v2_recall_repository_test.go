@@ -1,0 +1,101 @@
+package repository
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/domain"
+)
+
+func TestV2RecallBranchFusionSkipsKnownEvidenceAndCarriesPendingState(t *testing.T) {
+	knownID := uuid.NewString()
+	evidenceA := uuid.NewString()
+	evidenceB := uuid.NewString()
+	acc := map[string]*v2RecallCandidate{}
+	known := v2RecallStringSet([]string{knownID})
+
+	addV2RecallBranch(acc, []V2SearchHit{
+		{SourceKind: "evidence", SourceID: evidenceA, SearchState: string(domain.V2SearchProjectionCurrent)},
+		{SourceKind: "evidence", SourceID: evidenceB, SearchState: string(domain.V2SearchProjectionPending)},
+		{SourceKind: "evidence", SourceID: knownID, SearchState: string(domain.V2SearchProjectionCurrent)},
+		{SourceKind: "relationship", SourceID: uuid.NewString(), SearchState: string(domain.V2SearchProjectionCurrent)},
+	}, known, 1)
+	addV2RecallBranch(acc, []V2SearchHit{
+		{SourceKind: "evidence", SourceID: evidenceB, SearchState: string(domain.V2SearchProjectionCurrent)},
+	}, known, 1)
+
+	ranked := sortedV2RecallCandidates(acc)
+	if len(ranked) != 2 {
+		t.Fatalf("ranked candidates = %#v, want two unknown evidence candidates", ranked)
+	}
+	if ranked[0].EvidenceID != evidenceB {
+		t.Fatalf("top candidate = %s, want fused evidence %s", ranked[0].EvidenceID, evidenceB)
+	}
+	if ranked[0].SearchState != string(domain.V2SearchProjectionPending) {
+		t.Fatalf("search state = %q, want pending", ranked[0].SearchState)
+	}
+	if _, ok := acc[knownID]; ok {
+		t.Fatal("known evidence was added to recall candidates")
+	}
+}
+
+func TestV2RecallInputNormalizationAndValidation(t *testing.T) {
+	teamID := uuid.NewString()
+	evidenceID := uuid.NewString()
+	relationshipID := uuid.NewString()
+	entityID := uuid.NewString()
+	input := normalizeV2RecallEvidenceInput(V2RecallEvidenceInput{
+		TeamID:               " " + teamID + " ",
+		Query:                " durable memory ",
+		Limit:                500,
+		KnownEvidenceIDs:     []string{" " + evidenceID + " ", evidenceID, ""},
+		KnownRelationshipIDs: []string{relationshipID},
+		ExpandFromEntityIDs:  []string{entityID, entityID},
+	})
+
+	if input.TeamID != teamID || input.Query != "durable memory" || input.Limit != maxV2RecallLimit {
+		t.Fatalf("normalized input = %#v", input)
+	}
+	if len(input.KnownEvidenceIDs) != 1 || input.KnownEvidenceIDs[0] != evidenceID {
+		t.Fatalf("known evidence = %#v", input.KnownEvidenceIDs)
+	}
+	if len(input.ExpandFromEntityIDs) != 1 || input.ExpandFromEntityIDs[0] != entityID {
+		t.Fatalf("expand entities = %#v", input.ExpandFromEntityIDs)
+	}
+	if err := validateV2RecallEvidenceInput(input); err != nil {
+		t.Fatalf("valid input rejected: %v", err)
+	}
+
+	missingQuery := input
+	missingQuery.Query = ""
+	missingQuery.ExpandFromEntityIDs = nil
+	if err := validateV2RecallEvidenceInput(missingQuery); err == nil || !strings.Contains(err.Error(), "query") {
+		t.Fatalf("missing query err = %v, want query validation", err)
+	}
+
+	badID := input
+	badID.KnownRelationshipIDs = []string{"not-a-uuid"}
+	if err := validateV2RecallEvidenceInput(badID); err == nil || !strings.Contains(err.Error(), "known_relationship_ids") {
+		t.Fatalf("bad relationship id err = %v, want relationship id validation", err)
+	}
+}
+
+func TestV2RecallBoundsAndContextHelpers(t *testing.T) {
+	if got := v2RecallOverfetchLimit(1); got != v2RecallOverfetchFloor {
+		t.Fatalf("overfetch floor = %d, want %d", got, v2RecallOverfetchFloor)
+	}
+	if got := v2RecallOverfetchLimit(100); got != 250 {
+		t.Fatalf("overfetch cap = %d, want 250", got)
+	}
+	if got := v2RecallCombinedSearchState("", string(domain.V2SearchProjectionCurrent)); got != string(domain.V2SearchProjectionCurrent) {
+		t.Fatalf("combined state = %q", got)
+	}
+	if got := v2RecallCombinedSearchState(string(domain.V2SearchProjectionCurrent), string(domain.V2SearchProjectionPending)); got != string(domain.V2SearchProjectionPending) {
+		t.Fatalf("combined pending state = %q", got)
+	}
+	long := strings.Repeat("a", 2100)
+	if got := truncateV2RecallContext(long); len(got) != 2000 {
+		t.Fatalf("truncated length = %d, want 2000", len(got))
+	}
+}

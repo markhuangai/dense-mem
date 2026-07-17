@@ -175,3 +175,45 @@ func v2PlacementRelationshipSearchText(relationship *V2RelationshipRecord) strin
 	}
 	return strings.Join(parts, " ")
 }
+
+func upsertV2PlacementEvidenceSearchDocument(
+	ctx context.Context,
+	tx *gorm.DB,
+	commit V2CommitPlacementSemanticInput,
+	fragmentID string,
+	relationship *V2RelationshipRecord,
+	supportID string,
+) (*V2SearchDocumentResult, error) {
+	profile, err := loadV2ActiveSearchProfileInTx(ctx, tx, commit.SearchProfileKey)
+	if err != nil {
+		return nil, err
+	}
+	var content string
+	if err := tx.WithContext(ctx).Raw(`
+		SELECT content
+		FROM evidence_fragments
+		WHERE team_id = ?::uuid
+		  AND owner_profile_id = ?::uuid
+		  AND fragment_id = ?::uuid
+		LIMIT 1
+	`, commit.TeamID, commit.OwnerProfileID, fragmentID).Row().Scan(&content); err != nil {
+		return nil, err
+	}
+	input := normalizeV2UpsertSearchDocumentInput(V2UpsertSearchDocumentInput{
+		TeamID:         commit.TeamID,
+		OwnerProfileID: commit.OwnerProfileID,
+		ProfileKey:     commit.SearchProfileKey,
+		SourceKind:     "evidence",
+		SourceID:       fragmentID,
+		SourceVersion:  1,
+		DocumentText:   content,
+		Metadata: map[string]any{
+			"relationship_id": relationship.RelationshipID,
+			"support_id":      supportID,
+		},
+	})
+	if err := validateV2UpsertSearchDocumentInput(input); err != nil {
+		return nil, err
+	}
+	return upsertV2SearchDocumentInTx(ctx, tx, input, profile)
+}
