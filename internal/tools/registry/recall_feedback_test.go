@@ -319,6 +319,115 @@ func TestSubmitRecallSessionFeedbackAcceptsDreamIrrelevantRefs(t *testing.T) {
 	}
 }
 
+func TestSubmitRecallSessionFeedbackAcceptsV2RefsAndHypothesisFeedback(t *testing.T) {
+	recorder := &stubRecallFeedbackRecorder{}
+	reg, _ := BuildDefault(Dependencies{
+		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+		RecallFeedbackEvents: recorder,
+		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+	})
+	tool, _ := reg.Get("submit_recall_session_feedback")
+
+	_, err := tool.Invoke(context.Background(), "profile-feedback", map[string]any{
+		"recalls": []any{map[string]any{
+			"recall_id":        "rec-v2",
+			"used":             true,
+			"answer_supported": false,
+			"quality":          "low",
+			"missing_context":  false,
+			"irrelevant":       true,
+			"feedback_comment": "V2 evidence and relationship refs were not useful.",
+			"irrelevant_result_refs": []any{
+				map[string]any{
+					"type": "evidence",
+					"id":   "00000000-0000-0000-0000-00000000e001",
+					"rank": 1,
+				},
+				map[string]any{
+					"type": "relationship",
+					"id":   "00000000-0000-0000-0000-00000000e002",
+					"rank": 2,
+				},
+			},
+			"hypothesis_feedback": []any{map[string]any{
+				"hypothesis_id":    "00000000-0000-0000-0000-00000000e003",
+				"used":             false,
+				"quality":          "low",
+				"contradicted":     true,
+				"feedback_comment": "The hypothesis contradicted the returned evidence.",
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("submit_recall_session_feedback Invoke: %v", err)
+	}
+	got := recorder.feedback[0]
+	if len(got.IrrelevantRefs) != 2 ||
+		got.IrrelevantRefs[0].Type != domain.RecallFeedbackResultTypeEvidence ||
+		got.IrrelevantRefs[1].Type != domain.RecallFeedbackResultTypeRelationship {
+		t.Fatalf("V2 irrelevant refs = %+v", got.IrrelevantRefs)
+	}
+	if len(got.DreamFeedback) != 1 ||
+		got.DreamFeedback[0].DreamID != "00000000-0000-0000-0000-00000000e003" ||
+		!got.DreamFeedback[0].Contradicted {
+		t.Fatalf("hypothesis feedback = %+v", got.DreamFeedback)
+	}
+}
+
+func TestRecallFeedbackValidationRejectsInvalidV2Judgments(t *testing.T) {
+	rankZero := 0
+	_, err := normalizeRecallFeedbackJudgedRefs(0, []recallFeedbackJudgedResultRefInput{{
+		Type: domain.RecallFeedbackResultTypeEvidence,
+		ID:   "evidence-1",
+		Rank: &rankZero,
+	}})
+	if err == nil || !strings.Contains(err.Error(), "rank must be between") {
+		t.Fatalf("rank validation err = %v", err)
+	}
+
+	_, err = normalizeRecallFeedbackJudgedRefs(0, []recallFeedbackJudgedResultRefInput{
+		{Type: domain.RecallFeedbackResultTypeEvidence, ID: "evidence-1"},
+		{Type: domain.RecallFeedbackResultTypeEvidence, ID: "evidence-1"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "duplicates") {
+		t.Fatalf("duplicate ref err = %v", err)
+	}
+
+	_, err = normalizeRecallFeedbackJudgedRefs(0, []recallFeedbackJudgedResultRefInput{{
+		Type: "unknown",
+		ID:   "evidence-1",
+	}})
+	if err == nil || !strings.Contains(err.Error(), "type must be one of") {
+		t.Fatalf("unknown ref type err = %v", err)
+	}
+
+	_, err = normalizeRecallFeedbackDreamFeedback(0,
+		[]recallFeedbackDreamFeedbackInput{{DreamID: "hypothesis-1", Used: true, Quality: "high"}},
+		[]recallFeedbackHypothesisFeedbackInput{{HypothesisID: "hypothesis-1", Used: true, Quality: "high"}},
+	)
+	if err == nil || !strings.Contains(err.Error(), "hypothesis_feedback must not contain duplicates") {
+		t.Fatalf("duplicate hypothesis err = %v", err)
+	}
+
+	_, err = normalizeRecallFeedbackDreamFeedback(0, nil, []recallFeedbackHypothesisFeedbackInput{{
+		HypothesisID: "",
+		Used:         false,
+		Quality:      "high",
+	}})
+	if err == nil || !strings.Contains(err.Error(), "hypothesis_id is required") {
+		t.Fatalf("missing hypothesis id err = %v", err)
+	}
+
+	_, err = normalizeRecallFeedbackDreamFeedback(0, nil, []recallFeedbackHypothesisFeedbackInput{{
+		HypothesisID: "hypothesis-1",
+		Used:         false,
+		Quality:      "low",
+	}})
+	if err == nil || !strings.Contains(err.Error(), "feedback_comment is required") {
+		t.Fatalf("missing hypothesis comment err = %v", err)
+	}
+}
+
 func TestRecallMemoryRecallEventDisabledByDefault(t *testing.T) {
 	reg, _ := BuildDefault(Dependencies{Recall: stubRecallWithHit{}})
 	tool, _ := reg.Get("recall_memory")

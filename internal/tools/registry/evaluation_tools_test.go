@@ -665,6 +665,11 @@ func TestEvalUnavailableConfigAuditAndParserBranches(t *testing.T) {
 		{"type": "community"},
 		{"type": "dream"},
 		{"type": "edge"},
+		{"type": "evidence"},
+		{"type": "relationship"},
+		{"type": "entity"},
+		{"type": "value"},
+		{"type": "hypothesis"},
 	} {
 		_, err = listTool.Invoke(context.Background(), "profile-eval", tc)
 		if !errors.Is(err, ErrToolUnavailable) {
@@ -684,6 +689,10 @@ func TestEvalUnavailableConfigAuditAndParserBranches(t *testing.T) {
 	_, err = evalGetKnowledgeItem(context.Background(), Dependencies{}, "profile-eval", "unknown", "id")
 	if err == nil || !strings.Contains(err.Error(), "unsupported type") {
 		t.Fatalf("evalGetKnowledgeItem unsupported err = %v", err)
+	}
+	_, err = evalGetKnowledgeItem(context.Background(), Dependencies{}, "profile-eval", "evidence", "missing")
+	if !errors.Is(err, ErrToolUnavailable) {
+		t.Fatalf("evalGetKnowledgeItem V2 missing dep err = %v; want ErrToolUnavailable", err)
 	}
 
 	listFeedbackTool, _ := reg.Get("eval_list_recall_feedback_events")

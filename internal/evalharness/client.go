@@ -349,6 +349,10 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (Kno
 		return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)
 	}
 	fragmentID := fragmentIDFromRemember(out)
+	evidenceID := evidenceIDFromRemember(out)
+	if fragmentID == "" {
+		fragmentID = evidenceID
+	}
 	if fragmentID == "" {
 		return mapping, fmt.Errorf("import %s: remember response missing fragment id", item.SourceDocID)
 	}
@@ -358,6 +362,9 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (Kno
 		}
 	}
 	addSourceMapping(&mapping, Ref{Type: "fragment", ID: fragmentID, SourceDocID: item.SourceDocID}, true)
+	if evidenceID != "" {
+		addSourceMapping(&mapping, Ref{Type: "evidence", ID: evidenceID, SourceDocID: item.SourceDocID}, false)
+	}
 	return mapping, nil
 }
 
@@ -443,6 +450,10 @@ func (c *HTTPClient) ExportKnowledgeMapping(ctx context.Context, limit int) (Kno
 	return c.exportKnowledgeMapping(ctx, limit, []string{"fragment", "claim", "fact"})
 }
 
+func (c *HTTPClient) ExportV2KnowledgeMapping(ctx context.Context, limit int) (KnowledgeMapping, error) {
+	return c.exportKnowledgeMapping(ctx, limit, []string{"evidence", "entity", "value", "relationship", "hypothesis"})
+}
+
 func (c *HTTPClient) ExportDreamMapping(ctx context.Context, limit int) (KnowledgeMapping, error) {
 	return c.exportKnowledgeMapping(ctx, limit, []string{"dream"})
 }
@@ -483,6 +494,8 @@ func (c *HTTPClient) exportKnowledgeMapping(ctx context.Context, limit int, kind
 				}
 				switch kind {
 				case "fragment":
+					fragmentSourceDocIDs[id] = sourceDocIDs
+				case "evidence":
 					fragmentSourceDocIDs[id] = sourceDocIDs
 				case "claim":
 					claimSourceDocIDs[id] = sourceDocIDs
@@ -641,6 +654,7 @@ func sourceDocIDsFromKnowledgeItem(kind string, item map[string]any, fragmentSou
 		nestedString(item, "metadata", "source_doc_id"),
 		nestedString(item, "classification", "source_doc_id"),
 		nestedString(item, "classification", "eval_source_doc_id"),
+		nestedString(item, "payload", "source_doc_id"),
 	)
 	sourceDocIDs := []string{}
 	if sourceDocID != "" {
@@ -653,6 +667,15 @@ func sourceDocIDsFromKnowledgeItem(kind string, item map[string]any, fragmentSou
 		}
 	case "fact":
 		sourceDocIDs = append(sourceDocIDs, claimSourceDocIDs[stringValue(item["promoted_from_claim_id"])]...)
+	case "hypothesis":
+		for _, ref := range sourceRefsFromAny(item["source_refs"]) {
+			sourceDocIDs = append(sourceDocIDs, fragmentSourceDocIDs[ref.ID]...)
+		}
+		if payloadRefs, ok := nestedValue(item, "payload", "source_refs"); ok {
+			for _, ref := range sourceRefsFromAny(payloadRefs) {
+				sourceDocIDs = append(sourceDocIDs, fragmentSourceDocIDs[ref.ID]...)
+			}
+		}
 	}
 	return uniqueNonEmpty(sourceDocIDs)
 }
@@ -675,7 +698,11 @@ func stringsFromAny(value any) []string {
 }
 
 func dreamSourceRefsFromKnowledgeItem(item map[string]any) []Ref {
-	raw, ok := item["source_refs"].([]any)
+	return sourceRefsFromAny(item["source_refs"])
+}
+
+func sourceRefsFromAny(value any) []Ref {
+	raw, ok := value.([]any)
 	if !ok {
 		return nil
 	}
@@ -716,6 +743,10 @@ func fragmentIDFromRemember(out map[string]any) string {
 	if id := firstNonEmpty(stringValue(fragment["id"]), stringValue(fragment["fragment_id"])); id != "" {
 		return id
 	}
+	return evidenceIDFromRemember(out)
+}
+
+func evidenceIDFromRemember(out map[string]any) string {
 	evidence, _ := out["evidence"].([]any)
 	if len(evidence) == 0 {
 		return ""
@@ -763,8 +794,17 @@ func endpoint(base, path string) string {
 }
 
 func nestedString(m map[string]any, objectKey, valueKey string) string {
+	nested, _ := nestedValue(m, objectKey, valueKey)
+	return stringValue(nested)
+}
+
+func nestedValue(m map[string]any, objectKey, valueKey string) (any, bool) {
 	nested, _ := m[objectKey].(map[string]any)
-	return stringValue(nested[valueKey])
+	if nested == nil {
+		return nil, false
+	}
+	value, ok := nested[valueKey]
+	return value, ok
 }
 
 func stringValue(value any) string {

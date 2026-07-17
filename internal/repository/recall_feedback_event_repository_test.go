@@ -40,6 +40,10 @@ func TestScanRecallFeedbackEventReadsFeedbackComment(t *testing.T) {
 	rows := recallFeedbackEventRows(t, []byte("{}"), []byte("[]"), []byte(`[{"type":"fragment","id":"fragment-1","rank":1}]`), []byte(`[{"dream_id":"dream-1","used":true,"quality":"medium","contradicted":false,"feedback_comment":"plausible but weak"}]`))
 	got, err := scanRecallFeedbackEvent(rows)
 	require.NoError(t, err)
+	require.Equal(t, "v2", got.ContractVersion)
+	require.Equal(t, "current", got.SearchState)
+	require.Equal(t, map[string]any{"code": "vector_unavailable"}, got.Degradation)
+	require.Equal(t, map[string]any{"result_schema": "v2.evidence_relationship_refs.v1"}, got.SnapshotMetadata)
 	require.Equal(t, "knowledge explorer listbox pattern was missing", got.FeedbackComment)
 	require.Equal(t, []domain.RecallFeedbackJudgedResultRef{{
 		Type: domain.RecallFeedbackResultTypeFragment,
@@ -91,6 +95,13 @@ func recallFeedbackEventRows(t *testing.T, toolArgs []byte, resultRefs []byte, i
 		"result_refs",
 		"result_count",
 		"snapshot_state",
+		"contract_version",
+		"ranking_profile_version",
+		"embedding_contract_version",
+		"search_index_profile_version",
+		"search_state",
+		"degradation",
+		"snapshot_metadata",
 		"used",
 		"answer_supported",
 		"quality",
@@ -114,6 +125,13 @@ func recallFeedbackEventRows(t *testing.T, toolArgs []byte, resultRefs []byte, i
 		resultRefs,
 		0,
 		"captured",
+		"v2",
+		"",
+		"",
+		"",
+		"current",
+		[]byte(`{"code":"vector_unavailable"}`),
+		[]byte(`{"result_schema":"v2.evidence_relationship_refs.v1"}`),
 		nil,
 		nil,
 		"",

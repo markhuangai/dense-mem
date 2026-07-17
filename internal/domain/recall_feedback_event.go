@@ -10,38 +10,51 @@ const (
 	RecallFeedbackSnapshotCaptured     = "captured"
 	RecallFeedbackSnapshotFeedbackOnly = "feedback_only"
 
-	RecallFeedbackResultTypeFragment = "fragment"
-	RecallFeedbackResultTypeClaim    = "claim"
-	RecallFeedbackResultTypeFact     = "fact"
-	RecallFeedbackResultTypeDream    = "dream"
+	RecallFeedbackResultTypeFragment     = "fragment"
+	RecallFeedbackResultTypeClaim        = "claim"
+	RecallFeedbackResultTypeFact         = "fact"
+	RecallFeedbackResultTypeDream        = "dream"
+	RecallFeedbackResultTypeEvidence     = "evidence"
+	RecallFeedbackResultTypeRelationship = "relationship"
+	RecallFeedbackResultTypeEntity       = "entity"
+	RecallFeedbackResultTypeValue        = "value"
+	RecallFeedbackResultTypeCommunity    = "community"
+	RecallFeedbackResultTypeHypothesis   = "hypothesis"
 )
 
 // RecallFeedbackEvent is the durable investigation record that connects a
 // recall_memory result set to deferred host-LLM session feedback.
 type RecallFeedbackEvent struct {
-	RecallID        string                          `json:"recall_id"`
-	CreatedAt       time.Time                       `json:"created_at"`
-	UpdatedAt       time.Time                       `json:"updated_at"`
-	FeedbackAt      *time.Time                      `json:"feedback_at,omitempty"`
-	TeamID          *uuid.UUID                      `json:"team_id,omitempty"`
-	ProfileID       *uuid.UUID                      `json:"profile_id,omitempty"`
-	KeyID           *uuid.UUID                      `json:"key_id,omitempty"`
-	AuthMethod      string                          `json:"auth_method"`
-	ToolName        string                          `json:"tool_name"`
-	Query           string                          `json:"query"`
-	ToolArgs        map[string]any                  `json:"tool_args"`
-	ResultRefs      []RecallFeedbackResultRef       `json:"result_refs"`
-	ResultCount     int                             `json:"result_count"`
-	SnapshotState   string                          `json:"snapshot_state"`
-	Used            *bool                           `json:"used,omitempty"`
-	AnswerSupported *bool                           `json:"answer_supported,omitempty"`
-	Quality         string                          `json:"quality,omitempty"`
-	MissingContext  *bool                           `json:"missing_context,omitempty"`
-	Irrelevant      *bool                           `json:"irrelevant,omitempty"`
-	FeedbackComment string                          `json:"feedback_comment,omitempty"`
-	IrrelevantRefs  []RecallFeedbackJudgedResultRef `json:"irrelevant_result_refs,omitempty"`
-	DreamFeedback   []RecallFeedbackDreamFeedback   `json:"dream_feedback,omitempty"`
-	ResolvedResults []RecallFeedbackResolvedResult  `json:"resolved_results,omitempty"`
+	RecallID                  string                          `json:"recall_id"`
+	CreatedAt                 time.Time                       `json:"created_at"`
+	UpdatedAt                 time.Time                       `json:"updated_at"`
+	FeedbackAt                *time.Time                      `json:"feedback_at,omitempty"`
+	TeamID                    *uuid.UUID                      `json:"team_id,omitempty"`
+	ProfileID                 *uuid.UUID                      `json:"profile_id,omitempty"`
+	KeyID                     *uuid.UUID                      `json:"key_id,omitempty"`
+	AuthMethod                string                          `json:"auth_method"`
+	ToolName                  string                          `json:"tool_name"`
+	Query                     string                          `json:"query"`
+	ToolArgs                  map[string]any                  `json:"tool_args"`
+	ResultRefs                []RecallFeedbackResultRef       `json:"result_refs"`
+	ResultCount               int                             `json:"result_count"`
+	SnapshotState             string                          `json:"snapshot_state"`
+	ContractVersion           string                          `json:"contract_version,omitempty"`
+	RankingProfileVersion     string                          `json:"ranking_profile_version,omitempty"`
+	EmbeddingContractVersion  string                          `json:"embedding_contract_version,omitempty"`
+	SearchIndexProfileVersion string                          `json:"search_index_profile_version,omitempty"`
+	SearchState               string                          `json:"search_state,omitempty"`
+	Degradation               map[string]any                  `json:"degradation,omitempty"`
+	SnapshotMetadata          map[string]any                  `json:"snapshot_metadata,omitempty"`
+	Used                      *bool                           `json:"used,omitempty"`
+	AnswerSupported           *bool                           `json:"answer_supported,omitempty"`
+	Quality                   string                          `json:"quality,omitempty"`
+	MissingContext            *bool                           `json:"missing_context,omitempty"`
+	Irrelevant                *bool                           `json:"irrelevant,omitempty"`
+	FeedbackComment           string                          `json:"feedback_comment,omitempty"`
+	IrrelevantRefs            []RecallFeedbackJudgedResultRef `json:"irrelevant_result_refs,omitempty"`
+	DreamFeedback             []RecallFeedbackDreamFeedback   `json:"dream_feedback,omitempty"`
+	ResolvedResults           []RecallFeedbackResolvedResult  `json:"resolved_results,omitempty"`
 }
 
 // RecallFeedbackResultRef is a content-free reference to one result returned by

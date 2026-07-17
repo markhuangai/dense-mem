@@ -189,6 +189,78 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 	}
 }
 
+func TestHTTPClientV2KnowledgeMapping(t *testing.T) {
+	var requestedTypes []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/tools/eval_list_knowledge_refs" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		var input map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatalf("decode export body: %v", err)
+		}
+		kind := stringValue(input["type"])
+		requestedTypes = append(requestedTypes, kind)
+		var items []map[string]any
+		switch kind {
+		case "evidence":
+			items = []map[string]any{{
+				"id":       "evidence-alpha",
+				"metadata": map[string]any{"source_doc_id": "doc-alpha"},
+			}}
+		case "entity":
+			items = []map[string]any{{
+				"id":       "entity-alpha",
+				"metadata": map[string]any{"source_doc_id": "doc-alpha"},
+			}}
+		case "value":
+			items = []map[string]any{{
+				"id":       "value-beta",
+				"metadata": map[string]any{"source_doc_id": "doc-beta"},
+			}}
+		case "relationship":
+			items = []map[string]any{{
+				"id":       "relationship-alpha",
+				"metadata": map[string]any{"source_doc_id": "doc-alpha"},
+			}}
+		case "hypothesis":
+			items = []map[string]any{{
+				"id": "hypothesis-alpha",
+				"payload": map[string]any{
+					"source_refs": []any{map[string]any{"type": "evidence", "id": "evidence-alpha"}},
+				},
+			}}
+		default:
+			t.Fatalf("unexpected export type %q", kind)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"items":       items,
+			"next_cursor": "",
+			"has_more":    false,
+		})
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	mapping, err := client.ExportV2KnowledgeMapping(context.Background(), 50)
+	if err != nil {
+		t.Fatalf("ExportV2KnowledgeMapping: %v", err)
+	}
+	if strings.Join(requestedTypes, ",") != "evidence,entity,value,relationship,hypothesis" {
+		t.Fatalf("requested types = %v", requestedTypes)
+	}
+	alphaByType := mapping.BySourceDocIDAndType["doc-alpha"]
+	if alphaByType["evidence"][0].ID != "evidence-alpha" ||
+		alphaByType["entity"][0].ID != "entity-alpha" ||
+		alphaByType["relationship"][0].ID != "relationship-alpha" ||
+		alphaByType["hypothesis"][0].ID != "hypothesis-alpha" {
+		t.Fatalf("doc-alpha V2 mapping = %+v", alphaByType)
+	}
+	if mapping.BySourceDocIDAndType["doc-beta"]["value"][0].ID != "value-beta" {
+		t.Fatalf("doc-beta V2 mapping = %+v", mapping.BySourceDocIDAndType["doc-beta"])
+	}
+}
+
 func TestHTTPClientErrors(t *testing.T) {
 	client := &HTTPClient{}
 	if err := client.CallTool(context.Background(), "remember", map[string]any{}, nil); err == nil || err.Error() != "base URL is required" {

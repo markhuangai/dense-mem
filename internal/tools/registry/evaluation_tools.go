@@ -71,12 +71,12 @@ func evalGetManifestTool(deps Dependencies) Tool {
 func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "eval_list_knowledge_refs",
-		Description: "Page through team-scoped facts, claims, fragments, communities, dreams, or graph edges for evaluation. Content is included unless metadata_only=true.",
+		Description: "Page through team-scoped legacy or V2 knowledge references for evaluation. Content is included unless metadata_only=true.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"type"},
 			"properties": map[string]any{
-				"type":          schemaEnum([]string{"fragment", "claim", "fact", "community", "dream", "edge"}),
+				"type":          schemaEnum(evalListKnowledgeRefTypes()),
 				"limit":         map[string]any{"type": "integer", "minimum": 1, "maximum": 500},
 				"cursor":        schemaString("Opaque cursor from a previous response.", 512),
 				"status":        schemaString("Optional lifecycle status filter.", 64),
@@ -87,7 +87,7 @@ func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 		OutputSchema:   map[string]any{"type": "object"},
 		RequiredScopes: []string{"read", "write"},
 		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
-			kind, _ := input["type"].(string)
+			kind := strings.ToLower(stringInput(input["type"]))
 			limit := evalLimit(ctx, deps, input)
 			metadataOnly, _ := input["metadata_only"].(bool)
 			if err := auditEvaluationTool(ctx, deps, "eval_list_knowledge_refs", limit, !metadataOnly, map[string]any{"type": kind, "status": input["status"]}); err != nil {
@@ -106,6 +106,8 @@ func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 				return evalListDreams(ctx, deps, profileID, input, limit, metadataOnly)
 			case "edge":
 				return evalListEdges(ctx, deps, profileID, limit)
+			case "evidence", "relationship", "entity", "value", "hypothesis":
+				return evalListV2KnowledgeRefs(ctx, deps, profileID, input, limit, metadataOnly)
 			default:
 				return nil, fmt.Errorf("eval_list_knowledge_refs: unsupported type %q", kind)
 			}
@@ -116,12 +118,12 @@ func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 func evalGetKnowledgeItemTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "eval_get_knowledge_item",
-		Description: "Fetch one team-scoped fact, claim, fragment, community, or dream with its evaluation metadata.",
+		Description: "Fetch one team-scoped legacy or V2 knowledge item with its evaluation metadata.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"type", "id"},
 			"properties": map[string]any{
-				"type":          schemaEnum([]string{"fragment", "claim", "fact", "community", "dream"}),
+				"type":          schemaEnum(evalGetKnowledgeItemTypes()),
 				"id":            schemaString("Knowledge item ID.", 256),
 				"metadata_only": map[string]any{"type": "boolean"},
 			},
@@ -130,7 +132,7 @@ func evalGetKnowledgeItemTool(deps Dependencies) Tool {
 		OutputSchema:   map[string]any{"type": "object"},
 		RequiredScopes: []string{"read", "write"},
 		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
-			kind, _ := input["type"].(string)
+			kind := strings.ToLower(stringInput(input["type"]))
 			id, _ := input["id"].(string)
 			metadataOnly, _ := input["metadata_only"].(bool)
 			if err := auditEvaluationTool(ctx, deps, "eval_get_knowledge_item", 1, !metadataOnly, map[string]any{"type": kind}); err != nil {
@@ -573,6 +575,8 @@ func evalGetKnowledgeItem(ctx context.Context, deps Dependencies, profileID, kin
 			return nil, err
 		}
 		return structToMap(dream)
+	case "evidence", "relationship", "entity", "value", "hypothesis":
+		return evalGetV2KnowledgeItem(ctx, deps, profileID, kind, id)
 	default:
 		return nil, fmt.Errorf("eval_get_knowledge_item: unsupported type %q", kind)
 	}
@@ -753,6 +757,16 @@ func stripEvalContent(kind string, item map[string]any) {
 		delete(item, "what_if")
 		delete(item, "possible_outcome")
 		delete(item, "rationale")
+	case "evidence":
+		delete(item, "content")
+	case "entity":
+		delete(item, "canonical_name")
+		delete(item, "identity_context")
+	case "value":
+		delete(item, "canonical_value")
+		delete(item, "display")
+	case "hypothesis":
+		delete(item, "payload")
 	}
 }
 
@@ -824,7 +838,7 @@ func contextEvidenceRefs(items []contextservice.ContextItem) []map[string]any {
 
 func evalRefArraySchema(withGrade bool) map[string]any {
 	properties := map[string]any{
-		"type": schemaEnum([]string{"fragment", "claim", "fact", "community", "dream"}),
+		"type": schemaEnum(evalScoredKnowledgeRefTypes()),
 		"id":   schemaString("Reference ID.", 256),
 	}
 	required := []string{"type", "id"}

@@ -455,6 +455,7 @@ func main() {
 		CommunityList:        communityListSvc,
 		Context:              contextSvc,
 		Memory:               memorySvc,
+		V2Evaluation:         v2SemanticRepo,
 		SkillPack:            skillPackSvc,
 		Dreams:               dreamSvc,
 	})
