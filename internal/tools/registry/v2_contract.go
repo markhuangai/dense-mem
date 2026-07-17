@@ -27,6 +27,25 @@ const (
 	V2ToolRollbackMemoryPackImport    = "rollback_memory_pack_import"
 )
 
+var v2ContractToolNames = []string{
+	V2ToolRemember,
+	V2ToolGetMemoryPlacement,
+	V2ToolResolveMemoryPlacement,
+	V2ToolCorrectEntityResolution,
+	V2ToolRecallMemory,
+	V2ToolTraceMemory,
+	V2ToolSubmitRecallSessionFeedback,
+	V2ToolListDreams,
+	V2ToolGetDream,
+	V2ToolResolveDreamFeedback,
+	V2ToolListCommunities,
+	V2ToolFindMemoryPackCandidates,
+	V2ToolExportMemoryPack,
+	V2ToolInspectMemoryPack,
+	V2ToolImportMemoryPack,
+	V2ToolRollbackMemoryPackImport,
+}
+
 // V2ContractTools returns the frozen V2 tool contract catalog. The returned
 // tools are metadata only until the V2 feature gate wires real invokers.
 func V2ContractTools() []Tool {
@@ -36,7 +55,7 @@ func V2ContractTools() []Tool {
 			"Submit exact evidence and optional proposal hints for server-owned placement.",
 			[]string{"write"},
 			v2RememberInputSchema(),
-			v2PlacementRunOutputSchema(),
+			v2RememberOutputSchema(),
 		),
 		v2ContractTool(
 			V2ToolGetMemoryPlacement,
@@ -78,70 +97,70 @@ func V2ContractTools() []Tool {
 			"Record bounded session-level recall quality feedback.",
 			[]string{"write"},
 			v2RecallFeedbackInputSchema(),
-			map[string]any{"type": "object"},
+			v2RecallFeedbackOutputSchema(),
 		),
 		v2ContractTool(
 			V2ToolListDreams,
 			"List reviewable Hypotheses without treating them as memory.",
 			[]string{"read"},
 			v2ListDreamsInputSchema(),
-			map[string]any{"type": "object"},
+			v2ListDreamsOutputSchema(),
 		),
 		v2ContractTool(
 			V2ToolGetDream,
 			"Fetch one authorized Hypothesis and its source refs.",
 			[]string{"read"},
 			v2GetDreamInputSchema(),
-			map[string]any{"type": "object"},
+			v2GetDreamOutputSchema(),
 		),
 		v2ContractTool(
 			V2ToolResolveDreamFeedback,
 			"Resolve Hypothesis feedback without using the Hypothesis as evidence.",
 			[]string{"write"},
 			v2ResolveDreamFeedbackInputSchema(),
-			map[string]any{"type": "object"},
+			v2ResolveDreamFeedbackOutputSchema(),
 		),
 		v2ContractTool(
 			V2ToolListCommunities,
 			"List bounded same-team community summaries as derived read-model data.",
 			[]string{"read"},
 			v2ListCommunitiesInputSchema(),
-			map[string]any{"type": "object"},
+			v2ListCommunitiesOutputSchema(),
 		),
 		v2ContractTool(
 			V2ToolFindMemoryPackCandidates,
 			"Find active Relationships that may be exported into a memory pack.",
 			[]string{"read"},
 			v2FindMemoryPackCandidatesInputSchema(),
-			map[string]any{"type": "object"},
+			v2FindMemoryPackCandidatesOutputSchema(),
 		),
 		v2ContractTool(
 			V2ToolExportMemoryPack,
 			"Export selected active Relationships with support provenance.",
 			[]string{"read"},
 			v2ExportMemoryPackInputSchema(),
-			map[string]any{"type": "object"},
+			v2ExportMemoryPackOutputSchema(),
 		),
 		v2ContractTool(
 			V2ToolInspectMemoryPack,
 			"Inspect a memory-pack artifact without writing durable state.",
 			[]string{"read"},
 			v2InspectMemoryPackInputSchema(),
-			map[string]any{"type": "object"},
+			v2InspectMemoryPackOutputSchema(),
 		),
 		v2ContractTool(
 			V2ToolImportMemoryPack,
 			"Import a reviewed memory pack through normal evidence placement.",
 			[]string{"write"},
 			v2ImportMemoryPackInputSchema(),
-			map[string]any{"type": "object"},
+			v2ImportMemoryPackOutputSchema(),
 		),
 		v2ContractTool(
 			V2ToolRollbackMemoryPackImport,
 			"Rollback a V2 memory-pack import when no selected state changed.",
 			[]string{"write"},
 			v2RollbackMemoryPackImportInputSchema(),
-			map[string]any{"type": "object"},
+			v2RollbackMemoryPackImportOutputSchema(),
 		),
 	}
 }
@@ -166,16 +185,19 @@ func v2ContractTool(
 }
 
 func V2ContractToolNames() []string {
-	tools := V2ContractTools()
-	names := make([]string, 0, len(tools))
-	for _, tool := range tools {
-		names = append(names, tool.Name)
-	}
-	return names
+	return append([]string(nil), v2ContractToolNames...)
 }
 
 func IsV2ContractTool(tool Tool) bool {
-	return tool.ContractVersion == domain.V2ContractVersion
+	if tool.FeatureGate != domain.V2FeatureGate {
+		return false
+	}
+	for _, name := range v2ContractToolNames {
+		if tool.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func ValidateV2ContractInput(tool Tool, args map[string]any, scopes []string) error {
@@ -201,10 +223,24 @@ func ValidateV2ContractInput(tool Tool, args map[string]any, scopes []string) er
 		return validateV2Remember(args)
 	case V2ToolRecallMemory:
 		return validateV2Recall(args)
+	case V2ToolTraceMemory:
+		return validateV2UniqueStringArray(args, "predicate_keys")
 	case V2ToolResolveMemoryPlacement:
 		return validateV2ResolveMemoryPlacement(args)
 	case V2ToolCorrectEntityResolution:
-		return validateV2UniqueStringArray(args, "selected_observation_ids")
+		return validateV2CorrectEntityResolution(args)
+	case V2ToolSubmitRecallSessionFeedback:
+		return validateV2RecallFeedback(args)
+	case V2ToolResolveDreamFeedback:
+		return validateV2DreamFeedback(args)
+	case V2ToolFindMemoryPackCandidates:
+		return validateV2UniqueStringArray(args, "predicate_keys")
+	case V2ToolExportMemoryPack:
+		return validateV2UniqueStringArray(args, "relationship_ids")
+	case V2ToolInspectMemoryPack, V2ToolImportMemoryPack:
+		return validateV2MemoryPackSource(args)
+	case V2ToolRollbackMemoryPackImport:
+		return validateV2RollbackMemoryPackImport(args)
 	default:
 		return nil
 	}
@@ -228,6 +264,7 @@ func ToolScopesSatisfied(tool Tool, scopes []string) bool {
 
 func validateV2Remember(args map[string]any) error {
 	evidence, _ := args["evidence"].([]any)
+	sourceRevisions := map[string]v2ContractSourceRevision{}
 	for i, item := range evidence {
 		fields, ok := objectFields(item)
 		if !ok {
@@ -236,14 +273,21 @@ func validateV2Remember(args map[string]any) error {
 		if err := validateV2SourceRevisionFields(i, fields); err != nil {
 			return err
 		}
+		if err := validateV2SourceRevisionBatch(i, fields, sourceRevisions); err != nil {
+			return err
+		}
 	}
-	if err := validateV2UniqueObjectRefs(args, "entity_hints", "ref"); err != nil {
+	proposal, _ := objectFields(args["proposal"])
+	if err := validateV2UniqueObjectRefsIn(proposal["entities"], "proposal.entities", "ref"); err != nil {
 		return err
 	}
-	if err := validateV2UniqueObjectRefs(args, "relationship_hints", "ref"); err != nil {
+	if err := validateV2UniqueObjectRefsIn(proposal["relationships"], "proposal.relationships", "proposal_id"); err != nil {
 		return err
 	}
-	return validateV2RelationshipObjectChoice(args, "relationship_hints")
+	if err := validateV2RelationshipObjectChoiceIn(proposal["relationships"], "proposal.relationships"); err != nil {
+		return err
+	}
+	return validateV2ProposalReferencesAndSpans(proposal, evidence)
 }
 
 func validateV2Recall(args map[string]any) error {
@@ -265,37 +309,30 @@ func validateV2ResolveMemoryPlacement(args map[string]any) error {
 	case domain.V2ResolveAcknowledge:
 		return validateV2RequiredFields(args, "ingest_id")
 	case domain.V2ResolveSelectEntity:
-		return validateV2RequiredFields(args,
-			"ingest_id",
-			"placement_item_id",
-			"entity_ref",
-			"candidate_entity_id",
-		)
+		if err := validateV2RequiredFields(args, "ingest_id", "placement_item_id", "decision"); err != nil {
+			return err
+		}
+		return validateV2DecisionFields(args, "mention_ref", "entity_id")
 	case domain.V2ResolveConfirmNewEntity:
-		return validateV2RequiredFields(args,
-			"ingest_id",
-			"placement_item_id",
-			"entity_ref",
-			"evidence",
-		)
+		if err := validateV2RequiredFields(args, "ingest_id", "placement_item_id", "decision", "evidence"); err != nil {
+			return err
+		}
+		return validateV2DecisionFields(args, "mention_ref")
 	case domain.V2ResolveSelectPredicate:
-		return validateV2RequiredFields(args,
-			"ingest_id",
-			"placement_item_id",
-			"observation_id",
-			"predicate_key",
-			"predicate_version",
-		)
+		if err := validateV2RequiredFields(args, "ingest_id", "placement_item_id", "decision"); err != nil {
+			return err
+		}
+		return validateV2DecisionFields(args, "observation_id", "predicate_key", "predicate_version")
 	case domain.V2ResolveAccept:
 		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "evidence")
 	case domain.V2ResolveReject:
-		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "message")
+		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "reason")
 	case domain.V2ResolveCorrect:
 		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "evidence")
 	case domain.V2ResolveReleaseQuarantine:
-		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "message")
+		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "reason")
 	case domain.V2ResolveForget:
-		return validateV2RequiredFields(args, "relationship_id", "message", "evidence")
+		return validateV2RequiredFields(args, "relationship_id", "reason", "evidence")
 	default:
 		return nil
 	}
@@ -305,12 +342,19 @@ func validateV2SourceRevisionFields(index int, fields map[string]any) error {
 	_, hasSourceKey := fields["source_key"]
 	_, hasSourceRevision := fields["source_revision"]
 	_, hasPreviousRevision := fields["previous_source_revision"]
+	_, hasSupersededFragments := fields["supersedes_fragment_ids"]
 	if hasSourceKey != hasSourceRevision {
 		return fmt.Errorf("evidence[%d]: source_key and source_revision must appear together", index)
 	}
 	if hasPreviousRevision && (!hasSourceKey || !hasSourceRevision) {
 		return fmt.Errorf(
 			"evidence[%d]: previous_source_revision requires source_key and source_revision",
+			index,
+		)
+	}
+	if hasSupersededFragments && (!hasSourceKey || !hasSourceRevision) {
+		return fmt.Errorf(
+			"evidence[%d]: supersedes_fragment_ids requires source_key and source_revision",
 			index,
 		)
 	}
@@ -353,83 +397,30 @@ func validateV2UniqueStringArray(args map[string]any, field string) error {
 	return nil
 }
 
-func validateV2UniqueObjectRefs(args map[string]any, field string, refField string) error {
-	raw, ok := args[field]
-	if !ok {
-		return nil
-	}
-	items, ok := raw.([]any)
-	if !ok {
-		return nil
-	}
-	seen := map[string]struct{}{}
-	for i, item := range items {
-		fields, ok := objectFields(item)
-		if !ok {
-			continue
-		}
-		value, _ := fields[refField].(string)
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			return fmt.Errorf("%s[%d].%s: duplicate ref %q", field, i, refField, value)
-		}
-		seen[value] = struct{}{}
-	}
-	return nil
-}
-
-func validateV2RelationshipObjectChoice(args map[string]any, field string) error {
-	raw, ok := args[field]
-	if !ok {
-		return nil
-	}
-	items, ok := raw.([]any)
-	if !ok {
-		return nil
-	}
-	for i, item := range items {
-		fields, ok := objectFields(item)
-		if !ok {
-			continue
-		}
-		objectRef, hasObjectRef := fields["object_ref"].(string)
-		hasObjectRef = hasObjectRef && strings.TrimSpace(objectRef) != ""
-		_, hasObjectValue := fields["object_value"]
-		if hasObjectRef == hasObjectValue {
-			return fmt.Errorf("%s[%d]: exactly one of object_ref or object_value is required", field, i)
-		}
-	}
-	return nil
-}
-
 func v2ContractInput(required []string, properties map[string]any) map[string]any {
-	props := map[string]any{
-		"contract_version": schemaEnum([]string{domain.V2ContractVersion}),
-	}
-	for key, value := range properties {
-		props[key] = value
-	}
-	req := append([]string{"contract_version"}, required...)
+	v2RequireNonEmptyStrings(required, properties)
 	return map[string]any{
 		"type":                 "object",
-		"required":             req,
-		"properties":           props,
+		"required":             required,
+		"properties":           properties,
 		"additionalProperties": false,
+		"x-contract-version":   domain.V2ContractVersion,
 	}
 }
 
 func v2RememberInputSchema() map[string]any {
 	return v2ContractInput([]string{"evidence"}, map[string]any{
-		"evidence":           v2EvidenceArraySchema(),
-		"entity_hints":       v2EntityHintArraySchema(),
-		"relationship_hints": v2RelationshipHintArraySchema(),
-		"idempotency_key":    schemaString("Operation retry key scoped to team and profile.", 128),
+		"evidence": v2EvidenceArraySchema(),
+		"proposal": v2ClosedObject(nil, map[string]any{
+			"entities":      v2EntityProposalArraySchema(),
+			"relationships": v2RelationshipProposalArraySchema(),
+		}),
 	})
 }
 
 func v2EvidenceArraySchema() map[string]any {
+	content := memoryEntryString("Verbatim evidence text.")
+	content["minLength"] = 1
 	return map[string]any{
 		"type":     "array",
 		"minItems": 1,
@@ -438,24 +429,25 @@ func v2EvidenceArraySchema() map[string]any {
 			"type":     "object",
 			"required": []string{"content"},
 			"properties": map[string]any{
-				"content":                  memoryEntryString("Verbatim evidence text."),
+				"content":                  content,
 				"source_type":              schemaEnum([]string{"conversation", "document", "observation", "manual"}),
 				"source":                   schemaString("Bounded provenance label.", 256),
 				"authority":                schemaEnum([]string{"authoritative", "primary", "secondary", "inferred", "unknown"}),
+				"source_group":             schemaString("Proposed evidence source grouping.", 256),
 				"source_key":               schemaString("Stable source-owner-scoped identity.", 256),
 				"source_revision":          schemaString("Opaque current source revision token.", 256),
 				"previous_source_revision": schemaString("Exact previous source revision token.", 256),
-				"supersedes_evidence_ids":  v2StringArraySchema("Evidence UUID to supersede.", 50, 128),
+				"supersedes_fragment_ids":  v2StringArraySchema("Evidence fragment ID to supersede.", 50, 128),
 				"idempotency_key":          schemaString("Evidence retry key scoped to team and profile.", 128),
 				"labels":                   v2StringArraySchema("Evidence label.", 20, 64),
-				"metadata":                 map[string]any{"type": "object", "additionalProperties": true},
+				"metadata":                 v2BoundedMap("Source-policy-approved metadata."),
 			},
 			"additionalProperties": false,
 		},
 	}
 }
 
-func v2EntityHintArraySchema() map[string]any {
+func v2EntityProposalArraySchema() map[string]any {
 	return map[string]any{
 		"type":     "array",
 		"maxItems": 100,
@@ -463,24 +455,25 @@ func v2EntityHintArraySchema() map[string]any {
 			"type":     "object",
 			"required": []string{"ref", "name"},
 			"properties": map[string]any{
-				"ref":              schemaString("Client-local Entity proposal ref.", 128),
-				"name":             schemaString("Evidence-supported name.", 256),
-				"kind":             schemaEnum(domain.V2EntityKinds()),
+				"ref":              v2NonEmptyString("Client-local Entity proposal ref.", 128),
+				"name":             v2NonEmptyString("Evidence-supported name.", 256),
+				"entity_kind":      schemaEnum(domain.V2EntityKinds()),
 				"aliases":          v2StringArraySchema("Evidence-supported alias.", 20, 256),
-				"identity_context": map[string]any{"type": "object", "additionalProperties": true},
+				"identity_context": v2BoundedMap("Evidence-supported identity discriminators."),
+				"known_entity_id":  v2NullableString("Server-issued Entity candidate hint.", 128),
 			},
 			"additionalProperties": false,
 		},
 	}
 }
 
-func v2RelationshipHintArraySchema() map[string]any {
+func v2RelationshipProposalArraySchema() map[string]any {
 	return map[string]any{
 		"type":     "array",
 		"maxItems": 200,
 		"items": map[string]any{
 			"type":     "object",
-			"required": []string{"ref", "subject_ref", "predicate", "evidence"},
+			"required": []string{"proposal_id", "subject_ref", "predicate", "evidence"},
 			"oneOf": []any{
 				map[string]any{
 					"required": []string{"object_ref"},
@@ -492,35 +485,40 @@ func v2RelationshipHintArraySchema() map[string]any {
 				},
 			},
 			"properties": map[string]any{
-				"ref":         schemaString("Client-local Relationship proposal ref.", 128),
-				"subject_ref": schemaString("Entity proposal ref.", 128),
-				"predicate":   schemaString("Registered predicate name.", 128),
+				"proposal_id": v2NonEmptyString("Client-local Relationship proposal ref.", 128),
+				"subject_ref": v2NonEmptyString("Entity proposal ref.", 128),
+				"predicate":   v2NonEmptyString("Registered predicate name.", 128),
 				"object_ref":  schemaString("Entity proposal ref.", 128),
 				"object_value": map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"type":  schemaEnum(domain.V2ValueTypes()),
-						"value": schemaString("Canonical typed value.", 1024),
+						"type":    schemaEnum(domain.V2ValueTypes()),
+						"value":   map[string]any{"type": []any{"string", "number", "boolean"}},
+						"display": schemaString("Optional display form.", 1024),
+						"unit":    schemaString("Optional unit.", 128),
 					},
 					"required": []string{"type", "value"},
 				},
 				"polarity": schemaEnum([]string{"+", "-"}),
+				"modality": schemaEnum([]string{"statement", "question", "proposal", "speculation", "quoted"}),
 				"evidence": map[string]any{
 					"type":     "array",
 					"minItems": 1,
 					"maxItems": 20,
 					"items": map[string]any{
 						"type":                 "object",
-						"required":             []string{"evidence_index", "quote"},
+						"required":             []string{"evidence_index", "start", "end"},
 						"additionalProperties": false,
 						"properties": map[string]any{
 							"evidence_index": map[string]any{"type": "integer", "minimum": 0},
-							"quote":          schemaString("Exact source span.", 999),
-							"span_start":     map[string]any{"type": "integer", "minimum": 0},
-							"span_end":       map[string]any{"type": "integer", "minimum": 0},
+							"start":          map[string]any{"type": "integer", "minimum": 0},
+							"end":            map[string]any{"type": "integer", "minimum": 0},
 						},
 					},
+					"valid_from":     v2NullableDateTime("Evidence-supported validity start."),
+					"valid_to":       v2NullableDateTime("Evidence-supported validity end."),
+					"client_comment": v2NullableString("Non-authoritative extraction note.", 1000),
 				},
 			},
 			"additionalProperties": false,
@@ -539,49 +537,51 @@ func v2ResolveMemoryPlacementInputSchema() map[string]any {
 		"action":            schemaEnum(domain.V2ResolveActions()),
 		"ingest_id":         schemaString("Placement run ID.", 128),
 		"placement_item_id": schemaString("Review item ID.", 128),
-		"observation_id":    schemaString("Unresolved observation ID.", 128),
 		"relationship_id":   schemaString("Caller-owned Relationship ID.", 128),
-		"entity_ref":        schemaString("Client-local Entity proposal ref.", 128),
-		"candidate_entity_id": schemaString(
-			"Server-supplied candidate Entity ID selected for this profile.",
-			128,
-		),
-		"predicate_key": schemaString("Server-supplied registered predicate key.", 128),
-		"predicate_version": map[string]any{
-			"type":        "integer",
-			"minimum":     1,
-			"description": "Server-supplied predicate version selected for this observation.",
-		},
-		"message":         schemaString("Bounded reason or reviewer explanation.", 1000),
-		"evidence":        v2EvidenceArraySchema(),
+		"decision": v2ClosedObject(nil, map[string]any{
+			"mention_ref":       schemaString("Client-local Entity mention ref.", 128),
+			"entity_id":         schemaString("Server-supplied same-team Entity ID.", 128),
+			"observation_id":    schemaString("Unresolved observation ID.", 128),
+			"predicate_key":     schemaString("Server-supplied registered predicate key.", 128),
+			"predicate_version": map[string]any{"type": "integer", "minimum": 1},
+		}),
+		"reason":   schemaString("Bounded reviewer reason.", 1000),
+		"evidence": v2EvidenceArraySchema(),
+		"proposal": v2ClosedObject(nil, map[string]any{
+			"entities":      v2EntityProposalArraySchema(),
+			"relationships": v2RelationshipProposalArraySchema(),
+		}),
 		"idempotency_key": schemaString("Resolution retry key scoped to team and profile.", 128),
 	})
 }
 
 func v2CorrectEntityResolutionInputSchema() map[string]any {
-	return v2ContractInput([]string{"action", "source_entity_id", "dry_run"}, map[string]any{
-		"action":                   schemaEnum(domain.V2EntityCorrectionActions()),
-		"source_entity_id":         schemaString("Caller-visible source Entity ID.", 128),
-		"target_entity_id":         schemaString("Merge target Entity ID. Null for split.", 128),
-		"selected_observation_ids": v2StringArraySchema("Caller-owned observation ID.", 200, 128),
-		"dry_run":                  map[string]any{"type": "boolean"},
-		"plan_token":               schemaString("Dry-run token required for apply.", 256),
-		"evidence":                 v2EvidenceArraySchema(),
-		"idempotency_key":          schemaString("Correction retry key scoped to team and profile.", 128),
-	})
+	return v2ContractInput(
+		[]string{"operation", "source_entity_id", "target_entity_id", "owned_observation_ids", "evidence", "dry_run", "idempotency_key"},
+		map[string]any{
+			"operation":             schemaEnum(domain.V2EntityCorrectionActions()),
+			"source_entity_id":      schemaString("Caller-visible source Entity ID.", 128),
+			"target_entity_id":      v2NullableString("Merge target Entity ID; null for split.", 128),
+			"owned_observation_ids": v2StringArraySchema("Caller-owned observation ID.", 200, 128),
+			"dry_run":               map[string]any{"type": "boolean"},
+			"impact_token":          schemaString("Version-bound dry-run token required for apply.", 256),
+			"evidence":              v2EvidenceArraySchema(),
+			"idempotency_key":       schemaString("Correction retry key scoped to team and profile.", 128),
+		},
+	)
 }
 
 func v2RecallMemoryInputSchema() map[string]any {
+	query := schemaString("Natural-language recall query.", 512)
+	query["minLength"] = 1
 	return v2ContractInput([]string{"query"}, map[string]any{
-		"query":                  schemaString("Natural-language recall query.", 512),
+		"query":                  query,
 		"limit":                  map[string]any{"type": "integer", "minimum": 1, "maximum": 50},
-		"valid_at":               map[string]any{"type": "string", "format": "date-time"},
-		"known_at":               map[string]any{"type": "string", "format": "date-time"},
+		"valid_at":               v2NullableDateTime("Real-world recall time."),
+		"known_at":               v2NullableDateTime("System-knowledge recall time."),
 		"known_evidence_ids":     v2StringArraySchema("Evidence UUID already seen.", 200, 128),
 		"known_relationship_ids": v2StringArraySchema("Relationship UUID already seen.", 200, 128),
 		"expand_from_entity_ids": v2StringArraySchema("Entity UUID for focused expansion.", 50, 128),
-		"include_evidence":       map[string]any{"type": "boolean"},
-		"use_communities":        map[string]any{"type": "boolean"},
 	})
 }
 
@@ -589,8 +589,13 @@ func v2TraceMemoryInputSchema() map[string]any {
 	return v2ContractInput([]string{"relationship_id"}, map[string]any{
 		"relationship_id":          schemaString("Same-team Relationship ID.", 128),
 		"include_evidence_content": map[string]any{"type": "boolean"},
-		"max_edges":                map[string]any{"type": "integer", "minimum": 1, "maximum": 200},
-		"max_chars":                map[string]any{"type": "integer", "minimum": 1, "maximum": 20000},
+		"include_verification":     map[string]any{"type": "boolean"},
+		"include_transitions":      map[string]any{"type": "boolean"},
+		"max_depth":                map[string]any{"type": "integer", "minimum": 0, "maximum": 4},
+		"max_edges":                map[string]any{"type": "integer", "minimum": 0, "maximum": 100},
+		"predicate_keys":           v2StringArraySchema("Registered predicate key filter.", 30, 128),
+		"topic":                    v2NullableString("Optional graph-context topic.", 256),
+		"min_relevance":            v2NullableNumber("Optional graph-context relevance threshold.", 0, 1),
 	})
 }
 
@@ -602,15 +607,33 @@ func v2RecallFeedbackInputSchema() map[string]any {
 			"maxItems": 20,
 			"items": map[string]any{
 				"type":     "object",
-				"required": []string{"recall_id", "used", "answer_supported", "quality"},
+				"required": []string{"recall_event_id", "used", "answer_supported", "quality"},
 				"properties": map[string]any{
-					"recall_id":        schemaString("Recall event ID.", 128),
+					"recall_event_id":  v2NonEmptyString("Recall event ID.", 128),
 					"used":             map[string]any{"type": "boolean"},
 					"answer_supported": map[string]any{"type": "boolean"},
 					"quality":          schemaEnum([]string{"high", "medium", "low"}),
 					"missing_context":  map[string]any{"type": "boolean"},
 					"irrelevant":       map[string]any{"type": "boolean"},
 					"feedback_comment": schemaString("Bounded feedback note.", 1000),
+					"irrelevant_result_refs": v2Array(v2ClosedObject(
+						[]string{"type", "id", "rank"},
+						map[string]any{
+							"type": schemaEnum([]string{"relationship", "fragment", "community", "hypothesis"}),
+							"id":   schemaString("Result ID from the recall event.", 128),
+							"rank": map[string]any{"type": "integer", "minimum": 1, "maximum": 1000},
+						},
+					), 0, 100),
+					"hypothesis_feedback": v2Array(v2ClosedObject(
+						[]string{"hypothesis_id", "used", "quality", "contradicted"},
+						map[string]any{
+							"hypothesis_id":    schemaString("Hypothesis ID returned with recall.", 128),
+							"used":             map[string]any{"type": "boolean"},
+							"quality":          schemaEnum([]string{"high", "medium", "low"}),
+							"contradicted":     map[string]any{"type": "boolean"},
+							"feedback_comment": schemaString("Bounded Hypothesis feedback note.", 1000),
+						},
+					), 0, 100),
 				},
 				"additionalProperties": false,
 			},
@@ -620,29 +643,34 @@ func v2RecallFeedbackInputSchema() map[string]any {
 
 func v2ListDreamsInputSchema() map[string]any {
 	return v2ContractInput(nil, map[string]any{
-		"status": schemaEnum([]string{"proposed", "reinforced", "stale", "rejected", "promoted"}),
+		"status": schemaEnum([]string{"proposed", "reinforced", "stale", "rejected", "submitted"}),
 		"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
+		"cursor": schemaString("Opaque page cursor.", 512),
 	})
 }
 
 func v2GetDreamInputSchema() map[string]any {
-	return v2ContractInput([]string{"dream_id"}, map[string]any{
-		"dream_id": schemaString("Hypothesis ID.", 128),
+	return v2ContractInput([]string{"hypothesis_id"}, map[string]any{
+		"hypothesis_id": schemaString("Hypothesis ID.", 128),
 	})
 }
 
 func v2ResolveDreamFeedbackInputSchema() map[string]any {
-	return v2ContractInput([]string{"dream_id", "decision"}, map[string]any{
-		"dream_id": schemaString("Hypothesis ID.", 128),
+	return v2ContractInput([]string{"hypothesis_id", "decision"}, map[string]any{
+		"hypothesis_id": schemaString("Hypothesis ID.", 128),
 		"decision": schemaEnum([]string{
-			"ignore",
 			"reinforce",
 			"stale",
 			"reject",
 			"confirm_true",
 			"confirm_false",
 		}),
-		"feedback": schemaString("Evidence-backed feedback.", 1024),
+		"reason":   schemaString("Bounded lifecycle feedback reason.", 1000),
+		"evidence": v2EvidenceArraySchema(),
+		"proposal": v2ClosedObject(nil, map[string]any{
+			"entities":      v2EntityProposalArraySchema(),
+			"relationships": v2RelationshipProposalArraySchema(),
+		}),
 	})
 }
 
@@ -655,174 +683,201 @@ func v2ListCommunitiesInputSchema() map[string]any {
 
 func v2FindMemoryPackCandidatesInputSchema() map[string]any {
 	return v2ContractInput([]string{"query"}, map[string]any{
-		"query": schemaString("Topic search query.", 512),
-		"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
+		"query":          schemaString("Topic search query.", 512),
+		"limit":          map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
+		"predicate_keys": v2StringArraySchema("Registered predicate key filter.", 100, 128),
 	})
 }
 
 func v2ExportMemoryPackInputSchema() map[string]any {
 	return v2ContractInput([]string{"name"}, map[string]any{
-		"name":             schemaString("Memory pack name.", 256),
-		"description":      schemaString("Memory pack description.", 1024),
-		"relationship_ids": v2StringArraySchema("Relationship ID to export.", 500, 128),
-		"include_support":  map[string]any{"type": "boolean"},
+		"name":                 schemaString("Memory pack name.", 256),
+		"description":          schemaString("Memory pack description.", 1024),
+		"relationship_ids":     v2StringArraySchema("Relationship ID to export.", 500, 128),
+		"include_evidence":     map[string]any{"type": "boolean"},
+		"include_entity_names": map[string]any{"type": "boolean"},
 	})
 }
 
 func v2InspectMemoryPackInputSchema() map[string]any {
-	return v2ContractInput(nil, map[string]any{
-		"artifact_json":       schemaString("Memory-pack JSON artifact.", 0),
-		"url":                 schemaString("HTTPS URL.", 2048),
-		"expected_sha256":     schemaString("Expected canonical SHA-256.", 64),
-		"recommend_decisions": map[string]any{"type": "boolean"},
+	return v2ContractInput([]string{"mode"}, map[string]any{
+		"artifact_json":   schemaString("Memory-pack JSON artifact.", v2MemoryPackArtifactMaxLength),
+		"url":             schemaString("HTTPS URL.", 2048),
+		"expected_sha256": schemaString("Expected canonical SHA-256.", 64),
+		"mode":            schemaEnum([]string{"review", "trusted"}),
 	})
 }
 
 func v2ImportMemoryPackInputSchema() map[string]any {
 	return v2ContractInput([]string{"mode"}, map[string]any{
-		"artifact_json":      schemaString("Memory-pack JSON artifact.", 0),
-		"url":                schemaString("HTTPS URL.", 2048),
-		"expected_sha256":    schemaString("Expected canonical SHA-256.", 64),
-		"mode":               schemaEnum([]string{"review", "trusted"}),
-		"selected_item_ids":  v2StringArraySchema("Artifact item ID selected for import.", 500, 128),
-		"conflict_decisions": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
+		"artifact_json":   schemaString("Memory-pack JSON artifact.", v2MemoryPackArtifactMaxLength),
+		"url":             schemaString("HTTPS URL.", 2048),
+		"expected_sha256": schemaString("Expected canonical SHA-256.", 64),
+		"mode":            schemaEnum([]string{"review", "trusted"}),
+		"conflict_decisions": v2Array(v2ClosedObject(
+			[]string{"item_id", "decision"},
+			map[string]any{
+				"item_id":          schemaString("Artifact-local item ID.", 128),
+				"decision":         schemaEnum([]string{"skip", "import_for_review", "map_entity", "confirm_new_entity", "accept_source_authority"}),
+				"target_entity_id": schemaString("Server-supplied same-team Entity candidate.", 128),
+				"evidence":         v2EvidenceArraySchema(),
+			},
+		), 0, 500),
+		"idempotency_key": schemaString("Import retry key scoped to team and profile.", 128),
 	})
 }
 
 func v2RollbackMemoryPackImportInputSchema() map[string]any {
-	return v2ContractInput([]string{"import_id"}, map[string]any{
-		"import_id": schemaString("Memory-pack import ID.", 128),
+	return v2ContractInput([]string{"import_id", "dry_run"}, map[string]any{
+		"import_id":    schemaString("Memory-pack import ID.", 128),
+		"dry_run":      map[string]any{"type": "boolean"},
+		"impact_token": schemaString("Version-bound rollback dry-run token required for apply.", 256),
 	})
 }
 
-func v2PlacementRunOutputSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
+func v2RememberOutputSchema() map[string]any {
+	return v2ClosedObject(
+		[]string{"ingest_id", "processing_state", "check_after_seconds", "status_tool", "correlation_id"},
+		map[string]any{
 			"ingest_id":           schemaString("Placement run ID.", 128),
-			"status":              schemaEnum(domain.V2PlacementRunStatuses()),
-			"check_after_seconds": map[string]any{"type": "integer"},
-			"status_tool":         schemaString("Polling tool name.", 128),
-			"items": map[string]any{
-				"type":  "array",
-				"items": v2PlacementItemSchema(),
-			},
-			"search_state": schemaEnum(domain.V2SearchProjectionStates()),
-			"degradation":  v2DegradationSchema(),
+			"processing_state":    schemaEnum(domain.V2PlacementRunStatuses()),
+			"check_after_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 3600},
+			"status_tool":         schemaEnum([]string{V2ToolGetMemoryPlacement}),
+			"correlation_id":      schemaString("Request correlation ID.", 128),
 		},
-	}
+	)
+}
+
+func v2PlacementRunOutputSchema() map[string]any {
+	return v2ClosedObject(
+		[]string{"ingest_id", "processing_state", "search_state", "items", "errors"},
+		map[string]any{
+			"ingest_id":        schemaString("Placement run ID.", 128),
+			"processing_state": schemaEnum(domain.V2PlacementRunStatuses()),
+			"search_state":     schemaEnum(domain.V2SearchProjectionStates()),
+			"items":            v2Array(v2PlacementItemSchema(), 0, 20),
+			"errors":           v2PlacementErrorArraySchema(),
+		},
+	)
 }
 
 func v2PlacementItemSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
+	return v2ClosedObject(
+		[]string{"item_id", "evidence_id", "category", "search_state", "relationship_outcomes", "errors"},
+		map[string]any{
 			"item_id":               schemaString("Stable placement item ID.", 128),
-			"evidence_index":        map[string]any{"type": "integer"},
+			"evidence_id":           schemaString("Durable evidence fragment ID.", 128),
 			"category":              schemaEnum(domain.V2EvidenceItemCategories()),
 			"relationship_outcomes": v2RelationshipOutcomeArraySchema(),
 			"search_state":          schemaEnum(domain.V2SearchProjectionStates()),
-			"degradation":           v2DegradationSchema(),
-			"redacted_audit_ref":    schemaString("Redacted audit handle.", 128),
-			"provider_event_ref":    schemaString("Redacted provider event handle.", 128),
+			"errors":                v2PlacementErrorArraySchema(),
 		},
-	}
+	)
 }
 
 func v2RelationshipOutcomeArraySchema() map[string]any {
 	return map[string]any{
-		"type": "array",
-		"items": map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"category":          schemaEnum(domain.V2RelationshipOutcomeCategories()),
-				"relationship_id":   schemaString("Relationship ID when one exists.", 128),
-				"reason":            schemaString("Bounded placement explanation.", 1000),
-				"predicate_options": map[string]any{"type": "array", "items": v2PredicateDefinitionSchema()},
+		"type": "array", "maxItems": 200,
+		"items": v2ClosedObject(
+			[]string{"proposal_id", "observation_id", "owner_profile_id", "category", "reason"},
+			map[string]any{
+				"proposal_id":         v2NullableString("Client proposal ID when supplied.", 128),
+				"observation_id":      v2NullableString("Durable observation ID when one exists.", 128),
+				"relationship_id":     v2NullableString("Relationship ID when one exists.", 128),
+				"owner_profile_id":    schemaString("Relationship owner profile ID.", 128),
+				"tier":                schemaEnum(domain.V2RelationshipTiers()),
+				"relationship_status": schemaEnum(domain.V2RelationshipStatuses()),
+				"category":            schemaEnum(domain.V2RelationshipOutcomeCategories()),
+				"reason":              schemaString("Bounded placement explanation.", 1000),
+				"review_task":         v2NullableString("Review task handle.", 128),
+				"predicate_options":   v2Array(v2PredicateDefinitionSchema(), 0, 100),
 			},
-		},
+		),
 	}
 }
 
 func v2ResolveMemoryPlacementOutputSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
+	return v2ClosedObject(
+		[]string{"decision_id", "processing_state"},
+		map[string]any{
 			"decision_id":         schemaString("Append-only decision ID.", 128),
 			"ingest_id":           schemaString("Follow-up placement run ID.", 128),
-			"status":              schemaEnum(domain.V2PlacementRunStatuses()),
+			"processing_state":    schemaEnum(domain.V2PlacementRunStatuses()),
 			"impact_summary":      schemaString("Bounded before/after summary.", 1000),
-			"check_after_seconds": map[string]any{"type": "integer"},
+			"check_after_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 3600},
 		},
-	}
+	)
 }
 
 func v2CorrectEntityResolutionOutputSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"dry_run":        map[string]any{"type": "boolean"},
-			"plan_token":     schemaString("Token required for apply.", 256),
-			"selected_ids":   v2StringArraySchema("Observation selected for change.", 500, 128),
-			"blocked_ids":    v2StringArraySchema("Observation blocked from change.", 500, 128),
-			"impact_summary": schemaString("Bounded before/after summary.", 2000),
-			"degradation":    v2DegradationSchema(),
+	return v2ClosedObject(
+		[]string{
+			"dry_run",
+			"selected_observation_ids",
+			"blocked_observation_ids",
+			"relationship_changes",
+			"entity_candidates",
+			"unchanged_cross_profile_references",
 		},
-	}
+		map[string]any{
+			"dry_run":                            map[string]any{"type": "boolean"},
+			"impact_token":                       schemaString("Expiring version-bound apply token.", 256),
+			"selected_observation_ids":           v2StringArraySchema("Observation selected for change.", 200, 128),
+			"blocked_observation_ids":            v2StringArraySchema("Observation blocked from change.", 200, 128),
+			"relationship_changes":               v2Array(v2CorrectionRelationshipChangeSchema(), 0, 500),
+			"entity_candidates":                  v2Array(v2CorrectionEntityCandidateSchema(), 0, 100),
+			"unchanged_cross_profile_references": v2Array(v2CrossProfileReferenceSchema(), 0, 500),
+		},
+	)
 }
 
 func v2RecallMemoryOutputSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
+	return v2ClosedObject(
+		[]string{"recall_id", "results", "discovery_paths", "discovery_guidance", "related_hypotheses"},
+		map[string]any{
 			"recall_id":          schemaString("Recall event ID.", 128),
-			"results":            map[string]any{"type": "array", "items": v2RecallResultSchema()},
+			"results":            v2Array(v2RecallResultSchema(), 0, 50),
+			"discovery_paths":    v2Array(v2RecallDiscoveryPathSchema(), 0, 50),
 			"discovery_guidance": schemaString("Bounded follow-up guidance.", 1000),
-			"degradation":        v2DegradationSchema(),
-			"search_state":       schemaEnum(domain.V2SearchProjectionStates()),
+			"related_hypotheses": v2Array(v2HypothesisSummarySchema(), 0, 20),
 		},
-	}
+	)
 }
 
 func v2RecallResultSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"evidence_id":      schemaString("Evidence ID.", 128),
-			"relationship_ids": v2StringArraySchema("Relationship ID.", 50, 128),
-			"score":            map[string]any{"type": "number"},
-			"rank":             map[string]any{"type": "integer"},
-			"context":          schemaString("Bounded evidence context.", 2000),
+	return v2ClosedObject(
+		[]string{"evidence_id", "context"},
+		map[string]any{
+			"evidence_id": schemaString("Evidence ID.", 128),
+			"context":     schemaString("Bounded evidence context.", 2000),
 		},
-	}
+	)
 }
 
 func v2TraceMemoryOutputSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"relationship":         map[string]any{"type": "object"},
-			"evidence_supports":    map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"evidence_fragments":   map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"identity_corrections": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"supersession_lineage": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"degradation":          v2DegradationSchema(),
-			"stopped_reason":       schemaString("Trace budget stop reason.", 128),
-		},
+	required := []string{
+		"relationship", "observations", "evidence_supports", "support_decision_events",
+		"evidence_fragments", "verification_events", "transitions", "conflicts",
+		"cross_profile_references", "identity_corrections", "supersession_lineage",
+		"semantic_nodes", "semantic_edges", "visited_entity_ids", "stopped_reason",
 	}
-}
-
-func v2DegradationSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"required_failure": map[string]any{"type": "boolean"},
-			"optional":         map[string]any{"type": "boolean"},
-			"code":             schemaString("Typed degradation code.", 128),
-			"message":          schemaString("Bounded public degradation message.", 512),
-		},
-		"additionalProperties": false,
-	}
+	return v2ClosedObject(required, map[string]any{
+		"relationship":             v2TraceRelationshipSchema(),
+		"observations":             v2Array(v2TraceObservationSchema(), 0, 500),
+		"evidence_supports":        v2Array(v2TraceEvidenceSupportSchema(), 0, 500),
+		"support_decision_events":  v2Array(v2TraceSupportDecisionSchema(), 0, 500),
+		"evidence_fragments":       v2Array(v2TraceEvidenceFragmentSchema(), 0, 500),
+		"verification_events":      v2Array(v2TraceVerificationSchema(), 0, 500),
+		"transitions":              v2Array(v2TraceTransitionSchema(), 0, 500),
+		"conflicts":                v2Array(v2TraceConflictSchema(), 0, 500),
+		"cross_profile_references": v2Array(v2CrossProfileReferenceSchema(), 0, 500),
+		"identity_corrections":     v2Array(v2TraceIdentityCorrectionSchema(), 0, 500),
+		"supersession_lineage":     v2Array(v2TraceRelationshipSchema(), 0, 500),
+		"semantic_nodes":           v2Array(v2SemanticNodeSchema(), 0, 500),
+		"semantic_edges":           v2Array(v2SemanticEdgeSchema(), 0, 500),
+		"visited_entity_ids":       v2StringArraySchema("Visited Entity ID.", 500, 128),
+		"stopped_reason":           v2NullableString("Trace budget stop reason.", 128),
+	})
 }
 
 func v2PredicateDefinitionSchema() map[string]any {
@@ -854,9 +909,12 @@ func v2PredicateDefinitionSchema() map[string]any {
 }
 
 func v2StringArraySchema(description string, maxItems int, maxLen int) map[string]any {
+	item := schemaString(description, maxLen)
+	item["minLength"] = 1
 	schema := map[string]any{
-		"type":  "array",
-		"items": schemaString(description, maxLen),
+		"type":        "array",
+		"items":       item,
+		"uniqueItems": true,
 	}
 	if maxItems > 0 {
 		schema["maxItems"] = maxItems
@@ -902,6 +960,24 @@ func assertV2ProviderProposalSchema(schema map[string]any) error {
 	oneOf, ok := items["oneOf"].([]any)
 	if !ok || len(oneOf) != 2 {
 		return errors.New("provider relationship proposal schema must require exactly one object form")
+	}
+	return nil
+}
+
+func assertV2VerifierResponseSchema(schema map[string]any) error {
+	if !schemaDisallowsAdditionalProperties(schema) {
+		return errors.New("verifier response schema is not closed")
+	}
+	props := schemaProperties(schema)
+	for _, required := range []string{"request_id", "security_signals", "entity_results", "relationship_results"} {
+		if _, ok := props[required]; !ok {
+			return fmt.Errorf("verifier response schema has no %s", required)
+		}
+	}
+	for _, forbidden := range []string{"tier", "status", "support_count", "predicate_definitions"} {
+		if _, ok := props[forbidden]; ok {
+			return fmt.Errorf("verifier response schema allows %s", forbidden)
+		}
 	}
 	return nil
 }
