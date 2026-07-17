@@ -33,7 +33,7 @@ func main() {
 	flag.StringVar(&opts.MappingPath, "mapping", "", "offline knowledge_mapping.json path to use with --traces")
 	flag.IntVar(&opts.MaxPageSize, "max-page-size", 100, "evaluation export max page size")
 	flag.StringVar(&opts.RunID, "run-id", "", "optional stable run id")
-	flag.StringVar(&opts.ReleaseGatePolicyPath, "release-gate-policy", "", "release gate policy JSON path for baseline or candidate mode")
+	flag.StringVar(&opts.ReleaseGatePolicyPath, "release-gate-policy", "", "release gate policy JSON path for validate, baseline, or candidate mode")
 	flag.StringVar(&baselineRun, "baseline-run", "", "baseline run directory for compare mode")
 	flag.StringVar(&candidateRun, "candidate-run", "", "candidate run directory for compare mode")
 	registerFloatGate("min-recall-at-k", "minimum average recall@k required for scoring modes", &opts.Gates.MinRecallAtK, validateRate)

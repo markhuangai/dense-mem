@@ -194,6 +194,19 @@ func FileHash(path string) (string, error) {
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
+func canonicalJSONHash(value any) (string, error) {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	var canonical bytes.Buffer
+	if err := json.Compact(&canonical, payload); err != nil {
+		return "", err
+	}
+	hash := sha256.Sum256(canonical.Bytes())
+	return "sha256:" + hex.EncodeToString(hash[:]), nil
+}
+
 func IndexCases(cases []Case) map[string]Case {
 	out := make(map[string]Case, len(cases))
 	for _, c := range cases {

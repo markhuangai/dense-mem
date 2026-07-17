@@ -41,9 +41,20 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	if mode != "validate" && mode != "import" && mode != "baseline" && mode != "candidate" {
 		return Summary{}, fmt.Errorf("unsupported mode %q", mode)
 	}
-	if opts.ReleaseGatePolicyPath != "" && mode != "baseline" && mode != "candidate" {
-		return Summary{}, fmt.Errorf("release gate policy requires baseline or candidate mode")
+	if opts.ReleaseGatePolicyPath != "" && mode != "validate" && mode != "baseline" && mode != "candidate" {
+		return Summary{}, fmt.Errorf("release gate policy requires validate, baseline, or candidate mode")
 	}
+	toolTransport := strings.ToLower(strings.TrimSpace(opts.ToolTransport))
+	if toolTransport == "" {
+		toolTransport = "rest"
+	}
+	if toolTransport != "rest" && toolTransport != "mcp" {
+		return Summary{}, fmt.Errorf("unsupported tool transport %q", opts.ToolTransport)
+	}
+	if opts.ReleaseGatePolicyPath != "" && toolTransport != "mcp" {
+		return Summary{}, fmt.Errorf("release gate requires MCP tool transport")
+	}
+	opts.ToolTransport = toolTransport
 	if opts.SeedManifestPath == "" {
 		return Summary{}, fmt.Errorf("seed manifest path is required")
 	}
@@ -74,7 +85,18 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	if err := validateRunInputs(opts.SeedManifestPath, manifest, corpus, cases, qrels, expectedDreams, suite, seedHash, suiteHash); err != nil {
 		return Summary{}, err
 	}
+	inputSummary := Summary{
+		RunID:           runID,
+		Mode:            mode,
+		SeedID:          manifest.SeedID,
+		SeedHash:        seedHash,
+		SuitePath:       opts.SuitePath,
+		CaseCount:       len(suite),
+		ScoredCaseCount: 0,
+		CreatedAt:       time.Now().UTC(),
+	}
 	var releaseGatePolicy *ReleaseGatePolicy
+	var releaseGateInput *ReleaseGateInputResult
 	releaseGatePolicyHash := ""
 	if opts.ReleaseGatePolicyPath != "" {
 		releaseGatePolicyHash, err = FileHash(opts.ReleaseGatePolicyPath)
@@ -88,7 +110,9 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		if err := validateReleaseGatePolicyForRun(policy, *manifest, seedHash, suiteHash, len(suite)); err != nil {
 			return Summary{}, fmt.Errorf("release gate policy: %w", err)
 		}
+		result := EvaluateReleaseGateInput(inputSummary, policy)
 		releaseGatePolicy = &policy
+		releaseGateInput = &result
 	}
 	importRoute := ""
 	if opts.ImportSeed {

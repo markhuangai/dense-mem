@@ -364,3 +364,17 @@ type ReleaseGateResult struct {
 	Maximums  map[string]float64 `json:"maximums"`
 	CreatedAt time.Time          `json:"created_at"`
 }
+
+type ReleaseGateInputResult struct {
+	Passed            bool      `json:"passed"`
+	GateID            string    `json:"gate_id"`
+	Release           string    `json:"release"`
+	SeedID            string    `json:"seed_id"`
+	SeedHash          string    `json:"seed_hash"`
+	CaseCount         int       `json:"case_count"`
+	RequiredSeedID    string    `json:"required_seed_id"`
+	RequiredSeedHash  string    `json:"required_seed_hash"`
+	RequiredCaseCount int       `json:"required_case_count"`
+	Failures          []string  `json:"failures,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+}

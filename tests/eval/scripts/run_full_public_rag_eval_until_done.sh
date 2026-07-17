@@ -6,7 +6,6 @@ cd "${ROOT_DIR}"
 
 : "${SEED:?Set SEED to the seed_manifest.json path}"
 : "${SUITE:?Set SUITE to the suite JSONL path}"
-: "${RELEASE_GATE_POLICY:?Set RELEASE_GATE_POLICY to the committed release gate policy path}"
 
 if [[ ! -f "${SEED}" ]]; then
   echo "seed manifest not found: ${SEED}" >&2
@@ -16,14 +15,9 @@ if [[ ! -f "${SUITE}" ]]; then
   echo "suite not found: ${SUITE}" >&2
   exit 2
 fi
-if [[ ! -f "${RELEASE_GATE_POLICY}" ]]; then
-  echo "release gate policy not found: ${RELEASE_GATE_POLICY}" >&2
-  exit 2
-fi
 
 SEED="$(realpath "${SEED}")"
 SUITE="$(realpath "${SUITE}")"
-RELEASE_GATE_POLICY="$(realpath "${RELEASE_GATE_POLICY}")"
 V1_DATA_DIR="$(realpath -m "${V1_DATA_DIR:-tests/eval/runtime/v1}")"
 export V1_COMPOSE_DATA_DIR="$(realpath -m "${V1_COMPOSE_DATA_DIR:-${V1_DATA_DIR}}")"
 
@@ -416,12 +410,18 @@ write_status() {
 }
 
 validate_release_gate_seed() {
-  "${RUNNER}" \
+  local -a validate_args
+  validate_args=(
+    "${RUNNER}" \
     --mode validate \
     --seed "${SEED}" \
     --suite "${SUITE}" \
-    --release-gate-policy "${RELEASE_GATE_POLICY}" \
     --out "${VALIDATION_DIR}"
+  )
+  if [[ -n "${RELEASE_GATE_POLICY}" ]]; then
+    validate_args+=(--release-gate-policy "${RELEASE_GATE_POLICY}")
+  fi
+  "${validate_args[@]}"
 
   SEED_HASH="$(jq -r '.seed_hash' "${VALIDATION_DIR}/summary.json")"
   export SEED_HASH
