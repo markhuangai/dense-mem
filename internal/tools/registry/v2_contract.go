@@ -8,6 +8,25 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
+var v2ContractToolNames = []string{
+	V2ToolRemember,
+	V2ToolGetMemoryPlacement,
+	V2ToolResolveMemoryPlacement,
+	V2ToolCorrectEntityResolution,
+	V2ToolRecallMemory,
+	V2ToolTraceMemory,
+	V2ToolSubmitRecallSessionFeedback,
+	V2ToolListDreams,
+	V2ToolGetDream,
+	V2ToolResolveDreamFeedback,
+	V2ToolListCommunities,
+	V2ToolFindMemoryPackCandidates,
+	V2ToolExportMemoryPack,
+	V2ToolInspectMemoryPack,
+	V2ToolImportMemoryPack,
+	V2ToolRollbackMemoryPackImport,
+}
+
 const (
 	V2ToolRemember                    = "remember"
 	V2ToolGetMemoryPlacement          = "get_memory_placement"
@@ -166,12 +185,7 @@ func v2ContractTool(
 }
 
 func V2ContractToolNames() []string {
-	tools := V2ContractTools()
-	names := make([]string, 0, len(tools))
-	for _, tool := range tools {
-		names = append(names, tool.Name)
-	}
-	return names
+	return append([]string(nil), v2ContractToolNames...)
 }
 
 func IsV2ContractTool(tool Tool) bool {
@@ -204,7 +218,9 @@ func ValidateV2ContractInput(tool Tool, args map[string]any, scopes []string) er
 	case V2ToolResolveMemoryPlacement:
 		return validateV2ResolveMemoryPlacement(args)
 	case V2ToolCorrectEntityResolution:
-		return validateV2UniqueStringArray(args, "selected_observation_ids")
+		return validateV2CorrectEntityResolution(args)
+	case V2ToolInspectMemoryPack, V2ToolImportMemoryPack:
+		return validateV2MemoryPackSource(args)
 	default:
 		return nil
 	}
@@ -241,6 +257,9 @@ func validateV2Remember(args map[string]any) error {
 		return err
 	}
 	if err := validateV2UniqueObjectRefs(args, "relationship_hints", "ref"); err != nil {
+		return err
+	}
+	if err := validateV2RelationshipEvidenceIndexes(args, "relationship_hints", len(evidence)); err != nil {
 		return err
 	}
 	return validateV2RelationshipObjectChoice(args, "relationship_hints")
@@ -376,6 +395,41 @@ func validateV2UniqueObjectRefs(args map[string]any, field string, refField stri
 			return fmt.Errorf("%s[%d].%s: duplicate ref %q", field, i, refField, value)
 		}
 		seen[value] = struct{}{}
+	}
+	return nil
+}
+
+func validateV2RelationshipEvidenceIndexes(args map[string]any, field string, evidenceLen int) error {
+	raw, ok := args[field]
+	if !ok {
+		return nil
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	for i, item := range items {
+		fields, ok := objectFields(item)
+		if !ok {
+			continue
+		}
+		rawEvidence, ok := fields["evidence"].([]any)
+		if !ok {
+			continue
+		}
+		for j, rawSpan := range rawEvidence {
+			span, ok := objectFields(rawSpan)
+			if !ok {
+				continue
+			}
+			index, ok := schemaNumber(span["evidence_index"])
+			if !ok {
+				continue
+			}
+			if int(index) >= evidenceLen {
+				return fmt.Errorf("%s[%d].evidence[%d].evidence_index %d is outside evidence length %d", field, i, j, int(index), evidenceLen)
+			}
+		}
 	}
 	return nil
 }
@@ -671,7 +725,7 @@ func v2ExportMemoryPackInputSchema() map[string]any {
 
 func v2InspectMemoryPackInputSchema() map[string]any {
 	return v2ContractInput(nil, map[string]any{
-		"artifact_json":       schemaString("Memory-pack JSON artifact.", 0),
+		"artifact_json":       schemaString("Memory-pack JSON artifact.", v2MemoryPackArtifactMaxLength),
 		"url":                 schemaString("HTTPS URL.", 2048),
 		"expected_sha256":     schemaString("Expected canonical SHA-256.", 64),
 		"recommend_decisions": map[string]any{"type": "boolean"},
@@ -680,7 +734,7 @@ func v2InspectMemoryPackInputSchema() map[string]any {
 
 func v2ImportMemoryPackInputSchema() map[string]any {
 	return v2ContractInput([]string{"mode"}, map[string]any{
-		"artifact_json":      schemaString("Memory-pack JSON artifact.", 0),
+		"artifact_json":      schemaString("Memory-pack JSON artifact.", v2MemoryPackArtifactMaxLength),
 		"url":                schemaString("HTTPS URL.", 2048),
 		"expected_sha256":    schemaString("Expected canonical SHA-256.", 64),
 		"mode":               schemaEnum([]string{"review", "trusted"}),
