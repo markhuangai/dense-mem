@@ -54,6 +54,24 @@ func (r *RLS) WithTeamTx(ctx context.Context, db *gorm.DB, teamID string, fn fun
 	})
 }
 
+// WithTeamProfileTx executes fn inside one authenticated team/profile
+// transaction. V2 semantic tables use this for owner-scoped mutations where
+// same-team read visibility must not imply mutation authority.
+func (r *RLS) WithTeamProfileTx(ctx context.Context, db *gorm.DB, teamID string, profileID string, fn func(tx *gorm.DB) error) error {
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SELECT set_config('app.current_team_id', ?, true)", teamID).Error; err != nil {
+			return fmt.Errorf("failed to set app.current_team_id: %w", err)
+		}
+		if err := tx.Exec("SELECT set_config('app.current_profile_id', ?, true)", profileID).Error; err != nil {
+			return fmt.Errorf("failed to set app.current_profile_id: %w", err)
+		}
+		if err := tx.Exec("SELECT set_config('app.tx_mode', 'profile', true)").Error; err != nil {
+			return fmt.Errorf("failed to set app.tx_mode: %w", err)
+		}
+		return fn(tx)
+	})
+}
+
 // WithSystemTx executes fn inside a transaction with internal/system session
 // variables set via set_config. The session variables are scoped to the
 // transaction (is_local=true) so they cannot bleed into subsequent queries on a
@@ -71,6 +89,23 @@ func (r *RLS) WithSystemTx(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB
 		}
 		if err := tx.Exec("SELECT set_config('app.role', 'admin', true)").Error; err != nil {
 			return fmt.Errorf("failed to set app.role: %w", err)
+		}
+		return fn(tx)
+	})
+}
+
+// WithMigrationTx executes fn in an internal migration context distinct from
+// normal system-worker execution.
+func (r *RLS) WithMigrationTx(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) error) error {
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SELECT set_config('app.current_team_id', '', true)").Error; err != nil {
+			return fmt.Errorf("failed to set app.current_team_id: %w", err)
+		}
+		if err := tx.Exec("SELECT set_config('app.current_profile_id', '', true)").Error; err != nil {
+			return fmt.Errorf("failed to set app.current_profile_id: %w", err)
+		}
+		if err := tx.Exec("SELECT set_config('app.tx_mode', 'migration', true)").Error; err != nil {
+			return fmt.Errorf("failed to set app.tx_mode: %w", err)
 		}
 		return fn(tx)
 	})
