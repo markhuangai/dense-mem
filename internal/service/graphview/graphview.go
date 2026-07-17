@@ -2,11 +2,13 @@ package graphview
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service/graphrow"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
@@ -33,6 +35,11 @@ var (
 
 type ScopedReader interface {
 	ScopedRead(ctx context.Context, profileID string, query string, params map[string]any) (neo4jdriver.ResultSummary, []map[string]any, error)
+}
+
+type V2SemanticStore interface {
+	SemanticGraph(ctx context.Context, input repository.V2SemanticGraphQuery) (*repository.V2SemanticGraphSnapshot, error)
+	SemanticGraphNodeDetail(ctx context.Context, input repository.V2SemanticGraphNodeDetailInput) (*repository.V2SemanticGraphNode, error)
 }
 
 type Service interface {
@@ -93,10 +100,19 @@ type service struct {
 	reader ScopedReader
 }
 
+type v2SemanticService struct {
+	store V2SemanticStore
+}
+
 var _ Service = (*service)(nil)
+var _ Service = (*v2SemanticService)(nil)
 
 func New(reader ScopedReader) Service {
 	return &service{reader: reader}
+}
+
+func NewV2Semantic(store V2SemanticStore) Service {
+	return &v2SemanticService{store: store}
 }
 
 type normalizedQuery struct {
@@ -111,6 +127,16 @@ type normalizedQuery struct {
 	depth             int
 	limit             int
 	includeSuperseded bool
+}
+
+type normalizedV2SemanticQuery struct {
+	scope      string
+	search     string
+	types      []string
+	anchorType string
+	anchorID   string
+	depth      int
+	limit      int
 }
 
 func (s *service) Graph(ctx context.Context, profileID string, query Query) (*Snapshot, error) {
@@ -199,6 +225,59 @@ func (s *service) NodeDetail(ctx context.Context, profileID string, nodeType str
 	return &nodes[0], nil
 }
 
+func (s *v2SemanticService) Graph(ctx context.Context, teamID string, query Query) (*Snapshot, error) {
+	if s == nil || s.store == nil {
+		return nil, errors.New("graph view semantic store is not configured")
+	}
+	normalized, err := normalizeV2SemanticQuery(query)
+	if err != nil {
+		return nil, err
+	}
+	snapshot, err := s.store.SemanticGraph(ctx, repository.V2SemanticGraphQuery{
+		TeamID:     strings.TrimSpace(teamID),
+		Scope:      normalized.scope,
+		Query:      normalized.search,
+		Types:      normalized.types,
+		AnchorType: normalized.anchorType,
+		AnchorID:   normalized.anchorID,
+		Depth:      normalized.depth,
+		Limit:      normalized.limit,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("v2 semantic graph view: %w", err)
+	}
+	return snapshotFromV2Semantic(snapshot), nil
+}
+
+func (s *v2SemanticService) NodeDetail(ctx context.Context, teamID string, nodeType string, nodeID string) (*Node, error) {
+	if s == nil || s.store == nil {
+		return nil, errors.New("graph view semantic store is not configured")
+	}
+	normalizedType := normalizeV2SemanticGraphType(nodeType)
+	normalizedID := strings.TrimSpace(nodeID)
+	if normalizedType == "" && strings.TrimSpace(nodeType) != "" {
+		return nil, ErrInvalidNodeType
+	}
+	if normalizedType == "" || normalizedID == "" {
+		return nil, ErrMissingNode
+	}
+	node, err := s.store.SemanticGraphNodeDetail(ctx, repository.V2SemanticGraphNodeDetailInput{
+		TeamID:   strings.TrimSpace(teamID),
+		NodeType: normalizedType,
+		NodeID:   normalizedID,
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNodeNotFound
+		}
+		return nil, fmt.Errorf("v2 semantic graph node detail: %w", err)
+	}
+	if node == nil {
+		return nil, ErrNodeNotFound
+	}
+	return nodeFromV2Semantic(*node), nil
+}
+
 func (q normalizedQuery) params() map[string]any {
 	return map[string]any{
 		"query":             q.search,
@@ -249,6 +328,31 @@ func normalizeQuery(query Query) (normalizedQuery, error) {
 	return normalized, nil
 }
 
+func normalizeV2SemanticQuery(query Query) (normalizedV2SemanticQuery, error) {
+	scope := strings.ToLower(strings.TrimSpace(query.Scope))
+	if scope == "" || scope != ScopeLocal {
+		scope = ScopeOverview
+	}
+	normalized := normalizedV2SemanticQuery{
+		scope:  scope,
+		search: strings.ToLower(strings.TrimSpace(query.Query)),
+		types:  normalizeV2SemanticGraphTypes(query.Types),
+		limit:  clamp(query.Limit, DefaultLimit, MaxLimit),
+		depth:  clamp(query.Depth, DefaultDepth, MaxDepth),
+	}
+	if normalized.scope == ScopeLocal {
+		normalized.anchorType = normalizeV2SemanticGraphType(query.AnchorType)
+		normalized.anchorID = strings.TrimSpace(query.AnchorID)
+		if normalized.anchorType == "" && strings.TrimSpace(query.AnchorType) != "" {
+			return normalizedV2SemanticQuery{}, ErrInvalidAnchorType
+		}
+		if normalized.anchorType == "" || normalized.anchorID == "" {
+			return normalizedV2SemanticQuery{}, ErrMissingAnchor
+		}
+	}
+	return normalized, nil
+}
+
 func normalizeTypes(values []string) map[string]bool {
 	out := map[string]bool{}
 	for _, raw := range values {
@@ -265,6 +369,26 @@ func normalizeTypes(values []string) map[string]bool {
 	return out
 }
 
+func normalizeV2SemanticGraphTypes(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, raw := range values {
+		normalized := normalizeV2SemanticGraphType(raw)
+		if normalized == "" {
+			continue
+		}
+		if _, exists := seen[normalized]; exists {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	if len(out) == 0 {
+		return []string{"entity", "value"}
+	}
+	return out
+}
+
 func normalizeType(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "fact", "facts":
@@ -275,6 +399,17 @@ func normalizeType(raw string) string {
 		return "fragment"
 	case "dream", "dreams":
 		return "dream"
+	default:
+		return ""
+	}
+}
+
+func normalizeV2SemanticGraphType(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "entity", "entities":
+		return "entity"
+	case "value", "values":
+		return "value"
 	default:
 		return ""
 	}
@@ -319,6 +454,57 @@ func nodesFromRows(rows []map[string]any) []Node {
 		nodes = append(nodes, node)
 	}
 	return nodes
+}
+
+func snapshotFromV2Semantic(snapshot *repository.V2SemanticGraphSnapshot) *Snapshot {
+	if snapshot == nil {
+		return &Snapshot{Nodes: []Node{}, Edges: []Edge{}}
+	}
+	out := &Snapshot{
+		Scope:     snapshot.Scope,
+		Query:     snapshot.Query,
+		Depth:     snapshot.Depth,
+		Limit:     snapshot.Limit,
+		Truncated: snapshot.Truncated,
+		Nodes:     make([]Node, 0, len(snapshot.Nodes)),
+		Edges:     make([]Edge, 0, len(snapshot.Edges)),
+	}
+	if snapshot.Anchor != nil {
+		out.Anchor = &Anchor{
+			Type: snapshot.Anchor.Type,
+			ID:   snapshot.Anchor.ID,
+			Key:  snapshot.Anchor.Key,
+		}
+	}
+	for _, node := range snapshot.Nodes {
+		out.Nodes = append(out.Nodes, *nodeFromV2Semantic(node))
+	}
+	for _, edge := range snapshot.Edges {
+		out.Edges = append(out.Edges, Edge{
+			ID:           edge.ID,
+			Source:       edge.Source,
+			Target:       edge.Target,
+			Relationship: edge.Relationship,
+			Directed:     edge.Directed,
+		})
+	}
+	return out
+}
+
+func nodeFromV2Semantic(node repository.V2SemanticGraphNode) *Node {
+	title := truncateText(node.Title, 160)
+	if title == "" {
+		title = node.ID
+	}
+	return &Node{
+		Key:        node.Key,
+		ID:         node.ID,
+		Type:       node.Type,
+		Title:      title,
+		Body:       truncateText(node.Body, maxNodeBodyRunes),
+		Status:     node.Status,
+		RecordedAt: node.RecordedAt,
+	}
 }
 
 func edgesFromRows(rows []map[string]any) []Edge {

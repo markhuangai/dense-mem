@@ -2,11 +2,13 @@ package graphview
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/repository"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
@@ -20,6 +22,16 @@ type fakeGraphReader struct {
 	calls      []graphReadCall
 	rowsByCall [][]map[string]any
 	errByCall  []error
+}
+
+type fakeV2SemanticGraphStore struct {
+	graphInput repository.V2SemanticGraphQuery
+	graph      *repository.V2SemanticGraphSnapshot
+	graphErr   error
+
+	detailInput repository.V2SemanticGraphNodeDetailInput
+	detail      *repository.V2SemanticGraphNode
+	detailErr   error
 }
 
 func (f *fakeGraphReader) ScopedRead(_ context.Context, profileID string, query string, params map[string]any) (neo4jdriver.ResultSummary, []map[string]any, error) {
@@ -36,6 +48,22 @@ func (f *fakeGraphReader) ScopedRead(_ context.Context, profileID string, query 
 		return nil, f.rowsByCall[idx], nil
 	}
 	return nil, nil, nil
+}
+
+func (f *fakeV2SemanticGraphStore) SemanticGraph(_ context.Context, input repository.V2SemanticGraphQuery) (*repository.V2SemanticGraphSnapshot, error) {
+	f.graphInput = input
+	if f.graphErr != nil {
+		return nil, f.graphErr
+	}
+	return f.graph, nil
+}
+
+func (f *fakeV2SemanticGraphStore) SemanticGraphNodeDetail(_ context.Context, input repository.V2SemanticGraphNodeDetailInput) (*repository.V2SemanticGraphNode, error) {
+	f.detailInput = input
+	if f.detailErr != nil {
+		return nil, f.detailErr
+	}
+	return f.detail, nil
 }
 
 func TestGraphOverviewClampsLimitAndUsesScopedQuery(t *testing.T) {
@@ -494,5 +522,108 @@ func TestGraphReturnsNoEdgeReadForEmptyNodes(t *testing.T) {
 	}
 	if len(reader.calls) != 1 {
 		t.Fatalf("ScopedRead calls = %d; want only node read", len(reader.calls))
+	}
+}
+
+func TestV2SemanticGraphServiceMapsRepositorySnapshot(t *testing.T) {
+	recordedAt := time.Date(2026, 7, 17, 8, 0, 0, 0, time.UTC)
+	store := &fakeV2SemanticGraphStore{graph: &repository.V2SemanticGraphSnapshot{
+		Scope:     ScopeLocal,
+		Query:     "dense",
+		Depth:     MaxDepth,
+		Limit:     MaxLimit,
+		Truncated: true,
+		Anchor: &repository.V2SemanticGraphAnchor{
+			Type: "entity",
+			ID:   "entity-1",
+			Key:  "entity:entity-1",
+		},
+		Nodes: []repository.V2SemanticGraphNode{{
+			Key:        "entity:entity-1",
+			ID:         "entity-1",
+			Type:       "entity",
+			Title:      "Dense-Mem",
+			Body:       "project",
+			Status:     "active",
+			RecordedAt: &recordedAt,
+		}},
+		Edges: []repository.V2SemanticGraphEdge{{
+			ID:           "relationship-1",
+			Source:       "entity:entity-1",
+			Target:       "value:value-1",
+			Relationship: "released_on",
+			Directed:     true,
+		}},
+	}}
+	svc := NewV2Semantic(store)
+
+	got, err := svc.Graph(context.Background(), "team-1", Query{
+		Scope:      ScopeLocal,
+		Query:      " Dense ",
+		Types:      []string{"entities", "values", "entities", "facts"},
+		AnchorType: "entities",
+		AnchorID:   "entity-1",
+		Depth:      99,
+		Limit:      999,
+	})
+	if err != nil {
+		t.Fatalf("Graph returned error: %v", err)
+	}
+
+	if store.graphInput.TeamID != "team-1" || store.graphInput.Scope != ScopeLocal || store.graphInput.Query != "dense" {
+		t.Fatalf("graph input identity = %#v", store.graphInput)
+	}
+	if store.graphInput.Depth != MaxDepth || store.graphInput.Limit != MaxLimit {
+		t.Fatalf("graph bounds = depth %d limit %d", store.graphInput.Depth, store.graphInput.Limit)
+	}
+	if got := strings.Join(store.graphInput.Types, ","); got != "entity,value" {
+		t.Fatalf("types = %q; want entity,value", got)
+	}
+	if store.graphInput.AnchorType != "entity" || store.graphInput.AnchorID != "entity-1" {
+		t.Fatalf("anchor input = %#v", store.graphInput)
+	}
+	if got.Anchor == nil || got.Anchor.Key != "entity:entity-1" || len(got.Nodes) != 1 || len(got.Edges) != 1 {
+		t.Fatalf("snapshot = %#v", got)
+	}
+	if got.Nodes[0].RecordedAt == nil || !got.Nodes[0].RecordedAt.Equal(recordedAt) {
+		t.Fatalf("recorded_at = %v; want %v", got.Nodes[0].RecordedAt, recordedAt)
+	}
+}
+
+func TestV2SemanticGraphServiceNodeDetailValidatesAndMapsNotFound(t *testing.T) {
+	store := &fakeV2SemanticGraphStore{}
+	svc := NewV2Semantic(store)
+
+	_, err := svc.NodeDetail(context.Background(), "team-1", "facts", "node-1")
+	if !errors.Is(err, ErrInvalidNodeType) {
+		t.Fatalf("err = %v; want ErrInvalidNodeType", err)
+	}
+	_, err = svc.NodeDetail(context.Background(), "team-1", "entity", "")
+	if !errors.Is(err, ErrMissingNode) {
+		t.Fatalf("err = %v; want ErrMissingNode", err)
+	}
+	if store.detailInput.NodeID != "" {
+		t.Fatalf("store called for invalid input: %#v", store.detailInput)
+	}
+
+	store.detailErr = sql.ErrNoRows
+	_, err = svc.NodeDetail(context.Background(), "team-1", "entities", "missing")
+	if !errors.Is(err, ErrNodeNotFound) {
+		t.Fatalf("err = %v; want ErrNodeNotFound", err)
+	}
+	if store.detailInput.TeamID != "team-1" || store.detailInput.NodeType != "entity" || store.detailInput.NodeID != "missing" {
+		t.Fatalf("detail input = %#v", store.detailInput)
+	}
+}
+
+func TestV2SemanticGraphServiceRejectsUnconfiguredStore(t *testing.T) {
+	_, err := NewV2Semantic(nil).Graph(context.Background(), "team-1", Query{})
+	if err == nil || !strings.Contains(err.Error(), "semantic store is not configured") {
+		t.Fatalf("err = %v; want store configuration error", err)
+	}
+
+	_, err = (*v2SemanticService)(nil).NodeDetail(context.Background(), "team-1", "entity", "entity-1")
+	if err == nil || !strings.Contains(err.Error(), "semantic store is not configured") {
+		t.Fatalf("err = %v; want store configuration error", err)
 	}
 }

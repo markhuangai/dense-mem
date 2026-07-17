@@ -491,6 +491,20 @@ run_baseline() {
       log "baseline_seed_hash_mismatch path=${BASELINE_DIR}/summary.json"
       return 1
     fi
+    if [[ -n "${RELEASE_GATE_POLICY}" ]]; then
+      if [[ ! -s "${BASELINE_DIR}/release_gate_result.json" ]]; then
+        log "baseline_gate_result_missing policy=${RELEASE_GATE_POLICY}"
+        return 1
+      fi
+      if [[ "$(jq -r '.release_gate_policy_path // empty' "${BASELINE_DIR}/run_config.json")" != "${RELEASE_GATE_POLICY}" ]]; then
+        log "baseline_gate_policy_mismatch policy=${RELEASE_GATE_POLICY}"
+        return 1
+      fi
+      if [[ "$(jq -r '.passed // false' "${BASELINE_DIR}/release_gate_result.json")" != "true" ]]; then
+        log "baseline_gate_result_not_passed path=${BASELINE_DIR}/release_gate_result.json"
+        return 1
+      fi
+    fi
     log "baseline_summary_exists path=${BASELINE_DIR}/summary.json"
     return 0
   fi

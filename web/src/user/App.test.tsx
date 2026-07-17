@@ -298,7 +298,7 @@ describe("UserPortalApp", () => {
     expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("0.940");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment%2Cdream&depth=2",
+        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment%2Cdream%2Centity%2Cvalue&depth=2",
         expect.any(Object),
       );
     });
@@ -306,7 +306,7 @@ describe("UserPortalApp", () => {
     await userEvent.click(within(controls).getByRole("button", { name: "Refresh" }));
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment%2Cdream&depth=2&include_superseded=true",
+        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment%2Cdream%2Centity%2Cvalue&depth=2&include_superseded=true",
         expect.any(Object),
       );
     });
@@ -354,17 +354,16 @@ describe("UserPortalApp", () => {
     const controls = await screen.findByLabelText("Graph controls");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment%2Cdream&depth=2",
+        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment%2Cdream%2Centity%2Cvalue&depth=2",
         expect.any(Object),
       );
     });
     const graphCallCount = () => fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/ui/api/graph")).length;
     const beforeDisabledRefresh = graphCallCount();
 
-    await userEvent.click(within(controls).getByRole("checkbox", { name: "Fact" }));
-    await userEvent.click(within(controls).getByRole("checkbox", { name: "Claim" }));
-    await userEvent.click(within(controls).getByRole("checkbox", { name: "Fragment" }));
-    await userEvent.click(within(controls).getByRole("checkbox", { name: "Dream" }));
+    for (const label of ["Fact", "Claim", "Fragment", "Dream", "Entity", "Value"]) {
+      await userEvent.click(within(controls).getByRole("checkbox", { name: label }));
+    }
 
     const refresh = within(controls).getByRole("button", { name: "Refresh" });
     expect(refresh).toBeDisabled();
@@ -386,7 +385,7 @@ describe("UserPortalApp", () => {
     expect(await screen.findByTestId("force-graph")).toHaveTextContent("Alice works_on project-x");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=local&types=fact%2Cclaim%2Cfragment%2Cdream&anchor_type=fact&anchor_id=fact-1&depth=2&limit=48",
+        "/ui/api/graph?scope=local&types=fact%2Cclaim%2Cfragment%2Cdream%2Centity%2Cvalue&anchor_type=fact&anchor_id=fact-1&depth=2&limit=48",
         expect.any(Object),
       );
     });

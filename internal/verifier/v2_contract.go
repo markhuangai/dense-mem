@@ -89,13 +89,22 @@ func V2ProviderProposalSchema() map[string]any {
 					"properties": map[string]any{
 						"category": map[string]any{
 							"type": "string",
-							"enum": domain.V2RelationshipOutcomeCategories(),
+							"enum": v2ProviderReviewCategories(),
 						},
 						"reason": map[string]any{"type": "string", "maxLength": 1000},
 					},
 				},
 			},
 		},
+	}
+}
+
+func v2ProviderReviewCategories() []string {
+	return []string{
+		string(domain.V2OutcomeRelationshipPendingEvidence),
+		string(domain.V2OutcomeRelationshipNeedsReview),
+		string(domain.V2OutcomePredicateNeedsReview),
+		string(domain.V2OutcomeIdentityNeedsReview),
 	}
 }
 

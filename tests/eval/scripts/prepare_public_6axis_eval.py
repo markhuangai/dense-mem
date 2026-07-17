@@ -20,6 +20,15 @@ import prepare_public_semantic_eval as semantic
 SCHEMA_VERSION = "dense-mem.eval.seed.v1"
 VALIDATION_SCHEMA_VERSION = "dense-mem.eval.validation.v1"
 ID_NAMESPACE = "public_6axis_v1"
+SOURCE_LOCK_FILE = "source_locks/public_6axis_v1.json"
+LOCKED_ARTIFACTS = {
+    "scifact": Path("data/beir/scifact.zip"),
+    "msmarco": Path("data/beir/msmarco.zip"),
+    "hotpotqa": Path("data/beir/hotpotqa.zip"),
+    "musique": Path("data/public_semantic/musique_v1.0.zip"),
+    "qasper": Path("data/public_semantic/qasper-train-dev-v0.3.tgz"),
+    "longmem_oracle": Path("data/public_semantic/longmemeval_s_cleaned.json"),
+}
 
 AXIS_BUDGETS = {
     1000: {
@@ -82,10 +91,7 @@ def main() -> int:
     stage_dir.mkdir(parents=True, exist_ok=True)
     stage_suite.parent.mkdir(parents=True, exist_ok=True)
 
-    if args.size == 1000 and (root / "seeds" / "public_6axis_5k_v1").exists():
-        generated = derive_1k_from_5k(root)
-    else:
-        generated = build_seed(root, seed_id, args.size, args, stage_dir, stage_suite)
+    generated = build_seed(root, seed_id, args.size, args, stage_dir, stage_suite)
     validate_generated(generated, expected_size=args.size)
     write_seed(stage_dir, stage_suite, seed_id, args.size, generated)
     seed_hash = stable_seed_hash(stage_dir)
@@ -106,6 +112,8 @@ def build_seed(root: Path, seed_id: str, size: int, args: argparse.Namespace, st
     for axis_name in ("scifact", "msmarco", "hotpotqa"):
         add_beir_axis(out, root, seed_id, axis_name, budgets[axis_name], args)
     semantic.ensure_sources(root / "data" / "public_semantic", allow_download=not args.no_download)
+    for axis_name in ("musique", "qasper", "longmem_oracle"):
+        verify_locked_artifact(axis_name, root / LOCKED_ARTIFACTS[axis_name], source_lock_entry(root, axis_name))
     semantic_cases = semantic.build_cases(
         data_root=root / "data" / "public_semantic",
         seed_id=ID_NAMESPACE,
@@ -119,6 +127,59 @@ def build_seed(root: Path, seed_id: str, size: int, args: argparse.Namespace, st
     add_semantic_axis(out, "qasper", budgets["qasper"], [c for c in semantic_cases if "qasper" in c.slices])
     add_semantic_axis(out, "longmem_oracle", budgets["longmem_oracle"], [c for c in semantic_cases if "longmemeval_s" in c.slices])
     return out
+
+
+def verify_source_lock(root: Path) -> None:
+    lock_path = root / SOURCE_LOCK_FILE
+    if not lock_path.exists():
+        raise SystemExit(f"missing source lock {lock_path}")
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    if lock.get("lock_id") != ID_NAMESPACE:
+        raise SystemExit(f"{lock_path} lock_id = {lock.get('lock_id')!r}; want {ID_NAMESPACE!r}")
+    sources = {entry.get("axis"): entry for entry in lock.get("sources", [])}
+    missing = sorted(set(LOCKED_ARTIFACTS) - set(sources))
+    if missing:
+        raise SystemExit(f"{lock_path} missing source lock entries for {missing}")
+    for axis, relative_path in LOCKED_ARTIFACTS.items():
+        verify_locked_artifact(axis, root / relative_path, sources[axis])
+
+
+def source_lock_entry(root: Path, axis: str) -> dict[str, Any]:
+    lock_path = root / SOURCE_LOCK_FILE
+    if not lock_path.exists():
+        raise SystemExit(f"missing source lock {lock_path}")
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    for entry in lock.get("sources", []):
+        if entry.get("axis") == axis:
+            return entry
+    raise SystemExit(f"{lock_path} missing source lock entry for {axis}")
+
+
+def verify_locked_artifact(axis: str, path: Path, entry: dict[str, Any]) -> None:
+    if not path.exists():
+        raise SystemExit(f"{axis}: missing locked artifact {path}")
+    content_length = entry.get("content_length")
+    if content_length is not None and path.stat().st_size != int(content_length):
+        raise SystemExit(f"{axis}: {path} size {path.stat().st_size}; want {content_length}")
+    checks = []
+    for algorithm in ("sha256", "md5"):
+        expected = str(entry.get(algorithm) or "").strip().lower()
+        if expected:
+            checks.append((algorithm, expected.removeprefix(f"{algorithm}:")))
+    if not checks:
+        raise SystemExit(f"{axis}: source lock must include sha256 or md5")
+    for algorithm, expected in checks:
+        got = file_digest(path, algorithm)
+        if got != expected:
+            raise SystemExit(f"{axis}: {algorithm} {got}; want {expected}")
+
+
+def file_digest(path: Path, algorithm: str) -> str:
+    digest = hashlib.new(algorithm)
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def empty_generated() -> dict[str, Any]:
@@ -216,6 +277,7 @@ def add_beir_axis(out: dict[str, Any], root: Path, seed_id: str, axis_name: str,
         args.beir_base_url.rstrip("/"),
         allow_download=not args.no_download,
     )
+    verify_locked_artifact(axis_name, root / LOCKED_ARTIFACTS[axis_name], source_lock_entry(root, axis_name))
     split, qrels = beir.read_qrels(dataset_dir, axis.split_preferences)
     queries = beir.read_jsonl_map(dataset_dir / "queries.jsonl", "_id")
     selected_qrels, corpus_rows = select_beir_axis_rows(

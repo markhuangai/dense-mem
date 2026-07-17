@@ -190,6 +190,7 @@ func main() {
 	recallFeedbackEventRepo := repository.NewRecallFeedbackEventRepository(pgDB.GetDB(), rlsHelper)
 	memoryPlacementRepo := repository.NewMemoryPlacementRepository(pgDB.GetDB(), rlsHelper)
 	skillPackImportRepo := repository.NewSkillPackImportRepository(pgDB.GetDB(), rlsHelper)
+	v2SemanticRepo := repository.NewV2SemanticRepository(pgDB.GetDB(), rlsHelper)
 
 	// ========================================
 	// Neo4j profile scope enforcer and graph writer
@@ -405,6 +406,9 @@ func main() {
 		Dreams:      dreamSvc,
 	})
 	graphViewSvc := graphview.New(profileScopeEnforcer)
+	if cfg.GetV2BootMode() == config.V2BootModeUAT {
+		graphViewSvc = graphview.NewV2Semantic(v2SemanticRepo)
+	}
 	skillPackSvc := skillpackservice.New(skillpackservice.Dependencies{
 		FragmentCreate:  fragmentCreateRegistrySvc,
 		ClaimCreate:     claimCreateSvc,

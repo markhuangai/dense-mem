@@ -211,7 +211,7 @@ export type RecallHit = {
   final_score: number;
 };
 
-export type GraphNodeType = "fact" | "claim" | "fragment" | "dream";
+export type GraphNodeType = "fact" | "claim" | "fragment" | "dream" | "entity" | "value";
 
 export type GraphNode = {
   key: string;

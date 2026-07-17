@@ -22,11 +22,15 @@ type GraphAnchor = {
 type ForceNode = NodeObject<GraphNode> & GraphNode;
 type ForceLink = LinkObject<GraphNode, GraphEdge> & GraphEdge;
 
+const graphNodeTypes: GraphNodeType[] = ["fact", "claim", "fragment", "dream", "entity", "value"];
+
 const defaultTypes: TypeFilter = {
   fact: true,
   claim: true,
   fragment: true,
   dream: true,
+  entity: true,
+  value: true,
 };
 
 export function GraphPanel({ api }: { api: UserApi }) {
@@ -170,6 +174,8 @@ export function GraphPanel({ api }: { api: UserApi }) {
                 <option value="claim">Claim</option>
                 <option value="fragment">Fragment</option>
                 <option value="dream">Dream</option>
+                <option value="entity">Entity</option>
+                <option value="value">Value</option>
               </select>
               <label htmlFor="graph-anchor-id">Anchor ID</label>
               <input id="graph-anchor-id" value={anchorId} onChange={(event) => setAnchorId(event.target.value)} />
@@ -178,7 +184,7 @@ export function GraphPanel({ api }: { api: UserApi }) {
 
           <fieldset className="graph-type-filter">
             <legend>Types</legend>
-            {(["fact", "claim", "fragment", "dream"] as GraphNodeType[]).map((type) => (
+            {graphNodeTypes.map((type) => (
               <label className="filter-row" key={type}>
                 <input type="checkbox" checked={types[type]} onChange={() => toggleType(type)} />
                 <span>{nodeTypeLabel(type)}</span>
@@ -270,7 +276,7 @@ export function ResultGraphPreview({ api, anchor }: { api: UserApi; anchor: Grap
       anchorId: anchor.id,
       depth: 2,
       limit: 48,
-      types: ["fact", "claim", "fragment", "dream"],
+      types: graphNodeTypes,
     })
       .then((next) => {
         if (active) {
@@ -602,7 +608,7 @@ function paintNodeArea(node: ForceNode, color: string, canvas: CanvasRenderingCo
 }
 
 function nodeValue(node: Pick<GraphNode, "type">, nodeSize: number) {
-  const typeBoost = node.type === "fact" ? 1.4 : node.type === "dream" ? 0.6 : 1;
+  const typeBoost = node.type === "fact" || node.type === "entity" ? 1.4 : node.type === "value" ? 0.8 : node.type === "dream" ? 0.6 : 1;
   return nodeSize + typeBoost;
 }
 
@@ -616,6 +622,10 @@ function nodeColor(node: GraphNode): string {
       return "#ca8a04";
     case "dream":
       return "#c026d3";
+    case "entity":
+      return "#0e7490";
+    case "value":
+      return "#9333ea";
     default:
       return "#64748b";
   }
@@ -659,11 +669,17 @@ function nodeTypeLabel(type: GraphNodeType | string): string {
   if (type === "dream") {
     return "Dream";
   }
+  if (type === "entity") {
+    return "Entity";
+  }
+  if (type === "value") {
+    return "Value";
+  }
   return "Node";
 }
 
 function nodeIcon(type: string) {
-  if (type === "fact") {
+  if (type === "fact" || type === "entity") {
     return <CircleDot size={15} aria-hidden="true" />;
   }
   if (type === "claim") {

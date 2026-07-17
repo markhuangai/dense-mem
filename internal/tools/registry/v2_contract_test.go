@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"slices"
 	"strings"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
+	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
@@ -80,11 +83,15 @@ func TestV2ContractRememberBoundaryContent(t *testing.T) {
 
 func TestV2ContractCatalogMetadata(t *testing.T) {
 	tools := V2ContractTools()
-	if len(tools) != len(V2ContractToolNames()) {
-		t.Fatalf("tool names length mismatch")
+	expectedNames := V2ContractToolNames()
+	if len(tools) != len(expectedNames) {
+		t.Fatalf("tool count = %d, want %d", len(tools), len(expectedNames))
 	}
 	seen := map[string]struct{}{}
 	for _, tool := range tools {
+		if !slices.Contains(expectedNames, tool.Name) {
+			t.Fatalf("unexpected V2 tool name %s", tool.Name)
+		}
 		if _, dup := seen[tool.Name]; dup {
 			t.Fatalf("duplicate V2 tool name %s", tool.Name)
 		}
@@ -102,18 +109,38 @@ func TestV2ContractCatalogMetadata(t *testing.T) {
 			t.Fatalf("%s has an invoker before the V2 gate is wired", tool.Name)
 		}
 	}
-	for _, name := range []string{
-		V2ToolRemember,
-		V2ToolResolveMemoryPlacement,
-		V2ToolCorrectEntityResolution,
-		V2ToolRecallMemory,
-		V2ToolTraceMemory,
-		V2ToolListCommunities,
-		V2ToolImportMemoryPack,
-	} {
+	for _, name := range expectedNames {
 		if _, ok := seen[name]; !ok {
 			t.Fatalf("V2 contract missing tool %s", name)
 		}
+	}
+}
+
+func TestV2RelationshipHintsRejectOutOfRangeEvidenceIndex(t *testing.T) {
+	remember, err := requireV2Tool(v2ToolMap(t), V2ToolRemember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := map[string]any{
+		"contract_version": domain.V2ContractVersion,
+		"evidence": []any{
+			map[string]any{"content": "Dense-Mem uses PostgreSQL."},
+		},
+		"relationship_hints": []any{
+			map[string]any{
+				"ref":         "rel-1",
+				"subject_ref": "entity-1",
+				"predicate":   "uses",
+				"object_ref":  "entity-2",
+				"evidence": []any{
+					map[string]any{"evidence_index": 1, "quote": "uses PostgreSQL"},
+				},
+			},
+		},
+	}
+	err = ValidateV2ContractInput(remember, input, []string{"write"})
+	if err == nil || !strings.Contains(err.Error(), "outside evidence length") {
+		t.Fatalf("ValidateV2ContractInput err = %v, want evidence length error", err)
 	}
 }
 
@@ -258,6 +285,68 @@ func TestBuildV2UATRecallRejectsTenantOverride(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "team_id") {
 		t.Fatalf("recall_memory.Invoke err = %v, want tenant override rejection", err)
+	}
+}
+
+func TestBuildV2UATWiresExecutableTraceMemory(t *testing.T) {
+	stub := &stubV2TraceContext{}
+	reg, err := BuildV2UAT(Dependencies{Context: stub})
+	if err != nil {
+		t.Fatalf("BuildV2UAT: %v", err)
+	}
+	trace, ok := reg.Get(V2ToolTraceMemory)
+	if !ok {
+		t.Fatal("BuildV2UAT did not register trace_memory")
+	}
+	if trace.Invoke == nil {
+		t.Fatal("BuildV2UAT trace_memory invoker is nil")
+	}
+	out, err := trace.Invoke(context.Background(), "ignored-profile", map[string]any{
+		"contract_version":         domain.V2ContractVersion,
+		"relationship_id":          "relationship-v2",
+		"include_evidence_content": false,
+		"include_verification":     true,
+		"include_transitions":      false,
+		"max_depth":                2,
+		"max_edges":                12,
+		"max_chars":                500,
+		"predicate_keys":           []any{"works_on"},
+		"topic":                    "PostgreSQL memory",
+	})
+	if err != nil {
+		t.Fatalf("trace_memory.Invoke: %v", err)
+	}
+	relationship, ok := out["relationship"].(map[string]any)
+	if !ok || relationship["relationship_id"] != "relationship-v2" {
+		t.Fatalf("relationship = %#v", out["relationship"])
+	}
+	if _, ok := out["v2_semantic"]; ok {
+		t.Fatalf("trace_memory should unwrap V2 payload, got %#v", out)
+	}
+	if stub.req.RelationshipID != "relationship-v2" || stub.req.MaxDepth != 2 || stub.req.MaxEdges != 12 || stub.req.MaxChars != 500 {
+		t.Fatalf("trace request = %#v", stub.req)
+	}
+	if got := strings.Join(stub.req.PredicateKeys, ","); got != "works_on" {
+		t.Fatalf("predicate_keys = %q", got)
+	}
+}
+
+func TestBuildV2UATTraceRejectsTenantOverride(t *testing.T) {
+	reg, err := BuildV2UAT(Dependencies{Context: &stubV2TraceContext{}})
+	if err != nil {
+		t.Fatalf("BuildV2UAT: %v", err)
+	}
+	trace, ok := reg.Get(V2ToolTraceMemory)
+	if !ok {
+		t.Fatal("BuildV2UAT did not register trace_memory")
+	}
+	_, err = trace.Invoke(context.Background(), "ignored-profile", map[string]any{
+		"contract_version": domain.V2ContractVersion,
+		"team_id":          "attacker-team",
+		"relationship_id":  "relationship-v2",
+	})
+	if err == nil || !strings.Contains(err.Error(), "team_id") {
+		t.Fatalf("trace_memory.Invoke err = %v, want tenant override rejection", err)
 	}
 }
 
@@ -464,6 +553,115 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 	}
 }
 
+func TestV2CorrectEntityResolutionActionRequiredFields(t *testing.T) {
+	correct, err := requireV2Tool(v2ToolMap(t), V2ToolCorrectEntityResolution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := map[string]any{
+		"contract_version": domain.V2ContractVersion,
+		"source_entity_id": "ent-source",
+		"dry_run":          true,
+	}
+	merge := mergeMap(base, map[string]any{
+		"action":           string(domain.V2EntityCorrectionMerge),
+		"target_entity_id": "ent-target",
+	})
+	if err := ValidateV2ContractInput(correct, merge, []string{"write"}); err != nil {
+		t.Fatalf("valid merge rejected: %v", err)
+	}
+	split := mergeMap(base, map[string]any{
+		"action":                   string(domain.V2EntityCorrectionSplit),
+		"selected_observation_ids": []any{"obs-1"},
+	})
+	if err := ValidateV2ContractInput(correct, split, []string{"write"}); err != nil {
+		t.Fatalf("valid split rejected: %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		input map[string]any
+		want  string
+	}{
+		{
+			name: "merge requires target",
+			input: mergeMap(base, map[string]any{
+				"action": string(domain.V2EntityCorrectionMerge),
+			}),
+			want: "target_entity_id is required",
+		},
+		{
+			name: "split requires selected observations",
+			input: mergeMap(base, map[string]any{
+				"action": string(domain.V2EntityCorrectionSplit),
+			}),
+			want: "selected_observation_ids is required",
+		},
+		{
+			name: "apply requires plan token",
+			input: mergeMap(base, map[string]any{
+				"action":           string(domain.V2EntityCorrectionMerge),
+				"target_entity_id": "ent-target",
+				"dry_run":          false,
+			}),
+			want: "plan_token is required",
+		},
+		{
+			name: "split rejects target",
+			input: mergeMap(split, map[string]any{
+				"target_entity_id": "ent-target",
+			}),
+			want: "target_entity_id is only accepted",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateV2ContractInput(correct, tc.input, []string{"write"})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ValidateV2ContractInput err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestV2MemoryPackSourceValidation(t *testing.T) {
+	tools := v2ToolMap(t)
+	for _, toolName := range []string{V2ToolInspectMemoryPack, V2ToolImportMemoryPack} {
+		tool, err := requireV2Tool(tools, toolName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		base := map[string]any{"contract_version": domain.V2ContractVersion}
+		if toolName == V2ToolImportMemoryPack {
+			base["mode"] = "review"
+		}
+		validArtifact := mergeMap(base, map[string]any{"artifact_json": `{"items":[]}`})
+		if err := ValidateV2ContractInput(tool, validArtifact, []string{"write", "read"}); err != nil {
+			t.Fatalf("%s valid artifact rejected: %v", toolName, err)
+		}
+		validURL := mergeMap(base, map[string]any{"url": "https://example.com/pack.json"})
+		if err := ValidateV2ContractInput(tool, validURL, []string{"write", "read"}); err != nil {
+			t.Fatalf("%s valid URL rejected: %v", toolName, err)
+		}
+		for _, tc := range []struct {
+			name  string
+			input map[string]any
+			want  string
+		}{
+			{"missing source", cloneMap(base), "exactly one"},
+			{"both sources", mergeMap(base, map[string]any{"artifact_json": `{}`, "url": "https://example.com/pack.json"}), "exactly one"},
+			{"non https URL", mergeMap(base, map[string]any{"url": "http://example.com/pack.json"}), "HTTPS"},
+		} {
+			t.Run(toolName+"/"+tc.name, func(t *testing.T) {
+				err := ValidateV2ContractInput(tool, tc.input, []string{"write", "read"})
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("ValidateV2ContractInput err = %v, want %q", err, tc.want)
+				}
+			})
+		}
+	}
+}
+
 func TestV2DefaultRecallDoesNotPermitCandidatesOrHypotheses(t *testing.T) {
 	tools := v2ToolMap(t)
 	recall, err := requireV2Tool(tools, V2ToolRecallMemory)
@@ -490,8 +688,20 @@ func TestV2DefaultRecallDoesNotPermitCandidatesOrHypotheses(t *testing.T) {
 }
 
 func TestV2ProviderAndEmbeddingContracts(t *testing.T) {
-	if err := assertV2ProviderProposalSchema(verifier.V2ProviderProposalSchema()); err != nil {
+	schema := verifier.V2ProviderProposalSchema()
+	if err := assertV2ProviderProposalSchema(schema); err != nil {
 		t.Fatal(err)
+	}
+	reviewItems := schemaProperties(schema)["review_items"]
+	reviewItem := reviewItems["items"].(map[string]any)
+	category := schemaProperties(reviewItem)["category"]
+	if err := validateSchemaValue("category", "relationship_needs_review", category); err != nil {
+		t.Fatalf("provider review category rejected: %v", err)
+	}
+	for _, serverOwned := range []string{"relationship_fact", "relationship_validated_claim"} {
+		if err := validateSchemaValue("category", serverOwned, category); err == nil {
+			t.Fatalf("provider review category accepted server-owned outcome %s", serverOwned)
+		}
 	}
 	sourceKinds := embedding.V2EmbeddingSourceKinds()
 	for _, want := range []string{"evidence", "search_document", "recall_query"} {
@@ -614,4 +824,29 @@ func (s *stubV2RecallService) RecallV2(_ context.Context, req memoryservice.V2Re
 		}},
 		SearchState: string(domain.V2SearchProjectionCurrent),
 	}, nil
+}
+
+type stubV2TraceContext struct {
+	req contextservice.TraceRequest
+}
+
+func (s *stubV2TraceContext) Trace(_ context.Context, _ string, req contextservice.TraceRequest) (*contextservice.TraceResult, error) {
+	s.req = req
+	return &contextservice.TraceResult{
+		V2Semantic: &contextservice.V2SemanticTrace{
+			Relationship: &repository.V2RelationshipTraceRecord{
+				RelationshipID: "relationship-v2",
+				PredicateKey:   "works_on",
+			},
+			EvidenceSupports: []repository.V2RelationshipEvidenceSupportRecord{{
+				SupportID: "support-v2",
+			}},
+			StoppedReason: "max_edges",
+			Truncated:     true,
+		},
+	}, nil
+}
+
+func (s *stubV2TraceContext) Assemble(context.Context, string, contextservice.AssembleRequest) (*contextservice.AssembleResult, error) {
+	return nil, errors.New("not implemented")
 }

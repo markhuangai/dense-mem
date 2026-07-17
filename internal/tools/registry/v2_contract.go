@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
@@ -190,6 +191,28 @@ func v2UATTools(deps Dependencies) []Tool {
 				}
 				return structToMap(res)
 			}
+		case V2ToolTraceMemory:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
+				if deps.Context == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, tool.RequiredScopes); err != nil {
+					return nil, fmt.Errorf("trace_memory: invalid input: %w", err)
+				}
+				var req contextservice.TraceRequest
+				if err := remapInput(input, &req); err != nil {
+					return nil, fmt.Errorf("trace_memory: invalid input: %w", err)
+				}
+				res, err := deps.Context.Trace(ctx, "", req)
+				if err != nil {
+					return nil, err
+				}
+				if res != nil && res.V2Semantic != nil {
+					return structToMap(res.V2Semantic)
+				}
+				return structToMap(res)
+			}
 		}
 	}
 	return tools
@@ -215,12 +238,7 @@ func v2ContractTool(
 }
 
 func V2ContractToolNames() []string {
-	tools := V2ContractTools()
-	names := make([]string, 0, len(tools))
-	for _, tool := range tools {
-		names = append(names, tool.Name)
-	}
-	return names
+	return append([]string(nil), v2ContractToolNames...)
 }
 
 func IsV2ContractTool(tool Tool) bool {
@@ -250,10 +268,14 @@ func ValidateV2ContractInput(tool Tool, args map[string]any, scopes []string) er
 		return validateV2Remember(args)
 	case V2ToolRecallMemory:
 		return validateV2Recall(args)
+	case V2ToolTraceMemory:
+		return validateV2UniqueStringArray(args, "predicate_keys")
 	case V2ToolResolveMemoryPlacement:
 		return validateV2ResolveMemoryPlacement(args)
 	case V2ToolCorrectEntityResolution:
-		return validateV2UniqueStringArray(args, "selected_observation_ids")
+		return validateV2CorrectEntityResolution(args)
+	case V2ToolInspectMemoryPack, V2ToolImportMemoryPack:
+		return validateV2MemoryPackSource(args)
 	default:
 		return nil
 	}
@@ -294,6 +316,9 @@ func validateV2Remember(args map[string]any) error {
 		return err
 	}
 	if err := validateV2UniqueObjectRefs(args, "relationship_hints", "ref"); err != nil {
+		return err
+	}
+	if err := validateV2RelationshipEvidenceIndexes(args, "relationship_hints", len(evidence)); err != nil {
 		return err
 	}
 	return validateV2RelationshipObjectChoice(args, "relationship_hints")
@@ -459,6 +484,41 @@ func validateV2UniqueObjectRefs(args map[string]any, field string, refField stri
 			return fmt.Errorf("%s[%d].%s: duplicate ref %q", field, i, refField, value)
 		}
 		seen[value] = struct{}{}
+	}
+	return nil
+}
+
+func validateV2RelationshipEvidenceIndexes(args map[string]any, field string, evidenceLen int) error {
+	raw, ok := args[field]
+	if !ok {
+		return nil
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	for i, item := range items {
+		fields, ok := objectFields(item)
+		if !ok {
+			continue
+		}
+		rawEvidence, ok := fields["evidence"].([]any)
+		if !ok {
+			continue
+		}
+		for j, rawSpan := range rawEvidence {
+			span, ok := objectFields(rawSpan)
+			if !ok {
+				continue
+			}
+			index, ok := schemaNumber(span["evidence_index"])
+			if !ok {
+				continue
+			}
+			if int(index) >= evidenceLen {
+				return fmt.Errorf("%s[%d].evidence[%d].evidence_index %d is outside evidence length %d", field, i, j, int(index), evidenceLen)
+			}
+		}
 	}
 	return nil
 }
@@ -654,29 +714,6 @@ func v2CorrectEntityResolutionInputSchema() map[string]any {
 	})
 }
 
-func v2RecallMemoryInputSchema() map[string]any {
-	return v2ContractInput([]string{"query"}, map[string]any{
-		"query":                  schemaString("Natural-language recall query.", 512),
-		"limit":                  map[string]any{"type": "integer", "minimum": 1, "maximum": 50},
-		"valid_at":               map[string]any{"type": "string", "format": "date-time"},
-		"known_at":               map[string]any{"type": "string", "format": "date-time"},
-		"known_evidence_ids":     v2StringArraySchema("Evidence UUID already seen.", 200, 128),
-		"known_relationship_ids": v2StringArraySchema("Relationship UUID already seen.", 200, 128),
-		"expand_from_entity_ids": v2StringArraySchema("Entity UUID for focused expansion.", 50, 128),
-		"include_evidence":       map[string]any{"type": "boolean"},
-		"use_communities":        map[string]any{"type": "boolean"},
-	})
-}
-
-func v2TraceMemoryInputSchema() map[string]any {
-	return v2ContractInput([]string{"relationship_id"}, map[string]any{
-		"relationship_id":          schemaString("Same-team Relationship ID.", 128),
-		"include_evidence_content": map[string]any{"type": "boolean"},
-		"max_edges":                map[string]any{"type": "integer", "minimum": 1, "maximum": 200},
-		"max_chars":                map[string]any{"type": "integer", "minimum": 1, "maximum": 20000},
-	})
-}
-
 func v2RecallFeedbackInputSchema() map[string]any {
 	return v2ContractInput([]string{"recalls"}, map[string]any{
 		"recalls": map[string]any{
@@ -754,7 +791,7 @@ func v2ExportMemoryPackInputSchema() map[string]any {
 
 func v2InspectMemoryPackInputSchema() map[string]any {
 	return v2ContractInput(nil, map[string]any{
-		"artifact_json":       schemaString("Memory-pack JSON artifact.", 0),
+		"artifact_json":       schemaString("Memory-pack JSON artifact.", v2MemoryPackArtifactMaxLength),
 		"url":                 schemaString("HTTPS URL.", 2048),
 		"expected_sha256":     schemaString("Expected canonical SHA-256.", 64),
 		"recommend_decisions": map[string]any{"type": "boolean"},
@@ -763,7 +800,7 @@ func v2InspectMemoryPackInputSchema() map[string]any {
 
 func v2ImportMemoryPackInputSchema() map[string]any {
 	return v2ContractInput([]string{"mode"}, map[string]any{
-		"artifact_json":      schemaString("Memory-pack JSON artifact.", 0),
+		"artifact_json":      schemaString("Memory-pack JSON artifact.", v2MemoryPackArtifactMaxLength),
 		"url":                schemaString("HTTPS URL.", 2048),
 		"expected_sha256":    schemaString("Expected canonical SHA-256.", 64),
 		"mode":               schemaEnum([]string{"review", "trusted"}),
@@ -850,47 +887,6 @@ func v2CorrectEntityResolutionOutputSchema() map[string]any {
 			"blocked_ids":    v2StringArraySchema("Observation blocked from change.", 500, 128),
 			"impact_summary": schemaString("Bounded before/after summary.", 2000),
 			"degradation":    v2DegradationSchema(),
-		},
-	}
-}
-
-func v2RecallMemoryOutputSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"recall_id":          schemaString("Recall event ID.", 128),
-			"results":            map[string]any{"type": "array", "items": v2RecallResultSchema()},
-			"discovery_guidance": schemaString("Bounded follow-up guidance.", 1000),
-			"degradation":        v2DegradationSchema(),
-			"search_state":       schemaEnum(domain.V2SearchProjectionStates()),
-		},
-	}
-}
-
-func v2RecallResultSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"evidence_id":      schemaString("Evidence ID.", 128),
-			"relationship_ids": v2StringArraySchema("Relationship ID.", 50, 128),
-			"score":            map[string]any{"type": "number"},
-			"rank":             map[string]any{"type": "integer"},
-			"context":          schemaString("Bounded evidence context.", 2000),
-		},
-	}
-}
-
-func v2TraceMemoryOutputSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"relationship":         map[string]any{"type": "object"},
-			"evidence_supports":    map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"evidence_fragments":   map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"identity_corrections": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"supersession_lineage": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
-			"degradation":          v2DegradationSchema(),
-			"stopped_reason":       schemaString("Trace budget stop reason.", 128),
 		},
 	}
 }
