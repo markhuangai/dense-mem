@@ -52,6 +52,9 @@ type EvaluationConfigProvider interface {
 
 // ToolVisible reports whether a registered tool should be visible for a request.
 func ToolVisible(ctx context.Context, tool Tool, cfg RecallFeedbackConfigProvider) bool {
+	if tool.FeatureGate == domain.V2FeatureGate && tool.Visibility == domain.V2ToolVisibility {
+		return false
+	}
 	if tool.Name == SubmitRecallSessionFeedbackToolName {
 		return RecallFeedbackEnabled(ctx, cfg)
 	}
