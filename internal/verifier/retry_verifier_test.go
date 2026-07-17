@@ -10,12 +10,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 // stubConfigProvider satisfies config.ConfigProvider for unit tests without
 // touching environment variables or the real Config loader.
 type stubConfigProvider struct {
+	config.Config
 	maxConcurrency int
 }
 
