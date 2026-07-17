@@ -6,6 +6,7 @@ import (
 	"math"
 	"reflect"
 	"sort"
+	"time"
 	"unicode/utf8"
 )
 
@@ -62,8 +63,29 @@ func HasTenantOverrideArgs(args map[string]any) bool {
 }
 
 func validateSchemaValue(name string, value any, schema map[string]any) error {
-	expected, _ := schema["type"].(string)
+	expected, isSingleType := schema["type"].(string)
+	if !isSingleType {
+		types := schemaTypeNames(schema["type"])
+		if len(types) > 0 {
+			for _, candidateType := range types {
+				if !schemaValueMatchesType(value, candidateType) {
+					continue
+				}
+				candidate := make(map[string]any, len(schema))
+				for key, item := range schema {
+					candidate[key] = item
+				}
+				candidate["type"] = candidateType
+				return validateSchemaValue(name, value, candidate)
+			}
+			return fmt.Errorf("%s must be one of the allowed types %v", name, types)
+		}
+	}
 	switch expected {
+	case "null":
+		if value != nil {
+			return fmt.Errorf("%s must be null", name)
+		}
 	case "string":
 		s, ok := value.(string)
 		if !ok {
@@ -79,6 +101,12 @@ func validateSchemaValue(name string, value any, schema map[string]any) error {
 				message = message + ": " + hint
 			}
 			return fmt.Errorf("%s", message)
+		}
+		enforceFormat, _ := schema["x-enforce-format"].(bool)
+		if format, _ := schema["format"].(string); enforceFormat && format == "date-time" {
+			if _, err := time.Parse(time.RFC3339, s); err != nil {
+				return fmt.Errorf("%s must be a valid RFC 3339 date-time", name)
+			}
 		}
 	case "integer":
 		number, ok := schemaNumber(value)
@@ -106,6 +134,21 @@ func validateSchemaValue(name string, value any, schema map[string]any) error {
 		fields, ok := objectFields(value)
 		if !ok {
 			return fmt.Errorf("%s must be an object", name)
+		}
+		if minProperties, ok := schemaNumber(schema["minProperties"]); ok && len(fields) < int(minProperties) {
+			return fmt.Errorf("%s must contain at least %d properties", name, int(minProperties))
+		}
+		if maxProperties, ok := schemaNumber(schema["maxProperties"]); ok && len(fields) > int(maxProperties) {
+			return fmt.Errorf("%s exceeds maximum property count of %d", name, int(maxProperties))
+		}
+		if maxBytes, ok := schemaNumber(schema["x-max-bytes"]); ok {
+			encoded, err := json.Marshal(value)
+			if err != nil || len(encoded) > int(maxBytes) {
+				return fmt.Errorf("%s exceeds maximum encoded size of %d bytes", name, int(maxBytes))
+			}
+		}
+		if maxDepth, ok := schemaNumber(schema["x-max-depth"]); ok && schemaValueDepth(value) > int(maxDepth) {
+			return fmt.Errorf("%s exceeds maximum nesting depth of %d", name, int(maxDepth))
 		}
 		for _, fieldName := range schemaRequiredFields(schema) {
 			if _, ok := fields[fieldName]; !ok {
@@ -156,6 +199,73 @@ func validateSchemaValue(name string, value any, schema map[string]any) error {
 		return err
 	}
 	return nil
+}
+
+func schemaValueDepth(value any) int {
+	if fields, ok := objectFields(value); ok {
+		depth := 1
+		for _, field := range fields {
+			if child := 1 + schemaValueDepth(field); child > depth {
+				depth = child
+			}
+		}
+		return depth
+	}
+	reflected := reflect.ValueOf(value)
+	if reflected.IsValid() && (reflected.Kind() == reflect.Slice || reflected.Kind() == reflect.Array) {
+		depth := 1
+		for i := 0; i < reflected.Len(); i++ {
+			if child := 1 + schemaValueDepth(reflected.Index(i).Interface()); child > depth {
+				depth = child
+			}
+		}
+		return depth
+	}
+	return 0
+}
+
+func schemaValueMatchesType(value any, expected string) bool {
+	switch expected {
+	case "null":
+		return value == nil
+	case "string":
+		_, ok := value.(string)
+		return ok
+	case "integer":
+		number, ok := schemaNumber(value)
+		return ok && isFiniteNumber(number) && math.Trunc(number) == number
+	case "number":
+		number, ok := schemaNumber(value)
+		return ok && isFiniteNumber(number)
+	case "object":
+		_, ok := objectFields(value)
+		return ok
+	case "array":
+		reflected := reflect.ValueOf(value)
+		return reflected.IsValid() && (reflected.Kind() == reflect.Slice || reflected.Kind() == reflect.Array)
+	case "boolean":
+		_, ok := value.(bool)
+		return ok
+	default:
+		return false
+	}
+}
+
+func schemaTypeNames(raw any) []string {
+	switch values := raw.(type) {
+	case []string:
+		return append([]string(nil), values...)
+	case []any:
+		out := make([]string, 0, len(values))
+		for _, value := range values {
+			if name, ok := value.(string); ok {
+				out = append(out, name)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func schemaNumber(value any) (float64, bool) {
