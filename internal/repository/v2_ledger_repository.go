@@ -25,6 +25,7 @@ type V2LedgerRepository interface {
 	CreateIngest(ctx context.Context, input V2CreateIngestInput) (*V2CreateIngestResult, error)
 	AdvanceSourceRevision(ctx context.Context, input V2AdvanceSourceRevisionInput) (*V2SourceRevisionResult, error)
 	AppendSecurityEvent(ctx context.Context, input V2SecurityEventInput) (string, error)
+	AppendPlacementOutcome(ctx context.Context, input V2PlacementOutcomeInput) (string, error)
 	ClaimNextPlacementRun(ctx context.Context, teamID string, workerID string, lease time.Duration) (*V2PlacementRun, error)
 	FinishPlacementRun(ctx context.Context, teamID string, placementRunID string, status string, message string) error
 }
@@ -237,7 +238,16 @@ func (r *V2LedgerRepositoryImpl) AppendSecurityEvent(ctx context.Context, input 
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
 		var err error
 		eventID, err = insertV2SecurityEvent(ctx, tx, input)
-		return err
+		if err != nil {
+			return err
+		}
+		if input.Decision == "quarantine" {
+			return insertV2EvidenceQuarantine(ctx, tx, V2CreateIngestInput{
+				TeamID:         input.TeamID,
+				OwnerProfileID: input.OwnerProfileID,
+			}, input.IngestID, input.FragmentID, input.Reason)
+		}
+		return nil
 	})
 	if err != nil {
 		return "", fmt.Errorf("v2 ledger: append security event: %w", err)
@@ -717,6 +727,7 @@ func insertV2EvidenceQuarantine(ctx context.Context, tx *gorm.DB, input V2Create
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?
 		)
+		ON CONFLICT (team_id, fragment_id) DO NOTHING
 	`, input.TeamID, fragmentID, ingestID, input.OwnerProfileID, strings.TrimSpace(reason)).Error
 }
 

@@ -16,6 +16,7 @@ import (
 	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
@@ -546,6 +547,104 @@ func TestV2LedgerCreateIngestLinksSourceRevisionQuarantineAndRollsBackOnSourceCo
 			return err
 		}
 		assert.Equal(t, int64(0), rolledBackCount)
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+func TestV2LedgerAppendPlacementOutcomeAndVerifierQuarantine(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "team-review-outcome")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "owner-review-outcome")
+	repo := NewV2LedgerRepository(appDB, rls)
+
+	created, err := repo.CreateIngest(ctx, V2CreateIngestInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		IdempotencyKey: "review-outcome",
+		RequestHash:    "review-outcome-hash",
+		Evidence: []V2EvidenceInput{{
+			Content: "Mark works on Dense-Mem.",
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, created.Items, 1)
+
+	outcomeID, err := repo.AppendPlacementOutcome(ctx, V2PlacementOutcomeInput{
+		TeamID:             teamID,
+		OwnerProfileID:     ownerID,
+		PlacementRunID:     created.PlacementRunID,
+		PlacementItemID:    created.Items[0].PlacementItemID,
+		OutcomeKind:        "semantic_review",
+		Status:             string(domain.V2SemanticReviewTerminalFailure),
+		UpdateItemStatus:   "failed",
+		UpdateItemCategory: "failed",
+		Payload: map[string]any{
+			"request_id": "verify-test",
+			"redaction":  "raw provider request and response are not stored",
+		},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, outcomeID)
+
+	_, err = repo.AppendSecurityEvent(ctx, V2SecurityEventInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		IngestID:       created.IngestID,
+		FragmentID:     created.Evidence[0].FragmentID,
+		V2SecurityEventDraft: V2SecurityEventDraft{
+			EventKind: "verifier_signal",
+			Decision:  "quarantine",
+			Reason:    "semantic verifier reported security signal",
+			Signals: []V2SecuritySignalInput{{
+				Kind:      "prompt_secret_extraction",
+				Severity:  "high",
+				SpanStart: 0,
+				SpanEnd:   4,
+				Quote:     "Mark",
+			}},
+		},
+	})
+	require.NoError(t, err)
+
+	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		var status, category string
+		if err := tx.Raw(`
+			SELECT status, category
+			FROM placement_items
+			WHERE team_id = ?::uuid
+			  AND placement_item_id = ?::uuid
+		`, teamID, created.Items[0].PlacementItemID).Row().Scan(&status, &category); err != nil {
+			return err
+		}
+		assert.Equal(t, "failed", status)
+		assert.Equal(t, "failed", category)
+
+		var outcomeCount int64
+		if err := tx.Raw(`
+			SELECT count(*)
+			FROM placement_outcomes
+			WHERE team_id = ?::uuid
+			  AND outcome_id = ?::uuid
+			  AND payload->>'redaction' <> ''
+		`, teamID, outcomeID).Scan(&outcomeCount).Error; err != nil {
+			return err
+		}
+		assert.Equal(t, int64(1), outcomeCount)
+
+		var quarantineCount int64
+		if err := tx.Raw(`
+			SELECT count(*)
+			FROM evidence_quarantines
+			WHERE team_id = ?::uuid
+			  AND fragment_id = ?::uuid
+			  AND reason = 'semantic verifier reported security signal'
+		`, teamID, created.Evidence[0].FragmentID).Scan(&quarantineCount).Error; err != nil {
+			return err
+		}
+		assert.Equal(t, int64(1), quarantineCount)
 		return nil
 	})
 	require.NoError(t, err)

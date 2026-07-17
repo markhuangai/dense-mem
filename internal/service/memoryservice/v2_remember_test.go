@@ -226,6 +226,10 @@ func (s *v2RememberLedgerStub) AppendSecurityEvent(context.Context, repository.V
 	return "", errors.New("unexpected AppendSecurityEvent")
 }
 
+func (s *v2RememberLedgerStub) AppendPlacementOutcome(context.Context, repository.V2PlacementOutcomeInput) (string, error) {
+	return "", errors.New("unexpected AppendPlacementOutcome")
+}
+
 func (s *v2RememberLedgerStub) ClaimNextPlacementRun(context.Context, string, string, time.Duration) (*repository.V2PlacementRun, error) {
 	return nil, errors.New("unexpected ClaimNextPlacementRun")
 }
