@@ -21,7 +21,7 @@ func V2ProviderProposalSchema() map[string]any {
 					"additionalProperties": false,
 					"properties": map[string]any{
 						"evidence_index": map[string]any{"type": "integer", "minimum": 0},
-						"content":        map[string]any{"type": "string", "maxLength": 999},
+						"content":        nonEmptyStringSchema(999),
 					},
 				},
 			},
@@ -33,8 +33,8 @@ func V2ProviderProposalSchema() map[string]any {
 					"required":             []string{"ref", "name", "kind", "evidence"},
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"ref":      map[string]any{"type": "string", "maxLength": 128},
-						"name":     map[string]any{"type": "string", "maxLength": 256},
+						"ref":      nonEmptyStringSchema(128),
+						"name":     nonEmptyStringSchema(256),
 						"kind":     map[string]any{"type": "string", "enum": domain.V2EntityKinds()},
 						"aliases":  stringArraySchema(20, 256),
 						"evidence": evidenceSpanArraySchema(),
@@ -59,19 +59,19 @@ func V2ProviderProposalSchema() map[string]any {
 						},
 					},
 					"properties": map[string]any{
-						"ref":                map[string]any{"type": "string", "maxLength": 128},
-						"subject_ref":        map[string]any{"type": "string", "maxLength": 128},
-						"original_predicate": map[string]any{"type": "string", "maxLength": 128},
-						"predicate_key":      map[string]any{"type": "string", "maxLength": 128},
+						"ref":                nonEmptyStringSchema(128),
+						"subject_ref":        nonEmptyStringSchema(128),
+						"original_predicate": nonEmptyStringSchema(128),
+						"predicate_key":      nonEmptyStringSchema(128),
 						"predicate_version":  map[string]any{"type": "integer", "minimum": 1},
-						"object_ref":         map[string]any{"type": "string", "maxLength": 128},
+						"object_ref":         nonEmptyStringSchema(128),
 						"object_value": map[string]any{
 							"type":                 "object",
 							"additionalProperties": false,
 							"required":             []string{"type", "value"},
 							"properties": map[string]any{
 								"type":  map[string]any{"type": "string", "enum": domain.V2ValueTypes()},
-								"value": map[string]any{"type": "string", "maxLength": 1024},
+								"value": nonEmptyStringSchema(1024),
 							},
 						},
 						"polarity": map[string]any{"type": "string", "enum": []string{"+", "-"}},
@@ -91,7 +91,7 @@ func V2ProviderProposalSchema() map[string]any {
 							"type": "string",
 							"enum": v2ProviderReviewCategories(),
 						},
-						"reason": map[string]any{"type": "string", "maxLength": 1000},
+						"reason": nonEmptyStringSchema(1000),
 					},
 				},
 			},
@@ -122,7 +122,7 @@ func predicateOptionArraySchema() map[string]any {
 				"current_cardinality",
 			},
 			"properties": map[string]any{
-				"predicate_key":         map[string]any{"type": "string", "maxLength": 128},
+				"predicate_key":         nonEmptyStringSchema(128),
 				"aliases":               stringArraySchema(50, 128),
 				"allowed_subject_kinds": stringArraySchema(20, 64),
 				"allowed_object_kinds":  stringArraySchema(20, 64),
@@ -151,7 +151,7 @@ func evidenceSpanArraySchema() map[string]any {
 			"additionalProperties": false,
 			"properties": map[string]any{
 				"evidence_index": map[string]any{"type": "integer", "minimum": 0},
-				"quote":          map[string]any{"type": "string", "maxLength": 999},
+				"quote":          nonEmptyStringSchema(999),
 				"span_start":     map[string]any{"type": "integer", "minimum": 0},
 				"span_end":       map[string]any{"type": "integer", "minimum": 0},
 			},
@@ -163,6 +163,17 @@ func stringArraySchema(maxItems int, maxLength int) map[string]any {
 	return map[string]any{
 		"type":     "array",
 		"maxItems": maxItems,
-		"items":    map[string]any{"type": "string", "maxLength": maxLength},
+		"items":    nonEmptyStringSchema(maxLength),
 	}
+}
+
+func nonEmptyStringSchema(maxLength int) map[string]any {
+	schema := map[string]any{
+		"type":      "string",
+		"minLength": 1,
+	}
+	if maxLength > 0 {
+		schema["maxLength"] = maxLength
+	}
+	return schema
 }

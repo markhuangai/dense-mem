@@ -243,7 +243,9 @@ type RunConfig struct {
 	SeedManifest           string `json:"seed_manifest"`
 	SeedHash               string `json:"seed_hash"`
 	SuitePath              string `json:"suite_path"`
+	SuiteHash              string `json:"suite_hash"`
 	ReleaseGatePolicyPath  string `json:"release_gate_policy_path,omitempty"`
+	ReleaseGatePolicyHash  string `json:"release_gate_policy_hash,omitempty"`
 	BaseURL                string `json:"base_url,omitempty"`
 	ControlURL             string `json:"control_url,omitempty"`
 	ImportSeed             bool   `json:"import_seed"`
@@ -311,6 +313,7 @@ type ReleaseGatePolicy struct {
 	Description              string                    `json:"description,omitempty"`
 	SeedID                   string                    `json:"seed_id"`
 	SeedHash                 string                    `json:"seed_hash"`
+	SuiteHash                string                    `json:"suite_hash"`
 	RequiredCaseCount        int                       `json:"required_case_count"`
 	RequiredScoredCaseCount  int                       `json:"required_scored_case_count"`
 	BaselineSummary          ReleaseGateBaseline       `json:"baseline_summary"`
