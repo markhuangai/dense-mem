@@ -1,30 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "${TMP_DIR}"' EXIT
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
 BASE_SHA="4293ba460c5f24ae9123c6d141e17c34abe582a1"
 HEAD_SHA="54b0fa5a6a4f38ac70f27bd36ce8a9993e8493e8"
-HEAD_BRANCH="agent/semantic-edge-memory-v2"
-PR_REF="refs/pull/71/head"
 DEFAULT_LEDGER="docs/v2/pr71-parity-ledger.tsv"
+DEFAULT_MANIFEST="docs/v2/pr71-path-manifest.txt"
 
 usage() {
 	printf 'usage: %s [--self-test] [ledger-path]\n' "$0" >&2
-}
-
-ensure_pr71_commits() {
-	if git cat-file -e "${BASE_SHA}^{commit}" && git cat-file -e "${HEAD_SHA}^{commit}"; then
-		return
-	fi
-
-	if ! git fetch --quiet origin "refs/heads/${HEAD_BRANCH}:refs/remotes/origin/${HEAD_BRANCH}"; then
-		git fetch --quiet origin "${PR_REF}:refs/remotes/origin/pr/71/head"
-	fi
-
-	git cat-file -e "${BASE_SHA}^{commit}"
-	git cat-file -e "${HEAD_SHA}^{commit}"
 }
 
 validate_ledger() {
@@ -37,12 +26,15 @@ validate_ledger() {
 		return 1
 	fi
 
-	ensure_pr71_commits
+	if [[ ! -f "${DEFAULT_MANIFEST}" ]]; then
+		printf 'missing PR #71 path manifest: %s\n' "${DEFAULT_MANIFEST}" >&2
+		return 1
+	fi
 
-	expected="$(mktemp)"
-	actual="$(mktemp)"
+	expected="$(mktemp "${TMP_DIR}/expected.XXXXXX")"
+	actual="$(mktemp "${TMP_DIR}/actual.XXXXXX")"
 
-	git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" | sort > "${expected}"
+	sort "${DEFAULT_MANIFEST}" > "${expected}"
 
 	awk -F '\t' -v actual="${actual}" '
 		BEGIN {
@@ -126,7 +118,10 @@ validate_ledger() {
 	' "${ledger}"
 
 	sort -o "${actual}" "${actual}"
-	diff -u "${expected}" "${actual}" >/dev/null
+	if ! diff -u "${expected}" "${actual}"; then
+		printf 'ledger PR #71 paths do not match %s generated from %s..%s\n' "${DEFAULT_MANIFEST}" "${BASE_SHA}" "${HEAD_SHA}" >&2
+		return 1
+	fi
 }
 
 self_test() {
@@ -135,7 +130,7 @@ self_test() {
 
 	validate_ledger "${ledger}"
 
-	bad_ledger="$(mktemp)"
+	bad_ledger="$(mktemp "${TMP_DIR}/bad-ledger.XXXXXX")"
 	awk -F '\t' 'BEGIN { OFS = "\t" } NR == 1 { print; next } $1 == "pr71" && !dropped { dropped = 1; next } { print }' "${ledger}" > "${bad_ledger}"
 
 	if validate_ledger "${bad_ledger}" >/dev/null 2>&1; then
