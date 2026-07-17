@@ -247,8 +247,7 @@ func TestBuildV2UATWiresExecutableRecallMemory(t *testing.T) {
 		t.Fatal("BuildV2UAT recall_memory invoker is nil")
 	}
 	out, err := recall.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"query":            "PostgreSQL memory",
+		"query": "PostgreSQL memory",
 	})
 	if err != nil {
 		t.Fatalf("recall_memory.Invoke: %v", err)
@@ -270,6 +269,9 @@ func TestBuildV2UATWiresExecutableRecallMemory(t *testing.T) {
 	if stub.req.Query != "PostgreSQL memory" {
 		t.Fatalf("stub request not populated: %#v", stub.req)
 	}
+	if stub.req.ContractVersion != domain.V2ContractVersion {
+		t.Fatalf("contract version = %q", stub.req.ContractVersion)
+	}
 }
 
 func TestBuildV2UATRecallRejectsTenantOverride(t *testing.T) {
@@ -282,9 +284,8 @@ func TestBuildV2UATRecallRejectsTenantOverride(t *testing.T) {
 		t.Fatal("BuildV2UAT did not register recall_memory")
 	}
 	_, err = recall.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"team_id":          "attacker-team",
-		"query":            "PostgreSQL memory",
+		"team_id": "attacker-team",
+		"query":   "PostgreSQL memory",
 	})
 	if err == nil || !strings.Contains(err.Error(), "team_id") {
 		t.Fatalf("recall_memory.Invoke err = %v, want tenant override rejection", err)

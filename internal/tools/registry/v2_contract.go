@@ -203,6 +203,7 @@ func v2UATTools(deps Dependencies) []Tool {
 				if err := remapInput(input, &req); err != nil {
 					return nil, fmt.Errorf("recall_memory: invalid input: %w", err)
 				}
+				req.ContractVersion = domain.V2ContractVersion
 				res, err := deps.V2Recall.RecallV2(ctx, req)
 				if err != nil {
 					return nil, err
