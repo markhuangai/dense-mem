@@ -209,10 +209,296 @@ func TestRunOnceRequiresRunningMigration(t *testing.T) {
 	require.ErrorIs(t, err, ErrMigrationNotRunning)
 }
 
+func TestRunOnceRequiresDependenciesAndMigrationCredential(t *testing.T) {
+	_, err := New(nil, nil, nil, Config{}).RunOnce(context.Background())
+	require.ErrorIs(t, err, ErrMissingDependency)
+
+	svc := New(&executorStoreStub{}, &legacyReaderStub{}, &rememberStub{}, Config{})
+	_, err = svc.RunOnce(context.Background())
+	require.ErrorIs(t, err, ErrMigrationCredentialMissing)
+}
+
+func TestRunOnceUsesRunCheckpointFallbackAndMarksDone(t *testing.T) {
+	runID := uuid.NewString()
+	store := &executorStoreStub{
+		run: &domain.V2MigrationRun{
+			RunID:           runID,
+			State:           domain.V2MigrationStateRunning,
+			CheckpointKey:   domain.V2MigrationCheckpointLegacyNeo4jCursor,
+			CheckpointValue: map[string]any{"after_source_id": "sf-run"},
+		},
+	}
+	reader := &legacyReaderStub{page: neo4j.LegacyCorpusPage{}}
+	svc := New(store, reader, &rememberStub{}, Config{
+		PageSize:              1000,
+		WorkerID:              "worker-b",
+		MigrationCredentialID: uuid.New(),
+	})
+
+	result, err := svc.RunOnce(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, &RunOnceResult{
+		RunID:      runID,
+		Fetched:    0,
+		NextCursor: "",
+		Done:       true,
+	}, result)
+	assert.Equal(t, "sf-run", reader.req.AfterSourceID)
+	assert.Equal(t, 500, reader.req.Limit)
+	require.Len(t, store.checkpoints, 1)
+	assert.Equal(t, "", store.checkpoints[0].CheckpointValue["after_source_id"])
+	assert.Equal(t, true, store.checkpoints[0].CheckpointValue["done"])
+	assert.Equal(t, "worker-b", store.checkpoints[0].LeaseOwner)
+	assert.Equal(t, 1, store.refreshCalls)
+}
+
+func TestRunOnceRecordsReadFailure(t *testing.T) {
+	runID := uuid.NewString()
+	store := &executorStoreStub{
+		run: &domain.V2MigrationRun{
+			RunID: runID,
+			State: domain.V2MigrationStateRunning,
+		},
+	}
+	readErr := errors.New("neo4j unavailable")
+	svc := New(store, &legacyReaderStub{err: readErr}, &rememberStub{}, Config{MigrationCredentialID: uuid.New()})
+
+	result, err := svc.RunOnce(context.Background())
+	require.ErrorIs(t, err, readErr)
+	assert.Nil(t, result)
+	require.Len(t, store.errors, 1)
+	assert.Equal(t, "read_legacy_corpus", store.errors[0].Phase)
+	assert.Equal(t, "read_failed", store.errors[0].ErrorCode)
+	assert.True(t, store.errors[0].Retryable)
+}
+
+func TestRunOnceMapsQuarantinedRememberResult(t *testing.T) {
+	runID := uuid.NewString()
+	store := &executorStoreStub{
+		run: &domain.V2MigrationRun{
+			RunID: runID,
+			State: domain.V2MigrationStateRunning,
+		},
+	}
+	reader := &legacyReaderStub{
+		page: neo4j.LegacyCorpusPage{
+			NextCursor: "sf-030",
+			Items: []neo4j.LegacyCorpusItem{{
+				SourceID:       "sf-030",
+				TeamID:         uuid.NewString(),
+				OwnerProfileID: uuid.NewString(),
+				Content:        "quarantine me",
+			}},
+		},
+	}
+	remember := &rememberStub{
+		result: &memoryservice.V2RememberResult{
+			IngestID: "33333333-3333-3333-3333-333333333333",
+			Status:   "quarantined",
+			Items: []memoryservice.V2RememberItemResult{{
+				ItemID:   "44444444-4444-4444-4444-444444444444",
+				Category: string(domain.V2EvidenceNeedsReview),
+			}},
+		},
+	}
+	svc := New(store, reader, remember, Config{MigrationCredentialID: uuid.New()})
+
+	result, err := svc.RunOnce(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Submitted)
+	require.Len(t, store.updates, 1)
+	assert.Equal(t, domain.V2MigrationOutcomeQuarantined, store.updates[0].Outcome)
+}
+
+func TestRunOnceReturnsRequiredSourceMapWriteFailure(t *testing.T) {
+	runID := uuid.NewString()
+	store := &executorStoreStub{
+		run: &domain.V2MigrationRun{
+			RunID: runID,
+			State: domain.V2MigrationStateRunning,
+		},
+		sourceMapErr: errors.New("source map write failed"),
+	}
+	reader := &legacyReaderStub{
+		page: neo4j.LegacyCorpusPage{
+			Items: []neo4j.LegacyCorpusItem{{
+				SourceID:       "sf-040",
+				TeamID:         uuid.NewString(),
+				OwnerProfileID: uuid.NewString(),
+				Content:        "source map failure",
+			}},
+		},
+	}
+	svc := New(store, reader, &rememberStub{}, Config{MigrationCredentialID: uuid.New()})
+
+	result, err := svc.RunOnce(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "source map write failed")
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Submitted)
+	assert.Empty(t, store.updates)
+}
+
+func TestRunOnceRecordsCorpusUpsertFailureAsCutoverBlocker(t *testing.T) {
+	runID := uuid.NewString()
+	store := &executorStoreStub{
+		run: &domain.V2MigrationRun{
+			RunID: runID,
+			State: domain.V2MigrationStateRunning,
+		},
+		upsertErr: errors.New("postgres unavailable"),
+	}
+	reader := &legacyReaderStub{
+		page: neo4j.LegacyCorpusPage{
+			Items: []neo4j.LegacyCorpusItem{{
+				SourceID:       "sf-045",
+				TeamID:         uuid.NewString(),
+				OwnerProfileID: uuid.NewString(),
+				Content:        "upsert failure",
+			}},
+		},
+	}
+	svc := New(store, reader, &rememberStub{}, Config{MigrationCredentialID: uuid.New()})
+
+	result, err := svc.RunOnce(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Failed)
+	assert.Empty(t, store.updates)
+	require.Len(t, store.exclusions, 1)
+	assert.True(t, store.exclusions[0].BlocksCutover)
+	assert.Equal(t, "postgres corpus item upsert failed", store.exclusions[0].Reason)
+	require.Len(t, store.errors, 1)
+	assert.Equal(t, "upsert_corpus_item", store.errors[0].Phase)
+	assert.Equal(t, "postgres_write_failed", store.errors[0].ErrorCode)
+	assert.True(t, store.errors[0].Retryable)
+}
+
+func TestRunOnceReturnsCheckpointAndStatsRefreshFailures(t *testing.T) {
+	t.Run("checkpoint", func(t *testing.T) {
+		runID := uuid.NewString()
+		checkpointErr := errors.New("checkpoint failed")
+		store := &executorStoreStub{
+			run: &domain.V2MigrationRun{
+				RunID: runID,
+				State: domain.V2MigrationStateRunning,
+			},
+			checkpointErr: checkpointErr,
+		}
+		svc := New(store, &legacyReaderStub{}, &rememberStub{}, Config{MigrationCredentialID: uuid.New()})
+
+		result, err := svc.RunOnce(context.Background())
+		require.ErrorIs(t, err, checkpointErr)
+		require.NotNil(t, result)
+		assert.Equal(t, runID, result.RunID)
+		assert.Equal(t, 0, store.refreshCalls)
+	})
+
+	t.Run("stats refresh", func(t *testing.T) {
+		runID := uuid.NewString()
+		refreshErr := errors.New("refresh failed")
+		store := &executorStoreStub{
+			run: &domain.V2MigrationRun{
+				RunID: runID,
+				State: domain.V2MigrationStateRunning,
+			},
+			refreshErr: refreshErr,
+		}
+		svc := New(store, &legacyReaderStub{}, &rememberStub{}, Config{MigrationCredentialID: uuid.New()})
+
+		result, err := svc.RunOnce(context.Background())
+		require.ErrorIs(t, err, refreshErr)
+		require.NotNil(t, result)
+		assert.Equal(t, runID, result.RunID)
+		require.Len(t, store.checkpoints, 1)
+		assert.Equal(t, 1, store.refreshCalls)
+	})
+}
+
+func TestLegacyRememberRequestPreservesSupportedSourceAuthorityAndHints(t *testing.T) {
+	item := neo4j.LegacyCorpusItem{
+		SourceID:   "sf-050",
+		Source:     "https://example.test/source",
+		SourceType: "conversation",
+		Authority:  "derived",
+		Labels:     []string{"legacy_neo4j_migration", " note ", "note"},
+		Facts: []neo4j.LegacyFactHint{{
+			FactID:    "fact-1",
+			Subject:   "Grace",
+			Predicate: "worked_on",
+			Object:    "compiler",
+		}},
+	}
+
+	req := legacyRememberRequest("run-1", item)
+
+	require.Len(t, req.Evidence, 1)
+	assert.Equal(t, "conversation", req.Evidence[0].SourceType)
+	assert.Equal(t, "derived", req.Evidence[0].Authority)
+	assert.Equal(t, "https://example.test/source", req.Evidence[0].Source)
+	assert.Equal(t, "neo4j://source-fragment/sf-050", req.Evidence[0].SourceKey)
+	assert.Equal(t, []string{"legacy_neo4j_migration", "note"}, req.Evidence[0].Labels)
+	require.Len(t, req.EntityHints, 2)
+	require.Len(t, req.RelationshipHints, 1)
+	assert.Equal(t, "fact", req.RelationshipHints[0]["legacy_kind"])
+}
+
+func TestLegacyHelpersCoverOptionalAndInvalidBranches(t *testing.T) {
+	createdAt := time.Date(2026, 7, 17, 16, 0, 0, 0, time.UTC)
+	updatedAt := createdAt.Add(time.Minute)
+	metadata := legacyCorpusMetadata(neo4j.LegacyCorpusItem{
+		SourceID:       "sf-060",
+		SourceKind:     "custom-source",
+		CreatedAt:      &createdAt,
+		UpdatedAt:      &updatedAt,
+		Metadata:       map[string]any{"legacy": true},
+		Classification: map[string]any{"tier": "semantic"},
+	})
+
+	assert.Equal(t, "custom-source", metadata["migration_source_kind"])
+	assert.Equal(t, createdAt.Format(time.RFC3339Nano), metadata["legacy_created_at"])
+	assert.Equal(t, updatedAt.Format(time.RFC3339Nano), metadata["legacy_updated_at"])
+	assert.Equal(t, map[string]any{"legacy": true}, metadata["legacy_metadata"])
+	assert.Equal(t, map[string]any{"tier": "semantic"}, metadata["legacy_classification"])
+
+	assert.ErrorContains(t, validateLegacyCorpusItem(neo4j.LegacyCorpusItem{}), "source_id")
+	assert.ErrorContains(t, validateLegacyCorpusItem(neo4j.LegacyCorpusItem{
+		SourceID:       "sf-061",
+		TeamID:         "not-a-uuid",
+		OwnerProfileID: uuid.NewString(),
+		Content:        "content",
+	}), "team_id")
+	assert.ErrorContains(t, validateLegacyCorpusItem(neo4j.LegacyCorpusItem{
+		SourceID:       "sf-062",
+		TeamID:         uuid.NewString(),
+		OwnerProfileID: "not-a-uuid",
+		Content:        "content",
+	}), "owner_profile_id")
+	assert.ErrorContains(t, validateLegacyCorpusItem(neo4j.LegacyCorpusItem{
+		SourceID:       "sf-063",
+		TeamID:         uuid.NewString(),
+		OwnerProfileID: uuid.NewString(),
+	}), "content")
+
+	assert.Equal(t, domain.V2MigrationOutcomeFailed, rememberOutcome(nil))
+	assert.Equal(t, domain.V2MigrationOutcomeQuarantined, rememberOutcome(&memoryservice.V2RememberResult{
+		Items: []memoryservice.V2RememberItemResult{{Category: string(domain.V2EvidenceQuarantined)}},
+	}))
+	assert.Equal(t, "", firstPlacementItemID(nil))
+	assert.Equal(t, "", firstPlacementItemID(&memoryservice.V2RememberResult{}))
+	assert.Equal(t, "", stringFromMap(nil, "missing"))
+	assert.Equal(t, "", stringFromMap(map[string]any{"value": nil}, "value"))
+	assert.Nil(t, relationshipHint("subject", "", "object", "id", "claim"))
+	assert.Equal(t, "derived", legacyAuthority("untrusted"))
+}
+
 type executorStoreStub struct {
 	run            *domain.V2MigrationRun
 	checkpoint     map[string]any
 	upsertOutcomes map[string]string
+	upsertErr      error
+	sourceMapErr   error
+	checkpointErr  error
+	refreshErr     error
 	upserts        []repository.V2UpsertMigrationCorpusItemInput
 	updates        []repository.V2UpdateMigrationCorpusOutcomeInput
 	sourceMaps     []repository.V2UpsertMigrationSourceMapInput
@@ -228,6 +514,9 @@ func (s *executorStoreStub) GetLatestRun(context.Context) (*domain.V2MigrationRu
 
 func (s *executorStoreStub) UpsertMigrationCorpusItem(_ context.Context, input repository.V2UpsertMigrationCorpusItemInput) (*domain.V2MigrationCorpusItem, error) {
 	s.upserts = append(s.upserts, input)
+	if s.upsertErr != nil {
+		return nil, s.upsertErr
+	}
 	outcome := domain.V2MigrationOutcomePending
 	if s.upsertOutcomes != nil && s.upsertOutcomes[input.SourceID] != "" {
 		outcome = s.upsertOutcomes[input.SourceID]
@@ -256,12 +545,12 @@ func (s *executorStoreStub) UpdateMigrationCorpusOutcome(_ context.Context, inpu
 
 func (s *executorStoreStub) UpsertMigrationSourceMap(_ context.Context, input repository.V2UpsertMigrationSourceMapInput) error {
 	s.sourceMaps = append(s.sourceMaps, input)
-	return nil
+	return s.sourceMapErr
 }
 
 func (s *executorStoreStub) UpsertMigrationCheckpoint(_ context.Context, input repository.V2UpsertMigrationCheckpointInput) error {
 	s.checkpoints = append(s.checkpoints, input)
-	return nil
+	return s.checkpointErr
 }
 
 func (s *executorStoreStub) GetMigrationCheckpoint(context.Context, string, string) (map[string]any, error) {
@@ -280,7 +569,7 @@ func (s *executorStoreStub) RecordMigrationExclusion(_ context.Context, input re
 
 func (s *executorStoreStub) RefreshMigrationRunStats(context.Context, string, time.Time) (*domain.V2MigrationRun, error) {
 	s.refreshCalls++
-	return s.run, nil
+	return s.run, s.refreshErr
 }
 
 type legacyReaderStub struct {
