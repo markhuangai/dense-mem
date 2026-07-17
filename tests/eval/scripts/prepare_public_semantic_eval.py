@@ -129,12 +129,17 @@ def main() -> int:
     data_root = root / "data" / "public_semantic"
     seed_dir = root / "seeds" / args.seed_id
     suite_path = root / "suites" / f"{args.seed_id}.jsonl"
-    if seed_dir.exists():
-        if not args.force:
-            raise SystemExit(f"{seed_dir} already exists; use --force to rebuild")
-        shutil.rmtree(seed_dir)
-    seed_dir.mkdir(parents=True, exist_ok=True)
-    suite_path.parent.mkdir(parents=True, exist_ok=True)
+    stage_dir = root / "seeds" / f".{args.seed_id}.staging"
+    stage_suite = root / "suites" / f".{args.seed_id}.jsonl.staging"
+    install_tx_dir = root / "seeds" / f".{args.seed_id}.install-tx"
+
+    recover_install_transaction(seed_dir, suite_path, install_tx_dir)
+    if seed_dir.exists() and not args.force:
+        raise SystemExit(f"{seed_dir} already exists; use --force to rebuild")
+    remove_path(stage_dir)
+    remove_path(stage_suite)
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    stage_suite.parent.mkdir(parents=True, exist_ok=True)
 
     ensure_sources(data_root, allow_download=not args.no_download)
     cases = build_cases(
@@ -147,10 +152,62 @@ def main() -> int:
         preflight=args.preflight,
     )
     validate_cases(cases, expected_cases=3 if args.preflight else 1000)
-    write_seed(seed_dir, suite_path, args.seed_id, cases, args)
+    write_seed(stage_dir, stage_suite, args.seed_id, cases, args)
+    install_generated_seed(stage_dir, stage_suite, seed_dir, suite_path, install_tx_dir)
     print(f"wrote {seed_dir}")
     print(f"wrote {suite_path}")
     return 0
+
+
+def install_generated_seed(stage_dir: Path, stage_suite: Path, seed_dir: Path, suite_path: Path, tx_dir: Path) -> None:
+    recover_install_transaction(seed_dir, suite_path, tx_dir)
+    remove_path(tx_dir)
+    tx_dir.mkdir(parents=True)
+    write_json(tx_dir / "manifest.json", {
+        "seed_dir": str(seed_dir),
+        "suite_path": str(suite_path),
+    })
+    seed_backup = tx_dir / "seed_dir.backup"
+    suite_backup = tx_dir / "suite_path.backup"
+    try:
+        if seed_dir.exists():
+            os.replace(seed_dir, seed_backup)
+        if suite_path.exists():
+            os.replace(suite_path, suite_backup)
+        os.replace(stage_dir, seed_dir)
+        os.replace(stage_suite, suite_path)
+    except BaseException:
+        recover_install_transaction(seed_dir, suite_path, tx_dir)
+        raise
+    else:
+        shutil.rmtree(tx_dir)
+
+
+def recover_install_transaction(seed_dir: Path, suite_path: Path, tx_dir: Path) -> None:
+    if not tx_dir.exists():
+        return
+    manifest_path = tx_dir / "manifest.json"
+    if not manifest_path.exists():
+        shutil.rmtree(tx_dir)
+        return
+    seed_backup = tx_dir / "seed_dir.backup"
+    suite_backup = tx_dir / "suite_path.backup"
+    if seed_backup.exists():
+        remove_path(seed_dir)
+        seed_dir.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(seed_backup, seed_dir)
+    if suite_backup.exists():
+        remove_path(suite_path)
+        suite_path.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(suite_backup, suite_path)
+    shutil.rmtree(tx_dir)
+
+
+def remove_path(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    elif path.exists():
+        path.unlink()
 
 
 def ensure_sources(data_root: Path, allow_download: bool) -> None:
@@ -449,8 +506,7 @@ def qasper_case(
             required.append(source_doc_id)
     if not required or len(required) > 10:
         return None
-    gold_text = " ".join(candidate["evidence"])
-    distractors = qasper_distractor_paragraphs(paper, gold_text, distractor_count)
+    distractors = qasper_distractor_paragraphs(paper, candidate["evidence"], distractor_count)
     for index, item in enumerate(distractors):
         for chunk_index, chunk in enumerate(split_with_prefix(f"QASPER paper context. Section: {item['section']}.", item["text"], max_codepoints)):
             source_doc_id = sanitize_id(f"{case_id}:distractor:{index}:{chunk_index}")
@@ -479,14 +535,15 @@ def qasper_case(
 	)
 
 
-def qasper_distractor_paragraphs(paper: dict[str, Any], gold_text: str, limit: int) -> list[dict[str, Any]]:
+def qasper_distractor_paragraphs(paper: dict[str, Any], gold_evidence: list[str], limit: int) -> list[dict[str, Any]]:
     out = []
-    gold_lc = gold_text.lower()
+    gold_texts = [clean_text(item).lower() for item in gold_evidence if clean_text(item)]
     for section in paper.get("full_text") or []:
         section_name = clean_text(section.get("section_name", ""))
         for index, paragraph in enumerate(section.get("paragraphs") or []):
             text = clean_text(paragraph)
-            if not text or text.lower() in gold_lc or text in gold_text:
+            text_lc = text.lower()
+            if not text or any(gold in text_lc for gold in gold_texts):
                 continue
             out.append({"section": section_name, "paragraph_index": index, "text": text})
             if len(out) >= limit:
