@@ -71,6 +71,11 @@ func TestV2ContractEnums(t *testing.T) {
 			t.Fatalf("V2SearchProjectionStates missing %s", state)
 		}
 	}
+	for _, status := range []string{"queued", "guarded", "quarantined", "processing", "completed", "failed"} {
+		if !slices.Contains(V2PlacementRunStatuses(), status) {
+			t.Fatalf("V2PlacementRunStatuses missing %s", status)
+		}
+	}
 	for _, state := range []string{"building", "active", "failed", "deprecated", "retired"} {
 		if !slices.Contains(V2SearchProfileStates(), state) {
 			t.Fatalf("V2SearchProfileStates missing %s", state)

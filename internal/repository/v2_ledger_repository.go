@@ -18,6 +18,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
+var ErrV2IdempotencyConflict = errors.New("v2 idempotency conflict")
 var ErrV2SourceRevisionConflict = errors.New("v2 source revision conflict")
 
 type V2LedgerRepository interface {
@@ -41,14 +42,19 @@ type V2CreateIngestInput struct {
 }
 
 type V2EvidenceInput struct {
-	Content      string
-	ContentHash  string
-	SourceType   string
-	Authority    string
-	SourceRef    string
-	Labels       []string
-	Metadata     map[string]any
-	InitialEvent *V2SecurityEventDraft
+	Content                       string
+	ContentHash                   string
+	SourceType                    string
+	Authority                     string
+	SourceRef                     string
+	SourceKey                     string
+	SourceRevisionToken           string
+	ExpectedPreviousRevisionToken string
+	SourceRevisionContentHash     string
+	SourceRevisionEnvelope        map[string]any
+	Labels                        []string
+	Metadata                      map[string]any
+	InitialEvent                  *V2SecurityEventDraft
 }
 
 type V2SecurityEventDraft struct {
@@ -81,33 +87,18 @@ type V2CreateIngestResult struct {
 	TeamID         string
 	IngestID       string
 	PlacementRunID string
+	Status         string
 	Existing       bool
 	Evidence       []V2EvidenceFragment
+	Items          []V2PlacementItem
 }
 
 type V2EvidenceFragment struct {
-	FragmentID    string
-	EvidenceIndex int
-	ContentHash   string
-}
-
-type V2AdvanceSourceRevisionInput struct {
-	TeamID                        string
-	OwnerProfileID                string
-	SourceKey                     string
-	SourceKind                    string
-	Authority                     string
-	RevisionToken                 string
-	ExpectedPreviousRevisionToken string
-	ContentHash                   string
-	Envelope                      map[string]any
-}
-
-type V2SourceRevisionResult struct {
-	TeamID           string
+	FragmentID       string
+	EvidenceIndex    int
+	ContentHash      string
 	SourceID         string
 	SourceRevisionID string
-	RevisionToken    string
 }
 
 type V2PlacementRun struct {
@@ -118,6 +109,12 @@ type V2PlacementRun struct {
 	Status         string
 	Attempts       int
 	LeaseUntil     *time.Time
+}
+
+type V2PlacementItem struct {
+	PlacementItemID, FragmentID string
+	EvidenceIndex               int
+	Status, Category            string
 }
 
 type v2RLSHelper interface {
@@ -151,6 +148,9 @@ func (r *V2LedgerRepositoryImpl) CreateIngest(ctx context.Context, input V2Creat
 			return err
 		}
 		if !created {
+			if err := validateV2ExistingIngestHash(ctx, tx, input, ingestID); err != nil {
+				return err
+			}
 			loaded, err := loadV2CreateIngestResult(ctx, tx, input.TeamID, ingestID, true)
 			if err != nil {
 				return err
@@ -163,15 +163,37 @@ func (r *V2LedgerRepositoryImpl) CreateIngest(ctx context.Context, input V2Creat
 			return err
 		}
 		evidence := make([]V2EvidenceFragment, 0, len(input.Evidence))
+		items := make([]V2PlacementItem, 0, len(input.Evidence))
+		sources := make(map[string]V2SourceRevisionResult)
 		for i, item := range input.Evidence {
-			fragment, err := insertV2EvidenceFragment(ctx, tx, input, ingestID, i, item)
+			var source *V2SourceRevisionResult
+			if item.SourceKey != "" {
+				advanced, err := advanceV2SourceRevisionInTx(ctx, tx, V2AdvanceSourceRevisionInput{
+					TeamID:                        input.TeamID,
+					OwnerProfileID:                input.OwnerProfileID,
+					SourceKey:                     item.SourceKey,
+					SourceKind:                    v2SourceKindForEvidence(item.SourceType),
+					Authority:                     item.Authority,
+					RevisionToken:                 item.SourceRevisionToken,
+					ExpectedPreviousRevisionToken: item.ExpectedPreviousRevisionToken,
+					ContentHash:                   item.SourceRevisionContentHash,
+					Envelope:                      item.SourceRevisionEnvelope,
+				}, sources)
+				if err != nil {
+					return err
+				}
+				source = advanced
+			}
+			fragment, err := insertV2EvidenceFragment(ctx, tx, input, ingestID, i, item, source)
 			if err != nil {
 				return err
 			}
 			evidence = append(evidence, fragment)
-			if err := insertV2PlacementItem(ctx, tx, input, ingestID, placementRunID, fragment); err != nil {
+			placementItem, err := insertV2PlacementItem(ctx, tx, input, ingestID, placementRunID, fragment, item)
+			if err != nil {
 				return err
 			}
+			items = append(items, placementItem)
 			if item.InitialEvent != nil {
 				eventInput := V2SecurityEventInput{
 					TeamID:               input.TeamID,
@@ -183,65 +205,25 @@ func (r *V2LedgerRepositoryImpl) CreateIngest(ctx context.Context, input V2Creat
 				if _, err := insertV2SecurityEvent(ctx, tx, eventInput); err != nil {
 					return err
 				}
+				if item.InitialEvent.Decision == "quarantine" {
+					if err := insertV2EvidenceQuarantine(ctx, tx, input, ingestID, fragment.FragmentID, item.InitialEvent.Reason); err != nil {
+						return err
+					}
+				}
 			}
 		}
 		result = &V2CreateIngestResult{
 			TeamID:         input.TeamID,
 			IngestID:       ingestID,
 			PlacementRunID: placementRunID,
+			Status:         input.Status,
 			Evidence:       evidence,
+			Items:          items,
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("v2 ledger: create ingest: %w", err)
-	}
-	return result, nil
-}
-
-func (r *V2LedgerRepositoryImpl) AdvanceSourceRevision(ctx context.Context, input V2AdvanceSourceRevisionInput) (*V2SourceRevisionResult, error) {
-	input = normalizeV2AdvanceSourceRevisionInput(input)
-	if err := validateV2AdvanceSourceRevisionInput(input); err != nil {
-		return nil, err
-	}
-	var result *V2SourceRevisionResult
-	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		if err := ensureV2SemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
-			return err
-		}
-		sourceID, currentRevisionID, currentToken, err := getOrCreateV2EvidenceSource(ctx, tx, input)
-		if err != nil {
-			return err
-		}
-		if currentToken != input.ExpectedPreviousRevisionToken {
-			return fmt.Errorf("%w: expected %q, got %q", ErrV2SourceRevisionConflict, input.ExpectedPreviousRevisionToken, currentToken)
-		}
-		revisionID, err := insertV2SourceRevision(ctx, tx, input, sourceID, currentRevisionID)
-		if err != nil {
-			return err
-		}
-		if err := tx.WithContext(ctx).Exec(`
-			UPDATE evidence_sources
-			SET current_revision_id = ?::uuid,
-			    current_revision_token = ?,
-			    updated_at = now()
-			WHERE team_id = ?::uuid
-			  AND source_id = ?::uuid
-			  AND owner_profile_id = ?::uuid
-			  AND current_revision_token = ?
-		`, revisionID, input.RevisionToken, input.TeamID, sourceID, input.OwnerProfileID, currentToken).Error; err != nil {
-			return err
-		}
-		result = &V2SourceRevisionResult{
-			TeamID:           input.TeamID,
-			SourceID:         sourceID,
-			SourceRevisionID: revisionID,
-			RevisionToken:    input.RevisionToken,
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("v2 ledger: advance source revision: %w", err)
 	}
 	return result, nil
 }
@@ -387,7 +369,6 @@ func normalizeV2CreateIngestInput(input V2CreateIngestInput) V2CreateIngestInput
 		input.Status = "queued"
 	}
 	for i := range input.Evidence {
-		input.Evidence[i].Content = strings.TrimSpace(input.Evidence[i].Content)
 		input.Evidence[i].ContentHash = strings.TrimSpace(input.Evidence[i].ContentHash)
 		if input.Evidence[i].ContentHash == "" && input.Evidence[i].Content != "" {
 			input.Evidence[i].ContentHash = sha256Hex(input.Evidence[i].Content)
@@ -401,6 +382,13 @@ func normalizeV2CreateIngestInput(input V2CreateIngestInput) V2CreateIngestInput
 			input.Evidence[i].Authority = "primary"
 		}
 		input.Evidence[i].SourceRef = strings.TrimSpace(input.Evidence[i].SourceRef)
+		input.Evidence[i].SourceKey = strings.TrimSpace(input.Evidence[i].SourceKey)
+		input.Evidence[i].SourceRevisionToken = strings.TrimSpace(input.Evidence[i].SourceRevisionToken)
+		input.Evidence[i].ExpectedPreviousRevisionToken = strings.TrimSpace(input.Evidence[i].ExpectedPreviousRevisionToken)
+		input.Evidence[i].SourceRevisionContentHash = strings.TrimSpace(input.Evidence[i].SourceRevisionContentHash)
+		if input.Evidence[i].SourceRevisionContentHash == "" && input.Evidence[i].SourceKey != "" {
+			input.Evidence[i].SourceRevisionContentHash = input.Evidence[i].ContentHash
+		}
 	}
 	return input
 }
@@ -419,7 +407,7 @@ func validateV2CreateIngestInput(input V2CreateIngestInput) error {
 		return errors.New("evidence is required")
 	}
 	for i, item := range input.Evidence {
-		if item.Content == "" {
+		if strings.TrimSpace(item.Content) == "" {
 			return fmt.Errorf("evidence[%d].content is required", i)
 		}
 		if item.ContentHash == "" {
@@ -431,11 +419,74 @@ func validateV2CreateIngestInput(input V2CreateIngestInput) error {
 		if item.Authority != "primary" && item.Authority != "secondary" && item.Authority != "derived" {
 			return fmt.Errorf("evidence[%d].authority is unsupported", i)
 		}
+		if item.SourceKey == "" && item.SourceRevisionToken != "" {
+			return fmt.Errorf("evidence[%d].source_revision requires source_key", i)
+		}
+		if item.SourceKey != "" && item.SourceRevisionToken == "" {
+			return fmt.Errorf("evidence[%d].source_key requires source_revision", i)
+		}
+		if item.SourceKey != "" && item.SourceRevisionContentHash == "" {
+			return fmt.Errorf("evidence[%d].source_revision_content_hash is required", i)
+		}
+		if item.ExpectedPreviousRevisionToken != "" && item.SourceKey == "" {
+			return fmt.Errorf("evidence[%d].previous_source_revision requires source_key and source_revision", i)
+		}
 		if item.InitialEvent != nil {
 			if err := validateV2SecurityEventDraft(*item.InitialEvent); err != nil {
 				return fmt.Errorf("evidence[%d].security_event: %w", i, err)
 			}
 		}
+	}
+	if err := validateV2SourceRevisionBatch(input.Evidence); err != nil {
+		return err
+	}
+	return nil
+}
+
+type v2SourceRevisionBatch struct {
+	RevisionToken                 string
+	ExpectedPreviousRevisionToken string
+	SourceRevisionContentHash     string
+}
+
+func validateV2SourceRevisionBatch(evidence []V2EvidenceInput) error {
+	seen := make(map[string]v2SourceRevisionBatch)
+	for i, item := range evidence {
+		if item.SourceKey == "" {
+			continue
+		}
+		current := v2SourceRevisionBatch{
+			RevisionToken:                 item.SourceRevisionToken,
+			ExpectedPreviousRevisionToken: item.ExpectedPreviousRevisionToken,
+			SourceRevisionContentHash:     item.SourceRevisionContentHash,
+		}
+		previous, ok := seen[item.SourceKey]
+		if !ok {
+			seen[item.SourceKey] = current
+			continue
+		}
+		if previous != current {
+			return fmt.Errorf("evidence[%d].source_key %q revision fields must match earlier item in request", i, item.SourceKey)
+		}
+	}
+	return nil
+}
+
+func validateV2ExistingIngestHash(ctx context.Context, tx *gorm.DB, input V2CreateIngestInput, ingestID string) error {
+	row := tx.WithContext(ctx).Raw(`
+		SELECT request_hash
+		FROM knowledge_ingests
+		WHERE team_id = ?::uuid
+		  AND owner_profile_id = ?::uuid
+		  AND ingest_id = ?::uuid
+		LIMIT 1
+	`, input.TeamID, input.OwnerProfileID, ingestID).Row()
+	var existingHash string
+	if err := row.Scan(&existingHash); err != nil {
+		return err
+	}
+	if existingHash != input.RequestHash {
+		return fmt.Errorf("%w: idempotency key %q already recorded with a different request", ErrV2IdempotencyConflict, input.IdempotencyKey)
 	}
 	return nil
 }
@@ -581,21 +632,30 @@ func insertV2PlacementRun(ctx context.Context, tx *gorm.DB, input V2CreateIngest
 	return placementRunID, rows.Err()
 }
 
-func insertV2EvidenceFragment(ctx context.Context, tx *gorm.DB, input V2CreateIngestInput, ingestID string, index int, item V2EvidenceInput) (V2EvidenceFragment, error) {
+func insertV2EvidenceFragment(ctx context.Context, tx *gorm.DB, input V2CreateIngestInput, ingestID string, index int, item V2EvidenceInput, source *V2SourceRevisionResult) (V2EvidenceFragment, error) {
 	metadata, err := marshalV2JSON(item.Metadata)
 	if err != nil {
 		return V2EvidenceFragment{}, err
 	}
+	sourceID := ""
+	sourceRevisionID := ""
+	if source != nil {
+		sourceID = source.SourceID
+		sourceRevisionID = source.SourceRevisionID
+	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO evidence_fragments (
 		    team_id, ingest_id, owner_profile_id, evidence_index, content,
-		    content_hash, source_type, authority, source_ref, labels, metadata
+		    content_hash, source_type, authority, source_ref, source_id,
+		    source_revision_id, labels, metadata
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?, ?, ?::jsonb
+		    ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?,
+		    NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, ?::jsonb
 		)
 		RETURNING fragment_id::text
 	`, input.TeamID, ingestID, input.OwnerProfileID, index, item.Content, item.ContentHash,
-		item.SourceType, item.Authority, item.SourceRef, pqStringArray(item.Labels), string(metadata)).Rows()
+		item.SourceType, item.Authority, item.SourceRef, sourceID, sourceRevisionID,
+		pqStringArray(item.Labels), string(metadata)).Rows()
 	if err != nil {
 		return V2EvidenceFragment{}, err
 	}
@@ -603,36 +663,101 @@ func insertV2EvidenceFragment(ctx context.Context, tx *gorm.DB, input V2CreateIn
 	if !rows.Next() {
 		return V2EvidenceFragment{}, sql.ErrNoRows
 	}
-	fragment := V2EvidenceFragment{EvidenceIndex: index, ContentHash: item.ContentHash}
+	fragment := V2EvidenceFragment{
+		EvidenceIndex:    index,
+		ContentHash:      item.ContentHash,
+		SourceID:         sourceID,
+		SourceRevisionID: sourceRevisionID,
+	}
 	if err := rows.Scan(&fragment.FragmentID); err != nil {
 		return V2EvidenceFragment{}, err
 	}
 	return fragment, rows.Err()
 }
 
-func insertV2PlacementItem(ctx context.Context, tx *gorm.DB, input V2CreateIngestInput, ingestID string, placementRunID string, fragment V2EvidenceFragment) error {
-	return tx.WithContext(ctx).Exec(`
+func insertV2PlacementItem(ctx context.Context, tx *gorm.DB, input V2CreateIngestInput, ingestID string, placementRunID string, fragment V2EvidenceFragment, item V2EvidenceInput) (V2PlacementItem, error) {
+	status := "queued"
+	category := "pending"
+	if input.Status == "quarantined" || (item.InitialEvent != nil && item.InitialEvent.Decision == "quarantine") {
+		status = "quarantined"
+		category = "quarantined"
+	}
+	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO placement_items (
-		    team_id, placement_run_id, ingest_id, owner_profile_id, fragment_id, evidence_index
+		    team_id, placement_run_id, ingest_id, owner_profile_id, fragment_id,
+		    evidence_index, status, category
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?
+		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?
 		)
-	`, input.TeamID, placementRunID, ingestID, input.OwnerProfileID, fragment.FragmentID, fragment.EvidenceIndex).Error
+		RETURNING placement_item_id::text
+	`, input.TeamID, placementRunID, ingestID, input.OwnerProfileID, fragment.FragmentID, fragment.EvidenceIndex, status, category).Rows()
+	if err != nil {
+		return V2PlacementItem{}, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return V2PlacementItem{}, sql.ErrNoRows
+	}
+	placementItem := V2PlacementItem{
+		FragmentID:    fragment.FragmentID,
+		EvidenceIndex: fragment.EvidenceIndex,
+		Status:        status,
+		Category:      category,
+	}
+	if err := rows.Scan(&placementItem.PlacementItemID); err != nil {
+		return V2PlacementItem{}, err
+	}
+	return placementItem, rows.Err()
+}
+
+func insertV2EvidenceQuarantine(ctx context.Context, tx *gorm.DB, input V2CreateIngestInput, ingestID string, fragmentID string, reason string) error {
+	return tx.WithContext(ctx).Exec(`
+		INSERT INTO evidence_quarantines (
+		    team_id, fragment_id, ingest_id, owner_profile_id, reason
+		) VALUES (
+		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?
+		)
+	`, input.TeamID, fragmentID, ingestID, input.OwnerProfileID, strings.TrimSpace(reason)).Error
 }
 
 func loadV2CreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, ingestID string, existing bool) (*V2CreateIngestResult, error) {
 	result := V2CreateIngestResult{TeamID: teamID, IngestID: ingestID, Existing: existing}
-	if err := tx.WithContext(ctx).Raw(`
-		SELECT placement_run_id::text
+	row := tx.WithContext(ctx).Raw(`
+		SELECT placement_run_id::text, status
 		FROM placement_runs
 		WHERE team_id = ?::uuid
 		  AND ingest_id = ?::uuid
-	`, teamID, ingestID).Scan(&result.PlacementRunID).Error; err != nil {
+	`, teamID, ingestID).Row()
+	if err := row.Scan(&result.PlacementRunID, &result.Status); err != nil {
 		return nil, err
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT fragment_id::text, evidence_index, content_hash
-		FROM evidence_fragments
+			SELECT fragment_id::text, evidence_index, content_hash,
+			       COALESCE(source_id::text, ''), COALESCE(source_revision_id::text, '')
+			FROM evidence_fragments
+			WHERE team_id = ?::uuid
+			  AND ingest_id = ?::uuid
+			ORDER BY evidence_index ASC
+	`, teamID, ingestID).Rows()
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var item V2EvidenceFragment
+		if err := rows.Scan(&item.FragmentID, &item.EvidenceIndex, &item.ContentHash, &item.SourceID, &item.SourceRevisionID); err != nil {
+			return nil, err
+		}
+		result.Evidence = append(result.Evidence, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	itemRows, err := tx.WithContext(ctx).Raw(`
+		SELECT placement_item_id::text, fragment_id::text, evidence_index, status, category
+		FROM placement_items
 		WHERE team_id = ?::uuid
 		  AND ingest_id = ?::uuid
 		ORDER BY evidence_index ASC
@@ -640,142 +765,15 @@ func loadV2CreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, i
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var item V2EvidenceFragment
-		if err := rows.Scan(&item.FragmentID, &item.EvidenceIndex, &item.ContentHash); err != nil {
+	defer itemRows.Close()
+	for itemRows.Next() {
+		var item V2PlacementItem
+		if err := itemRows.Scan(&item.PlacementItemID, &item.FragmentID, &item.EvidenceIndex, &item.Status, &item.Category); err != nil {
 			return nil, err
 		}
-		result.Evidence = append(result.Evidence, item)
+		result.Items = append(result.Items, item)
 	}
-	return &result, rows.Err()
-}
-
-func normalizeV2AdvanceSourceRevisionInput(input V2AdvanceSourceRevisionInput) V2AdvanceSourceRevisionInput {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
-	input.SourceKey = strings.TrimSpace(input.SourceKey)
-	input.SourceKind = strings.TrimSpace(input.SourceKind)
-	if input.SourceKind == "" {
-		input.SourceKind = "conversation"
-	}
-	input.Authority = strings.TrimSpace(input.Authority)
-	if input.Authority == "" {
-		input.Authority = "primary"
-	}
-	input.RevisionToken = strings.TrimSpace(input.RevisionToken)
-	input.ExpectedPreviousRevisionToken = strings.TrimSpace(input.ExpectedPreviousRevisionToken)
-	input.ContentHash = strings.TrimSpace(input.ContentHash)
-	return input
-}
-
-func validateV2AdvanceSourceRevisionInput(input V2AdvanceSourceRevisionInput) error {
-	if _, err := uuid.Parse(input.TeamID); err != nil {
-		return fmt.Errorf("team_id is required: %w", err)
-	}
-	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
-		return fmt.Errorf("owner_profile_id is required: %w", err)
-	}
-	if input.SourceKey == "" {
-		return errors.New("source_key is required")
-	}
-	if input.RevisionToken == "" {
-		return errors.New("revision_token is required")
-	}
-	if input.ContentHash == "" {
-		return errors.New("content_hash is required")
-	}
-	return nil
-}
-
-func getOrCreateV2EvidenceSource(ctx context.Context, tx *gorm.DB, input V2AdvanceSourceRevisionInput) (string, string, string, error) {
-	var sourceID string
-	var currentRevisionID sql.NullString
-	var currentToken string
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT source_id::text, current_revision_id::text, current_revision_token
-		FROM evidence_sources
-		WHERE team_id = ?::uuid
-		  AND owner_profile_id = ?::uuid
-		  AND source_key = ?
-		LIMIT 1
-		FOR UPDATE
-	`, input.TeamID, input.OwnerProfileID, input.SourceKey).Rows()
-	if err != nil {
-		return "", "", "", err
-	}
-	if rows.Next() {
-		if err := rows.Scan(&sourceID, &currentRevisionID, &currentToken); err != nil {
-			_ = rows.Close()
-			return "", "", "", err
-		}
-		if err := rows.Close(); err != nil {
-			return "", "", "", err
-		}
-		return sourceID, currentRevisionID.String, currentToken, nil
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return "", "", "", err
-	}
-	if err := rows.Close(); err != nil {
-		return "", "", "", err
-	}
-	if input.ExpectedPreviousRevisionToken != "" {
-		return "", "", "", fmt.Errorf("%w: source does not exist", ErrV2SourceRevisionConflict)
-	}
-	metadata, err := marshalV2JSON(nil)
-	if err != nil {
-		return "", "", "", err
-	}
-	insertRows, err := tx.WithContext(ctx).Raw(`
-		INSERT INTO evidence_sources (
-		    team_id, owner_profile_id, source_key, source_kind, authority, metadata
-		) VALUES (
-		    ?::uuid, ?::uuid, ?, ?, ?, ?::jsonb
-		)
-		RETURNING source_id::text
-	`, input.TeamID, input.OwnerProfileID, input.SourceKey, input.SourceKind, input.Authority, string(metadata)).Rows()
-	if err != nil {
-		return "", "", "", err
-	}
-	defer insertRows.Close()
-	if !insertRows.Next() {
-		return "", "", "", sql.ErrNoRows
-	}
-	if err := insertRows.Scan(&sourceID); err != nil {
-		return "", "", "", err
-	}
-	return sourceID, "", "", insertRows.Err()
-}
-
-func insertV2SourceRevision(ctx context.Context, tx *gorm.DB, input V2AdvanceSourceRevisionInput, sourceID string, supersedesRevisionID string) (string, error) {
-	envelope, err := marshalV2JSON(input.Envelope)
-	if err != nil {
-		return "", err
-	}
-	rows, err := tx.WithContext(ctx).Raw(`
-		INSERT INTO evidence_source_revisions (
-		    team_id, source_id, owner_profile_id, revision_token,
-		    expected_previous_revision_token, supersedes_revision_id, content_hash, envelope
-		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?, ?, NULLIF(?, '')::uuid, ?, ?::jsonb
-		)
-		RETURNING source_revision_id::text
-	`, input.TeamID, sourceID, input.OwnerProfileID, input.RevisionToken,
-		input.ExpectedPreviousRevisionToken, supersedesRevisionID, input.ContentHash, string(envelope)).Rows()
-	if err != nil {
-		return "", err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		return "", sql.ErrNoRows
-	}
-	var revisionID string
-	if err := rows.Scan(&revisionID); err != nil {
-		return "", err
-	}
-	return revisionID, rows.Err()
+	return &result, itemRows.Err()
 }
 
 func normalizeV2SecurityEventInput(input V2SecurityEventInput) V2SecurityEventInput {

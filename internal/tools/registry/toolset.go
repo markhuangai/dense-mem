@@ -54,6 +54,7 @@ type Dependencies struct {
 	GraphQuery        graphquery.GraphQueryService
 	Context           contextservice.Service
 	Memory            memoryservice.Service
+	V2Remember        memoryservice.V2RememberService
 	SkillPack         skillpackservice.Service
 	Dreams            dreamservice.Service
 }
@@ -80,6 +81,18 @@ func BuildDefault(deps Dependencies) (Registry, error) {
 	for _, t := range defaultTools(deps) {
 		if err := r.Register(t); err != nil {
 			return nil, fmt.Errorf("registry: BuildDefault: %w", err)
+		}
+	}
+	return r, nil
+}
+
+// BuildV2UAT wires the dormant V2 executable test/UAT registry. It is separate
+// from BuildDefault so production V1 tool names are not replaced before cutover.
+func BuildV2UAT(deps Dependencies) (Registry, error) {
+	r := New()
+	for _, t := range v2UATTools(deps) {
+		if err := r.Register(t); err != nil {
+			return nil, fmt.Errorf("registry: BuildV2UAT: %w", err)
 		}
 	}
 	return r, nil

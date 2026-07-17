@@ -9,11 +9,13 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/ownership"
+	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
@@ -89,6 +91,9 @@ func (h *ToolExecuteHandler) Handle(c echo.Context) error {
 	}
 	if registry.IsEvaluationTool(tool.Name) && registry.HasTenantOverrideArgs(args) {
 		return httperr.New(httperr.VALIDATION_ERROR, "evaluation tools do not accept team_id or profile_id")
+	}
+	if tool.ContractVersion == domain.V2ContractVersion && registry.HasTenantOverrideArgs(args) {
+		return httperr.New(httperr.VALIDATION_ERROR, "V2 tools do not accept team_id or profile_id")
 	}
 	registry.StripTenantOverrideArgs(args)
 	args = registry.NormalizeInput(tool, args)
@@ -192,6 +197,8 @@ func mapToolExecuteError(err error) *httperr.APIError {
 		return httperr.New(httperr.NOT_FOUND, "tool not found")
 	case errors.Is(err, ownership.ErrOwnerMismatch):
 		return httperr.New(httperr.FORBIDDEN, "only the owner profile can modify this knowledge")
+	case errors.Is(err, repository.ErrV2IdempotencyConflict), errors.Is(err, repository.ErrV2SourceRevisionConflict):
+		return httperr.New(httperr.CONFLICT, "v2 remember conflict")
 	case errors.Is(err, claimservice.ErrSupportingFragmentMissing):
 		return httperr.New(httperr.ErrSupportingFragmentMissing, "supporting fragment missing or retracted")
 	case errors.Is(err, claimservice.ErrClaimNotFound):

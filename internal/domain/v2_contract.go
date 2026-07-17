@@ -119,10 +119,12 @@ const (
 type V2PlacementRunStatus string
 
 const (
-	V2PlacementRunQueued     V2PlacementRunStatus = "queued"
-	V2PlacementRunProcessing V2PlacementRunStatus = "processing"
-	V2PlacementRunCompleted  V2PlacementRunStatus = "completed"
-	V2PlacementRunFailed     V2PlacementRunStatus = "failed"
+	V2PlacementRunQueued      V2PlacementRunStatus = "queued"
+	V2PlacementRunGuarded     V2PlacementRunStatus = "guarded"
+	V2PlacementRunQuarantined V2PlacementRunStatus = "quarantined"
+	V2PlacementRunProcessing  V2PlacementRunStatus = "processing"
+	V2PlacementRunCompleted   V2PlacementRunStatus = "completed"
+	V2PlacementRunFailed      V2PlacementRunStatus = "failed"
 )
 
 type V2SearchProjectionState string
@@ -367,6 +369,8 @@ func V2ValueTypes() []string {
 func V2PlacementRunStatuses() []string {
 	return []string{
 		string(V2PlacementRunQueued),
+		string(V2PlacementRunGuarded),
+		string(V2PlacementRunQuarantined),
 		string(V2PlacementRunProcessing),
 		string(V2PlacementRunCompleted),
 		string(V2PlacementRunFailed),

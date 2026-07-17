@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/promptcatalog"
 	"github.com/markhuangai/dense-mem/internal/tools"
@@ -336,6 +337,9 @@ func (s *Server) handleToolsCall(ctx context.Context, raw json.RawMessage) (map[
 	}
 	if registry.IsEvaluationTool(tool.Name) && registry.HasTenantOverrideArgs(args) {
 		return nil, &rpcError{Code: errCodeInvalidParams, Message: "evaluation tools do not accept team_id or profile_id"}
+	}
+	if tool.ContractVersion == domain.V2ContractVersion && registry.HasTenantOverrideArgs(args) {
+		return nil, &rpcError{Code: errCodeInvalidParams, Message: "V2 tools do not accept team_id or profile_id"}
 	}
 	// Strip tenant IDs to prevent callers from overriding the fixed server
 	// team. The HTTP API derives scope from the bearer key; local registries

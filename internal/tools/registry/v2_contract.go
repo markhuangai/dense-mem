@@ -1,10 +1,12 @@
 package registry
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
 const (
@@ -145,6 +147,34 @@ func V2ContractTools() []Tool {
 	}
 }
 
+func v2UATTools(deps Dependencies) []Tool {
+	tools := V2ContractTools()
+	for i := range tools {
+		switch tools[i].Name {
+		case V2ToolRemember:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
+				if deps.V2Remember == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, tool.RequiredScopes); err != nil {
+					return nil, fmt.Errorf("remember: invalid input: %w", err)
+				}
+				var req memoryservice.V2RememberRequest
+				if err := remapInput(input, &req); err != nil {
+					return nil, fmt.Errorf("remember: invalid input: %w", err)
+				}
+				res, err := deps.V2Remember.RememberV2(ctx, req)
+				if err != nil {
+					return nil, err
+				}
+				return structToMap(res)
+			}
+		}
+	}
+	return tools
+}
+
 func v2ContractTool(
 	name string,
 	description string,
@@ -221,12 +251,16 @@ func ToolScopesSatisfied(tool Tool, scopes []string) bool {
 
 func validateV2Remember(args map[string]any) error {
 	evidence, _ := args["evidence"].([]any)
+	sourceRevisions := make(map[string]v2ContractSourceRevision)
 	for i, item := range evidence {
 		fields, ok := objectFields(item)
 		if !ok {
 			continue
 		}
 		if err := validateV2SourceRevisionFields(i, fields); err != nil {
+			return err
+		}
+		if err := validateV2SourceRevisionBatch(i, fields, sourceRevisions); err != nil {
 			return err
 		}
 	}
@@ -263,6 +297,36 @@ func validateV2SourceRevisionFields(index int, fields map[string]any) error {
 		)
 	}
 	return nil
+}
+
+type v2ContractSourceRevision struct {
+	Revision string
+	Previous string
+}
+
+func validateV2SourceRevisionBatch(index int, fields map[string]any, seen map[string]v2ContractSourceRevision) error {
+	sourceKey, _ := fields["source_key"].(string)
+	if sourceKey == "" {
+		return nil
+	}
+	current := v2ContractSourceRevision{
+		Revision: v2ContractStringField(fields, "source_revision"),
+		Previous: v2ContractStringField(fields, "previous_source_revision"),
+	}
+	previous, ok := seen[sourceKey]
+	if !ok {
+		seen[sourceKey] = current
+		return nil
+	}
+	if previous != current {
+		return fmt.Errorf("evidence[%d]: source_key %q revision fields must match earlier item in request", index, sourceKey)
+	}
+	return nil
+}
+
+func v2ContractStringField(fields map[string]any, key string) string {
+	value, _ := fields[key].(string)
+	return value
 }
 
 func validateV2UniqueStringArray(args map[string]any, field string) error {
