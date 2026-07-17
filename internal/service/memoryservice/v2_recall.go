@@ -114,13 +114,6 @@ func (s *v2RecallService) RecallV2(ctx context.Context, req V2RecallRequest) (*V
 		queryEmbedding = vector
 		degradation = vectorDegradation
 	}
-	if req.UseCommunities && degradation == nil {
-		degradation = &V2RecallDegradationResult{
-			Optional: true,
-			Code:     "community_recall_unavailable",
-			Message:  "community expansion is not available in the V2 recall path",
-		}
-	}
 	recalled, err := s.search.RecallEvidence(ctx, repository.V2RecallEvidenceInput{
 		TeamID:               actor.TeamID.String(),
 		ProfileKey:           s.profileKey,
@@ -132,9 +125,17 @@ func (s *v2RecallService) RecallV2(ctx context.Context, req V2RecallRequest) (*V
 		KnownEvidenceIDs:     req.KnownEvidenceIDs,
 		KnownRelationshipIDs: req.KnownRelationshipIDs,
 		ExpandFromEntityIDs:  req.ExpandFromEntityIDs,
+		UseCommunities:       req.UseCommunities,
 	})
 	if err != nil {
 		return nil, err
+	}
+	if degradation == nil && recalled.OptionalDegradation != nil {
+		degradation = &V2RecallDegradationResult{
+			Optional: true,
+			Code:     recalled.OptionalDegradation.Code,
+			Message:  recalled.OptionalDegradation.Message,
+		}
 	}
 	return v2RecallResultFromRepository(recalled, degradation), nil
 }

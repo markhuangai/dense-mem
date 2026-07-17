@@ -66,12 +66,30 @@ func (r *V2SearchRepositoryImpl) RecallEvidence(ctx context.Context, input V2Rec
 	addV2RecallBranch(acc, textHits, knownEvidence, 1)
 	addV2RecallBranch(acc, vectorHits, knownEvidence, 1)
 	addV2RecallBranch(acc, expansionHits, knownEvidence, 0.5)
+	var optionalDegradation *V2RecallOptionalDegradation
+	if input.UseCommunities && len(sortedV2RecallCandidates(acc)) < input.Limit {
+		var communityHits []V2SearchHit
+		err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+			var err error
+			communityHits, err = searchV2RecallCommunityExpansion(ctx, tx, input, profile, overfetch)
+			return err
+		})
+		if err != nil {
+			optionalDegradation = &V2RecallOptionalDegradation{
+				Code:    "community_recall_unavailable",
+				Message: "community expansion failed; primary evidence recall was used",
+			}
+		} else {
+			addV2RecallBranch(acc, communityHits, knownEvidence, 0.05)
+		}
+	}
 	candidates := sortedV2RecallCandidates(acc)
 	if len(candidates) == 0 {
 		return &V2RecallEvidenceResult{
-			TeamID:      input.TeamID,
-			SearchState: string(domain.V2SearchProjectionCurrent),
-			Results:     []V2RecallEvidenceHit{},
+			TeamID:              input.TeamID,
+			SearchState:         string(domain.V2SearchProjectionCurrent),
+			Results:             []V2RecallEvidenceHit{},
+			OptionalDegradation: optionalDegradation,
 		}, nil
 	}
 	candidateIDs := make([]string, 0, len(candidates))
@@ -106,9 +124,10 @@ func (r *V2SearchRepositoryImpl) RecallEvidence(ctx context.Context, input V2Rec
 		}
 	}
 	return &V2RecallEvidenceResult{
-		TeamID:      input.TeamID,
-		SearchState: searchState,
-		Results:     results,
+		TeamID:              input.TeamID,
+		SearchState:         searchState,
+		Results:             results,
+		OptionalDegradation: optionalDegradation,
 	}, nil
 }
 
@@ -258,6 +277,124 @@ func searchV2RecallEntityExpansion(
 		LIMIT ?
 	`, input.TeamID, profile.EmbeddingContractID, input.TeamID,
 		pq.Array(input.ExpandFromEntityIDs), pq.Array(input.ExpandFromEntityIDs),
+		input.ValidAt, input.ValidAt, input.ValidAt,
+		input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt,
+		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),
+		limit).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanV2SearchHits(rows)
+}
+
+func searchV2RecallCommunityExpansion(
+	ctx context.Context,
+	tx *gorm.DB,
+	input V2RecallEvidenceInput,
+	profile *V2SearchProfile,
+	limit int,
+) ([]V2SearchHit, error) {
+	rows, err := tx.WithContext(ctx).Raw(`
+		WITH matched_communities AS (
+			SELECT record.team_id, record.community_id
+			FROM community_records AS record
+			WHERE record.team_id = ?::uuid
+			  AND record.status = 'current'
+			  AND (
+			      (
+			          ? <> ''
+			          AND to_tsvector(
+			              'simple',
+			              concat_ws(' ', record.summary, array_to_string(record.top_entities, ' '), array_to_string(record.top_predicates, ' '))
+			          ) @@ plainto_tsquery('simple', ?)
+			      )
+			      OR (
+			          cardinality(?::uuid[]) > 0
+			          AND EXISTS (
+			              SELECT 1
+			              FROM community_memberships AS membership
+			              WHERE membership.team_id = record.team_id
+			                AND membership.community_id = record.community_id
+			                AND membership.entity_id = ANY(?::uuid[])
+			          )
+			      )
+			  )
+			ORDER BY record.member_count DESC, record.community_id ASC
+			LIMIT ?
+		),
+		latest_support_decision AS (
+			SELECT DISTINCT ON (team_id, support_id)
+			       team_id, support_id, decision
+			FROM relationship_support_decision_events
+			WHERE team_id = ?::uuid
+			ORDER BY team_id, support_id, created_at DESC, support_decision_id DESC
+		)
+		SELECT document.team_id::text,
+		       document.search_document_id::text,
+		       document.source_kind,
+		       document.source_id::text,
+		       document.source_version,
+		       document.document_version,
+		       document.embedding_contract_id::text,
+		       document.search_state,
+		       0::double precision AS distance,
+		       0::double precision AS text_rank
+		FROM matched_communities AS community
+		JOIN community_sources AS community_source
+		  ON community_source.team_id = community.team_id
+		 AND community_source.community_id = community.community_id
+		JOIN relationship_records AS relationship
+		  ON relationship.team_id = community_source.team_id
+		 AND relationship.relationship_id = community_source.relationship_id
+		 AND relationship.version = community_source.relationship_version
+		 AND relationship.status = 'active'
+		 AND relationship.tier IN ('validated_claim', 'fact')
+		 AND relationship.object_entity_id IS NOT NULL
+		JOIN relationship_evidence_supports AS support
+		  ON support.team_id = relationship.team_id
+		 AND support.relationship_id = relationship.relationship_id
+		JOIN latest_support_decision AS latest
+		  ON latest.team_id = support.team_id
+		 AND latest.support_id = support.support_id
+		 AND latest.decision IN ('grant', 'reinstate')
+		JOIN search_documents AS document
+		  ON document.team_id = support.team_id
+		 AND document.source_kind = 'evidence'
+		 AND document.source_id = support.fragment_id
+		 AND document.embedding_contract_id = ?::uuid
+		 AND document.search_state IN ('pending', 'current')
+		LEFT JOIN evidence_quarantines AS quarantine
+		  ON quarantine.team_id = support.team_id
+		 AND quarantine.fragment_id = support.fragment_id
+		 AND quarantine.status = 'active'
+		WHERE community.team_id = ?::uuid
+		  AND quarantine.quarantine_id IS NULL
+		  AND (
+		      ?::timestamptz IS NULL
+		      OR ((relationship.valid_from IS NULL OR relationship.valid_from <= ?::timestamptz)
+		          AND (relationship.valid_to IS NULL OR relationship.valid_to > ?::timestamptz))
+		  )
+		  AND (
+		      ?::timestamptz IS NULL
+		      OR (relationship.created_at <= ?::timestamptz
+		          AND support.created_at <= ?::timestamptz
+		          AND (relationship.recorded_to IS NULL OR relationship.recorded_to > ?::timestamptz))
+		  )
+		  AND (
+		      cardinality(?::uuid[]) = 0
+		      OR relationship.relationship_id <> ALL(?::uuid[])
+		  )
+		GROUP BY document.team_id, document.search_document_id, document.source_kind,
+		         document.source_id, document.source_version, document.document_version,
+		         document.embedding_contract_id, document.search_state
+		ORDER BY min(community_source.source_rank) ASC, document.search_document_id ASC
+		LIMIT ?
+	`, input.TeamID,
+		input.Query, input.Query,
+		pq.Array(input.ExpandFromEntityIDs), pq.Array(input.ExpandFromEntityIDs),
+		limit, input.TeamID,
+		profile.EmbeddingContractID, input.TeamID,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt,
 		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),

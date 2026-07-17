@@ -1,5 +1,6 @@
 // Package communityservice provides community detection over the knowledge
-// graph using the Neo4j Graph Data Science (GDS) plugin.
+// graph. The legacy v1 implementation uses the Neo4j Graph Data Science (GDS)
+// plugin; the V2 implementation persists bounded PostgreSQL snapshots.
 //
 // Profile isolation invariant: every method on every service interface in this
 // package receives profileID as an explicit parameter. Implementations MUST

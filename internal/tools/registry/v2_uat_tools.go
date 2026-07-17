@@ -4,7 +4,11 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
+
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
@@ -188,6 +192,32 @@ func v2UATTools(deps Dependencies) []Tool {
 					return nil, err
 				}
 				return structToMap(res)
+			}
+		case V2ToolListCommunities:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
+				if deps.V2Communities == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, tool.RequiredScopes); err != nil {
+					return nil, fmt.Errorf("list_communities: invalid input: %w", err)
+				}
+				actor, ok := requestctx.ActorProfileFromContext(ctx)
+				if !ok || actor.TeamID == uuid.Nil {
+					return nil, fmt.Errorf("list_communities: authenticated actor context is required")
+				}
+				limit := 0
+				if value, ok := input["limit"].(float64); ok {
+					limit = int(value)
+				}
+				communities, err := deps.V2Communities.ListV2Communities(ctx, repository.V2CommunityListInput{
+					TeamID: actor.TeamID.String(),
+					Limit:  limit,
+				})
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{"communities": communities}, nil
 			}
 		}
 	}

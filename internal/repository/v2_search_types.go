@@ -195,12 +195,19 @@ type V2RecallEvidenceInput struct {
 	KnownEvidenceIDs     []string
 	KnownRelationshipIDs []string
 	ExpandFromEntityIDs  []string
+	UseCommunities       bool
 }
 
 type V2RecallEvidenceResult struct {
-	TeamID      string
-	SearchState string
-	Results     []V2RecallEvidenceHit
+	TeamID              string
+	SearchState         string
+	Results             []V2RecallEvidenceHit
+	OptionalDegradation *V2RecallOptionalDegradation
+}
+
+type V2RecallOptionalDegradation struct {
+	Code    string
+	Message string
 }
 
 type V2RecallEvidenceHit struct {

@@ -495,6 +495,7 @@ func main() {
 		Context:              contextSvc,
 		Memory:               memorySvc,
 		V2Evaluation:         v2SemanticRepo,
+		V2Communities:        v2SemanticRepo,
 		SkillPack:            skillPackSvc,
 		Dreams:               dreamSvc,
 	})

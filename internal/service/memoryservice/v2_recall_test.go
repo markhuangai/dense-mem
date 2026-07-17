@@ -162,7 +162,7 @@ func TestV2RecallProviderMalformedBranchesAreOptionalDegradation(t *testing.T) {
 	}
 }
 
-func TestV2RecallCommunityDegradationAndIDNormalization(t *testing.T) {
+func TestV2RecallPassesCommunityFlagAndNormalizesIDs(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
 	keyID := uuid.New()
@@ -192,12 +192,45 @@ func TestV2RecallCommunityDegradationAndIDNormalization(t *testing.T) {
 		ExpandFromEntityIDs:  []string{entityID, entityID},
 	})
 	require.NoError(t, err)
-	require.NotNil(t, result.Degradation)
-	require.Equal(t, "community_recall_unavailable", result.Degradation.Code)
+	require.Nil(t, result.Degradation)
+	require.True(t, search.input.UseCommunities)
 	require.Equal(t, []string{evidenceID}, search.input.KnownEvidenceIDs)
 	require.Equal(t, []string{relationshipID}, search.input.KnownRelationshipIDs)
 	require.Equal(t, []string{entityID}, search.input.ExpandFromEntityIDs)
 	require.Empty(t, search.input.Query)
+}
+
+func TestV2RecallReportsRepositoryOptionalDegradation(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	search := &v2RecallSearchStub{
+		profile: &repository.V2SearchProfile{
+			ProfileKey:          "default",
+			EmbeddingContractID: uuid.NewString(),
+			EmbeddingDimensions: 3,
+			EmbeddingModel:      "test-model",
+		},
+		result: &repository.V2RecallEvidenceResult{
+			SearchState: string(domain.V2SearchProjectionCurrent),
+			Results:     []repository.V2RecallEvidenceHit{},
+			OptionalDegradation: &repository.V2RecallOptionalDegradation{
+				Code:    "community_recall_unavailable",
+				Message: "community expansion failed; primary evidence recall was used",
+			},
+		},
+	}
+	svc := NewV2RecallService(V2RecallDependencies{Search: search})
+
+	result, err := svc.RecallV2(authenticatedV2RememberContext(teamID, profileID, keyID), V2RecallRequest{
+		ContractVersion:     domain.V2ContractVersion,
+		ExpandFromEntityIDs: []string{uuid.NewString()},
+		UseCommunities:      true,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result.Degradation)
+	require.True(t, result.Degradation.Optional)
+	require.Equal(t, "community_recall_unavailable", result.Degradation.Code)
 }
 
 func TestV2RecallRequiresAuthenticatedActor(t *testing.T) {
