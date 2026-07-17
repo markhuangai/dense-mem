@@ -64,4 +64,12 @@ func TestV2ContractOpenAPIDerivesSchemasFromRegistry(t *testing.T) {
 	if got := reqSchema["$ref"]; got != "#/components/schemas/"+rememberInput {
 		t.Fatalf("remember request ref = %v", got)
 	}
+
+	toolCatalogEntry := schemas["ToolCatalogEntry"].(map[string]any)
+	toolCatalogProps := toolCatalogEntry["properties"].(map[string]any)
+	for _, field := range []string{"contract_version", "feature_gate", "visibility"} {
+		if _, ok := toolCatalogProps[field]; !ok {
+			t.Fatalf("ToolCatalogEntry schema missing %s", field)
+		}
+	}
 }

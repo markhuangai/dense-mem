@@ -337,13 +337,19 @@ func (s *Server) handleToolsCall(ctx context.Context, raw json.RawMessage) (map[
 	if registry.IsEvaluationTool(tool.Name) && registry.HasTenantOverrideArgs(args) {
 		return nil, &rpcError{Code: errCodeInvalidParams, Message: "evaluation tools do not accept team_id or profile_id"}
 	}
-	// Strip tenant IDs to prevent callers from overriding the fixed server
-	// team. The HTTP API derives scope from the bearer key; local registries
-	// may still receive a construction-time team for tests.
-	registry.StripTenantOverrideArgs(args)
-	args = registry.NormalizeInput(tool, args)
-	if err := registry.ValidateInput(tool, args); err != nil {
-		return nil, &rpcError{Code: errCodeInvalidParams, Message: err.Error()}
+	if registry.IsV2ContractTool(tool) {
+		if err := registry.ValidateV2ContractInput(tool, args, s.validationScopes(tool)); err != nil {
+			return nil, &rpcError{Code: errCodeInvalidParams, Message: err.Error()}
+		}
+	} else {
+		// Strip tenant IDs to prevent callers from overriding the fixed server
+		// team. The HTTP API derives scope from the bearer key; local registries
+		// may still receive a construction-time team for tests.
+		registry.StripTenantOverrideArgs(args)
+		args = registry.NormalizeInput(tool, args)
+		if err := registry.ValidateInput(tool, args); err != nil {
+			return nil, &rpcError{Code: errCodeInvalidParams, Message: err.Error()}
+		}
 	}
 	result, err := tool.Invoke(ctx, s.profileID, args)
 	if err != nil {
@@ -386,6 +392,13 @@ func (s *Server) canUseTool(tool registry.Tool) bool {
 		}
 	}
 	return true
+}
+
+func (s *Server) validationScopes(tool registry.Tool) []string {
+	if s.scopes != nil {
+		return s.scopes
+	}
+	return tool.RequiredScopes
 }
 
 func (s *Server) serverName() string {
