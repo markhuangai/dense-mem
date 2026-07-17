@@ -1,6 +1,7 @@
 package evalharness
 
 import (
+	"math"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -124,6 +125,80 @@ func TestReleaseGatePolicyValidation(t *testing.T) {
 	policy.BaselineSummary.ScoredCaseCount = 1
 	if err := validateReleaseGatePolicy(policy); err == nil || !strings.Contains(err.Error(), "baseline scored_case_count") {
 		t.Fatalf("baseline count validation err = %v", err)
+	}
+}
+
+func TestReleaseGatePolicyRequiresBaselineStrengthThresholds(t *testing.T) {
+	policy := releaseGateTestPolicy()
+	if err := validateReleaseGatePolicy(policy); err != nil {
+		t.Fatalf("baseline policy validation: %v", err)
+	}
+
+	stronger := releaseGateTestPolicy()
+	stronger.Minimums.AverageRecallAtK = 0.91
+	if err := validateReleaseGatePolicy(stronger); err != nil {
+		t.Fatalf("stronger minimum rejected: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		edit func(*ReleaseGatePolicy)
+		want string
+	}{
+		{
+			name: "omitted minimum decodes weaker than baseline",
+			edit: func(policy *ReleaseGatePolicy) {
+				policy.Minimums.AverageMRR = 0
+			},
+			want: "average_mrr minimum",
+		},
+		{
+			name: "weaker minimum",
+			edit: func(policy *ReleaseGatePolicy) {
+				policy.Minimums.AverageRecallAtK = 0.89
+			},
+			want: "average_recall_at_k minimum",
+		},
+		{
+			name: "non finite minimum",
+			edit: func(policy *ReleaseGatePolicy) {
+				policy.Minimums.AverageNDCGAtK = math.NaN()
+			},
+			want: "average_ndcg_at_k minimum",
+		},
+		{
+			name: "out of range minimum",
+			edit: func(policy *ReleaseGatePolicy) {
+				policy.Minimums.RequiredRank1Rate = 1.01
+			},
+			want: "required_rank1_rate minimum",
+		},
+		{
+			name: "weaker maximum",
+			edit: func(policy *ReleaseGatePolicy) {
+				policy.BaselineSummary.AverageBadAtK = 0.01
+				policy.Maximums.AverageBadAtK = 0.02
+			},
+			want: "average_bad_at_k maximum",
+		},
+		{
+			name: "weaker unmapped maximum",
+			edit: func(policy *ReleaseGatePolicy) {
+				policy.BaselineSummary.UnmappedSourceRefs = 1
+				policy.Maximums.UnmappedSourceRefs = 2
+			},
+			want: "unmapped_source_refs maximum",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			policy := releaseGateTestPolicy()
+			tc.edit(&policy)
+			err := validateReleaseGatePolicy(policy)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validateReleaseGatePolicy err = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
