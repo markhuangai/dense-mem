@@ -429,6 +429,7 @@ validate_release_gate_seed() {
 
 prepare_identity() {
   SUITE_HASH="$(sha256sum "${SUITE}" | awk '{print $1}')"
+  RUNNER_HASH="$(sha256sum "${RUNNER}" | awk '{print $1}')"
   if [[ -n "${RELEASE_GATE_POLICY}" ]]; then
     RELEASE_GATE_POLICY_HASH="$(sha256sum "${RELEASE_GATE_POLICY}" | awk '{print "sha256:" $1}')"
   fi
@@ -438,7 +439,7 @@ prepare_identity() {
     EMBEDDING_DIMENSIONS="1536"
   fi
   EMBEDDING_ENDPOINT_HASH="$(printf '%s' "${AI_API_URL:-}" | sha256sum | awk '{print $1}')"
-  export SEED_HASH SUITE_HASH RELEASE_GATE_POLICY_HASH
+  export SEED_HASH SUITE_HASH RELEASE_GATE_POLICY_HASH RUNNER_HASH
 
   local candidate="${MONITOR_DIR}/requested_dataset_identity.json"
   jq -n \
