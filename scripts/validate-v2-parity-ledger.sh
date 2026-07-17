@@ -11,6 +11,7 @@ BASE_SHA="4293ba460c5f24ae9123c6d141e17c34abe582a1"
 HEAD_SHA="54b0fa5a6a4f38ac70f27bd36ce8a9993e8493e8"
 DEFAULT_LEDGER="docs/v2/pr71-parity-ledger.tsv"
 DEFAULT_MANIFEST="docs/v2/pr71-path-manifest.txt"
+DEFAULT_WIKI_GAP_MANIFEST="docs/v2/wiki-gap-manifest.txt"
 
 usage() {
 	printf 'usage: %s [--self-test] [ledger-path]\n' "$0" >&2
@@ -20,6 +21,8 @@ validate_ledger() {
 	local ledger="$1"
 	local expected
 	local actual
+	local expected_wiki_gaps
+	local actual_wiki_gaps
 
 	if [[ ! -f "${ledger}" ]]; then
 		printf 'missing parity ledger: %s\n' "${ledger}" >&2
@@ -30,13 +33,20 @@ validate_ledger() {
 		printf 'missing PR #71 path manifest: %s\n' "${DEFAULT_MANIFEST}" >&2
 		return 1
 	fi
+	if [[ ! -f "${DEFAULT_WIKI_GAP_MANIFEST}" ]]; then
+		printf 'missing wiki-gap manifest: %s\n' "${DEFAULT_WIKI_GAP_MANIFEST}" >&2
+		return 1
+	fi
 
 	expected="$(mktemp "${TMP_DIR}/expected.XXXXXX")"
 	actual="$(mktemp "${TMP_DIR}/actual.XXXXXX")"
+	expected_wiki_gaps="$(mktemp "${TMP_DIR}/expected-wiki-gaps.XXXXXX")"
+	actual_wiki_gaps="$(mktemp "${TMP_DIR}/actual-wiki-gaps.XXXXXX")"
 
 	sort "${DEFAULT_MANIFEST}" > "${expected}"
+	sort "${DEFAULT_WIKI_GAP_MANIFEST}" > "${expected_wiki_gaps}"
 
-	awk -F '\t' -v actual="${actual}" '
+	awk -F '\t' -v actual="${actual}" -v actual_wiki_gaps="${actual_wiki_gaps}" '
 		BEGIN {
 			expected_header = "source\tpath\tdisposition\towner_issue\twiki_invariant\tverification\trationale"
 			disposition["retain"] = 1
@@ -93,10 +103,11 @@ validate_ledger() {
 			if (source == "pr71") {
 				print path > actual
 				pr71_count++
-			} else if (source == "wiki-gap") {
-				wiki_gap_count++
-				if (disp != "add" && disp != "replace") {
-					printf("line %d wiki-gap disposition must be add or replace\n", NR) > "/dev/stderr"
+				} else if (source == "wiki-gap") {
+					print path > actual_wiki_gaps
+					wiki_gap_count++
+					if (disp != "add" && disp != "replace") {
+						printf("line %d wiki-gap disposition must be add or replace\n", NR) > "/dev/stderr"
 					bad = 1
 				}
 			} else {
@@ -109,10 +120,10 @@ validate_ledger() {
 				printf("expected 189 pr71 rows, got %d\n", pr71_count) > "/dev/stderr"
 				bad = 1
 			}
-			if (wiki_gap_count < 8) {
-				printf("expected at least 8 wiki-gap rows, got %d\n", wiki_gap_count) > "/dev/stderr"
-				bad = 1
-			}
+				if (wiki_gap_count != 10) {
+					printf("expected 10 wiki-gap rows, got %d\n", wiki_gap_count) > "/dev/stderr"
+					bad = 1
+				}
 			exit bad ? 1 : 0
 		}
 	' "${ledger}"
@@ -120,6 +131,11 @@ validate_ledger() {
 	sort -o "${actual}" "${actual}"
 	if ! diff -u "${expected}" "${actual}"; then
 		printf 'ledger PR #71 paths do not match %s generated from %s..%s\n' "${DEFAULT_MANIFEST}" "${BASE_SHA}" "${HEAD_SHA}" >&2
+		return 1
+	fi
+	sort -o "${actual_wiki_gaps}" "${actual_wiki_gaps}"
+	if ! diff -u "${expected_wiki_gaps}" "${actual_wiki_gaps}"; then
+		printf 'ledger wiki-gap identities do not match %s\n' "${DEFAULT_WIKI_GAP_MANIFEST}" >&2
 		return 1
 	fi
 }
@@ -135,6 +151,13 @@ self_test() {
 
 	if validate_ledger "${bad_ledger}" >/dev/null 2>&1; then
 		printf 'negative validation unexpectedly passed\n' >&2
+		return 1
+	fi
+
+	bad_ledger="$(mktemp "${TMP_DIR}/bad-wiki-gap-ledger.XXXXXX")"
+	awk -F '\t' 'BEGIN { OFS = "\t" } NR == 1 { print; next } $1 == "wiki-gap" && !dropped { dropped = 1; next } { print }' "${ledger}" > "${bad_ledger}"
+	if validate_ledger "${bad_ledger}" >/dev/null 2>&1; then
+		printf 'wiki-gap negative validation unexpectedly passed\n' >&2
 		return 1
 	fi
 
