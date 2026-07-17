@@ -279,6 +279,55 @@ func TestToolExecuteHandler_RejectsTenantFieldsForEvaluationTools(t *testing.T) 
 	assert.Contains(t, apiErr.Message, "evaluation tools do not accept team_id or profile_id")
 }
 
+func TestToolExecuteHandler_RejectsTenantFieldsForV2ContractTools(t *testing.T) {
+	reg := registry.New()
+	called := false
+	tool := registry.V2ContractTools()[0]
+	tool.Visibility = "active"
+	tool.Invoke = func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+		called = true
+		return map[string]any{"ok": true}, nil
+	}
+	require.NoError(t, reg.Register(tool))
+
+	h := NewToolExecuteHandler(reg)
+	e := newTestEcho()
+	profileID := uuid.New()
+
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			ctx := middleware.SetResolvedProfileIDForTest(c.Request().Context(), profileID)
+			ctx = middleware.SetPrincipalForTest(ctx, &middleware.Principal{
+				KeyID:  uuid.New(),
+				Role:   "user",
+				Scopes: []string{"write"},
+			})
+			c.SetRequest(c.Request().WithContext(ctx))
+			return next(c)
+		}
+	})
+	e.POST("/api/v1/tools/:name", h.Handle)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/tools/remember",
+		strings.NewReader(`{"contract_version":"dense-mem.v2.1","team_id":"forged","evidence":[{"content":"hello"}]}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Profile-ID", profileID.String())
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.False(t, called, "V2 tool must not run when tenant selectors are present")
+
+	var apiErr httperr.APIError
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &apiErr))
+	assert.Equal(t, httperr.VALIDATION_ERROR, apiErr.Code)
+	assert.Contains(t, apiErr.Message, "team_id and profile_id are not accepted")
+}
+
 func TestToolExecuteHandler_ProtectsRecallFeedbackEventToolsWithFeedbackScope(t *testing.T) {
 	reg := registry.New()
 	called := false
