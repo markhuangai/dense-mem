@@ -89,6 +89,9 @@ func main() {
 	if err := cfg.ValidateServerStartup(); err != nil {
 		log.Fatalf("invalid startup config: %v", err)
 	}
+	if err := cfg.ValidateV2DormantStartup(); err != nil {
+		log.Fatalf("invalid v2 startup config: %v", err)
+	}
 
 	// Create logger
 	level := slog.LevelInfo
@@ -112,6 +115,11 @@ func main() {
 		log.Fatalf("failed to connect to postgres: %v", err)
 	}
 	defer pgDB.Close()
+	if cfg.IsV2BootEnabled() {
+		if err := postgres.ValidateSinglePrimaryTopology(startupCtx, pgDB.GetDB()); err != nil {
+			log.Fatalf("unsupported postgres topology for v2 dormant bootstrap: %v", err)
+		}
+	}
 
 	logger.Info("running postgres migrations")
 	if err := postgres.RunUp(startupCtx, pgDB.GetDB()); err != nil {
@@ -158,6 +166,10 @@ func main() {
 		log.Fatalf("failed to build backend: %v", err)
 	}
 	defer backend.closeFn()
+	v2Bootstrap := buildDormantV2Bootstrap(cfg, pgDB.GetDB())
+	if v2Bootstrap.Enabled {
+		logger.Info("v2 dormant bootstrap enabled", observability.String("mode", v2Bootstrap.Mode))
+	}
 
 	// Emit warning if running in degraded (in-memory) mode
 	logInMemoryModeWarning(logger, backend.degraded, backend.reason)
@@ -490,6 +502,7 @@ func main() {
 			Check: backend.redisPingFn,
 		})
 	}
+	checks = append(checks, v2Bootstrap.HealthChecks()...)
 
 	// ========================================
 	// Create Echo server

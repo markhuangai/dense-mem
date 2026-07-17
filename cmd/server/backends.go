@@ -32,6 +32,9 @@ func buildBackendBundle(ctx context.Context, cfg config.Config) (*backendBundle,
 	if cfg.RedisAddr != "" {
 		return buildRedisBackend(ctx, cfg)
 	}
+	if cfg.GetDistributedCoordinationRequired() {
+		return nil, fmt.Errorf("distributed coordination requires REDIS_ADDR")
+	}
 	return buildInMemoryBackend(cfg)
 }
 

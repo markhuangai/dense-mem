@@ -343,6 +343,9 @@ func controlDependencySnapshot(ctx context.Context, health HealthConfig) []contr
 		var message *string
 		if err != nil {
 			status = "error"
+			if check.Optional {
+				status = "degraded"
+			}
 			text := err.Error()
 			message = &text
 		}

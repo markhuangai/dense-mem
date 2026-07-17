@@ -49,6 +49,12 @@ type ConfigProvider interface {
 	GetPostgresDSN() string
 }
 
+type poolConfigProvider interface {
+	GetPostgresMaxOpenConns() int
+	GetPostgresMaxIdleConns() int
+	GetPostgresConnMaxLifetimeSeconds() int
+}
+
 // Open creates a new GORM/Postgres connection with configured pool settings.
 // Returns an error if the connection cannot be established or ping fails.
 func Open(ctx context.Context, cfg ConfigProvider) (*gorm.DB, error) {
@@ -62,19 +68,28 @@ func Open(ctx context.Context, cfg ConfigProvider) (*gorm.DB, error) {
 		return nil, fmt.Errorf("failed to open postgres connection: %w", err)
 	}
 
-	// Configure connection pool
 	sqlDB, err := db.DB()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", err)
 	}
 
-	// Set pool configuration exactly as specified:
-	// - MaxOpenConns: 25
-	// - MaxIdleConns: 5
-	// - ConnMaxLifetime: 30 minutes
-	sqlDB.SetMaxOpenConns(25)
-	sqlDB.SetMaxIdleConns(5)
-	sqlDB.SetConnMaxLifetime(30 * time.Minute)
+	maxOpenConns := 25
+	maxIdleConns := 10
+	connMaxLifetime := 30 * time.Minute
+	if poolCfg, ok := cfg.(poolConfigProvider); ok {
+		if value := poolCfg.GetPostgresMaxOpenConns(); value > 0 {
+			maxOpenConns = value
+		}
+		if value := poolCfg.GetPostgresMaxIdleConns(); value > 0 {
+			maxIdleConns = value
+		}
+		if value := poolCfg.GetPostgresConnMaxLifetimeSeconds(); value > 0 {
+			connMaxLifetime = time.Duration(value) * time.Second
+		}
+	}
+	sqlDB.SetMaxOpenConns(maxOpenConns)
+	sqlDB.SetMaxIdleConns(maxIdleConns)
+	sqlDB.SetConnMaxLifetime(connMaxLifetime)
 
 	// Ping with 5-second timeout
 	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
