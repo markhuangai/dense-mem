@@ -1,0 +1,70 @@
+# V2 Search Storage Migration 2026071703
+
+## Scope
+
+Adds dormant V2 PostgreSQL search storage:
+
+- `embedding_contracts`, `search_index_profiles`, and `ranking_profiles`
+- tenant-owned `search_documents` and `embedding_jobs`
+- full-text GIN index on generated `search_tsv`
+- default `halfvec(1536)` HNSW expression index for the seeded active profile
+- RLS policies for team-scoped search documents and embedding jobs
+
+The migration installs `pgvector` with `CREATE EXTENSION IF NOT EXISTS vector`.
+It does not route active v1 recall, placement, or worker execution through the
+new tables.
+
+## Lock, WAL, And Disk Notes
+
+The migration creates new empty tables and indexes. On a fresh V2 rollout this
+does not rewrite existing V1 knowledge rows. The default HNSW index is created
+normally, not concurrently, because the table is new and empty at migration
+time.
+
+Future rebuilds on populated tables must use a durable operator workflow:
+
+- capacity preflight for disk, memory, WAL, and replica lag
+- topology-specific `CREATE INDEX CONCURRENTLY` or shard-local build steps
+- progress and invalid-index cleanup checks
+- activation only after every required physical index is present
+
+HNSW indexes are rebuildable search structures. They are not semantic truth and
+can be dropped/rebuilt without losing knowledge, provided the old active profile
+remains in place until readiness passes.
+
+## Readiness
+
+Runtime readiness must check:
+
+- `pgvector` extension exists
+- active embedding contract dimensions match stored/query vectors
+- active HNSW profile has its named physical index present
+- exact search is allowed only by a profile that explicitly chooses exact or a
+  bounded fallback
+
+Missing profile/index state is non-ready with a typed reason; the repository
+must not silently fall back to an unbounded vector scan.
+
+## Rollback
+
+Down migration drops the dormant search tables and profile metadata. It does not
+drop the `vector` extension because the extension may be used by other database
+objects or later migrations.
+
+Rollback loses only derived V2 search documents, queued embedding work, and
+profile metadata. Authoritative evidence, semantic state, and lifecycle history
+remain in earlier V2 ledger tables.
+
+## Verification
+
+Run against PostgreSQL with pgvector installed:
+
+```bash
+DATABASE_URL="postgres://testuser:testpass@127.0.0.1:55433/testdb?sslmode=disable" \
+  go test -tags integration ./internal/storage/postgres \
+  -run 'TestMigratorRunUp|TestMigratorRunDown' -count=1
+
+DATABASE_URL="postgres://testuser:testpass@127.0.0.1:55433/testdb?sslmode=disable" \
+  go test ./internal/repository \
+  -run 'TestV2Ledger|TestV2Semantic|TestV2Search' -count=1
+```

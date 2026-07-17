@@ -92,6 +92,8 @@ func v2LedgerAppDSN(t *testing.T, dsn string) string {
 func truncateV2LedgerFixtures(tx *gorm.DB) error {
 	return tx.Exec(`
 		TRUNCATE
+			embedding_jobs,
+			search_documents,
 			hypotheses,
 			review_tasks,
 			relationship_cross_references,

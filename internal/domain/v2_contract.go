@@ -128,10 +128,48 @@ const (
 type V2SearchProjectionState string
 
 const (
-	V2SearchProjectionPending V2SearchProjectionState = "pending"
-	V2SearchProjectionCurrent V2SearchProjectionState = "current"
-	V2SearchProjectionStale   V2SearchProjectionState = "stale"
-	V2SearchProjectionFailed  V2SearchProjectionState = "failed"
+	V2SearchProjectionNotRequired V2SearchProjectionState = "not_required"
+	V2SearchProjectionPending     V2SearchProjectionState = "pending"
+	V2SearchProjectionCurrent     V2SearchProjectionState = "current"
+	V2SearchProjectionStale       V2SearchProjectionState = "stale"
+	V2SearchProjectionFailed      V2SearchProjectionState = "failed"
+)
+
+type V2SearchProfileState string
+
+const (
+	V2SearchProfileBuilding   V2SearchProfileState = "building"
+	V2SearchProfileActive     V2SearchProfileState = "active"
+	V2SearchProfileFailed     V2SearchProfileState = "failed"
+	V2SearchProfileDeprecated V2SearchProfileState = "deprecated"
+	V2SearchProfileRetired    V2SearchProfileState = "retired"
+)
+
+type V2VectorDistanceMetric string
+
+const (
+	V2VectorDistanceCosine V2VectorDistanceMetric = "cosine"
+	V2VectorDistanceL2     V2VectorDistanceMetric = "l2"
+	V2VectorDistanceInner  V2VectorDistanceMetric = "inner_product"
+)
+
+type V2VectorIndexStrategy string
+
+const (
+	V2VectorIndexExact       V2VectorIndexStrategy = "exact"
+	V2VectorIndexVectorHNSW  V2VectorIndexStrategy = "vector_hnsw"
+	V2VectorIndexHalfvecHNSW V2VectorIndexStrategy = "halfvec_hnsw"
+)
+
+type V2EmbeddingJobStatus string
+
+const (
+	V2EmbeddingJobQueued     V2EmbeddingJobStatus = "queued"
+	V2EmbeddingJobProcessing V2EmbeddingJobStatus = "processing"
+	V2EmbeddingJobCompleted  V2EmbeddingJobStatus = "completed"
+	V2EmbeddingJobFailed     V2EmbeddingJobStatus = "failed"
+	V2EmbeddingJobStale      V2EmbeddingJobStatus = "stale"
+	V2EmbeddingJobCancelled  V2EmbeddingJobStatus = "cancelled"
 )
 
 type V2EvidenceItemCategory string
@@ -337,9 +375,47 @@ func V2PlacementRunStatuses() []string {
 
 func V2SearchProjectionStates() []string {
 	return []string{
+		string(V2SearchProjectionNotRequired),
 		string(V2SearchProjectionPending),
 		string(V2SearchProjectionCurrent),
 		string(V2SearchProjectionStale),
 		string(V2SearchProjectionFailed),
+	}
+}
+
+func V2SearchProfileStates() []string {
+	return []string{
+		string(V2SearchProfileBuilding),
+		string(V2SearchProfileActive),
+		string(V2SearchProfileFailed),
+		string(V2SearchProfileDeprecated),
+		string(V2SearchProfileRetired),
+	}
+}
+
+func V2VectorDistanceMetrics() []string {
+	return []string{
+		string(V2VectorDistanceCosine),
+		string(V2VectorDistanceL2),
+		string(V2VectorDistanceInner),
+	}
+}
+
+func V2VectorIndexStrategies() []string {
+	return []string{
+		string(V2VectorIndexExact),
+		string(V2VectorIndexVectorHNSW),
+		string(V2VectorIndexHalfvecHNSW),
+	}
+}
+
+func V2EmbeddingJobStatuses() []string {
+	return []string{
+		string(V2EmbeddingJobQueued),
+		string(V2EmbeddingJobProcessing),
+		string(V2EmbeddingJobCompleted),
+		string(V2EmbeddingJobFailed),
+		string(V2EmbeddingJobStale),
+		string(V2EmbeddingJobCancelled),
 	}
 }

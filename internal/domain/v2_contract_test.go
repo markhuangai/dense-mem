@@ -66,4 +66,24 @@ func TestV2ContractEnums(t *testing.T) {
 			t.Fatalf("V2CrossReferenceKinds missing %s", kind)
 		}
 	}
+	for _, state := range []string{"not_required", "pending", "current", "stale", "failed"} {
+		if !slices.Contains(V2SearchProjectionStates(), state) {
+			t.Fatalf("V2SearchProjectionStates missing %s", state)
+		}
+	}
+	for _, state := range []string{"building", "active", "failed", "deprecated", "retired"} {
+		if !slices.Contains(V2SearchProfileStates(), state) {
+			t.Fatalf("V2SearchProfileStates missing %s", state)
+		}
+	}
+	for _, strategy := range []string{"exact", "vector_hnsw", "halfvec_hnsw"} {
+		if !slices.Contains(V2VectorIndexStrategies(), strategy) {
+			t.Fatalf("V2VectorIndexStrategies missing %s", strategy)
+		}
+	}
+	for _, status := range []string{"queued", "processing", "completed", "failed", "stale", "cancelled"} {
+		if !slices.Contains(V2EmbeddingJobStatuses(), status) {
+			t.Fatalf("V2EmbeddingJobStatuses missing %s", status)
+		}
+	}
 }

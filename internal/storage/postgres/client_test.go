@@ -35,7 +35,7 @@ func getTestDSN(ctx context.Context) (string, func(), error) {
 
 	// Try to start a test container
 	container, err := postgres.Run(ctx,
-		"postgres:18-alpine",
+		"pgvector/pgvector:pg18",
 		postgres.WithDatabase("testdb"),
 		postgres.WithUsername("testuser"),
 		postgres.WithPassword("testpass"),
