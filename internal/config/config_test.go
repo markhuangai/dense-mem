@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -131,6 +132,22 @@ func clearEnv() {
 }
 
 func TestConfigJSONExcludesAPICredentials(t *testing.T) {
+	configType := reflect.TypeOf(Config{})
+	for _, fieldName := range []string{
+		"AIAPIKey",
+		"AIVerifierAPIKey",
+		"ControlPortalToken",
+		"TelemetryScrapeToken",
+	} {
+		field, ok := configType.FieldByName(fieldName)
+		if !ok {
+			t.Fatalf("Config missing credential field %q", fieldName)
+		}
+		if got := field.Tag.Get("json"); got != "-" {
+			t.Fatalf("Config.%s json tag = %q, want %q", fieldName, got, "-")
+		}
+	}
+
 	cfg := Config{
 		AIAPIKey:             "ai-api-secret",
 		AIVerifierAPIKey:     "verifier-secret",
