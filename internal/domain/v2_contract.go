@@ -6,6 +6,17 @@ const (
 	V2ToolVisibility  = "dormant"
 )
 
+type V2IngestID string
+type V2PlacementItemID string
+type V2EvidenceID string
+type V2ObservationID string
+type V2EntityID string
+type V2ValueID string
+type V2RelationshipID string
+type V2HypothesisID string
+type V2CommunityID string
+type V2MemoryPackID string
+
 type V2SemanticNodeKind string
 
 const (
@@ -119,12 +130,13 @@ const (
 type V2PlacementRunStatus string
 
 const (
-	V2PlacementRunQueued      V2PlacementRunStatus = "queued"
-	V2PlacementRunGuarded     V2PlacementRunStatus = "guarded"
-	V2PlacementRunQuarantined V2PlacementRunStatus = "quarantined"
-	V2PlacementRunProcessing  V2PlacementRunStatus = "processing"
-	V2PlacementRunCompleted   V2PlacementRunStatus = "completed"
-	V2PlacementRunFailed      V2PlacementRunStatus = "failed"
+	V2PlacementRunQueued         V2PlacementRunStatus = "queued"
+	V2PlacementRunGuarded        V2PlacementRunStatus = "guarded"
+	V2PlacementRunQuarantined    V2PlacementRunStatus = "quarantined"
+	V2PlacementRunProcessing     V2PlacementRunStatus = "processing"
+	V2PlacementRunAwaitingReview V2PlacementRunStatus = "awaiting_review"
+	V2PlacementRunCompleted      V2PlacementRunStatus = "completed"
+	V2PlacementRunFailed         V2PlacementRunStatus = "failed"
 )
 
 type V2SearchProjectionState string
@@ -133,7 +145,6 @@ const (
 	V2SearchProjectionNotRequired V2SearchProjectionState = "not_required"
 	V2SearchProjectionPending     V2SearchProjectionState = "pending"
 	V2SearchProjectionCurrent     V2SearchProjectionState = "current"
-	V2SearchProjectionStale       V2SearchProjectionState = "stale"
 	V2SearchProjectionFailed      V2SearchProjectionState = "failed"
 )
 
@@ -177,9 +188,9 @@ const (
 type V2EvidenceItemCategory string
 
 const (
-	V2EvidenceProcessed   V2EvidenceItemCategory = "evidence_processed"
-	V2EvidenceNeedsReview V2EvidenceItemCategory = "evidence_needs_review"
-	V2EvidenceQuarantined V2EvidenceItemCategory = "evidence_quarantined"
+	V2EvidenceProcessed        V2EvidenceItemCategory = "evidence_processed"
+	V2EvidenceQuarantined      V2EvidenceItemCategory = "evidence_quarantined"
+	V2EvidenceProcessingFailed V2EvidenceItemCategory = "processing_failed"
 )
 
 type V2RelationshipOutcomeCategory string
@@ -190,6 +201,7 @@ const (
 	V2OutcomeRelationshipPendingEvidence V2RelationshipOutcomeCategory = "relationship_pending_evidence"
 	V2OutcomeRelationshipNeedsReview     V2RelationshipOutcomeCategory = "relationship_needs_review"
 	V2OutcomePredicateNeedsReview        V2RelationshipOutcomeCategory = "predicate_needs_review"
+	V2OutcomeRelationshipRejected        V2RelationshipOutcomeCategory = "relationship_rejected"
 	V2OutcomeIdentityNeedsReview         V2RelationshipOutcomeCategory = "identity_needs_review"
 )
 
@@ -262,8 +274,12 @@ func V2RelationshipKinds() []string {
 func V2RelationshipTiers() []string {
 	return []string{
 		string(V2RelationshipTierCandidate),
-		string(V2RelationshipTierValidatedClaim),
 		string(V2RelationshipTierFact),
+		string(V2RelationshipTierValidatedClaim),
+		string(V2RelationshipTierPendingEvidence),
+		string(V2RelationshipTierNeedsReview),
+		string(V2RelationshipTierPredicateReview),
+		string(V2RelationshipTierIdentityReview),
 	}
 }
 
@@ -342,6 +358,7 @@ func V2RelationshipOutcomeCategories() []string {
 		string(V2OutcomeRelationshipPendingEvidence),
 		string(V2OutcomeRelationshipNeedsReview),
 		string(V2OutcomePredicateNeedsReview),
+		string(V2OutcomeRelationshipRejected),
 		string(V2OutcomeIdentityNeedsReview),
 	}
 }
@@ -360,8 +377,8 @@ func V2SemanticReviewStatuses() []string {
 func V2EvidenceItemCategories() []string {
 	return []string{
 		string(V2EvidenceProcessed),
-		string(V2EvidenceNeedsReview),
 		string(V2EvidenceQuarantined),
+		string(V2EvidenceProcessingFailed),
 	}
 }
 
@@ -394,6 +411,7 @@ func V2PlacementRunStatuses() []string {
 		string(V2PlacementRunGuarded),
 		string(V2PlacementRunQuarantined),
 		string(V2PlacementRunProcessing),
+		string(V2PlacementRunAwaitingReview),
 		string(V2PlacementRunCompleted),
 		string(V2PlacementRunFailed),
 	}
@@ -404,7 +422,6 @@ func V2SearchProjectionStates() []string {
 		string(V2SearchProjectionNotRequired),
 		string(V2SearchProjectionPending),
 		string(V2SearchProjectionCurrent),
-		string(V2SearchProjectionStale),
 		string(V2SearchProjectionFailed),
 	}
 }

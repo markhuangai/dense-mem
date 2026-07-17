@@ -26,7 +26,6 @@ func TestBuildV2UATWiresExecutableRemember(t *testing.T) {
 		t.Fatal("BuildV2UAT remember invoker is nil")
 	}
 	out, err := remember.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
 		"evidence": []any{
 			map[string]any{"content": "remember this exact evidence"},
 		},
@@ -55,8 +54,7 @@ func TestBuildV2UATRememberRejectsTenantOverride(t *testing.T) {
 		t.Fatal("BuildV2UAT did not register remember")
 	}
 	_, err = remember.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"team_id":          "attacker-team",
+		"team_id": "attacker-team",
 		"evidence": []any{
 			map[string]any{"content": "remember this exact evidence"},
 		},
@@ -80,8 +78,7 @@ func TestBuildV2UATWiresExecutableRecallMemory(t *testing.T) {
 		t.Fatal("BuildV2UAT recall_memory invoker is nil")
 	}
 	out, err := recall.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"query":            "PostgreSQL memory",
+		"query": "PostgreSQL memory",
 	})
 	if err != nil {
 		t.Fatalf("recall_memory.Invoke: %v", err)
@@ -103,6 +100,9 @@ func TestBuildV2UATWiresExecutableRecallMemory(t *testing.T) {
 	if stub.req.Query != "PostgreSQL memory" {
 		t.Fatalf("stub request not populated: %#v", stub.req)
 	}
+	if stub.req.ContractVersion != domain.V2ContractVersion {
+		t.Fatalf("contract version = %q", stub.req.ContractVersion)
+	}
 }
 
 func TestBuildV2UATRecallRejectsTenantOverride(t *testing.T) {
@@ -115,9 +115,8 @@ func TestBuildV2UATRecallRejectsTenantOverride(t *testing.T) {
 		t.Fatal("BuildV2UAT did not register recall_memory")
 	}
 	_, err = recall.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"team_id":          "attacker-team",
-		"query":            "PostgreSQL memory",
+		"team_id": "attacker-team",
+		"query":   "PostgreSQL memory",
 	})
 	if err == nil || !strings.Contains(err.Error(), "team_id") {
 		t.Fatalf("recall_memory.Invoke err = %v, want tenant override rejection", err)
@@ -138,14 +137,12 @@ func TestBuildV2UATWiresExecutableTraceMemory(t *testing.T) {
 		t.Fatal("BuildV2UAT trace_memory invoker is nil")
 	}
 	out, err := trace.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version":         domain.V2ContractVersion,
 		"relationship_id":          "relationship-v2",
 		"include_evidence_content": false,
 		"include_verification":     true,
 		"include_transitions":      false,
 		"max_depth":                2,
 		"max_edges":                12,
-		"max_chars":                500,
 		"predicate_keys":           []any{"works_on"},
 		"topic":                    "PostgreSQL memory",
 	})
@@ -159,7 +156,7 @@ func TestBuildV2UATWiresExecutableTraceMemory(t *testing.T) {
 	if _, ok := out["v2_semantic"]; ok {
 		t.Fatalf("trace_memory should unwrap V2 payload, got %#v", out)
 	}
-	if stub.req.RelationshipID != "relationship-v2" || stub.req.MaxDepth != 2 || stub.req.MaxEdges != 12 || stub.req.MaxChars != 500 {
+	if stub.req.RelationshipID != "relationship-v2" || stub.req.MaxDepth != 2 || stub.req.MaxEdges != 12 {
 		t.Fatalf("trace request = %#v", stub.req)
 	}
 	if got := strings.Join(stub.req.PredicateKeys, ","); got != "works_on" {
@@ -177,9 +174,8 @@ func TestBuildV2UATTraceRejectsTenantOverride(t *testing.T) {
 		t.Fatal("BuildV2UAT did not register trace_memory")
 	}
 	_, err = trace.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"team_id":          "attacker-team",
-		"relationship_id":  "relationship-v2",
+		"team_id":         "attacker-team",
+		"relationship_id": "relationship-v2",
 	})
 	if err == nil || !strings.Contains(err.Error(), "team_id") {
 		t.Fatalf("trace_memory.Invoke err = %v, want tenant override rejection", err)
@@ -201,7 +197,7 @@ func (s *stubV2RememberService) RememberV2(_ context.Context, req memoryservice.
 			{
 				ItemID:        "item-v2",
 				EvidenceIndex: 0,
-				Category:      string(domain.V2EvidenceNeedsReview),
+				Category:      string(domain.V2EvidenceProcessed),
 				SearchState:   string(domain.V2SearchProjectionNotRequired),
 			},
 		},
