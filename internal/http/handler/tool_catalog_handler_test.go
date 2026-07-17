@@ -68,6 +68,64 @@ func TestToolCatalogHandler_ReturnsRegisteredTools(t *testing.T) {
 	}
 }
 
+func TestToolCatalogHandler_ReturnsContractMetadata(t *testing.T) {
+	reg := registry.New()
+	tool := registry.V2ContractTools()[0]
+	tool.Visibility = "active"
+	if err := reg.Register(tool); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	h := NewToolCatalogHandler(reg)
+
+	e := echo.New()
+	e.GET("/api/v1/tools", h.Handle)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tools", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	var resp dto.ToolCatalogResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Tools) != 1 {
+		t.Fatalf("Tools length = %d; want 1", len(resp.Tools))
+	}
+	got := resp.Tools[0]
+	if got.ContractVersion != domain.V2ContractVersion {
+		t.Fatalf("contract_version = %q", got.ContractVersion)
+	}
+	if got.FeatureGate != domain.V2FeatureGate || got.Visibility != "active" {
+		t.Fatalf("gate metadata = %q/%q", got.FeatureGate, got.Visibility)
+	}
+}
+
+func TestToolCatalogHandler_HidesDormantV2ContractTools(t *testing.T) {
+	reg := registry.New()
+	if err := reg.Register(registry.V2ContractTools()[0]); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	h := NewToolCatalogHandler(reg)
+
+	e := echo.New()
+	e.GET("/api/v1/tools", h.Handle)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tools", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200. body=%s", rec.Code, rec.Body.String())
+	}
+	var resp dto.ToolCatalogResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Tools) != 0 {
+		t.Fatalf("dormant V2 tools visible in catalog: %+v", resp.Tools)
+	}
+}
+
 func TestToolCatalogHandler_NoInternalTypeLeaks(t *testing.T) {
 	reg := registry.New()
 	_ = reg.Register(registry.Tool{Name: "x", Description: "y"})

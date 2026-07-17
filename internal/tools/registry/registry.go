@@ -34,6 +34,9 @@ type Tool struct {
 	InputSchema    map[string]any
 	OutputSchema   map[string]any
 	RequiredScopes []string
+	ContractVersion string
+	FeatureGate     string
+	Visibility      string
 	Invoke         ToolInvoker
 	NormalizeInput ToolInputNormalizer
 	Aliases        []string

@@ -1,0 +1,495 @@
+[
+  {
+    "name": "valid remember with source revision and proposal",
+    "tool": "remember",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["write"],
+    "valid": true,
+    "input": {
+      "evidence": [
+        {
+          "content": "Dense-Mem durable authority is PostgreSQL with pgvector.",
+          "source_type": "manual",
+          "source": "architecture review",
+          "source_group": "wiki:target-architecture",
+          "source_key": "wiki:target-architecture",
+          "source_revision": "rev-1",
+          "idempotency_key": "ev-1"
+        }
+      ],
+      "proposal": {
+        "entities": [
+          {
+            "ref": "entity:dense-mem",
+            "name": "Dense-Mem",
+            "entity_kind": "project",
+            "known_entity_id": null
+          }
+        ],
+        "relationships": [
+          {
+            "proposal_id": "rel:authority",
+            "subject_ref": "entity:dense-mem",
+            "predicate": "uses_durable_authority",
+            "object_value": {
+              "type": "string",
+              "value": "PostgreSQL with pgvector"
+            },
+            "polarity": "+",
+            "modality": "statement",
+            "evidence": [
+              {"evidence_index": 0, "start": 31, "end": 56}
+            ]
+          }
+        ]
+      }
+    },
+    "output": {
+      "ingest_id": "ing-1",
+      "processing_state": "queued",
+      "check_after_seconds": 3,
+      "status_tool": "get_memory_placement",
+      "correlation_id": "req-1"
+    }
+  },
+  {
+    "name": "valid placement poll",
+    "tool": "get_memory_placement",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["read"],
+    "valid": true,
+    "input": {"ingest_id": "ing-1"},
+    "output": {
+      "ingest_id": "ing-1",
+      "processing_state": "completed",
+      "search_state": "current",
+      "items": [
+        {
+          "item_id": "item-1",
+          "evidence_id": "ev-1",
+          "category": "evidence_processed",
+          "search_state": "current",
+          "relationship_outcomes": [
+            {
+              "proposal_id": "rel:authority",
+              "observation_id": "obs-1",
+              "relationship_id": "rel-1",
+              "owner_profile_id": "profile-a",
+              "tier": "fact",
+              "relationship_status": "active",
+              "category": "relationship_fact",
+              "reason": "Entailed authoritative evidence."
+            }
+          ],
+          "errors": []
+        }
+      ],
+      "errors": []
+    }
+  },
+  {
+    "name": "valid placement entity resolution",
+    "tool": "resolve_memory_placement",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["write"],
+    "valid": true,
+    "input": {
+      "ingest_id": "ing-1",
+      "placement_item_id": "item-1",
+      "action": "select_entity",
+      "decision": {"mention_ref": "person-1", "entity_id": "ent-1"},
+      "idempotency_key": "resolve-1"
+    },
+    "output": {
+      "decision_id": "decision-1",
+      "ingest_id": "ing-1",
+      "processing_state": "queued",
+      "check_after_seconds": 3
+    }
+  },
+  {
+    "name": "valid entity correction dry run",
+    "tool": "correct_entity_resolution",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["write"],
+    "valid": true,
+    "input": {
+      "operation": "split",
+      "source_entity_id": "ent-mark",
+      "target_entity_id": null,
+      "owned_observation_ids": ["obs-billing-1"],
+      "evidence": [{"content": "Billing Mark is a different person."}],
+      "dry_run": true,
+      "idempotency_key": "split-1"
+    },
+    "output": {
+      "dry_run": true,
+      "selected_observation_ids": ["obs-billing-1"],
+      "blocked_observation_ids": [],
+      "relationship_changes": [],
+      "entity_candidates": [],
+      "unchanged_cross_profile_references": [],
+      "impact_token": "impact-1"
+    }
+  },
+  {
+    "name": "valid recall boundary limit",
+    "tool": "recall_memory",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["read"],
+    "valid": true,
+    "input": {
+      "query": "postgres authority",
+      "limit": 50,
+      "valid_at": null,
+      "known_at": null,
+      "known_evidence_ids": ["ev-1"],
+      "known_relationship_ids": ["rel-1"],
+      "expand_from_entity_ids": ["entity-1"]
+    },
+    "output": {
+      "recall_id": "rec-1",
+      "results": [{"evidence_id": "ev-2", "context": "PostgreSQL is the durable authority."}],
+      "discovery_paths": [
+        {
+          "relationships": [
+            {
+              "relationship_id": "rel-2",
+              "subject": {"entity_id": "entity-1", "name": "Dense-Mem"},
+              "predicate": "uses",
+              "object": {"value_id": "value-1", "type": "string", "value": "PostgreSQL"},
+              "polarity": "+"
+            }
+          ],
+          "evidence_ids": ["ev-2"]
+        }
+      ],
+      "discovery_guidance": "Use trace_memory for history.",
+      "related_hypotheses": []
+    }
+  },
+  {
+    "name": "valid relationship trace",
+    "tool": "trace_memory",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["read"],
+    "valid": true,
+    "input": {
+      "relationship_id": "rel-1",
+      "include_evidence_content": true,
+      "include_verification": true,
+      "include_transitions": true,
+      "max_depth": 0,
+      "max_edges": 0,
+      "predicate_keys": [],
+      "topic": null,
+      "min_relevance": null
+    },
+    "output": {
+      "relationship": {"relationship_id": "rel-1"},
+      "observations": [],
+      "evidence_supports": [],
+      "support_decision_events": [],
+      "evidence_fragments": [],
+      "verification_events": [],
+      "transitions": [],
+      "conflicts": [],
+      "cross_profile_references": [],
+      "identity_corrections": [],
+      "supersession_lineage": [],
+      "semantic_nodes": [],
+      "semantic_edges": [],
+      "visited_entity_ids": [],
+      "stopped_reason": "depth_limit"
+    }
+  },
+  {
+    "name": "valid recall session feedback",
+    "tool": "submit_recall_session_feedback",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["write"],
+    "valid": true,
+    "input": {
+      "recalls": [
+        {
+          "recall_event_id": "rec-1",
+          "used": true,
+          "answer_supported": false,
+          "quality": "low",
+          "missing_context": true,
+          "irrelevant": true,
+          "feedback_comment": "The result omitted the current architecture.",
+          "irrelevant_result_refs": [{"type": "relationship", "id": "rel-old", "rank": 1}],
+          "hypothesis_feedback": [
+            {
+              "hypothesis_id": "hyp-1",
+              "used": false,
+              "quality": "low",
+              "contradicted": true,
+              "feedback_comment": "The source relationships were stale."
+            }
+          ]
+        }
+      ]
+    },
+    "output": {"recorded": true, "recorded_count": 1}
+  },
+  {
+    "name": "valid dream list",
+    "tool": "list_dreams",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["read"],
+    "valid": true,
+    "input": {"status": "proposed", "limit": 20},
+    "output": {"dreams": [], "next_cursor": "cursor-2"}
+  },
+  {
+    "name": "valid dream read",
+    "tool": "get_dream",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["read"],
+    "valid": true,
+    "input": {"hypothesis_id": "hyp-1"},
+    "output": {
+      "hypothesis": {
+        "hypothesis_id": "hyp-1",
+        "source_owner_profile_ids": ["profile-a"],
+        "subject_entity_id": "ent-1",
+        "predicate_key": "benefits_from",
+        "object_entity_id": "ent-2",
+        "statement": "Dense-Mem may benefit from explicit freshness.",
+        "rationale": "Eligible source relationships suggest it.",
+        "likelihood": 0.68,
+        "confidence": 0.61,
+        "source_relationship_ids": ["rel-1"],
+        "source_candidate_relationship_ids": [],
+        "source_versions": {"rel-1": 4},
+        "generator_kind": "provider",
+        "generator_version": "dream-v2",
+        "status": "proposed",
+        "created_at": "2026-07-17T00:00:00Z"
+      }
+    }
+  },
+  {
+    "name": "valid dream rejection",
+    "tool": "resolve_dream_feedback",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["write"],
+    "valid": true,
+    "input": {"hypothesis_id": "hyp-1", "decision": "reject", "reason": "No longer applicable."},
+    "output": {"hypothesis_id": "hyp-1", "status": "rejected"}
+  },
+  {
+    "name": "valid community list",
+    "tool": "list_communities",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["read"],
+    "valid": true,
+    "input": {"limit": 20},
+    "output": {"communities": [], "next_cursor": "cursor-2"}
+  },
+  {
+    "name": "valid memory pack candidate search",
+    "tool": "find_memory_pack_candidates",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["read"],
+    "valid": true,
+    "input": {"query": "release workflow", "limit": 20, "predicate_keys": ["requires"]},
+    "output": {"candidates": []}
+  },
+  {
+    "name": "valid memory pack export",
+    "tool": "export_memory_pack",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["read"],
+    "valid": true,
+    "input": {
+      "name": "release-workflow",
+      "description": "Reusable release relationships",
+      "relationship_ids": ["rel-1"],
+      "include_evidence": true,
+      "include_entity_names": true
+    },
+    "output": {
+      "artifact_json": "{\"format\":\"dense-mem.memory-pack.v2\"}",
+      "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "filename": "release-workflow.json",
+      "counts": {"relationships": 1, "evidence_fragments": 1},
+      "omissions": []
+    }
+  },
+  {
+    "name": "valid memory pack inspection",
+    "tool": "inspect_memory_pack",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["read"],
+    "valid": true,
+    "input": {
+      "artifact_json": "{\"format\":\"dense-mem.memory-pack.v2\"}",
+      "expected_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": "review"
+    },
+    "output": {
+      "valid": true,
+      "format": "dense-mem.memory-pack.v2",
+      "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": "review",
+      "counts": {"relationships": 0},
+      "conflicts": [],
+      "expected_outcomes": {"create": 0, "review": 0, "skip": 0}
+    }
+  },
+  {
+    "name": "valid reviewed memory pack import",
+    "tool": "import_memory_pack",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["write"],
+    "valid": true,
+    "input": {
+      "artifact_json": "{\"format\":\"dense-mem.memory-pack.v2\"}",
+      "expected_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": "review",
+      "conflict_decisions": [{"item_id": "rel-1", "decision": "import_for_review"}],
+      "idempotency_key": "import-1"
+    },
+    "output": {"import_id": "import-1", "processing_state": "queued", "ingest_ids": ["ing-1"], "omissions": []}
+  },
+  {
+    "name": "valid memory pack rollback dry run",
+    "tool": "rollback_memory_pack_import",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["write"],
+    "valid": true,
+    "input": {"import_id": "import-1", "dry_run": true},
+    "output": {
+      "import_id": "import-1",
+      "dry_run": true,
+      "safe": true,
+      "blockers": [],
+      "affected_relationship_ids": ["rel-1"],
+      "impact_token": "rollback-impact-1"
+    }
+  },
+  {
+    "name": "unknown lifecycle field",
+    "tool": "remember",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["write"],
+    "valid": false,
+    "want_error": "unknown field: tier",
+    "input": {"tier": "fact", "evidence": [{"content": "Clients cannot choose fact tier."}]}
+  },
+  {
+    "name": "legacy remember hint fields rejected",
+    "tool": "remember",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["write"],
+    "valid": false,
+    "want_error": "unknown field: entity_hints",
+    "input": {"evidence": [{"content": "Legacy aliases must not remain frozen."}], "entity_hints": []}
+  },
+  {
+    "name": "missing required evidence",
+    "tool": "remember",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["write"],
+    "valid": false,
+    "want_error": "evidence is required",
+    "input": {}
+  },
+  {
+    "name": "duplicate relationship proposal id",
+    "tool": "remember",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["write"],
+    "valid": false,
+    "want_error": "duplicate ref",
+    "input": {
+      "evidence": [{"content": "A uses B."}],
+      "proposal": {
+        "entities": [{"ref": "a", "name": "A"}, {"ref": "b", "name": "B"}],
+        "relationships": [
+          {"proposal_id": "r1", "subject_ref": "a", "predicate": "uses", "object_ref": "b", "evidence": [{"evidence_index": 0, "start": 0, "end": 9}]},
+          {"proposal_id": "r1", "subject_ref": "a", "predicate": "uses", "object_ref": "b", "evidence": [{"evidence_index": 0, "start": 0, "end": 9}]}
+        ]
+      }
+    }
+  },
+  {
+    "name": "out of allowlist resolution action",
+    "tool": "resolve_memory_placement",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["write"],
+    "valid": false,
+    "want_error": "action must be one of",
+    "input": {"action": "supersede_other_profile", "idempotency_key": "resolve-1"}
+  },
+  {
+    "name": "wrong contract version",
+    "tool": "recall_memory",
+    "contract_version": "dense-mem.v2.0",
+    "scopes": ["read"],
+    "valid": false,
+    "want_error": "tool contract version",
+    "input": {"query": "postgres"}
+  },
+  {
+    "name": "wrong scope",
+    "tool": "remember",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["read"],
+    "valid": false,
+    "want_error": "missing required scope",
+    "input": {"evidence": [{"content": "Write scope is required."}]}
+  },
+  {
+    "name": "duplicate recall evidence id",
+    "tool": "recall_memory",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["read"],
+    "valid": false,
+    "want_error": "duplicate value",
+    "input": {"query": "postgres", "known_evidence_ids": ["ev-1", "ev-1"]}
+  },
+  {
+    "name": "cross profile override rejected",
+    "tool": "correct_entity_resolution",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["write"],
+    "valid": false,
+    "want_error": "team_id and profile_id are not accepted",
+    "input": {
+      "profile_id": "profile-b",
+      "operation": "merge",
+      "source_entity_id": "entity-a",
+      "target_entity_id": "entity-b",
+      "owned_observation_ids": ["obs-1"],
+      "evidence": [{"content": "These are the same entity."}],
+      "dry_run": true,
+      "idempotency_key": "merge-1"
+    }
+  },
+  {
+    "name": "unpaired source revision rejected",
+    "tool": "remember",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["write"],
+    "valid": false,
+    "want_error": "source_key and source_revision must appear together",
+    "input": {
+      "evidence": [{"content": "A source key needs a revision.", "source_key": "wiki:target-architecture"}]
+    }
+  },
+  {
+    "name": "feedback judgment requires comment",
+    "tool": "submit_recall_session_feedback",
+    "contract_version": "dense-mem.v2.1",
+    "scopes": ["write"],
+    "valid": false,
+    "want_error": "feedback_comment is required",
+    "input": {
+      "recalls": [{"recall_event_id": "rec-1", "used": false, "answer_supported": false, "quality": "low"}]
+    }
+  }
+]
