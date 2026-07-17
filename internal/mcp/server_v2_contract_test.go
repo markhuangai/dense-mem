@@ -41,7 +41,9 @@ func TestServerRejectsProfileOverrideForV2ContractTools(t *testing.T) {
 func TestMCP_ToolsListHidesDormantV2ContractTools(t *testing.T) {
 	logger, _ := testLogger(t)
 	reg := registry.New()
-	_ = reg.Register(registry.V2ContractTools()[0])
+	if err := reg.Register(registry.V2ContractTools()[0]); err != nil {
+		t.Fatalf("register V2 contract tool: %v", err)
+	}
 	s := NewServerWithScopes(reg, "pA", []string{"read", "write"}, logger)
 
 	out := runRPC(t, s, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
