@@ -20,6 +20,15 @@ import prepare_public_semantic_eval as semantic
 SCHEMA_VERSION = "dense-mem.eval.seed.v1"
 VALIDATION_SCHEMA_VERSION = "dense-mem.eval.validation.v1"
 ID_NAMESPACE = "public_6axis_v1"
+SOURCE_LOCK_FILE = "source_locks/public_6axis_v1.json"
+LOCKED_ARTIFACTS = {
+    "scifact": Path("data/beir/scifact.zip"),
+    "msmarco": Path("data/beir/msmarco.zip"),
+    "hotpotqa": Path("data/beir/hotpotqa.zip"),
+    "musique": Path("data/public_semantic/musique_v1.0.zip"),
+    "qasper": Path("data/public_semantic/qasper-train-dev-v0.3.tgz"),
+    "longmem_oracle": Path("data/public_semantic/longmemeval_s_cleaned.json"),
+}
 
 AXIS_BUDGETS = {
     1000: {
@@ -82,10 +91,7 @@ def main() -> int:
     stage_dir.mkdir(parents=True, exist_ok=True)
     stage_suite.parent.mkdir(parents=True, exist_ok=True)
 
-    if args.size == 1000 and (root / "seeds" / "public_6axis_5k_v1").exists():
-        generated = derive_1k_from_5k(root)
-    else:
-        generated = build_seed(root, seed_id, args.size, args, stage_dir, stage_suite)
+    generated = build_seed(root, seed_id, args.size, args, stage_dir, stage_suite)
     validate_generated(generated, expected_size=args.size)
     write_seed(stage_dir, stage_suite, seed_id, args.size, generated)
     seed_hash = stable_seed_hash(stage_dir)
@@ -106,6 +112,8 @@ def build_seed(root: Path, seed_id: str, size: int, args: argparse.Namespace, st
     for axis_name in ("scifact", "msmarco", "hotpotqa"):
         add_beir_axis(out, root, seed_id, axis_name, budgets[axis_name], args)
     semantic.ensure_sources(root / "data" / "public_semantic", allow_download=not args.no_download)
+    for axis_name in ("musique", "qasper", "longmem_oracle"):
+        verify_locked_artifact(axis_name, root / LOCKED_ARTIFACTS[axis_name], source_lock_entry(root, axis_name))
     semantic_cases = semantic.build_cases(
         data_root=root / "data" / "public_semantic",
         seed_id=ID_NAMESPACE,
@@ -121,6 +129,59 @@ def build_seed(root: Path, seed_id: str, size: int, args: argparse.Namespace, st
     return out
 
 
+def verify_source_lock(root: Path) -> None:
+    lock_path = root / SOURCE_LOCK_FILE
+    if not lock_path.exists():
+        raise SystemExit(f"missing source lock {lock_path}")
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    if lock.get("lock_id") != ID_NAMESPACE:
+        raise SystemExit(f"{lock_path} lock_id = {lock.get('lock_id')!r}; want {ID_NAMESPACE!r}")
+    sources = {entry.get("axis"): entry for entry in lock.get("sources", [])}
+    missing = sorted(set(LOCKED_ARTIFACTS) - set(sources))
+    if missing:
+        raise SystemExit(f"{lock_path} missing source lock entries for {missing}")
+    for axis, relative_path in LOCKED_ARTIFACTS.items():
+        verify_locked_artifact(axis, root / relative_path, sources[axis])
+
+
+def source_lock_entry(root: Path, axis: str) -> dict[str, Any]:
+    lock_path = root / SOURCE_LOCK_FILE
+    if not lock_path.exists():
+        raise SystemExit(f"missing source lock {lock_path}")
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    for entry in lock.get("sources", []):
+        if entry.get("axis") == axis:
+            return entry
+    raise SystemExit(f"{lock_path} missing source lock entry for {axis}")
+
+
+def verify_locked_artifact(axis: str, path: Path, entry: dict[str, Any]) -> None:
+    if not path.exists():
+        raise SystemExit(f"{axis}: missing locked artifact {path}")
+    content_length = entry.get("content_length")
+    if content_length is not None and path.stat().st_size != int(content_length):
+        raise SystemExit(f"{axis}: {path} size {path.stat().st_size}; want {content_length}")
+    expected_sha256 = str(entry.get("sha256") or "").strip().lower()
+    if not expected_sha256:
+        raise SystemExit(f"{axis}: source lock must include sha256")
+    checks = [("sha256", expected_sha256.removeprefix("sha256:"))]
+    expected_md5 = str(entry.get("md5") or "").strip().lower()
+    if expected_md5:
+        checks.append(("md5", expected_md5.removeprefix("md5:")))
+    for algorithm, expected in checks:
+        got = file_digest(path, algorithm)
+        if got != expected:
+            raise SystemExit(f"{axis}: {algorithm} {got}; want {expected}")
+
+
+def file_digest(path: Path, algorithm: str) -> str:
+    digest = hashlib.new(algorithm)
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def empty_generated() -> dict[str, Any]:
     return {
         "corpus": [],
@@ -134,80 +195,6 @@ def empty_generated() -> dict[str, Any]:
     }
 
 
-def derive_1k_from_5k(root: Path) -> dict[str, Any]:
-    seed_5k = root / "seeds" / "public_6axis_5k_v1"
-    suite_5k = root / "suites" / "public_6axis_5k_v1.jsonl"
-    if not seed_5k.exists() or not suite_5k.exists():
-        raise SystemExit("public_6axis_5k_v1 must exist before deriving public_6axis_1k_v1")
-    manifest = json.loads((seed_5k / "seed_manifest.json").read_text(encoding="utf-8"))
-    corpus_5k = load_jsonl(seed_5k / manifest["corpus_file"])
-    cases_5k = load_jsonl(seed_5k / manifest["cases_file"])
-    qrels_5k = load_jsonl(seed_5k / manifest["qrels_file"])
-    answers_5k = load_jsonl(seed_5k / manifest["answers_file"])
-    transforms_5k = load_jsonl(seed_5k / manifest["transforms_file"])
-    suite_rows_5k = load_jsonl(suite_5k)
-
-    selected_corpus: list[dict[str, Any]] = []
-    axis_counts = {axis: {"corpus": 0, "cases": 0} for axis in AXIS_BUDGETS[1000]}
-    selected_doc_ids: set[str] = set()
-    source_axis: dict[str, str] = {}
-    for row in corpus_5k:
-        axis = axis_key_for_row(row)
-        if axis_counts[axis]["corpus"] >= AXIS_BUDGETS[1000][axis]:
-            continue
-        selected_corpus.append(row)
-        source_doc_id = row["source_doc_id"]
-        selected_doc_ids.add(source_doc_id)
-        source_axis[source_doc_id] = axis
-        axis_counts[axis]["corpus"] += 1
-        if sum(count["corpus"] for count in axis_counts.values()) == 1000:
-            break
-    if len(selected_corpus) != 1000:
-        raise SystemExit(f"derived 1k corpus rows = {len(selected_corpus)}")
-
-    selected_case_ids: set[str] = set()
-    selected_qrels: list[dict[str, Any]] = []
-    for qrel in qrels_5k:
-        refs = qrel.get("required_refs") or []
-        if refs and all(ref.get("source_doc_id") in selected_doc_ids for ref in refs):
-            selected_qrels.append(qrel)
-            selected_case_ids.add(qrel["case_id"])
-            first_axis = source_axis.get(refs[0].get("source_doc_id", ""))
-            if first_axis:
-                axis_counts[first_axis]["cases"] += 1
-    selected_cases = [row for row in cases_5k if row["case_id"] in selected_case_ids]
-    selected_answers = [row for row in answers_5k if row["case_id"] in selected_case_ids]
-    selected_transforms = [row for row in transforms_5k if row["case_id"] in selected_case_ids]
-    selected_suite = [row for row in suite_rows_5k if row["case_id"] in selected_case_ids]
-    return {
-        "corpus": selected_corpus,
-        "cases": selected_cases,
-        "qrels": selected_qrels,
-        "answers": selected_answers,
-        "transforms": selected_transforms,
-        "suite": selected_suite,
-        "sources": manifest.get("sources") or [],
-        "axis_counts": axis_counts,
-    }
-
-
-def axis_key_for_row(row: dict[str, Any]) -> str:
-    dataset = str(row.get("source_dataset") or (row.get("metadata") or {}).get("dataset") or "")
-    if dataset == "beir/scifact" or dataset == "scifact":
-        return "scifact"
-    if dataset == "beir/msmarco" or dataset == "msmarco":
-        return "msmarco"
-    if dataset == "beir/hotpotqa" or dataset == "hotpotqa":
-        return "hotpotqa"
-    if dataset == "musique":
-        return "musique"
-    if dataset == "qasper":
-        return "qasper"
-    if dataset == "longmemeval_s":
-        return "longmem_oracle"
-    raise SystemExit(f"cannot classify corpus row axis for {row.get('source_doc_id')}: {dataset}")
-
-
 def add_beir_axis(out: dict[str, Any], root: Path, seed_id: str, axis_name: str, budget: int, args: argparse.Namespace) -> None:
     axis = BEIR_AXES[axis_name]
     dataset_dir = beir.ensure_beir_dataset(
@@ -216,6 +203,7 @@ def add_beir_axis(out: dict[str, Any], root: Path, seed_id: str, axis_name: str,
         args.beir_base_url.rstrip("/"),
         allow_download=not args.no_download,
     )
+    verify_locked_artifact(axis_name, root / LOCKED_ARTIFACTS[axis_name], source_lock_entry(root, axis_name))
     split, qrels = beir.read_qrels(dataset_dir, axis.split_preferences)
     queries = beir.read_jsonl_map(dataset_dir / "queries.jsonl", "_id")
     selected_qrels, corpus_rows = select_beir_axis_rows(

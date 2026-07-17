@@ -2,6 +2,7 @@ package evalharness
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -119,5 +120,63 @@ func validateReleaseGatePolicy(policy ReleaseGatePolicy) error {
 	if policy.BaselineSummary.ScoredCaseCount != policy.RequiredScoredCaseCount {
 		return fmt.Errorf("baseline scored_case_count %d does not match required %d", policy.BaselineSummary.ScoredCaseCount, policy.RequiredScoredCaseCount)
 	}
+	if err := validateReleaseGateMinimum("average_recall_at_k", policy.Minimums.AverageRecallAtK, policy.BaselineSummary.AverageRecallAtK); err != nil {
+		return err
+	}
+	if err := validateReleaseGateMinimum("average_mrr", policy.Minimums.AverageMRR, policy.BaselineSummary.AverageMRR); err != nil {
+		return err
+	}
+	if err := validateReleaseGateMinimum("average_ndcg_at_k", policy.Minimums.AverageNDCGAtK, policy.BaselineSummary.AverageNDCGAtK); err != nil {
+		return err
+	}
+	if err := validateReleaseGateMinimum("required_rank1_rate", policy.Minimums.RequiredRank1Rate, policy.BaselineSummary.RequiredRank1Rate); err != nil {
+		return err
+	}
+	if err := validateReleaseGateMaximum("average_bad_at_k", policy.Maximums.AverageBadAtK, policy.BaselineSummary.AverageBadAtK); err != nil {
+		return err
+	}
+	if err := validateReleaseGateMaximum("bad_rank1_rate", policy.Maximums.BadRank1Rate, policy.BaselineSummary.BadRank1Rate); err != nil {
+		return err
+	}
+	if policy.Maximums.UnmappedSourceRefs < 0 {
+		return fmt.Errorf("unmapped_source_refs maximum must be non-negative")
+	}
+	if policy.Maximums.UnmappedSourceRefs > policy.BaselineSummary.UnmappedSourceRefs {
+		return fmt.Errorf(
+			"unmapped_source_refs maximum %d is weaker than baseline %d",
+			policy.Maximums.UnmappedSourceRefs,
+			policy.BaselineSummary.UnmappedSourceRefs,
+		)
+	}
 	return nil
+}
+
+func validateReleaseGateMinimum(name string, threshold float64, baseline float64) error {
+	if !isReleaseGateRate(threshold) {
+		return fmt.Errorf("%s minimum must be a finite value between 0 and 1", name)
+	}
+	if !isReleaseGateRate(baseline) {
+		return fmt.Errorf("baseline %s must be a finite value between 0 and 1", name)
+	}
+	if threshold < baseline {
+		return fmt.Errorf("%s minimum %.10f is weaker than baseline %.10f", name, threshold, baseline)
+	}
+	return nil
+}
+
+func validateReleaseGateMaximum(name string, threshold float64, baseline float64) error {
+	if !isReleaseGateRate(threshold) {
+		return fmt.Errorf("%s maximum must be a finite value between 0 and 1", name)
+	}
+	if !isReleaseGateRate(baseline) {
+		return fmt.Errorf("baseline %s must be a finite value between 0 and 1", name)
+	}
+	if threshold > baseline {
+		return fmt.Errorf("%s maximum %.10f is weaker than baseline %.10f", name, threshold, baseline)
+	}
+	return nil
+}
+
+func isReleaseGateRate(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= 1
 }
