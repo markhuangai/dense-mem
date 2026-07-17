@@ -115,6 +115,104 @@ func TestBuildV2UATMemoryPackImportRejectsTenantOverride(t *testing.T) {
 	}
 }
 
+func TestBuildV2UATMemoryPackMapsCanonicalImportAndRollbackApply(t *testing.T) {
+	stub := &stubV2SkillPackService{}
+	reg, err := BuildV2UAT(Dependencies{V2SkillPack: stub})
+	if err != nil {
+		t.Fatalf("BuildV2UAT: %v", err)
+	}
+
+	importTool, ok := reg.Get(V2ToolImportMemoryPack)
+	if !ok || importTool.Invoke == nil {
+		t.Fatal("BuildV2UAT did not register executable import_memory_pack")
+	}
+	importOut, err := importTool.Invoke(context.Background(), "ignored-profile", map[string]any{
+		"artifact_json": "{}",
+		"mode":          "trusted",
+		"conflict_decisions": []any{
+			map[string]any{"item_id": "item-1", "decision": "skip"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("import_memory_pack.Invoke: %v", err)
+	}
+	if importOut["processing_state"] != "completed" || len(stub.importReq.ConflictDecisions) != 1 ||
+		stub.importReq.ConflictDecisions[0].Action != "skip" {
+		t.Fatalf("import output = %#v req = %#v", importOut, stub.importReq)
+	}
+
+	rollback, ok := reg.Get(V2ToolRollbackMemoryPackImport)
+	if !ok || rollback.Invoke == nil {
+		t.Fatal("BuildV2UAT did not register executable rollback_memory_pack_import")
+	}
+	rollbackOut, err := rollback.Invoke(context.Background(), "ignored-profile", map[string]any{
+		"import_id":    "import-v2",
+		"dry_run":      false,
+		"impact_token": "impact-v2",
+	})
+	if err != nil {
+		t.Fatalf("rollback_memory_pack_import.Invoke: %v", err)
+	}
+	if rollbackOut["applied"] != true || !stub.rollbackReq.Confirm || stub.rollbackReq.DryRun {
+		t.Fatalf("rollback output = %#v req = %#v", rollbackOut, stub.rollbackReq)
+	}
+}
+
+func TestV2MemoryPackBridgeHelpersCoverOptionalBranches(t *testing.T) {
+	exportOut := v2MemoryPackExportPublicOutput(&skillpackservice.V2ExportResult{
+		SHA256:    "hash-v2",
+		ItemCount: 2,
+		Omissions: []string{
+			"missing relationship",
+		},
+	})
+	if omissions, ok := exportOut["omissions"].([]any); !ok || len(omissions) != 1 {
+		t.Fatalf("export omissions = %#v", exportOut["omissions"])
+	}
+
+	inspectOut := v2MemoryPackInspectPublicOutput(&skillpackservice.V2InspectResult{
+		Format:       skillpackservice.V2MemoryPackFormat,
+		ArtifactHash: "hash-v2",
+		ItemCount:    1,
+		DecisionsRequired: []skillpackservice.V2ConflictPrompt{{
+			ItemID:         "item-1",
+			Reason:         "entity_conflict",
+			AllowedActions: []string{"skip"},
+		}},
+	}, map[string]any{"mode": "review"})
+	if conflicts, ok := inspectOut["conflicts"].([]any); !ok || len(conflicts) != 1 || inspectOut["valid"] != true {
+		t.Fatalf("inspect output = %#v", inspectOut)
+	}
+
+	importOut := v2MemoryPackImportPublicOutput(&skillpackservice.V2ImportResult{
+		ImportID: "import-v2",
+		Status:   "pending",
+		Items: []skillpackservice.V2ImportItemResult{{
+			ItemID: "item-1",
+			Status: "skipped",
+		}},
+	})
+	if importOut["processing_state"] != "queued" {
+		t.Fatalf("import processing_state = %#v", importOut["processing_state"])
+	}
+	if omissions, ok := importOut["omissions"].([]any); !ok || len(omissions) != 1 {
+		t.Fatalf("import omissions = %#v", importOut["omissions"])
+	}
+
+	rollbackOut := v2MemoryPackRollbackPublicOutput(&skillpackservice.V2RollbackResult{
+		ImportID:  "import-v2",
+		Status:    "blocked",
+		DryRun:    true,
+		Conflicts: []string{"newer import depends on relationship"},
+	})
+	if rollbackOut["safe"] != false {
+		t.Fatalf("rollback safe = %#v", rollbackOut["safe"])
+	}
+	if blockers, ok := rollbackOut["blockers"].([]any); !ok || len(blockers) != 1 {
+		t.Fatalf("rollback blockers = %#v", rollbackOut["blockers"])
+	}
+}
+
 type stubV2SkillPackService struct {
 	findReq     skillpackservice.V2FindCandidatesRequest
 	exportReq   skillpackservice.V2ExportRequest
@@ -170,6 +268,13 @@ func (s *stubV2SkillPackService) ImportV2(_ context.Context, req skillpackservic
 
 func (s *stubV2SkillPackService) RollbackV2(_ context.Context, req skillpackservice.V2RollbackRequest) (*skillpackservice.V2RollbackResult, error) {
 	s.rollbackReq = req
+	if req.Confirm && !req.DryRun {
+		return &skillpackservice.V2RollbackResult{
+			ImportID: req.ImportID,
+			Status:   domain.SkillPackImportStatusRolledBack,
+			DryRun:   false,
+		}, nil
+	}
 	return &skillpackservice.V2RollbackResult{
 		ImportID: req.ImportID,
 		Status:   "safe",
