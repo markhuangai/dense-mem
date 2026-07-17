@@ -55,6 +55,7 @@ func TestValidateSinglePrimaryTopologyRejectsReadOnlyOrDistributed(t *testing.T)
 		{name: "in recovery", inRecovery: true, readOnly: "off"},
 		{name: "transaction read only", readOnly: "on"},
 		{name: "distributed extension", readOnly: "off", distributed: true, extension: "citus"},
+		{name: "distributed metadata table", readOnly: "off", distributed: true, extension: "pg_dist_node"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
