@@ -22,13 +22,12 @@ func TestBuildV2UATWiresExecutableGetMemoryPlacement(t *testing.T) {
 		t.Fatal("BuildV2UAT get_memory_placement invoker is nil")
 	}
 	out, err := placement.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"ingest_id":        "ingest-v2",
+		"ingest_id": "ingest-v2",
 	})
 	if err != nil {
 		t.Fatalf("get_memory_placement.Invoke: %v", err)
 	}
-	if out["ingest_id"] != "ingest-v2" || out["status"] != string(domain.V2PlacementRunCompleted) {
+	if out["ingest_id"] != "ingest-v2" || out["processing_state"] != string(domain.V2PlacementRunCompleted) {
 		t.Fatalf("placement output = %#v", out)
 	}
 	items, ok := out["items"].([]any)
@@ -39,7 +38,7 @@ func TestBuildV2UATWiresExecutableGetMemoryPlacement(t *testing.T) {
 	if !ok || item["version"] != float64(3) {
 		t.Fatalf("placement item = %#v", items[0])
 	}
-	if stub.placementReq.IngestID != "ingest-v2" {
+	if stub.placementReq.ContractVersion != domain.V2ContractVersion || stub.placementReq.IngestID != "ingest-v2" {
 		t.Fatalf("stub placement request not populated: %#v", stub.placementReq)
 	}
 }
@@ -54,9 +53,8 @@ func TestBuildV2UATGetMemoryPlacementRejectsTenantOverride(t *testing.T) {
 		t.Fatal("BuildV2UAT did not register get_memory_placement")
 	}
 	_, err = placement.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"team_id":          "attacker-team",
-		"ingest_id":        "ingest-v2",
+		"team_id":   "attacker-team",
+		"ingest_id": "ingest-v2",
 	})
 	if err == nil || !strings.Contains(err.Error(), "team_id") {
 		t.Fatalf("get_memory_placement.Invoke err = %v, want tenant override rejection", err)

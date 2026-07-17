@@ -26,66 +26,59 @@ func TestBuildV2UATExecutableToolsRequireDependencies(t *testing.T) {
 		{
 			name: V2ToolRemember,
 			args: map[string]any{
-				"contract_version": domain.V2ContractVersion,
-				"evidence":         []any{map[string]any{"content": "remember"}},
+				"evidence": []any{map[string]any{"content": "remember"}},
 			},
 		},
 		{
 			name: V2ToolRecallMemory,
 			args: map[string]any{
-				"contract_version": domain.V2ContractVersion,
-				"query":            "PostgreSQL",
+				"query": "PostgreSQL",
 			},
 		},
 		{
 			name: V2ToolResolveMemoryPlacement,
 			args: map[string]any{
-				"contract_version": domain.V2ContractVersion,
-				"action":           string(domain.V2ResolveForget),
-				"relationship_id":  "relationship-v2",
-				"message":          "forget this relationship",
-				"idempotency_key":  "forget-1",
-				"evidence":         []any{map[string]any{"content": "forget"}},
+				"action":          string(domain.V2ResolveForget),
+				"relationship_id": "relationship-v2",
+				"reason":          "forget this relationship",
+				"idempotency_key": "forget-1",
+				"evidence":        []any{map[string]any{"content": "forget"}},
 			},
 		},
 		{
 			name: V2ToolCorrectEntityResolution,
 			args: map[string]any{
-				"contract_version":         domain.V2ContractVersion,
-				"action":                   string(domain.V2EntityCorrectionSplit),
-				"source_entity_id":         "entity-source",
-				"selected_observation_ids": []any{"obs-1"},
-				"dry_run":                  true,
+				"operation":             string(domain.V2EntityCorrectionSplit),
+				"source_entity_id":      "entity-source",
+				"target_entity_id":      nil,
+				"owned_observation_ids": []any{"obs-1"},
+				"dry_run":               true,
 			},
 		},
 		{
 			name: V2ToolTraceMemory,
 			args: map[string]any{
-				"contract_version": domain.V2ContractVersion,
-				"relationship_id":  "relationship-v2",
+				"relationship_id": "relationship-v2",
 			},
 		},
 		{
 			name: V2ToolListDreams,
 			args: map[string]any{
-				"contract_version": domain.V2ContractVersion,
-				"status":           "proposed",
+				"status": "proposed",
 			},
 		},
 		{
 			name: V2ToolGetDream,
 			args: map[string]any{
-				"contract_version": domain.V2ContractVersion,
-				"dream_id":         "dream-v2",
+				"hypothesis_id": "dream-v2",
 			},
 		},
 		{
 			name: V2ToolResolveDreamFeedback,
 			args: map[string]any{
-				"contract_version": domain.V2ContractVersion,
-				"dream_id":         "dream-v2",
-				"decision":         "confirm_true",
-				"evidence":         []any{map[string]any{"content": "Independent evidence."}},
+				"hypothesis_id": "dream-v2",
+				"decision":      "confirm_true",
+				"evidence":      []any{map[string]any{"content": "Independent evidence."}},
 			},
 		},
 		{
@@ -159,9 +152,8 @@ func TestBuildV2UATWiresExecutableDreamTools(t *testing.T) {
 		t.Fatal("BuildV2UAT did not register executable list_dreams")
 	}
 	listOut, err := list.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"limit":            float64(2),
-		"status":           "submitted",
+		"limit":  float64(2),
+		"status": "submitted",
 	})
 	if err != nil {
 		t.Fatalf("list_dreams.Invoke: %v", err)
@@ -175,14 +167,14 @@ func TestBuildV2UATWiresExecutableDreamTools(t *testing.T) {
 		t.Fatal("BuildV2UAT did not register executable get_dream")
 	}
 	getOut, err := get.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"dream_id":         "dream-v2",
+		"hypothesis_id": "dream-v2",
 	})
 	if err != nil {
 		t.Fatalf("get_dream.Invoke: %v", err)
 	}
-	if getOut["dream_id"] != "dream-v2" {
-		t.Fatalf("get_dream dream_id = %#v", getOut["dream_id"])
+	hypothesis, ok := getOut["hypothesis"].(map[string]any)
+	if !ok || hypothesis["hypothesis_id"] != "dream-v2" {
+		t.Fatalf("get_dream hypothesis = %#v", getOut["hypothesis"])
 	}
 
 	resolve, ok := reg.Get(V2ToolResolveDreamFeedback)
@@ -190,17 +182,15 @@ func TestBuildV2UATWiresExecutableDreamTools(t *testing.T) {
 		t.Fatal("BuildV2UAT did not register executable resolve_dream_feedback")
 	}
 	_, err = resolve.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"dream_id":         "dream-v2",
-		"decision":         "confirm_true",
+		"hypothesis_id": "dream-v2",
+		"decision":      "confirm_true",
 	})
 	if err == nil || !strings.Contains(err.Error(), "evidence is required") {
 		t.Fatalf("resolve_dream_feedback missing evidence err = %v", err)
 	}
 	resolveOut, err := resolve.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"contract_version": domain.V2ContractVersion,
-		"dream_id":         "dream-v2",
-		"decision":         "confirm_true",
+		"hypothesis_id": "dream-v2",
+		"decision":      "confirm_true",
 		"evidence": []any{
 			map[string]any{"content": "A deployment note independently confirms Dense-Mem uses PostgreSQL."},
 		},
@@ -209,8 +199,11 @@ func TestBuildV2UATWiresExecutableDreamTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve_dream_feedback.Invoke: %v", err)
 	}
-	if resolveOut["dream"] == nil || dreams.lastResolveReq.Decision != "confirm_true" {
+	if resolveOut["hypothesis_id"] != "dream-1" || dreams.lastResolveReq.Decision != "confirm_true" {
 		t.Fatalf("resolve_dream_feedback output = %#v request = %#v", resolveOut, dreams.lastResolveReq)
+	}
+	if dreams.lastResolveReq.DreamID != "dream-v2" {
+		t.Fatalf("resolve_dream_feedback dream id = %q", dreams.lastResolveReq.DreamID)
 	}
 	if len(dreams.lastResolveReq.Evidence) != 1 ||
 		dreams.lastResolveReq.Evidence[0].Content != "A deployment note independently confirms Dense-Mem uses PostgreSQL." {
