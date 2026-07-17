@@ -30,6 +30,7 @@ var (
 
 type V2RememberService interface {
 	RememberV2(ctx context.Context, req V2RememberRequest) (*V2RememberResult, error)
+	GetMemoryPlacementV2(ctx context.Context, req V2GetMemoryPlacementRequest) (*V2RememberResult, error)
 }
 
 type V2RememberDependencies struct {
@@ -50,6 +51,11 @@ type V2RememberRequest struct {
 	EntityHints       []map[string]any          `json:"entity_hints,omitempty"`
 	RelationshipHints []map[string]any          `json:"relationship_hints,omitempty"`
 	IdempotencyKey    string                    `json:"idempotency_key,omitempty"`
+}
+
+type V2GetMemoryPlacementRequest struct {
+	ContractVersion string `json:"contract_version"`
+	IngestID        string `json:"ingest_id"`
 }
 
 type V2RememberEvidenceInput struct {
@@ -78,6 +84,7 @@ type V2RememberResult struct {
 
 type V2RememberItemResult struct {
 	ItemID        string               `json:"item_id"`
+	Version       int                  `json:"version"`
 	EvidenceIndex int                  `json:"evidence_index"`
 	Category      string               `json:"category"`
 	SearchState   string               `json:"search_state"`
@@ -143,6 +150,35 @@ func (s *v2RememberService) RememberV2(ctx context.Context, req V2RememberReques
 		return nil, err
 	}
 	return v2RememberResultFromLedger(created), nil
+}
+
+func (s *v2RememberService) GetMemoryPlacementV2(
+	ctx context.Context,
+	req V2GetMemoryPlacementRequest,
+) (*V2RememberResult, error) {
+	if s.ledger == nil {
+		return nil, errors.New("v2 placement: ledger repository is required")
+	}
+	if strings.TrimSpace(req.ContractVersion) != domain.V2ContractVersion {
+		return nil, fmt.Errorf("v2 placement: invalid contract_version %q", req.ContractVersion)
+	}
+	actor, ok := requestctx.ActorProfileFromContext(ctx)
+	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
+		return nil, ErrV2RememberAuthContext
+	}
+	ingestID := strings.TrimSpace(req.IngestID)
+	if ingestID == "" {
+		return nil, errors.New("v2 placement: ingest_id is required")
+	}
+	placement, err := s.ledger.GetPlacementRun(ctx, repository.V2GetPlacementRunInput{
+		TeamID:         actor.TeamID.String(),
+		OwnerProfileID: actor.ProfileID.String(),
+		IngestID:       ingestID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v2RememberResultFromLedger(placement), nil
 }
 
 func (s *v2RememberService) normalizeEvidence(evidence []V2RememberEvidenceInput) ([]repository.V2EvidenceInput, string) {
@@ -233,8 +269,13 @@ func v2RememberResultFromLedger(created *repository.V2CreateIngestResult) *V2Rem
 		if item.Category == "quarantined" || item.Status == "quarantined" {
 			category = string(domain.V2EvidenceQuarantined)
 		}
+		version := item.Version
+		if version == 0 {
+			version = 1
+		}
 		items = append(items, V2RememberItemResult{
 			ItemID:        item.PlacementItemID,
+			Version:       version,
 			EvidenceIndex: item.EvidenceIndex,
 			Category:      category,
 			SearchState:   string(domain.V2SearchProjectionNotRequired),

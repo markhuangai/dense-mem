@@ -20,9 +20,11 @@ import (
 
 var ErrV2IdempotencyConflict = errors.New("v2 idempotency conflict")
 var ErrV2SourceRevisionConflict = errors.New("v2 source revision conflict")
+var ErrV2PlacementNotFound = errors.New("v2 placement not found")
 
 type V2LedgerRepository interface {
 	CreateIngest(ctx context.Context, input V2CreateIngestInput) (*V2CreateIngestResult, error)
+	GetPlacementRun(ctx context.Context, input V2GetPlacementRunInput) (*V2CreateIngestResult, error)
 	AdvanceSourceRevision(ctx context.Context, input V2AdvanceSourceRevisionInput) (*V2SourceRevisionResult, error)
 	AppendSecurityEvent(ctx context.Context, input V2SecurityEventInput) (string, error)
 	AppendPlacementOutcome(ctx context.Context, input V2PlacementOutcomeInput) (string, error)
@@ -40,6 +42,12 @@ type V2CreateIngestInput struct {
 	Proposal       map[string]any
 	Metadata       map[string]any
 	Evidence       []V2EvidenceInput
+}
+
+type V2GetPlacementRunInput struct {
+	TeamID         string
+	OwnerProfileID string
+	IngestID       string
 }
 
 type V2EvidenceInput struct {
@@ -116,6 +124,7 @@ type V2PlacementItem struct {
 	PlacementItemID, FragmentID string
 	EvidenceIndex               int
 	Status, Category            string
+	Version                     int
 }
 
 type v2RLSHelper interface {
@@ -700,7 +709,7 @@ func insertV2PlacementItem(ctx context.Context, tx *gorm.DB, input V2CreateInges
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?
 		)
-		RETURNING placement_item_id::text
+		RETURNING placement_item_id::text, version
 	`, input.TeamID, placementRunID, ingestID, input.OwnerProfileID, fragment.FragmentID, fragment.EvidenceIndex, status, category).Rows()
 	if err != nil {
 		return V2PlacementItem{}, err
@@ -715,7 +724,7 @@ func insertV2PlacementItem(ctx context.Context, tx *gorm.DB, input V2CreateInges
 		Status:        status,
 		Category:      category,
 	}
-	if err := rows.Scan(&placementItem.PlacementItemID); err != nil {
+	if err := rows.Scan(&placementItem.PlacementItemID, &placementItem.Version); err != nil {
 		return V2PlacementItem{}, err
 	}
 	return placementItem, rows.Err()
@@ -768,7 +777,7 @@ func loadV2CreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, i
 		return nil, err
 	}
 	itemRows, err := tx.WithContext(ctx).Raw(`
-		SELECT placement_item_id::text, fragment_id::text, evidence_index, status, category
+		SELECT placement_item_id::text, fragment_id::text, evidence_index, status, category, version
 		FROM placement_items
 		WHERE team_id = ?::uuid
 		  AND ingest_id = ?::uuid
@@ -780,7 +789,7 @@ func loadV2CreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, i
 	defer itemRows.Close()
 	for itemRows.Next() {
 		var item V2PlacementItem
-		if err := itemRows.Scan(&item.PlacementItemID, &item.FragmentID, &item.EvidenceIndex, &item.Status, &item.Category); err != nil {
+		if err := itemRows.Scan(&item.PlacementItemID, &item.FragmentID, &item.EvidenceIndex, &item.Status, &item.Category, &item.Version); err != nil {
 			return nil, err
 		}
 		result.Items = append(result.Items, item)

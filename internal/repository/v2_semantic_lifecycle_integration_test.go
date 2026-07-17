@@ -1,0 +1,287 @@
+package repository
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestV2SemanticSupportDecisionsRecomputeEffectiveState(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "support-decision-team")
+	ownerA := createV2LedgerProfile(t, adminDB, rls, teamID, "support-owner-a")
+	ownerB := createV2LedgerProfile(t, adminDB, rls, teamID, "support-owner-b")
+	ledgerRepo := NewV2LedgerRepository(appDB, rls)
+	semanticRepo := NewV2SemanticRepository(appDB, rls)
+
+	subject := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "person", "Jamie")
+	object := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "project", "Dense-Mem")
+	firstIngest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerA,
+		"support first source", "Jamie works on Dense-Mem.")
+	first := applyV2SemanticDecision(t, ctx, semanticRepo, V2ApplyRelationshipDecisionInput{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerA,
+		IngestID:        firstIngest.IngestID,
+		SubjectEntityID: subject.EntityID,
+		PredicateKey:    "works_on",
+		ObjectEntityID:  object.EntityID,
+		Support: &V2EvidenceSupportInput{
+			FragmentID:     firstIngest.Evidence[0].FragmentID,
+			SourceGroupKey: "source:first",
+			SpanStart:      0,
+			SpanEnd:        len("Jamie works on Dense-Mem."),
+			Authority:      "primary",
+		},
+	})
+	require.NotNil(t, first.Relationship)
+	require.NotEmpty(t, first.SupportID)
+	assert.Equal(t, "validated_claim", first.Relationship.Tier)
+	assert.Equal(t, "active", first.Relationship.Status)
+
+	secondIngest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerA,
+		"support second source", "A second source confirms Jamie works on Dense-Mem.")
+	second := applyV2SemanticDecision(t, ctx, semanticRepo, V2ApplyRelationshipDecisionInput{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerA,
+		IngestID:        secondIngest.IngestID,
+		SubjectEntityID: subject.EntityID,
+		PredicateKey:    "works_on",
+		ObjectEntityID:  object.EntityID,
+		Support: &V2EvidenceSupportInput{
+			FragmentID:     secondIngest.Evidence[0].FragmentID,
+			SourceGroupKey: "source:second",
+			SpanStart:      0,
+			SpanEnd:        len("A second source confirms Jamie works on Dense-Mem."),
+			Authority:      "primary",
+		},
+	})
+	require.NotNil(t, second.Relationship)
+	require.NotEmpty(t, second.SupportID)
+	assert.Equal(t, first.Relationship.RelationshipID, second.Relationship.RelationshipID)
+	assert.Equal(t, "fact", second.Relationship.Tier)
+	assert.Equal(t, "active", second.Relationship.Status)
+	assert.Equal(t, 2, second.Relationship.SupportCount)
+	assert.Equal(t, 2, second.Relationship.SourceGroupCount)
+
+	revokeFirst, err := semanticRepo.ApplyRelationshipSupportDecision(ctx, V2ApplyRelationshipSupportDecisionInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerA,
+		RelationshipID: first.Relationship.RelationshipID,
+		SupportID:      first.SupportID,
+		Decision:       "revoke",
+		Reason:         "first source superseded",
+		IdempotencyKey: "revoke-first-support",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "fact", revokeFirst.FromTier)
+	assert.Equal(t, "validated_claim", revokeFirst.ToTier)
+	assert.Equal(t, "active", revokeFirst.ToStatus)
+	assert.Equal(t, 1, revokeFirst.SupportCount)
+	assert.Equal(t, 1, revokeFirst.SourceGroupCount)
+
+	retry, err := semanticRepo.ApplyRelationshipSupportDecision(ctx, V2ApplyRelationshipSupportDecisionInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerA,
+		RelationshipID: first.Relationship.RelationshipID,
+		SupportID:      first.SupportID,
+		Decision:       "revoke",
+		Reason:         "retry",
+		IdempotencyKey: "revoke-first-support",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, revokeFirst.SupportDecisionID, retry.SupportDecisionID)
+
+	_, err = semanticRepo.ApplyRelationshipSupportDecision(ctx, V2ApplyRelationshipSupportDecisionInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerA,
+		RelationshipID: first.Relationship.RelationshipID,
+		SupportID:      second.SupportID,
+		Decision:       "revoke",
+		Reason:         "conflicting retry",
+		IdempotencyKey: "revoke-first-support",
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrV2SemanticIdempotencyConflict), err)
+
+	_, err = semanticRepo.ApplyRelationshipSupportDecision(ctx, V2ApplyRelationshipSupportDecisionInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerB,
+		RelationshipID: first.Relationship.RelationshipID,
+		SupportID:      second.SupportID,
+		Decision:       "revoke",
+		Reason:         "wrong owner",
+		IdempotencyKey: "owner-b-revoke-support",
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrV2SemanticOwnerMismatch), err)
+
+	revokeSecond, err := semanticRepo.ApplyRelationshipSupportDecision(ctx, V2ApplyRelationshipSupportDecisionInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerA,
+		RelationshipID: first.Relationship.RelationshipID,
+		SupportID:      second.SupportID,
+		Decision:       "revoke",
+		Reason:         "second source superseded",
+		IdempotencyKey: "revoke-second-support",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "validated_claim", revokeSecond.FromTier)
+	assert.Equal(t, "candidate", revokeSecond.ToTier)
+	assert.Equal(t, "pending_evidence", revokeSecond.ToStatus)
+	assert.Equal(t, 0, revokeSecond.SupportCount)
+
+	edges, err := semanticRepo.ListSemanticEdges(ctx, teamID, 20)
+	require.NoError(t, err)
+	assert.Empty(t, edges, "relationships with no effective support must leave active graph reads")
+
+	reinstateFirst, err := semanticRepo.ApplyRelationshipSupportDecision(ctx, V2ApplyRelationshipSupportDecisionInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerA,
+		RelationshipID: first.Relationship.RelationshipID,
+		SupportID:      first.SupportID,
+		Decision:       "reinstate",
+		Reason:         "first source restored",
+		IdempotencyKey: "reinstate-first-support",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "candidate", reinstateFirst.FromTier)
+	assert.Equal(t, "validated_claim", reinstateFirst.ToTier)
+	assert.Equal(t, "active", reinstateFirst.ToStatus)
+	assert.Equal(t, 1, reinstateFirst.SupportCount)
+
+	edges, err = semanticRepo.ListSemanticEdges(ctx, teamID, 20)
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+	assert.Equal(t, first.Relationship.RelationshipID, edges[0].RelationshipID)
+
+	trace, err := semanticRepo.TraceRelationship(ctx, V2TraceRelationshipInput{
+		TeamID:         teamID,
+		RelationshipID: first.Relationship.RelationshipID,
+		MaxEvents:      20,
+	})
+	require.NoError(t, err)
+	assert.Len(t, trace.EvidenceSupports, 2)
+	assert.Len(t, trace.SupportDecisionEvents, 5)
+	assert.Equal(t, "validated_claim", trace.Relationship.Tier)
+	assert.Equal(t, "active", trace.Relationship.Status)
+}
+
+func TestV2SourceRevisionAdvanceRevokesAdoptedSupportAndRecomputesRelationships(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "source-invalidation-team")
+	sourceOwner := createV2LedgerProfile(t, adminDB, rls, teamID, "source-owner")
+	relationshipOwner := createV2LedgerProfile(t, adminDB, rls, teamID, "relationship-owner")
+	ledgerRepo := NewV2LedgerRepository(appDB, rls)
+	semanticRepo := NewV2SemanticRepository(appDB, rls)
+
+	sourceIngest, err := ledgerRepo.CreateIngest(ctx, V2CreateIngestInput{
+		TeamID:         teamID,
+		OwnerProfileID: sourceOwner,
+		IdempotencyKey: "source-policy-rev-1",
+		Evidence: []V2EvidenceInput{{
+			Content:             "Jamie works on Dense-Mem.",
+			SourceType:          "document",
+			Authority:           "primary",
+			SourceKey:           "doc://policy",
+			SourceRevisionToken: "rev-1",
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, sourceIngest.Evidence, 1)
+	require.NotEmpty(t, sourceIngest.Evidence[0].SourceID)
+	require.NotEmpty(t, sourceIngest.Evidence[0].SourceRevisionID)
+
+	subject := createV2SemanticEntity(t, ctx, semanticRepo, teamID, relationshipOwner, "person", "Jamie")
+	object := createV2SemanticEntity(t, ctx, semanticRepo, teamID, relationshipOwner, "project", "Dense-Mem")
+	decision := applyV2SemanticDecision(t, ctx, semanticRepo, V2ApplyRelationshipDecisionInput{
+		TeamID:          teamID,
+		OwnerProfileID:  relationshipOwner,
+		IngestID:        sourceIngest.IngestID,
+		SubjectEntityID: subject.EntityID,
+		PredicateKey:    "works_on",
+		ObjectEntityID:  object.EntityID,
+		Support: &V2EvidenceSupportInput{
+			FragmentID:       sourceIngest.Evidence[0].FragmentID,
+			SourceGroupKey:   "doc://policy",
+			SourceID:         sourceIngest.Evidence[0].SourceID,
+			SourceRevisionID: sourceIngest.Evidence[0].SourceRevisionID,
+			SpanStart:        0,
+			SpanEnd:          len("Jamie works on Dense-Mem."),
+			Authority:        "primary",
+		},
+	})
+	require.NotNil(t, decision.Relationship)
+	require.NotEmpty(t, decision.SupportID)
+	assert.Equal(t, "validated_claim", decision.Relationship.Tier)
+	assert.Equal(t, "active", decision.Relationship.Status)
+
+	_, err = ledgerRepo.CreateIngest(ctx, V2CreateIngestInput{
+		TeamID:         teamID,
+		OwnerProfileID: sourceOwner,
+		IdempotencyKey: "source-policy-stale-rev",
+		Evidence: []V2EvidenceInput{{
+			Content:                       "Stale source update must not invalidate support.",
+			SourceType:                    "document",
+			Authority:                     "primary",
+			SourceKey:                     "doc://policy",
+			SourceRevisionToken:           "rev-stale",
+			ExpectedPreviousRevisionToken: "rev-missing",
+		}},
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrV2SourceRevisionConflict), "err=%v", err)
+
+	trace, err := semanticRepo.TraceRelationship(ctx, V2TraceRelationshipInput{
+		TeamID:         teamID,
+		RelationshipID: decision.Relationship.RelationshipID,
+		MaxEvents:      20,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "validated_claim", trace.Relationship.Tier)
+	assert.Equal(t, "active", trace.Relationship.Status)
+	assert.Len(t, trace.SupportDecisionEvents, 1)
+
+	_, err = ledgerRepo.CreateIngest(ctx, V2CreateIngestInput{
+		TeamID:         teamID,
+		OwnerProfileID: sourceOwner,
+		IdempotencyKey: "source-policy-rev-2",
+		Evidence: []V2EvidenceInput{{
+			Content:                       "The policy source changed and the old statement is no longer current.",
+			SourceType:                    "document",
+			Authority:                     "primary",
+			SourceKey:                     "doc://policy",
+			SourceRevisionToken:           "rev-2",
+			ExpectedPreviousRevisionToken: "rev-1",
+		}},
+	})
+	require.NoError(t, err)
+
+	edges, err := semanticRepo.ListSemanticEdges(ctx, teamID, 20)
+	require.NoError(t, err)
+	assert.Empty(t, edges, "source-invalidation demotion must remove the adopted relationship from active graph reads")
+
+	trace, err = semanticRepo.TraceRelationship(ctx, V2TraceRelationshipInput{
+		TeamID:         teamID,
+		RelationshipID: decision.Relationship.RelationshipID,
+		MaxEvents:      20,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "candidate", trace.Relationship.Tier)
+	assert.Equal(t, "pending_evidence", trace.Relationship.Status)
+	assert.Equal(t, 0, trace.Relationship.SupportCount)
+	require.Len(t, trace.SupportDecisionEvents, 2)
+	revoke := trace.SupportDecisionEvents[1]
+	assert.Equal(t, "revoke", revoke.Decision)
+	assert.Equal(t, sourceOwner, revoke.ActorProfileID)
+	assert.Equal(t, relationshipOwner, revoke.OwnerProfileID)
+	assert.Equal(t, "source_revision_superseded", revoke.Reason)
+	require.NotEmpty(t, trace.Transitions)
+	assert.Equal(t, "source_revision_superseded", trace.Transitions[len(trace.Transitions)-1].Reason)
+}

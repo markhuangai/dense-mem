@@ -176,6 +176,15 @@ func TestBuildDefaultDoesNotExposeV2ContractTools(t *testing.T) {
 	}
 }
 
+func TestIsV2ContractTool(t *testing.T) {
+	if !IsV2ContractTool(Tool{Name: V2ToolRemember, ContractVersion: domain.V2ContractVersion}) {
+		t.Fatal("V2 contract tool was not recognized")
+	}
+	if IsV2ContractTool(Tool{Name: "remember", ContractVersion: ""}) {
+		t.Fatal("legacy tool was recognized as V2")
+	}
+}
+
 func TestBuildV2UATWiresExecutableRemember(t *testing.T) {
 	stub := &stubV2RememberService{}
 	reg, err := BuildV2UAT(Dependencies{V2Remember: stub})
@@ -285,6 +294,72 @@ func TestBuildV2UATRecallRejectsTenantOverride(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "team_id") {
 		t.Fatalf("recall_memory.Invoke err = %v, want tenant override rejection", err)
+	}
+}
+
+func TestBuildV2UATExecutableToolsRequireDependencies(t *testing.T) {
+	reg, err := BuildV2UAT(Dependencies{})
+	if err != nil {
+		t.Fatalf("BuildV2UAT: %v", err)
+	}
+	tests := []struct {
+		name string
+		args map[string]any
+	}{
+		{
+			name: V2ToolRemember,
+			args: map[string]any{
+				"contract_version": domain.V2ContractVersion,
+				"evidence":         []any{map[string]any{"content": "remember"}},
+			},
+		},
+		{
+			name: V2ToolRecallMemory,
+			args: map[string]any{
+				"contract_version": domain.V2ContractVersion,
+				"query":            "PostgreSQL",
+			},
+		},
+		{
+			name: V2ToolResolveMemoryPlacement,
+			args: map[string]any{
+				"contract_version": domain.V2ContractVersion,
+				"action":           string(domain.V2ResolveForget),
+				"relationship_id":  "relationship-v2",
+				"message":          "forget this relationship",
+				"idempotency_key":  "forget-1",
+				"evidence":         []any{map[string]any{"content": "forget"}},
+			},
+		},
+		{
+			name: V2ToolCorrectEntityResolution,
+			args: map[string]any{
+				"contract_version":         domain.V2ContractVersion,
+				"action":                   string(domain.V2EntityCorrectionSplit),
+				"source_entity_id":         "entity-source",
+				"selected_observation_ids": []any{"obs-1"},
+				"dry_run":                  true,
+			},
+		},
+		{
+			name: V2ToolTraceMemory,
+			args: map[string]any{
+				"contract_version": domain.V2ContractVersion,
+				"relationship_id":  "relationship-v2",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tool, ok := reg.Get(tc.name)
+			if !ok || tool.Invoke == nil {
+				t.Fatalf("tool %s not executable", tc.name)
+			}
+			_, err := tool.Invoke(context.Background(), "ignored-profile", tc.args)
+			if !errors.Is(err, ErrToolUnavailable) {
+				t.Fatalf("%s err = %v, want ErrToolUnavailable", tc.name, err)
+			}
+		})
 	}
 }
 
@@ -454,10 +529,11 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 			name:   "select entity requires target and candidate",
 			action: string(domain.V2ResolveSelectEntity),
 			valid: map[string]any{
-				"ingest_id":           "ing-1",
-				"placement_item_id":   "item-1",
-				"entity_ref":          "person-1",
-				"candidate_entity_id": "ent-1",
+				"ingest_id":              "ing-1",
+				"placement_item_id":      "item-1",
+				"placement_item_version": float64(1),
+				"entity_ref":             "person-1",
+				"candidate_entity_id":    "ent-1",
 			},
 			missing: "candidate_entity_id",
 		},
@@ -465,10 +541,11 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 			name:   "confirm new entity requires evidence",
 			action: string(domain.V2ResolveConfirmNewEntity),
 			valid: map[string]any{
-				"ingest_id":         "ing-1",
-				"placement_item_id": "item-1",
-				"entity_ref":        "person-1",
-				"evidence":          evidence,
+				"ingest_id":              "ing-1",
+				"placement_item_id":      "item-1",
+				"placement_item_version": float64(1),
+				"entity_ref":             "person-1",
+				"evidence":               evidence,
 			},
 			missing: "evidence",
 		},
@@ -476,11 +553,12 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 			name:   "select predicate requires predicate version",
 			action: string(domain.V2ResolveSelectPredicate),
 			valid: map[string]any{
-				"ingest_id":         "ing-1",
-				"placement_item_id": "item-1",
-				"observation_id":    "obs-1",
-				"predicate_key":     "works_on",
-				"predicate_version": float64(1),
+				"ingest_id":              "ing-1",
+				"placement_item_id":      "item-1",
+				"placement_item_version": float64(1),
+				"observation_id":         "obs-1",
+				"predicate_key":          "works_on",
+				"predicate_version":      float64(1),
 			},
 			missing: "predicate_version",
 		},
@@ -488,9 +566,10 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 			name:   "accept requires evidence",
 			action: string(domain.V2ResolveAccept),
 			valid: map[string]any{
-				"ingest_id":         "ing-1",
-				"placement_item_id": "item-1",
-				"evidence":          evidence,
+				"ingest_id":              "ing-1",
+				"placement_item_id":      "item-1",
+				"placement_item_version": float64(1),
+				"evidence":               evidence,
 			},
 			missing: "evidence",
 		},
@@ -498,9 +577,10 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 			name:   "reject requires message",
 			action: string(domain.V2ResolveReject),
 			valid: map[string]any{
-				"ingest_id":         "ing-1",
-				"placement_item_id": "item-1",
-				"message":           "not supported by the source",
+				"ingest_id":              "ing-1",
+				"placement_item_id":      "item-1",
+				"placement_item_version": float64(1),
+				"message":                "not supported by the source",
 			},
 			missing: "message",
 		},
@@ -508,9 +588,10 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 			name:   "correct requires evidence",
 			action: string(domain.V2ResolveCorrect),
 			valid: map[string]any{
-				"ingest_id":         "ing-1",
-				"placement_item_id": "item-1",
-				"evidence":          evidence,
+				"ingest_id":              "ing-1",
+				"placement_item_id":      "item-1",
+				"placement_item_version": float64(1),
+				"evidence":               evidence,
 			},
 			missing: "evidence",
 		},
@@ -518,9 +599,10 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 			name:   "release quarantine requires reason",
 			action: string(domain.V2ResolveReleaseQuarantine),
 			valid: map[string]any{
-				"ingest_id":         "ing-1",
-				"placement_item_id": "item-1",
-				"message":           "manager reviewed quarantine signal",
+				"ingest_id":              "ing-1",
+				"placement_item_id":      "item-1",
+				"placement_item_version": float64(1),
+				"message":                "manager reviewed quarantine signal",
 			},
 			missing: "message",
 		},
@@ -550,6 +632,34 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 				t.Fatalf("missing %s err = %v", tc.missing, err)
 			}
 		})
+	}
+}
+
+func TestV2ResolveMemoryPlacementReviewActionsRequireItemVersion(t *testing.T) {
+	resolve, err := requireV2Tool(v2ToolMap(t), V2ToolResolveMemoryPlacement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []domain.V2ResolveAction{
+		domain.V2ResolveSelectEntity,
+		domain.V2ResolveConfirmNewEntity,
+		domain.V2ResolveSelectPredicate,
+		domain.V2ResolveAccept,
+		domain.V2ResolveReject,
+		domain.V2ResolveCorrect,
+		domain.V2ResolveReleaseQuarantine,
+	} {
+		input := map[string]any{
+			"contract_version":  domain.V2ContractVersion,
+			"action":            string(action),
+			"idempotency_key":   "resolution-1",
+			"ingest_id":         "ing-1",
+			"placement_item_id": "item-1",
+		}
+		err := ValidateV2ContractInput(resolve, input, []string{"write"})
+		if err == nil || !strings.Contains(err.Error(), "placement_item_version is required") {
+			t.Fatalf("%s missing placement_item_version err = %v", action, err)
+		}
 	}
 }
 
@@ -786,7 +896,8 @@ func readV2ContractFixtures(t *testing.T) []v2ContractFixture {
 }
 
 type stubV2RememberService struct {
-	req memoryservice.V2RememberRequest
+	req          memoryservice.V2RememberRequest
+	placementReq memoryservice.V2GetMemoryPlacementRequest
 }
 
 func (s *stubV2RememberService) RememberV2(_ context.Context, req memoryservice.V2RememberRequest) (*memoryservice.V2RememberResult, error) {
@@ -799,11 +910,30 @@ func (s *stubV2RememberService) RememberV2(_ context.Context, req memoryservice.
 		Items: []memoryservice.V2RememberItemResult{
 			{
 				ItemID:        "item-v2",
+				Version:       1,
 				EvidenceIndex: 0,
 				Category:      string(domain.V2EvidenceNeedsReview),
 				SearchState:   string(domain.V2SearchProjectionNotRequired),
 			},
 		},
+		SearchState: string(domain.V2SearchProjectionNotRequired),
+	}, nil
+}
+
+func (s *stubV2RememberService) GetMemoryPlacementV2(_ context.Context, req memoryservice.V2GetMemoryPlacementRequest) (*memoryservice.V2RememberResult, error) {
+	s.placementReq = req
+	return &memoryservice.V2RememberResult{
+		IngestID:          req.IngestID,
+		Status:            string(domain.V2PlacementRunCompleted),
+		CheckAfterSeconds: 0,
+		StatusTool:        V2ToolGetMemoryPlacement,
+		Items: []memoryservice.V2RememberItemResult{{
+			ItemID:        "item-v2",
+			Version:       3,
+			EvidenceIndex: 0,
+			Category:      string(domain.V2EvidenceNeedsReview),
+			SearchState:   string(domain.V2SearchProjectionNotRequired),
+		}},
 		SearchState: string(domain.V2SearchProjectionNotRequired),
 	}, nil
 }

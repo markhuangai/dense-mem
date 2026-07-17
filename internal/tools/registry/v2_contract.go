@@ -1,14 +1,11 @@
 package registry
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/service/contextservice"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
 const (
@@ -149,75 +146,6 @@ func V2ContractTools() []Tool {
 	}
 }
 
-func v2UATTools(deps Dependencies) []Tool {
-	tools := V2ContractTools()
-	for i := range tools {
-		switch tools[i].Name {
-		case V2ToolRemember:
-			tool := tools[i]
-			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-				if deps.V2Remember == nil {
-					return nil, ErrToolUnavailable
-				}
-				if err := ValidateV2ContractInput(tool, input, tool.RequiredScopes); err != nil {
-					return nil, fmt.Errorf("remember: invalid input: %w", err)
-				}
-				var req memoryservice.V2RememberRequest
-				if err := remapInput(input, &req); err != nil {
-					return nil, fmt.Errorf("remember: invalid input: %w", err)
-				}
-				res, err := deps.V2Remember.RememberV2(ctx, req)
-				if err != nil {
-					return nil, err
-				}
-				return structToMap(res)
-			}
-		case V2ToolRecallMemory:
-			tool := tools[i]
-			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-				if deps.V2Recall == nil {
-					return nil, ErrToolUnavailable
-				}
-				if err := ValidateV2ContractInput(tool, input, tool.RequiredScopes); err != nil {
-					return nil, fmt.Errorf("recall_memory: invalid input: %w", err)
-				}
-				var req memoryservice.V2RecallRequest
-				if err := remapInput(input, &req); err != nil {
-					return nil, fmt.Errorf("recall_memory: invalid input: %w", err)
-				}
-				res, err := deps.V2Recall.RecallV2(ctx, req)
-				if err != nil {
-					return nil, err
-				}
-				return structToMap(res)
-			}
-		case V2ToolTraceMemory:
-			tool := tools[i]
-			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-				if deps.Context == nil {
-					return nil, ErrToolUnavailable
-				}
-				if err := ValidateV2ContractInput(tool, input, tool.RequiredScopes); err != nil {
-					return nil, fmt.Errorf("trace_memory: invalid input: %w", err)
-				}
-				var req contextservice.TraceRequest
-				if err := remapInput(input, &req); err != nil {
-					return nil, fmt.Errorf("trace_memory: invalid input: %w", err)
-				}
-				res, err := deps.Context.Trace(ctx, "", req)
-				if err != nil {
-					return nil, err
-				}
-				if res != nil && res.V2Semantic != nil {
-					return structToMap(res.V2Semantic)
-				}
-				return structToMap(res)
-			}
-		}
-	}
-	return tools
-}
-
 func v2ContractTool(
 	name string,
 	description string,
@@ -346,6 +274,7 @@ func validateV2ResolveMemoryPlacement(args map[string]any) error {
 		return validateV2RequiredFields(args,
 			"ingest_id",
 			"placement_item_id",
+			"placement_item_version",
 			"entity_ref",
 			"candidate_entity_id",
 		)
@@ -353,6 +282,7 @@ func validateV2ResolveMemoryPlacement(args map[string]any) error {
 		return validateV2RequiredFields(args,
 			"ingest_id",
 			"placement_item_id",
+			"placement_item_version",
 			"entity_ref",
 			"evidence",
 		)
@@ -360,18 +290,19 @@ func validateV2ResolveMemoryPlacement(args map[string]any) error {
 		return validateV2RequiredFields(args,
 			"ingest_id",
 			"placement_item_id",
+			"placement_item_version",
 			"observation_id",
 			"predicate_key",
 			"predicate_version",
 		)
 	case domain.V2ResolveAccept:
-		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "evidence")
+		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "placement_item_version", "evidence")
 	case domain.V2ResolveReject:
-		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "message")
+		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "placement_item_version", "message")
 	case domain.V2ResolveCorrect:
-		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "evidence")
+		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "placement_item_version", "evidence")
 	case domain.V2ResolveReleaseQuarantine:
-		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "message")
+		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "placement_item_version", "message")
 	case domain.V2ResolveForget:
 		return validateV2RequiredFields(args, "relationship_id", "message", "evidence")
 	default:
@@ -682,9 +613,14 @@ func v2ResolveMemoryPlacementInputSchema() map[string]any {
 		"action":            schemaEnum(domain.V2ResolveActions()),
 		"ingest_id":         schemaString("Placement run ID.", 128),
 		"placement_item_id": schemaString("Review item ID.", 128),
-		"observation_id":    schemaString("Unresolved observation ID.", 128),
-		"relationship_id":   schemaString("Caller-owned Relationship ID.", 128),
-		"entity_ref":        schemaString("Client-local Entity proposal ref.", 128),
+		"placement_item_version": map[string]any{
+			"type":        "integer",
+			"minimum":     1,
+			"description": "Observed placement item version from inspection; stale values are rejected.",
+		},
+		"observation_id":  schemaString("Unresolved observation ID.", 128),
+		"relationship_id": schemaString("Caller-owned Relationship ID.", 128),
+		"entity_ref":      schemaString("Client-local Entity proposal ref.", 128),
 		"candidate_entity_id": schemaString(
 			"Server-supplied candidate Entity ID selected for this profile.",
 			128,
@@ -838,6 +774,7 @@ func v2PlacementItemSchema() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"item_id":               schemaString("Stable placement item ID.", 128),
+			"version":               map[string]any{"type": "integer", "minimum": 1},
 			"evidence_index":        map[string]any{"type": "integer"},
 			"category":              schemaEnum(domain.V2EvidenceItemCategories()),
 			"relationship_outcomes": v2RelationshipOutcomeArraySchema(),

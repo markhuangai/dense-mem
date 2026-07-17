@@ -9,6 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 type V2AdvanceSourceRevisionInput struct {
@@ -190,6 +192,10 @@ func advanceV2SourceRevisionInTx(
 	if currentToken != input.ExpectedPreviousRevisionToken {
 		return nil, fmt.Errorf("%w: expected %q, got %q", ErrV2SourceRevisionConflict, input.ExpectedPreviousRevisionToken, currentToken)
 	}
+	supportsToRevoke, err := loadV2EffectiveSourceRevisionSupports(ctx, tx, input.TeamID, sourceID, currentRevisionID)
+	if err != nil {
+		return nil, err
+	}
 	revisionID, err := insertV2SourceRevision(ctx, tx, input, sourceID, currentRevisionID)
 	if err != nil {
 		return nil, err
@@ -210,6 +216,9 @@ func advanceV2SourceRevisionInTx(
 	if result.RowsAffected != 1 {
 		return nil, fmt.Errorf("%w: source revision changed concurrently", ErrV2SourceRevisionConflict)
 	}
+	if err := invalidateV2SourceRevisionSupports(ctx, tx, input, sourceID, currentRevisionID, revisionID, supportsToRevoke); err != nil {
+		return nil, err
+	}
 	advanced := V2SourceRevisionResult{
 		TeamID:           input.TeamID,
 		SourceID:         sourceID,
@@ -220,6 +229,149 @@ func advanceV2SourceRevisionInTx(
 		cache[cacheKey] = advanced
 	}
 	return &advanced, nil
+}
+
+type v2SourceRevisionSupportInvalidation struct {
+	SupportID      string
+	RelationshipID string
+	OwnerProfileID string
+}
+
+func loadV2EffectiveSourceRevisionSupports(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	sourceID string,
+	sourceRevisionID string,
+) ([]v2SourceRevisionSupportInvalidation, error) {
+	if sourceRevisionID == "" {
+		return nil, nil
+	}
+	rows, err := tx.WithContext(ctx).Raw(`
+		WITH latest AS (
+			SELECT DISTINCT ON (support_id)
+			       support_id,
+			       decision
+			FROM relationship_support_decision_events
+			WHERE team_id = ?::uuid
+			ORDER BY support_id, created_at DESC, support_decision_id DESC
+		)
+		SELECT support.support_id::text,
+		       support.relationship_id::text,
+		       support.owner_profile_id::text
+		FROM relationship_evidence_supports AS support
+		JOIN latest
+		  ON latest.support_id = support.support_id
+		 AND latest.decision IN ('grant', 'reinstate')
+		LEFT JOIN evidence_quarantines AS quarantine
+		  ON quarantine.team_id = support.team_id
+		 AND quarantine.fragment_id = support.fragment_id
+		 AND quarantine.status = 'active'
+		WHERE support.team_id = ?::uuid
+		  AND support.source_id = ?::uuid
+		  AND support.source_revision_id = ?::uuid
+		  AND quarantine.quarantine_id IS NULL
+		ORDER BY support.relationship_id ASC, support.support_id ASC
+	`, teamID, teamID, sourceID, sourceRevisionID).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []v2SourceRevisionSupportInvalidation{}
+	for rows.Next() {
+		var item v2SourceRevisionSupportInvalidation
+		if err := rows.Scan(&item.SupportID, &item.RelationshipID, &item.OwnerProfileID); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func invalidateV2SourceRevisionSupports(
+	ctx context.Context,
+	tx *gorm.DB,
+	input V2AdvanceSourceRevisionInput,
+	sourceID string,
+	supersededRevisionID string,
+	supersedingRevisionID string,
+	supports []v2SourceRevisionSupportInvalidation,
+) error {
+	if len(supports) == 0 {
+		return nil
+	}
+	return withV2SystemModeInTx(ctx, tx, input.TeamID, input.OwnerProfileID, func(systemTx *gorm.DB) error {
+		relationships := make(map[string]string)
+		for _, support := range supports {
+			decisionID, err := insertV2SupportDecisionEvent(ctx, systemTx, v2SupportDecisionInput{
+				TeamID:         input.TeamID,
+				OwnerProfileID: support.OwnerProfileID,
+				ActorProfileID: input.OwnerProfileID,
+				SupportID:      support.SupportID,
+				RelationshipID: support.RelationshipID,
+				Decision:       string(domain.V2SupportRevoke),
+				Reason:         "source_revision_superseded",
+				IdempotencyKey: "source-revision:" + supersedingRevisionID + ":support:" + support.SupportID,
+				Metadata: map[string]any{
+					"source_id":                      sourceID,
+					"source_owner_profile_id":        input.OwnerProfileID,
+					"superseded_source_revision_id":  supersededRevisionID,
+					"superseding_source_revision_id": supersedingRevisionID,
+				},
+			})
+			if err != nil {
+				return err
+			}
+			relationships[support.RelationshipID] = decisionID
+		}
+		for relationshipID, decisionID := range relationships {
+			if _, err := recomputeV2RelationshipFromEffectiveSupport(
+				ctx,
+				systemTx,
+				input.TeamID,
+				relationshipID,
+				decisionID,
+				"source_revision_superseded",
+			); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func withV2SystemModeInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	profileID string,
+	fn func(systemTx *gorm.DB) error,
+) error {
+	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.current_team_id', '', true)").Error; err != nil {
+		return err
+	}
+	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.current_profile_id', '', true)").Error; err != nil {
+		return err
+	}
+	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.tx_mode', 'system', true)").Error; err != nil {
+		return err
+	}
+	fnErr := fn(tx)
+	resetErr := resetV2ProfileModeInTx(ctx, tx, teamID, profileID)
+	if fnErr != nil {
+		return fnErr
+	}
+	return resetErr
+}
+
+func resetV2ProfileModeInTx(ctx context.Context, tx *gorm.DB, teamID, profileID string) error {
+	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.current_team_id', ?, true)", teamID).Error; err != nil {
+		return err
+	}
+	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.current_profile_id', ?, true)", profileID).Error; err != nil {
+		return err
+	}
+	return tx.WithContext(ctx).Exec("SELECT set_config('app.tx_mode', 'profile', true)").Error
 }
 
 func selectV2SourceRevisionContentHash(ctx context.Context, tx *gorm.DB, teamID, revisionID string) (string, error) {

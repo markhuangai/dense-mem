@@ -293,6 +293,10 @@ func (s *v2SemanticReviewLedgerStub) CreateIngest(context.Context, repository.V2
 	return nil, errors.New("unexpected CreateIngest")
 }
 
+func (s *v2SemanticReviewLedgerStub) GetPlacementRun(context.Context, repository.V2GetPlacementRunInput) (*repository.V2CreateIngestResult, error) {
+	return nil, errors.New("unexpected GetPlacementRun")
+}
+
 func (s *v2SemanticReviewLedgerStub) AdvanceSourceRevision(context.Context, repository.V2AdvanceSourceRevisionInput) (*repository.V2SourceRevisionResult, error) {
 	return nil, errors.New("unexpected AdvanceSourceRevision")
 }

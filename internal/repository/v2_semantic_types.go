@@ -10,7 +10,9 @@ type V2SemanticRepository interface {
 	AddEntityName(ctx context.Context, input V2AddEntityNameInput) (string, error)
 	UpsertValue(ctx context.Context, input V2UpsertValueInput) (*V2ValueRecord, error)
 	ApplyRelationshipDecision(ctx context.Context, input V2ApplyRelationshipDecisionInput) (*V2RelationshipDecisionResult, error)
-	RetractRelationship(ctx context.Context, input V2RetractRelationshipInput) error
+	RetractRelationship(ctx context.Context, input V2RetractRelationshipInput) (*V2RelationshipTransitionResult, error)
+	ApplyRelationshipSupportDecision(ctx context.Context, input V2ApplyRelationshipSupportDecisionInput) (*V2RelationshipSupportDecisionResult, error)
+	CorrectEntityResolution(ctx context.Context, input V2CorrectEntityResolutionInput) (*V2CorrectEntityResolutionResult, error)
 	AppendCrossReference(ctx context.Context, input V2AppendCrossReferenceInput) (string, error)
 	CreateHypothesis(ctx context.Context, input V2CreateHypothesisInput) (string, error)
 	ListSemanticEdges(ctx context.Context, teamID string, limit int) ([]V2SemanticEdge, error)
@@ -144,6 +146,49 @@ type V2RetractRelationshipInput struct {
 	OwnerProfileID string
 	RelationshipID string
 	Reason         string
+	IdempotencyKey string
+}
+
+type V2RelationshipTransitionResult struct {
+	TeamID         string
+	TransitionID   string
+	RelationshipID string
+	FromTier       string
+	FromStatus     string
+	ToTier         string
+	ToStatus       string
+	IdempotencyKey string
+}
+
+type V2CorrectionEvidenceInput struct {
+	Content     string
+	SourceType  string
+	Authority   string
+	SourceGroup string
+	Metadata    map[string]any
+}
+
+type V2CorrectEntityResolutionInput struct {
+	TeamID                 string
+	OwnerProfileID         string
+	Action                 string
+	SourceEntityID         string
+	TargetEntityID         string
+	SelectedObservationIDs []string
+	DryRun                 bool
+	PlanToken              string
+	Evidence               []V2CorrectionEvidenceInput
+	IdempotencyKey         string
+}
+
+type V2CorrectEntityResolutionResult struct {
+	DryRun                 bool     `json:"dry_run"`
+	PlanToken              string   `json:"plan_token,omitempty"`
+	SelectedObservationIDs []string `json:"selected_ids"`
+	BlockedObservationIDs  []string `json:"blocked_ids"`
+	ImpactSummary          string   `json:"impact_summary"`
+	CorrectionEventID      string   `json:"correction_event_id,omitempty"`
+	NewEntityID            string   `json:"new_entity_id,omitempty"`
 }
 
 type V2AppendCrossReferenceInput struct {
@@ -315,6 +360,32 @@ type V2RelationshipSupportDecisionEvent struct {
 	Reason            string         `json:"reason,omitempty"`
 	Metadata          map[string]any `json:"metadata,omitempty"`
 	CreatedAt         time.Time      `json:"created_at,omitempty"`
+}
+
+type V2ApplyRelationshipSupportDecisionInput struct {
+	TeamID         string
+	OwnerProfileID string
+	RelationshipID string
+	SupportID      string
+	Decision       string
+	Reason         string
+	IdempotencyKey string
+	Metadata       map[string]any
+}
+
+type V2RelationshipSupportDecisionResult struct {
+	TeamID            string
+	SupportDecisionID string
+	SupportID         string
+	RelationshipID    string
+	Decision          string
+	IdempotencyKey    string
+	FromTier          string
+	FromStatus        string
+	ToTier            string
+	ToStatus          string
+	SupportCount      int
+	SourceGroupCount  int
 }
 
 type V2TraceEvidenceFragment struct {
