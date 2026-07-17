@@ -1,0 +1,111 @@
+package verifier
+
+import (
+	"reflect"
+	"testing"
+)
+
+func TestV2ProviderProposalSchemaIsClosedAndCanonical(t *testing.T) {
+	schema := V2ProviderProposalSchema()
+	assertClosedV2ProviderObjects(t, schema, "proposal")
+	props := schemaPropertiesForTest(t, schema)
+	for _, field := range []string{"evidence", "entity_proposals", "relationship_proposals", "predicate_options"} {
+		if _, ok := props[field]; !ok {
+			t.Fatalf("provider proposal schema missing %s", field)
+		}
+	}
+	relationships := itemSchemaForTest(t, props["relationship_proposals"])
+	relProps := schemaPropertiesForTest(t, relationships)
+	for _, field := range []string{"proposal_id", "subject_ref", "original_predicate", "evidence"} {
+		if _, ok := relProps[field]; !ok {
+			t.Fatalf("provider relationship proposal missing %s", field)
+		}
+	}
+	if _, ok := relProps["ref"]; ok {
+		t.Fatal("provider relationship proposal exposes legacy ref field")
+	}
+	span := itemSchemaForTest(t, relProps["evidence"])
+	spanProps := schemaPropertiesForTest(t, span)
+	for _, field := range []string{"evidence_index", "start", "end"} {
+		if _, ok := spanProps[field]; !ok {
+			t.Fatalf("provider evidence span missing %s", field)
+		}
+	}
+}
+
+func TestV2VerifierResponseSchemaMatchesStrictWikiContract(t *testing.T) {
+	schema := V2VerifierResponseSchema()
+	assertClosedV2ProviderObjects(t, schema, "verifier response")
+	wantRequired := []string{"request_id", "security_signals", "entity_results", "relationship_results"}
+	if got := schema["required"]; !reflect.DeepEqual(got, wantRequired) {
+		t.Fatalf("required = %#v, want %#v", got, wantRequired)
+	}
+	props := schemaPropertiesForTest(t, schema)
+	entities := schemaPropertiesForTest(t, itemSchemaForTest(t, props["entity_results"]))
+	assertEnumForTest(t, entities["action"], []string{"reuse", "create", "ambiguous"})
+	relationships := schemaPropertiesForTest(t, itemSchemaForTest(t, props["relationship_results"]))
+	assertEnumForTest(t, relationships["predicate_status"], []string{"resolved", "needs_review"})
+	assertEnumForTest(t, relationships["evidence_verdict"], []string{"entailed", "contradicted", "insufficient"})
+	signals := schemaPropertiesForTest(t, itemSchemaForTest(t, props["security_signals"]))
+	assertEnumForTest(t, signals["kind"], []string{
+		"role_control_spoofing",
+		"instruction_override",
+		"prompt_secret_extraction",
+		"tool_exfiltration",
+		"obfuscated_instruction",
+		"hidden_control_markup",
+	})
+}
+
+func assertClosedV2ProviderObjects(t *testing.T, schema map[string]any, path string) {
+	t.Helper()
+	if schema["type"] == "object" {
+		boundedMap, _ := schema["x-bounded-map"].(bool)
+		if additional, ok := schema["additionalProperties"].(bool); !boundedMap && (!ok || additional) {
+			t.Errorf("%s is not closed", path)
+		}
+	}
+	if props, ok := schema["properties"].(map[string]any); ok {
+		for name, raw := range props {
+			if child, ok := raw.(map[string]any); ok {
+				assertClosedV2ProviderObjects(t, child, path+"."+name)
+			}
+		}
+	}
+	if items, ok := schema["items"].(map[string]any); ok {
+		assertClosedV2ProviderObjects(t, items, path+"[]")
+	}
+}
+
+func schemaPropertiesForTest(t *testing.T, schema map[string]any) map[string]any {
+	t.Helper()
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema has no properties: %#v", schema)
+	}
+	return props
+}
+
+func itemSchemaForTest(t *testing.T, schema any) map[string]any {
+	t.Helper()
+	field, ok := schema.(map[string]any)
+	if !ok {
+		t.Fatalf("field is not a schema: %#v", schema)
+	}
+	items, ok := field["items"].(map[string]any)
+	if !ok {
+		t.Fatalf("field has no item schema: %#v", field)
+	}
+	return items
+}
+
+func assertEnumForTest(t *testing.T, schema any, want []string) {
+	t.Helper()
+	field, ok := schema.(map[string]any)
+	if !ok {
+		t.Fatalf("enum field is not a schema: %#v", schema)
+	}
+	if got := field["enum"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("enum = %#v, want %#v", got, want)
+	}
+}
