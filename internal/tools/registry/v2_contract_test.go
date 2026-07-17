@@ -148,6 +148,21 @@ func TestV2ContractCatalogMetadata(t *testing.T) {
 	}
 }
 
+func TestV2InputSchemasOmitEmptyRequired(t *testing.T) {
+	for _, tool := range V2ContractTools() {
+		required := schemaRequiredFields(tool.InputSchema)
+		if len(required) == 0 {
+			if _, ok := tool.InputSchema["required"]; ok {
+				t.Fatalf("%s input schema has empty required keyword", tool.Name)
+			}
+			continue
+		}
+		if _, ok := tool.InputSchema["required"]; !ok {
+			t.Fatalf("%s input schema omits non-empty required fields", tool.Name)
+		}
+	}
+}
+
 func TestToolVisibleHidesDormantV2ContractTools(t *testing.T) {
 	if !ToolVisible(context.Background(), Tool{Name: "recall_memory"}, nil) {
 		t.Fatal("ordinary tools should remain visible")
@@ -619,9 +634,13 @@ func assertV2VerifierResponseSchema(schema map[string]any) error {
 		return errors.New("verifier response schema is not closed")
 	}
 	props := schemaProperties(schema)
+	requiredFields := schemaRequiredFields(schema)
 	for _, required := range []string{"request_id", "security_signals", "entity_results", "relationship_results"} {
 		if _, ok := props[required]; !ok {
 			return fmt.Errorf("verifier response schema has no %s", required)
+		}
+		if !slices.Contains(requiredFields, required) {
+			return fmt.Errorf("verifier response schema does not require %s", required)
 		}
 	}
 	for _, forbidden := range []string{"tier", "status", "support_count", "predicate_definitions"} {
