@@ -65,7 +65,7 @@ func TestRunOnceSubmitsLegacyItemsUnderOriginalOwnerAndRecordsProgress(t *testin
 			Status:   string(domain.V2PlacementRunQueued),
 			Items: []memoryservice.V2RememberItemResult{{
 				ItemID:   "22222222-2222-2222-2222-222222222222",
-				Category: string(domain.V2EvidenceNeedsReview),
+				Category: string(domain.V2EvidenceProcessed),
 			}},
 		},
 	}
@@ -297,7 +297,7 @@ func TestRunOnceMapsQuarantinedRememberResult(t *testing.T) {
 			Status:   "quarantined",
 			Items: []memoryservice.V2RememberItemResult{{
 				ItemID:   "44444444-4444-4444-4444-444444444444",
-				Category: string(domain.V2EvidenceNeedsReview),
+				Category: string(domain.V2EvidenceProcessed),
 			}},
 		},
 	}
@@ -608,7 +608,7 @@ func (s *rememberStub) RememberV2(ctx context.Context, req memoryservice.V2Remem
 		Status:   string(domain.V2PlacementRunQueued),
 		Items: []memoryservice.V2RememberItemResult{{
 			ItemID:   uuid.NewString(),
-			Category: string(domain.V2EvidenceNeedsReview),
+			Category: string(domain.V2EvidenceProcessed),
 		}},
 	}, nil
 }
