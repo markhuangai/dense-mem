@@ -96,6 +96,15 @@ func TestLoadV2ConfigRejectsUnsafeModesAndTopologyHints(t *testing.T) {
 			os.Setenv("RECALL_BRANCH_LIMIT_FLOOR", "201")
 			os.Setenv("RECALL_BRANCH_LIMIT_MAX", "200")
 		}, "RECALL_BRANCH_LIMIT_FLOOR"},
+		{"duplicate rrf branch weights", func() {
+			os.Setenv("RECALL_RRF_BRANCH_WEIGHTS", "exact=1,evidence_text=1,exact=2")
+		}, "RECALL_RRF_BRANCH_WEIGHTS"},
+		{"nan rrf branch weight", func() {
+			os.Setenv("RECALL_RRF_BRANCH_WEIGHTS", "exact=NaN,evidence_text=1,evidence_vector=1")
+		}, "RECALL_RRF_BRANCH_WEIGHTS"},
+		{"infinite rrf branch weight", func() {
+			os.Setenv("RECALL_RRF_BRANCH_WEIGHTS", "exact=+Inf,evidence_text=1,evidence_vector=1")
+		}, "RECALL_RRF_BRANCH_WEIGHTS"},
 	}
 
 	for _, tc := range cases {

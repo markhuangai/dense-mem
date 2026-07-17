@@ -1,7 +1,6 @@
 package registry
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
@@ -272,7 +271,10 @@ func validateV2Remember(args map[string]any) error {
 	if err := validateV2RelationshipEvidenceIndexes(args, "relationship_hints", len(evidence)); err != nil {
 		return err
 	}
-	return validateV2RelationshipObjectChoice(args, "relationship_hints")
+	if err := validateV2RelationshipObjectChoice(args, "relationship_hints"); err != nil {
+		return err
+	}
+	return validateV2RelationshipEntityRefs(args)
 }
 
 func validateV2Recall(args map[string]any) error {
@@ -501,6 +503,45 @@ func validateV2RelationshipObjectChoice(args map[string]any, field string) error
 	return nil
 }
 
+func validateV2RelationshipEntityRefs(args map[string]any) error {
+	entityRefs := map[string]struct{}{}
+	rawEntities, _ := args["entity_hints"].([]any)
+	for _, item := range rawEntities {
+		fields, ok := objectFields(item)
+		if !ok {
+			continue
+		}
+		ref, _ := fields["ref"].(string)
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			continue
+		}
+		entityRefs[ref] = struct{}{}
+	}
+	rawRelationships, _ := args["relationship_hints"].([]any)
+	for i, item := range rawRelationships {
+		fields, ok := objectFields(item)
+		if !ok {
+			continue
+		}
+		subjectRef, _ := fields["subject_ref"].(string)
+		subjectRef = strings.TrimSpace(subjectRef)
+		if subjectRef != "" {
+			if _, ok := entityRefs[subjectRef]; !ok {
+				return fmt.Errorf("relationship_hints[%d].subject_ref %q does not resolve to entity_hints", i, subjectRef)
+			}
+		}
+		objectRef, _ := fields["object_ref"].(string)
+		objectRef = strings.TrimSpace(objectRef)
+		if objectRef != "" {
+			if _, ok := entityRefs[objectRef]; !ok {
+				return fmt.Errorf("relationship_hints[%d].object_ref %q does not resolve to entity_hints", i, objectRef)
+			}
+		}
+	}
+	return nil
+}
+
 func v2ContractInput(required []string, properties map[string]any) map[string]any {
 	props := map[string]any{
 		"contract_version": schemaEnum([]string{domain.V2ContractVersion}),
@@ -664,7 +705,7 @@ func v2CorrectEntityResolutionInputSchema() map[string]any {
 	return v2ContractInput([]string{"action", "source_entity_id", "dry_run"}, map[string]any{
 		"action":                   schemaEnum(domain.V2EntityCorrectionActions()),
 		"source_entity_id":         schemaString("Caller-visible source Entity ID.", 128),
-		"target_entity_id":         schemaString("Merge target Entity ID. Null for split.", 128),
+		"target_entity_id":         schemaString("Merge target Entity ID. Omitted for split.", 128),
 		"selected_observation_ids": v2StringArraySchema("Caller-owned observation ID.", 200, 128),
 		"dry_run":                  map[string]any{"type": "boolean"},
 		"plan_token":               schemaString("Dry-run token required for apply.", 256),
@@ -744,10 +785,12 @@ func v2FindMemoryPackCandidatesInputSchema() map[string]any {
 }
 
 func v2ExportMemoryPackInputSchema() map[string]any {
-	return v2ContractInput([]string{"name"}, map[string]any{
+	relationshipIDs := v2StringArraySchema("Relationship ID to export.", 500, 128)
+	relationshipIDs["minItems"] = 1
+	return v2ContractInput([]string{"name", "relationship_ids"}, map[string]any{
 		"name":             schemaString("Memory pack name.", 256),
 		"description":      schemaString("Memory pack description.", 1024),
-		"relationship_ids": v2StringArraySchema("Relationship ID to export.", 500, 128),
+		"relationship_ids": relationshipIDs,
 		"include_support":  map[string]any{"type": "boolean"},
 	})
 }
@@ -907,46 +950,4 @@ func v2StringArraySchema(description string, maxItems int, maxLen int) map[strin
 		schema["maxItems"] = maxItems
 	}
 	return schema
-}
-
-func requireV2Tool(tools map[string]Tool, name string) (Tool, error) {
-	tool, ok := tools[name]
-	if !ok {
-		return Tool{}, fmt.Errorf("missing V2 tool %s", name)
-	}
-	if tool.ContractVersion != domain.V2ContractVersion {
-		return Tool{}, fmt.Errorf("tool %s has wrong contract version", name)
-	}
-	if tool.FeatureGate != domain.V2FeatureGate || tool.Visibility != domain.V2ToolVisibility {
-		return Tool{}, fmt.Errorf("tool %s has wrong V2 gate metadata", name)
-	}
-	return tool, nil
-}
-
-func assertV2ProviderProposalSchema(schema map[string]any) error {
-	props := schemaProperties(schema)
-	if len(props) == 0 {
-		return errors.New("provider proposal schema has no properties")
-	}
-	for _, forbidden := range []string{"team_id", "profile_id", "tier", "status", "predicate_definitions"} {
-		if _, ok := props[forbidden]; ok {
-			return fmt.Errorf("provider proposal schema allows %s", forbidden)
-		}
-	}
-	if _, ok := props["predicate_options"]; !ok {
-		return errors.New("provider proposal schema has no predicate_options")
-	}
-	relationshipProposals, ok := props["relationship_proposals"]
-	if !ok {
-		return errors.New("provider proposal schema has no relationship_proposals")
-	}
-	items, ok := relationshipProposals["items"].(map[string]any)
-	if !ok {
-		return errors.New("provider relationship_proposals schema has no item schema")
-	}
-	oneOf, ok := items["oneOf"].([]any)
-	if !ok || len(oneOf) != 2 {
-		return errors.New("provider relationship proposal schema must require exactly one object form")
-	}
-	return nil
 }
