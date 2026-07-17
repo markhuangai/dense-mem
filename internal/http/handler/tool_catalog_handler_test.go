@@ -68,6 +68,37 @@ func TestToolCatalogHandler_ReturnsRegisteredTools(t *testing.T) {
 	}
 }
 
+func TestToolCatalogHandler_ReturnsContractMetadata(t *testing.T) {
+	reg := registry.New()
+	tool := registry.V2ContractTools()[0]
+	if err := reg.Register(tool); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	h := NewToolCatalogHandler(reg)
+
+	e := echo.New()
+	e.GET("/api/v1/tools", h.Handle)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tools", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	var resp dto.ToolCatalogResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Tools) != 1 {
+		t.Fatalf("Tools length = %d; want 1", len(resp.Tools))
+	}
+	got := resp.Tools[0]
+	if got.ContractVersion != domain.V2ContractVersion {
+		t.Fatalf("contract_version = %q", got.ContractVersion)
+	}
+	if got.FeatureGate != domain.V2FeatureGate || got.Visibility != domain.V2ToolVisibility {
+		t.Fatalf("gate metadata = %q/%q", got.FeatureGate, got.Visibility)
+	}
+}
+
 func TestToolCatalogHandler_NoInternalTypeLeaks(t *testing.T) {
 	reg := registry.New()
 	_ = reg.Register(registry.Tool{Name: "x", Description: "y"})

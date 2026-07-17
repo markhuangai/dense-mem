@@ -13,9 +13,8 @@ import (
 // ToolCatalogHandler serves GET /api/v1/tools.
 //
 // The handler maps each registered Tool into a public ToolCatalogEntry DTO.
-// Only name, description, schemas, and required scopes travel over the wire —
-// the bound invoker function and any internal Go types stay
-// on the server side (AC-32: no internal type leakage).
+// Only tool metadata travels over the wire; the bound invoker function and any
+// internal Go types stay on the server side (AC-32: no internal type leakage).
 type ToolCatalogHandler struct {
 	reg                  registry.Registry
 	recallFeedbackConfig registry.RecallFeedbackConfigProvider
@@ -54,11 +53,14 @@ func (h *ToolCatalogHandler) Handle(c echo.Context) error {
 			}
 		}
 		entries = append(entries, dto.ToolCatalogEntry{
-			Name:           t.Name,
-			Description:    t.Description,
-			InputSchema:    t.InputSchema,
-			OutputSchema:   t.OutputSchema,
-			RequiredScopes: t.RequiredScopes,
+			Name:            t.Name,
+			Description:     t.Description,
+			InputSchema:     t.InputSchema,
+			OutputSchema:    t.OutputSchema,
+			RequiredScopes:  t.RequiredScopes,
+			ContractVersion: t.ContractVersion,
+			FeatureGate:     t.FeatureGate,
+			Visibility:      t.Visibility,
 		})
 	}
 	return c.JSON(http.StatusOK, dto.ToolCatalogResponse{Tools: entries})

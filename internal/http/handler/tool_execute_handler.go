@@ -151,11 +151,14 @@ func (h *ToolReadHandler) Handle(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, dto.ToolCatalogEntry{
-		Name:           tool.Name,
-		Description:    tool.Description,
-		InputSchema:    tool.InputSchema,
-		OutputSchema:   tool.OutputSchema,
-		RequiredScopes: tool.RequiredScopes,
+		Name:            tool.Name,
+		Description:     tool.Description,
+		InputSchema:     tool.InputSchema,
+		OutputSchema:    tool.OutputSchema,
+		RequiredScopes:  tool.RequiredScopes,
+		ContractVersion: tool.ContractVersion,
+		FeatureGate:     tool.FeatureGate,
+		Visibility:      tool.Visibility,
 	})
 }
 
