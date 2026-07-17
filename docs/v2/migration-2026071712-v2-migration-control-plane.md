@@ -36,11 +36,16 @@ POST /control/api/v2/migration/preflight
 POST /control/api/v2/migration/start
 POST /control/api/v2/migration/pause
 POST /control/api/v2/migration/resume
+POST /control/api/v2/migration/run-once
 ```
 
 Preflight approval requires a backup reference plus verified PostgreSQL restore
 and Neo4j snapshot checks. Operator actions are persisted in PostgreSQL with
 bounded metadata and no credential fields.
+
+`run-once` is available only when a migration executor service is explicitly
+injected. If the executor is not wired, the private route returns service
+unavailable instead of starting implicit migration work during normal boot.
 
 ## RLS And Isolation Impact
 

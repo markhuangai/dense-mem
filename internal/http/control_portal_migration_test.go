@@ -14,6 +14,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/migrationcontrol"
+	"github.com/markhuangai/dense-mem/internal/service/migrationexecutor"
 )
 
 func TestControlPortalV2MigrationStatusAndActions(t *testing.T) {
@@ -24,12 +25,19 @@ func TestControlPortalV2MigrationStatusAndActions(t *testing.T) {
 			ReadinessMessage: "legacy migration is required",
 		},
 	}
+	executor := &controlMigrationExec{
+		result: &migrationexecutor.RunOnceResult{
+			RunID:     "run-1",
+			Fetched:   1,
+			Submitted: 1,
+		},
+	}
 	server, err := NewControlPortalServerWithMetricsAndTelemetry(
 		&config.Config{ControlPortalToken: "secret"},
 		&controlProfileSvc{},
 		&controlKeySvc{},
 		nil,
-		ControlPortalTelemetry{Migration: migration},
+		ControlPortalTelemetry{Migration: migration, MigrationExec: executor},
 		HealthConfig{},
 		nil,
 	)
@@ -57,6 +65,12 @@ func TestControlPortalV2MigrationStatusAndActions(t *testing.T) {
 	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/start", `{"reason":"begin"}`)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "begin", migration.lastReq.Reason)
+
+	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/run-once", `{}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, 1, executor.calls)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, "run-1", body["data"]["run_id"])
 }
 
 func TestControlPortalV2MigrationValidationAndUnavailable(t *testing.T) {
@@ -72,14 +86,17 @@ func TestControlPortalV2MigrationValidationAndUnavailable(t *testing.T) {
 	require.NoError(t, err)
 	rec := controlMigrationRequest(server, http.MethodGet, "/control/api/v2/migration", "")
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/run-once", `{}`)
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 
 	migration := &controlMigrationSvc{err: migrationcontrol.ErrPreflightRequired}
+	executor := &controlMigrationExec{err: migrationexecutor.ErrMigrationNotRunning}
 	server, err = NewControlPortalServerWithMetricsAndTelemetry(
 		&config.Config{ControlPortalToken: "secret"},
 		&controlProfileSvc{},
 		&controlKeySvc{},
 		nil,
-		ControlPortalTelemetry{Migration: migration},
+		ControlPortalTelemetry{Migration: migration, MigrationExec: executor},
 		HealthConfig{},
 		nil,
 	)
@@ -92,6 +109,8 @@ func TestControlPortalV2MigrationValidationAndUnavailable(t *testing.T) {
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
 
 	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/start", `{`)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/run-once", `{}`)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
@@ -142,4 +161,18 @@ func (s *controlMigrationSvc) action(req migrationcontrol.OperatorRequest) (*dom
 		return nil, s.err
 	}
 	return &domain.V2MigrationControlStatus{State: domain.V2MigrationStateRunning}, nil
+}
+
+type controlMigrationExec struct {
+	result *migrationexecutor.RunOnceResult
+	err    error
+	calls  int
+}
+
+func (s *controlMigrationExec) RunOnce(context.Context) (*migrationexecutor.RunOnceResult, error) {
+	s.calls++
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.result, nil
 }
