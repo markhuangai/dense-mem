@@ -19,12 +19,15 @@ const (
 type SkillPackImport struct {
 	ImportID           string         `json:"import_id"`
 	TeamID             string         `json:"team_id"`
+	OwnerProfileID     string         `json:"owner_profile_id,omitempty"`
 	ArtifactHash       string         `json:"artifact_hash"`
 	SourceURL          string         `json:"source_url,omitempty"`
 	SchemaVersion      string         `json:"schema_version"`
 	Name               string         `json:"name"`
 	Mode               string         `json:"mode"`
 	Status             string         `json:"status"`
+	IngestID           string         `json:"ingest_id,omitempty"`
+	PlacementRunID     string         `json:"placement_run_id,omitempty"`
 	ItemCount          int            `json:"item_count"`
 	AppliedCount       int            `json:"applied_count"`
 	SkippedCount       int            `json:"skipped_count"`

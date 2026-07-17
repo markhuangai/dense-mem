@@ -95,6 +95,44 @@ func TestBuildV2UATExecutableToolsRequireDependencies(t *testing.T) {
 				"limit":            float64(2),
 			},
 		},
+		{
+			name: V2ToolFindMemoryPackCandidates,
+			args: map[string]any{
+				"contract_version": domain.V2ContractVersion,
+				"query":            "PostgreSQL",
+			},
+		},
+		{
+			name: V2ToolExportMemoryPack,
+			args: map[string]any{
+				"contract_version": domain.V2ContractVersion,
+				"name":             "PostgreSQL pack",
+				"relationship_ids": []any{"relationship-v2"},
+			},
+		},
+		{
+			name: V2ToolInspectMemoryPack,
+			args: map[string]any{
+				"contract_version": domain.V2ContractVersion,
+				"artifact_json":    "{}",
+			},
+		},
+		{
+			name: V2ToolImportMemoryPack,
+			args: map[string]any{
+				"contract_version": domain.V2ContractVersion,
+				"artifact_json":    "{}",
+				"mode":             "review",
+			},
+		},
+		{
+			name: V2ToolRollbackMemoryPackImport,
+			args: map[string]any{
+				"contract_version": domain.V2ContractVersion,
+				"import_id":        "import-v2",
+				"dry_run":          true,
+			},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

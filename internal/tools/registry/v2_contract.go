@@ -775,6 +775,8 @@ func v2ImportMemoryPackInputSchema() map[string]any {
 func v2RollbackMemoryPackImportInputSchema() map[string]any {
 	return v2ContractInput([]string{"import_id"}, map[string]any{
 		"import_id": schemaString("Memory-pack import ID.", 128),
+		"dry_run":   map[string]any{"type": "boolean"},
+		"confirm":   map[string]any{"type": "boolean"},
 	})
 }
 

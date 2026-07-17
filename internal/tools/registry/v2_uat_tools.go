@@ -12,6 +12,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 )
 
 func v2UATTools(deps Dependencies) []Tool {
@@ -218,6 +219,101 @@ func v2UATTools(deps Dependencies) []Tool {
 					return nil, err
 				}
 				return map[string]any{"communities": communities}, nil
+			}
+		case V2ToolFindMemoryPackCandidates:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
+				if deps.V2SkillPack == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, tool.RequiredScopes); err != nil {
+					return nil, fmt.Errorf("find_memory_pack_candidates: invalid input: %w", err)
+				}
+				var req skillpackservice.V2FindCandidatesRequest
+				if err := remapInput(input, &req); err != nil {
+					return nil, fmt.Errorf("find_memory_pack_candidates: invalid input: %w", err)
+				}
+				res, err := deps.V2SkillPack.FindCandidatesV2(ctx, req)
+				if err != nil {
+					return nil, err
+				}
+				return structToMap(res)
+			}
+		case V2ToolExportMemoryPack:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
+				if deps.V2SkillPack == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, tool.RequiredScopes); err != nil {
+					return nil, fmt.Errorf("export_memory_pack: invalid input: %w", err)
+				}
+				var req skillpackservice.V2ExportRequest
+				if err := remapInput(input, &req); err != nil {
+					return nil, fmt.Errorf("export_memory_pack: invalid input: %w", err)
+				}
+				res, err := deps.V2SkillPack.ExportV2(ctx, req)
+				if err != nil {
+					return nil, err
+				}
+				return structToMap(res)
+			}
+		case V2ToolInspectMemoryPack:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
+				if deps.V2SkillPack == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, tool.RequiredScopes); err != nil {
+					return nil, fmt.Errorf("inspect_memory_pack: invalid input: %w", err)
+				}
+				var req skillpackservice.V2InspectRequest
+				if err := remapInput(input, &req); err != nil {
+					return nil, fmt.Errorf("inspect_memory_pack: invalid input: %w", err)
+				}
+				res, err := deps.V2SkillPack.InspectV2(ctx, req)
+				if err != nil {
+					return nil, err
+				}
+				return structToMap(res)
+			}
+		case V2ToolImportMemoryPack:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
+				if deps.V2SkillPack == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, tool.RequiredScopes); err != nil {
+					return nil, fmt.Errorf("import_memory_pack: invalid input: %w", err)
+				}
+				var req skillpackservice.V2ImportRequest
+				if err := remapInput(input, &req); err != nil {
+					return nil, fmt.Errorf("import_memory_pack: invalid input: %w", err)
+				}
+				res, err := deps.V2SkillPack.ImportV2(ctx, req)
+				if err != nil {
+					return nil, err
+				}
+				return structToMap(res)
+			}
+		case V2ToolRollbackMemoryPackImport:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
+				if deps.V2SkillPack == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, tool.RequiredScopes); err != nil {
+					return nil, fmt.Errorf("rollback_memory_pack_import: invalid input: %w", err)
+				}
+				var req skillpackservice.V2RollbackRequest
+				if err := remapInput(input, &req); err != nil {
+					return nil, fmt.Errorf("rollback_memory_pack_import: invalid input: %w", err)
+				}
+				res, err := deps.V2SkillPack.RollbackV2(ctx, req)
+				if err != nil {
+					return nil, err
+				}
+				return structToMap(res)
 			}
 		}
 	}

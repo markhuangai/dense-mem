@@ -43,23 +43,28 @@ func (r *SkillPackImportRepositoryImpl) CreateImport(ctx context.Context, record
 	err = r.withTeamTx(ctx, record.TeamID, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO skill_pack_imports (
-				import_id, team_id, artifact_hash, source_url, schema_version, name,
-				mode, status, item_count, applied_count, skipped_count, summary,
+				import_id, team_id, owner_profile_id, artifact_hash, source_url,
+				schema_version, name, mode, status, ingest_id, placement_run_id,
+				item_count, applied_count, skipped_count, summary,
 				retention_expires_at, created_at, updated_at
 			) VALUES (
-				$1, $2, $3, $4, $5, $6,
-				$7, $8, $9, $10, $11, $12::jsonb,
-				$13, $14, $15
+				$1, $2, NULLIF($3, '')::uuid, $4, $5,
+				$6, $7, $8, $9, NULLIF($10, '')::uuid, NULLIF($11, '')::uuid,
+				$12, $13, $14, $15::jsonb,
+				$16, $17, $18
 			)
 		`,
 			record.ImportID,
 			record.TeamID,
+			record.OwnerProfileID,
 			record.ArtifactHash,
 			record.SourceURL,
 			record.SchemaVersion,
 			record.Name,
 			record.Mode,
 			record.Status,
+			record.IngestID,
+			record.PlacementRunID,
 			record.ItemCount,
 			record.AppliedCount,
 			record.SkippedCount,
@@ -80,6 +85,8 @@ func (r *SkillPackImportRepositoryImpl) UpdateImportStatus(ctx context.Context, 
 	if err != nil {
 		return fmt.Errorf("memory pack import update: encode summary: %w", err)
 	}
+	ingestID, _ := summary["ingest_id"].(string)
+	placementRunID, _ := summary["placement_run_id"].(string)
 	now := time.Now().UTC()
 	err = r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
 		return tx.Exec(`
@@ -88,10 +95,12 @@ func (r *SkillPackImportRepositoryImpl) UpdateImportStatus(ctx context.Context, 
 			    applied_count = $4,
 			    skipped_count = $5,
 			    summary = $6::jsonb,
-			    completed_at = CASE WHEN $3::text IN ('applied', 'failed', 'needs_review') THEN $7 ELSE completed_at END,
-			    updated_at = $7
+			    ingest_id = COALESCE(NULLIF($7, '')::uuid, ingest_id),
+			    placement_run_id = COALESCE(NULLIF($8, '')::uuid, placement_run_id),
+			    completed_at = CASE WHEN $3::text IN ('applied', 'failed', 'needs_review') THEN $9 ELSE completed_at END,
+			    updated_at = $9
 			WHERE team_id = $1 AND import_id = $2
-		`, teamID, importID, status, appliedCount, skippedCount, string(summaryJSON), now).Error
+		`, teamID, importID, status, appliedCount, skippedCount, string(summaryJSON), ingestID, placementRunID, now).Error
 	})
 	if err != nil {
 		return fmt.Errorf("memory pack import update: %w", err)
@@ -120,9 +129,10 @@ func (r *SkillPackImportRepositoryImpl) GetImport(ctx context.Context, teamID, i
 	var out *domain.SkillPackImport
 	err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
 		row := tx.Raw(`
-			SELECT import_id::text, team_id::text, artifact_hash, source_url,
-			       schema_version, name, mode, status, item_count, applied_count,
-			       skipped_count, summary::text, retention_expires_at,
+			SELECT import_id::text, team_id::text, COALESCE(owner_profile_id::text, ''),
+			       artifact_hash, source_url, schema_version, name, mode, status,
+			       COALESCE(ingest_id::text, ''), COALESCE(placement_run_id::text, ''),
+			       item_count, applied_count, skipped_count, summary::text, retention_expires_at,
 			       created_at, updated_at, completed_at, rolled_back_at
 			FROM skill_pack_imports
 			WHERE team_id = $1 AND import_id = $2
@@ -235,12 +245,15 @@ func scanSkillPackImport(row rowScanner) (*domain.SkillPackImport, error) {
 	if err := row.Scan(
 		&record.ImportID,
 		&record.TeamID,
+		&record.OwnerProfileID,
 		&record.ArtifactHash,
 		&sourceURL,
 		&record.SchemaVersion,
 		&record.Name,
 		&record.Mode,
 		&record.Status,
+		&record.IngestID,
+		&record.PlacementRunID,
 		&record.ItemCount,
 		&record.AppliedCount,
 		&record.SkippedCount,
