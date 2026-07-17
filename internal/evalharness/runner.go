@@ -65,8 +65,28 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	if err != nil {
 		return Summary{}, err
 	}
-	if err := validateRunInputs(opts.SeedManifestPath, manifest, corpus, cases, qrels, expectedDreams, suite, seedHash); err != nil {
+	suiteHash, err := FileHash(opts.SuitePath)
+	if err != nil {
+		return Summary{}, fmt.Errorf("suite hash: %w", err)
+	}
+	if err := validateRunInputs(opts.SeedManifestPath, manifest, corpus, cases, qrels, expectedDreams, suite, seedHash, suiteHash); err != nil {
 		return Summary{}, err
+	}
+	var releaseGatePolicy *ReleaseGatePolicy
+	releaseGatePolicyHash := ""
+	if opts.ReleaseGatePolicyPath != "" {
+		releaseGatePolicyHash, err = FileHash(opts.ReleaseGatePolicyPath)
+		if err != nil {
+			return Summary{}, fmt.Errorf("release gate policy hash: %w", err)
+		}
+		policy, err := LoadReleaseGatePolicy(opts.ReleaseGatePolicyPath)
+		if err != nil {
+			return Summary{}, fmt.Errorf("release gate policy: %w", err)
+		}
+		if err := validateReleaseGatePolicyForRun(policy, *manifest, seedHash, suiteHash, len(suite)); err != nil {
+			return Summary{}, fmt.Errorf("release gate policy: %w", err)
+		}
+		releaseGatePolicy = &policy
 	}
 	importRoute := ""
 	if opts.ImportSeed {
@@ -78,7 +98,9 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		SeedManifest:           opts.SeedManifestPath,
 		SeedHash:               seedHash,
 		SuitePath:              opts.SuitePath,
+		SuiteHash:              suiteHash,
 		ReleaseGatePolicyPath:  opts.ReleaseGatePolicyPath,
+		ReleaseGatePolicyHash:  releaseGatePolicyHash,
 		BaseURL:                opts.BaseURL,
 		ControlURL:             opts.ControlURL,
 		ImportSeed:             opts.ImportSeed,
@@ -252,12 +274,8 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			return summary, fmt.Errorf("gate check failed: %s", strings.Join(gate.Failures, "; "))
 		}
 	}
-	if opts.ReleaseGatePolicyPath != "" {
-		policy, err := LoadReleaseGatePolicy(opts.ReleaseGatePolicyPath)
-		if err != nil {
-			return summary, fmt.Errorf("release gate policy: %w", err)
-		}
-		releaseGate := EvaluateReleaseGate(summary, policy)
+	if releaseGatePolicy != nil {
+		releaseGate := EvaluateReleaseGate(summary, *releaseGatePolicy)
 		if opts.OutDir != "" {
 			if err := writeJSONFile(filepath.Join(opts.OutDir, "release_gate_result.json"), releaseGate); err != nil {
 				return Summary{}, err
@@ -354,11 +372,11 @@ func loadRunInputs(manifestPath, suitePath string) (*SeedManifest, []CorpusItem,
 	return manifest, corpus, cases, qrels, expectedDreams, suite, seedHash, nil
 }
 
-func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []CorpusItem, cases []Case, qrels []QRel, expectedDreams []ExpectedDream, suite []SuiteCase, seedHash string) error {
+func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []CorpusItem, cases []Case, qrels []QRel, expectedDreams []ExpectedDream, suite []SuiteCase, seedHash string, suiteHash string) error {
 	if err := validateManifestCounts(manifestPath, manifest, corpus, cases, qrels); err != nil {
 		return err
 	}
-	if err := validateSeedValidationReport(manifestPath, manifest, seedHash); err != nil {
+	if err := validateSeedValidationReport(manifestPath, manifest, seedHash, suiteHash); err != nil {
 		return err
 	}
 	caseIndex := IndexCases(cases)
@@ -426,9 +444,10 @@ type seedValidationReport struct {
 	SeedID        string `json:"seed_id"`
 	Status        string `json:"status"`
 	SeedHash      string `json:"seed_hash"`
+	SuiteHash     string `json:"suite_hash"`
 }
 
-func validateSeedValidationReport(manifestPath string, manifest *SeedManifest, seedHash string) error {
+func validateSeedValidationReport(manifestPath string, manifest *SeedManifest, seedHash string, suiteHash string) error {
 	if manifest == nil {
 		return nil
 	}
@@ -454,6 +473,12 @@ func validateSeedValidationReport(manifestPath string, manifest *SeedManifest, s
 	}
 	if report.SeedHash != seedHash {
 		return fmt.Errorf("validation report seed_hash %q does not match current seed hash %q", report.SeedHash, seedHash)
+	}
+	if strings.HasPrefix(manifest.SeedID, "public_6axis_") && strings.TrimSpace(report.SuiteHash) == "" {
+		return fmt.Errorf("validation report missing suite_hash")
+	}
+	if strings.TrimSpace(report.SuiteHash) != "" && report.SuiteHash != suiteHash {
+		return fmt.Errorf("validation report suite_hash %q does not match current suite hash %q", report.SuiteHash, suiteHash)
 	}
 	return nil
 }
