@@ -121,7 +121,7 @@ func TestDormantV2ReadinessRejectsInvalidQueueProfile(t *testing.T) {
 func TestDormantV2ReadinessRejectsEmbeddingPollAtOrAboveLease(t *testing.T) {
 	cfg := validDormantV2BootstrapConfig()
 	cfg.EmbeddingJobPollSeconds = cfg.EmbeddingJobLeaseSeconds
-	bootstrap := buildDormantV2Bootstrap(cfg, nil)
+	bootstrap := buildDormantV2Bootstrap(cfg, nil, nil)
 
 	err := requireHealthCheck(t, bootstrap, "v2_queue_profile").Check(context.Background())
 
