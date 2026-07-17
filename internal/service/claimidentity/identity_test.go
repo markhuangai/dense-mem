@@ -266,7 +266,7 @@ func TestValidateClaimIdentityInputs_EmptyIdempotencyAllowed(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Cross-profile isolation — REQUIRED by .claude/rules/profile-isolation.md
+// Cross-profile isolation — REQUIRED by AGENTS.md
 // ---------------------------------------------------------------------------
 
 // TestDeterministicClaimID_CrossProfileIsolation verifies that the same

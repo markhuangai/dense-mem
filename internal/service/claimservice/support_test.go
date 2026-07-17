@@ -192,7 +192,7 @@ func TestLoadSupportingFragments(t *testing.T) {
 
 // TestLoadSupportingFragments_CrossProfileIsolation verifies that data from
 // profile A is not returned when querying as profile B, and vice versa.
-// This is a mandatory security test per .claude/rules/profile-isolation.md.
+// This is a mandatory security test per AGENTS.md.
 func TestLoadSupportingFragments_CrossProfileIsolation(t *testing.T) {
 	ctx := context.Background()
 	const profileA = "profile-a"

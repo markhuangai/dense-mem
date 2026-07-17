@@ -427,7 +427,7 @@ func TestOpenAIVerifier(t *testing.T) {
 
 // TestOpenAIVerifier_CrossProfileIsolation verifies that successive Verify calls
 // for different profiles produce independent results with no cross-contamination,
-// as required by .claude/rules/profile-isolation.md.
+// as required by AGENTS.md.
 func TestOpenAIVerifier_CrossProfileIsolation(t *testing.T) {
 	const profileA = "profile-A"
 	const profileB = "profile-B"

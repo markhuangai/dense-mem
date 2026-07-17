@@ -216,7 +216,7 @@ func TestListClaims(t *testing.T) {
 // TestListClaims_CrossProfileIsolation verifies that claims belonging to profile
 // A are not returned when querying as profile B.
 //
-// This is a mandatory security test per .claude/rules/profile-isolation.md.
+// This is a mandatory security test per AGENTS.md.
 func TestListClaims_CrossProfileIsolation(t *testing.T) {
 	ctx := context.Background()
 	const profileA = "00000000-0000-0000-0000-000000000001"
