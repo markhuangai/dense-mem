@@ -315,7 +315,7 @@ func (s *v2SemanticReviewLedgerStub) ClaimNextPlacementRun(context.Context, stri
 	return nil, errors.New("unexpected ClaimNextPlacementRun")
 }
 
-func (s *v2SemanticReviewLedgerStub) FinishPlacementRun(context.Context, string, string, string, string) error {
+func (s *v2SemanticReviewLedgerStub) FinishPlacementRun(context.Context, string, string, string, string, string) error {
 	return errors.New("unexpected FinishPlacementRun")
 }
 

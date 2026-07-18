@@ -15,6 +15,7 @@ const (
 	V2BootModeOff     = "off"
 	V2BootModeDormant = "dormant"
 	V2BootModeUAT     = "uat"
+	V2BootModeActive  = "active"
 )
 
 type aiVerifierTemperatureConfig interface {
@@ -334,7 +335,11 @@ func (c *Config) ValidateServerStartup() error {
 
 func (c *Config) IsV2BootEnabled() bool {
 	mode := strings.TrimSpace(c.V2BootMode)
-	return mode == V2BootModeDormant || mode == V2BootModeUAT
+	return mode == V2BootModeDormant || mode == V2BootModeUAT || mode == V2BootModeActive
+}
+
+func (c *Config) IsV2BootActive() bool {
+	return strings.TrimSpace(c.V2BootMode) == V2BootModeActive
 }
 
 func (c *Config) ValidateV2DormantStartup() error {
@@ -358,14 +363,14 @@ func (c *Config) ValidateV2DormantStartup() error {
 		if strings.TrimSpace(item.value) == "" {
 			return &ValidationError{
 				Field:   item.field,
-				Message: "required when V2_BOOT_MODE is dormant or uat",
+				Message: "required when V2_BOOT_MODE is dormant, uat, or active",
 			}
 		}
 	}
 	if c.AIEmbeddingDimensions <= 0 {
 		return &ValidationError{
 			Field:   "AI_API_EMBEDDING_DIMENSIONS",
-			Message: "required when V2_BOOT_MODE is dormant or uat",
+			Message: "required when V2_BOOT_MODE is dormant, uat, or active",
 		}
 	}
 	return nil
@@ -745,7 +750,7 @@ func Load() (Config, error) {
 			Message: "required when TELEMETRY_ENABLED=true",
 		}
 	}
-	if err := validateEnum("V2_BOOT_MODE", cfg.V2BootMode, V2BootModeOff, V2BootModeDormant, V2BootModeUAT); err != nil {
+	if err := validateEnum("V2_BOOT_MODE", cfg.V2BootMode, V2BootModeOff, V2BootModeDormant, V2BootModeUAT, V2BootModeActive); err != nil {
 		return cfg, err
 	}
 	if cfg.DistributedCoordinationRequired && strings.TrimSpace(cfg.RedisAddr) == "" {

@@ -157,6 +157,266 @@ func TestStartRequiresApprovedPreflight(t *testing.T) {
 	}
 }
 
+func TestFinalizeGatesAndCommitCutover(t *testing.T) {
+	now := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	store := newStoreStub()
+	store.run = &domain.V2MigrationRun{
+		RunID:             "run-1",
+		State:             domain.V2MigrationStateRunning,
+		Required:          true,
+		PreflightApproved: true,
+	}
+	svc := New(store, Config{Required: true, Now: func() time.Time { return now }})
+	ctx := context.Background()
+
+	finalized, err := svc.FinalizeGates(ctx, GateReportRequest{
+		OperatorRequest: OperatorRequest{Actor: "operator", Reason: "all gates passed"},
+		CorpusHash:      "sha256:corpus",
+		GateReportHash:  "sha256:gates",
+		Gates:           passingGateResults(),
+	})
+	if err != nil {
+		t.Fatalf("FinalizeGates: %v", err)
+	}
+	if finalized.State != domain.V2MigrationStateReadyCutover {
+		t.Fatalf("finalized status = %#v", finalized)
+	}
+	if finalized.Run.GateReportHash != "sha256:gates" || len(finalized.Gates) != len(RequiredCutoverGateNames) {
+		t.Fatalf("finalized run/gates = %#v gates=%d", finalized.Run, len(finalized.Gates))
+	}
+	if got := store.actions[0].Metadata["gate_count"]; got != len(RequiredCutoverGateNames) {
+		t.Fatalf("gate action metadata = %#v", store.actions[0].Metadata)
+	}
+
+	cutOver, err := svc.CommitCutover(ctx, CutoverRequest{
+		OperatorRequest: OperatorRequest{Actor: "operator", Reason: "commit marker"},
+		CorpusHash:      "sha256:corpus",
+		GateReportHash:  "sha256:gates",
+	})
+	if err != nil {
+		t.Fatalf("CommitCutover: %v", err)
+	}
+	if cutOver.State != domain.V2MigrationStateCutOver || !cutOver.DataPlaneAllowed {
+		t.Fatalf("cutover status = %#v", cutOver)
+	}
+	if cutOver.Marker == nil || cutOver.Marker.Version != DefaultCutoverMarkerVersion {
+		t.Fatalf("marker = %#v", cutOver.Marker)
+	}
+	if len(store.actions) != 2 || store.actions[1].Action != domain.V2MigrationActionCutoverCommitted {
+		t.Fatalf("actions = %#v", store.actions)
+	}
+}
+
+func TestFinalizeGatesTranslatesRepositoryBlockers(t *testing.T) {
+	store := newStoreStub()
+	store.run = &domain.V2MigrationRun{
+		RunID:             "run-1",
+		State:             domain.V2MigrationStateRunning,
+		Required:          true,
+		PreflightApproved: true,
+	}
+	store.finalizeErr = repository.ErrV2MigrationGateReportFailed
+	_, err := New(store, Config{Required: true}).FinalizeGates(context.Background(), GateReportRequest{
+		CorpusHash:     "sha256:corpus",
+		GateReportHash: "sha256:gates",
+		Gates:          passingGateResults(),
+	})
+	if !errors.Is(err, ErrGateReportFailed) {
+		t.Fatalf("FinalizeGates err = %v", err)
+	}
+}
+
+func TestCommitCutoverRequiresReadyRun(t *testing.T) {
+	store := newStoreStub()
+	store.run = &domain.V2MigrationRun{
+		RunID:             "run-1",
+		State:             domain.V2MigrationStateRunning,
+		Required:          true,
+		PreflightApproved: true,
+	}
+	_, err := New(store, Config{Required: true}).CommitCutover(context.Background(), CutoverRequest{
+		CorpusHash:     "sha256:corpus",
+		GateReportHash: "sha256:gates",
+	})
+	if !errors.Is(err, ErrCutoverNotReady) {
+		t.Fatalf("CommitCutover err = %v", err)
+	}
+}
+
+func TestCommitCutoverRequiresMutableLatestRun(t *testing.T) {
+	ctx := context.Background()
+	req := CutoverRequest{
+		RunID:          "run-2",
+		CorpusHash:     "sha256:corpus",
+		GateReportHash: "sha256:gates",
+	}
+
+	store := newStoreStub()
+	_, err := New(store, Config{Required: true}).CommitCutover(ctx, req)
+	if !errors.Is(err, ErrPreflightRequired) {
+		t.Fatalf("nil run err = %v", err)
+	}
+
+	store = newStoreStub()
+	store.run = &domain.V2MigrationRun{RunID: "run-1", State: domain.V2MigrationStateReadyCutover}
+	_, err = New(store, Config{Required: true}).CommitCutover(ctx, req)
+	if !errors.Is(err, ErrCutoverNotReady) {
+		t.Fatalf("stale run err = %v", err)
+	}
+
+	store.marker = &domain.V2CompatibilityMarker{Status: domain.V2MigrationMarkerCompatible}
+	req.RunID = "run-1"
+	_, err = New(store, Config{Required: true}).CommitCutover(ctx, req)
+	if !errors.Is(err, ErrAlreadyCutOver) {
+		t.Fatalf("marker err = %v", err)
+	}
+}
+
+func TestCommitCutoverTranslatesRepositoryErrors(t *testing.T) {
+	cases := map[string]struct {
+		err  error
+		want error
+	}{
+		"gate failed":       {err: repository.ErrV2MigrationGateReportFailed, want: ErrGateReportFailed},
+		"already cut over":  {err: repository.ErrV2MigrationAlreadyCutOver, want: ErrAlreadyCutOver},
+		"cutover not ready": {err: repository.ErrV2MigrationCutoverNotReady, want: ErrCutoverNotReady},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			store := newStoreStub()
+			store.run = &domain.V2MigrationRun{
+				RunID:          "run-1",
+				State:          domain.V2MigrationStateReadyCutover,
+				CorpusHash:     "sha256:corpus",
+				GateReportHash: "sha256:gates",
+			}
+			store.commitErr = tc.err
+			_, err := New(store, Config{Required: true}).CommitCutover(context.Background(), CutoverRequest{
+				CorpusHash:     "sha256:corpus",
+				GateReportHash: "sha256:gates",
+			})
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("CommitCutover err = %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestFinalizeGatesRequiresMutableLatestRun(t *testing.T) {
+	ctx := context.Background()
+	req := GateReportRequest{
+		RunID:          "run-2",
+		CorpusHash:     "sha256:corpus",
+		GateReportHash: "sha256:gates",
+		Gates:          passingGateResults(),
+	}
+
+	store := newStoreStub()
+	_, err := New(store, Config{Required: true}).FinalizeGates(ctx, req)
+	if !errors.Is(err, ErrPreflightRequired) {
+		t.Fatalf("nil run err = %v", err)
+	}
+
+	store = newStoreStub()
+	store.run = &domain.V2MigrationRun{RunID: "run-1", State: domain.V2MigrationStateRunning}
+	_, err = New(store, Config{Required: true}).FinalizeGates(ctx, req)
+	if !errors.Is(err, ErrCutoverNotReady) {
+		t.Fatalf("stale run err = %v", err)
+	}
+
+	store = newStoreStub()
+	store.run = &domain.V2MigrationRun{RunID: "run-1", State: domain.V2MigrationStateReady}
+	req.RunID = "run-1"
+	_, err = New(store, Config{Required: true}).FinalizeGates(ctx, req)
+	if !errors.Is(err, ErrCutoverNotReady) {
+		t.Fatalf("not running err = %v", err)
+	}
+
+	store.marker = &domain.V2CompatibilityMarker{Status: domain.V2MigrationMarkerCompatible}
+	_, err = New(store, Config{Required: true}).FinalizeGates(ctx, req)
+	if !errors.Is(err, ErrAlreadyCutOver) {
+		t.Fatalf("marker err = %v", err)
+	}
+}
+
+func TestGateReportValidationFailures(t *testing.T) {
+	valid := GateReportRequest{
+		CorpusHash:     "sha256:corpus",
+		GateReportHash: "sha256:gates",
+		Gates:          passingGateResults()[:1],
+	}
+	cases := map[string]GateReportRequest{
+		"missing corpus": {
+			GateReportHash: "sha256:gates",
+			Gates:          passingGateResults()[:1],
+		},
+		"missing gate report": {
+			CorpusHash: "sha256:corpus",
+			Gates:      passingGateResults()[:1],
+		},
+		"missing gates": {
+			CorpusHash:     "sha256:corpus",
+			GateReportHash: "sha256:gates",
+		},
+		"missing name": editGateReport(valid, func(g *GateResultRequest) {
+			g.GateName = ""
+		}),
+		"duplicate gate": {
+			CorpusHash:     "sha256:corpus",
+			GateReportHash: "sha256:gates",
+			Gates: []GateResultRequest{
+				passingGateResults()[0],
+				passingGateResults()[0],
+			},
+		},
+		"invalid outcome": editGateReport(valid, func(g *GateResultRequest) {
+			g.Outcome = "maybe"
+		}),
+		"missing evidence ref": editGateReport(valid, func(g *GateResultRequest) {
+			g.EvidenceRef = ""
+		}),
+		"missing evidence hash": editGateReport(valid, func(g *GateResultRequest) {
+			g.EvidenceHash = ""
+		}),
+		"missing gate version": editGateReport(valid, func(g *GateResultRequest) {
+			g.GateVersion = ""
+		}),
+	}
+	for name, req := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := validateGateReportRequest(req); err == nil {
+				t.Fatal("validateGateReportRequest err = nil")
+			}
+		})
+	}
+	if err := validateGateReportRequest(valid); err != nil {
+		t.Fatalf("valid gate report err = %v", err)
+	}
+}
+
+func TestCutoverValidationMetadataAndTranslation(t *testing.T) {
+	if err := validateCutoverRequest(CutoverRequest{GateReportHash: "sha256:gates"}); err == nil {
+		t.Fatal("missing corpus err = nil")
+	}
+	if err := validateCutoverRequest(CutoverRequest{CorpusHash: "sha256:corpus"}); err == nil {
+		t.Fatal("missing gate report err = nil")
+	}
+	metadata := cutoverMetadata(map[string]any{"release": "v2.1.7"})
+	if metadata["release"] != "v2.1.7" || metadata["required_gates"] == nil {
+		t.Fatalf("metadata = %#v", metadata)
+	}
+	if err := translateCutoverRepositoryError(repository.ErrV2MigrationCutoverNotReady); !errors.Is(err, ErrCutoverNotReady) {
+		t.Fatalf("cutover translation = %v", err)
+	}
+	if err := translateCutoverRepositoryError(repository.ErrV2MigrationAlreadyCutOver); !errors.Is(err, ErrAlreadyCutOver) {
+		t.Fatalf("already translation = %v", err)
+	}
+	unknown := errors.New("unknown")
+	if err := translateCutoverRepositoryError(unknown); !errors.Is(err, unknown) {
+		t.Fatalf("unknown translation = %v", err)
+	}
+}
+
 func TestPreflightPropagatesStoreErrors(t *testing.T) {
 	ctx := context.Background()
 	req := OperatorRequest{
@@ -295,7 +555,7 @@ func TestReadinessMessagesForMigrationStates(t *testing.T) {
 				RunID:    "run-1",
 				State:    state,
 				Required: true,
-			}, nil, nil)
+			}, nil, nil, nil)
 			if status.ReadinessMessage != want {
 				t.Fatalf("message = %q, want %q", status.ReadinessMessage, want)
 			}
@@ -307,15 +567,19 @@ func TestReadinessMessagesForMigrationStates(t *testing.T) {
 }
 
 type storeStub struct {
-	run        *domain.V2MigrationRun
-	marker     *domain.V2CompatibilityMarker
-	actions    []domain.V2MigrationOperatorAction
-	runErr     error
-	markerErr  error
-	actionsErr error
-	createErr  error
-	updateErr  error
-	recordErr  error
+	run         *domain.V2MigrationRun
+	marker      *domain.V2CompatibilityMarker
+	gates       []domain.V2MigrationGateResult
+	actions     []domain.V2MigrationOperatorAction
+	runErr      error
+	markerErr   error
+	actionsErr  error
+	gatesErr    error
+	createErr   error
+	updateErr   error
+	finalizeErr error
+	commitErr   error
+	recordErr   error
 }
 
 func newStoreStub() *storeStub {
@@ -377,6 +641,60 @@ func (s *storeStub) UpdateRunState(_ context.Context, input repository.V2UpdateM
 	return cloneRun(s.run), nil
 }
 
+func (s *storeStub) FinalizeMigrationGateReport(_ context.Context, input repository.V2FinalizeMigrationGateReportInput) (*domain.V2MigrationRun, []domain.V2MigrationGateResult, error) {
+	if s.finalizeErr != nil {
+		return nil, nil, s.finalizeErr
+	}
+	if s.run == nil || s.run.RunID != input.RunID {
+		return nil, nil, repository.ErrV2MigrationCutoverNotReady
+	}
+	s.run.State = domain.V2MigrationStateReadyCutover
+	s.run.Phase = "cutover_ready"
+	s.run.CorpusHash = input.CorpusHash
+	s.run.GateReportHash = input.GateReportHash
+	s.run.UpdatedAt = input.Now
+	s.gates = make([]domain.V2MigrationGateResult, 0, len(input.GateResults))
+	for _, gate := range input.GateResults {
+		s.gates = append(s.gates, domain.V2MigrationGateResult{
+			GateID:       "gate-" + gate.GateName,
+			RunID:        input.RunID,
+			GateName:     gate.GateName,
+			Outcome:      gate.Outcome,
+			EvidenceRef:  gate.EvidenceRef,
+			EvidenceHash: gate.EvidenceHash,
+			GateVersion:  gate.GateVersion,
+			Message:      gate.Message,
+			Metadata:     gate.Metadata,
+			CreatedAt:    input.Now,
+		})
+	}
+	return cloneRun(s.run), append([]domain.V2MigrationGateResult(nil), s.gates...), nil
+}
+
+func (s *storeStub) CommitMigrationCutover(_ context.Context, input repository.V2CommitMigrationCutoverInput) (*domain.V2CompatibilityMarker, error) {
+	if s.commitErr != nil {
+		return nil, s.commitErr
+	}
+	if s.run == nil || s.run.RunID != input.RunID || s.run.State != domain.V2MigrationStateReadyCutover {
+		return nil, repository.ErrV2MigrationCutoverNotReady
+	}
+	s.run.State = domain.V2MigrationStateCutOver
+	s.run.Phase = "cutover"
+	s.run.CutoverAt = &input.Now
+	s.marker = &domain.V2CompatibilityMarker{
+		MarkerID:       "marker-1",
+		MarkerKind:     domain.V2MigrationMarkerKindCutover,
+		Version:        input.MarkerVersion,
+		Status:         domain.V2MigrationMarkerCompatible,
+		RunID:          input.RunID,
+		CorpusHash:     input.CorpusHash,
+		GateReportHash: input.GateReportHash,
+		Metadata:       input.Metadata,
+		CreatedAt:      input.Now,
+	}
+	return s.GetLatestMarker(context.Background())
+}
+
 func (s *storeStub) GetLatestMarker(context.Context) (*domain.V2CompatibilityMarker, error) {
 	if s.markerErr != nil {
 		return nil, s.markerErr
@@ -403,6 +721,13 @@ func (s *storeStub) ListOperatorActions(context.Context, string, int) ([]domain.
 	return append([]domain.V2MigrationOperatorAction(nil), s.actions...), nil
 }
 
+func (s *storeStub) ListMigrationGateResults(context.Context, string, int) ([]domain.V2MigrationGateResult, error) {
+	if s.gatesErr != nil {
+		return nil, s.gatesErr
+	}
+	return append([]domain.V2MigrationGateResult(nil), s.gates...), nil
+}
+
 func cloneRun(run *domain.V2MigrationRun) *domain.V2MigrationRun {
 	if run == nil {
 		return nil
@@ -415,4 +740,24 @@ func cloneRun(run *domain.V2MigrationRun) *domain.V2MigrationRun {
 		}
 	}
 	return &out
+}
+
+func passingGateResults() []GateResultRequest {
+	out := make([]GateResultRequest, 0, len(RequiredCutoverGateNames))
+	for _, name := range RequiredCutoverGateNames {
+		out = append(out, GateResultRequest{
+			GateName:     name,
+			Outcome:      domain.V2MigrationGateOutcomePass,
+			EvidenceRef:  "local://cutover/" + name,
+			EvidenceHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			GateVersion:  "dense-mem.gate.test.v1",
+		})
+	}
+	return out
+}
+
+func editGateReport(req GateReportRequest, edit func(*GateResultRequest)) GateReportRequest {
+	req.Gates = append([]GateResultRequest(nil), req.Gates...)
+	edit(&req.Gates[0])
+	return req
 }

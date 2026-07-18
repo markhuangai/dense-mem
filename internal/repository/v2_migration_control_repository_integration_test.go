@@ -81,6 +81,142 @@ func TestV2MigrationControlRepositoryPersistsStateAndRLS(t *testing.T) {
 	require.EqualValues(t, 1, systemVisible)
 }
 
+func TestV2MigrationControlRepositoryFinalizesGatesAndCommitsCutover(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := NewV2MigrationControlRepository(appDB, rls)
+	now := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+
+	run, err := repo.CreateRun(ctx, V2CreateMigrationRunInput{
+		MigrationContractVersion: "migration-contract-v1",
+		CorpusVersion:            "corpus-v1",
+		SourceKind:               "neo4j",
+		State:                    domain.V2MigrationStateReady,
+		Phase:                    "preflight",
+		Required:                 true,
+		PreflightApproved:        true,
+		BackupReference:          "backup-20260718",
+		PreflightChecks: map[string]any{
+			"postgres_restore_verified": true,
+			"neo4j_snapshot_verified":   true,
+		},
+		Now: now,
+	})
+	require.NoError(t, err)
+	run, err = repo.UpdateRunState(ctx, V2UpdateMigrationRunStateInput{
+		RunID:     run.RunID,
+		FromState: domain.V2MigrationStateReady,
+		ToState:   domain.V2MigrationStateRunning,
+		Phase:     "migration",
+		Retryable: true,
+		Now:       now.Add(time.Minute),
+	})
+	require.NoError(t, err)
+
+	requiredGates := []string{"backup_restore", "migration_terminal_outcomes"}
+	finalized, gates, err := repo.FinalizeMigrationGateReport(ctx, V2FinalizeMigrationGateReportInput{
+		RunID:             run.RunID,
+		FromState:         domain.V2MigrationStateRunning,
+		CorpusHash:        "sha256:corpus",
+		GateReportHash:    "sha256:gates",
+		GateResults:       testV2GateInputs(requiredGates),
+		RequiredGateNames: requiredGates,
+		Now:               now.Add(2 * time.Minute),
+	})
+	require.NoError(t, err)
+	require.Equal(t, domain.V2MigrationStateReadyCutover, finalized.State)
+	require.Equal(t, "sha256:gates", finalized.GateReportHash)
+	require.Len(t, gates, 2)
+	require.Equal(t, "dense-mem.gate.test.v1", gates[0].GateVersion)
+
+	marker, err := repo.CommitMigrationCutover(ctx, V2CommitMigrationCutoverInput{
+		RunID:             run.RunID,
+		MarkerVersion:     "dense-mem.v2.1.cutover.v1",
+		CorpusHash:        "sha256:corpus",
+		GateReportHash:    "sha256:gates",
+		RequiredGateNames: requiredGates,
+		Metadata:          map[string]any{"release": "v2.1.7"},
+		Now:               now.Add(3 * time.Minute),
+	})
+	require.NoError(t, err)
+	require.Equal(t, domain.V2MigrationMarkerCompatible, marker.Status)
+	require.Equal(t, run.RunID, marker.RunID)
+
+	latest, err := repo.GetLatestRun(ctx)
+	require.NoError(t, err)
+	require.Equal(t, domain.V2MigrationStateCutOver, latest.State)
+	require.Equal(t, "sha256:corpus", latest.CorpusHash)
+
+	err = insertV2MigrationMarker(ctx, adminDB, rls, run.RunID)
+	require.Error(t, err, "single compatible cutover marker must be unique")
+}
+
+func TestV2MigrationControlRepositoryBlocksCutoverWithPendingCorpus(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "cutover-blocker-team")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "cutover-blocker-owner")
+	repo := NewV2MigrationControlRepository(appDB, rls)
+	now := time.Date(2026, 7, 18, 11, 0, 0, 0, time.UTC)
+
+	run, err := repo.CreateRun(ctx, V2CreateMigrationRunInput{
+		MigrationContractVersion: "migration-contract-v1",
+		CorpusVersion:            "corpus-v1",
+		SourceKind:               "neo4j",
+		State:                    domain.V2MigrationStateReady,
+		Phase:                    "preflight",
+		Required:                 true,
+		PreflightApproved:        true,
+		BackupReference:          "backup-20260718",
+		PreflightChecks: map[string]any{
+			"postgres_restore_verified": true,
+			"neo4j_snapshot_verified":   true,
+		},
+		Now: now,
+	})
+	require.NoError(t, err)
+	run, err = repo.UpdateRunState(ctx, V2UpdateMigrationRunStateInput{
+		RunID:     run.RunID,
+		FromState: domain.V2MigrationStateReady,
+		ToState:   domain.V2MigrationStateRunning,
+		Phase:     "migration",
+		Retryable: true,
+		Now:       now.Add(time.Minute),
+	})
+	require.NoError(t, err)
+	_, err = repo.UpsertMigrationCorpusItem(ctx, V2UpsertMigrationCorpusItemInput{
+		RunID:          run.RunID,
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		SourceKind:     "neo4j",
+		SourceID:       "sf-pending",
+		SourceHash:     "sha256:pending",
+		ItemKind:       domain.V2MigrationItemKindEvidence,
+		Outcome:        domain.V2MigrationOutcomePending,
+		Now:            now.Add(2 * time.Minute),
+	})
+	require.NoError(t, err)
+
+	requiredGates := []string{"backup_restore"}
+	_, _, err = repo.FinalizeMigrationGateReport(ctx, V2FinalizeMigrationGateReportInput{
+		RunID:             run.RunID,
+		FromState:         domain.V2MigrationStateRunning,
+		CorpusHash:        "sha256:corpus",
+		GateReportHash:    "sha256:gates",
+		GateResults:       testV2GateInputs(requiredGates),
+		RequiredGateNames: requiredGates,
+		Now:               now.Add(3 * time.Minute),
+	})
+	require.ErrorIs(t, err, ErrV2MigrationGateReportFailed)
+
+	latest, err := repo.GetLatestRun(ctx)
+	require.NoError(t, err)
+	require.Equal(t, domain.V2MigrationStateVerifying, latest.State)
+	require.Contains(t, latest.LastError, "pending or failed")
+}
+
 func TestV2MigrationExecutorRepositoryPersistsProgressAndStats(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
 	defer cleanup()
@@ -269,4 +405,18 @@ func insertV2MigrationMarker(ctx context.Context, db *gorm.DB, rls *storagepostg
 		`, uuid.NewString(), domain.V2MigrationMarkerKindCutover, "v2.1.7",
 			domain.V2MigrationMarkerCompatible, runID).Error
 	})
+}
+
+func testV2GateInputs(names []string) []V2MigrationGateResultInput {
+	out := make([]V2MigrationGateResultInput, 0, len(names))
+	for _, name := range names {
+		out = append(out, V2MigrationGateResultInput{
+			GateName:     name,
+			Outcome:      domain.V2MigrationGateOutcomePass,
+			EvidenceRef:  "local://cutover/" + name,
+			EvidenceHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			GateVersion:  "dense-mem.gate.test.v1",
+		})
+	}
+	return out
 }

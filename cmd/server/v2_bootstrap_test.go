@@ -69,6 +69,36 @@ func TestDormantV2MigrationCheckBlocksWhenExplicitlyRequired(t *testing.T) {
 	require.True(t, errors.Is(check.Check(context.Background()), errV2MigrationPending))
 }
 
+func TestActiveV2MigrationCheckRequiresCutoverMarker(t *testing.T) {
+	cfg := validDormantV2BootstrapConfig()
+	cfg.V2BootMode = config.V2BootModeActive
+	bootstrap := buildDormantV2Bootstrap(cfg, nil, v2MigrationStatusStub{
+		status: &domain.V2MigrationControlStatus{State: domain.V2MigrationStateNotRequired},
+	})
+
+	require.True(t, bootstrap.AcceptsDataPlane)
+	check := requireHealthCheck(t, bootstrap, "v2_migration_state")
+	require.False(t, check.Optional)
+	require.True(t, errors.Is(check.Check(context.Background()), errV2MigrationPending))
+}
+
+func TestEnforceActiveV2CutoverMarker(t *testing.T) {
+	ctx := context.Background()
+	cfg := validDormantV2BootstrapConfig()
+	require.NoError(t, enforceActiveV2CutoverMarker(ctx, cfg, nil))
+
+	cfg.V2BootMode = config.V2BootModeActive
+	err := enforceActiveV2CutoverMarker(ctx, cfg, v2MigrationStatusStub{
+		status: &domain.V2MigrationControlStatus{State: domain.V2MigrationStateRequired},
+	})
+	require.True(t, errors.Is(err, errV2MigrationPending), "err=%v", err)
+
+	err = enforceActiveV2CutoverMarker(ctx, cfg, v2MigrationStatusStub{
+		status: &domain.V2MigrationControlStatus{State: domain.V2MigrationStateCutOver},
+	})
+	require.NoError(t, err)
+}
+
 func TestDormantV2PGVectorDisabledIsOptionalDegraded(t *testing.T) {
 	cfg := validDormantV2BootstrapConfig()
 	cfg.PGVectorExtensionRequired = false

@@ -20,6 +20,8 @@ const (
 	V2MigrationActionPaused            = "paused"
 	V2MigrationActionResumed           = "resumed"
 	V2MigrationActionFailed            = "failed"
+	V2MigrationActionGatesFinalized    = "gates_finalized"
+	V2MigrationActionCutoverCommitted  = "cutover_committed"
 
 	V2MigrationMarkerKindCutover  = "v2_cutover"
 	V2MigrationMarkerCompatible   = "compatible"
@@ -35,6 +37,10 @@ const (
 	V2MigrationOutcomeExcluded    = "excluded"
 
 	V2MigrationItemKindEvidence = "evidence"
+
+	V2MigrationGateOutcomePass    = "pass"
+	V2MigrationGateOutcomeFail    = "fail"
+	V2MigrationGateOutcomeWarning = "warning"
 
 	V2MigrationCheckpointLegacyNeo4jCursor = "legacy_neo4j_source_fragment_cursor"
 
@@ -55,6 +61,7 @@ type V2MigrationRun struct {
 	PreflightChecks          map[string]any `json:"preflight_checks,omitempty"`
 	CorpusWatermark          string         `json:"corpus_watermark,omitempty"`
 	CorpusHash               string         `json:"corpus_hash,omitempty"`
+	GateReportHash           string         `json:"gate_report_hash,omitempty"`
 	TotalItems               int            `json:"total_items"`
 	CompletedItems           int            `json:"completed_items"`
 	FailedItems              int            `json:"failed_items"`
@@ -100,6 +107,19 @@ type V2MigrationCorpusItem struct {
 	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
+type V2MigrationGateResult struct {
+	GateID       string         `json:"gate_id"`
+	RunID        string         `json:"run_id"`
+	GateName     string         `json:"gate_name"`
+	Outcome      string         `json:"outcome"`
+	EvidenceRef  string         `json:"evidence_ref"`
+	EvidenceHash string         `json:"evidence_hash"`
+	GateVersion  string         `json:"gate_version"`
+	Message      string         `json:"message,omitempty"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
+	CreatedAt    time.Time      `json:"created_at"`
+}
+
 type V2CompatibilityMarker struct {
 	MarkerID       string         `json:"marker_id"`
 	MarkerKind     string         `json:"marker_kind"`
@@ -119,5 +139,6 @@ type V2MigrationControlStatus struct {
 	ReadinessMessage string                      `json:"readiness_message"`
 	Run              *V2MigrationRun             `json:"run,omitempty"`
 	Marker           *V2CompatibilityMarker      `json:"marker,omitempty"`
+	Gates            []V2MigrationGateResult     `json:"gates,omitempty"`
 	Actions          []V2MigrationOperatorAction `json:"actions,omitempty"`
 }

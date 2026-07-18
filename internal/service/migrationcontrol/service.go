@@ -14,6 +14,7 @@ import (
 const (
 	DefaultMigrationContractVersion = "dense-mem.v2.1.migration-control.v1"
 	DefaultCorpusVersion            = "dense-mem.v2.1.legacy-corpus.v1"
+	DefaultCutoverMarkerVersion     = "dense-mem.v2.1.cutover.v1"
 	defaultSourceKind               = "neo4j"
 )
 
@@ -22,15 +23,20 @@ var (
 	ErrPreflightRequired = errors.New("v2 migration control: preflight approval is required")
 	ErrAlreadyCutOver    = errors.New("v2 migration control: already cut over")
 	ErrIncompatible      = errors.New("v2 migration control: incompatible marker")
+	ErrGateReportFailed  = errors.New("v2 migration control: gate report failed")
+	ErrCutoverNotReady   = errors.New("v2 migration control: cutover is not ready")
 )
 
 type Store interface {
 	GetLatestRun(ctx context.Context) (*domain.V2MigrationRun, error)
 	CreateRun(ctx context.Context, input repository.V2CreateMigrationRunInput) (*domain.V2MigrationRun, error)
 	UpdateRunState(ctx context.Context, input repository.V2UpdateMigrationRunStateInput) (*domain.V2MigrationRun, error)
+	FinalizeMigrationGateReport(ctx context.Context, input repository.V2FinalizeMigrationGateReportInput) (*domain.V2MigrationRun, []domain.V2MigrationGateResult, error)
+	CommitMigrationCutover(ctx context.Context, input repository.V2CommitMigrationCutoverInput) (*domain.V2CompatibilityMarker, error)
 	GetLatestMarker(ctx context.Context) (*domain.V2CompatibilityMarker, error)
 	RecordOperatorAction(ctx context.Context, action domain.V2MigrationOperatorAction) error
 	ListOperatorActions(ctx context.Context, runID string, limit int) ([]domain.V2MigrationOperatorAction, error)
+	ListMigrationGateResults(ctx context.Context, runID string, limit int) ([]domain.V2MigrationGateResult, error)
 }
 
 type Service interface {
@@ -39,12 +45,15 @@ type Service interface {
 	Start(ctx context.Context, req OperatorRequest) (*domain.V2MigrationControlStatus, error)
 	Pause(ctx context.Context, req OperatorRequest) (*domain.V2MigrationControlStatus, error)
 	Resume(ctx context.Context, req OperatorRequest) (*domain.V2MigrationControlStatus, error)
+	FinalizeGates(ctx context.Context, req GateReportRequest) (*domain.V2MigrationControlStatus, error)
+	CommitCutover(ctx context.Context, req CutoverRequest) (*domain.V2MigrationControlStatus, error)
 }
 
 type Config struct {
 	Required                 bool
 	MigrationContractVersion string
 	CorpusVersion            string
+	CutoverMarkerVersion     string
 	Now                      func() time.Time
 }
 
@@ -73,12 +82,15 @@ func New(store Store, cfg Config) Service {
 	if strings.TrimSpace(cfg.CorpusVersion) == "" {
 		cfg.CorpusVersion = DefaultCorpusVersion
 	}
+	if strings.TrimSpace(cfg.CutoverMarkerVersion) == "" {
+		cfg.CutoverMarkerVersion = DefaultCutoverMarkerVersion
+	}
 	return &service{store: store, cfg: cfg, now: now}
 }
 
 func (s *service) Status(ctx context.Context) (*domain.V2MigrationControlStatus, error) {
 	if s.store == nil {
-		return statusFromRunMarker(s.cfg.Required, nil, nil, nil), nil
+		return statusFromRunMarker(s.cfg.Required, nil, nil, nil, nil), nil
 	}
 	marker, err := s.store.GetLatestMarker(ctx)
 	if err != nil {
@@ -92,7 +104,11 @@ func (s *service) Status(ctx context.Context) (*domain.V2MigrationControlStatus,
 	if err != nil {
 		return nil, err
 	}
-	return statusFromRunMarker(s.cfg.Required, run, marker, actions), nil
+	gates, err := s.gates(ctx, run)
+	if err != nil {
+		return nil, err
+	}
+	return statusFromRunMarker(s.cfg.Required, run, marker, gates, actions), nil
 }
 
 func (s *service) ApprovePreflight(ctx context.Context, req OperatorRequest) (*domain.V2MigrationControlStatus, error) {
@@ -221,14 +237,32 @@ func (s *service) actions(ctx context.Context, run *domain.V2MigrationRun) ([]do
 	return s.store.ListOperatorActions(ctx, run.RunID, 20)
 }
 
+func (s *service) gates(ctx context.Context, run *domain.V2MigrationRun) ([]domain.V2MigrationGateResult, error) {
+	if run == nil || run.RunID == "" {
+		return nil, nil
+	}
+	return s.store.ListMigrationGateResults(ctx, run.RunID, 50)
+}
+
 func (s *service) recordAction(ctx context.Context, runID, action string, req OperatorRequest, now time.Time) error {
+	return s.recordActionWithMetadata(ctx, runID, action, req, operatorMetadata(req), now)
+}
+
+func (s *service) recordActionWithMetadata(
+	ctx context.Context,
+	runID string,
+	action string,
+	req OperatorRequest,
+	metadata map[string]any,
+	now time.Time,
+) error {
 	return s.store.RecordOperatorAction(ctx, domain.V2MigrationOperatorAction{
 		RunID:     runID,
 		Action:    action,
 		Actor:     operatorActor(req.Actor),
 		RemoteIP:  strings.TrimSpace(req.RemoteIP),
 		Reason:    strings.TrimSpace(req.Reason),
-		Metadata:  operatorMetadata(req),
+		Metadata:  metadata,
 		CreatedAt: now,
 	})
 }
@@ -237,6 +271,7 @@ func statusFromRunMarker(
 	required bool,
 	run *domain.V2MigrationRun,
 	marker *domain.V2CompatibilityMarker,
+	gates []domain.V2MigrationGateResult,
 	actions []domain.V2MigrationOperatorAction,
 ) *domain.V2MigrationControlStatus {
 	if marker != nil {
@@ -249,6 +284,7 @@ func statusFromRunMarker(
 				ReadinessMessage: "compatible V2 migration marker present",
 				Run:              run,
 				Marker:           marker,
+				Gates:            gates,
 				Actions:          actions,
 			}
 		case domain.V2MigrationMarkerIncompatible, domain.V2MigrationMarkerCorrupt:
@@ -259,6 +295,7 @@ func statusFromRunMarker(
 				ReadinessMessage: "V2 migration marker is incompatible or corrupt",
 				Run:              run,
 				Marker:           marker,
+				Gates:            gates,
 				Actions:          actions,
 			}
 		}
@@ -270,6 +307,7 @@ func statusFromRunMarker(
 			DataPlaneAllowed: run.State == domain.V2MigrationStateNotRequired || run.State == domain.V2MigrationStateCutOver,
 			ReadinessMessage: readinessMessage(run.State),
 			Run:              run,
+			Gates:            gates,
 			Actions:          actions,
 		}
 	}

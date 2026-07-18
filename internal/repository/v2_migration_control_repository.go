@@ -18,9 +18,12 @@ type V2MigrationControlRepository interface {
 	GetLatestRun(ctx context.Context) (*domain.V2MigrationRun, error)
 	CreateRun(ctx context.Context, input V2CreateMigrationRunInput) (*domain.V2MigrationRun, error)
 	UpdateRunState(ctx context.Context, input V2UpdateMigrationRunStateInput) (*domain.V2MigrationRun, error)
+	FinalizeMigrationGateReport(ctx context.Context, input V2FinalizeMigrationGateReportInput) (*domain.V2MigrationRun, []domain.V2MigrationGateResult, error)
+	CommitMigrationCutover(ctx context.Context, input V2CommitMigrationCutoverInput) (*domain.V2CompatibilityMarker, error)
 	GetLatestMarker(ctx context.Context) (*domain.V2CompatibilityMarker, error)
 	RecordOperatorAction(ctx context.Context, action domain.V2MigrationOperatorAction) error
 	ListOperatorActions(ctx context.Context, runID string, limit int) ([]domain.V2MigrationOperatorAction, error)
+	ListMigrationGateResults(ctx context.Context, runID string, limit int) ([]domain.V2MigrationGateResult, error)
 }
 
 type V2CreateMigrationRunInput struct {
@@ -66,7 +69,7 @@ func (r *V2MigrationControlRepositoryImpl) GetLatestRun(ctx context.Context) (*d
 		row := tx.Raw(`
 			SELECT run_id::text, migration_contract_version, corpus_version, source_kind,
 			       state, phase, required, preflight_approved, backup_reference,
-			       preflight_checks::text, corpus_watermark, corpus_hash,
+			       preflight_checks::text, corpus_watermark, corpus_hash, gate_report_hash,
 			       total_items, completed_items, failed_items, excluded_items,
 			       last_error, retryable, lease_owner, checkpoint_key,
 			       checkpoint_value::text, started_at, completed_at, cutover_at,
@@ -112,7 +115,7 @@ func (r *V2MigrationControlRepositoryImpl) CreateRun(ctx context.Context, input 
 			)
 			RETURNING run_id::text, migration_contract_version, corpus_version, source_kind,
 			          state, phase, required, preflight_approved, backup_reference,
-			          preflight_checks::text, corpus_watermark, corpus_hash,
+			          preflight_checks::text, corpus_watermark, corpus_hash, gate_report_hash,
 			          total_items, completed_items, failed_items, excluded_items,
 			          last_error, retryable, lease_owner, checkpoint_key,
 			          checkpoint_value::text, started_at, completed_at, cutover_at,
@@ -161,7 +164,7 @@ func (r *V2MigrationControlRepositoryImpl) UpdateRunState(ctx context.Context, i
 			  AND state = ?
 			RETURNING run_id::text, migration_contract_version, corpus_version, source_kind,
 			          state, phase, required, preflight_approved, backup_reference,
-			          preflight_checks::text, corpus_watermark, corpus_hash,
+			          preflight_checks::text, corpus_watermark, corpus_hash, gate_report_hash,
 			          total_items, completed_items, failed_items, excluded_items,
 			          last_error, retryable, lease_owner, checkpoint_key,
 			          checkpoint_value::text, started_at, completed_at, cutover_at,
@@ -299,6 +302,7 @@ func scanV2MigrationRun(row v2MigrationRowScanner) (*domain.V2MigrationRun, erro
 		&checksJSON,
 		&record.CorpusWatermark,
 		&record.CorpusHash,
+		&record.GateReportHash,
 		&record.TotalItems,
 		&record.CompletedItems,
 		&record.FailedItems,

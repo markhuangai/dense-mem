@@ -75,6 +75,26 @@ func TestValidateV2DormantStartup(t *testing.T) {
 			t.Fatalf("ValidateV2DormantStartup() returned unexpected error: %v", err)
 		}
 	})
+
+	t.Run("active succeeds with v2 contract settings", func(t *testing.T) {
+		clearEnv()
+		setRequiredEnv()
+		setRequiredV2Env()
+		os.Setenv("V2_BOOT_MODE", V2BootModeActive)
+		os.Setenv("V2_LEGACY_MIGRATION_REQUIRED", "true")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() returned unexpected error: %v", err)
+		}
+
+		if !cfg.IsV2BootEnabled() || !cfg.IsV2BootActive() {
+			t.Fatalf("V2 active flags = enabled:%v active:%v", cfg.IsV2BootEnabled(), cfg.IsV2BootActive())
+		}
+		if err := cfg.ValidateV2DormantStartup(); err != nil {
+			t.Fatalf("ValidateV2DormantStartup() returned unexpected error: %v", err)
+		}
+	})
 }
 
 func TestLoadV2ConfigRejectsUnsafeModesAndTopologyHints(t *testing.T) {
@@ -83,7 +103,6 @@ func TestLoadV2ConfigRejectsUnsafeModesAndTopologyHints(t *testing.T) {
 		set   func()
 		field string
 	}{
-		{"active mode unsupported before cutover issue", func() { os.Setenv("V2_BOOT_MODE", "active") }, "V2_BOOT_MODE"},
 		{"postgres read dsn rejected", func() { os.Setenv("POSTGRES_READ_DSN", "postgres://replica/db") }, "POSTGRES_READ_DSN"},
 		{"distributed coordination requires redis", func() { os.Setenv("DISTRIBUTED_COORDINATION_REQUIRED", "true") }, "DISTRIBUTED_COORDINATION_REQUIRED"},
 		{"unsupported ann strategy", func() { os.Setenv("PGVECTOR_ANN_STRATEGY", "ivfflat") }, "PGVECTOR_ANN_STRATEGY"},

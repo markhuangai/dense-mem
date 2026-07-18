@@ -302,7 +302,7 @@ func (s *v2PlacementWorkerLedgerStub) ClaimNextPlacementRun(_ context.Context, t
 	return s.run, nil
 }
 
-func (s *v2PlacementWorkerLedgerStub) FinishPlacementRun(context.Context, string, string, string, string) error {
+func (s *v2PlacementWorkerLedgerStub) FinishPlacementRun(context.Context, string, string, string, string, string) error {
 	return errors.New("unexpected FinishPlacementRun")
 }
 

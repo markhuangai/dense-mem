@@ -66,6 +66,31 @@ func TestControlPortalV2MigrationStatusAndActions(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "begin", migration.lastReq.Reason)
 
+	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/finalize-gates", `{
+		"actor": "operator",
+		"corpus_hash": "sha256:corpus",
+		"gate_report_hash": "sha256:gates",
+		"gates": [{
+			"gate_name": "backup_restore",
+			"outcome": "pass",
+			"evidence_ref": "local://gate/backup_restore",
+			"evidence_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"gate_version": "dense-mem.gate.test.v1"
+		}]
+	}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "sha256:gates", migration.lastGateReq.GateReportHash)
+	require.NotEmpty(t, migration.lastGateReq.RemoteIP)
+
+	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/cutover", `{
+		"actor": "operator",
+		"corpus_hash": "sha256:corpus",
+		"gate_report_hash": "sha256:gates"
+	}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "sha256:gates", migration.lastCutoverReq.GateReportHash)
+	require.NotEmpty(t, migration.lastCutoverReq.RemoteIP)
+
 	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/run-once", `{}`)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, 1, executor.calls)
@@ -124,9 +149,11 @@ func controlMigrationRequest(server http.Handler, method, path, body string) *ht
 }
 
 type controlMigrationSvc struct {
-	status  *domain.V2MigrationControlStatus
-	lastReq migrationcontrol.OperatorRequest
-	err     error
+	status         *domain.V2MigrationControlStatus
+	lastReq        migrationcontrol.OperatorRequest
+	lastGateReq    migrationcontrol.GateReportRequest
+	lastCutoverReq migrationcontrol.CutoverRequest
+	err            error
 }
 
 func (s *controlMigrationSvc) Status(context.Context) (*domain.V2MigrationControlStatus, error) {
@@ -153,6 +180,22 @@ func (s *controlMigrationSvc) Pause(_ context.Context, req migrationcontrol.Oper
 
 func (s *controlMigrationSvc) Resume(_ context.Context, req migrationcontrol.OperatorRequest) (*domain.V2MigrationControlStatus, error) {
 	return s.action(req)
+}
+
+func (s *controlMigrationSvc) FinalizeGates(_ context.Context, req migrationcontrol.GateReportRequest) (*domain.V2MigrationControlStatus, error) {
+	s.lastGateReq = req
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &domain.V2MigrationControlStatus{State: domain.V2MigrationStateReadyCutover}, nil
+}
+
+func (s *controlMigrationSvc) CommitCutover(_ context.Context, req migrationcontrol.CutoverRequest) (*domain.V2MigrationControlStatus, error) {
+	s.lastCutoverReq = req
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &domain.V2MigrationControlStatus{State: domain.V2MigrationStateCutOver}, nil
 }
 
 func (s *controlMigrationSvc) action(req migrationcontrol.OperatorRequest) (*domain.V2MigrationControlStatus, error) {

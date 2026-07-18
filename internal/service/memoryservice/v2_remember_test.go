@@ -308,6 +308,6 @@ func (s *v2RememberLedgerStub) ClaimNextPlacementRun(context.Context, string, st
 	return nil, errors.New("unexpected ClaimNextPlacementRun")
 }
 
-func (s *v2RememberLedgerStub) FinishPlacementRun(context.Context, string, string, string, string) error {
+func (s *v2RememberLedgerStub) FinishPlacementRun(context.Context, string, string, string, string, string) error {
 	return errors.New("unexpected FinishPlacementRun")
 }

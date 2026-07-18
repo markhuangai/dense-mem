@@ -186,7 +186,9 @@ func main() {
 	recallFeedbackEventRepo := repository.NewRecallFeedbackEventRepository(pgDB.GetDB(), rlsHelper)
 	memoryPlacementRepo := repository.NewMemoryPlacementRepository(pgDB.GetDB(), rlsHelper)
 	skillPackImportRepo := repository.NewSkillPackImportRepository(pgDB.GetDB(), rlsHelper)
+	v2LedgerRepo := repository.NewV2LedgerRepository(pgDB.GetDB(), rlsHelper)
 	v2SemanticRepo := repository.NewV2SemanticRepository(pgDB.GetDB(), rlsHelper)
+	v2SearchRepo := repository.NewV2SearchRepository(pgDB.GetDB(), rlsHelper)
 	v2MigrationControlRepo := repository.NewV2MigrationControlRepository(pgDB.GetDB(), rlsHelper)
 	v2MigrationControlSvc := migrationcontrol.New(v2MigrationControlRepo, migrationcontrol.Config{
 		Required: cfg.GetV2LegacyMigrationRequired(),
@@ -194,6 +196,9 @@ func main() {
 	v2Bootstrap := buildDormantV2Bootstrap(cfg, pgDB.GetDB(), v2MigrationControlSvc)
 	if v2Bootstrap.Enabled {
 		logger.Info("v2 dormant bootstrap enabled", observability.String("mode", v2Bootstrap.Mode))
+	}
+	if err := enforceActiveV2CutoverMarker(startupCtx, cfg, v2MigrationControlSvc); err != nil {
+		log.Fatalf("v2 active boot blocked: %v", err)
 	}
 
 	// ========================================
@@ -390,15 +395,32 @@ func main() {
 	placementWorkerCtx, placementWorkerCancel := context.WithCancel(context.Background())
 	defer placementWorkerCancel()
 	memorySvc.StartPlacementWorker(placementWorkerCtx, time.Minute)
+	v2RememberSvc := memoryservice.NewV2RememberService(memoryservice.V2RememberDependencies{
+		Ledger: v2LedgerRepo,
+	})
+	v2RecallSvc := memoryservice.NewV2RecallService(memoryservice.V2RecallDependencies{
+		Search:   v2SearchRepo,
+		Provider: retryEmbedder,
+	})
+	v2LifecycleSvc := memoryservice.NewV2LifecycleService(memoryservice.V2LifecycleDependencies{
+		Semantic:  v2SemanticRepo,
+		Placement: v2LedgerRepo,
+	})
+	var v2DreamRepo repository.V2DreamRepository
+	if cfg.GetV2BootMode() == config.V2BootModeUAT || cfg.IsV2BootActive() {
+		v2DreamRepo = v2SemanticRepo
+	}
 	dreamSvc := dreamservice.New(dreamservice.Dependencies{
-		Graph:     profileScopeEnforcer,
-		Memory:    memorySvc,
-		AppConfig: appConfigService,
-		Profiles:  profileService,
-		Locker:    dreamservice.NewPostgresCycleLocker(),
-		Postgres:  pgDB.GetDB(),
-		Generator: dreamservice.NewHeuristicGenerator(cfg.GetAIVerifierModel()),
-		Metrics:   discoverabilityMetrics,
+		Graph:      profileScopeEnforcer,
+		Memory:     memorySvc,
+		V2Remember: v2RememberSvc,
+		V2Dreams:   v2DreamRepo,
+		AppConfig:  appConfigService,
+		Profiles:   profileService,
+		Locker:     dreamservice.NewPostgresCycleLocker(),
+		Postgres:   pgDB.GetDB(),
+		Generator:  dreamservice.NewHeuristicGenerator(cfg.GetAIVerifierModel()),
+		Metrics:    discoverabilityMetrics,
 	})
 	contextSvc := contextservice.New(contextservice.Dependencies{
 		Reader:      profileScopeEnforcer,
@@ -409,8 +431,11 @@ func main() {
 		Memory:      memorySvc,
 		Dreams:      dreamSvc,
 	})
+	if cfg.GetV2BootMode() == config.V2BootModeUAT || cfg.IsV2BootActive() {
+		contextSvc = contextservice.NewV2Semantic(v2SemanticRepo)
+	}
 	graphViewSvc := graphview.New(profileScopeEnforcer)
-	if cfg.GetV2BootMode() == config.V2BootModeUAT {
+	if cfg.GetV2BootMode() == config.V2BootModeUAT || cfg.IsV2BootActive() {
 		graphViewSvc = graphview.NewV2Semantic(v2SemanticRepo)
 	}
 	skillPackSvc := skillpackservice.New(skillpackservice.Dependencies{
@@ -425,6 +450,12 @@ func main() {
 		Graph:           profileScopeEnforcer,
 		Ledger:          skillPackImportRepo,
 		HistoryDays:     cfg.GetSkillPackImportHistoryDays(),
+	})
+	v2SkillPackSvc := skillpackservice.NewV2(skillpackservice.V2Dependencies{
+		Semantic:    v2SemanticRepo,
+		Remember:    v2RememberSvc,
+		Ledger:      skillPackImportRepo,
+		HistoryDays: cfg.GetSkillPackImportHistoryDays(),
 	})
 
 	var (
@@ -441,7 +472,7 @@ func main() {
 	}
 
 	// Tool registry is the single source of truth for MCP / HTTP catalog / OpenAPI.
-	toolRegistry, err := registry.BuildDefault(registry.Dependencies{
+	registryDeps := registry.Dependencies{
 		FragmentList:         fragmentListSvc,
 		FragmentGet:          fragmentGetSvc,
 		Recall:               recallRegistrySvc,
@@ -459,11 +490,21 @@ func main() {
 		CommunityList:        communityListSvc,
 		Context:              contextSvc,
 		Memory:               memorySvc,
+		V2Remember:           v2RememberSvc,
+		V2Recall:             v2RecallSvc,
+		V2Lifecycle:          v2LifecycleSvc,
 		V2Evaluation:         v2SemanticRepo,
 		V2Communities:        v2SemanticRepo,
 		SkillPack:            skillPackSvc,
+		V2SkillPack:          v2SkillPackSvc,
 		Dreams:               dreamSvc,
-	})
+	}
+	var toolRegistry registry.Registry
+	if cfg.GetV2BootMode() == config.V2BootModeUAT || cfg.IsV2BootActive() {
+		toolRegistry, err = registry.BuildV2UAT(registryDeps)
+	} else {
+		toolRegistry, err = registry.BuildDefault(registryDeps)
+	}
 	if err != nil {
 		log.Fatalf("failed to build tool registry: %v", err)
 	}

@@ -43,11 +43,17 @@ func buildDormantV2Bootstrap(cfg config.Config, db *gorm.DB, migration v2Migrati
 		}
 	}
 
+	description := "v2 dormant; normal v1 authority remains active"
+	acceptsDataPlane := false
+	if cfg.IsV2BootActive() {
+		description = "v2 active; PostgreSQL V2 authority is marker-gated"
+		acceptsDataPlane = true
+	}
 	return dormantV2Bootstrap{
 		Mode:                 cfg.GetV2BootMode(),
 		Enabled:              true,
-		AcceptsDataPlane:     false,
-		ReadinessDescription: "v2 dormant; normal v1 authority remains active",
+		AcceptsDataPlane:     acceptsDataPlane,
+		ReadinessDescription: description,
 		checks: []internalhttp.HealthCheck{
 			{
 				Name: "v2_postgres_topology",
@@ -97,7 +103,7 @@ func buildDormantV2Bootstrap(cfg config.Config, db *gorm.DB, migration v2Migrati
 			},
 			{
 				Name:     "v2_migration_state",
-				Optional: !cfg.GetV2LegacyMigrationRequired(),
+				Optional: v2MigrationStateOptional(cfg),
 				Check: func(ctx context.Context) error {
 					return checkV2MigrationState(ctx, cfg, migration)
 				},
@@ -107,8 +113,9 @@ func buildDormantV2Bootstrap(cfg config.Config, db *gorm.DB, migration v2Migrati
 }
 
 func checkV2MigrationState(ctx context.Context, cfg config.Config, migration v2MigrationStatusReader) error {
+	requiresMarker := cfg.GetV2LegacyMigrationRequired() || cfg.IsV2BootActive()
 	if migration == nil {
-		if cfg.GetV2LegacyMigrationRequired() {
+		if requiresMarker {
 			return errV2MigrationPending
 		}
 		return nil
@@ -118,11 +125,27 @@ func checkV2MigrationState(ctx context.Context, cfg config.Config, migration v2M
 		return err
 	}
 	switch status.State {
-	case domain.V2MigrationStateNotRequired, domain.V2MigrationStateCutOver:
+	case domain.V2MigrationStateCutOver:
 		return nil
+	case domain.V2MigrationStateNotRequired:
+		if !requiresMarker {
+			return nil
+		}
+		return fmt.Errorf("%w: %s", errV2MigrationPending, status.State)
 	default:
 		return fmt.Errorf("%w: %s", errV2MigrationPending, status.State)
 	}
+}
+
+func enforceActiveV2CutoverMarker(ctx context.Context, cfg config.Config, migration v2MigrationStatusReader) error {
+	if !cfg.IsV2BootActive() {
+		return nil
+	}
+	return checkV2MigrationState(ctx, cfg, migration)
+}
+
+func v2MigrationStateOptional(cfg config.Config) bool {
+	return !cfg.GetV2LegacyMigrationRequired() && !cfg.IsV2BootActive()
 }
 
 func validateV2WorkerReadiness(cfg config.Config) error {
