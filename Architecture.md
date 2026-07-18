@@ -168,7 +168,7 @@ sequenceDiagram
     S->>P: Continue normal release startup
   end
   S->>P: Apply compatible schema migrations
-  S->>P: Validate pgvector, embedding contract, and search-index profile
+  S->>P: Validate pgvector, embedding contract, and search-index generation
   S->>R: Build required coordination backend
   S->>A: Validate configured provider contracts
   S->>W: Start placement, embedding, cleanup, and optional schedulers

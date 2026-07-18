@@ -81,7 +81,7 @@ Readiness should expose component-level state:
 | Component | Readiness failure |
 | --- | --- |
 | PostgreSQL | cannot connect, migration mismatch, RLS/bootstrap invalid, or pool exhausted |
-| `pgvector` | missing extension/operator class, dimension/contract mismatch, inactive search-index profile, or unusable search schema |
+| `pgvector` | missing extension/operator class, dimension/contract mismatch, inactive search-index generation, or unusable search schema |
 | verifier | required write contract cannot be reached or the provider cannot satisfy the closed contract probe |
 | embedding | required recall profile cannot embed, or configured contract probe fails |
 | Redis | unreachable when distributed coordination is required |
@@ -105,7 +105,7 @@ Before user traffic:
    two-team fixtures
 7. validate reviewer extraction and strict verifier schema
 8. validate one embedding against persisted dimensions/normalization
-9. validate the active search-index profile, query plan, and exact/ANN oracle
+9. validate the active search-index generation, query plan, and exact/ANN oracle
 10. configure Redis as required by service-instance topology
 11. start workers and confirm queues are empty/healthy
 12. run `remember` → placement → recall → trace → forget smoke
@@ -425,8 +425,8 @@ dumps.
 | Embedding backlog mistaken for data loss | client repeats `remember` and duplicates provenance | separate processing/search state, idempotency, and SemanticEdge source checks |
 | ANN latency fix harms quality | operator lowers HNSW work without exact comparison | paired latency/Recall@K gate and versioned tuning |
 | Scale-out exhausts connections | adding service replicas multiplies per-process pools beyond PostgreSQL capacity | deployment-wide connection formula, vector semaphore, and preflight gate |
-| Standby serves stale memory | replica recall misses a committed correction or active profile | primary for freshness-sensitive reads and explicit replay-lag/version gate |
-| Distributed activation is partial | some shards query an older or absent HNSW profile | all-shard build/plan/oracle gate before atomic profile activation |
+| Standby serves stale memory | replica recall misses a committed correction or active contract | primary for freshness-sensitive reads and explicit replay-lag/version gate |
+| Distributed activation is partial | some shards query an older or absent HNSW generation | all-shard build/plan/oracle gate before atomic generation activation |
 | Queue manually edited | placement history and idempotency diverge | supported lease/retry tooling only; investigate root cause |
 | Redis outage breaks global limits | replicas silently use independent counters | mandatory distributed mode fails readiness/affected operations |
 | Restore leaks tenants | RLS/runtime actor settings are missing after recovery | migration validation plus two-team isolation smoke before cutover |

@@ -158,7 +158,7 @@ replicated by a future adapter:
 
 - predicate registry versions and immutable definitions
 - embedding contracts
-- search-index and global/default ranking profile definitions
+- search-index generations and global/default ranking contract definitions
 - verifier/reviewer closed-contract definitions and hashes
 - closed enum/reference definitions that cannot differ by shard
 
@@ -346,7 +346,7 @@ eligibility indexes, and RLS from their canonical contracts.
 
 ## Search And Embedding Shape
 
-Search rows remain team-owned even though embedding/search-index profiles are
+Search rows remain team-owned even though embedding contracts/search-index generations are
 shared reference data:
 
 ```sql
@@ -592,7 +592,7 @@ through the AI verifier.
 | composite FK detects another-team endpoint | reject the transaction and alert integrity telemetry |
 | worker lacks team context | claim/run fails before provider or semantic work |
 | ownership projection disagrees with control authority | block that team/profile's semantic writes and surface reconciliation failure |
-| shared definition or search-index profile missing on a shard | keep the old version active; shard/topology not ready |
+| shared definition or search-index generation missing on a shard | keep the old version active; shard/topology not ready |
 | team route/placement epoch is stale | reject the write and refresh routing; never write an alternate shard speculatively |
 | distributed adapter cannot enforce RLS/FK contract | adapter unsupported; continue single/HA only |
 | global batch partially completes | preserve per-team checkpoints and retry incomplete teams idempotently |

@@ -242,8 +242,8 @@ and `hypothesis`.
 Diagnostics may record per-request branch detail in short-retention logs keyed
 by correlation ID. Do not put query text or result IDs in metrics.
 
-`fusion_mode` is a closed enum such as `rrf` or `branch_priority`; arbitrary
-ranking-profile versions belong in the stored recall event and structured log,
+`fusion_mode` is a closed enum such as `rrf` or `branch_priority`;
+ranking-contract versions belong in the stored recall event and structured log,
 not a Prometheus label. The ranking contract is defined in
 [Vector Search And Ranking](Vector-Search-And-Ranking).
 

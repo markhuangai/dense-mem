@@ -6,7 +6,7 @@ Hypotheses, embeddings, indexes, or ranking weights.
 
 Retrieval eligibility and response behavior live in
 [Recall Ranking](Recall-Ranking). Distance, fusion, RRF, deterministic reranking,
-and ranking-profile versioning live in
+and ranking-contract versioning live in
 [Vector Search And Ranking](Vector-Search-And-Ranking). Metrics presentation
 lives in [Telemetry](Telemetry).
 
@@ -41,7 +41,7 @@ Submitting feedback does not:
 - merge or split an Entity
 - reinforce/reject a Hypothesis
 - update a search document or embedding
-- modify a ranking profile
+- modify a ranking contract
 - train a model
 
 A quality problem changes behavior only after it becomes an evaluated case, an
@@ -131,7 +131,7 @@ Low-cardinality aggregates include:
 | search-freshness correlation | quality grouped by bounded pending/failed-vector state |
 | tier usefulness | used/irrelevant rate by validated-claim/fact |
 | authored-conflict usefulness | quality when recall preferred, retained, or asked about conflicting profile-owned Relationships |
-| fusion-profile comparison | paired quality by approved ranking-profile version and fusion mode |
+| fusion-contract comparison | paired quality by approved ranking-contract version and fusion mode |
 
 Metric labels must not contain queries, comments, result IDs, Entity names, or
 Relationship text. Exact metric names are owned by [Telemetry](Telemetry).

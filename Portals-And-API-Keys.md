@@ -111,9 +111,9 @@ The control portal manages:
 - key creation, rotation, expiry, and revocation
 - SSO providers and mappings
 - global/team runtime configuration
-- versioned RRF enable/disable, branch, and deterministic-rerank profiles with
+- versioned RRF enable/disable, branch, and deterministic-rerank contracts with
   atomic activation/rollback
-- provider/embedding and search-index profile visibility without exposing
+- provider/embedding and search-index generation visibility without exposing
   secret values
 - placement and embedding backlog/search freshness
 - PostgreSQL, pgvector, query, and backup health

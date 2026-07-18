@@ -208,7 +208,7 @@ remains in
 
 ## Fusion And Ranking
 
-The active database-backed ranking profile selects RRF or explicit
+The active database-backed ranking contract selects RRF or explicit
 branch-priority fusion, then bounded deterministic reranking. The initial
 fusion unit is `(branch, evidence_id)`.
 
@@ -333,8 +333,8 @@ evidence, change tier, or become semantic nodes. The canonical boundary is in
 
 ## Failure, Degradation, And Freshness
 
-Ranking profiles declare which branches are required. An outage cannot silently
-change the profile.
+Ranking contracts declare which branches are required. An outage cannot silently
+change the contract.
 
 | Condition | Required behavior |
 | --- | --- |

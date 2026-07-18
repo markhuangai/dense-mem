@@ -586,7 +586,8 @@ Recall eligibility, branch flow, and degradation belong in
 [Recall Ranking](Recall-Ranking). Cosine distance, RRF, and reranking belong in
 [Vector Search And Ranking](Vector-Search-And-Ranking). Exact/ANN execution and
 index versions belong in [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec).
-Embedding models, index/ranking profile versions, branch scores, and freshness
+Embedding contracts, search-index generation IDs, ranking-contract versions,
+branch scores, and freshness
 diagnostics are internal telemetry. They are intentionally absent from the
 public recall response because a client needs context and stable trace handles,
 not retrieval implementation details.

@@ -37,7 +37,7 @@ Production startup requires:
 
 - PostgreSQL connection and migration/runtime credentials
 - `pgvector` extension availability, one active embedding contract, and one
-  compatible active search-index profile
+  compatible active search-index generation
 - reviewer and verifier provider contracts
 - embedding provider contract
 - control-portal authentication secret or explicit private/disabled policy
@@ -120,8 +120,8 @@ move semantic authority to Redis, a model provider, or a legacy graph store.
 | --- | --- | --- |
 | `AI_API_URL` | none | required OpenAI-compatible base URL |
 | `AI_API_KEY` | none | required provider secret |
-| `AI_API_EMBEDDING_MODEL` | none | required model ID |
-| `AI_API_EMBEDDING_DIMENSIONS` | none | required expected vector dimensions; requested from capable providers and always response-validated |
+| `AI_API_EMBEDDING_MODEL` | `text-embedding-3-large` | required model ID |
+| `AI_API_EMBEDDING_DIMENSIONS` | `3072` | required expected vector dimensions; requested from capable providers and always response-validated |
 | `AI_API_EMBEDDING_TIMEOUT_SECONDS` | `30` | request timeout |
 | `AI_API_EMBEDDING_MAX_CONCURRENCY` | `8` | process-wide concurrency |
 | `SEARCH_DOCUMENT_FORMAT_VERSION` | required | canonical text-builder version |
@@ -129,8 +129,10 @@ move semantic authority to Redis, a model provider, or a legacy graph store.
 
 Provider adapter, model, dimensions, normalization, and document format are one
 persisted embedding contract. Dense-Mem does not infer dimensions from a model
-name. Changing the contract requires a versioned vector rebuild and matched
-evaluation; mixed vectors fail readiness or remain excluded by version checks.
+name. The first database initialization records the configured model/dimensions;
+later mismatches fail startup until a deliberate vector rebuild or reset workflow
+replaces the stored contract. Mixed vectors fail readiness or remain excluded by
+version checks.
 The adapter sends a dimensions request only when the configured provider/model
 supports it, but every response must have exactly the configured length.
 
@@ -141,22 +143,22 @@ rebuild impact is defined in
 
 ## Search Index Construction
 
-These desired startup values resolve to a persisted search-index profile. A
-different value from the active profile does not silently rebuild during normal
-startup; it enters the controlled index-build workflow.
+Startup derives the persisted search-index generation from the active embedding
+contract dimensions and supported pgvector capabilities. A different configured
+model or dimension from the active embedding contract fails startup until a
+controlled rebuild/reset workflow replaces the contract and derived generation.
 
 | Variable | Target default | Meaning |
 | --- | --- | --- |
-| `PGVECTOR_DISTANCE` | `cosine` | distance metric and compatible pgvector operator class |
-| `PGVECTOR_ANN_STRATEGY` | `auto` | `auto`, `exact`, `vector_hnsw`, or `halfvec_hnsw`; incompatible choices fail validation |
 | `PGVECTOR_HNSW_M` | `16` | maximum graph connections per HNSW layer; changing it rebuilds the index |
 | `PGVECTOR_HNSW_EF_CONSTRUCTION` | `64` | HNSW construction candidate breadth; changing it rebuilds the index |
 | `PGVECTOR_INDEX_BUILD_MAX_CONCURRENCY` | `1` | process-wide concurrent physical vector-index builds |
 
-`auto` resolves from the supported pgvector version, dimensions, distance, and
-canonical full-precision requirement. The dimension matrix, 3,072-dimensional
-halfvec expression index, exact rerank, and activation procedure belong only in
-[ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec).
+Cosine distance is fixed for the initial v2 contract. The default
+3,072-dimensional OpenAI embedding contract derives a `halfvec_hnsw` generation.
+The dimension matrix, 3,072-dimensional halfvec expression index, exact rerank,
+and activation procedure belong only in
+[ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec#contract-and-index-decision-guide).
 
 ## Reviewer And Verifier
 
@@ -247,10 +249,10 @@ wake-up latency only.
 
 ## PostgreSQL Search And Recall
 
-These startup settings define the active semantic-v2 recall ranking profile for
+These startup settings define the active semantic-v2 recall ranking contract for
 the process. They are internal telemetry and evaluation metadata; public recall
 responses do not expose them. Future control-portal management must activate the
-same complete profile shape atomically instead of mutating individual fields.
+same complete contract shape atomically instead of mutating individual fields.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -275,10 +277,10 @@ same complete profile shape atomically instead of mutating individual fields.
 | `PGVECTOR_HNSW_SCAN_MEM_MULTIPLIER` | `1` | bounded iterative-scan memory as a multiple of transaction-local `work_mem` |
 
 There is no candidate tier weight because candidates are ineligible for normal
-recall. Disabling RRF selects the complete branch-priority profile; it never
+recall. Disabling RRF selects the complete branch-priority contract; it never
 mixes raw text/vector scores or chooses an implicit order. Relationship, Entity,
 and adjacency branches are discovery branches and do not contribute to initial
-evidence fusion. Ranking-profile changes require paired evaluation, including
+evidence fusion. Ranking-contract changes require paired evaluation, including
 approximate Recall@K against exact filtered search. The algorithm is defined in
 [Vector Search And Ranking](Vector-Search-And-Ranking#runtime-control).
 
@@ -420,7 +422,7 @@ flowchart TD
   Vector -- No --> Fail
   Vector -- Yes --> Runtime["Load and validate app_config"]
   Runtime --> Embed["Verify embedding contract"]
-  Embed --> Index["Verify active search-index profile"]
+  Embed --> Index["Verify active search-index generation"]
   Index --> Models["Verify required model contracts"]
   Models --> Migration{"Compatible migration marker<br/>or 2.1.x bridge available?"}
   Migration -- No --> Fail
@@ -453,12 +455,12 @@ bridge and fails when the marker is absent.
 | --- | --- | --- |
 | Legacy variable silently revives Neo4j | old `NEO4J_URI` makes normal runtime depend on a second store | explicit `2.1.x` bridge-only namespace, close after cutover, and reject/remove in `2.2.0` |
 | Mixed embeddings | new vectors have different dimensions or document meaning | persisted contract, version predicate, readiness gate, and explicit rebuild |
-| Incompatible ANN profile | a 3,072-dimensional contract attempts unsupported full-precision HNSW | capability resolver, persisted search-index profile, and controlled build gate |
+| Incompatible ANN generation | a 3,072-dimensional contract attempts unsupported full-precision HNSW | capability resolver, persisted search-index generation, and controlled build gate |
 | Replica read is stale | recall after correction is routed to a lagging standby | primary-only freshness paths plus explicit lag/version gate |
 | Service scale-out exhausts PostgreSQL | each service instance opens 25 connections independently | deployment-wide pool formula and vector-query semaphore |
 | Partial verifier retry returns | operator enables an old setting that splices missing results | remove legacy setting, expose only full-response regeneration, and contract-test config parsing |
 | Redis fallback breaks replicas | outage switches multi-instance limits to local state | required distributed flag and no silent fallback |
-| ANN tuning harms quality | low HNSW breadth improves latency but loses tenant results | exact-baseline Recall@K gate and versioned atomic ranking/search profile |
+| ANN tuning harms quality | low HNSW breadth improves latency but loses tenant results | exact-baseline Recall@K gate and versioned atomic ranking contract/search generation |
 | Worker overload | placement and embedding workers exceed provider/database capacity | startup range checks, saturation metrics, and load testing |
 | Secret enters runtime policy | portal stores provider key in `app_config` | allowlisted keys and secret-shaped value rejection |
 
@@ -469,7 +471,7 @@ bridge and fails when the marker is absent.
 - keep main/control ports on loopback until HTTPS policy is ready
 - install/verify `pgvector` and run migrations
 - verify one embedding has the configured dimensions and contract version
-- verify the active search-index profile, query plan, and exact-versus-ANN gate
+- verify the active search-index generation, query plan, and exact-versus-ANN gate
 - verify the cluster-safe schema/key contract and two-team composite-FK/RLS
   probes
 - verify reviewer extraction and the closed verifier schema

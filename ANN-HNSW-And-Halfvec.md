@@ -102,9 +102,9 @@ also costs database resources:
 - larger query breadth improves recall but increases CPU, buffers, and latency
 - dead tuples and index growth require vacuum/reindex planning
 
-Dense-Mem therefore does not use HNSW merely because an index exists. The
-active ranking profile selects exact or ANN from the authorized-set shape and
-an evaluated workload boundary.
+Dense-Mem therefore does not use HNSW merely because an index exists. The #85
+ranking contract selects exact or ANN from the authorized-set shape and an
+evaluated workload boundary.
 
 ## Full Precision And `halfvec`
 
@@ -137,7 +137,7 @@ pass the exact-oracle evaluation.
 The configured model and dimension remain deployment choices. Dense-Mem does
 not infer dimensions from a model name or hardcode 3,072 into static schema
 migrations. Startup probes the provider, validates the returned length, and
-persists the resolved embedding contract and compatible search-index profile.
+persists the resolved embedding contract and compatible search-index generation.
 
 | Configured dimensions | Canonical storage | Default candidate strategy | Final vector ordering |
 | ---: | --- | --- | --- |
@@ -146,10 +146,12 @@ persists the resolved embedding contract and compatible search-index profile.
 | `4001..16000` | float32 `vector` | exact only until a separately evaluated index strategy is approved | exact float32 distance |
 | above `16000` | unsupported by the target pgvector `vector` contract | reject before writes | none |
 
-An operator may force exact search for any supported dimension. An operator
-cannot force an incompatible HNSW strategy. Dimensions above 4,000 do not
-silently switch to an unmeasured binary or subvector index; that would be a new
-design and evaluation decision.
+Operators choose the embedding model and dimensions. Dense-Mem derives the
+internal index generation from dimensions and supported pgvector capabilities.
+Exact diagnostic mode is allowed for bounded candidate sets; incompatible HNSW
+strategies are rejected instead of exposed as startup knobs. Dimensions above
+4,000 do not silently switch to an unmeasured binary or subvector index; that
+would be a new design and evaluation decision.
 
 The current pgvector HNSW limits are `vector` up to 2,000 dimensions and
 `halfvec` up to 4,000 dimensions. The underlying types can store more than
@@ -157,16 +159,63 @@ their HNSW limits. Verify limits against the supported extension version during
 release qualification; upstream behavior is documented in the
 [pgvector HNSW reference](https://github.com/pgvector/pgvector#hnsw).
 
+## Contract And Index Decision Guide
+
+The operator-facing search contract is the embedding model plus dimensions.
+Dense-Mem fixes cosine distance and derives the internal index generation from
+the persisted dimensions. Normal memory callers never select a distance, index
+name, operator class, or generation.
+
+Use this table before initializing or replacing the embedding contract.
+
+| Situation | Contract/index result | Why | Re-embed? | Rebuild index? | Extra gate |
+| --- | --- | --- | --- | --- | --- |
+| Small tenant, development, or migration verification | exact search generation | simplest behavior; no ANN recall loss; good oracle for tests | no, if contract unchanged | no | row-count budget must stay below exact threshold |
+| 1536-dimensional embedding contract | `vector_hnsw` generation when pgvector supports the dimension | HNSW keeps latency bounded while exact rerank preserves final candidate order | no, if contract unchanged | yes | Recall@K and load comparison against exact |
+| 3072-dimensional `text-embedding-3-large` contract | `halfvec_hnsw` generation plus exact float32 rerank | full-precision HNSW is outside pgvector's `vector` HNSW limit; `halfvec` is only the ANN expression | yes, when moving from another embedding contract | yes | candidate Recall@K must pass exact oracle |
+| High-quality debugging, audit, or release qualification | exact diagnostic mode | removes ANN approximation from the investigation | no | no | bounded authorized candidate set |
+| Latency/cost pressure after quality is acceptable | tune #85 ranking budgets before changing model | avoids provider calls and vector rewrite | no | maybe, if physical HNSW parameters change | saturation and quality comparison |
+| Provider/model upgrade | new embedding contract plus derived index generation | vector meaning changes; old vectors cannot be compared as if they came from the new model | yes | yes | staged backfill, dual-read evaluation, then activation |
+| Ranking/fusion experiment only | #85 ranking contract change | changes branch fusion or rerank order without changing vector meaning | no | no | deterministic 1k comparison and regression slices |
+
+Decision sequence:
+
+1. Choose the embedding contract first: provider, model, dimensions,
+   normalization, document format, and query format.
+2. Resolve index capability from dimensions and pgvector support. Use `exact`
+   for bounded sets, `vector_hnsw` only when the full-precision dimension is
+   supported, and `halfvec_hnsw` when ANN needs a half-precision expression.
+3. Use cosine distance and the matching cosine operator class. Exact cosine uses
+   `<=>`; a different metric is a new architecture decision, not a runtime
+   setting.
+4. Build or validate the physical index for the derived generation. A normal startup
+   mismatch must not silently rebuild or fall back to an unbounded scan.
+5. Compare the proposed generation against exact, team-filtered results. Use
+   fixed Recall@K, latency, CPU, memory, WAL, and replica-lag gates.
+6. Activate the complete contract/generation atomically, keep the previous
+   generation available for rollback, and include contract/generation IDs in
+   internal telemetry.
+
+Do not create configuration options for unsupported combinations. Examples:
+
+| Requested configuration | Decision |
+| --- | --- |
+| full-precision HNSW for a 3072-dimensional `vector` contract | reject; use exact or `halfvec_hnsw` candidates with exact rerank |
+| dimensions above 4000 with ANN | reject until a separately evaluated strategy exists |
+| `halfvec` as canonical storage | reject; canonical embeddings remain float32 `vector` |
+| query-time caller selects distance, index name, operator class, or generation | reject; only persisted validated contracts select SQL shape |
+| exact fallback for a large unbounded tenant | reject unless the active generation explicitly allows and budgets it |
+
 ## Separate Versioned Contracts
 
 One version number must not imply that every vector-related change requires
-provider calls. Dense-Mem persists and reports three linked contracts:
+provider calls. Dense-Mem persists and reports separate linked records:
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Embed["Embedding contract<br/>what the vector means"] --> Index["Search-index profile<br/>how stored vectors are indexed"]
-  Index --> Rank["Ranking profile<br/>how a recall searches and fuses"]
+  Embed["Embedding contract<br/>what the vector means"] --> Index["Search-index generation<br/>how stored vectors are indexed"]
+  Index --> Rank["Ranking contract (#85)<br/>how a recall searches and fuses"]
 ```
 
 ### Embedding contract
@@ -186,13 +235,13 @@ Changing one of these fields creates a new embedding contract and regenerates
 vectors. Old and building contracts may coexist during a controlled rebuild,
 but one contract is active for normal query/document comparison.
 
-### Search-index profile
+### Search-index generation
 
-The search-index profile owns physical compatibility and construction:
+The search-index generation owns physical compatibility and construction:
 
 ```text
-search_index_profile_id and embedding_contract_id
-distance metric and matching pgvector operator class
+search_index_generation_id and embedding_contract_id
+fixed cosine metric and matching pgvector operator class
 canonical vector type/precision
 candidate strategy: exact | vector_hnsw | halfvec_hnsw
 indexed cast and dimensions
@@ -201,14 +250,13 @@ physical relation/index identifiers and extension version
 state: building | validating | active | retired | failed
 ```
 
-Changing distance/operator class, indexed cast, HNSW strategy, `m`, or
-`ef_construction` requires a new index build and exact-oracle validation. It
-does not require new provider embeddings when the embedding contract is
-unchanged.
+Changing indexed cast, HNSW strategy, `m`, or `ef_construction` requires a new
+index build and exact-oracle validation. It does not require new provider
+embeddings when the embedding contract is unchanged.
 
-### Ranking profile
+### Ranking contract
 
-The existing ranking profile owns query-time behavior:
+Issue #85 owns query-time ranking behavior:
 
 ```text
 exact-versus-ANN eligibility threshold
@@ -218,19 +266,19 @@ iterative-scan mode and bounded scan work/memory
 branch enablement, RRF/priority fusion, and deterministic reranking
 ```
 
-Changing these fields requires matched evaluation and atomic profile
+Changing these fields requires matched evaluation and atomic ranking-contract
 activation. It does not rebuild embeddings or the HNSW graph. Exact names and
 defaults remain in [Configuration](Configuration#postgresql-search-and-recall).
 
 ### Change-impact matrix
 
-| Change | Provider calls | Vector rewrite | Index build | Runtime-profile activation |
+| Change | Provider calls | Vector rewrite | Index build | Runtime activation |
 | --- | --- | --- | --- | --- |
-| model, dimensions, document format, normalization | yes | yes | yes | after validation |
-| distance/operator class | no | no | yes | after validation |
-| HNSW kind, cast, `m`, `ef_construction` | no | no | yes | after validation |
-| `ef_search`, iterative scan, scan/candidate budget | no | no | no | yes |
-| RRF or deterministic rerank weights | no | no | no | yes |
+| model, dimensions, document format, normalization | yes | yes | yes | contract/generation activation |
+| HNSW kind, cast, `m`, `ef_construction` | no | no | yes | generation activation |
+| distance metric | unsupported | unsupported | unsupported | new architecture decision |
+| `ef_search`, iterative scan, scan/candidate budget | no | no | no | #85 ranking-contract activation |
+| RRF or deterministic rerank weights | no | no | no | #85 ranking-contract activation |
 
 ## PostgreSQL Storage And Query Shape
 
@@ -282,10 +330,11 @@ defined in
 The target stores vectors in a dimension-flexible pgvector column with an
 `embedding_contract_id` and dimension constraint. It creates one
 contract-specific partial expression index whose predicate contains the
-validated literal active-contract ID. Repository SQL for that active profile
+validated literal active-contract ID. Repository SQL for that active generation
 contains the same validated literal, allowing PostgreSQL to prove the partial
 predicate and select the index even when other query values are parameters.
-Profile activation invalidates the old contract-specific prepared statements.
+Generation activation invalidates the old contract-specific prepared
+statements.
 
 For a 3,072-dimensional cosine contract, the derived index shape is:
 
@@ -299,7 +348,7 @@ WHERE embedding_contract_id = '<validated-contract-id>'::uuid
   AND search_state = 'current';
 ```
 
-Generated DDL also applies the active profile's validated `m` and
+Generated DDL also applies the active generation's validated `m` and
 `ef_construction`; their canonical target defaults remain only in
 [Configuration](Configuration#search-index-construction).
 
@@ -353,7 +402,7 @@ LIMIT $5;
 ```
 
 This SQL is illustrative. The repository generates only validated casts and
-operator classes from the active persisted profile; untrusted input never
+operator classes from the active persisted generation; untrusted input never
 becomes SQL identifiers or type dimensions. Integration plans must prove that
 the candidate step uses the source-specific HNSW index and the rerank step
 performs a bounded exact sort, including when a full-precision HNSW index also
@@ -377,7 +426,7 @@ paths.
 | team/state/time filtering and RLS | PostgreSQL, with application-fixed actor context | reject unauthorized rows before hydration |
 | candidate exact rerank | PostgreSQL/pgvector | preserve float32 ordering without vector egress |
 | query embedding | embedding-provider adapter | external model computation, bounded outside the transaction |
-| exact/ANN branch orchestration and budgets | application using active profiles | database cannot decide product degradation or branch requirements |
+| exact/ANN branch orchestration and budgets | application using active contracts | database cannot decide product degradation or branch requirements |
 | RRF and deterministic reranking | application | combines heterogeneous branches at evidence-ID granularity |
 | conflict, clarification, trace, and response shape | application/domain | vector proximity cannot decide truth or lifecycle |
 
@@ -403,7 +452,7 @@ queries. The target applies these controls:
    selected evidence IDs after fusion
 7. build or reindex HNSW through durable operator work with progress, disk,
    memory, WAL, and replica-lag gates
-8. compare every approximate profile with exact team-filtered results under
+8. compare every approximate generation with exact team-filtered results under
    concurrent reads and writes
 9. use tenant-size metadata or maintained estimates for exact/ANN routing; do
    not run an unbounded `COUNT(*)` before every recall
@@ -436,13 +485,13 @@ flowchart TB
 ### Single primary
 
 One PostgreSQL primary supports every required operation. The application uses
-one bounded pool, and HNSW/exact selection follows the same profiles used in
+one bounded pool, and HNSW/exact selection follows the same contracts used in
 larger deployments. This is the reference correctness topology and must not
 require Redis when only one Dense-Mem process runs.
 
 ### High-availability primary and standbys
 
-All writes, job claims, migrations, profile activation, and index construction
+All writes, job claims, migrations, contract activation, and index construction
 go to the primary writer endpoint. Physical standbys provide failover and may
 serve explicitly replica-safe recall only after the release proves extension,
 operator, index, cancellation, and freshness behavior.
@@ -516,21 +565,21 @@ the same pgvector behavior:
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Desired["Validated desired profile"] --> Building["Persist building profile"]
+  Desired["Validated desired contract/generation"] --> Building["Persist building generation"]
   Building --> DDL["Build index on primary<br/>or every owning shard"]
   DDL --> Analyze["Analyze and verify plans"]
   Analyze --> Oracle["Exact-versus-ANN<br/>quality and load gate"]
   Oracle --> Ready{"All required nodes pass?"}
-  Ready -- No --> Failed["Keep old active profile<br/>mark build failed"]
-  Ready -- Yes --> Activate["Atomically activate profile"]
-  Activate --> Retire["Retain old profile for<br/>bounded rollback window"]
+  Ready -- No --> Failed["Keep old active generation<br/>mark build failed"]
+  Ready -- Yes --> Activate["Atomically activate generation"]
+  Activate --> Retire["Retain old generation for<br/>bounded rollback window"]
 ```
 
 Use concurrent index construction where the supported PostgreSQL/pgvector
 topology permits it. Concurrent builds reduce write blocking but increase build
 time and have failure/invalid-index cleanup semantics. Partitioned or sharded
 relations may require per-child/per-shard builds followed by metadata
-attachment or profile activation. The release must test the exact topology;
+attachment or generation activation. The release must test the exact topology;
 `CREATE INDEX CONCURRENTLY` is not assumed to be one atomic cluster-wide act.
 
 ## Failure Semantics
@@ -538,13 +587,13 @@ attachment or profile activation. The release must test the exact topology;
 | Failure | Required behavior |
 | --- | --- |
 | configured dimensions do not match provider output | fail contract probe; write no vector |
-| dimensions cannot use requested strategy | reject desired search-index profile |
-| HNSW missing or invalid | use exact only when the active profile explicitly allows and budgets it; otherwise fail the vector branch visibly |
-| building index fails | leave old active profile unchanged and expose build failure |
+| dimensions cannot use derived strategy | reject the contract/generation before writes |
+| HNSW missing or invalid | use exact only when the active generation explicitly allows and budgets it; otherwise fail the vector branch visibly |
+| building index fails | leave old active generation unchanged and expose build failure |
 | ANN returns too few authorized rows | bounded iterative scan/over-fetch; report degradation if branch contract cannot be met |
 | exact rerank fails | fail the vector branch; do not return half-precision ordering as exact |
 | replica lag exceeds bound | route eligible work to primary only when declared and capacity permits; otherwise report unavailable/degraded |
-| one shard lacks active index/profile | do not activate the distributed profile |
+| one shard lacks active index/generation | do not activate the distributed generation |
 | vector query exceeds statement/work budget | cancel that branch according to required/optional policy; do not remove tenant filters |
 
 ## Security And Tenant Boundary
@@ -555,7 +604,7 @@ RLS and explicit team predicates again. A result from another team is a
 security incident even if later ranking would have discarded it.
 
 The service does not interpolate request data into type casts, index names,
-operator classes, or DDL. Only validated persisted profile values may select
+operator classes, or DDL. Only validated persisted generation values may select
 predefined SQL templates.
 
 ## Risks And Mitigations
@@ -563,15 +612,15 @@ predefined SQL templates.
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
 | HNSW mistaken for semantic graph | code treats an index neighbor as a knowledge Relationship | separate repository types; HNSW returns search candidates only |
-| full-precision 3,072 index fails | migration creates `vector_cosine_ops` HNSW above pgvector's `vector` limit | dimension capability resolver and `halfvec(3072)` expression index |
+| full-precision 3,072 index fails | bootstrap creates `vector_cosine_ops` HNSW above pgvector's `vector` limit | dimension capability resolver and `halfvec(3072)` expression index |
 | half precision becomes truth | canonical vector is stored only as float16 and cannot be exactly reranked | retain float32 canonical vector; `halfvec` is a rebuildable index expression |
 | ANN misses relevant tenant rows | global neighbors are selected before selective team/state filters | exact bounded-set path, iterative scan, over-fetch, team-shaped evaluation, optional team partitioning after evidence |
 | exact rerank gives false confidence | a missed ANN candidate cannot re-enter the pool | measure candidate Recall@K against exact results and size the pool from gates |
 | vector queries starve writes | concurrent high-`ef_search` recalls consume the entire connection/CPU budget | vector semaphore, bounded pool/work, statement timeouts, workload saturation tests |
 | process scaling exhausts connections | each replica opens the configured maximum independently | deployment-wide connection-budget formula and readiness/alerting before scale-out |
 | index build overloads primary | HNSW construction exhausts memory, disk, or WAL and delays replicas | durable build job, capacity preflight, progress/lag gates, rollback to old profile |
-| partial index is never selected | generic prepared plan cannot prove a parameter implies its contract predicate | compile the validated contract literal into profile-specific SQL, invalidate it on activation, and assert query plans |
-| standby returns stale recall | replica has not replayed a recent correction or profile activation | primary for freshness-constrained reads; lag/version gate and diagnostic consistency mode |
+| partial index is never selected | generic prepared plan cannot prove a parameter implies its contract predicate | compile the validated contract literal into generation-specific SQL, invalidate it on activation, and assert query plans |
+| standby returns stale recall | replica has not replayed a recent correction or generation activation | primary for freshness-constrained reads; lag/version gate and diagnostic consistency mode |
 | shard scatter multiplies database work | recall fans out to every shard and merges global ANN results | distribute/colocate by authenticated `team_id`; one team-local shard per hot path |
 | one tenant becomes a hot shard | a very large team exceeds one worker's vector capacity | skew telemetry, placement/rebalance/dedicated shard, separate design before intra-team sharding |
 
@@ -583,12 +632,12 @@ predefined SQL templates.
 3. Canonical embeddings remain float32 for every supported dimension.
 4. The configured provider output length exactly matches the persisted
    embedding contract before vectors become current.
-5. Embedding, search-index, and ranking profiles have separate versions and
-   rebuild lifecycles.
+5. Embedding contracts, search-index generations, and #85 ranking contracts have
+   separate versions and rebuild lifecycles.
 6. A 3,072-dimensional contract uses exact search or halfvec HNSW candidates
    followed by exact float32 reranking; it never creates full-precision HNSW
    that pgvector cannot support.
-7. Every ANN profile passes Recall@K and load gates against the same exact,
+7. Every ANN generation passes Recall@K and load gates against the same exact,
    team-filtered oracle.
 8. Exact/ANN routing, candidate count, scan work, statement time, concurrency,
    and total database connections are bounded.
@@ -598,6 +647,6 @@ predefined SQL templates.
    replicas never weaken freshness silently.
 11. A supported distributed deployment colocates team-owned data and executes
     latency-sensitive vector search on one team-owning shard.
-12. Index/profile activation is atomic from the application's perspective and
+12. Index/generation activation is atomic from the application's perspective and
     cannot expose a partially built cluster.
 13. No request value can select arbitrary SQL casts, operator classes, or DDL.

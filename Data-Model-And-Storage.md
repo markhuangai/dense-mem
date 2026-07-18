@@ -123,7 +123,7 @@ flowchart LR
 | `search_documents` | rebuildable compact text and vector-ready metadata for authorized retrieval |
 | `embedding_jobs` | durable, leased work to bring a search document to the current embedding contract |
 | `embedding_contracts` | versioned provider/model/dimension/document/normalization meaning for query and document vectors |
-| `search_index_profiles` | versioned pgvector distance, physical index compatibility, build state, and active pointer |
+| `search_index_generations` | versioned pgvector physical index compatibility, build state, and active pointer |
 | `placement_runs` / `placement_items` | observable processing workflow, retry, and failure state |
 
 The exact Relationship identity, fields, and lifecycle belong only in
@@ -242,12 +242,12 @@ format form one versioned embedding contract. Vector rows reference that
 contract and carry a database-enforced matching dimension. A different active
 contract is never compared with those rows.
 
-A separate search-index profile references the embedding contract and owns the
-distance/operator class, indexed cast, HNSW construction parameters, physical
-index state, and active pointer. A ranking profile owns query-time exact/ANN
-thresholds and scan budgets. This separation allows reindexing without provider
-calls and query tuning without reindexing. Field ownership and change impact
-belong in
+A separate search-index generation references the embedding contract and owns
+the cosine operator class, indexed cast, HNSW construction parameters, physical
+index state, and active pointer. Issue #85 owns query-time ranking contracts for
+exact/ANN thresholds and scan budgets. This separation allows reindexing without
+provider calls and query tuning without reindexing. Field ownership and change
+impact belong in
 [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec#separate-versioned-contracts).
 
 Each source aggregate exposes:
@@ -470,7 +470,7 @@ Recovery order:
 
 1. restore PostgreSQL, WAL, and encryption material
 2. validate migrations, extensions, RLS, embedding contracts, and active
-   search-index profiles
+   search-index generations
 3. verify append-only and semantic uniqueness constraints
 4. resume or rebuild search documents and vectors when required
 5. compare approximate Recall@K with exact filtered search
@@ -542,7 +542,7 @@ Migration execution, checkpoints, and rollback belong in
 10. Embedding mismatch or failure is explicit and cannot corrupt semantic
     state.
 11. Losing all derived search documents does not lose knowledge.
-12. Embedding contracts and search-index profiles have separate versions and
+12. Embedding contracts and search-index generations have separate versions and
     rebuild lifecycles.
 13. Normal target runtime remains functional without Neo4j; `2.2.0+` contains
     no connection path.

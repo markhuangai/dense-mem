@@ -53,8 +53,8 @@ document vector d = [d1, d2, ... dn]
 Provider adapter, model, dimensions, text normalization, document format, and
 vector normalization form one persisted embedding contract. Query and document
 vectors must use the same contract version. Mixed versions are excluded, not
-compared approximately. The active search-index profile references that
-contract and selects its compatible distance metric and pgvector operator.
+compared approximately. The active search-index generation references that
+contract and carries its compatible cosine pgvector operator class.
 
 The vector represents model-defined semantic position. Individual dimensions
 do not have stable human-readable meanings and must not be exposed as an
@@ -118,7 +118,7 @@ creates another contract and requires a vector rebuild.
 
 ## Vector Candidate Boundary
 
-The initial target search-index profile uses cosine distance. Lower distance is
+The initial target search contract uses cosine distance. Lower distance is
 nearer, and diagnostic cosine similarity is `1 - distance`. PostgreSQL returns
 an ordered, authorized list of candidate IDs and exact diagnostic distances;
 it does not decide tier, truth, conflict, or final recall order.
@@ -165,7 +165,7 @@ rrf_score(candidate) =
 Only one `(branch, evidence_id)` entry contributes per branch. `rrf_k` controls
 how strongly the first few positions dominate; branch weights control the
 relative importance of retrieval paths. Both belong to one versioned ranking
-profile.
+contract.
 
 ### Worked RRF example
 
@@ -190,16 +190,16 @@ candidate before deterministic reranking.
 
 ### RRF disabled
 
-The control portal may disable RRF through a versioned runtime profile. The
-system then uses the profile's explicit deterministic branch order, for example
+The control portal may disable RRF through a versioned runtime ranking contract.
+The system then uses the contract's explicit deterministic branch order, for example
 exact anchor, full text, then vector, with stable first-seen
 deduplication. The resulting global position is `priority_rank`, starting at
 one, and its numeric base is `priority_score = 1 / (1 + priority_rank)`. This
 score reflects only the configured ordinal list; it never averages
 incomparable raw scores or chooses an implicit fallback.
 
-A profile that disables RRF without a valid branch order is rejected. Fusion
-mode and ranking-profile version remain internal telemetry, not public recall
+A contract that disables RRF without a valid branch order is rejected. Fusion
+mode and ranking-contract version remain internal telemetry, not public recall
 fields.
 
 ## Deterministic Post-Fusion Reranking
@@ -283,12 +283,12 @@ source group.
 
 ## Runtime Control
 
-The running service uses one complete ranking profile captured at request
-start. Today that profile is loaded from startup configuration. Control-portal
-management uses the same complete profile shape when enabled; it must not edit
+The running service uses one complete ranking contract captured at request
+start. Today that contract is loaded from startup configuration. Control-portal
+management uses the same complete contract shape when enabled; it must not edit
 individual live variables.
 
-The profile contains:
+The contract contains:
 
 ```text
 fusion mode: rrf | branch_priority
@@ -297,34 +297,34 @@ branch enablement, priority, and over-fetch
 exact-filtered versus HNSW thresholds and scan budgets
 deterministic rerank enabled state and bounded factor weights
 cross-profile preference and clarification margins
-profile source/version, creator, reason, and activation time when portal-managed
+contract source/version, creator, reason, and activation time when portal-managed
 ```
 
-Startup validation rejects invalid or incomplete profiles before serving
+Startup validation rejects invalid or incomplete contracts before serving
 traffic. Portal activation, when enabled, is atomic; in-flight recalls retain
-the profile captured at request start and rollback activates a prior complete
+the contract captured at request start and rollback activates a prior complete
 version. Provider credentials, model dimensions, and hard memory/byte/time caps
 remain startup configuration and cannot be weakened by the portal. Query-time
-ANN controls belong to this ranking profile; physical index construction belongs
-to the linked search-index profile in
+ANN controls belong to this ranking contract; physical index construction belongs
+to the linked search-index generation in
 [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec#separate-versioned-contracts).
 
 ## Degradation
 
-The active ranking profile declares required and optional branches:
+The active ranking contract declares required and optional branches:
 
 | Condition | Result |
 | --- | --- |
 | required branch fails | fail recall with the branch error |
 | optional branch fails | omit it and report degradation |
 | RRF enabled but fewer branches succeed | fuse successful allowed branches and report the missing branches |
-| RRF disabled | use the explicit branch-priority profile |
+| RRF disabled | use the explicit branch-priority contract |
 | deterministic reranker fails invariant validation | fail; do not return unreranked results silently |
 | optional future model reranker fails | use the declared deterministic fallback and report degradation, or fail when configured required |
 
 ## Evaluation
 
-Every ranking-profile change is evaluated against fixed and representative
+Every ranking-contract change is evaluated against fixed and representative
 corpora before activation. Required measurements include:
 
 - Recall@K against exact filtered vector and labeled retrieval truth
@@ -342,9 +342,9 @@ The evaluation procedure and release gates belong in [Evaluation](Evaluation).
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
 | Distance direction reversed | highest cosine distance is treated as best | cosine-specific query tests and ascending `<=>` order |
-| Index/operator mismatch | cosine HNSW index exists but query uses L2 | linked embedding/search-index versions plus plan/readiness validation |
+| Index/operator mismatch | cosine HNSW index exists but query uses L2 | fixed cosine contract plus plan/readiness validation |
 | Raw scores mixed | text rank `0.4` is averaged with cosine similarity `0.8` | fuse rank positions with RRF or named branch priority |
-| RRF toggle changes behavior silently | portal disables RRF and replicas choose different fallbacks | atomic versioned profile, explicit branch order, and internal profile telemetry |
+| RRF toggle changes behavior silently | portal disables RRF and replicas choose different fallbacks | atomic versioned ranking contract, explicit branch order, and internal telemetry |
 | Majority overrides evidence | copied weak memory from several profiles outranks one primary source | source-group dedupe, bounded corroboration, and evidence-aware conflict rerank |
 | Challenge censors another author | unsupported “wrong” link removes A from recall | target remains immutable; retain conflict refs and require verified challenge evidence |
 | ANN filter loses team results | HNSW selects global neighbors before tenant filtering | exact path for bounded sets, iterative scans, over-fetch, and exact Recall@K gate |
@@ -353,11 +353,11 @@ The evaluation procedure and release gates belong in [Evaluation](Evaluation).
 ## Acceptance Invariants
 
 1. cosine distance is calculated and ordered consistently with the active
-   search-index profile
+   search-index generation
 2. exact filtered search is the vector quality oracle
 3. raw scores from different branches are never averaged directly
 4. RRF uses stable one-based ranks, versioned weights, and deterministic ties
-5. disabling RRF activates one explicit branch-priority profile
+5. disabling RRF activates one explicit branch-priority contract
 6. control-portal ranking changes are atomic, audited, and versioned
 7. reranking cannot restore an unauthorized, inactive, temporally invalid, or
    candidate source row
@@ -366,5 +366,5 @@ The evaluation procedure and release gates belong in [Evaluation](Evaluation).
 10. insufficient conflict margin produces clarification rather than invented
     certainty
 11. optional model reranking cannot change knowledge lifecycle or provenance
-12. public results omit ranking-profile and embedding-contract versions; those
+12. public results omit ranking-contract and embedding-contract versions; those
     values remain internal telemetry and evaluation metadata

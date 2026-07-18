@@ -349,7 +349,7 @@ weaken the promised global limit.
 | `GET /ready` | readiness; returns non-success when required dependencies/policies fail |
 
 Readiness includes PostgreSQL migrations/RLS, `pgvector`, the persisted
-embedding contract, active search-index profile/topology parity, required
+embedding contract, active search-index generation/topology parity, required
 provider contracts, placement/embedding backlog policy, and Redis when
 distributed coordination is required. Optional feature outages appear as
 degradation unless deployment policy makes them required.
