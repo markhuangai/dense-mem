@@ -15,7 +15,12 @@ traffic to these tables.
 - Existing tables are not rewritten.
 - `2026071702_team_profiles_team_id_id_unique_index.sql` creates the
   `team_profiles(team_id, id)` helper index concurrently and outside a
-  transaction so profile writes are not blocked by the index build.
+  transaction so profile writes are not blocked by the index build. If the
+  concurrent build fails, PostgreSQL can leave an invalid
+  `idx_team_profiles_team_id_id_unique` index behind; drop or reindex that
+  invalid index before rerunning the migration. The migration omits
+  `IF NOT EXISTS` so retry fails visibly instead of accepting an invalid helper
+  index.
 - New tables, indexes, policies, and triggers are additive.
 - Backfill inserts only non-secret projection IDs from existing `teams` and
   `team_profiles`; it does not modify those authority rows.

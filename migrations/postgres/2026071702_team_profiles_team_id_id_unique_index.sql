@@ -1,7 +1,7 @@
 -- +goose NO TRANSACTION
 -- +goose Up
 
-CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_team_profiles_team_id_id_unique
+CREATE UNIQUE INDEX CONCURRENTLY idx_team_profiles_team_id_id_unique
     ON team_profiles(team_id, id);
 
 -- +goose Down
