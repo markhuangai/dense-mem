@@ -50,6 +50,7 @@ const (
 type V2RelationshipTier string
 
 const (
+	V2RelationshipTierCandidate       V2RelationshipTier = "candidate"
 	V2RelationshipTierFact            V2RelationshipTier = "fact"
 	V2RelationshipTierValidatedClaim  V2RelationshipTier = "validated_claim"
 	V2RelationshipTierPendingEvidence V2RelationshipTier = "pending_evidence"
@@ -68,6 +69,7 @@ const (
 	V2RelationshipStatusRetracted       V2RelationshipStatus = "retracted"
 	V2RelationshipStatusSuperseded      V2RelationshipStatus = "superseded"
 	V2RelationshipStatusQuarantined     V2RelationshipStatus = "quarantined"
+	V2RelationshipStatusDisputed        V2RelationshipStatus = "disputed"
 )
 
 type V2RelationshipKind string
@@ -90,6 +92,49 @@ const (
 	V2PredicateLifecycleActive     V2PredicateLifecycleState = "active"
 	V2PredicateLifecycleDeprecated V2PredicateLifecycleState = "deprecated"
 	V2PredicateLifecycleRetired    V2PredicateLifecycleState = "retired"
+)
+
+type V2VerificationVerdict string
+
+const (
+	V2VerificationEntailed     V2VerificationVerdict = "entailed"
+	V2VerificationContradicted V2VerificationVerdict = "contradicted"
+	V2VerificationInsufficient V2VerificationVerdict = "insufficient"
+)
+
+type V2EntityResolutionAction string
+
+const (
+	V2EntityResolutionReuse     V2EntityResolutionAction = "reuse"
+	V2EntityResolutionCreate    V2EntityResolutionAction = "create"
+	V2EntityResolutionAmbiguous V2EntityResolutionAction = "ambiguous"
+)
+
+type V2SupportDecision string
+
+const (
+	V2SupportGrant     V2SupportDecision = "grant"
+	V2SupportRevoke    V2SupportDecision = "revoke"
+	V2SupportReinstate V2SupportDecision = "reinstate"
+)
+
+type V2CrossReferenceKind string
+
+const (
+	V2CrossReferenceConfirms           V2CrossReferenceKind = "confirms"
+	V2CrossReferenceChallenges         V2CrossReferenceKind = "challenges"
+	V2CrossReferenceCorrects           V2CrossReferenceKind = "corrects"
+	V2CrossReferenceAdoptsEvidenceFrom V2CrossReferenceKind = "adopts_evidence_from"
+)
+
+type V2HypothesisStatus string
+
+const (
+	V2HypothesisProposed   V2HypothesisStatus = "proposed"
+	V2HypothesisReinforced V2HypothesisStatus = "reinforced"
+	V2HypothesisStale      V2HypothesisStatus = "stale"
+	V2HypothesisRejected   V2HypothesisStatus = "rejected"
+	V2HypothesisSubmitted  V2HypothesisStatus = "submitted"
 )
 
 type V2PlacementRunStatus string
@@ -186,6 +231,31 @@ func V2RelationshipKinds() []string {
 	}
 }
 
+func V2RelationshipTiers() []string {
+	return []string{
+		string(V2RelationshipTierCandidate),
+		string(V2RelationshipTierFact),
+		string(V2RelationshipTierValidatedClaim),
+		string(V2RelationshipTierPendingEvidence),
+		string(V2RelationshipTierNeedsReview),
+		string(V2RelationshipTierPredicateReview),
+		string(V2RelationshipTierIdentityReview),
+	}
+}
+
+func V2RelationshipStatuses() []string {
+	return []string{
+		string(V2RelationshipStatusPendingEvidence),
+		string(V2RelationshipStatusActive),
+		string(V2RelationshipStatusNeedsReview),
+		string(V2RelationshipStatusRejected),
+		string(V2RelationshipStatusRetracted),
+		string(V2RelationshipStatusSuperseded),
+		string(V2RelationshipStatusQuarantined),
+		string(V2RelationshipStatusDisputed),
+	}
+}
+
 func V2CurrentCardinalities() []string {
 	return []string{
 		string(V2CurrentCardinalityOne),
@@ -198,6 +268,49 @@ func V2PredicateLifecycleStates() []string {
 		string(V2PredicateLifecycleActive),
 		string(V2PredicateLifecycleDeprecated),
 		string(V2PredicateLifecycleRetired),
+	}
+}
+
+func V2VerificationVerdicts() []string {
+	return []string{
+		string(V2VerificationEntailed),
+		string(V2VerificationContradicted),
+		string(V2VerificationInsufficient),
+	}
+}
+
+func V2EntityResolutionActions() []string {
+	return []string{
+		string(V2EntityResolutionReuse),
+		string(V2EntityResolutionCreate),
+		string(V2EntityResolutionAmbiguous),
+	}
+}
+
+func V2SupportDecisions() []string {
+	return []string{
+		string(V2SupportGrant),
+		string(V2SupportRevoke),
+		string(V2SupportReinstate),
+	}
+}
+
+func V2CrossReferenceKinds() []string {
+	return []string{
+		string(V2CrossReferenceConfirms),
+		string(V2CrossReferenceChallenges),
+		string(V2CrossReferenceCorrects),
+		string(V2CrossReferenceAdoptsEvidenceFrom),
+	}
+}
+
+func V2HypothesisStatuses() []string {
+	return []string{
+		string(V2HypothesisProposed),
+		string(V2HypothesisReinforced),
+		string(V2HypothesisStale),
+		string(V2HypothesisRejected),
+		string(V2HypothesisSubmitted),
 	}
 }
 
@@ -267,28 +380,5 @@ func V2SearchProjectionStates() []string {
 		string(V2SearchProjectionPending),
 		string(V2SearchProjectionCurrent),
 		string(V2SearchProjectionFailed),
-	}
-}
-
-func V2RelationshipTiers() []string {
-	return []string{
-		string(V2RelationshipTierFact),
-		string(V2RelationshipTierValidatedClaim),
-		string(V2RelationshipTierPendingEvidence),
-		string(V2RelationshipTierNeedsReview),
-		string(V2RelationshipTierPredicateReview),
-		string(V2RelationshipTierIdentityReview),
-	}
-}
-
-func V2RelationshipStatuses() []string {
-	return []string{
-		string(V2RelationshipStatusActive),
-		string(V2RelationshipStatusPendingEvidence),
-		string(V2RelationshipStatusNeedsReview),
-		string(V2RelationshipStatusRejected),
-		string(V2RelationshipStatusRetracted),
-		string(V2RelationshipStatusSuperseded),
-		string(V2RelationshipStatusQuarantined),
 	}
 }

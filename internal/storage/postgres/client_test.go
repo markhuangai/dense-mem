@@ -4,11 +4,15 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -148,6 +152,8 @@ func TestMigratorRunUp(t *testing.T) {
 	err = m.RunUp(ctx)
 	// Should succeed since we have a valid migrations directory
 	assert.NoError(t, err, "RunUp should succeed")
+	err = m.RunUp(ctx)
+	assert.NoError(t, err, "repeat RunUp should be idempotent")
 }
 
 // TestMigratorRunDown verifies rollback succeeds.
@@ -178,6 +184,73 @@ func TestMigratorRunDown(t *testing.T) {
 	// Then run down
 	err = m.RunDown(ctx)
 	assert.NoError(t, err, "RunDown should succeed")
+}
+
+func TestV2SemanticLedgerMigrationUpgradesPopulated1703(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026071703)
+	teamID, profileID := insertV2MigrationTeamProfile(t, ctx, sqlDB)
+	insertV2MigrationAuthorityFixture(t, ctx, sqlDB, teamID, profileID, "primary")
+
+	m := NewMigratorWithDB(sqlDB)
+	require.NoError(t, m.RunUp(ctx))
+
+	_, err := sqlDB.ExecContext(ctx, `
+		INSERT INTO evidence_sources (team_id, owner_profile_id, source_key, source_kind, authority)
+		VALUES ($1::uuid, $2::uuid, 'doc://post-1704-inferred', 'document', 'inferred')
+	`, teamID, profileID)
+	require.NoError(t, err)
+}
+
+func TestV2SemanticLedgerMigrationRejectsLegacyDerivedAuthority(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026071703)
+	teamID, profileID := insertV2MigrationTeamProfile(t, ctx, sqlDB)
+	insertV2MigrationAuthorityFixture(t, ctx, sqlDB, teamID, profileID, "derived")
+
+	m := NewMigratorWithDB(sqlDB)
+	err := m.RunUp(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "canonical evidence authority required")
+	assert.Contains(t, err.Error(), "derived=1")
+}
+
+func TestV2SemanticLedgerMigrationGuardedRollbackRejectsCanonicalAuthority(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	m := NewMigratorWithDB(sqlDB)
+	require.NoError(t, m.RunUp(ctx))
+	teamID, profileID := insertV2MigrationTeamProfile(t, ctx, sqlDB)
+	_, err := sqlDB.ExecContext(ctx, `
+		INSERT INTO semantic_team_refs (team_id)
+		VALUES ($1::uuid)
+		ON CONFLICT (team_id) DO NOTHING
+	`, teamID)
+	require.NoError(t, err)
+	_, err = sqlDB.ExecContext(ctx, `
+		INSERT INTO semantic_profile_refs (team_id, profile_id)
+		VALUES ($1::uuid, $2::uuid)
+		ON CONFLICT (team_id, profile_id) DO NOTHING
+	`, teamID, profileID)
+	require.NoError(t, err)
+	_, err = sqlDB.ExecContext(ctx, `
+		INSERT INTO evidence_sources (team_id, owner_profile_id, source_key, source_kind, authority)
+		VALUES ($1::uuid, $2::uuid, 'doc://rollback-inferred', 'document', 'inferred')
+	`, teamID, profileID)
+	require.NoError(t, err)
+
+	err = m.RunDown(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot roll back 2026071704")
+	assert.Contains(t, err.Error(), "inferred=1")
 }
 
 // TestMigratorStatus verifies status command works.
@@ -252,4 +325,93 @@ func TestDBPingTimeout(t *testing.T) {
 	assert.Nil(t, db, "Open should return nil db on error")
 	// Should fail quickly (within 10 seconds due to connect_timeout)
 	assert.Less(t, elapsed, 10*time.Second, "should fail quickly with connect timeout")
+}
+
+func openMigrationSQLDB(t *testing.T, ctx context.Context) (*sql.DB, func()) {
+	t.Helper()
+	dsn, cleanup := skipIfNoPostgres(t, ctx)
+	cfg := &testConfig{dsn: dsn}
+	db, err := Open(ctx, cfg)
+	require.NoError(t, err, "Open should succeed")
+	sqlDB, err := db.DB()
+	require.NoError(t, err, "underlying sql.DB should be available")
+	return sqlDB, func() {
+		_ = sqlDB.Close()
+		cleanup()
+	}
+}
+
+func runGooseUpTo(t *testing.T, ctx context.Context, db *sql.DB, version int64) {
+	t.Helper()
+	require.NoError(t, goose.SetDialect("postgres"))
+	require.NoError(t, goose.UpToContext(ctx, db, getMigrationsDir(), version))
+}
+
+func insertV2MigrationTeamProfile(t *testing.T, ctx context.Context, db *sql.DB) (string, string) {
+	t.Helper()
+	teamID := uuid.NewString()
+	profileID := uuid.NewString()
+	keyPrefix := strings.ReplaceAll(uuid.NewString(), "-", "")[:24]
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO teams (id, name, description, metadata, config)
+		VALUES ($1::uuid, $2, '', '{}'::jsonb, '{}'::jsonb)
+	`, teamID, "migration-team-"+teamID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO team_profiles (
+			id, team_id, key_hash, key_prefix, key_suffix, name, scopes, role
+		) VALUES (
+			$1::uuid, $2::uuid, $3, $4, $5, $6, ARRAY['read','write']::text[], 'member'
+		)
+	`, profileID, teamID, "hash-"+profileID, keyPrefix, keyPrefix[:6], "migration-profile-"+profileID)
+	require.NoError(t, err)
+	return teamID, profileID
+}
+
+func insertV2MigrationAuthorityFixture(t *testing.T, ctx context.Context, db *sql.DB, teamID, profileID, authority string) {
+	t.Helper()
+	sourceID := uuid.NewString()
+	sourceRevisionID := uuid.NewString()
+	ingestID := uuid.NewString()
+	fragmentID := uuid.NewString()
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO semantic_team_refs (team_id)
+		VALUES ($1::uuid)
+		ON CONFLICT (team_id) DO NOTHING
+	`, teamID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO semantic_profile_refs (team_id, profile_id)
+		VALUES ($1::uuid, $2::uuid)
+		ON CONFLICT (team_id, profile_id) DO NOTHING
+	`, teamID, profileID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO knowledge_ingests (team_id, ingest_id, owner_profile_id, status)
+		VALUES ($1::uuid, $2::uuid, $3::uuid, 'queued')
+	`, teamID, ingestID, profileID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO evidence_sources (team_id, source_id, owner_profile_id, source_key, source_kind, authority)
+		VALUES ($1::uuid, $2::uuid, $3::uuid, $4, 'document', $5)
+	`, teamID, sourceID, profileID, "doc://migration-"+authority+"-"+sourceID, authority)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO evidence_source_revisions (
+			team_id, source_revision_id, source_id, owner_profile_id, revision_token, content_hash
+		) VALUES (
+			$1::uuid, $2::uuid, $3::uuid, $4::uuid, 'rev-1', $5
+		)
+	`, teamID, sourceRevisionID, sourceID, profileID, "sha256:"+sourceRevisionID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO evidence_fragments (
+			team_id, fragment_id, ingest_id, owner_profile_id, source_id, source_revision_id,
+			evidence_index, content, content_hash, source_type, authority
+		) VALUES (
+			$1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6::uuid,
+			0, 'migration authority fixture', $7, 'document', $8
+		)
+	`, teamID, fragmentID, ingestID, profileID, sourceID, sourceRevisionID, "sha256:"+fragmentID, authority)
+	require.NoError(t, err)
 }

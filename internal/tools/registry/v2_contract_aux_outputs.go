@@ -1,5 +1,7 @@
 package registry
 
+import "github.com/markhuangai/dense-mem/internal/domain"
+
 func v2RecallFeedbackOutputSchema() map[string]any {
 	return v2ClosedObject(
 		[]string{"recorded", "recorded_count"},
@@ -32,7 +34,7 @@ func v2ResolveDreamFeedbackOutputSchema() map[string]any {
 		[]string{"hypothesis_id", "status"},
 		map[string]any{
 			"hypothesis_id": schemaString("Hypothesis ID.", 128),
-			"status":        schemaEnum(v2HypothesisStatuses()),
+			"status":        schemaEnum(domain.V2HypothesisStatuses()),
 			"ingest_id":     schemaString("Placement run ID for submitted evidence.", 128),
 		},
 	)
