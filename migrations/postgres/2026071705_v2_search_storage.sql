@@ -41,6 +41,39 @@ CREATE TRIGGER embedding_contracts_reference_guard
     BEFORE INSERT OR UPDATE OR DELETE ON embedding_contracts
     FOR EACH ROW EXECUTE FUNCTION prevent_v2_reference_definition_mutation();
 
+CREATE OR REPLACE FUNCTION guard_v2_search_index_generation_lifecycle()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF COALESCE(current_setting('app.tx_mode', true), '') NOT IN ('system', 'migration') THEN
+        RAISE EXCEPTION '% is reference data: % requires system or migration mode', TG_TABLE_NAME, TG_OP;
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION '% is versioned reference data: % operations are not allowed', TG_TABLE_NAME, TG_OP;
+    END IF;
+    IF TG_OP = 'UPDATE' AND (
+        OLD.search_index_generation_id IS DISTINCT FROM NEW.search_index_generation_id
+        OR OLD.generation IS DISTINCT FROM NEW.generation
+        OR OLD.embedding_contract_id IS DISTINCT FROM NEW.embedding_contract_id
+        OR OLD.embedding_dimensions IS DISTINCT FROM NEW.embedding_dimensions
+        OR OLD.ann_strategy IS DISTINCT FROM NEW.ann_strategy
+        OR OLD.operator_class IS DISTINCT FROM NEW.operator_class
+        OR OLD.indexed_expression IS DISTINCT FROM NEW.indexed_expression
+        OR OLD.physical_index_name IS DISTINCT FROM NEW.physical_index_name
+        OR OLD.hnsw_m IS DISTINCT FROM NEW.hnsw_m
+        OR OLD.hnsw_ef_construction IS DISTINCT FROM NEW.hnsw_ef_construction
+        OR OLD.query_ef_search IS DISTINCT FROM NEW.query_ef_search
+        OR OLD.exact_max_rows IS DISTINCT FROM NEW.exact_max_rows
+        OR OLD.candidate_limit IS DISTINCT FROM NEW.candidate_limit
+        OR OLD.allow_exact_fallback IS DISTINCT FROM NEW.allow_exact_fallback
+        OR OLD.metadata IS DISTINCT FROM NEW.metadata
+        OR OLD.created_at IS DISTINCT FROM NEW.created_at
+    ) THEN
+        RAISE EXCEPTION '% immutable fields cannot be changed after insertion', TG_TABLE_NAME;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 CREATE TABLE IF NOT EXISTS search_index_generations (
     search_index_generation_id UUID NOT NULL DEFAULT gen_random_uuid(),
     generation INTEGER NOT NULL,
@@ -98,9 +131,10 @@ CREATE TABLE IF NOT EXISTS search_index_generations (
 );
 
 DROP TRIGGER IF EXISTS search_index_generations_reference_guard ON search_index_generations;
-CREATE TRIGGER search_index_generations_reference_guard
+DROP TRIGGER IF EXISTS search_index_generations_lifecycle_guard ON search_index_generations;
+CREATE TRIGGER search_index_generations_lifecycle_guard
     BEFORE INSERT OR UPDATE OR DELETE ON search_index_generations
-    FOR EACH ROW EXECUTE FUNCTION prevent_v2_reference_definition_mutation();
+    FOR EACH ROW EXECUTE FUNCTION guard_v2_search_index_generation_lifecycle();
 
 CREATE TABLE IF NOT EXISTS search_documents (
     team_id UUID NOT NULL,
@@ -300,5 +334,6 @@ DROP TABLE IF EXISTS embedding_jobs;
 DROP TABLE IF EXISTS search_documents;
 DROP TABLE IF EXISTS search_index_generations;
 DROP TABLE IF EXISTS embedding_contracts;
+DROP FUNCTION IF EXISTS guard_v2_search_index_generation_lifecycle();
 
 -- +goose StatementEnd

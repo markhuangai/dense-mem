@@ -209,6 +209,7 @@ func (r *V2SearchRepositoryImpl) UpsertSearchDocument(
 				    END,
 				    metadata = EXCLUDED.metadata,
 				    updated_at = now()
+				WHERE EXCLUDED.source_version >= search_documents.source_version
 				RETURNING team_id::text, search_document_id::text, owner_profile_id::text,
 				          source_kind, source_id::text, source_version, document_version,
 				          embedding_contract_id::text, embedding_dimensions, search_state
@@ -221,8 +222,12 @@ func (r *V2SearchRepositoryImpl) UpsertSearchDocument(
 			return err
 		}
 		if !rows.Next() {
+			err := rows.Err()
 			_ = rows.Close()
-			return rows.Err()
+			if err != nil {
+				return err
+			}
+			return ErrV2SearchStaleVersion
 		}
 		loaded := V2SearchDocumentResult{}
 		if err := rows.Scan(
@@ -360,6 +365,7 @@ func (r *V2SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input
 	if err != nil {
 		return err
 	}
+	var staleCompletion bool
 	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var dims int
 		if err := tx.WithContext(ctx).Raw(`
@@ -369,6 +375,8 @@ func (r *V2SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input
 			  AND embedding_job_id = ?::uuid
 			  AND worker_id = ?
 			  AND status = 'processing'
+			  AND lease_until IS NOT NULL
+			  AND lease_until > now()
 		`, input.TeamID, input.EmbeddingJobID, input.WorkerID).Scan(&dims).Error; err != nil {
 			return err
 		}
@@ -390,6 +398,8 @@ func (r *V2SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input
 			  AND job.embedding_job_id = ?::uuid
 			  AND job.worker_id = ?
 			  AND job.status = 'processing'
+			  AND job.lease_until IS NOT NULL
+			  AND job.lease_until > now()
 			  AND document.team_id = job.team_id
 			  AND document.search_document_id = job.search_document_id
 			  AND document.source_version = job.source_version
@@ -404,7 +414,8 @@ func (r *V2SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input
 			if err := markV2EmbeddingJobTerminal(ctx, tx, input, string(domain.V2EmbeddingJobStale), "source or document version changed before embedding completion"); err != nil {
 				return err
 			}
-			return ErrV2SearchStaleVersion
+			staleCompletion = true
+			return nil
 		}
 		if err := markV2EmbeddingJobTerminal(ctx, tx, input, string(domain.V2EmbeddingJobCompleted), ""); err != nil {
 			return err
@@ -413,6 +424,9 @@ func (r *V2SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input
 	})
 	if err != nil {
 		return fmt.Errorf("v2 search: complete embedding job: %w", err)
+	}
+	if staleCompletion {
+		return fmt.Errorf("v2 search: complete embedding job: %w", ErrV2SearchStaleVersion)
 	}
 	return nil
 }
@@ -477,6 +491,9 @@ func (r *V2SearchRepositoryImpl) SearchExactVector(ctx context.Context, input V2
 	}
 	if contract.IndexStrategy != string(domain.V2VectorIndexExact) && !contract.AllowExactFallback {
 		return nil, fmt.Errorf("%w: active search contract does not allow exact vector search", ErrV2SearchContractMismatch)
+	}
+	if contract.DistanceMetric != string(domain.V2VectorDistanceCosine) {
+		return nil, fmt.Errorf("%w: exact vector search supports %s distance only", ErrV2SearchContractMismatch, domain.V2VectorDistanceCosine)
 	}
 	vectorLiteral, err := v2VectorLiteral(input.QueryEmbedding)
 	if err != nil {
@@ -570,6 +587,9 @@ func (r *V2SearchRepositoryImpl) contractForVectorSearch(ctx context.Context, in
 	if input.EmbeddingContractID != "" && input.EmbeddingContractID != contract.EmbeddingContractID {
 		return nil, fmt.Errorf("%w: requested contract %s is not the active contract %s", ErrV2SearchContractMismatch, input.EmbeddingContractID, contract.EmbeddingContractID)
 	}
+	if contract.DistanceMetric != string(domain.V2VectorDistanceCosine) {
+		return nil, fmt.Errorf("%w: active search contract distance %q is not supported", ErrV2SearchContractMismatch, contract.DistanceMetric)
+	}
 	return contract, nil
 }
 
@@ -635,7 +655,7 @@ func failExpiredExhaustedV2EmbeddingJobs(ctx context.Context, tx *gorm.DB, teamI
 }
 
 func markV2EmbeddingJobTerminal(ctx context.Context, tx *gorm.DB, input V2CompleteEmbeddingJobInput, status string, message string) error {
-	return tx.WithContext(ctx).Exec(`
+	result := tx.WithContext(ctx).Exec(`
 		UPDATE embedding_jobs
 		SET status = ?,
 		    error = ?,
@@ -646,7 +666,16 @@ func markV2EmbeddingJobTerminal(ctx context.Context, tx *gorm.DB, input V2Comple
 		  AND embedding_job_id = ?::uuid
 		  AND worker_id = ?
 		  AND status = 'processing'
-	`, status, message, input.TeamID, input.EmbeddingJobID, input.WorkerID).Error
+		  AND lease_until IS NOT NULL
+		  AND lease_until > now()
+	`, status, message, input.TeamID, input.EmbeddingJobID, input.WorkerID)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return fmt.Errorf("%w: processing job not found", ErrV2SearchStaleVersion)
+	}
+	return nil
 }
 
 type v2SearchHitScanner interface {

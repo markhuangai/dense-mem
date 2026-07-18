@@ -128,8 +128,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.SSEMaxConcurrentStreams != 10 {
 		t.Errorf("SSEMaxConcurrentStreams default = %d, want %d", cfg.SSEMaxConcurrentStreams, 10)
 	}
-	if cfg.EmbeddingDimensions != 1536 {
-		t.Errorf("EmbeddingDimensions default = %d, want %d", cfg.EmbeddingDimensions, 1536)
+	if cfg.EmbeddingDimensions != 3072 {
+		t.Errorf("EmbeddingDimensions default = %d, want %d", cfg.EmbeddingDimensions, 3072)
 	}
 
 	// Test other defaults

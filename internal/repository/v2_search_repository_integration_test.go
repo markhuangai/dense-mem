@@ -168,6 +168,20 @@ func TestV2SearchEmbeddingCompletionRejectsStaleJobs(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrV2SearchStaleVersion), "err=%v", err)
 
+	var jobStatus string
+	var jobCompleted bool
+	err = rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT status, completed_at IS NOT NULL
+			FROM embedding_jobs
+			WHERE team_id = ?::uuid
+			  AND embedding_job_id = ?::uuid
+		`, teamID, claimed[0].EmbeddingJobID).Row().Scan(&jobStatus, &jobCompleted)
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "stale", jobStatus)
+	assert.True(t, jobCompleted)
+
 	hits, err := repo.SearchExactVector(ctx, V2ExactVectorSearchInput{
 		TeamID:         teamID,
 		QueryEmbedding: []float32{1, 0, 0},
@@ -188,6 +202,57 @@ func TestV2SearchEmbeddingCompletionRejectsStaleJobs(t *testing.T) {
 	require.Len(t, hits, 1)
 	assert.Equal(t, int64(2), hits[0].SourceVersion)
 	assert.Equal(t, int64(2), hits[0].DocumentVersion)
+}
+
+func TestV2SearchUpsertRejectsStaleSourceVersion(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "search-upsert-stale-team")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "search-upsert-stale-owner")
+	contractID := insertV2SearchTestContract(t, adminDB, rls, "search-upsert-stale", 3, "exact", "")
+	repo := NewV2SearchRepository(appDB, rls)
+	sourceID := uuid.NewString()
+
+	current, err := repo.UpsertSearchDocument(ctx, V2UpsertSearchDocumentInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		SourceKind:     "evidence",
+		SourceID:       sourceID,
+		SourceVersion:  2,
+		DocumentText:   "authoritative version two",
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), current.SourceVersion)
+
+	_, err = repo.UpsertSearchDocument(ctx, V2UpsertSearchDocumentInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		SourceKind:     "evidence",
+		SourceID:       sourceID,
+		SourceVersion:  1,
+		DocumentText:   "delayed version one",
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrV2SearchStaleVersion), "err=%v", err)
+
+	var sourceVersion int64
+	var documentVersion int64
+	var documentText string
+	err = rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT source_version, document_version, document_text
+			FROM search_documents
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'evidence'
+			  AND source_id = ?::uuid
+			  AND embedding_contract_id = ?::uuid
+		`, teamID, sourceID, contractID).Row().Scan(&sourceVersion, &documentVersion, &documentText)
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), sourceVersion)
+	assert.Equal(t, int64(1), documentVersion)
+	assert.Equal(t, "authoritative version two", documentText)
 }
 
 func TestV2SearchClaimEmbeddingJobsReclaimsExpiredLease(t *testing.T) {
@@ -248,6 +313,75 @@ func TestV2SearchClaimEmbeddingJobsReclaimsExpiredLease(t *testing.T) {
 		Embedding:      []float32{1, 0, 0},
 	})
 	require.NoError(t, err)
+}
+
+func TestV2SearchCompletionRejectsExpiredLeaseBeforeReclaim(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "search-expired-complete-team")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "search-expired-complete-owner")
+	insertV2SearchTestContract(t, adminDB, rls, "search-expired-complete", 3, "exact", "")
+	repo := NewV2SearchRepository(appDB, rls)
+
+	doc := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, "lease expired before completion", 1)
+	claimed, err := repo.ClaimEmbeddingJobs(ctx, V2ClaimEmbeddingJobsInput{
+		TeamID:   teamID,
+		WorkerID: "worker-expired",
+		Limit:    1,
+		Lease:    time.Minute,
+	})
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	require.Equal(t, doc.SearchDocumentID, claimed[0].SearchDocumentID)
+
+	err = rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE embedding_jobs
+			SET lease_until = now() - interval '1 second'
+			WHERE team_id = ?::uuid
+			  AND embedding_job_id = ?::uuid
+		`, teamID, claimed[0].EmbeddingJobID).Error
+	})
+	require.NoError(t, err)
+
+	err = repo.CompleteEmbeddingJob(ctx, V2CompleteEmbeddingJobInput{
+		TeamID:         teamID,
+		EmbeddingJobID: claimed[0].EmbeddingJobID,
+		WorkerID:       "worker-expired",
+		Embedding:      []float32{1, 0, 0},
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrV2SearchStaleVersion), "err=%v", err)
+
+	var jobStatus string
+	var documentState string
+	var embeddingPresent bool
+	err = rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT job.status, document.search_state, document.embedding IS NOT NULL
+			FROM embedding_jobs AS job
+			JOIN search_documents AS document
+			  ON document.team_id = job.team_id
+			 AND document.search_document_id = job.search_document_id
+			WHERE job.team_id = ?::uuid
+			  AND job.embedding_job_id = ?::uuid
+		`, teamID, claimed[0].EmbeddingJobID).Row().Scan(&jobStatus, &documentState, &embeddingPresent)
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "processing", jobStatus)
+	assert.Equal(t, "pending", documentState)
+	assert.False(t, embeddingPresent)
+
+	reclaimed, err := repo.ClaimEmbeddingJobs(ctx, V2ClaimEmbeddingJobsInput{
+		TeamID:   teamID,
+		WorkerID: "worker-reclaim-after-expiry",
+		Limit:    1,
+		Lease:    time.Minute,
+	})
+	require.NoError(t, err)
+	require.Len(t, reclaimed, 1)
+	assert.Equal(t, claimed[0].EmbeddingJobID, reclaimed[0].EmbeddingJobID)
 }
 
 func TestV2SearchClaimEmbeddingJobsFailsExpiredExhaustedJobs(t *testing.T) {

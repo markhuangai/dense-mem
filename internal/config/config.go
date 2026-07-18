@@ -383,7 +383,7 @@ func Load() (Config, error) {
 	if cfg.AIEmbeddingDimensions > 0 {
 		cfg.EmbeddingDimensions = cfg.AIEmbeddingDimensions
 	} else {
-		cfg.EmbeddingDimensions = 1536
+		cfg.EmbeddingDimensions = 3072
 	}
 
 	// Knowledge-pipeline knobs (AC-X3)
