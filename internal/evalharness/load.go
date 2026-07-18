@@ -126,16 +126,8 @@ func LoadExpectedDreams(manifestPath string, manifest *SeedManifest) ([]Expected
 }
 
 func LoadSuite(path string) ([]SuiteCase, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	return LoadSuiteBytes(path, data)
-}
-
-func LoadSuiteBytes(path string, data []byte) ([]SuiteCase, error) {
 	var suite []SuiteCase
-	if err := readJSONLBytes(path, data, &suite); err != nil {
+	if err := readJSONL(path, &suite); err != nil {
 		return nil, err
 	}
 	seen := map[string]struct{}{}
@@ -189,30 +181,23 @@ func SeedHash(manifestPath string, manifest *SeedManifest) (string, error) {
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func FileHash(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return FileHashBytes(data), nil
-}
-
-func FileHashBytes(data []byte) string {
-	hash := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(hash[:])
-}
-
 func canonicalJSONHash(value any) (string, error) {
 	payload, err := json.Marshal(value)
 	if err != nil {
 		return "", err
 	}
-	var canonical bytes.Buffer
-	if err := json.Compact(&canonical, payload); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+	var normalized any
+	if err := decoder.Decode(&normalized); err != nil {
 		return "", err
 	}
-	hash := sha256.Sum256(canonical.Bytes())
-	return "sha256:" + hex.EncodeToString(hash[:]), nil
+	payload, err = json.Marshal(normalized)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(payload)
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
 }
 
 func IndexCases(cases []Case) map[string]Case {
@@ -239,15 +224,12 @@ func resolveSeedPath(manifestPath, rel string) string {
 }
 
 func readJSONFile(path string, out any) error {
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-	return readJSONBytes(path, data, out)
-}
-
-func readJSONBytes(path string, data []byte, out any) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
+	defer f.Close()
+	decoder := json.NewDecoder(f)
 	decoder.UseNumber()
 	if err := decoder.Decode(out); err != nil {
 		return fmt.Errorf("%s: %w", path, err)
@@ -256,15 +238,12 @@ func readJSONBytes(path string, data []byte, out any) error {
 }
 
 func readJSONL[T any](path string, out *[]T) error {
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-	return readJSONLBytes(path, data, out)
-}
-
-func readJSONLBytes[T any](path string, data []byte, out *[]T) error {
-	scanner := bufio.NewScanner(bytes.NewReader(data))
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	lineNo := 0
 	for scanner.Scan() {

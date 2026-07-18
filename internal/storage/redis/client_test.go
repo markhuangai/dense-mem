@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"crypto/tls"
 	"testing"
 	"time"
 
@@ -98,13 +99,35 @@ func TestRedisClient_NoRawKeyExposure(t *testing.T) {
 	assert.Contains(t, key, ":stream:")
 }
 
+func TestOptionsFromConfig_TLS(t *testing.T) {
+	plain := optionsFromConfig(&mockConfig{
+		redisAddr:     "localhost:6379",
+		redisPassword: "secret",
+		redisDB:       2,
+	})
+	require.Nil(t, plain.TLSConfig)
+	assert.Equal(t, "localhost:6379", plain.Addr)
+	assert.Equal(t, "secret", plain.Password)
+	assert.Equal(t, 2, plain.DB)
+
+	enabled := optionsFromConfig(&mockConfig{
+		redisAddr:       "redis.example.com:6379",
+		redisTLSEnabled: true,
+	})
+	require.NotNil(t, enabled.TLSConfig)
+	assert.Equal(t, uint16(tls.VersionTLS12), enabled.TLSConfig.MinVersion)
+	assert.False(t, enabled.TLSConfig.InsecureSkipVerify)
+}
+
 // mockConfig implements ConfigProvider for testing
 type mockConfig struct {
-	redisAddr     string
-	redisPassword string
-	redisDB       int
+	redisAddr       string
+	redisPassword   string
+	redisDB         int
+	redisTLSEnabled bool
 }
 
 func (m *mockConfig) GetRedisAddr() string     { return m.redisAddr }
 func (m *mockConfig) GetRedisPassword() string { return m.redisPassword }
 func (m *mockConfig) GetRedisDB() int          { return m.redisDB }
+func (m *mockConfig) GetRedisTLSEnabled() bool { return m.redisTLSEnabled }

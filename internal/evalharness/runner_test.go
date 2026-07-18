@@ -464,7 +464,6 @@ func TestRunValidationRejectsCrossFileInconsistency(t *testing.T) {
 			t.Fatalf("Run err = %v; want validation seed hash mismatch", err)
 		}
 	})
-
 }
 
 func TestRunValidateLoadsAndValidatesExpectedDreams(t *testing.T) {
