@@ -96,7 +96,6 @@ type ConfigProvider interface {
 	GetClaimReadRateLimit() int
 	GetRecallValidatedClaimWeight() float64
 	GetPromoteTxTimeoutSeconds() int
-	GetMemoryPackImportHistoryDays() int
 	GetSkillPackImportHistoryDays() int
 	GetAICommunityMaxNodes() int
 	GetControlHTTPAddr() string

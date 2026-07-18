@@ -469,7 +469,7 @@ func main() {
 		ConflictDecider: skillPackConflictDecider,
 		Graph:           profileScopeEnforcer,
 		Ledger:          skillPackImportRepo,
-		HistoryDays:     cfg.GetMemoryPackImportHistoryDays(),
+		HistoryDays:     cfg.GetSkillPackImportHistoryDays(),
 	})
 
 	// Tool registry is the single source of truth for MCP / HTTP catalog / OpenAPI.
