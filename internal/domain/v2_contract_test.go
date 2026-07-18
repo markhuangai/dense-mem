@@ -108,6 +108,18 @@ func TestV2ContractEnums(t *testing.T) {
 	}
 }
 
+func TestV2HypothesisStatusesAreCanonical(t *testing.T) {
+	want := []string{"proposed", "reinforced", "stale", "rejected", "submitted"}
+	if got := V2HypothesisStatuses(); !slices.Equal(got, want) {
+		t.Fatalf("V2HypothesisStatuses = %#v, want %#v", got, want)
+	}
+	for _, legacy := range []string{"candidate", "promoted_candidate"} {
+		if slices.Contains(V2HypothesisStatuses(), legacy) {
+			t.Fatalf("V2HypothesisStatuses contains legacy status %q", legacy)
+		}
+	}
+}
+
 func TestV2ContractUsesTypedPublicIDs(t *testing.T) {
 	ids := []any{
 		V2IngestID("ing-1"),

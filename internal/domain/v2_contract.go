@@ -127,6 +127,16 @@ const (
 	V2CrossReferenceAdoptsEvidenceFrom V2CrossReferenceKind = "adopts_evidence_from"
 )
 
+type V2HypothesisStatus string
+
+const (
+	V2HypothesisProposed   V2HypothesisStatus = "proposed"
+	V2HypothesisReinforced V2HypothesisStatus = "reinforced"
+	V2HypothesisStale      V2HypothesisStatus = "stale"
+	V2HypothesisRejected   V2HypothesisStatus = "rejected"
+	V2HypothesisSubmitted  V2HypothesisStatus = "submitted"
+)
+
 type V2PlacementRunStatus string
 
 const (
@@ -328,6 +338,16 @@ func V2CrossReferenceKinds() []string {
 		string(V2CrossReferenceChallenges),
 		string(V2CrossReferenceCorrects),
 		string(V2CrossReferenceAdoptsEvidenceFrom),
+	}
+}
+
+func V2HypothesisStatuses() []string {
+	return []string{
+		string(V2HypothesisProposed),
+		string(V2HypothesisReinforced),
+		string(V2HypothesisStale),
+		string(V2HypothesisRejected),
+		string(V2HypothesisSubmitted),
 	}
 }
 

@@ -234,6 +234,67 @@ func TestV2RelationshipProposalsRequireExactlyOneObject(t *testing.T) {
 	}
 }
 
+func TestV2RelationshipProposalValidityFieldsBelongToRelationship(t *testing.T) {
+	remember, err := requireV2Tool(v2ToolMap(t), V2ToolRemember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseInput := map[string]any{
+		"evidence": []any{
+			map[string]any{"content": "Dense-Mem uses PostgreSQL after July 2026."},
+		},
+		"proposal": map[string]any{
+			"entities": []any{
+				map[string]any{"ref": "entity-1", "name": "Dense-Mem"},
+			},
+			"relationships": []any{
+				map[string]any{
+					"proposal_id":    "rel-1",
+					"subject_ref":    "entity-1",
+					"predicate":      "uses",
+					"object_value":   map[string]any{"type": "string", "value": "PostgreSQL"},
+					"valid_from":     "2026-07-01T00:00:00Z",
+					"valid_to":       "2026-12-31T00:00:00Z",
+					"client_comment": "from release planning evidence",
+					"evidence": []any{
+						map[string]any{"evidence_index": 0, "start": 10, "end": 20},
+					},
+				},
+			},
+		},
+	}
+	if err := ValidateV2ContractInput(remember, baseInput, []string{"write"}); err != nil {
+		t.Fatalf("relationship-level validity fields rejected: %v", err)
+	}
+
+	badInput := cloneMap(baseInput)
+	badInput["proposal"] = map[string]any{
+		"entities": []any{
+			map[string]any{"ref": "entity-1", "name": "Dense-Mem"},
+		},
+		"relationships": []any{
+			map[string]any{
+				"proposal_id":  "rel-1",
+				"subject_ref":  "entity-1",
+				"predicate":    "uses",
+				"object_value": map[string]any{"type": "string", "value": "PostgreSQL"},
+				"evidence": []any{
+					map[string]any{
+						"evidence_index": 0,
+						"start":          10,
+						"end":            20,
+						"valid_from":     "2026-07-01T00:00:00Z",
+					},
+				},
+			},
+		},
+	}
+	err = ValidateV2ContractInput(remember, badInput, []string{"write"})
+	if err == nil {
+		t.Fatal("evidence-level valid_from accepted")
+	}
+}
+
 func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 	resolve, err := requireV2Tool(v2ToolMap(t), V2ToolResolveMemoryPlacement)
 	if err != nil {

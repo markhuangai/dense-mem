@@ -15,6 +15,7 @@ import (
 	"github.com/lib/pq"
 	"gorm.io/gorm"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
@@ -482,7 +483,7 @@ func validateV2CreateIngestInput(input V2CreateIngestInput) error {
 		if item.SourceType != "conversation" && item.SourceType != "document" && item.SourceType != "observation" && item.SourceType != "manual" {
 			return fmt.Errorf("evidence[%d].source_type is unsupported", i)
 		}
-		if item.Authority != "primary" && item.Authority != "secondary" && item.Authority != "derived" {
+		if !domain.Authority(item.Authority).IsValid() {
 			return fmt.Errorf("evidence[%d].authority is unsupported", i)
 		}
 		if item.InitialEvent != nil {
@@ -748,6 +749,9 @@ func validateV2AdvanceSourceRevisionInput(input V2AdvanceSourceRevisionInput) er
 	}
 	if input.ContentHash == "" {
 		return errors.New("content_hash is required")
+	}
+	if !domain.Authority(input.Authority).IsValid() {
+		return fmt.Errorf("authority is unsupported: %q", input.Authority)
 	}
 	return nil
 }

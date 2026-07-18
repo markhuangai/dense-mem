@@ -13,7 +13,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-const defaultV2SearchProfileKey = "default"
+const (
+	defaultV2SearchProfileKey              = "default"
+	v2EmbeddingJobAttemptsExhaustedMessage = "embedding attempts exhausted after lease expiration"
+)
 
 var (
 	ErrV2SearchStaleVersion    = errors.New("v2 search stale source or document version")
@@ -276,6 +279,9 @@ func (r *V2SearchRepositoryImpl) ClaimEmbeddingJobs(
 	}
 	jobs := []V2EmbeddingJob{}
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+		if err := failExpiredExhaustedV2EmbeddingJobs(ctx, tx, input.TeamID); err != nil {
+			return err
+		}
 		rows, err := tx.WithContext(ctx).Raw(`
 			WITH claimed AS (
 				SELECT team_id, embedding_job_id
@@ -480,6 +486,10 @@ func (r *V2SearchRepositoryImpl) SearchExactVector(ctx context.Context, input V2
 	if profile.IndexStrategy != string(domain.V2VectorIndexExact) && !profile.AllowExactFallback {
 		return nil, fmt.Errorf("%w: profile %q does not allow exact vector search", ErrV2SearchProfileMismatch, profile.ProfileKey)
 	}
+	distanceOperator, err := v2VectorDistanceOperator(profile.DistanceMetric)
+	if err != nil {
+		return nil, err
+	}
 	vectorLiteral, err := v2VectorLiteral(input.QueryEmbedding)
 	if err != nil {
 		return nil, err
@@ -517,20 +527,20 @@ func (r *V2SearchRepositoryImpl) SearchExactVector(ctx context.Context, input V2
 		}
 		args = append(args, vectorLiteral, input.Limit)
 		rows, err := tx.WithContext(ctx).Raw(`
-			SELECT team_id::text, search_document_id::text, source_kind, source_id::text,
-			       source_version, document_version, embedding_contract_id::text,
-			       (embedding <=> ?::vector)::double precision AS distance,
-			       0::double precision AS text_rank
-			FROM search_documents
-			WHERE team_id = ?::uuid
+				SELECT team_id::text, search_document_id::text, source_kind, source_id::text,
+				       source_version, document_version, embedding_contract_id::text,
+				       (embedding `+distanceOperator+` ?::vector)::double precision AS distance,
+				       0::double precision AS text_rank
+				FROM search_documents
+				WHERE team_id = ?::uuid
 			  AND embedding_contract_id = ?::uuid
 			  AND embedding_dimensions = ?
-			  AND search_state = 'current'
-			  AND embedding IS NOT NULL
-			  `+sourceFilter+`
-			ORDER BY embedding <=> ?::vector ASC, search_document_id ASC
-			LIMIT ?
-		`, args...).Rows()
+				  AND search_state = 'current'
+				  AND embedding IS NOT NULL
+				  `+sourceFilter+`
+				ORDER BY embedding `+distanceOperator+` ?::vector ASC, search_document_id ASC
+				LIMIT ?
+			`, args...).Rows()
 		if err != nil {
 			return err
 		}
@@ -601,6 +611,39 @@ func enqueueV2EmbeddingJob(ctx context.Context, tx *gorm.DB, document V2SearchDo
 		return "", err
 	}
 	return jobID, nil
+}
+
+func failExpiredExhaustedV2EmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string) error {
+	return tx.WithContext(ctx).Exec(`
+		WITH exhausted AS (
+			UPDATE embedding_jobs AS job
+			SET status = 'failed',
+			    error = ?,
+			    completed_at = now(),
+			    updated_at = now(),
+			    lease_until = NULL
+			WHERE job.team_id = ?::uuid
+			  AND job.status = 'processing'
+			  AND job.lease_until IS NOT NULL
+			  AND job.lease_until < now()
+			  AND job.attempts >= job.max_attempts
+			RETURNING job.team_id, job.search_document_id, job.source_version,
+			          job.document_version, job.embedding_contract_id,
+			          job.embedding_dimensions
+		)
+		UPDATE search_documents AS document
+		SET search_state = 'failed',
+		    embedding_error = ?,
+		    updated_at = now()
+		FROM exhausted
+		WHERE document.team_id = exhausted.team_id
+		  AND document.search_document_id = exhausted.search_document_id
+		  AND document.source_version = exhausted.source_version
+		  AND document.document_version = exhausted.document_version
+		  AND document.embedding_contract_id = exhausted.embedding_contract_id
+		  AND document.embedding_dimensions = exhausted.embedding_dimensions
+		  AND document.search_state = 'pending'
+	`, v2EmbeddingJobAttemptsExhaustedMessage, teamID, v2EmbeddingJobAttemptsExhaustedMessage).Error
 }
 
 func markV2EmbeddingJobTerminal(ctx context.Context, tx *gorm.DB, input V2CompleteEmbeddingJobInput, status string, message string) error {

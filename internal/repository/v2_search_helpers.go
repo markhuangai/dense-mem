@@ -206,6 +206,19 @@ func v2VectorLiteral(values []float32) (string, error) {
 	return "[" + strings.Join(parts, ",") + "]", nil
 }
 
+func v2VectorDistanceOperator(metric string) (string, error) {
+	switch domain.V2VectorDistanceMetric(strings.TrimSpace(metric)) {
+	case domain.V2VectorDistanceCosine:
+		return "<=>", nil
+	case domain.V2VectorDistanceL2:
+		return "<->", nil
+	case domain.V2VectorDistanceInner:
+		return "<#>", nil
+	default:
+		return "", fmt.Errorf("%w: unsupported distance metric %q", ErrV2SearchProfileMismatch, metric)
+	}
+}
+
 func v2SearchMissingIndexCompatibility(profile *V2SearchProfile, indexDefinition string) []string {
 	normalized := strings.Join(strings.Fields(strings.ToLower(indexDefinition)), " ")
 	requirements := []struct {

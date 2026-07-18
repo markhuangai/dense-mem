@@ -88,6 +88,60 @@ func TestV2SearchDocumentsFTSAndExactVectorAreTeamScoped(t *testing.T) {
 	}
 }
 
+func TestV2SearchExactVectorUsesProfileDistanceMetric(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "search-metric-team")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "search-metric-owner")
+	repo := NewV2SearchRepository(appDB, rls)
+
+	tests := []struct {
+		name           string
+		metric         string
+		query          []float32
+		expectedVector []float32
+		otherVector    []float32
+	}{
+		{
+			name:           "l2",
+			metric:         "l2",
+			query:          []float32{1, 0, 0},
+			expectedVector: []float32{1, 1, 0},
+			otherVector:    []float32{10, 0, 0},
+		},
+		{
+			name:           "inner_product",
+			metric:         "inner_product",
+			query:          []float32{1, 0, 0},
+			expectedVector: []float32{2, 2, 0},
+			otherVector:    []float32{1, 0, 0},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			profileKey, _ := insertV2SearchTestProfileWithMetric(t, adminDB, rls, "search-"+tt.name, 3, "exact", "", tt.metric)
+			expected := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, profileKey, tt.name+" expected metric result", 1)
+			other := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, profileKey, tt.name+" cosine-biased result", 1)
+			completeV2SearchJobsForTest(t, repo, teamID, map[string][]float32{
+				expected.SearchDocumentID: tt.expectedVector,
+				other.SearchDocumentID:    tt.otherVector,
+			})
+
+			hits, err := repo.SearchExactVector(ctx, V2ExactVectorSearchInput{
+				TeamID:         teamID,
+				ProfileKey:     profileKey,
+				QueryEmbedding: tt.query,
+				Limit:          2,
+			})
+			require.NoError(t, err)
+			require.Len(t, hits, 2)
+			assert.Equal(t, expected.SearchDocumentID, hits[0].SearchDocumentID)
+			assert.Less(t, hits[0].Distance, hits[1].Distance)
+		})
+	}
+}
+
 func TestV2SearchEmbeddingCompletionRejectsStaleJobs(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
 	defer cleanup()
@@ -223,6 +277,77 @@ func TestV2SearchClaimEmbeddingJobsReclaimsExpiredLease(t *testing.T) {
 		Embedding:      []float32{1, 0, 0},
 	})
 	require.NoError(t, err)
+}
+
+func TestV2SearchClaimEmbeddingJobsFailsExpiredExhaustedJobs(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "search-exhausted-team")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "search-exhausted-owner")
+	profileKey, _ := insertV2SearchTestProfile(t, adminDB, rls, "search-exhausted", 3, "exact", "")
+	repo := NewV2SearchRepository(appDB, rls)
+
+	doc := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, profileKey, "exhausted embedding job text", 1)
+	firstClaim, err := repo.ClaimEmbeddingJobs(ctx, V2ClaimEmbeddingJobsInput{
+		TeamID:   teamID,
+		WorkerID: "worker-final-attempt",
+		Limit:    1,
+		Lease:    time.Minute,
+	})
+	require.NoError(t, err)
+	require.Len(t, firstClaim, 1)
+	require.Equal(t, doc.SearchDocumentID, firstClaim[0].SearchDocumentID)
+
+	err = rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE embedding_jobs
+			SET max_attempts = attempts,
+			    lease_until = now() - interval '1 second'
+			WHERE team_id = ?::uuid
+			  AND embedding_job_id = ?::uuid
+		`, teamID, firstClaim[0].EmbeddingJobID).Error
+	})
+	require.NoError(t, err)
+
+	nextClaim, err := repo.ClaimEmbeddingJobs(ctx, V2ClaimEmbeddingJobsInput{
+		TeamID:   teamID,
+		WorkerID: "worker-next",
+		Limit:    1,
+		Lease:    time.Minute,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, nextClaim)
+
+	var jobStatus string
+	var jobCompleted bool
+	var jobError string
+	var documentState string
+	var documentError string
+	err = rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT job.status, job.completed_at IS NOT NULL, job.error,
+			       document.search_state, document.embedding_error
+			FROM embedding_jobs AS job
+			JOIN search_documents AS document
+			  ON document.team_id = job.team_id
+			 AND document.search_document_id = job.search_document_id
+			WHERE job.team_id = ?::uuid
+			  AND job.embedding_job_id = ?::uuid
+		`, teamID, firstClaim[0].EmbeddingJobID).Row().Scan(
+			&jobStatus,
+			&jobCompleted,
+			&jobError,
+			&documentState,
+			&documentError,
+		)
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "failed", jobStatus)
+	assert.True(t, jobCompleted)
+	assert.Equal(t, v2EmbeddingJobAttemptsExhaustedMessage, jobError)
+	assert.Equal(t, "failed", documentState)
+	assert.Equal(t, v2EmbeddingJobAttemptsExhaustedMessage, documentError)
 }
 
 func TestV2SearchExactVectorRequiresBoundedProfile(t *testing.T) {
@@ -376,6 +501,19 @@ func insertV2SearchTestProfile(
 	return insertV2SearchTestProfileWithOptions(t, db, rls, prefix, dimensions, strategy, indexName, 10000, false)
 }
 
+func insertV2SearchTestProfileWithMetric(
+	t *testing.T,
+	db *gorm.DB,
+	rls *storagepostgres.RLS,
+	prefix string,
+	dimensions int,
+	strategy string,
+	indexName string,
+	metric string,
+) (string, string) {
+	return insertV2SearchTestProfileWithOptionsAndMetric(t, db, rls, prefix, dimensions, strategy, indexName, 10000, false, metric)
+}
+
 func insertV2SearchTestProfileWithOptions(
 	t *testing.T,
 	db *gorm.DB,
@@ -387,6 +525,21 @@ func insertV2SearchTestProfileWithOptions(
 	exactMaxRows int,
 	allowExactFallback bool,
 ) (string, string) {
+	return insertV2SearchTestProfileWithOptionsAndMetric(t, db, rls, prefix, dimensions, strategy, indexName, exactMaxRows, allowExactFallback, "cosine")
+}
+
+func insertV2SearchTestProfileWithOptionsAndMetric(
+	t *testing.T,
+	db *gorm.DB,
+	rls *storagepostgres.RLS,
+	prefix string,
+	dimensions int,
+	strategy string,
+	indexName string,
+	exactMaxRows int,
+	allowExactFallback bool,
+	metric string,
+) (string, string) {
 	t.Helper()
 	profileKey := fmt.Sprintf("%s-%s", prefix, strings.ReplaceAll(uuid.NewString(), "-", "")[:8])
 	contractID := uuid.NewString()
@@ -395,31 +548,31 @@ func insertV2SearchTestProfileWithOptions(
 	operatorClass := ""
 	indexedExpression := ""
 	if strategy != "exact" {
-		operatorClass = "halfvec_cosine_ops"
+		operatorClass = v2SearchTestHalfvecOperatorClass(metric)
 		indexedExpression = fmt.Sprintf("embedding::halfvec(%d)", dimensions)
 	}
 	err := rls.WithMigrationTx(context.Background(), db, func(tx *gorm.DB) error {
 		if err := tx.Exec(`
 			INSERT INTO embedding_contracts (
 			    embedding_contract_id, contract_key, version, provider, model,
-			    dimensions, distance_metric, vector_normalization,
-			    document_format_version, query_format_version, lifecycle_state
-			) VALUES (
-			    ?::uuid, ?, 1, 'test', ?, ?, 'cosine', 'provider', 1, 1, 'active'
-			)
-		`, contractID, profileKey, "test-model", dimensions).Error; err != nil {
+				    dimensions, distance_metric, vector_normalization,
+				    document_format_version, query_format_version, lifecycle_state
+				) VALUES (
+				    ?::uuid, ?, 1, 'test', ?, ?, ?, 'provider', 1, 1, 'active'
+				)
+			`, contractID, profileKey, "test-model", dimensions, metric).Error; err != nil {
 			return err
 		}
 		if err := tx.Exec(`
 			INSERT INTO search_index_profiles (
 			    search_index_profile_id, profile_key, version, embedding_contract_id,
 			    embedding_dimensions, distance_metric, ann_strategy, operator_class,
-			    indexed_expression, physical_index_name, exact_max_rows,
-			    allow_exact_fallback, activation_state, activated_at
-			) VALUES (
-			    ?::uuid, ?, 1, ?::uuid, ?, 'cosine', ?, ?, ?, ?, ?, ?, 'active', now()
-			)
-		`, searchProfileID, profileKey, contractID, dimensions, strategy,
+				    indexed_expression, physical_index_name, exact_max_rows,
+				    allow_exact_fallback, activation_state, activated_at
+				) VALUES (
+				    ?::uuid, ?, 1, ?::uuid, ?, ?, ?, ?, ?, ?, ?, ?, 'active', now()
+				)
+			`, searchProfileID, profileKey, contractID, dimensions, metric, strategy,
 			operatorClass, indexedExpression, indexName, exactMaxRows, allowExactFallback).Error; err != nil {
 			return err
 		}
@@ -435,6 +588,17 @@ func insertV2SearchTestProfileWithOptions(
 	})
 	require.NoError(t, err)
 	return profileKey, contractID
+}
+
+func v2SearchTestHalfvecOperatorClass(metric string) string {
+	switch metric {
+	case "l2":
+		return "halfvec_l2_ops"
+	case "inner_product":
+		return "halfvec_ip_ops"
+	default:
+		return "halfvec_cosine_ops"
+	}
 }
 
 func upsertV2SearchDocumentForTest(

@@ -67,7 +67,7 @@ func v2HypothesisSummarySchema() map[string]any {
 			"object_entity_id":        v2NullableString("Existing object Entity ID.", 128),
 			"object_value_id":         v2NullableString("Existing object Value ID.", 128),
 			"statement":               schemaString("Bounded hypothesis statement.", 1000),
-			"status":                  schemaEnum(v2HypothesisStatuses()),
+			"status":                  schemaEnum(domain.V2HypothesisStatuses()),
 			"source_relationship_ids": v2StringArraySchema("Source Relationship ID.", 200, 128),
 			"generator_kind":          schemaEnum([]string{"deterministic", "provider"}),
 			"generator_version":       schemaString("Dream generator version.", 128),
@@ -100,14 +100,10 @@ func v2HypothesisSchema() map[string]any {
 			"source_versions":                   v2VersionMapSchema(),
 			"generator_kind":                    schemaEnum([]string{"deterministic", "provider"}),
 			"generator_version":                 schemaString("Dream generator version.", 128),
-			"status":                            schemaEnum(v2HypothesisStatuses()),
+			"status":                            schemaEnum(domain.V2HypothesisStatuses()),
 			"created_at":                        map[string]any{"type": "string", "format": "date-time"},
 		},
 	)
-}
-
-func v2HypothesisStatuses() []string {
-	return []string{"proposed", "reinforced", "stale", "rejected", "submitted"}
 }
 
 func v2VersionMapSchema() map[string]any {

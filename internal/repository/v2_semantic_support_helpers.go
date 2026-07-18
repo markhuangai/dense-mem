@@ -29,7 +29,10 @@ func supersedeV2OneCardinalityRelationships(
 			  AND valid_to IS NOT DISTINCT FROM ?
 			  AND scope_key IS NOT DISTINCT FROM NULLIF(?, '')
 			  AND relationship_id <> COALESCE(NULLIF(?, '')::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
-			  AND current_cardinality = 'one'
+			  AND (
+			      predicate_version < ?
+			      OR (predicate_version = ? AND current_cardinality = 'one')
+			  )
 			  AND status = 'active'
 			  AND tier IN ('validated_claim', 'fact')
 			FOR UPDATE
@@ -49,7 +52,7 @@ func supersedeV2OneCardinalityRelationships(
 		FROM updated
 	`, input.TeamID, input.OwnerProfileID, input.SubjectEntityID, input.PredicateKey,
 		input.Polarity, v2TimeArg(input.ValidFrom), v2TimeArg(input.ValidTo), input.ScopeKey,
-		keepRelationshipID, input.TeamID).Rows()
+		keepRelationshipID, input.PredicateVersion, input.PredicateVersion, input.TeamID).Rows()
 	if err != nil {
 		return err
 	}
@@ -99,48 +102,43 @@ func validateV2SupportOwnership(ctx context.Context, tx *gorm.DB, input V2ApplyR
 	if input.Support == nil {
 		return nil
 	}
-	if ok, err := existsV2OwnerReference(ctx, tx, `
+	if (input.Support.SourceID == "") != (input.Support.SourceRevisionID == "") {
+		return errors.New("support source and source revision must be provided together")
+	}
+	query := `
 		SELECT EXISTS (
 			SELECT 1
-			FROM evidence_fragments
-			WHERE team_id = ?::uuid
-			  AND fragment_id = ?::uuid
-			  AND owner_profile_id = ?::uuid
-		)
-	`, input.TeamID, input.Support.FragmentID, input.OwnerProfileID); err != nil {
-		return err
-	} else if !ok {
-		return ErrV2SemanticOwnerMismatch
-	}
+			FROM evidence_fragments AS fragment
+			WHERE fragment.team_id = ?::uuid
+			  AND fragment.ingest_id = ?::uuid
+			  AND fragment.fragment_id = ?::uuid
+			  AND fragment.owner_profile_id = ?::uuid
+	`
+	args := []any{input.TeamID, input.IngestID, input.Support.FragmentID, input.OwnerProfileID}
 	if input.Support.SourceID != "" {
-		if ok, err := existsV2OwnerReference(ctx, tx, `
-			SELECT EXISTS (
-				SELECT 1
-				FROM evidence_sources
-				WHERE team_id = ?::uuid
-				  AND source_id = ?::uuid
-				  AND owner_profile_id = ?::uuid
-			)
-		`, input.TeamID, input.Support.SourceID, input.OwnerProfileID); err != nil {
-			return err
-		} else if !ok {
-			return ErrV2SemanticOwnerMismatch
-		}
+		query += `
+			  AND fragment.source_id = ?::uuid
+			  AND fragment.source_revision_id = ?::uuid
+			  AND EXISTS (
+			      SELECT 1
+			      FROM evidence_source_revisions AS revision
+			      WHERE revision.team_id = fragment.team_id
+			        AND revision.source_id = fragment.source_id
+			        AND revision.source_revision_id = fragment.source_revision_id
+			        AND revision.owner_profile_id = fragment.owner_profile_id
+			  )
+		`
+		args = append(args, input.Support.SourceID, input.Support.SourceRevisionID)
 	}
-	if input.Support.SourceRevisionID != "" {
-		if ok, err := existsV2OwnerReference(ctx, tx, `
-			SELECT EXISTS (
-				SELECT 1
-				FROM evidence_source_revisions
-				WHERE team_id = ?::uuid
-				  AND source_revision_id = ?::uuid
-				  AND owner_profile_id = ?::uuid
-			)
-		`, input.TeamID, input.Support.SourceRevisionID, input.OwnerProfileID); err != nil {
-			return err
-		} else if !ok {
-			return ErrV2SemanticOwnerMismatch
-		}
+	query += `
+		)
+	`
+	ok, err := existsV2OwnerReference(ctx, tx, query, args...)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrV2SemanticOwnerMismatch
 	}
 	return nil
 }
@@ -189,21 +187,26 @@ func requireV2RelationshipVersion(
 	return nil
 }
 
-func requireV2VerificationOwner(ctx context.Context, tx *gorm.DB, teamID, verificationEventID, ownerProfileID string) error {
+func requireV2VerificationForRelationship(ctx context.Context, tx *gorm.DB, teamID, verificationEventID, ownerProfileID, relationshipID string) error {
 	exists, err := existsV2OwnerReference(ctx, tx, `
 		SELECT EXISTS (
 			SELECT 1
-			FROM verification_events
-			WHERE team_id = ?::uuid
-			  AND verification_event_id = ?::uuid
-			  AND owner_profile_id = ?::uuid
+			FROM verification_events AS event
+			JOIN relationship_observations AS observation
+			  ON observation.team_id = event.team_id
+			 AND observation.observation_id = event.observation_id
+			 AND observation.owner_profile_id = event.owner_profile_id
+			WHERE event.team_id = ?::uuid
+			  AND event.verification_event_id = ?::uuid
+			  AND event.owner_profile_id = ?::uuid
+			  AND observation.relationship_id = ?::uuid
 		)
-	`, teamID, verificationEventID, ownerProfileID)
+	`, teamID, verificationEventID, ownerProfileID, relationshipID)
 	if err != nil {
 		return err
 	}
 	if !exists {
-		return ErrV2SemanticOwnerMismatch
+		return errors.New("verification event does not match source relationship")
 	}
 	return nil
 }
@@ -251,9 +254,6 @@ func insertV2RelationshipSupport(
 ) (string, string, error) {
 	metadata, err := marshalV2JSON(input.Support.Metadata)
 	if err != nil {
-		return "", "", err
-	}
-	if err := validateV2SupportOwnership(ctx, tx, input); err != nil {
 		return "", "", err
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
