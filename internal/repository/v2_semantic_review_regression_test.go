@@ -178,6 +178,91 @@ func TestV2SemanticOneCardinalityUpgradeSupersedesLegacyManyRows(t *testing.T) {
 	assert.Equal(t, upgraded.Relationship.RelationshipID, edges[0].RelationshipID)
 }
 
+func TestV2SemanticDelayedOlderOneVersionDoesNotSupersedeNewerManyRows(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "one-cardinality-reversal-team")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "owner")
+	ledgerRepo := NewV2LedgerRepository(appDB, rls)
+	semanticRepo := NewV2SemanticRepository(appDB, rls)
+
+	denseMem := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense-Mem")
+	postgres := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "PostgreSQL")
+	neo4j := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "Neo4j")
+	redis := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "Redis")
+	predicateKey := "runtime_policy_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	require.NoError(t, insertV2PolicyReversalPredicate(ctx, adminDB, rls, predicateKey))
+
+	postgresIngest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"policy reversal postgres", "Dense-Mem uses PostgreSQL as a durable store.")
+	postgresUse := applyV2SemanticDecision(t, ctx, semanticRepo, V2ApplyRelationshipDecisionInput{
+		TeamID:           teamID,
+		OwnerProfileID:   ownerID,
+		IngestID:         postgresIngest.IngestID,
+		SubjectEntityID:  denseMem.EntityID,
+		PredicateKey:     predicateKey,
+		PredicateVersion: 2,
+		ObjectEntityID:   postgres.EntityID,
+		Support: &V2EvidenceSupportInput{
+			FragmentID:     postgresIngest.Evidence[0].FragmentID,
+			SourceGroupKey: "conversation:policy-reversal-postgres",
+			SpanStart:      0,
+			SpanEnd:        len("Dense-Mem uses PostgreSQL as a durable store."),
+			Authority:      "primary",
+		},
+	})
+	require.Equal(t, "many", postgresUse.Relationship.CurrentCardinality)
+
+	neo4jIngest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"policy reversal neo4j", "Neo4j remains legacy migration input.")
+	neo4jUse := applyV2SemanticDecision(t, ctx, semanticRepo, V2ApplyRelationshipDecisionInput{
+		TeamID:           teamID,
+		OwnerProfileID:   ownerID,
+		IngestID:         neo4jIngest.IngestID,
+		SubjectEntityID:  denseMem.EntityID,
+		PredicateKey:     predicateKey,
+		PredicateVersion: 2,
+		ObjectEntityID:   neo4j.EntityID,
+		Support: &V2EvidenceSupportInput{
+			FragmentID:     neo4jIngest.Evidence[0].FragmentID,
+			SourceGroupKey: "conversation:policy-reversal-neo4j",
+			SpanStart:      0,
+			SpanEnd:        len("Neo4j remains legacy migration input."),
+			Authority:      "primary",
+		},
+	})
+	require.Equal(t, "many", neo4jUse.Relationship.CurrentCardinality)
+
+	delayedIngest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"delayed old redis", "Dense-Mem used Redis as its runtime memory store.")
+	delayed := applyV2SemanticDecision(t, ctx, semanticRepo, V2ApplyRelationshipDecisionInput{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        delayedIngest.IngestID,
+		SubjectEntityID: denseMem.EntityID,
+		PredicateKey:    predicateKey,
+		ObjectEntityID:  redis.EntityID,
+		Support: &V2EvidenceSupportInput{
+			FragmentID:     delayedIngest.Evidence[0].FragmentID,
+			SourceGroupKey: "conversation:delayed-old-redis",
+			SpanStart:      0,
+			SpanEnd:        len("Dense-Mem used Redis as its runtime memory store."),
+			Authority:      "primary",
+		},
+	})
+	require.Equal(t, "one", delayed.Relationship.CurrentCardinality)
+
+	statuses := loadV2RelationshipStatuses(t, ctx, appDB, rls, teamID, ownerID,
+		postgresUse.Relationship.RelationshipID,
+		neo4jUse.Relationship.RelationshipID,
+		delayed.Relationship.RelationshipID,
+	)
+	assert.Equal(t, "active", statuses[postgresUse.Relationship.RelationshipID])
+	assert.Equal(t, "active", statuses[neo4jUse.Relationship.RelationshipID])
+	assert.Equal(t, "active", statuses[delayed.Relationship.RelationshipID])
+}
+
 func createV2SemanticSourceIngest(
 	t *testing.T,
 	ctx context.Context,
@@ -224,6 +309,38 @@ func v2SemanticSupport(sourceGroupKey string, content string) *V2EvidenceSupport
 	}
 }
 
+func loadV2RelationshipStatuses(
+	t *testing.T,
+	ctx context.Context,
+	db *gorm.DB,
+	rls interface {
+		WithTeamProfileTx(context.Context, *gorm.DB, string, string, func(*gorm.DB) error) error
+	},
+	teamID string,
+	ownerID string,
+	relationshipIDs ...string,
+) map[string]string {
+	t.Helper()
+	statuses := make(map[string]string, len(relationshipIDs))
+	err := rls.WithTeamProfileTx(ctx, db, teamID, ownerID, func(tx *gorm.DB) error {
+		for _, relationshipID := range relationshipIDs {
+			var status string
+			if err := tx.Raw(`
+				SELECT status
+				FROM relationship_records
+				WHERE team_id = ?::uuid
+				  AND relationship_id = ?::uuid
+			`, teamID, relationshipID).Scan(&status).Error; err != nil {
+				return err
+			}
+			statuses[relationshipID] = status
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	return statuses
+}
+
 func insertV2CardinalityUpgradePredicate(
 	ctx context.Context,
 	db *gorm.DB,
@@ -249,6 +366,36 @@ func insertV2CardinalityUpgradePredicate(
 			        ARRAY['project','product','organization','other']::text[],
 			        ARRAY['project','product','concept','other']::text[],
 			        'state', 'one'
+			    )
+		`, predicateKey, predicateKey).Error
+	})
+}
+
+func insertV2PolicyReversalPredicate(
+	ctx context.Context,
+	db *gorm.DB,
+	rls interface {
+		WithMigrationTx(context.Context, *gorm.DB, func(*gorm.DB) error) error
+	},
+	predicateKey string,
+) error {
+	return rls.WithMigrationTx(ctx, db, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO predicate_definitions (
+			    predicate_key, version, aliases, allowed_subject_kinds, allowed_object_kinds,
+			    relationship_kind, current_cardinality
+			) VALUES
+			    (
+			        ?, 1, ARRAY[]::text[],
+			        ARRAY['project','product','organization','other']::text[],
+			        ARRAY['project','product','concept','other']::text[],
+			        'state', 'one'
+			    ),
+			    (
+			        ?, 2, ARRAY['runtime_component']::text[],
+			        ARRAY['project','product','organization','other']::text[],
+			        ARRAY['project','product','concept','other']::text[],
+			        'state', 'many'
 			    )
 		`, predicateKey, predicateKey).Error
 	})

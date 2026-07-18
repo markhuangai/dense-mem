@@ -29,6 +29,10 @@ func supersedeV2OneCardinalityRelationships(
 			  AND valid_to IS NOT DISTINCT FROM ?
 			  AND scope_key IS NOT DISTINCT FROM NULLIF(?, '')
 			  AND relationship_id <> COALESCE(NULLIF(?, '')::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+			  AND (
+			      predicate_version < ?
+			      OR (predicate_version = ? AND current_cardinality = 'one')
+			  )
 			  AND status = 'active'
 			  AND tier IN ('validated_claim', 'fact')
 			FOR UPDATE
@@ -48,7 +52,7 @@ func supersedeV2OneCardinalityRelationships(
 		FROM updated
 	`, input.TeamID, input.OwnerProfileID, input.SubjectEntityID, input.PredicateKey,
 		input.Polarity, v2TimeArg(input.ValidFrom), v2TimeArg(input.ValidTo), input.ScopeKey,
-		keepRelationshipID, input.TeamID).Rows()
+		keepRelationshipID, input.PredicateVersion, input.PredicateVersion, input.TeamID).Rows()
 	if err != nil {
 		return err
 	}
