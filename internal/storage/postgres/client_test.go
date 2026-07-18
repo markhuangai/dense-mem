@@ -5,13 +5,16 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -131,25 +134,13 @@ func TestOpenFailsOnEmptyDSN(t *testing.T) {
 func TestMigratorRunUp(t *testing.T) {
 	ctx := context.Background()
 
-	dsn, cleanup := skipIfNoPostgres(t, ctx)
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
 
-	cfg := &testConfig{dsn: dsn}
-
-	db, err := Open(ctx, cfg)
-	require.NoError(t, err, "Open should succeed")
-	defer func() {
-		sqlDB, _ := db.DB()
-		if sqlDB != nil {
-			sqlDB.Close()
-		}
-	}()
-
-	m, err := NewMigrator(db)
-	require.NoError(t, err, "NewMigrator should succeed")
+	m := NewMigratorWithDB(sqlDB)
 
 	// Run up migrations
-	err = m.RunUp(ctx)
+	err := m.RunUp(ctx)
 	// Should succeed since we have a valid migrations directory
 	assert.NoError(t, err, "RunUp should succeed")
 	err = m.RunUp(ctx)
@@ -160,25 +151,13 @@ func TestMigratorRunUp(t *testing.T) {
 func TestMigratorRunDown(t *testing.T) {
 	ctx := context.Background()
 
-	dsn, cleanup := skipIfNoPostgres(t, ctx)
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
 
-	cfg := &testConfig{dsn: dsn}
-
-	db, err := Open(ctx, cfg)
-	require.NoError(t, err, "Open should succeed")
-	defer func() {
-		sqlDB, _ := db.DB()
-		if sqlDB != nil {
-			sqlDB.Close()
-		}
-	}()
-
-	m, err := NewMigrator(db)
-	require.NoError(t, err, "NewMigrator should succeed")
+	m := NewMigratorWithDB(sqlDB)
 
 	// First run up
-	err = m.RunUp(ctx)
+	err := m.RunUp(ctx)
 	require.NoError(t, err, "RunUp should succeed")
 
 	// Then run down
@@ -257,25 +236,13 @@ func TestV2SemanticLedgerMigrationGuardedRollbackRejectsCanonicalAuthority(t *te
 func TestMigratorStatus(t *testing.T) {
 	ctx := context.Background()
 
-	dsn, cleanup := skipIfNoPostgres(t, ctx)
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
 
-	cfg := &testConfig{dsn: dsn}
-
-	db, err := Open(ctx, cfg)
-	require.NoError(t, err, "Open should succeed")
-	defer func() {
-		sqlDB, _ := db.DB()
-		if sqlDB != nil {
-			sqlDB.Close()
-		}
-	}()
-
-	m, err := NewMigrator(db)
-	require.NoError(t, err, "NewMigrator should succeed")
+	m := NewMigratorWithDB(sqlDB)
 
 	// Run status
-	err = m.Status(ctx)
+	err := m.Status(ctx)
 	// Status may write to stdout, but should not error
 	assert.NoError(t, err, "Status should not error")
 }
@@ -330,6 +297,15 @@ func TestDBPingTimeout(t *testing.T) {
 func openMigrationSQLDB(t *testing.T, ctx context.Context) (*sql.DB, func()) {
 	t.Helper()
 	dsn, cleanup := skipIfNoPostgres(t, ctx)
+	if os.Getenv("DATABASE_URL") != "" {
+		isolatedDSN, isolatedCleanup := createMigrationTestDatabase(t, ctx, dsn)
+		dsn = isolatedDSN
+		baseCleanup := cleanup
+		cleanup = func() {
+			isolatedCleanup()
+			baseCleanup()
+		}
+	}
 	cfg := &testConfig{dsn: dsn}
 	db, err := Open(ctx, cfg)
 	require.NoError(t, err, "Open should succeed")
@@ -339,6 +315,134 @@ func openMigrationSQLDB(t *testing.T, ctx context.Context) (*sql.DB, func()) {
 		_ = sqlDB.Close()
 		cleanup()
 	}
+}
+
+func createMigrationTestDatabase(t *testing.T, ctx context.Context, dsn string) (string, func()) {
+	t.Helper()
+	adminDB, err := Open(ctx, &testConfig{dsn: dsn})
+	require.NoError(t, err, "Open should succeed")
+	adminSQLDB, err := adminDB.DB()
+	require.NoError(t, err, "underlying sql.DB should be available")
+
+	dbName := "dense_mem_migration_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	quotedName := quoteMigrationIdentifier(dbName)
+	if _, err := adminSQLDB.ExecContext(ctx, "CREATE DATABASE "+quotedName+" TEMPLATE template0"); err != nil {
+		closeErr := adminSQLDB.Close()
+		if isPostgresInsufficientPrivilege(err) {
+			if closeErr != nil {
+				t.Errorf("close migration admin database after CREATE DATABASE privilege error: %v", closeErr)
+			}
+			t.Skipf("Postgres migration tests require CREATE DATABASE privilege for DATABASE_URL isolation: %v", err)
+		}
+		if closeErr != nil {
+			t.Errorf("close migration admin database after CREATE DATABASE failure: %v", closeErr)
+		}
+		t.Fatalf("create migration test database %q: %v", dbName, err)
+	}
+
+	cleanup := func() {
+		if _, err := adminSQLDB.ExecContext(ctx, `
+			SELECT pg_terminate_backend(pid)
+			FROM pg_stat_activity
+			WHERE datname = $1
+			  AND pid <> pg_backend_pid()
+		`, dbName); err != nil {
+			t.Errorf("terminate connections to migration test database %q: %v", dbName, err)
+		}
+		if _, err := adminSQLDB.ExecContext(ctx, "DROP DATABASE IF EXISTS "+quotedName); err != nil {
+			t.Errorf("drop migration test database %q: %v", dbName, err)
+		}
+		_ = adminSQLDB.Close()
+	}
+	return migrationDatabaseDSN(t, dsn, dbName), cleanup
+}
+
+func migrationDatabaseDSN(t *testing.T, dsn string, dbName string) string {
+	t.Helper()
+	config, err := pgconn.ParseConfig(dsn)
+	require.NoError(t, err, "DATABASE_URL should be parseable")
+	config.Database = dbName
+	return migrationConnInfo(config)
+}
+
+func isPostgresInsufficientPrivilege(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "42501"
+}
+
+func migrationConnInfo(config *pgconn.Config) string {
+	fields := make([]string, 0, 8+len(config.RuntimeParams))
+	if config.Host != "" {
+		fields = append(fields, "host="+quoteConnInfoValue(config.Host))
+	}
+	if config.Port != 0 {
+		fields = append(fields, fmt.Sprintf("port=%d", config.Port))
+	}
+	fields = append(fields, "dbname="+quoteConnInfoValue(config.Database))
+	if config.User != "" {
+		fields = append(fields, "user="+quoteConnInfoValue(config.User))
+	}
+	if config.Password != "" {
+		fields = append(fields, "password="+quoteConnInfoValue(config.Password))
+	}
+	if config.ConnectTimeout > 0 {
+		fields = append(fields, fmt.Sprintf("connect_timeout=%d", int(config.ConnectTimeout.Seconds())))
+	}
+	if config.TLSConfig == nil {
+		fields = append(fields, "sslmode=disable")
+	}
+	keys := make([]string, 0, len(config.RuntimeParams))
+	for key := range config.RuntimeParams {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		fields = append(fields, key+"="+quoteConnInfoValue(config.RuntimeParams[key]))
+	}
+	return strings.Join(fields, " ")
+}
+
+func quoteConnInfoValue(value string) string {
+	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(value) + "'"
+}
+
+func quoteMigrationIdentifier(value string) string {
+	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
+}
+
+func TestMigrationDatabaseDSNUpdatesURL(t *testing.T) {
+	dsn := "postgres://test%20user:pa%20ss@localhost:5433/old%20db?sslmode=disable&application_name=dense+mem"
+	got := migrationDatabaseDSN(t, dsn, "new db")
+
+	config, err := pgconn.ParseConfig(got)
+	require.NoError(t, err)
+	assert.Equal(t, "new db", config.Database)
+	assert.Equal(t, "test user", config.User)
+	assert.Equal(t, "pa ss", config.Password)
+	assert.Equal(t, "localhost", config.Host)
+	assert.Equal(t, uint16(5433), config.Port)
+	assert.Equal(t, "dense mem", config.RuntimeParams["application_name"])
+	assert.Nil(t, config.TLSConfig)
+}
+
+func TestMigrationDatabaseDSNPreservesQuotedConninfoValues(t *testing.T) {
+	dsn := `host='localhost' user='test user' password='pa ss\'word' dbname='old db' sslmode=disable application_name='dense mem tests'`
+	got := migrationDatabaseDSN(t, dsn, "new db")
+
+	config, err := pgconn.ParseConfig(got)
+	require.NoError(t, err)
+	assert.Equal(t, "new db", config.Database)
+	assert.Equal(t, "test user", config.User)
+	assert.Equal(t, "pa ss'word", config.Password)
+	assert.Equal(t, "localhost", config.Host)
+	assert.Equal(t, "dense mem tests", config.RuntimeParams["application_name"])
+	assert.Nil(t, config.TLSConfig)
+}
+
+func TestPostgresInsufficientPrivilegeDetection(t *testing.T) {
+	assert.True(t, isPostgresInsufficientPrivilege(&pgconn.PgError{Code: "42501"}))
+	assert.False(t, isPostgresInsufficientPrivilege(&pgconn.PgError{Code: "42P04"}))
+	assert.False(t, isPostgresInsufficientPrivilege(errors.New("network failure")))
 }
 
 func runGooseUpTo(t *testing.T, ctx context.Context, db *sql.DB, version int64) {

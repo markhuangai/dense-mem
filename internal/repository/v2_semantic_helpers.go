@@ -675,6 +675,7 @@ func upsertV2RelationshipRecord(
 			SET predicate_version = ?,
 			    tier = ?,
 			    status = ?,
+			    recorded_to = CASE WHEN ? = 'active' THEN NULL ELSE recorded_to END,
 			    relationship_kind = ?,
 			    current_cardinality = ?,
 			    semantic_group_key = ?,
@@ -683,7 +684,7 @@ func upsertV2RelationshipRecord(
 			WHERE team_id = ?::uuid
 			  AND relationship_id = ?::uuid
 			  AND owner_profile_id = ?::uuid
-		`, input.PredicateVersion, tier, status, predicate.RelationshipKind, predicate.CurrentCardinality,
+		`, input.PredicateVersion, tier, status, status, predicate.RelationshipKind, predicate.CurrentCardinality,
 			semanticGroupKey, input.TeamID, existing.RelationshipID, input.OwnerProfileID)
 		if result.Error != nil {
 			return nil, result.Error
