@@ -186,7 +186,7 @@ func normalizeV2ApplyRelationshipDecisionInput(input V2ApplyRelationshipDecision
 		input.Support.SourceRevisionID = strings.TrimSpace(input.Support.SourceRevisionID)
 		input.Support.Authority = strings.TrimSpace(input.Support.Authority)
 		if input.Support.Authority == "" {
-			input.Support.Authority = "primary"
+			input.Support.Authority = string(domain.AuthorityPrimary)
 		}
 	}
 	return input
@@ -239,13 +239,13 @@ func validateV2ApplyRelationshipDecisionInput(input V2ApplyRelationshipDecisionI
 	if input.ValidFrom != nil && input.ValidTo != nil && input.ValidTo.Before(*input.ValidFrom) {
 		return errors.New("valid_to must be greater than or equal to valid_from")
 	}
-	if input.EvidenceVerdict == string(domain.V2VerificationEntailed) {
-		if input.Support == nil {
-			return errors.New("entailed relationship decisions require support")
-		}
+	if input.Support != nil {
 		if err := validateV2EvidenceSupportInput(*input.Support); err != nil {
 			return err
 		}
+	}
+	if input.EvidenceVerdict == string(domain.V2VerificationEntailed) && input.Support == nil {
+		return errors.New("entailed relationship decisions require support")
 	}
 	return nil
 }
@@ -264,14 +264,16 @@ func validateV2EvidenceSupportInput(input V2EvidenceSupportInput) error {
 			return fmt.Errorf("support.source_revision_id is invalid: %w", err)
 		}
 	}
+	if (input.SourceID == "") != (input.SourceRevisionID == "") {
+		return errors.New("support.source_id and source_revision_id must be provided together")
+	}
 	if input.SourceGroupKey == "" {
 		return errors.New("support.source_group_key is required")
 	}
 	if input.SpanStart < 0 || input.SpanEnd <= input.SpanStart {
 		return errors.New("support span is invalid")
 	}
-	if input.Authority != "primary" && input.Authority != "secondary" &&
-		input.Authority != "derived" && input.Authority != "authoritative" {
+	if !domain.Authority(input.Authority).IsValid() {
 		return fmt.Errorf("unsupported support authority %q", input.Authority)
 	}
 	return nil
@@ -337,7 +339,7 @@ func normalizeV2CreateHypothesisInput(input V2CreateHypothesisInput) V2CreateHyp
 	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
 	input.Status = strings.TrimSpace(input.Status)
 	if input.Status == "" {
-		input.Status = "candidate"
+		input.Status = string(domain.V2HypothesisProposed)
 	}
 	return input
 }
@@ -349,12 +351,10 @@ func validateV2CreateHypothesisInput(input V2CreateHypothesisInput) error {
 	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
 		return fmt.Errorf("owner_profile_id is required: %w", err)
 	}
-	switch input.Status {
-	case "candidate", "reinforced", "rejected", "promoted_candidate", "stale":
-		return nil
-	default:
+	if !v2Contains(domain.V2HypothesisStatuses(), input.Status) {
 		return fmt.Errorf("unsupported hypothesis status %q", input.Status)
 	}
+	return nil
 }
 
 func insertV2EntityName(ctx context.Context, tx *gorm.DB, input V2AddEntityNameInput) (string, error) {

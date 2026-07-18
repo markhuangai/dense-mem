@@ -459,6 +459,77 @@ func TestV2LedgerSourceRevisionCompareAndSet(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrV2SourceRevisionConflict), fmt.Sprintf("err=%v", err))
 }
 
+func TestV2LedgerAuthorityConstraintsUseCanonicalValues(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "team-authority")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "owner-authority")
+	repo := NewV2LedgerRepository(appDB, rls)
+
+	created, err := repo.CreateIngest(ctx, V2CreateIngestInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		Evidence: []V2EvidenceInput{{
+			Content:   "Canonical inferred authority is accepted.",
+			Authority: "inferred",
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, created.Evidence, 1)
+
+	_, err = repo.CreateIngest(ctx, V2CreateIngestInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		Evidence: []V2EvidenceInput{{
+			Content:   "Legacy derived authority is rejected.",
+			Authority: "derived",
+		}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "authority is unsupported")
+
+	err = rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO evidence_sources (team_id, owner_profile_id, source_key, source_kind, authority)
+			VALUES (?::uuid, ?::uuid, 'doc://canonical-authority', 'document', 'unknown')
+		`, teamID, ownerID).Error
+	})
+	require.NoError(t, err)
+
+	err = rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO evidence_sources (team_id, owner_profile_id, source_key, source_kind, authority)
+			VALUES (?::uuid, ?::uuid, 'doc://legacy-derived-authority', 'document', 'derived')
+		`, teamID, ownerID).Error
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "evidence_sources_authority_check")
+}
+
+func TestV2ReferenceDefinitionGuardRequiresSystemOrMigrationMode(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "team-reference-guard")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "owner-reference-guard")
+
+	err := insertV2PredicateDefinitionForTest(adminDB, "test_missing_mode_"+strings.ReplaceAll(uuid.NewString(), "-", ""))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requires system or migration mode")
+
+	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return insertV2PredicateDefinitionForTest(tx, "test_profile_mode_"+strings.ReplaceAll(uuid.NewString(), "-", ""))
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requires system or migration mode")
+
+	err = rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return insertV2PredicateDefinitionForTest(tx, "test_migration_mode_"+strings.ReplaceAll(uuid.NewString(), "-", ""))
+	})
+	require.NoError(t, err)
+}
+
 func TestV2LedgerPlacementClaimIsTeamLocal(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
 	defer cleanup()
@@ -497,4 +568,15 @@ func TestV2LedgerPlacementClaimIsTeamLocal(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrV2PlacementLeaseConflict), fmt.Sprintf("err=%v", err))
 
 	require.NoError(t, repo.FinishPlacementRun(ctx, teamA, claimed.PlacementRunID, "worker-a", "completed", ""))
+}
+
+func insertV2PredicateDefinitionForTest(db *gorm.DB, predicateKey string) error {
+	return db.Exec(`
+		INSERT INTO predicate_definitions (
+			predicate_key, version, allowed_subject_kinds, allowed_object_kinds,
+			relationship_kind, current_cardinality
+		) VALUES (
+			?, 1, ARRAY['project']::text[], ARRAY['product']::text[], 'state', 'many'
+		)
+	`, predicateKey).Error
 }

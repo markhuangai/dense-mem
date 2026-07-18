@@ -112,31 +112,20 @@ func validateV2SupportOwnership(ctx context.Context, tx *gorm.DB, input V2ApplyR
 	} else if !ok {
 		return ErrV2SemanticOwnerMismatch
 	}
-	if input.Support.SourceID != "" {
-		if ok, err := existsV2OwnerReference(ctx, tx, `
-			SELECT EXISTS (
-				SELECT 1
-				FROM evidence_sources
-				WHERE team_id = ?::uuid
-				  AND source_id = ?::uuid
-				  AND owner_profile_id = ?::uuid
-			)
-		`, input.TeamID, input.Support.SourceID, input.OwnerProfileID); err != nil {
-			return err
-		} else if !ok {
-			return ErrV2SemanticOwnerMismatch
-		}
+	if (input.Support.SourceID == "") != (input.Support.SourceRevisionID == "") {
+		return errors.New("support source and source revision must be provided together")
 	}
-	if input.Support.SourceRevisionID != "" {
+	if input.Support.SourceID != "" {
 		if ok, err := existsV2OwnerReference(ctx, tx, `
 			SELECT EXISTS (
 				SELECT 1
 				FROM evidence_source_revisions
 				WHERE team_id = ?::uuid
+				  AND source_id = ?::uuid
 				  AND source_revision_id = ?::uuid
 				  AND owner_profile_id = ?::uuid
 			)
-		`, input.TeamID, input.Support.SourceRevisionID, input.OwnerProfileID); err != nil {
+		`, input.TeamID, input.Support.SourceID, input.Support.SourceRevisionID, input.OwnerProfileID); err != nil {
 			return err
 		} else if !ok {
 			return ErrV2SemanticOwnerMismatch
@@ -189,21 +178,26 @@ func requireV2RelationshipVersion(
 	return nil
 }
 
-func requireV2VerificationOwner(ctx context.Context, tx *gorm.DB, teamID, verificationEventID, ownerProfileID string) error {
+func requireV2VerificationForRelationship(ctx context.Context, tx *gorm.DB, teamID, verificationEventID, ownerProfileID, relationshipID string) error {
 	exists, err := existsV2OwnerReference(ctx, tx, `
 		SELECT EXISTS (
 			SELECT 1
-			FROM verification_events
-			WHERE team_id = ?::uuid
-			  AND verification_event_id = ?::uuid
-			  AND owner_profile_id = ?::uuid
+			FROM verification_events AS event
+			JOIN relationship_observations AS observation
+			  ON observation.team_id = event.team_id
+			 AND observation.observation_id = event.observation_id
+			 AND observation.owner_profile_id = event.owner_profile_id
+			WHERE event.team_id = ?::uuid
+			  AND event.verification_event_id = ?::uuid
+			  AND event.owner_profile_id = ?::uuid
+			  AND observation.relationship_id = ?::uuid
 		)
-	`, teamID, verificationEventID, ownerProfileID)
+	`, teamID, verificationEventID, ownerProfileID, relationshipID)
 	if err != nil {
 		return err
 	}
 	if !exists {
-		return ErrV2SemanticOwnerMismatch
+		return errors.New("verification event does not match source relationship")
 	}
 	return nil
 }
@@ -251,9 +245,6 @@ func insertV2RelationshipSupport(
 ) (string, string, error) {
 	metadata, err := marshalV2JSON(input.Support.Metadata)
 	if err != nil {
-		return "", "", err
-	}
-	if err := validateV2SupportOwnership(ctx, tx, input); err != nil {
 		return "", "", err
 	}
 	rows, err := tx.WithContext(ctx).Raw(`

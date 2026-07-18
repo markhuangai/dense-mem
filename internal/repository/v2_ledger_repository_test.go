@@ -12,6 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 func TestV2LedgerCreateIngestValidationRejectsHashMismatch(t *testing.T) {
@@ -46,6 +48,38 @@ func TestV2LedgerCreateIngestValidationRejectsTooManyEvidenceItems(t *testing.T)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exceeds maximum")
+}
+
+func TestV2LedgerCreateIngestValidationUsesCanonicalAuthority(t *testing.T) {
+	for _, authority := range []domain.Authority{
+		domain.AuthorityAuthoritative,
+		domain.AuthorityPrimary,
+		domain.AuthoritySecondary,
+		domain.AuthorityInferred,
+		domain.AuthorityUnknown,
+	} {
+		input := validV2CreateIngestInput()
+		input.Evidence[0].Authority = string(authority)
+		err := validateV2CreateIngestInput(normalizeV2CreateIngestInput(input))
+		require.NoError(t, err, "authority %s", authority)
+	}
+
+	input := validV2CreateIngestInput()
+	input.Evidence[0].Authority = "derived"
+	err := validateV2CreateIngestInput(normalizeV2CreateIngestInput(input))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "authority is unsupported")
+}
+
+func TestV2LedgerAdvanceSourceRevisionValidationUsesCanonicalAuthority(t *testing.T) {
+	input := validV2AdvanceSourceRevisionInput()
+	input.Authority = string(domain.AuthorityInferred)
+	require.NoError(t, validateV2AdvanceSourceRevisionInput(normalizeV2AdvanceSourceRevisionInput(input)))
+
+	input.Authority = "derived"
+	err := validateV2AdvanceSourceRevisionInput(normalizeV2AdvanceSourceRevisionInput(input))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "authority is unsupported")
 }
 
 func TestV2LedgerCreateIngestFailsClosedWithoutDependencies(t *testing.T) {
@@ -86,5 +120,15 @@ func validV2CreateIngestInput() V2CreateIngestInput {
 		Evidence: []V2EvidenceInput{{
 			Content: strings.Repeat("exact evidence ", 2),
 		}},
+	}
+}
+
+func validV2AdvanceSourceRevisionInput() V2AdvanceSourceRevisionInput {
+	return V2AdvanceSourceRevisionInput{
+		TeamID:         uuid.NewString(),
+		OwnerProfileID: uuid.NewString(),
+		SourceKey:      "doc://policy",
+		RevisionToken:  "rev-1",
+		ContentHash:    "sha256:policy",
 	}
 }

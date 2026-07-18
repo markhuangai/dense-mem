@@ -226,6 +226,9 @@ func (r *V2SemanticRepositoryImpl) ApplyRelationshipDecision(
 		if err := ensureV2SemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
 			return err
 		}
+		if err := validateV2SupportOwnership(ctx, tx, input); err != nil {
+			return err
+		}
 		predicate, err := loadV2PredicateDefinition(ctx, tx, input.PredicateKey, input.PredicateVersion)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			review, err := insertV2PredicateReview(ctx, tx, input)
@@ -356,7 +359,7 @@ func (r *V2SemanticRepositoryImpl) AppendCrossReference(ctx context.Context, inp
 		if err := requireV2RelationshipVersion(ctx, tx, input.TeamID, input.TargetRelationshipID, "", input.TargetRelationshipVersion); err != nil {
 			return err
 		}
-		if err := requireV2VerificationOwner(ctx, tx, input.TeamID, input.VerificationEventID, input.AuthorProfileID); err != nil {
+		if err := requireV2VerificationForRelationship(ctx, tx, input.TeamID, input.VerificationEventID, input.AuthorProfileID, input.SourceRelationshipID); err != nil {
 			return err
 		}
 		metadata, err := marshalV2JSON(input.Metadata)
@@ -398,6 +401,9 @@ func (r *V2SemanticRepositoryImpl) CreateHypothesis(ctx context.Context, input V
 	}
 	var hypothesisID string
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
+		if err := ensureV2SemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
+			return err
+		}
 		payload, err := marshalV2JSON(input.Payload)
 		if err != nil {
 			return err

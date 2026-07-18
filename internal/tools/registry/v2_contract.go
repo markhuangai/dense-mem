@@ -500,8 +500,11 @@ func v2RelationshipProposalArraySchema() map[string]any {
 					},
 					"required": []string{"type", "value"},
 				},
-				"polarity": schemaEnum([]string{"+", "-"}),
-				"modality": schemaEnum([]string{"statement", "question", "proposal", "speculation", "quoted"}),
+				"polarity":       schemaEnum([]string{"+", "-"}),
+				"modality":       schemaEnum([]string{"statement", "question", "proposal", "speculation", "quoted"}),
+				"valid_from":     v2NullableDateTime("Evidence-supported validity start."),
+				"valid_to":       v2NullableDateTime("Evidence-supported validity end."),
+				"client_comment": v2NullableString("Non-authoritative extraction note.", 1000),
 				"evidence": map[string]any{
 					"type":     "array",
 					"minItems": 1,
@@ -516,9 +519,6 @@ func v2RelationshipProposalArraySchema() map[string]any {
 							"end":            map[string]any{"type": "integer", "minimum": 0},
 						},
 					},
-					"valid_from":     v2NullableDateTime("Evidence-supported validity start."),
-					"valid_to":       v2NullableDateTime("Evidence-supported validity end."),
-					"client_comment": v2NullableString("Non-authoritative extraction note.", 1000),
 				},
 			},
 			"additionalProperties": false,
@@ -643,7 +643,7 @@ func v2RecallFeedbackInputSchema() map[string]any {
 
 func v2ListDreamsInputSchema() map[string]any {
 	return v2ContractInput(nil, map[string]any{
-		"status": schemaEnum([]string{"proposed", "reinforced", "stale", "rejected", "submitted"}),
+		"status": schemaEnum(domain.V2HypothesisStatuses()),
 		"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
 		"cursor": schemaString("Opaque page cursor.", 512),
 	})

@@ -8,7 +8,7 @@ SELECT set_config('app.current_profile_id', '', true);
 CREATE OR REPLACE FUNCTION prevent_v2_reference_definition_mutation()
 RETURNS TRIGGER AS $$
 BEGIN
-    IF current_setting('app.tx_mode', true) NOT IN ('system', 'migration') THEN
+    IF COALESCE(current_setting('app.tx_mode', true), '') NOT IN ('system', 'migration') THEN
         RAISE EXCEPTION '% is reference data: % requires system or migration mode', TG_TABLE_NAME, TG_OP;
     END IF;
     IF TG_OP IN ('UPDATE', 'DELETE') THEN
@@ -55,6 +55,53 @@ INSERT INTO predicate_definitions (
     ('primary_database', 1, ARRAY['main_database']::text[], ARRAY['project','product','organization','other']::text[], ARRAY['project','product','concept','other']::text[], 'state', 'one'),
 	    ('released', 1, ARRAY['shipped']::text[], ARRAY['project','product','other']::text[], ARRAY['date','date_time','string']::text[], 'event', 'many')
 	ON CONFLICT (predicate_key, version) DO NOTHING;
+
+DO $$
+DECLARE
+    source_authorities TEXT;
+    fragment_authorities TEXT;
+BEGIN
+    SELECT string_agg(format('%s=%s', authority, row_count), ', ' ORDER BY authority)
+    INTO source_authorities
+    FROM (
+        SELECT authority, count(*) AS row_count
+        FROM evidence_sources
+        WHERE authority NOT IN ('authoritative', 'primary', 'secondary', 'inferred', 'unknown')
+        GROUP BY authority
+    ) AS invalid_sources;
+
+    SELECT string_agg(format('%s=%s', authority, row_count), ', ' ORDER BY authority)
+    INTO fragment_authorities
+    FROM (
+        SELECT authority, count(*) AS row_count
+        FROM evidence_fragments
+        WHERE authority NOT IN ('authoritative', 'primary', 'secondary', 'inferred', 'unknown')
+        GROUP BY authority
+    ) AS invalid_fragments;
+
+    IF source_authorities IS NOT NULL OR fragment_authorities IS NOT NULL THEN
+        RAISE EXCEPTION
+            'cannot apply 2026071704: canonical evidence authority required; evidence_sources [%], evidence_fragments [%]',
+            COALESCE(source_authorities, 'none'),
+            COALESCE(fragment_authorities, 'none');
+    END IF;
+END $$;
+
+ALTER TABLE evidence_sources
+    DROP CONSTRAINT IF EXISTS evidence_sources_authority_check;
+ALTER TABLE evidence_sources
+    ADD CONSTRAINT evidence_sources_authority_check
+    CHECK (authority IN ('authoritative', 'primary', 'secondary', 'inferred', 'unknown')) NOT VALID;
+ALTER TABLE evidence_sources
+    VALIDATE CONSTRAINT evidence_sources_authority_check;
+
+ALTER TABLE evidence_fragments
+    DROP CONSTRAINT IF EXISTS evidence_fragments_authority_check;
+ALTER TABLE evidence_fragments
+    ADD CONSTRAINT evidence_fragments_authority_check
+    CHECK (authority IN ('authoritative', 'primary', 'secondary', 'inferred', 'unknown')) NOT VALID;
+ALTER TABLE evidence_fragments
+    VALIDATE CONSTRAINT evidence_fragments_authority_check;
 
 ALTER TABLE evidence_fragments
     DROP CONSTRAINT IF EXISTS evidence_fragments_fragment_owner_ref_unique;
@@ -340,14 +387,21 @@ CREATE TABLE IF NOT EXISTS relationship_evidence_supports (
 	    FOREIGN KEY (team_id, source_revision_id) REFERENCES evidence_source_revisions(team_id, source_revision_id) ON DELETE RESTRICT,
 	    FOREIGN KEY (team_id, source_revision_id, owner_profile_id)
 	        REFERENCES evidence_source_revisions(team_id, source_revision_id, owner_profile_id) ON DELETE RESTRICT,
-	    CONSTRAINT relationship_supports_source_group_nonempty CHECK (btrim(source_group_key) <> ''),
+	    FOREIGN KEY (team_id, source_id, source_revision_id, owner_profile_id)
+	        REFERENCES evidence_source_revisions(team_id, source_id, source_revision_id, owner_profile_id)
+	        ON DELETE RESTRICT,
+    CONSTRAINT relationship_supports_source_group_nonempty CHECK (btrim(source_group_key) <> ''),
+    CONSTRAINT relationship_supports_source_revision_pair_check CHECK (
+        (source_id IS NULL AND source_revision_id IS NULL)
+        OR (source_id IS NOT NULL AND source_revision_id IS NOT NULL)
+    ),
     CONSTRAINT relationship_supports_span_check CHECK (span_start >= 0 AND span_end > span_start),
-    CONSTRAINT relationship_supports_authority_check CHECK (authority IN ('primary', 'secondary', 'derived', 'authoritative')),
+    CONSTRAINT relationship_supports_authority_check CHECK (authority IN ('authoritative', 'primary', 'secondary', 'inferred', 'unknown')),
     CONSTRAINT relationship_supports_metadata_object_check CHECK (jsonb_typeof(metadata) = 'object'),
-	    CONSTRAINT relationship_supports_identity_unique UNIQUE (
-	        team_id, relationship_id, owner_profile_id, fragment_id, span_start, span_end
-	    )
-	);
+    CONSTRAINT relationship_supports_identity_unique UNIQUE (
+        team_id, relationship_id, owner_profile_id, fragment_id, span_start, span_end
+    )
+		);
 
 CREATE TABLE IF NOT EXISTS relationship_support_decision_events (
     team_id UUID NOT NULL,
@@ -550,13 +604,13 @@ CREATE TABLE IF NOT EXISTS hypotheses (
     team_id UUID NOT NULL,
     hypothesis_id UUID NOT NULL DEFAULT gen_random_uuid(),
     owner_profile_id UUID NOT NULL,
-    status TEXT NOT NULL DEFAULT 'candidate',
+    status TEXT NOT NULL DEFAULT 'proposed',
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (team_id, hypothesis_id),
     FOREIGN KEY (team_id, owner_profile_id) REFERENCES semantic_profile_refs(team_id, profile_id) ON DELETE RESTRICT,
-    CONSTRAINT hypotheses_status_check CHECK (status IN ('candidate', 'reinforced', 'rejected', 'promoted_candidate', 'stale')),
+    CONSTRAINT hypotheses_status_check CHECK (status IN ('proposed', 'reinforced', 'stale', 'rejected', 'submitted')),
     CONSTRAINT hypotheses_payload_object_check CHECK (jsonb_typeof(payload) = 'object')
 );
 
@@ -833,6 +887,37 @@ SELECT set_config('app.tx_mode', 'migration', true);
 SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
 
+DO $$
+DECLARE
+    source_authorities TEXT;
+    fragment_authorities TEXT;
+BEGIN
+    SELECT string_agg(format('%s=%s', authority, row_count), ', ' ORDER BY authority)
+    INTO source_authorities
+    FROM (
+        SELECT authority, count(*) AS row_count
+        FROM evidence_sources
+        WHERE authority NOT IN ('primary', 'secondary', 'derived')
+        GROUP BY authority
+    ) AS invalid_sources;
+
+    SELECT string_agg(format('%s=%s', authority, row_count), ', ' ORDER BY authority)
+    INTO fragment_authorities
+    FROM (
+        SELECT authority, count(*) AS row_count
+        FROM evidence_fragments
+        WHERE authority NOT IN ('primary', 'secondary', 'derived')
+        GROUP BY authority
+    ) AS invalid_fragments;
+
+    IF source_authorities IS NOT NULL OR fragment_authorities IS NOT NULL THEN
+        RAISE EXCEPTION
+            'cannot roll back 2026071704: 1703 evidence authority values required; evidence_sources [%], evidence_fragments [%]',
+            COALESCE(source_authorities, 'none'),
+            COALESCE(fragment_authorities, 'none');
+    END IF;
+END $$;
+
 UPDATE app_config
 SET value = regexp_replace(
         to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
@@ -860,6 +945,20 @@ DROP TABLE IF EXISTS entity_records;
 DROP TABLE IF EXISTS predicate_definitions;
 ALTER TABLE placement_items DROP CONSTRAINT IF EXISTS placement_items_owner_ref_unique;
 ALTER TABLE evidence_fragments DROP CONSTRAINT IF EXISTS evidence_fragments_fragment_owner_ref_unique;
+ALTER TABLE evidence_fragments
+    DROP CONSTRAINT IF EXISTS evidence_fragments_authority_check;
+ALTER TABLE evidence_fragments
+    ADD CONSTRAINT evidence_fragments_authority_check
+    CHECK (authority IN ('primary', 'secondary', 'derived')) NOT VALID;
+ALTER TABLE evidence_fragments
+    VALIDATE CONSTRAINT evidence_fragments_authority_check;
+ALTER TABLE evidence_sources
+    DROP CONSTRAINT IF EXISTS evidence_sources_authority_check;
+ALTER TABLE evidence_sources
+    ADD CONSTRAINT evidence_sources_authority_check
+    CHECK (authority IN ('primary', 'secondary', 'derived')) NOT VALID;
+ALTER TABLE evidence_sources
+    VALIDATE CONSTRAINT evidence_sources_authority_check;
 DROP FUNCTION IF EXISTS prevent_v2_reference_definition_mutation();
 
 -- +goose StatementEnd
