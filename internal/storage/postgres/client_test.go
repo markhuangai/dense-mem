@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -131,25 +132,13 @@ func TestOpenFailsOnEmptyDSN(t *testing.T) {
 func TestMigratorRunUp(t *testing.T) {
 	ctx := context.Background()
 
-	dsn, cleanup := skipIfNoPostgres(t, ctx)
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
 
-	cfg := &testConfig{dsn: dsn}
-
-	db, err := Open(ctx, cfg)
-	require.NoError(t, err, "Open should succeed")
-	defer func() {
-		sqlDB, _ := db.DB()
-		if sqlDB != nil {
-			sqlDB.Close()
-		}
-	}()
-
-	m, err := NewMigrator(db)
-	require.NoError(t, err, "NewMigrator should succeed")
+	m := NewMigratorWithDB(sqlDB)
 
 	// Run up migrations
-	err = m.RunUp(ctx)
+	err := m.RunUp(ctx)
 	// Should succeed since we have a valid migrations directory
 	assert.NoError(t, err, "RunUp should succeed")
 	err = m.RunUp(ctx)
@@ -160,25 +149,13 @@ func TestMigratorRunUp(t *testing.T) {
 func TestMigratorRunDown(t *testing.T) {
 	ctx := context.Background()
 
-	dsn, cleanup := skipIfNoPostgres(t, ctx)
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
 
-	cfg := &testConfig{dsn: dsn}
-
-	db, err := Open(ctx, cfg)
-	require.NoError(t, err, "Open should succeed")
-	defer func() {
-		sqlDB, _ := db.DB()
-		if sqlDB != nil {
-			sqlDB.Close()
-		}
-	}()
-
-	m, err := NewMigrator(db)
-	require.NoError(t, err, "NewMigrator should succeed")
+	m := NewMigratorWithDB(sqlDB)
 
 	// First run up
-	err = m.RunUp(ctx)
+	err := m.RunUp(ctx)
 	require.NoError(t, err, "RunUp should succeed")
 
 	// Then run down
@@ -257,25 +234,13 @@ func TestV2SemanticLedgerMigrationGuardedRollbackRejectsCanonicalAuthority(t *te
 func TestMigratorStatus(t *testing.T) {
 	ctx := context.Background()
 
-	dsn, cleanup := skipIfNoPostgres(t, ctx)
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
 
-	cfg := &testConfig{dsn: dsn}
-
-	db, err := Open(ctx, cfg)
-	require.NoError(t, err, "Open should succeed")
-	defer func() {
-		sqlDB, _ := db.DB()
-		if sqlDB != nil {
-			sqlDB.Close()
-		}
-	}()
-
-	m, err := NewMigrator(db)
-	require.NoError(t, err, "NewMigrator should succeed")
+	m := NewMigratorWithDB(sqlDB)
 
 	// Run status
-	err = m.Status(ctx)
+	err := m.Status(ctx)
 	// Status may write to stdout, but should not error
 	assert.NoError(t, err, "Status should not error")
 }
@@ -330,6 +295,15 @@ func TestDBPingTimeout(t *testing.T) {
 func openMigrationSQLDB(t *testing.T, ctx context.Context) (*sql.DB, func()) {
 	t.Helper()
 	dsn, cleanup := skipIfNoPostgres(t, ctx)
+	if os.Getenv("DATABASE_URL") != "" {
+		isolatedDSN, isolatedCleanup := createMigrationTestDatabase(t, ctx, dsn)
+		dsn = isolatedDSN
+		baseCleanup := cleanup
+		cleanup = func() {
+			isolatedCleanup()
+			baseCleanup()
+		}
+	}
 	cfg := &testConfig{dsn: dsn}
 	db, err := Open(ctx, cfg)
 	require.NoError(t, err, "Open should succeed")
@@ -339,6 +313,59 @@ func openMigrationSQLDB(t *testing.T, ctx context.Context) (*sql.DB, func()) {
 		_ = sqlDB.Close()
 		cleanup()
 	}
+}
+
+func createMigrationTestDatabase(t *testing.T, ctx context.Context, dsn string) (string, func()) {
+	t.Helper()
+	adminDB, err := Open(ctx, &testConfig{dsn: dsn})
+	require.NoError(t, err, "Open should succeed")
+	adminSQLDB, err := adminDB.DB()
+	require.NoError(t, err, "underlying sql.DB should be available")
+
+	dbName := "dense_mem_migration_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	quotedName := quoteMigrationIdentifier(dbName)
+	if _, err := adminSQLDB.ExecContext(ctx, "CREATE DATABASE "+quotedName+" TEMPLATE template0"); err != nil {
+		_ = adminSQLDB.Close()
+		t.Skipf("Postgres migration tests require CREATE DATABASE privilege for DATABASE_URL isolation: %v", err)
+	}
+
+	cleanup := func() {
+		_, _ = adminSQLDB.ExecContext(ctx, `
+			SELECT pg_terminate_backend(pid)
+			FROM pg_stat_activity
+			WHERE datname = $1
+			  AND pid <> pg_backend_pid()
+		`, dbName)
+		_, _ = adminSQLDB.ExecContext(ctx, "DROP DATABASE IF EXISTS "+quotedName)
+		_ = adminSQLDB.Close()
+	}
+	return migrationDatabaseDSN(t, dsn, dbName), cleanup
+}
+
+func migrationDatabaseDSN(t *testing.T, dsn string, dbName string) string {
+	t.Helper()
+	if strings.Contains(dsn, "://") {
+		parsed, err := url.Parse(dsn)
+		require.NoError(t, err, "DATABASE_URL should be parseable")
+		parsed.Path = "/" + dbName
+		return parsed.String()
+	}
+	fields := strings.Fields(dsn)
+	replaced := false
+	for i, field := range fields {
+		if strings.HasPrefix(field, "dbname=") {
+			fields[i] = "dbname=" + dbName
+			replaced = true
+		}
+	}
+	if !replaced {
+		fields = append(fields, "dbname="+dbName)
+	}
+	return strings.Join(fields, " ")
+}
+
+func quoteMigrationIdentifier(value string) string {
+	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
 }
 
 func runGooseUpTo(t *testing.T, ctx context.Context, db *sql.DB, version int64) {

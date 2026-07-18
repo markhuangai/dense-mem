@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"sync"
 	"testing"
@@ -698,6 +699,57 @@ func TestV2SemanticOneCardinalitySupersedesPriorActiveRelationship(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	assert.Equal(t, second.Relationship.RelationshipID, edges[0].RelationshipID)
+
+	thirdIngest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"primary database postgres again", "Dense-Mem now uses PostgreSQL as its primary database.")
+	third := applyV2SemanticDecision(t, ctx, semanticRepo, V2ApplyRelationshipDecisionInput{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        thirdIngest.IngestID,
+		SubjectEntityID: denseMem.EntityID,
+		PredicateKey:    "primary_database",
+		ObjectEntityID:  postgres.EntityID,
+		Support: &V2EvidenceSupportInput{
+			FragmentID:     thirdIngest.Evidence[0].FragmentID,
+			SourceGroupKey: "conversation:primary-db-3",
+			SpanStart:      0,
+			SpanEnd:        len("Dense-Mem now uses PostgreSQL as its primary database."),
+			Authority:      "primary",
+		},
+	})
+	require.Equal(t, first.Relationship.RelationshipID, third.Relationship.RelationshipID)
+	assert.Equal(t, "active", third.Relationship.Status)
+
+	var reopenedStatus string
+	var reopenedRecordedTo sql.NullTime
+	var supersededStatus string
+	var supersededRecordedTo sql.NullTime
+	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT status, recorded_to
+			FROM relationship_records
+			WHERE team_id = ?::uuid
+			  AND relationship_id = ?::uuid
+		`, teamID, third.Relationship.RelationshipID).Row().Scan(&reopenedStatus, &reopenedRecordedTo); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT status, recorded_to
+			FROM relationship_records
+			WHERE team_id = ?::uuid
+			  AND relationship_id = ?::uuid
+		`, teamID, second.Relationship.RelationshipID).Row().Scan(&supersededStatus, &supersededRecordedTo)
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "active", reopenedStatus)
+	assert.False(t, reopenedRecordedTo.Valid)
+	assert.Equal(t, "superseded", supersededStatus)
+	assert.True(t, supersededRecordedTo.Valid)
+
+	edges, err = semanticRepo.ListSemanticEdges(ctx, teamID, 20)
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+	assert.Equal(t, third.Relationship.RelationshipID, edges[0].RelationshipID)
 }
 
 func TestV2SemanticAppendOnlyHistoryAndRetraction(t *testing.T) {
