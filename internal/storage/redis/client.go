@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"time"
 
@@ -40,14 +41,14 @@ type ConfigProvider interface {
 	GetRedisDB() int
 }
 
+type tlsConfigProvider interface {
+	GetRedisTLSEnabled() bool
+}
+
 // NewClient creates a new Redis client wrapper.
 // It establishes the connection and pings the server to verify connectivity.
 func NewClient(ctx context.Context, cfg ConfigProvider) (*RedisClient, error) {
-	client := redis.NewClient(&redis.Options{
-		Addr:     cfg.GetRedisAddr(),
-		Password: cfg.GetRedisPassword(),
-		DB:       cfg.GetRedisDB(),
-	})
+	client := redis.NewClient(optionsFromConfig(cfg))
 
 	// Verify connection with ping
 	if err := client.Ping(ctx).Err(); err != nil {
@@ -58,6 +59,18 @@ func NewClient(ctx context.Context, cfg ConfigProvider) (*RedisClient, error) {
 		client:     client,
 		keyBuilder: NewKeyBuilder(),
 	}, nil
+}
+
+func optionsFromConfig(cfg ConfigProvider) *redis.Options {
+	options := &redis.Options{
+		Addr:     cfg.GetRedisAddr(),
+		Password: cfg.GetRedisPassword(),
+		DB:       cfg.GetRedisDB(),
+	}
+	if tlsCfg, ok := cfg.(tlsConfigProvider); ok && tlsCfg.GetRedisTLSEnabled() {
+		options.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	return options
 }
 
 // Ping verifies the Redis connection is healthy.

@@ -147,7 +147,7 @@ var _ TestEnvProvider = (*TestEnv)(nil)
 func (te *TestEnv) Setup(ctx context.Context) error {
 	// Start Postgres container
 	pgContainer, err := postgrescontainer.Run(ctx,
-		"postgres:18-alpine",
+		"pgvector/pgvector:0.8.2-pg18-trixie",
 		postgrescontainer.WithDatabase("uatdb"),
 		postgrescontainer.WithUsername("uatuser"),
 		postgrescontainer.WithPassword("uatpass"),
@@ -575,7 +575,6 @@ func (te *TestEnv) buildConfigConcrete() config.Config {
 
 // testConfig implements config.ConfigProvider
 type testConfig struct {
-	config.Config
 	postgresDSN             string
 	neo4jURI                string
 	neo4jUser               string

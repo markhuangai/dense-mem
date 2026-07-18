@@ -89,9 +89,6 @@ func main() {
 	if err := cfg.ValidateServerStartup(); err != nil {
 		log.Fatalf("invalid startup config: %v", err)
 	}
-	if err := cfg.ValidateV2DormantStartup(); err != nil {
-		log.Fatalf("invalid v2 startup config: %v", err)
-	}
 
 	// Create logger
 	level := slog.LevelInfo
@@ -115,10 +112,8 @@ func main() {
 		log.Fatalf("failed to connect to postgres: %v", err)
 	}
 	defer pgDB.Close()
-	if cfg.IsV2BootEnabled() {
-		if err := postgres.ValidateSinglePrimaryTopology(startupCtx, pgDB.GetDB()); err != nil {
-			log.Fatalf("unsupported postgres topology for v2 dormant bootstrap: %v", err)
-		}
+	if err := postgres.ValidateSinglePrimaryTopology(startupCtx, pgDB.GetDB()); err != nil {
+		log.Fatalf("unsupported postgres topology: %v", err)
 	}
 
 	logger.Info("running postgres migrations")
@@ -126,6 +121,9 @@ func main() {
 		log.Fatalf("failed to run postgres migrations: %v", err)
 	}
 	logger.Info("postgres migrations completed")
+	if err := postgres.CheckPGVectorExtension(startupCtx, pgDB.GetDB()); err != nil {
+		log.Fatalf("pgvector extension check failed: %v", err)
+	}
 
 	// ========================================
 	// Embedding consistency check
@@ -166,10 +164,6 @@ func main() {
 		log.Fatalf("failed to build backend: %v", err)
 	}
 	defer backend.closeFn()
-	v2Bootstrap := buildDormantV2Bootstrap(cfg, pgDB.GetDB())
-	if v2Bootstrap.Enabled {
-		logger.Info("v2 dormant bootstrap enabled", observability.String("mode", v2Bootstrap.Mode))
-	}
 
 	// Emit warning if running in degraded (in-memory) mode
 	logInMemoryModeWarning(logger, backend.degraded, backend.reason)
@@ -491,6 +485,12 @@ func main() {
 		{Name: "postgres", Check: func(ctx context.Context) error {
 			return pgDB.Ping(ctx)
 		}},
+		{Name: "postgres_topology", Check: func(ctx context.Context) error {
+			return postgres.ValidateSinglePrimaryTopology(ctx, pgDB.GetDB())
+		}},
+		{Name: "pgvector", Check: func(ctx context.Context) error {
+			return postgres.CheckPGVectorExtension(ctx, pgDB.GetDB())
+		}},
 		{Name: "neo4j", Check: func(ctx context.Context) error {
 			return neo4jClient.Verify(ctx)
 		}},
@@ -502,7 +502,6 @@ func main() {
 			Check: backend.redisPingFn,
 		})
 	}
-	checks = append(checks, v2Bootstrap.HealthChecks()...)
 
 	// ========================================
 	// Create Echo server
