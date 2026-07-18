@@ -34,7 +34,7 @@ func AIVerifierTemperatureDisabled(cfg ConfigProvider) bool {
 // Config holds all configuration for the application.
 // All fields are populated from environment variables with sensible defaults.
 type Config struct {
-	PostgresDSN                     string
+	PostgresDSN                     string `json:"-"`
 	PostgresMaxOpenConns            int
 	PostgresMaxIdleConns            int
 	PostgresConnMaxLifetimeSeconds  int
@@ -44,10 +44,10 @@ type Config struct {
 	PostgresLockTimeoutSeconds      int
 	Neo4jURI                        string
 	Neo4jUser                       string
-	Neo4jPassword                   string
+	Neo4jPassword                   string `json:"-"`
 	Neo4jDatabase                   string
 	RedisAddr                       string
-	RedisPassword                   string
+	RedisPassword                   string `json:"-"`
 	RedisDB                         int
 	HTTPMaxBodyBytes                int
 	AuthVerifyMaxConcurrency        int

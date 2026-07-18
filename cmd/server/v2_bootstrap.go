@@ -14,8 +14,8 @@ import (
 )
 
 var (
-	errV2MigrationPending    = errors.New("v2 migration marker pending")
 	errV2PGVectorDegraded    = errors.New("pgvector extension requirement disabled")
+	errV2MigrationPending    = errors.New("v2 legacy migration pending")
 	errV2QueueNotReady       = errors.New("v2 queue readiness failed")
 	errV2SchemaIndexNotReady = errors.New("v2 schema/index readiness failed")
 	errV2WorkersNotReady     = errors.New("v2 worker readiness failed")

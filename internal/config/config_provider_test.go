@@ -43,6 +43,7 @@ func TestConfigProviderInterface(t *testing.T) {
 	_ = provider.GetClaimReadRateLimit()
 	_ = provider.GetRecallValidatedClaimWeight()
 	_ = provider.GetPromoteTxTimeoutSeconds()
+	_ = provider.GetMemoryPackImportHistoryDays()
 	_ = provider.GetSkillPackImportHistoryDays()
 	_ = provider.GetAICommunityMaxNodes()
 	_ = provider.GetControlHTTPAddr()
