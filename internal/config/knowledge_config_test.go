@@ -40,9 +40,6 @@ func TestLoadKnowledgeConfigDefaults(t *testing.T) {
 	if got := cfg.GetSkillPackImportHistoryDays(); got != 30 {
 		t.Errorf("GetSkillPackImportHistoryDays() = %d, want %d", got, 30)
 	}
-	if got := cfg.GetMemoryPackImportHistoryDays(); got != 30 {
-		t.Errorf("GetMemoryPackImportHistoryDays() = %d, want %d", got, 30)
-	}
 	if got := cfg.GetAICommunityMaxNodes(); got != 500000 {
 		t.Errorf("GetAICommunityMaxNodes() = %d, want %d", got, 500000)
 	}
@@ -59,8 +56,8 @@ func TestLoadMemoryPackImportHistoryEnv(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load() returned unexpected error: %v", err)
 		}
-		if got := cfg.GetMemoryPackImportHistoryDays(); got != 14 {
-			t.Fatalf("GetMemoryPackImportHistoryDays() = %d, want 14", got)
+		if got := cfg.GetSkillPackImportHistoryDays(); got != 14 {
+			t.Fatalf("GetSkillPackImportHistoryDays() = %d, want 14", got)
 		}
 	})
 
@@ -73,8 +70,8 @@ func TestLoadMemoryPackImportHistoryEnv(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load() returned unexpected error: %v", err)
 		}
-		if got := cfg.GetMemoryPackImportHistoryDays(); got != 21 {
-			t.Fatalf("GetMemoryPackImportHistoryDays() = %d, want 21", got)
+		if got := cfg.GetSkillPackImportHistoryDays(); got != 21 {
+			t.Fatalf("GetSkillPackImportHistoryDays() = %d, want 21", got)
 		}
 	})
 }

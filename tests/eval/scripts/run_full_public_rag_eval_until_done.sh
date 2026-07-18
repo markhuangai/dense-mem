@@ -39,14 +39,12 @@ STATUS_JSON="${MONITOR_DIR}/status.json"
 PLACEMENT_SUMMARY="${MONITOR_DIR}/placement_summary.json"
 RESUME_SOURCE_DOC_IDS="${MONITOR_DIR}/completed_source_doc_ids.txt"
 FAILED_SOURCE_DOC_IDS="${MONITOR_DIR}/failed_source_doc_ids.txt"
-RELEASE_GATE_POLICY="${RELEASE_GATE_POLICY:-}"
-if [[ -n "${RELEASE_GATE_POLICY}" ]]; then
-  if [[ ! -f "${RELEASE_GATE_POLICY}" ]]; then
-    echo "release gate policy not found: ${RELEASE_GATE_POLICY}" >&2
-    exit 2
-  fi
-  RELEASE_GATE_POLICY="$(realpath "${RELEASE_GATE_POLICY}")"
+: "${RELEASE_GATE_POLICY:?Set RELEASE_GATE_POLICY to the release gate policy JSON path}"
+if [[ ! -f "${RELEASE_GATE_POLICY}" ]]; then
+  echo "release gate policy not found: ${RELEASE_GATE_POLICY}" >&2
+  exit 2
 fi
+RELEASE_GATE_POLICY="$(realpath "${RELEASE_GATE_POLICY}")"
 RELEASE_GATE_POLICY_HASH=""
 
 mkdir -p "${IMPORT_DIR}" "${BASELINE_DIR}" "${MONITOR_DIR}" "${VALIDATION_DIR}" "$(dirname "${RUNNER}")"
@@ -417,10 +415,8 @@ validate_release_gate_seed() {
     --seed "${SEED}" \
     --suite "${SUITE}" \
     --out "${VALIDATION_DIR}"
+    --release-gate-policy "${RELEASE_GATE_POLICY}"
   )
-  if [[ -n "${RELEASE_GATE_POLICY}" ]]; then
-    validate_args+=(--release-gate-policy "${RELEASE_GATE_POLICY}")
-  fi
   "${validate_args[@]}"
 
   SEED_HASH="$(jq -r '.seed_hash' "${VALIDATION_DIR}/summary.json")"
@@ -429,10 +425,12 @@ validate_release_gate_seed() {
 
 prepare_identity() {
   SUITE_HASH="$(sha256sum "${SUITE}" | awk '{print $1}')"
-  RUNNER_HASH="$(sha256sum "${RUNNER}" | awk '{print $1}')"
-  if [[ -n "${RELEASE_GATE_POLICY}" ]]; then
-    RELEASE_GATE_POLICY_HASH="$(sha256sum "${RELEASE_GATE_POLICY}" | awk '{print "sha256:" $1}')"
+  if [[ ! -f "${RUNNER}" ]]; then
+    echo "runner binary not found: ${RUNNER}" >&2
+    return 1
   fi
+  RUNNER_HASH="$(sha256sum "${RUNNER}" | awk '{print "sha256:" $1}')"
+  RELEASE_GATE_POLICY_HASH="$(sha256sum "${RELEASE_GATE_POLICY}" | awk '{print "sha256:" $1}')"
   EMBEDDING_MODEL="${AI_API_EMBEDDING_MODEL:-}"
   EMBEDDING_DIMENSIONS="${AI_API_EMBEDDING_DIMENSIONS:-1536}"
   if [[ "${EMBEDDING_DIMENSIONS}" == "0" ]]; then
@@ -574,23 +572,21 @@ run_baseline() {
       log "baseline_suite_hash_mismatch path=${BASELINE_DIR}/run_config.json"
       return 1
     fi
-    if [[ -n "${RELEASE_GATE_POLICY}" ]]; then
-      if [[ ! -s "${BASELINE_DIR}/release_gate_result.json" ]]; then
-        log "baseline_gate_result_missing policy=${RELEASE_GATE_POLICY}"
-        return 1
-      fi
-      if [[ "$(jq -r '.release_gate_policy_path // empty' "${BASELINE_DIR}/run_config.json")" != "${RELEASE_GATE_POLICY}" ]]; then
-        log "baseline_gate_policy_mismatch policy=${RELEASE_GATE_POLICY}"
-        return 1
-      fi
-      if [[ "$(jq -r '.release_gate_policy_hash // empty' "${BASELINE_DIR}/run_config.json")" != "${RELEASE_GATE_POLICY_HASH}" ]]; then
-        log "baseline_gate_policy_hash_mismatch policy=${RELEASE_GATE_POLICY}"
-        return 1
-      fi
-      if [[ "$(jq -r '.passed // false' "${BASELINE_DIR}/release_gate_result.json")" != "true" ]]; then
-        log "baseline_gate_result_not_passed path=${BASELINE_DIR}/release_gate_result.json"
-        return 1
-      fi
+    if [[ ! -s "${BASELINE_DIR}/release_gate_result.json" ]]; then
+      log "baseline_gate_result_missing policy=${RELEASE_GATE_POLICY}"
+      return 1
+    fi
+    if [[ "$(jq -r '.release_gate_policy_path // empty' "${BASELINE_DIR}/run_config.json")" != "${RELEASE_GATE_POLICY}" ]]; then
+      log "baseline_gate_policy_mismatch policy=${RELEASE_GATE_POLICY}"
+      return 1
+    fi
+    if [[ "$(jq -r '.release_gate_policy_hash // empty' "${BASELINE_DIR}/run_config.json")" != "${RELEASE_GATE_POLICY_HASH}" ]]; then
+      log "baseline_gate_policy_hash_mismatch policy=${RELEASE_GATE_POLICY}"
+      return 1
+    fi
+    if [[ "$(jq -r '.passed // false' "${BASELINE_DIR}/release_gate_result.json")" != "true" ]]; then
+      log "baseline_gate_result_not_passed path=${BASELINE_DIR}/release_gate_result.json"
+      return 1
     fi
     log "baseline_summary_exists path=${BASELINE_DIR}/summary.json"
     return 0
@@ -605,10 +601,8 @@ run_baseline() {
     --out "${BASELINE_DIR}"
     --mapping "${IMPORT_DIR}/knowledge_mapping.json"
     --max-page-size 500
+    --release-gate-policy "${RELEASE_GATE_POLICY}"
   )
-  if [[ -n "${RELEASE_GATE_POLICY}" ]]; then
-    baseline_args+=(--release-gate-policy "${RELEASE_GATE_POLICY}")
-  fi
 
   log "starting_baseline_eval"
   "${baseline_args[@]}"
