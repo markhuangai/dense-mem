@@ -420,7 +420,7 @@ func main() {
 		ConflictDecider: skillPackConflictDecider,
 		Graph:           profileScopeEnforcer,
 		Ledger:          skillPackImportRepo,
-		HistoryDays:     cfg.GetMemoryPackImportHistoryDays(),
+		HistoryDays:     cfg.GetSkillPackImportHistoryDays(),
 	})
 
 	var (
