@@ -184,7 +184,6 @@ func normalizeV2ApplyRelationshipDecisionInput(input V2ApplyRelationshipDecision
 		input.Support.SourceGroupKey = strings.TrimSpace(input.Support.SourceGroupKey)
 		input.Support.SourceID = strings.TrimSpace(input.Support.SourceID)
 		input.Support.SourceRevisionID = strings.TrimSpace(input.Support.SourceRevisionID)
-		input.Support.Quote = strings.TrimSpace(input.Support.Quote)
 		input.Support.Authority = strings.TrimSpace(input.Support.Authority)
 		if input.Support.Authority == "" {
 			input.Support.Authority = "primary"
@@ -609,6 +608,19 @@ func upsertV2RelationshipRecord(
 	if err != nil {
 		return nil, err
 	}
+	if predicate.CurrentCardinality == string(domain.V2CurrentCardinalityOne) &&
+		status == string(domain.V2RelationshipStatusActive) {
+		keepRelationshipID := ""
+		existing, err := selectV2RelationshipByIdentity(ctx, tx, input)
+		if err == nil {
+			keepRelationshipID = existing.RelationshipID
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+		if err := supersedeV2OneCardinalityRelationships(ctx, tx, input, keepRelationshipID); err != nil {
+			return nil, err
+		}
+	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO relationship_records (
 		    team_id, owner_profile_id, semantic_group_key, subject_entity_id,
@@ -649,13 +661,19 @@ func upsertV2RelationshipRecord(
 		return nil, err
 	}
 	state := &v2RelationshipRecordState{Record: existing}
-	if existing.Tier != tier || existing.Status != status {
+	if existing.PredicateVersion != input.PredicateVersion ||
+		existing.Tier != tier ||
+		existing.Status != status ||
+		existing.RelationshipKind != predicate.RelationshipKind ||
+		existing.CurrentCardinality != predicate.CurrentCardinality ||
+		existing.SemanticGroupKey != semanticGroupKey {
 		state.Changed = true
 		state.FromTier = existing.Tier
 		state.FromStatus = existing.Status
 		result := tx.WithContext(ctx).Exec(`
 			UPDATE relationship_records
-			SET tier = ?,
+			SET predicate_version = ?,
+			    tier = ?,
 			    status = ?,
 			    relationship_kind = ?,
 			    current_cardinality = ?,
@@ -665,7 +683,7 @@ func upsertV2RelationshipRecord(
 			WHERE team_id = ?::uuid
 			  AND relationship_id = ?::uuid
 			  AND owner_profile_id = ?::uuid
-		`, tier, status, predicate.RelationshipKind, predicate.CurrentCardinality,
+		`, input.PredicateVersion, tier, status, predicate.RelationshipKind, predicate.CurrentCardinality,
 			semanticGroupKey, input.TeamID, existing.RelationshipID, input.OwnerProfileID)
 		if result.Error != nil {
 			return nil, result.Error
@@ -759,136 +777,6 @@ func scanV2RelationshipRows(rows *sql.Rows) (*V2RelationshipRecord, error) {
 		return nil, err
 	}
 	return &loaded, nil
-}
-
-func insertV2RelationshipSupport(
-	ctx context.Context,
-	tx *gorm.DB,
-	input V2ApplyRelationshipDecisionInput,
-	relationshipID string,
-	observationID string,
-	verificationID string,
-) (string, string, error) {
-	metadata, err := marshalV2JSON(input.Support.Metadata)
-	if err != nil {
-		return "", "", err
-	}
-	rows, err := tx.WithContext(ctx).Raw(`
-		WITH inserted AS (
-			INSERT INTO relationship_evidence_supports (
-			    team_id, relationship_id, observation_id, verification_event_id,
-			    fragment_id, owner_profile_id, source_group_key, source_id,
-			    source_revision_id, span_start, span_end, quote, authority, metadata
-			) VALUES (
-			    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid,
-			    ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?, ?::jsonb
-			)
-			ON CONFLICT ON CONSTRAINT relationship_supports_identity_unique DO NOTHING
-			RETURNING support_id::text, true AS created
-		)
-		SELECT support_id, created FROM inserted
-		UNION ALL
-		SELECT support_id::text, false AS created
-		FROM relationship_evidence_supports
-		WHERE team_id = ?::uuid
-		  AND relationship_id = ?::uuid
-		  AND fragment_id = ?::uuid
-		  AND span_start = ?
-		  AND span_end = ?
-		LIMIT 1
-	`, input.TeamID, relationshipID, observationID, verificationID,
-		input.Support.FragmentID, input.OwnerProfileID, input.Support.SourceGroupKey,
-		input.Support.SourceID, input.Support.SourceRevisionID, input.Support.SpanStart,
-		input.Support.SpanEnd, input.Support.Quote, input.Support.Authority, string(metadata),
-		input.TeamID, relationshipID, input.Support.FragmentID, input.Support.SpanStart,
-		input.Support.SpanEnd).Rows()
-	if err != nil {
-		return "", "", err
-	}
-	if !rows.Next() {
-		_ = rows.Close()
-		return "", "", rows.Err()
-	}
-	var supportID string
-	var created bool
-	if err := rows.Scan(&supportID, &created); err != nil {
-		_ = rows.Close()
-		return "", "", err
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return "", "", err
-	}
-	if err := rows.Close(); err != nil {
-		return "", "", err
-	}
-	if !created {
-		return supportID, "", nil
-	}
-	decisionID, err := insertV2SupportDecision(ctx, tx, input.TeamID, input.OwnerProfileID, supportID, relationshipID, "grant", "verifier_entailed")
-	if err != nil {
-		return "", "", err
-	}
-	return supportID, decisionID, nil
-}
-
-func insertV2SupportDecision(ctx context.Context, tx *gorm.DB, teamID, ownerProfileID, supportID, relationshipID, decision, reason string) (string, error) {
-	rows, err := tx.WithContext(ctx).Raw(`
-		INSERT INTO relationship_support_decision_events (
-		    team_id, support_id, relationship_id, owner_profile_id, actor_profile_id,
-		    decision, reason
-		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?
-		)
-		RETURNING support_decision_id::text
-	`, teamID, supportID, relationshipID, ownerProfileID, ownerProfileID, decision, reason).Rows()
-	if err != nil {
-		return "", err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		return "", rows.Err()
-	}
-	var decisionID string
-	if err := rows.Scan(&decisionID); err != nil {
-		return "", err
-	}
-	return decisionID, rows.Err()
-}
-
-func refreshV2RelationshipSupportCounts(ctx context.Context, tx *gorm.DB, teamID, relationshipID string) error {
-	return tx.WithContext(ctx).Exec(`
-		WITH latest AS (
-			SELECT DISTINCT ON (support_id)
-			       support_id,
-			       decision
-			FROM relationship_support_decision_events
-			WHERE team_id = ?::uuid
-			  AND relationship_id = ?::uuid
-			ORDER BY support_id, created_at DESC, support_decision_id DESC
-		),
-		counts AS (
-			SELECT COUNT(*)::int AS support_count,
-			       COUNT(DISTINCT support.source_group_key)::int AS source_group_count
-			FROM relationship_evidence_supports AS support
-			JOIN latest
-			  ON latest.support_id = support.support_id
-			WHERE support.team_id = ?::uuid
-			  AND support.relationship_id = ?::uuid
-			  AND latest.decision IN ('grant', 'reinstate')
-		)
-		UPDATE relationship_records AS relationship
-		SET support_count = counts.support_count,
-		    source_group_count = counts.source_group_count,
-		    version = relationship.version + CASE
-		        WHEN relationship.support_count <> counts.support_count
-		          OR relationship.source_group_count <> counts.source_group_count
-		        THEN 1 ELSE 0 END,
-		    updated_at = now()
-		FROM counts
-		WHERE relationship.team_id = ?::uuid
-		  AND relationship.relationship_id = ?::uuid
-	`, teamID, relationshipID, teamID, relationshipID, teamID, relationshipID).Error
 }
 
 func insertV2RelationshipTransition(ctx context.Context, tx *gorm.DB, input v2TransitionInput) error {

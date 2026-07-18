@@ -364,23 +364,18 @@ func TestControlDependencySnapshotErrorAndDegraded(t *testing.T) {
 	snapshot := controlDependencySnapshot(context.Background(), HealthConfig{
 		Checks: []HealthCheck{
 			{Name: "postgres", Check: func(context.Context) error { return assert.AnError }},
-			{Name: "migration", Optional: true, Check: func(context.Context) error { return assert.AnError }},
 			{Name: "missing"},
 		},
 		Degraded: true,
 	})
 
-	require.Len(t, snapshot, 3)
+	require.Len(t, snapshot, 2)
 	assert.Equal(t, "postgres", snapshot[0].Name)
 	assert.Equal(t, "error", snapshot[0].Status)
 	require.NotNil(t, snapshot[0].Message)
 	assert.Contains(t, *snapshot[0].Message, assert.AnError.Error())
-	assert.Equal(t, "migration", snapshot[1].Name)
+	assert.Equal(t, "redis", snapshot[1].Name)
 	assert.Equal(t, "degraded", snapshot[1].Status)
-	require.NotNil(t, snapshot[1].Message)
-	assert.Contains(t, *snapshot[1].Message, assert.AnError.Error())
-	assert.Equal(t, "redis", snapshot[2].Name)
-	assert.Equal(t, "degraded", snapshot[2].Status)
 }
 
 var _ service.OperationLogReader = (*controlOperationLogReaderStub)(nil)

@@ -13,7 +13,6 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/storage/inmem"
@@ -43,7 +42,6 @@ func (s *stubRateLimitService) Check(ctx context.Context, subject, routePath str
 
 // testRateLimitConfig implements config.ConfigProvider for rate limit tests.
 type testRateLimitConfig struct {
-	config.Config
 	rateLimitPerMinute      int
 	fragmentCreateRateLimit int
 	fragmentReadRateLimit   int
@@ -150,7 +148,6 @@ func TestRateLimitMiddleware_Contract_InMemory(t *testing.T) {
 
 // redisRateLimitConfig implements config.ConfigProvider for Redis-backed rate limit tests.
 type redisRateLimitConfig struct {
-	config.Config
 	addr                    string
 	password                string
 	db                      int

@@ -2,22 +2,24 @@
   "schema_version": "dense-mem.eval.source_lock.v1",
   "lock_id": "public_6axis_v1",
   "id_namespace": "public_6axis_v1",
-  "generator": {
-    "six_axis": "tests/eval/scripts/prepare_public_6axis_eval.py",
+  "artifact_contract": {
+    "release_gate_seed_mode": "existing_local_only",
+    "release_gate_regeneration_allowed": false,
+    "diagnostic_generator": "tests/eval/scripts/prepare_public_6axis_eval.py",
     "beir_utility": "tests/eval/scripts/prepare_full_public_rag_eval.py",
     "semantic_utility": "tests/eval/scripts/prepare_public_semantic_eval.py",
     "seed_schema_version": "dense-mem.eval.seed.v1",
     "validation_schema_version": "dense-mem.eval.validation.v1",
     "max_evidence_codepoints": 999
   },
-  "generated_seeds": {
+  "local_seed_artifacts": {
     "required_release_gate": {
       "seed_id": "public_6axis_1k_v1",
       "corpus_rows": 1000,
       "suite_path": "tests/eval/suites/public_6axis_1k_v1.jsonl",
       "seed_path": "tests/eval/seeds/public_6axis_1k_v1/seed_manifest.json",
-      "seed_hash": "sha256:ca1da9dccad1a84a281ca6e2e18582fba0882feb6b99f359c96f4355bd2cdf76",
-      "suite_hash": "sha256:14c1229aad134e732392e08f7113ec12b710489d96a80750e9060a161730ea75"
+      "seed_hash": "sha256:eb09124331228e59898a93740104ab978b9974e3ebf7f7fc2e09728ef95b3d78",
+      "immutable": true
     },
     "diagnostic_only": {
       "seed_id": "public_6axis_5k_v1",
@@ -112,5 +114,5 @@
       "sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442"
     }
   ],
-  "artifact_policy": "Downloaded datasets, generated seeds, generated suites, imports, runtime databases, run outputs, and comparison artifacts are ignored local runtime data and must not be committed."
+  "artifact_policy": "The approved 1k seed and suite, downloaded datasets, generated diagnostic seeds and suites, imports, runtime databases, run outputs, and comparison artifacts are ignored local runtime data and must not be committed. The release gate consumes the existing approved 1k artifact and never regenerates it."
 }

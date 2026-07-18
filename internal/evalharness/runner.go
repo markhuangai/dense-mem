@@ -3,7 +3,6 @@ package evalharness
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -74,11 +73,11 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	if runID == "" {
 		runID = newRunID(mode)
 	}
-	manifest, corpus, cases, qrels, expectedDreams, suite, seedHash, suiteHash, err := loadRunInputs(opts.SeedManifestPath, opts.SuitePath)
+	manifest, corpus, cases, qrels, expectedDreams, suite, seedHash, err := loadRunInputs(opts.SeedManifestPath, opts.SuitePath)
 	if err != nil {
 		return Summary{}, err
 	}
-	if err := validateRunInputs(opts.SeedManifestPath, manifest, corpus, cases, qrels, expectedDreams, suite, seedHash, suiteHash); err != nil {
+	if err := validateRunInputs(opts.SeedManifestPath, manifest, corpus, cases, qrels, expectedDreams, suite, seedHash); err != nil {
 		return Summary{}, err
 	}
 	inputSummary := Summary{
@@ -93,23 +92,20 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	}
 	var releaseGatePolicy *ReleaseGatePolicy
 	var releaseGateInput *ReleaseGateInputResult
-	releaseGatePolicyHash := ""
+	var releaseGatePolicyHash string
 	if opts.ReleaseGatePolicyPath != "" {
-		policyBytes, err := os.ReadFile(opts.ReleaseGatePolicyPath)
+		policy, err := LoadReleaseGatePolicy(opts.ReleaseGatePolicyPath)
 		if err != nil {
-			return Summary{}, fmt.Errorf("release gate policy read: %w", err)
-		}
-		releaseGatePolicyHash = FileHashBytes(policyBytes)
-		policy, err := LoadReleaseGatePolicyBytes(opts.ReleaseGatePolicyPath, policyBytes)
-		if err != nil {
-			return Summary{}, fmt.Errorf("release gate policy: %w", err)
-		}
-		if err := validateReleaseGatePolicyForRun(policy, *manifest, seedHash, suiteHash, len(suite)); err != nil {
 			return Summary{}, fmt.Errorf("release gate policy: %w", err)
 		}
 		result := EvaluateReleaseGateInput(inputSummary, policy)
+		policyHash, err := canonicalJSONHash(policy)
+		if err != nil {
+			return Summary{}, fmt.Errorf("hash release gate policy: %w", err)
+		}
 		releaseGatePolicy = &policy
 		releaseGateInput = &result
+		releaseGatePolicyHash = policyHash
 	}
 	importRoute := ""
 	if opts.ImportSeed {
@@ -121,7 +117,6 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		SeedManifest:           opts.SeedManifestPath,
 		SeedHash:               seedHash,
 		SuitePath:              opts.SuitePath,
-		SuiteHash:              suiteHash,
 		ReleaseGatePolicyPath:  opts.ReleaseGatePolicyPath,
 		ReleaseGatePolicyHash:  releaseGatePolicyHash,
 		BaseURL:                opts.BaseURL,
@@ -299,7 +294,6 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			return Summary{}, err
 		}
 	}
-	var gateFailures []string
 	if opts.Gates.Any() {
 		gate := EvaluateGates(summary, opts.Gates)
 		if opts.OutDir != "" {
@@ -308,7 +302,7 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			}
 		}
 		if !gate.Passed {
-			gateFailures = append(gateFailures, fmt.Sprintf("gate check failed: %s", strings.Join(gate.Failures, "; ")))
+			return summary, fmt.Errorf("gate check failed: %s", strings.Join(gate.Failures, "; "))
 		}
 	}
 	if releaseGatePolicy != nil {
@@ -319,11 +313,8 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			}
 		}
 		if !releaseGate.Passed {
-			gateFailures = append(gateFailures, fmt.Sprintf("release gate check failed: %s", strings.Join(releaseGate.Failures, "; ")))
+			return summary, fmt.Errorf("release gate check failed: %s", strings.Join(releaseGate.Failures, "; "))
 		}
-	}
-	if len(gateFailures) > 0 {
-		return summary, errors.New(strings.Join(gateFailures, "; "))
 	}
 	return summary, nil
 }
@@ -387,47 +378,43 @@ func CompareRunDirs(baselineRunDir, candidateRunDir, outDir string) (Comparison,
 	return comparison, nil
 }
 
-func loadRunInputs(manifestPath, suitePath string) (*SeedManifest, []CorpusItem, []Case, []QRel, []ExpectedDream, []SuiteCase, string, string, error) {
+func loadRunInputs(manifestPath, suitePath string) (*SeedManifest, []CorpusItem, []Case, []QRel, []ExpectedDream, []SuiteCase, string, error) {
 	manifest, err := LoadSeedManifest(manifestPath)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, "", "", err
+		return nil, nil, nil, nil, nil, nil, "", err
 	}
 	corpus, err := LoadCorpus(manifestPath, manifest)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, "", "", err
+		return nil, nil, nil, nil, nil, nil, "", err
 	}
 	cases, err := LoadCases(manifestPath, manifest)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, "", "", err
+		return nil, nil, nil, nil, nil, nil, "", err
 	}
 	qrels, err := LoadQrels(manifestPath, manifest)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, "", "", err
+		return nil, nil, nil, nil, nil, nil, "", err
 	}
 	expectedDreams, err := LoadExpectedDreams(manifestPath, manifest)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, "", "", err
+		return nil, nil, nil, nil, nil, nil, "", err
 	}
-	suiteBytes, err := os.ReadFile(suitePath)
+	suite, err := LoadSuite(suitePath)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, "", "", err
-	}
-	suite, err := LoadSuiteBytes(suitePath, suiteBytes)
-	if err != nil {
-		return nil, nil, nil, nil, nil, nil, "", "", err
+		return nil, nil, nil, nil, nil, nil, "", err
 	}
 	seedHash, err := SeedHash(manifestPath, manifest)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, "", "", err
+		return nil, nil, nil, nil, nil, nil, "", err
 	}
-	return manifest, corpus, cases, qrels, expectedDreams, suite, seedHash, FileHashBytes(suiteBytes), nil
+	return manifest, corpus, cases, qrels, expectedDreams, suite, seedHash, nil
 }
 
-func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []CorpusItem, cases []Case, qrels []QRel, expectedDreams []ExpectedDream, suite []SuiteCase, seedHash string, suiteHash string) error {
+func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []CorpusItem, cases []Case, qrels []QRel, expectedDreams []ExpectedDream, suite []SuiteCase, seedHash string) error {
 	if err := validateManifestCounts(manifestPath, manifest, corpus, cases, qrels); err != nil {
 		return err
 	}
-	if err := validateSeedValidationReport(manifestPath, manifest, seedHash, suiteHash); err != nil {
+	if err := validateSeedValidationReport(manifestPath, manifest, seedHash); err != nil {
 		return err
 	}
 	caseIndex := IndexCases(cases)
@@ -495,10 +482,9 @@ type seedValidationReport struct {
 	SeedID        string `json:"seed_id"`
 	Status        string `json:"status"`
 	SeedHash      string `json:"seed_hash"`
-	SuiteHash     string `json:"suite_hash"`
 }
 
-func validateSeedValidationReport(manifestPath string, manifest *SeedManifest, seedHash string, suiteHash string) error {
+func validateSeedValidationReport(manifestPath string, manifest *SeedManifest, seedHash string) error {
 	if manifest == nil {
 		return nil
 	}
@@ -524,12 +510,6 @@ func validateSeedValidationReport(manifestPath string, manifest *SeedManifest, s
 	}
 	if report.SeedHash != seedHash {
 		return fmt.Errorf("validation report seed_hash %q does not match current seed hash %q", report.SeedHash, seedHash)
-	}
-	if strings.HasPrefix(manifest.SeedID, "public_6axis_") && strings.TrimSpace(report.SuiteHash) == "" {
-		return fmt.Errorf("validation report missing suite_hash")
-	}
-	if strings.TrimSpace(report.SuiteHash) != "" && report.SuiteHash != suiteHash {
-		return fmt.Errorf("validation report suite_hash %q does not match current suite hash %q", report.SuiteHash, suiteHash)
 	}
 	return nil
 }

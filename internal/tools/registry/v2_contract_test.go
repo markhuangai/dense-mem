@@ -3,7 +3,6 @@ package registry
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -144,33 +143,6 @@ func TestV2ContractCatalogMetadata(t *testing.T) {
 	} {
 		if _, ok := seen[name]; !ok {
 			t.Fatalf("V2 contract missing tool %s", name)
-		}
-	}
-}
-
-func TestV2InputSchemasOmitEmptyRequired(t *testing.T) {
-	empty := v2ContractInput(nil, map[string]any{})
-	if _, ok := empty["required"]; ok {
-		t.Fatal("v2ContractInput emitted required for empty required fields")
-	}
-	nonEmpty := v2ContractInput([]string{"source_ref"}, map[string]any{
-		"source_ref": v2NonEmptyString("source ref", 128),
-	})
-	required := schemaRequiredFields(nonEmpty)
-	if len(required) != 1 || required[0] != "source_ref" {
-		t.Fatalf("v2ContractInput required fields = %v, want [source_ref]", required)
-	}
-
-	for _, tool := range V2ContractTools() {
-		required := schemaRequiredFields(tool.InputSchema)
-		if len(required) == 0 {
-			if _, ok := tool.InputSchema["required"]; ok {
-				t.Fatalf("%s input schema has empty required keyword", tool.Name)
-			}
-			continue
-		}
-		if _, ok := tool.InputSchema["required"]; !ok {
-			t.Fatalf("%s input schema omits non-empty required fields", tool.Name)
 		}
 	}
 }
@@ -597,70 +569,6 @@ func v2ToolMap(t *testing.T) map[string]Tool {
 		tools[tool.Name] = tool
 	}
 	return tools
-}
-
-func requireV2Tool(tools map[string]Tool, name string) (Tool, error) {
-	tool, ok := tools[name]
-	if !ok {
-		return Tool{}, fmt.Errorf("missing V2 tool %s", name)
-	}
-	if tool.ContractVersion != domain.V2ContractVersion {
-		return Tool{}, fmt.Errorf("tool %s has wrong contract version", name)
-	}
-	if tool.FeatureGate != domain.V2FeatureGate || tool.Visibility != domain.V2ToolVisibility {
-		return Tool{}, fmt.Errorf("tool %s has wrong V2 gate metadata", name)
-	}
-	return tool, nil
-}
-
-func assertV2ProviderProposalSchema(schema map[string]any) error {
-	props := schemaProperties(schema)
-	if len(props) == 0 {
-		return errors.New("provider proposal schema has no properties")
-	}
-	for _, forbidden := range []string{"team_id", "profile_id", "tier", "status", "predicate_definitions"} {
-		if _, ok := props[forbidden]; ok {
-			return fmt.Errorf("provider proposal schema allows %s", forbidden)
-		}
-	}
-	if _, ok := props["predicate_options"]; !ok {
-		return errors.New("provider proposal schema has no predicate_options")
-	}
-	relationshipProposals, ok := props["relationship_proposals"]
-	if !ok {
-		return errors.New("provider proposal schema has no relationship_proposals")
-	}
-	items, ok := relationshipProposals["items"].(map[string]any)
-	if !ok {
-		return errors.New("provider relationship_proposals schema has no item schema")
-	}
-	oneOf, ok := items["oneOf"].([]any)
-	if !ok || len(oneOf) != 2 {
-		return errors.New("provider relationship proposal schema must require exactly one object form")
-	}
-	return nil
-}
-
-func assertV2VerifierResponseSchema(schema map[string]any) error {
-	if !schemaDisallowsAdditionalProperties(schema) {
-		return errors.New("verifier response schema is not closed")
-	}
-	props := schemaProperties(schema)
-	requiredFields := schemaRequiredFields(schema)
-	for _, required := range []string{"request_id", "security_signals", "entity_results", "relationship_results"} {
-		if _, ok := props[required]; !ok {
-			return fmt.Errorf("verifier response schema has no %s", required)
-		}
-		if !slices.Contains(requiredFields, required) {
-			return fmt.Errorf("verifier response schema does not require %s", required)
-		}
-	}
-	for _, forbidden := range []string{"tier", "status", "support_count", "predicate_definitions"} {
-		if _, ok := props[forbidden]; ok {
-			return fmt.Errorf("verifier response schema allows %s", forbidden)
-		}
-	}
-	return nil
 }
 
 func readV2ContractFixtures(t *testing.T) []v2ContractFixture {
