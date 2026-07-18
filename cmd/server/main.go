@@ -112,12 +112,18 @@ func main() {
 		log.Fatalf("failed to connect to postgres: %v", err)
 	}
 	defer pgDB.Close()
+	if err := postgres.ValidateSinglePrimaryTopology(startupCtx, pgDB.GetDB()); err != nil {
+		log.Fatalf("unsupported postgres topology: %v", err)
+	}
 
 	logger.Info("running postgres migrations")
 	if err := postgres.RunUp(startupCtx, pgDB.GetDB()); err != nil {
 		log.Fatalf("failed to run postgres migrations: %v", err)
 	}
 	logger.Info("postgres migrations completed")
+	if err := postgres.CheckPGVectorExtension(startupCtx, pgDB.GetDB()); err != nil {
+		log.Fatalf("pgvector extension check failed: %v", err)
+	}
 
 	// ========================================
 	// Embedding consistency check
@@ -478,6 +484,12 @@ func main() {
 	checks := []http.HealthCheck{
 		{Name: "postgres", Check: func(ctx context.Context) error {
 			return pgDB.Ping(ctx)
+		}},
+		{Name: "postgres_topology", Check: func(ctx context.Context) error {
+			return postgres.ValidateSinglePrimaryTopology(ctx, pgDB.GetDB())
+		}},
+		{Name: "pgvector", Check: func(ctx context.Context) error {
+			return postgres.CheckPGVectorExtension(ctx, pgDB.GetDB())
 		}},
 		{Name: "neo4j", Check: func(ctx context.Context) error {
 			return neo4jClient.Verify(ctx)

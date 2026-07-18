@@ -28,6 +28,18 @@ func TestBuildBackendBundle_NoRedis_UsesInMemory(t *testing.T) {
 	assert.NotNil(t, bundle.streamCleanupRepo)
 }
 
+func TestBuildBackendBundle_DistributedRequiredWithoutRedisFails(t *testing.T) {
+	bundle, err := buildBackendBundle(context.Background(), config.Config{
+		RedisAddr:                       "",
+		SSEMaxConcurrentStreams:         10,
+		DistributedCoordinationRequired: true,
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "REDIS_ADDR")
+	assert.Nil(t, bundle)
+}
+
 func TestLogInMemoryModeWarning_ContainsLockedWords(t *testing.T) {
 	var buf bytes.Buffer
 	logger := observability.NewWithHandler(slog.NewJSONHandler(&buf, nil))

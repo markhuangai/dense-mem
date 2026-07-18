@@ -70,14 +70,19 @@ func AIVerifierTemperatureDisabled(cfg ConfigProvider) bool {
 // Config holds all configuration for the application.
 // All fields are populated from environment variables with sensible defaults.
 type Config struct {
-	PostgresDSN                     string
+	PostgresDSN                     string `json:"-"`
+	PostgresMaxOpenConns            int
+	PostgresMaxIdleConns            int
+	PostgresConnMaxLifetimeSeconds  int
 	Neo4jURI                        string
 	Neo4jUser                       string
-	Neo4jPassword                   string
+	Neo4jPassword                   string `json:"-"`
 	Neo4jDatabase                   string
 	RedisAddr                       string
-	RedisPassword                   string
+	RedisPassword                   string `json:"-"`
 	RedisDB                         int
+	RedisTLSEnabled                 bool
+	DistributedCoordinationRequired bool
 	HTTPMaxBodyBytes                int
 	AuthVerifyMaxConcurrency        int
 	GraphQueryDefaultTimeoutSeconds int
@@ -120,14 +125,21 @@ type Config struct {
 var _ ConfigProvider = (*Config)(nil)
 
 // Getters for ConfigProvider interface
-func (c *Config) GetPostgresDSN() string            { return c.PostgresDSN }
-func (c *Config) GetNeo4jURI() string               { return c.Neo4jURI }
-func (c *Config) GetNeo4jUser() string              { return c.Neo4jUser }
-func (c *Config) GetNeo4jPassword() string          { return c.Neo4jPassword }
-func (c *Config) GetNeo4jDatabase() string          { return c.Neo4jDatabase }
-func (c *Config) GetRedisAddr() string              { return c.RedisAddr }
-func (c *Config) GetRedisPassword() string          { return c.RedisPassword }
-func (c *Config) GetRedisDB() int                   { return c.RedisDB }
+func (c *Config) GetPostgresDSN() string                 { return c.PostgresDSN }
+func (c *Config) GetPostgresMaxOpenConns() int           { return c.PostgresMaxOpenConns }
+func (c *Config) GetPostgresMaxIdleConns() int           { return c.PostgresMaxIdleConns }
+func (c *Config) GetPostgresConnMaxLifetimeSeconds() int { return c.PostgresConnMaxLifetimeSeconds }
+func (c *Config) GetNeo4jURI() string                    { return c.Neo4jURI }
+func (c *Config) GetNeo4jUser() string                   { return c.Neo4jUser }
+func (c *Config) GetNeo4jPassword() string               { return c.Neo4jPassword }
+func (c *Config) GetNeo4jDatabase() string               { return c.Neo4jDatabase }
+func (c *Config) GetRedisAddr() string                   { return c.RedisAddr }
+func (c *Config) GetRedisPassword() string               { return c.RedisPassword }
+func (c *Config) GetRedisDB() int                        { return c.RedisDB }
+func (c *Config) GetRedisTLSEnabled() bool               { return c.RedisTLSEnabled }
+func (c *Config) GetDistributedCoordinationRequired() bool {
+	return c.DistributedCoordinationRequired
+}
 func (c *Config) GetHTTPMaxBodyBytes() int          { return c.HTTPMaxBodyBytes }
 func (c *Config) GetRateLimitPerMinute() int        { return c.RateLimitPerMinute }
 func (c *Config) GetFragmentCreateRateLimit() int   { return c.FragmentCreateRateLimit }
@@ -317,6 +329,12 @@ func Load() (Config, error) {
 
 	// String fields with defaults
 	cfg.PostgresDSN = os.Getenv("POSTGRES_DSN")
+	if strings.TrimSpace(os.Getenv("POSTGRES_READ_DSN")) != "" {
+		return cfg, &ValidationError{
+			Field:   "POSTGRES_READ_DSN",
+			Message: "replica reads are not supported in this release",
+		}
+	}
 	cfg.Neo4jURI = os.Getenv("NEO4J_URI")
 	cfg.Neo4jUser = os.Getenv("NEO4J_USER")
 	cfg.Neo4jPassword = os.Getenv("NEO4J_PASSWORD")
@@ -330,6 +348,9 @@ func Load() (Config, error) {
 	// plus a graph write, whereas a read is a single indexed lookup.
 	if err := applyIntEnvSpecs(&cfg, []intEnvSpec{
 		{"REDIS_DB", 0, func(c *Config, value int) { c.RedisDB = value }},
+		{"POSTGRES_MAX_OPEN_CONNS", 25, func(c *Config, value int) { c.PostgresMaxOpenConns = value }},
+		{"POSTGRES_MAX_IDLE_CONNS", 10, func(c *Config, value int) { c.PostgresMaxIdleConns = value }},
+		{"POSTGRES_CONN_MAX_LIFETIME_SECONDS", 1800, func(c *Config, value int) { c.PostgresConnMaxLifetimeSeconds = value }},
 		{"HTTP_MAX_BODY_BYTES", 1048576, func(c *Config, value int) { c.HTTPMaxBodyBytes = value }},
 		{"AUTH_VERIFY_MAX_CONCURRENCY", 8, func(c *Config, value int) { c.AuthVerifyMaxConcurrency = value }},
 		{"GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS", 10, func(c *Config, value int) { c.GraphQueryDefaultTimeoutSeconds = value }},
@@ -343,6 +364,14 @@ func Load() (Config, error) {
 		{"AI_API_EMBEDDING_DIMENSIONS", 0, func(c *Config, value int) { c.AIEmbeddingDimensions = value }},
 		{"AI_API_EMBEDDING_TIMEOUT_SECONDS", 30, func(c *Config, value int) { c.AIEmbeddingTimeoutSeconds = value }},
 	}); err != nil {
+		return cfg, err
+	}
+	cfg.RedisTLSEnabled, err = parseBoolOrDefault("REDIS_TLS_ENABLED", false)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.DistributedCoordinationRequired, err = parseBoolOrDefault("DISTRIBUTED_COORDINATION_REQUIRED", false)
+	if err != nil {
 		return cfg, err
 	}
 
@@ -452,12 +481,21 @@ func Load() (Config, error) {
 			Message: "required when TELEMETRY_ENABLED=true",
 		}
 	}
+	if cfg.DistributedCoordinationRequired && strings.TrimSpace(cfg.RedisAddr) == "" {
+		return cfg, &ValidationError{
+			Field:   "DISTRIBUTED_COORDINATION_REQUIRED",
+			Message: "REDIS_ADDR is required when distributed coordination is required",
+		}
+	}
 
 	// Validate numeric limits > 0
 	numericFields := []struct {
 		name  string
 		value int
 	}{
+		{"POSTGRES_MAX_OPEN_CONNS", cfg.PostgresMaxOpenConns},
+		{"POSTGRES_MAX_IDLE_CONNS", cfg.PostgresMaxIdleConns},
+		{"POSTGRES_CONN_MAX_LIFETIME_SECONDS", cfg.PostgresConnMaxLifetimeSeconds},
 		{"HTTP_MAX_BODY_BYTES", cfg.HTTPMaxBodyBytes},
 		{"AUTH_VERIFY_MAX_CONCURRENCY", cfg.AuthVerifyMaxConcurrency},
 		{"GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS", cfg.GraphQueryDefaultTimeoutSeconds},
@@ -489,6 +527,12 @@ func Load() (Config, error) {
 		return cfg, &ValidationError{
 			Field:   "GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS",
 			Message: fmt.Sprintf("must be less than or equal to GRAPH_QUERY_MAX_TIMEOUT_SECONDS, got %d > %d", cfg.GraphQueryDefaultTimeoutSeconds, cfg.GraphQueryMaxTimeoutSeconds),
+		}
+	}
+	if cfg.PostgresMaxIdleConns > cfg.PostgresMaxOpenConns {
+		return cfg, &ValidationError{
+			Field:   "POSTGRES_MAX_IDLE_CONNS",
+			Message: fmt.Sprintf("must be less than or equal to POSTGRES_MAX_OPEN_CONNS, got %d > %d", cfg.PostgresMaxIdleConns, cfg.PostgresMaxOpenConns),
 		}
 	}
 

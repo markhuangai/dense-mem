@@ -21,7 +21,7 @@
 
 services:
   postgres:
-    image: postgres:18-alpine
+    image: pgvector/pgvector:0.8.2-pg18-trixie
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-densemem}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
@@ -77,11 +77,16 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       POSTGRES_SSLMODE: disable
+      POSTGRES_MAX_OPEN_CONNS: ${POSTGRES_MAX_OPEN_CONNS:-25}
+      POSTGRES_MAX_IDLE_CONNS: ${POSTGRES_MAX_IDLE_CONNS:-10}
+      POSTGRES_CONN_MAX_LIFETIME_SECONDS: ${POSTGRES_CONN_MAX_LIFETIME_SECONDS:-1800}
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: ${NEO4J_USER:-neo4j}
       NEO4J_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD must be set in .env}
       NEO4J_DATABASE: ${NEO4J_DATABASE:-}
       REDIS_ADDR: ""
+      REDIS_TLS_ENABLED: ${REDIS_TLS_ENABLED:-false}
+      DISTRIBUTED_COORDINATION_REQUIRED: ${DISTRIBUTED_COORDINATION_REQUIRED:-false}
       AI_API_URL: ${AI_API_URL:-https://api.openai.com/v1}
       AI_API_KEY: ${AI_API_KEY:?AI_API_KEY must be set in .env}
       AI_API_EMBEDDING_MODEL: ${AI_API_EMBEDDING_MODEL:-text-embedding-3-small}
