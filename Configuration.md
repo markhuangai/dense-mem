@@ -81,12 +81,13 @@ PostgreSQL is authoritative for knowledge, workflow, search, and control state.
 | `POSTGRES_MAX_IDLE_CONNS` | `10` | idle pool target |
 | `POSTGRES_CONN_MAX_LIFETIME_SECONDS` | `1800` | connection lifetime |
 | `POSTGRES_VECTOR_MAX_CONCURRENCY` | `4` | per-process semaphore for exact/ANN database queries |
-| `PGVECTOR_EXTENSION_REQUIRED` | `true` | fail readiness when extension/schema is unavailable |
 | `POSTGRES_STATEMENT_TIMEOUT_SECONDS` | `30` | default application statement ceiling |
 | `POSTGRES_LOCK_TIMEOUT_SECONDS` | `5` | default lock-wait ceiling |
 
 Production should separate migration and runtime roles. The runtime role needs
 only application DML, approved functions, and tenant-scoped/RLS access.
+The `vector` extension is installed by the global PostgreSQL migration and is
+not optional after the pgvector image cutover.
 
 The connection budget is deployment-wide:
 
