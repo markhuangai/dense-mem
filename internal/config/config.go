@@ -274,7 +274,6 @@ func (c *Config) GetClaimWriteRateLimit() int              { return c.ClaimWrite
 func (c *Config) GetClaimReadRateLimit() int               { return c.ClaimReadRateLimit }
 func (c *Config) GetRecallValidatedClaimWeight() float64   { return c.RecallValidatedClaimWeight }
 func (c *Config) GetPromoteTxTimeoutSeconds() int          { return c.PromoteTxTimeoutSeconds }
-func (c *Config) GetMemoryPackImportHistoryDays() int      { return c.SkillPackImportHistoryDays }
 func (c *Config) GetSkillPackImportHistoryDays() int       { return c.SkillPackImportHistoryDays }
 func (c *Config) GetAICommunityMaxNodes() int              { return c.AICommunityMaxNodes }
 func (c *Config) GetControlHTTPAddr() string               { return c.ControlHTTPAddr }
