@@ -98,6 +98,8 @@ func truncateV2LedgerFixtures(tx *gorm.DB) error {
 		TRUNCATE
 			embedding_jobs,
 			search_documents,
+			search_index_generations,
+			embedding_contracts,
 			hypotheses,
 			review_tasks,
 			relationship_cross_references,

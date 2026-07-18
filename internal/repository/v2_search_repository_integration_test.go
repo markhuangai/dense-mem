@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,7 +17,9 @@ import (
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-const defaultV2SearchContractID = "00000000-0000-0000-0000-000000020001"
+const v2SearchTestHNSWIndexName = "v2_search_documents_test_3_halfvec_hnsw_idx"
+
+var v2SearchTestContractSequence atomic.Int32
 
 func TestV2SearchRepositoryFailsClosedWithoutDependencies(t *testing.T) {
 	ctx := context.Background()
@@ -47,12 +50,12 @@ func TestV2SearchDocumentsFTSAndExactVectorAreTeamScoped(t *testing.T) {
 	ownerA := createV2LedgerProfile(t, adminDB, rls, teamA, "search-owner-a")
 	teamC := createV2LedgerTeam(t, adminDB, rls, "search-team-c")
 	ownerC := createV2LedgerProfile(t, adminDB, rls, teamC, "search-owner-c")
-	profileKey, _ := insertV2SearchTestProfile(t, adminDB, rls, "search-exact", 3, "exact", "")
+	insertV2SearchTestContract(t, adminDB, rls, "search-exact", 3, "exact", "")
 	repo := NewV2SearchRepository(appDB, rls)
 
-	docA := upsertV2SearchDocumentForTest(t, repo, teamA, ownerA, profileKey, "postgres pgvector durable memory", 1)
-	docB := upsertV2SearchDocumentForTest(t, repo, teamA, ownerA, profileKey, "pgvector ranking contract", 1)
-	docC := upsertV2SearchDocumentForTest(t, repo, teamC, ownerC, profileKey, "postgres pgvector other team", 1)
+	docA := upsertV2SearchDocumentForTest(t, repo, teamA, ownerA, "postgres pgvector durable memory", 1)
+	docB := upsertV2SearchDocumentForTest(t, repo, teamA, ownerA, "pgvector ranking contract", 1)
+	docC := upsertV2SearchDocumentForTest(t, repo, teamC, ownerC, "postgres pgvector other team", 1)
 	completeV2SearchJobsForTest(t, repo, teamA, map[string][]float32{
 		docA.SearchDocumentID: {1, 0, 0},
 		docB.SearchDocumentID: {0, 1, 0},
@@ -63,7 +66,6 @@ func TestV2SearchDocumentsFTSAndExactVectorAreTeamScoped(t *testing.T) {
 
 	vectorHits, err := repo.SearchExactVector(ctx, V2ExactVectorSearchInput{
 		TeamID:         teamA,
-		ProfileKey:     profileKey,
 		QueryEmbedding: []float32{1, 0, 0},
 		Limit:          5,
 	})
@@ -88,7 +90,7 @@ func TestV2SearchDocumentsFTSAndExactVectorAreTeamScoped(t *testing.T) {
 	}
 }
 
-func TestV2SearchExactVectorUsesProfileDistanceMetric(t *testing.T) {
+func TestV2SearchExactVectorUsesCosineDistance(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -96,50 +98,23 @@ func TestV2SearchExactVectorUsesProfileDistanceMetric(t *testing.T) {
 	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "search-metric-owner")
 	repo := NewV2SearchRepository(appDB, rls)
 
-	tests := []struct {
-		name           string
-		metric         string
-		query          []float32
-		expectedVector []float32
-		otherVector    []float32
-	}{
-		{
-			name:           "l2",
-			metric:         "l2",
-			query:          []float32{1, 0, 0},
-			expectedVector: []float32{1, 1, 0},
-			otherVector:    []float32{10, 0, 0},
-		},
-		{
-			name:           "inner_product",
-			metric:         "inner_product",
-			query:          []float32{1, 0, 0},
-			expectedVector: []float32{2, 2, 0},
-			otherVector:    []float32{1, 0, 0},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			profileKey, _ := insertV2SearchTestProfileWithMetric(t, adminDB, rls, "search-"+tt.name, 3, "exact", "", tt.metric)
-			expected := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, profileKey, tt.name+" expected metric result", 1)
-			other := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, profileKey, tt.name+" cosine-biased result", 1)
-			completeV2SearchJobsForTest(t, repo, teamID, map[string][]float32{
-				expected.SearchDocumentID: tt.expectedVector,
-				other.SearchDocumentID:    tt.otherVector,
-			})
+	insertV2SearchTestContract(t, adminDB, rls, "search-cosine", 3, "exact", "")
+	expected := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, "cosine nearest vector", 1)
+	other := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, "cosine farther vector", 1)
+	completeV2SearchJobsForTest(t, repo, teamID, map[string][]float32{
+		expected.SearchDocumentID: {1, 0, 0},
+		other.SearchDocumentID:    {0, 1, 0},
+	})
 
-			hits, err := repo.SearchExactVector(ctx, V2ExactVectorSearchInput{
-				TeamID:         teamID,
-				ProfileKey:     profileKey,
-				QueryEmbedding: tt.query,
-				Limit:          2,
-			})
-			require.NoError(t, err)
-			require.Len(t, hits, 2)
-			assert.Equal(t, expected.SearchDocumentID, hits[0].SearchDocumentID)
-			assert.Less(t, hits[0].Distance, hits[1].Distance)
-		})
-	}
+	hits, err := repo.SearchExactVector(ctx, V2ExactVectorSearchInput{
+		TeamID:         teamID,
+		QueryEmbedding: []float32{1, 0, 0},
+		Limit:          2,
+	})
+	require.NoError(t, err)
+	require.Len(t, hits, 2)
+	assert.Equal(t, expected.SearchDocumentID, hits[0].SearchDocumentID)
+	assert.Less(t, hits[0].Distance, hits[1].Distance)
 }
 
 func TestV2SearchEmbeddingCompletionRejectsStaleJobs(t *testing.T) {
@@ -148,14 +123,13 @@ func TestV2SearchEmbeddingCompletionRejectsStaleJobs(t *testing.T) {
 	ctx := context.Background()
 	teamID := createV2LedgerTeam(t, adminDB, rls, "search-stale-team")
 	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "search-stale-owner")
-	profileKey, _ := insertV2SearchTestProfile(t, adminDB, rls, "search-stale", 3, "exact", "")
+	insertV2SearchTestContract(t, adminDB, rls, "search-stale", 3, "exact", "")
 	repo := NewV2SearchRepository(appDB, rls)
 	sourceID := uuid.NewString()
 
 	first, err := repo.UpsertSearchDocument(ctx, V2UpsertSearchDocumentInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
-		ProfileKey:     profileKey,
 		SourceKind:     "relationship",
 		SourceID:       sourceID,
 		SourceVersion:  1,
@@ -176,7 +150,6 @@ func TestV2SearchEmbeddingCompletionRejectsStaleJobs(t *testing.T) {
 	second, err := repo.UpsertSearchDocument(ctx, V2UpsertSearchDocumentInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
-		ProfileKey:     profileKey,
 		SourceKind:     "relationship",
 		SourceID:       sourceID,
 		SourceVersion:  2,
@@ -197,7 +170,6 @@ func TestV2SearchEmbeddingCompletionRejectsStaleJobs(t *testing.T) {
 
 	hits, err := repo.SearchExactVector(ctx, V2ExactVectorSearchInput{
 		TeamID:         teamID,
-		ProfileKey:     profileKey,
 		QueryEmbedding: []float32{1, 0, 0},
 		Limit:          10,
 	})
@@ -209,7 +181,6 @@ func TestV2SearchEmbeddingCompletionRejectsStaleJobs(t *testing.T) {
 	})
 	hits, err = repo.SearchExactVector(ctx, V2ExactVectorSearchInput{
 		TeamID:         teamID,
-		ProfileKey:     profileKey,
 		QueryEmbedding: []float32{1, 0, 0},
 		Limit:          10,
 	})
@@ -225,10 +196,10 @@ func TestV2SearchClaimEmbeddingJobsReclaimsExpiredLease(t *testing.T) {
 	ctx := context.Background()
 	teamID := createV2LedgerTeam(t, adminDB, rls, "search-reclaim-team")
 	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "search-reclaim-owner")
-	profileKey, _ := insertV2SearchTestProfile(t, adminDB, rls, "search-reclaim", 3, "exact", "")
+	insertV2SearchTestContract(t, adminDB, rls, "search-reclaim", 3, "exact", "")
 	repo := NewV2SearchRepository(appDB, rls)
 
-	doc := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, profileKey, "lease reclaim text", 1)
+	doc := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, "lease reclaim text", 1)
 	firstClaim, err := repo.ClaimEmbeddingJobs(ctx, V2ClaimEmbeddingJobsInput{
 		TeamID:   teamID,
 		WorkerID: "worker-one",
@@ -285,10 +256,10 @@ func TestV2SearchClaimEmbeddingJobsFailsExpiredExhaustedJobs(t *testing.T) {
 	ctx := context.Background()
 	teamID := createV2LedgerTeam(t, adminDB, rls, "search-exhausted-team")
 	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "search-exhausted-owner")
-	profileKey, _ := insertV2SearchTestProfile(t, adminDB, rls, "search-exhausted", 3, "exact", "")
+	insertV2SearchTestContract(t, adminDB, rls, "search-exhausted", 3, "exact", "")
 	repo := NewV2SearchRepository(appDB, rls)
 
-	doc := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, profileKey, "exhausted embedding job text", 1)
+	doc := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, "exhausted embedding job text", 1)
 	firstClaim, err := repo.ClaimEmbeddingJobs(ctx, V2ClaimEmbeddingJobsInput{
 		TeamID:   teamID,
 		WorkerID: "worker-final-attempt",
@@ -350,27 +321,27 @@ func TestV2SearchClaimEmbeddingJobsFailsExpiredExhaustedJobs(t *testing.T) {
 	assert.Equal(t, v2EmbeddingJobAttemptsExhaustedMessage, documentError)
 }
 
-func TestV2SearchExactVectorRequiresBoundedProfile(t *testing.T) {
+func TestV2SearchExactVectorRequiresBoundedContract(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
 	teamID := createV2LedgerTeam(t, adminDB, rls, "search-exact-policy-team")
 	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "search-exact-policy-owner")
-	boundedProfileKey, _ := insertV2SearchTestProfileWithOptions(t, adminDB, rls, "search-bounded", 3, "exact", "", 1, false)
+	insertV2SearchTestContractWithOptions(t, adminDB, rls, "search-hnsw-blocked", 3, "halfvec_hnsw", "missing_exact_blocked_idx", 10000, false)
 	repo := NewV2SearchRepository(appDB, rls)
 
 	_, err := repo.SearchExactVector(ctx, V2ExactVectorSearchInput{
 		TeamID:         teamID,
-		ProfileKey:     "default",
-		QueryEmbedding: unitV2SearchVector(1536, 0),
+		QueryEmbedding: []float32{1, 0, 0},
 		Limit:          10,
 	})
 	require.Error(t, err)
-	require.True(t, errors.Is(err, ErrV2SearchProfileMismatch), "err=%v", err)
+	require.True(t, errors.Is(err, ErrV2SearchContractMismatch), "err=%v", err)
 	assert.Contains(t, err.Error(), "does not allow exact vector search")
 
-	docA := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, boundedProfileKey, "bounded vector one", 1)
-	docB := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, boundedProfileKey, "bounded vector two", 1)
+	insertV2SearchTestContractWithOptions(t, adminDB, rls, "search-bounded", 3, "exact", "", 1, false)
+	docA := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, "bounded vector one", 1)
+	docB := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, "bounded vector two", 1)
 	completeV2SearchJobsForTest(t, repo, teamID, map[string][]float32{
 		docA.SearchDocumentID: {1, 0, 0},
 		docB.SearchDocumentID: {0, 1, 0},
@@ -378,13 +349,12 @@ func TestV2SearchExactVectorRequiresBoundedProfile(t *testing.T) {
 
 	_, err = repo.SearchExactVector(ctx, V2ExactVectorSearchInput{
 		TeamID:         teamID,
-		ProfileKey:     boundedProfileKey,
 		QueryEmbedding: []float32{1, 0, 0},
 		Limit:          10,
 	})
 	require.Error(t, err)
-	require.True(t, errors.Is(err, ErrV2SearchProfileMismatch), "err=%v", err)
-	assert.Contains(t, err.Error(), "exceed profile max")
+	require.True(t, errors.Is(err, ErrV2SearchContractMismatch), "err=%v", err)
+	assert.Contains(t, err.Error(), "exceed contract max")
 }
 
 func TestV2SearchDocumentStateRejectsStaleProjection(t *testing.T) {
@@ -393,6 +363,7 @@ func TestV2SearchDocumentStateRejectsStaleProjection(t *testing.T) {
 	ctx := context.Background()
 	teamID := createV2LedgerTeam(t, adminDB, rls, "search-state-team")
 	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "search-state-owner")
+	contractID := insertV2SearchTestContract(t, adminDB, rls, "search-state", 3, "exact", "")
 
 	err := rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		if err := ensureV2SemanticRefs(ctx, tx, teamID, ownerID); err != nil {
@@ -405,9 +376,9 @@ func TestV2SearchDocumentStateRejectsStaleProjection(t *testing.T) {
 			    search_state, document_text, document_hash
 			) VALUES (
 			    ?::uuid, ?::uuid, 'evidence', ?::uuid, 1, 1,
-			    ?::uuid, 1536, 'stale', 'stale projection text', 'sha256:stale'
+			    ?::uuid, 3, 'stale', 'stale projection text', 'sha256:stale'
 			)
-		`, teamID, ownerID, uuid.NewString(), defaultV2SearchContractID).Error
+		`, teamID, ownerID, uuid.NewString(), contractID).Error
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "search_documents_state_check")
@@ -420,41 +391,21 @@ func TestV2SearchReadinessAndHNSWPlan(t *testing.T) {
 	teamID := createV2LedgerTeam(t, adminDB, rls, "search-hnsw-team")
 	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "search-hnsw-owner")
 	repo := NewV2SearchRepository(appDB, rls)
+	readyContractID := insertV2SearchTestContract(t, adminDB, rls, "search-ready", 3, "halfvec_hnsw", v2SearchTestHNSWIndexName)
+	createV2SearchTestHNSWIndex(t, adminDB, rls, readyContractID)
 
-	ready, err := repo.CheckSearchReadiness(ctx, "default")
+	ready, err := repo.CheckSearchReadiness(ctx)
 	require.NoError(t, err)
 	require.True(t, ready.Ready, "readiness reasons: %+v", ready.Reasons)
-	require.NotNil(t, ready.Profile)
-	assert.Equal(t, "halfvec_hnsw", ready.Profile.IndexStrategy)
+	require.NotNil(t, ready.Contract)
+	assert.Equal(t, "halfvec_hnsw", ready.Contract.IndexStrategy)
+	assert.Equal(t, 3, ready.Contract.EmbeddingDimensions)
 
-	missingProfileKey, _ := insertV2SearchTestProfile(t, adminDB, rls, "search-missing", 3, "halfvec_hnsw", "missing_v2_search_hnsw_idx")
-	missing, err := repo.CheckSearchReadiness(ctx, missingProfileKey)
-	require.NoError(t, err)
-	require.False(t, missing.Ready)
-	require.NotEmpty(t, missing.Reasons)
-	assert.Equal(t, "missing_physical_index", missing.Reasons[0].Code)
-
-	incompatibleProfileKey, _ := insertV2SearchTestProfile(
-		t,
-		adminDB,
-		rls,
-		"search-incompatible",
-		3,
-		"halfvec_hnsw",
-		"v2_search_documents_default_1536_halfvec_hnsw_idx",
-	)
-	incompatible, err := repo.CheckSearchReadiness(ctx, incompatibleProfileKey)
-	require.NoError(t, err)
-	require.False(t, incompatible.Ready)
-	require.NotEmpty(t, incompatible.Reasons)
-	assert.Equal(t, "incompatible_physical_index", incompatible.Reasons[0].Code)
-	assert.Contains(t, incompatible.Reasons[0].Message, "indexed expression")
-
-	doc := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, "default", "default profile hnsw text", 1)
+	doc := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, "test generation hnsw text", 1)
 	completeV2SearchJobsForTest(t, repo, teamID, map[string][]float32{
-		doc.SearchDocumentID: unitV2SearchVector(1536, 0),
+		doc.SearchDocumentID: unitV2SearchVector(3, 0),
 	})
-	query, err := v2VectorLiteral(unitV2SearchVector(1536, 0))
+	query, err := v2VectorLiteral(unitV2SearchVector(3, 0))
 	require.NoError(t, err)
 	err = rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
 		require.NoError(t, tx.Exec(`SET LOCAL enable_seqscan = off`).Error)
@@ -463,13 +414,13 @@ func TestV2SearchReadinessAndHNSWPlan(t *testing.T) {
 			SELECT search_document_id
 			FROM search_documents
 			WHERE team_id = ?::uuid
-			  AND embedding_contract_id = '00000000-0000-0000-0000-000000020001'::uuid
-			  AND embedding_dimensions = 1536
+			  AND embedding_contract_id = ?::uuid
+			  AND embedding_dimensions = 3
 			  AND search_state = 'current'
 			  AND embedding IS NOT NULL
-			ORDER BY embedding::halfvec(1536) <=> ?::halfvec(1536)
+			ORDER BY embedding::halfvec(3) <=> ?::halfvec(3)
 			LIMIT 1
-		`, teamID, query).Rows()
+		`, teamID, readyContractID, query).Rows()
 		if err != nil {
 			return err
 		}
@@ -483,13 +434,60 @@ func TestV2SearchReadinessAndHNSWPlan(t *testing.T) {
 			plan = append(plan, line)
 		}
 		require.NoError(t, rows.Err())
-		assert.Contains(t, strings.Join(plan, "\n"), "v2_search_documents_default_1536_halfvec_hnsw_idx")
+		assert.Contains(t, strings.Join(plan, "\n"), v2SearchTestHNSWIndexName)
 		return nil
+	})
+	require.NoError(t, err)
+
+	insertV2SearchTestContract(t, adminDB, rls, "search-missing", 3, "halfvec_hnsw", "missing_v2_search_hnsw_idx")
+	missing, err := repo.CheckSearchReadiness(ctx)
+	require.NoError(t, err)
+	require.False(t, missing.Ready)
+	require.NotEmpty(t, missing.Reasons)
+	assert.Equal(t, "missing_physical_index", missing.Reasons[0].Code)
+
+	insertV2SearchTestContract(
+		t,
+		adminDB,
+		rls,
+		"search-incompatible",
+		4,
+		"halfvec_hnsw",
+		v2SearchTestHNSWIndexName,
+	)
+	incompatible, err := repo.CheckSearchReadiness(ctx)
+	require.NoError(t, err)
+	require.False(t, incompatible.Ready)
+	require.NotEmpty(t, incompatible.Reasons)
+	assert.Equal(t, "incompatible_physical_index", incompatible.Reasons[0].Code)
+	assert.Contains(t, incompatible.Reasons[0].Message, "indexed expression")
+}
+
+func createV2SearchTestHNSWIndex(
+	t *testing.T,
+	db *gorm.DB,
+	rls *storagepostgres.RLS,
+	contractID string,
+) {
+	t.Helper()
+	parsedContractID, err := uuid.Parse(contractID)
+	require.NoError(t, err)
+	err = rls.WithMigrationTx(context.Background(), db, func(tx *gorm.DB) error {
+		return tx.Exec(fmt.Sprintf(`
+			CREATE INDEX IF NOT EXISTS v2_search_documents_test_3_halfvec_hnsw_idx
+			    ON search_documents
+			    USING hnsw ((embedding::halfvec(3)) halfvec_cosine_ops)
+			    WITH (m = 16, ef_construction = 64)
+			    WHERE embedding_contract_id = '%s'::uuid
+			      AND embedding_dimensions = 3
+			      AND search_state = 'current'
+			      AND embedding IS NOT NULL
+		`, parsedContractID.String())).Error
 	})
 	require.NoError(t, err)
 }
 
-func insertV2SearchTestProfile(
+func insertV2SearchTestContract(
 	t *testing.T,
 	db *gorm.DB,
 	rls *storagepostgres.RLS,
@@ -497,24 +495,11 @@ func insertV2SearchTestProfile(
 	dimensions int,
 	strategy string,
 	indexName string,
-) (string, string) {
-	return insertV2SearchTestProfileWithOptions(t, db, rls, prefix, dimensions, strategy, indexName, 10000, false)
+) string {
+	return insertV2SearchTestContractWithOptions(t, db, rls, prefix, dimensions, strategy, indexName, 10000, false)
 }
 
-func insertV2SearchTestProfileWithMetric(
-	t *testing.T,
-	db *gorm.DB,
-	rls *storagepostgres.RLS,
-	prefix string,
-	dimensions int,
-	strategy string,
-	indexName string,
-	metric string,
-) (string, string) {
-	return insertV2SearchTestProfileWithOptionsAndMetric(t, db, rls, prefix, dimensions, strategy, indexName, 10000, false, metric)
-}
-
-func insertV2SearchTestProfileWithOptions(
+func insertV2SearchTestContractWithOptions(
 	t *testing.T,
 	db *gorm.DB,
 	rls *storagepostgres.RLS,
@@ -524,31 +509,20 @@ func insertV2SearchTestProfileWithOptions(
 	indexName string,
 	exactMaxRows int,
 	allowExactFallback bool,
-) (string, string) {
-	return insertV2SearchTestProfileWithOptionsAndMetric(t, db, rls, prefix, dimensions, strategy, indexName, exactMaxRows, allowExactFallback, "cosine")
-}
-
-func insertV2SearchTestProfileWithOptionsAndMetric(
-	t *testing.T,
-	db *gorm.DB,
-	rls *storagepostgres.RLS,
-	prefix string,
-	dimensions int,
-	strategy string,
-	indexName string,
-	exactMaxRows int,
-	allowExactFallback bool,
-	metric string,
-) (string, string) {
+) string {
 	t.Helper()
-	profileKey := fmt.Sprintf("%s-%s", prefix, strings.ReplaceAll(uuid.NewString(), "-", "")[:8])
+	sequence := int(v2SearchTestContractSequence.Add(1))
+	contractKey := fmt.Sprintf("%s-%s", prefix, strings.ReplaceAll(uuid.NewString(), "-", "")[:8])
 	contractID := uuid.NewString()
-	searchProfileID := uuid.NewString()
-	rankingProfileID := uuid.NewString()
+	searchGenerationID := uuid.NewString()
 	operatorClass := ""
 	indexedExpression := ""
-	if strategy != "exact" {
-		operatorClass = v2SearchTestHalfvecOperatorClass(metric)
+	switch strategy {
+	case "vector_hnsw":
+		operatorClass = "vector_cosine_ops"
+		indexedExpression = fmt.Sprintf("embedding::vector(%d)", dimensions)
+	case "halfvec_hnsw":
+		operatorClass = "halfvec_cosine_ops"
 		indexedExpression = fmt.Sprintf("embedding::halfvec(%d)", dimensions)
 	}
 	err := rls.WithMigrationTx(context.Background(), db, func(tx *gorm.DB) error {
@@ -558,47 +532,25 @@ func insertV2SearchTestProfileWithOptionsAndMetric(
 				    dimensions, distance_metric, vector_normalization,
 				    document_format_version, query_format_version, lifecycle_state
 				) VALUES (
-				    ?::uuid, ?, 1, 'test', ?, ?, ?, 'provider', 1, 1, 'active'
+				    ?::uuid, ?, ?, 'test', ?, ?, 'cosine', 'provider', 1, 1, 'active'
 				)
-			`, contractID, profileKey, "test-model", dimensions, metric).Error; err != nil {
-			return err
-		}
-		if err := tx.Exec(`
-			INSERT INTO search_index_profiles (
-			    search_index_profile_id, profile_key, version, embedding_contract_id,
-			    embedding_dimensions, distance_metric, ann_strategy, operator_class,
-				    indexed_expression, physical_index_name, exact_max_rows,
-				    allow_exact_fallback, activation_state, activated_at
-				) VALUES (
-				    ?::uuid, ?, 1, ?::uuid, ?, ?, ?, ?, ?, ?, ?, ?, 'active', now()
-				)
-			`, searchProfileID, profileKey, contractID, dimensions, metric, strategy,
-			operatorClass, indexedExpression, indexName, exactMaxRows, allowExactFallback).Error; err != nil {
+			`, contractID, contractKey, sequence, "test-model", dimensions).Error; err != nil {
 			return err
 		}
 		return tx.Exec(`
-			INSERT INTO ranking_profiles (
-			    ranking_profile_id, profile_key, version, fusion_mode, rrf_k,
-			    branch_weights, branch_order, activation_state, activated_at
+			INSERT INTO search_index_generations (
+			    search_index_generation_id, generation, embedding_contract_id,
+			    embedding_dimensions, ann_strategy, operator_class,
+			    indexed_expression, physical_index_name, exact_max_rows,
+			    allow_exact_fallback, activation_state, activated_at
 			) VALUES (
-			    ?::uuid, ?, 1, 'rrf', 60, '{}'::jsonb,
-			    ARRAY['full_text','vector_exact']::text[], 'active', now()
+			    ?::uuid, ?, ?::uuid, ?, ?, ?, ?, ?, ?, ?, 'active', now()
 			)
-		`, rankingProfileID, profileKey).Error
+		`, searchGenerationID, sequence, contractID, dimensions, strategy,
+			operatorClass, indexedExpression, indexName, exactMaxRows, allowExactFallback).Error
 	})
 	require.NoError(t, err)
-	return profileKey, contractID
-}
-
-func v2SearchTestHalfvecOperatorClass(metric string) string {
-	switch metric {
-	case "l2":
-		return "halfvec_l2_ops"
-	case "inner_product":
-		return "halfvec_ip_ops"
-	default:
-		return "halfvec_cosine_ops"
-	}
+	return contractID
 }
 
 func upsertV2SearchDocumentForTest(
@@ -606,7 +558,6 @@ func upsertV2SearchDocumentForTest(
 	repo *V2SearchRepositoryImpl,
 	teamID string,
 	ownerID string,
-	profileKey string,
 	text string,
 	sourceVersion int64,
 ) *V2SearchDocumentResult {
@@ -614,7 +565,6 @@ func upsertV2SearchDocumentForTest(
 	doc, err := repo.UpsertSearchDocument(context.Background(), V2UpsertSearchDocumentInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
-		ProfileKey:     profileKey,
 		SourceKind:     "evidence",
 		SourceID:       uuid.NewString(),
 		SourceVersion:  sourceVersion,

@@ -16,18 +16,9 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-func normalizeV2SearchProfileKey(profileKey string) string {
-	profileKey = strings.TrimSpace(profileKey)
-	if profileKey == "" {
-		return defaultV2SearchProfileKey
-	}
-	return profileKey
-}
-
 func normalizeV2UpsertSearchDocumentInput(input V2UpsertSearchDocumentInput) V2UpsertSearchDocumentInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
-	input.ProfileKey = normalizeV2SearchProfileKey(input.ProfileKey)
 	input.SourceKind = strings.TrimSpace(input.SourceKind)
 	input.SourceID = strings.TrimSpace(input.SourceID)
 	input.DocumentText = strings.TrimSpace(input.DocumentText)
@@ -149,7 +140,6 @@ func validateV2FullTextSearchInput(input V2FullTextSearchInput) error {
 
 func normalizeV2ExactVectorSearchInput(input V2ExactVectorSearchInput) V2ExactVectorSearchInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.ProfileKey = normalizeV2SearchProfileKey(input.ProfileKey)
 	input.EmbeddingContractID = strings.TrimSpace(input.EmbeddingContractID)
 	input.SourceKind = strings.TrimSpace(input.SourceKind)
 	if input.Limit <= 0 {
@@ -206,33 +196,20 @@ func v2VectorLiteral(values []float32) (string, error) {
 	return "[" + strings.Join(parts, ",") + "]", nil
 }
 
-func v2VectorDistanceOperator(metric string) (string, error) {
-	switch domain.V2VectorDistanceMetric(strings.TrimSpace(metric)) {
-	case domain.V2VectorDistanceCosine:
-		return "<=>", nil
-	case domain.V2VectorDistanceL2:
-		return "<->", nil
-	case domain.V2VectorDistanceInner:
-		return "<#>", nil
-	default:
-		return "", fmt.Errorf("%w: unsupported distance metric %q", ErrV2SearchProfileMismatch, metric)
-	}
-}
-
-func v2SearchMissingIndexCompatibility(profile *V2SearchProfile, indexDefinition string) []string {
+func v2SearchMissingIndexCompatibility(contract *V2ActiveSearchContract, indexDefinition string) []string {
 	normalized := strings.Join(strings.Fields(strings.ToLower(indexDefinition)), " ")
 	requirements := []struct {
 		name  string
 		token string
 	}{
 		{name: "hnsw access method", token: "using hnsw"},
-		{name: "operator class", token: strings.ToLower(strings.TrimSpace(profile.OperatorClass))},
-		{name: "embedding contract predicate", token: strings.ToLower(strings.TrimSpace(profile.EmbeddingContractID))},
-		{name: "embedding dimension predicate", token: fmt.Sprintf("embedding_dimensions = %d", profile.EmbeddingDimensions)},
+		{name: "operator class", token: strings.ToLower(strings.TrimSpace(contract.OperatorClass))},
+		{name: "embedding contract predicate", token: strings.ToLower(strings.TrimSpace(contract.EmbeddingContractID))},
+		{name: "embedding dimension predicate", token: fmt.Sprintf("embedding_dimensions = %d", contract.EmbeddingDimensions)},
 		{name: "current search-state predicate", token: "search_state = 'current'"},
 		{name: "non-null embedding predicate", token: "embedding is not null"},
 	}
-	if token := v2SearchIndexExpressionToken(profile); token != "" {
+	if token := v2SearchIndexExpressionToken(contract); token != "" {
 		requirements = append(requirements, struct {
 			name  string
 			token string
@@ -251,15 +228,15 @@ func v2SearchMissingIndexCompatibility(profile *V2SearchProfile, indexDefinition
 	return missing
 }
 
-func v2SearchIndexExpressionToken(profile *V2SearchProfile) string {
-	expression := strings.ToLower(strings.TrimSpace(profile.IndexedExpression))
+func v2SearchIndexExpressionToken(contract *V2ActiveSearchContract) string {
+	expression := strings.ToLower(strings.TrimSpace(contract.IndexedExpression))
 	switch {
 	case strings.Contains(expression, "halfvec"):
-		return fmt.Sprintf("halfvec(%d)", profile.EmbeddingDimensions)
+		return fmt.Sprintf("halfvec(%d)", contract.EmbeddingDimensions)
 	case strings.Contains(expression, "vector("):
-		return fmt.Sprintf("vector(%d)", profile.EmbeddingDimensions)
-	case profile.IndexStrategy == string(domain.V2VectorIndexHalfvecHNSW):
-		return fmt.Sprintf("halfvec(%d)", profile.EmbeddingDimensions)
+		return fmt.Sprintf("vector(%d)", contract.EmbeddingDimensions)
+	case contract.IndexStrategy == string(domain.V2VectorIndexHalfvecHNSW):
+		return fmt.Sprintf("halfvec(%d)", contract.EmbeddingDimensions)
 	case expression != "":
 		return "embedding"
 	default:

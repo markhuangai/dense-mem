@@ -137,7 +137,7 @@ The server requires a complete embedding configuration at startup:
 `AI_API_URL`, `AI_API_KEY`, `AI_API_EMBEDDING_MODEL`, and
 `AI_API_EMBEDDING_DIMENSIONS`. The compose examples provide OpenAI defaults for
 the URL, model, and dimensions (`https://api.openai.com/v1`,
-`text-embedding-3-small`, `1536`), so the minimal local setup only needs you to
+`text-embedding-3-large`, `3072`), so the minimal local setup only needs you to
 fill in `AI_API_KEY`. Override those values together when using a different
 embedding provider or model.
 

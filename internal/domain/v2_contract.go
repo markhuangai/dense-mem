@@ -156,22 +156,20 @@ const (
 	V2SearchProjectionFailed      V2SearchProjectionState = "failed"
 )
 
-type V2SearchProfileState string
+type V2SearchIndexGenerationState string
 
 const (
-	V2SearchProfileBuilding   V2SearchProfileState = "building"
-	V2SearchProfileActive     V2SearchProfileState = "active"
-	V2SearchProfileFailed     V2SearchProfileState = "failed"
-	V2SearchProfileDeprecated V2SearchProfileState = "deprecated"
-	V2SearchProfileRetired    V2SearchProfileState = "retired"
+	V2SearchIndexGenerationBuilding   V2SearchIndexGenerationState = "building"
+	V2SearchIndexGenerationActive     V2SearchIndexGenerationState = "active"
+	V2SearchIndexGenerationFailed     V2SearchIndexGenerationState = "failed"
+	V2SearchIndexGenerationDeprecated V2SearchIndexGenerationState = "deprecated"
+	V2SearchIndexGenerationRetired    V2SearchIndexGenerationState = "retired"
 )
 
 type V2VectorDistanceMetric string
 
 const (
 	V2VectorDistanceCosine V2VectorDistanceMetric = "cosine"
-	V2VectorDistanceL2     V2VectorDistanceMetric = "l2"
-	V2VectorDistanceInner  V2VectorDistanceMetric = "inner_product"
 )
 
 type V2VectorIndexStrategy string
@@ -420,21 +418,19 @@ func V2SearchProjectionStates() []string {
 	}
 }
 
-func V2SearchProfileStates() []string {
+func V2SearchIndexGenerationStates() []string {
 	return []string{
-		string(V2SearchProfileBuilding),
-		string(V2SearchProfileActive),
-		string(V2SearchProfileFailed),
-		string(V2SearchProfileDeprecated),
-		string(V2SearchProfileRetired),
+		string(V2SearchIndexGenerationBuilding),
+		string(V2SearchIndexGenerationActive),
+		string(V2SearchIndexGenerationFailed),
+		string(V2SearchIndexGenerationDeprecated),
+		string(V2SearchIndexGenerationRetired),
 	}
 }
 
 func V2VectorDistanceMetrics() []string {
 	return []string{
 		string(V2VectorDistanceCosine),
-		string(V2VectorDistanceL2),
-		string(V2VectorDistanceInner),
 	}
 }
 

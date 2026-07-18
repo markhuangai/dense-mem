@@ -120,7 +120,7 @@ Control portal: http://127.0.0.1:8090/
 服务启动时必须有完整的 embedding 配置：`AI_API_URL`、`AI_API_KEY`、
 `AI_API_EMBEDDING_MODEL` 和 `AI_API_EMBEDDING_DIMENSIONS`。compose 示例已经为
 URL、model 和 dimensions 提供 OpenAI 默认值：`https://api.openai.com/v1`、
-`text-embedding-3-small`、`1536`。因此最小本地部署只需要补上 `AI_API_KEY`。
+`text-embedding-3-large`、`3072`。因此最小本地部署只需要补上 `AI_API_KEY`。
 如果切换到其他 embedding provider 或 model，请一起覆盖这些配置。
 
 Verifier 调用默认发送 `temperature: 0`。如果 provider 或 model 拒绝

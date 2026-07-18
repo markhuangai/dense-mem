@@ -84,8 +84,8 @@ func TestV2ContractEnums(t *testing.T) {
 		t.Fatal("V2SearchProjectionStates contains non-canonical stale state")
 	}
 	for _, state := range []string{"building", "active", "failed", "deprecated", "retired"} {
-		if !slices.Contains(V2SearchProfileStates(), state) {
-			t.Fatalf("V2SearchProfileStates missing %s", state)
+		if !slices.Contains(V2SearchIndexGenerationStates(), state) {
+			t.Fatalf("V2SearchIndexGenerationStates missing %s", state)
 		}
 	}
 	for _, strategy := range []string{"exact", "vector_hnsw", "halfvec_hnsw"} {

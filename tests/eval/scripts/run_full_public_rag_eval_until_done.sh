@@ -419,9 +419,9 @@ validate_release_gate_seed() {
 prepare_identity() {
   SUITE_HASH="$(sha256sum "${SUITE}" | awk '{print $1}')"
   EMBEDDING_MODEL="${AI_API_EMBEDDING_MODEL:-}"
-  EMBEDDING_DIMENSIONS="${AI_API_EMBEDDING_DIMENSIONS:-1536}"
+  EMBEDDING_DIMENSIONS="${AI_API_EMBEDDING_DIMENSIONS:-3072}"
   if [[ "${EMBEDDING_DIMENSIONS}" == "0" ]]; then
-    EMBEDDING_DIMENSIONS="1536"
+    EMBEDDING_DIMENSIONS="3072"
   fi
   EMBEDDING_ENDPOINT_HASH="$(printf '%s' "${AI_API_URL:-}" | sha256sum | awk '{print $1}')"
   RELEASE_GATE_POLICY_HASH="$(canonical_json_sha256 "${RELEASE_GATE_POLICY}")"
