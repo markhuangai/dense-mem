@@ -126,8 +126,16 @@ func LoadExpectedDreams(manifestPath string, manifest *SeedManifest) ([]Expected
 }
 
 func LoadSuite(path string) ([]SuiteCase, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return LoadSuiteBytes(path, data)
+}
+
+func LoadSuiteBytes(path string, data []byte) ([]SuiteCase, error) {
 	var suite []SuiteCase
-	if err := readJSONL(path, &suite); err != nil {
+	if err := readJSONLBytes(path, data, &suite); err != nil {
 		return nil, err
 	}
 	seen := map[string]struct{}{}
@@ -182,16 +190,16 @@ func SeedHash(manifestPath string, manifest *SeedManifest) (string, error) {
 }
 
 func FileHash(path string) (string, error) {
-	hash := sha256.New()
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
-	if _, err := io.Copy(hash, f); err != nil {
-		return "", err
-	}
-	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
+	return FileHashBytes(data), nil
+}
+
+func FileHashBytes(data []byte) string {
+	hash := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(hash[:])
 }
 
 func canonicalJSONHash(value any) (string, error) {
@@ -231,12 +239,15 @@ func resolveSeedPath(manifestPath, rel string) string {
 }
 
 func readJSONFile(path string, out any) error {
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	decoder := json.NewDecoder(f)
+	return readJSONBytes(path, data, out)
+}
+
+func readJSONBytes(path string, data []byte, out any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 	if err := decoder.Decode(out); err != nil {
 		return fmt.Errorf("%s: %w", path, err)
@@ -245,12 +256,15 @@ func readJSONFile(path string, out any) error {
 }
 
 func readJSONL[T any](path string, out *[]T) error {
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
+	return readJSONLBytes(path, data, out)
+}
+
+func readJSONLBytes[T any](path string, data []byte, out *[]T) error {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	lineNo := 0
 	for scanner.Scan() {
