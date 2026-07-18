@@ -138,16 +138,19 @@ func getOrCreateV2EvidenceSource(ctx context.Context, tx *gorm.DB, input V2Advan
 		RETURNING source_id::text
 	`, input.TeamID, input.OwnerProfileID, input.SourceKey, input.SourceKind, input.Authority, string(metadata)).Rows()
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", translateV2SourceCreateError(err)
 	}
 	defer insertRows.Close()
 	if !insertRows.Next() {
+		if err := insertRows.Err(); err != nil {
+			return "", "", "", translateV2SourceCreateError(err)
+		}
 		return "", "", "", sql.ErrNoRows
 	}
 	if err := insertRows.Scan(&sourceID); err != nil {
 		return "", "", "", err
 	}
-	return sourceID, "", "", insertRows.Err()
+	return sourceID, "", "", translateV2SourceCreateError(insertRows.Err())
 }
 
 func advanceV2SourceRevisionInTx(
