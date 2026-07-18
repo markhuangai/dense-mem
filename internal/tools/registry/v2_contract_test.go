@@ -150,6 +150,18 @@ func TestV2ContractCatalogMetadata(t *testing.T) {
 }
 
 func TestV2InputSchemasOmitEmptyRequired(t *testing.T) {
+	empty := v2ContractInput(nil, map[string]any{})
+	if _, ok := empty["required"]; ok {
+		t.Fatal("v2ContractInput emitted required for empty required fields")
+	}
+	nonEmpty := v2ContractInput([]string{"source_ref"}, map[string]any{
+		"source_ref": v2NonEmptyString("source ref", 128),
+	})
+	required := schemaRequiredFields(nonEmpty)
+	if len(required) != 1 || required[0] != "source_ref" {
+		t.Fatalf("v2ContractInput required fields = %v, want [source_ref]", required)
+	}
+
 	for _, tool := range V2ContractTools() {
 		required := schemaRequiredFields(tool.InputSchema)
 		if len(required) == 0 {
