@@ -192,6 +192,48 @@ func TestReadyAllowsOptionalDegradedCheck(t *testing.T) {
 	}
 }
 
+func TestHealthReportsOptionalAndRequiredFailures(t *testing.T) {
+	e := NewServer(config.Config{}, observability.New(slog.LevelInfo), HealthConfig{
+		Checks: []HealthCheck{
+			{
+				Name:     "optional",
+				Optional: true,
+				Check: func(ctx context.Context) error {
+					return errors.New("optional unavailable")
+				},
+			},
+			{
+				Name: "required",
+				Check: func(ctx context.Context) error {
+					return errors.New("required unavailable")
+				},
+			},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+	var response map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	checks, ok := response["checks"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected checks to be a map, got %T", response["checks"])
+	}
+	if checks["optional"] != "degraded" {
+		t.Fatalf("optional check = %v, want degraded", checks["optional"])
+	}
+	if checks["required"] != "failed" {
+		t.Fatalf("required check = %v, want failed", checks["required"])
+	}
+}
+
 // TestReadyReadyWhenAllChecksPass verifies that /ready returns 200 when all checks pass
 func TestReadyReadyWhenAllChecksPass(t *testing.T) {
 	// Arrange
