@@ -66,13 +66,9 @@ func TestRunWritesReleaseGateResultWhenLegacyGateFails(t *testing.T) {
 		t.Fatalf("write traces: %v", err)
 	}
 	suitePath := filepath.Join(dir, "suite.jsonl")
-	_, _, _, _, _, _, seedHash, err := loadRunInputs(filepath.Join(dir, "seed_manifest.json"), suitePath)
+	_, _, _, _, _, _, seedHash, suiteHash, err := loadRunInputs(filepath.Join(dir, "seed_manifest.json"), suitePath)
 	if err != nil {
 		t.Fatalf("load fixture inputs: %v", err)
-	}
-	suiteHash, err := FileHash(suitePath)
-	if err != nil {
-		t.Fatalf("hash suite: %v", err)
 	}
 	policy := releaseGateTestPolicy()
 	policy.SeedID = "fixture"

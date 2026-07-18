@@ -166,6 +166,8 @@ def install_generated_seed(stage_dir: Path, stage_suite: Path, seed_dir: Path, s
     write_json(tx_dir / "manifest.json", {
         "seed_dir": str(seed_dir),
         "suite_path": str(suite_path),
+        "seed_dir_existed": seed_dir.exists(),
+        "suite_path_existed": suite_path.exists(),
     })
     seed_backup = tx_dir / "seed_dir.backup"
     suite_backup = tx_dir / "suite_path.backup"
@@ -190,16 +192,21 @@ def recover_install_transaction(seed_dir: Path, suite_path: Path, tx_dir: Path) 
     if not manifest_path.exists():
         shutil.rmtree(tx_dir)
         return
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     seed_backup = tx_dir / "seed_dir.backup"
     suite_backup = tx_dir / "suite_path.backup"
     if seed_backup.exists():
         remove_path(seed_dir)
         seed_dir.parent.mkdir(parents=True, exist_ok=True)
         os.replace(seed_backup, seed_dir)
+    elif not manifest.get("seed_dir_existed", True):
+        remove_path(seed_dir)
     if suite_backup.exists():
         remove_path(suite_path)
         suite_path.parent.mkdir(parents=True, exist_ok=True)
         os.replace(suite_backup, suite_path)
+    elif not manifest.get("suite_path_existed", True):
+        remove_path(suite_path)
     shutil.rmtree(tx_dir)
 
 
