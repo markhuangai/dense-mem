@@ -18,6 +18,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
+const v2MaxEvidenceItems = 100
+
 var (
 	ErrV2IdempotencyConflict    = errors.New("v2 idempotency conflict")
 	ErrV2PlacementLeaseConflict = errors.New("v2 placement lease conflict")
@@ -281,6 +283,9 @@ func (r *V2LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, team
 	if lease <= 0 {
 		return nil, errors.New("lease must be greater than zero")
 	}
+	if lease < time.Second {
+		return nil, errors.New("lease must be at least one second")
+	}
 	var run *V2PlacementRun
 	err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
 		rows, err := tx.WithContext(ctx).Raw(`
@@ -449,6 +454,9 @@ func validateV2CreateIngestInput(input V2CreateIngestInput) error {
 	}
 	if len(input.Evidence) == 0 {
 		return errors.New("evidence is required")
+	}
+	if len(input.Evidence) > v2MaxEvidenceItems {
+		return fmt.Errorf("evidence count %d exceeds maximum %d", len(input.Evidence), v2MaxEvidenceItems)
 	}
 	for i, item := range input.Evidence {
 		if item.Content == "" {
@@ -792,16 +800,19 @@ func getOrCreateV2EvidenceSource(ctx context.Context, tx *gorm.DB, input V2Advan
 		RETURNING source_id::text
 	`, input.TeamID, input.OwnerProfileID, input.SourceKey, input.SourceKind, input.Authority, string(metadata)).Rows()
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", translateV2SourceCreateError(err)
 	}
 	defer insertRows.Close()
 	if !insertRows.Next() {
+		if err := insertRows.Err(); err != nil {
+			return "", "", "", translateV2SourceCreateError(err)
+		}
 		return "", "", "", sql.ErrNoRows
 	}
 	if err := insertRows.Scan(&sourceID); err != nil {
 		return "", "", "", err
 	}
-	return sourceID, "", "", insertRows.Err()
+	return sourceID, "", "", translateV2SourceCreateError(insertRows.Err())
 }
 
 func insertV2SourceRevision(ctx context.Context, tx *gorm.DB, input V2AdvanceSourceRevisionInput, sourceID string, supersedesRevisionID string) (string, error) {
@@ -934,28 +945,10 @@ func insertV2SecurityEvent(ctx context.Context, tx *gorm.DB, input V2SecurityEve
 	if err := rows.Close(); err != nil {
 		return "", err
 	}
-	for i, signal := range input.Signals {
-		if err := insertV2SecuritySignal(ctx, tx, input.TeamID, input.OwnerProfileID, eventID, i, signal); err != nil {
-			return "", err
-		}
+	if err := insertV2SecuritySignals(ctx, tx, input.TeamID, input.OwnerProfileID, eventID, input.Signals); err != nil {
+		return "", err
 	}
 	return eventID, nil
-}
-
-func insertV2SecuritySignal(ctx context.Context, tx *gorm.DB, teamID, ownerProfileID, eventID string, index int, signal V2SecuritySignalInput) error {
-	metadata, err := marshalV2JSON(signal.Metadata)
-	if err != nil {
-		return err
-	}
-	return tx.WithContext(ctx).Exec(`
-		INSERT INTO evidence_security_signals (
-		    team_id, security_event_id, signal_index, owner_profile_id,
-		    kind, severity, span_start, span_end, quote, metadata
-		) VALUES (
-		    ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, ?, ?, ?, ?::jsonb
-		)
-	`, teamID, eventID, index, ownerProfileID, signal.Kind, signal.Severity,
-		signal.SpanStart, signal.SpanEnd, signal.Quote, string(metadata)).Error
 }
 
 func marshalV2JSON(value map[string]any) ([]byte, error) {
