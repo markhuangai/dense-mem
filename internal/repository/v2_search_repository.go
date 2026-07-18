@@ -2,18 +2,11 @@ package repository
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
-	"strconv"
 	"strings"
-	"time"
 
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -40,8 +33,12 @@ func NewV2SearchRepository(db *gorm.DB, rls *postgres.RLS) *V2SearchRepositoryIm
 
 func (r *V2SearchRepositoryImpl) GetActiveSearchProfile(ctx context.Context, profileKey string) (*V2SearchProfile, error) {
 	profileKey = normalizeV2SearchProfileKey(profileKey)
+	db, err := r.database()
+	if err != nil {
+		return nil, err
+	}
 	var profile V2SearchProfile
-	err := r.db.WithContext(ctx).Raw(`
+	err = db.WithContext(ctx).Raw(`
 		SELECT
 		    search.profile_key,
 		    contract.embedding_contract_id::text,
@@ -110,9 +107,13 @@ func (r *V2SearchRepositoryImpl) CheckSearchReadiness(ctx context.Context, profi
 	if err != nil {
 		return nil, err
 	}
+	db, err := r.database()
+	if err != nil {
+		return nil, err
+	}
 	readiness := &V2SearchReadiness{ProfileKey: profile.ProfileKey, Ready: true, Profile: profile}
 	var vectorPresent bool
-	if err := r.db.WithContext(ctx).Raw(`
+	if err := db.WithContext(ctx).Raw(`
 		SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')
 	`).Scan(&vectorPresent).Error; err != nil {
 		return nil, fmt.Errorf("v2 search: readiness extension check: %w", err)
@@ -126,7 +127,7 @@ func (r *V2SearchRepositoryImpl) CheckSearchReadiness(ctx context.Context, profi
 	}
 	if profile.IndexStrategy != string(domain.V2VectorIndexExact) {
 		var indexDefinition string
-		if err := r.db.WithContext(ctx).Raw(`
+		if err := db.WithContext(ctx).Raw(`
 			SELECT COALESCE((
 			    SELECT indexdef
 			    FROM pg_indexes
@@ -280,10 +281,16 @@ func (r *V2SearchRepositoryImpl) ClaimEmbeddingJobs(
 				SELECT team_id, embedding_job_id
 				FROM embedding_jobs
 				WHERE team_id = ?::uuid
-				  AND status IN ('queued', 'failed')
 				  AND attempts < max_attempts
-				  AND available_at <= now()
-				ORDER BY available_at ASC, created_at ASC, embedding_job_id ASC
+				  AND (
+					(status IN ('queued', 'failed') AND available_at <= now())
+					OR (status = 'processing' AND lease_until IS NOT NULL AND lease_until < now())
+				  )
+				ORDER BY
+					CASE WHEN status IN ('queued', 'failed') THEN 0 ELSE 1 END,
+					available_at ASC,
+					created_at ASC,
+					embedding_job_id ASC
 				LIMIT ?
 				FOR UPDATE SKIP LOCKED
 			),
@@ -292,7 +299,7 @@ func (r *V2SearchRepositoryImpl) ClaimEmbeddingJobs(
 				SET status = 'processing',
 				    attempts = attempts + 1,
 				    worker_id = ?,
-				    lease_until = now() + make_interval(secs => ?::integer),
+				    lease_until = now() + (? * interval '1 second'),
 				    updated_at = now(),
 				    error = ''
 				FROM claimed
@@ -470,6 +477,9 @@ func (r *V2SearchRepositoryImpl) SearchExactVector(ctx context.Context, input V2
 	if len(input.QueryEmbedding) != profile.EmbeddingDimensions {
 		return nil, fmt.Errorf("%w: profile dimensions %d, query dimensions %d", ErrV2SearchProfileMismatch, profile.EmbeddingDimensions, len(input.QueryEmbedding))
 	}
+	if profile.IndexStrategy != string(domain.V2VectorIndexExact) && !profile.AllowExactFallback {
+		return nil, fmt.Errorf("%w: profile %q does not allow exact vector search", ErrV2SearchProfileMismatch, profile.ProfileKey)
+	}
 	vectorLiteral, err := v2VectorLiteral(input.QueryEmbedding)
 	if err != nil {
 		return nil, err
@@ -477,10 +487,33 @@ func (r *V2SearchRepositoryImpl) SearchExactVector(ctx context.Context, input V2
 	hits := []V2SearchHit{}
 	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		sourceFilter := ""
+		countArgs := []any{input.TeamID, profile.EmbeddingContractID, profile.EmbeddingDimensions}
 		args := []any{vectorLiteral, input.TeamID, profile.EmbeddingContractID, profile.EmbeddingDimensions}
 		if input.SourceKind != "" {
 			sourceFilter = "AND source_kind = ?"
+			countArgs = append(countArgs, input.SourceKind)
 			args = append(args, input.SourceKind)
+		}
+		countArgs = append(countArgs, profile.ExactMaxRows+1)
+		var candidateCount int64
+		if err := tx.WithContext(ctx).Raw(`
+			SELECT count(*)
+			FROM (
+				SELECT search_document_id
+				FROM search_documents
+				WHERE team_id = ?::uuid
+				  AND embedding_contract_id = ?::uuid
+				  AND embedding_dimensions = ?
+				  AND search_state = 'current'
+				  AND embedding IS NOT NULL
+				  `+sourceFilter+`
+				LIMIT ?
+			) AS exact_candidates
+		`, countArgs...).Scan(&candidateCount).Error; err != nil {
+			return err
+		}
+		if candidateCount > int64(profile.ExactMaxRows) {
+			return fmt.Errorf("%w: exact vector candidates %d exceed profile max %d", ErrV2SearchProfileMismatch, candidateCount, profile.ExactMaxRows)
 		}
 		args = append(args, vectorLiteral, input.Limit)
 		rows, err := tx.WithContext(ctx).Raw(`
@@ -605,242 +638,10 @@ func scanV2SearchHit(scanner v2SearchHitScanner) (V2SearchHit, error) {
 	return hit, err
 }
 
-func normalizeV2SearchProfileKey(profileKey string) string {
-	profileKey = strings.TrimSpace(profileKey)
-	if profileKey == "" {
-		return defaultV2SearchProfileKey
-	}
-	return profileKey
-}
-
-func normalizeV2UpsertSearchDocumentInput(input V2UpsertSearchDocumentInput) V2UpsertSearchDocumentInput {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
-	input.ProfileKey = normalizeV2SearchProfileKey(input.ProfileKey)
-	input.SourceKind = strings.TrimSpace(input.SourceKind)
-	input.SourceID = strings.TrimSpace(input.SourceID)
-	input.DocumentText = strings.TrimSpace(input.DocumentText)
-	input.DocumentHash = strings.TrimSpace(input.DocumentHash)
-	input.EmbeddingContractID = strings.TrimSpace(input.EmbeddingContractID)
-	if input.DocumentHash == "" && input.DocumentText != "" {
-		sum := sha256.Sum256([]byte(input.DocumentText))
-		input.DocumentHash = hex.EncodeToString(sum[:])
-	}
-	return input
-}
-
-func validateV2UpsertSearchDocumentInput(input V2UpsertSearchDocumentInput) error {
-	if _, err := uuid.Parse(input.TeamID); err != nil {
-		return fmt.Errorf("team_id is required: %w", err)
-	}
-	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
-		return fmt.Errorf("owner_profile_id is required: %w", err)
-	}
-	if !v2ValidSearchSourceKind(input.SourceKind) {
-		return fmt.Errorf("unsupported source_kind %q", input.SourceKind)
-	}
-	if _, err := uuid.Parse(input.SourceID); err != nil {
-		return fmt.Errorf("source_id is required: %w", err)
-	}
-	if input.SourceVersion < 1 {
-		return errors.New("source_version must be greater than zero")
-	}
-	if input.DocumentText == "" {
-		return errors.New("document_text is required")
-	}
-	if input.DocumentHash == "" {
-		return errors.New("document_hash is required")
-	}
-	if input.EmbeddingContractID != "" {
-		if _, err := uuid.Parse(input.EmbeddingContractID); err != nil {
-			return fmt.Errorf("embedding_contract_id is invalid: %w", err)
-		}
-	}
-	return nil
-}
-
-func normalizeV2ClaimEmbeddingJobsInput(input V2ClaimEmbeddingJobsInput) V2ClaimEmbeddingJobsInput {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.WorkerID = strings.TrimSpace(input.WorkerID)
-	if input.Limit <= 0 {
-		input.Limit = 10
-	}
-	if input.Limit > 100 {
-		input.Limit = 100
-	}
-	if input.Lease <= 0 {
-		input.Lease = time.Minute
-	}
-	return input
-}
-
-func validateV2ClaimEmbeddingJobsInput(input V2ClaimEmbeddingJobsInput) error {
-	if _, err := uuid.Parse(input.TeamID); err != nil {
-		return fmt.Errorf("team_id is required: %w", err)
-	}
-	if input.WorkerID == "" {
-		return errors.New("worker_id is required")
-	}
-	return nil
-}
-
-func normalizeV2CompleteEmbeddingJobInput(input V2CompleteEmbeddingJobInput) V2CompleteEmbeddingJobInput {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.EmbeddingJobID = strings.TrimSpace(input.EmbeddingJobID)
-	input.WorkerID = strings.TrimSpace(input.WorkerID)
-	return input
-}
-
-func validateV2CompleteEmbeddingJobInput(input V2CompleteEmbeddingJobInput) error {
-	if _, err := uuid.Parse(input.TeamID); err != nil {
-		return fmt.Errorf("team_id is required: %w", err)
-	}
-	if _, err := uuid.Parse(input.EmbeddingJobID); err != nil {
-		return fmt.Errorf("embedding_job_id is required: %w", err)
-	}
-	if input.WorkerID == "" {
-		return errors.New("worker_id is required")
-	}
-	if len(input.Embedding) == 0 {
-		return errors.New("embedding is required")
-	}
-	return nil
-}
-
-func normalizeV2FullTextSearchInput(input V2FullTextSearchInput) V2FullTextSearchInput {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.Query = strings.TrimSpace(input.Query)
-	input.SourceKind = strings.TrimSpace(input.SourceKind)
-	if input.Limit <= 0 {
-		input.Limit = 10
-	}
-	if input.Limit > 100 {
-		input.Limit = 100
-	}
-	return input
-}
-
-func validateV2FullTextSearchInput(input V2FullTextSearchInput) error {
-	if _, err := uuid.Parse(input.TeamID); err != nil {
-		return fmt.Errorf("team_id is required: %w", err)
-	}
-	if input.Query == "" {
-		return errors.New("query is required")
-	}
-	if input.SourceKind != "" && !v2ValidSearchSourceKind(input.SourceKind) {
-		return fmt.Errorf("unsupported source_kind %q", input.SourceKind)
-	}
-	return nil
-}
-
-func normalizeV2ExactVectorSearchInput(input V2ExactVectorSearchInput) V2ExactVectorSearchInput {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.ProfileKey = normalizeV2SearchProfileKey(input.ProfileKey)
-	input.EmbeddingContractID = strings.TrimSpace(input.EmbeddingContractID)
-	input.SourceKind = strings.TrimSpace(input.SourceKind)
-	if input.Limit <= 0 {
-		input.Limit = 10
-	}
-	if input.Limit > 100 {
-		input.Limit = 100
-	}
-	return input
-}
-
-func validateV2ExactVectorSearchInput(input V2ExactVectorSearchInput) error {
-	if _, err := uuid.Parse(input.TeamID); err != nil {
-		return fmt.Errorf("team_id is required: %w", err)
-	}
-	if input.EmbeddingContractID != "" {
-		if _, err := uuid.Parse(input.EmbeddingContractID); err != nil {
-			return fmt.Errorf("embedding_contract_id is invalid: %w", err)
-		}
-	}
-	if input.SourceKind != "" && !v2ValidSearchSourceKind(input.SourceKind) {
-		return fmt.Errorf("unsupported source_kind %q", input.SourceKind)
-	}
-	if len(input.QueryEmbedding) == 0 {
-		return errors.New("query_embedding is required")
-	}
-	return nil
-}
-
-func v2ValidSearchSourceKind(kind string) bool {
-	return kind == "evidence" || kind == "relationship" || kind == "entity"
-}
-
-func marshalV2SearchJSON(value map[string]any) ([]byte, error) {
-	if value == nil {
-		value = map[string]any{}
-	}
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return nil, fmt.Errorf("marshal metadata: %w", err)
-	}
-	return encoded, nil
-}
-
-func v2VectorLiteral(values []float32) (string, error) {
-	parts := make([]string, len(values))
-	for i, value := range values {
-		f := float64(value)
-		if math.IsNaN(f) || math.IsInf(f, 0) {
-			return "", fmt.Errorf("embedding contains non-finite value at index %d", i)
-		}
-		parts[i] = strconv.FormatFloat(f, 'g', -1, 32)
-	}
-	return "[" + strings.Join(parts, ",") + "]", nil
-}
-
-func v2SearchMissingIndexCompatibility(profile *V2SearchProfile, indexDefinition string) []string {
-	normalized := strings.Join(strings.Fields(strings.ToLower(indexDefinition)), " ")
-	requirements := []struct {
-		name  string
-		token string
-	}{
-		{name: "hnsw access method", token: "using hnsw"},
-		{name: "operator class", token: strings.ToLower(strings.TrimSpace(profile.OperatorClass))},
-		{name: "embedding contract predicate", token: strings.ToLower(strings.TrimSpace(profile.EmbeddingContractID))},
-		{name: "embedding dimension predicate", token: fmt.Sprintf("embedding_dimensions = %d", profile.EmbeddingDimensions)},
-		{name: "current search-state predicate", token: "search_state = 'current'"},
-		{name: "non-null embedding predicate", token: "embedding is not null"},
-	}
-	if token := v2SearchIndexExpressionToken(profile); token != "" {
-		requirements = append(requirements, struct {
-			name  string
-			token string
-		}{name: "indexed expression", token: token})
-	}
-	missing := make([]string, 0)
-	for _, requirement := range requirements {
-		if requirement.token == "" {
-			missing = append(missing, requirement.name)
-			continue
-		}
-		if !strings.Contains(normalized, requirement.token) {
-			missing = append(missing, requirement.name)
-		}
-	}
-	return missing
-}
-
-func v2SearchIndexExpressionToken(profile *V2SearchProfile) string {
-	expression := strings.ToLower(strings.TrimSpace(profile.IndexedExpression))
-	switch {
-	case strings.Contains(expression, "halfvec"):
-		return fmt.Sprintf("halfvec(%d)", profile.EmbeddingDimensions)
-	case strings.Contains(expression, "vector("):
-		return fmt.Sprintf("vector(%d)", profile.EmbeddingDimensions)
-	case profile.IndexStrategy == string(domain.V2VectorIndexHalfvecHNSW):
-		return fmt.Sprintf("halfvec(%d)", profile.EmbeddingDimensions)
-	case expression != "":
-		return "embedding"
-	default:
-		return ""
-	}
-}
-
 func (r *V2SearchRepositoryImpl) withTeamProfileTx(ctx context.Context, teamID, profileID string, fn func(tx *gorm.DB) error) error {
+	if _, err := r.database(); err != nil {
+		return err
+	}
 	if r.rls == nil {
 		return errors.New("v2 search: rls helper is required")
 	}
@@ -848,8 +649,18 @@ func (r *V2SearchRepositoryImpl) withTeamProfileTx(ctx context.Context, teamID, 
 }
 
 func (r *V2SearchRepositoryImpl) withTeamTx(ctx context.Context, teamID string, fn func(tx *gorm.DB) error) error {
+	if _, err := r.database(); err != nil {
+		return err
+	}
 	if r.rls == nil {
 		return errors.New("v2 search: rls helper is required")
 	}
 	return r.rls.WithTeamTx(ctx, r.db, teamID, fn)
+}
+
+func (r *V2SearchRepositoryImpl) database() (*gorm.DB, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("v2 search: database is required")
+	}
+	return r.db, nil
 }

@@ -18,6 +18,27 @@ import (
 
 const defaultV2SearchContractID = "00000000-0000-0000-0000-000000020001"
 
+func TestV2SearchRepositoryFailsClosedWithoutDependencies(t *testing.T) {
+	ctx := context.Background()
+	teamID := uuid.NewString()
+
+	_, err := (&V2SearchRepositoryImpl{}).ClaimEmbeddingJobs(ctx, V2ClaimEmbeddingJobsInput{
+		TeamID:   teamID,
+		WorkerID: "worker",
+		Lease:    time.Second,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "database is required")
+
+	_, err = (&V2SearchRepositoryImpl{db: &gorm.DB{}}).ClaimEmbeddingJobs(ctx, V2ClaimEmbeddingJobsInput{
+		TeamID:   teamID,
+		WorkerID: "worker",
+		Lease:    time.Second,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rls helper is required")
+}
+
 func TestV2SearchDocumentsFTSAndExactVectorAreTeamScoped(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
 	defer cleanup()
@@ -144,6 +165,129 @@ func TestV2SearchEmbeddingCompletionRejectsStaleJobs(t *testing.T) {
 	assert.Equal(t, int64(2), hits[0].DocumentVersion)
 }
 
+func TestV2SearchClaimEmbeddingJobsReclaimsExpiredLease(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "search-reclaim-team")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "search-reclaim-owner")
+	profileKey, _ := insertV2SearchTestProfile(t, adminDB, rls, "search-reclaim", 3, "exact", "")
+	repo := NewV2SearchRepository(appDB, rls)
+
+	doc := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, profileKey, "lease reclaim text", 1)
+	firstClaim, err := repo.ClaimEmbeddingJobs(ctx, V2ClaimEmbeddingJobsInput{
+		TeamID:   teamID,
+		WorkerID: "worker-one",
+		Limit:    1,
+		Lease:    time.Minute,
+	})
+	require.NoError(t, err)
+	require.Len(t, firstClaim, 1)
+	require.Equal(t, doc.SearchDocumentID, firstClaim[0].SearchDocumentID)
+	require.Equal(t, 1, firstClaim[0].Attempts)
+
+	err = rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE embedding_jobs
+			SET lease_until = now() - interval '1 second'
+			WHERE team_id = ?::uuid
+			  AND embedding_job_id = ?::uuid
+		`, teamID, firstClaim[0].EmbeddingJobID).Error
+	})
+	require.NoError(t, err)
+
+	secondClaim, err := repo.ClaimEmbeddingJobs(ctx, V2ClaimEmbeddingJobsInput{
+		TeamID:   teamID,
+		WorkerID: "worker-two",
+		Limit:    1,
+		Lease:    time.Minute,
+	})
+	require.NoError(t, err)
+	require.Len(t, secondClaim, 1)
+	assert.Equal(t, firstClaim[0].EmbeddingJobID, secondClaim[0].EmbeddingJobID)
+	assert.Equal(t, 2, secondClaim[0].Attempts)
+
+	err = repo.CompleteEmbeddingJob(ctx, V2CompleteEmbeddingJobInput{
+		TeamID:         teamID,
+		EmbeddingJobID: firstClaim[0].EmbeddingJobID,
+		WorkerID:       "worker-one",
+		Embedding:      []float32{1, 0, 0},
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrV2SearchStaleVersion), "err=%v", err)
+
+	err = repo.CompleteEmbeddingJob(ctx, V2CompleteEmbeddingJobInput{
+		TeamID:         teamID,
+		EmbeddingJobID: secondClaim[0].EmbeddingJobID,
+		WorkerID:       "worker-two",
+		Embedding:      []float32{1, 0, 0},
+	})
+	require.NoError(t, err)
+}
+
+func TestV2SearchExactVectorRequiresBoundedProfile(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "search-exact-policy-team")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "search-exact-policy-owner")
+	boundedProfileKey, _ := insertV2SearchTestProfileWithOptions(t, adminDB, rls, "search-bounded", 3, "exact", "", 1, false)
+	repo := NewV2SearchRepository(appDB, rls)
+
+	_, err := repo.SearchExactVector(ctx, V2ExactVectorSearchInput{
+		TeamID:         teamID,
+		ProfileKey:     "default",
+		QueryEmbedding: unitV2SearchVector(1536, 0),
+		Limit:          10,
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrV2SearchProfileMismatch), "err=%v", err)
+	assert.Contains(t, err.Error(), "does not allow exact vector search")
+
+	docA := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, boundedProfileKey, "bounded vector one", 1)
+	docB := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, boundedProfileKey, "bounded vector two", 1)
+	completeV2SearchJobsForTest(t, repo, teamID, map[string][]float32{
+		docA.SearchDocumentID: {1, 0, 0},
+		docB.SearchDocumentID: {0, 1, 0},
+	})
+
+	_, err = repo.SearchExactVector(ctx, V2ExactVectorSearchInput{
+		TeamID:         teamID,
+		ProfileKey:     boundedProfileKey,
+		QueryEmbedding: []float32{1, 0, 0},
+		Limit:          10,
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrV2SearchProfileMismatch), "err=%v", err)
+	assert.Contains(t, err.Error(), "exceed profile max")
+}
+
+func TestV2SearchDocumentStateRejectsStaleProjection(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "search-state-team")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "search-state-owner")
+
+	err := rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		if err := ensureV2SemanticRefs(ctx, tx, teamID, ownerID); err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO search_documents (
+			    team_id, owner_profile_id, source_kind, source_id, source_version,
+			    document_version, embedding_contract_id, embedding_dimensions,
+			    search_state, document_text, document_hash
+			) VALUES (
+			    ?::uuid, ?::uuid, 'evidence', ?::uuid, 1, 1,
+			    ?::uuid, 1536, 'stale', 'stale projection text', 'sha256:stale'
+			)
+		`, teamID, ownerID, uuid.NewString(), defaultV2SearchContractID).Error
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "search_documents_state_check")
+}
+
 func TestV2SearchReadinessAndHNSWPlan(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
 	defer cleanup()
@@ -229,6 +373,20 @@ func insertV2SearchTestProfile(
 	strategy string,
 	indexName string,
 ) (string, string) {
+	return insertV2SearchTestProfileWithOptions(t, db, rls, prefix, dimensions, strategy, indexName, 10000, false)
+}
+
+func insertV2SearchTestProfileWithOptions(
+	t *testing.T,
+	db *gorm.DB,
+	rls *storagepostgres.RLS,
+	prefix string,
+	dimensions int,
+	strategy string,
+	indexName string,
+	exactMaxRows int,
+	allowExactFallback bool,
+) (string, string) {
 	t.Helper()
 	profileKey := fmt.Sprintf("%s-%s", prefix, strings.ReplaceAll(uuid.NewString(), "-", "")[:8])
 	contractID := uuid.NewString()
@@ -256,12 +414,13 @@ func insertV2SearchTestProfile(
 			INSERT INTO search_index_profiles (
 			    search_index_profile_id, profile_key, version, embedding_contract_id,
 			    embedding_dimensions, distance_metric, ann_strategy, operator_class,
-			    indexed_expression, physical_index_name, activation_state, activated_at
+			    indexed_expression, physical_index_name, exact_max_rows,
+			    allow_exact_fallback, activation_state, activated_at
 			) VALUES (
-			    ?::uuid, ?, 1, ?::uuid, ?, 'cosine', ?, ?, ?, ?, 'active', now()
+			    ?::uuid, ?, 1, ?::uuid, ?, 'cosine', ?, ?, ?, ?, ?, ?, 'active', now()
 			)
 		`, searchProfileID, profileKey, contractID, dimensions, strategy,
-			operatorClass, indexedExpression, indexName).Error; err != nil {
+			operatorClass, indexedExpression, indexName, exactMaxRows, allowExactFallback).Error; err != nil {
 			return err
 		}
 		return tx.Exec(`

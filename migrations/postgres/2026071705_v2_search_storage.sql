@@ -198,7 +198,7 @@ CREATE TABLE IF NOT EXISTS search_documents (
     CONSTRAINT search_documents_source_kind_check CHECK (source_kind IN ('evidence', 'relationship', 'entity')),
     CONSTRAINT search_documents_source_version_check CHECK (source_version >= 1),
     CONSTRAINT search_documents_document_version_check CHECK (document_version >= 1),
-    CONSTRAINT search_documents_state_check CHECK (search_state IN ('not_required', 'pending', 'current', 'stale', 'failed')),
+    CONSTRAINT search_documents_state_check CHECK (search_state IN ('not_required', 'pending', 'current', 'failed')),
     CONSTRAINT search_documents_text_nonempty CHECK (btrim(document_text) <> ''),
     CONSTRAINT search_documents_hash_nonempty CHECK (btrim(document_hash) <> ''),
     CONSTRAINT search_documents_embedding_dims_check CHECK (

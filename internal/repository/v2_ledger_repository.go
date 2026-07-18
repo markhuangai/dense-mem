@@ -546,6 +546,7 @@ func insertV2KnowledgeIngest(ctx context.Context, tx *gorm.DB, input V2CreateIng
 		if err != nil {
 			return "", false, err
 		}
+		defer rows.Close()
 		if !rows.Next() {
 			if err := rows.Err(); err != nil {
 				_ = rows.Close()
@@ -929,6 +930,7 @@ func insertV2SecurityEvent(ctx context.Context, tx *gorm.DB, input V2SecurityEve
 	if err != nil {
 		return "", err
 	}
+	defer rows.Close()
 	if !rows.Next() {
 		_ = rows.Close()
 		return "", sql.ErrNoRows

@@ -3,12 +3,34 @@ package repository
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestV2SemanticRepositoryFailsClosedWithoutDependencies(t *testing.T) {
+	_, err := (*V2SemanticRepositoryImpl)(nil).CreateEntity(context.Background(), V2CreateEntityInput{
+		TeamID:         "f9f8b369-3240-44b8-a9b1-64ad3b56bcab",
+		OwnerProfileID: "5d285966-87d9-47b1-b1f7-1c7bb1415de4",
+		EntityKind:     "person",
+		CanonicalName:  "Mark",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "database is required")
+
+	repo := &V2SemanticRepositoryImpl{db: &gorm.DB{}}
+	_, err = repo.CreateEntity(context.Background(), V2CreateEntityInput{
+		TeamID:         "f9f8b369-3240-44b8-a9b1-64ad3b56bcab",
+		OwnerProfileID: "5d285966-87d9-47b1-b1f7-1c7bb1415de4",
+		EntityKind:     "person",
+		CanonicalName:  "Mark",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rls helper is required")
+}
 
 func TestV2SemanticEntitiesAllowHomonymsAndTypedValuesDeduplicate(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
@@ -83,6 +105,59 @@ func TestV2SemanticEntitiesAllowHomonymsAndTypedValuesDeduplicate(t *testing.T) 
 	require.NoError(t, err)
 	assert.True(t, secondValue.Existing)
 	assert.Equal(t, firstValue.ValueID, secondValue.ValueID)
+}
+
+func TestV2SemanticValueUpsertConcurrentDuplicateReturnsCanonical(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "semantic-value-race-team")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "owner")
+	repo := NewV2SemanticRepository(appDB, rls)
+
+	const workers = 8
+	start := make(chan struct{})
+	results := make(chan *V2ValueRecord, workers)
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			value, err := repo.UpsertValue(ctx, V2UpsertValueInput{
+				TeamID:         teamID,
+				OwnerProfileID: ownerID,
+				ValueType:      "string",
+				CanonicalValue: "PostgreSQL",
+				Display:        "PostgreSQL",
+			})
+			if err != nil {
+				errs <- err
+				return
+			}
+			results <- value
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	close(results)
+
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	var firstID string
+	for value := range results {
+		require.NotNil(t, value)
+		require.NotEmpty(t, value.ValueID)
+		if firstID == "" {
+			firstID = value.ValueID
+			continue
+		}
+		assert.Equal(t, firstID, value.ValueID)
+	}
+	require.NotEmpty(t, firstID)
 }
 
 func TestV2SemanticRelationshipLifecycleAndRLS(t *testing.T) {
@@ -252,6 +327,106 @@ func TestV2SemanticRelationshipLifecycleAndRLS(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "active", ownerAStatus, "cross-profile references must not mutate the target owner")
+
+	_, err = semanticRepo.AppendCrossReference(ctx, V2AppendCrossReferenceInput{
+		TeamID:                    teamA,
+		AuthorProfileID:           ownerB,
+		SourceRelationshipID:      ownerBRelationship.Relationship.RelationshipID,
+		SourceRelationshipVersion: ownerBRelationship.Relationship.Version + 1,
+		TargetRelationshipID:      first.Relationship.RelationshipID,
+		TargetRelationshipVersion: second.Relationship.Version,
+		Kind:                      "challenges",
+		VerificationEventID:       ownerBRelationship.VerificationEventID,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "relationship version does not match")
+
+	_, err = semanticRepo.ApplyRelationshipDecision(ctx, V2ApplyRelationshipDecisionInput{
+		TeamID:          teamA,
+		OwnerProfileID:  ownerB,
+		IngestID:        ownerBIngest.IngestID,
+		SubjectEntityID: mark.EntityID,
+		PredicateKey:    "uses",
+		ObjectEntityID:  postgres.EntityID,
+		Support: &V2EvidenceSupportInput{
+			FragmentID:     firstIngest.Evidence[0].FragmentID,
+			SourceGroupKey: "conversation:cross-owner",
+			SpanStart:      0,
+			SpanEnd:        len("Mark Huang works on Dense-Mem."),
+			Authority:      "primary",
+		},
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrV2SemanticOwnerMismatch), err)
+}
+
+func TestV2SemanticOneCardinalitySupersedesPriorActiveRelationship(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "one-cardinality-team")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "owner")
+	ledgerRepo := NewV2LedgerRepository(appDB, rls)
+	semanticRepo := NewV2SemanticRepository(appDB, rls)
+
+	denseMem := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense-Mem")
+	postgres := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "PostgreSQL")
+	neo4j := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "Neo4j")
+	firstIngest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"primary database postgres", "Dense-Mem uses PostgreSQL as its primary database.")
+	first := applyV2SemanticDecision(t, ctx, semanticRepo, V2ApplyRelationshipDecisionInput{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        firstIngest.IngestID,
+		SubjectEntityID: denseMem.EntityID,
+		PredicateKey:    "primary_database",
+		ObjectEntityID:  postgres.EntityID,
+		Support: &V2EvidenceSupportInput{
+			FragmentID:     firstIngest.Evidence[0].FragmentID,
+			SourceGroupKey: "conversation:primary-db-1",
+			SpanStart:      0,
+			SpanEnd:        len("Dense-Mem uses PostgreSQL as its primary database."),
+			Authority:      "primary",
+		},
+	})
+	require.Equal(t, "active", first.Relationship.Status)
+
+	secondIngest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"primary database neo4j", "Dense-Mem used Neo4j as its primary database before V2.")
+	second := applyV2SemanticDecision(t, ctx, semanticRepo, V2ApplyRelationshipDecisionInput{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        secondIngest.IngestID,
+		SubjectEntityID: denseMem.EntityID,
+		PredicateKey:    "primary_database",
+		ObjectEntityID:  neo4j.EntityID,
+		Support: &V2EvidenceSupportInput{
+			FragmentID:     secondIngest.Evidence[0].FragmentID,
+			SourceGroupKey: "conversation:primary-db-2",
+			SpanStart:      0,
+			SpanEnd:        len("Dense-Mem used Neo4j as its primary database before V2."),
+			Authority:      "primary",
+		},
+	})
+	require.Equal(t, "active", second.Relationship.Status)
+	require.NotEqual(t, first.Relationship.RelationshipID, second.Relationship.RelationshipID)
+
+	var firstStatus string
+	err := rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT status
+			FROM relationship_records
+			WHERE team_id = ?::uuid
+			  AND relationship_id = ?::uuid
+		`, teamID, first.Relationship.RelationshipID).Scan(&firstStatus).Error
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "superseded", firstStatus)
+
+	edges, err := semanticRepo.ListSemanticEdges(ctx, teamID, 20)
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+	assert.Equal(t, second.Relationship.RelationshipID, edges[0].RelationshipID)
 }
 
 func TestV2SemanticAppendOnlyHistoryAndRetraction(t *testing.T) {
@@ -365,6 +540,7 @@ func createV2SemanticIngest(
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IdempotencyKey: idempotencyKey,
+		RequestHash:    sha256Hex(content),
 		Evidence: []V2EvidenceInput{{
 			Content: content,
 		}},

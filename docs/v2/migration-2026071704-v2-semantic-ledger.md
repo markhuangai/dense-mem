@@ -1,4 +1,4 @@
-# Migration 2026071702: V2 Semantic Ledger
+# Migration 2026071704: V2 Semantic Ledger
 
 ## Scope
 
@@ -17,9 +17,10 @@ PostgreSQL authority required by issue #79.
 ## Lock And Rewrite Analysis
 
 The migration creates new tables, indexes, triggers, policies, and one view. It
-does not rewrite existing tenant data. The only existing tables touched are
-`app_config` for `update_time` and the already-added V2 semantic integrity
-projection tables through foreign keys.
+does not rewrite existing tenant data. The existing V2 ledger tables touched are
+`evidence_fragments` and `placement_items`, where owner-aware unique constraints
+are added to support semantic foreign keys. The only active-runtime table touched
+is `app_config` for `update_time`.
 
 The seeded predicate definitions are small shared reference rows. Updates and
 deletes are blocked by a trigger; future predicate meaning changes must use new

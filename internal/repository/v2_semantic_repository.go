@@ -152,20 +152,63 @@ func (r *V2SemanticRepositoryImpl) UpsertValue(ctx context.Context, input V2Upse
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
-		if !rows.Next() {
-			return rows.Err()
+		loaded, scanErr := scanV2ValueRows(rows)
+		closeErr := rows.Close()
+		if scanErr != nil {
+			return scanErr
 		}
-		loaded := V2ValueRecord{}
-		if err := rows.Scan(&loaded.TeamID, &loaded.ValueID, &loaded.ValueType, &loaded.CanonicalValue,
-			&loaded.Unit, &loaded.Display, &loaded.NormalizationVersion, &loaded.Existing); err != nil {
-			return err
+		if closeErr != nil {
+			return closeErr
 		}
-		record = &loaded
-		return rows.Err()
+		if loaded == nil {
+			loaded, err = selectV2ValueByKey(ctx, tx, input)
+			if err != nil {
+				return err
+			}
+		}
+		record = loaded
+		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("v2 semantic: upsert value: %w", err)
+	}
+	return record, nil
+}
+
+func scanV2ValueRows(rows *sql.Rows) (*V2ValueRecord, error) {
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	loaded := V2ValueRecord{}
+	if err := rows.Scan(&loaded.TeamID, &loaded.ValueID, &loaded.ValueType, &loaded.CanonicalValue,
+		&loaded.Unit, &loaded.Display, &loaded.NormalizationVersion, &loaded.Existing); err != nil {
+		return nil, err
+	}
+	return &loaded, rows.Err()
+}
+
+func selectV2ValueByKey(ctx context.Context, tx *gorm.DB, input V2UpsertValueInput) (*V2ValueRecord, error) {
+	rows, err := tx.WithContext(ctx).Raw(`
+		SELECT team_id::text, value_id::text, value_type, canonical_value,
+		       COALESCE(unit, ''), display, normalization_version, true AS existing
+		FROM value_records
+		WHERE team_id = ?::uuid
+		  AND value_type = ?
+		  AND canonical_value = ?
+		  AND unit IS NOT DISTINCT FROM NULLIF(?, '')
+		  AND normalization_version = ?
+	`, input.TeamID, input.ValueType, input.CanonicalValue, input.Unit,
+		input.NormalizationVersion).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	record, err := scanV2ValueRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	if record == nil {
+		return nil, gorm.ErrRecordNotFound
 	}
 	return record, nil
 }
@@ -307,6 +350,15 @@ func (r *V2SemanticRepositoryImpl) AppendCrossReference(ctx context.Context, inp
 	}
 	var crossReferenceID string
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.AuthorProfileID, func(tx *gorm.DB) error {
+		if err := requireV2RelationshipVersion(ctx, tx, input.TeamID, input.SourceRelationshipID, input.AuthorProfileID, input.SourceRelationshipVersion); err != nil {
+			return err
+		}
+		if err := requireV2RelationshipVersion(ctx, tx, input.TeamID, input.TargetRelationshipID, "", input.TargetRelationshipVersion); err != nil {
+			return err
+		}
+		if err := requireV2VerificationOwner(ctx, tx, input.TeamID, input.VerificationEventID, input.AuthorProfileID); err != nil {
+			return err
+		}
 		metadata, err := marshalV2JSON(input.Metadata)
 		if err != nil {
 			return err
@@ -417,22 +469,21 @@ func (r *V2SemanticRepositoryImpl) ListSemanticEdges(ctx context.Context, teamID
 }
 
 func (r *V2SemanticRepositoryImpl) withTeamProfileTx(ctx context.Context, teamID, profileID string, fn func(tx *gorm.DB) error) error {
-	if r.rls != nil {
-		return r.rls.WithTeamProfileTx(ctx, r.db, teamID, profileID, fn)
+	if r == nil || r.db == nil {
+		return errors.New("v2 semantic: database is required")
 	}
-	return r.db.WithContext(ctx).Transaction(fn)
+	if r.rls == nil {
+		return errors.New("v2 semantic: rls helper is required")
+	}
+	return r.rls.WithTeamProfileTx(ctx, r.db, teamID, profileID, fn)
 }
 
 func (r *V2SemanticRepositoryImpl) withTeamTx(ctx context.Context, teamID string, fn func(tx *gorm.DB) error) error {
-	if r.rls != nil {
-		return r.rls.WithTeamTx(ctx, r.db, teamID, fn)
+	if r == nil || r.db == nil {
+		return errors.New("v2 semantic: database is required")
 	}
-	return r.db.WithContext(ctx).Transaction(fn)
-}
-
-func scanV2NullableString(value sql.NullString) string {
-	if !value.Valid {
-		return ""
+	if r.rls == nil {
+		return errors.New("v2 semantic: rls helper is required")
 	}
-	return value.String
+	return r.rls.WithTeamTx(ctx, r.db, teamID, fn)
 }
