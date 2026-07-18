@@ -18,9 +18,12 @@ import (
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-var ErrV2IdempotencyConflict = errors.New("v2 idempotency conflict")
-var ErrV2SourceRevisionConflict = errors.New("v2 source revision conflict")
-var ErrV2PlacementNotFound = errors.New("v2 placement not found")
+var (
+	ErrV2IdempotencyConflict    = errors.New("v2 idempotency conflict")
+	ErrV2PlacementLeaseConflict = errors.New("v2 placement lease conflict")
+	ErrV2PlacementNotFound      = errors.New("v2 placement not found")
+	ErrV2SourceRevisionConflict = errors.New("v2 source revision conflict")
+)
 
 type V2LedgerRepository interface {
 	CreateIngest(ctx context.Context, input V2CreateIngestInput) (*V2CreateIngestResult, error)
@@ -29,7 +32,7 @@ type V2LedgerRepository interface {
 	AppendSecurityEvent(ctx context.Context, input V2SecurityEventInput) (string, error)
 	AppendPlacementOutcome(ctx context.Context, input V2PlacementOutcomeInput) (string, error)
 	ClaimNextPlacementRun(ctx context.Context, teamID string, workerID string, lease time.Duration) (*V2PlacementRun, error)
-	FinishPlacementRun(ctx context.Context, teamID string, placementRunID string, status string, message string) error
+	FinishPlacementRun(ctx context.Context, teamID string, placementRunID string, workerID string, status string, message string) error
 }
 
 type V2CreateIngestInput struct {
@@ -53,6 +56,8 @@ type V2GetPlacementRunInput struct {
 type V2EvidenceInput struct {
 	Content                       string
 	ContentHash                   string
+	SourceID                      string
+	SourceRevisionID              string
 	SourceType                    string
 	Authority                     string
 	SourceRef                     string
@@ -333,9 +338,10 @@ func (r *V2LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, team
 	return run, nil
 }
 
-func (r *V2LedgerRepositoryImpl) FinishPlacementRun(ctx context.Context, teamID string, placementRunID string, status string, message string) error {
+func (r *V2LedgerRepositoryImpl) FinishPlacementRun(ctx context.Context, teamID string, placementRunID string, workerID string, status string, message string) error {
 	teamID = strings.TrimSpace(teamID)
 	placementRunID = strings.TrimSpace(placementRunID)
+	workerID = strings.TrimSpace(workerID)
 	status = strings.TrimSpace(status)
 	if _, err := uuid.Parse(teamID); err != nil {
 		return fmt.Errorf("team_id is required: %w", err)
@@ -343,11 +349,14 @@ func (r *V2LedgerRepositoryImpl) FinishPlacementRun(ctx context.Context, teamID 
 	if _, err := uuid.Parse(placementRunID); err != nil {
 		return fmt.Errorf("placement_run_id is required: %w", err)
 	}
+	if workerID == "" {
+		return errors.New("worker_id is required")
+	}
 	if status != "completed" && status != "failed" && status != "quarantined" {
 		return fmt.Errorf("unsupported placement status %q", status)
 	}
 	err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
-		return tx.WithContext(ctx).Exec(`
+		result := tx.WithContext(ctx).Exec(`
 			UPDATE placement_runs
 			SET status = ?,
 			    error = ?,
@@ -356,7 +365,18 @@ func (r *V2LedgerRepositoryImpl) FinishPlacementRun(ctx context.Context, teamID 
 			    updated_at = now()
 			WHERE team_id = ?::uuid
 			  AND placement_run_id = ?::uuid
-		`, status, strings.TrimSpace(message), teamID, placementRunID).Error
+			  AND status = 'processing'
+			  AND worker_id = ?
+			  AND lease_until IS NOT NULL
+			  AND lease_until > now()
+		`, status, strings.TrimSpace(message), teamID, placementRunID, workerID)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return fmt.Errorf("%w: placement run is not actively leased by worker", ErrV2PlacementLeaseConflict)
+		}
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("v2 ledger: finish placement run: %w", err)
@@ -365,17 +385,23 @@ func (r *V2LedgerRepositoryImpl) FinishPlacementRun(ctx context.Context, teamID 
 }
 
 func (r *V2LedgerRepositoryImpl) withTeamProfileTx(ctx context.Context, teamID, profileID string, fn func(tx *gorm.DB) error) error {
-	if r.rls != nil {
-		return r.rls.WithTeamProfileTx(ctx, r.db, teamID, profileID, fn)
+	if r == nil || r.db == nil {
+		return errors.New("v2 ledger: database is required")
 	}
-	return r.db.WithContext(ctx).Transaction(fn)
+	if r.rls == nil {
+		return errors.New("v2 ledger: rls helper is required")
+	}
+	return r.rls.WithTeamProfileTx(ctx, r.db, teamID, profileID, fn)
 }
 
 func (r *V2LedgerRepositoryImpl) withTeamTx(ctx context.Context, teamID string, fn func(tx *gorm.DB) error) error {
-	if r.rls != nil {
-		return r.rls.WithTeamTx(ctx, r.db, teamID, fn)
+	if r == nil || r.db == nil {
+		return errors.New("v2 ledger: database is required")
 	}
-	return r.db.WithContext(ctx).Transaction(fn)
+	if r.rls == nil {
+		return errors.New("v2 ledger: rls helper is required")
+	}
+	return r.rls.WithTeamTx(ctx, r.db, teamID, fn)
 }
 
 func normalizeV2CreateIngestInput(input V2CreateIngestInput) V2CreateIngestInput {
@@ -393,6 +419,8 @@ func normalizeV2CreateIngestInput(input V2CreateIngestInput) V2CreateIngestInput
 		if input.Evidence[i].ContentHash == "" && input.Evidence[i].Content != "" {
 			input.Evidence[i].ContentHash = sha256Hex(input.Evidence[i].Content)
 		}
+		input.Evidence[i].SourceID = strings.TrimSpace(input.Evidence[i].SourceID)
+		input.Evidence[i].SourceRevisionID = strings.TrimSpace(input.Evidence[i].SourceRevisionID)
 		input.Evidence[i].SourceType = strings.TrimSpace(input.Evidence[i].SourceType)
 		if input.Evidence[i].SourceType == "" {
 			input.Evidence[i].SourceType = "conversation"
@@ -423,6 +451,9 @@ func validateV2CreateIngestInput(input V2CreateIngestInput) error {
 	if input.Status != "queued" && input.Status != "guarded" && input.Status != "quarantined" {
 		return fmt.Errorf("unsupported ingest status %q", input.Status)
 	}
+	if input.IdempotencyKey != "" && input.RequestHash == "" {
+		return errors.New("request_hash is required when idempotency_key is set")
+	}
 	if len(input.Evidence) == 0 {
 		return errors.New("evidence is required")
 	}
@@ -432,6 +463,20 @@ func validateV2CreateIngestInput(input V2CreateIngestInput) error {
 		}
 		if item.ContentHash == "" {
 			return fmt.Errorf("evidence[%d].content_hash is required", i)
+		}
+		if want := sha256Hex(item.Content); item.ContentHash != want {
+			return fmt.Errorf("evidence[%d].content_hash does not match content hash", i)
+		}
+		if (item.SourceID == "") != (item.SourceRevisionID == "") {
+			return fmt.Errorf("evidence[%d].source_id and source_revision_id must be provided together", i)
+		}
+		if item.SourceID != "" {
+			if _, err := uuid.Parse(item.SourceID); err != nil {
+				return fmt.Errorf("evidence[%d].source_id is invalid: %w", i, err)
+			}
+			if _, err := uuid.Parse(item.SourceRevisionID); err != nil {
+				return fmt.Errorf("evidence[%d].source_revision_id is invalid: %w", i, err)
+			}
 		}
 		if item.SourceType != "conversation" && item.SourceType != "document" && item.SourceType != "observation" && item.SourceType != "manual" {
 			return fmt.Errorf("evidence[%d].source_type is unsupported", i)
@@ -547,11 +592,11 @@ func insertV2KnowledgeIngest(ctx context.Context, tx *gorm.DB, input V2CreateIng
 				ON CONFLICT (team_id, owner_profile_id, idempotency_key)
 				WHERE idempotency_key <> ''
 				DO NOTHING
-				RETURNING ingest_id::text, true AS created
+				RETURNING ingest_id::text, request_hash, true AS created
 			)
-			SELECT ingest_id, created FROM inserted
+			SELECT ingest_id, request_hash, created FROM inserted
 			UNION ALL
-			SELECT ingest_id::text, false AS created
+			SELECT ingest_id::text, request_hash, false AS created
 			FROM knowledge_ingests
 			WHERE team_id = ?::uuid
 			  AND owner_profile_id = ?::uuid
@@ -571,14 +616,22 @@ func insertV2KnowledgeIngest(ctx context.Context, tx *gorm.DB, input V2CreateIng
 			if err := rows.Close(); err != nil {
 				return "", false, err
 			}
-			ingestID, err := selectV2KnowledgeIngestByIdempotency(ctx, tx, input)
+			ingestID, requestHash, err := selectV2KnowledgeIngestByIdempotency(ctx, tx, input)
+			if err == nil && requestHash != input.RequestHash {
+				err = fmt.Errorf("%w: idempotency key reused with different request hash", ErrV2IdempotencyConflict)
+			}
 			return ingestID, false, err
 		}
 		var ingestID string
+		var requestHash string
 		var created bool
-		if err := rows.Scan(&ingestID, &created); err != nil {
+		if err := rows.Scan(&ingestID, &requestHash, &created); err != nil {
 			_ = rows.Close()
 			return "", false, err
+		}
+		if !created && requestHash != input.RequestHash {
+			_ = rows.Close()
+			return "", false, fmt.Errorf("%w: idempotency key reused with different request hash", ErrV2IdempotencyConflict)
 		}
 		if err := rows.Err(); err != nil {
 			_ = rows.Close()
@@ -609,9 +662,9 @@ func insertV2KnowledgeIngest(ctx context.Context, tx *gorm.DB, input V2CreateIng
 	return ingestID, true, rows.Err()
 }
 
-func selectV2KnowledgeIngestByIdempotency(ctx context.Context, tx *gorm.DB, input V2CreateIngestInput) (string, error) {
+func selectV2KnowledgeIngestByIdempotency(ctx context.Context, tx *gorm.DB, input V2CreateIngestInput) (string, string, error) {
 	row := tx.WithContext(ctx).Raw(`
-		SELECT ingest_id::text
+		SELECT ingest_id::text, request_hash
 		FROM knowledge_ingests
 		WHERE team_id = ?::uuid
 		  AND owner_profile_id = ?::uuid
@@ -619,10 +672,11 @@ func selectV2KnowledgeIngestByIdempotency(ctx context.Context, tx *gorm.DB, inpu
 		LIMIT 1
 	`, input.TeamID, input.OwnerProfileID, input.IdempotencyKey).Row()
 	var ingestID string
-	if err := row.Scan(&ingestID); err != nil {
-		return "", err
+	var requestHash string
+	if err := row.Scan(&ingestID, &requestHash); err != nil {
+		return "", "", err
 	}
-	return ingestID, nil
+	return ingestID, requestHash, nil
 }
 
 func insertV2PlacementRun(ctx context.Context, tx *gorm.DB, input V2CreateIngestInput, ingestID string) (string, error) {
@@ -662,6 +716,9 @@ func insertV2EvidenceFragment(ctx context.Context, tx *gorm.DB, input V2CreateIn
 	if source != nil {
 		sourceID = source.SourceID
 		sourceRevisionID = source.SourceRevisionID
+	} else {
+		sourceID = item.SourceID
+		sourceRevisionID = item.SourceRevisionID
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO evidence_fragments (

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -31,6 +32,9 @@ func setupV2LedgerRepositoryDB(t *testing.T) (*gorm.DB, *gorm.DB, *storagepostgr
 	dsn := storagepostgres.GetTestDSN()
 	if dsn == "" {
 		t.Skip("set DATABASE_URL to run V2 ledger PostgreSQL integration tests")
+	}
+	if os.Getenv("DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS") != "1" {
+		t.Skip("set DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS=1 to run destructive V2 ledger PostgreSQL integration tests")
 	}
 
 	db, err := gorm.Open(gormpostgres.Open(dsn), &gorm.Config{})
@@ -267,6 +271,18 @@ func TestV2LedgerCreateIngestIsIdempotentAndOwnerScoped(t *testing.T) {
 	assert.Equal(t, first.IngestID, second.IngestID)
 	assert.Equal(t, first.PlacementRunID, second.PlacementRunID)
 
+	_, err = repo.CreateIngest(ctx, V2CreateIngestInput{
+		TeamID:         teamA,
+		OwnerProfileID: ownerA,
+		IdempotencyKey: "idem-1",
+		RequestHash:    "different-request-hash",
+		Evidence: []V2EvidenceInput{{
+			Content: "Dense-Mem v2 stores exact evidence durably before acknowledgement.",
+		}},
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrV2IdempotencyConflict), fmt.Sprintf("err=%v", err))
+
 	err = rls.WithTeamProfileTx(ctx, appDB, teamA, ownerB, func(tx *gorm.DB) error {
 		var currentTeam, currentProfile, txMode string
 		require.NoError(t, tx.Raw(`SELECT current_setting('app.current_team_id', true)`).Scan(&currentTeam).Error)
@@ -297,7 +313,7 @@ func TestV2LedgerCreateIngestIsIdempotentAndOwnerScoped(t *testing.T) {
 			) VALUES (
 			    ?::uuid, ?::uuid, ?::uuid, 9, 'bad owner write', 'sha256:bad'
 			)
-		`, teamA, first.IngestID, ownerA).Error
+		`, teamA, first.IngestID, ownerB).Error
 	})
 	require.Error(t, err)
 
@@ -657,6 +673,7 @@ func TestV2LedgerSourceRevisionCompareAndSet(t *testing.T) {
 	ctx := context.Background()
 	teamID := createV2LedgerTeam(t, adminDB, rls, "team-source")
 	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "source-owner")
+	otherOwnerID := createV2LedgerProfile(t, adminDB, rls, teamID, "source-other-owner")
 	repo := NewV2LedgerRepository(appDB, rls)
 
 	first, err := repo.AdvanceSourceRevision(ctx, V2AdvanceSourceRevisionInput{
@@ -680,6 +697,44 @@ func TestV2LedgerSourceRevisionCompareAndSet(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, first.SourceID, second.SourceID)
 	assert.NotEqual(t, first.SourceRevisionID, second.SourceRevisionID)
+
+	created, err := repo.CreateIngest(ctx, V2CreateIngestInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		Evidence: []V2EvidenceInput{{
+			Content:          "The source revision lineage must be preserved on evidence fragments.",
+			SourceID:         second.SourceID,
+			SourceRevisionID: second.SourceRevisionID,
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, created.Evidence, 1)
+	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		var sourceID, sourceRevisionID string
+		if err := tx.Raw(`
+			SELECT source_id::text, source_revision_id::text
+			FROM evidence_fragments
+			WHERE team_id = ?::uuid
+			  AND fragment_id = ?::uuid
+		`, teamID, created.Evidence[0].FragmentID).Row().Scan(&sourceID, &sourceRevisionID); err != nil {
+			return err
+		}
+		assert.Equal(t, second.SourceID, sourceID)
+		assert.Equal(t, second.SourceRevisionID, sourceRevisionID)
+		return nil
+	})
+	require.NoError(t, err)
+
+	_, err = repo.CreateIngest(ctx, V2CreateIngestInput{
+		TeamID:         teamID,
+		OwnerProfileID: otherOwnerID,
+		Evidence: []V2EvidenceInput{{
+			Content:          "Another owner must not attach evidence to this source revision.",
+			SourceID:         second.SourceID,
+			SourceRevisionID: second.SourceRevisionID,
+		}},
+	})
+	require.Error(t, err)
 
 	_, err = repo.AdvanceSourceRevision(ctx, V2AdvanceSourceRevisionInput{
 		TeamID:                        teamID,
@@ -707,6 +762,7 @@ func TestV2LedgerPlacementClaimIsTeamLocal(t *testing.T) {
 		TeamID:         teamA,
 		OwnerProfileID: ownerA,
 		IdempotencyKey: "placement-claim",
+		RequestHash:    "placement-claim-request",
 		Evidence: []V2EvidenceInput{{
 			Content: "Placement claim must stay inside one authenticated team.",
 		}},
@@ -725,5 +781,9 @@ func TestV2LedgerPlacementClaimIsTeamLocal(t *testing.T) {
 	assert.Equal(t, 1, claimed.Attempts)
 	require.NotNil(t, claimed.LeaseUntil)
 
-	require.NoError(t, repo.FinishPlacementRun(ctx, teamA, claimed.PlacementRunID, "completed", ""))
+	err = repo.FinishPlacementRun(ctx, teamA, claimed.PlacementRunID, "worker-b", "completed", "")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrV2PlacementLeaseConflict), fmt.Sprintf("err=%v", err))
+
+	require.NoError(t, repo.FinishPlacementRun(ctx, teamA, claimed.PlacementRunID, "worker-a", "completed", ""))
 }
