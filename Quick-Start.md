@@ -112,7 +112,7 @@ the server and calls `tools/list`; verify:
 - contract version 2
 - `remember` accepts evidence plus optional hints
 - `get_memory_placement` returns processing and search state
-- `recall_memory` returns ranked evidence contexts plus compact relationship discovery paths
+- `recall_memory` returns ranked evidence contexts, required `conflicts[]`, and compact Relationship discovery paths
 - `trace_memory` accepts `relationship_id`
 - the tool list matches key scopes
 
@@ -151,7 +151,9 @@ Valid outcomes:
 
 - active `validated_claim` or `fact`
 - `candidate/pending_evidence` retained but excluded from active/default recall
-- review for identity, predicate, conflict, scope, or time
+- owner-scoped review for identity, predicate, same-owner conflict, scope, or time
+- a team Conflict case for a material cross-profile disagreement; placement may
+  still complete while that case remains open
 - explicit rejected/quarantined/failed outcome
 
 The authoritative categories are in
@@ -194,7 +196,8 @@ Do not use an ambiguous first name for this initial smoke.
 
 Use the traced caller-owned `relationship_id` and ask to forget that one
 Relationship. To correct another profile, remember new evidence under the
-caller and let Dense-Mem create a cross-reference.
+caller, include the recall-supplied Conflict ID/version on the relevant proposal
+when present, and let Dense-Mem create the cross-reference/case update.
 
 Expected:
 

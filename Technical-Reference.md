@@ -44,7 +44,7 @@ The LLM host obtains this catalog with `tools/list` and invokes one entry with
 | `get_memory_placement` | `read` | Poll processing/search state and inspect outcomes or review tasks. |
 | `resolve_memory_placement` | `write` | Supply a client decision, new evidence, correction, rejection, or forget request. |
 | `correct_entity_resolution` | `write` | Dry-run or apply a merge/split limited to caller-owned observations and Relationships. |
-| `recall_memory` | `read` | Retrieve bounded evidence contexts with compact Relationship discovery paths and server-controlled related Hypotheses. |
+| `recall_memory` | `read` | Retrieve bounded evidence contexts, Conflict status, compact Relationship discovery paths, and server-controlled related Hypotheses. |
 | `trace_memory` | `read` | Expand one Relationship into evidence, verification, lifecycle, conflicts, and bounded current graph context. |
 
 ### Dreaming
@@ -88,29 +88,23 @@ must not be enabled for production memory.
 
 ## Production HTTP Surface
 
-MCP remains the primary external integration, but the same tool registry is
-also exposed through the authenticated HTTP tool surface:
+V2 semantic memory tools are MCP-only. `remember`, `get_memory_placement`,
+`resolve_memory_placement`, `correct_entity_resolution`, `recall_memory`, and
+`trace_memory` are advertised by MCP `tools/list` and invoked by MCP
+`tools/call`; they are absent from the generic HTTP tool catalog/executor and
+from generated OpenAPI paths/components. A direct HTTP attempt to execute one
+returns not found rather than exposing a second public contract.
 
 ```text
-GET  /api/v1/tools
-GET  /api/v1/tools/:id
-POST /api/v1/tools/:name
-GET  /api/v1/openapi.json
-GET  /api/v1/recall
-GET  /api/v1/dreaming/status
-GET  /api/v1/dreaming/runs
-GET  /api/v1/dreams
-GET  /api/v1/dreams/:dreamId
 POST /mcp
 GET  /mcp
 ```
 
-Production v2 clients remember through `remember`, poll
-`get_memory_placement`, recall through `recall_memory`, and may use
-`GET /api/v1/recall` for the canonical HTTP recall response. Direct v1 routes
-such as `POST /api/v1/fragments`, `POST /api/v1/claims`,
-`POST /api/v1/claims/:id/verify`, `POST /api/v1/claims/:id/promote`, and
-`GET /api/v1/facts` are not the v2 client surface.
+The registry remains the schema/executor source of truth, but transport
+visibility is explicit and checked independently by discovery and execution.
+First-party user/control portal handlers may use bounded server-owned browser
+endpoints; those endpoints are private product implementation, not an external
+memory API and not an alternate way to call an MCP tool.
 
 ## Common Request Rules
 
@@ -184,6 +178,7 @@ Only `evidence` is required:
         ],
         "valid_from": null,
         "valid_to": null,
+        "conflict_context": null,
         "client_comment": null
       }
     ]
@@ -279,11 +274,33 @@ names are valid because homonyms exist. Canonical behavior is in
 | `modality` | no | `statement`, `question`, `proposal`, `speculation`, or `quoted`. |
 | `evidence` | yes | One or more exact spans from this request. |
 | `valid_from` / `valid_to` | no | Evidence-supported real-world validity bounds. |
+| `conflict_context` | no | Response context containing one same-team `conflict_id` and `expected_version`; it requests re-evaluation but grants no decision authority. |
 | `client_comment` | no | Non-authoritative extraction note. |
 
 The target accepts 0–200 Relationship hints. Questions, proposals,
 speculation, and quotations do not become active knowledge merely because they
 were submitted.
+
+`conflict_context` is scoped to one Relationship proposal so one bounded batch
+may respond to different cases without ambiguity:
+
+```json
+{
+  "conflict_context": {
+    "conflict_id": "conflict_01J...",
+    "expected_version": 3
+  }
+}
+```
+
+Both fields are required when the object is present; `expected_version` is a
+positive integer. The ID/version must come from same-team `recall_memory` or
+`trace_memory`. Dense-Mem verifies the current version and proves that the
+placed Relationship is materially part of that case. A stale version, wrong
+team, dismissed case, or unrelated proposal rejects the complete `remember`
+request before evidence or case state commits. The server derives the matching
+or new position from verified semantics. Clients cannot submit a position ID,
+winner, status, score, deadline, or bare confirmation.
 
 An `object_value` contains one of `string`, `number`, `boolean`, `date`, or
 `date_time` plus a canonical value. `display` and `unit` are optional.
@@ -301,6 +318,7 @@ tier
 status
 support or source counts
 verification outcome
+conflict status, preferred position, or effective disposition
 ```
 
 ### Intake response
@@ -351,7 +369,14 @@ vector-search readiness.
           "relationship_status": "active",
           "category": "relationship_fact",
           "reason": "Entailed authoritative user evidence.",
-          "review_task": null
+          "review_task": null,
+          "conflict": {
+            "conflict_id": "conflict_01J...",
+            "version": 3,
+            "status": "resolved",
+            "position_id": "position_release",
+            "review_due_at": null
+          }
         }
       ],
       "errors": []
@@ -388,6 +413,13 @@ contain zero or more `relationship_outcomes[]`; there is no preferred
 Relationship for an evidence item. Relationship outcomes preserve every bounded
 observation result that passed extraction and verification.
 
+`conflict` is optional and appears when that Relationship opened, joined, or
+re-evaluated a durable cross-profile case. Its status is `open`, `overdue`, or
+`resolved`; a dismissed case remains trace-only. An open team conflict does not
+make an otherwise complete caller-owned placement `awaiting_review`: the
+Relationship placement is durable, and later evidence arrives through normal
+`remember` with the returned case ID/version.
+
 Top-level evidence item categories:
 
 | Category | Consumer behavior |
@@ -403,7 +435,7 @@ Relationship outcome categories:
 | `relationship_fact` | active Relationship at fact tier |
 | `relationship_validated_claim` | active supported Relationship below fact tier |
 | `relationship_pending_evidence` | retained candidate; exclude from normal recall; it may be eligible for dreaming |
-| `relationship_needs_review` | present the exact Relationship conflict/scope question |
+| `relationship_needs_review` | present the exact same-owner Relationship conflict/scope question |
 | `predicate_needs_review` | present original wording and server options; no Relationship exists yet |
 | `relationship_rejected` | do not treat as true |
 | `identity_needs_review` | resolve identity before dependent knowledge can activate |
@@ -515,7 +547,7 @@ belong in
 
 ```json
 {
-  "query": "Who works on Dense-Mem?",
+  "query": "Which branch does production deploy from?",
   "limit": 10,
   "valid_at": null,
   "known_at": null,
@@ -542,28 +574,57 @@ belong in
   "recall_id": "rec_550e8400-e29b-41d4-a716-446655440010",
   "results": [
     {
-      "evidence_id": "e1",
-      "context": "Mark works on Dense-Mem."
+      "evidence_id": "e_b_release",
+      "context": "Production deployments moved to release on 2026-02-19."
+    }
+  ],
+  "conflicts": [
+    {
+      "conflict_id": "conflict_01J...",
+      "version": 3,
+      "kind": "cross_profile_relationship",
+      "status": "resolved",
+      "question": "Which deployment branch is current for production?",
+      "review_due_at": null,
+      "effective_at": "2026-02-19T00:00:00Z",
+      "preferred_position_id": "position_release",
+      "positions": [
+        {
+          "position_id": "position_main",
+          "disposition": "suppressed_current",
+          "relationship_ids": ["r_a_main"],
+          "owner_profile_ids": ["profile-a"],
+          "result_evidence_ids": []
+        },
+        {
+          "position_id": "position_release",
+          "disposition": "preferred",
+          "relationship_ids": ["r_b_release"],
+          "owner_profile_ids": ["profile-b"],
+          "result_evidence_ids": ["e_b_release"]
+        }
+      ],
+      "positions_truncated": false
     }
   ],
   "discovery_paths": [
     {
       "relationships": [
         {
-          "relationship_id": "r1",
+          "relationship_id": "r_b_release",
           "subject": {
-            "entity_id": "ent_mark",
-            "name": "Mark"
+            "entity_id": "ent_production",
+            "name": "production"
           },
-          "predicate": "works_on",
+          "predicate": "deploys_from",
           "object": {
-            "entity_id": "ent_dense_mem",
-            "name": "Dense-Mem"
+            "entity_id": "ent_release",
+            "name": "release"
           },
           "polarity": "+"
         }
       ],
-      "evidence_ids": ["e1"]
+      "evidence_ids": ["e_b_release"]
     }
   ],
   "discovery_guidance": "If you are uncertain or have concerns about any specific part, call recall_memory again with a focused query. Pass known_evidence_ids and known_relationship_ids from this response to avoid repeated context, and pass expand_from_entity_ids when you want more context around specific entities. Use trace_memory for supporting evidence or history.",
@@ -577,6 +638,25 @@ selected Relationship paths for follow-up discovery near the returned evidence
 or requested expansion entities; it is not extra answer context and does not
 affect direct top-K scoring. `known_evidence_ids` and `known_relationship_ids`
 change only request-local retrieval context and never mutate stored state.
+
+`conflicts[]` is required and may be empty. It contains at most 20 cases
+material to the query or returned paths. Each case contains at most 10
+positions; each position contains at most 20 Relationship IDs, 20 owner profile
+IDs, and 50 evidence IDs that also occur in this response's `results[]`. Status
+is `open`, `overdue`, or `resolved`; disposition is `candidate`, `preferred`, or
+`suppressed_current`. `preferred_position_id`, `review_due_at`, and
+`effective_at` are nullable. `question` is a bounded deterministic description,
+not model-generated evidence. `positions_truncated=true` means the host should
+trace a returned Relationship before acting and never infer a winner from the
+bounded list.
+
+For an open/overdue applicable case, primary results reserve bounded context for
+each returned material position and the host presents the question. For a
+resolved applicable case, primary results contain preferred support paths only,
+while the compact case retains author and trace handles. Historical `valid_at`
+and `known_at` reconstruct the applicable position and case-event state. The
+exact policy belongs in
+[Conflicts And Corrections](Conflicts-And-Corrections#durable-team-conflict-cases).
 
 `subject` is always an Entity. `object` is a tagged union: an Entity with
 `entity_id`/`name` or a typed Value with `value_id`, `type`, canonical `value`,
@@ -642,6 +722,15 @@ visited_entity_ids[]
 stopped_reason
 ```
 
+Each trace `conflicts[]` item returns the full authorized case summary, bounded
+position membership with Relationship versions, and append-only case events:
+`opened`, `position_added`, `evaluated`, `resolved`, `reopened`, `overdue`, or
+`dismissed`.
+Events include prior/resulting status, selected position when present, reason,
+policy version, actor profile when client-triggered, referenced versions, and
+`created_at`. Trace may include dismissed cases and non-preferred evidence that
+ordinary current recall omits.
+
 Trace reads authoritative normalized history and may add bounded current
 SemanticEdges from PostgreSQL. It never reconstructs history from edge
 properties.
@@ -674,6 +763,11 @@ graph exploration, Relationship detail/trace, and placement review.
 The graph shows Entity/Value nodes and SemanticEdges. Evidence, verification,
 and transitions appear in detail/trace panels. Hypotheses are an opt-in,
 visually distinct overlay and never edges in the primary knowledge graph.
+
+The initial durable cross-profile Conflict workflow has no portal inbox or
+portal resolution action. LLM hosts receive status through MCP recall/trace and
+submit new evidence through MCP `remember`. A later first-party view may render
+the same bounded state but cannot introduce a winner-selection shortcut.
 
 Portal queries are not raw SQL/Cypher and never return embeddings. Portal
 behavior and key administration belong in
@@ -769,6 +863,9 @@ Provider configuration belongs in
 | Alias becomes edge | client proposal creates an alias Relationship | aliases exist only on Entity hints and name storage |
 | Oversized trace | a hub Entity exhausts response or host context | depth, edge, content, time, and character budgets plus `stopped_reason` |
 | Forget is treated as deletion | client expects audit/evidence to vanish | explicit retraction semantics and separate privacy-erasure workflow |
+| HTTP bypass diverges from MCP | a caller executes a V2 memory tool through the generic HTTP route with a stale schema | transport visibility omits V2 memory tools from HTTP catalog/execution/OpenAPI and tests list/call parity separately |
+| Stale conflict response changes the wrong case | C submits evidence against version 2 after the case moved to version 3 | per-proposal `conflict_id` plus expected version and pre-commit material-membership validation |
+| Resolved response conceals authorship | only B's current evidence returns and the host assumes A was deleted | required compact conflict ref plus full trace positions/events |
 
 ## Contract Acceptance
 
@@ -787,3 +884,11 @@ Version 2 is incomplete until:
 10. every public error has a correlation ID and bounded safe details
 11. `tools/list` visibility and `tools/call` execution agree for every scope and
     feature combination
+12. V2 semantic memory tools are discoverable/callable through MCP and are
+    absent from generic HTTP tool discovery, execution, and OpenAPI
+13. `remember` accepts conflict context only on one Relationship proposal and
+    rejects stale, cross-team, dismissed, or unrelated cases before commit
+14. every recall response contains bounded `conflicts[]`; open/overdue and
+    resolved cases follow their specified primary-result behavior
+15. trace reconstructs every authorized Conflict position, version, event, and
+    non-preferred evidence path

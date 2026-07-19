@@ -172,7 +172,7 @@ events.
 | Host self-bias | one model judges its own retrieval as ground truth | human review and paired offline cases before ranking changes |
 | Cross-team reference | feedback names a result from another recall/team | bind refs to the stored recall event and authenticated team |
 | Stale vector misdiagnosed | ranking is blamed for pending/failed embedding work | store search freshness, branch path, and source/vector versions with the event |
-| Authored conflict hidden by feedback | a low score on B's result is treated as permission to demote B's knowledge | retain the authored result set and keep feedback observational |
+| Authored conflict changed by feedback | a low score on B's result reopens/resolves a case or demotes B's knowledge | keep feedback observational; only verified evidence and deterministic Conflict policy change disposition |
 
 ## Acceptance Invariants
 

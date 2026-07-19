@@ -767,7 +767,8 @@ flowchart TD
   Lifecycle --> Cross{"Related cross-profile<br/>Relationships?"}
   Cross -- Yes --> Link["Append confirmation/challenge/<br/>correction cross-references"]
   Cross -- No --> Eligible{"active validated claim or fact?"}
-  Link --> Eligible
+  Link --> Case["Create/update team Conflict case<br/>and evaluate disposition"]
+  Case --> Eligible
   Eligible -- Yes --> Edge["Eligible SemanticEdge"]
   Eligible -- No --> Hidden["No SemanticEdge"]
 ```
@@ -792,6 +793,12 @@ Orchestration invariants:
 - a cross-profile conflict may create the caller's eligible Relationship plus
   immutable cross-references; normal correction never changes the related
   owner's current state
+- a supplied `conflict_context` must match the current same-team case version
+  and the verified Relationship semantics; stale or unrelated context rejects
+  the complete intake before commit
+- write-time Conflict evaluation uses the same deterministic policy version as
+  nightly review; it may resolve/open/reopen the team case but cannot change a
+  member Relationship's lifecycle, support, or authored validity
 - the application derives `relationship_kind` and `current_cardinality` from
   the registry
 
@@ -811,6 +818,7 @@ flowchart TB
   Tx --> SupportDecisions["Append support decision events"]
   Tx --> Transitions["Append lifecycle transitions"]
   Tx --> CrossReferences["Append cross-profile references"]
+  Tx --> Conflicts["Create/update Conflict cases<br/>and append case events"]
   Tx --> Reviews["Create/update review tasks"]
   Tx --> Placement["Update placement materialized state"]
   Tx --> Search["Upsert search documents<br/>and embedding jobs"]
@@ -823,7 +831,8 @@ vectors may remain pending.
 
 If the transaction fails, none of its semantic decisions becomes visible.
 Retries use stable idempotency keys for ingest, observation, resolution,
-Relationship identity, support, support decision, transition, and job records.
+Relationship identity, support, support decision, transition, Conflict event,
+and job records.
 
 ## Stage 10: Derived Search Work
 
@@ -858,8 +867,10 @@ Search freshness and PostgreSQL ownership are defined in
 
 ## Client Review
 
-Identity ambiguity, an unknown predicate, a conflict, a correction, or security
-quarantine can create a review task.
+Identity ambiguity, an unknown predicate, a same-owner conflict, a correction,
+or security quarantine can create an owner-scoped review task. A material
+cross-profile Relationship disagreement creates a team Conflict case instead;
+the caller-owned placement may complete while that case remains open.
 
 ```mermaid
 %%{init: {"sequence": {"rightAngles": true}}}%%
@@ -874,7 +885,7 @@ sequenceDiagram
   API->>PG: Load placement and review tasks
   PG-->>API: Question, candidates, impact, evidence handles
   API-->>Host: awaiting_review
-  Host->>User: Present bounded ambiguity, conflict, or quarantine review
+  Host->>User: Present bounded identity, same-owner, or quarantine review
   User-->>Host: Resolve, correct, reject, merge, split, or request release
   Host->>API: resolve_memory_placement(decision, evidence IDs)
   API->>PG: Append client decision and audit event
@@ -890,6 +901,13 @@ processing. Identity split mechanics belong in
 [Entity Identity And Resolution](Entity-Identity-And-Resolution#merge-and-split-corrections);
 conflict behavior belongs in
 [Conflicts And Corrections](Conflicts-And-Corrections).
+
+For a cross-profile case, recall returns the current case ID/version and
+positions. Another same-team writer responds with new exact evidence through
+`remember`, placing `conflict_context` on the relevant Relationship proposal.
+The server verifies the new evidence normally, creates only caller-owned
+knowledge, and recomputes the case in the placement transaction. There is no
+cross-profile `resolve_memory_placement` action and no model-only confirmation.
 
 ## Processing And Search State
 
@@ -971,6 +989,8 @@ or coordinate workers but never owns queue or result state.
 | Hidden provider outage | invalid output is patched locally and reported as success | bounded full-response regeneration followed by explicit placement failure |
 | Cross-profile overwrite | B's correction updates A's Relationship row | bind owner at intake, include owner in identity, require owner predicates on mutation, and write only cross-references to A |
 | Old worker resurrects replaced evidence | a rev-42 provider call commits after rev-43 activates | supersede old placement intent in activation and require current-source predicates at claim and semantic commit |
+| Stale Conflict context attaches evidence incorrectly | C responds to case version 2 after new evidence created version 3 | validate case ID/version and material membership before the all-or-nothing intake commit |
+| Case commit diverges from Relationship commit | B's Relationship is visible but the open/resolved disposition is missing | write Relationship, cross-reference, Conflict state/event, and refresh intent in one transaction |
 
 ## Pipeline Acceptance Tests
 
@@ -1006,3 +1026,9 @@ The refactor is incomplete until tests prove:
 20. a quarantined replacement never reactivates the old source revision
 21. old-revision placement and quarantine release cannot commit after a newer
     source revision activates
+22. a material cross-profile placement atomically creates/updates its team
+    Conflict case without changing another owner's Relationship
+23. stale, cross-team, dismissed, or semantically unrelated conflict context
+    rejects the complete `remember` request before evidence commits
+24. another profile can affect a Conflict disposition only by creating its own
+    verified evidence-backed Relationship through `remember`

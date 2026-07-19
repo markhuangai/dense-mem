@@ -297,6 +297,34 @@ caps.
 Dreaming that references an unknown endpoint/predicate is a rejected output;
 never “repair” it by creating a node. See [Dreaming](Dreaming).
 
+## Conflict Review Job
+
+Conflict review is deterministic core maintenance, separate from optional dream
+and community work. New evidence is evaluated synchronously, so a nightly
+outage does not roll back committed placement or authorize a fallback winner.
+It leaves due cases open/overdue and raises backlog/run alerts.
+
+Inspect durable per-team run rows, oldest due/overdue age, attempts, lease owner
+and expiry, current case/version, member Relationship versions, policy version,
+and the last append-only event. After process/database recovery, let bounded
+catch-up reserve the team/local date and reclaim expired leases. Do not launch
+parallel manual scans, extend deadlines, or mark a case resolved to clear an
+alert.
+
+For a stuck case:
+
+1. verify the active resolver policy and `APP_TIMEZONE`
+2. verify the case still has at least two material positions and current support
+3. distinguish a live lease from an expired lease before retrying
+4. allow the supported worker path to recompute from current PostgreSQL state
+5. if no position qualifies, keep/mark `overdue` and request new evidence
+6. confirm current and historical recall plus trace before closing the incident
+
+The worker may repair Conflict workflow/search state only. Never edit/delete
+evidence, set another owner's `valid_to`/status, add support, or rewrite a case
+event. Lifecycle rules are in
+[Conflicts And Corrections](Conflicts-And-Corrections#nightly-conflict-review).
+
 ## Backup
 
 After v2 cutover, PostgreSQL base backup plus WAL/PITR and required encryption
@@ -374,6 +402,7 @@ source after cutover and no adapter exists in `2.2.0+`.
 | `pgvector` | index size/build health, Recall@K, iterative-scan cost, reindex planning |
 | placement | queue age, lease churn, review age, verifier schema failures |
 | embeddings | pending/failed age, provider quota, version mismatch, rebuild progress |
+| Conflict review | run/due/overdue age, lease recovery, policy parity, resolved/reopened/dismissed events, three-profile recall smoke |
 | security | key/session cleanup, audit retention, RLS tests |
 | optional jobs | dream/community due state, caps, stale output cleanup |
 | Redis | connectivity, memory/eviction, TLS/auth, global quota correctness |
@@ -433,6 +462,7 @@ dumps.
 | Destructive repair loses ledger | direct deletes remove support/transition history | append-only roles, explicit approval/change control, backup, and dry-run impact |
 | Migration appears hung | long verifier/vector work emits no bounded status | durable phase counters plus periodic structured progress and ETA logs |
 | Cross-profile repair damages another author | operator retries B's split under a system role and moves A | owner-preserving jobs, selected-observation checks, and three-profile smoke |
+| Conflict backlog is “fixed” by choosing a winner | operator updates `preferred_position_id` directly to clear overdue alerts | append-only/system-owned workflow, supported deterministic retry only, and new evidence through MCP |
 
 ## Operational Acceptance
 
@@ -453,3 +483,6 @@ Before production:
     no Neo4j connection path
 12. single-primary, HA failover, and every advertised distributed topology pass
     the same tenant, exact/ANN, backup, and recovery contract
+13. Conflict review catch-up, lease recovery, overdue-without-winner, resolved
+    support-path filtering, and historical trace/recall are proven without
+    mutating either author's Relationship

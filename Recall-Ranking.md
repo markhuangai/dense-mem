@@ -83,14 +83,15 @@ sequenceDiagram
   and Evidence vector branch
     R->>P: Team-scoped pgvector evidence search
   end
-  R->>R: Fuse evidence IDs, rerank, and budget context
+  R->>R: Fuse evidence IDs, rerank, and apply Conflict dispositions
+  R->>R: Budget and hydrate evidence context
   par Discovery branches
     R->>P: Entity, Relationship, and adjacency candidates
   and Hypothesis branch
     R->>P: Related same-team Hypotheses when enabled
   end
   R->>R: Select bounded novelty paths after top-K
-  R-->>C: Evidence results, discovery paths, and discovery guidance
+  R-->>C: Evidence results, conflicts, discovery paths, and guidance
 ```
 
 PostgreSQL row-level security and explicit team predicates apply to source,
@@ -128,6 +129,33 @@ predicate, endpoint, and scope filters match
 
 `candidate` Relationships are never eligible, even when their
 `status=pending_evidence` record is retained for dreaming or review.
+
+## Conflict Disposition
+
+Evidence retrieval remains primary, but final selection maps candidate evidence
+through its query-relevant Relationship support paths and any durable team
+Conflict case:
+
+| Case view at requested `valid_at` / `known_at` | Primary recall behavior |
+| --- | --- |
+| no material case | normal evidence eligibility and ranking |
+| `open` or `overdue` | retain bounded evidence from each material position and return an actionable clarification |
+| `resolved` and current interval applies | retain preferred-position support paths; omit non-preferred current paths and return a compact resolved ref |
+| historical view before change/resolution | reconstruct the position and case state visible at that real-world/system-knowledge time |
+| `dismissed` | apply ordinary lifecycle/eligibility; keep the case in trace only |
+
+The resolver filters a support path, not an Evidence fragment. A fragment with
+another unrelated eligible support path remains eligible. The service applies
+disposition before hydration, then backfills from the over-fetched candidate
+pool. Within hard response bounds, an unresolved case reserves at least one
+context per returned position. If all positions cannot fit, `conflicts[]` marks
+the position list truncated and returns trace handles; truncation never implies
+a preferred position.
+
+The exact conflict strength policy belongs in
+[Conflicts And Corrections](Conflicts-And-Corrections#deterministic-resolution-policy),
+and its post-fusion ordering belongs in
+[Vector Search And Ranking](Vector-Search-And-Ranking#cross-profile-conflict-reranking).
 `retracted`, `superseded`, `rejected`, `quarantined`, `disputed`, and
 review-held records are also excluded.
 
@@ -387,6 +415,8 @@ and release-policy decisions belong in [Evaluation](Evaluation).
 | Same evidence repeats | several Relationships from one source produce many hits | deduplicate by `(branch, evidence_id)` before fusion |
 | Same meaning from several authors floods results | A, B, and C confirmations consume three top-K slots | rank evidence contexts while retaining author positions and trace handles in discovery/trace |
 | Strong correction hides history | B outranks A and A disappears completely | return bounded conflict refs and retain both in authorized trace/clarification |
+| Conflict filter hides an unrelated fact | one fragment supports both suppressed A and an unrelated eligible Relationship | filter support paths, not fragment IDs, then backfill before hydration |
+| Historical query sees current disposition | a `known_at` query before B arrived uses B's later resolution | reconstruct case events and effective intervals before candidate selection |
 | Stale vector wins | an embedding from before a correction ranks the old meaning | require matching source/document/contract versions |
 | Hypothesis contaminates truth | dream output enters primary results | separate table, response field, eligibility path, and no tier weight |
 | Unbounded traversal | a hub Entity expands millions of Relationships | indexed adjacency plus strict seed, fan-out, depth, edge, time, and byte limits |
@@ -416,7 +446,15 @@ The recall refactor is incomplete until tests prove:
     grouping, or conflict
 15. fragments from non-current source revisions never enter default recall or
     contribute effective Relationship support
-15. cross-profile corroboration or challenge changes ranking only through
+16. cross-profile corroboration or challenge changes ranking only through
     verified evidence and validated cross-references
-16. a preferred correction never deletes or mutates the lower-ranked author's
+17. a preferred correction never deletes or mutates the lower-ranked author's
     knowledge
+18. open/overdue cases retain bounded material alternatives and never infer a
+    winner from response truncation
+19. resolved cases omit only non-preferred query-relevant support paths for the
+    applicable current interval
+20. conflict disposition preserves unrelated support from the same Evidence
+    fragment and backfills the requested result budget
+21. historical `valid_at` and `known_at` requests reconstruct the applicable
+    position and case event state

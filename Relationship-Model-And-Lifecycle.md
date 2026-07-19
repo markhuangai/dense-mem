@@ -53,7 +53,8 @@ are defined in
 | Relationship record | Durable profile-owned semantic identity, lifecycle, and current tier/status for one Relationship. |
 | Semantic edge | Read representation of one `active` `validated_claim` or `fact` Relationship. |
 | Semantic group key | Server-derived key that groups equivalent Relationship meaning across profiles without merging ownership or lifecycle. |
-| Conflict set | Recall-time group of materially incompatible authored positions connected by verified cross-references, competing single-current values, or unresolved Entity alternatives. It is not a new semantic edge or truth record. |
+| Conflict set | Derived group of materially incompatible authored positions connected by verified cross-references, competing single-current values, or unresolved Entity alternatives. It is not a new semantic edge or truth record. |
+| Conflict case | Durable team-scoped workflow and recall-disposition record for one material cross-profile Relationship conflict set. It never owns evidence or changes an author's lifecycle. |
 | Relationship cross-reference | Append-only same-team link by which one profile confirms, challenges, corrects, or adopts evidence from another profile's Relationship. It is ledger metadata, not a semantic edge. |
 | Evidence source | Stable team-scoped origin owned by one authenticated profile or integration; only that owner may advance its revision. |
 | Source revision | Append-only immutable snapshot in one Evidence source lineage, linked by an expected previous-revision token. |
@@ -68,8 +69,8 @@ are defined in
 
 `Node` and `edge` are graph-domain terms, not database requirements. The target
 semantic nodes are Entity and Value records. Evidence, observations,
-verification events, transitions, reviews, and Hypotheses remain ledger
-records and never become semantic nodes.
+verification events, transitions, reviews, Conflict cases, and Hypotheses remain
+ledger/workflow records and never become semantic nodes.
 
 The subject is an Entity. The object is exactly one Entity or typed Value.
 Entities and Values are team-scoped. Relationship ownership and lifecycle are
@@ -101,6 +102,12 @@ It cannot change another profile's tier, status, support, Entity resolution, or
 history. Manager role does not bypass this ownership rule; separate privacy and
 security quarantine powers remain administrative workflows.
 
+A team Conflict case may select a preferred position for conflict-aware current
+reads without changing any member Relationship. This disposition is not
+ownership, support, supersession, retraction, or an authored validity update.
+The complete rule belongs in
+[Conflicts And Corrections](Conflicts-And-Corrections#durable-team-conflict-cases).
+
 Source currentness is a separate team-wide evidence invariant. When the
 authenticated owner of an Evidence source advances its revision, system policy
 makes the prior revision ineffective for every profile that adopted it and
@@ -117,7 +124,8 @@ flowchart LR
   C["Profile C Relationship"] --> Group
   B -->|"challenges or corrects"| A
   C -->|"confirms"| B
-  Group --> Recall["Conflict-aware team recall"]
+  Group --> Case["Team Conflict case<br/>when materially cross-profile"]
+  Case --> Recall["Conflict-aware team recall"]
 ```
 
 The cross-profile arrows above are ledger cross-references. They do not become
@@ -198,7 +206,10 @@ the authored positions compete, or when registered single-current behavior and
 scope/time make them mutually exclusive. This is how a later Mark identity
 split remains comparable with the earlier combined-Mark Relationships. The
 recall service builds the set from durable Relationships, identity history, and
-cross-references; no model may invent it from text similarity alone.
+cross-references; no model may invent it from text similarity alone. A material
+cross-profile Relationship set also has one durable team Conflict case for
+versioned review, deadline, and read-disposition state. Identity-only and
+same-owner placement ambiguity continue to use their existing review records.
 
 Tier, status, confidence, evidence count, source count, verifier model,
 recording time, Relationship kind, and current cardinality are not identity
@@ -492,7 +503,8 @@ flowchart TD
 Promotion updates the same owner's Relationship identity. It does not create a
 second edge for that owner. A cross-profile conflict does not prevent an
 otherwise entailed Relationship from becoming active; both authored positions
-remain visible to conflict-aware recall.
+remain active and traceable, while the team Conflict disposition controls which
+support paths enter primary current recall.
 
 ## Source Independence And Fact Promotion
 
@@ -658,8 +670,12 @@ Default recall searches:
 - bounded indexed Relationship expansion
 
 It excludes candidates, observations, verifier rationale, and complete
-transition history. It groups equivalent same-team authored Relationships,
-retains material conflicting alternatives, and never hides the author.
+transition history. It groups equivalent same-team authored Relationships. An
+`open` or `overdue` Conflict case retains bounded material alternatives in
+primary recall and requests clarification. A `resolved` case returns only the
+preferred support paths in primary results for the applicable
+`valid_at`/`known_at` view, plus a compact conflict reference. Every authored
+position, owner, and event remains available through authorized trace.
 
 ```json
 {
@@ -759,7 +775,7 @@ referential and audit integrity.
 | Verdict is insufficient | Preserve candidate Relationship and evidence context; create no SemanticEdge. |
 | Search embedding fails | Preserve authoritative Relationship; expose degraded search state and retry the derived embedding job. |
 | Same-owner knowledge conflicts with new evidence | Hold review or apply owner-authorized supersession; never use stored knowledge as self-supporting evidence. |
-| Another profile's knowledge conflicts with new evidence | Preserve both eligible authored records and append a challenge/correction cross-reference; mutate neither target nor its support. |
+| Another profile's knowledge conflicts with new evidence | Preserve both eligible authored records, append a challenge/correction cross-reference, and create/update the team Conflict case in the same transaction; mutate neither target nor its support. |
 | Source owner or prior revision does not match | Reject the revision update and change no source, support, tier, status, or search state. |
 | Source activation transaction or fanout bound fails | Abort before advancing the source pointer; expose a bounded source-update failure. |
 | Activated replacement is quarantined or fails placement | Keep the prior revision ineffective and leave affected Relationships at their recomputed lower tier/status. |
@@ -770,7 +786,8 @@ referential and audit integrity.
 | --- | --- |
 | Duplicate Relationships after repeated same-owner evidence | Owner-scoped canonical identity constraint plus one current Relationship upsert. |
 | Cross-profile correction mutates the target | ownership predicate on every lifecycle/support update and immutable cross-reference records |
-| Team recall hides disagreement | group equivalent positions, return material alternatives, and ask for clarification when the evidence margin is insufficient |
+| Team recall hides disagreement | open cases return material alternatives; resolved cases return a compact conflict reference and retain all positions in trace |
+| Team disposition becomes authored state | Store preference/effective time only on the Conflict case and keep owner-scoped lifecycle predicates so a resolver cannot set A's status or validity. |
 | Candidate pollutes normal recall | Candidate cannot be active; eligibility queries permit only validated claims and facts. |
 | Evidence/history makes Relationship rows unbounded | Normalize observations, support decisions, verification, and transitions into separate tables. |
 | Revoked support still promotes tier | Materialize effective counts in the support-decision transaction and reconcile them against latest per-support events. |
@@ -823,3 +840,10 @@ The refactor is incomplete until tests prove:
 23. loss of fact promotion basis demotes the same Relationship automatically
 24. quarantined replacement evidence does not reactivate the old revision
 25. unkeyed evidence never silently supersedes earlier evidence
+26. team Conflict disposition never changes a member Relationship's owner,
+    tier, status, support, or authored validity
+27. open/overdue cases retain material alternatives in primary recall, while a
+    resolved case suppresses only non-preferred support paths for its applicable
+    current interval
+28. every suppressed current position remains reconstructable through trace and
+    historical `valid_at`/`known_at` recall

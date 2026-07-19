@@ -366,10 +366,42 @@ and creates no `VerificationEvent` or other semantic subset.
 - source/document/contract version mismatch excludes a vector
 - one Relationship from three branches appears once
 - equivalent authored positions group without losing author handles
-- better-supported cross-profile correction ranks first with conflict refs, or
-  unresolved margin returns clarification
+- one qualifying cross-profile correction supplies resolved primary paths plus
+  conflict refs, or unresolved policy returns alternatives/clarification
 - hub/cycle traversal stops at configured bounds
 - compact recall reads no evidence/verification history
+
+### Conflict case and nightly review
+
+Use three real same-team profiles and PostgreSQL-backed services. Seed A's
+earlier authoritative single-current position, then submit B's correction and
+C's follow-up through the public MCP `remember` contract. Assert the durable
+case/event rows and recall/trace behavior, not that a mocked resolver method was
+called.
+
+- authoritative B plus a reliable effective time resolves at write time; A's
+  Relationship row/version/tier/status/support/validity remains byte-for-byte
+  unchanged
+- weak B, missing effective time, two qualifying positions, or copied evidence
+  from one source group remains `open`
+- C with independent evidence creates C-owned knowledge, joins/creates the
+  correct position, and recomputes the case; a bare assertion gains no weight
+- stale, wrong-team, dismissed, or semantically unrelated `conflict_context`
+  rejects the complete intake with zero durable writes
+- current recall after resolution returns preferred support paths plus the
+  bounded resolved case; trace returns A/B/C positions and events
+- `valid_at` before the business change returns the prior applicable position;
+  `known_at` before B/C/resolution excludes later case events
+- one fragment supporting suppressed A and an unrelated current Relationship
+  remains eligible through the unrelated support path
+- a due case with one qualifying position resolves identically at write-time and
+  nightly entry points; no qualifying/unique position becomes `overdue`
+- repeated nightly runs, duplicate source-group evidence, and stale claimed
+  versions are idempotent and do not extend the original deadline
+- two replicas claim team-local batches without duplicate events; expired leases
+  recover after restart and no cross-team row is read or written
+- V2 semantic memory tools appear in MCP `tools/list`/`tools/call` only and remain
+  absent/not-found on HTTP catalog, generic execution, and OpenAPI surfaces
 
 ## Concurrency And Failure Tests
 
@@ -387,6 +419,8 @@ Run real concurrent tests for:
 - quarantine release racing a repeated model security signal
 - verifier completion after placement lease loss
 - correction racing recall and embedding work
+- C's conflict response racing a nightly claim and a newer case version
+- two nightly workers claiming the same due case and one losing/recovering lease
 - old embedding job racing a newer source version
 - Redis failure in one-process and multi-instance modes
 - PostgreSQL deadlock/serialization retry boundaries
@@ -416,6 +450,7 @@ Measure at representative team sizes and concurrency:
 | adjacency | seed/degree/depth distributions, stopped reason, p95/p99 |
 | trace | joins/bytes versus support/history size |
 | embedding jobs | throughput, oldest age, stale-job ratio |
+| Conflict resolver/job | preference/overdue accuracy, false-suppression rate, case age, throughput, lease recovery, and current/historical recall parity |
 
 Do not approve a graph/vector change on a synthetic single-tenant latency
 number alone. Include concurrent reads/writes and tenant-filter selectivity.

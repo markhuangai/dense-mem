@@ -171,7 +171,7 @@ sequenceDiagram
   S->>P: Validate pgvector, embedding contract, and search-index generation
   S->>R: Build required coordination backend
   S->>A: Validate configured provider contracts
-  S->>W: Start placement, embedding, cleanup, and optional schedulers
+  S->>W: Start placement, embedding, Conflict review, cleanup, and optional schedulers
   S->>H: Enable main v2 data plane
   H-->>S: Serve until termination
   S->>H: Stop accepting traffic
@@ -266,11 +266,11 @@ does not coerce it or commit a valid subset. Full details belong in
 
 ## Read Boundary
 
-Normal recall queries same-team active `validated_claim` and `fact`
-profile-owned Relationships through
-PostgreSQL full-text, `pgvector`, and bounded adjacency branches. It returns a
-compact authored Relationship, conflict/support handles, and
-`relationship_id`, not all evidence or verifier history.
+Normal recall searches authorized same-team evidence through PostgreSQL
+full-text and `pgvector`, then uses active `validated_claim`/`fact`
+profile-owned Relationships for conflict-aware discovery and support-path
+disposition. It returns bounded evidence contexts, Conflict status, compact
+authored Relationship paths, and trace handles, not verifier history.
 
 Trace fetches normalized provenance when the caller needs to understand,
 correct, or forget knowledge. Graph visualization uses the same semantic-node
@@ -278,8 +278,10 @@ and SemanticEdge query shape; it is not another database or authority.
 
 ## Consistency Boundary
 
-Core semantic state and its append-only history commit atomically in one
-PostgreSQL transaction.
+Core semantic state, cross-profile Conflict case disposition, and their
+append-only histories commit atomically in one PostgreSQL transaction. The
+nightly Conflict worker may recompute workflow/search state from committed
+inputs, but cannot edit authored evidence or Relationship lifecycle.
 
 ```mermaid
 %%{init: {"sequence": {"rightAngles": true}}}%%
@@ -310,6 +312,7 @@ projection, outbox, or graph-reconciliation loop in the target.
 | Embeddings | evidence, Entity, Relationship, and query embeddings through configured providers | no normal-use vectors |
 | Recall | bounded retrieval, ranking, graph frontier, freshness, and trace handles | deciding which returned context to use, cite, or question |
 | Ambiguity | exact candidates, impact, review state, and safe decision application | presenting the ambiguity and collecting the user's evidence-backed choice |
+| Cross-profile conflict | durable case/version, deterministic disposition, deadline audit, current/historical recall, and trace | presenting open positions and submitting new evidence through `remember` |
 | Operations | isolation, profiles, roles, keys, portals, telemetry, backup, and recovery | client configuration and safe use of returned context |
 
 Dense-Mem is not an autonomous truth oracle. Models propose structured
@@ -345,6 +348,7 @@ second target model.
 | Provider controls truth | verifier returns `tier=fact` or an arbitrary ID and it reaches storage | closed schema excludes writes; allowlist validation and deterministic lifecycle |
 | Big-bang refactor stalls | every package changes before one end-to-end slice works | vertical slices, legacy adapters at boundaries, and passing acceptance invariants per slice |
 | Redis becomes a hidden database | replicas lose identity or review state after Redis restart | coordination-only ports and restart tests proving PostgreSQL is complete |
+| Conflict workflow becomes a truth edge | a team preference mutates A's Relationship or appears as a semantic predicate | separate non-semantic case/event records, owner-scoped lifecycle, and support-path-only recall disposition |
 
 ## Architecture Invariants
 
@@ -367,3 +371,6 @@ second target model.
     migration gate may connect, and `2.2.0` removes that code.
 13. Same-team visibility never permits one profile to mutate another profile's
     knowledge.
+14. A team Conflict case may affect current recall disposition but never owns
+    evidence or changes a member Relationship's owner, lifecycle, support, or
+    authored validity.

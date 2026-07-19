@@ -33,10 +33,10 @@ observations, verifier history, reviews, and Hypotheses are excluded.
 Equivalent authored Relationships collapse to one analytical edge so several
 profiles repeating the same meaning do not multiply topology. A bounded edge
 weight may reflect genuinely independent accepted source groups, never raw
-profile count. When a conflict set has a sufficiently preferred position under
-the active deterministic ranking contract, the snapshot uses that position and
-retains all source Relationship IDs. An unresolved conflict set is omitted and
-reported rather than guessed into the analytical graph.
+profile count. When a Conflict case is `resolved` under the active deterministic
+policy, the snapshot uses its preferred position and retains all source
+Relationship IDs. An `open` or `overdue` case is omitted and reported rather
+than guessed into the analytical graph.
 
 Conflict preference is defined in
 [Vector Search And Ranking](Vector-Search-And-Ranking#cross-profile-conflict-reranking).

@@ -40,20 +40,25 @@ sequenceDiagram
   DM->>DM: One strict Entity + Relationship verifier request
   DM->>DM: Apply deterministic lifecycle
   DM->>PG: Commit current state, history, review, and search jobs
-  alt Review required
+  alt Placement review required
     Host->>DM: get_memory_placement
-    DM-->>Host: Exact ambiguity/conflict and impact
+    DM-->>Host: Exact owner-scoped ambiguity/conflict and impact
     Host->>User: Ask for evidence-backed choice
     User-->>Host: Decision or new evidence
     Host->>DM: resolve_memory_placement
   end
   Host->>DM: recall_memory(query)
   DM->>PG: Evidence full-text and pgvector search
-  DM-->>Host: Ranked evidence contexts plus discovery paths
+  DM-->>Host: Ranked evidence, Conflict cases, and discovery paths
+  opt Cross-profile Conflict needs more evidence
+    Host->>User: Present authored positions and exact question
+    User-->>Host: Provide new evidence
+    Host->>DM: remember(evidence, conflict context)
+  end
   opt Support or correction detail needed
     Host->>DM: trace_memory(relationship_id)
     DM->>PG: Load normalized provenance/history
-    DM-->>Host: Evidence, verification, and lifecycle
+    DM-->>Host: Evidence, verification, lifecycle, and Conflict history
   end
 ```
 
@@ -63,6 +68,7 @@ The convergence rule:
 same real identity      -> reuse the Entity
 same owner + relationship -> attach evidence to that Relationship
 another profile agrees  -> keep its authored Relationship and group on recall
+profiles disagree       -> preserve each author; use a team Conflict case
 new real identity       -> create one Entity
 new relationship        -> create one Relationship
 actual ambiguity        -> review; do not guess
@@ -121,6 +127,7 @@ flowchart LR
   Verification --> Record["RelationshipRecord"]
   Record --> Edge["0..1 SemanticEdge read"]
   Record --> Cross["Cross-profile references"]
+  Record --> Case["Team Conflict case membership"]
   Record --> Trace["Support and transition trace"]
   Record -. "eligible input" .-> Dream["Hypothesis process"]
 ```

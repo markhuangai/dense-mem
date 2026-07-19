@@ -38,10 +38,9 @@ Dreaming may read:
 - registered predicate definitions
 
 Equivalent cross-profile Relationships are grouped so copied positions do not
-multiply dream weight. When a conflict has a sufficiently preferred
-evidence-backed position, dreaming may use that position with all source
-Relationship IDs. An unresolved cross-profile conflict is excluded rather than
-used as a guessed premise.
+multiply dream weight. Dreaming may use only the preferred position of a
+`resolved` Conflict case, with all source Relationship IDs. An `open` or
+`overdue` cross-profile case is excluded rather than used as a guessed premise.
 
 A pending candidate is eligible only when:
 

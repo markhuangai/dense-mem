@@ -90,6 +90,9 @@ flowchart LR
   Relationship --> Transition["RelationshipTransitionEvent"]
   Relationship --> Cross["RelationshipCrossReference"]
   Relationship --> Review["ReviewTask"]
+  Relationship --> Position["ConflictPosition membership"]
+  Conflict["RelationshipConflictCase"] --> Position
+  Conflict --> ConflictEvent["RelationshipConflictEvent"]
 
   Entity --> Search["SearchDocument"]
   Relationship --> Search
@@ -118,7 +121,11 @@ flowchart LR
 | `relationship_support_decision_events` | append-only grant/revoke/reinstate decisions controlling effective support |
 | `relationship_transition_events` | append-only tier/status history |
 | `relationship_cross_references` | append-only same-team confirmation, challenge, correction, and evidence-adoption links between profile-owned Relationships |
-| `review_tasks` | identity, predicate, conflict, correction, and policy decisions needing a client |
+| `review_tasks` | identity, predicate, same-owner Relationship conflict, correction, and policy decisions needing a client |
+| `relationship_conflict_cases` | current team-scoped status, version, deadline, due/lease metadata, effective time, and preferred-position disposition for material cross-profile Relationship conflicts |
+| `relationship_conflict_positions` | current bounded grouping of authored Relationship IDs/versions into equivalent case positions without merging ownership |
+| `relationship_conflict_events` | append-only open, membership, evaluation, resolve, reopen, overdue, and dismiss history |
+| `relationship_conflict_review_runs` | durable per-team/local-date nightly reservation, lease, retry, and bounded outcome counts |
 | `hypotheses` | dream output isolated from active knowledge |
 | `search_documents` | rebuildable compact text and vector-ready metadata for authorized retrieval |
 | `embedding_jobs` | durable, leased work to bring a search document to the current embedding contract |
@@ -311,6 +318,55 @@ behavior belong only in
 Relational tenant keys and query locality belong in
 [PostgreSQL Cluster-Safe Schema](PostgreSQL-Cluster-Safe-Schema).
 The release gate belongs in [Evaluation](Evaluation).
+
+## Conflict Case And Nightly Review Storage
+
+PostgreSQL owns durable Conflict workflow state. A case is team-scoped and has
+no `owner_profile_id`; member Relationships remain profile-owned. Profile-mode
+transactions may create caller-owned Relationships and cross-references, but
+only the Conflict service may insert/update case materialization under the same
+team transaction. Every material case change appends an immutable event with
+the actor profile when client-triggered.
+
+```mermaid
+%%{init: {"sequence": {"rightAngles": true}}}%%
+sequenceDiagram
+  participant W as Placement worker
+  participant P as PostgreSQL
+  participant N as Nightly Conflict worker
+
+  W->>P: Commit Relationship + cross-reference
+  W->>P: Lock matching case/version
+  W->>P: Recompute positions and disposition
+  W->>P: Update case + append event + refresh intent
+  W->>P: Commit atomically
+
+  N->>P: Reserve team/local run date
+  N->>P: Claim due team cases with SKIP LOCKED lease
+  N->>P: Reload authoritative supports/versions/time
+  N->>P: Append deterministic evaluation outcome
+  N->>P: Resolve, overdue/requeue, dismiss, or no-op
+```
+
+The due index begins with `(team_id, status, next_review_at)` and covers only
+`open`/`overdue` rows. A material new position or newly independent support
+increments the case version; duplicate evidence from an existing source group
+does not extend the deadline. A nightly run reserves `(team_id,
+local_run_date)` durably, claims bounded team-local batches with `FOR UPDATE
+SKIP LOCKED`, and recovers expired leases. A stale claimed version becomes a
+no-op and is re-evaluated from the current row rather than overwriting it.
+
+The worker invokes the same deterministic resolver used by placement and calls
+no model/provider. Failure leaves the case due and unresolved. A disposition
+change may enqueue rebuildable search/read-model work, but final recall checks
+the current Conflict case during support-path hydration so a stale vector cannot
+reintroduce a suppressed current path. The job never deletes evidence or
+changes authored Relationship lifecycle, support, ownership, or validity.
+
+Conflict-case lifecycle and evidence policy belong in
+[Conflicts And Corrections](Conflicts-And-Corrections#durable-team-conflict-cases).
+Team/shard claim rules belong in
+[PostgreSQL Cluster-Safe Schema](PostgreSQL-Cluster-Safe-Schema#durable-queue-and-scheduler-shape).
 
 ## Atomicity And Append-Only History
 
@@ -523,6 +579,8 @@ Migration execution, checkpoints, and rollback belong in
 | Source activation partially demotes knowledge | a large dependency set commits some revocations before failure | precompute indexed dependencies, enforce a fanout bound, and advance the source pointer only in the all-or-nothing transaction |
 | Stale placement resurrects an old revision | an in-flight provider result commits after a newer source pointer advances | supersede prior placement/search intent atomically and predicate later commits on the current source revision |
 | Security audit leaks detector internals | public placement or metrics reveal exact rules and attacker payloads | keep detailed signals in authorized audit rows and expose only bounded categories externally |
+| Conflict lease decides truth | a timed-out worker marks B preferred while its lease/version is stale | lease/version predicates, deterministic recomputation, and append event only with the matching current case |
+| Search refresh races disposition | an older vector job makes A primary after B resolves | authoritative Conflict filtering at hydration plus versioned rebuildable refresh work |
 | Migration collapses distinct knowledge | old edges with different polarity, scope, or temporal bounds deduplicate | include all identity qualifiers and require a dry-run collision review |
 | Migration loses authorship | every imported Relationship is owned by the system worker | preserve v1 profile ID as owner and record migration actor separately |
 
@@ -558,3 +616,11 @@ Migration execution, checkpoints, and rollback belong in
     semantic or search document.
 20. A non-current source revision cannot commit placement or search state after
     a newer revision activates.
+21. Conflict cases are team-scoped workflow state and never own or mutate a
+    member Relationship's evidence/lifecycle.
+22. Every case materialization change has one append-only event and matching
+    case-version compare-and-set.
+23. Nightly review claims only bounded team-local due work, recovers leases, and
+    cannot resolve from a deadline or provider/model output.
+24. Stale search state cannot bypass the current Conflict disposition applied at
+    final support-path hydration.

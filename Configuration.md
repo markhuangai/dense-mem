@@ -404,6 +404,38 @@ The service reads eligible IDs from PostgreSQL into a bounded analytical job;
 no Neo4j/GDS dependency is implied. See
 [Community And Dreaming](Community-And-Dreaming).
 
+### Conflict review
+
+Conflict review is core deterministic maintenance, not an optional/model-backed
+feature. Write-time dispositions take effect in the committing transaction;
+there is no shadow/observe mode and no normal-runtime disable flag. The nightly
+job audits due cases and repairs workflow/search state without changing authored
+evidence or Relationship lifecycle.
+
+| Key | Target default | Meaning |
+| --- | --- | --- |
+| `CONFLICT_RESOLUTION_POLICY_VERSION` | `cross_profile_v1` | immutable resolver/floor contract captured on case events |
+| `CONFLICT_REVIEW_TTL_DAYS` | `7` | default open/reopened review window, 1–30 days |
+| `CONFLICT_REVIEW_START_TIME_LOCAL` | `04:00` | nightly schedule in `APP_TIMEZONE` |
+| `CONFLICT_REVIEW_MAX_CONCURRENCY` | `1` | concurrent team runs per process, 1–16 |
+| `CONFLICT_REVIEW_BATCH_SIZE` | `100` | team-local case claim size, 1–500 |
+| `CONFLICT_REVIEW_LEASE_SECONDS` | `300` | renewable case-claim lease, 30–1800 |
+| `CONFLICT_REVIEW_MAX_ATTEMPTS` | `5` | bounded retry attempts before operator alert, 1–20 |
+| `CONFLICT_REVIEW_JITTER_SECONDS` | `600` | stable per-team schedule jitter, 0–3600 |
+
+A team may set only `review_ttl_days` as a PostgreSQL-backed override in the
+same 1–30 range. The control-plane change is audited and applies to cases opened
+or materially reopened afterward; an existing case retains its captured
+deadline and policy version. The override cannot disable review, weaken the
+evidence floor, or select a preferred position. Conflict policy is not exposed
+through MCP and no portal conflict inbox is implied.
+
+The scheduler performs bounded catch-up after downtime by reserving at most one
+run per team/local date. Missing the nominal start time does not skip due cases,
+and repeated ticks/replicas converge through the durable reservation and leases.
+Lifecycle and job semantics belong in
+[Conflicts And Corrections](Conflicts-And-Corrections#nightly-conflict-review).
+
 ### Scheduling
 
 | Key | Target default | Meaning |
@@ -436,6 +468,9 @@ flowchart TD
 
 Configuration errors fail visibly. Startup does not substitute another store,
 embedding model, verifier schema, or coordination mode.
+It also validates the Conflict policy version, TTL/override bounds, local start
+time, batch/concurrency/lease/attempt ranges, and `APP_TIMEZONE` before starting
+the core Conflict worker.
 During a pending `2.1.x` migration, only health/control surfaces start; service
 logs and the control portal expose durable progress. Version `2.2.0+` has no
 bridge and fails when the marker is absent.
@@ -462,6 +497,8 @@ bridge and fails when the marker is absent.
 | Redis fallback breaks replicas | outage switches multi-instance limits to local state | required distributed flag and no silent fallback |
 | ANN tuning harms quality | low HNSW breadth improves latency but loses tenant results | exact-baseline Recall@K gate and versioned atomic ranking contract/search generation |
 | Worker overload | placement and embedding workers exceed provider/database capacity | startup range checks, saturation metrics, and load testing |
+| Conflict schedule creates a thundering herd | every team starts its due-case scan at 04:00 | stable team jitter, bounded team-local batches/concurrency, and durable run reservation |
+| Team override weakens truth policy | an admin sets TTL to zero or chooses a winner | allow only bounded `review_ttl_days`; keep resolver floor/version immutable and audited |
 | Secret enters runtime policy | portal stores provider key in `app_config` | allowlisted keys and secret-shaped value rejection |
 
 ## First-Run Checklist
@@ -478,4 +515,6 @@ bridge and fails when the marker is absent.
 - create a manager key and least-privilege client key
 - confirm Redis requirement matches one- or multi-instance topology
 - run `remember` → placement → recall → trace, including a pending-vector case
+- run the three-profile Conflict smoke: open, evidence-backed resolve, historical
+  recall, overdue-without-winner, and nightly lease recovery
 - test PostgreSQL backup/PITR and vector rebuild before important use

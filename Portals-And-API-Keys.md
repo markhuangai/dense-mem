@@ -82,6 +82,11 @@ visually group equivalent edges for clarity only when it retains every
 `relationship_id` and author in the expandable group; visual grouping never
 merges their lifecycle or data.
 
+This is a read-only visualization consequence, not a cross-profile Conflict
+inbox. The initial Conflict workflow is MCP-only; the portal cannot select a
+preferred position or submit a bare confirmation. Placement review below
+continues to cover owner-scoped identity/predicate/Relationship decisions.
+
 ## Placement Review
 
 The portal shows:

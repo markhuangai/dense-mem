@@ -80,7 +80,7 @@ database version, and feature flags before deciding what shipped.
 | exact/ANN execution, HNSW, halfvec, vector index lifecycle/load, and vector-search topology | [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec) |
 | exact versioned MCP tool schemas | [Technical Reference](Technical-Reference) |
 | authentication, tenant identity, scopes, MCP discovery/execution, and portal boundaries | [Request Lifecycle And Security](Request-Lifecycle-And-Security) |
-| conflict and evidence-backed correction interaction | [Conflicts And Corrections](Conflicts-And-Corrections) |
+| durable team Conflict cases, recall disposition, and evidence-backed correction | [Conflicts And Corrections](Conflicts-And-Corrections) |
 | community derivation and analytical summaries | [Community And Dreaming](Community-And-Dreaming) |
 | Hypothesis generation, isolation, review, and staleness | [Dreaming](Dreaming) |
 | portable knowledge artifact and import/rollback workflow | [Memory Packs](Memory-Packs) |

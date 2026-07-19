@@ -67,7 +67,7 @@ PostgreSQL logical schema
 └── tenant-owned by team_id
     ├── non-secret team/profile integrity projections
     ├── semantic state and append-only history
-    ├── placement/review/import queues
+    ├── placement/review/import/Conflict queues
     ├── search documents and embedding jobs
     └── feedback, dream/community, and tenant audit
 ```
@@ -141,6 +141,8 @@ The following logical families carry non-null `team_id` from creation:
 - typed Value records
 - Relationship observations, verification events, current records, evidence
   support/decision rows, transitions, and cross-references
+- team Conflict cases, position membership, append-only events, and nightly run
+  reservations
 - Hypotheses and their review/run rows
 - search documents and embedding jobs
 - recall events/feedback and tenant-scoped evaluation run records
@@ -505,6 +507,14 @@ future distributed adapter performs the same claim on one shard/team routing
 context at a time. It does not promise a globally exact oldest-job ordering
 across shards.
 
+Nightly Conflict review follows the same shape. The scheduler durably reserves
+one `(team_id, local_run_date)` run, then claims due `open`/`overdue` cases from
+an index beginning `(team_id, status, next_review_at)` with case-version and
+lease predicates. A claim never scans or locks every team's Relationship rows.
+Only system/team transaction mode may update the team-owned case
+materialization; profile writes affect it indirectly inside the same placement
+service transaction and append the authenticated actor to the case event.
+
 Small coordinator summaries or Redis signals may indicate which shard has work,
 but they are derived hints. Losing them cannot lose, complete, or reassign the
 durable PostgreSQL job.
@@ -612,6 +622,7 @@ through the AI verifier.
 | ownership projection lags control state | a new profile authenticates but its semantic insert fails on the owning-shard FK | create atomically on one primary; require projection readiness before distributed semantic writes |
 | RLS stops at coordinator | distributed worker executes without the expected transaction-local setting | adapter-specific worker RLS tests and capability gate |
 | global queue ordering becomes bottleneck | coordinator locks/scans every shard for oldest work | per-shard/team claims, bounded fairness scheduler, durable local age metrics |
+| Conflict scheduler crosses tenants | a nightly worker claims the globally oldest case without a routed team and writes another shard | reserve/select a bounded team first, then require `team_id` on case/run/lease/version predicates |
 | reference data diverges | one shard uses another predicate or index profile version | immutable version checksum and all-node activation barrier |
 | stale routing creates split authority | two shards accept writes for one team during movement/failover | fenced placement epochs and one authoritative writer per team transaction |
 | large team remains hot | all team data correctly colocates but exhausts one worker | skew telemetry, dedicated placement/shard, separate intra-team design before splitting |
@@ -643,6 +654,10 @@ through the AI verifier.
     authorize a request or duplicate credential/entitlement authority.
 15. Future distribution by `team_id` requires placement DDL and data movement,
     but not semantic ID changes, AI re-verification, or tenant backfill.
+16. Conflict cases, positions, events, and nightly run rows use composite
+    team-leading keys/FKs and cannot reference another team's Relationship.
+17. Nightly Conflict review reserves and claims one team at a time with durable
+    lease/version predicates; no global semantic-row scan is a supported path.
 
 ## Primary References
 

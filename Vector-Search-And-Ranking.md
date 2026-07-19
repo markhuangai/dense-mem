@@ -246,7 +246,9 @@ cross-references, incompatible same-owner or cross-owner single-current values,
 and unresolved Entity alternatives already recorded by identity resolution.
 They may therefore contain several semantic-group keys, such as the combined-
 Mark and split-Mark positions. Vector similarity alone cannot declare two
-Relationships conflicting.
+Relationships conflicting. A material cross-profile Relationship set also has
+a durable team Conflict case; the case persists workflow and disposition, while
+the set remains derived from authoritative Relationship/evidence state.
 
 For equivalent positions in discovery or trace:
 
@@ -260,26 +262,42 @@ For conflicting positions:
 - retain every material eligible alternative in a conflict set
 - use each position's exact evidence, tier, temporal applicability, source
   independence, and correction/confirmation cross-references
-- prefer the better-supported applicable position when the configured margin is
-  met
-- return conflict refs even when one position ranks first
-- produce a clarification when the margin is not met or identity remains
-  ambiguous
+- resolve only when exactly one temporally clear position meets the configured
+  authoritative-or-independent-source floor
+- for an `open` or `overdue` case, budget evidence from every material position
+  into primary recall and produce a clarification
+- for a `resolved` case, include only preferred support paths in primary recall
+  for the applicable current interval and return a compact resolved case ref
+- preserve every non-preferred Relationship and its evidence in authorized
+  trace and in historical `valid_at`/`known_at` views
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
   Group["Same-team semantic/conflict group"] --> Evidence["Compare eligible authored positions"]
-  Evidence --> Margin{"Configured evidence/rank<br/>margin met?"}
-  Margin -- Yes --> Preferred["Preferred position first<br/>plus conflict references"]
-  Margin -- No --> Clarify["Return alternatives and<br/>clarification"]
+  Evidence --> Margin{"Exactly one position meets<br/>time + evidence floor?"}
+  Margin -- Yes --> Preferred["Preferred support paths only<br/>plus resolved conflict ref"]
+  Margin -- No --> Clarify["Return alternatives and<br/>open/overdue conflict"]
   Clarify --> NewEvidence["Caller may remember new evidence<br/>under its own profile"]
 ```
 
 A profile's correction cannot down-rank another profile merely by labeling it
 wrong. Its challenge contributes only after normal evidence verification and
 cross-reference validation. Several profiles copying one source remain one
-source group.
+source group. Tier, verified cross-references, and applicable recency order
+otherwise eligible evidence; none can substitute for the automatic-resolution
+floor, and recency cannot break a tie between two qualifying positions. The
+floor, deadline, and reopening behavior are defined in
+[Conflicts And Corrections](Conflicts-And-Corrections#deterministic-resolution-policy).
+
+Conflict disposition is applied after branch fusion and before final evidence
+hydration. The service over-fetches and backfills so removing a suppressed
+support path does not silently shrink `limit`. It never drops an Evidence
+fragment globally: when one fragment also supports an unrelated eligible
+Relationship, that independent path may still return the fragment. A
+`known_at` query ignores case events recorded later than the requested
+knowledge time, and `valid_at` applies the position/effective interval that was
+visible in that historical view.
 
 ## Runtime Control
 
@@ -296,7 +314,7 @@ RRF enabled state, k, and branch weights
 branch enablement, priority, and over-fetch
 exact-filtered versus HNSW thresholds and scan budgets
 deterministic rerank enabled state and bounded factor weights
-cross-profile preference and clarification margins
+cross-profile qualification and clarification policy
 contract source/version, creator, reason, and activation time when portal-managed
 ```
 
@@ -347,6 +365,8 @@ The evaluation procedure and release gates belong in [Evaluation](Evaluation).
 | RRF toggle changes behavior silently | portal disables RRF and replicas choose different fallbacks | atomic versioned ranking contract, explicit branch order, and internal telemetry |
 | Majority overrides evidence | copied weak memory from several profiles outranks one primary source | source-group dedupe, bounded corroboration, and evidence-aware conflict rerank |
 | Challenge censors another author | unsupported “wrong” link removes A from recall | target remains immutable; retain conflict refs and require verified challenge evidence |
+| Resolved case hides unrelated support | a fragment supporting A and another current fact is removed globally | apply disposition to the relevant Relationship support path and backfill from over-fetch |
+| Current winner rewrites history | B's resolved position is returned for a `valid_at` before the change or `known_at` before B arrived | evaluate case events and effective intervals bitemporally before hydration |
 | ANN filter loses team results | HNSW selects global neighbors before tenant filtering | exact path for bounded sets, iterative scans, over-fetch, and exact Recall@K gate |
 | Rerank hides relevant claim | a high tier multiplier overwhelms query relevance | bounded factors and relevance/evaluation invariants |
 
@@ -363,8 +383,16 @@ The evaluation procedure and release gates belong in [Evaluation](Evaluation).
    candidate source row
 8. same-source copies do not gain independent-source or cross-profile boosts
 9. material conflicting authored positions remain traceable and visible
-10. insufficient conflict margin produces clarification rather than invented
-    certainty
+10. zero or multiple qualifying conflict positions produce clarification rather
+    than invented certainty
 11. optional model reranking cannot change knowledge lifecycle or provenance
-12. public results omit ranking-contract and embedding-contract versions; those
+12. open/overdue Conflict cases retain bounded returned material positions in
+    primary recall and signal any truncation without choosing a winner
+13. resolved cases suppress only non-preferred support paths for the applicable
+    current interval and return a bounded conflict reference
+14. a suppressed path remains available through trace and the correct historical
+    `valid_at`/`known_at` view
+15. conflict filtering cannot globally suppress an Evidence fragment that has
+    another eligible support path
+16. public results omit ranking-contract and embedding-contract versions; those
     values remain internal telemetry and evaluation metadata

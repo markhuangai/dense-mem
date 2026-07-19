@@ -212,8 +212,10 @@ Role never implies scope.
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Registered["Registered tool"] --> Version{"Contract version supported?"}
-  Version -- No --> Missing["Omit"]
+  Registered["Registered tool"] --> Transport{"Allowed on this transport?"}
+  Transport -- No --> Missing["Omit / not found"]
+  Transport -- Yes --> Version{"Contract version supported?"}
+  Version -- No --> Missing
   Version -- Yes --> Feature{"Feature enabled?"}
   Feature -- No --> Missing
   Feature -- Yes --> Scope{"Principal scopes permit discovery?"}
@@ -222,7 +224,11 @@ flowchart LR
 ```
 
 MCP discovery and execution share one registry and the same visibility check.
-Disabled or unauthorized optional tools do not leak through another catalog.
+The registry also declares allowed transports. V2 semantic memory tools are
+MCP-only: HTTP tool catalogs and OpenAPI omit them, and generic HTTP execution
+returns not found. Disabled, unauthorized, or transport-ineligible tools do not
+leak through another catalog or execution path. The exact tool set belongs in
+[Technical Reference](Technical-Reference#production-http-surface).
 
 ## MCP Memory Interface
 
@@ -391,6 +397,7 @@ Audit high-value events:
 - deterministic/model quarantine and manager release
 - Entity merge/split
 - Relationship retraction/supersession corrections
+- Conflict case open/reopen/resolve/overdue/dismiss decisions and policy version
 - memory-pack import/rollback
 - runtime configuration changes
 - repeated authentication/rate/security failures
@@ -407,6 +414,7 @@ audit ledger.
 | Raw key leak | downstream log/provider receives Authorization | auth middleware removes header and sensitive-value tests |
 | Cookie CSRF | browser session mutates memory cross-site | SameSite/secure cookie and required CSRF token |
 | Discovery/execution drift | `tools/list` advertises a tool that `tools/call` then hides, or execution bypasses discovery policy | one registry and the same visibility/scope predicate for both methods |
+| HTTP bypass exposes a second memory contract | generic tool execution or OpenAPI publishes an MCP-only V2 memory tool | transport allowlist on catalog, execution, and schema generation plus not-found conformance tests |
 | Portal backend becomes an integration API | external clients depend on browser implementation details and bypass the intended MCP contract | same-origin portal boundary, no public SDK/OpenAPI/CORS contract, API-key-or-SSO authentication, and CSRF for SSO-cookie mutations |
 | Redis outage weakens limits | replicas fall back to independent counters | distributed-required readiness failure |
 | Search candidate leakage | global vector search exposes another team's text | internal filtering and authorized hydration before return |
@@ -441,3 +449,5 @@ audit ledger.
     guarded scanning/model policy
 15. a source revision can be advanced only by its immutable source owner and an
     exact expected prior token
+16. V2 semantic memory tools are visible and executable through MCP only; HTTP
+    catalogs, generic execution, and OpenAPI cannot expose them

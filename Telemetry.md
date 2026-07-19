@@ -198,6 +198,32 @@ Hard alerts:
 - cross-team ID/row detected
 - cross-profile Relationship mutation detected
 
+## Conflict Cases And Nightly Review
+
+```text
+densemem_relationship_conflict_cases{status}
+densemem_relationship_conflict_oldest_open_seconds{status}
+densemem_relationship_conflict_events_total{action,outcome}
+densemem_relationship_conflict_evaluations_total{stage,outcome}
+densemem_relationship_conflict_review_runs_total{outcome}
+densemem_relationship_conflict_review_duration_seconds{outcome}
+densemem_relationship_conflict_review_cases{outcome}
+densemem_relationship_conflict_review_lease_recoveries_total
+```
+
+Case-count `status` is a closed set: `open`, `overdue`, `resolved`, or
+`dismissed`; the oldest-open metric emits only `open` or `overdue`. Evaluation
+`stage` is `write` or `nightly`; event `action` is bounded to the durable
+case-event enum. Metrics never contain case, team, profile, Relationship,
+position, evidence, source, or query IDs. Durable events and run rows are the
+audit/debug source; metrics are aggregates only.
+
+Hard alerts include a resolution without one qualifying position, any attempted
+authored Relationship mutation by the Conflict worker, exhausted review
+attempts, and no successful nightly run beyond the release-defined window.
+Overdue count/age is an operational escalation, not authority to choose a
+winner.
+
 ## Embedding Jobs And Search Freshness
 
 ```text
@@ -387,6 +413,8 @@ must not become metric labels.
 - source revision activation, support revocation, and automatic tier demotion
 - owner-mutation denials and cross-profile correction outcomes
 - review task count/age
+- Conflict case status/age, write-versus-nightly outcomes, overdue escalation,
+  run duration, and lease recovery
 
 ### Search and recall
 
@@ -476,6 +504,8 @@ payloads, and vectors are opt-out by default and should not enter normal logs.
 | Redis over-alerts | intentional one-process mode reports Redis down | explicit coordination-mode metric and topology-aware alert |
 | Metric becomes authority | dashboard count used to correct knowledge | trace PostgreSQL records; metrics are observation only |
 | Profile conflict disappears in aggregation | recall looks healthy while one author's correction is consistently hidden | authored-conflict and clarification measures plus stored recall events |
+| Nightly resolution is invisible | B becomes preferred after a run but operators see only a recall-rank change | case event/run counters, status/age dashboard, and durable policy-versioned events |
+| Conflict IDs leak through metrics | one time series is created per case/Relationship | closed status/action/stage/outcome labels only; IDs remain in authorized PostgreSQL rows/log correlation |
 | Automatic cutover is not observable | readiness changes without a durable migration-complete signal | marker-backed completion event and separate readiness transition alert |
 | Per-process pool looks healthy while database saturates | every service replica stays below its local cap but aggregate connections exhaust PostgreSQL | topology-aware aggregate pool dashboard and deployment budget alert |
 | Cluster vector profile diverges | one shard/replica serves an absent or older search index | bounded parity metric plus readiness/activation gate |
@@ -498,3 +528,7 @@ payloads, and vectors are opt-out by default and should not enter normal logs.
 12. deterministic scans, model security signals, quarantine releases, source
     revisions, support revocations, and automatic demotions are separately
     observable with bounded labels
+13. Conflict write-time/nightly evaluation, status age, overdue escalation, run
+    failure, and lease recovery are observable without case/team/profile IDs
+14. telemetry cannot resolve or mutate a Conflict case and never substitutes
+    for its durable event history

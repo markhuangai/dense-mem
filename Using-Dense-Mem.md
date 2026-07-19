@@ -272,7 +272,10 @@ Default recall returns same-team active-supported evidence contexts in
 `results[]`. Relationships remain the durable semantic graph but appear only as
 compact `discovery_paths[]` for trace and follow-up. Recall excludes verifier
 history and pending candidates from primary results. Server policy may include
-matching Hypotheses in `related_hypotheses`.
+matching Hypotheses in `related_hypotheses`. Required `conflicts[]` is empty
+when no material disagreement applies. An open/overdue case returns bounded
+alternatives and a question; a resolved case returns preferred current evidence
+plus a compact status/trace reference.
 
 Use bounded `discovery_paths` for discovery; do not recursively fetch every
 neighbor. If one part remains uncertain, make a narrower recall and pass the
@@ -304,7 +307,11 @@ conflict, correction, forget, or high-stakes answers.
 
 A correction supplies new evidence and appends history. It does not edit the
 old fragment. A correction to another profile creates caller-owned knowledge
-and a cross-reference; it never changes the other profile's record.
+and a cross-reference; it never changes the other profile's record. When recall
+returns an open Conflict case, place its `conflict_id` and expected version on
+the relevant Relationship proposal in a normal `remember` call. Dense-Mem
+derives the position from the new verified evidence; there is no bare vote or
+cross-profile resolve action.
 
 `forget` takes a caller-owned `relationship_id` and authorized reason. It appends a
 retraction, removes that Relationship from active/default reads in the same

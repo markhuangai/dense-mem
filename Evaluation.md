@@ -158,10 +158,11 @@ scripts/e2e-compose.sh
 tests/uat/e2e-journey.spec.ts against an isolated compose stack
 ```
 
-The UAT journey is the current v2 production-surface smoke: `remember`,
-`get_memory_placement`, `recall_memory`, canonical `GET /api/v1/recall`,
-OpenAPI, and cross-team isolation. It must not depend on removed direct v1
-fragment, claim, or fact routes.
+The UAT journey is the current v2 production-surface smoke: MCP `tools/list` and
+`tools/call` for `remember`, `get_memory_placement`, `recall_memory`, and
+`trace_memory`; absence/not-found checks for those tools on HTTP/OpenAPI; and
+cross-team isolation. It must not depend on removed direct v1 fragment, claim,
+fact, or generic HTTP memory-tool routes.
 
 ## Evaluation Dimensions
 
@@ -258,6 +259,9 @@ The corpus includes:
 - cross-team near-duplicates designed to catch vector/RLS leaks
 - three writable same-team profiles with corroborating and conflicting
   Relationships, cross-references, and profile-local merge/split corrections
+- stale A knowledge followed by B's later correction and C's independent
+  response, with reliable/missing effective times, case deadlines, copied-source
+  controls, and write-time/nightly evaluation fixtures
 
 Seed through MCP `remember` and the first-party client-review workflow so runs
 exercise extraction, verification, policy, transactions, jobs, and interface
@@ -357,13 +361,19 @@ Required examples:
    nodes, but cannot activate it
 7. `insufficient` creates/retains a pending candidate only when endpoints and a
    predicate resolve
-8. conflict/single-current replacement remains review-held until safe
+8. same-owner conflict/single-current replacement remains review-held until safe
 9. forget retracts from current reads without erasing trace
-10. B's entailed correction can remain active beside A's knowledge and link it
-    without changing A
-11. C recall prefers the better-supported applicable position while retaining
-    conflict refs, or asks for clarification when the margin is insufficient
-12. A can adopt B's exact evidence without duplicating its source group, then
+10. B's entailed correction creates B-owned knowledge, links A, and creates a
+    team Conflict case without changing A
+11. an open/overdue case returns material alternatives and clarification; a
+    resolved case returns preferred current support paths plus conflict refs
+12. C's independent response creates C-owned knowledge and may resolve/reopen
+    the case; a bare assertion or copied source adds no vote
+13. `valid_at` before the change and `known_at` before later evidence/resolution
+    reconstruct the earlier position and case state
+14. nightly evaluation matches write-time policy, resolves only one qualifying
+    position, and otherwise records `overdue`
+15. A can adopt B's exact evidence without duplicating its source group, then
     supersede only A's prior Relationship
 
 ## Recall Judgments
@@ -385,8 +395,12 @@ Core metrics:
 | candidate/Hypothesis leak count | must be zero in primary results |
 | cross-team leak count | must be zero |
 | cross-profile mutation count | must be zero |
-| conflict preference accuracy | stronger evidence-backed authored position ranks first |
-| conflict clarification accuracy | unresolved evidence margins produce clarification |
+| conflict preference accuracy | the uniquely qualifying evidence-backed position resolves and supplies primary current paths |
+| conflict clarification accuracy | zero or multiple qualifying positions produce clarification |
+| conflict disposition accuracy | resolved current recall includes only the qualifying preferred support paths |
+| conflict false-suppression count | eligible unresolved, historical, or unrelated support paths suppressed; must be zero |
+| conflict overdue accuracy | deadline cases without one qualifying position become overdue rather than resolved |
+| conflict historical reconstruction | `valid_at`/`known_at` return the labeled position/event view |
 | p50/p95/p99 latency | overall and per branch |
 
 Report results by tier, time, team size, degree, query type, and search-freshness
@@ -590,3 +604,7 @@ comparisons are not added to the release evidence set.
     schema version, stored-knowledge alignment, or stored Relationship IDs
 13. source revision activation, automatic demotion, and stale-token rejection
     pass with same-team cross-profile adopters
+14. three-profile Conflict cases pass write-time/nightly parity, copied-source,
+    missing-time, deadline, stale-version, lease-recovery, and bitemporal slices
+15. no evaluation can pass with a cross-profile lifecycle mutation, deadline-only
+    winner, or false suppression of an unrelated/historical support path
