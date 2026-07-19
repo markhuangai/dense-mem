@@ -11,6 +11,8 @@ type V2SearchRepository interface {
 	UpsertSearchDocument(ctx context.Context, input V2UpsertSearchDocumentInput) (*V2SearchDocumentResult, error)
 	ClaimEmbeddingJobs(ctx context.Context, input V2ClaimEmbeddingJobsInput) ([]V2EmbeddingJob, error)
 	CompleteEmbeddingJob(ctx context.Context, input V2CompleteEmbeddingJobInput) error
+	FailEmbeddingJob(ctx context.Context, input V2FailEmbeddingJobInput) (*V2EmbeddingJobFailureResult, error)
+	GetEmbeddingQueueStats(ctx context.Context, input V2EmbeddingQueueStatsInput) (*V2EmbeddingQueueStats, error)
 	SearchFullText(ctx context.Context, input V2FullTextSearchInput) ([]V2SearchHit, error)
 	SearchExactVector(ctx context.Context, input V2ExactVectorSearchInput) ([]V2SearchHit, error)
 }
@@ -97,10 +99,53 @@ type V2EmbeddingJob struct {
 }
 
 type V2CompleteEmbeddingJobInput struct {
-	TeamID         string
-	EmbeddingJobID string
-	WorkerID       string
-	Embedding      []float32
+	TeamID           string
+	EmbeddingJobID   string
+	WorkerID         string
+	ExpectedAttempts int
+	Embedding        []float32
+}
+
+type V2FailEmbeddingJobInput struct {
+	TeamID           string
+	EmbeddingJobID   string
+	WorkerID         string
+	ExpectedAttempts int
+	Error            string
+	RetryAfter       time.Duration
+	Terminal         bool
+}
+
+type V2EmbeddingJobFailureResult struct {
+	Status      string
+	RetryAfter  time.Duration
+	Terminal    bool
+	Stale       bool
+	Attempts    int
+	MaxAttempts int
+}
+
+type V2EmbeddingQueueStatsInput struct {
+	TeamID              string
+	EmbeddingContractID string
+	EmbeddingDimensions int
+}
+
+type V2EmbeddingQueueStats struct {
+	TeamID              string
+	EmbeddingContractID string
+	EmbeddingDimensions int
+	Queued              int64
+	Processing          int64
+	Completed           int64
+	Failed              int64
+	Stale               int64
+	Cancelled           int64
+	ExpiredLeases       int64
+	OldestPendingAge    time.Duration
+	OldestLeaseAge      time.Duration
+	TerminalFailures    int64
+	CutoverBlocking     bool
 }
 
 type V2FullTextSearchInput struct {

@@ -106,6 +106,9 @@ func validateV2CompleteEmbeddingJobInput(input V2CompleteEmbeddingJobInput) erro
 	if input.WorkerID == "" {
 		return errors.New("worker_id is required")
 	}
+	if input.ExpectedAttempts < 1 {
+		return errors.New("expected_attempts must be greater than zero")
+	}
 	if len(input.Embedding) == 0 {
 		return errors.New("embedding is required")
 	}
