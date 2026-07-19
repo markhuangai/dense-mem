@@ -227,6 +227,10 @@ func (s *v2SemanticReviewService) appendSecurityEvents(ctx context.Context, job 
 		if !ok || evidence.FragmentID == "" {
 			return fmt.Errorf("v2 semantic review: cannot persist security signal for evidence %q", signal.EvidenceID)
 		}
+		quote, err := verifier.V2SemanticEvidenceSpan(evidence.Content, signal.Start, signal.End)
+		if err != nil {
+			return fmt.Errorf("v2 semantic review: cannot persist security signal span: %w", err)
+		}
 		if _, err := s.ledger.AppendSecurityEvent(ctx, repository.V2SecurityEventInput{
 			TeamID:         job.TeamID,
 			OwnerProfileID: job.OwnerProfileID,
@@ -242,7 +246,7 @@ func (s *v2SemanticReviewService) appendSecurityEvents(ctx context.Context, job 
 					Severity:  v2SemanticSignalSeverity(signal.Kind),
 					SpanStart: signal.Start,
 					SpanEnd:   signal.End,
-					Quote:     evidence.Content[signal.Start:signal.End],
+					Quote:     quote,
 				}},
 				Metadata: map[string]any{
 					"request_id": req.RequestID,

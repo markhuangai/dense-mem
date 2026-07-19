@@ -54,6 +54,32 @@ func TestV2SemanticReviewPrepareFiltersProviderEgressAndMapsWhitespaceQuote(t *t
 	}
 }
 
+func TestV2SemanticReviewPrepareUsesCodePointSpans(t *testing.T) {
+	req := v2SemanticReviewTestRequest()
+	content := "Renée works\non Dense-Mem."
+	req.Evidence[0].Content = content
+	req.EntityMentions[0].Surface = "Renée"
+	req.EntityMentions[0].Start = 0
+	req.EntityMentions[0].End = 5
+	projectStart := v2SemanticTestRuneIndex(content, "Dense-Mem")
+	req.EntityMentions[1].Start = projectStart
+	req.EntityMentions[1].End = projectStart + len([]rune("Dense-Mem"))
+	req.RelationshipObservations[0].Quote = content
+	req.RelationshipObservations[0].Start = 0
+	req.RelationshipObservations[0].End = len([]rune(content))
+
+	prepared, errs := PrepareV2SemanticReviewRequest(req)
+	if len(errs) != 0 {
+		t.Fatalf("PrepareV2SemanticReviewRequest errors = %#v", errs)
+	}
+	if got := prepared.EntityMentions[0].Surface; got != "Renée" {
+		t.Fatalf("surface = %q", got)
+	}
+	if got := prepared.RelationshipObservations[0].Quote; got != content {
+		t.Fatalf("quote = %q", got)
+	}
+}
+
 func TestV2SemanticReviewPrepareRejectsStaleSourceAndQuoteMismatch(t *testing.T) {
 	req := v2SemanticReviewTestRequest()
 	req.Evidence[0].SourceRevisionID = "rev-old"
@@ -364,6 +390,14 @@ func v2SemanticReviewTestRequest() V2SemanticReviewRequest {
 			}},
 		}},
 	}
+}
+
+func v2SemanticTestRuneIndex(content string, substring string) int {
+	index := strings.Index(content, substring)
+	if index < 0 {
+		return -1
+	}
+	return len([]rune(content[:index]))
 }
 
 func v2SemanticJoinedErrors(errs []V2SemanticValidationError) string {

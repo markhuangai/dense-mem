@@ -576,6 +576,7 @@ func TestV2LedgerAppendPlacementOutcomeAndVerifierQuarantine(t *testing.T) {
 	ctx := context.Background()
 	teamID := createV2LedgerTeam(t, adminDB, rls, "team-review-outcome")
 	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "owner-review-outcome")
+	otherOwnerID := createV2LedgerProfile(t, adminDB, rls, teamID, "owner-review-outcome-other")
 	repo := NewV2LedgerRepository(appDB, rls)
 
 	created, err := repo.CreateIngest(ctx, V2CreateIngestInput{
@@ -606,6 +607,27 @@ func TestV2LedgerAppendPlacementOutcomeAndVerifierQuarantine(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, outcomeID)
+
+	_, err = repo.AppendSecurityEvent(ctx, V2SecurityEventInput{
+		TeamID:         teamID,
+		OwnerProfileID: otherOwnerID,
+		IngestID:       created.IngestID,
+		FragmentID:     created.Evidence[0].FragmentID,
+		V2SecurityEventDraft: V2SecurityEventDraft{
+			EventKind: "verifier_signal",
+			Decision:  "quarantine",
+			Reason:    "wrong owner",
+			Signals: []V2SecuritySignalInput{{
+				Kind:      "prompt_secret_extraction",
+				Severity:  "high",
+				SpanStart: 0,
+				SpanEnd:   4,
+				Quote:     "Mark",
+			}},
+		},
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrV2SemanticOwnerMismatch), "err=%v", err)
 
 	_, err = repo.AppendSecurityEvent(ctx, V2SecurityEventInput{
 		TeamID:         teamID,

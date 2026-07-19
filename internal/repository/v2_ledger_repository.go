@@ -242,6 +242,9 @@ func (r *V2LedgerRepositoryImpl) AppendSecurityEvent(ctx context.Context, input 
 	}
 	var eventID string
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
+		if err := ensureV2EvidenceEventOwnership(ctx, tx, input); err != nil {
+			return err
+		}
 		var err error
 		eventID, err = insertV2SecurityEvent(ctx, tx, input)
 		if err != nil {
@@ -903,6 +906,30 @@ func validateV2SecurityEventDraft(input V2SecurityEventDraft) error {
 		if signal.SpanStart < 0 || signal.SpanEnd <= signal.SpanStart {
 			return fmt.Errorf("signals[%d].span is invalid", i)
 		}
+	}
+	return nil
+}
+
+func ensureV2EvidenceEventOwnership(ctx context.Context, tx *gorm.DB, input V2SecurityEventInput) error {
+	var exists bool
+	if err := tx.WithContext(ctx).Raw(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM evidence_fragments AS fragment
+			JOIN knowledge_ingests AS ingest
+			  ON ingest.team_id = fragment.team_id
+			 AND ingest.ingest_id = fragment.ingest_id
+			 AND ingest.owner_profile_id = fragment.owner_profile_id
+			WHERE fragment.team_id = ?::uuid
+			  AND fragment.fragment_id = ?::uuid
+			  AND fragment.ingest_id = ?::uuid
+			  AND fragment.owner_profile_id = ?::uuid
+		)
+	`, input.TeamID, input.FragmentID, input.IngestID, input.OwnerProfileID).Scan(&exists).Error; err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("%w: security event target evidence does not belong to owner and ingest", ErrV2SemanticOwnerMismatch)
 	}
 	return nil
 }

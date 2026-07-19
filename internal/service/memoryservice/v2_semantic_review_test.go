@@ -74,12 +74,23 @@ func TestV2SemanticReviewQuarantinesSecuritySignalsWithoutSemanticDecisions(t *t
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	request := v2SemanticReviewServiceRequest(teamID, ownerID)
+	content := "Renée works on Dense-Mem."
+	request.Evidence[0].Content = content
+	request.EntityMentions[0].Surface = "Renée"
+	request.EntityMentions[0].Start = 0
+	request.EntityMentions[0].End = 5
+	projectStart := v2SemanticReviewTestRuneIndex(content, "Dense-Mem")
+	request.EntityMentions[1].Start = projectStart
+	request.EntityMentions[1].End = projectStart + len([]rune("Dense-Mem"))
+	request.RelationshipObservations[0].Quote = content
+	request.RelationshipObservations[0].Start = 0
+	request.RelationshipObservations[0].End = len([]rune(content))
 	response := v2SemanticReviewResponse(request.RequestID, false, false)
 	response.SecuritySignals = []verifier.V2SemanticSecuritySignal{{
 		EvidenceID: "ev_1",
 		Kind:       "prompt_secret_extraction",
 		Start:      0,
-		End:        4,
+		End:        5,
 	}}
 	provider := &v2SemanticReviewProviderStub{responses: []verifier.V2SemanticReviewResponse{response}}
 	ledger := &v2SemanticReviewLedgerStub{}
@@ -105,6 +116,9 @@ func TestV2SemanticReviewQuarantinesSecuritySignalsWithoutSemanticDecisions(t *t
 	}
 	if len(ledger.securityEvents) != 1 {
 		t.Fatalf("security events = %#v", ledger.securityEvents)
+	}
+	if got := ledger.securityEvents[0].Signals[0].Quote; got != "Renée" {
+		t.Fatalf("security quote = %q", got)
 	}
 	last := ledger.outcomes[len(ledger.outcomes)-1]
 	if last.UpdateItemStatus != "quarantined" || last.UpdateItemCategory != "quarantined" {
@@ -237,6 +251,14 @@ func v2SemanticReviewServiceRequest(teamID string, ownerID string) verifier.V2Se
 	}
 }
 
+func v2SemanticReviewTestRuneIndex(content string, substring string) int {
+	index := strings.Index(content, substring)
+	if index < 0 {
+		return -1
+	}
+	return len([]rune(content[:index]))
+}
+
 func v2SemanticReviewResponse(requestID string, quarantined bool, omitRelationship bool) verifier.V2SemanticReviewResponse {
 	markID := "ent-mark"
 	projectID := "ent-dense-mem"
@@ -311,7 +333,7 @@ func (s *v2SemanticReviewLedgerStub) ClaimNextPlacementRun(context.Context, stri
 	return nil, errors.New("unexpected ClaimNextPlacementRun")
 }
 
-func (s *v2SemanticReviewLedgerStub) FinishPlacementRun(context.Context, string, string, string, string) error {
+func (s *v2SemanticReviewLedgerStub) FinishPlacementRun(context.Context, string, string, string, string, string) error {
 	return errors.New("unexpected FinishPlacementRun")
 }
 
