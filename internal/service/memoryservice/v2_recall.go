@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	defaultV2RecallResultLimit = 10
-	maxV2RecallResultLimit     = 50
+	defaultV2RecallResultLimit      = 10
+	maxV2RecallResultLimit          = 50
+	defaultV2RelatedHypothesisLimit = 5
 )
 
 var ErrV2RecallAuthContext = errors.New("v2 recall: authenticated actor context is required")
@@ -28,8 +29,9 @@ type V2RecallService interface {
 }
 
 type V2RecallDependencies struct {
-	Search   V2RecallSearchRepository
-	Provider embedding.EmbeddingProviderInterface
+	Search     V2RecallSearchRepository
+	Provider   embedding.EmbeddingProviderInterface
+	Hypotheses V2RecallHypothesisRepository
 }
 
 type V2RecallSearchRepository interface {
@@ -37,15 +39,22 @@ type V2RecallSearchRepository interface {
 	GetActiveSearchContract(ctx context.Context) (*repository.V2ActiveSearchContract, error)
 }
 
+type V2RecallHypothesisRepository interface {
+	RecallV2Hypotheses(ctx context.Context, input repository.V2RecallHypothesesInput) ([]repository.V2HypothesisRecord, error)
+	RefreshV2HypothesisStaleness(ctx context.Context, input repository.V2RefreshHypothesisStalenessInput) (int, error)
+}
+
 type v2RecallService struct {
-	search   V2RecallSearchRepository
-	provider embedding.EmbeddingProviderInterface
+	search     V2RecallSearchRepository
+	provider   embedding.EmbeddingProviderInterface
+	hypotheses V2RecallHypothesisRepository
 }
 
 func NewV2RecallService(deps V2RecallDependencies) V2RecallService {
 	return &v2RecallService{
-		search:   deps.Search,
-		provider: deps.Provider,
+		search:     deps.Search,
+		provider:   deps.Provider,
+		hypotheses: deps.Hypotheses,
 	}
 }
 
@@ -63,11 +72,13 @@ type V2RecallRequest struct {
 }
 
 type V2RecallResult struct {
-	RecallID          string                     `json:"recall_id"`
-	Results           []V2RecallResultItem       `json:"results"`
-	DiscoveryGuidance string                     `json:"discovery_guidance,omitempty"`
-	Degradation       *V2RecallDegradationResult `json:"degradation,omitempty"`
-	SearchState       string                     `json:"search_state"`
+	RecallID          string                       `json:"recall_id"`
+	Results           []V2RecallResultItem         `json:"results"`
+	DiscoveryPaths    []V2RecallDiscoveryPath      `json:"discovery_paths"`
+	DiscoveryGuidance string                       `json:"discovery_guidance"`
+	RelatedHypotheses []V2RelatedHypothesisSummary `json:"related_hypotheses"`
+	Degradation       *V2RecallDegradationResult   `json:"degradation,omitempty"`
+	SearchState       string                       `json:"search_state"`
 }
 
 type V2RecallResultItem struct {
@@ -75,6 +86,47 @@ type V2RecallResultItem struct {
 	RelationshipIDs []string `json:"relationship_ids,omitempty"`
 	Rank            int      `json:"rank"`
 	Context         string   `json:"context,omitempty"`
+}
+
+type V2RecallDiscoveryPath struct {
+	Relationships []V2RecallRelationshipHandle `json:"relationships"`
+	EvidenceIDs   []string                     `json:"evidence_ids"`
+}
+
+type V2RecallRelationshipHandle struct {
+	RelationshipID string           `json:"relationship_id"`
+	Subject        V2EntityHandle   `json:"subject"`
+	Predicate      string           `json:"predicate"`
+	Object         V2SemanticObject `json:"object"`
+	Polarity       string           `json:"polarity"`
+}
+
+type V2EntityHandle struct {
+	EntityID string `json:"entity_id"`
+	Name     string `json:"name"`
+}
+
+type V2SemanticObject struct {
+	EntityID string `json:"entity_id,omitempty"`
+	ValueID  string `json:"value_id,omitempty"`
+	Type     string `json:"type,omitempty"`
+	Value    any    `json:"value,omitempty"`
+	Display  string `json:"display,omitempty"`
+	Unit     string `json:"unit,omitempty"`
+}
+
+type V2RelatedHypothesisSummary struct {
+	HypothesisID          string    `json:"hypothesis_id"`
+	SubjectEntityID       string    `json:"subject_entity_id"`
+	PredicateKey          string    `json:"predicate_key"`
+	ObjectEntityID        string    `json:"object_entity_id,omitempty"`
+	ObjectValueID         string    `json:"object_value_id,omitempty"`
+	Statement             string    `json:"statement"`
+	Status                string    `json:"status"`
+	SourceRelationshipIDs []string  `json:"source_relationship_ids"`
+	GeneratorKind         string    `json:"generator_kind"`
+	GeneratorVersion      string    `json:"generator_version"`
+	CreatedAt             time.Time `json:"created_at"`
 }
 
 type V2RecallDegradationResult struct {
@@ -128,7 +180,49 @@ func (s *v2RecallService) RecallV2(ctx context.Context, req V2RecallRequest) (*V
 	if err != nil {
 		return nil, err
 	}
-	return v2RecallResultFromRepository(recalled, degradation), nil
+	result := v2RecallResultFromRepository(recalled, degradation)
+	related, relatedDegradation := s.recallRelatedHypotheses(ctx, actor.TeamID.String(), actor.ProfileID.String(), req.Query)
+	result.RelatedHypotheses = related
+	if result.Degradation == nil && relatedDegradation != nil {
+		result.Degradation = relatedDegradation
+	}
+	return result, nil
+}
+
+func (s *v2RecallService) recallRelatedHypotheses(
+	ctx context.Context,
+	teamID string,
+	ownerProfileID string,
+	query string,
+) ([]V2RelatedHypothesisSummary, *V2RecallDegradationResult) {
+	if s.hypotheses == nil || strings.TrimSpace(query) == "" {
+		return []V2RelatedHypothesisSummary{}, nil
+	}
+	_, err := s.hypotheses.RefreshV2HypothesisStaleness(ctx, repository.V2RefreshHypothesisStalenessInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerProfileID,
+		Limit:          200,
+	})
+	if err != nil {
+		return []V2RelatedHypothesisSummary{}, v2RelatedHypothesisDegradation()
+	}
+	records, err := s.hypotheses.RecallV2Hypotheses(ctx, repository.V2RecallHypothesesInput{
+		TeamID: teamID,
+		Query:  query,
+		Limit:  defaultV2RelatedHypothesisLimit,
+	})
+	if err != nil {
+		return []V2RelatedHypothesisSummary{}, v2RelatedHypothesisDegradation()
+	}
+	return v2RelatedHypothesisSummaries(records), nil
+}
+
+func v2RelatedHypothesisDegradation() *V2RecallDegradationResult {
+	return &V2RecallDegradationResult{
+		Optional: true,
+		Code:     "related_hypotheses_unavailable",
+		Message:  "related hypotheses were unavailable; primary evidence recall was used",
+	}
 }
 
 func (s *v2RecallService) queryEmbedding(
@@ -246,9 +340,53 @@ func v2RecallResultFromRepository(
 		}
 	}
 	return &V2RecallResult{
-		RecallID:    "rec_" + uuid.NewString(),
-		Results:     results,
-		Degradation: degradation,
-		SearchState: searchState,
+		RecallID:          "rec_" + uuid.NewString(),
+		Results:           results,
+		DiscoveryPaths:    []V2RecallDiscoveryPath{},
+		DiscoveryGuidance: "No additional discovery guidance.",
+		RelatedHypotheses: []V2RelatedHypothesisSummary{},
+		Degradation:       degradation,
+		SearchState:       searchState,
+	}
+}
+
+func v2RelatedHypothesisSummaries(records []repository.V2HypothesisRecord) []V2RelatedHypothesisSummary {
+	out := make([]V2RelatedHypothesisSummary, 0, len(records))
+	for _, record := range records {
+		out = append(out, V2RelatedHypothesisSummary{
+			HypothesisID:          record.HypothesisID,
+			SubjectEntityID:       record.SubjectEntityID,
+			PredicateKey:          record.PredicateKey,
+			ObjectEntityID:        record.ObjectEntityID,
+			ObjectValueID:         record.ObjectValueID,
+			Statement:             record.Statement,
+			Status:                record.Status,
+			SourceRelationshipIDs: v2RelatedHypothesisSourceIDs(record.SourceRefs),
+			GeneratorKind:         v2PublicHypothesisGeneratorKind(record.GeneratorKind),
+			GeneratorVersion:      record.GeneratorVersion,
+			CreatedAt:             record.CreatedAt,
+		})
+	}
+	return out
+}
+
+func v2RelatedHypothesisSourceIDs(refs []map[string]any) []string {
+	out := []string{}
+	for _, ref := range refs {
+		id, _ := ref["id"].(string)
+		id = strings.TrimSpace(id)
+		if id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func v2PublicHypothesisGeneratorKind(kind string) string {
+	switch strings.TrimSpace(kind) {
+	case "provider":
+		return "provider"
+	default:
+		return "deterministic"
 	}
 }

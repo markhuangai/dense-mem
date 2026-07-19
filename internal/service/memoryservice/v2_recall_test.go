@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -53,9 +54,69 @@ func TestV2RecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 	require.Len(t, result.Results, 1)
 	require.Nil(t, result.Degradation)
 	require.Equal(t, evidenceID, result.Results[0].EvidenceID)
+	require.NotEmpty(t, result.DiscoveryGuidance)
+	require.Empty(t, result.DiscoveryPaths)
+	require.Empty(t, result.RelatedHypotheses)
 	require.Equal(t, []float32{1, 0, 0}, search.input.QueryEmbedding)
 	require.Equal(t, teamID.String(), search.input.TeamID)
 	require.Equal(t, "PostgreSQL memory", provider.query)
+}
+
+func TestV2RecallReturnsRelatedHypothesesOutsidePrimaryResults(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	evidenceID := uuid.NewString()
+	hypothesisID := uuid.NewString()
+	sourceRelationshipID := uuid.NewString()
+	search := &v2RecallSearchStub{
+		contract: &repository.V2ActiveSearchContract{
+			EmbeddingContractID: uuid.NewString(),
+			EmbeddingDimensions: 3,
+			EmbeddingModel:      "test-model",
+		},
+		result: &repository.V2RecallEvidenceResult{
+			SearchState: string(domain.V2SearchProjectionCurrent),
+			Results: []repository.V2RecallEvidenceHit{{
+				EvidenceID: evidenceID,
+				Rank:       1,
+				Context:    "Dense-Mem uses PostgreSQL for durable memory.",
+			}},
+		},
+	}
+	hypotheses := &v2RecallHypothesisStub{
+		records: []repository.V2HypothesisRecord{{
+			HypothesisID:    hypothesisID,
+			SubjectEntityID: uuid.NewString(),
+			PredicateKey:    "benefits_from",
+			Statement:       "Dense-Mem may benefit from explicit search freshness.",
+			Status:          string(domain.DreamStatusProposed),
+			SourceRefs: []map[string]any{{
+				"type": "relationship",
+				"id":   sourceRelationshipID,
+			}},
+			GeneratorKind:    "server",
+			GeneratorVersion: "dream-v2.candidate-safe",
+			CreatedAt:        time.Now().UTC(),
+		}},
+	}
+	svc := NewV2RecallService(V2RecallDependencies{Search: search, Hypotheses: hypotheses})
+
+	result, err := svc.RecallV2(authenticatedV2RememberContext(teamID, profileID, keyID), V2RecallRequest{
+		ContractVersion: domain.V2ContractVersion,
+		Query:           "PostgreSQL memory",
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Results, 1)
+	require.Equal(t, evidenceID, result.Results[0].EvidenceID)
+	require.Len(t, result.RelatedHypotheses, 1)
+	require.Equal(t, hypothesisID, result.RelatedHypotheses[0].HypothesisID)
+	require.Equal(t, "deterministic", result.RelatedHypotheses[0].GeneratorKind)
+	require.Equal(t, []string{sourceRelationshipID}, result.RelatedHypotheses[0].SourceRelationshipIDs)
+	require.Equal(t, teamID.String(), hypotheses.refreshInput.TeamID)
+	require.Equal(t, profileID.String(), hypotheses.refreshInput.OwnerProfileID)
+	require.Equal(t, defaultV2RelatedHypothesisLimit, hypotheses.recallInput.Limit)
+	require.Equal(t, "PostgreSQL memory", hypotheses.recallInput.Query)
 }
 
 func TestV2RecallProviderFailureIsOptionalDegradation(t *testing.T) {
@@ -250,6 +311,29 @@ func (s *v2RecallSearchStub) RecallEvidence(_ context.Context, input repository.
 		return nil, s.err
 	}
 	return s.result, nil
+}
+
+type v2RecallHypothesisStub struct {
+	refreshInput repository.V2RefreshHypothesisStalenessInput
+	recallInput  repository.V2RecallHypothesesInput
+	records      []repository.V2HypothesisRecord
+	err          error
+}
+
+func (s *v2RecallHypothesisStub) RefreshV2HypothesisStaleness(_ context.Context, input repository.V2RefreshHypothesisStalenessInput) (int, error) {
+	s.refreshInput = input
+	if s.err != nil {
+		return 0, s.err
+	}
+	return 0, nil
+}
+
+func (s *v2RecallHypothesisStub) RecallV2Hypotheses(_ context.Context, input repository.V2RecallHypothesesInput) ([]repository.V2HypothesisRecord, error) {
+	s.recallInput = input
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.records, nil
 }
 
 type v2RecallProviderStub struct {

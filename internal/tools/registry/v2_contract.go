@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
+	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
@@ -270,7 +272,7 @@ func v2UATTools(deps Dependencies) []Tool {
 					return nil, err
 				}
 				recordV2RecallFeedbackSnapshot(ctx, deps, input, req, res)
-				return structToMap(res)
+				return v2RecallContractOutput(res), nil
 			}
 		case V2ToolTraceMemory:
 			tool := tools[i]
@@ -294,6 +296,62 @@ func v2UATTools(deps Dependencies) []Tool {
 				}
 				return structToMap(res)
 			}
+		case V2ToolListDreams:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+				if deps.Dreams == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
+					return nil, fmt.Errorf("list_dreams: invalid input: %w", err)
+				}
+				opts := dreamservice.ListOptions{
+					Status: stringInput(input["status"]),
+					Cursor: stringInput(input["cursor"]),
+				}
+				if limit, ok := intInput(input["limit"]); ok {
+					opts.Limit = limit
+				}
+				dreams, next, err := deps.Dreams.List(ctx, profileID, opts)
+				if err != nil {
+					return nil, err
+				}
+				return v2ListDreamsContractOutput(dreams, next), nil
+			}
+		case V2ToolGetDream:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+				if deps.Dreams == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
+					return nil, fmt.Errorf("get_dream: invalid input: %w", err)
+				}
+				dream, err := deps.Dreams.Get(ctx, profileID, stringInput(input["hypothesis_id"]))
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{"hypothesis": v2DreamContractOutput(dream)}, nil
+			}
+		case V2ToolResolveDreamFeedback:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+				if deps.Dreams == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
+					return nil, fmt.Errorf("resolve_dream_feedback: invalid input: %w", err)
+				}
+				req, err := v2ResolveDreamFeedbackRequestFromContractInput(input)
+				if err != nil {
+					return nil, fmt.Errorf("resolve_dream_feedback: invalid input: %w", err)
+				}
+				res, err := deps.Dreams.ResolveFeedback(ctx, profileID, req)
+				if err != nil {
+					return nil, err
+				}
+				return v2ResolveDreamFeedbackContractOutput(res), nil
+			}
 		}
 	}
 	return tools
@@ -311,6 +369,179 @@ func v2RememberRequestFromContractInput(input map[string]any) (memoryservice.V2R
 	req.EntityHints = v2ObjectArray(proposal["entities"])
 	req.RelationshipHints = v2ObjectArray(proposal["relationships"])
 	return req, nil
+}
+
+func v2ResolveDreamFeedbackRequestFromContractInput(input map[string]any) (dreamservice.ResolveFeedbackRequest, error) {
+	var req dreamservice.ResolveFeedbackRequest
+	if err := remapInput(input, &req); err != nil {
+		return req, err
+	}
+	req.DreamID = stringInput(input["hypothesis_id"])
+	req.Feedback = stringInput(input["reason"])
+	proposal, ok := objectFields(input["proposal"])
+	if !ok {
+		return req, nil
+	}
+	req.EntityHints = v2ObjectArray(proposal["entities"])
+	req.RelationshipHints = v2ObjectArray(proposal["relationships"])
+	return req, nil
+}
+
+func v2RecallContractOutput(res *memoryservice.V2RecallResult) map[string]any {
+	if res == nil {
+		return map[string]any{
+			"recall_id":          "",
+			"results":            []any{},
+			"discovery_paths":    []any{},
+			"discovery_guidance": "",
+			"related_hypotheses": []any{},
+		}
+	}
+	results := make([]map[string]any, 0, len(res.Results))
+	for _, item := range res.Results {
+		results = append(results, map[string]any{
+			"evidence_id": item.EvidenceID,
+			"context":     item.Context,
+		})
+	}
+	discoveryPaths := res.DiscoveryPaths
+	if discoveryPaths == nil {
+		discoveryPaths = []memoryservice.V2RecallDiscoveryPath{}
+	}
+	relatedHypotheses := res.RelatedHypotheses
+	if relatedHypotheses == nil {
+		relatedHypotheses = []memoryservice.V2RelatedHypothesisSummary{}
+	}
+	guidance := strings.TrimSpace(res.DiscoveryGuidance)
+	if guidance == "" {
+		guidance = "No additional discovery guidance."
+	}
+	return map[string]any{
+		"recall_id":          res.RecallID,
+		"results":            results,
+		"discovery_paths":    discoveryPaths,
+		"discovery_guidance": guidance,
+		"related_hypotheses": relatedHypotheses,
+	}
+}
+
+func v2ListDreamsContractOutput(dreams []*domain.Dream, next string) map[string]any {
+	items := make([]map[string]any, 0, len(dreams))
+	for _, dream := range dreams {
+		items = append(items, v2DreamSummaryContractOutput(dream))
+	}
+	out := map[string]any{"dreams": items}
+	if strings.TrimSpace(next) != "" {
+		out["next_cursor"] = next
+	}
+	return out
+}
+
+func v2ResolveDreamFeedbackContractOutput(res *dreamservice.ResolveFeedbackResult) map[string]any {
+	out := map[string]any{
+		"hypothesis_id": "",
+		"status":        string(domain.V2HypothesisProposed),
+	}
+	if res == nil || res.Dream == nil {
+		return out
+	}
+	out["hypothesis_id"] = res.Dream.DreamID
+	out["status"] = string(res.Dream.Status)
+	if res.V2Memory != nil && strings.TrimSpace(res.V2Memory.IngestID) != "" {
+		out["ingest_id"] = res.V2Memory.IngestID
+	}
+	return out
+}
+
+func v2DreamSummaryContractOutput(dream *domain.Dream) map[string]any {
+	if dream == nil {
+		return map[string]any{}
+	}
+	out := map[string]any{
+		"hypothesis_id":           dream.DreamID,
+		"subject_entity_id":       dream.SubjectEntityID,
+		"predicate_key":           dream.PredicateKey,
+		"statement":               dream.Hypothesis,
+		"status":                  string(dream.Status),
+		"source_relationship_ids": v2DreamOutputSourceIDs(dream, false),
+		"generator_kind":          v2DreamOutputGeneratorKind(dream),
+		"generator_version":       firstNonEmpty(dream.GeneratorVersion, dream.GeneratorModel, "dream-v2"),
+		"created_at":              v2DreamOutputCreatedAt(dream),
+	}
+	if strings.TrimSpace(dream.ObjectEntityID) != "" {
+		out["object_entity_id"] = dream.ObjectEntityID
+	}
+	if strings.TrimSpace(dream.ObjectValueID) != "" {
+		out["object_value_id"] = dream.ObjectValueID
+	}
+	return out
+}
+
+func v2DreamContractOutput(dream *domain.Dream) map[string]any {
+	out := v2DreamSummaryContractOutput(dream)
+	if dream == nil {
+		return out
+	}
+	out["source_owner_profile_ids"] = v2DreamOutputOwnerIDs(dream)
+	out["rationale"] = firstNonEmpty(dream.Rationale, "No rationale supplied.")
+	out["likelihood"] = dream.Likelihood
+	out["confidence"] = dream.Confidence
+	out["source_candidate_relationship_ids"] = v2DreamOutputSourceIDs(dream, true)
+	out["source_versions"] = v2DreamOutputSourceVersions(dream)
+	return out
+}
+
+func v2DreamOutputOwnerIDs(dream *domain.Dream) []string {
+	if len(dream.SourceOwnerProfileIDs) > 0 {
+		return append([]string(nil), dream.SourceOwnerProfileIDs...)
+	}
+	if strings.TrimSpace(dream.ProfileID) != "" {
+		return []string{dream.ProfileID}
+	}
+	return []string{}
+}
+
+func v2DreamOutputSourceIDs(dream *domain.Dream, candidates bool) []string {
+	if candidates && len(dream.SourceCandidateRelationshipIDs) > 0 {
+		return append([]string(nil), dream.SourceCandidateRelationshipIDs...)
+	}
+	if !candidates && len(dream.SourceRelationshipIDs) > 0 {
+		return append([]string(nil), dream.SourceRelationshipIDs...)
+	}
+	out := []string{}
+	for _, ref := range dream.SourceRefs {
+		isCandidate := ref.Type == "candidate_relationship"
+		if isCandidate == candidates && strings.TrimSpace(ref.ID) != "" {
+			out = append(out, ref.ID)
+		}
+	}
+	return out
+}
+
+func v2DreamOutputSourceVersions(dream *domain.Dream) map[string]int {
+	if dream.SourceVersions == nil {
+		return map[string]int{}
+	}
+	out := make(map[string]int, len(dream.SourceVersions))
+	for key, value := range dream.SourceVersions {
+		out[key] = value
+	}
+	return out
+}
+
+func v2DreamOutputGeneratorKind(dream *domain.Dream) string {
+	if strings.TrimSpace(dream.GeneratorKind) == "provider" {
+		return "provider"
+	}
+	return "deterministic"
+}
+
+func v2DreamOutputCreatedAt(dream *domain.Dream) string {
+	createdAt := dream.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Unix(0, 0).UTC()
+	}
+	return createdAt.UTC().Format(time.RFC3339Nano)
 }
 
 func v2ObjectArray(value any) []map[string]any {

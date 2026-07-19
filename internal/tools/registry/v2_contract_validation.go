@@ -123,7 +123,34 @@ func validateV2DreamFeedback(args map[string]any) error {
 	decision, _ := args["decision"].(string)
 	switch decision {
 	case "confirm_true", "confirm_false":
-		return validateV2RequiredFields(args, "evidence")
+		if err := validateV2RequiredFields(args, "evidence"); err != nil {
+			return err
+		}
+		evidence, _ := args["evidence"].([]any)
+		sourceRevisions := map[string]v2ContractSourceRevision{}
+		for i, item := range evidence {
+			fields, ok := objectFields(item)
+			if !ok {
+				continue
+			}
+			if err := validateV2SourceRevisionFields(i, fields); err != nil {
+				return err
+			}
+			if err := validateV2SourceRevisionBatch(i, fields, sourceRevisions); err != nil {
+				return err
+			}
+		}
+		proposal, _ := objectFields(args["proposal"])
+		if err := validateV2UniqueObjectRefsIn(proposal["entities"], "proposal.entities", "ref"); err != nil {
+			return err
+		}
+		if err := validateV2UniqueObjectRefsIn(proposal["relationships"], "proposal.relationships", "proposal_id"); err != nil {
+			return err
+		}
+		if err := validateV2RelationshipObjectChoiceIn(proposal["relationships"], "proposal.relationships"); err != nil {
+			return err
+		}
+		return validateV2ProposalReferencesAndSpans(proposal, evidence)
 	default:
 		return validateV2RequiredFields(args, "reason")
 	}

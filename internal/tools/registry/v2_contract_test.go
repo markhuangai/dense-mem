@@ -312,16 +312,32 @@ func TestBuildV2UATWiresExecutableRecallMemory(t *testing.T) {
 	if out["recall_id"] != "rec-v2" {
 		t.Fatalf("recall_id = %#v, want rec-v2", out["recall_id"])
 	}
-	results, ok := out["results"].([]any)
+	if err := ValidateInput(Tool{InputSchema: recall.OutputSchema}, out); err != nil {
+		t.Fatalf("recall output contract validation failed: %v; output = %#v", err, out)
+	}
+	for _, forbidden := range []string{"search_state", "degradation"} {
+		if _, ok := out[forbidden]; ok {
+			t.Fatalf("recall_memory exposed %s in public output: %#v", forbidden, out)
+		}
+	}
+	results, ok := out["results"].([]map[string]any)
 	if !ok || len(results) != 1 {
 		t.Fatalf("results = %#v, want one result", out["results"])
 	}
-	result, ok := results[0].(map[string]any)
-	if !ok {
-		t.Fatalf("result = %#v, want object", results[0])
+	result := results[0]
+	for _, forbidden := range []string{"score", "rank", "relationship_ids"} {
+		if _, ok := result[forbidden]; ok {
+			t.Fatalf("recall_memory exposed %s in public output: %#v", forbidden, result)
+		}
 	}
-	if _, ok := result["score"]; ok {
-		t.Fatalf("recall_memory exposed score in public output: %#v", result)
+	if result["evidence_id"] != "evidence-v2" || result["context"] != "Dense-Mem uses PostgreSQL." {
+		t.Fatalf("result = %#v, want public evidence context", result)
+	}
+	if _, ok := out["related_hypotheses"].([]memoryservice.V2RelatedHypothesisSummary); !ok {
+		t.Fatalf("related_hypotheses = %#v, want typed empty array", out["related_hypotheses"])
+	}
+	if _, ok := out["discovery_paths"].([]memoryservice.V2RecallDiscoveryPath); !ok {
+		t.Fatalf("discovery_paths = %#v, want typed empty array", out["discovery_paths"])
 	}
 	if stub.req.Query != "PostgreSQL memory" {
 		t.Fatalf("stub request not populated: %#v", stub.req)

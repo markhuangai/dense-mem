@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
@@ -123,11 +124,21 @@ func (s *stubDreamService) EffectiveConfig(context.Context, string) (dreamservic
 
 func stubDream(profileID string) *domain.Dream {
 	return &domain.Dream{
-		DreamID:         "dream-1",
-		ProfileID:       profileID,
-		Hypothesis:      "A may affect B.",
-		WhatIf:          "What if A and B interact?",
-		PossibleOutcome: "Review before promotion.",
-		Status:          domain.DreamStatusProposed,
+		DreamID:                        "dream-1",
+		ProfileID:                      profileID,
+		Hypothesis:                     "A may affect B.",
+		WhatIf:                         "What if A and B interact?",
+		PossibleOutcome:                "Review before promotion.",
+		Rationale:                      "Eligible relationship context suggests review.",
+		SubjectEntityID:                "entity-a",
+		PredicateKey:                   "affects",
+		ObjectEntityID:                 "entity-b",
+		SourceRelationshipIDs:          []string{"relationship-1"},
+		SourceCandidateRelationshipIDs: []string{},
+		SourceVersions:                 map[string]int{"relationship-1": 1},
+		GeneratorKind:                  "deterministic",
+		GeneratorVersion:               "dream-v2",
+		Status:                         domain.DreamStatusProposed,
+		CreatedAt:                      time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC),
 	}
 }
