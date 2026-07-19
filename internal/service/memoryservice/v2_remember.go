@@ -62,7 +62,7 @@ type V2RememberEvidenceInput struct {
 	SourceKey              string         `json:"source_key,omitempty"`
 	SourceRevision         string         `json:"source_revision,omitempty"`
 	PreviousSourceRevision string         `json:"previous_source_revision,omitempty"`
-	SupersedesEvidenceIDs  []string       `json:"supersedes_evidence_ids,omitempty"`
+	SupersedesFragmentIDs  []string       `json:"supersedes_fragment_ids,omitempty"`
 	IdempotencyKey         string         `json:"idempotency_key,omitempty"`
 	Labels                 []string       `json:"labels,omitempty"`
 	Metadata               map[string]any `json:"metadata,omitempty"`
@@ -272,8 +272,8 @@ func v2LedgerAuthorityAndMetadata(authority string, metadata map[string]any) (st
 }
 
 func v2EvidenceProcessingIntentMetadata(metadata map[string]any, item V2RememberEvidenceInput) map[string]any {
-	if len(item.SupersedesEvidenceIDs) > 0 {
-		metadata["supersedes_evidence_ids"] = append([]string(nil), item.SupersedesEvidenceIDs...)
+	if len(item.SupersedesFragmentIDs) > 0 {
+		metadata["supersedes_fragment_ids"] = append([]string(nil), item.SupersedesFragmentIDs...)
 	}
 	if value := strings.TrimSpace(item.IdempotencyKey); value != "" {
 		metadata["evidence_idempotency_key"] = value

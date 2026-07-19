@@ -213,6 +213,17 @@ const (
 	V2OutcomeIdentityNeedsReview         V2RelationshipOutcomeCategory = "identity_needs_review"
 )
 
+type V2SemanticReviewStatus string
+
+const (
+	V2SemanticReviewAccepted        V2SemanticReviewStatus = "accepted"
+	V2SemanticReviewReviewRequired  V2SemanticReviewStatus = "review_required"
+	V2SemanticReviewQuarantined     V2SemanticReviewStatus = "quarantined"
+	V2SemanticReviewRejected        V2SemanticReviewStatus = "rejected"
+	V2SemanticReviewRetryable       V2SemanticReviewStatus = "retryable"
+	V2SemanticReviewTerminalFailure V2SemanticReviewStatus = "terminal_failure"
+)
+
 type V2ResolveAction string
 
 const (
@@ -367,6 +378,17 @@ func V2RelationshipOutcomeCategories() []string {
 		string(V2OutcomePredicateNeedsReview),
 		string(V2OutcomeRelationshipRejected),
 		string(V2OutcomeIdentityNeedsReview),
+	}
+}
+
+func V2SemanticReviewStatuses() []string {
+	return []string{
+		string(V2SemanticReviewAccepted),
+		string(V2SemanticReviewReviewRequired),
+		string(V2SemanticReviewQuarantined),
+		string(V2SemanticReviewRejected),
+		string(V2SemanticReviewRetryable),
+		string(V2SemanticReviewTerminalFailure),
 	}
 }
 

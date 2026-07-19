@@ -47,6 +47,11 @@ func TestV2ContractEnums(t *testing.T) {
 			t.Fatalf("V2RelationshipOutcomeCategories missing %s", category)
 		}
 	}
+	for _, status := range []string{"accepted", "review_required", "quarantined", "rejected", "retryable", "terminal_failure"} {
+		if !slices.Contains(V2SemanticReviewStatuses(), status) {
+			t.Fatalf("V2SemanticReviewStatuses missing %s", status)
+		}
+	}
 	for _, tier := range []string{"candidate", "validated_claim", "fact"} {
 		if !slices.Contains(V2RelationshipTiers(), tier) {
 			t.Fatalf("V2RelationshipTiers missing %s", tier)
@@ -78,6 +83,11 @@ func TestV2ContractEnums(t *testing.T) {
 	for _, state := range []string{"not_required", "pending", "current", "failed"} {
 		if !slices.Contains(V2SearchProjectionStates(), state) {
 			t.Fatalf("V2SearchProjectionStates missing %s", state)
+		}
+	}
+	for _, status := range []string{"queued", "guarded", "quarantined", "processing", "completed", "failed"} {
+		if !slices.Contains(V2PlacementRunStatuses(), status) {
+			t.Fatalf("V2PlacementRunStatuses missing %s", status)
 		}
 	}
 	if slices.Contains(V2SearchProjectionStates(), "stale") {

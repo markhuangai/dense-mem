@@ -180,7 +180,7 @@ func TestV2RememberUsesOneSourceRevisionHashForBatch(t *testing.T) {
 				Content:               "first source fragment",
 				SourceKey:             "wiki://write-pipeline",
 				SourceRevision:        "rev-2",
-				SupersedesEvidenceIDs: []string{"evidence-old-a"},
+				SupersedesFragmentIDs: []string{"evidence-old-a"},
 				IdempotencyKey:        "fragment-a",
 				Metadata:              map[string]any{"item": "first"},
 			},
@@ -188,7 +188,7 @@ func TestV2RememberUsesOneSourceRevisionHashForBatch(t *testing.T) {
 				Content:               "second source fragment",
 				SourceKey:             "wiki://write-pipeline",
 				SourceRevision:        "rev-2",
-				SupersedesEvidenceIDs: []string{"evidence-old-b"},
+				SupersedesFragmentIDs: []string{"evidence-old-b"},
 				IdempotencyKey:        "fragment-b",
 				Metadata:              map[string]any{"item": "second"},
 			},
@@ -206,13 +206,13 @@ func TestV2RememberUsesOneSourceRevisionHashForBatch(t *testing.T) {
 	if first == ledger.input.Evidence[0].ContentHash || first == ledger.input.Evidence[1].ContentHash {
 		t.Fatalf("source revision hash %q must describe the batch, not one fragment", first)
 	}
-	require.Equal(t, []string{"evidence-old-a"}, ledger.input.Evidence[0].Metadata["supersedes_evidence_ids"])
+	require.Equal(t, []string{"evidence-old-a"}, ledger.input.Evidence[0].Metadata["supersedes_fragment_ids"])
 	require.Equal(t, "fragment-a", ledger.input.Evidence[0].Metadata["evidence_idempotency_key"])
-	require.Equal(t, []string{"evidence-old-b"}, ledger.input.Evidence[1].Metadata["supersedes_evidence_ids"])
+	require.Equal(t, []string{"evidence-old-b"}, ledger.input.Evidence[1].Metadata["supersedes_fragment_ids"])
 	require.Equal(t, "fragment-b", ledger.input.Evidence[1].Metadata["evidence_idempotency_key"])
-	require.NotContains(t, ledger.input.Evidence[0].SourceRevisionEnvelope, "supersedes_evidence_ids")
+	require.NotContains(t, ledger.input.Evidence[0].SourceRevisionEnvelope, "supersedes_fragment_ids")
 	require.NotContains(t, ledger.input.Evidence[0].SourceRevisionEnvelope, "evidence_idempotency_key")
-	require.NotContains(t, ledger.input.Evidence[1].SourceRevisionEnvelope, "supersedes_evidence_ids")
+	require.NotContains(t, ledger.input.Evidence[1].SourceRevisionEnvelope, "supersedes_fragment_ids")
 	require.NotContains(t, ledger.input.Evidence[1].SourceRevisionEnvelope, "evidence_idempotency_key")
 }
 
@@ -305,6 +305,10 @@ func (s *v2RememberLedgerStub) AdvanceSourceRevision(context.Context, repository
 
 func (s *v2RememberLedgerStub) AppendSecurityEvent(context.Context, repository.V2SecurityEventInput) (string, error) {
 	return "", errors.New("unexpected AppendSecurityEvent")
+}
+
+func (s *v2RememberLedgerStub) AppendPlacementOutcome(context.Context, repository.V2PlacementOutcomeInput) (string, error) {
+	return "", errors.New("unexpected AppendPlacementOutcome")
 }
 
 func (s *v2RememberLedgerStub) ClaimNextPlacementRun(context.Context, string, string, time.Duration) (*repository.V2PlacementRun, error) {
