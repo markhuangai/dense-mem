@@ -8,6 +8,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/service/migrationcontrol"
+	"github.com/markhuangai/dense-mem/internal/service/migrationexecutor"
 )
 
 func registerV2MigrationControlRoutes(api *echo.Group, control *controlPortalHandler) {
@@ -16,6 +17,7 @@ func registerV2MigrationControlRoutes(api *echo.Group, control *controlPortalHan
 	api.POST("/v2/migration/start", control.startV2Migration)
 	api.POST("/v2/migration/pause", control.pauseV2Migration)
 	api.POST("/v2/migration/resume", control.resumeV2Migration)
+	api.POST("/v2/migration/run-once", control.runV2MigrationOnce)
 }
 
 func (h *controlPortalHandler) getV2MigrationStatus(c echo.Context) error {
@@ -51,6 +53,24 @@ func (h *controlPortalHandler) resumeV2Migration(c echo.Context) error {
 	return h.invokeV2MigrationAction(c, func(req migrationcontrol.OperatorRequest) (any, error) {
 		return h.migration.Resume(c.Request().Context(), req)
 	})
+}
+
+func (h *controlPortalHandler) runV2MigrationOnce(c echo.Context) error {
+	if h.migrationExec == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "v2 migration executor unavailable")
+	}
+	res, err := h.migrationExec.RunOnce(c.Request().Context())
+	if err != nil {
+		if errors.Is(err, migrationexecutor.ErrMigrationNotRunning) {
+			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
+		}
+		if errors.Is(err, migrationexecutor.ErrMissingDependency) ||
+			errors.Is(err, migrationexecutor.ErrMigrationCredentialMissing) {
+			return httperr.New(httperr.SERVICE_UNAVAILABLE, err.Error())
+		}
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": res})
 }
 
 func (h *controlPortalHandler) invokeV2MigrationAction(

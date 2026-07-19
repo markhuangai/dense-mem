@@ -25,6 +25,21 @@ const (
 	V2MigrationMarkerCompatible   = "compatible"
 	V2MigrationMarkerIncompatible = "incompatible"
 	V2MigrationMarkerCorrupt      = "corrupt"
+
+	V2MigrationOutcomePending     = "pending"
+	V2MigrationOutcomeAccepted    = "accepted"
+	V2MigrationOutcomeNeedsReview = "needs_review"
+	V2MigrationOutcomeRejected    = "rejected"
+	V2MigrationOutcomeQuarantined = "quarantined"
+	V2MigrationOutcomeFailed      = "failed"
+	V2MigrationOutcomeExcluded    = "excluded"
+
+	V2MigrationItemKindEvidence = "evidence"
+
+	V2MigrationCheckpointLegacyNeo4jCursor = "legacy_neo4j_source_fragment_cursor"
+
+	V2MigrationTargetIngest        = "knowledge_ingest"
+	V2MigrationTargetPlacementItem = "placement_item"
 )
 
 type V2MigrationRun struct {
@@ -65,6 +80,24 @@ type V2MigrationOperatorAction struct {
 	Reason    string         `json:"reason,omitempty"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
 	CreatedAt time.Time      `json:"created_at"`
+}
+
+type V2MigrationCorpusItem struct {
+	ItemID          string         `json:"item_id"`
+	RunID           string         `json:"run_id"`
+	TeamID          string         `json:"team_id"`
+	OwnerProfileID  string         `json:"owner_profile_id,omitempty"`
+	SourceKind      string         `json:"source_kind"`
+	SourceID        string         `json:"source_id"`
+	SourceHash      string         `json:"source_hash,omitempty"`
+	ItemKind        string         `json:"item_kind"`
+	Outcome         string         `json:"outcome"`
+	IngestID        string         `json:"ingest_id,omitempty"`
+	PlacementItemID string         `json:"placement_item_id,omitempty"`
+	ExclusionReason string         `json:"exclusion_reason,omitempty"`
+	Metadata        map[string]any `json:"metadata,omitempty"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
 type V2CompatibilityMarker struct {
