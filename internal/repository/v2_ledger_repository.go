@@ -910,30 +910,6 @@ func validateV2SecurityEventDraft(input V2SecurityEventDraft) error {
 	return nil
 }
 
-func ensureV2EvidenceEventOwnership(ctx context.Context, tx *gorm.DB, input V2SecurityEventInput) error {
-	var exists bool
-	if err := tx.WithContext(ctx).Raw(`
-		SELECT EXISTS (
-			SELECT 1
-			FROM evidence_fragments AS fragment
-			JOIN knowledge_ingests AS ingest
-			  ON ingest.team_id = fragment.team_id
-			 AND ingest.ingest_id = fragment.ingest_id
-			 AND ingest.owner_profile_id = fragment.owner_profile_id
-			WHERE fragment.team_id = ?::uuid
-			  AND fragment.fragment_id = ?::uuid
-			  AND fragment.ingest_id = ?::uuid
-			  AND fragment.owner_profile_id = ?::uuid
-		)
-	`, input.TeamID, input.FragmentID, input.IngestID, input.OwnerProfileID).Scan(&exists).Error; err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("%w: security event target evidence does not belong to owner and ingest", ErrV2SemanticOwnerMismatch)
-	}
-	return nil
-}
-
 func insertV2SecurityEvent(ctx context.Context, tx *gorm.DB, input V2SecurityEventInput) (string, error) {
 	metadata, err := marshalV2JSON(input.Metadata)
 	if err != nil {
