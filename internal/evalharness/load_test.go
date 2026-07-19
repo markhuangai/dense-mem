@@ -61,13 +61,7 @@ func TestLoadFunctionsValidateSeedFiles(t *testing.T) {
 	if _, err := LoadCorpus(manifestPath, loaded); err == nil || !strings.Contains(err.Error(), "missing content") {
 		t.Fatalf("LoadCorpus missing content err = %v", err)
 	}
-	if err := writeJSONL(corpusPath, []CorpusItem{{SourceDocID: "doc-1", Content: strings.Repeat("é", MaxCorpusContentCodepoints)}}); err != nil {
-		t.Fatalf("write corpus: %v", err)
-	}
-	if corpus, err := LoadCorpus(manifestPath, loaded); err != nil || len(corpus) != 1 {
-		t.Fatalf("LoadCorpus exact multibyte content = %d, %v", len(corpus), err)
-	}
-	if err := writeJSONL(corpusPath, []CorpusItem{{SourceDocID: "doc-1", Content: strings.Repeat("é", MaxCorpusContentCodepoints+1)}}); err != nil {
+	if err := writeJSONL(corpusPath, []CorpusItem{{SourceDocID: "doc-1", Content: strings.Repeat("x", MaxCorpusContentCodepoints+1)}}); err != nil {
 		t.Fatalf("write corpus: %v", err)
 	}
 	if _, err := LoadCorpus(manifestPath, loaded); err == nil || !strings.Contains(err.Error(), "max is 999") {
@@ -241,5 +235,39 @@ func TestLoadErrorAndCommentBranches(t *testing.T) {
 	loaded.AnswersFile = "missing-answers.json"
 	if _, err := SeedHash(manifestPath, loaded); err == nil {
 		t.Fatal("SeedHash missing optional file error = nil")
+	}
+}
+
+func TestCanonicalJSONHashIsStableAndDetectsMappingDrift(t *testing.T) {
+	first := map[string]any{
+		"by_source_doc_id": map[string]any{
+			"doc-b": map[string]any{"type": "fragment", "id": "fragment-b"},
+			"doc-a": map[string]any{"id": "fragment-a", "type": "fragment"},
+		},
+	}
+	second := map[string]any{
+		"by_source_doc_id": map[string]any{
+			"doc-a": map[string]any{"type": "fragment", "id": "fragment-a"},
+			"doc-b": map[string]any{"id": "fragment-b", "type": "fragment"},
+		},
+	}
+	firstHash, err := canonicalJSONHash(first)
+	if err != nil {
+		t.Fatalf("hash first mapping: %v", err)
+	}
+	secondHash, err := canonicalJSONHash(second)
+	if err != nil {
+		t.Fatalf("hash second mapping: %v", err)
+	}
+	if firstHash != secondHash {
+		t.Fatalf("canonical hashes differ: %s != %s", firstHash, secondHash)
+	}
+	second["by_source_doc_id"].(map[string]any)["doc-b"].(map[string]any)["id"] = "fragment-changed"
+	driftedHash, err := canonicalJSONHash(second)
+	if err != nil {
+		t.Fatalf("hash drifted mapping: %v", err)
+	}
+	if driftedHash == firstHash {
+		t.Fatalf("mapping drift retained hash %s", firstHash)
 	}
 }

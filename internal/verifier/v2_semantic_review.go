@@ -510,11 +510,19 @@ func v2SemanticEndpointKinds(obs V2SemanticRelationshipObservation, mentions []V
 	return out
 }
 
-func v2SemanticExactSpanQuote(content string, start int, end int, quote string) (string, error) {
-	if start < 0 || end <= start || end > len(content) {
+func V2SemanticEvidenceSpan(content string, start int, end int) (string, error) {
+	runes := []rune(content)
+	if start < 0 || end <= start || end > len(runes) {
 		return "", errors.New("span is invalid")
 	}
-	exact := content[start:end]
+	return string(runes[start:end]), nil
+}
+
+func v2SemanticExactSpanQuote(content string, start int, end int, quote string) (string, error) {
+	exact, err := V2SemanticEvidenceSpan(content, start, end)
+	if err != nil {
+		return "", err
+	}
 	quote = strings.TrimSpace(quote)
 	if quote == "" || quote == exact || v2SemanticWhitespaceEquivalent(exact, quote) {
 		return exact, nil

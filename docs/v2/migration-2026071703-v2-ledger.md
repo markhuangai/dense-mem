@@ -1,4 +1,4 @@
-# Migration 2026071701: V2 Ledger Foundation
+# Migration 2026071703: V2 Ledger Foundation
 
 ## Scope
 
@@ -13,12 +13,20 @@ traffic to these tables.
 ## Lock And Rewrite Analysis
 
 - Existing tables are not rewritten.
-- The only existing-table change is a unique index on
-  `team_profiles(team_id, id)` so V2 projection rows can use composite
-  team/profile foreign keys.
+- `2026071702_team_profiles_team_id_id_unique_index.sql` creates the
+  `team_profiles(team_id, id)` helper index concurrently and outside a
+  transaction so profile writes are not blocked by the index build. If the
+  concurrent build fails, PostgreSQL can leave an invalid
+  `idx_team_profiles_team_id_id_unique` index behind; drop or reindex that
+  invalid index before rerunning the migration. The migration omits
+  `IF NOT EXISTS` so retry fails visibly instead of accepting an invalid helper
+  index.
 - New tables, indexes, policies, and triggers are additive.
 - Backfill inserts only non-secret projection IDs from existing `teams` and
   `team_profiles`; it does not modify those authority rows.
+- Projection rows cascade when unused authority team/profile rows are deleted.
+  Once V2 ledger rows reference a projection, those ledger-to-projection
+  references remain restrictive and preserve ledger history.
 
 ## RLS Impact
 
@@ -38,15 +46,17 @@ traffic to these tables.
 
 ## Rollback
 
-The down migration drops only the V2 ledger objects added here and the composite
-`team_profiles(team_id, id)` helper index. It does not delete or alter v1
-authority data. Rolling back after writing V2 ledger rows discards those dormant
-rows, so production rollback after V2 writes should be treated as a data-loss
-boundary unless the rows are exported first.
+The ledger down migration drops only the V2 ledger objects added here. The
+helper-index down migration drops only the composite `team_profiles(team_id, id)`
+index. Neither down migration deletes or alters v1 authority data. Rolling back
+after writing V2 ledger rows discards those dormant rows, so production rollback
+after V2 writes should be treated as a data-loss boundary unless the rows are
+exported first.
 
 ## Verification
 
-- Run goose up/down on an empty database.
+- Run goose up/down on an empty database, including the separate helper-index
+  migration.
 - Run goose up against a database containing existing teams and team profiles,
   then verify projection counts and absence of auth-row changes.
 - Run V2 ledger repository tests with a non-superuser `DATABASE_URL` role to

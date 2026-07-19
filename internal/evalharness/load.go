@@ -2,6 +2,7 @@ package evalharness
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -180,17 +181,23 @@ func SeedHash(manifestPath string, manifest *SeedManifest) (string, error) {
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func FileHash(path string) (string, error) {
-	hash := sha256.New()
-	f, err := os.Open(path)
+func canonicalJSONHash(value any) (string, error) {
+	payload, err := json.Marshal(value)
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
-	if _, err := io.Copy(hash, f); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+	var normalized any
+	if err := decoder.Decode(&normalized); err != nil {
 		return "", err
 	}
-	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
+	payload, err = json.Marshal(normalized)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(payload)
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
 }
 
 func IndexCases(cases []Case) map[string]Case {

@@ -176,11 +176,11 @@ func v2UATTools(deps Dependencies) []Tool {
 				if deps.V2Remember == nil {
 					return nil, ErrToolUnavailable
 				}
-				if err := ValidateV2ContractInput(tool, input, tool.RequiredScopes); err != nil {
+				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
 					return nil, fmt.Errorf("remember: invalid input: %w", err)
 				}
-				var req memoryservice.V2RememberRequest
-				if err := remapInput(input, &req); err != nil {
+				req, err := v2RememberRequestFromContractInput(input)
+				if err != nil {
 					return nil, fmt.Errorf("remember: invalid input: %w", err)
 				}
 				req.ContractVersion = domain.V2ContractVersion
@@ -193,6 +193,35 @@ func v2UATTools(deps Dependencies) []Tool {
 		}
 	}
 	return tools
+}
+
+func v2RememberRequestFromContractInput(input map[string]any) (memoryservice.V2RememberRequest, error) {
+	var req memoryservice.V2RememberRequest
+	if err := remapInput(input, &req); err != nil {
+		return req, err
+	}
+	proposal, ok := objectFields(input["proposal"])
+	if !ok {
+		return req, nil
+	}
+	req.EntityHints = v2ObjectArray(proposal["entities"])
+	req.RelationshipHints = v2ObjectArray(proposal["relationships"])
+	return req, nil
+}
+
+func v2ObjectArray(value any) []map[string]any {
+	items, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		fields, ok := objectFields(item)
+		if ok {
+			out = append(out, fields)
+		}
+	}
+	return out
 }
 
 func v2ContractTool(
@@ -530,8 +559,11 @@ func v2RelationshipProposalArraySchema() map[string]any {
 					},
 					"required": []string{"type", "value"},
 				},
-				"polarity": schemaEnum([]string{"+", "-"}),
-				"modality": schemaEnum([]string{"statement", "question", "proposal", "speculation", "quoted"}),
+				"polarity":       schemaEnum([]string{"+", "-"}),
+				"modality":       schemaEnum([]string{"statement", "question", "proposal", "speculation", "quoted"}),
+				"valid_from":     v2NullableDateTime("Evidence-supported validity start."),
+				"valid_to":       v2NullableDateTime("Evidence-supported validity end."),
+				"client_comment": v2NullableString("Non-authoritative extraction note.", 1000),
 				"evidence": map[string]any{
 					"type":     "array",
 					"minItems": 1,
@@ -546,9 +578,6 @@ func v2RelationshipProposalArraySchema() map[string]any {
 							"end":            map[string]any{"type": "integer", "minimum": 0},
 						},
 					},
-					"valid_from":     v2NullableDateTime("Evidence-supported validity start."),
-					"valid_to":       v2NullableDateTime("Evidence-supported validity end."),
-					"client_comment": v2NullableString("Non-authoritative extraction note.", 1000),
 				},
 			},
 			"additionalProperties": false,
@@ -673,7 +702,7 @@ func v2RecallFeedbackInputSchema() map[string]any {
 
 func v2ListDreamsInputSchema() map[string]any {
 	return v2ContractInput(nil, map[string]any{
-		"status": schemaEnum([]string{"proposed", "reinforced", "stale", "rejected", "submitted"}),
+		"status": schemaEnum(domain.V2HypothesisStatuses()),
 		"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
 		"cursor": schemaString("Opaque page cursor.", 512),
 	})
@@ -950,4 +979,18 @@ func v2StringArraySchema(description string, maxItems int, maxLen int) map[strin
 		schema["maxItems"] = maxItems
 	}
 	return schema
+}
+
+func requireV2Tool(tools map[string]Tool, name string) (Tool, error) {
+	tool, ok := tools[name]
+	if !ok {
+		return Tool{}, fmt.Errorf("missing V2 tool %s", name)
+	}
+	if tool.ContractVersion != domain.V2ContractVersion {
+		return Tool{}, fmt.Errorf("tool %s has wrong contract version", name)
+	}
+	if tool.FeatureGate != domain.V2FeatureGate || tool.Visibility != domain.V2ToolVisibility {
+		return Tool{}, fmt.Errorf("tool %s has wrong V2 gate metadata", name)
+	}
+	return tool, nil
 }

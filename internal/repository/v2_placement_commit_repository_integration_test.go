@@ -210,6 +210,7 @@ func TestV2PlacementSemanticCommitRollsBackSemanticWritesWhenSearchIntentFails(t
 		"placement semantic rollback", "Casey works on Dense-Mem.")
 	claimed, err := ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "worker-rollback", time.Minute)
 	require.NoError(t, err)
+	require.NoError(t, adminDB.Exec(`UPDATE search_index_generations SET activation_state = 'retired'`).Error)
 
 	_, err = ledgerRepo.CommitPlacementSemanticResult(ctx, V2CommitPlacementSemanticInput{
 		TeamID:           teamID,
@@ -219,7 +220,6 @@ func TestV2PlacementSemanticCommitRollsBackSemanticWritesWhenSearchIntentFails(t
 		PlacementItemID:  ingest.Items[0].PlacementItemID,
 		WorkerID:         "worker-rollback",
 		ExpectedAttempts: claimed.Attempts,
-		SearchProfileKey: "missing-search-profile",
 		RelationshipDecisions: []V2ApplyRelationshipDecisionInput{{
 			SubjectEntityID: subject.EntityID,
 			PredicateKey:    "works_on",
@@ -235,7 +235,7 @@ func TestV2PlacementSemanticCommitRollsBackSemanticWritesWhenSearchIntentFails(t
 		}},
 	})
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrV2SearchProfileMismatch), err)
+	assert.True(t, errors.Is(err, ErrV2SearchContractMismatch), err)
 
 	var relationshipCount, supportCount, searchDocumentCount, outcomeCount int64
 	var runStatus, itemStatus string

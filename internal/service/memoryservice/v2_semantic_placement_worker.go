@@ -128,6 +128,7 @@ func v2CommitJobWithRunScope(
 		PlacementItemID:  reviewJob.PlacementItemID,
 		WorkerID:         workerID,
 		ExpectedAttempts: run.Attempts,
+		MaxAttempts:      run.MaxAttempts,
 		Request:          reviewJob.Request,
 		Result:           result,
 	}

@@ -19,6 +19,7 @@ type RunOptions struct {
 	APIKey                 string
 	ControlURL             string
 	ControlToken           string
+	ToolTransport          string
 	ImportSeed             bool
 	ImportConcurrency      int
 	PlacementTimeout       time.Duration
@@ -39,9 +40,20 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	if mode != "validate" && mode != "import" && mode != "baseline" && mode != "candidate" {
 		return Summary{}, fmt.Errorf("unsupported mode %q", mode)
 	}
-	if opts.ReleaseGatePolicyPath != "" && mode != "baseline" && mode != "candidate" {
-		return Summary{}, fmt.Errorf("release gate policy requires baseline or candidate mode")
+	if opts.ReleaseGatePolicyPath != "" && mode != "validate" && mode != "baseline" && mode != "candidate" {
+		return Summary{}, fmt.Errorf("release gate policy requires validate, baseline, or candidate mode")
 	}
+	toolTransport := strings.ToLower(strings.TrimSpace(opts.ToolTransport))
+	if toolTransport == "" {
+		toolTransport = "rest"
+	}
+	if toolTransport != "rest" && toolTransport != "mcp" {
+		return Summary{}, fmt.Errorf("unsupported tool transport %q", opts.ToolTransport)
+	}
+	if opts.ReleaseGatePolicyPath != "" && toolTransport != "mcp" {
+		return Summary{}, fmt.Errorf("release gate requires MCP tool transport")
+	}
+	opts.ToolTransport = toolTransport
 	if opts.SeedManifestPath == "" {
 		return Summary{}, fmt.Errorf("seed manifest path is required")
 	}
@@ -65,28 +77,35 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	if err != nil {
 		return Summary{}, err
 	}
-	suiteHash, err := FileHash(opts.SuitePath)
-	if err != nil {
-		return Summary{}, fmt.Errorf("suite hash: %w", err)
-	}
-	if err := validateRunInputs(opts.SeedManifestPath, manifest, corpus, cases, qrels, expectedDreams, suite, seedHash, suiteHash); err != nil {
+	if err := validateRunInputs(opts.SeedManifestPath, manifest, corpus, cases, qrels, expectedDreams, suite, seedHash); err != nil {
 		return Summary{}, err
 	}
+	inputSummary := Summary{
+		RunID:           runID,
+		Mode:            mode,
+		SeedID:          manifest.SeedID,
+		SeedHash:        seedHash,
+		SuitePath:       opts.SuitePath,
+		CaseCount:       len(suite),
+		ScoredCaseCount: 0,
+		CreatedAt:       time.Now().UTC(),
+	}
 	var releaseGatePolicy *ReleaseGatePolicy
-	releaseGatePolicyHash := ""
+	var releaseGateInput *ReleaseGateInputResult
+	var releaseGatePolicyHash string
 	if opts.ReleaseGatePolicyPath != "" {
-		releaseGatePolicyHash, err = FileHash(opts.ReleaseGatePolicyPath)
-		if err != nil {
-			return Summary{}, fmt.Errorf("release gate policy hash: %w", err)
-		}
 		policy, err := LoadReleaseGatePolicy(opts.ReleaseGatePolicyPath)
 		if err != nil {
 			return Summary{}, fmt.Errorf("release gate policy: %w", err)
 		}
-		if err := validateReleaseGatePolicyForRun(policy, *manifest, seedHash, suiteHash, len(suite)); err != nil {
-			return Summary{}, fmt.Errorf("release gate policy: %w", err)
+		result := EvaluateReleaseGateInput(inputSummary, policy)
+		policyHash, err := canonicalJSONHash(policy)
+		if err != nil {
+			return Summary{}, fmt.Errorf("hash release gate policy: %w", err)
 		}
 		releaseGatePolicy = &policy
+		releaseGateInput = &result
+		releaseGatePolicyHash = policyHash
 	}
 	importRoute := ""
 	if opts.ImportSeed {
@@ -98,11 +117,12 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		SeedManifest:           opts.SeedManifestPath,
 		SeedHash:               seedHash,
 		SuitePath:              opts.SuitePath,
-		SuiteHash:              suiteHash,
 		ReleaseGatePolicyPath:  opts.ReleaseGatePolicyPath,
 		ReleaseGatePolicyHash:  releaseGatePolicyHash,
 		BaseURL:                opts.BaseURL,
 		ControlURL:             opts.ControlURL,
+		ToolTransport:          opts.ToolTransport,
+		ToolContract:           toolContract(opts.ToolTransport),
 		ImportSeed:             opts.ImportSeed,
 		ImportRoute:            importRoute,
 		ImportConcurrency:      opts.ImportConcurrency,
@@ -111,23 +131,23 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		TracesPath:             opts.TracesPath,
 		MappingPath:            opts.MappingPath,
 	}
-	if mode == "validate" {
-		summary := Summary{
-			RunID:           runID,
-			Mode:            mode,
-			SeedID:          manifest.SeedID,
-			SeedHash:        seedHash,
-			SuitePath:       opts.SuitePath,
-			CaseCount:       len(suite),
-			ScoredCaseCount: 0,
-			CreatedAt:       time.Now().UTC(),
-		}
+	if mode == "validate" || (releaseGateInput != nil && !releaseGateInput.Passed) {
 		if opts.OutDir != "" {
-			if err := writeValidationArtifacts(opts.OutDir, manifest, suite, runConfig, summary); err != nil {
+			if err := writeValidationArtifacts(opts.OutDir, manifest, suite, runConfig, inputSummary); err != nil {
 				return Summary{}, err
 			}
+			if releaseGateInput != nil {
+				if err := writeJSONFile(filepath.Join(opts.OutDir, "release_gate_input_result.json"), releaseGateInput); err != nil {
+					return Summary{}, err
+				}
+			}
 		}
-		return summary, nil
+		if releaseGateInput != nil && !releaseGateInput.Passed {
+			return inputSummary, fmt.Errorf("release gate input check failed: %s", strings.Join(releaseGateInput.Failures, "; "))
+		}
+		if mode == "validate" {
+			return inputSummary, nil
+		}
 	}
 	if mode == "import" && opts.TracesPath != "" {
 		return Summary{}, fmt.Errorf("import mode cannot use --traces")
@@ -155,6 +175,7 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			ControlURL:       opts.ControlURL,
 			ControlToken:     opts.ControlToken,
 			PlacementTimeout: opts.PlacementTimeout,
+			ToolTransport:    opts.ToolTransport,
 		}
 		if err := client.EnableEvaluationMode(ctx, opts.MaxPageSize); err != nil {
 			return Summary{}, err
@@ -231,6 +252,11 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			return Summary{}, err
 		}
 		if mode == "import" {
+			mappingHash, err := canonicalJSONHash(mapping)
+			if err != nil {
+				return Summary{}, fmt.Errorf("hash import mapping: %w", err)
+			}
+			runConfig.MappingHash = mappingHash
 			summary := Summary{
 				RunID:           runID,
 				Mode:            mode,
@@ -253,6 +279,11 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			return Summary{}, err
 		}
 	}
+	mappingHash, err := canonicalJSONHash(mapping)
+	if err != nil {
+		return Summary{}, fmt.Errorf("hash run mapping: %w", err)
+	}
+	runConfig.MappingHash = mappingHash
 
 	scores, summary, err := ScoreTraces(runID, mode, manifest.SeedID, seedHash, opts.SuitePath, suite, IndexCases(cases), IndexQrels(qrels), traces, mapping)
 	if err != nil {
@@ -286,6 +317,13 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		}
 	}
 	return summary, nil
+}
+
+func toolContract(transport string) string {
+	if transport == "mcp" {
+		return "mcp.tools/call.v1"
+	}
+	return "rest.tools.v1"
 }
 
 func validateRequiredQRelMappings(qrels map[string]QRel, suite []SuiteCase, mapping KnowledgeMapping) error {
@@ -372,11 +410,11 @@ func loadRunInputs(manifestPath, suitePath string) (*SeedManifest, []CorpusItem,
 	return manifest, corpus, cases, qrels, expectedDreams, suite, seedHash, nil
 }
 
-func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []CorpusItem, cases []Case, qrels []QRel, expectedDreams []ExpectedDream, suite []SuiteCase, seedHash string, suiteHash string) error {
+func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []CorpusItem, cases []Case, qrels []QRel, expectedDreams []ExpectedDream, suite []SuiteCase, seedHash string) error {
 	if err := validateManifestCounts(manifestPath, manifest, corpus, cases, qrels); err != nil {
 		return err
 	}
-	if err := validateSeedValidationReport(manifestPath, manifest, seedHash, suiteHash); err != nil {
+	if err := validateSeedValidationReport(manifestPath, manifest, seedHash); err != nil {
 		return err
 	}
 	caseIndex := IndexCases(cases)
@@ -444,10 +482,9 @@ type seedValidationReport struct {
 	SeedID        string `json:"seed_id"`
 	Status        string `json:"status"`
 	SeedHash      string `json:"seed_hash"`
-	SuiteHash     string `json:"suite_hash"`
 }
 
-func validateSeedValidationReport(manifestPath string, manifest *SeedManifest, seedHash string, suiteHash string) error {
+func validateSeedValidationReport(manifestPath string, manifest *SeedManifest, seedHash string) error {
 	if manifest == nil {
 		return nil
 	}
@@ -473,12 +510,6 @@ func validateSeedValidationReport(manifestPath string, manifest *SeedManifest, s
 	}
 	if report.SeedHash != seedHash {
 		return fmt.Errorf("validation report seed_hash %q does not match current seed hash %q", report.SeedHash, seedHash)
-	}
-	if strings.HasPrefix(manifest.SeedID, "public_6axis_") && strings.TrimSpace(report.SuiteHash) == "" {
-		return fmt.Errorf("validation report missing suite_hash")
-	}
-	if strings.TrimSpace(report.SuiteHash) != "" && report.SuiteHash != suiteHash {
-		return fmt.Errorf("validation report suite_hash %q does not match current suite hash %q", report.SuiteHash, suiteHash)
 	}
 	return nil
 }

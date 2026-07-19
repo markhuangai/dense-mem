@@ -26,6 +26,8 @@ const (
 var (
 	ErrV2RememberAuthContext = errors.New("v2 remember: authenticated actor context is required")
 	ErrV2RememberCredential  = errors.New("v2 remember: authenticated credential context is required")
+	ErrV2RememberConflict    = errors.New("v2 remember: conflict")
+	ErrV2RememberPersistence = errors.New("v2 remember: persistence failed")
 )
 
 type V2RememberService interface {
@@ -60,33 +62,18 @@ type V2RememberEvidenceInput struct {
 	SourceKey              string         `json:"source_key,omitempty"`
 	SourceRevision         string         `json:"source_revision,omitempty"`
 	PreviousSourceRevision string         `json:"previous_source_revision,omitempty"`
-	SupersedesEvidenceIDs  []string       `json:"supersedes_evidence_ids,omitempty"`
+	SupersedesFragmentIDs  []string       `json:"supersedes_fragment_ids,omitempty"`
 	IdempotencyKey         string         `json:"idempotency_key,omitempty"`
 	Labels                 []string       `json:"labels,omitempty"`
 	Metadata               map[string]any `json:"metadata,omitempty"`
 }
 
 type V2RememberResult struct {
-	IngestID          string                 `json:"ingest_id"`
-	Status            string                 `json:"status"`
-	CheckAfterSeconds int                    `json:"check_after_seconds"`
-	StatusTool        string                 `json:"status_tool"`
-	Items             []V2RememberItemResult `json:"items"`
-	SearchState       string                 `json:"search_state"`
-	Degradation       *V2DegradationResult   `json:"degradation,omitempty"`
-}
-
-type V2RememberItemResult struct {
-	ItemID        string               `json:"item_id"`
-	EvidenceIndex int                  `json:"evidence_index"`
-	Category      string               `json:"category"`
-	SearchState   string               `json:"search_state"`
-	Degradation   *V2DegradationResult `json:"degradation,omitempty"`
-}
-
-type V2DegradationResult struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	IngestID          string `json:"ingest_id"`
+	ProcessingState   string `json:"processing_state"`
+	CheckAfterSeconds int    `json:"check_after_seconds"`
+	StatusTool        string `json:"status_tool"`
+	CorrelationID     string `json:"correlation_id"`
 }
 
 func (s *v2RememberService) RememberV2(ctx context.Context, req V2RememberRequest) (*V2RememberResult, error) {
@@ -117,6 +104,7 @@ func (s *v2RememberService) RememberV2(ctx context.Context, req V2RememberReques
 		"entity_hints":       req.EntityHints,
 		"relationship_hints": req.RelationshipHints,
 	}
+	correlationID := correlation.FromContext(ctx)
 	metadata := map[string]any{
 		"contract_version": domain.V2ContractVersion,
 		"actor": map[string]any{
@@ -125,7 +113,7 @@ func (s *v2RememberService) RememberV2(ctx context.Context, req V2RememberReques
 			"role":           credential.Role,
 			"credential_id":  credential.KeyID.String(),
 			"auth_method":    credential.AuthMethod,
-			"correlation_id": correlation.FromContext(ctx),
+			"correlation_id": correlationID,
 		},
 	}
 	created, err := s.ledger.CreateIngest(ctx, repository.V2CreateIngestInput{
@@ -140,23 +128,30 @@ func (s *v2RememberService) RememberV2(ctx context.Context, req V2RememberReques
 		Evidence:       normalized,
 	})
 	if err != nil {
-		return nil, err
+		return nil, translateV2RememberLedgerError(err)
 	}
-	return v2RememberResultFromLedger(created), nil
+	return v2RememberResultFromLedger(created, correlationID), nil
 }
 
 func (s *v2RememberService) normalizeEvidence(evidence []V2RememberEvidenceInput) ([]repository.V2EvidenceInput, string) {
 	out := make([]repository.V2EvidenceInput, 0, len(evidence))
 	status := string(domain.V2PlacementRunQueued)
+	hasProcessable := false
+	hasGuarded := false
+	hasQuarantined := false
 	sourceRevisionHashes := v2SourceRevisionContentHashes(evidence)
 	for _, item := range evidence {
 		scan := scanV2Evidence(item.Content)
 		if scan.Decision == "quarantine" {
-			status = "quarantined"
-		} else if scan.Decision == "guarded" && status != "quarantined" {
-			status = "guarded"
+			hasQuarantined = true
+		} else {
+			hasProcessable = true
+			if scan.Decision == "guarded" {
+				hasGuarded = true
+			}
 		}
 		authority, metadata := v2LedgerAuthorityAndMetadata(item.Authority, item.Metadata)
+		metadata = v2EvidenceProcessingIntentMetadata(metadata, item)
 		out = append(out, repository.V2EvidenceInput{
 			Content:                       item.Content,
 			SourceType:                    v2EvidenceSourceType(item.SourceType),
@@ -171,6 +166,11 @@ func (s *v2RememberService) normalizeEvidence(evidence []V2RememberEvidenceInput
 			Metadata:                      metadata,
 			InitialEvent:                  &scan,
 		})
+	}
+	if hasQuarantined && !hasProcessable {
+		status = string(domain.V2PlacementRunQuarantined)
+	} else if hasGuarded {
+		status = string(domain.V2PlacementRunGuarded)
 	}
 	return out, status
 }
@@ -226,27 +226,22 @@ func v2CanonicalRequestHash(req V2RememberRequest) (string, error) {
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
-func v2RememberResultFromLedger(created *repository.V2CreateIngestResult) *V2RememberResult {
-	items := make([]V2RememberItemResult, 0, len(created.Items))
-	for _, item := range created.Items {
-		category := string(domain.V2EvidenceProcessed)
-		if item.Category == "quarantined" || item.Status == "quarantined" {
-			category = string(domain.V2EvidenceQuarantined)
-		}
-		items = append(items, V2RememberItemResult{
-			ItemID:        item.PlacementItemID,
-			EvidenceIndex: item.EvidenceIndex,
-			Category:      category,
-			SearchState:   string(domain.V2SearchProjectionNotRequired),
-		})
-	}
+func v2RememberResultFromLedger(created *repository.V2CreateIngestResult, correlationID string) *V2RememberResult {
 	return &V2RememberResult{
 		IngestID:          created.IngestID,
-		Status:            created.Status,
+		ProcessingState:   created.Status,
 		CheckAfterSeconds: v2RememberCheckAfterSeconds,
 		StatusTool:        v2RememberStatusTool,
-		Items:             items,
-		SearchState:       string(domain.V2SearchProjectionNotRequired),
+		CorrelationID:     correlationID,
+	}
+}
+
+func translateV2RememberLedgerError(err error) error {
+	switch {
+	case errors.Is(err, repository.ErrV2IdempotencyConflict), errors.Is(err, repository.ErrV2SourceRevisionConflict):
+		return fmt.Errorf("%w: duplicate or stale intake request", ErrV2RememberConflict)
+	default:
+		return ErrV2RememberPersistence
 	}
 }
 
@@ -267,29 +262,31 @@ func v2LedgerAuthorityAndMetadata(authority string, metadata map[string]any) (st
 	if authority != "" {
 		out["v2_contract_authority"] = authority
 	}
-	switch authority {
-	case "authoritative", "primary", "":
-		return "primary", out
-	case "secondary":
-		return "secondary", out
-	default:
-		return "derived", out
+	if authority == "" {
+		return string(domain.AuthorityPrimary), out
 	}
+	if domain.Authority(authority).IsValid() {
+		return authority, out
+	}
+	return authority, out
+}
+
+func v2EvidenceProcessingIntentMetadata(metadata map[string]any, item V2RememberEvidenceInput) map[string]any {
+	if len(item.SupersedesFragmentIDs) > 0 {
+		metadata["supersedes_fragment_ids"] = append([]string(nil), item.SupersedesFragmentIDs...)
+	}
+	if value := strings.TrimSpace(item.IdempotencyKey); value != "" {
+		metadata["evidence_idempotency_key"] = value
+	}
+	return metadata
 }
 
 func v2SourceRevisionEnvelope(item V2RememberEvidenceInput) map[string]any {
-	envelope := map[string]any{
+	return map[string]any{
 		"source_type": item.SourceType,
 		"source":      item.Source,
 		"metadata":    item.Metadata,
 	}
-	if len(item.SupersedesEvidenceIDs) > 0 {
-		envelope["supersedes_evidence_ids"] = item.SupersedesEvidenceIDs
-	}
-	if item.IdempotencyKey != "" {
-		envelope["evidence_idempotency_key"] = item.IdempotencyKey
-	}
-	return envelope
 }
 
 func v2SourceSummary(evidence []V2RememberEvidenceInput) string {

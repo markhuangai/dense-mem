@@ -6,8 +6,8 @@ import (
 )
 
 type V2SearchRepository interface {
-	GetActiveSearchProfile(ctx context.Context, profileKey string) (*V2SearchProfile, error)
-	CheckSearchReadiness(ctx context.Context, profileKey string) (*V2SearchReadiness, error)
+	GetActiveSearchContract(ctx context.Context) (*V2ActiveSearchContract, error)
+	CheckSearchReadiness(ctx context.Context) (*V2SearchReadiness, error)
 	UpsertSearchDocument(ctx context.Context, input V2UpsertSearchDocumentInput) (*V2SearchDocumentResult, error)
 	ClaimEmbeddingJobs(ctx context.Context, input V2ClaimEmbeddingJobsInput) ([]V2EmbeddingJob, error)
 	CompleteEmbeddingJob(ctx context.Context, input V2CompleteEmbeddingJobInput) error
@@ -15,32 +15,30 @@ type V2SearchRepository interface {
 	SearchExactVector(ctx context.Context, input V2ExactVectorSearchInput) ([]V2SearchHit, error)
 }
 
-type V2SearchProfile struct {
-	ProfileKey            string
-	EmbeddingContractID   string
-	SearchIndexProfileID  string
-	RankingProfileID      string
-	EmbeddingDimensions   int
-	EmbeddingProvider     string
-	EmbeddingModel        string
-	DistanceMetric        string
-	VectorNormalization   string
-	DocumentFormatVersion int
-	QueryFormatVersion    int
-	IndexStrategy         string
-	OperatorClass         string
-	IndexedExpression     string
-	PhysicalIndexName     string
-	ExactMaxRows          int
-	CandidateLimit        int
-	AllowExactFallback    bool
+type V2ActiveSearchContract struct {
+	EmbeddingContractID     string
+	SearchIndexGenerationID string
+	EmbeddingDimensions     int
+	EmbeddingProvider       string
+	EmbeddingModel          string
+	DistanceMetric          string
+	VectorNormalization     string
+	DocumentFormatVersion   int
+	QueryFormatVersion      int
+	IndexGeneration         int
+	IndexStrategy           string
+	OperatorClass           string
+	IndexedExpression       string
+	PhysicalIndexName       string
+	ExactMaxRows            int
+	CandidateLimit          int
+	AllowExactFallback      bool
 }
 
 type V2SearchReadiness struct {
-	ProfileKey string
-	Ready      bool
-	Reasons    []V2SearchReadinessReason
-	Profile    *V2SearchProfile
+	Ready    bool
+	Reasons  []V2SearchReadinessReason
+	Contract *V2ActiveSearchContract
 }
 
 type V2SearchReadinessReason struct {
@@ -51,7 +49,6 @@ type V2SearchReadinessReason struct {
 type V2UpsertSearchDocumentInput struct {
 	TeamID              string
 	OwnerProfileID      string
-	ProfileKey          string
 	SourceKind          string
 	SourceID            string
 	SourceVersion       int64
@@ -115,7 +112,6 @@ type V2FullTextSearchInput struct {
 
 type V2ExactVectorSearchInput struct {
 	TeamID              string
-	ProfileKey          string
 	EmbeddingContractID string
 	SourceKind          string
 	QueryEmbedding      []float32

@@ -72,7 +72,7 @@ func TestV2ContractEnums(t *testing.T) {
 			t.Fatalf("V2CrossReferenceKinds missing %s", kind)
 		}
 	}
-	for _, status := range []string{"queued", "processing", "awaiting_review", "completed", "failed"} {
+	for _, status := range []string{"queued", "guarded", "quarantined", "processing", "awaiting_review", "completed", "failed"} {
 		if !slices.Contains(V2PlacementRunStatuses(), status) {
 			t.Fatalf("V2PlacementRunStatuses missing %s", status)
 		}
@@ -94,8 +94,8 @@ func TestV2ContractEnums(t *testing.T) {
 		t.Fatal("V2SearchProjectionStates contains non-canonical stale state")
 	}
 	for _, state := range []string{"building", "active", "failed", "deprecated", "retired"} {
-		if !slices.Contains(V2SearchProfileStates(), state) {
-			t.Fatalf("V2SearchProfileStates missing %s", state)
+		if !slices.Contains(V2SearchIndexGenerationStates(), state) {
+			t.Fatalf("V2SearchIndexGenerationStates missing %s", state)
 		}
 	}
 	for _, strategy := range []string{"exact", "vector_hnsw", "halfvec_hnsw"} {
@@ -115,6 +115,18 @@ func TestV2ContractEnums(t *testing.T) {
 	}
 	if slices.Contains(V2EvidenceItemCategories(), "evidence_needs_review") {
 		t.Fatal("V2EvidenceItemCategories contains non-canonical evidence_needs_review category")
+	}
+}
+
+func TestV2HypothesisStatusesAreCanonical(t *testing.T) {
+	want := []string{"proposed", "reinforced", "stale", "rejected", "submitted"}
+	if got := V2HypothesisStatuses(); !slices.Equal(got, want) {
+		t.Fatalf("V2HypothesisStatuses = %#v, want %#v", got, want)
+	}
+	for _, legacy := range []string{"candidate", "promoted_candidate"} {
+		if slices.Contains(V2HypothesisStatuses(), legacy) {
+			t.Fatalf("V2HypothesisStatuses contains legacy status %q", legacy)
+		}
 	}
 }
 

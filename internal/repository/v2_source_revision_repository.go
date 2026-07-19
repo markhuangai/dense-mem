@@ -9,6 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 type V2AdvanceSourceRevisionInput struct {
@@ -84,6 +86,9 @@ func validateV2AdvanceSourceRevisionInput(input V2AdvanceSourceRevisionInput) er
 	if input.ContentHash == "" {
 		return errors.New("content_hash is required")
 	}
+	if !domain.Authority(input.Authority).IsValid() {
+		return fmt.Errorf("authority is unsupported: %q", input.Authority)
+	}
 	return nil
 }
 
@@ -136,16 +141,19 @@ func getOrCreateV2EvidenceSource(ctx context.Context, tx *gorm.DB, input V2Advan
 		RETURNING source_id::text
 	`, input.TeamID, input.OwnerProfileID, input.SourceKey, input.SourceKind, input.Authority, string(metadata)).Rows()
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", translateV2SourceCreateError(err)
 	}
 	defer insertRows.Close()
 	if !insertRows.Next() {
+		if err := insertRows.Err(); err != nil {
+			return "", "", "", translateV2SourceCreateError(err)
+		}
 		return "", "", "", sql.ErrNoRows
 	}
 	if err := insertRows.Scan(&sourceID); err != nil {
 		return "", "", "", err
 	}
-	return sourceID, "", "", insertRows.Err()
+	return sourceID, "", "", translateV2SourceCreateError(insertRows.Err())
 }
 
 func advanceV2SourceRevisionInTx(

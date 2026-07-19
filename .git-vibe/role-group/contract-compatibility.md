@@ -32,6 +32,10 @@ Prioritize these checks:
 - Confirm authorization semantics do not shift by accident. Read keys, write
   keys, profile headers, path-scoped routes, and cross-team errors are caller
   contracts as much as security controls.
+- Keep contract-bound tool preflight and invocation validation aligned. The
+  scopes used by `tools/list`, HTTP `tools/call`, MCP `tools/call`, and
+  registry invokers must describe the authenticated caller, not the tool's own
+  metadata.
 - Prefer additive changes for public payloads. New optional fields are usually
   safer than changing or removing existing fields.
 

@@ -108,7 +108,10 @@ func (s *v2SemanticReviewService) ReviewV2Semantic(ctx context.Context, job V2Se
 			}
 			return result, nil
 		}
-		responseHash := v2SemanticReviewResponseHash(response)
+		responseHash, err := v2SemanticReviewResponseHash(response)
+		if err != nil {
+			return nil, err
+		}
 		validationErrors = verifier.ValidateV2SemanticReviewResponse(request, response)
 		if len(validationErrors) > 0 {
 			result.Attempts = attempt
@@ -151,14 +154,8 @@ func normalizeV2SemanticReviewJob(job V2SemanticReviewJob) V2SemanticReviewJob {
 	job.IngestID = strings.TrimSpace(job.IngestID)
 	job.PlacementRunID = strings.TrimSpace(job.PlacementRunID)
 	job.PlacementItemID = strings.TrimSpace(job.PlacementItemID)
-	job.Request.TeamID = strings.TrimSpace(job.Request.TeamID)
-	if job.Request.TeamID == "" {
-		job.Request.TeamID = job.TeamID
-	}
-	job.Request.OwnerProfileID = strings.TrimSpace(job.Request.OwnerProfileID)
-	if job.Request.OwnerProfileID == "" {
-		job.Request.OwnerProfileID = job.OwnerProfileID
-	}
+	job.Request.TeamID = job.TeamID
+	job.Request.OwnerProfileID = job.OwnerProfileID
 	return job
 }
 
@@ -227,6 +224,10 @@ func (s *v2SemanticReviewService) appendSecurityEvents(ctx context.Context, job 
 		if !ok || evidence.FragmentID == "" {
 			return fmt.Errorf("v2 semantic review: cannot persist security signal for evidence %q", signal.EvidenceID)
 		}
+		quote, err := verifier.V2SemanticEvidenceSpan(evidence.Content, signal.Start, signal.End)
+		if err != nil {
+			return fmt.Errorf("v2 semantic review: cannot persist security signal span: %w", err)
+		}
 		if _, err := s.ledger.AppendSecurityEvent(ctx, repository.V2SecurityEventInput{
 			TeamID:         job.TeamID,
 			OwnerProfileID: job.OwnerProfileID,
@@ -242,7 +243,7 @@ func (s *v2SemanticReviewService) appendSecurityEvents(ctx context.Context, job 
 					Severity:  v2SemanticSignalSeverity(signal.Kind),
 					SpanStart: signal.Start,
 					SpanEnd:   signal.End,
-					Quote:     evidence.Content[signal.Start:signal.End],
+					Quote:     quote,
 				}},
 				Metadata: map[string]any{
 					"request_id": req.RequestID,
@@ -400,10 +401,13 @@ func v2SemanticNormalizedResults(resp verifier.V2SemanticReviewResponse) map[str
 	}
 }
 
-func v2SemanticReviewResponseHash(resp verifier.V2SemanticReviewResponse) string {
-	data, _ := json.Marshal(resp)
+func v2SemanticReviewResponseHash(resp verifier.V2SemanticReviewResponse) (string, error) {
+	data, err := json.Marshal(resp)
+	if err != nil {
+		return "", fmt.Errorf("v2 semantic review: response hash: %w", err)
+	}
 	sum := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 func v2SemanticValidationMessages(errs []verifier.V2SemanticValidationError) []string {

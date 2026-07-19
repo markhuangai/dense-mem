@@ -210,7 +210,7 @@ func TestV2PlacementPreTransactionErrorPaths(t *testing.T) {
 	}
 	_, err = upsertV2SearchDocumentInTx(context.Background(), nil, V2UpsertSearchDocumentInput{
 		Metadata: map[string]any{"bad": func() {}},
-	}, &V2SearchProfile{})
+	}, &V2ActiveSearchContract{})
 	if err == nil {
 		t.Fatal("expected search metadata marshal error")
 	}

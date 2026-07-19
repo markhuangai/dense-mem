@@ -8,17 +8,15 @@ import (
 	"strings"
 
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-func loadV2ActiveSearchProfileInTx(ctx context.Context, tx *gorm.DB, profileKey string) (*V2SearchProfile, error) {
-	profileKey = normalizeV2SearchProfileKey(profileKey)
-	var profile V2SearchProfile
+func loadV2ActiveSearchContractInTx(ctx context.Context, tx *gorm.DB) (*V2ActiveSearchContract, error) {
+	var contract V2ActiveSearchContract
 	err := tx.WithContext(ctx).Raw(`
 		SELECT
-		    search.profile_key,
 		    contract.embedding_contract_id::text,
-		    search.search_index_profile_id::text,
-		    ranking.ranking_profile_id::text,
 		    contract.dimensions,
 		    contract.provider,
 		    contract.model,
@@ -26,59 +24,60 @@ func loadV2ActiveSearchProfileInTx(ctx context.Context, tx *gorm.DB, profileKey 
 		    contract.vector_normalization,
 		    contract.document_format_version,
 		    contract.query_format_version,
-		    search.ann_strategy,
-		    search.operator_class,
-		    search.indexed_expression,
-		    search.physical_index_name,
-		    search.exact_max_rows,
-		    search.candidate_limit,
-		    search.allow_exact_fallback
-		FROM search_index_profiles AS search
+		    generation.search_index_generation_id::text,
+		    generation.generation,
+		    generation.ann_strategy,
+		    generation.operator_class,
+		    generation.indexed_expression,
+		    generation.physical_index_name,
+		    generation.exact_max_rows,
+		    generation.candidate_limit,
+		    generation.allow_exact_fallback
+		FROM search_index_generations AS generation
 		JOIN embedding_contracts AS contract
-		  ON contract.embedding_contract_id = search.embedding_contract_id
-		 AND contract.dimensions = search.embedding_dimensions
-		JOIN ranking_profiles AS ranking
-		  ON ranking.profile_key = search.profile_key
-		 AND ranking.activation_state = 'active'
-		WHERE search.profile_key = ?
-		  AND search.activation_state = 'active'
+		  ON contract.embedding_contract_id = generation.embedding_contract_id
+		 AND contract.dimensions = generation.embedding_dimensions
+		WHERE generation.activation_state = 'active'
 		  AND contract.lifecycle_state = 'active'
-		ORDER BY search.version DESC, ranking.version DESC
+		  AND contract.distance_metric = ?
+		ORDER BY contract.version DESC, generation.generation DESC, generation.created_at DESC
 		LIMIT 1
-	`, profileKey).Row().Scan(
-		&profile.ProfileKey,
-		&profile.EmbeddingContractID,
-		&profile.SearchIndexProfileID,
-		&profile.RankingProfileID,
-		&profile.EmbeddingDimensions,
-		&profile.EmbeddingProvider,
-		&profile.EmbeddingModel,
-		&profile.DistanceMetric,
-		&profile.VectorNormalization,
-		&profile.DocumentFormatVersion,
-		&profile.QueryFormatVersion,
-		&profile.IndexStrategy,
-		&profile.OperatorClass,
-		&profile.IndexedExpression,
-		&profile.PhysicalIndexName,
-		&profile.ExactMaxRows,
-		&profile.CandidateLimit,
-		&profile.AllowExactFallback,
+	`, string(domain.V2VectorDistanceCosine)).Row().Scan(
+		&contract.EmbeddingContractID,
+		&contract.EmbeddingDimensions,
+		&contract.EmbeddingProvider,
+		&contract.EmbeddingModel,
+		&contract.DistanceMetric,
+		&contract.VectorNormalization,
+		&contract.DocumentFormatVersion,
+		&contract.QueryFormatVersion,
+		&contract.SearchIndexGenerationID,
+		&contract.IndexGeneration,
+		&contract.IndexStrategy,
+		&contract.OperatorClass,
+		&contract.IndexedExpression,
+		&contract.PhysicalIndexName,
+		&contract.ExactMaxRows,
+		&contract.CandidateLimit,
+		&contract.AllowExactFallback,
 	)
 	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("%w: active search profile %q not found", ErrV2SearchProfileMismatch, profileKey)
+		return nil, fmt.Errorf("%w: active search contract not found", ErrV2SearchContractMismatch)
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &profile, nil
+	if contract.EmbeddingContractID == "" || contract.SearchIndexGenerationID == "" {
+		return nil, fmt.Errorf("%w: active search contract not found", ErrV2SearchContractMismatch)
+	}
+	return &contract, nil
 }
 
 func upsertV2SearchDocumentInTx(
 	ctx context.Context,
 	tx *gorm.DB,
 	input V2UpsertSearchDocumentInput,
-	profile *V2SearchProfile,
+	contract *V2ActiveSearchContract,
 ) (*V2SearchDocumentResult, error) {
 	metadata, err := marshalV2SearchJSON(input.Metadata)
 	if err != nil {
@@ -124,7 +123,7 @@ func upsertV2SearchDocumentInTx(
 		)
 		SELECT * FROM upserted
 	`, input.TeamID, input.OwnerProfileID, input.SourceKind, input.SourceID, input.SourceVersion,
-		profile.EmbeddingContractID, profile.EmbeddingDimensions, input.DocumentText,
+		contract.EmbeddingContractID, contract.EmbeddingDimensions, input.DocumentText,
 		input.DocumentHash, string(metadata)).Rows()
 	if err != nil {
 		return nil, err

@@ -36,7 +36,6 @@ type V2CommitPlacementSemanticInput struct {
 	Status           string
 	Category         string
 	Payload          map[string]any
-	SearchProfileKey string
 
 	EntityResolutions        []V2PlacementEntityResolutionInput
 	RelationshipObservations []V2PlacementRelationshipDecisionInput
@@ -206,7 +205,6 @@ func normalizeV2CommitPlacementSemanticInput(input V2CommitPlacementSemanticInpu
 	input.OutcomeKind = strings.TrimSpace(input.OutcomeKind)
 	input.Status = strings.TrimSpace(input.Status)
 	input.Category = strings.TrimSpace(input.Category)
-	input.SearchProfileKey = normalizeV2SearchProfileKey(input.SearchProfileKey)
 	if input.OutcomeKind == "" {
 		input.OutcomeKind = "semantic_commit"
 	}
@@ -833,14 +831,13 @@ func upsertV2PlacementRelationshipSearchDocument(
 	commit V2CommitPlacementSemanticInput,
 	relationship *V2RelationshipRecord,
 ) (*V2SearchDocumentResult, error) {
-	profile, err := loadV2ActiveSearchProfileInTx(ctx, tx, commit.SearchProfileKey)
+	contract, err := loadV2ActiveSearchContractInTx(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
 	input := normalizeV2UpsertSearchDocumentInput(V2UpsertSearchDocumentInput{
 		TeamID:         commit.TeamID,
 		OwnerProfileID: commit.OwnerProfileID,
-		ProfileKey:     commit.SearchProfileKey,
 		SourceKind:     "relationship",
 		SourceID:       relationship.RelationshipID,
 		SourceVersion:  int64(relationship.Version),
@@ -849,7 +846,7 @@ func upsertV2PlacementRelationshipSearchDocument(
 	if err := validateV2UpsertSearchDocumentInput(input); err != nil {
 		return nil, err
 	}
-	return upsertV2SearchDocumentInTx(ctx, tx, input, profile)
+	return upsertV2SearchDocumentInTx(ctx, tx, input, contract)
 }
 
 func v2PlacementCommitPayload(base map[string]any, result *V2CommitPlacementSemanticResult) map[string]any {

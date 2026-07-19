@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare validated six-axis public semantic eval seeds."""
+"""Prepare the diagnostic 5k six-axis seed; the approved 1k seed is immutable."""
 
 from __future__ import annotations
 
@@ -67,6 +67,8 @@ def main() -> int:
     parser.add_argument("--beir-base-url", default=beir.DEFAULT_BEIR_BASE_URL)
     args = parser.parse_args()
 
+    if args.size == 1000:
+        parser.error("public_6axis_1k_v1 is an approved local artifact and must not be regenerated")
     if args.max_evidence_codepoints != semantic.MAX_EVIDENCE_CODEPOINTS:
         parser.error("six-axis seeds must use max evidence length 999")
 
@@ -97,9 +99,7 @@ def main() -> int:
     validate_generated(generated, expected_size=args.size)
     write_seed(stage_dir, stage_suite, seed_id, args.size, generated)
     seed_hash = stable_seed_hash(stage_dir)
-    suite_hash = stable_file_hash(stage_suite)
-    write_validation_report(stage_dir, seed_id, args.size, seed_hash, suite_hash, generated)
-    verify_generated_release_gate_hashes(root, seed_id, seed_hash, suite_hash)
+    write_validation_report(stage_dir, seed_id, args.size, seed_hash, generated)
 
     install_generated_seed(stage_dir, stage_suite, seed_dir, suite_path, install_tx_dir)
     print(f"wrote {seed_dir}")
@@ -166,6 +166,8 @@ def install_generated_seed(stage_dir: Path, stage_suite: Path, seed_dir: Path, s
     write_json(tx_dir / "manifest.json", {
         "seed_dir": str(seed_dir),
         "suite_path": str(suite_path),
+        "seed_had_original": seed_dir.exists(),
+        "suite_had_original": suite_path.exists(),
     })
     seed_backup = tx_dir / "seed_dir.backup"
     suite_backup = tx_dir / "suite_path.backup"
@@ -190,17 +192,29 @@ def recover_install_transaction(seed_dir: Path, suite_path: Path, tx_dir: Path) 
     if not manifest_path.exists():
         shutil.rmtree(tx_dir)
         return
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     seed_backup = tx_dir / "seed_dir.backup"
     suite_backup = tx_dir / "suite_path.backup"
-    if seed_backup.exists():
-        remove_path(seed_dir)
-        seed_dir.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(seed_backup, seed_dir)
-    if suite_backup.exists():
-        remove_path(suite_path)
-        suite_path.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(suite_backup, suite_path)
+    recover_install_path(seed_dir, seed_backup, manifest.get("seed_had_original"))
+    recover_install_path(suite_path, suite_backup, manifest.get("suite_had_original"))
     shutil.rmtree(tx_dir)
+
+
+def recover_install_path(path: Path, backup: Path, had_original: Any) -> None:
+    if had_original is True:
+        if not backup.exists():
+            return
+        remove_path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(backup, path)
+        return
+    if had_original is False:
+        remove_path(path)
+        return
+    if backup.exists():
+        remove_path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(backup, path)
 
 
 def remove_path(path: Path) -> None:
@@ -526,13 +540,12 @@ def write_seed(stage_dir: Path, suite_path: Path, seed_id: str, size: int, gener
     })
 
 
-def write_validation_report(stage_dir: Path, seed_id: str, size: int, seed_hash: str, suite_hash: str, generated: dict[str, Any]) -> None:
+def write_validation_report(stage_dir: Path, seed_id: str, size: int, seed_hash: str, generated: dict[str, Any]) -> None:
     write_json(stage_dir / "validation_report.json", {
         "schema_version": VALIDATION_SCHEMA_VERSION,
         "seed_id": seed_id,
         "status": "passed",
         "seed_hash": seed_hash,
-        "suite_hash": suite_hash,
         "id_namespace": ID_NAMESPACE,
         "expected_corpus_rows": size,
         "axis_counts": generated["axis_counts"],
@@ -554,28 +567,6 @@ def stable_seed_hash(seed_dir: Path) -> str:
         digest.update(path.read_bytes())
         digest.update(b"\n")
     return "sha256:" + digest.hexdigest()
-
-
-def stable_file_hash(path: Path) -> str:
-    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def verify_generated_release_gate_hashes(root: Path, seed_id: str, seed_hash: str, suite_hash: str) -> None:
-    lock_path = root / SOURCE_LOCK_FILE
-    if not lock_path.exists():
-        return
-    lock = json.loads(lock_path.read_text(encoding="utf-8"))
-    required = ((lock.get("generated_seeds") or {}).get("required_release_gate") or {})
-    if required.get("seed_id") != seed_id:
-        return
-    expected_seed_hash = str(required.get("seed_hash") or "").strip()
-    expected_suite_hash = str(required.get("suite_hash") or "").strip()
-    if seed_hash != expected_seed_hash:
-        raise SystemExit(f"{seed_id}: seed_hash {seed_hash}; want {expected_seed_hash}")
-    if not expected_suite_hash:
-        raise SystemExit(f"{seed_id}: source lock missing required suite_hash")
-    if suite_hash != expected_suite_hash:
-        raise SystemExit(f"{seed_id}: suite_hash {suite_hash}; want {expected_suite_hash}")
 
 
 def read_jsonl_buffer(buffer: io.StringIO) -> list[dict[str, Any]]:

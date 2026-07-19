@@ -27,6 +27,7 @@ func TestV2SemanticPlacementWorkerClaimsReviewsAndCompletesAcceptedRun(t *testin
 		PlacementRunID: placementRunID,
 		Status:         "processing",
 		Attempts:       3,
+		MaxAttempts:    5,
 	}}
 	reviewSource := &v2PlacementWorkerReviewSourceStub{job: V2SemanticReviewJob{
 		PlacementItemID: placementItemID,
@@ -57,7 +58,7 @@ func TestV2SemanticPlacementWorkerClaimsReviewsAndCompletesAcceptedRun(t *testin
 	if review.job.TeamID != teamID || review.job.OwnerProfileID != ownerID || review.job.IngestID != ingestID || review.job.PlacementRunID != placementRunID {
 		t.Fatalf("review job scope = %#v", review.job)
 	}
-	if commit.job.WorkerID != "worker-v2" || commit.job.ExpectedAttempts != 3 || commit.job.PlacementItemID != placementItemID {
+	if commit.job.WorkerID != "worker-v2" || commit.job.ExpectedAttempts != 3 || commit.job.MaxAttempts != 5 || commit.job.PlacementItemID != placementItemID {
 		t.Fatalf("commit job = %#v", commit.job)
 	}
 }
@@ -298,7 +299,7 @@ func (s *v2PlacementWorkerLedgerStub) ClaimNextPlacementRun(_ context.Context, t
 	return s.run, nil
 }
 
-func (s *v2PlacementWorkerLedgerStub) FinishPlacementRun(context.Context, string, string, string, string) error {
+func (s *v2PlacementWorkerLedgerStub) FinishPlacementRun(context.Context, string, string, string, string, string) error {
 	return errors.New("unexpected FinishPlacementRun")
 }
 

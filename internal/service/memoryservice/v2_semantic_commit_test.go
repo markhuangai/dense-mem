@@ -170,7 +170,9 @@ func TestV2SemanticPlacementCompletionKeepsRetryableLeaseOpen(t *testing.T) {
 	svc := NewV2SemanticCommitService(V2SemanticCommitDependencies{PlacementCommit: commitRepo})
 
 	completed, err := svc.CompleteV2SemanticPlacement(context.Background(), V2SemanticCommitJob{
-		Result: V2SemanticReviewResult{Status: string(domain.V2SemanticReviewRetryable)},
+		ExpectedAttempts: 2,
+		MaxAttempts:      3,
+		Result:           V2SemanticReviewResult{Status: string(domain.V2SemanticReviewRetryable)},
 	})
 	if err != nil {
 		t.Fatalf("CompleteV2SemanticPlacement returned error: %v", err)
@@ -180,6 +182,51 @@ func TestV2SemanticPlacementCompletionKeepsRetryableLeaseOpen(t *testing.T) {
 	}
 	if commitRepo.called || commitRepo.terminalCalled {
 		t.Fatalf("repository paths called = semantic:%v terminal:%v", commitRepo.called, commitRepo.terminalCalled)
+	}
+}
+
+func TestV2SemanticPlacementCompletionClosesRetryableWhenPlacementAttemptsExhausted(t *testing.T) {
+	teamID := uuid.NewString()
+	ownerID := uuid.NewString()
+	request := v2SemanticReviewServiceRequest(teamID, ownerID)
+	commitRepo := &v2SemanticCommitRepoStub{}
+	svc := NewV2SemanticCommitService(V2SemanticCommitDependencies{PlacementCommit: commitRepo})
+
+	completed, err := svc.CompleteV2SemanticPlacement(context.Background(), V2SemanticCommitJob{
+		TeamID:           teamID,
+		OwnerProfileID:   ownerID,
+		IngestID:         uuid.NewString(),
+		PlacementRunID:   uuid.NewString(),
+		PlacementItemID:  uuid.NewString(),
+		WorkerID:         "worker-commit",
+		ExpectedAttempts: 3,
+		MaxAttempts:      3,
+		Request:          request,
+		Result: V2SemanticReviewResult{
+			Status:       string(domain.V2SemanticReviewRetryable),
+			ResponseHash: "sha256:retryable",
+			OutcomeIDs:   []string{uuid.NewString()},
+		},
+		ReviewModel: "stub-semantic-reviewer",
+	})
+	if err != nil {
+		t.Fatalf("CompleteV2SemanticPlacement returned error: %v", err)
+	}
+	if completed.Status != string(domain.V2SemanticReviewTerminalFailure) || completed.Terminal == nil || completed.SemanticCommit != nil {
+		t.Fatalf("completed = %#v", completed)
+	}
+	if commitRepo.called || !commitRepo.terminalCalled {
+		t.Fatalf("repository paths called = semantic:%v terminal:%v", commitRepo.called, commitRepo.terminalCalled)
+	}
+	if commitRepo.terminalInput.Status != string(domain.V2SemanticReviewTerminalFailure) || commitRepo.terminalInput.Category != "failed" {
+		t.Fatalf("terminal input = %#v", commitRepo.terminalInput)
+	}
+	if commitRepo.terminalInput.Payload["placement_attempts"] != 3 || commitRepo.terminalInput.Payload["max_attempts"] != 3 {
+		t.Fatalf("terminal payload = %#v", commitRepo.terminalInput.Payload)
+	}
+	messages, ok := commitRepo.terminalInput.Payload["validation_errors"].([]string)
+	if !ok || len(messages) != 1 || messages[0] != "placement_attempts: retryable semantic review exhausted placement attempts" {
+		t.Fatalf("terminal validation errors = %#v", commitRepo.terminalInput.Payload["validation_errors"])
 	}
 }
 

@@ -34,7 +34,7 @@ type V2SemanticCommitJob struct {
 	PlacementItemID  string
 	WorkerID         string
 	ExpectedAttempts int
-	SearchProfileKey string
+	MaxAttempts      int
 	Request          verifier.V2SemanticReviewRequest
 	Result           V2SemanticReviewResult
 	ReviewModel      string
@@ -85,6 +85,18 @@ func (s *v2SemanticCommitService) CompleteV2SemanticPlacement(
 		return &V2SemanticPlacementCompletionResult{Status: committed.Status, SemanticCommit: committed}, nil
 	}
 	if job.Result.Status == string(domain.V2SemanticReviewRetryable) {
+		if v2SemanticRetryAttemptsExhausted(job) {
+			exhausted := v2ExhaustedRetryableSemanticCommitJob(job)
+			input, err := v2TerminalReviewInputFromResult(exhausted)
+			if err != nil {
+				return nil, err
+			}
+			terminal, err := s.placementCommit.CompletePlacementReviewResult(ctx, input)
+			if err != nil {
+				return nil, err
+			}
+			return &V2SemanticPlacementCompletionResult{Status: terminal.Status, Terminal: terminal}, nil
+		}
 		return &V2SemanticPlacementCompletionResult{Status: job.Result.Status}, nil
 	}
 	input, err := v2TerminalReviewInputFromResult(job)
@@ -105,7 +117,6 @@ func normalizeV2SemanticCommitJob(job V2SemanticCommitJob) V2SemanticCommitJob {
 	job.PlacementRunID = strings.TrimSpace(job.PlacementRunID)
 	job.PlacementItemID = strings.TrimSpace(job.PlacementItemID)
 	job.WorkerID = strings.TrimSpace(job.WorkerID)
-	job.SearchProfileKey = strings.TrimSpace(job.SearchProfileKey)
 	job.ReviewModel = strings.TrimSpace(job.ReviewModel)
 	job.Request.TeamID = strings.TrimSpace(job.Request.TeamID)
 	if job.Request.TeamID == "" {
@@ -117,6 +128,19 @@ func normalizeV2SemanticCommitJob(job V2SemanticCommitJob) V2SemanticCommitJob {
 	}
 	job.Result.Status = strings.TrimSpace(job.Result.Status)
 	job.Result.ResponseHash = strings.TrimSpace(job.Result.ResponseHash)
+	return job
+}
+
+func v2SemanticRetryAttemptsExhausted(job V2SemanticCommitJob) bool {
+	return job.MaxAttempts > 0 && job.ExpectedAttempts >= job.MaxAttempts
+}
+
+func v2ExhaustedRetryableSemanticCommitJob(job V2SemanticCommitJob) V2SemanticCommitJob {
+	job.Result.Status = string(domain.V2SemanticReviewTerminalFailure)
+	job.Result.ValidationErrors = append(job.Result.ValidationErrors, verifier.V2SemanticValidationError{
+		Field:   "placement_attempts",
+		Message: "retryable semantic review exhausted placement attempts",
+	})
 	return job
 }
 
@@ -150,6 +174,8 @@ func v2TerminalReviewInputFromResult(job V2SemanticCommitJob) (repository.V2Comp
 			"request_id":         job.Request.RequestID,
 			"response_hash":      job.Result.ResponseHash,
 			"review_model":       job.ReviewModel,
+			"placement_attempts": job.ExpectedAttempts,
+			"max_attempts":       job.MaxAttempts,
 			"review_outcome_ids": append([]string(nil), job.Result.OutcomeIDs...),
 			"validation_errors":  v2SemanticValidationMessages(job.Result.ValidationErrors),
 		},
@@ -264,7 +290,6 @@ func v2SemanticCommitInputFromReview(job V2SemanticCommitJob) (repository.V2Comm
 		ExpectedAttempts:         job.ExpectedAttempts,
 		Status:                   job.Result.Status,
 		Category:                 category,
-		SearchProfileKey:         job.SearchProfileKey,
 		EntityResolutions:        entities,
 		RelationshipObservations: relationships,
 		Payload: map[string]any{

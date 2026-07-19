@@ -243,11 +243,12 @@ type RunConfig struct {
 	SeedManifest           string `json:"seed_manifest"`
 	SeedHash               string `json:"seed_hash"`
 	SuitePath              string `json:"suite_path"`
-	SuiteHash              string `json:"suite_hash"`
 	ReleaseGatePolicyPath  string `json:"release_gate_policy_path,omitempty"`
-	ReleaseGatePolicyHash  string `json:"release_gate_policy_hash,omitempty"`
+	ReleaseGatePolicyHash  string `json:"release_gate_policy_sha256,omitempty"`
 	BaseURL                string `json:"base_url,omitempty"`
 	ControlURL             string `json:"control_url,omitempty"`
+	ToolTransport          string `json:"tool_transport"`
+	ToolContract           string `json:"tool_contract"`
 	ImportSeed             bool   `json:"import_seed"`
 	ImportRoute            string `json:"import_route,omitempty"`
 	ImportConcurrency      int    `json:"import_concurrency,omitempty"`
@@ -255,6 +256,7 @@ type RunConfig struct {
 	ResumeSourceDocIDsPath string `json:"resume_source_doc_ids_path,omitempty"`
 	TracesPath             string `json:"traces_path,omitempty"`
 	MappingPath            string `json:"mapping_path,omitempty"`
+	MappingHash            string `json:"mapping_sha256,omitempty"`
 	BaselineRunPath        string `json:"baseline_run_path,omitempty"`
 }
 
@@ -313,7 +315,6 @@ type ReleaseGatePolicy struct {
 	Description              string                    `json:"description,omitempty"`
 	SeedID                   string                    `json:"seed_id"`
 	SeedHash                 string                    `json:"seed_hash"`
-	SuiteHash                string                    `json:"suite_hash"`
 	RequiredCaseCount        int                       `json:"required_case_count"`
 	RequiredScoredCaseCount  int                       `json:"required_scored_case_count"`
 	BaselineSummary          ReleaseGateBaseline       `json:"baseline_summary"`
@@ -360,4 +361,18 @@ type ReleaseGateResult struct {
 	Minimums  map[string]float64 `json:"minimums"`
 	Maximums  map[string]float64 `json:"maximums"`
 	CreatedAt time.Time          `json:"created_at"`
+}
+
+type ReleaseGateInputResult struct {
+	Passed            bool      `json:"passed"`
+	GateID            string    `json:"gate_id"`
+	Release           string    `json:"release"`
+	SeedID            string    `json:"seed_id"`
+	SeedHash          string    `json:"seed_hash"`
+	CaseCount         int       `json:"case_count"`
+	RequiredSeedID    string    `json:"required_seed_id"`
+	RequiredSeedHash  string    `json:"required_seed_hash"`
+	RequiredCaseCount int       `json:"required_case_count"`
+	Failures          []string  `json:"failures,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
 }

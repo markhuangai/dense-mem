@@ -6,5 +6,5 @@ gap:legacy-corpus-migration
 gap:memory-pack-v2-pipeline
 gap:migration-control-plane
 gap:neo4j-removal-marker-required
-gap:search-index-profile-activation
+gap:search-index-generation-activation
 gap:transaction-local-team-profile-rls

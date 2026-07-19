@@ -26,6 +26,7 @@ type ActorCredential struct {
 	KeyID      uuid.UUID
 	AuthMethod string
 	Role       string
+	Scopes     []string
 }
 
 // WithActorProfile stores authenticated actor metadata in context.
@@ -41,12 +42,14 @@ func ActorProfileFromContext(ctx context.Context) (ActorProfile, bool) {
 
 // WithActorCredential stores authenticated credential metadata in context.
 func WithActorCredential(ctx context.Context, credential ActorCredential) context.Context {
+	credential.Scopes = append([]string(nil), credential.Scopes...)
 	return context.WithValue(ctx, credentialContextKey{}, credential)
 }
 
 // ActorCredentialFromContext returns authenticated credential metadata when available.
 func ActorCredentialFromContext(ctx context.Context) (ActorCredential, bool) {
 	credential, ok := ctx.Value(credentialContextKey{}).(ActorCredential)
+	credential.Scopes = append([]string(nil), credential.Scopes...)
 	return credential, ok
 }
 

@@ -209,6 +209,128 @@ func TestHTTPClientErrors(t *testing.T) {
 	if err == nil || err.Error() != "POST "+server.URL+"/api/v1/tools/remember returned 418: nope" {
 		t.Fatalf("status error = %v", err)
 	}
+	client.ToolTransport = "smtp"
+	if err := client.CallTool(context.Background(), "remember", map[string]any{}, nil); err == nil || !strings.Contains(err.Error(), "unsupported tool transport") {
+		t.Fatalf("unsupported transport err = %v", err)
+	}
+}
+
+func TestHTTPClientCallsMCPToolsCall(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/mcp" {
+			t.Fatalf("path = %q, want /mcp", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer api-key" {
+			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
+		}
+		var request struct {
+			JSONRPC string `json:"jsonrpc"`
+			Method  string `json:"method"`
+			Params  struct {
+				Name      string         `json:"name"`
+				Arguments map[string]any `json:"arguments"`
+			} `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode MCP request: %v", err)
+		}
+		if request.JSONRPC != "2.0" || request.Method != "tools/call" || request.Params.Name != "eval_run_recall_case" {
+			t.Fatalf("MCP request = %+v", request)
+		}
+		if request.Params.Arguments["case_id"] != "case-1" {
+			t.Fatalf("MCP arguments = %#v", request.Params.Arguments)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"result": map[string]any{
+				"content": []map[string]any{{
+					"type": "text",
+					"text": `{"query":"question","ranked_refs":[{"type":"fragment","id":"fragment-1","rank":1}]}`,
+				}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", ToolTransport: "mcp", Client: server.Client()}
+	trace, err := client.RunRecallCase(context.Background(), Case{CaseID: "case-1", Query: "question"})
+	if err != nil {
+		t.Fatalf("RunRecallCase through MCP: %v", err)
+	}
+	if len(trace.RankedRefs) != 1 || trace.RankedRefs[0].ID != "fragment-1" {
+		t.Fatalf("trace = %+v", trace)
+	}
+}
+
+func TestHTTPClientRejectsInvalidMCPResponses(t *testing.T) {
+	tests := []struct {
+		name     string
+		response map[string]any
+		want     string
+	}{
+		{
+			name: "RPC error",
+			response: map[string]any{
+				"jsonrpc": "2.0",
+				"id":      1,
+				"error":   map[string]any{"code": -32602, "message": "invalid params"},
+			},
+			want: "returned -32602: invalid params",
+		},
+		{
+			name: "missing text",
+			response: map[string]any{
+				"jsonrpc": "2.0",
+				"id":      1,
+				"result":  map[string]any{"content": []map[string]any{{"type": "image"}}},
+			},
+			want: "returned no JSON text content",
+		},
+		{
+			name: "malformed text",
+			response: map[string]any{
+				"jsonrpc": "2.0",
+				"id":      1,
+				"result":  map[string]any{"content": []map[string]any{{"type": "text", "text": "{"}}},
+			},
+			want: "decode mcp tools/call",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(tc.response)
+			}))
+			defer server.Close()
+			client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", ToolTransport: "mcp", Client: server.Client()}
+			var out map[string]any
+			err := client.CallTool(context.Background(), "remember", map[string]any{}, &out)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("CallTool err = %v; want %q", err, tc.want)
+			}
+		})
+	}
+
+	client := &HTTPClient{BaseURL: "http://example.test", APIKey: "api-key", ToolTransport: "mcp"}
+	if err := client.CallTool(context.Background(), "remember", "not-an-object", nil); err == nil || !strings.Contains(err.Error(), "arguments must be an object") {
+		t.Fatalf("non-object MCP arguments err = %v", err)
+	}
+}
+
+func TestHTTPClientMCPCallWithoutOutputAcceptsEmptyResult(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"result":  map[string]any{},
+		})
+	}))
+	defer server.Close()
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", ToolTransport: "mcp", Client: server.Client()}
+	if err := client.CallTool(context.Background(), "eval_run_dream_cycle", struct{}{}, nil); err != nil {
+		t.Fatalf("CallTool without output: %v", err)
+	}
 }
 
 func TestHTTPClientRunRecallCaseRetriesTransientStatus(t *testing.T) {

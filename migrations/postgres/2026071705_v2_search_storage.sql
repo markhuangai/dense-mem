@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS embedding_contracts (
     CONSTRAINT embedding_contracts_provider_nonempty CHECK (btrim(provider) <> ''),
     CONSTRAINT embedding_contracts_model_nonempty CHECK (btrim(model) <> ''),
     CONSTRAINT embedding_contracts_dimensions_check CHECK (dimensions BETWEEN 1 AND 16000),
-    CONSTRAINT embedding_contracts_distance_check CHECK (distance_metric IN ('cosine', 'l2', 'inner_product')),
+    CONSTRAINT embedding_contracts_distance_check CHECK (distance_metric = 'cosine'),
     CONSTRAINT embedding_contracts_normalization_check CHECK (vector_normalization IN ('provider', 'unit', 'none')),
     CONSTRAINT embedding_contracts_format_check CHECK (document_format_version >= 1 AND query_format_version >= 1),
     CONSTRAINT embedding_contracts_lifecycle_check CHECK (lifecycle_state IN ('active', 'deprecated', 'retired')),
@@ -41,13 +41,44 @@ CREATE TRIGGER embedding_contracts_reference_guard
     BEFORE INSERT OR UPDATE OR DELETE ON embedding_contracts
     FOR EACH ROW EXECUTE FUNCTION prevent_v2_reference_definition_mutation();
 
-CREATE TABLE IF NOT EXISTS search_index_profiles (
-    search_index_profile_id UUID NOT NULL DEFAULT gen_random_uuid(),
-    profile_key TEXT NOT NULL,
-    version INTEGER NOT NULL,
+CREATE OR REPLACE FUNCTION guard_v2_search_index_generation_lifecycle()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF COALESCE(current_setting('app.tx_mode', true), '') NOT IN ('system', 'migration') THEN
+        RAISE EXCEPTION '% is reference data: % requires system or migration mode', TG_TABLE_NAME, TG_OP;
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION '% is versioned reference data: % operations are not allowed', TG_TABLE_NAME, TG_OP;
+    END IF;
+    IF TG_OP = 'UPDATE' AND (
+        OLD.search_index_generation_id IS DISTINCT FROM NEW.search_index_generation_id
+        OR OLD.generation IS DISTINCT FROM NEW.generation
+        OR OLD.embedding_contract_id IS DISTINCT FROM NEW.embedding_contract_id
+        OR OLD.embedding_dimensions IS DISTINCT FROM NEW.embedding_dimensions
+        OR OLD.ann_strategy IS DISTINCT FROM NEW.ann_strategy
+        OR OLD.operator_class IS DISTINCT FROM NEW.operator_class
+        OR OLD.indexed_expression IS DISTINCT FROM NEW.indexed_expression
+        OR OLD.physical_index_name IS DISTINCT FROM NEW.physical_index_name
+        OR OLD.hnsw_m IS DISTINCT FROM NEW.hnsw_m
+        OR OLD.hnsw_ef_construction IS DISTINCT FROM NEW.hnsw_ef_construction
+        OR OLD.query_ef_search IS DISTINCT FROM NEW.query_ef_search
+        OR OLD.exact_max_rows IS DISTINCT FROM NEW.exact_max_rows
+        OR OLD.candidate_limit IS DISTINCT FROM NEW.candidate_limit
+        OR OLD.allow_exact_fallback IS DISTINCT FROM NEW.allow_exact_fallback
+        OR OLD.metadata IS DISTINCT FROM NEW.metadata
+        OR OLD.created_at IS DISTINCT FROM NEW.created_at
+    ) THEN
+        RAISE EXCEPTION '% immutable fields cannot be changed after insertion', TG_TABLE_NAME;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TABLE IF NOT EXISTS search_index_generations (
+    search_index_generation_id UUID NOT NULL DEFAULT gen_random_uuid(),
+    generation INTEGER NOT NULL,
     embedding_contract_id UUID NOT NULL,
     embedding_dimensions INTEGER NOT NULL,
-    distance_metric TEXT NOT NULL DEFAULT 'cosine',
     ann_strategy TEXT NOT NULL DEFAULT 'exact',
     operator_class TEXT NOT NULL DEFAULT '',
     indexed_expression TEXT NOT NULL DEFAULT '',
@@ -63,112 +94,47 @@ CREATE TABLE IF NOT EXISTS search_index_profiles (
     activated_at TIMESTAMPTZ NULL,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (search_index_profile_id),
-    UNIQUE (profile_key, version),
-    UNIQUE (search_index_profile_id, embedding_contract_id),
+    PRIMARY KEY (search_index_generation_id),
+    UNIQUE (embedding_contract_id, generation),
+    UNIQUE (search_index_generation_id, embedding_contract_id),
     FOREIGN KEY (embedding_contract_id, embedding_dimensions)
         REFERENCES embedding_contracts(embedding_contract_id, dimensions) ON DELETE RESTRICT,
-    CONSTRAINT search_index_profiles_key_nonempty CHECK (btrim(profile_key) <> ''),
-    CONSTRAINT search_index_profiles_version_check CHECK (version >= 1),
-    CONSTRAINT search_index_profiles_distance_check CHECK (distance_metric IN ('cosine', 'l2', 'inner_product')),
-    CONSTRAINT search_index_profiles_strategy_check CHECK (ann_strategy IN ('exact', 'vector_hnsw', 'halfvec_hnsw')),
-    CONSTRAINT search_index_profiles_hnsw_positive CHECK (
+    CONSTRAINT search_index_generations_generation_check CHECK (generation >= 1),
+    CONSTRAINT search_index_generations_strategy_check CHECK (ann_strategy IN ('exact', 'vector_hnsw', 'halfvec_hnsw')),
+    CONSTRAINT search_index_generations_hnsw_positive CHECK (
         hnsw_m > 0
         AND hnsw_ef_construction > 0
         AND query_ef_search > 0
         AND exact_max_rows > 0
         AND candidate_limit > 0
     ),
-    CONSTRAINT search_index_profiles_state_check CHECK (activation_state IN ('building', 'active', 'failed', 'deprecated', 'retired')),
-    CONSTRAINT search_index_profiles_active_time_check CHECK (
+    CONSTRAINT search_index_generations_state_check CHECK (activation_state IN ('building', 'active', 'failed', 'deprecated', 'retired')),
+    CONSTRAINT search_index_generations_active_time_check CHECK (
         (activation_state = 'active' AND activated_at IS NOT NULL)
         OR activation_state <> 'active'
     ),
-    CONSTRAINT search_index_profiles_hnsw_index_check CHECK (
+    CONSTRAINT search_index_generations_hnsw_index_check CHECK (
         ann_strategy = 'exact'
         OR (btrim(physical_index_name) <> '' AND btrim(operator_class) <> '' AND btrim(indexed_expression) <> '')
     ),
-    CONSTRAINT search_index_profiles_metadata_object_check CHECK (jsonb_typeof(metadata) = 'object')
+    CONSTRAINT search_index_generations_dimension_strategy_check CHECK (
+        ann_strategy = 'exact'
+        OR (ann_strategy = 'vector_hnsw' AND embedding_dimensions BETWEEN 1 AND 2000)
+        OR (ann_strategy = 'halfvec_hnsw' AND embedding_dimensions BETWEEN 1 AND 4000)
+    ),
+    CONSTRAINT search_index_generations_operator_class_check CHECK (
+        ann_strategy = 'exact'
+        OR (ann_strategy = 'vector_hnsw' AND operator_class = 'vector_cosine_ops')
+        OR (ann_strategy = 'halfvec_hnsw' AND operator_class = 'halfvec_cosine_ops')
+    ),
+    CONSTRAINT search_index_generations_metadata_object_check CHECK (jsonb_typeof(metadata) = 'object')
 );
 
-DROP TRIGGER IF EXISTS search_index_profiles_reference_guard ON search_index_profiles;
-CREATE TRIGGER search_index_profiles_reference_guard
-    BEFORE INSERT OR UPDATE OR DELETE ON search_index_profiles
-    FOR EACH ROW EXECUTE FUNCTION prevent_v2_reference_definition_mutation();
-
-CREATE TABLE IF NOT EXISTS ranking_profiles (
-    ranking_profile_id UUID NOT NULL DEFAULT gen_random_uuid(),
-    profile_key TEXT NOT NULL,
-    version INTEGER NOT NULL,
-    fusion_mode TEXT NOT NULL DEFAULT 'rrf',
-    rrf_k INTEGER NOT NULL DEFAULT 60,
-    branch_weights JSONB NOT NULL DEFAULT '{}'::jsonb,
-    branch_order TEXT[] NOT NULL DEFAULT ARRAY[]::text[],
-    activation_state TEXT NOT NULL DEFAULT 'active',
-    activated_at TIMESTAMPTZ NULL,
-    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (ranking_profile_id),
-    UNIQUE (profile_key, version),
-    CONSTRAINT ranking_profiles_key_nonempty CHECK (btrim(profile_key) <> ''),
-    CONSTRAINT ranking_profiles_version_check CHECK (version >= 1),
-    CONSTRAINT ranking_profiles_fusion_check CHECK (fusion_mode IN ('rrf', 'priority')),
-    CONSTRAINT ranking_profiles_rrf_check CHECK (rrf_k > 0),
-    CONSTRAINT ranking_profiles_state_check CHECK (activation_state IN ('building', 'active', 'failed', 'deprecated', 'retired')),
-    CONSTRAINT ranking_profiles_active_time_check CHECK (
-        (activation_state = 'active' AND activated_at IS NOT NULL)
-        OR activation_state <> 'active'
-    ),
-    CONSTRAINT ranking_profiles_priority_order_check CHECK (
-        fusion_mode <> 'priority'
-        OR cardinality(branch_order) > 0
-    ),
-    CONSTRAINT ranking_profiles_branch_weights_object_check CHECK (jsonb_typeof(branch_weights) = 'object'),
-    CONSTRAINT ranking_profiles_metadata_object_check CHECK (jsonb_typeof(metadata) = 'object')
-);
-
-DROP TRIGGER IF EXISTS ranking_profiles_reference_guard ON ranking_profiles;
-CREATE TRIGGER ranking_profiles_reference_guard
-    BEFORE INSERT OR UPDATE OR DELETE ON ranking_profiles
-    FOR EACH ROW EXECUTE FUNCTION prevent_v2_reference_definition_mutation();
-
-INSERT INTO embedding_contracts (
-    embedding_contract_id, contract_key, version, provider, model, dimensions,
-    distance_metric, vector_normalization, document_format_version, query_format_version,
-    lifecycle_state, metadata
-) VALUES (
-    '00000000-0000-0000-0000-000000020001'::uuid,
-    'openai-text-embedding-3-small', 1, 'openai', 'text-embedding-3-small', 1536,
-    'cosine', 'provider', 1, 1, 'active',
-    '{"seed":"v2.1.2-default"}'::jsonb
-) ON CONFLICT (contract_key, version) DO NOTHING;
-
-INSERT INTO search_index_profiles (
-    search_index_profile_id, profile_key, version, embedding_contract_id,
-    embedding_dimensions, distance_metric, ann_strategy, operator_class,
-    indexed_expression, physical_index_name, hnsw_m, hnsw_ef_construction,
-    query_ef_search, exact_max_rows, candidate_limit, allow_exact_fallback,
-    activation_state, activated_at, metadata
-) VALUES (
-    '00000000-0000-0000-0000-000000020002'::uuid,
-    'default', 1,
-    '00000000-0000-0000-0000-000000020001'::uuid,
-    1536, 'cosine', 'halfvec_hnsw', 'halfvec_cosine_ops',
-    'embedding::halfvec(1536)', 'v2_search_documents_default_1536_halfvec_hnsw_idx',
-    16, 64, 40, 10000, 200, false,
-    'active', now(), '{"seed":"v2.1.2-default"}'::jsonb
-) ON CONFLICT (profile_key, version) DO NOTHING;
-
-INSERT INTO ranking_profiles (
-    ranking_profile_id, profile_key, version, fusion_mode, rrf_k, branch_weights,
-    branch_order, activation_state, activated_at, metadata
-) VALUES (
-    '00000000-0000-0000-0000-000000020003'::uuid,
-    'default', 1, 'rrf', 60,
-    '{"full_text":1.0,"vector_exact":1.0,"vector_hnsw":1.0}'::jsonb,
-    ARRAY['exact_anchor','full_text','vector_exact','vector_hnsw']::text[],
-    'active', now(), '{"seed":"v2.1.2-default"}'::jsonb
-) ON CONFLICT (profile_key, version) DO NOTHING;
+DROP TRIGGER IF EXISTS search_index_generations_reference_guard ON search_index_generations;
+DROP TRIGGER IF EXISTS search_index_generations_lifecycle_guard ON search_index_generations;
+CREATE TRIGGER search_index_generations_lifecycle_guard
+    BEFORE INSERT OR UPDATE OR DELETE ON search_index_generations
+    FOR EACH ROW EXECUTE FUNCTION guard_v2_search_index_generation_lifecycle();
 
 CREATE TABLE IF NOT EXISTS search_documents (
     team_id UUID NOT NULL,
@@ -198,7 +164,7 @@ CREATE TABLE IF NOT EXISTS search_documents (
     CONSTRAINT search_documents_source_kind_check CHECK (source_kind IN ('evidence', 'relationship', 'entity')),
     CONSTRAINT search_documents_source_version_check CHECK (source_version >= 1),
     CONSTRAINT search_documents_document_version_check CHECK (document_version >= 1),
-    CONSTRAINT search_documents_state_check CHECK (search_state IN ('not_required', 'pending', 'current', 'stale', 'failed')),
+    CONSTRAINT search_documents_state_check CHECK (search_state IN ('not_required', 'pending', 'current', 'failed')),
     CONSTRAINT search_documents_text_nonempty CHECK (btrim(document_text) <> ''),
     CONSTRAINT search_documents_hash_nonempty CHECK (btrim(document_hash) <> ''),
     CONSTRAINT search_documents_embedding_dims_check CHECK (
@@ -219,15 +185,6 @@ CREATE INDEX IF NOT EXISTS search_documents_contract_state_idx
 
 CREATE INDEX IF NOT EXISTS search_documents_fts_idx
     ON search_documents USING GIN (search_tsv);
-
-CREATE INDEX IF NOT EXISTS v2_search_documents_default_1536_halfvec_hnsw_idx
-    ON search_documents
-    USING hnsw ((embedding::halfvec(1536)) halfvec_cosine_ops)
-    WITH (m = 16, ef_construction = 64)
-    WHERE embedding_contract_id = '00000000-0000-0000-0000-000000020001'::uuid
-      AND embedding_dimensions = 1536
-      AND search_state = 'current'
-      AND embedding IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS embedding_jobs (
     team_id UUID NOT NULL,
@@ -375,8 +332,8 @@ WHERE key = 'update_time';
 
 DROP TABLE IF EXISTS embedding_jobs;
 DROP TABLE IF EXISTS search_documents;
-DROP TABLE IF EXISTS ranking_profiles;
-DROP TABLE IF EXISTS search_index_profiles;
+DROP TABLE IF EXISTS search_index_generations;
 DROP TABLE IF EXISTS embedding_contracts;
+DROP FUNCTION IF EXISTS guard_v2_search_index_generation_lifecycle();
 
 -- +goose StatementEnd

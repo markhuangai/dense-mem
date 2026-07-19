@@ -129,6 +129,20 @@ func TestRunBaselineWithTraceFileAndMappingScoresArtifacts(t *testing.T) {
 	if runConfig.MappingPath != mappingPath {
 		t.Fatalf("run config mapping path = %q, want %q", runConfig.MappingPath, mappingPath)
 	}
+	if runConfig.MappingHash == "" {
+		t.Fatal("run config mapping hash is empty")
+	}
+	var persistedMapping KnowledgeMapping
+	if err := readJSONFile(filepath.Join(out, "knowledge_mapping.json"), &persistedMapping); err != nil {
+		t.Fatalf("read persisted mapping: %v", err)
+	}
+	persistedHash, err := canonicalJSONHash(persistedMapping)
+	if err != nil {
+		t.Fatalf("hash persisted mapping: %v", err)
+	}
+	if runConfig.MappingHash != persistedHash {
+		t.Fatalf("run config mapping hash = %q, persisted hash = %q", runConfig.MappingHash, persistedHash)
+	}
 }
 
 func TestRunWritesGateResultAndFailsThreshold(t *testing.T) {
@@ -450,7 +464,6 @@ func TestRunValidationRejectsCrossFileInconsistency(t *testing.T) {
 			t.Fatalf("Run err = %v; want validation seed hash mismatch", err)
 		}
 	})
-
 }
 
 func TestRunValidateLoadsAndValidatesExpectedDreams(t *testing.T) {
