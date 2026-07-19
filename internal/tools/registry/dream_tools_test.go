@@ -15,15 +15,20 @@ func TestBuildDefault_DreamInvokers(t *testing.T) {
 	reg, _ := BuildDefault(Dependencies{Dreams: dreams})
 
 	listTool, _ := reg.Get("list_dreams")
+	statusSchema := listTool.InputSchema["properties"].(map[string]any)["status"].(map[string]any)
+	statusEnums := statusSchema["enum"].([]string)
+	if !containsString(statusEnums, "promoted") {
+		t.Fatalf("list_dreams status enum missing promoted: %v", statusEnums)
+	}
 	listOut, err := listTool.Invoke(context.Background(), "profile-dream", map[string]any{
 		"limit":  float64(3),
-		"status": "proposed",
+		"status": "promoted",
 	})
 	if err != nil {
 		t.Fatalf("list_dreams Invoke: %v", err)
 	}
 	listed := listOut["dreams"].([]*domain.Dream)
-	if len(listed) != 1 || dreams.lastListOpts.Limit != 3 || dreams.lastListOpts.Status != "proposed" {
+	if len(listed) != 1 || dreams.lastListOpts.Limit != 3 || dreams.lastListOpts.Status != "promoted" {
 		t.Fatalf("list_dreams output = %v opts = %+v", listOut, dreams.lastListOpts)
 	}
 

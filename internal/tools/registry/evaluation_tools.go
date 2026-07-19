@@ -76,7 +76,7 @@ func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 			"type":     "object",
 			"required": []string{"type"},
 			"properties": map[string]any{
-				"type":          schemaEnum(evalListKnowledgeRefTypes()),
+				"type":          schemaEnum(evalListKnowledgeRefTypes(deps)),
 				"limit":         map[string]any{"type": "integer", "minimum": 1, "maximum": 500},
 				"cursor":        schemaString("Opaque cursor from a previous response.", 512),
 				"status":        schemaString("Optional lifecycle status filter.", 64),
@@ -123,7 +123,7 @@ func evalGetKnowledgeItemTool(deps Dependencies) Tool {
 			"type":     "object",
 			"required": []string{"type", "id"},
 			"properties": map[string]any{
-				"type":          schemaEnum(evalGetKnowledgeItemTypes()),
+				"type":          schemaEnum(evalGetKnowledgeItemTypes(deps)),
 				"id":            schemaString("Knowledge item ID.", 256),
 				"metadata_only": map[string]any{"type": "boolean"},
 			},

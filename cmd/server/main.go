@@ -197,6 +197,7 @@ func main() {
 	if v2Bootstrap.Enabled {
 		logger.Info("v2 dormant bootstrap enabled", observability.String("mode", v2Bootstrap.Mode))
 	}
+	defaultCatalogV2 := buildDefaultCatalogV2Dependencies(v2Bootstrap, v2SemanticRepo)
 
 	// ========================================
 	// Neo4j profile scope enforcer and graph writer
@@ -458,8 +459,8 @@ func main() {
 		CommunityList:        communityListSvc,
 		Context:              contextSvc,
 		Memory:               memorySvc,
-		V2Evaluation:         v2SemanticRepo,
-		V2Communities:        v2SemanticRepo,
+		V2Evaluation:         defaultCatalogV2.Evaluation,
+		V2Communities:        defaultCatalogV2.Communities,
 		SkillPack:            skillPackSvc,
 		Dreams:               dreamSvc,
 	})

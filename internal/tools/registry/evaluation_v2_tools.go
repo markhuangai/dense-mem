@@ -71,35 +71,45 @@ func evalActorTeamID(ctx context.Context, profileID string) (string, error) {
 	return parsed.String(), nil
 }
 
-func evalListKnowledgeRefTypes() []string {
-	return []string{
+func evalListKnowledgeRefTypes(deps Dependencies) []string {
+	types := []string{
 		"fragment",
 		"claim",
 		"fact",
 		"community",
 		"dream",
 		"edge",
+	}
+	if deps.V2Evaluation == nil {
+		return types
+	}
+	return append(types,
 		"evidence",
 		"relationship",
 		"entity",
 		"value",
 		"hypothesis",
-	}
+	)
 }
 
-func evalGetKnowledgeItemTypes() []string {
-	return []string{
+func evalGetKnowledgeItemTypes(deps Dependencies) []string {
+	types := []string{
 		"fragment",
 		"claim",
 		"fact",
 		"community",
 		"dream",
+	}
+	if deps.V2Evaluation == nil {
+		return types
+	}
+	return append(types,
 		"evidence",
 		"relationship",
 		"entity",
 		"value",
 		"hypothesis",
-	}
+	)
 }
 
 func evalScoredKnowledgeRefTypes() []string {

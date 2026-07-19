@@ -7,6 +7,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/stretchr/testify/require"
 )
 
@@ -16,6 +17,18 @@ func TestBuildDormantV2BootstrapDisabledByDefault(t *testing.T) {
 	require.False(t, bootstrap.Enabled)
 	require.False(t, bootstrap.AcceptsDataPlane)
 	require.Empty(t, bootstrap.HealthChecks())
+}
+
+func TestDefaultCatalogV2DependenciesFollowBootGate(t *testing.T) {
+	semantic := repository.NewV2SemanticRepository(nil, nil)
+
+	disabled := buildDefaultCatalogV2Dependencies(dormantV2Bootstrap{}, semantic)
+	require.Nil(t, disabled.Evaluation)
+	require.Nil(t, disabled.Communities)
+
+	enabled := buildDefaultCatalogV2Dependencies(dormantV2Bootstrap{Enabled: true}, semantic)
+	require.NotNil(t, enabled.Evaluation)
+	require.NotNil(t, enabled.Communities)
 }
 
 func TestBuildDormantV2BootstrapRegistersNonRoutingChecks(t *testing.T) {

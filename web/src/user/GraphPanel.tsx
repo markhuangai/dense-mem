@@ -22,7 +22,7 @@ type GraphAnchor = {
 type ForceNode = NodeObject<GraphNode> & GraphNode;
 type ForceLink = LinkObject<GraphNode, GraphEdge> & GraphEdge;
 
-const graphNodeTypes: GraphNodeType[] = ["fact", "claim", "fragment", "dream", "entity", "value"];
+const graphNodeTypes: GraphNodeType[] = ["fact", "claim", "fragment", "dream"];
 
 const defaultTypes: TypeFilter = {
   fact: true,
@@ -87,7 +87,7 @@ export function GraphPanel({ api }: { api: UserApi }) {
   }, [api]);
 
   const selectedNode = selectedKey ? snapshot?.nodes.find((node) => node.key === selectedKey) ?? null : null;
-  const hasSelectedTypes = Object.values(types).some(Boolean);
+  const hasSelectedTypes = graphNodeTypes.some((type) => types[type]);
   const selectedNodeKey = selectedNode?.key ?? "";
   const activeDetail = selectedDetail?.key === selectedNodeKey ? selectedDetail : null;
   const activeDetailLoading = detailKey === selectedNodeKey ? detailLoading : false;
@@ -561,7 +561,7 @@ function buildQuery({
   depth: number;
   includeSuperseded: boolean;
 }): GraphQuery {
-  const enabledTypes = (Object.keys(types) as GraphNodeType[]).filter((type) => types[type]);
+  const enabledTypes = graphNodeTypes.filter((type) => types[type]);
   return {
     scope,
     q: searchText.trim() || undefined,

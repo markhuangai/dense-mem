@@ -13,14 +13,14 @@ const (
 	DreamStatusSubmitted  DreamStatus = "submitted"
 	// Deprecated: use DreamStatusSubmitted. Hypotheses are submitted to remember;
 	// they are never promoted directly into semantic truth.
-	DreamStatusPromoted DreamStatus = DreamStatusSubmitted
+	DreamStatusPromoted DreamStatus = "promoted"
 )
 
 // IsValid reports whether s is a supported DreamStatus value.
 func (s DreamStatus) IsValid() bool {
 	switch s {
 	case DreamStatusProposed, DreamStatusReinforced, DreamStatusStale,
-		DreamStatusRejected, DreamStatusSubmitted:
+		DreamStatusRejected, DreamStatusSubmitted, DreamStatusPromoted:
 		return true
 	default:
 		return false

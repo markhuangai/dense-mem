@@ -16,7 +16,7 @@ func listDreamsTool(deps Dependencies) Tool {
 			"type": "object",
 			"properties": map[string]any{
 				"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
-				"status": schemaEnum([]string{"proposed", "reinforced", "stale", "rejected", "submitted"}),
+				"status": schemaEnum([]string{"proposed", "reinforced", "stale", "rejected", "submitted", "promoted"}),
 			},
 			"additionalProperties": false,
 		},
