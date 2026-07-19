@@ -85,30 +85,42 @@ func (s *RecallFeedbackEventServiceImpl) RecordRecallFeedback(ctx context.Contex
 		return nil
 	}
 	now := s.now().UTC()
+	recallID := strings.TrimSpace(feedback.RecallID)
+	if recallID == "" {
+		return fmt.Errorf("recall feedback event recall_id is required")
+	}
+	existing, err := s.repo.Get(ctx, recallID)
+	if err != nil {
+		return err
+	}
+	if existing == nil || !recallFeedbackEventAuthorizedForSubmission(ctx, existing) {
+		return repository.ErrRecallFeedbackEventNotFound
+	}
+	if existing.SnapshotState != domain.RecallFeedbackSnapshotCaptured {
+		return fmt.Errorf("recall feedback event snapshot is required")
+	}
+	if err := validateRecallFeedbackSubmissionRefs(feedback, existing.ResultRefs); err != nil {
+		return err
+	}
 	used := feedback.Used
 	answerSupported := feedback.AnswerSupported
 	missingContext := feedback.MissingContext
 	irrelevant := feedback.Irrelevant
-	event := s.enrich(ctx, domain.RecallFeedbackEvent{
-		RecallID:        strings.TrimSpace(feedback.RecallID),
-		CreatedAt:       now,
-		UpdatedAt:       now,
-		FeedbackAt:      &now,
-		ToolName:        "recall_memory",
-		ToolArgs:        map[string]any{},
-		ResultRefs:      []domain.RecallFeedbackResultRef{},
-		SnapshotState:   domain.RecallFeedbackSnapshotFeedbackOnly,
-		Used:            &used,
-		AnswerSupported: &answerSupported,
-		Quality:         strings.ToLower(strings.TrimSpace(feedback.Quality)),
-		MissingContext:  &missingContext,
-		Irrelevant:      &irrelevant,
-		FeedbackComment: strings.TrimSpace(feedback.FeedbackComment),
-		IrrelevantRefs:  feedback.IrrelevantRefs,
-		DreamFeedback:   feedback.DreamFeedback,
-	})
-	if event.RecallID == "" {
-		return fmt.Errorf("recall feedback event recall_id is required")
+	event := *existing
+	event = s.enrich(ctx, event)
+	event.UpdatedAt = now
+	event.FeedbackAt = &now
+	event.SnapshotState = domain.RecallFeedbackSnapshotCaptured
+	event.Used = &used
+	event.AnswerSupported = &answerSupported
+	event.Quality = strings.ToLower(strings.TrimSpace(feedback.Quality))
+	event.MissingContext = &missingContext
+	event.Irrelevant = &irrelevant
+	event.FeedbackComment = strings.TrimSpace(feedback.FeedbackComment)
+	event.IrrelevantRefs = feedback.IrrelevantRefs
+	event.DreamFeedback = feedback.DreamFeedback
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = now
 	}
 	return s.repo.RecordFeedback(ctx, event)
 }
@@ -232,6 +244,118 @@ func (s *RecallFeedbackEventServiceImpl) enrich(ctx context.Context, event domai
 		event.ToolName = "recall_memory"
 	}
 	return event
+}
+
+func recallFeedbackEventAuthorizedForSubmission(ctx context.Context, event *domain.RecallFeedbackEvent) bool {
+	if event == nil {
+		return false
+	}
+	actor, ok := requestctx.ActorProfileFromContext(ctx)
+	if !ok || actor.TeamID == uuid.Nil {
+		return true
+	}
+	if event.TeamID != nil {
+		return *event.TeamID == actor.TeamID
+	}
+	if event.ProfileID != nil && actor.ProfileID != uuid.Nil {
+		return *event.ProfileID == actor.ProfileID
+	}
+	return false
+}
+
+func validateRecallFeedbackSubmissionRefs(feedback domain.RecallFeedbackSubmission, returned []domain.RecallFeedbackResultRef) error {
+	lookup := recallFeedbackReturnedRefSet(returned)
+	seen := map[string]struct{}{}
+	for _, ref := range feedback.IrrelevantRefs {
+		key := recallFeedbackRefKey(ref.Type, ref.ID)
+		if key == "" {
+			return fmt.Errorf("recall feedback result ref was not returned by recall event")
+		}
+		if _, ok := seen[key]; ok {
+			return fmt.Errorf("recall feedback result refs must not contain duplicates")
+		}
+		seen[key] = struct{}{}
+		if !lookup.contains(ref.Type, ref.ID, ref.Rank) {
+			return fmt.Errorf("recall feedback result ref was not returned by recall event")
+		}
+	}
+	seenHypotheses := map[string]struct{}{}
+	for _, item := range feedback.DreamFeedback {
+		key := recallFeedbackRefKey(domain.RecallFeedbackResultTypeHypothesis, item.DreamID)
+		if key == "" {
+			return fmt.Errorf("recall feedback hypothesis ref was not returned by recall event")
+		}
+		if _, ok := seenHypotheses[key]; ok {
+			return fmt.Errorf("recall feedback hypothesis refs must not contain duplicates")
+		}
+		seenHypotheses[key] = struct{}{}
+		if !lookup.contains(domain.RecallFeedbackResultTypeHypothesis, item.DreamID, 0) {
+			return fmt.Errorf("recall feedback hypothesis ref was not returned by recall event")
+		}
+	}
+	return nil
+}
+
+type recallFeedbackReturnedRefs map[string]map[int]struct{}
+
+func recallFeedbackReturnedRefSet(refs []domain.RecallFeedbackResultRef) recallFeedbackReturnedRefs {
+	out := recallFeedbackReturnedRefs{}
+	for _, ref := range refs {
+		key := recallFeedbackRefKey(ref.Type, ref.ID)
+		if key == "" {
+			continue
+		}
+		ranks := out[key]
+		if ranks == nil {
+			ranks = map[int]struct{}{}
+			out[key] = ranks
+		}
+		ranks[ref.Rank] = struct{}{}
+	}
+	return out
+}
+
+func (refs recallFeedbackReturnedRefs) contains(refType, id string, rank int) bool {
+	key := recallFeedbackRefKey(refType, id)
+	if key == "" {
+		return false
+	}
+	ranks, ok := refs[key]
+	if !ok {
+		return false
+	}
+	if rank <= 0 {
+		return true
+	}
+	_, ok = ranks[rank]
+	return ok
+}
+
+func recallFeedbackRefKey(refType, id string) string {
+	refType = recallFeedbackCanonicalResultType(refType)
+	id = strings.TrimSpace(id)
+	if refType == "" || id == "" {
+		return ""
+	}
+	return refType + "\x00" + id
+}
+
+func recallFeedbackCanonicalResultType(refType string) string {
+	switch strings.TrimSpace(refType) {
+	case domain.RecallFeedbackResultTypeDream, domain.RecallFeedbackResultTypeHypothesis:
+		return domain.RecallFeedbackResultTypeHypothesis
+	case domain.RecallFeedbackResultTypeFragment,
+		domain.RecallFeedbackResultTypeClaim,
+		domain.RecallFeedbackResultTypeFact,
+		domain.RecallFeedbackResultTypeEvidence,
+		domain.RecallFeedbackResultTypeRelationship,
+		domain.RecallFeedbackResultTypeEntity,
+		domain.RecallFeedbackResultTypeValue,
+		domain.RecallFeedbackResultTypeCommunity:
+		return strings.TrimSpace(refType)
+	default:
+		return ""
+	}
 }
 
 func (s *RecallFeedbackEventServiceImpl) run(ctx context.Context, done chan struct{}) {

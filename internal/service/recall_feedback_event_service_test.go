@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
@@ -51,10 +52,20 @@ func TestRecallFeedbackEventServiceRecordsSnapshotWithActorContext(t *testing.T)
 	assert.Equal(t, "api_key", got.AuthMethod)
 }
 
-func TestRecallFeedbackEventServiceRecordsFeedbackOnlyAndPrunesRetention(t *testing.T) {
+func TestRecallFeedbackEventServiceRecordsFeedbackForCapturedSnapshotAndPrunesRetention(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
-	repo := &recallFeedbackEventRepoStub{}
+	repo := &recallFeedbackEventRepoStub{
+		event: &domain.RecallFeedbackEvent{
+			RecallID:      "rec_1",
+			SnapshotState: domain.RecallFeedbackSnapshotCaptured,
+			ResultRefs: []domain.RecallFeedbackResultRef{{
+				Type: domain.RecallFeedbackResultTypeFragment,
+				ID:   "fragment-1",
+				Rank: 1,
+			}},
+		},
+	}
 	retention := recallFeedbackRetentionStub{cfg: domain.RecallFeedbackRuntimeConfig{RetentionDays: 7}}
 	svc := NewRecallFeedbackEventService(repo, retention, nil)
 	svc.now = func() time.Time { return now }
@@ -76,7 +87,12 @@ func TestRecallFeedbackEventServiceRecordsFeedbackOnlyAndPrunesRetention(t *test
 	require.NoError(t, err)
 	require.Len(t, repo.feedbacks, 1)
 	got := repo.feedbacks[0]
-	assert.Equal(t, domain.RecallFeedbackSnapshotFeedbackOnly, got.SnapshotState)
+	assert.Equal(t, domain.RecallFeedbackSnapshotCaptured, got.SnapshotState)
+	assert.Equal(t, []domain.RecallFeedbackResultRef{{
+		Type: domain.RecallFeedbackResultTypeFragment,
+		ID:   "fragment-1",
+		Rank: 1,
+	}}, got.ResultRefs)
 	assert.NotNil(t, got.Used)
 	assert.True(t, *got.Used)
 	assert.NotNil(t, got.AnswerSupported)
@@ -100,6 +116,88 @@ func TestRecallFeedbackEventServiceRecordsFeedbackOnlyAndPrunesRetention(t *test
 
 	err = NewRecallFeedbackEventService(repo, recallFeedbackRetentionStub{cfg: domain.RecallFeedbackRuntimeConfig{RetentionDays: 0}}, nil).Prune(ctx)
 	require.ErrorContains(t, err, "invalid recall feedback retention days")
+}
+
+func TestRecallFeedbackEventServiceRejectsUnsnapshottedOrUnreturnedFeedbackRefs(t *testing.T) {
+	ctx := context.Background()
+	repo := &recallFeedbackEventRepoStub{}
+	svc := NewRecallFeedbackEventService(repo, nil, nil)
+
+	err := svc.RecordRecallFeedback(ctx, domain.RecallFeedbackSubmission{
+		RecallID:        "rec_missing",
+		Used:            true,
+		AnswerSupported: false,
+		Quality:         "low",
+		MissingContext:  true,
+		FeedbackComment: "missing snapshot must fail closed",
+	})
+	require.ErrorIs(t, err, repository.ErrRecallFeedbackEventNotFound)
+
+	repo.event = &domain.RecallFeedbackEvent{
+		RecallID:      "rec_1",
+		SnapshotState: domain.RecallFeedbackSnapshotCaptured,
+		ResultRefs: []domain.RecallFeedbackResultRef{{
+			Type: domain.RecallFeedbackResultTypeEvidence,
+			ID:   "evidence-1",
+			Rank: 1,
+		}},
+	}
+	err = svc.RecordRecallFeedback(ctx, domain.RecallFeedbackSubmission{
+		RecallID:        "rec_1",
+		Used:            true,
+		AnswerSupported: false,
+		Quality:         "low",
+		Irrelevant:      true,
+		FeedbackComment: "fabricated refs must fail closed",
+		IrrelevantRefs: []domain.RecallFeedbackJudgedResultRef{{
+			Type: domain.RecallFeedbackResultTypeEvidence,
+			ID:   "other-evidence",
+			Rank: 1,
+		}},
+	})
+	require.ErrorContains(t, err, "was not returned")
+	require.Empty(t, repo.feedbacks)
+
+	repo.event = &domain.RecallFeedbackEvent{
+		RecallID:      "rec_stale",
+		SnapshotState: domain.RecallFeedbackSnapshotFeedbackOnly,
+		ResultRefs: []domain.RecallFeedbackResultRef{{
+			Type: domain.RecallFeedbackResultTypeEvidence,
+			ID:   "evidence-1",
+			Rank: 1,
+		}},
+	}
+	err = svc.RecordRecallFeedback(ctx, domain.RecallFeedbackSubmission{
+		RecallID:        "rec_stale",
+		Used:            true,
+		AnswerSupported: false,
+		Quality:         "low",
+		FeedbackComment: "feedback-only rows must not accept V2 judgments",
+	})
+	require.ErrorContains(t, err, "snapshot is required")
+
+	teamID := uuid.New()
+	otherTeamID := uuid.New()
+	repo.event = &domain.RecallFeedbackEvent{
+		RecallID:      "rec_cross_team",
+		TeamID:        &otherTeamID,
+		SnapshotState: domain.RecallFeedbackSnapshotCaptured,
+		ResultRefs: []domain.RecallFeedbackResultRef{{
+			Type: domain.RecallFeedbackResultTypeEvidence,
+			ID:   "evidence-1",
+			Rank: 1,
+		}},
+	}
+	teamCtx := requestctx.WithActorProfile(ctx, requestctx.ActorProfile{TeamID: teamID})
+	err = svc.RecordRecallFeedback(teamCtx, domain.RecallFeedbackSubmission{
+		RecallID:        "rec_cross_team",
+		Used:            true,
+		AnswerSupported: false,
+		Quality:         "low",
+		FeedbackComment: "cross-team feedback must fail closed",
+	})
+	require.ErrorIs(t, err, repository.ErrRecallFeedbackEventNotFound)
+	require.Empty(t, repo.feedbacks)
 }
 
 func TestRecallFeedbackEventServiceGetResolvesResults(t *testing.T) {

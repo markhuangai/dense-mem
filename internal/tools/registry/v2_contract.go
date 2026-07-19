@@ -269,6 +269,7 @@ func v2UATTools(deps Dependencies) []Tool {
 				if err != nil {
 					return nil, err
 				}
+				recordV2RecallFeedbackSnapshot(ctx, deps, input, req, res)
 				return structToMap(res)
 			}
 		case V2ToolTraceMemory:
