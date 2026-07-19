@@ -115,6 +115,7 @@ type V2PlacementRun struct {
 	OwnerProfileID string
 	Status         string
 	Attempts       int
+	MaxAttempts    int
 	LeaseUntil     *time.Time
 }
 
@@ -309,7 +310,8 @@ func (r *V2LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, team
 			WHERE run.team_id = ?::uuid
 			  AND run.placement_run_id = next.placement_run_id
 			RETURNING run.team_id::text, run.placement_run_id::text, run.ingest_id::text,
-			          run.owner_profile_id::text, run.status, run.attempts, run.lease_until
+			          run.owner_profile_id::text, run.status, run.attempts, run.max_attempts,
+			          run.lease_until
 		`, teamID, int(lease.Seconds()), workerID, teamID).Rows()
 		if err != nil {
 			return err
@@ -320,7 +322,7 @@ func (r *V2LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, team
 		}
 		loaded := V2PlacementRun{}
 		var leaseUntil sql.NullTime
-		if err := rows.Scan(&loaded.TeamID, &loaded.PlacementRunID, &loaded.IngestID, &loaded.OwnerProfileID, &loaded.Status, &loaded.Attempts, &leaseUntil); err != nil {
+		if err := rows.Scan(&loaded.TeamID, &loaded.PlacementRunID, &loaded.IngestID, &loaded.OwnerProfileID, &loaded.Status, &loaded.Attempts, &loaded.MaxAttempts, &leaseUntil); err != nil {
 			return err
 		}
 		if leaseUntil.Valid {
