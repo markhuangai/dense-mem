@@ -254,6 +254,7 @@ func AuthMiddlewareWithOptions(repo repository.APIKeyRepository, auditSvc servic
 				KeyID:      principal.KeyID,
 				AuthMethod: principal.AuthMethod,
 				Role:       principal.Role,
+				Scopes:     principal.Scopes,
 			})
 
 			// Remove the Authorization header to prevent downstream access to raw key
@@ -313,6 +314,7 @@ func authenticateSSOSession(c echo.Context, authenticator SSOSessionAuthenticato
 		KeyID:      principal.KeyID,
 		AuthMethod: principal.AuthMethod,
 		Role:       principal.Role,
+		Scopes:     principal.Scopes,
 	})
 	c.SetRequest(c.Request().WithContext(ctx))
 	return nil

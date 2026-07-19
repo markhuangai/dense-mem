@@ -19,6 +19,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
+	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/service/recallservice"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 	"github.com/markhuangai/dense-mem/internal/verifier"
@@ -199,7 +200,8 @@ func mapToolExecuteError(err error) *httperr.APIError {
 		return httperr.New(httperr.NOT_FOUND, "tool not found")
 	case errors.Is(err, ownership.ErrOwnerMismatch):
 		return httperr.New(httperr.FORBIDDEN, "only the owner profile can modify this knowledge")
-	case errors.Is(err, repository.ErrV2IdempotencyConflict), errors.Is(err, repository.ErrV2SourceRevisionConflict):
+	case errors.Is(err, memoryservice.ErrV2RememberConflict),
+		errors.Is(err, repository.ErrV2IdempotencyConflict), errors.Is(err, repository.ErrV2SourceRevisionConflict):
 		return httperr.New(httperr.CONFLICT, "v2 remember conflict")
 	case errors.Is(err, claimservice.ErrSupportingFragmentMissing):
 		return httperr.New(httperr.ErrSupportingFragmentMissing, "supporting fragment missing or retracted")

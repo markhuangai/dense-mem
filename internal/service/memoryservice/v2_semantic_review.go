@@ -108,7 +108,10 @@ func (s *v2SemanticReviewService) ReviewV2Semantic(ctx context.Context, job V2Se
 			}
 			return result, nil
 		}
-		responseHash := v2SemanticReviewResponseHash(response)
+		responseHash, err := v2SemanticReviewResponseHash(response)
+		if err != nil {
+			return nil, err
+		}
 		validationErrors = verifier.ValidateV2SemanticReviewResponse(request, response)
 		if len(validationErrors) > 0 {
 			result.Attempts = attempt
@@ -404,10 +407,13 @@ func v2SemanticNormalizedResults(resp verifier.V2SemanticReviewResponse) map[str
 	}
 }
 
-func v2SemanticReviewResponseHash(resp verifier.V2SemanticReviewResponse) string {
-	data, _ := json.Marshal(resp)
+func v2SemanticReviewResponseHash(resp verifier.V2SemanticReviewResponse) (string, error) {
+	data, err := json.Marshal(resp)
+	if err != nil {
+		return "", fmt.Errorf("v2 semantic review: response hash: %w", err)
+	}
 	sum := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 func v2SemanticValidationMessages(errs []verifier.V2SemanticValidationError) []string {

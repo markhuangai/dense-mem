@@ -25,6 +25,13 @@ Prioritize these checks:
 - Treat retries and concurrent requests as normal. Writes should be idempotent
   where the existing API promises it, and advisory locks or unique constraints
   should prevent duplicate facts, split lineage, or lost supersession history.
+- For schema-bound intake, exact evidence and processing intent must be durably
+  staged per submitted item before acknowledgement. Do not collapse per-item
+  fields such as supersession IDs or idempotency keys into a batch-level or
+  source-level envelope unless the schema explicitly defines that shape.
+- For ledger idempotency and source compare-and-set conflicts, the losing
+  transaction must leave no ingest, evidence fragment, placement, source, or
+  revision rows behind.
 - Keep audit data append-only and useful. Audit entries must identify the
   operation and scoped subject without storing private fragment or claim content.
 - Validate migrations against existing data. New constraints, labels, columns,

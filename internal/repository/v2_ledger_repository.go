@@ -809,6 +809,7 @@ func loadV2CreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, i
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	for rows.Next() {
 		var item V2EvidenceFragment
 		if err := rows.Scan(&item.FragmentID, &item.EvidenceIndex, &item.ContentHash, &item.SourceID, &item.SourceRevisionID); err != nil {

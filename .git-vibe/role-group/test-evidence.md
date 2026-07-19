@@ -22,6 +22,10 @@ Prioritize these checks:
 - Check both success and meaningful failure cases for new public behavior. This
   includes invalid input, unauthorized access, missing config, provider failure,
   storage failure, and conflict handling where applicable.
+- Require barrier-synchronized concurrency tests for transaction behavior that
+  depends on idempotency, unique constraints, source revision CAS, leases, or
+  advisory locks. Sequential duplicate tests do not prove rollback behavior for
+  a concurrent loser.
 - Ensure tests use deterministic fixtures and stable ordering. Recall results,
   tool lists, OpenAPI schemas, list endpoints, and audit assertions must not
   depend on incidental map or database ordering.

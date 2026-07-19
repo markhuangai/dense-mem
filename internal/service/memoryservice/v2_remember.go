@@ -26,6 +26,8 @@ const (
 var (
 	ErrV2RememberAuthContext = errors.New("v2 remember: authenticated actor context is required")
 	ErrV2RememberCredential  = errors.New("v2 remember: authenticated credential context is required")
+	ErrV2RememberConflict    = errors.New("v2 remember: conflict")
+	ErrV2RememberPersistence = errors.New("v2 remember: persistence failed")
 )
 
 type V2RememberService interface {
@@ -60,7 +62,7 @@ type V2RememberEvidenceInput struct {
 	SourceKey              string         `json:"source_key,omitempty"`
 	SourceRevision         string         `json:"source_revision,omitempty"`
 	PreviousSourceRevision string         `json:"previous_source_revision,omitempty"`
-	SupersedesEvidenceIDs  []string       `json:"supersedes_evidence_ids,omitempty"`
+	SupersedesFragmentIDs  []string       `json:"supersedes_fragment_ids,omitempty"`
 	IdempotencyKey         string         `json:"idempotency_key,omitempty"`
 	Labels                 []string       `json:"labels,omitempty"`
 	Metadata               map[string]any `json:"metadata,omitempty"`
@@ -126,7 +128,7 @@ func (s *v2RememberService) RememberV2(ctx context.Context, req V2RememberReques
 		Evidence:       normalized,
 	})
 	if err != nil {
-		return nil, err
+		return nil, translateV2RememberLedgerError(err)
 	}
 	return v2RememberResultFromLedger(created, correlationID), nil
 }
@@ -149,6 +151,7 @@ func (s *v2RememberService) normalizeEvidence(evidence []V2RememberEvidenceInput
 			}
 		}
 		authority, metadata := v2LedgerAuthorityAndMetadata(item.Authority, item.Metadata)
+		metadata = v2EvidenceProcessingIntentMetadata(metadata, item)
 		out = append(out, repository.V2EvidenceInput{
 			Content:                       item.Content,
 			SourceType:                    v2EvidenceSourceType(item.SourceType),
@@ -233,6 +236,15 @@ func v2RememberResultFromLedger(created *repository.V2CreateIngestResult, correl
 	}
 }
 
+func translateV2RememberLedgerError(err error) error {
+	switch {
+	case errors.Is(err, repository.ErrV2IdempotencyConflict), errors.Is(err, repository.ErrV2SourceRevisionConflict):
+		return fmt.Errorf("%w: duplicate or stale intake request", ErrV2RememberConflict)
+	default:
+		return ErrV2RememberPersistence
+	}
+}
+
 func v2EvidenceSourceType(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -259,19 +271,22 @@ func v2LedgerAuthorityAndMetadata(authority string, metadata map[string]any) (st
 	return authority, out
 }
 
+func v2EvidenceProcessingIntentMetadata(metadata map[string]any, item V2RememberEvidenceInput) map[string]any {
+	if len(item.SupersedesFragmentIDs) > 0 {
+		metadata["supersedes_fragment_ids"] = append([]string(nil), item.SupersedesFragmentIDs...)
+	}
+	if value := strings.TrimSpace(item.IdempotencyKey); value != "" {
+		metadata["evidence_idempotency_key"] = value
+	}
+	return metadata
+}
+
 func v2SourceRevisionEnvelope(item V2RememberEvidenceInput) map[string]any {
-	envelope := map[string]any{
+	return map[string]any{
 		"source_type": item.SourceType,
 		"source":      item.Source,
 		"metadata":    item.Metadata,
 	}
-	if len(item.SupersedesEvidenceIDs) > 0 {
-		envelope["supersedes_evidence_ids"] = item.SupersedesEvidenceIDs
-	}
-	if item.IdempotencyKey != "" {
-		envelope["evidence_idempotency_key"] = item.IdempotencyKey
-	}
-	return envelope
 }
 
 func v2SourceSummary(evidence []V2RememberEvidenceInput) string {
