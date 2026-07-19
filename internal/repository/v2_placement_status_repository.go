@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -58,16 +59,21 @@ func loadV2PlacementRunStatus(
 	tx *gorm.DB,
 	input V2GetPlacementRunInput,
 ) (*V2CreateIngestResult, error) {
-	result := &V2CreateIngestResult{TeamID: input.TeamID, IngestID: input.IngestID}
+	result := &V2CreateIngestResult{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: input.IngestID}
+	var proposalRaw []byte
 	err := tx.WithContext(ctx).Raw(`
-		SELECT placement_run_id::text, status
-		FROM placement_runs
-		WHERE team_id = ?::uuid
-		  AND owner_profile_id = ?::uuid
-		  AND ingest_id = ?::uuid
+		SELECT run.placement_run_id::text, run.status, COALESCE(ingest.proposal, '{}'::jsonb)
+		FROM placement_runs AS run
+		JOIN knowledge_ingests AS ingest
+		  ON ingest.team_id = run.team_id
+		 AND ingest.ingest_id = run.ingest_id
+		WHERE run.team_id = ?::uuid
+		  AND run.owner_profile_id = ?::uuid
+		  AND run.ingest_id = ?::uuid
 	`, input.TeamID, input.OwnerProfileID, input.IngestID).Row().Scan(
 		&result.PlacementRunID,
 		&result.Status,
+		&proposalRaw,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -75,9 +81,42 @@ func loadV2PlacementRunStatus(
 		}
 		return nil, err
 	}
+	if err := json.Unmarshal(proposalRaw, &result.Proposal); err != nil {
+		return nil, err
+	}
+	evidenceRows, err := tx.WithContext(ctx).Raw(`
+		SELECT fragment_id::text, evidence_index, content, content_hash,
+		       COALESCE(source_id::text, ''), COALESCE(source_revision_id::text, '')
+		FROM evidence_fragments
+		WHERE team_id = ?::uuid
+		  AND owner_profile_id = ?::uuid
+		  AND ingest_id = ?::uuid
+		ORDER BY evidence_index ASC
+	`, input.TeamID, input.OwnerProfileID, input.IngestID).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer evidenceRows.Close()
+	for evidenceRows.Next() {
+		var item V2EvidenceFragment
+		if err := evidenceRows.Scan(
+			&item.FragmentID,
+			&item.EvidenceIndex,
+			&item.Content,
+			&item.ContentHash,
+			&item.SourceID,
+			&item.SourceRevisionID,
+		); err != nil {
+			return nil, err
+		}
+		result.Evidence = append(result.Evidence, item)
+	}
+	if err := evidenceRows.Err(); err != nil {
+		return nil, err
+	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT placement_item_id::text, fragment_id::text, evidence_index,
-		       status, category, version
+		       status, category, version, COALESCE(result, '{}'::jsonb)
 		FROM placement_items
 		WHERE team_id = ?::uuid
 		  AND owner_profile_id = ?::uuid
@@ -90,6 +129,7 @@ func loadV2PlacementRunStatus(
 	defer rows.Close()
 	for rows.Next() {
 		var item V2PlacementItem
+		var resultRaw []byte
 		if err := rows.Scan(
 			&item.PlacementItemID,
 			&item.FragmentID,
@@ -97,10 +137,23 @@ func loadV2PlacementRunStatus(
 			&item.Status,
 			&item.Category,
 			&item.Version,
+			&resultRaw,
 		); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(resultRaw, &item.Result); err != nil {
 			return nil, err
 		}
 		result.Items = append(result.Items, item)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := hydrateV2PlacementItemSearchStates(ctx, tx, result.TeamID, result.OwnerProfileID, result.Items); err != nil {
+		return nil, err
+	}
+	return result, nil
 }

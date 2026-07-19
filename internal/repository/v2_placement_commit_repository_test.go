@@ -299,6 +299,32 @@ func TestV2PlacementValidationBranchCoverage(t *testing.T) {
 	}); err == nil {
 		t.Fatal("expected polarity error")
 	}
+	if err := validateV2PlacementRelationshipDecisionInput(V2PlacementRelationshipDecisionInput{
+		SubjectRef:      "subject",
+		PredicateKey:    "works_on",
+		ObjectRef:       "object",
+		Polarity:        "+",
+		EvidenceVerdict: string(domain.V2VerificationInsufficient),
+		CorrectionTarget: &V2PlacementCorrectionTargetInput{
+			RelationshipID:  "not-a-uuid",
+			ExpectedVersion: 1,
+		},
+	}); err == nil {
+		t.Fatal("expected correction target relationship_id error")
+	}
+	if err := validateV2PlacementRelationshipDecisionInput(V2PlacementRelationshipDecisionInput{
+		SubjectRef:      "subject",
+		PredicateKey:    "works_on",
+		ObjectRef:       "object",
+		Polarity:        "+",
+		EvidenceVerdict: string(domain.V2VerificationInsufficient),
+		CorrectionTarget: &V2PlacementCorrectionTargetInput{
+			RelationshipID:  uuid.NewString(),
+			ExpectedVersion: 0,
+		},
+	}); err == nil {
+		t.Fatal("expected correction target version error")
+	}
 }
 
 func TestV2PlacementReviewCompletionValidationAndStatusMapping(t *testing.T) {
@@ -350,7 +376,17 @@ func TestV2PlacementPayloadAndSearchTextHelpers(t *testing.T) {
 	result := &V2CommitPlacementSemanticResult{
 		EntityResolutionIDs: []string{uuid.NewString()},
 		RelationshipResults: []V2RelationshipDecisionResult{{
-			Relationship: &V2RelationshipRecord{RelationshipID: relationshipID},
+			Relationship: &V2RelationshipRecord{
+				RelationshipID: relationshipID,
+				OwnerProfileID: "profile-1",
+				Tier:           string(domain.V2RelationshipTierFact),
+				Status:         string(domain.V2RelationshipStatusActive),
+			},
+			ObservationID:  "obs-1",
+			ProposalID:     "rel:authority",
+			OwnerProfileID: "profile-1",
+			Category:       string(domain.V2OutcomeRelationshipFact),
+			Reason:         "accepted",
 		}},
 		SearchDocuments: []V2SearchDocumentResult{{
 			SearchDocumentID: searchDocumentID,
@@ -363,6 +399,10 @@ func TestV2PlacementPayloadAndSearchTextHelpers(t *testing.T) {
 	}
 	if got := payload["relationship_ids"].([]string); len(got) != 1 || got[0] != relationshipID {
 		t.Fatalf("relationship ids = %#v", got)
+	}
+	outcomes := payload["relationship_outcomes"].([]map[string]any)
+	if len(outcomes) != 1 || outcomes[0]["owner_profile_id"] != "profile-1" || outcomes[0]["category"] != string(domain.V2OutcomeRelationshipFact) {
+		t.Fatalf("relationship outcomes = %#v", outcomes)
 	}
 	text := v2PlacementRelationshipSearchText(&V2RelationshipRecord{
 		SubjectEntityID:  "subject",
@@ -391,6 +431,42 @@ func TestV2PlacementSmallHelpers(t *testing.T) {
 	}, V2ApplyRelationshipDecisionInput{PredicateKey: "works_on"})
 	if scoped.TeamID != "team" || scoped.OwnerProfileID != "owner" || scoped.IngestID != "ingest" || scoped.PlacementItemID != "item" {
 		t.Fatalf("scoped decision = %#v", scoped)
+	}
+}
+
+func TestV2PlacementCorrectionTargetRelated(t *testing.T) {
+	source := &V2RelationshipRecord{
+		SubjectEntityID: "subject-a",
+		PredicateKey:    "uses",
+		ObjectEntityID:  "object-a",
+	}
+	if !v2PlacementCorrectionTargetRelated(source, v2PlacementCorrectionTargetRecord{
+		SubjectEntityID: "subject-a",
+		PredicateKey:    "uses",
+		ObjectEntityID:  "object-b",
+	}) {
+		t.Fatal("expected matching subject and predicate to be related")
+	}
+	if !v2PlacementCorrectionTargetRelated(source, v2PlacementCorrectionTargetRecord{
+		SubjectEntityID: "subject-b",
+		PredicateKey:    "uses",
+		ObjectEntityID:  "object-a",
+	}) {
+		t.Fatal("expected matching object and predicate to be related")
+	}
+	if v2PlacementCorrectionTargetRelated(source, v2PlacementCorrectionTargetRecord{
+		SubjectEntityID: "subject-a",
+		PredicateKey:    "released",
+		ObjectEntityID:  "object-a",
+	}) {
+		t.Fatal("different predicates must not be related")
+	}
+	if v2PlacementCorrectionTargetRelated(source, v2PlacementCorrectionTargetRecord{
+		SubjectEntityID: "subject-b",
+		PredicateKey:    "uses",
+		ObjectEntityID:  "object-b",
+	}) {
+		t.Fatal("same predicate without an endpoint overlap must not be related")
 	}
 }
 

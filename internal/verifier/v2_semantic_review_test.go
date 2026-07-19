@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
@@ -27,6 +28,14 @@ func TestV2SemanticReviewPrepareFiltersProviderEgressAndMapsWhitespaceQuote(t *t
 		},
 	)
 	req.RelationshipObservations[0].Quote = "Mark works on Dense-Mem."
+	req.RelationshipObservations[0].CorrectionTarget = &V2RelationshipCorrectionTarget{
+		RelationshipID:  " rel-target ",
+		ExpectedVersion: 4,
+	}
+	validFrom := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	validTo := time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)
+	req.RelationshipObservations[0].ValidFrom = &validFrom
+	req.RelationshipObservations[0].ValidTo = &validTo
 	req.RelationshipObservations[0].PredicateCandidates = append(req.RelationshipObservations[0].PredicateCandidates,
 		V2SemanticPredicateCandidate{
 			PredicateKey:        "retired_predicate",
@@ -51,6 +60,20 @@ func TestV2SemanticReviewPrepareFiltersProviderEgressAndMapsWhitespaceQuote(t *t
 	}
 	if got := prepared.RelationshipObservations[0].PredicateCandidates; len(got) != 1 || got[0].PredicateKey != "works_on" {
 		t.Fatalf("predicate candidates = %#v", got)
+	}
+	if got := prepared.RelationshipObservations[0].CorrectionTarget; got == nil || got.RelationshipID != "rel-target" || got.ExpectedVersion != 4 {
+		t.Fatalf("correction target = %#v", got)
+	}
+	raw, err := json.Marshal(prepared)
+	if err != nil {
+		t.Fatalf("marshal prepared request: %v", err)
+	}
+	if strings.Contains(string(raw), "correction_target") || strings.Contains(string(raw), "rel-target") {
+		t.Fatalf("provider request leaked correction target JSON: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"valid_from":"2026-07-01T00:00:00Z"`) ||
+		!strings.Contains(string(raw), `"valid_to":"2026-12-31T00:00:00Z"`) {
+		t.Fatalf("provider request dropped validity bounds JSON: %s", raw)
 	}
 }
 
@@ -110,6 +133,10 @@ func TestV2SemanticReviewPrepareRejectsShapeErrors(t *testing.T) {
 	req.RelationshipObservations[0].SubjectRef = "missing"
 	req.RelationshipObservations[0].ObjectRef = ""
 	req.RelationshipObservations[0].ObjectValue = nil
+	validFrom := time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)
+	validTo := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	req.RelationshipObservations[0].ValidFrom = &validFrom
+	req.RelationshipObservations[0].ValidTo = &validTo
 
 	_, errs := PrepareV2SemanticReviewRequest(req)
 	joined := v2SemanticJoinedErrors(errs)
@@ -121,6 +148,7 @@ func TestV2SemanticReviewPrepareRejectsShapeErrors(t *testing.T) {
 		"entity_mentions[1].kind: is unsupported",
 		"relationship_observations[0].subject_ref: is unknown",
 		"relationship_observations[0].object: requires exactly one object_ref or object_value",
+		"relationship_observations[0].valid_to: must not be before valid_from",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("missing %q in %s", want, joined)

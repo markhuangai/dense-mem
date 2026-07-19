@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -288,6 +289,61 @@ func validateV2ProposalReferencesAndSpans(proposal map[string]any, evidence []an
 				return err
 			}
 		}
+		if target, ok := objectFields(relationship["correction_target"]); ok {
+			if err := validateV2CorrectionTarget(target, fmt.Sprintf("proposal.relationships[%d].correction_target", i)); err != nil {
+				return err
+			}
+		}
+		if err := validateV2RelationshipValidityWindow(relationship, fmt.Sprintf("proposal.relationships[%d]", i)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateV2RelationshipValidityWindow(relationship map[string]any, path string) error {
+	validFrom, err := v2ContractOptionalTime(relationship["valid_from"], path+".valid_from")
+	if err != nil {
+		return err
+	}
+	validTo, err := v2ContractOptionalTime(relationship["valid_to"], path+".valid_to")
+	if err != nil {
+		return err
+	}
+	if validFrom != nil && validTo != nil && validTo.Before(*validFrom) {
+		return fmt.Errorf("%s.valid_to must not be before valid_from", path)
+	}
+	return nil
+}
+
+func v2ContractOptionalTime(raw any, path string) (*time.Time, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	text, ok := raw.(string)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an RFC3339 timestamp", path)
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, text)
+	if err != nil {
+		return nil, fmt.Errorf("%s must be an RFC3339 timestamp", path)
+	}
+	parsed = parsed.UTC()
+	return &parsed, nil
+}
+
+func validateV2CorrectionTarget(target map[string]any, path string) error {
+	relationshipID, _ := target["relationship_id"].(string)
+	if strings.TrimSpace(relationshipID) == "" {
+		return fmt.Errorf("%s.relationship_id is required", path)
+	}
+	version, ok := schemaNumber(target["expected_version"])
+	if !ok || int(version) < 1 {
+		return fmt.Errorf("%s.expected_version must be a positive integer", path)
 	}
 	return nil
 }

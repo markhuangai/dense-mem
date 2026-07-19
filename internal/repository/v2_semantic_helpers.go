@@ -146,6 +146,7 @@ func normalizeV2ApplyRelationshipDecisionInput(input V2ApplyRelationshipDecision
 	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
 	input.IngestID = strings.TrimSpace(input.IngestID)
 	input.PlacementItemID = strings.TrimSpace(input.PlacementItemID)
+	input.ProposalRef = strings.TrimSpace(input.ProposalRef)
 	input.SubjectRef = strings.TrimSpace(input.SubjectRef)
 	input.SubjectEntityID = strings.TrimSpace(input.SubjectEntityID)
 	input.OriginalPredicate = strings.TrimSpace(input.OriginalPredicate)

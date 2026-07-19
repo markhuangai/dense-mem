@@ -11,7 +11,7 @@ func V2ProviderProposalSchema() map[string]any {
 	schema := closedObject(
 		[]string{"predicate_options", "evidence", "entity_proposals", "relationship_proposals"},
 		map[string]any{
-			"predicate_options": predicateOptionArraySchema(),
+			"predicate_options": stringArraySchema(100, 128),
 			"evidence": map[string]any{
 				"type": "array", "minItems": 1, "maxItems": 20,
 				"items": closedObject(

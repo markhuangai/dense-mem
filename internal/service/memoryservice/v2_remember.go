@@ -64,6 +64,7 @@ type V2RememberEvidenceInput struct {
 	Content                string         `json:"content"`
 	SourceType             string         `json:"source_type,omitempty"`
 	Source                 string         `json:"source,omitempty"`
+	SourceGroup            string         `json:"source_group,omitempty"`
 	Authority              string         `json:"authority,omitempty"`
 	SourceKey              string         `json:"source_key,omitempty"`
 	SourceRevision         string         `json:"source_revision,omitempty"`
@@ -102,14 +103,14 @@ type V2PlacementItemResult struct {
 }
 
 type V2RelationshipOutcomeRef struct {
-	ProposalID         string `json:"proposal_id,omitempty"`
-	ObservationID      string `json:"observation_id,omitempty"`
+	ProposalID         string `json:"proposal_id"`
+	ObservationID      string `json:"observation_id"`
 	RelationshipID     string `json:"relationship_id,omitempty"`
-	OwnerProfileID     string `json:"owner_profile_id,omitempty"`
+	OwnerProfileID     string `json:"owner_profile_id"`
 	Tier               string `json:"tier,omitempty"`
 	RelationshipStatus string `json:"relationship_status,omitempty"`
-	Category           string `json:"category,omitempty"`
-	Reason             string `json:"reason,omitempty"`
+	Category           string `json:"category"`
+	Reason             string `json:"reason"`
 	ReviewTask         string `json:"review_task,omitempty"`
 }
 
@@ -315,14 +316,16 @@ func v2PlacementRunResultFromLedger(created *repository.V2CreateIngestResult) *V
 		if version == 0 {
 			version = 1
 		}
+		itemSearchState := v2PlacementItemSearchState(item)
+		searchState = v2PlacementCombinedSearchState(searchState, itemSearchState)
 		items = append(items, V2PlacementItemResult{
 			ItemID:               item.PlacementItemID,
 			EvidenceID:           item.FragmentID,
 			Version:              version,
 			EvidenceIndex:        item.EvidenceIndex,
 			Category:             v2PublicPlacementItemCategory(item),
-			SearchState:          string(domain.V2SearchProjectionNotRequired),
-			RelationshipOutcomes: []V2RelationshipOutcomeRef{},
+			SearchState:          itemSearchState,
+			RelationshipOutcomes: v2PlacementRelationshipOutcomes(item.Result),
 			Errors:               []V2PlacementError{},
 		})
 	}
@@ -343,6 +346,109 @@ func v2PublicPlacementItemCategory(item repository.V2PlacementItem) string {
 		return string(domain.V2EvidenceProcessingFailed)
 	}
 	return string(domain.V2EvidenceProcessed)
+}
+
+func v2PlacementCombinedSearchState(left, right string) string {
+	if left == string(domain.V2SearchProjectionPending) || right == string(domain.V2SearchProjectionPending) {
+		return string(domain.V2SearchProjectionPending)
+	}
+	if left == string(domain.V2SearchProjectionCurrent) || right == string(domain.V2SearchProjectionCurrent) {
+		return string(domain.V2SearchProjectionCurrent)
+	}
+	return string(domain.V2SearchProjectionNotRequired)
+}
+
+func v2PlacementItemSearchState(item repository.V2PlacementItem) string {
+	if state := v2PlacementSearchStateFromStates(v2ResultArray(item.Result, "search_document_states")); state != "" {
+		return state
+	}
+	if len(v2ResultArray(item.Result, "embedding_job_ids")) > 0 {
+		return string(domain.V2SearchProjectionPending)
+	}
+	if len(v2ResultArray(item.Result, "search_document_ids")) > 0 {
+		return string(domain.V2SearchProjectionCurrent)
+	}
+	return string(domain.V2SearchProjectionNotRequired)
+}
+
+func v2PlacementSearchStateFromStates(values []any) string {
+	if len(values) == 0 {
+		return ""
+	}
+	hasCurrent := false
+	for _, value := range values {
+		state := strings.TrimSpace(fmt.Sprint(value))
+		switch state {
+		case string(domain.V2SearchProjectionFailed):
+			return string(domain.V2SearchProjectionFailed)
+		case string(domain.V2SearchProjectionPending):
+			return string(domain.V2SearchProjectionPending)
+		case string(domain.V2SearchProjectionCurrent):
+			hasCurrent = true
+		}
+	}
+	if hasCurrent {
+		return string(domain.V2SearchProjectionCurrent)
+	}
+	return ""
+}
+
+func v2PlacementRelationshipOutcomes(result map[string]any) []V2RelationshipOutcomeRef {
+	values := v2ResultArray(result, "relationship_outcomes")
+	out := make([]V2RelationshipOutcomeRef, 0, len(values))
+	for _, value := range values {
+		fields, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		out = append(out, V2RelationshipOutcomeRef{
+			ProposalID:         v2ResultString(fields, "proposal_id"),
+			ObservationID:      v2ResultString(fields, "observation_id"),
+			RelationshipID:     v2ResultString(fields, "relationship_id"),
+			OwnerProfileID:     v2ResultString(fields, "owner_profile_id"),
+			Tier:               v2ResultString(fields, "tier"),
+			RelationshipStatus: v2ResultString(fields, "relationship_status"),
+			Category:           v2ResultString(fields, "category"),
+			Reason:             v2ResultString(fields, "reason"),
+			ReviewTask:         v2ResultString(fields, "review_task"),
+		})
+	}
+	return out
+}
+
+func v2ResultArray(result map[string]any, key string) []any {
+	if len(result) == 0 {
+		return nil
+	}
+	switch values := result[key].(type) {
+	case []any:
+		return values
+	case []map[string]any:
+		out := make([]any, 0, len(values))
+		for _, value := range values {
+			out = append(out, value)
+		}
+		return out
+	case []string:
+		out := make([]any, 0, len(values))
+		for _, value := range values {
+			out = append(out, value)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func v2ResultString(fields map[string]any, key string) string {
+	value, ok := fields[key]
+	if !ok || value == nil {
+		return ""
+	}
+	if str, ok := value.(string); ok {
+		return strings.TrimSpace(str)
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 func translateV2RememberLedgerError(err error) error {
@@ -387,14 +493,18 @@ func v2EvidenceProcessingIntentMetadata(metadata map[string]any, item V2Remember
 	if value := strings.TrimSpace(item.IdempotencyKey); value != "" {
 		metadata["evidence_idempotency_key"] = value
 	}
+	if value := strings.TrimSpace(item.SourceGroup); value != "" {
+		metadata["v2_contract_source_group"] = value
+	}
 	return metadata
 }
 
 func v2SourceRevisionEnvelope(item V2RememberEvidenceInput) map[string]any {
 	return map[string]any{
-		"source_type": item.SourceType,
-		"source":      item.Source,
-		"metadata":    item.Metadata,
+		"source_type":  item.SourceType,
+		"source":       item.Source,
+		"source_group": item.SourceGroup,
+		"metadata":     item.Metadata,
 	}
 }
 

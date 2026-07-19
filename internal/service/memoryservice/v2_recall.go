@@ -88,6 +88,7 @@ type V2RecallRequest struct {
 type V2RecallResult struct {
 	RecallID          string                       `json:"recall_id"`
 	Results           []V2RecallResultItem         `json:"results"`
+	Conflicts         []V2RecallConflictSummary    `json:"conflicts"`
 	DiscoveryPaths    []V2RecallDiscoveryPath      `json:"discovery_paths"`
 	DiscoveryGuidance string                       `json:"discovery_guidance"`
 	RelatedHypotheses []V2RelatedHypothesisSummary `json:"related_hypotheses"`
@@ -105,6 +106,28 @@ type V2RecallResultItem struct {
 type V2RecallDiscoveryPath struct {
 	Relationships []V2RecallRelationshipHandle `json:"relationships"`
 	EvidenceIDs   []string                     `json:"evidence_ids"`
+}
+
+type V2RecallConflictSummary struct {
+	ConflictID          string                     `json:"conflict_id"`
+	Version             int                        `json:"version"`
+	Kind                string                     `json:"kind"`
+	Status              string                     `json:"status"`
+	Question            string                     `json:"question"`
+	ReviewDueAt         *time.Time                 `json:"review_due_at"`
+	EffectiveAt         *time.Time                 `json:"effective_at"`
+	EffectiveTimeBasis  string                     `json:"effective_time_basis,omitempty"`
+	PreferredPositionID string                     `json:"preferred_position_id,omitempty"`
+	Positions           []V2RecallConflictPosition `json:"positions"`
+	PositionsTruncated  bool                       `json:"positions_truncated"`
+}
+
+type V2RecallConflictPosition struct {
+	PositionID        string   `json:"position_id"`
+	Disposition       string   `json:"disposition"`
+	RelationshipIDs   []string `json:"relationship_ids"`
+	OwnerProfileIDs   []string `json:"owner_profile_ids"`
+	ResultEvidenceIDs []string `json:"result_evidence_ids"`
 }
 
 type V2RecallRelationshipHandle struct {
@@ -430,6 +453,7 @@ func v2RecallResultFromRepository(
 	return &V2RecallResult{
 		RecallID:          "rec_" + uuid.NewString(),
 		Results:           results,
+		Conflicts:         []V2RecallConflictSummary{},
 		DiscoveryPaths:    []V2RecallDiscoveryPath{},
 		DiscoveryGuidance: "No additional discovery guidance.",
 		RelatedHypotheses: []V2RelatedHypothesisSummary{},

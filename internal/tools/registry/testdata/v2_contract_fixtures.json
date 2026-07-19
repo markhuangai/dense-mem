@@ -154,6 +154,7 @@
     "output": {
       "recall_id": "rec-1",
       "results": [{"evidence_id": "ev-2", "context": "PostgreSQL is the durable authority."}],
+      "conflicts": [],
       "discovery_paths": [
         {
           "relationships": [

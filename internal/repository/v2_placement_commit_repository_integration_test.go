@@ -226,6 +226,230 @@ func TestV2PlacementSemanticCommitWritesStateSearchAndOutcomeAtomically(t *testi
 	assert.True(t, errors.Is(err, ErrV2PlacementLeaseLost), err)
 }
 
+func TestV2PlacementSemanticCommitRequeuesOpenMultiItemRun(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "placement-multi-team")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "placement-multi-owner")
+	ledgerRepo := NewV2LedgerRepository(appDB, rls)
+	semanticRepo := NewV2SemanticRepository(appDB, rls)
+	subject := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "person", "Alex")
+	ingest, err := ledgerRepo.CreateIngest(ctx, V2CreateIngestInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		Evidence: []V2EvidenceInput{
+			{Content: "Alex works on Dense-Mem."},
+			{Content: "Alex uses PostgreSQL."},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, ingest.Items, 2)
+	claimed, err := ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "worker-first", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+
+	_, err = ledgerRepo.CommitPlacementSemanticResult(ctx, V2CommitPlacementSemanticInput{
+		TeamID:           teamID,
+		OwnerProfileID:   ownerID,
+		IngestID:         ingest.IngestID,
+		PlacementRunID:   ingest.PlacementRunID,
+		PlacementItemID:  ingest.Items[0].PlacementItemID,
+		WorkerID:         "worker-first",
+		ExpectedAttempts: claimed.Attempts,
+		EntityResolutions: []V2PlacementEntityResolutionInput{
+			{MentionRef: "subject", Action: "reuse", EntityID: subject.EntityID},
+			{MentionRef: "object", Action: "create", EntityKind: "project", CanonicalName: "Dense-Mem"},
+		},
+		RelationshipObservations: []V2PlacementRelationshipDecisionInput{{
+			Ref:          "rel-first",
+			SubjectRef:   "subject",
+			PredicateKey: "works_on",
+			ObjectRef:    "object",
+			Support: &V2EvidenceSupportInput{
+				FragmentID:     ingest.Evidence[0].FragmentID,
+				SourceGroupKey: "conversation:multi-item",
+				SpanStart:      0,
+				SpanEnd:        len("Alex works on Dense-Mem."),
+				Quote:          "Alex works on Dense-Mem.",
+				Authority:      "primary",
+			},
+		}},
+	})
+	require.NoError(t, err)
+
+	var runStatus, workerID, firstStatus, secondStatus string
+	var runAttempts int
+	var leaseCleared bool
+	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		require.NoError(t, tx.Raw(`
+			SELECT status, COALESCE(worker_id, ''), lease_until IS NULL, attempts
+			FROM placement_runs
+			WHERE team_id = ?::uuid
+			  AND placement_run_id = ?::uuid
+		`, teamID, ingest.PlacementRunID).Row().Scan(&runStatus, &workerID, &leaseCleared, &runAttempts))
+		require.NoError(t, tx.Raw(`
+			SELECT status
+			FROM placement_items
+			WHERE team_id = ?::uuid
+			  AND placement_item_id = ?::uuid
+		`, teamID, ingest.Items[0].PlacementItemID).Row().Scan(&firstStatus))
+		return tx.Raw(`
+			SELECT status
+			FROM placement_items
+			WHERE team_id = ?::uuid
+			  AND placement_item_id = ?::uuid
+		`, teamID, ingest.Items[1].PlacementItemID).Row().Scan(&secondStatus)
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "queued", runStatus)
+	assert.Empty(t, workerID)
+	assert.True(t, leaseCleared)
+	assert.Equal(t, 0, runAttempts)
+	assert.Equal(t, "completed", firstStatus)
+	assert.Equal(t, "queued", secondStatus)
+
+	reclaimed, err := ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "worker-second", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, reclaimed)
+	assert.Equal(t, ingest.PlacementRunID, reclaimed.PlacementRunID)
+	assert.Equal(t, 1, reclaimed.Attempts)
+}
+
+func TestV2PlacementSemanticCommitAppendsCorrectionTargetCrossReference(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "placement-correction-target-team")
+	ownerA := createV2LedgerProfile(t, adminDB, rls, teamID, "correction-target-owner-a")
+	ownerB := createV2LedgerProfile(t, adminDB, rls, teamID, "correction-target-owner-b")
+	ledgerRepo := NewV2LedgerRepository(appDB, rls)
+	semanticRepo := NewV2SemanticRepository(appDB, rls)
+
+	denseMem := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "project", "Dense-Mem")
+	neo4j := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "Neo4j")
+	postgres := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "PostgreSQL")
+
+	targetIngest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerA,
+		"correction target neo4j", "Dense-Mem uses Neo4j.")
+	targetClaim, err := ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "worker-target", time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, targetIngest.PlacementRunID, targetClaim.PlacementRunID)
+	targetCommitted, err := ledgerRepo.CommitPlacementSemanticResult(ctx, V2CommitPlacementSemanticInput{
+		TeamID:           teamID,
+		OwnerProfileID:   ownerA,
+		IngestID:         targetIngest.IngestID,
+		PlacementRunID:   targetIngest.PlacementRunID,
+		PlacementItemID:  targetIngest.Items[0].PlacementItemID,
+		WorkerID:         "worker-target",
+		ExpectedAttempts: targetClaim.Attempts,
+		EntityResolutions: []V2PlacementEntityResolutionInput{
+			{
+				MentionRef: "subject",
+				Action:     "reuse",
+				EntityID:   denseMem.EntityID,
+			},
+			{
+				MentionRef: "object",
+				Action:     "reuse",
+				EntityID:   neo4j.EntityID,
+			},
+		},
+		RelationshipObservations: []V2PlacementRelationshipDecisionInput{{
+			Ref:          "target-uses",
+			SubjectRef:   "subject",
+			PredicateKey: "uses",
+			ObjectRef:    "object",
+			Support: &V2EvidenceSupportInput{
+				FragmentID:     targetIngest.Evidence[0].FragmentID,
+				SourceGroupKey: "conversation:correction-target",
+				SpanStart:      0,
+				SpanEnd:        len("Dense-Mem uses Neo4j."),
+				Quote:          "Dense-Mem uses Neo4j.",
+				Authority:      "primary",
+			},
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, targetCommitted.RelationshipResults, 1)
+	target := targetCommitted.RelationshipResults[0].Relationship
+	require.NotNil(t, target)
+
+	sourceIngest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerB,
+		"correction target postgres", "Dense-Mem uses PostgreSQL.")
+	sourceClaim, err := ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "worker-source", time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, sourceIngest.PlacementRunID, sourceClaim.PlacementRunID)
+	sourceCommitted, err := ledgerRepo.CommitPlacementSemanticResult(ctx, V2CommitPlacementSemanticInput{
+		TeamID:           teamID,
+		OwnerProfileID:   ownerB,
+		IngestID:         sourceIngest.IngestID,
+		PlacementRunID:   sourceIngest.PlacementRunID,
+		PlacementItemID:  sourceIngest.Items[0].PlacementItemID,
+		WorkerID:         "worker-source",
+		ExpectedAttempts: sourceClaim.Attempts,
+		EntityResolutions: []V2PlacementEntityResolutionInput{
+			{
+				MentionRef: "subject",
+				Action:     "reuse",
+				EntityID:   denseMem.EntityID,
+			},
+			{
+				MentionRef: "object",
+				Action:     "reuse",
+				EntityID:   postgres.EntityID,
+			},
+		},
+		RelationshipObservations: []V2PlacementRelationshipDecisionInput{{
+			Ref:          "source-uses",
+			SubjectRef:   "subject",
+			PredicateKey: "uses",
+			ObjectRef:    "object",
+			CorrectionTarget: &V2PlacementCorrectionTargetInput{
+				RelationshipID:  target.RelationshipID,
+				ExpectedVersion: target.Version,
+			},
+			Support: &V2EvidenceSupportInput{
+				FragmentID:     sourceIngest.Evidence[0].FragmentID,
+				SourceGroupKey: "conversation:correction-source",
+				SpanStart:      0,
+				SpanEnd:        len("Dense-Mem uses PostgreSQL."),
+				Quote:          "Dense-Mem uses PostgreSQL.",
+				Authority:      "primary",
+			},
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, sourceCommitted.RelationshipResults, 1)
+	source := sourceCommitted.RelationshipResults[0].Relationship
+	require.NotNil(t, source)
+
+	var kind, sourceRelationshipID, targetRelationshipID, targetStatus string
+	var sourceVersion, targetVersion int
+	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerB, func(tx *gorm.DB) error {
+		require.NoError(t, tx.Raw(`
+			SELECT kind, source_relationship_id::text, source_relationship_version,
+			       target_relationship_id::text, target_relationship_version
+			FROM relationship_cross_references
+			WHERE team_id = ?::uuid
+			  AND author_profile_id = ?::uuid
+		`, teamID, ownerB).Row().Scan(&kind, &sourceRelationshipID, &sourceVersion, &targetRelationshipID, &targetVersion))
+		return tx.Raw(`
+			SELECT status
+			FROM relationship_records
+			WHERE team_id = ?::uuid
+			  AND relationship_id = ?::uuid
+		`, teamID, target.RelationshipID).Scan(&targetStatus).Error
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "corrects", kind)
+	assert.Equal(t, source.RelationshipID, sourceRelationshipID)
+	assert.Equal(t, source.Version, sourceVersion)
+	assert.Equal(t, target.RelationshipID, targetRelationshipID)
+	assert.Equal(t, target.Version, targetVersion)
+	assert.Equal(t, "active", targetStatus)
+}
+
 func TestV2PlacementSemanticCommitRollsBackSemanticWritesWhenSearchIntentFails(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
 	defer cleanup()

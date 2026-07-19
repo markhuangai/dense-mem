@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -15,7 +16,17 @@ import (
 func TestV2SemanticCommitMapsAcceptedReviewIntoAtomicRepositoryInput(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
+	targetID := uuid.NewString()
 	request := v2SemanticReviewServiceRequest(teamID, ownerID)
+	request.EntityMentions[1].IdentityContext = map[string]any{"repo": "dense-mem"}
+	validFrom := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	validTo := time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)
+	request.RelationshipObservations[0].ValidFrom = &validFrom
+	request.RelationshipObservations[0].ValidTo = &validTo
+	request.RelationshipObservations[0].CorrectionTarget = &verifier.V2RelationshipCorrectionTarget{
+		RelationshipID:  targetID,
+		ExpectedVersion: 3,
+	}
 	response := v2SemanticReviewResponse(request.RequestID, false, false)
 	result := v2SemanticReviewResultFromResponse(response, 1, "sha256:semantic-response")
 	result.OutcomeIDs = []string{uuid.NewString()}
@@ -54,12 +65,24 @@ func TestV2SemanticCommitMapsAcceptedReviewIntoAtomicRepositoryInput(t *testing.
 	if got.EntityResolutions[1].MentionRef != "project_1" || got.EntityResolutions[1].EntityID != "ent-dense-mem" {
 		t.Fatalf("project resolution = %#v", got.EntityResolutions[1])
 	}
+	if got.EntityResolutions[1].IdentityContext["repo"] != "dense-mem" {
+		t.Fatalf("project identity context = %#v", got.EntityResolutions[1].IdentityContext)
+	}
 	if len(got.RelationshipObservations) != 1 {
 		t.Fatalf("relationship observations = %#v", got.RelationshipObservations)
 	}
 	relationship := got.RelationshipObservations[0]
 	if relationship.SubjectRef != "person_1" || relationship.ObjectRef != "project_1" || relationship.PredicateKey != "works_on" {
 		t.Fatalf("relationship mapping = %#v", relationship)
+	}
+	if relationship.CorrectionTarget == nil || relationship.CorrectionTarget.RelationshipID != targetID || relationship.CorrectionTarget.ExpectedVersion != 3 {
+		t.Fatalf("correction target = %#v", relationship.CorrectionTarget)
+	}
+	if relationship.ValidFrom == nil || !relationship.ValidFrom.Equal(validFrom) {
+		t.Fatalf("valid_from = %#v", relationship.ValidFrom)
+	}
+	if relationship.ValidTo == nil || !relationship.ValidTo.Equal(validTo) {
+		t.Fatalf("valid_to = %#v", relationship.ValidTo)
 	}
 	if relationship.Support == nil || relationship.Support.FragmentID != request.Evidence[0].FragmentID || relationship.Support.Quote != "Mark works on Dense-Mem." {
 		t.Fatalf("relationship support = %#v", relationship.Support)

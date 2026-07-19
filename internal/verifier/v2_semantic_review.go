@@ -8,6 +8,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -37,13 +38,14 @@ type V2SemanticReviewEvidence struct {
 }
 
 type V2SemanticEntityMention struct {
-	Ref        string                      `json:"ref"`
-	Surface    string                      `json:"surface"`
-	Kind       string                      `json:"kind"`
-	EvidenceID string                      `json:"evidence_id"`
-	Start      int                         `json:"start"`
-	End        int                         `json:"end"`
-	Candidates []V2SemanticEntityCandidate `json:"candidates"`
+	Ref             string                      `json:"ref"`
+	Surface         string                      `json:"surface"`
+	Kind            string                      `json:"kind"`
+	EvidenceID      string                      `json:"evidence_id"`
+	Start           int                         `json:"start"`
+	End             int                         `json:"end"`
+	Candidates      []V2SemanticEntityCandidate `json:"candidates"`
+	IdentityContext map[string]any              `json:"-"`
 }
 
 type V2SemanticEntityCandidate struct {
@@ -56,16 +58,24 @@ type V2SemanticEntityCandidate struct {
 }
 
 type V2SemanticRelationshipObservation struct {
-	Ref                 string                         `json:"ref"`
-	SubjectRef          string                         `json:"subject_ref"`
-	OriginalPredicate   string                         `json:"original_predicate"`
-	PredicateCandidates []V2SemanticPredicateCandidate `json:"predicate_candidates"`
-	ObjectRef           string                         `json:"object_ref,omitempty"`
-	ObjectValue         *V2SemanticValueObservation    `json:"object_value,omitempty"`
-	EvidenceID          string                         `json:"evidence_id"`
-	Quote               string                         `json:"quote"`
-	Start               int                            `json:"start"`
-	End                 int                            `json:"end"`
+	Ref                 string                          `json:"ref"`
+	SubjectRef          string                          `json:"subject_ref"`
+	OriginalPredicate   string                          `json:"original_predicate"`
+	PredicateCandidates []V2SemanticPredicateCandidate  `json:"predicate_candidates"`
+	ObjectRef           string                          `json:"object_ref,omitempty"`
+	ObjectValue         *V2SemanticValueObservation     `json:"object_value,omitempty"`
+	EvidenceID          string                          `json:"evidence_id"`
+	Quote               string                          `json:"quote"`
+	Start               int                             `json:"start"`
+	End                 int                             `json:"end"`
+	ValidFrom           *time.Time                      `json:"valid_from,omitempty"`
+	ValidTo             *time.Time                      `json:"valid_to,omitempty"`
+	CorrectionTarget    *V2RelationshipCorrectionTarget `json:"-"`
+}
+
+type V2RelationshipCorrectionTarget struct {
+	RelationshipID  string
+	ExpectedVersion int
 }
 
 type V2SemanticPredicateCandidate struct {
@@ -173,6 +183,9 @@ func PrepareV2SemanticReviewRequest(req V2SemanticReviewRequest) (V2SemanticRevi
 		obs.ObjectRef = strings.TrimSpace(obs.ObjectRef)
 		obs.EvidenceID = strings.TrimSpace(obs.EvidenceID)
 		obs.Quote = strings.TrimSpace(obs.Quote)
+		if obs.CorrectionTarget != nil {
+			obs.CorrectionTarget.RelationshipID = strings.TrimSpace(obs.CorrectionTarget.RelationshipID)
+		}
 		exact, err := v2SemanticExactSpanQuote(evidenceByID[obs.EvidenceID].Content, obs.Start, obs.End, obs.Quote)
 		if err != nil {
 			errs = append(errs, v2SemanticErr(fmt.Sprintf("relationship_observations[%d].quote", i), err.Error()))
@@ -301,6 +314,9 @@ func validateV2SemanticReviewRequestShape(req *V2SemanticReviewRequest) []V2Sema
 		}
 		if obs.ObjectValue != nil && !v2SemanticOneOf(strings.TrimSpace(obs.ObjectValue.Type), domain.V2ValueTypes()...) {
 			errs = append(errs, v2SemanticErr(fmt.Sprintf("relationship_observations[%d].object_value.type", i), "is unsupported"))
+		}
+		if obs.ValidFrom != nil && obs.ValidTo != nil && obs.ValidTo.Before(*obs.ValidFrom) {
+			errs = append(errs, v2SemanticErr(fmt.Sprintf("relationship_observations[%d].valid_to", i), "must not be before valid_from"))
 		}
 		if _, ok := evidenceRefs[obs.EvidenceID]; !ok {
 			errs = append(errs, v2SemanticErr(fmt.Sprintf("relationship_observations[%d].evidence_id", i), "is unknown"))

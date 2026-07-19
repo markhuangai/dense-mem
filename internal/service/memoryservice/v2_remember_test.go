@@ -44,6 +44,7 @@ func TestV2RememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.
 			Content:        "  exact evidence bytes stay intact  ",
 			SourceType:     "document",
 			Source:         "wiki",
+			SourceGroup:    "wiki:target-architecture",
 			Authority:      "authoritative",
 			SourceKey:      "wiki://write-pipeline",
 			SourceRevision: "rev-1",
@@ -74,6 +75,8 @@ func TestV2RememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.
 	if input.Evidence[0].Metadata["v2_contract_authority"] != "authoritative" {
 		t.Fatalf("metadata = %#v", input.Evidence[0].Metadata)
 	}
+	require.Equal(t, "wiki:target-architecture", input.Evidence[0].Metadata["v2_contract_source_group"])
+	require.Equal(t, "wiki:target-architecture", input.Evidence[0].SourceRevisionEnvelope["source_group"])
 	if input.Evidence[0].SourceRevisionToken != "rev-1" {
 		t.Fatalf("source revision = %q", input.Evidence[0].SourceRevisionToken)
 	}
@@ -175,6 +178,21 @@ func TestV2GetMemoryPlacementUsesAuthenticatedOwnerAndReturnsCurrentVersion(t *t
 				Status:          "completed",
 				Category:        "candidate",
 				Version:         4,
+				Result: map[string]any{
+					"search_document_ids":    []string{uuid.NewString()},
+					"embedding_job_ids":      []string{uuid.NewString()},
+					"search_document_states": []string{string(domain.V2SearchProjectionCurrent)},
+					"relationship_outcomes": []map[string]any{{
+						"proposal_id":         "rel:authority",
+						"observation_id":      "obs-1",
+						"relationship_id":     "rel-1",
+						"owner_profile_id":    profileID.String(),
+						"tier":                string(domain.V2RelationshipTierFact),
+						"relationship_status": string(domain.V2RelationshipStatusActive),
+						"category":            string(domain.V2OutcomeRelationshipFact),
+						"reason":              "accepted",
+					}},
+				},
 			}},
 		},
 	}
@@ -186,12 +204,23 @@ func TestV2GetMemoryPlacementUsesAuthenticatedOwnerAndReturnsCurrentVersion(t *t
 	})
 	require.NoError(t, err)
 	require.Equal(t, string(domain.V2PlacementRunCompleted), result.ProcessingState)
-	require.Equal(t, string(domain.V2SearchProjectionNotRequired), result.SearchState)
+	require.Equal(t, string(domain.V2SearchProjectionCurrent), result.SearchState)
 	require.Len(t, result.Items, 1)
 	require.Equal(t, itemID, result.Items[0].ItemID)
 	require.Equal(t, fragmentID, result.Items[0].EvidenceID)
 	require.Equal(t, 4, result.Items[0].Version)
 	require.Equal(t, string(domain.V2EvidenceProcessed), result.Items[0].Category)
+	require.Equal(t, string(domain.V2SearchProjectionCurrent), result.Items[0].SearchState)
+	require.Equal(t, []V2RelationshipOutcomeRef{{
+		ProposalID:         "rel:authority",
+		ObservationID:      "obs-1",
+		RelationshipID:     "rel-1",
+		OwnerProfileID:     profileID.String(),
+		Tier:               string(domain.V2RelationshipTierFact),
+		RelationshipStatus: string(domain.V2RelationshipStatusActive),
+		Category:           string(domain.V2OutcomeRelationshipFact),
+		Reason:             "accepted",
+	}}, result.Items[0].RelationshipOutcomes)
 	require.Equal(t, teamID.String(), ledger.placementInput.TeamID)
 	require.Equal(t, profileID.String(), ledger.placementInput.OwnerProfileID)
 	require.Equal(t, ingestID, ledger.placementInput.IngestID)

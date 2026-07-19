@@ -248,11 +248,21 @@ func v2CorrectionEvidenceFromRequest(evidence []V2RememberEvidenceInput) []repos
 			Content:     item.Content,
 			SourceType:  item.SourceType,
 			Authority:   item.Authority,
-			SourceGroup: item.SourceKey,
+			SourceGroup: v2CorrectionEvidenceSourceGroup(item),
 			Metadata:    item.Metadata,
 		})
 	}
 	return out
+}
+
+func v2CorrectionEvidenceSourceGroup(item V2RememberEvidenceInput) string {
+	if value := strings.TrimSpace(item.SourceGroup); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(item.SourceKey); value != "" {
+		return value
+	}
+	return strings.TrimSpace(item.Source)
 }
 
 func v2LifecycleEvidenceFromRequest(evidence []V2RememberEvidenceInput) []repository.V2EvidenceInput {

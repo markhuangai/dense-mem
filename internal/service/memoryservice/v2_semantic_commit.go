@@ -203,12 +203,13 @@ func v2SemanticCommitInputFromReview(job V2SemanticCommitJob) (repository.V2Comm
 			return repository.V2CommitPlacementSemanticInput{}, fmt.Errorf("v2 semantic commit: unknown entity result ref %q", result.Ref)
 		}
 		resolution := repository.V2PlacementEntityResolutionInput{
-			MentionRef:    result.Ref,
-			Action:        result.Action,
-			EntityKind:    mention.Kind,
-			CanonicalName: mention.Surface,
-			SpanStart:     &mention.Start,
-			SpanEnd:       &mention.End,
+			MentionRef:      result.Ref,
+			Action:          result.Action,
+			EntityKind:      mention.Kind,
+			CanonicalName:   mention.Surface,
+			SpanStart:       &mention.Start,
+			SpanEnd:         &mention.End,
+			IdentityContext: mention.IdentityContext,
 			VerifierResult: map[string]any{
 				"confidence": result.Confidence,
 			},
@@ -237,6 +238,8 @@ func v2SemanticCommitInputFromReview(job V2SemanticCommitJob) (repository.V2Comm
 			OriginalPredicate: observation.OriginalPredicate,
 			PredicateKey:      *result.PredicateKey,
 			ObjectRef:         observation.ObjectRef,
+			ValidFrom:         observation.ValidFrom,
+			ValidTo:           observation.ValidTo,
 			EvidenceVerdict:   result.EvidenceVerdict,
 			PromoteToFact:     job.PromoteToFact,
 			Confidence:        &result.Confidence,
@@ -250,6 +253,12 @@ func v2SemanticCommitInputFromReview(job V2SemanticCommitJob) (repository.V2Comm
 			RelationshipMetadata: map[string]any{
 				"semantic_review_response_hash": job.Result.ResponseHash,
 			},
+		}
+		if observation.CorrectionTarget != nil {
+			relationship.CorrectionTarget = &repository.V2PlacementCorrectionTargetInput{
+				RelationshipID:  observation.CorrectionTarget.RelationshipID,
+				ExpectedVersion: observation.CorrectionTarget.ExpectedVersion,
+			}
 		}
 		if observation.ObjectValue != nil {
 			relationship.ObjectValue = &repository.V2PlacementValueInput{

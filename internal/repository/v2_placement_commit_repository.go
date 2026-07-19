@@ -43,16 +43,17 @@ type V2CommitPlacementSemanticInput struct {
 }
 
 type V2PlacementEntityResolutionInput struct {
-	MentionRef     string
-	Action         string
-	EntityID       string
-	EntityKind     string
-	CanonicalName  string
-	FragmentID     string
-	SpanStart      *int
-	SpanEnd        *int
-	VerifierResult map[string]any
-	Metadata       map[string]any
+	MentionRef      string
+	Action          string
+	EntityID        string
+	EntityKind      string
+	CanonicalName   string
+	FragmentID      string
+	SpanStart       *int
+	SpanEnd         *int
+	IdentityContext map[string]any
+	VerifierResult  map[string]any
+	Metadata        map[string]any
 }
 
 type V2PlacementRelationshipDecisionInput struct {
@@ -74,8 +75,14 @@ type V2PlacementRelationshipDecisionInput struct {
 	Model                string
 	ResponseHash         string
 	Support              *V2EvidenceSupportInput
+	CorrectionTarget     *V2PlacementCorrectionTargetInput
 	ObservationMetadata  map[string]any
 	RelationshipMetadata map[string]any
+}
+
+type V2PlacementCorrectionTargetInput struct {
+	RelationshipID  string
+	ExpectedVersion int
 }
 
 type V2PlacementValueInput struct {
@@ -148,12 +155,12 @@ func (r *V2LedgerRepositoryImpl) CommitPlacementSemanticResult(
 			if err != nil {
 				return err
 			}
-			if err := applyV2PlacementRelationshipDecision(ctx, tx, input, decision, result); err != nil {
+			if err := applyV2PlacementRelationshipDecision(ctx, tx, input, decision, observation.CorrectionTarget, result); err != nil {
 				return err
 			}
 		}
 		for _, decision := range input.RelationshipDecisions {
-			if err := applyV2PlacementRelationshipDecision(ctx, tx, input, withV2PlacementDecisionScope(input, decision), result); err != nil {
+			if err := applyV2PlacementRelationshipDecision(ctx, tx, input, withV2PlacementDecisionScope(input, decision), nil, result); err != nil {
 				return err
 			}
 		}
@@ -339,6 +346,11 @@ func normalizeV2PlacementRelationshipDecisionInput(input V2PlacementRelationship
 			input.Support.Authority = "primary"
 		}
 	}
+	if input.CorrectionTarget != nil {
+		target := *input.CorrectionTarget
+		target.RelationshipID = strings.TrimSpace(target.RelationshipID)
+		input.CorrectionTarget = &target
+	}
 	return input
 }
 
@@ -379,6 +391,21 @@ func validateV2PlacementRelationshipDecisionInput(input V2PlacementRelationshipD
 		if err := validateV2EvidenceSupportInput(*input.Support); err != nil {
 			return err
 		}
+	}
+	if input.CorrectionTarget != nil {
+		if err := validateV2PlacementCorrectionTargetInput(*input.CorrectionTarget); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateV2PlacementCorrectionTargetInput(input V2PlacementCorrectionTargetInput) error {
+	if _, err := uuid.Parse(input.RelationshipID); err != nil {
+		return fmt.Errorf("correction target relationship_id is required: %w", err)
+	}
+	if input.ExpectedVersion < 1 {
+		return errors.New("correction target expected_version must be greater than zero")
 	}
 	return nil
 }
@@ -567,10 +594,16 @@ func insertV2PlacementEntity(
 	commit V2CommitPlacementSemanticInput,
 	input V2PlacementEntityResolutionInput,
 ) (string, error) {
-	identityContext, err := marshalV2JSON(map[string]any{
-		"source":      "semantic_placement",
-		"mention_ref": input.MentionRef,
-	})
+	identityFields := map[string]any{}
+	for key, value := range input.IdentityContext {
+		key = strings.TrimSpace(key)
+		if key != "" {
+			identityFields[key] = value
+		}
+	}
+	identityFields["source"] = "semantic_placement"
+	identityFields["mention_ref"] = input.MentionRef
+	identityContext, err := marshalV2JSON(identityFields)
 	if err != nil {
 		return "", err
 	}
@@ -627,6 +660,7 @@ func v2RelationshipDecisionFromPlacementObservation(
 		OwnerProfileID:       commit.OwnerProfileID,
 		IngestID:             commit.IngestID,
 		PlacementItemID:      commit.PlacementItemID,
+		ProposalRef:          input.Ref,
 		SubjectRef:           input.SubjectRef,
 		SubjectEntityID:      subjectID,
 		OriginalPredicate:    input.OriginalPredicate,
@@ -729,15 +763,25 @@ func applyV2PlacementRelationshipDecision(
 	tx *gorm.DB,
 	commit V2CommitPlacementSemanticInput,
 	decision V2ApplyRelationshipDecisionInput,
+	correctionTarget *V2PlacementCorrectionTargetInput,
 	result *V2CommitPlacementSemanticResult,
 ) error {
 	applied, err := applyV2RelationshipDecisionInTx(ctx, tx, decision)
 	if err != nil {
 		return err
 	}
+	applied.ProposalID = decision.ProposalRef
+	applied.OwnerProfileID = commit.OwnerProfileID
+	applied.Category = v2RelationshipOutcomeCategory(applied)
+	applied.Reason = v2RelationshipOutcomeReason(decision, applied)
 	result.RelationshipResults = append(result.RelationshipResults, *applied)
 	if applied.Relationship == nil || applied.Relationship.Status != string(domain.V2RelationshipStatusActive) {
 		return nil
+	}
+	if correctionTarget != nil {
+		if err := appendV2PlacementCorrectionTarget(ctx, tx, commit, applied, *correctionTarget); err != nil {
+			return err
+		}
 	}
 	if decision.Support != nil && applied.SupportID != "" {
 		document, err := upsertV2PlacementEvidenceSearchDocument(ctx, tx, commit, decision.Support.FragmentID, applied.Relationship, applied.SupportID)
@@ -752,191 +796,4 @@ func applyV2PlacementRelationshipDecision(
 	}
 	appendV2PlacementSearchDocument(result, document)
 	return nil
-}
-
-func appendV2PlacementSearchDocument(result *V2CommitPlacementSemanticResult, document *V2SearchDocumentResult) {
-	if result == nil || document == nil || document.SearchDocumentID == "" {
-		return
-	}
-	for _, existing := range result.SearchDocuments {
-		if existing.SearchDocumentID == document.SearchDocumentID {
-			return
-		}
-	}
-	result.SearchDocuments = append(result.SearchDocuments, *document)
-}
-
-func applyV2RelationshipDecisionInTx(
-	ctx context.Context,
-	tx *gorm.DB,
-	input V2ApplyRelationshipDecisionInput,
-) (*V2RelationshipDecisionResult, error) {
-	input = normalizeV2ApplyRelationshipDecisionInput(input)
-	predicate, err := loadV2PredicateDefinition(ctx, tx, input.PredicateKey, input.PredicateVersion)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return insertV2PredicateReview(ctx, tx, input)
-	}
-	if err != nil {
-		return nil, err
-	}
-	if err := validateV2RelationshipEndpointKinds(ctx, tx, input, predicate); err != nil {
-		return nil, err
-	}
-	tier, status := v2TierStatusForVerdict(input.EvidenceVerdict, input.PromoteToFact)
-	groupKey := v2SemanticGroupKey(input)
-	recordState, err := upsertV2RelationshipRecord(ctx, tx, input, predicate, tier, status, groupKey)
-	if err != nil {
-		return nil, err
-	}
-	observationID, err := insertV2RelationshipObservation(ctx, tx, input, recordState.Record.RelationshipID)
-	if err != nil {
-		return nil, err
-	}
-	verificationID, err := insertV2VerificationEvent(ctx, tx, input, observationID)
-	if err != nil {
-		return nil, err
-	}
-	var supportID, supportDecisionID string
-	if input.EvidenceVerdict == string(domain.V2VerificationEntailed) && input.Support != nil {
-		supportID, supportDecisionID, err = insertV2RelationshipSupport(ctx, tx, input, recordState.Record.RelationshipID, observationID, verificationID)
-		if err != nil {
-			return nil, err
-		}
-		if err := refreshV2RelationshipSupportCounts(ctx, tx, input.TeamID, recordState.Record.RelationshipID); err != nil {
-			return nil, err
-		}
-	}
-	if recordState.Changed {
-		if _, err := insertV2RelationshipTransition(ctx, tx, v2TransitionInput{
-			TeamID:              input.TeamID,
-			OwnerProfileID:      input.OwnerProfileID,
-			RelationshipID:      recordState.Record.RelationshipID,
-			FromTier:            recordState.FromTier,
-			FromStatus:          recordState.FromStatus,
-			ToTier:              tier,
-			ToStatus:            status,
-			Reason:              "verifier_decision",
-			VerificationEventID: verificationID,
-			SupportDecisionID:   supportDecisionID,
-		}); err != nil {
-			return nil, err
-		}
-	}
-	loaded, err := loadV2RelationshipRecord(ctx, tx, input.TeamID, recordState.Record.RelationshipID)
-	if err != nil {
-		return nil, err
-	}
-	return &V2RelationshipDecisionResult{
-		Relationship:        loaded,
-		ObservationID:       observationID,
-		VerificationEventID: verificationID,
-		SupportID:           supportID,
-		SupportDecisionID:   supportDecisionID,
-		CreatedRelationship: recordState.Created,
-	}, nil
-}
-
-func withV2PlacementDecisionScope(input V2CommitPlacementSemanticInput, decision V2ApplyRelationshipDecisionInput) V2ApplyRelationshipDecisionInput {
-	decision.TeamID = input.TeamID
-	decision.OwnerProfileID = input.OwnerProfileID
-	decision.IngestID = input.IngestID
-	decision.PlacementItemID = input.PlacementItemID
-	return decision
-}
-
-func upsertV2PlacementRelationshipSearchDocument(
-	ctx context.Context,
-	tx *gorm.DB,
-	commit V2CommitPlacementSemanticInput,
-	relationship *V2RelationshipRecord,
-) (*V2SearchDocumentResult, error) {
-	contract, err := loadV2ActiveSearchContractInTx(ctx, tx)
-	if err != nil {
-		return nil, err
-	}
-	input := normalizeV2UpsertSearchDocumentInput(V2UpsertSearchDocumentInput{
-		TeamID:         commit.TeamID,
-		OwnerProfileID: commit.OwnerProfileID,
-		SourceKind:     "relationship",
-		SourceID:       relationship.RelationshipID,
-		SourceVersion:  int64(relationship.Version),
-		DocumentText:   v2PlacementRelationshipSearchText(relationship),
-	})
-	if err := validateV2UpsertSearchDocumentInput(input); err != nil {
-		return nil, err
-	}
-	return upsertV2SearchDocumentInTx(ctx, tx, input, contract)
-}
-
-func v2PlacementCommitPayload(base map[string]any, result *V2CommitPlacementSemanticResult) map[string]any {
-	payload := map[string]any{
-		"contract_version": domain.V2ContractVersion,
-	}
-	for key, value := range base {
-		payload[key] = value
-	}
-	relationships := make([]string, 0, len(result.RelationshipResults))
-	for _, item := range result.RelationshipResults {
-		if item.Relationship != nil {
-			relationships = append(relationships, item.Relationship.RelationshipID)
-		}
-	}
-	searchDocuments := make([]string, 0, len(result.SearchDocuments))
-	embeddingJobs := make([]string, 0, len(result.SearchDocuments))
-	for _, item := range result.SearchDocuments {
-		searchDocuments = append(searchDocuments, item.SearchDocumentID)
-		if item.QueuedJobID != "" {
-			embeddingJobs = append(embeddingJobs, item.QueuedJobID)
-		}
-	}
-	payload["relationship_ids"] = relationships
-	payload["search_document_ids"] = searchDocuments
-	payload["embedding_job_ids"] = embeddingJobs
-	payload["entity_resolution_ids"] = append([]string(nil), result.EntityResolutionIDs...)
-	return payload
-}
-
-func finishV2PlacementRunIfTerminal(ctx context.Context, tx *gorm.DB, input V2CommitPlacementSemanticInput, status string) error {
-	var openCount int64
-	if err := tx.WithContext(ctx).Raw(`
-		SELECT COUNT(*)
-		FROM placement_items
-		WHERE team_id = ?::uuid
-		  AND placement_run_id = ?::uuid
-		  AND status IN ('queued', 'processing')
-	`, input.TeamID, input.PlacementRunID).Scan(&openCount).Error; err != nil {
-		return err
-	}
-	if openCount > 0 {
-		return nil
-	}
-	result := tx.WithContext(ctx).Exec(`
-		UPDATE placement_runs
-		SET status = ?,
-		    error = '',
-		    lease_until = NULL,
-		    completed_at = now(),
-		    updated_at = now()
-		WHERE team_id = ?::uuid
-		  AND placement_run_id = ?::uuid
-		  AND owner_profile_id = ?::uuid
-		  AND status = 'processing'
-		  AND worker_id = ?
-		  AND attempts = ?
-		  AND lease_until > clock_timestamp()
-	`, status, input.TeamID, input.PlacementRunID, input.OwnerProfileID, input.WorkerID, input.ExpectedAttempts)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
-		return ErrV2PlacementLeaseLost
-	}
-	return nil
-}
-
-func v2IntPointerArg(value *int) any {
-	if value == nil {
-		return nil
-	}
-	return *value
 }

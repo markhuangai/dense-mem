@@ -14,6 +14,14 @@ func TestV2ProviderProposalSchemaIsClosedAndCanonical(t *testing.T) {
 			t.Fatalf("provider proposal schema missing %s", field)
 		}
 	}
+	predicateOptions, ok := props["predicate_options"].(map[string]any)
+	if !ok {
+		t.Fatalf("predicate_options schema = %#v", props["predicate_options"])
+	}
+	predicateOptionItems, ok := predicateOptions["items"].(map[string]any)
+	if !ok || predicateOptionItems["type"] != "string" {
+		t.Fatalf("predicate_options items = %#v", predicateOptions["items"])
+	}
 	relationships := itemSchemaForTest(t, props["relationship_proposals"])
 	relProps := schemaPropertiesForTest(t, relationships)
 	for _, field := range []string{"proposal_id", "subject_ref", "original_predicate", "evidence"} {
@@ -55,6 +63,20 @@ func TestV2VerifierResponseSchemaMatchesStrictWikiContract(t *testing.T) {
 		"obfuscated_instruction",
 		"hidden_control_markup",
 	})
+}
+
+func TestPredicateOptionArraySchemaStaysClosed(t *testing.T) {
+	schema := predicateOptionArraySchema()
+	items := itemSchemaForTest(t, schema)
+	props := schemaPropertiesForTest(t, items)
+	for _, field := range []string{"predicate_key", "aliases", "allowed_subject_kinds", "allowed_object_kinds", "relationship_kind", "current_cardinality", "version"} {
+		if _, ok := props[field]; !ok {
+			t.Fatalf("predicate option schema missing %s", field)
+		}
+	}
+	assertEnumForTest(t, props["relationship_kind"], []string{"state", "event"})
+	assertEnumForTest(t, props["current_cardinality"], []string{"one", "many"})
+	assertClosedV2ProviderObjects(t, schema, "predicate options")
 }
 
 func assertClosedV2ProviderObjects(t *testing.T, schema map[string]any, path string) {

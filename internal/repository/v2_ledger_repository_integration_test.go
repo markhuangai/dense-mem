@@ -218,6 +218,12 @@ func TestV2LedgerCreateIngestIsIdempotentAndOwnerScoped(t *testing.T) {
 		OwnerProfileID: ownerA,
 		IdempotencyKey: "idem-1",
 		RequestHash:    "request-hash",
+		Proposal: map[string]any{
+			"relationship_hints": []map[string]any{{
+				"proposal_id": "rel:durable",
+				"predicate":   "uses",
+			}},
+		},
 		Evidence: []V2EvidenceInput{{
 			Content: "Dense-Mem v2 stores exact evidence durably before acknowledgement.",
 			Labels:  []string{"v2", "ledger"},
@@ -230,6 +236,21 @@ func TestV2LedgerCreateIngestIsIdempotentAndOwnerScoped(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, first.Existing)
 	require.Len(t, first.Evidence, 1)
+	require.Equal(t, ownerA, first.OwnerProfileID)
+	require.Equal(t, "Dense-Mem v2 stores exact evidence durably before acknowledgement.", first.Evidence[0].Content)
+
+	loaded, err := repo.GetPlacementRun(ctx, V2GetPlacementRunInput{
+		TeamID:         teamA,
+		OwnerProfileID: ownerA,
+		IngestID:       first.IngestID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, ownerA, loaded.OwnerProfileID)
+	require.Len(t, loaded.Evidence, 1)
+	require.Equal(t, first.Evidence[0].Content, loaded.Evidence[0].Content)
+	relationshipHints, ok := loaded.Proposal["relationship_hints"].([]any)
+	require.True(t, ok, "relationship_hints = %#v", loaded.Proposal["relationship_hints"])
+	require.Len(t, relationshipHints, 1)
 
 	err = rls.WithTeamProfileTx(ctx, appDB, teamA, ownerA, func(tx *gorm.DB) error {
 		result := tx.Exec(`

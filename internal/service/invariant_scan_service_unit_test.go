@@ -10,38 +10,49 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type unitInvariantClient struct {
-	err error
-}
-
-func (c *unitInvariantClient) ExecuteRead(context.Context, neo4j.ManagedTransactionWork) (any, error) {
-	if c.err != nil {
-		return nil, c.err
-	}
-	return nil, nil
-}
-
-func TestInvariantScanServiceCleanAndErrorAudit(t *testing.T) {
+func TestInvariantScanWithAuditRecordsCleanAndErrorResults(t *testing.T) {
 	ctx := context.Background()
-	audit := new(MockAuditService)
-	audit.On("SystemQuery", ctx, "invariant_scan", mock.MatchedBy(func(metadata map[string]interface{}) bool {
-		return metadata["violations"] == 0 && metadata["status"] == "clean" && metadata["success"] == true
-	}), mock.Anything, "admin", "127.0.0.1", "corr-clean").Return(nil)
-	svc := NewInvariantScanService(&unitInvariantClient{}, audit)
+	keyID := "key-1"
 
-	result, err := svc.ScanWithAudit(ctx, nil, "admin", "127.0.0.1", "corr-clean")
-	require.NoError(t, err)
-	require.Equal(t, "clean", result.Status)
-	require.Equal(t, 0, result.Violations)
+	t.Run("clean", func(t *testing.T) {
+		client := &invariantScanClientStub{}
+		audit := &MockAuditService{}
+		audit.On("SystemQuery", mock.Anything, "invariant_scan", mock.MatchedBy(func(metadata map[string]interface{}) bool {
+			return metadata["violations"] == 0 && metadata["status"] == "clean" && metadata["success"] == true
+		}), &keyID, "admin", "127.0.0.1", "corr-1").Return(nil).Once()
+		svc := NewInvariantScanService(client, audit)
 
-	scanErr := errors.New("neo4j failed")
-	audit.On("SystemQuery", ctx, "invariant_scan", mock.MatchedBy(func(metadata map[string]interface{}) bool {
-		return metadata["violations"] == 0 && metadata["status"] == "error" && metadata["success"] == false && metadata["error"] != ""
-	}), mock.Anything, "admin", "127.0.0.1", "corr-error").Return(errors.New("audit failed"))
-	svc = NewInvariantScanService(&unitInvariantClient{err: scanErr}, audit)
+		result, err := svc.ScanWithAudit(ctx, &keyID, "admin", "127.0.0.1", "corr-1")
 
-	result, err = svc.ScanWithAudit(ctx, nil, "admin", "127.0.0.1", "corr-error")
-	require.ErrorIs(t, err, scanErr)
-	require.Equal(t, "error", result.Status)
-	audit.AssertExpectations(t)
+		require.NoError(t, err)
+		require.Equal(t, 1, client.calls)
+		require.Equal(t, "clean", result.Status)
+		require.Equal(t, 0, result.Violations)
+		audit.AssertExpectations(t)
+	})
+
+	t.Run("scan error", func(t *testing.T) {
+		client := &invariantScanClientStub{err: errors.New("neo4j unavailable")}
+		audit := &MockAuditService{}
+		audit.On("SystemQuery", mock.Anything, "invariant_scan", mock.MatchedBy(func(metadata map[string]interface{}) bool {
+			return metadata["status"] == "error" && metadata["success"] == false && metadata["error"] == "invariant scan failed: neo4j unavailable"
+		}), &keyID, "admin", "127.0.0.1", "corr-2").Return(nil).Once()
+		svc := NewInvariantScanService(client, audit)
+
+		result, err := svc.ScanWithAudit(ctx, &keyID, "admin", "127.0.0.1", "corr-2")
+
+		require.ErrorContains(t, err, "neo4j unavailable")
+		require.Equal(t, "error", result.Status)
+		audit.AssertExpectations(t)
+	})
+}
+
+type invariantScanClientStub struct {
+	calls int
+	err   error
+}
+
+func (s *invariantScanClientStub) ExecuteRead(context.Context, neo4j.ManagedTransactionWork) (any, error) {
+	s.calls++
+	return nil, s.err
 }

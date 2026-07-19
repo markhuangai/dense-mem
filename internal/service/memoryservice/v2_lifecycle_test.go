@@ -75,7 +75,8 @@ func TestV2LifecycleCorrectEntityResolutionUsesAuthenticatedOwner(t *testing.T) 
 		DryRun:              true,
 		IdempotencyKey:      "split-1",
 		Evidence: []V2RememberEvidenceInput{{
-			Content: "The selected Mark mention refers to a different person.",
+			Content:     "The selected Mark mention refers to a different person.",
+			SourceGroup: "conversation:identity-correction",
 		}},
 	})
 	require.NoError(t, err)
@@ -90,6 +91,7 @@ func TestV2LifecycleCorrectEntityResolutionUsesAuthenticatedOwner(t *testing.T) 
 	require.Equal(t, []string{observationID}, semantic.correctInput.SelectedObservationIDs)
 	require.Equal(t, "split-1", semantic.correctInput.IdempotencyKey)
 	require.Len(t, semantic.correctInput.Evidence, 1)
+	require.Equal(t, "conversation:identity-correction", semantic.correctInput.Evidence[0].SourceGroup)
 }
 
 func TestV2LifecycleResolvePlacementUsesAuthenticatedOwner(t *testing.T) {
@@ -160,6 +162,7 @@ func TestV2LifecycleResolvePlacementMapsEvidenceForRepository(t *testing.T) {
 				Content:                "Reviewer selected works_on <!-- needs guarded review -->",
 				SourceType:             "document",
 				Source:                 " wiki://placement-review ",
+				SourceGroup:            "wiki:placement-review",
 				SourceKey:              "placement-review",
 				SourceRevision:         "rev-2",
 				PreviousSourceRevision: "rev-1",
@@ -193,6 +196,7 @@ func TestV2LifecycleResolvePlacementMapsEvidenceForRepository(t *testing.T) {
 	require.Equal(t, []string{"review"}, first.Labels)
 	require.Equal(t, "87", first.Metadata["ticket"])
 	require.Equal(t, "secondary", first.Metadata["v2_contract_authority"])
+	require.Equal(t, "wiki:placement-review", first.Metadata["v2_contract_source_group"])
 	require.Equal(t, "evidence-idem-1", first.Metadata["evidence_idempotency_key"])
 	require.Equal(t, []string{"evidence-old"}, first.Metadata["supersedes_fragment_ids"])
 	require.Equal(t, "guarded", first.InitialEvent.Decision)

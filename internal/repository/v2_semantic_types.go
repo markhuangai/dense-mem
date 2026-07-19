@@ -48,6 +48,47 @@ type V2EntityRecord struct {
 	Version       int
 }
 
+type V2SemanticReviewEntityCandidateInput struct {
+	TeamID         string
+	OwnerProfileID string
+	Name           string
+	EntityKind     string
+	KnownEntityID  string
+	Limit          int
+}
+
+type V2SemanticReviewEntityCandidate struct {
+	TeamID          string
+	EntityID        string
+	EntityKind      string
+	CanonicalName   string
+	IdentityContext map[string]any
+	Status          string
+}
+
+type V2SemanticReviewPredicateCandidateInput struct {
+	TeamID         string
+	OwnerProfileID string
+	Predicate      string
+	Limit          int
+}
+
+type V2SemanticReviewPredicateOptionsInput struct {
+	TeamID         string
+	OwnerProfileID string
+	Limit          int
+}
+
+type V2SemanticReviewPredicateCandidate struct {
+	PredicateKey        string
+	Version             int
+	AllowedSubjectKinds []string
+	AllowedObjectKinds  []string
+	RelationshipKind    string
+	CurrentCardinality  string
+	LifecycleState      string
+}
+
 type V2UpsertValueInput struct {
 	TeamID               string
 	OwnerProfileID       string
@@ -87,6 +128,7 @@ type V2ApplyRelationshipDecisionInput struct {
 	OwnerProfileID       string
 	IngestID             string
 	PlacementItemID      string
+	ProposalRef          string
 	SubjectRef           string
 	SubjectEntityID      string
 	OriginalPredicate    string
@@ -138,6 +180,10 @@ type V2RelationshipDecisionResult struct {
 	SupportID           string
 	SupportDecisionID   string
 	ReviewTaskID        string
+	ProposalID          string
+	OwnerProfileID      string
+	Category            string
+	Reason              string
 	CreatedRelationship bool
 }
 
