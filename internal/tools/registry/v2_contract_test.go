@@ -9,8 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
@@ -193,7 +196,7 @@ func TestBuildV2UATWiresExecutableRemember(t *testing.T) {
 	if remember.Invoke == nil {
 		t.Fatal("BuildV2UAT remember invoker is nil")
 	}
-	out, err := remember.Invoke(context.Background(), "ignored-profile", map[string]any{
+	out, err := remember.Invoke(v2ContractInvokeContext("write"), "ignored-profile", map[string]any{
 		"evidence": []any{
 			map[string]any{"content": "Dense-Mem uses PostgreSQL."},
 		},
@@ -250,7 +253,7 @@ func TestBuildV2UATRememberRejectsTenantOverride(t *testing.T) {
 	if !ok {
 		t.Fatal("BuildV2UAT did not register remember")
 	}
-	_, err = remember.Invoke(context.Background(), "ignored-profile", map[string]any{
+	_, err = remember.Invoke(v2ContractInvokeContext("write"), "ignored-profile", map[string]any{
 		"team_id": "attacker-team",
 		"evidence": []any{
 			map[string]any{"content": "remember this exact evidence"},
@@ -258,6 +261,29 @@ func TestBuildV2UATRememberRejectsTenantOverride(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "team_id") {
 		t.Fatalf("remember.Invoke err = %v, want tenant override rejection", err)
+	}
+}
+
+func TestBuildV2UATRememberRejectsReadOnlyCredential(t *testing.T) {
+	stub := &stubV2RememberService{}
+	reg, err := BuildV2UAT(Dependencies{V2Remember: stub})
+	if err != nil {
+		t.Fatalf("BuildV2UAT: %v", err)
+	}
+	remember, ok := reg.Get(V2ToolRemember)
+	if !ok {
+		t.Fatal("BuildV2UAT did not register remember")
+	}
+	_, err = remember.Invoke(v2ContractInvokeContext("read"), "ignored-profile", map[string]any{
+		"evidence": []any{
+			map[string]any{"content": "remember this exact evidence"},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "missing required scope") {
+		t.Fatalf("remember.Invoke err = %v, want missing scope rejection", err)
+	}
+	if len(stub.req.Evidence) != 0 {
+		t.Fatalf("remember service was called with read-only scopes: %#v", stub.req)
 	}
 }
 
@@ -753,6 +779,15 @@ func readV2ContractFixtures(t *testing.T) []v2ContractFixture {
 		t.Fatal("no V2 contract fixtures")
 	}
 	return fixtures
+}
+
+func v2ContractInvokeContext(scopes ...string) context.Context {
+	return requestctx.WithActorCredential(context.Background(), requestctx.ActorCredential{
+		KeyID:      uuid.New(),
+		AuthMethod: "api_key",
+		Role:       "member",
+		Scopes:     scopes,
+	})
 }
 
 type stubV2RememberService struct {

@@ -3,6 +3,7 @@ package memoryservice
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -176,14 +177,20 @@ func TestV2RememberUsesOneSourceRevisionHashForBatch(t *testing.T) {
 		ContractVersion: domain.V2ContractVersion,
 		Evidence: []V2RememberEvidenceInput{
 			{
-				Content:        "first source fragment",
-				SourceKey:      "wiki://write-pipeline",
-				SourceRevision: "rev-2",
+				Content:               "first source fragment",
+				SourceKey:             "wiki://write-pipeline",
+				SourceRevision:        "rev-2",
+				SupersedesEvidenceIDs: []string{"evidence-old-a"},
+				IdempotencyKey:        "fragment-a",
+				Metadata:              map[string]any{"item": "first"},
 			},
 			{
-				Content:        "second source fragment",
-				SourceKey:      "wiki://write-pipeline",
-				SourceRevision: "rev-2",
+				Content:               "second source fragment",
+				SourceKey:             "wiki://write-pipeline",
+				SourceRevision:        "rev-2",
+				SupersedesEvidenceIDs: []string{"evidence-old-b"},
+				IdempotencyKey:        "fragment-b",
+				Metadata:              map[string]any{"item": "second"},
 			},
 		},
 	})
@@ -199,6 +206,14 @@ func TestV2RememberUsesOneSourceRevisionHashForBatch(t *testing.T) {
 	if first == ledger.input.Evidence[0].ContentHash || first == ledger.input.Evidence[1].ContentHash {
 		t.Fatalf("source revision hash %q must describe the batch, not one fragment", first)
 	}
+	require.Equal(t, []string{"evidence-old-a"}, ledger.input.Evidence[0].Metadata["supersedes_evidence_ids"])
+	require.Equal(t, "fragment-a", ledger.input.Evidence[0].Metadata["evidence_idempotency_key"])
+	require.Equal(t, []string{"evidence-old-b"}, ledger.input.Evidence[1].Metadata["supersedes_evidence_ids"])
+	require.Equal(t, "fragment-b", ledger.input.Evidence[1].Metadata["evidence_idempotency_key"])
+	require.NotContains(t, ledger.input.Evidence[0].SourceRevisionEnvelope, "supersedes_evidence_ids")
+	require.NotContains(t, ledger.input.Evidence[0].SourceRevisionEnvelope, "evidence_idempotency_key")
+	require.NotContains(t, ledger.input.Evidence[1].SourceRevisionEnvelope, "supersedes_evidence_ids")
+	require.NotContains(t, ledger.input.Evidence[1].SourceRevisionEnvelope, "evidence_idempotency_key")
 }
 
 func TestV2RememberRequiresAuthenticatedActorAndCredential(t *testing.T) {
@@ -217,6 +232,42 @@ func TestV2RememberRequiresAuthenticatedActorAndCredential(t *testing.T) {
 	if _, err := svc.RememberV2(ctx, req); !errors.Is(err, ErrV2RememberCredential) {
 		t.Fatalf("missing credential err = %v", err)
 	}
+}
+
+func TestV2RememberTranslatesLedgerConflictErrors(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	ledger := &v2RememberLedgerStub{
+		err: fmt.Errorf("pq: leaked detail: %w", repository.ErrV2IdempotencyConflict),
+	}
+	svc := NewV2RememberService(V2RememberDependencies{Ledger: ledger})
+
+	_, err := svc.RememberV2(authenticatedV2RememberContext(teamID, profileID, keyID), V2RememberRequest{
+		ContractVersion: domain.V2ContractVersion,
+		IdempotencyKey:  "same-key",
+		Evidence:        []V2RememberEvidenceInput{{Content: "evidence"}},
+	})
+	require.ErrorIs(t, err, ErrV2RememberConflict)
+	require.NotErrorIs(t, err, repository.ErrV2IdempotencyConflict)
+	require.NotContains(t, err.Error(), "leaked detail")
+}
+
+func TestV2RememberTranslatesLedgerPersistenceErrors(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	ledger := &v2RememberLedgerStub{
+		err: errors.New("pq: raw database failure"),
+	}
+	svc := NewV2RememberService(V2RememberDependencies{Ledger: ledger})
+
+	_, err := svc.RememberV2(authenticatedV2RememberContext(teamID, profileID, keyID), V2RememberRequest{
+		ContractVersion: domain.V2ContractVersion,
+		Evidence:        []V2RememberEvidenceInput{{Content: "evidence"}},
+	})
+	require.ErrorIs(t, err, ErrV2RememberPersistence)
+	require.NotContains(t, err.Error(), "raw database")
 }
 
 func authenticatedV2RememberContext(teamID, profileID, keyID uuid.UUID) context.Context {

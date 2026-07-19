@@ -176,7 +176,7 @@ func v2UATTools(deps Dependencies) []Tool {
 				if deps.V2Remember == nil {
 					return nil, ErrToolUnavailable
 				}
-				if err := ValidateV2ContractInput(tool, input, tool.RequiredScopes); err != nil {
+				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
 					return nil, fmt.Errorf("remember: invalid input: %w", err)
 				}
 				req, err := v2RememberRequestFromContractInput(input)

@@ -34,6 +34,9 @@ Prioritize these invariants:
   shared tool registry rather than duplicated schema or business logic.
 - API, DTO, and docs changes must preserve published routes and error contracts
   unless the change explicitly updates the contract and tests.
+- SQL result iterators must be closed on every return path, including
+  `rows.Scan` and `rows.Err` failures before later queries in the same
+  transaction.
 - Redis must remain optional for single-node deployments and required for
   multi-instance rate limits and SSE concurrency.
 

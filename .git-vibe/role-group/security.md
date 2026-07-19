@@ -37,6 +37,9 @@ Prioritize these invariants:
   key/profile and must not manage other profiles or team metadata.
 - MCP tool calls must sanitize errors, strip tenant arguments, validate input
   against registry schemas, and filter tools by key scope.
+- Contract or schema-bound tool invokers must validate against immutable
+  authenticated caller scopes from context, not against the tool's own required
+  scopes. A read-only credential must not reach write-tool service code.
 - GitHub Actions and GitVibe workflows must not expose secrets to untrusted fork
   pull requests or run write-token automation on untrusted code paths.
 - Destructive operations need explicit authorization, audit coverage, and tests.

@@ -398,11 +398,13 @@ func TestV2LedgerCreateIngestConcurrentIdempotency(t *testing.T) {
 	const workers = 8
 	results := make(chan *V2CreateIngestResult, workers)
 	errs := make(chan error, workers)
+	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			<-start
 			result, err := repo.CreateIngest(ctx, V2CreateIngestInput{
 				TeamID:         teamID,
 				OwnerProfileID: ownerID,
@@ -419,6 +421,7 @@ func TestV2LedgerCreateIngestConcurrentIdempotency(t *testing.T) {
 			results <- result
 		}()
 	}
+	close(start)
 	wg.Wait()
 	close(results)
 	close(errs)

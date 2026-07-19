@@ -2,6 +2,7 @@ package requestctx
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/google/uuid"
@@ -55,18 +56,31 @@ func TestActorCredentialContext(t *testing.T) {
 		KeyID:      keyID,
 		AuthMethod: "api_key",
 		Role:       "manager",
+		Scopes:     []string{"read", "write"},
 	}
 	ctx := WithActorCredential(context.Background(), credential)
+	credential.Scopes[0] = "mutated"
 
 	got, ok := ActorCredentialFromContext(ctx)
 	if !ok {
 		t.Fatal("ActorCredentialFromContext ok = false; want true")
 	}
-	if got != credential {
-		t.Fatalf("ActorCredentialFromContext = %#v; want %#v", got, credential)
+	want := ActorCredential{
+		KeyID:      keyID,
+		AuthMethod: "api_key",
+		Role:       "manager",
+		Scopes:     []string{"read", "write"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ActorCredentialFromContext = %#v; want %#v", got, want)
+	}
+	got.Scopes[0] = "mutated"
+	got, ok = ActorCredentialFromContext(ctx)
+	if !ok || !reflect.DeepEqual(got.Scopes, []string{"read", "write"}) {
+		t.Fatalf("ActorCredentialFromContext returned mutable scopes: %#v, %v", got, ok)
 	}
 
-	if got, ok := ActorCredentialFromContext(context.Background()); ok || got != (ActorCredential{}) {
+	if got, ok := ActorCredentialFromContext(context.Background()); ok || !reflect.DeepEqual(got, ActorCredential{}) {
 		t.Fatalf("ActorCredentialFromContext unset = %#v, %v; want zero,false", got, ok)
 	}
 }
