@@ -287,6 +287,65 @@ func TestBuildV2UATRememberRejectsReadOnlyCredential(t *testing.T) {
 	}
 }
 
+func TestBuildV2UATWiresExecutableRecallMemory(t *testing.T) {
+	stub := &stubV2RecallService{}
+	reg, err := BuildV2UAT(Dependencies{V2Recall: stub})
+	if err != nil {
+		t.Fatalf("BuildV2UAT: %v", err)
+	}
+	recall, ok := reg.Get(V2ToolRecallMemory)
+	if !ok {
+		t.Fatal("BuildV2UAT did not register recall_memory")
+	}
+	if recall.Invoke == nil {
+		t.Fatal("BuildV2UAT recall_memory invoker is nil")
+	}
+	out, err := recall.Invoke(context.Background(), "ignored-profile", map[string]any{
+		"query": "PostgreSQL memory",
+	})
+	if err != nil {
+		t.Fatalf("recall_memory.Invoke: %v", err)
+	}
+	if out["recall_id"] != "rec-v2" {
+		t.Fatalf("recall_id = %#v, want rec-v2", out["recall_id"])
+	}
+	results, ok := out["results"].([]any)
+	if !ok || len(results) != 1 {
+		t.Fatalf("results = %#v, want one result", out["results"])
+	}
+	result, ok := results[0].(map[string]any)
+	if !ok {
+		t.Fatalf("result = %#v, want object", results[0])
+	}
+	if _, ok := result["score"]; ok {
+		t.Fatalf("recall_memory exposed score in public output: %#v", result)
+	}
+	if stub.req.Query != "PostgreSQL memory" {
+		t.Fatalf("stub request not populated: %#v", stub.req)
+	}
+	if stub.req.ContractVersion != domain.V2ContractVersion {
+		t.Fatalf("contract version = %q", stub.req.ContractVersion)
+	}
+}
+
+func TestBuildV2UATRecallRejectsTenantOverride(t *testing.T) {
+	reg, err := BuildV2UAT(Dependencies{V2Recall: &stubV2RecallService{}})
+	if err != nil {
+		t.Fatalf("BuildV2UAT: %v", err)
+	}
+	recall, ok := reg.Get(V2ToolRecallMemory)
+	if !ok {
+		t.Fatal("BuildV2UAT did not register recall_memory")
+	}
+	_, err = recall.Invoke(context.Background(), "ignored-profile", map[string]any{
+		"team_id": "attacker-team",
+		"query":   "PostgreSQL memory",
+	})
+	if err == nil || !strings.Contains(err.Error(), "team_id") {
+		t.Fatalf("recall_memory.Invoke err = %v, want tenant override rejection", err)
+	}
+}
+
 func TestV2RememberRejectsMixedSourceRevisionBatch(t *testing.T) {
 	tools := v2ToolMap(t)
 	remember, err := requireV2Tool(tools, V2ToolRemember)
@@ -802,5 +861,23 @@ func (s *stubV2RememberService) RememberV2(_ context.Context, req memoryservice.
 		CheckAfterSeconds: 60,
 		StatusTool:        V2ToolGetMemoryPlacement,
 		CorrelationID:     "corr-v2",
+	}, nil
+}
+
+type stubV2RecallService struct {
+	req memoryservice.V2RecallRequest
+}
+
+func (s *stubV2RecallService) RecallV2(_ context.Context, req memoryservice.V2RecallRequest) (*memoryservice.V2RecallResult, error) {
+	s.req = req
+	return &memoryservice.V2RecallResult{
+		RecallID: "rec-v2",
+		Results: []memoryservice.V2RecallResultItem{{
+			EvidenceID:      "evidence-v2",
+			RelationshipIDs: []string{"relationship-v2"},
+			Rank:            1,
+			Context:         "Dense-Mem uses PostgreSQL.",
+		}},
+		SearchState: string(domain.V2SearchProjectionCurrent),
 	}, nil
 }

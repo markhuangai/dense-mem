@@ -312,6 +312,7 @@ func (r *V2SearchRepositoryImpl) SearchFullText(ctx context.Context, input V2Ful
 		rows, err := tx.WithContext(ctx).Raw(`
 			SELECT team_id::text, search_document_id::text, source_kind, source_id::text,
 			       source_version, document_version, embedding_contract_id::text,
+			       search_state,
 			       0::double precision AS distance,
 			       ts_rank_cd(search_tsv, plainto_tsquery('simple', ?))::double precision AS text_rank
 			FROM search_documents
@@ -398,6 +399,7 @@ func (r *V2SearchRepositoryImpl) SearchExactVector(ctx context.Context, input V2
 		rows, err := tx.WithContext(ctx).Raw(`
 				SELECT team_id::text, search_document_id::text, source_kind, source_id::text,
 				       source_version, document_version, embedding_contract_id::text,
+				       search_state,
 				       (embedding <=> ?::vector)::double precision AS distance,
 				       0::double precision AS text_rank
 				FROM search_documents
@@ -499,6 +501,7 @@ func scanV2SearchHit(scanner v2SearchHitScanner) (V2SearchHit, error) {
 		&hit.SourceVersion,
 		&hit.DocumentVersion,
 		&hit.EmbeddingContractID,
+		&hit.SearchState,
 		&hit.Distance,
 		&hit.TextRank,
 	)

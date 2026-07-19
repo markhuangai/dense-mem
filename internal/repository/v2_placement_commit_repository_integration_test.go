@@ -93,12 +93,12 @@ func TestV2PlacementSemanticCommitWritesStateSearchAndOutcomeAtomically(t *testi
 	require.Equal(t, "accepted", committed.Status)
 	require.NotEmpty(t, committed.OutcomeID)
 	require.Len(t, committed.RelationshipResults, 2)
-	require.Len(t, committed.SearchDocuments, 2)
+	require.Len(t, committed.SearchDocuments, 3)
 	require.Len(t, committed.EntityResolutionIDs, 2)
 	require.NotEmpty(t, committed.SearchDocuments[0].QueuedJobID)
 
 	var runStatus, itemStatus, itemCategory string
-	var relationshipCount, supportCount, searchDocumentCount, embeddingJobCount, outcomeCount, valueCount int64
+	var relationshipCount, supportCount, relationshipSearchDocumentCount, evidenceSearchDocumentCount, embeddingJobCount, outcomeCount, valueCount int64
 	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		require.NoError(t, tx.Raw(`
 			SELECT status
@@ -127,7 +127,13 @@ func TestV2PlacementSemanticCommitWritesStateSearchAndOutcomeAtomically(t *testi
 			FROM search_documents
 			WHERE team_id = ?::uuid
 			  AND source_kind = 'relationship'
-		`, teamID).Scan(&searchDocumentCount).Error)
+		`, teamID).Scan(&relationshipSearchDocumentCount).Error)
+		require.NoError(t, tx.Raw(`
+			SELECT COUNT(*)
+			FROM search_documents
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'evidence'
+		`, teamID).Scan(&evidenceSearchDocumentCount).Error)
 		require.NoError(t, tx.Raw(`
 			SELECT COUNT(*)
 			FROM embedding_jobs
@@ -152,10 +158,35 @@ func TestV2PlacementSemanticCommitWritesStateSearchAndOutcomeAtomically(t *testi
 	assert.Equal(t, "validated_claim", itemCategory)
 	assert.Equal(t, int64(2), relationshipCount)
 	assert.Equal(t, int64(2), supportCount)
-	assert.Equal(t, int64(2), searchDocumentCount)
-	assert.Equal(t, int64(2), embeddingJobCount)
+	assert.Equal(t, int64(2), relationshipSearchDocumentCount)
+	assert.Equal(t, int64(1), evidenceSearchDocumentCount)
+	assert.Equal(t, int64(3), embeddingJobCount)
 	assert.Equal(t, int64(1), valueCount)
 	assert.Equal(t, int64(1), outcomeCount)
+
+	searchRepo := NewV2SearchRepository(appDB, rls)
+	recall, err := searchRepo.RecallEvidence(ctx, V2RecallEvidenceInput{
+		TeamID: teamID,
+		Query:  "Dense-Mem",
+		Limit:  5,
+	})
+	require.NoError(t, err)
+	require.Len(t, recall.Results, 1)
+	assert.Equal(t, ingest.Evidence[0].FragmentID, recall.Results[0].EvidenceID)
+	assert.ElementsMatch(t, []string{
+		committed.RelationshipResults[0].Relationship.RelationshipID,
+		committed.RelationshipResults[1].Relationship.RelationshipID,
+	}, recall.Results[0].RelationshipIDs)
+	assert.NotContains(t, recall.Results[0].Context, "candidate")
+
+	known, err := searchRepo.RecallEvidence(ctx, V2RecallEvidenceInput{
+		TeamID:               teamID,
+		Query:                "Dense-Mem",
+		Limit:                5,
+		KnownRelationshipIDs: recall.Results[0].RelationshipIDs,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, known.Results)
 
 	_, err = ledgerRepo.CommitPlacementSemanticResult(ctx, V2CommitPlacementSemanticInput{
 		TeamID:           teamID,
