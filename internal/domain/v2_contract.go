@@ -156,6 +156,41 @@ const (
 	V2SearchProjectionFailed      V2SearchProjectionState = "failed"
 )
 
+type V2SearchIndexGenerationState string
+
+const (
+	V2SearchIndexGenerationBuilding   V2SearchIndexGenerationState = "building"
+	V2SearchIndexGenerationActive     V2SearchIndexGenerationState = "active"
+	V2SearchIndexGenerationFailed     V2SearchIndexGenerationState = "failed"
+	V2SearchIndexGenerationDeprecated V2SearchIndexGenerationState = "deprecated"
+	V2SearchIndexGenerationRetired    V2SearchIndexGenerationState = "retired"
+)
+
+type V2VectorDistanceMetric string
+
+const (
+	V2VectorDistanceCosine V2VectorDistanceMetric = "cosine"
+)
+
+type V2VectorIndexStrategy string
+
+const (
+	V2VectorIndexExact       V2VectorIndexStrategy = "exact"
+	V2VectorIndexVectorHNSW  V2VectorIndexStrategy = "vector_hnsw"
+	V2VectorIndexHalfvecHNSW V2VectorIndexStrategy = "halfvec_hnsw"
+)
+
+type V2EmbeddingJobStatus string
+
+const (
+	V2EmbeddingJobQueued     V2EmbeddingJobStatus = "queued"
+	V2EmbeddingJobProcessing V2EmbeddingJobStatus = "processing"
+	V2EmbeddingJobCompleted  V2EmbeddingJobStatus = "completed"
+	V2EmbeddingJobFailed     V2EmbeddingJobStatus = "failed"
+	V2EmbeddingJobStale      V2EmbeddingJobStatus = "stale"
+	V2EmbeddingJobCancelled  V2EmbeddingJobStatus = "cancelled"
+)
+
 type V2EvidenceItemCategory string
 
 const (
@@ -380,5 +415,40 @@ func V2SearchProjectionStates() []string {
 		string(V2SearchProjectionPending),
 		string(V2SearchProjectionCurrent),
 		string(V2SearchProjectionFailed),
+	}
+}
+
+func V2SearchIndexGenerationStates() []string {
+	return []string{
+		string(V2SearchIndexGenerationBuilding),
+		string(V2SearchIndexGenerationActive),
+		string(V2SearchIndexGenerationFailed),
+		string(V2SearchIndexGenerationDeprecated),
+		string(V2SearchIndexGenerationRetired),
+	}
+}
+
+func V2VectorDistanceMetrics() []string {
+	return []string{
+		string(V2VectorDistanceCosine),
+	}
+}
+
+func V2VectorIndexStrategies() []string {
+	return []string{
+		string(V2VectorIndexExact),
+		string(V2VectorIndexVectorHNSW),
+		string(V2VectorIndexHalfvecHNSW),
+	}
+}
+
+func V2EmbeddingJobStatuses() []string {
+	return []string{
+		string(V2EmbeddingJobQueued),
+		string(V2EmbeddingJobProcessing),
+		string(V2EmbeddingJobCompleted),
+		string(V2EmbeddingJobFailed),
+		string(V2EmbeddingJobStale),
+		string(V2EmbeddingJobCancelled),
 	}
 }

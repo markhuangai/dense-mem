@@ -165,6 +165,58 @@ func TestMigratorRunDown(t *testing.T) {
 	assert.NoError(t, err, "RunDown should succeed")
 }
 
+func TestV2SearchStorageMigrationAllowsIndexGenerationLifecycleOnly(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	m := NewMigratorWithDB(sqlDB)
+	require.NoError(t, m.RunUp(ctx))
+
+	contractID := uuid.NewString()
+	generationID := uuid.NewString()
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `SELECT set_config('app.tx_mode', 'migration', true)`)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO embedding_contracts (
+		    embedding_contract_id, contract_key, version, provider, model,
+		    dimensions, distance_metric, vector_normalization,
+		    document_format_version, query_format_version, lifecycle_state
+		) VALUES ($1::uuid, 'test-search-lifecycle', 1, 'test', 'test-model', 3, 'cosine', 'provider', 1, 1, 'active')
+	`, contractID)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO search_index_generations (
+		    search_index_generation_id, generation, embedding_contract_id,
+		    embedding_dimensions, ann_strategy, activation_state
+		) VALUES ($1::uuid, 1, $2::uuid, 3, 'exact', 'building')
+	`, generationID, contractID)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `
+		UPDATE search_index_generations
+		SET activation_state = 'active',
+		    activated_at = now()
+		WHERE search_index_generation_id = $1::uuid
+	`, generationID)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+
+	tx, err = sqlDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `SELECT set_config('app.tx_mode', 'migration', true)`)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `
+		UPDATE search_index_generations
+		SET metadata = '{"changed": true}'::jsonb
+		WHERE search_index_generation_id = $1::uuid
+	`, generationID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "immutable fields cannot be changed")
+	require.NoError(t, tx.Rollback())
+}
+
 func TestV2SemanticLedgerMigrationUpgradesPopulated1703(t *testing.T) {
 	ctx := context.Background()
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
@@ -225,6 +277,8 @@ func TestV2SemanticLedgerMigrationGuardedRollbackRejectsCanonicalAuthority(t *te
 		VALUES ($1::uuid, $2::uuid, 'doc://rollback-inferred', 'document', 'inferred')
 	`, teamID, profileID)
 	require.NoError(t, err)
+
+	require.NoError(t, m.RunDown(ctx))
 
 	err = m.RunDown(ctx)
 	require.Error(t, err)
