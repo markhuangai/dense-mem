@@ -154,14 +154,8 @@ func normalizeV2SemanticReviewJob(job V2SemanticReviewJob) V2SemanticReviewJob {
 	job.IngestID = strings.TrimSpace(job.IngestID)
 	job.PlacementRunID = strings.TrimSpace(job.PlacementRunID)
 	job.PlacementItemID = strings.TrimSpace(job.PlacementItemID)
-	job.Request.TeamID = strings.TrimSpace(job.Request.TeamID)
-	if job.Request.TeamID == "" {
-		job.Request.TeamID = job.TeamID
-	}
-	job.Request.OwnerProfileID = strings.TrimSpace(job.Request.OwnerProfileID)
-	if job.Request.OwnerProfileID == "" {
-		job.Request.OwnerProfileID = job.OwnerProfileID
-	}
+	job.Request.TeamID = job.TeamID
+	job.Request.OwnerProfileID = job.OwnerProfileID
 	return job
 }
 

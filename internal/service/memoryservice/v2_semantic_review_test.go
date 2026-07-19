@@ -70,6 +70,46 @@ func TestV2SemanticReviewRetriesCompleteResponseAndDoesNotPersistPartialInvalidA
 	}
 }
 
+func TestV2SemanticReviewForcesJobIdentityOntoProviderRequest(t *testing.T) {
+	teamID := uuid.NewString()
+	ownerID := uuid.NewString()
+	request := v2SemanticReviewServiceRequest(teamID, ownerID)
+	request.TeamID = uuid.NewString()
+	request.OwnerProfileID = uuid.NewString()
+	provider := &v2SemanticReviewProviderStub{
+		responses: []verifier.V2SemanticReviewResponse{
+			v2SemanticReviewResponse(request.RequestID, false, false),
+		},
+	}
+	ledger := &v2SemanticReviewLedgerStub{}
+	svc := NewV2SemanticReviewService(V2SemanticReviewDependencies{Provider: provider, Ledger: ledger})
+
+	result, err := svc.ReviewV2Semantic(context.Background(), V2SemanticReviewJob{
+		TeamID:          " " + teamID + " ",
+		OwnerProfileID:  " " + ownerID + " ",
+		IngestID:        uuid.NewString(),
+		PlacementRunID:  uuid.NewString(),
+		PlacementItemID: uuid.NewString(),
+		Request:         request,
+	})
+	if err != nil {
+		t.Fatalf("ReviewV2Semantic returned error: %v", err)
+	}
+	if result.Status != string(domain.V2SemanticReviewAccepted) {
+		t.Fatalf("status = %q", result.Status)
+	}
+	if len(provider.requests) != 1 {
+		t.Fatalf("provider calls = %d", len(provider.requests))
+	}
+	sent := provider.requests[0]
+	if sent.TeamID != teamID || sent.OwnerProfileID != ownerID {
+		t.Fatalf("provider request identity = %s/%s, want %s/%s", sent.TeamID, sent.OwnerProfileID, teamID, ownerID)
+	}
+	if got := sent.EntityMentions[0].Candidates; len(got) != 1 || got[0].TeamID != teamID {
+		t.Fatalf("provider candidates = %#v", got)
+	}
+}
+
 func TestV2SemanticReviewQuarantinesSecuritySignalsWithoutSemanticDecisions(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
