@@ -30,6 +30,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 	"github.com/markhuangai/dense-mem/internal/service/graphview"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	"github.com/markhuangai/dense-mem/internal/service/migrationcontrol"
 	"github.com/markhuangai/dense-mem/internal/service/recallservice"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 	"github.com/markhuangai/dense-mem/internal/sse"
@@ -185,6 +186,17 @@ func main() {
 	memoryPlacementRepo := repository.NewMemoryPlacementRepository(pgDB.GetDB(), rlsHelper)
 	skillPackImportRepo := repository.NewSkillPackImportRepository(pgDB.GetDB(), rlsHelper)
 	v2SemanticRepo := repository.NewV2SemanticRepository(pgDB.GetDB(), rlsHelper)
+	var v2MigrationControlSvc migrationcontrol.Service
+	if cfg.IsV2BootEnabled() {
+		v2MigrationControlRepo := repository.NewV2MigrationControlRepository(pgDB.GetDB(), rlsHelper)
+		v2MigrationControlSvc = migrationcontrol.New(v2MigrationControlRepo, migrationcontrol.Config{
+			Required: cfg.GetV2LegacyMigrationRequired(),
+		})
+	}
+	v2Bootstrap := buildDormantV2Bootstrap(cfg, pgDB.GetDB(), v2MigrationControlSvc)
+	if v2Bootstrap.Enabled {
+		logger.Info("v2 dormant bootstrap enabled", observability.String("mode", v2Bootstrap.Mode))
+	}
 
 	// ========================================
 	// Neo4j profile scope enforcer and graph writer
@@ -498,6 +510,7 @@ func main() {
 			return neo4jClient.Verify(ctx)
 		}},
 	}
+	checks = append(checks, v2Bootstrap.HealthChecks()...)
 
 	if backend.redisPingFn != nil {
 		checks = append(checks, http.HealthCheck{
@@ -591,6 +604,7 @@ func main() {
 			Logs:           operationLogService,
 			RecallFeedback: recallFeedbackEventService,
 			Dreams:         dreamSvc,
+			Migration:      v2MigrationControlSvc,
 		},
 		healthConfig,
 		logger,
