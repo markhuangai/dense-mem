@@ -24,6 +24,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
+	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/service/recallservice"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 	"github.com/markhuangai/dense-mem/internal/verifier"
@@ -762,6 +763,7 @@ func TestMapToolExecuteError(t *testing.T) {
 		{"claim not found", claimservice.ErrClaimNotFound, httperr.ErrClaimNotFound},
 		{"fact not found", factservice.ErrFactNotFound, httperr.ErrFactNotFound},
 		{"fragment not found", fragmentservice.ErrFragmentNotFound, httperr.NOT_FOUND},
+		{"v2 remember conflict", memoryservice.ErrV2RememberConflict, httperr.CONFLICT},
 		{"embedding timeout", embedding.ErrEmbeddingTimeout, httperr.SERVICE_UNAVAILABLE},
 		{"embedding provider", embedding.ErrEmbeddingProvider, httperr.SERVICE_UNAVAILABLE},
 		{"embedding rate limit", embedding.ErrEmbeddingRateLimit, httperr.SERVICE_UNAVAILABLE},

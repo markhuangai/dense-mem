@@ -39,9 +39,9 @@ func TestV2SemanticSupportMustMatchSuppliedIngest(t *testing.T) {
 	require.NoError(t, err)
 
 	firstIngest := createV2SemanticSourceIngest(t, ctx, ledgerRepo, teamID, ownerID,
-		"Dense-Mem uses PostgreSQL.", sourceOne)
+		"Dense-Mem uses PostgreSQL.", "doc://ingest-one", "sha256:one")
 	secondIngest := createV2SemanticSourceIngest(t, ctx, ledgerRepo, teamID, ownerID,
-		"Dense-Mem used Neo4j.", sourceTwo)
+		"Dense-Mem used Neo4j.", "doc://ingest-two", "sha256:two")
 	denseMem := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense-Mem")
 	postgres := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "PostgreSQL")
 
@@ -270,16 +270,18 @@ func createV2SemanticSourceIngest(
 	teamID string,
 	ownerID string,
 	content string,
-	source *V2SourceRevisionResult,
+	sourceKey string,
+	sourceRevisionContentHash string,
 ) *V2CreateIngestResult {
 	t.Helper()
 	result, err := repo.CreateIngest(ctx, V2CreateIngestInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		Evidence: []V2EvidenceInput{{
-			Content:          content,
-			SourceID:         source.SourceID,
-			SourceRevisionID: source.SourceRevisionID,
+			Content:                   content,
+			SourceKey:                 sourceKey,
+			SourceRevisionToken:       "rev-1",
+			SourceRevisionContentHash: sourceRevisionContentHash,
 		}},
 	})
 	require.NoError(t, err)

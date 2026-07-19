@@ -67,7 +67,7 @@ func TestV2ContractEnums(t *testing.T) {
 			t.Fatalf("V2CrossReferenceKinds missing %s", kind)
 		}
 	}
-	for _, status := range []string{"queued", "processing", "awaiting_review", "completed", "failed"} {
+	for _, status := range []string{"queued", "guarded", "quarantined", "processing", "awaiting_review", "completed", "failed"} {
 		if !slices.Contains(V2PlacementRunStatuses(), status) {
 			t.Fatalf("V2PlacementRunStatuses missing %s", status)
 		}

@@ -141,6 +141,8 @@ type V2PlacementRunStatus string
 
 const (
 	V2PlacementRunQueued         V2PlacementRunStatus = "queued"
+	V2PlacementRunGuarded        V2PlacementRunStatus = "guarded"
+	V2PlacementRunQuarantined    V2PlacementRunStatus = "quarantined"
 	V2PlacementRunProcessing     V2PlacementRunStatus = "processing"
 	V2PlacementRunAwaitingReview V2PlacementRunStatus = "awaiting_review"
 	V2PlacementRunCompleted      V2PlacementRunStatus = "completed"
@@ -402,6 +404,8 @@ func V2ValueTypes() []string {
 func V2PlacementRunStatuses() []string {
 	return []string{
 		string(V2PlacementRunQueued),
+		string(V2PlacementRunGuarded),
+		string(V2PlacementRunQuarantined),
 		string(V2PlacementRunProcessing),
 		string(V2PlacementRunAwaitingReview),
 		string(V2PlacementRunCompleted),

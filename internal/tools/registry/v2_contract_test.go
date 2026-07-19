@@ -9,8 +9,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
+	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
@@ -176,6 +180,135 @@ func TestBuildDefaultDoesNotExposeV2ContractTools(t *testing.T) {
 		if tool.ContractVersion == domain.V2ContractVersion {
 			t.Fatalf("BuildDefault exposed V2 contract metadata on %s", tool.Name)
 		}
+	}
+}
+
+func TestBuildV2UATWiresExecutableRemember(t *testing.T) {
+	stub := &stubV2RememberService{}
+	reg, err := BuildV2UAT(Dependencies{V2Remember: stub})
+	if err != nil {
+		t.Fatalf("BuildV2UAT: %v", err)
+	}
+	remember, ok := reg.Get(V2ToolRemember)
+	if !ok {
+		t.Fatal("BuildV2UAT did not register remember")
+	}
+	if remember.Invoke == nil {
+		t.Fatal("BuildV2UAT remember invoker is nil")
+	}
+	out, err := remember.Invoke(v2ContractInvokeContext("write"), "ignored-profile", map[string]any{
+		"evidence": []any{
+			map[string]any{"content": "Dense-Mem uses PostgreSQL."},
+		},
+		"proposal": map[string]any{
+			"entities": []any{
+				map[string]any{"ref": "entity:dense-mem", "name": "Dense-Mem", "entity_kind": "project"},
+				map[string]any{"ref": "entity:postgres", "name": "PostgreSQL", "entity_kind": "product"},
+			},
+			"relationships": []any{
+				map[string]any{
+					"proposal_id": "rel:uses",
+					"subject_ref": "entity:dense-mem",
+					"predicate":   "uses",
+					"object_ref":  "entity:postgres",
+					"evidence": []any{
+						map[string]any{"evidence_index": 0, "start": 0, "end": 25},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("remember.Invoke: %v", err)
+	}
+	if err := ValidateInput(Tool{InputSchema: remember.OutputSchema}, out); err != nil {
+		t.Fatalf("validate output: %v", err)
+	}
+	if out["ingest_id"] != "ingest-v2" {
+		t.Fatalf("ingest_id = %#v, want ingest-v2", out["ingest_id"])
+	}
+	if out["processing_state"] != string(domain.V2PlacementRunQueued) || out["correlation_id"] != "corr-v2" {
+		t.Fatalf("output = %#v", out)
+	}
+	if stub.req.ContractVersion != domain.V2ContractVersion || len(stub.req.Evidence) != 1 {
+		t.Fatalf("stub request not populated: %#v", stub.req)
+	}
+	if stub.req.Evidence[0].Content != "Dense-Mem uses PostgreSQL." {
+		t.Fatalf("evidence content = %q", stub.req.Evidence[0].Content)
+	}
+	if len(stub.req.EntityHints) != 2 || stub.req.EntityHints[0]["ref"] != "entity:dense-mem" {
+		t.Fatalf("entity hints = %#v", stub.req.EntityHints)
+	}
+	if len(stub.req.RelationshipHints) != 1 || stub.req.RelationshipHints[0]["proposal_id"] != "rel:uses" {
+		t.Fatalf("relationship hints = %#v", stub.req.RelationshipHints)
+	}
+}
+
+func TestBuildV2UATRememberRejectsTenantOverride(t *testing.T) {
+	reg, err := BuildV2UAT(Dependencies{V2Remember: &stubV2RememberService{}})
+	if err != nil {
+		t.Fatalf("BuildV2UAT: %v", err)
+	}
+	remember, ok := reg.Get(V2ToolRemember)
+	if !ok {
+		t.Fatal("BuildV2UAT did not register remember")
+	}
+	_, err = remember.Invoke(v2ContractInvokeContext("write"), "ignored-profile", map[string]any{
+		"team_id": "attacker-team",
+		"evidence": []any{
+			map[string]any{"content": "remember this exact evidence"},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "team_id") {
+		t.Fatalf("remember.Invoke err = %v, want tenant override rejection", err)
+	}
+}
+
+func TestBuildV2UATRememberRejectsReadOnlyCredential(t *testing.T) {
+	stub := &stubV2RememberService{}
+	reg, err := BuildV2UAT(Dependencies{V2Remember: stub})
+	if err != nil {
+		t.Fatalf("BuildV2UAT: %v", err)
+	}
+	remember, ok := reg.Get(V2ToolRemember)
+	if !ok {
+		t.Fatal("BuildV2UAT did not register remember")
+	}
+	_, err = remember.Invoke(v2ContractInvokeContext("read"), "ignored-profile", map[string]any{
+		"evidence": []any{
+			map[string]any{"content": "remember this exact evidence"},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "missing required scope") {
+		t.Fatalf("remember.Invoke err = %v, want missing scope rejection", err)
+	}
+	if len(stub.req.Evidence) != 0 {
+		t.Fatalf("remember service was called with read-only scopes: %#v", stub.req)
+	}
+}
+
+func TestV2RememberRejectsMixedSourceRevisionBatch(t *testing.T) {
+	tools := v2ToolMap(t)
+	remember, err := requireV2Tool(tools, V2ToolRemember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = ValidateV2ContractInput(remember, map[string]any{
+		"evidence": []any{
+			map[string]any{
+				"content":         "first source fragment",
+				"source_key":      "wiki://write-pipeline",
+				"source_revision": "rev-1",
+			},
+			map[string]any{
+				"content":         "second source fragment",
+				"source_key":      "wiki://write-pipeline",
+				"source_revision": "rev-2",
+			},
+		},
+	}, []string{"write"})
+	if err == nil || !strings.Contains(err.Error(), "revision fields must match") {
+		t.Fatalf("ValidateV2ContractInput err = %v, want mixed source revision rejection", err)
 	}
 }
 
@@ -646,4 +779,28 @@ func readV2ContractFixtures(t *testing.T) []v2ContractFixture {
 		t.Fatal("no V2 contract fixtures")
 	}
 	return fixtures
+}
+
+func v2ContractInvokeContext(scopes ...string) context.Context {
+	return requestctx.WithActorCredential(context.Background(), requestctx.ActorCredential{
+		KeyID:      uuid.New(),
+		AuthMethod: "api_key",
+		Role:       "member",
+		Scopes:     scopes,
+	})
+}
+
+type stubV2RememberService struct {
+	req memoryservice.V2RememberRequest
+}
+
+func (s *stubV2RememberService) RememberV2(_ context.Context, req memoryservice.V2RememberRequest) (*memoryservice.V2RememberResult, error) {
+	s.req = req
+	return &memoryservice.V2RememberResult{
+		IngestID:          "ingest-v2",
+		ProcessingState:   string(domain.V2PlacementRunQueued),
+		CheckAfterSeconds: 60,
+		StatusTool:        V2ToolGetMemoryPlacement,
+		CorrelationID:     "corr-v2",
+	}, nil
 }
