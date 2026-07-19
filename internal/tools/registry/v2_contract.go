@@ -14,6 +14,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 )
 
 const (
@@ -382,6 +383,104 @@ func v2UATTools(deps Dependencies) []Tool {
 				}
 				return v2ListCommunitiesContractOutput(communities), nil
 			}
+		case V2ToolFindMemoryPackCandidates:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
+				if deps.V2SkillPack == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
+					return nil, fmt.Errorf("find_memory_pack_candidates: invalid input: %w", err)
+				}
+				var req skillpackservice.V2FindCandidatesRequest
+				if err := remapInput(input, &req); err != nil {
+					return nil, fmt.Errorf("find_memory_pack_candidates: invalid input: %w", err)
+				}
+				res, err := deps.V2SkillPack.FindCandidatesV2(ctx, req)
+				if err != nil {
+					return nil, err
+				}
+				return v2FindMemoryPackCandidatesContractOutput(res), nil
+			}
+		case V2ToolExportMemoryPack:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
+				if deps.V2SkillPack == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
+					return nil, fmt.Errorf("export_memory_pack: invalid input: %w", err)
+				}
+				var req skillpackservice.V2ExportRequest
+				if err := remapInput(input, &req); err != nil {
+					return nil, fmt.Errorf("export_memory_pack: invalid input: %w", err)
+				}
+				res, err := deps.V2SkillPack.ExportV2(ctx, req)
+				if err != nil {
+					return nil, err
+				}
+				return v2ExportMemoryPackContractOutput(res), nil
+			}
+		case V2ToolInspectMemoryPack:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
+				if deps.V2SkillPack == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
+					return nil, fmt.Errorf("inspect_memory_pack: invalid input: %w", err)
+				}
+				var req skillpackservice.V2InspectRequest
+				if err := remapInput(input, &req); err != nil {
+					return nil, fmt.Errorf("inspect_memory_pack: invalid input: %w", err)
+				}
+				res, err := deps.V2SkillPack.InspectV2(ctx, req)
+				if err != nil {
+					return nil, err
+				}
+				return v2InspectMemoryPackContractOutput(res, req.Mode), nil
+			}
+		case V2ToolImportMemoryPack:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
+				if deps.V2SkillPack == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
+					return nil, fmt.Errorf("import_memory_pack: invalid input: %w", err)
+				}
+				var req skillpackservice.V2ImportRequest
+				if err := remapInput(input, &req); err != nil {
+					return nil, fmt.Errorf("import_memory_pack: invalid input: %w", err)
+				}
+				res, err := deps.V2SkillPack.ImportV2(ctx, req)
+				if err != nil {
+					return nil, err
+				}
+				return v2ImportMemoryPackContractOutput(res), nil
+			}
+		case V2ToolRollbackMemoryPackImport:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
+				if deps.V2SkillPack == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
+					return nil, fmt.Errorf("rollback_memory_pack_import: invalid input: %w", err)
+				}
+				var req skillpackservice.V2RollbackRequest
+				if err := remapInput(input, &req); err != nil {
+					return nil, fmt.Errorf("rollback_memory_pack_import: invalid input: %w", err)
+				}
+				if !req.DryRun {
+					req.Confirm = true
+				}
+				res, err := deps.V2SkillPack.RollbackV2(ctx, req)
+				if err != nil {
+					return nil, err
+				}
+				return v2RollbackMemoryPackContractOutput(res), nil
+			}
 		}
 	}
 	return tools
@@ -507,6 +606,215 @@ func v2ListCommunitiesContractOutput(communities []repository.V2CommunityRecord)
 		items = append(items, item)
 	}
 	return map[string]any{"communities": items}
+}
+
+func v2FindMemoryPackCandidatesContractOutput(res *skillpackservice.V2FindCandidatesResult) map[string]any {
+	if res == nil {
+		return map[string]any{"candidates": []any{}}
+	}
+	candidates := make([]map[string]any, 0, len(res.Candidates))
+	for i, candidate := range res.Candidates {
+		candidates = append(candidates, map[string]any{
+			"relationship_id": candidate.RelationshipID,
+			"subject": map[string]any{
+				"entity_id": candidate.SubjectEntityID,
+				"name":      candidate.Subject,
+			},
+			"predicate": candidate.PredicateKey,
+			"object":    v2MemoryPackObjectContractOutput(candidate),
+			"polarity":  firstNonEmpty(candidate.Polarity, "+"),
+			"rank":      i + 1,
+		})
+	}
+	return map[string]any{"candidates": candidates}
+}
+
+func v2MemoryPackObjectContractOutput(candidate skillpackservice.V2MemoryPackCandidate) map[string]any {
+	if strings.TrimSpace(candidate.ObjectValueID) != "" {
+		return map[string]any{
+			"value_id": candidate.ObjectValueID,
+			"type":     firstNonEmpty(candidate.ObjectValueType, string(domain.V2ValueTypeString)),
+			"value":    candidate.Object,
+		}
+	}
+	return map[string]any{
+		"entity_id": candidate.ObjectEntityID,
+		"name":      candidate.Object,
+	}
+}
+
+func v2ExportMemoryPackContractOutput(res *skillpackservice.V2ExportResult) map[string]any {
+	if res == nil {
+		return map[string]any{
+			"artifact_json":  "",
+			"content_sha256": strings.Repeat("0", 64),
+			"filename":       "",
+			"counts":         map[string]any{},
+			"omissions":      []any{},
+		}
+	}
+	return map[string]any{
+		"artifact_json":  res.CanonicalJSON,
+		"content_sha256": res.SHA256,
+		"filename":       res.Filename,
+		"counts": map[string]any{
+			"relationships":      res.ItemCount,
+			"evidence_fragments": len(res.Artifact.EvidenceFragments),
+			"evidence_supports":  len(res.Artifact.EvidenceSupports),
+		},
+		"omissions": v2MemoryPackOmissionsContractOutput(res.Omissions),
+	}
+}
+
+func v2InspectMemoryPackContractOutput(res *skillpackservice.V2InspectResult, mode string) map[string]any {
+	if res == nil {
+		return map[string]any{
+			"valid":             false,
+			"format":            skillpackservice.V2MemoryPackFormat,
+			"content_sha256":    strings.Repeat("0", 64),
+			"mode":              firstNonEmpty(mode, "review"),
+			"counts":            map[string]any{},
+			"conflicts":         []any{},
+			"expected_outcomes": map[string]any{},
+		}
+	}
+	ready := 0
+	review := 0
+	for _, item := range res.Items {
+		if item.Status == "ready" {
+			ready++
+			continue
+		}
+		review++
+	}
+	return map[string]any{
+		"valid":          true,
+		"format":         res.Format,
+		"content_sha256": res.ArtifactHash,
+		"mode":           firstNonEmpty(mode, "review"),
+		"counts": map[string]any{
+			"relationships":      res.ItemCount,
+			"selected":           res.SelectedCount,
+			"evidence_fragments": res.SupportSummary.FragmentCount,
+			"evidence_supports":  res.SupportSummary.SupportCount,
+		},
+		"conflicts": v2MemoryPackConflictsContractOutput(res.DecisionsRequired),
+		"expected_outcomes": map[string]any{
+			"create": ready,
+			"review": review,
+			"skip":   0,
+		},
+	}
+}
+
+func v2ImportMemoryPackContractOutput(res *skillpackservice.V2ImportResult) map[string]any {
+	if res == nil {
+		return map[string]any{
+			"import_id":        "",
+			"processing_state": "failed",
+			"ingest_ids":       []any{},
+			"omissions":        []any{},
+		}
+	}
+	ingestIDs := []string{}
+	if strings.TrimSpace(res.IngestID) != "" {
+		ingestIDs = append(ingestIDs, res.IngestID)
+	}
+	return map[string]any{
+		"import_id":        res.ImportID,
+		"processing_state": v2MemoryPackProcessingState(res),
+		"ingest_ids":       ingestIDs,
+		"omissions":        v2ImportMemoryPackOmissionsContractOutput(res.Items),
+	}
+}
+
+func v2RollbackMemoryPackContractOutput(res *skillpackservice.V2RollbackResult) map[string]any {
+	if res == nil {
+		return map[string]any{
+			"import_id":                 "",
+			"dry_run":                   true,
+			"safe":                      false,
+			"blockers":                  []any{},
+			"affected_relationship_ids": []any{},
+		}
+	}
+	out := map[string]any{
+		"import_id":                 res.ImportID,
+		"dry_run":                   res.DryRun,
+		"safe":                      len(res.Conflicts) == 0,
+		"blockers":                  v2RollbackBlockersContractOutput(res.Conflicts),
+		"affected_relationship_ids": res.AffectedRelationshipIDs,
+	}
+	if strings.TrimSpace(res.ImpactToken) != "" {
+		out["impact_token"] = res.ImpactToken
+	}
+	if res.Status == domain.SkillPackImportStatusRolledBack {
+		out["applied"] = true
+	}
+	return out
+}
+
+func v2MemoryPackOmissionsContractOutput(omissions []string) []map[string]any {
+	out := make([]map[string]any, 0, len(omissions))
+	for _, omission := range omissions {
+		if strings.TrimSpace(omission) == "" {
+			continue
+		}
+		out = append(out, map[string]any{"item_id": "artifact", "reason": omission})
+	}
+	return out
+}
+
+func v2MemoryPackConflictsContractOutput(prompts []skillpackservice.V2ConflictPrompt) []map[string]any {
+	out := make([]map[string]any, 0, len(prompts))
+	for _, prompt := range prompts {
+		out = append(out, map[string]any{
+			"item_id":           prompt.ItemID,
+			"kind":              firstNonEmpty(prompt.Reason, "review_required"),
+			"allowed_decisions": prompt.AllowedActions,
+		})
+	}
+	return out
+}
+
+func v2ImportMemoryPackOmissionsContractOutput(items []skillpackservice.V2ImportItemResult) []map[string]any {
+	out := []map[string]any{}
+	for _, item := range items {
+		switch item.Status {
+		case "skipped":
+			out = append(out, map[string]any{"item_id": item.ItemID, "reason": firstNonEmpty(item.Decision, "skipped")})
+		case "failed":
+			out = append(out, map[string]any{"item_id": item.ItemID, "reason": firstNonEmpty(item.Error, "failed")})
+		}
+	}
+	return out
+}
+
+func v2MemoryPackProcessingState(res *skillpackservice.V2ImportResult) string {
+	switch res.Status {
+	case domain.SkillPackImportStatusFailed, "status_update_failed", "change_ledger_failed":
+		return "failed"
+	case domain.SkillPackImportStatusInspecting:
+		return "processing"
+	case domain.SkillPackImportStatusApplied:
+		if strings.TrimSpace(res.IngestID) != "" {
+			return "queued"
+		}
+		return "completed"
+	default:
+		return "completed"
+	}
+}
+
+func v2RollbackBlockersContractOutput(conflicts []string) []map[string]any {
+	out := make([]map[string]any, 0, len(conflicts))
+	for _, conflict := range conflicts {
+		out = append(out, map[string]any{
+			"code":    "rollback_blocked",
+			"message": conflict,
+		})
+	}
+	return out
 }
 
 func v2DreamSummaryContractOutput(dream *domain.Dream) map[string]any {
