@@ -1,11 +1,12 @@
 package registry
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
 const (
@@ -163,6 +164,35 @@ func V2ContractTools() []Tool {
 			v2RollbackMemoryPackImportOutputSchema(),
 		),
 	}
+}
+
+func v2UATTools(deps Dependencies) []Tool {
+	tools := V2ContractTools()
+	for i := range tools {
+		switch tools[i].Name {
+		case V2ToolRemember:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
+				if deps.V2Remember == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, tool.RequiredScopes); err != nil {
+					return nil, fmt.Errorf("remember: invalid input: %w", err)
+				}
+				var req memoryservice.V2RememberRequest
+				if err := remapInput(input, &req); err != nil {
+					return nil, fmt.Errorf("remember: invalid input: %w", err)
+				}
+				req.ContractVersion = domain.V2ContractVersion
+				res, err := deps.V2Remember.RememberV2(ctx, req)
+				if err != nil {
+					return nil, err
+				}
+				return structToMap(res)
+			}
+		}
+	}
+	return tools
 }
 
 func v2ContractTool(
@@ -934,50 +964,4 @@ func requireV2Tool(tools map[string]Tool, name string) (Tool, error) {
 		return Tool{}, fmt.Errorf("tool %s has wrong V2 gate metadata", name)
 	}
 	return tool, nil
-}
-
-func assertV2ProviderProposalSchema(schema map[string]any) error {
-	props := schemaProperties(schema)
-	if len(props) == 0 {
-		return errors.New("provider proposal schema has no properties")
-	}
-	for _, forbidden := range []string{"team_id", "profile_id", "tier", "status", "predicate_definitions"} {
-		if _, ok := props[forbidden]; ok {
-			return fmt.Errorf("provider proposal schema allows %s", forbidden)
-		}
-	}
-	if _, ok := props["predicate_options"]; !ok {
-		return errors.New("provider proposal schema has no predicate_options")
-	}
-	relationshipProposals, ok := props["relationship_proposals"]
-	if !ok {
-		return errors.New("provider proposal schema has no relationship_proposals")
-	}
-	items, ok := relationshipProposals["items"].(map[string]any)
-	if !ok {
-		return errors.New("provider relationship_proposals schema has no item schema")
-	}
-	oneOf, ok := items["oneOf"].([]any)
-	if !ok || len(oneOf) != 2 {
-		return errors.New("provider relationship proposal schema must require exactly one object form")
-	}
-	return nil
-}
-
-func assertV2VerifierResponseSchema(schema map[string]any) error {
-	if !schemaDisallowsAdditionalProperties(schema) {
-		return errors.New("verifier response schema is not closed")
-	}
-	props := schemaProperties(schema)
-	for _, required := range []string{"request_id", "security_signals", "entity_results", "relationship_results"} {
-		if _, ok := props[required]; !ok {
-			return fmt.Errorf("verifier response schema has no %s", required)
-		}
-	}
-	for _, forbidden := range []string{"tier", "status", "support_count", "predicate_definitions"} {
-		if _, ok := props[forbidden]; ok {
-			return fmt.Errorf("verifier response schema allows %s", forbidden)
-		}
-	}
-	return nil
 }

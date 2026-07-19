@@ -11,6 +11,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
+	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
@@ -176,6 +177,83 @@ func TestBuildDefaultDoesNotExposeV2ContractTools(t *testing.T) {
 		if tool.ContractVersion == domain.V2ContractVersion {
 			t.Fatalf("BuildDefault exposed V2 contract metadata on %s", tool.Name)
 		}
+	}
+}
+
+func TestBuildV2UATWiresExecutableRemember(t *testing.T) {
+	stub := &stubV2RememberService{}
+	reg, err := BuildV2UAT(Dependencies{V2Remember: stub})
+	if err != nil {
+		t.Fatalf("BuildV2UAT: %v", err)
+	}
+	remember, ok := reg.Get(V2ToolRemember)
+	if !ok {
+		t.Fatal("BuildV2UAT did not register remember")
+	}
+	if remember.Invoke == nil {
+		t.Fatal("BuildV2UAT remember invoker is nil")
+	}
+	out, err := remember.Invoke(context.Background(), "ignored-profile", map[string]any{
+		"evidence": []any{
+			map[string]any{"content": "remember this exact evidence"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("remember.Invoke: %v", err)
+	}
+	if out["ingest_id"] != "ingest-v2" {
+		t.Fatalf("ingest_id = %#v, want ingest-v2", out["ingest_id"])
+	}
+	if stub.req.ContractVersion != domain.V2ContractVersion || len(stub.req.Evidence) != 1 {
+		t.Fatalf("stub request not populated: %#v", stub.req)
+	}
+	if stub.req.Evidence[0].Content != "remember this exact evidence" {
+		t.Fatalf("evidence content = %q", stub.req.Evidence[0].Content)
+	}
+}
+
+func TestBuildV2UATRememberRejectsTenantOverride(t *testing.T) {
+	reg, err := BuildV2UAT(Dependencies{V2Remember: &stubV2RememberService{}})
+	if err != nil {
+		t.Fatalf("BuildV2UAT: %v", err)
+	}
+	remember, ok := reg.Get(V2ToolRemember)
+	if !ok {
+		t.Fatal("BuildV2UAT did not register remember")
+	}
+	_, err = remember.Invoke(context.Background(), "ignored-profile", map[string]any{
+		"team_id": "attacker-team",
+		"evidence": []any{
+			map[string]any{"content": "remember this exact evidence"},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "team_id") {
+		t.Fatalf("remember.Invoke err = %v, want tenant override rejection", err)
+	}
+}
+
+func TestV2RememberRejectsMixedSourceRevisionBatch(t *testing.T) {
+	tools := v2ToolMap(t)
+	remember, err := requireV2Tool(tools, V2ToolRemember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = ValidateV2ContractInput(remember, map[string]any{
+		"evidence": []any{
+			map[string]any{
+				"content":         "first source fragment",
+				"source_key":      "wiki://write-pipeline",
+				"source_revision": "rev-1",
+			},
+			map[string]any{
+				"content":         "second source fragment",
+				"source_key":      "wiki://write-pipeline",
+				"source_revision": "rev-2",
+			},
+		},
+	}, []string{"write"})
+	if err == nil || !strings.Contains(err.Error(), "revision fields must match") {
+		t.Fatalf("ValidateV2ContractInput err = %v, want mixed source revision rejection", err)
 	}
 }
 
@@ -646,4 +724,27 @@ func readV2ContractFixtures(t *testing.T) []v2ContractFixture {
 		t.Fatal("no V2 contract fixtures")
 	}
 	return fixtures
+}
+
+type stubV2RememberService struct {
+	req memoryservice.V2RememberRequest
+}
+
+func (s *stubV2RememberService) RememberV2(_ context.Context, req memoryservice.V2RememberRequest) (*memoryservice.V2RememberResult, error) {
+	s.req = req
+	return &memoryservice.V2RememberResult{
+		IngestID:          "ingest-v2",
+		Status:            string(domain.V2PlacementRunQueued),
+		CheckAfterSeconds: 60,
+		StatusTool:        V2ToolGetMemoryPlacement,
+		Items: []memoryservice.V2RememberItemResult{
+			{
+				ItemID:        "item-v2",
+				EvidenceIndex: 0,
+				Category:      string(domain.V2EvidenceProcessed),
+				SearchState:   string(domain.V2SearchProjectionNotRequired),
+			},
+		},
+		SearchState: string(domain.V2SearchProjectionNotRequired),
+	}, nil
 }

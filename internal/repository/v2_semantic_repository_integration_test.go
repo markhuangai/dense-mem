@@ -540,9 +540,10 @@ func TestV2SemanticSupportSourceRevisionMustMatchSource(t *testing.T) {
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		Evidence: []V2EvidenceInput{{
-			Content:          "Dense-Mem uses PostgreSQL.",
-			SourceID:         sourceOne.SourceID,
-			SourceRevisionID: sourceOne.SourceRevisionID,
+			Content:                   "Dense-Mem uses PostgreSQL.",
+			SourceKey:                 "doc://one",
+			SourceRevisionToken:       "rev-1",
+			SourceRevisionContentHash: "sha256:one",
 		}},
 	})
 	require.NoError(t, err)

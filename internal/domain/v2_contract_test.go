@@ -80,6 +80,11 @@ func TestV2ContractEnums(t *testing.T) {
 			t.Fatalf("V2SearchProjectionStates missing %s", state)
 		}
 	}
+	for _, status := range []string{"queued", "guarded", "quarantined", "processing", "completed", "failed"} {
+		if !slices.Contains(V2PlacementRunStatuses(), status) {
+			t.Fatalf("V2PlacementRunStatuses missing %s", status)
+		}
+	}
 	if slices.Contains(V2SearchProjectionStates(), "stale") {
 		t.Fatal("V2SearchProjectionStates contains non-canonical stale state")
 	}
