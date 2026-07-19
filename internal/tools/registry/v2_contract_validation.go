@@ -130,12 +130,13 @@ func validateV2DreamFeedback(args map[string]any) error {
 }
 
 func validateV2MemoryPackSource(args map[string]any) error {
-	artifact, hasArtifact := args["artifact_json"].(string)
-	hasArtifact = hasArtifact && strings.TrimSpace(artifact) != ""
-	rawURL, hasURL := args["url"].(string)
-	hasURL = hasURL && strings.TrimSpace(rawURL) != ""
+	artifact, hasArtifact := nonEmptyString(args["artifact_json"])
+	rawURL, hasURL := nonEmptyString(args["url"])
 	if hasArtifact == hasURL {
 		return fmt.Errorf("exactly one of artifact_json or url is required")
+	}
+	if hasArtifact && utf8.RuneCountInString(artifact) > v2MemoryPackArtifactMaxLength {
+		return fmt.Errorf("artifact_json exceeds maximum length of %d", v2MemoryPackArtifactMaxLength)
 	}
 	if hasURL {
 		parsed, err := url.Parse(rawURL)
@@ -153,6 +154,15 @@ func validateV2MemoryPackSource(args map[string]any) error {
 		}
 	}
 	return nil
+}
+
+func nonEmptyString(value any) (string, bool) {
+	text, ok := value.(string)
+	if !ok {
+		return "", false
+	}
+	text = strings.TrimSpace(text)
+	return text, text != ""
 }
 
 func validateV2RollbackMemoryPackImport(args map[string]any) error {

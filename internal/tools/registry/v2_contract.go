@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
@@ -207,6 +208,28 @@ func v2UATTools(deps Dependencies) []Tool {
 				res, err := deps.V2Recall.RecallV2(ctx, req)
 				if err != nil {
 					return nil, err
+				}
+				return structToMap(res)
+			}
+		case V2ToolTraceMemory:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
+				if deps.Context == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, tool.RequiredScopes); err != nil {
+					return nil, fmt.Errorf("trace_memory: invalid input: %w", err)
+				}
+				var req contextservice.TraceRequest
+				if err := remapInput(input, &req); err != nil {
+					return nil, fmt.Errorf("trace_memory: invalid input: %w", err)
+				}
+				res, err := deps.Context.Trace(ctx, "", req)
+				if err != nil {
+					return nil, err
+				}
+				if res != nil && res.V2Semantic != nil {
+					return structToMap(res.V2Semantic)
 				}
 				return structToMap(res)
 			}

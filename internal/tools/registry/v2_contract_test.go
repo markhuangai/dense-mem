@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -13,7 +14,9 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
+	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
@@ -343,6 +346,65 @@ func TestBuildV2UATRecallRejectsTenantOverride(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "team_id") {
 		t.Fatalf("recall_memory.Invoke err = %v, want tenant override rejection", err)
+	}
+}
+
+func TestBuildV2UATWiresExecutableTraceMemory(t *testing.T) {
+	stub := &stubV2TraceContext{}
+	reg, err := BuildV2UAT(Dependencies{Context: stub})
+	if err != nil {
+		t.Fatalf("BuildV2UAT: %v", err)
+	}
+	trace, ok := reg.Get(V2ToolTraceMemory)
+	if !ok {
+		t.Fatal("BuildV2UAT did not register trace_memory")
+	}
+	if trace.Invoke == nil {
+		t.Fatal("BuildV2UAT trace_memory invoker is nil")
+	}
+	out, err := trace.Invoke(context.Background(), "ignored-profile", map[string]any{
+		"relationship_id":          "relationship-v2",
+		"include_evidence_content": false,
+		"include_verification":     true,
+		"include_transitions":      false,
+		"max_depth":                2,
+		"max_edges":                12,
+		"predicate_keys":           []any{"works_on"},
+		"topic":                    "PostgreSQL memory",
+	})
+	if err != nil {
+		t.Fatalf("trace_memory.Invoke: %v", err)
+	}
+	relationship, ok := out["relationship"].(map[string]any)
+	if !ok || relationship["relationship_id"] != "relationship-v2" {
+		t.Fatalf("relationship = %#v", out["relationship"])
+	}
+	if _, ok := out["v2_semantic"]; ok {
+		t.Fatalf("trace_memory should unwrap V2 payload, got %#v", out)
+	}
+	if stub.req.RelationshipID != "relationship-v2" || stub.req.MaxDepth != 2 || stub.req.MaxEdges != 12 {
+		t.Fatalf("trace request = %#v", stub.req)
+	}
+	if got := strings.Join(stub.req.PredicateKeys, ","); got != "works_on" {
+		t.Fatalf("predicate_keys = %q", got)
+	}
+}
+
+func TestBuildV2UATTraceRejectsTenantOverride(t *testing.T) {
+	reg, err := BuildV2UAT(Dependencies{Context: &stubV2TraceContext{}})
+	if err != nil {
+		t.Fatalf("BuildV2UAT: %v", err)
+	}
+	trace, ok := reg.Get(V2ToolTraceMemory)
+	if !ok {
+		t.Fatal("BuildV2UAT did not register trace_memory")
+	}
+	_, err = trace.Invoke(context.Background(), "ignored-profile", map[string]any{
+		"team_id":         "attacker-team",
+		"relationship_id": "relationship-v2",
+	})
+	if err == nil || !strings.Contains(err.Error(), "team_id") {
+		t.Fatalf("trace_memory.Invoke err = %v, want tenant override rejection", err)
 	}
 }
 
@@ -880,4 +942,29 @@ func (s *stubV2RecallService) RecallV2(_ context.Context, req memoryservice.V2Re
 		}},
 		SearchState: string(domain.V2SearchProjectionCurrent),
 	}, nil
+}
+
+type stubV2TraceContext struct {
+	req contextservice.TraceRequest
+}
+
+func (s *stubV2TraceContext) Trace(_ context.Context, _ string, req contextservice.TraceRequest) (*contextservice.TraceResult, error) {
+	s.req = req
+	return &contextservice.TraceResult{
+		V2Semantic: &contextservice.V2SemanticTrace{
+			Relationship: &repository.V2RelationshipTraceRecord{
+				RelationshipID: "relationship-v2",
+				PredicateKey:   "works_on",
+			},
+			EvidenceSupports: []repository.V2RelationshipEvidenceSupportRecord{{
+				SupportID: "support-v2",
+			}},
+			StoppedReason: "max_edges",
+			Truncated:     true,
+		},
+	}, nil
+}
+
+func (s *stubV2TraceContext) Assemble(context.Context, string, contextservice.AssembleRequest) (*contextservice.AssembleResult, error) {
+	return nil, errors.New("not implemented")
 }

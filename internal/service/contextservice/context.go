@@ -67,10 +67,19 @@ type service struct {
 
 // TraceRequest selects one memory anchor to expand.
 type TraceRequest struct {
-	Type             string `json:"type"`
-	ID               string `json:"id"`
-	MaxRelated       int    `json:"max_related,omitempty"`
-	IncludeFragments *bool  `json:"include_fragments,omitempty"`
+	Type                   string   `json:"type"`
+	ID                     string   `json:"id"`
+	MaxRelated             int      `json:"max_related,omitempty"`
+	IncludeFragments       *bool    `json:"include_fragments,omitempty"`
+	RelationshipID         string   `json:"relationship_id,omitempty"`
+	IncludeEvidenceContent *bool    `json:"include_evidence_content,omitempty"`
+	IncludeVerification    *bool    `json:"include_verification,omitempty"`
+	IncludeTransitions     *bool    `json:"include_transitions,omitempty"`
+	MaxDepth               int      `json:"max_depth,omitempty"`
+	MaxEdges               int      `json:"max_edges,omitempty"`
+	MaxChars               int      `json:"max_chars,omitempty"`
+	PredicateKeys          []string `json:"predicate_keys,omitempty"`
+	Topic                  string   `json:"topic,omitempty"`
 }
 
 // TraceResult is a bounded graph lineage response for one anchor.
@@ -81,6 +90,7 @@ type TraceResult struct {
 	Related             []RelatedMemory    `json:"related,omitempty"`
 	Edges               []TraceEdge        `json:"edges,omitempty"`
 	MissingFragmentIDs  []string           `json:"missing_fragment_ids,omitempty"`
+	V2Semantic          *V2SemanticTrace   `json:"v2_semantic,omitempty"`
 }
 
 // TraceAnchor contains exactly one fact or claim.
