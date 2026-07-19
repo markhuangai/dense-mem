@@ -5,8 +5,13 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 func TestBuildV2UATExecutableToolsRequireDependencies(t *testing.T) {
@@ -76,6 +81,13 @@ func TestBuildV2UATExecutableToolsRequireDependencies(t *testing.T) {
 				"evidence":      []any{map[string]any{"content": "Independent evidence."}},
 			},
 		},
+		{
+			name: V2ToolListCommunities,
+			args: map[string]any{
+				"contract_version": domain.V2ContractVersion,
+				"limit":            float64(2),
+			},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -88,6 +100,50 @@ func TestBuildV2UATExecutableToolsRequireDependencies(t *testing.T) {
 				t.Fatalf("%s err = %v, want ErrToolUnavailable", tc.name, err)
 			}
 		})
+	}
+}
+
+func TestBuildV2UATWiresExecutableCommunityTools(t *testing.T) {
+	teamID := uuid.New()
+	communities := &stubV2CommunityRepository{
+		records: []repository.V2CommunityRecord{{
+			TeamID:         teamID.String(),
+			CommunityID:    uuid.NewString(),
+			RunID:          uuid.NewString(),
+			Status:         "current",
+			Summary:        "PostgreSQL community",
+			SummaryVersion: "community-deterministic-v1",
+			MemberCount:    2,
+			UpdatedAt:      time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC),
+		}},
+	}
+	reg, err := BuildV2UAT(Dependencies{V2Communities: communities})
+	if err != nil {
+		t.Fatalf("BuildV2UAT: %v", err)
+	}
+	tool, ok := reg.Get(V2ToolListCommunities)
+	if !ok || tool.Invoke == nil {
+		t.Fatal("BuildV2UAT did not register executable list_communities")
+	}
+	ctx := requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{
+		TeamID:    teamID,
+		ProfileID: uuid.New(),
+	})
+	ctx = requestctx.WithActorCredential(ctx, requestctx.ActorCredential{
+		KeyID:  uuid.New(),
+		Scopes: []string{"read"},
+	})
+	out, err := tool.Invoke(ctx, "ignored-profile", map[string]any{
+		"limit": float64(2),
+	})
+	if err != nil {
+		t.Fatalf("list_communities.Invoke: %v", err)
+	}
+	if err := ValidateInput(Tool{InputSchema: tool.OutputSchema}, out); err != nil {
+		t.Fatalf("list_communities output validation failed: %v; output = %#v", err, out)
+	}
+	if out["communities"] == nil || communities.lastInput.TeamID != teamID.String() || communities.lastInput.Limit != 2 {
+		t.Fatalf("list_communities output = %#v input = %#v", out, communities.lastInput)
 	}
 }
 
@@ -169,4 +225,46 @@ func TestBuildV2UATWiresExecutableDreamTools(t *testing.T) {
 	if dreams.lastResolveReq.DreamID != "dream-v2" {
 		t.Fatalf("resolve_dream_feedback dream id = %q", dreams.lastResolveReq.DreamID)
 	}
+}
+
+type stubV2CommunityRepository struct {
+	records   []repository.V2CommunityRecord
+	lastInput repository.V2CommunityListInput
+}
+
+func (s *stubV2CommunityRepository) ClaimV2CommunityRun(context.Context, repository.V2CommunityRunClaimInput) (*repository.V2CommunityRun, error) {
+	return nil, errors.New("unused")
+}
+
+func (s *stubV2CommunityRepository) CompleteV2CommunityRun(context.Context, repository.V2CommunityRunCompleteInput) error {
+	return errors.New("unused")
+}
+
+func (s *stubV2CommunityRepository) ListV2CommunityInputs(context.Context, repository.V2CommunityInputListInput) ([]repository.V2CommunityInput, error) {
+	return nil, errors.New("unused")
+}
+
+func (s *stubV2CommunityRepository) PublishV2CommunitySnapshot(context.Context, repository.V2CommunitySnapshotPublishInput) error {
+	return errors.New("unused")
+}
+
+func (s *stubV2CommunityRepository) RefreshV2CommunityStaleness(context.Context, repository.V2CommunityStalenessInput) (int, error) {
+	return 0, errors.New("unused")
+}
+
+func (s *stubV2CommunityRepository) ListV2Communities(_ context.Context, input repository.V2CommunityListInput) ([]repository.V2CommunityRecord, error) {
+	s.lastInput = input
+	return s.records, nil
+}
+
+func (s *stubV2CommunityRepository) GetV2Community(context.Context, repository.V2CommunityGetInput) (*repository.V2CommunityRecord, error) {
+	return nil, errors.New("unused")
+}
+
+func (s *stubV2CommunityRepository) RecallV2CommunityDiscovery(context.Context, repository.V2CommunityDiscoveryInput) ([]repository.V2CommunityDiscoveryPath, error) {
+	return nil, errors.New("unused")
+}
+
+func (s *stubV2CommunityRepository) LatestV2CommunityRun(context.Context, string) (*repository.V2CommunityRun, error) {
+	return nil, errors.New("unused")
 }

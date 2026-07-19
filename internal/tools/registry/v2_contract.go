@@ -6,7 +6,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
@@ -352,6 +356,32 @@ func v2UATTools(deps Dependencies) []Tool {
 				}
 				return v2ResolveDreamFeedbackContractOutput(res), nil
 			}
+		case V2ToolListCommunities:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
+				if deps.V2Communities == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
+					return nil, fmt.Errorf("list_communities: invalid input: %w", err)
+				}
+				actor, ok := requestctx.ActorProfileFromContext(ctx)
+				if !ok || actor.TeamID == uuid.Nil {
+					return nil, fmt.Errorf("list_communities: authenticated actor context is required")
+				}
+				limit := 0
+				if value, ok := intInput(input["limit"]); ok {
+					limit = value
+				}
+				communities, err := deps.V2Communities.ListV2Communities(ctx, repository.V2CommunityListInput{
+					TeamID: actor.TeamID.String(),
+					Limit:  limit,
+				})
+				if err != nil {
+					return nil, err
+				}
+				return v2ListCommunitiesContractOutput(communities), nil
+			}
 		}
 	}
 	return tools
@@ -451,6 +481,32 @@ func v2ResolveDreamFeedbackContractOutput(res *dreamservice.ResolveFeedbackResul
 		out["ingest_id"] = res.V2Memory.IngestID
 	}
 	return out
+}
+
+func v2ListCommunitiesContractOutput(communities []repository.V2CommunityRecord) map[string]any {
+	items := make([]map[string]any, 0, len(communities))
+	for _, community := range communities {
+		createdAt := community.CreatedAt
+		if createdAt.IsZero() {
+			createdAt = community.UpdatedAt
+		}
+		item := map[string]any{
+			"community_id":              community.CommunityID,
+			"run_id":                    community.RunID,
+			"summary":                   community.Summary,
+			"summary_generator_kind":    "deterministic",
+			"summary_generator_version": firstNonEmpty(community.SummaryVersion, "community-deterministic-v1"),
+			"status":                    community.Status,
+			"created_at":                createdAt.UTC().Format(time.RFC3339Nano),
+			"members":                   []map[string]any{},
+			"sources":                   []map[string]any{},
+		}
+		if community.SupersededAt != nil {
+			item["superseded_at"] = community.SupersededAt.UTC().Format(time.RFC3339Nano)
+		}
+		items = append(items, item)
+	}
+	return map[string]any{"communities": items}
 }
 
 func v2DreamSummaryContractOutput(dream *domain.Dream) map[string]any {

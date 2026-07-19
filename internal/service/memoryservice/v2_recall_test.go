@@ -220,7 +220,7 @@ func TestV2RecallProviderMalformedBranchesAreOptionalDegradation(t *testing.T) {
 	}
 }
 
-func TestV2RecallCommunityDegradationAndIDNormalization(t *testing.T) {
+func TestV2RecallNormalizesIDs(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
 	keyID := uuid.New()
@@ -243,18 +243,75 @@ func TestV2RecallCommunityDegradationAndIDNormalization(t *testing.T) {
 	result, err := svc.RecallV2(authenticatedV2RememberContext(teamID, profileID, keyID), V2RecallRequest{
 		ContractVersion:      domain.V2ContractVersion,
 		Query:                " ",
-		UseCommunities:       true,
 		KnownEvidenceIDs:     []string{" " + evidenceID + " ", evidenceID},
 		KnownRelationshipIDs: []string{relationshipID, relationshipID},
 		ExpandFromEntityIDs:  []string{entityID, entityID},
 	})
 	require.NoError(t, err)
-	require.NotNil(t, result.Degradation)
-	require.Equal(t, "community_recall_unavailable", result.Degradation.Code)
+	require.Nil(t, result.Degradation)
 	require.Equal(t, []string{evidenceID}, search.input.KnownEvidenceIDs)
 	require.Equal(t, []string{relationshipID}, search.input.KnownRelationshipIDs)
 	require.Equal(t, []string{entityID}, search.input.ExpandFromEntityIDs)
 	require.Empty(t, search.input.Query)
+}
+
+func TestV2RecallAddsCommunityDiscoveryWhenEnabledAndPrimaryHasRoom(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	relationshipID := uuid.NewString()
+	evidenceID := uuid.NewString()
+	subjectID := uuid.NewString()
+	objectID := uuid.NewString()
+	search := &v2RecallSearchStub{
+		contract: &repository.V2ActiveSearchContract{
+			EmbeddingContractID: uuid.NewString(),
+			EmbeddingDimensions: 3,
+			EmbeddingModel:      "test-model",
+		},
+		result: &repository.V2RecallEvidenceResult{
+			SearchState: string(domain.V2SearchProjectionCurrent),
+			Results:     []repository.V2RecallEvidenceHit{},
+		},
+	}
+	communities := &v2RecallCommunityStub{
+		paths: []repository.V2CommunityDiscoveryPath{{
+			CommunityID: uuid.NewString(),
+			Relationship: repository.V2CommunityDiscoveryRelationship{
+				RelationshipID:  relationshipID,
+				SubjectEntityID: subjectID,
+				SubjectName:     "Dense-Mem",
+				PredicateKey:    "uses",
+				ObjectEntityID:  objectID,
+				ObjectName:      "PostgreSQL",
+				Polarity:        "+",
+			},
+			EvidenceIDs: []string{evidenceID},
+		}},
+	}
+	svc := NewV2RecallService(V2RecallDependencies{
+		Search:          search,
+		Provider:        &v2RecallProviderStub{available: true, model: "test-model", dims: 3, vector: []float32{1, 0, 0}},
+		Communities:     communities,
+		CommunityConfig: v2RecallCommunityConfigStub{enabled: true},
+	})
+
+	result, err := svc.RecallV2(authenticatedV2RememberContext(teamID, profileID, keyID), V2RecallRequest{
+		ContractVersion: domain.V2ContractVersion,
+		Query:           "PostgreSQL",
+		Limit:           3,
+	})
+	require.NoError(t, err)
+	require.Nil(t, result.Degradation)
+	require.Empty(t, result.Results)
+	require.Len(t, result.DiscoveryPaths, 1)
+	require.Equal(t, relationshipID, result.DiscoveryPaths[0].Relationships[0].RelationshipID)
+	require.Equal(t, objectID, result.DiscoveryPaths[0].Relationships[0].Object.EntityID)
+	require.Equal(t, "PostgreSQL", result.DiscoveryPaths[0].Relationships[0].Object.Name)
+	require.Equal(t, []string{evidenceID}, result.DiscoveryPaths[0].EvidenceIDs)
+	require.Equal(t, teamID.String(), communities.refreshInput.TeamID)
+	require.Equal(t, "PostgreSQL", communities.recallInput.Query)
+	require.Equal(t, 3, communities.recallInput.Limit)
 }
 
 func TestV2RecallRequiresAuthenticatedActor(t *testing.T) {
@@ -334,6 +391,41 @@ func (s *v2RecallHypothesisStub) RecallV2Hypotheses(_ context.Context, input rep
 		return nil, s.err
 	}
 	return s.records, nil
+}
+
+type v2RecallCommunityStub struct {
+	refreshInput repository.V2CommunityStalenessInput
+	recallInput  repository.V2CommunityDiscoveryInput
+	paths        []repository.V2CommunityDiscoveryPath
+	err          error
+}
+
+func (s *v2RecallCommunityStub) RefreshV2CommunityStaleness(_ context.Context, input repository.V2CommunityStalenessInput) (int, error) {
+	s.refreshInput = input
+	if s.err != nil {
+		return 0, s.err
+	}
+	return 0, nil
+}
+
+func (s *v2RecallCommunityStub) RecallV2CommunityDiscovery(_ context.Context, input repository.V2CommunityDiscoveryInput) ([]repository.V2CommunityDiscoveryPath, error) {
+	s.recallInput = input
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.paths, nil
+}
+
+type v2RecallCommunityConfigStub struct {
+	enabled bool
+	err     error
+}
+
+func (s v2RecallCommunityConfigStub) CommunityDetectionRuntimeConfig(context.Context) (domain.CommunityDetectionRuntimeConfig, error) {
+	if s.err != nil {
+		return domain.CommunityDetectionRuntimeConfig{}, s.err
+	}
+	return domain.CommunityDetectionRuntimeConfig{Enabled: s.enabled}, nil
 }
 
 type v2RecallProviderStub struct {

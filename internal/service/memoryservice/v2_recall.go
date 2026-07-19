@@ -20,6 +20,7 @@ const (
 	defaultV2RecallResultLimit      = 10
 	maxV2RecallResultLimit          = 50
 	defaultV2RelatedHypothesisLimit = 5
+	defaultV2CommunityPathLimit     = 5
 )
 
 var ErrV2RecallAuthContext = errors.New("v2 recall: authenticated actor context is required")
@@ -29,9 +30,11 @@ type V2RecallService interface {
 }
 
 type V2RecallDependencies struct {
-	Search     V2RecallSearchRepository
-	Provider   embedding.EmbeddingProviderInterface
-	Hypotheses V2RecallHypothesisRepository
+	Search          V2RecallSearchRepository
+	Provider        embedding.EmbeddingProviderInterface
+	Hypotheses      V2RecallHypothesisRepository
+	Communities     V2RecallCommunityRepository
+	CommunityConfig V2RecallCommunityConfigProvider
 }
 
 type V2RecallSearchRepository interface {
@@ -44,17 +47,30 @@ type V2RecallHypothesisRepository interface {
 	RefreshV2HypothesisStaleness(ctx context.Context, input repository.V2RefreshHypothesisStalenessInput) (int, error)
 }
 
+type V2RecallCommunityRepository interface {
+	RecallV2CommunityDiscovery(ctx context.Context, input repository.V2CommunityDiscoveryInput) ([]repository.V2CommunityDiscoveryPath, error)
+	RefreshV2CommunityStaleness(ctx context.Context, input repository.V2CommunityStalenessInput) (int, error)
+}
+
+type V2RecallCommunityConfigProvider interface {
+	CommunityDetectionRuntimeConfig(ctx context.Context) (domain.CommunityDetectionRuntimeConfig, error)
+}
+
 type v2RecallService struct {
-	search     V2RecallSearchRepository
-	provider   embedding.EmbeddingProviderInterface
-	hypotheses V2RecallHypothesisRepository
+	search          V2RecallSearchRepository
+	provider        embedding.EmbeddingProviderInterface
+	hypotheses      V2RecallHypothesisRepository
+	communities     V2RecallCommunityRepository
+	communityConfig V2RecallCommunityConfigProvider
 }
 
 func NewV2RecallService(deps V2RecallDependencies) V2RecallService {
 	return &v2RecallService{
-		search:     deps.Search,
-		provider:   deps.Provider,
-		hypotheses: deps.Hypotheses,
+		search:          deps.Search,
+		provider:        deps.Provider,
+		hypotheses:      deps.Hypotheses,
+		communities:     deps.Communities,
+		communityConfig: deps.CommunityConfig,
 	}
 }
 
@@ -67,8 +83,6 @@ type V2RecallRequest struct {
 	KnownEvidenceIDs     []string   `json:"known_evidence_ids,omitempty"`
 	KnownRelationshipIDs []string   `json:"known_relationship_ids,omitempty"`
 	ExpandFromEntityIDs  []string   `json:"expand_from_entity_ids,omitempty"`
-	IncludeEvidence      bool       `json:"include_evidence,omitempty"`
-	UseCommunities       bool       `json:"use_communities,omitempty"`
 }
 
 type V2RecallResult struct {
@@ -109,6 +123,7 @@ type V2EntityHandle struct {
 type V2SemanticObject struct {
 	EntityID string `json:"entity_id,omitempty"`
 	ValueID  string `json:"value_id,omitempty"`
+	Name     string `json:"name,omitempty"`
 	Type     string `json:"type,omitempty"`
 	Value    any    `json:"value,omitempty"`
 	Display  string `json:"display,omitempty"`
@@ -159,13 +174,6 @@ func (s *v2RecallService) RecallV2(ctx context.Context, req V2RecallRequest) (*V
 		queryEmbedding = vector
 		degradation = vectorDegradation
 	}
-	if req.UseCommunities && degradation == nil {
-		degradation = &V2RecallDegradationResult{
-			Optional: true,
-			Code:     "community_recall_unavailable",
-			Message:  "community expansion is not available in the V2 recall path",
-		}
-	}
 	recalled, err := s.search.RecallEvidence(ctx, repository.V2RecallEvidenceInput{
 		TeamID:               actor.TeamID.String(),
 		Query:                req.Query,
@@ -181,12 +189,69 @@ func (s *v2RecallService) RecallV2(ctx context.Context, req V2RecallRequest) (*V
 		return nil, err
 	}
 	result := v2RecallResultFromRepository(recalled, degradation)
+	paths, communityDegradation := s.recallCommunityDiscovery(ctx, actor.TeamID.String(), req, len(result.Results))
+	result.DiscoveryPaths = paths
+	if len(paths) > 0 {
+		result.DiscoveryGuidance = "Community discovery found derived relationship paths; verify details with trace_memory before using them as support."
+	}
+	if result.Degradation == nil && communityDegradation != nil {
+		result.Degradation = communityDegradation
+	}
 	related, relatedDegradation := s.recallRelatedHypotheses(ctx, actor.TeamID.String(), actor.ProfileID.String(), req.Query)
 	result.RelatedHypotheses = related
 	if result.Degradation == nil && relatedDegradation != nil {
 		result.Degradation = relatedDegradation
 	}
 	return result, nil
+}
+
+func (s *v2RecallService) recallCommunityDiscovery(
+	ctx context.Context,
+	teamID string,
+	req V2RecallRequest,
+	resultCount int,
+) ([]V2RecallDiscoveryPath, *V2RecallDegradationResult) {
+	if s.communities == nil || s.communityConfig == nil || resultCount >= req.Limit {
+		return []V2RecallDiscoveryPath{}, nil
+	}
+	cfg, err := s.communityConfig.CommunityDetectionRuntimeConfig(ctx)
+	if err != nil {
+		return []V2RecallDiscoveryPath{}, v2CommunityDiscoveryDegradation()
+	}
+	if !cfg.Enabled {
+		return []V2RecallDiscoveryPath{}, nil
+	}
+	if _, err := s.communities.RefreshV2CommunityStaleness(ctx, repository.V2CommunityStalenessInput{
+		TeamID: teamID,
+		Limit:  200,
+	}); err != nil {
+		return []V2RecallDiscoveryPath{}, v2CommunityDiscoveryDegradation()
+	}
+	remaining := req.Limit - resultCount
+	if remaining > defaultV2CommunityPathLimit {
+		remaining = defaultV2CommunityPathLimit
+	}
+	records, err := s.communities.RecallV2CommunityDiscovery(ctx, repository.V2CommunityDiscoveryInput{
+		TeamID:               teamID,
+		Query:                req.Query,
+		ValidAt:              req.ValidAt,
+		KnownAt:              req.KnownAt,
+		KnownRelationshipIDs: req.KnownRelationshipIDs,
+		ExpandFromEntityIDs:  req.ExpandFromEntityIDs,
+		Limit:                remaining,
+	})
+	if err != nil {
+		return []V2RecallDiscoveryPath{}, v2CommunityDiscoveryDegradation()
+	}
+	return v2CommunityDiscoveryPaths(records), nil
+}
+
+func v2CommunityDiscoveryDegradation() *V2RecallDegradationResult {
+	return &V2RecallDegradationResult{
+		Optional: true,
+		Code:     "community_discovery_unavailable",
+		Message:  "community discovery was unavailable; primary evidence recall was used",
+	}
 }
 
 func (s *v2RecallService) recallRelatedHypotheses(
@@ -223,6 +288,29 @@ func v2RelatedHypothesisDegradation() *V2RecallDegradationResult {
 		Code:     "related_hypotheses_unavailable",
 		Message:  "related hypotheses were unavailable; primary evidence recall was used",
 	}
+}
+
+func v2CommunityDiscoveryPaths(records []repository.V2CommunityDiscoveryPath) []V2RecallDiscoveryPath {
+	out := make([]V2RecallDiscoveryPath, 0, len(records))
+	for _, record := range records {
+		out = append(out, V2RecallDiscoveryPath{
+			Relationships: []V2RecallRelationshipHandle{{
+				RelationshipID: record.Relationship.RelationshipID,
+				Subject: V2EntityHandle{
+					EntityID: record.Relationship.SubjectEntityID,
+					Name:     record.Relationship.SubjectName,
+				},
+				Predicate: record.Relationship.PredicateKey,
+				Object: V2SemanticObject{
+					EntityID: record.Relationship.ObjectEntityID,
+					Name:     record.Relationship.ObjectName,
+				},
+				Polarity: record.Relationship.Polarity,
+			}},
+			EvidenceIDs: append([]string(nil), record.EvidenceIDs...),
+		})
+	}
+	return out
 }
 
 func (s *v2RecallService) queryEmbedding(

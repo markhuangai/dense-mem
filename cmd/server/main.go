@@ -184,6 +184,7 @@ func main() {
 	recallFeedbackEventRepo := repository.NewRecallFeedbackEventRepository(pgDB.GetDB(), rlsHelper)
 	memoryPlacementRepo := repository.NewMemoryPlacementRepository(pgDB.GetDB(), rlsHelper)
 	skillPackImportRepo := repository.NewSkillPackImportRepository(pgDB.GetDB(), rlsHelper)
+	v2SemanticRepo := repository.NewV2SemanticRepository(pgDB.GetDB(), rlsHelper)
 
 	// ========================================
 	// Neo4j profile scope enforcer and graph writer
@@ -446,6 +447,7 @@ func main() {
 		Context:              contextSvc,
 		Memory:               memorySvc,
 		V2Evaluation:         v2SemanticRepo,
+		V2Communities:        v2SemanticRepo,
 		SkillPack:            skillPackSvc,
 		Dreams:               dreamSvc,
 	})

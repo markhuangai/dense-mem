@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
@@ -38,6 +40,31 @@ func TestV2RecallBranchFusionSkipsKnownEvidenceAndCarriesPendingState(t *testing
 	if _, ok := acc[knownID]; ok {
 		t.Fatal("known evidence was added to recall candidates")
 	}
+}
+
+func TestV2RecallCommunityBranchDoesNotOutrankPrimaryCandidates(t *testing.T) {
+	acc := map[string]*v2RecallCandidate{}
+	known := map[string]struct{}{}
+	primary := make([]V2SearchHit, 0, 250)
+	for i := 0; i < 250; i++ {
+		primary = append(primary, V2SearchHit{
+			SourceKind:  "evidence",
+			SourceID:    uuid.NewString(),
+			SearchState: string(domain.V2SearchProjectionCurrent),
+		})
+	}
+	communityEvidenceID := uuid.NewString()
+
+	addV2RecallBranch(acc, primary, known, 0.5)
+	addV2RecallBranch(acc, []V2SearchHit{{
+		SourceKind:  "evidence",
+		SourceID:    communityEvidenceID,
+		SearchState: string(domain.V2SearchProjectionCurrent),
+	}}, known, 0.05)
+
+	ranked := sortedV2RecallCandidates(acc)
+	require.Len(t, ranked, 251)
+	require.Equal(t, communityEvidenceID, ranked[len(ranked)-1].EvidenceID)
 }
 
 func TestV2RecallInputNormalizationAndValidation(t *testing.T) {
