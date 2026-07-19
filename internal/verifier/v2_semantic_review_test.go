@@ -167,6 +167,20 @@ func TestDecodeV2SemanticReviewResponseJSONRejectsTrailingJSON(t *testing.T) {
 	}
 }
 
+func TestDecodeV2SemanticReviewResponseJSONAcceptsClosedResponse(t *testing.T) {
+	raw := []byte(`{"request_id":"verify-1","security_signals":[],"entity_results":[],"relationship_results":[]}`)
+	resp, err := DecodeV2SemanticReviewResponseJSON(raw)
+	if err != nil {
+		t.Fatalf("DecodeV2SemanticReviewResponseJSON returned error: %v", err)
+	}
+	if resp.RequestID != "verify-1" {
+		t.Fatalf("request_id = %q", resp.RequestID)
+	}
+	if got := (V2SemanticValidationError{Message: "plain"}).Error(); got != "plain" {
+		t.Fatalf("validation error = %q", got)
+	}
+}
+
 func TestValidateV2SemanticReviewResponseRejectsMissingRequiredArrays(t *testing.T) {
 	req, errs := PrepareV2SemanticReviewRequest(v2SemanticReviewTestRequest())
 	if len(errs) != 0 {
@@ -260,6 +274,53 @@ func TestValidateV2SemanticReviewResponseRejectsIncompleteDuplicateAndOutOfAllow
 		"entity_results[2].ref: is unknown",
 		"entity_results: missing result for project_1",
 		"relationship_results[0].predicate_key: is outside predicate allowlist",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("missing %q in %s", want, joined)
+		}
+	}
+}
+
+func TestValidateV2SemanticReviewResponseRejectsMalformedResultFields(t *testing.T) {
+	req, errs := PrepareV2SemanticReviewRequest(v2SemanticReviewTestRequest())
+	if len(errs) != 0 {
+		t.Fatalf("request errors = %#v", errs)
+	}
+	outsideEntity := "ent-outside"
+	projectEntity := "ent-dense-mem"
+	predicate := "works_on"
+	resp := V2SemanticReviewResponse{
+		RequestID:       req.RequestID,
+		SecuritySignals: []V2SemanticSecuritySignal{},
+		EntityResults: []V2SemanticEntityResult{
+			{Ref: "person_1", Action: "reuse", CandidateEntityID: nil, Confidence: -0.1, Rationale: ""},
+			{Ref: "project_1", Action: "create", CandidateEntityID: &projectEntity, Confidence: 1.1, Rationale: strings.Repeat("x", 1001)},
+			{Ref: "project_1", Action: "merge", CandidateEntityID: nil, Confidence: 0.5, Rationale: "unsupported action"},
+			{Ref: "person_1", Action: "reuse", CandidateEntityID: &outsideEntity, Confidence: 0.6, Rationale: "outside allowlist"},
+		},
+		RelationshipResults: []V2SemanticRelationshipReviewResult{
+			{Ref: "rel_1", PredicateStatus: "resolved", PredicateKey: nil, EvidenceVerdict: "invented", Confidence: -0.2, Rationale: ""},
+			{Ref: "rel_1", PredicateStatus: "needs_review", PredicateKey: &predicate, EvidenceVerdict: string(domain.V2VerificationEntailed), Confidence: 1.2, Rationale: strings.Repeat("r", 1001)},
+			{Ref: "rel_1", PredicateStatus: "invented", PredicateKey: nil, EvidenceVerdict: string(domain.V2VerificationEntailed), Confidence: 0.5, Rationale: "unsupported predicate status"},
+			{Ref: "unknown", PredicateStatus: "needs_review", PredicateKey: nil, EvidenceVerdict: string(domain.V2VerificationEntailed), Confidence: 0.5, Rationale: "unknown relationship"},
+		},
+	}
+
+	joined := v2SemanticJoinedErrors(ValidateV2SemanticReviewResponse(req, resp))
+	for _, want := range []string{
+		"entity_results[0].confidence: must be between 0 and 1",
+		"entity_results[0].rationale: is required and must be bounded",
+		"entity_results[0].candidate_entity_id: is required for reuse",
+		"entity_results[1].candidate_entity_id: must be null",
+		"entity_results[2].action: is unsupported",
+		"entity_results[3].candidate_entity_id: is outside candidate allowlist",
+		"relationship_results[0].confidence: must be between 0 and 1",
+		"relationship_results[0].rationale: is required and must be bounded",
+		"relationship_results[0].evidence_verdict: is unsupported",
+		"relationship_results[0].predicate_key: is required for resolved predicate",
+		"relationship_results[1].predicate_key: must be null",
+		"relationship_results[2].predicate_status: is unsupported",
+		"relationship_results[3].ref: is unknown",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("missing %q in %s", want, joined)
