@@ -98,6 +98,10 @@ Forbidden dependencies:
 ## Refactor Slices
 
 Each slice must compile, migrate, test, and leave a usable checkpoint.
+The active GitHub roadmap breaks these slices into ordered issues #74 through
+#95. `v2.1.0` is only a release bootstrap, `v2.1.1` is the planned
+Neo4j-to-PostgreSQL cutover release, later `v2.1.x` releases are reserved for
+bug fixes, and `v2.2.0` removes the bridge.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
@@ -221,6 +225,13 @@ For each implementation change:
 6. run repository checks
 7. inspect migration/query plans and the diff
 8. record schema/config/API/migration implications
+
+If the change may affect retrieval quality, ranking, placement accuracy,
+verifier/reviewer behavior, embeddings, search documents, migration placement,
+or performance, run the deterministic 1k evaluation/comparison and put the
+result in the PR. Reuse a prior successful import only when import logic,
+schema, seed identity, placement terminality, and search/vector freshness are
+unchanged.
 
 Example focused commands, verified against the current Go/npm layout:
 

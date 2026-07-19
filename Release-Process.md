@@ -1,10 +1,10 @@
 # Release Process
 
-This page is the single source of truth for the `2.1.x` PostgreSQL + `pgvector`
-bridge migration, automatic cutover, and `2.2.0` legacy-removal gate. The
-migration is a high-blast-radius workflow: verify backups, run it in boot-gated
-maintenance mode, preserve every team/profile boundary, and fail closed when a
-hard gate does not pass.
+This page is the single source of truth for the staged PostgreSQL + `pgvector`
+V2 release train, the bridge migration, automatic cutover, and the `2.2.0`
+legacy-removal gate. Migration and cutover are high-blast-radius workflows:
+verify backups, run them in boot-gated maintenance mode, preserve every
+team/profile boundary, and fail closed when a hard gate does not pass.
 
 ## Release Principle
 
@@ -33,17 +33,19 @@ and stable profile IDs remain in the same database.
 | Release | Legacy behavior |
 | --- | --- |
 | `2.0.x` and earlier | existing v1 runtime; an operator may remain here and delay the directional upgrade |
-| `2.1.x` | contains the temporary boot-gated Neo4j corpus reader and official-pipeline migration; automatically serves v2 after all hard gates pass |
+| `2.1.0` | release bootstrap only; no runtime authority change |
+| `2.1.1` | contains the temporary boot-gated Neo4j corpus reader, official-pipeline migration control, and hard-gated automatic PostgreSQL cutover |
+| `2.1.2+` within `2.1.x` | bug-fix releases for the `2.1.1` migration/cutover line; no additional planned migration phase releases |
 | `2.2.0` and later | contains no Neo4j connection, driver, configuration, or migration adapter; requires a completed compatible `2.1.x` migration marker |
 
-The `2.1.x` migration package is temporary and marked for removal in `2.2.0`.
-Release notes must state that an installation upgrading from v1 must run the
-latest supported `2.1.x`, finish migration, and only then upgrade to `2.2.0` or
-later.
+The `2.1.1` migration package is temporary and marked for removal in `2.2.0`.
+Release notes must state that an installation upgrading from v1 must run
+`2.1.1` or a later supported `2.1.x` bug-fix release, finish migration, and
+only then upgrade to `2.2.0` or later.
 
 ```text
-supported:   2.0.x -> latest 2.1.x -> migration complete -> 2.2.x+
-unsupported: 2.0.x -------------------------------> 2.2.x+
+supported:   2.0.x -> 2.1.1+ bug-fix line -> migration complete -> 2.2.x+
+unsupported: 2.0.x ----------------------------------------> 2.2.x+
 ```
 
 Version `2.2.0+` reads the durable migration marker before starting normal
@@ -67,14 +69,15 @@ for that installation, not running v1 beside a migrating v2 instance.
 
 ## Boot-Gated Maintenance Mode
 
-The `2.1.x` server boots far enough to authenticate the control portal, expose
-liveness and migration status, and write safe service logs. It does not expose
-normal memory reads or writes until migration completes.
+The cutover-capable `2.1.1+` server boots far enough to authenticate the
+control portal, expose liveness and migration status, and write safe service
+logs. It does not expose normal memory reads or writes until migration
+completes.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
-  Boot["Start 2.1.x"] --> PG["Connect existing PostgreSQL"]
+  Boot["Start 2.1.1+"] --> PG["Connect existing PostgreSQL"]
   PG --> Marker{"Compatible v2 migration marker?"}
   Marker -- Yes --> Ready["Start normal v2 services"]
   Marker -- No --> Maintenance["Start control plane in<br/>migration_required mode"]

@@ -6,10 +6,9 @@ writes. A single answer-quality score is insufficient.
 
 ## Current V2 Retrieval Evaluation
 
-Semantic-memory comparisons are observational until a release gate is explicitly
-selected. They produce evidence for the next design decision; they do not
-declare v2 acceptable or unacceptable from a preselected Recall@K, nDCG, judge,
-or latency threshold.
+The V2 release train uses the deterministic 1k public comparison as the hard
+retrieval-quality gate. Larger runs and judge outputs are diagnostic unless a
+later roadmap decision explicitly promotes them.
 
 The active public comparison uses validated six-axis seeds generated locally and
 ignored by git:
@@ -21,11 +20,11 @@ tests/eval/suites/public_6axis_1k_v1.jsonl
 tests/eval/suites/public_6axis_5k_v1.jsonl
 ```
 
-`public_6axis_1k_v1` contains exactly 1,000 corpus rows and is the smoke
-comparison. `public_6axis_5k_v1` contains exactly 5,000 corpus rows and is the
-primary comparison. The 1k seed is a strict deterministic subset of the 5k seed.
-The six axes are SciFact, MS MARCO, HotpotQA, MuSiQue, QASPER, and LongMem
-Oracle. The corpus-row allocation is:
+`public_6axis_1k_v1` contains exactly 1,000 corpus rows and is the required
+v2.1 hard gate. `public_6axis_5k_v1` contains exactly 5,000 corpus rows and may
+be run as an optional diagnostic. The 1k seed is a strict deterministic subset
+of the 5k seed. The six axes are SciFact, MS MARCO, HotpotQA, MuSiQue, QASPER,
+and LongMem Oracle. The corpus-row allocation is:
 
 | Axis | 1k rows | 5k rows |
 | --- | ---: | ---: |
@@ -102,10 +101,11 @@ only the two six-axis seeds and their two suites.
 
 Generate into temporary staging directories, validate independently, regenerate
 cleanly and byte-compare, write `validation_report.json`, then atomically
-promote. Both 1k and 5k seeds must pass before any import, baseline, candidate,
-recall, judge, or comparison run. A failed validation promotes neither seed;
-fix the generator or mapping, regenerate both from scratch, and rerun all
-validation.
+promote. The 1k seed must pass before any required import, baseline, candidate,
+recall, judge, or comparison run. If a diagnostic 5k run is requested, the 5k
+seed must pass the same validation before that run starts. A failed validation
+promotes no required seed; fix the generator or mapping, regenerate from
+scratch, and rerun validation.
 
 Validation must prove exact counts, deterministic 1k subset of 5k, stable
 hashes, upstream hash/license metadata, unique same-scope source IDs, no
@@ -125,13 +125,25 @@ by an incompatible validator.
 | schemas, deterministic test definitions, and gate logic | isolated databases, run outputs, and logs |
 | documentation describing methodology and required gates | baseline/candidate results and generated comparison artifacts |
 
-Generated seeds, suites, results, and comparison artifacts stay under ignored
-evaluation paths such as `tests/eval/seeds/`, `tests/eval/suites/`, and
+Generated seeds, suites, downloaded datasets, imports, results, and comparison
+artifacts stay under ignored evaluation paths such as `tests/eval/data/`,
+`tests/eval/seeds/`, `tests/eval/suites/`, `tests/eval/runs/`, and
 `tests/eval/.runtime/`. They are local runtime data: never stage or commit them,
-and do not treat them as release documentation or release evidence. The manual
-defines how to evaluate and what must pass; it may include compact dated notes
-when a run changes methodology or comparability, but it does not replace the
-generated artifact files.
+exclude them from line-count checks, and do not treat them as release
+documentation or release evidence. The manual defines how to evaluate and what
+must pass; it may include compact dated notes when a run changes methodology or
+comparability, but it does not replace the generated artifact files.
+
+## PR Evaluation Rule
+
+Any PR that may affect retrieval quality, ranking, placement accuracy,
+verifier/reviewer behavior, embeddings, search documents, migration placement,
+or performance must run the 1k corpus evaluation/comparison and include the
+result in the PR. If the seed and import logic are unchanged, a later PR may
+reuse a previous successful import after validating manifest identity, placement
+terminality, search/vector freshness, and schema/contract compatibility.
+Recall/ranking-only changes still rerun recall and scoring against the retained
+import.
 
 ## Pre-Evaluation Local Gate
 
