@@ -116,10 +116,10 @@ flowchart LR
 | `entity_correction_events` | append-only merge, split, and reassignment decisions |
 | `relationship_observations` | immutable extracted statements tied to exact evidence spans |
 | `verification_events` | append-only schema-valid verifier judgments |
-| `relationship_records` | one profile-owned canonical Relationship's current tier, status, author, and version |
+| `relationship_records` | one authored Relationship episode's current tier, status, validity, author, and version |
 | `relationship_evidence_supports` | accepted, deduplicated evidence-span and source-group links |
 | `relationship_support_decision_events` | append-only grant/revoke/reinstate decisions controlling effective support |
-| `relationship_transition_events` | append-only tier/status history |
+| `relationship_transition_events` | append-only tier/status/validity-bound history |
 | `relationship_cross_references` | append-only same-team confirmation, challenge, correction, and evidence-adoption links between profile-owned Relationships |
 | `review_tasks` | identity, predicate, same-owner Relationship conflict, correction, and policy decisions needing a client |
 | `relationship_conflict_cases` | current team-scoped status, version, deadline, due/lease metadata, effective time, and preferred-position disposition for material cross-profile Relationship conflicts |
@@ -337,15 +337,15 @@ sequenceDiagram
 
   W->>P: Commit Relationship + cross-reference
   W->>P: Lock matching case/version
-  W->>P: Recompute positions and disposition
-  W->>P: Update case + append event + refresh intent
+  W->>P: Recompute positions and open/update membership
+  W->>P: Update case + append open/membership event + refresh intent
   W->>P: Commit atomically
 
   N->>P: Reserve team/local run date
   N->>P: Claim due team cases with SKIP LOCKED lease
   N->>P: Reload authoritative supports/versions/time
-  N->>P: Append deterministic evaluation outcome
-  N->>P: Resolve, overdue/requeue, dismiss, or no-op
+  N->>P: Lock case and member Relationship versions
+  N->>P: Resolve with Relationship transitions, overdue/requeue, dismiss, or no-op
 ```
 
 The due index begins with `(team_id, status, next_review_at)` and covers only
@@ -356,12 +356,15 @@ local_run_date)` durably, claims bounded team-local batches with `FOR UPDATE
 SKIP LOCKED`, and recovers expired leases. A stale claimed version becomes a
 no-op and is re-evaluated from the current row rather than overwriting it.
 
-The worker invokes the same deterministic resolver used by placement and calls
-no model/provider. Failure leaves the case due and unresolved. A disposition
-change may enqueue rebuildable search/read-model work, but final recall checks
-the current Conflict case during support-path hydration so a stale vector cannot
-reintroduce a suppressed current path. The job never deletes evidence or
-changes authored Relationship lifecycle, support, ownership, or validity.
+The worker invokes the versioned deterministic resolver and calls no
+model/provider. Failure leaves the case due and unresolved. A resolved case
+updates the case row, appends the case event, sets losing Relationship
+`status=superseded` and `valid_to`, appends Relationship transition events, and
+enqueues rebuildable search/read-model work in one transaction. Final recall
+checks current Relationship eligibility and the current Conflict case during
+support-path hydration so a stale vector cannot reintroduce a suppressed current
+path. The job never deletes evidence or changes support links, ownership, author
+attribution, Entity resolution, or source history.
 
 Conflict-case lifecycle and evidence policy belong in
 [Conflicts And Corrections](Conflicts-And-Corrections#durable-team-conflict-cases).
@@ -377,7 +380,9 @@ One PostgreSQL transaction commits each accepted semantic change:
 3. Entity/Value resolution events
 4. Relationship observations, immutable support links, and support decisions
 5. Relationship current-state changes and transition events
-6. review work, search-document intent, and durable embedding jobs
+6. Conflict case/case-event changes when placement opens or updates a material
+   disagreement
+7. review work, search-document intent, and durable embedding jobs
 
 If that transaction fails, none of the semantic change commits. Embedding
 generation remains asynchronous because it is derived and can be retried.
@@ -430,12 +435,13 @@ Stable external ID    UNIQUE (team_id, namespace, external_id)
 Source identity       UNIQUE (team_id, source_owner_profile_id, source_key)
 Source revision       UNIQUE (team_id, source_id, source_revision)
 Support identity      UNIQUE (team_id, relationship_id, fragment_id, start_offset, end_offset)
-Relationship identity UNIQUE NULLS NOT DISTINCT (team_id, owner_profile_id, subject_entity_id, predicate_key, object_entity_id, object_value_id, polarity, valid_from, valid_to, scope_key)
+Relationship identity UNIQUE NULLS NOT DISTINCT (team_id, owner_profile_id, subject_entity_id, predicate_key, object_entity_id, object_value_id, polarity, valid_from, scope_key)
 Cross-reference       UNIQUE (team_id, author_profile_id, source_relationship_id, target_relationship_id, kind, verification_event_id)
 ```
 
 The Relationship uniqueness key is defined in
 [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle#relationship-identity).
+`valid_to` is mutable episode-closure state and is excluded from uniqueness.
 Cross-reference constraints additionally require both Relationships to share
 the row's team and the source Relationship owner to equal `author_profile_id`.
 An Evidence source has one immutable owner and one current-revision pointer.
@@ -457,7 +463,9 @@ canonical contract and unknown-predicate behavior are defined in
 The team is the durable visibility boundary. A team profile is an authenticated
 actor with roles and scopes inside that team. Same-team reads may see every
 profile's eligible knowledge; ordinary lifecycle/support mutations require
-`owner_profile_id = app.current_profile_id`.
+`owner_profile_id = app.current_profile_id`. The system Conflict reviewer uses a
+separate transaction-local actor and may update only losing member Relationship
+`status`/`valid_to` fields selected by a locked resolved case.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%

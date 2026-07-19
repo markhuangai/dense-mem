@@ -50,11 +50,11 @@ are defined in
 | Current cardinality | Whether one or many current objects may coexist for a subject, predicate, and scope. |
 | Relationship observation | One source-specific extracted statement with exact evidence spans; its Relationship link is nullable until endpoints and predicate resolve. |
 | Verification event | Append-only verifier verdict for one observation. Provider retries are operational telemetry. |
-| Relationship record | Durable profile-owned semantic identity, lifecycle, and current tier/status for one Relationship. |
+| Relationship record | Durable authored semantic episode, lifecycle, and current tier/status for one Relationship. |
 | Semantic edge | Read representation of one `active` `validated_claim` or `fact` Relationship. |
 | Semantic group key | Server-derived key that groups equivalent Relationship meaning across profiles without merging ownership or lifecycle. |
 | Conflict set | Derived group of materially incompatible authored positions connected by verified cross-references, competing single-current values, or unresolved Entity alternatives. It is not a new semantic edge or truth record. |
-| Conflict case | Durable team-scoped workflow and recall-disposition record for one material cross-profile Relationship conflict set. It never owns evidence or changes an author's lifecycle. |
+| Conflict case | Durable team-scoped workflow and recall-disposition record for one material cross-profile Relationship conflict set. It never owns evidence, but the system reviewer may close losing stale Relationship episodes after deterministic resolution. |
 | Relationship cross-reference | Append-only same-team link by which one profile confirms, challenges, corrects, or adopts evidence from another profile's Relationship. It is ledger metadata, not a semantic edge. |
 | Evidence source | Stable team-scoped origin owned by one authenticated profile or integration; only that owner may advance its revision. |
 | Source revision | Append-only immutable snapshot in one Evidence source lineage, linked by an expected previous-revision token. |
@@ -64,7 +64,7 @@ are defined in
 | Evidence support | Immutable link recording that one exact fragment span and source group was accepted for a Relationship at a point in time. |
 | Support decision | Append-only `grant`, `revoke`, or `reinstate` event controlling whether policy currently counts an EvidenceSupport. |
 | Evidence security event | Append-only deterministic scan, model signal, quarantine, or authorized release decision for one fragment. |
-| Lifecycle transition | Append-only record of a tier or status change. |
+| Lifecycle transition | Append-only record of a tier, status, or validity-bound change. |
 | Hypothesis | Dream-generated possibility that cannot become knowledge without new evidence entering `remember`. |
 
 `Node` and `edge` are graph-domain terms, not database requirements. The target
@@ -73,8 +73,8 @@ verification events, transitions, reviews, Conflict cases, and Hypotheses remain
 ledger/workflow records and never become semantic nodes.
 
 The subject is an Entity. The object is exactly one Entity or typed Value.
-Entities and Values are team-scoped. Relationship ownership and lifecycle are
-profile-scoped inside that team.
+Entities and Values are team-scoped. Relationship author ownership and ordinary
+lifecycle writes are profile-scoped inside that team.
 
 Evidence, fragments, observations, and verification history are never promoted
 or rewritten. Promotion and demotion change the tier/status of the same
@@ -84,10 +84,11 @@ a non-current source revision, while its bytes and provenance remain immutable.
 
 ## Profile Ownership And Team Visibility
 
-Every RelationshipRecord has an immutable `owner_profile_id`. Ordinary writes
-set it from the authenticated profile; legacy migration preserves the original
-v1 owner. The owner controls that record's support decisions, supersession,
-retraction, and profile-local identity corrections.
+Every RelationshipRecord has an immutable `owner_profile_id`, which records the
+profile that authored the episode. Ordinary writes set it from the authenticated
+profile; legacy migration preserves the original v1 owner. The owner controls
+normal support decisions, direct supersession, retraction, and profile-local
+identity corrections.
 
 Every active team profile with `read` scope may recall and trace same-team
 Relationships regardless of owner. A profile with `write` scope may:
@@ -98,14 +99,15 @@ Relationships regardless of owner. A profile with `write` scope may:
 - adopt another profile's exact same-team evidence through normal verification
 - merge or split only the observations and Relationships it owns
 
-It cannot change another profile's tier, status, support, Entity resolution, or
-history. Manager role does not bypass this ownership rule; separate privacy and
-security quarantine powers remain administrative workflows.
+It cannot change another profile's tier, status, support, validity, Entity
+resolution, or history. Manager role does not bypass this ordinary ownership
+rule; separate privacy and security quarantine powers remain administrative
+workflows.
 
-A team Conflict case may select a preferred position for conflict-aware current
-reads without changing any member Relationship. This disposition is not
-ownership, support, supersession, retraction, or an authored validity update.
-The complete rule belongs in
+A system Conflict reviewer may close a losing stale episode by setting its
+current `status=superseded` and `valid_to` after deterministic team-case
+resolution. That transition does not transfer ownership, edit evidence, copy
+support, or change author attribution. The complete rule belongs in
 [Conflicts And Corrections](Conflicts-And-Corrections#durable-team-conflict-cases).
 
 Source currentness is a separate team-wide evidence invariant. When the
@@ -189,12 +191,14 @@ predicate_key
 object_entity_id OR object_value_id
 polarity
 valid_from
-valid_to
 scope_key
 ```
 
 `scope_key` is a normalized optional discriminator such as environment,
 repository, role, or jurisdiction when the evidence supports that scope.
+`valid_from` is the immutable episode start. It comes from evidence-supported
+time when available, otherwise from the server-recorded first placement time
+when policy allows `recorded_fallback`.
 
 The same key without `owner_profile_id` is the `semantic_group_key`. It is used
 for cross-profile grouping, corroboration, and conflict comparison, never for a
@@ -211,9 +215,14 @@ cross-profile Relationship set also has one durable team Conflict case for
 versioned review, deadline, and read-disposition state. Identity-only and
 same-owner placement ambiguity continue to use their existing review records.
 
+`valid_to` is not an identity field. Closing a stale episode updates current
+materialized state and appends a transition; it does not create a different
+Relationship identity. A later return to the same semantic state creates a new
+episode with a new `valid_from`.
+
 Tier, status, confidence, evidence count, source count, verifier model,
-recording time, Relationship kind, and current cardinality are not identity
-fields.
+recording time, Relationship kind, current cardinality, and `valid_to` are not
+identity fields.
 
 These observations from one profile converge on one Relationship only after
 identity and predicate resolution:
@@ -248,6 +257,7 @@ surfaces must resolve to `works_on`.
   "scope_key": null,
   "valid_from": null,
   "valid_to": null,
+  "valid_from_basis": "evidence_time",
   "support_count": 3,
   "source_group_count": 2,
   "version": 4,
@@ -258,7 +268,9 @@ surfaces must resolve to `works_on`.
 
 Exactly one object form is present. The record is current materialized state;
 observations, supports, verification events, and transitions explain how it
-reached that state.
+reached that state. `valid_to` may be set later by the owner or by the system
+Conflict reviewer; the raw evidence and immutable episode identity do not
+change.
 
 ## SemanticEdge Read View
 
@@ -281,6 +293,7 @@ Conceptually:
   source_group_count: 2,
   valid_from: null,
   valid_to: null,
+  valid_from_basis: "evidence_time",
   version: 4
 }]->(Dense-Mem:Entity)
 ```
@@ -425,11 +438,12 @@ One verifier request returns separate `entity_results` and
 behavior, and no-coercion rule are defined in
 [Memory Write Pipeline](Write-Pipeline#strict-verifier-contract).
 
-For each observation, the verifier returns one semantic judgment:
+For each observation, the verifier returns bounded semantic judgments:
 
 | Dimension | Values | Purpose |
 | --- | --- | --- |
 | Evidence verdict | `entailed`, `contradicted`, `insufficient` | Whether submitted evidence supports the observation. |
+| Temporal verdict | `entailed`, `absent`, `ambiguous`, `contradicted` | Whether submitted evidence supports the reviewer-extracted validity bounds. |
 
 The verifier also returns a separate bounded `security_signals` control array.
 A non-empty valid array quarantines the evidence and creates no
@@ -439,13 +453,17 @@ Stored Relationships are not verifier inputs. After a schema-valid response,
 the server recomputes canonical identity and loads bounded current state for
 deduplication, conflict, update, and cross-reference policy. A same-owner match
 attaches support to the existing record. A cross-owner conflict creates an
-append-only cross-reference and never changes the referenced owner's record.
+append-only cross-reference and opens or updates a team Conflict case; placement
+never changes the referenced owner's record.
 
 ```text
 VerificationEvent
   verification_event_id
   observation_id
   evidence_verdict
+  temporal_verdict
+  normalized_valid_from
+  normalized_valid_to
   confidence
   rationale
   model
@@ -500,11 +518,12 @@ flowchart TD
   More --> Trusted
 ```
 
-Promotion updates the same owner's Relationship identity. It does not create a
+Promotion updates the same authored Relationship episode. It does not create a
 second edge for that owner. A cross-profile conflict does not prevent an
 otherwise entailed Relationship from becoming active; both authored positions
-remain active and traceable, while the team Conflict disposition controls which
-support paths enter primary current recall.
+remain active and traceable while the case is open. Nightly Conflict resolution
+may later supersede losing stale episodes and controls which support paths enter
+primary current recall.
 
 ## Source Independence And Fact Promotion
 
@@ -654,11 +673,13 @@ Transitions are append-only. The RelationshipRecord is current materialized
 state. Evidence and history are never deleted merely because a Relationship
 becomes inactive.
 
-State predicates with `current_cardinality=one` may supersede a comparable
-prior active record owned by the same profile only when scope, time, tier, and
-evidence policy permit. A profile never supersedes another profile's record;
-cross-profile disagreement is represented by cross-references. Events and
-multi-current state Relationships coexist.
+State predicates with `current_cardinality=one` may supersede a comparable prior
+active record owned by the same profile only when scope, time, tier, and evidence
+policy permit. A profile never supersedes another profile's record;
+cross-profile disagreement is represented by cross-references and a team
+Conflict case. The system Conflict reviewer may supersede losing stale episodes
+after deterministic case resolution. Events and multi-current state
+Relationships coexist.
 
 ## Normal Recall And Trace
 
@@ -775,7 +796,7 @@ referential and audit integrity.
 | Verdict is insufficient | Preserve candidate Relationship and evidence context; create no SemanticEdge. |
 | Search embedding fails | Preserve authoritative Relationship; expose degraded search state and retry the derived embedding job. |
 | Same-owner knowledge conflicts with new evidence | Hold review or apply owner-authorized supersession; never use stored knowledge as self-supporting evidence. |
-| Another profile's knowledge conflicts with new evidence | Preserve both eligible authored records, append a challenge/correction cross-reference, and create/update the team Conflict case in the same transaction; mutate neither target nor its support. |
+| Another profile's knowledge conflicts with new evidence | Preserve both eligible authored records during placement, append a challenge/correction cross-reference, and create/update the team Conflict case in the same transaction. |
 | Source owner or prior revision does not match | Reject the revision update and change no source, support, tier, status, or search state. |
 | Source activation transaction or fanout bound fails | Abort before advancing the source pointer; expose a bounded source-update failure. |
 | Activated replacement is quarantined or fails placement | Keep the prior revision ineffective and leave affected Relationships at their recomputed lower tier/status. |
@@ -785,9 +806,9 @@ referential and audit integrity.
 | Risk | Mitigation |
 | --- | --- |
 | Duplicate Relationships after repeated same-owner evidence | Owner-scoped canonical identity constraint plus one current Relationship upsert. |
-| Cross-profile correction mutates the target | ownership predicate on every lifecycle/support update and immutable cross-reference records |
+| Cross-profile placement mutates the target | ownership predicate on placement writes plus immutable cross-reference records |
 | Team recall hides disagreement | open cases return material alternatives; resolved cases return a compact conflict reference and retain all positions in trace |
-| Team disposition becomes authored state | Store preference/effective time only on the Conflict case and keep owner-scoped lifecycle predicates so a resolver cannot set A's status or validity. |
+| Reviewer closes the wrong authored state | lock case member Relationship IDs/versions, revalidate scope/time/cardinality, and update losing episodes plus case resolution in one transaction |
 | Candidate pollutes normal recall | Candidate cannot be active; eligibility queries permit only validated claims and facts. |
 | Evidence/history makes Relationship rows unbounded | Normalize observations, support decisions, verification, and transitions into separate tables. |
 | Revoked support still promotes tier | Materialize effective counts in the support-decision transaction and reconcile them against latest per-support events. |
@@ -826,7 +847,7 @@ The refactor is incomplete until tests prove:
 15. revoking support preserves its link/history and removes it from effective
     counts and promotion policy
 16. a profile cannot change another profile's Relationship tier, status,
-    support, resolution, or history
+    validity, support, resolution, or history
 17. a cross-profile challenge preserves both authored positions and remains
     visible to conflict-aware recall
 18. adopting another profile's evidence preserves the original fragment,
@@ -841,9 +862,13 @@ The refactor is incomplete until tests prove:
 24. quarantined replacement evidence does not reactivate the old revision
 25. unkeyed evidence never silently supersedes earlier evidence
 26. team Conflict disposition never changes a member Relationship's owner,
-    tier, status, support, or authored validity
-27. open/overdue cases retain material alternatives in primary recall, while a
+    author attribution, support links, raw evidence, Entity resolution, or source
+    history
+27. nightly Conflict resolution may set losing stale episodes to
+    `status=superseded` and write `valid_to`, with transition and Conflict ledger
+    events
+28. open/overdue cases retain material alternatives in primary recall, while a
     resolved case suppresses only non-preferred support paths for its applicable
     current interval
-28. every suppressed current position remains reconstructable through trace and
+29. every suppressed current position remains reconstructable through trace and
     historical `valid_at`/`known_at` recall

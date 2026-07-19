@@ -433,7 +433,10 @@ Relationship observation. Predicate resolution is part of each
       "object_ref": "project_1",
       "evidence_id": "ev_1",
       "start": 0,
-      "end": 24
+      "end": 24,
+      "valid_from": null,
+      "valid_to": null,
+      "temporal_evidence": []
     }
   ]
 }
@@ -471,6 +474,7 @@ fields.
       "predicate_status": "resolved",
       "predicate_key": "works_on",
       "evidence_verdict": "entailed",
+      "temporal_verdict": "absent",
       "confidence": 0.96,
       "rationale": "The exact evidence states this relationship."
     }
@@ -480,8 +484,9 @@ fields.
 
 `security_signals` is a security control, not a semantic result array. The
 response cannot contain proposed Entities, predicate definitions, stored
-Relationship selections, tiers, statuses, support counts, or database
-mutations.
+Relationship selections, tiers, statuses, support counts, conflict decisions, or
+database mutations. The verifier may only judge whether submitted evidence
+supports the extracted Relationship and temporal bounds.
 
 ### Closed response schema
 
@@ -614,6 +619,7 @@ this contract:
           "predicate_status",
           "predicate_key",
           "evidence_verdict",
+          "temporal_verdict",
           "confidence",
           "rationale"
         ],
@@ -632,6 +638,9 @@ this contract:
           },
           "evidence_verdict": {
             "enum": ["entailed", "contradicted", "insufficient"]
+          },
+          "temporal_verdict": {
+            "enum": ["entailed", "absent", "ambiguous", "contradicted"]
           },
           "confidence": {
             "type": "number",
@@ -695,9 +704,15 @@ validation:
    allowlist and accepts the endpoint kinds.
 8. `needs_review` contains null `predicate_key`; the original wording remains
    on the observation.
-9. All arrays, strings, rationales, and total bytes remain within server
+9. `temporal_verdict=entailed` is accepted only when the request carried
+   reviewer-extracted temporal bounds and exact temporal evidence spans for that
+   observation.
+10. `absent`, `ambiguous`, or `contradicted` temporal verdicts cannot create an
+    evidence-backed effective time; any later `recorded_fallback` is a server
+    policy decision, not verifier output.
+11. All arrays, strings, rationales, and total bytes remain within server
    limits.
-10. Cross-array dependency checks prove every would-be Relationship endpoint
+12. Cross-array dependency checks prove every would-be Relationship endpoint
     resolves or is held non-active.
 
 ### Regeneration, not repair
@@ -767,7 +782,7 @@ flowchart TD
   Lifecycle --> Cross{"Related cross-profile<br/>Relationships?"}
   Cross -- Yes --> Link["Append confirmation/challenge/<br/>correction cross-references"]
   Cross -- No --> Eligible{"active validated claim or fact?"}
-  Link --> Case["Create/update team Conflict case<br/>and evaluate disposition"]
+  Link --> Case["Create/update open team Conflict case<br/>and case membership"]
   Case --> Eligible
   Eligible -- Yes --> Edge["Eligible SemanticEdge"]
   Eligible -- No --> Hidden["No SemanticEdge"]
@@ -793,12 +808,15 @@ Orchestration invariants:
 - a cross-profile conflict may create the caller's eligible Relationship plus
   immutable cross-references; normal correction never changes the related
   owner's current state
+- explicit correction target context, when supplied, is validated by
+  Relationship ID/version after verification; it can anchor "that is wrong" but
+  cannot select a winner
 - a supplied `conflict_context` must match the current same-team case version
   and the verified Relationship semantics; stale or unrelated context rejects
   the complete intake before commit
-- write-time Conflict evaluation uses the same deterministic policy version as
-  nightly review; it may resolve/open/reopen the team case but cannot change a
-  member Relationship's lifecycle, support, or authored validity
+- placement opens or updates the team Conflict case and case membership; it does
+  not resolve the case or change a member Relationship's lifecycle, support, or
+  validity
 - the application derives `relationship_kind` and `current_cardinality` from
   the registry
 
@@ -906,8 +924,9 @@ For a cross-profile case, recall returns the current case ID/version and
 positions. Another same-team writer responds with new exact evidence through
 `remember`, placing `conflict_context` on the relevant Relationship proposal.
 The server verifies the new evidence normally, creates only caller-owned
-knowledge, and recomputes the case in the placement transaction. There is no
-cross-profile `resolve_memory_placement` action and no model-only confirmation.
+knowledge, and updates the case in the placement transaction. Nightly Conflict
+review later resolves or escalates the case. There is no cross-profile
+`resolve_memory_placement` action and no model-only confirmation.
 
 ## Processing And Search State
 
@@ -987,10 +1006,10 @@ or coordinate workers but never owns queue or result state.
 | Unknown predicate invention | verifier returns a plausible new verb and application accepts it | allowlist registry keys and hold `needs_review` with null `predicate_key` |
 | Stale embedding overwrite | an old job writes a vector after a correction | compare source/document/contract versions in the update predicate |
 | Hidden provider outage | invalid output is patched locally and reported as success | bounded full-response regeneration followed by explicit placement failure |
-| Cross-profile overwrite | B's correction updates A's Relationship row | bind owner at intake, include owner in identity, require owner predicates on mutation, and write only cross-references to A |
+| Cross-profile overwrite during placement | B's correction updates A's Relationship row | bind owner at intake, include owner in identity, require owner predicates on placement mutations, and write only cross-references/case membership to A |
 | Old worker resurrects replaced evidence | a rev-42 provider call commits after rev-43 activates | supersede old placement intent in activation and require current-source predicates at claim and semantic commit |
 | Stale Conflict context attaches evidence incorrectly | C responds to case version 2 after new evidence created version 3 | validate case ID/version and material membership before the all-or-nothing intake commit |
-| Case commit diverges from Relationship commit | B's Relationship is visible but the open/resolved disposition is missing | write Relationship, cross-reference, Conflict state/event, and refresh intent in one transaction |
+| Case commit diverges from Relationship commit | B's Relationship is visible but the open case/membership is missing | write Relationship, cross-reference, Conflict state/event, and refresh intent in one transaction |
 
 ## Pipeline Acceptance Tests
 
@@ -1030,5 +1049,8 @@ The refactor is incomplete until tests prove:
     Conflict case without changing another owner's Relationship
 23. stale, cross-team, dismissed, or semantically unrelated conflict context
     rejects the complete `remember` request before evidence commits
-24. another profile can affect a Conflict disposition only by creating its own
-    verified evidence-backed Relationship through `remember`
+24. another profile can affect a Conflict case only by creating its own verified
+    evidence-backed Relationship through `remember`; automatic disposition
+    belongs to nightly Conflict review
+25. verifier temporal verdicts are required, closed-schema fields and cannot be
+    replaced by server guesses

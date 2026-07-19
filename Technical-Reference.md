@@ -25,8 +25,9 @@ completed bridge marker before startup.
 7. candidate Relationships are never active/default recall results
 8. every operation is authorized from the authenticated principal
 9. unknown fields on writes and provider/storage failures are rejected visibly
-10. knowledge is team-readable and profile-owned; cross-profile correction
-    creates caller-owned records and immutable references
+10. knowledge is team-readable and profile-authored; cross-profile correction
+    creates caller-owned records and immutable references, while nightly Conflict
+    review owns automatic stale-state closure
 11. MCP is the supported external memory integration; user and control portals
     are first-party product interfaces
 
@@ -273,7 +274,8 @@ names are valid because homonyms exist. Canonical behavior is in
 | `polarity` | no | `+` or `-`; default `+`. |
 | `modality` | no | `statement`, `question`, `proposal`, `speculation`, or `quoted`. |
 | `evidence` | yes | One or more exact spans from this request. |
-| `valid_from` / `valid_to` | no | Evidence-supported real-world validity bounds. |
+| `valid_from` / `valid_to` | no | Evidence-supported real-world validity bounds extracted for verifier temporal judgment. |
+| `correction_target` | no | Optional same-team Relationship target containing `relationship_id` and `expected_version`; it anchors an explicit correction but grants no winner or mutation authority. |
 | `conflict_context` | no | Response context containing one same-team `conflict_id` and `expected_version`; it requests re-evaluation but grants no decision authority. |
 | `client_comment` | no | Non-authoritative extraction note. |
 
@@ -293,14 +295,33 @@ may respond to different cases without ambiguity:
 }
 ```
 
-Both fields are required when the object is present; `expected_version` is a
-positive integer. The ID/version must come from same-team `recall_memory` or
-`trace_memory`. Dense-Mem verifies the current version and proves that the
-placed Relationship is materially part of that case. A stale version, wrong
-team, dismissed case, or unrelated proposal rejects the complete `remember`
-request before evidence or case state commits. The server derives the matching
-or new position from verified semantics. Clients cannot submit a position ID,
-winner, status, score, deadline, or bare confirmation.
+Both fields are required when `conflict_context` is present;
+`expected_version` is a positive integer. The ID/version must come from
+same-team `recall_memory` or `trace_memory`. Dense-Mem verifies the current
+version and proves that the placed Relationship is materially part of that case.
+A stale version, wrong team, dismissed case, or unrelated proposal rejects the
+complete `remember` request before evidence or case state commits. The server
+derives the matching or new position from verified semantics. Clients cannot
+submit a position ID, winner, status, score, deadline, or bare confirmation.
+
+`correction_target` is separate from `conflict_context`. It is used when the
+client can identify the specific same-team Relationship being corrected, such as
+from a prior `trace_memory` result:
+
+```json
+{
+  "correction_target": {
+    "relationship_id": "rel_01J...",
+    "expected_version": 7
+  }
+}
+```
+
+Dense-Mem revalidates team, version, visibility, and semantic relatedness after
+verification. A stale, cross-team, or unrelated target rejects the complete
+`remember` request before evidence commits. The target ID can help the server
+derive `corrects` or `challenges`; it cannot set the target's tier, status,
+validity, support, or conflict winner.
 
 An `object_value` contains one of `string`, `number`, `boolean`, `date`, or
 `date_time` plus a canonical value. `display` and `unit` are optional.
@@ -373,9 +394,9 @@ vector-search readiness.
           "conflict": {
             "conflict_id": "conflict_01J...",
             "version": 3,
-            "status": "resolved",
+            "status": "open",
             "position_id": "position_release",
-            "review_due_at": null
+            "review_due_at": "2026-02-26T00:00:00Z"
           }
         }
       ],
@@ -413,12 +434,12 @@ contain zero or more `relationship_outcomes[]`; there is no preferred
 Relationship for an evidence item. Relationship outcomes preserve every bounded
 observation result that passed extraction and verification.
 
-`conflict` is optional and appears when that Relationship opened, joined, or
-re-evaluated a durable cross-profile case. Its status is `open`, `overdue`, or
-`resolved`; a dismissed case remains trace-only. An open team conflict does not
-make an otherwise complete caller-owned placement `awaiting_review`: the
-Relationship placement is durable, and later evidence arrives through normal
-`remember` with the returned case ID/version.
+`conflict` is optional and appears when that Relationship opened or joined a
+durable cross-profile case. Placement returns `open` or `overdue`; `resolved`
+appears after nightly Conflict review. A dismissed case remains trace-only. An
+open team conflict does not make an otherwise complete caller-owned placement
+`awaiting_review`: the Relationship placement is durable, and later evidence
+arrives through normal `remember` with the returned case ID/version.
 
 Top-level evidence item categories:
 
@@ -587,6 +608,7 @@ belong in
       "question": "Which deployment branch is current for production?",
       "review_due_at": null,
       "effective_at": "2026-02-19T00:00:00Z",
+      "effective_time_basis": "evidence_time",
       "preferred_position_id": "position_release",
       "positions": [
         {
@@ -633,22 +655,27 @@ belong in
 ```
 
 Recall is evidence-primary. `results[]` is the ranked answer context, bounded
-by the server context budget. `discovery_paths[]` carries compact, separately
-selected Relationship paths for follow-up discovery near the returned evidence
-or requested expansion entities; it is not extra answer context and does not
-affect direct top-K scoring. `known_evidence_ids` and `known_relationship_ids`
-change only request-local retrieval context and never mutate stored state.
+by the server context budget. There is no `raw_evidence` response field and no
+unfiltered evidence dump. Evidence text is returned only after final hydration
+proves at least one query-relevant active support path remains eligible for the
+requested `valid_at`/`known_at` view. `discovery_paths[]` carries compact,
+separately selected Relationship paths for follow-up discovery near the returned
+evidence or requested expansion entities; it is not extra answer context and does
+not affect direct top-K scoring. `known_evidence_ids` and
+`known_relationship_ids` change only request-local retrieval context and never
+mutate stored state.
 
 `conflicts[]` is required and may be empty. It contains at most 20 cases
 material to the query or returned paths. Each case contains at most 10
 positions; each position contains at most 20 Relationship IDs, 20 owner profile
 IDs, and 50 evidence IDs that also occur in this response's `results[]`. Status
 is `open`, `overdue`, or `resolved`; disposition is `candidate`, `preferred`, or
-`suppressed_current`. `preferred_position_id`, `review_due_at`, and
-`effective_at` are nullable. `question` is a bounded deterministic description,
-not model-generated evidence. `positions_truncated=true` means the host should
-trace a returned Relationship before acting and never infer a winner from the
-bounded list.
+`suppressed_current`. `preferred_position_id`, `review_due_at`, `effective_at`,
+and `effective_time_basis` are nullable. `effective_time_basis` is
+`evidence_time` or `recorded_fallback` when present. `question` is a bounded
+deterministic description, not model-generated evidence.
+`positions_truncated=true` means the host should trace a returned Relationship
+before acting and never infer a winner from the bounded list.
 
 For an open/overdue applicable case, primary results reserve bounded context for
 each returned material position and the host presents the question. For a
@@ -727,9 +754,11 @@ position membership with Relationship versions, and append-only case events:
 `opened`, `position_added`, `evaluated`, `resolved`, `reopened`, `overdue`, or
 `dismissed`.
 Events include prior/resulting status, selected position when present, reason,
-policy version, actor profile when client-triggered, referenced versions, and
-`created_at`. Trace may include dismissed cases and non-preferred evidence that
-ordinary current recall omits.
+policy version, actor profile when client-triggered, system actor when
+reviewer-triggered, effective time basis, referenced versions, and `created_at`.
+Relationship `transitions[]` include prior/resulting tier, status, `valid_from`,
+and `valid_to` when a reviewer closes a stale episode. Trace may include
+dismissed cases and non-preferred evidence that ordinary current recall omits.
 
 Trace reads authoritative normalized history and may add bounded current
 SemanticEdges from PostgreSQL. It never reconstructs history from edge
@@ -866,6 +895,7 @@ Provider configuration belongs in
 | HTTP bypass diverges from MCP | a caller executes a V2 memory tool through the generic HTTP route with a stale schema | transport visibility omits V2 memory tools from HTTP catalog/execution/OpenAPI and tests list/call parity separately |
 | Stale conflict response changes the wrong case | C submits evidence against version 2 after the case moved to version 3 | per-proposal `conflict_id` plus expected version and pre-commit material-membership validation |
 | Resolved response conceals authorship | only B's current evidence returns and the host assumes A was deleted | required compact conflict ref plus full trace positions/events |
+| Raw evidence leaks noise | a vector seed returns stale A evidence with no eligible support path | omit `raw_evidence`; hydrate evidence text only through active support-path eligibility |
 
 ## Contract Acceptance
 
@@ -888,7 +918,9 @@ Version 2 is incomplete until:
     absent from generic HTTP tool discovery, execution, and OpenAPI
 13. `remember` accepts conflict context only on one Relationship proposal and
     rejects stale, cross-team, dismissed, or unrelated cases before commit
-14. every recall response contains bounded `conflicts[]`; open/overdue and
+14. `remember` accepts optional correction target only on one Relationship
+    proposal and rejects stale, cross-team, or unrelated targets before commit
+15. every recall response contains bounded `conflicts[]`; open/overdue and
     resolved cases follow their specified primary-result behavior
-15. trace reconstructs every authorized Conflict position, version, event, and
+16. trace reconstructs every authorized Conflict position, version, event, and
     non-preferred evidence path

@@ -152,8 +152,8 @@ Valid outcomes:
 - active `validated_claim` or `fact`
 - `candidate/pending_evidence` retained but excluded from active/default recall
 - owner-scoped review for identity, predicate, same-owner conflict, scope, or time
-- a team Conflict case for a material cross-profile disagreement; placement may
-  still complete while that case remains open
+- an open team Conflict case for a material cross-profile disagreement; placement
+  may still complete while that case awaits nightly review
 - explicit rejected/quarantined/failed outcome
 
 The authoritative categories are in
@@ -167,7 +167,8 @@ Ask:
 What do you remember about my explanation preferences?
 ```
 
-Default recall returns compact active Relationships. Then ask:
+Default recall returns ranked evidence contexts plus compact Relationship
+discovery paths. Then ask:
 
 ```text
 Trace that preference Relationship and show its supporting evidence.
@@ -197,7 +198,8 @@ Do not use an ambiguous first name for this initial smoke.
 Use the traced caller-owned `relationship_id` and ask to forget that one
 Relationship. To correct another profile, remember new evidence under the
 caller, include the recall-supplied Conflict ID/version on the relevant proposal
-when present, and let Dense-Mem create the cross-reference/case update.
+when present, and let Dense-Mem create the cross-reference/case update. Nightly
+Conflict review owns any automatic cross-profile stale-state closure.
 
 Expected:
 

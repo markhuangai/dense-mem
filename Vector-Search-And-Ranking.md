@@ -262,8 +262,8 @@ For conflicting positions:
 - retain every material eligible alternative in a conflict set
 - use each position's exact evidence, tier, temporal applicability, source
   independence, and correction/confirmation cross-references
-- resolve only when exactly one temporally clear position meets the configured
-  authoritative-or-independent-source floor
+- resolve only in nightly review, when exactly one temporally applicable position
+  meets the pre-TTL strong quorum or post-TTL automatic floor
 - for an `open` or `overdue` case, budget evidence from every material position
   into primary recall and produce a clarification
 - for a `resolved` case, include only preferred support paths in primary recall
@@ -275,29 +275,32 @@ For conflicting positions:
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
   Group["Same-team semantic/conflict group"] --> Evidence["Compare eligible authored positions"]
-  Evidence --> Margin{"Exactly one position meets<br/>time + evidence floor?"}
-  Margin -- Yes --> Preferred["Preferred support paths only<br/>plus resolved conflict ref"]
-  Margin -- No --> Clarify["Return alternatives and<br/>open/overdue conflict"]
+  Evidence --> Case{"Case already resolved<br/>for this time view?"}
+  Case -- Yes --> Preferred["Preferred support paths only<br/>plus resolved conflict ref"]
+  Case -- No --> Clarify["Return alternatives and<br/>open/overdue conflict"]
   Clarify --> NewEvidence["Caller may remember new evidence<br/>under its own profile"]
 ```
 
 A profile's correction cannot down-rank another profile merely by labeling it
 wrong. Its challenge contributes only after normal evidence verification and
 cross-reference validation. Several profiles copying one source remain one
-source group. Tier, verified cross-references, and applicable recency order
-otherwise eligible evidence; none can substitute for the automatic-resolution
-floor, and recency cannot break a tie between two qualifying positions. The
-floor, deadline, and reopening behavior are defined in
+source group. Tier, verified cross-references, and applicable recency may order
+otherwise eligible evidence within the bounded conflict view; none can substitute
+for the automatic-resolution floor, and recency cannot break a tie between two
+qualifying positions. The floor, deadline, time basis, and new-conflict-episode
+behavior are defined in
 [Conflicts And Corrections](Conflicts-And-Corrections#deterministic-resolution-policy).
 
 Conflict disposition is applied after branch fusion and before final evidence
 hydration. The service over-fetches and backfills so removing a suppressed
 support path does not silently shrink `limit`. It never drops an Evidence
 fragment globally: when one fragment also supports an unrelated eligible
-Relationship, that independent path may still return the fragment. A
-`known_at` query ignores case events recorded later than the requested
-knowledge time, and `valid_at` applies the position/effective interval that was
-visible in that historical view.
+Relationship, that independent path may still return the fragment. The final
+PostgreSQL hydration step is authoritative; a stale text/vector hit cannot enter
+`results[]` without an active eligible support path. A `known_at` query ignores
+case events recorded later than the requested knowledge time, and `valid_at`
+applies the position/effective interval that was visible in that historical
+view.
 
 ## Runtime Control
 
@@ -364,7 +367,7 @@ The evaluation procedure and release gates belong in [Evaluation](Evaluation).
 | Raw scores mixed | text rank `0.4` is averaged with cosine similarity `0.8` | fuse rank positions with RRF or named branch priority |
 | RRF toggle changes behavior silently | portal disables RRF and replicas choose different fallbacks | atomic versioned ranking contract, explicit branch order, and internal telemetry |
 | Majority overrides evidence | copied weak memory from several profiles outranks one primary source | source-group dedupe, bounded corroboration, and evidence-aware conflict rerank |
-| Challenge censors another author | unsupported “wrong” link removes A from recall | target remains immutable; retain conflict refs and require verified challenge evidence |
+| Challenge censors another author | unsupported "wrong" link removes A from recall | placement cannot mutate the target; retain conflict refs and require verified challenge evidence plus nightly resolution |
 | Resolved case hides unrelated support | a fragment supporting A and another current fact is removed globally | apply disposition to the relevant Relationship support path and backfill from over-fetch |
 | Current winner rewrites history | B's resolved position is returned for a `valid_at` before the change or `known_at` before B arrived | evaluate case events and effective intervals bitemporally before hydration |
 | ANN filter loses team results | HNSW selects global neighbors before tenant filtering | exact path for bounded sets, iterative scans, over-fetch, and exact Recall@K gate |

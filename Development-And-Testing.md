@@ -17,7 +17,7 @@ architecture page.
 | Current pre-refactor state | Target state |
 | --- | --- |
 | PostgreSQL control/placement plus Neo4j semantic/search data | PostgreSQL owns ledger, current semantic state, graph reads, full text, and `pgvector` |
-| claim/fact/fragment services and mixed graph records | Entity, Value, RelationshipObservation, VerificationEvent, profile-owned RelationshipRecord, Support, CrossReference, Transition, Hypothesis |
+| claim/fact/fragment services and mixed graph records | Entity, Value, RelationshipObservation, VerificationEvent, profile-authored RelationshipRecord, Support, CrossReference, Transition, Hypothesis |
 | server requires Neo4j startup/bootstrap | normal server requires PostgreSQL + `pgvector`; temporary `2.1.x` boot gate owns read-only legacy access |
 | verifier surfaces legacy claim decisions | one closed response with bounded `security_signals`, `entity_results`, and `relationship_results`; no model schema-version field or stored-Relationship context |
 | graph query adapters expose Neo4j behavior | repository ports expose bounded semantic-edge/search/trace operations |
@@ -137,8 +137,9 @@ flowchart LR
 - make every new tenant-owned table, primary/unique key, foreign key, hot join,
   queue/idempotency key, and repository lookup carry `team_id` as defined in
   [PostgreSQL Cluster-Safe Schema](PostgreSQL-Cluster-Safe-Schema)
-- add profile-owned Relationship identity, owner-only mutation constraints,
-  semantic grouping, and cross-profile reference records
+- add authored Relationship episode identity, owner-only placement constraints,
+  semantic grouping, cross-profile reference records, and system reviewer
+  transition authority for resolved conflict cases
 - implement transaction-local team/system worker context
 - add repository contract tests against real PostgreSQL
 - add backup/restore and migration-up/down fixtures before data backfill
@@ -166,7 +167,8 @@ of introducing a second migration system.
 - implement the exact/HNSW/halfvec/canonical-rerank paths and topology contract
   from [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec)
 - implement indexed bounded incoming/outgoing adjacency
-- fuse/deduplicate by `relationship_id`
+- fuse/deduplicate by `evidence_id` and require active support-path eligibility
+  before hydration
 - implement control-portal versioned RRF/branch-priority profiles and
   deterministic evidence/conflict reranking
 - group equivalent cross-profile positions while retaining material conflicts
@@ -176,7 +178,7 @@ of introducing a second migration system.
 ### Slice 4: lifecycle workflows
 
 - implement predicate review, profile-owned conflict/correction/supersession,
-  cross-profile references, and owner-only forget
+  cross-profile references, owner-only forget, and nightly Conflict review
 - implement write-scoped, caller-owned observation-level Entity split/merge
 - let dreaming read only eligible sources and existing endpoint IDs
 - run community analysis from a bounded PostgreSQL edge snapshot
@@ -379,23 +381,32 @@ C's follow-up through the public MCP `remember` contract. Assert the durable
 case/event rows and recall/trace behavior, not that a mocked resolver method was
 called.
 
-- authoritative B plus a reliable effective time resolves at write time; A's
-  Relationship row/version/tier/status/support/validity remains byte-for-byte
-  unchanged
-- weak B, missing effective time, two qualifying positions, or copied evidence
-  from one source group remains `open`
-- C with independent evidence creates C-owned knowledge, joins/creates the
-  correct position, and recomputes the case; a bare assertion gains no weight
+- B's placement creates B-owned knowledge, a cross-reference, and an open case;
+  A's Relationship row/version/tier/status/support/validity remains unchanged
+  until nightly review
+- weak B, missing required effective time, two qualifying positions, or copied
+  evidence from one source group remains `open` or becomes `overdue`
+- C with independent evidence creates C-owned knowledge and joins/creates the
+  correct position; a bare assertion gains no weight and does not extend the
+  deadline
 - stale, wrong-team, dismissed, or semantically unrelated `conflict_context`
   rejects the complete intake with zero durable writes
-- current recall after resolution returns preferred support paths plus the
-  bounded resolved case; trace returns A/B/C positions and events
+- current recall before resolution returns bounded material alternatives; after
+  nightly resolution it returns preferred support paths plus the bounded resolved
+  case, while trace returns A/B/C positions and events
 - `valid_at` before the business change returns the prior applicable position;
   `known_at` before B/C/resolution excludes later case events
 - one fragment supporting suppressed A and an unrelated current Relationship
   remains eligible through the unrelated support path
-- a due case with one qualifying position resolves identically at write-time and
-  nightly entry points; no qualifying/unique position becomes `overdue`
+- before TTL, a case resolves only with at least four independent source groups
+  and more than 75% support; at/after TTL, a unique authority or at least two
+  independent source groups with more than 50% support may resolve
+- authoritative opposition blocks ordinary resolution unless the timed strong
+  override has verifier-confirmed later replacement time; recorded fallback
+  cannot override authority
+- nightly resolution atomically sets losing stale Relationships to
+  `status=superseded`, writes `valid_to`, appends Relationship and Conflict
+  events, marks the case resolved, and queues search refresh
 - repeated nightly runs, duplicate source-group evidence, and stale claimed
   versions are idempotent and do not extend the original deadline
 - two replicas claim team-local batches without duplicate events; expired leases

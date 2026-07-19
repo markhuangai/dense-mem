@@ -320,9 +320,10 @@ For a stuck case:
 5. if no position qualifies, keep/mark `overdue` and request new evidence
 6. confirm current and historical recall plus trace before closing the incident
 
-The worker may repair Conflict workflow/search state only. Never edit/delete
-evidence, set another owner's `valid_to`/status, add support, or rewrite a case
-event. Lifecycle rules are in
+The worker path may resolve the case and losing Relationship episodes selected
+by the deterministic policy. Never edit/delete evidence, add support, rewrite a
+case event, or set another owner's `valid_to`/status outside the locked nightly
+Conflict review transaction. Lifecycle rules are in
 [Conflicts And Corrections](Conflicts-And-Corrections#nightly-conflict-review).
 
 ## Backup

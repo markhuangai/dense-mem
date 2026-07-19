@@ -511,9 +511,10 @@ Nightly Conflict review follows the same shape. The scheduler durably reserves
 one `(team_id, local_run_date)` run, then claims due `open`/`overdue` cases from
 an index beginning `(team_id, status, next_review_at)` with case-version and
 lease predicates. A claim never scans or locks every team's Relationship rows.
-Only system/team transaction mode may update the team-owned case
-materialization; profile writes affect it indirectly inside the same placement
-service transaction and append the authenticated actor to the case event.
+Only system/team transaction mode may update the team-owned case materialization
+or close losing Relationship episodes selected by a locked resolved case. Profile
+writes affect cases indirectly inside the same placement service transaction and
+append the authenticated actor to the case event.
 
 Small coordinator summaries or Redis signals may indicate which shard has work,
 but they are derived hints. Losing them cannot lose, complete, or reassign the

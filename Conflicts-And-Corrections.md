@@ -1,11 +1,12 @@
 # Conflicts And Corrections
 
-Dense-Mem preserves conflicting evidence. It asks for a client decision when
-the caller's identity, predicate, scope, time, or current-state behavior cannot
-be resolved safely. A resolved cross-profile disagreement keeps every authored
-Relationship and its evidence intact, while a separate team-scoped disposition
-controls which position enters primary current recall. No profile may mutate
-another profile's Relationship to resolve a team disagreement.
+Dense-Mem preserves raw evidence and resolves stale authored state with audited
+Relationship lifecycle transitions. It asks for a client decision when the
+caller-owned identity, predicate, scope, time, or current-state behavior cannot
+be resolved safely. A profile cannot mutate another profile's Relationship, but
+the bounded system Conflict reviewer may close a losing team Relationship episode
+after an evidence-backed case resolution. Evidence bytes, observations, support
+links, and author attribution remain immutable.
 
 This page is the single source of truth for conflict and correction
 interaction. Relationship lifecycle is in
@@ -59,8 +60,9 @@ cross-reference to the other profile's record.
 
 ## Cross-Profile Corrections
 
-Profiles A, B, and C may all read same-team knowledge. Each owns only the
-Relationships and observations created under its profile.
+Profiles A, B, and C may all read same-team knowledge. Each authors only the
+Relationships and observations created under its profile. Ordinary profile
+writes can change only caller-owned lifecycle state.
 
 Assume profile A has two Relationships based on an identity that later appears
 to combine two people:
@@ -79,8 +81,9 @@ B: ent_mark_billing -> works_on -> Billing
 ```
 
 In the same transaction, Dense-Mem appends `corrects` or `challenges`
-cross-references from B's new Relationships to A's related Relationships. A's
-status, tier, supports, and Entity resolutions do not change.
+cross-references from B's new Relationships to A's related Relationships and
+opens or updates the durable team Conflict case. A's status, tier, supports,
+validity, and Entity resolutions do not change during B's placement.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
@@ -91,22 +94,23 @@ flowchart LR
   B2["B: Mark-Billing works_on Billing"] --> Set
   B1 -->|"corrects"| A1
   B2 -->|"corrects"| A2
-  Set --> C["Profile C recall"]
-  C --> Decision{"Exactly one position qualifies?"}
-  Decision -- Yes --> Prefer["Resolve preferred current paths;<br/>retain conflict/trace refs"]
-  Decision -- No --> Ask["Keep open and ask<br/>for new evidence"]
+  Set --> Case["Team Conflict case"]
+  Case --> C["Profile C recall"]
+  C --> Ask["Show material alternatives<br/>and ask for evidence"]
   Ask --> CWrite["C remembers confirmation<br/>under profile C"]
+  CWrite --> Nightly["Nightly reviewer resolves,<br/>overdues, or keeps open"]
 ```
 
-Profile C may rely on the preferred position when the case is resolved. When it
-is open or overdue, C presents the alternatives or collects new user evidence.
-Any confirmation C remembers belongs to C and may `confirm` B or `challenge` A.
-It does not edit either record.
+Profile C sees both material positions while the case is open. C may submit new
+evidence through normal `remember`; any confirmation C remembers belongs to C and
+may `confirm` B or `challenge` A. It does not directly edit either record.
 
-If A later accepts the correction, A submits or adopts exact evidence through
-the normal verifier. A may then supersede A's old Relationships and create A's
-corrected Relationships. Adoption preserves B's evidence author, provenance,
-and source-group identity; it does not count the same evidence twice.
+If A later accepts the correction directly, A submits or adopts exact evidence
+through the normal verifier. A may then supersede A's old Relationships and
+create A's corrected Relationships. Separately, the system Conflict reviewer may
+supersede A's stale episode after the team case resolves. Adoption preserves B's
+evidence author, provenance, and source-group identity; it does not count the
+same evidence twice.
 
 The canonical ownership and cross-reference fields are defined in
 [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle#profile-ownership-and-team-visibility).
@@ -126,25 +130,28 @@ t2  B owns Relationship B1: production deploys_from release
     B1 corrects A1, with valid_from=t1 supported by B's evidence
 ```
 
-At `t2`, A1, A's evidence, support, tier, status, and authored validity remain
-unchanged. B cannot set A1's `valid_to`, supersede A1, or make A's fragment
-ineffective. Dense-Mem creates or updates a team conflict case that groups A1
-and B1. The case is workflow and recall-disposition state, not a Relationship,
-SemanticEdge, source revision, or new statement of truth.
+At `t2`, B's placement creates B1, the `corrects` cross-reference, and an open
+team Conflict case. A1, A's evidence, support, tier, status, and validity remain
+unchanged during placement. The AI verifier does not decide that a conflict
+exists; server policy detects the incompatible single-current state after B's
+submitted evidence verifies.
 
-If B's evidence is authoritative, verified, and temporally clear enough to meet
-the deterministic resolution policy, the case resolves to B's position at
-write time. Current recall at or after `t1` returns B's evidence in primary
-`results[]`, includes a compact resolved conflict reference, and keeps A1
-available through trace. Recall with `valid_at` before `t1` may still return A's
-position. Recall with `known_at` before `t2` reconstructs what Dense-Mem knew
-before B's correction arrived.
+While the case is open, C receives both material positions plus an explicit
+conflict question. C may submit new exact evidence through normal `remember`; any
+resulting Relationship belongs to C and is grouped with the matching or new
+position. A bare vote, profile count, or unsupported "B is right" assertion
+changes no disposition.
 
-If B does not meet the policy, the case remains open. C receives both material
-positions plus an explicit conflict question. C may submit new exact evidence
-through normal `remember`; any resulting Relationship belongs to C and is
-grouped with the matching or new position. A bare vote, profile count, or
-unsupported “B is right” assertion changes no disposition.
+The nightly Conflict reviewer owns automatic resolution. If B's side becomes the
+unique winner under the deterministic policy, one PostgreSQL transaction marks
+the case resolved, sets A1 `status=superseded`, writes A1 `valid_to` to the
+resolved cutoff, appends Relationship and Conflict ledger events with
+`actor=system_conflict_reviewer`, and queues rebuildable search refresh. A's
+original evidence fragment and support remain traceable. Current recall at or
+after the cutoff returns B-side evidence in primary `results[]`, includes a
+compact resolved conflict reference, and keeps A1 available through trace. Recall
+with `valid_at` before the cutoff may still return A's position. Recall with
+`known_at` before B's correction arrived reconstructs the older system view.
 
 ## Durable Team Conflict Cases
 
@@ -170,6 +177,7 @@ ConflictCase
   last_evaluated_at
   resolved_at
   effective_at
+  effective_time_basis: evidence_time | recorded_fallback
   preferred_position_id
   policy_version
 
@@ -182,8 +190,8 @@ ConflictPosition
 ConflictEvent
   event_id
   prior and resulting case state
-  actor profile when client-triggered
-  reason code, policy version, and referenced versions
+  actor profile when client-triggered or system worker when reviewer-triggered
+  reason code, policy version, time basis, and referenced versions
   created_at
 ```
 
@@ -195,10 +203,10 @@ lifecycle change; it is not a truth decision.
 
 | Authored knowledge | Team conflict disposition |
 | --- | --- |
-| A1 and B1 retain their immutable owners | the case belongs to the team, not A or B |
-| each Relationship keeps its own tier/status/support | `preferred_position_id` affects conflict-aware reads only |
+| A1 and B1 retain immutable author attribution | the case belongs to the team, not A or B |
+| each Relationship keeps its own evidence/support ledger | resolution may close losing stale episodes through audited system transitions |
 | neither author receives the other's evidence as support | equivalent evidence retains its original source-group identity |
-| authored validity is not rewritten cross-profile | `effective_at` bounds the team-level current-read disposition |
+| ordinary profiles cannot rewrite cross-profile validity | `effective_at` is the cutoff used for current-read disposition and losing-episode closure |
 | trace returns every authorized position and event | primary current recall omits resolved non-preferred support paths |
 
 A conflict case is created or changed only from committed, schema-valid state.
@@ -210,26 +218,41 @@ review continue to use their existing review workflows.
 
 ### Deterministic resolution policy
 
-A position qualifies for automatic current preference only when:
+The counting unit is a current accepted independent source group. Profile count,
+Relationship row count, copied fragments, summaries, adoptions, and repeated
+source revisions are not votes.
 
-1. every counted support is accepted, entailed, currently effective, and
-   applicable to the conflict scope
-2. a reliable effective time establishes when the current-state change applies
-3. the position has either one allowed authoritative source group or at least
-   two independent accepted source groups
-4. exactly one material position meets that floor for the applicable interval
+Before `review_due_at`, one position qualifies only when it has at least four
+independent source groups and more than 75% of counted support for the material
+case. At or after `review_due_at`, one position qualifies when either:
 
-Copied, summarized, adopted, or revised evidence from one origin remains one
-source group. Author count is not a vote. Tier, verified confirmation/correction
-references, and applicable recency may order otherwise eligible evidence, but
-recency alone cannot satisfy the floor or break a tie between two qualifying
-positions. Missing or conflicting effective-time evidence keeps the case open.
+1. it is the unique position with an allowed authoritative source group; or
+2. it has at least two independent source groups and more than 50% of counted
+   support.
 
-Resolution appends an event and updates the case disposition. It never changes
-Relationship tier/status/support, writes `valid_to` onto another owner's record,
-or expires an evidence fragment. One fragment may support unrelated current
-Relationships, so primary-result filtering operates on the relevant
-Relationship support path rather than globally hiding the fragment.
+In all cases, every counted support must be accepted, entailed, currently
+effective, and applicable to the conflict scope. A source group that currently
+supports incompatible positions counts toward neither side until its support is
+cleaned up.
+
+Authoritative opposition normally blocks automatic replacement. A timed strong
+override is allowed only when the proposed winner has at least four independent
+source groups, more than 75% of counted support, and verifier-confirmed evidence
+that the replacement became effective after the losing authoritative position.
+`recorded_fallback` time cannot override authoritative opposition.
+
+The cutoff is the evidence-supported effective time when the verifier confirms
+the extracted temporal bound. If no reliable bound exists and no authority
+override is needed, the reviewer may use the first contradictory placement time
+as `recorded_fallback`. Missing or conflicting time keeps the case open when the
+chosen threshold requires evidence time.
+
+Resolution appends case events, appends Relationship transitions for losing
+episodes, updates their current `status`/`valid_to`, and queues rebuildable search
+refresh. It never edits raw evidence, observations, verification events, support
+links, or author attribution. One fragment may support unrelated current
+Relationships, so primary-result filtering operates on the relevant Relationship
+support path rather than globally hiding the fragment.
 
 ### Responding from another profile
 
@@ -242,43 +265,50 @@ current alternatives and retry. The exact MCP field shape belongs in
 [Technical Reference](Technical-Reference#remember).
 
 The same transaction that places the caller-owned Relationship and validated
-cross-reference recomputes the case. A unique qualifying position resolves
-immediately; otherwise the case remains or becomes open and returns a fresh
-deadline/version. There is no separate cross-profile `resolve` command.
+cross-reference opens or updates the case, membership, deadline/version, and
+search refresh intent. It does not resolve the case. There is no separate
+cross-profile `resolve` command; automatic resolution belongs to nightly review.
 
 ## Nightly Conflict Review
 
-Write-time evaluation is authoritative for new evidence. The nightly job is a
-deterministic audit and repair backstop for due cases, missed derived work,
-source-revision changes, and service restarts. It uses the same versioned
-resolution policy as write-time evaluation and does not call a model.
+The nightly job is the deterministic Conflict maintainer. It reviews known open
+or overdue cases, repairs membership, resolves qualifying cases, and closes stale
+Relationship episodes. It does not scan all old Relationships by age and it does
+not call a model.
 
-For each due case, the job:
+For each case whose `next_review_at` is due, whether before or after
+`review_due_at`, the job:
 
 1. claims bounded team-local work with a durable lease
 2. reloads current Relationship versions, effective supports, source groups,
    cross-references, scope, and temporal bounds from PostgreSQL
-3. repairs stale position membership and recomputes the disposition
-4. resolves only when exactly one position meets the automatic floor
+3. repairs stale position membership and recomputes the policy view
+4. resolves only when exactly one position meets the automatic floor for the
+   current pre-TTL or post-TTL phase
 5. marks the case `overdue`, appends an escalation event, and schedules the next
    nightly check when no unique position qualifies
 6. dismisses a case only when committed lifecycle/source changes leave no
    material disagreement
-7. queues rebuildable search/read-model refresh work after a disposition change
+7. when resolving, locks and updates the losing Relationship rows, appends
+   transition events, marks the case resolved, appends the Conflict event, and
+   queues rebuildable search/read-model refresh work in one transaction
 
-The review deadline comes from the versioned team policy. Reaching it is never
-evidence and never forces a winner. Duplicate evidence from the same source
-group does not extend the deadline; a materially new position or newly
-independent support may reopen a resolved case and start a new review window.
-Database/worker failure leaves the case due and unresolved. Multi-instance
-workers use durable daily run reservation plus team-local `FOR UPDATE SKIP
-LOCKED` claims, bounded retries, and lease recovery.
+The review deadline comes from the versioned team policy. Reaching it is not
+evidence and does not force a winner; it only enables the lower automatic
+threshold. Duplicate evidence from the same source group does not extend the
+deadline. New independent support updates membership and may resolve on a later
+nightly run, but it does not move the original deadline. A later contradictory
+business change opens a new conflict episode instead of reopening a resolved
+case. Database/worker failure leaves the case due and unresolved.
+Multi-instance workers use durable daily run reservation plus team-local `FOR
+UPDATE SKIP LOCKED` claims, bounded retries, and lease recovery.
 
-The job may update conflict workflow rows and rebuildable search state. It may
-not edit or delete evidence, observations, verification events,
-RelationshipCrossReferences, authored validity, Relationship ownership,
-tier/status/support, Entity resolution, or source history. Operators inspect an
-overdue case or submit new evidence; they do not repair it with direct SQL.
+The job may update conflict workflow rows, losing Relationship `status` and
+`valid_to`, append Relationship transition events, and enqueue rebuildable search
+state. It may not edit or delete evidence, observations, verification events,
+RelationshipCrossReferences, support links, Relationship ownership, author
+attribution, Entity resolution, or source history. Operators inspect an overdue
+case or submit new evidence; they do not repair it with direct SQL.
 Defaults and bounded overrides belong in
 [Configuration](Configuration#conflict-review).
 
@@ -371,11 +401,13 @@ an already registered predicate. See [Dreaming](Dreaming).
 uses the authority and independent-source rules in
 [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle#source-independence-and-fact-promotion).
 
-These actions mutate only a Relationship owned by the authenticated profile.
-To address another profile's Relationship, the caller submits new evidence
-through `remember`; deterministic post-verification identity and conflict
-policy derive the appropriate cross-reference. There is no cross-profile
-`accept`, `forget`, `supersede`, merge, or split shortcut.
+These client actions mutate only a Relationship owned by the authenticated
+profile. To address another profile's Relationship, the caller submits new
+evidence through `remember`; deterministic post-verification identity and
+conflict policy derive the appropriate cross-reference and case update. The
+system Conflict reviewer is the only non-owner lifecycle writer for a
+cross-profile stale-state case. There is no cross-profile client `accept`,
+`forget`, `supersede`, merge, or split shortcut.
 
 ## Correct With New Evidence
 
@@ -457,9 +489,9 @@ mix a profile-local correction with unowned source-fragment retirement.
 | vector search may still represent the prior version | source/full-text/adjacency reads change at commit; version-matched embedding job updates vector search |
 
 For a cross-profile correction, the target record does not enter the right-hand
-column. The caller creates a separately owned Relationship and cross-reference;
-the team Conflict case preserves both positions and controls their current
-recall disposition.
+column during placement. The caller creates a separately owned Relationship and
+cross-reference; the team Conflict case preserves both positions until the
+nightly reviewer resolves or escalates the case.
 
 ## Forget And Retraction
 
@@ -490,9 +522,10 @@ emulate either operation with direct SQL deletion.
 ## Deterministic Current-State Decisions
 
 Predicate registry fields `relationship_kind` and `current_cardinality` guide
-whether accepted knowledge coexists or may supersede a prior current value
-owned by the same profile. They are not model decisions and never authorize
-cross-profile supersession.
+whether accepted knowledge coexists or may supersede a prior current value owned
+by the same profile. They are not model decisions and never authorize
+cross-profile ordinary writes. Cross-profile stale-state closure is limited to
+the nightly Conflict reviewer and the deterministic case policy above.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
@@ -524,11 +557,11 @@ this page owns how the client sees and resolves uncertainty.
 | Wrong supersession | a many-valued predicate is treated as single-current | explicit `current_cardinality`, scope/time comparison, and before/after preview |
 | Forget becomes data loss | deleting an edge also removes source and audit history | transactional retraction status; nodes and append-only ledger remain |
 | Stale vector confuses review | vector search surfaces meaning from before correction | source-version checks, exact trace by ID, and explicit search freshness |
-| Cross-profile correction becomes mutation | B's correction marks A's Relationship superseded | owner predicate on mutations; B writes its own Relationship plus immutable cross-reference |
+| Cross-profile correction becomes immediate mutation | B's placement marks A's Relationship superseded before review | placement can write only B's Relationship, cross-reference, and open/update case; non-owner supersession is allowed only in the nightly reviewer transaction |
 | Majority becomes truth | several profiles copy one weak source and outvote stronger evidence | preserve source groups, deduplicate common origins, and rank evidence rather than author count alone |
 | Correction impersonates source revision | a profile-local `correct` request invalidates evidence adopted by other owners | reserve team-wide invalidation for the immutable source owner and exact prior-revision contract |
-| Deadline becomes truth | an unresolved case automatically chooses B after seven days | require one unique temporally applicable position above the evidence floor; otherwise mark `overdue` and escalate |
-| Team disposition rewrites A | resolution sets A's status or authored `valid_to` | keep the disposition in team workflow state and enforce owner predicates on every Relationship mutation |
+| Deadline becomes truth | an unresolved case automatically chooses B after seven days | TTL only switches thresholds; require one unique temporally applicable position above the applicable evidence floor, otherwise mark `overdue` and escalate |
+| Reviewer closes the wrong episode | B's branch change supersedes an unrelated A Relationship sharing text | lock case membership by Relationship ID/version, revalidate scope/predicate/cardinality/time, and update case plus losing Relationships in one transaction |
 | Historical recall uses today's winner | a query for six months ago returns only B | evaluate both `valid_at` and `known_at` against conflict events and effective time |
 | Fragment-wide suppression hides valid facts | A's fragment supports another still-current Relationship | filter only query-relevant support paths and retain the immutable fragment/search document |
 | Stale C response attaches to the wrong case version | C confirms an alternative after the case was reopened or regrouped | require `conflict_id` plus expected version and reject stale context before commit |
@@ -563,9 +596,11 @@ this page owns how the client sees and resolves uncertainty.
     the corresponding historical view
 17. another writer's response creates that writer's evidence-backed
     Relationship and cannot act as a bare vote
-18. write-time and nightly evaluation produce the same disposition for the same
-    committed inputs and policy version
-19. deadline expiry without one qualifying position produces `overdue`, not an
+18. placement creates or updates Conflict cases but does not resolve them
+19. nightly review is the only automatic Conflict resolver and model-free
+20. deadline expiry without one qualifying position produces `overdue`, not an
     invented winner
-20. the nightly job can repair workflow/search state but cannot mutate authored
-    evidence, Relationship lifecycle, ownership, validity, or support
+21. the nightly job may close losing Relationship episodes with audited
+    `status=superseded` and `valid_to` updates, but cannot mutate raw evidence,
+    support links, ownership, author attribution, Entity resolution, or source
+    history

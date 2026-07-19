@@ -55,11 +55,13 @@ flowchart LR
   Hypothesis --> Response
 ```
 
-Initial recall ranks only directly searchable evidence. Relationship, Entity,
-and adjacency candidates form a separate discovery frontier after the evidence
-budget is chosen. Equivalent Relationships remain independently authored and
-traceable; public recall ranks evidence contexts that the client can read and
-uses Relationships as compact follow-up handles.
+Initial recall ranks directly searchable evidence candidates. Before hydration,
+each candidate must still prove at least one query-relevant active Relationship
+support path for the requested time view. Relationship, Entity, and adjacency
+candidates form a separate discovery frontier after the evidence budget is
+chosen. Equivalent Relationships remain independently authored and traceable;
+public recall ranks evidence contexts that the client can read and uses
+Relationships as compact follow-up handles.
 
 ## PostgreSQL Read Sequence
 
@@ -105,7 +107,7 @@ An evidence fragment enters default recall only when:
 ```text
 team_id = authenticated team
 owner_profile_id = any active profile in that team
-evidence is current for the requested valid_at and known_at
+at least one query-relevant Relationship support path is active for the requested valid_at and known_at
 its stable source revision, when present, is current
 evidence is not quarantined, supersession-pending, superseded, retracted, or erased
 request filters and exact anchors match this evidence
@@ -241,10 +243,11 @@ branch-priority fusion, then bounded deterministic reranking. The initial
 fusion unit is `(branch, evidence_id)`.
 
 Final selection applies required hard-anchor matching, query-derived phrase and
-exact signals, bounded support/source-group signals, and temporal intent.
-Hydration is not a second retrieval; it is a bounded `WHERE evidence_id IN (...)`
-read for already-selected evidence. Discovery paths are selected separately
-from bounded Relationship candidates after direct evidence ranking, exclude
+exact signals, active support-path eligibility, bounded support/source-group
+signals, conflict disposition, and temporal intent. Hydration is not a second
+retrieval; it is a bounded `WHERE evidence_id IN (...)` read for already-selected
+and support-eligible evidence. Discovery paths are selected separately from
+bounded Relationship candidates after direct evidence ranking, exclude
 already-returned or caller-supplied known IDs where possible, may point at
 relevant evidence outside `results[]`, and remain follow-up hints rather than
 direct answer context.
@@ -410,7 +413,8 @@ and release-policy decisions belong in [Evaluation](Evaluation).
 | --- | --- | --- |
 | Candidate contamination | an insufficient observation appears as a normal edge | database eligibility requires `active` plus `validated_claim/fact` |
 | Tier overwhelms relevance | unrelated fact outranks a direct validated claim | apply bounded tier weight after relevance fusion |
-| Evidence slows fast recall | every result joins verifier history and unbounded support rows | hydrate only selected evidence and compact discovery paths; trace explicitly by ID |
+| Evidence slows fast recall | every result joins verifier history and unbounded support rows | use bounded support-path eligibility for selected candidates, hydrate selected evidence only, and load full history through trace |
+| Search seed leaks stale text | vector/full-text returns A's old fragment after A was superseded | final PostgreSQL hydration requires an active eligible support path and backfills from over-fetch |
 | Filtered ANN misses | the vector branch returns an incomplete authorized candidate set | apply the team-shaped execution and exact-oracle contract in [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec) |
 | Same evidence repeats | several Relationships from one source produce many hits | deduplicate by `(branch, evidence_id)` before fusion |
 | Same meaning from several authors floods results | A, B, and C confirmations consume three top-K slots | rank evidence contexts while retaining author positions and trace handles in discovery/trace |
@@ -425,8 +429,8 @@ and release-policy decisions belong in [Evaluation](Evaluation).
 
 The recall refactor is incomplete until tests prove:
 
-1. default results contain current eligible evidence contexts without requiring
-   an active Relationship
+1. default results contain only current eligible evidence contexts with at least
+   one active query-relevant Relationship support path
 2. each evidence ID contributes at most once per retrieval branch before fusion
 3. public recall returns ranked evidence contexts and compact discovery paths,
    not verifier history

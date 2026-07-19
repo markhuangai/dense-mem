@@ -261,7 +261,8 @@ The corpus includes:
   Relationships, cross-references, and profile-local merge/split corrections
 - stale A knowledge followed by B's later correction and C's independent
   response, with reliable/missing effective times, case deadlines, copied-source
-  controls, and write-time/nightly evaluation fixtures
+  controls, pre-TTL/post-TTL thresholds, authority-override controls, and
+  nightly evaluation fixtures
 
 Seed through MCP `remember` and the first-party client-review workflow so runs
 exercise extraction, verification, policy, transactions, jobs, and interface
@@ -276,7 +277,7 @@ Every run fails immediately on:
 | --- | --- |
 | Entity identity | one real identity has one canonical ID; homonyms may have separate IDs |
 | semantic node kinds | only Entity and typed Value appear in graph-shaped reads |
-| Relationship identity | repeated same-owner evidence attaches to one record; another owner remains distinct and grouped |
+| Relationship identity | repeated same-owner evidence attaches to one episode; another owner remains distinct and grouped; `valid_to` closure does not change identity |
 | edge eligibility | only `active validated_claim/fact` appears as SemanticEdge |
 | candidate isolation | `candidate/pending_evidence` appears in neither default recall nor active graph |
 | Hypothesis isolation | dream output changes no Entity/Value/Relationship/support/tier/status |
@@ -289,7 +290,8 @@ Every run fails immediately on:
 | forget | no active edge; Entity/Value and ledger history remain |
 | append-only | evidence, material decisions, support, correction, and transition history is unchanged |
 | tenant isolation | zero cross-team rows/IDs across all branches and trace |
-| profile ownership | same-team eligible knowledge is readable, but lifecycle/support/merge/split changes affect caller-owned records only |
+| profile ownership | same-team eligible knowledge is readable, but ordinary lifecycle/support/merge/split changes affect caller-owned records only |
+| system reviewer boundary | nightly Conflict review may close losing stale Relationship episodes, but cannot edit evidence, support links, owner/author, Entity resolution, or source history |
 | version safety | stale embedding job cannot update a newer document |
 
 ## Identity Cases
@@ -363,17 +365,19 @@ Required examples:
    predicate resolve
 8. same-owner conflict/single-current replacement remains review-held until safe
 9. forget retracts from current reads without erasing trace
-10. B's entailed correction creates B-owned knowledge, links A, and creates a
-    team Conflict case without changing A
+10. B's entailed correction creates B-owned knowledge, links A, and creates an
+    open team Conflict case without changing A during placement
 11. an open/overdue case returns material alternatives and clarification; a
     resolved case returns preferred current support paths plus conflict refs
-12. C's independent response creates C-owned knowledge and may resolve/reopen
-    the case; a bare assertion or copied source adds no vote
+12. C's independent response creates C-owned knowledge and may contribute to
+    later nightly resolution; a bare assertion or copied source adds no vote
 13. `valid_at` before the change and `known_at` before later evidence/resolution
     reconstruct the earlier position and case state
-14. nightly evaluation matches write-time policy, resolves only one qualifying
-    position, and otherwise records `overdue`
-15. A can adopt B's exact evidence without duplicating its source group, then
+14. nightly evaluation resolves only one qualifying position, otherwise records
+    `overdue`, and never treats TTL as evidence
+15. nightly resolution atomically supersedes losing stale episodes with
+    `valid_to`, Relationship transitions, Conflict events, and search refresh
+16. A can adopt B's exact evidence without duplicating its source group, then
     supersede only A's prior Relationship
 
 ## Recall Judgments
@@ -386,7 +390,7 @@ Core metrics:
 
 | Metric | Meaning |
 | --- | --- |
-| Recall@K | relevant Relationship coverage |
+| Recall@K | relevant evidence-context coverage after support-path eligibility |
 | MRR | first relevant rank |
 | nDCG@K | graded ranking quality |
 | exact-anchor success | all required hard anchors satisfied by one result |
@@ -394,7 +398,8 @@ Core metrics:
 | trace completeness | expected evidence/verification/transition refs present |
 | candidate/Hypothesis leak count | must be zero in primary results |
 | cross-team leak count | must be zero |
-| cross-profile mutation count | must be zero |
+| cross-profile placement mutation count | must be zero |
+| reviewer closure accuracy | losing stale Relationship episodes receive the intended `valid_to` and ledger only after nightly resolution |
 | conflict preference accuracy | the uniquely qualifying evidence-backed position resolves and supplies primary current paths |
 | conflict clarification accuracy | zero or multiple qualifying positions produce clarification |
 | conflict disposition accuracy | resolved current recall includes only the qualifying preferred support paths |
@@ -604,7 +609,9 @@ comparisons are not added to the release evidence set.
     schema version, stored-knowledge alignment, or stored Relationship IDs
 13. source revision activation, automatic demotion, and stale-token rejection
     pass with same-team cross-profile adopters
-14. three-profile Conflict cases pass write-time/nightly parity, copied-source,
-    missing-time, deadline, stale-version, lease-recovery, and bitemporal slices
-15. no evaluation can pass with a cross-profile lifecycle mutation, deadline-only
-    winner, or false suppression of an unrelated/historical support path
+14. three-profile Conflict cases pass placement-open/nightly-resolve,
+    copied-source, missing-time, deadline, stale-version, lease-recovery, and
+    bitemporal slices
+15. no evaluation can pass with a cross-profile placement mutation, deadline-only
+    winner, wrong reviewer closure, or false suppression of an
+    unrelated/historical support path

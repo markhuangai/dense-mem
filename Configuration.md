@@ -407,15 +407,15 @@ no Neo4j/GDS dependency is implied. See
 ### Conflict review
 
 Conflict review is core deterministic maintenance, not an optional/model-backed
-feature. Write-time dispositions take effect in the committing transaction;
-there is no shadow/observe mode and no normal-runtime disable flag. The nightly
-job audits due cases and repairs workflow/search state without changing authored
-evidence or Relationship lifecycle.
+feature. Placement opens or updates durable cases in the committing transaction;
+automatic disposition belongs to the nightly reviewer. There is no
+shadow/observe mode and no normal-runtime disable flag. The nightly job reviews
+known open/overdue cases, may close losing stale Relationship episodes through
+audited lifecycle transitions, and calls no model.
 
 | Key | Target default | Meaning |
 | --- | --- | --- |
-| `CONFLICT_RESOLUTION_POLICY_VERSION` | `cross_profile_v1` | immutable resolver/floor contract captured on case events |
-| `CONFLICT_REVIEW_TTL_DAYS` | `7` | default open/reopened review window, 1–30 days |
+| `CONFLICT_REVIEW_TTL_DAYS` | `7` | default open review window before lower automatic threshold is available, 1–30 days |
 | `CONFLICT_REVIEW_START_TIME_LOCAL` | `04:00` | nightly schedule in `APP_TIMEZONE` |
 | `CONFLICT_REVIEW_MAX_CONCURRENCY` | `1` | concurrent team runs per process, 1–16 |
 | `CONFLICT_REVIEW_BATCH_SIZE` | `100` | team-local case claim size, 1–500 |
@@ -425,10 +425,15 @@ evidence or Relationship lifecycle.
 
 A team may set only `review_ttl_days` as a PostgreSQL-backed override in the
 same 1–30 range. The control-plane change is audited and applies to cases opened
-or materially reopened afterward; an existing case retains its captured
-deadline and policy version. The override cannot disable review, weaken the
-evidence floor, or select a preferred position. Conflict policy is not exposed
-through MCP and no portal conflict inbox is implied.
+afterward; an existing case retains its captured deadline and policy version.
+New evidence does not extend the original deadline. The override cannot disable
+review, weaken either evidence floor, or select a preferred position. Conflict
+policy is not exposed through MCP and no portal conflict inbox is implied.
+
+Conflict `policy_version` is not runtime configuration. It is a server-owned
+resolver contract identifier captured on case and Relationship transition events
+for audit, replay, and migration safety. Changing that resolver contract is a
+code/schema rollout with evaluation gates, not an operator or team override.
 
 The scheduler performs bounded catch-up after downtime by reserving at most one
 run per team/local date. Missing the nominal start time does not skip due cases,
@@ -467,10 +472,10 @@ flowchart TD
 ```
 
 Configuration errors fail visibly. Startup does not substitute another store,
-embedding model, verifier schema, or coordination mode.
-It also validates the Conflict policy version, TTL/override bounds, local start
-time, batch/concurrency/lease/attempt ranges, and `APP_TIMEZONE` before starting
-the core Conflict worker.
+embedding model, verifier schema, resolver contract, or coordination mode.
+It also validates TTL/override bounds, local start time,
+batch/concurrency/lease/attempt ranges, and `APP_TIMEZONE` before starting the
+core Conflict worker.
 During a pending `2.1.x` migration, only health/control surfaces start; service
 logs and the control portal expose durable progress. Version `2.2.0+` has no
 bridge and fails when the marker is absent.

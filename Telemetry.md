@@ -528,7 +528,8 @@ payloads, and vectors are opt-out by default and should not enter normal logs.
 12. deterministic scans, model security signals, quarantine releases, source
     revisions, support revocations, and automatic demotions are separately
     observable with bounded labels
-13. Conflict write-time/nightly evaluation, status age, overdue escalation, run
-    failure, and lease recovery are observable without case/team/profile IDs
+13. Conflict placement case updates, nightly review, status age, overdue
+    escalation, run failure, and lease recovery are observable without
+    case/team/profile IDs
 14. telemetry cannot resolve or mutate a Conflict case and never substitutes
     for its durable event history

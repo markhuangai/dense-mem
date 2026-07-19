@@ -206,8 +206,9 @@ flowchart LR
 
 - Entity and typed Value are the only semantic-node kinds.
 - A SemanticEdge is a graph-shaped read of one eligible Relationship row.
-- Relationship lifecycle is profile-owned and same-team readable; corrections
-  of another profile create caller-owned knowledge plus immutable references.
+- Relationship lifecycle is ordinarily profile-owned and same-team readable;
+  corrections of another profile create caller-owned knowledge plus immutable
+  references, while nightly Conflict review may close losing stale episodes.
 - Names and aliases are Entity metadata.
 - Evidence, observations, verification, transitions, reviews, and Hypotheses
   are ledger records, not semantic nodes.
@@ -279,9 +280,10 @@ and SemanticEdge query shape; it is not another database or authority.
 ## Consistency Boundary
 
 Core semantic state, cross-profile Conflict case disposition, and their
-append-only histories commit atomically in one PostgreSQL transaction. The
-nightly Conflict worker may recompute workflow/search state from committed
-inputs, but cannot edit authored evidence or Relationship lifecycle.
+append-only histories commit atomically in PostgreSQL transactions. Placement
+opens or updates cases with caller-owned knowledge. Nightly Conflict review may
+resolve a locked case, close losing stale Relationship episodes, append
+Relationship/Conflict ledger events, and queue search refresh in one transaction.
 
 ```mermaid
 %%{init: {"sequence": {"rightAngles": true}}}%%
@@ -312,7 +314,7 @@ projection, outbox, or graph-reconciliation loop in the target.
 | Embeddings | evidence, Entity, Relationship, and query embeddings through configured providers | no normal-use vectors |
 | Recall | bounded retrieval, ranking, graph frontier, freshness, and trace handles | deciding which returned context to use, cite, or question |
 | Ambiguity | exact candidates, impact, review state, and safe decision application | presenting the ambiguity and collecting the user's evidence-backed choice |
-| Cross-profile conflict | durable case/version, deterministic disposition, deadline audit, current/historical recall, and trace | presenting open positions and submitting new evidence through `remember` |
+| Cross-profile conflict | durable case/version, deterministic nightly disposition, deadline audit, current/historical recall, and trace | presenting open positions and submitting new evidence through `remember` |
 | Operations | isolation, profiles, roles, keys, portals, telemetry, backup, and recovery | client configuration and safe use of returned context |
 
 Dense-Mem is not an autonomous truth oracle. Models propose structured
@@ -348,7 +350,7 @@ second target model.
 | Provider controls truth | verifier returns `tier=fact` or an arbitrary ID and it reaches storage | closed schema excludes writes; allowlist validation and deterministic lifecycle |
 | Big-bang refactor stalls | every package changes before one end-to-end slice works | vertical slices, legacy adapters at boundaries, and passing acceptance invariants per slice |
 | Redis becomes a hidden database | replicas lose identity or review state after Redis restart | coordination-only ports and restart tests proving PostgreSQL is complete |
-| Conflict workflow becomes a truth edge | a team preference mutates A's Relationship or appears as a semantic predicate | separate non-semantic case/event records, owner-scoped lifecycle, and support-path-only recall disposition |
+| Conflict workflow becomes a truth edge | a team preference appears as a semantic predicate or closes an unrelated A Relationship | separate non-semantic case/event records, locked case membership, system reviewer transitions, and support-path-only recall disposition |
 
 ## Architecture Invariants
 
@@ -371,6 +373,7 @@ second target model.
     migration gate may connect, and `2.2.0` removes that code.
 13. Same-team visibility never permits one profile to mutate another profile's
     knowledge.
-14. A team Conflict case may affect current recall disposition but never owns
-    evidence or changes a member Relationship's owner, lifecycle, support, or
-    authored validity.
+14. A team Conflict case never owns evidence or changes a member Relationship's
+    owner, author attribution, support, Entity resolution, or source history.
+15. Nightly Conflict review may close losing stale Relationship episodes with
+    audited `status=superseded` and `valid_to` transitions.
