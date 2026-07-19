@@ -288,7 +288,7 @@ func TestV2SemanticRelationshipLifecycleAndRLS(t *testing.T) {
 	assertSameTeamCanReadSemanticEdge(t, ctx, appDB, rls, teamA, ownerB, first.Relationship.RelationshipID)
 	assertCrossTeamCannotReadSemanticEdge(t, ctx, appDB, rls, teamA, teamC, ownerC)
 
-	err = semanticRepo.RetractRelationship(ctx, V2RetractRelationshipInput{
+	_, err = semanticRepo.RetractRelationship(ctx, V2RetractRelationshipInput{
 		TeamID:         teamA,
 		OwnerProfileID: ownerB,
 		RelationshipID: first.Relationship.RelationshipID,
@@ -807,12 +807,31 @@ func TestV2SemanticAppendOnlyHistoryAndRetraction(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "append-only")
 
-	require.NoError(t, semanticRepo.RetractRelationship(ctx, V2RetractRelationshipInput{
+	retracted, err := semanticRepo.RetractRelationship(ctx, V2RetractRelationshipInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		RelationshipID: decision.Relationship.RelationshipID,
 		Reason:         "forget",
-	}))
+		IdempotencyKey: "forget-relationship",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, retracted)
+	assert.NotEmpty(t, retracted.TransitionID)
+	assert.Equal(t, decision.Relationship.RelationshipID, retracted.RelationshipID)
+	assert.Equal(t, "active", retracted.FromStatus)
+	assert.Equal(t, "retracted", retracted.ToStatus)
+	assert.Equal(t, "forget-relationship", retracted.IdempotencyKey)
+
+	retried, err := semanticRepo.RetractRelationship(ctx, V2RetractRelationshipInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		RelationshipID: decision.Relationship.RelationshipID,
+		Reason:         "forget retried",
+		IdempotencyKey: "forget-relationship",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, retried)
+	assert.Equal(t, retracted.TransitionID, retried.TransitionID)
 	edges, err := semanticRepo.ListSemanticEdges(ctx, teamID, 20)
 	require.NoError(t, err)
 	assert.Empty(t, edges, "retracted relationships must disappear from SemanticEdge reads")
@@ -827,7 +846,7 @@ func TestV2SemanticAppendOnlyHistoryAndRetraction(t *testing.T) {
 		`, teamID, decision.Relationship.RelationshipID).Scan(&transitionCount).Error
 	})
 	require.NoError(t, err)
-	assert.GreaterOrEqual(t, transitionCount, int64(2))
+	assert.Equal(t, int64(2), transitionCount)
 }
 
 func TestV2SemanticTraceRelationshipHydratesLineageAndBoundedGraph(t *testing.T) {

@@ -56,6 +56,7 @@ type Dependencies struct {
 	Memory            memoryservice.Service
 	V2Remember        memoryservice.V2RememberService
 	V2Recall          memoryservice.V2RecallService
+	V2Lifecycle       memoryservice.V2LifecycleService
 	SkillPack         skillpackservice.Service
 	Dreams            dreamservice.Service
 }

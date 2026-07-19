@@ -191,6 +191,66 @@ func v2UATTools(deps Dependencies) []Tool {
 				}
 				return structToMap(res)
 			}
+		case V2ToolGetMemoryPlacement:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
+				if deps.V2Remember == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
+					return nil, fmt.Errorf("get_memory_placement: invalid input: %w", err)
+				}
+				var req memoryservice.V2GetMemoryPlacementRequest
+				if err := remapInput(input, &req); err != nil {
+					return nil, fmt.Errorf("get_memory_placement: invalid input: %w", err)
+				}
+				req.ContractVersion = domain.V2ContractVersion
+				res, err := deps.V2Remember.GetMemoryPlacementV2(ctx, req)
+				if err != nil {
+					return nil, err
+				}
+				return structToMap(res)
+			}
+		case V2ToolResolveMemoryPlacement:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
+				if deps.V2Lifecycle == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
+					return nil, fmt.Errorf("resolve_memory_placement: invalid input: %w", err)
+				}
+				var req memoryservice.V2ResolveMemoryPlacementRequest
+				if err := remapInput(input, &req); err != nil {
+					return nil, fmt.Errorf("resolve_memory_placement: invalid input: %w", err)
+				}
+				req.ContractVersion = domain.V2ContractVersion
+				res, err := deps.V2Lifecycle.ResolveMemoryPlacementV2(ctx, req)
+				if err != nil {
+					return nil, err
+				}
+				return structToMap(res)
+			}
+		case V2ToolCorrectEntityResolution:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
+				if deps.V2Lifecycle == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
+					return nil, fmt.Errorf("correct_entity_resolution: invalid input: %w", err)
+				}
+				var req memoryservice.V2CorrectEntityResolutionRequest
+				if err := remapInput(input, &req); err != nil {
+					return nil, fmt.Errorf("correct_entity_resolution: invalid input: %w", err)
+				}
+				req.ContractVersion = domain.V2ContractVersion
+				res, err := deps.V2Lifecycle.CorrectEntityResolutionV2(ctx, req)
+				if err != nil {
+					return nil, err
+				}
+				return structToMap(res)
+			}
 		case V2ToolRecallMemory:
 			tool := tools[i]
 			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
@@ -411,30 +471,40 @@ func validateV2ResolveMemoryPlacement(args map[string]any) error {
 	case domain.V2ResolveAcknowledge:
 		return validateV2RequiredFields(args, "ingest_id")
 	case domain.V2ResolveSelectEntity:
-		if err := validateV2RequiredFields(args, "ingest_id", "placement_item_id", "decision"); err != nil {
-			return err
-		}
-		return validateV2DecisionFields(args, "mention_ref", "entity_id")
+		return validateV2RequiredFields(args,
+			"ingest_id",
+			"placement_item_id",
+			"placement_item_version",
+			"entity_ref",
+			"candidate_entity_id",
+		)
 	case domain.V2ResolveConfirmNewEntity:
-		if err := validateV2RequiredFields(args, "ingest_id", "placement_item_id", "decision", "evidence"); err != nil {
-			return err
-		}
-		return validateV2DecisionFields(args, "mention_ref")
+		return validateV2RequiredFields(args,
+			"ingest_id",
+			"placement_item_id",
+			"placement_item_version",
+			"entity_ref",
+			"evidence",
+		)
 	case domain.V2ResolveSelectPredicate:
-		if err := validateV2RequiredFields(args, "ingest_id", "placement_item_id", "decision"); err != nil {
-			return err
-		}
-		return validateV2DecisionFields(args, "observation_id", "predicate_key", "predicate_version")
+		return validateV2RequiredFields(args,
+			"ingest_id",
+			"placement_item_id",
+			"placement_item_version",
+			"observation_id",
+			"predicate_key",
+			"predicate_version",
+		)
 	case domain.V2ResolveAccept:
-		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "evidence")
+		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "placement_item_version", "evidence")
 	case domain.V2ResolveReject:
-		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "reason")
+		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "placement_item_version", "message")
 	case domain.V2ResolveCorrect:
-		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "evidence")
+		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "placement_item_version", "evidence")
 	case domain.V2ResolveReleaseQuarantine:
-		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "reason")
+		return validateV2RequiredFields(args, "ingest_id", "placement_item_id", "placement_item_version", "message")
 	case domain.V2ResolveForget:
-		return validateV2RequiredFields(args, "relationship_id", "reason", "evidence")
+		return validateV2RequiredFields(args, "relationship_id", "message", "evidence")
 	default:
 		return nil
 	}
@@ -639,20 +709,26 @@ func v2ResolveMemoryPlacementInputSchema() map[string]any {
 		"action":            schemaEnum(domain.V2ResolveActions()),
 		"ingest_id":         schemaString("Placement run ID.", 128),
 		"placement_item_id": schemaString("Review item ID.", 128),
-		"relationship_id":   schemaString("Caller-owned Relationship ID.", 128),
-		"decision": v2ClosedObject(nil, map[string]any{
-			"mention_ref":       schemaString("Client-local Entity mention ref.", 128),
-			"entity_id":         schemaString("Server-supplied same-team Entity ID.", 128),
-			"observation_id":    schemaString("Unresolved observation ID.", 128),
-			"predicate_key":     schemaString("Server-supplied registered predicate key.", 128),
-			"predicate_version": map[string]any{"type": "integer", "minimum": 1},
-		}),
-		"reason":   schemaString("Bounded reviewer reason.", 1000),
-		"evidence": v2EvidenceArraySchema(),
-		"proposal": v2ClosedObject(nil, map[string]any{
-			"entities":      v2EntityProposalArraySchema(),
-			"relationships": v2RelationshipProposalArraySchema(),
-		}),
+		"placement_item_version": map[string]any{
+			"type":        "integer",
+			"minimum":     1,
+			"description": "Observed placement item version from inspection; stale values are rejected.",
+		},
+		"observation_id":  schemaString("Unresolved observation ID.", 128),
+		"relationship_id": schemaString("Caller-owned Relationship ID.", 128),
+		"entity_ref":      schemaString("Client-local Entity proposal ref.", 128),
+		"candidate_entity_id": schemaString(
+			"Server-supplied candidate Entity ID selected for this profile.",
+			128,
+		),
+		"predicate_key": schemaString("Server-supplied registered predicate key.", 128),
+		"predicate_version": map[string]any{
+			"type":        "integer",
+			"minimum":     1,
+			"description": "Server-supplied predicate version selected for this observation.",
+		},
+		"message":         schemaString("Bounded reason or reviewer explanation.", 1000),
+		"evidence":        v2EvidenceArraySchema(),
 		"idempotency_key": schemaString("Resolution retry key scoped to team and profile.", 128),
 	})
 }
@@ -865,10 +941,12 @@ func v2PlacementRunOutputSchema() map[string]any {
 
 func v2PlacementItemSchema() map[string]any {
 	return v2ClosedObject(
-		[]string{"item_id", "evidence_id", "category", "search_state", "relationship_outcomes", "errors"},
+		[]string{"item_id", "evidence_id", "version", "evidence_index", "category", "search_state", "relationship_outcomes", "errors"},
 		map[string]any{
 			"item_id":               schemaString("Stable placement item ID.", 128),
 			"evidence_id":           schemaString("Durable evidence fragment ID.", 128),
+			"version":               map[string]any{"type": "integer", "minimum": 1},
+			"evidence_index":        map[string]any{"type": "integer", "minimum": 0},
 			"category":              schemaEnum(domain.V2EvidenceItemCategories()),
 			"relationship_outcomes": v2RelationshipOutcomeArraySchema(),
 			"search_state":          schemaEnum(domain.V2SearchProjectionStates()),

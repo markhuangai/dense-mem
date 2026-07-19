@@ -123,7 +123,7 @@ func v2SemanticGraphEdgesSQL(extraWhere string) string {
 		       COALESCE(subject_name.display_name, e.subject_entity_id::text) AS source_title,
 		       subject.entity_kind AS source_body,
 		       subject.status AS source_status,
-		       subject.owner_profile_id::text AS source_owner_profile_id,
+		       e.owner_profile_id::text AS source_owner_profile_id,
 		       subject.updated_at AS source_recorded_at,
 		       CASE
 		         WHEN e.object_entity_id IS NOT NULL THEN 'entity:' || e.object_entity_id::text
@@ -134,7 +134,7 @@ func v2SemanticGraphEdgesSQL(extraWhere string) string {
 		       COALESCE(object_name.display_name, NULLIF(value.display, ''), value.canonical_value, e.object_entity_id::text, e.object_value_id::text) AS target_title,
 		       COALESCE(object.entity_kind, value.value_type, '') AS target_body,
 		       COALESCE(object.status, 'active') AS target_status,
-		       COALESCE(object.owner_profile_id::text, value.owner_profile_id::text, e.owner_profile_id::text) AS target_owner_profile_id,
+		       e.owner_profile_id::text AS target_owner_profile_id,
 		       COALESCE(object.updated_at, value.created_at, subject.updated_at) AS target_recorded_at
 		FROM semantic_edges e
 		JOIN entity_records subject
@@ -289,7 +289,7 @@ func loadV2SemanticValueGraphNode(ctx context.Context, tx *gorm.DB, teamID, valu
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT ('value:' || value_id::text), value_id::text,
 		       COALESCE(NULLIF(display, ''), canonical_value), value_type,
-		       'active', owner_profile_id::text, created_at
+		       'active', ''::text, created_at
 		FROM value_records
 		WHERE team_id = ?::uuid
 		  AND value_id = ?::uuid

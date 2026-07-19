@@ -67,6 +67,8 @@
         {
           "item_id": "item-1",
           "evidence_id": "ev-1",
+          "version": 1,
+          "evidence_index": 0,
           "category": "evidence_processed",
           "search_state": "current",
           "relationship_outcomes": [
@@ -96,8 +98,10 @@
     "input": {
       "ingest_id": "ing-1",
       "placement_item_id": "item-1",
+      "placement_item_version": 1,
       "action": "select_entity",
-      "decision": {"mention_ref": "person-1", "entity_id": "ent-1"},
+      "entity_ref": "person-1",
+      "candidate_entity_id": "ent-1",
       "idempotency_key": "resolve-1"
     },
     "output": {

@@ -807,7 +807,7 @@ func applyV2RelationshipDecisionInTx(
 		}
 	}
 	if recordState.Changed {
-		if err := insertV2RelationshipTransition(ctx, tx, v2TransitionInput{
+		if _, err := insertV2RelationshipTransition(ctx, tx, v2TransitionInput{
 			TeamID:              input.TeamID,
 			OwnerProfileID:      input.OwnerProfileID,
 			RelationshipID:      recordState.Record.RelationshipID,

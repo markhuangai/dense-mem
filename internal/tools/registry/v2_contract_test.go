@@ -557,11 +557,10 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 	base := map[string]any{"idempotency_key": "resolution-1"}
 	evidence := []any{map[string]any{"content": "The user supplied authoritative resolution evidence."}}
 	cases := []struct {
-		name            string
-		action          string
-		valid           map[string]any
-		missing         string
-		missingDecision string
+		name    string
+		action  string
+		valid   map[string]any
+		missing string
 	}{
 		{
 			name:    "acknowledge requires ingest",
@@ -573,23 +572,23 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 			name:   "select entity requires mention and candidate",
 			action: string(domain.V2ResolveSelectEntity),
 			valid: map[string]any{
-				"ingest_id":         "ing-1",
-				"placement_item_id": "item-1",
-				"decision": map[string]any{
-					"mention_ref": "person-1",
-					"entity_id":   "ent-1",
-				},
+				"ingest_id":              "ing-1",
+				"placement_item_id":      "item-1",
+				"placement_item_version": float64(1),
+				"entity_ref":             "person-1",
+				"candidate_entity_id":    "ent-1",
 			},
-			missingDecision: "entity_id",
+			missing: "candidate_entity_id",
 		},
 		{
 			name:   "confirm new entity requires evidence",
 			action: string(domain.V2ResolveConfirmNewEntity),
 			valid: map[string]any{
-				"ingest_id":         "ing-1",
-				"placement_item_id": "item-1",
-				"decision":          map[string]any{"mention_ref": "person-1"},
-				"evidence":          evidence,
+				"ingest_id":              "ing-1",
+				"placement_item_id":      "item-1",
+				"placement_item_version": float64(1),
+				"entity_ref":             "person-1",
+				"evidence":               evidence,
 			},
 			missing: "evidence",
 		},
@@ -597,23 +596,23 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 			name:   "select predicate requires predicate version",
 			action: string(domain.V2ResolveSelectPredicate),
 			valid: map[string]any{
-				"ingest_id":         "ing-1",
-				"placement_item_id": "item-1",
-				"decision": map[string]any{
-					"observation_id":    "obs-1",
-					"predicate_key":     "works_on",
-					"predicate_version": float64(1),
-				},
+				"ingest_id":              "ing-1",
+				"placement_item_id":      "item-1",
+				"placement_item_version": float64(1),
+				"observation_id":         "obs-1",
+				"predicate_key":          "works_on",
+				"predicate_version":      float64(1),
 			},
-			missingDecision: "predicate_version",
+			missing: "predicate_version",
 		},
 		{
 			name:   "accept requires evidence",
 			action: string(domain.V2ResolveAccept),
 			valid: map[string]any{
-				"ingest_id":         "ing-1",
-				"placement_item_id": "item-1",
-				"evidence":          evidence,
+				"ingest_id":              "ing-1",
+				"placement_item_id":      "item-1",
+				"placement_item_version": float64(1),
+				"evidence":               evidence,
 			},
 			missing: "evidence",
 		},
@@ -621,19 +620,21 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 			name:   "reject requires reason",
 			action: string(domain.V2ResolveReject),
 			valid: map[string]any{
-				"ingest_id":         "ing-1",
-				"placement_item_id": "item-1",
-				"reason":            "not supported by the source",
+				"ingest_id":              "ing-1",
+				"placement_item_id":      "item-1",
+				"placement_item_version": float64(1),
+				"message":                "not supported by the source",
 			},
-			missing: "reason",
+			missing: "message",
 		},
 		{
 			name:   "correct requires evidence",
 			action: string(domain.V2ResolveCorrect),
 			valid: map[string]any{
-				"ingest_id":         "ing-1",
-				"placement_item_id": "item-1",
-				"evidence":          evidence,
+				"ingest_id":              "ing-1",
+				"placement_item_id":      "item-1",
+				"placement_item_version": float64(1),
+				"evidence":               evidence,
 			},
 			missing: "evidence",
 		},
@@ -641,18 +642,19 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 			name:   "release quarantine requires reason",
 			action: string(domain.V2ResolveReleaseQuarantine),
 			valid: map[string]any{
-				"ingest_id":         "ing-1",
-				"placement_item_id": "item-1",
-				"reason":            "manager reviewed quarantine signal",
+				"ingest_id":              "ing-1",
+				"placement_item_id":      "item-1",
+				"placement_item_version": float64(1),
+				"message":                "manager reviewed quarantine signal",
 			},
-			missing: "reason",
+			missing: "message",
 		},
 		{
 			name:   "forget requires relationship target",
 			action: string(domain.V2ResolveForget),
 			valid: map[string]any{
 				"relationship_id": "rel-1",
-				"reason":          "user requested retraction",
+				"message":         "user requested retraction",
 				"evidence":        evidence,
 			},
 			missing: "relationship_id",
@@ -668,19 +670,39 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 
 			invalid := cloneMap(valid)
 			missing := tc.missing
-			if tc.missingDecision != "" {
-				decision := cloneMap(invalid["decision"].(map[string]any))
-				delete(decision, tc.missingDecision)
-				invalid["decision"] = decision
-				missing = "decision." + tc.missingDecision
-			} else {
-				delete(invalid, tc.missing)
-			}
+			delete(invalid, tc.missing)
 			err := ValidateV2ContractInput(resolve, invalid, []string{"write"})
 			if err == nil || !strings.Contains(err.Error(), missing+" is required") {
 				t.Fatalf("missing %s err = %v", missing, err)
 			}
 		})
+	}
+}
+
+func TestV2ResolveMemoryPlacementReviewActionsRequireItemVersion(t *testing.T) {
+	resolve, err := requireV2Tool(v2ToolMap(t), V2ToolResolveMemoryPlacement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []domain.V2ResolveAction{
+		domain.V2ResolveSelectEntity,
+		domain.V2ResolveConfirmNewEntity,
+		domain.V2ResolveSelectPredicate,
+		domain.V2ResolveAccept,
+		domain.V2ResolveReject,
+		domain.V2ResolveCorrect,
+		domain.V2ResolveReleaseQuarantine,
+	} {
+		input := map[string]any{
+			"action":            string(action),
+			"idempotency_key":   "resolution-1",
+			"ingest_id":         "ing-1",
+			"placement_item_id": "item-1",
+		}
+		err := ValidateV2ContractInput(resolve, input, []string{"write"})
+		if err == nil || !strings.Contains(err.Error(), "placement_item_version is required") {
+			t.Fatalf("%s missing placement_item_version err = %v", action, err)
+		}
 	}
 }
 
@@ -727,6 +749,7 @@ func TestV2CanonicalInputFieldNames(t *testing.T) {
 		forbidden []string
 	}{
 		{V2ToolRemember, []string{"evidence", "proposal"}, []string{"contract_version", "entity_hints", "relationship_hints"}},
+		{V2ToolResolveMemoryPlacement, []string{"placement_item_version", "entity_ref", "candidate_entity_id", "message"}, []string{"contract_version", "decision", "reason"}},
 		{V2ToolCorrectEntityResolution, []string{"operation", "owned_observation_ids", "impact_token"}, []string{"action", "selected_observation_ids", "plan_token"}},
 		{V2ToolRecallMemory, []string{"known_evidence_ids", "known_relationship_ids", "expand_from_entity_ids"}, []string{"include_evidence", "use_communities"}},
 		{V2ToolTraceMemory, []string{"include_verification", "include_transitions", "max_depth", "predicate_keys", "topic", "min_relevance"}, []string{"max_chars"}},
@@ -912,7 +935,8 @@ func v2ContractInvokeContext(scopes ...string) context.Context {
 }
 
 type stubV2RememberService struct {
-	req memoryservice.V2RememberRequest
+	req          memoryservice.V2RememberRequest
+	placementReq memoryservice.V2GetMemoryPlacementRequest
 }
 
 func (s *stubV2RememberService) RememberV2(_ context.Context, req memoryservice.V2RememberRequest) (*memoryservice.V2RememberResult, error) {
@@ -923,6 +947,29 @@ func (s *stubV2RememberService) RememberV2(_ context.Context, req memoryservice.
 		CheckAfterSeconds: 60,
 		StatusTool:        V2ToolGetMemoryPlacement,
 		CorrelationID:     "corr-v2",
+	}, nil
+}
+
+func (s *stubV2RememberService) GetMemoryPlacementV2(
+	_ context.Context,
+	req memoryservice.V2GetMemoryPlacementRequest,
+) (*memoryservice.V2PlacementRunResult, error) {
+	s.placementReq = req
+	return &memoryservice.V2PlacementRunResult{
+		IngestID:        req.IngestID,
+		ProcessingState: string(domain.V2PlacementRunCompleted),
+		SearchState:     string(domain.V2SearchProjectionNotRequired),
+		Items: []memoryservice.V2PlacementItemResult{{
+			ItemID:               "item-v2",
+			EvidenceID:           "evidence-v2",
+			Version:              3,
+			EvidenceIndex:        0,
+			Category:             string(domain.V2EvidenceProcessed),
+			SearchState:          string(domain.V2SearchProjectionNotRequired),
+			RelationshipOutcomes: []memoryservice.V2RelationshipOutcomeRef{},
+			Errors:               []memoryservice.V2PlacementError{},
+		}},
+		Errors: []memoryservice.V2PlacementError{},
 	}, nil
 }
 

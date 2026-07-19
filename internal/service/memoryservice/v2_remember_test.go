@@ -155,6 +155,70 @@ func TestV2RememberKeepsMixedQuarantineRunsClaimable(t *testing.T) {
 	require.Equal(t, "pass", ledger.input.Evidence[1].InitialEvent.Decision)
 }
 
+func TestV2GetMemoryPlacementUsesAuthenticatedOwnerAndReturnsCurrentVersion(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	ingestID := uuid.NewString()
+	fragmentID := uuid.NewString()
+	itemID := uuid.NewString()
+	ledger := &v2RememberLedgerStub{
+		placement: &repository.V2CreateIngestResult{
+			TeamID:         teamID.String(),
+			IngestID:       ingestID,
+			PlacementRunID: uuid.NewString(),
+			Status:         string(domain.V2PlacementRunCompleted),
+			Items: []repository.V2PlacementItem{{
+				PlacementItemID: itemID,
+				FragmentID:      fragmentID,
+				EvidenceIndex:   0,
+				Status:          "completed",
+				Category:        "candidate",
+				Version:         4,
+			}},
+		},
+	}
+	svc := NewV2RememberService(V2RememberDependencies{Ledger: ledger})
+
+	result, err := svc.GetMemoryPlacementV2(authenticatedV2RememberContext(teamID, profileID, keyID), V2GetMemoryPlacementRequest{
+		ContractVersion: domain.V2ContractVersion,
+		IngestID:        ingestID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, string(domain.V2PlacementRunCompleted), result.ProcessingState)
+	require.Equal(t, string(domain.V2SearchProjectionNotRequired), result.SearchState)
+	require.Len(t, result.Items, 1)
+	require.Equal(t, itemID, result.Items[0].ItemID)
+	require.Equal(t, fragmentID, result.Items[0].EvidenceID)
+	require.Equal(t, 4, result.Items[0].Version)
+	require.Equal(t, string(domain.V2EvidenceProcessed), result.Items[0].Category)
+	require.Equal(t, teamID.String(), ledger.placementInput.TeamID)
+	require.Equal(t, profileID.String(), ledger.placementInput.OwnerProfileID)
+	require.Equal(t, ingestID, ledger.placementInput.IngestID)
+}
+
+func TestV2GetMemoryPlacementRequiresAuthContractAndLedger(t *testing.T) {
+	req := V2GetMemoryPlacementRequest{
+		ContractVersion: domain.V2ContractVersion,
+		IngestID:        uuid.NewString(),
+	}
+	_, err := NewV2RememberService(V2RememberDependencies{}).GetMemoryPlacementV2(
+		authenticatedV2RememberContext(uuid.New(), uuid.New(), uuid.New()),
+		req,
+	)
+	require.ErrorContains(t, err, "ledger repository is required")
+
+	_, err = NewV2RememberService(V2RememberDependencies{Ledger: &v2RememberLedgerStub{}}).GetMemoryPlacementV2(context.Background(), req)
+	require.ErrorIs(t, err, ErrV2RememberAuthContext)
+
+	req.ContractVersion = "v0"
+	_, err = NewV2RememberService(V2RememberDependencies{Ledger: &v2RememberLedgerStub{}}).GetMemoryPlacementV2(
+		authenticatedV2RememberContext(uuid.New(), uuid.New(), uuid.New()),
+		req,
+	)
+	require.ErrorContains(t, err, "invalid contract_version")
+}
+
 func TestV2RememberUsesOneSourceRevisionHashForBatch(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
@@ -286,9 +350,11 @@ func authenticatedV2RememberContext(teamID, profileID, keyID uuid.UUID) context.
 }
 
 type v2RememberLedgerStub struct {
-	input  repository.V2CreateIngestInput
-	result *repository.V2CreateIngestResult
-	err    error
+	input          repository.V2CreateIngestInput
+	placementInput repository.V2GetPlacementRunInput
+	result         *repository.V2CreateIngestResult
+	placement      *repository.V2CreateIngestResult
+	err            error
 }
 
 func (s *v2RememberLedgerStub) CreateIngest(_ context.Context, input repository.V2CreateIngestInput) (*repository.V2CreateIngestResult, error) {
@@ -297,6 +363,14 @@ func (s *v2RememberLedgerStub) CreateIngest(_ context.Context, input repository.
 		return nil, s.err
 	}
 	return s.result, nil
+}
+
+func (s *v2RememberLedgerStub) GetPlacementRun(_ context.Context, input repository.V2GetPlacementRunInput) (*repository.V2CreateIngestResult, error) {
+	s.placementInput = input
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.placement, nil
 }
 
 func (s *v2RememberLedgerStub) AdvanceSourceRevision(context.Context, repository.V2AdvanceSourceRevisionInput) (*repository.V2SourceRevisionResult, error) {

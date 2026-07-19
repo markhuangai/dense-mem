@@ -277,6 +277,10 @@ func (s *v2PlacementWorkerLedgerStub) CreateIngest(context.Context, repository.V
 	return nil, errors.New("unexpected CreateIngest")
 }
 
+func (s *v2PlacementWorkerLedgerStub) GetPlacementRun(context.Context, repository.V2GetPlacementRunInput) (*repository.V2CreateIngestResult, error) {
+	return nil, errors.New("unexpected GetPlacementRun")
+}
+
 func (s *v2PlacementWorkerLedgerStub) AdvanceSourceRevision(context.Context, repository.V2AdvanceSourceRevisionInput) (*repository.V2SourceRevisionResult, error) {
 	return nil, errors.New("unexpected AdvanceSourceRevision")
 }

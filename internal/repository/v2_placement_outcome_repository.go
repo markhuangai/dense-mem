@@ -17,6 +17,7 @@ type V2PlacementOutcomeInput struct {
 	PlacementItemID    string
 	OutcomeKind        string
 	Status             string
+	IdempotencyKey     string
 	Payload            map[string]any
 	UpdateItemStatus   string
 	UpdateItemCategory string
@@ -52,6 +53,7 @@ func normalizeV2PlacementOutcomeInput(input V2PlacementOutcomeInput) V2Placement
 	input.PlacementItemID = strings.TrimSpace(input.PlacementItemID)
 	input.OutcomeKind = strings.TrimSpace(input.OutcomeKind)
 	input.Status = strings.TrimSpace(input.Status)
+	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
 	input.UpdateItemStatus = strings.TrimSpace(input.UpdateItemStatus)
 	input.UpdateItemCategory = strings.TrimSpace(input.UpdateItemCategory)
 	return input
@@ -95,13 +97,13 @@ func insertV2PlacementOutcome(ctx context.Context, tx *gorm.DB, input V2Placemen
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO placement_outcomes (
 		    team_id, placement_run_id, placement_item_id, owner_profile_id,
-		    outcome_kind, status, payload
+		    outcome_kind, status, idempotency_key, payload
 		) VALUES (
-		    ?::uuid, ?::uuid, NULLIF(?, '')::uuid, ?::uuid, ?, ?, ?::jsonb
+		    ?::uuid, ?::uuid, NULLIF(?, '')::uuid, ?::uuid, ?, ?, ?, ?::jsonb
 		)
 		RETURNING outcome_id::text
 	`, input.TeamID, input.PlacementRunID, input.PlacementItemID, input.OwnerProfileID,
-		input.OutcomeKind, input.Status, string(payload)).Rows()
+		input.OutcomeKind, input.Status, input.IdempotencyKey, string(payload)).Rows()
 	if err != nil {
 		return "", err
 	}
@@ -125,6 +127,7 @@ func updateV2PlacementItemOutcome(ctx context.Context, tx *gorm.DB, input V2Plac
 		SET status = COALESCE(NULLIF(?, ''), status),
 		    category = COALESCE(NULLIF(?, ''), category),
 		    result = ?::jsonb,
+		    version = version + 1,
 		    updated_at = now()
 		WHERE team_id = ?::uuid
 		  AND owner_profile_id = ?::uuid

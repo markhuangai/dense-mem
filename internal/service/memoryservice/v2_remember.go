@@ -32,6 +32,7 @@ var (
 
 type V2RememberService interface {
 	RememberV2(ctx context.Context, req V2RememberRequest) (*V2RememberResult, error)
+	GetMemoryPlacementV2(ctx context.Context, req V2GetMemoryPlacementRequest) (*V2PlacementRunResult, error)
 }
 
 type V2RememberDependencies struct {
@@ -54,6 +55,11 @@ type V2RememberRequest struct {
 	IdempotencyKey    string                    `json:"idempotency_key,omitempty"`
 }
 
+type V2GetMemoryPlacementRequest struct {
+	ContractVersion string `json:"contract_version"`
+	IngestID        string `json:"ingest_id"`
+}
+
 type V2RememberEvidenceInput struct {
 	Content                string         `json:"content"`
 	SourceType             string         `json:"source_type,omitempty"`
@@ -74,6 +80,42 @@ type V2RememberResult struct {
 	CheckAfterSeconds int    `json:"check_after_seconds"`
 	StatusTool        string `json:"status_tool"`
 	CorrelationID     string `json:"correlation_id"`
+}
+
+type V2PlacementRunResult struct {
+	IngestID        string                  `json:"ingest_id"`
+	ProcessingState string                  `json:"processing_state"`
+	SearchState     string                  `json:"search_state"`
+	Items           []V2PlacementItemResult `json:"items"`
+	Errors          []V2PlacementError      `json:"errors"`
+}
+
+type V2PlacementItemResult struct {
+	ItemID               string                     `json:"item_id"`
+	EvidenceID           string                     `json:"evidence_id"`
+	Version              int                        `json:"version"`
+	EvidenceIndex        int                        `json:"evidence_index"`
+	Category             string                     `json:"category"`
+	SearchState          string                     `json:"search_state"`
+	RelationshipOutcomes []V2RelationshipOutcomeRef `json:"relationship_outcomes"`
+	Errors               []V2PlacementError         `json:"errors"`
+}
+
+type V2RelationshipOutcomeRef struct {
+	ProposalID         string `json:"proposal_id,omitempty"`
+	ObservationID      string `json:"observation_id,omitempty"`
+	RelationshipID     string `json:"relationship_id,omitempty"`
+	OwnerProfileID     string `json:"owner_profile_id,omitempty"`
+	Tier               string `json:"tier,omitempty"`
+	RelationshipStatus string `json:"relationship_status,omitempty"`
+	Category           string `json:"category,omitempty"`
+	Reason             string `json:"reason,omitempty"`
+	ReviewTask         string `json:"review_task,omitempty"`
+}
+
+type V2PlacementError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 func (s *v2RememberService) RememberV2(ctx context.Context, req V2RememberRequest) (*V2RememberResult, error) {
@@ -131,6 +173,35 @@ func (s *v2RememberService) RememberV2(ctx context.Context, req V2RememberReques
 		return nil, translateV2RememberLedgerError(err)
 	}
 	return v2RememberResultFromLedger(created, correlationID), nil
+}
+
+func (s *v2RememberService) GetMemoryPlacementV2(
+	ctx context.Context,
+	req V2GetMemoryPlacementRequest,
+) (*V2PlacementRunResult, error) {
+	if s.ledger == nil {
+		return nil, errors.New("v2 placement: ledger repository is required")
+	}
+	if strings.TrimSpace(req.ContractVersion) != domain.V2ContractVersion {
+		return nil, fmt.Errorf("v2 placement: invalid contract_version %q", req.ContractVersion)
+	}
+	actor, ok := requestctx.ActorProfileFromContext(ctx)
+	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
+		return nil, ErrV2RememberAuthContext
+	}
+	ingestID := strings.TrimSpace(req.IngestID)
+	if ingestID == "" {
+		return nil, errors.New("v2 placement: ingest_id is required")
+	}
+	placement, err := s.ledger.GetPlacementRun(ctx, repository.V2GetPlacementRunInput{
+		TeamID:         actor.TeamID.String(),
+		OwnerProfileID: actor.ProfileID.String(),
+		IngestID:       ingestID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v2PlacementRunResultFromLedger(placement), nil
 }
 
 func (s *v2RememberService) normalizeEvidence(evidence []V2RememberEvidenceInput) ([]repository.V2EvidenceInput, string) {
@@ -234,6 +305,44 @@ func v2RememberResultFromLedger(created *repository.V2CreateIngestResult, correl
 		StatusTool:        v2RememberStatusTool,
 		CorrelationID:     correlationID,
 	}
+}
+
+func v2PlacementRunResultFromLedger(created *repository.V2CreateIngestResult) *V2PlacementRunResult {
+	items := make([]V2PlacementItemResult, 0, len(created.Items))
+	searchState := string(domain.V2SearchProjectionNotRequired)
+	for _, item := range created.Items {
+		version := item.Version
+		if version == 0 {
+			version = 1
+		}
+		items = append(items, V2PlacementItemResult{
+			ItemID:               item.PlacementItemID,
+			EvidenceID:           item.FragmentID,
+			Version:              version,
+			EvidenceIndex:        item.EvidenceIndex,
+			Category:             v2PublicPlacementItemCategory(item),
+			SearchState:          string(domain.V2SearchProjectionNotRequired),
+			RelationshipOutcomes: []V2RelationshipOutcomeRef{},
+			Errors:               []V2PlacementError{},
+		})
+	}
+	return &V2PlacementRunResult{
+		IngestID:        created.IngestID,
+		ProcessingState: created.Status,
+		SearchState:     searchState,
+		Items:           items,
+		Errors:          []V2PlacementError{},
+	}
+}
+
+func v2PublicPlacementItemCategory(item repository.V2PlacementItem) string {
+	if item.Category == "quarantined" || item.Status == "quarantined" {
+		return string(domain.V2EvidenceQuarantined)
+	}
+	if item.Status == "failed" || item.Category == "failed" {
+		return string(domain.V2EvidenceProcessingFailed)
+	}
+	return string(domain.V2EvidenceProcessed)
 }
 
 func translateV2RememberLedgerError(err error) error {
