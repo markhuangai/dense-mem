@@ -179,8 +179,8 @@ func v2UATTools(deps Dependencies) []Tool {
 				if err := ValidateV2ContractInput(tool, input, tool.RequiredScopes); err != nil {
 					return nil, fmt.Errorf("remember: invalid input: %w", err)
 				}
-				var req memoryservice.V2RememberRequest
-				if err := remapInput(input, &req); err != nil {
+				req, err := v2RememberRequestFromContractInput(input)
+				if err != nil {
 					return nil, fmt.Errorf("remember: invalid input: %w", err)
 				}
 				req.ContractVersion = domain.V2ContractVersion
@@ -193,6 +193,35 @@ func v2UATTools(deps Dependencies) []Tool {
 		}
 	}
 	return tools
+}
+
+func v2RememberRequestFromContractInput(input map[string]any) (memoryservice.V2RememberRequest, error) {
+	var req memoryservice.V2RememberRequest
+	if err := remapInput(input, &req); err != nil {
+		return req, err
+	}
+	proposal, ok := objectFields(input["proposal"])
+	if !ok {
+		return req, nil
+	}
+	req.EntityHints = v2ObjectArray(proposal["entities"])
+	req.RelationshipHints = v2ObjectArray(proposal["relationships"])
+	return req, nil
+}
+
+func v2ObjectArray(value any) []map[string]any {
+	items, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		fields, ok := objectFields(item)
+		if ok {
+			out = append(out, fields)
+		}
+	}
+	return out
 }
 
 func v2ContractTool(

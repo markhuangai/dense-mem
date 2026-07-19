@@ -195,20 +195,49 @@ func TestBuildV2UATWiresExecutableRemember(t *testing.T) {
 	}
 	out, err := remember.Invoke(context.Background(), "ignored-profile", map[string]any{
 		"evidence": []any{
-			map[string]any{"content": "remember this exact evidence"},
+			map[string]any{"content": "Dense-Mem uses PostgreSQL."},
+		},
+		"proposal": map[string]any{
+			"entities": []any{
+				map[string]any{"ref": "entity:dense-mem", "name": "Dense-Mem", "entity_kind": "project"},
+				map[string]any{"ref": "entity:postgres", "name": "PostgreSQL", "entity_kind": "product"},
+			},
+			"relationships": []any{
+				map[string]any{
+					"proposal_id": "rel:uses",
+					"subject_ref": "entity:dense-mem",
+					"predicate":   "uses",
+					"object_ref":  "entity:postgres",
+					"evidence": []any{
+						map[string]any{"evidence_index": 0, "start": 0, "end": 25},
+					},
+				},
+			},
 		},
 	})
 	if err != nil {
 		t.Fatalf("remember.Invoke: %v", err)
 	}
+	if err := ValidateInput(Tool{InputSchema: remember.OutputSchema}, out); err != nil {
+		t.Fatalf("validate output: %v", err)
+	}
 	if out["ingest_id"] != "ingest-v2" {
 		t.Fatalf("ingest_id = %#v, want ingest-v2", out["ingest_id"])
+	}
+	if out["processing_state"] != string(domain.V2PlacementRunQueued) || out["correlation_id"] != "corr-v2" {
+		t.Fatalf("output = %#v", out)
 	}
 	if stub.req.ContractVersion != domain.V2ContractVersion || len(stub.req.Evidence) != 1 {
 		t.Fatalf("stub request not populated: %#v", stub.req)
 	}
-	if stub.req.Evidence[0].Content != "remember this exact evidence" {
+	if stub.req.Evidence[0].Content != "Dense-Mem uses PostgreSQL." {
 		t.Fatalf("evidence content = %q", stub.req.Evidence[0].Content)
+	}
+	if len(stub.req.EntityHints) != 2 || stub.req.EntityHints[0]["ref"] != "entity:dense-mem" {
+		t.Fatalf("entity hints = %#v", stub.req.EntityHints)
+	}
+	if len(stub.req.RelationshipHints) != 1 || stub.req.RelationshipHints[0]["proposal_id"] != "rel:uses" {
+		t.Fatalf("relationship hints = %#v", stub.req.RelationshipHints)
 	}
 }
 
@@ -734,17 +763,9 @@ func (s *stubV2RememberService) RememberV2(_ context.Context, req memoryservice.
 	s.req = req
 	return &memoryservice.V2RememberResult{
 		IngestID:          "ingest-v2",
-		Status:            string(domain.V2PlacementRunQueued),
+		ProcessingState:   string(domain.V2PlacementRunQueued),
 		CheckAfterSeconds: 60,
 		StatusTool:        V2ToolGetMemoryPlacement,
-		Items: []memoryservice.V2RememberItemResult{
-			{
-				ItemID:        "item-v2",
-				EvidenceIndex: 0,
-				Category:      string(domain.V2EvidenceProcessed),
-				SearchState:   string(domain.V2SearchProjectionNotRequired),
-			},
-		},
-		SearchState: string(domain.V2SearchProjectionNotRequired),
+		CorrelationID:     "corr-v2",
 	}, nil
 }

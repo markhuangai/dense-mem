@@ -336,7 +336,9 @@ func (r *V2LedgerRepositoryImpl) FinishPlacementRun(ctx context.Context, teamID 
 	if workerID == "" {
 		return errors.New("worker_id is required")
 	}
-	if status != "completed" && status != "failed" && status != "quarantined" {
+	if status != string(domain.V2PlacementRunCompleted) &&
+		status != string(domain.V2PlacementRunFailed) &&
+		status != string(domain.V2PlacementRunQuarantined) {
 		return fmt.Errorf("unsupported placement status %q", status)
 	}
 	err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
@@ -396,7 +398,7 @@ func normalizeV2CreateIngestInput(input V2CreateIngestInput) V2CreateIngestInput
 	input.SourceSummary = strings.TrimSpace(input.SourceSummary)
 	input.Status = strings.TrimSpace(input.Status)
 	if input.Status == "" {
-		input.Status = "queued"
+		input.Status = string(domain.V2PlacementRunQueued)
 	}
 	for i := range input.Evidence {
 		input.Evidence[i].ContentHash = strings.TrimSpace(input.Evidence[i].ContentHash)
@@ -430,7 +432,9 @@ func validateV2CreateIngestInput(input V2CreateIngestInput) error {
 	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
 		return fmt.Errorf("owner_profile_id is required: %w", err)
 	}
-	if input.Status != "queued" && input.Status != "guarded" && input.Status != "quarantined" {
+	if input.Status != string(domain.V2PlacementRunQueued) &&
+		input.Status != string(domain.V2PlacementRunGuarded) &&
+		input.Status != string(domain.V2PlacementRunQuarantined) {
 		return fmt.Errorf("unsupported ingest status %q", input.Status)
 	}
 	if input.IdempotencyKey != "" && input.RequestHash == "" {
@@ -656,7 +660,7 @@ func selectV2KnowledgeIngestByIdempotency(ctx context.Context, tx *gorm.DB, inpu
 
 func insertV2PlacementRun(ctx context.Context, tx *gorm.DB, input V2CreateIngestInput, ingestID string) (string, error) {
 	completedExpr := "NULL"
-	if input.Status == "quarantined" {
+	if input.Status == string(domain.V2PlacementRunQuarantined) {
 		completedExpr = "now()"
 	}
 	rows, err := tx.WithContext(ctx).Raw(fmt.Sprintf(`
@@ -725,10 +729,10 @@ func insertV2EvidenceFragment(ctx context.Context, tx *gorm.DB, input V2CreateIn
 }
 
 func insertV2PlacementItem(ctx context.Context, tx *gorm.DB, input V2CreateIngestInput, ingestID string, placementRunID string, fragment V2EvidenceFragment, item V2EvidenceInput) (V2PlacementItem, error) {
-	status := "queued"
+	status := string(domain.V2PlacementRunQueued)
 	category := "pending"
-	if input.Status == "quarantined" || (item.InitialEvent != nil && item.InitialEvent.Decision == "quarantine") {
-		status = "quarantined"
+	if input.Status == string(domain.V2PlacementRunQuarantined) || (item.InitialEvent != nil && item.InitialEvent.Decision == "quarantine") {
+		status = string(domain.V2PlacementRunQuarantined)
 		category = "quarantined"
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
