@@ -757,6 +757,8 @@ func controlPortalMiddleware(token string, securitySvc service.SecurityService) 
 				recordControlAuthFailure(c, securitySvc)
 				return httperr.New(httperr.AUTH_INVALID, "invalid control portal token")
 			}
+			ctx := context.WithValue(c.Request().Context(), controlPortalActorContextKey{}, controlPortalActorFromRequest(c.Request()))
+			c.SetRequest(c.Request().WithContext(ctx))
 			return next(c)
 		}
 	}

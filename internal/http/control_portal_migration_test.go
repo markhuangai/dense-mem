@@ -59,7 +59,7 @@ func TestControlPortalV2MigrationStatusAndActions(t *testing.T) {
 		}
 	}`)
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "control", migration.lastReq.Actor)
+	require.Equal(t, "control_portal:authorization-bearer", migration.lastReq.Actor)
 	require.Equal(t, "backup-20260717", migration.lastReq.BackupReference)
 	require.Equal(t, "192.0.2.1", migration.lastReq.RemoteIP)
 
