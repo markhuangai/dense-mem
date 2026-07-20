@@ -75,6 +75,7 @@ func (s *v2SemanticTraceService) Trace(ctx context.Context, _ string, req TraceR
 		MaxFragmentContentRunes: req.MaxChars,
 		PredicateKeys:           req.PredicateKeys,
 		Topic:                   req.Topic,
+		MinRelevance:            req.MinRelevance,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("v2 trace: %w", err)

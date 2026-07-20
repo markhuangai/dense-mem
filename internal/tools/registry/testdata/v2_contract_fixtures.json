@@ -286,15 +286,6 @@
     "output": {"hypothesis_id": "hyp-1", "status": "rejected"}
   },
   {
-    "name": "valid community list",
-    "tool": "list_communities",
-    "contract_version": "dense-mem.v2.1",
-    "scopes": ["read"],
-    "valid": true,
-    "input": {"limit": 20},
-    "output": {"communities": [], "next_cursor": "cursor-2"}
-  },
-  {
     "name": "valid memory pack candidate search",
     "tool": "find_memory_pack_candidates",
     "contract_version": "dense-mem.v2.1",

@@ -225,6 +225,50 @@ func TestToolCatalogHandler_FullV2Surface(t *testing.T) {
 	}
 }
 
+func TestToolCatalogHandler_HidesMCPOnlyV2MemoryToolsFromHTTPView(t *testing.T) {
+	uat, err := registry.BuildV2UAT(registry.Dependencies{})
+	if err != nil {
+		t.Fatalf("BuildV2UAT: %v", err)
+	}
+	httpReg, err := registry.HTTPRegistryView(uat)
+	if err != nil {
+		t.Fatalf("HTTPRegistryView: %v", err)
+	}
+	h := NewToolCatalogHandler(httpReg)
+
+	e := echo.New()
+	e.GET("/api/v1/tools", h.Handle)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tools", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200. body=%s", rec.Code, rec.Body.String())
+	}
+	var resp dto.ToolCatalogResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	visible := map[string]struct{}{}
+	for _, tool := range resp.Tools {
+		visible[tool.Name] = struct{}{}
+	}
+	for _, name := range []string{
+		registry.V2ToolRemember,
+		registry.V2ToolGetMemoryPlacement,
+		registry.V2ToolRecallMemory,
+		registry.V2ToolTraceMemory,
+	} {
+		if _, ok := visible[name]; ok {
+			t.Fatalf("HTTP catalog exposed MCP-only V2 memory tool %s", name)
+		}
+	}
+	if _, ok := visible[registry.V2ToolListDreams]; !ok {
+		t.Fatal("HTTP catalog hid non-memory V2 tool list_dreams")
+	}
+}
+
 func TestToolCatalogHandler_HidesRecallFeedbackToolWithRuntimeDisabled(t *testing.T) {
 	reg := registry.New()
 	if err := reg.Register(registry.Tool{

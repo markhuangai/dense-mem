@@ -94,6 +94,42 @@ func TestV2ContractOpenAPIDerivesSchemasFromRegistry(t *testing.T) {
 	}
 }
 
+func TestV2HTTPRegistryOpenAPIOmitsMCPOnlyMemoryToolRoutes(t *testing.T) {
+	uat, err := registry.BuildV2UAT(registry.Dependencies{})
+	if err != nil {
+		t.Fatalf("BuildV2UAT: %v", err)
+	}
+	httpReg, err := registry.HTTPRegistryView(uat)
+	if err != nil {
+		t.Fatalf("HTTPRegistryView: %v", err)
+	}
+	doc, err := New(httpReg, DefaultRoutes()).Generate(SpecVariantFull)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	paths := doc["paths"].(map[string]any)
+	for _, path := range []string{
+		"/api/v1/tools/remember",
+		"/api/v1/tools/get_memory_placement",
+		"/api/v1/tools/recall_memory",
+	} {
+		if _, ok := paths[path]; ok {
+			t.Fatalf("OpenAPI exposed MCP-only V2 memory tool route %s", path)
+		}
+	}
+	if _, ok := paths["/api/v1/tools/{name}"]; !ok {
+		t.Fatal("OpenAPI omitted the generic tool execution route")
+	}
+
+	schemas := doc["components"].(map[string]any)["schemas"].(map[string]any)
+	for _, name := range []string{"RememberInput", "GetMemoryPlacementInput", "RecallMemoryInput"} {
+		if _, ok := schemas[name]; ok {
+			t.Fatalf("OpenAPI exposed MCP-only V2 memory tool schema %s", name)
+		}
+	}
+}
+
 func TestV2ContractOpenAPIRoundTripsGoldenFixtures(t *testing.T) {
 	reg := registry.New()
 	for _, tool := range registry.V2ContractTools() {

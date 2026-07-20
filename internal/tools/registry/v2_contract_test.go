@@ -138,7 +138,6 @@ func TestV2ContractCatalogMetadata(t *testing.T) {
 		V2ToolCorrectEntityResolution,
 		V2ToolRecallMemory,
 		V2ToolTraceMemory,
-		V2ToolListCommunities,
 		V2ToolImportMemoryPack,
 	} {
 		if _, ok := seen[name]; !ok {

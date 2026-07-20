@@ -397,32 +397,6 @@ func v2ResolveDreamFeedbackContractOutput(res *dreamservice.ResolveFeedbackResul
 	return out
 }
 
-func v2ListCommunitiesContractOutput(communities []repository.V2CommunityRecord) map[string]any {
-	items := make([]map[string]any, 0, len(communities))
-	for _, community := range communities {
-		createdAt := community.CreatedAt
-		if createdAt.IsZero() {
-			createdAt = community.UpdatedAt
-		}
-		item := map[string]any{
-			"community_id":              community.CommunityID,
-			"run_id":                    community.RunID,
-			"summary":                   community.Summary,
-			"summary_generator_kind":    "deterministic",
-			"summary_generator_version": firstNonEmpty(community.SummaryVersion, "community-deterministic-v1"),
-			"status":                    community.Status,
-			"created_at":                createdAt.UTC().Format(time.RFC3339Nano),
-			"members":                   []map[string]any{},
-			"sources":                   []map[string]any{},
-		}
-		if community.SupersededAt != nil {
-			item["superseded_at"] = community.SupersededAt.UTC().Format(time.RFC3339Nano)
-		}
-		items = append(items, item)
-	}
-	return map[string]any{"communities": items}
-}
-
 func v2FindMemoryPackCandidatesContractOutput(res *skillpackservice.V2FindCandidatesResult) map[string]any {
 	if res == nil {
 		return map[string]any{"candidates": []any{}}

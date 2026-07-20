@@ -40,56 +40,6 @@ func v2ResolveDreamFeedbackOutputSchema() map[string]any {
 	)
 }
 
-func v2ListCommunitiesOutputSchema() map[string]any {
-	return v2ClosedObject(
-		[]string{"communities"},
-		map[string]any{
-			"communities": v2Array(v2CommunitySummarySchema(), 0, 100),
-			"next_cursor": v2NullableString("Opaque next-page cursor.", 512),
-		},
-	)
-}
-
-func v2CommunitySummarySchema() map[string]any {
-	return v2ClosedObject(
-		[]string{"community_id", "run_id", "summary", "status", "created_at", "members", "sources"},
-		map[string]any{
-			"community_id":              schemaString("Community snapshot ID.", 128),
-			"run_id":                    schemaString("Community generation run ID.", 128),
-			"summary":                   schemaString("Bounded community summary.", 2000),
-			"summary_generator_kind":    schemaEnum([]string{"deterministic", "provider"}),
-			"summary_generator_version": schemaString("Summary generator version.", 128),
-			"status":                    schemaEnum([]string{"current", "superseded"}),
-			"created_at":                map[string]any{"type": "string", "format": "date-time"},
-			"superseded_at":             v2NullableDateTime("Community supersession time."),
-			"members":                   v2Array(v2CommunityMemberSchema(), 0, 500),
-			"sources":                   v2Array(v2CommunitySourceSchema(), 0, 1000),
-		},
-	)
-}
-
-func v2CommunityMemberSchema() map[string]any {
-	return v2ClosedObject(
-		[]string{"entity_id", "score", "rank"},
-		map[string]any{
-			"entity_id": schemaString("Community member Entity ID.", 128),
-			"score":     map[string]any{"type": "number", "minimum": 0},
-			"rank":      map[string]any{"type": "integer", "minimum": 1},
-		},
-	)
-}
-
-func v2CommunitySourceSchema() map[string]any {
-	return v2ClosedObject(
-		[]string{"relationship_id", "owner_profile_id", "relationship_version"},
-		map[string]any{
-			"relationship_id":      schemaString("Source Relationship ID.", 128),
-			"owner_profile_id":     schemaString("Source Relationship owner profile ID.", 128),
-			"relationship_version": map[string]any{"type": "integer", "minimum": 1},
-		},
-	)
-}
-
 func v2FindMemoryPackCandidatesOutputSchema() map[string]any {
 	return v2ClosedObject(
 		[]string{"candidates"},

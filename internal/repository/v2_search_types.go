@@ -52,6 +52,24 @@ type V2SearchReadinessReason struct {
 	Message string
 }
 
+type V2EnsureActiveSearchContractInput struct {
+	Provider              string
+	Model                 string
+	Dimensions            int
+	VectorNormalization   string
+	DocumentFormatVersion int
+	QueryFormatVersion    int
+	ExactMaxRows          int
+	CandidateLimit        int
+}
+
+type V2EnsureActiveSearchContractResult struct {
+	Contract             *V2ActiveSearchContract
+	CreatedContract      bool
+	CreatedGeneration    bool
+	CreatedPhysicalIndex bool
+}
+
 type V2UpsertSearchDocumentInput struct {
 	TeamID              string
 	OwnerProfileID      string

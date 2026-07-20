@@ -5,13 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 func TestBuildV2UATExecutableToolsRequireDependencies(t *testing.T) {
@@ -82,12 +77,6 @@ func TestBuildV2UATExecutableToolsRequireDependencies(t *testing.T) {
 			},
 		},
 		{
-			name: V2ToolListCommunities,
-			args: map[string]any{
-				"limit": float64(2),
-			},
-		},
-		{
 			name: V2ToolFindMemoryPackCandidates,
 			args: map[string]any{
 				"query": "PostgreSQL",
@@ -136,47 +125,48 @@ func TestBuildV2UATExecutableToolsRequireDependencies(t *testing.T) {
 	}
 }
 
-func TestBuildV2UATWiresExecutableCommunityTools(t *testing.T) {
-	teamID := uuid.New()
-	communities := &stubV2CommunityRepository{
-		records: []repository.V2CommunityRecord{{
-			TeamID:         teamID.String(),
-			CommunityID:    uuid.NewString(),
-			RunID:          uuid.NewString(),
-			Status:         "current",
-			Summary:        "PostgreSQL community",
-			SummaryVersion: "community-deterministic-v1",
-			MemberCount:    2,
-			UpdatedAt:      time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC),
-		}},
-	}
-	reg, err := BuildV2UAT(Dependencies{V2Communities: communities})
+func TestBuildV2UATWiresEvaluationRecallCaseToV2(t *testing.T) {
+	recall := &stubV2RecallService{}
+	reg, err := BuildV2UAT(Dependencies{
+		V2Recall:        recall,
+		EvaluationAudit: &evaluationAuditStub{},
+	})
 	if err != nil {
 		t.Fatalf("BuildV2UAT: %v", err)
 	}
-	tool, ok := reg.Get(V2ToolListCommunities)
+	tool, ok := reg.Get("eval_run_recall_case")
 	if !ok || tool.Invoke == nil {
-		t.Fatal("BuildV2UAT did not register executable list_communities")
+		t.Fatal("BuildV2UAT did not register executable eval_run_recall_case")
 	}
-	ctx := requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{
-		TeamID:    teamID,
-		ProfileID: uuid.New(),
-	})
-	ctx = requestctx.WithActorCredential(ctx, requestctx.ActorCredential{
-		KeyID:  uuid.New(),
-		Scopes: []string{"read"},
-	})
-	out, err := tool.Invoke(ctx, "ignored-profile", map[string]any{
-		"limit": float64(2),
+	out, err := tool.Invoke(v2ContractInvokeContext("read", "write"), "ignored-profile", map[string]any{
+		"case_id":                "case-v2",
+		"query":                  "PostgreSQL memory",
+		"limit":                  float64(3),
+		"known_evidence_ids":     []any{"evidence-known"},
+		"known_relationship_ids": []any{"relationship-known"},
+		"expand_from_entity_ids": []any{"entity-expand"},
 	})
 	if err != nil {
-		t.Fatalf("list_communities.Invoke: %v", err)
+		t.Fatalf("eval_run_recall_case.Invoke: %v", err)
 	}
-	if err := ValidateInput(Tool{InputSchema: tool.OutputSchema}, out); err != nil {
-		t.Fatalf("list_communities output validation failed: %v; output = %#v", err, out)
+	if recall.req.Query != "PostgreSQL memory" || recall.req.Limit != 3 {
+		t.Fatalf("V2 recall request = %#v", recall.req)
 	}
-	if out["communities"] == nil || communities.lastInput.TeamID != teamID.String() || communities.lastInput.Limit != 2 {
-		t.Fatalf("list_communities output = %#v input = %#v", out, communities.lastInput)
+	if len(recall.req.KnownEvidenceIDs) != 1 || recall.req.KnownEvidenceIDs[0] != "evidence-known" {
+		t.Fatalf("known evidence ids = %#v", recall.req.KnownEvidenceIDs)
+	}
+	if len(recall.req.KnownRelationshipIDs) != 1 || recall.req.KnownRelationshipIDs[0] != "relationship-known" {
+		t.Fatalf("known relationship ids = %#v", recall.req.KnownRelationshipIDs)
+	}
+	if len(recall.req.ExpandFromEntityIDs) != 1 || recall.req.ExpandFromEntityIDs[0] != "entity-expand" {
+		t.Fatalf("expand entity ids = %#v", recall.req.ExpandFromEntityIDs)
+	}
+	ranked, ok := out["ranked_refs"].([]map[string]any)
+	if !ok || len(ranked) != 1 || ranked[0]["type"] != "evidence" || ranked[0]["id"] != "evidence-v2" {
+		t.Fatalf("ranked refs = %#v", out["ranked_refs"])
+	}
+	if out["search_state"] != string(domain.V2SearchProjectionCurrent) {
+		t.Fatalf("search_state = %#v", out["search_state"])
 	}
 }
 
@@ -258,46 +248,4 @@ func TestBuildV2UATWiresExecutableDreamTools(t *testing.T) {
 	if dreams.lastResolveReq.DreamID != "dream-v2" {
 		t.Fatalf("resolve_dream_feedback dream id = %q", dreams.lastResolveReq.DreamID)
 	}
-}
-
-type stubV2CommunityRepository struct {
-	records   []repository.V2CommunityRecord
-	lastInput repository.V2CommunityListInput
-}
-
-func (s *stubV2CommunityRepository) ClaimV2CommunityRun(context.Context, repository.V2CommunityRunClaimInput) (*repository.V2CommunityRun, error) {
-	return nil, errors.New("unused")
-}
-
-func (s *stubV2CommunityRepository) CompleteV2CommunityRun(context.Context, repository.V2CommunityRunCompleteInput) error {
-	return errors.New("unused")
-}
-
-func (s *stubV2CommunityRepository) ListV2CommunityInputs(context.Context, repository.V2CommunityInputListInput) ([]repository.V2CommunityInput, error) {
-	return nil, errors.New("unused")
-}
-
-func (s *stubV2CommunityRepository) PublishV2CommunitySnapshot(context.Context, repository.V2CommunitySnapshotPublishInput) error {
-	return errors.New("unused")
-}
-
-func (s *stubV2CommunityRepository) RefreshV2CommunityStaleness(context.Context, repository.V2CommunityStalenessInput) (int, error) {
-	return 0, errors.New("unused")
-}
-
-func (s *stubV2CommunityRepository) ListV2Communities(_ context.Context, input repository.V2CommunityListInput) ([]repository.V2CommunityRecord, error) {
-	s.lastInput = input
-	return s.records, nil
-}
-
-func (s *stubV2CommunityRepository) GetV2Community(context.Context, repository.V2CommunityGetInput) (*repository.V2CommunityRecord, error) {
-	return nil, errors.New("unused")
-}
-
-func (s *stubV2CommunityRepository) RecallV2CommunityDiscovery(context.Context, repository.V2CommunityDiscoveryInput) ([]repository.V2CommunityDiscoveryPath, error) {
-	return nil, errors.New("unused")
-}
-
-func (s *stubV2CommunityRepository) LatestV2CommunityRun(context.Context, string) (*repository.V2CommunityRun, error) {
-	return nil, errors.New("unused")
 }

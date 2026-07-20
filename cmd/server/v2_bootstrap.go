@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -25,6 +26,10 @@ type dormantV2Bootstrap struct {
 
 type v2MigrationStatusReader interface {
 	Status(ctx context.Context) (*domain.V2MigrationControlStatus, error)
+}
+
+type v2SearchReadinessChecker interface {
+	CheckSearchReadiness(ctx context.Context) (*repository.V2SearchReadiness, error)
 }
 
 type defaultCatalogV2Dependencies struct {
@@ -111,6 +116,33 @@ func checkV2MigrationState(ctx context.Context, cfg config.Config, migration v2M
 	default:
 		return fmt.Errorf("%w: %s", errV2MigrationPending, status.State)
 	}
+}
+
+func checkV2SearchReadiness(ctx context.Context, search v2SearchReadinessChecker) error {
+	if search == nil {
+		return fmt.Errorf("%w: search repository is required", repository.ErrV2SearchContractMismatch)
+	}
+	readiness, err := search.CheckSearchReadiness(ctx)
+	if err != nil {
+		return err
+	}
+	if readiness == nil || readiness.Ready {
+		return nil
+	}
+	reasons := make([]string, 0, len(readiness.Reasons))
+	for _, reason := range readiness.Reasons {
+		message := strings.TrimSpace(reason.Message)
+		if message == "" {
+			message = strings.TrimSpace(reason.Code)
+		}
+		if message != "" {
+			reasons = append(reasons, message)
+		}
+	}
+	if len(reasons) == 0 {
+		reasons = append(reasons, "search readiness check failed")
+	}
+	return fmt.Errorf("%w: %s", repository.ErrV2SearchContractMismatch, strings.Join(reasons, "; "))
 }
 
 func (b dormantV2Bootstrap) HealthChecks() []internalhttp.HealthCheck {

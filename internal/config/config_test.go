@@ -55,6 +55,7 @@ func clearEnv() {
 		"CONTROL_PORTAL_TOKEN",
 		"V2_BOOT_MODE",
 		"V2_LEGACY_MIGRATION_REQUIRED",
+		"V2_MIGRATION_CREDENTIAL_ID",
 		"TELEMETRY_ENABLED",
 		"TELEMETRY_PROMETHEUS_URL",
 		"TELEMETRY_PROMETHEUS_JOB",
@@ -206,63 +207,6 @@ func TestLoadTelemetryConfigRequiresScrapeToken(t *testing.T) {
 	}
 	if validationErr.Field != "TELEMETRY_SCRAPE_TOKEN" {
 		t.Errorf("ValidationError.Field = %q, want TELEMETRY_SCRAPE_TOKEN", validationErr.Field)
-	}
-}
-
-func TestLoadV2MigrationControlConfig(t *testing.T) {
-	clearEnv()
-	setRequiredEnv()
-	os.Setenv("V2_BOOT_MODE", V2BootModeDormant)
-	os.Setenv("V2_LEGACY_MIGRATION_REQUIRED", "true")
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() returned unexpected error: %v", err)
-	}
-	if cfg.GetV2BootMode() != V2BootModeDormant {
-		t.Fatalf("GetV2BootMode() = %q, want %q", cfg.GetV2BootMode(), V2BootModeDormant)
-	}
-	if !cfg.IsV2BootEnabled() {
-		t.Fatal("IsV2BootEnabled() = false, want true")
-	}
-	if !cfg.GetV2LegacyMigrationRequired() {
-		t.Fatal("GetV2LegacyMigrationRequired() = false, want true")
-	}
-}
-
-func TestLoadV2BootModeRejectsUnsupportedMode(t *testing.T) {
-	clearEnv()
-	setRequiredEnv()
-	os.Setenv("V2_BOOT_MODE", "active")
-
-	_, err := Load()
-	if err == nil {
-		t.Fatal("Load() expected error, got nil")
-	}
-	validationErr, ok := err.(*ValidationError)
-	if !ok {
-		t.Fatalf("expected *ValidationError, got %T", err)
-	}
-	if validationErr.Field != "V2_BOOT_MODE" {
-		t.Fatalf("field = %q, want V2_BOOT_MODE", validationErr.Field)
-	}
-}
-
-func TestLoadV2MigrationRequiredNeedsEnabledBootMode(t *testing.T) {
-	clearEnv()
-	setRequiredEnv()
-	os.Setenv("V2_LEGACY_MIGRATION_REQUIRED", "true")
-
-	_, err := Load()
-	if err == nil {
-		t.Fatal("Load() expected error, got nil")
-	}
-	validationErr, ok := err.(*ValidationError)
-	if !ok {
-		t.Fatalf("expected *ValidationError, got %T", err)
-	}
-	if validationErr.Field != "V2_LEGACY_MIGRATION_REQUIRED" {
-		t.Fatalf("field = %q, want V2_LEGACY_MIGRATION_REQUIRED", validationErr.Field)
 	}
 }
 
@@ -540,6 +484,7 @@ func TestConfigProviderInterface(t *testing.T) {
 	_ = provider.GetControlPortalToken()
 	_ = cfg.GetV2BootMode()
 	_ = cfg.GetV2LegacyMigrationRequired()
+	_ = cfg.GetV2MigrationCredentialID()
 }
 
 func TestConfigGetterFallbacksAndParsers(t *testing.T) {

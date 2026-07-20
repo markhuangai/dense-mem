@@ -111,6 +111,37 @@ func TestGenerator_MemoryPlacementToolRoutesUseRegistrySchemas(t *testing.T) {
 	}
 }
 
+func TestGeneratorSkipsNamedToolRoutesWhenToolIsAbsent(t *testing.T) {
+	reg := registry.New()
+	g := New(reg, []RouteDescriptor{
+		{
+			Method:      "POST",
+			Path:        "/api/v1/tools/remember",
+			OperationID: "rememberTool",
+			ToolName:    "remember",
+			AISafe:      true,
+		},
+		{
+			Method:         "POST",
+			Path:           "/api/v1/tools/{name}",
+			OperationID:    "executeTool",
+			RequestSchema:  "ToolExecuteRequest",
+			ResponseSchema: "ToolExecuteResponse",
+		},
+	})
+	spec, err := g.Generate(SpecVariantFull)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	paths := spec["paths"].(map[string]any)
+	if _, ok := paths["/api/v1/tools/remember"]; ok {
+		t.Fatal("named tool route was exposed without a registered tool")
+	}
+	if _, ok := paths["/api/v1/tools/{name}"]; !ok {
+		t.Fatal("generic tool execution route was removed")
+	}
+}
+
 func TestGenerator_ValidOpenAPIVersion(t *testing.T) {
 	g := New(testRegistry(t), DefaultRoutes())
 	spec, err := g.Generate(SpecVariantFull)

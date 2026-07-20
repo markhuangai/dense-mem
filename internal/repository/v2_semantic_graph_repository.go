@@ -20,14 +20,15 @@ func loadV2TraceGraphContext(
 		return nil, nil, nil
 	}
 	rows, err := loadV2SemanticLocalGraphRows(ctx, tx, V2SemanticGraphQuery{
-		TeamID:     input.TeamID,
-		Scope:      "local",
-		Query:      strings.ToLower(input.Topic),
-		Types:      []string{"entity", "value"},
-		AnchorType: "entity",
-		AnchorID:   relationship.SubjectEntityID,
-		Depth:      input.MaxDepth,
-		Limit:      input.MaxEdges,
+		TeamID:       input.TeamID,
+		Scope:        "local",
+		Query:        strings.ToLower(input.Topic),
+		Types:        []string{"entity", "value"},
+		AnchorType:   "entity",
+		AnchorID:     relationship.SubjectEntityID,
+		Depth:        input.MaxDepth,
+		Limit:        input.MaxEdges,
+		MinRelevance: v2OptionalRelevanceValue(input.MinRelevance),
 	})
 	if err != nil {
 		return nil, nil, err
@@ -46,7 +47,10 @@ func loadV2SemanticOverviewGraphRows(
 	tx *gorm.DB,
 	input V2SemanticGraphQuery,
 ) ([]v2SemanticGraphEdgeRow, error) {
-	rows, err := tx.WithContext(ctx).Raw(v2SemanticGraphEdgesSQL(""), input.TeamID, input.Query, input.Query, input.Limit).Rows()
+	rows, err := tx.WithContext(ctx).Raw(
+		v2SemanticGraphEdgesSQL(""),
+		v2SemanticGraphQueryArgs(input, input.Limit)...,
+	).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +80,7 @@ func loadV2SemanticLocalGraphRows(
 		      ELSE 'value:' || e.object_value_id::text
 		    END) = ANY(?::text[])
 		  )
-		`), input.TeamID, input.Query, input.Query, pq.Array(frontier), pq.Array(frontier), input.Limit-len(out)).Rows()
+		`), v2SemanticGraphQueryArgs(input, input.Limit-len(out), pq.Array(frontier), pq.Array(frontier))...).Rows()
 		if err != nil {
 			return nil, err
 		}
@@ -111,6 +115,7 @@ func loadV2SemanticLocalGraphRows(
 }
 
 func v2SemanticGraphEdgesSQL(extraWhere string) string {
+	searchText := v2SemanticGraphSearchTextSQL()
 	return `
 		SELECT e.relationship_id::text,
 		       e.owner_profile_id::text,
@@ -171,13 +176,51 @@ func v2SemanticGraphEdgesSQL(extraWhere string) string {
 		  )
 		  AND (
 		    ? = ''
-		    OR lower(COALESCE(subject_name.display_name, '') || ' ' || e.predicate_key || ' ' ||
-		             COALESCE(object_name.display_name, value.display, value.canonical_value, '')) LIKE '%' || ? || '%'
+		    OR ` + searchText + ` LIKE '%' || ? || '%'
+		    OR to_tsvector('simple', ` + searchText + `) @@ plainto_tsquery('simple', ?)
+		  )
+		  AND (
+		    ? <= 0
+		    OR ? = ''
+		    OR ts_rank_cd(to_tsvector('simple', ` + searchText + `), plainto_tsquery('simple', ?), 32) >= ?
 		  )
 	` + extraWhere + `
-		ORDER BY e.relationship_id ASC
+		ORDER BY
+		  CASE
+		    WHEN ? = '' THEN 0
+		    ELSE ts_rank_cd(to_tsvector('simple', ` + searchText + `), plainto_tsquery('simple', ?), 32)
+		  END DESC,
+		  e.relationship_id ASC
 		LIMIT ?
 	`
+}
+
+func v2SemanticGraphSearchTextSQL() string {
+	return `lower(COALESCE(subject_name.display_name, '') || ' ' || e.predicate_key || ' ' ||
+		             COALESCE(object_name.display_name, value.display, value.canonical_value, ''))`
+}
+
+func v2SemanticGraphQueryArgs(input V2SemanticGraphQuery, limit int, extraArgs ...any) []any {
+	args := []any{
+		input.TeamID,
+		input.Query,
+		input.Query,
+		input.Query,
+		input.MinRelevance,
+		input.Query,
+		input.Query,
+		input.MinRelevance,
+	}
+	args = append(args, extraArgs...)
+	args = append(args, input.Query, input.Query, limit)
+	return args
+}
+
+func v2OptionalRelevanceValue(value *float64) float64 {
+	if value == nil {
+		return 0
+	}
+	return normalizeV2Relevance(*value)
 }
 
 func scanV2SemanticGraphRows(rows *sql.Rows, types []string) ([]v2SemanticGraphEdgeRow, error) {

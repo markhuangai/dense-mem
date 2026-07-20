@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -109,6 +110,35 @@ func TestDormantV2MigrationCheckPassesAfterCutoverMarker(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestV2SearchReadinessCheckReportsRepositoryFailure(t *testing.T) {
+	err := checkV2SearchReadiness(context.Background(), v2SearchReadinessStub{
+		err: repository.ErrV2SearchContractMismatch,
+	})
+
+	require.True(t, errors.Is(err, repository.ErrV2SearchContractMismatch))
+}
+
+func TestV2SearchReadinessCheckReportsReasons(t *testing.T) {
+	err := checkV2SearchReadiness(context.Background(), v2SearchReadinessStub{
+		readiness: &repository.V2SearchReadiness{
+			Ready: false,
+			Reasons: []repository.V2SearchReadinessReason{{
+				Code:    "embedding_backlog_pending",
+				Message: "2 embedding jobs are queued or processing for active search contract",
+			}},
+		},
+	})
+
+	require.True(t, errors.Is(err, repository.ErrV2SearchContractMismatch))
+	require.Contains(t, err.Error(), "2 embedding jobs")
+}
+
+func TestV2UATPlacementLeaseCoversProviderAndCommitTimeouts(t *testing.T) {
+	require.Equal(t, 5*time.Minute, v2UATPlacementLease(60, 10))
+	require.Equal(t, 9*time.Minute, v2UATPlacementLease(120, 30))
+	require.Equal(t, 5*time.Minute, v2UATPlacementLease(0, 0))
+}
+
 type v2MigrationStatusStub struct {
 	status *domain.V2MigrationControlStatus
 	err    error
@@ -119,4 +149,16 @@ func (s v2MigrationStatusStub) Status(context.Context) (*domain.V2MigrationContr
 		return nil, s.err
 	}
 	return s.status, nil
+}
+
+type v2SearchReadinessStub struct {
+	readiness *repository.V2SearchReadiness
+	err       error
+}
+
+func (s v2SearchReadinessStub) CheckSearchReadiness(context.Context) (*repository.V2SearchReadiness, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.readiness, nil
 }

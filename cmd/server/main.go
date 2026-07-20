@@ -136,6 +136,10 @@ func main() {
 	if err := embeddingConsistencySvc.CheckAtStartup(startupCtx); err != nil {
 		log.Fatalf("embedding consistency check failed: %v", err)
 	}
+	if cfg.GetV2BootMode() == config.V2BootModeUAT {
+		runV2UATServer(startupCtx, cfg, pgDB, logger, level)
+		return
+	}
 
 	// Initialize Neo4j client with 5-second timeout
 	neo4jClient, err := neo4j.NewClient(startupCtx, &cfg)
@@ -186,9 +190,12 @@ func main() {
 	memoryPlacementRepo := repository.NewMemoryPlacementRepository(pgDB.GetDB(), rlsHelper)
 	skillPackImportRepo := repository.NewSkillPackImportRepository(pgDB.GetDB(), rlsHelper)
 	v2SemanticRepo := repository.NewV2SemanticRepository(pgDB.GetDB(), rlsHelper)
+	var v2LedgerRepo *repository.V2LedgerRepositoryImpl
+	var v2MigrationControlRepo *repository.V2MigrationControlRepositoryImpl
 	var v2MigrationControlSvc migrationcontrol.Service
 	if cfg.IsV2BootEnabled() {
-		v2MigrationControlRepo := repository.NewV2MigrationControlRepository(pgDB.GetDB(), rlsHelper)
+		v2LedgerRepo = repository.NewV2LedgerRepository(pgDB.GetDB(), rlsHelper)
+		v2MigrationControlRepo = repository.NewV2MigrationControlRepository(pgDB.GetDB(), rlsHelper)
 		v2MigrationControlSvc = migrationcontrol.New(v2MigrationControlRepo, migrationcontrol.Config{
 			Required: cfg.GetV2LegacyMigrationRequired(),
 		})
@@ -393,6 +400,13 @@ func main() {
 	placementWorkerCtx, placementWorkerCancel := context.WithCancel(context.Background())
 	defer placementWorkerCancel()
 	memorySvc.StartPlacementWorker(placementWorkerCtx, time.Minute)
+	v2MigrationExecSvc, err := buildV2MigrationExecutor(cfg, v2MigrationControlRepo, neo4jClient, v2LedgerRepo)
+	if err != nil {
+		log.Fatalf("failed to build v2 migration executor: %v", err)
+	}
+	if v2MigrationExecSvc != nil {
+		logger.Info("v2 legacy migration executor enabled")
+	}
 	dreamSvc := dreamservice.New(dreamservice.Dependencies{
 		Graph:     profileScopeEnforcer,
 		Memory:    memorySvc,
@@ -607,6 +621,7 @@ func main() {
 			RecallFeedback: recallFeedbackEventService,
 			Dreams:         dreamSvc,
 			Migration:      v2MigrationControlSvc,
+			MigrationExec:  v2MigrationExecSvc,
 		},
 		healthConfig,
 		logger,

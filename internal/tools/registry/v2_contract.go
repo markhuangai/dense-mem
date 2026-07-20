@@ -5,11 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/google/uuid"
-
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
@@ -27,7 +23,6 @@ const (
 	V2ToolListDreams                  = "list_dreams"
 	V2ToolGetDream                    = "get_dream"
 	V2ToolResolveDreamFeedback        = "resolve_dream_feedback"
-	V2ToolListCommunities             = "list_communities"
 	V2ToolFindMemoryPackCandidates    = "find_memory_pack_candidates"
 	V2ToolExportMemoryPack            = "export_memory_pack"
 	V2ToolInspectMemoryPack           = "inspect_memory_pack"
@@ -46,7 +41,6 @@ var v2ContractToolNames = []string{
 	V2ToolListDreams,
 	V2ToolGetDream,
 	V2ToolResolveDreamFeedback,
-	V2ToolListCommunities,
 	V2ToolFindMemoryPackCandidates,
 	V2ToolExportMemoryPack,
 	V2ToolInspectMemoryPack,
@@ -129,13 +123,6 @@ func V2ContractTools() []Tool {
 			v2ResolveDreamFeedbackOutputSchema(),
 		),
 		v2ContractTool(
-			V2ToolListCommunities,
-			"List bounded same-team community summaries as derived read-model data.",
-			[]string{"read"},
-			v2ListCommunitiesInputSchema(),
-			v2ListCommunitiesOutputSchema(),
-		),
-		v2ContractTool(
 			V2ToolFindMemoryPackCandidates,
 			"Find active Relationships that may be exported into a memory pack.",
 			[]string{"read"},
@@ -176,6 +163,7 @@ func V2ContractTools() []Tool {
 func v2UATTools(deps Dependencies) []Tool {
 	tools := V2ContractTools()
 	for i := range tools {
+		tools[i].Visibility = "active"
 		switch tools[i].Name {
 		case V2ToolRemember:
 			tool := tools[i]
@@ -355,32 +343,6 @@ func v2UATTools(deps Dependencies) []Tool {
 					return nil, err
 				}
 				return v2ResolveDreamFeedbackContractOutput(res), nil
-			}
-		case V2ToolListCommunities:
-			tool := tools[i]
-			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-				if deps.V2Communities == nil {
-					return nil, ErrToolUnavailable
-				}
-				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
-					return nil, fmt.Errorf("list_communities: invalid input: %w", err)
-				}
-				actor, ok := requestctx.ActorProfileFromContext(ctx)
-				if !ok || actor.TeamID == uuid.Nil {
-					return nil, fmt.Errorf("list_communities: authenticated actor context is required")
-				}
-				limit := 0
-				if value, ok := intInput(input["limit"]); ok {
-					limit = value
-				}
-				communities, err := deps.V2Communities.ListV2Communities(ctx, repository.V2CommunityListInput{
-					TeamID: actor.TeamID.String(),
-					Limit:  limit,
-				})
-				if err != nil {
-					return nil, err
-				}
-				return v2ListCommunitiesContractOutput(communities), nil
 			}
 		case V2ToolFindMemoryPackCandidates:
 			tool := tools[i]

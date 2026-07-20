@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -112,8 +113,8 @@ func TestV2RecallBoundsAndContextHelpers(t *testing.T) {
 	if got := v2RecallOverfetchLimit(1); got != v2RecallOverfetchFloor {
 		t.Fatalf("overfetch floor = %d, want %d", got, v2RecallOverfetchFloor)
 	}
-	if got := v2RecallOverfetchLimit(100); got != 250 {
-		t.Fatalf("overfetch cap = %d, want 250", got)
+	if got := v2RecallOverfetchLimit(100); got != v2RecallOverfetchCap {
+		t.Fatalf("overfetch cap = %d, want %d", got, v2RecallOverfetchCap)
 	}
 	if got := v2RecallCombinedSearchState("", string(domain.V2SearchProjectionCurrent)); got != string(domain.V2SearchProjectionCurrent) {
 		t.Fatalf("combined state = %q", got)
@@ -125,4 +126,31 @@ func TestV2RecallBoundsAndContextHelpers(t *testing.T) {
 	if got := truncateV2RecallContext(long); len(got) != 2000 {
 		t.Fatalf("truncated length = %d, want 2000", len(got))
 	}
+}
+
+func TestV2RecallANNHelpersUseDerivedContract(t *testing.T) {
+	contractID := uuid.NewString()
+	contract := &V2ActiveSearchContract{
+		EmbeddingContractID: contractID,
+		EmbeddingDimensions: 3072,
+		IndexStrategy:       string(domain.V2VectorIndexHalfvecHNSW),
+		CandidateLimit:      120,
+	}
+	expression, err := v2RecallANNDistanceExpression(contract)
+	require.NoError(t, err)
+	require.Equal(t, "embedding::halfvec(3072) <=> ?::halfvec(3072)", expression)
+
+	literal, err := v2RecallEmbeddingContractLiteral(contractID)
+	require.NoError(t, err)
+	require.Equal(t, "'"+contractID+"'", literal)
+	require.Equal(t, 120, v2RecallANNCandidateLimit(contract, 60))
+	require.Equal(t, 80, v2RecallANNCandidateLimit(&V2ActiveSearchContract{CandidateLimit: 20}, 80))
+	require.Equal(t, v2RecallOverfetchCap, v2RecallANNCandidateLimit(&V2ActiveSearchContract{CandidateLimit: 1000}, 80))
+
+	_, err = v2RecallANNDistanceExpression(&V2ActiveSearchContract{
+		EmbeddingDimensions: 5000,
+		IndexStrategy:       string(domain.V2VectorIndexHalfvecHNSW),
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrV2SearchContractMismatch), "err=%v", err)
 }

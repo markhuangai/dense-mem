@@ -99,7 +99,11 @@ func BuildDefault(deps Dependencies) (Registry, error) {
 // from BuildDefault so production V1 tool names are not replaced before cutover.
 func BuildV2UAT(deps Dependencies) (Registry, error) {
 	r := New()
-	for _, t := range v2UATTools(deps) {
+	tools := v2UATTools(deps)
+	if deps.V2EvaluationEnabled || deps.V2Recall != nil {
+		tools = append(tools, evaluationTools(deps)...)
+	}
+	for _, t := range tools {
 		if err := r.Register(t); err != nil {
 			return nil, fmt.Errorf("registry: BuildV2UAT: %w", err)
 		}
@@ -128,6 +132,13 @@ func defaultTools(deps Dependencies) []Tool {
 		importSkillPackTool(deps),
 		rollbackSkillPackImportTool(deps),
 		submitRecallSessionFeedbackTool(deps),
+	}
+	tools = append(tools, evaluationTools(deps)...)
+	return tools
+}
+
+func evaluationTools(deps Dependencies) []Tool {
+	return []Tool{
 		evalGetManifestTool(deps),
 		evalListKnowledgeRefsTool(deps),
 		evalGetKnowledgeItemTool(deps),
@@ -137,7 +148,6 @@ func defaultTools(deps Dependencies) []Tool {
 		evalRunRecallCaseTool(deps),
 		evalScoreRetrievalCaseTool(deps),
 	}
-	return tools
 }
 
 // --- recall_memory ---------------------------------------------------------

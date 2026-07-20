@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -208,6 +209,7 @@ func normalizeV2TraceRelationshipInput(input V2TraceRelationshipInput) V2TraceRe
 	input.MaxEvents = clampV2Int(input.MaxEvents, v2DefaultTraceEvents, v2MaxTraceEvents)
 	input.MaxFragmentContentRunes = clampV2Int(input.MaxFragmentContentRunes, v2DefaultTraceFragmentRunes, v2MaxTraceFragmentRunes)
 	input.PredicateKeys = normalizeV2TracePredicateKeys(input.PredicateKeys)
+	input.MinRelevance = normalizeV2OptionalRelevance(input.MinRelevance)
 	return input
 }
 
@@ -233,6 +235,7 @@ func normalizeV2SemanticGraphQuery(input V2SemanticGraphQuery) V2SemanticGraphQu
 	input.Types = normalizeV2SemanticGraphTypes(input.Types)
 	input.Depth = clampV2Int(input.Depth, v2DefaultSemanticGraphDepth, v2MaxSemanticGraphDepth)
 	input.Limit = clampV2Int(input.Limit, v2DefaultSemanticGraphLimit, v2MaxSemanticGraphLimit)
+	input.MinRelevance = normalizeV2Relevance(input.MinRelevance)
 	return input
 }
 
@@ -944,6 +947,24 @@ func clampV2Int(value, defaultValue, maxValue int) int {
 	}
 	if value > maxValue {
 		return maxValue
+	}
+	return value
+}
+
+func normalizeV2OptionalRelevance(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	normalized := normalizeV2Relevance(*value)
+	return &normalized
+}
+
+func normalizeV2Relevance(value float64) float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
+		return 0
+	}
+	if value > 1 {
+		return 1
 	}
 	return value
 }

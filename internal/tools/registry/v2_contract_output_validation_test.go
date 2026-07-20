@@ -205,19 +205,6 @@ func TestV2AuxiliaryContractOutputsMapPublicShapes(t *testing.T) {
 		t.Fatalf("dream feedback output validation failed: %v; output=%#v", err, feedback)
 	}
 
-	community := v2ListCommunitiesContractOutput([]repository.V2CommunityRecord{{
-		CommunityID:    "community-1",
-		RunID:          "run-1",
-		Status:         "current",
-		Summary:        "Dense-Mem V2 cutover",
-		SummaryVersion: "community-deterministic-v2",
-		CreatedAt:      now,
-		SupersededAt:   &now,
-	}})
-	if err := ValidateInput(Tool{InputSchema: v2ListCommunitiesOutputSchema()}, community); err != nil {
-		t.Fatalf("community output validation failed: %v; output=%#v", err, community)
-	}
-
 	candidates := v2FindMemoryPackCandidatesContractOutput(&skillpackservice.V2FindCandidatesResult{
 		Candidates: []skillpackservice.V2MemoryPackCandidate{{
 			RelationshipID:  "rel-1",

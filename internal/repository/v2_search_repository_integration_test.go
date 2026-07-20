@@ -540,11 +540,28 @@ func TestV2SearchReadinessAndHNSWPlan(t *testing.T) {
 	assert.Equal(t, 3, ready.Contract.EmbeddingDimensions)
 
 	doc := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, "test generation hnsw text", 1)
+	otherDoc := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, "test generation farther hnsw text", 1)
 	completeV2SearchJobsForTest(t, repo, teamID, map[string][]float32{
-		doc.SearchDocumentID: unitV2SearchVector(3, 0),
+		doc.SearchDocumentID:      unitV2SearchVector(3, 0),
+		otherDoc.SearchDocumentID: unitV2SearchVector(3, 1),
 	})
 	query, err := v2VectorLiteral(unitV2SearchVector(3, 0))
 	require.NoError(t, err)
+	var recallHits []V2SearchHit
+	err = repo.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
+		var err error
+		recallHits, err = searchV2RecallVector(ctx, tx, V2RecallEvidenceInput{
+			TeamID:         teamID,
+			QueryEmbedding: unitV2SearchVector(3, 0),
+			Limit:          2,
+		}, ready.Contract, 2)
+		return err
+	})
+	require.NoError(t, err)
+	require.Len(t, recallHits, 2)
+	assert.Equal(t, doc.SearchDocumentID, recallHits[0].SearchDocumentID)
+	assert.Less(t, recallHits[0].Distance, recallHits[1].Distance)
+
 	err = rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
 		require.NoError(t, tx.Exec(`SET LOCAL enable_seqscan = off`).Error)
 		rows, err := tx.Raw(`

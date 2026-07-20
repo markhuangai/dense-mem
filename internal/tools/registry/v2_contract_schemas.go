@@ -300,13 +300,6 @@ func v2ResolveDreamFeedbackInputSchema() map[string]any {
 	})
 }
 
-func v2ListCommunitiesInputSchema() map[string]any {
-	return v2ContractInput(nil, map[string]any{
-		"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
-		"cursor": schemaString("Opaque page cursor.", 512),
-	})
-}
-
 func v2FindMemoryPackCandidatesInputSchema() map[string]any {
 	return v2ContractInput([]string{"query"}, map[string]any{
 		"query":          schemaString("Topic search query.", 512),

@@ -249,6 +249,7 @@ func TestBuildV2UATWiresExecutableTraceMemory(t *testing.T) {
 		"max_edges":                12,
 		"predicate_keys":           []any{"works_on"},
 		"topic":                    "PostgreSQL memory",
+		"min_relevance":            0.7,
 	})
 	if err != nil {
 		t.Fatalf("trace_memory.Invoke: %v", err)
@@ -288,6 +289,9 @@ func TestBuildV2UATWiresExecutableTraceMemory(t *testing.T) {
 	}
 	if got := strings.Join(stub.req.PredicateKeys, ","); got != "works_on" {
 		t.Fatalf("predicate_keys = %q", got)
+	}
+	if stub.req.MinRelevance == nil || *stub.req.MinRelevance != 0.7 {
+		t.Fatalf("min_relevance = %#v, want 0.7", stub.req.MinRelevance)
 	}
 }
 

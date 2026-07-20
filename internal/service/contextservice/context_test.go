@@ -171,6 +171,7 @@ func TestV2SemanticTraceUsesAuthenticatedTeamAndRelationshipID(t *testing.T) {
 	includeContent := false
 	includeVerification := true
 	includeTransitions := false
+	minRelevance := 0.7
 	store := &fakeV2SemanticTraceStore{result: &repository.V2RelationshipTraceResult{
 		Relationship: &repository.V2RelationshipTraceRecord{
 			RelationshipID: "relationship-1",
@@ -198,6 +199,7 @@ func TestV2SemanticTraceUsesAuthenticatedTeamAndRelationshipID(t *testing.T) {
 		MaxChars:               333,
 		PredicateKeys:          []string{"works_on"},
 		Topic:                  "Dense-Mem",
+		MinRelevance:           &minRelevance,
 	})
 
 	require.NoError(t, err)
@@ -216,6 +218,7 @@ func TestV2SemanticTraceUsesAuthenticatedTeamAndRelationshipID(t *testing.T) {
 	require.Equal(t, 333, store.input.MaxFragmentContentRunes)
 	require.Equal(t, []string{"works_on"}, store.input.PredicateKeys)
 	require.Equal(t, "Dense-Mem", store.input.Topic)
+	require.Equal(t, &minRelevance, store.input.MinRelevance)
 }
 
 func TestV2SemanticTraceRequiresAuthenticatedTeam(t *testing.T) {

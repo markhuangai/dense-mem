@@ -18,8 +18,9 @@ import (
 const (
 	defaultV2RecallLimit      = 10
 	maxV2RecallLimit          = 50
-	v2RecallOverfetchMultiple = 5
-	v2RecallOverfetchFloor    = 50
+	v2RecallOverfetchMultiple = 6
+	v2RecallOverfetchFloor    = 60
+	v2RecallOverfetchCap      = 200
 	v2RecallRRFConstant       = 60
 )
 
@@ -46,7 +47,7 @@ func (r *V2SearchRepositoryImpl) RecallEvidence(ctx context.Context, input V2Rec
 			}
 		}
 		if len(input.QueryEmbedding) > 0 {
-			vectorHits, err = searchV2RecallExactVector(ctx, tx, input, contract, overfetch)
+			vectorHits, err = searchV2RecallVector(ctx, tx, input, contract, overfetch)
 			if err != nil {
 				return err
 			}
@@ -147,6 +148,23 @@ func searchV2RecallFullText(
 	return scanV2SearchHits(rows)
 }
 
+func searchV2RecallVector(
+	ctx context.Context,
+	tx *gorm.DB,
+	input V2RecallEvidenceInput,
+	contract *V2ActiveSearchContract,
+	limit int,
+) ([]V2SearchHit, error) {
+	switch contract.IndexStrategy {
+	case string(domain.V2VectorIndexExact):
+		return searchV2RecallExactVector(ctx, tx, input, contract, limit)
+	case string(domain.V2VectorIndexVectorHNSW), string(domain.V2VectorIndexHalfvecHNSW):
+		return searchV2RecallANNVector(ctx, tx, input, contract, limit)
+	default:
+		return nil, fmt.Errorf("%w: unsupported recall vector index strategy %q", ErrV2SearchContractMismatch, contract.IndexStrategy)
+	}
+}
+
 func searchV2RecallExactVector(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -183,6 +201,114 @@ func searchV2RecallExactVector(
 	}
 	defer rows.Close()
 	return scanV2SearchHits(rows)
+}
+
+func searchV2RecallANNVector(
+	ctx context.Context,
+	tx *gorm.DB,
+	input V2RecallEvidenceInput,
+	contract *V2ActiveSearchContract,
+	limit int,
+) ([]V2SearchHit, error) {
+	if len(input.QueryEmbedding) != contract.EmbeddingDimensions {
+		return nil, fmt.Errorf("%w: contract dimensions %d, query dimensions %d", ErrV2SearchContractMismatch, contract.EmbeddingDimensions, len(input.QueryEmbedding))
+	}
+	annDistance, err := v2RecallANNDistanceExpression(contract)
+	if err != nil {
+		return nil, err
+	}
+	contractLiteral, err := v2RecallEmbeddingContractLiteral(contract.EmbeddingContractID)
+	if err != nil {
+		return nil, err
+	}
+	vectorLiteral, err := v2VectorLiteral(input.QueryEmbedding)
+	if err != nil {
+		return nil, err
+	}
+	candidateLimit := v2RecallANNCandidateLimit(contract, limit)
+	query := fmt.Sprintf(`
+		WITH ann_candidates AS MATERIALIZED (
+			SELECT team_id, search_document_id
+			FROM search_documents
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'evidence'
+			  AND embedding_contract_id = %s::uuid
+			  AND embedding_dimensions = %d
+			  AND search_state = 'current'
+			  AND embedding IS NOT NULL
+			ORDER BY %s ASC, search_document_id ASC
+			LIMIT ?
+		)
+		SELECT document.team_id::text,
+		       document.search_document_id::text,
+		       document.source_kind,
+		       document.source_id::text,
+		       document.source_version,
+		       document.document_version,
+		       document.embedding_contract_id::text,
+		       document.search_state,
+		       (document.embedding <=> ?::vector)::double precision AS distance,
+		       0::double precision AS text_rank
+		FROM ann_candidates AS candidate
+		JOIN search_documents AS document
+		  ON document.team_id = candidate.team_id
+		 AND document.search_document_id = candidate.search_document_id
+		ORDER BY document.embedding <=> ?::vector ASC, document.search_document_id ASC
+		LIMIT ?
+	`, contractLiteral, contract.EmbeddingDimensions, annDistance)
+	rows, err := tx.WithContext(ctx).Raw(
+		query,
+		input.TeamID,
+		vectorLiteral,
+		candidateLimit,
+		vectorLiteral,
+		vectorLiteral,
+		limit,
+	).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanV2SearchHits(rows)
+}
+
+func v2RecallANNDistanceExpression(contract *V2ActiveSearchContract) (string, error) {
+	if contract == nil {
+		return "", fmt.Errorf("%w: active search contract is required", ErrV2SearchContractMismatch)
+	}
+	if contract.EmbeddingDimensions < 1 || contract.EmbeddingDimensions > 4000 {
+		return "", fmt.Errorf("%w: ANN dimensions out of range: %d", ErrV2SearchContractMismatch, contract.EmbeddingDimensions)
+	}
+	switch contract.IndexStrategy {
+	case string(domain.V2VectorIndexVectorHNSW):
+		return fmt.Sprintf("embedding::vector(%d) <=> ?::vector(%d)", contract.EmbeddingDimensions, contract.EmbeddingDimensions), nil
+	case string(domain.V2VectorIndexHalfvecHNSW):
+		return fmt.Sprintf("embedding::halfvec(%d) <=> ?::halfvec(%d)", contract.EmbeddingDimensions, contract.EmbeddingDimensions), nil
+	default:
+		return "", fmt.Errorf("%w: unsupported recall ANN strategy %q", ErrV2SearchContractMismatch, contract.IndexStrategy)
+	}
+}
+
+func v2RecallEmbeddingContractLiteral(contractID string) (string, error) {
+	parsed, err := uuid.Parse(strings.TrimSpace(contractID))
+	if err != nil {
+		return "", fmt.Errorf("%w: invalid embedding contract id: %w", ErrV2SearchContractMismatch, err)
+	}
+	return pq.QuoteLiteral(parsed.String()), nil
+}
+
+func v2RecallANNCandidateLimit(contract *V2ActiveSearchContract, limit int) int {
+	candidateLimit := v2RecallOverfetchCap
+	if contract != nil && contract.CandidateLimit > 0 {
+		candidateLimit = contract.CandidateLimit
+	}
+	if candidateLimit < limit {
+		candidateLimit = limit
+	}
+	if candidateLimit > v2RecallOverfetchCap {
+		return v2RecallOverfetchCap
+	}
+	return candidateLimit
 }
 
 func searchV2RecallEntityExpansion(
@@ -448,8 +574,8 @@ func v2RecallOverfetchLimit(limit int) int {
 	if overfetch < v2RecallOverfetchFloor {
 		overfetch = v2RecallOverfetchFloor
 	}
-	if overfetch > 250 {
-		return 250
+	if overfetch > v2RecallOverfetchCap {
+		return v2RecallOverfetchCap
 	}
 	return overfetch
 }

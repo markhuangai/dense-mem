@@ -80,6 +80,7 @@ type TraceRequest struct {
 	MaxChars               int      `json:"max_chars,omitempty"`
 	PredicateKeys          []string `json:"predicate_keys,omitempty"`
 	Topic                  string   `json:"topic,omitempty"`
+	MinRelevance           *float64 `json:"min_relevance,omitempty"`
 }
 
 // TraceResult is a bounded graph lineage response for one anchor.

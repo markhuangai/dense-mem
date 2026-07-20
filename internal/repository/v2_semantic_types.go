@@ -288,6 +288,7 @@ type V2TraceRelationshipInput struct {
 	MaxFragmentContentRunes int
 	PredicateKeys           []string
 	Topic                   string
+	MinRelevance            *float64
 }
 
 type V2RelationshipTraceResult struct {
@@ -530,14 +531,15 @@ type V2TraceEmbeddingJob struct {
 }
 
 type V2SemanticGraphQuery struct {
-	TeamID     string
-	Scope      string
-	Query      string
-	Types      []string
-	AnchorType string
-	AnchorID   string
-	Depth      int
-	Limit      int
+	TeamID       string
+	Scope        string
+	Query        string
+	Types        []string
+	AnchorType   string
+	AnchorID     string
+	Depth        int
+	Limit        int
+	MinRelevance float64
 }
 
 type V2SemanticGraphNodeDetailInput struct {
