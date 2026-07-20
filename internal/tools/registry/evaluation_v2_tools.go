@@ -12,11 +12,8 @@ import (
 )
 
 func evalListV2KnowledgeRefs(ctx context.Context, deps Dependencies, profileID string, input map[string]any, limit int, metadataOnly bool) (map[string]any, error) {
-	if deps.V2Evaluation == nil {
-		return nil, ErrToolUnavailable
-	}
-	if !deps.V2EvaluationEnabled {
-		return nil, ErrToolDisabled
+	if err := requireV2EvaluationKnowledgeTypesVisible(deps); err != nil {
+		return nil, err
 	}
 	teamID, err := evalActorTeamID(ctx, profileID)
 	if err != nil {
@@ -49,11 +46,8 @@ func evalListV2KnowledgeRefs(ctx context.Context, deps Dependencies, profileID s
 }
 
 func evalGetV2KnowledgeItem(ctx context.Context, deps Dependencies, profileID, kind, id string) (map[string]any, error) {
-	if deps.V2Evaluation == nil {
-		return nil, ErrToolUnavailable
-	}
-	if !deps.V2EvaluationEnabled {
-		return nil, ErrToolDisabled
+	if err := requireV2EvaluationKnowledgeTypesVisible(deps); err != nil {
+		return nil, err
 	}
 	teamID, err := evalActorTeamID(ctx, profileID)
 	if err != nil {
@@ -120,6 +114,16 @@ func evalGetKnowledgeItemTypes(deps Dependencies) []string {
 
 func v2EvaluationKnowledgeTypesVisible(deps Dependencies) bool {
 	return deps.V2Evaluation != nil && deps.V2EvaluationEnabled
+}
+
+func requireV2EvaluationKnowledgeTypesVisible(deps Dependencies) error {
+	if deps.V2Evaluation == nil {
+		return ErrToolUnavailable
+	}
+	if !deps.V2EvaluationEnabled {
+		return ErrToolDisabled
+	}
+	return nil
 }
 
 func evalScoredKnowledgeRefTypes() []string {

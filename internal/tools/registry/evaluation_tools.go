@@ -107,6 +107,9 @@ func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 			case "edge":
 				return evalListEdges(ctx, deps, profileID, limit)
 			case "evidence", "relationship", "entity", "value", "hypothesis":
+				if err := requireV2EvaluationKnowledgeTypesVisible(deps); err != nil {
+					return nil, err
+				}
 				return evalListV2KnowledgeRefs(ctx, deps, profileID, input, limit, metadataOnly)
 			default:
 				return nil, fmt.Errorf("eval_list_knowledge_refs: unsupported type %q", kind)
@@ -576,6 +579,9 @@ func evalGetKnowledgeItem(ctx context.Context, deps Dependencies, profileID, kin
 		}
 		return structToMap(dream)
 	case "evidence", "relationship", "entity", "value", "hypothesis":
+		if err := requireV2EvaluationKnowledgeTypesVisible(deps); err != nil {
+			return nil, err
+		}
 		return evalGetV2KnowledgeItem(ctx, deps, profileID, kind, id)
 	default:
 		return nil, fmt.Errorf("eval_get_knowledge_item: unsupported type %q", kind)
