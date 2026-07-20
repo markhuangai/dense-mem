@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -35,7 +36,7 @@ func (r *V2SemanticRepositoryImpl) ListV2SemanticReviewEntityCandidates(
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
 		if input.KnownEntityID != "" {
 			candidate, err := loadV2SemanticReviewEntityCandidateByID(ctx, tx, input)
-			if err != nil && err != sql.ErrNoRows {
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
 			if candidate != nil {

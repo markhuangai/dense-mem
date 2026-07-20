@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -178,7 +179,7 @@ func (r *V2MigrationControlRepositoryImpl) UpdateMigrationCorpusOutcome(
 		return nil
 	})
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("v2 migration executor: corpus item not found")
 		}
 		return nil, fmt.Errorf("v2 migration executor: update corpus outcome: %w", err)
@@ -268,7 +269,7 @@ func (r *V2MigrationControlRepositoryImpl) GetMigrationCheckpoint(
 		return unmarshalV2MigrationJSON(data, &out)
 	})
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return map[string]any{}, nil
 		}
 		return nil, fmt.Errorf("v2 migration executor: get checkpoint: %w", err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -76,7 +77,7 @@ func loadV2PlacementRunStatus(
 		&proposalRaw,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrV2PlacementNotFound
 		}
 		return nil, err
