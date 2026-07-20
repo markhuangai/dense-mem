@@ -29,8 +29,8 @@ const defaultTypes: TypeFilter = {
   claim: true,
   fragment: true,
   dream: true,
-  entity: true,
-  value: true,
+  entity: false,
+  value: false,
 };
 
 export function GraphPanel({ api }: { api: UserApi }) {
@@ -170,12 +170,9 @@ export function GraphPanel({ api }: { api: UserApi }) {
             <div className="graph-anchor-grid">
               <label htmlFor="graph-anchor-type">Anchor type</label>
               <select id="graph-anchor-type" value={anchorType} onChange={(event) => setAnchorType(event.target.value as GraphNodeType)}>
-                <option value="fact">Fact</option>
-                <option value="claim">Claim</option>
-                <option value="fragment">Fragment</option>
-                <option value="dream">Dream</option>
-                <option value="entity">Entity</option>
-                <option value="value">Value</option>
+                {graphNodeTypes.map((type) => (
+                  <option key={type} value={type}>{nodeTypeLabel(type)}</option>
+                ))}
               </select>
               <label htmlFor="graph-anchor-id">Anchor ID</label>
               <input id="graph-anchor-id" value={anchorId} onChange={(event) => setAnchorId(event.target.value)} />
