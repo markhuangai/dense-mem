@@ -51,6 +51,7 @@ func TestControlPortalV2MigrationStatusAndActions(t *testing.T) {
 
 	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/preflight", `{
 		"actor": "operator",
+		"remote_ip": "198.51.100.99",
 		"backup_reference": "backup-20260717",
 		"preflight_checks": {
 			"postgres_restore_verified": true,
@@ -58,9 +59,9 @@ func TestControlPortalV2MigrationStatusAndActions(t *testing.T) {
 		}
 	}`)
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "operator", migration.lastReq.Actor)
+	require.Equal(t, "control", migration.lastReq.Actor)
 	require.Equal(t, "backup-20260717", migration.lastReq.BackupReference)
-	require.NotEmpty(t, migration.lastReq.RemoteIP)
+	require.Equal(t, "192.0.2.1", migration.lastReq.RemoteIP)
 
 	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/start", `{"reason":"begin"}`)
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -118,6 +119,7 @@ func controlMigrationRequest(server http.Handler, method, path, body string) *ht
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer secret")
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Real-IP", "203.0.113.7")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	return rec

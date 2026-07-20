@@ -141,7 +141,7 @@ func TestBuildV2UATWiresExecutableRecallMemory(t *testing.T) {
 	if recall.Invoke == nil {
 		t.Fatal("BuildV2UAT recall_memory invoker is nil")
 	}
-	out, err := recall.Invoke(context.Background(), "ignored-profile", map[string]any{
+	out, err := recall.Invoke(v2ContractInvokeContext("read"), "ignored-profile", map[string]any{
 		"query": "PostgreSQL memory",
 	})
 	if err != nil {
@@ -197,12 +197,33 @@ func TestBuildV2UATRecallRejectsTenantOverride(t *testing.T) {
 	if !ok {
 		t.Fatal("BuildV2UAT did not register recall_memory")
 	}
-	_, err = recall.Invoke(context.Background(), "ignored-profile", map[string]any{
+	_, err = recall.Invoke(v2ContractInvokeContext("read"), "ignored-profile", map[string]any{
 		"team_id": "attacker-team",
 		"query":   "PostgreSQL memory",
 	})
 	if err == nil || !strings.Contains(err.Error(), "team_id") {
 		t.Fatalf("recall_memory.Invoke err = %v, want tenant override rejection", err)
+	}
+}
+
+func TestBuildV2UATRecallRejectsMissingReadScope(t *testing.T) {
+	stub := &stubV2RecallService{}
+	reg, err := BuildV2UAT(Dependencies{V2Recall: stub})
+	if err != nil {
+		t.Fatalf("BuildV2UAT: %v", err)
+	}
+	recall, ok := reg.Get(V2ToolRecallMemory)
+	if !ok {
+		t.Fatal("BuildV2UAT did not register recall_memory")
+	}
+	_, err = recall.Invoke(context.Background(), "ignored-profile", map[string]any{
+		"query": "PostgreSQL memory",
+	})
+	if err == nil || !strings.Contains(err.Error(), "missing required scope") {
+		t.Fatalf("recall_memory.Invoke err = %v, want missing scope rejection", err)
+	}
+	if stub.req.Query != "" {
+		t.Fatalf("recall service was called without read scope: %#v", stub.req)
 	}
 }
 
@@ -219,7 +240,7 @@ func TestBuildV2UATWiresExecutableTraceMemory(t *testing.T) {
 	if trace.Invoke == nil {
 		t.Fatal("BuildV2UAT trace_memory invoker is nil")
 	}
-	out, err := trace.Invoke(context.Background(), "ignored-profile", map[string]any{
+	out, err := trace.Invoke(v2ContractInvokeContext("read"), "ignored-profile", map[string]any{
 		"relationship_id":          "relationship-v2",
 		"include_evidence_content": false,
 		"include_verification":     true,
@@ -279,11 +300,32 @@ func TestBuildV2UATTraceRejectsTenantOverride(t *testing.T) {
 	if !ok {
 		t.Fatal("BuildV2UAT did not register trace_memory")
 	}
-	_, err = trace.Invoke(context.Background(), "ignored-profile", map[string]any{
+	_, err = trace.Invoke(v2ContractInvokeContext("read"), "ignored-profile", map[string]any{
 		"team_id":         "attacker-team",
 		"relationship_id": "relationship-v2",
 	})
 	if err == nil || !strings.Contains(err.Error(), "team_id") {
 		t.Fatalf("trace_memory.Invoke err = %v, want tenant override rejection", err)
+	}
+}
+
+func TestBuildV2UATTraceRejectsMissingReadScope(t *testing.T) {
+	stub := &stubV2TraceContext{}
+	reg, err := BuildV2UAT(Dependencies{Context: stub})
+	if err != nil {
+		t.Fatalf("BuildV2UAT: %v", err)
+	}
+	trace, ok := reg.Get(V2ToolTraceMemory)
+	if !ok {
+		t.Fatal("BuildV2UAT did not register trace_memory")
+	}
+	_, err = trace.Invoke(context.Background(), "ignored-profile", map[string]any{
+		"relationship_id": "relationship-v2",
+	})
+	if err == nil || !strings.Contains(err.Error(), "missing required scope") {
+		t.Fatalf("trace_memory.Invoke err = %v, want missing scope rejection", err)
+	}
+	if stub.req.RelationshipID != "" {
+		t.Fatalf("trace service was called without read scope: %#v", stub.req)
 	}
 }

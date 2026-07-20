@@ -15,6 +15,9 @@ func evalListV2KnowledgeRefs(ctx context.Context, deps Dependencies, profileID s
 	if deps.V2Evaluation == nil {
 		return nil, ErrToolUnavailable
 	}
+	if !deps.V2EvaluationEnabled {
+		return nil, ErrToolDisabled
+	}
 	teamID, err := evalActorTeamID(ctx, profileID)
 	if err != nil {
 		return nil, err
@@ -49,6 +52,9 @@ func evalGetV2KnowledgeItem(ctx context.Context, deps Dependencies, profileID, k
 	if deps.V2Evaluation == nil {
 		return nil, ErrToolUnavailable
 	}
+	if !deps.V2EvaluationEnabled {
+		return nil, ErrToolDisabled
+	}
 	teamID, err := evalActorTeamID(ctx, profileID)
 	if err != nil {
 		return nil, err
@@ -80,7 +86,7 @@ func evalListKnowledgeRefTypes(deps Dependencies) []string {
 		"dream",
 		"edge",
 	}
-	if deps.V2Evaluation == nil {
+	if !v2EvaluationKnowledgeTypesVisible(deps) {
 		return types
 	}
 	return append(types,
@@ -100,7 +106,7 @@ func evalGetKnowledgeItemTypes(deps Dependencies) []string {
 		"community",
 		"dream",
 	}
-	if deps.V2Evaluation == nil {
+	if !v2EvaluationKnowledgeTypesVisible(deps) {
 		return types
 	}
 	return append(types,
@@ -110,6 +116,10 @@ func evalGetKnowledgeItemTypes(deps Dependencies) []string {
 		"value",
 		"hypothesis",
 	)
+}
+
+func v2EvaluationKnowledgeTypesVisible(deps Dependencies) bool {
+	return deps.V2Evaluation != nil && deps.V2EvaluationEnabled
 }
 
 func evalScoredKnowledgeRefTypes() []string {

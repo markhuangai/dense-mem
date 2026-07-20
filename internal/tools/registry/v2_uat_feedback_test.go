@@ -23,7 +23,7 @@ func TestBuildV2UATRecallRecordsFeedbackSnapshot(t *testing.T) {
 		t.Fatalf("BuildV2UAT: %v", err)
 	}
 	recall, _ := reg.Get(V2ToolRecallMemory)
-	out, err := recall.Invoke(context.Background(), "ignored-profile", map[string]any{
+	out, err := recall.Invoke(v2ContractInvokeContext("read"), "ignored-profile", map[string]any{
 		"query": "PostgreSQL memory",
 	})
 	if err != nil {

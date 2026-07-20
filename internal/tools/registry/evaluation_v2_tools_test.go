@@ -33,8 +33,9 @@ func TestEvalV2KnowledgeToolsUseTeamScopeAndStripPayloads(t *testing.T) {
 		},
 	}
 	reg, err := BuildDefault(Dependencies{
-		EvaluationAudit: audit,
-		V2Evaluation:    v2Evaluation,
+		EvaluationAudit:     audit,
+		V2Evaluation:        v2Evaluation,
+		V2EvaluationEnabled: true,
 	})
 	if err != nil {
 		t.Fatalf("BuildDefault: %v", err)
@@ -104,6 +105,33 @@ func TestEvalV2KnowledgeToolsUseTeamScopeAndStripPayloads(t *testing.T) {
 	}
 	if len(audit.entries) != 3 {
 		t.Fatalf("audit entries = %d; want 3", len(audit.entries))
+	}
+}
+
+func TestEvalV2KnowledgeToolsRequireExplicitGate(t *testing.T) {
+	v2Evaluation := &evalV2EvaluationStore{}
+	reg, err := BuildDefault(Dependencies{
+		EvaluationAudit: &evaluationAuditStub{},
+		V2Evaluation:    v2Evaluation,
+	})
+	if err != nil {
+		t.Fatalf("BuildDefault: %v", err)
+	}
+
+	listTool, _ := reg.Get("eval_list_knowledge_refs")
+	if err := ValidateInput(listTool, map[string]any{"type": "evidence"}); err == nil {
+		t.Fatal("eval_list_knowledge_refs accepted V2 type without explicit gate")
+	}
+	if _, err := listTool.Invoke(context.Background(), "profile-eval", map[string]any{"type": "evidence"}); !errors.Is(err, ErrToolDisabled) {
+		t.Fatalf("eval_list_knowledge_refs err = %v; want ErrToolDisabled", err)
+	}
+
+	getTool, _ := reg.Get("eval_get_knowledge_item")
+	if err := ValidateInput(getTool, map[string]any{"type": "relationship", "id": "rel-1"}); err == nil {
+		t.Fatal("eval_get_knowledge_item accepted V2 type without explicit gate")
+	}
+	if _, err := getTool.Invoke(context.Background(), "profile-eval", map[string]any{"type": "relationship", "id": "rel-1"}); !errors.Is(err, ErrToolDisabled) {
+		t.Fatalf("eval_get_knowledge_item err = %v; want ErrToolDisabled", err)
 	}
 }
 

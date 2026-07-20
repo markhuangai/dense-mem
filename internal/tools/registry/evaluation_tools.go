@@ -71,7 +71,7 @@ func evalGetManifestTool(deps Dependencies) Tool {
 func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "eval_list_knowledge_refs",
-		Description: "Page through team-scoped legacy or V2 knowledge references for evaluation. Content is included unless metadata_only=true.",
+		Description: "Page through team-scoped knowledge references for evaluation. Content is included unless metadata_only=true.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"type"},
@@ -118,7 +118,7 @@ func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 func evalGetKnowledgeItemTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "eval_get_knowledge_item",
-		Description: "Fetch one team-scoped legacy or V2 knowledge item with its evaluation metadata.",
+		Description: "Fetch one team-scoped knowledge item with its evaluation metadata.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"type", "id"},

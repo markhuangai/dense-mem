@@ -460,6 +460,7 @@ func main() {
 		Context:              contextSvc,
 		Memory:               memorySvc,
 		V2Evaluation:         defaultCatalogV2.Evaluation,
+		V2EvaluationEnabled:  defaultCatalogV2.EvaluationEnabled,
 		V2Communities:        defaultCatalogV2.Communities,
 		SkillPack:            skillPackSvc,
 		Dreams:               dreamSvc,

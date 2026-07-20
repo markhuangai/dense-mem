@@ -84,9 +84,8 @@ func (h *controlPortalHandler) invokeV2MigrationAction(
 	if err := c.Bind(&req); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
 	}
-	if req.RemoteIP == "" {
-		req.RemoteIP = c.RealIP()
-	}
+	req.Actor = "control"
+	req.RemoteIP = c.RealIP()
 	res, err := fn(req)
 	if err != nil {
 		if migrationControlValidationError(err) {

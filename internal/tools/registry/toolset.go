@@ -59,10 +59,13 @@ type Dependencies struct {
 	V2Recall          memoryservice.V2RecallService
 	V2Lifecycle       memoryservice.V2LifecycleService
 	V2Evaluation      repository.V2EvaluationRepository
-	V2Communities     repository.V2CommunityRepository
-	SkillPack         skillpackservice.Service
-	V2SkillPack       skillpackservice.V2Service
-	Dreams            dreamservice.Service
+	// V2EvaluationEnabled must be set by cutover/UAT wiring before default
+	// evaluation tools expose V2 migration or rehearsal records.
+	V2EvaluationEnabled bool
+	V2Communities       repository.V2CommunityRepository
+	SkillPack           skillpackservice.Service
+	V2SkillPack         skillpackservice.V2Service
+	Dreams              dreamservice.Service
 }
 
 type RecallFeedbackEventRecorder interface {

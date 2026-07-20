@@ -26,9 +26,15 @@ func TestDefaultCatalogV2DependenciesFollowBootGate(t *testing.T) {
 	require.Nil(t, disabled.Evaluation)
 	require.Nil(t, disabled.Communities)
 
-	enabled := buildDefaultCatalogV2Dependencies(dormantV2Bootstrap{Enabled: true}, semantic)
-	require.NotNil(t, enabled.Evaluation)
-	require.NotNil(t, enabled.Communities)
+	dormant := buildDefaultCatalogV2Dependencies(dormantV2Bootstrap{Enabled: true, Mode: config.V2BootModeDormant}, semantic)
+	require.Nil(t, dormant.Evaluation)
+	require.False(t, dormant.EvaluationEnabled)
+	require.Nil(t, dormant.Communities)
+
+	uat := buildDefaultCatalogV2Dependencies(dormantV2Bootstrap{Enabled: true, Mode: config.V2BootModeUAT}, semantic)
+	require.NotNil(t, uat.Evaluation)
+	require.True(t, uat.EvaluationEnabled)
+	require.NotNil(t, uat.Communities)
 }
 
 func TestBuildDormantV2BootstrapRegistersNonRoutingChecks(t *testing.T) {

@@ -49,7 +49,7 @@ type Config struct {
 }
 
 type OperatorRequest struct {
-	Actor           string         `json:"actor,omitempty"`
+	Actor           string         `json:"-"`
 	RemoteIP        string         `json:"remote_ip,omitempty"`
 	Reason          string         `json:"reason,omitempty"`
 	BackupReference string         `json:"backup_reference,omitempty"`
