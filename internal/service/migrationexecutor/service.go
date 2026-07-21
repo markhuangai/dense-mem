@@ -48,6 +48,9 @@ type RememberService interface {
 }
 
 type Service interface {
+	// RunOnce processes at most one bounded page. Once page processing starts,
+	// a non-nil result reports counters reached before an error; durable outcomes
+	// and checkpoints remain authoritative for retries.
 	RunOnce(ctx context.Context) (*RunOnceResult, error)
 }
 

@@ -60,6 +60,12 @@ For each page it:
 Retry upserts preserve existing non-pending outcomes, so a restarted executor skips
 items already submitted or excluded instead of duplicating work.
 
+`RunOnce` may return page counters with an error after processing has started.
+Those counters describe work reached by that call; durable corpus outcomes and
+the last committed checkpoint are authoritative for operator inspection and
+retry. The private control route returns the error rather than presenting the
+partial counters as a successful page.
+
 ## Wiring Boundary
 
 Main boot constructs the executor only when `V2_BOOT_MODE=dormant` and

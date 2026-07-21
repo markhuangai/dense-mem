@@ -30,6 +30,8 @@ const (
 	V2ToolRollbackMemoryPackImport    = "rollback_memory_pack_import"
 )
 
+// Community analysis stays server-controlled recall context and first-party
+// portal data; it is intentionally absent from the public MCP catalog.
 var v2ContractToolNames = []string{
 	V2ToolRemember,
 	V2ToolGetMemoryPlacement,
@@ -602,6 +604,7 @@ func validateV2Recall(args map[string]any) error {
 
 func validateV2ResolveMemoryPlacement(args map[string]any) error {
 	action, _ := args["action"].(string)
+	// Item-targeted decisions require the inspected version so stale reviews fail closed.
 	switch domain.V2ResolveAction(action) {
 	case domain.V2ResolveAcknowledge:
 		return validateV2RequiredFields(args, "ingest_id")

@@ -146,6 +146,14 @@ func TestV2ContractCatalogMetadata(t *testing.T) {
 	}
 }
 
+func TestV2ContractExcludesStandaloneCommunityTool(t *testing.T) {
+	for _, tool := range V2ContractTools() {
+		if tool.Name == "list_communities" {
+			t.Fatal("public V2 catalog exposes server-controlled community data")
+		}
+	}
+}
+
 func TestToolVisibleHidesDormantV2ContractTools(t *testing.T) {
 	if !ToolVisible(context.Background(), Tool{Name: "recall_memory"}, nil) {
 		t.Fatal("ordinary tools should remain visible")
@@ -535,6 +543,30 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 				t.Fatalf("missing %s err = %v", missing, err)
 			}
 		})
+	}
+}
+
+func TestV2ResolveMemoryPlacementRejectsLegacyNestedDecision(t *testing.T) {
+	resolve, err := requireV2Tool(v2ToolMap(t), V2ToolResolveMemoryPlacement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := map[string]any{
+		"action":                 string(domain.V2ResolveSelectEntity),
+		"idempotency_key":        "resolution-1",
+		"ingest_id":              "ing-1",
+		"placement_item_id":      "item-1",
+		"placement_item_version": float64(1),
+		"entity_ref":             "person-1",
+		"candidate_entity_id":    "ent-1",
+		"decision": map[string]any{
+			"mention_ref": "person-1",
+			"entity_id":   "ent-1",
+		},
+	}
+	err = ValidateV2ContractInput(resolve, input, []string{"write"})
+	if err == nil || !strings.Contains(err.Error(), "decision") {
+		t.Fatalf("legacy nested decision err = %v", err)
 	}
 }
 

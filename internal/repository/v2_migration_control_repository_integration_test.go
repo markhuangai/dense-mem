@@ -19,6 +19,9 @@ func TestV2MigrationControlRepositoryPersistsStateAndRLS(t *testing.T) {
 	ctx := context.Background()
 	repo := NewV2MigrationControlRepository(appDB, rls)
 	now := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
+	marker, err := repo.GetLatestMarker(ctx)
+	require.NoError(t, err)
+	require.Nil(t, marker)
 
 	run, err := repo.CreateRun(ctx, V2CreateMigrationRunInput{
 		MigrationContractVersion: "migration-contract-v1",
@@ -66,7 +69,7 @@ func TestV2MigrationControlRepositoryPersistsStateAndRLS(t *testing.T) {
 	require.Equal(t, domain.V2MigrationActionStarted, actions[0].Action)
 
 	require.NoError(t, insertV2MigrationMarker(ctx, adminDB, rls, run.RunID))
-	marker, err := repo.GetLatestMarker(ctx)
+	marker, err = repo.GetLatestMarker(ctx)
 	require.NoError(t, err)
 	require.Equal(t, domain.V2MigrationMarkerCompatible, marker.Status)
 	require.Equal(t, run.RunID, marker.RunID)
