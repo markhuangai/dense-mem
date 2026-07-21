@@ -1,11 +1,6 @@
 package main
 
 import (
-	"fmt"
-	"strings"
-
-	"github.com/google/uuid"
-
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
@@ -42,33 +37,10 @@ func buildV2MigrationExecutorFromDependencies(
 	if cfg.GetV2BootMode() != config.V2BootModeDormant || !cfg.GetV2LegacyMigrationRequired() {
 		return nil, nil
 	}
-	credentialID, err := parseV2MigrationCredentialID(cfg)
-	if err != nil {
-		return nil, err
-	}
 	if store == nil || reader == nil || remember == nil {
 		return nil, migrationexecutor.ErrMissingDependency
 	}
 	return migrationexecutor.New(store, reader, remember, migrationexecutor.Config{
-		MigrationCredentialID: credentialID,
-		WorkerID:              "server-v2-migration",
+		WorkerID: "server-v2-migration",
 	}), nil
-}
-
-func parseV2MigrationCredentialID(cfg config.Config) (uuid.UUID, error) {
-	raw := strings.TrimSpace(cfg.GetV2MigrationCredentialID())
-	if raw == "" {
-		return uuid.Nil, &config.ValidationError{
-			Field:   "V2_MIGRATION_CREDENTIAL_ID",
-			Message: "required when V2_BOOT_MODE=dormant and V2_LEGACY_MIGRATION_REQUIRED=true",
-		}
-	}
-	id, err := uuid.Parse(raw)
-	if err != nil {
-		return uuid.Nil, &config.ValidationError{
-			Field:   "V2_MIGRATION_CREDENTIAL_ID",
-			Message: fmt.Sprintf("invalid UUID: %s", raw),
-		}
-	}
-	return id, nil
 }

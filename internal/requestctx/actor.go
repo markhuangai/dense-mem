@@ -8,6 +8,7 @@ import (
 
 type actorContextKey struct{}
 type credentialContextKey struct{}
+type migrationActorContextKey struct{}
 
 // ActorProfile identifies the authenticated team profile that initiated a
 // request. TeamID is the knowledge scope; ProfileID is the named member/client
@@ -27,6 +28,12 @@ type ActorCredential struct {
 	AuthMethod string
 	Role       string
 	Scopes     []string
+}
+
+// MigrationActor identifies the durable migration run that submitted evidence
+// through the internal legacy-corpus executor.
+type MigrationActor struct {
+	RunID uuid.UUID
 }
 
 // WithActorProfile stores authenticated actor metadata in context.
@@ -51,6 +58,17 @@ func ActorCredentialFromContext(ctx context.Context) (ActorCredential, bool) {
 	credential, ok := ctx.Value(credentialContextKey{}).(ActorCredential)
 	credential.Scopes = append([]string(nil), credential.Scopes...)
 	return credential, ok
+}
+
+// WithMigrationActor stores the internal migration execution identity in context.
+func WithMigrationActor(ctx context.Context, actor MigrationActor) context.Context {
+	return context.WithValue(ctx, migrationActorContextKey{}, actor)
+}
+
+// MigrationActorFromContext returns the internal migration execution identity when available.
+func MigrationActorFromContext(ctx context.Context) (MigrationActor, bool) {
+	actor, ok := ctx.Value(migrationActorContextKey{}).(MigrationActor)
+	return actor, ok
 }
 
 // ActorOwner returns the profile identity used as the ownership boundary for

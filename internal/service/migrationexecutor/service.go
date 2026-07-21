@@ -22,9 +22,9 @@ const (
 )
 
 var (
-	ErrMissingDependency          = errors.New("v2 migration executor: missing dependency")
-	ErrMigrationNotRunning        = errors.New("v2 migration executor: migration is not running")
-	ErrMigrationCredentialMissing = errors.New("v2 migration executor: migration credential is required")
+	ErrMissingDependency   = errors.New("v2 migration executor: missing dependency")
+	ErrMigrationNotRunning = errors.New("v2 migration executor: migration is not running")
+	ErrInvalidRunID        = errors.New("v2 migration executor: migration run id is invalid")
 )
 
 type Store interface {
@@ -52,10 +52,9 @@ type Service interface {
 }
 
 type Config struct {
-	PageSize              int
-	WorkerID              string
-	MigrationCredentialID uuid.UUID
-	Now                   func() time.Time
+	PageSize int
+	WorkerID string
+	Now      func() time.Time
 }
 
 type RunOnceResult struct {
@@ -98,15 +97,16 @@ func (s *service) RunOnce(ctx context.Context) (*RunOnceResult, error) {
 	if s.store == nil || s.reader == nil || s.remember == nil {
 		return nil, ErrMissingDependency
 	}
-	if s.cfg.MigrationCredentialID == uuid.Nil {
-		return nil, ErrMigrationCredentialMissing
-	}
 	run, err := s.store.GetLatestRun(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if run == nil || run.State != domain.V2MigrationStateRunning {
 		return nil, ErrMigrationNotRunning
+	}
+	migrationRunID, err := uuid.Parse(strings.TrimSpace(run.RunID))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %q", ErrInvalidRunID, run.RunID)
 	}
 	cursor, err := s.cursor(ctx, run)
 	if err != nil {
@@ -122,7 +122,7 @@ func (s *service) RunOnce(ctx context.Context) (*RunOnceResult, error) {
 	}
 	result := &RunOnceResult{RunID: run.RunID, Fetched: len(page.Items), NextCursor: page.NextCursor, Done: len(page.Items) == 0}
 	for _, item := range page.Items {
-		if err := s.processItem(ctx, run, item, result); err != nil {
+		if err := s.processItem(ctx, run, migrationRunID, item, result); err != nil {
 			return result, err
 		}
 	}
@@ -144,7 +144,7 @@ func (s *service) RunOnce(ctx context.Context) (*RunOnceResult, error) {
 	return result, nil
 }
 
-func (s *service) processItem(ctx context.Context, run *domain.V2MigrationRun, item neo4j.LegacyCorpusItem, result *RunOnceResult) error {
+func (s *service) processItem(ctx context.Context, run *domain.V2MigrationRun, migrationRunID uuid.UUID, item neo4j.LegacyCorpusItem, result *RunOnceResult) error {
 	sourceKind := legacySourceKind(item)
 	if err := validateLegacyCorpusItem(item); err != nil {
 		result.Excluded++
@@ -198,7 +198,7 @@ func (s *service) processItem(ctx context.Context, run *domain.V2MigrationRun, i
 		result.Skipped++
 		return nil
 	}
-	rememberResult, err := s.remember.RememberV2(legacyActorContext(ctx, item, s.cfg.MigrationCredentialID), legacyRememberRequest(run.RunID, item))
+	rememberResult, err := s.remember.RememberV2(legacyActorContext(ctx, item, migrationRunID), legacyRememberRequest(run.RunID, item))
 	if err != nil {
 		result.Failed++
 		if _, updateErr := s.store.UpdateMigrationCorpusOutcome(ctx, repository.V2UpdateMigrationCorpusOutcomeInput{
@@ -328,7 +328,7 @@ func validateLegacyCorpusItem(item neo4j.LegacyCorpusItem) error {
 	return nil
 }
 
-func legacyActorContext(ctx context.Context, item neo4j.LegacyCorpusItem, credentialID uuid.UUID) context.Context {
+func legacyActorContext(ctx context.Context, item neo4j.LegacyCorpusItem, migrationRunID uuid.UUID) context.Context {
 	teamID, _ := uuid.Parse(strings.TrimSpace(item.TeamID))
 	ownerID, _ := uuid.Parse(strings.TrimSpace(item.OwnerProfileID))
 	ctx = requestctx.WithActorProfile(ctx, requestctx.ActorProfile{
@@ -336,11 +336,7 @@ func legacyActorContext(ctx context.Context, item neo4j.LegacyCorpusItem, creden
 		ProfileID:   ownerID,
 		ProfileName: strings.TrimSpace(item.OwnerProfileName),
 	})
-	return requestctx.WithActorCredential(ctx, requestctx.ActorCredential{
-		KeyID:      credentialID,
-		AuthMethod: "migration",
-		Role:       "migration",
-	})
+	return requestctx.WithMigrationActor(ctx, requestctx.MigrationActor{RunID: migrationRunID})
 }
 
 func legacyRememberRequest(runID string, item neo4j.LegacyCorpusItem) memoryservice.V2RememberRequest {

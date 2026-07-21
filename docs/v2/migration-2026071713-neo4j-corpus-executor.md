@@ -62,14 +62,14 @@ items already submitted or excluded instead of duplicating work.
 
 ## Wiring Boundary
 
-The control route is available only when a `migrationexecutor.Service` is
-explicitly injected. Main boot does not construct the executor yet because
-`RememberV2` requires a migration credential UUID and the repository does not
-currently define an operator-approved configuration source for that credential.
+Main boot constructs the executor only when `V2_BOOT_MODE=dormant` and
+`V2_LEGACY_MIGRATION_REQUIRED=true`. The token-protected private control portal
+authorizes every action; one `run-once` call performs one bounded page and no
+implicit migration worker starts during normal boot.
 
-Until that wiring exists, the private route returns service unavailable. This is
-intentional: the read-only adapter and executor are present for the migration
-ticket, but normal boot still has no implicit Neo4j-to-V2 migration worker.
+Each submission preserves the original team/profile owner and carries a typed
+internal migration actor derived from the durable migration run ID. Migration
+does not require or impersonate a team-scoped API credential.
 
 ## Verification
 

@@ -21,7 +21,6 @@ func TestRunOnceSubmitsLegacyItemsUnderOriginalOwnerAndRecordsProgress(t *testin
 	runID := uuid.NewString()
 	teamID := uuid.New()
 	ownerID := uuid.New()
-	credentialID := uuid.New()
 	now := time.Date(2026, 7, 17, 15, 0, 0, 0, time.UTC)
 	store := &executorStoreStub{
 		run: &domain.V2MigrationRun{
@@ -66,10 +65,9 @@ func TestRunOnceSubmitsLegacyItemsUnderOriginalOwnerAndRecordsProgress(t *testin
 		},
 	}
 	svc := New(store, reader, remember, Config{
-		PageSize:              1000,
-		WorkerID:              "worker-a",
-		MigrationCredentialID: credentialID,
-		Now:                   func() time.Time { return now },
+		PageSize: 1000,
+		WorkerID: "worker-a",
+		Now:      func() time.Time { return now },
 	})
 	callerCtx := requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{
 		TeamID:    uuid.New(),
@@ -107,9 +105,9 @@ func TestRunOnceSubmitsLegacyItemsUnderOriginalOwnerAndRecordsProgress(t *testin
 	assert.Equal(t, teamID, remember.actors[0].TeamID)
 	assert.Equal(t, ownerID, remember.actors[0].ProfileID)
 	assert.Equal(t, "source-owner", remember.actors[0].ProfileName)
-	require.Len(t, remember.credentials, 1)
-	assert.Equal(t, credentialID, remember.credentials[0].KeyID)
-	assert.Equal(t, "migration", remember.credentials[0].AuthMethod)
+	require.Len(t, remember.migrationActors, 1)
+	assert.Equal(t, uuid.MustParse(runID), remember.migrationActors[0].RunID)
+	require.Equal(t, []bool{false}, remember.credentialContexts)
 
 	require.Len(t, store.upserts, 1)
 	assert.Equal(t, ownerID.String(), store.upserts[0].OwnerProfileID)
@@ -154,7 +152,7 @@ func TestRunOnceSkipsAlreadyCompletedItemsOnResume(t *testing.T) {
 		},
 	}
 	remember := &rememberStub{err: errors.New("remember should not be called")}
-	svc := New(store, reader, remember, Config{MigrationCredentialID: uuid.New()})
+	svc := New(store, reader, remember, Config{})
 
 	result, err := svc.RunOnce(context.Background())
 	require.NoError(t, err)
@@ -184,7 +182,7 @@ func TestRunOnceRecordsFailedOutcomeWhenRememberFails(t *testing.T) {
 		},
 	}
 	remember := &rememberStub{err: errors.New("provider down")}
-	svc := New(store, reader, remember, Config{MigrationCredentialID: uuid.New()})
+	svc := New(store, reader, remember, Config{})
 
 	result, err := svc.RunOnce(context.Background())
 	require.NoError(t, err)
@@ -201,19 +199,22 @@ func TestRunOnceRequiresRunningMigration(t *testing.T) {
 			RunID: uuid.NewString(),
 			State: domain.V2MigrationStateReady,
 		},
-	}, &legacyReaderStub{}, &rememberStub{}, Config{MigrationCredentialID: uuid.New()})
+	}, &legacyReaderStub{}, &rememberStub{}, Config{})
 
 	_, err := svc.RunOnce(context.Background())
 	require.ErrorIs(t, err, ErrMigrationNotRunning)
 }
 
-func TestRunOnceRequiresDependenciesAndMigrationCredential(t *testing.T) {
+func TestRunOnceRequiresDependenciesAndValidRunID(t *testing.T) {
 	_, err := New(nil, nil, nil, Config{}).RunOnce(context.Background())
 	require.ErrorIs(t, err, ErrMissingDependency)
 
-	svc := New(&executorStoreStub{}, &legacyReaderStub{}, &rememberStub{}, Config{})
+	svc := New(&executorStoreStub{run: &domain.V2MigrationRun{
+		RunID: "not-a-uuid",
+		State: domain.V2MigrationStateRunning,
+	}}, &legacyReaderStub{}, &rememberStub{}, Config{})
 	_, err = svc.RunOnce(context.Background())
-	require.ErrorIs(t, err, ErrMigrationCredentialMissing)
+	require.ErrorIs(t, err, ErrInvalidRunID)
 }
 
 func TestRunOnceUsesRunCheckpointFallbackAndMarksDone(t *testing.T) {
@@ -228,9 +229,8 @@ func TestRunOnceUsesRunCheckpointFallbackAndMarksDone(t *testing.T) {
 	}
 	reader := &legacyReaderStub{page: neo4j.LegacyCorpusPage{}}
 	svc := New(store, reader, &rememberStub{}, Config{
-		PageSize:              1000,
-		WorkerID:              "worker-b",
-		MigrationCredentialID: uuid.New(),
+		PageSize: 1000,
+		WorkerID: "worker-b",
 	})
 
 	result, err := svc.RunOnce(context.Background())
@@ -259,7 +259,7 @@ func TestRunOnceRecordsReadFailure(t *testing.T) {
 		},
 	}
 	readErr := errors.New("neo4j unavailable")
-	svc := New(store, &legacyReaderStub{err: readErr}, &rememberStub{}, Config{MigrationCredentialID: uuid.New()})
+	svc := New(store, &legacyReaderStub{err: readErr}, &rememberStub{}, Config{})
 
 	result, err := svc.RunOnce(context.Background())
 	require.ErrorIs(t, err, readErr)
@@ -295,7 +295,7 @@ func TestRunOnceMapsQuarantinedRememberResult(t *testing.T) {
 			ProcessingState: string(domain.V2PlacementRunQuarantined),
 		},
 	}
-	svc := New(store, reader, remember, Config{MigrationCredentialID: uuid.New()})
+	svc := New(store, reader, remember, Config{})
 
 	result, err := svc.RunOnce(context.Background())
 	require.NoError(t, err)
@@ -323,7 +323,7 @@ func TestRunOnceReturnsRequiredSourceMapWriteFailure(t *testing.T) {
 			}},
 		},
 	}
-	svc := New(store, reader, &rememberStub{}, Config{MigrationCredentialID: uuid.New()})
+	svc := New(store, reader, &rememberStub{}, Config{})
 
 	result, err := svc.RunOnce(context.Background())
 	require.Error(t, err)
@@ -352,7 +352,7 @@ func TestRunOnceRecordsCorpusUpsertFailureAsCutoverBlocker(t *testing.T) {
 			}},
 		},
 	}
-	svc := New(store, reader, &rememberStub{}, Config{MigrationCredentialID: uuid.New()})
+	svc := New(store, reader, &rememberStub{}, Config{})
 
 	result, err := svc.RunOnce(context.Background())
 	require.NoError(t, err)
@@ -378,7 +378,7 @@ func TestRunOnceReturnsCheckpointAndStatsRefreshFailures(t *testing.T) {
 			},
 			checkpointErr: checkpointErr,
 		}
-		svc := New(store, &legacyReaderStub{}, &rememberStub{}, Config{MigrationCredentialID: uuid.New()})
+		svc := New(store, &legacyReaderStub{}, &rememberStub{}, Config{})
 
 		result, err := svc.RunOnce(context.Background())
 		require.ErrorIs(t, err, checkpointErr)
@@ -397,7 +397,7 @@ func TestRunOnceReturnsCheckpointAndStatsRefreshFailures(t *testing.T) {
 			},
 			refreshErr: refreshErr,
 		}
-		svc := New(store, &legacyReaderStub{}, &rememberStub{}, Config{MigrationCredentialID: uuid.New()})
+		svc := New(store, &legacyReaderStub{}, &rememberStub{}, Config{})
 
 		result, err := svc.RunOnce(context.Background())
 		require.ErrorIs(t, err, refreshErr)
@@ -579,19 +579,22 @@ func (r *legacyReaderStub) ReadCorpusPage(_ context.Context, req neo4j.LegacyCor
 }
 
 type rememberStub struct {
-	requests    []memoryservice.V2RememberRequest
-	actors      []requestctx.ActorProfile
-	credentials []requestctx.ActorCredential
-	result      *memoryservice.V2RememberResult
-	err         error
+	requests           []memoryservice.V2RememberRequest
+	actors             []requestctx.ActorProfile
+	migrationActors    []requestctx.MigrationActor
+	credentialContexts []bool
+	result             *memoryservice.V2RememberResult
+	err                error
 }
 
 func (s *rememberStub) RememberV2(ctx context.Context, req memoryservice.V2RememberRequest) (*memoryservice.V2RememberResult, error) {
 	s.requests = append(s.requests, req)
 	actor, _ := requestctx.ActorProfileFromContext(ctx)
 	s.actors = append(s.actors, actor)
-	credential, _ := requestctx.ActorCredentialFromContext(ctx)
-	s.credentials = append(s.credentials, credential)
+	migrationActor, _ := requestctx.MigrationActorFromContext(ctx)
+	s.migrationActors = append(s.migrationActors, migrationActor)
+	_, credentialOK := requestctx.ActorCredentialFromContext(ctx)
+	s.credentialContexts = append(s.credentialContexts, credentialOK)
 	if s.err != nil {
 		return nil, s.err
 	}

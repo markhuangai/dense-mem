@@ -64,8 +64,7 @@ func (h *controlPortalHandler) runV2MigrationOnce(c echo.Context) error {
 		if errors.Is(err, migrationexecutor.ErrMigrationNotRunning) {
 			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
 		}
-		if errors.Is(err, migrationexecutor.ErrMissingDependency) ||
-			errors.Is(err, migrationexecutor.ErrMigrationCredentialMissing) {
+		if errors.Is(err, migrationexecutor.ErrMissingDependency) {
 			return httperr.New(httperr.SERVICE_UNAVAILABLE, err.Error())
 		}
 		return err

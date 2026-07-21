@@ -55,7 +55,6 @@ func clearEnv() {
 		"CONTROL_PORTAL_TOKEN",
 		"V2_BOOT_MODE",
 		"V2_LEGACY_MIGRATION_REQUIRED",
-		"V2_MIGRATION_CREDENTIAL_ID",
 		"TELEMETRY_ENABLED",
 		"TELEMETRY_PROMETHEUS_URL",
 		"TELEMETRY_PROMETHEUS_JOB",
@@ -484,7 +483,6 @@ func TestConfigProviderInterface(t *testing.T) {
 	_ = provider.GetControlPortalToken()
 	_ = cfg.GetV2BootMode()
 	_ = cfg.GetV2LegacyMigrationRequired()
-	_ = cfg.GetV2MigrationCredentialID()
 }
 
 func TestConfigGetterFallbacksAndParsers(t *testing.T) {

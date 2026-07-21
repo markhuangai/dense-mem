@@ -131,7 +131,10 @@ func (s *v2RememberService) RememberV2(ctx context.Context, req V2RememberReques
 		return nil, ErrV2RememberAuthContext
 	}
 	credential, ok := requestctx.ActorCredentialFromContext(ctx)
-	if !ok || credential.KeyID == uuid.Nil {
+	migrationActor, migrationOK := requestctx.MigrationActorFromContext(ctx)
+	credentialOK := ok && credential.KeyID != uuid.Nil
+	migrationOK = migrationOK && migrationActor.RunID != uuid.Nil
+	if !credentialOK && !migrationOK {
 		return nil, ErrV2RememberCredential
 	}
 	if len(req.Evidence) == 0 {
@@ -148,16 +151,23 @@ func (s *v2RememberService) RememberV2(ctx context.Context, req V2RememberReques
 		"relationship_hints": req.RelationshipHints,
 	}
 	correlationID := correlation.FromContext(ctx)
+	actorMetadata := map[string]any{
+		"team_id":        actor.TeamID.String(),
+		"profile_id":     actor.ProfileID.String(),
+		"correlation_id": correlationID,
+	}
+	if credentialOK {
+		actorMetadata["role"] = credential.Role
+		actorMetadata["credential_id"] = credential.KeyID.String()
+		actorMetadata["auth_method"] = credential.AuthMethod
+	} else {
+		actorMetadata["role"] = "migration"
+		actorMetadata["auth_method"] = "migration"
+		actorMetadata["migration_run_id"] = migrationActor.RunID.String()
+	}
 	metadata := map[string]any{
 		"contract_version": domain.V2ContractVersion,
-		"actor": map[string]any{
-			"team_id":        actor.TeamID.String(),
-			"profile_id":     actor.ProfileID.String(),
-			"role":           credential.Role,
-			"credential_id":  credential.KeyID.String(),
-			"auth_method":    credential.AuthMethod,
-			"correlation_id": correlationID,
-		},
+		"actor":            actorMetadata,
 	}
 	created, err := s.ledger.CreateIngest(ctx, repository.V2CreateIngestInput{
 		TeamID:         actor.TeamID.String(),

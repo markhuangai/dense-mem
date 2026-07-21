@@ -10,7 +10,6 @@ func TestLoadV2MigrationControlConfig(t *testing.T) {
 	setRequiredEnv()
 	os.Setenv("V2_BOOT_MODE", V2BootModeDormant)
 	os.Setenv("V2_LEGACY_MIGRATION_REQUIRED", "true")
-	os.Setenv("V2_MIGRATION_CREDENTIAL_ID", "11111111-1111-4111-8111-111111111111")
 
 	cfg, err := Load()
 	if err != nil {
@@ -24,9 +23,6 @@ func TestLoadV2MigrationControlConfig(t *testing.T) {
 	}
 	if !cfg.GetV2LegacyMigrationRequired() {
 		t.Fatal("GetV2LegacyMigrationRequired() = false, want true")
-	}
-	if got := cfg.GetV2MigrationCredentialID(); got != "11111111-1111-4111-8111-111111111111" {
-		t.Fatalf("GetV2MigrationCredentialID() = %q", got)
 	}
 }
 
@@ -82,43 +78,5 @@ func TestLoadV2MigrationRequiredNeedsEnabledBootMode(t *testing.T) {
 	}
 	if validationErr.Field != "V2_LEGACY_MIGRATION_REQUIRED" {
 		t.Fatalf("field = %q, want V2_LEGACY_MIGRATION_REQUIRED", validationErr.Field)
-	}
-}
-
-func TestLoadV2MigrationRequiredDormantNeedsCredential(t *testing.T) {
-	clearEnv()
-	setRequiredEnv()
-	os.Setenv("V2_BOOT_MODE", V2BootModeDormant)
-	os.Setenv("V2_LEGACY_MIGRATION_REQUIRED", "true")
-
-	_, err := Load()
-	if err == nil {
-		t.Fatal("Load() expected error, got nil")
-	}
-	validationErr, ok := err.(*ValidationError)
-	if !ok {
-		t.Fatalf("expected *ValidationError, got %T", err)
-	}
-	if validationErr.Field != "V2_MIGRATION_CREDENTIAL_ID" {
-		t.Fatalf("field = %q, want V2_MIGRATION_CREDENTIAL_ID", validationErr.Field)
-	}
-}
-
-func TestLoadV2MigrationCredentialRejectsInvalidUUID(t *testing.T) {
-	clearEnv()
-	setRequiredEnv()
-	os.Setenv("V2_BOOT_MODE", V2BootModeDormant)
-	os.Setenv("V2_MIGRATION_CREDENTIAL_ID", "not-a-uuid")
-
-	_, err := Load()
-	if err == nil {
-		t.Fatal("Load() expected error, got nil")
-	}
-	validationErr, ok := err.(*ValidationError)
-	if !ok {
-		t.Fatalf("expected *ValidationError, got %T", err)
-	}
-	if validationErr.Field != "V2_MIGRATION_CREDENTIAL_ID" {
-		t.Fatalf("field = %q, want V2_MIGRATION_CREDENTIAL_ID", validationErr.Field)
 	}
 }

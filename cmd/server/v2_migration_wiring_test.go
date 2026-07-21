@@ -31,22 +31,12 @@ func TestBuildV2MigrationExecutorFromDependenciesGatesByMode(t *testing.T) {
 	}
 }
 
-func TestBuildV2MigrationExecutorFromDependenciesRequiresCredentialAndDeps(t *testing.T) {
+func TestBuildV2MigrationExecutorFromDependenciesRequiresDeps(t *testing.T) {
 	cfg := config.Config{
 		V2BootMode:                config.V2BootModeDormant,
 		V2LegacyMigrationRequired: true,
 	}
-	_, err := buildV2MigrationExecutorFromDependencies(cfg, &v2MigrationStoreStub{}, &legacyCorpusReaderStub{}, &migrationRememberStub{})
-	if err == nil {
-		t.Fatal("expected missing credential error, got nil")
-	}
-	var validationErr *config.ValidationError
-	if !errors.As(err, &validationErr) || validationErr.Field != "V2_MIGRATION_CREDENTIAL_ID" {
-		t.Fatalf("err = %v; want V2_MIGRATION_CREDENTIAL_ID validation error", err)
-	}
-
-	cfg.V2MigrationCredentialID = "11111111-1111-4111-8111-111111111111"
-	_, err = buildV2MigrationExecutorFromDependencies(cfg, nil, &legacyCorpusReaderStub{}, &migrationRememberStub{})
+	_, err := buildV2MigrationExecutorFromDependencies(cfg, nil, &legacyCorpusReaderStub{}, &migrationRememberStub{})
 	if !errors.Is(err, migrationexecutor.ErrMissingDependency) {
 		t.Fatalf("err = %v; want ErrMissingDependency", err)
 	}

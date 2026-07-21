@@ -5,8 +5,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-
-	"github.com/google/uuid"
 )
 
 const (
@@ -122,7 +120,6 @@ type Config struct {
 	ControlPortalToken           string `json:"-"`
 	V2BootMode                   string
 	V2LegacyMigrationRequired    bool
-	V2MigrationCredentialID      string `json:"-"`
 	TelemetryEnabled             bool
 	TelemetryPrometheusURL       string
 	TelemetryPrometheusJob       string
@@ -201,7 +198,6 @@ func (c *Config) GetControlHTTPAddr() string             { return c.ControlHTTPA
 func (c *Config) GetControlPortalToken() string          { return c.ControlPortalToken }
 func (c *Config) GetV2BootMode() string                  { return c.V2BootMode }
 func (c *Config) GetV2LegacyMigrationRequired() bool     { return c.V2LegacyMigrationRequired }
-func (c *Config) GetV2MigrationCredentialID() string     { return c.V2MigrationCredentialID }
 func (c *Config) GetTelemetryEnabled() bool              { return c.TelemetryEnabled }
 func (c *Config) GetTelemetryPrometheusURL() string      { return c.TelemetryPrometheusURL }
 func (c *Config) GetTelemetryPrometheusJob() string      { return c.TelemetryPrometheusJob }
@@ -276,20 +272,6 @@ func (c *Config) validateV2BootMode() error {
 		return &ValidationError{
 			Field:   "V2_LEGACY_MIGRATION_REQUIRED",
 			Message: "requires V2_BOOT_MODE=dormant or V2_BOOT_MODE=uat",
-		}
-	}
-	if strings.TrimSpace(c.V2MigrationCredentialID) != "" {
-		if _, err := uuid.Parse(strings.TrimSpace(c.V2MigrationCredentialID)); err != nil {
-			return &ValidationError{
-				Field:   "V2_MIGRATION_CREDENTIAL_ID",
-				Message: "must be a UUID",
-			}
-		}
-	}
-	if c.V2LegacyMigrationRequired && mode == V2BootModeDormant && strings.TrimSpace(c.V2MigrationCredentialID) == "" {
-		return &ValidationError{
-			Field:   "V2_MIGRATION_CREDENTIAL_ID",
-			Message: "required when V2_BOOT_MODE=dormant and V2_LEGACY_MIGRATION_REQUIRED=true",
 		}
 	}
 	return nil
@@ -396,7 +378,6 @@ func Load() (Config, error) {
 	cfg.RedisAddr = os.Getenv("REDIS_ADDR")
 	cfg.RedisPassword = os.Getenv("REDIS_PASSWORD")
 	cfg.V2BootMode = strings.TrimSpace(getEnvOrDefault("V2_BOOT_MODE", V2BootModeOff))
-	cfg.V2MigrationCredentialID = strings.TrimSpace(os.Getenv("V2_MIGRATION_CREDENTIAL_ID"))
 	cfg.V2LegacyMigrationRequired, err = parseBoolOrDefault("V2_LEGACY_MIGRATION_REQUIRED", false)
 	if err != nil {
 		return cfg, err

@@ -91,6 +91,43 @@ func TestV2RememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.
 	}
 }
 
+func TestV2RememberUsesMigrationRunActorWithoutCredential(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	runID := uuid.New()
+	ledger := &v2RememberLedgerStub{
+		result: &repository.V2CreateIngestResult{
+			TeamID:         teamID.String(),
+			IngestID:       uuid.NewString(),
+			PlacementRunID: uuid.NewString(),
+			Status:         string(domain.V2PlacementRunQueued),
+		},
+	}
+	svc := NewV2RememberService(V2RememberDependencies{Ledger: ledger})
+	ctx := correlation.WithID(context.Background(), "corr-migration")
+	ctx = requestctx.WithActorProfile(ctx, requestctx.ActorProfile{
+		TeamID:    teamID,
+		ProfileID: profileID,
+	})
+	ctx = requestctx.WithMigrationActor(ctx, requestctx.MigrationActor{RunID: runID})
+
+	_, err := svc.RememberV2(ctx, V2RememberRequest{
+		ContractVersion: domain.V2ContractVersion,
+		Evidence:        []V2RememberEvidenceInput{{Content: "legacy evidence"}},
+	})
+	require.NoError(t, err)
+
+	actor, ok := ledger.input.Metadata["actor"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, teamID.String(), actor["team_id"])
+	require.Equal(t, profileID.String(), actor["profile_id"])
+	require.Equal(t, "migration", actor["role"])
+	require.Equal(t, "migration", actor["auth_method"])
+	require.Equal(t, runID.String(), actor["migration_run_id"])
+	require.Equal(t, "corr-migration", actor["correlation_id"])
+	require.NotContains(t, actor, "credential_id")
+}
+
 func TestV2RememberQuarantinesDeterministicCriticalSignals(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
@@ -329,6 +366,10 @@ func TestV2RememberRequiresAuthenticatedActorAndCredential(t *testing.T) {
 	})
 	if _, err := svc.RememberV2(ctx, req); !errors.Is(err, ErrV2RememberCredential) {
 		t.Fatalf("missing credential err = %v", err)
+	}
+	ctx = requestctx.WithMigrationActor(ctx, requestctx.MigrationActor{})
+	if _, err := svc.RememberV2(ctx, req); !errors.Is(err, ErrV2RememberCredential) {
+		t.Fatalf("empty migration actor err = %v", err)
 	}
 }
 
