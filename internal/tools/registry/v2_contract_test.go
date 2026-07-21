@@ -2,9 +2,7 @@ package registry
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -13,8 +11,6 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
-	"github.com/markhuangai/dense-mem/internal/requestctx"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
@@ -142,11 +138,18 @@ func TestV2ContractCatalogMetadata(t *testing.T) {
 		V2ToolCorrectEntityResolution,
 		V2ToolRecallMemory,
 		V2ToolTraceMemory,
-		V2ToolListCommunities,
 		V2ToolImportMemoryPack,
 	} {
 		if _, ok := seen[name]; !ok {
 			t.Fatalf("V2 contract missing tool %s", name)
+		}
+	}
+}
+
+func TestV2ContractExcludesStandaloneCommunityTool(t *testing.T) {
+	for _, tool := range V2ContractTools() {
+		if tool.Name == "list_communities" {
+			t.Fatal("public V2 catalog exposes server-controlled community data")
 		}
 	}
 }
@@ -180,110 +183,6 @@ func TestBuildDefaultDoesNotExposeV2ContractTools(t *testing.T) {
 		if tool.ContractVersion == domain.V2ContractVersion {
 			t.Fatalf("BuildDefault exposed V2 contract metadata on %s", tool.Name)
 		}
-	}
-}
-
-func TestBuildV2UATWiresExecutableRemember(t *testing.T) {
-	stub := &stubV2RememberService{}
-	reg, err := BuildV2UAT(Dependencies{V2Remember: stub})
-	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
-	}
-	remember, ok := reg.Get(V2ToolRemember)
-	if !ok {
-		t.Fatal("BuildV2UAT did not register remember")
-	}
-	if remember.Invoke == nil {
-		t.Fatal("BuildV2UAT remember invoker is nil")
-	}
-	out, err := remember.Invoke(v2ContractInvokeContext("write"), "ignored-profile", map[string]any{
-		"evidence": []any{
-			map[string]any{"content": "Dense-Mem uses PostgreSQL."},
-		},
-		"proposal": map[string]any{
-			"entities": []any{
-				map[string]any{"ref": "entity:dense-mem", "name": "Dense-Mem", "entity_kind": "project"},
-				map[string]any{"ref": "entity:postgres", "name": "PostgreSQL", "entity_kind": "product"},
-			},
-			"relationships": []any{
-				map[string]any{
-					"proposal_id": "rel:uses",
-					"subject_ref": "entity:dense-mem",
-					"predicate":   "uses",
-					"object_ref":  "entity:postgres",
-					"evidence": []any{
-						map[string]any{"evidence_index": 0, "start": 0, "end": 25},
-					},
-				},
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("remember.Invoke: %v", err)
-	}
-	if err := ValidateInput(Tool{InputSchema: remember.OutputSchema}, out); err != nil {
-		t.Fatalf("validate output: %v", err)
-	}
-	if out["ingest_id"] != "ingest-v2" {
-		t.Fatalf("ingest_id = %#v, want ingest-v2", out["ingest_id"])
-	}
-	if out["processing_state"] != string(domain.V2PlacementRunQueued) || out["correlation_id"] != "corr-v2" {
-		t.Fatalf("output = %#v", out)
-	}
-	if stub.req.ContractVersion != domain.V2ContractVersion || len(stub.req.Evidence) != 1 {
-		t.Fatalf("stub request not populated: %#v", stub.req)
-	}
-	if stub.req.Evidence[0].Content != "Dense-Mem uses PostgreSQL." {
-		t.Fatalf("evidence content = %q", stub.req.Evidence[0].Content)
-	}
-	if len(stub.req.EntityHints) != 2 || stub.req.EntityHints[0]["ref"] != "entity:dense-mem" {
-		t.Fatalf("entity hints = %#v", stub.req.EntityHints)
-	}
-	if len(stub.req.RelationshipHints) != 1 || stub.req.RelationshipHints[0]["proposal_id"] != "rel:uses" {
-		t.Fatalf("relationship hints = %#v", stub.req.RelationshipHints)
-	}
-}
-
-func TestBuildV2UATRememberRejectsTenantOverride(t *testing.T) {
-	reg, err := BuildV2UAT(Dependencies{V2Remember: &stubV2RememberService{}})
-	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
-	}
-	remember, ok := reg.Get(V2ToolRemember)
-	if !ok {
-		t.Fatal("BuildV2UAT did not register remember")
-	}
-	_, err = remember.Invoke(v2ContractInvokeContext("write"), "ignored-profile", map[string]any{
-		"team_id": "attacker-team",
-		"evidence": []any{
-			map[string]any{"content": "remember this exact evidence"},
-		},
-	})
-	if err == nil || !strings.Contains(err.Error(), "team_id") {
-		t.Fatalf("remember.Invoke err = %v, want tenant override rejection", err)
-	}
-}
-
-func TestBuildV2UATRememberRejectsReadOnlyCredential(t *testing.T) {
-	stub := &stubV2RememberService{}
-	reg, err := BuildV2UAT(Dependencies{V2Remember: stub})
-	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
-	}
-	remember, ok := reg.Get(V2ToolRemember)
-	if !ok {
-		t.Fatal("BuildV2UAT did not register remember")
-	}
-	_, err = remember.Invoke(v2ContractInvokeContext("read"), "ignored-profile", map[string]any{
-		"evidence": []any{
-			map[string]any{"content": "remember this exact evidence"},
-		},
-	})
-	if err == nil || !strings.Contains(err.Error(), "missing required scope") {
-		t.Fatalf("remember.Invoke err = %v, want missing scope rejection", err)
-	}
-	if len(stub.req.Evidence) != 0 {
-		t.Fatalf("remember service was called with read-only scopes: %#v", stub.req)
 	}
 }
 
@@ -367,6 +266,71 @@ func TestV2RelationshipProposalsRequireExactlyOneObject(t *testing.T) {
 	}
 }
 
+func TestV2RelationshipProposalCorrectionTargetRequiresCompleteShape(t *testing.T) {
+	remember, err := requireV2Tool(v2ToolMap(t), V2ToolRemember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := []any{
+		map[string]any{"content": "Dense-Mem uses PostgreSQL."},
+	}
+	entities := []any{
+		map[string]any{"ref": "entity-1", "name": "Dense-Mem"},
+		map[string]any{"ref": "entity-2", "name": "PostgreSQL"},
+	}
+	baseProposal := map[string]any{
+		"proposal_id": "rel-1",
+		"subject_ref": "entity-1",
+		"predicate":   "uses",
+		"object_ref":  "entity-2",
+		"evidence": []any{
+			map[string]any{"evidence_index": 0, "start": 0, "end": 25},
+		},
+	}
+
+	cases := []struct {
+		name   string
+		target map[string]any
+	}{
+		{
+			name: "missing relationship id",
+			target: map[string]any{
+				"expected_version": 1,
+			},
+		},
+		{
+			name: "missing expected version",
+			target: map[string]any{
+				"relationship_id": uuid.NewString(),
+			},
+		},
+		{
+			name: "zero expected version",
+			target: map[string]any{
+				"relationship_id":  uuid.NewString(),
+				"expected_version": 0,
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			proposal := cloneMap(baseProposal)
+			proposal["correction_target"] = tc.target
+			input := map[string]any{
+				"evidence": evidence,
+				"proposal": map[string]any{
+					"entities":      entities,
+					"relationships": []any{proposal},
+				},
+			}
+			err := ValidateV2ContractInput(remember, input, []string{"write"})
+			if err == nil || !strings.Contains(err.Error(), "correction_target") {
+				t.Fatalf("ValidateV2ContractInput err = %v, want correction_target error", err)
+			}
+		})
+	}
+}
+
 func TestV2RelationshipProposalValidityFieldsBelongToRelationship(t *testing.T) {
 	remember, err := requireV2Tool(v2ToolMap(t), V2ToolRemember)
 	if err != nil {
@@ -398,6 +362,30 @@ func TestV2RelationshipProposalValidityFieldsBelongToRelationship(t *testing.T) 
 	}
 	if err := ValidateV2ContractInput(remember, baseInput, []string{"write"}); err != nil {
 		t.Fatalf("relationship-level validity fields rejected: %v", err)
+	}
+
+	invertedInput := cloneMap(baseInput)
+	invertedInput["proposal"] = map[string]any{
+		"entities": []any{
+			map[string]any{"ref": "entity-1", "name": "Dense-Mem"},
+		},
+		"relationships": []any{
+			map[string]any{
+				"proposal_id":  "rel-1",
+				"subject_ref":  "entity-1",
+				"predicate":    "uses",
+				"object_value": map[string]any{"type": "string", "value": "PostgreSQL"},
+				"valid_from":   "2026-12-31T00:00:00Z",
+				"valid_to":     "2026-07-01T00:00:00Z",
+				"evidence": []any{
+					map[string]any{"evidence_index": 0, "start": 10, "end": 20},
+				},
+			},
+		},
+	}
+	err = ValidateV2ContractInput(remember, invertedInput, []string{"write"})
+	if err == nil || !strings.Contains(err.Error(), "valid_to") {
+		t.Fatalf("ValidateV2ContractInput err = %v, want inverted validity rejection", err)
 	}
 
 	badInput := cloneMap(baseInput)
@@ -436,11 +424,10 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 	base := map[string]any{"idempotency_key": "resolution-1"}
 	evidence := []any{map[string]any{"content": "The user supplied authoritative resolution evidence."}}
 	cases := []struct {
-		name            string
-		action          string
-		valid           map[string]any
-		missing         string
-		missingDecision string
+		name    string
+		action  string
+		valid   map[string]any
+		missing string
 	}{
 		{
 			name:    "acknowledge requires ingest",
@@ -452,23 +439,23 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 			name:   "select entity requires mention and candidate",
 			action: string(domain.V2ResolveSelectEntity),
 			valid: map[string]any{
-				"ingest_id":         "ing-1",
-				"placement_item_id": "item-1",
-				"decision": map[string]any{
-					"mention_ref": "person-1",
-					"entity_id":   "ent-1",
-				},
+				"ingest_id":              "ing-1",
+				"placement_item_id":      "item-1",
+				"placement_item_version": float64(1),
+				"entity_ref":             "person-1",
+				"candidate_entity_id":    "ent-1",
 			},
-			missingDecision: "entity_id",
+			missing: "candidate_entity_id",
 		},
 		{
 			name:   "confirm new entity requires evidence",
 			action: string(domain.V2ResolveConfirmNewEntity),
 			valid: map[string]any{
-				"ingest_id":         "ing-1",
-				"placement_item_id": "item-1",
-				"decision":          map[string]any{"mention_ref": "person-1"},
-				"evidence":          evidence,
+				"ingest_id":              "ing-1",
+				"placement_item_id":      "item-1",
+				"placement_item_version": float64(1),
+				"entity_ref":             "person-1",
+				"evidence":               evidence,
 			},
 			missing: "evidence",
 		},
@@ -476,23 +463,23 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 			name:   "select predicate requires predicate version",
 			action: string(domain.V2ResolveSelectPredicate),
 			valid: map[string]any{
-				"ingest_id":         "ing-1",
-				"placement_item_id": "item-1",
-				"decision": map[string]any{
-					"observation_id":    "obs-1",
-					"predicate_key":     "works_on",
-					"predicate_version": float64(1),
-				},
+				"ingest_id":              "ing-1",
+				"placement_item_id":      "item-1",
+				"placement_item_version": float64(1),
+				"observation_id":         "obs-1",
+				"predicate_key":          "works_on",
+				"predicate_version":      float64(1),
 			},
-			missingDecision: "predicate_version",
+			missing: "predicate_version",
 		},
 		{
 			name:   "accept requires evidence",
 			action: string(domain.V2ResolveAccept),
 			valid: map[string]any{
-				"ingest_id":         "ing-1",
-				"placement_item_id": "item-1",
-				"evidence":          evidence,
+				"ingest_id":              "ing-1",
+				"placement_item_id":      "item-1",
+				"placement_item_version": float64(1),
+				"evidence":               evidence,
 			},
 			missing: "evidence",
 		},
@@ -500,19 +487,21 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 			name:   "reject requires reason",
 			action: string(domain.V2ResolveReject),
 			valid: map[string]any{
-				"ingest_id":         "ing-1",
-				"placement_item_id": "item-1",
-				"reason":            "not supported by the source",
+				"ingest_id":              "ing-1",
+				"placement_item_id":      "item-1",
+				"placement_item_version": float64(1),
+				"message":                "not supported by the source",
 			},
-			missing: "reason",
+			missing: "message",
 		},
 		{
 			name:   "correct requires evidence",
 			action: string(domain.V2ResolveCorrect),
 			valid: map[string]any{
-				"ingest_id":         "ing-1",
-				"placement_item_id": "item-1",
-				"evidence":          evidence,
+				"ingest_id":              "ing-1",
+				"placement_item_id":      "item-1",
+				"placement_item_version": float64(1),
+				"evidence":               evidence,
 			},
 			missing: "evidence",
 		},
@@ -520,18 +509,19 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 			name:   "release quarantine requires reason",
 			action: string(domain.V2ResolveReleaseQuarantine),
 			valid: map[string]any{
-				"ingest_id":         "ing-1",
-				"placement_item_id": "item-1",
-				"reason":            "manager reviewed quarantine signal",
+				"ingest_id":              "ing-1",
+				"placement_item_id":      "item-1",
+				"placement_item_version": float64(1),
+				"message":                "manager reviewed quarantine signal",
 			},
-			missing: "reason",
+			missing: "message",
 		},
 		{
 			name:   "forget requires relationship target",
 			action: string(domain.V2ResolveForget),
 			valid: map[string]any{
 				"relationship_id": "rel-1",
-				"reason":          "user requested retraction",
+				"message":         "user requested retraction",
 				"evidence":        evidence,
 			},
 			missing: "relationship_id",
@@ -547,19 +537,63 @@ func TestV2ResolveMemoryPlacementActionRequiredFields(t *testing.T) {
 
 			invalid := cloneMap(valid)
 			missing := tc.missing
-			if tc.missingDecision != "" {
-				decision := cloneMap(invalid["decision"].(map[string]any))
-				delete(decision, tc.missingDecision)
-				invalid["decision"] = decision
-				missing = "decision." + tc.missingDecision
-			} else {
-				delete(invalid, tc.missing)
-			}
+			delete(invalid, tc.missing)
 			err := ValidateV2ContractInput(resolve, invalid, []string{"write"})
 			if err == nil || !strings.Contains(err.Error(), missing+" is required") {
 				t.Fatalf("missing %s err = %v", missing, err)
 			}
 		})
+	}
+}
+
+func TestV2ResolveMemoryPlacementRejectsLegacyNestedDecision(t *testing.T) {
+	resolve, err := requireV2Tool(v2ToolMap(t), V2ToolResolveMemoryPlacement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := map[string]any{
+		"action":                 string(domain.V2ResolveSelectEntity),
+		"idempotency_key":        "resolution-1",
+		"ingest_id":              "ing-1",
+		"placement_item_id":      "item-1",
+		"placement_item_version": float64(1),
+		"entity_ref":             "person-1",
+		"candidate_entity_id":    "ent-1",
+		"decision": map[string]any{
+			"mention_ref": "person-1",
+			"entity_id":   "ent-1",
+		},
+	}
+	err = ValidateV2ContractInput(resolve, input, []string{"write"})
+	if err == nil || !strings.Contains(err.Error(), "decision") {
+		t.Fatalf("legacy nested decision err = %v", err)
+	}
+}
+
+func TestV2ResolveMemoryPlacementReviewActionsRequireItemVersion(t *testing.T) {
+	resolve, err := requireV2Tool(v2ToolMap(t), V2ToolResolveMemoryPlacement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []domain.V2ResolveAction{
+		domain.V2ResolveSelectEntity,
+		domain.V2ResolveConfirmNewEntity,
+		domain.V2ResolveSelectPredicate,
+		domain.V2ResolveAccept,
+		domain.V2ResolveReject,
+		domain.V2ResolveCorrect,
+		domain.V2ResolveReleaseQuarantine,
+	} {
+		input := map[string]any{
+			"action":            string(action),
+			"idempotency_key":   "resolution-1",
+			"ingest_id":         "ing-1",
+			"placement_item_id": "item-1",
+		}
+		err := ValidateV2ContractInput(resolve, input, []string{"write"})
+		if err == nil || !strings.Contains(err.Error(), "placement_item_version is required") {
+			t.Fatalf("%s missing placement_item_version err = %v", action, err)
+		}
 	}
 }
 
@@ -606,6 +640,7 @@ func TestV2CanonicalInputFieldNames(t *testing.T) {
 		forbidden []string
 	}{
 		{V2ToolRemember, []string{"evidence", "proposal"}, []string{"contract_version", "entity_hints", "relationship_hints"}},
+		{V2ToolResolveMemoryPlacement, []string{"placement_item_version", "entity_ref", "candidate_entity_id", "message"}, []string{"contract_version", "decision", "reason"}},
 		{V2ToolCorrectEntityResolution, []string{"operation", "owned_observation_ids", "impact_token"}, []string{"action", "selected_observation_ids", "plan_token"}},
 		{V2ToolRecallMemory, []string{"known_evidence_ids", "known_relationship_ids", "expand_from_entity_ids"}, []string{"include_evidence", "use_communities"}},
 		{V2ToolTraceMemory, []string{"include_verification", "include_transitions", "max_depth", "predicate_keys", "topic", "min_relevance"}, []string{"max_chars"}},
@@ -754,53 +789,4 @@ func TestV2PredicateOptionsContract(t *testing.T) {
 	if err := validateSchemaValue("current_cardinality", "latest", cardinality); err == nil {
 		t.Fatal("current_cardinality accepted non-wiki value")
 	}
-}
-
-func v2ToolMap(t *testing.T) map[string]Tool {
-	t.Helper()
-	tools := map[string]Tool{}
-	for _, tool := range V2ContractTools() {
-		tools[tool.Name] = tool
-	}
-	return tools
-}
-
-func readV2ContractFixtures(t *testing.T) []v2ContractFixture {
-	t.Helper()
-	data, err := os.ReadFile("testdata/v2_contract_fixtures.json")
-	if err != nil {
-		t.Fatalf("read fixture: %v", err)
-	}
-	var fixtures []v2ContractFixture
-	if err := json.Unmarshal(data, &fixtures); err != nil {
-		t.Fatalf("decode fixture: %v", err)
-	}
-	if len(fixtures) == 0 {
-		t.Fatal("no V2 contract fixtures")
-	}
-	return fixtures
-}
-
-func v2ContractInvokeContext(scopes ...string) context.Context {
-	return requestctx.WithActorCredential(context.Background(), requestctx.ActorCredential{
-		KeyID:      uuid.New(),
-		AuthMethod: "api_key",
-		Role:       "member",
-		Scopes:     scopes,
-	})
-}
-
-type stubV2RememberService struct {
-	req memoryservice.V2RememberRequest
-}
-
-func (s *stubV2RememberService) RememberV2(_ context.Context, req memoryservice.V2RememberRequest) (*memoryservice.V2RememberResult, error) {
-	s.req = req
-	return &memoryservice.V2RememberResult{
-		IngestID:          "ingest-v2",
-		ProcessingState:   string(domain.V2PlacementRunQueued),
-		CheckAfterSeconds: 60,
-		StatusTool:        V2ToolGetMemoryPlacement,
-		CorrelationID:     "corr-v2",
-	}, nil
 }

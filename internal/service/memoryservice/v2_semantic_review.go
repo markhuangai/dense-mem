@@ -42,13 +42,14 @@ type v2SemanticReviewService struct {
 }
 
 type V2SemanticReviewJob struct {
-	TeamID          string
-	OwnerProfileID  string
-	IngestID        string
-	PlacementRunID  string
-	PlacementItemID string
-	Request         verifier.V2SemanticReviewRequest
-	MaxAttempts     int
+	TeamID           string
+	OwnerProfileID   string
+	IngestID         string
+	PlacementRunID   string
+	PlacementItemID  string
+	Request          verifier.V2SemanticReviewRequest
+	ValidationErrors []verifier.V2SemanticValidationError
+	MaxAttempts      int
 }
 
 type V2SemanticReviewResult struct {
@@ -70,16 +71,24 @@ func NewV2SemanticReviewService(deps V2SemanticReviewDependencies) V2SemanticRev
 }
 
 func (s *v2SemanticReviewService) ReviewV2Semantic(ctx context.Context, job V2SemanticReviewJob) (*V2SemanticReviewResult, error) {
-	if s.provider == nil {
-		return nil, errors.New("v2 semantic review: provider is required")
-	}
 	if s.ledger == nil {
 		return nil, errors.New("v2 semantic review: ledger repository is required")
 	}
 	job = normalizeV2SemanticReviewJob(job)
+	result := &V2SemanticReviewResult{}
+	if len(job.ValidationErrors) > 0 {
+		result.Status = string(domain.V2SemanticReviewTerminalFailure)
+		result.ValidationErrors = append([]verifier.V2SemanticValidationError(nil), job.ValidationErrors...)
+		if err := s.appendFinalOutcome(ctx, job, result, "", nil); err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
+	if s.provider == nil {
+		return nil, errors.New("v2 semantic review: provider is required")
+	}
 	request, validationErrors := verifier.PrepareV2SemanticReviewRequest(job.Request)
 	job.Request = request
-	result := &V2SemanticReviewResult{}
 	if len(validationErrors) > 0 {
 		result.Status = string(domain.V2SemanticReviewTerminalFailure)
 		result.ValidationErrors = validationErrors

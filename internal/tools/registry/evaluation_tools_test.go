@@ -671,6 +671,11 @@ func TestEvalUnavailableConfigAuditAndParserBranches(t *testing.T) {
 			t.Fatalf("eval_list_knowledge_refs %v err = %v; want ErrToolUnavailable", tc, err)
 		}
 	}
+	for _, kind := range []string{"evidence", "relationship", "entity", "value", "hypothesis"} {
+		if err := ValidateInput(listTool, map[string]any{"type": kind}); err == nil {
+			t.Fatalf("eval_list_knowledge_refs accepted gated V2 type %q", kind)
+		}
+	}
 	_, err = listTool.Invoke(context.Background(), "profile-eval", map[string]any{"type": "unknown"})
 	if err == nil || !strings.Contains(err.Error(), "unsupported type") {
 		t.Fatalf("unsupported list type err = %v", err)
@@ -681,9 +686,16 @@ func TestEvalUnavailableConfigAuditAndParserBranches(t *testing.T) {
 	if !errors.Is(err, ErrToolUnavailable) {
 		t.Fatalf("eval_get_knowledge_item missing dep err = %v; want ErrToolUnavailable", err)
 	}
+	if err := ValidateInput(getTool, map[string]any{"type": "evidence", "id": "missing"}); err == nil {
+		t.Fatal("eval_get_knowledge_item accepted gated V2 type")
+	}
 	_, err = evalGetKnowledgeItem(context.Background(), Dependencies{}, "profile-eval", "unknown", "id")
 	if err == nil || !strings.Contains(err.Error(), "unsupported type") {
 		t.Fatalf("evalGetKnowledgeItem unsupported err = %v", err)
+	}
+	_, err = evalGetKnowledgeItem(context.Background(), Dependencies{}, "profile-eval", "evidence", "missing")
+	if !errors.Is(err, ErrToolUnavailable) {
+		t.Fatalf("evalGetKnowledgeItem V2 missing dep err = %v; want ErrToolUnavailable", err)
 	}
 
 	listFeedbackTool, _ := reg.Get("eval_list_recall_feedback_events")

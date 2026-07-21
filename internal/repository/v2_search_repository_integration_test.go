@@ -160,10 +160,11 @@ func TestV2SearchEmbeddingCompletionRejectsStaleJobs(t *testing.T) {
 	require.Equal(t, int64(2), second.DocumentVersion)
 
 	err = repo.CompleteEmbeddingJob(ctx, V2CompleteEmbeddingJobInput{
-		TeamID:         teamID,
-		EmbeddingJobID: claimed[0].EmbeddingJobID,
-		WorkerID:       "worker-stale",
-		Embedding:      []float32{1, 0, 0},
+		TeamID:           teamID,
+		EmbeddingJobID:   claimed[0].EmbeddingJobID,
+		WorkerID:         "worker-stale",
+		ExpectedAttempts: claimed[0].Attempts,
+		Embedding:        []float32{1, 0, 0},
 	})
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrV2SearchStaleVersion), "err=%v", err)
@@ -298,19 +299,21 @@ func TestV2SearchClaimEmbeddingJobsReclaimsExpiredLease(t *testing.T) {
 	assert.Equal(t, 2, secondClaim[0].Attempts)
 
 	err = repo.CompleteEmbeddingJob(ctx, V2CompleteEmbeddingJobInput{
-		TeamID:         teamID,
-		EmbeddingJobID: firstClaim[0].EmbeddingJobID,
-		WorkerID:       "worker-one",
-		Embedding:      []float32{1, 0, 0},
+		TeamID:           teamID,
+		EmbeddingJobID:   firstClaim[0].EmbeddingJobID,
+		WorkerID:         "worker-one",
+		ExpectedAttempts: firstClaim[0].Attempts,
+		Embedding:        []float32{1, 0, 0},
 	})
 	require.Error(t, err)
-	require.True(t, errors.Is(err, ErrV2SearchStaleVersion), "err=%v", err)
+	require.True(t, errors.Is(err, ErrV2EmbeddingLeaseLost), "err=%v", err)
 
 	err = repo.CompleteEmbeddingJob(ctx, V2CompleteEmbeddingJobInput{
-		TeamID:         teamID,
-		EmbeddingJobID: secondClaim[0].EmbeddingJobID,
-		WorkerID:       "worker-two",
-		Embedding:      []float32{1, 0, 0},
+		TeamID:           teamID,
+		EmbeddingJobID:   secondClaim[0].EmbeddingJobID,
+		WorkerID:         "worker-two",
+		ExpectedAttempts: secondClaim[0].Attempts,
+		Embedding:        []float32{1, 0, 0},
 	})
 	require.NoError(t, err)
 }
@@ -346,13 +349,14 @@ func TestV2SearchCompletionRejectsExpiredLeaseBeforeReclaim(t *testing.T) {
 	require.NoError(t, err)
 
 	err = repo.CompleteEmbeddingJob(ctx, V2CompleteEmbeddingJobInput{
-		TeamID:         teamID,
-		EmbeddingJobID: claimed[0].EmbeddingJobID,
-		WorkerID:       "worker-expired",
-		Embedding:      []float32{1, 0, 0},
+		TeamID:           teamID,
+		EmbeddingJobID:   claimed[0].EmbeddingJobID,
+		WorkerID:         "worker-expired",
+		ExpectedAttempts: claimed[0].Attempts,
+		Embedding:        []float32{1, 0, 0},
 	})
 	require.Error(t, err)
-	require.True(t, errors.Is(err, ErrV2SearchStaleVersion), "err=%v", err)
+	require.True(t, errors.Is(err, ErrV2EmbeddingLeaseLost), "err=%v", err)
 
 	var jobStatus string
 	var documentState string
@@ -536,11 +540,28 @@ func TestV2SearchReadinessAndHNSWPlan(t *testing.T) {
 	assert.Equal(t, 3, ready.Contract.EmbeddingDimensions)
 
 	doc := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, "test generation hnsw text", 1)
+	otherDoc := upsertV2SearchDocumentForTest(t, repo, teamID, ownerID, "test generation farther hnsw text", 1)
 	completeV2SearchJobsForTest(t, repo, teamID, map[string][]float32{
-		doc.SearchDocumentID: unitV2SearchVector(3, 0),
+		doc.SearchDocumentID:      unitV2SearchVector(3, 0),
+		otherDoc.SearchDocumentID: unitV2SearchVector(3, 1),
 	})
 	query, err := v2VectorLiteral(unitV2SearchVector(3, 0))
 	require.NoError(t, err)
+	var recallHits []V2SearchHit
+	err = repo.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
+		var err error
+		recallHits, err = searchV2RecallVector(ctx, tx, V2RecallEvidenceInput{
+			TeamID:         teamID,
+			QueryEmbedding: unitV2SearchVector(3, 0),
+			Limit:          2,
+		}, ready.Contract, 2)
+		return err
+	})
+	require.NoError(t, err)
+	require.Len(t, recallHits, 2)
+	assert.Equal(t, doc.SearchDocumentID, recallHits[0].SearchDocumentID)
+	assert.Less(t, recallHits[0].Distance, recallHits[1].Distance)
+
 	err = rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
 		require.NoError(t, tx.Exec(`SET LOCAL enable_seqscan = off`).Error)
 		rows, err := tx.Raw(`
@@ -733,10 +754,11 @@ func completeV2SearchJobsForTest(
 			continue
 		}
 		err := repo.CompleteEmbeddingJob(context.Background(), V2CompleteEmbeddingJobInput{
-			TeamID:         teamID,
-			EmbeddingJobID: job.EmbeddingJobID,
-			WorkerID:       workerID,
-			Embedding:      vector,
+			TeamID:           teamID,
+			EmbeddingJobID:   job.EmbeddingJobID,
+			WorkerID:         workerID,
+			ExpectedAttempts: job.Attempts,
+			Embedding:        vector,
 		})
 		require.NoError(t, err)
 		completed++

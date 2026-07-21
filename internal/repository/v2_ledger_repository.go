@@ -2,9 +2,7 @@ package repository
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -24,11 +21,13 @@ const v2MaxEvidenceItems = 100
 var (
 	ErrV2IdempotencyConflict    = errors.New("v2 idempotency conflict")
 	ErrV2PlacementLeaseConflict = errors.New("v2 placement lease conflict")
+	ErrV2PlacementNotFound      = errors.New("v2 placement not found")
 	ErrV2SourceRevisionConflict = errors.New("v2 source revision conflict")
 )
 
 type V2LedgerRepository interface {
 	CreateIngest(ctx context.Context, input V2CreateIngestInput) (*V2CreateIngestResult, error)
+	GetPlacementRun(ctx context.Context, input V2GetPlacementRunInput) (*V2CreateIngestResult, error)
 	AdvanceSourceRevision(ctx context.Context, input V2AdvanceSourceRevisionInput) (*V2SourceRevisionResult, error)
 	AppendSecurityEvent(ctx context.Context, input V2SecurityEventInput) (string, error)
 	AppendPlacementOutcome(ctx context.Context, input V2PlacementOutcomeInput) (string, error)
@@ -46,6 +45,12 @@ type V2CreateIngestInput struct {
 	Proposal       map[string]any
 	Metadata       map[string]any
 	Evidence       []V2EvidenceInput
+}
+
+type V2GetPlacementRunInput struct {
+	TeamID         string
+	OwnerProfileID string
+	IngestID       string
 }
 
 type V2EvidenceInput struct {
@@ -92,10 +97,12 @@ type V2SecuritySignalInput struct {
 
 type V2CreateIngestResult struct {
 	TeamID         string
+	OwnerProfileID string
 	IngestID       string
 	PlacementRunID string
 	Status         string
 	Existing       bool
+	Proposal       map[string]any
 	Evidence       []V2EvidenceFragment
 	Items          []V2PlacementItem
 }
@@ -103,6 +110,7 @@ type V2CreateIngestResult struct {
 type V2EvidenceFragment struct {
 	FragmentID       string
 	EvidenceIndex    int
+	Content          string
 	ContentHash      string
 	SourceID         string
 	SourceRevisionID string
@@ -115,6 +123,7 @@ type V2PlacementRun struct {
 	OwnerProfileID string
 	Status         string
 	Attempts       int
+	MaxAttempts    int
 	LeaseUntil     *time.Time
 }
 
@@ -122,11 +131,14 @@ type V2PlacementItem struct {
 	PlacementItemID, FragmentID string
 	EvidenceIndex               int
 	Status, Category            string
+	Version                     int
+	Result                      map[string]any
 }
 
 type v2RLSHelper interface {
 	WithTeamTx(ctx context.Context, db *gorm.DB, teamID string, fn func(tx *gorm.DB) error) error
 	WithTeamProfileTx(ctx context.Context, db *gorm.DB, teamID string, profileID string, fn func(tx *gorm.DB) error) error
+	WithSystemTx(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) error) error
 }
 
 type V2LedgerRepositoryImpl struct {
@@ -221,9 +233,11 @@ func (r *V2LedgerRepositoryImpl) CreateIngest(ctx context.Context, input V2Creat
 		}
 		result = &V2CreateIngestResult{
 			TeamID:         input.TeamID,
+			OwnerProfileID: input.OwnerProfileID,
 			IngestID:       ingestID,
 			PlacementRunID: placementRunID,
 			Status:         input.Status,
+			Proposal:       input.Proposal,
 			Evidence:       evidence,
 			Items:          items,
 		}
@@ -309,7 +323,8 @@ func (r *V2LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, team
 			WHERE run.team_id = ?::uuid
 			  AND run.placement_run_id = next.placement_run_id
 			RETURNING run.team_id::text, run.placement_run_id::text, run.ingest_id::text,
-			          run.owner_profile_id::text, run.status, run.attempts, run.lease_until
+			          run.owner_profile_id::text, run.status, run.attempts, run.max_attempts,
+			          run.lease_until
 		`, teamID, int(lease.Seconds()), workerID, teamID).Rows()
 		if err != nil {
 			return err
@@ -320,7 +335,7 @@ func (r *V2LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, team
 		}
 		loaded := V2PlacementRun{}
 		var leaseUntil sql.NullTime
-		if err := rows.Scan(&loaded.TeamID, &loaded.PlacementRunID, &loaded.IngestID, &loaded.OwnerProfileID, &loaded.Status, &loaded.Attempts, &leaseUntil); err != nil {
+		if err := rows.Scan(&loaded.TeamID, &loaded.PlacementRunID, &loaded.IngestID, &loaded.OwnerProfileID, &loaded.Status, &loaded.Attempts, &loaded.MaxAttempts, &leaseUntil); err != nil {
 			return err
 		}
 		if leaseUntil.Valid {
@@ -731,6 +746,7 @@ func insertV2EvidenceFragment(ctx context.Context, tx *gorm.DB, input V2CreateIn
 	}
 	fragment := V2EvidenceFragment{
 		EvidenceIndex:    index,
+		Content:          item.Content,
 		ContentHash:      item.ContentHash,
 		SourceID:         sourceID,
 		SourceRevisionID: sourceRevisionID,
@@ -755,7 +771,7 @@ func insertV2PlacementItem(ctx context.Context, tx *gorm.DB, input V2CreateInges
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?
 		)
-		RETURNING placement_item_id::text
+		RETURNING placement_item_id::text, version
 	`, input.TeamID, placementRunID, ingestID, input.OwnerProfileID, fragment.FragmentID, fragment.EvidenceIndex, status, category).Rows()
 	if err != nil {
 		return V2PlacementItem{}, err
@@ -770,7 +786,7 @@ func insertV2PlacementItem(ctx context.Context, tx *gorm.DB, input V2CreateInges
 		Status:        status,
 		Category:      category,
 	}
-	if err := rows.Scan(&placementItem.PlacementItemID); err != nil {
+	if err := rows.Scan(&placementItem.PlacementItemID, &placementItem.Version); err != nil {
 		return V2PlacementItem{}, err
 	}
 	return placementItem, rows.Err()
@@ -790,16 +806,24 @@ func insertV2EvidenceQuarantine(ctx context.Context, tx *gorm.DB, input V2Create
 func loadV2CreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, ingestID string, existing bool) (*V2CreateIngestResult, error) {
 	result := V2CreateIngestResult{TeamID: teamID, IngestID: ingestID, Existing: existing}
 	row := tx.WithContext(ctx).Raw(`
-		SELECT placement_run_id::text, status
-		FROM placement_runs
-		WHERE team_id = ?::uuid
-		  AND ingest_id = ?::uuid
+		SELECT run.placement_run_id::text, run.owner_profile_id::text, run.status,
+		       COALESCE(ingest.proposal, '{}'::jsonb)
+		FROM placement_runs AS run
+		JOIN knowledge_ingests AS ingest
+		  ON ingest.team_id = run.team_id
+		 AND ingest.ingest_id = run.ingest_id
+		WHERE run.team_id = ?::uuid
+		  AND run.ingest_id = ?::uuid
 	`, teamID, ingestID).Row()
-	if err := row.Scan(&result.PlacementRunID, &result.Status); err != nil {
+	var proposalRaw []byte
+	if err := row.Scan(&result.PlacementRunID, &result.OwnerProfileID, &result.Status, &proposalRaw); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(proposalRaw, &result.Proposal); err != nil {
 		return nil, err
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
-			SELECT fragment_id::text, evidence_index, content_hash,
+			SELECT fragment_id::text, evidence_index, content, content_hash,
 			       COALESCE(source_id::text, ''), COALESCE(source_revision_id::text, '')
 			FROM evidence_fragments
 			WHERE team_id = ?::uuid
@@ -812,7 +836,7 @@ func loadV2CreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, i
 	defer rows.Close()
 	for rows.Next() {
 		var item V2EvidenceFragment
-		if err := rows.Scan(&item.FragmentID, &item.EvidenceIndex, &item.ContentHash, &item.SourceID, &item.SourceRevisionID); err != nil {
+		if err := rows.Scan(&item.FragmentID, &item.EvidenceIndex, &item.Content, &item.ContentHash, &item.SourceID, &item.SourceRevisionID); err != nil {
 			return nil, err
 		}
 		result.Evidence = append(result.Evidence, item)
@@ -824,7 +848,8 @@ func loadV2CreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, i
 		return nil, err
 	}
 	itemRows, err := tx.WithContext(ctx).Raw(`
-		SELECT placement_item_id::text, fragment_id::text, evidence_index, status, category
+		SELECT placement_item_id::text, fragment_id::text, evidence_index, status, category,
+		       version, COALESCE(result, '{}'::jsonb)
 		FROM placement_items
 		WHERE team_id = ?::uuid
 		  AND ingest_id = ?::uuid
@@ -836,145 +861,31 @@ func loadV2CreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, i
 	defer itemRows.Close()
 	for itemRows.Next() {
 		var item V2PlacementItem
-		if err := itemRows.Scan(&item.PlacementItemID, &item.FragmentID, &item.EvidenceIndex, &item.Status, &item.Category); err != nil {
+		var resultRaw []byte
+		if err := itemRows.Scan(
+			&item.PlacementItemID,
+			&item.FragmentID,
+			&item.EvidenceIndex,
+			&item.Status,
+			&item.Category,
+			&item.Version,
+			&resultRaw,
+		); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(resultRaw, &item.Result); err != nil {
 			return nil, err
 		}
 		result.Items = append(result.Items, item)
 	}
-	return &result, itemRows.Err()
-}
-
-func normalizeV2SecurityEventInput(input V2SecurityEventInput) V2SecurityEventInput {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
-	input.IngestID = strings.TrimSpace(input.IngestID)
-	input.FragmentID = strings.TrimSpace(input.FragmentID)
-	input.V2SecurityEventDraft = normalizeV2SecurityEventDraft(input.V2SecurityEventDraft)
-	return input
-}
-
-func normalizeV2SecurityEventDraft(input V2SecurityEventDraft) V2SecurityEventDraft {
-	input.EventKind = strings.TrimSpace(input.EventKind)
-	input.Decision = strings.TrimSpace(input.Decision)
-	input.ScanPolicyHash = strings.TrimSpace(input.ScanPolicyHash)
-	input.Reason = strings.TrimSpace(input.Reason)
-	for i := range input.Signals {
-		input.Signals[i].Kind = strings.TrimSpace(input.Signals[i].Kind)
-		input.Signals[i].Severity = strings.TrimSpace(input.Signals[i].Severity)
-		input.Signals[i].Quote = strings.TrimSpace(input.Signals[i].Quote)
+	if err := itemRows.Err(); err != nil {
+		return nil, err
 	}
-	return input
-}
-
-func validateV2SecurityEventInput(input V2SecurityEventInput) error {
-	if _, err := uuid.Parse(input.TeamID); err != nil {
-		return fmt.Errorf("team_id is required: %w", err)
+	if err := itemRows.Close(); err != nil {
+		return nil, err
 	}
-	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
-		return fmt.Errorf("owner_profile_id is required: %w", err)
+	if err := hydrateV2PlacementItemSearchStates(ctx, tx, result.TeamID, result.OwnerProfileID, result.Items); err != nil {
+		return nil, err
 	}
-	if _, err := uuid.Parse(input.IngestID); err != nil {
-		return fmt.Errorf("ingest_id is required: %w", err)
-	}
-	if _, err := uuid.Parse(input.FragmentID); err != nil {
-		return fmt.Errorf("fragment_id is required: %w", err)
-	}
-	return validateV2SecurityEventDraft(input.V2SecurityEventDraft)
-}
-
-func validateV2SecurityEventDraft(input V2SecurityEventDraft) error {
-	switch input.EventKind {
-	case "deterministic_scan", "reviewer_signal", "verifier_signal", "quarantine_release":
-	default:
-		return fmt.Errorf("unsupported event_kind %q", input.EventKind)
-	}
-	switch input.Decision {
-	case "pass", "guarded", "quarantine", "released":
-	default:
-		return fmt.Errorf("unsupported decision %q", input.Decision)
-	}
-	for i, signal := range input.Signals {
-		switch signal.Kind {
-		case "role_control_spoofing", "instruction_override", "prompt_secret_extraction", "tool_exfiltration", "obfuscated_instruction", "hidden_control_markup":
-		default:
-			return fmt.Errorf("signals[%d].kind is unsupported", i)
-		}
-		switch signal.Severity {
-		case "low", "medium", "high", "critical":
-		default:
-			return fmt.Errorf("signals[%d].severity is unsupported", i)
-		}
-		if signal.SpanStart < 0 || signal.SpanEnd <= signal.SpanStart {
-			return fmt.Errorf("signals[%d].span is invalid", i)
-		}
-	}
-	return nil
-}
-
-func insertV2SecurityEvent(ctx context.Context, tx *gorm.DB, input V2SecurityEventInput) (string, error) {
-	metadata, err := marshalV2JSON(input.Metadata)
-	if err != nil {
-		return "", err
-	}
-	rows, err := tx.WithContext(ctx).Raw(`
-		INSERT INTO evidence_security_events (
-		    team_id, fragment_id, ingest_id, owner_profile_id, event_kind, decision,
-		    scan_policy_hash, reason, metadata
-		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?::jsonb
-		)
-		RETURNING security_event_id::text
-	`, input.TeamID, input.FragmentID, input.IngestID, input.OwnerProfileID,
-		input.EventKind, input.Decision, input.ScanPolicyHash, input.Reason, string(metadata)).Rows()
-	if err != nil {
-		return "", err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		_ = rows.Close()
-		return "", sql.ErrNoRows
-	}
-	var eventID string
-	if err := rows.Scan(&eventID); err != nil {
-		_ = rows.Close()
-		return "", err
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return "", err
-	}
-	if err := rows.Close(); err != nil {
-		return "", err
-	}
-	if err := insertV2SecuritySignals(ctx, tx, input.TeamID, input.OwnerProfileID, eventID, input.Signals); err != nil {
-		return "", err
-	}
-	return eventID, nil
-}
-
-func marshalV2JSON(value map[string]any) ([]byte, error) {
-	if value == nil {
-		value = map[string]any{}
-	}
-	data, err := json.Marshal(value)
-	if err != nil {
-		return nil, fmt.Errorf("marshal json: %w", err)
-	}
-	return data, nil
-}
-
-func pqStringArray(values []string) any {
-	normalized := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			normalized = append(normalized, value)
-		}
-	}
-	return pq.Array(normalized)
-}
-
-func sha256Hex(content string) string {
-	sum := sha256.Sum256([]byte(content))
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return &result, nil
 }

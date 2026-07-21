@@ -361,10 +361,10 @@ describe("UserPortalApp", () => {
     const graphCallCount = () => fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/ui/api/graph")).length;
     const beforeDisabledRefresh = graphCallCount();
 
-    await userEvent.click(within(controls).getByRole("checkbox", { name: "Fact" }));
-    await userEvent.click(within(controls).getByRole("checkbox", { name: "Claim" }));
-    await userEvent.click(within(controls).getByRole("checkbox", { name: "Fragment" }));
-    await userEvent.click(within(controls).getByRole("checkbox", { name: "Dream" }));
+    expect(["Entity", "Value"].some((label) => within(controls).queryByRole("checkbox", { name: label }))).toBe(false);
+    for (const label of ["Fact", "Claim", "Fragment", "Dream"]) {
+      await userEvent.click(within(controls).getByRole("checkbox", { name: label }));
+    }
 
     const refresh = within(controls).getByRole("button", { name: "Refresh" });
     expect(refresh).toBeDisabled();

@@ -15,6 +15,7 @@ import (
 )
 
 var ErrV2SemanticOwnerMismatch = errors.New("v2 semantic owner mismatch")
+var ErrV2SemanticIdempotencyConflict = errors.New("v2 semantic idempotency conflict")
 
 type V2SemanticRepositoryImpl struct {
 	db  *gorm.DB
@@ -269,7 +270,7 @@ func (r *V2SemanticRepositoryImpl) ApplyRelationshipDecision(
 			}
 		}
 		if recordState.Changed {
-			if err := insertV2RelationshipTransition(ctx, tx, v2TransitionInput{
+			if _, err := insertV2RelationshipTransition(ctx, tx, v2TransitionInput{
 				TeamID:              input.TeamID,
 				OwnerProfileID:      input.OwnerProfileID,
 				RelationshipID:      recordState.Record.RelationshipID,
@@ -304,17 +305,32 @@ func (r *V2SemanticRepositoryImpl) ApplyRelationshipDecision(
 	return result, nil
 }
 
-func (r *V2SemanticRepositoryImpl) RetractRelationship(ctx context.Context, input V2RetractRelationshipInput) error {
+func (r *V2SemanticRepositoryImpl) RetractRelationship(
+	ctx context.Context,
+	input V2RetractRelationshipInput,
+) (*V2RelationshipTransitionResult, error) {
 	input = normalizeV2RetractRelationshipInput(input)
 	if err := validateV2RetractRelationshipInput(input); err != nil {
-		return err
+		return nil, err
 	}
+	var result *V2RelationshipTransitionResult
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
+		existing, err := loadV2RelationshipTransitionByIdempotency(ctx, tx, input)
+		if err != nil {
+			return err
+		}
+		if existing != nil {
+			if existing.RelationshipID != input.RelationshipID || existing.ToStatus != string(domain.V2RelationshipStatusRetracted) {
+				return ErrV2SemanticIdempotencyConflict
+			}
+			result = existing
+			return nil
+		}
 		current, err := loadV2RelationshipRecord(ctx, tx, input.TeamID, input.RelationshipID)
 		if err != nil {
 			return err
 		}
-		result := tx.WithContext(ctx).Exec(`
+		updateResult := tx.WithContext(ctx).Exec(`
 			UPDATE relationship_records
 			SET status = 'retracted',
 			    version = version + 1,
@@ -323,27 +339,276 @@ func (r *V2SemanticRepositoryImpl) RetractRelationship(ctx context.Context, inpu
 			  AND relationship_id = ?::uuid
 			  AND owner_profile_id = ?::uuid
 		`, input.TeamID, input.RelationshipID, input.OwnerProfileID)
-		if result.Error != nil {
-			return result.Error
+		if updateResult.Error != nil {
+			return updateResult.Error
 		}
-		if result.RowsAffected == 0 {
+		if updateResult.RowsAffected == 0 {
 			return ErrV2SemanticOwnerMismatch
 		}
-		return insertV2RelationshipTransition(ctx, tx, v2TransitionInput{
+		transitionID, err := insertV2RelationshipTransition(ctx, tx, v2TransitionInput{
 			TeamID:         input.TeamID,
 			OwnerProfileID: input.OwnerProfileID,
 			RelationshipID: input.RelationshipID,
+			IdempotencyKey: input.IdempotencyKey,
 			FromTier:       current.Tier,
 			FromStatus:     current.Status,
 			ToTier:         current.Tier,
 			ToStatus:       string(domain.V2RelationshipStatusRetracted),
 			Reason:         input.Reason,
 		})
+		if err != nil {
+			return err
+		}
+		result = &V2RelationshipTransitionResult{
+			TeamID:         input.TeamID,
+			TransitionID:   transitionID,
+			RelationshipID: input.RelationshipID,
+			FromTier:       current.Tier,
+			FromStatus:     current.Status,
+			ToTier:         current.Tier,
+			ToStatus:       string(domain.V2RelationshipStatusRetracted),
+			IdempotencyKey: input.IdempotencyKey,
+		}
+		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("v2 semantic: retract relationship: %w", err)
+		return nil, fmt.Errorf("v2 semantic: retract relationship: %w", err)
+	}
+	return result, nil
+}
+
+func (r *V2SemanticRepositoryImpl) ApplyRelationshipSupportDecision(
+	ctx context.Context,
+	input V2ApplyRelationshipSupportDecisionInput,
+) (*V2RelationshipSupportDecisionResult, error) {
+	input = normalizeV2ApplyRelationshipSupportDecisionInput(input)
+	if err := validateV2ApplyRelationshipSupportDecisionInput(input); err != nil {
+		return nil, err
+	}
+	var result *V2RelationshipSupportDecisionResult
+	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
+		existing, err := loadV2SupportDecisionByIdempotency(ctx, tx, input)
+		if err != nil {
+			return err
+		}
+		if existing != nil {
+			if existing.RelationshipID != input.RelationshipID ||
+				existing.SupportID != input.SupportID ||
+				existing.Decision != input.Decision {
+				return ErrV2SemanticIdempotencyConflict
+			}
+			current, err := loadV2RelationshipRecord(ctx, tx, input.TeamID, input.RelationshipID)
+			if err != nil {
+				return err
+			}
+			result = &V2RelationshipSupportDecisionResult{
+				TeamID:            input.TeamID,
+				SupportDecisionID: existing.SupportDecisionID,
+				SupportID:         existing.SupportID,
+				RelationshipID:    existing.RelationshipID,
+				Decision:          existing.Decision,
+				IdempotencyKey:    input.IdempotencyKey,
+				FromTier:          current.Tier,
+				FromStatus:        current.Status,
+				ToTier:            current.Tier,
+				ToStatus:          current.Status,
+				SupportCount:      current.SupportCount,
+				SourceGroupCount:  current.SourceGroupCount,
+			}
+			return nil
+		}
+		if err := lockV2OwnedRelationshipSupport(ctx, tx, input); err != nil {
+			return err
+		}
+		decisionID, err := insertV2SupportDecisionEvent(ctx, tx, v2SupportDecisionInput{
+			TeamID:         input.TeamID,
+			OwnerProfileID: input.OwnerProfileID,
+			SupportID:      input.SupportID,
+			RelationshipID: input.RelationshipID,
+			Decision:       input.Decision,
+			Reason:         input.Reason,
+			IdempotencyKey: input.IdempotencyKey,
+			Metadata:       input.Metadata,
+		})
+		if err != nil {
+			return err
+		}
+		recomputed, err := recomputeV2RelationshipFromEffectiveSupport(
+			ctx,
+			tx,
+			input.TeamID,
+			input.RelationshipID,
+			decisionID,
+			"support_"+input.Decision,
+		)
+		if err != nil {
+			return err
+		}
+		result = &V2RelationshipSupportDecisionResult{
+			TeamID:            input.TeamID,
+			SupportDecisionID: decisionID,
+			SupportID:         input.SupportID,
+			RelationshipID:    input.RelationshipID,
+			Decision:          input.Decision,
+			IdempotencyKey:    input.IdempotencyKey,
+			FromTier:          recomputed.Before.Tier,
+			FromStatus:        recomputed.Before.Status,
+			ToTier:            recomputed.After.Tier,
+			ToStatus:          recomputed.After.Status,
+			SupportCount:      recomputed.After.SupportCount,
+			SourceGroupCount:  recomputed.After.SourceGroupCount,
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("v2 semantic: apply relationship support decision: %w", err)
+	}
+	return result, nil
+}
+
+func normalizeV2ApplyRelationshipSupportDecisionInput(
+	input V2ApplyRelationshipSupportDecisionInput,
+) V2ApplyRelationshipSupportDecisionInput {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.RelationshipID = strings.TrimSpace(input.RelationshipID)
+	input.SupportID = strings.TrimSpace(input.SupportID)
+	input.Decision = strings.TrimSpace(input.Decision)
+	input.Reason = strings.TrimSpace(input.Reason)
+	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
+	return input
+}
+
+func validateV2ApplyRelationshipSupportDecisionInput(input V2ApplyRelationshipSupportDecisionInput) error {
+	if _, err := uuid.Parse(input.TeamID); err != nil {
+		return fmt.Errorf("team_id is required: %w", err)
+	}
+	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
+		return fmt.Errorf("owner_profile_id is required: %w", err)
+	}
+	if _, err := uuid.Parse(input.RelationshipID); err != nil {
+		return fmt.Errorf("relationship_id is required: %w", err)
+	}
+	if _, err := uuid.Parse(input.SupportID); err != nil {
+		return fmt.Errorf("support_id is required: %w", err)
+	}
+	switch domain.V2SupportDecision(input.Decision) {
+	case domain.V2SupportRevoke, domain.V2SupportReinstate:
+	default:
+		return fmt.Errorf("unsupported support decision %q", input.Decision)
+	}
+	if input.Reason == "" {
+		return errors.New("reason is required")
+	}
+	if input.IdempotencyKey == "" {
+		return errors.New("idempotency_key is required")
 	}
 	return nil
+}
+
+func lockV2OwnedRelationshipSupport(ctx context.Context, tx *gorm.DB, input V2ApplyRelationshipSupportDecisionInput) error {
+	rows, err := tx.WithContext(ctx).Raw(`
+		SELECT support_id::text
+		FROM relationship_evidence_supports
+		WHERE team_id = ?::uuid
+		  AND owner_profile_id = ?::uuid
+		  AND relationship_id = ?::uuid
+		  AND support_id = ?::uuid
+	`, input.TeamID, input.OwnerProfileID, input.RelationshipID, input.SupportID).Rows()
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		return ErrV2SemanticOwnerMismatch
+	}
+	var supportID string
+	if err := rows.Scan(&supportID); err != nil {
+		return err
+	}
+	return rows.Err()
+}
+
+func loadV2SupportDecisionByIdempotency(
+	ctx context.Context,
+	tx *gorm.DB,
+	input V2ApplyRelationshipSupportDecisionInput,
+) (*V2RelationshipSupportDecisionResult, error) {
+	if input.IdempotencyKey == "" {
+		return nil, nil
+	}
+	rows, err := tx.WithContext(ctx).Raw(`
+		SELECT team_id::text, support_decision_id::text, support_id::text,
+		       relationship_id::text, decision, idempotency_key
+		FROM relationship_support_decision_events
+		WHERE team_id = ?::uuid
+		  AND owner_profile_id = ?::uuid
+		  AND idempotency_key = ?
+		LIMIT 1
+	`, input.TeamID, input.OwnerProfileID, input.IdempotencyKey).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	result := &V2RelationshipSupportDecisionResult{}
+	if err := rows.Scan(
+		&result.TeamID,
+		&result.SupportDecisionID,
+		&result.SupportID,
+		&result.RelationshipID,
+		&result.Decision,
+		&result.IdempotencyKey,
+	); err != nil {
+		return nil, err
+	}
+	return result, rows.Err()
+}
+
+func loadV2RelationshipTransitionByIdempotency(
+	ctx context.Context,
+	tx *gorm.DB,
+	input V2RetractRelationshipInput,
+) (*V2RelationshipTransitionResult, error) {
+	if input.IdempotencyKey == "" {
+		return nil, nil
+	}
+	rows, err := tx.WithContext(ctx).Raw(`
+		SELECT team_id::text, transition_id::text, relationship_id::text,
+		       COALESCE(from_tier, ''), COALESCE(from_status, ''),
+		       to_tier, to_status, idempotency_key
+		FROM relationship_transition_events
+		WHERE team_id = ?::uuid
+		  AND owner_profile_id = ?::uuid
+		  AND idempotency_key = ?
+		LIMIT 1
+	`, input.TeamID, input.OwnerProfileID, input.IdempotencyKey).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	result := &V2RelationshipTransitionResult{}
+	if err := rows.Scan(
+		&result.TeamID,
+		&result.TransitionID,
+		&result.RelationshipID,
+		&result.FromTier,
+		&result.FromStatus,
+		&result.ToTier,
+		&result.ToStatus,
+		&result.IdempotencyKey,
+	); err != nil {
+		return nil, err
+	}
+	return result, rows.Err()
 }
 
 func (r *V2SemanticRepositoryImpl) AppendCrossReference(ctx context.Context, input V2AppendCrossReferenceInput) (string, error) {

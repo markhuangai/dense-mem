@@ -54,6 +54,38 @@ func v2RecallRelationshipSchema() map[string]any {
 	)
 }
 
+func v2RecallConflictSchema() map[string]any {
+	return v2ClosedObject(
+		[]string{"conflict_id", "version", "kind", "status", "question", "positions", "positions_truncated"},
+		map[string]any{
+			"conflict_id":           schemaString("Conflict case ID.", 128),
+			"version":               map[string]any{"type": "integer", "minimum": 1},
+			"kind":                  schemaString("Conflict kind.", 128),
+			"status":                schemaEnum([]string{"open", "overdue", "resolved"}),
+			"question":              schemaString("Bounded deterministic conflict question.", 512),
+			"review_due_at":         v2NullableDateTime("Conflict review deadline."),
+			"effective_at":          v2NullableDateTime("Resolved effective time."),
+			"effective_time_basis":  v2NullableString("Resolved effective time basis.", 64),
+			"preferred_position_id": v2NullableString("Preferred position when resolved.", 128),
+			"positions":             v2Array(v2RecallConflictPositionSchema(), 0, 10),
+			"positions_truncated":   map[string]any{"type": "boolean"},
+		},
+	)
+}
+
+func v2RecallConflictPositionSchema() map[string]any {
+	return v2ClosedObject(
+		[]string{"position_id", "disposition", "relationship_ids", "owner_profile_ids", "result_evidence_ids"},
+		map[string]any{
+			"position_id":         schemaString("Conflict position ID.", 128),
+			"disposition":         schemaEnum([]string{"candidate", "preferred", "suppressed_current"}),
+			"relationship_ids":    v2StringArraySchema("Relationship ID in this position.", 20, 128),
+			"owner_profile_ids":   v2StringArraySchema("Owner profile ID in this position.", 20, 128),
+			"result_evidence_ids": v2StringArraySchema("Returned evidence ID for this position.", 50, 128),
+		},
+	)
+}
+
 func v2HypothesisSummarySchema() map[string]any {
 	return v2ClosedObject(
 		[]string{

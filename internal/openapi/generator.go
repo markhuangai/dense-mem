@@ -78,6 +78,11 @@ func (g *generator) Generate(variant SpecVariant) (map[string]any, error) {
 		if !routeMatches(route, variant) {
 			continue
 		}
+		if route.ToolName != "" {
+			if _, ok := g.reg.Get(route.ToolName); !ok {
+				continue
+			}
+		}
 		op := g.buildOperation(route, schemas)
 		pathItem, ok := paths[route.Path].(map[string]any)
 		if !ok {

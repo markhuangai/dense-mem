@@ -20,6 +20,7 @@ const (
 var (
 	ErrV2SearchStaleVersion     = errors.New("v2 search stale source or document version")
 	ErrV2SearchContractMismatch = errors.New("v2 search contract mismatch")
+	ErrV2EmbeddingLeaseLost     = errors.New("v2 embedding lease lost")
 )
 
 type V2SearchRepositoryImpl struct {
@@ -151,6 +152,34 @@ func (r *V2SearchRepositoryImpl) CheckSearchReadiness(ctx context.Context) (*V2S
 			})
 		}
 	}
+	stats, err := r.GetEmbeddingQueueStats(ctx, V2EmbeddingQueueStatsInput{
+		EmbeddingContractID: contract.EmbeddingContractID,
+		EmbeddingDimensions: contract.EmbeddingDimensions,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if stats.CutoverBlocking {
+		readiness.Ready = false
+		if stats.Queued+stats.Processing > 0 {
+			readiness.Reasons = append(readiness.Reasons, V2SearchReadinessReason{
+				Code:    "embedding_backlog_pending",
+				Message: fmt.Sprintf("%d embedding jobs are queued or processing for active search contract", stats.Queued+stats.Processing),
+			})
+		}
+		if stats.ExpiredLeases > 0 {
+			readiness.Reasons = append(readiness.Reasons, V2SearchReadinessReason{
+				Code:    "expired_embedding_leases",
+				Message: fmt.Sprintf("%d embedding jobs have expired leases for active search contract", stats.ExpiredLeases),
+			})
+		}
+		if stats.TerminalFailures > 0 {
+			readiness.Reasons = append(readiness.Reasons, V2SearchReadinessReason{
+				Code:    "terminal_embedding_failures",
+				Message: fmt.Sprintf("%d terminal embedding jobs exist for active search contract", stats.TerminalFailures),
+			})
+		}
+	}
 	return readiness, nil
 }
 
@@ -266,171 +295,6 @@ func (r *V2SearchRepositoryImpl) UpsertSearchDocument(
 	return result, nil
 }
 
-func (r *V2SearchRepositoryImpl) ClaimEmbeddingJobs(
-	ctx context.Context,
-	input V2ClaimEmbeddingJobsInput,
-) ([]V2EmbeddingJob, error) {
-	input = normalizeV2ClaimEmbeddingJobsInput(input)
-	if err := validateV2ClaimEmbeddingJobsInput(input); err != nil {
-		return nil, err
-	}
-	jobs := []V2EmbeddingJob{}
-	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		if err := failExpiredExhaustedV2EmbeddingJobs(ctx, tx, input.TeamID); err != nil {
-			return err
-		}
-		rows, err := tx.WithContext(ctx).Raw(`
-			WITH claimed AS (
-				SELECT team_id, embedding_job_id
-				FROM embedding_jobs
-				WHERE team_id = ?::uuid
-				  AND attempts < max_attempts
-				  AND (
-					(status IN ('queued', 'failed') AND available_at <= now())
-					OR (status = 'processing' AND lease_until IS NOT NULL AND lease_until < now())
-				  )
-				ORDER BY
-					CASE WHEN status IN ('queued', 'failed') THEN 0 ELSE 1 END,
-					available_at ASC,
-					created_at ASC,
-					embedding_job_id ASC
-				LIMIT ?
-				FOR UPDATE SKIP LOCKED
-			),
-			updated AS (
-				UPDATE embedding_jobs AS job
-				SET status = 'processing',
-				    attempts = attempts + 1,
-				    worker_id = ?,
-				    lease_until = now() + (? * interval '1 second'),
-				    updated_at = now(),
-				    error = ''
-				FROM claimed
-				WHERE job.team_id = claimed.team_id
-				  AND job.embedding_job_id = claimed.embedding_job_id
-				RETURNING job.team_id::text, job.embedding_job_id::text,
-				          job.search_document_id::text, job.owner_profile_id::text,
-				          job.source_kind, job.source_id::text, job.source_version,
-				          job.document_version, job.embedding_contract_id::text,
-				          job.embedding_dimensions, job.status, job.attempts,
-				          job.lease_until
-			)
-			SELECT updated.*, document.document_text
-			FROM updated
-			JOIN search_documents AS document
-			  ON document.team_id = updated.team_id::uuid
-			 AND document.search_document_id = updated.search_document_id::uuid
-			ORDER BY updated.lease_until ASC, updated.embedding_job_id ASC
-		`, input.TeamID, input.Limit, input.WorkerID, int(input.Lease.Seconds())).Rows()
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var job V2EmbeddingJob
-			if err := rows.Scan(
-				&job.TeamID,
-				&job.EmbeddingJobID,
-				&job.SearchDocumentID,
-				&job.OwnerProfileID,
-				&job.SourceKind,
-				&job.SourceID,
-				&job.SourceVersion,
-				&job.DocumentVersion,
-				&job.EmbeddingContractID,
-				&job.EmbeddingDimensions,
-				&job.Status,
-				&job.Attempts,
-				&job.LeaseUntil,
-				&job.DocumentText,
-			); err != nil {
-				return err
-			}
-			jobs = append(jobs, job)
-		}
-		return rows.Err()
-	})
-	if err != nil {
-		return nil, fmt.Errorf("v2 search: claim embedding jobs: %w", err)
-	}
-	return jobs, nil
-}
-
-func (r *V2SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input V2CompleteEmbeddingJobInput) error {
-	input = normalizeV2CompleteEmbeddingJobInput(input)
-	if err := validateV2CompleteEmbeddingJobInput(input); err != nil {
-		return err
-	}
-	vectorLiteral, err := v2VectorLiteral(input.Embedding)
-	if err != nil {
-		return err
-	}
-	var staleCompletion bool
-	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		var dims int
-		if err := tx.WithContext(ctx).Raw(`
-			SELECT embedding_dimensions
-			FROM embedding_jobs
-			WHERE team_id = ?::uuid
-			  AND embedding_job_id = ?::uuid
-			  AND worker_id = ?
-			  AND status = 'processing'
-			  AND lease_until IS NOT NULL
-			  AND lease_until > now()
-		`, input.TeamID, input.EmbeddingJobID, input.WorkerID).Scan(&dims).Error; err != nil {
-			return err
-		}
-		if dims == 0 {
-			return fmt.Errorf("%w: processing job not found", ErrV2SearchStaleVersion)
-		}
-		if dims != len(input.Embedding) {
-			return fmt.Errorf("%w: job dimensions %d, vector dimensions %d", ErrV2SearchContractMismatch, dims, len(input.Embedding))
-		}
-		result := tx.WithContext(ctx).Exec(`
-			UPDATE search_documents AS document
-			SET embedding = ?::vector,
-			    search_state = 'current',
-			    embedding_updated_at = now(),
-			    embedding_error = '',
-			    updated_at = now()
-			FROM embedding_jobs AS job
-			WHERE job.team_id = ?::uuid
-			  AND job.embedding_job_id = ?::uuid
-			  AND job.worker_id = ?
-			  AND job.status = 'processing'
-			  AND job.lease_until IS NOT NULL
-			  AND job.lease_until > now()
-			  AND document.team_id = job.team_id
-			  AND document.search_document_id = job.search_document_id
-			  AND document.source_version = job.source_version
-			  AND document.document_version = job.document_version
-			  AND document.embedding_contract_id = job.embedding_contract_id
-			  AND document.embedding_dimensions = job.embedding_dimensions
-		`, vectorLiteral, input.TeamID, input.EmbeddingJobID, input.WorkerID)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected != 1 {
-			if err := markV2EmbeddingJobTerminal(ctx, tx, input, string(domain.V2EmbeddingJobStale), "source or document version changed before embedding completion"); err != nil {
-				return err
-			}
-			staleCompletion = true
-			return nil
-		}
-		if err := markV2EmbeddingJobTerminal(ctx, tx, input, string(domain.V2EmbeddingJobCompleted), ""); err != nil {
-			return err
-		}
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("v2 search: complete embedding job: %w", err)
-	}
-	if staleCompletion {
-		return fmt.Errorf("v2 search: complete embedding job: %w", ErrV2SearchStaleVersion)
-	}
-	return nil
-}
-
 func (r *V2SearchRepositoryImpl) SearchFullText(ctx context.Context, input V2FullTextSearchInput) ([]V2SearchHit, error) {
 	input = normalizeV2FullTextSearchInput(input)
 	if err := validateV2FullTextSearchInput(input); err != nil {
@@ -448,6 +312,7 @@ func (r *V2SearchRepositoryImpl) SearchFullText(ctx context.Context, input V2Ful
 		rows, err := tx.WithContext(ctx).Raw(`
 			SELECT team_id::text, search_document_id::text, source_kind, source_id::text,
 			       source_version, document_version, embedding_contract_id::text,
+			       search_state,
 			       0::double precision AS distance,
 			       ts_rank_cd(search_tsv, plainto_tsquery('simple', ?))::double precision AS text_rank
 			FROM search_documents
@@ -534,6 +399,7 @@ func (r *V2SearchRepositoryImpl) SearchExactVector(ctx context.Context, input V2
 		rows, err := tx.WithContext(ctx).Raw(`
 				SELECT team_id::text, search_document_id::text, source_kind, source_id::text,
 				       source_version, document_version, embedding_contract_id::text,
+				       search_state,
 				       (embedding <=> ?::vector)::double precision AS distance,
 				       0::double precision AS text_rank
 				FROM search_documents
@@ -621,63 +487,6 @@ func enqueueV2EmbeddingJob(ctx context.Context, tx *gorm.DB, document V2SearchDo
 	return jobID, nil
 }
 
-func failExpiredExhaustedV2EmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string) error {
-	return tx.WithContext(ctx).Exec(`
-		WITH exhausted AS (
-			UPDATE embedding_jobs AS job
-			SET status = 'failed',
-			    error = ?,
-			    completed_at = now(),
-			    updated_at = now(),
-			    lease_until = NULL
-			WHERE job.team_id = ?::uuid
-			  AND job.status = 'processing'
-			  AND job.lease_until IS NOT NULL
-			  AND job.lease_until < now()
-			  AND job.attempts >= job.max_attempts
-			RETURNING job.team_id, job.search_document_id, job.source_version,
-			          job.document_version, job.embedding_contract_id,
-			          job.embedding_dimensions
-		)
-		UPDATE search_documents AS document
-		SET search_state = 'failed',
-		    embedding_error = ?,
-		    updated_at = now()
-		FROM exhausted
-		WHERE document.team_id = exhausted.team_id
-		  AND document.search_document_id = exhausted.search_document_id
-		  AND document.source_version = exhausted.source_version
-		  AND document.document_version = exhausted.document_version
-		  AND document.embedding_contract_id = exhausted.embedding_contract_id
-		  AND document.embedding_dimensions = exhausted.embedding_dimensions
-		  AND document.search_state = 'pending'
-	`, v2EmbeddingJobAttemptsExhaustedMessage, teamID, v2EmbeddingJobAttemptsExhaustedMessage).Error
-}
-
-func markV2EmbeddingJobTerminal(ctx context.Context, tx *gorm.DB, input V2CompleteEmbeddingJobInput, status string, message string) error {
-	result := tx.WithContext(ctx).Exec(`
-		UPDATE embedding_jobs
-		SET status = ?,
-		    error = ?,
-		    completed_at = now(),
-		    updated_at = now(),
-		    lease_until = NULL
-		WHERE team_id = ?::uuid
-		  AND embedding_job_id = ?::uuid
-		  AND worker_id = ?
-		  AND status = 'processing'
-		  AND lease_until IS NOT NULL
-		  AND lease_until > now()
-	`, status, message, input.TeamID, input.EmbeddingJobID, input.WorkerID)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
-		return fmt.Errorf("%w: processing job not found", ErrV2SearchStaleVersion)
-	}
-	return nil
-}
-
 type v2SearchHitScanner interface {
 	Scan(dest ...any) error
 }
@@ -692,6 +501,7 @@ func scanV2SearchHit(scanner v2SearchHitScanner) (V2SearchHit, error) {
 		&hit.SourceVersion,
 		&hit.DocumentVersion,
 		&hit.EmbeddingContractID,
+		&hit.SearchState,
 		&hit.Distance,
 		&hit.TextRank,
 	)
@@ -716,6 +526,16 @@ func (r *V2SearchRepositoryImpl) withTeamTx(ctx context.Context, teamID string, 
 		return errors.New("v2 search: rls helper is required")
 	}
 	return r.rls.WithTeamTx(ctx, r.db, teamID, fn)
+}
+
+func (r *V2SearchRepositoryImpl) withSystemTx(ctx context.Context, fn func(tx *gorm.DB) error) error {
+	if _, err := r.database(); err != nil {
+		return err
+	}
+	if r.rls == nil {
+		return errors.New("v2 search: rls helper is required")
+	}
+	return r.rls.WithSystemTx(ctx, r.db, fn)
 }
 
 func (r *V2SearchRepositoryImpl) database() (*gorm.DB, error) {

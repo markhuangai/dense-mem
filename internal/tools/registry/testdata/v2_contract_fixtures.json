@@ -67,6 +67,8 @@
         {
           "item_id": "item-1",
           "evidence_id": "ev-1",
+          "version": 1,
+          "evidence_index": 0,
           "category": "evidence_processed",
           "search_state": "current",
           "relationship_outcomes": [
@@ -96,8 +98,10 @@
     "input": {
       "ingest_id": "ing-1",
       "placement_item_id": "item-1",
+      "placement_item_version": 1,
       "action": "select_entity",
-      "decision": {"mention_ref": "person-1", "entity_id": "ent-1"},
+      "entity_ref": "person-1",
+      "candidate_entity_id": "ent-1",
       "idempotency_key": "resolve-1"
     },
     "output": {
@@ -150,6 +154,7 @@
     "output": {
       "recall_id": "rec-1",
       "results": [{"evidence_id": "ev-2", "context": "PostgreSQL is the durable authority."}],
+      "conflicts": [],
       "discovery_paths": [
         {
           "relationships": [
@@ -279,15 +284,6 @@
     "valid": true,
     "input": {"hypothesis_id": "hyp-1", "decision": "reject", "reason": "No longer applicable."},
     "output": {"hypothesis_id": "hyp-1", "status": "rejected"}
-  },
-  {
-    "name": "valid community list",
-    "tool": "list_communities",
-    "contract_version": "dense-mem.v2.1",
-    "scopes": ["read"],
-    "valid": true,
-    "input": {"limit": 20},
-    "output": {"communities": [], "next_cursor": "cursor-2"}
   },
   {
     "name": "valid memory pack candidate search",

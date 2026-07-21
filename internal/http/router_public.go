@@ -15,10 +15,8 @@ func registerPublicRoutes(e *echo.Echo, healthConfig HealthConfig) {
 	// when running in in-memory mode.
 	e.GET("/health", handleHealth(healthConfig))
 
-	// Ready endpoint - readiness check with dependency validation
-	// Returns 200 {"status":"ready","dependencies":{...}} if all checks pass
-	// Returns 503 {"status":"degraded","dependencies":{...}} if any check fails
-	// No auth/profile/rate-limit middleware applied
+	// Ready endpoint - readiness check with dependency validation.
+	// Optional check failures are reported as degraded without blocking readiness.
 	e.GET("/ready", handleReady(healthConfig.Checks))
 }
 
@@ -31,7 +29,11 @@ func handleHealth(healthConfig HealthConfig) echo.HandlerFunc {
 		checks := make(map[string]string)
 		for _, check := range healthConfig.Checks {
 			if err := check.Check(ctx); err != nil {
-				checks[check.Name] = "failed"
+				if check.Optional {
+					checks[check.Name] = "degraded"
+				} else {
+					checks[check.Name] = "failed"
+				}
 			} else {
 				checks[check.Name] = "ok"
 			}
@@ -63,8 +65,12 @@ func handleReady(checks []HealthCheck) echo.HandlerFunc {
 		// Execute all health checks
 		for _, check := range checks {
 			if err := check.Check(ctx); err != nil {
-				dependencies[check.Name] = "failed"
-				allPass = false
+				if check.Optional {
+					dependencies[check.Name] = "degraded"
+				} else {
+					dependencies[check.Name] = "failed"
+					allPass = false
+				}
 			} else {
 				dependencies[check.Name] = "ok"
 			}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -22,6 +23,8 @@ type RecallFeedbackEventRepository interface {
 	PruneBefore(ctx context.Context, cutoff time.Time) error
 }
 
+var ErrRecallFeedbackEventNotFound = errors.New("recall feedback event not found")
+
 type RecallFeedbackEventRepositoryImpl struct {
 	db  *gorm.DB
 	rls postgres.RLSHelper
@@ -35,7 +38,7 @@ func NewRecallFeedbackEventRepository(db *gorm.DB, rls postgres.RLSHelper) *Reca
 
 func (r *RecallFeedbackEventRepositoryImpl) RecordSnapshot(ctx context.Context, event domain.RecallFeedbackEvent) error {
 	event = normalizeRecallFeedbackEvent(event)
-	toolArgs, resultRefs, err := marshalRecallFeedbackPayload(event)
+	toolArgs, resultRefs, degradation, snapshotMetadata, err := marshalRecallFeedbackPayload(event)
 	if err != nil {
 		return err
 	}
@@ -44,11 +47,15 @@ func (r *RecallFeedbackEventRepositoryImpl) RecordSnapshot(ctx context.Context, 
 			INSERT INTO recall_feedback_events (
 				recall_id, created_at, updated_at, team_id, profile_id, key_id,
 				auth_method, tool_name, query, tool_args, result_refs,
-				result_count, snapshot_state
+				result_count, snapshot_state, contract_version, ranking_profile_version,
+				embedding_contract_version, search_index_profile_version, search_state,
+				degradation, snapshot_metadata
 			) VALUES (
 				$1, $2, $3, $4, $5, $6,
 				$7, $8, $9, $10::jsonb, $11::jsonb,
-				$12, $13
+				$12, $13, $14, $15,
+				$16, $17, $18,
+				$19::jsonb, $20::jsonb
 			)
 			ON CONFLICT (recall_id) DO UPDATE SET
 				updated_at = EXCLUDED.updated_at,
@@ -64,7 +71,14 @@ func (r *RecallFeedbackEventRepositoryImpl) RecordSnapshot(ctx context.Context, 
 				tool_args = EXCLUDED.tool_args,
 				result_refs = EXCLUDED.result_refs,
 				result_count = EXCLUDED.result_count,
-				snapshot_state = 'captured'
+				snapshot_state = 'captured',
+				contract_version = EXCLUDED.contract_version,
+				ranking_profile_version = EXCLUDED.ranking_profile_version,
+				embedding_contract_version = EXCLUDED.embedding_contract_version,
+				search_index_profile_version = EXCLUDED.search_index_profile_version,
+				search_state = EXCLUDED.search_state,
+				degradation = EXCLUDED.degradation,
+				snapshot_metadata = EXCLUDED.snapshot_metadata
 		`,
 			event.RecallID,
 			event.CreatedAt.UTC(),
@@ -79,6 +93,13 @@ func (r *RecallFeedbackEventRepositoryImpl) RecordSnapshot(ctx context.Context, 
 			string(resultRefs),
 			event.ResultCount,
 			event.SnapshotState,
+			event.ContractVersion,
+			event.RankingProfileVersion,
+			event.EmbeddingContractVersion,
+			event.SearchIndexProfileVersion,
+			event.SearchState,
+			string(degradation),
+			string(snapshotMetadata),
 		).Error
 	})
 	if err != nil {
@@ -89,7 +110,7 @@ func (r *RecallFeedbackEventRepositoryImpl) RecordSnapshot(ctx context.Context, 
 
 func (r *RecallFeedbackEventRepositoryImpl) RecordFeedback(ctx context.Context, event domain.RecallFeedbackEvent) error {
 	event = normalizeRecallFeedbackEvent(event)
-	toolArgs, resultRefs, err := marshalRecallFeedbackPayload(event)
+	_, _, _, _, err := marshalRecallFeedbackPayload(event)
 	if err != nil {
 		return err
 	}
@@ -102,53 +123,30 @@ func (r *RecallFeedbackEventRepositoryImpl) RecordFeedback(ctx context.Context, 
 		return err
 	}
 	err = r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		return tx.Exec(`
-			INSERT INTO recall_feedback_events (
-				recall_id, created_at, updated_at, feedback_at, team_id, profile_id, key_id,
-				auth_method, tool_name, query, tool_args, result_refs,
-				result_count, snapshot_state, used, answer_supported,
-				quality, missing_context, irrelevant, feedback_comment,
-				irrelevant_result_refs, dream_feedback
-			) VALUES (
-				$1, $2, $3, $4, $5, $6, $7,
-				$8, $9, $10, $11::jsonb, $12::jsonb,
-				$13, $14, $15, $16,
-				$17, $18, $19, $20,
-				$21::jsonb, $22::jsonb
-			)
-			ON CONFLICT (recall_id) DO UPDATE SET
-				updated_at = EXCLUDED.updated_at,
-				feedback_at = EXCLUDED.feedback_at,
-				team_id = COALESCE(recall_feedback_events.team_id, EXCLUDED.team_id),
-				profile_id = COALESCE(recall_feedback_events.profile_id, EXCLUDED.profile_id),
-				key_id = COALESCE(recall_feedback_events.key_id, EXCLUDED.key_id),
+		result := tx.Exec(`
+			UPDATE recall_feedback_events SET
+				updated_at = $2,
+				feedback_at = $3,
+				key_id = COALESCE(recall_feedback_events.key_id, $4),
 				auth_method = CASE
-					WHEN recall_feedback_events.auth_method = '' THEN EXCLUDED.auth_method
+					WHEN recall_feedback_events.auth_method = '' THEN $5
 					ELSE recall_feedback_events.auth_method
 				END,
-				used = EXCLUDED.used,
-				answer_supported = EXCLUDED.answer_supported,
-				quality = EXCLUDED.quality,
-				missing_context = EXCLUDED.missing_context,
-				irrelevant = EXCLUDED.irrelevant,
-				feedback_comment = EXCLUDED.feedback_comment,
-				irrelevant_result_refs = EXCLUDED.irrelevant_result_refs,
-				dream_feedback = EXCLUDED.dream_feedback
+				used = $6,
+				answer_supported = $7,
+				quality = $8,
+				missing_context = $9,
+				irrelevant = $10,
+				feedback_comment = $11,
+				irrelevant_result_refs = $12::jsonb,
+				dream_feedback = $13::jsonb
+			WHERE recall_id = $1
 		`,
 			event.RecallID,
-			event.CreatedAt.UTC(),
 			event.UpdatedAt.UTC(),
 			timePtrValue(event.FeedbackAt),
-			uuidPtrValue(event.TeamID),
-			uuidPtrValue(event.ProfileID),
 			uuidPtrValue(event.KeyID),
 			event.AuthMethod,
-			event.ToolName,
-			event.Query,
-			string(toolArgs),
-			string(resultRefs),
-			event.ResultCount,
-			event.SnapshotState,
 			boolPtrValue(event.Used),
 			boolPtrValue(event.AnswerSupported),
 			event.Quality,
@@ -157,7 +155,14 @@ func (r *RecallFeedbackEventRepositoryImpl) RecordFeedback(ctx context.Context, 
 			event.FeedbackComment,
 			string(irrelevantRefs),
 			string(dreamFeedback),
-		).Error
+		)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return ErrRecallFeedbackEventNotFound
+		}
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("failed to record recall feedback: %w", err)
@@ -287,6 +292,12 @@ func normalizeRecallFeedbackEvent(event domain.RecallFeedbackEvent) domain.Recal
 	if event.DreamFeedback == nil {
 		event.DreamFeedback = []domain.RecallFeedbackDreamFeedback{}
 	}
+	if event.Degradation == nil {
+		event.Degradation = map[string]any{}
+	}
+	if event.SnapshotMetadata == nil {
+		event.SnapshotMetadata = map[string]any{}
+	}
 	event.ResultCount = len(event.ResultRefs)
 	now := time.Now().UTC()
 	if event.CreatedAt.IsZero() {
@@ -351,7 +362,9 @@ func recallFeedbackEventColumns() string {
 		recall_id, created_at, updated_at, feedback_at,
 		team_id::text, profile_id::text, key_id::text,
 		auth_method, tool_name, query, tool_args, result_refs,
-		result_count, snapshot_state, used, answer_supported,
+		result_count, snapshot_state, contract_version, ranking_profile_version,
+		embedding_contract_version, search_index_profile_version, search_state,
+		degradation, snapshot_metadata, used, answer_supported,
 		quality, missing_context, irrelevant, feedback_comment,
 		irrelevant_result_refs, dream_feedback
 	`
@@ -359,19 +372,21 @@ func recallFeedbackEventColumns() string {
 
 func scanRecallFeedbackEvent(rows *sql.Rows) (domain.RecallFeedbackEvent, error) {
 	var (
-		event              domain.RecallFeedbackEvent
-		feedbackAtRaw      sql.NullTime
-		teamIDRaw          sql.NullString
-		profileIDRaw       sql.NullString
-		keyIDRaw           sql.NullString
-		toolArgsRaw        []byte
-		resultRefsRaw      []byte
-		usedRaw            sql.NullBool
-		answerSupportedRaw sql.NullBool
-		missingContextRaw  sql.NullBool
-		irrelevantRaw      sql.NullBool
-		irrelevantRefsRaw  []byte
-		dreamFeedbackRaw   []byte
+		event               domain.RecallFeedbackEvent
+		feedbackAtRaw       sql.NullTime
+		teamIDRaw           sql.NullString
+		profileIDRaw        sql.NullString
+		keyIDRaw            sql.NullString
+		toolArgsRaw         []byte
+		resultRefsRaw       []byte
+		degradationRaw      []byte
+		snapshotMetadataRaw []byte
+		usedRaw             sql.NullBool
+		answerSupportedRaw  sql.NullBool
+		missingContextRaw   sql.NullBool
+		irrelevantRaw       sql.NullBool
+		irrelevantRefsRaw   []byte
+		dreamFeedbackRaw    []byte
 	)
 	if err := rows.Scan(
 		&event.RecallID,
@@ -388,6 +403,13 @@ func scanRecallFeedbackEvent(rows *sql.Rows) (domain.RecallFeedbackEvent, error)
 		&resultRefsRaw,
 		&event.ResultCount,
 		&event.SnapshotState,
+		&event.ContractVersion,
+		&event.RankingProfileVersion,
+		&event.EmbeddingContractVersion,
+		&event.SearchIndexProfileVersion,
+		&event.SearchState,
+		&degradationRaw,
+		&snapshotMetadataRaw,
 		&usedRaw,
 		&answerSupportedRaw,
 		&event.Quality,
@@ -421,6 +443,18 @@ func scanRecallFeedbackEvent(rows *sql.Rows) (domain.RecallFeedbackEvent, error)
 			return domain.RecallFeedbackEvent{}, fmt.Errorf("invalid recall_feedback_events.result_refs JSON: %w", err)
 		}
 	}
+	event.Degradation = map[string]any{}
+	if len(degradationRaw) > 0 {
+		if err := json.Unmarshal(degradationRaw, &event.Degradation); err != nil {
+			return domain.RecallFeedbackEvent{}, fmt.Errorf("invalid recall_feedback_events.degradation JSON: %w", err)
+		}
+	}
+	event.SnapshotMetadata = map[string]any{}
+	if len(snapshotMetadataRaw) > 0 {
+		if err := json.Unmarshal(snapshotMetadataRaw, &event.SnapshotMetadata); err != nil {
+			return domain.RecallFeedbackEvent{}, fmt.Errorf("invalid recall_feedback_events.snapshot_metadata JSON: %w", err)
+		}
+	}
 	event.IrrelevantRefs = []domain.RecallFeedbackJudgedResultRef{}
 	if len(irrelevantRefsRaw) > 0 {
 		if err := json.Unmarshal(irrelevantRefsRaw, &event.IrrelevantRefs); err != nil {
@@ -436,10 +470,10 @@ func scanRecallFeedbackEvent(rows *sql.Rows) (domain.RecallFeedbackEvent, error)
 	return event, nil
 }
 
-func marshalRecallFeedbackPayload(event domain.RecallFeedbackEvent) ([]byte, []byte, error) {
+func marshalRecallFeedbackPayload(event domain.RecallFeedbackEvent) ([]byte, []byte, []byte, []byte, error) {
 	toolArgs, err := json.Marshal(nonNilMap(event.ToolArgs))
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to encode recall feedback tool args: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("failed to encode recall feedback tool args: %w", err)
 	}
 	refs := event.ResultRefs
 	if refs == nil {
@@ -447,9 +481,17 @@ func marshalRecallFeedbackPayload(event domain.RecallFeedbackEvent) ([]byte, []b
 	}
 	resultRefs, err := json.Marshal(refs)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to encode recall feedback result refs: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("failed to encode recall feedback result refs: %w", err)
 	}
-	return toolArgs, resultRefs, nil
+	degradation, err := json.Marshal(nonNilMap(event.Degradation))
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("failed to encode recall feedback degradation: %w", err)
+	}
+	snapshotMetadata, err := json.Marshal(nonNilMap(event.SnapshotMetadata))
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("failed to encode recall feedback snapshot metadata: %w", err)
+	}
+	return toolArgs, resultRefs, degradation, snapshotMetadata, nil
 }
 
 func marshalRecallFeedbackJudgedRefs(refs []domain.RecallFeedbackJudgedResultRef) ([]byte, error) {

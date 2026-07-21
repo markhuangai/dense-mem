@@ -32,6 +32,7 @@ var (
 
 type V2RememberService interface {
 	RememberV2(ctx context.Context, req V2RememberRequest) (*V2RememberResult, error)
+	GetMemoryPlacementV2(ctx context.Context, req V2GetMemoryPlacementRequest) (*V2PlacementRunResult, error)
 }
 
 type V2RememberDependencies struct {
@@ -54,10 +55,16 @@ type V2RememberRequest struct {
 	IdempotencyKey    string                    `json:"idempotency_key,omitempty"`
 }
 
+type V2GetMemoryPlacementRequest struct {
+	ContractVersion string `json:"contract_version"`
+	IngestID        string `json:"ingest_id"`
+}
+
 type V2RememberEvidenceInput struct {
 	Content                string         `json:"content"`
 	SourceType             string         `json:"source_type,omitempty"`
 	Source                 string         `json:"source,omitempty"`
+	SourceGroup            string         `json:"source_group,omitempty"`
 	Authority              string         `json:"authority,omitempty"`
 	SourceKey              string         `json:"source_key,omitempty"`
 	SourceRevision         string         `json:"source_revision,omitempty"`
@@ -76,6 +83,42 @@ type V2RememberResult struct {
 	CorrelationID     string `json:"correlation_id"`
 }
 
+type V2PlacementRunResult struct {
+	IngestID        string                  `json:"ingest_id"`
+	ProcessingState string                  `json:"processing_state"`
+	SearchState     string                  `json:"search_state"`
+	Items           []V2PlacementItemResult `json:"items"`
+	Errors          []V2PlacementError      `json:"errors"`
+}
+
+type V2PlacementItemResult struct {
+	ItemID               string                     `json:"item_id"`
+	EvidenceID           string                     `json:"evidence_id"`
+	Version              int                        `json:"version"`
+	EvidenceIndex        int                        `json:"evidence_index"`
+	Category             string                     `json:"category"`
+	SearchState          string                     `json:"search_state"`
+	RelationshipOutcomes []V2RelationshipOutcomeRef `json:"relationship_outcomes"`
+	Errors               []V2PlacementError         `json:"errors"`
+}
+
+type V2RelationshipOutcomeRef struct {
+	ProposalID         string `json:"proposal_id"`
+	ObservationID      string `json:"observation_id"`
+	RelationshipID     string `json:"relationship_id,omitempty"`
+	OwnerProfileID     string `json:"owner_profile_id"`
+	Tier               string `json:"tier,omitempty"`
+	RelationshipStatus string `json:"relationship_status,omitempty"`
+	Category           string `json:"category"`
+	Reason             string `json:"reason"`
+	ReviewTask         string `json:"review_task,omitempty"`
+}
+
+type V2PlacementError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
 func (s *v2RememberService) RememberV2(ctx context.Context, req V2RememberRequest) (*V2RememberResult, error) {
 	if s.ledger == nil {
 		return nil, errors.New("v2 remember: ledger repository is required")
@@ -88,7 +131,10 @@ func (s *v2RememberService) RememberV2(ctx context.Context, req V2RememberReques
 		return nil, ErrV2RememberAuthContext
 	}
 	credential, ok := requestctx.ActorCredentialFromContext(ctx)
-	if !ok || credential.KeyID == uuid.Nil {
+	migrationActor, migrationOK := requestctx.MigrationActorFromContext(ctx)
+	credentialOK := ok && credential.KeyID != uuid.Nil
+	migrationOK = migrationOK && migrationActor.RunID != uuid.Nil
+	if !credentialOK && !migrationOK {
 		return nil, ErrV2RememberCredential
 	}
 	if len(req.Evidence) == 0 {
@@ -105,16 +151,23 @@ func (s *v2RememberService) RememberV2(ctx context.Context, req V2RememberReques
 		"relationship_hints": req.RelationshipHints,
 	}
 	correlationID := correlation.FromContext(ctx)
+	actorMetadata := map[string]any{
+		"team_id":        actor.TeamID.String(),
+		"profile_id":     actor.ProfileID.String(),
+		"correlation_id": correlationID,
+	}
+	if credentialOK {
+		actorMetadata["role"] = credential.Role
+		actorMetadata["credential_id"] = credential.KeyID.String()
+		actorMetadata["auth_method"] = credential.AuthMethod
+	} else {
+		actorMetadata["role"] = "migration"
+		actorMetadata["auth_method"] = "migration"
+		actorMetadata["migration_run_id"] = migrationActor.RunID.String()
+	}
 	metadata := map[string]any{
 		"contract_version": domain.V2ContractVersion,
-		"actor": map[string]any{
-			"team_id":        actor.TeamID.String(),
-			"profile_id":     actor.ProfileID.String(),
-			"role":           credential.Role,
-			"credential_id":  credential.KeyID.String(),
-			"auth_method":    credential.AuthMethod,
-			"correlation_id": correlationID,
-		},
+		"actor":            actorMetadata,
 	}
 	created, err := s.ledger.CreateIngest(ctx, repository.V2CreateIngestInput{
 		TeamID:         actor.TeamID.String(),
@@ -131,6 +184,35 @@ func (s *v2RememberService) RememberV2(ctx context.Context, req V2RememberReques
 		return nil, translateV2RememberLedgerError(err)
 	}
 	return v2RememberResultFromLedger(created, correlationID), nil
+}
+
+func (s *v2RememberService) GetMemoryPlacementV2(
+	ctx context.Context,
+	req V2GetMemoryPlacementRequest,
+) (*V2PlacementRunResult, error) {
+	if s.ledger == nil {
+		return nil, errors.New("v2 placement: ledger repository is required")
+	}
+	if strings.TrimSpace(req.ContractVersion) != domain.V2ContractVersion {
+		return nil, fmt.Errorf("v2 placement: invalid contract_version %q", req.ContractVersion)
+	}
+	actor, ok := requestctx.ActorProfileFromContext(ctx)
+	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
+		return nil, ErrV2RememberAuthContext
+	}
+	ingestID := strings.TrimSpace(req.IngestID)
+	if ingestID == "" {
+		return nil, errors.New("v2 placement: ingest_id is required")
+	}
+	placement, err := s.ledger.GetPlacementRun(ctx, repository.V2GetPlacementRunInput{
+		TeamID:         actor.TeamID.String(),
+		OwnerProfileID: actor.ProfileID.String(),
+		IngestID:       ingestID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v2PlacementRunResultFromLedger(placement), nil
 }
 
 func (s *v2RememberService) normalizeEvidence(evidence []V2RememberEvidenceInput) ([]repository.V2EvidenceInput, string) {
@@ -236,6 +318,149 @@ func v2RememberResultFromLedger(created *repository.V2CreateIngestResult, correl
 	}
 }
 
+func v2PlacementRunResultFromLedger(created *repository.V2CreateIngestResult) *V2PlacementRunResult {
+	items := make([]V2PlacementItemResult, 0, len(created.Items))
+	searchState := string(domain.V2SearchProjectionNotRequired)
+	for _, item := range created.Items {
+		version := item.Version
+		if version == 0 {
+			version = 1
+		}
+		itemSearchState := v2PlacementItemSearchState(item)
+		searchState = v2PlacementCombinedSearchState(searchState, itemSearchState)
+		items = append(items, V2PlacementItemResult{
+			ItemID:               item.PlacementItemID,
+			EvidenceID:           item.FragmentID,
+			Version:              version,
+			EvidenceIndex:        item.EvidenceIndex,
+			Category:             v2PublicPlacementItemCategory(item),
+			SearchState:          itemSearchState,
+			RelationshipOutcomes: v2PlacementRelationshipOutcomes(item.Result),
+			Errors:               []V2PlacementError{},
+		})
+	}
+	return &V2PlacementRunResult{
+		IngestID:        created.IngestID,
+		ProcessingState: created.Status,
+		SearchState:     searchState,
+		Items:           items,
+		Errors:          []V2PlacementError{},
+	}
+}
+
+func v2PublicPlacementItemCategory(item repository.V2PlacementItem) string {
+	if item.Category == "quarantined" || item.Status == "quarantined" {
+		return string(domain.V2EvidenceQuarantined)
+	}
+	if item.Status == "failed" || item.Category == "failed" {
+		return string(domain.V2EvidenceProcessingFailed)
+	}
+	return string(domain.V2EvidenceProcessed)
+}
+
+func v2PlacementCombinedSearchState(left, right string) string {
+	if left == string(domain.V2SearchProjectionPending) || right == string(domain.V2SearchProjectionPending) {
+		return string(domain.V2SearchProjectionPending)
+	}
+	if left == string(domain.V2SearchProjectionCurrent) || right == string(domain.V2SearchProjectionCurrent) {
+		return string(domain.V2SearchProjectionCurrent)
+	}
+	return string(domain.V2SearchProjectionNotRequired)
+}
+
+func v2PlacementItemSearchState(item repository.V2PlacementItem) string {
+	if state := v2PlacementSearchStateFromStates(v2ResultArray(item.Result, "search_document_states")); state != "" {
+		return state
+	}
+	if len(v2ResultArray(item.Result, "embedding_job_ids")) > 0 {
+		return string(domain.V2SearchProjectionPending)
+	}
+	if len(v2ResultArray(item.Result, "search_document_ids")) > 0 {
+		return string(domain.V2SearchProjectionCurrent)
+	}
+	return string(domain.V2SearchProjectionNotRequired)
+}
+
+func v2PlacementSearchStateFromStates(values []any) string {
+	if len(values) == 0 {
+		return ""
+	}
+	hasCurrent := false
+	for _, value := range values {
+		state := strings.TrimSpace(fmt.Sprint(value))
+		switch state {
+		case string(domain.V2SearchProjectionFailed):
+			return string(domain.V2SearchProjectionFailed)
+		case string(domain.V2SearchProjectionPending):
+			return string(domain.V2SearchProjectionPending)
+		case string(domain.V2SearchProjectionCurrent):
+			hasCurrent = true
+		}
+	}
+	if hasCurrent {
+		return string(domain.V2SearchProjectionCurrent)
+	}
+	return ""
+}
+
+func v2PlacementRelationshipOutcomes(result map[string]any) []V2RelationshipOutcomeRef {
+	values := v2ResultArray(result, "relationship_outcomes")
+	out := make([]V2RelationshipOutcomeRef, 0, len(values))
+	for _, value := range values {
+		fields, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		out = append(out, V2RelationshipOutcomeRef{
+			ProposalID:         v2ResultString(fields, "proposal_id"),
+			ObservationID:      v2ResultString(fields, "observation_id"),
+			RelationshipID:     v2ResultString(fields, "relationship_id"),
+			OwnerProfileID:     v2ResultString(fields, "owner_profile_id"),
+			Tier:               v2ResultString(fields, "tier"),
+			RelationshipStatus: v2ResultString(fields, "relationship_status"),
+			Category:           v2ResultString(fields, "category"),
+			Reason:             v2ResultString(fields, "reason"),
+			ReviewTask:         v2ResultString(fields, "review_task"),
+		})
+	}
+	return out
+}
+
+func v2ResultArray(result map[string]any, key string) []any {
+	if len(result) == 0 {
+		return nil
+	}
+	switch values := result[key].(type) {
+	case []any:
+		return values
+	case []map[string]any:
+		out := make([]any, 0, len(values))
+		for _, value := range values {
+			out = append(out, value)
+		}
+		return out
+	case []string:
+		out := make([]any, 0, len(values))
+		for _, value := range values {
+			out = append(out, value)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func v2ResultString(fields map[string]any, key string) string {
+	value, ok := fields[key]
+	if !ok || value == nil {
+		return ""
+	}
+	if str, ok := value.(string); ok {
+		return strings.TrimSpace(str)
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
 func translateV2RememberLedgerError(err error) error {
 	switch {
 	case errors.Is(err, repository.ErrV2IdempotencyConflict), errors.Is(err, repository.ErrV2SourceRevisionConflict):
@@ -278,14 +503,18 @@ func v2EvidenceProcessingIntentMetadata(metadata map[string]any, item V2Remember
 	if value := strings.TrimSpace(item.IdempotencyKey); value != "" {
 		metadata["evidence_idempotency_key"] = value
 	}
+	if value := strings.TrimSpace(item.SourceGroup); value != "" {
+		metadata["v2_contract_source_group"] = value
+	}
 	return metadata
 }
 
 func v2SourceRevisionEnvelope(item V2RememberEvidenceInput) map[string]any {
 	return map[string]any{
-		"source_type": item.SourceType,
-		"source":      item.Source,
-		"metadata":    item.Metadata,
+		"source_type":  item.SourceType,
+		"source":       item.Source,
+		"source_group": item.SourceGroup,
+		"metadata":     item.Metadata,
 	}
 }
 

@@ -38,6 +38,17 @@ func TestOpenAIVerifierSetMetricsNormalizesNil(t *testing.T) {
 	require.Same(t, metrics, v.metrics)
 }
 
+func TestOpenAIVerifierV2AdapterHelpers(t *testing.T) {
+	v := NewOpenAIVerifier(newTestVerifierConfig("https://example.com/v1", "sk-test", "gpt-4.1-mini"), nil)
+	require.Equal(t, "gpt-4.1-mini", v.ModelName())
+
+	summary := openAIV2ValidationSummary([]V2SemanticValidationError{
+		{Field: "relationships[0].predicate", Message: "is required"},
+		{Message: "duplicate response"},
+	})
+	require.Equal(t, "relationships[0].predicate: is required; duplicate response", summary)
+}
+
 // verifierSuccessHandler returns an HTTP handler that always replies with a
 // valid verification result carrying the given verdict, confidence, and rationale.
 func verifierSuccessHandler(verdict string, confidence float64, rationale string) http.HandlerFunc {
@@ -54,6 +65,19 @@ func verifierSuccessHandler(verdict string, confidence float64, rationale string
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	}
+}
+
+func writeStructuredChatContent(t *testing.T, w http.ResponseWriter, content any) {
+	t.Helper()
+	payload, err := json.Marshal(content)
+	require.NoError(t, err)
+	resp := map[string]any{
+		"choices": []map[string]any{
+			{"message": map[string]any{"content": string(payload)}},
+		},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	require.NoError(t, json.NewEncoder(w).Encode(resp))
 }
 
 // TestOpenAIVerifier covers the happy path and all validation branches
@@ -422,6 +446,255 @@ func TestOpenAIVerifier(t *testing.T) {
 	t.Run("ImplementsVerifierInterface", func(t *testing.T) {
 		var _ Verifier = (*OpenAIVerifier)(nil)
 		assert.True(t, true, "compile-time interface assertion passed")
+	})
+}
+
+func TestOpenAIVerifierV2SemanticAdapters(t *testing.T) {
+	t.Run("ProposeV2Semantic", func(t *testing.T) {
+		content := "Dense-Mem uses PostgreSQL."
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var reqBody openAIVerifierRequest
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
+			assert.Equal(t, V2ProviderProposalSchemaName, reqBody.ResponseFormat.JSONSchema.Name)
+			require.Len(t, reqBody.Messages, 2)
+			assert.Contains(t, reqBody.Messages[0].Content, "structure extraction")
+
+			proposal := map[string]any{
+				"predicate_options": []string{"uses"},
+				"evidence": []map[string]any{{
+					"evidence_index": 0,
+					"evidence_id":    "evidence:0",
+					"content":        content,
+				}},
+				"entity_proposals": []map[string]any{
+					{
+						"ref":         "project_1",
+						"name":        "Dense-Mem",
+						"entity_kind": "project",
+						"evidence":    []map[string]any{{"evidence_index": 0, "start": 0, "end": len([]rune("Dense-Mem"))}},
+					},
+					{
+						"ref":         "db_1",
+						"name":        "PostgreSQL",
+						"entity_kind": "project",
+						"evidence": []map[string]any{{
+							"evidence_index": 0,
+							"start":          len([]rune("Dense-Mem uses ")),
+							"end":            len([]rune("Dense-Mem uses PostgreSQL")),
+						}},
+					},
+				},
+				"relationship_proposals": []map[string]any{{
+					"proposal_id":        "rel:uses",
+					"subject_ref":        "project_1",
+					"original_predicate": "uses",
+					"object_ref":         "db_1",
+					"evidence":           []map[string]any{{"evidence_index": 0, "start": 0, "end": len([]rune(content))}},
+				}},
+			}
+			writeStructuredChatContent(t, w, proposal)
+		}))
+		defer srv.Close()
+
+		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "sk-test", "gpt-4o-mini"), srv.Client())
+		got, err := v.ProposeV2Semantic(context.Background(), V2ProviderProposalRequest{
+			RequestID:        "extract-1",
+			PredicateOptions: []string{"uses"},
+			Evidence: []V2SemanticReviewEvidence{{
+				EvidenceID:    "evidence:0",
+				EvidenceIndex: 0,
+				Content:       content,
+			}},
+		})
+		require.NoError(t, err)
+		require.Len(t, got.RelationshipProposals, 1)
+		assert.Equal(t, "rel:uses", got.RelationshipProposals[0].ProposalID)
+	})
+
+	t.Run("ReviewV2Semantic", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var reqBody openAIVerifierRequest
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
+			assert.Equal(t, V2VerifierResponseSchemaName, reqBody.ResponseFormat.JSONSchema.Name)
+			assert.Contains(t, reqBody.Messages[0].Content, "semantic verifier")
+			predicateKey := "uses"
+			writeStructuredChatContent(t, w, map[string]any{
+				"request_id":       "verify-1",
+				"security_signals": []any{},
+				"entity_results": []map[string]any{
+					{"ref": "project_1", "action": "create", "candidate_entity_id": nil, "confidence": 0.9, "rationale": "Evidence names the project."},
+					{"ref": "db_1", "action": "create", "candidate_entity_id": nil, "confidence": 0.9, "rationale": "Evidence names the database."},
+				},
+				"relationship_results": []map[string]any{{
+					"ref":              "rel:uses",
+					"predicate_status": "resolved",
+					"predicate_key":    predicateKey,
+					"evidence_verdict": "entailed",
+					"confidence":       0.9,
+					"rationale":        "The evidence states the relationship.",
+				}},
+			})
+		}))
+		defer srv.Close()
+
+		content := "Dense-Mem uses PostgreSQL."
+		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "sk-test", "gpt-4o-mini"), srv.Client())
+		got, err := v.ReviewV2Semantic(context.Background(), V2SemanticReviewRequest{
+			RequestID: "verify-1",
+			TeamID:    "team-a",
+			Evidence: []V2SemanticReviewEvidence{{
+				EvidenceID: "evidence:0",
+				Content:    content,
+			}},
+			EntityMentions: []V2SemanticEntityMention{
+				{Ref: "project_1", Surface: "Dense-Mem", Kind: "project", EvidenceID: "evidence:0", Start: 0, End: len([]rune("Dense-Mem"))},
+				{Ref: "db_1", Surface: "PostgreSQL", Kind: "project", EvidenceID: "evidence:0", Start: len([]rune("Dense-Mem uses ")), End: len([]rune("Dense-Mem uses PostgreSQL"))},
+			},
+			RelationshipObservations: []V2SemanticRelationshipObservation{{
+				Ref:               "rel:uses",
+				SubjectRef:        "project_1",
+				OriginalPredicate: "uses",
+				PredicateCandidates: []V2SemanticPredicateCandidate{{
+					PredicateKey:        "uses",
+					Version:             1,
+					AllowedSubjectKinds: []string{"project"},
+					AllowedObjectKinds:  []string{"project"},
+				}},
+				ObjectRef:  "db_1",
+				EvidenceID: "evidence:0",
+				Quote:      content,
+				Start:      0,
+				End:        len([]rune(content)),
+			}},
+		})
+		require.NoError(t, err)
+		require.Len(t, got.RelationshipResults, 1)
+		assert.Equal(t, "rel:uses", got.RelationshipResults[0].Ref)
+	})
+}
+
+func TestOpenAIVerifierV2SemanticAdapterErrors(t *testing.T) {
+	validProposalRequest := func() V2ProviderProposalRequest {
+		return V2ProviderProposalRequest{
+			RequestID:        "extract-1",
+			PredicateOptions: []string{"uses"},
+			Evidence: []V2SemanticReviewEvidence{{
+				EvidenceID:    "evidence:0",
+				EvidenceIndex: 0,
+				Content:       "Dense-Mem uses PostgreSQL.",
+			}},
+		}
+	}
+	validReviewRequest := func() V2SemanticReviewRequest {
+		content := "Dense-Mem uses PostgreSQL."
+		return V2SemanticReviewRequest{
+			RequestID: "verify-1",
+			TeamID:    "team-a",
+			Evidence: []V2SemanticReviewEvidence{{
+				EvidenceID: "evidence:0",
+				Content:    content,
+			}},
+			EntityMentions: []V2SemanticEntityMention{
+				{Ref: "project_1", Surface: "Dense-Mem", Kind: "project", EvidenceID: "evidence:0", Start: 0, End: len([]rune("Dense-Mem"))},
+				{Ref: "db_1", Surface: "PostgreSQL", Kind: "project", EvidenceID: "evidence:0", Start: len([]rune("Dense-Mem uses ")), End: len([]rune("Dense-Mem uses PostgreSQL"))},
+			},
+			RelationshipObservations: []V2SemanticRelationshipObservation{{
+				Ref:               "rel:uses",
+				SubjectRef:        "project_1",
+				OriginalPredicate: "uses",
+				PredicateCandidates: []V2SemanticPredicateCandidate{{
+					PredicateKey:        "uses",
+					Version:             1,
+					AllowedSubjectKinds: []string{"project"},
+					AllowedObjectKinds:  []string{"project"},
+				}},
+				ObjectRef:  "db_1",
+				EvidenceID: "evidence:0",
+				Quote:      content,
+				Start:      0,
+				End:        len([]rune(content)),
+			}},
+		}
+	}
+
+	t.Run("invalid proposal request", func(t *testing.T) {
+		v := NewOpenAIVerifier(newTestVerifierConfig("https://example.com/v1", "sk-test", "gpt-4o-mini"), nil)
+		_, err := v.ProposeV2Semantic(context.Background(), V2ProviderProposalRequest{})
+		var providerErr *ProviderError
+		require.ErrorAs(t, err, &providerErr)
+		assert.Contains(t, providerErr.Message, "invalid v2 provider proposal request")
+	})
+
+	t.Run("invalid review request", func(t *testing.T) {
+		v := NewOpenAIVerifier(newTestVerifierConfig("https://example.com/v1", "sk-test", "gpt-4o-mini"), nil)
+		_, err := v.ReviewV2Semantic(context.Background(), V2SemanticReviewRequest{})
+		var providerErr *ProviderError
+		require.ErrorAs(t, err, &providerErr)
+		assert.Contains(t, providerErr.Message, "invalid v2 semantic review request")
+	})
+
+	t.Run("no choices", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"choices": []any{}}))
+		}))
+		defer srv.Close()
+		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "sk-test", "gpt-4o-mini"), srv.Client())
+
+		_, err := v.ProposeV2Semantic(context.Background(), validProposalRequest())
+
+		var malformed *MalformedResponseError
+		require.ErrorAs(t, err, &malformed)
+		assert.Contains(t, malformed.Message, "no choices")
+	})
+
+	t.Run("malformed proposal content", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{{"message": map[string]any{"content": "not-json"}}},
+			}))
+		}))
+		defer srv.Close()
+		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "sk-test", "gpt-4o-mini"), srv.Client())
+
+		_, err := v.ProposeV2Semantic(context.Background(), validProposalRequest())
+
+		var malformed *MalformedResponseError
+		require.ErrorAs(t, err, &malformed)
+		assert.Contains(t, malformed.Message, "failed to parse v2 provider proposal response")
+	})
+
+	t.Run("provider status", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadGateway)
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]any{"message": "upstream unavailable"},
+			}))
+		}))
+		defer srv.Close()
+		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "sk-test", "gpt-4o-mini"), srv.Client())
+
+		_, err := v.ReviewV2Semantic(context.Background(), validReviewRequest())
+
+		var providerErr *ProviderError
+		require.ErrorAs(t, err, &providerErr)
+		assert.Equal(t, "upstream unavailable", providerErr.Message)
+	})
+
+	t.Run("rate limited", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusTooManyRequests)
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]any{"message": "slow down"},
+			}))
+		}))
+		defer srv.Close()
+		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "sk-test", "gpt-4o-mini"), srv.Client())
+
+		_, err := v.ReviewV2Semantic(context.Background(), validReviewRequest())
+
+		var rateLimited *RateLimitError
+		require.ErrorAs(t, err, &rateLimited)
+		assert.Equal(t, "slow down", rateLimited.Message)
 	})
 }
 

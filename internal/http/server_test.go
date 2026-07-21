@@ -156,6 +156,37 @@ func TestReadyDegradedWhenCheckFails(t *testing.T) {
 	}
 }
 
+func TestReadyReportsOptionalFailureWithoutBlocking(t *testing.T) {
+	cfg := config.Config{}
+	logger := observability.New(slog.LevelInfo)
+	e := NewServer(cfg, logger, HealthConfig{Checks: []HealthCheck{{
+		Name:     "v2_migration_state",
+		Optional: true,
+		Check: func(ctx context.Context) error {
+			return errors.New("migration pending")
+		},
+	}}})
+
+	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+	var response map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	deps, ok := response["dependencies"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected dependencies to be a map, got %T", response["dependencies"])
+	}
+	if deps["v2_migration_state"] != "degraded" {
+		t.Errorf("expected optional dependency to be degraded, got %v", deps["v2_migration_state"])
+	}
+}
+
 // TestReadyReadyWhenAllChecksPass verifies that /ready returns 200 when all checks pass
 func TestReadyReadyWhenAllChecksPass(t *testing.T) {
 	// Arrange

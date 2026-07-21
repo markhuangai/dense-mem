@@ -34,6 +34,58 @@ func TestV2SemanticRepositoryFailsClosedWithoutDependencies(t *testing.T) {
 	assert.Contains(t, err.Error(), "rls helper is required")
 }
 
+func TestV2SemanticReviewCatalogListsTeamCandidatesAndPredicateAliases(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "semantic-review-catalog-team")
+	ownerA := createV2LedgerProfile(t, adminDB, rls, teamID, "catalog-owner-a")
+	ownerB := createV2LedgerProfile(t, adminDB, rls, teamID, "catalog-owner-b")
+	otherTeamID := createV2LedgerTeam(t, adminDB, rls, "semantic-review-catalog-other-team")
+	otherOwnerID := createV2LedgerProfile(t, adminDB, rls, otherTeamID, "catalog-other-owner")
+	repo := NewV2SemanticRepository(appDB, rls)
+	entity := createV2SemanticEntity(t, ctx, repo, teamID, ownerA, "project", "Dense-Mem")
+
+	candidates, err := repo.ListV2SemanticReviewEntityCandidates(ctx, V2SemanticReviewEntityCandidateInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerB,
+		Name:           " DENSE-MEM ",
+		EntityKind:     "project",
+		Limit:          5,
+	})
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	assert.Equal(t, entity.EntityID, candidates[0].EntityID)
+	assert.Equal(t, "Dense-Mem", candidates[0].CanonicalName)
+
+	hidden, err := repo.ListV2SemanticReviewEntityCandidates(ctx, V2SemanticReviewEntityCandidateInput{
+		TeamID:         otherTeamID,
+		OwnerProfileID: otherOwnerID,
+		Name:           "Dense-Mem",
+		EntityKind:     "project",
+	})
+	require.NoError(t, err)
+	assert.Empty(t, hidden)
+
+	predicates, err := repo.ListV2SemanticReviewPredicateCandidates(ctx, V2SemanticReviewPredicateCandidateInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerB,
+		Predicate:      "is_working_on",
+	})
+	require.NoError(t, err)
+	require.Len(t, predicates, 1)
+	assert.Equal(t, "works_on", predicates[0].PredicateKey)
+	assert.Equal(t, 1, predicates[0].Version)
+
+	options, err := repo.ListV2SemanticReviewPredicateOptions(ctx, V2SemanticReviewPredicateOptionsInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerB,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, options, "works_on")
+	assert.Contains(t, options, "is_working_on")
+}
+
 func TestV2SemanticApplyRelationshipDecisionValidationRejectsMalformedSupportForAnyVerdict(t *testing.T) {
 	input := validV2ApplyRelationshipDecisionInput()
 	input.EvidenceVerdict = "insufficient"
@@ -288,7 +340,7 @@ func TestV2SemanticRelationshipLifecycleAndRLS(t *testing.T) {
 	assertSameTeamCanReadSemanticEdge(t, ctx, appDB, rls, teamA, ownerB, first.Relationship.RelationshipID)
 	assertCrossTeamCannotReadSemanticEdge(t, ctx, appDB, rls, teamA, teamC, ownerC)
 
-	err = semanticRepo.RetractRelationship(ctx, V2RetractRelationshipInput{
+	_, err = semanticRepo.RetractRelationship(ctx, V2RetractRelationshipInput{
 		TeamID:         teamA,
 		OwnerProfileID: ownerB,
 		RelationshipID: first.Relationship.RelationshipID,
@@ -807,12 +859,31 @@ func TestV2SemanticAppendOnlyHistoryAndRetraction(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "append-only")
 
-	require.NoError(t, semanticRepo.RetractRelationship(ctx, V2RetractRelationshipInput{
+	retracted, err := semanticRepo.RetractRelationship(ctx, V2RetractRelationshipInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		RelationshipID: decision.Relationship.RelationshipID,
 		Reason:         "forget",
-	}))
+		IdempotencyKey: "forget-relationship",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, retracted)
+	assert.NotEmpty(t, retracted.TransitionID)
+	assert.Equal(t, decision.Relationship.RelationshipID, retracted.RelationshipID)
+	assert.Equal(t, "active", retracted.FromStatus)
+	assert.Equal(t, "retracted", retracted.ToStatus)
+	assert.Equal(t, "forget-relationship", retracted.IdempotencyKey)
+
+	retried, err := semanticRepo.RetractRelationship(ctx, V2RetractRelationshipInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		RelationshipID: decision.Relationship.RelationshipID,
+		Reason:         "forget retried",
+		IdempotencyKey: "forget-relationship",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, retried)
+	assert.Equal(t, retracted.TransitionID, retried.TransitionID)
 	edges, err := semanticRepo.ListSemanticEdges(ctx, teamID, 20)
 	require.NoError(t, err)
 	assert.Empty(t, edges, "retracted relationships must disappear from SemanticEdge reads")
@@ -827,110 +898,5 @@ func TestV2SemanticAppendOnlyHistoryAndRetraction(t *testing.T) {
 		`, teamID, decision.Relationship.RelationshipID).Scan(&transitionCount).Error
 	})
 	require.NoError(t, err)
-	assert.GreaterOrEqual(t, transitionCount, int64(2))
-}
-
-func createV2SemanticEntity(
-	t *testing.T,
-	ctx context.Context,
-	repo *V2SemanticRepositoryImpl,
-	teamID string,
-	ownerID string,
-	kind string,
-	name string,
-) *V2EntityRecord {
-	t.Helper()
-	entity, err := repo.CreateEntity(ctx, V2CreateEntityInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerID,
-		EntityKind:     kind,
-		CanonicalName:  name,
-	})
-	require.NoError(t, err)
-	return entity
-}
-
-func createV2SemanticIngest(
-	t *testing.T,
-	ctx context.Context,
-	repo *V2LedgerRepositoryImpl,
-	teamID string,
-	ownerID string,
-	idempotencyKey string,
-	content string,
-) *V2CreateIngestResult {
-	t.Helper()
-	result, err := repo.CreateIngest(ctx, V2CreateIngestInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerID,
-		IdempotencyKey: idempotencyKey,
-		RequestHash:    sha256Hex(content),
-		Evidence: []V2EvidenceInput{{
-			Content: content,
-		}},
-	})
-	require.NoError(t, err)
-	require.Len(t, result.Evidence, 1)
-	return result
-}
-
-func applyV2SemanticDecision(
-	t *testing.T,
-	ctx context.Context,
-	repo *V2SemanticRepositoryImpl,
-	input V2ApplyRelationshipDecisionInput,
-) *V2RelationshipDecisionResult {
-	t.Helper()
-	result, err := repo.ApplyRelationshipDecision(ctx, input)
-	require.NoError(t, err)
-	return result
-}
-
-func assertSameTeamCanReadSemanticEdge(
-	t *testing.T,
-	ctx context.Context,
-	db *gorm.DB,
-	rls interface {
-		WithTeamProfileTx(context.Context, *gorm.DB, string, string, func(*gorm.DB) error) error
-	},
-	teamID string,
-	profileID string,
-	relationshipID string,
-) {
-	t.Helper()
-	var count int64
-	err := rls.WithTeamProfileTx(ctx, db, teamID, profileID, func(tx *gorm.DB) error {
-		return tx.Raw(`
-			SELECT COUNT(*)
-			FROM semantic_edges
-			WHERE team_id = ?::uuid
-			  AND relationship_id = ?::uuid
-		`, teamID, relationshipID).Scan(&count).Error
-	})
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), count)
-}
-
-func assertCrossTeamCannotReadSemanticEdge(
-	t *testing.T,
-	ctx context.Context,
-	db *gorm.DB,
-	rls interface {
-		WithTeamProfileTx(context.Context, *gorm.DB, string, string, func(*gorm.DB) error) error
-	},
-	targetTeamID string,
-	readerTeamID string,
-	readerProfileID string,
-) {
-	t.Helper()
-	var count int64
-	err := rls.WithTeamProfileTx(ctx, db, readerTeamID, readerProfileID, func(tx *gorm.DB) error {
-		return tx.Raw(`
-			SELECT COUNT(*)
-			FROM semantic_edges
-			WHERE team_id = ?::uuid
-		`, targetTeamID).Scan(&count).Error
-	})
-	require.NoError(t, err)
-	assert.Equal(t, int64(0), count)
+	assert.Equal(t, int64(2), transitionCount)
 }

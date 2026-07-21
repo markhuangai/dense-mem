@@ -85,6 +85,20 @@ func TestActorCredentialContext(t *testing.T) {
 	}
 }
 
+func TestMigrationActorContext(t *testing.T) {
+	runID := uuid.MustParse("00000000-0000-0000-0000-0000000000cc")
+	actor := MigrationActor{RunID: runID}
+	ctx := WithMigrationActor(context.Background(), actor)
+
+	got, ok := MigrationActorFromContext(ctx)
+	if !ok || got != actor {
+		t.Fatalf("MigrationActorFromContext = %#v, %v; want %#v,true", got, ok, actor)
+	}
+	if got, ok := MigrationActorFromContext(context.Background()); ok || got != (MigrationActor{}) {
+		t.Fatalf("MigrationActorFromContext unset = %#v, %v; want zero,false", got, ok)
+	}
+}
+
 func TestActorOwner_EmptyForMissingOrNilProfile(t *testing.T) {
 	profileID, profileName, ok := ActorOwner(context.Background())
 	if ok || profileID != "" || profileName != "" {

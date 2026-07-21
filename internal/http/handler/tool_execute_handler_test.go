@@ -331,6 +331,38 @@ func TestToolExecuteHandler_RejectsTenantFieldsForV2ContractTools(t *testing.T) 
 	assert.Contains(t, apiErr.Message, "team_id and profile_id are not accepted")
 }
 
+func TestToolExecuteHandler_ReturnsNotFoundForMCPOnlyV2MemoryHTTPView(t *testing.T) {
+	uat, err := registry.BuildV2UAT(registry.Dependencies{})
+	require.NoError(t, err)
+	httpReg, err := registry.HTTPRegistryView(uat)
+	require.NoError(t, err)
+
+	h := NewToolExecuteHandler(httpReg)
+	e := newTestEcho()
+	profileID := uuid.New()
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			ctx := middleware.SetResolvedProfileIDForTest(c.Request().Context(), profileID)
+			ctx = middleware.SetPrincipalForTest(ctx, &middleware.Principal{
+				KeyID:  uuid.New(),
+				Role:   "user",
+				Scopes: []string{"write"},
+			})
+			c.SetRequest(c.Request().WithContext(ctx))
+			return next(c)
+		}
+	})
+	e.POST("/api/v1/tools/:name", h.Handle)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/remember", strings.NewReader(`{"evidence":[{"content":"hello"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusNotFound, rec.Code)
+}
+
 func TestToolExecuteHandler_RoundTripsV2ContractFixtures(t *testing.T) {
 	fixtures := readHandlerV2ContractFixtures(t)
 	tools := map[string]registry.Tool{}

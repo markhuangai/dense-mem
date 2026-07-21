@@ -7,7 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/factservice"
@@ -159,6 +163,83 @@ func TestTraceCanSkipFragmentsAndRelatedExpansion(t *testing.T) {
 	require.Empty(t, got.SupportingFragments)
 	require.Empty(t, got.Related)
 	require.Empty(t, got.Edges)
+}
+
+func TestV2SemanticTraceUsesAuthenticatedTeamAndRelationshipID(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	includeContent := false
+	includeVerification := true
+	includeTransitions := false
+	minRelevance := 0.7
+	store := &fakeV2SemanticTraceStore{result: &repository.V2RelationshipTraceResult{
+		Relationship: &repository.V2RelationshipTraceRecord{
+			RelationshipID: "relationship-1",
+			PredicateKey:   "works_on",
+		},
+		EvidenceSupports: []repository.V2RelationshipEvidenceSupportRecord{{
+			SupportID: "support-1",
+		}},
+		StoppedReason: "max_edges",
+		Truncated:     true,
+	}}
+	svc := NewV2Semantic(store)
+	ctx := requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{
+		TeamID:    teamID,
+		ProfileID: profileID,
+	})
+
+	got, err := svc.Trace(ctx, "ignored-profile", TraceRequest{
+		RelationshipID:         " relationship-1 ",
+		IncludeEvidenceContent: &includeContent,
+		IncludeVerification:    &includeVerification,
+		IncludeTransitions:     &includeTransitions,
+		MaxDepth:               2,
+		MaxEdges:               12,
+		MaxChars:               333,
+		PredicateKeys:          []string{"works_on"},
+		Topic:                  "Dense-Mem",
+		MinRelevance:           &minRelevance,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, got.V2Semantic)
+	require.Equal(t, "relationship-1", got.V2Semantic.Relationship.RelationshipID)
+	require.Len(t, got.V2Semantic.EvidenceSupports, 1)
+	require.True(t, got.V2Semantic.Truncated)
+	require.Equal(t, "max_edges", got.V2Semantic.StoppedReason)
+	require.Equal(t, teamID.String(), store.input.TeamID)
+	require.Equal(t, "relationship-1", store.input.RelationshipID)
+	require.Equal(t, &includeContent, store.input.IncludeEvidenceContent)
+	require.Equal(t, &includeVerification, store.input.IncludeVerification)
+	require.Equal(t, &includeTransitions, store.input.IncludeTransitions)
+	require.Equal(t, 2, store.input.MaxDepth)
+	require.Equal(t, 12, store.input.MaxEdges)
+	require.Equal(t, 333, store.input.MaxFragmentContentRunes)
+	require.Equal(t, []string{"works_on"}, store.input.PredicateKeys)
+	require.Equal(t, "Dense-Mem", store.input.Topic)
+	require.Equal(t, &minRelevance, store.input.MinRelevance)
+}
+
+func TestV2SemanticTraceRequiresAuthenticatedTeam(t *testing.T) {
+	svc := NewV2Semantic(&fakeV2SemanticTraceStore{})
+
+	_, err := svc.Trace(context.Background(), "ignored-profile", TraceRequest{RelationshipID: "relationship-1"})
+	require.ErrorIs(t, err, ErrV2TraceAuthContext)
+}
+
+func TestV2SemanticTraceRejectsMissingRelationshipAndStore(t *testing.T) {
+	teamID := uuid.New()
+	ctx := requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{
+		TeamID:    teamID,
+		ProfileID: uuid.New(),
+	})
+
+	_, err := NewV2Semantic(&fakeV2SemanticTraceStore{}).Trace(ctx, "ignored-profile", TraceRequest{})
+	require.ErrorContains(t, err, "relationship_id is required")
+
+	_, err = NewV2Semantic(nil).Trace(ctx, "ignored-profile", TraceRequest{RelationshipID: "relationship-1"})
+	require.ErrorContains(t, err, "semantic store is required")
 }
 
 func TestTracePropagatesDependencyErrors(t *testing.T) {
@@ -684,6 +765,20 @@ func (f *fakeRecall) Recall(_ context.Context, profileID string, req recallservi
 	f.lastProfile = profileID
 	f.lastReq = req
 	return f.hits, f.err
+}
+
+type fakeV2SemanticTraceStore struct {
+	input  repository.V2TraceRelationshipInput
+	result *repository.V2RelationshipTraceResult
+	err    error
+}
+
+func (f *fakeV2SemanticTraceStore) TraceRelationship(_ context.Context, input repository.V2TraceRelationshipInput) (*repository.V2RelationshipTraceResult, error) {
+	f.input = input
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.result, nil
 }
 
 type fakeMemory struct {

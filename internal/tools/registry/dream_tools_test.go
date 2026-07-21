@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
@@ -14,15 +15,20 @@ func TestBuildDefault_DreamInvokers(t *testing.T) {
 	reg, _ := BuildDefault(Dependencies{Dreams: dreams})
 
 	listTool, _ := reg.Get("list_dreams")
+	statusSchema := listTool.InputSchema["properties"].(map[string]any)["status"].(map[string]any)
+	statusEnums := statusSchema["enum"].([]string)
+	if !containsString(statusEnums, "promoted") {
+		t.Fatalf("list_dreams status enum missing promoted: %v", statusEnums)
+	}
 	listOut, err := listTool.Invoke(context.Background(), "profile-dream", map[string]any{
 		"limit":  float64(3),
-		"status": "proposed",
+		"status": "promoted",
 	})
 	if err != nil {
 		t.Fatalf("list_dreams Invoke: %v", err)
 	}
 	listed := listOut["dreams"].([]*domain.Dream)
-	if len(listed) != 1 || dreams.lastListOpts.Limit != 3 || dreams.lastListOpts.Status != "proposed" {
+	if len(listed) != 1 || dreams.lastListOpts.Limit != 3 || dreams.lastListOpts.Status != "promoted" {
 		t.Fatalf("list_dreams output = %v opts = %+v", listOut, dreams.lastListOpts)
 	}
 
@@ -123,11 +129,21 @@ func (s *stubDreamService) EffectiveConfig(context.Context, string) (dreamservic
 
 func stubDream(profileID string) *domain.Dream {
 	return &domain.Dream{
-		DreamID:         "dream-1",
-		ProfileID:       profileID,
-		Hypothesis:      "A may affect B.",
-		WhatIf:          "What if A and B interact?",
-		PossibleOutcome: "Review before promotion.",
-		Status:          domain.DreamStatusProposed,
+		DreamID:                        "dream-1",
+		ProfileID:                      profileID,
+		Hypothesis:                     "A may affect B.",
+		WhatIf:                         "What if A and B interact?",
+		PossibleOutcome:                "Review before promotion.",
+		Rationale:                      "Eligible relationship context suggests review.",
+		SubjectEntityID:                "entity-a",
+		PredicateKey:                   "affects",
+		ObjectEntityID:                 "entity-b",
+		SourceRelationshipIDs:          []string{"relationship-1"},
+		SourceCandidateRelationshipIDs: []string{},
+		SourceVersions:                 map[string]int{"relationship-1": 1},
+		GeneratorKind:                  "deterministic",
+		GeneratorVersion:               "dream-v2",
+		Status:                         domain.DreamStatusProposed,
+		CreatedAt:                      time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC),
 	}
 }

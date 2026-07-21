@@ -135,7 +135,6 @@ func main() {
 	if err := embeddingConsistencySvc.CheckAtStartup(startupCtx); err != nil {
 		log.Fatalf("embedding consistency check failed: %v", err)
 	}
-
 	// Initialize Neo4j client with 5-second timeout
 	neo4jClient, err := neo4j.NewClient(startupCtx, &cfg)
 	if err != nil {
@@ -495,7 +494,6 @@ func main() {
 			return neo4jClient.Verify(ctx)
 		}},
 	}
-
 	if backend.redisPingFn != nil {
 		checks = append(checks, http.HealthCheck{
 			Name:  "redis",

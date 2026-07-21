@@ -14,6 +14,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/service/claimservice"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
@@ -55,8 +56,16 @@ type Dependencies struct {
 	Context           contextservice.Service
 	Memory            memoryservice.Service
 	V2Remember        memoryservice.V2RememberService
-	SkillPack         skillpackservice.Service
-	Dreams            dreamservice.Service
+	V2Recall          memoryservice.V2RecallService
+	V2Lifecycle       memoryservice.V2LifecycleService
+	V2Evaluation      repository.V2EvaluationRepository
+	// V2EvaluationEnabled must be set by cutover/UAT wiring before default
+	// evaluation tools expose V2 migration or rehearsal records.
+	V2EvaluationEnabled bool
+	V2Communities       repository.V2CommunityRepository
+	SkillPack           skillpackservice.Service
+	V2SkillPack         skillpackservice.V2Service
+	Dreams              dreamservice.Service
 }
 
 type RecallFeedbackEventRecorder interface {
@@ -90,7 +99,11 @@ func BuildDefault(deps Dependencies) (Registry, error) {
 // from BuildDefault so production V1 tool names are not replaced before cutover.
 func BuildV2UAT(deps Dependencies) (Registry, error) {
 	r := New()
-	for _, t := range v2UATTools(deps) {
+	tools := v2UATTools(deps)
+	if deps.V2EvaluationEnabled || deps.V2Recall != nil {
+		tools = append(tools, evaluationTools(deps)...)
+	}
+	for _, t := range tools {
 		if err := r.Register(t); err != nil {
 			return nil, fmt.Errorf("registry: BuildV2UAT: %w", err)
 		}
@@ -119,6 +132,13 @@ func defaultTools(deps Dependencies) []Tool {
 		importSkillPackTool(deps),
 		rollbackSkillPackImportTool(deps),
 		submitRecallSessionFeedbackTool(deps),
+	}
+	tools = append(tools, evaluationTools(deps)...)
+	return tools
+}
+
+func evaluationTools(deps Dependencies) []Tool {
+	return []Tool{
 		evalGetManifestTool(deps),
 		evalListKnowledgeRefsTool(deps),
 		evalGetKnowledgeItemTool(deps),
@@ -128,7 +148,6 @@ func defaultTools(deps Dependencies) []Tool {
 		evalRunRecallCaseTool(deps),
 		evalScoreRetrievalCaseTool(deps),
 	}
-	return tools
 }
 
 // --- recall_memory ---------------------------------------------------------
@@ -265,6 +284,14 @@ type recallFeedbackDreamFeedbackInput struct {
 	FeedbackComment string `json:"feedback_comment"`
 }
 
+type recallFeedbackHypothesisFeedbackInput struct {
+	HypothesisID    string `json:"hypothesis_id"`
+	Used            bool   `json:"used"`
+	Quality         string `json:"quality"`
+	Contradicted    bool   `json:"contradicted"`
+	FeedbackComment string `json:"feedback_comment"`
+}
+
 func submitRecallSessionFeedbackTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        SubmitRecallSessionFeedbackToolName,
@@ -310,12 +337,7 @@ func submitRecallSessionFeedbackTool(deps Dependencies) Tool {
 									"type":     "object",
 									"required": []string{"type", "id"},
 									"properties": map[string]any{
-										"type": schemaEnum([]string{
-											domain.RecallFeedbackResultTypeFragment,
-											domain.RecallFeedbackResultTypeClaim,
-											domain.RecallFeedbackResultTypeFact,
-											domain.RecallFeedbackResultTypeDream,
-										}),
+										"type": schemaEnum(recallFeedbackResultTypes()),
 										"id":   schemaString("Result id from recall feedback result_refs.", recallFeedbackJudgedRefIDMaxLength),
 										"rank": map[string]any{"type": "integer", "minimum": 1, "maximum": recallFeedbackJudgedRefMaxRank},
 									},
@@ -324,13 +346,30 @@ func submitRecallSessionFeedbackTool(deps Dependencies) Tool {
 							},
 							"dream_feedback": map[string]any{
 								"type":        "array",
-								"description": "Optional host-LLM judgments about related dream hypotheses returned with recall_memory. This records quality only; it does not change dream status.",
+								"description": "Deprecated alias for hypothesis_feedback. This records quality only; it does not change hypothesis status.",
 								"maxItems":    recallFeedbackIrrelevantRefsMax,
 								"items": map[string]any{
 									"type":     "object",
 									"required": []string{"dream_id", "used", "quality", "contradicted"},
 									"properties": map[string]any{
 										"dream_id":         schemaString("Dream id from recall_memory.related_dreams.", recallFeedbackJudgedRefIDMaxLength),
+										"used":             map[string]any{"type": "boolean"},
+										"quality":          schemaEnum([]string{"high", "medium", "low"}),
+										"contradicted":     map[string]any{"type": "boolean"},
+										"feedback_comment": schemaString("Required unless quality is high and contradicted is false.", recallFeedbackCommentMaxLength),
+									},
+									"additionalProperties": false,
+								},
+							},
+							"hypothesis_feedback": map[string]any{
+								"type":        "array",
+								"description": "Optional host-LLM judgments about related hypotheses returned with recall_memory. This records quality only; it does not change hypothesis status.",
+								"maxItems":    recallFeedbackIrrelevantRefsMax,
+								"items": map[string]any{
+									"type":     "object",
+									"required": []string{"hypothesis_id", "used", "quality", "contradicted"},
+									"properties": map[string]any{
+										"hypothesis_id":    schemaString("Hypothesis id from recall_memory related hypotheses.", recallFeedbackJudgedRefIDMaxLength),
 										"used":             map[string]any{"type": "boolean"},
 										"quality":          schemaEnum([]string{"high", "medium", "low"}),
 										"contradicted":     map[string]any{"type": "boolean"},
@@ -363,17 +402,18 @@ func submitRecallSessionFeedbackTool(deps Dependencies) Tool {
 			}
 			var req struct {
 				Recalls []struct {
-					RecallID        string                               `json:"recall_id"`
-					Used            bool                                 `json:"used"`
-					AnswerSupported bool                                 `json:"answer_supported"`
-					Quality         string                               `json:"quality"`
-					MissingContext  bool                                 `json:"missing_context"`
-					Irrelevant      bool                                 `json:"irrelevant"`
-					FeedbackComment string                               `json:"feedback_comment"`
-					FailureReason   string                               `json:"failure_reason"`
-					ExpectedContext string                               `json:"expected_context"`
-					IrrelevantRefs  []recallFeedbackJudgedResultRefInput `json:"irrelevant_result_refs"`
-					DreamFeedback   []recallFeedbackDreamFeedbackInput   `json:"dream_feedback"`
+					RecallID           string                                  `json:"recall_id"`
+					Used               bool                                    `json:"used"`
+					AnswerSupported    bool                                    `json:"answer_supported"`
+					Quality            string                                  `json:"quality"`
+					MissingContext     bool                                    `json:"missing_context"`
+					Irrelevant         bool                                    `json:"irrelevant"`
+					FeedbackComment    string                                  `json:"feedback_comment"`
+					FailureReason      string                                  `json:"failure_reason"`
+					ExpectedContext    string                                  `json:"expected_context"`
+					IrrelevantRefs     []recallFeedbackJudgedResultRefInput    `json:"irrelevant_result_refs"`
+					DreamFeedback      []recallFeedbackDreamFeedbackInput      `json:"dream_feedback"`
+					HypothesisFeedback []recallFeedbackHypothesisFeedbackInput `json:"hypothesis_feedback"`
 				} `json:"recalls"`
 			}
 			if err := remapInput(input, &req); err != nil {
@@ -405,7 +445,7 @@ func submitRecallSessionFeedbackTool(deps Dependencies) Tool {
 				if err != nil {
 					return nil, err
 				}
-				dreamFeedback, err := normalizeRecallFeedbackDreamFeedback(i, recall.DreamFeedback)
+				dreamFeedback, err := normalizeRecallFeedbackDreamFeedback(i, recall.DreamFeedback, recall.HypothesisFeedback)
 				if err != nil {
 					return nil, err
 				}
@@ -456,17 +496,42 @@ func recallFeedbackNeedsComment(quality string, answerSupported bool, missingCon
 	return quality != "high" || !answerSupported || missingContext || irrelevant
 }
 
+func recallFeedbackResultTypes() []string {
+	return []string{
+		domain.RecallFeedbackResultTypeFragment,
+		domain.RecallFeedbackResultTypeClaim,
+		domain.RecallFeedbackResultTypeFact,
+		domain.RecallFeedbackResultTypeDream,
+		domain.RecallFeedbackResultTypeEvidence,
+		domain.RecallFeedbackResultTypeRelationship,
+		domain.RecallFeedbackResultTypeEntity,
+		domain.RecallFeedbackResultTypeValue,
+		domain.RecallFeedbackResultTypeCommunity,
+		domain.RecallFeedbackResultTypeHypothesis,
+	}
+}
+
 func normalizeRecallFeedbackJudgedRefs(recallIndex int, refs []recallFeedbackJudgedResultRefInput) ([]domain.RecallFeedbackJudgedResultRef, error) {
 	if len(refs) > recallFeedbackIrrelevantRefsMax {
 		return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].irrelevant_result_refs must contain at most %d items", recallIndex, recallFeedbackIrrelevantRefsMax)
 	}
 	out := make([]domain.RecallFeedbackJudgedResultRef, 0, len(refs))
+	seen := map[string]struct{}{}
 	for i, ref := range refs {
 		refType := strings.TrimSpace(ref.Type)
 		switch refType {
-		case domain.RecallFeedbackResultTypeFragment, domain.RecallFeedbackResultTypeClaim, domain.RecallFeedbackResultTypeFact, domain.RecallFeedbackResultTypeDream:
+		case domain.RecallFeedbackResultTypeFragment,
+			domain.RecallFeedbackResultTypeClaim,
+			domain.RecallFeedbackResultTypeFact,
+			domain.RecallFeedbackResultTypeDream,
+			domain.RecallFeedbackResultTypeEvidence,
+			domain.RecallFeedbackResultTypeRelationship,
+			domain.RecallFeedbackResultTypeEntity,
+			domain.RecallFeedbackResultTypeValue,
+			domain.RecallFeedbackResultTypeCommunity,
+			domain.RecallFeedbackResultTypeHypothesis:
 		default:
-			return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].irrelevant_result_refs[%d].type must be one of fragment, claim, fact, dream", recallIndex, i)
+			return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].irrelevant_result_refs[%d].type must be one of %s", recallIndex, i, strings.Join(recallFeedbackResultTypes(), ", "))
 		}
 		id := strings.TrimSpace(ref.ID)
 		if id == "" {
@@ -476,6 +541,11 @@ func normalizeRecallFeedbackJudgedRefs(recallIndex int, refs []recallFeedbackJud
 			return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].irrelevant_result_refs[%d].id must be at most %d characters", recallIndex, i, recallFeedbackJudgedRefIDMaxLength)
 		}
 		judged := domain.RecallFeedbackJudgedResultRef{Type: refType, ID: id}
+		key := refType + "\x00" + id
+		if _, ok := seen[key]; ok {
+			return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].irrelevant_result_refs must not contain duplicates", recallIndex)
+		}
+		seen[key] = struct{}{}
 		if ref.Rank != nil {
 			if *ref.Rank < 1 || *ref.Rank > recallFeedbackJudgedRefMaxRank {
 				return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].irrelevant_result_refs[%d].rank must be between 1 and %d", recallIndex, i, recallFeedbackJudgedRefMaxRank)
@@ -490,44 +560,81 @@ func normalizeRecallFeedbackJudgedRefs(recallIndex int, refs []recallFeedbackJud
 	return out, nil
 }
 
-func normalizeRecallFeedbackDreamFeedback(recallIndex int, feedback []recallFeedbackDreamFeedbackInput) ([]domain.RecallFeedbackDreamFeedback, error) {
-	if len(feedback) > recallFeedbackIrrelevantRefsMax {
+func normalizeRecallFeedbackDreamFeedback(
+	recallIndex int,
+	legacyDreams []recallFeedbackDreamFeedbackInput,
+	hypotheses []recallFeedbackHypothesisFeedbackInput,
+) ([]domain.RecallFeedbackDreamFeedback, error) {
+	if len(legacyDreams)+len(hypotheses) > recallFeedbackIrrelevantRefsMax {
 		return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].dream_feedback must contain at most %d items", recallIndex, recallFeedbackIrrelevantRefsMax)
 	}
-	out := make([]domain.RecallFeedbackDreamFeedback, 0, len(feedback))
-	for i, item := range feedback {
-		dreamID := strings.TrimSpace(item.DreamID)
-		if dreamID == "" {
-			return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].dream_feedback[%d].dream_id is required", recallIndex, i)
+	out := make([]domain.RecallFeedbackDreamFeedback, 0, len(legacyDreams)+len(hypotheses))
+	seen := map[string]struct{}{}
+	for i, item := range legacyDreams {
+		normalized, err := normalizeRecallFeedbackHypothesisJudgment(recallIndex, i, "dream_feedback", strings.TrimSpace(item.DreamID), item.Used, item.Quality, item.Contradicted, item.FeedbackComment)
+		if err != nil {
+			return nil, err
 		}
-		if runeLen(dreamID) > recallFeedbackJudgedRefIDMaxLength {
-			return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].dream_feedback[%d].dream_id must be at most %d characters", recallIndex, i, recallFeedbackJudgedRefIDMaxLength)
+		if _, ok := seen[normalized.DreamID]; ok {
+			return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].dream_feedback must not contain duplicates", recallIndex)
 		}
-		quality := strings.ToLower(strings.TrimSpace(item.Quality))
-		switch quality {
-		case "high", "medium", "low":
-		default:
-			return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].dream_feedback[%d].quality must be one of high, medium, low", recallIndex, i)
+		seen[normalized.DreamID] = struct{}{}
+		out = append(out, normalized)
+	}
+	for i, item := range hypotheses {
+		normalized, err := normalizeRecallFeedbackHypothesisJudgment(recallIndex, i, "hypothesis_feedback", strings.TrimSpace(item.HypothesisID), item.Used, item.Quality, item.Contradicted, item.FeedbackComment)
+		if err != nil {
+			return nil, err
 		}
-		comment := strings.TrimSpace(item.FeedbackComment)
-		if (quality != "high" || item.Contradicted) && comment == "" {
-			return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].dream_feedback[%d].feedback_comment is required unless quality is high and contradicted is false", recallIndex, i)
+		if _, ok := seen[normalized.DreamID]; ok {
+			return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].hypothesis_feedback must not contain duplicates", recallIndex)
 		}
-		if runeLen(comment) > recallFeedbackCommentMaxLength {
-			return nil, fmt.Errorf("submit_recall_session_feedback: recalls[%d].dream_feedback[%d].feedback_comment must be at most %d characters", recallIndex, i, recallFeedbackCommentMaxLength)
-		}
-		out = append(out, domain.RecallFeedbackDreamFeedback{
-			DreamID:         dreamID,
-			Used:            item.Used,
-			Quality:         quality,
-			Contradicted:    item.Contradicted,
-			FeedbackComment: comment,
-		})
+		seen[normalized.DreamID] = struct{}{}
+		out = append(out, normalized)
 	}
 	if out == nil {
 		return []domain.RecallFeedbackDreamFeedback{}, nil
 	}
 	return out, nil
+}
+
+func normalizeRecallFeedbackHypothesisJudgment(
+	recallIndex int,
+	feedbackIndex int,
+	field string,
+	hypothesisID string,
+	used bool,
+	qualityRaw string,
+	contradicted bool,
+	feedbackComment string,
+) (domain.RecallFeedbackDreamFeedback, error) {
+	hypothesisID = strings.TrimSpace(hypothesisID)
+	if hypothesisID == "" {
+		return domain.RecallFeedbackDreamFeedback{}, fmt.Errorf("submit_recall_session_feedback: recalls[%d].%s[%d].hypothesis_id is required", recallIndex, field, feedbackIndex)
+	}
+	if runeLen(hypothesisID) > recallFeedbackJudgedRefIDMaxLength {
+		return domain.RecallFeedbackDreamFeedback{}, fmt.Errorf("submit_recall_session_feedback: recalls[%d].%s[%d].hypothesis_id must be at most %d characters", recallIndex, field, feedbackIndex, recallFeedbackJudgedRefIDMaxLength)
+	}
+	quality := strings.ToLower(strings.TrimSpace(qualityRaw))
+	switch quality {
+	case "high", "medium", "low":
+	default:
+		return domain.RecallFeedbackDreamFeedback{}, fmt.Errorf("submit_recall_session_feedback: recalls[%d].%s[%d].quality must be one of high, medium, low", recallIndex, field, feedbackIndex)
+	}
+	comment := strings.TrimSpace(feedbackComment)
+	if (quality != "high" || contradicted) && comment == "" {
+		return domain.RecallFeedbackDreamFeedback{}, fmt.Errorf("submit_recall_session_feedback: recalls[%d].%s[%d].feedback_comment is required unless quality is high and contradicted is false", recallIndex, field, feedbackIndex)
+	}
+	if runeLen(comment) > recallFeedbackCommentMaxLength {
+		return domain.RecallFeedbackDreamFeedback{}, fmt.Errorf("submit_recall_session_feedback: recalls[%d].%s[%d].feedback_comment must be at most %d characters", recallIndex, field, feedbackIndex, recallFeedbackCommentMaxLength)
+	}
+	return domain.RecallFeedbackDreamFeedback{
+		DreamID:         hypothesisID,
+		Used:            used,
+		Quality:         quality,
+		Contradicted:    contradicted,
+		FeedbackComment: comment,
+	}, nil
 }
 
 func runeLen(value string) int {

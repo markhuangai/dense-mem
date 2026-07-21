@@ -16,7 +16,7 @@ func listDreamsTool(deps Dependencies) Tool {
 			"type": "object",
 			"properties": map[string]any{
 				"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
-				"status": schemaEnum([]string{"proposed", "reinforced", "stale", "rejected", "promoted"}),
+				"status": schemaEnum([]string{"proposed", "reinforced", "stale", "rejected", "submitted", "promoted"}),
 			},
 			"additionalProperties": false,
 		},
@@ -45,7 +45,7 @@ func listDreamsTool(deps Dependencies) Tool {
 func getDreamTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "get_dream",
-		Description: "Fetch one dream hypothesis with source references. Dreams are assumptions and require explicit user evidence or confirmation before promotion.",
+		Description: "Fetch one dream hypothesis with source references. Dreams are assumptions and require independent evidence before submission.",
 		InputSchema: map[string]any{
 			"type":                 "object",
 			"required":             []string{"dream_id"},
@@ -74,7 +74,7 @@ func getDreamTool(deps Dependencies) Tool {
 func resolveDreamFeedbackTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "resolve_dream_feedback",
-		Description: "Apply evidence-driven feedback to a dream hypothesis. Dreams are uncertain recall hints. Use ignore when no decision was made, reinforce when it remains useful but unconfirmed, reject or stale for manual lifecycle cleanup, confirm_true when prior conversation or user feedback confirms it should enter normal memory placement, and confirm_false when evidence confirms it is not true and correction evidence should enter normal memory placement. promote_candidate is accepted as a backward-compatible alias for confirm_true. Do not confirm based only on model confidence.",
+		Description: "Apply evidence-driven feedback to a dream hypothesis. Dreams are uncertain recall hints. Use ignore when no decision was made, reinforce when it remains useful but unconfirmed, reject or stale for manual lifecycle cleanup, confirm_true when independent evidence should enter normal memory placement, and confirm_false when evidence confirms it is not true. promote_candidate is accepted as a backward-compatible alias for confirm_true. Do not confirm based only on model confidence.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"dream_id", "decision"},

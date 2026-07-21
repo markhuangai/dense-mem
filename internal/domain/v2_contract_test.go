@@ -34,6 +34,26 @@ func TestV2ContractEnums(t *testing.T) {
 			t.Fatalf("V2CurrentCardinalities missing %s", cardinality)
 		}
 	}
+	for _, state := range []string{"active", "deprecated", "retired"} {
+		if !slices.Contains(V2PredicateLifecycleStates(), state) {
+			t.Fatalf("V2PredicateLifecycleStates missing %s", state)
+		}
+	}
+	for _, action := range []string{"reuse", "create", "ambiguous"} {
+		if !slices.Contains(V2EntityResolutionActions(), action) {
+			t.Fatalf("V2EntityResolutionActions missing %s", action)
+		}
+	}
+	for _, decision := range []string{"grant", "revoke", "reinstate"} {
+		if !slices.Contains(V2SupportDecisions(), decision) {
+			t.Fatalf("V2SupportDecisions missing %s", decision)
+		}
+	}
+	for _, action := range []string{"merge", "split"} {
+		if !slices.Contains(V2EntityCorrectionActions(), action) {
+			t.Fatalf("V2EntityCorrectionActions missing %s", action)
+		}
+	}
 	for _, category := range []string{
 		"relationship_fact",
 		"relationship_validated_claim",
@@ -101,6 +121,19 @@ func TestV2ContractEnums(t *testing.T) {
 	for _, strategy := range []string{"exact", "vector_hnsw", "halfvec_hnsw"} {
 		if !slices.Contains(V2VectorIndexStrategies(), strategy) {
 			t.Fatalf("V2VectorIndexStrategies missing %s", strategy)
+		}
+	}
+	if got := V2VectorDistanceMetrics(); !slices.Equal(got, []string{"cosine"}) {
+		t.Fatalf("V2VectorDistanceMetrics = %#v", got)
+	}
+	for _, kind := range []string{"person", "organization", "project", "product", "place", "document", "concept", "other"} {
+		if !slices.Contains(V2EntityKinds(), kind) {
+			t.Fatalf("V2EntityKinds missing %s", kind)
+		}
+	}
+	for _, valueType := range []string{"string", "number", "boolean", "date", "date_time"} {
+		if !slices.Contains(V2ValueTypes(), valueType) {
+			t.Fatalf("V2ValueTypes missing %s", valueType)
 		}
 	}
 	for _, status := range []string{"queued", "processing", "completed", "failed", "stale", "cancelled"} {

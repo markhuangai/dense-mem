@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -123,19 +124,47 @@ func validateV2DreamFeedback(args map[string]any) error {
 	decision, _ := args["decision"].(string)
 	switch decision {
 	case "confirm_true", "confirm_false":
-		return validateV2RequiredFields(args, "evidence")
+		if err := validateV2RequiredFields(args, "evidence"); err != nil {
+			return err
+		}
+		evidence, _ := args["evidence"].([]any)
+		sourceRevisions := map[string]v2ContractSourceRevision{}
+		for i, item := range evidence {
+			fields, ok := objectFields(item)
+			if !ok {
+				continue
+			}
+			if err := validateV2SourceRevisionFields(i, fields); err != nil {
+				return err
+			}
+			if err := validateV2SourceRevisionBatch(i, fields, sourceRevisions); err != nil {
+				return err
+			}
+		}
+		proposal, _ := objectFields(args["proposal"])
+		if err := validateV2UniqueObjectRefsIn(proposal["entities"], "proposal.entities", "ref"); err != nil {
+			return err
+		}
+		if err := validateV2UniqueObjectRefsIn(proposal["relationships"], "proposal.relationships", "proposal_id"); err != nil {
+			return err
+		}
+		if err := validateV2RelationshipObjectChoiceIn(proposal["relationships"], "proposal.relationships"); err != nil {
+			return err
+		}
+		return validateV2ProposalReferencesAndSpans(proposal, evidence)
 	default:
 		return validateV2RequiredFields(args, "reason")
 	}
 }
 
 func validateV2MemoryPackSource(args map[string]any) error {
-	artifact, hasArtifact := args["artifact_json"].(string)
-	hasArtifact = hasArtifact && strings.TrimSpace(artifact) != ""
-	rawURL, hasURL := args["url"].(string)
-	hasURL = hasURL && strings.TrimSpace(rawURL) != ""
+	artifact, hasArtifact := nonEmptyString(args["artifact_json"])
+	rawURL, hasURL := nonEmptyString(args["url"])
 	if hasArtifact == hasURL {
 		return fmt.Errorf("exactly one of artifact_json or url is required")
+	}
+	if hasArtifact && utf8.RuneCountInString(artifact) > v2MemoryPackArtifactMaxLength {
+		return fmt.Errorf("artifact_json exceeds maximum length of %d", v2MemoryPackArtifactMaxLength)
 	}
 	if hasURL {
 		parsed, err := url.Parse(rawURL)
@@ -153,6 +182,15 @@ func validateV2MemoryPackSource(args map[string]any) error {
 		}
 	}
 	return nil
+}
+
+func nonEmptyString(value any) (string, bool) {
+	text, ok := value.(string)
+	if !ok {
+		return "", false
+	}
+	text = strings.TrimSpace(text)
+	return text, text != ""
 }
 
 func validateV2RollbackMemoryPackImport(args map[string]any) error {
@@ -251,6 +289,61 @@ func validateV2ProposalReferencesAndSpans(proposal map[string]any, evidence []an
 				return err
 			}
 		}
+		if target, ok := objectFields(relationship["correction_target"]); ok {
+			if err := validateV2CorrectionTarget(target, fmt.Sprintf("proposal.relationships[%d].correction_target", i)); err != nil {
+				return err
+			}
+		}
+		if err := validateV2RelationshipValidityWindow(relationship, fmt.Sprintf("proposal.relationships[%d]", i)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateV2RelationshipValidityWindow(relationship map[string]any, path string) error {
+	validFrom, err := v2ContractOptionalTime(relationship["valid_from"], path+".valid_from")
+	if err != nil {
+		return err
+	}
+	validTo, err := v2ContractOptionalTime(relationship["valid_to"], path+".valid_to")
+	if err != nil {
+		return err
+	}
+	if validFrom != nil && validTo != nil && validTo.Before(*validFrom) {
+		return fmt.Errorf("%s.valid_to must not be before valid_from", path)
+	}
+	return nil
+}
+
+func v2ContractOptionalTime(raw any, path string) (*time.Time, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	text, ok := raw.(string)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an RFC3339 timestamp", path)
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, text)
+	if err != nil {
+		return nil, fmt.Errorf("%s must be an RFC3339 timestamp", path)
+	}
+	parsed = parsed.UTC()
+	return &parsed, nil
+}
+
+func validateV2CorrectionTarget(target map[string]any, path string) error {
+	relationshipID, _ := target["relationship_id"].(string)
+	if strings.TrimSpace(relationshipID) == "" {
+		return fmt.Errorf("%s.relationship_id is required", path)
+	}
+	version, ok := schemaNumber(target["expected_version"])
+	if !ok || int(version) < 1 {
+		return fmt.Errorf("%s.expected_version must be a positive integer", path)
 	}
 	return nil
 }
