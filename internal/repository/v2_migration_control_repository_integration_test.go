@@ -19,6 +19,9 @@ func TestV2MigrationControlRepositoryPersistsStateAndRLS(t *testing.T) {
 	ctx := context.Background()
 	repo := NewV2MigrationControlRepository(appDB, rls)
 	now := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
+	latest, err := repo.GetLatestRun(ctx)
+	require.NoError(t, err)
+	require.Nil(t, latest)
 	marker, err := repo.GetLatestMarker(ctx)
 	require.NoError(t, err)
 	require.Nil(t, marker)
@@ -82,6 +85,41 @@ func TestV2MigrationControlRepositoryPersistsStateAndRLS(t *testing.T) {
 		return tx.Raw(`SELECT count(*) FROM v2_migration_runs`).Scan(&systemVisible).Error
 	}))
 	require.EqualValues(t, 1, systemVisible)
+}
+
+func TestV2MigrationExecutorRepositoryValidatesOwnerProfilePairs(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := NewV2MigrationControlRepository(appDB, rls)
+
+	teamA := createV2LedgerTeam(t, adminDB, rls, "migration-owner-team-a")
+	ownerA := createV2LedgerProfile(t, adminDB, rls, teamA, "migration-owner-a")
+	ownerB := createV2LedgerProfile(t, adminDB, rls, teamA, "migration-owner-b")
+	teamC := createV2LedgerTeam(t, adminDB, rls, "migration-owner-team-c")
+	ownerC := createV2LedgerProfile(t, adminDB, rls, teamC, "migration-owner-c")
+
+	for _, tc := range []struct {
+		name           string
+		teamID         string
+		ownerProfileID string
+		want           bool
+	}{
+		{name: "team A owner A", teamID: teamA, ownerProfileID: ownerA, want: true},
+		{name: "team A owner B", teamID: teamA, ownerProfileID: ownerB, want: true},
+		{name: "team A owner C", teamID: teamA, ownerProfileID: ownerC, want: false},
+		{name: "team C owner A", teamID: teamC, ownerProfileID: ownerA, want: false},
+		{name: "missing owner", teamID: teamA, ownerProfileID: uuid.NewString(), want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := repo.ValidateMigrationOwnerProfile(ctx, V2ValidateMigrationOwnerProfileInput{
+				TeamID:         tc.teamID,
+				OwnerProfileID: tc.ownerProfileID,
+			})
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+		})
+	}
 }
 
 func TestV2MigrationExecutorRepositoryPersistsProgressAndStats(t *testing.T) {

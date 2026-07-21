@@ -129,6 +129,87 @@ func TestRunOnceSubmitsLegacyItemsUnderOriginalOwnerAndRecordsProgress(t *testin
 	assert.Equal(t, 1, store.refreshCalls)
 }
 
+func TestRunOnceExcludesLegacyOwnerProfileOutsideTeamBeforeRemember(t *testing.T) {
+	runID := uuid.NewString()
+	teamID := uuid.NewString()
+	ownerID := uuid.NewString()
+	store := &executorStoreStub{
+		run: &domain.V2MigrationRun{
+			RunID: runID,
+			State: domain.V2MigrationStateRunning,
+		},
+		validOwnerProfiles: map[string]bool{
+			ownerProfileKey(teamID, uuid.NewString()): true,
+		},
+	}
+	reader := &legacyReaderStub{
+		page: neo4j.LegacyCorpusPage{
+			NextCursor: "sf-cross",
+			Items: []neo4j.LegacyCorpusItem{{
+				SourceID:         "sf-cross",
+				TeamID:           teamID,
+				OwnerProfileID:   ownerID,
+				OwnerProfileName: "wrong-team-owner",
+				Content:          "legacy evidence with invalid owner pair",
+			}},
+		},
+	}
+	remember := &rememberStub{}
+	svc := New(store, reader, remember, Config{})
+
+	result, err := svc.RunOnce(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, &RunOnceResult{
+		RunID:      runID,
+		Fetched:    1,
+		Excluded:   1,
+		NextCursor: "sf-cross",
+	}, result)
+	assert.Empty(t, store.upserts)
+	assert.Empty(t, remember.requests)
+	require.Len(t, store.exclusions, 1)
+	assert.Contains(t, store.exclusions[0].Reason, "legacy owner profile does not belong to team")
+	assert.True(t, store.exclusions[0].BlocksCutover)
+	require.Len(t, store.errors, 1)
+	assert.Equal(t, "validate_legacy_owner_profile", store.errors[0].Phase)
+	assert.Equal(t, "invalid_legacy_owner_profile", store.errors[0].ErrorCode)
+	assert.False(t, store.errors[0].Retryable)
+}
+
+func TestRunOnceReturnsOwnerProfileValidationFailureWithoutAdvancingCheckpoint(t *testing.T) {
+	runID := uuid.NewString()
+	validateErr := errors.New("postgres unavailable")
+	store := &executorStoreStub{
+		run: &domain.V2MigrationRun{
+			RunID: runID,
+			State: domain.V2MigrationStateRunning,
+		},
+		validateOwnerErr: validateErr,
+	}
+	reader := &legacyReaderStub{
+		page: neo4j.LegacyCorpusPage{
+			NextCursor: "sf-validation",
+			Items: []neo4j.LegacyCorpusItem{{
+				SourceID:       "sf-validation",
+				TeamID:         uuid.NewString(),
+				OwnerProfileID: uuid.NewString(),
+				Content:        "legacy evidence while postgres is down",
+			}},
+		},
+	}
+	svc := New(store, reader, &rememberStub{}, Config{})
+
+	result, err := svc.RunOnce(context.Background())
+	require.ErrorIs(t, err, validateErr)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Failed)
+	assert.Empty(t, store.upserts)
+	assert.Empty(t, store.checkpoints)
+	require.Len(t, store.errors, 1)
+	assert.Equal(t, "owner_profile_validation_failed", store.errors[0].ErrorCode)
+	assert.True(t, store.errors[0].Retryable)
+}
+
 func TestRunOnceSkipsAlreadyCompletedItemsOnResume(t *testing.T) {
 	runID := uuid.NewString()
 	teamID := uuid.NewString()
@@ -487,24 +568,40 @@ func TestLegacyHelpersCoverOptionalAndInvalidBranches(t *testing.T) {
 }
 
 type executorStoreStub struct {
-	run            *domain.V2MigrationRun
-	checkpoint     map[string]any
-	upsertOutcomes map[string]string
-	upsertErr      error
-	sourceMapErr   error
-	checkpointErr  error
-	refreshErr     error
-	upserts        []repository.V2UpsertMigrationCorpusItemInput
-	updates        []repository.V2UpdateMigrationCorpusOutcomeInput
-	sourceMaps     []repository.V2UpsertMigrationSourceMapInput
-	checkpoints    []repository.V2UpsertMigrationCheckpointInput
-	errors         []repository.V2RecordMigrationErrorInput
-	exclusions     []repository.V2RecordMigrationExclusionInput
-	refreshCalls   int
+	run                *domain.V2MigrationRun
+	checkpoint         map[string]any
+	upsertOutcomes     map[string]string
+	upsertErr          error
+	validateOwnerErr   error
+	validOwnerProfiles map[string]bool
+	sourceMapErr       error
+	checkpointErr      error
+	refreshErr         error
+	upserts            []repository.V2UpsertMigrationCorpusItemInput
+	updates            []repository.V2UpdateMigrationCorpusOutcomeInput
+	sourceMaps         []repository.V2UpsertMigrationSourceMapInput
+	checkpoints        []repository.V2UpsertMigrationCheckpointInput
+	errors             []repository.V2RecordMigrationErrorInput
+	exclusions         []repository.V2RecordMigrationExclusionInput
+	refreshCalls       int
 }
 
 func (s *executorStoreStub) GetLatestRun(context.Context) (*domain.V2MigrationRun, error) {
 	return s.run, nil
+}
+
+func (s *executorStoreStub) ValidateMigrationOwnerProfile(_ context.Context, input repository.V2ValidateMigrationOwnerProfileInput) (bool, error) {
+	if s.validateOwnerErr != nil {
+		return false, s.validateOwnerErr
+	}
+	if s.validOwnerProfiles == nil {
+		return true, nil
+	}
+	return s.validOwnerProfiles[ownerProfileKey(input.TeamID, input.OwnerProfileID)], nil
+}
+
+func ownerProfileKey(teamID, ownerProfileID string) string {
+	return teamID + "/" + ownerProfileID
 }
 
 func (s *executorStoreStub) UpsertMigrationCorpusItem(_ context.Context, input repository.V2UpsertMigrationCorpusItemInput) (*domain.V2MigrationCorpusItem, error) {

@@ -84,7 +84,7 @@ func (r *V2MigrationControlRepositoryImpl) GetLatestRun(ctx context.Context) (*d
 		return nil
 	})
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if isV2MigrationRowNotFound(err) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("v2 migration control: get latest run: %w", err)
@@ -179,7 +179,7 @@ func (r *V2MigrationControlRepositoryImpl) UpdateRunState(ctx context.Context, i
 		return nil
 	})
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if isV2MigrationRowNotFound(err) {
 			return nil, fmt.Errorf("v2 migration control: stale or illegal state transition")
 		}
 		return nil, fmt.Errorf("v2 migration control: update run state: %w", err)
@@ -207,12 +207,16 @@ func (r *V2MigrationControlRepositoryImpl) GetLatestMarker(ctx context.Context) 
 		return nil
 	})
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if isV2MigrationRowNotFound(err) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("v2 migration control: get marker: %w", err)
 	}
 	return out, nil
+}
+
+func isV2MigrationRowNotFound(err error) bool {
+	return errors.Is(err, sql.ErrNoRows) || errors.Is(err, gorm.ErrRecordNotFound)
 }
 
 func (r *V2MigrationControlRepositoryImpl) RecordOperatorAction(ctx context.Context, action domain.V2MigrationOperatorAction) error {

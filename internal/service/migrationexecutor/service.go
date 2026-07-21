@@ -25,10 +25,12 @@ var (
 	ErrMissingDependency   = errors.New("v2 migration executor: missing dependency")
 	ErrMigrationNotRunning = errors.New("v2 migration executor: migration is not running")
 	ErrInvalidRunID        = errors.New("v2 migration executor: migration run id is invalid")
+	errInvalidLegacyOwner  = errors.New("legacy owner profile does not belong to team")
 )
 
 type Store interface {
 	GetLatestRun(ctx context.Context) (*domain.V2MigrationRun, error)
+	ValidateMigrationOwnerProfile(ctx context.Context, input repository.V2ValidateMigrationOwnerProfileInput) (bool, error)
 	UpsertMigrationCorpusItem(ctx context.Context, input repository.V2UpsertMigrationCorpusItemInput) (*domain.V2MigrationCorpusItem, error)
 	UpdateMigrationCorpusOutcome(ctx context.Context, input repository.V2UpdateMigrationCorpusOutcomeInput) (*domain.V2MigrationCorpusItem, error)
 	UpsertMigrationSourceMap(ctx context.Context, input repository.V2UpsertMigrationSourceMapInput) error
@@ -126,6 +128,7 @@ func (s *service) RunOnce(ctx context.Context) (*RunOnceResult, error) {
 	result := &RunOnceResult{RunID: run.RunID, Fetched: len(page.Items), NextCursor: page.NextCursor, Done: len(page.Items) == 0}
 	for _, item := range page.Items {
 		if err := s.processItem(ctx, run, migrationRunID, item, result); err != nil {
+			// Preserve reached counters while returning the error; durable rows and checkpoint state govern retries.
 			return result, err
 		}
 	}
@@ -165,6 +168,13 @@ func (s *service) processItem(ctx context.Context, run *domain.V2MigrationRun, m
 		if recordErr := s.recordError(ctx, run.RunID, sourceKind, item.SourceID, "validate_legacy_item", "invalid_legacy_item", err, false, nil); recordErr != nil {
 			return recordErr
 		}
+		return nil
+	}
+	ownerValid, err := s.validateLegacyOwnerProfile(ctx, run.RunID, sourceKind, item, result)
+	if err != nil {
+		return err
+	}
+	if !ownerValid {
 		return nil
 	}
 	corpusItem, err := s.store.UpsertMigrationCorpusItem(ctx, repository.V2UpsertMigrationCorpusItemInput{
@@ -239,6 +249,46 @@ func (s *service) processItem(ctx context.Context, run *domain.V2MigrationRun, m
 		return err
 	}
 	return nil
+}
+
+func (s *service) validateLegacyOwnerProfile(
+	ctx context.Context,
+	runID string,
+	sourceKind string,
+	item neo4j.LegacyCorpusItem,
+	result *RunOnceResult,
+) (bool, error) {
+	teamID := strings.TrimSpace(item.TeamID)
+	ownerProfileID := strings.TrimSpace(item.OwnerProfileID)
+	ok, err := s.store.ValidateMigrationOwnerProfile(ctx, repository.V2ValidateMigrationOwnerProfileInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerProfileID,
+	})
+	if err != nil {
+		result.Failed++
+		if recordErr := s.recordError(ctx, runID, sourceKind, item.SourceID, "validate_legacy_owner_profile", "owner_profile_validation_failed", err, true, nil); recordErr != nil {
+			return false, recordErr
+		}
+		return false, err
+	}
+	if ok {
+		return true, nil
+	}
+
+	result.Excluded++
+	err = fmt.Errorf("%w: team_id %s owner_profile_id %s", errInvalidLegacyOwner, teamID, ownerProfileID)
+	if recordErr := s.store.RecordMigrationExclusion(ctx, repository.V2RecordMigrationExclusionInput{
+		RunID:         runID,
+		SourceKind:    sourceKind,
+		SourceID:      strings.TrimSpace(item.SourceID),
+		Reason:        err.Error(),
+		BlocksCutover: true,
+		Metadata:      legacyCorpusMetadata(item),
+		Now:           s.now(),
+	}); recordErr != nil {
+		return false, recordErr
+	}
+	return false, s.recordError(ctx, runID, sourceKind, item.SourceID, "validate_legacy_owner_profile", "invalid_legacy_owner_profile", err, false, nil)
 }
 
 func (s *service) recordSourceMaps(ctx context.Context, runID string, item neo4j.LegacyCorpusItem, rememberResult *memoryservice.V2RememberResult) error {

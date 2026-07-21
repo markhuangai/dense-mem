@@ -30,7 +30,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 	"github.com/markhuangai/dense-mem/internal/service/graphview"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
-	"github.com/markhuangai/dense-mem/internal/service/migrationcontrol"
 	"github.com/markhuangai/dense-mem/internal/service/recallservice"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 	"github.com/markhuangai/dense-mem/internal/sse"
@@ -136,11 +135,6 @@ func main() {
 	if err := embeddingConsistencySvc.CheckAtStartup(startupCtx); err != nil {
 		log.Fatalf("embedding consistency check failed: %v", err)
 	}
-	if cfg.GetV2BootMode() == config.V2BootModeUAT {
-		runV2UATServer(startupCtx, cfg, pgDB, logger, level)
-		return
-	}
-
 	// Initialize Neo4j client with 5-second timeout
 	neo4jClient, err := neo4j.NewClient(startupCtx, &cfg)
 	if err != nil {
@@ -189,22 +183,6 @@ func main() {
 	recallFeedbackEventRepo := repository.NewRecallFeedbackEventRepository(pgDB.GetDB(), rlsHelper)
 	memoryPlacementRepo := repository.NewMemoryPlacementRepository(pgDB.GetDB(), rlsHelper)
 	skillPackImportRepo := repository.NewSkillPackImportRepository(pgDB.GetDB(), rlsHelper)
-	v2SemanticRepo := repository.NewV2SemanticRepository(pgDB.GetDB(), rlsHelper)
-	var v2LedgerRepo *repository.V2LedgerRepositoryImpl
-	var v2MigrationControlRepo *repository.V2MigrationControlRepositoryImpl
-	var v2MigrationControlSvc migrationcontrol.Service
-	if cfg.IsV2BootEnabled() {
-		v2LedgerRepo = repository.NewV2LedgerRepository(pgDB.GetDB(), rlsHelper)
-		v2MigrationControlRepo = repository.NewV2MigrationControlRepository(pgDB.GetDB(), rlsHelper)
-		v2MigrationControlSvc = migrationcontrol.New(v2MigrationControlRepo, migrationcontrol.Config{
-			Required: cfg.GetV2LegacyMigrationRequired(),
-		})
-	}
-	v2Bootstrap := buildDormantV2Bootstrap(cfg, pgDB.GetDB(), v2MigrationControlSvc)
-	if v2Bootstrap.Enabled {
-		logger.Info("v2 dormant bootstrap enabled", observability.String("mode", v2Bootstrap.Mode))
-	}
-	defaultCatalogV2 := buildDefaultCatalogV2Dependencies(v2Bootstrap, v2SemanticRepo)
 
 	// ========================================
 	// Neo4j profile scope enforcer and graph writer
@@ -400,13 +378,6 @@ func main() {
 	placementWorkerCtx, placementWorkerCancel := context.WithCancel(context.Background())
 	defer placementWorkerCancel()
 	memorySvc.StartPlacementWorker(placementWorkerCtx, time.Minute)
-	v2MigrationExecSvc, err := buildV2MigrationExecutor(cfg, v2MigrationControlRepo, neo4jClient, v2LedgerRepo)
-	if err != nil {
-		log.Fatalf("failed to build v2 migration executor: %v", err)
-	}
-	if v2MigrationExecSvc != nil {
-		logger.Info("v2 legacy migration executor enabled")
-	}
 	dreamSvc := dreamservice.New(dreamservice.Dependencies{
 		Graph:     profileScopeEnforcer,
 		Memory:    memorySvc,
@@ -473,9 +444,6 @@ func main() {
 		CommunityList:        communityListSvc,
 		Context:              contextSvc,
 		Memory:               memorySvc,
-		V2Evaluation:         defaultCatalogV2.Evaluation,
-		V2EvaluationEnabled:  defaultCatalogV2.EvaluationEnabled,
-		V2Communities:        defaultCatalogV2.Communities,
 		SkillPack:            skillPackSvc,
 		Dreams:               dreamSvc,
 	})
@@ -526,8 +494,6 @@ func main() {
 			return neo4jClient.Verify(ctx)
 		}},
 	}
-	checks = append(checks, v2Bootstrap.HealthChecks()...)
-
 	if backend.redisPingFn != nil {
 		checks = append(checks, http.HealthCheck{
 			Name:  "redis",
@@ -620,8 +586,6 @@ func main() {
 			Logs:           operationLogService,
 			RecallFeedback: recallFeedbackEventService,
 			Dreams:         dreamSvc,
-			Migration:      v2MigrationControlSvc,
-			MigrationExec:  v2MigrationExecSvc,
 		},
 		healthConfig,
 		logger,

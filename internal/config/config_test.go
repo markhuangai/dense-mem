@@ -53,8 +53,6 @@ func clearEnv() {
 		"AI_COMMUNITY_MAX_NODES",
 		"CONTROL_HTTP_ADDR",
 		"CONTROL_PORTAL_TOKEN",
-		"V2_BOOT_MODE",
-		"V2_LEGACY_MIGRATION_REQUIRED",
 		"TELEMETRY_ENABLED",
 		"TELEMETRY_PROMETHEUS_URL",
 		"TELEMETRY_PROMETHEUS_JOB",
@@ -144,14 +142,16 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.TelemetryPrometheusJob != "" {
 		t.Errorf("TelemetryPrometheusJob default = %q, want empty", cfg.TelemetryPrometheusJob)
 	}
-	if cfg.GetV2BootMode() != V2BootModeOff {
-		t.Errorf("V2BootMode default = %q, want %q", cfg.GetV2BootMode(), V2BootModeOff)
-	}
-	if cfg.GetV2LegacyMigrationRequired() {
-		t.Error("V2LegacyMigrationRequired default = true, want false")
-	}
-	if cfg.IsV2BootEnabled() {
-		t.Error("IsV2BootEnabled() = true, want false")
+}
+
+func TestLoadIgnoresLegacyV2BootModeEnv(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+	t.Setenv("V2_BOOT_MODE", "uat")
+	t.Setenv("V2_LEGACY_MIGRATION_REQUIRED", "true")
+
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load() returned unexpected error for ignored V2 boot env: %v", err)
 	}
 }
 
@@ -481,8 +481,6 @@ func TestConfigProviderInterface(t *testing.T) {
 	_ = provider.GetAICommunityMaxNodes()
 	_ = provider.GetControlHTTPAddr()
 	_ = provider.GetControlPortalToken()
-	_ = cfg.GetV2BootMode()
-	_ = cfg.GetV2LegacyMigrationRequired()
 }
 
 func TestConfigGetterFallbacksAndParsers(t *testing.T) {

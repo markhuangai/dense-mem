@@ -2,8 +2,6 @@ package repository
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -16,6 +14,7 @@ import (
 
 type V2MigrationExecutorRepository interface {
 	GetLatestRun(ctx context.Context) (*domain.V2MigrationRun, error)
+	ValidateMigrationOwnerProfile(ctx context.Context, input V2ValidateMigrationOwnerProfileInput) (bool, error)
 	UpsertMigrationCorpusItem(ctx context.Context, input V2UpsertMigrationCorpusItemInput) (*domain.V2MigrationCorpusItem, error)
 	UpdateMigrationCorpusOutcome(ctx context.Context, input V2UpdateMigrationCorpusOutcomeInput) (*domain.V2MigrationCorpusItem, error)
 	UpsertMigrationSourceMap(ctx context.Context, input V2UpsertMigrationSourceMapInput) error
@@ -24,6 +23,11 @@ type V2MigrationExecutorRepository interface {
 	RecordMigrationError(ctx context.Context, input V2RecordMigrationErrorInput) error
 	RecordMigrationExclusion(ctx context.Context, input V2RecordMigrationExclusionInput) error
 	RefreshMigrationRunStats(ctx context.Context, runID string, now time.Time) (*domain.V2MigrationRun, error)
+}
+
+type V2ValidateMigrationOwnerProfileInput struct {
+	TeamID         string
+	OwnerProfileID string
 }
 
 type V2UpsertMigrationCorpusItemInput struct {
@@ -93,6 +97,39 @@ type V2RecordMigrationExclusionInput struct {
 
 type v2MigrationRLSHelper interface {
 	WithMigrationTx(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) error) error
+}
+
+func (r *V2MigrationControlRepositoryImpl) ValidateMigrationOwnerProfile(
+	ctx context.Context,
+	input V2ValidateMigrationOwnerProfileInput,
+) (bool, error) {
+	teamID := strings.TrimSpace(input.TeamID)
+	ownerProfileID := strings.TrimSpace(input.OwnerProfileID)
+	if _, err := uuid.Parse(teamID); err != nil {
+		return false, fmt.Errorf("v2 migration executor: validate owner profile: invalid team_id: %w", err)
+	}
+	if _, err := uuid.Parse(ownerProfileID); err != nil {
+		return false, fmt.Errorf("v2 migration executor: validate owner profile: invalid owner_profile_id: %w", err)
+	}
+
+	var exists bool
+	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT EXISTS (
+				SELECT 1
+				FROM team_profiles profile
+				JOIN teams team ON team.id = profile.team_id
+				WHERE profile.team_id = ?::uuid
+				  AND profile.id = ?::uuid
+				  AND team.deleted_at IS NULL
+				  AND team.status <> 'deleted'
+			)
+		`, teamID, ownerProfileID).Scan(&exists).Error
+	})
+	if err != nil {
+		return false, fmt.Errorf("v2 migration executor: validate owner profile: %w", err)
+	}
+	return exists, nil
 }
 
 func (r *V2MigrationControlRepositoryImpl) UpsertMigrationCorpusItem(
@@ -179,7 +216,7 @@ func (r *V2MigrationControlRepositoryImpl) UpdateMigrationCorpusOutcome(
 		return nil
 	})
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if isV2MigrationRowNotFound(err) {
 			return nil, fmt.Errorf("v2 migration executor: corpus item not found")
 		}
 		return nil, fmt.Errorf("v2 migration executor: update corpus outcome: %w", err)
@@ -269,7 +306,7 @@ func (r *V2MigrationControlRepositoryImpl) GetMigrationCheckpoint(
 		return unmarshalV2MigrationJSON(data, &out)
 	})
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if isV2MigrationRowNotFound(err) {
 			return map[string]any{}, nil
 		}
 		return nil, fmt.Errorf("v2 migration executor: get checkpoint: %w", err)

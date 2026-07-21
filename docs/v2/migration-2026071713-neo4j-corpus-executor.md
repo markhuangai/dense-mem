@@ -32,9 +32,11 @@ responsible for durable semantic state.
 ## Ownership And Isolation
 
 Each submitted fragment gets a fresh request context built from the legacy
-fragment's original `team_id` and `owner_profile_id`. The operator/control
-caller cannot choose the migrated team or owner through request payload,
-headers, or control-route identity.
+fragment's original `team_id` and `owner_profile_id` only after PostgreSQL
+confirms that exact owner profile belongs to the team. Mismatches are recorded
+as cutover-blocking exclusions before any V2 actor context or remember request
+is created. The operator/control caller cannot choose the migrated team or
+owner through request payload, headers, or control-route identity.
 
 Migration bookkeeping uses PostgreSQL `migration` transaction mode when the RLS
 helper exposes it. Normal profile and team transactions cannot read or mutate
@@ -68,10 +70,10 @@ partial counters as a successful page.
 
 ## Wiring Boundary
 
-Main boot constructs the executor only when `V2_BOOT_MODE=dormant` and
-`V2_LEGACY_MIGRATION_REQUIRED=true`. The token-protected private control portal
-authorizes every action; one `run-once` call performs one bounded page and no
-implicit migration worker starts during normal boot.
+Main boot does not construct the executor in #119. The token-protected private
+control portal can accept an injected executor, but normal production boot leaves
+the service nil and returns service unavailable for `run-once`. #94 owns
+production wiring for forced migration maintenance.
 
 Each submission preserves the original team/profile owner and carries a typed
 internal migration actor derived from the durable migration run ID. Migration
