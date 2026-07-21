@@ -210,7 +210,7 @@ func TestRunOnceExcludesLegacyOwnerProfileOutsideTeamBeforeRemember(t *testing.T
 
 func TestRunOnceReturnsOwnerProfileValidationFailureWithoutAdvancingCheckpoint(t *testing.T) {
 	runID := uuid.NewString()
-	validateErr := errors.New("postgres unavailable")
+	validateErr := errors.New("postgres unavailable: postgres://operator:secret@db.internal/dense_mem")
 	store := &executorStoreStub{
 		run: &domain.V2MigrationRun{
 			RunID: runID,
@@ -240,6 +240,8 @@ func TestRunOnceReturnsOwnerProfileValidationFailureWithoutAdvancingCheckpoint(t
 	assert.Empty(t, store.checkpoints)
 	require.Len(t, store.errors, 1)
 	assert.Equal(t, "owner_profile_validation_failed", store.errors[0].ErrorCode)
+	assert.Equal(t, "legacy owner profile validation failed", store.errors[0].Message)
+	assert.NotContains(t, store.errors[0].Message, "secret")
 	assert.True(t, store.errors[0].Retryable)
 }
 
@@ -295,7 +297,7 @@ func TestRunOnceRecordsFailedOutcomeWhenRememberFails(t *testing.T) {
 			}},
 		},
 	}
-	remember := &rememberStub{err: errors.New("provider down")}
+	remember := &rememberStub{err: errors.New("provider down: Authorization: Bearer secret-token")}
 	svc := New(store, reader, remember, Config{})
 
 	result, err := svc.RunOnce(context.Background())
@@ -305,6 +307,9 @@ func TestRunOnceRecordsFailedOutcomeWhenRememberFails(t *testing.T) {
 	assert.Equal(t, domain.V2MigrationOutcomeFailed, store.updates[0].Outcome)
 	require.Len(t, store.errors, 1)
 	assert.Equal(t, "remember_failed", store.errors[0].ErrorCode)
+	assert.Equal(t, "remember v2 submission failed", store.errors[0].Message)
+	assert.Equal(t, "remember v2 submission failed", store.updates[0].Metadata["error"])
+	assert.NotContains(t, store.errors[0].Message, "secret-token")
 }
 
 func TestRunOnceRequiresRunningMigration(t *testing.T) {
@@ -372,7 +377,7 @@ func TestRunOnceRecordsReadFailure(t *testing.T) {
 			State: domain.V2MigrationStateRunning,
 		},
 	}
-	readErr := errors.New("neo4j unavailable")
+	readErr := errors.New("neo4j unavailable at bolt://user:secret@legacy")
 	svc := New(store, &legacyReaderStub{err: readErr}, &rememberStub{}, Config{})
 
 	result, err := svc.RunOnce(context.Background())
@@ -381,6 +386,8 @@ func TestRunOnceRecordsReadFailure(t *testing.T) {
 	require.Len(t, store.errors, 1)
 	assert.Equal(t, "read_legacy_corpus", store.errors[0].Phase)
 	assert.Equal(t, "read_failed", store.errors[0].ErrorCode)
+	assert.Equal(t, "legacy corpus read failed", store.errors[0].Message)
+	assert.NotContains(t, store.errors[0].Message, "secret")
 	assert.True(t, store.errors[0].Retryable)
 }
 
@@ -455,7 +462,7 @@ func TestRunOnceRecordsCorpusUpsertFailureAsCutoverBlocker(t *testing.T) {
 			RunID: runID,
 			State: domain.V2MigrationStateRunning,
 		},
-		upsertErr: errors.New("postgres unavailable"),
+		upsertErr: errors.New("postgres unavailable: api_key=secret"),
 	}
 	reader := &legacyReaderStub{
 		page: neo4j.LegacyCorpusPage{
@@ -476,9 +483,12 @@ func TestRunOnceRecordsCorpusUpsertFailureAsCutoverBlocker(t *testing.T) {
 	require.Len(t, store.exclusions, 1)
 	assert.True(t, store.exclusions[0].BlocksCutover)
 	assert.Equal(t, "postgres corpus item upsert failed", store.exclusions[0].Reason)
+	assert.Equal(t, "migration repository write failed", store.exclusions[0].Metadata["error"])
 	require.Len(t, store.errors, 1)
 	assert.Equal(t, "upsert_corpus_item", store.errors[0].Phase)
 	assert.Equal(t, "postgres_write_failed", store.errors[0].ErrorCode)
+	assert.Equal(t, "migration repository write failed", store.errors[0].Message)
+	assert.NotContains(t, store.errors[0].Message, "secret")
 	assert.True(t, store.errors[0].Retryable)
 }
 
@@ -537,6 +547,12 @@ func TestPartialRunOnceErrorWrapsResultAndCause(t *testing.T) {
 	require.ErrorIs(t, err, cause)
 	assert.Equal(t, cause.Error(), err.Error())
 	assert.Nil(t, partialRunOnceError(result, nil))
+}
+
+func TestMigrationErrorMessageUsesBoundedSafeText(t *testing.T) {
+	assert.Equal(t, "legacy corpus item is invalid", migrationErrorMessage("validate_legacy_item", "invalid_legacy_item", errors.New("content contains sk-secret")))
+	assert.Equal(t, "migration phase failed", migrationErrorMessage("custom_phase", "custom_code", errors.New("dsn postgres://user:secret@db")))
+	assert.Empty(t, migrationErrorMessage("", "", nil))
 }
 
 func TestMigrationExecutorHelpersCoverFallbackBranches(t *testing.T) {

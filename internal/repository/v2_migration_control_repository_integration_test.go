@@ -2,6 +2,9 @@ package repository
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +15,24 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
+
+func TestV2MigrationControlPlaneMigrationContainsDDL(t *testing.T) {
+	path := filepath.Join("..", "..", "migrations", "postgres", "2026071909_v2_migration_control_plane.sql")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	sql := string(data)
+	for _, ddl := range []string{
+		"CREATE TABLE IF NOT EXISTS v2_migration_runs",
+		"CREATE TABLE IF NOT EXISTS v2_migration_corpus_items",
+		"CREATE TABLE IF NOT EXISTS v2_migration_checkpoints",
+		"CREATE TABLE IF NOT EXISTS v2_migration_errors",
+		"CREATE TABLE IF NOT EXISTS v2_migration_gate_results",
+		"CREATE TABLE IF NOT EXISTS v2_compatibility_markers",
+		"ALTER TABLE v2_migration_runs ENABLE ROW LEVEL SECURITY",
+	} {
+		require.Truef(t, strings.Contains(sql, ddl), "migration file missing %q", ddl)
+	}
+}
 
 func TestV2MigrationControlRepositoryPersistsStateAndRLS(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)

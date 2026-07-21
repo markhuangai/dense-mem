@@ -217,7 +217,7 @@ func (s *service) processItem(ctx context.Context, run *domain.V2MigrationRun, m
 			SourceID:      strings.TrimSpace(item.SourceID),
 			Reason:        "postgres corpus item upsert failed",
 			BlocksCutover: true,
-			Metadata:      map[string]any{"error": err.Error()},
+			Metadata:      map[string]any{"error": migrationErrorMessage("upsert_corpus_item", "postgres_write_failed", err)},
 			Now:           s.now(),
 		}); recordErr != nil {
 			return recordErr
@@ -240,7 +240,7 @@ func (s *service) processItem(ctx context.Context, run *domain.V2MigrationRun, m
 			SourceID:        strings.TrimSpace(item.SourceID),
 			Outcome:         domain.V2MigrationOutcomeFailed,
 			ExclusionReason: "remember_v2_failed",
-			Metadata:        map[string]any{"error": err.Error()},
+			Metadata:        map[string]any{"error": migrationErrorMessage("remember_v2", "remember_failed", err)},
 			Now:             s.now(),
 		}); updateErr != nil {
 			return updateErr
@@ -353,11 +353,35 @@ func (s *service) recordError(
 		SourceID:   strings.TrimSpace(sourceID),
 		Phase:      phase,
 		ErrorCode:  code,
-		Message:    err.Error(),
+		Message:    migrationErrorMessage(phase, code, err),
 		Retryable:  retryable,
 		Metadata:   metadata,
 		Now:        s.now(),
 	})
+}
+
+func migrationErrorMessage(phase string, code string, err error) string {
+	switch strings.TrimSpace(code) {
+	case "read_failed":
+		return "legacy corpus read failed"
+	case "invalid_legacy_item":
+		return "legacy corpus item is invalid"
+	case "owner_profile_validation_failed":
+		return "legacy owner profile validation failed"
+	case "invalid_legacy_owner_profile":
+		return errInvalidLegacyOwner.Error()
+	case "postgres_write_failed":
+		return "migration repository write failed"
+	case "remember_failed":
+		return "remember v2 submission failed"
+	}
+	if strings.TrimSpace(phase) != "" {
+		return "migration phase failed"
+	}
+	if err != nil {
+		return "migration failed"
+	}
+	return ""
 }
 
 func (s *service) cursor(ctx context.Context, run *domain.V2MigrationRun) (string, error) {
