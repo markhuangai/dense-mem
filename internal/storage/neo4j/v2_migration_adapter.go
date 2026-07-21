@@ -231,7 +231,7 @@ func legacyCorpusItemFromRecord(record *driver.Record) (LegacyCorpusItem, error)
 		return LegacyCorpusItem{}, errors.New("neo4j legacy migration adapter: source_id is required")
 	}
 	if item.SourceHash == "" {
-		item.SourceHash = legacyContentHash(item.Content)
+		item.SourceHash = LegacyContentHash(item.Content)
 	}
 	var err error
 	item.Metadata, err = legacyJSONObject(record, "metadata_json")
@@ -419,7 +419,8 @@ func legacyMapWithout(input map[string]any, keys ...string) map[string]any {
 	return out
 }
 
-func legacyContentHash(content string) string {
+// LegacyContentHash returns the deterministic fallback SourceFragment hash used when Neo4j lacks one.
+func LegacyContentHash(content string) string {
 	sum := sha256.Sum256([]byte(content))
 	return "sha256:" + hex.EncodeToString(sum[:])
 }

@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,6 +13,9 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
+
+// ErrV2MigrationCorpusSourceMetadataMismatch reports legacy source owner or hash drift after staging.
+var ErrV2MigrationCorpusSourceMetadataMismatch = errors.New("v2 migration executor: corpus source metadata mismatch")
 
 type V2MigrationExecutorRepository interface {
 	GetLatestRun(ctx context.Context) (*domain.V2MigrationRun, error)
@@ -143,7 +148,7 @@ func (r *V2MigrationControlRepositoryImpl) UpsertMigrationCorpusItem(
 	}
 	var out *domain.V2MigrationCorpusItem
 	err = r.withMigrationTx(ctx, func(tx *gorm.DB) error {
-		row := tx.Raw(`
+		rows, err := tx.Raw(`
 			INSERT INTO v2_migration_corpus_items (
 			    item_id, run_id, team_id, owner_profile_id, source_kind, source_id,
 			    source_hash, item_kind, outcome, metadata, created_at, updated_at
@@ -152,10 +157,12 @@ func (r *V2MigrationControlRepositoryImpl) UpsertMigrationCorpusItem(
 			    ?, ?, ?, ?::jsonb, ?, ?
 			)
 			ON CONFLICT (run_id, source_kind, source_id) DO UPDATE
-			SET source_hash = EXCLUDED.source_hash,
-			    item_kind = EXCLUDED.item_kind,
+			SET item_kind = EXCLUDED.item_kind,
 			    metadata = v2_migration_corpus_items.metadata || EXCLUDED.metadata,
 			    updated_at = EXCLUDED.updated_at
+			WHERE v2_migration_corpus_items.team_id = EXCLUDED.team_id
+			  AND v2_migration_corpus_items.owner_profile_id IS NOT DISTINCT FROM EXCLUDED.owner_profile_id
+			  AND v2_migration_corpus_items.source_hash = EXCLUDED.source_hash
 			RETURNING item_id::text, run_id::text, team_id::text,
 			          COALESCE(owner_profile_id::text, ''), source_kind, source_id,
 			          source_hash, item_kind, outcome, COALESCE(ingest_id::text, ''),
@@ -164,9 +171,15 @@ func (r *V2MigrationControlRepositoryImpl) UpsertMigrationCorpusItem(
 		`, uuid.NewString(), input.RunID, input.TeamID, input.OwnerProfileID,
 			v2MigrationSourceKind(input.SourceKind), strings.TrimSpace(input.SourceID),
 			strings.TrimSpace(input.SourceHash), v2MigrationItemKind(input.ItemKind),
-			v2MigrationOutcome(input.Outcome), string(metadata), now, now).Row()
-		record, err := scanV2MigrationCorpusItem(row)
+			v2MigrationOutcome(input.Outcome), string(metadata), now, now).Rows()
 		if err != nil {
+			return err
+		}
+		record, err := scanV2MigrationCorpusItemRows(rows)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrV2MigrationCorpusSourceMetadataMismatch
+			}
 			return err
 		}
 		out = record
@@ -189,7 +202,7 @@ func (r *V2MigrationControlRepositoryImpl) UpdateMigrationCorpusOutcome(
 	}
 	var out *domain.V2MigrationCorpusItem
 	err = r.withMigrationTx(ctx, func(tx *gorm.DB) error {
-		row := tx.Raw(`
+		rows, err := tx.Raw(`
 			UPDATE v2_migration_corpus_items
 			SET outcome = ?,
 			    ingest_id = NULLIF(?, '')::uuid,
@@ -205,10 +218,13 @@ func (r *V2MigrationControlRepositoryImpl) UpdateMigrationCorpusOutcome(
 			          source_hash, item_kind, outcome, COALESCE(ingest_id::text, ''),
 			          COALESCE(placement_item_id::text, ''), exclusion_reason,
 			          metadata::text, created_at, updated_at
-		`, v2MigrationOutcome(input.Outcome), input.IngestID, input.PlacementItemID,
+			`, v2MigrationOutcome(input.Outcome), input.IngestID, input.PlacementItemID,
 			strings.TrimSpace(input.ExclusionReason), string(metadata), now, input.RunID,
-			v2MigrationSourceKind(input.SourceKind), strings.TrimSpace(input.SourceID)).Row()
-		record, err := scanV2MigrationCorpusItem(row)
+			v2MigrationSourceKind(input.SourceKind), strings.TrimSpace(input.SourceID)).Rows()
+		if err != nil {
+			return err
+		}
+		record, err := scanV2MigrationCorpusItemRows(rows)
 		if err != nil {
 			return err
 		}
@@ -294,13 +310,26 @@ func (r *V2MigrationControlRepositoryImpl) GetMigrationCheckpoint(
 	var out map[string]any
 	err := r.withMigrationTx(ctx, func(tx *gorm.DB) error {
 		var data string
-		row := tx.Raw(`
+		rows, err := tx.Raw(`
 			SELECT checkpoint_value::text
 			FROM v2_migration_checkpoints
 			WHERE run_id = ?::uuid
 			  AND checkpoint_key = ?
-		`, runID, strings.TrimSpace(checkpointKey)).Row()
-		if err := row.Scan(&data); err != nil {
+		`, runID, strings.TrimSpace(checkpointKey)).Rows()
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		if !rows.Next() {
+			if err := rows.Err(); err != nil {
+				return err
+			}
+			return sql.ErrNoRows
+		}
+		if err := rows.Scan(&data); err != nil {
+			return err
+		}
+		if err := rows.Err(); err != nil {
 			return err
 		}
 		return unmarshalV2MigrationJSON(data, &out)
@@ -372,7 +401,7 @@ func (r *V2MigrationControlRepositoryImpl) RefreshMigrationRunStats(
 ) (*domain.V2MigrationRun, error) {
 	var out *domain.V2MigrationRun
 	err := r.withMigrationTx(ctx, func(tx *gorm.DB) error {
-		row := tx.Raw(`
+		rows, err := tx.Raw(`
 			WITH counts AS (
 			    SELECT
 			        count(*)::int AS total_items,
@@ -399,8 +428,11 @@ func (r *V2MigrationControlRepositoryImpl) RefreshMigrationRunStats(
 			          last_error, retryable, lease_owner, checkpoint_key,
 			          checkpoint_value::text, started_at, completed_at, cutover_at,
 			          created_at, updated_at
-		`, runID, v2MigrationTime(now), runID).Row()
-		record, err := scanV2MigrationRun(row)
+		`, runID, v2MigrationTime(now), runID).Rows()
+		if err != nil {
+			return err
+		}
+		record, err := scanV2MigrationRunRows(rows)
 		if err != nil {
 			return err
 		}
@@ -421,6 +453,42 @@ func (r *V2MigrationControlRepositoryImpl) withMigrationTx(ctx context.Context, 
 		return helper.WithMigrationTx(ctx, r.db, fn)
 	}
 	return r.withSystemTx(ctx, fn)
+}
+
+func scanV2MigrationRunRows(rows *sql.Rows) (*domain.V2MigrationRun, error) {
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, sql.ErrNoRows
+	}
+	record, err := scanV2MigrationRun(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return record, nil
+}
+
+func scanV2MigrationCorpusItemRows(rows *sql.Rows) (*domain.V2MigrationCorpusItem, error) {
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, sql.ErrNoRows
+	}
+	record, err := scanV2MigrationCorpusItem(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return record, nil
 }
 
 func scanV2MigrationCorpusItem(row v2MigrationRowScanner) (*domain.V2MigrationCorpusItem, error) {

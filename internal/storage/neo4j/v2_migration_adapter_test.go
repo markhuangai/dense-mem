@@ -136,7 +136,7 @@ func TestLegacyCorpusMigrationAdapterReadsPageAndPreservesExactContent(t *testin
 	item := page.Items[0]
 	require.Equal(t, LegacyCorpusSourceKind, item.SourceKind)
 	require.Equal(t, "sf-123", item.SourceID)
-	require.Equal(t, legacyContentHash(content), item.SourceHash)
+	require.Equal(t, LegacyContentHash(content), item.SourceHash)
 	require.Equal(t, "team-a", item.TeamID)
 	require.Equal(t, "profile-a", item.OwnerProfileID)
 	require.Equal(t, "Ada", item.OwnerProfileName)

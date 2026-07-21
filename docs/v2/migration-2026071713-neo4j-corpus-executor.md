@@ -62,6 +62,11 @@ For each page it:
 Retry upserts preserve existing non-pending outcomes, so a restarted executor skips
 items already submitted or excluded instead of duplicating work.
 
+Items inside a page are processed sequentially in #119. Operators scale the
+rehearsal by running additional bounded pages only after durable outcomes and
+checkpoints are visible, which avoids concurrent owner-scope, provider, and RLS
+pressure while the executor remains dormant.
+
 `RunOnce` may return page counters with an error after processing has started.
 Those counters describe work reached by that call; durable corpus outcomes and
 the last committed checkpoint are authoritative for operator inspection and

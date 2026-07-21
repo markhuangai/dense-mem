@@ -111,6 +111,7 @@ func TestRunOnceSubmitsLegacyItemsUnderOriginalOwnerAndRecordsProgress(t *testin
 
 	require.Len(t, store.upserts, 1)
 	assert.Equal(t, ownerID.String(), store.upserts[0].OwnerProfileID)
+	assert.Equal(t, "sha256:source", store.upserts[0].SourceHash)
 	require.Len(t, store.updates, 1)
 	assert.Equal(t, domain.V2MigrationOutcomeNeedsReview, store.updates[0].Outcome)
 	assert.Equal(t, "11111111-1111-1111-1111-111111111111", store.updates[0].IngestID)
@@ -127,6 +128,37 @@ func TestRunOnceSubmitsLegacyItemsUnderOriginalOwnerAndRecordsProgress(t *testin
 	require.Len(t, store.errors, 1)
 	assert.Equal(t, "invalid_legacy_item", store.errors[0].ErrorCode)
 	assert.Equal(t, 1, store.refreshCalls)
+}
+
+func TestRunOnceDerivesMissingLegacySourceHashBeforeStaging(t *testing.T) {
+	runID := uuid.NewString()
+	teamID := uuid.NewString()
+	ownerID := uuid.NewString()
+	content := "legacy evidence without stored hash"
+	store := &executorStoreStub{
+		run: &domain.V2MigrationRun{
+			RunID: runID,
+			State: domain.V2MigrationStateRunning,
+		},
+	}
+	reader := &legacyReaderStub{
+		page: neo4j.LegacyCorpusPage{
+			NextCursor: "sf-derived-hash",
+			Items: []neo4j.LegacyCorpusItem{{
+				SourceID:       "sf-derived-hash",
+				TeamID:         teamID,
+				OwnerProfileID: ownerID,
+				Content:        content,
+			}},
+		},
+	}
+	svc := New(store, reader, &rememberStub{}, Config{})
+
+	result, err := svc.RunOnce(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Submitted)
+	require.Len(t, store.upserts, 1)
+	assert.Equal(t, neo4j.LegacyContentHash(content), store.upserts[0].SourceHash)
 }
 
 func TestRunOnceExcludesLegacyOwnerProfileOutsideTeamBeforeRemember(t *testing.T) {
@@ -202,6 +234,7 @@ func TestRunOnceReturnsOwnerProfileValidationFailureWithoutAdvancingCheckpoint(t
 	result, err := svc.RunOnce(context.Background())
 	require.ErrorIs(t, err, validateErr)
 	require.NotNil(t, result)
+	requirePartialRunOnceError(t, err, result)
 	assert.Equal(t, 1, result.Failed)
 	assert.Empty(t, store.upserts)
 	assert.Empty(t, store.checkpoints)
@@ -410,6 +443,7 @@ func TestRunOnceReturnsRequiredSourceMapWriteFailure(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "source map write failed")
 	require.NotNil(t, result)
+	requirePartialRunOnceError(t, err, result)
 	assert.Equal(t, 1, result.Submitted)
 	assert.Empty(t, store.updates)
 }
@@ -464,6 +498,7 @@ func TestRunOnceReturnsCheckpointAndStatsRefreshFailures(t *testing.T) {
 		result, err := svc.RunOnce(context.Background())
 		require.ErrorIs(t, err, checkpointErr)
 		require.NotNil(t, result)
+		requirePartialRunOnceError(t, err, result)
 		assert.Equal(t, runID, result.RunID)
 		assert.Equal(t, 0, store.refreshCalls)
 	})
@@ -483,10 +518,46 @@ func TestRunOnceReturnsCheckpointAndStatsRefreshFailures(t *testing.T) {
 		result, err := svc.RunOnce(context.Background())
 		require.ErrorIs(t, err, refreshErr)
 		require.NotNil(t, result)
+		requirePartialRunOnceError(t, err, result)
 		assert.Equal(t, runID, result.RunID)
 		require.Len(t, store.checkpoints, 1)
 		assert.Equal(t, 1, store.refreshCalls)
 	})
+}
+
+func TestPartialRunOnceErrorWrapsResultAndCause(t *testing.T) {
+	cause := errors.New("checkpoint failed")
+	result := &RunOnceResult{RunID: uuid.NewString(), Fetched: 1}
+
+	err := partialRunOnceError(result, cause)
+
+	var partial *PartialRunOnceError
+	require.ErrorAs(t, err, &partial)
+	require.Same(t, result, partial.Result)
+	require.ErrorIs(t, err, cause)
+	assert.Equal(t, cause.Error(), err.Error())
+	assert.Nil(t, partialRunOnceError(result, nil))
+}
+
+func TestMigrationExecutorHelpersCoverFallbackBranches(t *testing.T) {
+	var nilPartial *PartialRunOnceError
+	assert.Equal(t, "v2 migration executor: partial run failed", nilPartial.Error())
+	assert.Nil(t, nilPartial.Unwrap())
+
+	svc := &service{cfg: Config{PageSize: 42}, store: &executorStoreStub{}}
+	assert.Equal(t, 42, svc.pageSize())
+
+	require.NoError(t, svc.recordSourceMaps(context.Background(), uuid.NewString(), neo4j.LegacyCorpusItem{}, nil))
+	require.NoError(t, svc.recordSourceMaps(context.Background(), uuid.NewString(), neo4j.LegacyCorpusItem{}, &memoryservice.V2RememberResult{}))
+	assert.Empty(t, svc.store.(*executorStoreStub).sourceMaps)
+
+	assert.ErrorContains(t, validateLegacyCorpusItem(neo4j.LegacyCorpusItem{
+		SourceID:       "sf-no-hash",
+		TeamID:         uuid.NewString(),
+		OwnerProfileID: uuid.NewString(),
+		Content:        "content without hash",
+	}), "source_hash")
+	assert.Empty(t, legacyEntityHints(neo4j.LegacyCorpusItem{}))
 }
 
 func TestLegacyRememberRequestPreservesSupportedSourceAuthorityAndHints(t *testing.T) {
@@ -602,6 +673,13 @@ func (s *executorStoreStub) ValidateMigrationOwnerProfile(_ context.Context, inp
 
 func ownerProfileKey(teamID, ownerProfileID string) string {
 	return teamID + "/" + ownerProfileID
+}
+
+func requirePartialRunOnceError(t *testing.T, err error, result *RunOnceResult) {
+	t.Helper()
+	var partial *PartialRunOnceError
+	require.ErrorAs(t, err, &partial)
+	require.Same(t, result, partial.Result)
 }
 
 func (s *executorStoreStub) UpsertMigrationCorpusItem(_ context.Context, input repository.V2UpsertMigrationCorpusItemInput) (*domain.V2MigrationCorpusItem, error) {

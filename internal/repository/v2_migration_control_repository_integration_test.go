@@ -128,6 +128,7 @@ func TestV2MigrationExecutorRepositoryPersistsProgressAndStats(t *testing.T) {
 	ctx := context.Background()
 	teamID := createV2LedgerTeam(t, adminDB, rls, "migration-executor-team")
 	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "migration-executor-owner")
+	otherOwnerID := createV2LedgerProfile(t, adminDB, rls, teamID, "migration-executor-other-owner")
 	now := time.Date(2026, 7, 17, 13, 0, 0, 0, time.UTC)
 	ledger := NewV2LedgerRepository(appDB, rls)
 	ingest, err := ledger.CreateIngest(ctx, V2CreateIngestInput{
@@ -207,7 +208,7 @@ func TestV2MigrationExecutorRepositoryPersistsProgressAndStats(t *testing.T) {
 		OwnerProfileID: ownerID,
 		SourceKind:     "neo4j",
 		SourceID:       "sf-1",
-		SourceHash:     "sha256:legacy-retry",
+		SourceHash:     "sha256:legacy",
 		ItemKind:       domain.V2MigrationItemKindEvidence,
 		Outcome:        domain.V2MigrationOutcomePending,
 		Metadata:       map[string]any{"retry_seen": true},
@@ -216,6 +217,34 @@ func TestV2MigrationExecutorRepositoryPersistsProgressAndStats(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, domain.V2MigrationOutcomeNeedsReview, item.Outcome, "retry upsert must not reset terminal outcome")
 	require.True(t, item.Metadata["retry_seen"].(bool))
+
+	_, err = repo.UpsertMigrationCorpusItem(ctx, V2UpsertMigrationCorpusItemInput{
+		RunID:          run.RunID,
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		SourceKind:     "neo4j",
+		SourceID:       "sf-1",
+		SourceHash:     "sha256:legacy-mutated",
+		ItemKind:       domain.V2MigrationItemKindEvidence,
+		Outcome:        domain.V2MigrationOutcomePending,
+		Metadata:       map[string]any{"retry_seen": true},
+		Now:            now.Add(4*time.Minute + time.Second),
+	})
+	require.ErrorIs(t, err, ErrV2MigrationCorpusSourceMetadataMismatch)
+
+	_, err = repo.UpsertMigrationCorpusItem(ctx, V2UpsertMigrationCorpusItemInput{
+		RunID:          run.RunID,
+		TeamID:         teamID,
+		OwnerProfileID: otherOwnerID,
+		SourceKind:     "neo4j",
+		SourceID:       "sf-1",
+		SourceHash:     "sha256:legacy",
+		ItemKind:       domain.V2MigrationItemKindEvidence,
+		Outcome:        domain.V2MigrationOutcomePending,
+		Metadata:       map[string]any{"retry_seen": true},
+		Now:            now.Add(4*time.Minute + 2*time.Second),
+	})
+	require.ErrorIs(t, err, ErrV2MigrationCorpusSourceMetadataMismatch)
 
 	_, err = repo.UpsertMigrationCorpusItem(ctx, V2UpsertMigrationCorpusItemInput{
 		RunID:          run.RunID,

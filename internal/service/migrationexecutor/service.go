@@ -51,8 +51,8 @@ type RememberService interface {
 
 type Service interface {
 	// RunOnce processes at most one bounded page. Once page processing starts,
-	// a non-nil result reports counters reached before an error; durable outcomes
-	// and checkpoints remain authoritative for retries.
+	// a non-nil result reports counters reached before an error. Partial errors
+	// wrap the same result so callers can inspect it with errors.As.
 	RunOnce(ctx context.Context) (*RunOnceResult, error)
 }
 
@@ -71,6 +71,26 @@ type RunOnceResult struct {
 	Failed     int    `json:"failed"`
 	NextCursor string `json:"next_cursor,omitempty"`
 	Done       bool   `json:"done"`
+}
+
+// PartialRunOnceError wraps an error after RunOnce has produced page counters.
+type PartialRunOnceError struct {
+	Result *RunOnceResult
+	Err    error
+}
+
+func (e *PartialRunOnceError) Error() string {
+	if e == nil || e.Err == nil {
+		return "v2 migration executor: partial run failed"
+	}
+	return e.Err.Error()
+}
+
+func (e *PartialRunOnceError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
 }
 
 type service struct {
@@ -128,8 +148,7 @@ func (s *service) RunOnce(ctx context.Context) (*RunOnceResult, error) {
 	result := &RunOnceResult{RunID: run.RunID, Fetched: len(page.Items), NextCursor: page.NextCursor, Done: len(page.Items) == 0}
 	for _, item := range page.Items {
 		if err := s.processItem(ctx, run, migrationRunID, item, result); err != nil {
-			// Preserve reached counters while returning the error; durable rows and checkpoint state govern retries.
-			return result, err
+			return result, partialRunOnceError(result, err)
 		}
 	}
 	if err := s.store.UpsertMigrationCheckpoint(ctx, repository.V2UpsertMigrationCheckpointInput{
@@ -142,15 +161,16 @@ func (s *service) RunOnce(ctx context.Context) (*RunOnceResult, error) {
 		LeaseOwner: s.cfg.WorkerID,
 		Now:        s.now(),
 	}); err != nil {
-		return result, err
+		return result, partialRunOnceError(result, err)
 	}
 	if _, err := s.store.RefreshMigrationRunStats(ctx, run.RunID, s.now()); err != nil {
-		return result, err
+		return result, partialRunOnceError(result, err)
 	}
 	return result, nil
 }
 
 func (s *service) processItem(ctx context.Context, run *domain.V2MigrationRun, migrationRunID uuid.UUID, item neo4j.LegacyCorpusItem, result *RunOnceResult) error {
+	item = normalizeLegacyCorpusItem(item)
 	sourceKind := legacySourceKind(item)
 	if err := validateLegacyCorpusItem(item); err != nil {
 		result.Excluded++
@@ -378,7 +398,25 @@ func validateLegacyCorpusItem(item neo4j.LegacyCorpusItem) error {
 	if strings.TrimSpace(item.Content) == "" {
 		return errors.New("legacy evidence content is required")
 	}
+	if strings.TrimSpace(item.SourceHash) == "" {
+		return errors.New("legacy source_hash is required")
+	}
 	return nil
+}
+
+func normalizeLegacyCorpusItem(item neo4j.LegacyCorpusItem) neo4j.LegacyCorpusItem {
+	item.SourceHash = strings.TrimSpace(item.SourceHash)
+	if item.SourceHash == "" && strings.TrimSpace(item.Content) != "" {
+		item.SourceHash = neo4j.LegacyContentHash(item.Content)
+	}
+	return item
+}
+
+func partialRunOnceError(result *RunOnceResult, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &PartialRunOnceError{Result: result, Err: err}
 }
 
 func legacyActorContext(ctx context.Context, item neo4j.LegacyCorpusItem, migrationRunID uuid.UUID) context.Context {
