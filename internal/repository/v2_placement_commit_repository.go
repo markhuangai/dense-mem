@@ -791,6 +791,23 @@ func applyV2PlacementRelationshipDecision(
 			return err
 		}
 	}
+	if decision.Support != nil && decision.Support.FragmentID != "" {
+		placementFragmentID, err := loadV2PlacementItemFragmentID(ctx, tx, commit)
+		if err != nil {
+			return err
+		}
+		if decision.Support.FragmentID != placementFragmentID {
+			document, err := upsertV2PlacementEvidenceSearchDocument(ctx, tx, commit, decision.Support.FragmentID, map[string]any{
+				"supporting_placement_item_id": commit.PlacementItemID,
+				"support_id":                   applied.SupportID,
+				"relationship_id":              applied.Relationship.RelationshipID,
+			})
+			if err != nil {
+				return err
+			}
+			appendV2PlacementSearchDocument(result, document)
+		}
+	}
 	document, err := upsertV2PlacementRelationshipSearchDocument(ctx, tx, commit, applied.Relationship)
 	if err != nil {
 		return err

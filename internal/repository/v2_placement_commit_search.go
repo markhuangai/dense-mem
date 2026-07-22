@@ -212,11 +212,7 @@ func upsertV2PlacementEvidenceSearchDocument(
 	return upsertV2SearchDocumentInTx(ctx, tx, input, contract)
 }
 
-func upsertV2PlacementItemEvidenceSearchDocument(
-	ctx context.Context,
-	tx *gorm.DB,
-	commit V2CommitPlacementSemanticInput,
-) (*V2SearchDocumentResult, error) {
+func loadV2PlacementItemFragmentID(ctx context.Context, tx *gorm.DB, commit V2CommitPlacementSemanticInput) (string, error) {
 	var fragmentID string
 	if err := tx.WithContext(ctx).Raw(`
 		SELECT fragment_id::text
@@ -226,6 +222,18 @@ func upsertV2PlacementItemEvidenceSearchDocument(
 		  AND placement_item_id = ?::uuid
 		LIMIT 1
 	`, commit.TeamID, commit.OwnerProfileID, commit.PlacementItemID).Row().Scan(&fragmentID); err != nil {
+		return "", err
+	}
+	return fragmentID, nil
+}
+
+func upsertV2PlacementItemEvidenceSearchDocument(
+	ctx context.Context,
+	tx *gorm.DB,
+	commit V2CommitPlacementSemanticInput,
+) (*V2SearchDocumentResult, error) {
+	fragmentID, err := loadV2PlacementItemFragmentID(ctx, tx, commit)
+	if err != nil {
 		return nil, err
 	}
 	return upsertV2PlacementEvidenceSearchDocument(ctx, tx, commit, fragmentID, map[string]any{

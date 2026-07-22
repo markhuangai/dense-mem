@@ -227,6 +227,96 @@ func TestV2PlacementSemanticCommitWritesStateSearchAndOutcomeAtomically(t *testi
 	assert.True(t, errors.Is(err, ErrV2PlacementLeaseLost), err)
 }
 
+func TestV2PlacementSemanticCommitIndexesCrossFragmentSupportEvidence(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "placement-cross-support-team")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "placement-cross-support-owner")
+	ledgerRepo := NewV2LedgerRepository(appDB, rls)
+	semanticRepo := NewV2SemanticRepository(appDB, rls)
+	denseMem := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense-Mem")
+	ingest, err := ledgerRepo.CreateIngest(ctx, V2CreateIngestInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		IdempotencyKey: "placement cross-fragment support",
+		Evidence: []V2EvidenceInput{
+			{Content: "Jordan mentioned the Dense-Mem roadmap."},
+			{Content: "Dense-Mem uses PostgreSQL for durable memory."},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, ingest.Items, 2)
+	claimed, err := ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "worker-cross-support", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+
+	committed, err := ledgerRepo.CommitPlacementSemanticResult(ctx, V2CommitPlacementSemanticInput{
+		TeamID:           teamID,
+		OwnerProfileID:   ownerID,
+		IngestID:         ingest.IngestID,
+		PlacementRunID:   ingest.PlacementRunID,
+		PlacementItemID:  ingest.Items[0].PlacementItemID,
+		WorkerID:         "worker-cross-support",
+		ExpectedAttempts: claimed.Attempts,
+		EntityResolutions: []V2PlacementEntityResolutionInput{
+			{MentionRef: "subject", Action: "reuse", EntityID: denseMem.EntityID},
+			{MentionRef: "object", Action: "create", EntityKind: "project", CanonicalName: "PostgreSQL"},
+		},
+		RelationshipObservations: []V2PlacementRelationshipDecisionInput{{
+			Ref:          "rel-uses-postgres",
+			SubjectRef:   "subject",
+			PredicateKey: "uses",
+			ObjectRef:    "object",
+			Support: &V2EvidenceSupportInput{
+				FragmentID:     ingest.Evidence[1].FragmentID,
+				SourceGroupKey: "conversation:cross-fragment-support",
+				SpanStart:      0,
+				SpanEnd:        len("Dense-Mem uses PostgreSQL"),
+				Quote:          "Dense-Mem uses PostgreSQL",
+				Authority:      "primary",
+			},
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, committed.SearchDocuments, 3)
+
+	var itemEvidenceDocCount, supportEvidenceDocCount, relationshipDocCount, embeddingJobCount int64
+	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		require.NoError(t, tx.Raw(`
+			SELECT COUNT(*)
+			FROM search_documents
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'evidence'
+			  AND source_id = ?::uuid
+		`, teamID, ingest.Evidence[0].FragmentID).Scan(&itemEvidenceDocCount).Error)
+		require.NoError(t, tx.Raw(`
+			SELECT COUNT(*)
+			FROM search_documents
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'evidence'
+			  AND source_id = ?::uuid
+		`, teamID, ingest.Evidence[1].FragmentID).Scan(&supportEvidenceDocCount).Error)
+		require.NoError(t, tx.Raw(`
+			SELECT COUNT(*)
+			FROM search_documents
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id = ?::uuid
+		`, teamID, committed.RelationshipResults[0].Relationship.RelationshipID).Scan(&relationshipDocCount).Error)
+		return tx.Raw(`
+			SELECT COUNT(*)
+			FROM embedding_jobs
+			WHERE team_id = ?::uuid
+		`, teamID).Scan(&embeddingJobCount).Error
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), itemEvidenceDocCount)
+	assert.Equal(t, int64(1), supportEvidenceDocCount)
+	assert.Equal(t, int64(1), relationshipDocCount)
+	assert.Equal(t, int64(3), embeddingJobCount)
+}
+
 func TestV2PlacementSemanticCommitRequeuesOpenMultiItemRun(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
 	defer cleanup()
