@@ -101,26 +101,36 @@ func TestSupervisorStatusExposesSanitizedLoopError(t *testing.T) {
 		Control:         control,
 		Executor:        &supervisorExecutorStub{err: rawErr},
 		Lock:            &supervisorLockStub{locked: true},
+		PollInterval:    time.Hour,
 		PageRetryDelays: []time.Duration{0},
 	})
 
-	err := service.tick(ctx)
-	if err == nil {
-		t.Fatal("tick err = nil")
+	if err := service.StartBackground(ctx); err != nil {
+		t.Fatalf("StartBackground: %v", err)
 	}
-	service.setLastError(publicSupervisorError(err))
-	status, err := service.Status(ctx)
-	if err != nil {
-		t.Fatalf("Status: %v", err)
-	}
-	if len(status.RecentErrors) != 1 {
-		t.Fatalf("recent errors = %#v", status.RecentErrors)
-	}
-	if status.RecentErrors[0] != supervisorInternalErrorMessage {
-		t.Fatalf("recent error = %q", status.RecentErrors[0])
-	}
-	if strings.Contains(status.RecentErrors[0], "secret") || strings.Contains(status.RecentErrors[0], "credentials") {
-		t.Fatalf("recent error leaked raw detail: %q", status.RecentErrors[0])
+	defer service.Stop()
+
+	deadline := time.After(500 * time.Millisecond)
+	for {
+		status, err := service.Status(ctx)
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		if len(status.RecentErrors) == 1 {
+			if status.RecentErrors[0] != supervisorInternalErrorMessage {
+				t.Fatalf("recent error = %q", status.RecentErrors[0])
+			}
+			if strings.Contains(status.RecentErrors[0], "secret") || strings.Contains(status.RecentErrors[0], "credentials") {
+				t.Fatalf("recent error leaked raw detail: %q", status.RecentErrors[0])
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("recent errors = %#v", status.RecentErrors)
+		default:
+			time.Sleep(time.Millisecond)
+		}
 	}
 }
 

@@ -120,7 +120,7 @@ func TestValidateLegacyMigrationNeo4jConfigOnlyRequiresNeo4jForMigrationBoot(t *
 		Mode:              v2AuthorityMigrationRequired,
 		RequiresNeo4j:     true,
 		MigrationRequired: true,
-	}, config.Config{Neo4jURI: "bolt://localhost:7687"})
+	}, config.Config{})
 	require.ErrorContains(t, err, "legacy migration requires NEO4J_URI")
 
 	err = validateLegacyMigrationNeo4jConfig(v2AuthorityBootstrap{
