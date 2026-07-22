@@ -8,8 +8,10 @@ Added PostgreSQL state for the V2 legacy-corpus migration protocol in the
 - migration runs, corpus items, source maps, checkpoints, errors, exclusions,
   gate results, and operator actions
 - compatibility and cutover markers
-- a private control-portal API for status and operator approval commands during
-  the forced migration release
+- a private control-portal API for status, backup confirmation, start, pause,
+  and resume commands during the forced migration release
+- guided migration and cleanup control-portal modes in the `v2.1.1` release
+  line
 
 The original migration did not read legacy corpus rows, execute the official
 migration, write a cutover marker, or switch active remember/recall/trace
@@ -35,13 +37,56 @@ POST /control/api/v2/migration/pause
 POST /control/api/v2/migration/resume
 ```
 
-Preflight approval required a backup reference plus verified PostgreSQL restore
-and historical source snapshot checks. Operator actions were persisted in
-PostgreSQL with bounded metadata and no credential fields.
+In the latest `v2.1.1` migration release, preflight approval required one
+operator confirmation that recoverable artifacts already existed for both
+databases:
+
+```json
+{
+  "backups_confirmed": true,
+  "reason": "operator confirmed external database backups"
+}
+```
+
+Dense-Mem did not create, inspect, verify, restore, or record references to
+these backups. The run stored only safe confirmation metadata:
+
+- `operator_backup_confirmation=true`
+- `postgres_backup_confirmed=true`
+- `neo4j_backup_confirmed=true`
+- `confirmation_scope=operator`
+- `backup_verification=not_performed`
+
+The active migration-release contract was
+`dense-mem.v2.1.migration-control.v3`. Existing
+`dense-mem.v2.1.migration-control.v1` and
+`dense-mem.v2.1.migration-control.v2` runs were not auto-executed by the
+supervisor; operators had to renew backup confirmation through the guided UI
+before migration could resume.
+
+Operator actions were persisted in PostgreSQL with bounded metadata and no
+credential fields.
 
 After #95, these routes and the migration portal are no longer registered.
 Operators with legacy Neo4j configuration must run the latest `v2.1.1` release
 to complete migration before upgrading to the cleanup release.
+
+Historical `v2.1.1-rc.12` operator sequence:
+
+```text
+Deploy rc.12 with complete Neo4j source config
+  -> /mcp returns 503 and private portal shows only migration mode
+  -> operator confirms PostgreSQL and Neo4j backups already exist
+  -> operator clicks Confirm and start migration
+  -> supervisor runs pages with bounded retries
+  -> supervisor evaluates hard gates
+  -> supervisor commits compatible marker
+  -> process gracefully shuts down and reexecs
+  -> MCP/API starts on PostgreSQL V2
+  -> cleanup portal appears while any NEO4J_* setting remains
+  -> operator removes legacy NEO4J_* env/service/network and recreates deploy
+  -> normal control portal appears
+```
 
 ## RLS And Isolation Impact
 
@@ -57,11 +102,17 @@ processes only use the compatible cutover marker as boot evidence.
 
 ## Rollback Boundary
 
-The historical down migration drops only the dormant migration-control tables
-and markers. Before the official migration executor writes production progress,
-rollback discards rehearsal/control-plane state only. After production migration
-runs exist, rollback must be treated as an operator decision because checkpoint,
-error, exclusion, and audit history would be lost.
+Backup confirmation records that an operator confirmed PostgreSQL and Neo4j
+backups already existed outside Dense-Mem. It does not prove the backups exist,
+that Dense-Mem created them, or that either artifact was restore-tested. Gate
+output and portal copy in the migration release kept that weaker rollback
+assurance visible.
+
+The historical down migration drops migration-control tables and markers. After
+production migration progress exists, rollback must be treated as an operator
+decision because checkpoint, error, exclusion, gate, and audit history would be
+lost. Normal application code does not delete accepted evidence or semantic
+audit lineage as part of rollback.
 
 ## Verification
 

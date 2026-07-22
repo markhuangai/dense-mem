@@ -114,7 +114,11 @@ docker compose exec server /app/provision-team --name "primary-memory"
 ```
 
 The base compose example provisions PostgreSQL with pgvector and the Dense-Mem
-server. The base stack exposes only local host ports:
+server. Fresh installs leave `NEO4J_*` unset and initialize PostgreSQL V2
+directly. Cleanup releases reject legacy Neo4j configuration; operators with a
+legacy Neo4j corpus must first run the latest `v2.1.1` migration release,
+complete the guided migration there, remove `NEO4J_*`, and then upgrade. The
+base stack exposes only local host ports:
 
 ```text
 MCP/API:        http://127.0.0.1:8080/mcp
