@@ -552,10 +552,7 @@ export type MigrationStatus = {
 };
 
 export type MigrationPreflightInput = {
-  postgres_backup_reference: string;
-  postgres_backup_created: boolean;
-  neo4j_snapshot_reference: string;
-  neo4j_snapshot_created: boolean;
+  backups_confirmed: boolean;
   reason?: string;
 };
 

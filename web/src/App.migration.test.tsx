@@ -28,16 +28,16 @@ describe("App migration portal", () => {
       }
       if (url.endsWith("/v2/migration/preflight") && method === "POST") {
         const body = JSON.parse(String(init?.body));
-        expect(body.postgres_backup_reference).toBe("pg-backup-1");
-        expect(body.postgres_backup_created).toBe(true);
-        expect(body.neo4j_snapshot_reference).toBe("neo4j-snapshot-1");
-        expect(body.neo4j_snapshot_created).toBe(true);
+        expect(body).toEqual({
+          backups_confirmed: true,
+          reason: "operator confirmed external PostgreSQL and Neo4j backups",
+        });
         return jsonResponse({
           data: {
             state: "ready",
             required: true,
             data_plane_allowed: false,
-            readiness_message: "migration preflight approved",
+            readiness_message: "backup confirmation recorded",
             run: migrationRun({ state: "ready" }),
           },
         });
@@ -61,19 +61,22 @@ describe("App migration portal", () => {
     render(<App />);
     expect(await screen.findByRole("heading", { name: "Legacy migration is required" })).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/teams"))).toBe(false);
+    expect(screen.queryByLabelText("PostgreSQL backup reference")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Neo4j snapshot reference")).not.toBeInTheDocument();
+    expect(screen.getByText("Dense-Mem does not create, inspect, or restore these backups.")).toBeInTheDocument();
 
-    await userEvent.type(screen.getByLabelText("PostgreSQL backup reference"), "pg-backup-1");
-    await userEvent.click(screen.getByLabelText("PostgreSQL backup created"));
-    await userEvent.type(screen.getByLabelText("Neo4j snapshot reference"), "neo4j-snapshot-1");
-    await userEvent.click(screen.getByLabelText("Neo4j snapshot created"));
-    await userEvent.click(screen.getByRole("button", { name: /start migration/i }));
+    const startButton = screen.getByRole("button", { name: /confirm and start migration/i });
+    expect(startButton).toBeDisabled();
+    await userEvent.click(screen.getByLabelText("I confirm that I have backed up both the PostgreSQL and Neo4j databases."));
+    expect(startButton).toBeEnabled();
+    await userEvent.click(startButton);
 
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => (
       String(url).endsWith("/v2/migration/start")
     ))).toBe(true));
   });
 
-  it("renews old migration preflight before resuming an rc11 run", async () => {
+  it("renews old migration backup confirmation before resuming an rc11 run", async () => {
     let preflightCalls = 0;
     const legacyRun = migrationRun({
       run_id: "run-rc11",
@@ -86,7 +89,8 @@ describe("App migration portal", () => {
     const currentRun = {
       ...legacyRun,
       state: "ready",
-      migration_contract_version: "dense-mem.v2.1.migration-control.v2",
+      migration_contract_version: "dense-mem.v2.1.migration-control.v3",
+      preflight_checks: confirmationChecks(),
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -100,7 +104,7 @@ describe("App migration portal", () => {
             state: "running",
             required: true,
             data_plane_allowed: false,
-            readiness_message: "renew preflight before resuming legacy migration contract",
+            readiness_message: "renew backup confirmation before resuming legacy migration contract",
             run: legacyRun,
           },
         });
@@ -112,7 +116,7 @@ describe("App migration portal", () => {
             state: "ready",
             required: true,
             data_plane_allowed: false,
-            readiness_message: "migration preflight approved",
+            readiness_message: "backup confirmation recorded",
             run: currentRun,
           },
         });
@@ -135,14 +139,179 @@ describe("App migration portal", () => {
 
     render(<App />);
     expect(await screen.findByRole("heading", { name: "Legacy migration is required" })).toBeInTheDocument();
-    await userEvent.type(screen.getByLabelText("PostgreSQL backup reference"), "pg-backup-2");
-    await userEvent.click(screen.getByLabelText("PostgreSQL backup created"));
-    await userEvent.type(screen.getByLabelText("Neo4j snapshot reference"), "neo4j-snapshot-2");
-    await userEvent.click(screen.getByLabelText("Neo4j snapshot created"));
-    await userEvent.click(screen.getByRole("button", { name: /start migration/i }));
+    await userEvent.click(screen.getByLabelText("I confirm that I have backed up both the PostgreSQL and Neo4j databases."));
+    await userEvent.click(screen.getByRole("button", { name: /confirm and start migration/i }));
 
     await waitFor(() => expect(preflightCalls).toBe(1));
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/v2/migration/start"))).toBe(true);
+  });
+
+  it("renews incomplete current backup confirmation before restarting an active run", async () => {
+    let preflightCalls = 0;
+    const activeRun = migrationRun({
+      state: "running",
+      total_items: 4,
+      completed_items: 2,
+      preflight_checks: { operator_backup_confirmation: true },
+      updated_at: "2026-07-22T00:00:01Z",
+    });
+    const currentRun = {
+      ...activeRun,
+      state: "ready",
+      preflight_checks: confirmationChecks(),
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/session")) {
+        return jsonResponse({ data: { authenticated: true, portal_mode: "migration", legacy_config_present: true } });
+      }
+      if (url.endsWith("/v2/migration") && method === "GET") {
+        return jsonResponse({
+          data: {
+            state: "running",
+            required: true,
+            data_plane_allowed: false,
+            readiness_message: "backup confirmation must be renewed before migration can continue",
+            run: activeRun,
+          },
+        });
+      }
+      if (url.endsWith("/v2/migration/preflight") && method === "POST") {
+        preflightCalls++;
+        return jsonResponse({
+          data: {
+            state: "ready",
+            required: true,
+            data_plane_allowed: false,
+            readiness_message: "backup confirmation recorded",
+            run: currentRun,
+          },
+        });
+      }
+      if (url.endsWith("/v2/migration/start") && method === "POST") {
+        return jsonResponse({
+          data: {
+            state: "running",
+            required: true,
+            data_plane_allowed: false,
+            readiness_message: "migration is running",
+            run: { ...currentRun, state: "running" },
+          },
+        });
+      }
+      return jsonResponse({ message: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Legacy migration is required" })).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText("I confirm that I have backed up both the PostgreSQL and Neo4j databases."));
+    await userEvent.click(screen.getByRole("button", { name: /confirm and start migration/i }));
+
+    await waitFor(() => expect(preflightCalls).toBe(1));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/v2/migration/start"))).toBe(true);
+  });
+
+  it("does not offer backup confirmation renewal for a non-retryable failed run", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/session")) {
+        return jsonResponse({ data: { authenticated: true, portal_mode: "migration", legacy_config_present: true } });
+      }
+      if (url.endsWith("/v2/migration") && method === "GET") {
+        return jsonResponse({
+          data: {
+            state: "failed",
+            required: true,
+            data_plane_allowed: false,
+            readiness_message: "migration failed; inspect errors and resume only if retryable",
+            run: migrationRun({
+              state: "failed",
+              retryable: false,
+              migration_contract_version: "dense-mem.v2.1.migration-control.v2",
+            }),
+          },
+        });
+      }
+      return jsonResponse({ message: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+
+    render(<App />);
+    expect(await screen.findByText("migration failed; inspect errors and resume only if retryable")).toBeInTheDocument();
+    const startButton = screen.getByRole("button", { name: /confirm and start migration/i });
+    expect(startButton).toBeDisabled();
+    await userEvent.click(screen.getByLabelText("I confirm that I have backed up both the PostgreSQL and Neo4j databases."));
+    expect(startButton).toBeDisabled();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/v2/migration/preflight"))).toBe(false);
+  });
+
+  it("retries start without reconfirming when confirmation succeeds but start fails", async () => {
+    let preflightCalls = 0;
+    let startCalls = 0;
+    const readyRun = migrationRun({ state: "ready" });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/session")) {
+        return jsonResponse({ data: { authenticated: true, portal_mode: "migration", legacy_config_present: true } });
+      }
+      if (url.endsWith("/v2/migration") && method === "GET") {
+        return jsonResponse({
+          data: {
+            state: "required",
+            required: true,
+            data_plane_allowed: false,
+            readiness_message: "legacy migration is required",
+          },
+        });
+      }
+      if (url.endsWith("/v2/migration/preflight") && method === "POST") {
+        preflightCalls++;
+        return jsonResponse({
+          data: {
+            state: "ready",
+            required: true,
+            data_plane_allowed: false,
+            readiness_message: "backup confirmation recorded",
+            run: readyRun,
+          },
+        });
+      }
+      if (url.endsWith("/v2/migration/start") && method === "POST") {
+        startCalls++;
+        if (startCalls === 1) {
+          return jsonResponse({ message: "start failed" }, 500);
+        }
+        return jsonResponse({
+          data: {
+            state: "running",
+            required: true,
+            data_plane_allowed: false,
+            readiness_message: "migration is running",
+            run: { ...readyRun, state: "running" },
+          },
+        });
+      }
+      return jsonResponse({ message: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Legacy migration is required" })).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText("I confirm that I have backed up both the PostgreSQL and Neo4j databases."));
+    await userEvent.click(screen.getByRole("button", { name: /confirm and start migration/i }));
+
+    expect(await screen.findByText("start failed")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /start migration/i }));
+
+    await waitFor(() => expect(startCalls).toBe(2));
+    expect(preflightCalls).toBe(1);
   });
 
   it("shows cleanup mode without normal control routes", async () => {
@@ -185,13 +354,24 @@ function migrationRun(overrides: Record<string, unknown> = {}) {
     failed_items: 0,
     excluded_items: 0,
     retryable: true,
-    migration_contract_version: "dense-mem.v2.1.migration-control.v2",
+    migration_contract_version: "dense-mem.v2.1.migration-control.v3",
+    preflight_checks: confirmationChecks(),
     corpus_version: "dense-mem.v2.1.legacy-corpus.v1",
     source_kind: "neo4j",
     required: true,
     created_at: "2026-07-22T00:00:00Z",
     updated_at: "2026-07-22T00:00:00Z",
     ...overrides,
+  };
+}
+
+function confirmationChecks() {
+  return {
+    operator_backup_confirmation: true,
+    postgres_backup_confirmed: true,
+    neo4j_backup_confirmed: true,
+    confirmation_scope: "operator",
+    backup_verification: "not_performed",
   };
 }
 

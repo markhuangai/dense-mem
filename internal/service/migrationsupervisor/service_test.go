@@ -124,7 +124,34 @@ func TestSupervisorRequiresRenewedPreflightForLegacyContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	if len(got.RecentErrors) != 1 || !strings.Contains(got.RecentErrors[0], "renew preflight") {
+	if len(got.RecentErrors) != 1 || !strings.Contains(got.RecentErrors[0], "renew backup confirmation") {
+		t.Fatalf("recent errors = %#v", got.RecentErrors)
+	}
+}
+
+func TestSupervisorRequiresCompleteBackupConfirmationBeforeRunningPages(t *testing.T) {
+	ctx := context.Background()
+	status := supervisorStatus(domain.V2MigrationStateRunning)
+	status.Run.PreflightChecks = map[string]any{"operator_backup_confirmation": true}
+	control := &supervisorControlStub{status: status}
+	executor := &supervisorExecutorStub{}
+	service := New(Config{
+		Control:  control,
+		Executor: executor,
+		Lock:     &supervisorLockStub{locked: true},
+	})
+
+	if err := service.tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if executor.calls != 0 {
+		t.Fatalf("incomplete confirmation should not execute pages, calls = %d", executor.calls)
+	}
+	got, err := service.Status(ctx)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(got.RecentErrors) != 1 || !strings.Contains(got.RecentErrors[0], "renew backup confirmation") {
 		t.Fatalf("recent errors = %#v", got.RecentErrors)
 	}
 }
@@ -168,6 +195,21 @@ func TestTelemetryGateRequiresPersistedOperatorActions(t *testing.T) {
 	}
 }
 
+func TestOperatorBackupConfirmationGateEvidenceStatesVerificationBoundary(t *testing.T) {
+	ctx := context.Background()
+	service := New(Config{RequiredGates: []string{"operator_backup_confirmation"}})
+	gates, err := service.evaluateGates(ctx, supervisorStatus(domain.V2MigrationStateReadyCutover))
+	if err != nil {
+		t.Fatalf("evaluateGates: %v", err)
+	}
+	if len(gates) != 1 || gates[0].Outcome != domain.V2MigrationGateOutcomePass {
+		t.Fatalf("gate = %#v", gates)
+	}
+	if !strings.Contains(gates[0].Message, "Dense-Mem did not create") || !strings.Contains(gates[0].Message, "verify") {
+		t.Fatalf("gate message = %q", gates[0].Message)
+	}
+}
+
 func supervisorStatus(state string) *domain.V2MigrationControlStatus {
 	now := time.Date(2026, 7, 22, 7, 43, 0, 0, time.UTC)
 	run := &domain.V2MigrationRun{
@@ -178,15 +220,12 @@ func supervisorStatus(state string) *domain.V2MigrationControlStatus {
 		State:                    state,
 		Required:                 true,
 		PreflightApproved:        true,
-		BackupReference:          "sha256:preflight-attestation",
 		PreflightChecks: map[string]any{
-			"backup_snapshots_created":       true,
-			"postgres_backup_created":        true,
-			"postgres_backup_reference_hash": "sha256:pg",
-			"neo4j_snapshot_created":         true,
-			"neo4j_snapshot_reference_hash":  "sha256:neo4j",
-			"attestation_scope":              "creation_only",
-			"rollback_assurance":             "backup_and_snapshot_creation_attested_restore_not_verified",
+			"operator_backup_confirmation": true,
+			"postgres_backup_confirmed":    true,
+			"neo4j_backup_confirmed":       true,
+			"confirmation_scope":           "operator",
+			"backup_verification":          "not_performed",
 		},
 		CorpusHash:     "sha256:corpus",
 		TotalItems:     3,

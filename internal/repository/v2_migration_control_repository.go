@@ -52,6 +52,7 @@ type V2UpdateMigrationRunStateInput struct {
 	CorpusVersion            string
 	PreflightApproved        bool
 	BackupReference          string
+	ClearBackupReference     bool
 	PreflightChecks          map[string]any
 	LastError                string
 	Retryable                bool
@@ -241,17 +242,17 @@ func (r *V2MigrationControlRepositoryImpl) UpdateRunState(ctx context.Context, i
 	var out *domain.V2MigrationRun
 	err = r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		row := tx.Raw(`
-			UPDATE v2_migration_runs
-			SET state = ?,
-			    phase = ?,
-			    migration_contract_version = COALESCE(NULLIF(?, ''), migration_contract_version),
-			    corpus_version = COALESCE(NULLIF(?, ''), corpus_version),
-			    preflight_approved = preflight_approved OR ?,
-			    backup_reference = COALESCE(NULLIF(?, ''), backup_reference),
-			    preflight_checks = CASE WHEN ?::jsonb = '{}'::jsonb THEN preflight_checks ELSE ?::jsonb END,
-			    last_error = ?,
-			    retryable = ?,
-			    started_at = CASE WHEN ? = 'running' AND started_at IS NULL THEN ? ELSE started_at END,
+				UPDATE v2_migration_runs
+				SET state = ?,
+				    phase = ?,
+				    migration_contract_version = COALESCE(NULLIF(?, ''), migration_contract_version),
+				    corpus_version = COALESCE(NULLIF(?, ''), corpus_version),
+				    preflight_approved = preflight_approved OR ?,
+				    backup_reference = CASE WHEN ? THEN '' ELSE COALESCE(NULLIF(?, ''), backup_reference) END,
+				    preflight_checks = CASE WHEN ?::jsonb = '{}'::jsonb THEN preflight_checks ELSE ?::jsonb END,
+				    last_error = ?,
+				    retryable = ?,
+				    started_at = CASE WHEN ? = 'running' AND started_at IS NULL THEN ? ELSE started_at END,
 			    completed_at = CASE WHEN ? IN ('failed', 'cut_over', 'incompatible') THEN ? ELSE completed_at END,
 			    cutover_at = CASE WHEN ? = 'cut_over' THEN ? ELSE cutover_at END,
 			    updated_at = ?
@@ -264,8 +265,8 @@ func (r *V2MigrationControlRepositoryImpl) UpdateRunState(ctx context.Context, i
 			          last_error, retryable, lease_owner, checkpoint_key,
 			          checkpoint_value::text, started_at, completed_at, cutover_at,
 			          created_at, updated_at
-		`, input.ToState, input.Phase, input.MigrationContractVersion, input.CorpusVersion,
-			input.PreflightApproved, input.BackupReference,
+			`, input.ToState, input.Phase, input.MigrationContractVersion, input.CorpusVersion,
+			input.PreflightApproved, input.ClearBackupReference, input.BackupReference,
 			string(checks), string(checks), input.LastError, input.Retryable,
 			input.ToState, now, input.ToState, now, input.ToState, now, now,
 			input.RunID, input.FromState).Row()

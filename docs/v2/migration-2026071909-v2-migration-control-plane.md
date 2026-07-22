@@ -7,7 +7,7 @@ Adds PostgreSQL state for the V2 legacy-corpus migration protocol:
 - migration runs, corpus items, source maps, checkpoints, errors, exclusions,
   gate results, and operator actions
 - compatibility and cutover markers
-- a private control-portal API for status, preflight approval, start, pause,
+- a private control-portal API for status, backup confirmation, start, pause,
   and resume commands
 - guided migration and cleanup control-portal modes
 
@@ -51,42 +51,39 @@ POST /control/api/v2/migration/resume
 `POST /control/api/v2/migration/cutover` are intentionally not registered.
 The supervisor owns bounded page execution and cutover.
 
-Preflight approval requires creation-only attestations for both recovery
-artifacts:
+Backup confirmation requires one operator confirmation that recoverable
+artifacts exist for both databases:
 
 ```json
 {
-  "postgres_backup_reference": "pg-backup-20260722",
-  "postgres_backup_created": true,
-  "neo4j_snapshot_reference": "neo4j-snapshot-20260722",
-  "neo4j_snapshot_created": true
+  "backups_confirmed": true,
+  "reason": "operator confirmed external database backups"
 }
 ```
 
-The raw references are bounded to 200 characters, rejected if they contain
-control characters, and never stored raw. The run stores only opaque hashes and
-safe booleans:
+Dense-Mem does not create, inspect, verify, restore, or record references to
+these backups. The run stores only safe confirmation metadata:
 
-- `backup_snapshots_created`
-- `postgres_backup_created`
-- `postgres_backup_reference_hash`
-- `neo4j_snapshot_created`
-- `neo4j_snapshot_reference_hash`
-- `attestation_scope=creation_only`
-- `rollback_assurance=backup_and_snapshot_creation_attested_restore_not_verified`
+- `operator_backup_confirmation=true`
+- `postgres_backup_confirmed=true`
+- `neo4j_backup_confirmed=true`
+- `confirmation_scope=operator`
+- `backup_verification=not_performed`
 
-Existing `dense-mem.v2.1.migration-control.v1` runs are not auto-executed by
-the supervisor. The operator must renew preflight through the guided UI, which
-upgrades the run to `dense-mem.v2.1.migration-control.v2` and returns it to
-`ready` before migration can resume.
+The active contract is `dense-mem.v2.1.migration-control.v3`. Existing
+`dense-mem.v2.1.migration-control.v1` and
+`dense-mem.v2.1.migration-control.v2` runs are not auto-executed by the
+supervisor. The operator must renew backup confirmation through the guided UI,
+which upgrades the run to v3 and returns it to `ready` before migration can
+resume.
 
 ## Operator Sequence
 
 ```text
 Deploy rc.12 with complete Neo4j source config
   -> /mcp returns 503 and private portal shows only migration mode
-  -> operator enters backup/snapshot references and checks both creation boxes
-  -> operator clicks Start migration
+  -> operator confirms PostgreSQL and Neo4j backups already exist
+  -> operator clicks Confirm and start migration
   -> supervisor runs pages with bounded retries
   -> supervisor evaluates hard gates
   -> supervisor commits compatible marker
@@ -114,9 +111,10 @@ actions, and markers.
 
 ## Rollback Boundary
 
-Preflight attests that a PostgreSQL backup and Neo4j snapshot were created. It
-does not assert that either artifact was restore-tested. Gate output and portal
-copy must keep that weaker rollback assurance visible.
+Backup confirmation records that an operator confirmed PostgreSQL and Neo4j
+backups already exist outside Dense-Mem. It does not prove the backups exist,
+that Dense-Mem created them, or that either artifact was restore-tested. Gate
+output and portal copy must keep that weaker rollback assurance visible.
 
 The down migration drops migration-control tables and markers. After production
 migration progress exists, rollback is an operator decision because checkpoint,

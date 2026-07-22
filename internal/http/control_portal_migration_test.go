@@ -18,6 +18,7 @@ import (
 
 func TestControlPortalV2MigrationStatusAndActions(t *testing.T) {
 	migration := &controlMigrationSvc{
+		validatePreflight: true,
 		status: &domain.V2MigrationControlStatus{
 			State:            domain.V2MigrationStateRequired,
 			Required:         true,
@@ -44,15 +45,20 @@ func TestControlPortalV2MigrationStatusAndActions(t *testing.T) {
 	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/preflight", `{
 		"actor": "operator",
 		"remote_ip": "198.51.100.99",
+		"backups_confirmed": true
+	}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "control_portal:authorization-bearer", migration.lastReq.Actor)
+	require.True(t, migration.lastReq.BackupsConfirmed)
+	require.Equal(t, "192.0.2.1", migration.lastReq.RemoteIP)
+
+	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/preflight", `{
 		"postgres_backup_reference": "pg-backup-20260717",
 		"postgres_backup_created": true,
 		"neo4j_snapshot_reference": "neo4j-snapshot-20260717",
 		"neo4j_snapshot_created": true
 	}`)
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "control_portal:authorization-bearer", migration.lastReq.Actor)
-	require.Equal(t, "pg-backup-20260717", migration.lastReq.PostgresBackupReference)
-	require.Equal(t, "192.0.2.1", migration.lastReq.RemoteIP)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
 	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/start", `{"reason":"begin"}`)
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -151,10 +157,11 @@ func controlMigrationRequest(server http.Handler, method, path, body string) *ht
 }
 
 type controlMigrationSvc struct {
-	status      *domain.V2MigrationControlStatus
-	lastReq     migrationcontrol.OperatorRequest
-	lastCutover migrationcontrol.CutoverRequest
-	err         error
+	status            *domain.V2MigrationControlStatus
+	lastReq           migrationcontrol.OperatorRequest
+	lastCutover       migrationcontrol.CutoverRequest
+	err               error
+	validatePreflight bool
 }
 
 func (s *controlMigrationSvc) Status(context.Context) (*domain.V2MigrationControlStatus, error) {
@@ -168,6 +175,9 @@ func (s *controlMigrationSvc) Status(context.Context) (*domain.V2MigrationContro
 }
 
 func (s *controlMigrationSvc) ApprovePreflight(_ context.Context, req migrationcontrol.OperatorRequest) (*domain.V2MigrationControlStatus, error) {
+	if s.validatePreflight && !req.BackupsConfirmed {
+		return nil, migrationcontrol.ErrPreflightRequired
+	}
 	return s.action(req)
 }
 

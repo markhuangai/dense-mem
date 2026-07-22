@@ -173,8 +173,8 @@ var staticReleaseEvidence = map[string]releaseEvidenceEntry{
 		},
 	},
 	"rollback_compatibility": {
-		message:  "Rollback compatibility is bounded by explicit backup and snapshot attestations.",
-		criteria: "Control-plane docs and tests mark backup/snapshot creation as a hard gate.",
+		message:  "Rollback compatibility is bounded by operator backup confirmation.",
+		criteria: "Control-plane docs and tests require the operator to confirm PostgreSQL and Neo4j backups; Dense-Mem does not create or verify them.",
 		sources: []string{
 			"docs/v2/migration-2026071909-v2-migration-control-plane.md",
 			"internal/service/migrationcontrol/service_test.go",
