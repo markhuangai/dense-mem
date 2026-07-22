@@ -32,6 +32,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/service/migrationcontrol"
 	"github.com/markhuangai/dense-mem/internal/service/migrationexecutor"
+	"github.com/markhuangai/dense-mem/internal/service/migrationsupervisor"
 	"github.com/markhuangai/dense-mem/internal/service/recallservice"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 	"github.com/markhuangai/dense-mem/internal/sse"
@@ -154,6 +155,9 @@ func main() {
 		return
 	}
 	migrationDataPlaneStatus := legacyMigrationDataPlaneStatusGate{inner: v2MigrationControlSvc}
+	if !cfg.HasCompleteNeo4jConfig() {
+		log.Fatal("legacy migration requires NEO4J_URI, NEO4J_USER, and NEO4J_PASSWORD; remove all NEO4J_* settings only after compatible marker cleanup is complete")
+	}
 
 	// Initialize Neo4j client with 5-second timeout
 	neo4jClient, err := neo4j.NewClient(startupCtx, &cfg)
@@ -256,6 +260,7 @@ func main() {
 	v2MigrationExecSvc := migrationexecutor.New(v2MigrationControlRepo, legacyMigrationReader, v2RememberMigrationSvc, migrationexecutor.Config{
 		WorkerID: "server-control",
 	})
+	restartRequests := make(chan string, 1)
 
 	// ========================================
 	// Recall searchers
@@ -432,6 +437,19 @@ func main() {
 	if v2SemanticReviewer == nil {
 		log.Fatalf("v2 migration worker requires verifier provider")
 	}
+	v2MigrationSupervisor := migrationsupervisor.New(migrationsupervisor.Config{
+		Control:         v2MigrationControlSvc,
+		Executor:        v2MigrationExecSvc,
+		Lock:            postgres.NewMigrationLeaderLock(pgDB.GetDB()),
+		Restarter:       channelRestarter{ch: restartRequests},
+		SearchReadiness: v2SearchRepo,
+		ProviderProbe: migrationProviderProbe{
+			embedder: retryEmbedder,
+			verifier: v2SemanticReviewer,
+			timeout:  time.Duration(cfg.GetAIVerifierTimeoutSeconds()) * time.Second,
+		},
+		Logger: slog.Default(),
+	})
 	v2WorkerCtx, v2WorkerCancel := context.WithCancel(context.Background())
 	defer v2WorkerCancel()
 	startV2ActiveWorkers(
@@ -660,8 +678,9 @@ func main() {
 			Logs:           operationLogService,
 			RecallFeedback: recallFeedbackEventService,
 			Dreams:         dreamSvc,
-			Migration:      v2MigrationControlSvc,
-			MigrationExec:  v2MigrationExecSvc,
+			Migration:      v2MigrationSupervisor,
+			PortalMode:     "migration",
+			LegacyConfig:   cfg.HasNeo4jConfig(),
 		},
 		healthConfig,
 		logger,
@@ -676,6 +695,9 @@ func main() {
 			logger.Error("control portal server error", err)
 		}
 	}()
+	if err := v2MigrationSupervisor.StartBackground(context.Background()); err != nil {
+		log.Fatalf("failed to start v2 migration supervisor: %v", err)
+	}
 
 	dreamSchedulerCtx, dreamSchedulerCancel := context.WithCancel(context.Background())
 	defer dreamSchedulerCancel()
@@ -708,12 +730,17 @@ func main() {
 		}
 	}()
 
-	// Wait for interrupt signal to gracefully shutdown
+	// Wait for interrupt signal or migration cutover restart request.
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	restartReason := ""
+	select {
+	case <-quit:
+	case restartReason = <-restartRequests:
+	}
 
 	logger.Info("shutting down server")
+	v2MigrationSupervisor.Stop()
 	placementWorkerCancel()
 	v2WorkerCancel()
 	dreamSchedulerCancel()
@@ -741,5 +768,12 @@ func main() {
 	defer recallFeedbackShutdownCancel()
 	if err := recallFeedbackEventService.Shutdown(recallFeedbackShutdownCtx); err != nil {
 		log.Printf("recall feedback event shutdown error: %v", err)
+	}
+	if restartReason != "" {
+		logger.Info("re-executing server after v2 migration cutover", observability.String("reason", restartReason))
+		if err := reexecSelf(); err != nil {
+			logger.Error("server re-exec failed", err)
+			os.Exit(1)
+		}
 	}
 }

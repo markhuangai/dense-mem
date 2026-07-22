@@ -52,7 +52,7 @@ func (g legacyMigrationDataPlaneStatusGate) Status(ctx context.Context) (*domain
 	out := *status
 	out.DataPlaneAllowed = false
 	if out.State == domain.V2MigrationStateCutOver {
-		out.ReadinessMessage = "migration cutover complete; restart to activate PostgreSQL V2 authority"
+		out.ReadinessMessage = "migration cutover complete; server restart is pending"
 	} else if out.ReadinessMessage == "" {
 		out.ReadinessMessage = "legacy migration is required; data plane is disabled"
 	}

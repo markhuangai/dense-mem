@@ -1,0 +1,220 @@
+.maintenance-shell {
+  padding-block: 18px 42px;
+}
+
+.maintenance-topbar {
+  grid-template-columns: minmax(0, 1fr) max-content;
+}
+
+.maintenance-content {
+  width: min(1180px, calc(100vw - 32px));
+  margin-inline: auto;
+}
+
+.maintenance-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 26px 0 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.maintenance-hero h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 30px;
+  line-height: 1.12;
+  letter-spacing: 0;
+}
+
+.maintenance-hero p {
+  max-width: 760px;
+  margin: 10px 0 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 780;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.migration-state-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 12px;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.migration-state-badge[data-state="failed"] {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+}
+
+.maintenance-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+  gap: 16px;
+  padding-top: 18px;
+}
+
+.maintenance-panel {
+  min-width: 0;
+  padding: 18px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-soft);
+}
+
+.authority-panel {
+  grid-column: 1 / -1;
+}
+
+.authority-rail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content minmax(0, 1fr) max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  background: var(--panel-strong);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.authority-rail > svg {
+  color: var(--subtle);
+}
+
+.authority-step {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 12px;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.authority-step span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.authority-step.active {
+  color: var(--accent-strong);
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  box-shadow: 0 0 0 4px var(--focus);
+}
+
+.authority-step.done {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.migration-progress {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.migration-progress > div:first-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+}
+
+.migration-progress strong {
+  color: var(--text);
+  font-size: 24px;
+  line-height: 1;
+}
+
+.progress-track {
+  height: 9px;
+  overflow: hidden;
+  background: var(--panel-muted);
+  border-radius: 999px;
+}
+
+.progress-track span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: inherit;
+  transition: width 220ms ease;
+}
+
+.migration-preflight {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.cleanup-panel ol {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 22px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.gate-list {
+  display: grid;
+  gap: 8px;
+}
+
+.gate-row {
+  display: grid;
+  grid-template-columns: 18px minmax(150px, 0.6fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  background: var(--panel-strong);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.gate-row svg {
+  color: var(--accent-strong);
+}
+
+.gate-row span {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 760;
+  text-transform: capitalize;
+}
+
+.gate-row small {
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.banner.warning {
+  color: var(--warning);
+  background: var(--warning-soft);
+  border: 1px solid color-mix(in srgb, var(--warning) 34%, var(--border));
+}

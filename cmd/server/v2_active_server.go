@@ -311,6 +311,8 @@ func runActiveV2Server(
 			RecallFeedback: recallFeedbackEventService,
 			Dreams:         dreamSvc,
 			Migration:      v2MigrationControlSvc,
+			PortalMode:     v2ActiveControlPortalMode(cfg),
+			LegacyConfig:   cfg.HasNeo4jConfig(),
 		},
 		healthConfig,
 		logger,
@@ -384,6 +386,13 @@ func runActiveV2Server(
 	if err := recallFeedbackEventService.Shutdown(recallFeedbackShutdownCtx); err != nil {
 		log.Printf("recall feedback event shutdown error: %v", err)
 	}
+}
+
+func v2ActiveControlPortalMode(cfg config.Config) string {
+	if cfg.HasNeo4jConfig() {
+		return "cleanup"
+	}
+	return "normal"
 }
 
 func checkV2ActiveAuthority(ctx context.Context, migration migrationcontrol.Service) error {

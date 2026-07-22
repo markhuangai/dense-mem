@@ -16,10 +16,11 @@ import (
 )
 
 const (
-	DefaultMigrationContractVersion = "dense-mem.v2.1.migration-control.v1"
+	DefaultMigrationContractVersion = "dense-mem.v2.1.migration-control.v2"
 	DefaultCorpusVersion            = "dense-mem.v2.1.legacy-corpus.v1"
 	DefaultCutoverMarkerVersion     = "dense-mem.v2.1.cutover.v1"
 	defaultSourceKind               = "neo4j"
+	maxPreflightReferenceLen        = 200
 )
 
 var (
@@ -32,7 +33,7 @@ var (
 )
 
 var defaultCutoverRequiredGates = []string{
-	"backup_restore",
+	"backup_snapshots_created",
 	"postgres_schema_topology",
 	"tenant_integrity",
 	"team_owner_reconciliation",
@@ -59,6 +60,10 @@ var defaultCutoverRequiredGates = []string{
 	"restart_rehearsal",
 	"rollback_compatibility",
 	"no_neo4j_fallback",
+}
+
+func DefaultCutoverRequiredGates() []string {
+	return append([]string(nil), defaultCutoverRequiredGates...)
 }
 
 type Store interface {
@@ -90,11 +95,15 @@ type Config struct {
 }
 
 type OperatorRequest struct {
-	Actor           string         `json:"-"`
-	RemoteIP        string         `json:"-"`
-	Reason          string         `json:"reason,omitempty"`
-	BackupReference string         `json:"backup_reference,omitempty"`
-	PreflightChecks map[string]any `json:"preflight_checks,omitempty"`
+	Actor                   string         `json:"-"`
+	RemoteIP                string         `json:"-"`
+	Reason                  string         `json:"reason,omitempty"`
+	BackupReference         string         `json:"backup_reference,omitempty"`
+	PostgresBackupReference string         `json:"postgres_backup_reference,omitempty"`
+	PostgresBackupCreated   bool           `json:"postgres_backup_created,omitempty"`
+	Neo4jSnapshotReference  string         `json:"neo4j_snapshot_reference,omitempty"`
+	Neo4jSnapshotCreated    bool           `json:"neo4j_snapshot_created,omitempty"`
+	PreflightChecks         map[string]any `json:"preflight_checks,omitempty"`
 }
 
 type CutoverRequest struct {
@@ -172,24 +181,28 @@ func (s *service) ApprovePreflight(ctx context.Context, req OperatorRequest) (*d
 			Phase:                    "preflight",
 			Required:                 true,
 			PreflightApproved:        true,
-			BackupReference:          strings.TrimSpace(req.BackupReference),
-			PreflightChecks:          req.PreflightChecks,
+			BackupReference:          preflightAttestationHash(req),
+			PreflightChecks:          safePreflightChecks(req),
 			Now:                      now,
 		})
 	} else {
-		if !canTransition(run.State, domain.V2MigrationStateReady) && run.State != domain.V2MigrationStateReady {
+		if !canTransition(run.State, domain.V2MigrationStateReady) &&
+			run.State != domain.V2MigrationStateReady &&
+			!canRenewPreflight(run, s.cfg.MigrationContractVersion) {
 			return nil, fmt.Errorf("%w: %s -> %s", ErrIllegalTransition, run.State, domain.V2MigrationStateReady)
 		}
 		run, err = s.store.UpdateRunState(ctx, repository.V2UpdateMigrationRunStateInput{
-			RunID:             run.RunID,
-			FromState:         run.State,
-			ToState:           domain.V2MigrationStateReady,
-			Phase:             "preflight",
-			PreflightApproved: true,
-			BackupReference:   strings.TrimSpace(req.BackupReference),
-			PreflightChecks:   req.PreflightChecks,
-			Retryable:         true,
-			Now:               now,
+			RunID:                    run.RunID,
+			FromState:                run.State,
+			ToState:                  domain.V2MigrationStateReady,
+			Phase:                    "preflight",
+			MigrationContractVersion: s.cfg.MigrationContractVersion,
+			CorpusVersion:            s.cfg.CorpusVersion,
+			PreflightApproved:        true,
+			BackupReference:          preflightAttestationHash(req),
+			PreflightChecks:          safePreflightChecks(req),
+			Retryable:                true,
+			Now:                      now,
 		})
 	}
 	if err != nil {
@@ -210,7 +223,24 @@ func (s *service) Pause(ctx context.Context, req OperatorRequest) (*domain.V2Mig
 }
 
 func (s *service) Resume(ctx context.Context, req OperatorRequest) (*domain.V2MigrationControlStatus, error) {
-	return s.transition(ctx, domain.V2MigrationStatePaused, domain.V2MigrationStateRunning, "migration", domain.V2MigrationActionResumed, req)
+	run, _, err := s.latestRunAndMarker(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, ErrPreflightRequired
+	}
+	switch run.State {
+	case domain.V2MigrationStatePaused:
+		return s.transition(ctx, domain.V2MigrationStatePaused, domain.V2MigrationStateRunning, "migration", domain.V2MigrationActionResumed, req)
+	case domain.V2MigrationStateFailed:
+		if !run.Retryable {
+			return nil, fmt.Errorf("%w: failed run is not retryable", ErrIllegalTransition)
+		}
+		return s.transition(ctx, domain.V2MigrationStateFailed, domain.V2MigrationStateRunning, "migration", domain.V2MigrationActionResumed, req)
+	default:
+		return nil, fmt.Errorf("%w: %s -> %s", ErrIllegalTransition, run.State, domain.V2MigrationStateRunning)
+	}
 }
 
 func (s *service) Cutover(ctx context.Context, req CutoverRequest) (*domain.V2MigrationControlStatus, error) {
@@ -227,8 +257,8 @@ func (s *service) Cutover(ctx context.Context, req CutoverRequest) (*domain.V2Mi
 	if run.State != domain.V2MigrationStateReadyCutover {
 		return nil, fmt.Errorf("%w: run state %s", ErrCutoverBlocked, run.State)
 	}
-	if !run.PreflightApproved || strings.TrimSpace(run.BackupReference) == "" {
-		return nil, fmt.Errorf("%w: approved preflight and backup reference are required", ErrPreflightRequired)
+	if !run.PreflightApproved || !preflightAttestationsCreated(run.PreflightChecks) || strings.TrimSpace(run.BackupReference) == "" {
+		return nil, fmt.Errorf("%w: approved backup and snapshot creation attestations are required", ErrPreflightRequired)
 	}
 	corpusHash := strings.TrimSpace(run.CorpusHash)
 	if corpusHash == "" {
@@ -481,16 +511,54 @@ func canTransition(from, to string) bool {
 	return false
 }
 
+func canRenewPreflight(run *domain.V2MigrationRun, currentContract string) bool {
+	if run == nil || strings.TrimSpace(run.MigrationContractVersion) == strings.TrimSpace(currentContract) {
+		return false
+	}
+	switch run.State {
+	case domain.V2MigrationStateRunning,
+		domain.V2MigrationStatePaused,
+		domain.V2MigrationStateFailed,
+		domain.V2MigrationStateVerifying,
+		domain.V2MigrationStateReadyCutover:
+		return true
+	default:
+		return false
+	}
+}
+
 func validatePreflight(req OperatorRequest) error {
-	if strings.TrimSpace(req.BackupReference) == "" {
-		return fmt.Errorf("%w: backup_reference is required", ErrPreflightRequired)
+	postgresRef := strings.TrimSpace(req.PostgresBackupReference)
+	neo4jRef := strings.TrimSpace(req.Neo4jSnapshotReference)
+	if postgresRef == "" {
+		return fmt.Errorf("%w: postgres_backup_reference is required", ErrPreflightRequired)
 	}
-	checks := req.PreflightChecks
-	if !truthy(checks["postgres_restore_verified"]) {
-		return fmt.Errorf("%w: postgres_restore_verified must be true", ErrPreflightRequired)
+	if neo4jRef == "" {
+		return fmt.Errorf("%w: neo4j_snapshot_reference is required", ErrPreflightRequired)
 	}
-	if !truthy(checks["neo4j_snapshot_verified"]) {
-		return fmt.Errorf("%w: neo4j_snapshot_verified must be true", ErrPreflightRequired)
+	if err := validatePreflightReference("postgres_backup_reference", postgresRef); err != nil {
+		return err
+	}
+	if err := validatePreflightReference("neo4j_snapshot_reference", neo4jRef); err != nil {
+		return err
+	}
+	if !req.PostgresBackupCreated {
+		return fmt.Errorf("%w: postgres_backup_created must be true", ErrPreflightRequired)
+	}
+	if !req.Neo4jSnapshotCreated {
+		return fmt.Errorf("%w: neo4j_snapshot_created must be true", ErrPreflightRequired)
+	}
+	return nil
+}
+
+func validatePreflightReference(field string, value string) error {
+	if len(value) > maxPreflightReferenceLen {
+		return fmt.Errorf("%w: %s must be at most %d characters", ErrPreflightRequired, field, maxPreflightReferenceLen)
+	}
+	for _, ch := range value {
+		if ch < 0x20 || ch == 0x7f {
+			return fmt.Errorf("%w: %s contains a control character", ErrPreflightRequired, field)
+		}
 	}
 	return nil
 }
@@ -506,6 +574,47 @@ func truthy(value any) bool {
 	}
 }
 
+func safePreflightChecks(req OperatorRequest) map[string]any {
+	postgresRef := strings.TrimSpace(req.PostgresBackupReference)
+	neo4jRef := strings.TrimSpace(req.Neo4jSnapshotReference)
+	return map[string]any{
+		"attestation_scope":              "creation_only",
+		"rollback_assurance":             "backup_and_snapshot_creation_attested_restore_not_verified",
+		"backup_snapshots_created":       req.PostgresBackupCreated && req.Neo4jSnapshotCreated,
+		"postgres_backup_created":        req.PostgresBackupCreated,
+		"postgres_backup_reference_hash": hashString(postgresRef),
+		"neo4j_snapshot_created":         req.Neo4jSnapshotCreated,
+		"neo4j_snapshot_reference_hash":  hashString(neo4jRef),
+	}
+}
+
+func preflightAttestationsCreated(checks map[string]any) bool {
+	return truthy(checks["backup_snapshots_created"]) &&
+		truthy(checks["postgres_backup_created"]) &&
+		truthy(checks["neo4j_snapshot_created"]) &&
+		strings.TrimSpace(fmt.Sprint(checks["postgres_backup_reference_hash"])) != "" &&
+		strings.TrimSpace(fmt.Sprint(checks["neo4j_snapshot_reference_hash"])) != ""
+}
+
+func preflightAttestationHash(req OperatorRequest) string {
+	checks := safePreflightChecks(req)
+	payload := map[string]any{
+		"schema": "dense-mem.v2.1.migration-preflight-attestation.v1",
+		"checks": checks,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func hashString(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
 func operatorActor(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -516,11 +625,11 @@ func operatorActor(value string) string {
 
 func operatorMetadata(req OperatorRequest) map[string]any {
 	out := map[string]any{}
-	if req.BackupReference != "" {
-		out["backup_reference"] = strings.TrimSpace(req.BackupReference)
-	}
-	if len(req.PreflightChecks) > 0 {
-		out["preflight_checks"] = req.PreflightChecks
+	if strings.TrimSpace(req.PostgresBackupReference) != "" || strings.TrimSpace(req.Neo4jSnapshotReference) != "" {
+		out["preflight_attestation_hash"] = preflightAttestationHash(req)
+		out["preflight_checks"] = safePreflightChecks(req)
+	} else if req.BackupReference != "" {
+		out["backup_reference_hash"] = hashString(strings.TrimSpace(req.BackupReference))
 	}
 	return out
 }

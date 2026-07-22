@@ -209,4 +209,56 @@ describe("ControlApi", () => {
     expect(result.next_cursor).toBe("next-dream");
     expect(fetchMock).toHaveBeenCalledWith("/control/api/teams/team-1/dreams?limit=50&status=proposed&cursor=current-dream&sort=created_at&direction=asc", expect.any(Object));
   });
+
+  it("calls migration status and operator action routes", async () => {
+    const migrationStatus = {
+      data: {
+        state: "ready",
+        required: true,
+        data_plane_allowed: false,
+        readiness_message: "migration preflight approved",
+      },
+    };
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify(migrationStatus), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const api = new ControlApi("secret", "/control/api");
+    await api.getMigrationStatus();
+    await api.approveMigrationPreflight({
+      postgres_backup_reference: "pg-backup-20260722",
+      postgres_backup_created: true,
+      neo4j_snapshot_reference: "neo4j-snapshot-20260722",
+      neo4j_snapshot_created: true,
+      reason: "operator attested backup artifacts",
+    });
+    await api.startMigration("start migration");
+    await api.pauseMigration("operator pause");
+    await api.resumeMigration("resume migration");
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/control/api/v2/migration", expect.objectContaining({
+      method: "GET",
+    }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/control/api/v2/migration/preflight", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        postgres_backup_reference: "pg-backup-20260722",
+        postgres_backup_created: true,
+        neo4j_snapshot_reference: "neo4j-snapshot-20260722",
+        neo4j_snapshot_created: true,
+        reason: "operator attested backup artifacts",
+      }),
+    }));
+    expect(fetchMock).toHaveBeenNthCalledWith(3, "/control/api/v2/migration/start", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ reason: "start migration" }),
+    }));
+    expect(fetchMock).toHaveBeenNthCalledWith(4, "/control/api/v2/migration/pause", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ reason: "operator pause" }),
+    }));
+    expect(fetchMock).toHaveBeenNthCalledWith(5, "/control/api/v2/migration/resume", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ reason: "resume migration" }),
+    }));
+  });
 });

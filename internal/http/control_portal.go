@@ -76,7 +76,6 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 	if strings.TrimSpace(cfg.GetControlPortalToken()) == "" {
 		return nil, fmt.Errorf("control portal: token is required")
 	}
-
 	e := echo.New()
 	applyServerLimits(e)
 	applyIPExtractor(e)
@@ -121,14 +120,17 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		e.GET("/metrics", echo.WrapHandler(telemetry.ScrapeHandler), telemetryScrapeTokenMiddleware(telemetry.ScrapeToken))
 	}
 
-	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, dreams: telemetry.Dreams, migration: telemetry.Migration, migrationExec: telemetry.MigrationExec, health: health, sso: telemetry.SSO, appConfig: telemetry.Config}
+	portalMode := controlPortalMode(telemetry.PortalMode)
+	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, dreams: telemetry.Dreams, migration: telemetry.Migration, health: health, sso: telemetry.SSO, appConfig: telemetry.Config, portalMode: portalMode, legacyConfig: telemetry.LegacyConfig}
 	api := e.Group("/control/api")
 	api.Use(controlPortalMiddleware(cfg.GetControlPortalToken(), securitySvc))
 	api.Use(httpmw.TelemetryHTTPMiddleware(telemetry.HTTPMetrics))
 	api.GET("/session", control.session)
+	if registerModeScopedControlPortal(e, api, portalMode, control) {
+		return e, nil
+	}
 	api.GET("/metrics", control.getMetrics)
 	api.GET("/telemetry", control.getTelemetry)
-	registerV2MigrationControlRoutes(api, control)
 	if telemetry.Logs != nil {
 		api.GET("/logs", control.listOperationLogs)
 	}
@@ -740,41 +742,6 @@ func telemetryScrapeTokenMiddleware(token string) echo.MiddlewareFunc {
 	}
 }
 
-func controlPortalMiddleware(token string, securitySvc service.SecurityService) echo.MiddlewareFunc {
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			origin := c.Request().Header.Get(echo.HeaderOrigin)
-			if origin != "" {
-				c.Response().Header().Set(echo.HeaderVary, echo.HeaderOrigin)
-				c.Response().Header().Set(echo.HeaderAccessControlAllowOrigin, origin)
-				c.Response().Header().Set(echo.HeaderAccessControlAllowHeaders, "Authorization, Content-Type, X-Control-Portal-Token")
-				c.Response().Header().Set(echo.HeaderAccessControlAllowMethods, "GET, POST, PATCH, DELETE, OPTIONS")
-			}
-			if c.Request().Method == nethttp.MethodOptions {
-				return c.NoContent(nethttp.StatusNoContent)
-			}
-			if !controlTokenMatches(c.Request(), token) {
-				recordControlAuthFailure(c, securitySvc)
-				return httperr.New(httperr.AUTH_INVALID, "invalid control portal token")
-			}
-			ctx := context.WithValue(c.Request().Context(), controlPortalActorContextKey{}, controlPortalActorFromRequest(c.Request()))
-			c.SetRequest(c.Request().WithContext(ctx))
-			return next(c)
-		}
-	}
-}
-
-func recordControlAuthFailure(c echo.Context, securitySvc service.SecurityService) {
-	if securitySvc == nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if _, err := securitySvc.RecordAuthFailure(ctx, c.RealIP(), "control", "AUTH_INVALID"); err != nil {
-		c.Logger().Errorf("control security auth failure record failed: %v", err)
-	}
-}
-
 type controlBodyLimitConfig interface {
 	GetHTTPMaxBodyBytes() int
 }
@@ -784,20 +751,6 @@ func controlMaxBodyBytes(cfg config.ConfigProvider) int {
 		return effectiveMaxBodyBytes(provider.GetHTTPMaxBodyBytes())
 	}
 	return effectiveMaxBodyBytes(0)
-}
-
-func controlTokenMatches(req *nethttp.Request, expected string) bool {
-	got := req.Header.Get("X-Control-Portal-Token")
-	if got == "" {
-		auth := req.Header.Get(echo.HeaderAuthorization)
-		if strings.HasPrefix(auth, "Bearer ") {
-			got = strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
-		}
-	}
-	if got == "" {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(got), []byte(expected)) == 1
 }
 
 func defaultPortalStaticDir() string {

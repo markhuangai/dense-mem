@@ -10,8 +10,7 @@ Adds the first migration executor unit for the V2 legacy-corpus migration:
   writes
 - a migration executor service that submits each valid legacy source fragment
   through `RememberV2`
-- a private `POST /control/api/v2/migration/run-once` control action for one
-  bounded page of migration work
+- an internal bounded-page executor called by the migration supervisor
 
 The executor does not write Neo4j, create Neo4j indexes, run GDS/APOC, dual-write
 normal requests, or add Neo4j fallback reads to V2 recall, trace, search, or
@@ -44,11 +43,9 @@ the migration progress tables.
 
 ## Resumability
 
-The executor is intentionally one page at a time:
-
-```text
-POST /control/api/v2/migration/run-once
-```
+The executor is intentionally one page at a time. In current production wiring,
+the background migration supervisor calls it under a PostgreSQL advisory leader
+lock; operators do not call it through the control API.
 
 For each page it:
 
@@ -59,13 +56,12 @@ For each page it:
 5. records exclusions and typed errors for invalid or failed items
 6. advances the cursor checkpoint after the page
 
-Retry upserts preserve existing non-pending outcomes, so a restarted executor skips
-items already submitted or excluded instead of duplicating work.
+Retry upserts preserve existing non-pending outcomes, so a restarted executor
+skips items already submitted or excluded instead of duplicating work.
 
-Items inside a page are processed sequentially in #119. Operators scale the
-rehearsal by running additional bounded pages only after durable outcomes and
-checkpoints are visible, which avoids concurrent owner-scope, provider, and RLS
-pressure while the executor remains dormant.
+Items inside a page are processed sequentially. The supervisor advances through
+additional bounded pages only after durable outcomes and checkpoints are
+visible, which avoids concurrent owner-scope, provider, and RLS pressure.
 
 `RunOnce` may return page counters with an error after processing has started.
 Those counters describe work reached by that call; durable corpus outcomes and
@@ -75,10 +71,11 @@ partial counters as a successful page.
 
 ## Wiring Boundary
 
-Main boot does not construct the executor in #119. The token-protected private
-control portal can accept an injected executor, but normal production boot leaves
-the service nil and returns service unavailable for `run-once`. #94 owns
-production wiring for forced migration maintenance.
+Forced migration boot constructs the executor only for migration maintenance
+mode. The private control portal exposes status, preflight, start, pause, and
+resume; it does not register `run-once` or manual `cutover` routes. Fresh V2
+boot and post-cutover active V2 boot do not read Neo4j or keep a fallback
+reader.
 
 Each submission preserves the original team/profile owner and carries a typed
 internal migration actor derived from the durable migration run ID. Migration
@@ -92,6 +89,7 @@ Focused checks:
 go test ./internal/storage/neo4j -run 'TestLegacyCorpus|TestNewLegacyCorpus' -count=1
 go test ./internal/service/migrationexecutor -run TestRunOnce -count=1
 go test ./internal/repository -run TestV2MigrationExecutorRepositoryPersistsProgressAndStats -count=1
+go test ./internal/service/migrationsupervisor -count=1
 go test ./internal/http -run TestControlPortalV2Migration -count=1
 ```
 

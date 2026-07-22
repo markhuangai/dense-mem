@@ -14,7 +14,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/migrationcontrol"
-	"github.com/markhuangai/dense-mem/internal/service/migrationexecutor"
 )
 
 func TestControlPortalV2MigrationStatusAndActions(t *testing.T) {
@@ -25,19 +24,12 @@ func TestControlPortalV2MigrationStatusAndActions(t *testing.T) {
 			ReadinessMessage: "legacy migration is required",
 		},
 	}
-	executor := &controlMigrationExec{
-		result: &migrationexecutor.RunOnceResult{
-			RunID:     "run-1",
-			Fetched:   1,
-			Submitted: 1,
-		},
-	}
 	server, err := NewControlPortalServerWithMetricsAndTelemetry(
 		&config.Config{ControlPortalToken: "secret"},
 		&controlProfileSvc{},
 		&controlKeySvc{},
 		nil,
-		ControlPortalTelemetry{Migration: migration, MigrationExec: executor},
+		ControlPortalTelemetry{Migration: migration, PortalMode: "migration", LegacyConfig: true},
 		HealthConfig{},
 		nil,
 	)
@@ -52,45 +44,25 @@ func TestControlPortalV2MigrationStatusAndActions(t *testing.T) {
 	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/preflight", `{
 		"actor": "operator",
 		"remote_ip": "198.51.100.99",
-		"backup_reference": "backup-20260717",
-		"preflight_checks": {
-			"postgres_restore_verified": true,
-			"neo4j_snapshot_verified": true
-		}
+		"postgres_backup_reference": "pg-backup-20260717",
+		"postgres_backup_created": true,
+		"neo4j_snapshot_reference": "neo4j-snapshot-20260717",
+		"neo4j_snapshot_created": true
 	}`)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "control_portal:authorization-bearer", migration.lastReq.Actor)
-	require.Equal(t, "backup-20260717", migration.lastReq.BackupReference)
+	require.Equal(t, "pg-backup-20260717", migration.lastReq.PostgresBackupReference)
 	require.Equal(t, "192.0.2.1", migration.lastReq.RemoteIP)
 
 	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/start", `{"reason":"begin"}`)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "begin", migration.lastReq.Reason)
 
-	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/cutover", `{
-		"actor": "body-actor",
-		"remote_ip": "198.51.100.99",
-		"reason": "commit cutover",
-		"corpus_hash": "sha256:corpus",
-		"gate_results": [{
-			"gate_name": "backup_restore",
-			"outcome": "pass",
-			"evidence_ref": "local://backup",
-			"evidence_hash": "sha256:backup",
-			"message": "backup restored",
-			"metadata": {"version": "test-v1"}
-		}]
-	}`)
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "control_portal:authorization-bearer", migration.lastCutover.Actor)
-	require.Equal(t, "192.0.2.1", migration.lastCutover.RemoteIP)
-	require.Equal(t, "commit cutover", migration.lastCutover.Reason)
-
 	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/run-once", `{}`)
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, 1, executor.calls)
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	require.Equal(t, "run-1", body["data"]["run_id"])
+	require.Equal(t, http.StatusNotFound, rec.Code)
+
+	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/cutover", `{}`)
+	require.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 func TestControlPortalV2MigrationValidationAndUnavailable(t *testing.T) {
@@ -99,7 +71,7 @@ func TestControlPortalV2MigrationValidationAndUnavailable(t *testing.T) {
 		&controlProfileSvc{},
 		&controlKeySvc{},
 		nil,
-		ControlPortalTelemetry{},
+		ControlPortalTelemetry{PortalMode: "migration"},
 		HealthConfig{},
 		nil,
 	)
@@ -107,16 +79,15 @@ func TestControlPortalV2MigrationValidationAndUnavailable(t *testing.T) {
 	rec := controlMigrationRequest(server, http.MethodGet, "/control/api/v2/migration", "")
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/run-once", `{}`)
-	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Equal(t, http.StatusNotFound, rec.Code)
 
 	migration := &controlMigrationSvc{err: migrationcontrol.ErrPreflightRequired}
-	executor := &controlMigrationExec{err: migrationexecutor.ErrMigrationNotRunning}
 	server, err = NewControlPortalServerWithMetricsAndTelemetry(
 		&config.Config{ControlPortalToken: "secret"},
 		&controlProfileSvc{},
 		&controlKeySvc{},
 		nil,
-		ControlPortalTelemetry{Migration: migration, MigrationExec: executor},
+		ControlPortalTelemetry{Migration: migration, PortalMode: "migration"},
 		HealthConfig{},
 		nil,
 	)
@@ -131,7 +102,42 @@ func TestControlPortalV2MigrationValidationAndUnavailable(t *testing.T) {
 	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/start", `{`)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/run-once", `{}`)
-	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	require.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestControlPortalV2CleanupModeOnlyExposesSessionAndMigrationStatus(t *testing.T) {
+	migration := &controlMigrationSvc{
+		status: &domain.V2MigrationControlStatus{
+			State:            domain.V2MigrationStateCutOver,
+			Required:         false,
+			DataPlaneAllowed: true,
+			ReadinessMessage: "compatible V2 authority marker present",
+		},
+	}
+	server, err := NewControlPortalServerWithMetricsAndTelemetry(
+		&config.Config{ControlPortalToken: "secret"},
+		&controlProfileSvc{},
+		&controlKeySvc{},
+		nil,
+		ControlPortalTelemetry{Migration: migration, PortalMode: "cleanup", LegacyConfig: true},
+		HealthConfig{},
+		nil,
+	)
+	require.NoError(t, err)
+
+	rec := controlMigrationRequest(server, http.MethodGet, "/control/api/session", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	var session map[string]map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &session))
+	require.Equal(t, "cleanup", session["data"]["portal_mode"])
+	require.Equal(t, true, session["data"]["legacy_config_present"])
+
+	rec = controlMigrationRequest(server, http.MethodGet, "/control/api/v2/migration", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/start", `{}`)
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	rec = controlMigrationRequest(server, http.MethodGet, "/control/api/teams", "")
+	require.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 func controlMigrationRequest(server http.Handler, method, path, body string) *httptest.ResponseRecorder {
@@ -191,18 +197,4 @@ func (s *controlMigrationSvc) action(req migrationcontrol.OperatorRequest) (*dom
 		return nil, s.err
 	}
 	return &domain.V2MigrationControlStatus{State: domain.V2MigrationStateRunning}, nil
-}
-
-type controlMigrationExec struct {
-	result *migrationexecutor.RunOnceResult
-	err    error
-	calls  int
-}
-
-func (s *controlMigrationExec) RunOnce(context.Context) (*migrationexecutor.RunOnceResult, error) {
-	s.calls++
-	if s.err != nil {
-		return nil, s.err
-	}
-	return s.result, nil
 }
