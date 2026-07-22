@@ -78,6 +78,8 @@ func TestValidateServerStartupRemainingRequiredFields(t *testing.T) {
 		AIAPIKey:              "sk-test",
 		AIEmbeddingModel:      "text-embedding-3-small",
 		AIEmbeddingDimensions: 1536,
+		AIReviewerModel:       "reviewer-model",
+		AIVerifierModel:       "verifier-model",
 		ControlPortalToken:    "control-secret",
 	}
 	cases := []struct {
@@ -88,6 +90,8 @@ func TestValidateServerStartupRemainingRequiredFields(t *testing.T) {
 		{"missing api key", func(c *Config) { c.AIAPIKey = "" }, "AI_API_KEY"},
 		{"missing embedding model", func(c *Config) { c.AIEmbeddingModel = "" }, "AI_API_EMBEDDING_MODEL"},
 		{"missing embedding dimensions", func(c *Config) { c.AIEmbeddingDimensions = 0 }, "AI_API_EMBEDDING_DIMENSIONS"},
+		{"missing reviewer model", func(c *Config) { c.AIReviewerModel = "" }, "AI_REVIEWER_MODEL"},
+		{"missing verifier model", func(c *Config) { c.AIVerifierModel = "" }, "AI_VERIFIER_MODEL"},
 	}
 
 	for _, tc := range cases {

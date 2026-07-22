@@ -34,6 +34,7 @@ func clearEnv() {
 		// Knowledge-pipeline knobs
 		"AI_VERIFIER_API_URL",
 		"AI_VERIFIER_API_KEY",
+		"AI_REVIEWER_MODEL",
 		"AI_VERIFIER_MODEL",
 		"AI_VERIFIER_DISABLE_TEMPERATURE",
 		"AI_VERIFIER_TIMEOUT_SECONDS",
@@ -75,6 +76,11 @@ func setRequiredEmbeddingEnv() {
 	os.Setenv("AI_API_KEY", "sk-test")
 	os.Setenv("AI_API_EMBEDDING_MODEL", "text-embedding-3-small")
 	os.Setenv("AI_API_EMBEDDING_DIMENSIONS", "1536")
+}
+
+func setRequiredModelEnv() {
+	os.Setenv("AI_REVIEWER_MODEL", "reviewer-model")
+	os.Setenv("AI_VERIFIER_MODEL", "verifier-model")
 }
 
 func TestLoadDefaults(t *testing.T) {
@@ -358,6 +364,7 @@ func TestConfigProviderInterface(t *testing.T) {
 	_ = provider.IsEmbeddingConfigured()
 	_ = provider.GetAIVerifierAPIURL()
 	_ = provider.GetAIVerifierAPIKey()
+	_ = provider.GetAIReviewerModel()
 	_ = provider.GetAIVerifierModel()
 	_ = provider.GetAIVerifierTimeoutSeconds()
 	_ = provider.GetAIVerifierMaxConcurrency()
@@ -378,6 +385,7 @@ func TestConfigGetterFallbacksAndParsers(t *testing.T) {
 		FragmentReadRateLimit:    22,
 		AIAPIURL:                 "https://shared.example/v1",
 		AIAPIKey:                 "shared-key",
+		AIReviewerModel:          "reviewer-model",
 		AIVerifierModel:          "verifier-model",
 		AIVerifierTimeoutSeconds: 0,
 	}
@@ -517,6 +525,7 @@ func TestLoadVerifierConfig_DefaultsToSharedAIConfig(t *testing.T) {
 	clearEnv()
 	setRequiredEnv()
 	setRequiredEmbeddingEnv()
+	setRequiredModelEnv()
 
 	cfg, err := Load()
 	if err != nil {
@@ -540,6 +549,7 @@ func TestLoadVerifierConfig_SeparateEndpoint(t *testing.T) {
 	setRequiredEmbeddingEnv()
 	os.Setenv("AI_VERIFIER_API_URL", "https://verifier.example.com/v1")
 	os.Setenv("AI_VERIFIER_API_KEY", "verifier-key")
+	os.Setenv("AI_REVIEWER_MODEL", "local-reviewer")
 	os.Setenv("AI_VERIFIER_MODEL", "local-verifier")
 	os.Setenv("AI_VERIFIER_TIMEOUT_SECONDS", "45")
 
@@ -557,6 +567,9 @@ func TestLoadVerifierConfig_SeparateEndpoint(t *testing.T) {
 	if got := cfg.GetAIVerifierAPIKey(); got != "verifier-key" {
 		t.Errorf("GetAIVerifierAPIKey() = %q, want %q", got, "verifier-key")
 	}
+	if got := cfg.GetAIReviewerModel(); got != "local-reviewer" {
+		t.Errorf("GetAIReviewerModel() = %q, want %q", got, "local-reviewer")
+	}
 	if got := cfg.GetAIVerifierModel(); got != "local-verifier" {
 		t.Errorf("GetAIVerifierModel() = %q, want %q", got, "local-verifier")
 	}
@@ -572,6 +585,7 @@ func TestLoadVerifierConfig_DisableTemperature(t *testing.T) {
 	clearEnv()
 	setRequiredEnv()
 	setRequiredEmbeddingEnv()
+	setRequiredModelEnv()
 	os.Setenv("AI_VERIFIER_DISABLE_TEMPERATURE", "true")
 
 	cfg, err := Load()
@@ -634,6 +648,7 @@ func TestValidateServerStartup_SucceedsWithEmbeddingConfig(t *testing.T) {
 	clearEnv()
 	setRequiredEnv()
 	setRequiredEmbeddingEnv()
+	setRequiredModelEnv()
 
 	cfg, err := Load()
 	if err != nil {
@@ -642,6 +657,51 @@ func TestValidateServerStartup_SucceedsWithEmbeddingConfig(t *testing.T) {
 
 	if err := cfg.ValidateServerStartup(); err != nil {
 		t.Fatalf("ValidateServerStartup() returned unexpected error: %v", err)
+	}
+}
+
+func TestValidateServerStartup_RequiresReviewerAndVerifierModels(t *testing.T) {
+	cases := []struct {
+		name  string
+		set   func()
+		field string
+	}{
+		{
+			name:  "missing reviewer model",
+			set:   func() { os.Setenv("AI_VERIFIER_MODEL", "verifier-model") },
+			field: "AI_REVIEWER_MODEL",
+		},
+		{
+			name:  "missing verifier model",
+			set:   func() { os.Setenv("AI_REVIEWER_MODEL", "reviewer-model") },
+			field: "AI_VERIFIER_MODEL",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnv()
+			setRequiredEnv()
+			setRequiredEmbeddingEnv()
+			tc.set()
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() returned unexpected error: %v", err)
+			}
+
+			err = cfg.ValidateServerStartup()
+			if err == nil {
+				t.Fatal("ValidateServerStartup() expected error, got nil")
+			}
+			validationErr, ok := err.(*ValidationError)
+			if !ok {
+				t.Fatalf("expected *ValidationError, got %T", err)
+			}
+			if validationErr.Field != tc.field {
+				t.Errorf("ValidationError.Field = %q, want %q", validationErr.Field, tc.field)
+			}
+		})
 	}
 }
 
@@ -656,8 +716,11 @@ func TestLoadKnowledgeConfigDefaults(t *testing.T) {
 		t.Fatalf("Load() returned unexpected error: %v", err)
 	}
 
-	if got := cfg.GetAIVerifierModel(); got != "gpt-4o-mini" {
-		t.Errorf("GetAIVerifierModel() = %q, want %q", got, "gpt-4o-mini")
+	if got := cfg.GetAIReviewerModel(); got != "" {
+		t.Errorf("GetAIReviewerModel() = %q, want empty", got)
+	}
+	if got := cfg.GetAIVerifierModel(); got != "" {
+		t.Errorf("GetAIVerifierModel() = %q, want empty", got)
 	}
 	if cfg.GetAIVerifierDisableTemperature() {
 		t.Error("GetAIVerifierDisableTemperature() = true, want false")
@@ -724,6 +787,7 @@ func TestLoadControlPortalValidation(t *testing.T) {
 		clearEnv()
 		setRequiredEnv()
 		setRequiredEmbeddingEnv()
+		setRequiredModelEnv()
 		os.Unsetenv("CONTROL_PORTAL_TOKEN")
 
 		cfg, err := Load()

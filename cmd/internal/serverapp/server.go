@@ -206,7 +206,7 @@ func RunActiveServer(
 		Profiles:  profileService,
 		Locker:    dreamservice.NewPostgresCycleLocker(),
 		Postgres:  pgDB.GetDB(),
-		Generator: dreamservice.NewHeuristicGenerator(cfg.GetAIVerifierModel()),
+		Generator: dreamservice.NewHeuristicGenerator(""),
 		Metrics:   discoverabilityMetrics,
 	})
 	graphViewSvc := graphview.NewSemantic(semanticRepo)

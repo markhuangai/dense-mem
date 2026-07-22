@@ -9,10 +9,12 @@
 #   POSTGRES_PASSWORD
 #   CONTROL_PORTAL_TOKEN
 #   AI_API_KEY
+#   AI_REVIEWER_MODEL
+#   AI_VERIFIER_MODEL
 #
 # The server also requires AI_API_URL, AI_API_EMBEDDING_MODEL, and
-# AI_API_EMBEDDING_DIMENSIONS. This compose example supplies OpenAI defaults
-# below; set them in .env when using another provider or model.
+# AI_API_EMBEDDING_DIMENSIONS. This compose example supplies OpenAI embedding
+# defaults below; set them in .env when using another provider or model.
 #
 # Set real values when enabling the traefik profile:
 #   DENSE_MEM_DOMAIN
@@ -114,7 +116,8 @@ services:
       AI_API_EMBEDDING_TIMEOUT_SECONDS: ${AI_API_EMBEDDING_TIMEOUT_SECONDS:-30}
       AI_VERIFIER_API_URL: ${AI_VERIFIER_API_URL:-}
       AI_VERIFIER_API_KEY: ${AI_VERIFIER_API_KEY:-}
-      AI_VERIFIER_MODEL: ${AI_VERIFIER_MODEL:-gpt-4o-mini}
+      AI_REVIEWER_MODEL: ${AI_REVIEWER_MODEL:?AI_REVIEWER_MODEL must be set in .env}
+      AI_VERIFIER_MODEL: ${AI_VERIFIER_MODEL:?AI_VERIFIER_MODEL must be set in .env}
       AI_VERIFIER_DISABLE_TEMPERATURE: ${AI_VERIFIER_DISABLE_TEMPERATURE:-false}
       AI_VERIFIER_TIMEOUT_SECONDS: ${AI_VERIFIER_TIMEOUT_SECONDS:-60}
       AI_VERIFIER_MAX_CONCURRENCY: ${AI_VERIFIER_MAX_CONCURRENCY:-5}

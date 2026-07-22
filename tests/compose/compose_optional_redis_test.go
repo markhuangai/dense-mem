@@ -22,6 +22,8 @@ func TestDockerComposeBaseExample_LocalOnly(t *testing.T) {
 	assert.NotContains(t, compose.Services, "redis")
 	assert.NotContains(t, compose.Services, removedGraphServiceName())
 	assert.NotContains(t, server.Environment, removedGraphEnvKey())
+	assert.Contains(t, server.Environment["AI_REVIEWER_MODEL"], "AI_REVIEWER_MODEL must be set")
+	assert.Contains(t, server.Environment["AI_VERIFIER_MODEL"], "AI_VERIFIER_MODEL must be set")
 }
 
 func TestDockerComposeExpertExample_HasOptionalProfiles(t *testing.T) {
@@ -37,6 +39,8 @@ func TestDockerComposeExpertExample_HasOptionalProfiles(t *testing.T) {
 	assert.Contains(t, text, "${TRAEFIK_HTTPS_PORT:-443}:443/udp")
 	assert.NotContains(t, text, "\n      HTTP_ADDR:")
 	assert.NotContains(t, server.Environment, removedGraphEnvKey())
+	assert.Contains(t, server.Environment["AI_REVIEWER_MODEL"], "AI_REVIEWER_MODEL must be set")
+	assert.Contains(t, server.Environment["AI_VERIFIER_MODEL"], "AI_VERIFIER_MODEL must be set")
 	assert.NotContains(t, server.DependsOn, "redis")
 }
 

@@ -23,6 +23,7 @@ func newTestVerifierConfig(serverURL, apiKey, model string) *config.Config {
 	return &config.Config{
 		AIAPIURL:        serverURL,
 		AIAPIKey:        apiKey,
+		AIReviewerModel: model,
 		AIVerifierModel: model,
 	}
 }
@@ -142,6 +143,7 @@ func TestOpenAIVerifier(t *testing.T) {
 			AIAPIKey:         "embedding-key",
 			AIVerifierAPIURL: srv.URL,
 			AIVerifierAPIKey: "verifier-key",
+			AIReviewerModel:  "reviewer-model",
 			AIVerifierModel:  "verifier-model",
 		}
 		v := NewOpenAIVerifier(cfg, srv.Client())
@@ -455,6 +457,7 @@ func TestOpenAIVerifierV2SemanticAdapters(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var reqBody openAIVerifierRequest
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
+			assert.Equal(t, "reviewer-model", reqBody.Model)
 			assert.Equal(t, V2ProviderProposalSchemaName, reqBody.ResponseFormat.JSONSchema.Name)
 			require.Len(t, reqBody.Messages, 2)
 			assert.Contains(t, reqBody.Messages[0].Content, "structure extraction")
@@ -491,7 +494,9 @@ func TestOpenAIVerifierV2SemanticAdapters(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "sk-test", "gpt-4o-mini"), srv.Client())
+		cfg := newTestVerifierConfig(srv.URL, "sk-test", "verifier-model")
+		cfg.AIReviewerModel = "reviewer-model"
+		v := NewOpenAIVerifier(cfg, srv.Client())
 		got, err := v.ProposeV2Semantic(context.Background(), V2ProviderProposalRequest{
 			RequestID:        "extract-1",
 			PredicateOptions: []string{"uses"},
@@ -510,6 +515,7 @@ func TestOpenAIVerifierV2SemanticAdapters(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var reqBody openAIVerifierRequest
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
+			assert.Equal(t, "verifier-model", reqBody.Model)
 			assert.Equal(t, V2VerifierResponseSchemaName, reqBody.ResponseFormat.JSONSchema.Name)
 			assert.Contains(t, reqBody.Messages[0].Content, "semantic verifier")
 			predicateKey := "uses"
@@ -533,7 +539,9 @@ func TestOpenAIVerifierV2SemanticAdapters(t *testing.T) {
 		defer srv.Close()
 
 		content := "Dense-Mem uses PostgreSQL."
-		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "sk-test", "gpt-4o-mini"), srv.Client())
+		cfg := newTestVerifierConfig(srv.URL, "sk-test", "verifier-model")
+		cfg.AIReviewerModel = "reviewer-model"
+		v := NewOpenAIVerifier(cfg, srv.Client())
 		got, err := v.ReviewSemantic(context.Background(), V2SemanticReviewRequest{
 			RequestID: "verify-1",
 			TeamID:    "team-a",

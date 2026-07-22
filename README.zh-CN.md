@@ -116,10 +116,11 @@ Control portal: http://127.0.0.1:8090/
 首次拉取镜像可能不止 60 秒。基础示例刻意不包含 Redis 和公网 HTTPS；如果需要
 这些部署能力，请使用 expert 示例。
 
-服务启动时必须有完整的 embedding 配置：`AI_API_URL`、`AI_API_KEY`、
-`AI_API_EMBEDDING_MODEL` 和 `AI_API_EMBEDDING_DIMENSIONS`。compose 示例已经为
-URL、model 和 dimensions 提供 OpenAI 默认值：`https://api.openai.com/v1`、
-`text-embedding-3-large`、`3072`。因此最小本地部署只需要补上 `AI_API_KEY`。
+服务启动时必须有完整的 embedding 和 reviewer/verifier 配置：`AI_API_URL`、
+`AI_API_KEY`、`AI_API_EMBEDDING_MODEL`、`AI_API_EMBEDDING_DIMENSIONS`、
+`AI_REVIEWER_MODEL` 和 `AI_VERIFIER_MODEL`。compose 示例已经为 embedding URL、
+model 和 dimensions 提供 OpenAI 默认值：`https://api.openai.com/v1`、
+`text-embedding-3-large`、`3072`，但 chat model 需要在 `.env` 里显式选择。
 如果切换到其他 embedding provider 或 model，请一起覆盖这些配置。
 
 Verifier 调用默认发送 `temperature: 0`。如果 provider 或 model 拒绝
@@ -141,6 +142,7 @@ AI_API_URL=http://host.docker.internal:11434/v1
 AI_API_KEY=ollama
 AI_API_EMBEDDING_MODEL=nomic-embed-text
 AI_API_EMBEDDING_DIMENSIONS=768
+AI_REVIEWER_MODEL=llama3.1:8b
 AI_VERIFIER_MODEL=llama3.1:8b
 AI_VERIFIER_TIMEOUT_SECONDS=300
 ```
@@ -152,11 +154,10 @@ AI_VERIFIER_TIMEOUT_SECONDS=300
   Linux（Docker 默认不定义该域名）上同样可用。
 - `AI_API_KEY` 必须非空，即使 Ollama 会忽略它；启动校验要求完整的 embedding
   配置。
-- `AI_VERIFIER_MODEL` 要和 embedding 配置一起改。默认值是 `gpt-4o-mini`，在
-  Ollama 上并不存在。启动仍会成功，失败要到 claim 验证阶段才暴露。选择一个在
-  你的硬件上能在 verifier 超时之内响应的模型：7B-8B 级别的模型在笔记本上
-  验证起来很轻松，而更大的模型在加载期间可能超过默认的 60 秒超时，导致 claim
-  停在 `candidate_claim`，错误记录在 placement item 里。
+- `AI_REVIEWER_MODEL` 和 `AI_VERIFIER_MODEL` 都要设为 chat endpoint 上真实存在
+  的模型。任一缺失都会导致启动失败，因此不会等到开始写入 memory 后才暴露
+  错误。7B-8B 级别模型适合本地 smoke test；更大的模型在加载期间可能超过默认
+  60 秒超时，placement 会保持可重试直到模型可响应。
 
 ### 你的第一条记忆
 

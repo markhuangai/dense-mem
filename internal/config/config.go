@@ -36,6 +36,7 @@ type ConfigProvider interface {
 	// Knowledge-pipeline knobs (AC-X3)
 	GetAIVerifierAPIURL() string
 	GetAIVerifierAPIKey() string
+	GetAIReviewerModel() string
 	GetAIVerifierModel() string
 	GetAIVerifierTimeoutSeconds() int
 	GetAIVerifierMaxConcurrency() int
@@ -92,6 +93,7 @@ type Config struct {
 	// Knowledge-pipeline knobs (AC-X3)
 	AIVerifierAPIURL             string
 	AIVerifierAPIKey             string `json:"-"`
+	AIReviewerModel              string
 	AIVerifierModel              string
 	AIVerifierDisableTemperature bool
 	AIVerifierTimeoutSeconds     int
@@ -156,6 +158,7 @@ func (c *Config) GetAIVerifierAPIKey() string {
 	}
 	return c.AIAPIKey
 }
+func (c *Config) GetAIReviewerModel() string { return c.AIReviewerModel }
 func (c *Config) GetAIVerifierModel() string { return c.AIVerifierModel }
 func (c *Config) GetAIVerifierDisableTemperature() bool {
 	return c.AIVerifierDisableTemperature
@@ -208,6 +211,8 @@ func (c *Config) ValidateServerStartup() error {
 		{"AI_API_URL", c.AIAPIURL},
 		{"AI_API_KEY", c.AIAPIKey},
 		{"AI_API_EMBEDDING_MODEL", c.AIEmbeddingModel},
+		{"AI_REVIEWER_MODEL", c.AIReviewerModel},
+		{"AI_VERIFIER_MODEL", c.AIVerifierModel},
 		{"CONTROL_PORTAL_TOKEN", c.ControlPortalToken},
 	}
 	for _, item := range required {
@@ -377,7 +382,8 @@ func Load() (Config, error) {
 	if cfg.AIVerifierAPIKey == "" && !verifierAPIURLSet {
 		cfg.AIVerifierAPIKey = cfg.AIAPIKey
 	}
-	cfg.AIVerifierModel = getEnvOrDefault("AI_VERIFIER_MODEL", "gpt-4o-mini")
+	cfg.AIReviewerModel = os.Getenv("AI_REVIEWER_MODEL")
+	cfg.AIVerifierModel = os.Getenv("AI_VERIFIER_MODEL")
 	cfg.AIVerifierDisableTemperature, err = parseBoolOrDefault("AI_VERIFIER_DISABLE_TEMPERATURE", false)
 	if err != nil {
 		return cfg, err
