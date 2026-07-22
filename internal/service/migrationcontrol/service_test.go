@@ -319,12 +319,13 @@ func TestCutoverRejectsBlockedStateAndMissingPreflight(t *testing.T) {
 
 	store := newStoreStub()
 	store.run = &domain.V2MigrationRun{
-		RunID:             "run-1",
-		State:             domain.V2MigrationStateRunning,
-		Required:          true,
-		PreflightApproved: true,
-		CorpusHash:        "sha256:run-corpus",
-		PreflightChecks:   createdPreflightChecks(),
+		RunID:                    "run-1",
+		MigrationContractVersion: DefaultMigrationContractVersion,
+		State:                    domain.V2MigrationStateRunning,
+		Required:                 true,
+		PreflightApproved:        true,
+		CorpusHash:               "sha256:run-corpus",
+		PreflightChecks:          createdPreflightChecks(),
 	}
 	svc := New(store, Config{Required: true, CutoverRequiredGates: []string{"operator_backup_confirmation"}})
 	_, err := svc.Cutover(ctx, CutoverRequest{GateResults: gates})
@@ -871,8 +872,7 @@ func (s *storeStub) UpdateRunState(_ context.Context, input repository.V2UpdateM
 	s.run.PreflightApproved = s.run.PreflightApproved || input.PreflightApproved
 	if input.ClearBackupReference {
 		s.run.BackupReference = ""
-	}
-	if input.BackupReference != "" {
+	} else if input.BackupReference != "" {
 		s.run.BackupReference = input.BackupReference
 	}
 	if input.PreflightChecks != nil {

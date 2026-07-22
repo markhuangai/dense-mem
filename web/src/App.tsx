@@ -491,6 +491,11 @@ function MigrationPortal({
   const progress = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : (status?.state === "cut_over" ? 100 : 0);
   const contractCurrent = run?.migration_contract_version === CURRENT_MIGRATION_CONTRACT;
   const backupConfirmationCurrent = !!run?.preflight_approved && contractCurrent && hasBackupConfirmation(run.preflight_checks);
+  useEffect(() => {
+    if (backupConfirmationCurrent) {
+      setBackupsConfirmed(false);
+    }
+  }, [backupConfirmationCurrent]);
   const confirmationRenewalState = !!run && !backupConfirmationCurrent && (
     status?.state === "running" ||
     status?.state === "paused_retryable" ||

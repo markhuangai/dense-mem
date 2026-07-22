@@ -94,6 +94,34 @@ func TestStatusReportsRenewalWhenBackupConfirmationIsStale(t *testing.T) {
 	}
 }
 
+func TestPreflightRenewalAllowsReadyRunWithStaleConfirmation(t *testing.T) {
+	ctx := context.Background()
+	store := newStoreStub()
+	store.run = &domain.V2MigrationRun{
+		RunID:                    "run-1",
+		MigrationContractVersion: "dense-mem.v2.1.migration-control.v2",
+		State:                    domain.V2MigrationStateReady,
+		Required:                 true,
+		PreflightApproved:        true,
+		PreflightChecks:          createdPreflightChecks(),
+	}
+	svc := New(store, Config{Required: true})
+
+	status, err := svc.ApprovePreflight(ctx, OperatorRequest{
+		BackupsConfirmed: true,
+	})
+	if err != nil {
+		t.Fatalf("ApprovePreflight ready stale run: %v", err)
+	}
+	if status.State != domain.V2MigrationStateReady {
+		t.Fatalf("ready renewal status = %#v", status)
+	}
+	if store.run.MigrationContractVersion != DefaultMigrationContractVersion {
+		t.Fatalf("renewed contract = %q", store.run.MigrationContractVersion)
+	}
+	assertBackupConfirmationChecks(t, store.run.PreflightChecks)
+}
+
 func TestPreflightRenewalKeepsNonRetryableFailedRunTerminal(t *testing.T) {
 	ctx := context.Background()
 	store := newStoreStub()

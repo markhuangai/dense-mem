@@ -545,7 +545,8 @@ func canRenewPreflight(run *domain.V2MigrationRun, currentContract string) bool 
 		return false
 	}
 	switch run.State {
-	case domain.V2MigrationStateRunning,
+	case domain.V2MigrationStateReady,
+		domain.V2MigrationStateRunning,
 		domain.V2MigrationStatePaused,
 		domain.V2MigrationStateVerifying,
 		domain.V2MigrationStateReadyCutover:
@@ -598,7 +599,7 @@ func (s *service) requireCurrentBackupConfirmation(run *domain.V2MigrationRun) e
 		return ErrPreflightRequired
 	}
 	if strings.TrimSpace(run.MigrationContractVersion) != strings.TrimSpace(s.cfg.MigrationContractVersion) {
-		return fmt.Errorf("%w: renew backup confirmation for migration contract %s", ErrPreflightRequired, run.MigrationContractVersion)
+		return fmt.Errorf("%w: backup confirmation recorded for contract %s is stale; renew for contract %s", ErrPreflightRequired, run.MigrationContractVersion, s.cfg.MigrationContractVersion)
 	}
 	if !BackupConfirmationRecorded(run.PreflightChecks) {
 		return fmt.Errorf("%w: operator confirmation for PostgreSQL and Neo4j backups is required", ErrPreflightRequired)
