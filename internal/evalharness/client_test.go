@@ -55,8 +55,7 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 			evidence := input["evidence"].([]any)
 			firstEvidence := evidence[0].(map[string]any)
 			metadata := firstEvidence["metadata"].(map[string]any)
-			if input["idempotency_key"] != "eval:doc-alpha" ||
-				firstEvidence["idempotency_key"] != "eval:doc-alpha" ||
+			if firstEvidence["idempotency_key"] != "eval:doc-alpha" ||
 				metadata["source_doc_id"] != "doc-alpha" ||
 				metadata["eval_seed"] != true {
 				t.Fatalf("remember input = %#v", input)
@@ -603,9 +602,6 @@ func TestHTTPClientImportCorpusWithConcurrency(t *testing.T) {
 		}
 		evidence := input["evidence"].([]any)[0].(map[string]any)
 		sourceDocID := strings.TrimPrefix(evidence["idempotency_key"].(string), "eval:")
-		if input["idempotency_key"] != evidence["idempotency_key"] {
-			t.Fatalf("idempotency mismatch: %#v", input)
-		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"fragment": map[string]any{"id": "fragment-" + sourceDocID},
 		})

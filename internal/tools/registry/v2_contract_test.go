@@ -11,6 +11,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
+	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
@@ -758,6 +759,35 @@ func TestV2PublicErrorSchemaContract(t *testing.T) {
 	detailsSchema := schemaProperties(schema)["details"]
 	if detailsSchema["maxProperties"] != v2MetadataMaxProperties || detailsSchema["x-max-depth"] != 4 {
 		t.Fatalf("details schema is not bounded: %#v", detailsSchema)
+	}
+}
+
+func TestV2RememberIngestIdempotencyKeyFromEvidence(t *testing.T) {
+	single := v2RememberIngestIdempotencyKey([]memoryservice.V2RememberEvidenceInput{{
+		IdempotencyKey: " eval:doc-alpha ",
+	}})
+	if single != "eval:doc-alpha" {
+		t.Fatalf("single key = %q", single)
+	}
+
+	batch := v2RememberIngestIdempotencyKey([]memoryservice.V2RememberEvidenceInput{
+		{IdempotencyKey: "eval:doc-alpha"},
+		{IdempotencyKey: "eval:doc-beta"},
+	})
+	if !strings.HasPrefix(batch, "batch:") || len(batch) != len("batch:")+64 {
+		t.Fatalf("batch key = %q", batch)
+	}
+	if batch != v2RememberIngestIdempotencyKey([]memoryservice.V2RememberEvidenceInput{
+		{IdempotencyKey: "eval:doc-alpha"},
+		{IdempotencyKey: "eval:doc-beta"},
+	}) {
+		t.Fatal("batch key is not deterministic")
+	}
+	if got := v2RememberIngestIdempotencyKey([]memoryservice.V2RememberEvidenceInput{
+		{IdempotencyKey: "eval:doc-alpha"},
+		{},
+	}); got != "" {
+		t.Fatalf("partial batch key = %q", got)
 	}
 }
 

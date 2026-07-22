@@ -36,9 +36,6 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 			evidence := input["evidence"].([]any)
 			firstEvidence := evidence[0].(map[string]any)
 			idempotencyKey := firstEvidence["idempotency_key"].(string)
-			if input["idempotency_key"] != idempotencyKey {
-				t.Fatalf("remember idempotency mismatch: %#v", input)
-			}
 			id, ok := rememberIDs[idempotencyKey]
 			if !ok {
 				t.Fatalf("remember input = %#v", input)

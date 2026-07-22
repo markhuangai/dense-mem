@@ -27,7 +27,7 @@ func TestBuildV2UATWiresExecutableRemember(t *testing.T) {
 	}
 	out, err := remember.Invoke(v2ContractInvokeContext("write"), "ignored-profile", map[string]any{
 		"evidence": []any{
-			map[string]any{"content": "Dense-Mem uses PostgreSQL."},
+			map[string]any{"content": "Dense-Mem uses PostgreSQL.", "idempotency_key": "eval:doc-alpha"},
 		},
 		"proposal": map[string]any{
 			"entities": []any{
@@ -65,6 +65,9 @@ func TestBuildV2UATWiresExecutableRemember(t *testing.T) {
 	}
 	if stub.req.ContractVersion != domain.V2ContractVersion || len(stub.req.Evidence) != 1 {
 		t.Fatalf("stub request not populated: %#v", stub.req)
+	}
+	if stub.req.IdempotencyKey != "eval:doc-alpha" {
+		t.Fatalf("remember idempotency key = %q", stub.req.IdempotencyKey)
 	}
 	if stub.req.Evidence[0].Content != "Dense-Mem uses PostgreSQL." {
 		t.Fatalf("evidence content = %q", stub.req.Evidence[0].Content)
