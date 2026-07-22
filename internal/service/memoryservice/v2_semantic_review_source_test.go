@@ -682,7 +682,7 @@ func TestV2SemanticPlacementReviewSourceReturnsRetryableProviderProposalAtLimit(
 	if err != nil {
 		t.Fatalf("BuildV2SemanticReviewJob returned error: %v", err)
 	}
-	if len(provider.reqs) != 2 || provider.reqs[1].Attempt != 2 {
+	if len(provider.reqs) != 5 || provider.reqs[4].Attempt != 5 {
 		t.Fatalf("provider requests = %#v", provider.reqs)
 	}
 	if len(job.ValidationErrors) != 0 {
@@ -696,12 +696,15 @@ func TestV2SemanticPlacementReviewSourceReturnsRetryableProviderProposalAtLimit(
 func TestV2PlacementReviewSourceHelperCoercions(t *testing.T) {
 	raw := map[string]any{
 		"object_value": map[string]any{
-			"type":  "number",
-			"value": 42,
+			"type":    "number",
+			"value":   42,
+			"display": "42%",
+			"unit":    "percent",
 		},
 	}
 	value, ok := v2PlacementReviewObjectValue(raw, "rel:score")
-	if !ok || value.Ref != "value:rel:score" || value.Type != "number" || value.Value != "42" {
+	if !ok || value.Ref != "value:rel:score" || value.Type != "number" || value.Value != "42" ||
+		value.Display != "42%" || value.Unit != "percent" {
 		t.Fatalf("object value = %#v, ok=%v", value, ok)
 	}
 	value, ok = v2PlacementReviewObjectValue(map[string]any{

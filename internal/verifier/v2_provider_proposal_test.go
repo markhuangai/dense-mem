@@ -66,6 +66,39 @@ func TestDecodeV2ProviderProposalJSONRejectsUnknownFieldsAndTrailingJSON(t *test
 	}
 }
 
+func TestDecodeV2ProviderProposalJSONAcceptsTypedValueDisplayAndUnit(t *testing.T) {
+	raw := []byte(`{
+		"predicate_options":["scored"],
+		"entity_proposals":[
+			{"ref":"project","name":"Dense-Mem","entity_kind":"project","aliases":[],"known_entity_id":null,"evidence":[{"evidence_index":0,"start":0,"end":9}]}
+		],
+		"relationship_proposals":[
+			{
+				"proposal_id":"score",
+				"subject_ref":"project",
+				"original_predicate":"scored",
+				"predicate_candidates":["scored"],
+				"object_ref":"",
+				"object_value":{"ref":"score_value","type":"number","value":"42","display":"42%","unit":"percent"},
+				"polarity":"+",
+				"modality":"statement",
+				"evidence":[{"evidence_index":0,"start":0,"end":9}],
+				"valid_from":null,
+				"valid_to":null,
+				"client_comment":null
+			}
+		]
+	}`)
+	proposal, err := DecodeV2ProviderProposalJSON(raw)
+	if err != nil {
+		t.Fatalf("DecodeV2ProviderProposalJSON: %v", err)
+	}
+	value := proposal.RelationshipProposals[0].ObjectValue
+	if value == nil || value.Display != "42%" || value.Unit != "percent" {
+		t.Fatalf("object value = %#v", value)
+	}
+}
+
 func TestPrepareV2ProviderProposalRequestTrimsAndRejectsInvalidInputs(t *testing.T) {
 	req, errs := PrepareV2ProviderProposalRequest(V2ProviderProposalRequest{
 		RequestID:        " request-1 ",

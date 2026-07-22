@@ -806,6 +806,9 @@ func insertV2RelationshipTransition(ctx context.Context, tx *gorm.DB, input v2Tr
 		    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, ''), NULLIF(?, ''),
 		    ?, ?, ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?
 		)
+		ON CONFLICT (team_id, owner_profile_id, idempotency_key)
+		WHERE idempotency_key <> ''
+		DO NOTHING
 		RETURNING transition_id::text
 	`, input.TeamID, input.RelationshipID, input.OwnerProfileID, input.FromTier,
 		input.FromStatus, input.ToTier, input.ToStatus, input.Reason,
@@ -823,9 +826,31 @@ func insertV2RelationshipTransition(ctx context.Context, tx *gorm.DB, input v2Tr
 		return "", err
 	}
 	if transitionID == "" {
+		transitionID, err = loadV2RelationshipTransitionIDByIdempotency(ctx, tx, input)
+		if err != nil {
+			return "", err
+		}
+	}
+	if transitionID == "" {
 		return "", gorm.ErrRecordNotFound
 	}
 	return transitionID, nil
+}
+
+func loadV2RelationshipTransitionIDByIdempotency(ctx context.Context, tx *gorm.DB, input v2TransitionInput) (string, error) {
+	if strings.TrimSpace(input.IdempotencyKey) == "" {
+		return "", nil
+	}
+	var transitionID string
+	err := tx.WithContext(ctx).Raw(`
+		SELECT transition_id::text
+		FROM relationship_transition_events
+		WHERE team_id = ?::uuid
+		  AND owner_profile_id = ?::uuid
+		  AND idempotency_key = ?
+		LIMIT 1
+	`, input.TeamID, input.OwnerProfileID, input.IdempotencyKey).Scan(&transitionID).Error
+	return transitionID, err
 }
 
 func v2RelationshipTransitionIdempotencyKey(verificationEventID string, supportDecisionID string) string {

@@ -745,3 +745,78 @@ func TestV2PlacementReviewRetryableRequeuesRunWithoutResettingAttempts(t *testin
 	assert.Equal(t, ingest.PlacementRunID, reclaimed.PlacementRunID)
 	assert.Equal(t, claimed.Attempts+1, reclaimed.Attempts)
 }
+
+func TestV2PlacementReviewRetrySupersedesStaleSource(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "placement-review-stale-team")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "review-stale-owner")
+	ledgerRepo := NewV2LedgerRepository(appDB, rls)
+
+	ingest, err := ledgerRepo.CreateIngest(ctx, V2CreateIngestInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		IdempotencyKey: "placement review stale source",
+		Evidence: []V2EvidenceInput{{
+			Content:                   "Retry should not revive stale evidence.",
+			SourceType:                "document",
+			SourceKey:                 "doc://placement-review-stale",
+			SourceRevisionToken:       "rev-1",
+			SourceRevisionContentHash: "sha256:rev1",
+		}},
+	})
+	require.NoError(t, err)
+	claimed, err := ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "worker-review-stale", time.Minute)
+	require.NoError(t, err)
+	_, err = ledgerRepo.AdvanceSourceRevision(ctx, V2AdvanceSourceRevisionInput{
+		TeamID:                        teamID,
+		OwnerProfileID:                ownerID,
+		SourceKey:                     "doc://placement-review-stale",
+		SourceKind:                    "document",
+		RevisionToken:                 "rev-2",
+		ExpectedPreviousRevisionToken: "rev-1",
+		ContentHash:                   "sha256:rev2",
+	})
+	require.NoError(t, err)
+
+	requeued, err := ledgerRepo.RequeuePlacementReviewResult(ctx, V2RequeuePlacementReviewInput{
+		TeamID:           teamID,
+		OwnerProfileID:   ownerID,
+		IngestID:         ingest.IngestID,
+		PlacementRunID:   ingest.PlacementRunID,
+		PlacementItemID:  ingest.Items[0].PlacementItemID,
+		WorkerID:         "worker-review-stale",
+		ExpectedAttempts: claimed.Attempts,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "superseded", requeued.Status)
+	require.NotEmpty(t, requeued.OutcomeID)
+
+	var runStatus, itemStatus, itemCategory, outcomeStatus string
+	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		require.NoError(t, tx.Raw(`
+			SELECT status
+			FROM placement_runs
+			WHERE team_id = ?::uuid
+			  AND placement_run_id = ?::uuid
+		`, teamID, ingest.PlacementRunID).Scan(&runStatus).Error)
+		require.NoError(t, tx.Raw(`
+			SELECT status, category
+			FROM placement_items
+			WHERE team_id = ?::uuid
+			  AND placement_item_id = ?::uuid
+		`, teamID, ingest.Items[0].PlacementItemID).Row().Scan(&itemStatus, &itemCategory))
+		return tx.Raw(`
+			SELECT status
+			FROM placement_outcomes
+			WHERE team_id = ?::uuid
+			  AND outcome_id = ?::uuid
+		`, teamID, requeued.OutcomeID).Scan(&outcomeStatus).Error
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "failed", runStatus)
+	assert.Equal(t, "failed", itemStatus)
+	assert.Equal(t, "failed", itemCategory)
+	assert.Equal(t, "superseded", outcomeStatus)
+}

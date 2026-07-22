@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -321,7 +322,7 @@ func runActiveV2Server(
 	logger.Info("starting control portal", observability.String("addr", cfg.GetControlHTTPAddr()))
 	go func() {
 		if err := controlServer.Start(cfg.GetControlHTTPAddr()); err != nil {
-			logger.Error("control portal server error", err)
+			logV2ActiveServerStartError(logger, "control portal server error", err)
 		}
 	}()
 
@@ -351,7 +352,7 @@ func runActiveV2Server(
 	logger.Info("starting server", observability.String("addr", httpAddr))
 	go func() {
 		if err := e.Start(httpAddr); err != nil {
-			logger.Error("server error", err)
+			logV2ActiveServerStartError(logger, "server error", err)
 		}
 	}()
 
@@ -480,11 +481,18 @@ func v2ActivePlacementLease(verifierTimeoutSeconds int, commitTimeoutSeconds int
 	if commitTimeoutSeconds <= 0 {
 		commitTimeoutSeconds = 10
 	}
-	lease := time.Duration((verifierTimeoutSeconds*4)+commitTimeoutSeconds+30) * time.Second
+	lease := time.Duration((verifierTimeoutSeconds*memoryservice.V2SemanticPlacementDefaultVerifierCallBudget)+commitTimeoutSeconds+30) * time.Second
 	if lease < 5*time.Minute {
 		return 5 * time.Minute
 	}
 	return lease
+}
+
+func logV2ActiveServerStartError(logger observability.LogProvider, message string, err error) {
+	if errors.Is(err, nethttp.ErrServerClosed) {
+		return
+	}
+	logger.Error(message, err)
 }
 
 func v2ActiveWorkerCount(verifierMaxConcurrency int) int {

@@ -225,15 +225,6 @@ func enumSchema(values []string) map[string]any {
 	return map[string]any{"type": "string", "enum": values}
 }
 
-func nullableEnumSchema(values []string) map[string]any {
-	enumValues := make([]any, 0, len(values)+1)
-	for _, value := range values {
-		enumValues = append(enumValues, value)
-	}
-	enumValues = append(enumValues, nil)
-	return map[string]any{"type": []any{"string", "null"}, "enum": enumValues}
-}
-
 func optionalEnumSchema(values []string) map[string]any {
 	enumValues := make([]any, 0, len(values)+1)
 	enumValues = append(enumValues, "")

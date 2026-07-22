@@ -138,6 +138,40 @@ func TestMigrationDataPlaneGateAllowsOpenDataPlane(t *testing.T) {
 	}
 }
 
+func TestMigrationDataPlaneGateCachesStatusWithinTTL(t *testing.T) {
+	migration := &migrationDataPlaneStatusStub{status: &domain.V2MigrationControlStatus{DataPlaneAllowed: true}}
+	e := echo.New()
+	called := 0
+	e.GET("/gated", func(c echo.Context) error {
+		called++
+		return c.NoContent(nethttp.StatusNoContent)
+	}, migrationDataPlaneGateWithTTL(migration, time.Hour))
+
+	req := httptest.NewRequest(nethttp.MethodGet, "/gated", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != nethttp.StatusNoContent {
+		t.Fatalf("first status = %d, want %d; body=%s", rec.Code, nethttp.StatusNoContent, rec.Body.String())
+	}
+
+	migration.status = &domain.V2MigrationControlStatus{
+		DataPlaneAllowed: false,
+		ReadinessMessage: "migration_required",
+	}
+	req = httptest.NewRequest(nethttp.MethodGet, "/gated", nil)
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != nethttp.StatusNoContent {
+		t.Fatalf("cached status = %d, want %d; body=%s", rec.Code, nethttp.StatusNoContent, rec.Body.String())
+	}
+	if called != 2 {
+		t.Fatalf("handler calls = %d, want 2", called)
+	}
+	if migration.calls != 1 {
+		t.Fatalf("status calls = %d, want 1", migration.calls)
+	}
+}
+
 func TestMigrationDataPlaneGateFailsClosedOnStatusError(t *testing.T) {
 	migration := &migrationDataPlaneStatusStub{err: errors.New("store unavailable")}
 	e := echo.New()
@@ -217,9 +251,11 @@ func assertMigrationGateError(t *testing.T, body []byte, message string) {
 type migrationDataPlaneStatusStub struct {
 	status *domain.V2MigrationControlStatus
 	err    error
+	calls  int
 }
 
 func (s *migrationDataPlaneStatusStub) Status(context.Context) (*domain.V2MigrationControlStatus, error) {
+	s.calls++
 	if s.err != nil {
 		return nil, s.err
 	}

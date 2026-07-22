@@ -230,12 +230,13 @@ func (s *service) Cutover(ctx context.Context, req CutoverRequest) (*domain.V2Mi
 	if !run.PreflightApproved || strings.TrimSpace(run.BackupReference) == "" {
 		return nil, fmt.Errorf("%w: approved preflight and backup reference are required", ErrPreflightRequired)
 	}
-	corpusHash := strings.TrimSpace(req.CorpusHash)
-	if corpusHash == "" {
-		corpusHash = strings.TrimSpace(run.CorpusHash)
-	}
+	corpusHash := strings.TrimSpace(run.CorpusHash)
 	if corpusHash == "" {
 		return nil, fmt.Errorf("%w: corpus_hash is required", ErrCutoverGate)
+	}
+	requestCorpusHash := strings.TrimSpace(req.CorpusHash)
+	if requestCorpusHash != "" && requestCorpusHash != corpusHash {
+		return nil, fmt.Errorf("%w: corpus_hash does not match finalized run", ErrCutoverGate)
 	}
 	gates, err := normalizeCutoverGates(req.GateResults, s.cfg.CutoverRequiredGates)
 	if err != nil {

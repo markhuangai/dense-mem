@@ -288,7 +288,8 @@ func v2SemanticCommitInputFromReview(job V2SemanticCommitJob) (repository.V2Comm
 				Ref:            observation.ObjectValue.Ref,
 				ValueType:      observation.ObjectValue.Type,
 				CanonicalValue: observation.ObjectValue.Value,
-				Display:        observation.ObjectValue.Value,
+				Display:        observation.ObjectValue.Display,
+				Unit:           observation.ObjectValue.Unit,
 			}
 			relationship.ObjectRef = ""
 		}

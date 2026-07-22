@@ -90,9 +90,11 @@ type V2SemanticPredicateCandidate struct {
 }
 
 type V2SemanticValueObservation struct {
-	Ref   string `json:"ref"`
-	Type  string `json:"type"`
-	Value string `json:"value"`
+	Ref     string `json:"ref"`
+	Type    string `json:"type"`
+	Value   string `json:"value"`
+	Display string `json:"display,omitempty"`
+	Unit    string `json:"unit,omitempty"`
 }
 
 type V2SemanticReviewResponse struct {

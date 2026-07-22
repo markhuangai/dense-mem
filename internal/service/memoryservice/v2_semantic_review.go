@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	v2SemanticReviewDefaultMaxAttempts = 5
-	v2SemanticReviewOutcomeKind        = "semantic_review"
-	v2SemanticReviewAttemptOutcomeKind = "semantic_review_provider_attempt"
+	v2SemanticReviewDefaultMaxAttempts           = 5
+	V2SemanticPlacementDefaultVerifierCallBudget = v2SemanticProposalDefaultMaxAttempts + v2SemanticReviewDefaultMaxAttempts
+	v2SemanticReviewOutcomeKind                  = "semantic_review"
+	v2SemanticReviewAttemptOutcomeKind           = "semantic_review_provider_attempt"
 )
 
 type V2SemanticReviewProvider interface {

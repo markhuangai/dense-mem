@@ -96,7 +96,7 @@ type V2MigrationGateResult struct {
 	EvidenceHash string         `json:"evidence_hash,omitempty"`
 	Message      string         `json:"message,omitempty"`
 	Metadata     map[string]any `json:"metadata,omitempty"`
-	CreatedAt    time.Time      `json:"created_at,omitempty"`
+	CreatedAt    time.Time      `json:"created_at,omitzero"`
 }
 
 type V2MigrationCorpusItem struct {

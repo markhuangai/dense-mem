@@ -42,7 +42,8 @@ type V2RequeuePlacementReviewInput struct {
 }
 
 type V2RequeuePlacementReviewResult struct {
-	Status string
+	Status    string
+	OutcomeID string
 }
 
 func (r *V2LedgerRepositoryImpl) CompletePlacementReviewResult(
@@ -131,6 +132,18 @@ func (r *V2LedgerRepositoryImpl) RequeuePlacementReviewResult(
 			return err
 		}
 		if err := ensureV2PlacementItemCurrent(ctx, tx, scope); err != nil {
+			if errors.Is(err, ErrV2PlacementStaleSource) {
+				outcomeID, outcomeErr := appendV2SupersededPlacementOutcome(ctx, tx, scope)
+				if outcomeErr != nil {
+					return outcomeErr
+				}
+				if finishErr := finishV2PlacementRunIfTerminal(ctx, tx, scope, string(domain.V2PlacementRunFailed)); finishErr != nil {
+					return finishErr
+				}
+				result.Status = "superseded"
+				result.OutcomeID = outcomeID
+				return nil
+			}
 			return err
 		}
 		return requeueV2PlacementRunForRetry(ctx, tx, scope)

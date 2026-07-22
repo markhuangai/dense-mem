@@ -190,10 +190,7 @@ func (s *v2SemanticPlacementReviewSource) v2PlacementReviewProviderProposal(
 	}
 	var lastValidationErrors []verifier.V2SemanticValidationError
 	feedback := []string{}
-	maxAttempts := run.MaxAttempts
-	if maxAttempts <= 0 {
-		maxAttempts = v2SemanticProposalDefaultMaxAttempts
-	}
+	maxAttempts := v2SemanticProposalDefaultMaxAttempts
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		attemptReq := req
 		attemptReq.Attempt = attempt
@@ -281,9 +278,11 @@ func v2ReviewSourceProposalFromProvider(proposal verifier.V2ProviderProposal) ma
 		}
 		if relationship.ObjectValue != nil {
 			item["object_value"] = map[string]any{
-				"ref":   relationship.ObjectValue.Ref,
-				"type":  relationship.ObjectValue.Type,
-				"value": relationship.ObjectValue.Value,
+				"ref":     relationship.ObjectValue.Ref,
+				"type":    relationship.ObjectValue.Type,
+				"value":   relationship.ObjectValue.Value,
+				"display": relationship.ObjectValue.Display,
+				"unit":    relationship.ObjectValue.Unit,
 			}
 		}
 		if relationship.ValidFrom != nil {
@@ -657,9 +656,11 @@ func v2PlacementReviewObjectValue(raw map[string]any, relationshipRef string) (v
 		return verifier.V2SemanticValueObservation{}, false
 	}
 	return verifier.V2SemanticValueObservation{
-		Ref:   v2ReviewFirstNonEmpty(v2ReviewString(objectValue, "ref"), "value:"+relationshipRef),
-		Type:  valueType,
-		Value: value,
+		Ref:     v2ReviewFirstNonEmpty(v2ReviewString(objectValue, "ref"), "value:"+relationshipRef),
+		Type:    valueType,
+		Value:   value,
+		Display: v2ReviewAnyString(objectValue["display"]),
+		Unit:    v2ReviewAnyString(objectValue["unit"]),
 	}, true
 }
 

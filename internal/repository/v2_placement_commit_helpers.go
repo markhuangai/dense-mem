@@ -11,6 +11,23 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
+const v2PlacementRunGuardedStatusCase = `
+	CASE
+	    WHEN EXISTS (
+	        SELECT 1
+	        FROM placement_items AS item
+	        JOIN evidence_security_events AS event
+	          ON event.team_id = item.team_id
+	         AND event.fragment_id = item.fragment_id
+	         AND event.owner_profile_id = item.owner_profile_id
+	        WHERE item.team_id = placement_runs.team_id
+	          AND item.placement_run_id = placement_runs.placement_run_id
+	          AND item.status IN ('queued', 'processing')
+	          AND event.decision = 'guarded'
+	    ) THEN 'guarded'
+	    ELSE 'queued'
+	END`
+
 func appendV2PlacementSearchDocument(result *V2CommitPlacementSemanticResult, document *V2SearchDocumentResult) {
 	if result == nil || document == nil || document.SearchDocumentID == "" {
 		return
@@ -350,21 +367,7 @@ func finishV2PlacementRunIfTerminal(ctx context.Context, tx *gorm.DB, input V2Co
 	if openCount > 0 {
 		result := tx.WithContext(ctx).Exec(`
 			UPDATE placement_runs
-			SET status = CASE
-			        WHEN EXISTS (
-			            SELECT 1
-			            FROM placement_items AS item
-			            JOIN evidence_security_events AS event
-			              ON event.team_id = item.team_id
-			             AND event.fragment_id = item.fragment_id
-			             AND event.owner_profile_id = item.owner_profile_id
-			            WHERE item.team_id = placement_runs.team_id
-			              AND item.placement_run_id = placement_runs.placement_run_id
-			              AND item.status IN ('queued', 'processing')
-			              AND event.decision = 'guarded'
-			        ) THEN 'guarded'
-			        ELSE 'queued'
-			    END,
+			SET status = `+v2PlacementRunGuardedStatusCase+`,
 			    worker_id = '',
 			    lease_until = NULL,
 			    attempts = 0,
@@ -413,21 +416,7 @@ func finishV2PlacementRunIfTerminal(ctx context.Context, tx *gorm.DB, input V2Co
 func requeueV2PlacementRunForRetry(ctx context.Context, tx *gorm.DB, input V2CommitPlacementSemanticInput) error {
 	result := tx.WithContext(ctx).Exec(`
 		UPDATE placement_runs
-		SET status = CASE
-		        WHEN EXISTS (
-		            SELECT 1
-		            FROM placement_items AS item
-		            JOIN evidence_security_events AS event
-		              ON event.team_id = item.team_id
-		             AND event.fragment_id = item.fragment_id
-		             AND event.owner_profile_id = item.owner_profile_id
-		            WHERE item.team_id = placement_runs.team_id
-		              AND item.placement_run_id = placement_runs.placement_run_id
-		              AND item.status IN ('queued', 'processing')
-		              AND event.decision = 'guarded'
-		        ) THEN 'guarded'
-		        ELSE 'queued'
-		    END,
+		SET status = `+v2PlacementRunGuardedStatusCase+`,
 		    worker_id = '',
 		    lease_until = NULL,
 		    available_at = now(),

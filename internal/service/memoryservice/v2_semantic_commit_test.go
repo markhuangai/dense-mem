@@ -314,9 +314,11 @@ func TestV2SemanticCommitMapsObjectValueRelationship(t *testing.T) {
 	request := v2SemanticReviewServiceRequest(teamID, ownerID)
 	request.RelationshipObservations[0].ObjectRef = ""
 	request.RelationshipObservations[0].ObjectValue = &verifier.V2SemanticValueObservation{
-		Ref:   "release_date",
-		Type:  "date",
-		Value: "2026-07-17",
+		Ref:     "release_date",
+		Type:    "date",
+		Value:   "2026-07-17",
+		Display: "July 17, 2026",
+		Unit:    "calendar_day",
 	}
 	result := v2SemanticReviewResultFromResponse(v2SemanticReviewResponse(request.RequestID, false, false), 1, "sha256:value")
 	commitRepo := &v2SemanticCommitRepoStub{}
@@ -343,7 +345,10 @@ func TestV2SemanticCommitMapsObjectValueRelationship(t *testing.T) {
 	if relationship.ObjectRef != "" || relationship.ObjectValue == nil {
 		t.Fatalf("relationship object = %#v", relationship)
 	}
-	if relationship.ObjectValue.Ref != "release_date" || relationship.ObjectValue.CanonicalValue != "2026-07-17" {
+	if relationship.ObjectValue.Ref != "release_date" ||
+		relationship.ObjectValue.CanonicalValue != "2026-07-17" ||
+		relationship.ObjectValue.Display != "July 17, 2026" ||
+		relationship.ObjectValue.Unit != "calendar_day" {
 		t.Fatalf("object value = %#v", relationship.ObjectValue)
 	}
 }

@@ -211,6 +211,7 @@ func TestCutoverRequiresReadyRunBackupCorpusAndPassingGates(t *testing.T) {
 		t.Fatalf("Cutover missing corpus hash err = %v", err)
 	}
 
+	store.run.CorpusHash = "sha256:corpus"
 	_, err = svc.Cutover(ctx, CutoverRequest{
 		CorpusHash:  "sha256:corpus",
 		GateResults: passingCutoverGates("backup_restore"),
@@ -383,13 +384,14 @@ func TestCutoverPropagatesStoreAndPreflightLookupErrors(t *testing.T) {
 		Required:          true,
 		PreflightApproved: true,
 		BackupReference:   "backup-20260717",
+		CorpusHash:        "sha256:run-corpus",
 	}
 	store.commitErr = want
 	_, err = New(store, Config{
 		Required:             true,
 		CutoverRequiredGates: []string{"backup_restore"},
 	}).Cutover(ctx, CutoverRequest{
-		CorpusHash:  "sha256:request-corpus",
+		CorpusHash:  "sha256:run-corpus",
 		GateResults: passingCutoverGates("backup_restore"),
 	})
 	if !errors.Is(err, want) {
@@ -445,7 +447,7 @@ func TestCutoverCommitsMarkerAndOperatorAction(t *testing.T) {
 	}
 }
 
-func TestCutoverUsesRequestCorpusHashWhenRunHashIsEmpty(t *testing.T) {
+func TestCutoverRequiresFinalizedRunCorpusHashAndRejectsMismatch(t *testing.T) {
 	store := newStoreStub()
 	store.run = &domain.V2MigrationRun{
 		RunID:             "run-1",
@@ -460,10 +462,27 @@ func TestCutoverUsesRequestCorpusHashWhenRunHashIsEmpty(t *testing.T) {
 		CorpusHash:  "sha256:request-corpus",
 		GateResults: passingCutoverGates("backup_restore"),
 	})
-	if err != nil {
-		t.Fatalf("Cutover: %v", err)
+	if !errors.Is(err, ErrCutoverGate) {
+		t.Fatalf("Cutover missing finalized corpus hash err = %v", err)
 	}
-	if store.commitInput.CorpusHash != "sha256:request-corpus" {
+
+	store.run.CorpusHash = "sha256:run-corpus"
+	_, err = svc.Cutover(context.Background(), CutoverRequest{
+		CorpusHash:  "sha256:request-corpus",
+		GateResults: passingCutoverGates("backup_restore"),
+	})
+	if !errors.Is(err, ErrCutoverGate) {
+		t.Fatalf("Cutover mismatched corpus hash err = %v", err)
+	}
+
+	_, err = svc.Cutover(context.Background(), CutoverRequest{
+		CorpusHash:  "sha256:run-corpus",
+		GateResults: passingCutoverGates("backup_restore"),
+	})
+	if err != nil {
+		t.Fatalf("Cutover matching corpus hash: %v", err)
+	}
+	if store.commitInput.CorpusHash != "sha256:run-corpus" {
 		t.Fatalf("corpus hash = %q", store.commitInput.CorpusHash)
 	}
 }
