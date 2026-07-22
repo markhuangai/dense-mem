@@ -155,8 +155,8 @@ func main() {
 		return
 	}
 	migrationDataPlaneStatus := legacyMigrationDataPlaneStatusGate{inner: v2MigrationControlSvc}
-	if !cfg.HasCompleteNeo4jConfig() {
-		log.Fatal("legacy migration requires NEO4J_URI, NEO4J_USER, and NEO4J_PASSWORD; remove all NEO4J_* settings only after compatible marker cleanup is complete")
+	if err := validateLegacyMigrationNeo4jConfig(v2Authority, cfg); err != nil {
+		log.Fatal(err)
 	}
 
 	// Initialize Neo4j client with 5-second timeout
