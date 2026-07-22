@@ -722,6 +722,45 @@ func TestV2ProviderAndEmbeddingContracts(t *testing.T) {
 	}
 }
 
+func TestV2PublicErrorSchemaContract(t *testing.T) {
+	schema := V2PublicErrorSchema()
+	if !schemaDisallowsAdditionalProperties(schema) {
+		t.Fatal("public error schema must be closed")
+	}
+
+	required := schemaRequiredFields(schema)
+	for _, field := range []string{"code", "message", "retryable", "correlation_id"} {
+		if !slices.Contains(required, field) {
+			t.Fatalf("required fields missing %s: %#v", field, required)
+		}
+	}
+
+	codeSchema := schemaProperties(schema)["code"]
+	enumValues, ok := codeSchema["enum"].([]string)
+	if !ok {
+		t.Fatalf("code enum = %#v", codeSchema["enum"])
+	}
+	for _, code := range []domain.V2PublicErrorCode{
+		domain.V2ErrorInvalidContractVersion,
+		domain.V2ErrorInvalidInput,
+		domain.V2ErrorUnauthorizedScope,
+		domain.V2ErrorWrongOwner,
+		domain.V2ErrorConflict,
+		domain.V2ErrorProviderUnavailable,
+		domain.V2ErrorProviderMalformed,
+		domain.V2ErrorDegraded,
+	} {
+		if !slices.Contains(enumValues, string(code)) {
+			t.Fatalf("public error enum missing %s: %#v", code, enumValues)
+		}
+	}
+
+	detailsSchema := schemaProperties(schema)["details"]
+	if detailsSchema["maxProperties"] != v2MetadataMaxProperties || detailsSchema["x-max-depth"] != 4 {
+		t.Fatalf("details schema is not bounded: %#v", detailsSchema)
+	}
+}
+
 func assertV2ClosedObjectSchemas(t *testing.T, schema map[string]any, path string) {
 	t.Helper()
 	if schema["type"] == "object" {

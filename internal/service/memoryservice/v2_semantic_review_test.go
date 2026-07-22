@@ -70,6 +70,93 @@ func TestV2SemanticReviewRetriesCompleteResponseAndDoesNotPersistPartialInvalidA
 	}
 }
 
+func TestV2SemanticReviewRetriesMalformedProviderResponse(t *testing.T) {
+	teamID := uuid.NewString()
+	ownerID := uuid.NewString()
+	request := v2SemanticReviewServiceRequest(teamID, ownerID)
+	provider := &v2SemanticReviewProviderStub{
+		errs: []error{
+			&verifier.MalformedResponseError{Provider: "stub", Message: "bad structured output"},
+			nil,
+		},
+		responses: []verifier.V2SemanticReviewResponse{
+			v2SemanticReviewResponse(request.RequestID, false, false),
+		},
+	}
+	ledger := &v2SemanticReviewLedgerStub{}
+	svc := NewV2SemanticReviewService(V2SemanticReviewDependencies{
+		Provider: provider,
+		Ledger:   ledger,
+	})
+
+	result, err := svc.ReviewV2Semantic(context.Background(), V2SemanticReviewJob{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        uuid.NewString(),
+		PlacementRunID:  uuid.NewString(),
+		PlacementItemID: uuid.NewString(),
+		Request:         request,
+		MaxAttempts:     5,
+	})
+	if err != nil {
+		t.Fatalf("ReviewV2Semantic returned error: %v", err)
+	}
+	if result.Status != string(domain.V2SemanticReviewAccepted) || result.Attempts != 2 {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(provider.requests) != 2 {
+		t.Fatalf("provider calls = %d", len(provider.requests))
+	}
+	if provider.requests[1].RequestID != request.RequestID || provider.requests[1].Attempt != 2 {
+		t.Fatalf("second request scope = %#v", provider.requests[1])
+	}
+	if len(provider.requests[1].ValidationFeedback) != 1 ||
+		!strings.Contains(provider.requests[1].ValidationFeedback[0], "provider_response") ||
+		!strings.Contains(provider.requests[1].ValidationFeedback[0], "malformed structured response") {
+		t.Fatalf("second request feedback = %#v", provider.requests[1].ValidationFeedback)
+	}
+	if len(ledger.outcomes) != 3 {
+		t.Fatalf("outcomes = %#v", ledger.outcomes)
+	}
+	if ledger.outcomes[0].Status != "invalid" || ledger.outcomes[1].Status != "valid" || ledger.outcomes[2].Status != string(domain.V2SemanticReviewAccepted) {
+		t.Fatalf("outcome statuses = %#v", ledger.outcomes)
+	}
+}
+
+func TestV2SemanticReviewReturnsRetryableMalformedProviderResponseAtDefaultLimit(t *testing.T) {
+	teamID := uuid.NewString()
+	ownerID := uuid.NewString()
+	provider := &v2SemanticReviewProviderStub{
+		err: &verifier.MalformedResponseError{Provider: "stub", Message: "bad structured output"},
+	}
+	ledger := &v2SemanticReviewLedgerStub{}
+	svc := NewV2SemanticReviewService(V2SemanticReviewDependencies{Provider: provider, Ledger: ledger})
+
+	result, err := svc.ReviewV2Semantic(context.Background(), V2SemanticReviewJob{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        uuid.NewString(),
+		PlacementRunID:  uuid.NewString(),
+		PlacementItemID: uuid.NewString(),
+		Request:         v2SemanticReviewServiceRequest(teamID, ownerID),
+	})
+	if err != nil {
+		t.Fatalf("ReviewV2Semantic returned error: %v", err)
+	}
+	if result.Status != string(domain.V2SemanticReviewRetryable) || result.Attempts != 5 {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(provider.requests) != 5 {
+		t.Fatalf("provider calls = %d", len(provider.requests))
+	}
+	if len(result.ValidationErrors) != 1 || result.ValidationErrors[0].Field != "provider_response" {
+		t.Fatalf("validation errors = %#v", result.ValidationErrors)
+	}
+	if len(ledger.outcomes) != 6 || ledger.outcomes[len(ledger.outcomes)-1].Status != string(domain.V2SemanticReviewRetryable) {
+		t.Fatalf("outcomes = %#v", ledger.outcomes)
+	}
+}
+
 func TestV2SemanticReviewForcesJobIdentityOntoProviderRequest(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
@@ -161,8 +248,8 @@ func TestV2SemanticReviewQuarantinesSecuritySignalsWithoutSemanticDecisions(t *t
 		t.Fatalf("security quote = %q", got)
 	}
 	last := ledger.outcomes[len(ledger.outcomes)-1]
-	if last.UpdateItemStatus != "quarantined" || last.UpdateItemCategory != "quarantined" {
-		t.Fatalf("final outcome did not quarantine item: %#v", last)
+	if last.UpdateItemStatus != "" || last.UpdateItemCategory != "" {
+		t.Fatalf("final review outcome mutated placement item before commit: %#v", last)
 	}
 }
 
@@ -190,15 +277,15 @@ func TestV2SemanticReviewStopsAtRegenerationLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReviewV2Semantic returned error: %v", err)
 	}
-	if result.Status != string(domain.V2SemanticReviewTerminalFailure) || result.Attempts != 1 {
+	if result.Status != string(domain.V2SemanticReviewRetryable) || result.Attempts != 1 {
 		t.Fatalf("result = %#v", result)
 	}
 	if len(provider.requests) != 1 {
 		t.Fatalf("provider calls = %d", len(provider.requests))
 	}
 	last := ledger.outcomes[len(ledger.outcomes)-1]
-	if last.UpdateItemStatus != "failed" || last.UpdateItemCategory != "failed" {
-		t.Fatalf("terminal failure did not mark item failed: %#v", last)
+	if last.UpdateItemStatus != "" || last.UpdateItemCategory != "" {
+		t.Fatalf("retryable review outcome mutated placement item before commit: %#v", last)
 	}
 }
 
@@ -326,11 +413,21 @@ func v2SemanticReviewResponse(requestID string, quarantined bool, omitRelationsh
 type v2SemanticReviewProviderStub struct {
 	requests  []verifier.V2SemanticReviewRequest
 	responses []verifier.V2SemanticReviewResponse
+	errs      []error
 	err       error
 }
 
 func (s *v2SemanticReviewProviderStub) ReviewV2Semantic(_ context.Context, req verifier.V2SemanticReviewRequest) (verifier.V2SemanticReviewResponse, error) {
 	s.requests = append(s.requests, req)
+	if len(s.errs) > 0 {
+		index := len(s.requests) - 1
+		if index >= len(s.errs) {
+			index = len(s.errs) - 1
+		}
+		if s.errs[index] != nil {
+			return verifier.V2SemanticReviewResponse{}, s.errs[index]
+		}
+	}
 	if s.err != nil {
 		return verifier.V2SemanticReviewResponse{}, s.err
 	}

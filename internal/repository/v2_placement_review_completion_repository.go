@@ -31,6 +31,20 @@ type V2CompletePlacementReviewResult struct {
 	OutcomeID string
 }
 
+type V2RequeuePlacementReviewInput struct {
+	TeamID           string
+	OwnerProfileID   string
+	IngestID         string
+	PlacementRunID   string
+	PlacementItemID  string
+	WorkerID         string
+	ExpectedAttempts int
+}
+
+type V2RequeuePlacementReviewResult struct {
+	Status string
+}
+
 func (r *V2LedgerRepositoryImpl) CompletePlacementReviewResult(
 	ctx context.Context,
 	input V2CompletePlacementReviewInput,
@@ -99,6 +113,34 @@ func (r *V2LedgerRepositoryImpl) CompletePlacementReviewResult(
 	return result, nil
 }
 
+func (r *V2LedgerRepositoryImpl) RequeuePlacementReviewResult(
+	ctx context.Context,
+	input V2RequeuePlacementReviewInput,
+) (*V2RequeuePlacementReviewResult, error) {
+	input = normalizeV2RequeuePlacementReviewInput(input)
+	if err := validateV2RequeuePlacementReviewInput(input); err != nil {
+		return nil, err
+	}
+	scope := v2PlacementRetryScope(input)
+	result := &V2RequeuePlacementReviewResult{Status: string(domain.V2SemanticReviewRetryable)}
+	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
+		if err := lockV2PlacementRunForCommit(ctx, tx, scope); err != nil {
+			return err
+		}
+		if err := lockV2PlacementItemForCommit(ctx, tx, scope); err != nil {
+			return err
+		}
+		if err := ensureV2PlacementItemCurrent(ctx, tx, scope); err != nil {
+			return err
+		}
+		return requeueV2PlacementRunForRetry(ctx, tx, scope)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("v2 placement review retry: %w", err)
+	}
+	return result, nil
+}
+
 func normalizeV2CompletePlacementReviewInput(input V2CompletePlacementReviewInput) V2CompletePlacementReviewInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
@@ -112,6 +154,16 @@ func normalizeV2CompletePlacementReviewInput(input V2CompletePlacementReviewInpu
 	if input.OutcomeKind == "" {
 		input.OutcomeKind = "semantic_review_terminal"
 	}
+	return input
+}
+
+func normalizeV2RequeuePlacementReviewInput(input V2RequeuePlacementReviewInput) V2RequeuePlacementReviewInput {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.IngestID = strings.TrimSpace(input.IngestID)
+	input.PlacementRunID = strings.TrimSpace(input.PlacementRunID)
+	input.PlacementItemID = strings.TrimSpace(input.PlacementItemID)
+	input.WorkerID = strings.TrimSpace(input.WorkerID)
 	return input
 }
 
@@ -144,7 +196,40 @@ func validateV2CompletePlacementReviewInput(input V2CompletePlacementReviewInput
 	return nil
 }
 
+func validateV2RequeuePlacementReviewInput(input V2RequeuePlacementReviewInput) error {
+	for label, value := range map[string]string{
+		"team_id":           input.TeamID,
+		"owner_profile_id":  input.OwnerProfileID,
+		"ingest_id":         input.IngestID,
+		"placement_run_id":  input.PlacementRunID,
+		"placement_item_id": input.PlacementItemID,
+	} {
+		if _, err := uuid.Parse(value); err != nil {
+			return fmt.Errorf("%s is required: %w", label, err)
+		}
+	}
+	if input.WorkerID == "" {
+		return errors.New("worker_id is required")
+	}
+	if input.ExpectedAttempts < 1 {
+		return errors.New("expected_attempts must be greater than zero")
+	}
+	return nil
+}
+
 func v2PlacementCommitScope(input V2CompletePlacementReviewInput) V2CommitPlacementSemanticInput {
+	return V2CommitPlacementSemanticInput{
+		TeamID:           input.TeamID,
+		OwnerProfileID:   input.OwnerProfileID,
+		IngestID:         input.IngestID,
+		PlacementRunID:   input.PlacementRunID,
+		PlacementItemID:  input.PlacementItemID,
+		WorkerID:         input.WorkerID,
+		ExpectedAttempts: input.ExpectedAttempts,
+	}
+}
+
+func v2PlacementRetryScope(input V2RequeuePlacementReviewInput) V2CommitPlacementSemanticInput {
 	return V2CommitPlacementSemanticInput{
 		TeamID:           input.TeamID,
 		OwnerProfileID:   input.OwnerProfileID,

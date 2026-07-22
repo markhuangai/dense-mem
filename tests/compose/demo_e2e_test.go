@@ -76,7 +76,6 @@ func demoE2EEnv(image string, port int) []string {
 		"DENSE_MEM_DEMO_IMAGE=" + image,
 		fmt.Sprintf("DENSE_MEM_DEMO_PORT=%d", port),
 		"POSTGRES_PASSWORD=demo-postgres-e2e",
-		"NEO4J_PASSWORD=demo-neo4j-e2e",
 		"AI_API_URL=https://api.openai.com/v1",
 		"AI_API_KEY=demo-e2e-placeholder",
 		"AI_API_EMBEDDING_MODEL=text-embedding-3-large",

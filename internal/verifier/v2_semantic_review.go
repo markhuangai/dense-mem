@@ -33,6 +33,7 @@ type V2SemanticReviewEvidence struct {
 	FragmentID              string `json:"-"`
 	EvidenceIndex           int    `json:"-"`
 	Content                 string `json:"content"`
+	SourceID                string `json:"-"`
 	SourceRevisionID        string `json:"-"`
 	CurrentSourceRevisionID string `json:"-"`
 }
@@ -429,7 +430,7 @@ func validateV2SemanticRelationshipResults(req V2SemanticReviewRequest, results 
 			}
 		case "needs_review":
 			if result.PredicateKey != nil {
-				errs = append(errs, v2SemanticErr(fmt.Sprintf("relationship_results[%d].predicate_key", i), "must be null"))
+				errs = append(errs, v2SemanticErr(fmt.Sprintf("relationship_results[%d].predicate_key", i), "must be null when predicate_status is needs_review; use predicate_status resolved only when selecting a submitted predicate candidate"))
 			}
 		default:
 			errs = append(errs, v2SemanticErr(fmt.Sprintf("relationship_results[%d].predicate_status", i), "is unsupported"))

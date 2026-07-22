@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
@@ -687,4 +688,60 @@ func TestV2PlacementReviewCompletionClosesNonAcceptedResultWithLeaseFence(t *tes
 	})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrV2PlacementLeaseLost), err)
+}
+
+func TestV2PlacementReviewRetryableRequeuesRunWithoutResettingAttempts(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "placement-review-retryable-team")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "retryable-owner")
+	ledgerRepo := NewV2LedgerRepository(appDB, rls)
+
+	ingest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"placement retryable review", "Provider timeout should requeue this evidence.")
+	claimed, err := ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "worker-retryable", time.Minute)
+	require.NoError(t, err)
+
+	requeued, err := ledgerRepo.RequeuePlacementReviewResult(ctx, V2RequeuePlacementReviewInput{
+		TeamID:           teamID,
+		OwnerProfileID:   ownerID,
+		IngestID:         ingest.IngestID,
+		PlacementRunID:   ingest.PlacementRunID,
+		PlacementItemID:  ingest.Items[0].PlacementItemID,
+		WorkerID:         "worker-retryable",
+		ExpectedAttempts: claimed.Attempts,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "retryable", requeued.Status)
+
+	var runStatus, workerID, itemStatus string
+	var attempts int
+	var leaseUntil sql.NullTime
+	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		require.NoError(t, tx.Raw(`
+			SELECT status, attempts, worker_id, lease_until
+			FROM placement_runs
+			WHERE team_id = ?::uuid
+			  AND placement_run_id = ?::uuid
+		`, teamID, ingest.PlacementRunID).Row().Scan(&runStatus, &attempts, &workerID, &leaseUntil))
+		return tx.Raw(`
+			SELECT status
+			FROM placement_items
+			WHERE team_id = ?::uuid
+			  AND placement_item_id = ?::uuid
+		`, teamID, ingest.Items[0].PlacementItemID).Row().Scan(&itemStatus)
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "queued", runStatus)
+	assert.Equal(t, claimed.Attempts, attempts)
+	assert.Empty(t, workerID)
+	assert.False(t, leaseUntil.Valid)
+	assert.Equal(t, "queued", itemStatus)
+
+	reclaimed, err := ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "worker-retryable-2", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, reclaimed)
+	assert.Equal(t, ingest.PlacementRunID, reclaimed.PlacementRunID)
+	assert.Equal(t, claimed.Attempts+1, reclaimed.Attempts)
 }

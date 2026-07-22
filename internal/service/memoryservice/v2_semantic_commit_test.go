@@ -18,6 +18,8 @@ func TestV2SemanticCommitMapsAcceptedReviewIntoAtomicRepositoryInput(t *testing.
 	ownerID := uuid.NewString()
 	targetID := uuid.NewString()
 	request := v2SemanticReviewServiceRequest(teamID, ownerID)
+	request.Evidence[0].SourceID = uuid.NewString()
+	request.Evidence[0].SourceRevisionID = uuid.NewString()
 	request.EntityMentions[1].IdentityContext = map[string]any{"repo": "dense-mem"}
 	validFrom := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	validTo := time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)
@@ -86,6 +88,9 @@ func TestV2SemanticCommitMapsAcceptedReviewIntoAtomicRepositoryInput(t *testing.
 	}
 	if relationship.Support == nil || relationship.Support.FragmentID != request.Evidence[0].FragmentID || relationship.Support.Quote != "Mark works on Dense-Mem." {
 		t.Fatalf("relationship support = %#v", relationship.Support)
+	}
+	if relationship.Support.SourceID != request.Evidence[0].SourceID || relationship.Support.SourceRevisionID != request.Evidence[0].SourceRevisionID {
+		t.Fatalf("relationship support source scope = %#v", relationship.Support)
 	}
 	if got.Payload["response_hash"] != "sha256:semantic-response" {
 		t.Fatalf("payload = %#v", got.Payload)
@@ -188,11 +193,19 @@ func TestV2SemanticPlacementCompletionCommitsAcceptedReview(t *testing.T) {
 	}
 }
 
-func TestV2SemanticPlacementCompletionKeepsRetryableLeaseOpen(t *testing.T) {
+func TestV2SemanticPlacementCompletionRequeuesRetryableReview(t *testing.T) {
+	teamID := uuid.NewString()
+	ownerID := uuid.NewString()
 	commitRepo := &v2SemanticCommitRepoStub{}
 	svc := NewV2SemanticCommitService(V2SemanticCommitDependencies{PlacementCommit: commitRepo})
 
 	completed, err := svc.CompleteV2SemanticPlacement(context.Background(), V2SemanticCommitJob{
+		TeamID:           teamID,
+		OwnerProfileID:   ownerID,
+		IngestID:         uuid.NewString(),
+		PlacementRunID:   uuid.NewString(),
+		PlacementItemID:  uuid.NewString(),
+		WorkerID:         "worker-commit",
 		ExpectedAttempts: 2,
 		MaxAttempts:      3,
 		Result:           V2SemanticReviewResult{Status: string(domain.V2SemanticReviewRetryable)},
@@ -203,8 +216,11 @@ func TestV2SemanticPlacementCompletionKeepsRetryableLeaseOpen(t *testing.T) {
 	if completed.Status != string(domain.V2SemanticReviewRetryable) || completed.SemanticCommit != nil || completed.Terminal != nil {
 		t.Fatalf("completed = %#v", completed)
 	}
-	if commitRepo.called || commitRepo.terminalCalled {
-		t.Fatalf("repository paths called = semantic:%v terminal:%v", commitRepo.called, commitRepo.terminalCalled)
+	if commitRepo.called || commitRepo.terminalCalled || !commitRepo.retryCalled {
+		t.Fatalf("repository paths called = semantic:%v terminal:%v retry:%v", commitRepo.called, commitRepo.terminalCalled, commitRepo.retryCalled)
+	}
+	if commitRepo.retryInput.ExpectedAttempts != 2 || commitRepo.retryInput.WorkerID != "worker-commit" {
+		t.Fatalf("retry input = %#v", commitRepo.retryInput)
 	}
 }
 
@@ -238,8 +254,8 @@ func TestV2SemanticPlacementCompletionClosesRetryableWhenPlacementAttemptsExhaus
 	if completed.Status != string(domain.V2SemanticReviewTerminalFailure) || completed.Terminal == nil || completed.SemanticCommit != nil {
 		t.Fatalf("completed = %#v", completed)
 	}
-	if commitRepo.called || !commitRepo.terminalCalled {
-		t.Fatalf("repository paths called = semantic:%v terminal:%v", commitRepo.called, commitRepo.terminalCalled)
+	if commitRepo.called || !commitRepo.terminalCalled || commitRepo.retryCalled {
+		t.Fatalf("repository paths called = semantic:%v terminal:%v retry:%v", commitRepo.called, commitRepo.terminalCalled, commitRepo.retryCalled)
 	}
 	if commitRepo.terminalInput.Status != string(domain.V2SemanticReviewTerminalFailure) || commitRepo.terminalInput.Category != "failed" {
 		t.Fatalf("terminal input = %#v", commitRepo.terminalInput)
@@ -400,8 +416,10 @@ func TestV2SemanticCommitRequiresPlacementRepository(t *testing.T) {
 type v2SemanticCommitRepoStub struct {
 	called         bool
 	terminalCalled bool
+	retryCalled    bool
 	input          repository.V2CommitPlacementSemanticInput
 	terminalInput  repository.V2CompletePlacementReviewInput
+	retryInput     repository.V2RequeuePlacementReviewInput
 }
 
 func (s *v2SemanticCommitRepoStub) CommitPlacementSemanticResult(
@@ -420,6 +438,15 @@ func (s *v2SemanticCommitRepoStub) CompletePlacementReviewResult(
 	s.terminalCalled = true
 	s.terminalInput = input
 	return &repository.V2CompletePlacementReviewResult{Status: input.Status, OutcomeID: uuid.NewString()}, nil
+}
+
+func (s *v2SemanticCommitRepoStub) RequeuePlacementReviewResult(
+	_ context.Context,
+	input repository.V2RequeuePlacementReviewInput,
+) (*repository.V2RequeuePlacementReviewResult, error) {
+	s.retryCalled = true
+	s.retryInput = input
+	return &repository.V2RequeuePlacementReviewResult{Status: string(domain.V2SemanticReviewRetryable)}, nil
 }
 
 func v2TerminalResponseHash(input repository.V2CompletePlacementReviewInput) string {

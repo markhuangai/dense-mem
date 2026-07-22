@@ -111,6 +111,21 @@ func BuildV2UAT(deps Dependencies) (Registry, error) {
 	return r, nil
 }
 
+// BuildV2Active wires the PostgreSQL-authoritative V2 production registry.
+func BuildV2Active(deps Dependencies) (Registry, error) {
+	r := New()
+	tools := v2UATTools(deps)
+	if deps.V2EvaluationEnabled || deps.V2Recall != nil {
+		tools = append(tools, evaluationTools(deps)...)
+	}
+	for _, t := range tools {
+		if err := r.Register(t); err != nil {
+			return nil, fmt.Errorf("registry: BuildV2Active: %w", err)
+		}
+	}
+	return r, nil
+}
+
 func defaultTools(deps Dependencies) []Tool {
 	tools := []Tool{
 		// server-owned memory tools

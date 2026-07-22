@@ -68,6 +68,23 @@ func TestV2PlacementCommitInputValidationCoversRefAndValueObservations(t *testin
 	}
 }
 
+func TestV2RelationshipTransitionIdempotencyKeyPrefersVerificationEvent(t *testing.T) {
+	verificationID := uuid.NewString()
+	supportDecisionID := uuid.NewString()
+
+	got := v2RelationshipTransitionIdempotencyKey(" "+verificationID+" ", supportDecisionID)
+	if got != "verification:"+verificationID+":relationship_transition" {
+		t.Fatalf("verification transition idempotency key = %q", got)
+	}
+	got = v2RelationshipTransitionIdempotencyKey("", " "+supportDecisionID+" ")
+	if got != "support_decision:"+supportDecisionID+":relationship_transition" {
+		t.Fatalf("support transition idempotency key = %q", got)
+	}
+	if got = v2RelationshipTransitionIdempotencyKey("", ""); got != "" {
+		t.Fatalf("empty transition idempotency key = %q", got)
+	}
+}
+
 func TestV2PlacementCommitValidationRejectsBadShapes(t *testing.T) {
 	tests := []struct {
 		name  string

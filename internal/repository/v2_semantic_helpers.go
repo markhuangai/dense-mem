@@ -804,7 +804,7 @@ func insertV2RelationshipTransition(ctx context.Context, tx *gorm.DB, input v2Tr
 		    idempotency_key
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, ''), NULLIF(?, ''),
-		    ?, ?, ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, NULLIF(?, '')
+		    ?, ?, ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?
 		)
 		RETURNING transition_id::text
 	`, input.TeamID, input.RelationshipID, input.OwnerProfileID, input.FromTier,
@@ -826,6 +826,16 @@ func insertV2RelationshipTransition(ctx context.Context, tx *gorm.DB, input v2Tr
 		return "", gorm.ErrRecordNotFound
 	}
 	return transitionID, nil
+}
+
+func v2RelationshipTransitionIdempotencyKey(verificationEventID string, supportDecisionID string) string {
+	if id := strings.TrimSpace(verificationEventID); id != "" {
+		return "verification:" + id + ":relationship_transition"
+	}
+	if id := strings.TrimSpace(supportDecisionID); id != "" {
+		return "support_decision:" + id + ":relationship_transition"
+	}
+	return ""
 }
 
 func v2TierStatusForVerdict(verdict string, promoteToFact bool) (string, string) {

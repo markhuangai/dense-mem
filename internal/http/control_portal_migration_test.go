@@ -67,6 +67,25 @@ func TestControlPortalV2MigrationStatusAndActions(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "begin", migration.lastReq.Reason)
 
+	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/cutover", `{
+		"actor": "body-actor",
+		"remote_ip": "198.51.100.99",
+		"reason": "commit cutover",
+		"corpus_hash": "sha256:corpus",
+		"gate_results": [{
+			"gate_name": "backup_restore",
+			"outcome": "pass",
+			"evidence_ref": "local://backup",
+			"evidence_hash": "sha256:backup",
+			"message": "backup restored",
+			"metadata": {"version": "test-v1"}
+		}]
+	}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "control_portal:authorization-bearer", migration.lastCutover.Actor)
+	require.Equal(t, "192.0.2.1", migration.lastCutover.RemoteIP)
+	require.Equal(t, "commit cutover", migration.lastCutover.Reason)
+
 	rec = controlMigrationRequest(server, http.MethodPost, "/control/api/v2/migration/run-once", `{}`)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, 1, executor.calls)
@@ -126,9 +145,10 @@ func controlMigrationRequest(server http.Handler, method, path, body string) *ht
 }
 
 type controlMigrationSvc struct {
-	status  *domain.V2MigrationControlStatus
-	lastReq migrationcontrol.OperatorRequest
-	err     error
+	status      *domain.V2MigrationControlStatus
+	lastReq     migrationcontrol.OperatorRequest
+	lastCutover migrationcontrol.CutoverRequest
+	err         error
 }
 
 func (s *controlMigrationSvc) Status(context.Context) (*domain.V2MigrationControlStatus, error) {
@@ -155,6 +175,14 @@ func (s *controlMigrationSvc) Pause(_ context.Context, req migrationcontrol.Oper
 
 func (s *controlMigrationSvc) Resume(_ context.Context, req migrationcontrol.OperatorRequest) (*domain.V2MigrationControlStatus, error) {
 	return s.action(req)
+}
+
+func (s *controlMigrationSvc) Cutover(_ context.Context, req migrationcontrol.CutoverRequest) (*domain.V2MigrationControlStatus, error) {
+	s.lastCutover = req
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &domain.V2MigrationControlStatus{State: domain.V2MigrationStateCutOver}, nil
 }
 
 func (s *controlMigrationSvc) action(req migrationcontrol.OperatorRequest) (*domain.V2MigrationControlStatus, error) {

@@ -18,6 +18,9 @@ func assertV2ProviderProposalSchema(schema map[string]any) error {
 	if _, ok := props["predicate_options"]; !ok {
 		return errors.New("provider proposal schema has no predicate_options")
 	}
+	if _, ok := props["evidence"]; ok {
+		return errors.New("provider proposal schema must not require immutable evidence echo")
+	}
 	relationshipProposals, ok := props["relationship_proposals"]
 	if !ok {
 		return errors.New("provider proposal schema has no relationship_proposals")
@@ -26,9 +29,19 @@ func assertV2ProviderProposalSchema(schema map[string]any) error {
 	if !ok {
 		return errors.New("provider relationship_proposals schema has no item schema")
 	}
-	oneOf, ok := items["oneOf"].([]any)
-	if !ok || len(oneOf) != 2 {
-		return errors.New("provider relationship proposal schema must require exactly one object form")
+	for _, unsupported := range []string{"oneOf", "allOf", "not", "if", "then", "else"} {
+		if _, ok := items[unsupported]; ok {
+			return fmt.Errorf("provider relationship proposal schema uses unsupported structured-output keyword %s", unsupported)
+		}
+	}
+	itemProps := schemaProperties(items)
+	objectRef, ok := itemProps["object_ref"]
+	if !ok || schemaAllowsNull(objectRef) {
+		return errors.New("provider relationship proposal schema must expose string object_ref")
+	}
+	objectValue, ok := itemProps["object_value"]
+	if !ok || !schemaAllowsNull(objectValue) {
+		return errors.New("provider relationship proposal schema must expose nullable object_value")
 	}
 	return nil
 }
@@ -49,4 +62,32 @@ func assertV2VerifierResponseSchema(schema map[string]any) error {
 		}
 	}
 	return nil
+}
+
+func schemaAllowsNull(schema map[string]any) bool {
+	if schema == nil {
+		return false
+	}
+	if values, ok := schema["type"].([]any); ok {
+		for _, value := range values {
+			if value == nil || value == "null" {
+				return true
+			}
+		}
+	}
+	if values, ok := schema["type"].([]string); ok {
+		for _, value := range values {
+			if value == "null" {
+				return true
+			}
+		}
+	}
+	if variants, ok := schema["anyOf"].([]any); ok {
+		for _, raw := range variants {
+			if child, ok := raw.(map[string]any); ok && child["type"] == "null" {
+				return true
+			}
+		}
+	}
+	return false
 }

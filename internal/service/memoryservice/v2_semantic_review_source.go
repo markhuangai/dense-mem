@@ -16,7 +16,7 @@ import (
 
 const (
 	v2SemanticReviewSourceDefaultCandidateLimit = 5
-	v2SemanticProposalDefaultMaxAttempts        = 2
+	v2SemanticProposalDefaultMaxAttempts        = 5
 )
 
 type V2SemanticPlacementReviewCatalog interface {
@@ -50,6 +50,7 @@ type v2PlacementReviewEntityHint struct {
 	EntityKind      string
 	KnownEntityID   string
 	IdentityContext map[string]any
+	Evidence        []v2PlacementReviewEvidenceSpanHint
 }
 
 type v2PlacementReviewRelationshipSpec struct {
@@ -113,11 +114,14 @@ func (s *v2SemanticPlacementReviewSource) BuildV2SemanticReviewJob(
 		return v2SemanticReviewPreflightFailureJob(run, item, evidence, validationErrors), nil
 	}
 	if len(relationships) == 0 {
-		providerProposal, validationErrors, err := s.v2PlacementReviewProviderProposal(ctx, run, evidence, proposal)
+		providerProposal, validationErrors, retryable, err := s.v2PlacementReviewProviderProposal(ctx, run, evidence, proposal)
 		if err != nil {
 			return V2SemanticReviewJob{}, err
 		}
 		if len(validationErrors) > 0 {
+			if retryable {
+				return v2SemanticReviewRetryablePreflightJob(run, item, evidence, validationErrors), nil
+			}
 			return v2SemanticReviewPreflightFailureJob(run, item, evidence, validationErrors), nil
 		}
 		if providerProposal != nil {
@@ -160,19 +164,19 @@ func (s *v2SemanticPlacementReviewSource) v2PlacementReviewProviderProposal(
 	run repository.V2PlacementRun,
 	evidence verifier.V2SemanticReviewEvidence,
 	clientProposal map[string]any,
-) (*verifier.V2ProviderProposal, []verifier.V2SemanticValidationError, error) {
+) (*verifier.V2ProviderProposal, []verifier.V2SemanticValidationError, bool, error) {
 	if s.proposalProvider == nil {
 		return nil, []verifier.V2SemanticValidationError{{
 			Field:   "proposal",
 			Message: "extraction provider is required when proposal has no relationship hints",
-		}}, nil
+		}}, false, nil
 	}
 	predicateOptions, err := s.catalog.ListV2SemanticReviewPredicateOptions(ctx, repository.V2SemanticReviewPredicateOptionsInput{
 		TeamID:         run.TeamID,
 		OwnerProfileID: run.OwnerProfileID,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	req, validationErrors := verifier.PrepareV2ProviderProposalRequest(verifier.V2ProviderProposalRequest{
 		RequestID:         "semantic-extraction:" + evidence.FragmentID,
@@ -182,26 +186,35 @@ func (s *v2SemanticPlacementReviewSource) v2PlacementReviewProviderProposal(
 		PredicateOptions:  predicateOptions,
 	})
 	if len(validationErrors) > 0 {
-		return nil, validationErrors, nil
+		return nil, validationErrors, false, nil
 	}
 	var lastValidationErrors []verifier.V2SemanticValidationError
 	feedback := []string{}
-	for attempt := 1; attempt <= v2SemanticProposalDefaultMaxAttempts; attempt++ {
+	maxAttempts := run.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = v2SemanticProposalDefaultMaxAttempts
+	}
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		attemptReq := req
 		attemptReq.Attempt = attempt
 		attemptReq.ValidationFeedback = feedback
 		proposal, err := s.proposalProvider.ProposeV2Semantic(ctx, attemptReq)
 		if err != nil {
-			return nil, nil, err
+			if errors.Is(err, verifier.ErrVerifierMalformedResponse) {
+				lastValidationErrors = v2SemanticMalformedValidationErrors("provider_proposal", err)
+				feedback = v2SemanticValidationMessages(lastValidationErrors)
+				continue
+			}
+			return nil, nil, false, err
 		}
 		if validationErrors := verifier.ValidateV2ProviderProposal(req, proposal); len(validationErrors) > 0 {
 			lastValidationErrors = validationErrors
 			feedback = v2SemanticValidationMessages(validationErrors)
 			continue
 		}
-		return &proposal, nil, nil
+		return &proposal, nil, false, nil
 	}
-	return nil, lastValidationErrors, nil
+	return nil, lastValidationErrors, true, nil
 }
 
 func v2SemanticReviewPreflightFailureJob(
@@ -227,6 +240,17 @@ func v2SemanticReviewPreflightFailureJob(
 	}
 }
 
+func v2SemanticReviewRetryablePreflightJob(
+	run repository.V2PlacementRun,
+	item repository.V2PlacementItem,
+	evidence verifier.V2SemanticReviewEvidence,
+	validationErrors []verifier.V2SemanticValidationError,
+) V2SemanticReviewJob {
+	job := v2SemanticReviewPreflightFailureJob(run, item, evidence, nil)
+	job.RetryableValidationErrors = validationErrors
+	return job
+}
+
 func v2ReviewSourceProposalFromProvider(proposal verifier.V2ProviderProposal) map[string]any {
 	entities := make([]map[string]any, 0, len(proposal.EntityProposals))
 	for _, entity := range proposal.EntityProposals {
@@ -235,6 +259,7 @@ func v2ReviewSourceProposalFromProvider(proposal verifier.V2ProviderProposal) ma
 			"name":             entity.Name,
 			"entity_kind":      entity.EntityKind,
 			"identity_context": entity.IdentityContext,
+			"evidence":         v2ReviewSourceEvidenceSpans(entity.Evidence),
 		}
 		if entity.KnownEntityID != nil {
 			item["known_entity_id"] = *entity.KnownEntityID
@@ -315,6 +340,7 @@ func v2SemanticReviewEvidence(fragment repository.V2EvidenceFragment, evidenceID
 		FragmentID:              fragment.FragmentID,
 		EvidenceIndex:           fragment.EvidenceIndex,
 		Content:                 fragment.Content,
+		SourceID:                fragment.SourceID,
 		SourceRevisionID:        fragment.SourceRevisionID,
 		CurrentSourceRevisionID: fragment.SourceRevisionID,
 	}
@@ -338,6 +364,7 @@ func v2PlacementReviewEntityHints(proposal map[string]any) map[string]v2Placemen
 			EntityKind:      v2ReviewFirstNonEmpty(v2ReviewString(raw, "entity_kind"), string(domain.V2EntityKindOther)),
 			KnownEntityID:   v2ReviewString(raw, "known_entity_id"),
 			IdentityContext: identityContext,
+			Evidence:        v2PlacementReviewEvidenceSpanHints(raw),
 		}
 	}
 	return out
@@ -418,6 +445,31 @@ type v2PlacementReviewSpan struct {
 	quote string
 }
 
+type v2PlacementReviewEvidenceSpanHint struct {
+	evidenceIndex int
+	start         int
+	end           int
+}
+
+func v2PlacementReviewEvidenceSpanHints(raw map[string]any) []v2PlacementReviewEvidenceSpanHint {
+	spans := v2PlacementReviewObjectArray(raw, "evidence")
+	out := make([]v2PlacementReviewEvidenceSpanHint, 0, len(spans))
+	for _, span := range spans {
+		index, hasIndex := v2ReviewInt(span, "evidence_index")
+		start, hasStart := v2ReviewInt(span, "start")
+		end, hasEnd := v2ReviewInt(span, "end")
+		if !hasIndex || !hasStart || !hasEnd {
+			continue
+		}
+		out = append(out, v2PlacementReviewEvidenceSpanHint{
+			evidenceIndex: index,
+			start:         start,
+			end:           end,
+		})
+	}
+	return out
+}
+
 func v2PlacementReviewRelationshipSpan(raw map[string]any, fragment repository.V2EvidenceFragment) (v2PlacementReviewSpan, bool) {
 	spans := v2PlacementReviewObjectArray(raw, "evidence")
 	for _, span := range spans {
@@ -496,12 +548,17 @@ func (s *v2SemanticPlacementReviewSource) v2PlacementReviewEntityMentions(
 			Candidates:      nil,
 			IdentityContext: hint.IdentityContext,
 		}
-		if start, end, ok := v2ReviewFindSpan(fragment.Content, hint.Name); ok {
+		if start, end, ok := v2PlacementReviewEntityHintSpan(fragment, hint); ok {
+			mention.Start = start
+			mention.End = end
+			mention.Surface = v2ReviewSpanQuote(fragment.Content, start, end)
+		} else if start, end, ok := v2ReviewFindSpan(fragment.Content, hint.Name); ok {
 			mention.Start = start
 			mention.End = end
 			mention.Surface = v2ReviewSpanQuote(fragment.Content, start, end)
 		} else if end := min(utf8.RuneCountInString(hint.Name), utf8.RuneCountInString(fragment.Content)); end > 0 {
 			mention.End = end
+			mention.Surface = v2ReviewSpanQuote(fragment.Content, mention.Start, mention.End)
 		}
 		candidates, err := s.catalog.ListV2SemanticReviewEntityCandidates(ctx, repository.V2SemanticReviewEntityCandidateInput{
 			TeamID:         run.TeamID,
@@ -527,6 +584,18 @@ func (s *v2SemanticPlacementReviewSource) v2PlacementReviewEntityMentions(
 		mentions = append(mentions, mention)
 	}
 	return mentions, nil
+}
+
+func v2PlacementReviewEntityHintSpan(fragment repository.V2EvidenceFragment, hint v2PlacementReviewEntityHint) (int, int, bool) {
+	for _, span := range hint.Evidence {
+		if span.evidenceIndex != fragment.EvidenceIndex {
+			continue
+		}
+		if quote := v2ReviewSpanQuote(fragment.Content, span.start, span.end); strings.TrimSpace(quote) != "" {
+			return span.start, span.end, true
+		}
+	}
+	return 0, 0, false
 }
 
 func (s *v2SemanticPlacementReviewSource) v2PlacementReviewRelationshipObservations(

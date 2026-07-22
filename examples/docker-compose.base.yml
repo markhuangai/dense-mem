@@ -6,7 +6,6 @@
 #
 # Required .env values:
 #   POSTGRES_PASSWORD
-#   NEO4J_PASSWORD
 #   CONTROL_PORTAL_TOKEN
 #   AI_API_KEY
 #
@@ -18,6 +17,10 @@
 #   MCP/API:        http://127.0.0.1:8080/mcp
 #   User portal:    http://127.0.0.1:8080/ui
 #   Control portal: http://127.0.0.1:8090/
+#
+# Fresh installs leave NEO4J_* unset and initialize PostgreSQL V2 directly.
+# For a legacy migration rehearsal, set NEO4J_URI=bolt://neo4j:7687 plus
+# NEO4J_USER/NEO4J_PASSWORD and start compose with --profile legacy-neo4j.
 
 services:
   postgres:
@@ -39,9 +42,10 @@ services:
     restart: unless-stopped
 
   neo4j:
+    profiles: ["legacy-neo4j"]
     image: neo4j:5.26-community
     environment:
-      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:?NEO4J_PASSWORD must be set in .env}
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-password}
       NEO4J_PLUGINS: '["graph-data-science"]'
       NEO4J_server_memory_heap_initial__size: 512m
       NEO4J_server_memory_heap_max__size: 1g
@@ -57,7 +61,7 @@ services:
         - "CMD-SHELL"
         - >
           wget -q --spider http://127.0.0.1:7474
-          && cypher-shell -u "${NEO4J_USER:-neo4j}" -p "${NEO4J_PASSWORD}" 'RETURN 1' >/dev/null 2>&1
+          && cypher-shell -u "${NEO4J_USER:-neo4j}" -p "${NEO4J_PASSWORD:-password}" 'RETURN 1' >/dev/null 2>&1
           || exit 1
       interval: 10s
       timeout: 10s
@@ -80,9 +84,9 @@ services:
       POSTGRES_MAX_OPEN_CONNS: ${POSTGRES_MAX_OPEN_CONNS:-25}
       POSTGRES_MAX_IDLE_CONNS: ${POSTGRES_MAX_IDLE_CONNS:-10}
       POSTGRES_CONN_MAX_LIFETIME_SECONDS: ${POSTGRES_CONN_MAX_LIFETIME_SECONDS:-1800}
-      NEO4J_URI: bolt://neo4j:7687
-      NEO4J_USER: ${NEO4J_USER:-neo4j}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD must be set in .env}
+      NEO4J_URI: ${NEO4J_URI:-}
+      NEO4J_USER: ${NEO4J_USER:-}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-}
       NEO4J_DATABASE: ${NEO4J_DATABASE:-}
       REDIS_ADDR: ""
       REDIS_TLS_ENABLED: ${REDIS_TLS_ENABLED:-false}
@@ -114,8 +118,6 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
-        condition: service_healthy
-      neo4j:
         condition: service_healthy
     networks:
       - private

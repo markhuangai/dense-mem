@@ -448,8 +448,47 @@ func TestHTTPClientImportRejectsMissingFragmentID(t *testing.T) {
 
 	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
 	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-1", Content: "content"}})
-	if err == nil || !strings.Contains(err.Error(), "remember response missing fragment id") {
+	if err == nil || !strings.Contains(err.Error(), "remember response missing fragment or evidence id") {
 		t.Fatalf("ImportCorpus err = %v", err)
+	}
+}
+
+func TestHTTPClientImportCorpusMapsV2PlacementEvidenceID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/tools/remember":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ingest_id":        "ingest-v2",
+				"processing_state": "queued",
+			})
+		case "/api/v1/tools/get_memory_placement":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ingest_id":        "ingest-v2",
+				"processing_state": "completed",
+				"items": []map[string]any{{
+					"evidence_id": "evidence-v2",
+				}},
+			})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	mapping, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-v2", Content: "content"}})
+	if err != nil {
+		t.Fatalf("ImportCorpus: %v", err)
+	}
+	ref, ok := mapping.BySourceDocID["doc-v2"]
+	if !ok || ref.Type != "evidence" || ref.ID != "evidence-v2" {
+		t.Fatalf("default source mapping = %+v, %v", ref, ok)
+	}
+	if len(mapping.BySourceDocIDAndType["doc-v2"]["fragment"]) != 0 {
+		t.Fatalf("fragment mappings = %+v", mapping.BySourceDocIDAndType["doc-v2"]["fragment"])
+	}
+	if refs := mapping.BySourceDocIDAndType["doc-v2"]["evidence"]; len(refs) != 1 || refs[0].ID != "evidence-v2" {
+		t.Fatalf("evidence mappings = %+v", refs)
 	}
 }
 
@@ -477,6 +516,35 @@ func TestHTTPClientImportCorpusReportsPlacementFailureCause(t *testing.T) {
 	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
 	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-failed", Content: "content"}})
 	if err == nil || !strings.Contains(err.Error(), "memory placement ingest-failed failed: verifier unavailable") {
+		t.Fatalf("ImportCorpus err = %v", err)
+	}
+}
+
+func TestHTTPClientImportCorpusReportsV2PlacementFailureCause(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/tools/remember":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ingest_id":        "ingest-v2-failed",
+				"processing_state": "queued",
+			})
+		case "/api/v1/tools/get_memory_placement":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ingest_id":        "ingest-v2-failed",
+				"processing_state": "failed",
+				"errors": []map[string]any{{
+					"message": "verifier unavailable",
+				}},
+			})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-v2-failed", Content: "content"}})
+	if err == nil || !strings.Contains(err.Error(), "memory placement ingest-v2-failed failed: verifier unavailable") {
 		t.Fatalf("ImportCorpus err = %v", err)
 	}
 }

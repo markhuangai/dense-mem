@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,10 +20,15 @@ type V2MigrationControlRepository interface {
 	GetLatestRun(ctx context.Context) (*domain.V2MigrationRun, error)
 	CreateRun(ctx context.Context, input V2CreateMigrationRunInput) (*domain.V2MigrationRun, error)
 	UpdateRunState(ctx context.Context, input V2UpdateMigrationRunStateInput) (*domain.V2MigrationRun, error)
+	CommitCutover(ctx context.Context, input V2CommitCutoverInput) (*domain.V2CompatibilityMarker, error)
+	CommitFreshV2Authority(ctx context.Context, input V2CommitFreshV2AuthorityInput) (*domain.V2CompatibilityMarker, error)
 	GetLatestMarker(ctx context.Context) (*domain.V2CompatibilityMarker, error)
 	RecordOperatorAction(ctx context.Context, action domain.V2MigrationOperatorAction) error
 	ListOperatorActions(ctx context.Context, runID string, limit int) ([]domain.V2MigrationOperatorAction, error)
 }
+
+var ErrV2MigrationCutoverBlocked = errors.New("v2 migration control: cutover blocked")
+var ErrV2MigrationFreshInitBlocked = errors.New("v2 migration control: fresh V2 authority blocked")
 
 type V2CreateMigrationRunInput struct {
 	MigrationContractVersion string
@@ -50,6 +56,24 @@ type V2UpdateMigrationRunStateInput struct {
 	Now               time.Time
 }
 
+type V2CommitCutoverInput struct {
+	RunID          string
+	FromState      string
+	MarkerVersion  string
+	CorpusHash     string
+	GateReportHash string
+	GateResults    []domain.V2MigrationGateResult
+	Metadata       map[string]any
+	OperatorAction domain.V2MigrationOperatorAction
+	Now            time.Time
+}
+
+type V2CommitFreshV2AuthorityInput struct {
+	MarkerVersion string
+	Metadata      map[string]any
+	Now           time.Time
+}
+
 type V2MigrationControlRepositoryImpl struct {
 	db  *gorm.DB
 	rls postgres.RLSHelper
@@ -59,6 +83,75 @@ var _ V2MigrationControlRepository = (*V2MigrationControlRepositoryImpl)(nil)
 
 func NewV2MigrationControlRepository(db *gorm.DB, rls postgres.RLSHelper) *V2MigrationControlRepositoryImpl {
 	return &V2MigrationControlRepositoryImpl{db: db, rls: rls}
+}
+
+var v2FreshAuthorityApplicationTables = []string{
+	"profiles",
+	"api_keys",
+	"teams",
+	"team_profiles",
+	"audit_log",
+	"usage_metric_buckets",
+	"operation_logs",
+	"recall_feedback_events",
+	"security_ip_failures",
+	"security_ip_bans",
+	"memory_placement_runs",
+	"memory_placement_items",
+	"memory_dispute_sessions",
+	"skill_pack_imports",
+	"skill_pack_import_changes",
+	"sso_providers",
+	"sso_identities",
+	"sso_group_mappings",
+	"sso_entitlement_cache",
+	"sso_oauth_states",
+	"sso_sessions",
+	"community_detection_runs",
+	"semantic_team_refs",
+	"semantic_profile_refs",
+	"knowledge_ingests",
+	"evidence_sources",
+	"evidence_source_revisions",
+	"evidence_fragments",
+	"evidence_security_events",
+	"evidence_security_signals",
+	"evidence_quarantines",
+	"placement_runs",
+	"placement_items",
+	"placement_outcomes",
+	"entity_records",
+	"entity_names",
+	"value_records",
+	"relationship_records",
+	"relationship_observations",
+	"verification_events",
+	"relationship_evidence_supports",
+	"relationship_support_decision_events",
+	"relationship_transition_events",
+	"entity_resolution_events",
+	"entity_correction_events",
+	"relationship_cross_references",
+	"entity_correction_plans",
+	"review_tasks",
+	"hypotheses",
+	"embedding_contracts",
+	"search_index_generations",
+	"search_documents",
+	"embedding_jobs",
+	"community_snapshot_runs",
+	"community_records",
+	"community_memberships",
+	"community_sources",
+	"dream_cycle_runs",
+	"v2_migration_runs",
+	"v2_migration_corpus_items",
+	"v2_migration_source_maps",
+	"v2_migration_checkpoints",
+	"v2_migration_errors",
+	"v2_migration_exclusions",
+	"v2_migration_gate_results",
+	"v2_migration_operator_actions",
 }
 
 func (r *V2MigrationControlRepositoryImpl) GetLatestRun(ctx context.Context) (*domain.V2MigrationRun, error) {
@@ -219,6 +312,167 @@ func isV2MigrationRowNotFound(err error) bool {
 	return errors.Is(err, sql.ErrNoRows) || errors.Is(err, gorm.ErrRecordNotFound)
 }
 
+func (r *V2MigrationControlRepositoryImpl) CommitCutover(
+	ctx context.Context,
+	input V2CommitCutoverInput,
+) (*domain.V2CompatibilityMarker, error) {
+	now := input.Now.UTC()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	metadata, err := marshalV2MigrationJSON(input.Metadata)
+	if err != nil {
+		return nil, err
+	}
+	actionMetadata, err := marshalV2MigrationJSON(input.OperatorAction.Metadata)
+	if err != nil {
+		return nil, err
+	}
+	var out *domain.V2CompatibilityMarker
+	err = r.withMigrationTx(ctx, func(tx *gorm.DB) error {
+		if err := validateV2CutoverRepositoryState(tx, input); err != nil {
+			return err
+		}
+		for _, gate := range input.GateResults {
+			gateMetadata, err := marshalV2MigrationJSON(gate.Metadata)
+			if err != nil {
+				return err
+			}
+			if err := tx.Exec(`
+				INSERT INTO v2_migration_gate_results (
+				    gate_id, run_id, gate_name, outcome, evidence_ref, evidence_hash,
+				    message, metadata, created_at
+				) VALUES (
+				    ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?::jsonb, ?
+				)
+			`, uuid.NewString(), input.RunID, gate.GateName, gate.Outcome,
+				gate.EvidenceRef, gate.EvidenceHash, gate.Message, string(gateMetadata), now).Error; err != nil {
+				return err
+			}
+		}
+		update := tx.Exec(`
+			UPDATE v2_migration_runs
+			SET state = ?,
+			    phase = 'cutover',
+			    corpus_hash = COALESCE(NULLIF(?, ''), corpus_hash),
+			    completed_at = ?,
+			    cutover_at = ?,
+			    updated_at = ?
+			WHERE run_id = ?::uuid
+			  AND state = ?
+		`, domain.V2MigrationStateCutOver, input.CorpusHash, now, now, now, input.RunID, input.FromState)
+		if update.Error != nil {
+			return update.Error
+		}
+		if update.RowsAffected != 1 {
+			return fmt.Errorf("%w: cutover state compare-and-swap failed", ErrV2MigrationCutoverBlocked)
+		}
+		row := tx.Raw(`
+			INSERT INTO v2_compatibility_markers (
+			    marker_id, marker_kind, version, status, run_id,
+			    corpus_hash, gate_report_hash, metadata, created_at
+			) VALUES (
+			    ?::uuid, ?, ?, ?, ?::uuid, ?, ?, ?::jsonb, ?
+			)
+			RETURNING marker_id::text, marker_kind, version, status,
+			          COALESCE(run_id::text, ''), corpus_hash, gate_report_hash,
+			          metadata::text, created_at
+		`, uuid.NewString(), domain.V2MigrationMarkerKindCutover, input.MarkerVersion,
+			domain.V2MigrationMarkerCompatible, input.RunID, input.CorpusHash,
+			input.GateReportHash, string(metadata), now).Row()
+		marker, err := scanV2CompatibilityMarker(row)
+		if err != nil {
+			return err
+		}
+		out = marker
+		if input.OperatorAction.Action != "" {
+			if err := tx.Exec(`
+				INSERT INTO v2_migration_operator_actions (
+				    action_id, run_id, action, actor, remote_ip, reason, metadata, created_at
+				) VALUES (
+				    ?::uuid, ?::uuid, ?, ?, ?, ?, ?::jsonb, ?
+				)
+			`, uuid.NewString(), input.RunID, input.OperatorAction.Action,
+				input.OperatorAction.Actor, input.OperatorAction.RemoteIP, input.OperatorAction.Reason,
+				string(actionMetadata), now).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, ErrV2MigrationCutoverBlocked) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("v2 migration control: commit cutover: %w", err)
+	}
+	return out, nil
+}
+
+func (r *V2MigrationControlRepositoryImpl) CommitFreshV2Authority(
+	ctx context.Context,
+	input V2CommitFreshV2AuthorityInput,
+) (*domain.V2CompatibilityMarker, error) {
+	now := input.Now.UTC()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	metadata := map[string]any{"fresh_install": true}
+	for key, value := range input.Metadata {
+		metadata[key] = value
+	}
+	metadataJSON, err := marshalV2MigrationJSON(metadata)
+	if err != nil {
+		return nil, err
+	}
+	var out *domain.V2CompatibilityMarker
+	err = r.withMigrationTx(ctx, func(tx *gorm.DB) error {
+		var existingMarkerCount int
+		if err := tx.Raw(`
+			SELECT count(*)::int
+			FROM v2_compatibility_markers
+			WHERE marker_kind = ?
+		`, domain.V2MigrationMarkerKindCutover).Scan(&existingMarkerCount).Error; err != nil {
+			return err
+		}
+		if existingMarkerCount > 0 {
+			return fmt.Errorf("%w: cutover marker already exists", ErrV2MigrationFreshInitBlocked)
+		}
+		nonempty, err := v2FreshAuthorityNonemptyTables(tx)
+		if err != nil {
+			return err
+		}
+		if len(nonempty) > 0 {
+			return fmt.Errorf("%w: nonempty application tables: %s", ErrV2MigrationFreshInitBlocked, strings.Join(nonempty, ", "))
+		}
+		row := tx.Raw(`
+			INSERT INTO v2_compatibility_markers (
+			    marker_id, marker_kind, version, status, run_id,
+			    corpus_hash, gate_report_hash, metadata, created_at
+			) VALUES (
+			    ?::uuid, ?, ?, ?, NULL, '', '', ?::jsonb, ?
+			)
+			RETURNING marker_id::text, marker_kind, version, status,
+			          COALESCE(run_id::text, ''), corpus_hash, gate_report_hash,
+			          metadata::text, created_at
+		`, uuid.NewString(), domain.V2MigrationMarkerKindCutover, input.MarkerVersion,
+			domain.V2MigrationMarkerCompatible, string(metadataJSON), now).Row()
+		marker, err := scanV2CompatibilityMarker(row)
+		if err != nil {
+			return err
+		}
+		out = marker
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, ErrV2MigrationFreshInitBlocked) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("v2 migration control: commit fresh authority: %w", err)
+	}
+	return out, nil
+}
+
 func (r *V2MigrationControlRepositoryImpl) RecordOperatorAction(ctx context.Context, action domain.V2MigrationOperatorAction) error {
 	metadata, err := marshalV2MigrationJSON(action.Metadata)
 	if err != nil {
@@ -275,6 +529,103 @@ func (r *V2MigrationControlRepositoryImpl) ListOperatorActions(ctx context.Conte
 		return nil, fmt.Errorf("v2 migration control: list operator actions: %w", err)
 	}
 	return out, nil
+}
+
+func validateV2CutoverRepositoryState(tx *gorm.DB, input V2CommitCutoverInput) error {
+	var existingMarkerCount int
+	if err := tx.Raw(`
+		SELECT count(*)::int
+		FROM v2_compatibility_markers
+		WHERE marker_kind = ?
+	`, domain.V2MigrationMarkerKindCutover).Scan(&existingMarkerCount).Error; err != nil {
+		return err
+	}
+	if existingMarkerCount > 0 {
+		return fmt.Errorf("%w: cutover marker already exists", ErrV2MigrationCutoverBlocked)
+	}
+
+	var state string
+	var preflightApproved bool
+	var pendingItems, failedItems, blockingExclusions int
+	row := tx.Raw(`
+		SELECT r.state,
+		       r.preflight_approved,
+		       (
+		           SELECT count(*)::int
+		           FROM v2_migration_corpus_items
+		           WHERE run_id = r.run_id
+		             AND (
+		                 outcome = 'pending'
+		                 OR (outcome = 'needs_review' AND placement_item_id IS NULL)
+		             )
+		       ) AS pending_items,
+		       (
+		           SELECT count(*)::int
+		           FROM v2_migration_corpus_items
+		           WHERE run_id = r.run_id
+		             AND outcome = 'failed'
+		       ) AS failed_items,
+		       (
+		           SELECT count(*)::int
+		           FROM v2_migration_exclusions
+		           WHERE run_id = r.run_id
+		             AND blocks_cutover
+		       ) AS blocking_exclusions
+		FROM v2_migration_runs r
+		WHERE r.run_id = ?::uuid
+		FOR UPDATE
+	`, input.RunID).Row()
+	if err := row.Scan(&state, &preflightApproved, &pendingItems, &failedItems, &blockingExclusions); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: run not found", ErrV2MigrationCutoverBlocked)
+		}
+		return err
+	}
+	if state != input.FromState || state != domain.V2MigrationStateReadyCutover {
+		return fmt.Errorf("%w: run state %s", ErrV2MigrationCutoverBlocked, state)
+	}
+	if !preflightApproved {
+		return fmt.Errorf("%w: preflight not approved", ErrV2MigrationCutoverBlocked)
+	}
+	if pendingItems > 0 || failedItems > 0 || blockingExclusions > 0 {
+		return fmt.Errorf(
+			"%w: pending_items=%d failed_items=%d blocking_exclusions=%d",
+			ErrV2MigrationCutoverBlocked,
+			pendingItems,
+			failedItems,
+			blockingExclusions,
+		)
+	}
+	return nil
+}
+
+func v2FreshAuthorityNonemptyTables(tx *gorm.DB) ([]string, error) {
+	nonempty := []string{}
+	for _, table := range v2FreshAuthorityApplicationTables {
+		var exists bool
+		if err := tx.Raw(`SELECT to_regclass(?) IS NOT NULL`, table).Scan(&exists).Error; err != nil {
+			return nil, err
+		}
+		if !exists {
+			continue
+		}
+		quoted := pqQuoteIdentifier(table)
+		if err := tx.Exec("LOCK TABLE " + quoted + " IN SHARE MODE").Error; err != nil {
+			return nil, err
+		}
+		var hasRows bool
+		if err := tx.Raw("SELECT EXISTS (SELECT 1 FROM " + quoted + " LIMIT 1)").Scan(&hasRows).Error; err != nil {
+			return nil, err
+		}
+		if hasRows {
+			nonempty = append(nonempty, table)
+		}
+	}
+	return nonempty, nil
+}
+
+func pqQuoteIdentifier(value string) string {
+	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
 }
 
 func (r *V2MigrationControlRepositoryImpl) withSystemTx(ctx context.Context, fn func(tx *gorm.DB) error) error {

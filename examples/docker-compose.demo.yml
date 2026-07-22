@@ -10,7 +10,6 @@
 #
 # Required .env values:
 #   POSTGRES_PASSWORD
-#   NEO4J_PASSWORD
 #   AI_API_KEY
 #
 # Set DEMO_PUBLIC_BASE_URL when serving behind a real public URL, for example:
@@ -19,6 +18,9 @@
 # The demo is for disposable test data only. It provisions isolated teams with
 # expiring API keys, enforces demo quotas, and runs cleanup every 10 minutes.
 # Do not use this compose file to host production memory data.
+#
+# Fresh demo installs leave NEO4J_* unset and initialize PostgreSQL V2 directly.
+# Use the legacy-neo4j profile only when rehearsing a migration.
 
 services:
   postgres:
@@ -40,9 +42,10 @@ services:
     restart: unless-stopped
 
   neo4j:
+    profiles: ["legacy-neo4j"]
     image: neo4j:5.26-community
     environment:
-      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:?NEO4J_PASSWORD must be set in .env}
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-password}
       NEO4J_server_memory_heap_initial__size: 512m
       NEO4J_server_memory_heap_max__size: 1g
       NEO4J_server_memory_pagecache_size: 512m
@@ -56,7 +59,7 @@ services:
         - "CMD-SHELL"
         - >
           wget -q --spider http://127.0.0.1:7474
-          && cypher-shell -u "${NEO4J_USER:-neo4j}" -p "${NEO4J_PASSWORD}" 'RETURN 1' >/dev/null 2>&1
+          && cypher-shell -u "${NEO4J_USER:-neo4j}" -p "${NEO4J_PASSWORD:-password}" 'RETURN 1' >/dev/null 2>&1
           || exit 1
       interval: 10s
       timeout: 10s
@@ -93,9 +96,9 @@ services:
       POSTGRES_MAX_OPEN_CONNS: ${POSTGRES_MAX_OPEN_CONNS:-25}
       POSTGRES_MAX_IDLE_CONNS: ${POSTGRES_MAX_IDLE_CONNS:-10}
       POSTGRES_CONN_MAX_LIFETIME_SECONDS: ${POSTGRES_CONN_MAX_LIFETIME_SECONDS:-1800}
-      NEO4J_URI: bolt://neo4j:7687
-      NEO4J_USER: ${NEO4J_USER:-neo4j}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD must be set in .env}
+      NEO4J_URI: ${NEO4J_URI:-}
+      NEO4J_USER: ${NEO4J_USER:-}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-}
       NEO4J_DATABASE: ${NEO4J_DATABASE:-}
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ""
@@ -133,8 +136,6 @@ services:
       - "${DENSE_MEM_DEMO_BIND:-127.0.0.1}:${DENSE_MEM_DEMO_PORT:-8080}:8080"
     depends_on:
       postgres:
-        condition: service_healthy
-      neo4j:
         condition: service_healthy
       redis:
         condition: service_healthy

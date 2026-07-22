@@ -469,6 +469,7 @@ func recomputeV2RelationshipFromEffectiveSupport(
 		ToStatus:          after.Status,
 		Reason:            reason,
 		SupportDecisionID: supportDecisionID,
+		IdempotencyKey:    v2RelationshipTransitionIdempotencyKey("", supportDecisionID),
 	})
 	if err != nil {
 		return nil, err

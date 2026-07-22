@@ -22,6 +22,7 @@ var (
 type V2PlacementCommitRepository interface {
 	CommitPlacementSemanticResult(ctx context.Context, input V2CommitPlacementSemanticInput) (*V2CommitPlacementSemanticResult, error)
 	CompletePlacementReviewResult(ctx context.Context, input V2CompletePlacementReviewInput) (*V2CompletePlacementReviewResult, error)
+	RequeuePlacementReviewResult(ctx context.Context, input V2RequeuePlacementReviewInput) (*V2RequeuePlacementReviewResult, error)
 }
 
 type V2CommitPlacementSemanticInput struct {

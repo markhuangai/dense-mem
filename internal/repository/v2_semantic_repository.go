@@ -281,6 +281,7 @@ func (r *V2SemanticRepositoryImpl) ApplyRelationshipDecision(
 				Reason:              "verifier_decision",
 				VerificationEventID: verificationID,
 				SupportDecisionID:   supportDecisionID,
+				IdempotencyKey:      v2RelationshipTransitionIdempotencyKey(verificationID, supportDecisionID),
 			}); err != nil {
 				return err
 			}

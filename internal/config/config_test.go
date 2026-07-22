@@ -144,14 +144,17 @@ func TestLoadDefaults(t *testing.T) {
 	}
 }
 
-func TestLoadIgnoresLegacyV2BootModeEnv(t *testing.T) {
+func TestLoadAllowsMissingNeo4jForFreshV2(t *testing.T) {
 	clearEnv()
-	setRequiredEnv()
-	t.Setenv("V2_BOOT_MODE", "uat")
-	t.Setenv("V2_LEGACY_MIGRATION_REQUIRED", "true")
+	os.Setenv("POSTGRES_DSN", "postgres://user:pass@localhost/db?sslmode=disable")
+	os.Setenv("CONTROL_PORTAL_TOKEN", "control-secret")
 
-	if _, err := Load(); err != nil {
-		t.Fatalf("Load() returned unexpected error for ignored V2 boot env: %v", err)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned unexpected error without Neo4j: %v", err)
+	}
+	if cfg.HasNeo4jConfig() {
+		t.Fatalf("HasNeo4jConfig() = true, want false: %#v", cfg)
 	}
 }
 

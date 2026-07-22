@@ -25,15 +25,8 @@ type V2ProviderProposalRequest struct {
 
 type V2ProviderProposal struct {
 	PredicateOptions      []string                         `json:"predicate_options"`
-	Evidence              []V2ProviderProposalEvidence     `json:"evidence"`
 	EntityProposals       []V2ProviderEntityProposal       `json:"entity_proposals"`
 	RelationshipProposals []V2ProviderRelationshipProposal `json:"relationship_proposals"`
-}
-
-type V2ProviderProposalEvidence struct {
-	EvidenceIndex int    `json:"evidence_index"`
-	EvidenceID    string `json:"evidence_id"`
-	Content       string `json:"content"`
 }
 
 type V2ProviderEvidenceSpan struct {
@@ -128,41 +121,8 @@ func ValidateV2ProviderProposal(req V2ProviderProposalRequest, proposal V2Provid
 	for _, evidence := range req.Evidence {
 		evidenceByIndex[evidence.EvidenceIndex] = evidence
 	}
-	errs = append(errs, validateV2ProviderProposalEvidence(req, proposal.Evidence)...)
 	errs = append(errs, validateV2ProviderEntityProposals(evidenceByIndex, proposal.EntityProposals)...)
 	errs = append(errs, validateV2ProviderRelationshipProposals(evidenceByIndex, proposal.EntityProposals, proposal.RelationshipProposals)...)
-	return errs
-}
-
-func validateV2ProviderProposalEvidence(req V2ProviderProposalRequest, evidence []V2ProviderProposalEvidence) []V2SemanticValidationError {
-	expected := map[int]V2SemanticReviewEvidence{}
-	for _, item := range req.Evidence {
-		expected[item.EvidenceIndex] = item
-	}
-	seen := map[int]struct{}{}
-	var errs []V2SemanticValidationError
-	for i, item := range evidence {
-		expectedItem, ok := expected[item.EvidenceIndex]
-		if !ok {
-			errs = append(errs, v2SemanticErr(fmt.Sprintf("evidence[%d].evidence_index", i), "is unknown"))
-			continue
-		}
-		if _, exists := seen[item.EvidenceIndex]; exists {
-			errs = append(errs, v2SemanticErr(fmt.Sprintf("evidence[%d].evidence_index", i), "is duplicated"))
-		}
-		seen[item.EvidenceIndex] = struct{}{}
-		if strings.TrimSpace(item.EvidenceID) != expectedItem.EvidenceID {
-			errs = append(errs, v2SemanticErr(fmt.Sprintf("evidence[%d].evidence_id", i), "does not match request evidence"))
-		}
-		if item.Content != expectedItem.Content {
-			errs = append(errs, v2SemanticErr(fmt.Sprintf("evidence[%d].content", i), "does not match request evidence"))
-		}
-	}
-	for index := range expected {
-		if _, ok := seen[index]; !ok {
-			errs = append(errs, v2SemanticErr("evidence", fmt.Sprintf("missing echo for evidence_index %d", index)))
-		}
-	}
 	return errs
 }
 

@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	v2SemanticReviewDefaultMaxAttempts = 2
+	v2SemanticReviewDefaultMaxAttempts = 5
 	v2SemanticReviewOutcomeKind        = "semantic_review"
 	v2SemanticReviewAttemptOutcomeKind = "semantic_review_provider_attempt"
 )
@@ -42,14 +42,15 @@ type v2SemanticReviewService struct {
 }
 
 type V2SemanticReviewJob struct {
-	TeamID           string
-	OwnerProfileID   string
-	IngestID         string
-	PlacementRunID   string
-	PlacementItemID  string
-	Request          verifier.V2SemanticReviewRequest
-	ValidationErrors []verifier.V2SemanticValidationError
-	MaxAttempts      int
+	TeamID                    string
+	OwnerProfileID            string
+	IngestID                  string
+	PlacementRunID            string
+	PlacementItemID           string
+	Request                   verifier.V2SemanticReviewRequest
+	ValidationErrors          []verifier.V2SemanticValidationError
+	RetryableValidationErrors []verifier.V2SemanticValidationError
+	MaxAttempts               int
 }
 
 type V2SemanticReviewResult struct {
@@ -84,6 +85,14 @@ func (s *v2SemanticReviewService) ReviewV2Semantic(ctx context.Context, job V2Se
 		}
 		return result, nil
 	}
+	if len(job.RetryableValidationErrors) > 0 {
+		result.Status = string(domain.V2SemanticReviewRetryable)
+		result.ValidationErrors = append([]verifier.V2SemanticValidationError(nil), job.RetryableValidationErrors...)
+		if err := s.appendFinalOutcome(ctx, job, result, "", nil); err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
 	if s.provider == nil {
 		return nil, errors.New("v2 semantic review: provider is required")
 	}
@@ -107,6 +116,24 @@ func (s *v2SemanticReviewService) ReviewV2Semantic(ctx context.Context, job V2Se
 		attemptReq.PreviousResponseHash = previousHash
 		response, err := s.provider.ReviewV2Semantic(ctx, attemptReq)
 		if err != nil {
+			if errors.Is(err, verifier.ErrVerifierMalformedResponse) {
+				validationErrors = v2SemanticMalformedValidationErrors("provider_response", err)
+				result.Attempts = attempt
+				result.ValidationErrors = validationErrors
+				if err := s.appendAttemptOutcome(ctx, job, attempt, "invalid", "", v2SemanticValidationMessages(validationErrors), nil); err != nil {
+					return nil, err
+				}
+				if attempt == maxAttempts {
+					result.Status = string(domain.V2SemanticReviewRetryable)
+					if err := s.appendFinalOutcome(ctx, job, result, "", nil); err != nil {
+						return nil, err
+					}
+					return result, nil
+				}
+				feedback = v2SemanticValidationMessages(validationErrors)
+				previousHash = ""
+				continue
+			}
 			result.Status = string(domain.V2SemanticReviewRetryable)
 			result.Attempts = attempt
 			if outcomeErr := s.appendAttemptOutcome(ctx, job, attempt, "provider_error", "", []string{v2SemanticErrorClass(err)}, nil); outcomeErr != nil {
@@ -129,7 +156,7 @@ func (s *v2SemanticReviewService) ReviewV2Semantic(ctx context.Context, job V2Se
 				return nil, err
 			}
 			if attempt == maxAttempts {
-				result.Status = string(domain.V2SemanticReviewTerminalFailure)
+				result.Status = string(domain.V2SemanticReviewRetryable)
 				result.ResponseHash = responseHash
 				if err := s.appendFinalOutcome(ctx, job, result, responseHash, nil); err != nil {
 					return nil, err
@@ -206,14 +233,6 @@ func (s *v2SemanticReviewService) appendFinalOutcome(ctx context.Context, job V2
 		OutcomeKind:     v2SemanticReviewOutcomeKind,
 		Status:          result.Status,
 		Payload:         v2SemanticFinalPayload(job.Request, result, s.provider.ModelName(), responseHash, response),
-	}
-	switch result.Status {
-	case string(domain.V2SemanticReviewQuarantined):
-		input.UpdateItemStatus = "quarantined"
-		input.UpdateItemCategory = "quarantined"
-	case string(domain.V2SemanticReviewTerminalFailure):
-		input.UpdateItemStatus = "failed"
-		input.UpdateItemCategory = "failed"
 	}
 	outcomeID, err := s.ledger.AppendPlacementOutcome(ctx, input)
 	if err != nil {
@@ -425,6 +444,24 @@ func v2SemanticValidationMessages(errs []verifier.V2SemanticValidationError) []s
 		out = append(out, err.Error())
 	}
 	return out
+}
+
+func v2SemanticMalformedValidationErrors(field string, err error) []verifier.V2SemanticValidationError {
+	return []verifier.V2SemanticValidationError{{
+		Field:   field,
+		Message: v2SemanticMalformedValidationMessage(err),
+	}}
+}
+
+func v2SemanticMalformedValidationMessage(err error) string {
+	message := "provider returned malformed structured response; regenerate the complete response using the required schema"
+	if err == nil {
+		return message
+	}
+	if errText := strings.TrimSpace(err.Error()); errText != "" {
+		message += ": " + errText
+	}
+	return message
 }
 
 func v2SemanticErrorClass(err error) string {

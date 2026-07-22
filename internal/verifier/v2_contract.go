@@ -8,33 +8,21 @@ const (
 )
 
 func V2ProviderProposalSchema() map[string]any {
-	schema := closedObject(
-		[]string{"predicate_options", "evidence", "entity_proposals", "relationship_proposals"},
+	return closedObject(
+		[]string{"predicate_options", "entity_proposals", "relationship_proposals"},
 		map[string]any{
 			"predicate_options": stringArraySchema(100, 128),
-			"evidence": map[string]any{
-				"type": "array", "minItems": 1, "maxItems": 20,
-				"items": closedObject(
-					[]string{"evidence_index", "evidence_id", "content"},
-					map[string]any{
-						"evidence_index": integerSchema(0, 19),
-						"evidence_id":    stringSchema(1, 128),
-						"content":        stringSchema(1, 999),
-					},
-				),
-			},
 			"entity_proposals": map[string]any{
 				"type": "array", "maxItems": 100,
 				"items": closedObject(
-					[]string{"ref", "name", "evidence"},
+					[]string{"ref", "name", "entity_kind", "aliases", "known_entity_id", "evidence"},
 					map[string]any{
-						"ref":              stringSchema(1, 128),
-						"name":             stringSchema(1, 256),
-						"entity_kind":      enumSchema(domain.V2EntityKinds()),
-						"aliases":          stringArraySchema(20, 256),
-						"known_entity_id":  nullableStringSchema(128),
-						"identity_context": boundedProviderMapSchema(),
-						"evidence":         evidenceSpanArraySchema(),
+						"ref":             stringSchema(1, 128),
+						"name":            stringSchema(1, 256),
+						"entity_kind":     enumSchema(domain.V2EntityKinds()),
+						"aliases":         stringArraySchema(20, 256),
+						"known_entity_id": nullableStringSchema(128),
+						"evidence":        evidenceSpanArraySchema(),
 					},
 				),
 			},
@@ -44,12 +32,10 @@ func V2ProviderProposalSchema() map[string]any {
 			},
 		},
 	)
-	schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
-	return schema
 }
 
 func V2VerifierResponseSchema() map[string]any {
-	schema := closedObject(
+	return closedObject(
 		[]string{"request_id", "security_signals", "entity_results", "relationship_results"},
 		map[string]any{
 			"request_id": stringSchema(1, 128),
@@ -82,22 +68,35 @@ func V2VerifierResponseSchema() map[string]any {
 			},
 		},
 	)
-	schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
-	return schema
 }
 
 func relationshipProposalSchema() map[string]any {
-	schema := closedObject(
-		[]string{"proposal_id", "subject_ref", "original_predicate", "evidence"},
+	return closedObject(
+		[]string{
+			"proposal_id",
+			"subject_ref",
+			"original_predicate",
+			"predicate_candidates",
+			"object_ref",
+			"object_value",
+			"polarity",
+			"modality",
+			"evidence",
+			"valid_from",
+			"valid_to",
+			"client_comment",
+		},
 		map[string]any{
 			"proposal_id":          stringSchema(1, 128),
 			"subject_ref":          stringSchema(1, 128),
 			"original_predicate":   stringSchema(1, 128),
 			"predicate_candidates": stringArraySchema(100, 128),
-			"object_ref":           stringSchema(1, 128),
-			"object_value":         typedValueSchema(),
-			"polarity":             enumSchema([]string{"+", "-"}),
-			"modality": enumSchema([]string{
+			"object_ref":           stringSchema(0, 128),
+			"object_value": map[string]any{
+				"anyOf": []any{typedValueSchema(), map[string]any{"type": "null"}},
+			},
+			"polarity": optionalEnumSchema([]string{"+", "-"}),
+			"modality": optionalEnumSchema([]string{
 				"statement", "question", "proposal", "speculation", "quoted",
 			}),
 			"evidence":       evidenceSpanArraySchema(),
@@ -106,15 +105,10 @@ func relationshipProposalSchema() map[string]any {
 			"client_comment": nullableStringSchema(1000),
 		},
 	)
-	schema["oneOf"] = []any{
-		map[string]any{"required": []string{"object_ref"}, "not": map[string]any{"required": []string{"object_value"}}},
-		map[string]any{"required": []string{"object_value"}, "not": map[string]any{"required": []string{"object_ref"}}},
-	}
-	return schema
 }
 
 func entityResultSchema() map[string]any {
-	schema := closedObject(
+	return closedObject(
 		[]string{"ref", "action", "candidate_entity_id", "confidence", "rationale"},
 		map[string]any{
 			"ref":                 stringSchema(1, 128),
@@ -124,18 +118,10 @@ func entityResultSchema() map[string]any {
 			"rationale":           stringSchema(1, 1000),
 		},
 	)
-	schema["allOf"] = []any{
-		map[string]any{
-			"if":   map[string]any{"properties": map[string]any{"action": map[string]any{"const": "reuse"}}, "required": []string{"action"}},
-			"then": map[string]any{"properties": map[string]any{"candidate_entity_id": stringSchema(1, 128)}},
-			"else": map[string]any{"properties": map[string]any{"candidate_entity_id": map[string]any{"type": "null"}}},
-		},
-	}
-	return schema
 }
 
 func relationshipResultSchema() map[string]any {
-	schema := closedObject(
+	return closedObject(
 		[]string{"ref", "predicate_status", "predicate_key", "evidence_verdict", "confidence", "rationale"},
 		map[string]any{
 			"ref":              stringSchema(1, 128),
@@ -146,14 +132,6 @@ func relationshipResultSchema() map[string]any {
 			"rationale":        stringSchema(1, 1000),
 		},
 	)
-	schema["allOf"] = []any{
-		map[string]any{
-			"if":   map[string]any{"properties": map[string]any{"predicate_status": map[string]any{"const": "resolved"}}, "required": []string{"predicate_status"}},
-			"then": map[string]any{"properties": map[string]any{"predicate_key": stringSchema(1, 128)}},
-			"else": map[string]any{"properties": map[string]any{"predicate_key": map[string]any{"type": "null"}}},
-		},
-	}
-	return schema
 }
 
 func predicateOptionArraySchema() map[string]any {
@@ -190,10 +168,10 @@ func evidenceSpanArraySchema() map[string]any {
 
 func typedValueSchema() map[string]any {
 	return closedObject(
-		[]string{"type", "value"},
+		[]string{"type", "value", "display", "unit"},
 		map[string]any{
 			"type":    enumSchema(domain.V2ValueTypes()),
-			"value":   map[string]any{"type": []any{"string", "number", "boolean"}},
+			"value":   stringSchema(1, 4096),
 			"display": stringSchema(0, 1024),
 			"unit":    stringSchema(0, 128),
 		},
@@ -247,20 +225,27 @@ func enumSchema(values []string) map[string]any {
 	return map[string]any{"type": "string", "enum": values}
 }
 
+func nullableEnumSchema(values []string) map[string]any {
+	enumValues := make([]any, 0, len(values)+1)
+	for _, value := range values {
+		enumValues = append(enumValues, value)
+	}
+	enumValues = append(enumValues, nil)
+	return map[string]any{"type": []any{"string", "null"}, "enum": enumValues}
+}
+
+func optionalEnumSchema(values []string) map[string]any {
+	enumValues := make([]any, 0, len(values)+1)
+	enumValues = append(enumValues, "")
+	for _, value := range values {
+		enumValues = append(enumValues, value)
+	}
+	return map[string]any{"type": "string", "enum": enumValues}
+}
+
 func stringArraySchema(maxItems int, maxLength int) map[string]any {
 	return map[string]any{
 		"type": "array", "maxItems": maxItems,
 		"items": stringSchema(1, maxLength),
-	}
-}
-
-func boundedProviderMapSchema() map[string]any {
-	return map[string]any{
-		"type":                 "object",
-		"maxProperties":        20,
-		"additionalProperties": true,
-		"x-max-depth":          4,
-		"x-max-bytes":          8192,
-		"x-bounded-map":        true,
 	}
 }

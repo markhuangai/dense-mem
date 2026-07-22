@@ -28,6 +28,26 @@ func TestBuildV2UATActivatesMCPTools(t *testing.T) {
 	}
 }
 
+func TestBuildV2ActiveActivatesMCPTools(t *testing.T) {
+	reg, err := BuildV2Active(Dependencies{})
+	if err != nil {
+		t.Fatalf("BuildV2Active: %v", err)
+	}
+	for _, name := range []string{
+		V2ToolRemember,
+		V2ToolRecallMemory,
+		V2ToolTraceMemory,
+	} {
+		tool, ok := reg.Get(name)
+		if !ok {
+			t.Fatalf("BuildV2Active missing %s", name)
+		}
+		if !ToolVisible(context.Background(), tool, nil) {
+			t.Fatalf("%s is not visible in the active MCP registry", name)
+		}
+	}
+}
+
 func TestHTTPRegistryViewKeepsV2MemoryToolsMCPOnly(t *testing.T) {
 	uat, err := BuildV2UAT(Dependencies{})
 	if err != nil {
