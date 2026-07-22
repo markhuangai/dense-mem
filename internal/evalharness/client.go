@@ -405,17 +405,17 @@ func (c *HTTPClient) importCorpusGroup(ctx context.Context, corpus []CorpusItem)
 	}
 	return mapping, nil
 }
-
 func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (KnowledgeMapping, error) {
 	mapping := newKnowledgeMapping()
+	idempotencyKey := "eval:" + item.SourceDocID
 	evidence := map[string]any{
 		"content":         item.Content,
 		"source":          firstNonEmpty(item.SourceDataset, item.Title, "eval-seed"),
-		"idempotency_key": "eval:" + item.SourceDocID,
+		"idempotency_key": idempotencyKey,
 		"labels":          item.Labels,
 		"metadata":        seedMetadata(item),
 	}
-	input := map[string]any{"evidence": []map[string]any{evidence}}
+	input := map[string]any{"idempotency_key": idempotencyKey, "evidence": []map[string]any{evidence}}
 	var out map[string]any
 	if err := c.callToolWithRetry(ctx, "remember", input, &out); err != nil {
 		return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)
