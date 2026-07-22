@@ -231,11 +231,8 @@ func upsertV2PlacementItemEvidenceSearchDocument(
 	ctx context.Context,
 	tx *gorm.DB,
 	commit V2CommitPlacementSemanticInput,
+	fragmentID string,
 ) (*V2SearchDocumentResult, error) {
-	fragmentID, err := loadV2PlacementItemFragmentID(ctx, tx, commit)
-	if err != nil {
-		return nil, err
-	}
 	return upsertV2PlacementEvidenceSearchDocument(ctx, tx, commit, fragmentID, map[string]any{
 		"placement_item_id": commit.PlacementItemID,
 	})
