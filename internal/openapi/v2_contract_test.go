@@ -95,9 +95,9 @@ func TestV2ContractOpenAPIDerivesSchemasFromRegistry(t *testing.T) {
 }
 
 func TestV2HTTPRegistryOpenAPIOmitsMCPOnlyMemoryToolRoutes(t *testing.T) {
-	uat, err := registry.BuildV2UAT(registry.Dependencies{})
+	uat, err := registry.BuildActive(registry.Dependencies{})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	httpReg, err := registry.HTTPRegistryView(uat)
 	if err != nil {

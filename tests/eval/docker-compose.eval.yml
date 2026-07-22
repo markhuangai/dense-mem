@@ -18,12 +18,6 @@ services:
     volumes:
       - ${V1_COMPOSE_DATA_DIR:-./tests/eval/runtime/v1}/postgres:/var/lib/postgresql
 
-  neo4j:
-    volumes:
-      - ${V1_COMPOSE_DATA_DIR:-./tests/eval/runtime/v1}/neo4j/data:/data
-      - ${V1_COMPOSE_DATA_DIR:-./tests/eval/runtime/v1}/neo4j/logs:/logs
-      - ${V1_COMPOSE_DATA_DIR:-./tests/eval/runtime/v1}/neo4j/plugins:/plugins
-
   redis:
     volumes:
       - ${V1_COMPOSE_DATA_DIR:-./tests/eval/runtime/v1}/redis:/data

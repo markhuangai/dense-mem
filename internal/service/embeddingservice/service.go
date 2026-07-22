@@ -20,11 +20,11 @@ const (
 	defaultFailureTimeout = 10 * time.Second
 )
 
-type V2EmbeddingWorkerService interface {
-	ProcessNextBatch(ctx context.Context) (V2EmbeddingWorkerResult, error)
+type EmbeddingWorkerService interface {
+	ProcessNextBatch(ctx context.Context) (EmbeddingWorkerResult, error)
 }
 
-type V2EmbeddingWorkerDependencies struct {
+type EmbeddingWorkerDependencies struct {
 	Search         repository.V2SearchRepository
 	Provider       embedding.EmbeddingProviderInterface
 	Metrics        observability.DiscoverabilityMetrics
@@ -35,7 +35,7 @@ type V2EmbeddingWorkerDependencies struct {
 	FailureTimeout time.Duration
 }
 
-type V2EmbeddingWorkerResult struct {
+type EmbeddingWorkerResult struct {
 	Claimed   int
 	Completed int
 	Retried   int
@@ -44,7 +44,7 @@ type V2EmbeddingWorkerResult struct {
 	LeaseLost int
 }
 
-type v2EmbeddingWorkerService struct {
+type embeddingWorkerService struct {
 	search         repository.V2SearchRepository
 	provider       embedding.EmbeddingProviderInterface
 	metrics        observability.DiscoverabilityMetrics
@@ -55,7 +55,7 @@ type v2EmbeddingWorkerService struct {
 	failureTimeout time.Duration
 }
 
-func NewV2EmbeddingWorkerService(deps V2EmbeddingWorkerDependencies) V2EmbeddingWorkerService {
+func NewEmbeddingWorkerService(deps EmbeddingWorkerDependencies) EmbeddingWorkerService {
 	batchSize := deps.BatchSize
 	if batchSize <= 0 {
 		batchSize = defaultBatchSize
@@ -75,7 +75,7 @@ func NewV2EmbeddingWorkerService(deps V2EmbeddingWorkerDependencies) V2Embedding
 	if metrics == nil {
 		metrics = observability.NoopDiscoverabilityMetrics()
 	}
-	return &v2EmbeddingWorkerService{
+	return &embeddingWorkerService{
 		search:         deps.Search,
 		provider:       deps.Provider,
 		metrics:        metrics,
@@ -87,8 +87,8 @@ func NewV2EmbeddingWorkerService(deps V2EmbeddingWorkerDependencies) V2Embedding
 	}
 }
 
-func (s *v2EmbeddingWorkerService) ProcessNextBatch(ctx context.Context) (V2EmbeddingWorkerResult, error) {
-	var result V2EmbeddingWorkerResult
+func (s *embeddingWorkerService) ProcessNextBatch(ctx context.Context) (EmbeddingWorkerResult, error) {
+	var result EmbeddingWorkerResult
 	if err := s.validate(); err != nil {
 		return result, err
 	}
@@ -180,23 +180,23 @@ func (s *v2EmbeddingWorkerService) ProcessNextBatch(ctx context.Context) (V2Embe
 	return result, firstErr
 }
 
-func (s *v2EmbeddingWorkerService) validate() error {
+func (s *embeddingWorkerService) validate() error {
 	if s.search == nil {
-		return errors.New("v2 embedding worker: search repository is required")
+		return errors.New("embedding worker: search repository is required")
 	}
 	if s.provider == nil {
-		return errors.New("v2 embedding worker: embedding provider is required")
+		return errors.New("embedding worker: embedding provider is required")
 	}
 	if s.teamID == "" {
-		return errors.New("v2 embedding worker: team_id is required")
+		return errors.New("embedding worker: team_id is required")
 	}
 	if s.workerID == "" {
-		return errors.New("v2 embedding worker: worker_id is required")
+		return errors.New("embedding worker: worker_id is required")
 	}
 	return nil
 }
 
-func (s *v2EmbeddingWorkerService) validateProvider(contract *repository.V2ActiveSearchContract) error {
+func (s *embeddingWorkerService) validateProvider(contract *repository.V2ActiveSearchContract) error {
 	if got := s.provider.Dimensions(); got != 0 && got != contract.EmbeddingDimensions {
 		return fmt.Errorf("embedding provider dimensions %d, active contract dimensions %d", got, contract.EmbeddingDimensions)
 	}
@@ -206,11 +206,11 @@ func (s *v2EmbeddingWorkerService) validateProvider(contract *repository.V2Activ
 	return nil
 }
 
-func (s *v2EmbeddingWorkerService) failJobs(
+func (s *embeddingWorkerService) failJobs(
 	ctx context.Context,
 	contract *repository.V2ActiveSearchContract,
 	jobs []repository.V2EmbeddingJob,
-	result *V2EmbeddingWorkerResult,
+	result *EmbeddingWorkerResult,
 	err error,
 	code string,
 	terminal bool,
@@ -221,11 +221,11 @@ func (s *v2EmbeddingWorkerService) failJobs(
 	}
 }
 
-func (s *v2EmbeddingWorkerService) failJob(
+func (s *embeddingWorkerService) failJob(
 	ctx context.Context,
 	contract *repository.V2ActiveSearchContract,
 	job repository.V2EmbeddingJob,
-	result *V2EmbeddingWorkerResult,
+	result *EmbeddingWorkerResult,
 	err error,
 	code string,
 	terminal bool,

@@ -30,7 +30,6 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/MCP-Streamable_HTTP-111827?style=flat-square" alt="MCP Streamable HTTP" />
-  <img src="https://img.shields.io/badge/Neo4j-5.26-008CC1?style=flat-square&logo=neo4j&logoColor=white" alt="Neo4j 5.26" />
   <img src="https://img.shields.io/badge/PostgreSQL-18-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL 18" />
   <img src="https://img.shields.io/badge/OpenAPI-3.0-6BA539?style=flat-square&logo=openapiinitiative&logoColor=white" alt="OpenAPI 3.0" />
   <img src="https://visitor-badge.laobi.icu/badge?page_id=markhuangai.dense-mem&style=flat-square" alt="Visitors" />
@@ -98,15 +97,15 @@ curl -fsSLo .env.example \
   https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/.env.example
 
 cp .env.example .env
-# 填写 POSTGRES_PASSWORD、NEO4J_PASSWORD、CONTROL_PORTAL_TOKEN 和 AI_API_KEY。
+# 填写 POSTGRES_PASSWORD、CONTROL_PORTAL_TOKEN 和 AI_API_KEY。
 ${EDITOR:-vi} .env
 
 docker compose up -d
 docker compose exec server /app/provision-team --name "primary-memory"
 ```
 
-基础 compose 示例会启动 Postgres、带 Neo4j Graph Data Science 插件的
-`neo4j:5.26-community`，以及 Dense-Mem server。默认只暴露本机端口：
+基础 compose 示例会启动带 pgvector 的 Postgres 和 Dense-Mem server。
+默认只暴露本机端口：
 
 ```text
 MCP/API:        http://127.0.0.1:8080/mcp
@@ -209,23 +208,6 @@ docker compose -f docker-compose.yml -f docker-compose.telemetry.yml up -d
 需要有界 comment，也可以包含 irrelevant result refs，供离线分析使用。
 Prometheus 仍然只接收有界 labels；自由文本 comment 保存在 recall feedback
 investigation records 中。正常生产 recall 流量仍然会贡献请求量、结果数和延迟指标。
-
-对于一次性 demo image，保持 control portal 关闭，改用 demo telemetry
-overlay：
-
-```bash
-curl -fsSLo prometheus.demo.yml \
-  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/prometheus.demo.yml
-curl -fsSLo docker-compose.demo.telemetry.yml \
-  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/docker-compose.demo.telemetry.yml
-
-export TELEMETRY_SCRAPE_TOKEN="$(openssl rand -hex 32)"
-docker compose -f docker-compose.yml -f docker-compose.demo.telemetry.yml up -d
-```
-
-demo overlay 会在私有 Compose network 上 scrape `demo:8091`，并设置
-`TELEMETRY_PROMETHEUS_JOB=dense-mem-demo`。不要把这个 metrics listener
-公开到公网。
 
 ## 能力对比
 

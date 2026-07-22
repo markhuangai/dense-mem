@@ -81,6 +81,10 @@ type V2MigrationControlRepositoryImpl struct {
 
 var _ V2MigrationControlRepository = (*V2MigrationControlRepositoryImpl)(nil)
 
+type v2MigrationRLSHelper interface {
+	WithMigrationTx(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) error) error
+}
+
 func NewV2MigrationControlRepository(db *gorm.DB, rls postgres.RLSHelper) *V2MigrationControlRepositoryImpl {
 	return &V2MigrationControlRepositoryImpl{db: db, rls: rls}
 }
@@ -633,6 +637,23 @@ func (r *V2MigrationControlRepositoryImpl) withSystemTx(ctx context.Context, fn 
 		return r.db.WithContext(ctx).Transaction(fn)
 	}
 	return r.rls.WithSystemTx(ctx, r.db, fn)
+}
+
+func (r *V2MigrationControlRepositoryImpl) withMigrationTx(ctx context.Context, fn func(tx *gorm.DB) error) error {
+	if r.rls == nil {
+		return r.db.WithContext(ctx).Transaction(fn)
+	}
+	if helper, ok := r.rls.(v2MigrationRLSHelper); ok {
+		return helper.WithMigrationTx(ctx, r.db, fn)
+	}
+	return r.withSystemTx(ctx, fn)
+}
+
+func v2MigrationTime(value time.Time) time.Time {
+	if value.IsZero() {
+		return time.Now().UTC()
+	}
+	return value.UTC()
 }
 
 type v2MigrationRowScanner interface {

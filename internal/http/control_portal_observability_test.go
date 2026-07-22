@@ -16,7 +16,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
-	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 )
 
 type controlOperationLogReaderStub struct {
@@ -105,7 +104,7 @@ func (s *controlDreamServiceStub) Recall(context.Context, string, string, int) (
 }
 
 func (s *controlDreamServiceStub) ResolveFeedback(context.Context, string, dreamservice.ResolveFeedbackRequest) (*dreamservice.ResolveFeedbackResult, error) {
-	return &dreamservice.ResolveFeedbackResult{Fragment: &fragmentservice.CreateResult{}}, nil
+	return &dreamservice.ResolveFeedbackResult{}, nil
 }
 
 func (s *controlDreamServiceStub) Status(_ context.Context, profileID string) (*dreamservice.StatusResult, error) {
@@ -143,7 +142,7 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 		RecallID:      "rec_1",
 		CreatedAt:     now,
 		Query:         "why was recall bad?",
-		ResultRefs:    []domain.RecallFeedbackResultRef{{Type: domain.RecallFeedbackResultTypeFragment, ID: "fragment-1", Rank: 1}},
+		ResultRefs:    []domain.RecallFeedbackResultRef{{Type: domain.RecallFeedbackResultTypeRelationship, ID: "relationship-1", Rank: 1}},
 		SnapshotState: domain.RecallFeedbackSnapshotCaptured,
 	}}
 	dreams := &controlDreamServiceStub{
@@ -217,7 +216,7 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 
 	rec = do("/control/api/recall-feedback-events/rec_1")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "fragment-1")
+	assert.Contains(t, rec.Body.String(), "relationship-1")
 	assert.Equal(t, "rec_1", feedback.recallID)
 
 	rec = do("/control/api/teams/" + teamID.String() + "/dreaming/status")
@@ -243,8 +242,9 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 
 func TestControlPortalObservabilityValidation(t *testing.T) {
 	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/control/api/logs?limit=501", nil)
 	rec := httptest.NewRecorder()
+
+	req := httptest.NewRequest(http.MethodGet, "/control/api/logs?limit=501", nil)
 	c := e.NewContext(req, rec)
 	_, err := controlOperationLogsFilter(c)
 	require.ErrorContains(t, err, "limit must be between 1 and 500")

@@ -172,21 +172,6 @@ func TestToolVisibleHidesDormantV2ContractTools(t *testing.T) {
 	}
 }
 
-func TestBuildDefaultDoesNotExposeV2ContractTools(t *testing.T) {
-	reg, err := BuildDefault(Dependencies{})
-	if err != nil {
-		t.Fatalf("BuildDefault: %v", err)
-	}
-	if _, ok := reg.Get(V2ToolCorrectEntityResolution); ok {
-		t.Fatal("BuildDefault exposed correct_entity_resolution before V2 gate")
-	}
-	for _, tool := range reg.List() {
-		if tool.ContractVersion == domain.V2ContractVersion {
-			t.Fatalf("BuildDefault exposed V2 contract metadata on %s", tool.Name)
-		}
-	}
-}
-
 func TestV2RememberRejectsMixedSourceRevisionBatch(t *testing.T) {
 	tools := v2ToolMap(t)
 	remember, err := requireV2Tool(tools, V2ToolRemember)

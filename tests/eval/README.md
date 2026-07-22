@@ -13,9 +13,9 @@ corpus row
   -> qrel-based retrieval metrics
 ```
 
-The evaluation harness does not use `import_memories`, direct Neo4j writes, or
-an answer-judge model. It measures retrieval against deterministic qrels and
-reports placement outcomes separately.
+The evaluation harness does not use `import_memories` or an answer-judge model.
+It measures retrieval against deterministic qrels and reports placement outcomes
+separately.
 
 The approved seed, generated diagnostic datasets, persistent databases,
 credentials, and run artifacts are local-only and ignored by git. The full
@@ -39,7 +39,6 @@ tests/eval/
     dataset_identity.json
     eval_profile.json
     postgres/
-    neo4j/
     redis/
     prometheus/
     monitor/

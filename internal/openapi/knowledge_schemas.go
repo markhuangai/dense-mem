@@ -546,7 +546,7 @@ func knowledgeSchemas() map[string]any {
 
 		// CommunityDetectRequest is the request body for
 		// Community detection request/response payloads.
-		// All fields are optional tuning parameters for the underlying GDS algorithm.
+		// All fields are optional tuning parameters for the Leiden projection.
 		"CommunityDetectRequest": map[string]any{
 			"type": "object",
 			"properties": map[string]any{

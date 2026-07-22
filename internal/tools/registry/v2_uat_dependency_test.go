@@ -9,10 +9,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-func TestBuildV2UATExecutableToolsRequireDependencies(t *testing.T) {
-	reg, err := BuildV2UAT(Dependencies{})
+func TestBuildActiveExecutableToolsRequireDependencies(t *testing.T) {
+	reg, err := BuildActive(Dependencies{})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	tests := []struct {
 		name string
@@ -125,18 +125,18 @@ func TestBuildV2UATExecutableToolsRequireDependencies(t *testing.T) {
 	}
 }
 
-func TestBuildV2UATWiresEvaluationRecallCaseToV2(t *testing.T) {
-	recall := &stubV2RecallService{}
-	reg, err := BuildV2UAT(Dependencies{
-		V2Recall:        recall,
+func TestBuildActiveWiresEvaluationRecallCaseToV2(t *testing.T) {
+	recall := &stubRecallService{}
+	reg, err := BuildActive(Dependencies{
+		Recall:          recall,
 		EvaluationAudit: &evaluationAuditStub{},
 	})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	tool, ok := reg.Get("eval_run_recall_case")
 	if !ok || tool.Invoke == nil {
-		t.Fatal("BuildV2UAT did not register executable eval_run_recall_case")
+		t.Fatal("BuildActive did not register executable eval_run_recall_case")
 	}
 	out, err := tool.Invoke(v2ContractInvokeContext("read", "write"), "ignored-profile", map[string]any{
 		"case_id":                "case-v2",
@@ -170,16 +170,16 @@ func TestBuildV2UATWiresEvaluationRecallCaseToV2(t *testing.T) {
 	}
 }
 
-func TestBuildV2UATWiresExecutableDreamTools(t *testing.T) {
+func TestBuildActiveWiresExecutableDreamTools(t *testing.T) {
 	dreams := &stubDreamService{}
-	reg, err := BuildV2UAT(Dependencies{Dreams: dreams})
+	reg, err := BuildActive(Dependencies{Dreams: dreams})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 
 	list, ok := reg.Get(V2ToolListDreams)
 	if !ok || list.Invoke == nil {
-		t.Fatal("BuildV2UAT did not register executable list_dreams")
+		t.Fatal("BuildActive did not register executable list_dreams")
 	}
 	listOut, err := list.Invoke(v2ContractInvokeContext("read"), "ignored-profile", map[string]any{
 		"limit":  float64(2),
@@ -197,7 +197,7 @@ func TestBuildV2UATWiresExecutableDreamTools(t *testing.T) {
 
 	get, ok := reg.Get(V2ToolGetDream)
 	if !ok || get.Invoke == nil {
-		t.Fatal("BuildV2UAT did not register executable get_dream")
+		t.Fatal("BuildActive did not register executable get_dream")
 	}
 	getOut, err := get.Invoke(v2ContractInvokeContext("read"), "ignored-profile", map[string]any{
 		"hypothesis_id": "dream-v2",
@@ -215,7 +215,7 @@ func TestBuildV2UATWiresExecutableDreamTools(t *testing.T) {
 
 	resolve, ok := reg.Get(V2ToolResolveDreamFeedback)
 	if !ok || resolve.Invoke == nil {
-		t.Fatal("BuildV2UAT did not register executable resolve_dream_feedback")
+		t.Fatal("BuildActive did not register executable resolve_dream_feedback")
 	}
 	_, err = resolve.Invoke(v2ContractInvokeContext("write"), "ignored-profile", map[string]any{
 		"hypothesis_id": "dream-v2",

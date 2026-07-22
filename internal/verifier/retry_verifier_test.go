@@ -20,10 +20,6 @@ type stubConfigProvider struct {
 }
 
 func (s *stubConfigProvider) GetPostgresDSN() string                 { return "" }
-func (s *stubConfigProvider) GetNeo4jURI() string                    { return "" }
-func (s *stubConfigProvider) GetNeo4jUser() string                   { return "" }
-func (s *stubConfigProvider) GetNeo4jPassword() string               { return "" }
-func (s *stubConfigProvider) GetNeo4jDatabase() string               { return "" }
 func (s *stubConfigProvider) GetRedisAddr() string                   { return "" }
 func (s *stubConfigProvider) GetRedisPassword() string               { return "" }
 func (s *stubConfigProvider) GetRedisDB() int                        { return 0 }

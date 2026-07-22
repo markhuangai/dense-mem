@@ -27,7 +27,7 @@ const (
 // Fragment represents a knowledge fragment stored in the system.
 // The FragmentID field uses Go name FragmentID but JSON tag "id" so the public API surface
 // reads as "id": "..." (AC-41 compatibility clause) while internal code references FragmentID
-// to match the Neo4j constraint name sourcefragment_fragment_id_unique.
+// to preserve the historical fragment uniqueness key.
 type Fragment struct {
 	FragmentID           string         `json:"id"` // API field "id" maps to stored fragment_id
 	ProfileID            string         `json:"team_id"`

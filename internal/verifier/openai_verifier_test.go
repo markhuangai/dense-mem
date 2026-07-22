@@ -534,7 +534,7 @@ func TestOpenAIVerifierV2SemanticAdapters(t *testing.T) {
 
 		content := "Dense-Mem uses PostgreSQL."
 		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "sk-test", "gpt-4o-mini"), srv.Client())
-		got, err := v.ReviewV2Semantic(context.Background(), V2SemanticReviewRequest{
+		got, err := v.ReviewSemantic(context.Background(), V2SemanticReviewRequest{
 			RequestID: "verify-1",
 			TeamID:    "team-a",
 			Evidence: []V2SemanticReviewEvidence{{
@@ -622,10 +622,10 @@ func TestOpenAIVerifierV2SemanticAdapterErrors(t *testing.T) {
 
 	t.Run("invalid review request", func(t *testing.T) {
 		v := NewOpenAIVerifier(newTestVerifierConfig("https://example.com/v1", "sk-test", "gpt-4o-mini"), nil)
-		_, err := v.ReviewV2Semantic(context.Background(), V2SemanticReviewRequest{})
+		_, err := v.ReviewSemantic(context.Background(), V2SemanticReviewRequest{})
 		var providerErr *ProviderError
 		require.ErrorAs(t, err, &providerErr)
-		assert.Contains(t, providerErr.Message, "invalid v2 semantic review request")
+		assert.Contains(t, providerErr.Message, "invalid semantic review request")
 	})
 
 	t.Run("no choices", func(t *testing.T) {
@@ -668,7 +668,7 @@ func TestOpenAIVerifierV2SemanticAdapterErrors(t *testing.T) {
 		defer srv.Close()
 		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "sk-test", "gpt-4o-mini"), srv.Client())
 
-		_, err := v.ReviewV2Semantic(context.Background(), validReviewRequest())
+		_, err := v.ReviewSemantic(context.Background(), validReviewRequest())
 
 		var providerErr *ProviderError
 		require.ErrorAs(t, err, &providerErr)
@@ -685,7 +685,7 @@ func TestOpenAIVerifierV2SemanticAdapterErrors(t *testing.T) {
 		defer srv.Close()
 		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "sk-test", "gpt-4o-mini"), srv.Client())
 
-		_, err := v.ReviewV2Semantic(context.Background(), validReviewRequest())
+		_, err := v.ReviewSemantic(context.Background(), validReviewRequest())
 
 		var rateLimited *RateLimitError
 		require.ErrorAs(t, err, &rateLimited)

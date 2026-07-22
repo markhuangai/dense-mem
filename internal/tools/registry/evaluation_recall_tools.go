@@ -5,10 +5,10 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
-	"github.com/markhuangai/dense-mem/internal/service/recallservice"
 )
+
+const defaultRecallCaseLimit = 10
 
 func evalRunRecallCaseTool(deps Dependencies) Tool {
 	return Tool{
@@ -33,59 +33,16 @@ func evalRunRecallCaseTool(deps Dependencies) Tool {
 		OutputSchema:   map[string]any{"type": "object"},
 		RequiredScopes: []string{"read", "write"},
 		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
-			if deps.Recall == nil && deps.V2Recall == nil {
+			if deps.Recall == nil {
 				return nil, ErrToolUnavailable
 			}
-			limit := intInputOrDefault(input["limit"], recallservice.DefaultLimit)
+			limit := intInputOrDefault(input["limit"], defaultRecallCaseLimit)
 			if err := auditEvaluationTool(ctx, deps, "eval_run_recall_case", limit, false, map[string]any{"case_id": input["case_id"]}); err != nil {
 				return nil, err
 			}
-			if deps.Recall == nil {
-				return evalRunV2RecallCase(ctx, deps, input)
-			}
-			return evalRunLegacyRecallCase(ctx, deps, profileID, input)
+			return evalRunV2RecallCase(ctx, deps, input)
 		},
 	}
-}
-
-func evalRunLegacyRecallCase(ctx context.Context, deps Dependencies, profileID string, input map[string]any) (map[string]any, error) {
-	req, err := evalRecallRequest(input)
-	if err != nil {
-		return nil, err
-	}
-	started := time.Now()
-	hits, err := deps.Recall.Recall(ctx, profileID, req)
-	if err != nil {
-		return nil, err
-	}
-	ranked := make([]map[string]any, 0, len(hits))
-	for i, hit := range hits {
-		ranked = append(ranked, recallHitRef(i+1, hit))
-	}
-	out := map[string]any{
-		"case_id":     input["case_id"],
-		"query":       req.Query,
-		"ranked_refs": ranked,
-		"latency_ms":  time.Since(started).Milliseconds(),
-	}
-	if deps.Context != nil {
-		assembled, err := deps.Context.Assemble(ctx, profileID, evalAssembleRequest(input, req))
-		if err != nil {
-			return nil, err
-		}
-		out["context_refs"] = contextItemRefs(assembled.Items)
-		out["context_evidence_refs"] = contextEvidenceRefs(assembled.Items)
-		out["context_block_chars"] = len(assembled.ContextBlock)
-	}
-	limit := intInputOrDefault(input["limit"], recallservice.DefaultLimit)
-	if boolInput(input["include_dreams"]) && deps.Dreams != nil {
-		dreams, err := deps.Dreams.Recall(ctx, profileID, req.Query, limit)
-		if err != nil {
-			return nil, err
-		}
-		out["dream_refs"] = dreamRefs(dreams)
-	}
-	return out, nil
 }
 
 func evalRunV2RecallCase(ctx context.Context, deps Dependencies, input map[string]any) (map[string]any, error) {
@@ -94,7 +51,7 @@ func evalRunV2RecallCase(ctx context.Context, deps Dependencies, input map[strin
 		return nil, err
 	}
 	started := time.Now()
-	result, err := deps.V2Recall.RecallV2(ctx, req)
+	result, err := deps.Recall.Recall(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +72,7 @@ func evalRunV2RecallCase(ctx context.Context, deps Dependencies, input map[strin
 	if boolInputOrDefault(input["include_evidence"], true) {
 		out["context_evidence_refs"] = ranked
 	}
-	limit := intInputOrDefault(input["limit"], recallservice.DefaultLimit)
+	limit := intInputOrDefault(input["limit"], defaultRecallCaseLimit)
 	if boolInput(input["include_dreams"]) && deps.Dreams != nil {
 		dreams, err := deps.Dreams.Recall(ctx, "", req.Query, limit)
 		if err != nil {
@@ -133,7 +90,7 @@ func evalV2RecallRequest(input map[string]any) (memoryservice.V2RecallRequest, e
 	}
 	req.ContractVersion = domain.V2ContractVersion
 	req.Query = stringInput(input["query"])
-	req.Limit = intInputOrDefault(input["limit"], recallservice.DefaultLimit)
+	req.Limit = intInputOrDefault(input["limit"], defaultRecallCaseLimit)
 	if validAt, err := optionalTime(input["valid_at"]); err != nil {
 		return req, err
 	} else {
@@ -169,104 +126,6 @@ func v2RecallResultRefs(result *memoryservice.V2RecallResult) []map[string]any {
 			ref["relationship_ids"] = append([]string(nil), item.RelationshipIDs...)
 		}
 		refs = append(refs, ref)
-	}
-	return refs
-}
-
-func evalRecallRequest(input map[string]any) (recallservice.RecallRequest, error) {
-	req := recallservice.RecallRequest{
-		Query:           stringInput(input["query"]),
-		Limit:           intInputOrDefault(input["limit"], recallservice.DefaultLimit),
-		IncludeEvidence: boolInputOrDefault(input["include_evidence"], true),
-		UseCommunities:  boolInput(input["use_communities"]),
-	}
-	if validAt, err := optionalTime(input["valid_at"]); err != nil {
-		return req, err
-	} else {
-		req.ValidAt = validAt
-	}
-	if knownAt, err := optionalTime(input["known_at"]); err != nil {
-		return req, err
-	} else {
-		req.KnownAt = knownAt
-	}
-	return req, nil
-}
-
-func evalAssembleRequest(input map[string]any, recallReq recallservice.RecallRequest) contextservice.AssembleRequest {
-	includeEvidence := boolInputOrDefault(input["include_evidence"], recallReq.IncludeEvidence)
-	return contextservice.AssembleRequest{
-		Query:           recallReq.Query,
-		Limit:           recallReq.Limit,
-		IncludeEvidence: &includeEvidence,
-		ValidAt:         recallReq.ValidAt,
-		KnownAt:         recallReq.KnownAt,
-		MaxChars:        intInputOrDefault(input["max_context_chars"], 4000),
-	}
-}
-
-func recallHitRef(rank int, hit recallservice.RecallHit) map[string]any {
-	ref := map[string]any{
-		"rank":          rank,
-		"tier":          hit.Tier,
-		"score":         hit.Score,
-		"final_score":   hit.FinalScore,
-		"semantic_rank": hit.SemanticRank,
-		"keyword_rank":  hit.KeywordRank,
-	}
-	switch {
-	case hit.Fact != nil:
-		ref["type"] = "fact"
-		ref["id"] = hit.Fact.FactID
-		ref["status"] = string(hit.Fact.Status)
-	case hit.Claim != nil:
-		ref["type"] = "claim"
-		ref["id"] = hit.Claim.ClaimID
-		ref["status"] = string(hit.Claim.Status)
-	case hit.Fragment != nil:
-		ref["type"] = "fragment"
-		ref["id"] = hit.Fragment.FragmentID
-		ref["status"] = string(hit.Fragment.Status)
-	}
-	return ref
-}
-
-func contextItemRefs(items []contextservice.ContextItem) []map[string]any {
-	refs := make([]map[string]any, 0, len(items))
-	for i, item := range items {
-		refs = append(refs, map[string]any{
-			"rank":  i + 1,
-			"type":  item.Type,
-			"id":    item.ID,
-			"score": item.Score,
-		})
-	}
-	return refs
-}
-
-func contextEvidenceRefs(items []contextservice.ContextItem) []map[string]any {
-	refs := []map[string]any{}
-	seen := map[string]struct{}{}
-	rank := 1
-	for _, item := range items {
-		for _, fragment := range item.EvidenceFragments {
-			if fragment == nil || stringInput(fragment.FragmentID) == "" {
-				continue
-			}
-			key := "fragment:" + fragment.FragmentID + "|parent:" + item.Type + ":" + item.ID
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			refs = append(refs, map[string]any{
-				"rank":        rank,
-				"type":        "fragment",
-				"id":          fragment.FragmentID,
-				"parent_type": item.Type,
-				"parent_id":   item.ID,
-			})
-			rank++
-		}
 	}
 	return refs
 }

@@ -2,13 +2,10 @@ package skillpackservice
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -22,18 +19,6 @@ var (
 	ErrInvalidArtifact = errors.New("invalid memory pack artifact")
 	ErrHashMismatch    = errors.New("memory pack hash mismatch")
 )
-
-func canonicalArtifact(pack SkillPack) ([]byte, string, error) {
-	if err := validatePack(pack); err != nil {
-		return nil, "", err
-	}
-	data, err := json.Marshal(pack)
-	if err != nil {
-		return nil, "", fmt.Errorf("memory pack canonicalize: %w", err)
-	}
-	sum := sha256.Sum256(data)
-	return data, hex.EncodeToString(sum[:]), nil
-}
 
 func parseArtifactJSON(data []byte) (SkillPack, error) {
 	if len(data) == 0 {
@@ -300,74 +285,6 @@ func allowedSourceKind(kind string) bool {
 	default:
 		return false
 	}
-}
-
-func normalizePack(pack SkillPack) SkillPack {
-	pack.SchemaVersion = strings.TrimSpace(pack.SchemaVersion)
-	pack.Name = strings.TrimSpace(pack.Name)
-	pack.Description = strings.TrimSpace(pack.Description)
-	if pack.ExportedAt != nil {
-		exportedAt := pack.ExportedAt.UTC()
-		if exportedAt.IsZero() {
-			pack.ExportedAt = nil
-		} else {
-			pack.ExportedAt = &exportedAt
-		}
-	}
-	for i := range pack.Items {
-		pack.Items[i].Subject = strings.TrimSpace(pack.Items[i].Subject)
-		pack.Items[i].Predicate = strings.TrimSpace(pack.Items[i].Predicate)
-		pack.Items[i].Object = strings.TrimSpace(pack.Items[i].Object)
-		pack.Items[i].SourceKind = strings.TrimSpace(pack.Items[i].SourceKind)
-		pack.Items[i].SourceID = strings.TrimSpace(pack.Items[i].SourceID)
-		normalizeIDList(pack.Items[i].SupportClaimIDs)
-		normalizeIDList(pack.Items[i].SupportFragmentIDs)
-	}
-	if pack.Support != nil {
-		for i := range pack.Support.Claims {
-			normalizeSupportClaim(&pack.Support.Claims[i])
-		}
-		for i := range pack.Support.Fragments {
-			normalizeSupportFragment(&pack.Support.Fragments[i])
-		}
-		sort.Slice(pack.Support.Claims, func(i, j int) bool {
-			return pack.Support.Claims[i].ClaimID < pack.Support.Claims[j].ClaimID
-		})
-		sort.Slice(pack.Support.Fragments, func(i, j int) bool {
-			return pack.Support.Fragments[i].FragmentID < pack.Support.Fragments[j].FragmentID
-		})
-		if len(pack.Support.Claims) == 0 && len(pack.Support.Fragments) == 0 {
-			pack.Support = nil
-		}
-	}
-	return pack
-}
-
-func normalizeIDList(values []string) {
-	for i := range values {
-		values[i] = strings.TrimSpace(values[i])
-	}
-	sort.Strings(values)
-}
-
-func normalizeSupportClaim(claim *SkillPackSupportClaim) {
-	claim.ClaimID = strings.TrimSpace(claim.ClaimID)
-	claim.Subject = strings.TrimSpace(claim.Subject)
-	claim.Predicate = strings.TrimSpace(claim.Predicate)
-	claim.Object = strings.TrimSpace(claim.Object)
-	normalizeIDList(claim.SupportedBy)
-}
-
-func normalizeSupportFragment(fragment *SkillPackSupportFragment) {
-	fragment.FragmentID = strings.TrimSpace(fragment.FragmentID)
-	fragment.Content = strings.TrimSpace(fragment.Content)
-	fragment.Source = strings.TrimSpace(fragment.Source)
-	fragment.SourceType = strings.TrimSpace(fragment.SourceType)
-	fragment.Authority = strings.TrimSpace(fragment.Authority)
-	for i := range fragment.Labels {
-		fragment.Labels[i] = strings.TrimSpace(fragment.Labels[i])
-	}
-	sort.Strings(fragment.Labels)
 }
 
 func validateExpectedHash(actual, expected string) error {

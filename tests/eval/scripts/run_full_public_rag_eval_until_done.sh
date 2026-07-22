@@ -57,8 +57,6 @@ fi
 export DENSE_MEM_PORT="${DENSE_MEM_PORT:-18080}"
 export CONTROL_PORTAL_PORT="${CONTROL_PORTAL_PORT:-18090}"
 export POSTGRES_HOST_PORT="${POSTGRES_HOST_PORT:-15432}"
-export NEO4J_HTTP_HOST_PORT="${NEO4J_HTTP_HOST_PORT:-17474}"
-export NEO4J_BOLT_HOST_PORT="${NEO4J_BOLT_HOST_PORT:-17687}"
 export REDIS_PORT="${REDIS_PORT:-16380}"
 export PROMETHEUS_PORT="${PROMETHEUS_PORT:-19090}"
 export PROMETHEUS_CONTAINER_NAME="${PROMETHEUS_CONTAINER_NAME:-densemem-eval-v1-prometheus}"
@@ -101,8 +99,6 @@ load_env() {
   local eval_dense_mem_port="${DENSE_MEM_PORT}"
   local eval_control_portal_port="${CONTROL_PORTAL_PORT}"
   local eval_postgres_host_port="${POSTGRES_HOST_PORT}"
-  local eval_neo4j_http_host_port="${NEO4J_HTTP_HOST_PORT}"
-  local eval_neo4j_bolt_host_port="${NEO4J_BOLT_HOST_PORT}"
   local eval_redis_port="${REDIS_PORT}"
   local eval_prometheus_port="${PROMETHEUS_PORT}"
   local eval_prometheus_container_name="${PROMETHEUS_CONTAINER_NAME}"
@@ -122,8 +118,6 @@ load_env() {
   export DENSE_MEM_PORT="${eval_dense_mem_port}"
   export CONTROL_PORTAL_PORT="${eval_control_portal_port}"
   export POSTGRES_HOST_PORT="${eval_postgres_host_port}"
-  export NEO4J_HTTP_HOST_PORT="${eval_neo4j_http_host_port}"
-  export NEO4J_BOLT_HOST_PORT="${eval_neo4j_bolt_host_port}"
   export REDIS_PORT="${eval_redis_port}"
   export PROMETHEUS_PORT="${eval_prometheus_port}"
   export PROMETHEUS_CONTAINER_NAME="${eval_prometheus_container_name}"
@@ -176,34 +170,39 @@ psql_eval() {
 }
 
 count_fragments() {
-  compose exec -T -e EVAL_TEAM_ID="${EVAL_TEAM_ID}" neo4j sh -c '
-    user=${NEO4J_AUTH%%/*}
-    password=${NEO4J_AUTH#*/}
-    cypher-shell -u "$user" -p "$password" \
-      "MATCH (sf:SourceFragment {team_id: '\''$EVAL_TEAM_ID'\''})
-       WHERE sf.idempotency_key STARTS WITH '\''eval:'\''
-       RETURN count(sf) AS fragments"
-  ' | awk '/^[[:space:]]*[0-9]+[[:space:]]*$/ { gsub(/[[:space:]]/, ""); value=$0 } END { if (value == "") exit 1; print value }'
+  psql_eval "
+    SELECT count(DISTINCT metadata ->> 'source_doc_id')
+    FROM evidence_fragments
+    WHERE team_id = :'team_id'::uuid
+      AND COALESCE(metadata ->> 'source_doc_id', '') <> '';
+  "
 }
 
 placement_counts() {
   psql_eval "
-    WITH ranked AS (
+    WITH run_docs AS (
+      SELECT fragment.metadata ->> 'source_doc_id' AS source_doc_id,
+             run.ingest_id,
+             run.status,
+             run.created_at
+      FROM placement_runs AS run
+      JOIN evidence_fragments AS fragment
+        ON fragment.team_id = run.team_id
+       AND fragment.ingest_id = run.ingest_id
+      WHERE run.team_id = :'team_id'::uuid
+        AND COALESCE(fragment.metadata ->> 'source_doc_id', '') <> ''
+    ), ranked AS (
       SELECT status,
              row_number() OVER (
-               PARTITION BY evidence -> 0 ->> 'idempotency_key'
+               PARTITION BY source_doc_id
                ORDER BY created_at DESC, ingest_id DESC
              ) AS row_num
-      FROM memory_placement_runs
-      WHERE profile_id = :'team_id'::uuid
-        AND evidence -> 0 ->> 'idempotency_key' LIKE 'eval:%'
+      FROM run_docs
     ), latest AS (
       SELECT status FROM ranked WHERE row_num = 1
     ), historical AS (
-      SELECT count(*) AS attempts
-      FROM memory_placement_runs
-      WHERE profile_id = :'team_id'::uuid
-        AND evidence -> 0 ->> 'idempotency_key' LIKE 'eval:%'
+      SELECT count(DISTINCT ingest_id) AS attempts
+      FROM run_docs
     )
     SELECT count(*),
            count(*) FILTER (WHERE status = 'completed'),
@@ -220,16 +219,25 @@ write_resume_files() {
   completed_tmp="$(mktemp "${RESUME_SOURCE_DOC_IDS}.tmp.XXXXXX")"
   failed_tmp="$(mktemp "${FAILED_SOURCE_DOC_IDS}.tmp.XXXXXX")"
   psql_eval "
-    WITH ranked AS (
-      SELECT substring(evidence -> 0 ->> 'idempotency_key' FROM 6) AS source_doc_id,
+    WITH run_docs AS (
+      SELECT fragment.metadata ->> 'source_doc_id' AS source_doc_id,
+             run.status,
+             run.created_at,
+             run.ingest_id
+      FROM placement_runs AS run
+      JOIN evidence_fragments AS fragment
+        ON fragment.team_id = run.team_id
+       AND fragment.ingest_id = run.ingest_id
+      WHERE run.team_id = :'team_id'::uuid
+        AND COALESCE(fragment.metadata ->> 'source_doc_id', '') <> ''
+    ), ranked AS (
+      SELECT source_doc_id,
              status,
              row_number() OVER (
-               PARTITION BY evidence -> 0 ->> 'idempotency_key'
+               PARTITION BY source_doc_id
                ORDER BY created_at DESC, ingest_id DESC
              ) AS row_num
-      FROM memory_placement_runs
-      WHERE profile_id = :'team_id'::uuid
-        AND evidence -> 0 ->> 'idempotency_key' LIKE 'eval:%'
+      FROM run_docs
     )
     SELECT source_doc_id
     FROM ranked
@@ -237,16 +245,25 @@ write_resume_files() {
     ORDER BY source_doc_id;
   " > "${completed_tmp}"
   psql_eval "
-    WITH ranked AS (
-      SELECT substring(evidence -> 0 ->> 'idempotency_key' FROM 6) AS source_doc_id,
+    WITH run_docs AS (
+      SELECT fragment.metadata ->> 'source_doc_id' AS source_doc_id,
+             run.status,
+             run.created_at,
+             run.ingest_id
+      FROM placement_runs AS run
+      JOIN evidence_fragments AS fragment
+        ON fragment.team_id = run.team_id
+       AND fragment.ingest_id = run.ingest_id
+      WHERE run.team_id = :'team_id'::uuid
+        AND COALESCE(fragment.metadata ->> 'source_doc_id', '') <> ''
+    ), ranked AS (
+      SELECT source_doc_id,
              status,
              row_number() OVER (
-               PARTITION BY evidence -> 0 ->> 'idempotency_key'
+               PARTITION BY source_doc_id
                ORDER BY created_at DESC, ingest_id DESC
              ) AS row_num
-      FROM memory_placement_runs
-      WHERE profile_id = :'team_id'::uuid
-        AND evidence -> 0 ->> 'idempotency_key' LIKE 'eval:%'
+      FROM run_docs
     )
     SELECT source_doc_id
     FROM ranked
@@ -261,17 +278,27 @@ write_placement_summary() {
   local tmp
   tmp="$(mktemp "${PLACEMENT_SUMMARY}.tmp.XXXXXX")"
   psql_eval "
-    WITH ranked AS (
-      SELECT ingest_id, status,
+    WITH run_docs AS (
+      SELECT fragment.metadata ->> 'source_doc_id' AS source_doc_id,
+             run.placement_run_id,
+             run.ingest_id,
+             run.status,
+             run.created_at
+      FROM placement_runs AS run
+      JOIN evidence_fragments AS fragment
+        ON fragment.team_id = run.team_id
+       AND fragment.ingest_id = run.ingest_id
+      WHERE run.team_id = :'team_id'::uuid
+        AND COALESCE(fragment.metadata ->> 'source_doc_id', '') <> ''
+    ), ranked AS (
+      SELECT placement_run_id, ingest_id, status,
              row_number() OVER (
-               PARTITION BY evidence -> 0 ->> 'idempotency_key'
+               PARTITION BY source_doc_id
                ORDER BY created_at DESC, ingest_id DESC
              ) AS row_num
-      FROM memory_placement_runs
-      WHERE profile_id = :'team_id'::uuid
-        AND evidence -> 0 ->> 'idempotency_key' LIKE 'eval:%'
+      FROM run_docs
     ), latest AS (
-      SELECT ingest_id, status FROM ranked WHERE row_num = 1
+      SELECT placement_run_id, ingest_id, status FROM ranked WHERE row_num = 1
     ), latest_stats AS (
       SELECT count(*) AS total,
              count(*) FILTER (WHERE status = 'completed') AS completed,
@@ -282,17 +309,20 @@ write_placement_summary() {
     ), latest_items AS (
       SELECT item.category, item.status, latest.status AS run_status
       FROM latest
-      JOIN memory_placement_items AS item ON item.ingest_id = latest.ingest_id
+      JOIN placement_items AS item
+        ON item.placement_run_id = latest.placement_run_id
+       AND item.ingest_id = latest.ingest_id
+       AND item.team_id = :'team_id'::uuid
     ), item_stats AS (
       SELECT count(*) AS total,
              count(*) FILTER (WHERE run_status = 'completed') AS completed_total,
              count(*) FILTER (
                WHERE run_status = 'completed'
-                 AND category IN ('promoted_fact', 'accepted_promoted')
+                 AND category IN ('validated_claim', 'fact')
              ) AS promoted,
              count(*) FILTER (
                WHERE run_status = 'completed'
-                 AND category IN ('rejected_false', 'rejected_explained')
+                 AND category IN ('candidate', 'quarantined', 'failed')
              ) AS rejected
       FROM latest_items
     ), category_counts AS (
@@ -316,9 +346,7 @@ write_placement_summary() {
              COALESCE(sum(status_count), 0) AS total
       FROM (
         SELECT status, count(*) AS status_count
-        FROM memory_placement_runs
-        WHERE profile_id = :'team_id'::uuid
-          AND evidence -> 0 ->> 'idempotency_key' LIKE 'eval:%'
+        FROM run_docs
         GROUP BY status
         ORDER BY status
       ) AS counts
@@ -619,7 +647,7 @@ main() {
   ensure_runner
   validate_release_gate_seed
   load_env
-  if ! compose exec -T postgres true || ! compose exec -T neo4j true || ! compose exec -T server true; then
+  if ! compose exec -T postgres true || ! compose exec -T server true; then
     echo "eval stack is not running; start it with the eval compose override" >&2
     return 1
   fi

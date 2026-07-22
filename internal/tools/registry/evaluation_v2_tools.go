@@ -20,7 +20,7 @@ func evalListV2KnowledgeRefs(ctx context.Context, deps Dependencies, profileID s
 		return nil, err
 	}
 	kind := strings.ToLower(stringInput(input["type"]))
-	page, err := deps.V2Evaluation.ListV2EvaluationRefs(ctx, repository.V2EvaluationListInput{
+	page, err := deps.Evaluation.ListV2EvaluationRefs(ctx, repository.V2EvaluationListInput{
 		TeamID: teamID,
 		Type:   kind,
 		Limit:  limit,
@@ -53,7 +53,7 @@ func evalGetV2KnowledgeItem(ctx context.Context, deps Dependencies, profileID, k
 	if err != nil {
 		return nil, err
 	}
-	return deps.V2Evaluation.GetV2EvaluationItem(ctx, repository.V2EvaluationGetInput{
+	return deps.Evaluation.GetV2EvaluationItem(ctx, repository.V2EvaluationGetInput{
 		TeamID: teamID,
 		Type:   kind,
 		ID:     id,
@@ -72,55 +72,42 @@ func evalActorTeamID(ctx context.Context, profileID string) (string, error) {
 }
 
 func evalListKnowledgeRefTypes(deps Dependencies) []string {
-	types := []string{
-		"fragment",
-		"claim",
-		"fact",
-		"community",
-		"dream",
-		"edge",
+	types := []string{"dream"}
+	if v2EvaluationKnowledgeTypesVisible(deps) {
+		types = append(types,
+			"evidence",
+			"relationship",
+			"entity",
+			"value",
+			"hypothesis",
+		)
 	}
-	if !v2EvaluationKnowledgeTypesVisible(deps) {
-		return types
-	}
-	return append(types,
-		"evidence",
-		"relationship",
-		"entity",
-		"value",
-		"hypothesis",
-	)
+	return types
 }
 
 func evalGetKnowledgeItemTypes(deps Dependencies) []string {
-	types := []string{
-		"fragment",
-		"claim",
-		"fact",
-		"community",
-		"dream",
+	types := []string{"dream"}
+	if v2EvaluationKnowledgeTypesVisible(deps) {
+		types = append(types,
+			"evidence",
+			"relationship",
+			"entity",
+			"value",
+			"hypothesis",
+		)
 	}
-	if !v2EvaluationKnowledgeTypesVisible(deps) {
-		return types
-	}
-	return append(types,
-		"evidence",
-		"relationship",
-		"entity",
-		"value",
-		"hypothesis",
-	)
+	return types
 }
 
 func v2EvaluationKnowledgeTypesVisible(deps Dependencies) bool {
-	return deps.V2Evaluation != nil && deps.V2EvaluationEnabled
+	return deps.Evaluation != nil && deps.EvaluationEnabled
 }
 
 func requireV2EvaluationKnowledgeTypesVisible(deps Dependencies) error {
-	if deps.V2Evaluation == nil {
+	if deps.Evaluation == nil {
 		return ErrToolUnavailable
 	}
-	if !deps.V2EvaluationEnabled {
+	if !deps.EvaluationEnabled {
 		return ErrToolDisabled
 	}
 	return nil
@@ -128,10 +115,6 @@ func requireV2EvaluationKnowledgeTypesVisible(deps Dependencies) error {
 
 func evalScoredKnowledgeRefTypes() []string {
 	return []string{
-		"fragment",
-		"claim",
-		"fact",
-		"community",
 		"dream",
 		"evidence",
 		"relationship",

@@ -180,12 +180,12 @@ func (v *OpenAIVerifier) ProposeV2Semantic(ctx context.Context, req V2ProviderPr
 	return proposal, nil
 }
 
-func (v *OpenAIVerifier) ReviewV2Semantic(ctx context.Context, req V2SemanticReviewRequest) (V2SemanticReviewResponse, error) {
+func (v *OpenAIVerifier) ReviewSemantic(ctx context.Context, req V2SemanticReviewRequest) (V2SemanticReviewResponse, error) {
 	prepared, validationErrors := PrepareV2SemanticReviewRequest(req)
 	if len(validationErrors) > 0 {
 		return V2SemanticReviewResponse{}, &ProviderError{
 			Provider: openAIVerifierProvider,
-			Message:  "invalid v2 semantic review request: " + openAIV2ValidationSummary(validationErrors),
+			Message:  "invalid semantic review request: " + openAIV2ValidationSummary(validationErrors),
 		}
 	}
 	rawContent, err := v.openAIStructuredChatJSON(ctx, V2VerifierResponseSchemaName, V2VerifierResponseSchema(), openAIV2SemanticReviewPrompt, prepared)
@@ -196,7 +196,7 @@ func (v *OpenAIVerifier) ReviewV2Semantic(ctx context.Context, req V2SemanticRev
 	if err != nil {
 		return V2SemanticReviewResponse{}, &MalformedResponseError{
 			Provider: openAIVerifierProvider,
-			Message:  "failed to parse v2 semantic review response",
+			Message:  "failed to parse semantic review response",
 			RawJSON:  rawContent,
 		}
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -13,9 +12,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	appservice "github.com/markhuangai/dense-mem/internal/service"
-	"github.com/markhuangai/dense-mem/internal/service/claimservice"
-	"github.com/markhuangai/dense-mem/internal/service/factservice"
-	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 	"github.com/markhuangai/dense-mem/internal/service/recallquality"
 )
 
@@ -92,18 +88,8 @@ func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 				return nil, err
 			}
 			switch kind {
-			case "fragment":
-				return evalListFragments(ctx, deps, profileID, input, limit, metadataOnly)
-			case "claim":
-				return evalListClaims(ctx, deps, profileID, input, limit, metadataOnly)
-			case "fact":
-				return evalListFacts(ctx, deps, profileID, input, limit, metadataOnly)
-			case "community":
-				return evalListCommunities(ctx, deps, profileID, limit, metadataOnly)
 			case "dream":
 				return evalListDreams(ctx, deps, profileID, input, limit, metadataOnly)
-			case "edge":
-				return evalListEdges(ctx, deps, profileID, limit)
 			case "evidence", "relationship", "entity", "value", "hypothesis":
 				if err := requireV2EvaluationKnowledgeTypesVisible(deps); err != nil {
 					return nil, err
@@ -328,175 +314,8 @@ func evalScoreRetrievalCaseTool(deps Dependencies) Tool {
 	}
 }
 
-func evalListFragments(ctx context.Context, deps Dependencies, profileID string, input map[string]any, limit int, metadataOnly bool) (map[string]any, error) {
-	if deps.FragmentList == nil {
-		return nil, ErrToolUnavailable
-	}
-	opts := fragmentservice.ListOptions{Limit: limit}
-	if cursor, ok := input["cursor"].(string); ok {
-		opts.Cursor = cursor
-	}
-	fragments, nextCursor, err := deps.FragmentList.List(ctx, profileID, opts)
-	if err != nil {
-		return nil, err
-	}
-	items := make([]map[string]any, 0, len(fragments))
-	for i := range fragments {
-		item, err := structToMap(&fragments[i])
-		if err != nil {
-			return nil, err
-		}
-		if metadataOnly {
-			stripEvalContent("fragment", item)
-		}
-		items = append(items, item)
-	}
-	return evalPage(items, nextCursor), nil
-}
-
-func evalListClaims(ctx context.Context, deps Dependencies, profileID string, input map[string]any, limit int, metadataOnly bool) (map[string]any, error) {
-	status, _ := input["status"].(string)
-	if deps.ClaimListFiltered != nil {
-		opts := claimservice.ListClaimOptions{Limit: limit, Status: status}
-		if cursor, ok := input["cursor"].(string); ok {
-			opts.Cursor = cursor
-		}
-		result, err := deps.ClaimListFiltered.List(ctx, profileID, opts)
-		if err != nil {
-			return nil, err
-		}
-		items, err := claimItems(result.Items, metadataOnly)
-		if err != nil {
-			return nil, err
-		}
-		return evalPage(items, result.NextCursor), nil
-	}
-	if deps.ClaimList == nil {
-		return nil, ErrToolUnavailable
-	}
-	offset := cursorOffset(input["cursor"])
-	claims, total, err := deps.ClaimList.List(ctx, profileID, limit, offset)
-	if err != nil {
-		return nil, err
-	}
-	items, err := claimItems(claims, metadataOnly)
-	if err != nil {
-		return nil, err
-	}
-	nextCursor := ""
-	if offset+len(claims) < total {
-		nextCursor = strconv.Itoa(offset + len(claims))
-	}
-	return evalPage(items, nextCursor), nil
-}
-
-func evalListFacts(ctx context.Context, deps Dependencies, profileID string, input map[string]any, limit int, metadataOnly bool) (map[string]any, error) {
-	if deps.FactList == nil {
-		return nil, ErrToolUnavailable
-	}
-	filters := factservice.FactListFilters{}
-	if status, ok := input["status"].(string); ok && status != "" {
-		filters.Status = domain.FactStatus(status)
-	}
-	cursor, _ := input["cursor"].(string)
-	facts, nextCursor, err := deps.FactList.List(ctx, profileID, filters, limit, cursor)
-	if err != nil {
-		return nil, err
-	}
-	items := make([]map[string]any, 0, len(facts))
-	for _, fact := range facts {
-		item, err := structToMap(fact)
-		if err != nil {
-			return nil, err
-		}
-		if metadataOnly {
-			stripEvalContent("fact", item)
-		}
-		items = append(items, item)
-	}
-	return evalPage(items, nextCursor), nil
-}
-
-func evalListCommunities(ctx context.Context, deps Dependencies, profileID string, limit int, metadataOnly bool) (map[string]any, error) {
-	if deps.CommunityList == nil {
-		return nil, ErrToolUnavailable
-	}
-	communities, err := deps.CommunityList.List(ctx, profileID, limit)
-	if err != nil {
-		return nil, err
-	}
-	items := make([]map[string]any, 0, len(communities))
-	for _, community := range communities {
-		item, err := structToMap(community)
-		if err != nil {
-			return nil, err
-		}
-		if metadataOnly {
-			stripEvalContent("community", item)
-		}
-		items = append(items, item)
-	}
-	return evalPage(items, ""), nil
-}
-
-func evalListEdges(ctx context.Context, deps Dependencies, profileID string, limit int) (map[string]any, error) {
-	if deps.GraphQuery == nil {
-		return nil, ErrToolUnavailable
-	}
-	query := fmt.Sprintf(`
-MATCH (a {team_id: $profileId})-[rel]->(b {team_id: $profileId})
-WHERE rel.team_id = $profileId
-RETURN type(rel) AS edge_type,
-       labels(a) AS from_labels,
-       coalesce(a.fact_id, a.claim_id, a.fragment_id, a.community_id, '') AS from_id,
-       labels(b) AS to_labels,
-       coalesce(b.fact_id, b.claim_id, b.fragment_id, b.community_id, '') AS to_id
-LIMIT %d`, limit)
-	res, err := deps.GraphQuery.Execute(ctx, profileID, query, nil)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"items": res.Rows, "next_cursor": "", "has_more": false}, nil
-}
-
 func evalGetKnowledgeItem(ctx context.Context, deps Dependencies, profileID, kind, id string) (map[string]any, error) {
 	switch kind {
-	case "fragment":
-		if deps.FragmentGet == nil {
-			return nil, ErrToolUnavailable
-		}
-		fragment, err := deps.FragmentGet.GetByID(ctx, profileID, id)
-		if err != nil {
-			return nil, err
-		}
-		return structToMap(fragment)
-	case "claim":
-		if deps.ClaimGet == nil {
-			return nil, ErrToolUnavailable
-		}
-		claim, err := deps.ClaimGet.Get(ctx, profileID, id)
-		if err != nil {
-			return nil, err
-		}
-		return structToMap(claim)
-	case "fact":
-		if deps.FactGet == nil {
-			return nil, ErrToolUnavailable
-		}
-		fact, err := deps.FactGet.Get(ctx, profileID, id)
-		if err != nil {
-			return nil, err
-		}
-		return structToMap(fact)
-	case "community":
-		if deps.CommunityGet == nil {
-			return nil, ErrToolUnavailable
-		}
-		community, err := deps.CommunityGet.Get(ctx, profileID, id)
-		if err != nil {
-			return nil, err
-		}
-		return structToMap(community)
 	case "dream":
 		if deps.Dreams == nil {
 			return nil, ErrToolUnavailable
@@ -629,21 +448,6 @@ func evalPage(items []map[string]any, nextCursor string) map[string]any {
 		"next_cursor": nextCursor,
 		"has_more":    nextCursor != "",
 	}
-}
-
-func claimItems(claims []*domain.Claim, metadataOnly bool) ([]map[string]any, error) {
-	items := make([]map[string]any, 0, len(claims))
-	for _, claim := range claims {
-		item, err := structToMap(claim)
-		if err != nil {
-			return nil, err
-		}
-		if metadataOnly {
-			stripEvalContent("claim", item)
-		}
-		items = append(items, item)
-	}
-	return items, nil
 }
 
 func stripEvalContent(kind string, item map[string]any) {
@@ -780,14 +584,6 @@ func boolInputOrDefault(value any, fallback bool) bool {
 func stringInput(value any) string {
 	parsed, _ := value.(string)
 	return strings.TrimSpace(parsed)
-}
-
-func cursorOffset(value any) int {
-	offset, err := strconv.Atoi(stringInput(value))
-	if err != nil || offset < 0 {
-		return 0
-	}
-	return offset
 }
 
 func firstNonEmpty(values ...string) string {

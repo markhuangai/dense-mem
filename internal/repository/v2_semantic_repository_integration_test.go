@@ -696,7 +696,7 @@ func TestV2SemanticOneCardinalitySupersedesPriorActiveRelationship(t *testing.T)
 
 	denseMem := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense-Mem")
 	postgres := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "PostgreSQL")
-	neo4j := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "Neo4j")
+	graphdb := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "GraphDB")
 	firstIngest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
 		"primary database postgres", "Dense-Mem uses PostgreSQL as its primary database.")
 	first := applyV2SemanticDecision(t, ctx, semanticRepo, V2ApplyRelationshipDecisionInput{
@@ -717,19 +717,19 @@ func TestV2SemanticOneCardinalitySupersedesPriorActiveRelationship(t *testing.T)
 	require.Equal(t, "active", first.Relationship.Status)
 
 	secondIngest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
-		"primary database neo4j", "Dense-Mem used Neo4j as its primary database before V2.")
+		"primary database graphdb", "Dense-Mem used GraphDB as its primary database before V2.")
 	second := applyV2SemanticDecision(t, ctx, semanticRepo, V2ApplyRelationshipDecisionInput{
 		TeamID:          teamID,
 		OwnerProfileID:  ownerID,
 		IngestID:        secondIngest.IngestID,
 		SubjectEntityID: denseMem.EntityID,
 		PredicateKey:    "primary_database",
-		ObjectEntityID:  neo4j.EntityID,
+		ObjectEntityID:  graphdb.EntityID,
 		Support: &V2EvidenceSupportInput{
 			FragmentID:     secondIngest.Evidence[0].FragmentID,
 			SourceGroupKey: "conversation:primary-db-2",
 			SpanStart:      0,
-			SpanEnd:        len("Dense-Mem used Neo4j as its primary database before V2."),
+			SpanEnd:        len("Dense-Mem used GraphDB as its primary database before V2."),
 			Authority:      "primary",
 		},
 	})

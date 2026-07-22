@@ -1,10 +1,5 @@
 # Dense-Mem public demo compose example.
 #
-# Download this file as docker-compose.yml when you want to host the disposable
-# 24-hour demo service:
-#   curl -fsSLo docker-compose.yml \
-#     https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/docker-compose.demo.yml
-#
 # This stack runs the separate demo image, not the official release image:
 #   ghcr.io/markhuangai/dense-mem:demo
 #
@@ -12,15 +7,11 @@
 #   POSTGRES_PASSWORD
 #   AI_API_KEY
 #
-# Set DEMO_PUBLIC_BASE_URL when serving behind a real public URL, for example:
+# Set DEMO_PUBLIC_BASE_URL when serving behind a public URL, for example:
 #   DEMO_PUBLIC_BASE_URL=https://demo-dense-mem.example.com
 #
 # The demo is for disposable test data only. It provisions isolated teams with
 # expiring API keys, enforces demo quotas, and runs cleanup every 10 minutes.
-# Do not use this compose file to host production memory data.
-#
-# Fresh demo installs leave NEO4J_* unset and initialize PostgreSQL V2 directly.
-# Use the legacy-neo4j profile only when rehearsing a migration.
 
 services:
   postgres:
@@ -39,32 +30,6 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
-    restart: unless-stopped
-
-  neo4j:
-    profiles: ["legacy-neo4j"]
-    image: neo4j:5.26-community
-    environment:
-      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-password}
-      NEO4J_server_memory_heap_initial__size: 512m
-      NEO4J_server_memory_heap_max__size: 1g
-      NEO4J_server_memory_pagecache_size: 512m
-    volumes:
-      - demo-neo4j-data:/data
-      - demo-neo4j-logs:/logs
-    networks:
-      - private
-    healthcheck:
-      test:
-        - "CMD-SHELL"
-        - >
-          wget -q --spider http://127.0.0.1:7474
-          && cypher-shell -u "${NEO4J_USER:-neo4j}" -p "${NEO4J_PASSWORD:-password}" 'RETURN 1' >/dev/null 2>&1
-          || exit 1
-      interval: 10s
-      timeout: 10s
-      retries: 20
-      start_period: 60s
     restart: unless-stopped
 
   redis:
@@ -96,10 +61,6 @@ services:
       POSTGRES_MAX_OPEN_CONNS: ${POSTGRES_MAX_OPEN_CONNS:-25}
       POSTGRES_MAX_IDLE_CONNS: ${POSTGRES_MAX_IDLE_CONNS:-10}
       POSTGRES_CONN_MAX_LIFETIME_SECONDS: ${POSTGRES_CONN_MAX_LIFETIME_SECONDS:-1800}
-      NEO4J_URI: ${NEO4J_URI:-}
-      NEO4J_USER: ${NEO4J_USER:-}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-}
-      NEO4J_DATABASE: ${NEO4J_DATABASE:-}
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ""
       REDIS_DB: "0"
@@ -118,10 +79,6 @@ services:
       AUTH_VERIFY_MAX_CONCURRENCY: ${AUTH_VERIFY_MAX_CONCURRENCY:-8}
       HTTP_MAX_BODY_BYTES: ${HTTP_MAX_BODY_BYTES:-1048576}
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-100}
-      FRAGMENT_CREATE_RATE_LIMIT: ${FRAGMENT_CREATE_RATE_LIMIT:-60}
-      FRAGMENT_READ_RATE_LIMIT: ${FRAGMENT_READ_RATE_LIMIT:-300}
-      CLAIM_WRITE_RATE_LIMIT: ${CLAIM_WRITE_RATE_LIMIT:-60}
-      CLAIM_READ_RATE_LIMIT: ${CLAIM_READ_RATE_LIMIT:-300}
       SSE_HEARTBEAT_SECONDS: ${SSE_HEARTBEAT_SECONDS:-30}
       SSE_MAX_DURATION_SECONDS: ${SSE_MAX_DURATION_SECONDS:-300}
       SSE_MAX_CONCURRENT_STREAMS: ${SSE_MAX_CONCURRENT_STREAMS:-10}
@@ -145,8 +102,6 @@ services:
 
 volumes:
   demo-postgres-data:
-  demo-neo4j-data:
-  demo-neo4j-logs:
   demo-redis-data:
 
 networks:

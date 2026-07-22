@@ -418,11 +418,11 @@ func TestV2PlacementSemanticCommitAppendsCorrectionTargetCrossReference(t *testi
 	semanticRepo := NewV2SemanticRepository(appDB, rls)
 
 	denseMem := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "project", "Dense-Mem")
-	neo4j := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "Neo4j")
+	graphdb := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "GraphDB")
 	postgres := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "PostgreSQL")
 
 	targetIngest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerA,
-		"correction target neo4j", "Dense-Mem uses Neo4j.")
+		"correction target graphdb", "Dense-Mem uses GraphDB.")
 	targetClaim, err := ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "worker-target", time.Minute)
 	require.NoError(t, err)
 	require.Equal(t, targetIngest.PlacementRunID, targetClaim.PlacementRunID)
@@ -443,7 +443,7 @@ func TestV2PlacementSemanticCommitAppendsCorrectionTargetCrossReference(t *testi
 			{
 				MentionRef: "object",
 				Action:     "reuse",
-				EntityID:   neo4j.EntityID,
+				EntityID:   graphdb.EntityID,
 			},
 		},
 		RelationshipObservations: []V2PlacementRelationshipDecisionInput{{
@@ -455,8 +455,8 @@ func TestV2PlacementSemanticCommitAppendsCorrectionTargetCrossReference(t *testi
 				FragmentID:     targetIngest.Evidence[0].FragmentID,
 				SourceGroupKey: "conversation:correction-target",
 				SpanStart:      0,
-				SpanEnd:        len("Dense-Mem uses Neo4j."),
-				Quote:          "Dense-Mem uses Neo4j.",
+				SpanEnd:        len("Dense-Mem uses GraphDB."),
+				Quote:          "Dense-Mem uses GraphDB.",
 				Authority:      "primary",
 			},
 		}},

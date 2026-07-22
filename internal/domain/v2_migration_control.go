@@ -41,8 +41,6 @@ const (
 
 	V2MigrationItemKindEvidence = "evidence"
 
-	V2MigrationCheckpointLegacyNeo4jCursor = "legacy_neo4j_source_fragment_cursor"
-
 	V2MigrationTargetIngest        = "knowledge_ingest"
 	V2MigrationTargetPlacementItem = "placement_item"
 )

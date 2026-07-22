@@ -10,9 +10,9 @@ import (
 
 func testRegistry(t *testing.T) registry.Registry {
 	t.Helper()
-	reg, err := registry.BuildDefault(registry.Dependencies{})
+	reg, err := registry.BuildActive(registry.Dependencies{})
 	if err != nil {
-		t.Fatalf("BuildDefault: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	return reg
 }
@@ -210,9 +210,9 @@ func TestGenerator_SecuritySchemesPresent(t *testing.T) {
 }
 
 func TestGenerator_SchemasDerivedFromRegistry(t *testing.T) {
-	reg, err := registry.BuildDefault(registry.Dependencies{})
+	reg, err := registry.BuildActive(registry.Dependencies{})
 	if err != nil {
-		t.Fatalf("BuildDefault: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	g := New(reg, DefaultRoutes())
 	spec, err := g.Generate(SpecVariantFull)
@@ -512,7 +512,7 @@ func TestGenerateOmitsDirectPromoteRoute(t *testing.T) {
 }
 
 // TestGenerateOmitsRemovedControlPlaneRoutes verifies the generated specs no
-// longer surface the removed raw-Cypher HTTP path.
+// longer surface the removed raw graph-query HTTP path.
 func TestGenerateOmitsRemovedControlPlaneRoutes(t *testing.T) {
 	g := New(testRegistry(t), DefaultRoutes())
 
@@ -525,9 +525,9 @@ func TestGenerateOmitsRemovedControlPlaneRoutes(t *testing.T) {
 		t.Fatalf("paths missing or wrong type in ai-safe spec")
 	}
 	legacyControlPlaneSegment := "ad" + "min"
-	removedRawCypherPath := "/api/v1/" + legacyControlPlaneSegment + "/graph/query"
-	if _, present := aiSafePaths[removedRawCypherPath]; present {
-		t.Errorf("removed raw-Cypher path must NOT appear in ai-safe spec")
+	removedRawGraphPath := "/api/v1/" + legacyControlPlaneSegment + "/graph/query"
+	if _, present := aiSafePaths[removedRawGraphPath]; present {
+		t.Errorf("removed raw graph-query path must NOT appear in ai-safe spec")
 	}
 
 	full, err := g.Generate(SpecVariantFull)
@@ -538,8 +538,8 @@ func TestGenerateOmitsRemovedControlPlaneRoutes(t *testing.T) {
 	if !ok {
 		t.Fatalf("paths missing or wrong type in full spec")
 	}
-	if _, present := fullPaths[removedRawCypherPath]; present {
-		t.Errorf("removed raw-Cypher path must NOT appear in full spec")
+	if _, present := fullPaths[removedRawGraphPath]; present {
+		t.Errorf("removed raw graph-query path must NOT appear in full spec")
 	}
 }
 

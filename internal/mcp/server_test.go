@@ -12,7 +12,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/promptcatalog"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
@@ -561,104 +560,6 @@ func TestMCP_ToolsCallInvokesRegistry(t *testing.T) {
 	if !strings.Contains(text, `"id":"abc"`) || !strings.Contains(text, `"status":"created"`) {
 		t.Errorf("text payload missing fields: %s", text)
 	}
-}
-
-func TestMCP_MemoryToolsScopeProfileAndClarifications(t *testing.T) {
-	logger, _ := testLogger(t)
-	mem := &mcpMemoryStub{}
-	reg, err := registry.BuildDefault(registry.Dependencies{Memory: mem})
-	if err != nil {
-		t.Fatalf("BuildDefault: %v", err)
-	}
-
-	readOnly := NewServerWithScopes(reg, "profileA", []string{"read"}, logger)
-	listOut := runRPC(t, readOnly, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
-	if strings.Contains(listOut, `"remember"`) || strings.Contains(listOut, `"reflect_memories"`) || strings.Contains(listOut, `"confirm_memory"`) {
-		t.Fatalf("read-scoped list exposed write tools: %s", listOut)
-	}
-
-	readWrite := NewServerWithScopes(reg, "profileA", []string{"read", "write"}, logger)
-	callOut := runRPC(t, readWrite, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"remember","arguments":{"profile_id":"profileB","evidence":[{"content":"remember this"}]}}}`)
-	if mem.lastProfile != "profileA" {
-		t.Fatalf("memory tool profile = %q; want profileA", mem.lastProfile)
-	}
-	if strings.Contains(callOut, "profileB") {
-		t.Fatalf("caller-supplied profile_id leaked into MCP result: %s", callOut)
-	}
-	if !strings.Contains(callOut, `\"ingest_id\"`) || !strings.Contains(callOut, `\"queued\"`) {
-		t.Fatalf("placement payload missing from MCP result: %s", callOut)
-	}
-}
-
-func TestMCP_RememberAcceptsLegacyContentCallAsEvidence(t *testing.T) {
-	logger, _ := testLogger(t)
-	mem := &mcpMemoryStub{}
-	reg, err := registry.BuildDefault(registry.Dependencies{Memory: mem})
-	if err != nil {
-		t.Fatalf("BuildDefault: %v", err)
-	}
-	server := NewServerWithScopes(reg, "profileA", []string{"read", "write"}, logger)
-
-	out := runRPC(t, server, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"remember","arguments":{"content":"legacy client content","labels":["decision","security"],"source":"chat: compatibility","idempotency_key":"legacy-content-call","auto_promote":true,"claims":[{"subject":"client","predicate":"uses","object":"old remember shape","extract_conf":0.99,"resolution_conf":0.99}]}}}`)
-	if strings.Contains(out, `"error"`) {
-		t.Fatalf("legacy remember call failed: %s", out)
-	}
-	if len(mem.lastRemember.Evidence) != 1 {
-		t.Fatalf("remember evidence count = %d; want 1", len(mem.lastRemember.Evidence))
-	}
-	evidence := mem.lastRemember.Evidence[0]
-	if evidence.Content != "legacy client content" {
-		t.Fatalf("remember evidence content = %q", evidence.Content)
-	}
-	if evidence.Source != "chat: compatibility" || evidence.IdempotencyKey != "legacy-content-call" {
-		t.Fatalf("remember evidence provenance = %#v", evidence)
-	}
-	if len(evidence.Labels) != 2 || evidence.Labels[0] != "decision" || evidence.Labels[1] != "security" {
-		t.Fatalf("remember evidence labels = %#v", evidence.Labels)
-	}
-}
-
-type mcpMemoryStub struct {
-	lastProfile  string
-	lastRemember memoryservice.RememberRequest
-}
-
-func (s *mcpMemoryStub) Remember(ctx context.Context, profileID string, req memoryservice.RememberRequest) (*memoryservice.RememberResult, error) {
-	s.lastProfile = profileID
-	s.lastRemember = req
-	return &memoryservice.RememberResult{
-		IngestID: "ingest-1",
-		Status:   "queued",
-	}, nil
-}
-
-func (s *mcpMemoryStub) GetMemoryPlacement(ctx context.Context, profileID string, req memoryservice.PlacementStatusRequest) (*memoryservice.PlacementStatusResult, error) {
-	s.lastProfile = profileID
-	return &memoryservice.PlacementStatusResult{
-		Run: domain.MemoryPlacementRun{IngestID: req.IngestID, Status: domain.MemoryPlacementCompleted},
-	}, nil
-}
-
-func (s *mcpMemoryStub) DisputeMemoryPlacement(ctx context.Context, profileID string, req memoryservice.DisputeRequest) (*memoryservice.DisputeResult, error) {
-	s.lastProfile = profileID
-	return &memoryservice.DisputeResult{
-		Session: domain.MemoryDisputeSession{DisputeID: "dispute-1", Status: domain.MemoryDisputeOpen},
-	}, nil
-}
-
-func (s *mcpMemoryStub) ImportMemories(ctx context.Context, profileID string, req memoryservice.ImportRequest) (*memoryservice.RememberResult, error) {
-	s.lastProfile = profileID
-	return &memoryservice.RememberResult{Fragment: memoryservice.FragmentOutcome{ID: "fragment-import", Status: "created"}}, nil
-}
-
-func (s *mcpMemoryStub) Reflect(ctx context.Context, profileID string, req memoryservice.ReflectRequest) (*memoryservice.ReflectResult, error) {
-	s.lastProfile = profileID
-	return &memoryservice.ReflectResult{}, nil
-}
-
-func (s *mcpMemoryStub) ConfirmMemory(ctx context.Context, profileID string, req memoryservice.ConfirmRequest) (*memoryservice.ConfirmResult, error) {
-	s.lastProfile = profileID
-	return &memoryservice.ConfirmResult{ClaimID: req.ClaimID, Decision: req.Decision, Status: "accepted"}, nil
 }
 
 func TestMCP_ToolsCallUnknownToolReturnsError(t *testing.T) {

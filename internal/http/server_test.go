@@ -391,7 +391,7 @@ func TestHealthEndpoint_NoRedis_ReturnsDegraded200(t *testing.T) {
 		Reason:   "in-memory backend: no cross-instance rate limiting or session cleanup",
 		Checks: []HealthCheck{
 			{Name: "postgres", Check: func(ctx context.Context) error { return nil }},
-			{Name: "neo4j", Check: func(ctx context.Context) error { return nil }},
+			{Name: "pgvector", Check: func(ctx context.Context) error { return nil }},
 		},
 	})
 
@@ -434,7 +434,7 @@ func TestHealthEndpoint_RedisEnabled_ReturnsNonDegraded(t *testing.T) {
 		Checks: []HealthCheck{
 			{Name: "postgres", Check: func(ctx context.Context) error { return nil }},
 			{Name: "redis", Check: func(ctx context.Context) error { return nil }},
-			{Name: "neo4j", Check: func(ctx context.Context) error { return nil }},
+			{Name: "pgvector", Check: func(ctx context.Context) error { return nil }},
 		},
 	})
 
@@ -468,7 +468,7 @@ func TestHealthEndpoint_Degraded_ContainsChecks(t *testing.T) {
 		Reason:   "in-memory backend: no cross-instance rate limiting or session cleanup",
 		Checks: []HealthCheck{
 			{Name: "postgres", Check: func(ctx context.Context) error { return nil }},
-			{Name: "neo4j", Check: func(ctx context.Context) error { return nil }},
+			{Name: "pgvector", Check: func(ctx context.Context) error { return nil }},
 		},
 	})
 
@@ -489,7 +489,7 @@ func TestHealthEndpoint_Degraded_ContainsChecks(t *testing.T) {
 	if _, hasPostgres := deps["postgres"]; !hasPostgres {
 		t.Error("expected 'postgres' check in dependencies")
 	}
-	if _, hasNeo4j := deps["neo4j"]; !hasNeo4j {
-		t.Error("expected 'neo4j' check in dependencies")
+	if _, hasPGVector := deps["pgvector"]; !hasPGVector {
+		t.Error("expected 'pgvector' check in dependencies")
 	}
 }

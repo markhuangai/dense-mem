@@ -9,16 +9,16 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 )
 
-func TestBuildV2UATWiresExecutableMemoryPackTools(t *testing.T) {
-	stub := &stubV2SkillPackService{}
-	reg, err := BuildV2UAT(Dependencies{V2SkillPack: stub})
+func TestBuildActiveWiresExecutableMemoryPackTools(t *testing.T) {
+	stub := &stubMemoryPackService{}
+	reg, err := BuildActive(Dependencies{MemoryPack: stub})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 
 	find, ok := reg.Get(V2ToolFindMemoryPackCandidates)
 	if !ok || find.Invoke == nil {
-		t.Fatal("BuildV2UAT did not register executable find_memory_pack_candidates")
+		t.Fatal("BuildActive did not register executable find_memory_pack_candidates")
 	}
 	findOut, err := find.Invoke(v2ContractInvokeContext("read"), "ignored-profile", map[string]any{
 		"query": "PostgreSQL",
@@ -36,7 +36,7 @@ func TestBuildV2UATWiresExecutableMemoryPackTools(t *testing.T) {
 
 	export, ok := reg.Get(V2ToolExportMemoryPack)
 	if !ok || export.Invoke == nil {
-		t.Fatal("BuildV2UAT did not register executable export_memory_pack")
+		t.Fatal("BuildActive did not register executable export_memory_pack")
 	}
 	exportOut, err := export.Invoke(v2ContractInvokeContext("read"), "ignored-profile", map[string]any{
 		"name":             "PostgreSQL pack",
@@ -58,7 +58,7 @@ func TestBuildV2UATWiresExecutableMemoryPackTools(t *testing.T) {
 
 	inspect, ok := reg.Get(V2ToolInspectMemoryPack)
 	if !ok || inspect.Invoke == nil {
-		t.Fatal("BuildV2UAT did not register executable inspect_memory_pack")
+		t.Fatal("BuildActive did not register executable inspect_memory_pack")
 	}
 	inspectOut, err := inspect.Invoke(v2ContractInvokeContext("read"), "ignored-profile", map[string]any{
 		"artifact_json": "{}",
@@ -76,7 +76,7 @@ func TestBuildV2UATWiresExecutableMemoryPackTools(t *testing.T) {
 
 	importTool, ok := reg.Get(V2ToolImportMemoryPack)
 	if !ok || importTool.Invoke == nil {
-		t.Fatal("BuildV2UAT did not register executable import_memory_pack")
+		t.Fatal("BuildActive did not register executable import_memory_pack")
 	}
 	importOut, err := importTool.Invoke(v2ContractInvokeContext("write"), "ignored-profile", map[string]any{
 		"artifact_json": "{}",
@@ -94,7 +94,7 @@ func TestBuildV2UATWiresExecutableMemoryPackTools(t *testing.T) {
 
 	rollback, ok := reg.Get(V2ToolRollbackMemoryPackImport)
 	if !ok || rollback.Invoke == nil {
-		t.Fatal("BuildV2UAT did not register executable rollback_memory_pack_import")
+		t.Fatal("BuildActive did not register executable rollback_memory_pack_import")
 	}
 	rollbackOut, err := rollback.Invoke(v2ContractInvokeContext("write"), "ignored-profile", map[string]any{
 		"import_id": "import-v2",
@@ -111,14 +111,14 @@ func TestBuildV2UATWiresExecutableMemoryPackTools(t *testing.T) {
 	}
 }
 
-func TestBuildV2UATMemoryPackImportRejectsTenantOverride(t *testing.T) {
-	reg, err := BuildV2UAT(Dependencies{V2SkillPack: &stubV2SkillPackService{}})
+func TestBuildActiveMemoryPackImportRejectsTenantOverride(t *testing.T) {
+	reg, err := BuildActive(Dependencies{MemoryPack: &stubMemoryPackService{}})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	tool, ok := reg.Get(V2ToolImportMemoryPack)
 	if !ok {
-		t.Fatal("BuildV2UAT did not register import_memory_pack")
+		t.Fatal("BuildActive did not register import_memory_pack")
 	}
 	_, err = tool.Invoke(v2ContractInvokeContext("write"), "ignored-profile", map[string]any{
 		"team_id":       "attacker-team",
@@ -130,7 +130,7 @@ func TestBuildV2UATMemoryPackImportRejectsTenantOverride(t *testing.T) {
 	}
 }
 
-type stubV2SkillPackService struct {
+type stubMemoryPackService struct {
 	findReq     skillpackservice.V2FindCandidatesRequest
 	exportReq   skillpackservice.V2ExportRequest
 	inspectReq  skillpackservice.V2InspectRequest
@@ -140,7 +140,7 @@ type stubV2SkillPackService struct {
 
 const testV2MemoryPackHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-func (s *stubV2SkillPackService) FindCandidatesV2(_ context.Context, req skillpackservice.V2FindCandidatesRequest) (*skillpackservice.V2FindCandidatesResult, error) {
+func (s *stubMemoryPackService) FindCandidates(_ context.Context, req skillpackservice.V2FindCandidatesRequest) (*skillpackservice.V2FindCandidatesResult, error) {
 	s.findReq = req
 	return &skillpackservice.V2FindCandidatesResult{
 		Candidates: []skillpackservice.V2MemoryPackCandidate{{
@@ -154,7 +154,7 @@ func (s *stubV2SkillPackService) FindCandidatesV2(_ context.Context, req skillpa
 	}, nil
 }
 
-func (s *stubV2SkillPackService) ExportV2(_ context.Context, req skillpackservice.V2ExportRequest) (*skillpackservice.V2ExportResult, error) {
+func (s *stubMemoryPackService) Export(_ context.Context, req skillpackservice.V2ExportRequest) (*skillpackservice.V2ExportResult, error) {
 	s.exportReq = req
 	return &skillpackservice.V2ExportResult{
 		CanonicalJSON: `{"format":"dense-mem.memory-pack.v2"}`,
@@ -165,17 +165,17 @@ func (s *stubV2SkillPackService) ExportV2(_ context.Context, req skillpackservic
 	}, nil
 }
 
-func (s *stubV2SkillPackService) InspectV2(_ context.Context, req skillpackservice.V2InspectRequest) (*skillpackservice.V2InspectResult, error) {
+func (s *stubMemoryPackService) Inspect(_ context.Context, req skillpackservice.V2InspectRequest) (*skillpackservice.V2InspectResult, error) {
 	s.inspectReq = req
 	return &skillpackservice.V2InspectResult{
 		ArtifactHash: testV2MemoryPackHash,
-		Format:       skillpackservice.V2MemoryPackFormat,
+		Format:       skillpackservice.MemoryPackFormat,
 		Name:         "PostgreSQL pack",
 		ItemCount:    1,
 	}, nil
 }
 
-func (s *stubV2SkillPackService) ImportV2(_ context.Context, req skillpackservice.V2ImportRequest) (*skillpackservice.V2ImportResult, error) {
+func (s *stubMemoryPackService) Import(_ context.Context, req skillpackservice.V2ImportRequest) (*skillpackservice.V2ImportResult, error) {
 	s.importReq = req
 	return &skillpackservice.V2ImportResult{
 		ImportID:     "import-v2",
@@ -186,7 +186,7 @@ func (s *stubV2SkillPackService) ImportV2(_ context.Context, req skillpackservic
 	}, nil
 }
 
-func (s *stubV2SkillPackService) RollbackV2(_ context.Context, req skillpackservice.V2RollbackRequest) (*skillpackservice.V2RollbackResult, error) {
+func (s *stubMemoryPackService) Rollback(_ context.Context, req skillpackservice.V2RollbackRequest) (*skillpackservice.V2RollbackResult, error) {
 	s.rollbackReq = req
 	return &skillpackservice.V2RollbackResult{
 		ImportID: req.ImportID,
@@ -195,4 +195,4 @@ func (s *stubV2SkillPackService) RollbackV2(_ context.Context, req skillpackserv
 	}, nil
 }
 
-var _ skillpackservice.V2Service = (*stubV2SkillPackService)(nil)
+var _ skillpackservice.MemoryPackService = (*stubMemoryPackService)(nil)

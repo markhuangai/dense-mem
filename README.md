@@ -30,7 +30,6 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/MCP-Streamable_HTTP-111827?style=flat-square" alt="MCP Streamable HTTP" />
-  <img src="https://img.shields.io/badge/Neo4j-5.26-008CC1?style=flat-square&logo=neo4j&logoColor=white" alt="Neo4j 5.26" />
   <img src="https://img.shields.io/badge/PostgreSQL-18-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL 18" />
   <img src="https://img.shields.io/badge/OpenAPI-3.0-6BA539?style=flat-square&logo=openapiinitiative&logoColor=white" alt="OpenAPI 3.0" />
   <img src="https://visitor-badge.laobi.icu/badge?page_id=markhuangai.dense-mem&style=flat-square" alt="Visitors" />
@@ -115,10 +114,7 @@ docker compose exec server /app/provision-team --name "primary-memory"
 ```
 
 The base compose example provisions PostgreSQL with pgvector and the Dense-Mem
-server. Fresh installs leave `NEO4J_*` unset and initialize PostgreSQL V2
-directly. Legacy migration rehearsals can enable Neo4j explicitly with
-`--profile legacy-neo4j` and `NEO4J_URI=bolt://neo4j:7687`. The base stack
-exposes only local host ports:
+server. The base stack exposes only local host ports:
 
 ```text
 MCP/API:        http://127.0.0.1:8080/mcp
@@ -129,7 +125,7 @@ Control portal: http://127.0.0.1:8090/
 The user portal includes recall, facts, claims, fragments, communities, dreams,
 and a bounded graph explorer for seeing facts, claims, evidence fragments, and
 dream hypotheses as connected memory. The graph view is a read-scoped UI
-endpoint, not a raw Cypher or unrestricted traversal API.
+endpoint, not a raw database query or unrestricted traversal API.
 
 Cold image pulls can take longer than 60 seconds. Redis and public HTTPS are
 intentionally omitted from the base example; use the expert example when you
@@ -242,23 +238,6 @@ or false dreams should be resolved through `resolve_dream_feedback`, which
 records dream-specific telemetry and routes the confirmation evidence through
 normal memory placement. Normal production recall traffic still contributes
 request volume, result count, and latency.
-
-For the disposable demo image, keep the control portal disabled and use the
-demo telemetry overlay instead:
-
-```bash
-curl -fsSLo prometheus.demo.yml \
-  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/prometheus.demo.yml
-curl -fsSLo docker-compose.demo.telemetry.yml \
-  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/docker-compose.demo.telemetry.yml
-
-export TELEMETRY_SCRAPE_TOKEN="$(openssl rand -hex 32)"
-docker compose -f docker-compose.yml -f docker-compose.demo.telemetry.yml up -d
-```
-
-The demo overlay scrapes the demo service at `demo:8091` on the private Compose
-network and sets `TELEMETRY_PROMETHEUS_JOB=dense-mem-demo`. Do not publish that
-metrics listener publicly.
 
 ## Compare
 

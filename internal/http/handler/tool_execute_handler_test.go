@@ -20,12 +20,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service/claimservice"
-	"github.com/markhuangai/dense-mem/internal/service/communityservice"
-	"github.com/markhuangai/dense-mem/internal/service/factservice"
-	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
-	"github.com/markhuangai/dense-mem/internal/service/recallservice"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
@@ -332,7 +327,7 @@ func TestToolExecuteHandler_RejectsTenantFieldsForV2ContractTools(t *testing.T) 
 }
 
 func TestToolExecuteHandler_ReturnsNotFoundForMCPOnlyV2MemoryHTTPView(t *testing.T) {
-	uat, err := registry.BuildV2UAT(registry.Dependencies{})
+	uat, err := registry.BuildActive(registry.Dependencies{})
 	require.NoError(t, err)
 	httpReg, err := registry.HTTPRegistryView(uat)
 	require.NoError(t, err)
@@ -507,7 +502,7 @@ func TestToolExecuteHandler_MapsEmbeddingFailureToServiceUnavailable(t *testing.
 		InputSchema:    map[string]any{"type": "object", "required": []string{"content"}, "properties": map[string]any{"content": map[string]any{"type": "string"}}, "additionalProperties": false},
 		RequiredScopes: []string{"write"},
 		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
-			return nil, fragmentservice.ErrEmbeddingFailed
+			return nil, embedding.ErrEmbeddingProvider
 		},
 	})
 	require.NoError(t, err)
@@ -791,30 +786,14 @@ func TestMapToolExecuteError(t *testing.T) {
 	}{
 		{"tool unavailable", registry.ErrToolUnavailable, httperr.SERVICE_UNAVAILABLE},
 		{"tool disabled", registry.ErrToolDisabled, httperr.NOT_FOUND},
-		{"supporting fragment missing", claimservice.ErrSupportingFragmentMissing, httperr.ErrSupportingFragmentMissing},
-		{"claim not found", claimservice.ErrClaimNotFound, httperr.ErrClaimNotFound},
-		{"fact not found", factservice.ErrFactNotFound, httperr.ErrFactNotFound},
-		{"fragment not found", fragmentservice.ErrFragmentNotFound, httperr.NOT_FOUND},
-		{"v2 remember conflict", memoryservice.ErrV2RememberConflict, httperr.CONFLICT},
+		{"remember conflict", memoryservice.ErrRememberConflict, httperr.CONFLICT},
 		{"embedding timeout", embedding.ErrEmbeddingTimeout, httperr.SERVICE_UNAVAILABLE},
 		{"embedding provider", embedding.ErrEmbeddingProvider, httperr.SERVICE_UNAVAILABLE},
 		{"embedding rate limit", embedding.ErrEmbeddingRateLimit, httperr.SERVICE_UNAVAILABLE},
-		{"fragment embedding failed", fragmentservice.ErrEmbeddingFailed, httperr.SERVICE_UNAVAILABLE},
-		{"community unavailable", communityservice.ErrCommunityUnavailable, httperr.SERVICE_UNAVAILABLE},
-		{"community graph too large", communityservice.ErrCommunityGraphTooLarge, httperr.ErrCommunityGraphTooLarge},
-		{"community not found", communityservice.ErrCommunityNotFound, httperr.NOT_FOUND},
-		{"predicate not policed", factservice.ErrPredicateNotPoliced, httperr.ErrPredicateNotPoliced},
-		{"unsupported policy", factservice.ErrUnsupportedPolicy, httperr.ErrUnsupportedPolicy},
-		{"claim not validated", factservice.ErrClaimNotValidated, httperr.ErrNeedsClaimValidated},
-		{"gate rejected", factservice.ErrGateRejected, httperr.ErrGateRejected},
-		{"promotion deferred disputed", factservice.ErrPromotionDeferredDisputed, httperr.ErrComparableDisputed},
-		{"promotion rejected", factservice.ErrPromotionRejected, httperr.ErrRejectedWeaker},
 		{"verifier rate limit", verifier.ErrVerifierRateLimit, httperr.ErrVerifierRateLimit},
 		{"verifier timeout", verifier.ErrVerifierTimeout, httperr.ErrVerifierTimeout},
 		{"verifier provider", verifier.ErrVerifierProvider, httperr.ErrVerifierProvider},
 		{"verifier malformed", verifier.ErrVerifierMalformedResponse, httperr.ErrVerifierMalformedResponse},
-		{"recall embedding", recallservice.ErrEmbeddingUnavailable, httperr.SERVICE_UNAVAILABLE},
-		{"recall keyword", recallservice.ErrKeywordUnavailable, httperr.SERVICE_UNAVAILABLE},
 		{"validation string", errors.New("field is required"), httperr.VALIDATION_ERROR},
 		{"default", errors.New("database exploded"), httperr.INTERNAL_ERROR},
 	}

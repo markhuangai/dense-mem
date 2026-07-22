@@ -18,10 +18,6 @@
 #   DENSE_MEM_DOMAIN
 #   ACME_EMAIL
 #
-# Fresh installs leave NEO4J_* unset and initialize PostgreSQL V2 directly.
-# For a legacy migration rehearsal, set NEO4J_URI=bolt://neo4j:7687 plus
-# NEO4J_USER/NEO4J_PASSWORD and start compose with --profile legacy-neo4j.
-
 services:
   traefik:
     profiles: ["traefik"]
@@ -72,37 +68,6 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  neo4j:
-    profiles: ["legacy-neo4j"]
-    image: neo4j:5.26-community
-    environment:
-      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-password}
-      NEO4J_PLUGINS: '["graph-data-science"]'
-      NEO4J_server_memory_heap_initial__size: 512m
-      NEO4J_server_memory_heap_max__size: 1g
-      NEO4J_server_memory_pagecache_size: 512m
-    volumes:
-      - neo4j-data:/data
-      - neo4j-logs:/logs
-      - neo4j-plugins:/plugins
-    ports:
-      - "127.0.0.1:${NEO4J_HTTP_PORT:-7474}:7474"
-      - "127.0.0.1:${NEO4J_BOLT_PORT:-7687}:7687"
-    networks:
-      - private
-    healthcheck:
-      test:
-        - "CMD-SHELL"
-        - >
-          wget -q --spider http://127.0.0.1:7474
-          && cypher-shell -u "${NEO4J_USER:-neo4j}" -p "${NEO4J_PASSWORD:-password}" 'RETURN 1' >/dev/null 2>&1
-          || exit 1
-      interval: 10s
-      timeout: 10s
-      retries: 20
-      start_period: 60s
-    restart: unless-stopped
-
   redis:
     profiles: ["redis"]
     image: redis:7-alpine
@@ -139,10 +104,6 @@ services:
       POSTGRES_MAX_OPEN_CONNS: ${POSTGRES_MAX_OPEN_CONNS:-25}
       POSTGRES_MAX_IDLE_CONNS: ${POSTGRES_MAX_IDLE_CONNS:-10}
       POSTGRES_CONN_MAX_LIFETIME_SECONDS: ${POSTGRES_CONN_MAX_LIFETIME_SECONDS:-1800}
-      NEO4J_URI: ${NEO4J_URI:-}
-      NEO4J_USER: ${NEO4J_USER:-}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-}
-      NEO4J_DATABASE: ${NEO4J_DATABASE:-}
       REDIS_ADDR: ${REDIS_ADDR:-}
       REDIS_TLS_ENABLED: ${REDIS_TLS_ENABLED:-false}
       DISTRIBUTED_COORDINATION_REQUIRED: ${DISTRIBUTED_COORDINATION_REQUIRED:-false}
@@ -159,8 +120,6 @@ services:
       AI_VERIFIER_MAX_CONCURRENCY: ${AI_VERIFIER_MAX_CONCURRENCY:-5}
       HTTP_MAX_BODY_BYTES: ${HTTP_MAX_BODY_BYTES:-1048576}
       AUTH_VERIFY_MAX_CONCURRENCY: ${AUTH_VERIFY_MAX_CONCURRENCY:-8}
-      GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS: ${GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS:-10}
-      GRAPH_QUERY_MAX_TIMEOUT_SECONDS: ${GRAPH_QUERY_MAX_TIMEOUT_SECONDS:-30}
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-100}
       SSE_HEARTBEAT_SECONDS: ${SSE_HEARTBEAT_SECONDS:-30}
       SSE_MAX_DURATION_SECONDS: ${SSE_MAX_DURATION_SECONDS:-300}
@@ -205,9 +164,6 @@ services:
 volumes:
   traefik-acme:
   postgres-data:
-  neo4j-data:
-  neo4j-logs:
-  neo4j-plugins:
   redis-data:
 
 networks:

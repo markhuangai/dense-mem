@@ -50,10 +50,6 @@ type testRateLimitConfig struct {
 }
 
 func (c *testRateLimitConfig) GetPostgresDSN() string            { return "" }
-func (c *testRateLimitConfig) GetNeo4jURI() string               { return "" }
-func (c *testRateLimitConfig) GetNeo4jUser() string              { return "" }
-func (c *testRateLimitConfig) GetNeo4jPassword() string          { return "" }
-func (c *testRateLimitConfig) GetNeo4jDatabase() string          { return "" }
 func (c *testRateLimitConfig) GetRedisAddr() string              { return "" }
 func (c *testRateLimitConfig) GetRedisPassword() string          { return "" }
 func (c *testRateLimitConfig) GetRedisDB() int                   { return 0 }
@@ -157,10 +153,6 @@ type redisRateLimitConfig struct {
 }
 
 func (c *redisRateLimitConfig) GetPostgresDSN() string                 { return "" }
-func (c *redisRateLimitConfig) GetNeo4jURI() string                    { return "" }
-func (c *redisRateLimitConfig) GetNeo4jUser() string                   { return "" }
-func (c *redisRateLimitConfig) GetNeo4jPassword() string               { return "" }
-func (c *redisRateLimitConfig) GetNeo4jDatabase() string               { return "" }
 func (c *redisRateLimitConfig) GetRedisAddr() string                   { return c.addr }
 func (c *redisRateLimitConfig) GetRedisPassword() string               { return c.password }
 func (c *redisRateLimitConfig) GetRedisDB() int                        { return c.db }

@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestV2SemanticTraceRelationshipHydratesLineageAndBoundedGraph(t *testing.T) {
+func TestSemanticTraceRelationshipHydratesLineageAndBoundedGraph(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()

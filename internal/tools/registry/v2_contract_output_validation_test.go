@@ -19,7 +19,7 @@ func TestV2TraceContractOutputMapsCompletePublicLineage(t *testing.T) {
 	validTo := now.Add(time.Hour)
 	confidence := 0.91
 
-	out, err := v2TraceContractOutput(&contextservice.V2SemanticTrace{
+	out, err := v2TraceContractOutput(&contextservice.SemanticTrace{
 		Relationship: &repository.V2RelationshipTraceRecord{
 			RelationshipID:   "rel-1",
 			OwnerProfileID:   "owner-1",
@@ -198,8 +198,8 @@ func TestV2AuxiliaryContractOutputsMapPublicShapes(t *testing.T) {
 		t.Fatalf("dream output = %#v", dreamOut)
 	}
 	feedback := v2ResolveDreamFeedbackContractOutput(&dreamservice.ResolveFeedbackResult{
-		Dream:    dream,
-		V2Memory: &memoryservice.V2RememberResult{IngestID: "ingest-v2"},
+		Dream:  dream,
+		Memory: &memoryservice.V2RememberResult{IngestID: "ingest-v2"},
 	})
 	if err := ValidateInput(Tool{InputSchema: v2ResolveDreamFeedbackOutputSchema()}, feedback); err != nil {
 		t.Fatalf("dream feedback output validation failed: %v; output=%#v", err, feedback)
@@ -248,7 +248,7 @@ func TestV2AuxiliaryContractOutputsMapPublicShapes(t *testing.T) {
 
 	inspected := v2InspectMemoryPackContractOutput(&skillpackservice.V2InspectResult{
 		ArtifactHash:   hash,
-		Format:         skillpackservice.V2MemoryPackFormat,
+		Format:         skillpackservice.MemoryPackFormat,
 		ItemCount:      2,
 		SelectedCount:  1,
 		SupportSummary: skillpackservice.V2SupportSummary{FragmentCount: 1, SupportCount: 1},

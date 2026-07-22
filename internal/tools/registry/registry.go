@@ -29,17 +29,17 @@ type ToolInputNormalizer func(input map[string]any) map[string]any
 
 // Tool is the metadata + executor bundle for a single registered tool.
 type Tool struct {
-	Name           string
-	Description    string
-	InputSchema    map[string]any
-	OutputSchema   map[string]any
-	RequiredScopes []string
+	Name            string
+	Description     string
+	InputSchema     map[string]any
+	OutputSchema    map[string]any
+	RequiredScopes  []string
 	ContractVersion string
 	FeatureGate     string
 	Visibility      string
-	Invoke         ToolInvoker
-	NormalizeInput ToolInputNormalizer
-	Aliases        []string
+	Invoke          ToolInvoker
+	NormalizeInput  ToolInputNormalizer
+	Aliases         []string
 }
 
 // Registry holds a set of Tools and answers register/list/get queries.

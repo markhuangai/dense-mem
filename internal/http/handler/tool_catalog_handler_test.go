@@ -178,9 +178,9 @@ func TestToolCatalogHandler_ReturnsEmptyListForEmptyRegistry(t *testing.T) {
 }
 
 func TestToolCatalogHandler_FullV2Surface(t *testing.T) {
-	reg, err := registry.BuildDefault(registry.Dependencies{})
+	reg, err := registry.BuildActive(registry.Dependencies{})
 	if err != nil {
-		t.Fatalf("BuildDefault: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	h := NewToolCatalogHandler(reg)
 
@@ -196,23 +196,20 @@ func TestToolCatalogHandler_FullV2Surface(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	expected := []string{
-		"assemble_context",
-		"confirm_memory",
-		"dispute_memory_placement",
-		"export_memory_pack",
-		"find_memory_pack_candidates",
-		"get_dream",
-		"get_memory_placement",
-		"import_memories",
-		"import_memory_pack",
-		"inspect_memory_pack",
-		"list_dreams",
-		"recall_memory",
-		"reflect_memories",
-		"remember",
-		"resolve_dream_feedback",
-		"rollback_memory_pack_import",
-		"trace_memory",
+		registry.V2ToolCorrectEntityResolution,
+		registry.V2ToolExportMemoryPack,
+		registry.V2ToolFindMemoryPackCandidates,
+		registry.V2ToolGetDream,
+		registry.V2ToolGetMemoryPlacement,
+		registry.V2ToolImportMemoryPack,
+		registry.V2ToolInspectMemoryPack,
+		registry.V2ToolListDreams,
+		registry.V2ToolRecallMemory,
+		registry.V2ToolRemember,
+		registry.V2ToolResolveDreamFeedback,
+		registry.V2ToolResolveMemoryPlacement,
+		registry.V2ToolRollbackMemoryPackImport,
+		registry.V2ToolTraceMemory,
 	}
 	got := make([]string, 0, len(resp.Tools))
 	for _, te := range resp.Tools {
@@ -226,9 +223,9 @@ func TestToolCatalogHandler_FullV2Surface(t *testing.T) {
 }
 
 func TestToolCatalogHandler_HidesMCPOnlyV2MemoryToolsFromHTTPView(t *testing.T) {
-	uat, err := registry.BuildV2UAT(registry.Dependencies{})
+	uat, err := registry.BuildActive(registry.Dependencies{})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	httpReg, err := registry.HTTPRegistryView(uat)
 	if err != nil {

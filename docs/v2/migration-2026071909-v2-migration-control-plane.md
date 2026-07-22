@@ -2,25 +2,23 @@
 
 ## Scope
 
-Adds dormant PostgreSQL state for the V2 legacy-corpus migration protocol:
+Adds PostgreSQL state for the V2 legacy-corpus migration protocol:
 
 - migration runs, corpus items, source maps, checkpoints, errors, exclusions,
   gate results, and operator actions
 - compatibility and cutover markers
-- a private control-portal API for status, preflight approval, start, pause,
-  and resume commands
-- internal control services that remain unwired from normal production boot
+- a private control-portal API for status and operator approval commands
 
-This migration does not read Neo4j corpus rows, execute the official migration,
-write a cutover marker, or switch active remember/recall/trace authority.
+This migration does not read legacy corpus rows, execute the official
+migration, write a cutover marker, or switch active remember/recall/trace
+authority. Issue #95 removed the runtime migration executor and normal boot no
+longer links the legacy graph adapter.
 
 ## Boot Boundary
 
-Default production behavior stays v1-active in this PR. The server still
-requires Neo4j configuration and does not expose an environment switch that can
-activate V2 migration services, V2 evaluation data, or a V2-only UAT runtime.
-#94 owns the forced migration boot classifier, migration maintenance mode, and
-compatible/fresh marker write.
+The historical PR that introduced this migration left production behavior
+v1-active. After #94 and #95, normal boot requires a compatible cutover marker
+and uses PostgreSQL V2 authority only.
 
 ## Private Controls
 
@@ -33,18 +31,12 @@ POST /control/api/v2/migration/preflight
 POST /control/api/v2/migration/start
 POST /control/api/v2/migration/pause
 POST /control/api/v2/migration/resume
-POST /control/api/v2/migration/run-once
 ```
 
 Preflight approval requires a backup reference plus verified PostgreSQL restore
-and Neo4j snapshot checks. Operator actions are persisted in PostgreSQL with
-bounded metadata and no credential fields.
-
-`run-once` is available only when a migration executor service is explicitly
-injected. If the executor is not wired, the private route returns service
-unavailable instead of starting implicit migration work during normal boot.
-#119 leaves the production server unwired, so these routes exist only as inert
-control-plane surface until a later cutover branch injects the services.
+and historical source snapshot checks. Operator actions are persisted in
+PostgreSQL with bounded metadata and no credential fields. The previous
+`run-once` executor route was removed by #95.
 
 ## RLS And Isolation Impact
 
