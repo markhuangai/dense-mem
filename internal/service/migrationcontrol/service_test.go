@@ -41,11 +41,8 @@ func TestPreflightStartPauseResumeStateMachine(t *testing.T) {
 	}
 
 	_, err = svc.ApprovePreflight(ctx, OperatorRequest{
-		Actor:                   "operator",
-		PostgresBackupReference: "pg-backup-20260717",
-		PostgresBackupCreated:   true,
-		Neo4jSnapshotReference:  "neo4j-snapshot-20260717",
-		Neo4jSnapshotCreated:    true,
+		Actor:            "operator",
+		BackupsConfirmed: true,
 	})
 	if err != nil {
 		t.Fatalf("ApprovePreflight: %v", err)
@@ -53,6 +50,10 @@ func TestPreflightStartPauseResumeStateMachine(t *testing.T) {
 	if store.run.State != domain.V2MigrationStateReady || !store.run.PreflightApproved {
 		t.Fatalf("run after preflight = %#v", store.run)
 	}
+	if store.run.BackupReference != "" {
+		t.Fatalf("backup reference should not be written, got %q", store.run.BackupReference)
+	}
+	assertBackupConfirmationChecks(t, store.run.PreflightChecks)
 
 	started, err := svc.Start(ctx, OperatorRequest{Actor: "operator", Reason: "begin rehearsal"})
 	if err != nil {
@@ -83,33 +84,16 @@ func TestPreflightStartPauseResumeStateMachine(t *testing.T) {
 	}
 }
 
-func TestPreflightRequiresCreatedBackupAndSnapshotAttestations(t *testing.T) {
+func TestPreflightRequiresOperatorBackupConfirmation(t *testing.T) {
 	svc := New(newStoreStub(), Config{Required: true})
-	_, err := svc.ApprovePreflight(context.Background(), OperatorRequest{
-		PostgresBackupReference: "pg-backup",
-		PostgresBackupCreated:   true,
-	})
+	_, err := svc.ApprovePreflight(context.Background(), OperatorRequest{})
 	if !errors.Is(err, ErrPreflightRequired) {
-		t.Fatalf("ApprovePreflight err = %v", err)
+		t.Fatalf("ApprovePreflight missing confirmation err = %v", err)
 	}
 
-	_, err = svc.ApprovePreflight(context.Background(), OperatorRequest{
-		PostgresBackupReference: "pg-backup",
-		Neo4jSnapshotReference:  "neo4j-snapshot",
-		Neo4jSnapshotCreated:    true,
-	})
+	_, err = svc.ApprovePreflight(context.Background(), OperatorRequest{BackupsConfirmed: false})
 	if !errors.Is(err, ErrPreflightRequired) {
-		t.Fatalf("ApprovePreflight missing postgres check err = %v", err)
-	}
-
-	_, err = svc.ApprovePreflight(context.Background(), OperatorRequest{
-		PostgresBackupReference: strings.Repeat("x", maxPreflightReferenceLen+1),
-		PostgresBackupCreated:   true,
-		Neo4jSnapshotReference:  "neo4j-snapshot",
-		Neo4jSnapshotCreated:    true,
-	})
-	if !errors.Is(err, ErrPreflightRequired) {
-		t.Fatalf("ApprovePreflight long reference err = %v", err)
+		t.Fatalf("ApprovePreflight false confirmation err = %v", err)
 	}
 }
 
@@ -124,10 +108,7 @@ func TestPreflightUpdatesExistingRequiredRun(t *testing.T) {
 	svc := New(store, Config{Required: true})
 
 	status, err := svc.ApprovePreflight(ctx, OperatorRequest{
-		PostgresBackupReference: "pg-backup-20260717",
-		PostgresBackupCreated:   true,
-		Neo4jSnapshotReference:  "neo4j-snapshot-20260717",
-		Neo4jSnapshotCreated:    true,
+		BackupsConfirmed: true,
 	})
 	if err != nil {
 		t.Fatalf("ApprovePreflight existing run: %v", err)
@@ -138,11 +119,17 @@ func TestPreflightUpdatesExistingRequiredRun(t *testing.T) {
 	if len(store.actions) != 1 || store.actions[0].Actor != "control" {
 		t.Fatalf("actions = %#v", store.actions)
 	}
-	if got := store.actions[0].Metadata["preflight_attestation_hash"]; got == "" {
+	if got := store.actions[0].Metadata["backup_confirmation"]; got != true {
 		t.Fatalf("preflight metadata = %#v", store.actions[0].Metadata)
 	}
-	if checks, ok := store.run.PreflightChecks["backup_snapshots_created"].(bool); !ok || !checks {
-		t.Fatalf("preflight checks = %#v", store.run.PreflightChecks)
+	checks, ok := store.actions[0].Metadata["preflight_checks"].(map[string]any)
+	if !ok {
+		t.Fatalf("preflight metadata = %#v", store.actions[0].Metadata)
+	}
+	assertBackupConfirmationChecks(t, checks)
+	assertBackupConfirmationChecks(t, store.run.PreflightChecks)
+	if store.run.BackupReference != "" {
+		t.Fatalf("backup reference should not be written, got %q", store.run.BackupReference)
 	}
 	if store.run.MigrationContractVersion != DefaultMigrationContractVersion {
 		t.Fatalf("migration contract = %q", store.run.MigrationContractVersion)
@@ -159,14 +146,12 @@ func TestPreflightRenewsLegacyContractRun(t *testing.T) {
 		State:                    domain.V2MigrationStateRunning,
 		Required:                 true,
 		PreflightApproved:        true,
+		BackupReference:          "legacy-backup-reference",
 	}
 	svc := New(store, Config{Required: true})
 
 	status, err := svc.ApprovePreflight(ctx, OperatorRequest{
-		PostgresBackupReference: "pg-backup-20260722",
-		PostgresBackupCreated:   true,
-		Neo4jSnapshotReference:  "neo4j-snapshot-20260722",
-		Neo4jSnapshotCreated:    true,
+		BackupsConfirmed: true,
 	})
 	if err != nil {
 		t.Fatalf("ApprovePreflight legacy run: %v", err)
@@ -180,17 +165,28 @@ func TestPreflightRenewsLegacyContractRun(t *testing.T) {
 	if store.run.State != domain.V2MigrationStateReady {
 		t.Fatalf("run state = %q", store.run.State)
 	}
+	if store.run.BackupReference != "" {
+		t.Fatalf("legacy backup reference should be cleared, got %q", store.run.BackupReference)
+	}
 
 	store.run.State = domain.V2MigrationStateRunning
 	store.run.MigrationContractVersion = DefaultMigrationContractVersion
 	_, err = svc.ApprovePreflight(ctx, OperatorRequest{
-		PostgresBackupReference: "pg-backup-20260722",
-		PostgresBackupCreated:   true,
-		Neo4jSnapshotReference:  "neo4j-snapshot-20260722",
-		Neo4jSnapshotCreated:    true,
+		BackupsConfirmed: true,
 	})
 	if !errors.Is(err, ErrIllegalTransition) {
 		t.Fatalf("current running preflight err = %v", err)
+	}
+
+	store.run.PreflightChecks = map[string]any{"operator_backup_confirmation": true}
+	status, err = svc.ApprovePreflight(ctx, OperatorRequest{
+		BackupsConfirmed: true,
+	})
+	if err != nil {
+		t.Fatalf("ApprovePreflight incomplete current run: %v", err)
+	}
+	if status.State != domain.V2MigrationStateReady {
+		t.Fatalf("status after incomplete current renewal = %#v", status)
 	}
 }
 
@@ -214,10 +210,12 @@ func TestTransitionPropagatesUpdateAndRecordErrors(t *testing.T) {
 
 	store := newStoreStub()
 	store.run = &domain.V2MigrationRun{
-		RunID:             "run-1",
-		State:             domain.V2MigrationStateReady,
-		Required:          true,
-		PreflightApproved: true,
+		RunID:                    "run-1",
+		MigrationContractVersion: DefaultMigrationContractVersion,
+		State:                    domain.V2MigrationStateReady,
+		Required:                 true,
+		PreflightApproved:        true,
+		PreflightChecks:          createdPreflightChecks(),
 	}
 	store.updateErr = want
 	_, err := New(store, Config{Required: true}).Start(ctx, OperatorRequest{})
@@ -227,10 +225,12 @@ func TestTransitionPropagatesUpdateAndRecordErrors(t *testing.T) {
 
 	store = newStoreStub()
 	store.run = &domain.V2MigrationRun{
-		RunID:             "run-1",
-		State:             domain.V2MigrationStateReady,
-		Required:          true,
-		PreflightApproved: true,
+		RunID:                    "run-1",
+		MigrationContractVersion: DefaultMigrationContractVersion,
+		State:                    domain.V2MigrationStateReady,
+		Required:                 true,
+		PreflightApproved:        true,
+		PreflightChecks:          createdPreflightChecks(),
 	}
 	store.recordErr = want
 	_, err = New(store, Config{Required: true}).Start(ctx, OperatorRequest{})
@@ -239,24 +239,24 @@ func TestTransitionPropagatesUpdateAndRecordErrors(t *testing.T) {
 	}
 }
 
-func TestCutoverRequiresReadyRunBackupCorpusAndPassingGates(t *testing.T) {
+func TestCutoverRequiresReadyRunConfirmationCorpusAndPassingGates(t *testing.T) {
 	ctx := context.Background()
 	store := newStoreStub()
 	store.run = &domain.V2MigrationRun{
-		RunID:             "run-1",
-		State:             domain.V2MigrationStateReadyCutover,
-		Required:          true,
-		PreflightApproved: true,
-		BackupReference:   "backup-20260717",
-		PreflightChecks:   createdPreflightChecks(),
+		RunID:                    "run-1",
+		MigrationContractVersion: DefaultMigrationContractVersion,
+		State:                    domain.V2MigrationStateReadyCutover,
+		Required:                 true,
+		PreflightApproved:        true,
+		PreflightChecks:          createdPreflightChecks(),
 	}
 	svc := New(store, Config{
 		Required:             true,
-		CutoverRequiredGates: []string{"backup_snapshots_created", "no_neo4j_fallback"},
+		CutoverRequiredGates: []string{"operator_backup_confirmation", "no_neo4j_fallback"},
 	})
 
 	_, err := svc.Cutover(ctx, CutoverRequest{
-		GateResults: passingCutoverGates("backup_snapshots_created", "no_neo4j_fallback"),
+		GateResults: passingCutoverGates("operator_backup_confirmation", "no_neo4j_fallback"),
 	})
 	if !errors.Is(err, ErrCutoverGate) {
 		t.Fatalf("Cutover missing corpus hash err = %v", err)
@@ -265,7 +265,7 @@ func TestCutoverRequiresReadyRunBackupCorpusAndPassingGates(t *testing.T) {
 	store.run.CorpusHash = "sha256:corpus"
 	_, err = svc.Cutover(ctx, CutoverRequest{
 		CorpusHash:  "sha256:corpus",
-		GateResults: passingCutoverGates("backup_snapshots_created"),
+		GateResults: passingCutoverGates("operator_backup_confirmation"),
 	})
 	if !errors.Is(err, ErrCutoverGate) {
 		t.Fatalf("Cutover missing gate err = %v", err)
@@ -274,7 +274,7 @@ func TestCutoverRequiresReadyRunBackupCorpusAndPassingGates(t *testing.T) {
 	store.commitErr = repository.ErrV2MigrationCutoverBlocked
 	_, err = svc.Cutover(ctx, CutoverRequest{
 		CorpusHash:  "sha256:corpus",
-		GateResults: passingCutoverGates("backup_snapshots_created", "no_neo4j_fallback"),
+		GateResults: passingCutoverGates("operator_backup_confirmation", "no_neo4j_fallback"),
 	})
 	if !errors.Is(err, ErrCutoverBlocked) {
 		t.Fatalf("Cutover repository blocked err = %v", err)
@@ -285,27 +285,27 @@ func TestCutoverRejectsUnknownGateAndInvalidEvidenceHash(t *testing.T) {
 	ctx := context.Background()
 	store := newStoreStub()
 	store.run = &domain.V2MigrationRun{
-		RunID:             "run-1",
-		State:             domain.V2MigrationStateReadyCutover,
-		Required:          true,
-		PreflightApproved: true,
-		BackupReference:   "backup-20260717",
-		CorpusHash:        "sha256:run-corpus",
-		PreflightChecks:   createdPreflightChecks(),
+		RunID:                    "run-1",
+		MigrationContractVersion: DefaultMigrationContractVersion,
+		State:                    domain.V2MigrationStateReadyCutover,
+		Required:                 true,
+		PreflightApproved:        true,
+		CorpusHash:               "sha256:run-corpus",
+		PreflightChecks:          createdPreflightChecks(),
 	}
 	svc := New(store, Config{
 		Required:             true,
-		CutoverRequiredGates: []string{"backup_snapshots_created"},
+		CutoverRequiredGates: []string{"operator_backup_confirmation"},
 	})
 
 	_, err := svc.Cutover(ctx, CutoverRequest{
-		GateResults: passingCutoverGates("backup_snapshots_created", "unexpected_gate"),
+		GateResults: passingCutoverGates("operator_backup_confirmation", "unexpected_gate"),
 	})
 	if !errors.Is(err, ErrCutoverGate) {
 		t.Fatalf("unknown gate err = %v", err)
 	}
 
-	gates := passingCutoverGates("backup_snapshots_created")
+	gates := passingCutoverGates("operator_backup_confirmation")
 	gates[0].EvidenceHash = "sha256:not-a-digest"
 	_, err = svc.Cutover(ctx, CutoverRequest{GateResults: gates})
 	if !errors.Is(err, ErrCutoverGate) {
@@ -315,19 +315,19 @@ func TestCutoverRejectsUnknownGateAndInvalidEvidenceHash(t *testing.T) {
 
 func TestCutoverRejectsBlockedStateAndMissingPreflight(t *testing.T) {
 	ctx := context.Background()
-	gates := passingCutoverGates("backup_snapshots_created")
+	gates := passingCutoverGates("operator_backup_confirmation")
 
 	store := newStoreStub()
 	store.run = &domain.V2MigrationRun{
-		RunID:             "run-1",
-		State:             domain.V2MigrationStateRunning,
-		Required:          true,
-		PreflightApproved: true,
-		BackupReference:   "backup-20260717",
-		CorpusHash:        "sha256:run-corpus",
-		PreflightChecks:   createdPreflightChecks(),
+		RunID:                    "run-1",
+		MigrationContractVersion: DefaultMigrationContractVersion,
+		State:                    domain.V2MigrationStateRunning,
+		Required:                 true,
+		PreflightApproved:        true,
+		CorpusHash:               "sha256:run-corpus",
+		PreflightChecks:          createdPreflightChecks(),
 	}
-	svc := New(store, Config{Required: true, CutoverRequiredGates: []string{"backup_snapshots_created"}})
+	svc := New(store, Config{Required: true, CutoverRequiredGates: []string{"operator_backup_confirmation"}})
 	_, err := svc.Cutover(ctx, CutoverRequest{GateResults: gates})
 	if !errors.Is(err, ErrCutoverBlocked) {
 		t.Fatalf("blocked state err = %v", err)
@@ -341,10 +341,10 @@ func TestCutoverRejectsBlockedStateAndMissingPreflight(t *testing.T) {
 	}
 
 	store.run.PreflightApproved = true
-	store.run.BackupReference = ""
+	store.run.PreflightChecks = map[string]any{"operator_backup_confirmation": false}
 	_, err = svc.Cutover(ctx, CutoverRequest{GateResults: gates})
 	if !errors.Is(err, ErrPreflightRequired) {
-		t.Fatalf("missing backup err = %v", err)
+		t.Fatalf("missing backup confirmation err = %v", err)
 	}
 }
 
@@ -352,15 +352,15 @@ func TestCutoverGateValidationRejectsIncompleteGateEvidence(t *testing.T) {
 	ctx := context.Background()
 	store := newStoreStub()
 	store.run = &domain.V2MigrationRun{
-		RunID:             "run-1",
-		State:             domain.V2MigrationStateReadyCutover,
-		Required:          true,
-		PreflightApproved: true,
-		BackupReference:   "backup-20260717",
-		CorpusHash:        "sha256:run-corpus",
-		PreflightChecks:   createdPreflightChecks(),
+		RunID:                    "run-1",
+		MigrationContractVersion: DefaultMigrationContractVersion,
+		State:                    domain.V2MigrationStateReadyCutover,
+		Required:                 true,
+		PreflightApproved:        true,
+		CorpusHash:               "sha256:run-corpus",
+		PreflightChecks:          createdPreflightChecks(),
 	}
-	svc := New(store, Config{Required: true, CutoverRequiredGates: []string{"backup_snapshots_created"}})
+	svc := New(store, Config{Required: true, CutoverRequiredGates: []string{"operator_backup_confirmation"}})
 
 	cases := map[string]func([]domain.V2MigrationGateResult) []domain.V2MigrationGateResult{
 		"empty name": func(gates []domain.V2MigrationGateResult) []domain.V2MigrationGateResult {
@@ -392,7 +392,7 @@ func TestCutoverGateValidationRejectsIncompleteGateEvidence(t *testing.T) {
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
 			_, err := svc.Cutover(ctx, CutoverRequest{
-				GateResults: mutate(passingCutoverGates("backup_snapshots_created")),
+				GateResults: mutate(passingCutoverGates("operator_backup_confirmation")),
 			})
 			if !errors.Is(err, ErrCutoverGate) {
 				t.Fatalf("Cutover err = %v", err)
@@ -400,7 +400,7 @@ func TestCutoverGateValidationRejectsIncompleteGateEvidence(t *testing.T) {
 		})
 	}
 
-	duplicate := append(passingCutoverGates("backup_snapshots_created"), passingCutoverGates("backup_snapshots_created")...)
+	duplicate := append(passingCutoverGates("operator_backup_confirmation"), passingCutoverGates("operator_backup_confirmation")...)
 	_, err := svc.Cutover(ctx, CutoverRequest{GateResults: duplicate})
 	if !errors.Is(err, ErrCutoverGate) {
 		t.Fatalf("duplicate gate err = %v", err)
@@ -433,21 +433,21 @@ func TestCutoverPropagatesStoreAndPreflightLookupErrors(t *testing.T) {
 
 	store = newStoreStub()
 	store.run = &domain.V2MigrationRun{
-		RunID:             "run-1",
-		State:             domain.V2MigrationStateReadyCutover,
-		Required:          true,
-		PreflightApproved: true,
-		BackupReference:   "backup-20260717",
-		CorpusHash:        "sha256:run-corpus",
-		PreflightChecks:   createdPreflightChecks(),
+		RunID:                    "run-1",
+		MigrationContractVersion: DefaultMigrationContractVersion,
+		State:                    domain.V2MigrationStateReadyCutover,
+		Required:                 true,
+		PreflightApproved:        true,
+		CorpusHash:               "sha256:run-corpus",
+		PreflightChecks:          createdPreflightChecks(),
 	}
 	store.commitErr = want
 	_, err = New(store, Config{
 		Required:             true,
-		CutoverRequiredGates: []string{"backup_snapshots_created"},
+		CutoverRequiredGates: []string{"operator_backup_confirmation"},
 	}).Cutover(ctx, CutoverRequest{
 		CorpusHash:  "sha256:run-corpus",
-		GateResults: passingCutoverGates("backup_snapshots_created"),
+		GateResults: passingCutoverGates("operator_backup_confirmation"),
 	})
 	if !errors.Is(err, want) {
 		t.Fatalf("commit err = %v", err)
@@ -458,17 +458,17 @@ func TestCutoverCommitsMarkerAndOperatorAction(t *testing.T) {
 	now := time.Date(2026, 7, 21, 15, 0, 0, 0, time.UTC)
 	store := newStoreStub()
 	store.run = &domain.V2MigrationRun{
-		RunID:             "run-1",
-		State:             domain.V2MigrationStateReadyCutover,
-		Required:          true,
-		PreflightApproved: true,
-		BackupReference:   "backup-20260717",
-		CorpusHash:        "sha256:run-corpus",
-		PreflightChecks:   createdPreflightChecks(),
+		RunID:                    "run-1",
+		MigrationContractVersion: DefaultMigrationContractVersion,
+		State:                    domain.V2MigrationStateReadyCutover,
+		Required:                 true,
+		PreflightApproved:        true,
+		CorpusHash:               "sha256:run-corpus",
+		PreflightChecks:          createdPreflightChecks(),
 	}
 	svc := New(store, Config{
 		Required:             true,
-		CutoverRequiredGates: []string{"backup_snapshots_created"},
+		CutoverRequiredGates: []string{"operator_backup_confirmation"},
 		Now:                  func() time.Time { return now },
 	})
 
@@ -476,7 +476,7 @@ func TestCutoverCommitsMarkerAndOperatorAction(t *testing.T) {
 		Actor:       "operator",
 		RemoteIP:    "192.0.2.55",
 		Reason:      "final cutover",
-		GateResults: passingCutoverGates("backup_snapshots_created"),
+		GateResults: passingCutoverGates("operator_backup_confirmation"),
 		Metadata:    map[string]any{"release": "v2.1.1"},
 	})
 
@@ -506,18 +506,18 @@ func TestCutoverCommitsMarkerAndOperatorAction(t *testing.T) {
 func TestCutoverRequiresFinalizedRunCorpusHashAndRejectsMismatch(t *testing.T) {
 	store := newStoreStub()
 	store.run = &domain.V2MigrationRun{
-		RunID:             "run-1",
-		State:             domain.V2MigrationStateReadyCutover,
-		Required:          true,
-		PreflightApproved: true,
-		BackupReference:   "backup-20260717",
-		PreflightChecks:   createdPreflightChecks(),
+		RunID:                    "run-1",
+		MigrationContractVersion: DefaultMigrationContractVersion,
+		State:                    domain.V2MigrationStateReadyCutover,
+		Required:                 true,
+		PreflightApproved:        true,
+		PreflightChecks:          createdPreflightChecks(),
 	}
-	svc := New(store, Config{Required: true, CutoverRequiredGates: []string{"backup_snapshots_created"}})
+	svc := New(store, Config{Required: true, CutoverRequiredGates: []string{"operator_backup_confirmation"}})
 
 	_, err := svc.Cutover(context.Background(), CutoverRequest{
 		CorpusHash:  "sha256:request-corpus",
-		GateResults: passingCutoverGates("backup_snapshots_created"),
+		GateResults: passingCutoverGates("operator_backup_confirmation"),
 	})
 	if !errors.Is(err, ErrCutoverGate) {
 		t.Fatalf("Cutover missing finalized corpus hash err = %v", err)
@@ -526,7 +526,7 @@ func TestCutoverRequiresFinalizedRunCorpusHashAndRejectsMismatch(t *testing.T) {
 	store.run.CorpusHash = "sha256:run-corpus"
 	_, err = svc.Cutover(context.Background(), CutoverRequest{
 		CorpusHash:  "sha256:request-corpus",
-		GateResults: passingCutoverGates("backup_snapshots_created"),
+		GateResults: passingCutoverGates("operator_backup_confirmation"),
 	})
 	if !errors.Is(err, ErrCutoverGate) {
 		t.Fatalf("Cutover mismatched corpus hash err = %v", err)
@@ -534,7 +534,7 @@ func TestCutoverRequiresFinalizedRunCorpusHashAndRejectsMismatch(t *testing.T) {
 
 	_, err = svc.Cutover(context.Background(), CutoverRequest{
 		CorpusHash:  "sha256:run-corpus",
-		GateResults: passingCutoverGates("backup_snapshots_created"),
+		GateResults: passingCutoverGates("operator_backup_confirmation"),
 	})
 	if err != nil {
 		t.Fatalf("Cutover matching corpus hash: %v", err)
@@ -547,10 +547,7 @@ func TestCutoverRequiresFinalizedRunCorpusHashAndRejectsMismatch(t *testing.T) {
 func TestPreflightPropagatesStoreErrors(t *testing.T) {
 	ctx := context.Background()
 	req := OperatorRequest{
-		PostgresBackupReference: "pg-backup-20260717",
-		PostgresBackupCreated:   true,
-		Neo4jSnapshotReference:  "neo4j-snapshot-20260717",
-		Neo4jSnapshotCreated:    true,
+		BackupsConfirmed: true,
 	}
 	want := errors.New("store failed")
 
@@ -732,7 +729,7 @@ func TestActionRequiresStore(t *testing.T) {
 
 func TestReadinessMessagesForMigrationStates(t *testing.T) {
 	cases := map[string]string{
-		domain.V2MigrationStateReady:        "migration preflight approved; start is allowed",
+		domain.V2MigrationStateReady:        "backup confirmation recorded; start is allowed",
 		domain.V2MigrationStateRunning:      "migration is running",
 		domain.V2MigrationStatePaused:       "migration is paused at a durable checkpoint",
 		domain.V2MigrationStateFailed:       "migration failed; inspect errors and resume only if retryable",
@@ -744,10 +741,13 @@ func TestReadinessMessagesForMigrationStates(t *testing.T) {
 	}
 	for state, want := range cases {
 		t.Run(state, func(t *testing.T) {
-			status := statusFromRunMarker(true, &domain.V2MigrationRun{
-				RunID:    "run-1",
-				State:    state,
-				Required: true,
+			status := statusFromRunMarker(true, DefaultMigrationContractVersion, &domain.V2MigrationRun{
+				RunID:                    "run-1",
+				MigrationContractVersion: DefaultMigrationContractVersion,
+				State:                    state,
+				Required:                 true,
+				PreflightApproved:        true,
+				PreflightChecks:          createdPreflightChecks(),
 			}, nil, nil)
 			if status.ReadinessMessage != want {
 				t.Fatalf("message = %q, want %q", status.ReadinessMessage, want)
@@ -784,7 +784,7 @@ func TestTransitionTableRejectsUnsupportedEdges(t *testing.T) {
 }
 
 func TestCutoverGateHashRejectsUnserializableMetadata(t *testing.T) {
-	gates := passingCutoverGates("backup_snapshots_created")
+	gates := passingCutoverGates("operator_backup_confirmation")
 	gates[0].Metadata["bad"] = make(chan struct{})
 	_, err := cutoverGateReportHash(gates)
 	if !errors.Is(err, ErrCutoverGate) {
@@ -870,7 +870,9 @@ func (s *storeStub) UpdateRunState(_ context.Context, input repository.V2UpdateM
 		s.run.CorpusVersion = input.CorpusVersion
 	}
 	s.run.PreflightApproved = s.run.PreflightApproved || input.PreflightApproved
-	if input.BackupReference != "" {
+	if input.ClearBackupReference {
+		s.run.BackupReference = ""
+	} else if input.BackupReference != "" {
 		s.run.BackupReference = input.BackupReference
 	}
 	if input.PreflightChecks != nil {
@@ -967,10 +969,10 @@ func passingCutoverGates(names ...string) []domain.V2MigrationGateResult {
 
 func createdPreflightChecks() map[string]any {
 	return map[string]any{
-		"backup_snapshots_created":       true,
-		"postgres_backup_created":        true,
-		"postgres_backup_reference_hash": "sha256:" + strings.Repeat("b", 64),
-		"neo4j_snapshot_created":         true,
-		"neo4j_snapshot_reference_hash":  "sha256:" + strings.Repeat("c", 64),
+		"operator_backup_confirmation": true,
+		"postgres_backup_confirmed":    true,
+		"neo4j_backup_confirmed":       true,
+		"confirmation_scope":           "operator",
+		"backup_verification":          "not_performed",
 	}
 }

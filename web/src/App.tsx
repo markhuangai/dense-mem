@@ -48,7 +48,7 @@ const RecallFeedbackPanel = lazy(() => import("./control/RecallFeedbackPanel").t
 
 const TOKEN_STORAGE_KEY = "denseMem.controlToken";
 const THEME_STORAGE_KEY = "denseMem.controlTheme";
-const CURRENT_MIGRATION_CONTRACT = "dense-mem.v2.1.migration-control.v2";
+const CURRENT_MIGRATION_CONTRACT = "dense-mem.v2.1.migration-control.v3";
 
 type LoadState = "idle" | "loading" | "error";
 type Theme = "light" | "dark";
@@ -406,10 +406,7 @@ function MigrationPortal({
   onSignOut: () => void;
 }) {
   const [status, setStatus] = useState<MigrationStatus | null>(null);
-  const [postgresRef, setPostgresRef] = useState("");
-  const [neo4jRef, setNeo4jRef] = useState("");
-  const [postgresCreated, setPostgresCreated] = useState(false);
-  const [neo4jCreated, setNeo4jCreated] = useState(false);
+  const [backupsConfirmed, setBackupsConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [connection, setConnection] = useState<"connected" | "reconnecting">("connected");
   const [error, setError] = useState("");
@@ -444,15 +441,14 @@ function MigrationPortal({
         next = await api.getMigrationStatus();
       }
       const currentPreflight = next?.run?.preflight_approved &&
-        next.run.migration_contract_version === CURRENT_MIGRATION_CONTRACT;
+        next.run.migration_contract_version === CURRENT_MIGRATION_CONTRACT &&
+        hasBackupConfirmation(next.run.preflight_checks);
       if (!currentPreflight) {
         next = await api.approveMigrationPreflight({
-          postgres_backup_reference: postgresRef.trim(),
-          postgres_backup_created: postgresCreated,
-          neo4j_snapshot_reference: neo4jRef.trim(),
-          neo4j_snapshot_created: neo4jCreated,
-          reason: "operator confirmed backup and snapshot creation",
+          backups_confirmed: backupsConfirmed,
+          reason: "operator confirmed external PostgreSQL and Neo4j backups",
         });
+        setStatus(next);
       }
       if (next.state === "ready") {
         next = await api.startMigration("operator started guided migration");
@@ -493,21 +489,27 @@ function MigrationPortal({
   const total = run?.total_items ?? 0;
   const completed = run?.completed_items ?? 0;
   const progress = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : (status?.state === "cut_over" ? 100 : 0);
-  const preflightReady = postgresRef.trim().length > 0 && neo4jRef.trim().length > 0 && postgresCreated && neo4jCreated;
   const contractCurrent = run?.migration_contract_version === CURRENT_MIGRATION_CONTRACT;
-  const preflightCurrent = !!run?.preflight_approved && contractCurrent;
-  const legacyRenewalState = !!run && !contractCurrent && (
+  const backupConfirmationCurrent = !!run?.preflight_approved && contractCurrent && hasBackupConfirmation(run.preflight_checks);
+  useEffect(() => {
+    if (backupConfirmationCurrent) {
+      setBackupsConfirmed(false);
+    }
+  }, [backupConfirmationCurrent]);
+  const confirmationRenewalState = !!run && !backupConfirmationCurrent && (
     status?.state === "running" ||
     status?.state === "paused_retryable" ||
-    status?.state === "failed" ||
+    (status?.state === "failed" && run.retryable) ||
     status?.state === "verifying" ||
     status?.state === "ready_to_cutover"
   );
   const canStart = session.portal_mode === "migration" &&
-    (status?.state === "required" || status?.state === "ready" || legacyRenewalState) &&
-    (preflightCurrent || preflightReady);
+    (status?.state === "required" || status?.state === "ready" || confirmationRenewalState) &&
+    (backupConfirmationCurrent || backupsConfirmed);
   const canPause = session.portal_mode === "migration" && status?.state === "running";
-  const canResume = session.portal_mode === "migration" && (status?.state === "paused_retryable" || (status?.state === "failed" && run?.retryable));
+  const canResume = session.portal_mode === "migration" &&
+    backupConfirmationCurrent &&
+    (status?.state === "paused_retryable" || (status?.state === "failed" && run?.retryable));
   const cleanup = session.portal_mode === "cleanup";
 
   return (
@@ -564,47 +566,33 @@ function MigrationPortal({
           <section className="maintenance-panel">
             <SectionHeading
               title="Start migration"
-              subtitle="Attest that both recovery artifacts have been created. This does not prove a restore test."
+              subtitle="Confirm that both recovery artifacts exist before the migration starts."
             />
             <form className="migration-preflight" onSubmit={(event) => { event.preventDefault(); void start(); }}>
-              <label htmlFor="postgres-backup-ref">PostgreSQL backup reference</label>
-              <input
-                id="postgres-backup-ref"
-                value={postgresRef}
-                maxLength={200}
-                onChange={(event) => setPostgresRef(event.target.value)}
-                disabled={busy || preflightCurrent}
-              />
+              <div className="backup-confirmation-card" aria-label="Before you migrate">
+                <div>
+                  <h3>Before you migrate</h3>
+                  <p>Confirm that recoverable copies exist for both databases.</p>
+                </div>
+                <div className="backup-confirmation-scope" aria-label="Databases covered by this confirmation">
+                  <span><Database size={15} aria-hidden="true" /> PostgreSQL</span>
+                  <span><Database size={15} aria-hidden="true" /> Neo4j</span>
+                </div>
+              </div>
               <label className="check-row">
                 <input
                   type="checkbox"
-                  checked={postgresCreated}
-                  onChange={(event) => setPostgresCreated(event.target.checked)}
-                  disabled={busy || preflightCurrent}
+                  checked={backupsConfirmed || backupConfirmationCurrent}
+                  onChange={(event) => setBackupsConfirmed(event.target.checked)}
+                  disabled={busy || backupConfirmationCurrent}
                 />
-                PostgreSQL backup created
+                I confirm that I have backed up both the PostgreSQL and Neo4j databases.
               </label>
-              <label htmlFor="neo4j-snapshot-ref">Neo4j snapshot reference</label>
-              <input
-                id="neo4j-snapshot-ref"
-                value={neo4jRef}
-                maxLength={200}
-                onChange={(event) => setNeo4jRef(event.target.value)}
-                disabled={busy || preflightCurrent}
-              />
-              <label className="check-row">
-                <input
-                  type="checkbox"
-                  checked={neo4jCreated}
-                  onChange={(event) => setNeo4jCreated(event.target.checked)}
-                  disabled={busy || preflightCurrent}
-                />
-                Neo4j snapshot created
-              </label>
+              <p className="confirmation-note">Dense-Mem does not create, inspect, or restore these backups.</p>
               <div className="button-row">
                 <button className="primary-button" type="submit" disabled={busy || !canStart}>
                   <Play size={16} aria-hidden="true" />
-                  Start migration
+                  {backupConfirmationCurrent ? "Start migration" : "Confirm and start migration"}
                 </button>
                 <button className="ghost-button" type="button" disabled={busy || !canPause} onClick={() => void pause()}>
                   <PauseCircle size={16} aria-hidden="true" />
@@ -712,7 +700,7 @@ function CleanupPanel() {
 function stateLabel(state: string) {
   switch (state) {
     case "required":
-      return "Ready for preflight";
+      return "Needs backup confirmation";
     case "ready":
       return "Ready to start";
     case "running":
@@ -728,6 +716,17 @@ function stateLabel(state: string) {
     default:
       return state.replaceAll("_", " ");
   }
+}
+
+function hasBackupConfirmation(checks?: Record<string, unknown>) {
+  if (!checks) {
+    return false;
+  }
+  return checks.operator_backup_confirmation === true &&
+    checks.postgres_backup_confirmed === true &&
+    checks.neo4j_backup_confirmed === true &&
+    checks.confirmation_scope === "operator" &&
+    checks.backup_verification === "not_performed";
 }
 
 function LazyPanelFallback() {

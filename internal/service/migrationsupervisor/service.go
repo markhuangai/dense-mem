@@ -271,8 +271,8 @@ func (s *Service) tick(ctx context.Context) error {
 		if status == nil {
 			return nil
 		}
-		if status.Run != nil && status.Run.MigrationContractVersion != migrationcontrol.DefaultMigrationContractVersion {
-			s.setLastError("renew preflight before resuming legacy migration contract " + status.Run.MigrationContractVersion)
+		if message := supervisorBackupConfirmationRenewalMessage(status); message != "" {
+			s.setLastError(message)
 			return nil
 		}
 		switch status.State {
@@ -293,6 +293,24 @@ func (s *Service) tick(ctx context.Context) error {
 			return nil
 		}
 	}
+}
+
+func supervisorBackupConfirmationRenewalMessage(status *domain.V2MigrationControlStatus) string {
+	if status == nil || status.Run == nil {
+		return ""
+	}
+	switch status.State {
+	case domain.V2MigrationStateRunning, domain.V2MigrationStateReadyCutover:
+	default:
+		return ""
+	}
+	if strings.TrimSpace(status.Run.MigrationContractVersion) != migrationcontrol.DefaultMigrationContractVersion {
+		return "renew backup confirmation before resuming legacy migration contract " + status.Run.MigrationContractVersion
+	}
+	if !status.Run.PreflightApproved || !migrationcontrol.BackupConfirmationRecorded(status.Run.PreflightChecks) {
+		return "renew backup confirmation before continuing migration"
+	}
+	return ""
 }
 
 func (s *Service) runPages(ctx context.Context) (bool, error) {
@@ -396,13 +414,14 @@ func (s *Service) evaluateGate(
 	}
 	var err error
 	switch name {
-	case "backup_snapshots_created":
-		if !migrationcontrol.PreflightAttestationsCreated(run.PreflightChecks) {
-			err = fmt.Errorf("%w: backup and snapshot creation attestations are missing", ErrGateBlocked)
+	case "operator_backup_confirmation":
+		if !migrationcontrol.BackupConfirmationRecorded(run.PreflightChecks) {
+			err = fmt.Errorf("%w: operator backup confirmation is missing", ErrGateBlocked)
 		}
-		evidence.Ref = "dense-mem://migration/preflight/backup-snapshots-created"
-		evidence.Message = "operator attested PostgreSQL backup and Neo4j snapshot creation; restore was not verified"
-		evidence.Details["attestation_scope"] = "creation_only"
+		evidence.Ref = "dense-mem://migration/preflight/operator-backup-confirmation"
+		evidence.Message = "operator confirmed PostgreSQL and Neo4j backups; Dense-Mem did not create, inspect, verify, or restore backups"
+		evidence.Details["confirmation_scope"] = "operator"
+		evidence.Details["backup_verification"] = "not_performed"
 	case "terminal_official_pipeline_outcomes":
 		if run.TotalItems != run.CompletedItems || run.FailedItems != 0 || run.ExcludedItems != 0 {
 			err = fmt.Errorf("%w: migration outcomes are not terminal and clean", ErrGateBlocked)
@@ -605,7 +624,7 @@ func publicSupervisorError(err error) string {
 	case errors.Is(err, ErrGateBlocked):
 		return safeGateMessage(err)
 	case errors.Is(err, migrationcontrol.ErrPreflightRequired):
-		return "migration preflight is required"
+		return "backup confirmation is required"
 	default:
 		return supervisorInternalErrorMessage
 	}

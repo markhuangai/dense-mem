@@ -216,7 +216,7 @@ describe("ControlApi", () => {
         state: "ready",
         required: true,
         data_plane_allowed: false,
-        readiness_message: "migration preflight approved",
+        readiness_message: "backup confirmation recorded",
       },
     };
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify(migrationStatus), { status: 200 })));
@@ -225,11 +225,8 @@ describe("ControlApi", () => {
     const api = new ControlApi("secret", "/control/api");
     await api.getMigrationStatus();
     await api.approveMigrationPreflight({
-      postgres_backup_reference: "pg-backup-20260722",
-      postgres_backup_created: true,
-      neo4j_snapshot_reference: "neo4j-snapshot-20260722",
-      neo4j_snapshot_created: true,
-      reason: "operator attested backup artifacts",
+      backups_confirmed: true,
+      reason: "operator confirmed external database backups",
     });
     await api.startMigration("start migration");
     await api.pauseMigration("operator pause");
@@ -241,11 +238,8 @@ describe("ControlApi", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(2, "/control/api/v2/migration/preflight", expect.objectContaining({
       method: "POST",
       body: JSON.stringify({
-        postgres_backup_reference: "pg-backup-20260722",
-        postgres_backup_created: true,
-        neo4j_snapshot_reference: "neo4j-snapshot-20260722",
-        neo4j_snapshot_created: true,
-        reason: "operator attested backup artifacts",
+        backups_confirmed: true,
+        reason: "operator confirmed external database backups",
       }),
     }));
     expect(fetchMock).toHaveBeenNthCalledWith(3, "/control/api/v2/migration/start", expect.objectContaining({
