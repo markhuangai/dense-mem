@@ -23,6 +23,11 @@ var (
 	ErrGateBlocked       = errors.New("v2 migration supervisor: gate blocked")
 )
 
+const (
+	supervisorInternalErrorMessage = "migration supervisor encountered an internal error; inspect server logs"
+	gateInternalErrorMessage       = "migration gate check failed; inspect server logs"
+)
+
 type LeaderLock interface {
 	TryLock(ctx context.Context) (interface {
 		Release(context.Context) error
@@ -235,8 +240,9 @@ func (s *Service) loop(ctx context.Context) {
 			resetTimer(timer, 0)
 		case <-timer.C:
 			if err := s.tick(ctx); err != nil {
-				s.setLastError(err.Error())
-				s.logger.Warn("v2 migration supervisor tick failed", "error", err)
+				publicErr := publicSupervisorError(err)
+				s.setLastError(publicErr)
+				s.logger.Warn("v2 migration supervisor tick failed", "error", publicErr)
 			}
 			resetTimer(timer, s.pollInterval)
 		}
@@ -271,8 +277,12 @@ func (s *Service) tick(ctx context.Context) error {
 		}
 		switch status.State {
 		case domain.V2MigrationStateRunning:
-			if err := s.runPages(ctx); err != nil {
+			keepRunning, err := s.runPages(ctx)
+			if err != nil {
 				return err
+			}
+			if !keepRunning {
+				return nil
 			}
 		case domain.V2MigrationStateReadyCutover:
 			return s.evaluateAndCutover(ctx, status)
@@ -285,39 +295,39 @@ func (s *Service) tick(ctx context.Context) error {
 	}
 }
 
-func (s *Service) runPages(ctx context.Context) error {
+func (s *Service) runPages(ctx context.Context) (bool, error) {
 	var lastErr error
 	for attempt, delay := range append(s.pageRetryDelays, 0) {
 		result, err := s.executor.RunOnce(ctx)
 		if err == nil {
 			s.setLastError("")
 			if result != nil && result.Done {
-				return nil
+				return false, nil
 			}
 			continue
 		}
 		lastErr = err
 		if errors.Is(err, migrationexecutor.ErrMigrationNotRunning) {
-			return nil
+			return false, nil
 		}
 		if attempt >= len(s.pageRetryDelays) {
 			_, pauseErr := s.control.Pause(ctx, migrationcontrol.OperatorRequest{
 				Reason: "migration paused after bounded retry attempts",
 			})
 			if pauseErr != nil {
-				return fmt.Errorf("%w; pause failed: %v", lastErr, pauseErr)
+				return false, fmt.Errorf("%w; pause failed: %v", lastErr, pauseErr)
 			}
-			return fmt.Errorf("%w; paused_retryable after bounded retries", lastErr)
+			return false, fmt.Errorf("%w; paused_retryable after bounded retries", lastErr)
 		}
 		if delay > 0 {
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return false, ctx.Err()
 			case <-time.After(delay):
 			}
 		}
 	}
-	return lastErr
+	return true, lastErr
 }
 
 func (s *Service) evaluateAndCutover(ctx context.Context, status *domain.V2MigrationControlStatus) error {
@@ -564,11 +574,34 @@ func safeGateMessage(err error) string {
 	if err == nil {
 		return ""
 	}
+	if !errors.Is(err, ErrGateBlocked) {
+		return gateInternalErrorMessage
+	}
 	msg := err.Error()
 	if idx := strings.Index(msg, ": "); idx >= 0 {
 		msg = msg[idx+2:]
 	}
 	return msg
+}
+
+func publicSupervisorError(err error) string {
+	if err == nil {
+		return ""
+	}
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "migration supervisor stopped"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "migration supervisor timed out"
+	case errors.Is(err, ErrMissingDependency):
+		return "migration supervisor dependency is unavailable"
+	case errors.Is(err, ErrGateBlocked):
+		return safeGateMessage(err)
+	case errors.Is(err, migrationcontrol.ErrPreflightRequired):
+		return "migration preflight is required"
+	default:
+		return supervisorInternalErrorMessage
+	}
 }
 
 func nonempty(value, fallback string) string {

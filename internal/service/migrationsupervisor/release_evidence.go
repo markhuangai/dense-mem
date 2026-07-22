@@ -14,7 +14,10 @@ var staticReleaseEvidence = map[string]releaseEvidenceEntry{
 		criteria: "Committed PostgreSQL migrations and static schema checks define the V2 authority topology.",
 		sources: []string{
 			"migrations/postgres",
-			"internal/storage/postgres/semantic_schema_static_test.go",
+			"internal/storage/postgres/schema_test.go",
+			"internal/storage/postgres/migration_order_test.go",
+			"internal/repository/v2_migration_control_repository_integration_test.go",
+			"internal/repository/v2_search_repository_integration_test.go",
 			"docs/v2/pr71-parity-ledger.tsv",
 		},
 	},

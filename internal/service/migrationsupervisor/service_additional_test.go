@@ -3,12 +3,15 @@ package migrationsupervisor
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/migrationcontrol"
+	"github.com/markhuangai/dense-mem/internal/service/migrationexecutor"
 )
 
 func TestSupervisorStartBackgroundRunsLoopAndStop(t *testing.T) {
@@ -60,6 +63,64 @@ func TestSupervisorStartBackgroundRequiresDependencies(t *testing.T) {
 	}
 	if _, err := service.Status(context.Background()); !errors.Is(err, ErrMissingDependency) {
 		t.Fatalf("Status err = %v", err)
+	}
+}
+
+func TestSupervisorWaitsAfterSourceExhaustedWhileRunStillRunning(t *testing.T) {
+	ctx := context.Background()
+	control := &supervisorControlStub{status: supervisorStatus(domain.V2MigrationStateRunning)}
+	executor := &supervisorExecutorStub{
+		results: []*migrationexecutor.RunOnceResult{{RunID: "run-1", Done: true}},
+	}
+	service := New(Config{
+		Control:         control,
+		Executor:        executor,
+		Lock:            &supervisorLockStub{locked: true},
+		PageRetryDelays: []time.Duration{0},
+	})
+
+	if err := service.tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if executor.calls != 1 {
+		t.Fatalf("executor calls = %d, want 1", executor.calls)
+	}
+	if control.statusCalls != 1 {
+		t.Fatalf("status calls = %d, want 1", control.statusCalls)
+	}
+	if control.cutoverCalls != 0 {
+		t.Fatalf("cutover calls = %d, want 0", control.cutoverCalls)
+	}
+}
+
+func TestSupervisorStatusExposesSanitizedLoopError(t *testing.T) {
+	ctx := context.Background()
+	rawErr := errors.New("postgres: password=secret SELECT * FROM credentials")
+	control := &supervisorControlStub{status: supervisorStatus(domain.V2MigrationStateRunning)}
+	service := New(Config{
+		Control:         control,
+		Executor:        &supervisorExecutorStub{err: rawErr},
+		Lock:            &supervisorLockStub{locked: true},
+		PageRetryDelays: []time.Duration{0},
+	})
+
+	err := service.tick(ctx)
+	if err == nil {
+		t.Fatal("tick err = nil")
+	}
+	service.setLastError(publicSupervisorError(err))
+	status, err := service.Status(ctx)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(status.RecentErrors) != 1 {
+		t.Fatalf("recent errors = %#v", status.RecentErrors)
+	}
+	if status.RecentErrors[0] != supervisorInternalErrorMessage {
+		t.Fatalf("recent error = %q", status.RecentErrors[0])
+	}
+	if strings.Contains(status.RecentErrors[0], "secret") || strings.Contains(status.RecentErrors[0], "credentials") {
+		t.Fatalf("recent error leaked raw detail: %q", status.RecentErrors[0])
 	}
 }
 
@@ -202,6 +263,30 @@ func TestProviderReadinessFailsClosedWhenProbeReturnsNoEvidence(t *testing.T) {
 	}
 }
 
+func TestProviderReadinessSanitizesRawProbeErrors(t *testing.T) {
+	ctx := context.Background()
+	status := supervisorStatus(domain.V2MigrationStateReadyCutover)
+	status.Run.TotalItems = 0
+	status.Run.CompletedItems = 0
+	service := New(Config{
+		ProviderProbe: &supervisorProviderProbeStub{
+			err: errors.New("provider response contained token=secret"),
+		},
+		RequiredGates: []string{"provider_readiness"},
+	})
+
+	gates, err := service.evaluateGates(ctx, status)
+	if err == nil {
+		t.Fatal("evaluateGates err = nil")
+	}
+	if len(gates) != 1 || gates[0].Message != gateInternalErrorMessage {
+		t.Fatalf("gates = %#v", gates)
+	}
+	if strings.Contains(gates[0].Message, "secret") || strings.Contains(gates[0].Message, "provider response") {
+		t.Fatalf("gate message leaked raw detail: %q", gates[0].Message)
+	}
+}
+
 func TestProviderReadinessFailsClosedForNonemptyCorpusWithoutPlacement(t *testing.T) {
 	ctx := context.Background()
 	status := supervisorStatus(domain.V2MigrationStateReadyCutover)
@@ -244,6 +329,17 @@ func TestSearchGateFailsClosedWhenReadinessFails(t *testing.T) {
 	}
 	if !strings.Contains(gates[0].Message, "search readiness failed") {
 		t.Fatalf("gate message = %q", gates[0].Message)
+	}
+}
+
+func TestStaticReleaseEvidenceSourcesExist(t *testing.T) {
+	repoRoot := filepath.Join("..", "..", "..")
+	for gate, entry := range staticReleaseEvidence {
+		for _, source := range entry.sources {
+			if _, err := os.Stat(filepath.Join(repoRoot, source)); err != nil {
+				t.Fatalf("gate %s source %s does not exist: %v", gate, source, err)
+			}
+		}
 	}
 }
 

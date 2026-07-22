@@ -43,6 +43,12 @@ func TestSupervisorProcessesDefaultGatesCutoverAndRequestsRestart(t *testing.T) 
 	if err := service.tick(ctx); err != nil {
 		t.Fatalf("tick: %v", err)
 	}
+	if control.cutoverCalls != 0 {
+		t.Fatalf("cutover calls before next poll = %d, want 0", control.cutoverCalls)
+	}
+	if err := service.tick(ctx); err != nil {
+		t.Fatalf("second tick: %v", err)
+	}
 
 	if executor.calls != 2 {
 		t.Fatalf("executor calls = %d, want 2", executor.calls)
@@ -226,6 +232,7 @@ type supervisorControlStub struct {
 	pauseCalls     int
 	resumeCalls    int
 	cutoverCalls   int
+	statusCalls    int
 	preflightReq   migrationcontrol.OperatorRequest
 	startReq       migrationcontrol.OperatorRequest
 	pauseReq       migrationcontrol.OperatorRequest
@@ -234,6 +241,7 @@ type supervisorControlStub struct {
 }
 
 func (s *supervisorControlStub) Status(context.Context) (*domain.V2MigrationControlStatus, error) {
+	s.statusCalls++
 	if s.statusErr != nil {
 		return nil, s.statusErr
 	}
