@@ -41,6 +41,7 @@ type UserPortalDeps struct {
 	SSOService      *service.SSOService
 	AppConfig       service.AppConfigService
 	Config          config.ConfigProvider
+	MigrationStatus MigrationDataPlaneStatusProvider
 	UserStaticDir   string
 	ExtraMiddleware []echo.MiddlewareFunc
 }
@@ -72,6 +73,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 		authOpts.SSOSessionAuthenticator = deps.SSOService
 	}
 	api.Use(httpmw.AuthMiddlewareWithOptions(deps.APIKeyRepo, deps.AuditSvc, deps.SecuritySvc, authOpts))
+	api.Use(migrationDataPlaneGate(deps.MigrationStatus))
 	api.Use(deps.ExtraMiddleware...)
 	api.Use(httpmw.UsageMetricsMiddleware(deps.UsageMetrics))
 	api.Use(httpmw.RateLimitMiddleware(deps.RateLimitSvc, deps.Config, deps.AuditSvc))

@@ -346,7 +346,7 @@ func TestValidateV2SemanticReviewResponseRejectsMalformedResultFields(t *testing
 		"relationship_results[0].rationale: is required and must be bounded",
 		"relationship_results[0].evidence_verdict: is unsupported",
 		"relationship_results[0].predicate_key: is required for resolved predicate",
-		"relationship_results[1].predicate_key: must be null",
+		"relationship_results[1].predicate_key: must be null when predicate_status is needs_review",
 		"relationship_results[2].predicate_status: is unsupported",
 		"relationship_results[3].ref: is unknown",
 	} {
@@ -405,13 +405,16 @@ func TestV2SemanticReviewResponseSchemaIsClosed(t *testing.T) {
 	}
 }
 
-func TestV2ProviderProposalSchemaExposesPredicateAndEvidenceContract(t *testing.T) {
+func TestV2ProviderProposalSchemaExposesPredicateAndProposalContract(t *testing.T) {
 	schema := V2ProviderProposalSchema()
 	properties := schema["properties"].(map[string]any)
-	for _, key := range []string{"predicate_options", "evidence", "entity_proposals", "relationship_proposals"} {
+	for _, key := range []string{"predicate_options", "entity_proposals", "relationship_proposals"} {
 		if _, ok := properties[key]; !ok {
 			t.Fatalf("V2ProviderProposalSchema missing %s", key)
 		}
+	}
+	if _, ok := properties["evidence"]; ok {
+		t.Fatal("V2ProviderProposalSchema should not require evidence echo")
 	}
 }
 

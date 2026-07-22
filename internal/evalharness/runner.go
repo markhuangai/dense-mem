@@ -26,6 +26,7 @@ type RunOptions struct {
 	ResumeSourceDocIDsPath string
 	TracesPath             string
 	MappingPath            string
+	KnowledgeMappingMode   string
 	MaxPageSize            int
 	RunID                  string
 	ReleaseGatePolicyPath  string
@@ -42,6 +43,10 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	}
 	if opts.ReleaseGatePolicyPath != "" && mode != "validate" && mode != "baseline" && mode != "candidate" {
 		return Summary{}, fmt.Errorf("release gate policy requires validate, baseline, or candidate mode")
+	}
+	knowledgeMappingMode, err := normalizeKnowledgeMappingMode(opts.KnowledgeMappingMode)
+	if err != nil {
+		return Summary{}, err
 	}
 	toolTransport := strings.ToLower(strings.TrimSpace(opts.ToolTransport))
 	if toolTransport == "" {
@@ -130,6 +135,7 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		ResumeSourceDocIDsPath: opts.ResumeSourceDocIDsPath,
 		TracesPath:             opts.TracesPath,
 		MappingPath:            opts.MappingPath,
+		KnowledgeMappingMode:   knowledgeMappingMode,
 	}
 	if mode == "validate" || (releaseGateInput != nil && !releaseGateInput.Passed) {
 		if opts.OutDir != "" {
@@ -214,7 +220,7 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 					return Summary{}, err
 				}
 				mergeKnowledgeMapping(&mapping, imported)
-				exported, err := client.ExportKnowledgeMapping(ctx, opts.MaxPageSize)
+				exported, err := exportKnowledgeMapping(ctx, client, opts.MaxPageSize, knowledgeMappingMode)
 				if err != nil {
 					return Summary{}, err
 				}
@@ -234,7 +240,7 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			}
 		}
 		if !mappingLoadedFromPath && mode != "import" {
-			exported, err := client.ExportKnowledgeMapping(ctx, opts.MaxPageSize)
+			exported, err := exportKnowledgeMapping(ctx, client, opts.MaxPageSize, knowledgeMappingMode)
 			if err != nil {
 				return Summary{}, err
 			}
@@ -317,6 +323,26 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		}
 	}
 	return summary, nil
+}
+
+func normalizeKnowledgeMappingMode(mode string) (string, error) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		return "v1", nil
+	}
+	switch mode {
+	case "v1", "v2":
+		return mode, nil
+	default:
+		return "", fmt.Errorf("unsupported knowledge mapping mode %q", mode)
+	}
+}
+
+func exportKnowledgeMapping(ctx context.Context, client *HTTPClient, maxPageSize int, mode string) (KnowledgeMapping, error) {
+	if mode == "v2" {
+		return client.ExportV2KnowledgeMapping(ctx, maxPageSize)
+	}
+	return client.ExportKnowledgeMapping(ctx, maxPageSize)
 }
 
 func toolContract(transport string) string {

@@ -18,11 +18,6 @@ func TestValidateV2ProviderProposalAcceptsGroundedExtraction(t *testing.T) {
 	}
 	proposal := V2ProviderProposal{
 		PredicateOptions: []string{"uses"},
-		Evidence: []V2ProviderProposalEvidence{{
-			EvidenceIndex: 0,
-			EvidenceID:    "evidence:0",
-			Content:       content,
-		}},
 		EntityProposals: []V2ProviderEntityProposal{
 			{
 				Ref:        "project_1",
@@ -60,14 +55,47 @@ func TestValidateV2ProviderProposalAcceptsGroundedExtraction(t *testing.T) {
 }
 
 func TestDecodeV2ProviderProposalJSONRejectsUnknownFieldsAndTrailingJSON(t *testing.T) {
-	raw := []byte(`{"predicate_options":[],"evidence":[],"entity_proposals":[],"relationship_proposals":[],"unknown":true}`)
+	raw := []byte(`{"predicate_options":[],"evidence":[],"entity_proposals":[],"relationship_proposals":[]}`)
 	if _, err := DecodeV2ProviderProposalJSON(raw); err == nil {
 		t.Fatal("unknown provider proposal field accepted")
 	}
 
-	raw = []byte(`{"predicate_options":[],"evidence":[],"entity_proposals":[],"relationship_proposals":[]} {}`)
+	raw = []byte(`{"predicate_options":[],"entity_proposals":[],"relationship_proposals":[]} {}`)
 	if _, err := DecodeV2ProviderProposalJSON(raw); err == nil {
 		t.Fatal("trailing provider proposal JSON accepted")
+	}
+}
+
+func TestDecodeV2ProviderProposalJSONAcceptsTypedValueDisplayAndUnit(t *testing.T) {
+	raw := []byte(`{
+		"predicate_options":["scored"],
+		"entity_proposals":[
+			{"ref":"project","name":"Dense-Mem","entity_kind":"project","aliases":[],"known_entity_id":null,"evidence":[{"evidence_index":0,"start":0,"end":9}]}
+		],
+		"relationship_proposals":[
+			{
+				"proposal_id":"score",
+				"subject_ref":"project",
+				"original_predicate":"scored",
+				"predicate_candidates":["scored"],
+				"object_ref":"",
+				"object_value":{"ref":"score_value","type":"number","value":"42","display":"42%","unit":"percent"},
+				"polarity":"+",
+				"modality":"statement",
+				"evidence":[{"evidence_index":0,"start":0,"end":9}],
+				"valid_from":null,
+				"valid_to":null,
+				"client_comment":null
+			}
+		]
+	}`)
+	proposal, err := DecodeV2ProviderProposalJSON(raw)
+	if err != nil {
+		t.Fatalf("DecodeV2ProviderProposalJSON: %v", err)
+	}
+	value := proposal.RelationshipProposals[0].ObjectValue
+	if value == nil || value.Display != "42%" || value.Unit != "percent" {
+		t.Fatalf("object value = %#v", value)
 	}
 }
 
@@ -140,11 +168,6 @@ func TestValidateV2ProviderProposalRejectsUnknownRefsAndBadSpans(t *testing.T) {
 		}},
 	}
 	proposal := V2ProviderProposal{
-		Evidence: []V2ProviderProposalEvidence{{
-			EvidenceIndex: 0,
-			EvidenceID:    "evidence:0",
-			Content:       "Dense-Mem uses PostgreSQL.",
-		}},
 		EntityProposals: []V2ProviderEntityProposal{{
 			Ref:        "project_1",
 			Name:       "Dense-Mem",
@@ -173,50 +196,9 @@ func TestValidateV2ProviderProposalRejectsUnknownRefsAndBadSpans(t *testing.T) {
 	}
 }
 
-func TestValidateV2ProviderProposalRejectsEvidenceEchoMismatches(t *testing.T) {
-	req := V2ProviderProposalRequest{
-		RequestID:        "extract-1",
-		PredicateOptions: []string{"uses"},
-		Evidence: []V2SemanticReviewEvidence{{
-			EvidenceID:    "evidence:0",
-			EvidenceIndex: 0,
-			Content:       "Dense-Mem uses PostgreSQL.",
-		}, {
-			EvidenceID:    "evidence:1",
-			EvidenceIndex: 1,
-			Content:       "Dense-Mem uses pgvector.",
-		}},
-	}
-	proposal := V2ProviderProposal{
-		Evidence: []V2ProviderProposalEvidence{
-			{EvidenceIndex: 2, EvidenceID: "evidence:2", Content: "unknown"},
-			{EvidenceIndex: 0, EvidenceID: "wrong", Content: "Dense-Mem uses PostgreSQL."},
-			{EvidenceIndex: 0, EvidenceID: "evidence:0", Content: "wrong"},
-		},
-	}
-
-	got := v2ProviderTestValidationMessages(ValidateV2ProviderProposal(req, proposal))
-	for _, want := range []string{
-		"evidence[0].evidence_index: is unknown",
-		"evidence[1].evidence_id: does not match request evidence",
-		"evidence[2].evidence_index: is duplicated",
-		"evidence[2].content: does not match request evidence",
-		"evidence: missing echo for evidence_index 1",
-	} {
-		if !v2TestContainsValidation(got, want) {
-			t.Fatalf("validation errors = %#v, want %q", got, want)
-		}
-	}
-}
-
 func TestValidateV2ProviderProposalRejectsEntityShapeErrors(t *testing.T) {
 	req := v2ProviderProposalTestRequest()
 	proposal := V2ProviderProposal{
-		Evidence: []V2ProviderProposalEvidence{{
-			EvidenceIndex: 0,
-			EvidenceID:    "evidence:0",
-			Content:       req.Evidence[0].Content,
-		}},
 		EntityProposals: []V2ProviderEntityProposal{
 			{Ref: " ", Name: " ", EntityKind: "unsupported"},
 			{Ref: "dup", Name: "Dense-Mem", EntityKind: "project", Evidence: []V2ProviderEvidenceSpan{{EvidenceIndex: 3, Start: 0, End: 1}}},
@@ -243,11 +225,6 @@ func TestValidateV2ProviderProposalRejectsEntityShapeErrors(t *testing.T) {
 func TestValidateV2ProviderProposalRejectsRelationshipShapeErrors(t *testing.T) {
 	req := v2ProviderProposalTestRequest()
 	proposal := V2ProviderProposal{
-		Evidence: []V2ProviderProposalEvidence{{
-			EvidenceIndex: 0,
-			EvidenceID:    "evidence:0",
-			Content:       req.Evidence[0].Content,
-		}},
 		EntityProposals: []V2ProviderEntityProposal{
 			{Ref: "project_1", Name: "Dense-Mem", EntityKind: "project", Evidence: []V2ProviderEvidenceSpan{{EvidenceIndex: 0, Start: 0, End: 9}}},
 			{Ref: "db_1", Name: "PostgreSQL", EntityKind: "project", Evidence: []V2ProviderEvidenceSpan{{EvidenceIndex: 0, Start: 15, End: 25}}},

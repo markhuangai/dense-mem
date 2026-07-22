@@ -3,6 +3,7 @@ package memoryservice
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -240,11 +241,6 @@ func TestV2SemanticPlacementReviewSourceExtractsWhenProposalAbsent(t *testing.T)
 	provider := &v2ReviewSourceProposalProviderStub{
 		proposal: verifier.V2ProviderProposal{
 			PredicateOptions: []string{"uses", "works_on"},
-			Evidence: []verifier.V2ProviderProposalEvidence{{
-				EvidenceIndex: 0,
-				EvidenceID:    "evidence:0",
-				Content:       content,
-			}},
 			EntityProposals: []verifier.V2ProviderEntityProposal{
 				{
 					Ref:        "project_1",
@@ -254,7 +250,7 @@ func TestV2SemanticPlacementReviewSourceExtractsWhenProposalAbsent(t *testing.T)
 				},
 				{
 					Ref:        "db_1",
-					Name:       "PostgreSQL",
+					Name:       "Postgres database",
 					EntityKind: "project",
 					Evidence: []verifier.V2ProviderEvidenceSpan{{
 						EvidenceIndex: 0,
@@ -302,6 +298,9 @@ func TestV2SemanticPlacementReviewSourceExtractsWhenProposalAbsent(t *testing.T)
 	if len(job.Request.EntityMentions) != 2 || len(job.Request.RelationshipObservations) != 1 {
 		t.Fatalf("request = %#v", job.Request)
 	}
+	if job.Request.EntityMentions[1].Surface != "PostgreSQL" {
+		t.Fatalf("provider entity evidence span was not preserved: %#v", job.Request.EntityMentions[1])
+	}
 	if job.Request.RelationshipObservations[0].Ref != "rel:uses" || job.Request.RelationshipObservations[0].Quote != content {
 		t.Fatalf("relationship observation = %#v", job.Request.RelationshipObservations[0])
 	}
@@ -310,6 +309,9 @@ func TestV2SemanticPlacementReviewSourceExtractsWhenProposalAbsent(t *testing.T)
 	}
 	if got := job.Request.RelationshipObservations[0].ValidTo; got == nil || got.Format(time.RFC3339) != validToText {
 		t.Fatalf("valid_to = %#v", got)
+	}
+	if _, validationErrs := verifier.PrepareV2SemanticReviewRequest(job.Request); len(validationErrs) > 0 {
+		t.Fatalf("prepared request validation errors = %#v", validationErrs)
 	}
 }
 
@@ -466,19 +468,15 @@ func TestV2SemanticPlacementReviewSourceRetriesInvalidProviderProposal(t *testin
 		},
 	}
 	invalid := verifier.V2ProviderProposal{
-		Evidence: []verifier.V2ProviderProposalEvidence{{
-			EvidenceIndex: 0,
-			EvidenceID:    "evidence:0",
-			Content:       "stale content",
+		EntityProposals: []verifier.V2ProviderEntityProposal{{
+			Ref:        "project_1",
+			Name:       "Dense-Mem",
+			EntityKind: "project",
+			Evidence:   []verifier.V2ProviderEvidenceSpan{{EvidenceIndex: 2, Start: 0, End: 1}},
 		}},
 	}
 	valid := verifier.V2ProviderProposal{
 		PredicateOptions: []string{"uses"},
-		Evidence: []verifier.V2ProviderProposalEvidence{{
-			EvidenceIndex: 0,
-			EvidenceID:    "evidence:0",
-			Content:       content,
-		}},
 		EntityProposals: []verifier.V2ProviderEntityProposal{{
 			Ref:        "project_1",
 			Name:       "Dense-Mem",
@@ -533,15 +531,180 @@ func TestV2SemanticPlacementReviewSourceRetriesInvalidProviderProposal(t *testin
 	}
 }
 
+func TestV2SemanticPlacementReviewSourceRetriesMalformedProviderProposal(t *testing.T) {
+	teamID := uuid.NewString()
+	ownerID := uuid.NewString()
+	ingestID := uuid.NewString()
+	runID := uuid.NewString()
+	itemID := uuid.NewString()
+	content := "Dense-Mem uses PostgreSQL."
+	ledger := &v2ReviewSourceLedgerStub{placement: &repository.V2CreateIngestResult{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		IngestID:       ingestID,
+		PlacementRunID: runID,
+		Status:         "processing",
+		Proposal:       map[string]any{},
+		Evidence: []repository.V2EvidenceFragment{{
+			FragmentID:       uuid.NewString(),
+			EvidenceIndex:    0,
+			Content:          content,
+			ContentHash:      "sha256:current",
+			SourceRevisionID: uuid.NewString(),
+		}},
+		Items: []repository.V2PlacementItem{{
+			PlacementItemID: itemID,
+			EvidenceIndex:   0,
+			Status:          "queued",
+		}},
+	}}
+	catalog := &v2ReviewSourceCatalogStub{
+		predicateOptions: []string{"uses"},
+		predicateCandidates: map[string][]repository.V2SemanticReviewPredicateCandidate{
+			"uses": {{
+				PredicateKey:        "uses",
+				Version:             1,
+				AllowedSubjectKinds: []string{"project"},
+				AllowedObjectKinds:  []string{"project"},
+				RelationshipKind:    "state",
+				CurrentCardinality:  "many",
+				LifecycleState:      "active",
+			}},
+		},
+	}
+	valid := verifier.V2ProviderProposal{
+		PredicateOptions: []string{"uses"},
+		EntityProposals: []verifier.V2ProviderEntityProposal{{
+			Ref:        "project_1",
+			Name:       "Dense-Mem",
+			EntityKind: "project",
+			Evidence:   []verifier.V2ProviderEvidenceSpan{{EvidenceIndex: 0, Start: 0, End: utf8.RuneCountInString("Dense-Mem")}},
+		}, {
+			Ref:        "db_1",
+			Name:       "PostgreSQL",
+			EntityKind: "project",
+			Evidence: []verifier.V2ProviderEvidenceSpan{{
+				EvidenceIndex: 0,
+				Start:         utf8.RuneCountInString("Dense-Mem uses "),
+				End:           utf8.RuneCountInString("Dense-Mem uses PostgreSQL"),
+			}},
+		}},
+		RelationshipProposals: []verifier.V2ProviderRelationshipProposal{{
+			ProposalID:        "rel:uses",
+			SubjectRef:        "project_1",
+			OriginalPredicate: "uses",
+			ObjectRef:         "db_1",
+			Polarity:          "+",
+			Modality:          "statement",
+			Evidence:          []verifier.V2ProviderEvidenceSpan{{EvidenceIndex: 0, Start: 0, End: utf8.RuneCountInString(content)}},
+		}},
+	}
+	provider := &v2ReviewSourceProposalProviderStub{
+		errs: []error{
+			&verifier.MalformedResponseError{Provider: "stub", Message: "bad structured output"},
+			nil,
+		},
+		proposals: []verifier.V2ProviderProposal{{}, valid},
+	}
+	source := NewV2SemanticPlacementReviewSource(V2SemanticPlacementReviewSourceDependencies{
+		Ledger:           ledger,
+		Catalog:          catalog,
+		ProposalProvider: provider,
+	})
+
+	job, err := source.BuildV2SemanticReviewJob(context.Background(), repository.V2PlacementRun{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		IngestID:       ingestID,
+		PlacementRunID: runID,
+		Status:         "processing",
+		MaxAttempts:    5,
+	})
+	if err != nil {
+		t.Fatalf("BuildV2SemanticReviewJob returned error: %v", err)
+	}
+	if len(provider.reqs) != 2 {
+		t.Fatalf("provider attempts = %d, requests=%#v", len(provider.reqs), provider.reqs)
+	}
+	if provider.reqs[1].Attempt != 2 ||
+		len(provider.reqs[1].ValidationFeedback) != 1 ||
+		!strings.Contains(provider.reqs[1].ValidationFeedback[0], "provider_proposal") ||
+		!strings.Contains(provider.reqs[1].ValidationFeedback[0], "malformed structured response") {
+		t.Fatalf("provider retry requests = %#v", provider.reqs)
+	}
+	if len(job.ValidationErrors) != 0 || len(job.Request.RelationshipObservations) != 1 {
+		t.Fatalf("job = %#v", job)
+	}
+}
+
+func TestV2SemanticPlacementReviewSourceReturnsRetryableProviderProposalAtLimit(t *testing.T) {
+	teamID := uuid.NewString()
+	ownerID := uuid.NewString()
+	ingestID := uuid.NewString()
+	runID := uuid.NewString()
+	itemID := uuid.NewString()
+	ledger := &v2ReviewSourceLedgerStub{placement: &repository.V2CreateIngestResult{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		IngestID:       ingestID,
+		PlacementRunID: runID,
+		Status:         "processing",
+		Proposal:       map[string]any{},
+		Evidence: []repository.V2EvidenceFragment{{
+			FragmentID:    uuid.NewString(),
+			EvidenceIndex: 0,
+			Content:       "Dense-Mem uses PostgreSQL.",
+			ContentHash:   "sha256:current",
+		}},
+		Items: []repository.V2PlacementItem{{
+			PlacementItemID: itemID,
+			EvidenceIndex:   0,
+			Status:          "queued",
+		}},
+	}}
+	provider := &v2ReviewSourceProposalProviderStub{
+		err: &verifier.MalformedResponseError{Provider: "stub", Message: "bad structured output"},
+	}
+	source := NewV2SemanticPlacementReviewSource(V2SemanticPlacementReviewSourceDependencies{
+		Ledger:           ledger,
+		Catalog:          &v2ReviewSourceCatalogStub{predicateOptions: []string{"uses"}},
+		ProposalProvider: provider,
+	})
+
+	job, err := source.BuildV2SemanticReviewJob(context.Background(), repository.V2PlacementRun{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		IngestID:       ingestID,
+		PlacementRunID: runID,
+		Status:         "processing",
+		MaxAttempts:    2,
+	})
+	if err != nil {
+		t.Fatalf("BuildV2SemanticReviewJob returned error: %v", err)
+	}
+	if len(provider.reqs) != 5 || provider.reqs[4].Attempt != 5 {
+		t.Fatalf("provider requests = %#v", provider.reqs)
+	}
+	if len(job.ValidationErrors) != 0 {
+		t.Fatalf("terminal validation errors = %#v", job.ValidationErrors)
+	}
+	if len(job.RetryableValidationErrors) != 1 || job.RetryableValidationErrors[0].Field != "provider_proposal" {
+		t.Fatalf("retryable validation errors = %#v", job.RetryableValidationErrors)
+	}
+}
+
 func TestV2PlacementReviewSourceHelperCoercions(t *testing.T) {
 	raw := map[string]any{
 		"object_value": map[string]any{
-			"type":  "number",
-			"value": 42,
+			"type":    "number",
+			"value":   42,
+			"display": "42%",
+			"unit":    "percent",
 		},
 	}
 	value, ok := v2PlacementReviewObjectValue(raw, "rel:score")
-	if !ok || value.Ref != "value:rel:score" || value.Type != "number" || value.Value != "42" {
+	if !ok || value.Ref != "value:rel:score" || value.Type != "number" || value.Value != "42" ||
+		value.Display != "42%" || value.Unit != "percent" {
 		t.Fatalf("object value = %#v, ok=%v", value, ok)
 	}
 	value, ok = v2PlacementReviewObjectValue(map[string]any{
@@ -674,20 +837,29 @@ type v2ReviewSourceProposalProviderStub struct {
 	reqs      []verifier.V2ProviderProposalRequest
 	proposal  verifier.V2ProviderProposal
 	proposals []verifier.V2ProviderProposal
+	errs      []error
 	err       error
 }
 
 func (s *v2ReviewSourceProposalProviderStub) ProposeV2Semantic(_ context.Context, req verifier.V2ProviderProposalRequest) (verifier.V2ProviderProposal, error) {
 	s.req = req
 	s.reqs = append(s.reqs, req)
+	err := s.err
+	if len(s.errs) > 0 {
+		index := len(s.reqs) - 1
+		if index >= len(s.errs) {
+			index = len(s.errs) - 1
+		}
+		err = s.errs[index]
+	}
 	if len(s.proposals) > 0 {
 		index := len(s.reqs) - 1
 		if index >= len(s.proposals) {
 			index = len(s.proposals) - 1
 		}
-		return s.proposals[index], s.err
+		return s.proposals[index], err
 	}
-	return s.proposal, s.err
+	return s.proposal, err
 }
 
 func (s *v2ReviewSourceProposalProviderStub) ModelName() string {

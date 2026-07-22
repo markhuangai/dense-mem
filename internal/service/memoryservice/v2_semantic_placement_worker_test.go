@@ -166,6 +166,7 @@ func TestV2SemanticPlacementWorkerRequiresDependenciesAndScope(t *testing.T) {
 func TestV2SemanticPlacementWorkerPropagatesProcessingErrors(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
+	placementItemID := uuid.NewString()
 	run := &repository.V2PlacementRun{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
@@ -173,9 +174,11 @@ func TestV2SemanticPlacementWorkerPropagatesProcessingErrors(t *testing.T) {
 		PlacementRunID: uuid.NewString(),
 		Status:         "processing",
 		Attempts:       1,
+		MaxAttempts:    5,
 	}
 	request := v2SemanticReviewServiceRequest(teamID, ownerID)
 	accepted := v2SemanticReviewResultFromResponse(v2SemanticReviewResponse(request.RequestID, false, false), 1, "sha256:worker-error")
+	reviewJob := V2SemanticReviewJob{PlacementItemID: placementItemID, Request: request}
 	errClaim := errors.New("claim failed")
 	errSource := errors.New("review source failed")
 	errReview := errors.New("review failed")
@@ -190,11 +193,13 @@ func TestV2SemanticPlacementWorkerPropagatesProcessingErrors(t *testing.T) {
 		wantProcessed bool
 		wantErr       error
 		wantContains  string
+		wantRetry     bool
+		wantReason    string
 	}{
 		{
 			name:          "claim error leaves run unprocessed",
 			ledger:        &v2PlacementWorkerLedgerStub{claimErr: errClaim},
-			reviewSource:  &v2PlacementWorkerReviewSourceStub{job: V2SemanticReviewJob{Request: request}},
+			reviewSource:  &v2PlacementWorkerReviewSourceStub{job: reviewJob},
 			review:        &v2PlacementWorkerReviewStub{result: accepted},
 			commit:        &v2PlacementWorkerCommitStub{},
 			wantProcessed: false,
@@ -210,27 +215,31 @@ func TestV2SemanticPlacementWorkerPropagatesProcessingErrors(t *testing.T) {
 			wantErr:       errSource,
 		},
 		{
-			name:          "review error marks claimed run processed",
+			name:          "review error marks claimed run processed and retryable",
 			ledger:        &v2PlacementWorkerLedgerStub{run: run},
-			reviewSource:  &v2PlacementWorkerReviewSourceStub{job: V2SemanticReviewJob{Request: request}},
+			reviewSource:  &v2PlacementWorkerReviewSourceStub{job: reviewJob},
 			review:        &v2PlacementWorkerReviewStub{err: errReview},
 			commit:        &v2PlacementWorkerCommitStub{},
 			wantProcessed: true,
 			wantErr:       errReview,
+			wantRetry:     true,
+			wantReason:    "semantic review failed before completion",
 		},
 		{
-			name:          "nil review result is a typed worker error",
+			name:          "nil review result is a typed retryable worker error",
 			ledger:        &v2PlacementWorkerLedgerStub{run: run},
-			reviewSource:  &v2PlacementWorkerReviewSourceStub{job: V2SemanticReviewJob{Request: request}},
+			reviewSource:  &v2PlacementWorkerReviewSourceStub{job: reviewJob},
 			review:        &v2PlacementWorkerReviewStub{returnNil: true},
 			commit:        &v2PlacementWorkerCommitStub{},
 			wantProcessed: true,
 			wantContains:  "review returned nil result",
+			wantRetry:     true,
+			wantReason:    "semantic review returned no result",
 		},
 		{
 			name:          "commit error marks claimed run processed",
 			ledger:        &v2PlacementWorkerLedgerStub{run: run},
-			reviewSource:  &v2PlacementWorkerReviewSourceStub{job: V2SemanticReviewJob{Request: request}},
+			reviewSource:  &v2PlacementWorkerReviewSourceStub{job: reviewJob},
 			review:        &v2PlacementWorkerReviewStub{result: accepted},
 			commit:        &v2PlacementWorkerCommitStub{err: errCommit},
 			wantProcessed: true,
@@ -256,10 +265,19 @@ func TestV2SemanticPlacementWorkerPropagatesProcessingErrors(t *testing.T) {
 				if !errors.Is(err, tt.wantErr) {
 					t.Fatalf("err = %v, want %v", err, tt.wantErr)
 				}
-				return
-			}
-			if err == nil || !strings.Contains(err.Error(), tt.wantContains) {
+			} else if err == nil || !strings.Contains(err.Error(), tt.wantContains) {
 				t.Fatalf("err = %v, want containing %q", err, tt.wantContains)
+			}
+			if tt.wantRetry {
+				if tt.commit.job.Result.Status != "retryable" {
+					t.Fatalf("retry status = %q, want retryable", tt.commit.job.Result.Status)
+				}
+				if tt.commit.job.PlacementItemID != placementItemID || tt.commit.job.ExpectedAttempts != run.Attempts || tt.commit.job.MaxAttempts != run.MaxAttempts {
+					t.Fatalf("retry job = %#v", tt.commit.job)
+				}
+				if got := tt.commit.job.Result.ValidationErrors; len(got) != 1 || got[0].Message != tt.wantReason {
+					t.Fatalf("retry validation errors = %#v, want reason %q", got, tt.wantReason)
+				}
 			}
 		})
 	}

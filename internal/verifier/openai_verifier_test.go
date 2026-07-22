@@ -461,11 +461,6 @@ func TestOpenAIVerifierV2SemanticAdapters(t *testing.T) {
 
 			proposal := map[string]any{
 				"predicate_options": []string{"uses"},
-				"evidence": []map[string]any{{
-					"evidence_index": 0,
-					"evidence_id":    "evidence:0",
-					"content":        content,
-				}},
 				"entity_proposals": []map[string]any{
 					{
 						"ref":         "project_1",

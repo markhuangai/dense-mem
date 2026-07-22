@@ -55,7 +55,9 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 			evidence := input["evidence"].([]any)
 			firstEvidence := evidence[0].(map[string]any)
 			metadata := firstEvidence["metadata"].(map[string]any)
-			if firstEvidence["idempotency_key"] != "eval:doc-alpha" || metadata["source_doc_id"] != "doc-alpha" || metadata["eval_seed"] != true {
+			if firstEvidence["idempotency_key"] != "eval:doc-alpha" ||
+				metadata["source_doc_id"] != "doc-alpha" ||
+				metadata["eval_seed"] != true {
 				t.Fatalf("remember input = %#v", input)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -448,8 +450,47 @@ func TestHTTPClientImportRejectsMissingFragmentID(t *testing.T) {
 
 	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
 	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-1", Content: "content"}})
-	if err == nil || !strings.Contains(err.Error(), "remember response missing fragment id") {
+	if err == nil || !strings.Contains(err.Error(), "remember response missing fragment or evidence id") {
 		t.Fatalf("ImportCorpus err = %v", err)
+	}
+}
+
+func TestHTTPClientImportCorpusMapsV2PlacementEvidenceID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/tools/remember":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ingest_id":        "ingest-v2",
+				"processing_state": "queued",
+			})
+		case "/api/v1/tools/get_memory_placement":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ingest_id":        "ingest-v2",
+				"processing_state": "completed",
+				"items": []map[string]any{{
+					"evidence_id": "evidence-v2",
+				}},
+			})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	mapping, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-v2", Content: "content"}})
+	if err != nil {
+		t.Fatalf("ImportCorpus: %v", err)
+	}
+	ref, ok := mapping.BySourceDocID["doc-v2"]
+	if !ok || ref.Type != "evidence" || ref.ID != "evidence-v2" {
+		t.Fatalf("default source mapping = %+v, %v", ref, ok)
+	}
+	if len(mapping.BySourceDocIDAndType["doc-v2"]["fragment"]) != 0 {
+		t.Fatalf("fragment mappings = %+v", mapping.BySourceDocIDAndType["doc-v2"]["fragment"])
+	}
+	if refs := mapping.BySourceDocIDAndType["doc-v2"]["evidence"]; len(refs) != 1 || refs[0].ID != "evidence-v2" {
+		t.Fatalf("evidence mappings = %+v", refs)
 	}
 }
 
@@ -478,6 +519,88 @@ func TestHTTPClientImportCorpusReportsPlacementFailureCause(t *testing.T) {
 	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-failed", Content: "content"}})
 	if err == nil || !strings.Contains(err.Error(), "memory placement ingest-failed failed: verifier unavailable") {
 		t.Fatalf("ImportCorpus err = %v", err)
+	}
+}
+
+func TestHTTPClientImportCorpusReportsV2PlacementFailureCause(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/tools/remember":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ingest_id":        "ingest-v2-failed",
+				"processing_state": "queued",
+			})
+		case "/api/v1/tools/get_memory_placement":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ingest_id":        "ingest-v2-failed",
+				"processing_state": "failed",
+				"errors": []map[string]any{{
+					"message": "verifier unavailable",
+				}},
+			})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-v2-failed", Content: "content"}})
+	if err == nil || !strings.Contains(err.Error(), "memory placement ingest-v2-failed failed: verifier unavailable") {
+		t.Fatalf("ImportCorpus err = %v", err)
+	}
+}
+
+func TestHTTPClientWaitForMemoryPlacementResultWaitsForV2SearchProjection(t *testing.T) {
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/tools/get_memory_placement" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		call := atomic.AddInt32(&calls, 1)
+		searchState := "pending"
+		if call > 1 {
+			searchState = "current"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ingest_id":        "ingest-search",
+			"processing_state": "completed",
+			"search_state":     searchState,
+		})
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	out, err := client.WaitForMemoryPlacementResult(context.Background(), "ingest-search", 2*time.Second)
+	if err != nil {
+		t.Fatalf("WaitForMemoryPlacementResult: %v", err)
+	}
+	if atomic.LoadInt32(&calls) != 2 || out["search_state"] != "current" {
+		t.Fatalf("calls/out = %d/%#v", calls, out)
+	}
+}
+
+func TestHTTPClientWaitForMemoryPlacementResultReportsV2SearchFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/tools/get_memory_placement" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ingest_id":        "ingest-search-failed",
+			"processing_state": "completed",
+			"items": []map[string]any{{
+				"evidence_id":  "evidence-v2",
+				"search_state": "failed",
+				"errors":       []map[string]any{{"message": "embedding failed"}},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	_, err := client.WaitForMemoryPlacementResult(context.Background(), "ingest-search-failed", time.Second)
+	if err == nil || !strings.Contains(err.Error(), "memory placement ingest-search-failed search_state failed: embedding failed") {
+		t.Fatalf("WaitForMemoryPlacementResult err = %v", err)
 	}
 }
 

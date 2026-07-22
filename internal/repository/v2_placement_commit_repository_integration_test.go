@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
@@ -224,6 +225,96 @@ func TestV2PlacementSemanticCommitWritesStateSearchAndOutcomeAtomically(t *testi
 	})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrV2PlacementLeaseLost), err)
+}
+
+func TestV2PlacementSemanticCommitIndexesCrossFragmentSupportEvidence(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "placement-cross-support-team")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "placement-cross-support-owner")
+	ledgerRepo := NewV2LedgerRepository(appDB, rls)
+	semanticRepo := NewV2SemanticRepository(appDB, rls)
+	denseMem := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense-Mem")
+	ingest, err := ledgerRepo.CreateIngest(ctx, V2CreateIngestInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		IdempotencyKey: "placement cross-fragment support",
+		Evidence: []V2EvidenceInput{
+			{Content: "Jordan mentioned the Dense-Mem roadmap."},
+			{Content: "Dense-Mem uses PostgreSQL for durable memory."},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, ingest.Items, 2)
+	claimed, err := ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "worker-cross-support", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+
+	committed, err := ledgerRepo.CommitPlacementSemanticResult(ctx, V2CommitPlacementSemanticInput{
+		TeamID:           teamID,
+		OwnerProfileID:   ownerID,
+		IngestID:         ingest.IngestID,
+		PlacementRunID:   ingest.PlacementRunID,
+		PlacementItemID:  ingest.Items[0].PlacementItemID,
+		WorkerID:         "worker-cross-support",
+		ExpectedAttempts: claimed.Attempts,
+		EntityResolutions: []V2PlacementEntityResolutionInput{
+			{MentionRef: "subject", Action: "reuse", EntityID: denseMem.EntityID},
+			{MentionRef: "object", Action: "create", EntityKind: "project", CanonicalName: "PostgreSQL"},
+		},
+		RelationshipObservations: []V2PlacementRelationshipDecisionInput{{
+			Ref:          "rel-uses-postgres",
+			SubjectRef:   "subject",
+			PredicateKey: "uses",
+			ObjectRef:    "object",
+			Support: &V2EvidenceSupportInput{
+				FragmentID:     ingest.Evidence[1].FragmentID,
+				SourceGroupKey: "conversation:cross-fragment-support",
+				SpanStart:      0,
+				SpanEnd:        len("Dense-Mem uses PostgreSQL"),
+				Quote:          "Dense-Mem uses PostgreSQL",
+				Authority:      "primary",
+			},
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, committed.SearchDocuments, 3)
+
+	var itemEvidenceDocCount, supportEvidenceDocCount, relationshipDocCount, embeddingJobCount int64
+	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		require.NoError(t, tx.Raw(`
+			SELECT COUNT(*)
+			FROM search_documents
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'evidence'
+			  AND source_id = ?::uuid
+		`, teamID, ingest.Evidence[0].FragmentID).Scan(&itemEvidenceDocCount).Error)
+		require.NoError(t, tx.Raw(`
+			SELECT COUNT(*)
+			FROM search_documents
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'evidence'
+			  AND source_id = ?::uuid
+		`, teamID, ingest.Evidence[1].FragmentID).Scan(&supportEvidenceDocCount).Error)
+		require.NoError(t, tx.Raw(`
+			SELECT COUNT(*)
+			FROM search_documents
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id = ?::uuid
+		`, teamID, committed.RelationshipResults[0].Relationship.RelationshipID).Scan(&relationshipDocCount).Error)
+		return tx.Raw(`
+			SELECT COUNT(*)
+			FROM embedding_jobs
+			WHERE team_id = ?::uuid
+		`, teamID).Scan(&embeddingJobCount).Error
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), itemEvidenceDocCount)
+	assert.Equal(t, int64(1), supportEvidenceDocCount)
+	assert.Equal(t, int64(1), relationshipDocCount)
+	assert.Equal(t, int64(3), embeddingJobCount)
 }
 
 func TestV2PlacementSemanticCommitRequeuesOpenMultiItemRun(t *testing.T) {
@@ -649,6 +740,169 @@ func TestV2PlacementReviewCompletionClosesNonAcceptedResultWithLeaseFence(t *tes
 	require.NotEmpty(t, completed.OutcomeID)
 
 	var runStatus, itemStatus, itemCategory, outcomeStatus string
+	var evidenceSearchDocumentCount int64
+	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		require.NoError(t, tx.Raw(`
+			SELECT status
+			FROM placement_runs
+			WHERE team_id = ?::uuid
+			  AND placement_run_id = ?::uuid
+		`, teamID, ingest.PlacementRunID).Scan(&runStatus).Error)
+		require.NoError(t, tx.Raw(`
+			SELECT status, category
+			FROM placement_items
+			WHERE team_id = ?::uuid
+			  AND placement_item_id = ?::uuid
+		`, teamID, ingest.Items[0].PlacementItemID).Row().Scan(&itemStatus, &itemCategory))
+		require.NoError(t, tx.Raw(`
+			SELECT COUNT(*)
+			FROM search_documents
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'evidence'
+		`, teamID).Scan(&evidenceSearchDocumentCount).Error)
+		return tx.Raw(`
+			SELECT status
+			FROM placement_outcomes
+			WHERE team_id = ?::uuid
+			  AND outcome_id = ?::uuid
+		`, teamID, completed.OutcomeID).Scan(&outcomeStatus).Error
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "completed", runStatus)
+	assert.Equal(t, "completed", itemStatus)
+	assert.Equal(t, "candidate", itemCategory)
+	assert.Equal(t, "review_required", outcomeStatus)
+	assert.Equal(t, int64(1), evidenceSearchDocumentCount)
+
+	searchRepo := NewV2SearchRepository(appDB, rls)
+	recall, err := searchRepo.RecallEvidence(ctx, V2RecallEvidenceInput{
+		TeamID: teamID,
+		Query:  "Ambiguous evidence",
+		Limit:  5,
+	})
+	require.NoError(t, err)
+	require.Len(t, recall.Results, 1)
+	assert.Equal(t, ingest.Evidence[0].FragmentID, recall.Results[0].EvidenceID)
+	assert.Empty(t, recall.Results[0].RelationshipIDs)
+
+	_, err = ledgerRepo.CompletePlacementReviewResult(ctx, V2CompletePlacementReviewInput{
+		TeamID:           teamID,
+		OwnerProfileID:   ownerID,
+		IngestID:         ingest.IngestID,
+		PlacementRunID:   ingest.PlacementRunID,
+		PlacementItemID:  ingest.Items[0].PlacementItemID,
+		WorkerID:         "worker-review-required",
+		ExpectedAttempts: claimed.Attempts,
+		Status:           "review_required",
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrV2PlacementLeaseLost), err)
+}
+
+func TestV2PlacementReviewRetryableRequeuesRunWithoutResettingAttempts(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "placement-review-retryable-team")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "retryable-owner")
+	ledgerRepo := NewV2LedgerRepository(appDB, rls)
+
+	ingest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"placement retryable review", "Provider timeout should requeue this evidence.")
+	claimed, err := ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "worker-retryable", time.Minute)
+	require.NoError(t, err)
+
+	requeued, err := ledgerRepo.RequeuePlacementReviewResult(ctx, V2RequeuePlacementReviewInput{
+		TeamID:           teamID,
+		OwnerProfileID:   ownerID,
+		IngestID:         ingest.IngestID,
+		PlacementRunID:   ingest.PlacementRunID,
+		PlacementItemID:  ingest.Items[0].PlacementItemID,
+		WorkerID:         "worker-retryable",
+		ExpectedAttempts: claimed.Attempts,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "retryable", requeued.Status)
+
+	var runStatus, workerID, itemStatus string
+	var attempts int
+	var leaseUntil sql.NullTime
+	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		require.NoError(t, tx.Raw(`
+			SELECT status, attempts, worker_id, lease_until
+			FROM placement_runs
+			WHERE team_id = ?::uuid
+			  AND placement_run_id = ?::uuid
+		`, teamID, ingest.PlacementRunID).Row().Scan(&runStatus, &attempts, &workerID, &leaseUntil))
+		return tx.Raw(`
+			SELECT status
+			FROM placement_items
+			WHERE team_id = ?::uuid
+			  AND placement_item_id = ?::uuid
+		`, teamID, ingest.Items[0].PlacementItemID).Row().Scan(&itemStatus)
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "queued", runStatus)
+	assert.Equal(t, claimed.Attempts, attempts)
+	assert.Empty(t, workerID)
+	assert.False(t, leaseUntil.Valid)
+	assert.Equal(t, "queued", itemStatus)
+
+	reclaimed, err := ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "worker-retryable-2", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, reclaimed)
+	assert.Equal(t, ingest.PlacementRunID, reclaimed.PlacementRunID)
+	assert.Equal(t, claimed.Attempts+1, reclaimed.Attempts)
+}
+
+func TestV2PlacementReviewRetrySupersedesStaleSource(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "placement-review-stale-team")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "review-stale-owner")
+	ledgerRepo := NewV2LedgerRepository(appDB, rls)
+
+	ingest, err := ledgerRepo.CreateIngest(ctx, V2CreateIngestInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		IdempotencyKey: "placement review stale source",
+		Evidence: []V2EvidenceInput{{
+			Content:                   "Retry should not revive stale evidence.",
+			SourceType:                "document",
+			SourceKey:                 "doc://placement-review-stale",
+			SourceRevisionToken:       "rev-1",
+			SourceRevisionContentHash: "sha256:rev1",
+		}},
+	})
+	require.NoError(t, err)
+	claimed, err := ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "worker-review-stale", time.Minute)
+	require.NoError(t, err)
+	_, err = ledgerRepo.AdvanceSourceRevision(ctx, V2AdvanceSourceRevisionInput{
+		TeamID:                        teamID,
+		OwnerProfileID:                ownerID,
+		SourceKey:                     "doc://placement-review-stale",
+		SourceKind:                    "document",
+		RevisionToken:                 "rev-2",
+		ExpectedPreviousRevisionToken: "rev-1",
+		ContentHash:                   "sha256:rev2",
+	})
+	require.NoError(t, err)
+
+	requeued, err := ledgerRepo.RequeuePlacementReviewResult(ctx, V2RequeuePlacementReviewInput{
+		TeamID:           teamID,
+		OwnerProfileID:   ownerID,
+		IngestID:         ingest.IngestID,
+		PlacementRunID:   ingest.PlacementRunID,
+		PlacementItemID:  ingest.Items[0].PlacementItemID,
+		WorkerID:         "worker-review-stale",
+		ExpectedAttempts: claimed.Attempts,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "superseded", requeued.Status)
+	require.NotEmpty(t, requeued.OutcomeID)
+
+	var runStatus, itemStatus, itemCategory, outcomeStatus string
 	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		require.NoError(t, tx.Raw(`
 			SELECT status
@@ -667,24 +921,11 @@ func TestV2PlacementReviewCompletionClosesNonAcceptedResultWithLeaseFence(t *tes
 			FROM placement_outcomes
 			WHERE team_id = ?::uuid
 			  AND outcome_id = ?::uuid
-		`, teamID, completed.OutcomeID).Scan(&outcomeStatus).Error
+		`, teamID, requeued.OutcomeID).Scan(&outcomeStatus).Error
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "completed", runStatus)
-	assert.Equal(t, "completed", itemStatus)
-	assert.Equal(t, "candidate", itemCategory)
-	assert.Equal(t, "review_required", outcomeStatus)
-
-	_, err = ledgerRepo.CompletePlacementReviewResult(ctx, V2CompletePlacementReviewInput{
-		TeamID:           teamID,
-		OwnerProfileID:   ownerID,
-		IngestID:         ingest.IngestID,
-		PlacementRunID:   ingest.PlacementRunID,
-		PlacementItemID:  ingest.Items[0].PlacementItemID,
-		WorkerID:         "worker-review-required",
-		ExpectedAttempts: claimed.Attempts,
-		Status:           "review_required",
-	})
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrV2PlacementLeaseLost), err)
+	assert.Equal(t, "failed", runStatus)
+	assert.Equal(t, "failed", itemStatus)
+	assert.Equal(t, "failed", itemCategory)
+	assert.Equal(t, "superseded", outcomeStatus)
 }

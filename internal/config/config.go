@@ -133,10 +133,16 @@ func (c *Config) GetNeo4jURI() string                    { return c.Neo4jURI }
 func (c *Config) GetNeo4jUser() string                   { return c.Neo4jUser }
 func (c *Config) GetNeo4jPassword() string               { return c.Neo4jPassword }
 func (c *Config) GetNeo4jDatabase() string               { return c.Neo4jDatabase }
-func (c *Config) GetRedisAddr() string                   { return c.RedisAddr }
-func (c *Config) GetRedisPassword() string               { return c.RedisPassword }
-func (c *Config) GetRedisDB() int                        { return c.RedisDB }
-func (c *Config) GetRedisTLSEnabled() bool               { return c.RedisTLSEnabled }
+func (c *Config) HasNeo4jConfig() bool {
+	return strings.TrimSpace(c.Neo4jURI) != "" ||
+		strings.TrimSpace(c.Neo4jUser) != "" ||
+		strings.TrimSpace(c.Neo4jPassword) != "" ||
+		strings.TrimSpace(c.Neo4jDatabase) != ""
+}
+func (c *Config) GetRedisAddr() string     { return c.RedisAddr }
+func (c *Config) GetRedisPassword() string { return c.RedisPassword }
+func (c *Config) GetRedisDB() int          { return c.RedisDB }
+func (c *Config) GetRedisTLSEnabled() bool { return c.RedisTLSEnabled }
 func (c *Config) GetDistributedCoordinationRequired() bool {
 	return c.DistributedCoordinationRequired
 }
@@ -454,24 +460,24 @@ func Load() (Config, error) {
 		}
 	}
 
-	if cfg.Neo4jURI == "" {
-		return cfg, &ValidationError{
-			Field:   "NEO4J_URI",
-			Message: "required field is empty",
+	if cfg.HasNeo4jConfig() {
+		if strings.TrimSpace(cfg.Neo4jURI) == "" {
+			return cfg, &ValidationError{
+				Field:   "NEO4J_URI",
+				Message: "required when Neo4j migration source is configured",
+			}
 		}
-	}
-
-	if cfg.Neo4jUser == "" {
-		return cfg, &ValidationError{
-			Field:   "NEO4J_USER",
-			Message: "required field is empty",
+		if strings.TrimSpace(cfg.Neo4jUser) == "" {
+			return cfg, &ValidationError{
+				Field:   "NEO4J_USER",
+				Message: "required when Neo4j migration source is configured",
+			}
 		}
-	}
-
-	if cfg.Neo4jPassword == "" {
-		return cfg, &ValidationError{
-			Field:   "NEO4J_PASSWORD",
-			Message: "required field is empty",
+		if strings.TrimSpace(cfg.Neo4jPassword) == "" {
+			return cfg, &ValidationError{
+				Field:   "NEO4J_PASSWORD",
+				Message: "required when Neo4j migration source is configured",
+			}
 		}
 	}
 

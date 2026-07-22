@@ -2,8 +2,12 @@ package migrationcontrol
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,6 +18,7 @@ import (
 const (
 	DefaultMigrationContractVersion = "dense-mem.v2.1.migration-control.v1"
 	DefaultCorpusVersion            = "dense-mem.v2.1.legacy-corpus.v1"
+	DefaultCutoverMarkerVersion     = "dense-mem.v2.1.cutover.v1"
 	defaultSourceKind               = "neo4j"
 )
 
@@ -22,12 +27,45 @@ var (
 	ErrPreflightRequired = errors.New("v2 migration control: preflight approval is required")
 	ErrAlreadyCutOver    = errors.New("v2 migration control: already cut over")
 	ErrIncompatible      = errors.New("v2 migration control: incompatible marker")
+	ErrCutoverBlocked    = errors.New("v2 migration control: cutover blocked")
+	ErrCutoverGate       = errors.New("v2 migration control: cutover gate failed")
 )
+
+var defaultCutoverRequiredGates = []string{
+	"backup_restore",
+	"postgres_schema_topology",
+	"tenant_integrity",
+	"team_owner_reconciliation",
+	"terminal_official_pipeline_outcomes",
+	"exclusion_manifest",
+	"rls_security",
+	"relationship_identity_uniqueness",
+	"active_endpoint_integrity",
+	"relationship_owner_preservation",
+	"inactive_candidate_review_boundary",
+	"predicate_identity_hold_policy",
+	"vector_contract_current",
+	"recall_oracle_hnsw",
+	"trace_lineage",
+	"v2_smoke_lifecycle",
+	"abc_visibility_mutation",
+	"provider_readiness",
+	"search_index_backlog",
+	"worker_lease_health",
+	"telemetry_audit",
+	"release_gate_1k",
+	"uat_mcp_http_browser",
+	"compose_rehearsal",
+	"restart_rehearsal",
+	"rollback_compatibility",
+	"no_neo4j_fallback",
+}
 
 type Store interface {
 	GetLatestRun(ctx context.Context) (*domain.V2MigrationRun, error)
 	CreateRun(ctx context.Context, input repository.V2CreateMigrationRunInput) (*domain.V2MigrationRun, error)
 	UpdateRunState(ctx context.Context, input repository.V2UpdateMigrationRunStateInput) (*domain.V2MigrationRun, error)
+	CommitCutover(ctx context.Context, input repository.V2CommitCutoverInput) (*domain.V2CompatibilityMarker, error)
 	GetLatestMarker(ctx context.Context) (*domain.V2CompatibilityMarker, error)
 	RecordOperatorAction(ctx context.Context, action domain.V2MigrationOperatorAction) error
 	ListOperatorActions(ctx context.Context, runID string, limit int) ([]domain.V2MigrationOperatorAction, error)
@@ -39,21 +77,33 @@ type Service interface {
 	Start(ctx context.Context, req OperatorRequest) (*domain.V2MigrationControlStatus, error)
 	Pause(ctx context.Context, req OperatorRequest) (*domain.V2MigrationControlStatus, error)
 	Resume(ctx context.Context, req OperatorRequest) (*domain.V2MigrationControlStatus, error)
+	Cutover(ctx context.Context, req CutoverRequest) (*domain.V2MigrationControlStatus, error)
 }
 
 type Config struct {
 	Required                 bool
 	MigrationContractVersion string
 	CorpusVersion            string
+	CutoverMarkerVersion     string
+	CutoverRequiredGates     []string
 	Now                      func() time.Time
 }
 
 type OperatorRequest struct {
 	Actor           string         `json:"-"`
-	RemoteIP        string         `json:"remote_ip,omitempty"`
+	RemoteIP        string         `json:"-"`
 	Reason          string         `json:"reason,omitempty"`
 	BackupReference string         `json:"backup_reference,omitempty"`
 	PreflightChecks map[string]any `json:"preflight_checks,omitempty"`
+}
+
+type CutoverRequest struct {
+	Actor       string                         `json:"-"`
+	RemoteIP    string                         `json:"-"`
+	Reason      string                         `json:"reason,omitempty"`
+	CorpusHash  string                         `json:"corpus_hash,omitempty"`
+	GateResults []domain.V2MigrationGateResult `json:"gate_results"`
+	Metadata    map[string]any                 `json:"metadata,omitempty"`
 }
 
 type service struct {
@@ -72,6 +122,12 @@ func New(store Store, cfg Config) Service {
 	}
 	if strings.TrimSpace(cfg.CorpusVersion) == "" {
 		cfg.CorpusVersion = DefaultCorpusVersion
+	}
+	if strings.TrimSpace(cfg.CutoverMarkerVersion) == "" {
+		cfg.CutoverMarkerVersion = DefaultCutoverMarkerVersion
+	}
+	if len(cfg.CutoverRequiredGates) == 0 {
+		cfg.CutoverRequiredGates = append([]string(nil), defaultCutoverRequiredGates...)
 	}
 	return &service{store: store, cfg: cfg, now: now}
 }
@@ -155,6 +211,68 @@ func (s *service) Pause(ctx context.Context, req OperatorRequest) (*domain.V2Mig
 
 func (s *service) Resume(ctx context.Context, req OperatorRequest) (*domain.V2MigrationControlStatus, error) {
 	return s.transition(ctx, domain.V2MigrationStatePaused, domain.V2MigrationStateRunning, "migration", domain.V2MigrationActionResumed, req)
+}
+
+func (s *service) Cutover(ctx context.Context, req CutoverRequest) (*domain.V2MigrationControlStatus, error) {
+	run, marker, err := s.latestRunAndMarker(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureMutableMarker(marker); err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, ErrPreflightRequired
+	}
+	if run.State != domain.V2MigrationStateReadyCutover {
+		return nil, fmt.Errorf("%w: run state %s", ErrCutoverBlocked, run.State)
+	}
+	if !run.PreflightApproved || strings.TrimSpace(run.BackupReference) == "" {
+		return nil, fmt.Errorf("%w: approved preflight and backup reference are required", ErrPreflightRequired)
+	}
+	corpusHash := strings.TrimSpace(run.CorpusHash)
+	if corpusHash == "" {
+		return nil, fmt.Errorf("%w: corpus_hash is required", ErrCutoverGate)
+	}
+	requestCorpusHash := strings.TrimSpace(req.CorpusHash)
+	if requestCorpusHash != "" && requestCorpusHash != corpusHash {
+		return nil, fmt.Errorf("%w: corpus_hash does not match finalized run", ErrCutoverGate)
+	}
+	gates, err := normalizeCutoverGates(req.GateResults, s.cfg.CutoverRequiredGates)
+	if err != nil {
+		return nil, err
+	}
+	gateReportHash, err := cutoverGateReportHash(gates)
+	if err != nil {
+		return nil, err
+	}
+	now := s.now().UTC()
+	_, err = s.store.CommitCutover(ctx, repository.V2CommitCutoverInput{
+		RunID:          run.RunID,
+		FromState:      domain.V2MigrationStateReadyCutover,
+		MarkerVersion:  s.cfg.CutoverMarkerVersion,
+		CorpusHash:     corpusHash,
+		GateReportHash: gateReportHash,
+		GateResults:    gates,
+		Metadata:       req.Metadata,
+		OperatorAction: domain.V2MigrationOperatorAction{
+			RunID:     run.RunID,
+			Action:    domain.V2MigrationActionCutoverCommitted,
+			Actor:     operatorActor(req.Actor),
+			RemoteIP:  strings.TrimSpace(req.RemoteIP),
+			Reason:    strings.TrimSpace(req.Reason),
+			Metadata:  cutoverOperatorMetadata(req, gateReportHash, corpusHash, s.cfg.CutoverRequiredGates),
+			CreatedAt: now,
+		},
+		Now: now,
+	})
+	if err != nil {
+		if errors.Is(err, repository.ErrV2MigrationCutoverBlocked) {
+			return nil, fmt.Errorf("%w: %v", ErrCutoverBlocked, err)
+		}
+		return nil, err
+	}
+	return s.Status(ctx)
 }
 
 func (s *service) transition(
@@ -242,11 +360,15 @@ func statusFromRunMarker(
 	if marker != nil {
 		switch marker.Status {
 		case domain.V2MigrationMarkerCompatible:
+			message := "compatible V2 migration marker present; neo4j_disconnect_required"
+			if v2FreshInstallMarker(marker) {
+				message = "fresh V2 authority marker present"
+			}
 			return &domain.V2MigrationControlStatus{
 				State:            domain.V2MigrationStateCutOver,
 				Required:         required,
 				DataPlaneAllowed: true,
-				ReadinessMessage: "compatible V2 migration marker present",
+				ReadinessMessage: message,
 				Run:              run,
 				Marker:           marker,
 				Actions:          actions,
@@ -305,6 +427,24 @@ func readinessMessage(state string) string {
 		return "migration marker is incompatible"
 	default:
 		return "legacy migration is required; use the private control portal"
+	}
+}
+
+func v2FreshInstallMarker(marker *domain.V2CompatibilityMarker) bool {
+	if marker == nil || len(marker.Metadata) == 0 {
+		return false
+	}
+	value, ok := marker.Metadata["fresh_install"]
+	if !ok {
+		return false
+	}
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		return strings.EqualFold(strings.TrimSpace(typed), "true")
+	default:
+		return false
 	}
 }
 
@@ -383,4 +523,134 @@ func operatorMetadata(req OperatorRequest) map[string]any {
 		out["preflight_checks"] = req.PreflightChecks
 	}
 	return out
+}
+
+func normalizeCutoverGates(
+	results []domain.V2MigrationGateResult,
+	required []string,
+) ([]domain.V2MigrationGateResult, error) {
+	allowed := map[string]struct{}{}
+	for _, name := range required {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		allowed[name] = struct{}{}
+	}
+	seen := map[string]domain.V2MigrationGateResult{}
+	for _, gate := range results {
+		gate.GateName = strings.TrimSpace(gate.GateName)
+		gate.Outcome = strings.TrimSpace(gate.Outcome)
+		gate.EvidenceRef = strings.TrimSpace(gate.EvidenceRef)
+		gate.EvidenceHash = strings.TrimSpace(gate.EvidenceHash)
+		gate.Message = strings.TrimSpace(gate.Message)
+		if gate.GateName == "" {
+			return nil, fmt.Errorf("%w: gate_name is required", ErrCutoverGate)
+		}
+		if _, ok := allowed[gate.GateName]; !ok {
+			return nil, fmt.Errorf("%w: unknown gate %s", ErrCutoverGate, gate.GateName)
+		}
+		if gate.Outcome != domain.V2MigrationGateOutcomePass {
+			return nil, fmt.Errorf("%w: %s outcome is %q", ErrCutoverGate, gate.GateName, gate.Outcome)
+		}
+		if gate.EvidenceRef == "" || gate.EvidenceHash == "" {
+			return nil, fmt.Errorf("%w: %s evidence_ref and evidence_hash are required", ErrCutoverGate, gate.GateName)
+		}
+		if !validSHA256Ref(gate.EvidenceHash) {
+			return nil, fmt.Errorf("%w: %s evidence_hash must be sha256:<64 hex chars>", ErrCutoverGate, gate.GateName)
+		}
+		if gate.Message == "" {
+			return nil, fmt.Errorf("%w: %s message is required", ErrCutoverGate, gate.GateName)
+		}
+		if strings.TrimSpace(cutoverGateVersion(gate.Metadata)) == "" {
+			return nil, fmt.Errorf("%w: %s metadata.version is required", ErrCutoverGate, gate.GateName)
+		}
+		if _, dup := seen[gate.GateName]; dup {
+			return nil, fmt.Errorf("%w: duplicate gate %s", ErrCutoverGate, gate.GateName)
+		}
+		seen[gate.GateName] = gate
+	}
+	for name := range allowed {
+		if _, ok := seen[name]; !ok {
+			return nil, fmt.Errorf("%w: missing required gate %s", ErrCutoverGate, name)
+		}
+	}
+	out := make([]domain.V2MigrationGateResult, 0, len(seen))
+	for _, gate := range seen {
+		out = append(out, gate)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].GateName < out[j].GateName
+	})
+	return out, nil
+}
+
+func cutoverGateReportHash(results []domain.V2MigrationGateResult) (string, error) {
+	payload := make([]map[string]any, 0, len(results))
+	for _, gate := range results {
+		payload = append(payload, map[string]any{
+			"gate_name":     gate.GateName,
+			"outcome":       gate.Outcome,
+			"evidence_ref":  gate.EvidenceRef,
+			"evidence_hash": gate.EvidenceHash,
+			"message":       gate.Message,
+			"metadata":      gate.Metadata,
+		})
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("%w: encode gate report: %v", ErrCutoverGate, err)
+	}
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func cutoverOperatorMetadata(
+	req CutoverRequest,
+	gateReportHash string,
+	corpusHash string,
+	requiredGates []string,
+) map[string]any {
+	out := map[string]any{
+		"corpus_hash":      corpusHash,
+		"gate_report_hash": gateReportHash,
+		"required_gates":   append([]string(nil), requiredGates...),
+	}
+	if len(req.Metadata) > 0 {
+		out["cutover_metadata"] = req.Metadata
+	}
+	return out
+}
+
+func cutoverGateVersion(metadata map[string]any) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	value, ok := metadata["version"]
+	if !ok {
+		return ""
+	}
+	text, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return text
+}
+
+func validSHA256Ref(value string) bool {
+	const prefix = "sha256:"
+	if !strings.HasPrefix(value, prefix) {
+		return false
+	}
+	digest := value[len(prefix):]
+	if len(digest) != 64 {
+		return false
+	}
+	for _, ch := range digest {
+		if (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') {
+			continue
+		}
+		return false
+	}
+	return true
 }

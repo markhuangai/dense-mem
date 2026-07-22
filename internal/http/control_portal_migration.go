@@ -17,6 +17,7 @@ func registerV2MigrationControlRoutes(api *echo.Group, control *controlPortalHan
 	api.POST("/v2/migration/start", control.startV2Migration)
 	api.POST("/v2/migration/pause", control.pauseV2Migration)
 	api.POST("/v2/migration/resume", control.resumeV2Migration)
+	api.POST("/v2/migration/cutover", control.cutoverV2Migration)
 	api.POST("/v2/migration/run-once", control.runV2MigrationOnce)
 }
 
@@ -53,6 +54,26 @@ func (h *controlPortalHandler) resumeV2Migration(c echo.Context) error {
 	return h.invokeV2MigrationAction(c, func(req migrationcontrol.OperatorRequest) (any, error) {
 		return h.migration.Resume(c.Request().Context(), req)
 	})
+}
+
+func (h *controlPortalHandler) cutoverV2Migration(c echo.Context) error {
+	if h.migration == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "v2 migration control unavailable")
+	}
+	var req migrationcontrol.CutoverRequest
+	if err := c.Bind(&req); err != nil {
+		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
+	}
+	req.Actor = controlPortalActorFromContext(c.Request().Context())
+	req.RemoteIP = c.RealIP()
+	res, err := h.migration.Cutover(c.Request().Context(), req)
+	if err != nil {
+		if migrationControlValidationError(err) {
+			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
+		}
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": res})
 }
 
 func (h *controlPortalHandler) runV2MigrationOnce(c echo.Context) error {
@@ -99,5 +120,7 @@ func migrationControlValidationError(err error) bool {
 	return errors.Is(err, migrationcontrol.ErrIllegalTransition) ||
 		errors.Is(err, migrationcontrol.ErrPreflightRequired) ||
 		errors.Is(err, migrationcontrol.ErrAlreadyCutOver) ||
-		errors.Is(err, migrationcontrol.ErrIncompatible)
+		errors.Is(err, migrationcontrol.ErrIncompatible) ||
+		errors.Is(err, migrationcontrol.ErrCutoverBlocked) ||
+		errors.Is(err, migrationcontrol.ErrCutoverGate)
 }

@@ -11,6 +11,23 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
+const v2PlacementRunGuardedStatusCase = `
+	CASE
+	    WHEN EXISTS (
+	        SELECT 1
+	        FROM placement_items AS item
+	        JOIN evidence_security_events AS event
+	          ON event.team_id = item.team_id
+	         AND event.fragment_id = item.fragment_id
+	         AND event.owner_profile_id = item.owner_profile_id
+	        WHERE item.team_id = placement_runs.team_id
+	          AND item.placement_run_id = placement_runs.placement_run_id
+	          AND item.status IN ('queued', 'processing')
+	          AND event.decision = 'guarded'
+	    ) THEN 'guarded'
+	    ELSE 'queued'
+	END`
+
 func appendV2PlacementSearchDocument(result *V2CommitPlacementSemanticResult, document *V2SearchDocumentResult) {
 	if result == nil || document == nil || document.SearchDocumentID == "" {
 		return
@@ -21,6 +38,15 @@ func appendV2PlacementSearchDocument(result *V2CommitPlacementSemanticResult, do
 		}
 	}
 	result.SearchDocuments = append(result.SearchDocuments, *document)
+}
+
+func v2PlacementEvidenceSearchableStatus(status string) bool {
+	switch strings.TrimSpace(status) {
+	case string(domain.V2SemanticReviewAccepted), string(domain.V2SemanticReviewReviewRequired):
+		return true
+	default:
+		return false
+	}
 }
 
 type v2PlacementCorrectionTargetRecord struct {
@@ -188,6 +214,7 @@ func applyV2RelationshipDecisionInTx(
 			Reason:              "verifier_decision",
 			VerificationEventID: verificationID,
 			SupportDecisionID:   supportDecisionID,
+			IdempotencyKey:      v2RelationshipTransitionIdempotencyKey(verificationID, supportDecisionID),
 		}); err != nil {
 			return nil, err
 		}
@@ -349,21 +376,7 @@ func finishV2PlacementRunIfTerminal(ctx context.Context, tx *gorm.DB, input V2Co
 	if openCount > 0 {
 		result := tx.WithContext(ctx).Exec(`
 			UPDATE placement_runs
-			SET status = CASE
-			        WHEN EXISTS (
-			            SELECT 1
-			            FROM placement_items AS item
-			            JOIN evidence_security_events AS event
-			              ON event.team_id = item.team_id
-			             AND event.fragment_id = item.fragment_id
-			             AND event.owner_profile_id = item.owner_profile_id
-			            WHERE item.team_id = placement_runs.team_id
-			              AND item.placement_run_id = placement_runs.placement_run_id
-			              AND item.status IN ('queued', 'processing')
-			              AND event.decision = 'guarded'
-			        ) THEN 'guarded'
-			        ELSE 'queued'
-			    END,
+			SET status = `+v2PlacementRunGuardedStatusCase+`,
 			    worker_id = '',
 			    lease_until = NULL,
 			    attempts = 0,
@@ -400,6 +413,31 @@ func finishV2PlacementRunIfTerminal(ctx context.Context, tx *gorm.DB, input V2Co
 		  AND attempts = ?
 		  AND lease_until > clock_timestamp()
 	`, status, input.TeamID, input.PlacementRunID, input.OwnerProfileID, input.WorkerID, input.ExpectedAttempts)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrV2PlacementLeaseLost
+	}
+	return nil
+}
+
+func requeueV2PlacementRunForRetry(ctx context.Context, tx *gorm.DB, input V2CommitPlacementSemanticInput) error {
+	result := tx.WithContext(ctx).Exec(`
+		UPDATE placement_runs
+		SET status = `+v2PlacementRunGuardedStatusCase+`,
+		    worker_id = '',
+		    lease_until = NULL,
+		    available_at = now(),
+		    updated_at = now()
+		WHERE team_id = ?::uuid
+		  AND placement_run_id = ?::uuid
+		  AND owner_profile_id = ?::uuid
+		  AND status = 'processing'
+		  AND worker_id = ?
+		  AND attempts = ?
+		  AND lease_until > clock_timestamp()
+	`, input.TeamID, input.PlacementRunID, input.OwnerProfileID, input.WorkerID, input.ExpectedAttempts)
 	if result.Error != nil {
 		return result.Error
 	}

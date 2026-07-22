@@ -900,3 +900,69 @@ func TestV2SemanticAppendOnlyHistoryAndRetraction(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), transitionCount)
 }
+
+func TestInsertV2RelationshipTransitionReturnsExistingIDForIdempotentReplay(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "transition-idempotency-team")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "transition-owner")
+	ledgerRepo := NewV2LedgerRepository(appDB, rls)
+	semanticRepo := NewV2SemanticRepository(appDB, rls)
+
+	subject := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "person", "Avery")
+	object := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense-Mem")
+	ingest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"avery works on dense mem", "Avery works on Dense-Mem.")
+	decision := applyV2SemanticDecision(t, ctx, semanticRepo, V2ApplyRelationshipDecisionInput{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        ingest.IngestID,
+		SubjectEntityID: subject.EntityID,
+		PredicateKey:    "works_on",
+		ObjectEntityID:  object.EntityID,
+		Support: &V2EvidenceSupportInput{
+			FragmentID:     ingest.Evidence[0].FragmentID,
+			SourceGroupKey: "conversation:transition-idempotency",
+			SpanStart:      0,
+			SpanEnd:        len("Avery works on Dense-Mem."),
+			Authority:      "primary",
+		},
+	})
+	require.NotNil(t, decision.Relationship)
+
+	var firstID, secondID string
+	var transitionCount int64
+	err := rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		input := v2TransitionInput{
+			TeamID:         teamID,
+			OwnerProfileID: ownerID,
+			RelationshipID: decision.Relationship.RelationshipID,
+			IdempotencyKey: "transition-replay-key",
+			FromTier:       "candidate",
+			FromStatus:     "active",
+			ToTier:         "candidate",
+			ToStatus:       "active",
+			Reason:         "idempotency replay",
+		}
+		var err error
+		firstID, err = insertV2RelationshipTransition(ctx, tx, input)
+		if err != nil {
+			return err
+		}
+		secondID, err = insertV2RelationshipTransition(ctx, tx, input)
+		if err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT COUNT(*)
+			FROM relationship_transition_events
+			WHERE team_id = ?::uuid
+			  AND owner_profile_id = ?::uuid
+			  AND idempotency_key = ?
+		`, teamID, ownerID, input.IdempotencyKey).Scan(&transitionCount).Error
+	})
+	require.NoError(t, err)
+	assert.Equal(t, firstID, secondID)
+	assert.Equal(t, int64(1), transitionCount)
+}

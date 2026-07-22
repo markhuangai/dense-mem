@@ -1,6 +1,7 @@
 package verifier
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -9,10 +10,13 @@ func TestV2ProviderProposalSchemaIsClosedAndCanonical(t *testing.T) {
 	schema := V2ProviderProposalSchema()
 	assertClosedV2ProviderObjects(t, schema, "proposal")
 	props := schemaPropertiesForTest(t, schema)
-	for _, field := range []string{"evidence", "entity_proposals", "relationship_proposals", "predicate_options"} {
+	for _, field := range []string{"entity_proposals", "relationship_proposals", "predicate_options"} {
 		if _, ok := props[field]; !ok {
 			t.Fatalf("provider proposal schema missing %s", field)
 		}
+	}
+	if _, ok := props["evidence"]; ok {
+		t.Fatal("provider proposal schema should not require immutable evidence echo")
 	}
 	predicateOptions, ok := props["predicate_options"].(map[string]any)
 	if !ok {
@@ -79,11 +83,19 @@ func TestPredicateOptionArraySchemaStaysClosed(t *testing.T) {
 	assertClosedV2ProviderObjects(t, schema, "predicate options")
 }
 
+func TestV2StructuredOutputSchemasUseOpenAISupportedStrictSubset(t *testing.T) {
+	for name, schema := range map[string]map[string]any{
+		V2ProviderProposalSchemaName: V2ProviderProposalSchema(),
+		V2VerifierResponseSchemaName: V2VerifierResponseSchema(),
+	} {
+		assertOpenAIStrictSchemaSubset(t, schema, name)
+	}
+}
+
 func assertClosedV2ProviderObjects(t *testing.T, schema map[string]any, path string) {
 	t.Helper()
 	if schema["type"] == "object" {
-		boundedMap, _ := schema["x-bounded-map"].(bool)
-		if additional, ok := schema["additionalProperties"].(bool); !boundedMap && (!ok || additional) {
+		if additional, ok := schema["additionalProperties"].(bool); !ok || additional {
 			t.Errorf("%s is not closed", path)
 		}
 	}
@@ -96,6 +108,54 @@ func assertClosedV2ProviderObjects(t *testing.T, schema map[string]any, path str
 	}
 	if items, ok := schema["items"].(map[string]any); ok {
 		assertClosedV2ProviderObjects(t, items, path+"[]")
+	}
+}
+
+func assertOpenAIStrictSchemaSubset(t *testing.T, schema map[string]any, path string) {
+	t.Helper()
+	for _, keyword := range []string{"$schema", "maxProperties", "oneOf", "allOf", "not", "if", "then", "else", "dependentRequired", "dependentSchemas", "patternProperties"} {
+		if _, ok := schema[keyword]; ok {
+			t.Fatalf("%s uses unsupported OpenAI structured-output keyword %q", path, keyword)
+		}
+	}
+	if schema["type"] == "object" {
+		if additional, ok := schema["additionalProperties"].(bool); !ok || additional {
+			t.Fatalf("%s must set additionalProperties:false", path)
+		}
+		props := map[string]any{}
+		if raw, ok := schema["properties"].(map[string]any); ok {
+			props = raw
+		}
+		requiredRaw, ok := schema["required"].([]string)
+		if !ok {
+			t.Fatalf("%s must list required properties", path)
+		}
+		required := map[string]struct{}{}
+		for _, field := range requiredRaw {
+			required[field] = struct{}{}
+		}
+		for field := range props {
+			if _, ok := required[field]; !ok {
+				t.Fatalf("%s.%s must be required for OpenAI strict structured outputs", path, field)
+			}
+		}
+	}
+	if props, ok := schema["properties"].(map[string]any); ok {
+		for name, raw := range props {
+			if child, ok := raw.(map[string]any); ok {
+				assertOpenAIStrictSchemaSubset(t, child, path+"."+name)
+			}
+		}
+	}
+	if items, ok := schema["items"].(map[string]any); ok {
+		assertOpenAIStrictSchemaSubset(t, items, path+"[]")
+	}
+	if variants, ok := schema["anyOf"].([]any); ok {
+		for i, raw := range variants {
+			if child, ok := raw.(map[string]any); ok {
+				assertOpenAIStrictSchemaSubset(t, child, fmt.Sprintf("%s.anyOf[%d]", path, i))
+			}
+		}
 	}
 }
 

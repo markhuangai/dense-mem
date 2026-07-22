@@ -405,7 +405,6 @@ func (c *HTTPClient) importCorpusGroup(ctx context.Context, corpus []CorpusItem)
 	}
 	return mapping, nil
 }
-
 func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (KnowledgeMapping, error) {
 	mapping := newKnowledgeMapping()
 	evidence := map[string]any{
@@ -422,20 +421,26 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (Kno
 	}
 	fragmentID := fragmentIDFromRemember(out)
 	evidenceID := evidenceIDFromRemember(out)
-	if fragmentID == "" {
+	if fragmentID == "" && evidenceID != "" && !isV2RememberOutput(out) {
 		fragmentID = evidenceID
 	}
-	if fragmentID == "" {
-		return mapping, fmt.Errorf("import %s: remember response missing fragment id", item.SourceDocID)
-	}
 	if ingestID := stringValue(out["ingest_id"]); ingestID != "" {
-		if err := c.WaitForMemoryPlacement(ctx, ingestID, c.placementTimeout()); err != nil {
+		placement, err := c.WaitForMemoryPlacementResult(ctx, ingestID, c.placementTimeout())
+		if err != nil {
 			return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)
 		}
+		if evidenceID == "" {
+			evidenceID = evidenceIDFromPlacement(placement)
+		}
 	}
-	addSourceMapping(&mapping, Ref{Type: "fragment", ID: fragmentID, SourceDocID: item.SourceDocID}, true)
+	if fragmentID == "" && evidenceID == "" {
+		return mapping, fmt.Errorf("import %s: remember response missing fragment or evidence id", item.SourceDocID)
+	}
+	if fragmentID != "" {
+		addSourceMapping(&mapping, Ref{Type: "fragment", ID: fragmentID, SourceDocID: item.SourceDocID}, true)
+	}
 	if evidenceID != "" {
-		addSourceMapping(&mapping, Ref{Type: "evidence", ID: evidenceID, SourceDocID: item.SourceDocID}, false)
+		addSourceMapping(&mapping, Ref{Type: "evidence", ID: evidenceID, SourceDocID: item.SourceDocID}, fragmentID == "")
 	}
 	return mapping, nil
 }
@@ -470,8 +475,13 @@ func corpusImportGroupKey(item CorpusItem) string {
 }
 
 func (c *HTTPClient) WaitForMemoryPlacement(ctx context.Context, ingestID string, timeout time.Duration) error {
+	_, err := c.WaitForMemoryPlacementResult(ctx, ingestID, timeout)
+	return err
+}
+
+func (c *HTTPClient) WaitForMemoryPlacementResult(ctx context.Context, ingestID string, timeout time.Duration) (map[string]any, error) {
 	if strings.TrimSpace(ingestID) == "" {
-		return nil
+		return nil, nil
 	}
 	if timeout <= 0 {
 		timeout = 2 * time.Minute
@@ -482,26 +492,38 @@ func (c *HTTPClient) WaitForMemoryPlacement(ctx context.Context, ingestID string
 		var out map[string]any
 		if err := c.callToolWithRetry(waitCtx, "get_memory_placement", map[string]any{"ingest_id": ingestID}, &out); err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
-				return fmt.Errorf("memory placement %s did not complete within %s", ingestID, timeout)
+				return nil, fmt.Errorf("memory placement %s did not complete within %s", ingestID, timeout)
 			}
-			return err
+			return nil, err
 		}
-		status := nestedString(out, "placement", "status")
-		if status == "completed" || status == "failed" {
-			if status == "failed" {
-				if cause := nestedString(out, "placement", "error"); cause != "" {
-					return fmt.Errorf("memory placement %s failed: %s", ingestID, cause)
+		status := placementProcessingState(out)
+		switch status {
+		case "completed":
+			searchState := placementSearchState(out)
+			switch searchState {
+			case "", "current", "not_required":
+				return out, nil
+			case "pending":
+			case "failed":
+				if cause := placementErrorMessage(out); cause != "" {
+					return nil, fmt.Errorf("memory placement %s search_state failed: %s", ingestID, cause)
 				}
-				return fmt.Errorf("memory placement %s failed", ingestID)
+				return nil, fmt.Errorf("memory placement %s search_state failed", ingestID)
+			default:
+				return nil, fmt.Errorf("memory placement %s returned unknown search_state %q", ingestID, searchState)
 			}
-			return nil
+		case "failed", "guarded", "quarantined", "awaiting_review":
+			if cause := placementErrorMessage(out); cause != "" {
+				return nil, fmt.Errorf("memory placement %s %s: %s", ingestID, status, cause)
+			}
+			return nil, fmt.Errorf("memory placement %s %s", ingestID, status)
 		}
 		select {
 		case <-waitCtx.Done():
 			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
-				return fmt.Errorf("memory placement %s did not complete within %s", ingestID, timeout)
+				return nil, fmt.Errorf("memory placement %s did not complete within %s", ingestID, timeout)
 			}
-			return waitCtx.Err()
+			return nil, waitCtx.Err()
 		case <-time.After(time.Second):
 		}
 	}
@@ -724,6 +746,7 @@ func seedMetadata(item CorpusItem) map[string]any {
 func sourceDocIDsFromKnowledgeItem(kind string, item map[string]any, fragmentSourceDocIDs, claimSourceDocIDs map[string][]string) []string {
 	sourceDocID := firstNonEmpty(
 		nestedString(item, "metadata", "source_doc_id"),
+		nestedStringPath(item, "metadata", "legacy_metadata", "source_doc_id"),
 		nestedString(item, "classification", "source_doc_id"),
 		nestedString(item, "classification", "eval_source_doc_id"),
 		nestedString(item, "payload", "source_doc_id"),
@@ -812,19 +835,36 @@ func knowledgeItemID(kind string, item map[string]any) string {
 
 func fragmentIDFromRemember(out map[string]any) string {
 	fragment, _ := out["fragment"].(map[string]any)
-	if id := firstNonEmpty(stringValue(fragment["id"]), stringValue(fragment["fragment_id"])); id != "" {
-		return id
-	}
-	return evidenceIDFromRemember(out)
+	return firstNonEmpty(stringValue(fragment["id"]), stringValue(fragment["fragment_id"]))
 }
 
 func evidenceIDFromRemember(out map[string]any) string {
+	if id := stringValue(out["evidence_id"]); id != "" {
+		return id
+	}
 	evidence, _ := out["evidence"].([]any)
 	if len(evidence) == 0 {
 		return ""
 	}
 	first, _ := evidence[0].(map[string]any)
-	return firstNonEmpty(stringValue(first["id"]), stringValue(first["fragment_id"]))
+	return firstNonEmpty(stringValue(first["evidence_id"]), stringValue(first["id"]), stringValue(first["fragment_id"]))
+}
+
+func isV2RememberOutput(out map[string]any) bool {
+	return stringValue(out["processing_state"]) != "" ||
+		stringValue(out["status_tool"]) != "" ||
+		stringValue(out["correlation_id"]) != ""
+}
+
+func evidenceIDFromPlacement(out map[string]any) string {
+	items, _ := out["items"].([]any)
+	for _, raw := range items {
+		item, _ := raw.(map[string]any)
+		if id := firstNonEmpty(stringValue(item["evidence_id"]), stringValue(item["id"]), stringValue(item["fragment_id"])); id != "" {
+			return id
+		}
+	}
+	return evidenceIDFromRemember(out)
 }
 
 func traceFromToolOutput(tc Case, out map[string]any) RecallTrace {
@@ -868,6 +908,21 @@ func endpoint(base, path string) string {
 func nestedString(m map[string]any, objectKey, valueKey string) string {
 	nested, _ := nestedValue(m, objectKey, valueKey)
 	return stringValue(nested)
+}
+
+func nestedStringPath(m map[string]any, path ...string) string {
+	if len(path) == 0 {
+		return ""
+	}
+	var current any = m
+	for _, key := range path {
+		nested, ok := current.(map[string]any)
+		if !ok {
+			return ""
+		}
+		current = nested[key]
+	}
+	return stringValue(current)
 }
 
 func nestedValue(m map[string]any, objectKey, valueKey string) (any, bool) {

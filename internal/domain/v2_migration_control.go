@@ -20,11 +20,16 @@ const (
 	V2MigrationActionPaused            = "paused"
 	V2MigrationActionResumed           = "resumed"
 	V2MigrationActionFailed            = "failed"
+	V2MigrationActionCutoverCommitted  = "cutover_committed"
 
 	V2MigrationMarkerKindCutover  = "v2_cutover"
 	V2MigrationMarkerCompatible   = "compatible"
 	V2MigrationMarkerIncompatible = "incompatible"
 	V2MigrationMarkerCorrupt      = "corrupt"
+
+	V2MigrationGateOutcomePass    = "pass"
+	V2MigrationGateOutcomeFail    = "fail"
+	V2MigrationGateOutcomeWarning = "warning"
 
 	V2MigrationOutcomePending     = "pending"
 	V2MigrationOutcomeAccepted    = "accepted"
@@ -80,6 +85,18 @@ type V2MigrationOperatorAction struct {
 	Reason    string         `json:"reason,omitempty"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
 	CreatedAt time.Time      `json:"created_at"`
+}
+
+type V2MigrationGateResult struct {
+	GateID       string         `json:"gate_id,omitempty"`
+	RunID        string         `json:"run_id,omitempty"`
+	GateName     string         `json:"gate_name"`
+	Outcome      string         `json:"outcome"`
+	EvidenceRef  string         `json:"evidence_ref,omitempty"`
+	EvidenceHash string         `json:"evidence_hash,omitempty"`
+	Message      string         `json:"message,omitempty"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
+	CreatedAt    time.Time      `json:"created_at,omitzero"`
 }
 
 type V2MigrationCorpusItem struct {

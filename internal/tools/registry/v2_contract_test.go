@@ -11,6 +11,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
+	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
@@ -719,6 +720,114 @@ func TestV2ProviderAndEmbeddingContracts(t *testing.T) {
 	}
 	if embedding.V2EmbeddingContractVersion == "" {
 		t.Fatal("V2 embedding contract version is empty")
+	}
+}
+
+func TestV2PublicErrorSchemaContract(t *testing.T) {
+	schema := V2PublicErrorSchema()
+	if !schemaDisallowsAdditionalProperties(schema) {
+		t.Fatal("public error schema must be closed")
+	}
+
+	required := schemaRequiredFields(schema)
+	for _, field := range []string{"code", "message", "retryable", "correlation_id"} {
+		if !slices.Contains(required, field) {
+			t.Fatalf("required fields missing %s: %#v", field, required)
+		}
+	}
+
+	codeSchema := schemaProperties(schema)["code"]
+	enumValues, ok := codeSchema["enum"].([]string)
+	if !ok {
+		t.Fatalf("code enum = %#v", codeSchema["enum"])
+	}
+	for _, code := range []domain.V2PublicErrorCode{
+		domain.V2ErrorInvalidContractVersion,
+		domain.V2ErrorInvalidInput,
+		domain.V2ErrorUnauthorizedScope,
+		domain.V2ErrorWrongOwner,
+		domain.V2ErrorConflict,
+		domain.V2ErrorProviderUnavailable,
+		domain.V2ErrorProviderMalformed,
+		domain.V2ErrorDegraded,
+	} {
+		if !slices.Contains(enumValues, string(code)) {
+			t.Fatalf("public error enum missing %s: %#v", code, enumValues)
+		}
+	}
+
+	detailsSchema := schemaProperties(schema)["details"]
+	if detailsSchema["maxProperties"] != v2MetadataMaxProperties || detailsSchema["x-max-depth"] != 4 {
+		t.Fatalf("details schema is not bounded: %#v", detailsSchema)
+	}
+}
+
+func TestV2RememberIngestIdempotencyKeyFromEvidence(t *testing.T) {
+	single := v2RememberIngestIdempotencyKey([]memoryservice.V2RememberEvidenceInput{{
+		IdempotencyKey: " eval:doc-alpha ",
+	}})
+	if single != "eval:doc-alpha" {
+		t.Fatalf("single key = %q", single)
+	}
+
+	batch := v2RememberIngestIdempotencyKey([]memoryservice.V2RememberEvidenceInput{
+		{IdempotencyKey: "eval:doc-alpha"},
+		{IdempotencyKey: "eval:doc-beta"},
+	})
+	if !strings.HasPrefix(batch, "batch:") || len(batch) != len("batch:")+64 {
+		t.Fatalf("batch key = %q", batch)
+	}
+	if batch != v2RememberIngestIdempotencyKey([]memoryservice.V2RememberEvidenceInput{
+		{IdempotencyKey: "eval:doc-alpha"},
+		{IdempotencyKey: "eval:doc-beta"},
+	}) {
+		t.Fatal("batch key is not deterministic")
+	}
+	if got := v2RememberIngestIdempotencyKey([]memoryservice.V2RememberEvidenceInput{
+		{IdempotencyKey: "eval:doc-alpha"},
+		{},
+	}); got != "" {
+		t.Fatalf("partial batch key = %q", got)
+	}
+}
+
+func TestV2RememberRequestFromContractInputDerivesIngestIdempotency(t *testing.T) {
+	req, err := v2RememberRequestFromContractInput(map[string]any{
+		"contract_version": domain.V2ContractVersion,
+		"evidence": []any{
+			map[string]any{
+				"content":         "alpha evidence",
+				"idempotency_key": " eval:doc-alpha ",
+			},
+			map[string]any{
+				"content":         "beta evidence",
+				"idempotency_key": "eval:doc-beta",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("map request: %v", err)
+	}
+	want := v2RememberIngestIdempotencyKey(req.Evidence)
+	if req.IdempotencyKey != want || !strings.HasPrefix(req.IdempotencyKey, "batch:") {
+		t.Fatalf("derived request key = %q, want %q", req.IdempotencyKey, want)
+	}
+
+	explicit, err := v2RememberRequestFromContractInput(map[string]any{
+		"contract_version": domain.V2ContractVersion,
+		"idempotency_key":  "explicit-ingest-key",
+		"evidence": []any{
+			map[string]any{
+				"content":         "alpha evidence",
+				"idempotency_key": "eval:doc-alpha",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("map explicit request: %v", err)
+	}
+	if explicit.IdempotencyKey != "explicit-ingest-key" {
+		t.Fatalf("explicit request key = %q", explicit.IdempotencyKey)
 	}
 }
 

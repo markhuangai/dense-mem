@@ -1,6 +1,8 @@
 package registry
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"time"
 
@@ -16,6 +18,9 @@ func v2RememberRequestFromContractInput(input map[string]any) (memoryservice.V2R
 	var req memoryservice.V2RememberRequest
 	if err := remapInput(input, &req); err != nil {
 		return req, err
+	}
+	if strings.TrimSpace(req.IdempotencyKey) == "" {
+		req.IdempotencyKey = v2RememberIngestIdempotencyKey(req.Evidence)
 	}
 	proposal, ok := objectFields(input["proposal"])
 	if !ok {
@@ -40,6 +45,25 @@ func v2ResolveDreamFeedbackRequestFromContractInput(input map[string]any) (dream
 	req.EntityHints = v2ObjectArray(proposal["entities"])
 	req.RelationshipHints = v2ObjectArray(proposal["relationships"])
 	return req, nil
+}
+
+func v2RememberIngestIdempotencyKey(evidence []memoryservice.V2RememberEvidenceInput) string {
+	if len(evidence) == 0 {
+		return ""
+	}
+	if len(evidence) == 1 {
+		return strings.TrimSpace(evidence[0].IdempotencyKey)
+	}
+	h := sha256.New()
+	for _, item := range evidence {
+		key := strings.TrimSpace(item.IdempotencyKey)
+		if key == "" {
+			return ""
+		}
+		_, _ = h.Write([]byte(key))
+		_, _ = h.Write([]byte{0})
+	}
+	return "batch:" + hex.EncodeToString(h.Sum(nil))
 }
 
 func v2RecallContractOutput(res *memoryservice.V2RecallResult) map[string]any {

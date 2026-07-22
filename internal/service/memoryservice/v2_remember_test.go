@@ -21,6 +21,77 @@ func v2ScannerPayload(parts ...string) string {
 	return strings.Join(parts, "")
 }
 
+func TestV2PlacementResultSearchStateHelpers(t *testing.T) {
+	if got := v2PublicPlacementItemCategory(repository.V2PlacementItem{Status: "quarantined"}); got != string(domain.V2EvidenceQuarantined) {
+		t.Fatalf("quarantined status category = %q", got)
+	}
+	if got := v2PublicPlacementItemCategory(repository.V2PlacementItem{Category: "failed"}); got != string(domain.V2EvidenceProcessingFailed) {
+		t.Fatalf("failed category = %q", got)
+	}
+	if got := v2PublicPlacementItemCategory(repository.V2PlacementItem{Status: "completed"}); got != string(domain.V2EvidenceProcessed) {
+		t.Fatalf("processed category = %q", got)
+	}
+
+	if got := v2PlacementCombinedSearchState(string(domain.V2SearchProjectionCurrent), string(domain.V2SearchProjectionPending)); got != string(domain.V2SearchProjectionPending) {
+		t.Fatalf("combined pending = %q", got)
+	}
+	if got := v2PlacementCombinedSearchState(string(domain.V2SearchProjectionCurrent), string(domain.V2SearchProjectionFailed)); got != string(domain.V2SearchProjectionFailed) {
+		t.Fatalf("combined failed = %q", got)
+	}
+	if got := v2PlacementCombinedSearchState(string(domain.V2SearchProjectionNotRequired), string(domain.V2SearchProjectionCurrent)); got != string(domain.V2SearchProjectionCurrent) {
+		t.Fatalf("combined current = %q", got)
+	}
+	if got := v2PlacementCombinedSearchState("", ""); got != string(domain.V2SearchProjectionNotRequired) {
+		t.Fatalf("combined not required = %q", got)
+	}
+
+	searchStates := []any{string(domain.V2SearchProjectionCurrent), string(domain.V2SearchProjectionFailed)}
+	if got := v2PlacementItemSearchState(repository.V2PlacementItem{Result: map[string]any{"search_document_states": searchStates}}); got != string(domain.V2SearchProjectionFailed) {
+		t.Fatalf("failed search state = %q", got)
+	}
+	if got := v2PlacementItemSearchState(repository.V2PlacementItem{Result: map[string]any{"embedding_job_ids": []string{"job-1"}}}); got != string(domain.V2SearchProjectionPending) {
+		t.Fatalf("embedding pending search state = %q", got)
+	}
+	if got := v2PlacementItemSearchState(repository.V2PlacementItem{Result: map[string]any{"search_document_ids": []any{"doc-1"}}}); got != string(domain.V2SearchProjectionCurrent) {
+		t.Fatalf("document current search state = %q", got)
+	}
+	if got := v2PlacementItemSearchState(repository.V2PlacementItem{}); got != string(domain.V2SearchProjectionNotRequired) {
+		t.Fatalf("default search state = %q", got)
+	}
+}
+
+func TestV2PlacementRelationshipOutcomeProjection(t *testing.T) {
+	result := map[string]any{
+		"relationship_outcomes": []map[string]any{{
+			"proposal_id":         " proposal-1 ",
+			"observation_id":      "obs-1",
+			"relationship_id":     "rel-1",
+			"owner_profile_id":    42,
+			"tier":                "active",
+			"relationship_status": "accepted",
+			"category":            "stored",
+			"reason":              "accepted by verifier",
+			"review_task":         nil,
+			"ignored_extra_field": "ignored",
+		}},
+	}
+
+	outcomes := v2PlacementRelationshipOutcomes(result)
+	if len(outcomes) != 1 {
+		t.Fatalf("outcomes = %#v", outcomes)
+	}
+	if outcomes[0].ProposalID != "proposal-1" || outcomes[0].OwnerProfileID != "42" || outcomes[0].ReviewTask != "" {
+		t.Fatalf("outcome = %#v", outcomes[0])
+	}
+
+	if got := v2ResultArray(map[string]any{"values": []string{"a", "b"}}, "values"); len(got) != 2 || got[1] != "b" {
+		t.Fatalf("string array result = %#v", got)
+	}
+	if got := v2ResultArray(map[string]any{"values": "not-array"}, "values"); got != nil {
+		t.Fatalf("non-array result = %#v", got)
+	}
+}
+
 func TestV2RememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()

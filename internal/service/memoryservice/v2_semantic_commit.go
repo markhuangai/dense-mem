@@ -97,7 +97,15 @@ func (s *v2SemanticCommitService) CompleteV2SemanticPlacement(
 			}
 			return &V2SemanticPlacementCompletionResult{Status: terminal.Status, Terminal: terminal}, nil
 		}
-		return &V2SemanticPlacementCompletionResult{Status: job.Result.Status}, nil
+		input, err := v2RetryableReviewInputFromResult(job)
+		if err != nil {
+			return nil, err
+		}
+		requeued, err := s.placementCommit.RequeuePlacementReviewResult(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		return &V2SemanticPlacementCompletionResult{Status: requeued.Status}, nil
 	}
 	input, err := v2TerminalReviewInputFromResult(job)
 	if err != nil {
@@ -142,6 +150,21 @@ func v2ExhaustedRetryableSemanticCommitJob(job V2SemanticCommitJob) V2SemanticCo
 		Message: "retryable semantic review exhausted placement attempts",
 	})
 	return job
+}
+
+func v2RetryableReviewInputFromResult(job V2SemanticCommitJob) (repository.V2RequeuePlacementReviewInput, error) {
+	if job.Result.Status != string(domain.V2SemanticReviewRetryable) {
+		return repository.V2RequeuePlacementReviewInput{}, fmt.Errorf("v2 semantic commit: unsupported retryable status %q", job.Result.Status)
+	}
+	return repository.V2RequeuePlacementReviewInput{
+		TeamID:           job.TeamID,
+		OwnerProfileID:   job.OwnerProfileID,
+		IngestID:         job.IngestID,
+		PlacementRunID:   job.PlacementRunID,
+		PlacementItemID:  job.PlacementItemID,
+		WorkerID:         job.WorkerID,
+		ExpectedAttempts: job.ExpectedAttempts,
+	}, nil
 }
 
 func v2TerminalReviewInputFromResult(job V2SemanticCommitJob) (repository.V2CompletePlacementReviewInput, error) {
@@ -265,7 +288,8 @@ func v2SemanticCommitInputFromReview(job V2SemanticCommitJob) (repository.V2Comm
 				Ref:            observation.ObjectValue.Ref,
 				ValueType:      observation.ObjectValue.Type,
 				CanonicalValue: observation.ObjectValue.Value,
-				Display:        observation.ObjectValue.Value,
+				Display:        observation.ObjectValue.Display,
+				Unit:           observation.ObjectValue.Unit,
 			}
 			relationship.ObjectRef = ""
 		}
@@ -276,6 +300,7 @@ func v2SemanticCommitInputFromReview(job V2SemanticCommitJob) (repository.V2Comm
 		relationship.Support = &repository.V2EvidenceSupportInput{
 			FragmentID:       evidence.FragmentID,
 			SourceGroupKey:   "semantic_review:" + evidence.EvidenceID,
+			SourceID:         evidence.SourceID,
 			SourceRevisionID: evidence.SourceRevisionID,
 			SpanStart:        observation.Start,
 			SpanEnd:          observation.End,

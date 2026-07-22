@@ -30,6 +30,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 	"github.com/markhuangai/dense-mem/internal/service/graphview"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	"github.com/markhuangai/dense-mem/internal/service/migrationcontrol"
+	"github.com/markhuangai/dense-mem/internal/service/migrationexecutor"
 	"github.com/markhuangai/dense-mem/internal/service/recallservice"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 	"github.com/markhuangai/dense-mem/internal/sse"
@@ -135,6 +137,24 @@ func main() {
 	if err := embeddingConsistencySvc.CheckAtStartup(startupCtx); err != nil {
 		log.Fatalf("embedding consistency check failed: %v", err)
 	}
+
+	// RLSHelper is shared across repos so every query runs with Postgres
+	// FORCE RLS session variables (app.current_team_id / app.tx_mode) set.
+	rlsHelper := postgres.NewRLS()
+	v2MigrationControlRepo := repository.NewV2MigrationControlRepository(pgDB.GetDB(), rlsHelper)
+	v2Authority, err := classifyV2Authority(startupCtx, cfg, v2MigrationControlRepo)
+	if err != nil {
+		log.Fatalf("v2 authority bootstrap failed: %v", err)
+	}
+	v2MigrationControlSvc := migrationcontrol.New(v2MigrationControlRepo, migrationcontrol.Config{
+		Required: v2Authority.MigrationRequired,
+	})
+	if v2Authority.DataPlaneAllowed {
+		runActiveV2Server(startupCtx, cfg, pgDB, logger, level, v2Authority)
+		return
+	}
+	migrationDataPlaneStatus := legacyMigrationDataPlaneStatusGate{inner: v2MigrationControlSvc}
+
 	// Initialize Neo4j client with 5-second timeout
 	neo4jClient, err := neo4j.NewClient(startupCtx, &cfg)
 	if err != nil {
@@ -170,9 +190,6 @@ func main() {
 	// ========================================
 	// Repository layer
 	// ========================================
-	// RLSHelper is shared across repos so every query runs with Postgres
-	// FORCE RLS session variables (app.current_team_id / app.tx_mode) set.
-	rlsHelper := postgres.NewRLS()
 	profileRepo := repository.NewProfileRepository(pgDB.GetDB(), rlsHelper)
 	apiKeyRepo := repository.NewAPIKeyRepository(pgDB.GetDB(), rlsHelper)
 	ssoRepo := repository.NewSSORepository(pgDB.GetDB(), rlsHelper)
@@ -183,12 +200,37 @@ func main() {
 	recallFeedbackEventRepo := repository.NewRecallFeedbackEventRepository(pgDB.GetDB(), rlsHelper)
 	memoryPlacementRepo := repository.NewMemoryPlacementRepository(pgDB.GetDB(), rlsHelper)
 	skillPackImportRepo := repository.NewSkillPackImportRepository(pgDB.GetDB(), rlsHelper)
+	v2LedgerRepo := repository.NewV2LedgerRepository(pgDB.GetDB(), rlsHelper)
+	v2SemanticRepo := repository.NewV2SemanticRepository(pgDB.GetDB(), rlsHelper)
+	v2SearchRepo := repository.NewV2SearchRepository(pgDB.GetDB(), rlsHelper)
+	searchContract, err := v2SearchRepo.EnsureActiveSearchContract(startupCtx, repository.V2EnsureActiveSearchContractInput{
+		Provider:   "openai",
+		Model:      cfg.GetAIEmbeddingModel(),
+		Dimensions: cfg.GetAIEmbeddingDimensions(),
+	})
+	if err != nil {
+		log.Fatalf("v2 migration search bootstrap blocked: %v", err)
+	}
+	logger.Info(
+		"v2 migration search contract ready",
+		observability.String("embedding_contract_id", searchContract.Contract.EmbeddingContractID),
+		observability.String("search_index_generation_id", searchContract.Contract.SearchIndexGenerationID),
+		observability.String("index_strategy", searchContract.Contract.IndexStrategy),
+	)
 
 	// ========================================
 	// Neo4j profile scope enforcer and graph writer
 	// ========================================
 	profileScopeEnforcer := neo4j.NewProfileScopeEnforcer(neo4jClient)
 	profileDataPurger := service.NewNeo4jProfileDataPurger(profileScopeEnforcer)
+	legacyMigrationReader, err := neo4j.NewLegacyCorpusMigrationAdapter(neo4jClient, neo4j.LegacyCorpusAdapterConfig{
+		Enabled:     true,
+		MaxPageSize: 500,
+	})
+	if err != nil {
+		log.Fatalf("failed to build legacy migration reader: %v", err)
+	}
+	defer legacyMigrationReader.Close(context.Background())
 
 	// ========================================
 	// Service layer
@@ -210,6 +252,10 @@ func main() {
 		Logger:        logger,
 	})
 	rateLimitService := backend.rateLimitService
+	v2RememberMigrationSvc := memoryservice.NewV2RememberService(memoryservice.V2RememberDependencies{Ledger: v2LedgerRepo})
+	v2MigrationExecSvc := migrationexecutor.New(v2MigrationControlRepo, legacyMigrationReader, v2RememberMigrationSvc, migrationexecutor.Config{
+		WorkerID: "server-control",
+	})
 
 	// ========================================
 	// Recall searchers
@@ -320,10 +366,12 @@ func main() {
 	var (
 		claimVerifyRegistrySvc   claimservice.VerifyClaimService = unavailableVerifyClaimService{}
 		skillPackConflictDecider skillpackservice.ConflictDecider
+		v2SemanticReviewer       *verifier.OpenAIVerifier
 	)
 	if verifierConfigured(&cfg) {
 		baseVerifier := verifier.NewOpenAIVerifier(&cfg, nil)
 		baseVerifier.SetMetrics(discoverabilityMetrics)
+		v2SemanticReviewer = baseVerifier
 		retryVerifier := verifier.NewRetryVerifier(baseVerifier, &cfg, logger)
 		skillPackConflictDecider = skillpackservice.NewOpenAIConflictDecider(&cfg, nil)
 
@@ -378,6 +426,27 @@ func main() {
 	placementWorkerCtx, placementWorkerCancel := context.WithCancel(context.Background())
 	defer placementWorkerCancel()
 	memorySvc.StartPlacementWorker(placementWorkerCtx, time.Minute)
+	if retryEmbedder == nil {
+		log.Fatalf("v2 migration worker requires embedding provider")
+	}
+	if v2SemanticReviewer == nil {
+		log.Fatalf("v2 migration worker requires verifier provider")
+	}
+	v2WorkerCtx, v2WorkerCancel := context.WithCancel(context.Background())
+	defer v2WorkerCancel()
+	startV2ActiveWorkers(
+		v2WorkerCtx,
+		logger,
+		profileService,
+		v2LedgerRepo,
+		v2SearchRepo,
+		v2SemanticRepo,
+		retryEmbedder,
+		v2SemanticReviewer,
+		discoverabilityMetrics,
+		v2ActivePlacementLease(cfg.GetAIVerifierTimeoutSeconds(), cfg.GetPromoteTxTimeoutSeconds()),
+		v2ActiveWorkerCount(cfg.GetAIVerifierMaxConcurrency()),
+	)
 	dreamSvc := dreamservice.New(dreamservice.Dependencies{
 		Graph:     profileScopeEnforcer,
 		Memory:    memorySvc,
@@ -493,6 +562,9 @@ func main() {
 		{Name: "neo4j", Check: func(ctx context.Context) error {
 			return neo4jClient.Verify(ctx)
 		}},
+		{Name: "v2_migration_authority", Check: func(ctx context.Context) error {
+			return checkV2MigrationDataPlaneReadiness(ctx, migrationDataPlaneStatus)
+		}},
 	}
 	if backend.redisPingFn != nil {
 		checks = append(checks, http.HealthCheck{
@@ -530,6 +602,7 @@ func main() {
 		SSOAuthenticator: ssoService,
 		Config:           &cfg,
 		Logger:           logger,
+		MigrationStatus:  migrationDataPlaneStatus,
 	}
 	if telemetryHTTPMetrics != nil {
 		protectedDeps.PostAuthMiddleware = append(protectedDeps.PostAuthMiddleware, middleware.TelemetryHTTPMiddleware(telemetryHTTPMetrics))
@@ -553,18 +626,19 @@ func main() {
 
 	http.RegisterProtectedRoutesWithHandlers(e, protectedDeps, protectedHandlers)
 	userPortalDeps := http.UserPortalDeps{
-		APIKeyRepo:   apiKeyRepo,
-		ProfileSvc:   profileService,
-		APIKeySvc:    apiKeyService,
-		RateLimitSvc: rateLimitService,
-		UsageMetrics: usageMetricsService,
-		Telemetry:    telemetryReader,
-		GraphView:    graphViewSvc,
-		AuditSvc:     auditService,
-		SecuritySvc:  securityService,
-		SSOService:   ssoService,
-		AppConfig:    appConfigService,
-		Config:       &cfg,
+		APIKeyRepo:      apiKeyRepo,
+		ProfileSvc:      profileService,
+		APIKeySvc:       apiKeyService,
+		RateLimitSvc:    rateLimitService,
+		UsageMetrics:    usageMetricsService,
+		Telemetry:       telemetryReader,
+		GraphView:       graphViewSvc,
+		AuditSvc:        auditService,
+		SecuritySvc:     securityService,
+		SSOService:      ssoService,
+		AppConfig:       appConfigService,
+		Config:          &cfg,
+		MigrationStatus: migrationDataPlaneStatus,
 	}
 	if telemetryHTTPMetrics != nil {
 		userPortalDeps.ExtraMiddleware = append(userPortalDeps.ExtraMiddleware, middleware.TelemetryHTTPMiddleware(telemetryHTTPMetrics))
@@ -586,6 +660,8 @@ func main() {
 			Logs:           operationLogService,
 			RecallFeedback: recallFeedbackEventService,
 			Dreams:         dreamSvc,
+			Migration:      v2MigrationControlSvc,
+			MigrationExec:  v2MigrationExecSvc,
 		},
 		healthConfig,
 		logger,
@@ -639,6 +715,7 @@ func main() {
 
 	logger.Info("shutting down server")
 	placementWorkerCancel()
+	v2WorkerCancel()
 	dreamSchedulerCancel()
 	communitySchedulerCancel()
 

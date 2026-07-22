@@ -113,7 +113,7 @@ func TestRunOnceSubmitsLegacyItemsUnderOriginalOwnerAndRecordsProgress(t *testin
 	assert.Equal(t, ownerID.String(), store.upserts[0].OwnerProfileID)
 	assert.Equal(t, "sha256:source", store.upserts[0].SourceHash)
 	require.Len(t, store.updates, 1)
-	assert.Equal(t, domain.V2MigrationOutcomeNeedsReview, store.updates[0].Outcome)
+	assert.Equal(t, domain.V2MigrationOutcomePending, store.updates[0].Outcome)
 	assert.Equal(t, "11111111-1111-1111-1111-111111111111", store.updates[0].IngestID)
 	assert.Empty(t, store.updates[0].PlacementItemID)
 	assert.Equal(t, string(domain.V2PlacementRunQueued), store.updates[0].Metadata["remember_processing_state"])
@@ -367,6 +367,67 @@ func TestRunOnceUsesRunCheckpointFallbackAndMarksDone(t *testing.T) {
 	assert.Equal(t, true, store.checkpoints[0].CheckpointValue["done"])
 	assert.Equal(t, "worker-b", store.checkpoints[0].LeaseOwner)
 	assert.Equal(t, 1, store.refreshCalls)
+	assert.Equal(t, 1, store.finalizeCalls)
+}
+
+func TestRunOnceDoneCheckpointFinalizesWithoutReadingLegacyAgain(t *testing.T) {
+	runID := uuid.NewString()
+	store := &executorStoreStub{
+		run: &domain.V2MigrationRun{
+			RunID: runID,
+			State: domain.V2MigrationStateRunning,
+		},
+		checkpoint: map[string]any{
+			"after_source_id": "",
+			"done":            true,
+		},
+	}
+	reader := &legacyReaderStub{page: neo4j.LegacyCorpusPage{
+		Items: []neo4j.LegacyCorpusItem{{
+			SourceID:       "sf-should-not-read",
+			TeamID:         uuid.NewString(),
+			OwnerProfileID: uuid.NewString(),
+			Content:        "would be duplicated if the done checkpoint were ignored",
+		}},
+	}}
+	remember := &rememberStub{}
+	svc := New(store, reader, remember, Config{})
+
+	result, err := svc.RunOnce(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, &RunOnceResult{RunID: runID, Done: true}, result)
+	assert.Equal(t, 0, reader.calls)
+	assert.Empty(t, remember.requests)
+	assert.Empty(t, store.checkpoints)
+	assert.Equal(t, 1, store.refreshCalls)
+	assert.Equal(t, 1, store.finalizeCalls)
+}
+
+func TestRunOnceDoesNotFinalizeBeforeCursorDone(t *testing.T) {
+	runID := uuid.NewString()
+	store := &executorStoreStub{
+		run: &domain.V2MigrationRun{
+			RunID: runID,
+			State: domain.V2MigrationStateRunning,
+		},
+	}
+	reader := &legacyReaderStub{page: neo4j.LegacyCorpusPage{
+		NextCursor: "sf-next",
+		Items: []neo4j.LegacyCorpusItem{{
+			SourceID:       "sf-current",
+			TeamID:         uuid.NewString(),
+			OwnerProfileID: uuid.NewString(),
+			Content:        "legacy evidence",
+		}},
+	}}
+
+	result, err := New(store, reader, &rememberStub{}, Config{}).RunOnce(context.Background())
+
+	require.NoError(t, err)
+	require.False(t, result.Done)
+	assert.Equal(t, 1, store.refreshCalls)
+	assert.Zero(t, store.finalizeCalls)
 }
 
 func TestRunOnceRecordsReadFailure(t *testing.T) {
@@ -648,6 +709,12 @@ func TestLegacyHelpersCoverOptionalAndInvalidBranches(t *testing.T) {
 	assert.Equal(t, domain.V2MigrationOutcomeFailed, rememberOutcome(&memoryservice.V2RememberResult{
 		ProcessingState: string(domain.V2PlacementRunFailed),
 	}))
+	assert.Equal(t, domain.V2MigrationOutcomeAccepted, rememberOutcome(&memoryservice.V2RememberResult{
+		ProcessingState: string(domain.V2PlacementRunCompleted),
+	}))
+	assert.Equal(t, domain.V2MigrationOutcomePending, rememberOutcome(&memoryservice.V2RememberResult{
+		ProcessingState: string(domain.V2PlacementRunQueued),
+	}))
 	assert.Equal(t, "", stringFromMap(nil, "missing"))
 	assert.Equal(t, "", stringFromMap(map[string]any{"value": nil}, "value"))
 	assert.Nil(t, relationshipHint("subject", "", "object", "id", "claim"))
@@ -671,6 +738,8 @@ type executorStoreStub struct {
 	errors             []repository.V2RecordMigrationErrorInput
 	exclusions         []repository.V2RecordMigrationExclusionInput
 	refreshCalls       int
+	finalizeCalls      int
+	finalizeErr        error
 }
 
 func (s *executorStoreStub) GetLatestRun(context.Context) (*domain.V2MigrationRun, error) {
@@ -758,13 +827,20 @@ func (s *executorStoreStub) RefreshMigrationRunStats(context.Context, string, ti
 	return s.run, s.refreshErr
 }
 
+func (s *executorStoreStub) FinalizeMigrationRun(context.Context, string, time.Time) (*domain.V2MigrationRun, error) {
+	s.finalizeCalls++
+	return s.run, s.finalizeErr
+}
+
 type legacyReaderStub struct {
-	req  neo4j.LegacyCorpusPageRequest
-	page neo4j.LegacyCorpusPage
-	err  error
+	calls int
+	req   neo4j.LegacyCorpusPageRequest
+	page  neo4j.LegacyCorpusPage
+	err   error
 }
 
 func (r *legacyReaderStub) ReadCorpusPage(_ context.Context, req neo4j.LegacyCorpusPageRequest) (neo4j.LegacyCorpusPage, error) {
+	r.calls++
 	r.req = req
 	return r.page, r.err
 }

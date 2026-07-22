@@ -107,16 +107,18 @@ curl -fsSLo .env.example \
   https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/.env.example
 
 cp .env.example .env
-# Fill in POSTGRES_PASSWORD, NEO4J_PASSWORD, CONTROL_PORTAL_TOKEN, and AI_API_KEY.
+# Fill in POSTGRES_PASSWORD, CONTROL_PORTAL_TOKEN, and AI_API_KEY.
 ${EDITOR:-vi} .env
 
 docker compose up -d
 docker compose exec server /app/provision-team --name "primary-memory"
 ```
 
-The base compose example provisions Postgres, `neo4j:5.26-community` with the
-Neo4j Graph Data Science plugin, and the Dense-Mem server. It exposes only local
-host ports:
+The base compose example provisions PostgreSQL with pgvector and the Dense-Mem
+server. Fresh installs leave `NEO4J_*` unset and initialize PostgreSQL V2
+directly. Legacy migration rehearsals can enable Neo4j explicitly with
+`--profile legacy-neo4j` and `NEO4J_URI=bolt://neo4j:7687`. The base stack
+exposes only local host ports:
 
 ```text
 MCP/API:        http://127.0.0.1:8080/mcp

@@ -22,6 +22,7 @@ var (
 type V2PlacementCommitRepository interface {
 	CommitPlacementSemanticResult(ctx context.Context, input V2CommitPlacementSemanticInput) (*V2CommitPlacementSemanticResult, error)
 	CompletePlacementReviewResult(ctx context.Context, input V2CompletePlacementReviewInput) (*V2CompletePlacementReviewResult, error)
+	RequeuePlacementReviewResult(ctx context.Context, input V2RequeuePlacementReviewInput) (*V2RequeuePlacementReviewResult, error)
 }
 
 type V2CommitPlacementSemanticInput struct {
@@ -139,6 +140,21 @@ func (r *V2LedgerRepositoryImpl) CommitPlacementSemanticResult(
 		if err := ensureV2SemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
 			return err
 		}
+		placementFragmentID := ""
+		if v2PlacementCommitNeedsPlacementFragmentID(input) {
+			var err error
+			placementFragmentID, err = loadV2PlacementItemFragmentID(ctx, tx, input)
+			if err != nil {
+				return err
+			}
+		}
+		if v2PlacementEvidenceSearchableStatus(input.Status) {
+			document, err := upsertV2PlacementItemEvidenceSearchDocument(ctx, tx, input, placementFragmentID)
+			if err != nil {
+				return err
+			}
+			appendV2PlacementSearchDocument(result, document)
+		}
 		entitiesByRef := make(map[string]string, len(input.EntityResolutions))
 		for _, resolution := range input.EntityResolutions {
 			resolutionID, entityID, err := insertV2PlacementEntityResolution(ctx, tx, input, resolution)
@@ -155,12 +171,12 @@ func (r *V2LedgerRepositoryImpl) CommitPlacementSemanticResult(
 			if err != nil {
 				return err
 			}
-			if err := applyV2PlacementRelationshipDecision(ctx, tx, input, decision, observation.CorrectionTarget, result); err != nil {
+			if err := applyV2PlacementRelationshipDecision(ctx, tx, input, decision, observation.CorrectionTarget, placementFragmentID, result); err != nil {
 				return err
 			}
 		}
 		for _, decision := range input.RelationshipDecisions {
-			if err := applyV2PlacementRelationshipDecision(ctx, tx, input, withV2PlacementDecisionScope(input, decision), nil, result); err != nil {
+			if err := applyV2PlacementRelationshipDecision(ctx, tx, input, withV2PlacementDecisionScope(input, decision), nil, placementFragmentID, result); err != nil {
 				return err
 			}
 		}
@@ -281,6 +297,23 @@ func validateV2CommitPlacementSemanticInput(input V2CommitPlacementSemanticInput
 		}
 	}
 	return nil
+}
+
+func v2PlacementCommitNeedsPlacementFragmentID(input V2CommitPlacementSemanticInput) bool {
+	if v2PlacementEvidenceSearchableStatus(input.Status) {
+		return true
+	}
+	for _, observation := range input.RelationshipObservations {
+		if observation.Support != nil && strings.TrimSpace(observation.Support.FragmentID) != "" {
+			return true
+		}
+	}
+	for _, decision := range input.RelationshipDecisions {
+		if decision.Support != nil && strings.TrimSpace(decision.Support.FragmentID) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func validateV2PlacementEntityResolutionInput(input V2PlacementEntityResolutionInput) error {
@@ -764,6 +797,7 @@ func applyV2PlacementRelationshipDecision(
 	commit V2CommitPlacementSemanticInput,
 	decision V2ApplyRelationshipDecisionInput,
 	correctionTarget *V2PlacementCorrectionTargetInput,
+	placementFragmentID string,
 	result *V2CommitPlacementSemanticResult,
 ) error {
 	applied, err := applyV2RelationshipDecisionInTx(ctx, tx, decision)
@@ -783,12 +817,25 @@ func applyV2PlacementRelationshipDecision(
 			return err
 		}
 	}
-	if decision.Support != nil && applied.SupportID != "" {
-		document, err := upsertV2PlacementEvidenceSearchDocument(ctx, tx, commit, decision.Support.FragmentID, applied.Relationship, applied.SupportID)
-		if err != nil {
-			return err
+	if applied.SupportID != "" && decision.Support != nil && decision.Support.FragmentID != "" {
+		if placementFragmentID == "" {
+			var err error
+			placementFragmentID, err = loadV2PlacementItemFragmentID(ctx, tx, commit)
+			if err != nil {
+				return err
+			}
 		}
-		appendV2PlacementSearchDocument(result, document)
+		if decision.Support.FragmentID != placementFragmentID {
+			document, err := upsertV2PlacementEvidenceSearchDocument(ctx, tx, commit, decision.Support.FragmentID, map[string]any{
+				"supporting_placement_item_id": commit.PlacementItemID,
+				"support_id":                   applied.SupportID,
+				"relationship_id":              applied.Relationship.RelationshipID,
+			})
+			if err != nil {
+				return err
+			}
+			appendV2PlacementSearchDocument(result, document)
+		}
 	}
 	document, err := upsertV2PlacementRelationshipSearchDocument(ctx, tx, commit, applied.Relationship)
 	if err != nil {

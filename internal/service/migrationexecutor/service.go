@@ -39,6 +39,7 @@ type Store interface {
 	RecordMigrationError(ctx context.Context, input repository.V2RecordMigrationErrorInput) error
 	RecordMigrationExclusion(ctx context.Context, input repository.V2RecordMigrationExclusionInput) error
 	RefreshMigrationRunStats(ctx context.Context, runID string, now time.Time) (*domain.V2MigrationRun, error)
+	FinalizeMigrationRun(ctx context.Context, runID string, now time.Time) (*domain.V2MigrationRun, error)
 }
 
 type LegacyCorpusReader interface {
@@ -133,9 +134,19 @@ func (s *service) RunOnce(ctx context.Context) (*RunOnceResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %q", ErrInvalidRunID, run.RunID)
 	}
-	cursor, err := s.cursor(ctx, run)
+	cursor, cursorDone, err := s.cursor(ctx, run)
 	if err != nil {
 		return nil, err
+	}
+	if cursorDone {
+		result := &RunOnceResult{RunID: run.RunID, Done: true}
+		if _, err := s.store.RefreshMigrationRunStats(ctx, run.RunID, s.now()); err != nil {
+			return result, partialRunOnceError(result, err)
+		}
+		if _, err := s.store.FinalizeMigrationRun(ctx, run.RunID, s.now()); err != nil {
+			return result, partialRunOnceError(result, err)
+		}
+		return result, nil
 	}
 	page, err := s.reader.ReadCorpusPage(ctx, neo4j.LegacyCorpusPageRequest{
 		AfterSourceID: cursor,
@@ -165,6 +176,11 @@ func (s *service) RunOnce(ctx context.Context) (*RunOnceResult, error) {
 	}
 	if _, err := s.store.RefreshMigrationRunStats(ctx, run.RunID, s.now()); err != nil {
 		return result, partialRunOnceError(result, err)
+	}
+	if result.Done {
+		if _, err := s.store.FinalizeMigrationRun(ctx, run.RunID, s.now()); err != nil {
+			return result, partialRunOnceError(result, err)
+		}
 	}
 	return result, nil
 }
@@ -384,18 +400,24 @@ func migrationErrorMessage(phase string, code string, err error) string {
 	return ""
 }
 
-func (s *service) cursor(ctx context.Context, run *domain.V2MigrationRun) (string, error) {
+func (s *service) cursor(ctx context.Context, run *domain.V2MigrationRun) (string, bool, error) {
 	checkpoint, err := s.store.GetMigrationCheckpoint(ctx, run.RunID, domain.V2MigrationCheckpointLegacyNeo4jCursor)
 	if err != nil {
-		return "", err
+		return "", false, err
+	}
+	if boolFromMap(checkpoint, "done") {
+		return "", true, nil
 	}
 	if cursor := stringFromMap(checkpoint, "after_source_id"); cursor != "" {
-		return cursor, nil
+		return cursor, false, nil
 	}
 	if run.CheckpointKey == domain.V2MigrationCheckpointLegacyNeo4jCursor {
-		return stringFromMap(run.CheckpointValue, "after_source_id"), nil
+		if boolFromMap(run.CheckpointValue, "done") {
+			return "", true, nil
+		}
+		return stringFromMap(run.CheckpointValue, "after_source_id"), false, nil
 	}
-	return "", nil
+	return "", false, nil
 }
 
 func (s *service) pageSize() int {
@@ -621,12 +643,14 @@ func rememberOutcome(result *memoryservice.V2RememberResult) string {
 		return domain.V2MigrationOutcomeFailed
 	}
 	switch result.ProcessingState {
+	case string(domain.V2PlacementRunCompleted):
+		return domain.V2MigrationOutcomeAccepted
 	case string(domain.V2PlacementRunQuarantined):
 		return domain.V2MigrationOutcomeQuarantined
 	case string(domain.V2PlacementRunFailed):
 		return domain.V2MigrationOutcomeFailed
 	}
-	return domain.V2MigrationOutcomeNeedsReview
+	return domain.V2MigrationOutcomePending
 }
 
 func stringFromMap(values map[string]any, key string) string {
@@ -638,4 +662,16 @@ func stringFromMap(values map[string]any, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(fmt.Sprint(raw))
+}
+
+func boolFromMap(values map[string]any, key string) bool {
+	if values == nil {
+		return false
+	}
+	raw, ok := values[key]
+	if !ok || raw == nil {
+		return false
+	}
+	value, ok := raw.(bool)
+	return ok && value
 }

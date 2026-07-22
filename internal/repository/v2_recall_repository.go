@@ -428,50 +428,61 @@ func hydrateV2RecallEvidence(
 			 AND document.source_id = fragment.fragment_id
 			 AND document.embedding_contract_id = ?::uuid
 			 AND document.search_state IN ('pending', 'current')
-			JOIN relationship_evidence_supports AS support
-			  ON support.team_id = fragment.team_id
-			 AND support.fragment_id = fragment.fragment_id
-			JOIN latest_support_decision AS latest
-			  ON latest.team_id = support.team_id
-			 AND latest.support_id = support.support_id
-			 AND latest.decision IN ('grant', 'reinstate')
-			JOIN relationship_records AS relationship
-			  ON relationship.team_id = support.team_id
-			 AND relationship.relationship_id = support.relationship_id
-			 AND relationship.status = 'active'
-			 AND relationship.tier IN ('validated_claim', 'fact')
 			LEFT JOIN evidence_quarantines AS quarantine
 			  ON quarantine.team_id = fragment.team_id
 			 AND quarantine.fragment_id = fragment.fragment_id
 			 AND quarantine.status = 'active'
-			LEFT JOIN evidence_sources AS source
-			  ON source.team_id = support.team_id
-			 AND source.source_id = support.source_id
+			LEFT JOIN evidence_sources AS fragment_source
+			  ON fragment_source.team_id = fragment.team_id
+			 AND fragment_source.source_id = fragment.source_id
+			LEFT JOIN relationship_evidence_supports AS support
+			  ON support.team_id = fragment.team_id
+			 AND support.fragment_id = fragment.fragment_id
+			LEFT JOIN latest_support_decision AS latest
+			  ON latest.team_id = support.team_id
+			 AND latest.support_id = support.support_id
+			 AND latest.decision IN ('grant', 'reinstate')
+			LEFT JOIN evidence_sources AS support_source
+			  ON support_source.team_id = support.team_id
+			 AND support_source.source_id = support.source_id
+			LEFT JOIN relationship_records AS relationship
+			  ON relationship.team_id = support.team_id
+			 AND relationship.relationship_id = support.relationship_id
+			 AND latest.support_id IS NOT NULL
+			 AND relationship.status = 'active'
+			 AND relationship.tier IN ('validated_claim', 'fact')
+			 AND (
+			     support.source_id IS NULL
+			     OR support_source.current_revision_id = support.source_revision_id
+			 )
+			 AND (
+			     ?::timestamptz IS NULL
+			     OR ((relationship.valid_from IS NULL OR relationship.valid_from <= ?::timestamptz)
+			         AND (relationship.valid_to IS NULL OR relationship.valid_to > ?::timestamptz))
+			 )
+			 AND (
+			     ?::timestamptz IS NULL
+			     OR (relationship.created_at <= ?::timestamptz
+			         AND support.created_at <= ?::timestamptz
+			         AND (relationship.recorded_to IS NULL OR relationship.recorded_to > ?::timestamptz))
+			 )
+			 AND (
+			     cardinality(?::uuid[]) = 0
+			     OR relationship.relationship_id <> ALL(?::uuid[])
+			 )
 			WHERE quarantine.quarantine_id IS NULL
 			  AND (
-			      support.source_id IS NULL
-			      OR source.current_revision_id = support.source_revision_id
+			      fragment.source_id IS NULL
+			      OR fragment_source.current_revision_id = fragment.source_revision_id
 			  )
-			  AND (
-			      ?::timestamptz IS NULL
-			      OR ((relationship.valid_from IS NULL OR relationship.valid_from <= ?::timestamptz)
-			          AND (relationship.valid_to IS NULL OR relationship.valid_to > ?::timestamptz))
-			  )
-			  AND (
-			      ?::timestamptz IS NULL
-			      OR (fragment.created_at <= ?::timestamptz
-			          AND relationship.created_at <= ?::timestamptz
-			          AND support.created_at <= ?::timestamptz
-			          AND (relationship.recorded_to IS NULL OR relationship.recorded_to > ?::timestamptz))
-			  )
-			  AND (
-			      cardinality(?::uuid[]) = 0
-			      OR relationship.relationship_id <> ALL(?::uuid[])
-			  )
+			  AND (?::timestamptz IS NULL OR fragment.created_at <= ?::timestamptz)
 		)
 		SELECT evidence_id,
 		       max(context) AS context,
-		       array_agg(DISTINCT relationship_id ORDER BY relationship_id) AS relationship_ids,
+		       COALESCE(
+		           array_remove(array_agg(DISTINCT relationship_id ORDER BY relationship_id), NULL),
+		           ARRAY[]::text[]
+		       ) AS relationship_ids,
 		       CASE
 		           WHEN bool_or(search_state = 'pending') THEN 'pending'
 		           ELSE 'current'
@@ -480,8 +491,9 @@ func hydrateV2RecallEvidence(
 		GROUP BY evidence_id
 	`, pq.Array(evidenceIDs), input.TeamID, input.TeamID, contract.EmbeddingContractID,
 		input.ValidAt, input.ValidAt, input.ValidAt,
-		input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt,
-		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs)).Rows()
+		input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt,
+		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),
+		input.KnownAt, input.KnownAt).Rows()
 	if err != nil {
 		return nil, err
 	}
