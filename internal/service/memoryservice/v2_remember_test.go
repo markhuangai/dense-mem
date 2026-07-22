@@ -35,6 +35,9 @@ func TestV2PlacementResultSearchStateHelpers(t *testing.T) {
 	if got := v2PlacementCombinedSearchState(string(domain.V2SearchProjectionCurrent), string(domain.V2SearchProjectionPending)); got != string(domain.V2SearchProjectionPending) {
 		t.Fatalf("combined pending = %q", got)
 	}
+	if got := v2PlacementCombinedSearchState(string(domain.V2SearchProjectionCurrent), string(domain.V2SearchProjectionFailed)); got != string(domain.V2SearchProjectionFailed) {
+		t.Fatalf("combined failed = %q", got)
+	}
 	if got := v2PlacementCombinedSearchState(string(domain.V2SearchProjectionNotRequired), string(domain.V2SearchProjectionCurrent)); got != string(domain.V2SearchProjectionCurrent) {
 		t.Fatalf("combined current = %q", got)
 	}

@@ -359,6 +359,9 @@ func v2PublicPlacementItemCategory(item repository.V2PlacementItem) string {
 }
 
 func v2PlacementCombinedSearchState(left, right string) string {
+	if left == string(domain.V2SearchProjectionFailed) || right == string(domain.V2SearchProjectionFailed) {
+		return string(domain.V2SearchProjectionFailed)
+	}
 	if left == string(domain.V2SearchProjectionPending) || right == string(domain.V2SearchProjectionPending) {
 		return string(domain.V2SearchProjectionPending)
 	}

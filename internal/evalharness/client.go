@@ -499,7 +499,19 @@ func (c *HTTPClient) WaitForMemoryPlacementResult(ctx context.Context, ingestID 
 		status := placementProcessingState(out)
 		switch status {
 		case "completed":
-			return out, nil
+			searchState := placementSearchState(out)
+			switch searchState {
+			case "", "current", "not_required":
+				return out, nil
+			case "pending":
+			case "failed":
+				if cause := placementErrorMessage(out); cause != "" {
+					return nil, fmt.Errorf("memory placement %s search_state failed: %s", ingestID, cause)
+				}
+				return nil, fmt.Errorf("memory placement %s search_state failed", ingestID)
+			default:
+				return nil, fmt.Errorf("memory placement %s returned unknown search_state %q", ingestID, searchState)
+			}
 		case "failed", "guarded", "quarantined", "awaiting_review":
 			if cause := placementErrorMessage(out); cause != "" {
 				return nil, fmt.Errorf("memory placement %s %s: %s", ingestID, status, cause)
@@ -852,44 +864,6 @@ func evidenceIDFromPlacement(out map[string]any) string {
 		}
 	}
 	return evidenceIDFromRemember(out)
-}
-
-func placementProcessingState(out map[string]any) string {
-	if status := nestedString(out, "placement", "status"); status != "" {
-		return status
-	}
-	return stringValue(out["processing_state"])
-}
-
-func placementErrorMessage(out map[string]any) string {
-	if cause := nestedString(out, "placement", "error"); cause != "" {
-		return cause
-	}
-	errorsValue, _ := out["errors"].([]any)
-	for _, raw := range errorsValue {
-		item, _ := raw.(map[string]any)
-		if message := stringValue(item["message"]); message != "" {
-			return message
-		}
-		if code := stringValue(item["code"]); code != "" {
-			return code
-		}
-	}
-	items, _ := out["items"].([]any)
-	for _, rawItem := range items {
-		item, _ := rawItem.(map[string]any)
-		itemErrors, _ := item["errors"].([]any)
-		for _, rawError := range itemErrors {
-			errItem, _ := rawError.(map[string]any)
-			if message := stringValue(errItem["message"]); message != "" {
-				return message
-			}
-			if code := stringValue(errItem["code"]); code != "" {
-				return code
-			}
-		}
-	}
-	return ""
 }
 
 func traceFromToolOutput(tc Case, out map[string]any) RecallTrace {

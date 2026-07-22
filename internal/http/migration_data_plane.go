@@ -37,7 +37,7 @@ func migrationDataPlaneGateWithTTL(statusProvider MigrationDataPlaneStatusProvid
 			status, err := cache.Status(c.Request().Context())
 			if err != nil || status == nil {
 				if err != nil {
-					c.Logger().Errorf("migration data plane status unavailable: %v", err)
+					c.Logger().Error("migration data plane status unavailable")
 				}
 				return httperr.New(httperr.SERVICE_UNAVAILABLE, "migration state unavailable")
 			}

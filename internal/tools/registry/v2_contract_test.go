@@ -791,6 +791,46 @@ func TestV2RememberIngestIdempotencyKeyFromEvidence(t *testing.T) {
 	}
 }
 
+func TestV2RememberRequestFromContractInputDerivesIngestIdempotency(t *testing.T) {
+	req, err := v2RememberRequestFromContractInput(map[string]any{
+		"contract_version": domain.V2ContractVersion,
+		"evidence": []any{
+			map[string]any{
+				"content":         "alpha evidence",
+				"idempotency_key": " eval:doc-alpha ",
+			},
+			map[string]any{
+				"content":         "beta evidence",
+				"idempotency_key": "eval:doc-beta",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("map request: %v", err)
+	}
+	want := v2RememberIngestIdempotencyKey(req.Evidence)
+	if req.IdempotencyKey != want || !strings.HasPrefix(req.IdempotencyKey, "batch:") {
+		t.Fatalf("derived request key = %q, want %q", req.IdempotencyKey, want)
+	}
+
+	explicit, err := v2RememberRequestFromContractInput(map[string]any{
+		"contract_version": domain.V2ContractVersion,
+		"idempotency_key":  "explicit-ingest-key",
+		"evidence": []any{
+			map[string]any{
+				"content":         "alpha evidence",
+				"idempotency_key": "eval:doc-alpha",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("map explicit request: %v", err)
+	}
+	if explicit.IdempotencyKey != "explicit-ingest-key" {
+		t.Fatalf("explicit request key = %q", explicit.IdempotencyKey)
+	}
+}
+
 func assertV2ClosedObjectSchemas(t *testing.T, schema map[string]any, path string) {
 	t.Helper()
 	if schema["type"] == "object" {

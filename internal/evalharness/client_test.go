@@ -551,6 +551,59 @@ func TestHTTPClientImportCorpusReportsV2PlacementFailureCause(t *testing.T) {
 	}
 }
 
+func TestHTTPClientWaitForMemoryPlacementResultWaitsForV2SearchProjection(t *testing.T) {
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/tools/get_memory_placement" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		call := atomic.AddInt32(&calls, 1)
+		searchState := "pending"
+		if call > 1 {
+			searchState = "current"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ingest_id":        "ingest-search",
+			"processing_state": "completed",
+			"search_state":     searchState,
+		})
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	out, err := client.WaitForMemoryPlacementResult(context.Background(), "ingest-search", 2*time.Second)
+	if err != nil {
+		t.Fatalf("WaitForMemoryPlacementResult: %v", err)
+	}
+	if atomic.LoadInt32(&calls) != 2 || out["search_state"] != "current" {
+		t.Fatalf("calls/out = %d/%#v", calls, out)
+	}
+}
+
+func TestHTTPClientWaitForMemoryPlacementResultReportsV2SearchFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/tools/get_memory_placement" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ingest_id":        "ingest-search-failed",
+			"processing_state": "completed",
+			"items": []map[string]any{{
+				"evidence_id":  "evidence-v2",
+				"search_state": "failed",
+				"errors":       []map[string]any{{"message": "embedding failed"}},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	_, err := client.WaitForMemoryPlacementResult(context.Background(), "ingest-search-failed", time.Second)
+	if err == nil || !strings.Contains(err.Error(), "memory placement ingest-search-failed search_state failed: embedding failed") {
+		t.Fatalf("WaitForMemoryPlacementResult err = %v", err)
+	}
+}
+
 func TestHTTPClientImportCorpusHonorsPlacementTimeout(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
