@@ -320,6 +320,12 @@ func TestRunRejectsInvalidOptionsAndSuite(t *testing.T) {
 			SuitePath:              filepath.Join(dir, "suite.jsonl"),
 			ResumeSourceDocIDsPath: filepath.Join(dir, "resume.txt"),
 		}},
+		{name: "bad knowledge mapping mode", opts: RunOptions{
+			Mode:                 "validate",
+			SeedManifestPath:     filepath.Join(dir, "seed_manifest.json"),
+			SuitePath:            filepath.Join(dir, "suite.jsonl"),
+			KnowledgeMappingMode: "legacy",
+		}},
 	} {
 		if _, err := Run(context.Background(), tc.opts); err == nil {
 			t.Fatalf("%s: Run error = nil", tc.name)

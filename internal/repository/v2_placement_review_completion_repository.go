@@ -80,6 +80,11 @@ func (r *V2LedgerRepositoryImpl) CompletePlacementReviewResult(
 		}
 		itemStatus, category, runStatus := v2TerminalPlacementStatuses(input.Status, input.Category)
 		payload := v2TerminalPlacementPayload(input.Payload, input.Status)
+		if v2PlacementEvidenceSearchableStatus(input.Status) {
+			if _, err := upsertV2PlacementItemEvidenceSearchDocument(ctx, tx, scope); err != nil {
+				return err
+			}
+		}
 		outcomeID, err := insertV2PlacementOutcome(ctx, tx, V2PlacementOutcomeInput{
 			TeamID:          input.TeamID,
 			OwnerProfileID:  input.OwnerProfileID,

@@ -31,6 +31,7 @@ func main() {
 	flag.StringVar(&opts.ResumeSourceDocIDsPath, "resume-source-doc-ids", env("DENSE_MEM_EVAL_RESUME_SOURCE_DOC_IDS", ""), "newline-delimited source document IDs with completed placements")
 	flag.StringVar(&opts.TracesPath, "traces", "", "offline recall_traces.jsonl path to score instead of running live")
 	flag.StringVar(&opts.MappingPath, "mapping", "", "offline knowledge_mapping.json path to use with --traces")
+	flag.StringVar(&opts.KnowledgeMappingMode, "knowledge-mapping-mode", env("DENSE_MEM_EVAL_KNOWLEDGE_MAPPING_MODE", "v1"), "knowledge mapping export mode: v1 or v2")
 	flag.IntVar(&opts.MaxPageSize, "max-page-size", 100, "evaluation export max page size")
 	flag.StringVar(&opts.RunID, "run-id", "", "optional stable run id")
 	flag.StringVar(&opts.ReleaseGatePolicyPath, "release-gate-policy", "", "release gate policy JSON path for validate, baseline, or candidate mode")

@@ -40,6 +40,15 @@ func appendV2PlacementSearchDocument(result *V2CommitPlacementSemanticResult, do
 	result.SearchDocuments = append(result.SearchDocuments, *document)
 }
 
+func v2PlacementEvidenceSearchableStatus(status string) bool {
+	switch strings.TrimSpace(status) {
+	case string(domain.V2SemanticReviewAccepted), string(domain.V2SemanticReviewReviewRequired):
+		return true
+	default:
+		return false
+	}
+}
+
 type v2PlacementCorrectionTargetRecord struct {
 	SubjectEntityID string
 	PredicateKey    string

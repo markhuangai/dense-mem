@@ -140,6 +140,13 @@ func (r *V2LedgerRepositoryImpl) CommitPlacementSemanticResult(
 		if err := ensureV2SemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
 			return err
 		}
+		if v2PlacementEvidenceSearchableStatus(input.Status) {
+			document, err := upsertV2PlacementItemEvidenceSearchDocument(ctx, tx, input)
+			if err != nil {
+				return err
+			}
+			appendV2PlacementSearchDocument(result, document)
+		}
 		entitiesByRef := make(map[string]string, len(input.EntityResolutions))
 		for _, resolution := range input.EntityResolutions {
 			resolutionID, entityID, err := insertV2PlacementEntityResolution(ctx, tx, input, resolution)
@@ -783,13 +790,6 @@ func applyV2PlacementRelationshipDecision(
 		if err := appendV2PlacementCorrectionTarget(ctx, tx, commit, applied, *correctionTarget); err != nil {
 			return err
 		}
-	}
-	if decision.Support != nil && applied.SupportID != "" {
-		document, err := upsertV2PlacementEvidenceSearchDocument(ctx, tx, commit, decision.Support.FragmentID, applied.Relationship, applied.SupportID)
-		if err != nil {
-			return err
-		}
-		appendV2PlacementSearchDocument(result, document)
 	}
 	document, err := upsertV2PlacementRelationshipSearchDocument(ctx, tx, commit, applied.Relationship)
 	if err != nil {

@@ -746,6 +746,7 @@ func seedMetadata(item CorpusItem) map[string]any {
 func sourceDocIDsFromKnowledgeItem(kind string, item map[string]any, fragmentSourceDocIDs, claimSourceDocIDs map[string][]string) []string {
 	sourceDocID := firstNonEmpty(
 		nestedString(item, "metadata", "source_doc_id"),
+		nestedStringPath(item, "metadata", "legacy_metadata", "source_doc_id"),
 		nestedString(item, "classification", "source_doc_id"),
 		nestedString(item, "classification", "eval_source_doc_id"),
 		nestedString(item, "payload", "source_doc_id"),
@@ -907,6 +908,21 @@ func endpoint(base, path string) string {
 func nestedString(m map[string]any, objectKey, valueKey string) string {
 	nested, _ := nestedValue(m, objectKey, valueKey)
 	return stringValue(nested)
+}
+
+func nestedStringPath(m map[string]any, path ...string) string {
+	if len(path) == 0 {
+		return ""
+	}
+	var current any = m
+	for _, key := range path {
+		nested, ok := current.(map[string]any)
+		if !ok {
+			return ""
+		}
+		current = nested[key]
+	}
+	return stringValue(current)
 }
 
 func nestedValue(m map[string]any, objectKey, valueKey string) (any, bool) {

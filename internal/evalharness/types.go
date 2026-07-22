@@ -256,6 +256,7 @@ type RunConfig struct {
 	ResumeSourceDocIDsPath string `json:"resume_source_doc_ids_path,omitempty"`
 	TracesPath             string `json:"traces_path,omitempty"`
 	MappingPath            string `json:"mapping_path,omitempty"`
+	KnowledgeMappingMode   string `json:"knowledge_mapping_mode"`
 	MappingHash            string `json:"mapping_sha256,omitempty"`
 	BaselineRunPath        string `json:"baseline_run_path,omitempty"`
 }

@@ -650,6 +650,7 @@ func TestV2PlacementReviewCompletionClosesNonAcceptedResultWithLeaseFence(t *tes
 	require.NotEmpty(t, completed.OutcomeID)
 
 	var runStatus, itemStatus, itemCategory, outcomeStatus string
+	var evidenceSearchDocumentCount int64
 	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		require.NoError(t, tx.Raw(`
 			SELECT status
@@ -663,6 +664,12 @@ func TestV2PlacementReviewCompletionClosesNonAcceptedResultWithLeaseFence(t *tes
 			WHERE team_id = ?::uuid
 			  AND placement_item_id = ?::uuid
 		`, teamID, ingest.Items[0].PlacementItemID).Row().Scan(&itemStatus, &itemCategory))
+		require.NoError(t, tx.Raw(`
+			SELECT COUNT(*)
+			FROM search_documents
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'evidence'
+		`, teamID).Scan(&evidenceSearchDocumentCount).Error)
 		return tx.Raw(`
 			SELECT status
 			FROM placement_outcomes
@@ -675,6 +682,18 @@ func TestV2PlacementReviewCompletionClosesNonAcceptedResultWithLeaseFence(t *tes
 	assert.Equal(t, "completed", itemStatus)
 	assert.Equal(t, "candidate", itemCategory)
 	assert.Equal(t, "review_required", outcomeStatus)
+	assert.Equal(t, int64(1), evidenceSearchDocumentCount)
+
+	searchRepo := NewV2SearchRepository(appDB, rls)
+	recall, err := searchRepo.RecallEvidence(ctx, V2RecallEvidenceInput{
+		TeamID: teamID,
+		Query:  "Ambiguous evidence",
+		Limit:  5,
+	})
+	require.NoError(t, err)
+	require.Len(t, recall.Results, 1)
+	assert.Equal(t, ingest.Evidence[0].FragmentID, recall.Results[0].EvidenceID)
+	assert.Empty(t, recall.Results[0].RelationshipIDs)
 
 	_, err = ledgerRepo.CompletePlacementReviewResult(ctx, V2CompletePlacementReviewInput{
 		TeamID:           teamID,
