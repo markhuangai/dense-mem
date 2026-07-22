@@ -588,12 +588,16 @@ func safePreflightChecks(req OperatorRequest) map[string]any {
 	}
 }
 
-func preflightAttestationsCreated(checks map[string]any) bool {
+func PreflightAttestationsCreated(checks map[string]any) bool {
 	return truthy(checks["backup_snapshots_created"]) &&
 		truthy(checks["postgres_backup_created"]) &&
 		truthy(checks["neo4j_snapshot_created"]) &&
 		strings.TrimSpace(fmt.Sprint(checks["postgres_backup_reference_hash"])) != "" &&
 		strings.TrimSpace(fmt.Sprint(checks["neo4j_snapshot_reference_hash"])) != ""
+}
+
+func preflightAttestationsCreated(checks map[string]any) bool {
+	return PreflightAttestationsCreated(checks)
 }
 
 func preflightAttestationHash(req OperatorRequest) string {

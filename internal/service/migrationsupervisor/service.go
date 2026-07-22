@@ -369,14 +369,15 @@ func (s *Service) evaluateGates(ctx context.Context, status *domain.V2MigrationC
 		return nil, migrationcontrol.ErrPreflightRequired
 	}
 	results := make([]domain.V2MigrationGateResult, 0, len(s.requiredGates))
+	var firstErr error
 	for _, name := range s.requiredGates {
 		gate, err := s.evaluateGate(ctx, status, name)
-		if err != nil {
-			return append(results, gate), err
+		if err != nil && firstErr == nil {
+			firstErr = err
 		}
 		results = append(results, gate)
 	}
-	return results, nil
+	return results, firstErr
 }
 
 func (s *Service) evaluateGate(
@@ -396,7 +397,7 @@ func (s *Service) evaluateGate(
 	var err error
 	switch name {
 	case "backup_snapshots_created":
-		if !attestationsCreated(run.PreflightChecks) {
+		if !migrationcontrol.PreflightAttestationsCreated(run.PreflightChecks) {
 			err = fmt.Errorf("%w: backup and snapshot creation attestations are missing", ErrGateBlocked)
 		}
 		evidence.Ref = "dense-mem://migration/preflight/backup-snapshots-created"
@@ -440,7 +441,7 @@ func (s *Service) evaluateGate(
 			err = fmt.Errorf("%w: no embedded release evidence registered for gate %q", ErrGateBlocked, name)
 		}
 	}
-	return gateResult(name, evidence, err), err
+	return gateResult(name, evidence, err)
 }
 
 func (s *Service) providerReadiness(ctx context.Context, run *domain.V2MigrationRun) (GateEvidence, error) {
@@ -501,7 +502,11 @@ func (s *Service) searchGate(ctx context.Context, name string) (GateEvidence, er
 	}, nil
 }
 
-func gateResult(name string, evidence GateEvidence, gateErr error) domain.V2MigrationGateResult {
+func gateResult(
+	name string,
+	evidence GateEvidence,
+	gateErr error,
+) (domain.V2MigrationGateResult, error) {
 	outcome := domain.V2MigrationGateOutcomePass
 	message := evidence.Message
 	if gateErr != nil {
@@ -515,17 +520,35 @@ func gateResult(name string, evidence GateEvidence, gateErr error) domain.V2Migr
 	if _, ok := metadata["version"]; !ok {
 		metadata["version"] = migrationGateEvidenceVersion
 	}
+	hash, hashErr := evidenceHash(name, evidence, outcome)
+	if hashErr != nil {
+		outcome = domain.V2MigrationGateOutcomeFail
+		message = "migration gate evidence metadata is not serializable"
+		metadata = map[string]any{
+			"version":             migrationGateEvidenceVersion,
+			"gate":                name,
+			"evidence_hash_error": "metadata_not_serializable",
+		}
+		hash, _ = evidenceHash(name, GateEvidence{
+			Ref:     evidence.Ref,
+			Message: message,
+			Details: metadata,
+		}, outcome)
+		if gateErr == nil {
+			gateErr = fmt.Errorf("%w: migration gate evidence metadata is not serializable", ErrGateBlocked)
+		}
+	}
 	return domain.V2MigrationGateResult{
 		GateName:     name,
 		Outcome:      outcome,
 		EvidenceRef:  nonempty(evidence.Ref, "dense-mem://migration/runtime/"+name),
-		EvidenceHash: evidenceHash(name, evidence, outcome),
+		EvidenceHash: hash,
 		Message:      message,
 		Metadata:     metadata,
-	}
+	}, gateErr
 }
 
-func evidenceHash(name string, evidence GateEvidence, outcome string) string {
+func evidenceHash(name string, evidence GateEvidence, outcome string) (string, error) {
 	payload := map[string]any{
 		"name":     name,
 		"outcome":  outcome,
@@ -533,28 +556,12 @@ func evidenceHash(name string, evidence GateEvidence, outcome string) string {
 		"message":  evidence.Message,
 		"metadata": evidence.Details,
 	}
-	data, _ := json.Marshal(payload)
-	sum := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-func attestationsCreated(checks map[string]any) bool {
-	return truthy(checks["backup_snapshots_created"]) &&
-		truthy(checks["postgres_backup_created"]) &&
-		truthy(checks["neo4j_snapshot_created"]) &&
-		strings.TrimSpace(fmt.Sprint(checks["postgres_backup_reference_hash"])) != "" &&
-		strings.TrimSpace(fmt.Sprint(checks["neo4j_snapshot_reference_hash"])) != ""
-}
-
-func truthy(value any) bool {
-	switch typed := value.(type) {
-	case bool:
-		return typed
-	case string:
-		return strings.EqualFold(strings.TrimSpace(typed), "true")
-	default:
-		return false
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("migration gate evidence hash: %w", err)
 	}
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 func hasRecentOperatorAction(actions []domain.V2MigrationOperatorAction) bool {

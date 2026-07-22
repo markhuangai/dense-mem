@@ -72,15 +72,19 @@ func TestV2MigrationControlRepositoryPersistsStateAndRLS(t *testing.T) {
 	require.True(t, run.PreflightApproved)
 
 	started, err := repo.UpdateRunState(ctx, V2UpdateMigrationRunStateInput{
-		RunID:     run.RunID,
-		FromState: domain.V2MigrationStateReady,
-		ToState:   domain.V2MigrationStateRunning,
-		Phase:     "migration",
-		Retryable: true,
-		Now:       now.Add(time.Minute),
+		RunID:                    run.RunID,
+		FromState:                domain.V2MigrationStateReady,
+		ToState:                  domain.V2MigrationStateRunning,
+		Phase:                    "migration",
+		MigrationContractVersion: "migration-contract-v2",
+		CorpusVersion:            "corpus-v2",
+		Retryable:                true,
+		Now:                      now.Add(time.Minute),
 	})
 	require.NoError(t, err)
 	require.Equal(t, domain.V2MigrationStateRunning, started.State)
+	require.Equal(t, "migration-contract-v2", started.MigrationContractVersion)
+	require.Equal(t, "corpus-v2", started.CorpusVersion)
 	require.NotNil(t, started.StartedAt)
 
 	require.NoError(t, repo.RecordOperatorAction(ctx, domain.V2MigrationOperatorAction{

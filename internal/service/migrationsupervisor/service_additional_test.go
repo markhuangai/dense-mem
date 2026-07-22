@@ -332,6 +332,50 @@ func TestSearchGateFailsClosedWhenReadinessFails(t *testing.T) {
 	}
 }
 
+func TestEvaluateGatesReportsAllFailures(t *testing.T) {
+	ctx := context.Background()
+	status := supervisorStatus(domain.V2MigrationStateReadyCutover)
+	status.Actions = nil
+	service := New(Config{RequiredGates: []string{"unknown_gate", "telemetry_audit"}})
+
+	gates, err := service.evaluateGates(ctx, status)
+	if !errors.Is(err, ErrGateBlocked) {
+		t.Fatalf("evaluateGates err = %v", err)
+	}
+	if len(gates) != 2 {
+		t.Fatalf("gate count = %d, want 2: %#v", len(gates), gates)
+	}
+	for _, gate := range gates {
+		if gate.Outcome != domain.V2MigrationGateOutcomeFail {
+			t.Fatalf("gate outcome = %#v", gate)
+		}
+	}
+}
+
+func TestGateResultFailsClosedWhenEvidenceMetadataCannotHash(t *testing.T) {
+	gate, err := gateResult("bad_metadata", GateEvidence{
+		Ref:     "dense-mem://migration/test/bad-metadata",
+		Message: "bad metadata",
+		Details: map[string]any{"bad": func() {}},
+	}, nil)
+
+	if !errors.Is(err, ErrGateBlocked) {
+		t.Fatalf("gateResult err = %v", err)
+	}
+	if gate.Outcome != domain.V2MigrationGateOutcomeFail {
+		t.Fatalf("gate = %#v", gate)
+	}
+	if gate.EvidenceHash == "" {
+		t.Fatalf("gate missing fallback hash: %#v", gate)
+	}
+	if gate.Message != "migration gate evidence metadata is not serializable" {
+		t.Fatalf("gate message = %q", gate.Message)
+	}
+	if gate.Metadata["evidence_hash_error"] != "metadata_not_serializable" {
+		t.Fatalf("gate metadata = %#v", gate.Metadata)
+	}
+}
+
 func TestStaticReleaseEvidenceSourcesExist(t *testing.T) {
 	repoRoot := filepath.Join("..", "..", "..")
 	for gate, entry := range staticReleaseEvidence {

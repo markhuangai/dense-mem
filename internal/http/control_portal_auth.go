@@ -64,7 +64,7 @@ func recordControlAuthFailure(c echo.Context, securitySvc service.SecurityServic
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, err := securitySvc.RecordAuthFailure(ctx, c.RealIP(), "control", "AUTH_INVALID"); err != nil {
-		c.Logger().Errorf("control security auth failure record failed: %v", err)
+		c.Logger().Error("control security auth failure record failed")
 	}
 }
 

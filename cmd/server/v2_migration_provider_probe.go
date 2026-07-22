@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -30,7 +31,7 @@ func (p migrationProviderProbe) Probe(ctx context.Context) (*migrationsupervisor
 
 	vector, embeddingModel, err := p.embedder.Embed(probeCtx, "dense-mem v2 migration readiness probe")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("migration provider probe: embedding request failed: %w", err)
 	}
 	if len(vector) == 0 {
 		return nil, errors.New("migration provider probe: embedding provider returned an empty vector")
@@ -41,7 +42,7 @@ func (p migrationProviderProbe) Probe(ctx context.Context) (*migrationsupervisor
 		Context:   "This bounded request validates provider transport and structured response parsing before empty-corpus cutover.",
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("migration provider probe: verifier request failed: %w", err)
 	}
 	if strings.TrimSpace(response.Verdict) == "" {
 		return nil, errors.New("migration provider probe: verifier returned an empty verdict")
