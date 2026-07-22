@@ -137,4 +137,7 @@ type V2MigrationControlStatus struct {
 	Run              *V2MigrationRun             `json:"run,omitempty"`
 	Marker           *V2CompatibilityMarker      `json:"marker,omitempty"`
 	Actions          []V2MigrationOperatorAction `json:"actions,omitempty"`
+	GateResults      []V2MigrationGateResult     `json:"gate_results,omitempty"`
+	RecentErrors     []string                    `json:"recent_errors,omitempty"`
+	RestartPending   bool                        `json:"restart_pending,omitempty"`
 }

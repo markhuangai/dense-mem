@@ -109,6 +109,32 @@ func TestCheckV2MigrationDataPlaneReadinessStaysClosedAfterCutoverUntilRestart(t
 	require.ErrorContains(t, err, "restart")
 }
 
+func TestValidateLegacyMigrationNeo4jConfigOnlyRequiresNeo4jForMigrationBoot(t *testing.T) {
+	err := validateLegacyMigrationNeo4jConfig(v2AuthorityBootstrap{
+		Mode:             v2AuthorityActive,
+		DataPlaneAllowed: true,
+	}, config.Config{})
+	require.NoError(t, err)
+
+	err = validateLegacyMigrationNeo4jConfig(v2AuthorityBootstrap{
+		Mode:              v2AuthorityMigrationRequired,
+		RequiresNeo4j:     true,
+		MigrationRequired: true,
+	}, config.Config{})
+	require.ErrorContains(t, err, "legacy migration requires NEO4J_URI")
+
+	err = validateLegacyMigrationNeo4jConfig(v2AuthorityBootstrap{
+		Mode:              v2AuthorityMigrationRequired,
+		RequiresNeo4j:     true,
+		MigrationRequired: true,
+	}, config.Config{
+		Neo4jURI:      "bolt://localhost:7687",
+		Neo4jUser:     "neo4j",
+		Neo4jPassword: "password",
+	})
+	require.NoError(t, err)
+}
+
 type v2AuthorityStoreStub struct {
 	marker      *domain.V2CompatibilityMarker
 	markerErr   error

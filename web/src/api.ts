@@ -498,6 +498,67 @@ export type DreamStatus = {
   pending_count: number;
 };
 
+export type ControlPortalMode = "normal" | "migration" | "cleanup";
+
+export type ControlSession = {
+  authenticated: boolean;
+  portal_mode: ControlPortalMode;
+  legacy_config_present: boolean;
+};
+
+export type MigrationRun = {
+  run_id: string;
+  migration_contract_version: string;
+  corpus_version: string;
+  source_kind: string;
+  state: string;
+  phase?: string;
+  required: boolean;
+  preflight_approved: boolean;
+  backup_reference?: string;
+  preflight_checks?: Record<string, unknown>;
+  corpus_hash?: string;
+  total_items: number;
+  completed_items: number;
+  failed_items: number;
+  excluded_items: number;
+  last_error?: string;
+  retryable: boolean;
+  started_at?: string;
+  completed_at?: string;
+  cutover_at?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MigrationGateResult = {
+  gate_name: string;
+  outcome: "pass" | "fail" | "warning" | string;
+  evidence_ref?: string;
+  evidence_hash?: string;
+  message?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type MigrationStatus = {
+  state: string;
+  required: boolean;
+  data_plane_allowed: boolean;
+  readiness_message: string;
+  run?: MigrationRun;
+  gate_results?: MigrationGateResult[];
+  recent_errors?: string[];
+  restart_pending?: boolean;
+};
+
+export type MigrationPreflightInput = {
+  postgres_backup_reference: string;
+  postgres_backup_created: boolean;
+  neo4j_snapshot_reference: string;
+  neo4j_snapshot_created: boolean;
+  reason?: string;
+};
+
 export type DreamQuery = {
   limit?: number;
   status?: Dream["status"] | "";
@@ -525,8 +586,28 @@ export class ControlApi {
     this.baseUrl = baseUrl;
   }
 
-  session(): Promise<{ authenticated: boolean }> {
-    return this.request<{ authenticated: boolean }>("/session");
+  session(): Promise<ControlSession> {
+    return this.requestEnvelope<ControlSession>("/session");
+  }
+
+  getMigrationStatus(): Promise<MigrationStatus> {
+    return this.requestEnvelope<MigrationStatus>("/v2/migration");
+  }
+
+  approveMigrationPreflight(input: MigrationPreflightInput): Promise<MigrationStatus> {
+    return this.requestEnvelope<MigrationStatus>("/v2/migration/preflight", { method: "POST", body: input });
+  }
+
+  startMigration(reason?: string): Promise<MigrationStatus> {
+    return this.requestEnvelope<MigrationStatus>("/v2/migration/start", { method: "POST", body: { reason } });
+  }
+
+  pauseMigration(reason?: string): Promise<MigrationStatus> {
+    return this.requestEnvelope<MigrationStatus>("/v2/migration/pause", { method: "POST", body: { reason } });
+  }
+
+  resumeMigration(reason?: string): Promise<MigrationStatus> {
+    return this.requestEnvelope<MigrationStatus>("/v2/migration/resume", { method: "POST", body: { reason } });
   }
 
   listTeams(): Promise<Page<Team>> {

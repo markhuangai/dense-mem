@@ -139,6 +139,11 @@ func (c *Config) HasNeo4jConfig() bool {
 		strings.TrimSpace(c.Neo4jPassword) != "" ||
 		strings.TrimSpace(c.Neo4jDatabase) != ""
 }
+func (c *Config) HasCompleteNeo4jConfig() bool {
+	return strings.TrimSpace(c.Neo4jURI) != "" &&
+		strings.TrimSpace(c.Neo4jUser) != "" &&
+		strings.TrimSpace(c.Neo4jPassword) != ""
+}
 func (c *Config) GetRedisAddr() string     { return c.RedisAddr }
 func (c *Config) GetRedisPassword() string { return c.RedisPassword }
 func (c *Config) GetRedisDB() int          { return c.RedisDB }
@@ -457,27 +462,6 @@ func Load() (Config, error) {
 		return cfg, &ValidationError{
 			Field:   "POSTGRES_DSN",
 			Message: "required field is empty",
-		}
-	}
-
-	if cfg.HasNeo4jConfig() {
-		if strings.TrimSpace(cfg.Neo4jURI) == "" {
-			return cfg, &ValidationError{
-				Field:   "NEO4J_URI",
-				Message: "required when Neo4j migration source is configured",
-			}
-		}
-		if strings.TrimSpace(cfg.Neo4jUser) == "" {
-			return cfg, &ValidationError{
-				Field:   "NEO4J_USER",
-				Message: "required when Neo4j migration source is configured",
-			}
-		}
-		if strings.TrimSpace(cfg.Neo4jPassword) == "" {
-			return cfg, &ValidationError{
-				Field:   "NEO4J_PASSWORD",
-				Message: "required when Neo4j migration source is configured",
-			}
 		}
 	}
 

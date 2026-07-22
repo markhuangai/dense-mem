@@ -232,63 +232,20 @@ func TestLoadValidation_MissingPostgresDSN(t *testing.T) {
 	}
 }
 
-func TestLoadValidation_MissingNeo4jURI(t *testing.T) {
+func TestLoadAllowsPartialNeo4jConfigForPostCutoverCleanup(t *testing.T) {
 	clearEnv()
 	os.Setenv("POSTGRES_DSN", "postgres://user:pass@localhost/db?sslmode=disable")
 	os.Setenv("NEO4J_USER", "neo4j")
-	os.Setenv("NEO4J_PASSWORD", "password")
 
-	_, err := Load()
-	if err == nil {
-		t.Fatal("Load() expected error for missing NEO4J_URI, got nil")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned unexpected error for partial Neo4j cleanup config: %v", err)
 	}
-
-	validationErr, ok := err.(*ValidationError)
-	if !ok {
-		t.Fatalf("expected *ValidationError, got %T", err)
+	if !cfg.HasNeo4jConfig() {
+		t.Fatalf("HasNeo4jConfig() = false, want true")
 	}
-	if validationErr.Field != "NEO4J_URI" {
-		t.Errorf("ValidationError.Field = %q, want %q", validationErr.Field, "NEO4J_URI")
-	}
-}
-
-func TestLoadValidation_MissingNeo4jUser(t *testing.T) {
-	clearEnv()
-	os.Setenv("POSTGRES_DSN", "postgres://user:pass@localhost/db?sslmode=disable")
-	os.Setenv("NEO4J_URI", "bolt://localhost:7687")
-	os.Setenv("NEO4J_PASSWORD", "password")
-
-	_, err := Load()
-	if err == nil {
-		t.Fatal("Load() expected error for missing NEO4J_USER, got nil")
-	}
-
-	validationErr, ok := err.(*ValidationError)
-	if !ok {
-		t.Fatalf("expected *ValidationError, got %T", err)
-	}
-	if validationErr.Field != "NEO4J_USER" {
-		t.Errorf("ValidationError.Field = %q, want %q", validationErr.Field, "NEO4J_USER")
-	}
-}
-
-func TestLoadValidation_MissingNeo4jPassword(t *testing.T) {
-	clearEnv()
-	os.Setenv("POSTGRES_DSN", "postgres://user:pass@localhost/db?sslmode=disable")
-	os.Setenv("NEO4J_URI", "bolt://localhost:7687")
-	os.Setenv("NEO4J_USER", "neo4j")
-
-	_, err := Load()
-	if err == nil {
-		t.Fatal("Load() expected error for missing NEO4J_PASSWORD, got nil")
-	}
-
-	validationErr, ok := err.(*ValidationError)
-	if !ok {
-		t.Fatalf("expected *ValidationError, got %T", err)
-	}
-	if validationErr.Field != "NEO4J_PASSWORD" {
-		t.Errorf("ValidationError.Field = %q, want %q", validationErr.Field, "NEO4J_PASSWORD")
+	if cfg.HasCompleteNeo4jConfig() {
+		t.Fatalf("HasCompleteNeo4jConfig() = true, want false")
 	}
 }
 

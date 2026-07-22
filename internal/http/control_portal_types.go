@@ -8,7 +8,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/migrationcontrol"
-	"github.com/markhuangai/dense-mem/internal/service/migrationexecutor"
 )
 
 type ControlPortalTelemetry struct {
@@ -22,7 +21,8 @@ type ControlPortalTelemetry struct {
 	RecallFeedback service.RecallFeedbackEventReader
 	Dreams         dreamservice.Service
 	Migration      migrationcontrol.Service
-	MigrationExec  migrationexecutor.Service
+	PortalMode     string
+	LegacyConfig   bool
 }
 
 type controlPortalHandler struct {
@@ -35,8 +35,9 @@ type controlPortalHandler struct {
 	recallFeedback service.RecallFeedbackEventReader
 	dreams         dreamservice.Service
 	migration      migrationcontrol.Service
-	migrationExec  migrationexecutor.Service
 	health         HealthConfig
 	sso            *service.SSOService
 	appConfig      service.AppConfigService
+	portalMode     string
+	legacyConfig   bool
 }

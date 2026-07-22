@@ -785,7 +785,7 @@ function mockPortalFetch({
     const parsedUrl = new URL(url, "http://localhost");
 
     if (url.endsWith("/session")) {
-      return jsonResponse({ data: { authenticated: true } });
+      return jsonResponse({ data: { authenticated: true, portal_mode: "normal", legacy_config_present: false } });
     }
     if (url.includes("/telemetry") && method === "GET") {
       return jsonResponse({ data: telemetrySnapshot });

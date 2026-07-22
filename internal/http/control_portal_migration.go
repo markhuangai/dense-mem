@@ -3,22 +3,24 @@ package http
 import (
 	"errors"
 	nethttp "net/http"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/service/migrationcontrol"
-	"github.com/markhuangai/dense-mem/internal/service/migrationexecutor"
 )
 
 func registerV2MigrationControlRoutes(api *echo.Group, control *controlPortalHandler) {
-	api.GET("/v2/migration", control.getV2MigrationStatus)
+	registerV2MigrationStatusRoute(api, control)
 	api.POST("/v2/migration/preflight", control.approveV2MigrationPreflight)
 	api.POST("/v2/migration/start", control.startV2Migration)
 	api.POST("/v2/migration/pause", control.pauseV2Migration)
 	api.POST("/v2/migration/resume", control.resumeV2Migration)
-	api.POST("/v2/migration/cutover", control.cutoverV2Migration)
-	api.POST("/v2/migration/run-once", control.runV2MigrationOnce)
+}
+
+func registerV2MigrationStatusRoute(api *echo.Group, control *controlPortalHandler) {
+	api.GET("/v2/migration", control.getV2MigrationStatus)
 }
 
 func (h *controlPortalHandler) getV2MigrationStatus(c echo.Context) error {
@@ -56,43 +58,6 @@ func (h *controlPortalHandler) resumeV2Migration(c echo.Context) error {
 	})
 }
 
-func (h *controlPortalHandler) cutoverV2Migration(c echo.Context) error {
-	if h.migration == nil {
-		return httperr.New(httperr.SERVICE_UNAVAILABLE, "v2 migration control unavailable")
-	}
-	var req migrationcontrol.CutoverRequest
-	if err := c.Bind(&req); err != nil {
-		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
-	}
-	req.Actor = controlPortalActorFromContext(c.Request().Context())
-	req.RemoteIP = c.RealIP()
-	res, err := h.migration.Cutover(c.Request().Context(), req)
-	if err != nil {
-		if migrationControlValidationError(err) {
-			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
-		}
-		return err
-	}
-	return c.JSON(nethttp.StatusOK, map[string]any{"data": res})
-}
-
-func (h *controlPortalHandler) runV2MigrationOnce(c echo.Context) error {
-	if h.migrationExec == nil {
-		return httperr.New(httperr.SERVICE_UNAVAILABLE, "v2 migration executor unavailable")
-	}
-	res, err := h.migrationExec.RunOnce(c.Request().Context())
-	if err != nil {
-		if errors.Is(err, migrationexecutor.ErrMigrationNotRunning) {
-			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
-		}
-		if errors.Is(err, migrationexecutor.ErrMissingDependency) {
-			return httperr.New(httperr.SERVICE_UNAVAILABLE, err.Error())
-		}
-		return err
-	}
-	return c.JSON(nethttp.StatusOK, map[string]any{"data": res})
-}
-
 func (h *controlPortalHandler) invokeV2MigrationAction(
 	c echo.Context,
 	fn func(req migrationcontrol.OperatorRequest) (any, error),
@@ -123,4 +88,13 @@ func migrationControlValidationError(err error) bool {
 		errors.Is(err, migrationcontrol.ErrIncompatible) ||
 		errors.Is(err, migrationcontrol.ErrCutoverBlocked) ||
 		errors.Is(err, migrationcontrol.ErrCutoverGate)
+}
+
+func controlPortalMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "migration", "cleanup", "normal":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "normal"
+	}
 }

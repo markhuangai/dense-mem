@@ -132,7 +132,7 @@ internal/storage/neo4j/fragment_status_migration.go
 internal/storage/neo4j/schema_live_test.go
 internal/storage/neo4j/schema_test.go
 internal/storage/postgres/client_test.go
-internal/storage/postgres/semantic_schema_static_test.go
+internal/storage/postgres/schema_test.go
 internal/storage/postgres/topology.go
 internal/storage/postgres/topology_test.go
 internal/tools/registry/context_tools.go

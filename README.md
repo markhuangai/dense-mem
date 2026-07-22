@@ -120,6 +120,14 @@ directly. Legacy migration rehearsals can enable Neo4j explicitly with
 `--profile legacy-neo4j` and `NEO4J_URI=bolt://neo4j:7687`. The base stack
 exposes only local host ports:
 
+When a legacy Neo4j source is configured and no compatible V2 marker exists,
+the main MCP data plane returns HTTP 503 and the private control portal shows
+only the guided migration page. The operator must attest that a PostgreSQL
+backup and Neo4j snapshot were created, then click Start migration. After
+cutover, the server restarts into PostgreSQL V2; if any `NEO4J_*` setting is
+still present, the control portal stays in cleanup mode until those legacy env
+vars and services are removed and the deployment is recreated.
+
 ```text
 MCP/API:        http://127.0.0.1:8080/mcp
 User portal:    http://127.0.0.1:8080/ui

@@ -52,7 +52,7 @@ func (g legacyMigrationDataPlaneStatusGate) Status(ctx context.Context) (*domain
 	out := *status
 	out.DataPlaneAllowed = false
 	if out.State == domain.V2MigrationStateCutOver {
-		out.ReadinessMessage = "migration cutover complete; restart to activate PostgreSQL V2 authority"
+		out.ReadinessMessage = "migration cutover complete; server restart is pending"
 	} else if out.ReadinessMessage == "" {
 		out.ReadinessMessage = "legacy migration is required; data plane is disabled"
 	}
@@ -80,6 +80,13 @@ func checkV2MigrationDataPlaneReadiness(ctx context.Context, statusProvider inte
 		message = "legacy migration is required; data plane is disabled"
 	}
 	return fmt.Errorf("%w: %s", errV2AuthorityBlocked, message)
+}
+
+func validateLegacyMigrationNeo4jConfig(authority v2AuthorityBootstrap, cfg config.Config) error {
+	if !authority.RequiresNeo4j || cfg.HasCompleteNeo4jConfig() {
+		return nil
+	}
+	return fmt.Errorf("legacy migration requires NEO4J_URI, NEO4J_USER, and NEO4J_PASSWORD")
 }
 
 func classifyV2Authority(

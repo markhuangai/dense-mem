@@ -57,8 +57,13 @@ func TestV2MigrationControlRepositoryPersistsStateAndRLS(t *testing.T) {
 		PreflightApproved:        true,
 		BackupReference:          "backup-20260717",
 		PreflightChecks: map[string]any{
-			"postgres_restore_verified": true,
-			"neo4j_snapshot_verified":   true,
+			"backup_snapshots_created":       true,
+			"postgres_backup_created":        true,
+			"postgres_backup_reference_hash": "sha256:pg",
+			"neo4j_snapshot_created":         true,
+			"neo4j_snapshot_reference_hash":  "sha256:neo4j",
+			"attestation_scope":              "creation_only",
+			"rollback_assurance":             "backup_and_snapshot_creation_attested_restore_not_verified",
 		},
 		Now: now,
 	})
@@ -67,15 +72,19 @@ func TestV2MigrationControlRepositoryPersistsStateAndRLS(t *testing.T) {
 	require.True(t, run.PreflightApproved)
 
 	started, err := repo.UpdateRunState(ctx, V2UpdateMigrationRunStateInput{
-		RunID:     run.RunID,
-		FromState: domain.V2MigrationStateReady,
-		ToState:   domain.V2MigrationStateRunning,
-		Phase:     "migration",
-		Retryable: true,
-		Now:       now.Add(time.Minute),
+		RunID:                    run.RunID,
+		FromState:                domain.V2MigrationStateReady,
+		ToState:                  domain.V2MigrationStateRunning,
+		Phase:                    "migration",
+		MigrationContractVersion: "migration-contract-v2",
+		CorpusVersion:            "corpus-v2",
+		Retryable:                true,
+		Now:                      now.Add(time.Minute),
 	})
 	require.NoError(t, err)
 	require.Equal(t, domain.V2MigrationStateRunning, started.State)
+	require.Equal(t, "migration-contract-v2", started.MigrationContractVersion)
+	require.Equal(t, "corpus-v2", started.CorpusVersion)
 	require.NotNil(t, started.StartedAt)
 
 	require.NoError(t, repo.RecordOperatorAction(ctx, domain.V2MigrationOperatorAction{
@@ -125,8 +134,13 @@ func TestV2MigrationControlRepositoryCommitsCutoverAtomically(t *testing.T) {
 		PreflightApproved:        true,
 		BackupReference:          "backup-20260721",
 		PreflightChecks: map[string]any{
-			"postgres_restore_verified": true,
-			"neo4j_snapshot_verified":   true,
+			"backup_snapshots_created":       true,
+			"postgres_backup_created":        true,
+			"postgres_backup_reference_hash": "sha256:pg",
+			"neo4j_snapshot_created":         true,
+			"neo4j_snapshot_reference_hash":  "sha256:neo4j",
+			"attestation_scope":              "creation_only",
+			"rollback_assurance":             "backup_and_snapshot_creation_attested_restore_not_verified",
 		},
 		Now: now,
 	})
@@ -139,11 +153,11 @@ func TestV2MigrationControlRepositoryCommitsCutoverAtomically(t *testing.T) {
 		CorpusHash:     "sha256:corpus",
 		GateReportHash: "sha256:gates",
 		GateResults: []domain.V2MigrationGateResult{{
-			GateName:     "backup_restore",
+			GateName:     "backup_snapshots_created",
 			Outcome:      domain.V2MigrationGateOutcomePass,
 			EvidenceRef:  "local://backup",
 			EvidenceHash: "sha256:backup",
-			Message:      "backup restored",
+			Message:      "backup and snapshot creation attested",
 			Metadata:     map[string]any{"version": "test-v1"},
 		}},
 		Metadata: map[string]any{"release": "v2.1.1"},
@@ -437,8 +451,13 @@ func TestV2MigrationExecutorRepositoryPersistsProgressAndStats(t *testing.T) {
 		PreflightApproved:        true,
 		BackupReference:          "backup-20260717",
 		PreflightChecks: map[string]any{
-			"postgres_restore_verified": true,
-			"neo4j_snapshot_verified":   true,
+			"backup_snapshots_created":       true,
+			"postgres_backup_created":        true,
+			"postgres_backup_reference_hash": "sha256:pg",
+			"neo4j_snapshot_created":         true,
+			"neo4j_snapshot_reference_hash":  "sha256:neo4j",
+			"attestation_scope":              "creation_only",
+			"rollback_assurance":             "backup_and_snapshot_creation_attested_restore_not_verified",
 		},
 		Now: now,
 	})

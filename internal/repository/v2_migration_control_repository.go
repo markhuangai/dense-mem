@@ -44,16 +44,18 @@ type V2CreateMigrationRunInput struct {
 }
 
 type V2UpdateMigrationRunStateInput struct {
-	RunID             string
-	FromState         string
-	ToState           string
-	Phase             string
-	PreflightApproved bool
-	BackupReference   string
-	PreflightChecks   map[string]any
-	LastError         string
-	Retryable         bool
-	Now               time.Time
+	RunID                    string
+	FromState                string
+	ToState                  string
+	Phase                    string
+	MigrationContractVersion string
+	CorpusVersion            string
+	PreflightApproved        bool
+	BackupReference          string
+	PreflightChecks          map[string]any
+	LastError                string
+	Retryable                bool
+	Now                      time.Time
 }
 
 type V2CommitCutoverInput struct {
@@ -242,6 +244,8 @@ func (r *V2MigrationControlRepositoryImpl) UpdateRunState(ctx context.Context, i
 			UPDATE v2_migration_runs
 			SET state = ?,
 			    phase = ?,
+			    migration_contract_version = COALESCE(NULLIF(?, ''), migration_contract_version),
+			    corpus_version = COALESCE(NULLIF(?, ''), corpus_version),
 			    preflight_approved = preflight_approved OR ?,
 			    backup_reference = COALESCE(NULLIF(?, ''), backup_reference),
 			    preflight_checks = CASE WHEN ?::jsonb = '{}'::jsonb THEN preflight_checks ELSE ?::jsonb END,
@@ -260,7 +264,8 @@ func (r *V2MigrationControlRepositoryImpl) UpdateRunState(ctx context.Context, i
 			          last_error, retryable, lease_owner, checkpoint_key,
 			          checkpoint_value::text, started_at, completed_at, cutover_at,
 			          created_at, updated_at
-		`, input.ToState, input.Phase, input.PreflightApproved, input.BackupReference,
+		`, input.ToState, input.Phase, input.MigrationContractVersion, input.CorpusVersion,
+			input.PreflightApproved, input.BackupReference,
 			string(checks), string(checks), input.LastError, input.Retryable,
 			input.ToState, now, input.ToState, now, input.ToState, now, now,
 			input.RunID, input.FromState).Row()
