@@ -172,6 +172,34 @@ func TestMigrationDataPlaneGateCachesStatusWithinTTL(t *testing.T) {
 	}
 }
 
+func TestMigrationDataPlaneGateDoesNotCacheCanceledStatusRefresh(t *testing.T) {
+	migration := &migrationDataPlaneStatusStub{err: context.Canceled}
+	e := echo.New()
+	e.HTTPErrorHandler = httperr.ErrorHandler
+	e.GET("/gated", func(c echo.Context) error {
+		return c.NoContent(nethttp.StatusNoContent)
+	}, migrationDataPlaneGateWithTTL(migration, time.Hour))
+
+	req := httptest.NewRequest(nethttp.MethodGet, "/gated", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != nethttp.StatusServiceUnavailable {
+		t.Fatalf("first status = %d, want %d; body=%s", rec.Code, nethttp.StatusServiceUnavailable, rec.Body.String())
+	}
+
+	migration.err = nil
+	migration.status = &domain.V2MigrationControlStatus{DataPlaneAllowed: true}
+	req = httptest.NewRequest(nethttp.MethodGet, "/gated", nil)
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != nethttp.StatusNoContent {
+		t.Fatalf("second status = %d, want %d; body=%s", rec.Code, nethttp.StatusNoContent, rec.Body.String())
+	}
+	if migration.calls != 2 {
+		t.Fatalf("status calls = %d, want 2", migration.calls)
+	}
+}
+
 func TestMigrationDataPlaneGateFailsClosedOnStatusError(t *testing.T) {
 	migration := &migrationDataPlaneStatusStub{err: errors.New("store unavailable")}
 	e := echo.New()

@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +14,7 @@ import (
 )
 
 const migrationDataPlaneGateStatusTTL = 5 * time.Second
+const migrationDataPlaneStatusRefreshTimeout = 2 * time.Second
 
 type MigrationDataPlaneStatusProvider interface {
 	Status(ctx context.Context) (*domain.V2MigrationControlStatus, error)
@@ -72,7 +74,12 @@ func (c *migrationDataPlaneStatusCache) Status(ctx context.Context) (*domain.V2M
 	if !c.expiresAt.IsZero() && now.Before(c.expiresAt) {
 		return cloneMigrationDataPlaneStatus(c.status), c.err
 	}
-	status, err := c.statusProvider.Status(ctx)
+	refreshCtx, cancel := context.WithTimeout(context.Background(), migrationDataPlaneStatusRefreshTimeout)
+	defer cancel()
+	status, err := c.statusProvider.Status(refreshCtx)
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return nil, err
+	}
 	c.status = cloneMigrationDataPlaneStatus(status)
 	c.err = err
 	c.expiresAt = now.Add(c.ttl)
