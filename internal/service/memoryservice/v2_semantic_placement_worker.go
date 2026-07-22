@@ -6,7 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 type V2SemanticPlacementReviewSource interface {
@@ -86,16 +88,34 @@ func (s *v2SemanticPlacementWorkerService) ProcessNextV2SemanticPlacement(ctx co
 	reviewJob = v2ReviewJobWithRunScope(reviewJob, *run)
 	result, err := s.review.ReviewV2Semantic(ctx, reviewJob)
 	if err != nil {
-		return true, err
+		return true, errors.Join(err, s.requeueV2SemanticPlacement(ctx, *run, reviewJob, "semantic review failed before completion"))
 	}
 	if result == nil {
-		return true, errors.New("v2 semantic placement worker: review returned nil result")
+		err := errors.New("v2 semantic placement worker: review returned nil result")
+		return true, errors.Join(err, s.requeueV2SemanticPlacement(ctx, *run, reviewJob, "semantic review returned no result"))
 	}
 	_, err = s.commit.CompleteV2SemanticPlacement(ctx, v2CommitJobWithRunScope(reviewJob, *run, s.workerID, *result))
 	if err != nil {
 		return true, err
 	}
 	return true, nil
+}
+
+func (s *v2SemanticPlacementWorkerService) requeueV2SemanticPlacement(
+	ctx context.Context,
+	run repository.V2PlacementRun,
+	reviewJob V2SemanticReviewJob,
+	reason string,
+) error {
+	retryable := V2SemanticReviewResult{
+		Status: string(domain.V2SemanticReviewRetryable),
+		ValidationErrors: []verifier.V2SemanticValidationError{{
+			Field:   "semantic_review",
+			Message: reason,
+		}},
+	}
+	_, err := s.commit.CompleteV2SemanticPlacement(ctx, v2CommitJobWithRunScope(reviewJob, run, s.workerID, retryable))
+	return err
 }
 
 func v2ReviewJobWithRunScope(job V2SemanticReviewJob, run repository.V2PlacementRun) V2SemanticReviewJob {
