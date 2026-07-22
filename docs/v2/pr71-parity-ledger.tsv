@@ -133,7 +133,7 @@ pr71	internal/storage/neo4j/fragment_status_migration.go	replace	#93	read-only N
 pr71	internal/storage/neo4j/schema_live_test.go	replace	#93	read-only Neo4j migration input	migration adapter fixture tests	Retain only explicit bounded read-only migration adapter behavior until removal
 pr71	internal/storage/neo4j/schema_test.go	replace	#93	read-only Neo4j migration input	migration adapter fixture tests	Retain only explicit bounded read-only migration adapter behavior until removal
 pr71	internal/storage/postgres/client_test.go	replace	#94	cutover readiness and UAT gates	compose UAT security and readiness gates	Use these changes as evidence for final hard gates and production-surface UAT
-pr71	internal/storage/postgres/semantic_schema_static_test.go	replace	#94	cutover readiness and UAT gates	compose UAT security and readiness gates	Use these changes as evidence for final hard gates and production-surface UAT
+pr71	internal/storage/postgres/schema_test.go	replace	#94	cutover readiness and UAT gates	compose UAT security and readiness gates	Use these changes as evidence for final hard gates and production-surface UAT
 pr71	internal/storage/postgres/topology.go	replace	#77	dormant V2 bootstrap	config and bootstrap tests	Wire V2 only behind dormant validated topology and readiness gates
 pr71	internal/storage/postgres/topology_test.go	replace	#77	dormant V2 bootstrap	config and bootstrap tests	Wire V2 only behind dormant validated topology and readiness gates
 pr71	internal/tools/registry/context_tools.go	replace	#94	cutover readiness and UAT gates	compose UAT security and readiness gates	Use these changes as evidence for final hard gates and production-surface UAT
