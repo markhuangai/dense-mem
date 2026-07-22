@@ -75,7 +75,7 @@ const metrics = {
   },
   dependencies: [
     { name: "postgres", status: "ok", latency_ms: 3 },
-    { name: "neo4j", status: "ok", latency_ms: 8 },
+    { name: "redis", status: "ok", latency_ms: 8 },
   ],
   teams: [
     { team_id: team.id, team_name: "Default", requests: 42, errors: 2, avg_latency_ms: 18.5, max_latency_ms: 90 },
@@ -411,7 +411,7 @@ test("metrics tab renders operational totals and filter queries", async ({ page 
   await expect(summary).toContainText("19 ms");
   await expect(summary).toContainText("90 ms");
   await expect(page.getByText("postgres")).toBeVisible();
-  await expect(page.getByText("neo4j")).toBeVisible();
+  await expect(page.getByText("redis")).toBeVisible();
   await expect(page.getByRole("row", { name: /Default\s+42\s+2\s+19 ms\s+90 ms/ })).toBeVisible();
   await expect(page.getByRole("row", { name: /default profile\s+\*\*\*\*\*\*abc123\s+Default\s+40\s+1\s+17 ms/ })).toBeVisible();
   await expect(page.getByRole("row", { name: /\/api\/v1\/fragments\/:id\s+GET\s+2xx\s+39\s+0/ })).toBeVisible();

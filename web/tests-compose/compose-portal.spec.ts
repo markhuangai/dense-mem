@@ -98,7 +98,7 @@ test("control panel shows operational metrics against compose", async ({ page })
   await expect(page.getByLabel("Request metrics")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Dependencies" })).toBeVisible();
   await expect(page.getByText("postgres")).toBeVisible();
-  await expect(page.getByText("neo4j")).toBeVisible();
+  await expect(page.getByText("redis")).toBeVisible();
 
   await page.getByLabel("Window").selectOption("360");
   await page.getByLabel("Team", { exact: true }).selectOption(seedTeamId);

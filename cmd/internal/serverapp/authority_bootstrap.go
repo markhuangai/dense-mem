@@ -8,10 +8,11 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service/migrationcontrol"
 )
 
 var errAuthorityBlocked = errors.New("authority bootstrap blocked")
+
+const cutoverMarkerVersion = "dense-mem.v2.1.cutover.v1"
 
 type authorityMode string
 
@@ -21,7 +22,6 @@ const (
 
 type authorityBootstrap struct {
 	Mode             authorityMode
-	DataPlaneAllowed bool
 	Marker           *domain.V2CompatibilityMarker
 	ReadinessMessage string
 }
@@ -52,7 +52,7 @@ func EnsureAuthority(ctx context.Context, store authorityBootstrapStore) (author
 	}
 	if marker == nil {
 		marker, err = store.CommitFreshV2Authority(ctx, repository.V2CommitFreshV2AuthorityInput{
-			MarkerVersion: migrationcontrol.DefaultCutoverMarkerVersion,
+			MarkerVersion: cutoverMarkerVersion,
 			Now:           time.Now().UTC(),
 			Metadata:      map[string]any{"created_by": "server_boot"},
 		})
@@ -71,7 +71,6 @@ func classifyAuthorityMarker(marker *domain.V2CompatibilityMarker) (authorityBoo
 	case domain.V2MigrationMarkerCompatible:
 		return authorityBootstrap{
 			Mode:             authorityActive,
-			DataPlaneAllowed: true,
 			Marker:           marker,
 			ReadinessMessage: "compatible V2 authority marker present",
 		}, nil

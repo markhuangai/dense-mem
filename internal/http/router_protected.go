@@ -37,8 +37,6 @@ type ProtectedDeps struct {
 	}
 	// Config is the application configuration.
 	Config config.ConfigProvider
-	// MigrationStatus gates normal data-plane routes during mandatory V2 migration.
-	MigrationStatus MigrationDataPlaneStatusProvider
 	// Logger is the structured logger.
 	Logger observability.LogProvider
 	// PostAuthMiddleware runs after authentication, profile resolution, and
@@ -57,7 +55,6 @@ type ProtectedDepsInterface interface {
 	GetAuditService() service.AuditService
 	GetSecurityService() middleware.SecurityBanService
 	GetConfig() config.ConfigProvider
-	GetMigrationStatus() MigrationDataPlaneStatusProvider
 	GetLogger() observability.LogProvider
 	GetPostAuthMiddleware() []echo.MiddlewareFunc
 }
@@ -98,10 +95,6 @@ func (d *ProtectedDeps) GetConfig() config.ConfigProvider {
 	return d.Config
 }
 
-func (d *ProtectedDeps) GetMigrationStatus() MigrationDataPlaneStatusProvider {
-	return d.MigrationStatus
-}
-
 func (d *ProtectedDeps) GetLogger() observability.LogProvider {
 	return d.Logger
 }
@@ -128,7 +121,6 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 		group.Use(authMW)
 		group.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 		group.Use(middleware.AuthorizeProfile(profileAuthzSvc))
-		group.Use(migrationDataPlaneGate(deps.MigrationStatus))
 		group.Use(deps.PostAuthMiddleware...)
 		group.Use(usageMW)
 		group.Use(rateLimitMW)
@@ -208,7 +200,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 
 	// OpenAPI — expose the full runtime contract when available. The AI-safe
 	// variant remains as a fallback for reduced runtimes and tests.
-	openAPIMiddleware := []echo.MiddlewareFunc{authMW, migrationDataPlaneGate(deps.MigrationStatus)}
+	openAPIMiddleware := []echo.MiddlewareFunc{authMW}
 	openAPIMiddleware = append(openAPIMiddleware, deps.PostAuthMiddleware...)
 	openAPIMiddleware = append(openAPIMiddleware, lastUsedMW)
 	if handlers.OpenAPIFull != nil {

@@ -126,13 +126,3 @@ type V2CompatibilityMarker struct {
 	Metadata       map[string]any `json:"metadata,omitempty"`
 	CreatedAt      time.Time      `json:"created_at"`
 }
-
-type V2MigrationControlStatus struct {
-	State            string                      `json:"state"`
-	Required         bool                        `json:"required"`
-	DataPlaneAllowed bool                        `json:"data_plane_allowed"`
-	ReadinessMessage string                      `json:"readiness_message"`
-	Run              *V2MigrationRun             `json:"run,omitempty"`
-	Marker           *V2CompatibilityMarker      `json:"marker,omitempty"`
-	Actions          []V2MigrationOperatorAction `json:"actions,omitempty"`
-}

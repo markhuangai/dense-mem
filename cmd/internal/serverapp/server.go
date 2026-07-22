@@ -31,7 +31,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/embeddingservice"
 	"github.com/markhuangai/dense-mem/internal/service/graphview"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
-	"github.com/markhuangai/dense-mem/internal/service/migrationcontrol"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -107,10 +106,8 @@ func RunActiveServer(
 	semanticRepo := repository.NewV2SemanticRepository(pgDB.GetDB(), rlsHelper)
 	ledgerRepo := repository.NewV2LedgerRepository(pgDB.GetDB(), rlsHelper)
 	searchRepo := repository.NewV2SearchRepository(pgDB.GetDB(), rlsHelper)
-	migrationControlRepo := repository.NewV2MigrationControlRepository(pgDB.GetDB(), rlsHelper)
-	migrationControlSvc := migrationcontrol.New(migrationControlRepo, migrationcontrol.Config{Required: false})
 
-	if err := checkActiveAuthority(startupCtx, migrationControlSvc); err != nil {
+	if err := checkActiveAuthority(authority); err != nil {
 		log.Fatalf("active boot blocked: %v", err)
 	}
 	searchContract, err := searchRepo.EnsureActiveSearchContract(startupCtx, repository.V2EnsureActiveSearchContractInput{
@@ -276,7 +273,7 @@ func RunActiveServer(
 			return postgres.CheckPGVectorExtension(ctx, pgDB.GetDB())
 		}},
 		{Name: "authority", Check: func(ctx context.Context) error {
-			return checkActiveAuthority(ctx, migrationControlSvc)
+			return checkActiveAuthority(authority)
 		}},
 		{Name: "search_readiness", Check: func(ctx context.Context) error {
 			return checkSearchReadiness(ctx, searchRepo)
@@ -312,7 +309,6 @@ func RunActiveServer(
 		SSOAuthenticator: ssoService,
 		Config:           &cfg,
 		Logger:           logger,
-		MigrationStatus:  migrationControlSvc,
 	}
 	protectedDeps.PostAuthMiddleware = append(protectedDeps.PostAuthMiddleware, options.PostAuthMiddleware...)
 	if telemetryHTTPMetrics != nil {
@@ -334,19 +330,18 @@ func RunActiveServer(
 		DreamGet:       dreamHandler.Get,
 	})
 	userPortalDeps := http.UserPortalDeps{
-		APIKeyRepo:      apiKeyRepo,
-		ProfileSvc:      profileService,
-		APIKeySvc:       apiKeyService,
-		RateLimitSvc:    rateLimitService,
-		UsageMetrics:    usageMetricsService,
-		Telemetry:       telemetryReader,
-		GraphView:       graphViewSvc,
-		AuditSvc:        auditService,
-		SecuritySvc:     securityService,
-		SSOService:      ssoService,
-		AppConfig:       appConfigService,
-		Config:          &cfg,
-		MigrationStatus: migrationControlSvc,
+		APIKeyRepo:   apiKeyRepo,
+		ProfileSvc:   profileService,
+		APIKeySvc:    apiKeyService,
+		RateLimitSvc: rateLimitService,
+		UsageMetrics: usageMetricsService,
+		Telemetry:    telemetryReader,
+		GraphView:    graphViewSvc,
+		AuditSvc:     auditService,
+		SecuritySvc:  securityService,
+		SSOService:   ssoService,
+		AppConfig:    appConfigService,
+		Config:       &cfg,
 	}
 	userPortalDeps.ExtraMiddleware = append(userPortalDeps.ExtraMiddleware, options.UserPortalMiddleware...)
 	if telemetryHTTPMetrics != nil {
@@ -372,7 +367,6 @@ func RunActiveServer(
 				Logs:           operationLogService,
 				RecallFeedback: recallFeedbackEventService,
 				Dreams:         dreamSvc,
-				Migration:      migrationControlSvc,
 			},
 			healthConfig,
 			logger,
@@ -486,15 +480,10 @@ func RunActiveServer(
 	}
 }
 
-func checkActiveAuthority(ctx context.Context, migration migrationcontrol.Service) error {
-	if migration == nil {
-		return fmt.Errorf("%w: migration status is required", errAuthorityBlocked)
-	}
-	status, err := migration.Status(ctx)
-	if err != nil {
-		return err
-	}
-	if status == nil || status.State != domain.V2MigrationStateCutOver || !status.DataPlaneAllowed {
+func checkActiveAuthority(authority authorityBootstrap) error {
+	if authority.Mode != authorityActive ||
+		authority.Marker == nil ||
+		authority.Marker.Status != domain.V2MigrationMarkerCompatible {
 		return fmt.Errorf("%w: compatible V2 authority marker is required", errAuthorityBlocked)
 	}
 	return nil

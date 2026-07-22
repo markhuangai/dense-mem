@@ -18,6 +18,10 @@ func clearEnv() {
 		"REDIS_DB",
 		"REDIS_TLS_ENABLED",
 		"DISTRIBUTED_COORDINATION_REQUIRED",
+		"NEO4J_URI",
+		"NEO4J_USER",
+		"NEO4J_PASSWORD",
+		"NEO4J_DATABASE",
 		"HTTP_MAX_BODY_BYTES",
 		"AUTH_VERIFY_MAX_CONCURRENCY",
 		"RATE_LIMIT_PER_MINUTE",
@@ -146,6 +150,27 @@ func TestLoadAllowsPostgresOnlyConfig(t *testing.T) {
 	}
 	if cfg.PostgresDSN == "" {
 		t.Fatal("PostgresDSN was not loaded")
+	}
+}
+
+func TestLoadRejectsLegacyNeo4jConfig(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+	os.Setenv("NEO4J_URI", "bolt://neo4j:7687")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() expected error for legacy Neo4j config, got nil")
+	}
+	validationErr, ok := err.(*ValidationError)
+	if !ok {
+		t.Fatalf("expected *ValidationError, got %T", err)
+	}
+	if validationErr.Field != "NEO4J_URI" {
+		t.Errorf("ValidationError.Field = %q, want NEO4J_URI", validationErr.Field)
+	}
+	if validationErr.Message != "legacy Neo4j configuration is no longer supported; run the latest v2.1.1 release to complete migration before upgrading" {
+		t.Errorf("ValidationError.Message = %q", validationErr.Message)
 	}
 }
 

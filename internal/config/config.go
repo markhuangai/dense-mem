@@ -12,6 +12,13 @@ const (
 	DefaultHTTPAddr = ":" + DefaultHTTPPort
 )
 
+var legacyNeo4jEnvVars = []string{
+	"NEO4J_URI",
+	"NEO4J_USER",
+	"NEO4J_PASSWORD",
+	"NEO4J_DATABASE",
+}
+
 // ConfigProvider is the companion interface for Config.
 // Consumers and tests depend on this abstraction rather than the concrete struct.
 type ConfigProvider interface {
@@ -433,6 +440,9 @@ func Load() (Config, error) {
 	}
 	cfg.TelemetryScrapeToken = os.Getenv("TELEMETRY_SCRAPE_TOKEN")
 	// Validation
+	if err := rejectLegacyNeo4jConfig(); err != nil {
+		return cfg, err
+	}
 	if cfg.PostgresDSN == "" {
 		return cfg, &ValidationError{
 			Field:   "POSTGRES_DSN",
@@ -549,4 +559,16 @@ func Load() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func rejectLegacyNeo4jConfig() *ValidationError {
+	for _, name := range legacyNeo4jEnvVars {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			return &ValidationError{
+				Field:   name,
+				Message: "legacy Neo4j configuration is no longer supported; run the latest v2.1.1 release to complete migration before upgrading",
+			}
+		}
+	}
+	return nil
 }

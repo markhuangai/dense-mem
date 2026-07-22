@@ -20,7 +20,6 @@ func TestClassifyAuthorityActivatesWhenCompatibleMarkerPresent(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, authorityActive, bootstrap.Mode)
-	require.True(t, bootstrap.DataPlaneAllowed)
 	require.Equal(t, store.marker, bootstrap.Marker)
 }
 
@@ -74,7 +73,6 @@ func TestEnsureAuthorityCreatesFreshMarkerWhenNoneExists(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, authorityActive, bootstrap.Mode)
-	require.True(t, bootstrap.DataPlaneAllowed)
 	require.Equal(t, store.freshMarker, bootstrap.Marker)
 	require.Equal(t, 1, store.freshCommits)
 }
