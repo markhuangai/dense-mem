@@ -389,15 +389,16 @@ func insertV2EntityName(ctx context.Context, tx *gorm.DB, input V2AddEntityNameI
 	return nameID, rows.Err()
 }
 
-func loadV2PredicateDefinition(ctx context.Context, tx *gorm.DB, predicateKey string, version int) (*v2PredicateDefinition, error) {
+func loadV2PredicateDefinition(ctx context.Context, tx *gorm.DB, teamID string, predicateKey string, version int) (*v2PredicateDefinition, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT predicate_key, version, allowed_subject_kinds, allowed_object_kinds,
 		       relationship_kind, current_cardinality
-		FROM predicate_definitions
-		WHERE predicate_key = ?
+		FROM team_predicate_definitions
+		WHERE team_id = ?::uuid
+		  AND predicate_key = ?
 		  AND version = ?
 		  AND lifecycle_state = 'active'
-	`, predicateKey, version).Rows()
+	`, teamID, predicateKey, version).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -483,24 +484,36 @@ func insertV2PredicateReview(
 	if err != nil {
 		return nil, err
 	}
+	verificationID, err := insertV2VerificationEvent(ctx, tx, input, observationID)
+	if err != nil {
+		return nil, err
+	}
 	payload, err := marshalV2JSON(map[string]any{
-		"original_predicate": input.OriginalPredicate,
-		"predicate_key":      input.PredicateKey,
+		"original_predicate":       input.OriginalPredicate,
+		"predicate_key":            input.PredicateKey,
+		"predicate_policy_version": domain.V2PredicatePolicyVersion,
 	})
 	if err != nil {
 		return nil, err
 	}
+	dedupeKey := ""
+	if input.PlacementItemID != "" && input.ProposalRef != "" {
+		dedupeKey = "relationship:" + input.PlacementItemID + ":" + input.ProposalRef + ":predicate_needs_review"
+	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO review_tasks (
 		    team_id, owner_profile_id, ingest_id, placement_item_id,
-		    observation_id, task_type, reason, payload
+		    observation_id, task_type, status, reason, payload, dedupe_key, updated_at
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid,
-		    ?::uuid, 'predicate_needs_review', 'unknown_predicate', ?::jsonb
+		    ?::uuid, 'predicate_needs_review', 'open', 'unknown_predicate', ?::jsonb, ?, now()
 		)
+		ON CONFLICT (team_id, dedupe_key)
+		WHERE dedupe_key <> '' AND status IN ('open', 'acknowledged')
+		DO UPDATE SET updated_at = now()
 		RETURNING review_task_id::text
 	`, input.TeamID, input.OwnerProfileID, input.IngestID, input.PlacementItemID,
-		observationID, string(payload)).Rows()
+		observationID, string(payload), dedupeKey).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -513,8 +526,9 @@ func insertV2PredicateReview(
 		return nil, err
 	}
 	return &V2RelationshipDecisionResult{
-		ObservationID: observationID,
-		ReviewTaskID:  reviewTaskID,
+		ObservationID:       observationID,
+		VerificationEventID: verificationID,
+		ReviewTaskID:        reviewTaskID,
 	}, rows.Err()
 }
 
@@ -543,7 +557,7 @@ func insertV2RelationshipObservation(ctx context.Context, tx *gorm.DB, input V2A
 		    polarity, scope_key, valid_from, valid_to, evidence, metadata
 		) VALUES (
 		    ?::uuid, NULLIF(?, '')::uuid, ?::uuid, NULLIF(?, '')::uuid, ?::uuid,
-		    ?, ?, ?, ?::uuid, NULLIF(?, ''), NULLIF(?, 0),
+		    ?, ?, ?, NULLIF(?, '')::uuid, NULLIF(?, ''), NULLIF(?, 0),
 		    NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, NULLIF(?, ''),
 		    ?, ?, ?::jsonb, ?::jsonb
 		)

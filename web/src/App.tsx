@@ -338,11 +338,9 @@ function Portal({
 function LazyPanelFallback() {
   return <LoadingState label="Loading panel" />;
 }
-
 function readTheme(): Theme {
   return localStorage.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light";
 }
-
 function TeamCreateForm({ api, onCreated }: { api: ControlApi; onCreated: (team: Team) => void }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");

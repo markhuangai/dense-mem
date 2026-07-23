@@ -298,17 +298,17 @@ func (r *V2LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, team
 		rows, err := tx.WithContext(ctx).Raw(`
 			WITH next AS (
 				SELECT placement_run_id
-				FROM placement_runs
-				WHERE team_id = ?::uuid
-				  AND attempts < max_attempts
+				FROM placement_runs AS run
+				WHERE run.team_id = ?::uuid
+				  AND run.attempts < run.max_attempts
 				  AND (
 					(status IN ('queued', 'guarded') AND available_at <= now())
 					OR (status = 'processing' AND lease_until IS NOT NULL AND lease_until < now())
 				  )
 				ORDER BY
-					CASE WHEN status IN ('queued', 'guarded') THEN 0 ELSE 1 END,
-					available_at ASC,
-					created_at ASC
+					CASE WHEN run.status IN ('queued', 'guarded') THEN 0 ELSE 1 END,
+					run.available_at ASC,
+					run.created_at ASC
 				LIMIT 1
 				FOR UPDATE SKIP LOCKED
 			)
@@ -570,11 +570,14 @@ func ensureV2SemanticRefs(ctx context.Context, tx *gorm.DB, teamID, profileID st
 	`, teamID).Error; err != nil {
 		return err
 	}
-	return tx.WithContext(ctx).Exec(`
+	if err := tx.WithContext(ctx).Exec(`
 		INSERT INTO semantic_profile_refs (team_id, profile_id)
 		VALUES (?::uuid, ?::uuid)
 		ON CONFLICT (team_id, profile_id) DO NOTHING
-	`, teamID, profileID).Error
+	`, teamID, profileID).Error; err != nil {
+		return err
+	}
+	return seedV2TeamPredicateDefinitions(ctx, tx, teamID)
 }
 
 func insertV2KnowledgeIngest(ctx context.Context, tx *gorm.DB, input V2CreateIngestInput) (string, bool, error) {

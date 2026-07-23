@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
+	"unicode"
 
 	"gorm.io/gorm"
 
@@ -38,6 +40,25 @@ func appendV2PlacementSearchDocument(result *V2CommitPlacementSemanticResult, do
 		}
 	}
 	result.SearchDocuments = append(result.SearchDocuments, *document)
+}
+
+func appendV2PlacementReviewTaskID(result *V2CommitPlacementSemanticResult, taskID string) {
+	if result == nil || strings.TrimSpace(taskID) == "" {
+		return
+	}
+	for _, existing := range result.ReviewTaskIDs {
+		if existing == taskID {
+			return
+		}
+	}
+	result.ReviewTaskIDs = append(result.ReviewTaskIDs, taskID)
+}
+
+func appendV2PlacementRelationshipResult(result *V2CommitPlacementSemanticResult, relationship *V2RelationshipDecisionResult) {
+	if result == nil || relationship == nil {
+		return
+	}
+	result.RelationshipResults = append(result.RelationshipResults, *relationship)
 }
 
 func v2PlacementEvidenceSearchableStatus(status string) bool {
@@ -162,13 +183,304 @@ func v2PlacementCorrectionTargetRelated(source *V2RelationshipRecord, target v2P
 	return source.ObjectValueID != "" && source.ObjectValueID == target.ObjectValueID
 }
 
+func insertV2PlacementEntity(
+	ctx context.Context,
+	tx *gorm.DB,
+	commit V2CommitPlacementSemanticInput,
+	input V2PlacementEntityResolutionInput,
+) (string, error) {
+	existingEntityID, err := loadV2PlacementCreatedEntity(ctx, tx, commit, input.MentionRef)
+	if err == nil {
+		return existingEntityID, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	identityFields := map[string]any{}
+	for key, value := range input.IdentityContext {
+		key = strings.TrimSpace(key)
+		if key != "" {
+			identityFields[key] = value
+		}
+	}
+	identityFields["source"] = "semantic_placement"
+	identityFields["mention_ref"] = input.MentionRef
+	identityContext, err := marshalV2JSON(identityFields)
+	if err != nil {
+		return "", err
+	}
+	rows, err := tx.WithContext(ctx).Raw(`
+		INSERT INTO entity_records (team_id, entity_kind, identity_context, metadata)
+		VALUES (?::uuid, ?, ?::jsonb, '{}'::jsonb)
+		RETURNING entity_id::text
+	`, commit.TeamID, input.EntityKind, string(identityContext)).Rows()
+	if err != nil {
+		return "", err
+	}
+	if !rows.Next() {
+		_ = rows.Close()
+		return "", rows.Err()
+	}
+	var entityID string
+	if err := rows.Scan(&entityID); err != nil {
+		_ = rows.Close()
+		return "", err
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return "", err
+	}
+	if err := rows.Close(); err != nil {
+		return "", err
+	}
+	_, err = insertV2EntityName(ctx, tx, V2AddEntityNameInput{
+		TeamID:         commit.TeamID,
+		OwnerProfileID: commit.OwnerProfileID,
+		EntityID:       entityID,
+		DisplayName:    input.CanonicalName,
+		NameKind:       "canonical",
+	})
+	if err != nil {
+		return "", err
+	}
+	return entityID, nil
+}
+
+func loadV2PlacementCreatedEntity(
+	ctx context.Context,
+	tx *gorm.DB,
+	commit V2CommitPlacementSemanticInput,
+	mentionRef string,
+) (string, error) {
+	var entityID string
+	err := tx.WithContext(ctx).Raw(`
+		SELECT event.entity_id::text
+		FROM entity_resolution_events AS event
+		JOIN entity_records AS entity
+		  ON entity.team_id = event.team_id
+		 AND entity.entity_id = event.entity_id
+		 AND entity.status = 'active'
+		WHERE event.team_id = ?::uuid
+		  AND event.owner_profile_id = ?::uuid
+		  AND event.placement_item_id = ?::uuid
+		  AND event.mention_ref = ?
+		  AND event.action = 'create'
+		  AND event.entity_id IS NOT NULL
+		ORDER BY event.created_at, event.resolution_event_id
+		LIMIT 1
+	`, commit.TeamID, commit.OwnerProfileID, commit.PlacementItemID, mentionRef).Row().Scan(&entityID)
+	if err != nil {
+		return "", err
+	}
+	return entityID, nil
+}
+
+func resolveV2PlacementPredicateCandidate(
+	ctx context.Context,
+	tx *gorm.DB,
+	decision V2ApplyRelationshipDecisionInput,
+	candidate V2PlacementPredicateCandidateInput,
+) (V2ApplyRelationshipDecisionInput, error) {
+	canonicalKey := canonicalV2GeneratedPredicateKey(candidate.PredicateKey)
+	canonicalOriginal := canonicalV2GeneratedPredicateKey(decision.OriginalPredicate)
+	matches, err := loadV2PlacementPredicateMatches(
+		ctx,
+		tx,
+		decision.TeamID,
+		canonicalKey,
+		decision.OriginalPredicate,
+		canonicalOriginal,
+	)
+	if err != nil {
+		return V2ApplyRelationshipDecisionInput{}, err
+	}
+	if len(matches) == 0 {
+		if err := tx.WithContext(ctx).Exec(
+			`SELECT pg_advisory_xact_lock(hashtext(?))`,
+			decision.TeamID+":"+canonicalKey,
+		).Error; err != nil {
+			return V2ApplyRelationshipDecisionInput{}, err
+		}
+		matches, err = loadV2PlacementPredicateMatches(
+			ctx,
+			tx,
+			decision.TeamID,
+			canonicalKey,
+			decision.OriginalPredicate,
+			canonicalOriginal,
+		)
+		if err != nil {
+			return V2ApplyRelationshipDecisionInput{}, err
+		}
+	}
+	if len(matches) > 1 {
+		return V2ApplyRelationshipDecisionInput{}, fmt.Errorf(
+			"%w: predicate %q resolves to multiple team definitions",
+			errV2PlacementPredicateReview,
+			decision.OriginalPredicate,
+		)
+	}
+	if len(matches) == 0 && !v2PlacementNovelPredicateSafe(
+		candidate.PredicateKey,
+		canonicalKey,
+		decision.OriginalPredicate,
+	) {
+		return V2ApplyRelationshipDecisionInput{}, fmt.Errorf(
+			"%w: predicate candidate %q is not a safe canonical key",
+			errV2PlacementPredicateReview,
+			candidate.PredicateKey,
+		)
+	}
+
+	subjectKind, objectKind, err := loadV2PlacementPredicateEndpointKinds(ctx, tx, decision)
+	if err != nil {
+		return V2ApplyRelationshipDecisionInput{}, err
+	}
+	var resolved V2SemanticReviewPredicateCandidate
+	if len(matches) == 1 {
+		resolved = matches[0]
+	} else {
+		inserted, err := insertV2TeamPredicateCandidate(ctx, tx, V2EnsureSemanticPredicateCandidateInput{
+			TeamID:           decision.TeamID,
+			OwnerProfileID:   decision.OwnerProfileID,
+			Predicate:        decision.OriginalPredicate,
+			RelationshipKind: candidate.RelationshipKind,
+			SubjectKind:      subjectKind,
+			ObjectKind:       objectKind,
+			Origin:           "provider_generated",
+			Metadata: map[string]any{
+				"source":                   "semantic_placement",
+				"predicate_policy_version": domain.V2PredicatePolicyVersion,
+				"ingest_id":                decision.IngestID,
+				"placement_item_id":        decision.PlacementItemID,
+			},
+		}, canonicalKey, false)
+		if err != nil {
+			return V2ApplyRelationshipDecisionInput{}, err
+		}
+		resolved = *inserted
+	}
+	if resolved.LifecycleState != string(domain.V2PredicateLifecycleActive) {
+		return V2ApplyRelationshipDecisionInput{}, fmt.Errorf(
+			"%w: predicate %q lifecycle is %q",
+			errV2PlacementPredicateReview,
+			resolved.PredicateKey,
+			resolved.LifecycleState,
+		)
+	}
+	if resolved.RelationshipKind != candidate.RelationshipKind {
+		return V2ApplyRelationshipDecisionInput{}, fmt.Errorf(
+			"%w: predicate %q relationship_kind is %q, candidate requested %q",
+			errV2PlacementPredicateReview,
+			resolved.PredicateKey,
+			resolved.RelationshipKind,
+			candidate.RelationshipKind,
+		)
+	}
+	if !v2PlacementPredicateKindAllowed(resolved.AllowedSubjectKinds, subjectKind) {
+		return V2ApplyRelationshipDecisionInput{}, fmt.Errorf(
+			"%w: predicate %q does not allow subject kind %q",
+			errV2PlacementPredicateReview,
+			resolved.PredicateKey,
+			subjectKind,
+		)
+	}
+	if !v2PlacementPredicateKindAllowed(resolved.AllowedObjectKinds, objectKind) {
+		return V2ApplyRelationshipDecisionInput{}, fmt.Errorf(
+			"%w: predicate %q does not allow object kind %q",
+			errV2PlacementPredicateReview,
+			resolved.PredicateKey,
+			objectKind,
+		)
+	}
+	decision.PredicateKey = resolved.PredicateKey
+	decision.PredicateVersion = resolved.Version
+	return decision, nil
+}
+
+func loadV2PlacementPredicateMatches(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	canonicalKey string,
+	originalPredicate string,
+	canonicalOriginal string,
+) ([]V2SemanticReviewPredicateCandidate, error) {
+	rows, err := tx.WithContext(ctx).Raw(`
+		WITH latest AS (
+		    SELECT predicate_key, version, aliases,
+		           allowed_subject_kinds, allowed_object_kinds,
+		           relationship_kind, current_cardinality, lifecycle_state,
+		           row_number() OVER (PARTITION BY predicate_key ORDER BY version DESC) AS version_rank
+		    FROM team_predicate_definitions
+		    WHERE team_id = ?::uuid
+		), matched AS (
+		    SELECT predicate_key, version, allowed_subject_kinds, allowed_object_kinds,
+		           relationship_kind, current_cardinality, lifecycle_state
+		    FROM latest
+		    WHERE version_rank = 1
+		      AND (
+		          predicate_key IN (?, ?)
+		          OR ? = ANY(aliases)
+		          OR ? = ANY(aliases)
+		          OR ? = ANY(aliases)
+		      )
+		)
+		SELECT predicate_key, version, allowed_subject_kinds, allowed_object_kinds,
+		       relationship_kind, current_cardinality, lifecycle_state
+		FROM matched
+		ORDER BY predicate_key
+	`, teamID, canonicalKey, canonicalOriginal, canonicalKey, originalPredicate, canonicalOriginal).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanV2SemanticReviewPredicateCandidates(rows)
+}
+
+func loadV2PlacementPredicateEndpointKinds(
+	ctx context.Context,
+	tx *gorm.DB,
+	decision V2ApplyRelationshipDecisionInput,
+) (string, string, error) {
+	subjectKind, err := loadV2EntityKind(ctx, tx, decision.TeamID, decision.SubjectEntityID)
+	if err != nil {
+		return "", "", err
+	}
+	if decision.ObjectEntityID != "" {
+		objectKind, err := loadV2EntityKind(ctx, tx, decision.TeamID, decision.ObjectEntityID)
+		return subjectKind, objectKind, err
+	}
+	objectKind, err := loadV2ValueType(ctx, tx, decision.TeamID, decision.ObjectValueID)
+	return subjectKind, objectKind, err
+}
+
+func v2PlacementPredicateKindAllowed(allowed []string, actual string) bool {
+	return len(allowed) == 0 || v2Contains(allowed, actual)
+}
+
+func v2PlacementNovelPredicateSafe(candidateKey string, canonicalKey string, originalPredicate string) bool {
+	candidateKey = strings.TrimSpace(candidateKey)
+	originalPredicate = strings.TrimSpace(originalPredicate)
+	if candidateKey == "" || candidateKey != canonicalKey || originalPredicate == "" ||
+		len([]rune(candidateKey)) > 64 || len([]rune(originalPredicate)) > 128 {
+		return false
+	}
+	for _, r := range candidateKey {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return true
+		}
+	}
+	return false
+}
+
 func applyV2RelationshipDecisionInTx(
 	ctx context.Context,
 	tx *gorm.DB,
 	input V2ApplyRelationshipDecisionInput,
 ) (*V2RelationshipDecisionResult, error) {
 	input = normalizeV2ApplyRelationshipDecisionInput(input)
-	predicate, err := loadV2PredicateDefinition(ctx, tx, input.PredicateKey, input.PredicateVersion)
+	predicate, err := loadV2PredicateDefinition(ctx, tx, input.TeamID, input.PredicateKey, input.PredicateVersion)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return insertV2PredicateReview(ctx, tx, input)
 	}
@@ -291,6 +603,7 @@ func v2PlacementCommitPayload(base map[string]any, result *V2CommitPlacementSema
 	payload["search_document_ids"] = searchDocuments
 	payload["embedding_job_ids"] = embeddingJobs
 	payload["entity_resolution_ids"] = append([]string(nil), result.EntityResolutionIDs...)
+	payload["review_task_ids"] = append([]string(nil), result.ReviewTaskIDs...)
 	return payload
 }
 
@@ -363,14 +676,15 @@ func v2PlacementRelationshipOutcomePayload(results []V2RelationshipDecisionResul
 }
 
 func finishV2PlacementRunIfTerminal(ctx context.Context, tx *gorm.DB, input V2CommitPlacementSemanticInput, status string) error {
-	var openCount int64
+	var openCount, reviewCount int64
 	if err := tx.WithContext(ctx).Raw(`
-		SELECT COUNT(*)
+		SELECT
+		    COUNT(*) FILTER (WHERE status IN ('queued', 'processing')),
+		    COUNT(*) FILTER (WHERE status = 'awaiting_review')
 		FROM placement_items
 		WHERE team_id = ?::uuid
 		  AND placement_run_id = ?::uuid
-		  AND status IN ('queued', 'processing')
-	`, input.TeamID, input.PlacementRunID).Scan(&openCount).Error; err != nil {
+	`, input.TeamID, input.PlacementRunID).Row().Scan(&openCount, &reviewCount); err != nil {
 		return err
 	}
 	if openCount > 0 {
@@ -398,6 +712,10 @@ func finishV2PlacementRunIfTerminal(ctx context.Context, tx *gorm.DB, input V2Co
 		}
 		return nil
 	}
+	runStatus := status
+	if reviewCount > 0 && status != string(domain.V2PlacementRunFailed) && status != string(domain.V2PlacementRunQuarantined) {
+		runStatus = string(domain.V2PlacementRunAwaitingReview)
+	}
 	result := tx.WithContext(ctx).Exec(`
 		UPDATE placement_runs
 		SET status = ?,
@@ -412,7 +730,7 @@ func finishV2PlacementRunIfTerminal(ctx context.Context, tx *gorm.DB, input V2Co
 		  AND worker_id = ?
 		  AND attempts = ?
 		  AND lease_until > clock_timestamp()
-	`, status, input.TeamID, input.PlacementRunID, input.OwnerProfileID, input.WorkerID, input.ExpectedAttempts)
+	`, runStatus, input.TeamID, input.PlacementRunID, input.OwnerProfileID, input.WorkerID, input.ExpectedAttempts)
 	if result.Error != nil {
 		return result.Error
 	}

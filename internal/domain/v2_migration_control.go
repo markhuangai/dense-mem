@@ -19,6 +19,7 @@ const (
 	V2MigrationActionStarted           = "started"
 	V2MigrationActionPaused            = "paused"
 	V2MigrationActionResumed           = "resumed"
+	V2MigrationActionRepairResumed     = "repair_resumed"
 	V2MigrationActionFailed            = "failed"
 	V2MigrationActionCutoverCommitted  = "cutover_committed"
 
@@ -67,6 +68,7 @@ type V2MigrationRun struct {
 	LeaseOwner               string         `json:"lease_owner,omitempty"`
 	CheckpointKey            string         `json:"checkpoint_key,omitempty"`
 	CheckpointValue          map[string]any `json:"checkpoint_value,omitempty"`
+	ClaimEpoch               int            `json:"claim_epoch"`
 	StartedAt                *time.Time     `json:"started_at,omitempty"`
 	CompletedAt              *time.Time     `json:"completed_at,omitempty"`
 	CutoverAt                *time.Time     `json:"cutover_at,omitempty"`

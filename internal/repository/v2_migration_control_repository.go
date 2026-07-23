@@ -116,6 +116,7 @@ var v2FreshAuthorityApplicationTables = []string{
 	"sso_sessions",
 	"community_detection_runs",
 	"semantic_team_refs",
+	"team_predicate_definitions",
 	"semantic_profile_refs",
 	"knowledge_ingests",
 	"evidence_sources",
@@ -170,7 +171,7 @@ func (r *V2MigrationControlRepositoryImpl) GetLatestRun(ctx context.Context) (*d
 			       preflight_checks::text, corpus_watermark, corpus_hash,
 			       total_items, completed_items, failed_items, excluded_items,
 			       last_error, retryable, lease_owner, checkpoint_key,
-			       checkpoint_value::text, started_at, completed_at, cutover_at,
+			       checkpoint_value::text, claim_epoch, started_at, completed_at, cutover_at,
 			       created_at, updated_at
 			FROM v2_migration_runs
 			ORDER BY created_at DESC, run_id DESC
@@ -216,7 +217,7 @@ func (r *V2MigrationControlRepositoryImpl) CreateRun(ctx context.Context, input 
 			          preflight_checks::text, corpus_watermark, corpus_hash,
 			          total_items, completed_items, failed_items, excluded_items,
 			          last_error, retryable, lease_owner, checkpoint_key,
-			          checkpoint_value::text, started_at, completed_at, cutover_at,
+			          checkpoint_value::text, claim_epoch, started_at, completed_at, cutover_at,
 			          created_at, updated_at
 		`, uuid.NewString(), input.MigrationContractVersion, input.CorpusVersion, input.SourceKind,
 			input.State, input.Phase, input.Required, input.PreflightApproved, input.BackupReference,
@@ -267,12 +268,12 @@ func (r *V2MigrationControlRepositoryImpl) UpdateRunState(ctx context.Context, i
 			          preflight_checks::text, corpus_watermark, corpus_hash,
 			          total_items, completed_items, failed_items, excluded_items,
 			          last_error, retryable, lease_owner, checkpoint_key,
-			          checkpoint_value::text, started_at, completed_at, cutover_at,
+			          checkpoint_value::text, claim_epoch, started_at, completed_at, cutover_at,
 			          created_at, updated_at
 		`, input.ToState, input.Phase, input.MigrationContractVersion, input.CorpusVersion,
 			input.PreflightApproved, input.ClearBackupReference, input.BackupReference,
 			string(checks), string(checks), input.LastError, input.Retryable,
-			input.ToState, now, input.ToState, now, input.ToState, now, now,
+			input.ToState, now, input.ToState, input.ToState, now, input.ToState, now, now,
 			input.RunID, input.FromState).Row()
 		record, err := scanV2MigrationRun(row)
 		if err != nil {
@@ -566,7 +567,19 @@ func validateV2CutoverRepositoryState(tx *gorm.DB, input V2CommitCutoverInput) e
 		           WHERE run_id = r.run_id
 		             AND (
 		                 outcome = 'pending'
-		                 OR (outcome = 'needs_review' AND placement_item_id IS NULL)
+		                 OR (
+		                     outcome = 'needs_review'
+		                     AND (
+		                         placement_item_id IS NULL
+		                         OR NOT EXISTS (
+		                             SELECT 1
+		                             FROM review_tasks AS task
+		                             WHERE task.team_id = v2_migration_corpus_items.team_id
+		                               AND task.placement_item_id = v2_migration_corpus_items.placement_item_id
+		                               AND task.status IN ('open', 'acknowledged')
+		                         )
+		                     )
+		                 )
 		             )
 		       ) AS pending_items,
 		       (
@@ -691,6 +704,7 @@ func scanV2MigrationRun(row v2MigrationRowScanner) (*domain.V2MigrationRun, erro
 		&record.LeaseOwner,
 		&record.CheckpointKey,
 		&checkpointJSON,
+		&record.ClaimEpoch,
 		&record.StartedAt,
 		&record.CompletedAt,
 		&record.CutoverAt,

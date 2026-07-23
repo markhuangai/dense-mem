@@ -34,58 +34,6 @@ func TestV2SemanticRepositoryFailsClosedWithoutDependencies(t *testing.T) {
 	assert.Contains(t, err.Error(), "rls helper is required")
 }
 
-func TestV2SemanticReviewCatalogListsTeamCandidatesAndPredicateAliases(t *testing.T) {
-	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
-	defer cleanup()
-	ctx := context.Background()
-	teamID := createV2LedgerTeam(t, adminDB, rls, "semantic-review-catalog-team")
-	ownerA := createV2LedgerProfile(t, adminDB, rls, teamID, "catalog-owner-a")
-	ownerB := createV2LedgerProfile(t, adminDB, rls, teamID, "catalog-owner-b")
-	otherTeamID := createV2LedgerTeam(t, adminDB, rls, "semantic-review-catalog-other-team")
-	otherOwnerID := createV2LedgerProfile(t, adminDB, rls, otherTeamID, "catalog-other-owner")
-	repo := NewV2SemanticRepository(appDB, rls)
-	entity := createV2SemanticEntity(t, ctx, repo, teamID, ownerA, "project", "Dense-Mem")
-
-	candidates, err := repo.ListV2SemanticReviewEntityCandidates(ctx, V2SemanticReviewEntityCandidateInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerB,
-		Name:           " DENSE-MEM ",
-		EntityKind:     "project",
-		Limit:          5,
-	})
-	require.NoError(t, err)
-	require.Len(t, candidates, 1)
-	assert.Equal(t, entity.EntityID, candidates[0].EntityID)
-	assert.Equal(t, "Dense-Mem", candidates[0].CanonicalName)
-
-	hidden, err := repo.ListV2SemanticReviewEntityCandidates(ctx, V2SemanticReviewEntityCandidateInput{
-		TeamID:         otherTeamID,
-		OwnerProfileID: otherOwnerID,
-		Name:           "Dense-Mem",
-		EntityKind:     "project",
-	})
-	require.NoError(t, err)
-	assert.Empty(t, hidden)
-
-	predicates, err := repo.ListV2SemanticReviewPredicateCandidates(ctx, V2SemanticReviewPredicateCandidateInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerB,
-		Predicate:      "is_working_on",
-	})
-	require.NoError(t, err)
-	require.Len(t, predicates, 1)
-	assert.Equal(t, "works_on", predicates[0].PredicateKey)
-	assert.Equal(t, 1, predicates[0].Version)
-
-	options, err := repo.ListV2SemanticReviewPredicateOptions(ctx, V2SemanticReviewPredicateOptionsInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerB,
-	})
-	require.NoError(t, err)
-	assert.Contains(t, options, "works_on")
-	assert.Contains(t, options, "is_working_on")
-}
-
 func TestV2SemanticApplyRelationshipDecisionValidationRejectsMalformedSupportForAnyVerdict(t *testing.T) {
 	input := validV2ApplyRelationshipDecisionInput()
 	input.EvidenceVerdict = "insufficient"

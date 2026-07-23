@@ -247,28 +247,74 @@ func semanticCommitInputFromReview(job SemanticCommitJob) (repository.V2CommitPl
 	}
 
 	relationships := make([]repository.V2PlacementRelationshipDecisionInput, 0, len(job.Result.RelationshipResults))
+	relationshipReviews := make([]repository.V2PlacementRelationshipReviewInput, 0)
 	for _, result := range job.Result.RelationshipResults {
 		observation, ok := observationsByRef[result.Ref]
 		if !ok {
 			return repository.V2CommitPlacementSemanticInput{}, fmt.Errorf("semantic commit: unknown relationship result ref %q", result.Ref)
 		}
 		if result.PredicateStatus != "resolved" || result.PredicateKey == nil {
-			return repository.V2CommitPlacementSemanticInput{}, fmt.Errorf("semantic commit: relationship result %q is not resolved", result.Ref)
+			confidence := result.Confidence
+			support, err := v2SemanticPlacementSupport(observation, evidenceByID)
+			if err != nil {
+				return repository.V2CommitPlacementSemanticInput{}, err
+			}
+			review := repository.V2PlacementRelationshipReviewInput{
+				Ref:               result.Ref,
+				SubjectRef:        observation.SubjectRef,
+				OriginalPredicate: observation.OriginalPredicate,
+				ObjectRef:         observation.ObjectRef,
+				ObjectValue:       nil,
+				Polarity:          observation.Polarity,
+				EvidenceVerdict:   result.EvidenceVerdict,
+				Confidence:        &confidence,
+				Rationale:         result.Rationale,
+				Model:             job.ReviewModel,
+				ResponseHash:      job.Result.ResponseHash,
+				Support:           support,
+				Reason:            "predicate_needs_review",
+				Payload: map[string]any{
+					"predicate_policy_version": domain.V2PredicatePolicyVersion,
+				},
+			}
+			if observation.ObjectValue != nil {
+				review.ObjectValue = &repository.V2PlacementValueInput{
+					Ref:            observation.ObjectValue.Ref,
+					ValueType:      observation.ObjectValue.Type,
+					CanonicalValue: observation.ObjectValue.Value,
+					Display:        observation.ObjectValue.Display,
+					Unit:           observation.ObjectValue.Unit,
+				}
+				review.ObjectRef = ""
+			}
+			relationshipReviews = append(relationshipReviews, review)
+			continue
+		}
+		predicateCandidate, err := v2SemanticSelectedPredicateCandidate(observation, *result.PredicateKey)
+		if err != nil {
+			return repository.V2CommitPlacementSemanticInput{}, err
 		}
 		relationship := repository.V2PlacementRelationshipDecisionInput{
 			Ref:               result.Ref,
 			SubjectRef:        observation.SubjectRef,
 			OriginalPredicate: observation.OriginalPredicate,
 			PredicateKey:      *result.PredicateKey,
-			ObjectRef:         observation.ObjectRef,
-			ValidFrom:         observation.ValidFrom,
-			ValidTo:           observation.ValidTo,
-			EvidenceVerdict:   result.EvidenceVerdict,
-			PromoteToFact:     job.PromoteToFact,
-			Confidence:        &result.Confidence,
-			Rationale:         result.Rationale,
-			Model:             job.ReviewModel,
-			ResponseHash:      job.Result.ResponseHash,
+			PredicateVersion:  predicateCandidate.Version,
+			PredicateCandidate: &repository.V2PlacementPredicateCandidateInput{
+				PredicateKey:     predicateCandidate.PredicateKey,
+				PredicateVersion: predicateCandidate.Version,
+				RelationshipKind: predicateCandidate.RelationshipKind,
+			},
+			ObjectRef:       observation.ObjectRef,
+			Polarity:        observation.Polarity,
+			ValidFrom:       observation.ValidFrom,
+			ValidTo:         observation.ValidTo,
+			EvidenceVerdict: result.EvidenceVerdict,
+			PromoteToFact:   job.PromoteToFact,
+			Confidence:      &result.Confidence,
+			Rationale:       result.Rationale,
+			Model:           job.ReviewModel,
+			ResponseHash:    job.Result.ResponseHash,
 			ObservationMetadata: map[string]any{
 				"request_id": job.Request.RequestID,
 				"review_ref": result.Ref,
@@ -293,19 +339,9 @@ func semanticCommitInputFromReview(job SemanticCommitJob) (repository.V2CommitPl
 			}
 			relationship.ObjectRef = ""
 		}
-		evidence, ok := evidenceByID[observation.EvidenceID]
-		if !ok {
-			return repository.V2CommitPlacementSemanticInput{}, fmt.Errorf("semantic commit: unknown relationship evidence_id %q", observation.EvidenceID)
-		}
-		relationship.Support = &repository.V2EvidenceSupportInput{
-			FragmentID:       evidence.FragmentID,
-			SourceGroupKey:   "semantic_review:" + evidence.EvidenceID,
-			SourceID:         evidence.SourceID,
-			SourceRevisionID: evidence.SourceRevisionID,
-			SpanStart:        observation.Start,
-			SpanEnd:          observation.End,
-			Quote:            observation.Quote,
-			Authority:        "primary",
+		relationship.Support, err = v2SemanticPlacementSupport(observation, evidenceByID)
+		if err != nil {
+			return repository.V2CommitPlacementSemanticInput{}, err
 		}
 		relationships = append(relationships, relationship)
 	}
@@ -326,6 +362,7 @@ func semanticCommitInputFromReview(job SemanticCommitJob) (repository.V2CommitPl
 		Category:                 category,
 		EntityResolutions:        entities,
 		RelationshipObservations: relationships,
+		RelationshipReviews:      relationshipReviews,
 		Payload: map[string]any{
 			"request_id":         job.Request.RequestID,
 			"response_hash":      job.Result.ResponseHash,
@@ -333,4 +370,56 @@ func semanticCommitInputFromReview(job SemanticCommitJob) (repository.V2CommitPl
 			"review_outcome_ids": append([]string(nil), job.Result.OutcomeIDs...),
 		},
 	}, nil
+}
+
+func v2SemanticPlacementSupport(
+	observation verifier.V2SemanticRelationshipObservation,
+	evidenceByID map[string]verifier.V2SemanticReviewEvidence,
+) (*repository.V2EvidenceSupportInput, error) {
+	evidence, ok := evidenceByID[observation.EvidenceID]
+	if !ok {
+		return nil, fmt.Errorf(
+			"v2 semantic commit: unknown relationship evidence_id %q",
+			observation.EvidenceID,
+		)
+	}
+	return &repository.V2EvidenceSupportInput{
+		FragmentID:       evidence.FragmentID,
+		SourceGroupKey:   "semantic_review:" + evidence.EvidenceID,
+		SourceID:         evidence.SourceID,
+		SourceRevisionID: evidence.SourceRevisionID,
+		SpanStart:        observation.Start,
+		SpanEnd:          observation.End,
+		Quote:            observation.Quote,
+		Authority:        string(domain.AuthorityPrimary),
+	}, nil
+}
+
+func v2SemanticSelectedPredicateCandidate(
+	observation verifier.V2SemanticRelationshipObservation,
+	predicateKey string,
+) (verifier.V2SemanticPredicateCandidate, error) {
+	predicateKey = strings.TrimSpace(predicateKey)
+	var selected *verifier.V2SemanticPredicateCandidate
+	for i := range observation.PredicateCandidates {
+		candidate := observation.PredicateCandidates[i]
+		if strings.TrimSpace(candidate.PredicateKey) != predicateKey {
+			continue
+		}
+		if selected != nil && (selected.Version != candidate.Version ||
+			selected.RelationshipKind != candidate.RelationshipKind) {
+			return verifier.V2SemanticPredicateCandidate{}, fmt.Errorf(
+				"v2 semantic commit: predicate %q has ambiguous candidate definitions",
+				predicateKey,
+			)
+		}
+		selected = &candidate
+	}
+	if selected == nil {
+		return verifier.V2SemanticPredicateCandidate{}, fmt.Errorf(
+			"v2 semantic commit: predicate %q is outside relationship candidate set",
+			predicateKey,
+		)
+	}
+	return *selected, nil
 }

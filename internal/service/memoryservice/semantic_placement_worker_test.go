@@ -47,7 +47,7 @@ func TestV2SemanticPlacementWorkerClaimsReviewsAndCompletesAcceptedRun(t *testin
 
 	processed, err := worker.ProcessNextSemanticPlacement(context.Background())
 	if err != nil {
-		t.Fatalf("ProcessNextV2SemanticPlacement returned error: %v", err)
+		t.Fatalf("ProcessNextSemanticPlacement returned error: %v", err)
 	}
 	if !processed {
 		t.Fatal("processed = false")
@@ -77,7 +77,7 @@ func TestV2SemanticPlacementWorkerReturnsFalseWhenNoRunClaimed(t *testing.T) {
 
 	processed, err := worker.ProcessNextSemanticPlacement(context.Background())
 	if err != nil {
-		t.Fatalf("ProcessNextV2SemanticPlacement returned error: %v", err)
+		t.Fatalf("ProcessNextSemanticPlacement returned error: %v", err)
 	}
 	if processed {
 		t.Fatal("processed = true")
@@ -237,13 +237,15 @@ func TestV2SemanticPlacementWorkerPropagatesProcessingErrors(t *testing.T) {
 			wantReason:    "semantic review returned no result",
 		},
 		{
-			name:          "commit error marks claimed run processed",
+			name:          "commit error marks claimed run processed and retryable",
 			ledger:        &placementWorkerLedgerStub{run: run},
 			reviewSource:  &placementWorkerReviewSourceStub{job: reviewJob},
 			review:        &placementWorkerReviewStub{result: accepted},
-			commit:        &placementWorkerCommitStub{err: errCommit},
+			commit:        &placementWorkerCommitStub{errs: []error{errCommit}},
 			wantProcessed: true,
 			wantErr:       errCommit,
+			wantRetry:     true,
+			wantReason:    "semantic commit failed before completion",
 		},
 	}
 	for _, tt := range tests {
@@ -359,16 +361,24 @@ func (s *placementWorkerReviewStub) ReviewSemantic(_ context.Context, job Semant
 }
 
 type placementWorkerCommitStub struct {
-	err error
-	job SemanticCommitJob
+	err  error
+	errs []error
+	job  SemanticCommitJob
 }
 
 func (s *placementWorkerCommitStub) CommitSemantic(context.Context, SemanticCommitJob) (*repository.V2CommitPlacementSemanticResult, error) {
-	return nil, errors.New("unexpected CommitV2Semantic")
+	return nil, errors.New("unexpected CommitSemantic")
 }
 
 func (s *placementWorkerCommitStub) CompleteSemanticPlacement(_ context.Context, job SemanticCommitJob) (*SemanticPlacementCompletionResult, error) {
 	s.job = job
+	if len(s.errs) > 0 {
+		err := s.errs[0]
+		s.errs = s.errs[1:]
+		if err != nil {
+			return nil, err
+		}
+	}
 	if s.err != nil {
 		return nil, s.err
 	}
