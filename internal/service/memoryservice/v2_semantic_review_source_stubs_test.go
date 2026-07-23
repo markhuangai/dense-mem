@@ -51,9 +51,10 @@ func (s *v2ReviewSourceLedgerStub) FinishPlacementRun(context.Context, string, s
 }
 
 type v2ReviewSourceCatalogStub struct {
-	predicateOptions    []string
-	entityCandidates    map[string][]repository.V2SemanticReviewEntityCandidate
-	predicateCandidates map[string][]repository.V2SemanticReviewPredicateCandidate
+	predicateOptions     []string
+	entityCandidates     map[string][]repository.V2SemanticReviewEntityCandidate
+	predicateCandidates  map[string][]repository.V2SemanticReviewPredicateCandidate
+	ensurePredicateCalls int
 }
 
 func (s *v2ReviewSourceCatalogStub) ListV2SemanticReviewEntityCandidates(_ context.Context, input repository.V2SemanticReviewEntityCandidateInput) ([]repository.V2SemanticReviewEntityCandidate, error) {
@@ -69,6 +70,7 @@ func (s *v2ReviewSourceCatalogStub) ListV2SemanticReviewPredicateOptions(context
 }
 
 func (s *v2ReviewSourceCatalogStub) EnsureV2SemanticReviewPredicateCandidate(_ context.Context, input repository.V2EnsureSemanticPredicateCandidateInput) (*repository.V2SemanticReviewPredicateCandidate, error) {
+	s.ensurePredicateCalls++
 	candidate := repository.V2SemanticReviewPredicateCandidate{
 		PredicateKey:        strings.ToLower(strings.ReplaceAll(strings.TrimSpace(input.Predicate), " ", "_")),
 		Version:             1,

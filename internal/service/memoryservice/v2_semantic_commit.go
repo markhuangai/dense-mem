@@ -35,6 +35,8 @@ type V2SemanticCommitJob struct {
 	WorkerID         string
 	ExpectedAttempts int
 	MaxAttempts      int
+	MigrationRunID   string
+	MigrationEpoch   int
 	Request          verifier.V2SemanticReviewRequest
 	Result           V2SemanticReviewResult
 	ReviewModel      string
@@ -125,6 +127,7 @@ func normalizeV2SemanticCommitJob(job V2SemanticCommitJob) V2SemanticCommitJob {
 	job.PlacementRunID = strings.TrimSpace(job.PlacementRunID)
 	job.PlacementItemID = strings.TrimSpace(job.PlacementItemID)
 	job.WorkerID = strings.TrimSpace(job.WorkerID)
+	job.MigrationRunID = strings.TrimSpace(job.MigrationRunID)
 	job.ReviewModel = strings.TrimSpace(job.ReviewModel)
 	job.Request.TeamID = strings.TrimSpace(job.Request.TeamID)
 	if job.Request.TeamID == "" {
@@ -164,6 +167,8 @@ func v2RetryableReviewInputFromResult(job V2SemanticCommitJob) (repository.V2Req
 		PlacementItemID:  job.PlacementItemID,
 		WorkerID:         job.WorkerID,
 		ExpectedAttempts: job.ExpectedAttempts,
+		MigrationRunID:   job.MigrationRunID,
+		MigrationEpoch:   job.MigrationEpoch,
 	}, nil
 }
 
@@ -191,6 +196,8 @@ func v2TerminalReviewInputFromResult(job V2SemanticCommitJob) (repository.V2Comp
 		PlacementItemID:  job.PlacementItemID,
 		WorkerID:         job.WorkerID,
 		ExpectedAttempts: job.ExpectedAttempts,
+		MigrationRunID:   job.MigrationRunID,
+		MigrationEpoch:   job.MigrationEpoch,
 		Status:           job.Result.Status,
 		Category:         category,
 		Payload: map[string]any{
@@ -348,6 +355,8 @@ func v2SemanticCommitInputFromReview(job V2SemanticCommitJob) (repository.V2Comm
 		PlacementItemID:          job.PlacementItemID,
 		WorkerID:                 job.WorkerID,
 		ExpectedAttempts:         job.ExpectedAttempts,
+		MigrationRunID:           job.MigrationRunID,
+		MigrationEpoch:           job.MigrationEpoch,
 		Status:                   job.Result.Status,
 		Category:                 category,
 		EntityResolutions:        entities,

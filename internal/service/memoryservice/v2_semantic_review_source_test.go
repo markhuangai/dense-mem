@@ -245,8 +245,8 @@ func TestV2SemanticPlacementReviewSourceBuildsCurrentEvidenceJob(t *testing.T) {
 	if job.Request.RelationshipObservations[0].Ref != "rel:uses" || job.Request.RelationshipObservations[0].Quote != usesQuote {
 		t.Fatalf("uses observation = %#v", job.Request.RelationshipObservations[0])
 	}
-	if job.Request.RelationshipObservations[0].CorrectionTarget != nil {
-		t.Fatalf("provider output should not inherit client correction target = %#v", job.Request.RelationshipObservations[0].CorrectionTarget)
+	if got := job.Request.RelationshipObservations[0].CorrectionTarget; got == nil || got.RelationshipID != targetID || got.ExpectedVersion != 4 {
+		t.Fatalf("correction target = %#v", got)
 	}
 	if got := job.Request.RelationshipObservations[0].ValidFrom; got == nil || !got.Equal(validFrom) {
 		t.Fatalf("valid_from = %#v", got)
@@ -263,6 +263,9 @@ func TestV2SemanticPlacementReviewSourceBuildsCurrentEvidenceJob(t *testing.T) {
 	}
 	if len(prepared.RelationshipObservations[0].PredicateCandidates) != 1 || len(prepared.RelationshipObservations[1].PredicateCandidates) != 1 {
 		t.Fatalf("prepared predicate allowlists = %#v", prepared.RelationshipObservations)
+	}
+	if catalog.ensurePredicateCalls != 0 {
+		t.Fatalf("provider predicate candidates were durably ensured %d times", catalog.ensurePredicateCalls)
 	}
 }
 

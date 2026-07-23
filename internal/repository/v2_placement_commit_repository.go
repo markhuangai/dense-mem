@@ -34,6 +34,8 @@ type V2CommitPlacementSemanticInput struct {
 	PlacementItemID  string
 	WorkerID         string
 	ExpectedAttempts int
+	MigrationRunID   string
+	MigrationEpoch   int
 	OutcomeKind      string
 	Status           string
 	Category         string
@@ -270,6 +272,7 @@ func normalizeV2CommitPlacementSemanticInput(input V2CommitPlacementSemanticInpu
 	input.PlacementRunID = strings.TrimSpace(input.PlacementRunID)
 	input.PlacementItemID = strings.TrimSpace(input.PlacementItemID)
 	input.WorkerID = strings.TrimSpace(input.WorkerID)
+	input.MigrationRunID = strings.TrimSpace(input.MigrationRunID)
 	input.OutcomeKind = strings.TrimSpace(input.OutcomeKind)
 	input.Status = strings.TrimSpace(input.Status)
 	input.Category = strings.TrimSpace(input.Category)
@@ -334,6 +337,9 @@ func validateV2CommitPlacementSemanticInput(input V2CommitPlacementSemanticInput
 	}
 	if input.ExpectedAttempts < 1 {
 		return errors.New("expected_attempts must be greater than zero")
+	}
+	if err := validateV2PlacementMigrationFence(input.MigrationRunID, input.MigrationEpoch); err != nil {
+		return err
 	}
 	if input.Status == "" {
 		return errors.New("status is required")
@@ -562,6 +568,9 @@ func validateV2PlacementValueInput(input V2PlacementValueInput) error {
 }
 
 func lockV2PlacementRunForCommit(ctx context.Context, tx *gorm.DB, input V2CommitPlacementSemanticInput) error {
+	if err := lockV2MigrationRunForPlacementCommit(ctx, tx, input); err != nil {
+		return err
+	}
 	var found int
 	err := tx.WithContext(ctx).Raw(`
 		SELECT 1
@@ -573,10 +582,11 @@ func lockV2PlacementRunForCommit(ctx context.Context, tx *gorm.DB, input V2Commi
 		  AND status = 'processing'
 		  AND worker_id = ?
 		  AND attempts = ?
+		  AND (? = '' OR COALESCE(migration_claim_epoch, 0) = ?)
 		  AND lease_until > clock_timestamp()
 		FOR UPDATE
 	`, input.TeamID, input.OwnerProfileID, input.IngestID, input.PlacementRunID,
-		input.WorkerID, input.ExpectedAttempts).Scan(&found).Error
+		input.WorkerID, input.ExpectedAttempts, input.MigrationRunID, input.MigrationEpoch).Scan(&found).Error
 	if err != nil {
 		return err
 	}

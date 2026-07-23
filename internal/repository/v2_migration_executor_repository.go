@@ -540,7 +540,7 @@ func syncV2MigrationCorpusPlacementOutcomes(tx *gorm.DB, runID string, now time.
 		    WHERE item.item_id = mapped.item_id
 		    RETURNING mapped.run_id, mapped.source_kind, mapped.source_id,
 		              mapped.placement_item_id, mapped.placement_status,
-		              mapped.placement_category
+		              mapped.placement_category, mapped.has_open_review
 		)
 		INSERT INTO v2_migration_source_maps (
 		    map_id, run_id, source_kind, source_id, target_type, target_id, metadata, created_at

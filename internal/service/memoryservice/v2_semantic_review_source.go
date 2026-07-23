@@ -23,7 +23,6 @@ type V2SemanticPlacementReviewCatalog interface {
 	ListV2SemanticReviewEntityCandidates(ctx context.Context, input repository.V2SemanticReviewEntityCandidateInput) ([]repository.V2SemanticReviewEntityCandidate, error)
 	ListV2SemanticReviewPredicateCandidates(ctx context.Context, input repository.V2SemanticReviewPredicateCandidateInput) ([]repository.V2SemanticReviewPredicateCandidate, error)
 	ListV2SemanticReviewPredicateOptions(ctx context.Context, input repository.V2SemanticReviewPredicateOptionsInput) ([]string, error)
-	EnsureV2SemanticReviewPredicateCandidate(ctx context.Context, input repository.V2EnsureSemanticPredicateCandidateInput) (*repository.V2SemanticReviewPredicateCandidate, error)
 }
 
 type V2SemanticProposalProvider interface {
@@ -111,6 +110,7 @@ func (s *v2SemanticPlacementReviewSource) BuildV2SemanticReviewJob(
 	evidenceID := fmt.Sprintf("evidence:%d", fragment.EvidenceIndex)
 	evidence := v2SemanticReviewEvidence(fragment, evidenceID)
 	proposal := placement.Proposal
+	trustedCorrectionTargets := v2ReviewSourceCorrectionTargets(proposal)
 	entityHints := v2PlacementReviewEntityHints(proposal)
 	var validationErrors []verifier.V2SemanticValidationError
 	providerProposal, validationErrors, retryable, err := s.v2PlacementReviewProviderProposal(ctx, run, evidence, proposal)
@@ -128,6 +128,7 @@ func (s *v2SemanticPlacementReviewSource) BuildV2SemanticReviewJob(
 	}
 	if providerProposal != nil {
 		proposal = v2ReviewSourceProposalFromProvider(*providerProposal)
+		proposal = v2ReviewSourceProposalWithTrustedCorrectionTargets(proposal, trustedCorrectionTargets)
 		entityHints = v2PlacementReviewEntityHints(proposal)
 	}
 	relationships, validationErrors := v2PlacementReviewRelationshipSpecs(proposal, fragment, evidenceID)
@@ -679,26 +680,7 @@ func (s *v2SemanticPlacementReviewSource) v2PlacementReviewRelationshipObservati
 			appendCandidate(candidate)
 		}
 		for _, predicate := range relationship.PredicateCandidates {
-			generated, err := s.catalog.EnsureV2SemanticReviewPredicateCandidate(ctx, repository.V2EnsureSemanticPredicateCandidateInput{
-				TeamID:           run.TeamID,
-				OwnerProfileID:   run.OwnerProfileID,
-				Predicate:        predicate,
-				RelationshipKind: relationship.RelationshipKind,
-				SubjectKind:      kindByRef[relationship.SubjectRef],
-				ObjectKind:       v2ReviewSourceRelationshipObjectKind(relationship, kindByRef),
-				Origin:           "provider_generated",
-				Metadata: map[string]any{
-					"original_predicate": relationship.Predicate,
-					"relationship_ref":   relationship.Ref,
-				},
-			})
-			if err != nil {
-				return nil, err
-			}
-			if generated == nil {
-				continue
-			}
-			appendCandidate(*generated)
+			appendCandidate(v2ReviewSourceRequestLocalPredicateCandidate(predicate, relationship, kindByRef))
 		}
 		out = append(out, obs)
 	}
