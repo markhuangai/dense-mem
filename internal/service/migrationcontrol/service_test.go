@@ -808,19 +808,20 @@ func TestValidSHA256RefRejectsMalformedValues(t *testing.T) {
 }
 
 type storeStub struct {
-	run         *domain.V2MigrationRun
-	marker      *domain.V2CompatibilityMarker
-	actions     []domain.V2MigrationOperatorAction
-	commitInput repository.V2CommitCutoverInput
-	runErr      error
-	markerErr   error
-	actionsErr  error
-	createErr   error
-	updateErr   error
-	recordErr   error
-	commitErr   error
-	repairErr   error
-	repair      *domain.V2MigrationRepairSummary
+	run               *domain.V2MigrationRun
+	marker            *domain.V2CompatibilityMarker
+	actions           []domain.V2MigrationOperatorAction
+	commitInput       repository.V2CommitCutoverInput
+	runErr            error
+	markerErr         error
+	actionsErr        error
+	createErr         error
+	updateErr         error
+	recordErr         error
+	commitErr         error
+	repairErr         error
+	repair            *domain.V2MigrationRepairSummary
+	repairAssessCalls int
 }
 
 func newStoreStub() *storeStub {

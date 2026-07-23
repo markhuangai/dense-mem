@@ -358,21 +358,12 @@ func (s *service) repairAndResume(
 	if err := s.requireCurrentBackupConfirmation(run); err != nil {
 		return nil, err
 	}
-	repair, err := s.repairSummary(ctx, run)
-	if err != nil {
-		return nil, err
-	}
-	action := domain.V2MigrationActionResumed
-	if repair != nil && repair.Required {
-		action = domain.V2MigrationActionRepairResumed
-	}
 	now := s.now().UTC()
-	_, err = s.store.RepairAndResumeMigration(ctx, repository.V2RepairAndResumeMigrationInput{
+	_, err := s.store.RepairAndResumeMigration(ctx, repository.V2RepairAndResumeMigrationInput{
 		RunID:     run.RunID,
 		FromState: run.State,
 		OperatorAction: domain.V2MigrationOperatorAction{
 			RunID:     run.RunID,
-			Action:    action,
 			Actor:     operatorActor(req.Actor),
 			RemoteIP:  strings.TrimSpace(req.RemoteIP),
 			Reason:    strings.TrimSpace(req.Reason),
@@ -382,6 +373,9 @@ func (s *service) repairAndResume(
 		Now: now,
 	})
 	if err != nil {
+		if errors.Is(err, repository.ErrV2MigrationCutoverBlocked) {
+			return nil, fmt.Errorf("%w: %v", ErrCutoverBlocked, err)
+		}
 		return nil, err
 	}
 	return s.Status(ctx)

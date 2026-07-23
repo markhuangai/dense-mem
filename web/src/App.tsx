@@ -35,7 +35,7 @@ import { TeamProfilesPanel } from "./control/TeamProfilesPanel";
 import { TeamOverviewPanel, TeamWorkspaceShell } from "./control/TeamWorkspace";
 import type { TeamWorkspaceTab } from "./control/TeamWorkspace";
 import { TeamDreamingConfigForm } from "./teamDreamingConfig";
-import { formatDate, readError, shortId } from "./control/utils";
+import { formatDate, readError, shortId, startSerialPolling } from "./control/utils";
 import { AuthShell, LoadingState, PortalShell, SectionHeading } from "./ui/components";
 
 const MetricsPanel = lazy(() => import("./control/MetricsPanel").then((module) => ({ default: module.MetricsPanel })));
@@ -424,9 +424,7 @@ function MigrationPortal({
   }
 
   useEffect(() => {
-    void loadStatus();
-    const timer = window.setInterval(() => void loadStatus(), 2000);
-    return () => window.clearInterval(timer);
+    return startSerialPolling(loadStatus, 2000);
   }, [api]);
 
   async function start() {

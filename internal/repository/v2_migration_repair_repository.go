@@ -14,6 +14,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
+const v2MigrationRetryExhaustedValidationError = "placement_attempts: retryable semantic review exhausted placement attempts"
+
 func (r *V2MigrationControlRepositoryImpl) AssessMigrationRepair(
 	ctx context.Context,
 	runID string,
@@ -93,7 +95,12 @@ func (r *V2MigrationControlRepositoryImpl) RepairAndResumeMigration(
 		summary.RepairedItems = orphanReviews + abandonedProcessing + retryableFailures
 		summary.ClaimEpochBefore = claimEpoch
 		summary.ClaimEpochAfter = claimEpoch
-		if err := insertV2MigrationOperatorActionTx(tx, input.OperatorAction, summary, now); err != nil {
+		operatorAction := input.OperatorAction
+		operatorAction.Action = domain.V2MigrationActionResumed
+		if summary.Required {
+			operatorAction.Action = domain.V2MigrationActionRepairResumed
+		}
+		if err := insertV2MigrationOperatorActionTx(tx, operatorAction, summary, now); err != nil {
 			return err
 		}
 		rows, err := tx.Raw(`
@@ -134,80 +141,81 @@ func (r *V2MigrationControlRepositoryImpl) RepairAndResumeMigration(
 func assessV2MigrationRepairTx(tx *gorm.DB, runID string) (*domain.V2MigrationRepairSummary, error) {
 	summary := &domain.V2MigrationRepairSummary{}
 	row := tx.Raw(`
-		WITH target_run AS (
-		    SELECT run_id, claim_epoch
-		    FROM v2_migration_runs
-		    WHERE run_id = ?::uuid
+		WITH corpus_runs AS (
+		    SELECT corpus.outcome, corpus.team_id, corpus.ingest_id,
+		           run.placement_run_id, run.status AS run_status,
+		           run.attempts, run.max_attempts
+		    FROM v2_migration_corpus_items AS corpus
+		    JOIN placement_runs AS run
+		      ON run.team_id = corpus.team_id
+		     AND run.ingest_id = corpus.ingest_id
+		    WHERE corpus.run_id = ?::uuid
+		), corpus_items AS (
+		    SELECT corpus_runs.*,
+		           item.placement_item_id,
+		           item.status AS item_status,
+		           (
+		               SELECT count(*)::int
+		               FROM review_tasks AS task
+		               WHERE task.team_id = item.team_id
+		                 AND task.placement_item_id = item.placement_item_id
+		                 AND task.status IN ('open', 'acknowledged')
+		           ) AS open_review_count,
+		           COALESCE((
+		               SELECT terminal.payload @> jsonb_build_object(
+		                          'validation_errors',
+		                          jsonb_build_array(?::text)
+		                      )
+		               FROM placement_outcomes AS terminal
+		               WHERE terminal.team_id = item.team_id
+		                 AND terminal.placement_run_id = item.placement_run_id
+		                 AND terminal.placement_item_id = item.placement_item_id
+		                 AND terminal.outcome_kind = 'semantic_review_terminal'
+		                 AND terminal.status = 'terminal_failure'
+		               ORDER BY terminal.created_at DESC, terminal.outcome_id DESC
+		               LIMIT 1
+		           ), false) AS exhausted_retryable
+		    FROM corpus_runs
+		    JOIN placement_items AS item
+		      ON item.team_id = corpus_runs.team_id
+		     AND item.placement_run_id = corpus_runs.placement_run_id
+		     AND item.evidence_index = 0
+		), run_counts AS (
+		    SELECT count(*) FILTER (
+		        WHERE run_status = 'processing'
+		    )::int AS abandoned_processing
+		    FROM corpus_runs
+		), item_counts AS (
+		    SELECT
+		        count(*) FILTER (
+		            WHERE outcome = 'needs_review'
+		              AND item_status <> 'awaiting_review'
+		              AND open_review_count = 0
+		        )::int AS orphan_reviews,
+		        count(*) FILTER (
+		            WHERE (outcome = 'failed' OR run_status = 'failed' OR item_status = 'failed')
+		              AND (attempts < max_attempts OR exhausted_retryable)
+		        )::int AS retryable_failures,
+		        COALESCE(sum(open_review_count), 0)::int AS held_reviews,
+		        count(*) FILTER (
+		            WHERE (outcome = 'failed' OR run_status = 'failed' OR item_status = 'failed')
+		              AND attempts >= max_attempts
+		              AND NOT exhausted_retryable
+		        )::int AS blocked_items
+		    FROM corpus_items
 		)
 		SELECT
-		    COALESCE((SELECT claim_epoch FROM target_run), 0)::int AS claim_epoch,
-		    (
-		        SELECT count(*)::int
-		        FROM v2_migration_corpus_items AS corpus
-		        JOIN placement_items AS item
-		          ON item.team_id = corpus.team_id
-		         AND item.ingest_id = corpus.ingest_id
-		         AND item.evidence_index = 0
-		        LEFT JOIN review_tasks AS task
-		          ON task.team_id = item.team_id
-		         AND task.placement_item_id = item.placement_item_id
-		         AND task.status IN ('open', 'acknowledged')
-		        WHERE corpus.run_id = ?::uuid
-		          AND corpus.outcome = 'needs_review'
-		          AND item.status <> 'awaiting_review'
-		          AND task.review_task_id IS NULL
-		    ) AS orphan_reviews,
-		    (
-		        SELECT count(*)::int
-		        FROM v2_migration_corpus_items AS corpus
-		        JOIN placement_runs AS run
-		          ON run.team_id = corpus.team_id
-		         AND run.ingest_id = corpus.ingest_id
-		        WHERE corpus.run_id = ?::uuid
-		          AND run.status = 'processing'
-		    ) AS abandoned_processing,
-		    (
-		        SELECT count(*)::int
-		        FROM v2_migration_corpus_items AS corpus
-		        JOIN placement_runs AS run
-		          ON run.team_id = corpus.team_id
-		         AND run.ingest_id = corpus.ingest_id
-		        JOIN placement_items AS item
-		          ON item.team_id = run.team_id
-		         AND item.placement_run_id = run.placement_run_id
-		         AND item.evidence_index = 0
-		        WHERE corpus.run_id = ?::uuid
-		          AND (corpus.outcome = 'failed' OR run.status = 'failed' OR item.status = 'failed')
-		          AND run.attempts < run.max_attempts
-		    ) AS retryable_failures,
-		    (
-		        SELECT count(*)::int
-		        FROM v2_migration_corpus_items AS corpus
-		        JOIN placement_items AS item
-		          ON item.team_id = corpus.team_id
-		         AND item.ingest_id = corpus.ingest_id
-		         AND item.evidence_index = 0
-		        JOIN review_tasks AS task
-		          ON task.team_id = item.team_id
-		         AND task.placement_item_id = item.placement_item_id
-		         AND task.status IN ('open', 'acknowledged')
-		        WHERE corpus.run_id = ?::uuid
-		    ) AS held_reviews,
-		    (
-		        SELECT count(*)::int
-		        FROM v2_migration_corpus_items AS corpus
-		        JOIN placement_runs AS run
-		          ON run.team_id = corpus.team_id
-		         AND run.ingest_id = corpus.ingest_id
-		        JOIN placement_items AS item
-		          ON item.team_id = run.team_id
-		         AND item.placement_run_id = run.placement_run_id
-		         AND item.evidence_index = 0
-		        WHERE corpus.run_id = ?::uuid
-		          AND (corpus.outcome = 'failed' OR run.status = 'failed' OR item.status = 'failed')
-		          AND run.attempts >= run.max_attempts
-		    ) AS blocked_items
-	`, runID, runID, runID, runID, runID, runID).Row()
+		    migration.claim_epoch::int,
+		    item_counts.orphan_reviews,
+		    run_counts.abandoned_processing,
+		    item_counts.retryable_failures,
+		    item_counts.held_reviews,
+		    item_counts.blocked_items
+		FROM v2_migration_runs AS migration
+		CROSS JOIN run_counts
+		CROSS JOIN item_counts
+		WHERE migration.run_id = ?::uuid
+	`, runID, v2MigrationRetryExhaustedValidationError, runID).Row()
 	if err := row.Scan(
 		&summary.ClaimEpochBefore,
 		&summary.OrphanReviews,
@@ -253,12 +261,12 @@ func repairV2MigrationOrphanReviewsTx(tx *gorm.DB, runID string, claimEpoch int,
 		    )
 		    SELECT team_id, placement_run_id, placement_item_id, owner_profile_id,
 		           'migration_repair_requeued', 'retryable',
-		           'migration_repair:' || ? || ':' || placement_item_id::text || ':orphan_review:' || ?::text,
+		           'migration_repair:' || ? || ':' || placement_item_id::text || ':orphan_review:' || (?::int)::text,
 		           jsonb_build_object(
-		               'contract_version', ?,
+		               'contract_version', ?::text,
 		               'reason', 'orphan_review_without_open_task',
-		               'migration_run_id', ?,
-		               'claim_epoch', ?,
+		               'migration_run_id', ?::text,
+		               'claim_epoch', ?::int,
 		               'repaired_at', ?::text
 		           ),
 		           ?
@@ -335,12 +343,12 @@ func repairV2MigrationAbandonedProcessingTx(tx *gorm.DB, runID string, claimEpoc
 		    )
 		    SELECT team_id, placement_run_id, placement_item_id, owner_profile_id,
 		           'migration_repair_requeued', 'retryable',
-		           'migration_repair:' || ? || ':' || placement_item_id::text || ':abandoned_processing:' || ?::text,
+		           'migration_repair:' || ? || ':' || placement_item_id::text || ':abandoned_processing:' || (?::int)::text,
 		           jsonb_build_object(
-		               'contract_version', ?,
+		               'contract_version', ?::text,
 		               'reason', 'abandoned_processing_after_pause_or_restart',
-		               'migration_run_id', ?,
-		               'claim_epoch', ?,
+		               'migration_run_id', ?::text,
+		               'claim_epoch', ?::int,
 		               'repaired_at', ?::text
 		           ),
 		           ?
@@ -404,7 +412,23 @@ func repairV2MigrationRetryableFailuresTx(tx *gorm.DB, runID string, claimEpoch 
 		     AND item.evidence_index = 0
 		    WHERE corpus.run_id = ?::uuid
 		      AND (corpus.outcome = 'failed' OR run.status = 'failed' OR item.status = 'failed')
-		      AND run.attempts < run.max_attempts
+		      AND (
+		          run.attempts < run.max_attempts
+		          OR COALESCE((
+		              SELECT terminal.payload @> jsonb_build_object(
+		                         'validation_errors',
+		                         jsonb_build_array(?::text)
+		                     )
+		              FROM placement_outcomes AS terminal
+		              WHERE terminal.team_id = item.team_id
+		                AND terminal.placement_run_id = item.placement_run_id
+		                AND terminal.placement_item_id = item.placement_item_id
+		                AND terminal.outcome_kind = 'semantic_review_terminal'
+		                AND terminal.status = 'terminal_failure'
+		              ORDER BY terminal.created_at DESC, terminal.outcome_id DESC
+		              LIMIT 1
+		          ), false)
+		      )
 		    FOR UPDATE OF corpus, run, item
 		), outcomes AS (
 		    INSERT INTO placement_outcomes (
@@ -413,12 +437,12 @@ func repairV2MigrationRetryableFailuresTx(tx *gorm.DB, runID string, claimEpoch 
 		    )
 		    SELECT team_id, placement_run_id, placement_item_id, owner_profile_id,
 		           'migration_repair_requeued', 'retryable',
-		           'migration_repair:' || ? || ':' || placement_item_id::text || ':retryable_failure:' || ?::text,
+		           'migration_repair:' || ? || ':' || placement_item_id::text || ':retryable_failure:' || (?::int)::text,
 		           jsonb_build_object(
-		               'contract_version', ?,
+		               'contract_version', ?::text,
 		               'reason', 'retryable_failure_requeued',
-		               'migration_run_id', ?,
-		               'claim_epoch', ?,
+		               'migration_run_id', ?::text,
+		               'claim_epoch', ?::int,
 		               'repaired_at', ?::text
 		           ),
 		           ?
@@ -468,7 +492,8 @@ func repairV2MigrationRetryableFailuresTx(tx *gorm.DB, runID string, claimEpoch 
 		    RETURNING 1
 		)
 		SELECT count(*)::int FROM updated_corpus
-	`, runID, runID, claimEpoch, domain.V2ContractVersion, runID, claimEpoch, now.UTC().Format(time.RFC3339Nano),
+	`, runID, v2MigrationRetryExhaustedValidationError,
+		runID, claimEpoch, domain.V2ContractVersion, runID, claimEpoch, now.UTC().Format(time.RFC3339Nano),
 		now, now, claimEpoch, now, now, now.UTC().Format(time.RFC3339Nano), now).Scan(&repaired).Error
 	return repaired, err
 }

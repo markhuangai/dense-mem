@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
 beforeEach(() => {
@@ -8,7 +8,72 @@ beforeEach(() => {
   vi.restoreAllMocks();
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("App migration portal", () => {
+  it("waits for each migration status request before scheduling the next poll", async () => {
+    vi.useFakeTimers();
+    const pendingStatus: Array<(response: Response) => void> = [];
+    let statusCalls = 0;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/session")) {
+        return jsonResponse({ data: { authenticated: true, portal_mode: "migration", legacy_config_present: true } });
+      }
+      if (url.endsWith("/v2/migration") && method === "GET") {
+        statusCalls++;
+        return new Promise((resolve) => pendingStatus.push(resolve));
+      }
+      return jsonResponse({ message: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+
+    const view = render(<App />);
+    await act(async () => {
+      for (let index = 0; index < 10; index++) {
+        await Promise.resolve();
+      }
+    });
+    expect(statusCalls).toBe(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(10_000);
+      await Promise.resolve();
+    });
+    expect(statusCalls).toBe(1);
+
+    await act(async () => {
+      pendingStatus.shift()?.(new Response(JSON.stringify({
+        data: {
+          state: "paused_retryable",
+          required: true,
+          data_plane_allowed: false,
+          readiness_message: "migration is paused",
+          run: migrationRun({ state: "paused_retryable" }),
+        },
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+      for (let index = 0; index < 5; index++) {
+        await Promise.resolve();
+      }
+    });
+
+    act(() => vi.advanceTimersByTime(1_999));
+    expect(statusCalls).toBe(1);
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+      await Promise.resolve();
+    });
+    expect(statusCalls).toBe(2);
+    view.unmount();
+  });
+
   it("shows migration mode without loading normal teams", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);

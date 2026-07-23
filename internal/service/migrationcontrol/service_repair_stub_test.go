@@ -3,6 +3,7 @@ package migrationcontrol
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -10,7 +11,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
-func TestResumeUsesRepairAwareTransitionWhenRepairRequired(t *testing.T) {
+func TestResumeDefersRepairAssessmentToTransactionalTransition(t *testing.T) {
 	now := time.Date(2026, 7, 23, 3, 0, 0, 0, time.UTC)
 	store := newStoreStub()
 	store.run = &domain.V2MigrationRun{
@@ -47,13 +48,37 @@ func TestResumeUsesRepairAwareTransitionWhenRepairRequired(t *testing.T) {
 	if len(store.actions) != 1 {
 		t.Fatalf("actions = %#v", store.actions)
 	}
+	if store.repairAssessCalls != 0 {
+		t.Fatalf("repair assessment calls = %d, want 0", store.repairAssessCalls)
+	}
 	action := store.actions[0]
 	if action.Action != domain.V2MigrationActionRepairResumed || action.Actor != "operator" || action.RemoteIP != "127.0.0.1" {
 		t.Fatalf("repair action = %#v", action)
 	}
 }
 
+func TestResumeReturnsCutoverBlockedForDeterministicRepairBlocker(t *testing.T) {
+	store := newStoreStub()
+	store.run = &domain.V2MigrationRun{
+		RunID:                    "run-1",
+		MigrationContractVersion: DefaultMigrationContractVersion,
+		State:                    domain.V2MigrationStatePaused,
+		Required:                 true,
+		PreflightApproved:        true,
+		PreflightChecks:          createdPreflightChecks(),
+		Retryable:                true,
+	}
+	store.repairErr = fmt.Errorf("%w: blocked_items=1", repository.ErrV2MigrationCutoverBlocked)
+	svc := New(store, Config{Required: true})
+
+	_, err := svc.Resume(context.Background(), OperatorRequest{})
+	if !errors.Is(err, ErrCutoverBlocked) {
+		t.Fatalf("Resume err = %v, want ErrCutoverBlocked", err)
+	}
+}
+
 func (s *storeStub) AssessMigrationRepair(context.Context, string) (*domain.V2MigrationRepairSummary, error) {
+	s.repairAssessCalls++
 	if s.repairErr != nil {
 		return nil, s.repairErr
 	}
@@ -80,6 +105,12 @@ func (s *storeStub) RepairAndResumeMigration(_ context.Context, input repository
 		s.run.StartedAt = &started
 	}
 	s.run.UpdatedAt = input.Now
+	if input.OperatorAction.Action == "" {
+		input.OperatorAction.Action = domain.V2MigrationActionResumed
+		if s.repair != nil && s.repair.Required {
+			input.OperatorAction.Action = domain.V2MigrationActionRepairResumed
+		}
+	}
 	if input.OperatorAction.Action != "" {
 		s.actions = append(s.actions, input.OperatorAction)
 	}
