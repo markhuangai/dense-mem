@@ -297,7 +297,7 @@ func (r *V2LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, team
 		return nil, errors.New("lease must be at least one second")
 	}
 	var run *V2PlacementRun
-	err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
+	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		rows, err := tx.WithContext(ctx).Raw(`
 			WITH next AS (
 				SELECT run.placement_run_id,
@@ -439,6 +439,16 @@ func (r *V2LedgerRepositoryImpl) withTeamTx(ctx context.Context, teamID string, 
 		return errors.New("v2 ledger: rls helper is required")
 	}
 	return r.rls.WithTeamTx(ctx, r.db, teamID, fn)
+}
+
+func (r *V2LedgerRepositoryImpl) withSystemTx(ctx context.Context, fn func(tx *gorm.DB) error) error {
+	if r == nil || r.db == nil {
+		return errors.New("v2 ledger: database is required")
+	}
+	if r.rls == nil {
+		return errors.New("v2 ledger: rls helper is required")
+	}
+	return r.rls.WithSystemTx(ctx, r.db, fn)
 }
 
 func normalizeV2CreateIngestInput(input V2CreateIngestInput) V2CreateIngestInput {

@@ -26,6 +26,9 @@ func lockV2MigrationRunForPlacementCommit(ctx context.Context, tx *gorm.DB, inpu
 	if input.MigrationRunID == "" {
 		return nil
 	}
+	if err := setV2PlacementTransactionMode(ctx, tx, "system"); err != nil {
+		return err
+	}
 	var found int
 	err := tx.WithContext(ctx).Raw(`
 		SELECT 1
@@ -45,6 +48,18 @@ func lockV2MigrationRunForPlacementCommit(ctx context.Context, tx *gorm.DB, inpu
 	}
 	if found != 1 {
 		return ErrV2PlacementLeaseLost
+	}
+	return setV2PlacementTransactionMode(ctx, tx, "profile")
+}
+
+func setV2PlacementTransactionMode(ctx context.Context, tx *gorm.DB, mode string) error {
+	switch mode {
+	case "profile", "system":
+	default:
+		return fmt.Errorf("unsupported v2 placement transaction mode %q", mode)
+	}
+	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.tx_mode', ?, true)", mode).Error; err != nil {
+		return fmt.Errorf("set v2 placement transaction mode %q: %w", mode, err)
 	}
 	return nil
 }
