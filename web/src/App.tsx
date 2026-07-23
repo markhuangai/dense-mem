@@ -564,7 +564,8 @@ function MigrationPortal({
                 ? "The next resume will requeue stale migration-owned placement records before workers continue."
                 : "No stale retryable migration-owned placement rows were detected."}</p>
               <dl>
-                <div><dt>Orphan reviews</dt><dd>{repair.orphan_reviews}</dd></div><div><dt>Processing rows</dt><dd>{repair.abandoned_processing}</dd></div>
+                <div><dt>Legacy predicate reviews</dt><dd>{repair.legacy_predicate_reviews}</dd></div><div><dt>Orphan reviews</dt><dd>{repair.orphan_reviews}</dd></div>
+                <div><dt>Processing rows</dt><dd>{repair.abandoned_processing}</dd></div>
                 <div><dt>Retryable failures</dt><dd>{repair.retryable_failures}</dd></div><div><dt>Held reviews</dt><dd>{repair.held_reviews}</dd></div>
                 <div><dt>Blocked</dt><dd>{repair.blocked_items}</dd></div><div><dt>Claim epoch</dt><dd>{repair.claim_epoch_before ?? run?.claim_epoch ?? "—"}</dd></div>
               </dl>

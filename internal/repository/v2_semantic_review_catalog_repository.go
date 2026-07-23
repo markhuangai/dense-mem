@@ -22,7 +22,8 @@ const (
 	v2SemanticReviewDefaultCandidateLimit = 5
 	v2SemanticReviewMaxCandidateLimit     = 20
 	v2SemanticReviewDefaultOptionLimit    = 100
-	v2SemanticReviewMaxOptionLimit        = 200
+	v2SemanticReviewMaxOptionLimit        = 100
+	v2SemanticReviewMaxResolutionInputs   = 200
 )
 
 func (r *V2SemanticRepositoryImpl) ListV2SemanticReviewEntityCandidates(
@@ -85,10 +86,21 @@ func (r *V2SemanticRepositoryImpl) ListV2SemanticReviewPredicateCandidates(
 	var out []V2SemanticReviewPredicateCandidate
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
 		rows, err := tx.WithContext(ctx).Raw(`
+			WITH latest AS (
+			    SELECT predicate_key, version, aliases,
+			           allowed_subject_kinds, allowed_object_kinds,
+			           relationship_kind, current_cardinality, lifecycle_state,
+			           row_number() OVER (
+			               PARTITION BY predicate_key
+			               ORDER BY version DESC
+			           ) AS version_rank
+			    FROM team_predicate_definitions
+			    WHERE team_id = ?::uuid
+			)
 			SELECT predicate_key, version, allowed_subject_kinds, allowed_object_kinds,
 			       relationship_kind, current_cardinality, lifecycle_state
-			FROM team_predicate_definitions
-			WHERE team_id = ?::uuid
+			FROM latest
+			WHERE version_rank = 1
 			  AND lifecycle_state = 'active'
 			  AND (predicate_key = ? OR ? = ANY(aliases))
 			ORDER BY CASE WHEN predicate_key = ? THEN 0 ELSE 1 END, version DESC
@@ -111,6 +123,105 @@ func (r *V2SemanticRepositoryImpl) ListV2SemanticReviewPredicateCandidates(
 	return out, nil
 }
 
+func (r *V2SemanticRepositoryImpl) ResolveV2SemanticReviewPredicateCandidates(
+	ctx context.Context,
+	input V2SemanticReviewPredicateResolutionInput,
+) ([]V2SemanticReviewPredicateResolution, error) {
+	input = normalizeV2SemanticReviewPredicateResolutionInput(input)
+	if err := validateV2SemanticReviewPredicateResolutionInput(input); err != nil {
+		return nil, err
+	}
+	if len(input.Predicates) == 0 {
+		return nil, nil
+	}
+	normalizedPredicates := make([]string, 0, len(input.Predicates))
+	for _, predicate := range input.Predicates {
+		normalizedPredicates = append(normalizedPredicates, canonicalV2GeneratedPredicateKey(predicate))
+	}
+	out := []V2SemanticReviewPredicateResolution{}
+	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
+		rows, err := tx.WithContext(ctx).Raw(`
+			WITH requested AS (
+			    SELECT btrim(input.requested_predicate) AS requested_predicate,
+			           input.normalized_predicate,
+			           input.ordinality AS requested_order
+			    FROM unnest(?::text[], ?::text[]) WITH ORDINALITY
+			         AS input(requested_predicate, normalized_predicate, ordinality)
+			    WHERE btrim(input.requested_predicate) <> ''
+			), latest_definitions AS (
+			    SELECT definition.*,
+			           row_number() OVER (
+			               PARTITION BY definition.predicate_key
+			               ORDER BY definition.version DESC
+			           ) AS version_rank
+			    FROM team_predicate_definitions AS definition
+			    WHERE definition.team_id = ?::uuid
+			), matched AS (
+			    SELECT requested.requested_predicate, requested.requested_order,
+			           CASE WHEN definition.predicate_key = requested.normalized_predicate
+			                THEN 'key' ELSE 'alias' END AS match_kind,
+			           definition.predicate_key, definition.version,
+			           definition.allowed_subject_kinds, definition.allowed_object_kinds,
+			           definition.relationship_kind, definition.current_cardinality,
+			           definition.lifecycle_state
+			    FROM requested
+			    JOIN latest_definitions AS definition
+			      ON definition.version_rank = 1
+			     AND definition.lifecycle_state = 'active'
+			     AND (
+			         definition.predicate_key = requested.normalized_predicate
+			         OR requested.requested_predicate = ANY(definition.aliases)
+			         OR requested.normalized_predicate = ANY(definition.aliases)
+			     )
+			), latest AS (
+			    SELECT *,
+			           row_number() OVER (
+			               PARTITION BY requested_order
+			               ORDER BY CASE match_kind WHEN 'key' THEN 0 ELSE 1 END,
+			                        predicate_key
+			           ) AS match_rank
+			    FROM matched
+			)
+			SELECT requested_predicate, match_kind, predicate_key, version,
+			       allowed_subject_kinds, allowed_object_kinds,
+			       relationship_kind, current_cardinality, lifecycle_state
+			FROM latest
+			WHERE match_rank <= ?
+			ORDER BY requested_order, match_rank
+		`, pq.Array(input.Predicates), pq.Array(normalizedPredicates), input.TeamID, input.Limit).Rows()
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var resolution V2SemanticReviewPredicateResolution
+			var subjectKinds pq.StringArray
+			var objectKinds pq.StringArray
+			if err := rows.Scan(
+				&resolution.RequestedPredicate,
+				&resolution.MatchKind,
+				&resolution.Candidate.PredicateKey,
+				&resolution.Candidate.Version,
+				&subjectKinds,
+				&objectKinds,
+				&resolution.Candidate.RelationshipKind,
+				&resolution.Candidate.CurrentCardinality,
+				&resolution.Candidate.LifecycleState,
+			); err != nil {
+				return err
+			}
+			resolution.Candidate.AllowedSubjectKinds = []string(subjectKinds)
+			resolution.Candidate.AllowedObjectKinds = []string(objectKinds)
+			out = append(out, resolution)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("v2 semantic: resolve review predicate candidates: %w", err)
+	}
+	return out, nil
+}
+
 func (r *V2SemanticRepositoryImpl) ListV2SemanticReviewPredicateOptions(
 	ctx context.Context,
 	input V2SemanticReviewPredicateOptionsInput,
@@ -122,13 +233,39 @@ func (r *V2SemanticRepositoryImpl) ListV2SemanticReviewPredicateOptions(
 	var out []string
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
 		rows, err := tx.WithContext(ctx).Raw(`
+			WITH latest AS (
+			    SELECT DISTINCT ON (predicate_key)
+			           predicate_key, aliases, lifecycle_state, origin, created_at
+			    FROM team_predicate_definitions
+			    WHERE team_id = ?::uuid
+			    ORDER BY predicate_key, version DESC
+			), evidence_terms AS (
+			    SELECT DISTINCT evidence_term.term
+			    FROM unnest(tsvector_to_array(to_tsvector('english', ?)))
+			         AS evidence_term(term)
+			), ranked AS (
+			    SELECT latest.*,
+			           (
+			               SELECT count(*)
+			               FROM unnest(tsvector_to_array(to_tsvector(
+			                   'english',
+			                   replace(latest.predicate_key, '_', ' ') || ' ' ||
+			                   array_to_string(latest.aliases, ' ')
+			               ))) AS predicate_term(term)
+			               JOIN evidence_terms
+			                 ON evidence_terms.term = predicate_term.term
+			           ) AS relevance
+			    FROM latest
+			    WHERE lifecycle_state = 'active'
+			)
 			SELECT predicate_key, aliases
-			FROM team_predicate_definitions
-			WHERE team_id = ?::uuid
-			  AND lifecycle_state = 'active'
-			ORDER BY predicate_key ASC, version DESC
+			FROM ranked
+			ORDER BY relevance DESC,
+			         CASE WHEN origin = 'built_in' THEN 0 ELSE 1 END,
+			         created_at DESC,
+			         predicate_key
 			LIMIT ?
-		`, input.TeamID, input.Limit).Rows()
+		`, input.TeamID, input.QueryText, input.Limit).Rows()
 		if err != nil {
 			return err
 		}
@@ -150,6 +287,12 @@ func (r *V2SemanticRepositoryImpl) ListV2SemanticReviewPredicateOptions(
 				}
 				seen[option] = struct{}{}
 				out = append(out, option)
+				if len(out) == input.Limit {
+					break
+				}
+			}
+			if len(out) == input.Limit {
+				break
 			}
 		}
 		return rows.Err()
@@ -232,9 +375,48 @@ func validateV2SemanticReviewPredicateCandidateInput(input V2SemanticReviewPredi
 	return nil
 }
 
+func normalizeV2SemanticReviewPredicateResolutionInput(input V2SemanticReviewPredicateResolutionInput) V2SemanticReviewPredicateResolutionInput {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.Limit = normalizeV2ReviewCandidateLimit(input.Limit)
+	seen := map[string]struct{}{}
+	predicates := make([]string, 0, len(input.Predicates))
+	for _, predicate := range input.Predicates {
+		predicate = strings.TrimSpace(predicate)
+		if predicate == "" {
+			continue
+		}
+		if _, exists := seen[predicate]; exists {
+			continue
+		}
+		seen[predicate] = struct{}{}
+		predicates = append(predicates, predicate)
+		if len(predicates) == v2SemanticReviewMaxResolutionInputs {
+			break
+		}
+	}
+	input.Predicates = predicates
+	return input
+}
+
+func validateV2SemanticReviewPredicateResolutionInput(input V2SemanticReviewPredicateResolutionInput) error {
+	if _, err := uuid.Parse(input.TeamID); err != nil {
+		return fmt.Errorf("team_id is required: %w", err)
+	}
+	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
+		return fmt.Errorf("owner_profile_id is required: %w", err)
+	}
+	return nil
+}
+
 func normalizeV2SemanticReviewPredicateOptionsInput(input V2SemanticReviewPredicateOptionsInput) V2SemanticReviewPredicateOptionsInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.QueryText = strings.TrimSpace(input.QueryText)
+	queryRunes := []rune(input.QueryText)
+	if len(queryRunes) > 32000 {
+		input.QueryText = string(queryRunes[:32000])
+	}
 	input.Limit = normalizeV2ReviewOptionLimit(input.Limit)
 	return input
 }

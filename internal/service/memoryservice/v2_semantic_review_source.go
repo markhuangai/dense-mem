@@ -21,7 +21,7 @@ const (
 
 type V2SemanticPlacementReviewCatalog interface {
 	ListV2SemanticReviewEntityCandidates(ctx context.Context, input repository.V2SemanticReviewEntityCandidateInput) ([]repository.V2SemanticReviewEntityCandidate, error)
-	ListV2SemanticReviewPredicateCandidates(ctx context.Context, input repository.V2SemanticReviewPredicateCandidateInput) ([]repository.V2SemanticReviewPredicateCandidate, error)
+	ResolveV2SemanticReviewPredicateCandidates(ctx context.Context, input repository.V2SemanticReviewPredicateResolutionInput) ([]repository.V2SemanticReviewPredicateResolution, error)
 	ListV2SemanticReviewPredicateOptions(ctx context.Context, input repository.V2SemanticReviewPredicateOptionsInput) ([]string, error)
 }
 
@@ -177,6 +177,7 @@ func (s *v2SemanticPlacementReviewSource) v2PlacementReviewProviderProposal(
 	predicateOptions, err := s.catalog.ListV2SemanticReviewPredicateOptions(ctx, repository.V2SemanticReviewPredicateOptionsInput{
 		TeamID:         run.TeamID,
 		OwnerProfileID: run.OwnerProfileID,
+		QueryText:      evidence.Content,
 	})
 	if err != nil {
 		return nil, nil, false, err
@@ -643,10 +644,11 @@ func (s *v2SemanticPlacementReviewSource) v2PlacementReviewRelationshipObservati
 		}
 	}
 	for _, relationship := range relationships {
-		candidates, err := s.catalog.ListV2SemanticReviewPredicateCandidates(ctx, repository.V2SemanticReviewPredicateCandidateInput{
+		predicateLabels := v2ReviewSourcePredicateLabels(relationship)
+		resolutions, err := s.catalog.ResolveV2SemanticReviewPredicateCandidates(ctx, repository.V2SemanticReviewPredicateResolutionInput{
 			TeamID:         run.TeamID,
 			OwnerProfileID: run.OwnerProfileID,
-			Predicate:      relationship.Predicate,
+			Predicates:     predicateLabels,
 			Limit:          s.candidateLimit,
 		})
 		if err != nil {
@@ -689,11 +691,20 @@ func (s *v2SemanticPlacementReviewSource) v2PlacementReviewRelationshipObservati
 				LifecycleState:      candidate.LifecycleState,
 			})
 		}
-		for _, candidate := range candidates {
-			appendCandidate(candidate)
-		}
-		for _, predicate := range relationship.PredicateCandidates {
-			appendCandidate(v2ReviewSourceRequestLocalPredicateCandidate(predicate, relationship, kindByRef))
+		resolutionsByLabel := v2ReviewSourcePredicateResolutionsByLabel(resolutions)
+		for _, predicate := range predicateLabels {
+			candidate, matched, ambiguous := v2ReviewSourceCanonicalPredicateCandidate(resolutionsByLabel[predicate])
+			if ambiguous {
+				continue
+			}
+			if matched {
+				appendCandidate(candidate)
+			} else {
+				appendCandidate(v2ReviewSourceRequestLocalPredicateCandidate(predicate, relationship, kindByRef))
+			}
+			if len(obs.PredicateCandidates) >= s.candidateLimit {
+				break
+			}
 		}
 		out = append(out, obs)
 	}

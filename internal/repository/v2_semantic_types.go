@@ -73,9 +73,23 @@ type V2SemanticReviewPredicateCandidateInput struct {
 	Limit          int
 }
 
+type V2SemanticReviewPredicateResolutionInput struct {
+	TeamID         string
+	OwnerProfileID string
+	Predicates     []string
+	Limit          int
+}
+
+type V2SemanticReviewPredicateResolution struct {
+	RequestedPredicate string
+	MatchKind          string
+	Candidate          V2SemanticReviewPredicateCandidate
+}
+
 type V2SemanticReviewPredicateOptionsInput struct {
 	TeamID         string
 	OwnerProfileID string
+	QueryText      string
 	Limit          int
 }
 

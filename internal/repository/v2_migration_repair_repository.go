@@ -77,6 +77,10 @@ func (r *V2MigrationControlRepositoryImpl) RepairAndResumeMigration(
 		if summary.BlockedItems > 0 {
 			return fmt.Errorf("%w: blocked_items=%d", ErrV2MigrationCutoverBlocked, summary.BlockedItems)
 		}
+		legacyPredicateItems, err := prepareV2MigrationLegacyPredicateReviewsTx(tx, runID, now)
+		if err != nil {
+			return err
+		}
 		orphanReviews, err := repairV2MigrationOrphanReviewsTx(tx, runID, claimEpoch, now)
 		if err != nil {
 			return err
@@ -89,7 +93,7 @@ func (r *V2MigrationControlRepositoryImpl) RepairAndResumeMigration(
 		if err != nil {
 			return err
 		}
-		summary.OrphanReviews = orphanReviews
+		summary.OrphanReviews = max(0, orphanReviews-legacyPredicateItems)
 		summary.AbandonedProcessing = abandonedProcessing
 		summary.RetryableFailures = retryableFailures
 		summary.RepairedItems = orphanReviews + abandonedProcessing + retryableFailures
@@ -154,13 +158,8 @@ func assessV2MigrationRepairTx(tx *gorm.DB, runID string) (*domain.V2MigrationRe
 		    SELECT corpus_runs.*,
 		           item.placement_item_id,
 		           item.status AS item_status,
-		           (
-		               SELECT count(*)::int
-		               FROM review_tasks AS task
-		               WHERE task.team_id = item.team_id
-		                 AND task.placement_item_id = item.placement_item_id
-		                 AND task.status IN ('open', 'acknowledged')
-		           ) AS open_review_count,
+		           COALESCE(review.open_review_count, 0)::int AS open_review_count,
+		           COALESCE(review.legacy_predicate_review_count, 0)::int AS legacy_predicate_review_count,
 		           COALESCE((
 		               SELECT terminal.payload @> jsonb_build_object(
 		                          'validation_errors',
@@ -180,6 +179,17 @@ func assessV2MigrationRepairTx(tx *gorm.DB, runID string) (*domain.V2MigrationRe
 		      ON item.team_id = corpus_runs.team_id
 		     AND item.placement_run_id = corpus_runs.placement_run_id
 		     AND item.evidence_index = 0
+		    LEFT JOIN LATERAL (
+		        SELECT count(*)::int AS open_review_count,
+		               count(*) FILTER (
+		                   WHERE task.task_type = 'predicate_needs_review'
+		                     AND COALESCE(task.payload->>'predicate_policy_version', '') = ''
+		               )::int AS legacy_predicate_review_count
+		        FROM review_tasks AS task
+		        WHERE task.team_id = item.team_id
+		          AND task.placement_item_id = item.placement_item_id
+		          AND task.status IN ('open', 'acknowledged')
+		    ) AS review ON true
 		), run_counts AS (
 		    SELECT count(*) FILTER (
 		        WHERE run_status = 'processing'
@@ -187,6 +197,7 @@ func assessV2MigrationRepairTx(tx *gorm.DB, runID string) (*domain.V2MigrationRe
 		    FROM corpus_runs
 		), item_counts AS (
 		    SELECT
+		        COALESCE(sum(legacy_predicate_review_count), 0)::int AS legacy_predicate_reviews,
 		        count(*) FILTER (
 		            WHERE outcome = 'needs_review'
 		              AND item_status <> 'awaiting_review'
@@ -194,11 +205,13 @@ func assessV2MigrationRepairTx(tx *gorm.DB, runID string) (*domain.V2MigrationRe
 		        )::int AS orphan_reviews,
 		        count(*) FILTER (
 		            WHERE (outcome = 'failed' OR run_status = 'failed' OR item_status = 'failed')
+		              AND legacy_predicate_review_count = 0
 		              AND (attempts < max_attempts OR exhausted_retryable)
 		        )::int AS retryable_failures,
-		        COALESCE(sum(open_review_count), 0)::int AS held_reviews,
+		        COALESCE(sum(open_review_count - legacy_predicate_review_count), 0)::int AS held_reviews,
 		        count(*) FILTER (
 		            WHERE (outcome = 'failed' OR run_status = 'failed' OR item_status = 'failed')
+		              AND legacy_predicate_review_count = 0
 		              AND attempts >= max_attempts
 		              AND NOT exhausted_retryable
 		        )::int AS blocked_items
@@ -206,6 +219,7 @@ func assessV2MigrationRepairTx(tx *gorm.DB, runID string) (*domain.V2MigrationRe
 		)
 		SELECT
 		    migration.claim_epoch::int,
+		    item_counts.legacy_predicate_reviews,
 		    item_counts.orphan_reviews,
 		    run_counts.abandoned_processing,
 		    item_counts.retryable_failures,
@@ -218,6 +232,7 @@ func assessV2MigrationRepairTx(tx *gorm.DB, runID string) (*domain.V2MigrationRe
 	`, runID, v2MigrationRetryExhaustedValidationError, runID).Row()
 	if err := row.Scan(
 		&summary.ClaimEpochBefore,
+		&summary.LegacyPredicateReviews,
 		&summary.OrphanReviews,
 		&summary.AbandonedProcessing,
 		&summary.RetryableFailures,
@@ -230,8 +245,92 @@ func assessV2MigrationRepairTx(tx *gorm.DB, runID string) (*domain.V2MigrationRe
 		return nil, sql.ErrNoRows
 	}
 	summary.ClaimEpochAfter = summary.ClaimEpochBefore
-	summary.Required = summary.OrphanReviews > 0 || summary.AbandonedProcessing > 0 || summary.RetryableFailures > 0
+	summary.Required = summary.LegacyPredicateReviews > 0 || summary.OrphanReviews > 0 ||
+		summary.AbandonedProcessing > 0 || summary.RetryableFailures > 0
 	return summary, nil
+}
+
+func prepareV2MigrationLegacyPredicateReviewsTx(tx *gorm.DB, runID string, now time.Time) (int, error) {
+	var prepared int
+	err := tx.Raw(`
+		WITH target AS MATERIALIZED (
+		    SELECT corpus.item_id, corpus.team_id, item.placement_item_id
+		    FROM v2_migration_corpus_items AS corpus
+		    JOIN placement_items AS item
+		      ON item.team_id = corpus.team_id
+		     AND item.ingest_id = corpus.ingest_id
+		     AND item.evidence_index = 0
+		    WHERE corpus.run_id = ?::uuid
+		      AND EXISTS (
+		          SELECT 1
+		          FROM review_tasks AS task
+		          WHERE task.team_id = item.team_id
+		            AND task.placement_item_id = item.placement_item_id
+		            AND task.status IN ('open', 'acknowledged')
+		            AND task.task_type = 'predicate_needs_review'
+		            AND COALESCE(task.payload->>'predicate_policy_version', '') = ''
+		      )
+		    FOR UPDATE OF corpus, item
+		), canceled_tasks AS (
+		    UPDATE review_tasks AS task
+		    SET status = 'canceled',
+		        resolution = task.resolution || jsonb_build_object(
+		            'action', 'superseded_by_predicate_policy_replay',
+		            'predicate_policy_version', ?::text,
+		            'migration_run_id', ?::text,
+		            'repaired_at', ?::text
+		        ),
+		        resolved_at = ?,
+		        updated_at = ?
+		    FROM target
+		    WHERE task.team_id = target.team_id
+		      AND task.placement_item_id = target.placement_item_id
+		      AND task.status IN ('open', 'acknowledged')
+		      AND task.task_type = 'predicate_needs_review'
+		      AND COALESCE(task.payload->>'predicate_policy_version', '') = ''
+		    RETURNING task.review_task_id
+		), updated_items AS (
+		    UPDATE placement_items AS item
+		    SET status = CASE
+		            WHEN EXISTS (
+		                 SELECT 1
+		                 FROM review_tasks AS remaining
+		                 WHERE remaining.team_id = item.team_id
+		                   AND remaining.placement_item_id = item.placement_item_id
+		                   AND remaining.status IN ('open', 'acknowledged')
+		                   AND NOT (
+		                       remaining.task_type = 'predicate_needs_review'
+		                       AND COALESCE(remaining.payload->>'predicate_policy_version', '') = ''
+		                   )
+		             )
+		            THEN 'awaiting_review'
+		            WHEN item.status = 'awaiting_review' THEN 'completed'
+		            ELSE item.status
+		        END,
+		        updated_at = ?
+		    FROM target
+		    WHERE item.team_id = target.team_id
+		      AND item.placement_item_id = target.placement_item_id
+		    RETURNING item.placement_item_id
+		), updated_corpus AS (
+		    UPDATE v2_migration_corpus_items AS corpus
+		    SET outcome = 'needs_review',
+		        metadata = metadata || jsonb_build_object(
+		            'migration_repair', 'legacy_predicate_review_detected',
+		            'predicate_policy_version', ?::text,
+		            'migration_repair_at', ?::text
+		        ),
+		        updated_at = ?
+		    FROM target
+		    WHERE corpus.item_id = target.item_id
+		    RETURNING corpus.item_id
+		)
+		SELECT count(*)::int
+		FROM target
+	`, runID, domain.V2PredicatePolicyVersion, runID, now.UTC().Format(time.RFC3339Nano), now, now,
+		now, domain.V2PredicatePolicyVersion, now.UTC().Format(time.RFC3339Nano), now,
+	).Scan(&prepared).Error
+	return prepared, err
 }
 
 func repairV2MigrationOrphanReviewsTx(tx *gorm.DB, runID string, claimEpoch int, now time.Time) (int, error) {
@@ -513,15 +612,16 @@ func insertV2MigrationOperatorActionTx(
 	}
 	if repair != nil {
 		metadata["repair"] = map[string]any{
-			"required":             repair.Required,
-			"orphan_reviews":       repair.OrphanReviews,
-			"abandoned_processing": repair.AbandonedProcessing,
-			"retryable_failures":   repair.RetryableFailures,
-			"held_reviews":         repair.HeldReviews,
-			"blocked_items":        repair.BlockedItems,
-			"repaired_items":       repair.RepairedItems,
-			"claim_epoch_before":   repair.ClaimEpochBefore,
-			"claim_epoch_after":    repair.ClaimEpochAfter,
+			"required":                 repair.Required,
+			"legacy_predicate_reviews": repair.LegacyPredicateReviews,
+			"orphan_reviews":           repair.OrphanReviews,
+			"abandoned_processing":     repair.AbandonedProcessing,
+			"retryable_failures":       repair.RetryableFailures,
+			"held_reviews":             repair.HeldReviews,
+			"blocked_items":            repair.BlockedItems,
+			"repaired_items":           repair.RepairedItems,
+			"claim_epoch_before":       repair.ClaimEpochBefore,
+			"claim_epoch_after":        repair.ClaimEpochAfter,
 		}
 	}
 	data, err := marshalV2MigrationJSON(metadata)

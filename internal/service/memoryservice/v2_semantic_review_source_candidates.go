@@ -156,6 +156,67 @@ func v2ReviewSourceRequestLocalPredicateCandidate(
 	}
 }
 
+func v2ReviewSourcePredicateLabels(relationship v2PlacementReviewRelationshipSpec) []string {
+	labels := make([]string, 0, len(relationship.PredicateCandidates)+1)
+	seen := map[string]struct{}{}
+	appendLabel := func(label string) {
+		label = strings.TrimSpace(label)
+		if label == "" {
+			return
+		}
+		if _, exists := seen[label]; exists {
+			return
+		}
+		seen[label] = struct{}{}
+		labels = append(labels, label)
+	}
+	appendLabel(relationship.Predicate)
+	for _, candidate := range relationship.PredicateCandidates {
+		appendLabel(candidate)
+	}
+	return labels
+}
+
+func v2ReviewSourcePredicateResolutionsByLabel(
+	resolutions []repository.V2SemanticReviewPredicateResolution,
+) map[string][]repository.V2SemanticReviewPredicateResolution {
+	out := make(map[string][]repository.V2SemanticReviewPredicateResolution)
+	for _, resolution := range resolutions {
+		label := strings.TrimSpace(resolution.RequestedPredicate)
+		if label != "" {
+			out[label] = append(out[label], resolution)
+		}
+	}
+	return out
+}
+
+func v2ReviewSourceCanonicalPredicateCandidate(
+	resolutions []repository.V2SemanticReviewPredicateResolution,
+) (repository.V2SemanticReviewPredicateCandidate, bool, bool) {
+	for _, resolution := range resolutions {
+		if resolution.MatchKind == "key" {
+			return resolution.Candidate, true, false
+		}
+	}
+	byKey := map[string]repository.V2SemanticReviewPredicateCandidate{}
+	for _, resolution := range resolutions {
+		key := strings.TrimSpace(resolution.Candidate.PredicateKey)
+		if key != "" {
+			byKey[key] = resolution.Candidate
+		}
+	}
+	if len(byKey) == 0 {
+		return repository.V2SemanticReviewPredicateCandidate{}, false, false
+	}
+	if len(byKey) > 1 {
+		return repository.V2SemanticReviewPredicateCandidate{}, false, true
+	}
+	for _, candidate := range byKey {
+		return candidate, true, false
+	}
+	return repository.V2SemanticReviewPredicateCandidate{}, false, false
+}
+
 func v2ReviewSourceAllowedKinds(value string, fallback string) []string {
 	value = strings.TrimSpace(value)
 	if value == "" {

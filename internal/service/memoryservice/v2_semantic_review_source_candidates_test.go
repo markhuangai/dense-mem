@@ -104,3 +104,28 @@ func TestV2SemanticPlacementReviewSourceKeepsProviderPredicateCandidatesRequestL
 		t.Fatalf("prepared predicate candidates = %#v", prepared.RelationshipObservations[0].PredicateCandidates)
 	}
 }
+
+func TestV2ReviewSourceCanonicalPredicateCandidateRejectsAmbiguousAliases(t *testing.T) {
+	candidate, matched, ambiguous := v2ReviewSourceCanonicalPredicateCandidate([]repository.V2SemanticReviewPredicateResolution{
+		{
+			RequestedPredicate: "depends_on",
+			MatchKind:          "alias",
+			Candidate: repository.V2SemanticReviewPredicateCandidate{
+				PredicateKey: "uses",
+				Version:      1,
+			},
+		},
+		{
+			RequestedPredicate: "depends_on",
+			MatchKind:          "alias",
+			Candidate: repository.V2SemanticReviewPredicateCandidate{
+				PredicateKey: "requires",
+				Version:      1,
+			},
+		},
+	})
+
+	if matched || !ambiguous || candidate.PredicateKey != "" {
+		t.Fatalf("candidate = %#v, matched = %v, ambiguous = %v", candidate, matched, ambiguous)
+	}
+}

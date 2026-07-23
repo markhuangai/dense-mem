@@ -65,6 +65,24 @@ func (s *v2ReviewSourceCatalogStub) ListV2SemanticReviewPredicateCandidates(_ co
 	return append([]repository.V2SemanticReviewPredicateCandidate(nil), s.predicateCandidates[input.Predicate]...), nil
 }
 
+func (s *v2ReviewSourceCatalogStub) ResolveV2SemanticReviewPredicateCandidates(_ context.Context, input repository.V2SemanticReviewPredicateResolutionInput) ([]repository.V2SemanticReviewPredicateResolution, error) {
+	out := []repository.V2SemanticReviewPredicateResolution{}
+	for _, predicate := range input.Predicates {
+		for _, candidate := range s.predicateCandidates[predicate] {
+			matchKind := "alias"
+			if candidate.PredicateKey == predicate {
+				matchKind = "key"
+			}
+			out = append(out, repository.V2SemanticReviewPredicateResolution{
+				RequestedPredicate: predicate,
+				MatchKind:          matchKind,
+				Candidate:          candidate,
+			})
+		}
+	}
+	return out, nil
+}
+
 func (s *v2ReviewSourceCatalogStub) ListV2SemanticReviewPredicateOptions(context.Context, repository.V2SemanticReviewPredicateOptionsInput) ([]string, error) {
 	return append([]string(nil), s.predicateOptions...), nil
 }

@@ -1,9 +1,10 @@
 package domain
 
 const (
-	V2ContractVersion = "dense-mem.v2.1"
-	V2FeatureGate     = "memory_v2"
-	V2ToolVisibility  = "dormant"
+	V2ContractVersion        = "dense-mem.v2.1"
+	V2PredicatePolicyVersion = "open_vocabulary_v1"
+	V2FeatureGate            = "memory_v2"
+	V2ToolVisibility         = "dormant"
 )
 
 type V2IngestID string

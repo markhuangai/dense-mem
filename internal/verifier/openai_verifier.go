@@ -33,7 +33,7 @@ Respond ONLY with a JSON object conforming to the required schema:
 
 	openAIV2SemanticProposalPrompt = `You are Dense-Mem's structure extraction reviewer. Use only the submitted evidence and optional client hints. Return a complete JSON object matching the required schema.
 
-Extract evidence-grounded entity_proposals and relationship_proposals with exact evidence spans. Use predicate_options as vocabulary hints, but do not invent durable IDs, tiers, statuses, truth, ownership, support counts, or policy decisions. If no supported semantic relationship is present, return empty proposal arrays.`
+Extract evidence-grounded entity_proposals and relationship_proposals with exact evidence spans. Prefer a predicate_options label when it accurately expresses the relationship. When none fits, propose one concise, reusable predicate label in predicate_candidates; the server will canonicalize and approve it. Do not invent durable IDs, tiers, statuses, truth, ownership, support counts, or policy decisions. If no supported semantic relationship is present, return empty proposal arrays.`
 
 	openAIV2SemanticReviewPrompt = `You are Dense-Mem's semantic verifier. Use only the submitted evidence, entity candidate allowlists, and predicate candidate allowlists. Return a complete JSON object matching the required schema.
 

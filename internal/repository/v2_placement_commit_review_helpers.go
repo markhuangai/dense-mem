@@ -30,9 +30,47 @@ func insertV2RelationshipDependencyReview(
 		ObjectValue:       input.ObjectValue,
 		Polarity:          input.Polarity,
 		EvidenceVerdict:   input.EvidenceVerdict,
+		Confidence:        input.Confidence,
+		Rationale:         input.Rationale,
+		Model:             input.Model,
+		ResponseHash:      input.ResponseHash,
+		Support:           input.Support,
 		Reason:            "identity_needs_review",
 		Payload: map[string]any{
 			"error": reason,
+		},
+	})
+}
+
+func insertV2RelationshipPredicateReview(
+	ctx context.Context,
+	tx *gorm.DB,
+	commit V2CommitPlacementSemanticInput,
+	input V2PlacementRelationshipDecisionInput,
+	reason string,
+) (*V2RelationshipDecisionResult, error) {
+	objectRef := input.ObjectRef
+	if objectRef == "" && input.ObjectValue != nil {
+		objectRef = input.ObjectValue.Ref
+	}
+	return insertV2RelationshipReview(ctx, tx, commit, V2PlacementRelationshipReviewInput{
+		Ref:               input.Ref,
+		SubjectRef:        input.SubjectRef,
+		OriginalPredicate: input.OriginalPredicate,
+		ObjectRef:         objectRef,
+		ObjectValue:       input.ObjectValue,
+		Polarity:          input.Polarity,
+		EvidenceVerdict:   input.EvidenceVerdict,
+		Confidence:        input.Confidence,
+		Rationale:         input.Rationale,
+		Model:             input.Model,
+		ResponseHash:      input.ResponseHash,
+		Support:           input.Support,
+		Reason:            "predicate_needs_review",
+		Payload: map[string]any{
+			"error":                    reason,
+			"selected_predicate_key":   input.PredicateKey,
+			"predicate_policy_version": domain.V2PredicatePolicyVersion,
 		},
 	})
 }
@@ -60,6 +98,14 @@ func validateV2PlacementRelationshipReviewInput(input V2PlacementRelationshipRev
 	}
 	if input.EvidenceVerdict != "" && !v2Contains(domain.V2VerificationVerdicts(), input.EvidenceVerdict) {
 		return fmt.Errorf("unsupported relationship review evidence_verdict %q", input.EvidenceVerdict)
+	}
+	if input.Confidence != nil && (*input.Confidence < 0 || *input.Confidence > 1) {
+		return errors.New("relationship review confidence must be between 0 and 1")
+	}
+	if input.Support != nil {
+		if err := validateV2EvidenceSupportInput(*input.Support); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -102,10 +148,26 @@ func insertV2RelationshipReview(
 		ObjectValueID:       objectValueID,
 		Polarity:            input.Polarity,
 		EvidenceVerdict:     input.EvidenceVerdict,
+		Support:             input.Support,
 		ObservationMetadata: observationMetadata,
 	}, "")
 	if err != nil {
 		return nil, err
+	}
+	verificationID := ""
+	if input.EvidenceVerdict != "" {
+		verificationID, err = insertV2VerificationEvent(ctx, tx, V2ApplyRelationshipDecisionInput{
+			TeamID:          commit.TeamID,
+			OwnerProfileID:  commit.OwnerProfileID,
+			EvidenceVerdict: input.EvidenceVerdict,
+			Confidence:      input.Confidence,
+			Rationale:       input.Rationale,
+			Model:           input.Model,
+			ResponseHash:    input.ResponseHash,
+		}, observationID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	taskType := "relationship_needs_review"
 	reason := input.Reason
@@ -136,6 +198,9 @@ func insertV2RelationshipReview(
 	}
 	for key, value := range input.Payload {
 		payload[key] = value
+	}
+	if taskType == "predicate_needs_review" {
+		payload["predicate_policy_version"] = domain.V2PredicatePolicyVersion
 	}
 	payloadJSON, err := marshalV2JSON(payload)
 	if err != nil {
@@ -168,11 +233,12 @@ func insertV2RelationshipReview(
 		return nil, err
 	}
 	return &V2RelationshipDecisionResult{
-		ObservationID:  observationID,
-		ReviewTaskID:   taskID,
-		ProposalID:     input.Ref,
-		OwnerProfileID: commit.OwnerProfileID,
-		Category:       taskType,
-		Reason:         reason,
+		ObservationID:       observationID,
+		VerificationEventID: verificationID,
+		ReviewTaskID:        taskID,
+		ProposalID:          input.Ref,
+		OwnerProfileID:      commit.OwnerProfileID,
+		Category:            taskType,
+		Reason:              reason,
 	}, rows.Err()
 }

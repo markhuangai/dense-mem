@@ -142,10 +142,13 @@ func TestV2MigrationRepairKeepsDeterministicExhaustedFailureBlocked(t *testing.T
 		repo,
 		[]string{"proposal: relationship proposal is invalid"},
 	)
+	taskID := seedV2MigrationPredicateReviewTask(t, ctx, adminDB, rls, fixture, domain.V2PredicatePolicyVersion)
 
 	summary, err := repo.AssessMigrationRepair(ctx, fixture.runID)
 	require.NoError(t, err)
 	require.False(t, summary.Required)
+	require.Zero(t, summary.LegacyPredicateReviews)
+	require.Equal(t, 1, summary.HeldReviews)
 	require.Zero(t, summary.RetryableFailures)
 	require.Equal(t, 1, summary.BlockedItems)
 
@@ -161,7 +164,7 @@ func TestV2MigrationRepairKeepsDeterministicExhaustedFailureBlocked(t *testing.T
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrV2MigrationCutoverBlocked), err)
 
-	var state, runStatus string
+	var state, runStatus, taskStatus string
 	var attempts, actionCount int
 	require.NoError(t, rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
 		if err := tx.Raw(`
@@ -179,6 +182,14 @@ func TestV2MigrationRepairKeepsDeterministicExhaustedFailureBlocked(t *testing.T
 		`, fixture.teamID, fixture.placementRunID).Row().Scan(&runStatus, &attempts); err != nil {
 			return err
 		}
+		if err := tx.Raw(`
+			SELECT status
+			FROM review_tasks
+			WHERE team_id = ?::uuid
+			  AND review_task_id = ?::uuid
+		`, fixture.teamID, taskID).Row().Scan(&taskStatus); err != nil {
+			return err
+		}
 		return tx.Raw(`
 			SELECT count(*)::int
 			FROM v2_migration_operator_actions
@@ -188,12 +199,186 @@ func TestV2MigrationRepairKeepsDeterministicExhaustedFailureBlocked(t *testing.T
 	require.Equal(t, domain.V2MigrationStatePaused, state)
 	require.Equal(t, "failed", runStatus)
 	require.Equal(t, 5, attempts)
+	require.Equal(t, "open", taskStatus)
 	require.Zero(t, actionCount)
+}
+
+func TestV2MigrationRepairReplaysLegacyPredicateReviews(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	repo := NewV2MigrationControlRepository(appDB, rls)
+	fixture := seedV2MigrationExhaustedFailure(
+		t,
+		ctx,
+		adminDB,
+		appDB,
+		rls,
+		repo,
+		[]string{"proposal: relationship proposal is invalid"},
+	)
+	taskID := seedV2MigrationPredicateReviewTask(t, ctx, adminDB, rls, fixture, "")
+	secondTaskID := seedV2MigrationPredicateReviewTask(t, ctx, adminDB, rls, fixture, "")
+
+	summary, err := repo.AssessMigrationRepair(ctx, fixture.runID)
+	require.NoError(t, err)
+	require.True(t, summary.Required)
+	require.Equal(t, 2, summary.LegacyPredicateReviews)
+	require.Zero(t, summary.HeldReviews)
+	require.Zero(t, summary.BlockedItems)
+
+	resumed, err := repo.RepairAndResumeMigration(ctx, V2RepairAndResumeMigrationInput{
+		RunID:     fixture.runID,
+		FromState: domain.V2MigrationStatePaused,
+		OperatorAction: domain.V2MigrationOperatorAction{
+			RunID: fixture.runID,
+			Actor: "operator",
+		},
+		Now: fixture.now.Add(time.Minute),
+	})
+	require.NoError(t, err)
+	require.Equal(t, domain.V2MigrationStateRunning, resumed.State)
+
+	var taskStatus, secondTaskStatus, runStatus, itemStatus, corpusOutcome string
+	var attempts int
+	var corpusPlacementItemID *string
+	require.NoError(t, rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT status, attempts
+			FROM placement_runs
+			WHERE team_id = ?::uuid
+			  AND placement_run_id = ?::uuid
+		`, fixture.teamID, fixture.placementRunID).Row().Scan(&runStatus, &attempts); err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT status
+			FROM placement_items
+			WHERE team_id = ?::uuid
+			  AND placement_item_id = ?::uuid
+		`, fixture.teamID, fixture.placementItemID).Row().Scan(&itemStatus); err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT status
+			FROM review_tasks
+			WHERE team_id = ?::uuid
+			  AND review_task_id = ?::uuid
+		`, fixture.teamID, taskID).Row().Scan(&taskStatus); err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT status
+			FROM review_tasks
+			WHERE team_id = ?::uuid
+			  AND review_task_id = ?::uuid
+		`, fixture.teamID, secondTaskID).Row().Scan(&secondTaskStatus); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT outcome, placement_item_id::text
+			FROM v2_migration_corpus_items
+			WHERE run_id = ?::uuid
+			  AND source_id = ?
+		`, fixture.runID, fixture.sourceID).Row().Scan(&corpusOutcome, &corpusPlacementItemID)
+	}))
+	require.Contains(t, []string{"queued", "guarded"}, runStatus)
+	require.Zero(t, attempts)
+	require.Equal(t, "queued", itemStatus)
+	require.Equal(t, "canceled", taskStatus)
+	require.Equal(t, "canceled", secondTaskStatus)
+	require.Equal(t, domain.V2MigrationOutcomePending, corpusOutcome)
+	require.Nil(t, corpusPlacementItemID)
+}
+
+func TestV2MigrationRepairPreservesCurrentReviewAlongsideLegacyPredicateReview(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	repo := NewV2MigrationControlRepository(appDB, rls)
+	fixture := seedV2MigrationExhaustedFailure(
+		t,
+		ctx,
+		adminDB,
+		appDB,
+		rls,
+		repo,
+		[]string{"proposal: relationship proposal is invalid"},
+	)
+	legacyTaskID := seedV2MigrationPredicateReviewTask(t, ctx, adminDB, rls, fixture, "")
+	currentTaskID := seedV2MigrationPredicateReviewTask(
+		t,
+		ctx,
+		adminDB,
+		rls,
+		fixture,
+		domain.V2PredicatePolicyVersion,
+	)
+
+	summary, err := repo.AssessMigrationRepair(ctx, fixture.runID)
+	require.NoError(t, err)
+	require.Equal(t, 1, summary.LegacyPredicateReviews)
+	require.Equal(t, 1, summary.HeldReviews)
+	require.Zero(t, summary.BlockedItems)
+
+	resumed, err := repo.RepairAndResumeMigration(ctx, V2RepairAndResumeMigrationInput{
+		RunID:     fixture.runID,
+		FromState: domain.V2MigrationStatePaused,
+		OperatorAction: domain.V2MigrationOperatorAction{
+			RunID: fixture.runID,
+			Actor: "operator",
+		},
+		Now: fixture.now.Add(time.Minute),
+	})
+	require.NoError(t, err)
+	require.Equal(t, domain.V2MigrationStateRunning, resumed.State)
+
+	var legacyStatus, currentStatus, itemStatus, corpusOutcome string
+	require.NoError(t, rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT status
+			FROM review_tasks
+			WHERE team_id = ?::uuid
+			  AND review_task_id = ?::uuid
+		`, fixture.teamID, legacyTaskID).Row().Scan(&legacyStatus); err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT status
+			FROM review_tasks
+			WHERE team_id = ?::uuid
+			  AND review_task_id = ?::uuid
+		`, fixture.teamID, currentTaskID).Row().Scan(&currentStatus); err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT status
+			FROM placement_items
+			WHERE team_id = ?::uuid
+			  AND placement_item_id = ?::uuid
+		`, fixture.teamID, fixture.placementItemID).Row().Scan(&itemStatus); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT outcome
+			FROM v2_migration_corpus_items
+			WHERE run_id = ?::uuid
+			  AND source_id = ?
+		`, fixture.runID, fixture.sourceID).Row().Scan(&corpusOutcome)
+	}))
+	require.Equal(t, "canceled", legacyStatus)
+	require.Equal(t, "open", currentStatus)
+	require.Equal(t, "awaiting_review", itemStatus)
+	require.Equal(t, domain.V2MigrationOutcomeNeedsReview, corpusOutcome)
 }
 
 type v2MigrationExhaustedFailureFixture struct {
 	runID           string
 	teamID          string
+	ownerID         string
+	ingestID        string
 	placementRunID  string
 	placementItemID string
 	sourceID        string
@@ -312,9 +497,50 @@ func seedV2MigrationExhaustedFailure(
 	return v2MigrationExhaustedFailureFixture{
 		runID:           run.RunID,
 		teamID:          teamID,
+		ownerID:         ownerID,
+		ingestID:        ingest.IngestID,
 		placementRunID:  ingest.PlacementRunID,
 		placementItemID: ingest.Items[0].PlacementItemID,
 		sourceID:        sourceID,
 		now:             now,
 	}
+}
+
+func seedV2MigrationPredicateReviewTask(
+	t *testing.T,
+	ctx context.Context,
+	adminDB *gorm.DB,
+	rls *storagepostgres.RLS,
+	fixture v2MigrationExhaustedFailureFixture,
+	policyVersion string,
+) string {
+	t.Helper()
+	taskID := uuid.NewString()
+	observationID := uuid.NewString()
+	payload, err := json.Marshal(map[string]any{"predicate_policy_version": policyVersion})
+	require.NoError(t, err)
+	require.NoError(t, rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO relationship_observations (
+			    team_id, observation_id, ingest_id, placement_item_id, owner_profile_id,
+			    subject_ref, original_predicate, object_ref, polarity, evidence, metadata
+			) VALUES (
+			    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid,
+			    'subject', 'legacy predicate', 'object', '+', '[]'::jsonb, '{}'::jsonb
+			)
+		`, fixture.teamID, observationID, fixture.ingestID, fixture.placementItemID, fixture.ownerID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO review_tasks (
+			    team_id, review_task_id, owner_profile_id, ingest_id, placement_item_id,
+			    observation_id, task_type, status, reason, payload
+			) VALUES (
+			    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid,
+			    ?::uuid, 'predicate_needs_review', 'open', 'predicate_needs_review', ?::jsonb
+			)
+		`, fixture.teamID, taskID, fixture.ownerID, fixture.ingestID, fixture.placementItemID,
+			observationID, string(payload)).Error
+	}))
+	return taskID
 }

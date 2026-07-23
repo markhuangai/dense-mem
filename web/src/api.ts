@@ -543,6 +543,7 @@ export type MigrationGateResult = {
 
 export type MigrationRepairSummary = {
   required: boolean;
+  legacy_predicate_reviews: number;
   orphan_reviews: number;
   abandoned_processing: number;
   retryable_failures: number;

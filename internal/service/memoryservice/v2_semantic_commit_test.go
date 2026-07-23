@@ -78,6 +78,12 @@ func TestV2SemanticCommitMapsAcceptedReviewIntoAtomicRepositoryInput(t *testing.
 	if relationship.SubjectRef != "person_1" || relationship.ObjectRef != "project_1" || relationship.PredicateKey != "works_on" {
 		t.Fatalf("relationship mapping = %#v", relationship)
 	}
+	if relationship.PredicateCandidate == nil ||
+		relationship.PredicateCandidate.PredicateKey != "works_on" ||
+		relationship.PredicateCandidate.PredicateVersion != 1 ||
+		relationship.PredicateCandidate.RelationshipKind != "state" {
+		t.Fatalf("relationship predicate candidate = %#v", relationship.PredicateCandidate)
+	}
 	if relationship.Polarity != "-" {
 		t.Fatalf("relationship polarity = %q, want -", relationship.Polarity)
 	}
@@ -185,6 +191,7 @@ func TestV2SemanticPlacementCompletionCommitsAcceptedReview(t *testing.T) {
 		WorkerID:        "worker-commit",
 		Request:         request,
 		Result:          *result,
+		ReviewModel:     "stub-semantic-reviewer",
 	})
 	if err != nil {
 		t.Fatalf("CompleteV2SemanticPlacement returned error: %v", err)
@@ -425,6 +432,7 @@ func TestV2SemanticCommitMapsUnresolvedPredicateToRelationshipReview(t *testing.
 		WorkerID:        "worker-commit",
 		Request:         request,
 		Result:          *result,
+		ReviewModel:     "stub-semantic-reviewer",
 	})
 	if err != nil {
 		t.Fatalf("CommitV2Semantic returned error: %v", err)
@@ -444,6 +452,20 @@ func TestV2SemanticCommitMapsUnresolvedPredicateToRelationshipReview(t *testing.
 	}
 	if review.Polarity != "-" {
 		t.Fatalf("relationship review polarity = %q, want -", review.Polarity)
+	}
+	if review.Confidence == nil || *review.Confidence != result.RelationshipResults[0].Confidence ||
+		review.Rationale != result.RelationshipResults[0].Rationale ||
+		review.Model != "stub-semantic-reviewer" ||
+		review.ResponseHash != result.ResponseHash {
+		t.Fatalf("relationship review verification = %#v", review)
+	}
+	if review.Support == nil ||
+		review.Support.FragmentID != request.Evidence[0].FragmentID ||
+		review.Support.Quote != request.RelationshipObservations[0].Quote {
+		t.Fatalf("relationship review support = %#v", review.Support)
+	}
+	if review.Payload["predicate_policy_version"] != domain.V2PredicatePolicyVersion {
+		t.Fatalf("relationship review payload = %#v", review.Payload)
 	}
 }
 

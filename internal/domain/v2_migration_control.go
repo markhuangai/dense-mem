@@ -146,13 +146,14 @@ type V2MigrationControlStatus struct {
 }
 
 type V2MigrationRepairSummary struct {
-	Required            bool `json:"required"`
-	OrphanReviews       int  `json:"orphan_reviews"`
-	AbandonedProcessing int  `json:"abandoned_processing"`
-	RetryableFailures   int  `json:"retryable_failures"`
-	HeldReviews         int  `json:"held_reviews"`
-	BlockedItems        int  `json:"blocked_items"`
-	RepairedItems       int  `json:"repaired_items,omitempty"`
-	ClaimEpochBefore    int  `json:"claim_epoch_before,omitempty"`
-	ClaimEpochAfter     int  `json:"claim_epoch_after,omitempty"`
+	Required               bool `json:"required"`
+	LegacyPredicateReviews int  `json:"legacy_predicate_reviews"`
+	OrphanReviews          int  `json:"orphan_reviews"`
+	AbandonedProcessing    int  `json:"abandoned_processing"`
+	RetryableFailures      int  `json:"retryable_failures"`
+	HeldReviews            int  `json:"held_reviews"`
+	BlockedItems           int  `json:"blocked_items"`
+	RepairedItems          int  `json:"repaired_items,omitempty"`
+	ClaimEpochBefore       int  `json:"claim_epoch_before,omitempty"`
+	ClaimEpochAfter        int  `json:"claim_epoch_after,omitempty"`
 }
