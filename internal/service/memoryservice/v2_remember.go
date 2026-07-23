@@ -169,6 +169,10 @@ func (s *v2RememberService) RememberV2(ctx context.Context, req V2RememberReques
 		"contract_version": domain.V2ContractVersion,
 		"actor":            actorMetadata,
 	}
+	migrationRunID := ""
+	if migrationOK {
+		migrationRunID = migrationActor.RunID.String()
+	}
 	created, err := s.ledger.CreateIngest(ctx, repository.V2CreateIngestInput{
 		TeamID:         actor.TeamID.String(),
 		OwnerProfileID: actor.ProfileID.String(),
@@ -176,6 +180,7 @@ func (s *v2RememberService) RememberV2(ctx context.Context, req V2RememberReques
 		RequestHash:    requestHash,
 		SourceSummary:  v2SourceSummary(req.Evidence),
 		Status:         status,
+		MigrationRunID: migrationRunID,
 		Proposal:       proposal,
 		Metadata:       metadata,
 		Evidence:       normalized,

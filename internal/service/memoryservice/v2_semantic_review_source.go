@@ -54,20 +54,22 @@ type v2PlacementReviewEntityHint struct {
 }
 
 type v2PlacementReviewRelationshipSpec struct {
-	Ref              string
-	SubjectRef       string
-	SubjectName      string
-	Predicate        string
-	ObjectRef        string
-	ObjectName       string
-	ObjectValue      *verifier.V2SemanticValueObservation
-	EvidenceID       string
-	Quote            string
-	Start            int
-	End              int
-	ValidFrom        *time.Time
-	ValidTo          *time.Time
-	CorrectionTarget *verifier.V2RelationshipCorrectionTarget
+	Ref                 string
+	SubjectRef          string
+	SubjectName         string
+	Predicate           string
+	PredicateCandidates []string
+	RelationshipKind    string
+	ObjectRef           string
+	ObjectName          string
+	ObjectValue         *verifier.V2SemanticValueObservation
+	EvidenceID          string
+	Quote               string
+	Start               int
+	End                 int
+	ValidFrom           *time.Time
+	ValidTo             *time.Time
+	CorrectionTarget    *verifier.V2RelationshipCorrectionTarget
 }
 
 func NewV2SemanticPlacementReviewSource(deps V2SemanticPlacementReviewSourceDependencies) V2SemanticPlacementReviewSource {
@@ -108,36 +110,36 @@ func (s *v2SemanticPlacementReviewSource) BuildV2SemanticReviewJob(
 	evidenceID := fmt.Sprintf("evidence:%d", fragment.EvidenceIndex)
 	evidence := v2SemanticReviewEvidence(fragment, evidenceID)
 	proposal := placement.Proposal
+	trustedCorrectionTargets := v2ReviewSourceCorrectionTargets(proposal)
 	entityHints := v2PlacementReviewEntityHints(proposal)
+	var validationErrors []verifier.V2SemanticValidationError
+	providerProposal, validationErrors, retryable, err := s.v2PlacementReviewProviderProposal(ctx, run, evidence, proposal)
+	if err != nil {
+		return v2SemanticReviewRetryablePreflightJob(run, item, evidence, []verifier.V2SemanticValidationError{{
+			Field:   "provider_proposal",
+			Message: "semantic extraction provider failed",
+		}}), nil
+	}
+	if len(validationErrors) > 0 {
+		if retryable {
+			return v2SemanticReviewRetryablePreflightJob(run, item, evidence, validationErrors), nil
+		}
+		return v2SemanticReviewPreflightFailureJob(run, item, evidence, validationErrors), nil
+	}
+	if providerProposal != nil {
+		proposal = v2ReviewSourceProposalFromProvider(*providerProposal)
+		proposal = v2ReviewSourceProposalWithTrustedCorrectionTargets(proposal, trustedCorrectionTargets)
+		entityHints = v2PlacementReviewEntityHints(proposal)
+	}
 	relationships, validationErrors := v2PlacementReviewRelationshipSpecs(proposal, fragment, evidenceID)
 	if len(validationErrors) > 0 {
 		return v2SemanticReviewPreflightFailureJob(run, item, evidence, validationErrors), nil
-	}
-	if len(relationships) == 0 {
-		providerProposal, validationErrors, retryable, err := s.v2PlacementReviewProviderProposal(ctx, run, evidence, proposal)
-		if err != nil {
-			return V2SemanticReviewJob{}, err
-		}
-		if len(validationErrors) > 0 {
-			if retryable {
-				return v2SemanticReviewRetryablePreflightJob(run, item, evidence, validationErrors), nil
-			}
-			return v2SemanticReviewPreflightFailureJob(run, item, evidence, validationErrors), nil
-		}
-		if providerProposal != nil {
-			proposal = v2ReviewSourceProposalFromProvider(*providerProposal)
-			entityHints = v2PlacementReviewEntityHints(proposal)
-			relationships, validationErrors = v2PlacementReviewRelationshipSpecs(proposal, fragment, evidenceID)
-			if len(validationErrors) > 0 {
-				return v2SemanticReviewPreflightFailureJob(run, item, evidence, validationErrors), nil
-			}
-		}
 	}
 	mentions, err := s.v2PlacementReviewEntityMentions(ctx, run, fragment, entityHints, relationships, evidenceID)
 	if err != nil {
 		return V2SemanticReviewJob{}, err
 	}
-	observations, err := s.v2PlacementReviewRelationshipObservations(ctx, run, relationships)
+	observations, err := s.v2PlacementReviewRelationshipObservations(ctx, run, relationships, mentions)
 	if err != nil {
 		return V2SemanticReviewJob{}, err
 	}
@@ -266,12 +268,14 @@ func v2ReviewSourceProposalFromProvider(proposal verifier.V2ProviderProposal) ma
 	relationships := make([]map[string]any, 0, len(proposal.RelationshipProposals))
 	for _, relationship := range proposal.RelationshipProposals {
 		item := map[string]any{
-			"proposal_id": relationship.ProposalID,
-			"subject_ref": relationship.SubjectRef,
-			"predicate":   relationship.OriginalPredicate,
-			"polarity":    relationship.Polarity,
-			"modality":    relationship.Modality,
-			"evidence":    v2ReviewSourceEvidenceSpans(relationship.Evidence),
+			"proposal_id":          relationship.ProposalID,
+			"subject_ref":          relationship.SubjectRef,
+			"predicate":            relationship.OriginalPredicate,
+			"predicate_candidates": relationship.PredicateCandidates,
+			"relationship_kind":    relationship.RelationshipKind,
+			"polarity":             relationship.Polarity,
+			"modality":             relationship.Modality,
+			"evidence":             v2ReviewSourceEvidenceSpans(relationship.Evidence),
 		}
 		if relationship.ObjectRef != "" {
 			item["object_ref"] = relationship.ObjectRef
@@ -383,16 +387,18 @@ func v2PlacementReviewRelationshipSpecs(
 			continue
 		}
 		spec := v2PlacementReviewRelationshipSpec{
-			Ref:         v2ReviewFirstNonEmpty(v2ReviewString(raw, "proposal_id"), v2ReviewString(raw, "ref"), v2ReviewString(raw, "legacy_id"), fmt.Sprintf("relationship:%d", i)),
-			SubjectRef:  v2ReviewFirstNonEmpty(v2ReviewString(raw, "subject_ref"), v2ReviewString(raw, "subject")),
-			SubjectName: v2ReviewFirstNonEmpty(v2ReviewString(raw, "subject_name"), v2ReviewString(raw, "subject")),
-			Predicate:   v2ReviewString(raw, "predicate"),
-			ObjectRef:   v2ReviewString(raw, "object_ref"),
-			ObjectName:  v2ReviewString(raw, "object_name"),
-			EvidenceID:  evidenceID,
-			Quote:       span.quote,
-			Start:       span.start,
-			End:         span.end,
+			Ref:                 v2ReviewFirstNonEmpty(v2ReviewString(raw, "proposal_id"), v2ReviewString(raw, "ref"), v2ReviewString(raw, "legacy_id"), fmt.Sprintf("relationship:%d", i)),
+			SubjectRef:          v2ReviewFirstNonEmpty(v2ReviewString(raw, "subject_ref"), v2ReviewString(raw, "subject")),
+			SubjectName:         v2ReviewFirstNonEmpty(v2ReviewString(raw, "subject_name"), v2ReviewString(raw, "subject")),
+			Predicate:           v2ReviewString(raw, "predicate"),
+			PredicateCandidates: v2ReviewStringArray(raw, "predicate_candidates"),
+			RelationshipKind:    v2ReviewString(raw, "relationship_kind"),
+			ObjectRef:           v2ReviewString(raw, "object_ref"),
+			ObjectName:          v2ReviewString(raw, "object_name"),
+			EvidenceID:          evidenceID,
+			Quote:               span.quote,
+			Start:               span.start,
+			End:                 span.end,
 		}
 		validFrom, err := v2ReviewOptionalTime(raw, "valid_from")
 		if err != nil {
@@ -431,6 +437,20 @@ func v2PlacementReviewRelationshipSpecs(
 			spec.CorrectionTarget = &target
 		}
 		if spec.SubjectRef == "" || spec.Predicate == "" || (spec.ObjectRef == "" && spec.ObjectValue == nil) {
+			continue
+		}
+		if len(spec.PredicateCandidates) == 0 {
+			validationErrors = append(validationErrors, verifier.V2SemanticValidationError{
+				Field:   fmt.Sprintf("relationship_hints[%d].predicate_candidates", i),
+				Message: "is required",
+			})
+			continue
+		}
+		if spec.RelationshipKind == "" {
+			validationErrors = append(validationErrors, verifier.V2SemanticValidationError{
+				Field:   fmt.Sprintf("relationship_hints[%d].relationship_kind", i),
+				Message: "is required",
+			})
 			continue
 		}
 		out = append(out, spec)
@@ -601,8 +621,15 @@ func (s *v2SemanticPlacementReviewSource) v2PlacementReviewRelationshipObservati
 	ctx context.Context,
 	run repository.V2PlacementRun,
 	relationships []v2PlacementReviewRelationshipSpec,
+	mentions []verifier.V2SemanticEntityMention,
 ) ([]verifier.V2SemanticRelationshipObservation, error) {
 	out := make([]verifier.V2SemanticRelationshipObservation, 0, len(relationships))
+	kindByRef := map[string]string{}
+	for _, mention := range mentions {
+		if mention.Ref != "" && mention.Kind != "" {
+			kindByRef[mention.Ref] = mention.Kind
+		}
+	}
 	for _, relationship := range relationships {
 		candidates, err := s.catalog.ListV2SemanticReviewPredicateCandidates(ctx, repository.V2SemanticReviewPredicateCandidateInput{
 			TeamID:         run.TeamID,
@@ -628,7 +655,17 @@ func (s *v2SemanticPlacementReviewSource) v2PlacementReviewRelationshipObservati
 			CorrectionTarget:    relationship.CorrectionTarget,
 			PredicateCandidates: nil,
 		}
-		for _, candidate := range candidates {
+		seenCandidates := map[string]struct{}{}
+		appendCandidate := func(candidate repository.V2SemanticReviewPredicateCandidate) {
+			key := strings.TrimSpace(candidate.PredicateKey)
+			if key == "" || candidate.Version <= 0 {
+				return
+			}
+			dedupeKey := fmt.Sprintf("%s:%d", key, candidate.Version)
+			if _, exists := seenCandidates[dedupeKey]; exists {
+				return
+			}
+			seenCandidates[dedupeKey] = struct{}{}
 			obs.PredicateCandidates = append(obs.PredicateCandidates, verifier.V2SemanticPredicateCandidate{
 				PredicateKey:        candidate.PredicateKey,
 				Version:             candidate.Version,
@@ -639,10 +676,23 @@ func (s *v2SemanticPlacementReviewSource) v2PlacementReviewRelationshipObservati
 				LifecycleState:      candidate.LifecycleState,
 			})
 		}
+		for _, candidate := range candidates {
+			appendCandidate(candidate)
+		}
+		for _, predicate := range relationship.PredicateCandidates {
+			appendCandidate(v2ReviewSourceRequestLocalPredicateCandidate(predicate, relationship, kindByRef))
+		}
 		out = append(out, obs)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Ref < out[j].Ref })
 	return out, nil
+}
+
+func v2ReviewSourceRelationshipObjectKind(relationship v2PlacementReviewRelationshipSpec, kindByRef map[string]string) string {
+	if relationship.ObjectValue != nil {
+		return strings.TrimSpace(relationship.ObjectValue.Type)
+	}
+	return strings.TrimSpace(kindByRef[relationship.ObjectRef])
 }
 
 func v2PlacementReviewObjectValue(raw map[string]any, relationshipRef string) (verifier.V2SemanticValueObservation, bool) {
@@ -712,6 +762,36 @@ func v2ReviewString(fields map[string]any, key string) string {
 		return ""
 	}
 	return v2ReviewAnyString(fields[key])
+}
+
+func v2ReviewStringArray(fields map[string]any, key string) []string {
+	if fields == nil {
+		return nil
+	}
+	raw := fields[key]
+	out := []string{}
+	seen := map[string]bool{}
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			return
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	switch typed := raw.(type) {
+	case []string:
+		for _, value := range typed {
+			add(value)
+		}
+	case []any:
+		for _, value := range typed {
+			add(v2ReviewAnyString(value))
+		}
+	case string:
+		add(typed)
+	}
+	return out
 }
 
 func v2ReviewAnyString(raw any) string {

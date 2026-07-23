@@ -19,6 +19,7 @@ const (
 	V2MigrationActionStarted           = "started"
 	V2MigrationActionPaused            = "paused"
 	V2MigrationActionResumed           = "resumed"
+	V2MigrationActionRepairResumed     = "repair_resumed"
 	V2MigrationActionFailed            = "failed"
 	V2MigrationActionCutoverCommitted  = "cutover_committed"
 
@@ -69,6 +70,7 @@ type V2MigrationRun struct {
 	LeaseOwner               string         `json:"lease_owner,omitempty"`
 	CheckpointKey            string         `json:"checkpoint_key,omitempty"`
 	CheckpointValue          map[string]any `json:"checkpoint_value,omitempty"`
+	ClaimEpoch               int            `json:"claim_epoch"`
 	StartedAt                *time.Time     `json:"started_at,omitempty"`
 	CompletedAt              *time.Time     `json:"completed_at,omitempty"`
 	CutoverAt                *time.Time     `json:"cutover_at,omitempty"`
@@ -136,8 +138,21 @@ type V2MigrationControlStatus struct {
 	ReadinessMessage string                      `json:"readiness_message"`
 	Run              *V2MigrationRun             `json:"run,omitempty"`
 	Marker           *V2CompatibilityMarker      `json:"marker,omitempty"`
+	Repair           *V2MigrationRepairSummary   `json:"repair,omitempty"`
 	Actions          []V2MigrationOperatorAction `json:"actions,omitempty"`
 	GateResults      []V2MigrationGateResult     `json:"gate_results,omitempty"`
 	RecentErrors     []string                    `json:"recent_errors,omitempty"`
 	RestartPending   bool                        `json:"restart_pending,omitempty"`
+}
+
+type V2MigrationRepairSummary struct {
+	Required            bool `json:"required"`
+	OrphanReviews       int  `json:"orphan_reviews"`
+	AbandonedProcessing int  `json:"abandoned_processing"`
+	RetryableFailures   int  `json:"retryable_failures"`
+	HeldReviews         int  `json:"held_reviews"`
+	BlockedItems        int  `json:"blocked_items"`
+	RepairedItems       int  `json:"repaired_items,omitempty"`
+	ClaimEpochBefore    int  `json:"claim_epoch_before,omitempty"`
+	ClaimEpochAfter     int  `json:"claim_epoch_after,omitempty"`
 }

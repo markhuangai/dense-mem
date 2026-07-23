@@ -389,15 +389,16 @@ func insertV2EntityName(ctx context.Context, tx *gorm.DB, input V2AddEntityNameI
 	return nameID, rows.Err()
 }
 
-func loadV2PredicateDefinition(ctx context.Context, tx *gorm.DB, predicateKey string, version int) (*v2PredicateDefinition, error) {
+func loadV2PredicateDefinition(ctx context.Context, tx *gorm.DB, teamID string, predicateKey string, version int) (*v2PredicateDefinition, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT predicate_key, version, allowed_subject_kinds, allowed_object_kinds,
 		       relationship_kind, current_cardinality
-		FROM predicate_definitions
-		WHERE predicate_key = ?
+		FROM team_predicate_definitions
+		WHERE team_id = ?::uuid
+		  AND predicate_key = ?
 		  AND version = ?
 		  AND lifecycle_state = 'active'
-	`, predicateKey, version).Rows()
+	`, teamID, predicateKey, version).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -543,7 +544,7 @@ func insertV2RelationshipObservation(ctx context.Context, tx *gorm.DB, input V2A
 		    polarity, scope_key, valid_from, valid_to, evidence, metadata
 		) VALUES (
 		    ?::uuid, NULLIF(?, '')::uuid, ?::uuid, NULLIF(?, '')::uuid, ?::uuid,
-		    ?, ?, ?, ?::uuid, NULLIF(?, ''), NULLIF(?, 0),
+		    ?, ?, ?, NULLIF(?, '')::uuid, NULLIF(?, ''), NULLIF(?, 0),
 		    NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, NULLIF(?, ''),
 		    ?, ?, ?::jsonb, ?::jsonb
 		)

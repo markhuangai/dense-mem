@@ -783,7 +783,7 @@ func (r *V2SemanticRepositoryImpl) LatestV2DreamCycle(ctx context.Context, teamI
 }
 
 func validateV2HypothesisEndpoints(ctx context.Context, tx *gorm.DB, input V2UpsertHypothesisInput) error {
-	predicate, err := loadV2PredicateDefinition(ctx, tx, input.PredicateKey, input.PredicateVersion)
+	predicate, err := loadV2PredicateDefinition(ctx, tx, input.TeamID, input.PredicateKey, input.PredicateVersion)
 	if err != nil {
 		return err
 	}

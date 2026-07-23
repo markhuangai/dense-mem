@@ -71,6 +71,8 @@ type Store interface {
 	UpdateRunState(ctx context.Context, input repository.V2UpdateMigrationRunStateInput) (*domain.V2MigrationRun, error)
 	CommitCutover(ctx context.Context, input repository.V2CommitCutoverInput) (*domain.V2CompatibilityMarker, error)
 	GetLatestMarker(ctx context.Context) (*domain.V2CompatibilityMarker, error)
+	AssessMigrationRepair(ctx context.Context, runID string) (*domain.V2MigrationRepairSummary, error)
+	RepairAndResumeMigration(ctx context.Context, input repository.V2RepairAndResumeMigrationInput) (*domain.V2MigrationRun, error)
 	RecordOperatorAction(ctx context.Context, action domain.V2MigrationOperatorAction) error
 	ListOperatorActions(ctx context.Context, runID string, limit int) ([]domain.V2MigrationOperatorAction, error)
 }
@@ -137,7 +139,7 @@ func New(store Store, cfg Config) Service {
 
 func (s *service) Status(ctx context.Context) (*domain.V2MigrationControlStatus, error) {
 	if s.store == nil {
-		return statusFromRunMarker(s.cfg.Required, s.cfg.MigrationContractVersion, nil, nil, nil), nil
+		return statusFromRunMarker(s.cfg.Required, s.cfg.MigrationContractVersion, nil, nil, nil, nil), nil
 	}
 	marker, err := s.store.GetLatestMarker(ctx)
 	if err != nil {
@@ -151,7 +153,11 @@ func (s *service) Status(ctx context.Context) (*domain.V2MigrationControlStatus,
 	if err != nil {
 		return nil, err
 	}
-	return statusFromRunMarker(s.cfg.Required, s.cfg.MigrationContractVersion, run, marker, actions), nil
+	repair, err := s.repairSummary(ctx, run)
+	if err != nil {
+		return nil, err
+	}
+	return statusFromRunMarker(s.cfg.Required, s.cfg.MigrationContractVersion, run, marker, repair, actions), nil
 }
 
 func (s *service) ApprovePreflight(ctx context.Context, req OperatorRequest) (*domain.V2MigrationControlStatus, error) {
@@ -225,12 +231,12 @@ func (s *service) Resume(ctx context.Context, req OperatorRequest) (*domain.V2Mi
 	}
 	switch run.State {
 	case domain.V2MigrationStatePaused:
-		return s.transition(ctx, domain.V2MigrationStatePaused, domain.V2MigrationStateRunning, "migration", domain.V2MigrationActionResumed, req)
+		return s.repairAndResume(ctx, run, req)
 	case domain.V2MigrationStateFailed:
 		if !run.Retryable {
 			return nil, fmt.Errorf("%w: failed run is not retryable", ErrIllegalTransition)
 		}
-		return s.transition(ctx, domain.V2MigrationStateFailed, domain.V2MigrationStateRunning, "migration", domain.V2MigrationActionResumed, req)
+		return s.repairAndResume(ctx, run, req)
 	default:
 		return nil, fmt.Errorf("%w: %s -> %s", ErrIllegalTransition, run.State, domain.V2MigrationStateRunning)
 	}
@@ -344,6 +350,43 @@ func (s *service) transition(
 	return s.Status(ctx)
 }
 
+func (s *service) repairAndResume(
+	ctx context.Context,
+	run *domain.V2MigrationRun,
+	req OperatorRequest,
+) (*domain.V2MigrationControlStatus, error) {
+	if err := s.requireCurrentBackupConfirmation(run); err != nil {
+		return nil, err
+	}
+	repair, err := s.repairSummary(ctx, run)
+	if err != nil {
+		return nil, err
+	}
+	action := domain.V2MigrationActionResumed
+	if repair != nil && repair.Required {
+		action = domain.V2MigrationActionRepairResumed
+	}
+	now := s.now().UTC()
+	_, err = s.store.RepairAndResumeMigration(ctx, repository.V2RepairAndResumeMigrationInput{
+		RunID:     run.RunID,
+		FromState: run.State,
+		OperatorAction: domain.V2MigrationOperatorAction{
+			RunID:     run.RunID,
+			Action:    action,
+			Actor:     operatorActor(req.Actor),
+			RemoteIP:  strings.TrimSpace(req.RemoteIP),
+			Reason:    strings.TrimSpace(req.Reason),
+			Metadata:  operatorMetadata(req),
+			CreatedAt: now,
+		},
+		Now: now,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.Status(ctx)
+}
+
 func (s *service) latestRunAndMarker(ctx context.Context) (*domain.V2MigrationRun, *domain.V2CompatibilityMarker, error) {
 	if s.store == nil {
 		return nil, nil, errors.New("v2 migration control: store is required")
@@ -366,6 +409,22 @@ func (s *service) actions(ctx context.Context, run *domain.V2MigrationRun) ([]do
 	return s.store.ListOperatorActions(ctx, run.RunID, 20)
 }
 
+func (s *service) repairSummary(ctx context.Context, run *domain.V2MigrationRun) (*domain.V2MigrationRepairSummary, error) {
+	if run == nil || run.RunID == "" {
+		return nil, nil
+	}
+	switch run.State {
+	case domain.V2MigrationStatePaused:
+	case domain.V2MigrationStateFailed:
+		if !run.Retryable {
+			return nil, nil
+		}
+	default:
+		return nil, nil
+	}
+	return s.store.AssessMigrationRepair(ctx, run.RunID)
+}
+
 func (s *service) recordAction(ctx context.Context, runID, action string, req OperatorRequest, now time.Time) error {
 	return s.store.RecordOperatorAction(ctx, domain.V2MigrationOperatorAction{
 		RunID:     runID,
@@ -383,6 +442,7 @@ func statusFromRunMarker(
 	migrationContractVersion string,
 	run *domain.V2MigrationRun,
 	marker *domain.V2CompatibilityMarker,
+	repair *domain.V2MigrationRepairSummary,
 	actions []domain.V2MigrationOperatorAction,
 ) *domain.V2MigrationControlStatus {
 	if marker != nil {
@@ -399,6 +459,7 @@ func statusFromRunMarker(
 				ReadinessMessage: message,
 				Run:              run,
 				Marker:           marker,
+				Repair:           repair,
 				Actions:          actions,
 			}
 		case domain.V2MigrationMarkerIncompatible, domain.V2MigrationMarkerCorrupt:
@@ -409,6 +470,7 @@ func statusFromRunMarker(
 				ReadinessMessage: "V2 migration marker is incompatible or corrupt",
 				Run:              run,
 				Marker:           marker,
+				Repair:           repair,
 				Actions:          actions,
 			}
 		}
@@ -420,6 +482,7 @@ func statusFromRunMarker(
 			DataPlaneAllowed: run.State == domain.V2MigrationStateNotRequired || run.State == domain.V2MigrationStateCutOver,
 			ReadinessMessage: readinessMessage(run, migrationContractVersion),
 			Run:              run,
+			Repair:           repair,
 			Actions:          actions,
 		}
 	}

@@ -79,6 +79,17 @@ type V2SemanticReviewPredicateOptionsInput struct {
 	Limit          int
 }
 
+type V2EnsureSemanticPredicateCandidateInput struct {
+	TeamID           string
+	OwnerProfileID   string
+	Predicate        string
+	RelationshipKind string
+	SubjectKind      string
+	ObjectKind       string
+	Origin           string
+	Metadata         map[string]any
+}
+
 type V2SemanticReviewPredicateCandidate struct {
 	PredicateKey        string
 	Version             int

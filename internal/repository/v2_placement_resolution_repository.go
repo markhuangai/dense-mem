@@ -652,22 +652,27 @@ func quarantineV2PlacementRunForUserResolution(ctx context.Context, tx *gorm.DB,
 }
 
 func finishV2PlacementRunAfterUserResolution(ctx context.Context, tx *gorm.DB, scope v2PlacementResolutionScope) error {
-	var openCount int64
+	var openCount, reviewCount int64
 	if err := tx.WithContext(ctx).Raw(`
-		SELECT COUNT(*)
+		SELECT
+		    COUNT(*) FILTER (WHERE status IN ('queued', 'processing')),
+		    COUNT(*) FILTER (WHERE status = 'awaiting_review')
 		FROM placement_items
 		WHERE team_id = ?::uuid
 		  AND placement_run_id = ?::uuid
-		  AND status IN ('queued', 'processing')
-	`, scope.TeamID, scope.PlacementRunID).Scan(&openCount).Error; err != nil {
+	`, scope.TeamID, scope.PlacementRunID).Row().Scan(&openCount, &reviewCount); err != nil {
 		return err
 	}
 	if openCount > 0 {
 		return nil
 	}
+	runStatus := string(domain.V2PlacementRunCompleted)
+	if reviewCount > 0 {
+		runStatus = string(domain.V2PlacementRunAwaitingReview)
+	}
 	result := tx.WithContext(ctx).Exec(`
 		UPDATE placement_runs
-		SET status = 'completed',
+		SET status = ?,
 		    error = '',
 		    lease_until = NULL,
 		    worker_id = '',
@@ -677,7 +682,7 @@ func finishV2PlacementRunAfterUserResolution(ctx context.Context, tx *gorm.DB, s
 		  AND owner_profile_id = ?::uuid
 		  AND placement_run_id = ?::uuid
 		  AND status <> 'processing'
-	`, scope.TeamID, scope.OwnerProfileID, scope.PlacementRunID)
+	`, runStatus, scope.TeamID, scope.OwnerProfileID, scope.PlacementRunID)
 	if result.Error != nil {
 		return result.Error
 	}

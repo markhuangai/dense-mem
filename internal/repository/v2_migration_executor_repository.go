@@ -465,7 +465,7 @@ func (r *V2MigrationControlRepositoryImpl) FinalizeMigrationRun(
 			          preflight_checks::text, corpus_watermark, corpus_hash,
 			          total_items, completed_items, failed_items, excluded_items,
 			          last_error, retryable, lease_owner, checkpoint_key,
-			          checkpoint_value::text, started_at, completed_at, cutover_at,
+			          checkpoint_value::text, claim_epoch, started_at, completed_at, cutover_at,
 			          created_at, updated_at
 		`, domain.V2MigrationStateReadyCutover, corpusHash, completedAt, completedAt, runID,
 			domain.V2MigrationStateRunning).Rows()
@@ -496,13 +496,22 @@ func syncV2MigrationCorpusPlacementOutcomes(tx *gorm.DB, runID string, now time.
 		           placement.placement_item_id,
 		           placement.status AS placement_status,
 		           placement.category AS placement_category,
-		           COALESCE(placement.result->>'status', '') AS review_status,
+		           EXISTS (
+		               SELECT 1
+		               FROM review_tasks AS task
+		               WHERE task.team_id = placement.team_id
+		                 AND task.placement_item_id = placement.placement_item_id
+		                 AND task.status IN ('open', 'acknowledged')
+		           ) AS has_open_review,
 		           CASE
-		               WHEN placement.status = 'completed' AND COALESCE(placement.result->>'status', '') = 'rejected' THEN 'rejected'
-		               WHEN placement.status = 'completed' AND (
-		                   placement.category = 'candidate'
-		                   OR COALESCE(placement.result->>'status', '') = 'review_required'
+		               WHEN placement.status = 'awaiting_review' AND EXISTS (
+		                   SELECT 1
+		                   FROM review_tasks AS task
+		                   WHERE task.team_id = placement.team_id
+		                     AND task.placement_item_id = placement.placement_item_id
+		                     AND task.status IN ('open', 'acknowledged')
 		               ) THEN 'needs_review'
+		               WHEN placement.status = 'completed' AND COALESCE(placement.result->>'status', '') = 'rejected' THEN 'rejected'
 		               WHEN placement.status = 'completed' THEN 'accepted'
 		               WHEN placement.status = 'failed' THEN 'failed'
 		               WHEN placement.status = 'quarantined' THEN 'quarantined'
@@ -523,6 +532,7 @@ func syncV2MigrationCorpusPlacementOutcomes(tx *gorm.DB, runID string, now time.
 		        metadata = item.metadata || jsonb_build_object(
 		            'placement_status', mapped.placement_status,
 		            'placement_category', mapped.placement_category,
+		            'placement_has_open_review', mapped.has_open_review,
 		            'migration_finalized_at', ?::text
 		        ),
 		        updated_at = ?
@@ -530,7 +540,7 @@ func syncV2MigrationCorpusPlacementOutcomes(tx *gorm.DB, runID string, now time.
 		    WHERE item.item_id = mapped.item_id
 		    RETURNING mapped.run_id, mapped.source_kind, mapped.source_id,
 		              mapped.placement_item_id, mapped.placement_status,
-		              mapped.placement_category
+		              mapped.placement_category, mapped.has_open_review
 		)
 		INSERT INTO v2_migration_source_maps (
 		    map_id, run_id, source_kind, source_id, target_type, target_id, metadata, created_at
@@ -538,7 +548,8 @@ func syncV2MigrationCorpusPlacementOutcomes(tx *gorm.DB, runID string, now time.
 		SELECT gen_random_uuid(), run_id, source_kind, source_id, ?, placement_item_id::text,
 		       jsonb_build_object(
 		           'placement_status', placement_status,
-		           'placement_category', placement_category
+		           'placement_category', placement_category,
+		           'placement_has_open_review', has_open_review
 		       ),
 		       ?
 		FROM updated
@@ -604,7 +615,17 @@ func refreshV2MigrationRunStatsTx(tx *gorm.DB, runID string, now time.Time) (*do
 			        count(*)::int AS total_items,
 			        count(*) FILTER (
 			            WHERE outcome IN ('accepted', 'rejected', 'quarantined')
-			               OR (outcome = 'needs_review' AND placement_item_id IS NOT NULL)
+			               OR (
+			                   outcome = 'needs_review'
+			                   AND placement_item_id IS NOT NULL
+			                   AND EXISTS (
+			                       SELECT 1
+			                       FROM review_tasks AS task
+			                       WHERE task.team_id = v2_migration_corpus_items.team_id
+			                         AND task.placement_item_id = v2_migration_corpus_items.placement_item_id
+			                         AND task.status IN ('open', 'acknowledged')
+			                   )
+			               )
 			        )::int AS completed_items,
 			        count(*) FILTER (WHERE outcome = 'failed')::int AS failed_items,
 			        count(*) FILTER (WHERE outcome = 'excluded')::int AS excluded_items
@@ -640,6 +661,7 @@ func refreshV2MigrationRunStatsTx(tx *gorm.DB, runID string, now time.Time) (*do
 			          v2_migration_runs.lease_owner,
 			          v2_migration_runs.checkpoint_key,
 			          v2_migration_runs.checkpoint_value::text,
+			          v2_migration_runs.claim_epoch,
 			          v2_migration_runs.started_at,
 			          v2_migration_runs.completed_at,
 			          v2_migration_runs.cutover_at,
@@ -668,7 +690,19 @@ func v2MigrationCutoverBlockCounts(tx *gorm.DB, runID string) (pendingItems int,
 		SELECT
 		    count(*) FILTER (
 		        WHERE outcome = 'pending'
-		           OR (outcome = 'needs_review' AND placement_item_id IS NULL)
+		           OR (
+		               outcome = 'needs_review'
+		               AND (
+		                   placement_item_id IS NULL
+		                   OR NOT EXISTS (
+		                       SELECT 1
+		                       FROM review_tasks AS task
+		                       WHERE task.team_id = v2_migration_corpus_items.team_id
+		                         AND task.placement_item_id = v2_migration_corpus_items.placement_item_id
+		                         AND task.status IN ('open', 'acknowledged')
+		                   )
+		               )
+		           )
 		    )::int,
 		    count(*) FILTER (WHERE outcome = 'failed')::int,
 		    (

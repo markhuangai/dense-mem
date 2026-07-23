@@ -42,6 +42,7 @@ type V2CreateIngestInput struct {
 	RequestHash    string
 	SourceSummary  string
 	Status         string
+	MigrationRunID string
 	Proposal       map[string]any
 	Metadata       map[string]any
 	Evidence       []V2EvidenceInput
@@ -124,6 +125,8 @@ type V2PlacementRun struct {
 	Status         string
 	Attempts       int
 	MaxAttempts    int
+	MigrationRunID string
+	MigrationEpoch int
 	LeaseUntil     *time.Time
 }
 
@@ -297,24 +300,43 @@ func (r *V2LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, team
 	err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
 		rows, err := tx.WithContext(ctx).Raw(`
 			WITH next AS (
-				SELECT placement_run_id
-				FROM placement_runs
-				WHERE team_id = ?::uuid
-				  AND attempts < max_attempts
+				SELECT run.placement_run_id,
+				       COALESCE(migration.claim_epoch, 0) AS claim_epoch
+				FROM placement_runs AS run
+				JOIN knowledge_ingests AS ingest
+				  ON ingest.team_id = run.team_id
+				 AND ingest.ingest_id = run.ingest_id
+				LEFT JOIN v2_migration_runs AS migration
+				  ON migration.run_id = ingest.migration_run_id
+				WHERE run.team_id = ?::uuid
+				  AND run.attempts < run.max_attempts
 				  AND (
-					(status IN ('queued', 'guarded') AND available_at <= now())
-					OR (status = 'processing' AND lease_until IS NOT NULL AND lease_until < now())
+				      ingest.migration_run_id IS NULL
+				      OR migration.state = 'running'
+				  )
+				  AND (
+					(run.status IN ('queued', 'guarded') AND run.available_at <= now())
+					OR (
+					    run.status = 'processing'
+					    AND run.lease_until IS NOT NULL
+					    AND run.lease_until < now()
+					    AND (
+					        ingest.migration_run_id IS NULL
+					        OR run.migration_claim_epoch = migration.claim_epoch
+					    )
+					)
 				  )
 				ORDER BY
-					CASE WHEN status IN ('queued', 'guarded') THEN 0 ELSE 1 END,
-					available_at ASC,
-					created_at ASC
+					CASE WHEN run.status IN ('queued', 'guarded') THEN 0 ELSE 1 END,
+					run.available_at ASC,
+					run.created_at ASC
 				LIMIT 1
-				FOR UPDATE SKIP LOCKED
+				FOR UPDATE OF run SKIP LOCKED
 			)
 			UPDATE placement_runs AS run
 			SET status = 'processing',
 			    attempts = attempts + 1,
+			    migration_claim_epoch = CASE WHEN next.claim_epoch > 0 THEN next.claim_epoch ELSE run.migration_claim_epoch END,
 			    started_at = COALESCE(started_at, now()),
 			    lease_until = now() + (? * interval '1 second'),
 			    worker_id = ?,
@@ -324,7 +346,8 @@ func (r *V2LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, team
 			  AND run.placement_run_id = next.placement_run_id
 			RETURNING run.team_id::text, run.placement_run_id::text, run.ingest_id::text,
 			          run.owner_profile_id::text, run.status, run.attempts, run.max_attempts,
-			          run.lease_until
+			          COALESCE((SELECT migration_run_id::text FROM knowledge_ingests WHERE team_id = run.team_id AND ingest_id = run.ingest_id), ''),
+			          run.migration_claim_epoch, run.lease_until
 		`, teamID, int(lease.Seconds()), workerID, teamID).Rows()
 		if err != nil {
 			return err
@@ -335,7 +358,7 @@ func (r *V2LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, team
 		}
 		loaded := V2PlacementRun{}
 		var leaseUntil sql.NullTime
-		if err := rows.Scan(&loaded.TeamID, &loaded.PlacementRunID, &loaded.IngestID, &loaded.OwnerProfileID, &loaded.Status, &loaded.Attempts, &loaded.MaxAttempts, &leaseUntil); err != nil {
+		if err := rows.Scan(&loaded.TeamID, &loaded.PlacementRunID, &loaded.IngestID, &loaded.OwnerProfileID, &loaded.Status, &loaded.Attempts, &loaded.MaxAttempts, &loaded.MigrationRunID, &loaded.MigrationEpoch, &leaseUntil); err != nil {
 			return err
 		}
 		if leaseUntil.Valid {
@@ -425,6 +448,7 @@ func normalizeV2CreateIngestInput(input V2CreateIngestInput) V2CreateIngestInput
 	input.RequestHash = strings.TrimSpace(input.RequestHash)
 	input.SourceSummary = strings.TrimSpace(input.SourceSummary)
 	input.Status = strings.TrimSpace(input.Status)
+	input.MigrationRunID = strings.TrimSpace(input.MigrationRunID)
 	if input.Status == "" {
 		input.Status = string(domain.V2PlacementRunQueued)
 	}
@@ -467,6 +491,11 @@ func validateV2CreateIngestInput(input V2CreateIngestInput) error {
 	}
 	if input.IdempotencyKey != "" && input.RequestHash == "" {
 		return errors.New("request_hash is required when idempotency_key is set")
+	}
+	if input.MigrationRunID != "" {
+		if _, err := uuid.Parse(input.MigrationRunID); err != nil {
+			return fmt.Errorf("migration_run_id is invalid: %w", err)
+		}
 	}
 	if len(input.Evidence) == 0 {
 		return errors.New("evidence is required")
@@ -570,11 +599,14 @@ func ensureV2SemanticRefs(ctx context.Context, tx *gorm.DB, teamID, profileID st
 	`, teamID).Error; err != nil {
 		return err
 	}
-	return tx.WithContext(ctx).Exec(`
+	if err := tx.WithContext(ctx).Exec(`
 		INSERT INTO semantic_profile_refs (team_id, profile_id)
 		VALUES (?::uuid, ?::uuid)
 		ON CONFLICT (team_id, profile_id) DO NOTHING
-	`, teamID, profileID).Error
+	`, teamID, profileID).Error; err != nil {
+		return err
+	}
+	return seedV2TeamPredicateDefinitions(ctx, tx, teamID)
 }
 
 func insertV2KnowledgeIngest(ctx context.Context, tx *gorm.DB, input V2CreateIngestInput) (string, bool, error) {
@@ -591,9 +623,9 @@ func insertV2KnowledgeIngest(ctx context.Context, tx *gorm.DB, input V2CreateIng
 			WITH inserted AS (
 				INSERT INTO knowledge_ingests (
 				    team_id, owner_profile_id, idempotency_key, request_hash,
-				    source_summary, status, proposal, metadata
+				    source_summary, status, migration_run_id, proposal, metadata
 				) VALUES (
-				    ?::uuid, ?::uuid, ?, ?, ?, ?, ?::jsonb, ?::jsonb
+				    ?::uuid, ?::uuid, ?, ?, ?, ?, NULLIF(?, '')::uuid, ?::jsonb, ?::jsonb
 				)
 				ON CONFLICT (team_id, owner_profile_id, idempotency_key)
 				WHERE idempotency_key <> ''
@@ -609,7 +641,7 @@ func insertV2KnowledgeIngest(ctx context.Context, tx *gorm.DB, input V2CreateIng
 			  AND idempotency_key = ?
 			LIMIT 1
 		`, input.TeamID, input.OwnerProfileID, input.IdempotencyKey, input.RequestHash,
-			input.SourceSummary, input.Status, string(proposal), string(metadata),
+			input.SourceSummary, input.Status, input.MigrationRunID, string(proposal), string(metadata),
 			input.TeamID, input.OwnerProfileID, input.IdempotencyKey).Rows()
 		if err != nil {
 			return "", false, err
@@ -648,13 +680,13 @@ func insertV2KnowledgeIngest(ctx context.Context, tx *gorm.DB, input V2CreateIng
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO knowledge_ingests (
-		    team_id, owner_profile_id, request_hash, source_summary, status, proposal, metadata
+		    team_id, owner_profile_id, request_hash, source_summary, status, migration_run_id, proposal, metadata
 		) VALUES (
-		    ?::uuid, ?::uuid, ?, ?, ?, ?::jsonb, ?::jsonb
+		    ?::uuid, ?::uuid, ?, ?, ?, NULLIF(?, '')::uuid, ?::jsonb, ?::jsonb
 		)
 		RETURNING ingest_id::text
 	`, input.TeamID, input.OwnerProfileID, input.RequestHash, input.SourceSummary,
-		input.Status, string(proposal), string(metadata)).Rows()
+		input.Status, input.MigrationRunID, string(proposal), string(metadata)).Rows()
 	if err != nil {
 		return "", false, err
 	}

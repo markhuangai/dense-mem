@@ -15,8 +15,9 @@ import (
 )
 
 var (
-	ErrV2PlacementLeaseLost   = errors.New("v2 placement lease lost")
-	ErrV2PlacementStaleSource = errors.New("v2 placement stale source")
+	ErrV2PlacementLeaseLost          = errors.New("v2 placement lease lost")
+	ErrV2PlacementStaleSource        = errors.New("v2 placement stale source")
+	errV2PlacementUnresolvedEndpoint = errors.New("v2 placement unresolved relationship endpoint")
 )
 
 type V2PlacementCommitRepository interface {
@@ -33,6 +34,8 @@ type V2CommitPlacementSemanticInput struct {
 	PlacementItemID  string
 	WorkerID         string
 	ExpectedAttempts int
+	MigrationRunID   string
+	MigrationEpoch   int
 	OutcomeKind      string
 	Status           string
 	Category         string
@@ -40,6 +43,7 @@ type V2CommitPlacementSemanticInput struct {
 
 	EntityResolutions        []V2PlacementEntityResolutionInput
 	RelationshipObservations []V2PlacementRelationshipDecisionInput
+	RelationshipReviews      []V2PlacementRelationshipReviewInput
 	RelationshipDecisions    []V2ApplyRelationshipDecisionInput
 }
 
@@ -81,6 +85,17 @@ type V2PlacementRelationshipDecisionInput struct {
 	RelationshipMetadata map[string]any
 }
 
+type V2PlacementRelationshipReviewInput struct {
+	Ref               string
+	SubjectRef        string
+	OriginalPredicate string
+	ObjectRef         string
+	ObjectValue       *V2PlacementValueInput
+	EvidenceVerdict   string
+	Reason            string
+	Payload           map[string]any
+}
+
 type V2PlacementCorrectionTargetInput struct {
 	RelationshipID  string
 	ExpectedVersion int
@@ -102,6 +117,7 @@ type V2CommitPlacementSemanticResult struct {
 	RelationshipResults []V2RelationshipDecisionResult
 	SearchDocuments     []V2SearchDocumentResult
 	EntityResolutionIDs []string
+	ReviewTaskIDs       []string
 }
 
 var _ V2PlacementCommitRepository = (*V2LedgerRepositoryImpl)(nil)
@@ -165,15 +181,39 @@ func (r *V2LedgerRepositoryImpl) CommitPlacementSemanticResult(
 			if entityID != "" {
 				entitiesByRef[resolution.MentionRef] = entityID
 			}
+			if resolution.Action == string(domain.V2EntityResolutionAmbiguous) {
+				taskID, err := insertV2EntityReviewTask(ctx, tx, input, resolution, resolutionID)
+				if err != nil {
+					return err
+				}
+				appendV2PlacementReviewTaskID(result, taskID)
+			}
 		}
 		for _, observation := range input.RelationshipObservations {
 			decision, err := v2RelationshipDecisionFromPlacementObservation(ctx, tx, input, observation, entitiesByRef)
 			if err != nil {
-				return err
+				if !errors.Is(err, errV2PlacementUnresolvedEndpoint) {
+					return err
+				}
+				review, reviewErr := insertV2RelationshipDependencyReview(ctx, tx, input, observation, err.Error())
+				if reviewErr != nil {
+					return reviewErr
+				}
+				appendV2PlacementRelationshipResult(result, review)
+				appendV2PlacementReviewTaskID(result, review.ReviewTaskID)
+				continue
 			}
 			if err := applyV2PlacementRelationshipDecision(ctx, tx, input, decision, observation.CorrectionTarget, placementFragmentID, result); err != nil {
 				return err
 			}
+		}
+		for _, review := range input.RelationshipReviews {
+			recorded, err := insertV2RelationshipReview(ctx, tx, input, review)
+			if err != nil {
+				return err
+			}
+			appendV2PlacementRelationshipResult(result, recorded)
+			appendV2PlacementReviewTaskID(result, recorded.ReviewTaskID)
 		}
 		for _, decision := range input.RelationshipDecisions {
 			if err := applyV2PlacementRelationshipDecision(ctx, tx, input, withV2PlacementDecisionScope(input, decision), nil, placementFragmentID, result); err != nil {
@@ -181,6 +221,13 @@ func (r *V2LedgerRepositoryImpl) CommitPlacementSemanticResult(
 			}
 		}
 		payload := v2PlacementCommitPayload(input.Payload, result)
+		itemStatus := string(domain.V2PlacementRunCompleted)
+		runStatus := string(domain.V2PlacementRunCompleted)
+		if len(result.ReviewTaskIDs) > 0 {
+			itemStatus = string(domain.V2PlacementRunAwaitingReview)
+			runStatus = string(domain.V2PlacementRunAwaitingReview)
+			input.Category = "candidate"
+		}
 		outcomeID, err := insertV2PlacementOutcome(ctx, tx, V2PlacementOutcomeInput{
 			TeamID:             input.TeamID,
 			OwnerProfileID:     input.OwnerProfileID,
@@ -189,7 +236,7 @@ func (r *V2LedgerRepositoryImpl) CommitPlacementSemanticResult(
 			OutcomeKind:        input.OutcomeKind,
 			Status:             input.Status,
 			Payload:            payload,
-			UpdateItemStatus:   string(domain.V2PlacementRunCompleted),
+			UpdateItemStatus:   itemStatus,
 			UpdateItemCategory: input.Category,
 		})
 		if err != nil {
@@ -199,13 +246,13 @@ func (r *V2LedgerRepositoryImpl) CommitPlacementSemanticResult(
 			TeamID:             input.TeamID,
 			OwnerProfileID:     input.OwnerProfileID,
 			PlacementItemID:    input.PlacementItemID,
-			UpdateItemStatus:   string(domain.V2PlacementRunCompleted),
+			UpdateItemStatus:   itemStatus,
 			UpdateItemCategory: input.Category,
 			Payload:            payload,
 		}); err != nil {
 			return err
 		}
-		if err := finishV2PlacementRunIfTerminal(ctx, tx, input, string(domain.V2PlacementRunCompleted)); err != nil {
+		if err := finishV2PlacementRunIfTerminal(ctx, tx, input, runStatus); err != nil {
 			return err
 		}
 		result.Status = input.Status
@@ -225,6 +272,7 @@ func normalizeV2CommitPlacementSemanticInput(input V2CommitPlacementSemanticInpu
 	input.PlacementRunID = strings.TrimSpace(input.PlacementRunID)
 	input.PlacementItemID = strings.TrimSpace(input.PlacementItemID)
 	input.WorkerID = strings.TrimSpace(input.WorkerID)
+	input.MigrationRunID = strings.TrimSpace(input.MigrationRunID)
 	input.OutcomeKind = strings.TrimSpace(input.OutcomeKind)
 	input.Status = strings.TrimSpace(input.Status)
 	input.Category = strings.TrimSpace(input.Category)
@@ -253,6 +301,22 @@ func normalizeV2CommitPlacementSemanticInput(input V2CommitPlacementSemanticInpu
 		observation := &input.RelationshipObservations[i]
 		*observation = normalizeV2PlacementRelationshipDecisionInput(*observation)
 	}
+	for i := range input.RelationshipReviews {
+		review := &input.RelationshipReviews[i]
+		review.Ref = strings.TrimSpace(review.Ref)
+		review.SubjectRef = strings.TrimSpace(review.SubjectRef)
+		review.OriginalPredicate = strings.TrimSpace(review.OriginalPredicate)
+		review.ObjectRef = strings.TrimSpace(review.ObjectRef)
+		review.EvidenceVerdict = strings.TrimSpace(review.EvidenceVerdict)
+		review.Reason = strings.TrimSpace(review.Reason)
+		if review.Reason == "" {
+			review.Reason = "relationship_needs_review"
+		}
+		if review.ObjectValue != nil {
+			value := normalizeV2PlacementValueInput(*review.ObjectValue)
+			review.ObjectValue = &value
+		}
+	}
 	return input
 }
 
@@ -274,6 +338,9 @@ func validateV2CommitPlacementSemanticInput(input V2CommitPlacementSemanticInput
 	if input.ExpectedAttempts < 1 {
 		return errors.New("expected_attempts must be greater than zero")
 	}
+	if err := validateV2PlacementMigrationFence(input.MigrationRunID, input.MigrationEpoch); err != nil {
+		return err
+	}
 	if input.Status == "" {
 		return errors.New("status is required")
 	}
@@ -290,11 +357,40 @@ func validateV2CommitPlacementSemanticInput(input V2CommitPlacementSemanticInput
 			return err
 		}
 	}
+	for _, review := range input.RelationshipReviews {
+		if err := validateV2PlacementRelationshipReviewInput(review); err != nil {
+			return err
+		}
+	}
 	for _, decision := range input.RelationshipDecisions {
 		scoped := withV2PlacementDecisionScope(input, decision)
 		if err := validateV2ApplyRelationshipDecisionInput(normalizeV2ApplyRelationshipDecisionInput(scoped)); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validateV2PlacementRelationshipReviewInput(input V2PlacementRelationshipReviewInput) error {
+	if input.Ref == "" {
+		return errors.New("relationship review ref is required")
+	}
+	if input.SubjectRef == "" {
+		return errors.New("relationship review subject_ref is required")
+	}
+	if input.OriginalPredicate == "" {
+		return errors.New("relationship review original_predicate is required")
+	}
+	if (input.ObjectRef == "") == (input.ObjectValue == nil) {
+		return errors.New("relationship review requires exactly one object endpoint")
+	}
+	if input.ObjectValue != nil {
+		if err := validateV2PlacementValueInput(*input.ObjectValue); err != nil {
+			return err
+		}
+	}
+	if input.EvidenceVerdict != "" && !v2Contains(domain.V2VerificationVerdicts(), input.EvidenceVerdict) {
+		return fmt.Errorf("unsupported relationship review evidence_verdict %q", input.EvidenceVerdict)
 	}
 	return nil
 }
@@ -472,6 +568,9 @@ func validateV2PlacementValueInput(input V2PlacementValueInput) error {
 }
 
 func lockV2PlacementRunForCommit(ctx context.Context, tx *gorm.DB, input V2CommitPlacementSemanticInput) error {
+	if err := lockV2MigrationRunForPlacementCommit(ctx, tx, input); err != nil {
+		return err
+	}
 	var found int
 	err := tx.WithContext(ctx).Raw(`
 		SELECT 1
@@ -483,10 +582,11 @@ func lockV2PlacementRunForCommit(ctx context.Context, tx *gorm.DB, input V2Commi
 		  AND status = 'processing'
 		  AND worker_id = ?
 		  AND attempts = ?
+		  AND (? = '' OR COALESCE(migration_claim_epoch, 0) = ?)
 		  AND lease_until > clock_timestamp()
 		FOR UPDATE
 	`, input.TeamID, input.OwnerProfileID, input.IngestID, input.PlacementRunID,
-		input.WorkerID, input.ExpectedAttempts).Scan(&found).Error
+		input.WorkerID, input.ExpectedAttempts, input.MigrationRunID, input.MigrationEpoch).Scan(&found).Error
 	if err != nil {
 		return err
 	}
@@ -621,6 +721,53 @@ func insertV2PlacementEntityResolution(
 	return resolutionID, entityID, rows.Err()
 }
 
+func insertV2EntityReviewTask(
+	ctx context.Context,
+	tx *gorm.DB,
+	commit V2CommitPlacementSemanticInput,
+	input V2PlacementEntityResolutionInput,
+	resolutionID string,
+) (string, error) {
+	payload, err := marshalV2JSON(map[string]any{
+		"mention_ref":         input.MentionRef,
+		"resolution_event_id": resolutionID,
+		"action":              input.Action,
+		"entity_kind":         input.EntityKind,
+		"canonical_name":      input.CanonicalName,
+		"reason":              "ambiguous_entity",
+	})
+	if err != nil {
+		return "", err
+	}
+	dedupeKey := "identity:" + commit.PlacementItemID + ":" + input.MentionRef
+	rows, err := tx.WithContext(ctx).Raw(`
+		INSERT INTO review_tasks (
+		    team_id, owner_profile_id, ingest_id, placement_item_id,
+		    task_type, status, reason, payload, dedupe_key, updated_at
+		) VALUES (
+		    ?::uuid, ?::uuid, ?::uuid, ?::uuid,
+		    'identity_needs_review', 'open', 'ambiguous_entity', ?::jsonb, ?, now()
+		)
+		ON CONFLICT (team_id, dedupe_key)
+		WHERE dedupe_key <> '' AND status IN ('open', 'acknowledged')
+		DO UPDATE SET updated_at = now()
+		RETURNING review_task_id::text
+	`, commit.TeamID, commit.OwnerProfileID, commit.IngestID, commit.PlacementItemID,
+		string(payload), dedupeKey).Rows()
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return "", rows.Err()
+	}
+	var taskID string
+	if err := rows.Scan(&taskID); err != nil {
+		return "", err
+	}
+	return taskID, rows.Err()
+}
+
 func insertV2PlacementEntity(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -686,7 +833,7 @@ func v2RelationshipDecisionFromPlacementObservation(
 ) (V2ApplyRelationshipDecisionInput, error) {
 	subjectID := entitiesByRef[input.SubjectRef]
 	if subjectID == "" {
-		return V2ApplyRelationshipDecisionInput{}, fmt.Errorf("relationship observation %q references unresolved subject_ref %q", input.Ref, input.SubjectRef)
+		return V2ApplyRelationshipDecisionInput{}, fmt.Errorf("%w: relationship observation %q references subject_ref %q", errV2PlacementUnresolvedEndpoint, input.Ref, input.SubjectRef)
 	}
 	decision := V2ApplyRelationshipDecisionInput{
 		TeamID:               commit.TeamID,
@@ -726,7 +873,7 @@ func v2RelationshipDecisionFromPlacementObservation(
 	} else {
 		objectID := entitiesByRef[input.ObjectRef]
 		if objectID == "" {
-			return V2ApplyRelationshipDecisionInput{}, fmt.Errorf("relationship observation %q references unresolved object_ref %q", input.Ref, input.ObjectRef)
+			return V2ApplyRelationshipDecisionInput{}, fmt.Errorf("%w: relationship observation %q references object_ref %q", errV2PlacementUnresolvedEndpoint, input.Ref, input.ObjectRef)
 		}
 		decision.ObjectRef = input.ObjectRef
 		decision.ObjectEntityID = objectID

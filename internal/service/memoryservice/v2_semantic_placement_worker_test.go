@@ -18,6 +18,7 @@ func TestV2SemanticPlacementWorkerClaimsReviewsAndCompletesAcceptedRun(t *testin
 	placementRunID := uuid.NewString()
 	placementItemID := uuid.NewString()
 	ingestID := uuid.NewString()
+	migrationRunID := uuid.NewString()
 	request := v2SemanticReviewServiceRequest(teamID, ownerID)
 	reviewResult := v2SemanticReviewResultFromResponse(v2SemanticReviewResponse(request.RequestID, false, false), 1, "sha256:worker-review")
 	ledger := &v2PlacementWorkerLedgerStub{run: &repository.V2PlacementRun{
@@ -28,6 +29,8 @@ func TestV2SemanticPlacementWorkerClaimsReviewsAndCompletesAcceptedRun(t *testin
 		Status:         "processing",
 		Attempts:       3,
 		MaxAttempts:    5,
+		MigrationRunID: migrationRunID,
+		MigrationEpoch: 7,
 	}}
 	reviewSource := &v2PlacementWorkerReviewSourceStub{job: V2SemanticReviewJob{
 		PlacementItemID: placementItemID,
@@ -60,6 +63,9 @@ func TestV2SemanticPlacementWorkerClaimsReviewsAndCompletesAcceptedRun(t *testin
 	}
 	if commit.job.WorkerID != "worker-v2" || commit.job.ExpectedAttempts != 3 || commit.job.MaxAttempts != 5 || commit.job.PlacementItemID != placementItemID {
 		t.Fatalf("commit job = %#v", commit.job)
+	}
+	if commit.job.MigrationRunID != migrationRunID || commit.job.MigrationEpoch != 7 {
+		t.Fatalf("commit migration scope = %#v", commit.job)
 	}
 }
 

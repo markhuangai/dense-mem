@@ -149,6 +149,8 @@ func v2CommitJobWithRunScope(
 		WorkerID:         workerID,
 		ExpectedAttempts: run.Attempts,
 		MaxAttempts:      run.MaxAttempts,
+		MigrationRunID:   run.MigrationRunID,
+		MigrationEpoch:   run.MigrationEpoch,
 		Request:          reviewJob.Request,
 		Result:           result,
 	}
