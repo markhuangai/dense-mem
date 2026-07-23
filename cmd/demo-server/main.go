@@ -72,8 +72,8 @@ func main() {
 	}
 
 	rlsHelper := postgres.NewRLS()
-	migrationControlRepo := repository.NewV2MigrationControlRepository(pgDB.GetDB(), rlsHelper)
-	authority, err := serverapp.EnsureAuthority(startupCtx, migrationControlRepo)
+	authorityRepo := repository.NewAuthorityRepository(pgDB.GetDB(), rlsHelper)
+	authority, err := serverapp.EnsureAuthority(startupCtx, authorityRepo)
 	if err != nil {
 		log.Fatalf("authority bootstrap failed: %v", err)
 	}

@@ -93,20 +93,3 @@ func (r *RLS) WithSystemTx(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB
 		return fn(tx)
 	})
 }
-
-// WithMigrationTx executes fn in an internal migration context distinct from
-// normal system-worker execution.
-func (r *RLS) WithMigrationTx(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) error) error {
-	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec("SELECT set_config('app.current_team_id', '', true)").Error; err != nil {
-			return fmt.Errorf("failed to set app.current_team_id: %w", err)
-		}
-		if err := tx.Exec("SELECT set_config('app.current_profile_id', '', true)").Error; err != nil {
-			return fmt.Errorf("failed to set app.current_profile_id: %w", err)
-		}
-		if err := tx.Exec("SELECT set_config('app.tx_mode', 'migration', true)").Error; err != nil {
-			return fmt.Errorf("failed to set app.tx_mode: %w", err)
-		}
-		return fn(tx)
-	})
-}

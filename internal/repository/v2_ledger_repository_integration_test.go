@@ -14,6 +14,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/wait"
 	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
@@ -29,13 +32,7 @@ const (
 func setupV2LedgerRepositoryDB(t *testing.T) (*gorm.DB, *gorm.DB, *storagepostgres.RLS, func()) {
 	t.Helper()
 
-	dsn := storagepostgres.GetTestDSN()
-	if dsn == "" {
-		t.Skip("set DATABASE_URL to run V2 ledger PostgreSQL integration tests")
-	}
-	if os.Getenv("DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS") != "1" {
-		t.Skip("set DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS=1 to run destructive V2 ledger PostgreSQL integration tests")
-	}
+	dsn, baseCleanup := setupV2LedgerRepositoryDSN(t)
 
 	db, err := gorm.Open(gormpostgres.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
@@ -45,7 +42,7 @@ func setupV2LedgerRepositoryDB(t *testing.T) (*gorm.DB, *gorm.DB, *storagepostgr
 	require.NoError(t, migrator.RunUp(context.Background()))
 
 	rls := storagepostgres.NewRLS()
-	require.NoError(t, rls.WithMigrationTx(context.Background(), db, func(tx *gorm.DB) error {
+	require.NoError(t, rls.WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
 		return tx.Exec(fmt.Sprintf(`
 			DO $$
 			BEGIN
@@ -65,11 +62,11 @@ func setupV2LedgerRepositoryDB(t *testing.T) (*gorm.DB, *gorm.DB, *storagepostgr
 	require.NoError(t, err)
 
 	cleanup := func() {
-		_ = rls.WithMigrationTx(context.Background(), db, truncateV2LedgerFixtures)
+		_ = rls.WithSystemTx(context.Background(), db, truncateV2LedgerFixtures)
 		if sqlDB, err := appDB.DB(); err == nil {
 			_ = sqlDB.Close()
 		}
-		_ = rls.WithMigrationTx(context.Background(), db, func(tx *gorm.DB) error {
+		_ = rls.WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
 			return tx.Exec(fmt.Sprintf(`
 				REASSIGN OWNED BY %[1]s TO CURRENT_USER;
 				DROP OWNED BY %[1]s;
@@ -79,9 +76,50 @@ func setupV2LedgerRepositoryDB(t *testing.T) (*gorm.DB, *gorm.DB, *storagepostgr
 		if sqlDB, err := db.DB(); err == nil {
 			_ = sqlDB.Close()
 		}
+		baseCleanup()
 	}
-	require.NoError(t, rls.WithMigrationTx(context.Background(), db, truncateV2LedgerFixtures))
+	require.NoError(t, rls.WithSystemTx(context.Background(), db, truncateV2LedgerFixtures))
 	return db, appDB, rls, cleanup
+}
+
+func setupV2LedgerRepositoryDSN(t *testing.T) (string, func()) {
+	t.Helper()
+
+	if dsn := storagepostgres.GetTestDSN(); dsn != "" {
+		if os.Getenv("DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS") != "1" {
+			t.Skip("set DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS=1 to run destructive V2 ledger PostgreSQL integration tests against DATABASE_URL")
+		}
+		return dsn, func() {}
+	}
+	if os.Getenv("DENSE_MEM_REPOSITORY_TESTCONTAINERS") != "1" {
+		t.Skip("set DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 to run disposable V2 ledger PostgreSQL integration tests")
+	}
+
+	ctx := context.Background()
+	container, err := tcpostgres.Run(ctx,
+		"pgvector/pgvector:0.8.2-pg18-trixie",
+		tcpostgres.WithDatabase("testdb"),
+		tcpostgres.WithUsername("testuser"),
+		tcpostgres.WithPassword("testpass"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).
+				WithStartupTimeout(30*time.Second),
+		),
+	)
+	if err != nil {
+		t.Skipf("Postgres test container not available: %v", err)
+	}
+
+	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		_ = container.Terminate(ctx)
+		t.Fatalf("get Postgres test container DSN: %v", err)
+	}
+
+	return dsn, func() {
+		_ = container.Terminate(ctx)
+	}
 }
 
 func v2LedgerAppDSN(t *testing.T, dsn string) string {
@@ -174,7 +212,7 @@ func createV2LedgerTeam(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS, tea
 	t.Helper()
 
 	teamID := uuid.NewString()
-	err := rls.WithMigrationTx(context.Background(), db, func(tx *gorm.DB) error {
+	err := rls.WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO teams (id, name, description, metadata, config)
 			VALUES (?::uuid, ?, '', '{}'::jsonb, '{}'::jsonb)
@@ -189,7 +227,7 @@ func createV2LedgerProfile(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS, 
 
 	profileID := uuid.NewString()
 	keyPrefix := strings.ReplaceAll(uuid.NewString(), "-", "")[:24]
-	err := rls.WithMigrationTx(context.Background(), db, func(tx *gorm.DB) error {
+	err := rls.WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO team_profiles (
 			    id, team_id, key_hash, key_prefix, key_suffix, name, scopes, role
@@ -273,7 +311,7 @@ func TestV2LedgerCreateIngestIsIdempotentAndOwnerScoped(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			UPDATE evidence_fragments
 			SET content = 'rewritten'
@@ -284,7 +322,7 @@ func TestV2LedgerCreateIngestIsIdempotentAndOwnerScoped(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "append-only")
 
-	err = rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			DELETE FROM evidence_fragments
 			WHERE team_id = ?::uuid
@@ -844,7 +882,7 @@ func TestV2LedgerAuthorityConstraintsUseCanonicalValues(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "authority is unsupported")
 
-	err = rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO evidence_sources (team_id, owner_profile_id, source_key, source_kind, authority)
 			VALUES (?::uuid, ?::uuid, 'doc://canonical-authority', 'document', 'unknown')
@@ -852,7 +890,7 @@ func TestV2LedgerAuthorityConstraintsUseCanonicalValues(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO evidence_sources (team_id, owner_profile_id, source_key, source_kind, authority)
 			VALUES (?::uuid, ?::uuid, 'doc://legacy-derived-authority', 'document', 'derived')
@@ -879,7 +917,7 @@ func TestV2ReferenceDefinitionGuardRequiresSystemOrMigrationMode(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires system or migration mode")
 
-	err = rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return insertV2PredicateDefinitionForTest(tx, "test_migration_mode_"+strings.ReplaceAll(uuid.NewString(), "-", ""))
 	})
 	require.NoError(t, err)

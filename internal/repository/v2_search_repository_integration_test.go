@@ -627,7 +627,7 @@ func createV2SearchTestHNSWIndex(
 	t.Helper()
 	parsedContractID, err := uuid.Parse(contractID)
 	require.NoError(t, err)
-	err = rls.WithMigrationTx(context.Background(), db, func(tx *gorm.DB) error {
+	err = rls.WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
 		return tx.Exec(fmt.Sprintf(`
 			CREATE INDEX IF NOT EXISTS v2_search_documents_test_3_halfvec_hnsw_idx
 			    ON search_documents
@@ -680,7 +680,7 @@ func insertV2SearchTestContractWithOptions(
 		operatorClass = "halfvec_cosine_ops"
 		indexedExpression = fmt.Sprintf("embedding::halfvec(%d)", dimensions)
 	}
-	err := rls.WithMigrationTx(context.Background(), db, func(tx *gorm.DB) error {
+	err := rls.WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
 		if err := tx.Exec(`
 			INSERT INTO embedding_contracts (
 			    embedding_contract_id, contract_key, version, provider, model,

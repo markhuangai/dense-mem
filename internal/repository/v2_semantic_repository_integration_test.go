@@ -346,7 +346,7 @@ func TestV2SemanticRelationshipLifecycleAndRLS(t *testing.T) {
 	assert.NotEmpty(t, unknown.ReviewTaskID)
 
 	var beforeObservations, beforeReviews int64
-	err = rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		if err := tx.Raw(`
 				SELECT COUNT(*)
 				FROM relationship_observations
@@ -379,7 +379,7 @@ func TestV2SemanticRelationshipLifecycleAndRLS(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrV2SemanticOwnerMismatch), err)
-	err = rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		var afterObservations, afterReviews int64
 		if err := tx.Raw(`
 				SELECT COUNT(*)
@@ -606,7 +606,7 @@ func TestV2SemanticCreateHypothesisBootstrapsRefsAndDefaultsProposed(t *testing.
 	require.NoError(t, err)
 	require.NotEmpty(t, hypothesisID)
 
-	err = rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		var status string
 		if err := tx.Raw(`
 			SELECT status
@@ -796,7 +796,7 @@ func TestV2SemanticAppendOnlyHistoryAndRetraction(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			UPDATE relationship_transition_events
 			SET reason = 'rewritten'

@@ -13,147 +13,116 @@ import (
 	"gorm.io/gorm"
 )
 
-// TestRLSPoliciesProfileIsolation verifies profile A cannot read profile B's rows
-func TestRLSPoliciesProfileIsolation(t *testing.T) {
+func TestRLSPoliciesTeamProfileIsolation(t *testing.T) {
 	ctx := context.Background()
-
-	// Create test database connection
-	db, cleanup := setupTestDB(t)
+	db, cleanup := setupRLSTestDB(t)
 	defer cleanup()
 
 	rls := NewRLS()
+	teamA := createTestTeam(t, db, "Team A")
+	teamB := createTestTeam(t, db, "Team B")
+	profileA := createTestTeamProfile(t, db, teamA, "Profile A")
+	profileB := createTestTeamProfile(t, db, teamB, "Profile B")
 
-	// Create two profiles
-	profileA := createTestProfile(t, db, "Profile A")
-	profileB := createTestProfile(t, db, "Profile B")
-
-	// Create an API key for profile A
-	apiKeyA := createTestAPIKey(t, db, profileA)
-
-	// Create an API key for profile B
-	apiKeyB := createTestAPIKey(t, db, profileB)
-
-	// Verify profile A can only see its own API keys
 	var count int64
-	err := rls.WithProfileTx(ctx, db, profileA.String(), func(tx *gorm.DB) error {
-		return tx.Model(&APIKey{}).Count(&count).Error
+	err := rls.WithTeamTx(ctx, db, teamA.String(), func(tx *gorm.DB) error {
+		return tx.Model(&TeamProfile{}).Count(&count).Error
 	})
 	if err != nil {
-		t.Fatalf("failed to query as profile A: %v", err)
+		t.Fatalf("failed to query as team A: %v", err)
 	}
 	if count != 1 {
-		t.Errorf("profile A should see exactly 1 API key, got %d", count)
+		t.Fatalf("team A should see exactly 1 team_profile, got %d", count)
 	}
 
-	// Verify profile A cannot see profile B's API key
-	var foundKey APIKey
-	err = rls.WithProfileTx(ctx, db, profileA.String(), func(tx *gorm.DB) error {
-		return tx.First(&foundKey, "id = ?", apiKeyB).Error
+	var found TeamProfile
+	err = rls.WithTeamTx(ctx, db, teamA.String(), func(tx *gorm.DB) error {
+		return tx.First(&found, "id = ?", profileB).Error
 	})
 	if err == nil {
-		t.Error("profile A should not be able to read profile B's API key")
+		t.Fatal("team A should not read team B's team_profile")
 	}
 
-	// Verify profile B can only see its own API keys
-	err = rls.WithProfileTx(ctx, db, profileB.String(), func(tx *gorm.DB) error {
-		return tx.Model(&APIKey{}).Count(&count).Error
+	err = rls.WithTeamTx(ctx, db, teamB.String(), func(tx *gorm.DB) error {
+		return tx.Model(&TeamProfile{}).Count(&count).Error
 	})
 	if err != nil {
-		t.Fatalf("failed to query as profile B: %v", err)
+		t.Fatalf("failed to query as team B: %v", err)
 	}
 	if count != 1 {
-		t.Errorf("profile B should see exactly 1 API key, got %d", count)
+		t.Fatalf("team B should see exactly 1 team_profile, got %d", count)
 	}
 
-	// Verify profile B cannot see profile A's API key
-	err = rls.WithProfileTx(ctx, db, profileB.String(), func(tx *gorm.DB) error {
-		return tx.First(&foundKey, "id = ?", apiKeyA).Error
+	err = rls.WithTeamTx(ctx, db, teamB.String(), func(tx *gorm.DB) error {
+		return tx.First(&found, "id = ?", profileA).Error
 	})
 	if err == nil {
-		t.Error("profile B should not be able to read profile A's API key")
+		t.Fatal("team B should not read team A's team_profile")
 	}
 }
 
-// TestRLSPoliciesSystemSeesAll verifies internal/system transactions can read
-// all rows across profiles.
 func TestRLSPoliciesSystemSeesAll(t *testing.T) {
 	ctx := context.Background()
-
-	// Create test database connection
-	db, cleanup := setupTestDB(t)
+	db, cleanup := setupRLSTestDB(t)
 	defer cleanup()
 
 	rls := NewRLS()
+	teamA := createTestTeam(t, db, "Team A")
+	teamB := createTestTeam(t, db, "Team B")
+	createTestTeamProfile(t, db, teamA, "Profile A")
+	createTestTeamProfile(t, db, teamB, "Profile B")
 
-	// Create two profiles
-	profileA := createTestProfile(t, db, "Profile A")
-	profileB := createTestProfile(t, db, "Profile B")
-
-	// Create API keys for both profiles
-	createTestAPIKey(t, db, profileA)
-	createTestAPIKey(t, db, profileB)
-
-	// Verify system transactions can see all API keys.
 	var count int64
 	err := rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
-		return tx.Model(&APIKey{}).Count(&count).Error
+		return tx.Model(&TeamProfile{}).Count(&count).Error
 	})
 	if err != nil {
-		t.Fatalf("failed to query as system transaction: %v", err)
+		t.Fatalf("failed to query team_profiles as system transaction: %v", err)
 	}
 	if count != 2 {
-		t.Errorf("system transaction should see exactly 2 API keys, got %d", count)
+		t.Fatalf("system transaction should see exactly 2 team_profiles, got %d", count)
 	}
 
-	// Verify system transactions can see all profiles.
 	err = rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
-		return tx.Model(&Profile{}).Count(&count).Error
+		return tx.Model(&Team{}).Count(&count).Error
 	})
 	if err != nil {
-		t.Fatalf("failed to query profiles as system transaction: %v", err)
+		t.Fatalf("failed to query teams as system transaction: %v", err)
 	}
 	if count < 2 {
-		t.Errorf("system transaction should see at least 2 profiles, got %d", count)
+		t.Fatalf("system transaction should see at least 2 teams, got %d", count)
 	}
 }
 
-// TestRLSPoliciesAuditLogAppendable verifies profile and system transactions
-// can insert audit_log entries.
 func TestRLSPoliciesAuditLogAppendable(t *testing.T) {
 	ctx := context.Background()
-
-	// Create test database connection
-	db, cleanup := setupTestDB(t)
+	db, cleanup := setupRLSTestDB(t)
 	defer cleanup()
 
 	rls := NewRLS()
+	teamID := createTestTeam(t, db, "Audit Team")
+	profileID := createTestTeamProfile(t, db, teamID, "Audit Profile")
 
-	// Create a profile
-	profile := createTestProfile(t, db, "Test Profile")
-
-	// Verify standard role can insert audit log
-	auditID := uuid.New()
-	err := rls.WithProfileTx(ctx, db, profile.String(), func(tx *gorm.DB) error {
+	err := rls.WithTeamTx(ctx, db, teamID.String(), func(tx *gorm.DB) error {
 		return tx.Create(&AuditLog{
-			ID:         auditID,
-			ProfileID:  &profile,
-			Operation:  "test_operation",
-			EntityType: "test_entity",
-			EntityID:   "test-123",
-			ActorRole:  "standard",
-			Timestamp:  time.Now(),
+			ID:             uuid.New(),
+			TeamID:         &teamID,
+			ActorProfileID: &profileID,
+			Operation:      "test_operation",
+			EntityType:     "test_entity",
+			EntityID:       "test-123",
+			ActorRole:      "member",
+			Timestamp:      time.Now(),
 		}).Error
 	})
 	if err != nil {
-		t.Fatalf("standard role should be able to insert audit log: %v", err)
+		t.Fatalf("team transaction should insert audit log: %v", err)
 	}
 
-	// Verify system transactions can insert audit log.
-	auditID2 := uuid.New()
 	err = rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
 		return tx.Create(&AuditLog{
-			ID:         auditID2,
-			ProfileID:  &profile,
+			ID:         uuid.New(),
+			TeamID:     &teamID,
 			Operation:  "system_test_operation",
 			EntityType: "test_entity",
 			EntityID:   "test-456",
@@ -162,10 +131,9 @@ func TestRLSPoliciesAuditLogAppendable(t *testing.T) {
 		}).Error
 	})
 	if err != nil {
-		t.Fatalf("system transaction should be able to insert audit log: %v", err)
+		t.Fatalf("system transaction should insert audit log: %v", err)
 	}
 
-	// Verify system transactions can read both entries.
 	var count int64
 	err = rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
 		return tx.Model(&AuditLog{}).Count(&count).Error
@@ -174,25 +142,19 @@ func TestRLSPoliciesAuditLogAppendable(t *testing.T) {
 		t.Fatalf("failed to count audit logs: %v", err)
 	}
 	if count < 2 {
-		t.Errorf("system transaction should see at least 2 audit log entries, got %d", count)
+		t.Fatalf("system transaction should see at least 2 audit log entries, got %d", count)
 	}
 }
 
-// TestWithProfileTx verifies SET LOCAL variables are scoped to the transaction
 func TestWithProfileTx(t *testing.T) {
 	ctx := context.Background()
-
-	// Create test database connection
-	db, cleanup := setupTestDB(t)
+	db, cleanup := setupRLSTestDB(t)
 	defer cleanup()
 
 	rls := NewRLS()
-
 	profileID := uuid.New().String()
 
-	// Execute transaction with profile context
 	err := rls.WithProfileTx(ctx, db, profileID, func(tx *gorm.DB) error {
-		// Verify variables are set inside the transaction
 		var currentProfileID string
 		var currentTxMode string
 
@@ -204,52 +166,40 @@ func TestWithProfileTx(t *testing.T) {
 		}
 
 		if currentProfileID != profileID {
-			t.Errorf("expected profile_id %s, got %s", profileID, currentProfileID)
+			t.Fatalf("expected profile_id %s, got %s", profileID, currentProfileID)
 		}
-		if currentTxMode != "profile" {
-			t.Errorf("expected tx_mode profile, got %s", currentTxMode)
+		if currentTxMode != "team" {
+			t.Fatalf("expected tx_mode team, got %s", currentTxMode)
 		}
-
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("transaction failed: %v", err)
 	}
 
-	// Verify variables are NOT set outside the transaction (SET LOCAL scoped correctly)
 	var currentProfileID string
 	var currentTxMode string
-
-	err = db.Raw("SELECT current_setting('app.current_profile_id', true)").Scan(&currentProfileID).Error
-	if err != nil {
+	if err := db.Raw("SELECT current_setting('app.current_profile_id', true)").Scan(&currentProfileID).Error; err != nil {
 		t.Fatalf("failed to check profile_id outside transaction: %v", err)
 	}
 	if currentProfileID != "" {
-		t.Errorf("profile_id should be empty outside transaction (SET LOCAL worked), got %s", currentProfileID)
+		t.Fatalf("profile_id should be empty outside transaction, got %s", currentProfileID)
 	}
-
-	err = db.Raw("SELECT current_setting('app.tx_mode', true)").Scan(&currentTxMode).Error
-	if err != nil {
+	if err := db.Raw("SELECT current_setting('app.tx_mode', true)").Scan(&currentTxMode).Error; err != nil {
 		t.Fatalf("failed to check tx_mode outside transaction: %v", err)
 	}
 	if currentTxMode != "" {
-		t.Errorf("tx_mode should be empty outside transaction (SET LOCAL worked), got %s", currentTxMode)
+		t.Fatalf("tx_mode should be empty outside transaction, got %s", currentTxMode)
 	}
 }
 
-// TestWithSystemTx verifies system session variables are set correctly.
 func TestWithSystemTx(t *testing.T) {
 	ctx := context.Background()
-
-	// Create test database connection
-	db, cleanup := setupTestDB(t)
+	db, cleanup := setupRLSTestDB(t)
 	defer cleanup()
 
 	rls := NewRLS()
-
-	// Execute transaction with system context.
 	err := rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
-		// Verify variables are set inside the transaction
 		var currentProfileID string
 		var currentTxMode string
 
@@ -261,39 +211,24 @@ func TestWithSystemTx(t *testing.T) {
 		}
 
 		if currentProfileID != "" {
-			t.Errorf("expected empty profile_id for system transaction, got %s", currentProfileID)
+			t.Fatalf("expected empty profile_id for system transaction, got %s", currentProfileID)
 		}
 		if currentTxMode != "system" {
-			t.Errorf("expected tx_mode system, got %s", currentTxMode)
+			t.Fatalf("expected tx_mode system, got %s", currentTxMode)
 		}
-
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("transaction failed: %v", err)
 	}
-
-	// Verify variables are NOT set outside the transaction
-	var currentTxMode string
-	err = db.Raw("SELECT current_setting('app.tx_mode', true)").Scan(&currentTxMode).Error
-	if err != nil {
-		t.Fatalf("failed to check tx_mode outside transaction: %v", err)
-	}
-	if currentTxMode != "" {
-		t.Errorf("tx_mode should be empty outside transaction (SET LOCAL worked), got %s", currentTxMode)
-	}
 }
 
-// setupTestDB creates a test database connection, runs all migrations,
-// and returns a cleanup function that truncates fixture tables under system context.
-// Skips the test when DATABASE_URL is not set.
-func setupTestDB(t *testing.T) (*gorm.DB, func()) {
+func setupRLSTestDB(t *testing.T) (*gorm.DB, func()) {
 	t.Helper()
 
 	dsn := GetTestDSN()
 	if dsn == "" {
 		t.Skip("set DATABASE_URL to run RLS integration tests")
-		return nil, func() {}
 	}
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
@@ -310,17 +245,16 @@ func setupTestDB(t *testing.T) (*gorm.DB, func()) {
 		t.Fatalf("failed to run migrations: %v", err)
 	}
 
-	// Clean slate before test: truncate fixture tables under system context.
 	rls := NewRLS()
 	if err := rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
-		return tx.Exec("TRUNCATE profiles, api_keys, audit_log CASCADE").Error
+		return tx.Exec("TRUNCATE team_profiles, teams, audit_log CASCADE").Error
 	}); err != nil {
 		t.Fatalf("failed to truncate fixture tables before test: %v", err)
 	}
 
 	cleanup := func() {
 		if err := rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
-			return tx.Exec("TRUNCATE profiles, api_keys, audit_log CASCADE").Error
+			return tx.Exec("TRUNCATE team_profiles, teams, audit_log CASCADE").Error
 		}); err != nil {
 			t.Logf("warning: cleanup truncate failed: %v", err)
 		}
@@ -332,12 +266,7 @@ func setupTestDB(t *testing.T) (*gorm.DB, func()) {
 	return db, cleanup
 }
 
-// The following gorm fixture structs are intentionally test-local — domain models
-// live in internal/domain and are not gorm-annotated. These fixtures exist only
-// to exercise RLS policies; production writes go through the repository layer.
-
-// Profile represents the profiles table
-type Profile struct {
+type Team struct {
 	ID          uuid.UUID  `gorm:"type:uuid;primary_key"`
 	Name        string     `gorm:"type:varchar(100);not null"`
 	Description string     `gorm:"type:text;not null;default:''"`
@@ -349,18 +278,19 @@ type Profile struct {
 	DeletedAt   *time.Time `gorm:"type:timestamptz"`
 }
 
-func (Profile) TableName() string {
-	return "profiles"
+func (Team) TableName() string {
+	return "teams"
 }
 
-// APIKey represents the api_keys table
-type APIKey struct {
+type TeamProfile struct {
 	ID         uuid.UUID  `gorm:"type:uuid;primary_key"`
-	ProfileID  uuid.UUID  `gorm:"type:uuid;not null"`
+	TeamID     uuid.UUID  `gorm:"type:uuid;not null"`
 	KeyHash    string     `gorm:"type:text;not null"`
-	KeyPrefix  string     `gorm:"type:varchar(12);not null"`
-	Label      string     `gorm:"type:varchar(100);not null;default:''"`
+	KeyPrefix  string     `gorm:"type:varchar(24);not null"`
+	KeySuffix  string     `gorm:"type:varchar(6)"`
+	Name       string     `gorm:"type:varchar(100);not null;default:''"`
 	Scopes     string     `gorm:"type:text[];not null;default:ARRAY['read']"`
+	Role       string     `gorm:"type:varchar(20);not null;default:'member'"`
 	RateLimit  int        `gorm:"type:integer;not null;default:0"`
 	ExpiresAt  *time.Time `gorm:"type:timestamptz"`
 	RevokedAt  *time.Time `gorm:"type:timestamptz"`
@@ -369,74 +299,72 @@ type APIKey struct {
 	UpdatedAt  time.Time  `gorm:"type:timestamptz;not null;default:now()"`
 }
 
-func (APIKey) TableName() string {
-	return "api_keys"
+func (TeamProfile) TableName() string {
+	return "team_profiles"
 }
 
-// AuditLog represents the audit_log table
 type AuditLog struct {
-	ID            uuid.UUID  `gorm:"type:uuid;primary_key"`
-	ProfileID     *uuid.UUID `gorm:"type:uuid"`
-	Timestamp     time.Time  `gorm:"type:timestamptz;not null;default:now()"`
-	Operation     string     `gorm:"type:varchar(64);not null"`
-	EntityType    string     `gorm:"type:varchar(64);not null"`
-	EntityID      string     `gorm:"type:text;not null"`
-	BeforePayload *string    `gorm:"type:jsonb"`
-	AfterPayload  *string    `gorm:"type:jsonb"`
-	ActorKeyID    *uuid.UUID `gorm:"type:uuid"`
-	ActorRole     string     `gorm:"type:varchar(20)"`
-	ClientIP      string     `gorm:"type:inet"`
-	CorrelationID *uuid.UUID `gorm:"type:uuid"`
-	Metadata      string     `gorm:"type:jsonb;not null;default:'{}'"`
+	ID             uuid.UUID  `gorm:"type:uuid;primary_key"`
+	TeamID         *uuid.UUID `gorm:"type:uuid"`
+	Timestamp      time.Time  `gorm:"type:timestamptz;not null;default:now()"`
+	Operation      string     `gorm:"type:varchar(64);not null"`
+	EntityType     string     `gorm:"type:varchar(64);not null"`
+	EntityID       string     `gorm:"type:text;not null"`
+	BeforePayload  *string    `gorm:"type:jsonb"`
+	AfterPayload   *string    `gorm:"type:jsonb"`
+	ActorProfileID *uuid.UUID `gorm:"type:uuid"`
+	ActorRole      string     `gorm:"type:varchar(20)"`
+	ClientIP       *string    `gorm:"type:inet"`
+	CorrelationID  *string    `gorm:"type:text"`
+	Metadata       string     `gorm:"type:jsonb;not null;default:'{}'"`
 }
 
 func (AuditLog) TableName() string {
 	return "audit_log"
 }
 
-// createTestProfile inserts a profile using profile-scoped RLS context.
-func createTestProfile(t *testing.T, db *gorm.DB, name string) uuid.UUID {
+func createTestTeam(t *testing.T, db *gorm.DB, name string) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
-	profile := Profile{
+	team := Team{
 		ID:          id,
 		Name:        name,
-		Description: "Test profile",
+		Description: "Test team",
 		Metadata:    "{}",
 		Config:      "{}",
 		Status:      "active",
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
-	err := NewRLS().WithProfileTx(context.Background(), db, id.String(), func(tx *gorm.DB) error {
-		return tx.Create(&profile).Error
+	err := NewRLS().WithTeamTx(context.Background(), db, id.String(), func(tx *gorm.DB) error {
+		return tx.Create(&team).Error
 	})
 	if err != nil {
-		t.Fatalf("failed to create test profile: %v", err)
+		t.Fatalf("failed to create test team: %v", err)
 	}
 	return id
 }
 
-// createTestAPIKey inserts an api_key using profile-scoped RLS context.
-func createTestAPIKey(t *testing.T, db *gorm.DB, profileID uuid.UUID) uuid.UUID {
+func createTestTeamProfile(t *testing.T, db *gorm.DB, teamID uuid.UUID, name string) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
-	key := APIKey{
+	key := TeamProfile{
 		ID:        id,
-		ProfileID: profileID,
+		TeamID:    teamID,
 		KeyHash:   "test_hash_" + id.String(),
-		KeyPrefix: id.String()[:12],
-		Label:     "Test Key",
+		KeyPrefix: id.String()[:24],
+		KeySuffix: id.String()[:6],
+		Name:      name,
 		Scopes:    "{read}",
-		RateLimit: 0,
+		Role:      "member",
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
-	err := NewRLS().WithProfileTx(context.Background(), db, profileID.String(), func(tx *gorm.DB) error {
+	err := NewRLS().WithTeamTx(context.Background(), db, teamID.String(), func(tx *gorm.DB) error {
 		return tx.Create(&key).Error
 	})
 	if err != nil {
-		t.Fatalf("failed to create test API key: %v", err)
+		t.Fatalf("failed to create test team_profile: %v", err)
 	}
 	return id
 }

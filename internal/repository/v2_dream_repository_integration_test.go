@@ -125,7 +125,7 @@ func TestV2DreamRepositoryCandidateSafeHypothesisLifecycle(t *testing.T) {
 	staleProposal := proposal
 	staleProposal.ContentHash = "sha256:dream-candidate-stale"
 	staleProposal.Statement = "Dense-Mem may use PostgreSQL after the source changes."
-	require.NoError(t, rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			UPDATE relationship_records
 			SET version = version + 1

@@ -347,11 +347,11 @@ func insertV2CardinalityUpgradePredicate(
 	ctx context.Context,
 	db *gorm.DB,
 	rls interface {
-		WithMigrationTx(context.Context, *gorm.DB, func(*gorm.DB) error) error
+		WithSystemTx(context.Context, *gorm.DB, func(*gorm.DB) error) error
 	},
 	predicateKey string,
 ) error {
-	return rls.WithMigrationTx(ctx, db, func(tx *gorm.DB) error {
+	return rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO predicate_definitions (
 			    predicate_key, version, aliases, allowed_subject_kinds, allowed_object_kinds,
@@ -377,11 +377,11 @@ func insertV2PolicyReversalPredicate(
 	ctx context.Context,
 	db *gorm.DB,
 	rls interface {
-		WithMigrationTx(context.Context, *gorm.DB, func(*gorm.DB) error) error
+		WithSystemTx(context.Context, *gorm.DB, func(*gorm.DB) error) error
 	},
 	predicateKey string,
 ) error {
-	return rls.WithMigrationTx(ctx, db, func(tx *gorm.DB) error {
+	return rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO predicate_definitions (
 			    predicate_key, version, aliases, allowed_subject_kinds, allowed_object_kinds,

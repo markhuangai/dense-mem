@@ -79,11 +79,11 @@ func TestEnsureAuthorityCreatesFreshMarkerWhenNoneExists(t *testing.T) {
 
 func TestEnsureAuthorityFailsWhenFreshMarkerCreationBlocked(t *testing.T) {
 	_, err := EnsureAuthority(context.Background(), &authorityStoreStub{
-		freshErr: repository.ErrV2MigrationFreshInitBlocked,
+		freshErr: repository.ErrFreshV2AuthorityBlocked,
 	})
 
 	require.ErrorIs(t, err, errAuthorityBlocked)
-	require.ErrorIs(t, err, repository.ErrV2MigrationFreshInitBlocked)
+	require.ErrorIs(t, err, repository.ErrFreshV2AuthorityBlocked)
 	require.ErrorContains(t, err, "create fresh V2 authority marker")
 }
 
@@ -102,7 +102,7 @@ func (s *authorityStoreStub) GetLatestMarker(context.Context) (*domain.V2Compati
 	return s.marker, nil
 }
 
-func (s *authorityStoreStub) CommitFreshV2Authority(context.Context, repository.V2CommitFreshV2AuthorityInput) (*domain.V2CompatibilityMarker, error) {
+func (s *authorityStoreStub) CommitFreshV2Authority(context.Context, repository.CommitFreshV2AuthorityInput) (*domain.V2CompatibilityMarker, error) {
 	s.freshCommits++
 	if s.freshErr != nil {
 		return nil, s.freshErr

@@ -28,12 +28,12 @@ type authorityBootstrap struct {
 
 type authorityBootstrapStore interface {
 	GetLatestMarker(ctx context.Context) (*domain.V2CompatibilityMarker, error)
-	CommitFreshV2Authority(ctx context.Context, input repository.V2CommitFreshV2AuthorityInput) (*domain.V2CompatibilityMarker, error)
+	CommitFreshV2Authority(ctx context.Context, input repository.CommitFreshV2AuthorityInput) (*domain.V2CompatibilityMarker, error)
 }
 
 func ClassifyAuthority(ctx context.Context, store authorityBootstrapStore) (authorityBootstrap, error) {
 	if store == nil {
-		return authorityBootstrap{}, fmt.Errorf("%w: migration control store is required", errAuthorityBlocked)
+		return authorityBootstrap{}, fmt.Errorf("%w: authority store is required", errAuthorityBlocked)
 	}
 	marker, err := store.GetLatestMarker(ctx)
 	if err != nil {
@@ -44,14 +44,14 @@ func ClassifyAuthority(ctx context.Context, store authorityBootstrapStore) (auth
 
 func EnsureAuthority(ctx context.Context, store authorityBootstrapStore) (authorityBootstrap, error) {
 	if store == nil {
-		return authorityBootstrap{}, fmt.Errorf("%w: migration control store is required", errAuthorityBlocked)
+		return authorityBootstrap{}, fmt.Errorf("%w: authority store is required", errAuthorityBlocked)
 	}
 	marker, err := store.GetLatestMarker(ctx)
 	if err != nil {
 		return authorityBootstrap{}, fmt.Errorf("%w: read compatibility marker: %w", errAuthorityBlocked, err)
 	}
 	if marker == nil {
-		marker, err = store.CommitFreshV2Authority(ctx, repository.V2CommitFreshV2AuthorityInput{
+		marker, err = store.CommitFreshV2Authority(ctx, repository.CommitFreshV2AuthorityInput{
 			MarkerVersion: cutoverMarkerVersion,
 			Now:           time.Now().UTC(),
 			Metadata:      map[string]any{"created_by": "server_boot"},

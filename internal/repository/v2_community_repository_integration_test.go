@@ -206,7 +206,7 @@ func TestV2CommunityRepositorySnapshotLifecycleAndRecallExpansion(t *testing.T) 
 	assert.Equal(t, uses.Relationship.RelationshipID, discovery[0].Relationship.RelationshipID)
 	assert.Contains(t, discovery[0].EvidenceIDs, usesIngest.Evidence[0].FragmentID)
 
-	require.NoError(t, rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			UPDATE relationship_records
 			SET version = version + 1

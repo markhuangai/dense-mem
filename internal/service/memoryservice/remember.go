@@ -131,10 +131,8 @@ func (s *rememberService) Remember(ctx context.Context, req V2RememberRequest) (
 		return nil, ErrRememberAuthContext
 	}
 	credential, ok := requestctx.ActorCredentialFromContext(ctx)
-	migrationActor, migrationOK := requestctx.MigrationActorFromContext(ctx)
 	credentialOK := ok && credential.KeyID != uuid.Nil
-	migrationOK = migrationOK && migrationActor.RunID != uuid.Nil
-	if !credentialOK && !migrationOK {
+	if !credentialOK {
 		return nil, ErrRememberCredential
 	}
 	if len(req.Evidence) == 0 {
@@ -160,10 +158,6 @@ func (s *rememberService) Remember(ctx context.Context, req V2RememberRequest) (
 		actorMetadata["role"] = credential.Role
 		actorMetadata["credential_id"] = credential.KeyID.String()
 		actorMetadata["auth_method"] = credential.AuthMethod
-	} else {
-		actorMetadata["role"] = "migration"
-		actorMetadata["auth_method"] = "migration"
-		actorMetadata["migration_run_id"] = migrationActor.RunID.String()
 	}
 	metadata := map[string]any{
 		"contract_version": domain.V2ContractVersion,
