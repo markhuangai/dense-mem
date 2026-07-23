@@ -748,7 +748,7 @@ func TestReadinessMessagesForMigrationStates(t *testing.T) {
 				Required:                 true,
 				PreflightApproved:        true,
 				PreflightChecks:          createdPreflightChecks(),
-			}, nil, nil)
+			}, nil, nil, nil)
 			if status.ReadinessMessage != want {
 				t.Fatalf("message = %q, want %q", status.ReadinessMessage, want)
 			}
@@ -819,6 +819,8 @@ type storeStub struct {
 	updateErr   error
 	recordErr   error
 	commitErr   error
+	repairErr   error
+	repair      *domain.V2MigrationRepairSummary
 }
 
 func newStoreStub() *storeStub {

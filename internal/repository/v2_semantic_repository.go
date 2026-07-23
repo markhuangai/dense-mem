@@ -230,7 +230,7 @@ func (r *V2SemanticRepositoryImpl) ApplyRelationshipDecision(
 		if err := validateV2SupportOwnership(ctx, tx, input); err != nil {
 			return err
 		}
-		predicate, err := loadV2PredicateDefinition(ctx, tx, input.PredicateKey, input.PredicateVersion)
+		predicate, err := loadV2PredicateDefinition(ctx, tx, input.TeamID, input.PredicateKey, input.PredicateVersion)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			review, err := insertV2PredicateReview(ctx, tx, input)
 			if err != nil {

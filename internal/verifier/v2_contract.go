@@ -77,6 +77,7 @@ func relationshipProposalSchema() map[string]any {
 			"subject_ref",
 			"original_predicate",
 			"predicate_candidates",
+			"relationship_kind",
 			"object_ref",
 			"object_value",
 			"polarity",
@@ -91,6 +92,7 @@ func relationshipProposalSchema() map[string]any {
 			"subject_ref":          stringSchema(1, 128),
 			"original_predicate":   stringSchema(1, 128),
 			"predicate_candidates": stringArraySchema(100, 128),
+			"relationship_kind":    enumSchema(domain.V2RelationshipKinds()),
 			"object_ref":           stringSchema(0, 128),
 			"object_value": map[string]any{
 				"anyOf": []any{typedValueSchema(), map[string]any{"type": "null"}},

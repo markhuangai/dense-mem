@@ -301,25 +301,6 @@ func v2SemanticReviewResultFromResponse(resp verifier.V2SemanticReviewResponse, 
 		result.RelationshipResults = nil
 		return result
 	}
-	relationshipCount := 0
-	contradictedCount := 0
-	for _, entity := range resp.EntityResults {
-		if entity.Action == string(domain.V2EntityResolutionAmbiguous) {
-			result.Status = string(domain.V2SemanticReviewReviewRequired)
-		}
-	}
-	for _, relationship := range resp.RelationshipResults {
-		relationshipCount++
-		if relationship.PredicateStatus == "needs_review" || relationship.EvidenceVerdict == string(domain.V2VerificationInsufficient) {
-			result.Status = string(domain.V2SemanticReviewReviewRequired)
-		}
-		if relationship.EvidenceVerdict == string(domain.V2VerificationContradicted) {
-			contradictedCount++
-		}
-	}
-	if relationshipCount > 0 && contradictedCount == relationshipCount {
-		result.Status = string(domain.V2SemanticReviewRejected)
-	}
 	return result
 }
 

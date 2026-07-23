@@ -40,6 +40,25 @@ func appendV2PlacementSearchDocument(result *V2CommitPlacementSemanticResult, do
 	result.SearchDocuments = append(result.SearchDocuments, *document)
 }
 
+func appendV2PlacementReviewTaskID(result *V2CommitPlacementSemanticResult, taskID string) {
+	if result == nil || strings.TrimSpace(taskID) == "" {
+		return
+	}
+	for _, existing := range result.ReviewTaskIDs {
+		if existing == taskID {
+			return
+		}
+	}
+	result.ReviewTaskIDs = append(result.ReviewTaskIDs, taskID)
+}
+
+func appendV2PlacementRelationshipResult(result *V2CommitPlacementSemanticResult, relationship *V2RelationshipDecisionResult) {
+	if result == nil || relationship == nil {
+		return
+	}
+	result.RelationshipResults = append(result.RelationshipResults, *relationship)
+}
+
 func v2PlacementEvidenceSearchableStatus(status string) bool {
 	switch strings.TrimSpace(status) {
 	case string(domain.V2SemanticReviewAccepted), string(domain.V2SemanticReviewReviewRequired):
@@ -168,7 +187,7 @@ func applyV2RelationshipDecisionInTx(
 	input V2ApplyRelationshipDecisionInput,
 ) (*V2RelationshipDecisionResult, error) {
 	input = normalizeV2ApplyRelationshipDecisionInput(input)
-	predicate, err := loadV2PredicateDefinition(ctx, tx, input.PredicateKey, input.PredicateVersion)
+	predicate, err := loadV2PredicateDefinition(ctx, tx, input.TeamID, input.PredicateKey, input.PredicateVersion)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return insertV2PredicateReview(ctx, tx, input)
 	}
@@ -291,6 +310,7 @@ func v2PlacementCommitPayload(base map[string]any, result *V2CommitPlacementSema
 	payload["search_document_ids"] = searchDocuments
 	payload["embedding_job_ids"] = embeddingJobs
 	payload["entity_resolution_ids"] = append([]string(nil), result.EntityResolutionIDs...)
+	payload["review_task_ids"] = append([]string(nil), result.ReviewTaskIDs...)
 	return payload
 }
 
@@ -363,14 +383,15 @@ func v2PlacementRelationshipOutcomePayload(results []V2RelationshipDecisionResul
 }
 
 func finishV2PlacementRunIfTerminal(ctx context.Context, tx *gorm.DB, input V2CommitPlacementSemanticInput, status string) error {
-	var openCount int64
+	var openCount, reviewCount int64
 	if err := tx.WithContext(ctx).Raw(`
-		SELECT COUNT(*)
+		SELECT
+		    COUNT(*) FILTER (WHERE status IN ('queued', 'processing')),
+		    COUNT(*) FILTER (WHERE status = 'awaiting_review')
 		FROM placement_items
 		WHERE team_id = ?::uuid
 		  AND placement_run_id = ?::uuid
-		  AND status IN ('queued', 'processing')
-	`, input.TeamID, input.PlacementRunID).Scan(&openCount).Error; err != nil {
+	`, input.TeamID, input.PlacementRunID).Row().Scan(&openCount, &reviewCount); err != nil {
 		return err
 	}
 	if openCount > 0 {
@@ -398,6 +419,10 @@ func finishV2PlacementRunIfTerminal(ctx context.Context, tx *gorm.DB, input V2Co
 		}
 		return nil
 	}
+	runStatus := status
+	if reviewCount > 0 && status != string(domain.V2PlacementRunFailed) && status != string(domain.V2PlacementRunQuarantined) {
+		runStatus = string(domain.V2PlacementRunAwaitingReview)
+	}
 	result := tx.WithContext(ctx).Exec(`
 		UPDATE placement_runs
 		SET status = ?,
@@ -412,7 +437,7 @@ func finishV2PlacementRunIfTerminal(ctx context.Context, tx *gorm.DB, input V2Co
 		  AND worker_id = ?
 		  AND attempts = ?
 		  AND lease_until > clock_timestamp()
-	`, status, input.TeamID, input.PlacementRunID, input.OwnerProfileID, input.WorkerID, input.ExpectedAttempts)
+	`, runStatus, input.TeamID, input.PlacementRunID, input.OwnerProfileID, input.WorkerID, input.ExpectedAttempts)
 	if result.Error != nil {
 		return result.Error
 	}

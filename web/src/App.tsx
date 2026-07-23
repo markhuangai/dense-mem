@@ -489,6 +489,7 @@ function MigrationPortal({
   const total = run?.total_items ?? 0;
   const completed = run?.completed_items ?? 0;
   const progress = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : (status?.state === "cut_over" ? 100 : 0);
+  const repair = status?.repair;
   const contractCurrent = run?.migration_contract_version === CURRENT_MIGRATION_CONTRACT;
   const backupConfirmationCurrent = !!run?.preflight_approved && contractCurrent && hasBackupConfirmation(run.preflight_checks);
   useEffect(() => {
@@ -558,6 +559,19 @@ function MigrationPortal({
           {status?.recent_errors?.map((item) => (
             <p className="field-error" role="alert" key={item}>{item}</p>
           ))}
+          {repair && (
+            <div className={repair.required ? "migration-repair-card warning" : "migration-repair-card"} aria-label="Resume repair summary">
+              <div><h3>{repair.required ? "Resume will repair placement state" : "Resume can continue from the checkpoint"}</h3></div>
+              <p>{repair.required
+                ? "The next resume will requeue stale migration-owned placement records before workers continue."
+                : "No stale retryable migration-owned placement rows were detected."}</p>
+              <dl>
+                <div><dt>Orphan reviews</dt><dd>{repair.orphan_reviews}</dd></div><div><dt>Processing rows</dt><dd>{repair.abandoned_processing}</dd></div>
+                <div><dt>Retryable failures</dt><dd>{repair.retryable_failures}</dd></div><div><dt>Held reviews</dt><dd>{repair.held_reviews}</dd></div>
+                <div><dt>Blocked</dt><dd>{repair.blocked_items}</dd></div><div><dt>Claim epoch</dt><dd>{repair.claim_epoch_before ?? run?.claim_epoch ?? "—"}</dd></div>
+              </dl>
+            </div>
+          )}
         </section>
 
         {cleanup ? (
@@ -600,7 +614,7 @@ function MigrationPortal({
                 </button>
                 <button className="ghost-button" type="button" disabled={busy || !canResume} onClick={() => void resume()}>
                   <RotateCcw size={16} aria-hidden="true" />
-                  Resume
+                  {repair?.required ? "Repair and resume" : "Resume"}
                 </button>
               </div>
             </form>
@@ -732,11 +746,9 @@ function hasBackupConfirmation(checks?: Record<string, unknown>) {
 function LazyPanelFallback() {
   return <LoadingState label="Loading panel" />;
 }
-
 function readTheme(): Theme {
   return localStorage.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light";
 }
-
 function TeamCreateForm({ api, onCreated }: { api: ControlApi; onCreated: (team: Team) => void }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");

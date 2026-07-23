@@ -166,6 +166,57 @@
   transition: width 220ms ease;
 }
 
+.migration-repair-card {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-muted);
+}
+
+.migration-repair-card.warning {
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+  background: color-mix(in srgb, var(--warning) 12%, var(--panel));
+}
+
+.migration-repair-card h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.migration-repair-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.migration-repair-card dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.migration-repair-card dl div {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.migration-repair-card dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.migration-repair-card dd {
+  margin: 3px 0 0;
+  color: var(--text);
+  font-weight: 700;
+}
+
 .migration-preflight {
   display: grid;
   grid-template-columns: 1fr;

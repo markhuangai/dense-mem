@@ -50,6 +50,7 @@ type V2ProviderRelationshipProposal struct {
 	SubjectRef          string                      `json:"subject_ref"`
 	OriginalPredicate   string                      `json:"original_predicate"`
 	PredicateCandidates []string                    `json:"predicate_candidates,omitempty"`
+	RelationshipKind    string                      `json:"relationship_kind"`
 	ObjectRef           string                      `json:"object_ref,omitempty"`
 	ObjectValue         *V2SemanticValueObservation `json:"object_value,omitempty"`
 	Polarity            string                      `json:"polarity,omitempty"`
@@ -186,6 +187,12 @@ func validateV2ProviderRelationshipProposals(
 		}
 		if strings.TrimSpace(relationship.OriginalPredicate) == "" {
 			errs = append(errs, v2SemanticErr(fmt.Sprintf("relationship_proposals[%d].original_predicate", i), "is required"))
+		}
+		if len(v2ProviderTrimStringSlice(relationship.PredicateCandidates)) == 0 {
+			errs = append(errs, v2SemanticErr(fmt.Sprintf("relationship_proposals[%d].predicate_candidates", i), "is required"))
+		}
+		if !v2SemanticOneOf(strings.TrimSpace(relationship.RelationshipKind), domain.V2RelationshipKinds()...) {
+			errs = append(errs, v2SemanticErr(fmt.Sprintf("relationship_proposals[%d].relationship_kind", i), "is unsupported"))
 		}
 		if (strings.TrimSpace(relationship.ObjectRef) == "") == (relationship.ObjectValue == nil) {
 			errs = append(errs, v2SemanticErr(fmt.Sprintf("relationship_proposals[%d].object", i), "requires exactly one object_ref or object_value"))

@@ -247,13 +247,39 @@ func v2SemanticCommitInputFromReview(job V2SemanticCommitJob) (repository.V2Comm
 	}
 
 	relationships := make([]repository.V2PlacementRelationshipDecisionInput, 0, len(job.Result.RelationshipResults))
+	relationshipReviews := make([]repository.V2PlacementRelationshipReviewInput, 0)
 	for _, result := range job.Result.RelationshipResults {
 		observation, ok := observationsByRef[result.Ref]
 		if !ok {
 			return repository.V2CommitPlacementSemanticInput{}, fmt.Errorf("v2 semantic commit: unknown relationship result ref %q", result.Ref)
 		}
 		if result.PredicateStatus != "resolved" || result.PredicateKey == nil {
-			return repository.V2CommitPlacementSemanticInput{}, fmt.Errorf("v2 semantic commit: relationship result %q is not resolved", result.Ref)
+			review := repository.V2PlacementRelationshipReviewInput{
+				Ref:               result.Ref,
+				SubjectRef:        observation.SubjectRef,
+				OriginalPredicate: observation.OriginalPredicate,
+				ObjectRef:         observation.ObjectRef,
+				ObjectValue:       nil,
+				EvidenceVerdict:   result.EvidenceVerdict,
+				Reason:            "predicate_needs_review",
+				Payload: map[string]any{
+					"rationale":     result.Rationale,
+					"confidence":    result.Confidence,
+					"response_hash": job.Result.ResponseHash,
+				},
+			}
+			if observation.ObjectValue != nil {
+				review.ObjectValue = &repository.V2PlacementValueInput{
+					Ref:            observation.ObjectValue.Ref,
+					ValueType:      observation.ObjectValue.Type,
+					CanonicalValue: observation.ObjectValue.Value,
+					Display:        observation.ObjectValue.Display,
+					Unit:           observation.ObjectValue.Unit,
+				}
+				review.ObjectRef = ""
+			}
+			relationshipReviews = append(relationshipReviews, review)
+			continue
 		}
 		relationship := repository.V2PlacementRelationshipDecisionInput{
 			Ref:               result.Ref,
@@ -326,6 +352,7 @@ func v2SemanticCommitInputFromReview(job V2SemanticCommitJob) (repository.V2Comm
 		Category:                 category,
 		EntityResolutions:        entities,
 		RelationshipObservations: relationships,
+		RelationshipReviews:      relationshipReviews,
 		Payload: map[string]any{
 			"request_id":         job.Request.RequestID,
 			"response_hash":      job.Result.ResponseHash,

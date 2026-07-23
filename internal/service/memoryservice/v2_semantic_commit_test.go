@@ -372,13 +372,6 @@ func TestV2SemanticCommitRejectsMismatchedReviewRefsBeforeRepositoryCall(t *test
 				result.RelationshipResults[0].Ref = "missing_relationship"
 			},
 		},
-		{
-			name: "unresolved predicate",
-			mutate: func(result *V2SemanticReviewResult) {
-				result.RelationshipResults[0].PredicateStatus = "ambiguous"
-				result.RelationshipResults[0].PredicateKey = nil
-			},
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -405,6 +398,44 @@ func TestV2SemanticCommitRejectsMismatchedReviewRefsBeforeRepositoryCall(t *test
 				t.Fatalf("repository paths called = semantic:%v terminal:%v", commitRepo.called, commitRepo.terminalCalled)
 			}
 		})
+	}
+}
+
+func TestV2SemanticCommitMapsUnresolvedPredicateToRelationshipReview(t *testing.T) {
+	teamID := uuid.NewString()
+	ownerID := uuid.NewString()
+	request := v2SemanticReviewServiceRequest(teamID, ownerID)
+	result := v2SemanticReviewResultFromResponse(v2SemanticReviewResponse(request.RequestID, false, false), 1, "sha256:unresolved-predicate")
+	result.RelationshipResults[0].PredicateStatus = "ambiguous"
+	result.RelationshipResults[0].PredicateKey = nil
+	commitRepo := &v2SemanticCommitRepoStub{}
+	svc := NewV2SemanticCommitService(V2SemanticCommitDependencies{PlacementCommit: commitRepo})
+
+	_, err := svc.CommitV2Semantic(context.Background(), V2SemanticCommitJob{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        uuid.NewString(),
+		PlacementRunID:  uuid.NewString(),
+		PlacementItemID: uuid.NewString(),
+		WorkerID:        "worker-commit",
+		Request:         request,
+		Result:          *result,
+	})
+	if err != nil {
+		t.Fatalf("CommitV2Semantic returned error: %v", err)
+	}
+	if !commitRepo.called || commitRepo.terminalCalled {
+		t.Fatalf("repository paths called = semantic:%v terminal:%v", commitRepo.called, commitRepo.terminalCalled)
+	}
+	if len(commitRepo.input.RelationshipObservations) != 0 {
+		t.Fatalf("canonical relationship observations = %#v", commitRepo.input.RelationshipObservations)
+	}
+	if len(commitRepo.input.RelationshipReviews) != 1 {
+		t.Fatalf("relationship reviews = %#v", commitRepo.input.RelationshipReviews)
+	}
+	review := commitRepo.input.RelationshipReviews[0]
+	if review.Ref != request.RelationshipObservations[0].Ref || review.Reason != "predicate_needs_review" {
+		t.Fatalf("relationship review = %#v", review)
 	}
 }
 

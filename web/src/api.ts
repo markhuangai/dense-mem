@@ -522,6 +522,7 @@ export type MigrationRun = {
   completed_items: number;
   failed_items: number;
   excluded_items: number;
+  claim_epoch: number;
   last_error?: string;
   retryable: boolean;
   started_at?: string;
@@ -540,12 +541,25 @@ export type MigrationGateResult = {
   metadata?: Record<string, unknown>;
 };
 
+export type MigrationRepairSummary = {
+  required: boolean;
+  orphan_reviews: number;
+  abandoned_processing: number;
+  retryable_failures: number;
+  held_reviews: number;
+  blocked_items: number;
+  repaired_items: number;
+  claim_epoch_before?: number;
+  claim_epoch_after?: number;
+};
+
 export type MigrationStatus = {
   state: string;
   required: boolean;
   data_plane_allowed: boolean;
   readiness_message: string;
   run?: MigrationRun;
+  repair?: MigrationRepairSummary;
   gate_results?: MigrationGateResult[];
   recent_errors?: string[];
   restart_pending?: boolean;
