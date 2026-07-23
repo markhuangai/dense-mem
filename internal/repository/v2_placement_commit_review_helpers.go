@@ -2,9 +2,13 @@ package repository
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 func insertV2RelationshipDependencyReview(
@@ -24,12 +28,40 @@ func insertV2RelationshipDependencyReview(
 		OriginalPredicate: input.OriginalPredicate,
 		ObjectRef:         objectRef,
 		ObjectValue:       input.ObjectValue,
+		Polarity:          input.Polarity,
 		EvidenceVerdict:   input.EvidenceVerdict,
 		Reason:            "identity_needs_review",
 		Payload: map[string]any{
 			"error": reason,
 		},
 	})
+}
+
+func validateV2PlacementRelationshipReviewInput(input V2PlacementRelationshipReviewInput) error {
+	if input.Ref == "" {
+		return errors.New("relationship review ref is required")
+	}
+	if input.SubjectRef == "" {
+		return errors.New("relationship review subject_ref is required")
+	}
+	if input.OriginalPredicate == "" {
+		return errors.New("relationship review original_predicate is required")
+	}
+	if (input.ObjectRef == "") == (input.ObjectValue == nil) {
+		return errors.New("relationship review requires exactly one object endpoint")
+	}
+	if input.ObjectValue != nil {
+		if err := validateV2PlacementValueInput(*input.ObjectValue); err != nil {
+			return err
+		}
+	}
+	if input.Polarity != "+" && input.Polarity != "-" {
+		return fmt.Errorf("unsupported relationship review polarity %q", input.Polarity)
+	}
+	if input.EvidenceVerdict != "" && !v2Contains(domain.V2VerificationVerdicts(), input.EvidenceVerdict) {
+		return fmt.Errorf("unsupported relationship review evidence_verdict %q", input.EvidenceVerdict)
+	}
+	return nil
 }
 
 func insertV2RelationshipReview(
@@ -68,6 +100,7 @@ func insertV2RelationshipReview(
 		OriginalPredicate:   input.OriginalPredicate,
 		ObjectRef:           objectRef,
 		ObjectValueID:       objectValueID,
+		Polarity:            input.Polarity,
 		EvidenceVerdict:     input.EvidenceVerdict,
 		ObservationMetadata: observationMetadata,
 	}, "")
@@ -88,6 +121,7 @@ func insertV2RelationshipReview(
 		"subject_ref":        input.SubjectRef,
 		"object_ref":         objectRef,
 		"original_predicate": input.OriginalPredicate,
+		"polarity":           input.Polarity,
 		"evidence_verdict":   input.EvidenceVerdict,
 		"reason":             reason,
 	}

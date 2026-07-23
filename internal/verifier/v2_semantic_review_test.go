@@ -61,6 +61,9 @@ func TestV2SemanticReviewPrepareFiltersProviderEgressAndMapsWhitespaceQuote(t *t
 	if got := prepared.RelationshipObservations[0].PredicateCandidates; len(got) != 1 || got[0].PredicateKey != "works_on" {
 		t.Fatalf("predicate candidates = %#v", got)
 	}
+	if got := prepared.RelationshipObservations[0].Polarity; got != "+" {
+		t.Fatalf("default polarity = %q, want +", got)
+	}
 	if got := prepared.RelationshipObservations[0].CorrectionTarget; got == nil || got.RelationshipID != "rel-target" || got.ExpectedVersion != 4 {
 		t.Fatalf("correction target = %#v", got)
 	}
@@ -133,6 +136,7 @@ func TestV2SemanticReviewPrepareRejectsShapeErrors(t *testing.T) {
 	req.RelationshipObservations[0].SubjectRef = "missing"
 	req.RelationshipObservations[0].ObjectRef = ""
 	req.RelationshipObservations[0].ObjectValue = nil
+	req.RelationshipObservations[0].Polarity = "?"
 	validFrom := time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)
 	validTo := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	req.RelationshipObservations[0].ValidFrom = &validFrom
@@ -148,6 +152,7 @@ func TestV2SemanticReviewPrepareRejectsShapeErrors(t *testing.T) {
 		"entity_mentions[1].kind: is unsupported",
 		"relationship_observations[0].subject_ref: is unknown",
 		"relationship_observations[0].object: requires exactly one object_ref or object_value",
+		"relationship_observations[0].polarity: is unsupported",
 		"relationship_observations[0].valid_to: must not be before valid_from",
 	} {
 		if !strings.Contains(joined, want) {

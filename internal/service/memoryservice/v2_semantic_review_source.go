@@ -60,6 +60,7 @@ type v2PlacementReviewRelationshipSpec struct {
 	Predicate           string
 	PredicateCandidates []string
 	RelationshipKind    string
+	Polarity            string
 	ObjectRef           string
 	ObjectName          string
 	ObjectValue         *verifier.V2SemanticValueObservation
@@ -393,12 +394,23 @@ func v2PlacementReviewRelationshipSpecs(
 			Predicate:           v2ReviewString(raw, "predicate"),
 			PredicateCandidates: v2ReviewStringArray(raw, "predicate_candidates"),
 			RelationshipKind:    v2ReviewString(raw, "relationship_kind"),
+			Polarity:            v2ReviewString(raw, "polarity"),
 			ObjectRef:           v2ReviewString(raw, "object_ref"),
 			ObjectName:          v2ReviewString(raw, "object_name"),
 			EvidenceID:          evidenceID,
 			Quote:               span.quote,
 			Start:               span.start,
 			End:                 span.end,
+		}
+		if spec.Polarity == "" {
+			spec.Polarity = "+"
+		}
+		if spec.Polarity != "+" && spec.Polarity != "-" {
+			validationErrors = append(validationErrors, verifier.V2SemanticValidationError{
+				Field:   fmt.Sprintf("relationship_hints[%d].polarity", i),
+				Message: "is unsupported",
+			})
+			continue
 		}
 		validFrom, err := v2ReviewOptionalTime(raw, "valid_from")
 		if err != nil {
@@ -644,6 +656,7 @@ func (s *v2SemanticPlacementReviewSource) v2PlacementReviewRelationshipObservati
 			Ref:                 relationship.Ref,
 			SubjectRef:          relationship.SubjectRef,
 			OriginalPredicate:   relationship.Predicate,
+			Polarity:            relationship.Polarity,
 			ObjectRef:           relationship.ObjectRef,
 			ObjectValue:         relationship.ObjectValue,
 			EvidenceID:          relationship.EvidenceID,

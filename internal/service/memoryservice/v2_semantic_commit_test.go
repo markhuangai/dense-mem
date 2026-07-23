@@ -25,6 +25,7 @@ func TestV2SemanticCommitMapsAcceptedReviewIntoAtomicRepositoryInput(t *testing.
 	validTo := time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)
 	request.RelationshipObservations[0].ValidFrom = &validFrom
 	request.RelationshipObservations[0].ValidTo = &validTo
+	request.RelationshipObservations[0].Polarity = "-"
 	request.RelationshipObservations[0].CorrectionTarget = &verifier.V2RelationshipCorrectionTarget{
 		RelationshipID:  targetID,
 		ExpectedVersion: 3,
@@ -76,6 +77,9 @@ func TestV2SemanticCommitMapsAcceptedReviewIntoAtomicRepositoryInput(t *testing.
 	relationship := got.RelationshipObservations[0]
 	if relationship.SubjectRef != "person_1" || relationship.ObjectRef != "project_1" || relationship.PredicateKey != "works_on" {
 		t.Fatalf("relationship mapping = %#v", relationship)
+	}
+	if relationship.Polarity != "-" {
+		t.Fatalf("relationship polarity = %q, want -", relationship.Polarity)
 	}
 	if relationship.CorrectionTarget == nil || relationship.CorrectionTarget.RelationshipID != targetID || relationship.CorrectionTarget.ExpectedVersion != 3 {
 		t.Fatalf("correction target = %#v", relationship.CorrectionTarget)
@@ -405,6 +409,7 @@ func TestV2SemanticCommitMapsUnresolvedPredicateToRelationshipReview(t *testing.
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	request := v2SemanticReviewServiceRequest(teamID, ownerID)
+	request.RelationshipObservations[0].Polarity = "-"
 	result := v2SemanticReviewResultFromResponse(v2SemanticReviewResponse(request.RequestID, false, false), 1, "sha256:unresolved-predicate")
 	result.RelationshipResults[0].PredicateStatus = "ambiguous"
 	result.RelationshipResults[0].PredicateKey = nil
@@ -436,6 +441,9 @@ func TestV2SemanticCommitMapsUnresolvedPredicateToRelationshipReview(t *testing.
 	review := commitRepo.input.RelationshipReviews[0]
 	if review.Ref != request.RelationshipObservations[0].Ref || review.Reason != "predicate_needs_review" {
 		t.Fatalf("relationship review = %#v", review)
+	}
+	if review.Polarity != "-" {
+		t.Fatalf("relationship review polarity = %q, want -", review.Polarity)
 	}
 }
 

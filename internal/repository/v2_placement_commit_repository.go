@@ -91,6 +91,7 @@ type V2PlacementRelationshipReviewInput struct {
 	OriginalPredicate string
 	ObjectRef         string
 	ObjectValue       *V2PlacementValueInput
+	Polarity          string
 	EvidenceVerdict   string
 	Reason            string
 	Payload           map[string]any
@@ -307,8 +308,12 @@ func normalizeV2CommitPlacementSemanticInput(input V2CommitPlacementSemanticInpu
 		review.SubjectRef = strings.TrimSpace(review.SubjectRef)
 		review.OriginalPredicate = strings.TrimSpace(review.OriginalPredicate)
 		review.ObjectRef = strings.TrimSpace(review.ObjectRef)
+		review.Polarity = strings.TrimSpace(review.Polarity)
 		review.EvidenceVerdict = strings.TrimSpace(review.EvidenceVerdict)
 		review.Reason = strings.TrimSpace(review.Reason)
+		if review.Polarity == "" {
+			review.Polarity = "+"
+		}
 		if review.Reason == "" {
 			review.Reason = "relationship_needs_review"
 		}
@@ -367,30 +372,6 @@ func validateV2CommitPlacementSemanticInput(input V2CommitPlacementSemanticInput
 		if err := validateV2ApplyRelationshipDecisionInput(normalizeV2ApplyRelationshipDecisionInput(scoped)); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-func validateV2PlacementRelationshipReviewInput(input V2PlacementRelationshipReviewInput) error {
-	if input.Ref == "" {
-		return errors.New("relationship review ref is required")
-	}
-	if input.SubjectRef == "" {
-		return errors.New("relationship review subject_ref is required")
-	}
-	if input.OriginalPredicate == "" {
-		return errors.New("relationship review original_predicate is required")
-	}
-	if (input.ObjectRef == "") == (input.ObjectValue == nil) {
-		return errors.New("relationship review requires exactly one object endpoint")
-	}
-	if input.ObjectValue != nil {
-		if err := validateV2PlacementValueInput(*input.ObjectValue); err != nil {
-			return err
-		}
-	}
-	if input.EvidenceVerdict != "" && !v2Contains(domain.V2VerificationVerdicts(), input.EvidenceVerdict) {
-		return fmt.Errorf("unsupported relationship review evidence_verdict %q", input.EvidenceVerdict)
 	}
 	return nil
 }

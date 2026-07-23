@@ -316,6 +316,16 @@ func TestV2PlacementValidationBranchCoverage(t *testing.T) {
 	}); err == nil {
 		t.Fatal("expected polarity error")
 	}
+	if err := validateV2PlacementRelationshipReviewInput(V2PlacementRelationshipReviewInput{
+		Ref:               "relationship-review",
+		SubjectRef:        "subject",
+		OriginalPredicate: "works on",
+		ObjectRef:         "object",
+		Polarity:          "?",
+		EvidenceVerdict:   string(domain.V2VerificationInsufficient),
+	}); err == nil {
+		t.Fatal("expected relationship review polarity error")
+	}
 	if err := validateV2PlacementRelationshipDecisionInput(V2PlacementRelationshipDecisionInput{
 		SubjectRef:      "subject",
 		PredicateKey:    "works_on",

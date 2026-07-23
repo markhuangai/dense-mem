@@ -168,7 +168,7 @@ func TestV2SemanticPlacementReviewSourceBuildsCurrentEvidenceJob(t *testing.T) {
 				},
 				RelationshipKind: "state",
 				ObjectRef:        "db_1",
-				Polarity:         "+",
+				Polarity:         "-",
 				Modality:         "statement",
 				ValidFrom:        &validFromText,
 				ValidTo:          &validToText,
@@ -244,6 +244,9 @@ func TestV2SemanticPlacementReviewSourceBuildsCurrentEvidenceJob(t *testing.T) {
 	}
 	if job.Request.RelationshipObservations[0].Ref != "rel:uses" || job.Request.RelationshipObservations[0].Quote != usesQuote {
 		t.Fatalf("uses observation = %#v", job.Request.RelationshipObservations[0])
+	}
+	if job.Request.RelationshipObservations[0].Polarity != "-" {
+		t.Fatalf("uses observation polarity = %q, want -", job.Request.RelationshipObservations[0].Polarity)
 	}
 	if got := job.Request.RelationshipObservations[0].CorrectionTarget; got == nil || got.RelationshipID != targetID || got.ExpectedVersion != 4 {
 		t.Fatalf("correction target = %#v", got)

@@ -62,6 +62,7 @@ type V2SemanticRelationshipObservation struct {
 	Ref                 string                          `json:"ref"`
 	SubjectRef          string                          `json:"subject_ref"`
 	OriginalPredicate   string                          `json:"original_predicate"`
+	Polarity            string                          `json:"polarity"`
 	PredicateCandidates []V2SemanticPredicateCandidate  `json:"predicate_candidates"`
 	ObjectRef           string                          `json:"object_ref,omitempty"`
 	ObjectValue         *V2SemanticValueObservation     `json:"object_value,omitempty"`
@@ -183,6 +184,10 @@ func PrepareV2SemanticReviewRequest(req V2SemanticReviewRequest) (V2SemanticRevi
 		obs.Ref = strings.TrimSpace(obs.Ref)
 		obs.SubjectRef = strings.TrimSpace(obs.SubjectRef)
 		obs.OriginalPredicate = strings.TrimSpace(obs.OriginalPredicate)
+		obs.Polarity = strings.TrimSpace(obs.Polarity)
+		if obs.Polarity == "" {
+			obs.Polarity = "+"
+		}
 		obs.ObjectRef = strings.TrimSpace(obs.ObjectRef)
 		obs.EvidenceID = strings.TrimSpace(obs.EvidenceID)
 		obs.Quote = strings.TrimSpace(obs.Quote)
@@ -297,6 +302,10 @@ func validateV2SemanticReviewRequestShape(req *V2SemanticReviewRequest) []V2Sema
 		obs.SubjectRef = strings.TrimSpace(obs.SubjectRef)
 		obs.ObjectRef = strings.TrimSpace(obs.ObjectRef)
 		obs.EvidenceID = strings.TrimSpace(obs.EvidenceID)
+		obs.Polarity = strings.TrimSpace(obs.Polarity)
+		if obs.Polarity == "" {
+			obs.Polarity = "+"
+		}
 		if obs.Ref == "" {
 			errs = append(errs, v2SemanticErr(fmt.Sprintf("relationship_observations[%d].ref", i), "is required"))
 		}
@@ -317,6 +326,9 @@ func validateV2SemanticReviewRequestShape(req *V2SemanticReviewRequest) []V2Sema
 		}
 		if obs.ObjectValue != nil && !v2SemanticOneOf(strings.TrimSpace(obs.ObjectValue.Type), domain.V2ValueTypes()...) {
 			errs = append(errs, v2SemanticErr(fmt.Sprintf("relationship_observations[%d].object_value.type", i), "is unsupported"))
+		}
+		if !v2SemanticOneOf(obs.Polarity, "+", "-") {
+			errs = append(errs, v2SemanticErr(fmt.Sprintf("relationship_observations[%d].polarity", i), "is unsupported"))
 		}
 		if obs.ValidFrom != nil && obs.ValidTo != nil && obs.ValidTo.Before(*obs.ValidFrom) {
 			errs = append(errs, v2SemanticErr(fmt.Sprintf("relationship_observations[%d].valid_to", i), "must not be before valid_from"))

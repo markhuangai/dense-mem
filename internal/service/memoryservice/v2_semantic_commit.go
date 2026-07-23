@@ -267,6 +267,7 @@ func v2SemanticCommitInputFromReview(job V2SemanticCommitJob) (repository.V2Comm
 				OriginalPredicate: observation.OriginalPredicate,
 				ObjectRef:         observation.ObjectRef,
 				ObjectValue:       nil,
+				Polarity:          observation.Polarity,
 				EvidenceVerdict:   result.EvidenceVerdict,
 				Reason:            "predicate_needs_review",
 				Payload: map[string]any{
@@ -294,6 +295,7 @@ func v2SemanticCommitInputFromReview(job V2SemanticCommitJob) (repository.V2Comm
 			OriginalPredicate: observation.OriginalPredicate,
 			PredicateKey:      *result.PredicateKey,
 			ObjectRef:         observation.ObjectRef,
+			Polarity:          observation.Polarity,
 			ValidFrom:         observation.ValidFrom,
 			ValidTo:           observation.ValidTo,
 			EvidenceVerdict:   result.EvidenceVerdict,

@@ -243,13 +243,15 @@ func TestV2SemanticPlacementWorkerPropagatesProcessingErrors(t *testing.T) {
 			wantReason:    "semantic review returned no result",
 		},
 		{
-			name:          "commit error marks claimed run processed",
+			name:          "commit error marks claimed run processed and retryable",
 			ledger:        &v2PlacementWorkerLedgerStub{run: run},
 			reviewSource:  &v2PlacementWorkerReviewSourceStub{job: reviewJob},
 			review:        &v2PlacementWorkerReviewStub{result: accepted},
-			commit:        &v2PlacementWorkerCommitStub{err: errCommit},
+			commit:        &v2PlacementWorkerCommitStub{errs: []error{errCommit}},
 			wantProcessed: true,
 			wantErr:       errCommit,
+			wantRetry:     true,
+			wantReason:    "semantic commit failed before completion",
 		},
 	}
 	for _, tt := range tests {
@@ -365,8 +367,9 @@ func (s *v2PlacementWorkerReviewStub) ReviewV2Semantic(_ context.Context, job V2
 }
 
 type v2PlacementWorkerCommitStub struct {
-	err error
-	job V2SemanticCommitJob
+	err  error
+	errs []error
+	job  V2SemanticCommitJob
 }
 
 func (s *v2PlacementWorkerCommitStub) CommitV2Semantic(context.Context, V2SemanticCommitJob) (*repository.V2CommitPlacementSemanticResult, error) {
@@ -375,6 +378,13 @@ func (s *v2PlacementWorkerCommitStub) CommitV2Semantic(context.Context, V2Semant
 
 func (s *v2PlacementWorkerCommitStub) CompleteV2SemanticPlacement(_ context.Context, job V2SemanticCommitJob) (*V2SemanticPlacementCompletionResult, error) {
 	s.job = job
+	if len(s.errs) > 0 {
+		err := s.errs[0]
+		s.errs = s.errs[1:]
+		if err != nil {
+			return nil, err
+		}
+	}
 	if s.err != nil {
 		return nil, s.err
 	}

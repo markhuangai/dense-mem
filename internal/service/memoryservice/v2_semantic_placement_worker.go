@@ -96,7 +96,7 @@ func (s *v2SemanticPlacementWorkerService) ProcessNextV2SemanticPlacement(ctx co
 	}
 	_, err = s.commit.CompleteV2SemanticPlacement(ctx, v2CommitJobWithRunScope(reviewJob, *run, s.workerID, *result))
 	if err != nil {
-		return true, err
+		return true, errors.Join(err, s.requeueV2SemanticPlacement(ctx, *run, reviewJob, "semantic commit failed before completion"))
 	}
 	return true, nil
 }
