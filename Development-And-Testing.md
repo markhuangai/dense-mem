@@ -1,8 +1,8 @@
 # Development And Testing
 
-This page defines the v2 refactor workflow and test gates. Runtime inspection
-results belong in project memory or a dated evaluation report, not in this
-architecture page.
+This page defines the current development workflow and test gates. Runtime
+inspection results belong in project memory or a dated evaluation report, not
+in this architecture page.
 
 ## Baseline Assumptions
 
@@ -12,28 +12,26 @@ architecture page.
 - checks: `scripts/ci-check.sh` runs line lint, Go tests, and a 90% unit coverage
   gate for selected internal packages
 
-## Current And Target
+## Architecture Boundaries
 
-| Current pre-refactor state | Target state |
+| Retired pattern | Current requirement |
 | --- | --- |
-| PostgreSQL control/placement plus Neo4j semantic/search data | PostgreSQL owns ledger, current semantic state, graph reads, full text, and `pgvector` |
+| PostgreSQL control plus a second semantic store | PostgreSQL owns ledger, current semantic state, graph reads, full text, and `pgvector` |
 | claim/fact/fragment services and mixed graph records | Entity, Value, RelationshipObservation, VerificationEvent, profile-authored RelationshipRecord, Support, CrossReference, Transition, Hypothesis |
-| server requires Neo4j startup/bootstrap | normal server requires PostgreSQL + `pgvector`; temporary `2.1.x` boot gate owns read-only legacy access |
-| verifier surfaces legacy claim decisions | one closed response with bounded `security_signals`, `entity_results`, and `relationship_results`; no model schema-version field or stored-Relationship context |
-| graph query adapters expose Neo4j behavior | repository ports expose bounded semantic-edge/search/trace operations |
+| graph-store startup/bootstrap | server requires PostgreSQL + `pgvector` |
+| verifier exposes alternate claim-decision vocabulary | one closed response with bounded `security_signals`, `entity_results`, and `relationship_results`; no model schema-version field or stored-Relationship context |
+| graph-specific adapters define behavior | repository ports expose bounded semantic-edge/search/trace operations |
 | Redis optional rate/SSE backend | same coordination-only role; mandatory when distributed contracts require it |
 
-## Target Responsibility Tree
+## Responsibility Tree
 
 The exact package split should follow existing Go patterns and remain
-reviewable. This is a target responsibility map, not an instruction to rename
-every package at once:
+reviewable:
 
 ```text
 cmd/
   server/                       # composition root
   migrate/                      # PostgreSQL migrations
-  migrate-legacy-graph/         # temporary 2.1.x boot-gated adapter; remove in 2.2.0
 
 internal/
   domain/
@@ -93,126 +91,22 @@ Forbidden dependencies:
 - Redis interfaces accepting Entity, Relationship, evidence, or review records
 - transport or provider adapters assigning tier/status
 - recall reconstructing truth from search-document text
-- migration compatibility types leaking into canonical domain APIs
+- compatibility types leaking into canonical domain APIs
 
-## Refactor Slices
+## Implementation Boundaries
 
-Each slice must compile, migrate, test, and leave a usable checkpoint.
-The active GitHub roadmap breaks these slices into ordered issues #74 through
-#95. `v2.1.0` is only a release bootstrap, `v2.1.1` is the planned
-Neo4j-to-PostgreSQL cutover release, later `v2.1.x` releases are reserved for
-bug fixes, and `v2.2.0` removes the bridge.
-
-```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart LR
-  S0["0. Freeze v2 contracts"] --> S1["1. PostgreSQL schema<br/>and domain records"]
-  S1 --> S2["2. Identity and strict<br/>remember placement"]
-  S2 --> S3["3. SemanticEdge, search,<br/>recall and trace"]
-  S3 --> S4["4. Profile ownership,<br/>correction, dream/community"]
-  S4 --> S5["5. 2.1.x official-pipeline<br/>legacy migration"]
-  S5 --> S6["6. Automatic cutover"]
-  S6 --> S7["7. Remove bridge<br/>in 2.2.0"]
-```
-
-### Slice 0: contract fixtures
-
-- commit V2 MCP tool input/output schemas
-- commit the verifier JSON Schema from
-  [Memory Write Pipeline](Write-Pipeline#strict-verifier-contract)
-- create domain fixture tables for Entity, Value, observation, verification,
-  Relationship, support, transition, and Hypothesis
-- add forbidden-term checks for retired vocabulary, public projection fields,
-  and active candidates
-- generate current interface/data samples locally under ignored evaluation
-  runtime paths for migration comparison; never commit generated samples
-
-### Slice 1: PostgreSQL foundation
-
-- enable/version `pgvector` through migration
-- add target normalized tables, constraints, RLS, append-only enforcement,
-  partial adjacency indexes, full-text documents, vector columns, and jobs
-- add separate embedding-contract and search-index-profile metadata, validated
-  dimension/operator strategy, and atomic index activation
-- make every new tenant-owned table, primary/unique key, foreign key, hot join,
-  queue/idempotency key, and repository lookup carry `team_id` as defined in
-  [PostgreSQL Cluster-Safe Schema](PostgreSQL-Cluster-Safe-Schema)
-- add authored Relationship episode identity, owner-only placement constraints,
-  semantic grouping, cross-profile reference records, and system reviewer
-  transition authority for resolved conflict cases
-- implement transaction-local team/system worker context
-- add repository contract tests against real PostgreSQL
-- add backup/restore and migration-up/down fixtures before data backfill
-
-The source currently has PostgreSQL migrations under
-`migrations/postgres/` and migration wiring in
-`internal/storage/postgres/migrator.go`; extend that established path instead
-of introducing a second migration system.
-
-### Slice 2: identity and remember
-
-- implement reviewer extraction into immutable drafts
-- retrieve bounded same-team Entity/predicate/Relationship context
-- make exactly one verifier request per placement contract
-- reject the entire output on JSON/schema/coverage/allowlist/dependency failure
-- regenerate complete output; never coerce or splice
-- implement same-name reuse, ambiguity review, and transactional create recheck
-- commit evidence, outcomes, current state, history, review, and embedding jobs
-  atomically
-
-### Slice 3: recall and trace
-
-- implement `SemanticEdge` as one PostgreSQL view/query shape
-- implement team-scoped full-text and `pgvector` branches
-- implement the exact/HNSW/halfvec/canonical-rerank paths and topology contract
-  from [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec)
-- implement indexed bounded incoming/outgoing adjacency
-- fuse/deduplicate by `evidence_id` and require active support-path eligibility
-  before hydration
-- implement control-portal versioned RRF/branch-priority profiles and
-  deterministic evidence/conflict reranking
-- group equivalent cross-profile positions while retaining material conflicts
-- keep evidence and verifier history out of compact recall
-- expose `search_state` and branch degradation, not projection state
-
-### Slice 4: lifecycle workflows
-
-- implement predicate review, profile-owned conflict/correction/supersession,
-  cross-profile references, owner-only forget, and nightly Conflict review
-- implement write-scoped, caller-owned observation-level Entity split/merge
-- let dreaming read only eligible sources and existing endpoint IDs
-- run community analysis from a bounded PostgreSQL edge snapshot
-- update portals and telemetry to use the canonical API
-
-### Slice 5: `2.1.x` legacy migration
-
-- build the read-only boot-gated Neo4j corpus adapter
-- inventory all teams/profiles, preserve original owners, and exclude
-  superseded knowledge with a hashed manifest
-- stage every included corpus unit through the official reviewer, one-call
-  verifier, lifecycle, transaction, and new-vector pipeline
-- write durable mapping/checkpoint/progress/error/marker rows to PostgreSQL
-- hold valid ambiguity/unknown-predicate/candidate outcomes without bypassing
-  placement
-- gate automatic cutover on terminal outcomes, owners, trace, RLS, recall, and
-  current required vectors
-
-### Slice 6: automatic cutover
-
-- switch all normal writes/reads to PostgreSQL paths
-- close the Neo4j adapter immediately after the transactional marker
-- start the v2 data plane without a second operator confirmation only when every
-  hard gate passes
-- expose/log disconnect guidance and retain migration artifacts
-
-### Slice 7: `2.2.0` bridge removal
-
-- require a compatible `2.1.x` migration marker at startup
-- remove Neo4j config, connection, Compose, readiness, Go imports, driver,
-  testcontainer, migration adapter, and portal action
-- retain only the marker check and historical reports required for audit
-
-Release orchestration belongs in [Release Process](Release-Process).
+- PostgreSQL migrations live under `migrations/postgres/` and use
+  `internal/storage/postgres/migrator.go`.
+- MCP tool input/output schemas and provider JSON contracts are versioned
+  fixtures.
+- Every tenant-owned table, key, hot lookup, queue, and idempotency key carries
+  `team_id`.
+- Reviewer output is an immutable proposal; deterministic server policy owns
+  identity, lifecycle, tier, status, and durable commit.
+- Recall and trace use team-scoped PostgreSQL full-text, vector, and adjacency
+  paths.
+- Dreaming and community analysis consume eligible current state and cannot
+  become an alternate authority.
 
 ## Change Workflow
 
@@ -229,11 +123,10 @@ For each implementation change:
 8. record schema/config/API/migration implications
 
 If the change may affect retrieval quality, ranking, placement accuracy,
-verifier/reviewer behavior, embeddings, search documents, migration placement,
-or performance, run the deterministic 1k evaluation/comparison and put the
-result in the PR. Reuse a prior successful import only when import logic,
-schema, seed identity, placement terminality, and search/vector freshness are
-unchanged.
+verifier/reviewer behavior, embeddings, search documents, or performance, run
+the deterministic 1k evaluation/comparison and put the result in the PR. Reuse
+a prior successful import only when import logic, schema, seed identity,
+placement terminality, and search/vector freshness are unchanged.
 
 Example focused commands, verified against the current Go/npm layout:
 
@@ -283,7 +176,7 @@ the relevant uniqueness constraints.
 | repository/service integration | actual transactions, concurrent create recheck, idempotency, current-state/transition consistency |
 | provider-adapter protocol | malformed JSON, extra/missing/duplicate results, wrong IDs/spans, model security signals, timeouts, 429, complete regeneration |
 | recall evaluation | exact/full-text/vector/adjacency relevance, RRF/priority profiles, deterministic reranking, exact-vs-HNSW Recall@K, temporal/tenant/profile-conflict slices |
-| MCP contract | `tools/list` visibility, `tools/call` schema/scope enforcement, V2 semantics, and safe errors |
+| MCP contract | `tools/list` visibility, `tools/call` schema/scope enforcement, current contract semantics, and safe errors |
 | browser UAT | ambiguity, trace, correction, forget, quarantine release, Hypothesis styling, role/scope behavior |
 | recovery/load | PITR/restore, vector rebuild, worker restart, high concurrency, hub traversal bounds |
 
@@ -318,7 +211,10 @@ real PostgreSQL/`pgvector` instance and actual service logic.
 - a stale/unowned revision or fanout-bound failure changes no source pointer or
   semantic state
 - a quarantined or later failed replacement never reactivates the prior revision
-- unknown predicate creates review and no Relationship
+- existing predicate aliases resolve to one canonical team definition
+- a safe novel predicate definition and Relationship commit atomically
+- alias/key ambiguity, endpoint-kind mismatch, and relationship-kind collision
+  create review and no Relationship
 - forget retracts the edge while preserving nodes/history
 
 ### Strict verifier
@@ -336,6 +232,8 @@ duplicate or unknown ref
 reuse ID outside per-ref allowlist
 non-null ID for create/ambiguous
 unknown predicate_key
+ambiguous predicate alias
+novel predicate candidate outside the submitted set
 removed knowledge_alignment or related_relationship_ids field
 security signal with unknown evidence ID or invalid span
 out-of-range confidence
@@ -411,7 +309,7 @@ called.
   versions are idempotent and do not extend the original deadline
 - two replicas claim team-local batches without duplicate events; expired leases
   recover after restart and no cross-team row is read or written
-- V2 semantic memory tools appear in MCP `tools/list`/`tools/call` only and remain
+- semantic memory tools appear in MCP `tools/list`/`tools/call` only and remain
   absent/not-found on HTTP catalog, generic execution, and OpenAPI surfaces
 
 ## Concurrency And Failure Tests
@@ -481,37 +379,31 @@ number alone. Include concurrent reads/writes and tenant-filter selectivity.
 - append-only history remains immutable
 - error is visible and bounded; no silent fallback
 - integration test exercises real PostgreSQL behavior
-- migration/cutover/rollback impact is stated
+- schema and rollback impact is stated
 - no unrelated refactor or speculative abstraction is mixed in
 
 ## Risks And Mitigations
 
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
-| Target packages become a big-bang rewrite | contributors rename all services before one vertical path works | slices, adapters at boundaries, and deployable test gates |
+| Package cleanup becomes a big-bang rewrite | contributors rename all services before one vertical path works | small changes, adapters at boundaries, and deployable test gates |
 | Unit mocks hide storage bugs | mocked repository passes while RLS or unique identity fails | real PostgreSQL/`pgvector` integration is required |
-| Dual-write divergence | transition period writes PostgreSQL and Neo4j independently | one canonical PostgreSQL write; legacy graph is read-only migration input |
 | Verifier accommodation returns | adapter accepts old/alternate field names to keep tests green | one committed schema, negative fixtures, and full regeneration |
 | ANN benchmark is misleading | global unfiltered test passes while small tenants lose results | tenant-filtered exact baseline under representative skew/concurrency |
-| Dependency removed too early | rollback still needs legacy extraction after Neo driver deletion | cutover checkpoint and explicit later removal release |
 | Cross-profile tests collapse to one actor | ownership bugs pass because every fixture uses one profile | mandatory A/B/C read, correct, split, adopt, and forget integration cases |
 | Scanner fixtures test keywords only | ordinary security documentation is quarantined while obfuscated control text passes | quoted/adversarial minimal pairs plus pass/guarded/quarantine confusion and bypass gates |
 | Source revision test checks only the pointer | pointer advances while adopted facts and search state remain stale | real A/B/C dependency fixtures and transaction-state assertions for support, tier/status, transitions, and search intent |
 
 ## Completion Criteria
 
-The refactor is not complete until:
+The implementation is release-ready only when:
 
 1. every target domain/storage/API acceptance invariant passes
 2. PostgreSQL and `pgvector` integration tests run in CI
 3. strict verifier negative fixtures prove zero partial commits
 4. exact-vs-ANN recall and concurrent load meet release gates
-5. representative all-team migration reaches official-pipeline terminal
-   outcomes, preserves authors, excludes superseded corpus, builds new vectors,
-   and passes the automatic marker gate
-6. server, Compose, config, readiness, docs, and dependencies contain no normal
-   Neo4j path
-7. PostgreSQL backup/PITR and vector rebuild are proven
-8. MCP discovery/execution, first-party portal, and evaluation fixtures agree
-   on V2 semantics where their bounded use cases overlap
-9. `2.2.0` rejects missing bridge markers and contains no Neo4j connection path
+5. server, Compose, configuration, readiness, documentation, and dependencies
+   contain no secondary durable knowledge-store path
+6. PostgreSQL backup/PITR and vector rebuild are proven
+7. MCP discovery/execution, first-party portal, and evaluation fixtures agree
+   on current contract semantics where their bounded use cases overlap

@@ -78,7 +78,7 @@ host uses `tools/call` when the model selects a tool. Their canonical behavior
 is in
 [Request Lifecycle And Security](Request-Lifecycle-And-Security#mcp-memory-interface).
 
-For target v2, verify:
+For contract version 2, verify:
 
 - `remember` takes evidence and optional proposal
 - `get_memory_placement` returns processing and search state
@@ -88,7 +88,7 @@ For target v2, verify:
 
 ## Server Instructions
 
-The target MCP initialization response should use the server `instructions`
+The MCP initialization response should use the server `instructions`
 field for short cross-tool guidance:
 
 ```text
@@ -131,7 +131,7 @@ Use [Quick Start](Quick-Start#6-remember-evidence) and
 | server absent | URL, network, TLS, client restart |
 | unauthorized | environment variable exported to client process, key expiry/revocation |
 | tool missing | scopes, feature flag, contract version |
-| old request rejected | v1/v2 schema mismatch |
+| old request rejected | client/server contract mismatch |
 | recall misses recent write | processing outcome, branch degradation, and search freshness |
 | timeout | client tool timeout versus provider/placement polling pattern |
 

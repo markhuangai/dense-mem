@@ -126,9 +126,6 @@ The control portal manages:
 - telemetry and feedback summaries
 - dream/community scheduler state
 - memory-pack import/rollback operations
-- boot-gated `2.1.x` legacy migration state, progress, errors, logs, and
-  authorized start/resume after preflight, plus post-migration Neo4j disconnect
-  guidance; passing hard gates trigger cutover without a second confirmation
 
 It is not a general memory editor. Semantic changes use versioned review,
 correction, merge/split, retraction, or import workflows with audit.

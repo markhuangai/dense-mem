@@ -4,7 +4,7 @@ Dense-Mem is a standalone memory service. The host LLM decides when memory is
 useful; Dense-Mem owns evidence intake, Entity resolution, Relationship
 lifecycle, durable provenance, retrieval, trace, and audit.
 
-This page is the v2 architecture overview. Detailed rules live in the linked
+This page is the current architecture overview. Detailed rules live in the linked
 canonical pages.
 
 ## System Map
@@ -38,8 +38,7 @@ flowchart TB
 PostgreSQL is the only required database. It stores durable knowledge and
 control state and serves graph-shaped, full-text, and vector reads. `pgvector`
 is an extension inside PostgreSQL. Redis is optional coordination and never
-contains memory truth. Neo4j is not part of normal target runtime; the temporary
-`2.1.x` bridge reads it only in boot-gated migration mode.
+contains memory truth.
 
 ## Responsibility Boundaries
 
@@ -79,7 +78,7 @@ flowchart LR
 The authenticated principal fixes team, profile, role, and scopes before any
 application service runs. A request never chooses its tenant.
 
-## Target Runtime Composition
+## Runtime Composition
 
 Dependency direction is inward: transports call application services;
 application services apply domain policy through ports; adapters implement
@@ -152,36 +151,24 @@ sequenceDiagram
   participant A as Model providers
   participant W as Workers
   participant H as HTTP
-  actor O as Operator
 
   S->>S: Load and validate configuration
-  S->>P: Connect and inspect release/migration state
+  S->>P: Connect and validate authority state
   S->>H: Start health and control surfaces
-  alt Migration required in 2.1.x
-    S->>H: Enter maintenance and log migration_required
-    O->>H: Start or resume after preflight
-    S->>A: Validate migration provider contracts
-    S->>P: Run official-pipeline migration and hard gates
-    P-->>S: Commit automatic cutover marker
-    S->>S: Close legacy migration adapter
-  else Compatible completed marker
-    S->>P: Continue normal release startup
-  end
   S->>P: Apply compatible schema migrations
   S->>P: Validate pgvector, embedding contract, and search-index generation
   S->>R: Build required coordination backend
   S->>A: Validate configured provider contracts
   S->>W: Start placement, embedding, Conflict review, cleanup, and optional schedulers
-  S->>H: Enable main v2 data plane
+  S->>H: Enable main data plane
   H-->>S: Serve until termination
   S->>H: Stop accepting traffic
   S->>W: Drain or release work safely
   S->>S: Close providers and adapters
 ```
 
-PostgreSQL and a compatible completed migration marker are always readiness
-gates. Redis is a gate only when distributed
-coordination is required or explicitly configured as mandatory. A
+PostgreSQL authority validation is a readiness gate. Redis is a gate only when
+distributed coordination is required or explicitly configured as mandatory. A
 multi-instance deployment cannot silently fall back to process-local limits or
 leases.
 
@@ -320,35 +307,20 @@ projection, outbox, or graph-reconciliation loop in the target.
 Dense-Mem is not an autonomous truth oracle. Models propose structured
 judgments; deterministic server rules control durable state.
 
-## Refactor Boundary
+## Change Boundary
 
-The target should be implemented as reviewable vertical slices:
-
-```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart LR
-  Contract["1. Versioned domain contracts"] --> Schema["2. PostgreSQL schema<br/>and repositories"]
-  Schema --> Remember["3. Remember + strict verifier"]
-  Remember --> Recall["4. Recall + trace"]
-  Recall --> Dream["5. Candidate-safe dreaming"]
-  Dream --> Migration["6. 2.1.x official-pipeline<br/>legacy migration"]
-  Migration --> Cutover["7. Automatic cutover"]
-  Cutover --> Remove["8. Remove Neo4j bridge<br/>in 2.2.0"]
-```
-
-Each slice needs contract, tenant-isolation, idempotency, and failure tests
-before another slice relies on it. Legacy Neo4j data is migration input, not a
-second target model.
+Architecture changes ship as reviewable vertical changes. Each change needs
+contract, tenant-isolation, idempotency, and failure tests before another
+change relies on it.
 
 ## Risks And Mitigations
 
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
-| Target mistaken for shipped behavior | an operator uses v2 PostgreSQL-only recovery on the current runtime | label target status, expose contract/runtime versions, and gate cutover on release checks |
 | PostgreSQL graph query is unbounded | a hub Entity causes a recursive query to exhaust memory | partial adjacency indexes and strict seed/fan-out/depth/edge/time budgets |
 | ANN tenant filter loses recall | shared approximate search omits relevant team rows before hydration | enforce the team-shaped execution/topology gates in [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec) |
 | Provider controls truth | verifier returns `tier=fact` or an arbitrary ID and it reaches storage | closed schema excludes writes; allowlist validation and deterministic lifecycle |
-| Big-bang refactor stalls | every package changes before one end-to-end slice works | vertical slices, legacy adapters at boundaries, and passing acceptance invariants per slice |
+| Big-bang refactor stalls | every package changes before one end-to-end path works | small vertical changes and passing acceptance invariants per change |
 | Redis becomes a hidden database | replicas lose identity or review state after Redis restart | coordination-only ports and restart tests proving PostgreSQL is complete |
 | Conflict workflow becomes a truth edge | a team preference appears as a semantic predicate or closes an unrelated A Relationship | separate non-semantic case/event records, locked case membership, system reviewer transitions, and support-path-only recall disposition |
 
@@ -369,8 +341,7 @@ second target model.
 10. Required recall failures are visible; optional degradation is reported.
 11. Embedding and search-index versions form explicit linked deployment
     contracts with separate rebuild lifecycles.
-12. Normal target runtime has no Neo4j dependency; only the temporary `2.1.x`
-    migration gate may connect, and `2.2.0` removes that code.
+12. Runtime has no secondary durable knowledge-store dependency.
 13. Same-team visibility never permits one profile to mutate another profile's
     knowledge.
 14. A team Conflict case never owns evidence or changes a member Relationship's

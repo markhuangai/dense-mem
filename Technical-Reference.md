@@ -1,6 +1,6 @@
 # Technical Reference
 
-This page defines the v2 public memory contract. The external memory contract
+This page defines public memory contract version 2. The external memory contract
 is discovered and executed through MCP:
 
 ```text
@@ -8,10 +8,6 @@ MCP transport:  /mcp
 discovery:      tools/list
 execution:      tools/call
 ```
-
-The temporary `2.1.x` adapter submits legacy corpus evidence through the same
-V2 application services used by MCP tools. Version `2.2.0` requires the
-completed bridge marker before startup.
 
 ## Contract Principles
 
@@ -89,7 +85,7 @@ must not be enabled for production memory.
 
 ## Production HTTP Surface
 
-V2 semantic memory tools are MCP-only. `remember`, `get_memory_placement`,
+Semantic memory tools are MCP-only. `remember`, `get_memory_placement`,
 `resolve_memory_placement`, `correct_entity_resolution`, `recall_memory`, and
 `trace_memory` are advertised by MCP `tools/list` and invoked by MCP
 `tools/call`; they are absent from the generic HTTP tool catalog/executor and
@@ -413,7 +409,7 @@ Processing states:
 | --- | --- |
 | `queued` | evidence is durable and waiting |
 | `processing` | a worker owns a renewable lease |
-| `awaiting_review` | durable review tasks need a client decision |
+| `awaiting_review` | one or more durable open/acknowledged review tasks need a client decision |
 | `completed` | every item has a durable outcome |
 | `failed` | orchestration failed visibly |
 
@@ -466,6 +462,18 @@ predicate, failed extraction, or invalid verification prevents canonical
 Relationship creation. An evidence item may have no Relationship outcomes and
 still be current searchable evidence when it is safe and not superseded.
 
+`relationship_pending_evidence` and `relationship_rejected` are terminal
+processed outcomes for the evidence item. They do not by themselves put the
+placement item in `awaiting_review`.
+`predicate_needs_review`, `identity_needs_review`, and
+`relationship_needs_review` require a durable review task; without that task the
+placement row is considered repairable orchestration state, not a valid held
+review.
+
+`predicate_needs_review` payloads carry the current predicate-policy version.
+Current collisions and ambiguities remain `awaiting_review`; operators do not
+reset placement rows manually.
+
 The strict internal verifier schema is not a public field. Its only canonical
 definition is
 [Memory Write Pipeline](Write-Pipeline#strict-verifier-contract).
@@ -478,11 +486,10 @@ Example:
 {
   "ingest_id": "ing_01J...",
   "placement_item_id": "item_1",
+  "placement_item_version": 3,
   "action": "select_entity",
-  "decision": {
-    "mention_ref": "person_1",
-    "entity_id": "ent_mark_huang"
-  },
+  "entity_ref": "person_1",
+  "candidate_entity_id": "ent_mark_huang",
   "evidence": [
     {
       "content": "I mean Mark Huang on the Dense-Mem team.",
@@ -498,14 +505,19 @@ Example:
 | Action | Required input | Result |
 | --- | --- | --- |
 | `acknowledge` | completed ingest | records acknowledgement only |
-| `select_entity` | mention ref, supplied candidate ID, and evidence where required | appends identity decision and requeues affected observations |
-| `confirm_new_entity` | mention ref plus distinguishing evidence | permits a fresh create decision; client allocates no ID |
-| `select_predicate` | observation ref and supplied registered predicate | appends vocabulary review decision and reprocesses |
-| `accept` | review item plus authoritative evidence | appends evidence and reruns strict placement |
-| `reject` | review item plus reason/evidence | records rejection without deleting history |
-| `correct` | replacement evidence and optional proposal | appends and reprocesses corrected input |
-| `release_quarantine` | quarantined placement item plus bounded reason; manager role and `write` scope | appends a security release and requeues the evidence as guarded |
-| `forget` | target Relationship ID, authority, and reason | retracts active current state; preserves nodes and append-only ledger |
+| `select_entity` | placement item ID/version, Entity ref, and supplied candidate ID | appends identity decision and requeues affected observations |
+| `confirm_new_entity` | placement item ID/version, Entity ref, and distinguishing evidence | permits a fresh create decision; client allocates no ID |
+| `select_predicate` | placement item ID/version, observation ID, and supplied registered predicate/version | appends vocabulary review decision and reprocesses |
+| `accept` | placement item ID/version plus authoritative evidence | appends evidence and reruns strict placement |
+| `reject` | placement item ID/version plus bounded message | records rejection without deleting history |
+| `correct` | placement item ID/version plus replacement evidence | appends and reprocesses corrected input |
+| `release_quarantine` | placement item ID/version plus bounded reason; manager role and `write` scope | appends a security release and requeues the evidence as guarded |
+| `forget` | target Relationship ID, bounded message, and authoritative evidence | retracts active current state; preserves nodes and append-only ledger |
+
+Every action that targets a placement item uses the item `version` returned by
+`remember` or `get_memory_placement` as `placement_item_version`. A stale value
+fails closed. Resolution fields are top-level closed-schema properties; there
+is no nested `decision` compatibility shape.
 
 No action writes a graph side channel or directly forces `fact`. Merge, split,
 supersede, support changes, and forget target caller-owned records only. A
@@ -808,7 +820,7 @@ behavior and key administration belong in
 | --- | --- | --- |
 | MCP `/mcp` | authenticated LLM hosts | discover and execute memory tools |
 | user portal `/ui` | authenticated team users | first-party recall, graph/trace, review, keys, and self telemetry |
-| control portal | deployment operators on the private listener | configuration, migration, security, and operations |
+| control portal | deployment operators on the private listener | configuration, security, and operations |
 | health/readiness | deployment infrastructure | liveness and dependency readiness only |
 
 MCP runtime discovery reflects scopes and feature gates. Portal handlers expose
@@ -892,7 +904,7 @@ Provider configuration belongs in
 | Alias becomes edge | client proposal creates an alias Relationship | aliases exist only on Entity hints and name storage |
 | Oversized trace | a hub Entity exhausts response or host context | depth, edge, content, time, and character budgets plus `stopped_reason` |
 | Forget is treated as deletion | client expects audit/evidence to vanish | explicit retraction semantics and separate privacy-erasure workflow |
-| HTTP bypass diverges from MCP | a caller executes a V2 memory tool through the generic HTTP route with a stale schema | transport visibility omits V2 memory tools from HTTP catalog/execution/OpenAPI and tests list/call parity separately |
+| HTTP bypass diverges from MCP | a caller executes a semantic memory tool through the generic HTTP route with a stale schema | transport visibility omits semantic memory tools from HTTP catalog/execution/OpenAPI and tests list/call parity separately |
 | Stale conflict response changes the wrong case | C submits evidence against version 2 after the case moved to version 3 | per-proposal `conflict_id` plus expected version and pre-commit material-membership validation |
 | Resolved response conceals authorship | only B's current evidence returns and the host assumes A was deleted | required compact conflict ref plus full trace positions/events |
 | Raw evidence leaks noise | a vector seed returns stale A evidence with no eligible support path | omit `raw_evidence`; hydrate evidence text only through active support-path eligibility |
@@ -910,11 +922,11 @@ Version 2 is incomplete until:
 6. trace returns exact spans and lifecycle/correction lineage
 7. processing and search states vary independently
 8. cross-team ID hints fail without revealing existence
-9. every MCP tool enters only canonical V2 services and PostgreSQL
+9. every MCP tool enters only canonical services and PostgreSQL
 10. every public error has a correlation ID and bounded safe details
 11. `tools/list` visibility and `tools/call` execution agree for every scope and
     feature combination
-12. V2 semantic memory tools are discoverable/callable through MCP and are
+12. semantic memory tools are discoverable/callable through MCP and are
     absent from generic HTTP tool discovery, execution, and OpenAPI
 13. `remember` accepts conflict context only on one Relationship proposal and
     rejects stale, cross-team, dismissed, or unrelated cases before commit

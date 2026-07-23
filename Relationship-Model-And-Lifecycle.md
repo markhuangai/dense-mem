@@ -86,9 +86,8 @@ a non-current source revision, while its bytes and provenance remain immutable.
 
 Every RelationshipRecord has an immutable `owner_profile_id`, which records the
 profile that authored the episode. Ordinary writes set it from the authenticated
-profile; legacy migration preserves the original v1 owner. The owner controls
-normal support decisions, direct supersession, retraction, and profile-local
-identity corrections.
+profile. The owner controls normal support decisions, direct supersession,
+retraction, and profile-local identity corrections.
 
 Every active team profile with `read` scope may recall and trace same-team
 Relationships regardless of owner. A profile with `write` scope may:
@@ -374,12 +373,33 @@ flowchart TD
   Replace -- Yes --> Supersede["Supersede prior Relationship"]
 ```
 
-An unknown predicate is not a Hypothesis. It means a `remember` observation
-cannot map to a registered predicate or alias. Dense-Mem preserves the
-observation, returns `predicate_needs_review`, and creates no Relationship or
-SemanticEdge until a server-authorized registry decision resolves it.
+The team registry is open-ended; the model prompt is not. Before extraction,
+Dense-Mem ranks the active team vocabulary against the submitted evidence and
+sends at most the request-schema limit. The extractor should reuse a supplied
+label when it fits, but may propose a concise novel label when none does.
 
-The verifier cannot create predicate definitions.
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart TD
+  Registry["Open-ended team registry"] --> Relevant["Bounded evidence-relevant vocabulary"]
+  Relevant --> Extractor["Extractor selects existing label<br/>or proposes a novel label"]
+  Extractor --> Canonical["Server resolves keys and aliases<br/>against the complete registry"]
+  Canonical --> Verify["Verifier confirms evidence,<br/>endpoints, kind, and candidate"]
+  Verify --> Existing{"Canonical active definition exists?"}
+  Existing -- Yes --> Use["Use canonical definition"]
+  Existing -- No --> Safe{"Novel candidate is safe<br/>and unambiguous?"}
+  Safe -- Yes --> Atomic["Register team definition and<br/>Relationship in one transaction"]
+  Safe -- No --> Review["awaiting_review"]
+```
+
+Extraction providers may suggest labels and `relationship_kind`, but they
+cannot decide the durable key, version, endpoint allowlist, lifecycle, tier, or
+truth. Exact keys and aliases are rechecked under a team/key transaction lock.
+An existing compatible definition wins. A safe novel candidate receives an
+append-only team definition with the verified endpoint kinds in the same
+transaction as its Relationship. Key/alias collisions, ambiguous aliases,
+incompatible endpoint kinds, and incompatible relationship kinds preserve the
+observation as `predicate_needs_review` and create no Relationship.
 
 ## Observation And Evidence
 
@@ -582,7 +602,7 @@ not entailed: Mark uses PostgreSQL
 The third statement may be a useful Hypothesis, but the premises do not
 logically entail it.
 
-The v2 refactor has no automatic derived-fact rule engine. A future rule engine
+The current implementation has no automatic derived-fact rule engine. A future rule engine
 would require registered deterministic rules, exact premise Relationship IDs,
 cycle prevention, and automatic invalidation when a premise changes. AI
 reasoning alone remains a Hypothesis.
@@ -792,7 +812,8 @@ referential and audit integrity.
 | Evidence transaction fails | Create no ingest or semantic state. |
 | Extraction succeeds but verification fails | Preserve staged evidence and validated extraction state; expose failure; create no support or SemanticEdge. |
 | Entity endpoint is ambiguous | Preserve observation/review context; create no dependent Relationship or SemanticEdge. |
-| Predicate is unknown | Preserve observation; return predicate review; create no Relationship or SemanticEdge. |
+| Novel predicate is safe and unambiguous | Register the team definition and Relationship atomically. |
+| Predicate key/alias is ambiguous, colliding, or kind-incompatible | Preserve observation; return predicate review; create no Relationship or SemanticEdge. |
 | Verdict is insufficient | Preserve candidate Relationship and evidence context; create no SemanticEdge. |
 | Search embedding fails | Preserve authoritative Relationship; expose degraded search state and retry the derived embedding job. |
 | Same-owner knowledge conflicts with new evidence | Hold review or apply owner-authorized supersession; never use stored knowledge as self-supporting evidence. |
@@ -837,7 +858,9 @@ The refactor is incomplete until tests prove:
 7. stored knowledge alone cannot create support or promote tier
 8. normal recall does not load complete evidence or transition history
 9. trace reconstructs evidence, verification, and lifecycle lineage
-10. unknown predicates create review, not invented registry entries
+10. existing aliases reuse canonical definitions, safe novel predicates register
+    atomically with their Relationships, and ambiguous/unsafe candidates create
+    review
 11. a Hypothesis cannot create a node or edge
 12. forget removes the active SemanticEdge while preserving nodes and history
 13. one profile-owned Relationship has at most one graph-shaped SemanticEdge

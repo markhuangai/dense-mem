@@ -5,7 +5,7 @@ as reviewable, versioned JSON artifacts. They are portability packages, not
 database backups and not a path around normal identity resolution or
 verification.
 
-This page owns the target `dense-mem.memory-pack.v2` artifact and workflow.
+This page owns the current `dense-mem.memory-pack.v2` artifact and workflow.
 Tool discovery and transport schemas are in
 [Technical Reference](Technical-Reference#memory-packs).
 
@@ -220,10 +220,6 @@ If the same semantic meaning already exists:
 - under another same-team owner, import creates or reviews a destination-owned
   Relationship and may append a cross-profile reference
 - under another team, it is not a candidate and must not be visible
-
-The audited v1-to-v2 migration is the only workflow allowed to preserve an
-original owner while acting as a system worker. Its separate contract is in
-[Release Process](Release-Process#5-run-the-official-v2-pipeline).
 
 ## Identity And Relationship Mapping
 

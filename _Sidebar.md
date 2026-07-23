@@ -41,5 +41,4 @@
 ## Contribute And Maintain
 
 - [Development And Testing](Development-And-Testing)
-- [Release Process](Release-Process)
 - [Documentation Maintenance](Documentation-Maintenance)

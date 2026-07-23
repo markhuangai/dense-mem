@@ -224,7 +224,7 @@ flowchart LR
 ```
 
 MCP discovery and execution share one registry and the same visibility check.
-The registry also declares allowed transports. V2 semantic memory tools are
+The registry also declares allowed transports. Semantic memory tools are
 MCP-only: HTTP tool catalogs and OpenAPI omit them, and generic HTTP execution
 returns not found. Disabled, unauthorized, or transport-ineligible tools do not
 leak through another catalog or execution path. The exact tool set belongs in
@@ -277,7 +277,7 @@ sequenceDiagram
 The runtime advertises supported MCP protocol versions. Do not hardcode one
 protocol date in the manual as timeless.
 
-The negotiated MCP protocol version and the Dense-Mem V2 tool contract are
+The negotiated MCP protocol version and Dense-Mem tool contract version 2 are
 different versions. The host follows the current `tools/list` schemas and
 server instructions instead of applying a cached input shape from another
 Dense-Mem release.
@@ -315,7 +315,7 @@ sequenceDiagram
 
 The user portal supports same-team recall, graph/trace, review, key management,
 and permitted telemetry. The control portal supports private cross-team
-configuration, migration, security, and operations. Portal handlers call the
+configuration, security, and operations. Portal handlers call the
 same application services and PostgreSQL authority as MCP where their use cases
 overlap, but their browser endpoints are not a supported client SDK or memory
 automation interface.
@@ -414,7 +414,7 @@ audit ledger.
 | Raw key leak | downstream log/provider receives Authorization | auth middleware removes header and sensitive-value tests |
 | Cookie CSRF | browser session mutates memory cross-site | SameSite/secure cookie and required CSRF token |
 | Discovery/execution drift | `tools/list` advertises a tool that `tools/call` then hides, or execution bypasses discovery policy | one registry and the same visibility/scope predicate for both methods |
-| HTTP bypass exposes a second memory contract | generic tool execution or OpenAPI publishes an MCP-only V2 memory tool | transport allowlist on catalog, execution, and schema generation plus not-found conformance tests |
+| HTTP bypass exposes a second memory contract | generic tool execution or OpenAPI publishes an MCP-only semantic memory tool | transport allowlist on catalog, execution, and schema generation plus not-found conformance tests |
 | Portal backend becomes an integration API | external clients depend on browser implementation details and bypass the intended MCP contract | same-origin portal boundary, no public SDK/OpenAPI/CORS contract, API-key-or-SSO authentication, and CSRF for SSO-cookie mutations |
 | Redis outage weakens limits | replicas fall back to independent counters | distributed-required readiness failure |
 | Search candidate leakage | global vector search exposes another team's text | internal filtering and authorized hydration before return |
@@ -438,16 +438,14 @@ audit ledger.
 9. public errors cannot reveal cross-team existence
 10. same-team read visibility never authorizes cross-profile lifecycle,
     support, or identity mutation
-11. system migration may preserve original owners only through the audited
-    migration transaction mode
-12. user/control portal handlers remain first-party views and do not become a
+11. user/control portal handlers remain first-party views and do not become a
     public memory automation contract
-13. user-portal API-key login remains supported alongside configured SSO;
+12. user-portal API-key login remains supported alongside configured SSO;
     HttpOnly session and CSRF semantics apply only to cookie-authenticated SSO
     requests
-14. only a manager with `write` can release quarantine, and release cannot bypass
+13. only a manager with `write` can release quarantine, and release cannot bypass
     guarded scanning/model policy
-15. a source revision can be advanced only by its immutable source owner and an
+14. a source revision can be advanced only by its immutable source owner and an
     exact expected prior token
-16. V2 semantic memory tools are visible and executable through MCP only; HTTP
+15. semantic memory tools are visible and executable through MCP only; HTTP
     catalogs, generic execution, and OpenAPI cannot expose them

@@ -1,7 +1,7 @@
 # Documentation Maintenance
 
 This wiki is the current project manual and architecture contract. It describes
-the supported target behavior for v2, not a changelog.
+the supported current behavior, not a changelog.
 
 ## Status Classes
 
@@ -12,7 +12,7 @@ Every deep technical page uses one status:
 | current architecture | approved contract the implementation must satisfy |
 | current runtime | verified behavior of an exact commit/image |
 | operational procedure | commands for a named supported release |
-| historical migration | temporary compatibility or conversion behavior with a removal condition |
+| retired compatibility | temporary compatibility behavior with a removal condition |
 
 Do not mix architecture, runtime findings, and history in one paragraph.
 Runtime findings, dated score reports, and work-in-progress deltas belong in
@@ -30,7 +30,7 @@ flowchart TD
   Memory --> Canonical["Canonical target manual page"]
   Canonical --> Tests["Target contract and invariant tests"]
   Tests --> Code["Refactor implementation"]
-  Code --> Old["Older wiki prose or legacy code"]
+  Code --> Old["Older wiki prose or retired code"]
 ```
 
 Current code is conformance evidence; it does not silently supersede the
@@ -92,7 +92,6 @@ database version, and feature flags before deciding what shipped.
 | deployment, backup, restore, and incidents | [Operations Runbook](Operations-Runbook) |
 | telemetry names and operational interpretation | [Telemetry](Telemetry) |
 | source layout and validation layers | [Development And Testing](Development-And-Testing) |
-| release migration, cutover, rollback boundary, and legacy removal | [Release Process](Release-Process) |
 
 [Home](Home#start-here) is the navigation map. This table is the ownership map.
 Do not reproduce either map on another page.
@@ -108,7 +107,7 @@ owner. It must not copy the owner's:
 - complete process diagram
 - detailed storage shape
 - troubleshooting decision tree
-- migration procedure
+- full operational procedure
 
 When content gains its own responsibility, move it to a new canonical page and
 replace old copies with narrow links. Git history preserves removed prose.
@@ -200,9 +199,7 @@ Ask:
 - Can a same-name Entity cross a team boundary?
 - Can same-team visibility mutate another profile's knowledge?
 - Can a Hypothesis enter primary recall?
-- Can the migration marker commit while corpus or vector work is still mutable?
-- Can `2.2.0+` distinguish a valid fresh database from a skipped v1 migration?
-- Can a v1 client silently misread a v2 response?
+- Can an older client silently misread the current response contract?
 
 If the failure changes the contract, add a specific Risk and mitigation before
 implementation.
@@ -213,14 +210,14 @@ Remove material that no longer describes a supported or required path. Keep old
 terminology only when:
 
 - a compatibility adapter currently accepts it
-- an operator must migrate stored data containing it
+- an operator must handle stored data containing it
 - an explicit tombstone behavior matters
 
 Mark the removal condition. Do not keep old architecture prose for history.
 
 The retired term `Assertion` may appear in the single retirement note or a
-migration mapping. It must not name an active target record, metric, API field,
-graph label, or service.
+retired compatibility mapping. It must not name an active target record,
+metric, API field, graph label, or service.
 
 ## Page Template
 
@@ -300,11 +297,11 @@ layout.
 ### Terminology
 
 ```bash
-rg -n -i 'assertion|assertion_id|legacy fact|legacy claim|43f3e38' --glob '*.md'
+rg -n -i 'assertion|assertion_id|43f3e38' --glob '*.md'
 ```
 
-Inspect every match. Target pages should contain only deliberate retirement or
-migration references.
+Inspect every match. Target pages should contain only deliberate retirement
+references.
 
 Also scan for target terms used inconsistently:
 
@@ -328,7 +325,7 @@ rg -n 'RelationshipObservation|VerificationEvent|RelationshipRecord|SemanticEdge
 
 ## Freshness Metadata
 
-Architecture pages describe the current approved v2 contract and should not
+Architecture pages describe the current approved contract and should not
 carry dated runtime-conformance notes. Current-runtime pages say:
 
 ```text
@@ -377,7 +374,7 @@ separate:
 - [ ] Entity reuse/create/ambiguity occurs before Relationship identity
 - [ ] graph context is not evidence
 - [ ] Redis is not described as durable memory
-- [ ] failure, retry, job recovery, migration, and rollback boundaries are explicit
+- [ ] failure, retry, job recovery, schema-change, and rollback boundaries are explicit
 - [ ] Risk contains specific failure modes and mitigations
 - [ ] stale material was removed instead of accumulated
 - [ ] schemas/defaults live on one owner page

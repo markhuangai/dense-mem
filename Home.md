@@ -2,10 +2,9 @@
 
 Dense-Mem gives AI clients a shared, evidence-backed semantic memory service.
 
-This manual is the approved target contract for a full PostgreSQL + `pgvector`
-refactor. The current source still contains legacy behavior; pages label that
-gap when it matters. A code/design mismatch is implementation work, not a
-second valid architecture.
+This manual describes the current PostgreSQL + `pgvector` architecture and
+supported product behavior. A code/design mismatch is implementation work, not
+a second valid architecture.
 
 ## What Dense-Mem Remembers
 
@@ -114,7 +113,7 @@ flowchart LR
 | Configuration and operation | [Configuration](Configuration), [Operations Runbook](Operations-Runbook) |
 | Security, portals, SSO, keys | [Request Lifecycle And Security](Request-Lifecycle-And-Security), [Portals And API Keys](Portals-And-API-Keys), [User Portal SSO](User-Portal-SSO) |
 | Telemetry, feedback, evaluation | [Telemetry](Telemetry), [Recall Feedback](Recall-Feedback), [Evaluation](Evaluation) |
-| Source refactor and release | [Development And Testing](Development-And-Testing), [Release Process](Release-Process) |
+| Source changes and testing | [Development And Testing](Development-And-Testing) |
 | Manual ownership | [Documentation Maintenance](Documentation-Maintenance) |
 
 ## Semantic Model At A Glance
@@ -155,10 +154,8 @@ Full definitions exist only in
 | Redis | optional distributed coordination: limits, short leases/signals, SSE |
 | process memory | the same coordination interfaces for one process only |
 
-Neo4j is not in normal target runtime. The temporary `2.1.x` bridge reads it
-only for boot-gated migration and `2.2.0` removes that connection path. Redis
-never stores the only copy of an Entity, Relationship, evidence, review, key,
-or audit event.
+Redis never stores the only copy of an Entity, Relationship, evidence, review,
+key, or audit event.
 
 ## What Dense-Mem Does Not Do
 
@@ -177,7 +174,7 @@ Dense-Mem does not:
 
 ## Manual Status
 
-Canonical pages define the v2 architecture. Operational commands must be
+Canonical pages define the current architecture. Operational commands must be
 checked against the deployed contract/version.
 Update and evidence rules are in
 [Documentation Maintenance](Documentation-Maintenance).

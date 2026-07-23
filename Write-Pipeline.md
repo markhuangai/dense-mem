@@ -296,9 +296,10 @@ merely because new evidence cannot enter the semantic path.
 ## Stage 4: Extract Atomic Structure
 
 The structure reviewer receives verbatim evidence, server evidence IDs, the
-client proposal as a hint, allowed Entity kinds, typed-Value rules, and the
-predicate vocabulary. It performs semantic unit selection and atomic extraction
-in one structured request. Deterministic code preserves evidence item
+client proposal as a hint, allowed Entity kinds, typed-Value rules, and a
+bounded evidence-relevant slice of the open-ended team predicate registry. It
+performs semantic unit selection and atomic extraction in one structured
+request. Deterministic code preserves evidence item
 boundaries, validates offsets, and enforces limits; it does not pre-split source
 text into sentences as the semantic authority.
 
@@ -313,9 +314,11 @@ exact evidence spans
 original mention and predicate wording
 ```
 
-It cannot allocate IDs, reuse an Entity, create a predicate, decide truth, or
-assign tier/status. It may emit multiple observations for one evidence item, and
-all valid observations remain visible through the placement result.
+It cannot allocate IDs, reuse an Entity, persist a predicate, decide truth, or
+assign tier/status. It should select a supplied predicate label when one fits
+and may propose a concise novel label when none does. It may emit multiple
+observations for one evidence item, and all valid observations remain visible
+through the placement result.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
@@ -350,7 +353,8 @@ The server, not either model, supplies:
 
 - per-mention Entity candidate allowlists from names, IDs, context, and vector
   retrieval
-- registered predicate definitions and aliases
+- complete-registry key/alias matches for each extracted predicate label,
+  represented as a bounded candidate set
 - verbatim evidence, server evidence IDs, and exact observation spans
 - request IDs, allowed enums, and byte/item limits
 
@@ -365,7 +369,7 @@ sets.
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
   Extraction["Extraction bundle"] --> Entity["Entity candidate sets"]
-  Extraction --> Predicate["Predicate registry matches"]
+  Extraction --> Predicate["Complete-registry key/alias matches<br/>plus bounded novel candidates"]
   Entity --> Freeze["Freeze request IDs,<br/>allowlists, evidence, and spans"]
   Predicate --> Freeze
   Freeze --> Verifier["One verifier request"]
@@ -700,8 +704,9 @@ validation:
 5. A `reuse` ID is in that mention's immutable candidate allowlist, belongs to
    the authenticated team, and is active.
 6. `create` and `ambiguous` contain null `candidate_entity_id`.
-7. A resolved `predicate_key` is in that observation's registry-backed
-   allowlist and accepts the endpoint kinds.
+7. A resolved `predicate_key` is in that observation's submitted candidate
+   allowlist and accepts the endpoint kinds; the server rechecks the complete
+   team registry before commit.
 8. `needs_review` contains null `predicate_key`; the original wording remains
    on the observation.
 9. `temporal_verdict=entailed` is accepted only when the request carried
@@ -746,7 +751,8 @@ fields across attempts. Application code must not:
 - accept a result from an earlier invalid attempt
 - retry only missing items and splice responses together
 - commit Entity results while Relationship results are invalid
-- invent a predicate or substitute the closest candidate
+- invent a predicate outside the submitted candidate set or substitute the
+  closest candidate
 
 Validation errors should be actionable enough for regeneration. For example,
 when a relationship has neither `object_name` nor `object_value`, the error must
@@ -799,8 +805,12 @@ Orchestration invariants:
 - `insufficient` may create or update a `candidate/pending_evidence` record
   only after endpoints and a registered predicate resolve
 - candidates never become active edges or default recall results
-- an unknown predicate preserves the observation and creates
-  `predicate_needs_review`, not a guessed definition
+- a compatible existing key or alias uses its canonical team definition
+- a verifier-selected novel candidate is registered with its Relationship in
+  one transaction only after the complete registry, endpoint kinds, and
+  relationship kind pass deterministic checks
+- a key/alias collision, ambiguous alias, unsafe key, or incompatible kind
+  preserves the observation and creates `predicate_needs_review`
 - repeated evidence reuses the same owner's Relationship identity and
   deduplicates exact spans/source groups
 - the server derives related same-team records from canonical endpoints,
@@ -885,8 +895,9 @@ Search freshness and PostgreSQL ownership are defined in
 
 ## Client Review
 
-Identity ambiguity, an unknown predicate, a same-owner conflict, a correction,
-or security quarantine can create an owner-scoped review task. A material
+Identity ambiguity, an ambiguous/unsafe predicate candidate, a same-owner
+conflict, a correction, or security quarantine can create an owner-scoped
+review task. A material
 cross-profile Relationship disagreement creates a team Conflict case instead;
 the caller-owned placement may complete while that case remains open.
 
@@ -980,7 +991,8 @@ or coordinate workers but never owns queue or result state.
 | context retrieval failure | fail placement; do not interpret it as no candidates |
 | verifier invalid after retries | preserve staged evidence and processing error; commit no verifier subset or support |
 | Entity ambiguity | preserve observation/review context; create no Entity or dependent active edge |
-| unknown predicate | preserve observation; create `predicate_needs_review`; create no Relationship |
+| safe novel predicate | append the team definition and Relationship atomically |
+| ambiguous, colliding, or incompatible predicate | preserve observation; create `predicate_needs_review`; create no Relationship |
 | valid `insufficient` verdict | preserve candidate Relationship as `pending_evidence` when schema and endpoints resolve; no active edge |
 | worker loses lease | stop before semantic commit |
 | transaction failure | expose no partial material decision |
@@ -1003,7 +1015,7 @@ or coordinate workers but never owns queue or result state.
 | Injection bypass | obfuscation avoids the deterministic scanner and manipulates a model | keep both models capability-free, require bounded security signals, ground output to exact spans, and let deterministic code own every write |
 | Guard model becomes authority | an injected verifier returns an empty signal array and is treated as proof of safety | model output may only escalate; it cannot clear deterministic findings or authorize tier/status |
 | Candidate pollution | `insufficient` results appear in normal graph recall | enforce `candidate/pending_evidence` and SemanticEdge eligibility in the database query |
-| Unknown predicate invention | verifier returns a plausible new verb and application accepts it | allowlist registry keys and hold `needs_review` with null `predicate_key` |
+| Predicate vocabulary fragments | extractor emits synonyms for an existing team meaning | send bounded relevant vocabulary, canonicalize every proposed key/alias against the complete registry, and review ambiguous collisions |
 | Stale embedding overwrite | an old job writes a vector after a correction | compare source/document/contract versions in the update predicate |
 | Hidden provider outage | invalid output is patched locally and reported as success | bounded full-response regeneration followed by explicit placement failure |
 | Cross-profile overwrite during placement | B's correction updates A's Relationship row | bind owner at intake, include owner in identity, require owner predicates on placement mutations, and write only cross-references/case membership to A |
@@ -1023,12 +1035,15 @@ The refactor is incomplete until tests prove:
 4. correction attempts regenerate a complete response and are never spliced
 5. one plausible Entity candidate is reused unless evidence contradicts it
 6. unresolved ambiguity creates review work and no dependent active edge
-7. an unknown predicate creates review work and no Relationship
+7. an existing alias resolves to its canonical team definition, a safe novel
+   predicate is registered atomically with its Relationship, and collisions
+   create review work with no Relationship
 8. repeated evidence attaches to one same-owner Relationship
 9. `insufficient` creates no SemanticEdge or default recall result
 10. stored graph context never enters the verifier request and cannot satisfy
     evidence entailment or independence
-11. PostgreSQL commit makes eligible SemanticEdges readable without Neo4j
+11. PostgreSQL commit makes eligible SemanticEdges readable without a
+    secondary graph projection
 12. embedding failure changes only search freshness, not knowledge truth
 13. deterministic quarantine reaches no model-backed path
 14. reviewer and verifier security signals quarantine the complete item with no

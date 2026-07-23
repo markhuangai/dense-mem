@@ -170,7 +170,7 @@ Use this table before initializing or replacing the embedding contract.
 
 | Situation | Contract/index result | Why | Re-embed? | Rebuild index? | Extra gate |
 | --- | --- | --- | --- | --- | --- |
-| Small tenant, development, or migration verification | exact search generation | simplest behavior; no ANN recall loss; good oracle for tests | no, if contract unchanged | no | row-count budget must stay below exact threshold |
+| Small tenant, development, or upgrade verification | exact search generation | simplest behavior; no ANN recall loss; good oracle for tests | no, if contract unchanged | no | row-count budget must stay below exact threshold |
 | 1536-dimensional embedding contract | `vector_hnsw` generation when pgvector supports the dimension | HNSW keeps latency bounded while exact rerank preserves final candidate order | no, if contract unchanged | yes | Recall@K and load comparison against exact |
 | 3072-dimensional `text-embedding-3-large` contract | `halfvec_hnsw` generation plus exact float32 rerank | full-precision HNSW is outside pgvector's `vector` HNSW limit; `halfvec` is only the ANN expression | yes, when moving from another embedding contract | yes | candidate Recall@K must pass exact oracle |
 | High-quality debugging, audit, or release qualification | exact diagnostic mode | removes ANN approximation from the investigation | no | no | bounded authorized candidate set |
@@ -408,7 +408,7 @@ the candidate step uses the source-specific HNSW index and the rerank step
 performs a bounded exact sort, including when a full-precision HNSW index also
 exists.
 
-The initial v2 schema keeps one `semantic_search_documents` table and creates
+The current schema keeps one `semantic_search_documents` table and creates
 separate partial HNSW indexes for `source_type = 'evidence'`,
 `source_type = 'relationship'`, and `source_type = 'entity'`. Evidence vector
 branches return evidence IDs for initial fusion. Relationship and Entity vector

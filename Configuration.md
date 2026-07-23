@@ -1,8 +1,8 @@
 # Configuration
 
-This page is the single source of truth for the target configuration contract.
+This page is the single source of truth for the current configuration contract.
 It separates immutable startup/secrets from PostgreSQL-backed runtime policy.
-Names in this page are the v2 configuration contract.
+Names in this page are the supported configuration contract.
 
 ## Sources And Precedence
 
@@ -43,12 +43,8 @@ Production startup requires:
 - control-portal authentication secret or explicit private/disabled policy
 - encryption/signing material required by enabled features
 
-Neo4j settings are not part of normal target runtime. The temporary `2.1.x`
-bridge may read explicitly prefixed legacy Neo4j settings only while the
-boot-gated migration is pending or running. It closes the connection after a
-successful cutover. Version `2.2.0` removes that adapter and refuses startup
-without the completed `2.1.x` migration marker. The canonical lifecycle is in
-[Release Process](Release-Process#bridge-release-contract).
+Unsupported graph settings are rejected at startup instead of
+connecting to a second durable store.
 
 ## Listeners
 
@@ -112,7 +108,7 @@ that those runtime topologies are enabled in this release.
 
 PostgreSQL contains the records listed in
 [Data Model And Storage](Data-Model-And-Storage). No configuration flag can
-move semantic authority to Redis, a model provider, or a legacy graph store.
+move semantic authority to Redis, a model provider, or a secondary graph store.
 
 ## Embedding Provider And Contract
 
@@ -135,6 +131,9 @@ replaces the stored contract. Mixed vectors fail readiness or remain excluded by
 version checks.
 The adapter sends a dimensions request only when the configured provider/model
 supports it, but every response must have exactly the configured length.
+`AI_API_URL` must point at an endpoint that implements OpenAI-compatible
+`/embeddings` for the configured embedding model. A chat-only endpoint is not a
+valid embedding provider even if reviewer/verifier calls work there.
 
 Embedding and cosine meaning is defined in
 [Vector Search And Ranking](Vector-Search-And-Ranking). Index compatibility and
@@ -154,7 +153,7 @@ controlled rebuild/reset workflow replaces the contract and derived generation.
 | `PGVECTOR_HNSW_EF_CONSTRUCTION` | `64` | HNSW construction candidate breadth; changing it rebuilds the index |
 | `PGVECTOR_INDEX_BUILD_MAX_CONCURRENCY` | `1` | process-wide concurrent physical vector-index builds |
 
-Cosine distance is fixed for the initial v2 contract. The default
+Cosine distance is fixed for the current contract. The default
 3,072-dimensional OpenAI embedding contract derives a `halfvec_hnsw` generation.
 The dimension matrix, 3,072-dimensional halfvec expression index, exact rerank,
 and activation procedure belong only in
@@ -163,7 +162,7 @@ and activation procedure belong only in
 ## Reviewer And Verifier
 
 The structure reviewer and Entity/Relationship verifier may share the embedding
-endpoint or use a separate OpenAI-compatible endpoint.
+endpoint or use a separate OpenAI-compatible chat endpoint.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
@@ -249,7 +248,7 @@ wake-up latency only.
 
 ## PostgreSQL Search And Recall
 
-These startup settings define the active semantic-v2 recall ranking contract for
+These startup settings define the active semantic recall ranking contract for
 the process. They are internal telemetry and evaluation metadata; public recall
 responses do not expose them. Future control-portal management must activate the
 same complete contract shape atomically instead of mutating individual fields.
@@ -401,7 +400,7 @@ Eligibility and no-new-node behavior belong in [Dreaming](Dreaming).
 | `COMMUNITY_DETECTION_TIMEOUT_SECONDS` | `600` | run timeout |
 
 The service reads eligible IDs from PostgreSQL into a bounded analytical job;
-no Neo4j/GDS dependency is implied. See
+no external graph-analysis dependency is implied. See
 [Community And Dreaming](Community-And-Dreaming).
 
 ### Conflict review
@@ -461,14 +460,13 @@ flowchart TD
   Runtime --> Embed["Verify embedding contract"]
   Embed --> Index["Verify active search-index generation"]
   Index --> Models["Verify required model contracts"]
-  Models --> Migration{"Compatible migration marker<br/>or 2.1.x bridge available?"}
-  Migration -- No --> Fail
-  Migration -- Yes --> Distributed{"Distributed coordination required?"}
+  Models --> Authority{"PostgreSQL authority<br/>state valid?"}
+  Authority -- No --> Fail
+  Authority -- Yes --> Distributed{"Distributed coordination required?"}
   Distributed -- Yes --> Redis{"Redis healthy?"}
   Redis -- No --> Fail
-  Redis -- Yes --> Gate["Enter migration maintenance<br/>or start normal workers"]
-  Distributed -- No --> Gate
-  Gate --> Ready["Start normal workers only<br/>after migration gates pass"]
+  Redis -- Yes --> Ready["Start normal workers"]
+  Distributed -- No --> Ready
 ```
 
 Configuration errors fail visibly. Startup does not substitute another store,
@@ -476,9 +474,6 @@ embedding model, verifier schema, resolver contract, or coordination mode.
 It also validates TTL/override bounds, local start time,
 batch/concurrency/lease/attempt ranges, and `APP_TIMEZONE` before starting the
 core Conflict worker.
-During a pending `2.1.x` migration, only health/control surfaces start; service
-logs and the control portal expose durable progress. Version `2.2.0+` has no
-bridge and fails when the marker is absent.
 
 ## Secret Rules
 
@@ -493,12 +488,12 @@ bridge and fails when the marker is absent.
 
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
-| Legacy variable silently revives Neo4j | old `NEO4J_URI` makes normal runtime depend on a second store | explicit `2.1.x` bridge-only namespace, close after cutover, and reject/remove in `2.2.0` |
+| Unsupported variable silently revives a graph store | an old graph URI makes normal runtime depend on a second store | reject all graph-store configuration during startup |
 | Mixed embeddings | new vectors have different dimensions or document meaning | persisted contract, version predicate, readiness gate, and explicit rebuild |
 | Incompatible ANN generation | a 3,072-dimensional contract attempts unsupported full-precision HNSW | capability resolver, persisted search-index generation, and controlled build gate |
 | Replica read is stale | recall after correction is routed to a lagging standby | primary-only freshness paths plus explicit lag/version gate |
 | Service scale-out exhausts PostgreSQL | each service instance opens 25 connections independently | deployment-wide pool formula and vector-query semaphore |
-| Partial verifier retry returns | operator enables an old setting that splices missing results | remove legacy setting, expose only full-response regeneration, and contract-test config parsing |
+| Partial verifier retry returns | operator enables an old setting that splices missing results | reject the unsupported setting, expose only full-response regeneration, and contract-test config parsing |
 | Redis fallback breaks replicas | outage switches multi-instance limits to local state | required distributed flag and no silent fallback |
 | ANN tuning harms quality | low HNSW breadth improves latency but loses tenant results | exact-baseline Recall@K gate and versioned atomic ranking contract/search generation |
 | Worker overload | placement and embedding workers exceed provider/database capacity | startup range checks, saturation metrics, and load testing |

@@ -352,28 +352,6 @@ Bounded dream rejection reasons include unknown endpoint, unknown predicate,
 source version changed, duplicate, and schema invalid. Community metrics refer
 to an in-worker analytical graph, not a semantic projection.
 
-## Bridge Migration
-
-The temporary `2.1.x` bridge exposes bounded phase, outcome, corpus progress,
-verifier, vector, and hard-gate signals without labeling teams, profiles, or
-legacy IDs. Structured logs carry a migration-run correlation ID and bounded
-counts. The canonical phase, log-milestone, automatic-cutover, and `2.2.0`
-removal contract is in [Release Process](Release-Process); telemetry must not
-redefine it here.
-
-```text
-densemem_migration_state{state}
-densemem_migration_phase_total{phase,outcome}
-densemem_migration_items_total{outcome}
-densemem_migration_gate_total{gate,outcome}
-densemem_migration_vector_jobs{search_state}
-```
-
-The migration-run ID, item totals, completed count, ETA, and author/team
-breakdowns belong in the control API or logs because those values are not safe
-metric labels. `migration_completed` is emitted only after the durable marker
-commits; readiness becoming successful is a separate observable transition.
-
 ## Security And Audit
 
 Alert/report:
@@ -449,12 +427,6 @@ must not become metric labels.
   release denials
 - key/session/SSO anomalies
 
-### Migration (`2.1.x` only)
-
-- maintenance state, phase, progress, provider/vector backlog, and hard gates
-- automatic cutover marker/readiness transition
-- post-cutover Neo4j disconnect notice from the release contract
-
 ## Alert Policy
 
 | Alert | Example trigger |
@@ -471,7 +443,6 @@ must not become metric labels.
 | Redis coordination loss | required backend unavailable |
 | audit failure | append failure nonzero |
 | backup/PITR risk | WAL archive or restore verification stale |
-| migration stalled | checkpoint age or a blocking gate remains above the migration SLO |
 
 Alerts link to [Operations Runbook](Operations-Runbook) and name a bounded
 signal, not “system unhealthy.”
@@ -506,7 +477,6 @@ payloads, and vectors are opt-out by default and should not enter normal logs.
 | Profile conflict disappears in aggregation | recall looks healthy while one author's correction is consistently hidden | authored-conflict and clarification measures plus stored recall events |
 | Nightly resolution is invisible | B becomes preferred after a run but operators see only a recall-rank change | case event/run counters, status/age dashboard, and durable policy-versioned events |
 | Conflict IDs leak through metrics | one time series is created per case/Relationship | closed status/action/stage/outcome labels only; IDs remain in authorized PostgreSQL rows/log correlation |
-| Automatic cutover is not observable | readiness changes without a durable migration-complete signal | marker-backed completion event and separate readiness transition alert |
 | Per-process pool looks healthy while database saturates | every service replica stays below its local cap but aggregate connections exhaust PostgreSQL | topology-aware aggregate pool dashboard and deployment budget alert |
 | Cluster vector profile diverges | one shard/replica serves an absent or older search index | bounded parity metric plus readiness/activation gate |
 
@@ -522,14 +492,13 @@ payloads, and vectors are opt-out by default and should not enter normal logs.
 7. Redis alerts depend on declared topology
 8. dashboards and alerts link to an actionable runbook
 9. profile conflicts and owner-mutation denials are observable without profile-ID labels
-10. `2.1.x` migration progress and automatic cutover are observable without making telemetry authoritative
-11. vector-query concurrency, replica lag, and cluster search-profile parity are
+10. vector-query concurrency, replica lag, and cluster search-profile parity are
     observable without tenant/profile labels
-12. deterministic scans, model security signals, quarantine releases, source
+11. deterministic scans, model security signals, quarantine releases, source
     revisions, support revocations, and automatic demotions are separately
     observable with bounded labels
-13. Conflict placement case updates, nightly review, status age, overdue
+12. Conflict placement case updates, nightly review, status age, overdue
     escalation, run failure, and lease recovery are observable without
     case/team/profile IDs
-14. telemetry cannot resolve or mutate a Conflict case and never substitutes
+13. telemetry cannot resolve or mutate a Conflict case and never substitutes
     for its durable event history

@@ -1,12 +1,12 @@
 # Evaluation
 
-Evaluation decides whether the target architecture is correct, retrievable,
+Evaluation decides whether the current architecture is correct, retrievable,
 isolated, recoverable, and fast under representative concurrent reads and
 writes. A single answer-quality score is insufficient.
 
-## Current V2 Retrieval Evaluation
+## Current Retrieval Evaluation
 
-The V2 release train uses the deterministic 1k public comparison as the hard
+The current release uses the deterministic 1k public comparison as the hard
 retrieval-quality gate. Larger runs and judge outputs are diagnostic unless a
 later roadmap decision explicitly promotes them.
 
@@ -21,7 +21,7 @@ tests/eval/suites/public_6axis_5k_v1.jsonl
 ```
 
 `public_6axis_1k_v1` contains exactly 1,000 corpus rows and is the required
-v2.1 hard gate. `public_6axis_5k_v1` contains exactly 5,000 corpus rows and may
+release gate. `public_6axis_5k_v1` contains exactly 5,000 corpus rows and may
 be run as an optional diagnostic. The 1k seed is a strict deterministic subset
 of the 5k seed. The six axes are SciFact, MS MARCO, HotpotQA, MuSiQue, QASPER,
 and LongMem Oracle. The corpus-row allocation is:
@@ -38,7 +38,7 @@ and LongMem Oracle. The corpus-row allocation is:
 Corpus evidence is split rather than truncated, every row is at most 999
 Unicode code points, and qrels resolve to generated `source_key` plus
 `source_revision` pairs before import. Seed validation, not recall quality, is
-a mandatory gate before any v1 or v2 stack starts.
+a mandatory gate before any evaluated stack starts.
 
 ### Run protocol
 
@@ -58,17 +58,18 @@ validated seed and suite
 Runs are sequential so provider contention does not bias recall latency. Each
 run records the server revision, evaluator revision and dirty-state
 fingerprint, seed/suite hashes, embedding configuration, reviewer/verifier
-model, judge model, transport, and isolated team ID. The reviewer/verifier
-model is configured by the runtime profile. The answer-quality judge model is
+models, judge model, transport, and isolated team ID. The reviewer/verifier
+models are configured by the runtime profile. The answer-quality judge model is
 recorded exactly. Import uses one evidence row per production `remember` call,
 and runner concurrency is part of the manifest.
 
-When v1 behavior and the seed are unchanged, the retained clean v1 trace and
-retrieval artifact may be reused. If the seed, v1 behavior, recall parser, or
-judge contract changes, regenerate the affected v1 artifact. V2 is reimported
-whenever remember logic, persisted semantic shape, verifier/reviewer prompt, or
-schema behavior changes. If only recall ranking changes, the existing successful
-v2 import may be reused after validating search freshness and placement state.
+When baseline behavior and the seed are unchanged, the retained clean baseline
+trace and retrieval artifact may be reused. If the seed, baseline behavior,
+recall parser, or judge contract changes, regenerate the affected artifact. The
+current implementation is reimported whenever remember logic, persisted
+semantic shape, verifier/reviewer prompt, or schema behavior changes. If only
+recall ranking changes, the existing successful import may be reused after
+validating search freshness and placement state.
 
 The evaluator must not call `assemble_context`, embed the query again, perform a
 second retrieval, import through a shortcut, write the database directly, or let
@@ -86,7 +87,7 @@ the direct top-K score. The AI judge receives only the exact initial response
 and supplied gold data; it cannot follow guidance, recall again, or use outside
 knowledge. Recall latency reports average, p50, and p95.
 
-Optional diagnostic ablations may run after the main v2 report, but they must
+Optional diagnostic ablations may run after the main report, but they must
 use the same production recall entry point with a named runtime profile, never
 gold labels or evaluator-only candidate manipulation. Useful ablations are:
 full-text-only, vector-only, no-discovery, and adjusted evidence branch limits.
@@ -137,17 +138,17 @@ comparability, but it does not replace the generated artifact files.
 ## PR Evaluation Rule
 
 Any PR that may affect retrieval quality, ranking, placement accuracy,
-verifier/reviewer behavior, embeddings, search documents, migration placement,
-or performance must run the 1k corpus evaluation/comparison and include the
-result in the PR. If the seed and import logic are unchanged, a later PR may
-reuse a previous successful import after validating manifest identity, placement
-terminality, search/vector freshness, and schema/contract compatibility.
+verifier/reviewer behavior, embeddings, search documents, or performance must
+run the 1k corpus evaluation/comparison and include the result in the PR. If
+the seed and import logic are unchanged, a later PR may reuse a previous
+successful import after validating manifest identity, placement terminality,
+search/vector freshness, and schema/contract compatibility.
 Recall/ranking-only changes still rerun recall and scoring against the retained
 import.
 
 ## Pre-Evaluation Local Gate
 
-Before running or reporting the v2 evaluation, the branch must pass:
+Before running or reporting the current evaluation, the branch must pass:
 
 ```text
 go test ./... -count=1
@@ -158,10 +159,10 @@ scripts/e2e-compose.sh
 tests/uat/e2e-journey.spec.ts against an isolated compose stack
 ```
 
-The UAT journey is the current v2 production-surface smoke: MCP `tools/list` and
+The UAT journey is the current production-surface smoke: MCP `tools/list` and
 `tools/call` for `remember`, `get_memory_placement`, `recall_memory`, and
 `trace_memory`; absence/not-found checks for those tools on HTTP/OpenAPI; and
-cross-team isolation. It must not depend on removed direct v1 fragment, claim,
+cross-team isolation. It must not depend on removed direct fragment, claim,
 fact, or generic HTTP memory-tool routes.
 
 ## Evaluation Dimensions
@@ -178,7 +179,6 @@ fact, or generic HTTP memory-tool routes.
 | isolation/security | can any actor see or affect another team, and can a profile mutate another profile's knowledge? |
 | performance/scaling | what happens under simultaneous remember/recall/trace/job load? |
 | operations | do restart, Redis loss, backup/restore, and vector rebuild preserve behavior? |
-| migration | does legacy data map without silent collapse or activation? |
 
 ## Reproducibility Manifest
 
@@ -193,7 +193,7 @@ contract and schema migration versions
 cluster-safe schema/key-contract version
 PostgreSQL and pgvector versions/config
 predicate registry version
-reviewer/verifier provider, model, prompt revision, and local contract hash
+reviewer/verifier provider, models, prompt revisions, and local contract hash
 embedding provider/model, dimensions, normalization, and document version
 search-index profile, distance/operator, and HNSW construction
 ranking profile and HNSW query parameters
@@ -506,27 +506,6 @@ Expected outcomes come from
 [Memory Write Pipeline](Write-Pipeline#failure-semantics) and
 [Operations Runbook](Operations-Runbook), not per-test invention.
 
-## Migration Evaluation
-
-Legacy Neo4j is read-only corpus input during `2.1.x` migration evaluation.
-
-Compare:
-
-- current non-superseded source knowledge versus terminal official-pipeline
-  outcomes, plus the superseded exclusion manifest
-- every team/original owner versus migrated owner and system migration actor
-- Entity duplicates/homonyms/aliases and unresolved review counts
-- Relationship identity collisions by polarity/scope/time
-- active/candidate/review/rejected outcomes produced by v2 policy rather than
-  copied v1 tiers
-- exact evidence/trace coverage where legacy provenance exists
-- default recall parity on approved cases
-- no newly activated unsupported candidate
-- required vector freshness, hard gate report, and automatic cutover marker
-
-Count parity alone cannot approve migration because a one-to-one copy may
-preserve duplicates or wrong semantics.
-
 ## Local Runtime Outputs
 
 Suggested ignored local layout:
@@ -550,9 +529,7 @@ without changing source or release documentation.
 
 ## Release Gates
 
-These are future release criteria. They are intentionally not applied as a
-pass/fail gate to the initial v1/v2 comparison above; its report presents raw
-paired results and examples for review first.
+These criteria complement the paired comparison above.
 
 | Gate | Requirement |
 | --- | --- |
@@ -567,7 +544,6 @@ paired results and examples for review first.
 | topology | single-primary plus every advertised HA/distributed topology passes parity, lag, failover, RLS, and bounded-load gates |
 | cluster-safe schema | zero nullable tenant rows, unscoped tenant keys/FKs/lookups, or cross-team references |
 | recovery | isolated PITR restore, vector rebuild, and smoke pass |
-| migration | every team/author accounted for, official-pipeline terminal outcomes complete, vectors current, hard gates pass, and automatic marker valid |
 
 A gate waiver names the failing slice, owner, expiry, user impact, and rollback.
 Security/tenant-leak and append-only/partial-write invariants are not waivable.
@@ -581,7 +557,6 @@ comparisons are not added to the release evidence set.
 | Benchmark overfits one tenant | HNSW looks good globally but misses small-team matches | stratify by tenant size/filter and use exact filtered oracle |
 | Baseline/candidate contaminate | both runs share mutable vectors/jobs | isolated restored databases and frozen manifests |
 | Mocked success | fake repositories pass while RLS/locks/operators fail | real PostgreSQL + `pgvector` for storage gates |
-| Count parity hides semantic loss | migration maps every edge but collapses two Marks | identity/trace/collision cases plus client-reviewed sample |
 | Cross-profile correction mutates target | B's stronger evidence supersedes A automatically | A/B/C ownership fixtures and target-row version checks |
 | Provider variability hides regression | model change shifts identity/verdict output | record provider, model, prompt revision, and local contract hash; use repeated/paired runs |
 | Security corpus overfits keywords | detector passes benchmark but quarantines ordinary security prose | include quoted/adversarial minimal pairs and measure pass/guarded/quarantine confusion separately |
@@ -598,20 +573,17 @@ comparisons are not added to the release evidence set.
 5. concurrent read/write load includes tenant skew and hub graphs
 6. invalid verifier output proves zero partial semantic commit
 7. failure injection and recovery produce canonical expected outcomes
-8. migration reports identity/Relationship ambiguity, not only row counts
-9. RRF enabled/disabled profiles, deterministic reranking, and cross-profile
+8. RRF enabled/disabled profiles, deterministic reranking, and cross-profile
    conflict preference are evaluated separately
-10. migration cannot pass with a missing author, nonterminal corpus item,
-    required stale vector, or cross-profile mutation
-11. every advertised PostgreSQL topology passes the same semantic, tenant,
+9. every advertised PostgreSQL topology passes the same semantic, tenant,
     exact/ANN, connection-budget, backup, and failover gates
-12. reviewer/verifier contracts contain bounded security signals but no model
+10. reviewer/verifier contracts contain bounded security signals but no model
     schema version, stored-knowledge alignment, or stored Relationship IDs
-13. source revision activation, automatic demotion, and stale-token rejection
+11. source revision activation, automatic demotion, and stale-token rejection
     pass with same-team cross-profile adopters
-14. three-profile Conflict cases pass placement-open/nightly-resolve,
+12. three-profile Conflict cases pass placement-open/nightly-resolve,
     copied-source, missing-time, deadline, stale-version, lease-recovery, and
     bitemporal slices
-15. no evaluation can pass with a cross-profile placement mutation, deadline-only
+13. no evaluation can pass with a cross-profile placement mutation, deadline-only
     winner, wrong reviewer closure, or false suppression of an
     unrelated/historical support path

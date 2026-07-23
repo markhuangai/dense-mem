@@ -133,6 +133,10 @@ Normal public recall does not expose a `use_communities` flag. Community
 signals may be used only as server-controlled discovery context when the team
 configuration enables them and freshness checks pass.
 
+There is no public `list_communities` MCP tool. The first-party portal may show
+the same authorized derived read model as an analytical overlay, but that does
+not add a public memory contract.
+
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR

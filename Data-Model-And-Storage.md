@@ -1,8 +1,8 @@
 # Data Model And Storage
 
-This page is the single source of truth for Dense-Mem's target storage
+This page is the single source of truth for Dense-Mem's current storage
 architecture. It defines the PostgreSQL and `pgvector` design for semantic
-memory v2.
+memory.
 
 Tenant-owned primary/unique keys, composite foreign keys, table-placement
 classes, team-local repository queries, RLS worker context, and future sharding
@@ -56,9 +56,9 @@ These are data responsibilities, not separate databases. Their canonical
 Relationship terminology and lifecycle are defined in
 [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle).
 
-## Target PostgreSQL Model
+## PostgreSQL Model
 
-The names below are the target logical schema. Physical migrations may use
+The names below are the logical schema. Physical migrations may use
 equivalent names, but must preserve each responsibility.
 
 ```mermaid
@@ -454,7 +454,20 @@ Predicate definitions are versioned PostgreSQL records. The registry owns
 canonical keys, aliases, allowed endpoint kinds, `relationship_kind`,
 `current_cardinality`, lifecycle state, and version.
 
-It does not contain `policy_family` and cannot be changed by the verifier. The
+Global built-ins seed per-team `team_predicate_definitions`. Provider-backed
+extraction may propose team-local predicate candidates, but PostgreSQL
+normalization, RLS, append-only versioning, and the strict verifier contract
+decide whether a candidate can be referenced. Providers cannot directly mutate
+Relationship lifecycle or active graph state.
+
+The registry may grow without a fixed vocabulary ceiling. Extraction receives
+only a bounded evidence-relevant subset. Commit resolution checks the complete
+team registry under a team/key transaction lock. A compatible existing
+definition is reused; a safe novel definition and its Relationship commit
+atomically. Alias/key ambiguity or kind incompatibility produces task-backed
+review without expanding an existing definition's endpoint allowlist.
+
+The registry does not contain `policy_family`. The
 canonical contract and unknown-predicate behavior are defined in
 [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle#predicate-registry).
 
@@ -491,10 +504,6 @@ app.tx_mode = team
 System workers use a separate, non-request-selectable transaction mode.
 Payloads and headers cannot replace the authenticated team. RLS applies to
 search documents and vector queries as well as source tables.
-
-System migration workers may preserve another profile as owner only through a
-separate migration transaction mode that records the migration run and original
-v1 author. Normal request payloads cannot select `owner_profile_id`.
 
 Redis namespacing prevents accidental key collisions; it is not an
 authorization boundary. Authorization occurs before a coordination operation.
@@ -546,32 +555,6 @@ health, job backlog, failed embeddings, query latency, and backup restore
 drills. Runbook commands belong in
 [Operations Runbook](Operations-Runbook), not here.
 
-## Legacy Migration Boundary
-
-Normal target runtime does not depend on Neo4j. The temporary `2.1.x` bridge
-reads current non-superseded Neo4j knowledge as a versioned corpus and submits
-it through the official v2 write pipeline. It never directly converts graph
-rows into canonical tables.
-
-Migration must:
-
-1. preserve old identifiers in explicit mapping tables
-2. preserve every team and original owner profile
-3. stage corpus evidence, run structured extraction and the strict verifier,
-   then let normal policy reconstruct Entity/Value/Relationship state
-4. preserve provenance, temporal bounds, polarity, source groups, and migration
-   lineage without copying a v1 tier
-5. exclude superseded v1 knowledge from the corpus while retaining its IDs,
-   counts, reason, and checksums in the migration report
-6. build new v2 search documents/vectors instead of copying legacy vectors
-7. hold ambiguous identities, unknown predicates, and unsupported candidates
-   for review instead of activating them
-8. cut over automatically only after terminal-outcome, author, ownership,
-   tenant-isolation, trace, vector, and recall gates pass
-
-Migration execution, checkpoints, and rollback belong in
-[Release Process](Release-Process). This page owns only the target shape.
-
 ## Risks And Mitigations
 
 | Risk | Concrete failure mode | Mitigation |
@@ -589,8 +572,6 @@ Migration execution, checkpoints, and rollback belong in
 | Security audit leaks detector internals | public placement or metrics reveal exact rules and attacker payloads | keep detailed signals in authorized audit rows and expose only bounded categories externally |
 | Conflict lease decides truth | a timed-out worker marks B preferred while its lease/version is stale | lease/version predicates, deterministic recomputation, and append event only with the matching current case |
 | Search refresh races disposition | an older vector job makes A primary after B resolves | authoritative Conflict filtering at hydration plus versioned rebuildable refresh work |
-| Migration collapses distinct knowledge | old edges with different polarity, scope, or temporal bounds deduplicate | include all identity qualifiers and require a dry-run collision review |
-| Migration loses authorship | every imported Relationship is owned by the system worker | preserve v1 profile ID as owner and record migration actor separately |
 
 ## Storage Invariants
 
@@ -610,8 +591,7 @@ Migration execution, checkpoints, and rollback belong in
 11. Losing all derived search documents does not lose knowledge.
 12. Embedding contracts and search-index generations have separate versions and
     rebuild lifecycles.
-13. Normal target runtime remains functional without Neo4j; `2.2.0+` contains
-    no connection path.
+13. Runtime has no secondary durable knowledge-store dependency.
 14. Same-team reads can see eligible knowledge from every profile, while normal
     mutations require the caller to own the target record.
 15. One Evidence source has one immutable owner and one current revision.

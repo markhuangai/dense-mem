@@ -1,6 +1,6 @@
 # PostgreSQL Cluster-Safe Schema
 
-Single-primary and physical HA compatibility are v2 requirements.
+Single-primary and physical HA compatibility are current requirements.
 Distributed-by-team execution remains a future capability-gated adapter, not a
 claim of shipped cluster support.
 
@@ -18,7 +18,7 @@ topology and index behavior remains in
 
 ## Outcome And Boundary
 
-The V2 schema runs unchanged as ordinary tables on one PostgreSQL primary and
+The schema runs unchanged as ordinary tables on one PostgreSQL primary and
 through a physical-HA writer endpoint. Its tenant-owned rows can later be
 distributed and colocated by `team_id` without changing semantic identities,
 rewriting row ownership, or adding a missing tenant column to populated tables.
@@ -45,7 +45,7 @@ but one team routes to one authoritative writer for a transaction.
 
 ## Before And After
 
-| Single-primary-only shape | Cluster-safe V2 shape |
+| Single-primary-only shape | Cluster-safe shape |
 | --- | --- |
 | tenant table may use `PRIMARY KEY (id)` | tenant table uses `PRIMARY KEY (team_id, id)` |
 | foreign key carries only record ID | foreign key carries matching `(team_id, record_id)` |
@@ -77,20 +77,20 @@ PostgreSQL logical schema
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Contract["V2 now<br/>tenant keys, FKs, queries, jobs, RLS"] --> Single["Ship and measure<br/>single primary + physical HA"]
+  Contract["Current contract<br/>tenant keys, FKs, queries, jobs, RLS"] --> Single["Ship and measure<br/>single primary + physical HA"]
   Single --> Qualify["Later<br/>select and qualify one distributed product/version"]
   Qualify --> Place["Add adapter placement DDL<br/>and topology operations"]
 ```
 
 | Delivery slice | Decision | Relative lift | Why |
 | --- | --- | --- | --- |
-| cluster-safe logical schema | implement in the first V2 schema | medium-high, inside the V2 schema work | adding tenant columns/composite constraints before rows exist avoids a later table and identity-key rewrite |
+| cluster-safe logical schema | required | medium-high | adding tenant columns/composite constraints before rows exist avoids a later table and identity-key rewrite |
 | single-primary runtime | implement first | baseline | establishes the correctness oracle and simplest operating mode |
 | physical HA compatibility | implement with the baseline; qualify standby reads separately | medium | writer-endpoint failover keeps the same schema; replica reads add lag/freshness and query-cancel concerns |
 | horizontally distributed runtime | defer behind a named adapter | high, mostly operational and integration work | requires product/version-specific placement, routing, RLS, pgvector, index, backup, failover, and rebalance proof |
 | splitting one large team across shards | out of scope until measured need | very high | breaks the one-team transaction/search locality invariant and needs a different consistency and candidate-merge design |
 
-The required V2 implementation boundary is the first three rows. It includes
+The required implementation boundary is the first three rows. It includes
 topology-neutral repository ports and configuration, but no vendor distribution
 functions or SDK. The later distributed adapter may add physical placement and
 routing; it may not weaken or reinterpret the logical contract.
@@ -182,20 +182,16 @@ plane:
 - SSO providers, identities, sessions, and entitlement mappings
 - encrypted-secret references
 - global `app_config` and topology declarations
-- schema migrations, bridge migration runs, team placement epochs, and cluster
-  build/activation records
+- schema migrations, team placement epochs, and cluster build/activation
+  records
 - global scheduler leadership and redacted system audit
 
 Authentication resolves key/session to team, profile, role, and scopes before
 opening a tenant semantic transaction. The hot semantic query does not join a
 distributed memory table to the global key or SSO tables.
 
-Existing V1/V2 control credentials remain in the current PostgreSQL database.
-The V2 semantic migration does not copy or reissue them merely to prepare for
-future sharding.
-
 The existing `teams` and `team_profiles` rows remain the only identity,
-authorization, and credential authority. V2 adds only these non-secret
+authorization, and credential authority. The semantic schema adds only these non-secret
 integrity projections:
 
 ```sql
@@ -565,35 +561,6 @@ team, opaque target placement, epoch, and transition state. Routing and shard
 movement are fenced by the epoch; application repositories never guess a shard
 or retry a write against another placement.
 
-## Migration From Existing PostgreSQL
-
-V2.1.x preserves the existing teams, profiles, API keys, SSO, and control rows.
-New semantic/workflow/search tables are created cluster-safe from their first
-release.
-
-For every legacy corpus item, the bridge already knows team and original owner.
-The official write path supplies that `team_id` to every new tenant row; no
-semantic row may rely on a later tenant backfill.
-
-Migration hard gates include:
-
-```text
-zero NULL team_id in tenant-owned tables
-zero tenant PK/unique constraints missing team_id
-zero tenant foreign keys missing matching team_id
-zero cross-team endpoint/support/cross-reference rows
-zero normal repository queries that hydrate by ID without team_id
-every tenant queue/idempotency key includes team_id
-every required team/profile preserved
-every preserved team/profile has its non-secret integrity projection
-zero orphan or team-mismatched integrity projections
-```
-
-Distributed conversion is not part of the legacy Neo4j bridge by default. An
-installation may migrate to V2 on one primary/HA, validate it, and later run a
-separate qualified database-topology migration without reinterpreting knowledge
-through the AI verifier.
-
 ## Failure Semantics
 
 | Failure | Required behavior |
@@ -614,7 +581,7 @@ through the AI verifier.
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
 | schema called cluster-safe but query is not | `GetRelationship(id)` scatters to every shard or finds another team | repository requires `(team_id, id)` and integration scan forbids unscoped methods |
-| global UUID PK blocks distribution | tenant table has `PRIMARY KEY(id)` and cannot enforce it locally after sharding | composite `(team_id, id)` from first V2 migration |
+| global UUID PK blocks distribution | tenant table has `PRIMARY KEY(id)` and cannot enforce it locally after sharding | composite `(team_id, id)` from the table's first migration |
 | tenant prefixes inflate write/index cost | redundant composite indexes increase WAL, cache pressure, and insert latency on one primary | keep only measured query-driven indexes, avoid per-team indexes, and gate on index-size/buffer/write benchmarks |
 | cross-team FK survives RLS | row in team A references Entity from team B that RLS merely hides | composite tenant foreign keys on both sides |
 | nullable tenant mixes system data | `team_id=NULL` rows cannot route and bypass tenant assumptions | separate coordinator system/control tables; tenant rows require non-null |
@@ -627,12 +594,12 @@ through the AI verifier.
 | reference data diverges | one shard uses another predicate or index profile version | immutable version checksum and all-node activation barrier |
 | stale routing creates split authority | two shards accept writes for one team during movement/failover | fenced placement epochs and one authoritative writer per team transaction |
 | large team remains hot | all team data correctly colocates but exhausts one worker | skew telemetry, dedicated placement/shard, separate intra-team design before splitting |
-| generic cluster abstraction over-engineers V2 | domain code carries Citus/vendor types before any adapter exists | product-neutral repository contract; product DDL stays in optional adapter |
+| generic cluster abstraction over-engineers the domain | domain code carries Citus/vendor types before any adapter exists | product-neutral repository contract; product DDL stays in optional adapter |
 | existing credentials are rewritten | cluster preparation reissues keys or breaks SSO ownership | keep auth/control rows coordinator-local; migrate only new semantic shape and non-secret integrity IDs |
 
 ## Acceptance Invariants
 
-1. Every tenant-owned V2 row has non-null `team_id` from its first insert.
+1. Every tenant-owned row has non-null `team_id` from its first insert.
 2. Every tenant-owned primary key, unique constraint, foreign key, hot join, and
    normal lookup contains `team_id`.
 3. Composite foreign keys make cross-team semantic references impossible.
@@ -650,7 +617,7 @@ through the AI verifier.
     prove key/FK, RLS, pgvector, queue, migration, backup, rebalance, and failover
     behavior.
 13. Existing teams, profiles, keys, SSO, and control records remain stable
-    through V2 semantic migration.
+    through schema changes.
 14. Non-secret integrity projections validate team/profile ownership but never
     authorize a request or duplicate credential/entitlement authority.
 15. Future distribution by `team_id` requires placement DDL and data movement,

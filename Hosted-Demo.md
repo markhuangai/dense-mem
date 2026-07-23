@@ -6,9 +6,9 @@ Use the hosted demo to test the shared-memory experience with disposable data:
 https://demo-dense-mem.markhuang.ai
 ```
 
-The deployed demo may lag the v2 architecture. Check runtime tool discovery
-before using it to validate behavior. This page does not hardcode changing
-quotas; the demo UI/runtime response owns its current limits.
+The hosted demo runs the PostgreSQL-backed runtime. Check tool discovery before
+using it to validate behavior. This page does not hardcode changing quotas; the
+demo UI/runtime response owns its current limits.
 
 ## Safety Boundary
 
@@ -40,10 +40,9 @@ flowchart LR
 It proves cross-session/client access. It does not prove:
 
 - production durability or backup
-- target contract-v2 conformance unless advertised
 - multi-instance/Redis correctness
 - your own provider/privacy policy
-- migration or high-load behavior
+- high-load behavior
 
 ## Step 1: Generate A Key
 
@@ -65,7 +64,7 @@ Follow [MCP Clients](MCP-Clients) with:
 https://demo-dense-mem.markhuang.ai/mcp
 ```
 
-Run tool discovery. For target v2, verify that discovery/server metadata
+Run tool discovery. Verify that discovery/server metadata
 advertises Dense-Mem contract version 2 and that `recall_memory` returns
 `relationship_id` handles.
 
@@ -94,13 +93,13 @@ Ask:
 Show the Relationship Dense-Mem recalled for the demo codename and trace its supporting evidence.
 ```
 
-On v2, normal recall should be compact and trace should use
+Normal recall should be compact and trace should use
 `relationship_id` to expand evidence/verification/history.
 
 ## Step 5: Test Identity Ambiguity
 
 Store two clearly distinguished people with the same first name, then submit an
-underspecified statement about that name. The safe v2 behavior is an
+underspecified statement about that name. The safe behavior is an
 `identity_needs_review` task and no speculative Entity/edge.
 
 Do not choose a candidate unless the evidence identifies which person.
@@ -126,7 +125,7 @@ evidence. The safe behavior is:
 | placement is not searchable | inspect processing outcome, branch degradation, and search freshness |
 | review task appears | show the exact question; provide evidence/identity choice |
 | quota/expiry error | current limits on demo page/runtime response |
-| v2 behavior unavailable | demo has not been upgraded; use a pinned local v2 release |
+| deployed behavior differs from this page | check the current release tag and `tools/list` metadata |
 
 ## Next
 

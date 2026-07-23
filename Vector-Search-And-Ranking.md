@@ -230,7 +230,7 @@ Stable ties resolve by final score, branch rank, query/support signals,
 applicable recency, and evidence ID. Exact ordering and factor values belong to
 the active versioned profile.
 
-The initial v2 target uses deterministic reranking. A future cross-encoder or
+The current contract uses deterministic reranking. A future cross-encoder or
 LLM reranker must be a separate optional stage with its own model/schema,
 latency/cost budget, failure behavior, and offline evaluation. It cannot change
 tier, status, evidence, or provenance.

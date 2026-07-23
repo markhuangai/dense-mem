@@ -1,6 +1,6 @@
 # Operations Runbook
 
-This page is the operating contract for the PostgreSQL + `pgvector` v2
+This page is the operating contract for the PostgreSQL + `pgvector`
 architecture. Commands and dashboards must still be verified against the
 deployed release before use.
 
@@ -13,7 +13,6 @@ deployed release before use.
 | embedding provider | yes for vector build/query profiles that require it | no |
 | Redis | only for required distributed coordination or explicit configuration | no |
 | summary/dream provider | only for enabled provider-backed optional features | no |
-| Neo4j | temporary `2.1.x` boot-gated migration only | no; read-only corpus source |
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
@@ -58,13 +57,9 @@ ready profile version.
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
   Config["Validate static config and secrets"] --> PG["Connect PostgreSQL"]
-  PG --> Migration{"Schema and compatible<br/>legacy marker current?"}
-  Migration -- MissingBridge --> Stop["2.2.0+: fail with<br/>run 2.1.x guidance"]
-  Migration -- Pending21 --> Maintenance["2.1.x: health/control only;<br/>log migration state"]
-  Maintenance --> Start["Authorized operator starts<br/>or resumes after preflight"]
-  Start --> Migrate["Run official-pipeline migration"]
-  Migrate --> Vector
-  Migration -- Complete --> Vector{"pgvector and embedding<br/>contract valid?"}
+  PG --> Authority{"PostgreSQL authority<br/>state valid?"}
+  Authority -- No --> Stop["Fail startup"]
+  Authority -- Yes --> Vector{"pgvector and embedding<br/>contract valid?"}
   Vector -- No --> Stop
   Vector -- Yes --> Policy["Load predicate, ranking,<br/>and runtime policy"]
   Policy --> Redis{"Distributed coordination required?"}
@@ -86,7 +81,7 @@ Readiness should expose component-level state:
 | embedding | required recall profile cannot embed, or configured contract probe fails |
 | Redis | unreachable when distributed coordination is required |
 | placement/embedding jobs | backlog exceeds the release-defined readiness boundary |
-| legacy migration | pending/running/failed in `2.1.x`, or required marker absent in `2.2.0+` |
+| authority state | missing, incompatible, or corrupt PostgreSQL authority metadata |
 
 Do not report a single green dependency flag when write, vector recall, trace,
 and control readiness differ.
@@ -111,10 +106,6 @@ Before user traffic:
 12. run `remember` → placement → recall → trace → forget smoke
 13. verify a pending embedding does not hide committed SemanticEdges
 14. take and restore a PostgreSQL backup before accepting important memory
-
-For an upgrade from v1, replace normal traffic steps with the boot-gated
-`2.1.x` procedure in [Release Process](Release-Process). Do not run v1 against
-the same stores during migration.
 
 Public exposure belongs in
 [Public HTTPS And Redis](Public-HTTPS-And-Redis).
@@ -328,10 +319,9 @@ Conflict review transaction. Lifecycle rules are in
 
 ## Backup
 
-After v2 cutover, PostgreSQL base backup plus WAL/PITR and required encryption
-material are the complete durable backup. Before a `2.1.x` bridge migration,
-also take and verify the read-only Neo4j source snapshot required by
-[Release Process](Release-Process#1-backup-and-preflight).
+PostgreSQL base backup plus WAL/PITR and required encryption material are the
+complete durable backup. Verify restores in an isolated environment on a
+regular schedule.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
@@ -391,9 +381,7 @@ Restore checks include:
 - queue leases safely expired/reacquired
 - distributed coordination restored before multiple instances
 
-Never restore a legacy graph copy over newer PostgreSQL state. Neo4j may be
-read only by the temporary `2.1.x` migration adapter, but it is not a recovery
-source after cutover and no adapter exists in `2.2.0+`.
+Never restore another data store over newer PostgreSQL state.
 
 ## Routine Maintenance
 
@@ -459,9 +447,8 @@ dumps.
 | Distributed activation is partial | some shards query an older or absent HNSW generation | all-shard build/plan/oracle gate before atomic generation activation |
 | Queue manually edited | placement history and idempotency diverge | supported lease/retry tooling only; investigate root cause |
 | Redis outage breaks global limits | replicas silently use independent counters | mandatory distributed mode fails readiness/affected operations |
-| Restore leaks tenants | RLS/runtime actor settings are missing after recovery | migration validation plus two-team isolation smoke before cutover |
+| Restore leaks tenants | RLS/runtime actor settings are missing after recovery | schema validation plus two-team isolation smoke before traffic cutover |
 | Destructive repair loses ledger | direct deletes remove support/transition history | append-only roles, explicit approval/change control, backup, and dry-run impact |
-| Migration appears hung | long verifier/vector work emits no bounded status | durable phase counters plus periodic structured progress and ETA logs |
 | Cross-profile repair damages another author | operator retries B's split under a system role and moves A | owner-preserving jobs, selected-observation checks, and three-profile smoke |
 | Conflict backlog is “fixed” by choosing a winner | operator updates `preferred_position_id` directly to clear overdue alerts | append-only/system-owned workflow, supported deterministic retry only, and new evidence through MCP |
 
@@ -478,12 +465,8 @@ Before production:
 7. graceful shutdown and lease recovery are proven
 8. support bundles contain no secrets/evidence/provider payloads
 9. core memory remains usable when optional dream/community jobs fail
-10. `2.1.x` resumes migration from checkpoints and cuts over automatically only
-    after all hard gates pass
-11. `2.2.0+` rejects a database that lacks the compatible bridge marker and has
-    no Neo4j connection path
-12. single-primary, HA failover, and every advertised distributed topology pass
+10. single-primary, HA failover, and every advertised distributed topology pass
     the same tenant, exact/ANN, backup, and recovery contract
-13. Conflict review catch-up, lease recovery, overdue-without-winner, resolved
+11. Conflict review catch-up, lease recovery, overdue-without-winner, resolved
     support-path filtering, and historical trace/recall are proven without
     mutating either author's Relationship

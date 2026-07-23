@@ -1,9 +1,7 @@
 # Quick Start
 
-This is the target local setup and contract-v2 smoke test. Use a pinned release
-that advertises contract version 2. The current pre-refactor source still
-requires legacy components and cannot be validated against this target merely
-by following these commands.
+This is the local PostgreSQL setup and contract-v2 smoke test. Use a pinned
+release that advertises contract version 2.
 
 ## Local Shape
 
@@ -22,7 +20,7 @@ flowchart LR
 One local server needs no Redis or public HTTPS. Redis becomes required when
 multiple server processes need shared coordination.
 
-## 1. Get A Pinned V2 Release
+## 1. Get A Pinned Release
 
 ```bash
 mkdir dense-mem-local
@@ -39,7 +37,21 @@ cp .env.example .env
 ```
 
 Verify the release tag, artifact checksum/signature, and release notes. Stop if
-the release does not advertise contract v2 and the PostgreSQL-only target.
+the release does not advertise contract v2 and PostgreSQL authority.
+
+### Upgrading an existing installation
+
+An installation upgrading from a version earlier than `2.1.1` must first
+deploy `2.1.1` and complete its guided migration. After that succeeds, upgrade
+to the current release.
+
+This prerequisite does not apply to a fresh installation starting on `2.2.0`
+or later, or to an installation whose `2.1.1` migration already completed.
+
+```text
+source before 2.1.1 -> run 2.1.1 migration -> current release
+fresh install 2.2.0+ -----------------------> current release
+```
 
 ## 2. Configure Required Values
 
@@ -72,13 +84,6 @@ curl -fsS http://127.0.0.1:8080/ready
 
 Continue only when readiness confirms PostgreSQL migrations, `pgvector`,
 embedding/verifier contracts, and required coordination.
-
-An installation with v1 data must run the supported `2.1.x` bridge first. It
-starts in boot-gated maintenance, exposes migration status in the control
-portal and service logs, and automatically becomes ready only after every hard
-gate passes. A `2.2.0+` binary rejects an installation without the compatible
-marker. Follow [Release Process](Release-Process) instead of using the new-install
-smoke steps to bypass migration.
 
 Local surfaces:
 
