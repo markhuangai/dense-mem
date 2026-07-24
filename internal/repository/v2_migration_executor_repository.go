@@ -29,6 +29,7 @@ type V2MigrationExecutorRepository interface {
 	GetMigrationCheckpoint(ctx context.Context, runID string, checkpointKey string) (map[string]any, error)
 	RecordMigrationError(ctx context.Context, input V2RecordMigrationErrorInput) error
 	RecordMigrationExclusion(ctx context.Context, input V2RecordMigrationExclusionInput) error
+	ResolveMigrationExclusion(ctx context.Context, input V2ResolveMigrationExclusionInput) error
 	RefreshMigrationRunStats(ctx context.Context, runID string, now time.Time) (*domain.V2MigrationRun, error)
 	FinalizeMigrationRun(ctx context.Context, runID string, now time.Time) (*domain.V2MigrationRun, error)
 }
@@ -101,6 +102,15 @@ type V2RecordMigrationExclusionInput struct {
 	BlocksCutover bool
 	Metadata      map[string]any
 	Now           time.Time
+}
+
+type V2ResolveMigrationExclusionInput struct {
+	RunID          string
+	SourceKind     string
+	SourceID       string
+	OwnerProfileID string
+	Resolution     string
+	Now            time.Time
 }
 
 type v2MigrationRLSHelper interface {
@@ -393,6 +403,38 @@ func (r *V2MigrationControlRepositoryImpl) RecordMigrationExclusion(ctx context.
 	})
 	if err != nil {
 		return fmt.Errorf("v2 migration executor: record exclusion: %w", err)
+	}
+	return nil
+}
+
+func (r *V2MigrationControlRepositoryImpl) ResolveMigrationExclusion(
+	ctx context.Context,
+	input V2ResolveMigrationExclusionInput,
+) error {
+	now := v2MigrationTime(input.Now)
+	metadata, err := marshalV2MigrationJSON(map[string]any{
+		"resolved":                  true,
+		"owner_resolution":          strings.TrimSpace(input.Resolution),
+		"resolved_owner_profile_id": strings.TrimSpace(input.OwnerProfileID),
+		"resolved_at":               now.UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		return err
+	}
+	err = r.withMigrationTx(ctx, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE v2_migration_exclusions
+			SET blocks_cutover = false,
+			    metadata = metadata || ?::jsonb
+			WHERE run_id = ?::uuid
+			  AND source_kind = ?
+			  AND source_id = ?
+			  AND blocks_cutover
+		`, string(metadata), input.RunID, v2MigrationSourceKind(input.SourceKind),
+			strings.TrimSpace(input.SourceID)).Error
+	})
+	if err != nil {
+		return fmt.Errorf("v2 migration executor: resolve exclusion: %w", err)
 	}
 	return nil
 }

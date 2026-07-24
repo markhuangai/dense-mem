@@ -550,6 +550,8 @@ export type MigrationRepairSummary = {
   held_reviews: number;
   blocked_items: number;
   blocking_exclusions: number;
+  repairable_exclusions?: number;
+  hard_blocking_exclusions?: number;
   failure_groups?: Array<{
     stage: string;
     class: string;

@@ -421,6 +421,67 @@ describe("App migration portal", () => {
     expect(screen.getByRole("button", { name: /resume/i })).toBeDisabled();
   });
 
+  it("allows repair and resume when every exclusion is auto-repairable", async () => {
+    let resumeCalls = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/session")) {
+        return jsonResponse({ data: { authenticated: true, portal_mode: "migration", legacy_config_present: true } });
+      }
+      if (url.endsWith("/v2/migration") && method === "GET") {
+        return jsonResponse({
+          data: {
+            state: "paused_retryable",
+            required: true,
+            data_plane_allowed: false,
+            readiness_message: "migration is paused at a durable checkpoint",
+            run: migrationRun({ state: "paused_retryable", total_items: 4421, completed_items: 4417, failed_items: 4 }),
+            repair: {
+              required: true,
+              legacy_predicate_reviews: 0,
+              orphan_reviews: 0,
+              abandoned_processing: 0,
+              retryable_failures: 4,
+              held_reviews: 12631,
+              blocked_items: 0,
+              blocking_exclusions: 18,
+              repairable_exclusions: 18,
+              hard_blocking_exclusions: 0,
+              repaired_items: 0,
+              claim_epoch_before: 7,
+              failure_groups: [{ stage: "unknown", class: "unknown", count: 4 }],
+            },
+          },
+        });
+      }
+      if (url.endsWith("/v2/migration/resume") && method === "POST") {
+        resumeCalls++;
+        return jsonResponse({
+          data: {
+            state: "running",
+            required: true,
+            data_plane_allowed: false,
+            readiness_message: "migration repair resumed",
+            run: migrationRun({ state: "running" }),
+          },
+        });
+      }
+      return jsonResponse({ message: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+
+    render(<App />);
+    expect(await screen.findByText("Resume will repair placement state")).toBeInTheDocument();
+    expect(screen.getByText("Auto-repairable exclusions")).toBeInTheDocument();
+    const resumeButton = screen.getByRole("button", { name: /repair and resume/i });
+    expect(resumeButton).toBeEnabled();
+
+    await userEvent.click(resumeButton);
+    await waitFor(() => expect(resumeCalls).toBe(1));
+  });
+
   it("shows cleanup mode without normal control routes", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

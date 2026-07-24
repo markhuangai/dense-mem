@@ -125,6 +125,7 @@ func TestRunOnceSubmitsLegacyItemsUnderOriginalOwnerAndRecordsProgress(t *testin
 	assert.Equal(t, "worker-a", store.checkpoints[0].LeaseOwner)
 	require.Len(t, store.exclusions, 1)
 	assert.Contains(t, store.exclusions[0].Reason, "owner_profile_id")
+	assert.Equal(t, domain.V2MigrationExclusionUnresolvedOwnerProfile, store.exclusions[0].Metadata["exclusion_code"])
 	require.Len(t, store.errors, 1)
 	assert.Equal(t, "invalid_legacy_item", store.errors[0].ErrorCode)
 	assert.Equal(t, 1, store.refreshCalls)
@@ -723,24 +724,29 @@ func TestLegacyHelpersCoverOptionalAndInvalidBranches(t *testing.T) {
 }
 
 type executorStoreStub struct {
-	run                *domain.V2MigrationRun
-	checkpoint         map[string]any
-	upsertOutcomes     map[string]string
-	upsertErr          error
-	validateOwnerErr   error
-	validOwnerProfiles map[string]bool
-	sourceMapErr       error
-	checkpointErr      error
-	refreshErr         error
-	upserts            []repository.V2UpsertMigrationCorpusItemInput
-	updates            []repository.V2UpdateMigrationCorpusOutcomeInput
-	sourceMaps         []repository.V2UpsertMigrationSourceMapInput
-	checkpoints        []repository.V2UpsertMigrationCheckpointInput
-	errors             []repository.V2RecordMigrationErrorInput
-	exclusions         []repository.V2RecordMigrationExclusionInput
-	refreshCalls       int
-	finalizeCalls      int
-	finalizeErr        error
+	run                 *domain.V2MigrationRun
+	checkpoint          map[string]any
+	upsertOutcomes      map[string]string
+	upsertErr           error
+	updateErr           error
+	validateOwnerErr    error
+	validOwnerProfiles  map[string]bool
+	sourceMapErr        error
+	checkpointErr       error
+	refreshErr          error
+	recordErrorErr      error
+	recordExclusionErr  error
+	resolveExclusionErr error
+	upserts             []repository.V2UpsertMigrationCorpusItemInput
+	updates             []repository.V2UpdateMigrationCorpusOutcomeInput
+	sourceMaps          []repository.V2UpsertMigrationSourceMapInput
+	checkpoints         []repository.V2UpsertMigrationCheckpointInput
+	errors              []repository.V2RecordMigrationErrorInput
+	exclusions          []repository.V2RecordMigrationExclusionInput
+	resolvedExclusions  []repository.V2ResolveMigrationExclusionInput
+	refreshCalls        int
+	finalizeCalls       int
+	finalizeErr         error
 }
 
 func (s *executorStoreStub) GetLatestRun(context.Context) (*domain.V2MigrationRun, error) {
@@ -789,6 +795,9 @@ func (s *executorStoreStub) UpsertMigrationCorpusItem(_ context.Context, input r
 
 func (s *executorStoreStub) UpdateMigrationCorpusOutcome(_ context.Context, input repository.V2UpdateMigrationCorpusOutcomeInput) (*domain.V2MigrationCorpusItem, error) {
 	s.updates = append(s.updates, input)
+	if s.updateErr != nil {
+		return nil, s.updateErr
+	}
 	return &domain.V2MigrationCorpusItem{
 		RunID:           input.RunID,
 		SourceKind:      input.SourceKind,
@@ -815,12 +824,17 @@ func (s *executorStoreStub) GetMigrationCheckpoint(context.Context, string, stri
 
 func (s *executorStoreStub) RecordMigrationError(_ context.Context, input repository.V2RecordMigrationErrorInput) error {
 	s.errors = append(s.errors, input)
-	return nil
+	return s.recordErrorErr
 }
 
 func (s *executorStoreStub) RecordMigrationExclusion(_ context.Context, input repository.V2RecordMigrationExclusionInput) error {
 	s.exclusions = append(s.exclusions, input)
-	return nil
+	return s.recordExclusionErr
+}
+
+func (s *executorStoreStub) ResolveMigrationExclusion(_ context.Context, input repository.V2ResolveMigrationExclusionInput) error {
+	s.resolvedExclusions = append(s.resolvedExclusions, input)
+	return s.resolveExclusionErr
 }
 
 func (s *executorStoreStub) RefreshMigrationRunStats(context.Context, string, time.Time) (*domain.V2MigrationRun, error) {
@@ -834,16 +848,27 @@ func (s *executorStoreStub) FinalizeMigrationRun(context.Context, string, time.T
 }
 
 type legacyReaderStub struct {
-	calls int
-	req   neo4j.LegacyCorpusPageRequest
-	page  neo4j.LegacyCorpusPage
-	err   error
+	calls               int
+	req                 neo4j.LegacyCorpusPageRequest
+	page                neo4j.LegacyCorpusPage
+	err                 error
+	ownerResolution     neo4j.LegacyOwnerResolution
+	ownerResolutionErr  error
+	ownerResolutionTeam string
 }
 
 func (r *legacyReaderStub) ReadCorpusPage(_ context.Context, req neo4j.LegacyCorpusPageRequest) (neo4j.LegacyCorpusPage, error) {
 	r.calls++
 	r.req = req
 	return r.page, r.err
+}
+
+func (r *legacyReaderStub) ResolveUniqueTeamOwner(
+	_ context.Context,
+	teamID string,
+) (neo4j.LegacyOwnerResolution, error) {
+	r.ownerResolutionTeam = teamID
+	return r.ownerResolution, r.ownerResolutionErr
 }
 
 type rememberStub struct {

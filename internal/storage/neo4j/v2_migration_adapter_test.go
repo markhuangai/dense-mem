@@ -56,6 +56,66 @@ func TestLegacyCorpusPageCypherIsReadOnlyAndKeepsOptionalRelationshipsOptional(t
 	}
 }
 
+func TestLegacyUniqueTeamOwnerCypherIsBoundedAndReadOnly(t *testing.T) {
+	query := strings.ToLower(legacyUniqueTeamOwnerCypher())
+
+	assert.Contains(t, query, "match (sf:sourcefragment {team_id: $team_id})")
+	assert.Contains(t, query, "coalesce(sf.status, 'active') <> 'retracted'")
+	assert.Contains(t, query, "coalesce(sf.status, 'active') <> 'superseded'")
+	assert.Contains(t, query, "limit 2")
+
+	for _, forbidden := range []string{
+		" create ",
+		" merge ",
+		" delete ",
+		" detach ",
+		" set ",
+		" remove ",
+		" drop ",
+		" call ",
+	} {
+		assert.NotContains(t, query, forbidden)
+	}
+}
+
+func TestLegacyCorpusMigrationAdapterResolvesOnlyOneTeamOwner(t *testing.T) {
+	t.Run("one candidate", func(t *testing.T) {
+		client := &legacyMigrationReadClient{
+			ownerRecords: []*driver.Record{{
+				Keys:   []string{"owner_profile_id", "owner_profile_name"},
+				Values: []any{" profile-a ", " Ada "},
+			}},
+		}
+		adapter, err := NewLegacyCorpusMigrationAdapter(client, LegacyCorpusAdapterConfig{Enabled: true})
+		require.NoError(t, err)
+
+		resolution, err := adapter.ResolveUniqueTeamOwner(context.Background(), " team-a ")
+		require.NoError(t, err)
+		require.Equal(t, LegacyOwnerResolution{
+			OwnerProfileID:   "profile-a",
+			OwnerProfileName: "Ada",
+			CandidateCount:   1,
+		}, resolution)
+		require.Equal(t, "team-a", client.params[0]["team_id"])
+		require.Zero(t, client.writeCalls)
+	})
+
+	t.Run("multiple candidates", func(t *testing.T) {
+		client := &legacyMigrationReadClient{
+			ownerRecords: []*driver.Record{
+				{Keys: []string{"owner_profile_id"}, Values: []any{"profile-a"}},
+				{Keys: []string{"owner_profile_id"}, Values: []any{"profile-b"}},
+			},
+		}
+		adapter, err := NewLegacyCorpusMigrationAdapter(client, LegacyCorpusAdapterConfig{Enabled: true})
+		require.NoError(t, err)
+
+		resolution, err := adapter.ResolveUniqueTeamOwner(context.Background(), "team-a")
+		require.NoError(t, err)
+		require.Equal(t, LegacyOwnerResolution{CandidateCount: 2}, resolution)
+	})
+}
+
 func TestLegacyCorpusMigrationAdapterReadsPageAndPreservesExactContent(t *testing.T) {
 	createdAt := time.Date(2026, 7, 17, 9, 30, 0, 0, time.FixedZone("source", -4*60*60))
 	content := "  exact legacy evidence\n"
@@ -184,11 +244,12 @@ func TestLegacyCorpusMigrationAdapterRejectsInvalidMetadataJSON(t *testing.T) {
 }
 
 type legacyMigrationReadClient struct {
-	records    []*driver.Record
-	queries    []string
-	params     []map[string]any
-	writeCalls int
-	closeCalls int
+	records      []*driver.Record
+	ownerRecords []*driver.Record
+	queries      []string
+	params       []map[string]any
+	writeCalls   int
+	closeCalls   int
 }
 
 func (c *legacyMigrationReadClient) Verify(context.Context) error { return nil }
@@ -216,5 +277,9 @@ type legacyMigrationReadTx struct {
 func (tx *legacyMigrationReadTx) Run(_ context.Context, cypher string, params map[string]any) (driver.ResultWithContext, error) {
 	tx.client.queries = append(tx.client.queries, cypher)
 	tx.client.params = append(tx.client.params, params)
-	return &stubResultWithContext{records: tx.client.records, open: true}, nil
+	records := tx.client.records
+	if strings.Contains(cypher, "max(coalesce(sf.owner_profile_name") {
+		records = tx.client.ownerRecords
+	}
+	return &stubResultWithContext{records: records, open: true}, nil
 }

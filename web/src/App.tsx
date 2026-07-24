@@ -489,7 +489,8 @@ function MigrationPortal({
   const completed = run?.completed_items ?? 0;
   const progress = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : (status?.state === "cut_over" ? 100 : 0);
   const repair = status?.repair;
-  const repairBlocked = ((repair?.blocked_items ?? 0) > 0) || ((repair?.blocking_exclusions ?? 0) > 0);
+  const hardBlockingExclusions = repair?.hard_blocking_exclusions ?? repair?.blocking_exclusions ?? 0;
+  const repairBlocked = ((repair?.blocked_items ?? 0) > 0) || hardBlockingExclusions > 0;
   const contractCurrent = run?.migration_contract_version === CURRENT_MIGRATION_CONTRACT;
   const backupConfirmationCurrent = !!run?.preflight_approved && contractCurrent && hasBackupConfirmation(run.preflight_checks);
   useEffect(() => {

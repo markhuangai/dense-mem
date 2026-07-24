@@ -36,6 +36,12 @@ type LegacyCorpusPage struct {
 	NextCursor string
 }
 
+type LegacyOwnerResolution struct {
+	OwnerProfileID   string
+	OwnerProfileName string
+	CandidateCount   int
+}
+
 type LegacyCorpusItem struct {
 	SourceKind       string
 	SourceID         string
@@ -43,6 +49,8 @@ type LegacyCorpusItem struct {
 	TeamID           string
 	OwnerProfileID   string
 	OwnerProfileName string
+	OwnerResolution  string
+	OwnerCandidates  int
 	Content          string
 	Source           string
 	SourceType       string
@@ -77,6 +85,7 @@ type LegacyFactHint struct {
 
 type LegacyCorpusReader interface {
 	ReadCorpusPage(ctx context.Context, req LegacyCorpusPageRequest) (LegacyCorpusPage, error)
+	ResolveUniqueTeamOwner(ctx context.Context, teamID string) (LegacyOwnerResolution, error)
 	Close(ctx context.Context) error
 }
 
@@ -140,11 +149,61 @@ func (a *LegacyCorpusMigrationAdapter) ReadCorpusPage(ctx context.Context, req L
 	return page, nil
 }
 
+func (a *LegacyCorpusMigrationAdapter) ResolveUniqueTeamOwner(
+	ctx context.Context,
+	teamID string,
+) (LegacyOwnerResolution, error) {
+	if a == nil || a.client == nil {
+		return LegacyOwnerResolution{}, errors.New("neo4j legacy migration adapter: client is required")
+	}
+	teamID = strings.TrimSpace(teamID)
+	if teamID == "" {
+		return LegacyOwnerResolution{}, errors.New("neo4j legacy migration adapter: team_id is required")
+	}
+	raw, err := a.client.ExecuteRead(ctx, func(tx driver.ManagedTransaction) (any, error) {
+		res, err := tx.Run(ctx, legacyUniqueTeamOwnerCypher(), map[string]any{"team_id": teamID})
+		if err != nil {
+			return nil, err
+		}
+		return res.Collect(ctx)
+	})
+	if err != nil {
+		return LegacyOwnerResolution{}, fmt.Errorf("neo4j legacy migration adapter: resolve unique team owner: %w", err)
+	}
+	records, ok := raw.([]*driver.Record)
+	if !ok {
+		return LegacyOwnerResolution{}, fmt.Errorf(
+			"neo4j legacy migration adapter: unexpected owner result type %T",
+			raw,
+		)
+	}
+	resolution := LegacyOwnerResolution{CandidateCount: len(records)}
+	if len(records) != 1 {
+		return resolution, nil
+	}
+	resolution.OwnerProfileID = legacyString(records[0], "owner_profile_id")
+	resolution.OwnerProfileName = legacyString(records[0], "owner_profile_name")
+	return resolution, nil
+}
+
 func (a *LegacyCorpusMigrationAdapter) Close(ctx context.Context) error {
 	if a == nil || a.client == nil {
 		return nil
 	}
 	return a.client.Close(ctx)
+}
+
+func legacyUniqueTeamOwnerCypher() string {
+	return `
+MATCH (sf:SourceFragment {team_id: $team_id})
+WHERE coalesce(sf.status, 'active') <> 'retracted'
+  AND coalesce(sf.status, 'active') <> 'superseded'
+WITH coalesce(sf.owner_profile_id, sf.created_by_profile_id, '') AS owner_profile_id,
+     max(coalesce(sf.owner_profile_name, sf.created_by_profile_name, '')) AS owner_profile_name
+WHERE owner_profile_id <> ''
+RETURN owner_profile_id, owner_profile_name
+ORDER BY owner_profile_id ASC
+LIMIT 2`
 }
 
 func legacyCorpusPageParams(afterSourceID string, limit int) map[string]any {

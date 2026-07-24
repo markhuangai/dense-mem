@@ -38,12 +38,14 @@ type Store interface {
 	GetMigrationCheckpoint(ctx context.Context, runID string, checkpointKey string) (map[string]any, error)
 	RecordMigrationError(ctx context.Context, input repository.V2RecordMigrationErrorInput) error
 	RecordMigrationExclusion(ctx context.Context, input repository.V2RecordMigrationExclusionInput) error
+	ResolveMigrationExclusion(ctx context.Context, input repository.V2ResolveMigrationExclusionInput) error
 	RefreshMigrationRunStats(ctx context.Context, runID string, now time.Time) (*domain.V2MigrationRun, error)
 	FinalizeMigrationRun(ctx context.Context, runID string, now time.Time) (*domain.V2MigrationRun, error)
 }
 
 type LegacyCorpusReader interface {
 	ReadCorpusPage(ctx context.Context, req neo4j.LegacyCorpusPageRequest) (neo4j.LegacyCorpusPage, error)
+	ResolveUniqueTeamOwner(ctx context.Context, teamID string) (neo4j.LegacyOwnerResolution, error)
 }
 
 type RememberService interface {
@@ -195,6 +197,25 @@ func (s *service) RunOnce(ctx context.Context) (*RunOnceResult, error) {
 func (s *service) processItem(ctx context.Context, run *domain.V2MigrationRun, migrationRunID uuid.UUID, item neo4j.LegacyCorpusItem, result *RunOnceResult) error {
 	item = normalizeLegacyCorpusItem(item)
 	sourceKind := legacySourceKind(item)
+	var err error
+	item, err = s.resolveMissingLegacyOwner(ctx, item)
+	if err != nil {
+		result.Failed++
+		if recordErr := s.recordError(
+			ctx,
+			run.RunID,
+			sourceKind,
+			item.SourceID,
+			"resolve_legacy_owner",
+			"owner_resolution_failed",
+			err,
+			true,
+			nil,
+		); recordErr != nil {
+			return recordErr
+		}
+		return err
+	}
 	if err := validateLegacyCorpusItem(item); err != nil {
 		result.Excluded++
 		if recordErr := s.store.RecordMigrationExclusion(ctx, repository.V2RecordMigrationExclusionInput{
@@ -203,7 +224,7 @@ func (s *service) processItem(ctx context.Context, run *domain.V2MigrationRun, m
 			SourceID:      strings.TrimSpace(item.SourceID),
 			Reason:        err.Error(),
 			BlocksCutover: true,
-			Metadata:      legacyCorpusMetadata(item),
+			Metadata:      legacyExclusionMetadata(item, validationExclusionCode(item)),
 			Now:           s.now(),
 		}); recordErr != nil {
 			return recordErr
@@ -251,6 +272,11 @@ func (s *service) processItem(ctx context.Context, run *domain.V2MigrationRun, m
 		return nil
 	}
 	if corpusItem.Outcome != domain.V2MigrationOutcomePending {
+		if corpusOutcomeHasStagedEvidence(corpusItem.Outcome) {
+			if err := s.resolveStagedMigrationExclusion(ctx, run.RunID, item); err != nil {
+				return err
+			}
+		}
 		result.Skipped++
 		return nil
 	}
@@ -291,7 +317,56 @@ func (s *service) processItem(ctx context.Context, run *domain.V2MigrationRun, m
 	}); err != nil {
 		return err
 	}
-	return nil
+	return s.resolveStagedMigrationExclusion(ctx, run.RunID, item)
+}
+
+func (s *service) resolveMissingLegacyOwner(
+	ctx context.Context,
+	item neo4j.LegacyCorpusItem,
+) (neo4j.LegacyCorpusItem, error) {
+	if strings.TrimSpace(item.OwnerProfileID) != "" {
+		return item, nil
+	}
+	teamID := strings.TrimSpace(item.TeamID)
+	if _, err := uuid.Parse(teamID); err != nil {
+		return item, nil
+	}
+	resolution, err := s.reader.ResolveUniqueTeamOwner(ctx, teamID)
+	if err != nil {
+		return item, err
+	}
+	item.OwnerCandidates = resolution.CandidateCount
+	switch {
+	case resolution.CandidateCount == 0:
+		item.OwnerResolution = domain.V2MigrationOwnerResolutionNoCandidate
+	case resolution.CandidateCount > 1:
+		item.OwnerResolution = domain.V2MigrationOwnerResolutionAmbiguous
+	case strings.TrimSpace(resolution.OwnerProfileID) != "":
+		item.OwnerProfileID = strings.TrimSpace(resolution.OwnerProfileID)
+		item.OwnerProfileName = strings.TrimSpace(resolution.OwnerProfileName)
+		item.OwnerResolution = domain.V2MigrationOwnerResolutionUniqueTeamOwner
+	default:
+		item.OwnerResolution = domain.V2MigrationOwnerResolutionNoCandidate
+	}
+	return item, nil
+}
+
+func (s *service) resolveStagedMigrationExclusion(
+	ctx context.Context,
+	runID string,
+	item neo4j.LegacyCorpusItem,
+) error {
+	if item.OwnerResolution != domain.V2MigrationOwnerResolutionUniqueTeamOwner {
+		return nil
+	}
+	return s.store.ResolveMigrationExclusion(ctx, repository.V2ResolveMigrationExclusionInput{
+		RunID:          runID,
+		SourceKind:     legacySourceKind(item),
+		SourceID:       strings.TrimSpace(item.SourceID),
+		OwnerProfileID: strings.TrimSpace(item.OwnerProfileID),
+		Resolution:     item.OwnerResolution,
+		Now:            s.now(),
+	})
 }
 
 func (s *service) validateLegacyOwnerProfile(
@@ -326,7 +401,7 @@ func (s *service) validateLegacyOwnerProfile(
 		SourceID:      strings.TrimSpace(item.SourceID),
 		Reason:        err.Error(),
 		BlocksCutover: true,
-		Metadata:      legacyCorpusMetadata(item),
+		Metadata:      legacyExclusionMetadata(item, domain.V2MigrationExclusionInvalidOwnerProfile),
 		Now:           s.now(),
 	}); recordErr != nil {
 		return false, recordErr
@@ -393,6 +468,8 @@ func migrationErrorMessage(phase string, code string, err error) string {
 		return "legacy owner profile validation failed"
 	case "invalid_legacy_owner_profile":
 		return errInvalidLegacyOwner.Error()
+	case "owner_resolution_failed":
+		return "legacy owner profile resolution failed"
 	case "postgres_write_failed":
 		return "migration repository write failed"
 	case "remember_failed":
@@ -583,7 +660,46 @@ func legacyCorpusMetadata(item neo4j.LegacyCorpusItem) map[string]any {
 	if len(item.Classification) > 0 {
 		out["legacy_classification"] = item.Classification
 	}
+	if item.OwnerResolution != "" {
+		out["legacy_owner_resolution"] = item.OwnerResolution
+		out["legacy_owner_candidates"] = item.OwnerCandidates
+	}
 	return out
+}
+
+func legacyExclusionMetadata(item neo4j.LegacyCorpusItem, code string) map[string]any {
+	out := legacyCorpusMetadata(item)
+	out["exclusion_code"] = strings.TrimSpace(code)
+	return out
+}
+
+func validationExclusionCode(item neo4j.LegacyCorpusItem) string {
+	if _, err := uuid.Parse(strings.TrimSpace(item.TeamID)); err != nil {
+		return domain.V2MigrationExclusionInvalidLegacyItem
+	}
+	if item.OwnerCandidates > 1 {
+		return domain.V2MigrationExclusionAmbiguousOwnerProfile
+	}
+	ownerProfileID := strings.TrimSpace(item.OwnerProfileID)
+	if ownerProfileID == "" {
+		return domain.V2MigrationExclusionUnresolvedOwnerProfile
+	}
+	if _, err := uuid.Parse(ownerProfileID); err != nil {
+		return domain.V2MigrationExclusionInvalidOwnerProfile
+	}
+	return domain.V2MigrationExclusionInvalidLegacyItem
+}
+
+func corpusOutcomeHasStagedEvidence(outcome string) bool {
+	switch strings.TrimSpace(outcome) {
+	case domain.V2MigrationOutcomeAccepted,
+		domain.V2MigrationOutcomeNeedsReview,
+		domain.V2MigrationOutcomeRejected,
+		domain.V2MigrationOutcomeQuarantined:
+		return true
+	default:
+		return false
+	}
 }
 
 func legacyEntityHints(item neo4j.LegacyCorpusItem) []map[string]any {

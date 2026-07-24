@@ -14,7 +14,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-const v2MigrationRetryExhaustedValidationError = "placement_attempts: retryable semantic review exhausted placement attempts"
+const (
+	v2MigrationRetryExhaustedValidationError = "placement_attempts: retryable semantic review exhausted placement attempts"
+	v2MigrationMissingOwnerReasonPrefix      = "legacy owner_profile_id is invalid: invalid UUID length: 0"
+)
 
 func (r *V2MigrationControlRepositoryImpl) AssessMigrationRepair(
 	ctx context.Context,
@@ -74,10 +77,11 @@ func (r *V2MigrationControlRepositoryImpl) RepairAndResumeMigration(
 		if err != nil {
 			return err
 		}
-		if summary.BlockedItems > 0 || summary.BlockingExclusions > 0 {
-			return fmt.Errorf("%w: blocked_items=%d blocking_exclusions=%d",
+		if summary.BlockedItems > 0 || summary.HardBlockingExclusions > 0 {
+			return fmt.Errorf("%w: blocked_items=%d hard_blocking_exclusions=%d blocking_exclusions=%d",
 				ErrV2MigrationCutoverBlocked,
 				summary.BlockedItems,
+				summary.HardBlockingExclusions,
 				summary.BlockingExclusions,
 			)
 		}
@@ -96,6 +100,11 @@ func (r *V2MigrationControlRepositoryImpl) RepairAndResumeMigration(
 		retryableFailures, err := repairV2MigrationRetryableFailuresTx(tx, runID, claimEpoch, now)
 		if err != nil {
 			return err
+		}
+		if summary.RepairableExclusions > 0 {
+			if err := rewindV2MigrationCursorForOwnerRepairTx(tx, runID, claimEpoch, now); err != nil {
+				return err
+			}
 		}
 		summary.OrphanReviews = max(0, orphanReviews-legacyPredicateItems)
 		summary.AbandonedProcessing = abandonedProcessing
@@ -201,10 +210,31 @@ func assessV2MigrationRepairTx(tx *gorm.DB, runID string) (*domain.V2MigrationRe
 		    )::int AS abandoned_processing
 		    FROM corpus_runs
 		), exclusion_counts AS (
-		    SELECT count(*)::int AS blocking_exclusions
+		    SELECT count(*) FILTER (
+		               WHERE blocks_cutover
+		           )::int AS blocking_exclusions,
+		           count(*) FILTER (
+		               WHERE blocks_cutover
+		                 AND (
+		                     COALESCE(metadata->>'exclusion_code', '') = ?
+		                     OR (
+		                         COALESCE(metadata->>'exclusion_code', '') = ''
+		                         AND reason LIKE ?
+		                     )
+		                 )
+		           )::int AS repairable_exclusions,
+		           count(*) FILTER (
+		               WHERE blocks_cutover
+		                 AND NOT (
+		                     COALESCE(metadata->>'exclusion_code', '') = ?
+		                     OR (
+		                         COALESCE(metadata->>'exclusion_code', '') = ''
+		                         AND reason LIKE ?
+		                     )
+		                 )
+		           )::int AS hard_blocking_exclusions
 		    FROM v2_migration_exclusions
 		    WHERE run_id = ?::uuid
-		      AND blocks_cutover
 		), item_counts AS (
 		    SELECT
 		        COALESCE(sum(legacy_predicate_review_count), 0)::int AS legacy_predicate_reviews,
@@ -235,13 +265,23 @@ func assessV2MigrationRepairTx(tx *gorm.DB, runID string) (*domain.V2MigrationRe
 		    item_counts.retryable_failures,
 		    item_counts.held_reviews,
 		    item_counts.blocked_items,
-		    exclusion_counts.blocking_exclusions
+		    exclusion_counts.blocking_exclusions,
+		    exclusion_counts.repairable_exclusions,
+		    exclusion_counts.hard_blocking_exclusions
 		FROM v2_migration_runs AS migration
 		CROSS JOIN run_counts
 		CROSS JOIN exclusion_counts
 		CROSS JOIN item_counts
 		WHERE migration.run_id = ?::uuid
-	`, runID, v2MigrationRetryExhaustedValidationError, runID, runID).Row()
+	`, runID,
+		v2MigrationRetryExhaustedValidationError,
+		domain.V2MigrationExclusionMissingOwnerProfile,
+		v2MigrationMissingOwnerReasonPrefix+"%",
+		domain.V2MigrationExclusionMissingOwnerProfile,
+		v2MigrationMissingOwnerReasonPrefix+"%",
+		runID,
+		runID,
+	).Row()
 	if err := row.Scan(
 		&summary.ClaimEpochBefore,
 		&summary.LegacyPredicateReviews,
@@ -251,6 +291,8 @@ func assessV2MigrationRepairTx(tx *gorm.DB, runID string) (*domain.V2MigrationRe
 		&summary.HeldReviews,
 		&summary.BlockedItems,
 		&summary.BlockingExclusions,
+		&summary.RepairableExclusions,
+		&summary.HardBlockingExclusions,
 	); err != nil {
 		return nil, err
 	}
@@ -259,13 +301,53 @@ func assessV2MigrationRepairTx(tx *gorm.DB, runID string) (*domain.V2MigrationRe
 	}
 	summary.ClaimEpochAfter = summary.ClaimEpochBefore
 	summary.Required = summary.LegacyPredicateReviews > 0 || summary.OrphanReviews > 0 ||
-		summary.AbandonedProcessing > 0 || summary.RetryableFailures > 0
+		summary.AbandonedProcessing > 0 || summary.RetryableFailures > 0 ||
+		summary.RepairableExclusions > 0
 	groups, err := v2MigrationRepairFailureGroupsTx(tx, runID)
 	if err != nil {
 		return nil, err
 	}
 	summary.FailureGroups = groups
 	return summary, nil
+}
+
+func rewindV2MigrationCursorForOwnerRepairTx(
+	tx *gorm.DB,
+	runID string,
+	claimEpoch int,
+	now time.Time,
+) error {
+	checkpoint := map[string]any{
+		"after_source_id": "",
+		"done":            false,
+		"repair_reason":   domain.V2MigrationExclusionMissingOwnerProfile,
+		"claim_epoch":     claimEpoch,
+		"rewound_at":      now.UTC().Format(time.RFC3339Nano),
+	}
+	data, err := marshalV2MigrationJSON(checkpoint)
+	if err != nil {
+		return err
+	}
+	if err := tx.Exec(`
+		INSERT INTO v2_migration_checkpoints (
+		    run_id, checkpoint_key, checkpoint_value, lease_owner, updated_at
+		) VALUES (
+		    ?::uuid, ?, ?::jsonb, '', ?
+		)
+		ON CONFLICT (run_id, checkpoint_key) DO UPDATE
+		SET checkpoint_value = EXCLUDED.checkpoint_value,
+		    lease_owner = '',
+		    updated_at = EXCLUDED.updated_at
+	`, runID, domain.V2MigrationCheckpointLegacyNeo4jCursor, string(data), now).Error; err != nil {
+		return err
+	}
+	return tx.Exec(`
+		UPDATE v2_migration_runs
+		SET checkpoint_key = ?,
+		    checkpoint_value = ?::jsonb,
+		    updated_at = ?
+		WHERE run_id = ?::uuid
+	`, domain.V2MigrationCheckpointLegacyNeo4jCursor, string(data), now, runID).Error
 }
 
 func v2MigrationRepairFailureGroupsTx(tx *gorm.DB, runID string) ([]domain.V2MigrationFailureGroup, error) {
@@ -691,6 +773,8 @@ func insertV2MigrationOperatorActionTx(
 			"held_reviews":             repair.HeldReviews,
 			"blocked_items":            repair.BlockedItems,
 			"blocking_exclusions":      repair.BlockingExclusions,
+			"repairable_exclusions":    repair.RepairableExclusions,
+			"hard_blocking_exclusions": repair.HardBlockingExclusions,
 			"failure_groups":           repair.FailureGroups,
 			"repaired_items":           repair.RepairedItems,
 			"claim_epoch_before":       repair.ClaimEpochBefore,

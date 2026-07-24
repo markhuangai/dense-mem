@@ -13,13 +13,15 @@ export function MigrationRepairCard({ repair, repairBlocked, claimEpoch }: Migra
       <p>{repairBlocked
         ? "Some terminal migration records need operator investigation before resume can succeed."
         : repair.required
-        ? "The next resume will requeue stale migration-owned placement records before workers continue."
+        ? "The next resume will repair retryable placement state and re-scan ownerless legacy evidence when needed."
         : "No stale retryable migration-owned placement rows were detected."}</p>
       <dl>
         <div><dt>Legacy predicate reviews</dt><dd>{repair.legacy_predicate_reviews}</dd></div><div><dt>Orphan reviews</dt><dd>{repair.orphan_reviews}</dd></div>
         <div><dt>Processing rows</dt><dd>{repair.abandoned_processing}</dd></div>
         <div><dt>Retryable failures</dt><dd>{repair.retryable_failures}</dd></div><div><dt>Held reviews</dt><dd>{repair.held_reviews}</dd></div>
         <div><dt>Blocked</dt><dd>{repair.blocked_items}</dd></div><div><dt>Blocking exclusions</dt><dd>{repair.blocking_exclusions ?? 0}</dd></div>
+        <div><dt>Auto-repairable exclusions</dt><dd>{repair.repairable_exclusions ?? 0}</dd></div>
+        <div><dt>Hard exclusions</dt><dd>{repair.hard_blocking_exclusions ?? repair.blocking_exclusions ?? 0}</dd></div>
         <div><dt>Claim epoch</dt><dd>{repair.claim_epoch_before ?? claimEpoch ?? "—"}</dd></div>
       </dl>
       {!!repair.failure_groups?.length && (

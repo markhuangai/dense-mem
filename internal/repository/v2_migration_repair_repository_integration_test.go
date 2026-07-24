@@ -153,14 +153,19 @@ func TestV2MigrationRepairBlocksResumeWhenCutoverExclusionsRemain(t *testing.T) 
 		SourceID:      "legacy-bad-owner",
 		Reason:        "legacy owner profile does not belong to team",
 		BlocksCutover: true,
-		Metadata:      map[string]any{"reason_class": "owner_mismatch"},
-		Now:           now.Add(time.Minute),
+		Metadata: map[string]any{
+			"reason_class":   "owner_mismatch",
+			"exclusion_code": domain.V2MigrationExclusionAmbiguousOwnerProfile,
+		},
+		Now: now.Add(time.Minute),
 	}))
 
 	summary, err := repo.AssessMigrationRepair(ctx, run.RunID)
 	require.NoError(t, err)
 	require.False(t, summary.Required)
 	require.Equal(t, 1, summary.BlockingExclusions)
+	require.Zero(t, summary.RepairableExclusions)
+	require.Equal(t, 1, summary.HardBlockingExclusions)
 	require.Zero(t, summary.RetryableFailures)
 
 	_, err = repo.RepairAndResumeMigration(ctx, V2RepairAndResumeMigrationInput{
@@ -175,6 +180,115 @@ func TestV2MigrationRepairBlocksResumeWhenCutoverExclusionsRemain(t *testing.T) 
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrV2MigrationCutoverBlocked), err)
 	require.Contains(t, err.Error(), "blocking_exclusions=1")
+	require.Contains(t, err.Error(), "hard_blocking_exclusions=1")
+}
+
+func TestV2MigrationRepairRewindsLegacyMissingOwnerExclusions(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	repo := NewV2MigrationControlRepository(appDB, rls)
+	now := time.Date(2026, 7, 24, 1, 0, 0, 0, time.UTC)
+	run, err := repo.CreateRun(ctx, V2CreateMigrationRunInput{
+		MigrationContractVersion: "migration-contract-v1",
+		CorpusVersion:            "corpus-v1",
+		SourceKind:               "neo4j",
+		State:                    domain.V2MigrationStatePaused,
+		Phase:                    "paused",
+		Required:                 true,
+		PreflightApproved:        true,
+		Now:                      now,
+	})
+	require.NoError(t, err)
+	require.NoError(t, repo.UpsertMigrationCheckpoint(ctx, V2UpsertMigrationCheckpointInput{
+		RunID:         run.RunID,
+		CheckpointKey: domain.V2MigrationCheckpointLegacyNeo4jCursor,
+		CheckpointValue: map[string]any{
+			"after_source_id": "legacy-last-source",
+			"done":            true,
+		},
+		LeaseOwner: "old-worker",
+		Now:        now,
+	}))
+	require.NoError(t, repo.RecordMigrationExclusion(ctx, V2RecordMigrationExclusionInput{
+		RunID:         run.RunID,
+		SourceKind:    "neo4j",
+		SourceID:      "legacy-ownerless",
+		Reason:        v2MigrationMissingOwnerReasonPrefix,
+		BlocksCutover: true,
+		Metadata:      map[string]any{"legacy_source_id": "legacy-ownerless"},
+		Now:           now.Add(time.Minute),
+	}))
+
+	summary, err := repo.AssessMigrationRepair(ctx, run.RunID)
+	require.NoError(t, err)
+	require.True(t, summary.Required)
+	require.Equal(t, 1, summary.BlockingExclusions)
+	require.Equal(t, 1, summary.RepairableExclusions)
+	require.Zero(t, summary.HardBlockingExclusions)
+
+	resumedAt := now.Add(2 * time.Minute)
+	resumed, err := repo.RepairAndResumeMigration(ctx, V2RepairAndResumeMigrationInput{
+		RunID:     run.RunID,
+		FromState: domain.V2MigrationStatePaused,
+		OperatorAction: domain.V2MigrationOperatorAction{
+			RunID: run.RunID,
+			Actor: "operator",
+		},
+		Now: resumedAt,
+	})
+	require.NoError(t, err)
+	require.Equal(t, domain.V2MigrationStateRunning, resumed.State)
+
+	var checkpointDone, checkpointCursor, checkpointReason, leaseOwner string
+	require.NoError(t, rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT checkpoint_value->>'done',
+			       checkpoint_value->>'after_source_id',
+			       checkpoint_value->>'repair_reason',
+			       lease_owner
+			FROM v2_migration_checkpoints
+			WHERE run_id = ?::uuid
+			  AND checkpoint_key = ?
+		`, run.RunID, domain.V2MigrationCheckpointLegacyNeo4jCursor).Row().Scan(
+			&checkpointDone,
+			&checkpointCursor,
+			&checkpointReason,
+			&leaseOwner,
+		)
+	}))
+	require.Equal(t, "false", checkpointDone)
+	require.Empty(t, checkpointCursor)
+	require.Equal(t, domain.V2MigrationExclusionMissingOwnerProfile, checkpointReason)
+	require.Empty(t, leaseOwner)
+
+	ownerID := uuid.NewString()
+	require.NoError(t, repo.ResolveMigrationExclusion(ctx, V2ResolveMigrationExclusionInput{
+		RunID:          run.RunID,
+		SourceKind:     "neo4j",
+		SourceID:       "legacy-ownerless",
+		OwnerProfileID: ownerID,
+		Resolution:     domain.V2MigrationOwnerResolutionUniqueTeamOwner,
+		Now:            resumedAt.Add(time.Minute),
+	}))
+
+	var blocksCutover bool
+	var reason, resolution, resolvedOwner string
+	require.NoError(t, rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT blocks_cutover, reason,
+			       metadata->>'owner_resolution',
+			       metadata->>'resolved_owner_profile_id'
+			FROM v2_migration_exclusions
+			WHERE run_id = ?::uuid
+			  AND source_id = 'legacy-ownerless'
+		`, run.RunID).Row().Scan(&blocksCutover, &reason, &resolution, &resolvedOwner)
+	}))
+	require.False(t, blocksCutover)
+	require.Equal(t, v2MigrationMissingOwnerReasonPrefix, reason)
+	require.Equal(t, domain.V2MigrationOwnerResolutionUniqueTeamOwner, resolution)
+	require.Equal(t, ownerID, resolvedOwner)
 }
 
 func TestV2MigrationRepairKeepsDeterministicExhaustedFailureBlocked(t *testing.T) {

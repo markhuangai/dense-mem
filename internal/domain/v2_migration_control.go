@@ -46,6 +46,16 @@ const (
 
 	V2MigrationTargetIngest        = "knowledge_ingest"
 	V2MigrationTargetPlacementItem = "placement_item"
+
+	V2MigrationExclusionMissingOwnerProfile    = "missing_owner_profile"
+	V2MigrationExclusionUnresolvedOwnerProfile = "unresolved_owner_profile"
+	V2MigrationExclusionAmbiguousOwnerProfile  = "ambiguous_owner_profile"
+	V2MigrationExclusionInvalidOwnerProfile    = "invalid_owner_profile"
+	V2MigrationExclusionInvalidLegacyItem      = "invalid_legacy_item"
+
+	V2MigrationOwnerResolutionUniqueTeamOwner = "unique_active_team_owner"
+	V2MigrationOwnerResolutionNoCandidate     = "no_active_team_owner"
+	V2MigrationOwnerResolutionAmbiguous       = "ambiguous_active_team_owner"
 )
 
 type V2MigrationRun struct {
@@ -154,6 +164,8 @@ type V2MigrationRepairSummary struct {
 	HeldReviews            int                       `json:"held_reviews"`
 	BlockedItems           int                       `json:"blocked_items"`
 	BlockingExclusions     int                       `json:"blocking_exclusions"`
+	RepairableExclusions   int                       `json:"repairable_exclusions"`
+	HardBlockingExclusions int                       `json:"hard_blocking_exclusions"`
 	FailureGroups          []V2MigrationFailureGroup `json:"failure_groups,omitempty"`
 	RepairedItems          int                       `json:"repaired_items,omitempty"`
 	ClaimEpochBefore       int                       `json:"claim_epoch_before,omitempty"`
