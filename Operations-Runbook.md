@@ -164,9 +164,33 @@ Required checks:
   errors
 - awaiting-review age separately from worker backlog
 
-Do not mark jobs complete, delete queue rows, or extend leases blindly. Repair
-the root cause, release only expired/abandoned leases through supported tooling,
-and let stable idempotency converge retries.
+Retryable placement failures use deterministic exponential backoff with bounded
+jitter. The first four retry releases wait about 15s, 30s, 60s, and 120s,
+capped at 300s. Attempts are not reset by ordinary retries.
+
+When a legacy authority handoff reaches the end of its source cursor with all
+items terminal but some items failed or were excluded, the supervisor pauses the
+run instead of repeatedly trying cutover. The private portal shows whether
+resume can repair the run. Supported repair may requeue abandoned processing
+rows, orphan review rows, and retryable exhausted placement failures.
+
+Legacy evidence missing its owner is auto-repairable only when the active
+same-team legacy corpus has exactly one distinct owner. Resume rewinds the
+legacy cursor, the executor validates that exact team/profile pair in
+PostgreSQL, and stable idempotency skips evidence that was already staged. The
+original exclusion row remains as audit history and stops blocking cutover only
+after the evidence is durably staged. Zero owners, multiple owners, invalid
+team/profile membership, other cutover exclusions, and deterministic terminal
+failures remain hard blockers that need operator investigation.
+
+`needs_review` is terminal for handoff progress only when the placement item is
+`awaiting_review` and has an open or acknowledged review task. Those items do
+not block cutover; they remain review backlog after PostgreSQL V2 is active.
+Missing review tasks are repairable orchestration state, not valid held review.
+
+Do not mark jobs complete, delete queue rows, reset attempts, or extend leases
+with direct SQL. Repair the root cause, use the supported pause/resume repair
+path, and let stable idempotency converge retries.
 
 ## Invalid Verifier Responses
 
