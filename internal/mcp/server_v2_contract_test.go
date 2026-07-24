@@ -197,6 +197,53 @@ func TestMCP_V2ToolListCarriesContractVersionMetadata(t *testing.T) {
 	}
 }
 
+func TestMCP_V2ToolListRequiredFieldsAreArraysOrOmitted(t *testing.T) {
+	logger, _ := testLogger(t)
+	reg := registry.New()
+	for _, tool := range registry.V2ContractTools() {
+		tool.Visibility = "active"
+		if err := reg.Register(tool); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := NewServerWithScopes(reg, "profile-a", []string{"read", "write"}, logger)
+	out := runRPC(t, server, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
+	var response rpcResp
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error != nil {
+		t.Fatalf("tools/list error = %+v", response.Error)
+	}
+	var result struct {
+		Tools []struct {
+			Name        string         `json:"name"`
+			InputSchema map[string]any `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(response.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	listDreamsFound := false
+	for _, tool := range result.Tools {
+		required, exists := tool.InputSchema["required"]
+		if exists {
+			if _, ok := required.([]any); !ok {
+				t.Errorf("%s inputSchema.required = %#v; want array or omitted", tool.Name, required)
+			}
+		}
+		if tool.Name == registry.V2ToolListDreams {
+			listDreamsFound = true
+			if exists {
+				t.Errorf("%s inputSchema.required = %#v; want omitted", tool.Name, required)
+			}
+		}
+	}
+	if !listDreamsFound {
+		t.Fatal("tools/list did not expose list_dreams")
+	}
+}
+
 type mcpV2ContractFixture struct {
 	Name            string         `json:"name"`
 	Tool            string         `json:"tool"`
