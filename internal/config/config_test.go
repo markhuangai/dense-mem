@@ -191,7 +191,7 @@ func TestLoadRejectsLegacyNeo4jConfig(t *testing.T) {
 	if validationErr.Field != "NEO4J_URI" {
 		t.Errorf("ValidationError.Field = %q, want NEO4J_URI", validationErr.Field)
 	}
-	if validationErr.Message != "legacy Neo4j configuration is no longer supported; run the latest v2.1.1 release to complete migration before upgrading" {
+	if validationErr.Message != "legacy Neo4j configuration is no longer supported; run v2.1.2 to complete migration before upgrading" {
 		t.Errorf("ValidationError.Message = %q", validationErr.Message)
 	}
 }

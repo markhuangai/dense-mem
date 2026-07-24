@@ -578,7 +578,7 @@ func rejectLegacyNeo4jConfig() *ValidationError {
 		if strings.TrimSpace(os.Getenv(name)) != "" {
 			return &ValidationError{
 				Field:   name,
-				Message: "legacy Neo4j configuration is no longer supported; run the latest v2.1.1 release to complete migration before upgrading",
+				Message: "legacy Neo4j configuration is no longer supported; run v2.1.2 to complete migration before upgrading",
 			}
 		}
 	}
