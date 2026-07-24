@@ -52,6 +52,7 @@ func (s *reviewSourceLedgerStub) FinishPlacementRun(context.Context, string, str
 
 type reviewSourceCatalogStub struct {
 	predicateOptions     []string
+	predicateOptionsErr  error
 	entityCandidates     map[string][]repository.V2SemanticReviewEntityCandidate
 	predicateCandidates  map[string][]repository.V2SemanticReviewPredicateCandidate
 	ensurePredicateCalls int
@@ -84,6 +85,9 @@ func (s *reviewSourceCatalogStub) ResolveV2SemanticReviewPredicateCandidates(_ c
 }
 
 func (s *reviewSourceCatalogStub) ListV2SemanticReviewPredicateOptions(context.Context, repository.V2SemanticReviewPredicateOptionsInput) ([]string, error) {
+	if s.predicateOptionsErr != nil {
+		return nil, s.predicateOptionsErr
+	}
 	return append([]string(nil), s.predicateOptions...), nil
 }
 

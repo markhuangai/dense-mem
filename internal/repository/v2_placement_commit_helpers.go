@@ -2,10 +2,12 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 
 	"gorm.io/gorm"
@@ -59,6 +61,75 @@ func appendV2PlacementRelationshipResult(result *V2CommitPlacementSemanticResult
 		return
 	}
 	result.RelationshipResults = append(result.RelationshipResults, *relationship)
+}
+
+func applyV2PlacementRelationshipDecision(
+	ctx context.Context,
+	tx *gorm.DB,
+	commit V2CommitPlacementSemanticInput,
+	decision V2ApplyRelationshipDecisionInput,
+	correctionTarget *V2PlacementCorrectionTargetInput,
+	placementFragmentID string,
+	embeddingJobMaxAttempts int,
+	result *V2CommitPlacementSemanticResult,
+) error {
+	applied, err := applyV2RelationshipDecisionInTx(ctx, tx, decision)
+	if err != nil {
+		return err
+	}
+	applied.ProposalID = decision.ProposalRef
+	applied.OwnerProfileID = commit.OwnerProfileID
+	applied.Category = v2RelationshipOutcomeCategory(applied)
+	applied.Reason = v2RelationshipOutcomeReason(decision, applied)
+	result.RelationshipResults = append(result.RelationshipResults, *applied)
+	appendV2PlacementReviewTaskID(result, applied.ReviewTaskID)
+	if applied.Relationship == nil || applied.Relationship.Status != string(domain.V2RelationshipStatusActive) {
+		return nil
+	}
+	if correctionTarget != nil {
+		if err := appendV2PlacementCorrectionTarget(ctx, tx, commit, applied, *correctionTarget); err != nil {
+			return err
+		}
+	}
+	if applied.SupportID != "" && decision.Support != nil && decision.Support.FragmentID != "" {
+		if placementFragmentID == "" {
+			var err error
+			placementFragmentID, err = loadV2PlacementItemFragmentID(ctx, tx, commit)
+			if err != nil {
+				return err
+			}
+		}
+		if decision.Support.FragmentID != placementFragmentID {
+			document, err := upsertV2PlacementEvidenceSearchDocument(
+				ctx,
+				tx,
+				commit,
+				decision.Support.FragmentID,
+				map[string]any{
+					"supporting_placement_item_id": commit.PlacementItemID,
+					"support_id":                   applied.SupportID,
+					"relationship_id":              applied.Relationship.RelationshipID,
+				},
+				embeddingJobMaxAttempts,
+			)
+			if err != nil {
+				return err
+			}
+			appendV2PlacementSearchDocument(result, document)
+		}
+	}
+	document, err := upsertV2PlacementRelationshipSearchDocument(
+		ctx,
+		tx,
+		commit,
+		applied.Relationship,
+		embeddingJobMaxAttempts,
+	)
+	if err != nil {
+		return err
+	}
+	appendV2PlacementSearchDocument(result, document)
+	return nil
 }
 
 func v2PlacementEvidenceSearchableStatus(status string) bool {
@@ -558,6 +629,7 @@ func upsertV2PlacementRelationshipSearchDocument(
 	tx *gorm.DB,
 	commit V2CommitPlacementSemanticInput,
 	relationship *V2RelationshipRecord,
+	embeddingJobMaxAttempts int,
 ) (*V2SearchDocumentResult, error) {
 	contract, err := loadV2ActiveSearchContractInTx(ctx, tx)
 	if err != nil {
@@ -574,7 +646,7 @@ func upsertV2PlacementRelationshipSearchDocument(
 	if err := validateV2UpsertSearchDocumentInput(input); err != nil {
 		return nil, err
 	}
-	return upsertV2SearchDocumentInTx(ctx, tx, input, contract)
+	return upsertV2SearchDocumentInTx(ctx, tx, input, contract, embeddingJobMaxAttempts)
 }
 
 func v2PlacementCommitPayload(base map[string]any, result *V2CommitPlacementSemanticResult) map[string]any {
@@ -741,12 +813,13 @@ func finishV2PlacementRunIfTerminal(ctx context.Context, tx *gorm.DB, input V2Co
 }
 
 func requeueV2PlacementRunForRetry(ctx context.Context, tx *gorm.DB, input V2CommitPlacementSemanticInput) error {
+	retryDelaySeconds := int(v2PlacementRetryDelay(input.ExpectedAttempts, input.PlacementItemID) / time.Second)
 	result := tx.WithContext(ctx).Exec(`
 		UPDATE placement_runs
 		SET status = `+v2PlacementRunGuardedStatusCase+`,
 		    worker_id = '',
 		    lease_until = NULL,
-		    available_at = now(),
+		    available_at = now() + (? * interval '1 second'),
 		    updated_at = now()
 		WHERE team_id = ?::uuid
 		  AND placement_run_id = ?::uuid
@@ -755,7 +828,7 @@ func requeueV2PlacementRunForRetry(ctx context.Context, tx *gorm.DB, input V2Com
 		  AND worker_id = ?
 		  AND attempts = ?
 		  AND lease_until > clock_timestamp()
-	`, input.TeamID, input.PlacementRunID, input.OwnerProfileID, input.WorkerID, input.ExpectedAttempts)
+	`, retryDelaySeconds, input.TeamID, input.PlacementRunID, input.OwnerProfileID, input.WorkerID, input.ExpectedAttempts)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -763,6 +836,30 @@ func requeueV2PlacementRunForRetry(ctx context.Context, tx *gorm.DB, input V2Com
 		return ErrV2PlacementLeaseLost
 	}
 	return nil
+}
+
+func v2PlacementRetryDelay(attempt int, placementItemID string) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	base := 15 * time.Second
+	for i := 1; i < attempt; i++ {
+		base *= 2
+		if base >= 300*time.Second {
+			base = 300 * time.Second
+			break
+		}
+	}
+	delay := base + time.Duration(v2PlacementRetryJitterSeconds(placementItemID))*time.Second
+	if delay > 300*time.Second {
+		return 300 * time.Second
+	}
+	return delay
+}
+
+func v2PlacementRetryJitterSeconds(placementItemID string) int {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(placementItemID)))
+	return int(sum[0] % 15)
 }
 
 func v2IntPointerArg(value *int) any {

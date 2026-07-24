@@ -518,6 +518,14 @@ func TestOpenAIVerifierV2SemanticAdapters(t *testing.T) {
 			assert.Equal(t, "verifier-model", reqBody.Model)
 			assert.Equal(t, V2VerifierResponseSchemaName, reqBody.ResponseFormat.JSONSchema.Name)
 			assert.Contains(t, reqBody.Messages[0].Content, "semantic verifier")
+			assert.Contains(t, reqBody.Messages[0].Content, `actions "create" and "ambiguous" require candidate_entity_id to be null`)
+			var userPayload map[string]any
+			require.NoError(t, json.Unmarshal([]byte(reqBody.Messages[1].Content), &userPayload))
+			assert.Equal(t, float64(2), userPayload["attempt"])
+			assert.Equal(t, []any{"entity_results[0].candidate_entity_id: must be null"}, userPayload["validation_feedback"])
+			assert.Equal(t, "sha256:previous", userPayload["previous_response_hash"])
+			assert.NotContains(t, userPayload, "team_id")
+			assert.NotContains(t, userPayload, "owner_profile_id")
 			predicateKey := "uses"
 			writeStructuredChatContent(t, w, map[string]any{
 				"request_id":       "verify-1",
@@ -543,8 +551,12 @@ func TestOpenAIVerifierV2SemanticAdapters(t *testing.T) {
 		cfg.AIReviewerModel = "reviewer-model"
 		v := NewOpenAIVerifier(cfg, srv.Client())
 		got, err := v.ReviewSemantic(context.Background(), V2SemanticReviewRequest{
-			RequestID: "verify-1",
-			TeamID:    "team-a",
+			RequestID:            "verify-1",
+			TeamID:               "team-a",
+			OwnerProfileID:       "profile-a",
+			Attempt:              2,
+			ValidationFeedback:   []string{"entity_results[0].candidate_entity_id: must be null"},
+			PreviousResponseHash: "sha256:previous",
 			Evidence: []V2SemanticReviewEvidence{{
 				EvidenceID: "evidence:0",
 				Content:    content,

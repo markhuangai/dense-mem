@@ -85,7 +85,13 @@ func (r *V2LedgerRepositoryImpl) CompletePlacementReviewResult(
 			if err != nil {
 				return err
 			}
-			if _, err := upsertV2PlacementItemEvidenceSearchDocument(ctx, tx, scope, placementFragmentID); err != nil {
+			if _, err := upsertV2PlacementItemEvidenceSearchDocument(
+				ctx,
+				tx,
+				scope,
+				placementFragmentID,
+				r.embeddingJobMaxAttempts,
+			); err != nil {
 				return err
 			}
 		}

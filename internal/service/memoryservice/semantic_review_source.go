@@ -73,6 +73,11 @@ type v2PlacementReviewRelationshipSpec struct {
 	CorrectionTarget    *verifier.V2RelationshipCorrectionTarget
 }
 
+type semanticFailureDescriptor struct {
+	Stage string
+	Class string
+}
+
 func NewSemanticPlacementReviewSource(deps SemanticPlacementReviewSourceDependencies) SemanticPlacementReviewSource {
 	limit := deps.CandidateLimit
 	if limit <= 0 {
@@ -114,16 +119,16 @@ func (s *semanticPlacementReviewSource) BuildSemanticReviewJob(
 	trustedCorrectionTargets := v2ReviewSourceCorrectionTargets(proposal)
 	entityHints := v2PlacementReviewEntityHints(proposal)
 	var validationErrors []verifier.V2SemanticValidationError
-	providerProposal, validationErrors, retryable, err := s.v2PlacementReviewProviderProposal(ctx, run, evidence, proposal)
+	providerProposal, validationErrors, retryable, failure, err := s.v2PlacementReviewProviderProposal(ctx, run, evidence, proposal)
 	if err != nil {
 		return v2SemanticReviewRetryablePreflightJob(run, item, evidence, []verifier.V2SemanticValidationError{{
 			Field:   "provider_proposal",
 			Message: "semantic extraction provider failed",
-		}}), nil
+		}}, failure), nil
 	}
 	if len(validationErrors) > 0 {
 		if retryable {
-			return v2SemanticReviewRetryablePreflightJob(run, item, evidence, validationErrors), nil
+			return v2SemanticReviewRetryablePreflightJob(run, item, evidence, validationErrors, failure), nil
 		}
 		return v2SemanticReviewPreflightFailureJob(run, item, evidence, validationErrors), nil
 	}
@@ -167,12 +172,12 @@ func (s *semanticPlacementReviewSource) v2PlacementReviewProviderProposal(
 	run repository.V2PlacementRun,
 	evidence verifier.V2SemanticReviewEvidence,
 	clientProposal map[string]any,
-) (*verifier.V2ProviderProposal, []verifier.V2SemanticValidationError, bool, error) {
+) (*verifier.V2ProviderProposal, []verifier.V2SemanticValidationError, bool, semanticFailureDescriptor, error) {
 	if s.proposalProvider == nil {
 		return nil, []verifier.V2SemanticValidationError{{
 			Field:   "proposal",
 			Message: "extraction provider is required when proposal has no relationship hints",
-		}}, false, nil
+		}}, false, semanticFailureDescriptor{}, nil
 	}
 	predicateOptions, err := s.catalog.ListV2SemanticReviewPredicateOptions(ctx, repository.V2SemanticReviewPredicateOptionsInput{
 		TeamID:         run.TeamID,
@@ -180,7 +185,10 @@ func (s *semanticPlacementReviewSource) v2PlacementReviewProviderProposal(
 		QueryText:      evidence.Content,
 	})
 	if err != nil {
-		return nil, nil, false, err
+		return nil, nil, false, semanticFailureDescriptor{
+			Stage: semanticFailureStagePredicateCatalog,
+			Class: semanticFailureClassLookupFailed,
+		}, err
 	}
 	req, validationErrors := verifier.PrepareV2ProviderProposalRequest(verifier.V2ProviderProposalRequest{
 		RequestID:         "semantic-extraction:" + evidence.FragmentID,
@@ -190,7 +198,7 @@ func (s *semanticPlacementReviewSource) v2PlacementReviewProviderProposal(
 		PredicateOptions:  predicateOptions,
 	})
 	if len(validationErrors) > 0 {
-		return nil, validationErrors, false, nil
+		return nil, validationErrors, false, semanticFailureDescriptor{}, nil
 	}
 	var lastValidationErrors []verifier.V2SemanticValidationError
 	feedback := []string{}
@@ -206,16 +214,22 @@ func (s *semanticPlacementReviewSource) v2PlacementReviewProviderProposal(
 				feedback = semanticValidationMessages(lastValidationErrors)
 				continue
 			}
-			return nil, nil, false, err
+			return nil, nil, false, semanticFailureDescriptor{
+				Stage: semanticFailureStageExtraction,
+				Class: semanticProviderFailureClass(err),
+			}, err
 		}
 		if validationErrors := verifier.ValidateV2ProviderProposal(req, proposal); len(validationErrors) > 0 {
 			lastValidationErrors = validationErrors
 			feedback = semanticValidationMessages(validationErrors)
 			continue
 		}
-		return &proposal, nil, false, nil
+		return &proposal, nil, false, semanticFailureDescriptor{}, nil
 	}
-	return nil, lastValidationErrors, true, nil
+	return nil, lastValidationErrors, true, semanticFailureDescriptor{
+		Stage: semanticFailureStageExtraction,
+		Class: semanticFailureClassMalformedResponse,
+	}, nil
 }
 
 func v2SemanticReviewPreflightFailureJob(
@@ -246,9 +260,12 @@ func v2SemanticReviewRetryablePreflightJob(
 	item repository.V2PlacementItem,
 	evidence verifier.V2SemanticReviewEvidence,
 	validationErrors []verifier.V2SemanticValidationError,
+	failure semanticFailureDescriptor,
 ) SemanticReviewJob {
 	job := v2SemanticReviewPreflightFailureJob(run, item, evidence, nil)
 	job.RetryableValidationErrors = validationErrors
+	job.FailureStage = failure.Stage
+	job.FailureClass = failure.Class
 	return job
 }
 

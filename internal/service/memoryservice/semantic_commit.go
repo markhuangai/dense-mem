@@ -145,6 +145,9 @@ func semanticRetryAttemptsExhausted(job SemanticCommitJob) bool {
 
 func exhaustedRetryableSemanticCommitJob(job SemanticCommitJob) SemanticCommitJob {
 	job.Result.Status = string(domain.V2SemanticReviewTerminalFailure)
+	job.Result.FailureStage = semanticFailureStageOrDefault(job.Result.FailureStage, semanticFailureStageUnknown)
+	job.Result.FailureClass = semanticFailureClassOrDefault(job.Result.FailureClass, semanticFailureClassUnknown)
+	job.Result.RetryableExhausted = true
 	job.Result.ValidationErrors = append(job.Result.ValidationErrors, verifier.V2SemanticValidationError{
 		Field:   "placement_attempts",
 		Message: "retryable semantic review exhausted placement attempts",
@@ -183,6 +186,24 @@ func v2TerminalReviewInputFromResult(job SemanticCommitJob) (repository.V2Comple
 	if job.Result.Status == string(domain.V2SemanticReviewTerminalFailure) {
 		category = "failed"
 	}
+	payload := map[string]any{
+		"request_id":         job.Request.RequestID,
+		"response_hash":      job.Result.ResponseHash,
+		"review_model":       job.ReviewModel,
+		"placement_attempts": job.ExpectedAttempts,
+		"max_attempts":       job.MaxAttempts,
+		"review_outcome_ids": append([]string(nil), job.Result.OutcomeIDs...),
+		"validation_errors":  semanticValidationMessages(job.Result.ValidationErrors),
+	}
+	if job.Result.FailureStage != "" {
+		payload["failure_stage"] = job.Result.FailureStage
+	}
+	if job.Result.FailureClass != "" {
+		payload["failure_class"] = job.Result.FailureClass
+	}
+	if job.Result.RetryableExhausted {
+		payload["retryable_exhausted"] = true
+	}
 	return repository.V2CompletePlacementReviewInput{
 		TeamID:           job.TeamID,
 		OwnerProfileID:   job.OwnerProfileID,
@@ -193,15 +214,7 @@ func v2TerminalReviewInputFromResult(job SemanticCommitJob) (repository.V2Comple
 		ExpectedAttempts: job.ExpectedAttempts,
 		Status:           job.Result.Status,
 		Category:         category,
-		Payload: map[string]any{
-			"request_id":         job.Request.RequestID,
-			"response_hash":      job.Result.ResponseHash,
-			"review_model":       job.ReviewModel,
-			"placement_attempts": job.ExpectedAttempts,
-			"max_attempts":       job.MaxAttempts,
-			"review_outcome_ids": append([]string(nil), job.Result.OutcomeIDs...),
-			"validation_errors":  semanticValidationMessages(job.Result.ValidationErrors),
-		},
+		Payload:          payload,
 	}, nil
 }
 

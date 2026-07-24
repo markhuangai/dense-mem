@@ -292,7 +292,7 @@ func TestV2SemanticReviewStopsAtRegenerationLimit(t *testing.T) {
 func TestV2SemanticReviewReturnsRetryableProviderFailure(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
-	provider := &semanticReviewProviderStub{err: errors.New("provider unavailable")}
+	provider := &semanticReviewProviderStub{err: &verifier.TimeoutError{Provider: "stub", Message: "secret host timed out"}}
 	ledger := &semanticReviewLedgerStub{}
 	svc := NewSemanticReviewService(SemanticReviewDependencies{Provider: provider, Ledger: ledger})
 
@@ -310,7 +310,14 @@ func TestV2SemanticReviewReturnsRetryableProviderFailure(t *testing.T) {
 	if result.Status != string(domain.V2SemanticReviewRetryable) {
 		t.Fatalf("status = %q", result.Status)
 	}
-	if strings.Contains(ledger.combinedPayloadJSON(t), "provider unavailable") {
+	if result.FailureStage != semanticFailureStageVerification || result.FailureClass != semanticFailureClassTimeout {
+		t.Fatalf("failure = %s/%s", result.FailureStage, result.FailureClass)
+	}
+	last := ledger.outcomes[len(ledger.outcomes)-1]
+	if last.Payload["failure_stage"] != semanticFailureStageVerification || last.Payload["failure_class"] != semanticFailureClassTimeout {
+		t.Fatalf("final payload failure = %#v", last.Payload)
+	}
+	if strings.Contains(ledger.combinedPayloadJSON(t), "secret host") {
 		t.Fatalf("provider error message leaked into audit payload: %s", ledger.combinedPayloadJSON(t))
 	}
 }

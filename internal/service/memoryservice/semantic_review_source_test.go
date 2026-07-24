@@ -2,6 +2,7 @@ package memoryservice
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -825,6 +826,65 @@ func TestV2SemanticPlacementReviewSourceReturnsRetryableProviderProposalAtLimit(
 	}
 	if len(job.RetryableValidationErrors) != 1 || job.RetryableValidationErrors[0].Field != "provider_proposal" {
 		t.Fatalf("retryable validation errors = %#v", job.RetryableValidationErrors)
+	}
+	if job.FailureStage != semanticFailureStageExtraction || job.FailureClass != semanticFailureClassMalformedResponse {
+		t.Fatalf("failure = %s/%s", job.FailureStage, job.FailureClass)
+	}
+}
+
+func TestV2SemanticPlacementReviewSourceClassifiesPredicateCatalogLookupFailure(t *testing.T) {
+	teamID := uuid.NewString()
+	ownerID := uuid.NewString()
+	ingestID := uuid.NewString()
+	runID := uuid.NewString()
+	itemID := uuid.NewString()
+	ledger := &reviewSourceLedgerStub{placement: &repository.V2CreateIngestResult{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		IngestID:       ingestID,
+		PlacementRunID: runID,
+		Status:         "processing",
+		Proposal:       map[string]any{},
+		Evidence: []repository.V2EvidenceFragment{{
+			FragmentID:    uuid.NewString(),
+			EvidenceIndex: 0,
+			Content:       "Dense-Mem uses PostgreSQL.",
+			ContentHash:   "sha256:current",
+		}},
+		Items: []repository.V2PlacementItem{{
+			PlacementItemID: itemID,
+			EvidenceIndex:   0,
+			Status:          "queued",
+		}},
+	}}
+	provider := &reviewSourceProposalProviderStub{}
+	source := NewSemanticPlacementReviewSource(SemanticPlacementReviewSourceDependencies{
+		Ledger: ledger,
+		Catalog: &reviewSourceCatalogStub{
+			predicateOptionsErr: errors.New("postgres unavailable"),
+		},
+		ProposalProvider: provider,
+	})
+
+	job, err := source.BuildSemanticReviewJob(context.Background(), repository.V2PlacementRun{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		IngestID:       ingestID,
+		PlacementRunID: runID,
+		Status:         "processing",
+		MaxAttempts:    2,
+	})
+	if err != nil {
+		t.Fatalf("BuildSemanticReviewJob returned error: %v", err)
+	}
+	if len(provider.reqs) != 0 {
+		t.Fatalf("provider requests = %#v", provider.reqs)
+	}
+	if len(job.RetryableValidationErrors) != 1 || job.RetryableValidationErrors[0].Field != "provider_proposal" {
+		t.Fatalf("retryable validation errors = %#v", job.RetryableValidationErrors)
+	}
+	if job.FailureStage != semanticFailureStagePredicateCatalog || job.FailureClass != semanticFailureClassLookupFailed {
+		t.Fatalf("failure = %s/%s", job.FailureStage, job.FailureClass)
 	}
 }
 

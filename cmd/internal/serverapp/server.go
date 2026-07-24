@@ -104,8 +104,16 @@ func RunActiveServer(
 	recallFeedbackEventRepo := repository.NewRecallFeedbackEventRepository(pgDB.GetDB(), rlsHelper)
 	skillPackImportRepo := repository.NewSkillPackImportRepository(pgDB.GetDB(), rlsHelper)
 	semanticRepo := repository.NewV2SemanticRepository(pgDB.GetDB(), rlsHelper)
-	ledgerRepo := repository.NewV2LedgerRepository(pgDB.GetDB(), rlsHelper)
-	searchRepo := repository.NewV2SearchRepository(pgDB.GetDB(), rlsHelper)
+	ledgerRepo := repository.NewV2LedgerRepositoryWithEmbeddingJobMaxAttempts(
+		pgDB.GetDB(),
+		rlsHelper,
+		cfg.GetEmbeddingJobMaxAttempts(),
+	)
+	searchRepo := repository.NewV2SearchRepositoryWithEmbeddingJobMaxAttempts(
+		pgDB.GetDB(),
+		rlsHelper,
+		cfg.GetEmbeddingJobMaxAttempts(),
+	)
 
 	if err := checkActiveAuthority(authority); err != nil {
 		log.Fatalf("active boot blocked: %v", err)

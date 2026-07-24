@@ -8,8 +8,10 @@ import (
 )
 
 const (
-	DefaultHTTPPort = "8080"
-	DefaultHTTPAddr = ":" + DefaultHTTPPort
+	DefaultHTTPPort                = "8080"
+	DefaultHTTPAddr                = ":" + DefaultHTTPPort
+	DefaultEmbeddingJobMaxAttempts = 20
+	MaxEmbeddingJobMaxAttempts     = 100
 )
 
 var legacyNeo4jEnvVars = []string{
@@ -97,6 +99,7 @@ type Config struct {
 	AIEmbeddingModel                string
 	AIEmbeddingDimensions           int
 	AIEmbeddingTimeoutSeconds       int
+	EmbeddingJobMaxAttempts         int
 	// Knowledge-pipeline knobs (AC-X3)
 	AIVerifierAPIURL             string
 	AIVerifierAPIKey             string `json:"-"`
@@ -148,6 +151,7 @@ func (c *Config) GetAIAPIKey() string               { return c.AIAPIKey }
 func (c *Config) GetAIEmbeddingModel() string       { return c.AIEmbeddingModel }
 func (c *Config) GetAIEmbeddingDimensions() int     { return c.AIEmbeddingDimensions }
 func (c *Config) GetAIEmbeddingTimeoutSeconds() int { return c.AIEmbeddingTimeoutSeconds }
+func (c *Config) GetEmbeddingJobMaxAttempts() int   { return c.EmbeddingJobMaxAttempts }
 func (c *Config) IsEmbeddingConfigured() bool {
 	return c.AIAPIURL != "" && c.AIAPIKey != "" && c.AIEmbeddingModel != "" && c.AIEmbeddingDimensions > 0
 }
@@ -355,6 +359,7 @@ func Load() (Config, error) {
 		{"SSE_MAX_CONCURRENT_STREAMS", 10, func(c *Config, value int) { c.SSEMaxConcurrentStreams = value }},
 		{"AI_API_EMBEDDING_DIMENSIONS", 0, func(c *Config, value int) { c.AIEmbeddingDimensions = value }},
 		{"AI_API_EMBEDDING_TIMEOUT_SECONDS", 30, func(c *Config, value int) { c.AIEmbeddingTimeoutSeconds = value }},
+		{"EMBEDDING_JOB_MAX_ATTEMPTS", DefaultEmbeddingJobMaxAttempts, func(c *Config, value int) { c.EmbeddingJobMaxAttempts = value }},
 	}); err != nil {
 		return cfg, err
 	}
@@ -477,6 +482,7 @@ func Load() (Config, error) {
 		{"SSE_HEARTBEAT_SECONDS", cfg.SSEHeartbeatSeconds},
 		{"SSE_MAX_DURATION_SECONDS", cfg.SSEMaxDurationSeconds},
 		{"SSE_MAX_CONCURRENT_STREAMS", cfg.SSEMaxConcurrentStreams},
+		{"EMBEDDING_JOB_MAX_ATTEMPTS", cfg.EmbeddingJobMaxAttempts},
 		{"AI_VERIFIER_TIMEOUT_SECONDS", cfg.AIVerifierTimeoutSeconds},
 		{"AI_VERIFIER_MAX_CONCURRENCY", cfg.AIVerifierMaxConcurrency},
 		{"CLAIM_WRITE_RATE_LIMIT", cfg.ClaimWriteRateLimit},
@@ -493,6 +499,12 @@ func Load() (Config, error) {
 				Field:   field.name,
 				Message: fmt.Sprintf("must be greater than 0, got %d", field.value),
 			}
+		}
+	}
+	if cfg.EmbeddingJobMaxAttempts > MaxEmbeddingJobMaxAttempts {
+		return cfg, &ValidationError{
+			Field:   "EMBEDDING_JOB_MAX_ATTEMPTS",
+			Message: fmt.Sprintf("must be less than or equal to %d, got %d", MaxEmbeddingJobMaxAttempts, cfg.EmbeddingJobMaxAttempts),
 		}
 	}
 

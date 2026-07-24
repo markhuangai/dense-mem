@@ -177,7 +177,13 @@ func (r *V2LedgerRepositoryImpl) CommitPlacementSemanticResult(
 			}
 		}
 		if v2PlacementEvidenceSearchableStatus(input.Status) {
-			document, err := upsertV2PlacementItemEvidenceSearchDocument(ctx, tx, input, placementFragmentID)
+			document, err := upsertV2PlacementItemEvidenceSearchDocument(
+				ctx,
+				tx,
+				input,
+				placementFragmentID,
+				r.embeddingJobMaxAttempts,
+			)
 			if err != nil {
 				return err
 			}
@@ -224,7 +230,16 @@ func (r *V2LedgerRepositoryImpl) CommitPlacementSemanticResult(
 				appendV2PlacementReviewTaskID(result, review.ReviewTaskID)
 				continue
 			}
-			if err := applyV2PlacementRelationshipDecision(ctx, tx, input, decision, observation.CorrectionTarget, placementFragmentID, result); err != nil {
+			if err := applyV2PlacementRelationshipDecision(
+				ctx,
+				tx,
+				input,
+				decision,
+				observation.CorrectionTarget,
+				placementFragmentID,
+				r.embeddingJobMaxAttempts,
+				result,
+			); err != nil {
 				return err
 			}
 		}
@@ -237,7 +252,16 @@ func (r *V2LedgerRepositoryImpl) CommitPlacementSemanticResult(
 			appendV2PlacementReviewTaskID(result, recorded.ReviewTaskID)
 		}
 		for _, decision := range input.RelationshipDecisions {
-			if err := applyV2PlacementRelationshipDecision(ctx, tx, input, withV2PlacementDecisionScope(input, decision), nil, placementFragmentID, result); err != nil {
+			if err := applyV2PlacementRelationshipDecision(
+				ctx,
+				tx,
+				input,
+				withV2PlacementDecisionScope(input, decision),
+				nil,
+				placementFragmentID,
+				r.embeddingJobMaxAttempts,
+				result,
+			); err != nil {
 				return err
 			}
 		}
@@ -914,59 +938,4 @@ func upsertV2PlacementValue(
 		return nil, err
 	}
 	return &loaded, rows.Err()
-}
-
-func applyV2PlacementRelationshipDecision(
-	ctx context.Context,
-	tx *gorm.DB,
-	commit V2CommitPlacementSemanticInput,
-	decision V2ApplyRelationshipDecisionInput,
-	correctionTarget *V2PlacementCorrectionTargetInput,
-	placementFragmentID string,
-	result *V2CommitPlacementSemanticResult,
-) error {
-	applied, err := applyV2RelationshipDecisionInTx(ctx, tx, decision)
-	if err != nil {
-		return err
-	}
-	applied.ProposalID = decision.ProposalRef
-	applied.OwnerProfileID = commit.OwnerProfileID
-	applied.Category = v2RelationshipOutcomeCategory(applied)
-	applied.Reason = v2RelationshipOutcomeReason(decision, applied)
-	result.RelationshipResults = append(result.RelationshipResults, *applied)
-	appendV2PlacementReviewTaskID(result, applied.ReviewTaskID)
-	if applied.Relationship == nil || applied.Relationship.Status != string(domain.V2RelationshipStatusActive) {
-		return nil
-	}
-	if correctionTarget != nil {
-		if err := appendV2PlacementCorrectionTarget(ctx, tx, commit, applied, *correctionTarget); err != nil {
-			return err
-		}
-	}
-	if applied.SupportID != "" && decision.Support != nil && decision.Support.FragmentID != "" {
-		if placementFragmentID == "" {
-			var err error
-			placementFragmentID, err = loadV2PlacementItemFragmentID(ctx, tx, commit)
-			if err != nil {
-				return err
-			}
-		}
-		if decision.Support.FragmentID != placementFragmentID {
-			document, err := upsertV2PlacementEvidenceSearchDocument(ctx, tx, commit, decision.Support.FragmentID, map[string]any{
-				"supporting_placement_item_id": commit.PlacementItemID,
-				"support_id":                   applied.SupportID,
-				"relationship_id":              applied.Relationship.RelationshipID,
-			})
-			if err != nil {
-				return err
-			}
-			appendV2PlacementSearchDocument(result, document)
-		}
-	}
-	document, err := upsertV2PlacementRelationshipSearchDocument(ctx, tx, commit, applied.Relationship)
-	if err != nil {
-		return err
-	}
-	appendV2PlacementSearchDocument(result, document)
-	return nil
 }

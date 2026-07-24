@@ -42,6 +42,45 @@ func TestV2SearchRepositoryFailsClosedWithoutDependencies(t *testing.T) {
 	assert.Contains(t, err.Error(), "rls helper is required")
 }
 
+func TestV2SearchRepositoryPersistsConfiguredEmbeddingJobMaxAttempts(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createV2LedgerTeam(t, adminDB, rls, "search-attempt-policy-team")
+	ownerID := createV2LedgerProfile(t, adminDB, rls, teamID, "search-attempt-policy-owner")
+	insertV2SearchTestContract(t, adminDB, rls, "search-attempt-policy", 3, "exact", "")
+
+	customRepo := NewV2SearchRepositoryWithEmbeddingJobMaxAttempts(appDB, rls, 37)
+	custom := upsertV2SearchDocumentForTest(t, customRepo, teamID, ownerID, "custom retry policy", 1)
+	defaultRepo := NewV2SearchRepository(appDB, rls)
+	standard := upsertV2SearchDocumentForTest(t, defaultRepo, teamID, ownerID, "default retry policy", 1)
+
+	attemptsByDocument := map[string]int{}
+	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		rows, err := tx.Raw(`
+			SELECT search_document_id::text, max_attempts
+			FROM embedding_jobs
+			WHERE team_id = ?::uuid
+			  AND search_document_id IN (?::uuid, ?::uuid)
+		`, teamID, custom.SearchDocumentID, standard.SearchDocumentID).Rows()
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var documentID string
+			var maxAttempts int
+			if err := rows.Scan(&documentID, &maxAttempts); err != nil {
+				return err
+			}
+			attemptsByDocument[documentID] = maxAttempts
+		}
+		return rows.Err()
+	}))
+	assert.Equal(t, 37, attemptsByDocument[custom.SearchDocumentID])
+	assert.Equal(t, defaultV2EmbeddingJobMaxAttempts, attemptsByDocument[standard.SearchDocumentID])
+}
+
 func TestV2SearchDocumentsFTSAndExactVectorAreTeamScoped(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
 	defer cleanup()

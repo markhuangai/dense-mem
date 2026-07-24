@@ -19,6 +19,21 @@ const (
 	SemanticPlacementDefaultVerifierCallBudget = semanticProposalDefaultMaxAttempts + semanticReviewDefaultMaxAttempts
 	semanticReviewOutcomeKind                  = "semantic_review"
 	semanticReviewAttemptOutcomeKind           = "semantic_review_provider_attempt"
+
+	semanticFailureStagePredicateCatalog = "predicate_catalog"
+	semanticFailureStageExtraction       = "extraction"
+	semanticFailureStageVerification     = "verification"
+	semanticFailureStagePreflight        = "preflight"
+	semanticFailureStageUnknown          = "unknown"
+
+	semanticFailureClassTimeout             = "timeout"
+	semanticFailureClassRateLimited         = "rate_limited"
+	semanticFailureClassProviderUnavailable = "provider_unavailable"
+	semanticFailureClassMalformedResponse   = "malformed_response"
+	semanticFailureClassContextCanceled     = "context_canceled"
+	semanticFailureClassLookupFailed        = "lookup_failed"
+	semanticFailureClassValidationFailed    = "validation_failed"
+	semanticFailureClassUnknown             = "unknown"
 )
 
 type SemanticReviewProvider interface {
@@ -51,6 +66,8 @@ type SemanticReviewJob struct {
 	Request                   verifier.V2SemanticReviewRequest
 	ValidationErrors          []verifier.V2SemanticValidationError
 	RetryableValidationErrors []verifier.V2SemanticValidationError
+	FailureStage              string
+	FailureClass              string
 	MaxAttempts               int
 }
 
@@ -62,6 +79,9 @@ type SemanticReviewResult struct {
 	ValidationErrors    []verifier.V2SemanticValidationError          `json:"validation_errors,omitempty"`
 	OutcomeIDs          []string                                      `json:"outcome_ids,omitempty"`
 	ResponseHash        string                                        `json:"response_hash,omitempty"`
+	FailureStage        string                                        `json:"failure_stage,omitempty"`
+	FailureClass        string                                        `json:"failure_class,omitempty"`
+	RetryableExhausted  bool                                          `json:"retryable_exhausted,omitempty"`
 }
 
 func NewSemanticReviewService(deps SemanticReviewDependencies) SemanticReviewService {
@@ -81,6 +101,8 @@ func (s *semanticReviewService) ReviewSemantic(ctx context.Context, job Semantic
 	if len(job.ValidationErrors) > 0 {
 		result.Status = string(domain.V2SemanticReviewTerminalFailure)
 		result.ValidationErrors = append([]verifier.V2SemanticValidationError(nil), job.ValidationErrors...)
+		result.FailureStage = semanticFailureStageOrDefault(job.FailureStage, semanticFailureStagePreflight)
+		result.FailureClass = semanticFailureClassOrDefault(job.FailureClass, semanticFailureClassValidationFailed)
 		if err := s.appendFinalOutcome(ctx, job, result, "", nil); err != nil {
 			return nil, err
 		}
@@ -89,6 +111,8 @@ func (s *semanticReviewService) ReviewSemantic(ctx context.Context, job Semantic
 	if len(job.RetryableValidationErrors) > 0 {
 		result.Status = string(domain.V2SemanticReviewRetryable)
 		result.ValidationErrors = append([]verifier.V2SemanticValidationError(nil), job.RetryableValidationErrors...)
+		result.FailureStage = semanticFailureStageOrDefault(job.FailureStage, semanticFailureStagePreflight)
+		result.FailureClass = semanticFailureClassOrDefault(job.FailureClass, semanticFailureClassUnknown)
 		if err := s.appendFinalOutcome(ctx, job, result, "", nil); err != nil {
 			return nil, err
 		}
@@ -126,6 +150,8 @@ func (s *semanticReviewService) ReviewSemantic(ctx context.Context, job Semantic
 				}
 				if attempt == maxAttempts {
 					result.Status = string(domain.V2SemanticReviewRetryable)
+					result.FailureStage = semanticFailureStageVerification
+					result.FailureClass = semanticFailureClassMalformedResponse
 					if err := s.appendFinalOutcome(ctx, job, result, "", nil); err != nil {
 						return nil, err
 					}
@@ -137,7 +163,9 @@ func (s *semanticReviewService) ReviewSemantic(ctx context.Context, job Semantic
 			}
 			result.Status = string(domain.V2SemanticReviewRetryable)
 			result.Attempts = attempt
-			if outcomeErr := s.appendAttemptOutcome(ctx, job, attempt, "provider_error", "", []string{semanticErrorClass(err)}, nil); outcomeErr != nil {
+			result.FailureStage = semanticFailureStageVerification
+			result.FailureClass = semanticProviderFailureClass(err)
+			if outcomeErr := s.appendAttemptOutcome(ctx, job, attempt, "provider_error", "", []string{result.FailureClass}, nil); outcomeErr != nil {
 				return nil, outcomeErr
 			}
 			if outcomeErr := s.appendFinalOutcome(ctx, job, result, "", nil); outcomeErr != nil {
@@ -159,6 +187,8 @@ func (s *semanticReviewService) ReviewSemantic(ctx context.Context, job Semantic
 			if attempt == maxAttempts {
 				result.Status = string(domain.V2SemanticReviewRetryable)
 				result.ResponseHash = responseHash
+				result.FailureStage = semanticFailureStageVerification
+				result.FailureClass = semanticFailureClassMalformedResponse
 				if err := s.appendFinalOutcome(ctx, job, result, responseHash, nil); err != nil {
 					return nil, err
 				}
@@ -191,6 +221,8 @@ func normalizeSemanticReviewJob(job SemanticReviewJob) SemanticReviewJob {
 	job.IngestID = strings.TrimSpace(job.IngestID)
 	job.PlacementRunID = strings.TrimSpace(job.PlacementRunID)
 	job.PlacementItemID = strings.TrimSpace(job.PlacementItemID)
+	job.FailureStage = strings.TrimSpace(job.FailureStage)
+	job.FailureClass = strings.TrimSpace(job.FailureClass)
 	job.Request.TeamID = job.TeamID
 	job.Request.OwnerProfileID = job.OwnerProfileID
 	return job
@@ -341,6 +373,15 @@ func semanticFinalPayload(req verifier.V2SemanticReviewRequest, result *Semantic
 	if len(result.ValidationErrors) > 0 {
 		payload["validation_errors"] = semanticValidationMessages(result.ValidationErrors)
 	}
+	if result.FailureStage != "" {
+		payload["failure_stage"] = result.FailureStage
+	}
+	if result.FailureClass != "" {
+		payload["failure_class"] = result.FailureClass
+	}
+	if result.RetryableExhausted {
+		payload["retryable_exhausted"] = true
+	}
 	if resp != nil {
 		payload["response_summary"] = semanticResponseSummary(*resp)
 		payload["normalized_results"] = semanticNormalizedResults(*resp)
@@ -446,16 +487,44 @@ func semanticMalformedValidationMessage(err error) string {
 	return message
 }
 
-func semanticErrorClass(err error) string {
-	if err == nil {
-		return ""
-	}
-	return fmt.Sprintf("%T", err)
-}
-
 func semanticSignalSeverity(kind string) string {
 	if strings.TrimSpace(kind) == "hidden_control_markup" {
 		return "critical"
 	}
 	return "high"
+}
+
+func semanticFailureStageOrDefault(value string, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value != "" {
+		return value
+	}
+	return fallback
+}
+
+func semanticFailureClassOrDefault(value string, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value != "" {
+		return value
+	}
+	return fallback
+}
+
+func semanticProviderFailureClass(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, verifier.ErrVerifierTimeout), errors.Is(err, context.DeadlineExceeded):
+		return semanticFailureClassTimeout
+	case errors.Is(err, verifier.ErrVerifierRateLimit):
+		return semanticFailureClassRateLimited
+	case errors.Is(err, verifier.ErrVerifierMalformedResponse):
+		return semanticFailureClassMalformedResponse
+	case errors.Is(err, context.Canceled):
+		return semanticFailureClassContextCanceled
+	case errors.Is(err, verifier.ErrVerifierProvider):
+		return semanticFailureClassProviderUnavailable
+	default:
+		return semanticFailureClassUnknown
+	}
 }

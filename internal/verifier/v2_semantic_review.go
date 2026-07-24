@@ -20,9 +20,9 @@ type V2SemanticReviewRequest struct {
 	RequestID                string                              `json:"request_id"`
 	TeamID                   string                              `json:"-"`
 	OwnerProfileID           string                              `json:"-"`
-	Attempt                  int                                 `json:"-"`
-	ValidationFeedback       []string                            `json:"-"`
-	PreviousResponseHash     string                              `json:"-"`
+	Attempt                  int                                 `json:"attempt,omitempty"`
+	ValidationFeedback       []string                            `json:"validation_feedback,omitempty"`
+	PreviousResponseHash     string                              `json:"previous_response_hash,omitempty"`
 	Evidence                 []V2SemanticReviewEvidence          `json:"evidence"`
 	EntityMentions           []V2SemanticEntityMention           `json:"entity_mentions"`
 	RelationshipObservations []V2SemanticRelationshipObservation `json:"relationship_observations"`
