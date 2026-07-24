@@ -69,8 +69,16 @@ func runActiveV2Server(
 	recallFeedbackEventRepo := repository.NewRecallFeedbackEventRepository(pgDB.GetDB(), rlsHelper)
 	skillPackImportRepo := repository.NewSkillPackImportRepository(pgDB.GetDB(), rlsHelper)
 	v2SemanticRepo := repository.NewV2SemanticRepository(pgDB.GetDB(), rlsHelper)
-	v2LedgerRepo := repository.NewV2LedgerRepository(pgDB.GetDB(), rlsHelper)
-	v2SearchRepo := repository.NewV2SearchRepository(pgDB.GetDB(), rlsHelper)
+	v2LedgerRepo := repository.NewV2LedgerRepositoryWithEmbeddingJobMaxAttempts(
+		pgDB.GetDB(),
+		rlsHelper,
+		cfg.GetEmbeddingJobMaxAttempts(),
+	)
+	v2SearchRepo := repository.NewV2SearchRepositoryWithEmbeddingJobMaxAttempts(
+		pgDB.GetDB(),
+		rlsHelper,
+		cfg.GetEmbeddingJobMaxAttempts(),
+	)
 	v2MigrationControlRepo := repository.NewV2MigrationControlRepository(pgDB.GetDB(), rlsHelper)
 	v2MigrationControlSvc := migrationcontrol.New(v2MigrationControlRepo, migrationcontrol.Config{Required: false})
 

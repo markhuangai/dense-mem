@@ -145,14 +145,27 @@ type v2RLSHelper interface {
 }
 
 type V2LedgerRepositoryImpl struct {
-	db  *gorm.DB
-	rls v2RLSHelper
+	db                      *gorm.DB
+	rls                     v2RLSHelper
+	embeddingJobMaxAttempts int
 }
 
 var _ V2LedgerRepository = (*V2LedgerRepositoryImpl)(nil)
 
 func NewV2LedgerRepository(db *gorm.DB, rls *postgres.RLS) *V2LedgerRepositoryImpl {
-	return &V2LedgerRepositoryImpl{db: db, rls: rls}
+	return NewV2LedgerRepositoryWithEmbeddingJobMaxAttempts(db, rls, defaultV2EmbeddingJobMaxAttempts)
+}
+
+func NewV2LedgerRepositoryWithEmbeddingJobMaxAttempts(
+	db *gorm.DB,
+	rls *postgres.RLS,
+	maxAttempts int,
+) *V2LedgerRepositoryImpl {
+	return &V2LedgerRepositoryImpl{
+		db:                      db,
+		rls:                     rls,
+		embeddingJobMaxAttempts: normalizeV2EmbeddingJobMaxAttempts(maxAttempts),
+	}
 }
 
 func (r *V2LedgerRepositoryImpl) CreateIngest(ctx context.Context, input V2CreateIngestInput) (*V2CreateIngestResult, error) {

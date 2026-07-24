@@ -78,6 +78,7 @@ func upsertV2SearchDocumentInTx(
 	tx *gorm.DB,
 	input V2UpsertSearchDocumentInput,
 	contract *V2ActiveSearchContract,
+	embeddingJobMaxAttempts int,
 ) (*V2SearchDocumentResult, error) {
 	metadata, err := marshalV2SearchJSON(input.Metadata)
 	if err != nil {
@@ -155,7 +156,7 @@ func upsertV2SearchDocumentInTx(
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	jobID, err := enqueueV2EmbeddingJob(ctx, tx, loaded)
+	jobID, err := enqueueV2EmbeddingJob(ctx, tx, loaded, embeddingJobMaxAttempts)
 	if err != nil {
 		return nil, err
 	}
@@ -181,6 +182,7 @@ func upsertV2PlacementEvidenceSearchDocument(
 	commit V2CommitPlacementSemanticInput,
 	fragmentID string,
 	metadata map[string]any,
+	embeddingJobMaxAttempts int,
 ) (*V2SearchDocumentResult, error) {
 	contract, err := loadV2ActiveSearchContractInTx(ctx, tx)
 	if err != nil {
@@ -209,7 +211,7 @@ func upsertV2PlacementEvidenceSearchDocument(
 	if err := validateV2UpsertSearchDocumentInput(input); err != nil {
 		return nil, err
 	}
-	return upsertV2SearchDocumentInTx(ctx, tx, input, contract)
+	return upsertV2SearchDocumentInTx(ctx, tx, input, contract, embeddingJobMaxAttempts)
 }
 
 func loadV2PlacementItemFragmentID(ctx context.Context, tx *gorm.DB, commit V2CommitPlacementSemanticInput) (string, error) {
@@ -232,8 +234,16 @@ func upsertV2PlacementItemEvidenceSearchDocument(
 	tx *gorm.DB,
 	commit V2CommitPlacementSemanticInput,
 	fragmentID string,
+	embeddingJobMaxAttempts int,
 ) (*V2SearchDocumentResult, error) {
-	return upsertV2PlacementEvidenceSearchDocument(ctx, tx, commit, fragmentID, map[string]any{
-		"placement_item_id": commit.PlacementItemID,
-	})
+	return upsertV2PlacementEvidenceSearchDocument(
+		ctx,
+		tx,
+		commit,
+		fragmentID,
+		map[string]any{
+			"placement_item_id": commit.PlacementItemID,
+		},
+		embeddingJobMaxAttempts,
+	)
 }

@@ -532,7 +532,7 @@ func (s *Service) searchGate(ctx context.Context, name string) (GateEvidence, er
 	if err != nil {
 		return GateEvidence{}, err
 	}
-	if readiness == nil || !readiness.Ready {
+	if readiness == nil {
 		return GateEvidence{}, fmt.Errorf("%w: search readiness failed", ErrGateBlocked)
 	}
 	details := map[string]any{
@@ -544,11 +544,23 @@ func (s *Service) searchGate(ctx context.Context, name string) (GateEvidence, er
 		details["search_index_generation_id"] = readiness.Contract.SearchIndexGenerationID
 		details["index_strategy"] = readiness.Contract.IndexStrategy
 	}
-	return GateEvidence{
+	evidence := GateEvidence{
 		Ref:     "dense-mem://migration/runtime/search-readiness/" + name,
 		Message: "active V2 search contract and embedding backlog are ready",
 		Details: details,
-	}, nil
+	}
+	if !readiness.Ready {
+		reasons := make([]string, 0, len(readiness.Reasons))
+		for _, reason := range readiness.Reasons {
+			reasons = append(reasons, reason.Code+": "+reason.Message)
+		}
+		details["reasons"] = reasons
+		if len(reasons) == 0 {
+			return evidence, fmt.Errorf("%w: search readiness failed", ErrGateBlocked)
+		}
+		return evidence, fmt.Errorf("%w: search readiness failed: %s", ErrGateBlocked, strings.Join(reasons, "; "))
+	}
+	return evidence, nil
 }
 
 func gateResult(

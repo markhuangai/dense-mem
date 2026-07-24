@@ -236,6 +236,151 @@ func TestV2SemanticLedgerMigrationUpgradesPopulated1703(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestV2EmbeddingRetryRecoveryMigrationRequeuesOnlyTransientExhaustion(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026072302)
+	teamID, profileID := insertV2MigrationTeamProfile(t, ctx, sqlDB)
+	contractID := uuid.NewString()
+	generationID := uuid.NewString()
+	transientDocumentID := uuid.NewString()
+	permanentDocumentID := uuid.NewString()
+	queuedDocumentID := uuid.NewString()
+	transientJobID := uuid.NewString()
+	permanentJobID := uuid.NewString()
+	queuedJobID := uuid.NewString()
+
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `SELECT set_config('app.tx_mode', 'migration', true)`)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO semantic_team_refs (team_id)
+		VALUES ($1::uuid)
+	`, teamID)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO semantic_profile_refs (team_id, profile_id)
+		VALUES ($1::uuid, $2::uuid)
+	`, teamID, profileID)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO embedding_contracts (
+		    embedding_contract_id, contract_key, version, provider, model,
+		    dimensions, distance_metric, vector_normalization,
+		    document_format_version, query_format_version, lifecycle_state
+		) VALUES (
+		    $1::uuid, $2, 1, 'openai', 'test-model', 3, 'cosine', 'provider', 1, 1, 'active'
+		)
+	`, contractID, "embedding-retry-"+contractID)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO search_index_generations (
+		    search_index_generation_id, generation, embedding_contract_id,
+		    embedding_dimensions, ann_strategy, activation_state, activated_at
+		) VALUES ($1::uuid, 1, $2::uuid, 3, 'exact', 'active', now());
+	`, generationID, contractID)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO search_documents (
+		    team_id, search_document_id, owner_profile_id, source_kind, source_id,
+		    source_version, document_version, embedding_contract_id, embedding_dimensions,
+		    search_state, document_text, document_hash, embedding_error
+		) VALUES
+		    ($1::uuid, $3::uuid, $2::uuid, 'relationship', $3::uuid, 1, 1, $6::uuid, 3,
+		     'failed', 'transient timeout', 'sha256:transient', 'context deadline exceeded'),
+		    ($1::uuid, $4::uuid, $2::uuid, 'relationship', $4::uuid, 1, 1, $6::uuid, 3,
+		     'failed', 'permanent failure', 'sha256:permanent', 'invalid vector dimensions'),
+		    ($1::uuid, $5::uuid, $2::uuid, 'relationship', $5::uuid, 1, 1, $6::uuid, 3,
+		     'pending', 'queued work', 'sha256:queued', '')
+	`, teamID, profileID, transientDocumentID, permanentDocumentID, queuedDocumentID, contractID)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO embedding_jobs (
+		    team_id, embedding_job_id, search_document_id, owner_profile_id,
+		    source_kind, source_id, source_version, document_version,
+		    embedding_contract_id, embedding_dimensions, status, attempts,
+		    max_attempts, error, completed_at
+		) VALUES
+		    ($1::uuid, $6::uuid, $3::uuid, $2::uuid, 'relationship', $3::uuid, 1, 1,
+		     $9::uuid, 3, 'failed', 5, 5,
+		     'embedding provider error: context deadline exceeded (Client.Timeout exceeded while awaiting headers)', now()),
+		    ($1::uuid, $7::uuid, $4::uuid, $2::uuid, 'relationship', $4::uuid, 1, 1,
+		     $9::uuid, 3, 'failed', 5, 5, 'invalid vector dimensions', now()),
+		    ($1::uuid, $8::uuid, $5::uuid, $2::uuid, 'relationship', $5::uuid, 1, 1,
+		     $9::uuid, 3, 'queued', 0, 5, '', NULL)
+	`, teamID, profileID, transientDocumentID, permanentDocumentID, queuedDocumentID,
+		transientJobID, permanentJobID, queuedJobID, contractID)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+
+	migrator := NewMigratorWithDB(sqlDB)
+	require.NoError(t, migrator.RunUp(ctx))
+
+	tx, err = sqlDB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `SELECT set_config('app.tx_mode', 'migration', true)`)
+	require.NoError(t, err)
+	var transientStatus, permanentStatus, queuedStatus string
+	var transientAttempts, transientMaxAttempts, permanentMaxAttempts, queuedMaxAttempts int
+	var transientCompleted bool
+	require.NoError(t, tx.QueryRowContext(ctx, `
+		SELECT status, attempts, max_attempts, completed_at IS NOT NULL
+		FROM embedding_jobs
+		WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
+	`, teamID, transientJobID).Scan(
+		&transientStatus,
+		&transientAttempts,
+		&transientMaxAttempts,
+		&transientCompleted,
+	))
+	require.NoError(t, tx.QueryRowContext(ctx, `
+		SELECT status, max_attempts
+		FROM embedding_jobs
+		WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
+	`, teamID, permanentJobID).Scan(&permanentStatus, &permanentMaxAttempts))
+	require.NoError(t, tx.QueryRowContext(ctx, `
+		SELECT status, max_attempts
+		FROM embedding_jobs
+		WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
+	`, teamID, queuedJobID).Scan(&queuedStatus, &queuedMaxAttempts))
+	var transientDocumentState, transientDocumentError, permanentDocumentState string
+	require.NoError(t, tx.QueryRowContext(ctx, `
+		SELECT search_state, embedding_error
+		FROM search_documents
+		WHERE team_id = $1::uuid AND search_document_id = $2::uuid
+	`, teamID, transientDocumentID).Scan(&transientDocumentState, &transientDocumentError))
+	require.NoError(t, tx.QueryRowContext(ctx, `
+		SELECT search_state
+		FROM search_documents
+		WHERE team_id = $1::uuid AND search_document_id = $2::uuid
+	`, teamID, permanentDocumentID).Scan(&permanentDocumentState))
+	var defaultExpression string
+	require.NoError(t, tx.QueryRowContext(ctx, `
+		SELECT column_default
+		FROM information_schema.columns
+		WHERE table_schema = 'public'
+		  AND table_name = 'embedding_jobs'
+		  AND column_name = 'max_attempts'
+	`).Scan(&defaultExpression))
+	require.NoError(t, tx.Rollback())
+
+	assert.Equal(t, "queued", transientStatus)
+	assert.Equal(t, 5, transientAttempts)
+	assert.Equal(t, 20, transientMaxAttempts)
+	assert.False(t, transientCompleted)
+	assert.Equal(t, "pending", transientDocumentState)
+	assert.Empty(t, transientDocumentError)
+	assert.Equal(t, "failed", permanentStatus)
+	assert.Equal(t, 5, permanentMaxAttempts)
+	assert.Equal(t, "failed", permanentDocumentState)
+	assert.Equal(t, "queued", queuedStatus)
+	assert.Equal(t, 20, queuedMaxAttempts)
+	assert.Equal(t, "20", defaultExpression)
+}
+
 func TestV2SemanticLedgerMigrationRejectsLegacyDerivedAuthority(t *testing.T) {
 	ctx := context.Background()
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)

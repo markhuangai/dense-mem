@@ -63,6 +63,75 @@ func appendV2PlacementRelationshipResult(result *V2CommitPlacementSemanticResult
 	result.RelationshipResults = append(result.RelationshipResults, *relationship)
 }
 
+func applyV2PlacementRelationshipDecision(
+	ctx context.Context,
+	tx *gorm.DB,
+	commit V2CommitPlacementSemanticInput,
+	decision V2ApplyRelationshipDecisionInput,
+	correctionTarget *V2PlacementCorrectionTargetInput,
+	placementFragmentID string,
+	embeddingJobMaxAttempts int,
+	result *V2CommitPlacementSemanticResult,
+) error {
+	applied, err := applyV2RelationshipDecisionInTx(ctx, tx, decision)
+	if err != nil {
+		return err
+	}
+	applied.ProposalID = decision.ProposalRef
+	applied.OwnerProfileID = commit.OwnerProfileID
+	applied.Category = v2RelationshipOutcomeCategory(applied)
+	applied.Reason = v2RelationshipOutcomeReason(decision, applied)
+	result.RelationshipResults = append(result.RelationshipResults, *applied)
+	appendV2PlacementReviewTaskID(result, applied.ReviewTaskID)
+	if applied.Relationship == nil || applied.Relationship.Status != string(domain.V2RelationshipStatusActive) {
+		return nil
+	}
+	if correctionTarget != nil {
+		if err := appendV2PlacementCorrectionTarget(ctx, tx, commit, applied, *correctionTarget); err != nil {
+			return err
+		}
+	}
+	if applied.SupportID != "" && decision.Support != nil && decision.Support.FragmentID != "" {
+		if placementFragmentID == "" {
+			var err error
+			placementFragmentID, err = loadV2PlacementItemFragmentID(ctx, tx, commit)
+			if err != nil {
+				return err
+			}
+		}
+		if decision.Support.FragmentID != placementFragmentID {
+			document, err := upsertV2PlacementEvidenceSearchDocument(
+				ctx,
+				tx,
+				commit,
+				decision.Support.FragmentID,
+				map[string]any{
+					"supporting_placement_item_id": commit.PlacementItemID,
+					"support_id":                   applied.SupportID,
+					"relationship_id":              applied.Relationship.RelationshipID,
+				},
+				embeddingJobMaxAttempts,
+			)
+			if err != nil {
+				return err
+			}
+			appendV2PlacementSearchDocument(result, document)
+		}
+	}
+	document, err := upsertV2PlacementRelationshipSearchDocument(
+		ctx,
+		tx,
+		commit,
+		applied.Relationship,
+		embeddingJobMaxAttempts,
+	)
+	if err != nil {
+		return err
+	}
+	appendV2PlacementSearchDocument(result, document)
+	return nil
+}
+
 func v2PlacementEvidenceSearchableStatus(status string) bool {
 	switch strings.TrimSpace(status) {
 	case string(domain.V2SemanticReviewAccepted), string(domain.V2SemanticReviewReviewRequired):
@@ -560,6 +629,7 @@ func upsertV2PlacementRelationshipSearchDocument(
 	tx *gorm.DB,
 	commit V2CommitPlacementSemanticInput,
 	relationship *V2RelationshipRecord,
+	embeddingJobMaxAttempts int,
 ) (*V2SearchDocumentResult, error) {
 	contract, err := loadV2ActiveSearchContractInTx(ctx, tx)
 	if err != nil {
@@ -576,7 +646,7 @@ func upsertV2PlacementRelationshipSearchDocument(
 	if err := validateV2UpsertSearchDocumentInput(input); err != nil {
 		return nil, err
 	}
-	return upsertV2SearchDocumentInTx(ctx, tx, input, contract)
+	return upsertV2SearchDocumentInTx(ctx, tx, input, contract, embeddingJobMaxAttempts)
 }
 
 func v2PlacementCommitPayload(base map[string]any, result *V2CommitPlacementSemanticResult) map[string]any {

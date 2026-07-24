@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service/migrationcontrol"
 	"github.com/markhuangai/dense-mem/internal/service/migrationexecutor"
 )
@@ -372,16 +373,27 @@ func TestSearchGateFailsClosedWhenReadinessUnavailable(t *testing.T) {
 func TestSearchGateFailsClosedWhenReadinessFails(t *testing.T) {
 	ctx := context.Background()
 	service := New(Config{
-		SearchReadiness: &supervisorSearchStub{},
-		RequiredGates:   []string{"search_index_backlog"},
+		SearchReadiness: &supervisorSearchStub{readiness: &repository.V2SearchReadiness{
+			Ready: false,
+			Reasons: []repository.V2SearchReadinessReason{{
+				Code:    "terminal_embedding_failures",
+				Message: "25 terminal embedding jobs exist for active search contract",
+			}},
+		}},
+		RequiredGates: []string{"search_index_backlog"},
 	})
 
 	gates, err := service.evaluateGates(ctx, supervisorStatus(domain.V2MigrationStateReadyCutover))
 	if !errors.Is(err, ErrGateBlocked) {
 		t.Fatalf("evaluateGates err = %v", err)
 	}
-	if !strings.Contains(gates[0].Message, "search readiness failed") {
+	if !strings.Contains(gates[0].Message, "terminal_embedding_failures") ||
+		!strings.Contains(gates[0].Message, "25 terminal embedding jobs") {
 		t.Fatalf("gate message = %q", gates[0].Message)
+	}
+	reasons, ok := gates[0].Metadata["reasons"].([]string)
+	if !ok || len(reasons) != 1 || !strings.Contains(reasons[0], "terminal_embedding_failures") {
+		t.Fatalf("gate metadata reasons = %#v", gates[0].Metadata["reasons"])
 	}
 }
 

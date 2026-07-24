@@ -37,6 +37,7 @@ func clearEnv() {
 		"AI_API_EMBEDDING_MODEL",
 		"AI_API_EMBEDDING_DIMENSIONS",
 		"AI_API_EMBEDDING_TIMEOUT_SECONDS",
+		"EMBEDDING_JOB_MAX_ATTEMPTS",
 		// Knowledge-pipeline knobs
 		"AI_VERIFIER_API_URL",
 		"AI_VERIFIER_API_KEY",
@@ -131,6 +132,13 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.EmbeddingDimensions != 3072 {
 		t.Errorf("EmbeddingDimensions default = %d, want %d", cfg.EmbeddingDimensions, 3072)
 	}
+	if cfg.GetEmbeddingJobMaxAttempts() != DefaultEmbeddingJobMaxAttempts {
+		t.Errorf(
+			"EmbeddingJobMaxAttempts default = %d, want %d",
+			cfg.GetEmbeddingJobMaxAttempts(),
+			DefaultEmbeddingJobMaxAttempts,
+		)
+	}
 
 	// Test other defaults
 	if cfg.RedisDB != 0 {
@@ -141,6 +149,20 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.TelemetryPrometheusJob != "" {
 		t.Errorf("TelemetryPrometheusJob default = %q, want empty", cfg.TelemetryPrometheusJob)
+	}
+}
+
+func TestLoadEmbeddingJobMaxAttempts(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+	os.Setenv("EMBEDDING_JOB_MAX_ATTEMPTS", "37")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned unexpected error: %v", err)
+	}
+	if got := cfg.GetEmbeddingJobMaxAttempts(); got != 37 {
+		t.Fatalf("GetEmbeddingJobMaxAttempts() = %d, want 37", got)
 	}
 }
 

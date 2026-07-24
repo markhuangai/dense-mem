@@ -15,6 +15,7 @@ import (
 
 const (
 	v2EmbeddingJobAttemptsExhaustedMessage = "embedding attempts exhausted after lease expiration"
+	defaultV2EmbeddingJobMaxAttempts       = 20
 )
 
 var (
@@ -24,14 +25,27 @@ var (
 )
 
 type V2SearchRepositoryImpl struct {
-	db  *gorm.DB
-	rls v2RLSHelper
+	db                      *gorm.DB
+	rls                     v2RLSHelper
+	embeddingJobMaxAttempts int
 }
 
 var _ V2SearchRepository = (*V2SearchRepositoryImpl)(nil)
 
 func NewV2SearchRepository(db *gorm.DB, rls *postgres.RLS) *V2SearchRepositoryImpl {
-	return &V2SearchRepositoryImpl{db: db, rls: rls}
+	return NewV2SearchRepositoryWithEmbeddingJobMaxAttempts(db, rls, defaultV2EmbeddingJobMaxAttempts)
+}
+
+func NewV2SearchRepositoryWithEmbeddingJobMaxAttempts(
+	db *gorm.DB,
+	rls *postgres.RLS,
+	maxAttempts int,
+) *V2SearchRepositoryImpl {
+	return &V2SearchRepositoryImpl{
+		db:                      db,
+		rls:                     rls,
+		embeddingJobMaxAttempts: normalizeV2EmbeddingJobMaxAttempts(maxAttempts),
+	}
 }
 
 func (r *V2SearchRepositoryImpl) GetActiveSearchContract(ctx context.Context) (*V2ActiveSearchContract, error) {
@@ -281,7 +295,7 @@ func (r *V2SearchRepositoryImpl) UpsertSearchDocument(
 		if err := rows.Close(); err != nil {
 			return err
 		}
-		jobID, err := enqueueV2EmbeddingJob(ctx, tx, loaded)
+		jobID, err := enqueueV2EmbeddingJob(ctx, tx, loaded, r.embeddingJobMaxAttempts)
 		if err != nil {
 			return err
 		}
@@ -459,32 +473,46 @@ func (r *V2SearchRepositoryImpl) contractForVectorSearch(ctx context.Context, in
 	return contract, nil
 }
 
-func enqueueV2EmbeddingJob(ctx context.Context, tx *gorm.DB, document V2SearchDocumentResult) (string, error) {
+func enqueueV2EmbeddingJob(
+	ctx context.Context,
+	tx *gorm.DB,
+	document V2SearchDocumentResult,
+	maxAttempts int,
+) (string, error) {
 	if document.SearchState != string(domain.V2SearchProjectionPending) {
 		return "", nil
 	}
+	maxAttempts = normalizeV2EmbeddingJobMaxAttempts(maxAttempts)
 	var jobID string
 	err := tx.WithContext(ctx).Raw(`
 		INSERT INTO embedding_jobs (
 		    team_id, search_document_id, owner_profile_id, source_kind, source_id,
-		    source_version, document_version, embedding_contract_id, embedding_dimensions
+		    source_version, document_version, embedding_contract_id, embedding_dimensions,
+		    max_attempts
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?, ?::uuid,
-		    ?, ?, ?::uuid, ?
+		    ?, ?, ?::uuid, ?, ?
 		)
 		ON CONFLICT (
 		    team_id, source_kind, source_id, source_version,
 		    document_version, embedding_contract_id
 		) DO NOTHING
 		RETURNING embedding_job_id::text
-	`, document.TeamID, document.SearchDocumentID, document.OwnerProfileID,
+		`, document.TeamID, document.SearchDocumentID, document.OwnerProfileID,
 		document.SourceKind, document.SourceID, document.SourceVersion,
 		document.DocumentVersion, document.EmbeddingContractID,
-		document.EmbeddingDimensions).Scan(&jobID).Error
+		document.EmbeddingDimensions, maxAttempts).Scan(&jobID).Error
 	if err != nil {
 		return "", err
 	}
 	return jobID, nil
+}
+
+func normalizeV2EmbeddingJobMaxAttempts(maxAttempts int) int {
+	if maxAttempts <= 0 {
+		return defaultV2EmbeddingJobMaxAttempts
+	}
+	return maxAttempts
 }
 
 type v2SearchHitScanner interface {
