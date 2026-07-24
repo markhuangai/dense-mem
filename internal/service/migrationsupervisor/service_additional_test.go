@@ -93,6 +93,49 @@ func TestSupervisorWaitsAfterSourceExhaustedWhileRunStillRunning(t *testing.T) {
 	}
 }
 
+func TestSupervisorPausesAfterSourceExhaustedWithTerminalFailures(t *testing.T) {
+	ctx := context.Background()
+	status := supervisorStatus(domain.V2MigrationStateRunning)
+	control := &supervisorControlStub{status: status}
+	executor := &supervisorExecutorStub{
+		results: []*migrationexecutor.RunOnceResult{{
+			RunID: "run-1",
+			Done:  true,
+			FinalRun: &domain.V2MigrationRun{
+				RunID:          "run-1",
+				State:          domain.V2MigrationStateRunning,
+				TotalItems:     10,
+				CompletedItems: 9,
+				FailedItems:    1,
+			},
+		}},
+	}
+	service := New(Config{
+		Control:         control,
+		Executor:        executor,
+		Lock:            &supervisorLockStub{locked: true},
+		PageRetryDelays: []time.Duration{0},
+	})
+
+	if err := service.tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if control.pauseCalls != 1 {
+		t.Fatalf("pause calls = %d, want 1", control.pauseCalls)
+	}
+	if !strings.Contains(control.pauseReq.Reason, "terminal blockers") ||
+		!strings.Contains(control.pauseReq.Reason, "failed_items=1") {
+		t.Fatalf("pause reason = %q", control.pauseReq.Reason)
+	}
+	got, err := service.Status(ctx)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if got.State != domain.V2MigrationStatePaused {
+		t.Fatalf("state = %s, want paused", got.State)
+	}
+}
+
 func TestSupervisorStatusExposesSanitizedLoopError(t *testing.T) {
 	ctx := context.Background()
 	rawErr := errors.New("postgres: password=secret SELECT * FROM credentials")

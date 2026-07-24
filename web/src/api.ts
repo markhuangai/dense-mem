@@ -549,6 +549,12 @@ export type MigrationRepairSummary = {
   retryable_failures: number;
   held_reviews: number;
   blocked_items: number;
+  blocking_exclusions: number;
+  failure_groups?: Array<{
+    stage: string;
+    class: string;
+    count: number;
+  }>;
   repaired_items: number;
   claim_epoch_before?: number;
   claim_epoch_after?: number;

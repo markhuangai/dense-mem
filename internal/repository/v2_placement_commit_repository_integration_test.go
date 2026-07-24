@@ -827,13 +827,16 @@ func TestV2PlacementReviewRetryableRequeuesRunWithoutResettingAttempts(t *testin
 	var runStatus, workerID, itemStatus string
 	var attempts int
 	var leaseUntil sql.NullTime
+	var delayed, bounded bool
 	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		require.NoError(t, tx.Raw(`
-			SELECT status, attempts, worker_id, lease_until
+			SELECT status, attempts, worker_id, lease_until,
+			       available_at > now(),
+			       available_at <= now() + interval '30 seconds'
 			FROM placement_runs
 			WHERE team_id = ?::uuid
 			  AND placement_run_id = ?::uuid
-		`, teamID, ingest.PlacementRunID).Row().Scan(&runStatus, &attempts, &workerID, &leaseUntil))
+		`, teamID, ingest.PlacementRunID).Row().Scan(&runStatus, &attempts, &workerID, &leaseUntil, &delayed, &bounded))
 		return tx.Raw(`
 			SELECT status
 			FROM placement_items
@@ -846,9 +849,25 @@ func TestV2PlacementReviewRetryableRequeuesRunWithoutResettingAttempts(t *testin
 	assert.Equal(t, claimed.Attempts, attempts)
 	assert.Empty(t, workerID)
 	assert.False(t, leaseUntil.Valid)
+	assert.True(t, delayed)
+	assert.True(t, bounded)
 	assert.Equal(t, "queued", itemStatus)
 
 	reclaimed, err := ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "worker-retryable-2", time.Minute)
+	require.NoError(t, err)
+	require.Nil(t, reclaimed)
+
+	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE placement_runs
+			SET available_at = now() - interval '1 second'
+			WHERE team_id = ?::uuid
+			  AND placement_run_id = ?::uuid
+		`, teamID, ingest.PlacementRunID).Error
+	})
+	require.NoError(t, err)
+
+	reclaimed, err = ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "worker-retryable-2", time.Minute)
 	require.NoError(t, err)
 	require.NotNil(t, reclaimed)
 	assert.Equal(t, ingest.PlacementRunID, reclaimed.PlacementRunID)

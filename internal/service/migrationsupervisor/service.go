@@ -320,6 +320,15 @@ func (s *Service) runPages(ctx context.Context) (bool, error) {
 		if err == nil {
 			s.setLastError("")
 			if result != nil && result.Done {
+				if reason := terminalMigrationPauseReason(result); reason != "" {
+					_, pauseErr := s.control.Pause(ctx, migrationcontrol.OperatorRequest{
+						Reason: reason,
+					})
+					if pauseErr != nil {
+						return false, fmt.Errorf("terminal migration pause failed: %w", pauseErr)
+					}
+					s.setLastError(reason)
+				}
 				return false, nil
 			}
 			continue
@@ -346,6 +355,27 @@ func (s *Service) runPages(ctx context.Context) (bool, error) {
 		}
 	}
 	return true, lastErr
+}
+
+func terminalMigrationPauseReason(result *migrationexecutor.RunOnceResult) string {
+	if result == nil || !result.Done || result.FinalRun == nil {
+		return ""
+	}
+	run := result.FinalRun
+	if run.State != domain.V2MigrationStateRunning || run.TotalItems <= 0 {
+		return ""
+	}
+	terminalItems := run.CompletedItems + run.FailedItems + run.ExcludedItems
+	if terminalItems != run.TotalItems || run.FailedItems+run.ExcludedItems == 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		"migration source exhausted with terminal blockers; total_items=%d completed_items=%d failed_items=%d excluded_items=%d",
+		run.TotalItems,
+		run.CompletedItems,
+		run.FailedItems,
+		run.ExcludedItems,
+	)
 }
 
 func (s *Service) evaluateAndCutover(ctx context.Context, status *domain.V2MigrationControlStatus) error {

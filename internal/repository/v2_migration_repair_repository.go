@@ -74,8 +74,12 @@ func (r *V2MigrationControlRepositoryImpl) RepairAndResumeMigration(
 		if err != nil {
 			return err
 		}
-		if summary.BlockedItems > 0 {
-			return fmt.Errorf("%w: blocked_items=%d", ErrV2MigrationCutoverBlocked, summary.BlockedItems)
+		if summary.BlockedItems > 0 || summary.BlockingExclusions > 0 {
+			return fmt.Errorf("%w: blocked_items=%d blocking_exclusions=%d",
+				ErrV2MigrationCutoverBlocked,
+				summary.BlockedItems,
+				summary.BlockingExclusions,
+			)
 		}
 		legacyPredicateItems, err := prepareV2MigrationLegacyPredicateReviewsTx(tx, runID, now)
 		if err != nil {
@@ -161,7 +165,8 @@ func assessV2MigrationRepairTx(tx *gorm.DB, runID string) (*domain.V2MigrationRe
 		           COALESCE(review.open_review_count, 0)::int AS open_review_count,
 		           COALESCE(review.legacy_predicate_review_count, 0)::int AS legacy_predicate_review_count,
 		           COALESCE((
-		               SELECT terminal.payload @> jsonb_build_object(
+		               SELECT terminal.payload->>'retryable_exhausted' = 'true'
+		                   OR terminal.payload @> jsonb_build_object(
 		                          'validation_errors',
 		                          jsonb_build_array(?::text)
 		                      )
@@ -195,6 +200,11 @@ func assessV2MigrationRepairTx(tx *gorm.DB, runID string) (*domain.V2MigrationRe
 		        WHERE run_status = 'processing'
 		    )::int AS abandoned_processing
 		    FROM corpus_runs
+		), exclusion_counts AS (
+		    SELECT count(*)::int AS blocking_exclusions
+		    FROM v2_migration_exclusions
+		    WHERE run_id = ?::uuid
+		      AND blocks_cutover
 		), item_counts AS (
 		    SELECT
 		        COALESCE(sum(legacy_predicate_review_count), 0)::int AS legacy_predicate_reviews,
@@ -224,12 +234,14 @@ func assessV2MigrationRepairTx(tx *gorm.DB, runID string) (*domain.V2MigrationRe
 		    run_counts.abandoned_processing,
 		    item_counts.retryable_failures,
 		    item_counts.held_reviews,
-		    item_counts.blocked_items
+		    item_counts.blocked_items,
+		    exclusion_counts.blocking_exclusions
 		FROM v2_migration_runs AS migration
 		CROSS JOIN run_counts
+		CROSS JOIN exclusion_counts
 		CROSS JOIN item_counts
 		WHERE migration.run_id = ?::uuid
-	`, runID, v2MigrationRetryExhaustedValidationError, runID).Row()
+	`, runID, v2MigrationRetryExhaustedValidationError, runID, runID).Row()
 	if err := row.Scan(
 		&summary.ClaimEpochBefore,
 		&summary.LegacyPredicateReviews,
@@ -238,6 +250,7 @@ func assessV2MigrationRepairTx(tx *gorm.DB, runID string) (*domain.V2MigrationRe
 		&summary.RetryableFailures,
 		&summary.HeldReviews,
 		&summary.BlockedItems,
+		&summary.BlockingExclusions,
 	); err != nil {
 		return nil, err
 	}
@@ -247,7 +260,64 @@ func assessV2MigrationRepairTx(tx *gorm.DB, runID string) (*domain.V2MigrationRe
 	summary.ClaimEpochAfter = summary.ClaimEpochBefore
 	summary.Required = summary.LegacyPredicateReviews > 0 || summary.OrphanReviews > 0 ||
 		summary.AbandonedProcessing > 0 || summary.RetryableFailures > 0
+	groups, err := v2MigrationRepairFailureGroupsTx(tx, runID)
+	if err != nil {
+		return nil, err
+	}
+	summary.FailureGroups = groups
 	return summary, nil
+}
+
+func v2MigrationRepairFailureGroupsTx(tx *gorm.DB, runID string) ([]domain.V2MigrationFailureGroup, error) {
+	rows, err := tx.Raw(`
+		WITH failed_items AS (
+		    SELECT item.team_id, item.placement_run_id, item.placement_item_id
+		    FROM v2_migration_corpus_items AS corpus
+		    JOIN placement_runs AS run
+		      ON run.team_id = corpus.team_id
+		     AND run.ingest_id = corpus.ingest_id
+		    JOIN placement_items AS item
+		      ON item.team_id = run.team_id
+		     AND item.placement_run_id = run.placement_run_id
+		     AND item.evidence_index = 0
+		    WHERE corpus.run_id = ?::uuid
+		      AND (corpus.outcome = 'failed' OR run.status = 'failed' OR item.status = 'failed')
+		), latest_terminal AS (
+		    SELECT failed_items.placement_item_id,
+		           COALESCE(NULLIF(terminal.payload->>'failure_stage', ''), 'unknown') AS failure_stage,
+		           COALESCE(NULLIF(terminal.payload->>'failure_class', ''), 'unknown') AS failure_class
+		    FROM failed_items
+		    LEFT JOIN LATERAL (
+		        SELECT payload
+		        FROM placement_outcomes AS terminal
+		        WHERE terminal.team_id = failed_items.team_id
+		          AND terminal.placement_run_id = failed_items.placement_run_id
+		          AND terminal.placement_item_id = failed_items.placement_item_id
+		          AND terminal.outcome_kind = 'semantic_review_terminal'
+		          AND terminal.status = 'terminal_failure'
+		        ORDER BY terminal.created_at DESC, terminal.outcome_id DESC
+		        LIMIT 1
+		    ) AS terminal ON true
+		)
+		SELECT failure_stage, failure_class, count(*)::int
+		FROM latest_terminal
+		GROUP BY failure_stage, failure_class
+		ORDER BY count(*) DESC, failure_stage ASC, failure_class ASC
+	`, runID).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []domain.V2MigrationFailureGroup{}
+	for rows.Next() {
+		var group domain.V2MigrationFailureGroup
+		if err := rows.Scan(&group.Stage, &group.Class, &group.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, group)
+	}
+	return out, rows.Err()
 }
 
 func prepareV2MigrationLegacyPredicateReviewsTx(tx *gorm.DB, runID string, now time.Time) (int, error) {
@@ -514,7 +584,8 @@ func repairV2MigrationRetryableFailuresTx(tx *gorm.DB, runID string, claimEpoch 
 		      AND (
 		          run.attempts < run.max_attempts
 		          OR COALESCE((
-		              SELECT terminal.payload @> jsonb_build_object(
+		              SELECT terminal.payload->>'retryable_exhausted' = 'true'
+		                  OR terminal.payload @> jsonb_build_object(
 		                         'validation_errors',
 		                         jsonb_build_array(?::text)
 		                     )
@@ -619,6 +690,8 @@ func insertV2MigrationOperatorActionTx(
 			"retryable_failures":       repair.RetryableFailures,
 			"held_reviews":             repair.HeldReviews,
 			"blocked_items":            repair.BlockedItems,
+			"blocking_exclusions":      repair.BlockingExclusions,
+			"failure_groups":           repair.FailureGroups,
 			"repaired_items":           repair.RepairedItems,
 			"claim_epoch_before":       repair.ClaimEpochBefore,
 			"claim_epoch_after":        repair.ClaimEpochAfter,

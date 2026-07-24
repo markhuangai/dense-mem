@@ -64,14 +64,15 @@ type Config struct {
 }
 
 type RunOnceResult struct {
-	RunID      string `json:"run_id"`
-	Fetched    int    `json:"fetched"`
-	Submitted  int    `json:"submitted"`
-	Skipped    int    `json:"skipped"`
-	Excluded   int    `json:"excluded"`
-	Failed     int    `json:"failed"`
-	NextCursor string `json:"next_cursor,omitempty"`
-	Done       bool   `json:"done"`
+	RunID      string                 `json:"run_id"`
+	Fetched    int                    `json:"fetched"`
+	Submitted  int                    `json:"submitted"`
+	Skipped    int                    `json:"skipped"`
+	Excluded   int                    `json:"excluded"`
+	Failed     int                    `json:"failed"`
+	NextCursor string                 `json:"next_cursor,omitempty"`
+	Done       bool                   `json:"done"`
+	FinalRun   *domain.V2MigrationRun `json:"final_run,omitempty"`
 }
 
 // PartialRunOnceError wraps an error after RunOnce has produced page counters.
@@ -140,12 +141,16 @@ func (s *service) RunOnce(ctx context.Context) (*RunOnceResult, error) {
 	}
 	if cursorDone {
 		result := &RunOnceResult{RunID: run.RunID, Done: true}
-		if _, err := s.store.RefreshMigrationRunStats(ctx, run.RunID, s.now()); err != nil {
+		refreshed, err := s.store.RefreshMigrationRunStats(ctx, run.RunID, s.now())
+		if err != nil {
 			return result, partialRunOnceError(result, err)
 		}
-		if _, err := s.store.FinalizeMigrationRun(ctx, run.RunID, s.now()); err != nil {
+		result.FinalRun = refreshed
+		finalized, err := s.store.FinalizeMigrationRun(ctx, run.RunID, s.now())
+		if err != nil {
 			return result, partialRunOnceError(result, err)
 		}
+		result.FinalRun = finalized
 		return result, nil
 	}
 	page, err := s.reader.ReadCorpusPage(ctx, neo4j.LegacyCorpusPageRequest{
@@ -178,9 +183,11 @@ func (s *service) RunOnce(ctx context.Context) (*RunOnceResult, error) {
 		return result, partialRunOnceError(result, err)
 	}
 	if result.Done {
-		if _, err := s.store.FinalizeMigrationRun(ctx, run.RunID, s.now()); err != nil {
+		finalized, err := s.store.FinalizeMigrationRun(ctx, run.RunID, s.now())
+		if err != nil {
 			return result, partialRunOnceError(result, err)
 		}
+		result.FinalRun = finalized
 	}
 	return result, nil
 }

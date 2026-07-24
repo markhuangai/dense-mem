@@ -359,6 +359,7 @@ func TestRunOnceUsesRunCheckpointFallbackAndMarksDone(t *testing.T) {
 		Fetched:    0,
 		NextCursor: "",
 		Done:       true,
+		FinalRun:   store.run,
 	}, result)
 	assert.Equal(t, "sf-run", reader.req.AfterSourceID)
 	assert.Equal(t, 500, reader.req.Limit)
@@ -396,7 +397,7 @@ func TestRunOnceDoneCheckpointFinalizesWithoutReadingLegacyAgain(t *testing.T) {
 	result, err := svc.RunOnce(context.Background())
 
 	require.NoError(t, err)
-	require.Equal(t, &RunOnceResult{RunID: runID, Done: true}, result)
+	require.Equal(t, &RunOnceResult{RunID: runID, Done: true, FinalRun: store.run}, result)
 	assert.Equal(t, 0, reader.calls)
 	assert.Empty(t, remember.requests)
 	assert.Empty(t, store.checkpoints)

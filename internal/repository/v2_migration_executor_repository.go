@@ -424,7 +424,7 @@ func (r *V2MigrationControlRepositoryImpl) FinalizeMigrationRun(
 ) (*domain.V2MigrationRun, error) {
 	var out *domain.V2MigrationRun
 	err := r.withMigrationTx(ctx, func(tx *gorm.DB) error {
-		if err := syncV2MigrationCorpusPlacementOutcomes(tx, runID, now); err != nil {
+		if _, err := syncV2MigrationCorpusPlacementOutcomes(tx, runID, now); err != nil {
 			return err
 		}
 		record, err := refreshV2MigrationRunStatsTx(tx, runID, now)
@@ -485,9 +485,9 @@ func (r *V2MigrationControlRepositoryImpl) FinalizeMigrationRun(
 	return out, nil
 }
 
-func syncV2MigrationCorpusPlacementOutcomes(tx *gorm.DB, runID string, now time.Time) error {
+func syncV2MigrationCorpusPlacementOutcomes(tx *gorm.DB, runID string, now time.Time) (int64, error) {
 	now = v2MigrationTime(now)
-	if err := tx.Exec(`
+	result := tx.Exec(`
 		WITH mapped AS (
 		    SELECT item.item_id,
 		           item.run_id,
@@ -496,21 +496,9 @@ func syncV2MigrationCorpusPlacementOutcomes(tx *gorm.DB, runID string, now time.
 		           placement.placement_item_id,
 		           placement.status AS placement_status,
 		           placement.category AS placement_category,
-		           EXISTS (
-		               SELECT 1
-		               FROM review_tasks AS task
-		               WHERE task.team_id = placement.team_id
-		                 AND task.placement_item_id = placement.placement_item_id
-		                 AND task.status IN ('open', 'acknowledged')
-		           ) AS has_open_review,
+		           COALESCE(review.has_open_review, false) AS has_open_review,
 		           CASE
-		               WHEN placement.status = 'awaiting_review' AND EXISTS (
-		                   SELECT 1
-		                   FROM review_tasks AS task
-		                   WHERE task.team_id = placement.team_id
-		                     AND task.placement_item_id = placement.placement_item_id
-		                     AND task.status IN ('open', 'acknowledged')
-		               ) THEN 'needs_review'
+		               WHEN placement.status = 'awaiting_review' AND COALESCE(review.has_open_review, false) THEN 'needs_review'
 		               WHEN placement.status = 'completed' AND COALESCE(placement.result->>'status', '') = 'rejected' THEN 'rejected'
 		               WHEN placement.status = 'completed' THEN 'accepted'
 		               WHEN placement.status = 'failed' THEN 'failed'
@@ -522,44 +510,81 @@ func syncV2MigrationCorpusPlacementOutcomes(tx *gorm.DB, runID string, now time.
 		      ON placement.team_id = item.team_id
 		     AND placement.ingest_id = item.ingest_id
 		     AND placement.evidence_index = 0
+		    LEFT JOIN LATERAL (
+		        SELECT true AS has_open_review
+		        FROM review_tasks AS task
+		        WHERE task.team_id = placement.team_id
+		          AND task.placement_item_id = placement.placement_item_id
+		          AND task.status IN ('open', 'acknowledged')
+		        LIMIT 1
+		    ) AS review ON true
 		    WHERE item.run_id = ?::uuid
 		      AND item.outcome <> 'excluded'
 		      AND item.ingest_id IS NOT NULL
+		), desired AS (
+		    SELECT mapped.*,
+		           jsonb_build_object(
+		               'placement_status', mapped.placement_status,
+		               'placement_category', mapped.placement_category,
+		               'placement_has_open_review', mapped.has_open_review
+		           ) AS placement_metadata
+		    FROM mapped
+		), changed AS (
+		    SELECT desired.*
+		    FROM desired
+		    JOIN v2_migration_corpus_items AS item
+		      ON item.item_id = desired.item_id
+		    WHERE item.outcome IS DISTINCT FROM desired.migration_outcome
+		       OR item.placement_item_id IS DISTINCT FROM desired.placement_item_id
+		       OR item.metadata->>'placement_status' IS DISTINCT FROM desired.placement_status
+		       OR item.metadata->>'placement_category' IS DISTINCT FROM desired.placement_category
+		       OR COALESCE(item.metadata->>'placement_has_open_review', '') IS DISTINCT FROM desired.has_open_review::text
 		), updated AS (
 		    UPDATE v2_migration_corpus_items item
-		    SET outcome = mapped.migration_outcome,
-		        placement_item_id = mapped.placement_item_id,
-		        metadata = item.metadata || jsonb_build_object(
-		            'placement_status', mapped.placement_status,
-		            'placement_category', mapped.placement_category,
-		            'placement_has_open_review', mapped.has_open_review,
+		    SET outcome = changed.migration_outcome,
+		        placement_item_id = changed.placement_item_id,
+		        metadata = item.metadata || changed.placement_metadata || jsonb_build_object(
 		            'migration_finalized_at', ?::text
 		        ),
 		        updated_at = ?
-		    FROM mapped
-		    WHERE item.item_id = mapped.item_id
-		    RETURNING mapped.run_id, mapped.source_kind, mapped.source_id,
-		              mapped.placement_item_id, mapped.placement_status,
-		              mapped.placement_category, mapped.has_open_review
+		    FROM changed
+		    WHERE item.item_id = changed.item_id
+		    RETURNING changed.run_id, changed.source_kind, changed.source_id,
+		              changed.placement_item_id, changed.placement_metadata
+		), map_target AS (
+		    SELECT updated.run_id, updated.source_kind, updated.source_id,
+		           updated.placement_item_id, updated.placement_metadata
+		    FROM updated
+		    UNION
+		    SELECT desired.run_id, desired.source_kind, desired.source_id,
+		           desired.placement_item_id, desired.placement_metadata
+		    FROM desired
+		    WHERE NOT EXISTS (
+		        SELECT 1
+		        FROM v2_migration_source_maps AS source_map
+		        WHERE source_map.run_id = desired.run_id
+		          AND source_map.source_kind = desired.source_kind
+		          AND source_map.source_id = desired.source_id
+		          AND source_map.target_type = ?
+		          AND source_map.target_id = desired.placement_item_id::text
+		          AND source_map.metadata @> desired.placement_metadata
+		    )
 		)
 		INSERT INTO v2_migration_source_maps (
 		    map_id, run_id, source_kind, source_id, target_type, target_id, metadata, created_at
 		)
 		SELECT gen_random_uuid(), run_id, source_kind, source_id, ?, placement_item_id::text,
-		       jsonb_build_object(
-		           'placement_status', placement_status,
-		           'placement_category', placement_category,
-		           'placement_has_open_review', has_open_review
-		       ),
-		       ?
-		FROM updated
+		       placement_metadata, ?
+		FROM map_target
 		ON CONFLICT (run_id, source_kind, source_id, target_type, target_id) DO UPDATE
 		SET metadata = v2_migration_source_maps.metadata || EXCLUDED.metadata
+		WHERE v2_migration_source_maps.metadata IS DISTINCT FROM v2_migration_source_maps.metadata || EXCLUDED.metadata
 	`, runID, now.UTC().Format(time.RFC3339Nano), now,
-		domain.V2MigrationTargetPlacementItem, now).Error; err != nil {
-		return err
+		domain.V2MigrationTargetPlacementItem, domain.V2MigrationTargetPlacementItem, now)
+	if result.Error != nil {
+		return 0, result.Error
 	}
-	return nil
+	return result.RowsAffected, nil
 }
 
 func v2MigrationCorpusHashTx(tx *gorm.DB, runID string) (string, error) {
@@ -631,43 +656,83 @@ func refreshV2MigrationRunStatsTx(tx *gorm.DB, runID string, now time.Time) (*do
 			        count(*) FILTER (WHERE outcome = 'excluded')::int AS excluded_items
 			    FROM v2_migration_corpus_items
 			    WHERE run_id = ?::uuid
+			), updated AS (
+				UPDATE v2_migration_runs
+				SET total_items = counts.total_items,
+				    completed_items = counts.completed_items,
+				    failed_items = counts.failed_items,
+				    excluded_items = counts.excluded_items,
+				    updated_at = ?
+				FROM counts
+				WHERE run_id = ?::uuid
+				  AND (
+				      v2_migration_runs.total_items IS DISTINCT FROM counts.total_items
+				      OR v2_migration_runs.completed_items IS DISTINCT FROM counts.completed_items
+				      OR v2_migration_runs.failed_items IS DISTINCT FROM counts.failed_items
+				      OR v2_migration_runs.excluded_items IS DISTINCT FROM counts.excluded_items
+				  )
+				RETURNING v2_migration_runs.run_id::text,
+				          v2_migration_runs.migration_contract_version,
+				          v2_migration_runs.corpus_version,
+				          v2_migration_runs.source_kind,
+				          v2_migration_runs.state,
+				          v2_migration_runs.phase,
+				          v2_migration_runs.required,
+				          v2_migration_runs.preflight_approved,
+				          v2_migration_runs.backup_reference,
+				          v2_migration_runs.preflight_checks::text,
+				          v2_migration_runs.corpus_watermark,
+				          v2_migration_runs.corpus_hash,
+				          v2_migration_runs.total_items,
+				          v2_migration_runs.completed_items,
+				          v2_migration_runs.failed_items,
+				          v2_migration_runs.excluded_items,
+				          v2_migration_runs.last_error,
+				          v2_migration_runs.retryable,
+				          v2_migration_runs.lease_owner,
+				          v2_migration_runs.checkpoint_key,
+				          v2_migration_runs.checkpoint_value::text,
+				          v2_migration_runs.claim_epoch,
+				          v2_migration_runs.started_at,
+				          v2_migration_runs.completed_at,
+				          v2_migration_runs.cutover_at,
+				          v2_migration_runs.created_at,
+				          v2_migration_runs.updated_at
 			)
-			UPDATE v2_migration_runs
-			SET total_items = counts.total_items,
-			    completed_items = counts.completed_items,
-			    failed_items = counts.failed_items,
-			    excluded_items = counts.excluded_items,
-			    updated_at = ?
-			FROM counts
+			SELECT *
+			FROM updated
+			UNION ALL
+			SELECT v2_migration_runs.run_id::text,
+			       v2_migration_runs.migration_contract_version,
+			       v2_migration_runs.corpus_version,
+			       v2_migration_runs.source_kind,
+			       v2_migration_runs.state,
+			       v2_migration_runs.phase,
+			       v2_migration_runs.required,
+			       v2_migration_runs.preflight_approved,
+			       v2_migration_runs.backup_reference,
+			       v2_migration_runs.preflight_checks::text,
+			       v2_migration_runs.corpus_watermark,
+			       v2_migration_runs.corpus_hash,
+			       v2_migration_runs.total_items,
+			       v2_migration_runs.completed_items,
+			       v2_migration_runs.failed_items,
+			       v2_migration_runs.excluded_items,
+			       v2_migration_runs.last_error,
+			       v2_migration_runs.retryable,
+			       v2_migration_runs.lease_owner,
+			       v2_migration_runs.checkpoint_key,
+			       v2_migration_runs.checkpoint_value::text,
+			       v2_migration_runs.claim_epoch,
+			       v2_migration_runs.started_at,
+			       v2_migration_runs.completed_at,
+			       v2_migration_runs.cutover_at,
+			       v2_migration_runs.created_at,
+			       v2_migration_runs.updated_at
+			FROM v2_migration_runs
 			WHERE run_id = ?::uuid
-			RETURNING v2_migration_runs.run_id::text,
-			          v2_migration_runs.migration_contract_version,
-			          v2_migration_runs.corpus_version,
-			          v2_migration_runs.source_kind,
-			          v2_migration_runs.state,
-			          v2_migration_runs.phase,
-			          v2_migration_runs.required,
-			          v2_migration_runs.preflight_approved,
-			          v2_migration_runs.backup_reference,
-			          v2_migration_runs.preflight_checks::text,
-			          v2_migration_runs.corpus_watermark,
-			          v2_migration_runs.corpus_hash,
-			          v2_migration_runs.total_items,
-			          v2_migration_runs.completed_items,
-			          v2_migration_runs.failed_items,
-			          v2_migration_runs.excluded_items,
-			          v2_migration_runs.last_error,
-			          v2_migration_runs.retryable,
-			          v2_migration_runs.lease_owner,
-			          v2_migration_runs.checkpoint_key,
-			          v2_migration_runs.checkpoint_value::text,
-			          v2_migration_runs.claim_epoch,
-			          v2_migration_runs.started_at,
-			          v2_migration_runs.completed_at,
-			          v2_migration_runs.cutover_at,
-			          v2_migration_runs.created_at,
-			          v2_migration_runs.updated_at
-	`, runID, v2MigrationTime(now), runID).Rows()
+			  AND NOT EXISTS (SELECT 1 FROM updated)
+	`, runID, v2MigrationTime(now), runID, runID).Rows()
 	if err != nil {
 		return nil, err
 	}

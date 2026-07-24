@@ -256,6 +256,8 @@ func TestV2SemanticPlacementCompletionClosesRetryableWhenPlacementAttemptsExhaus
 			Status:       string(domain.V2SemanticReviewRetryable),
 			ResponseHash: "sha256:retryable",
 			OutcomeIDs:   []string{uuid.NewString()},
+			FailureStage: v2SemanticFailureStageVerification,
+			FailureClass: v2SemanticFailureClassTimeout,
 		},
 		ReviewModel: "stub-semantic-reviewer",
 	})
@@ -277,6 +279,11 @@ func TestV2SemanticPlacementCompletionClosesRetryableWhenPlacementAttemptsExhaus
 	messages, ok := commitRepo.terminalInput.Payload["validation_errors"].([]string)
 	if !ok || len(messages) != 1 || messages[0] != "placement_attempts: retryable semantic review exhausted placement attempts" {
 		t.Fatalf("terminal validation errors = %#v", commitRepo.terminalInput.Payload["validation_errors"])
+	}
+	if commitRepo.terminalInput.Payload["failure_stage"] != v2SemanticFailureStageVerification ||
+		commitRepo.terminalInput.Payload["failure_class"] != v2SemanticFailureClassTimeout ||
+		commitRepo.terminalInput.Payload["retryable_exhausted"] != true {
+		t.Fatalf("terminal failure payload = %#v", commitRepo.terminalInput.Payload)
 	}
 }
 

@@ -37,6 +37,7 @@ import type { TeamWorkspaceTab } from "./control/TeamWorkspace";
 import { TeamDreamingConfigForm } from "./teamDreamingConfig";
 import { formatDate, readError, shortId, startSerialPolling } from "./control/utils";
 import { AuthShell, LoadingState, PortalShell, SectionHeading } from "./ui/components";
+import { MigrationRepairCard } from "./MigrationRepairCard";
 
 const MetricsPanel = lazy(() => import("./control/MetricsPanel").then((module) => ({ default: module.MetricsPanel })));
 const SecurityPanel = lazy(() => import("./control/SecurityPanel").then((module) => ({ default: module.SecurityPanel })));
@@ -488,6 +489,7 @@ function MigrationPortal({
   const completed = run?.completed_items ?? 0;
   const progress = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : (status?.state === "cut_over" ? 100 : 0);
   const repair = status?.repair;
+  const repairBlocked = ((repair?.blocked_items ?? 0) > 0) || ((repair?.blocking_exclusions ?? 0) > 0);
   const contractCurrent = run?.migration_contract_version === CURRENT_MIGRATION_CONTRACT;
   const backupConfirmationCurrent = !!run?.preflight_approved && contractCurrent && hasBackupConfirmation(run.preflight_checks);
   useEffect(() => {
@@ -508,7 +510,8 @@ function MigrationPortal({
   const canPause = session.portal_mode === "migration" && status?.state === "running";
   const canResume = session.portal_mode === "migration" &&
     backupConfirmationCurrent &&
-    (status?.state === "paused_retryable" || (status?.state === "failed" && run?.retryable));
+    (status?.state === "paused_retryable" || (status?.state === "failed" && run?.retryable)) &&
+    !repairBlocked;
   const cleanup = session.portal_mode === "cleanup";
 
   return (
@@ -557,20 +560,7 @@ function MigrationPortal({
           {status?.recent_errors?.map((item) => (
             <p className="field-error" role="alert" key={item}>{item}</p>
           ))}
-          {repair && (
-            <div className={repair.required ? "migration-repair-card warning" : "migration-repair-card"} aria-label="Resume repair summary">
-              <div><h3>{repair.required ? "Resume will repair placement state" : "Resume can continue from the checkpoint"}</h3></div>
-              <p>{repair.required
-                ? "The next resume will requeue stale migration-owned placement records before workers continue."
-                : "No stale retryable migration-owned placement rows were detected."}</p>
-              <dl>
-                <div><dt>Legacy predicate reviews</dt><dd>{repair.legacy_predicate_reviews}</dd></div><div><dt>Orphan reviews</dt><dd>{repair.orphan_reviews}</dd></div>
-                <div><dt>Processing rows</dt><dd>{repair.abandoned_processing}</dd></div>
-                <div><dt>Retryable failures</dt><dd>{repair.retryable_failures}</dd></div><div><dt>Held reviews</dt><dd>{repair.held_reviews}</dd></div>
-                <div><dt>Blocked</dt><dd>{repair.blocked_items}</dd></div><div><dt>Claim epoch</dt><dd>{repair.claim_epoch_before ?? run?.claim_epoch ?? "—"}</dd></div>
-              </dl>
-            </div>
-          )}
+          {repair && <MigrationRepairCard repair={repair} repairBlocked={repairBlocked} claimEpoch={run?.claim_epoch} />}
         </section>
 
         {cleanup ? (

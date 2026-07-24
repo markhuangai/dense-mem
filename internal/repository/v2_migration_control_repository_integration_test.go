@@ -736,15 +736,37 @@ func TestV2MigrationExecutorRepositoryFinalizesReadyToCutoverWhenPlacementsTermi
 		`, now.Add(4*time.Minute), teamID, ingest.Items[0].PlacementItemID).Error
 	}))
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		return tx.Exec(`
+		if err := tx.Exec(`
+			UPDATE placement_runs
+			SET status = 'awaiting_review',
+			    completed_at = ?,
+			    updated_at = ?
+			WHERE team_id = ?::uuid
+			  AND placement_run_id = ?::uuid
+		`, now.Add(4*time.Minute+10*time.Second), now.Add(4*time.Minute+10*time.Second),
+			teamID, reviewIngest.PlacementRunID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
 			UPDATE placement_items
-			SET status = 'completed',
+			SET status = 'awaiting_review',
 			    category = 'candidate',
 			    result = result || '{"status":"review_required","review_task":"identity_needs_review"}'::jsonb,
 			    updated_at = ?
 			WHERE team_id = ?::uuid
 			  AND placement_item_id = ?::uuid
-		`, now.Add(4*time.Minute+10*time.Second), teamID, reviewIngest.Items[0].PlacementItemID).Error
+		`, now.Add(4*time.Minute+10*time.Second), teamID, reviewIngest.Items[0].PlacementItemID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO review_tasks (
+			    team_id, owner_profile_id, ingest_id, placement_item_id,
+			    task_type, status, reason, payload
+			) VALUES (
+			    ?::uuid, ?::uuid, ?::uuid, ?::uuid,
+			    'identity_needs_review', 'open', 'identity_needs_review', '{}'::jsonb
+			)
+		`, teamID, ownerID, reviewIngest.IngestID, reviewIngest.Items[0].PlacementItemID).Error
 	}))
 
 	finalized, err := repo.FinalizeMigrationRun(ctx, run.RunID, now.Add(5*time.Minute))
@@ -799,6 +821,74 @@ func TestV2MigrationExecutorRepositoryFinalizesReadyToCutoverWhenPlacementsTermi
 		`, run.RunID, domain.V2MigrationTargetPlacementItem, ingest.Items[0].PlacementItemID).Scan(&sourceMapCount).Error
 	}))
 	require.EqualValues(t, 1, sourceMapCount)
+
+	var firstFinalizedAt string
+	require.NoError(t, rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT metadata->>'migration_finalized_at'
+			FROM v2_migration_corpus_items
+			WHERE run_id = ?::uuid
+			  AND source_id = 'sf-terminal'
+		`, run.RunID).Row().Scan(&firstFinalizedAt)
+	}))
+	require.NotEmpty(t, firstFinalizedAt)
+
+	var unchangedRows int64
+	require.NoError(t, rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+		var syncErr error
+		unchangedRows, syncErr = syncV2MigrationCorpusPlacementOutcomes(tx, run.RunID, now.Add(6*time.Minute))
+		return syncErr
+	}))
+	require.Zero(t, unchangedRows)
+
+	var secondFinalizedAt string
+	require.NoError(t, rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT metadata->>'migration_finalized_at'
+			FROM v2_migration_corpus_items
+			WHERE run_id = ?::uuid
+			  AND source_id = 'sf-terminal'
+		`, run.RunID).Row().Scan(&secondFinalizedAt)
+	}))
+	require.Equal(t, firstFinalizedAt, secondFinalizedAt)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE placement_items
+			SET category = 'candidate',
+			    updated_at = ?
+			WHERE team_id = ?::uuid
+			  AND placement_item_id = ?::uuid
+		`, now.Add(6*time.Minute+30*time.Second), teamID, ingest.Items[0].PlacementItemID).Error
+	}))
+	var changedRows int64
+	require.NoError(t, rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+		var syncErr error
+		changedRows, syncErr = syncV2MigrationCorpusPlacementOutcomes(tx, run.RunID, now.Add(7*time.Minute))
+		return syncErr
+	}))
+	require.EqualValues(t, 1, changedRows)
+
+	var placementCategory, sourceMapCategory string
+	require.NoError(t, rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT metadata->>'placement_category'
+			FROM v2_migration_corpus_items
+			WHERE run_id = ?::uuid
+			  AND source_id = 'sf-terminal'
+		`, run.RunID).Row().Scan(&placementCategory); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT metadata->>'placement_category'
+			FROM v2_migration_source_maps
+			WHERE run_id = ?::uuid
+			  AND target_type = ?
+			  AND target_id = ?
+		`, run.RunID, domain.V2MigrationTargetPlacementItem, ingest.Items[0].PlacementItemID).Row().Scan(&sourceMapCategory)
+	}))
+	require.Equal(t, "candidate", placementCategory)
+	require.Equal(t, "candidate", sourceMapCategory)
 }
 
 func TestV2MigrationExecutorRepositoryFinalizeKeepsRunRunningUntilPlacementsTerminal(t *testing.T) {

@@ -217,6 +217,20 @@
   font-weight: 700;
 }
 
+.migration-failure-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.migration-failure-groups span {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .migration-preflight {
   display: grid;
   grid-template-columns: 1fr;

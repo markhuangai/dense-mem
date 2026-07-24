@@ -379,6 +379,48 @@ describe("App migration portal", () => {
     expect(preflightCalls).toBe(1);
   });
 
+  it("shows blocked repair details and disables resume", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/session")) {
+        return jsonResponse({ data: { authenticated: true, portal_mode: "migration", legacy_config_present: true } });
+      }
+      if (url.endsWith("/v2/migration")) {
+        return jsonResponse({
+          data: {
+            state: "paused_retryable",
+            required: true,
+            data_plane_allowed: false,
+            readiness_message: "migration is paused at a durable checkpoint",
+            run: migrationRun({ state: "paused_retryable", total_items: 4421, completed_items: 4414, failed_items: 7 }),
+            repair: {
+              required: false,
+              legacy_predicate_reviews: 0,
+              orphan_reviews: 0,
+              abandoned_processing: 0,
+              retryable_failures: 0,
+              held_reviews: 3452,
+              blocked_items: 7,
+              blocking_exclusions: 1,
+              repaired_items: 0,
+              claim_epoch_before: 3,
+              failure_groups: [{ stage: "verification", class: "timeout", count: 7 }],
+            },
+          },
+        });
+      }
+      return jsonResponse({ message: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+
+    render(<App />);
+    expect(await screen.findByText("Resume is blocked")).toBeInTheDocument();
+    expect(screen.getByText("verification/timeout: 7")).toBeInTheDocument();
+    expect(screen.getByText("Blocking exclusions")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /resume/i })).toBeDisabled();
+  });
+
   it("shows cleanup mode without normal control routes", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

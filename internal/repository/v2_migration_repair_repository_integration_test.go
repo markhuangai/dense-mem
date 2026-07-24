@@ -56,6 +56,8 @@ func TestV2MigrationRepairRequeuesExhaustedRetryableFailure(t *testing.T) {
 	require.True(t, summary.Required)
 	require.Equal(t, 1, summary.RetryableFailures)
 	require.Zero(t, summary.BlockedItems)
+	require.Len(t, summary.FailureGroups, 1)
+	require.Equal(t, domain.V2MigrationFailureGroup{Stage: "unknown", Class: "unknown", Count: 1}, summary.FailureGroups[0])
 
 	resumed, err := repo.RepairAndResumeMigration(ctx, V2RepairAndResumeMigrationInput{
 		RunID:     fixture.runID,
@@ -125,6 +127,54 @@ func TestV2MigrationRepairRequeuesExhaustedRetryableFailure(t *testing.T) {
 	require.Nil(t, corpusPlacementItemID)
 	require.Equal(t, domain.V2MigrationActionRepairResumed, action)
 	require.Equal(t, 1, repairOutcomes)
+}
+
+func TestV2MigrationRepairBlocksResumeWhenCutoverExclusionsRemain(t *testing.T) {
+	_, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	repo := NewV2MigrationControlRepository(appDB, rls)
+	now := time.Date(2026, 7, 23, 5, 0, 0, 0, time.UTC)
+	run, err := repo.CreateRun(ctx, V2CreateMigrationRunInput{
+		MigrationContractVersion: "migration-contract-v1",
+		CorpusVersion:            "corpus-v1",
+		SourceKind:               "neo4j",
+		State:                    domain.V2MigrationStatePaused,
+		Phase:                    "paused",
+		Required:                 true,
+		PreflightApproved:        true,
+		Now:                      now,
+	})
+	require.NoError(t, err)
+	require.NoError(t, repo.RecordMigrationExclusion(ctx, V2RecordMigrationExclusionInput{
+		RunID:         run.RunID,
+		SourceKind:    "neo4j",
+		SourceID:      "legacy-bad-owner",
+		Reason:        "legacy owner profile does not belong to team",
+		BlocksCutover: true,
+		Metadata:      map[string]any{"reason_class": "owner_mismatch"},
+		Now:           now.Add(time.Minute),
+	}))
+
+	summary, err := repo.AssessMigrationRepair(ctx, run.RunID)
+	require.NoError(t, err)
+	require.False(t, summary.Required)
+	require.Equal(t, 1, summary.BlockingExclusions)
+	require.Zero(t, summary.RetryableFailures)
+
+	_, err = repo.RepairAndResumeMigration(ctx, V2RepairAndResumeMigrationInput{
+		RunID:     run.RunID,
+		FromState: domain.V2MigrationStatePaused,
+		OperatorAction: domain.V2MigrationOperatorAction{
+			RunID: run.RunID,
+			Actor: "operator",
+		},
+		Now: now.Add(2 * time.Minute),
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrV2MigrationCutoverBlocked), err)
+	require.Contains(t, err.Error(), "blocking_exclusions=1")
 }
 
 func TestV2MigrationRepairKeepsDeterministicExhaustedFailureBlocked(t *testing.T) {

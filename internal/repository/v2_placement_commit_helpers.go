@@ -2,10 +2,12 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 
 	"gorm.io/gorm"
@@ -741,12 +743,13 @@ func finishV2PlacementRunIfTerminal(ctx context.Context, tx *gorm.DB, input V2Co
 }
 
 func requeueV2PlacementRunForRetry(ctx context.Context, tx *gorm.DB, input V2CommitPlacementSemanticInput) error {
+	retryDelaySeconds := int(v2PlacementRetryDelay(input.ExpectedAttempts, input.PlacementItemID) / time.Second)
 	result := tx.WithContext(ctx).Exec(`
 		UPDATE placement_runs
 		SET status = `+v2PlacementRunGuardedStatusCase+`,
 		    worker_id = '',
 		    lease_until = NULL,
-		    available_at = now(),
+		    available_at = now() + (? * interval '1 second'),
 		    updated_at = now()
 		WHERE team_id = ?::uuid
 		  AND placement_run_id = ?::uuid
@@ -755,7 +758,7 @@ func requeueV2PlacementRunForRetry(ctx context.Context, tx *gorm.DB, input V2Com
 		  AND worker_id = ?
 		  AND attempts = ?
 		  AND lease_until > clock_timestamp()
-	`, input.TeamID, input.PlacementRunID, input.OwnerProfileID, input.WorkerID, input.ExpectedAttempts)
+	`, retryDelaySeconds, input.TeamID, input.PlacementRunID, input.OwnerProfileID, input.WorkerID, input.ExpectedAttempts)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -763,6 +766,30 @@ func requeueV2PlacementRunForRetry(ctx context.Context, tx *gorm.DB, input V2Com
 		return ErrV2PlacementLeaseLost
 	}
 	return nil
+}
+
+func v2PlacementRetryDelay(attempt int, placementItemID string) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	base := 15 * time.Second
+	for i := 1; i < attempt; i++ {
+		base *= 2
+		if base >= 300*time.Second {
+			base = 300 * time.Second
+			break
+		}
+	}
+	delay := base + time.Duration(v2PlacementRetryJitterSeconds(placementItemID))*time.Second
+	if delay > 300*time.Second {
+		return 300 * time.Second
+	}
+	return delay
+}
+
+func v2PlacementRetryJitterSeconds(placementItemID string) int {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(placementItemID)))
+	return int(sum[0] % 15)
 }
 
 func v2IntPointerArg(value *int) any {
