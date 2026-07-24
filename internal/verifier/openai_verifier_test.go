@@ -512,6 +512,14 @@ func TestOpenAIVerifierV2SemanticAdapters(t *testing.T) {
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
 			assert.Equal(t, V2VerifierResponseSchemaName, reqBody.ResponseFormat.JSONSchema.Name)
 			assert.Contains(t, reqBody.Messages[0].Content, "semantic verifier")
+			assert.Contains(t, reqBody.Messages[0].Content, `actions "create" and "ambiguous" require candidate_entity_id to be null`)
+			var userPayload map[string]any
+			require.NoError(t, json.Unmarshal([]byte(reqBody.Messages[1].Content), &userPayload))
+			assert.Equal(t, float64(2), userPayload["attempt"])
+			assert.Equal(t, []any{"entity_results[0].candidate_entity_id: must be null"}, userPayload["validation_feedback"])
+			assert.Equal(t, "sha256:previous", userPayload["previous_response_hash"])
+			assert.NotContains(t, userPayload, "team_id")
+			assert.NotContains(t, userPayload, "owner_profile_id")
 			predicateKey := "uses"
 			writeStructuredChatContent(t, w, map[string]any{
 				"request_id":       "verify-1",
@@ -535,8 +543,12 @@ func TestOpenAIVerifierV2SemanticAdapters(t *testing.T) {
 		content := "Dense-Mem uses PostgreSQL."
 		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "sk-test", "gpt-4o-mini"), srv.Client())
 		got, err := v.ReviewV2Semantic(context.Background(), V2SemanticReviewRequest{
-			RequestID: "verify-1",
-			TeamID:    "team-a",
+			RequestID:            "verify-1",
+			TeamID:               "team-a",
+			OwnerProfileID:       "profile-a",
+			Attempt:              2,
+			ValidationFeedback:   []string{"entity_results[0].candidate_entity_id: must be null"},
+			PreviousResponseHash: "sha256:previous",
 			Evidence: []V2SemanticReviewEvidence{{
 				EvidenceID: "evidence:0",
 				Content:    content,
