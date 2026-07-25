@@ -740,21 +740,27 @@ func loadV2RelationshipConflictPositionRows(
 	conflictIDs []string,
 	knownAt *time.Time,
 ) ([]V2RelationshipConflictPositionRecord, error) {
-	rows, err := tx.WithContext(ctx).Raw(`
+	dispositionSelect := "position.disposition"
+	dispositionGroup := ", position.disposition"
+	if knownAt != nil {
+		dispositionSelect = "'candidate'"
+		dispositionGroup = ""
+	}
+	rows, err := tx.WithContext(ctx).Raw(fmt.Sprintf(`
 		SELECT position.conflict_id::text,
 		       position.position_id::text,
 		       position.position_key,
 		       COALESCE(position.object_entity_id::text, ''),
 		       COALESCE(position.object_value_id::text, ''),
-		       CASE WHEN ?::timestamptz IS NULL THEN position.disposition ELSE 'candidate' END,
-		       position.support_group_count,
-		       position.authoritative_group_count,
+		       %s,
+		       COUNT(DISTINCT member.source_group_key)::int,
+		       (COUNT(DISTINCT member.source_group_key) FILTER (WHERE member.authority = 'authoritative'))::int,
 		       COALESCE(array_remove(array_agg(DISTINCT member.relationship_id::text ORDER BY member.relationship_id::text), NULL), ARRAY[]::text[]),
 		       COALESCE(array_remove(array_agg(DISTINCT member.owner_profile_id::text ORDER BY member.owner_profile_id::text), NULL), ARRAY[]::text[]),
-			       COALESCE(array_remove(array_agg(DISTINCT member.fragment_id::text ORDER BY member.fragment_id::text), NULL), ARRAY[]::text[]),
-			       max(member.effective_at),
-			       max(member.effective_time_basis),
-			       COALESCE(bool_and(member.recorded_fallback), false)
+		       COALESCE(array_remove(array_agg(DISTINCT member.fragment_id::text ORDER BY member.fragment_id::text), NULL), ARRAY[]::text[]),
+		       max(member.effective_at),
+		       max(member.effective_time_basis),
+		       COALESCE(bool_and(member.recorded_fallback), false)
 			FROM relationship_conflict_positions AS position
 			LEFT JOIN relationship_conflict_position_members AS member
 			 ON member.team_id = position.team_id
@@ -778,10 +784,9 @@ func loadV2RelationshipConflictPositionRows(
 			      )
 			  )
 			GROUP BY position.conflict_id, position.position_id, position.position_key,
-			         position.object_entity_id, position.object_value_id,
-			         position.disposition, position.support_group_count, position.authoritative_group_count
+			         position.object_entity_id, position.object_value_id%s
 			ORDER BY position.conflict_id, position.position_key
-		`, knownAt,
+		`, dispositionSelect, dispositionGroup),
 		knownAt, knownAt, knownAt, knownAt,
 		teamID, pq.Array(conflictIDs),
 		knownAt, knownAt, knownAt, knownAt).Rows()
@@ -877,9 +882,7 @@ func applyV2ConflictKnownAtNextReview(record *V2RelationshipConflictCaseRecord, 
 	if record == nil || knownAt == nil || !rewound {
 		return
 	}
-	if record.NextReviewAt.After(*knownAt) {
-		record.NextReviewAt = *knownAt
-	}
+	record.NextReviewAt = time.Time{}
 }
 
 func applyV2ConflictPositionKnownAtDispositions(record *V2RelationshipConflictCaseRecord, knownAt *time.Time) {

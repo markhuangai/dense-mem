@@ -23,7 +23,7 @@ func TestApplyV2ConflictKnownAtClearsFutureDismissal(t *testing.T) {
 	applyV2ConflictKnownAt(&record, &knownAt)
 
 	assert.Equal(t, string(domain.V2RelationshipConflictOpen), record.Status)
-	assert.Equal(t, knownAt, record.NextReviewAt)
+	assert.True(t, record.NextReviewAt.IsZero())
 	assert.Nil(t, record.DismissedAt)
 }
 
@@ -53,7 +53,7 @@ func TestApplyV2ConflictKnownAtPreservesResolvedStateBeforeFutureDismissal(t *te
 	assert.Equal(t, effectiveAt, *record.EffectiveAt)
 	assert.Equal(t, "valid_time", record.EffectiveTimeBasis)
 	assert.Equal(t, "deterministic winner", record.ResolutionReason)
-	assert.Equal(t, knownAt, record.NextReviewAt)
+	assert.True(t, record.NextReviewAt.IsZero())
 	assert.Nil(t, record.DismissedAt)
 }
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/operatorcli"
@@ -211,10 +212,14 @@ func parseCLI(args []string, stderr io.Writer) (cliConfig, error) {
 	var cfg cliConfig
 	fs := flag.NewFlagSet("review-conflicts", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	defaultTimezone := strings.TrimSpace(os.Getenv("APP_TIMEZONE"))
+	if defaultTimezone == "" {
+		defaultTimezone = "UTC"
+	}
 	fs.StringVar(&cfg.teamID, "team-id", "", "Team UUID to review (required)")
 	fs.StringVar(&cfg.workerID, "worker-id", fmt.Sprintf("operator-conflict-review-%d", os.Getpid()), "Reviewer worker ID")
 	fs.StringVar(&cfg.now, "now", "", "Review timestamp override in RFC3339")
-	fs.StringVar(&cfg.timezone, "timezone", "UTC", "Team-local review timezone")
+	fs.StringVar(&cfg.timezone, "timezone", defaultTimezone, "Team-local review timezone")
 	fs.IntVar(&cfg.batchSize, "batch-size", 100, "Maximum cases claimed per batch")
 	fs.IntVar(&cfg.leaseSeconds, "lease-seconds", 300, "Review lease seconds")
 	fs.IntVar(&cfg.maxAttempts, "max-attempts", 5, "Maximum case attempts")
