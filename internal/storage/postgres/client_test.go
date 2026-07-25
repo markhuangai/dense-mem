@@ -147,8 +147,9 @@ func TestMigratorRunUp(t *testing.T) {
 	assert.NoError(t, err, "repeat RunUp should be idempotent")
 }
 
-// TestMigratorRunDown verifies rollback succeeds.
-func TestMigratorRunDown(t *testing.T) {
+// TestMigratorRunDownRejectsPostCutoverCleanup verifies the latest cleanup
+// boundary is intentionally irreversible.
+func TestMigratorRunDownRejectsPostCutoverCleanup(t *testing.T) {
 	ctx := context.Background()
 
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
@@ -160,9 +161,12 @@ func TestMigratorRunDown(t *testing.T) {
 	err := m.RunUp(ctx)
 	require.NoError(t, err, "RunUp should succeed")
 
-	// Then run down
+	// The embedding retry migration is reversible; the cleanup boundary below it is not.
 	err = m.RunDown(ctx)
-	assert.NoError(t, err, "RunDown should succeed")
+	require.NoError(t, err)
+	err = m.RunDown(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "irreversible migration: post-cutover legacy cleanup")
 }
 
 func TestV2SearchStorageMigrationAllowsIndexGenerationLifecycleOnly(t *testing.T) {
@@ -241,7 +245,7 @@ func TestV2EmbeddingRetryRecoveryMigrationRequeuesOnlyTransientExhaustion(t *tes
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
 
-	runGooseUpTo(t, ctx, sqlDB, 2026072302)
+	runGooseUpTo(t, ctx, sqlDB, 2026072303)
 	teamID, profileID := insertV2MigrationTeamProfile(t, ctx, sqlDB)
 	contractID := uuid.NewString()
 	generationID := uuid.NewString()
@@ -402,33 +406,179 @@ func TestV2SemanticLedgerMigrationGuardedRollbackRejectsCanonicalAuthority(t *te
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
 
-	m := NewMigratorWithDB(sqlDB)
-	require.NoError(t, m.RunUp(ctx))
+	runGooseUpTo(t, ctx, sqlDB, 2026071704)
 	teamID, profileID := insertV2MigrationTeamProfile(t, ctx, sqlDB)
-	_, err := sqlDB.ExecContext(ctx, `
-		INSERT INTO semantic_team_refs (team_id)
-		VALUES ($1::uuid)
-		ON CONFLICT (team_id) DO NOTHING
-	`, teamID)
-	require.NoError(t, err)
-	_, err = sqlDB.ExecContext(ctx, `
-		INSERT INTO semantic_profile_refs (team_id, profile_id)
-		VALUES ($1::uuid, $2::uuid)
-		ON CONFLICT (team_id, profile_id) DO NOTHING
-	`, teamID, profileID)
-	require.NoError(t, err)
-	_, err = sqlDB.ExecContext(ctx, `
-		INSERT INTO evidence_sources (team_id, owner_profile_id, source_key, source_kind, authority)
-		VALUES ($1::uuid, $2::uuid, 'doc://rollback-inferred', 'document', 'inferred')
-	`, teamID, profileID)
-	require.NoError(t, err)
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO semantic_team_refs (team_id)
+			VALUES ($1::uuid)
+			ON CONFLICT (team_id) DO NOTHING
+		`, teamID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO semantic_profile_refs (team_id, profile_id)
+			VALUES ($1::uuid, $2::uuid)
+			ON CONFLICT (team_id, profile_id) DO NOTHING
+		`, teamID, profileID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO evidence_sources (team_id, owner_profile_id, source_key, source_kind, authority)
+			VALUES ($1::uuid, $2::uuid, 'doc://rollback-inferred', 'document', 'inferred')
+		`, teamID, profileID)
+		return err
+	}))
 
+	m := NewMigratorWithDB(sqlDB)
 	require.NoError(t, m.RunDown(ctx))
 
-	err = m.RunDown(ctx)
+	err := m.RunDown(ctx)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot roll back 2026071704")
 	assert.Contains(t, err.Error(), "inferred=1")
+}
+
+func TestPostCutoverCleanupMigrationFreshUpgradeSucceeds(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	m := NewMigratorWithDB(sqlDB)
+	require.NoError(t, m.RunUp(ctx))
+
+	for _, tableName := range []string{
+		"profiles",
+		"api_keys",
+		"memory_dispute_sessions",
+		"memory_placement_items",
+		"memory_placement_runs",
+		"community_detection_runs",
+	} {
+		assert.False(t, tableExists(t, ctx, sqlDB, tableName), "%s should be dropped", tableName)
+	}
+	assert.False(t, columnExists(t, ctx, sqlDB, "placement_runs", "migration_claim_epoch"))
+
+	var markerCount int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*)::int
+		FROM v2_compatibility_markers
+	`).Scan(&markerCount))
+	assert.Zero(t, markerCount, "fresh authority marker is created by server bootstrap after migrations")
+}
+
+func TestPostCutoverCleanupMigrationWithCompatibleMarkerDropsLegacyTables(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026072302)
+	teamID, profileID := insertV2MigrationTeamProfile(t, ctx, sqlDB)
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `CREATE TABLE profiles (id uuid PRIMARY KEY)`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO profiles (id) VALUES ($1::uuid)`, teamID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `CREATE TABLE api_keys (id uuid PRIMARY KEY, team_id uuid NOT NULL)`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO api_keys (id, team_id) VALUES ($1::uuid, $2::uuid)`, profileID, teamID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO v2_compatibility_markers (
+				marker_kind, version, status, corpus_hash, gate_report_hash, metadata
+			) VALUES (
+				'v2_cutover', 'dense-mem.v2.1.cutover.v1', 'compatible', 'sha256:corpus', 'sha256:gates', '{}'::jsonb
+			)
+		`)
+		return err
+	}))
+
+	runGooseUpTo(t, ctx, sqlDB, 2026072303)
+
+	assert.False(t, tableExists(t, ctx, sqlDB, "profiles"))
+	assert.False(t, tableExists(t, ctx, sqlDB, "api_keys"))
+	assert.True(t, tableExists(t, ctx, sqlDB, "v2_migration_runs"))
+	assert.True(t, tableExists(t, ctx, sqlDB, "v2_compatibility_markers"))
+}
+
+func TestPostCutoverCleanupMigrationBlocksNonemptyDatabaseWithoutMarker(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026072302)
+	insertV2MigrationTeamProfile(t, ctx, sqlDB)
+
+	require.NoError(t, goose.SetDialect("postgres"))
+	err := goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026072303)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "compatible cutover marker missing")
+	assert.Contains(t, err.Error(), "teams")
+	assert.True(t, tableExists(t, ctx, sqlDB, "community_detection_runs"), "cleanup DDL must not run after guard failure")
+}
+
+func TestPostCutoverCleanupMigrationBlocksLegacyProfileWithoutCanonicalTeam(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026072302)
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `CREATE TABLE profiles (id uuid PRIMARY KEY)`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO profiles (id) VALUES ($1::uuid)`, uuid.NewString()); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO v2_compatibility_markers (
+				marker_kind, version, status, corpus_hash, gate_report_hash, metadata
+			) VALUES (
+				'v2_cutover', 'dense-mem.v2.1.cutover.v1', 'compatible', 'sha256:corpus', 'sha256:gates', '{}'::jsonb
+			)
+		`)
+		return err
+	}))
+
+	require.NoError(t, goose.SetDialect("postgres"))
+	err := goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026072303)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "legacy profiles missing canonical teams")
+	assert.True(t, tableExists(t, ctx, sqlDB, "profiles"), "cleanup DDL must not run after guard failure")
+}
+
+func TestPostCutoverCleanupMigrationBlocksLegacyAPIKeyWithoutCanonicalTeamProfile(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026072302)
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `CREATE TABLE api_keys (id uuid PRIMARY KEY, team_id uuid NOT NULL)`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO api_keys (id, team_id) VALUES ($1::uuid, $2::uuid)`, uuid.NewString(), uuid.NewString()); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO v2_compatibility_markers (
+				marker_kind, version, status, corpus_hash, gate_report_hash, metadata
+			) VALUES (
+				'v2_cutover', 'dense-mem.v2.1.cutover.v1', 'compatible', 'sha256:corpus', 'sha256:gates', '{}'::jsonb
+			)
+		`)
+		return err
+	}))
+
+	require.NoError(t, goose.SetDialect("postgres"))
+	err := goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026072303)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "legacy api_keys missing canonical team_profiles")
+	assert.True(t, tableExists(t, ctx, sqlDB, "api_keys"), "cleanup DDL must not run after guard failure")
 }
 
 // TestMigratorStatus verifies status command works.
@@ -650,24 +800,82 @@ func runGooseUpTo(t *testing.T, ctx context.Context, db *sql.DB, version int64) 
 	require.NoError(t, goose.UpToContext(ctx, db, getMigrationsDir(), version))
 }
 
+func execPostgresTxMode(ctx context.Context, db *sql.DB, txMode string, fn func(tx *sql.Tx) error) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.tx_mode', $1, true)`, txMode); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_team_id', '', true)`); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_profile_id', '', true)`); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+func tableExists(t *testing.T, ctx context.Context, db *sql.DB, tableName string) bool {
+	t.Helper()
+	var exists bool
+	err := db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM information_schema.tables
+			WHERE table_schema = 'public'
+			  AND table_name = $1
+		)
+	`, tableName).Scan(&exists)
+	require.NoError(t, err)
+	return exists
+}
+
+func columnExists(t *testing.T, ctx context.Context, db *sql.DB, tableName, columnName string) bool {
+	t.Helper()
+	var exists bool
+	err := db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM information_schema.columns
+			WHERE table_schema = 'public'
+			  AND table_name = $1
+			  AND column_name = $2
+		)
+	`, tableName, columnName).Scan(&exists)
+	require.NoError(t, err)
+	return exists
+}
+
 func insertV2MigrationTeamProfile(t *testing.T, ctx context.Context, db *sql.DB) (string, string) {
 	t.Helper()
 	teamID := uuid.NewString()
 	profileID := uuid.NewString()
 	keyPrefix := strings.ReplaceAll(uuid.NewString(), "-", "")[:24]
-	_, err := db.ExecContext(ctx, `
-		INSERT INTO teams (id, name, description, metadata, config)
-		VALUES ($1::uuid, $2, '', '{}'::jsonb, '{}'::jsonb)
-	`, teamID, "migration-team-"+teamID)
-	require.NoError(t, err)
-	_, err = db.ExecContext(ctx, `
-		INSERT INTO team_profiles (
-			id, team_id, key_hash, key_prefix, key_suffix, name, scopes, role
-		) VALUES (
-			$1::uuid, $2::uuid, $3, $4, $5, $6, ARRAY['read','write']::text[], 'member'
-		)
-	`, profileID, teamID, "hash-"+profileID, keyPrefix, keyPrefix[:6], "migration-profile-"+profileID)
-	require.NoError(t, err)
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO teams (id, name, description, metadata, config)
+			VALUES ($1::uuid, $2, '', '{}'::jsonb, '{}'::jsonb)
+		`, teamID, "migration-team-"+teamID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO team_profiles (
+				id, team_id, key_hash, key_prefix, key_suffix, name, scopes, role
+			) VALUES (
+				$1::uuid, $2::uuid, $3, $4, $5, $6, ARRAY['read','write']::text[], 'member'
+			)
+		`, profileID, teamID, "hash-"+profileID, keyPrefix, keyPrefix[:6], "migration-profile-"+profileID)
+		return err
+	}))
 	return teamID, profileID
 }
 
@@ -677,44 +885,51 @@ func insertV2MigrationAuthorityFixture(t *testing.T, ctx context.Context, db *sq
 	sourceRevisionID := uuid.NewString()
 	ingestID := uuid.NewString()
 	fragmentID := uuid.NewString()
-	_, err := db.ExecContext(ctx, `
-		INSERT INTO semantic_team_refs (team_id)
-		VALUES ($1::uuid)
-		ON CONFLICT (team_id) DO NOTHING
-	`, teamID)
-	require.NoError(t, err)
-	_, err = db.ExecContext(ctx, `
-		INSERT INTO semantic_profile_refs (team_id, profile_id)
-		VALUES ($1::uuid, $2::uuid)
-		ON CONFLICT (team_id, profile_id) DO NOTHING
-	`, teamID, profileID)
-	require.NoError(t, err)
-	_, err = db.ExecContext(ctx, `
-		INSERT INTO knowledge_ingests (team_id, ingest_id, owner_profile_id, status)
-		VALUES ($1::uuid, $2::uuid, $3::uuid, 'queued')
-	`, teamID, ingestID, profileID)
-	require.NoError(t, err)
-	_, err = db.ExecContext(ctx, `
-		INSERT INTO evidence_sources (team_id, source_id, owner_profile_id, source_key, source_kind, authority)
-		VALUES ($1::uuid, $2::uuid, $3::uuid, $4, 'document', $5)
-	`, teamID, sourceID, profileID, "doc://migration-"+authority+"-"+sourceID, authority)
-	require.NoError(t, err)
-	_, err = db.ExecContext(ctx, `
-		INSERT INTO evidence_source_revisions (
-			team_id, source_revision_id, source_id, owner_profile_id, revision_token, content_hash
-		) VALUES (
-			$1::uuid, $2::uuid, $3::uuid, $4::uuid, 'rev-1', $5
-		)
-	`, teamID, sourceRevisionID, sourceID, profileID, "sha256:"+sourceRevisionID)
-	require.NoError(t, err)
-	_, err = db.ExecContext(ctx, `
-		INSERT INTO evidence_fragments (
-			team_id, fragment_id, ingest_id, owner_profile_id, source_id, source_revision_id,
-			evidence_index, content, content_hash, source_type, authority
-		) VALUES (
-			$1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6::uuid,
-			0, 'migration authority fixture', $7, 'document', $8
-		)
-	`, teamID, fragmentID, ingestID, profileID, sourceID, sourceRevisionID, "sha256:"+fragmentID, authority)
-	require.NoError(t, err)
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO semantic_team_refs (team_id)
+			VALUES ($1::uuid)
+			ON CONFLICT (team_id) DO NOTHING
+		`, teamID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO semantic_profile_refs (team_id, profile_id)
+			VALUES ($1::uuid, $2::uuid)
+			ON CONFLICT (team_id, profile_id) DO NOTHING
+		`, teamID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO knowledge_ingests (team_id, ingest_id, owner_profile_id, status)
+			VALUES ($1::uuid, $2::uuid, $3::uuid, 'queued')
+		`, teamID, ingestID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO evidence_sources (team_id, source_id, owner_profile_id, source_key, source_kind, authority)
+			VALUES ($1::uuid, $2::uuid, $3::uuid, $4, 'document', $5)
+		`, teamID, sourceID, profileID, "doc://migration-"+authority+"-"+sourceID, authority); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO evidence_source_revisions (
+				team_id, source_revision_id, source_id, owner_profile_id, revision_token, content_hash
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, $4::uuid, 'rev-1', $5
+			)
+		`, teamID, sourceRevisionID, sourceID, profileID, "sha256:"+sourceRevisionID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO evidence_fragments (
+				team_id, fragment_id, ingest_id, owner_profile_id, source_id, source_revision_id,
+				evidence_index, content, content_hash, source_type, authority
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6::uuid,
+				0, 'migration authority fixture', $7, 'document', $8
+			)
+		`, teamID, fragmentID, ingestID, profileID, sourceID, sourceRevisionID, "sha256:"+fragmentID, authority)
+		return err
+	}))
 }

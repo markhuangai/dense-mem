@@ -50,12 +50,12 @@ func v2ContractInvokeContext(scopes ...string) context.Context {
 	})
 }
 
-type stubV2RememberService struct {
+type stubRememberService struct {
 	req          memoryservice.V2RememberRequest
 	placementReq memoryservice.V2GetMemoryPlacementRequest
 }
 
-func (s *stubV2RememberService) RememberV2(_ context.Context, req memoryservice.V2RememberRequest) (*memoryservice.V2RememberResult, error) {
+func (s *stubRememberService) Remember(_ context.Context, req memoryservice.V2RememberRequest) (*memoryservice.V2RememberResult, error) {
 	s.req = req
 	return &memoryservice.V2RememberResult{
 		IngestID:          "ingest-v2",
@@ -66,7 +66,7 @@ func (s *stubV2RememberService) RememberV2(_ context.Context, req memoryservice.
 	}, nil
 }
 
-func (s *stubV2RememberService) GetMemoryPlacementV2(
+func (s *stubRememberService) GetMemoryPlacement(
 	_ context.Context,
 	req memoryservice.V2GetMemoryPlacementRequest,
 ) (*memoryservice.V2PlacementRunResult, error) {
@@ -89,11 +89,11 @@ func (s *stubV2RememberService) GetMemoryPlacementV2(
 	}, nil
 }
 
-type stubV2RecallService struct {
+type stubRecallService struct {
 	req memoryservice.V2RecallRequest
 }
 
-func (s *stubV2RecallService) RecallV2(_ context.Context, req memoryservice.V2RecallRequest) (*memoryservice.V2RecallResult, error) {
+func (s *stubRecallService) Recall(_ context.Context, req memoryservice.V2RecallRequest) (*memoryservice.V2RecallResult, error) {
 	s.req = req
 	return &memoryservice.V2RecallResult{
 		RecallID: "rec-v2",
@@ -114,7 +114,7 @@ type stubV2TraceContext struct {
 func (s *stubV2TraceContext) Trace(_ context.Context, _ string, req contextservice.TraceRequest) (*contextservice.TraceResult, error) {
 	s.req = req
 	return &contextservice.TraceResult{
-		V2Semantic: &contextservice.V2SemanticTrace{
+		Semantic: &contextservice.SemanticTrace{
 			Relationship: &repository.V2RelationshipTraceRecord{
 				RelationshipID:   "relationship-v2",
 				TeamID:           "team-v2",

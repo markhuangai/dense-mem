@@ -23,6 +23,7 @@ func newTestVerifierConfig(serverURL, apiKey, model string) *config.Config {
 	return &config.Config{
 		AIAPIURL:        serverURL,
 		AIAPIKey:        apiKey,
+		AIReviewerModel: model,
 		AIVerifierModel: model,
 	}
 }
@@ -142,6 +143,7 @@ func TestOpenAIVerifier(t *testing.T) {
 			AIAPIKey:         "embedding-key",
 			AIVerifierAPIURL: srv.URL,
 			AIVerifierAPIKey: "verifier-key",
+			AIReviewerModel:  "reviewer-model",
 			AIVerifierModel:  "verifier-model",
 		}
 		v := NewOpenAIVerifier(cfg, srv.Client())
@@ -455,6 +457,7 @@ func TestOpenAIVerifierV2SemanticAdapters(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var reqBody openAIVerifierRequest
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
+			assert.Equal(t, "reviewer-model", reqBody.Model)
 			assert.Equal(t, V2ProviderProposalSchemaName, reqBody.ResponseFormat.JSONSchema.Name)
 			require.Len(t, reqBody.Messages, 2)
 			assert.Contains(t, reqBody.Messages[0].Content, "structure extraction")
@@ -491,7 +494,9 @@ func TestOpenAIVerifierV2SemanticAdapters(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "sk-test", "gpt-4o-mini"), srv.Client())
+		cfg := newTestVerifierConfig(srv.URL, "sk-test", "verifier-model")
+		cfg.AIReviewerModel = "reviewer-model"
+		v := NewOpenAIVerifier(cfg, srv.Client())
 		got, err := v.ProposeV2Semantic(context.Background(), V2ProviderProposalRequest{
 			RequestID:        "extract-1",
 			PredicateOptions: []string{"uses"},
@@ -510,6 +515,7 @@ func TestOpenAIVerifierV2SemanticAdapters(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var reqBody openAIVerifierRequest
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
+			assert.Equal(t, "verifier-model", reqBody.Model)
 			assert.Equal(t, V2VerifierResponseSchemaName, reqBody.ResponseFormat.JSONSchema.Name)
 			assert.Contains(t, reqBody.Messages[0].Content, "semantic verifier")
 			assert.Contains(t, reqBody.Messages[0].Content, `actions "create" and "ambiguous" require candidate_entity_id to be null`)
@@ -541,8 +547,10 @@ func TestOpenAIVerifierV2SemanticAdapters(t *testing.T) {
 		defer srv.Close()
 
 		content := "Dense-Mem uses PostgreSQL."
-		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "sk-test", "gpt-4o-mini"), srv.Client())
-		got, err := v.ReviewV2Semantic(context.Background(), V2SemanticReviewRequest{
+		cfg := newTestVerifierConfig(srv.URL, "sk-test", "verifier-model")
+		cfg.AIReviewerModel = "reviewer-model"
+		v := NewOpenAIVerifier(cfg, srv.Client())
+		got, err := v.ReviewSemantic(context.Background(), V2SemanticReviewRequest{
 			RequestID:            "verify-1",
 			TeamID:               "team-a",
 			OwnerProfileID:       "profile-a",
@@ -634,10 +642,10 @@ func TestOpenAIVerifierV2SemanticAdapterErrors(t *testing.T) {
 
 	t.Run("invalid review request", func(t *testing.T) {
 		v := NewOpenAIVerifier(newTestVerifierConfig("https://example.com/v1", "sk-test", "gpt-4o-mini"), nil)
-		_, err := v.ReviewV2Semantic(context.Background(), V2SemanticReviewRequest{})
+		_, err := v.ReviewSemantic(context.Background(), V2SemanticReviewRequest{})
 		var providerErr *ProviderError
 		require.ErrorAs(t, err, &providerErr)
-		assert.Contains(t, providerErr.Message, "invalid v2 semantic review request")
+		assert.Contains(t, providerErr.Message, "invalid semantic review request")
 	})
 
 	t.Run("no choices", func(t *testing.T) {
@@ -680,7 +688,7 @@ func TestOpenAIVerifierV2SemanticAdapterErrors(t *testing.T) {
 		defer srv.Close()
 		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "sk-test", "gpt-4o-mini"), srv.Client())
 
-		_, err := v.ReviewV2Semantic(context.Background(), validReviewRequest())
+		_, err := v.ReviewSemantic(context.Background(), validReviewRequest())
 
 		var providerErr *ProviderError
 		require.ErrorAs(t, err, &providerErr)
@@ -697,7 +705,7 @@ func TestOpenAIVerifierV2SemanticAdapterErrors(t *testing.T) {
 		defer srv.Close()
 		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "sk-test", "gpt-4o-mini"), srv.Client())
 
-		_, err := v.ReviewV2Semantic(context.Background(), validReviewRequest())
+		_, err := v.ReviewSemantic(context.Background(), validReviewRequest())
 
 		var rateLimited *RateLimitError
 		require.ErrorAs(t, err, &rateLimited)

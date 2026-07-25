@@ -7,18 +7,18 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-func TestBuildV2UATWiresExecutableGetMemoryPlacement(t *testing.T) {
-	stub := &stubV2RememberService{}
-	reg, err := BuildV2UAT(Dependencies{V2Remember: stub})
+func TestBuildActiveWiresExecutableGetMemoryPlacement(t *testing.T) {
+	stub := &stubRememberService{}
+	reg, err := BuildActive(Dependencies{Remember: stub})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	placement, ok := reg.Get(V2ToolGetMemoryPlacement)
 	if !ok {
-		t.Fatal("BuildV2UAT did not register get_memory_placement")
+		t.Fatal("BuildActive did not register get_memory_placement")
 	}
 	if placement.Invoke == nil {
-		t.Fatal("BuildV2UAT get_memory_placement invoker is nil")
+		t.Fatal("BuildActive get_memory_placement invoker is nil")
 	}
 	out, err := placement.Invoke(v2ContractInvokeContext("read"), "ignored-profile", map[string]any{
 		"ingest_id": "ingest-v2",
@@ -45,14 +45,14 @@ func TestBuildV2UATWiresExecutableGetMemoryPlacement(t *testing.T) {
 	}
 }
 
-func TestBuildV2UATGetMemoryPlacementRejectsTenantOverride(t *testing.T) {
-	reg, err := BuildV2UAT(Dependencies{V2Remember: &stubV2RememberService{}})
+func TestBuildActiveGetMemoryPlacementRejectsTenantOverride(t *testing.T) {
+	reg, err := BuildActive(Dependencies{Remember: &stubRememberService{}})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	placement, ok := reg.Get(V2ToolGetMemoryPlacement)
 	if !ok {
-		t.Fatal("BuildV2UAT did not register get_memory_placement")
+		t.Fatal("BuildActive did not register get_memory_placement")
 	}
 	_, err = placement.Invoke(v2ContractInvokeContext("read"), "ignored-profile", map[string]any{
 		"team_id":   "attacker-team",

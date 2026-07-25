@@ -13,10 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
-	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 )
 
 type dreamHandlerServiceStub struct {
@@ -68,7 +66,7 @@ func (s *dreamHandlerServiceStub) Recall(context.Context, string, string, int) (
 }
 
 func (s *dreamHandlerServiceStub) ResolveFeedback(context.Context, string, dreamservice.ResolveFeedbackRequest) (*dreamservice.ResolveFeedbackResult, error) {
-	return &dreamservice.ResolveFeedbackResult{Fragment: &fragmentservice.CreateResult{}}, nil
+	return &dreamservice.ResolveFeedbackResult{}, nil
 }
 
 func (s *dreamHandlerServiceStub) Status(_ context.Context, profileID string) (*dreamservice.StatusResult, error) {
@@ -155,13 +153,7 @@ func TestDreamHandlerValidationAndNotFound(t *testing.T) {
 
 	e = echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
-	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			ctx := middleware.SetResolvedProfileIDForTest(c.Request().Context(), profileID)
-			c.SetRequest(c.Request().WithContext(ctx))
-			return next(c)
-		}
-	})
+	e.Use(injectProfileMiddleware(profileID))
 	e.GET("/api/v1/dreaming/runs", h.Runs)
 	e.GET("/api/v1/dreams", h.List)
 	e.GET("/api/v1/dreams/:dreamId", h.Get)

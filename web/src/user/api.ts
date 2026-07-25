@@ -203,12 +203,69 @@ export type DreamStatus = {
 export type RecallHit = {
   tier?: string;
   score?: number;
+  evidence?: RecallEvidenceContext;
+  relationship?: RecallRelationship;
+  relationships?: RecallRelationship[];
+  evidences?: RecallEvidenceContext[];
   fragment?: Fragment;
   claim?: Claim;
   fact?: Fact;
-  semantic_rank: number;
-  keyword_rank: number;
-  final_score: number;
+  semantic_rank?: number;
+  keyword_rank?: number;
+  final_score?: number;
+  discovery_paths?: RecallDiscoveryPath[];
+  related_hypotheses?: unknown[];
+};
+
+export type RecallEntity = {
+  entity_id?: string;
+  name?: string;
+  kind?: string;
+};
+
+export type RecallObject = {
+  entity_id?: string;
+  value_id?: string;
+  name?: string;
+  kind?: string;
+  value?: string;
+  type?: string;
+};
+
+export type RecallRelationship = {
+  relationship_id: string;
+  subject?: RecallEntity;
+  predicate?: string;
+  object?: RecallObject;
+  tier?: string;
+  polarity?: string;
+  valid_from?: string;
+  valid_to?: string;
+  evidence_ids?: string[];
+  corroborating_relationship_ids?: string[];
+  conflicting_relationship_ids?: string[];
+};
+
+export type RecallEvidenceContext = {
+  evidence_id: string;
+  relationship_ids?: string[];
+  rank?: number;
+  context: string;
+};
+
+export type RecallDiscoveryPath = {
+  relationships: RecallRelationship[];
+  evidence_ids: string[];
+};
+
+export type RecallPayload = {
+  recall_id?: string;
+  results: RecallEvidenceContext[];
+  conflicts?: unknown[];
+  discovery_paths: RecallDiscoveryPath[];
+  discovery_guidance: string;
+  related_hypotheses?: unknown[];
+  search_state?: string;
 };
 
 export type GraphNodeType = "fact" | "claim" | "fragment" | "dream" | "entity" | "value";
@@ -352,8 +409,37 @@ export class UserApi {
 
   async recall(query: string, limit = 10): Promise<RecallHit[]> {
     const params = new URLSearchParams({ query, limit: String(limit) });
-    const payload = await this.request<Envelope<RecallHit[]>>(`/api/v1/recall?${params.toString()}`);
-    return payload.data;
+    const payload = await this.request<Envelope<RecallHit[] | RecallPayload>>(`/api/v1/recall?${params.toString()}`);
+    const data = payload.data;
+    if (Array.isArray(data)) {
+      return data;
+    }
+    if (isRecallPayload(data)) {
+      return data.results.map((evidence) => ({
+        evidence,
+        evidences: [evidence],
+        relationships: relationshipsForEvidence(data.discovery_paths, evidence.evidence_id),
+        discovery_paths: data.discovery_paths,
+        related_hypotheses: data.related_hypotheses ?? [],
+        final_score: evidence.rank ? 1 / evidence.rank : undefined,
+        semantic_rank: evidence.rank,
+      }));
+    }
+    const legacyPayload = data as unknown as {
+      results: RecallRelationship[];
+      evidences: RecallEvidenceContext[];
+    };
+    const evidencesByID = new Map((legacyPayload.evidences ?? []).map((evidence) => [evidence.evidence_id, evidence]));
+    return (legacyPayload.results ?? []).map((relationship, index) => ({
+      relationship,
+      evidences: (relationship.evidence_ids ?? [])
+        .map((id) => evidencesByID.get(id))
+        .filter((evidence): evidence is RecallEvidenceContext => Boolean(evidence)),
+      tier: relationship.tier,
+      score: 1,
+      final_score: 1,
+      semantic_rank: index + 1,
+    }));
   }
 
   async graph(query: GraphQuery = {}): Promise<GraphSnapshot> {
@@ -434,4 +520,26 @@ export class UserApi {
       },
     });
   }
+}
+
+function isRecallPayload(value: RecallPayload | unknown): value is RecallPayload {
+  return Boolean(value && typeof value === "object" && "discovery_paths" in value && "results" in value);
+}
+
+function relationshipsForEvidence(paths: RecallDiscoveryPath[], evidenceID: string): RecallRelationship[] {
+  const seen = new Set<string>();
+  const out: RecallRelationship[] = [];
+  for (const path of paths) {
+    if (!path.evidence_ids.includes(evidenceID)) {
+      continue;
+    }
+    for (const relationship of path.relationships) {
+      if (!relationship.relationship_id || seen.has(relationship.relationship_id)) {
+        continue;
+      }
+      seen.add(relationship.relationship_id);
+      out.push(relationship);
+    }
+  }
+  return out;
 }

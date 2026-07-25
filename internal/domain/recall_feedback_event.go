@@ -58,7 +58,7 @@ type RecallFeedbackEvent struct {
 }
 
 // RecallFeedbackResultRef is a content-free reference to one result returned by
-// recall_memory. The control portal dereferences these IDs from Neo4j on demand.
+// recall_memory. The control portal dereferences these IDs from PostgreSQL semantic state on demand.
 type RecallFeedbackResultRef struct {
 	Type           string     `json:"type"`
 	ID             string     `json:"id"`

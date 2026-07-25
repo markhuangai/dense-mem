@@ -50,10 +50,6 @@ type testRateLimitConfig struct {
 }
 
 func (c *testRateLimitConfig) GetPostgresDSN() string            { return "" }
-func (c *testRateLimitConfig) GetNeo4jURI() string               { return "" }
-func (c *testRateLimitConfig) GetNeo4jUser() string              { return "" }
-func (c *testRateLimitConfig) GetNeo4jPassword() string          { return "" }
-func (c *testRateLimitConfig) GetNeo4jDatabase() string          { return "" }
 func (c *testRateLimitConfig) GetRedisAddr() string              { return "" }
 func (c *testRateLimitConfig) GetRedisPassword() string          { return "" }
 func (c *testRateLimitConfig) GetRedisDB() int                   { return 0 }
@@ -73,6 +69,7 @@ func (c *testRateLimitConfig) GetAIEmbeddingTimeoutSeconds() int { return 30 }
 func (c *testRateLimitConfig) IsEmbeddingConfigured() bool       { return false }
 func (c *testRateLimitConfig) GetAIVerifierAPIURL() string       { return "" }
 func (c *testRateLimitConfig) GetAIVerifierAPIKey() string       { return "" }
+func (c *testRateLimitConfig) GetAIReviewerModel() string        { return "reviewer-model" }
 func (c *testRateLimitConfig) GetAIVerifierModel() string        { return "gpt-4o-mini" }
 func (c *testRateLimitConfig) GetAIVerifierTimeoutSeconds() int  { return 60 }
 func (c *testRateLimitConfig) GetAIVerifierMaxConcurrency() int  { return 5 }
@@ -157,10 +154,6 @@ type redisRateLimitConfig struct {
 }
 
 func (c *redisRateLimitConfig) GetPostgresDSN() string                 { return "" }
-func (c *redisRateLimitConfig) GetNeo4jURI() string                    { return "" }
-func (c *redisRateLimitConfig) GetNeo4jUser() string                   { return "" }
-func (c *redisRateLimitConfig) GetNeo4jPassword() string               { return "" }
-func (c *redisRateLimitConfig) GetNeo4jDatabase() string               { return "" }
 func (c *redisRateLimitConfig) GetRedisAddr() string                   { return c.addr }
 func (c *redisRateLimitConfig) GetRedisPassword() string               { return c.password }
 func (c *redisRateLimitConfig) GetRedisDB() int                        { return c.db }
@@ -180,6 +173,7 @@ func (c *redisRateLimitConfig) GetAIEmbeddingTimeoutSeconds() int      { return 
 func (c *redisRateLimitConfig) IsEmbeddingConfigured() bool            { return false }
 func (c *redisRateLimitConfig) GetAIVerifierAPIURL() string            { return "" }
 func (c *redisRateLimitConfig) GetAIVerifierAPIKey() string            { return "" }
+func (c *redisRateLimitConfig) GetAIReviewerModel() string             { return "reviewer-model" }
 func (c *redisRateLimitConfig) GetAIVerifierModel() string             { return "gpt-4o-mini" }
 func (c *redisRateLimitConfig) GetAIVerifierTimeoutSeconds() int       { return 60 }
 func (c *redisRateLimitConfig) GetAIVerifierMaxConcurrency() int       { return 5 }

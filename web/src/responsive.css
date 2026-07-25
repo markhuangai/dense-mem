@@ -30,10 +30,6 @@
   .telemetry-card-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
-
-  .maintenance-content {
-    width: min(100% - 32px, 1040px);
-  }
 }
 
 @media (max-width: 980px) {
@@ -124,29 +120,14 @@
 
   .search-form:not(.stacked),
   .knowledge-explorer,
-  .key-detail-grid,
-  .maintenance-grid {
+  .key-detail-grid {
     grid-template-columns: 1fr;
-  }
-
-  .maintenance-hero {
-    display: grid;
-  }
-
-  .authority-rail {
-    grid-template-columns: 1fr;
-  }
-
-  .authority-rail > svg {
-    justify-self: center;
-    transform: rotate(90deg);
   }
 }
 
 @media (max-width: 620px) {
   .topbar,
   .workspace,
-  .maintenance-content,
   .app-shell > .banner {
     width: calc(100vw - 28px);
   }
@@ -268,11 +249,5 @@
 
   .profile-name-cell {
     align-items: stretch;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .progress-track span {
-    transition: none;
   }
 }

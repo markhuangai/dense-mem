@@ -7,7 +7,7 @@ import (
 )
 
 // Relationship constants for preserved knowledge graph.
-// These must match the canonical names used in Neo4j queries.
+// These must match the canonical names used by knowledge graph read models.
 const (
 	SUPPORTED_BY  = "SUPPORTED_BY"
 	PROMOTES_TO   = "PROMOTES_TO"
@@ -18,7 +18,7 @@ const (
 )
 
 // SourceFragmentContract represents the preserved knowledge contract for source fragments.
-// Field names must match the canonical names in discovery docs for Neo4j compatibility.
+// Field names must match the canonical names in discovery docs.
 type SourceFragmentContract struct {
 	FragmentID     uuid.UUID      `json:"fragment_id"`
 	Connector      string         `json:"connector"`
@@ -29,7 +29,7 @@ type SourceFragmentContract struct {
 }
 
 // ClaimContract represents the preserved knowledge contract for claims.
-// Field names must match the canonical names in discovery docs for Neo4j compatibility.
+// Field names must match the canonical names in discovery docs.
 type ClaimContract struct {
 	ClaimID           uuid.UUID `json:"claim_id"`
 	Predicate         string    `json:"predicate"`
@@ -40,7 +40,7 @@ type ClaimContract struct {
 }
 
 // FactContract represents the preserved knowledge contract for facts.
-// Field names must match the canonical names in discovery docs for Neo4j compatibility.
+// Field names must match the canonical names in discovery docs.
 type FactContract struct {
 	FactID     uuid.UUID  `json:"fact_id"`
 	Status     string     `json:"status"`

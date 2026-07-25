@@ -8,20 +8,18 @@
 #   POSTGRES_PASSWORD
 #   CONTROL_PORTAL_TOKEN
 #   AI_API_KEY
+#   AI_REVIEWER_MODEL
+#   AI_VERIFIER_MODEL
 #
 # The server also requires AI_API_URL, AI_API_EMBEDDING_MODEL, and
-# AI_API_EMBEDDING_DIMENSIONS. This compose example supplies OpenAI defaults
-# below; set them in .env when using another provider or model.
+# AI_API_EMBEDDING_DIMENSIONS. This compose example supplies OpenAI embedding
+# defaults below; set them in .env when using another provider or model.
 #
 # This example exposes Dense-Mem only on localhost:
 #   MCP/API:        http://127.0.0.1:8080/mcp
 #   User portal:    http://127.0.0.1:8080/ui
 #   Control portal: http://127.0.0.1:8090/
 #
-# Fresh installs leave NEO4J_* unset and initialize PostgreSQL V2 directly.
-# For a legacy migration rehearsal, set NEO4J_URI=bolt://neo4j:7687 plus
-# NEO4J_USER/NEO4J_PASSWORD and start compose with --profile legacy-neo4j.
-
 services:
   postgres:
     image: pgvector/pgvector:0.8.2-pg18-trixie
@@ -41,34 +39,6 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  neo4j:
-    profiles: ["legacy-neo4j"]
-    image: neo4j:5.26-community
-    environment:
-      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-password}
-      NEO4J_PLUGINS: '["graph-data-science"]'
-      NEO4J_server_memory_heap_initial__size: 512m
-      NEO4J_server_memory_heap_max__size: 1g
-      NEO4J_server_memory_pagecache_size: 512m
-    volumes:
-      - neo4j-data:/data
-      - neo4j-logs:/logs
-      - neo4j-plugins:/plugins
-    networks:
-      - private
-    healthcheck:
-      test:
-        - "CMD-SHELL"
-        - >
-          wget -q --spider http://127.0.0.1:7474
-          && cypher-shell -u "${NEO4J_USER:-neo4j}" -p "${NEO4J_PASSWORD:-password}" 'RETURN 1' >/dev/null 2>&1
-          || exit 1
-      interval: 10s
-      timeout: 10s
-      retries: 20
-      start_period: 60s
-    restart: unless-stopped
-
   server:
     image: ghcr.io/markhuangai/dense-mem:latest
     environment:
@@ -84,10 +54,6 @@ services:
       POSTGRES_MAX_OPEN_CONNS: ${POSTGRES_MAX_OPEN_CONNS:-25}
       POSTGRES_MAX_IDLE_CONNS: ${POSTGRES_MAX_IDLE_CONNS:-10}
       POSTGRES_CONN_MAX_LIFETIME_SECONDS: ${POSTGRES_CONN_MAX_LIFETIME_SECONDS:-1800}
-      NEO4J_URI: ${NEO4J_URI:-}
-      NEO4J_USER: ${NEO4J_USER:-}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-}
-      NEO4J_DATABASE: ${NEO4J_DATABASE:-}
       REDIS_ADDR: ""
       REDIS_TLS_ENABLED: ${REDIS_TLS_ENABLED:-false}
       DISTRIBUTED_COORDINATION_REQUIRED: ${DISTRIBUTED_COORDINATION_REQUIRED:-false}
@@ -99,7 +65,8 @@ services:
       EMBEDDING_JOB_MAX_ATTEMPTS: ${EMBEDDING_JOB_MAX_ATTEMPTS:-20}
       AI_VERIFIER_API_URL: ${AI_VERIFIER_API_URL:-}
       AI_VERIFIER_API_KEY: ${AI_VERIFIER_API_KEY:-}
-      AI_VERIFIER_MODEL: ${AI_VERIFIER_MODEL:-gpt-4o-mini}
+      AI_REVIEWER_MODEL: ${AI_REVIEWER_MODEL:?AI_REVIEWER_MODEL must be set in .env}
+      AI_VERIFIER_MODEL: ${AI_VERIFIER_MODEL:?AI_VERIFIER_MODEL must be set in .env}
       AI_VERIFIER_DISABLE_TEMPERATURE: ${AI_VERIFIER_DISABLE_TEMPERATURE:-false}
       AI_VERIFIER_TIMEOUT_SECONDS: ${AI_VERIFIER_TIMEOUT_SECONDS:-60}
       AI_VERIFIER_MAX_CONCURRENCY: ${AI_VERIFIER_MAX_CONCURRENCY:-5}
@@ -126,9 +93,6 @@ services:
 
 volumes:
   postgres-data:
-  neo4j-data:
-  neo4j-logs:
-  neo4j-plugins:
 
 networks:
   private:

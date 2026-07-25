@@ -11,16 +11,16 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
-func TestBuildV2UATRecallRecordsFeedbackSnapshot(t *testing.T) {
+func TestBuildActiveRecallRecordsFeedbackSnapshot(t *testing.T) {
 	recorder := &stubRecallFeedbackRecorder{}
-	reg, err := BuildV2UAT(Dependencies{
-		V2Recall:             &stubV2RecallService{},
+	reg, err := BuildActive(Dependencies{
+		Recall:               &stubRecallService{},
 		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
 		RecallFeedbackEvents: recorder,
 		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
 	})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	recall, _ := reg.Get(V2ToolRecallMemory)
 	out, err := recall.Invoke(v2ContractInvokeContext("read"), "ignored-profile", map[string]any{

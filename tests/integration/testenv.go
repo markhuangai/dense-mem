@@ -10,8 +10,6 @@ type TestEnvProvider interface {
 	Setup(ctx context.Context) error
 	Teardown(ctx context.Context) error
 	GetPostgresDSN() string
-	GetNeo4jURI() string
-	GetNeo4jAuth() (username, password string)
 	GetRedisAddr() string
 	GetServerBaseURL() string
 }
@@ -19,11 +17,8 @@ type TestEnvProvider interface {
 // TestEnv is a shared integration fixture that manages test containers
 // and in-process server lifecycle for UAT tests
 type TestEnv struct {
-	postgresDSN   string
-	neo4jURI      string
-	neo4jUser     string
-	neo4jPassword string
-	redisAddr     string
+	postgresDSN string
+	redisAddr   string
 
 	// Server
 	serverBaseURL string
@@ -47,16 +42,6 @@ func (te *TestEnv) Teardown(ctx context.Context) error {
 // GetPostgresDSN returns the connection string for the test Postgres container
 func (te *TestEnv) GetPostgresDSN() string {
 	return te.postgresDSN
-}
-
-// GetNeo4jURI returns the Bolt URI for the test Neo4j container
-func (te *TestEnv) GetNeo4jURI() string {
-	return te.neo4jURI
-}
-
-// GetNeo4jAuth returns the credentials for the test Neo4j container
-func (te *TestEnv) GetNeo4jAuth() (username, password string) {
-	return te.neo4jUser, te.neo4jPassword
 }
 
 // GetRedisAddr returns the address for the test Redis container

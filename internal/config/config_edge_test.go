@@ -14,8 +14,6 @@ func TestLoadValidation_RemainingInvalidEnvironmentBranches(t *testing.T) {
 		{"invalid redis db", func() { os.Setenv("REDIS_DB", "bad") }, "REDIS_DB"},
 		{"invalid http max body bytes", func() { os.Setenv("HTTP_MAX_BODY_BYTES", "bad") }, "HTTP_MAX_BODY_BYTES"},
 		{"invalid auth verify concurrency", func() { os.Setenv("AUTH_VERIFY_MAX_CONCURRENCY", "bad") }, "AUTH_VERIFY_MAX_CONCURRENCY"},
-		{"invalid graph default timeout", func() { os.Setenv("GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS", "bad") }, "GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS"},
-		{"invalid graph max timeout", func() { os.Setenv("GRAPH_QUERY_MAX_TIMEOUT_SECONDS", "bad") }, "GRAPH_QUERY_MAX_TIMEOUT_SECONDS"},
 		{"invalid fragment create rate", func() { os.Setenv("FRAGMENT_CREATE_RATE_LIMIT", "bad") }, "FRAGMENT_CREATE_RATE_LIMIT"},
 		{"invalid fragment read rate", func() { os.Setenv("FRAGMENT_READ_RATE_LIMIT", "bad") }, "FRAGMENT_READ_RATE_LIMIT"},
 		{"invalid sse heartbeat", func() { os.Setenv("SSE_HEARTBEAT_SECONDS", "bad") }, "SSE_HEARTBEAT_SECONDS"},
@@ -83,6 +81,8 @@ func TestValidateServerStartupRemainingRequiredFields(t *testing.T) {
 		AIAPIKey:              "sk-test",
 		AIEmbeddingModel:      "text-embedding-3-small",
 		AIEmbeddingDimensions: 1536,
+		AIReviewerModel:       "reviewer-model",
+		AIVerifierModel:       "verifier-model",
 		ControlPortalToken:    "control-secret",
 	}
 	cases := []struct {
@@ -93,6 +93,8 @@ func TestValidateServerStartupRemainingRequiredFields(t *testing.T) {
 		{"missing api key", func(c *Config) { c.AIAPIKey = "" }, "AI_API_KEY"},
 		{"missing embedding model", func(c *Config) { c.AIEmbeddingModel = "" }, "AI_API_EMBEDDING_MODEL"},
 		{"missing embedding dimensions", func(c *Config) { c.AIEmbeddingDimensions = 0 }, "AI_API_EMBEDDING_DIMENSIONS"},
+		{"missing reviewer model", func(c *Config) { c.AIReviewerModel = "" }, "AI_REVIEWER_MODEL"},
+		{"missing verifier model", func(c *Config) { c.AIVerifierModel = "" }, "AI_VERIFIER_MODEL"},
 	}
 
 	for _, tc := range cases {

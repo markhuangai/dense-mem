@@ -112,6 +112,7 @@ type OpenAIVerifier struct {
 	baseURL            string
 	apiKey             string
 	model              string
+	reviewerModel      string
 	disableTemperature bool
 	httpClient         *http.Client
 	metrics            observability.DiscoverabilityMetrics
@@ -137,6 +138,7 @@ func NewOpenAIVerifier(cfg config.ConfigProvider, httpClient *http.Client) *Open
 		baseURL:            cfg.GetAIVerifierAPIURL(),
 		apiKey:             cfg.GetAIVerifierAPIKey(),
 		model:              cfg.GetAIVerifierModel(),
+		reviewerModel:      cfg.GetAIReviewerModel(),
 		disableTemperature: config.AIVerifierTemperatureDisabled(cfg),
 		httpClient:         client,
 		metrics:            observability.NoopDiscoverabilityMetrics(),
@@ -165,7 +167,7 @@ func (v *OpenAIVerifier) ProposeV2Semantic(ctx context.Context, req V2ProviderPr
 			Message:  "invalid v2 provider proposal request: " + openAIV2ValidationSummary(validationErrors),
 		}
 	}
-	rawContent, err := v.openAIStructuredChatJSON(ctx, V2ProviderProposalSchemaName, V2ProviderProposalSchema(), openAIV2SemanticProposalPrompt, prepared)
+	rawContent, err := v.openAIStructuredChatJSON(ctx, v.reviewerModel, V2ProviderProposalSchemaName, V2ProviderProposalSchema(), openAIV2SemanticProposalPrompt, prepared)
 	if err != nil {
 		return V2ProviderProposal{}, err
 	}
@@ -180,15 +182,15 @@ func (v *OpenAIVerifier) ProposeV2Semantic(ctx context.Context, req V2ProviderPr
 	return proposal, nil
 }
 
-func (v *OpenAIVerifier) ReviewV2Semantic(ctx context.Context, req V2SemanticReviewRequest) (V2SemanticReviewResponse, error) {
+func (v *OpenAIVerifier) ReviewSemantic(ctx context.Context, req V2SemanticReviewRequest) (V2SemanticReviewResponse, error) {
 	prepared, validationErrors := PrepareV2SemanticReviewRequest(req)
 	if len(validationErrors) > 0 {
 		return V2SemanticReviewResponse{}, &ProviderError{
 			Provider: openAIVerifierProvider,
-			Message:  "invalid v2 semantic review request: " + openAIV2ValidationSummary(validationErrors),
+			Message:  "invalid semantic review request: " + openAIV2ValidationSummary(validationErrors),
 		}
 	}
-	rawContent, err := v.openAIStructuredChatJSON(ctx, V2VerifierResponseSchemaName, V2VerifierResponseSchema(), openAIV2SemanticReviewPrompt, prepared)
+	rawContent, err := v.openAIStructuredChatJSON(ctx, v.model, V2VerifierResponseSchemaName, V2VerifierResponseSchema(), openAIV2SemanticReviewPrompt, prepared)
 	if err != nil {
 		return V2SemanticReviewResponse{}, err
 	}
@@ -196,7 +198,7 @@ func (v *OpenAIVerifier) ReviewV2Semantic(ctx context.Context, req V2SemanticRev
 	if err != nil {
 		return V2SemanticReviewResponse{}, &MalformedResponseError{
 			Provider: openAIVerifierProvider,
-			Message:  "failed to parse v2 semantic review response",
+			Message:  "failed to parse semantic review response",
 			RawJSON:  rawContent,
 		}
 	}
@@ -397,6 +399,7 @@ func (v *OpenAIVerifier) Verify(ctx context.Context, req Request) (Response, err
 
 func (v *OpenAIVerifier) openAIStructuredChatJSON(
 	ctx context.Context,
+	model string,
 	schemaName string,
 	schema map[string]any,
 	systemPrompt string,
@@ -405,7 +408,7 @@ func (v *OpenAIVerifier) openAIStructuredChatJSON(
 	started := time.Now()
 	latencyOutcome := "error"
 	defer func() {
-		observability.RecordVerifierLatency(ctx, v.metrics, v.model, float64(time.Since(started).Milliseconds()), latencyOutcome)
+		observability.RecordVerifierLatency(ctx, v.metrics, model, float64(time.Since(started).Milliseconds()), latencyOutcome)
 	}()
 	schemaRaw, err := json.Marshal(schema)
 	if err != nil {
@@ -424,7 +427,7 @@ func (v *OpenAIVerifier) openAIStructuredChatJSON(
 		}
 	}
 	chatReq := openAIVerifierRequest{
-		Model: v.model,
+		Model: model,
 		Messages: []openAIVerifierMessage{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: string(userJSON)},
@@ -513,7 +516,7 @@ func (v *OpenAIVerifier) openAIStructuredChatJSON(
 		}
 	}
 	if apiResp.Usage != nil {
-		observability.RecordVerifierTokens(ctx, v.metrics, v.model, apiResp.Usage.PromptTokens, apiResp.Usage.CompletionTokens, apiResp.Usage.TotalTokens)
+		observability.RecordVerifierTokens(ctx, v.metrics, model, apiResp.Usage.PromptTokens, apiResp.Usage.CompletionTokens, apiResp.Usage.TotalTokens)
 	}
 	latencyOutcome = "ok"
 	return apiResp.Choices[0].Message.Content, nil

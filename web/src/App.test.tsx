@@ -49,7 +49,7 @@ const metricsSnapshot: ControlMetrics = {
   },
   dependencies: [
     { name: "postgres", status: "ok", latency_ms: 3 },
-    { name: "neo4j", status: "ok", latency_ms: 8 },
+    { name: "redis", status: "ok", latency_ms: 8 },
   ],
   teams: [
     { team_id: profileA.id, team_name: "Default", requests: 42, errors: 2, avg_latency_ms: 18.5, max_latency_ms: 90 },
@@ -785,7 +785,7 @@ function mockPortalFetch({
     const parsedUrl = new URL(url, "http://localhost");
 
     if (url.endsWith("/session")) {
-      return jsonResponse({ data: { authenticated: true, portal_mode: "normal", legacy_config_present: false } });
+      return jsonResponse({ data: { authenticated: true } });
     }
     if (url.includes("/telemetry") && method === "GET") {
       return jsonResponse({ data: telemetrySnapshot });

@@ -346,7 +346,7 @@ func TestV2SemanticRelationshipLifecycleAndRLS(t *testing.T) {
 	assert.NotEmpty(t, unknown.ReviewTaskID)
 
 	var beforeObservations, beforeReviews int64
-	err = rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		if err := tx.Raw(`
 				SELECT COUNT(*)
 				FROM relationship_observations
@@ -379,7 +379,7 @@ func TestV2SemanticRelationshipLifecycleAndRLS(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrV2SemanticOwnerMismatch), err)
-	err = rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		var afterObservations, afterReviews int64
 		if err := tx.Raw(`
 				SELECT COUNT(*)
@@ -606,7 +606,7 @@ func TestV2SemanticCreateHypothesisBootstrapsRefsAndDefaultsProposed(t *testing.
 	require.NoError(t, err)
 	require.NotEmpty(t, hypothesisID)
 
-	err = rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		var status string
 		if err := tx.Raw(`
 			SELECT status
@@ -644,7 +644,7 @@ func TestV2SemanticOneCardinalitySupersedesPriorActiveRelationship(t *testing.T)
 
 	denseMem := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense-Mem")
 	postgres := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "PostgreSQL")
-	neo4j := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "Neo4j")
+	graphdb := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "GraphDB")
 	firstIngest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
 		"primary database postgres", "Dense-Mem uses PostgreSQL as its primary database.")
 	first := applyV2SemanticDecision(t, ctx, semanticRepo, V2ApplyRelationshipDecisionInput{
@@ -665,19 +665,19 @@ func TestV2SemanticOneCardinalitySupersedesPriorActiveRelationship(t *testing.T)
 	require.Equal(t, "active", first.Relationship.Status)
 
 	secondIngest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
-		"primary database neo4j", "Dense-Mem used Neo4j as its primary database before V2.")
+		"primary database graphdb", "Dense-Mem used GraphDB as its primary database before V2.")
 	second := applyV2SemanticDecision(t, ctx, semanticRepo, V2ApplyRelationshipDecisionInput{
 		TeamID:          teamID,
 		OwnerProfileID:  ownerID,
 		IngestID:        secondIngest.IngestID,
 		SubjectEntityID: denseMem.EntityID,
 		PredicateKey:    "primary_database",
-		ObjectEntityID:  neo4j.EntityID,
+		ObjectEntityID:  graphdb.EntityID,
 		Support: &V2EvidenceSupportInput{
 			FragmentID:     secondIngest.Evidence[0].FragmentID,
 			SourceGroupKey: "conversation:primary-db-2",
 			SpanStart:      0,
-			SpanEnd:        len("Dense-Mem used Neo4j as its primary database before V2."),
+			SpanEnd:        len("Dense-Mem used GraphDB as its primary database before V2."),
 			Authority:      "primary",
 		},
 	})
@@ -796,7 +796,7 @@ func TestV2SemanticAppendOnlyHistoryAndRetraction(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			UPDATE relationship_transition_events
 			SET reason = 'rewritten'

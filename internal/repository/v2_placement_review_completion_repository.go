@@ -20,8 +20,6 @@ type V2CompletePlacementReviewInput struct {
 	PlacementItemID  string
 	WorkerID         string
 	ExpectedAttempts int
-	MigrationRunID   string
-	MigrationEpoch   int
 	OutcomeKind      string
 	Status           string
 	Category         string
@@ -41,8 +39,6 @@ type V2RequeuePlacementReviewInput struct {
 	PlacementItemID  string
 	WorkerID         string
 	ExpectedAttempts int
-	MigrationRunID   string
-	MigrationEpoch   int
 }
 
 type V2RequeuePlacementReviewResult struct {
@@ -180,7 +176,6 @@ func normalizeV2CompletePlacementReviewInput(input V2CompletePlacementReviewInpu
 	input.PlacementRunID = strings.TrimSpace(input.PlacementRunID)
 	input.PlacementItemID = strings.TrimSpace(input.PlacementItemID)
 	input.WorkerID = strings.TrimSpace(input.WorkerID)
-	input.MigrationRunID = strings.TrimSpace(input.MigrationRunID)
 	input.OutcomeKind = strings.TrimSpace(input.OutcomeKind)
 	input.Status = strings.TrimSpace(input.Status)
 	input.Category = strings.TrimSpace(input.Category)
@@ -197,7 +192,6 @@ func normalizeV2RequeuePlacementReviewInput(input V2RequeuePlacementReviewInput)
 	input.PlacementRunID = strings.TrimSpace(input.PlacementRunID)
 	input.PlacementItemID = strings.TrimSpace(input.PlacementItemID)
 	input.WorkerID = strings.TrimSpace(input.WorkerID)
-	input.MigrationRunID = strings.TrimSpace(input.MigrationRunID)
 	return input
 }
 
@@ -218,9 +212,6 @@ func validateV2CompletePlacementReviewInput(input V2CompletePlacementReviewInput
 	}
 	if input.ExpectedAttempts < 1 {
 		return errors.New("expected_attempts must be greater than zero")
-	}
-	if err := validateV2PlacementMigrationFence(input.MigrationRunID, input.MigrationEpoch); err != nil {
-		return err
 	}
 	switch input.Status {
 	case string(domain.V2SemanticReviewReviewRequired),
@@ -251,9 +242,6 @@ func validateV2RequeuePlacementReviewInput(input V2RequeuePlacementReviewInput) 
 	if input.ExpectedAttempts < 1 {
 		return errors.New("expected_attempts must be greater than zero")
 	}
-	if err := validateV2PlacementMigrationFence(input.MigrationRunID, input.MigrationEpoch); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -266,8 +254,6 @@ func v2PlacementCommitScope(input V2CompletePlacementReviewInput) V2CommitPlacem
 		PlacementItemID:  input.PlacementItemID,
 		WorkerID:         input.WorkerID,
 		ExpectedAttempts: input.ExpectedAttempts,
-		MigrationRunID:   input.MigrationRunID,
-		MigrationEpoch:   input.MigrationEpoch,
 	}
 }
 
@@ -280,8 +266,6 @@ func v2PlacementRetryScope(input V2RequeuePlacementReviewInput) V2CommitPlacemen
 		PlacementItemID:  input.PlacementItemID,
 		WorkerID:         input.WorkerID,
 		ExpectedAttempts: input.ExpectedAttempts,
-		MigrationRunID:   input.MigrationRunID,
-		MigrationEpoch:   input.MigrationEpoch,
 	}
 }
 

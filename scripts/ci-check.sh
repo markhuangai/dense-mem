@@ -6,7 +6,6 @@ cd "${ROOT_DIR}"
 
 npm ci --prefix .lint
 npm run --prefix .lint lint:lines
-./scripts/validate-v2-parity-ledger.sh
 
 packages="$(
 	git ls-files '*.go' |

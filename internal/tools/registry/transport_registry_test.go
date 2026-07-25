@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-func TestBuildV2UATActivatesMCPTools(t *testing.T) {
-	reg, err := BuildV2UAT(Dependencies{})
+func TestBuildActiveActivatesFullMCPToolSet(t *testing.T) {
+	reg, err := BuildActive(Dependencies{})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	for _, name := range []string{
 		V2ToolRemember,
@@ -20,18 +20,18 @@ func TestBuildV2UATActivatesMCPTools(t *testing.T) {
 	} {
 		tool, ok := reg.Get(name)
 		if !ok {
-			t.Fatalf("BuildV2UAT missing %s", name)
+			t.Fatalf("BuildActive missing %s", name)
 		}
 		if !ToolVisible(context.Background(), tool, nil) {
-			t.Fatalf("%s is not visible in the UAT MCP registry", name)
+			t.Fatalf("%s is not visible in the active MCP registry", name)
 		}
 	}
 }
 
-func TestBuildV2ActiveActivatesMCPTools(t *testing.T) {
-	reg, err := BuildV2Active(Dependencies{})
+func TestBuildActiveActivatesCoreMemoryTools(t *testing.T) {
+	reg, err := BuildActive(Dependencies{})
 	if err != nil {
-		t.Fatalf("BuildV2Active: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	for _, name := range []string{
 		V2ToolRemember,
@@ -40,7 +40,7 @@ func TestBuildV2ActiveActivatesMCPTools(t *testing.T) {
 	} {
 		tool, ok := reg.Get(name)
 		if !ok {
-			t.Fatalf("BuildV2Active missing %s", name)
+			t.Fatalf("BuildActive missing %s", name)
 		}
 		if !ToolVisible(context.Background(), tool, nil) {
 			t.Fatalf("%s is not visible in the active MCP registry", name)
@@ -49,9 +49,9 @@ func TestBuildV2ActiveActivatesMCPTools(t *testing.T) {
 }
 
 func TestHTTPRegistryViewKeepsV2MemoryToolsMCPOnly(t *testing.T) {
-	uat, err := BuildV2UAT(Dependencies{})
+	uat, err := BuildActive(Dependencies{})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	httpReg, err := HTTPRegistryView(uat)
 	if err != nil {
@@ -76,21 +76,5 @@ func TestHTTPRegistryViewKeepsV2MemoryToolsMCPOnly(t *testing.T) {
 
 	if _, ok := httpReg.Get(V2ToolListDreams); !ok {
 		t.Fatal("HTTP registry filtered non-memory V2 tool list_dreams")
-	}
-}
-
-func TestHTTPRegistryViewDoesNotHideLegacyToolNames(t *testing.T) {
-	defaultReg, err := BuildDefault(Dependencies{})
-	if err != nil {
-		t.Fatalf("BuildDefault: %v", err)
-	}
-	httpReg, err := HTTPRegistryView(defaultReg)
-	if err != nil {
-		t.Fatalf("HTTPRegistryView: %v", err)
-	}
-	for _, name := range []string{V2ToolRemember, V2ToolRecallMemory, V2ToolTraceMemory} {
-		if _, ok := httpReg.Get(name); !ok {
-			t.Fatalf("HTTP registry hid legacy tool name %s", name)
-		}
 	}
 }

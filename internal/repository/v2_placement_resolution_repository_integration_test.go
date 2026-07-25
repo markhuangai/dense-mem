@@ -298,7 +298,7 @@ func TestV2PlacementResolutionBlocksProcessingState(t *testing.T) {
 	ledgerRepo := NewV2LedgerRepository(appDB, rls)
 	ingest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
 		"placement-resolution-processing", "Processing item.")
-	require.NoError(t, rls.WithMigrationTx(ctx, adminDB, func(tx *gorm.DB) error {
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			UPDATE placement_runs
 			SET status = 'processing',

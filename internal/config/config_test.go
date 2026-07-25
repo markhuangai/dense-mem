@@ -13,19 +13,17 @@ func clearEnv() {
 		"POSTGRES_MAX_OPEN_CONNS",
 		"POSTGRES_MAX_IDLE_CONNS",
 		"POSTGRES_CONN_MAX_LIFETIME_SECONDS",
-		"NEO4J_URI",
-		"NEO4J_USER",
-		"NEO4J_PASSWORD",
-		"NEO4J_DATABASE",
 		"REDIS_ADDR",
 		"REDIS_PASSWORD",
 		"REDIS_DB",
 		"REDIS_TLS_ENABLED",
 		"DISTRIBUTED_COORDINATION_REQUIRED",
+		"NEO4J_URI",
+		"NEO4J_USER",
+		"NEO4J_PASSWORD",
+		"NEO4J_DATABASE",
 		"HTTP_MAX_BODY_BYTES",
 		"AUTH_VERIFY_MAX_CONCURRENCY",
-		"GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS",
-		"GRAPH_QUERY_MAX_TIMEOUT_SECONDS",
 		"RATE_LIMIT_PER_MINUTE",
 		"FRAGMENT_CREATE_RATE_LIMIT",
 		"FRAGMENT_READ_RATE_LIMIT",
@@ -41,6 +39,7 @@ func clearEnv() {
 		// Knowledge-pipeline knobs
 		"AI_VERIFIER_API_URL",
 		"AI_VERIFIER_API_KEY",
+		"AI_REVIEWER_MODEL",
 		"AI_VERIFIER_MODEL",
 		"AI_VERIFIER_DISABLE_TEMPERATURE",
 		"AI_VERIFIER_TIMEOUT_SECONDS",
@@ -74,9 +73,6 @@ func clearEnv() {
 // setRequiredEnv sets the minimum required environment variables for a valid config
 func setRequiredEnv() {
 	os.Setenv("POSTGRES_DSN", "postgres://user:pass@localhost/db?sslmode=disable")
-	os.Setenv("NEO4J_URI", "bolt://localhost:7687")
-	os.Setenv("NEO4J_USER", "neo4j")
-	os.Setenv("NEO4J_PASSWORD", "password")
 	os.Setenv("CONTROL_PORTAL_TOKEN", "control-secret")
 }
 
@@ -85,6 +81,11 @@ func setRequiredEmbeddingEnv() {
 	os.Setenv("AI_API_KEY", "sk-test")
 	os.Setenv("AI_API_EMBEDDING_MODEL", "text-embedding-3-small")
 	os.Setenv("AI_API_EMBEDDING_DIMENSIONS", "1536")
+}
+
+func setRequiredModelEnv() {
+	os.Setenv("AI_REVIEWER_MODEL", "reviewer-model")
+	os.Setenv("AI_VERIFIER_MODEL", "verifier-model")
 }
 
 func TestLoadDefaults(t *testing.T) {
@@ -113,12 +114,6 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.AuthVerifyMaxConcurrency != 8 {
 		t.Errorf("AuthVerifyMaxConcurrency default = %d, want %d", cfg.AuthVerifyMaxConcurrency, 8)
-	}
-	if cfg.GraphQueryDefaultTimeoutSeconds != 10 {
-		t.Errorf("GraphQueryDefaultTimeoutSeconds default = %d, want %d", cfg.GraphQueryDefaultTimeoutSeconds, 10)
-	}
-	if cfg.GraphQueryMaxTimeoutSeconds != 30 {
-		t.Errorf("GraphQueryMaxTimeoutSeconds default = %d, want %d", cfg.GraphQueryMaxTimeoutSeconds, 30)
 	}
 	if cfg.SSEHeartbeatSeconds != 30 {
 		t.Errorf("SSEHeartbeatSeconds default = %d, want %d", cfg.SSEHeartbeatSeconds, 30)
@@ -166,17 +161,38 @@ func TestLoadEmbeddingJobMaxAttempts(t *testing.T) {
 	}
 }
 
-func TestLoadAllowsMissingNeo4jForFreshV2(t *testing.T) {
+func TestLoadAllowsPostgresOnlyConfig(t *testing.T) {
 	clearEnv()
 	os.Setenv("POSTGRES_DSN", "postgres://user:pass@localhost/db?sslmode=disable")
 	os.Setenv("CONTROL_PORTAL_TOKEN", "control-secret")
 
 	cfg, err := Load()
 	if err != nil {
-		t.Fatalf("Load() returned unexpected error without Neo4j: %v", err)
+		t.Fatalf("Load() returned unexpected error with Postgres-only config: %v", err)
 	}
-	if cfg.HasNeo4jConfig() {
-		t.Fatalf("HasNeo4jConfig() = true, want false: %#v", cfg)
+	if cfg.PostgresDSN == "" {
+		t.Fatal("PostgresDSN was not loaded")
+	}
+}
+
+func TestLoadRejectsLegacyNeo4jConfig(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+	os.Setenv("NEO4J_URI", "bolt://neo4j:7687")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() expected error for legacy Neo4j config, got nil")
+	}
+	validationErr, ok := err.(*ValidationError)
+	if !ok {
+		t.Fatalf("expected *ValidationError, got %T", err)
+	}
+	if validationErr.Field != "NEO4J_URI" {
+		t.Errorf("ValidationError.Field = %q, want NEO4J_URI", validationErr.Field)
+	}
+	if validationErr.Message != "legacy Neo4j configuration is no longer supported; run v2.1.2 to complete migration before upgrading" {
+		t.Errorf("ValidationError.Message = %q", validationErr.Message)
 	}
 }
 
@@ -236,9 +252,6 @@ func TestLoadTelemetryConfigRequiresScrapeToken(t *testing.T) {
 
 func TestLoadValidation_MissingPostgresDSN(t *testing.T) {
 	clearEnv()
-	os.Setenv("NEO4J_URI", "bolt://localhost:7687")
-	os.Setenv("NEO4J_USER", "neo4j")
-	os.Setenv("NEO4J_PASSWORD", "password")
 
 	_, err := Load()
 	if err == nil {
@@ -251,23 +264,6 @@ func TestLoadValidation_MissingPostgresDSN(t *testing.T) {
 	}
 	if validationErr.Field != "POSTGRES_DSN" {
 		t.Errorf("ValidationError.Field = %q, want %q", validationErr.Field, "POSTGRES_DSN")
-	}
-}
-
-func TestLoadAllowsPartialNeo4jConfigForPostCutoverCleanup(t *testing.T) {
-	clearEnv()
-	os.Setenv("POSTGRES_DSN", "postgres://user:pass@localhost/db?sslmode=disable")
-	os.Setenv("NEO4J_USER", "neo4j")
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() returned unexpected error for partial Neo4j cleanup config: %v", err)
-	}
-	if !cfg.HasNeo4jConfig() {
-		t.Fatalf("HasNeo4jConfig() = false, want true")
-	}
-	if cfg.HasCompleteNeo4jConfig() {
-		t.Fatalf("HasCompleteNeo4jConfig() = true, want false")
 	}
 }
 
@@ -328,38 +324,15 @@ func TestLoadValidation_NegativeInteger(t *testing.T) {
 	}
 }
 
-func TestLoadValidation_GraphQueryDefaultTimeoutExceedsMax(t *testing.T) {
-	clearEnv()
-	setRequiredEnv()
-	os.Setenv("GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS", "60")
-	os.Setenv("GRAPH_QUERY_MAX_TIMEOUT_SECONDS", "30")
-
-	_, err := Load()
-	if err == nil {
-		t.Fatal("Load() expected error for graph_query timeout mismatch, got nil")
-	}
-
-	validationErr, ok := err.(*ValidationError)
-	if !ok {
-		t.Fatalf("expected *ValidationError, got %T", err)
-	}
-	if validationErr.Field != "GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS" {
-		t.Errorf("ValidationError.Field = %q, want %q", validationErr.Field, "GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS")
-	}
-}
-
 func TestLoadOverrides(t *testing.T) {
 	clearEnv()
 	setRequiredEnv()
 
 	// Override all values
-	os.Setenv("NEO4J_DATABASE", "testdb")
 	os.Setenv("REDIS_PASSWORD", "redispass")
 	os.Setenv("REDIS_DB", "5")
 	os.Setenv("HTTP_MAX_BODY_BYTES", "2097152")
 	os.Setenv("AUTH_VERIFY_MAX_CONCURRENCY", "12")
-	os.Setenv("GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS", "20")
-	os.Setenv("GRAPH_QUERY_MAX_TIMEOUT_SECONDS", "60")
 	os.Setenv("RATE_LIMIT_PER_MINUTE", "200")
 	os.Setenv("SSE_HEARTBEAT_SECONDS", "60")
 	os.Setenv("SSE_MAX_DURATION_SECONDS", "600")
@@ -371,10 +344,6 @@ func TestLoadOverrides(t *testing.T) {
 		t.Fatalf("Load() returned unexpected error: %v", err)
 	}
 
-	// String overrides
-	if cfg.Neo4jDatabase != "testdb" {
-		t.Errorf("Neo4jDatabase = %q, want %q", cfg.Neo4jDatabase, "testdb")
-	}
 	if cfg.RedisPassword != "redispass" {
 		t.Errorf("RedisPassword = %q, want %q", cfg.RedisPassword, "redispass")
 	}
@@ -388,12 +357,6 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.AuthVerifyMaxConcurrency != 12 {
 		t.Errorf("AuthVerifyMaxConcurrency = %d, want %d", cfg.AuthVerifyMaxConcurrency, 12)
-	}
-	if cfg.GraphQueryDefaultTimeoutSeconds != 20 {
-		t.Errorf("GraphQueryDefaultTimeoutSeconds = %d, want %d", cfg.GraphQueryDefaultTimeoutSeconds, 20)
-	}
-	if cfg.GraphQueryMaxTimeoutSeconds != 60 {
-		t.Errorf("GraphQueryMaxTimeoutSeconds = %d, want %d", cfg.GraphQueryMaxTimeoutSeconds, 60)
 	}
 	if cfg.RateLimitPerMinute != 200 {
 		t.Errorf("RateLimitPerMinute = %d, want %d", cfg.RateLimitPerMinute, 200)
@@ -429,10 +392,6 @@ func TestConfigProviderInterface(t *testing.T) {
 
 	// Test all getter methods
 	_ = provider.GetPostgresDSN()
-	_ = provider.GetNeo4jURI()
-	_ = provider.GetNeo4jUser()
-	_ = provider.GetNeo4jPassword()
-	_ = provider.GetNeo4jDatabase()
 	_ = provider.GetRedisAddr()
 	_ = provider.GetRedisPassword()
 	_ = provider.GetRedisDB()
@@ -452,6 +411,7 @@ func TestConfigProviderInterface(t *testing.T) {
 	_ = provider.IsEmbeddingConfigured()
 	_ = provider.GetAIVerifierAPIURL()
 	_ = provider.GetAIVerifierAPIKey()
+	_ = provider.GetAIReviewerModel()
 	_ = provider.GetAIVerifierModel()
 	_ = provider.GetAIVerifierTimeoutSeconds()
 	_ = provider.GetAIVerifierMaxConcurrency()
@@ -472,6 +432,7 @@ func TestConfigGetterFallbacksAndParsers(t *testing.T) {
 		FragmentReadRateLimit:    22,
 		AIAPIURL:                 "https://shared.example/v1",
 		AIAPIKey:                 "shared-key",
+		AIReviewerModel:          "reviewer-model",
 		AIVerifierModel:          "verifier-model",
 		AIVerifierTimeoutSeconds: 0,
 	}
@@ -518,9 +479,6 @@ func TestValidationError_Error(t *testing.T) {
 func TestLoad_WithoutRedis_Succeeds(t *testing.T) {
 	clearEnv()
 	os.Setenv("POSTGRES_DSN", "postgres://user:pass@localhost/db?sslmode=disable")
-	os.Setenv("NEO4J_URI", "bolt://localhost:7687")
-	os.Setenv("NEO4J_USER", "neo4j")
-	os.Setenv("NEO4J_PASSWORD", "password")
 	os.Setenv("CONTROL_PORTAL_TOKEN", "control-secret")
 
 	cfg, err := Load()
@@ -549,9 +507,6 @@ func TestLoad_WithRedis_Succeeds(t *testing.T) {
 func TestLoad_EmbeddingConfig_AllOrNothing(t *testing.T) {
 	clearEnv()
 	os.Setenv("POSTGRES_DSN", "postgres://user:pass@localhost/db?sslmode=disable")
-	os.Setenv("NEO4J_URI", "bolt://localhost:7687")
-	os.Setenv("NEO4J_USER", "neo4j")
-	os.Setenv("NEO4J_PASSWORD", "password")
 	os.Setenv("CONTROL_PORTAL_TOKEN", "control-secret")
 	os.Setenv("AI_API_URL", "https://example.com/v1")
 	// Missing AI_API_KEY intentionally
@@ -575,9 +530,6 @@ func TestLoad_EmbeddingConfig_AllOrNothing(t *testing.T) {
 func TestLoad_EmbeddingConfig_Complete(t *testing.T) {
 	clearEnv()
 	os.Setenv("POSTGRES_DSN", "postgres://user:pass@localhost/db?sslmode=disable")
-	os.Setenv("NEO4J_URI", "bolt://localhost:7687")
-	os.Setenv("NEO4J_USER", "neo4j")
-	os.Setenv("NEO4J_PASSWORD", "password")
 	os.Setenv("CONTROL_PORTAL_TOKEN", "control-secret")
 	setRequiredEmbeddingEnv()
 
@@ -620,6 +572,7 @@ func TestLoadVerifierConfig_DefaultsToSharedAIConfig(t *testing.T) {
 	clearEnv()
 	setRequiredEnv()
 	setRequiredEmbeddingEnv()
+	setRequiredModelEnv()
 
 	cfg, err := Load()
 	if err != nil {
@@ -643,6 +596,7 @@ func TestLoadVerifierConfig_SeparateEndpoint(t *testing.T) {
 	setRequiredEmbeddingEnv()
 	os.Setenv("AI_VERIFIER_API_URL", "https://verifier.example.com/v1")
 	os.Setenv("AI_VERIFIER_API_KEY", "verifier-key")
+	os.Setenv("AI_REVIEWER_MODEL", "local-reviewer")
 	os.Setenv("AI_VERIFIER_MODEL", "local-verifier")
 	os.Setenv("AI_VERIFIER_TIMEOUT_SECONDS", "45")
 
@@ -660,6 +614,9 @@ func TestLoadVerifierConfig_SeparateEndpoint(t *testing.T) {
 	if got := cfg.GetAIVerifierAPIKey(); got != "verifier-key" {
 		t.Errorf("GetAIVerifierAPIKey() = %q, want %q", got, "verifier-key")
 	}
+	if got := cfg.GetAIReviewerModel(); got != "local-reviewer" {
+		t.Errorf("GetAIReviewerModel() = %q, want %q", got, "local-reviewer")
+	}
 	if got := cfg.GetAIVerifierModel(); got != "local-verifier" {
 		t.Errorf("GetAIVerifierModel() = %q, want %q", got, "local-verifier")
 	}
@@ -675,6 +632,7 @@ func TestLoadVerifierConfig_DisableTemperature(t *testing.T) {
 	clearEnv()
 	setRequiredEnv()
 	setRequiredEmbeddingEnv()
+	setRequiredModelEnv()
 	os.Setenv("AI_VERIFIER_DISABLE_TEMPERATURE", "true")
 
 	cfg, err := Load()
@@ -737,6 +695,7 @@ func TestValidateServerStartup_SucceedsWithEmbeddingConfig(t *testing.T) {
 	clearEnv()
 	setRequiredEnv()
 	setRequiredEmbeddingEnv()
+	setRequiredModelEnv()
 
 	cfg, err := Load()
 	if err != nil {
@@ -745,6 +704,51 @@ func TestValidateServerStartup_SucceedsWithEmbeddingConfig(t *testing.T) {
 
 	if err := cfg.ValidateServerStartup(); err != nil {
 		t.Fatalf("ValidateServerStartup() returned unexpected error: %v", err)
+	}
+}
+
+func TestValidateServerStartup_RequiresReviewerAndVerifierModels(t *testing.T) {
+	cases := []struct {
+		name  string
+		set   func()
+		field string
+	}{
+		{
+			name:  "missing reviewer model",
+			set:   func() { os.Setenv("AI_VERIFIER_MODEL", "verifier-model") },
+			field: "AI_REVIEWER_MODEL",
+		},
+		{
+			name:  "missing verifier model",
+			set:   func() { os.Setenv("AI_REVIEWER_MODEL", "reviewer-model") },
+			field: "AI_VERIFIER_MODEL",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnv()
+			setRequiredEnv()
+			setRequiredEmbeddingEnv()
+			tc.set()
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() returned unexpected error: %v", err)
+			}
+
+			err = cfg.ValidateServerStartup()
+			if err == nil {
+				t.Fatal("ValidateServerStartup() expected error, got nil")
+			}
+			validationErr, ok := err.(*ValidationError)
+			if !ok {
+				t.Fatalf("expected *ValidationError, got %T", err)
+			}
+			if validationErr.Field != tc.field {
+				t.Errorf("ValidationError.Field = %q, want %q", validationErr.Field, tc.field)
+			}
+		})
 	}
 }
 
@@ -759,8 +763,11 @@ func TestLoadKnowledgeConfigDefaults(t *testing.T) {
 		t.Fatalf("Load() returned unexpected error: %v", err)
 	}
 
-	if got := cfg.GetAIVerifierModel(); got != "gpt-4o-mini" {
-		t.Errorf("GetAIVerifierModel() = %q, want %q", got, "gpt-4o-mini")
+	if got := cfg.GetAIReviewerModel(); got != "" {
+		t.Errorf("GetAIReviewerModel() = %q, want empty", got)
+	}
+	if got := cfg.GetAIVerifierModel(); got != "" {
+		t.Errorf("GetAIVerifierModel() = %q, want empty", got)
 	}
 	if cfg.GetAIVerifierDisableTemperature() {
 		t.Error("GetAIVerifierDisableTemperature() = true, want false")
@@ -827,6 +834,7 @@ func TestLoadControlPortalValidation(t *testing.T) {
 		clearEnv()
 		setRequiredEnv()
 		setRequiredEmbeddingEnv()
+		setRequiredModelEnv()
 		os.Unsetenv("CONTROL_PORTAL_TOKEN")
 
 		cfg, err := Load()

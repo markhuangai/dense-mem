@@ -139,6 +139,56 @@ describe("UserApi", () => {
     );
   });
 
+  it("maps canonical V2 recall payloads to evidence display hits", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: {
+        recall_id: "rec_v2",
+        results: [
+          {
+            evidence_id: "11111111-1111-4111-8111-111111111111",
+            relationship_ids: ["22222222-2222-4222-8222-222222222222"],
+            rank: 2,
+            context: "Dense-Mem uses PostgreSQL as the durable authority.",
+          },
+        ],
+        conflicts: [],
+        discovery_paths: [
+          {
+            evidence_ids: ["11111111-1111-4111-8111-111111111111"],
+            relationships: [
+              {
+                relationship_id: "22222222-2222-4222-8222-222222222222",
+                subject: { entity_id: "33333333-3333-4333-8333-333333333333", name: "Dense-Mem" },
+                predicate: "uses",
+                object: { name: "PostgreSQL" },
+                polarity: "positive",
+              },
+            ],
+          },
+        ],
+        discovery_guidance: "No additional discovery guidance.",
+        related_hypotheses: [],
+        search_state: "current",
+      },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await new UserApi("dm_key").recall("postgres", 3);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].evidence?.evidence_id).toBe("11111111-1111-4111-8111-111111111111");
+    expect(result[0].evidence?.context).toContain("PostgreSQL");
+    expect(result[0].relationships?.[0].relationship_id).toBe("22222222-2222-4222-8222-222222222222");
+    expect(result[0].semantic_rank).toBe(2);
+    expect(result[0].final_score).toBe(0.5);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/recall?query=postgres&limit=3",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer dm_key" }),
+      }),
+    );
+  });
+
   it("throws ApiError with server message", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ message: "invalid api key" }), { status: 401 })));
 

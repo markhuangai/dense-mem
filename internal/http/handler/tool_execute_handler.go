@@ -15,12 +15,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/ownership"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service/claimservice"
-	"github.com/markhuangai/dense-mem/internal/service/communityservice"
-	"github.com/markhuangai/dense-mem/internal/service/factservice"
-	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
-	"github.com/markhuangai/dense-mem/internal/service/recallservice"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
@@ -200,43 +195,15 @@ func mapToolExecuteError(err error) *httperr.APIError {
 		return httperr.New(httperr.NOT_FOUND, "tool not found")
 	case errors.Is(err, ownership.ErrOwnerMismatch):
 		return httperr.New(httperr.FORBIDDEN, "only the owner profile can modify this knowledge")
-	case errors.Is(err, memoryservice.ErrV2RememberConflict),
+	case errors.Is(err, memoryservice.ErrRememberConflict),
 		errors.Is(err, repository.ErrV2IdempotencyConflict), errors.Is(err, repository.ErrV2SourceRevisionConflict):
-		return httperr.New(httperr.CONFLICT, "v2 remember conflict")
-	case errors.Is(err, claimservice.ErrSupportingFragmentMissing):
-		return httperr.New(httperr.ErrSupportingFragmentMissing, "supporting fragment missing or retracted")
-	case errors.Is(err, claimservice.ErrClaimNotFound):
-		return httperr.New(httperr.ErrClaimNotFound, "claim not found")
-	case errors.Is(err, factservice.ErrFactNotFound):
-		return httperr.New(httperr.ErrFactNotFound, "fact not found")
-	case errors.Is(err, fragmentservice.ErrFragmentNotFound):
-		return httperr.New(httperr.NOT_FOUND, "fragment not found")
+		return httperr.New(httperr.CONFLICT, "remember conflict")
 	case errors.Is(err, embedding.ErrEmbeddingTimeout):
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "embedding request timed out")
 	case errors.Is(err, embedding.ErrEmbeddingProvider):
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "embedding service unavailable")
 	case errors.Is(err, embedding.ErrEmbeddingRateLimit):
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "embedding service rate limited")
-	case errors.Is(err, fragmentservice.ErrEmbeddingFailed):
-		return httperr.New(httperr.SERVICE_UNAVAILABLE, "embedding service unavailable")
-	case errors.Is(err, communityservice.ErrCommunityUnavailable):
-		return httperr.New(httperr.SERVICE_UNAVAILABLE, "community detection service unavailable")
-	case errors.Is(err, communityservice.ErrCommunityGraphTooLarge):
-		return httperr.New(httperr.ErrCommunityGraphTooLarge, "knowledge graph too large for community detection")
-	case errors.Is(err, communityservice.ErrCommunityNotFound):
-		return httperr.New(httperr.NOT_FOUND, "community not found")
-	case errors.Is(err, factservice.ErrPredicateNotPoliced):
-		return httperr.New(httperr.ErrPredicateNotPoliced, "predicate not policed for promotion")
-	case errors.Is(err, factservice.ErrUnsupportedPolicy):
-		return httperr.New(httperr.ErrUnsupportedPolicy, "unsupported promotion policy")
-	case errors.Is(err, factservice.ErrClaimNotValidated):
-		return httperr.New(httperr.ErrNeedsClaimValidated, "claim must be validated before promotion")
-	case errors.Is(err, factservice.ErrGateRejected):
-		return httperr.New(httperr.ErrGateRejected, "claim did not meet promotion gate thresholds")
-	case errors.Is(err, factservice.ErrPromotionDeferredDisputed):
-		return httperr.New(httperr.ErrComparableDisputed, "promotion deferred: comparable fact exists")
-	case errors.Is(err, factservice.ErrPromotionRejected):
-		return httperr.New(httperr.ErrRejectedWeaker, "promotion rejected: claim weaker than existing fact")
 	case errors.Is(err, verifier.ErrVerifierRateLimit):
 		return httperr.New(httperr.ErrVerifierRateLimit, "verifier rate limited; retry later")
 	case errors.Is(err, verifier.ErrVerifierTimeout):
@@ -245,10 +212,6 @@ func mapToolExecuteError(err error) *httperr.APIError {
 		return httperr.New(httperr.ErrVerifierProvider, "verifier provider error")
 	case errors.Is(err, verifier.ErrVerifierMalformedResponse):
 		return httperr.New(httperr.ErrVerifierMalformedResponse, "verifier returned a malformed response")
-	case errors.Is(err, recallservice.ErrEmbeddingUnavailable):
-		return httperr.New(httperr.SERVICE_UNAVAILABLE, "embedding provider unavailable")
-	case errors.Is(err, recallservice.ErrKeywordUnavailable):
-		return httperr.New(httperr.SERVICE_UNAVAILABLE, "keyword search unavailable")
 	case strings.Contains(err.Error(), "invalid input"),
 		strings.Contains(err.Error(), "is required"),
 		strings.Contains(err.Error(), "invalid cursor"),

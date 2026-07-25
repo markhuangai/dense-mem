@@ -420,7 +420,7 @@ func normalizeV2TracePredicateKeys(values []string) []string {
 	return out
 }
 
-func normalizeV2SemanticGraphTypes(values []string) []string {
+func normalizeSemanticGraphTypes(values []string) []string {
 	set := v2SemanticGraphTypeSet(values)
 	out := make([]string, 0, len(set))
 	for _, value := range []string{"entity", "value"} {

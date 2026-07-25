@@ -198,3 +198,44 @@ func TestToolRegistry_ListReturnsAllRegistered(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeInputUsesRegisteredNormalizer(t *testing.T) {
+	input := map[string]any{"legacy": "value"}
+	normalized := NormalizeInput(Tool{
+		NormalizeInput: func(args map[string]any) map[string]any {
+			return map[string]any{"canonical": args["legacy"]}
+		},
+	}, input)
+	if normalized["canonical"] != "value" {
+		t.Fatalf("normalized input = %v", normalized)
+	}
+	empty := NormalizeInput(Tool{}, nil)
+	if len(empty) != 0 {
+		t.Fatalf("nil input without normalizer = %v", empty)
+	}
+}
+
+func TestToolVisibleRuntimeGates(t *testing.T) {
+	ctx := context.Background()
+	if !IsEvaluationTool("eval_run_dream_cycle") || IsEvaluationTool("remember") {
+		t.Fatal("IsEvaluationTool returned unexpected result")
+	}
+	if EvaluationEnabled(ctx, nil) || EvaluationEnabled(ctx, stubEvaluationConfig{err: errors.New("config failed")}) {
+		t.Fatal("EvaluationEnabled should fail closed")
+	}
+	if ToolVisible(ctx, Tool{Name: "eval_get_manifest"}, nil) {
+		t.Fatal("evaluation tool should be hidden without enabled config")
+	}
+	if !ToolVisible(ctx, Tool{Name: "eval_get_manifest"}, stubEvaluationConfig{enabled: true}) {
+		t.Fatal("evaluation tool should be visible with enabled config")
+	}
+	if ToolVisible(ctx, Tool{Name: EvalListRecallFeedbackEventsToolName}, stubRecallFeedbackConfig{enabled: false}) {
+		t.Fatal("recall feedback event tool should be hidden when feedback is disabled")
+	}
+	if !ToolVisible(ctx, Tool{Name: EvalListRecallFeedbackEventsToolName}, stubRecallFeedbackConfig{enabled: true}) {
+		t.Fatal("recall feedback event tool should be visible when feedback is enabled")
+	}
+	if !ToolVisible(ctx, Tool{Name: "ordinary_tool"}, nil) {
+		t.Fatal("ordinary tools should be visible by default")
+	}
+}

@@ -20,10 +20,6 @@ type stubConfigProvider struct {
 }
 
 func (s *stubConfigProvider) GetPostgresDSN() string                 { return "" }
-func (s *stubConfigProvider) GetNeo4jURI() string                    { return "" }
-func (s *stubConfigProvider) GetNeo4jUser() string                   { return "" }
-func (s *stubConfigProvider) GetNeo4jPassword() string               { return "" }
-func (s *stubConfigProvider) GetNeo4jDatabase() string               { return "" }
 func (s *stubConfigProvider) GetRedisAddr() string                   { return "" }
 func (s *stubConfigProvider) GetRedisPassword() string               { return "" }
 func (s *stubConfigProvider) GetRedisDB() int                        { return 0 }
@@ -43,6 +39,7 @@ func (s *stubConfigProvider) GetAIEmbeddingTimeoutSeconds() int      { return 30
 func (s *stubConfigProvider) IsEmbeddingConfigured() bool            { return false }
 func (s *stubConfigProvider) GetAIVerifierAPIURL() string            { return "" }
 func (s *stubConfigProvider) GetAIVerifierAPIKey() string            { return "" }
+func (s *stubConfigProvider) GetAIReviewerModel() string             { return "reviewer-model" }
 func (s *stubConfigProvider) GetAIVerifierModel() string             { return "gpt-4o-mini" }
 func (s *stubConfigProvider) GetAIVerifierTimeoutSeconds() int       { return 60 }
 func (s *stubConfigProvider) GetAIVerifierMaxConcurrency() int       { return s.maxConcurrency }

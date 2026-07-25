@@ -162,7 +162,7 @@ func V2ContractTools() []Tool {
 	}
 }
 
-func v2UATTools(deps Dependencies) []Tool {
+func contractTools(deps Dependencies) []Tool {
 	tools := V2ContractTools()
 	for i := range tools {
 		tools[i].Visibility = "active"
@@ -170,7 +170,7 @@ func v2UATTools(deps Dependencies) []Tool {
 		case V2ToolRemember:
 			tool := tools[i]
 			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-				if deps.V2Remember == nil {
+				if deps.Remember == nil {
 					return nil, ErrToolUnavailable
 				}
 				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
@@ -181,7 +181,7 @@ func v2UATTools(deps Dependencies) []Tool {
 					return nil, fmt.Errorf("remember: invalid input: %w", err)
 				}
 				req.ContractVersion = domain.V2ContractVersion
-				res, err := deps.V2Remember.RememberV2(ctx, req)
+				res, err := deps.Remember.Remember(ctx, req)
 				if err != nil {
 					return nil, err
 				}
@@ -190,7 +190,7 @@ func v2UATTools(deps Dependencies) []Tool {
 		case V2ToolGetMemoryPlacement:
 			tool := tools[i]
 			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-				if deps.V2Remember == nil {
+				if deps.Remember == nil {
 					return nil, ErrToolUnavailable
 				}
 				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
@@ -201,7 +201,7 @@ func v2UATTools(deps Dependencies) []Tool {
 					return nil, fmt.Errorf("get_memory_placement: invalid input: %w", err)
 				}
 				req.ContractVersion = domain.V2ContractVersion
-				res, err := deps.V2Remember.GetMemoryPlacementV2(ctx, req)
+				res, err := deps.Remember.GetMemoryPlacement(ctx, req)
 				if err != nil {
 					return nil, err
 				}
@@ -210,7 +210,7 @@ func v2UATTools(deps Dependencies) []Tool {
 		case V2ToolResolveMemoryPlacement:
 			tool := tools[i]
 			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-				if deps.V2Lifecycle == nil {
+				if deps.Lifecycle == nil {
 					return nil, ErrToolUnavailable
 				}
 				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
@@ -221,7 +221,7 @@ func v2UATTools(deps Dependencies) []Tool {
 					return nil, fmt.Errorf("resolve_memory_placement: invalid input: %w", err)
 				}
 				req.ContractVersion = domain.V2ContractVersion
-				res, err := deps.V2Lifecycle.ResolveMemoryPlacementV2(ctx, req)
+				res, err := deps.Lifecycle.ResolveMemoryPlacement(ctx, req)
 				if err != nil {
 					return nil, err
 				}
@@ -230,7 +230,7 @@ func v2UATTools(deps Dependencies) []Tool {
 		case V2ToolCorrectEntityResolution:
 			tool := tools[i]
 			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-				if deps.V2Lifecycle == nil {
+				if deps.Lifecycle == nil {
 					return nil, ErrToolUnavailable
 				}
 				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
@@ -241,7 +241,7 @@ func v2UATTools(deps Dependencies) []Tool {
 					return nil, fmt.Errorf("correct_entity_resolution: invalid input: %w", err)
 				}
 				req.ContractVersion = domain.V2ContractVersion
-				res, err := deps.V2Lifecycle.CorrectEntityResolutionV2(ctx, req)
+				res, err := deps.Lifecycle.CorrectEntityResolution(ctx, req)
 				if err != nil {
 					return nil, err
 				}
@@ -250,7 +250,7 @@ func v2UATTools(deps Dependencies) []Tool {
 		case V2ToolRecallMemory:
 			tool := tools[i]
 			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-				if deps.V2Recall == nil {
+				if deps.Recall == nil {
 					return nil, ErrToolUnavailable
 				}
 				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
@@ -261,7 +261,7 @@ func v2UATTools(deps Dependencies) []Tool {
 					return nil, fmt.Errorf("recall_memory: invalid input: %w", err)
 				}
 				req.ContractVersion = domain.V2ContractVersion
-				res, err := deps.V2Recall.RecallV2(ctx, req)
+				res, err := deps.Recall.Recall(ctx, req)
 				if err != nil {
 					return nil, err
 				}
@@ -285,8 +285,8 @@ func v2UATTools(deps Dependencies) []Tool {
 				if err != nil {
 					return nil, err
 				}
-				if res != nil && res.V2Semantic != nil {
-					return v2TraceContractOutput(res.V2Semantic)
+				if res != nil && res.Semantic != nil {
+					return v2TraceContractOutput(res.Semantic)
 				}
 				return structToMap(res)
 			}
@@ -349,7 +349,7 @@ func v2UATTools(deps Dependencies) []Tool {
 		case V2ToolFindMemoryPackCandidates:
 			tool := tools[i]
 			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-				if deps.V2SkillPack == nil {
+				if deps.MemoryPack == nil {
 					return nil, ErrToolUnavailable
 				}
 				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
@@ -359,7 +359,7 @@ func v2UATTools(deps Dependencies) []Tool {
 				if err := remapInput(input, &req); err != nil {
 					return nil, fmt.Errorf("find_memory_pack_candidates: invalid input: %w", err)
 				}
-				res, err := deps.V2SkillPack.FindCandidatesV2(ctx, req)
+				res, err := deps.MemoryPack.FindCandidates(ctx, req)
 				if err != nil {
 					return nil, err
 				}
@@ -368,7 +368,7 @@ func v2UATTools(deps Dependencies) []Tool {
 		case V2ToolExportMemoryPack:
 			tool := tools[i]
 			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-				if deps.V2SkillPack == nil {
+				if deps.MemoryPack == nil {
 					return nil, ErrToolUnavailable
 				}
 				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
@@ -378,7 +378,7 @@ func v2UATTools(deps Dependencies) []Tool {
 				if err := remapInput(input, &req); err != nil {
 					return nil, fmt.Errorf("export_memory_pack: invalid input: %w", err)
 				}
-				res, err := deps.V2SkillPack.ExportV2(ctx, req)
+				res, err := deps.MemoryPack.Export(ctx, req)
 				if err != nil {
 					return nil, err
 				}
@@ -387,7 +387,7 @@ func v2UATTools(deps Dependencies) []Tool {
 		case V2ToolInspectMemoryPack:
 			tool := tools[i]
 			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-				if deps.V2SkillPack == nil {
+				if deps.MemoryPack == nil {
 					return nil, ErrToolUnavailable
 				}
 				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
@@ -397,7 +397,7 @@ func v2UATTools(deps Dependencies) []Tool {
 				if err := remapInput(input, &req); err != nil {
 					return nil, fmt.Errorf("inspect_memory_pack: invalid input: %w", err)
 				}
-				res, err := deps.V2SkillPack.InspectV2(ctx, req)
+				res, err := deps.MemoryPack.Inspect(ctx, req)
 				if err != nil {
 					return nil, err
 				}
@@ -406,7 +406,7 @@ func v2UATTools(deps Dependencies) []Tool {
 		case V2ToolImportMemoryPack:
 			tool := tools[i]
 			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-				if deps.V2SkillPack == nil {
+				if deps.MemoryPack == nil {
 					return nil, ErrToolUnavailable
 				}
 				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
@@ -416,7 +416,7 @@ func v2UATTools(deps Dependencies) []Tool {
 				if err := remapInput(input, &req); err != nil {
 					return nil, fmt.Errorf("import_memory_pack: invalid input: %w", err)
 				}
-				res, err := deps.V2SkillPack.ImportV2(ctx, req)
+				res, err := deps.MemoryPack.Import(ctx, req)
 				if err != nil {
 					return nil, err
 				}
@@ -425,7 +425,7 @@ func v2UATTools(deps Dependencies) []Tool {
 		case V2ToolRollbackMemoryPackImport:
 			tool := tools[i]
 			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-				if deps.V2SkillPack == nil {
+				if deps.MemoryPack == nil {
 					return nil, ErrToolUnavailable
 				}
 				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
@@ -438,7 +438,7 @@ func v2UATTools(deps Dependencies) []Tool {
 				if !req.DryRun {
 					req.Confirm = true
 				}
-				res, err := deps.V2SkillPack.RollbackV2(ctx, req)
+				res, err := deps.MemoryPack.Rollback(ctx, req)
 				if err != nil {
 					return nil, err
 				}

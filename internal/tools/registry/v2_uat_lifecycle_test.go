@@ -9,18 +9,18 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
-func TestBuildV2UATWiresExecutableResolveMemoryPlacementForget(t *testing.T) {
-	stub := &stubV2LifecycleService{}
-	reg, err := BuildV2UAT(Dependencies{V2Lifecycle: stub})
+func TestBuildActiveWiresExecutableResolveMemoryPlacementForget(t *testing.T) {
+	stub := &stubLifecycleService{}
+	reg, err := BuildActive(Dependencies{Lifecycle: stub})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	resolve, ok := reg.Get(V2ToolResolveMemoryPlacement)
 	if !ok {
-		t.Fatal("BuildV2UAT did not register resolve_memory_placement")
+		t.Fatal("BuildActive did not register resolve_memory_placement")
 	}
 	if resolve.Invoke == nil {
-		t.Fatal("BuildV2UAT resolve_memory_placement invoker is nil")
+		t.Fatal("BuildActive resolve_memory_placement invoker is nil")
 	}
 	out, err := resolve.Invoke(v2ContractInvokeContext("write"), "ignored-profile", map[string]any{
 		"action":          string(domain.V2ResolveForget),
@@ -45,14 +45,14 @@ func TestBuildV2UATWiresExecutableResolveMemoryPlacementForget(t *testing.T) {
 	}
 }
 
-func TestBuildV2UATResolveMemoryPlacementRejectsTenantOverride(t *testing.T) {
-	reg, err := BuildV2UAT(Dependencies{V2Lifecycle: &stubV2LifecycleService{}})
+func TestBuildActiveResolveMemoryPlacementRejectsTenantOverride(t *testing.T) {
+	reg, err := BuildActive(Dependencies{Lifecycle: &stubLifecycleService{}})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	resolve, ok := reg.Get(V2ToolResolveMemoryPlacement)
 	if !ok {
-		t.Fatal("BuildV2UAT did not register resolve_memory_placement")
+		t.Fatal("BuildActive did not register resolve_memory_placement")
 	}
 	_, err = resolve.Invoke(v2ContractInvokeContext("write"), "ignored-profile", map[string]any{
 		"team_id":         "attacker-team",
@@ -69,18 +69,18 @@ func TestBuildV2UATResolveMemoryPlacementRejectsTenantOverride(t *testing.T) {
 	}
 }
 
-func TestBuildV2UATWiresExecutableCorrectEntityResolution(t *testing.T) {
-	stub := &stubV2LifecycleService{}
-	reg, err := BuildV2UAT(Dependencies{V2Lifecycle: stub})
+func TestBuildActiveWiresExecutableCorrectEntityResolution(t *testing.T) {
+	stub := &stubLifecycleService{}
+	reg, err := BuildActive(Dependencies{Lifecycle: stub})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	correct, ok := reg.Get(V2ToolCorrectEntityResolution)
 	if !ok {
-		t.Fatal("BuildV2UAT did not register correct_entity_resolution")
+		t.Fatal("BuildActive did not register correct_entity_resolution")
 	}
 	if correct.Invoke == nil {
-		t.Fatal("BuildV2UAT correct_entity_resolution invoker is nil")
+		t.Fatal("BuildActive correct_entity_resolution invoker is nil")
 	}
 	out, err := correct.Invoke(v2ContractInvokeContext("write"), "ignored-profile", map[string]any{
 		"operation":             string(domain.V2EntityCorrectionSplit),
@@ -107,14 +107,14 @@ func TestBuildV2UATWiresExecutableCorrectEntityResolution(t *testing.T) {
 	}
 }
 
-func TestBuildV2UATCorrectEntityResolutionRejectsTenantOverride(t *testing.T) {
-	reg, err := BuildV2UAT(Dependencies{V2Lifecycle: &stubV2LifecycleService{}})
+func TestBuildActiveCorrectEntityResolutionRejectsTenantOverride(t *testing.T) {
+	reg, err := BuildActive(Dependencies{Lifecycle: &stubLifecycleService{}})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	correct, ok := reg.Get(V2ToolCorrectEntityResolution)
 	if !ok {
-		t.Fatal("BuildV2UAT did not register correct_entity_resolution")
+		t.Fatal("BuildActive did not register correct_entity_resolution")
 	}
 	_, err = correct.Invoke(v2ContractInvokeContext("write"), "ignored-profile", map[string]any{
 		"team_id":               "attacker-team",
@@ -129,12 +129,12 @@ func TestBuildV2UATCorrectEntityResolutionRejectsTenantOverride(t *testing.T) {
 	}
 }
 
-type stubV2LifecycleService struct {
+type stubLifecycleService struct {
 	req        memoryservice.V2ResolveMemoryPlacementRequest
 	correctReq memoryservice.V2CorrectEntityResolutionRequest
 }
 
-func (s *stubV2LifecycleService) ResolveMemoryPlacementV2(
+func (s *stubLifecycleService) ResolveMemoryPlacement(
 	_ context.Context,
 	req memoryservice.V2ResolveMemoryPlacementRequest,
 ) (*memoryservice.V2ResolveMemoryPlacementResult, error) {
@@ -146,7 +146,7 @@ func (s *stubV2LifecycleService) ResolveMemoryPlacementV2(
 	}, nil
 }
 
-func (s *stubV2LifecycleService) CorrectEntityResolutionV2(
+func (s *stubLifecycleService) CorrectEntityResolution(
 	_ context.Context,
 	req memoryservice.V2CorrectEntityResolutionRequest,
 ) (*memoryservice.V2CorrectEntityResolutionResult, error) {

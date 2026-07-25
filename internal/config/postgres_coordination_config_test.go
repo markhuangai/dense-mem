@@ -128,7 +128,6 @@ func TestConfigJSONExcludesCredentials(t *testing.T) {
 	configType := reflect.TypeOf(Config{})
 	for _, fieldName := range []string{
 		"PostgresDSN",
-		"Neo4jPassword",
 		"RedisPassword",
 		"AIAPIKey",
 		"AIVerifierAPIKey",
@@ -146,7 +145,6 @@ func TestConfigJSONExcludesCredentials(t *testing.T) {
 
 	cfg := Config{
 		PostgresDSN:          "postgres://user:postgres-secret@example.com/db",
-		Neo4jPassword:        "neo4j-secret",
 		RedisPassword:        "redis-secret",
 		AIAPIKey:             "ai-api-secret",
 		AIVerifierAPIKey:     "verifier-secret",
@@ -161,7 +159,6 @@ func TestConfigJSONExcludesCredentials(t *testing.T) {
 	encoded := string(data)
 	for _, secret := range []string{
 		"postgres-secret",
-		"neo4j-secret",
 		"redis-secret",
 		"ai-api-secret",
 		"verifier-secret",

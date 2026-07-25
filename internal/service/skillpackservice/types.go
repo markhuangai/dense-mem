@@ -5,9 +5,6 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/service/claimservice"
-	"github.com/markhuangai/dense-mem/internal/service/factservice"
-	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 )
 
 const (
@@ -47,18 +44,9 @@ type ImportLedger interface {
 }
 
 type Dependencies struct {
-	FragmentCreate  fragmentservice.CreateFragmentService
-	ClaimCreate     claimservice.CreateClaimService
-	ClaimGet        claimservice.GetClaimService
-	ClaimList       claimservice.ListClaimsService
-	FactPromote     factservice.PromoteClaimService
-	FactGet         factservice.GetFactService
-	FactList        factservice.ListFactsService
-	ConflictDecider ConflictDecider
-	Graph           GraphStore
-	Ledger          ImportLedger
-	HistoryDays     int
-	HTTPClient      ArtifactHTTPClient
+	Ledger      ImportLedger
+	HistoryDays int
+	HTTPClient  ArtifactHTTPClient
 }
 
 type ConflictDecider interface {

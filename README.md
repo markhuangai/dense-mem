@@ -30,7 +30,6 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/MCP-Streamable_HTTP-111827?style=flat-square" alt="MCP Streamable HTTP" />
-  <img src="https://img.shields.io/badge/Neo4j-5.26-008CC1?style=flat-square&logo=neo4j&logoColor=white" alt="Neo4j 5.26" />
   <img src="https://img.shields.io/badge/PostgreSQL-18-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL 18" />
   <img src="https://img.shields.io/badge/OpenAPI-3.0-6BA539?style=flat-square&logo=openapiinitiative&logoColor=white" alt="OpenAPI 3.0" />
   <img src="https://visitor-badge.laobi.icu/badge?page_id=markhuangai.dense-mem&style=flat-square" alt="Visitors" />
@@ -116,18 +115,10 @@ docker compose exec server /app/provision-team --name "primary-memory"
 
 The base compose example provisions PostgreSQL with pgvector and the Dense-Mem
 server. Fresh installs leave `NEO4J_*` unset and initialize PostgreSQL V2
-directly. Legacy migration rehearsals can enable Neo4j explicitly with
-`--profile legacy-neo4j` and `NEO4J_URI=bolt://neo4j:7687`. The base stack
-exposes only local host ports:
-
-When a legacy Neo4j source is configured and no compatible V2 marker exists,
-the main MCP data plane returns HTTP 503 and the private control portal shows
-only the guided migration page. The operator must confirm that recoverable
-PostgreSQL and Neo4j backups already exist, then start migration. Dense-Mem does
-not create, inspect, verify, or restore those backups. After cutover, the server
-restarts into PostgreSQL V2; if any `NEO4J_*` setting is still present, the
-control portal stays in cleanup mode until those legacy env vars and services
-are removed and the deployment is recreated.
+directly. Cleanup releases reject legacy Neo4j configuration; operators with a
+legacy Neo4j corpus must first run `v2.1.2`, complete the guided migration
+there, remove `NEO4J_*`, and then upgrade. The
+base stack exposes only local host ports:
 
 ```text
 MCP/API:        http://127.0.0.1:8080/mcp
@@ -138,19 +129,19 @@ Control portal: http://127.0.0.1:8090/
 The user portal includes recall, facts, claims, fragments, communities, dreams,
 and a bounded graph explorer for seeing facts, claims, evidence fragments, and
 dream hypotheses as connected memory. The graph view is a read-scoped UI
-endpoint, not a raw Cypher or unrestricted traversal API.
+endpoint, not a raw database query or unrestricted traversal API.
 
 Cold image pulls can take longer than 60 seconds. Redis and public HTTPS are
 intentionally omitted from the base example; use the expert example when you
 need those deployment options.
 
-The server requires a complete embedding configuration at startup:
-`AI_API_URL`, `AI_API_KEY`, `AI_API_EMBEDDING_MODEL`, and
-`AI_API_EMBEDDING_DIMENSIONS`. The compose examples provide OpenAI defaults for
-the URL, model, and dimensions (`https://api.openai.com/v1`,
-`text-embedding-3-large`, `3072`), so the minimal local setup only needs you to
-fill in `AI_API_KEY`. Override those values together when using a different
-embedding provider or model.
+The server requires complete embedding and reviewer/verifier configuration at
+startup: `AI_API_URL`, `AI_API_KEY`, `AI_API_EMBEDDING_MODEL`,
+`AI_API_EMBEDDING_DIMENSIONS`, `AI_REVIEWER_MODEL`, and `AI_VERIFIER_MODEL`.
+The compose examples provide OpenAI defaults for the embedding URL, model, and
+dimensions (`https://api.openai.com/v1`, `text-embedding-3-large`, `3072`), but
+you still choose the chat models explicitly in `.env`. Override the embedding
+values together when using a different embedding provider or model.
 
 Verifier calls send `temperature: 0` by default. Set
 `AI_VERIFIER_DISABLE_TEMPERATURE=true` to omit the field for providers or models
@@ -172,6 +163,7 @@ AI_API_URL=http://host.docker.internal:11434/v1
 AI_API_KEY=ollama
 AI_API_EMBEDDING_MODEL=nomic-embed-text
 AI_API_EMBEDDING_DIMENSIONS=768
+AI_REVIEWER_MODEL=llama3.1:8b
 AI_VERIFIER_MODEL=llama3.1:8b
 AI_VERIFIER_TIMEOUT_SECONDS=300
 ```
@@ -184,13 +176,12 @@ Three details matter on this path:
   by default.
 - `AI_API_KEY` must be non-empty even though Ollama ignores it; startup
   validation requires a complete embedding configuration.
-- Change `AI_VERIFIER_MODEL` together with the embedding settings. The default
-  is `gpt-4o-mini`, which does not exist on Ollama. Startup still succeeds;
-  the failure only appears later, at claim-verification time. Pick a model
-  that answers within the verifier timeout on your hardware. A 7B-8B class
-  model verifies comfortably on a laptop; larger models can exceed the
-  default 60-second timeout while they load, leaving claims parked as
-  `candidate_claim` with the error recorded in the placement item.
+- Set both `AI_REVIEWER_MODEL` and `AI_VERIFIER_MODEL` to models that exist on
+  the selected chat endpoint. Startup fails if either is missing, so a bad
+  model choice is caught before the service accepts memory writes. A 7B-8B
+  class model works for local smoke tests; larger models can exceed the default
+  60-second timeout while they load, leaving placement attempts retryable until
+  the model responds.
 
 ### Your First Memory
 
@@ -251,23 +242,6 @@ or false dreams should be resolved through `resolve_dream_feedback`, which
 records dream-specific telemetry and routes the confirmation evidence through
 normal memory placement. Normal production recall traffic still contributes
 request volume, result count, and latency.
-
-For the disposable demo image, keep the control portal disabled and use the
-demo telemetry overlay instead:
-
-```bash
-curl -fsSLo prometheus.demo.yml \
-  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/prometheus.demo.yml
-curl -fsSLo docker-compose.demo.telemetry.yml \
-  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/docker-compose.demo.telemetry.yml
-
-export TELEMETRY_SCRAPE_TOKEN="$(openssl rand -hex 32)"
-docker compose -f docker-compose.yml -f docker-compose.demo.telemetry.yml up -d
-```
-
-The demo overlay scrapes the demo service at `demo:8091` on the private Compose
-network and sets `TELEMETRY_PROMETHEUS_JOB=dense-mem-demo`. Do not publish that
-metrics listener publicly.
 
 ## Compare
 

@@ -216,7 +216,7 @@ func TestProfileServiceUpdateDeleteSuccessAndFailureBranches(t *testing.T) {
 	require.ErrorContains(t, err, "failed to delete profile")
 
 	repo = &unitProfileRepo{profile: existing}
-	dataPurger = &unitProfileDataPurger{err: errors.New("neo4j failed")}
+	dataPurger = &unitProfileDataPurger{err: errors.New("profile data purge failed")}
 	audit = new(MockAuditService)
 	audit.On("Append", ctx, mock.AnythingOfType("service.AuditLogEntry")).Return(nil)
 	svc = NewProfileServiceWithDataPurger(repo, audit, nil, dataPurger)

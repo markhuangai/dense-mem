@@ -232,7 +232,7 @@ func normalizeV2SemanticGraphQuery(input V2SemanticGraphQuery) V2SemanticGraphQu
 	input.Query = strings.ToLower(strings.TrimSpace(input.Query))
 	input.AnchorType = normalizeV2SemanticGraphNodeType(input.AnchorType)
 	input.AnchorID = strings.TrimSpace(input.AnchorID)
-	input.Types = normalizeV2SemanticGraphTypes(input.Types)
+	input.Types = normalizeSemanticGraphTypes(input.Types)
 	input.Depth = clampV2Int(input.Depth, v2DefaultSemanticGraphDepth, v2MaxSemanticGraphDepth)
 	input.Limit = clampV2Int(input.Limit, v2DefaultSemanticGraphLimit, v2MaxSemanticGraphLimit)
 	input.MinRelevance = normalizeV2Relevance(input.MinRelevance)

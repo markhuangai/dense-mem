@@ -17,7 +17,7 @@ import (
 )
 
 // HealthCheck is a named function interface for dependency health checks.
-// Later units can register Postgres/Neo4j/Redis checks without changing the route contract.
+// Later units can register Postgres/Redis/pgvector checks without changing the route contract.
 type HealthCheck struct {
 	Name     string
 	Check    func(ctx context.Context) error

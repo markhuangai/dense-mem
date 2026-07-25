@@ -56,21 +56,3 @@ export function dependencyStatusClass(status: string): string {
 export function shortId(value: string): string {
   return value.slice(0, 8);
 }
-
-export function startSerialPolling(task: () => Promise<void>, delayMs: number): () => void {
-  let cancelled = false;
-  let timer: number | undefined;
-  async function poll() {
-    await task();
-    if (!cancelled) {
-      timer = window.setTimeout(() => void poll(), delayMs);
-    }
-  }
-  void poll();
-  return () => {
-    cancelled = true;
-    if (timer !== undefined) {
-      window.clearTimeout(timer);
-    }
-  };
-}

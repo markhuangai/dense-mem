@@ -29,9 +29,9 @@ func (g *countingOpenAPIGenerator) Generate(_ openapi.SpecVariant) (map[string]a
 
 func buildTestGenerator(t *testing.T) openapi.Generator {
 	t.Helper()
-	reg, err := registry.BuildDefault(registry.Dependencies{})
+	reg, err := registry.BuildActive(registry.Dependencies{})
 	if err != nil {
-		t.Fatalf("BuildDefault: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	return openapi.New(reg, openapi.DefaultRoutes())
 }

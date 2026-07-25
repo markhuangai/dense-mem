@@ -41,7 +41,7 @@ func TestV2SemanticSupportMustMatchSuppliedIngest(t *testing.T) {
 	firstIngest := createV2SemanticSourceIngest(t, ctx, ledgerRepo, teamID, ownerID,
 		"Dense-Mem uses PostgreSQL.", "doc://ingest-one", "sha256:one")
 	secondIngest := createV2SemanticSourceIngest(t, ctx, ledgerRepo, teamID, ownerID,
-		"Dense-Mem used Neo4j.", "doc://ingest-two", "sha256:two")
+		"Dense-Mem used GraphDB.", "doc://ingest-two", "sha256:two")
 	denseMem := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense-Mem")
 	postgres := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "PostgreSQL")
 
@@ -53,7 +53,7 @@ func TestV2SemanticSupportMustMatchSuppliedIngest(t *testing.T) {
 		PredicateKey:    "uses",
 		ObjectEntityID:  postgres.EntityID,
 		Support: v2SemanticSupportFromSource(
-			secondIngest.Evidence[0].FragmentID, sourceTwo, "doc://ingest-two", "Dense-Mem used Neo4j.",
+			secondIngest.Evidence[0].FragmentID, sourceTwo, "doc://ingest-two", "Dense-Mem used GraphDB.",
 		),
 	})
 	require.Error(t, err)
@@ -99,7 +99,7 @@ func TestV2SemanticOneCardinalityUpgradeSupersedesLegacyManyRows(t *testing.T) {
 
 	denseMem := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense-Mem")
 	postgres := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "PostgreSQL")
-	neo4j := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "Neo4j")
+	graphdb := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "GraphDB")
 	predicateKey := "sole_runtime_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
 	require.NoError(t, insertV2CardinalityUpgradePredicate(ctx, adminDB, rls, predicateKey))
 
@@ -121,23 +121,23 @@ func TestV2SemanticOneCardinalityUpgradeSupersedesLegacyManyRows(t *testing.T) {
 	})
 	require.Equal(t, "many", postgresUse.Relationship.CurrentCardinality)
 
-	neo4jIngest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerID, "uses neo4j", "Dense-Mem uses Neo4j.")
-	neo4jUse := applyV2SemanticDecision(t, ctx, semanticRepo, V2ApplyRelationshipDecisionInput{
+	graphdbIngest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerID, "uses graphdb", "Dense-Mem uses GraphDB.")
+	graphdbUse := applyV2SemanticDecision(t, ctx, semanticRepo, V2ApplyRelationshipDecisionInput{
 		TeamID:          teamID,
 		OwnerProfileID:  ownerID,
-		IngestID:        neo4jIngest.IngestID,
+		IngestID:        graphdbIngest.IngestID,
 		SubjectEntityID: denseMem.EntityID,
 		PredicateKey:    predicateKey,
-		ObjectEntityID:  neo4j.EntityID,
+		ObjectEntityID:  graphdb.EntityID,
 		Support: &V2EvidenceSupportInput{
-			FragmentID:     neo4jIngest.Evidence[0].FragmentID,
-			SourceGroupKey: "conversation:uses-neo4j",
+			FragmentID:     graphdbIngest.Evidence[0].FragmentID,
+			SourceGroupKey: "conversation:uses-graphdb",
 			SpanStart:      0,
-			SpanEnd:        len("Dense-Mem uses Neo4j."),
+			SpanEnd:        len("Dense-Mem uses GraphDB."),
 			Authority:      "primary",
 		},
 	})
-	require.Equal(t, "many", neo4jUse.Relationship.CurrentCardinality)
+	require.Equal(t, "many", graphdbUse.Relationship.CurrentCardinality)
 
 	upgradeIngest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
 		"uses postgres as sole database", "Dense-Mem uses PostgreSQL as its sole durable database.")
@@ -167,7 +167,7 @@ func TestV2SemanticOneCardinalityUpgradeSupersedesLegacyManyRows(t *testing.T) {
 			FROM relationship_records
 			WHERE team_id = ?::uuid
 			  AND relationship_id = ?::uuid
-		`, teamID, neo4jUse.Relationship.RelationshipID).Scan(&legacySiblingStatus).Error
+		`, teamID, graphdbUse.Relationship.RelationshipID).Scan(&legacySiblingStatus).Error
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "superseded", legacySiblingStatus)
@@ -189,7 +189,7 @@ func TestV2SemanticDelayedOlderOneVersionDoesNotSupersedeNewerManyRows(t *testin
 
 	denseMem := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense-Mem")
 	postgres := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "PostgreSQL")
-	neo4j := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "Neo4j")
+	graphdb := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "GraphDB")
 	redis := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "Redis")
 	predicateKey := "runtime_policy_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
 	require.NoError(t, insertV2PolicyReversalPredicate(ctx, adminDB, rls, predicateKey))
@@ -214,25 +214,25 @@ func TestV2SemanticDelayedOlderOneVersionDoesNotSupersedeNewerManyRows(t *testin
 	})
 	require.Equal(t, "many", postgresUse.Relationship.CurrentCardinality)
 
-	neo4jIngest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
-		"policy reversal neo4j", "Neo4j remains legacy migration input.")
-	neo4jUse := applyV2SemanticDecision(t, ctx, semanticRepo, V2ApplyRelationshipDecisionInput{
+	graphdbIngest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"policy reversal graphdb", "GraphDB remains legacy migration input.")
+	graphdbUse := applyV2SemanticDecision(t, ctx, semanticRepo, V2ApplyRelationshipDecisionInput{
 		TeamID:           teamID,
 		OwnerProfileID:   ownerID,
-		IngestID:         neo4jIngest.IngestID,
+		IngestID:         graphdbIngest.IngestID,
 		SubjectEntityID:  denseMem.EntityID,
 		PredicateKey:     predicateKey,
 		PredicateVersion: 2,
-		ObjectEntityID:   neo4j.EntityID,
+		ObjectEntityID:   graphdb.EntityID,
 		Support: &V2EvidenceSupportInput{
-			FragmentID:     neo4jIngest.Evidence[0].FragmentID,
-			SourceGroupKey: "conversation:policy-reversal-neo4j",
+			FragmentID:     graphdbIngest.Evidence[0].FragmentID,
+			SourceGroupKey: "conversation:policy-reversal-graphdb",
 			SpanStart:      0,
-			SpanEnd:        len("Neo4j remains legacy migration input."),
+			SpanEnd:        len("GraphDB remains legacy migration input."),
 			Authority:      "primary",
 		},
 	})
-	require.Equal(t, "many", neo4jUse.Relationship.CurrentCardinality)
+	require.Equal(t, "many", graphdbUse.Relationship.CurrentCardinality)
 
 	delayedIngest := createV2SemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
 		"delayed old redis", "Dense-Mem used Redis as its runtime memory store.")
@@ -255,11 +255,11 @@ func TestV2SemanticDelayedOlderOneVersionDoesNotSupersedeNewerManyRows(t *testin
 
 	statuses := loadV2RelationshipStatuses(t, ctx, appDB, rls, teamID, ownerID,
 		postgresUse.Relationship.RelationshipID,
-		neo4jUse.Relationship.RelationshipID,
+		graphdbUse.Relationship.RelationshipID,
 		delayed.Relationship.RelationshipID,
 	)
 	assert.Equal(t, "active", statuses[postgresUse.Relationship.RelationshipID])
-	assert.Equal(t, "active", statuses[neo4jUse.Relationship.RelationshipID])
+	assert.Equal(t, "active", statuses[graphdbUse.Relationship.RelationshipID])
 	assert.Equal(t, "active", statuses[delayed.Relationship.RelationshipID])
 }
 
@@ -347,11 +347,11 @@ func insertV2CardinalityUpgradePredicate(
 	ctx context.Context,
 	db *gorm.DB,
 	rls interface {
-		WithMigrationTx(context.Context, *gorm.DB, func(*gorm.DB) error) error
+		WithSystemTx(context.Context, *gorm.DB, func(*gorm.DB) error) error
 	},
 	predicateKey string,
 ) error {
-	return rls.WithMigrationTx(ctx, db, func(tx *gorm.DB) error {
+	return rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO predicate_definitions (
 			    predicate_key, version, aliases, allowed_subject_kinds, allowed_object_kinds,
@@ -377,11 +377,11 @@ func insertV2PolicyReversalPredicate(
 	ctx context.Context,
 	db *gorm.DB,
 	rls interface {
-		WithMigrationTx(context.Context, *gorm.DB, func(*gorm.DB) error) error
+		WithSystemTx(context.Context, *gorm.DB, func(*gorm.DB) error) error
 	},
 	predicateKey string,
 ) error {
-	return rls.WithMigrationTx(ctx, db, func(tx *gorm.DB) error {
+	return rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO predicate_definitions (
 			    predicate_key, version, aliases, allowed_subject_kinds, allowed_object_kinds,

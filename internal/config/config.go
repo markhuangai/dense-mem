@@ -14,14 +14,17 @@ const (
 	MaxEmbeddingJobMaxAttempts     = 100
 )
 
+var legacyNeo4jEnvVars = []string{
+	"NEO4J_URI",
+	"NEO4J_USER",
+	"NEO4J_PASSWORD",
+	"NEO4J_DATABASE",
+}
+
 // ConfigProvider is the companion interface for Config.
 // Consumers and tests depend on this abstraction rather than the concrete struct.
 type ConfigProvider interface {
 	GetPostgresDSN() string
-	GetNeo4jURI() string
-	GetNeo4jUser() string
-	GetNeo4jPassword() string
-	GetNeo4jDatabase() string
 	GetRedisAddr() string
 	GetRedisPassword() string
 	GetRedisDB() int
@@ -42,6 +45,7 @@ type ConfigProvider interface {
 	// Knowledge-pipeline knobs (AC-X3)
 	GetAIVerifierAPIURL() string
 	GetAIVerifierAPIKey() string
+	GetAIReviewerModel() string
 	GetAIVerifierModel() string
 	GetAIVerifierTimeoutSeconds() int
 	GetAIVerifierMaxConcurrency() int
@@ -76,10 +80,6 @@ type Config struct {
 	PostgresMaxOpenConns            int
 	PostgresMaxIdleConns            int
 	PostgresConnMaxLifetimeSeconds  int
-	Neo4jURI                        string
-	Neo4jUser                       string
-	Neo4jPassword                   string `json:"-"`
-	Neo4jDatabase                   string
 	RedisAddr                       string
 	RedisPassword                   string `json:"-"`
 	RedisDB                         int
@@ -87,8 +87,6 @@ type Config struct {
 	DistributedCoordinationRequired bool
 	HTTPMaxBodyBytes                int
 	AuthVerifyMaxConcurrency        int
-	GraphQueryDefaultTimeoutSeconds int
-	GraphQueryMaxTimeoutSeconds     int
 	RateLimitPerMinute              int
 	FragmentCreateRateLimit         int
 	FragmentReadRateLimit           int
@@ -105,6 +103,7 @@ type Config struct {
 	// Knowledge-pipeline knobs (AC-X3)
 	AIVerifierAPIURL             string
 	AIVerifierAPIKey             string `json:"-"`
+	AIReviewerModel              string
 	AIVerifierModel              string
 	AIVerifierDisableTemperature bool
 	AIVerifierTimeoutSeconds     int
@@ -132,25 +131,10 @@ func (c *Config) GetPostgresDSN() string                 { return c.PostgresDSN 
 func (c *Config) GetPostgresMaxOpenConns() int           { return c.PostgresMaxOpenConns }
 func (c *Config) GetPostgresMaxIdleConns() int           { return c.PostgresMaxIdleConns }
 func (c *Config) GetPostgresConnMaxLifetimeSeconds() int { return c.PostgresConnMaxLifetimeSeconds }
-func (c *Config) GetNeo4jURI() string                    { return c.Neo4jURI }
-func (c *Config) GetNeo4jUser() string                   { return c.Neo4jUser }
-func (c *Config) GetNeo4jPassword() string               { return c.Neo4jPassword }
-func (c *Config) GetNeo4jDatabase() string               { return c.Neo4jDatabase }
-func (c *Config) HasNeo4jConfig() bool {
-	return strings.TrimSpace(c.Neo4jURI) != "" ||
-		strings.TrimSpace(c.Neo4jUser) != "" ||
-		strings.TrimSpace(c.Neo4jPassword) != "" ||
-		strings.TrimSpace(c.Neo4jDatabase) != ""
-}
-func (c *Config) HasCompleteNeo4jConfig() bool {
-	return strings.TrimSpace(c.Neo4jURI) != "" &&
-		strings.TrimSpace(c.Neo4jUser) != "" &&
-		strings.TrimSpace(c.Neo4jPassword) != ""
-}
-func (c *Config) GetRedisAddr() string     { return c.RedisAddr }
-func (c *Config) GetRedisPassword() string { return c.RedisPassword }
-func (c *Config) GetRedisDB() int          { return c.RedisDB }
-func (c *Config) GetRedisTLSEnabled() bool { return c.RedisTLSEnabled }
+func (c *Config) GetRedisAddr() string                   { return c.RedisAddr }
+func (c *Config) GetRedisPassword() string               { return c.RedisPassword }
+func (c *Config) GetRedisDB() int                        { return c.RedisDB }
+func (c *Config) GetRedisTLSEnabled() bool               { return c.RedisTLSEnabled }
 func (c *Config) GetDistributedCoordinationRequired() bool {
 	return c.DistributedCoordinationRequired
 }
@@ -185,6 +169,7 @@ func (c *Config) GetAIVerifierAPIKey() string {
 	}
 	return c.AIAPIKey
 }
+func (c *Config) GetAIReviewerModel() string { return c.AIReviewerModel }
 func (c *Config) GetAIVerifierModel() string { return c.AIVerifierModel }
 func (c *Config) GetAIVerifierDisableTemperature() bool {
 	return c.AIVerifierDisableTemperature
@@ -237,6 +222,8 @@ func (c *Config) ValidateServerStartup() error {
 		{"AI_API_URL", c.AIAPIURL},
 		{"AI_API_KEY", c.AIAPIKey},
 		{"AI_API_EMBEDDING_MODEL", c.AIEmbeddingModel},
+		{"AI_REVIEWER_MODEL", c.AIReviewerModel},
+		{"AI_VERIFIER_MODEL", c.AIVerifierModel},
 		{"CONTROL_PORTAL_TOKEN", c.ControlPortalToken},
 	}
 	for _, item := range required {
@@ -350,10 +337,6 @@ func Load() (Config, error) {
 			Message: "replica reads are not supported in this release",
 		}
 	}
-	cfg.Neo4jURI = os.Getenv("NEO4J_URI")
-	cfg.Neo4jUser = os.Getenv("NEO4J_USER")
-	cfg.Neo4jPassword = os.Getenv("NEO4J_PASSWORD")
-	cfg.Neo4jDatabase = os.Getenv("NEO4J_DATABASE")
 	cfg.RedisAddr = os.Getenv("REDIS_ADDR")
 	cfg.RedisPassword = os.Getenv("REDIS_PASSWORD")
 
@@ -368,8 +351,6 @@ func Load() (Config, error) {
 		{"POSTGRES_CONN_MAX_LIFETIME_SECONDS", 1800, func(c *Config, value int) { c.PostgresConnMaxLifetimeSeconds = value }},
 		{"HTTP_MAX_BODY_BYTES", 1048576, func(c *Config, value int) { c.HTTPMaxBodyBytes = value }},
 		{"AUTH_VERIFY_MAX_CONCURRENCY", 8, func(c *Config, value int) { c.AuthVerifyMaxConcurrency = value }},
-		{"GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS", 10, func(c *Config, value int) { c.GraphQueryDefaultTimeoutSeconds = value }},
-		{"GRAPH_QUERY_MAX_TIMEOUT_SECONDS", 30, func(c *Config, value int) { c.GraphQueryMaxTimeoutSeconds = value }},
 		{"RATE_LIMIT_PER_MINUTE", 100, func(c *Config, value int) { c.RateLimitPerMinute = value }},
 		{"FRAGMENT_CREATE_RATE_LIMIT", 60, func(c *Config, value int) { c.FragmentCreateRateLimit = value }},
 		{"FRAGMENT_READ_RATE_LIMIT", 300, func(c *Config, value int) { c.FragmentReadRateLimit = value }},
@@ -413,7 +394,8 @@ func Load() (Config, error) {
 	if cfg.AIVerifierAPIKey == "" && !verifierAPIURLSet {
 		cfg.AIVerifierAPIKey = cfg.AIAPIKey
 	}
-	cfg.AIVerifierModel = getEnvOrDefault("AI_VERIFIER_MODEL", "gpt-4o-mini")
+	cfg.AIReviewerModel = os.Getenv("AI_REVIEWER_MODEL")
+	cfg.AIVerifierModel = os.Getenv("AI_VERIFIER_MODEL")
 	cfg.AIVerifierDisableTemperature, err = parseBoolOrDefault("AI_VERIFIER_DISABLE_TEMPERATURE", false)
 	if err != nil {
 		return cfg, err
@@ -463,6 +445,9 @@ func Load() (Config, error) {
 	}
 	cfg.TelemetryScrapeToken = os.Getenv("TELEMETRY_SCRAPE_TOKEN")
 	// Validation
+	if err := rejectLegacyNeo4jConfig(); err != nil {
+		return cfg, err
+	}
 	if cfg.PostgresDSN == "" {
 		return cfg, &ValidationError{
 			Field:   "POSTGRES_DSN",
@@ -493,8 +478,6 @@ func Load() (Config, error) {
 		{"POSTGRES_CONN_MAX_LIFETIME_SECONDS", cfg.PostgresConnMaxLifetimeSeconds},
 		{"HTTP_MAX_BODY_BYTES", cfg.HTTPMaxBodyBytes},
 		{"AUTH_VERIFY_MAX_CONCURRENCY", cfg.AuthVerifyMaxConcurrency},
-		{"GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS", cfg.GraphQueryDefaultTimeoutSeconds},
-		{"GRAPH_QUERY_MAX_TIMEOUT_SECONDS", cfg.GraphQueryMaxTimeoutSeconds},
 		{"RATE_LIMIT_PER_MINUTE", cfg.RateLimitPerMinute},
 		{"SSE_HEARTBEAT_SECONDS", cfg.SSEHeartbeatSeconds},
 		{"SSE_MAX_DURATION_SECONDS", cfg.SSEMaxDurationSeconds},
@@ -525,12 +508,6 @@ func Load() (Config, error) {
 		}
 	}
 
-	if cfg.GraphQueryDefaultTimeoutSeconds > cfg.GraphQueryMaxTimeoutSeconds {
-		return cfg, &ValidationError{
-			Field:   "GRAPH_QUERY_DEFAULT_TIMEOUT_SECONDS",
-			Message: fmt.Sprintf("must be less than or equal to GRAPH_QUERY_MAX_TIMEOUT_SECONDS, got %d > %d", cfg.GraphQueryDefaultTimeoutSeconds, cfg.GraphQueryMaxTimeoutSeconds),
-		}
-	}
 	if cfg.PostgresMaxIdleConns > cfg.PostgresMaxOpenConns {
 		return cfg, &ValidationError{
 			Field:   "POSTGRES_MAX_IDLE_CONNS",
@@ -594,4 +571,16 @@ func Load() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func rejectLegacyNeo4jConfig() *ValidationError {
+	for _, name := range legacyNeo4jEnvVars {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			return &ValidationError{
+				Field:   name,
+				Message: "legacy Neo4j configuration is no longer supported; run v2.1.2 to complete migration before upgrading",
+			}
+		}
+	}
+	return nil
 }

@@ -7,9 +7,5 @@ import (
 )
 
 func (h *controlPortalHandler) session(c echo.Context) error {
-	return c.JSON(nethttp.StatusOK, map[string]any{"data": map[string]any{
-		"authenticated":         true,
-		"portal_mode":           controlPortalMode(h.portalMode),
-		"legacy_config_present": h.legacyConfig,
-	}})
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": map[string]bool{"authenticated": true}})
 }

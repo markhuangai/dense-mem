@@ -171,7 +171,7 @@ func setV2RelationshipSupportSourceForTest(
 	ctx context.Context,
 	db *gorm.DB,
 	rls interface {
-		WithMigrationTx(context.Context, *gorm.DB, func(*gorm.DB) error) error
+		WithSystemTx(context.Context, *gorm.DB, func(*gorm.DB) error) error
 	},
 	teamID string,
 	ownerID string,
@@ -180,7 +180,7 @@ func setV2RelationshipSupportSourceForTest(
 	sourceRevisionID string,
 ) {
 	t.Helper()
-	err := rls.WithMigrationTx(ctx, db, func(tx *gorm.DB) error {
+	err := rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			UPDATE relationship_evidence_supports
 			SET source_id = ?::uuid,
@@ -198,7 +198,7 @@ func advanceV2SupportSourceCurrentRevisionForTest(
 	ctx context.Context,
 	db *gorm.DB,
 	rls interface {
-		WithMigrationTx(context.Context, *gorm.DB, func(*gorm.DB) error) error
+		WithSystemTx(context.Context, *gorm.DB, func(*gorm.DB) error) error
 	},
 	teamID string,
 	ownerID string,
@@ -207,7 +207,7 @@ func advanceV2SupportSourceCurrentRevisionForTest(
 ) {
 	t.Helper()
 	nextRevisionID := uuid.NewString()
-	err := rls.WithMigrationTx(ctx, db, func(tx *gorm.DB) error {
+	err := rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
 		if err := tx.Exec(`
 			INSERT INTO evidence_source_revisions (
 			    team_id, source_revision_id, source_id, owner_profile_id,

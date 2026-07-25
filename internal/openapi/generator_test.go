@@ -10,9 +10,9 @@ import (
 
 func testRegistry(t *testing.T) registry.Registry {
 	t.Helper()
-	reg, err := registry.BuildDefault(registry.Dependencies{})
+	reg, err := registry.BuildActive(registry.Dependencies{})
 	if err != nil {
-		t.Fatalf("BuildDefault: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	return reg
 }
@@ -108,6 +108,33 @@ func TestGenerator_MemoryPlacementToolRoutesUseRegistrySchemas(t *testing.T) {
 	}
 	if _, has := schemas["RememberOutput"]; !has {
 		t.Fatalf("RememberOutput schema missing from components")
+	}
+}
+
+func TestGenerator_RecallResponseUsesV2EvidencePayload(t *testing.T) {
+	g := New(testRegistry(t), DefaultRoutes())
+	spec, err := g.Generate(SpecVariantFull)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	schemas := spec["components"].(map[string]any)["schemas"].(map[string]any)
+	recallResponse := schemas["RecallResponse"].(map[string]any)
+	recallProps := recallResponse["properties"].(map[string]any)
+	data := recallProps["data"].(map[string]any)
+	if got := data["$ref"]; got != "#/components/schemas/RecallResult" {
+		t.Fatalf("RecallResponse data ref = %v; want RecallResult", got)
+	}
+
+	recallResult := schemas["RecallResult"].(map[string]any)
+	props := recallResult["properties"].(map[string]any)
+	results := props["results"].(map[string]any)
+	items := results["items"].(map[string]any)
+	if got := items["$ref"]; got != "#/components/schemas/RecallEvidenceResult" {
+		t.Fatalf("RecallResult results ref = %v; want RecallEvidenceResult", got)
+	}
+	if _, has := schemas["RecallHitResponse"]; has {
+		t.Fatal("legacy RecallHitResponse schema should not be exposed")
 	}
 }
 
@@ -210,9 +237,9 @@ func TestGenerator_SecuritySchemesPresent(t *testing.T) {
 }
 
 func TestGenerator_SchemasDerivedFromRegistry(t *testing.T) {
-	reg, err := registry.BuildDefault(registry.Dependencies{})
+	reg, err := registry.BuildActive(registry.Dependencies{})
 	if err != nil {
-		t.Fatalf("BuildDefault: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	g := New(reg, DefaultRoutes())
 	spec, err := g.Generate(SpecVariantFull)
@@ -512,7 +539,7 @@ func TestGenerateOmitsDirectPromoteRoute(t *testing.T) {
 }
 
 // TestGenerateOmitsRemovedControlPlaneRoutes verifies the generated specs no
-// longer surface the removed raw-Cypher HTTP path.
+// longer surface the removed raw graph-query HTTP path.
 func TestGenerateOmitsRemovedControlPlaneRoutes(t *testing.T) {
 	g := New(testRegistry(t), DefaultRoutes())
 
@@ -525,9 +552,9 @@ func TestGenerateOmitsRemovedControlPlaneRoutes(t *testing.T) {
 		t.Fatalf("paths missing or wrong type in ai-safe spec")
 	}
 	legacyControlPlaneSegment := "ad" + "min"
-	removedRawCypherPath := "/api/v1/" + legacyControlPlaneSegment + "/graph/query"
-	if _, present := aiSafePaths[removedRawCypherPath]; present {
-		t.Errorf("removed raw-Cypher path must NOT appear in ai-safe spec")
+	removedRawGraphPath := "/api/v1/" + legacyControlPlaneSegment + "/graph/query"
+	if _, present := aiSafePaths[removedRawGraphPath]; present {
+		t.Errorf("removed raw graph-query path must NOT appear in ai-safe spec")
 	}
 
 	full, err := g.Generate(SpecVariantFull)
@@ -538,8 +565,8 @@ func TestGenerateOmitsRemovedControlPlaneRoutes(t *testing.T) {
 	if !ok {
 		t.Fatalf("paths missing or wrong type in full spec")
 	}
-	if _, present := fullPaths[removedRawCypherPath]; present {
-		t.Errorf("removed raw-Cypher path must NOT appear in full spec")
+	if _, present := fullPaths[removedRawGraphPath]; present {
+		t.Errorf("removed raw graph-query path must NOT appear in full spec")
 	}
 }
 

@@ -13,8 +13,8 @@ import (
 )
 
 func TestV2EmbeddingWorkerRequiresDependenciesAndScope(t *testing.T) {
-	validDeps := func() V2EmbeddingWorkerDependencies {
-		return V2EmbeddingWorkerDependencies{
+	validDeps := func() EmbeddingWorkerDependencies {
+		return EmbeddingWorkerDependencies{
 			Search:   newV2EmbeddingSearchStub(),
 			Provider: &v2EmbeddingProviderStub{available: true, model: "test-model", dims: 3},
 			TeamID:   "team-a",
@@ -23,23 +23,23 @@ func TestV2EmbeddingWorkerRequiresDependenciesAndScope(t *testing.T) {
 	}
 	tests := []struct {
 		name string
-		edit func(*V2EmbeddingWorkerDependencies)
+		edit func(*EmbeddingWorkerDependencies)
 	}{
-		{name: "missing_search", edit: func(deps *V2EmbeddingWorkerDependencies) { deps.Search = nil }},
-		{name: "missing_provider", edit: func(deps *V2EmbeddingWorkerDependencies) { deps.Provider = nil }},
-		{name: "missing_team", edit: func(deps *V2EmbeddingWorkerDependencies) { deps.TeamID = " " }},
-		{name: "missing_worker", edit: func(deps *V2EmbeddingWorkerDependencies) { deps.WorkerID = " " }},
+		{name: "missing_search", edit: func(deps *EmbeddingWorkerDependencies) { deps.Search = nil }},
+		{name: "missing_provider", edit: func(deps *EmbeddingWorkerDependencies) { deps.Provider = nil }},
+		{name: "missing_team", edit: func(deps *EmbeddingWorkerDependencies) { deps.TeamID = " " }},
+		{name: "missing_worker", edit: func(deps *EmbeddingWorkerDependencies) { deps.WorkerID = " " }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			deps := validDeps()
 			tt.edit(&deps)
-			worker := NewV2EmbeddingWorkerService(deps)
+			worker := NewEmbeddingWorkerService(deps)
 			result, err := worker.ProcessNextBatch(context.Background())
 			if err == nil {
 				t.Fatal("ProcessNextBatch returned nil error")
 			}
-			if result != (V2EmbeddingWorkerResult{}) {
+			if result != (EmbeddingWorkerResult{}) {
 				t.Fatalf("result = %#v", result)
 			}
 		})
@@ -48,7 +48,7 @@ func TestV2EmbeddingWorkerRequiresDependenciesAndScope(t *testing.T) {
 
 func TestV2EmbeddingWorkerHandlesNoClaimedJobsAndClaimErrors(t *testing.T) {
 	search := newV2EmbeddingSearchStub()
-	worker := NewV2EmbeddingWorkerService(V2EmbeddingWorkerDependencies{
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
 		Search:    search,
 		Provider:  &v2EmbeddingProviderStub{available: true, model: "test-model", dims: 3},
 		TeamID:    "team-a",
@@ -72,7 +72,7 @@ func TestV2EmbeddingWorkerHandlesNoClaimedJobsAndClaimErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("ProcessNextBatch returned nil error")
 	}
-	if result != (V2EmbeddingWorkerResult{}) {
+	if result != (EmbeddingWorkerResult{}) {
 		t.Fatalf("result = %#v", result)
 	}
 }
@@ -92,7 +92,7 @@ func TestV2EmbeddingWorkerCompletesValidBatch(t *testing.T) {
 			{0, 1, 0},
 		},
 	}
-	worker := NewV2EmbeddingWorkerService(V2EmbeddingWorkerDependencies{
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
 		Search:   search,
 		Provider: provider,
 		TeamID:   "team-a",
@@ -124,7 +124,7 @@ func TestV2EmbeddingWorkerFailsProviderCountMismatch(t *testing.T) {
 		v2EmbeddingJobForTest("job-b", 1),
 	}
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
-	worker := NewV2EmbeddingWorkerService(V2EmbeddingWorkerDependencies{
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
 		Search: search,
 		Provider: &v2EmbeddingProviderStub{
 			available: true,
@@ -164,7 +164,7 @@ func TestV2EmbeddingWorkerRejectsInvalidVectorsWithoutDroppingValidJobs(t *testi
 		v2EmbeddingJobForTest("job-b", 1),
 	}
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
-	worker := NewV2EmbeddingWorkerService(V2EmbeddingWorkerDependencies{
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
 		Search: search,
 		Provider: &v2EmbeddingProviderStub{
 			available: true,
@@ -247,7 +247,7 @@ func TestV2EmbeddingWorkerClassifiesProviderFailures(t *testing.T) {
 			search := newV2EmbeddingSearchStub()
 			search.jobs = []repository.V2EmbeddingJob{v2EmbeddingJobForTest("job-a", 1)}
 			metrics := observability.NewInMemoryDiscoverabilityMetrics()
-			worker := NewV2EmbeddingWorkerService(V2EmbeddingWorkerDependencies{
+			worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
 				Search: search,
 				Provider: &v2EmbeddingProviderStub{
 					available: true,
@@ -293,7 +293,7 @@ func TestV2EmbeddingWorkerFailsContractMismatchBeforeProviderCall(t *testing.T) 
 		vectors:   [][]float32{{1, 0, 0}},
 	}
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
-	worker := NewV2EmbeddingWorkerService(V2EmbeddingWorkerDependencies{
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
 		Search:   search,
 		Provider: provider,
 		Metrics:  metrics,
@@ -325,7 +325,7 @@ func TestV2EmbeddingWorkerFailsDimensionMismatchBeforeProviderCall(t *testing.T)
 		dims:      4,
 		vectors:   [][]float32{{1, 0, 0}},
 	}
-	worker := NewV2EmbeddingWorkerService(V2EmbeddingWorkerDependencies{
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
 		Search:   search,
 		Provider: provider,
 		TeamID:   "team-a",
@@ -355,7 +355,7 @@ func TestV2EmbeddingWorkerMarksIneligibleJobContractMismatch(t *testing.T) {
 		dims:      3,
 		vectors:   [][]float32{{1, 0, 0}},
 	}
-	worker := NewV2EmbeddingWorkerService(V2EmbeddingWorkerDependencies{
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
 		Search:   search,
 		Provider: provider,
 		TeamID:   "team-a",
@@ -384,7 +384,7 @@ func TestV2EmbeddingWorkerTreatsUnavailableProviderAsRetryable(t *testing.T) {
 		vectors:   [][]float32{{1, 0, 0}},
 	}
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
-	worker := NewV2EmbeddingWorkerService(V2EmbeddingWorkerDependencies{
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
 		Search:   search,
 		Provider: provider,
 		Metrics:  metrics,
@@ -416,7 +416,7 @@ func TestV2EmbeddingWorkerCountsStaleAndLeaseLostCompletions(t *testing.T) {
 	search.completeErrs["job-stale"] = repository.ErrV2SearchStaleVersion
 	search.completeErrs["job-lease"] = repository.ErrV2EmbeddingLeaseLost
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
-	worker := NewV2EmbeddingWorkerService(V2EmbeddingWorkerDependencies{
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
 		Search: search,
 		Provider: &v2EmbeddingProviderStub{
 			available: true,

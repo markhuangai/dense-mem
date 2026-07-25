@@ -30,7 +30,6 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/MCP-Streamable_HTTP-111827?style=flat-square" alt="MCP Streamable HTTP" />
-  <img src="https://img.shields.io/badge/Neo4j-5.26-008CC1?style=flat-square&logo=neo4j&logoColor=white" alt="Neo4j 5.26" />
   <img src="https://img.shields.io/badge/PostgreSQL-18-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL 18" />
   <img src="https://img.shields.io/badge/OpenAPI-3.0-6BA539?style=flat-square&logo=openapiinitiative&logoColor=white" alt="OpenAPI 3.0" />
   <img src="https://visitor-badge.laobi.icu/badge?page_id=markhuangai.dense-mem&style=flat-square" alt="Visitors" />
@@ -98,15 +97,15 @@ curl -fsSLo .env.example \
   https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/.env.example
 
 cp .env.example .env
-# 填写 POSTGRES_PASSWORD、NEO4J_PASSWORD、CONTROL_PORTAL_TOKEN 和 AI_API_KEY。
+# 填写 POSTGRES_PASSWORD、CONTROL_PORTAL_TOKEN 和 AI_API_KEY。
 ${EDITOR:-vi} .env
 
 docker compose up -d
 docker compose exec server /app/provision-team --name "primary-memory"
 ```
 
-基础 compose 示例会启动 Postgres、带 Neo4j Graph Data Science 插件的
-`neo4j:5.26-community`，以及 Dense-Mem server。默认只暴露本机端口：
+基础 compose 示例会启动带 pgvector 的 Postgres 和 Dense-Mem server。
+默认只暴露本机端口：
 
 ```text
 MCP/API:        http://127.0.0.1:8080/mcp
@@ -117,10 +116,11 @@ Control portal: http://127.0.0.1:8090/
 首次拉取镜像可能不止 60 秒。基础示例刻意不包含 Redis 和公网 HTTPS；如果需要
 这些部署能力，请使用 expert 示例。
 
-服务启动时必须有完整的 embedding 配置：`AI_API_URL`、`AI_API_KEY`、
-`AI_API_EMBEDDING_MODEL` 和 `AI_API_EMBEDDING_DIMENSIONS`。compose 示例已经为
-URL、model 和 dimensions 提供 OpenAI 默认值：`https://api.openai.com/v1`、
-`text-embedding-3-large`、`3072`。因此最小本地部署只需要补上 `AI_API_KEY`。
+服务启动时必须有完整的 embedding 和 reviewer/verifier 配置：`AI_API_URL`、
+`AI_API_KEY`、`AI_API_EMBEDDING_MODEL`、`AI_API_EMBEDDING_DIMENSIONS`、
+`AI_REVIEWER_MODEL` 和 `AI_VERIFIER_MODEL`。compose 示例已经为 embedding URL、
+model 和 dimensions 提供 OpenAI 默认值：`https://api.openai.com/v1`、
+`text-embedding-3-large`、`3072`，但 chat model 需要在 `.env` 里显式选择。
 如果切换到其他 embedding provider 或 model，请一起覆盖这些配置。
 
 Verifier 调用默认发送 `temperature: 0`。如果 provider 或 model 拒绝
@@ -142,6 +142,7 @@ AI_API_URL=http://host.docker.internal:11434/v1
 AI_API_KEY=ollama
 AI_API_EMBEDDING_MODEL=nomic-embed-text
 AI_API_EMBEDDING_DIMENSIONS=768
+AI_REVIEWER_MODEL=llama3.1:8b
 AI_VERIFIER_MODEL=llama3.1:8b
 AI_VERIFIER_TIMEOUT_SECONDS=300
 ```
@@ -153,11 +154,10 @@ AI_VERIFIER_TIMEOUT_SECONDS=300
   Linux（Docker 默认不定义该域名）上同样可用。
 - `AI_API_KEY` 必须非空，即使 Ollama 会忽略它；启动校验要求完整的 embedding
   配置。
-- `AI_VERIFIER_MODEL` 要和 embedding 配置一起改。默认值是 `gpt-4o-mini`，在
-  Ollama 上并不存在。启动仍会成功，失败要到 claim 验证阶段才暴露。选择一个在
-  你的硬件上能在 verifier 超时之内响应的模型：7B-8B 级别的模型在笔记本上
-  验证起来很轻松，而更大的模型在加载期间可能超过默认的 60 秒超时，导致 claim
-  停在 `candidate_claim`，错误记录在 placement item 里。
+- `AI_REVIEWER_MODEL` 和 `AI_VERIFIER_MODEL` 都要设为 chat endpoint 上真实存在
+  的模型。任一缺失都会导致启动失败，因此不会等到开始写入 memory 后才暴露
+  错误。7B-8B 级别模型适合本地 smoke test；更大的模型在加载期间可能超过默认
+  60 秒超时，placement 会保持可重试直到模型可响应。
 
 ### 你的第一条记忆
 
@@ -209,23 +209,6 @@ docker compose -f docker-compose.yml -f docker-compose.telemetry.yml up -d
 需要有界 comment，也可以包含 irrelevant result refs，供离线分析使用。
 Prometheus 仍然只接收有界 labels；自由文本 comment 保存在 recall feedback
 investigation records 中。正常生产 recall 流量仍然会贡献请求量、结果数和延迟指标。
-
-对于一次性 demo image，保持 control portal 关闭，改用 demo telemetry
-overlay：
-
-```bash
-curl -fsSLo prometheus.demo.yml \
-  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/prometheus.demo.yml
-curl -fsSLo docker-compose.demo.telemetry.yml \
-  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/docker-compose.demo.telemetry.yml
-
-export TELEMETRY_SCRAPE_TOKEN="$(openssl rand -hex 32)"
-docker compose -f docker-compose.yml -f docker-compose.demo.telemetry.yml up -d
-```
-
-demo overlay 会在私有 Compose network 上 scrape `demo:8091`，并设置
-`TELEMETRY_PROMETHEUS_JOB=dense-mem-demo`。不要把这个 metrics listener
-公开到公网。
 
 ## 能力对比
 

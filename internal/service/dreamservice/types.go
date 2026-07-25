@@ -11,9 +11,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service/fragmentservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
-	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"gorm.io/gorm"
 )
 
@@ -41,11 +39,6 @@ type ProfileService interface {
 	List(ctx context.Context, limit, offset int) ([]*domain.Profile, error)
 }
 
-type ScopedGraph interface {
-	ScopedRead(ctx context.Context, profileID string, query string, params map[string]any) (neo4j.ResultSummary, []map[string]any, error)
-	ScopedWriteTx(ctx context.Context, profileID string, fn func(tx neo4j.ManagedTransaction) error) error
-}
-
 type CycleLocker interface {
 	WithCycleLock(ctx context.Context, db *gorm.DB, profileID, runDate string, timeout time.Duration, fn func(tx *gorm.DB) error) error
 }
@@ -56,17 +49,15 @@ type Generator interface {
 }
 
 type Dependencies struct {
-	Graph      ScopedGraph
-	Memory     memoryservice.Service
-	V2Remember memoryservice.V2RememberService
-	V2Dreams   repository.V2DreamRepository
-	AppConfig  AppConfig
-	Profiles   ProfileService
-	Locker     CycleLocker
-	Postgres   *gorm.DB
-	Generator  Generator
-	Metrics    observability.DiscoverabilityMetrics
-	Now        func() time.Time
+	Remember  memoryservice.RememberService
+	Store     repository.V2DreamRepository
+	AppConfig AppConfig
+	Profiles  ProfileService
+	Locker    CycleLocker
+	Postgres  *gorm.DB
+	Generator Generator
+	Metrics   observability.DiscoverabilityMetrics
+	Now       func() time.Time
 }
 
 type Service interface {
@@ -127,12 +118,9 @@ type ResolveFeedbackRequest struct {
 }
 
 type ResolveFeedbackResult struct {
-	Dream *domain.Dream `json:"dream"`
-	// Deprecated: confirmed dream feedback now returns Memory placement.
-	Fragment *fragmentservice.CreateResult   `json:"fragment,omitempty"`
-	Memory   *memoryservice.RememberResult   `json:"memory,omitempty"`
-	V2Memory *memoryservice.V2RememberResult `json:"v2_memory,omitempty"`
-	Deleted  bool                            `json:"deleted,omitempty"`
+	Dream   *domain.Dream                   `json:"dream"`
+	Memory  *memoryservice.V2RememberResult `json:"memory,omitempty"`
+	Deleted bool                            `json:"deleted,omitempty"`
 }
 
 type StatusResult struct {
@@ -149,7 +137,6 @@ type EffectiveConfig struct {
 
 type GenerateRequest struct {
 	MaxOutputs     int
-	Reflection     *memoryservice.ReflectResult
 	Inputs         []DreamInput
 	Existing       []*domain.Dream
 	GeneratorModel string

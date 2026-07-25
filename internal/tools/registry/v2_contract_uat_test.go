@@ -11,19 +11,19 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
-func TestBuildV2UATWiresExecutableRemember(t *testing.T) {
-	stub := &stubV2RememberService{}
-	reg, err := BuildV2UAT(Dependencies{V2Remember: stub})
+func TestBuildActiveWiresExecutableRemember(t *testing.T) {
+	stub := &stubRememberService{}
+	reg, err := BuildActive(Dependencies{Remember: stub})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	correctionTargetID := uuid.NewString()
 	remember, ok := reg.Get(V2ToolRemember)
 	if !ok {
-		t.Fatal("BuildV2UAT did not register remember")
+		t.Fatal("BuildActive did not register remember")
 	}
 	if remember.Invoke == nil {
-		t.Fatal("BuildV2UAT remember invoker is nil")
+		t.Fatal("BuildActive remember invoker is nil")
 	}
 	out, err := remember.Invoke(v2ContractInvokeContext("write"), "ignored-profile", map[string]any{
 		"evidence": []any{
@@ -88,14 +88,14 @@ func TestBuildV2UATWiresExecutableRemember(t *testing.T) {
 	}
 }
 
-func TestBuildV2UATRememberRejectsTenantOverride(t *testing.T) {
-	reg, err := BuildV2UAT(Dependencies{V2Remember: &stubV2RememberService{}})
+func TestBuildActiveRememberRejectsTenantOverride(t *testing.T) {
+	reg, err := BuildActive(Dependencies{Remember: &stubRememberService{}})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	remember, ok := reg.Get(V2ToolRemember)
 	if !ok {
-		t.Fatal("BuildV2UAT did not register remember")
+		t.Fatal("BuildActive did not register remember")
 	}
 	_, err = remember.Invoke(v2ContractInvokeContext("write"), "ignored-profile", map[string]any{
 		"team_id": "attacker-team",
@@ -108,15 +108,15 @@ func TestBuildV2UATRememberRejectsTenantOverride(t *testing.T) {
 	}
 }
 
-func TestBuildV2UATRememberRejectsReadOnlyCredential(t *testing.T) {
-	stub := &stubV2RememberService{}
-	reg, err := BuildV2UAT(Dependencies{V2Remember: stub})
+func TestBuildActiveRememberRejectsReadOnlyCredential(t *testing.T) {
+	stub := &stubRememberService{}
+	reg, err := BuildActive(Dependencies{Remember: stub})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	remember, ok := reg.Get(V2ToolRemember)
 	if !ok {
-		t.Fatal("BuildV2UAT did not register remember")
+		t.Fatal("BuildActive did not register remember")
 	}
 	_, err = remember.Invoke(v2ContractInvokeContext("read"), "ignored-profile", map[string]any{
 		"evidence": []any{
@@ -131,18 +131,18 @@ func TestBuildV2UATRememberRejectsReadOnlyCredential(t *testing.T) {
 	}
 }
 
-func TestBuildV2UATWiresExecutableRecallMemory(t *testing.T) {
-	stub := &stubV2RecallService{}
-	reg, err := BuildV2UAT(Dependencies{V2Recall: stub})
+func TestBuildActiveWiresExecutableRecallMemory(t *testing.T) {
+	stub := &stubRecallService{}
+	reg, err := BuildActive(Dependencies{Recall: stub})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	recall, ok := reg.Get(V2ToolRecallMemory)
 	if !ok {
-		t.Fatal("BuildV2UAT did not register recall_memory")
+		t.Fatal("BuildActive did not register recall_memory")
 	}
 	if recall.Invoke == nil {
-		t.Fatal("BuildV2UAT recall_memory invoker is nil")
+		t.Fatal("BuildActive recall_memory invoker is nil")
 	}
 	out, err := recall.Invoke(v2ContractInvokeContext("read"), "ignored-profile", map[string]any{
 		"query": "PostgreSQL memory",
@@ -191,14 +191,14 @@ func TestBuildV2UATWiresExecutableRecallMemory(t *testing.T) {
 	}
 }
 
-func TestBuildV2UATRecallRejectsTenantOverride(t *testing.T) {
-	reg, err := BuildV2UAT(Dependencies{V2Recall: &stubV2RecallService{}})
+func TestBuildActiveRecallRejectsTenantOverride(t *testing.T) {
+	reg, err := BuildActive(Dependencies{Recall: &stubRecallService{}})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	recall, ok := reg.Get(V2ToolRecallMemory)
 	if !ok {
-		t.Fatal("BuildV2UAT did not register recall_memory")
+		t.Fatal("BuildActive did not register recall_memory")
 	}
 	_, err = recall.Invoke(v2ContractInvokeContext("read"), "ignored-profile", map[string]any{
 		"team_id": "attacker-team",
@@ -209,15 +209,15 @@ func TestBuildV2UATRecallRejectsTenantOverride(t *testing.T) {
 	}
 }
 
-func TestBuildV2UATRecallRejectsMissingReadScope(t *testing.T) {
-	stub := &stubV2RecallService{}
-	reg, err := BuildV2UAT(Dependencies{V2Recall: stub})
+func TestBuildActiveRecallRejectsMissingReadScope(t *testing.T) {
+	stub := &stubRecallService{}
+	reg, err := BuildActive(Dependencies{Recall: stub})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	recall, ok := reg.Get(V2ToolRecallMemory)
 	if !ok {
-		t.Fatal("BuildV2UAT did not register recall_memory")
+		t.Fatal("BuildActive did not register recall_memory")
 	}
 	_, err = recall.Invoke(context.Background(), "ignored-profile", map[string]any{
 		"query": "PostgreSQL memory",
@@ -230,18 +230,18 @@ func TestBuildV2UATRecallRejectsMissingReadScope(t *testing.T) {
 	}
 }
 
-func TestBuildV2UATWiresExecutableTraceMemory(t *testing.T) {
+func TestBuildActiveWiresExecutableTraceMemory(t *testing.T) {
 	stub := &stubV2TraceContext{}
-	reg, err := BuildV2UAT(Dependencies{Context: stub})
+	reg, err := BuildActive(Dependencies{Context: stub})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	trace, ok := reg.Get(V2ToolTraceMemory)
 	if !ok {
-		t.Fatal("BuildV2UAT did not register trace_memory")
+		t.Fatal("BuildActive did not register trace_memory")
 	}
 	if trace.Invoke == nil {
-		t.Fatal("BuildV2UAT trace_memory invoker is nil")
+		t.Fatal("BuildActive trace_memory invoker is nil")
 	}
 	out, err := trace.Invoke(v2ContractInvokeContext("read"), "ignored-profile", map[string]any{
 		"relationship_id":          "relationship-v2",
@@ -298,14 +298,14 @@ func TestBuildV2UATWiresExecutableTraceMemory(t *testing.T) {
 	}
 }
 
-func TestBuildV2UATTraceRejectsTenantOverride(t *testing.T) {
-	reg, err := BuildV2UAT(Dependencies{Context: &stubV2TraceContext{}})
+func TestBuildActiveTraceRejectsTenantOverride(t *testing.T) {
+	reg, err := BuildActive(Dependencies{Context: &stubV2TraceContext{}})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	trace, ok := reg.Get(V2ToolTraceMemory)
 	if !ok {
-		t.Fatal("BuildV2UAT did not register trace_memory")
+		t.Fatal("BuildActive did not register trace_memory")
 	}
 	_, err = trace.Invoke(v2ContractInvokeContext("read"), "ignored-profile", map[string]any{
 		"team_id":         "attacker-team",
@@ -316,15 +316,15 @@ func TestBuildV2UATTraceRejectsTenantOverride(t *testing.T) {
 	}
 }
 
-func TestBuildV2UATTraceRejectsMissingReadScope(t *testing.T) {
+func TestBuildActiveTraceRejectsMissingReadScope(t *testing.T) {
 	stub := &stubV2TraceContext{}
-	reg, err := BuildV2UAT(Dependencies{Context: stub})
+	reg, err := BuildActive(Dependencies{Context: stub})
 	if err != nil {
-		t.Fatalf("BuildV2UAT: %v", err)
+		t.Fatalf("BuildActive: %v", err)
 	}
 	trace, ok := reg.Get(V2ToolTraceMemory)
 	if !ok {
-		t.Fatal("BuildV2UAT did not register trace_memory")
+		t.Fatal("BuildActive did not register trace_memory")
 	}
 	_, err = trace.Invoke(context.Background(), "ignored-profile", map[string]any{
 		"relationship_id": "relationship-v2",

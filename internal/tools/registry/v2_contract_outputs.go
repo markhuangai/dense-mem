@@ -110,9 +110,9 @@ func v2RecallContractOutput(res *memoryservice.V2RecallResult) map[string]any {
 	}
 }
 
-func v2TraceContractOutput(trace *contextservice.V2SemanticTrace) (map[string]any, error) {
+func v2TraceContractOutput(trace *contextservice.SemanticTrace) (map[string]any, error) {
 	if trace == nil {
-		trace = &contextservice.V2SemanticTrace{}
+		trace = &contextservice.SemanticTrace{}
 	}
 	stoppedReason := any(nil)
 	if strings.TrimSpace(trace.StoppedReason) != "" {
@@ -415,8 +415,8 @@ func v2ResolveDreamFeedbackContractOutput(res *dreamservice.ResolveFeedbackResul
 	}
 	out["hypothesis_id"] = res.Dream.DreamID
 	out["status"] = string(res.Dream.Status)
-	if res.V2Memory != nil && strings.TrimSpace(res.V2Memory.IngestID) != "" {
-		out["ingest_id"] = res.V2Memory.IngestID
+	if res.Memory != nil && strings.TrimSpace(res.Memory.IngestID) != "" {
+		out["ingest_id"] = res.Memory.IngestID
 	}
 	return out
 }
@@ -483,7 +483,7 @@ func v2InspectMemoryPackContractOutput(res *skillpackservice.V2InspectResult, mo
 	if res == nil {
 		return map[string]any{
 			"valid":             false,
-			"format":            skillpackservice.V2MemoryPackFormat,
+			"format":            skillpackservice.MemoryPackFormat,
 			"content_sha256":    strings.Repeat("0", 64),
 			"mode":              firstNonEmpty(mode, "review"),
 			"counts":            map[string]any{},

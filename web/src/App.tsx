@@ -1,24 +1,16 @@
-import { FormEvent, lazy, ReactNode, Suspense, useEffect, useMemo, useState } from "react";
+import { FormEvent, lazy, Suspense, useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle,
-  ArrowRight,
   Ban,
   BarChart3,
-  CheckCircle2,
-  Database,
   KeyRound,
   ListFilter,
   LogOut,
   MessageSquare,
   Moon,
-  PauseCircle,
   Pencil,
-  Play,
   Plus,
   RefreshCw,
-  RotateCcw,
   Search,
-  ServerCog,
   Settings,
   ShieldCheck,
   Sun,
@@ -27,17 +19,14 @@ import {
 } from "lucide-react";
 import {
   ControlApi,
-  ControlSession,
-  MigrationStatus,
   Team,
 } from "./api";
 import { TeamProfilesPanel } from "./control/TeamProfilesPanel";
 import { TeamOverviewPanel, TeamWorkspaceShell } from "./control/TeamWorkspace";
 import type { TeamWorkspaceTab } from "./control/TeamWorkspace";
 import { TeamDreamingConfigForm } from "./teamDreamingConfig";
-import { formatDate, readError, shortId, startSerialPolling } from "./control/utils";
+import { formatDate, readError, shortId } from "./control/utils";
 import { AuthShell, LoadingState, PortalShell, SectionHeading } from "./ui/components";
-import { MigrationRepairCard } from "./MigrationRepairCard";
 
 const MetricsPanel = lazy(() => import("./control/MetricsPanel").then((module) => ({ default: module.MetricsPanel })));
 const SecurityPanel = lazy(() => import("./control/SecurityPanel").then((module) => ({ default: module.SecurityPanel })));
@@ -49,7 +38,6 @@ const RecallFeedbackPanel = lazy(() => import("./control/RecallFeedbackPanel").t
 
 const TOKEN_STORAGE_KEY = "denseMem.controlToken";
 const THEME_STORAGE_KEY = "denseMem.controlTheme";
-const CURRENT_MIGRATION_CONTRACT = "dense-mem.v2.1.migration-control.v3";
 
 type LoadState = "idle" | "loading" | "error";
 type Theme = "light" | "dark";
@@ -149,7 +137,6 @@ function Portal({
   const [activeTab, setActiveTab] = useState<PortalTab>("teams");
   const [teamWorkspaceTab, setTeamWorkspaceTab] = useState<TeamWorkspaceTab>("overview");
   const [creatingTeam, setCreatingTeam] = useState(false);
-  const [session, setSession] = useState<ControlSession | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [error, setError] = useState("");
 
@@ -172,46 +159,9 @@ function Portal({
     }
   }
 
-  async function loadPortal() {
-    setLoadState("loading");
-    setError("");
-    try {
-      const nextSession = normalizeControlSession(await api.session());
-      setSession(nextSession);
-      if (nextSession.portal_mode === "normal") {
-        await loadTeams();
-      } else {
-        setLoadState("idle");
-      }
-    } catch (err) {
-      setLoadState("error");
-      setError(readError(err));
-    }
-  }
-
   useEffect(() => {
-    void loadPortal();
+    void loadTeams();
   }, []);
-
-  if (!session) {
-    return (
-      <MaintenanceFrame theme={theme} onToggleTheme={onToggleTheme} onSignOut={onSignOut}>
-        {error ? <div className="banner error" role="alert">{error}</div> : <LoadingState label="Loading control session" />}
-      </MaintenanceFrame>
-    );
-  }
-
-  if (session.portal_mode !== "normal") {
-    return (
-      <MigrationPortal
-        api={api}
-        session={session}
-        theme={theme}
-        onToggleTheme={onToggleTheme}
-        onSignOut={onSignOut}
-      />
-    );
-  }
 
   const selectedTeam = teams.find((team) => team.id === selectedTeamId) ?? null;
   const teamScopedTab = activeTab === "teams";
@@ -383,354 +333,6 @@ function Portal({
       </Suspense>
     </PortalShell>
   );
-}
-
-function normalizeControlSession(session: ControlSession): ControlSession {
-  return {
-    ...session,
-    portal_mode: session.portal_mode ?? "normal",
-    legacy_config_present: session.legacy_config_present ?? false,
-  };
-}
-
-function MigrationPortal({
-  api,
-  session,
-  theme,
-  onToggleTheme,
-  onSignOut,
-}: {
-  api: ControlApi;
-  session: ControlSession;
-  theme: Theme;
-  onToggleTheme: () => void;
-  onSignOut: () => void;
-}) {
-  const [status, setStatus] = useState<MigrationStatus | null>(null);
-  const [backupsConfirmed, setBackupsConfirmed] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [connection, setConnection] = useState<"connected" | "reconnecting">("connected");
-  const [error, setError] = useState("");
-
-  async function loadStatus() {
-    try {
-      const next = await api.getMigrationStatus();
-      setStatus(next);
-      setConnection("connected");
-      setError("");
-    } catch (err) {
-      setConnection("reconnecting");
-      setError(readError(err));
-    }
-  }
-
-  useEffect(() => {
-    return startSerialPolling(loadStatus, 2000);
-  }, [api]);
-
-  async function start() {
-    if (session.portal_mode !== "migration") {
-      return;
-    }
-    setBusy(true);
-    setError("");
-    try {
-      let next = status;
-      if (!next) {
-        next = await api.getMigrationStatus();
-      }
-      const currentPreflight = next?.run?.preflight_approved &&
-        next.run.migration_contract_version === CURRENT_MIGRATION_CONTRACT &&
-        hasBackupConfirmation(next.run.preflight_checks);
-      if (!currentPreflight) {
-        next = await api.approveMigrationPreflight({
-          backups_confirmed: backupsConfirmed,
-          reason: "operator confirmed external PostgreSQL and Neo4j backups",
-        });
-        setStatus(next);
-      }
-      if (next.state === "ready") {
-        next = await api.startMigration("operator started guided migration");
-      }
-      setStatus(next);
-    } catch (err) {
-      setError(readError(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function pause() {
-    setBusy(true);
-    setError("");
-    try {
-      setStatus(await api.pauseMigration("operator paused guided migration"));
-    } catch (err) {
-      setError(readError(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function resume() {
-    setBusy(true);
-    setError("");
-    try {
-      setStatus(await api.resumeMigration("operator resumed guided migration"));
-    } catch (err) {
-      setError(readError(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const run = status?.run;
-  const total = run?.total_items ?? 0;
-  const completed = run?.completed_items ?? 0;
-  const progress = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : (status?.state === "cut_over" ? 100 : 0);
-  const repair = status?.repair;
-  const hardBlockingExclusions = repair?.hard_blocking_exclusions ?? repair?.blocking_exclusions ?? 0;
-  const repairBlocked = ((repair?.blocked_items ?? 0) > 0) || hardBlockingExclusions > 0;
-  const contractCurrent = run?.migration_contract_version === CURRENT_MIGRATION_CONTRACT;
-  const backupConfirmationCurrent = !!run?.preflight_approved && contractCurrent && hasBackupConfirmation(run.preflight_checks);
-  useEffect(() => {
-    if (backupConfirmationCurrent) {
-      setBackupsConfirmed(false);
-    }
-  }, [backupConfirmationCurrent]);
-  const confirmationRenewalState = !!run && !backupConfirmationCurrent && (
-    status?.state === "running" ||
-    status?.state === "paused_retryable" ||
-    (status?.state === "failed" && run.retryable) ||
-    status?.state === "verifying" ||
-    status?.state === "ready_to_cutover"
-  );
-  const canStart = session.portal_mode === "migration" &&
-    (status?.state === "required" || status?.state === "ready" || confirmationRenewalState) &&
-    (backupConfirmationCurrent || backupsConfirmed);
-  const canPause = session.portal_mode === "migration" && status?.state === "running";
-  const canResume = session.portal_mode === "migration" &&
-    backupConfirmationCurrent &&
-    (status?.state === "paused_retryable" || (status?.state === "failed" && run?.retryable)) &&
-    !repairBlocked;
-  const cleanup = session.portal_mode === "cleanup";
-
-  return (
-    <MaintenanceFrame theme={theme} onToggleTheme={onToggleTheme} onSignOut={onSignOut}>
-      <section className="maintenance-hero" aria-label="V2 migration">
-        <div>
-          <p className="eyebrow">Authority migration</p>
-          <h2>{cleanup ? "PostgreSQL V2 is active" : "Legacy migration is required"}</h2>
-          <p>
-            {cleanup
-              ? "The MCP service is running on PostgreSQL V2. Finish environment cleanup, then recreate the deployment to restore the normal control portal."
-              : "The data plane is closed until the legacy Neo4j corpus is migrated and the V2 compatibility marker is committed."}
-          </p>
-        </div>
-        <div className="migration-state-badge" data-state={status?.state ?? "loading"}>
-          {status?.state ? stateLabel(status.state) : "Loading"}
-        </div>
-      </section>
-
-      {error && <div className="banner error" role="alert">{error}</div>}
-      {connection === "reconnecting" && (
-        <div className="banner warning" role="status">
-          Reconnecting to the control portal. If cutover just completed, the server is restarting into PostgreSQL V2.
-        </div>
-      )}
-
-      <div className="maintenance-grid">
-        <section className="maintenance-panel authority-panel">
-          <SectionHeading title="Authority handoff" subtitle={status?.readiness_message} />
-          <div className="authority-rail" aria-label="Authority handoff phases">
-            <AuthorityStep label="Neo4j source" active={!cleanup && status?.state !== "cut_over"} done={cleanup || status?.state === "cut_over"} />
-            <ArrowRight size={18} aria-hidden="true" />
-            <AuthorityStep label="PostgreSQL V2" active={status?.state === "running" || status?.state === "ready_to_cutover"} done={cleanup || status?.state === "cut_over"} />
-            <ArrowRight size={18} aria-hidden="true" />
-            <AuthorityStep label="Active service" active={cleanup || status?.state === "cut_over"} done={cleanup} />
-          </div>
-          <div className="migration-progress" aria-label="Migration progress">
-            <div>
-              <strong>{progress}%</strong>
-              <span>{total > 0 ? `${completed} of ${total} items complete` : "Waiting for corpus scan"}</span>
-            </div>
-            <div className="progress-track">
-              <span style={{ width: `${progress}%` }} />
-            </div>
-          </div>
-          {status?.recent_errors?.map((item) => (
-            <p className="field-error" role="alert" key={item}>{item}</p>
-          ))}
-          {repair && <MigrationRepairCard repair={repair} repairBlocked={repairBlocked} claimEpoch={run?.claim_epoch} />}
-        </section>
-
-        {cleanup ? (
-          <CleanupPanel />
-        ) : (
-          <section className="maintenance-panel">
-            <SectionHeading
-              title="Start migration"
-              subtitle="Confirm that both recovery artifacts exist before the migration starts."
-            />
-            <form className="migration-preflight" onSubmit={(event) => { event.preventDefault(); void start(); }}>
-              <div className="backup-confirmation-card" aria-label="Before you migrate">
-                <div>
-                  <h3>Before you migrate</h3>
-                  <p>Confirm that recoverable copies exist for both databases.</p>
-                </div>
-                <div className="backup-confirmation-scope" aria-label="Databases covered by this confirmation">
-                  <span><Database size={15} aria-hidden="true" /> PostgreSQL</span>
-                  <span><Database size={15} aria-hidden="true" /> Neo4j</span>
-                </div>
-              </div>
-              <label className="check-row">
-                <input
-                  type="checkbox"
-                  checked={backupsConfirmed || backupConfirmationCurrent}
-                  onChange={(event) => setBackupsConfirmed(event.target.checked)}
-                  disabled={busy || backupConfirmationCurrent}
-                />
-                I confirm that I have backed up both the PostgreSQL and Neo4j databases.
-              </label>
-              <p className="confirmation-note">Dense-Mem does not create, inspect, or restore these backups.</p>
-              <div className="button-row">
-                <button className="primary-button" type="submit" disabled={busy || !canStart}>
-                  <Play size={16} aria-hidden="true" />
-                  {backupConfirmationCurrent ? "Start migration" : "Confirm and start migration"}
-                </button>
-                <button className="ghost-button" type="button" disabled={busy || !canPause} onClick={() => void pause()}>
-                  <PauseCircle size={16} aria-hidden="true" />
-                  Pause
-                </button>
-                <button className="ghost-button" type="button" disabled={busy || !canResume} onClick={() => void resume()}>
-                  <RotateCcw size={16} aria-hidden="true" />
-                  {repair?.required ? "Repair and resume" : "Resume"}
-                </button>
-              </div>
-            </form>
-          </section>
-        )}
-
-        <section className="maintenance-panel gates-panel">
-          <SectionHeading title="Cutover gates" subtitle="The supervisor commits the marker only after every hard gate passes." />
-          {status?.gate_results?.length ? (
-            <div className="gate-list">
-              {status.gate_results.map((gate) => (
-                <div className="gate-row" key={gate.gate_name}>
-                  {gate.outcome === "pass" ? <CheckCircle2 size={16} aria-hidden="true" /> : <AlertTriangle size={16} aria-hidden="true" />}
-                  <span>{gate.gate_name.replaceAll("_", " ")}</span>
-                  <small>{gate.message ?? gate.outcome}</small>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="table-placeholder compact">Gate results appear after corpus processing finishes.</div>
-          )}
-        </section>
-      </div>
-    </MaintenanceFrame>
-  );
-}
-
-function MaintenanceFrame({
-  theme,
-  onToggleTheme,
-  onSignOut,
-  children,
-}: {
-  theme: Theme;
-  onToggleTheme: () => void;
-  onSignOut: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <main className="app-shell maintenance-shell" data-theme={theme}>
-      <header className="topbar maintenance-topbar">
-        <div className="brand-row">
-          <span className="brand-mark"><ServerCog size={18} aria-hidden="true" /></span>
-          <h1>Dense-Mem Control</h1>
-        </div>
-        <div className="topbar-actions">
-          <button
-            className="icon-button"
-            type="button"
-            aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-            title={theme === "dark" ? "Light theme" : "Dark theme"}
-            onClick={onToggleTheme}
-          >
-            {theme === "dark" ? <Sun size={17} aria-hidden="true" /> : <Moon size={17} aria-hidden="true" />}
-          </button>
-          <button className="ghost-button" type="button" onClick={onSignOut}>
-            <LogOut size={17} aria-hidden="true" />
-            Sign out
-          </button>
-        </div>
-      </header>
-      <div className="maintenance-content">
-        {children}
-      </div>
-    </main>
-  );
-}
-
-function AuthorityStep({ label, active, done }: { label: string; active: boolean; done: boolean }) {
-  return (
-    <div className={active ? "authority-step active" : done ? "authority-step done" : "authority-step"}>
-      {done ? <CheckCircle2 size={16} aria-hidden="true" /> : <Database size={16} aria-hidden="true" />}
-      <span>{label}</span>
-    </div>
-  );
-}
-
-function CleanupPanel() {
-  const steps = [
-    "Remove NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, and NEO4J_DATABASE from the production runtime or secret store.",
-    "Remove the legacy Neo4j service or block application network access to it.",
-    "Recreate the deployment so the process starts without any NEO4J_* settings.",
-    "Return to the private control portal; the normal administration UI will appear after cleanup.",
-  ];
-  return (
-    <section className="maintenance-panel cleanup-panel">
-      <SectionHeading title="Manual cleanup" subtitle="The application does not edit environment variables." />
-      <ol>
-        {steps.map((step) => (
-          <li key={step}>{step}</li>
-        ))}
-      </ol>
-    </section>
-  );
-}
-
-function stateLabel(state: string) {
-  switch (state) {
-    case "required":
-      return "Needs backup confirmation";
-    case "ready":
-      return "Ready to start";
-    case "running":
-      return "Migrating";
-    case "paused_retryable":
-      return "Paused";
-    case "ready_to_cutover":
-      return "Verifying";
-    case "cut_over":
-      return "Cut over";
-    case "failed":
-      return "Needs attention";
-    default:
-      return state.replaceAll("_", " ");
-  }
-}
-
-function hasBackupConfirmation(checks?: Record<string, unknown>) {
-  if (!checks) {
-    return false;
-  }
-  return checks.operator_backup_confirmation === true &&
-    checks.postgres_backup_confirmed === true &&
-    checks.neo4j_backup_confirmed === true &&
-    checks.confirmation_scope === "operator" &&
-    checks.backup_verification === "not_performed";
 }
 
 function LazyPanelFallback() {
