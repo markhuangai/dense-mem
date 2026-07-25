@@ -73,10 +73,16 @@ type V2SemanticRelationshipObservation struct {
 	ValidFrom           *time.Time                      `json:"valid_from,omitempty"`
 	ValidTo             *time.Time                      `json:"valid_to,omitempty"`
 	CorrectionTarget    *V2RelationshipCorrectionTarget `json:"-"`
+	ConflictContext     *V2RelationshipConflictContext  `json:"-"`
 }
 
 type V2RelationshipCorrectionTarget struct {
 	RelationshipID  string
+	ExpectedVersion int
+}
+
+type V2RelationshipConflictContext struct {
+	ConflictID      string
 	ExpectedVersion int
 }
 
@@ -193,6 +199,9 @@ func PrepareV2SemanticReviewRequest(req V2SemanticReviewRequest) (V2SemanticRevi
 		obs.Quote = strings.TrimSpace(obs.Quote)
 		if obs.CorrectionTarget != nil {
 			obs.CorrectionTarget.RelationshipID = strings.TrimSpace(obs.CorrectionTarget.RelationshipID)
+		}
+		if obs.ConflictContext != nil {
+			obs.ConflictContext.ConflictID = strings.TrimSpace(obs.ConflictContext.ConflictID)
 		}
 		exact, err := v2SemanticExactSpanQuote(evidenceByID[obs.EvidenceID].Content, obs.Start, obs.End, obs.Quote)
 		if err != nil {

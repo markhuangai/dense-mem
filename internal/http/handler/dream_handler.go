@@ -58,6 +58,9 @@ func (h *DreamHandler) Runs(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	if runs == nil {
+		runs = []*dreamservice.RunCycleResult{}
+	}
 	return response.SuccessOK(c, runs)
 }
 

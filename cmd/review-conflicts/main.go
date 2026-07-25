@@ -1,0 +1,218 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"time"
+
+	"github.com/markhuangai/dense-mem/internal/operatorcli"
+	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres"
+)
+
+type cliConfig struct {
+	teamID       string
+	workerID     string
+	now          string
+	timezone     string
+	batchSize    int
+	leaseSeconds int
+	maxAttempts  int
+}
+
+type reviewOutput struct {
+	TeamID        string             `json:"team_id"`
+	ReviewRunID   string             `json:"review_run_id,omitempty"`
+	Status        string             `json:"status"`
+	Claimed       bool               `json:"claimed"`
+	ClaimedCases  int                `json:"claimed_cases"`
+	ResolvedCases int                `json:"resolved_cases"`
+	OverdueCases  int                `json:"overdue_cases"`
+	NoOpCases     int                `json:"no_op_cases"`
+	FailedCases   int                `json:"failed_cases"`
+	Results       []reviewCaseResult `json:"results,omitempty"`
+}
+
+type reviewCaseResult struct {
+	ConflictID           string   `json:"conflict_id"`
+	Outcome              string   `json:"outcome"`
+	Stage                string   `json:"stage"`
+	PreferredPositionID  string   `json:"preferred_position_id,omitempty"`
+	UpdatedRelationships []string `json:"updated_relationships,omitempty"`
+}
+
+type postgresConfig struct {
+	dsn string
+}
+
+func (c postgresConfig) GetPostgresDSN() string {
+	return c.dsn
+}
+
+func main() {
+	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func run(args []string, stdout, stderr io.Writer) error {
+	cfg, err := parseCLI(args, stderr)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	if cfg.now != "" {
+		parsed, err := time.Parse(time.RFC3339, cfg.now)
+		if err != nil {
+			return fmt.Errorf("invalid --now: must be RFC3339: %w", err)
+		}
+		now = parsed.UTC()
+	}
+	dsn, err := operatorcli.ResolvePostgresDSN(os.Getenv)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	pgClient, err := postgres.OpenWithClient(ctx, postgresConfig{dsn: dsn})
+	if err != nil {
+		return fmt.Errorf("connect postgres: %w", err)
+	}
+	defer pgClient.Close()
+	out, err := reviewTeamConflicts(ctx, repository.NewV2LedgerRepository(pgClient.GetDB(), postgres.NewRLS()), cfg, now)
+	if err != nil {
+		return err
+	}
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
+}
+
+func reviewTeamConflicts(
+	ctx context.Context,
+	ledger *repository.V2LedgerRepositoryImpl,
+	cfg cliConfig,
+	now time.Time,
+) (reviewOutput, error) {
+	lease := time.Duration(cfg.leaseSeconds) * time.Second
+	run, claimed, err := ledger.ReserveV2RelationshipConflictReviewRun(ctx, repository.V2ConflictReviewRunInput{
+		TeamID:       cfg.teamID,
+		WorkerID:     cfg.workerID,
+		LocalRunDate: now,
+		Timezone:     cfg.timezone,
+		Lease:        lease,
+	})
+	if err != nil {
+		return reviewOutput{}, err
+	}
+	out := reviewOutput{TeamID: cfg.teamID, Claimed: claimed, Status: "skipped"}
+	if run != nil {
+		out.ReviewRunID = run.ReviewRunID
+	}
+	if run == nil || !claimed || run.Status == "completed" {
+		return out, nil
+	}
+	counts := repository.V2ConflictReviewRunCompleteInput{
+		TeamID:      cfg.teamID,
+		ReviewRunID: run.ReviewRunID,
+		WorkerID:    cfg.workerID,
+		Status:      "completed",
+	}
+	for {
+		cases, err := ledger.ClaimV2RelationshipConflictCases(ctx, repository.V2ClaimRelationshipConflictCasesInput{
+			TeamID:      cfg.teamID,
+			WorkerID:    cfg.workerID,
+			ReviewRunID: run.ReviewRunID,
+			Limit:       cfg.batchSize,
+			Lease:       lease,
+			MaxAttempts: cfg.maxAttempts,
+			Now:         now,
+		})
+		if err != nil {
+			counts.Status = "failed"
+			counts.LastError = err.Error()
+			break
+		}
+		if len(cases) == 0 {
+			break
+		}
+		counts.ClaimedCases += len(cases)
+		for _, conflictCase := range cases {
+			result, err := ledger.ReviewV2RelationshipConflictCase(ctx, repository.V2ReviewRelationshipConflictCaseInput{
+				TeamID:      cfg.teamID,
+				WorkerID:    cfg.workerID,
+				ReviewRunID: run.ReviewRunID,
+				ConflictID:  conflictCase.ConflictID,
+				Now:         now,
+			})
+			if err != nil {
+				counts.FailedCases++
+				out.Results = append(out.Results, reviewCaseResult{ConflictID: conflictCase.ConflictID, Outcome: "error"})
+				continue
+			}
+			out.Results = append(out.Results, reviewCaseResult{
+				ConflictID:           result.ConflictID,
+				Outcome:              result.Outcome,
+				Stage:                result.Stage,
+				PreferredPositionID:  result.PreferredPositionID,
+				UpdatedRelationships: append([]string(nil), result.UpdatedRelationships...),
+			})
+			switch result.Outcome {
+			case repository.V2ConflictReviewOutcomeResolve:
+				counts.ResolvedCases++
+			case repository.V2ConflictReviewOutcomeOverdue:
+				counts.OverdueCases++
+			default:
+				counts.NoOpCases++
+			}
+		}
+	}
+	if err := ledger.CompleteV2RelationshipConflictReviewRun(ctx, counts); err != nil {
+		return reviewOutput{}, err
+	}
+	out.Status = counts.Status
+	out.ClaimedCases = counts.ClaimedCases
+	out.ResolvedCases = counts.ResolvedCases
+	out.OverdueCases = counts.OverdueCases
+	out.NoOpCases = counts.NoOpCases
+	out.FailedCases = counts.FailedCases
+	return out, nil
+}
+
+func parseCLI(args []string, stderr io.Writer) (cliConfig, error) {
+	var cfg cliConfig
+	fs := flag.NewFlagSet("review-conflicts", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.StringVar(&cfg.teamID, "team-id", "", "Team UUID to review (required)")
+	fs.StringVar(&cfg.workerID, "worker-id", fmt.Sprintf("operator-conflict-review-%d", os.Getpid()), "Reviewer worker ID")
+	fs.StringVar(&cfg.now, "now", "", "Review timestamp override in RFC3339")
+	fs.StringVar(&cfg.timezone, "timezone", "UTC", "Team-local review timezone")
+	fs.IntVar(&cfg.batchSize, "batch-size", 100, "Maximum cases claimed per batch")
+	fs.IntVar(&cfg.leaseSeconds, "lease-seconds", 300, "Review lease seconds")
+	fs.IntVar(&cfg.maxAttempts, "max-attempts", 5, "Maximum case attempts")
+	if err := fs.Parse(args); err != nil {
+		return cliConfig{}, err
+	}
+	if cfg.teamID == "" {
+		return cliConfig{}, errors.New("--team-id is required")
+	}
+	if cfg.workerID == "" {
+		return cliConfig{}, errors.New("--worker-id is required")
+	}
+	if cfg.batchSize < 1 {
+		cfg.batchSize = 100
+	}
+	if cfg.leaseSeconds < 30 {
+		cfg.leaseSeconds = 30
+	}
+	if cfg.maxAttempts < 1 {
+		cfg.maxAttempts = 5
+	}
+	return cfg, nil
+}

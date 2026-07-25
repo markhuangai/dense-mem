@@ -324,6 +324,7 @@ type V2RelationshipTraceResult struct {
 	EvidenceFragments      []V2TraceEvidenceFragment
 	VerificationEvents     []V2RelationshipVerificationEvent
 	Transitions            []V2RelationshipTransitionEvent
+	Conflicts              []V2RelationshipConflictCaseRecord
 	CrossProfileReferences []V2RelationshipCrossReferenceRecord
 	IdentityCorrections    []V2EntityCorrectionEventRecord
 	SupersessionLineage    []V2RelationshipTraceRecord

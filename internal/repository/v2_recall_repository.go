@@ -80,9 +80,14 @@ func (r *V2SearchRepositoryImpl) RecallEvidence(ctx context.Context, input V2Rec
 		candidateIDs = append(candidateIDs, candidate.EvidenceID)
 	}
 	hydrated := map[string]V2RecallEvidenceHit{}
+	conflicts := []V2RelationshipConflictCaseRecord{}
 	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var err error
 		hydrated, err = hydrateV2RecallEvidence(ctx, tx, input, contract, candidateIDs)
+		if err != nil {
+			return err
+		}
+		conflicts, err = loadV2RecallOpenConflictRecords(ctx, tx, input.TeamID, hydrated)
 		return err
 	})
 	if err != nil {
@@ -110,6 +115,7 @@ func (r *V2SearchRepositoryImpl) RecallEvidence(ctx context.Context, input V2Rec
 		TeamID:      input.TeamID,
 		SearchState: searchState,
 		Results:     results,
+		Conflicts:   conflicts,
 	}, nil
 }
 
@@ -355,7 +361,20 @@ func searchV2RecallEntityExpansion(
 		 AND quarantine.fragment_id = support.fragment_id
 		 AND quarantine.status = 'active'
 		WHERE relationship.team_id = ?::uuid
-		  AND relationship.status = 'active'
+		  AND (
+		      relationship.status = 'active'
+		      OR (
+		          relationship.status = 'superseded'
+		          AND (
+		              (?::timestamptz IS NOT NULL
+		               AND (relationship.valid_from IS NULL OR relationship.valid_from <= ?::timestamptz)
+		               AND (relationship.valid_to IS NULL OR relationship.valid_to > ?::timestamptz))
+		              OR (?::timestamptz IS NOT NULL
+		                  AND relationship.created_at <= ?::timestamptz
+		                  AND (relationship.recorded_to IS NULL OR relationship.recorded_to > ?::timestamptz))
+		          )
+		      )
+		  )
 		  AND relationship.tier IN ('validated_claim', 'fact')
 		  AND quarantine.quarantine_id IS NULL
 		  AND (
@@ -383,6 +402,8 @@ func searchV2RecallEntityExpansion(
 		ORDER BY max(relationship.updated_at) DESC, document.search_document_id ASC
 		LIMIT ?
 	`, input.TeamID, contract.EmbeddingContractID, input.TeamID,
+		input.ValidAt, input.ValidAt, input.ValidAt,
+		input.KnownAt, input.KnownAt, input.KnownAt,
 		pq.Array(input.ExpandFromEntityIDs), pq.Array(input.ExpandFromEntityIDs),
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt,
@@ -449,7 +470,20 @@ func hydrateV2RecallEvidence(
 			  ON relationship.team_id = support.team_id
 			 AND relationship.relationship_id = support.relationship_id
 			 AND latest.support_id IS NOT NULL
-			 AND relationship.status = 'active'
+			 AND (
+			     relationship.status = 'active'
+			     OR (
+			         relationship.status = 'superseded'
+			         AND (
+			             (?::timestamptz IS NOT NULL
+			              AND (relationship.valid_from IS NULL OR relationship.valid_from <= ?::timestamptz)
+			              AND (relationship.valid_to IS NULL OR relationship.valid_to > ?::timestamptz))
+			             OR (?::timestamptz IS NOT NULL
+			                 AND relationship.created_at <= ?::timestamptz
+			                 AND (relationship.recorded_to IS NULL OR relationship.recorded_to > ?::timestamptz))
+			         )
+			     )
+			 )
 			 AND relationship.tier IN ('validated_claim', 'fact')
 			 AND (
 			     support.source_id IS NULL
@@ -491,6 +525,8 @@ func hydrateV2RecallEvidence(
 		GROUP BY evidence_id
 	`, pq.Array(evidenceIDs), input.TeamID, input.TeamID, contract.EmbeddingContractID,
 		input.ValidAt, input.ValidAt, input.ValidAt,
+		input.KnownAt, input.KnownAt, input.KnownAt,
+		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt,
 		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),
 		input.KnownAt, input.KnownAt).Rows()
@@ -514,6 +550,44 @@ func hydrateV2RecallEvidence(
 		}
 	}
 	return out, rows.Err()
+}
+
+func loadV2RecallOpenConflictRecords(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	hydrated map[string]V2RecallEvidenceHit,
+) ([]V2RelationshipConflictCaseRecord, error) {
+	relationshipIDs := []string{}
+	seenRelationships := map[string]struct{}{}
+	for _, hit := range hydrated {
+		for _, id := range hit.RelationshipIDs {
+			if _, ok := seenRelationships[id]; ok {
+				continue
+			}
+			seenRelationships[id] = struct{}{}
+			relationshipIDs = append(relationshipIDs, id)
+		}
+	}
+	conflicts, err := loadV2RelationshipConflictRecords(ctx, tx, teamID, relationshipIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]V2RelationshipConflictCaseRecord, 0, len(conflicts))
+	seenConflicts := map[string]struct{}{}
+	for _, conflict := range conflicts {
+		if conflict.Status != string(domain.V2RelationshipConflictOpen) &&
+			conflict.Status != string(domain.V2RelationshipConflictOverdue) &&
+			conflict.Status != string(domain.V2RelationshipConflictResolved) {
+			continue
+		}
+		if _, ok := seenConflicts[conflict.ConflictID]; ok {
+			continue
+		}
+		seenConflicts[conflict.ConflictID] = struct{}{}
+		out = append(out, conflict)
+	}
+	return out, nil
 }
 
 func scanV2SearchHits(rows *sql.Rows) ([]V2SearchHit, error) {

@@ -23,6 +23,7 @@ func TestV2SemanticPlacementReviewSourceBuildsCurrentEvidenceJob(t *testing.T) {
 	queuedItemID := uuid.NewString()
 	markID := uuid.NewString()
 	targetID := uuid.NewString()
+	conflictID := uuid.NewString()
 	currentContent := "Mark works on Dense-Mem using PostgreSQL."
 	worksQuote := "Mark works on Dense-Mem"
 	usesQuote := "Dense-Mem using PostgreSQL"
@@ -75,6 +76,10 @@ func TestV2SemanticPlacementReviewSourceBuildsCurrentEvidenceJob(t *testing.T) {
 					"correction_target": map[string]any{
 						"relationship_id":  targetID,
 						"expected_version": 4,
+					},
+					"conflict_context": map[string]any{
+						"conflict_id":      conflictID,
+						"expected_version": 6,
 					},
 					"evidence": []map[string]any{{
 						"evidence_index": 1,
@@ -251,6 +256,16 @@ func TestV2SemanticPlacementReviewSourceBuildsCurrentEvidenceJob(t *testing.T) {
 	}
 	if got := job.Request.RelationshipObservations[0].CorrectionTarget; got == nil || got.RelationshipID != targetID || got.ExpectedVersion != 4 {
 		t.Fatalf("correction target = %#v", got)
+	}
+	if got := job.Request.RelationshipObservations[0].ConflictContext; got == nil || got.ConflictID != conflictID || got.ExpectedVersion != 6 {
+		t.Fatalf("conflict context = %#v", got)
+	}
+	if len(ledger.conflictContextInputs) != 1 ||
+		ledger.conflictContextInputs[0].TeamID != teamID ||
+		ledger.conflictContextInputs[0].OwnerProfileID != ownerID ||
+		ledger.conflictContextInputs[0].ConflictID != conflictID ||
+		ledger.conflictContextInputs[0].ExpectedVersion != 6 {
+		t.Fatalf("conflict context validation inputs = %#v", ledger.conflictContextInputs)
 	}
 	if got := job.Request.RelationshipObservations[0].ValidFrom; got == nil || !got.Equal(validFrom) {
 		t.Fatalf("valid_from = %#v", got)

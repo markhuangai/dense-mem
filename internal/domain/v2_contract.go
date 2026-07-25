@@ -3,6 +3,7 @@ package domain
 const (
 	V2ContractVersion        = "dense-mem.v2.1"
 	V2PredicatePolicyVersion = "open_vocabulary_v1"
+	V2ConflictPolicyVersion  = "cross_profile_conflict_v1"
 	V2FeatureGate            = "memory_v2"
 	V2ToolVisibility         = "dormant"
 )
@@ -126,6 +127,41 @@ const (
 	V2CrossReferenceChallenges         V2CrossReferenceKind = "challenges"
 	V2CrossReferenceCorrects           V2CrossReferenceKind = "corrects"
 	V2CrossReferenceAdoptsEvidenceFrom V2CrossReferenceKind = "adopts_evidence_from"
+)
+
+type V2RelationshipConflictStatus string
+
+const (
+	V2RelationshipConflictOpen      V2RelationshipConflictStatus = "open"
+	V2RelationshipConflictOverdue   V2RelationshipConflictStatus = "overdue"
+	V2RelationshipConflictResolved  V2RelationshipConflictStatus = "resolved"
+	V2RelationshipConflictDismissed V2RelationshipConflictStatus = "dismissed"
+)
+
+type V2RelationshipConflictKind string
+
+const (
+	V2RelationshipConflictCrossProfileCurrentState V2RelationshipConflictKind = "cross_profile_current_state"
+)
+
+type V2RelationshipConflictPositionDisposition string
+
+const (
+	V2RelationshipConflictPositionCandidate         V2RelationshipConflictPositionDisposition = "candidate"
+	V2RelationshipConflictPositionPreferred         V2RelationshipConflictPositionDisposition = "preferred"
+	V2RelationshipConflictPositionSuppressedCurrent V2RelationshipConflictPositionDisposition = "suppressed_current"
+)
+
+type V2RelationshipConflictEventAction string
+
+const (
+	V2RelationshipConflictEventOpened              V2RelationshipConflictEventAction = "opened"
+	V2RelationshipConflictEventPositionAdded       V2RelationshipConflictEventAction = "position_added"
+	V2RelationshipConflictEventMemberAdded         V2RelationshipConflictEventAction = "member_added"
+	V2RelationshipConflictEventEvaluated           V2RelationshipConflictEventAction = "evaluated"
+	V2RelationshipConflictEventMarkedOverdue       V2RelationshipConflictEventAction = "marked_overdue"
+	V2RelationshipConflictEventResolved            V2RelationshipConflictEventAction = "resolved"
+	V2RelationshipConflictEventRelationshipUpdated V2RelationshipConflictEventAction = "relationship_updated"
 )
 
 type V2HypothesisStatus string
@@ -477,5 +513,28 @@ func V2EmbeddingJobStatuses() []string {
 		string(V2EmbeddingJobFailed),
 		string(V2EmbeddingJobStale),
 		string(V2EmbeddingJobCancelled),
+	}
+}
+
+func V2RelationshipConflictStatuses() []string {
+	return []string{
+		string(V2RelationshipConflictOpen),
+		string(V2RelationshipConflictOverdue),
+		string(V2RelationshipConflictResolved),
+		string(V2RelationshipConflictDismissed),
+	}
+}
+
+func V2RelationshipConflictKinds() []string {
+	return []string{
+		string(V2RelationshipConflictCrossProfileCurrentState),
+	}
+}
+
+func V2RelationshipConflictPositionDispositions() []string {
+	return []string{
+		string(V2RelationshipConflictPositionCandidate),
+		string(V2RelationshipConflictPositionPreferred),
+		string(V2RelationshipConflictPositionSuppressedCurrent),
 	}
 }

@@ -97,8 +97,8 @@ test("control panel shows operational metrics against compose", async ({ page })
   await expect(page.getByRole("heading", { name: "Usage Rollup" })).toBeVisible();
   await expect(page.getByLabel("Request metrics")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Dependencies" })).toBeVisible();
-  await expect(page.getByText("postgres")).toBeVisible();
-  await expect(page.getByText("redis")).toBeVisible();
+  await expect(page.getByText("postgres", { exact: true })).toBeVisible();
+  await expect(page.getByText("redis", { exact: true })).toBeVisible();
 
   await page.getByLabel("Window").selectOption("360");
   await page.getByLabel("Team", { exact: true }).selectOption(seedTeamId);
@@ -204,18 +204,14 @@ test("MCP recall feedback is submitted and surfaced through compose telemetry", 
     }));
 
     expect(Array.isArray(recallPayload.results)).toBe(true);
-    expect(isRecord(recallPayload.recall_event)).toBe(true);
-    const recallEvent = recallPayload.recall_event as Record<string, unknown>;
-    expect(recallEvent.feedback_tool).toBe("submit_recall_session_feedback");
-    expect(recallEvent.feedback_timing).toBe("deferred_until_final_answer");
-    expect(typeof recallEvent.recall_id).toBe("string");
-    expect(String(recallEvent.recall_id)).toMatch(/^rec_/);
+    expect(typeof recallPayload.recall_id).toBe("string");
+    expect(String(recallPayload.recall_id)).toMatch(/^rec_/);
 
     const submitPayload = mcpToolPayload(await mcpCall(request, "tools/call", {
       name: "submit_recall_session_feedback",
       arguments: {
         recalls: [{
-          recall_id: recallEvent.recall_id,
+          recall_event_id: recallPayload.recall_id,
           used: true,
           answer_supported: true,
           quality: "high",
@@ -304,21 +300,16 @@ test("user portal logs in with a real API key and shows only that profile", asyn
   await expect(page.getByText("default profile")).toBeVisible();
   await expect(page.getByText(otherProfile.key.name)).toBeHidden();
 
-  await page.getByRole("button", { name: "Facts" }).click();
-  await expect(page.getByRole("heading", { name: "Facts" })).toBeVisible();
-  await expect(page.getByText("No facts")).toBeVisible();
+  await page.getByRole("button", { name: "Recall" }).click();
+  await expect(page.getByLabel("Knowledge explorer")).toBeVisible();
+  await expect(page.getByText("No recall results")).toBeVisible();
 
-  await page.getByRole("button", { name: "Claims" }).click();
-  await expect(page.getByRole("heading", { name: "Claims" })).toBeVisible();
-  await expect(page.getByText("No claims")).toBeVisible();
+  await page.getByRole("button", { name: "Graph" }).click();
+  await expect(page.getByLabel("Knowledge graph")).toBeVisible();
+  await expect(page.getByText("No graph nodes")).toBeVisible();
 
-  await page.getByRole("button", { name: "Fragments" }).click();
-  await expect(page.getByRole("heading", { name: "Fragments" })).toBeVisible();
-  await expect(page.getByText("No fragments")).toBeVisible();
-
-  await page.getByRole("button", { name: "Communities" }).click();
-  await expect(page.getByRole("heading", { name: "Communities" })).toBeVisible();
-  await expect(page.getByText("No communities")).toBeVisible();
+  await page.getByRole("button", { name: "Dreams" }).click();
+  await expect(page.getByRole("heading", { name: "Dream Outputs" })).toBeVisible();
 });
 
 test("read-only user key cannot regenerate itself", async ({ page, request }, testInfo) => {

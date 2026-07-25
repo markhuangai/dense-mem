@@ -290,6 +290,17 @@ func contractTools(deps Dependencies) []Tool {
 				}
 				return structToMap(res)
 			}
+		case V2ToolSubmitRecallSessionFeedback:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
+				if deps.RecallFeedbackEvents == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateV2ContractInput(tool, input, v2AuthenticatedScopes(ctx)); err != nil {
+					return nil, fmt.Errorf("submit_recall_session_feedback: invalid input: %w", err)
+				}
+				return submitV2RecallFeedback(ctx, deps, input)
+			}
 		case V2ToolListDreams:
 			tool := tools[i]
 			tools[i].Invoke = func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {

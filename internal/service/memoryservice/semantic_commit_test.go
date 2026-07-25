@@ -17,6 +17,7 @@ func TestV2SemanticCommitMapsAcceptedReviewIntoAtomicRepositoryInput(t *testing.
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	targetID := uuid.NewString()
+	conflictID := uuid.NewString()
 	request := semanticReviewServiceRequest(teamID, ownerID)
 	request.Evidence[0].SourceID = uuid.NewString()
 	request.Evidence[0].SourceRevisionID = uuid.NewString()
@@ -29,6 +30,10 @@ func TestV2SemanticCommitMapsAcceptedReviewIntoAtomicRepositoryInput(t *testing.
 	request.RelationshipObservations[0].CorrectionTarget = &verifier.V2RelationshipCorrectionTarget{
 		RelationshipID:  targetID,
 		ExpectedVersion: 3,
+	}
+	request.RelationshipObservations[0].ConflictContext = &verifier.V2RelationshipConflictContext{
+		ConflictID:      conflictID,
+		ExpectedVersion: 5,
 	}
 	response := semanticReviewResponse(request.RequestID, false, false)
 	result := semanticReviewResultFromResponse(response, 1, "sha256:semantic-response")
@@ -89,6 +94,9 @@ func TestV2SemanticCommitMapsAcceptedReviewIntoAtomicRepositoryInput(t *testing.
 	}
 	if relationship.CorrectionTarget == nil || relationship.CorrectionTarget.RelationshipID != targetID || relationship.CorrectionTarget.ExpectedVersion != 3 {
 		t.Fatalf("correction target = %#v", relationship.CorrectionTarget)
+	}
+	if relationship.ConflictContext == nil || relationship.ConflictContext.ConflictID != conflictID || relationship.ConflictContext.ExpectedVersion != 5 {
+		t.Fatalf("conflict context = %#v", relationship.ConflictContext)
 	}
 	if relationship.ValidFrom == nil || !relationship.ValidFrom.Equal(validFrom) {
 		t.Fatalf("valid_from = %#v", relationship.ValidFrom)

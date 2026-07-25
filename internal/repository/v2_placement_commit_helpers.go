@@ -71,6 +71,7 @@ func applyV2PlacementRelationshipDecision(
 	correctionTarget *V2PlacementCorrectionTargetInput,
 	placementFragmentID string,
 	embeddingJobMaxAttempts int,
+	conflictConfig V2ConflictRuntimeConfig,
 	result *V2CommitPlacementSemanticResult,
 ) error {
 	applied, err := applyV2RelationshipDecisionInTx(ctx, tx, decision)
@@ -129,6 +130,9 @@ func applyV2PlacementRelationshipDecision(
 		return err
 	}
 	appendV2PlacementSearchDocument(result, document)
+	if err := applyV2RelationshipConflictPlacement(ctx, tx, commit, applied, conflictConfig); err != nil {
+		return err
+	}
 	return nil
 }
 

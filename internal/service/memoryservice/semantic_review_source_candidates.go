@@ -19,6 +19,16 @@ type v2ReviewSourceCorrectionTarget struct {
 	Target         verifier.V2RelationshipCorrectionTarget
 }
 
+type v2ReviewSourceConflictContext struct {
+	Index          int
+	Ref            string
+	SubjectRef     string
+	PredicateKey   string
+	ObjectRef      string
+	ObjectValueKey string
+	Context        verifier.V2RelationshipConflictContext
+}
+
 func v2ReviewSourceCorrectionTargets(proposal map[string]any) []v2ReviewSourceCorrectionTarget {
 	relationships := v2PlacementReviewObjectArray(proposal, "relationship_hints", "relationships")
 	out := make([]v2ReviewSourceCorrectionTarget, 0, len(relationships))
@@ -38,6 +48,31 @@ func v2ReviewSourceCorrectionTargets(proposal map[string]any) []v2ReviewSourceCo
 			ObjectRef:      objectRef,
 			ObjectValueKey: v2ReviewSourceObjectValueKey(raw),
 			Target:         target,
+		})
+	}
+	return out
+}
+
+func v2ReviewSourceConflictContexts(proposal map[string]any) []v2ReviewSourceConflictContext {
+	relationships := v2PlacementReviewObjectArray(proposal, "relationship_hints", "relationships")
+	out := make([]v2ReviewSourceConflictContext, 0, len(relationships))
+	for i, raw := range relationships {
+		context, ok := v2PlacementReviewConflictContext(raw)
+		if !ok {
+			continue
+		}
+		objectRef := v2ReviewString(raw, "object_ref")
+		if objectRef == "" && raw["object_value"] == nil {
+			objectRef = v2ReviewString(raw, "object")
+		}
+		out = append(out, v2ReviewSourceConflictContext{
+			Index:          i,
+			Ref:            v2ReviewFirstNonEmpty(v2ReviewString(raw, "proposal_id"), v2ReviewString(raw, "ref"), v2ReviewString(raw, "legacy_id"), fmt.Sprintf("relationship:%d", i)),
+			SubjectRef:     v2ReviewFirstNonEmpty(v2ReviewString(raw, "subject_ref"), v2ReviewString(raw, "subject")),
+			PredicateKey:   v2ReviewSourcePredicateKey(v2ReviewString(raw, "predicate")),
+			ObjectRef:      objectRef,
+			ObjectValueKey: v2ReviewSourceObjectValueKey(raw),
+			Context:        context,
 		})
 	}
 	return out
@@ -68,6 +103,91 @@ func v2ReviewSourceProposalWithTrustedCorrectionTargets(
 		}
 	}
 	return proposal
+}
+
+func v2ReviewSourceProposalWithTrustedConflictContexts(
+	proposal map[string]any,
+	contexts []v2ReviewSourceConflictContext,
+) map[string]any {
+	if len(contexts) == 0 {
+		return proposal
+	}
+	relationships := v2PlacementReviewObjectArray(proposal, "relationship_hints", "relationships")
+	used := map[int]struct{}{}
+	for _, raw := range relationships {
+		if _, ok := v2PlacementReviewConflictContext(raw); ok {
+			continue
+		}
+		index, ok := v2ReviewSourceMatchConflictContext(raw, contexts, used, len(relationships))
+		if !ok {
+			continue
+		}
+		used[index] = struct{}{}
+		context := contexts[index].Context
+		raw["conflict_context"] = map[string]any{
+			"conflict_id":      context.ConflictID,
+			"expected_version": context.ExpectedVersion,
+		}
+	}
+	return proposal
+}
+
+func v2ReviewSourceMatchConflictContext(
+	raw map[string]any,
+	contexts []v2ReviewSourceConflictContext,
+	used map[int]struct{},
+	relationshipCount int,
+) (int, bool) {
+	ref := v2ReviewFirstNonEmpty(v2ReviewString(raw, "proposal_id"), v2ReviewString(raw, "ref"), v2ReviewString(raw, "legacy_id"))
+	if ref != "" {
+		for i, context := range contexts {
+			if _, exists := used[i]; exists {
+				continue
+			}
+			if context.Ref == ref {
+				return i, true
+			}
+		}
+	}
+	probe := v2ReviewSourceConflictContext{
+		SubjectRef:     v2ReviewFirstNonEmpty(v2ReviewString(raw, "subject_ref"), v2ReviewString(raw, "subject")),
+		PredicateKey:   v2ReviewSourcePredicateKey(v2ReviewString(raw, "predicate")),
+		ObjectRef:      v2ReviewFirstNonEmpty(v2ReviewString(raw, "object_ref"), v2ReviewString(raw, "object")),
+		ObjectValueKey: v2ReviewSourceObjectValueKey(raw),
+	}
+	matches := make([]int, 0, 1)
+	for i, context := range contexts {
+		if _, exists := used[i]; exists {
+			continue
+		}
+		if v2ReviewSourceConflictContextMatches(probe, context) {
+			matches = append(matches, i)
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0], true
+	}
+	if relationshipCount == 1 && len(contexts)-len(used) == 1 {
+		for i := range contexts {
+			if _, exists := used[i]; !exists {
+				return i, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func v2ReviewSourceConflictContextMatches(probe v2ReviewSourceConflictContext, context v2ReviewSourceConflictContext) bool {
+	if probe.SubjectRef == "" || context.SubjectRef == "" || probe.SubjectRef != context.SubjectRef {
+		return false
+	}
+	if probe.PredicateKey == "" || context.PredicateKey == "" || probe.PredicateKey != context.PredicateKey {
+		return false
+	}
+	if probe.ObjectRef != "" || context.ObjectRef != "" {
+		return probe.ObjectRef != "" && probe.ObjectRef == context.ObjectRef
+	}
+	return probe.ObjectValueKey != "" && probe.ObjectValueKey == context.ObjectValueKey
 }
 
 func v2ReviewSourceMatchCorrectionTarget(

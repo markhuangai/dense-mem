@@ -228,6 +228,11 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), `"run_id":"run-1"`)
 	assert.Equal(t, 3, dreams.runsLimit)
 
+	dreams.runs = nil
+	rec = do("/control/api/teams/" + teamID.String() + "/dreaming/runs")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.JSONEq(t, `{"data":[]}`, rec.Body.String())
+
 	rec = do("/control/api/teams/" + teamID.String() + "/dreams?limit=4&status=proposed&cursor=next&sort=last_evaluated_at&direction=asc")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "A control dream appears")

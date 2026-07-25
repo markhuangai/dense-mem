@@ -86,6 +86,11 @@ func (r *V2SemanticRepositoryImpl) TraceRelationship(
 			}
 			result.Transitions = transitions
 		}
+		conflicts, err := loadV2RelationshipConflictRecords(ctx, tx, input.TeamID, []string{relationship.RelationshipID})
+		if err != nil {
+			return err
+		}
+		result.Conflicts = conflicts
 		crossRefs, err := loadV2TraceCrossReferences(ctx, tx, input)
 		if err != nil {
 			return err

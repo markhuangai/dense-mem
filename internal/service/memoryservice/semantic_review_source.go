@@ -71,6 +71,7 @@ type v2PlacementReviewRelationshipSpec struct {
 	ValidFrom           *time.Time
 	ValidTo             *time.Time
 	CorrectionTarget    *verifier.V2RelationshipCorrectionTarget
+	ConflictContext     *verifier.V2RelationshipConflictContext
 }
 
 type semanticFailureDescriptor struct {
@@ -117,6 +118,10 @@ func (s *semanticPlacementReviewSource) BuildSemanticReviewJob(
 	evidence := v2SemanticReviewEvidence(fragment, evidenceID)
 	proposal := placement.Proposal
 	trustedCorrectionTargets := v2ReviewSourceCorrectionTargets(proposal)
+	trustedConflictContexts := v2ReviewSourceConflictContexts(proposal)
+	if validationErrors := s.v2ValidateReviewSourceConflictContexts(ctx, run, trustedConflictContexts); len(validationErrors) > 0 {
+		return v2SemanticReviewPreflightFailureJob(run, item, evidence, validationErrors), nil
+	}
 	entityHints := v2PlacementReviewEntityHints(proposal)
 	var validationErrors []verifier.V2SemanticValidationError
 	providerProposal, validationErrors, retryable, failure, err := s.v2PlacementReviewProviderProposal(ctx, run, evidence, proposal)
@@ -135,6 +140,7 @@ func (s *semanticPlacementReviewSource) BuildSemanticReviewJob(
 	if providerProposal != nil {
 		proposal = v2ReviewSourceProposalFromProvider(*providerProposal)
 		proposal = v2ReviewSourceProposalWithTrustedCorrectionTargets(proposal, trustedCorrectionTargets)
+		proposal = v2ReviewSourceProposalWithTrustedConflictContexts(proposal, trustedConflictContexts)
 		entityHints = v2PlacementReviewEntityHints(proposal)
 	}
 	relationships, validationErrors := v2PlacementReviewRelationshipSpecs(proposal, fragment, evidenceID)
@@ -466,6 +472,9 @@ func v2PlacementReviewRelationshipSpecs(
 		if target, ok := v2PlacementReviewCorrectionTarget(raw); ok {
 			spec.CorrectionTarget = &target
 		}
+		if context, ok := v2PlacementReviewConflictContext(raw); ok {
+			spec.ConflictContext = &context
+		}
 		if spec.SubjectRef == "" || spec.Predicate == "" || (spec.ObjectRef == "" && spec.ObjectValue == nil) {
 			continue
 		}
@@ -685,6 +694,7 @@ func (s *semanticPlacementReviewSource) v2PlacementReviewRelationshipObservation
 			ValidFrom:           relationship.ValidFrom,
 			ValidTo:             relationship.ValidTo,
 			CorrectionTarget:    relationship.CorrectionTarget,
+			ConflictContext:     relationship.ConflictContext,
 			PredicateCandidates: nil,
 		}
 		seenCandidates := map[string]struct{}{}

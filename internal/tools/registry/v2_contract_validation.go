@@ -294,6 +294,11 @@ func validateV2ProposalReferencesAndSpans(proposal map[string]any, evidence []an
 				return err
 			}
 		}
+		if context, ok := objectFields(relationship["conflict_context"]); ok {
+			if err := validateV2ConflictContext(context, fmt.Sprintf("proposal.relationships[%d].conflict_context", i)); err != nil {
+				return err
+			}
+		}
 		if err := validateV2RelationshipValidityWindow(relationship, fmt.Sprintf("proposal.relationships[%d]", i)); err != nil {
 			return err
 		}
@@ -342,6 +347,18 @@ func validateV2CorrectionTarget(target map[string]any, path string) error {
 		return fmt.Errorf("%s.relationship_id is required", path)
 	}
 	version, ok := schemaNumber(target["expected_version"])
+	if !ok || int(version) < 1 {
+		return fmt.Errorf("%s.expected_version must be a positive integer", path)
+	}
+	return nil
+}
+
+func validateV2ConflictContext(context map[string]any, path string) error {
+	conflictID, _ := context["conflict_id"].(string)
+	if strings.TrimSpace(conflictID) == "" {
+		return fmt.Errorf("%s.conflict_id is required", path)
+	}
+	version, ok := schemaNumber(context["expected_version"])
 	if !ok || int(version) < 1 {
 		return fmt.Errorf("%s.expected_version must be a positive integer", path)
 	}

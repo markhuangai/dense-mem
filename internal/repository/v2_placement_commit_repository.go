@@ -17,6 +17,7 @@ import (
 var (
 	ErrV2PlacementLeaseLost          = errors.New("v2 placement lease lost")
 	ErrV2PlacementStaleSource        = errors.New("v2 placement stale source")
+	ErrV2ConflictContextStale        = errors.New("v2 conflict context stale")
 	errV2PlacementUnresolvedEndpoint = errors.New("v2 placement unresolved relationship endpoint")
 	errV2PlacementPredicateReview    = errors.New("v2 placement predicate requires review")
 )
@@ -81,6 +82,7 @@ type V2PlacementRelationshipDecisionInput struct {
 	ResponseHash         string
 	Support              *V2EvidenceSupportInput
 	CorrectionTarget     *V2PlacementCorrectionTargetInput
+	ConflictContext      *V2PlacementConflictContextInput
 	ObservationMetadata  map[string]any
 	RelationshipMetadata map[string]any
 }
@@ -110,6 +112,11 @@ type V2PlacementRelationshipReviewInput struct {
 
 type V2PlacementCorrectionTargetInput struct {
 	RelationshipID  string
+	ExpectedVersion int
+}
+
+type V2PlacementConflictContextInput struct {
+	ConflictID      string
 	ExpectedVersion int
 }
 
@@ -163,6 +170,9 @@ func (r *V2LedgerRepositoryImpl) CommitPlacementSemanticResult(
 				result.OutcomeID = outcomeID
 				return nil
 			}
+			return err
+		}
+		if err := ensureV2RelationshipConflictContextsCurrent(ctx, tx, input); err != nil {
 			return err
 		}
 		if err := ensureV2SemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
@@ -230,6 +240,11 @@ func (r *V2LedgerRepositoryImpl) CommitPlacementSemanticResult(
 				appendV2PlacementReviewTaskID(result, review.ReviewTaskID)
 				continue
 			}
+			if observation.ConflictContext != nil {
+				if err := requireV2RelationshipConflictContextMatchesDecision(ctx, tx, input.TeamID, *observation.ConflictContext, decision); err != nil {
+					return err
+				}
+			}
 			if err := applyV2PlacementRelationshipDecision(
 				ctx,
 				tx,
@@ -238,6 +253,10 @@ func (r *V2LedgerRepositoryImpl) CommitPlacementSemanticResult(
 				observation.CorrectionTarget,
 				placementFragmentID,
 				r.embeddingJobMaxAttempts,
+				V2ConflictRuntimeConfig{
+					ReviewTTLDays: r.conflictReviewTTLDays,
+					Timezone:      r.conflictReviewTimezone,
+				},
 				result,
 			); err != nil {
 				return err
@@ -260,6 +279,10 @@ func (r *V2LedgerRepositoryImpl) CommitPlacementSemanticResult(
 				nil,
 				placementFragmentID,
 				r.embeddingJobMaxAttempts,
+				V2ConflictRuntimeConfig{
+					ReviewTTLDays: r.conflictReviewTTLDays,
+					Timezone:      r.conflictReviewTimezone,
+				},
 				result,
 			); err != nil {
 				return err
@@ -521,6 +544,11 @@ func normalizeV2PlacementRelationshipDecisionInput(input V2PlacementRelationship
 		target.RelationshipID = strings.TrimSpace(target.RelationshipID)
 		input.CorrectionTarget = &target
 	}
+	if input.ConflictContext != nil {
+		context := *input.ConflictContext
+		context.ConflictID = strings.TrimSpace(context.ConflictID)
+		input.ConflictContext = &context
+	}
 	return input
 }
 
@@ -581,6 +609,11 @@ func validateV2PlacementRelationshipDecisionInput(input V2PlacementRelationshipD
 			return err
 		}
 	}
+	if input.ConflictContext != nil {
+		if err := validateV2PlacementConflictContextInput(*input.ConflictContext); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -590,6 +623,16 @@ func validateV2PlacementCorrectionTargetInput(input V2PlacementCorrectionTargetI
 	}
 	if input.ExpectedVersion < 1 {
 		return errors.New("correction target expected_version must be greater than zero")
+	}
+	return nil
+}
+
+func validateV2PlacementConflictContextInput(input V2PlacementConflictContextInput) error {
+	if _, err := uuid.Parse(input.ConflictID); err != nil {
+		return fmt.Errorf("conflict context conflict_id is required: %w", err)
+	}
+	if input.ExpectedVersion < 1 {
+		return errors.New("conflict context expected_version must be greater than zero")
 	}
 	return nil
 }

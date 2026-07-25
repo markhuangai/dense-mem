@@ -53,6 +53,63 @@ func TestBuildActiveRecallRecordsFeedbackSnapshot(t *testing.T) {
 	}
 }
 
+func TestBuildActiveSubmitRecallSessionFeedbackRecordsFeedback(t *testing.T) {
+	recorder := &stubRecallFeedbackRecorder{}
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	reg, err := BuildActive(Dependencies{
+		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+		RecallFeedbackEvents: recorder,
+		Metrics:              metrics,
+	})
+	if err != nil {
+		t.Fatalf("BuildActive: %v", err)
+	}
+	submit, _ := reg.Get(V2ToolSubmitRecallSessionFeedback)
+	out, err := submit.Invoke(v2ContractInvokeContext("write"), "ignored-profile", map[string]any{
+		"recalls": []any{map[string]any{
+			"recall_event_id":  "rec-v2",
+			"used":             true,
+			"answer_supported": true,
+			"quality":          "high",
+			"missing_context":  false,
+			"irrelevant":       false,
+			"irrelevant_result_refs": []any{map[string]any{
+				"type": "relationship",
+				"id":   "relationship-v2",
+				"rank": 1,
+			}},
+			"hypothesis_feedback": []any{map[string]any{
+				"hypothesis_id": "dream-v2",
+				"used":          true,
+				"quality":       "medium",
+				"contradicted":  false,
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("submit_recall_session_feedback.Invoke: %v", err)
+	}
+	if out["recorded"] != true || out["recorded_count"] != 1 {
+		t.Fatalf("submit output = %#v", out)
+	}
+	if len(recorder.feedback) != 1 {
+		t.Fatalf("feedback submissions = %d; want 1", len(recorder.feedback))
+	}
+	feedback := recorder.feedback[0]
+	if feedback.RecallID != "rec-v2" || !feedback.Used || !feedback.AnswerSupported || feedback.Quality != "high" {
+		t.Fatalf("feedback submission = %+v", feedback)
+	}
+	if len(feedback.IrrelevantRefs) != 1 || feedback.IrrelevantRefs[0].ID != "relationship-v2" {
+		t.Fatalf("irrelevant refs = %+v", feedback.IrrelevantRefs)
+	}
+	if len(feedback.DreamFeedback) != 1 || feedback.DreamFeedback[0].DreamID != "dream-v2" {
+		t.Fatalf("hypothesis feedback = %+v", feedback.DreamFeedback)
+	}
+	if got := len(metrics.RecallFeedbackSamples()); got != 1 {
+		t.Fatalf("metrics feedback samples = %d; want 1", got)
+	}
+}
+
 func TestV2RecallFeedbackSnapshotHelpersCoverOptionalBranches(t *testing.T) {
 	validAt := time.Date(2026, 7, 17, 14, 0, 0, 0, time.UTC)
 	knownAt := validAt.Add(time.Hour)

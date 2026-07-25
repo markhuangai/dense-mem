@@ -317,6 +317,87 @@ func TestV2RelationshipProposalCorrectionTargetRequiresCompleteShape(t *testing.
 	}
 }
 
+func TestV2RelationshipProposalConflictContextRequiresCompleteShape(t *testing.T) {
+	remember, err := requireV2Tool(v2ToolMap(t), V2ToolRemember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := []any{
+		map[string]any{"content": "Dense-Mem uses PostgreSQL."},
+	}
+	entities := []any{
+		map[string]any{"ref": "entity-1", "name": "Dense-Mem"},
+		map[string]any{"ref": "entity-2", "name": "PostgreSQL"},
+	}
+	baseProposal := map[string]any{
+		"proposal_id": "rel-1",
+		"subject_ref": "entity-1",
+		"predicate":   "uses",
+		"object_ref":  "entity-2",
+		"evidence": []any{
+			map[string]any{"evidence_index": 0, "start": 0, "end": 25},
+		},
+	}
+
+	cases := []struct {
+		name    string
+		context map[string]any
+	}{
+		{
+			name: "missing conflict id",
+			context: map[string]any{
+				"expected_version": 1,
+			},
+		},
+		{
+			name: "missing expected version",
+			context: map[string]any{
+				"conflict_id": uuid.NewString(),
+			},
+		},
+		{
+			name: "zero expected version",
+			context: map[string]any{
+				"conflict_id":      uuid.NewString(),
+				"expected_version": 0,
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			proposal := cloneMap(baseProposal)
+			proposal["conflict_context"] = tc.context
+			input := map[string]any{
+				"evidence": evidence,
+				"proposal": map[string]any{
+					"entities":      entities,
+					"relationships": []any{proposal},
+				},
+			}
+			err := ValidateV2ContractInput(remember, input, []string{"write"})
+			if err == nil || !strings.Contains(err.Error(), "conflict_context") {
+				t.Fatalf("ValidateV2ContractInput err = %v, want conflict_context error", err)
+			}
+		})
+	}
+
+	validProposal := cloneMap(baseProposal)
+	validProposal["conflict_context"] = map[string]any{
+		"conflict_id":      uuid.NewString(),
+		"expected_version": 1,
+	}
+	validInput := map[string]any{
+		"evidence": evidence,
+		"proposal": map[string]any{
+			"entities":      entities,
+			"relationships": []any{validProposal},
+		},
+	}
+	if err := ValidateV2ContractInput(remember, validInput, []string{"write"}); err != nil {
+		t.Fatalf("ValidateV2ContractInput valid conflict_context err = %v", err)
+	}
+}
+
 func TestV2RelationshipProposalValidityFieldsBelongToRelationship(t *testing.T) {
 	remember, err := requireV2Tool(v2ToolMap(t), V2ToolRemember)
 	if err != nil {

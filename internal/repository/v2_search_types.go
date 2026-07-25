@@ -214,6 +214,7 @@ type V2RecallEvidenceResult struct {
 	TeamID      string
 	SearchState string
 	Results     []V2RecallEvidenceHit
+	Conflicts   []V2RelationshipConflictCaseRecord
 }
 
 type V2RecallEvidenceHit struct {

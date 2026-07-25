@@ -45,6 +45,8 @@ RUN CGO_ENABLED=0 GOOS=linux \
     go build -trimpath -ldflags="-s -w" -o /out/delete-key ./cmd/delete-key && \
     CGO_ENABLED=0 GOOS=linux \
     go build -trimpath -ldflags="-s -w" -o /out/rotate-key ./cmd/rotate-key && \
+    CGO_ENABLED=0 GOOS=linux \
+    go build -trimpath -ldflags="-s -w" -o /out/review-conflicts ./cmd/review-conflicts && \
     cp /out/provision-profile /out/provision-team && \
     cp /out/list-profiles /out/list-teams && \
     cp /out/delete-profile /out/delete-team && \
@@ -92,6 +94,7 @@ COPY --from=builder /out/list-team-profiles /app/list-team-profiles
 COPY --from=builder /out/delete-key /app/delete-key
 COPY --from=builder /out/delete-team-profile /app/delete-team-profile
 COPY --from=builder /out/rotate-key /app/rotate-key
+COPY --from=builder /out/review-conflicts /app/review-conflicts
 COPY --from=builder /out/rotate-team-profile-key /app/rotate-team-profile-key
 
 # migrator.go discovers migrations via cwd-relative walk; WORKDIR=/app plus

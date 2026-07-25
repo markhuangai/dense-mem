@@ -304,17 +304,7 @@ func v2TraceTransitionSchema() map[string]any {
 }
 
 func v2TraceConflictSchema() map[string]any {
-	return v2ClosedObject(
-		[]string{"conflict_id", "relationship_id", "kind", "status"},
-		map[string]any{
-			"conflict_id":           schemaString("Conflict ID.", 128),
-			"relationship_id":       schemaString("Relationship ID.", 128),
-			"other_relationship_id": schemaString("Conflicting Relationship ID.", 128),
-			"kind":                  schemaString("Conflict kind.", 128),
-			"status":                schemaString("Conflict status.", 64),
-			"created_at":            map[string]any{"type": "string", "format": "date-time"},
-		},
-	)
+	return v2RecallConflictSchema()
 }
 
 func v2TraceIdentityCorrectionSchema() map[string]any {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"log"
 	"log/slog"
 	nethttp "net/http"
@@ -104,10 +105,14 @@ func RunActiveServer(
 	recallFeedbackEventRepo := repository.NewRecallFeedbackEventRepository(pgDB.GetDB(), rlsHelper)
 	skillPackImportRepo := repository.NewSkillPackImportRepository(pgDB.GetDB(), rlsHelper)
 	semanticRepo := repository.NewV2SemanticRepository(pgDB.GetDB(), rlsHelper)
-	ledgerRepo := repository.NewV2LedgerRepositoryWithEmbeddingJobMaxAttempts(
+	ledgerRepo := repository.NewV2LedgerRepositoryWithRuntimeConfig(
 		pgDB.GetDB(),
 		rlsHelper,
 		cfg.GetEmbeddingJobMaxAttempts(),
+		repository.V2ConflictRuntimeConfig{
+			ReviewTTLDays: cfg.GetConflictReviewTTLDays(),
+			Timezone:      cfg.GetAppTimezone(),
+		},
 	)
 	searchRepo := repository.NewV2SearchRepositoryWithEmbeddingJobMaxAttempts(
 		pgDB.GetDB(),
@@ -432,6 +437,9 @@ func RunActiveServer(
 	dreamSchedulerCtx, dreamSchedulerCancel := context.WithCancel(context.Background())
 	defer dreamSchedulerCancel()
 	go dreamservice.NewScheduler(dreamSvc, profileService, slog.Default()).Start(dreamSchedulerCtx)
+	conflictReviewCtx, conflictReviewCancel := context.WithCancel(context.Background())
+	defer conflictReviewCancel()
+	startConflictReviewWorkers(conflictReviewCtx, logger, profileService, ledgerRepo, &cfg, discoverabilityMetrics)
 
 	httpAddr := os.Getenv("HTTP_ADDR")
 	if httpAddr == "" {
@@ -451,6 +459,7 @@ func RunActiveServer(
 	logger.Info("shutting down server")
 	workerCancel()
 	dreamSchedulerCancel()
+	conflictReviewCancel()
 	if err := http.ShutdownServer(e, logger); err != nil {
 		logger.Error("server shutdown error", err)
 	}
@@ -486,6 +495,199 @@ func RunActiveServer(
 	if err := recallFeedbackEventService.Shutdown(recallFeedbackShutdownCtx); err != nil {
 		log.Printf("recall feedback event shutdown error: %v", err)
 	}
+}
+
+func startConflictReviewWorkers(
+	ctx context.Context,
+	logger observability.LogProvider,
+	profiles service.ProfileService,
+	ledger conflictReviewLedger,
+	cfg *config.Config,
+	metrics observability.DiscoverabilityMetrics,
+) {
+	if metrics == nil {
+		metrics = observability.NoopDiscoverabilityMetrics()
+	}
+	hostname, _ := os.Hostname()
+	baseWorkerID := fmt.Sprintf("conflict-review-%s-%d", hostname, os.Getpid())
+	count := cfg.GetConflictReviewMaxConcurrency()
+	if count < 1 {
+		count = 1
+	}
+	if count > 16 {
+		count = 16
+	}
+	for workerIndex := 0; workerIndex < count; workerIndex++ {
+		workerID := fmt.Sprintf("%s-%d", baseWorkerID, workerIndex+1)
+		go func() {
+			ticker := time.NewTicker(time.Minute)
+			defer ticker.Stop()
+			for {
+				processConflictReviewTick(ctx, logger, profiles, ledger, cfg, metrics, workerID)
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+	}
+}
+
+func processConflictReviewTick(
+	ctx context.Context,
+	logger observability.LogProvider,
+	profiles service.ProfileService,
+	ledger conflictReviewLedger,
+	cfg *config.Config,
+	metrics observability.DiscoverabilityMetrics,
+	workerID string,
+) {
+	const pageSize = 100
+	now := time.Now()
+	for offset := 0; ; offset += pageSize {
+		teams, err := profiles.List(ctx, pageSize, offset)
+		if err != nil {
+			logger.Error("conflict review profile list failed", err)
+			return
+		}
+		if len(teams) == 0 {
+			return
+		}
+		for _, team := range teams {
+			if team == nil || !conflictReviewDueForTeam(now, cfg, team.ID.String()) {
+				continue
+			}
+			if err := processTeamConflictReview(ctx, logger, ledger, cfg, metrics, team.ID.String(), workerID, now); err != nil {
+				logger.Error("conflict review run failed", err, observability.String("team_id", team.ID.String()))
+			}
+		}
+		if len(teams) < pageSize {
+			return
+		}
+	}
+}
+
+func processTeamConflictReview(
+	ctx context.Context,
+	logger observability.LogProvider,
+	ledger conflictReviewLedger,
+	cfg *config.Config,
+	metrics observability.DiscoverabilityMetrics,
+	teamID string,
+	workerID string,
+	now time.Time,
+) error {
+	if metrics == nil {
+		metrics = observability.NoopDiscoverabilityMetrics()
+	}
+	started := time.Now()
+	outcome := "completed"
+	defer func() {
+		metrics.ObserveMemoryFunnelLatency("conflict_review", time.Since(started).Seconds(), outcome)
+	}()
+	lease := time.Duration(cfg.GetConflictReviewLeaseSeconds()) * time.Second
+	run, claimed, err := ledger.ReserveV2RelationshipConflictReviewRun(ctx, repository.V2ConflictReviewRunInput{
+		TeamID:       teamID,
+		WorkerID:     workerID,
+		LocalRunDate: now,
+		Timezone:     cfg.GetAppTimezone(),
+		Lease:        lease,
+	})
+	if err != nil {
+		outcome = "error"
+		return err
+	}
+	if run == nil || !claimed || run.Status == "completed" {
+		outcome = "skipped"
+		return nil
+	}
+	counts := repository.V2ConflictReviewRunCompleteInput{
+		TeamID:      teamID,
+		ReviewRunID: run.ReviewRunID,
+		WorkerID:    workerID,
+		Status:      "completed",
+	}
+	for {
+		cases, err := ledger.ClaimV2RelationshipConflictCases(ctx, repository.V2ClaimRelationshipConflictCasesInput{
+			TeamID:      teamID,
+			WorkerID:    workerID,
+			ReviewRunID: run.ReviewRunID,
+			Limit:       cfg.GetConflictReviewBatchSize(),
+			Lease:       lease,
+			MaxAttempts: cfg.GetConflictReviewMaxAttempts(),
+			Now:         time.Now().UTC(),
+		})
+		if err != nil {
+			counts.Status = "failed"
+			counts.LastError = err.Error()
+			outcome = "failed"
+			break
+		}
+		if len(cases) == 0 {
+			break
+		}
+		counts.ClaimedCases += len(cases)
+		for _, conflictCase := range cases {
+			result, err := ledger.ReviewV2RelationshipConflictCase(ctx, repository.V2ReviewRelationshipConflictCaseInput{
+				TeamID:      teamID,
+				WorkerID:    workerID,
+				ReviewRunID: run.ReviewRunID,
+				ConflictID:  conflictCase.ConflictID,
+				Now:         time.Now().UTC(),
+			})
+			if err != nil {
+				counts.FailedCases++
+				logger.Error("conflict review case failed", err, observability.String("team_id", teamID), observability.String("conflict_id", conflictCase.ConflictID))
+				continue
+			}
+			switch result.Outcome {
+			case repository.V2ConflictReviewOutcomeResolve:
+				counts.ResolvedCases++
+			case repository.V2ConflictReviewOutcomeOverdue:
+				counts.OverdueCases++
+			default:
+				counts.NoOpCases++
+			}
+		}
+	}
+	if counts.FailedCases > 0 && counts.Status == "completed" {
+		outcome = "partial_error"
+	} else if counts.ClaimedCases == 0 && counts.Status == "completed" {
+		outcome = "empty"
+	}
+	if err := ledger.CompleteV2RelationshipConflictReviewRun(ctx, counts); err != nil {
+		outcome = "error"
+		return err
+	}
+	return nil
+}
+
+type conflictReviewLedger interface {
+	ReserveV2RelationshipConflictReviewRun(context.Context, repository.V2ConflictReviewRunInput) (*repository.V2ConflictReviewRunRecord, bool, error)
+	ClaimV2RelationshipConflictCases(context.Context, repository.V2ClaimRelationshipConflictCasesInput) ([]repository.V2RelationshipConflictCaseRecord, error)
+	ReviewV2RelationshipConflictCase(context.Context, repository.V2ReviewRelationshipConflictCaseInput) (*repository.V2ReviewRelationshipConflictCaseResult, error)
+	CompleteV2RelationshipConflictReviewRun(context.Context, repository.V2ConflictReviewRunCompleteInput) error
+}
+
+func conflictReviewDueForTeam(now time.Time, cfg *config.Config, teamID string) bool {
+	location, err := time.LoadLocation(cfg.GetAppTimezone())
+	if err != nil {
+		location = time.Local
+	}
+	localNow := now.In(location)
+	start, err := time.Parse("15:04", cfg.GetConflictReviewStartTimeLocal())
+	if err != nil {
+		return false
+	}
+	year, month, day := localNow.Date()
+	scheduled := time.Date(year, month, day, start.Hour(), start.Minute(), 0, 0, location)
+	jitterSeconds := cfg.GetConflictReviewJitterSeconds()
+	if jitterSeconds > 0 {
+		delay := int(crc32.ChecksumIEEE([]byte(teamID)) % uint32(jitterSeconds+1))
+		scheduled = scheduled.Add(time.Duration(delay) * time.Second)
+	}
+	return !localNow.Before(scheduled)
 }
 
 func checkActiveAuthority(authority authorityBootstrap) error {

@@ -126,7 +126,7 @@ func v2TraceContractOutput(trace *contextservice.SemanticTrace) (map[string]any,
 		"evidence_fragments":       v2TraceEvidenceFragmentOutputs(trace.EvidenceFragments),
 		"verification_events":      v2TraceVerificationOutputs(trace.VerificationEvents),
 		"transitions":              v2TraceTransitionOutputs(trace.Transitions),
-		"conflicts":                []any{},
+		"conflicts":                v2TraceConflictOutputs(trace.Conflicts),
 		"cross_profile_references": v2TraceCrossProfileReferenceOutputs(trace.CrossProfileReferences),
 		"identity_corrections":     v2TraceIdentityCorrectionOutputs(trace.IdentityCorrections),
 		"supersession_lineage":     v2TraceRelationshipLineageOutputs(trace.SupersessionLineage),
@@ -282,6 +282,41 @@ func v2TraceTransitionOutputs(records []repository.V2RelationshipTransitionEvent
 		v2PutNullableString(item, "from_status", record.FromStatus)
 		v2PutRequiredTime(item, "created_at", record.CreatedAt)
 		out = append(out, item)
+	}
+	return out
+}
+
+func v2TraceConflictOutputs(records []repository.V2RelationshipConflictCaseRecord) []map[string]any {
+	out := make([]map[string]any, 0, len(records))
+	for _, record := range records {
+		item := map[string]any{
+			"conflict_id":         record.ConflictID,
+			"version":             record.Version,
+			"kind":                record.Kind,
+			"status":              record.Status,
+			"question":            record.Question,
+			"positions":           v2TraceConflictPositionOutputs(record.Positions),
+			"positions_truncated": false,
+		}
+		v2PutTime(item, "review_due_at", record.ReviewDueAt)
+		v2PutNullableTime(item, "effective_at", record.EffectiveAt)
+		v2PutNullableString(item, "effective_time_basis", record.EffectiveTimeBasis)
+		v2PutNullableString(item, "preferred_position_id", record.PreferredPositionID)
+		out = append(out, item)
+	}
+	return out
+}
+
+func v2TraceConflictPositionOutputs(records []repository.V2RelationshipConflictPositionRecord) []map[string]any {
+	out := make([]map[string]any, 0, len(records))
+	for _, record := range records {
+		out = append(out, map[string]any{
+			"position_id":         record.PositionID,
+			"disposition":         record.Disposition,
+			"relationship_ids":    v2TraceStringArray(record.RelationshipIDs),
+			"owner_profile_ids":   v2TraceStringArray(record.OwnerProfileIDs),
+			"result_evidence_ids": v2TraceStringArray(record.EvidenceIDs),
+		})
 	}
 	return out
 }
