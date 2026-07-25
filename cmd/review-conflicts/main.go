@@ -61,7 +61,7 @@ const (
 	reviewConflictMaxAttempts     = 20
 	reviewConflictMinTimeoutSecs  = 1
 	reviewConflictMaxTimeoutSecs  = 86400
-	reviewConflictDefaultTimeout  = 120
+	reviewConflictDefaultTimeout  = 300
 )
 
 func (c postgresConfig) GetPostgresDSN() string {

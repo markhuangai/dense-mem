@@ -46,6 +46,9 @@ func TestParseCLIDefaultsTimezoneToLocal(t *testing.T) {
 	if cfg.timeoutSecs != reviewConflictDefaultTimeout {
 		t.Fatalf("timeoutSecs = %d, want %d", cfg.timeoutSecs, reviewConflictDefaultTimeout)
 	}
+	if cfg.timeoutSecs < cfg.leaseSeconds {
+		t.Fatalf("timeoutSecs = %d, want at least leaseSeconds %d", cfg.timeoutSecs, cfg.leaseSeconds)
+	}
 }
 
 func TestParseCLIParsesTimeout(t *testing.T) {
