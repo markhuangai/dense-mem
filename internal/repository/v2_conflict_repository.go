@@ -655,6 +655,7 @@ func loadV2RelationshipConflictRecordsByID(
 	}
 	for i := range cases {
 		cases[i].Positions = positionsForV2Conflict(cases[i].ConflictID, positions)
+		applyV2ConflictPositionKnownAtDispositions(&cases[i], knownAt)
 	}
 	return cases, nil
 }
@@ -847,6 +848,11 @@ func applyV2ConflictKnownAt(record *V2RelationshipConflictCaseRecord, knownAt *t
 		record.ResolutionReason = ""
 	}
 	if record.Status == string(domain.V2RelationshipConflictDismissed) && v2ConflictDismissedAfterKnownAt(record, knownAt) {
+		record.DismissedAt = nil
+		if record.ResolvedAt != nil && !record.ResolvedAt.After(*knownAt) {
+			record.Status = string(domain.V2RelationshipConflictResolved)
+			return
+		}
 		if knownAt.Before(record.ReviewDueAt) {
 			record.Status = string(domain.V2RelationshipConflictOpen)
 		} else {
@@ -857,6 +863,26 @@ func applyV2ConflictKnownAt(record *V2RelationshipConflictCaseRecord, knownAt *t
 		record.EffectiveAt = nil
 		record.EffectiveTimeBasis = ""
 		record.ResolutionReason = ""
+	}
+}
+
+func applyV2ConflictPositionKnownAtDispositions(record *V2RelationshipConflictCaseRecord, knownAt *time.Time) {
+	if record == nil || knownAt == nil {
+		return
+	}
+	switch record.Status {
+	case string(domain.V2RelationshipConflictResolved):
+		for i := range record.Positions {
+			if record.Positions[i].PositionID == record.PreferredPositionID {
+				record.Positions[i].Disposition = string(domain.V2RelationshipConflictPositionPreferred)
+			} else {
+				record.Positions[i].Disposition = string(domain.V2RelationshipConflictPositionSuppressedCurrent)
+			}
+		}
+	case string(domain.V2RelationshipConflictOpen), string(domain.V2RelationshipConflictOverdue):
+		for i := range record.Positions {
+			record.Positions[i].Disposition = string(domain.V2RelationshipConflictPositionCandidate)
+		}
 	}
 }
 
