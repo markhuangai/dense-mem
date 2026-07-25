@@ -57,6 +57,51 @@ func TestApplyV2ConflictKnownAtPreservesResolvedStateBeforeFutureDismissal(t *te
 	assert.Nil(t, record.DismissedAt)
 }
 
+func TestApplyV2ConflictKnownAtClearsDismissalWhenFutureResolutionIsRewound(t *testing.T) {
+	knownAt := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
+	resolvedAt := knownAt.Add(time.Hour)
+	effectiveAt := resolvedAt
+	dismissedAt := knownAt.Add(2 * time.Hour)
+	record := V2RelationshipConflictCaseRecord{
+		Status:              string(domain.V2RelationshipConflictDismissed),
+		ReviewDueAt:         knownAt.Add(time.Hour),
+		PreferredPositionID: "position-a",
+		ResolvedAt:          &resolvedAt,
+		EffectiveAt:         &effectiveAt,
+		EffectiveTimeBasis:  "recorded_at",
+		ResolutionReason:    "future resolution",
+		NextReviewAt:        dismissedAt,
+		DismissedAt:         &dismissedAt,
+		UpdatedAt:           dismissedAt,
+	}
+
+	applyV2ConflictKnownAt(&record, &knownAt)
+
+	assert.Equal(t, string(domain.V2RelationshipConflictOpen), record.Status)
+	assert.Empty(t, record.PreferredPositionID)
+	assert.Nil(t, record.ResolvedAt)
+	assert.Nil(t, record.EffectiveAt)
+	assert.Empty(t, record.EffectiveTimeBasis)
+	assert.Empty(t, record.ResolutionReason)
+	assert.Nil(t, record.DismissedAt)
+	assert.True(t, record.NextReviewAt.IsZero())
+}
+
+func TestApplyV2ConflictKnownAtRewindsOverdueBeforeReviewDueAt(t *testing.T) {
+	knownAt := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
+	nextReviewAt := knownAt.Add(24 * time.Hour)
+	record := V2RelationshipConflictCaseRecord{
+		Status:       string(domain.V2RelationshipConflictOverdue),
+		ReviewDueAt:  knownAt.Add(time.Hour),
+		NextReviewAt: nextReviewAt,
+	}
+
+	applyV2ConflictKnownAt(&record, &knownAt)
+
+	assert.Equal(t, string(domain.V2RelationshipConflictOpen), record.Status)
+	assert.True(t, record.NextReviewAt.IsZero())
+}
+
 func TestApplyV2ConflictPositionKnownAtDispositions(t *testing.T) {
 	knownAt := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
 	record := V2RelationshipConflictCaseRecord{

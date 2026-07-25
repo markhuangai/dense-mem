@@ -143,7 +143,11 @@ func (s *semanticPlacementReviewSource) BuildSemanticReviewJob(
 	if providerProposal != nil {
 		proposal = v2ReviewSourceProposalFromProvider(*providerProposal)
 		proposal = v2ReviewSourceProposalWithTrustedCorrectionTargets(proposal, trustedCorrectionTargets)
-		proposal = v2ReviewSourceProposalWithTrustedConflictContexts(proposal, trustedConflictContexts)
+		var reattachErrors []verifier.V2SemanticValidationError
+		proposal, reattachErrors = v2ReviewSourceProposalWithTrustedConflictContexts(proposal, trustedConflictContexts)
+		if len(reattachErrors) > 0 {
+			return v2SemanticReviewPreflightFailureJob(run, item, evidence, reattachErrors), nil
+		}
 		entityHints = v2PlacementReviewEntityHints(proposal)
 	}
 	relationships, validationErrors := v2PlacementReviewRelationshipSpecs(proposal, fragment, evidenceID)

@@ -108,14 +108,12 @@ func v2ReviewSourceProposalWithTrustedCorrectionTargets(
 func v2ReviewSourceProposalWithTrustedConflictContexts(
 	proposal map[string]any,
 	contexts []v2ReviewSourceConflictContext,
-) map[string]any {
-	if len(contexts) == 0 {
-		return proposal
-	}
+) (map[string]any, []verifier.V2SemanticValidationError) {
 	relationships := v2PlacementReviewObjectArray(proposal, "relationship_hints", "relationships")
 	used := map[int]struct{}{}
 	for _, raw := range relationships {
-		if _, ok := v2PlacementReviewConflictContext(raw); ok {
+		delete(raw, "conflict_context")
+		if len(contexts) == 0 {
 			continue
 		}
 		index, ok := v2ReviewSourceMatchConflictContext(raw, contexts, used, len(relationships))
@@ -129,7 +127,20 @@ func v2ReviewSourceProposalWithTrustedConflictContexts(
 			"expected_version": context.ExpectedVersion,
 		}
 	}
-	return proposal
+	if len(used) == len(contexts) {
+		return proposal, nil
+	}
+	errors := make([]verifier.V2SemanticValidationError, 0, len(contexts)-len(used))
+	for i, context := range contexts {
+		if _, ok := used[i]; ok {
+			continue
+		}
+		errors = append(errors, verifier.V2SemanticValidationError{
+			Field:   fmt.Sprintf("relationship_hints[%d].conflict_context", context.Index),
+			Message: "could not be reattached after provider proposal rewrite",
+		})
+	}
+	return proposal, errors
 }
 
 func v2ReviewSourceMatchConflictContext(

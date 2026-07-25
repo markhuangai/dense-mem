@@ -853,6 +853,11 @@ func applyV2ConflictKnownAt(record *V2RelationshipConflictCaseRecord, knownAt *t
 		record.EffectiveAt = nil
 		record.EffectiveTimeBasis = ""
 		record.ResolutionReason = ""
+		record.DismissedAt = nil
+		rewound = true
+	}
+	if record.Status == string(domain.V2RelationshipConflictOverdue) && knownAt.Before(record.ReviewDueAt) {
+		record.Status = string(domain.V2RelationshipConflictOpen)
 		rewound = true
 	}
 	if record.Status == string(domain.V2RelationshipConflictDismissed) && v2ConflictDismissedAfterKnownAt(record, knownAt) {
