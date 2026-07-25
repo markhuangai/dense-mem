@@ -85,6 +85,14 @@ func TestV2PlacementReviewRelationshipSpecsReturnsBoundedValidationErrors(t *tes
 				"object_ref":           "dense-mem",
 				"valid_from":           12,
 			},
+			{
+				"subject_ref":          "mark",
+				"predicate":            "works_on",
+				"predicate_candidates": []string{"works_on"},
+				"relationship_kind":    "state",
+				"object_ref":           "dense-mem",
+				"conflict_context":     map[string]any{"expected_version": 1},
+			},
 		},
 	}, repository.V2EvidenceFragment{Content: content}, "evidence-1")
 
@@ -100,6 +108,7 @@ func TestV2PlacementReviewRelationshipSpecsReturnsBoundedValidationErrors(t *tes
 		"relationship_hints[1].relationship_kind",
 		"relationship_hints[2].valid_to",
 		"relationship_hints[3].valid_from",
+		"relationship_hints[4].conflict_context",
 	}
 	if len(fields) != len(want) {
 		t.Fatalf("validation fields = %#v", fields)

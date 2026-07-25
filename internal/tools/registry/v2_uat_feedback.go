@@ -52,6 +52,7 @@ func submitV2RecallFeedback(ctx context.Context, deps Dependencies, input map[st
 	recorded := 0
 	for _, submission := range submissions {
 		if err := deps.RecallFeedbackEvents.RecordRecallFeedback(ctx, submission); err != nil {
+			//nolint:nilerr // Partial failure is reported through the tool response payload.
 			return map[string]any{
 				"recorded":        recorded > 0,
 				"recorded_count":  recorded,

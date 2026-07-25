@@ -48,6 +48,24 @@ func (s *semanticPlacementReviewSource) v2ValidateReviewSourceConflictContexts(
 	return out
 }
 
+func v2ReviewSourceConflictContextShapeErrors(proposal map[string]any) []verifier.V2SemanticValidationError {
+	relationships := v2PlacementReviewObjectArray(proposal, "relationship_hints", "relationships")
+	out := make([]verifier.V2SemanticValidationError, 0)
+	for i, raw := range relationships {
+		if _, exists := raw["conflict_context"]; !exists {
+			continue
+		}
+		if _, ok := v2PlacementReviewConflictContext(raw); ok {
+			continue
+		}
+		out = append(out, verifier.V2SemanticValidationError{
+			Field:   fmt.Sprintf("relationship_hints[%d].conflict_context", i),
+			Message: "must include conflict_id and expected_version",
+		})
+	}
+	return out
+}
+
 func v2PlacementReviewConflictContext(raw map[string]any) (verifier.V2RelationshipConflictContext, bool) {
 	context, ok := v2ReviewMap(raw["conflict_context"])
 	if !ok {

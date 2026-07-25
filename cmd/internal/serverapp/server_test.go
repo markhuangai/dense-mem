@@ -133,7 +133,8 @@ func TestProcessTeamConflictReviewCountsMixedOutcomes(t *testing.T) {
 		t.Fatalf("complete calls = %#v", ledger.completes)
 	}
 	complete := ledger.completes[0]
-	if complete.Status != "completed" ||
+	if complete.Status != "failed" ||
+		complete.LastError != "one or more conflict cases failed" ||
 		complete.ClaimedCases != 4 ||
 		complete.ResolvedCases != 1 ||
 		complete.OverdueCases != 1 ||

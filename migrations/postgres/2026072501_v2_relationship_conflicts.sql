@@ -128,8 +128,6 @@ CREATE TABLE IF NOT EXISTS relationship_conflict_position_members (
     FOREIGN KEY (team_id, verification_event_id, owner_profile_id)
         REFERENCES verification_events(team_id, verification_event_id, owner_profile_id) ON DELETE RESTRICT,
     FOREIGN KEY (team_id, fragment_id) REFERENCES evidence_fragments(team_id, fragment_id) ON DELETE RESTRICT,
-    FOREIGN KEY (team_id, fragment_id, owner_profile_id)
-        REFERENCES evidence_fragments(team_id, fragment_id, owner_profile_id) ON DELETE RESTRICT,
     CONSTRAINT relationship_conflict_members_source_group_nonempty CHECK (btrim(source_group_key) <> ''),
     CONSTRAINT relationship_conflict_members_authority_check CHECK (authority IN ('authoritative', 'primary', 'secondary', 'inferred', 'unknown')),
     CONSTRAINT relationship_conflict_members_metadata_object_check CHECK (jsonb_typeof(metadata) = 'object')

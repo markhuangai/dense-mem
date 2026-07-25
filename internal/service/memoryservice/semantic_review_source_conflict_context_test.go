@@ -89,3 +89,72 @@ func TestV2SemanticPlacementReviewSourceRejectsStaleConflictContextBeforeProvide
 		t.Fatalf("provider was called %#v", provider.reqs)
 	}
 }
+
+func TestV2SemanticPlacementReviewSourceRejectsMalformedConflictContextBeforeProvider(t *testing.T) {
+	teamID := uuid.NewString()
+	ownerID := uuid.NewString()
+	ingestID := uuid.NewString()
+	runID := uuid.NewString()
+	itemID := uuid.NewString()
+	content := "Dense-Mem uses GraphDB."
+	ledger := &reviewSourceLedgerStub{
+		placement: &repository.V2CreateIngestResult{
+			TeamID:         teamID,
+			OwnerProfileID: ownerID,
+			IngestID:       ingestID,
+			PlacementRunID: runID,
+			Status:         "processing",
+			Proposal: map[string]any{
+				"relationship_hints": []map[string]any{{
+					"proposal_id": "rel:uses",
+					"subject_ref": "project_1",
+					"predicate":   "uses",
+					"object_ref":  "db_1",
+					"conflict_context": map[string]any{
+						"conflict_id": "",
+					},
+					"evidence": []map[string]any{{
+						"evidence_index": 0,
+						"start":          0,
+						"end":            utf8.RuneCountInString(content),
+					}},
+				}},
+			},
+			Evidence: []repository.V2EvidenceFragment{{
+				FragmentID:    uuid.NewString(),
+				EvidenceIndex: 0,
+				Content:       content,
+				ContentHash:   "sha256:current",
+			}},
+			Items: []repository.V2PlacementItem{{
+				PlacementItemID: itemID,
+				EvidenceIndex:   0,
+				Status:          "queued",
+			}},
+		},
+	}
+	provider := &reviewSourceProposalProviderStub{}
+	source := NewSemanticPlacementReviewSource(SemanticPlacementReviewSourceDependencies{
+		Ledger:           ledger,
+		Catalog:          &reviewSourceCatalogStub{},
+		ProposalProvider: provider,
+	})
+
+	job, err := source.BuildSemanticReviewJob(context.Background(), repository.V2PlacementRun{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		IngestID:       ingestID,
+		PlacementRunID: runID,
+		Status:         "processing",
+		MaxAttempts:    3,
+	})
+	if err != nil {
+		t.Fatalf("BuildSemanticReviewJob returned error: %v", err)
+	}
+	if len(job.ValidationErrors) != 1 || job.ValidationErrors[0].Field != "relationship_hints[0].conflict_context" {
+		t.Fatalf("validation errors = %#v", job.ValidationErrors)
+	}
+	if len(provider.reqs) != 0 {
+		t.Fatalf("provider was called %#v", provider.reqs)
+	}
+}

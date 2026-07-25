@@ -70,8 +70,7 @@ ALTER TABLE relationship_records
     ADD CONSTRAINT relationship_records_identity_unique
     UNIQUE USING INDEX relationship_records_identity_unique_without_valid_to_idx;
 
-DROP INDEX CONCURRENTLY IF EXISTS relationship_records_active_one_current_unique;
-CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS relationship_records_active_one_current_unique
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS relationship_records_active_one_current_unique_new
     ON relationship_records (
         team_id, owner_profile_id, subject_entity_id, predicate_key,
         polarity, valid_from, scope_key
@@ -80,6 +79,9 @@ CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS relationship_records_active_one_c
     WHERE current_cardinality = 'one'
       AND status = 'active'
       AND tier IN ('validated_claim', 'fact');
+DROP INDEX CONCURRENTLY IF EXISTS relationship_records_active_one_current_unique;
+ALTER INDEX relationship_records_active_one_current_unique_new
+    RENAME TO relationship_records_active_one_current_unique;
 
 -- +goose Down
 
@@ -148,8 +150,7 @@ ALTER TABLE relationship_records
     ADD CONSTRAINT relationship_records_identity_unique
     UNIQUE USING INDEX relationship_records_identity_unique_with_valid_to_idx;
 
-DROP INDEX CONCURRENTLY IF EXISTS relationship_records_active_one_current_unique;
-CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS relationship_records_active_one_current_unique
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS relationship_records_active_one_current_unique_with_valid_to_new
     ON relationship_records (
         team_id, owner_profile_id, subject_entity_id, predicate_key,
         polarity, valid_from, valid_to, scope_key
@@ -158,3 +159,6 @@ CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS relationship_records_active_one_c
     WHERE current_cardinality = 'one'
       AND status = 'active'
       AND tier IN ('validated_claim', 'fact');
+DROP INDEX CONCURRENTLY IF EXISTS relationship_records_active_one_current_unique;
+ALTER INDEX relationship_records_active_one_current_unique_with_valid_to_new
+    RENAME TO relationship_records_active_one_current_unique;

@@ -109,6 +109,7 @@ type V2RelationshipConflictCaseRecord struct {
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 	Positions           []V2RelationshipConflictPositionRecord
+	DismissedAt         *time.Time
 }
 
 type V2ValidateRelationshipConflictContextInput struct {
@@ -604,10 +605,13 @@ func loadV2RelationshipConflictRecords(
 		          AND (member.retired_at IS NULL OR member.retired_at > ?::timestamptz)
 		      )
 		  )
-		  AND conflict.status IN ('open', 'overdue', 'resolved')
+		  AND (
+		      (?::timestamptz IS NULL AND conflict.status IN ('open', 'overdue', 'resolved'))
+		      OR (?::timestamptz IS NOT NULL AND conflict.status IN ('open', 'overdue', 'resolved', 'dismissed'))
+		  )
 		ORDER BY conflict.conflict_id::text
 	`, teamID, pq.Array(relationshipIDs),
-		knownAt, knownAt, knownAt, knownAt, knownAt, knownAt).Rows()
+		knownAt, knownAt, knownAt, knownAt, knownAt, knownAt, knownAt, knownAt).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -669,7 +673,14 @@ func loadV2RelationshipConflictCaseRows(
 		       question, policy_version, review_due_at, next_review_at, review_ttl_days,
 		       timezone, COALESCE(preferred_position_id::text, ''),
 		       resolved_at, effective_at, effective_time_basis, resolution_reason,
-		       version, attempts, created_at, updated_at
+		       version, attempts, created_at, updated_at,
+		       (
+		           SELECT max(event.created_at)
+		           FROM relationship_conflict_events AS event
+		           WHERE event.team_id = relationship_conflict_cases.team_id
+		             AND event.conflict_id = relationship_conflict_cases.conflict_id
+		             AND event.action = 'dismissed'
+		       ) AS dismissed_at
 		FROM relationship_conflict_cases
 		WHERE team_id = ?::uuid
 		  AND conflict_id = ANY(?::uuid[])
@@ -711,6 +722,7 @@ func loadV2RelationshipConflictCaseRows(
 			&record.Attempts,
 			&record.CreatedAt,
 			&record.UpdatedAt,
+			&record.DismissedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -834,4 +846,26 @@ func applyV2ConflictKnownAt(record *V2RelationshipConflictCaseRecord, knownAt *t
 		record.EffectiveTimeBasis = ""
 		record.ResolutionReason = ""
 	}
+	if record.Status == string(domain.V2RelationshipConflictDismissed) && v2ConflictDismissedAfterKnownAt(record, knownAt) {
+		if knownAt.Before(record.ReviewDueAt) {
+			record.Status = string(domain.V2RelationshipConflictOpen)
+		} else {
+			record.Status = string(domain.V2RelationshipConflictOverdue)
+		}
+		record.PreferredPositionID = ""
+		record.ResolvedAt = nil
+		record.EffectiveAt = nil
+		record.EffectiveTimeBasis = ""
+		record.ResolutionReason = ""
+	}
+}
+
+func v2ConflictDismissedAfterKnownAt(record *V2RelationshipConflictCaseRecord, knownAt *time.Time) bool {
+	if record == nil || knownAt == nil {
+		return false
+	}
+	if record.DismissedAt != nil {
+		return record.DismissedAt.After(*knownAt)
+	}
+	return record.UpdatedAt.After(*knownAt)
 }

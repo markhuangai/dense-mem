@@ -520,7 +520,7 @@ func startConflictReviewWorkers(
 	}
 	for workerIndex := 0; workerIndex < count; workerIndex++ {
 		workerID := fmt.Sprintf("%s-%d", baseWorkerID, workerIndex+1)
-		go func() {
+		go func(workerID string) {
 			ticker := time.NewTicker(time.Minute)
 			defer ticker.Stop()
 			for {
@@ -531,7 +531,7 @@ func startConflictReviewWorkers(
 				case <-ticker.C:
 				}
 			}
-		}()
+		}(workerID)
 	}
 }
 
@@ -663,6 +663,8 @@ func processTeamConflictReview(
 		}
 	}
 	if counts.FailedCases > 0 && counts.Status == "completed" {
+		counts.Status = "failed"
+		counts.LastError = "one or more conflict cases failed"
 		outcome = "partial_error"
 	} else if counts.ClaimedCases == 0 && counts.Status == "completed" {
 		outcome = "empty"

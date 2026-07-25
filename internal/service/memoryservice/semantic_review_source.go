@@ -117,6 +117,9 @@ func (s *semanticPlacementReviewSource) BuildSemanticReviewJob(
 	evidenceID := fmt.Sprintf("evidence:%d", fragment.EvidenceIndex)
 	evidence := v2SemanticReviewEvidence(fragment, evidenceID)
 	proposal := placement.Proposal
+	if validationErrors := v2ReviewSourceConflictContextShapeErrors(proposal); len(validationErrors) > 0 {
+		return v2SemanticReviewPreflightFailureJob(run, item, evidence, validationErrors), nil
+	}
 	trustedCorrectionTargets := v2ReviewSourceCorrectionTargets(proposal)
 	trustedConflictContexts := v2ReviewSourceConflictContexts(proposal)
 	if validationErrors := s.v2ValidateReviewSourceConflictContexts(ctx, run, trustedConflictContexts); len(validationErrors) > 0 {
@@ -472,7 +475,15 @@ func v2PlacementReviewRelationshipSpecs(
 		if target, ok := v2PlacementReviewCorrectionTarget(raw); ok {
 			spec.CorrectionTarget = &target
 		}
-		if context, ok := v2PlacementReviewConflictContext(raw); ok {
+		if _, exists := raw["conflict_context"]; exists {
+			context, ok := v2PlacementReviewConflictContext(raw)
+			if !ok {
+				validationErrors = append(validationErrors, verifier.V2SemanticValidationError{
+					Field:   fmt.Sprintf("relationship_hints[%d].conflict_context", i),
+					Message: "must include conflict_id and expected_version",
+				})
+				continue
+			}
 			spec.ConflictContext = &context
 		}
 		if spec.SubjectRef == "" || spec.Predicate == "" || (spec.ObjectRef == "" && spec.ObjectValue == nil) {

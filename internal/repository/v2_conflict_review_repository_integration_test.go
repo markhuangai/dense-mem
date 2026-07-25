@@ -24,7 +24,7 @@ func TestV2RelationshipConflictReviewerDismissesStaleCaseAfterRetraction(t *test
 	subject := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "project", "Dense-Mem")
 	postgres := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "PostgreSQL")
 	graphdb := createV2SemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "GraphDB")
-	commitV2PlacementRelationshipForConflictTest(
+	active := commitV2PlacementRelationshipForConflictTest(
 		t, ctx, ledgerRepo, teamID, ownerA, "worker-dismiss-stale-a",
 		"dismiss-stale-conflict-a", "Dense-Mem uses PostgreSQL.", subject.EntityID, postgres.EntityID, "source-group-dismiss-stale-a",
 	)
@@ -42,6 +42,7 @@ func TestV2RelationshipConflictReviewerDismissesStaleCaseAfterRetraction(t *test
 		IdempotencyKey: "dismiss-stale-retract",
 	})
 	require.NoError(t, err)
+	historicalKnownAt := time.Now().UTC()
 
 	result := reviewV2ConflictCaseForTest(t, ctx, ledgerRepo, teamID, "conflict-reviewer-dismiss-stale", conflictID, time.Now().UTC())
 	assert.Equal(t, V2ConflictReviewOutcomeNoop, result.Outcome)
@@ -76,6 +77,22 @@ func TestV2RelationshipConflictReviewerDismissesStaleCaseAfterRetraction(t *test
 	assert.Greater(t, version, conflictVersion)
 	assert.Equal(t, int64(1), activeMembers)
 	assert.Equal(t, int64(1), dismissedEvents)
+
+	var historicalConflicts []V2RelationshipConflictCaseRecord
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		var loadErr error
+		historicalConflicts, loadErr = loadV2RelationshipConflictRecords(
+			ctx,
+			tx,
+			teamID,
+			[]string{active.RelationshipResults[0].Relationship.RelationshipID},
+			&historicalKnownAt,
+		)
+		return loadErr
+	}))
+	require.Len(t, historicalConflicts, 1)
+	assert.NotEqual(t, "dismissed", historicalConflicts[0].Status)
+	assert.Empty(t, historicalConflicts[0].PreferredPositionID)
 }
 
 func TestV2RelationshipConflictReviewerDoesNotExhaustAttemptsBeforeDueDate(t *testing.T) {
