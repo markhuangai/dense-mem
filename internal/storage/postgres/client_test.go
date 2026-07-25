@@ -147,6 +147,21 @@ func TestMigratorRunUp(t *testing.T) {
 	assert.NoError(t, err, "repeat RunUp should be idempotent")
 }
 
+func TestMigratorRunUpAppliesPostCutoverCleanupAfterEmbeddingRetry(t *testing.T) {
+	ctx := context.Background()
+
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026072401)
+	require.True(t, tableExists(t, ctx, sqlDB, "community_detection_runs"))
+
+	m := NewMigratorWithDB(sqlDB)
+	require.NoError(t, m.RunUp(ctx))
+	require.False(t, tableExists(t, ctx, sqlDB, "community_detection_runs"))
+	require.NoError(t, m.RunUp(ctx), "repeat RunUp should remain idempotent")
+}
+
 // TestMigratorRunDownRejectsPostCutoverCleanup verifies the latest cleanup
 // boundary is intentionally irreversible.
 func TestMigratorRunDownRejectsPostCutoverCleanup(t *testing.T) {
@@ -161,9 +176,7 @@ func TestMigratorRunDownRejectsPostCutoverCleanup(t *testing.T) {
 	err := m.RunUp(ctx)
 	require.NoError(t, err, "RunUp should succeed")
 
-	// The embedding retry migration is reversible; the cleanup boundary below it is not.
-	err = m.RunDown(ctx)
-	require.NoError(t, err)
+	// The latest cleanup migration is intentionally irreversible.
 	err = m.RunDown(ctx)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "irreversible migration: post-cutover legacy cleanup")
@@ -245,7 +258,7 @@ func TestV2EmbeddingRetryRecoveryMigrationRequeuesOnlyTransientExhaustion(t *tes
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
 
-	runGooseUpTo(t, ctx, sqlDB, 2026072303)
+	runGooseUpTo(t, ctx, sqlDB, 2026072302)
 	teamID, profileID := insertV2MigrationTeamProfile(t, ctx, sqlDB)
 	contractID := uuid.NewString()
 	generationID := uuid.NewString()
@@ -320,8 +333,7 @@ func TestV2EmbeddingRetryRecoveryMigrationRequeuesOnlyTransientExhaustion(t *tes
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
-	migrator := NewMigratorWithDB(sqlDB)
-	require.NoError(t, migrator.RunUp(ctx))
+	runGooseUpTo(t, ctx, sqlDB, 2026072401)
 
 	tx, err = sqlDB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	require.NoError(t, err)
@@ -497,7 +509,7 @@ func TestPostCutoverCleanupMigrationWithCompatibleMarkerDropsLegacyTables(t *tes
 		return err
 	}))
 
-	runGooseUpTo(t, ctx, sqlDB, 2026072303)
+	runGooseUpTo(t, ctx, sqlDB, 2026072402)
 
 	assert.False(t, tableExists(t, ctx, sqlDB, "profiles"))
 	assert.False(t, tableExists(t, ctx, sqlDB, "api_keys"))
@@ -514,7 +526,7 @@ func TestPostCutoverCleanupMigrationBlocksNonemptyDatabaseWithoutMarker(t *testi
 	insertV2MigrationTeamProfile(t, ctx, sqlDB)
 
 	require.NoError(t, goose.SetDialect("postgres"))
-	err := goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026072303)
+	err := goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026072402)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "compatible cutover marker missing")
 	assert.Contains(t, err.Error(), "teams")
@@ -545,7 +557,7 @@ func TestPostCutoverCleanupMigrationBlocksLegacyProfileWithoutCanonicalTeam(t *t
 	}))
 
 	require.NoError(t, goose.SetDialect("postgres"))
-	err := goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026072303)
+	err := goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026072402)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "legacy profiles missing canonical teams")
 	assert.True(t, tableExists(t, ctx, sqlDB, "profiles"), "cleanup DDL must not run after guard failure")
@@ -575,7 +587,7 @@ func TestPostCutoverCleanupMigrationBlocksLegacyAPIKeyWithoutCanonicalTeamProfil
 	}))
 
 	require.NoError(t, goose.SetDialect("postgres"))
-	err := goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026072303)
+	err := goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026072402)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "legacy api_keys missing canonical team_profiles")
 	assert.True(t, tableExists(t, ctx, sqlDB, "api_keys"), "cleanup DDL must not run after guard failure")

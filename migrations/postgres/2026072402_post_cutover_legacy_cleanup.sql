@@ -1,6 +1,7 @@
 -- +goose Up
 -- +goose StatementBegin
 
+-- This cleanup follows the already-released 2026072401 migration.
 SELECT set_config('app.tx_mode', 'system', true);
 SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
