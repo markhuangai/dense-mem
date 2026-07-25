@@ -51,6 +51,15 @@ type postgresConfig struct {
 	dsn string
 }
 
+const (
+	reviewConflictMinBatchSize    = 1
+	reviewConflictMaxBatchSize    = 500
+	reviewConflictMinLeaseSeconds = 30
+	reviewConflictMaxLeaseSeconds = 1800
+	reviewConflictMinAttempts     = 1
+	reviewConflictMaxAttempts     = 20
+)
+
 func (c postgresConfig) GetPostgresDSN() string {
 	return c.dsn
 }
@@ -214,7 +223,7 @@ func parseCLI(args []string, stderr io.Writer) (cliConfig, error) {
 	fs.SetOutput(stderr)
 	defaultTimezone := strings.TrimSpace(os.Getenv("APP_TIMEZONE"))
 	if defaultTimezone == "" {
-		defaultTimezone = "UTC"
+		defaultTimezone = "Local"
 	}
 	fs.StringVar(&cfg.teamID, "team-id", "", "Team UUID to review (required)")
 	fs.StringVar(&cfg.workerID, "worker-id", fmt.Sprintf("operator-conflict-review-%d", os.Getpid()), "Reviewer worker ID")
@@ -235,14 +244,21 @@ func parseCLI(args []string, stderr io.Writer) (cliConfig, error) {
 	if _, err := time.LoadLocation(cfg.timezone); err != nil {
 		return cliConfig{}, fmt.Errorf("--timezone is invalid: %w", err)
 	}
-	if cfg.batchSize < 1 {
-		cfg.batchSize = 100
+	if err := validateCLIIntRange("--batch-size", cfg.batchSize, reviewConflictMinBatchSize, reviewConflictMaxBatchSize); err != nil {
+		return cliConfig{}, err
 	}
-	if cfg.leaseSeconds < 30 {
-		cfg.leaseSeconds = 30
+	if err := validateCLIIntRange("--lease-seconds", cfg.leaseSeconds, reviewConflictMinLeaseSeconds, reviewConflictMaxLeaseSeconds); err != nil {
+		return cliConfig{}, err
 	}
-	if cfg.maxAttempts < 1 {
-		cfg.maxAttempts = 5
+	if err := validateCLIIntRange("--max-attempts", cfg.maxAttempts, reviewConflictMinAttempts, reviewConflictMaxAttempts); err != nil {
+		return cliConfig{}, err
 	}
 	return cfg, nil
+}
+
+func validateCLIIntRange(name string, value, min, max int) error {
+	if value < min || value > max {
+		return fmt.Errorf("%s must be between %d and %d, got %d", name, min, max, value)
+	}
+	return nil
 }
