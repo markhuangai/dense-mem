@@ -19,13 +19,17 @@ func (r *V2LedgerRepositoryImpl) ReserveV2RelationshipConflictReviewRun(
 	ctx context.Context,
 	input V2ConflictReviewRunInput,
 ) (*V2ConflictReviewRunRecord, bool, error) {
-	input = normalizeV2ConflictReviewRunInput(input)
+	var err error
+	input, err = normalizeV2ConflictReviewRunInput(input)
+	if err != nil {
+		return nil, false, err
+	}
 	if err := validateV2ConflictReviewRunInput(input); err != nil {
 		return nil, false, err
 	}
 	var record *V2ConflictReviewRunRecord
 	var claimed bool
-	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		rows, err := tx.WithContext(ctx).Raw(`
 			WITH inserted AS (
 				INSERT INTO relationship_conflict_review_runs (
@@ -612,13 +616,13 @@ func releaseV2RelationshipConflictCaseLease(
 
 func v2ConflictNextReviewAt(now time.Time, due time.Time) time.Time {
 	next := now.Add(24 * time.Hour)
-	if next.After(due) {
+	if due.After(now) && next.After(due) {
 		return due
 	}
 	return next
 }
 
-func normalizeV2ConflictReviewRunInput(input V2ConflictReviewRunInput) V2ConflictReviewRunInput {
+func normalizeV2ConflictReviewRunInput(input V2ConflictReviewRunInput) (V2ConflictReviewRunInput, error) {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.WorkerID = strings.TrimSpace(input.WorkerID)
 	input.Timezone = strings.TrimSpace(input.Timezone)
@@ -628,12 +632,16 @@ func normalizeV2ConflictReviewRunInput(input V2ConflictReviewRunInput) V2Conflic
 	if input.Lease <= 0 {
 		input.Lease = 5 * time.Minute
 	}
-	if input.LocalRunDate.IsZero() {
-		input.LocalRunDate = time.Now().In(v2ConflictLocation(input.Timezone))
+	location, err := v2ConflictLocation(input.Timezone)
+	if err != nil {
+		return V2ConflictReviewRunInput{}, err
 	}
-	y, m, d := input.LocalRunDate.In(v2ConflictLocation(input.Timezone)).Date()
+	if input.LocalRunDate.IsZero() {
+		input.LocalRunDate = time.Now().In(location)
+	}
+	y, m, d := input.LocalRunDate.In(location).Date()
 	input.LocalRunDate = time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
-	return input
+	return input, nil
 }
 
 func validateV2ConflictReviewRunInput(input V2ConflictReviewRunInput) error {
@@ -739,10 +747,10 @@ func validateV2ConflictReviewRunCompleteInput(input V2ConflictReviewRunCompleteI
 	return nil
 }
 
-func v2ConflictLocation(name string) *time.Location {
+func v2ConflictLocation(name string) (*time.Location, error) {
 	location, err := time.LoadLocation(strings.TrimSpace(name))
-	if err == nil {
-		return location
+	if err != nil {
+		return nil, fmt.Errorf("timezone is invalid: %w", err)
 	}
-	return time.Local
+	return location, nil
 }

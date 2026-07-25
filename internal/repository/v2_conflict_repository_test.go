@@ -80,3 +80,28 @@ func TestApplyV2ConflictPositionKnownAtDispositions(t *testing.T) {
 	assert.Equal(t, string(domain.V2RelationshipConflictPositionSuppressedCurrent), record.Positions[0].Disposition)
 	assert.Equal(t, string(domain.V2RelationshipConflictPositionPreferred), record.Positions[1].Disposition)
 }
+
+func TestV2ConflictNextReviewAtDoesNotReturnPastDue(t *testing.T) {
+	now := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
+
+	assert.Equal(t, now.Add(24*time.Hour), v2ConflictNextReviewAt(now, now.Add(-time.Hour)))
+	assert.Equal(t, now.Add(24*time.Hour), v2ConflictNextReviewAt(now, now))
+}
+
+func TestV2ConflictNextReviewAtUsesFutureDueInsideDailyInterval(t *testing.T) {
+	now := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
+	due := now.Add(time.Hour)
+
+	assert.Equal(t, due, v2ConflictNextReviewAt(now, due))
+	assert.Equal(t, now.Add(24*time.Hour), v2ConflictNextReviewAt(now, now.Add(48*time.Hour)))
+}
+
+func TestNormalizeV2ConflictReviewRunInputRejectsInvalidTimezone(t *testing.T) {
+	_, err := normalizeV2ConflictReviewRunInput(V2ConflictReviewRunInput{
+		TeamID:   "00000000-0000-0000-0000-000000000001",
+		WorkerID: "worker-a",
+		Timezone: "Mars/Base",
+	})
+
+	assert.ErrorContains(t, err, "timezone is invalid")
+}
