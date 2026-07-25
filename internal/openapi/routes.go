@@ -55,7 +55,7 @@ func DefaultRoutes() []RouteDescriptor {
 		{Method: "POST", Path: "/api/v1/tools/{name}", OperationID: "executeTool", RequestSchema: "ToolExecuteRequest", ResponseSchema: "ToolExecuteResponse", Description: "Execute a registered tool by name. Discover per-tool schemas and scope requirements via GET /api/v1/tools first."},
 
 		// --- Recall (AI-safe) ---
-		{Method: "GET", Path: "/api/v1/recall", OperationID: "recallKnowledge", ResponseSchema: "RecallResponse", AISafe: true, Tags: []string{"knowledge"}, Description: "Hybrid semantic + keyword recall spanning all knowledge-pipeline tiers (facts, claims, fragments).", ExtraResponses: map[string]string{
+		{Method: "GET", Path: "/api/v1/recall", OperationID: "recallKnowledge", ResponseSchema: "RecallResponse", AISafe: true, Tags: []string{"knowledge"}, Description: "Recall ranked V2 evidence contexts with discovery paths, conflicts, and related hypotheses.", ExtraResponses: map[string]string{
 			"400": "Missing or invalid query parameter.",
 			"503": "Embedding provider unavailable.",
 		}},

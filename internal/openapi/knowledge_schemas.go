@@ -589,59 +589,169 @@ func knowledgeSchemas() map[string]any {
 			"required": []string{"detected", "community_count", "node_count"},
 		},
 
-		// RecallHitResponse is one ranked result returned by GET /api/v1/recall.
-		// Tier classifies the knowledge-pipeline level:
-		//   "1"   = active Fact (highest authority)
-		//   "1.5" = validated Claim
-		//   "2"   = SourceFragment (raw evidence)
-		"RecallHitResponse": map[string]any{
+		"RecallEvidenceResult": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"tier": map[string]any{
+				"evidence_id": map[string]any{
 					"type":        "string",
-					"enum":        []string{"1", "1.5", "2"},
-					"description": "Knowledge-pipeline tier of this hit: 1=active fact, 1.5=validated claim, 2=source fragment.",
+					"format":      "uuid",
+					"description": "Evidence fragment ID for the ranked context.",
 				},
-				"score": map[string]any{
-					"type":        "number",
-					"format":      "float",
-					"description": "Normalised relevance score after tier weighting.",
+				"relationship_ids": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"type": "string", "format": "uuid"},
 				},
-				"fragment": map[string]any{
-					"$ref":        "#/components/schemas/FragmentResponse",
-					"description": "Populated for tier-2 (SourceFragment) hits.",
-				},
-				"claim": map[string]any{
-					"$ref":        "#/components/schemas/ClaimResponse",
-					"description": "Populated for tier-1.5 (validated Claim) hits.",
-				},
-				"fact": map[string]any{
-					"$ref":        "#/components/schemas/FactResponse",
-					"description": "Populated for tier-1 (active Fact) hits.",
-				},
-				"semantic_rank": map[string]any{
+				"rank": map[string]any{
 					"type":        "integer",
-					"description": "1-based rank from the semantic branch; 0 if absent.",
+					"minimum":     1,
+					"description": "1-based recall rank.",
 				},
-				"keyword_rank": map[string]any{
-					"type":        "integer",
-					"description": "1-based rank from the keyword branch; 0 if absent.",
-				},
-				"final_score": map[string]any{
-					"type":        "number",
-					"format":      "float",
-					"description": "Reciprocal Rank Fusion score (fragment hits only).",
+				"context": map[string]any{
+					"type":        "string",
+					"description": "Evidence-grounded context text.",
 				},
 			},
+			"required": []string{"evidence_id", "rank"},
+		},
+		"RecallEntityHandle": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"entity_id": map[string]any{"type": "string", "format": "uuid"},
+				"name":      map[string]any{"type": "string"},
+			},
+			"required": []string{"entity_id", "name"},
+		},
+		"RecallSemanticObject": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"entity_id": map[string]any{"type": "string", "format": "uuid"},
+				"value_id":  map[string]any{"type": "string", "format": "uuid"},
+				"name":      map[string]any{"type": "string"},
+				"type":      map[string]any{"type": "string"},
+				"value":     map[string]any{},
+				"display":   map[string]any{"type": "string"},
+				"unit":      map[string]any{"type": "string"},
+			},
+		},
+		"RecallRelationshipHandle": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"relationship_id": map[string]any{"type": "string", "format": "uuid"},
+				"subject":         map[string]any{"$ref": "#/components/schemas/RecallEntityHandle"},
+				"predicate":       map[string]any{"type": "string"},
+				"object":          map[string]any{"$ref": "#/components/schemas/RecallSemanticObject"},
+				"polarity":        map[string]any{"type": "string"},
+			},
+			"required": []string{"relationship_id", "subject", "predicate", "object", "polarity"},
+		},
+		"RecallDiscoveryPath": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"relationships": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"$ref": "#/components/schemas/RecallRelationshipHandle"},
+				},
+				"evidence_ids": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"type": "string", "format": "uuid"},
+				},
+			},
+			"required": []string{"relationships", "evidence_ids"},
+		},
+		"RecallConflictPosition": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"position_id":         map[string]any{"type": "string", "format": "uuid"},
+				"disposition":         map[string]any{"type": "string"},
+				"relationship_ids":    map[string]any{"type": "array", "items": map[string]any{"type": "string", "format": "uuid"}},
+				"owner_profile_ids":   map[string]any{"type": "array", "items": map[string]any{"type": "string", "format": "uuid"}},
+				"result_evidence_ids": map[string]any{"type": "array", "items": map[string]any{"type": "string", "format": "uuid"}},
+			},
+			"required": []string{"position_id", "disposition", "relationship_ids", "owner_profile_ids", "result_evidence_ids"},
+		},
+		"RecallConflictSummary": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"conflict_id":           map[string]any{"type": "string", "format": "uuid"},
+				"version":               map[string]any{"type": "integer"},
+				"kind":                  map[string]any{"type": "string"},
+				"status":                map[string]any{"type": "string"},
+				"question":              map[string]any{"type": "string"},
+				"review_due_at":         map[string]any{"type": "string", "format": "date-time", "nullable": true},
+				"effective_at":          map[string]any{"type": "string", "format": "date-time", "nullable": true},
+				"effective_time_basis":  map[string]any{"type": "string"},
+				"preferred_position_id": map[string]any{"type": "string", "format": "uuid"},
+				"positions": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"$ref": "#/components/schemas/RecallConflictPosition"},
+				},
+				"positions_truncated": map[string]any{"type": "boolean"},
+			},
+			"required": []string{"conflict_id", "version", "kind", "status", "question", "positions", "positions_truncated"},
+		},
+		"RecallRelatedHypothesis": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"hypothesis_id":           map[string]any{"type": "string", "format": "uuid"},
+				"subject_entity_id":       map[string]any{"type": "string", "format": "uuid"},
+				"predicate_key":           map[string]any{"type": "string"},
+				"object_entity_id":        map[string]any{"type": "string", "format": "uuid"},
+				"object_value_id":         map[string]any{"type": "string", "format": "uuid"},
+				"statement":               map[string]any{"type": "string"},
+				"status":                  map[string]any{"type": "string"},
+				"source_relationship_ids": map[string]any{"type": "array", "items": map[string]any{"type": "string", "format": "uuid"}},
+				"generator_kind":          map[string]any{"type": "string"},
+				"generator_version":       map[string]any{"type": "string"},
+				"created_at":              map[string]any{"type": "string", "format": "date-time"},
+			},
+			"required": []string{"hypothesis_id", "subject_entity_id", "predicate_key", "statement", "status", "source_relationship_ids", "generator_kind", "generator_version", "created_at"},
+		},
+		"RecallDegradation": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"required_failure": map[string]any{"type": "boolean"},
+				"optional":         map[string]any{"type": "boolean"},
+				"code":             map[string]any{"type": "string"},
+				"message":          map[string]any{"type": "string"},
+			},
+			"required": []string{"code", "message"},
+		},
+		"RecallResult": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"recall_id": map[string]any{"type": "string"},
+				"results": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"$ref": "#/components/schemas/RecallEvidenceResult"},
+				},
+				"conflicts": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"$ref": "#/components/schemas/RecallConflictSummary"},
+				},
+				"discovery_paths": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"$ref": "#/components/schemas/RecallDiscoveryPath"},
+				},
+				"discovery_guidance": map[string]any{"type": "string"},
+				"related_hypotheses": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"$ref": "#/components/schemas/RecallRelatedHypothesis"},
+				},
+				"degradation": map[string]any{"$ref": "#/components/schemas/RecallDegradation"},
+				"search_state": map[string]any{
+					"type":        "string",
+					"description": "Search projection state for the returned context.",
+				},
+			},
+			"required": []string{"recall_id", "results", "conflicts", "discovery_paths", "discovery_guidance", "related_hypotheses", "search_state"},
 		},
 
-		// RecallResponse wraps the ranked list returned by GET /api/v1/recall.
+		// RecallResponse wraps the V2 recall result returned by GET /api/v1/recall.
 		"RecallResponse": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"data": map[string]any{
-					"type":  "array",
-					"items": map[string]any{"$ref": "#/components/schemas/RecallHitResponse"},
+					"$ref": "#/components/schemas/RecallResult",
 				},
 			},
 			"required": []string{"data"},

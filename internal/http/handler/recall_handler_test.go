@@ -13,14 +13,13 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	dto "github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
 type recallDataEnvelope struct {
-	Data []dto.RecallHitResponse `json:"data"`
+	Data memoryservice.V2RecallResult `json:"data"`
 }
 
 type stubRecallService struct {
@@ -36,7 +35,7 @@ func (s *stubRecallService) Recall(ctx context.Context, req memoryservice.V2Reca
 
 var _ memoryservice.RecallService = (*stubRecallService)(nil)
 
-func TestRecallHandlerRoutesLegacyHTTPToV2Recall(t *testing.T) {
+func TestRecallHandlerRoutesHTTPToV2Recall(t *testing.T) {
 	e := echo.New()
 	teamID := uuid.New()
 	profileID := uuid.New()
@@ -59,6 +58,13 @@ func TestRecallHandlerRoutesLegacyHTTPToV2Recall(t *testing.T) {
 					Rank:            2,
 					Context:         "Dense-Mem uses PostgreSQL as the durable authority.",
 				}},
+				DiscoveryPaths: []memoryservice.V2RecallDiscoveryPath{{
+					EvidenceIDs: []string{"ev-1"},
+					Relationships: []memoryservice.V2RecallRelationshipHandle{{
+						RelationshipID: "rel-1",
+						Predicate:      "uses",
+					}},
+				}},
 			}, nil
 		},
 	}
@@ -68,7 +74,7 @@ func TestRecallHandlerRoutesLegacyHTTPToV2Recall(t *testing.T) {
 	e.Use(injectActorMiddleware(teamID, profileID))
 	e.GET("/api/v1/recall", h.Handle)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/recall?query=postgres&limit=3&use_communities=true", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/recall?query=postgres&limit=3&known_evidence_ids=11111111-1111-4111-8111-111111111111&known_relationship_ids=22222222-2222-4222-8222-222222222222&expand_from_entity_ids=33333333-3333-4333-8333-333333333333", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
@@ -81,6 +87,15 @@ func TestRecallHandlerRoutesLegacyHTTPToV2Recall(t *testing.T) {
 	if captured.Query != "postgres" || captured.Limit != 3 {
 		t.Fatalf("captured request = %#v", captured)
 	}
+	if got := captured.KnownEvidenceIDs; len(got) != 1 || got[0] != "11111111-1111-4111-8111-111111111111" {
+		t.Fatalf("known_evidence_ids = %#v", got)
+	}
+	if got := captured.KnownRelationshipIDs; len(got) != 1 || got[0] != "22222222-2222-4222-8222-222222222222" {
+		t.Fatalf("known_relationship_ids = %#v", got)
+	}
+	if got := captured.ExpandFromEntityIDs; len(got) != 1 || got[0] != "33333333-3333-4333-8333-333333333333" {
+		t.Fatalf("expand_from_entity_ids = %#v", got)
+	}
 	if capturedActor.TeamID != teamID || capturedActor.ProfileID != profileID {
 		t.Fatalf("actor = %#v; want team=%s profile=%s", capturedActor, teamID, profileID)
 	}
@@ -89,21 +104,42 @@ func TestRecallHandlerRoutesLegacyHTTPToV2Recall(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v. body=%s", err, rec.Body.String())
 	}
-	if len(resp.Data) != 1 {
-		t.Fatalf("data count = %d; want 1. body=%s", len(resp.Data), rec.Body.String())
+	if resp.Data.RecallID != "rec_v2" {
+		t.Fatalf("recall_id = %q; want rec_v2", resp.Data.RecallID)
 	}
-	item := resp.Data[0]
-	if item.Tier != recallTierEvidence {
-		t.Fatalf("tier = %q; want %q", item.Tier, recallTierEvidence)
+	if len(resp.Data.Results) != 1 {
+		t.Fatalf("result count = %d; want 1. body=%s", len(resp.Data.Results), rec.Body.String())
 	}
-	if item.Fragment == nil || item.Fragment.FragmentID != "ev-1" || item.Fragment.Content == "" {
-		t.Fatalf("fragment = %#v; want ev-1 with context", item.Fragment)
+	item := resp.Data.Results[0]
+	if item.EvidenceID != "ev-1" || item.Context == "" {
+		t.Fatalf("result = %#v; want ev-1 with context", item)
 	}
-	if got, _ := item.Fragment.Metadata["relationship_ids"].([]any); len(got) == 0 {
-		t.Fatalf("relationship_ids metadata missing: %#v", item.Fragment.Metadata)
+	if len(item.RelationshipIDs) != 1 || item.RelationshipIDs[0] != "rel-1" {
+		t.Fatalf("relationship_ids = %#v; want rel-1", item.RelationshipIDs)
 	}
-	if item.Score != 0.5 || item.FinalScore != 0.5 {
-		t.Fatalf("score/final_score = %v/%v; want 0.5/0.5", item.Score, item.FinalScore)
+	if len(resp.Data.DiscoveryPaths) != 1 || len(resp.Data.DiscoveryPaths[0].Relationships) != 1 {
+		t.Fatalf("discovery_paths = %#v; want one relationship path", resp.Data.DiscoveryPaths)
+	}
+	if resp.Data.DiscoveryGuidance != "No additional discovery guidance." {
+		t.Fatalf("discovery_guidance = %q; want fallback guidance", resp.Data.DiscoveryGuidance)
+	}
+}
+
+func TestRecallHandlerRequiresTeamContext(t *testing.T) {
+	e := echo.New()
+	h := NewRecallHandler(&stubRecallService{})
+	e.HTTPErrorHandler = httperr.ErrorHandler
+	e.GET("/api/v1/recall", h.Handle)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/recall?query=postgres", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d; want 400. body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "team ID is required") {
+		t.Fatalf("body = %s; want team ID message", rec.Body.String())
 	}
 }
 

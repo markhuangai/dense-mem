@@ -111,6 +111,33 @@ func TestGenerator_MemoryPlacementToolRoutesUseRegistrySchemas(t *testing.T) {
 	}
 }
 
+func TestGenerator_RecallResponseUsesV2EvidencePayload(t *testing.T) {
+	g := New(testRegistry(t), DefaultRoutes())
+	spec, err := g.Generate(SpecVariantFull)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	schemas := spec["components"].(map[string]any)["schemas"].(map[string]any)
+	recallResponse := schemas["RecallResponse"].(map[string]any)
+	recallProps := recallResponse["properties"].(map[string]any)
+	data := recallProps["data"].(map[string]any)
+	if got := data["$ref"]; got != "#/components/schemas/RecallResult" {
+		t.Fatalf("RecallResponse data ref = %v; want RecallResult", got)
+	}
+
+	recallResult := schemas["RecallResult"].(map[string]any)
+	props := recallResult["properties"].(map[string]any)
+	results := props["results"].(map[string]any)
+	items := results["items"].(map[string]any)
+	if got := items["$ref"]; got != "#/components/schemas/RecallEvidenceResult" {
+		t.Fatalf("RecallResult results ref = %v; want RecallEvidenceResult", got)
+	}
+	if _, has := schemas["RecallHitResponse"]; has {
+		t.Fatal("legacy RecallHitResponse schema should not be exposed")
+	}
+}
+
 func TestGeneratorSkipsNamedToolRoutesWhenToolIsAbsent(t *testing.T) {
 	reg := registry.New()
 	g := New(reg, []RouteDescriptor{

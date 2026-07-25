@@ -16,8 +16,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
-const recallTierEvidence = "2"
-
 // RecallHandlerInterface is the companion interface for recall handlers.
 type RecallHandlerInterface interface {
 	Handle(c echo.Context) error
@@ -36,9 +34,9 @@ func NewRecallHandler(svc memoryservice.RecallService) *RecallHandler {
 
 func (h *RecallHandler) Handle(c echo.Context) error {
 	ctx := c.Request().Context()
-	teamID, ok := middleware.GetResolvedTeamID(ctx)
+	_, ok := middleware.GetResolvedTeamID(ctx)
 	if !ok {
-		return httperr.New(httperr.PROFILE_ID_REQUIRED, "profile ID is required")
+		return httperr.New(httperr.PROFILE_ID_REQUIRED, "team ID is required")
 	}
 	if h == nil || h.svc == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "recall unavailable")
@@ -58,6 +56,18 @@ func (h *RecallHandler) Handle(c echo.Context) error {
 		Limit:           req.Limit,
 		ValidAt:         req.ValidAt,
 		KnownAt:         req.KnownAt,
+		KnownEvidenceIDs: append(
+			[]string(nil),
+			req.KnownEvidenceIDs...,
+		),
+		KnownRelationshipIDs: append(
+			[]string(nil),
+			req.KnownRelationshipIDs...,
+		),
+		ExpandFromEntityIDs: append(
+			[]string(nil),
+			req.ExpandFromEntityIDs...,
+		),
 	})
 	if err != nil {
 		if errors.Is(err, memoryservice.ErrRecallAuthContext) {
@@ -73,40 +83,28 @@ func (h *RecallHandler) Handle(c echo.Context) error {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, message)
 	}
 
-	items := recallHTTPItems(teamID.String(), result)
-	return response.SuccessOK(c, items)
+	return response.SuccessOK(c, recallHTTPResult(result))
 }
 
-func recallHTTPItems(teamID string, result *memoryservice.V2RecallResult) []dto.RecallHitResponse {
+func recallHTTPResult(result *memoryservice.V2RecallResult) memoryservice.V2RecallResult {
 	if result == nil {
-		return []dto.RecallHitResponse{}
+		result = &memoryservice.V2RecallResult{}
 	}
-	items := make([]dto.RecallHitResponse, 0, len(result.Results))
-	for _, hit := range result.Results {
-		score := 0.0
-		if hit.Rank > 0 {
-			score = 1 / float64(hit.Rank)
-		}
-		metadata := map[string]any{
-			"relationship_ids": hit.RelationshipIDs,
-			"search_state":     result.SearchState,
-			"recall_id":        result.RecallID,
-		}
-		items = append(items, dto.RecallHitResponse{
-			Tier:       recallTierEvidence,
-			Score:      score,
-			FinalScore: score,
-			Fragment: &dto.FragmentResponse{
-				ID:         hit.EvidenceID,
-				FragmentID: hit.EvidenceID,
-				TeamID:     teamID,
-				Content:    hit.Context,
-				SourceType: string(domain.SourceTypeObservation),
-				Source:     "semantic recall",
-				Metadata:   metadata,
-				Status:     string(domain.FragmentStatusActive),
-			},
-		})
+	out := *result
+	if out.Results == nil {
+		out.Results = []memoryservice.V2RecallResultItem{}
 	}
-	return items
+	if out.Conflicts == nil {
+		out.Conflicts = []memoryservice.V2RecallConflictSummary{}
+	}
+	if out.DiscoveryPaths == nil {
+		out.DiscoveryPaths = []memoryservice.V2RecallDiscoveryPath{}
+	}
+	if out.RelatedHypotheses == nil {
+		out.RelatedHypotheses = []memoryservice.V2RelatedHypothesisSummary{}
+	}
+	if strings.TrimSpace(out.DiscoveryGuidance) == "" {
+		out.DiscoveryGuidance = "No additional discovery guidance."
+	}
+	return out
 }
