@@ -561,7 +561,7 @@ func processConflictReviewTick(
 	for offset := workerIndex * pageSize; ; offset += pageSize * workerCount {
 		teams, err := profiles.List(ctx, pageSize, offset)
 		if err != nil {
-			logger.Error("conflict review profile list failed", err)
+			logger.Error("conflict review profile list failed", errConflictReviewProfileListFailed)
 			return
 		}
 		if len(teams) == 0 {
@@ -572,7 +572,7 @@ func processConflictReviewTick(
 				continue
 			}
 			if err := processTeamConflictReview(ctx, logger, ledger, cfg, metrics, team.ID.String(), workerID, now); err != nil {
-				logger.Error("conflict review run failed", err, observability.String("team_id", team.ID.String()))
+				logger.Error("conflict review run failed", errConflictReviewRunFailed, observability.String("team_id", team.ID.String()))
 			}
 		}
 		if len(teams) < pageSize {
@@ -688,7 +688,11 @@ func processTeamConflictReview(
 	return nil
 }
 
-var errConflictReviewCaseFailed = errors.New("conflict review case failed")
+var (
+	errConflictReviewProfileListFailed = errors.New("conflict review profile list failed")
+	errConflictReviewRunFailed         = errors.New("conflict review run failed")
+	errConflictReviewCaseFailed        = errors.New("conflict review case failed")
+)
 
 func safeConflictReviewError(err error) string {
 	if err == nil {

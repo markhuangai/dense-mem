@@ -24,6 +24,7 @@ type cliConfig struct {
 	batchSize    int
 	leaseSeconds int
 	maxAttempts  int
+	timeoutSecs  int
 }
 
 type reviewOutput struct {
@@ -58,6 +59,9 @@ const (
 	reviewConflictMaxLeaseSeconds = 1800
 	reviewConflictMinAttempts     = 1
 	reviewConflictMaxAttempts     = 20
+	reviewConflictMinTimeoutSecs  = 1
+	reviewConflictMaxTimeoutSecs  = 86400
+	reviewConflictDefaultTimeout  = 120
 )
 
 func (c postgresConfig) GetPostgresDSN() string {
@@ -88,7 +92,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.timeoutSecs)*time.Second)
 	defer cancel()
 	pgClient, err := postgres.OpenWithClient(ctx, postgresConfig{dsn: dsn})
 	if err != nil {
@@ -232,6 +236,7 @@ func parseCLI(args []string, stderr io.Writer) (cliConfig, error) {
 	fs.IntVar(&cfg.batchSize, "batch-size", 100, "Maximum cases claimed per batch")
 	fs.IntVar(&cfg.leaseSeconds, "lease-seconds", 300, "Review lease seconds")
 	fs.IntVar(&cfg.maxAttempts, "max-attempts", 5, "Maximum case attempts")
+	fs.IntVar(&cfg.timeoutSecs, "timeout-seconds", reviewConflictDefaultTimeout, "Maximum review command duration in seconds")
 	if err := fs.Parse(args); err != nil {
 		return cliConfig{}, err
 	}
@@ -251,6 +256,9 @@ func parseCLI(args []string, stderr io.Writer) (cliConfig, error) {
 		return cliConfig{}, err
 	}
 	if err := validateCLIIntRange("--max-attempts", cfg.maxAttempts, reviewConflictMinAttempts, reviewConflictMaxAttempts); err != nil {
+		return cliConfig{}, err
+	}
+	if err := validateCLIIntRange("--timeout-seconds", cfg.timeoutSecs, reviewConflictMinTimeoutSecs, reviewConflictMaxTimeoutSecs); err != nil {
 		return cliConfig{}, err
 	}
 	return cfg, nil

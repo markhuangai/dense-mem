@@ -12,6 +12,8 @@ const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
 let rpcID = 0;
 
 const runID = `conflict-e2e-${Date.now()}`;
+const olderEffectiveAt = "2026-07-20T00:00:00Z";
+const newerEffectiveAt = "2026-07-22T00:00:00Z";
 
 const profileA = await createProfile("Conflict E2E A");
 const profileB = await createProfile("Conflict E2E B");
@@ -19,8 +21,9 @@ const profileC = await createProfile("Conflict E2E C");
 
 const first = await rememberAndWait(profileA.apiKey, {
   idempotencyKey: `${runID}:a`,
-  evidence: `ConflictE2E ${runID}: Dense-Mem primary database is PostgreSQL according to profile A.`,
+  evidence: `ConflictE2E ${runID}: Effective ${newerEffectiveAt}, Dense-Mem primary database is PostgreSQL according to profile A.`,
   sourceGroup: `${runID}:source:a`,
+  validFrom: newerEffectiveAt,
   subject: { ref: "project", name: "Dense-Mem", kind: "project" },
   object: { ref: "postgres", name: "PostgreSQL", kind: "product" },
   relationshipID: "rel:primary-db-a",
@@ -37,8 +40,9 @@ if (!subjectEntityID || !postgresEntityID) {
 
 const second = await rememberAndWait(profileB.apiKey, {
   idempotencyKey: `${runID}:b`,
-  evidence: `ConflictE2E ${runID}: Dense-Mem primary database is GraphDB according to profile B.`,
+  evidence: `ConflictE2E ${runID}: Effective ${olderEffectiveAt}, Dense-Mem primary database is GraphDB according to profile B.`,
   sourceGroup: `${runID}:source:b`,
+  validFrom: olderEffectiveAt,
   subject: { ref: "project", name: "Dense-Mem", kind: "project", knownEntityID: subjectEntityID },
   object: { ref: "graphdb", name: "GraphDB", kind: "product" },
   relationshipID: "rel:primary-db-b",
@@ -53,8 +57,9 @@ if (!conflictID || !Number.isInteger(conflictVersion) || conflictVersion < 1) {
 
 await rememberAndWait(profileC.apiKey, {
   idempotencyKey: `${runID}:c`,
-  evidence: `ConflictE2E ${runID}: Dense-Mem primary database is PostgreSQL according to profile C.`,
+  evidence: `ConflictE2E ${runID}: Effective ${newerEffectiveAt}, Dense-Mem primary database is PostgreSQL according to profile C.`,
   sourceGroup: `${runID}:source:c`,
+  validFrom: newerEffectiveAt,
   subject: { ref: "project", name: "Dense-Mem", kind: "project", knownEntityID: subjectEntityID },
   object: { ref: "postgres", name: "PostgreSQL", kind: "product", knownEntityID: postgresEntityID },
   relationshipID: "rel:primary-db-c",
@@ -143,6 +148,7 @@ async function rememberAndWait(apiKey, input) {
           start: 0,
           end: evidence.length,
         }],
+        ...(input.validFrom ? { valid_from: input.validFrom } : {}),
         ...(input.conflictContext ? { conflict_context: input.conflictContext } : {}),
       }],
     },

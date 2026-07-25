@@ -97,7 +97,7 @@ func TestEvaluateV2RelationshipConflictAuthoritativeOppositionBlocksMajority(t *
 	}
 }
 
-func TestEvaluateV2RelationshipConflictLaterEffectiveTimeDoesNotWeakenAuthoritativeOverrideThreshold(t *testing.T) {
+func TestEvaluateV2RelationshipConflictLaterEffectiveTimeCanOverrideDueMajorityOpposition(t *testing.T) {
 	now := time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC)
 	oldEffective := now.Add(-48 * time.Hour)
 	newEffective := now.Add(-24 * time.Hour)
@@ -110,8 +110,14 @@ func TestEvaluateV2RelationshipConflictLaterEffectiveTimeDoesNotWeakenAuthoritat
 		},
 	})
 
-	if evaluation.Outcome != V2ConflictReviewOutcomeOverdue {
-		t.Fatalf("Outcome = %q, want overdue", evaluation.Outcome)
+	if evaluation.Outcome != V2ConflictReviewOutcomeResolve {
+		t.Fatalf("Outcome = %q, want resolve", evaluation.Outcome)
+	}
+	if evaluation.Stage != V2ConflictReviewStageDueMajority || evaluation.PreferredPositionID != "pos-a" {
+		t.Fatalf("evaluation = %+v", evaluation)
+	}
+	if evaluation.EffectiveAt == nil || !evaluation.EffectiveAt.Equal(newEffective) {
+		t.Fatalf("EffectiveAt = %v, want %v", evaluation.EffectiveAt, newEffective)
 	}
 }
 

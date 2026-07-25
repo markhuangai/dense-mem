@@ -43,6 +43,22 @@ func TestParseCLIDefaultsTimezoneToLocal(t *testing.T) {
 	if cfg.timezone != "Local" {
 		t.Fatalf("timezone = %q, want Local", cfg.timezone)
 	}
+	if cfg.timeoutSecs != reviewConflictDefaultTimeout {
+		t.Fatalf("timeoutSecs = %d, want %d", cfg.timeoutSecs, reviewConflictDefaultTimeout)
+	}
+}
+
+func TestParseCLIParsesTimeout(t *testing.T) {
+	cfg, err := parseCLI([]string{
+		"--team-id", "00000000-0000-0000-0000-000000000001",
+		"--timeout-seconds", "600",
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("parseCLI returned error: %v", err)
+	}
+	if cfg.timeoutSecs != 600 {
+		t.Fatalf("timeoutSecs = %d, want 600", cfg.timeoutSecs)
+	}
 }
 
 func TestParseCLIRejectsOutOfRangeConflictReviewFlags(t *testing.T) {
@@ -80,6 +96,16 @@ func TestParseCLIRejectsOutOfRangeConflictReviewFlags(t *testing.T) {
 			name: "attempts too high",
 			args: []string{"--max-attempts", "21"},
 			want: "--max-attempts must be between 1 and 20",
+		},
+		{
+			name: "timeout too low",
+			args: []string{"--timeout-seconds", "0"},
+			want: "--timeout-seconds must be between 1 and 86400",
+		},
+		{
+			name: "timeout too high",
+			args: []string{"--timeout-seconds", "86401"},
+			want: "--timeout-seconds must be between 1 and 86400",
 		},
 	}
 	for _, tt := range tests {

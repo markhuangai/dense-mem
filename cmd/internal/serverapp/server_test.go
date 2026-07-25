@@ -94,6 +94,49 @@ func TestProcessConflictReviewTickShardsProfilePages(t *testing.T) {
 	}
 }
 
+func TestProcessConflictReviewTickLogsBoundedErrors(t *testing.T) {
+	cfg := testConflictReviewConfig(t, "UTC", "00:00", "0")
+	rawErr := errors.New("raw database error with internal detail")
+
+	profileLogger := &conflictReviewLogCapture{}
+	processConflictReviewTick(
+		context.Background(),
+		profileLogger,
+		&conflictReviewProfileListStub{err: rawErr},
+		&conflictReviewLedgerStub{},
+		cfg,
+		observability.NoopDiscoverabilityMetrics(),
+		"worker-a",
+		0,
+		1,
+	)
+	if len(profileLogger.errs) != 1 || !errors.Is(profileLogger.errs[0], errConflictReviewProfileListFailed) {
+		t.Fatalf("profile list logged errors = %#v", profileLogger.errs)
+	}
+	if errors.Is(profileLogger.errs[0], rawErr) {
+		t.Fatalf("profile list logged raw error")
+	}
+
+	runLogger := &conflictReviewLogCapture{}
+	processConflictReviewTick(
+		context.Background(),
+		runLogger,
+		&conflictReviewProfileListStub{pageSizes: map[int]int{0: 1}},
+		&conflictReviewLedgerStub{reserveErr: rawErr},
+		cfg,
+		observability.NoopDiscoverabilityMetrics(),
+		"worker-a",
+		0,
+		1,
+	)
+	if len(runLogger.errs) != 1 || !errors.Is(runLogger.errs[0], errConflictReviewRunFailed) {
+		t.Fatalf("run logged errors = %#v", runLogger.errs)
+	}
+	if errors.Is(runLogger.errs[0], rawErr) {
+		t.Fatalf("run logged raw error")
+	}
+}
+
 func TestProcessTeamConflictReviewCompletesEmptyRun(t *testing.T) {
 	cfg := testConflictReviewConfig(t, "UTC", "04:00", "0")
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
@@ -208,9 +251,13 @@ type conflictReviewLedgerStub struct {
 type conflictReviewProfileListStub struct {
 	pageSizes map[int]int
 	offsets   []int
+	err       error
 }
 
 func (s *conflictReviewProfileListStub) List(_ context.Context, _ int, offset int) ([]*domain.Profile, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
 	s.offsets = append(s.offsets, offset)
 	count := s.pageSizes[offset]
 	out := make([]*domain.Profile, 0, count)
@@ -218,6 +265,24 @@ func (s *conflictReviewProfileListStub) List(_ context.Context, _ int, offset in
 		out = append(out, &domain.Profile{ID: uuid.New()})
 	}
 	return out, nil
+}
+
+type conflictReviewLogCapture struct {
+	errs []error
+}
+
+func (l *conflictReviewLogCapture) Info(string, ...observability.LogAttr) {}
+
+func (l *conflictReviewLogCapture) Error(_ string, err error, _ ...observability.LogAttr) {
+	l.errs = append(l.errs, err)
+}
+
+func (l *conflictReviewLogCapture) Warn(string, ...observability.LogAttr) {}
+
+func (l *conflictReviewLogCapture) Debug(string, ...observability.LogAttr) {}
+
+func (l *conflictReviewLogCapture) With(...observability.LogAttr) observability.LogProvider {
+	return l
 }
 
 func (s *conflictReviewLedgerStub) ReserveV2RelationshipConflictReviewRun(context.Context, repository.V2ConflictReviewRunInput) (*repository.V2ConflictReviewRunRecord, bool, error) {

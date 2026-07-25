@@ -115,7 +115,7 @@ func EvaluateV2RelationshipConflict(input V2RelationshipConflictEvaluationInput)
 				}
 			}
 		}
-		if top.SupportGroupCount >= 2 && topShare > 0.5 && !hasAuthoritativeOpposition {
+		if top.SupportGroupCount >= 2 && topShare > 0.5 && canOverrideAuthoritativeOpposition {
 			return V2RelationshipConflictEvaluation{
 				Outcome:                V2ConflictReviewOutcomeResolve,
 				Stage:                  V2ConflictReviewStageDueMajority,
