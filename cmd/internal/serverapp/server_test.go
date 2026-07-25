@@ -7,7 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
@@ -63,6 +66,31 @@ func TestConflictReviewDueForTeamHonorsLocalStartAndJitter(t *testing.T) {
 	}
 	if !conflictReviewDueForTeam(atStart.Add(10*time.Minute), jittered, teamID) {
 		t.Fatalf("conflict review was not due after max jitter elapsed")
+	}
+}
+
+func TestProcessConflictReviewTickShardsProfilePages(t *testing.T) {
+	cfg := testConflictReviewConfig(t, "UTC", "23:59", "0")
+	profiles := &conflictReviewProfileListStub{
+		pageSizes: map[int]int{
+			100: 100,
+		},
+	}
+
+	processConflictReviewTick(
+		context.Background(),
+		observability.New(slog.LevelError),
+		profiles,
+		&conflictReviewLedgerStub{},
+		cfg,
+		observability.NoopDiscoverabilityMetrics(),
+		"worker-2",
+		1,
+		3,
+	)
+
+	if len(profiles.offsets) != 2 || profiles.offsets[0] != 100 || profiles.offsets[1] != 400 {
+		t.Fatalf("profile list offsets = %#v, want [100 400]", profiles.offsets)
 	}
 }
 
@@ -175,6 +203,21 @@ type conflictReviewLedgerStub struct {
 	reviewErrs    map[string]error
 	completes     []repository.V2ConflictReviewRunCompleteInput
 	completeErr   error
+}
+
+type conflictReviewProfileListStub struct {
+	pageSizes map[int]int
+	offsets   []int
+}
+
+func (s *conflictReviewProfileListStub) List(_ context.Context, _ int, offset int) ([]*domain.Profile, error) {
+	s.offsets = append(s.offsets, offset)
+	count := s.pageSizes[offset]
+	out := make([]*domain.Profile, 0, count)
+	for i := 0; i < count; i++ {
+		out = append(out, &domain.Profile{ID: uuid.New()})
+	}
+	return out, nil
 }
 
 func (s *conflictReviewLedgerStub) ReserveV2RelationshipConflictReviewRun(context.Context, repository.V2ConflictReviewRunInput) (*repository.V2ConflictReviewRunRecord, bool, error) {

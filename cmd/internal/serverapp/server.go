@@ -520,33 +520,45 @@ func startConflictReviewWorkers(
 	}
 	for workerIndex := 0; workerIndex < count; workerIndex++ {
 		workerID := fmt.Sprintf("%s-%d", baseWorkerID, workerIndex+1)
-		go func(workerID string) {
+		go func(workerID string, workerIndex int) {
 			ticker := time.NewTicker(time.Minute)
 			defer ticker.Stop()
 			for {
-				processConflictReviewTick(ctx, logger, profiles, ledger, cfg, metrics, workerID)
+				processConflictReviewTick(ctx, logger, profiles, ledger, cfg, metrics, workerID, workerIndex, count)
 				select {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
 				}
 			}
-		}(workerID)
+		}(workerID, workerIndex)
 	}
+}
+
+type conflictReviewProfileLister interface {
+	List(ctx context.Context, limit, offset int) ([]*domain.Profile, error)
 }
 
 func processConflictReviewTick(
 	ctx context.Context,
 	logger observability.LogProvider,
-	profiles service.ProfileService,
+	profiles conflictReviewProfileLister,
 	ledger conflictReviewLedger,
 	cfg *config.Config,
 	metrics observability.DiscoverabilityMetrics,
 	workerID string,
+	workerIndex int,
+	workerCount int,
 ) {
 	const pageSize = 100
+	if workerCount < 1 {
+		workerCount = 1
+	}
+	if workerIndex < 0 || workerIndex >= workerCount {
+		workerIndex = 0
+	}
 	now := time.Now()
-	for offset := 0; ; offset += pageSize {
+	for offset := workerIndex * pageSize; ; offset += pageSize * workerCount {
 		teams, err := profiles.List(ctx, pageSize, offset)
 		if err != nil {
 			logger.Error("conflict review profile list failed", err)

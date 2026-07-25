@@ -746,7 +746,7 @@ func loadV2RelationshipConflictPositionRows(
 		       position.position_key,
 		       COALESCE(position.object_entity_id::text, ''),
 		       COALESCE(position.object_value_id::text, ''),
-		       position.disposition,
+		       CASE WHEN ?::timestamptz IS NULL THEN position.disposition ELSE 'candidate' END,
 		       position.support_group_count,
 		       position.authoritative_group_count,
 		       COALESCE(array_remove(array_agg(DISTINCT member.relationship_id::text ORDER BY member.relationship_id::text), NULL), ARRAY[]::text[]),
@@ -778,10 +778,11 @@ func loadV2RelationshipConflictPositionRows(
 			      )
 			  )
 			GROUP BY position.conflict_id, position.position_id, position.position_key,
-			         position.object_entity_id, position.object_value_id, position.disposition,
-			         position.support_group_count, position.authoritative_group_count
+			         position.object_entity_id, position.object_value_id,
+			         position.disposition, position.support_group_count, position.authoritative_group_count
 			ORDER BY position.conflict_id, position.position_key
-		`, knownAt, knownAt, knownAt, knownAt,
+		`, knownAt,
+		knownAt, knownAt, knownAt, knownAt,
 		teamID, pq.Array(conflictIDs),
 		knownAt, knownAt, knownAt, knownAt).Rows()
 	if err != nil {
@@ -835,6 +836,7 @@ func applyV2ConflictKnownAt(record *V2RelationshipConflictCaseRecord, knownAt *t
 	if record == nil || knownAt == nil {
 		return
 	}
+	rewound := false
 	if record.ResolvedAt != nil && record.ResolvedAt.After(*knownAt) {
 		if knownAt.Before(record.ReviewDueAt) {
 			record.Status = string(domain.V2RelationshipConflictOpen)
@@ -846,11 +848,14 @@ func applyV2ConflictKnownAt(record *V2RelationshipConflictCaseRecord, knownAt *t
 		record.EffectiveAt = nil
 		record.EffectiveTimeBasis = ""
 		record.ResolutionReason = ""
+		rewound = true
 	}
 	if record.Status == string(domain.V2RelationshipConflictDismissed) && v2ConflictDismissedAfterKnownAt(record, knownAt) {
 		record.DismissedAt = nil
 		if record.ResolvedAt != nil && !record.ResolvedAt.After(*knownAt) {
 			record.Status = string(domain.V2RelationshipConflictResolved)
+			rewound = true
+			applyV2ConflictKnownAtNextReview(record, knownAt, rewound)
 			return
 		}
 		if knownAt.Before(record.ReviewDueAt) {
@@ -863,6 +868,17 @@ func applyV2ConflictKnownAt(record *V2RelationshipConflictCaseRecord, knownAt *t
 		record.EffectiveAt = nil
 		record.EffectiveTimeBasis = ""
 		record.ResolutionReason = ""
+		rewound = true
+	}
+	applyV2ConflictKnownAtNextReview(record, knownAt, rewound)
+}
+
+func applyV2ConflictKnownAtNextReview(record *V2RelationshipConflictCaseRecord, knownAt *time.Time, rewound bool) {
+	if record == nil || knownAt == nil || !rewound {
+		return
+	}
+	if record.NextReviewAt.After(*knownAt) {
+		record.NextReviewAt = *knownAt
 	}
 }
 

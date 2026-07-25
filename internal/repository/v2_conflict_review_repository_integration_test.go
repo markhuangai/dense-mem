@@ -93,6 +93,7 @@ func TestV2RelationshipConflictReviewerDismissesStaleCaseAfterRetraction(t *test
 	require.Len(t, historicalConflicts, 1)
 	assert.NotEqual(t, "dismissed", historicalConflicts[0].Status)
 	assert.Empty(t, historicalConflicts[0].PreferredPositionID)
+	assert.False(t, historicalConflicts[0].NextReviewAt.After(historicalKnownAt))
 	assert.Nil(t, historicalConflicts[0].DismissedAt)
 	require.NotEmpty(t, historicalConflicts[0].Positions)
 	for _, position := range historicalConflicts[0].Positions {

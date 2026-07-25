@@ -227,6 +227,9 @@ func parseCLI(args []string, stderr io.Writer) (cliConfig, error) {
 	if cfg.workerID == "" {
 		return cliConfig{}, errors.New("--worker-id is required")
 	}
+	if _, err := time.LoadLocation(cfg.timezone); err != nil {
+		return cliConfig{}, fmt.Errorf("--timezone is invalid: %w", err)
+	}
 	if cfg.batchSize < 1 {
 		cfg.batchSize = 100
 	}

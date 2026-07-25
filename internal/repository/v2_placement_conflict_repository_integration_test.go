@@ -447,6 +447,7 @@ func TestV2RelationshipConflictReviewerResolvesMajorityAndSupersedesLosers(t *te
 	require.Len(t, historicalConflicts, 1)
 	assert.NotEqual(t, "resolved", historicalConflicts[0].Status)
 	assert.Empty(t, historicalConflicts[0].PreferredPositionID)
+	assert.False(t, historicalConflicts[0].NextReviewAt.After(historicalKnownAt))
 	require.Len(t, historicalConflicts[0].Positions, 2)
 	for _, position := range historicalConflicts[0].Positions {
 		assert.Equal(t, "candidate", position.Disposition)

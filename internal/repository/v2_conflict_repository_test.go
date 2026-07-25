@@ -13,15 +13,17 @@ func TestApplyV2ConflictKnownAtClearsFutureDismissal(t *testing.T) {
 	knownAt := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
 	dismissedAt := knownAt.Add(time.Hour)
 	record := V2RelationshipConflictCaseRecord{
-		Status:      string(domain.V2RelationshipConflictDismissed),
-		ReviewDueAt: knownAt.Add(time.Hour),
-		DismissedAt: &dismissedAt,
-		UpdatedAt:   dismissedAt,
+		Status:       string(domain.V2RelationshipConflictDismissed),
+		ReviewDueAt:  knownAt.Add(time.Hour),
+		NextReviewAt: dismissedAt,
+		DismissedAt:  &dismissedAt,
+		UpdatedAt:    dismissedAt,
 	}
 
 	applyV2ConflictKnownAt(&record, &knownAt)
 
 	assert.Equal(t, string(domain.V2RelationshipConflictOpen), record.Status)
+	assert.Equal(t, knownAt, record.NextReviewAt)
 	assert.Nil(t, record.DismissedAt)
 }
 
@@ -38,6 +40,7 @@ func TestApplyV2ConflictKnownAtPreservesResolvedStateBeforeFutureDismissal(t *te
 		EffectiveAt:         &effectiveAt,
 		EffectiveTimeBasis:  "valid_time",
 		ResolutionReason:    "deterministic winner",
+		NextReviewAt:        dismissedAt,
 		DismissedAt:         &dismissedAt,
 		UpdatedAt:           dismissedAt,
 	}
@@ -50,6 +53,7 @@ func TestApplyV2ConflictKnownAtPreservesResolvedStateBeforeFutureDismissal(t *te
 	assert.Equal(t, effectiveAt, *record.EffectiveAt)
 	assert.Equal(t, "valid_time", record.EffectiveTimeBasis)
 	assert.Equal(t, "deterministic winner", record.ResolutionReason)
+	assert.Equal(t, knownAt, record.NextReviewAt)
 	assert.Nil(t, record.DismissedAt)
 }
 
