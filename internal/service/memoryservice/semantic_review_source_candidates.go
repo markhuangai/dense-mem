@@ -167,13 +167,6 @@ func v2ReviewSourceMatchConflictContext(
 	if len(matches) == 1 {
 		return matches[0], true
 	}
-	if relationshipCount == 1 && len(contexts)-len(used) == 1 {
-		for i := range contexts {
-			if _, exists := used[i]; !exists {
-				return i, true
-			}
-		}
-	}
 	return 0, false
 }
 

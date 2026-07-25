@@ -110,6 +110,45 @@ func TestBuildActiveSubmitRecallSessionFeedbackRecordsFeedback(t *testing.T) {
 	}
 }
 
+func TestBuildActiveSubmitRecallSessionFeedbackReportsPartialSuccess(t *testing.T) {
+	recorder := &stubRecallFeedbackRecorder{failAfter: 1}
+	reg, err := BuildActive(Dependencies{
+		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+		RecallFeedbackEvents: recorder,
+		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+	})
+	if err != nil {
+		t.Fatalf("BuildActive: %v", err)
+	}
+	submit, _ := reg.Get(V2ToolSubmitRecallSessionFeedback)
+	out, err := submit.Invoke(v2ContractInvokeContext("write"), "ignored-profile", map[string]any{
+		"recalls": []any{
+			map[string]any{
+				"recall_event_id":  "rec-v2-a",
+				"used":             true,
+				"answer_supported": true,
+				"quality":          "high",
+			},
+			map[string]any{
+				"recall_event_id":  "rec-v2-b",
+				"used":             true,
+				"answer_supported": false,
+				"quality":          "low",
+				"feedback_comment": "The recall missed the relevant correction.",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("submit_recall_session_feedback.Invoke: %v", err)
+	}
+	if out["recorded"] != true || out["recorded_count"] != 1 || out["partial_success"] != true || out["failed_index"] != 1 {
+		t.Fatalf("partial submit output = %#v", out)
+	}
+	if len(recorder.feedback) != 1 || recorder.feedback[0].RecallID != "rec-v2-a" {
+		t.Fatalf("feedback submissions = %#v", recorder.feedback)
+	}
+}
+
 func TestV2RecallFeedbackSnapshotHelpersCoverOptionalBranches(t *testing.T) {
 	validAt := time.Date(2026, 7, 17, 14, 0, 0, 0, time.UTC)
 	knownAt := validAt.Add(time.Hour)

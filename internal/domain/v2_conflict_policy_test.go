@@ -1,4 +1,4 @@
-package repository
+package domain
 
 import (
 	"testing"
@@ -20,6 +20,25 @@ func TestEvaluateV2RelationshipConflictResolvesEarlyQuorum(t *testing.T) {
 		t.Fatalf("Outcome = %q, want resolve", evaluation.Outcome)
 	}
 	if evaluation.Stage != V2ConflictReviewStageEarlyQuorum || evaluation.PreferredPositionID != "pos-a" {
+		t.Fatalf("evaluation = %+v", evaluation)
+	}
+}
+
+func TestEvaluateV2RelationshipConflictDueMajority(t *testing.T) {
+	now := time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC)
+	evaluation := EvaluateV2RelationshipConflict(V2RelationshipConflictEvaluationInput{
+		Now:         now,
+		ReviewDueAt: now,
+		Positions: []V2RelationshipConflictPositionRecord{
+			{PositionID: "pos-a", SupportGroupCount: 2},
+			{PositionID: "pos-b", SupportGroupCount: 1},
+		},
+	})
+
+	if evaluation.Outcome != V2ConflictReviewOutcomeResolve {
+		t.Fatalf("Outcome = %q, want resolve", evaluation.Outcome)
+	}
+	if evaluation.Stage != V2ConflictReviewStageDueMajority || evaluation.PreferredPositionID != "pos-a" {
 		t.Fatalf("evaluation = %+v", evaluation)
 	}
 }
@@ -136,21 +155,22 @@ func TestEvaluateV2RelationshipConflictLaterEffectiveTimeCanOverrideAuthoritativ
 	}
 }
 
-func TestEvaluateV2RelationshipConflictBreaksTiesByPositionID(t *testing.T) {
+func TestEvaluateV2RelationshipConflictIgnoresInvalidPositions(t *testing.T) {
 	now := time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC)
 	evaluation := EvaluateV2RelationshipConflict(V2RelationshipConflictEvaluationInput{
 		Now:         now,
 		ReviewDueAt: now,
 		Positions: []V2RelationshipConflictPositionRecord{
-			{PositionID: "pos-b", SupportGroupCount: 2},
-			{PositionID: "pos-a", SupportGroupCount: 2},
+			{PositionID: " ", SupportGroupCount: 3},
+			{PositionID: "pos-a", SupportGroupCount: 0},
+			{PositionID: "pos-b", SupportGroupCount: 1},
 		},
 	})
 
-	if evaluation.Outcome != V2ConflictReviewOutcomeOverdue {
-		t.Fatalf("Outcome = %q, want overdue", evaluation.Outcome)
+	if evaluation.Outcome != V2ConflictReviewOutcomeNoop {
+		t.Fatalf("Outcome = %q, want no_op", evaluation.Outcome)
 	}
-	if evaluation.Stage != V2ConflictReviewStageDueNoWinner {
-		t.Fatalf("Stage = %q, want %q", evaluation.Stage, V2ConflictReviewStageDueNoWinner)
+	if evaluation.Reason != V2ConflictReviewReasonFewerThanTwoPositions {
+		t.Fatalf("Reason = %q, want %q", evaluation.Reason, V2ConflictReviewReasonFewerThanTwoPositions)
 	}
 }

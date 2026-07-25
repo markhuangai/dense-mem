@@ -58,3 +58,39 @@ func TestV2TraceConflictOutputsIncludePositionsAndResolution(t *testing.T) {
 		t.Fatalf("result_evidence_ids = %#v", position["result_evidence_ids"])
 	}
 }
+
+func TestV2TraceConflictOutputsEnforcePositionBounds(t *testing.T) {
+	positions := make([]repository.V2RelationshipConflictPositionRecord, 0, 11)
+	for i := 0; i < 11; i++ {
+		positions = append(positions, repository.V2RelationshipConflictPositionRecord{
+			PositionID:      "00000000-0000-0000-0000-000000000201",
+			Disposition:     "candidate",
+			RelationshipIDs: make([]string, 21),
+			OwnerProfileIDs: make([]string, 21),
+			EvidenceIDs:     make([]string, 51),
+		})
+	}
+	out := v2TraceConflictOutputs([]repository.V2RelationshipConflictCaseRecord{{
+		ConflictID:  "00000000-0000-0000-0000-000000000101",
+		Version:     1,
+		Kind:        "cross_profile_current_state",
+		Status:      "open",
+		Question:    "Which value is current?",
+		ReviewDueAt: time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC),
+		Positions:   positions,
+	}})
+
+	if out[0]["positions_truncated"] != true {
+		t.Fatalf("positions_truncated = %#v", out[0]["positions_truncated"])
+	}
+	bounded := out[0]["positions"].([]map[string]any)
+	if len(bounded) != 10 {
+		t.Fatalf("positions len = %d, want 10", len(bounded))
+	}
+	first := bounded[0]
+	if len(first["relationship_ids"].([]string)) != 20 ||
+		len(first["owner_profile_ids"].([]string)) != 20 ||
+		len(first["result_evidence_ids"].([]string)) != 50 {
+		t.Fatalf("bounded position = %#v", first)
+	}
+}

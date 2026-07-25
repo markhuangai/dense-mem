@@ -468,6 +468,7 @@ func v2RecallConflictSummaries(records []repository.V2RelationshipConflictCaseRe
 	out := make([]V2RecallConflictSummary, 0, len(records))
 	for _, record := range records {
 		reviewDueAt := record.ReviewDueAt
+		positions := v2RecallConflictPositions(record.Positions)
 		summary := V2RecallConflictSummary{
 			ConflictID:          record.ConflictID,
 			Version:             record.Version,
@@ -478,26 +479,43 @@ func v2RecallConflictSummaries(records []repository.V2RelationshipConflictCaseRe
 			EffectiveAt:         record.EffectiveAt,
 			EffectiveTimeBasis:  record.EffectiveTimeBasis,
 			PreferredPositionID: record.PreferredPositionID,
-			Positions:           v2RecallConflictPositions(record.Positions),
-			PositionsTruncated:  false,
+			Positions:           positions,
+			PositionsTruncated:  len(record.Positions) > v2RecallConflictPositionLimit,
 		}
 		out = append(out, summary)
 	}
 	return out
 }
 
+const (
+	v2RecallConflictPositionLimit         = 10
+	v2RecallConflictRelationshipIDLimit   = 20
+	v2RecallConflictOwnerProfileIDLimit   = 20
+	v2RecallConflictResultEvidenceIDLimit = 50
+)
+
 func v2RecallConflictPositions(records []repository.V2RelationshipConflictPositionRecord) []V2RecallConflictPosition {
+	if len(records) > v2RecallConflictPositionLimit {
+		records = records[:v2RecallConflictPositionLimit]
+	}
 	out := make([]V2RecallConflictPosition, 0, len(records))
 	for _, record := range records {
 		out = append(out, V2RecallConflictPosition{
 			PositionID:        record.PositionID,
 			Disposition:       record.Disposition,
-			RelationshipIDs:   append([]string(nil), record.RelationshipIDs...),
-			OwnerProfileIDs:   append([]string(nil), record.OwnerProfileIDs...),
-			ResultEvidenceIDs: append([]string(nil), record.EvidenceIDs...),
+			RelationshipIDs:   v2LimitStrings(record.RelationshipIDs, v2RecallConflictRelationshipIDLimit),
+			OwnerProfileIDs:   v2LimitStrings(record.OwnerProfileIDs, v2RecallConflictOwnerProfileIDLimit),
+			ResultEvidenceIDs: v2LimitStrings(record.EvidenceIDs, v2RecallConflictResultEvidenceIDLimit),
 		})
 	}
 	return out
+}
+
+func v2LimitStrings(values []string, limit int) []string {
+	if limit >= 0 && len(values) > limit {
+		values = values[:limit]
+	}
+	return append([]string(nil), values...)
 }
 
 func v2RelatedHypothesisSummaries(records []repository.V2HypothesisRecord) []V2RelatedHypothesisSummary {

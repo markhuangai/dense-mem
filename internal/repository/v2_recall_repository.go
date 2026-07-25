@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -80,15 +81,13 @@ func (r *V2SearchRepositoryImpl) RecallEvidence(ctx context.Context, input V2Rec
 		candidateIDs = append(candidateIDs, candidate.EvidenceID)
 	}
 	hydrated := map[string]V2RecallEvidenceHit{}
-	conflicts := []V2RelationshipConflictCaseRecord{}
 	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var err error
 		hydrated, err = hydrateV2RecallEvidence(ctx, tx, input, contract, candidateIDs)
 		if err != nil {
 			return err
 		}
-		conflicts, err = loadV2RecallOpenConflictRecords(ctx, tx, input.TeamID, hydrated)
-		return err
+		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("v2 recall: hydrate evidence: %w", err)
@@ -110,6 +109,15 @@ func (r *V2SearchRepositoryImpl) RecallEvidence(ctx context.Context, input V2Rec
 		if len(results) == input.Limit {
 			break
 		}
+	}
+	conflicts := []V2RelationshipConflictCaseRecord{}
+	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+		var err error
+		conflicts, err = loadV2RecallOpenConflictRecords(ctx, tx, input.TeamID, input.KnownAt, results)
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("v2 recall: load conflicts: %w", err)
 	}
 	return &V2RecallEvidenceResult{
 		TeamID:      input.TeamID,
@@ -556,11 +564,12 @@ func loadV2RecallOpenConflictRecords(
 	ctx context.Context,
 	tx *gorm.DB,
 	teamID string,
-	hydrated map[string]V2RecallEvidenceHit,
+	knownAt *time.Time,
+	results []V2RecallEvidenceHit,
 ) ([]V2RelationshipConflictCaseRecord, error) {
 	relationshipIDs := []string{}
 	seenRelationships := map[string]struct{}{}
-	for _, hit := range hydrated {
+	for _, hit := range results {
 		for _, id := range hit.RelationshipIDs {
 			if _, ok := seenRelationships[id]; ok {
 				continue
@@ -569,7 +578,7 @@ func loadV2RecallOpenConflictRecords(
 			relationshipIDs = append(relationshipIDs, id)
 		}
 	}
-	conflicts, err := loadV2RelationshipConflictRecords(ctx, tx, teamID, relationshipIDs)
+	conflicts, err := loadV2RelationshipConflictRecords(ctx, tx, teamID, relationshipIDs, knownAt)
 	if err != nil {
 		return nil, err
 	}

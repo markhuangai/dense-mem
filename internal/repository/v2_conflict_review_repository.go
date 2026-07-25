@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -104,30 +105,35 @@ func (r *V2LedgerRepositoryImpl) ClaimV2RelationshipConflictCases(
 			WITH selected AS (
 				SELECT conflict_id
 				FROM relationship_conflict_cases
-				WHERE team_id = ?::uuid
-				  AND status IN ('open', 'overdue')
-				  AND next_review_at <= ?
-				  AND attempts < ?
-				  AND (lease_until IS NULL OR lease_until < ? OR lease_worker_id = ?)
-				ORDER BY next_review_at, created_at, conflict_id
-				FOR UPDATE SKIP LOCKED
-				LIMIT ?
+					WHERE team_id = ?::uuid
+					  AND status IN ('open', 'overdue')
+					  AND next_review_at <= ?
+					  AND attempts < ?
+					  AND (lease_until IS NULL OR lease_until < clock_timestamp() OR lease_worker_id = ?)
+					  AND (
+					      cardinality(?::uuid[]) = 0
+					      OR conflict_id <> ALL(?::uuid[])
+					  )
+					ORDER BY next_review_at, created_at, conflict_id
+					FOR UPDATE SKIP LOCKED
+					LIMIT ?
 			),
 			updated AS (
-				UPDATE relationship_conflict_cases AS conflict
-				SET lease_worker_id = ?,
-				    lease_until = ?::timestamptz + (?::int * interval '1 second'),
-				    attempts = attempts + 1,
-				    last_review_run_id = ?::uuid,
-				    updated_at = now()
+					UPDATE relationship_conflict_cases AS conflict
+					SET lease_worker_id = ?,
+					    lease_until = clock_timestamp() + (?::int * interval '1 second'),
+					    attempts = attempts + 1,
+					    last_review_run_id = ?::uuid,
+					    updated_at = now()
 				FROM selected
 				WHERE conflict.team_id = ?::uuid
 				  AND conflict.conflict_id = selected.conflict_id
 				RETURNING conflict.conflict_id::text
-			)
-			SELECT conflict_id FROM updated
-		`, input.TeamID, input.Now, input.MaxAttempts, input.Now, input.WorkerID,
-			input.Limit, input.WorkerID, input.Now, int(input.Lease.Seconds()),
+				)
+				SELECT conflict_id FROM updated
+			`, input.TeamID, input.Now, input.MaxAttempts, input.WorkerID,
+			pq.Array(input.ExcludedConflictIDs), pq.Array(input.ExcludedConflictIDs),
+			input.Limit, input.WorkerID, int(input.Lease.Seconds()),
 			input.ReviewRunID, input.TeamID).Rows()
 		if err != nil {
 			return err
@@ -148,7 +154,7 @@ func (r *V2LedgerRepositoryImpl) ClaimV2RelationshipConflictCases(
 		if err := rows.Close(); err != nil {
 			return err
 		}
-		loaded, loadErr := loadV2RelationshipConflictRecordsByID(ctx, tx, input.TeamID, conflictIDs)
+		loaded, loadErr := loadV2RelationshipConflictRecordsByID(ctx, tx, input.TeamID, conflictIDs, nil)
 		records = loaded
 		return loadErr
 	})
@@ -172,6 +178,15 @@ func (r *V2LedgerRepositoryImpl) ReviewV2RelationshipConflictCase(
 		if err != nil {
 			return err
 		}
+		caseRecord, dismissed, err := refreshV2RelationshipConflictCaseSnapshotForReview(ctx, tx, input, caseRecord)
+		if err != nil {
+			return err
+		}
+		if dismissed {
+			result.Outcome = V2ConflictReviewOutcomeNoop
+			result.Stage = domain.V2ConflictReviewStageDismissedNoConflict
+			return nil
+		}
 		evaluation := EvaluateV2RelationshipConflict(V2RelationshipConflictEvaluationInput{
 			Now:         input.Now,
 			ReviewDueAt: caseRecord.ReviewDueAt,
@@ -189,7 +204,7 @@ func (r *V2LedgerRepositoryImpl) ReviewV2RelationshipConflictCase(
 		}
 		switch evaluation.Outcome {
 		case V2ConflictReviewOutcomeResolve:
-			updated, err := resolveV2RelationshipConflictCase(ctx, tx, input, caseRecord, evaluation)
+			updated, err := resolveV2RelationshipConflictCase(ctx, tx, input, caseRecord, evaluation, r.embeddingJobMaxAttempts)
 			if err != nil {
 				return err
 			}
@@ -199,7 +214,8 @@ func (r *V2LedgerRepositoryImpl) ReviewV2RelationshipConflictCase(
 				return err
 			}
 		default:
-			if err := releaseV2RelationshipConflictCaseLease(ctx, tx, input, v2ConflictNextReviewAt(input.Now, caseRecord.ReviewDueAt)); err != nil {
+			resetAttempts := evaluation.Stage == domain.V2ConflictReviewStageWaitingForReviewDue
+			if err := releaseV2RelationshipConflictCaseLease(ctx, tx, input, v2ConflictNextReviewAt(input.Now, caseRecord.ReviewDueAt), resetAttempts); err != nil {
 				return err
 			}
 		}
@@ -263,17 +279,17 @@ func loadV2RelationshipConflictCaseForReview(
 		FROM relationship_conflict_cases
 		WHERE team_id = ?::uuid
 		  AND conflict_id = ?::uuid
-		  AND lease_worker_id = ?
-		  AND last_review_run_id = ?::uuid
-		  AND lease_until >= ?
-		FOR UPDATE
-	`, input.TeamID, input.ConflictID, input.WorkerID, input.ReviewRunID, input.Now).Scan(&conflictID).Error; err != nil {
+			  AND lease_worker_id = ?
+			  AND last_review_run_id = ?::uuid
+			  AND lease_until >= clock_timestamp()
+			FOR UPDATE
+		`, input.TeamID, input.ConflictID, input.WorkerID, input.ReviewRunID).Scan(&conflictID).Error; err != nil {
 		return nil, err
 	}
 	if conflictID == "" {
 		return nil, ErrV2PlacementLeaseLost
 	}
-	records, err := loadV2RelationshipConflictRecordsByID(ctx, tx, input.TeamID, []string{input.ConflictID})
+	records, err := loadV2RelationshipConflictRecordsByID(ctx, tx, input.TeamID, []string{input.ConflictID}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -283,12 +299,58 @@ func loadV2RelationshipConflictCaseForReview(
 	return &records[0], nil
 }
 
+func refreshV2RelationshipConflictCaseSnapshotForReview(
+	ctx context.Context,
+	tx *gorm.DB,
+	input V2ReviewRelationshipConflictCaseInput,
+	record *V2RelationshipConflictCaseRecord,
+) (*V2RelationshipConflictCaseRecord, bool, error) {
+	source := &V2RelationshipRecord{
+		TeamID:             record.TeamID,
+		SubjectEntityID:    record.SubjectEntityID,
+		PredicateKey:       record.PredicateKey,
+		RelationshipKind:   record.RelationshipKind,
+		CurrentCardinality: record.CurrentCardinality,
+		Polarity:           record.Polarity,
+		ScopeKey:           record.ScopeKey,
+	}
+	placement, err := loadV2RelationshipConflictPlacement(ctx, tx, input.TeamID, source)
+	if err != nil {
+		return nil, false, err
+	}
+	changed, err := refreshV2ExistingRelationshipConflictCaseSnapshot(ctx, tx, input.TeamID, input.ConflictID, placement.rows)
+	if err != nil {
+		return nil, false, err
+	}
+	if !v2ConflictPlacementHasConflict(placement.rows) {
+		if err := dismissV2RelationshipConflictCase(ctx, tx, input, changed); err != nil {
+			return nil, false, err
+		}
+		return nil, true, nil
+	}
+	if changed {
+		if err := bumpV2RelationshipConflictCaseVersion(ctx, tx, input.TeamID, input.ConflictID); err != nil {
+			return nil, false, err
+		}
+		records, err := loadV2RelationshipConflictRecordsByID(ctx, tx, input.TeamID, []string{input.ConflictID}, nil)
+		if err != nil {
+			return nil, false, err
+		}
+		if len(records) != 1 {
+			return nil, false, sql.ErrNoRows
+		}
+		return &records[0], false, nil
+	}
+	return record, false, nil
+}
+
 func resolveV2RelationshipConflictCase(
 	ctx context.Context,
 	tx *gorm.DB,
 	input V2ReviewRelationshipConflictCaseInput,
 	record *V2RelationshipConflictCaseRecord,
 	evaluation V2RelationshipConflictEvaluation,
+	embeddingJobMaxAttempts int,
 ) ([]string, error) {
 	if evaluation.PreferredPositionID == "" {
 		return nil, errors.New("preferred position is required to resolve conflict")
@@ -324,7 +386,7 @@ func resolveV2RelationshipConflictCase(
 	if err := updateV2ConflictPositionDispositions(ctx, tx, input.TeamID, input.ConflictID, evaluation.PreferredPositionID); err != nil {
 		return nil, err
 	}
-	updated, err := suppressV2ConflictLosingRelationships(ctx, tx, input, record, evaluation.PreferredPositionID, *effectiveAt)
+	updated, err := suppressV2ConflictLosingRelationships(ctx, tx, input, record, evaluation.PreferredPositionID, *effectiveAt, embeddingJobMaxAttempts)
 	if err != nil {
 		return nil, err
 	}
@@ -366,6 +428,7 @@ func suppressV2ConflictLosingRelationships(
 	record *V2RelationshipConflictCaseRecord,
 	preferredPositionID string,
 	effectiveAt time.Time,
+	embeddingJobMaxAttempts int,
 ) ([]string, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		WITH losers AS (
@@ -425,6 +488,16 @@ func suppressV2ConflictLosingRelationships(
 	updatedIDs := make([]string, 0, len(suppressed))
 	for _, item := range suppressed {
 		updatedIDs = append(updatedIDs, item.RelationshipID)
+		relationship, err := loadV2RelationshipRecord(ctx, tx, input.TeamID, item.RelationshipID)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := upsertV2PlacementRelationshipSearchDocument(ctx, tx, V2CommitPlacementSemanticInput{
+			TeamID:         input.TeamID,
+			OwnerProfileID: item.OwnerProfileID,
+		}, relationship, embeddingJobMaxAttempts); err != nil {
+			return nil, err
+		}
 		if _, err := insertV2RelationshipTransition(ctx, tx, v2TransitionInput{
 			TeamID:         input.TeamID,
 			OwnerProfileID: item.OwnerProfileID,
@@ -441,6 +514,11 @@ func suppressV2ConflictLosingRelationships(
 		if err := appendV2RelationshipConflictEvent(ctx, tx, input.TeamID, input.ConflictID, "", item.RelationshipID, item.OwnerProfileID, string(domain.V2RelationshipConflictEventRelationshipUpdated), "superseded", "case:"+input.ConflictID+":relationship:"+item.RelationshipID+":superseded", map[string]any{
 			"preferred_position_id": preferredPositionID,
 		}); err != nil {
+			return nil, err
+		}
+	}
+	if len(suppressed) > 0 {
+		if err := markV2StaleEmbeddingJobs(ctx, tx, input.TeamID); err != nil {
 			return nil, err
 		}
 	}
@@ -475,21 +553,54 @@ func markV2RelationshipConflictCaseOverdue(
 	})
 }
 
+func dismissV2RelationshipConflictCase(
+	ctx context.Context,
+	tx *gorm.DB,
+	input V2ReviewRelationshipConflictCaseInput,
+	snapshotChanged bool,
+) error {
+	result := tx.WithContext(ctx).Exec(`
+		UPDATE relationship_conflict_cases
+		SET status = 'dismissed',
+		    lease_worker_id = '',
+		    lease_until = NULL,
+		    next_review_at = ?,
+		    last_error = '',
+		    version = version + 1,
+		    updated_at = now()
+		WHERE team_id = ?::uuid
+		  AND conflict_id = ?::uuid
+		  AND status IN ('open', 'overdue')
+	`, input.Now, input.TeamID, input.ConflictID)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return sql.ErrNoRows
+	}
+	return appendV2RelationshipConflictEvent(ctx, tx, input.TeamID, input.ConflictID, "", "", "", string(domain.V2RelationshipConflictEventDismissed), domain.V2ConflictReviewReasonActiveConflictNoLongerExists, "case:"+input.ConflictID+":run:"+input.ReviewRunID+":dismissed", map[string]any{
+		"stage":            domain.V2ConflictReviewStageDismissedNoConflict,
+		"snapshot_changed": snapshotChanged,
+	})
+}
+
 func releaseV2RelationshipConflictCaseLease(
 	ctx context.Context,
 	tx *gorm.DB,
 	input V2ReviewRelationshipConflictCaseInput,
 	nextReviewAt time.Time,
+	resetAttempts bool,
 ) error {
 	result := tx.WithContext(ctx).Exec(`
 		UPDATE relationship_conflict_cases
 		SET lease_worker_id = '',
 		    lease_until = NULL,
 		    next_review_at = ?,
+		    attempts = CASE WHEN ? THEN 0 ELSE attempts END,
 		    updated_at = now()
 		WHERE team_id = ?::uuid
 		  AND conflict_id = ?::uuid
-	`, nextReviewAt, input.TeamID, input.ConflictID)
+	`, nextReviewAt, resetAttempts, input.TeamID, input.ConflictID)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -539,6 +650,7 @@ func normalizeV2ClaimRelationshipConflictCasesInput(input V2ClaimRelationshipCon
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.WorkerID = strings.TrimSpace(input.WorkerID)
 	input.ReviewRunID = strings.TrimSpace(input.ReviewRunID)
+	input.ExcludedConflictIDs = normalizeV2RecallUUIDList(input.ExcludedConflictIDs)
 	if input.Limit <= 0 || input.Limit > 500 {
 		input.Limit = 100
 	}
@@ -563,6 +675,11 @@ func validateV2ClaimRelationshipConflictCasesInput(input V2ClaimRelationshipConf
 	}
 	if input.WorkerID == "" {
 		return errors.New("worker_id is required")
+	}
+	for _, id := range input.ExcludedConflictIDs {
+		if _, err := uuid.Parse(id); err != nil {
+			return fmt.Errorf("excluded_conflict_ids contains invalid UUID %q: %w", id, err)
+		}
 	}
 	return nil
 }

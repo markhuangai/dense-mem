@@ -162,6 +162,7 @@ const (
 	V2RelationshipConflictEventMarkedOverdue       V2RelationshipConflictEventAction = "marked_overdue"
 	V2RelationshipConflictEventResolved            V2RelationshipConflictEventAction = "resolved"
 	V2RelationshipConflictEventRelationshipUpdated V2RelationshipConflictEventAction = "relationship_updated"
+	V2RelationshipConflictEventDismissed           V2RelationshipConflictEventAction = "dismissed"
 )
 
 type V2HypothesisStatus string

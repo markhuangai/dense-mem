@@ -264,6 +264,10 @@ EOF
 }
 
 prepare_e2e_compose_files() {
+  if [[ ! -f "$COMPOSE_FILE" ]]; then
+    echo "Missing supported compose source at ${COMPOSE_FILE}." >&2
+    return 1
+  fi
   E2E_ENV_FILE="${ROOT_DIR}/.env.e2e-${E2E_RUN_ID}"
   E2E_COMPOSE_FILE="${ROOT_DIR}/docker-compose.e2e-${E2E_RUN_ID}.yml"
   printf '%s\n' "$E2E_MARKER" > "$E2E_ENV_FILE"
@@ -276,8 +280,12 @@ prepare_e2e_compose_files() {
     /^[[:space:]]*-[[:space:]]*\.env[[:space:]]*$/ {
       sub(/\.env/, env_file)
     }
-    { print }
-  ' "$COMPOSE_FILE" >> "$E2E_COMPOSE_FILE"
+	    { print }
+	  ' "$COMPOSE_FILE" >> "$E2E_COMPOSE_FILE"
+  if ! grep -F -- "$E2E_ENV_FILE" "$E2E_COMPOSE_FILE" >/dev/null; then
+    echo "Generated compose file did not replace any .env entries." >&2
+    return 1
+  fi
   COMPOSE_FILE="$E2E_COMPOSE_FILE"
 }
 

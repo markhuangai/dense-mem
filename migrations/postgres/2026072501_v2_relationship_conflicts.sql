@@ -5,73 +5,6 @@ SELECT set_config('app.tx_mode', 'migration', true);
 SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
 
-DO $$
-DECLARE
-    duplicate_identities TEXT;
-BEGIN
-    SELECT string_agg(
-        format(
-            'team_id=%s owner_profile_id=%s subject=%s predicate=%s object_entity=%s object_value=%s polarity=%s valid_from=%s scope=%s rows=%s',
-            team_id,
-            owner_profile_id,
-            subject_entity_id,
-            predicate_key,
-            COALESCE(object_entity_id::text, ''),
-            COALESCE(object_value_id::text, ''),
-            polarity,
-            COALESCE(valid_from::text, ''),
-            COALESCE(scope_key, ''),
-            row_count
-        ),
-        '; '
-        ORDER BY team_id, owner_profile_id, subject_entity_id, predicate_key
-    )
-    INTO duplicate_identities
-    FROM (
-        SELECT team_id,
-               owner_profile_id,
-               subject_entity_id,
-               predicate_key,
-               object_entity_id,
-               object_value_id,
-               polarity,
-               valid_from,
-               scope_key,
-               count(*) AS row_count
-        FROM relationship_records
-        GROUP BY team_id, owner_profile_id, subject_entity_id, predicate_key,
-                 object_entity_id, object_value_id, polarity, valid_from, scope_key
-        HAVING count(*) > 1
-    ) AS duplicates;
-
-    IF duplicate_identities IS NOT NULL THEN
-        RAISE EXCEPTION 'cannot remove relationship_records.valid_to from identity: %', duplicate_identities;
-    END IF;
-END $$;
-
-DROP INDEX IF EXISTS relationship_records_active_one_current_unique;
-ALTER TABLE relationship_records
-    DROP CONSTRAINT IF EXISTS relationship_records_identity_unique;
-CREATE UNIQUE INDEX IF NOT EXISTS relationship_records_identity_unique_without_valid_to_idx
-    ON relationship_records (
-        team_id, owner_profile_id, subject_entity_id, predicate_key,
-        object_entity_id, object_value_id, polarity, valid_from, scope_key
-    )
-    NULLS NOT DISTINCT;
-ALTER TABLE relationship_records
-    ADD CONSTRAINT relationship_records_identity_unique
-    UNIQUE USING INDEX relationship_records_identity_unique_without_valid_to_idx;
-
-CREATE UNIQUE INDEX IF NOT EXISTS relationship_records_active_one_current_unique
-    ON relationship_records (
-        team_id, owner_profile_id, subject_entity_id, predicate_key,
-        polarity, valid_from, scope_key
-    )
-    NULLS NOT DISTINCT
-    WHERE current_cardinality = 'one'
-      AND status = 'active'
-      AND tier IN ('validated_claim', 'fact');
-
 CREATE TABLE IF NOT EXISTS relationship_conflict_cases (
     team_id UUID NOT NULL,
     conflict_id UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -144,6 +77,8 @@ CREATE TABLE IF NOT EXISTS relationship_conflict_positions (
     disposition TEXT NOT NULL DEFAULT 'candidate',
     support_group_count INTEGER NOT NULL DEFAULT 0,
     authoritative_group_count INTEGER NOT NULL DEFAULT 0,
+    active BOOLEAN NOT NULL DEFAULT true,
+    retired_at TIMESTAMPTZ NULL,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -177,10 +112,13 @@ CREATE TABLE IF NOT EXISTS relationship_conflict_position_members (
     authority TEXT NOT NULL DEFAULT 'primary',
     effective_at TIMESTAMPTZ NULL,
     effective_time_basis TEXT NOT NULL DEFAULT '',
+    recorded_fallback BOOLEAN NOT NULL DEFAULT false,
+    active BOOLEAN NOT NULL DEFAULT true,
+    retired_at TIMESTAMPTZ NULL,
     first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-    PRIMARY KEY (team_id, position_id, relationship_id),
+    PRIMARY KEY (team_id, position_id, relationship_id, source_group_key),
     FOREIGN KEY (team_id, conflict_id) REFERENCES relationship_conflict_cases(team_id, conflict_id) ON DELETE RESTRICT,
     FOREIGN KEY (team_id, position_id) REFERENCES relationship_conflict_positions(team_id, position_id) ON DELETE RESTRICT,
     FOREIGN KEY (team_id, relationship_id, owner_profile_id)
@@ -225,7 +163,7 @@ CREATE TABLE IF NOT EXISTS relationship_conflict_events (
     FOREIGN KEY (team_id, actor_profile_id) REFERENCES semantic_profile_refs(team_id, profile_id) ON DELETE RESTRICT,
     CONSTRAINT relationship_conflict_events_action_check CHECK (action IN (
         'opened', 'position_added', 'member_added', 'evaluated', 'marked_overdue',
-        'resolved', 'relationship_updated'
+        'resolved', 'relationship_updated', 'dismissed'
     )),
     CONSTRAINT relationship_conflict_events_actor_check CHECK (actor_kind IN ('system', 'profile')),
     CONSTRAINT relationship_conflict_events_metadata_object_check CHECK (jsonb_typeof(metadata) = 'object')
@@ -299,6 +237,9 @@ BEGIN
         'relationship_conflict_review_runs'
     ]
     LOOP
+        EXECUTE format('DROP POLICY IF EXISTS %I ON %I', table_name || '_select', table_name);
+        EXECUTE format('DROP POLICY IF EXISTS %I ON %I', table_name || '_insert', table_name);
+        EXECUTE format('DROP POLICY IF EXISTS %I ON %I', table_name || '_update', table_name);
         EXECUTE format(
             'CREATE POLICY %I ON %I FOR SELECT USING (
                 current_setting(''app.tx_mode'', true) IN (''system'', ''migration'')
@@ -321,23 +262,25 @@ BEGIN
             table_name || '_insert',
             table_name
         );
-        EXECUTE format(
-            'CREATE POLICY %I ON %I FOR UPDATE USING (
-                current_setting(''app.tx_mode'', true) IN (''system'', ''migration'')
-                OR (
-                    current_setting(''app.tx_mode'', true) IN (''team'', ''profile'')
-                    AND team_id = nullif(current_setting(''app.current_team_id'', true), '''')::uuid
-                )
-            ) WITH CHECK (
-                current_setting(''app.tx_mode'', true) IN (''system'', ''migration'')
-                OR (
-                    current_setting(''app.tx_mode'', true) IN (''team'', ''profile'')
-                    AND team_id = nullif(current_setting(''app.current_team_id'', true), '''')::uuid
-                )
-            )',
-            table_name || '_update',
-            table_name
-        );
+        IF table_name <> 'relationship_conflict_events' THEN
+            EXECUTE format(
+                'CREATE POLICY %I ON %I FOR UPDATE USING (
+                    current_setting(''app.tx_mode'', true) IN (''system'', ''migration'')
+                    OR (
+                        current_setting(''app.tx_mode'', true) IN (''team'', ''profile'')
+                        AND team_id = nullif(current_setting(''app.current_team_id'', true), '''')::uuid
+                    )
+                ) WITH CHECK (
+                    current_setting(''app.tx_mode'', true) IN (''system'', ''migration'')
+                    OR (
+                        current_setting(''app.tx_mode'', true) IN (''team'', ''profile'')
+                        AND team_id = nullif(current_setting(''app.current_team_id'', true), '''')::uuid
+                    )
+                )',
+                table_name || '_update',
+                table_name
+            );
+        END IF;
     END LOOP;
 END $$;
 
@@ -365,75 +308,6 @@ DROP TABLE IF EXISTS relationship_conflict_events;
 DROP TABLE IF EXISTS relationship_conflict_position_members;
 DROP TABLE IF EXISTS relationship_conflict_positions;
 DROP TABLE IF EXISTS relationship_conflict_cases;
-
-DO $$
-DECLARE
-    duplicate_identities TEXT;
-BEGIN
-    SELECT string_agg(
-        format(
-            'team_id=%s owner_profile_id=%s subject=%s predicate=%s object_entity=%s object_value=%s polarity=%s valid_from=%s valid_to=%s scope=%s rows=%s',
-            team_id,
-            owner_profile_id,
-            subject_entity_id,
-            predicate_key,
-            COALESCE(object_entity_id::text, ''),
-            COALESCE(object_value_id::text, ''),
-            polarity,
-            COALESCE(valid_from::text, ''),
-            COALESCE(valid_to::text, ''),
-            COALESCE(scope_key, ''),
-            row_count
-        ),
-        '; '
-        ORDER BY team_id, owner_profile_id, subject_entity_id, predicate_key
-    )
-    INTO duplicate_identities
-    FROM (
-        SELECT team_id,
-               owner_profile_id,
-               subject_entity_id,
-               predicate_key,
-               object_entity_id,
-               object_value_id,
-               polarity,
-               valid_from,
-               valid_to,
-               scope_key,
-               count(*) AS row_count
-        FROM relationship_records
-        GROUP BY team_id, owner_profile_id, subject_entity_id, predicate_key,
-                 object_entity_id, object_value_id, polarity, valid_from, valid_to, scope_key
-        HAVING count(*) > 1
-    ) AS duplicates;
-
-    IF duplicate_identities IS NOT NULL THEN
-        RAISE EXCEPTION 'cannot restore relationship_records.valid_to identity: %', duplicate_identities;
-    END IF;
-END $$;
-
-DROP INDEX IF EXISTS relationship_records_active_one_current_unique;
-ALTER TABLE relationship_records
-    DROP CONSTRAINT IF EXISTS relationship_records_identity_unique;
-CREATE UNIQUE INDEX IF NOT EXISTS relationship_records_identity_unique_with_valid_to_idx
-    ON relationship_records (
-        team_id, owner_profile_id, subject_entity_id, predicate_key,
-        object_entity_id, object_value_id, polarity, valid_from, valid_to, scope_key
-    )
-    NULLS NOT DISTINCT;
-ALTER TABLE relationship_records
-    ADD CONSTRAINT relationship_records_identity_unique
-    UNIQUE USING INDEX relationship_records_identity_unique_with_valid_to_idx;
-
-CREATE UNIQUE INDEX IF NOT EXISTS relationship_records_active_one_current_unique
-    ON relationship_records (
-        team_id, owner_profile_id, subject_entity_id, predicate_key,
-        polarity, valid_from, valid_to, scope_key
-    )
-    NULLS NOT DISTINCT
-    WHERE current_cardinality = 'one'
-      AND status = 'active'
-      AND tier IN ('validated_claim', 'fact');
 
 UPDATE app_config
 SET value = regexp_replace(

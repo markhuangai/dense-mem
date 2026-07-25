@@ -83,8 +83,8 @@ func TestV2ReviewSourceMatchConflictContextFallbackAndAmbiguity(t *testing.T) {
 		"predicate":   "other",
 		"object_ref":  "other",
 	}, contexts, map[int]struct{}{}, 1)
-	if !ok || index != 0 {
-		t.Fatalf("fallback match index=%d ok=%v", index, ok)
+	if ok || index != 0 {
+		t.Fatalf("mismatched singleton conflict context matched index=%d ok=%v", index, ok)
 	}
 
 	ambiguous := []v2ReviewSourceConflictContext{

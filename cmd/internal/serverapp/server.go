@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -608,27 +609,37 @@ func processTeamConflictReview(
 		WorkerID:    workerID,
 		Status:      "completed",
 	}
+	attempted := map[string]struct{}{}
 	for {
+		excluded := make([]string, 0, len(attempted))
+		for id := range attempted {
+			excluded = append(excluded, id)
+		}
 		cases, err := ledger.ClaimV2RelationshipConflictCases(ctx, repository.V2ClaimRelationshipConflictCasesInput{
-			TeamID:      teamID,
-			WorkerID:    workerID,
-			ReviewRunID: run.ReviewRunID,
-			Limit:       cfg.GetConflictReviewBatchSize(),
-			Lease:       lease,
-			MaxAttempts: cfg.GetConflictReviewMaxAttempts(),
-			Now:         time.Now().UTC(),
+			TeamID:              teamID,
+			WorkerID:            workerID,
+			ReviewRunID:         run.ReviewRunID,
+			Limit:               cfg.GetConflictReviewBatchSize(),
+			Lease:               lease,
+			MaxAttempts:         cfg.GetConflictReviewMaxAttempts(),
+			Now:                 time.Now().UTC(),
+			ExcludedConflictIDs: excluded,
 		})
 		if err != nil {
 			counts.Status = "failed"
-			counts.LastError = err.Error()
+			counts.LastError = safeConflictReviewError(err)
 			outcome = "failed"
 			break
 		}
 		if len(cases) == 0 {
 			break
 		}
-		counts.ClaimedCases += len(cases)
 		for _, conflictCase := range cases {
+			if _, ok := attempted[conflictCase.ConflictID]; ok {
+				continue
+			}
+			attempted[conflictCase.ConflictID] = struct{}{}
+			counts.ClaimedCases++
 			result, err := ledger.ReviewV2RelationshipConflictCase(ctx, repository.V2ReviewRelationshipConflictCaseInput{
 				TeamID:      teamID,
 				WorkerID:    workerID,
@@ -638,7 +649,7 @@ func processTeamConflictReview(
 			})
 			if err != nil {
 				counts.FailedCases++
-				logger.Error("conflict review case failed", err, observability.String("team_id", teamID), observability.String("conflict_id", conflictCase.ConflictID))
+				logger.Error("conflict review case failed", errConflictReviewCaseFailed, observability.String("team_id", teamID), observability.String("conflict_id", conflictCase.ConflictID))
 				continue
 			}
 			switch result.Outcome {
@@ -663,6 +674,15 @@ func processTeamConflictReview(
 	return nil
 }
 
+var errConflictReviewCaseFailed = errors.New("conflict review case failed")
+
+func safeConflictReviewError(err error) string {
+	if err == nil {
+		return ""
+	}
+	return "conflict review repository operation failed"
+}
+
 type conflictReviewLedger interface {
 	ReserveV2RelationshipConflictReviewRun(context.Context, repository.V2ConflictReviewRunInput) (*repository.V2ConflictReviewRunRecord, bool, error)
 	ClaimV2RelationshipConflictCases(context.Context, repository.V2ClaimRelationshipConflictCasesInput) ([]repository.V2RelationshipConflictCaseRecord, error)
@@ -671,10 +691,7 @@ type conflictReviewLedger interface {
 }
 
 func conflictReviewDueForTeam(now time.Time, cfg *config.Config, teamID string) bool {
-	location, err := time.LoadLocation(cfg.GetAppTimezone())
-	if err != nil {
-		location = time.Local
-	}
+	location := conflictReviewLocation(cfg.GetAppTimezone())
 	localNow := now.In(location)
 	start, err := time.Parse("15:04", cfg.GetConflictReviewStartTimeLocal())
 	if err != nil {
@@ -683,11 +700,32 @@ func conflictReviewDueForTeam(now time.Time, cfg *config.Config, teamID string) 
 	year, month, day := localNow.Date()
 	scheduled := time.Date(year, month, day, start.Hour(), start.Minute(), 0, 0, location)
 	jitterSeconds := cfg.GetConflictReviewJitterSeconds()
+	if jitterSeconds > 3600 {
+		jitterSeconds = 3600
+	}
 	if jitterSeconds > 0 {
-		delay := int(crc32.ChecksumIEEE([]byte(teamID)) % uint32(jitterSeconds+1))
+		delay := int(crc32.ChecksumIEEE([]byte(teamID))) % (jitterSeconds + 1)
 		scheduled = scheduled.Add(time.Duration(delay) * time.Second)
 	}
 	return !localNow.Before(scheduled)
+}
+
+var conflictReviewLocationCache sync.Map
+
+func conflictReviewLocation(name string) *time.Location {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return time.Local
+	}
+	if cached, ok := conflictReviewLocationCache.Load(name); ok {
+		return cached.(*time.Location)
+	}
+	location, err := time.LoadLocation(name)
+	if err != nil {
+		return time.Local
+	}
+	actual, _ := conflictReviewLocationCache.LoadOrStore(name, location)
+	return actual.(*time.Location)
 }
 
 func checkActiveAuthority(authority authorityBootstrap) error {

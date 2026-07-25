@@ -289,14 +289,15 @@ func v2TraceTransitionOutputs(records []repository.V2RelationshipTransitionEvent
 func v2TraceConflictOutputs(records []repository.V2RelationshipConflictCaseRecord) []map[string]any {
 	out := make([]map[string]any, 0, len(records))
 	for _, record := range records {
+		positions := v2TraceConflictPositionOutputs(record.Positions)
 		item := map[string]any{
 			"conflict_id":         record.ConflictID,
 			"version":             record.Version,
 			"kind":                record.Kind,
 			"status":              record.Status,
 			"question":            record.Question,
-			"positions":           v2TraceConflictPositionOutputs(record.Positions),
-			"positions_truncated": false,
+			"positions":           positions,
+			"positions_truncated": len(record.Positions) > v2TraceConflictPositionLimit,
 		}
 		v2PutTime(item, "review_due_at", record.ReviewDueAt)
 		v2PutNullableTime(item, "effective_at", record.EffectiveAt)
@@ -307,18 +308,35 @@ func v2TraceConflictOutputs(records []repository.V2RelationshipConflictCaseRecor
 	return out
 }
 
+const (
+	v2TraceConflictPositionLimit         = 10
+	v2TraceConflictRelationshipIDLimit   = 20
+	v2TraceConflictOwnerProfileIDLimit   = 20
+	v2TraceConflictResultEvidenceIDLimit = 50
+)
+
 func v2TraceConflictPositionOutputs(records []repository.V2RelationshipConflictPositionRecord) []map[string]any {
+	if len(records) > v2TraceConflictPositionLimit {
+		records = records[:v2TraceConflictPositionLimit]
+	}
 	out := make([]map[string]any, 0, len(records))
 	for _, record := range records {
 		out = append(out, map[string]any{
 			"position_id":         record.PositionID,
 			"disposition":         record.Disposition,
-			"relationship_ids":    v2TraceStringArray(record.RelationshipIDs),
-			"owner_profile_ids":   v2TraceStringArray(record.OwnerProfileIDs),
-			"result_evidence_ids": v2TraceStringArray(record.EvidenceIDs),
+			"relationship_ids":    v2TraceBoundedStringArray(record.RelationshipIDs, v2TraceConflictRelationshipIDLimit),
+			"owner_profile_ids":   v2TraceBoundedStringArray(record.OwnerProfileIDs, v2TraceConflictOwnerProfileIDLimit),
+			"result_evidence_ids": v2TraceBoundedStringArray(record.EvidenceIDs, v2TraceConflictResultEvidenceIDLimit),
 		})
 	}
 	return out
+}
+
+func v2TraceBoundedStringArray(values []string, limit int) []string {
+	if limit >= 0 && len(values) > limit {
+		values = values[:limit]
+	}
+	return v2TraceStringArray(values)
 }
 
 func v2TraceCrossProfileReferenceOutputs(records []repository.V2RelationshipCrossReferenceRecord) []map[string]any {

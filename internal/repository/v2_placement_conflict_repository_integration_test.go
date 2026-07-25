@@ -82,13 +82,17 @@ func TestV2PlacementSemanticCommitOpensCrossProfileConflictCase(t *testing.T) {
 		conflicts, loadErr = loadV2RelationshipConflictRecords(ctx, tx, teamID, []string{
 			first.RelationshipResults[0].Relationship.RelationshipID,
 			second.RelationshipResults[0].Relationship.RelationshipID,
-		})
+		}, nil)
 		return loadErr
 	})
 	require.NoError(t, err)
 	require.Len(t, conflicts, 1)
 	require.Len(t, conflicts[0].Positions, 2)
 	assert.Equal(t, "open", conflicts[0].Status)
+	for _, position := range conflicts[0].Positions {
+		assert.True(t, position.RecordedFallback)
+		assert.Equal(t, "recorded_at", position.EffectiveTimeBasis)
+	}
 	assert.ElementsMatch(t, []string{
 		first.RelationshipResults[0].Relationship.RelationshipID,
 		second.RelationshipResults[0].Relationship.RelationshipID,
@@ -156,6 +160,8 @@ func TestV2PlacementSemanticCommitValidatesConflictContextAtomically(t *testing.
 	require.NoError(t, err)
 	require.Len(t, valid.RelationshipResults, 1)
 	assert.NotNil(t, valid.RelationshipResults[0].Relationship)
+	_, refreshedConflictVersion := loadV2ConflictCaseVersionForSubject(t, ctx, appDB, rls, teamID, ownerA, subject.EntityID)
+	assert.Greater(t, refreshedConflictVersion, conflictVersion)
 
 	var memberCount int64
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
@@ -183,7 +189,7 @@ func TestV2PlacementSemanticCommitValidatesConflictContextAtomically(t *testing.
 			ownerID:         ownerC,
 			subjectEntityID: subject.EntityID,
 			objectEntityID:  postgres.EntityID,
-			context:         V2PlacementConflictContextInput{ConflictID: conflictID, ExpectedVersion: conflictVersion + 1},
+			context:         V2PlacementConflictContextInput{ConflictID: conflictID, ExpectedVersion: conflictVersion},
 			beforeProfileID: ownerA,
 		},
 		{
@@ -317,8 +323,9 @@ func TestV2RelationshipConflictReviewerResolvesMajorityAndSupersedesLosers(t *te
 		ResolvedCases: 1,
 	}))
 
-	var conflictStatus, loserStatus, preferredAStatus, preferredCStatus string
-	var preferredPositionCount, suppressedPositionCount, transitionCount int64
+	var conflictStatus, loserStatus, preferredAStatus, preferredCStatus, loserSearchState string
+	var loserRelationshipVersion, loserSearchSourceVersion int64
+	var preferredPositionCount, suppressedPositionCount, transitionCount, staleEmbeddingJobs, queuedEmbeddingJobs int64
 	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
 		require.NoError(t, tx.Raw(`
 			SELECT status
@@ -327,11 +334,35 @@ func TestV2RelationshipConflictReviewerResolvesMajorityAndSupersedesLosers(t *te
 			  AND conflict_id = ?::uuid
 		`, teamID, conflictID).Scan(&conflictStatus).Error)
 		require.NoError(t, tx.Raw(`
-			SELECT status
+			SELECT status, version
 			FROM relationship_records
 			WHERE team_id = ?::uuid
 			  AND relationship_id = ?::uuid
-		`, teamID, loser.RelationshipResults[0].Relationship.RelationshipID).Scan(&loserStatus).Error)
+		`, teamID, loser.RelationshipResults[0].Relationship.RelationshipID).Row().Scan(&loserStatus, &loserRelationshipVersion))
+		require.NoError(t, tx.Raw(`
+			SELECT source_version, search_state
+			FROM search_documents
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id = ?::uuid
+		`, teamID, loser.RelationshipResults[0].Relationship.RelationshipID).Row().Scan(&loserSearchSourceVersion, &loserSearchState))
+		require.NoError(t, tx.Raw(`
+			SELECT COUNT(*)
+			FROM embedding_jobs
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id = ?::uuid
+			  AND status = 'stale'
+		`, teamID, loser.RelationshipResults[0].Relationship.RelationshipID).Scan(&staleEmbeddingJobs).Error)
+		require.NoError(t, tx.Raw(`
+			SELECT COUNT(*)
+			FROM embedding_jobs
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id = ?::uuid
+			  AND source_version = ?
+			  AND status = 'queued'
+		`, teamID, loser.RelationshipResults[0].Relationship.RelationshipID, loserRelationshipVersion).Scan(&queuedEmbeddingJobs).Error)
 		require.NoError(t, tx.Raw(`
 			SELECT status
 			FROM relationship_records
@@ -369,6 +400,10 @@ func TestV2RelationshipConflictReviewerResolvesMajorityAndSupersedesLosers(t *te
 	require.NoError(t, err)
 	assert.Equal(t, "resolved", conflictStatus)
 	assert.Equal(t, "superseded", loserStatus)
+	assert.Equal(t, loserRelationshipVersion, loserSearchSourceVersion)
+	assert.Equal(t, "pending", loserSearchState)
+	assert.GreaterOrEqual(t, staleEmbeddingJobs, int64(1))
+	assert.Equal(t, int64(1), queuedEmbeddingJobs)
 	assert.Equal(t, "active", preferredAStatus)
 	assert.Equal(t, "active", preferredCStatus)
 	assert.Equal(t, int64(1), preferredPositionCount)
@@ -402,6 +437,16 @@ func TestV2RelationshipConflictReviewerResolvesMajorityAndSupersedesLosers(t *te
 		historicalRelationshipIDs = append(historicalRelationshipIDs, hit.RelationshipIDs...)
 	}
 	assert.Contains(t, historicalRelationshipIDs, loser.RelationshipResults[0].Relationship.RelationshipID)
+	historicalKnownAt := reviewNow.Add(-time.Second)
+	var historicalConflicts []V2RelationshipConflictCaseRecord
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		var loadErr error
+		historicalConflicts, loadErr = loadV2RelationshipConflictRecords(ctx, tx, teamID, []string{loser.RelationshipResults[0].Relationship.RelationshipID}, &historicalKnownAt)
+		return loadErr
+	}))
+	require.Len(t, historicalConflicts, 1)
+	assert.NotEqual(t, "resolved", historicalConflicts[0].Status)
+	assert.Empty(t, historicalConflicts[0].PreferredPositionID)
 
 	trace, err := semanticRepo.TraceRelationship(ctx, V2TraceRelationshipInput{
 		TeamID:         teamID,

@@ -54,13 +54,14 @@ type V2ConflictReviewRunRecord struct {
 }
 
 type V2ClaimRelationshipConflictCasesInput struct {
-	TeamID      string
-	WorkerID    string
-	ReviewRunID string
-	Limit       int
-	Lease       time.Duration
-	MaxAttempts int
-	Now         time.Time
+	TeamID              string
+	WorkerID            string
+	ReviewRunID         string
+	Limit               int
+	Lease               time.Duration
+	MaxAttempts         int
+	Now                 time.Time
+	ExcludedConflictIDs []string
 }
 
 type V2ReviewRelationshipConflictCaseInput struct {
@@ -77,6 +78,37 @@ type V2ReviewRelationshipConflictCaseResult struct {
 	Stage                string
 	PreferredPositionID  string
 	UpdatedRelationships []string
+}
+
+type V2RelationshipConflictCaseRecord struct {
+	TeamID              string
+	ConflictID          string
+	SemanticScopeKey    string
+	Kind                string
+	Status              string
+	SubjectEntityID     string
+	PredicateKey        string
+	PredicateVersion    int
+	RelationshipKind    string
+	CurrentCardinality  string
+	Polarity            string
+	ScopeKey            string
+	Question            string
+	PolicyVersion       string
+	ReviewDueAt         time.Time
+	NextReviewAt        time.Time
+	ReviewTTLDays       int
+	Timezone            string
+	PreferredPositionID string
+	ResolvedAt          *time.Time
+	EffectiveAt         *time.Time
+	EffectiveTimeBasis  string
+	ResolutionReason    string
+	Version             int
+	Attempts            int
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	Positions           []V2RelationshipConflictPositionRecord
 }
 
 type V2ValidateRelationshipConflictContextInput struct {
@@ -112,6 +144,7 @@ type v2ConflictPlacementRow struct {
 	Authority               string
 	EffectiveAt             *time.Time
 	EffectiveTimeBasis      string
+	RecordedFallback        bool
 	SupportGroupCount       int
 	AuthoritativeGroupCount int
 }
@@ -200,11 +233,13 @@ func loadV2RelationshipConflictPlacement(
 			       support.team_id,
 			       support.support_id,
 			       decision.decision
-			FROM relationship_evidence_supports AS support
+			FROM active_relationships AS active
+			JOIN relationship_evidence_supports AS support
+			  ON support.team_id = ?::uuid
+			 AND support.relationship_id = active.relationship_id
 			JOIN relationship_support_decision_events AS decision
 			  ON decision.team_id = support.team_id
 			 AND decision.support_id = support.support_id
-			WHERE support.team_id = ?::uuid
 			ORDER BY support.team_id, support.support_id, decision.created_at DESC, decision.support_decision_id DESC
 		),
 		effective_supports AS (
@@ -243,18 +278,8 @@ func loadV2RelationshipConflictPlacement(
 			      OR source.current_revision_id = support.source_revision_id
 			  )
 		),
-		position_counts AS (
-			SELECT active.object_entity_id,
-			       active.object_value_id,
-			       COUNT(DISTINCT support.source_group_key)::int AS support_group_count,
-			       COUNT(DISTINCT support.source_group_key) FILTER (WHERE support.authority = 'authoritative')::int AS authoritative_group_count
-			FROM active_relationships AS active
-			JOIN effective_supports AS support
-			  ON support.relationship_id = active.relationship_id
-			GROUP BY active.object_entity_id, active.object_value_id
-		),
-		representative_support AS (
-			SELECT DISTINCT ON (support.relationship_id)
+		support_groups AS (
+			SELECT DISTINCT ON (support.relationship_id, support.source_group_key)
 			       support.relationship_id,
 			       support.support_id,
 			       support.verification_event_id,
@@ -263,9 +288,19 @@ func loadV2RelationshipConflictPlacement(
 			       support.authority
 			FROM effective_supports AS support
 			ORDER BY support.relationship_id,
-			         CASE WHEN support.authority = 'authoritative' THEN 0 ELSE 1 END,
 			         support.source_group_key,
+			         CASE WHEN support.authority = 'authoritative' THEN 0 ELSE 1 END,
 			         support.support_id
+		),
+		position_counts AS (
+			SELECT active.object_entity_id,
+			       active.object_value_id,
+			       COUNT(DISTINCT support.source_group_key)::int AS support_group_count,
+			       COUNT(DISTINCT support.source_group_key) FILTER (WHERE support.authority = 'authoritative')::int AS authoritative_group_count
+			FROM active_relationships AS active
+			JOIN support_groups AS support
+			  ON support.relationship_id = active.relationship_id
+			GROUP BY active.object_entity_id, active.object_value_id
 		)
 		SELECT active.relationship_id::text,
 		       active.owner_profile_id::text,
@@ -288,11 +323,12 @@ func loadV2RelationshipConflictPlacement(
 		       support.source_group_key,
 		       support.authority,
 		       active.valid_from,
-		       CASE WHEN active.valid_from IS NULL THEN '' ELSE 'valid_from' END,
+		       CASE WHEN active.valid_from IS NULL THEN 'recorded_at' ELSE 'valid_from' END,
+		       active.valid_from IS NULL,
 		       counts.support_group_count,
 		       counts.authoritative_group_count
 		FROM active_relationships AS active
-		JOIN representative_support AS support
+		JOIN support_groups AS support
 		  ON support.relationship_id = active.relationship_id
 		JOIN position_counts AS counts
 		  ON counts.object_entity_id IS NOT DISTINCT FROM active.object_entity_id
@@ -335,6 +371,7 @@ func loadV2RelationshipConflictPlacement(
 			&row.Authority,
 			&row.EffectiveAt,
 			&row.EffectiveTimeBasis,
+			&row.RecordedFallback,
 			&row.SupportGroupCount,
 			&row.AuthoritativeGroupCount,
 		); err != nil {
@@ -448,9 +485,12 @@ func upsertV2RelationshipConflictCase(
 			return err
 		}
 	}
-	positions := v2ConflictRowsByPosition(placement.rows)
-	for _, positionRows := range positions {
-		if err := upsertV2RelationshipConflictPosition(ctx, tx, teamID, conflictID, positionRows); err != nil {
+	changed, err := refreshV2ExistingRelationshipConflictCaseSnapshot(ctx, tx, teamID, conflictID, placement.rows)
+	if err != nil {
+		return err
+	}
+	if !created && changed {
+		if err := bumpV2RelationshipConflictCaseVersion(ctx, tx, teamID, conflictID); err != nil {
 			return err
 		}
 	}
@@ -482,132 +522,20 @@ func loadV2ConflictReviewTTLDays(ctx context.Context, tx *gorm.DB, teamID string
 	return defaultDays, nil
 }
 
-func v2ConflictRowsByPosition(rows []v2ConflictPlacementRow) [][]v2ConflictPlacementRow {
-	byKey := map[string][]v2ConflictPlacementRow{}
-	keys := []string{}
-	for _, row := range rows {
-		if _, ok := byKey[row.PositionKey]; !ok {
-			keys = append(keys, row.PositionKey)
-		}
-		byKey[row.PositionKey] = append(byKey[row.PositionKey], row)
-	}
-	out := make([][]v2ConflictPlacementRow, 0, len(keys))
-	for _, key := range keys {
-		out = append(out, byKey[key])
-	}
-	return out
-}
-
-func upsertV2RelationshipConflictPosition(
-	ctx context.Context,
-	tx *gorm.DB,
-	teamID string,
-	conflictID string,
-	rowsForPosition []v2ConflictPlacementRow,
-) error {
-	if len(rowsForPosition) == 0 {
-		return nil
-	}
-	first := rowsForPosition[0]
-	var positionID string
-	var created bool
-	rows, err := tx.WithContext(ctx).Raw(`
-		WITH inserted AS (
-			INSERT INTO relationship_conflict_positions (
-			    team_id, conflict_id, position_key, object_entity_id, object_value_id,
-			    support_group_count, authoritative_group_count
-			) VALUES (
-			    ?::uuid, ?::uuid, ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, ?
-			)
-			ON CONFLICT (team_id, conflict_id, position_key)
-			DO UPDATE SET support_group_count = EXCLUDED.support_group_count,
-			              authoritative_group_count = EXCLUDED.authoritative_group_count,
-			              last_seen_at = now(),
-			              updated_at = now()
-			RETURNING position_id::text, (xmax = 0) AS created
-		)
-		SELECT position_id, created FROM inserted
-	`, teamID, conflictID, first.PositionKey, first.ObjectEntityID, first.ObjectValueID,
-		first.SupportGroupCount, first.AuthoritativeGroupCount).Rows()
-	if err != nil {
-		return err
-	}
-	if rows.Next() {
-		if err := rows.Scan(&positionID, &created); err != nil {
-			_ = rows.Close()
-			return err
-		}
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	if positionID == "" {
-		return sql.ErrNoRows
-	}
-	if created {
-		if err := appendV2RelationshipConflictEvent(ctx, tx, teamID, conflictID, positionID, "", "", string(domain.V2RelationshipConflictEventPositionAdded), "candidate", "case:"+conflictID+":position:"+positionID+":added", map[string]any{
-			"position_key": first.PositionKey,
-		}); err != nil {
-			return err
-		}
-	}
-	for _, member := range rowsForPosition {
-		if err := upsertV2RelationshipConflictMember(ctx, tx, teamID, conflictID, positionID, member); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func upsertV2RelationshipConflictMember(
-	ctx context.Context,
-	tx *gorm.DB,
-	teamID string,
-	conflictID string,
-	positionID string,
-	row v2ConflictPlacementRow,
-) error {
-	metadata, err := marshalV2JSON(map[string]any{
-		"source": domain.V2ConflictPolicyVersion,
-	})
-	if err != nil {
-		return err
-	}
+func bumpV2RelationshipConflictCaseVersion(ctx context.Context, tx *gorm.DB, teamID string, conflictID string) error {
 	result := tx.WithContext(ctx).Exec(`
-		INSERT INTO relationship_conflict_position_members (
-		    team_id, conflict_id, position_id, relationship_id, owner_profile_id,
-		    support_id, verification_event_id, fragment_id, source_group_key, authority,
-		    effective_at, effective_time_basis, metadata
-		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid,
-		    NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, ?,
-		    ?, ?, ?::jsonb
-		)
-		ON CONFLICT (team_id, position_id, relationship_id)
-		DO UPDATE SET support_id = EXCLUDED.support_id,
-		              verification_event_id = EXCLUDED.verification_event_id,
-		              fragment_id = EXCLUDED.fragment_id,
-		              source_group_key = EXCLUDED.source_group_key,
-		              authority = EXCLUDED.authority,
-		              effective_at = EXCLUDED.effective_at,
-		              effective_time_basis = EXCLUDED.effective_time_basis,
-		              last_seen_at = now(),
-		              metadata = EXCLUDED.metadata
-	`, teamID, conflictID, positionID, row.RelationshipID, row.OwnerProfileID,
-		row.SupportID, row.VerificationEventID, row.FragmentID, row.SourceGroupKey, row.Authority,
-		row.EffectiveAt, row.EffectiveTimeBasis, string(metadata))
+		UPDATE relationship_conflict_cases
+		SET version = version + 1,
+		    updated_at = now()
+		WHERE team_id = ?::uuid
+		  AND conflict_id = ?::uuid
+		  AND status IN ('open', 'overdue')
+	`, teamID, conflictID)
 	if result.Error != nil {
 		return result.Error
 	}
-	if result.RowsAffected == 1 {
-		return appendV2RelationshipConflictEvent(ctx, tx, teamID, conflictID, positionID, row.RelationshipID, row.OwnerProfileID, string(domain.V2RelationshipConflictEventMemberAdded), "member", "case:"+conflictID+":relationship:"+row.RelationshipID+":member", map[string]any{
-			"source_group_key": row.SourceGroupKey,
-			"authority":        row.Authority,
-		})
+	if result.RowsAffected != 1 {
+		return sql.ErrNoRows
 	}
 	return nil
 }
@@ -653,6 +581,7 @@ func loadV2RelationshipConflictRecords(
 	tx *gorm.DB,
 	teamID string,
 	relationshipIDs []string,
+	knownAt *time.Time,
 ) ([]V2RelationshipConflictCaseRecord, error) {
 	relationshipIDs = normalizeV2RecallUUIDList(relationshipIDs)
 	if len(relationshipIDs) == 0 {
@@ -666,9 +595,19 @@ func loadV2RelationshipConflictRecords(
 		 AND member.conflict_id = conflict.conflict_id
 		WHERE conflict.team_id = ?::uuid
 		  AND member.relationship_id = ANY(?::uuid[])
+		  AND (?::timestamptz IS NULL OR conflict.created_at <= ?::timestamptz)
+		  AND (
+		      (?::timestamptz IS NULL AND member.active)
+		      OR (
+		          ?::timestamptz IS NOT NULL
+		          AND member.first_seen_at <= ?::timestamptz
+		          AND (member.retired_at IS NULL OR member.retired_at > ?::timestamptz)
+		      )
+		  )
 		  AND conflict.status IN ('open', 'overdue', 'resolved')
 		ORDER BY conflict.conflict_id::text
-	`, teamID, pq.Array(relationshipIDs)).Rows()
+	`, teamID, pq.Array(relationshipIDs),
+		knownAt, knownAt, knownAt, knownAt, knownAt, knownAt).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -688,7 +627,7 @@ func loadV2RelationshipConflictRecords(
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	return loadV2RelationshipConflictRecordsByID(ctx, tx, teamID, conflictIDs)
+	return loadV2RelationshipConflictRecordsByID(ctx, tx, teamID, conflictIDs, knownAt)
 }
 
 func loadV2RelationshipConflictRecordsByID(
@@ -696,16 +635,17 @@ func loadV2RelationshipConflictRecordsByID(
 	tx *gorm.DB,
 	teamID string,
 	conflictIDs []string,
+	knownAt *time.Time,
 ) ([]V2RelationshipConflictCaseRecord, error) {
 	conflictIDs = normalizeV2RecallUUIDList(conflictIDs)
 	if len(conflictIDs) == 0 {
 		return []V2RelationshipConflictCaseRecord{}, nil
 	}
-	cases, err := loadV2RelationshipConflictCaseRows(ctx, tx, teamID, conflictIDs)
+	cases, err := loadV2RelationshipConflictCaseRows(ctx, tx, teamID, conflictIDs, knownAt)
 	if err != nil {
 		return nil, err
 	}
-	positions, err := loadV2RelationshipConflictPositionRows(ctx, tx, teamID, conflictIDs)
+	positions, err := loadV2RelationshipConflictPositionRows(ctx, tx, teamID, conflictIDs, knownAt)
 	if err != nil {
 		return nil, err
 	}
@@ -720,6 +660,7 @@ func loadV2RelationshipConflictCaseRows(
 	tx *gorm.DB,
 	teamID string,
 	conflictIDs []string,
+	knownAt *time.Time,
 ) ([]V2RelationshipConflictCaseRecord, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT team_id::text, conflict_id::text, semantic_scope_key, kind, status,
@@ -728,12 +669,13 @@ func loadV2RelationshipConflictCaseRows(
 		       question, policy_version, review_due_at, next_review_at, review_ttl_days,
 		       timezone, COALESCE(preferred_position_id::text, ''),
 		       resolved_at, effective_at, effective_time_basis, resolution_reason,
-		       version, attempts
+		       version, attempts, created_at, updated_at
 		FROM relationship_conflict_cases
 		WHERE team_id = ?::uuid
 		  AND conflict_id = ANY(?::uuid[])
+		  AND (?::timestamptz IS NULL OR created_at <= ?::timestamptz)
 		ORDER BY created_at, conflict_id
-	`, teamID, pq.Array(conflictIDs)).Rows()
+	`, teamID, pq.Array(conflictIDs), knownAt, knownAt).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -767,9 +709,12 @@ func loadV2RelationshipConflictCaseRows(
 			&record.ResolutionReason,
 			&record.Version,
 			&record.Attempts,
+			&record.CreatedAt,
+			&record.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
+		applyV2ConflictKnownAt(&record, knownAt)
 		out = append(out, record)
 	}
 	return out, rows.Err()
@@ -780,6 +725,7 @@ func loadV2RelationshipConflictPositionRows(
 	tx *gorm.DB,
 	teamID string,
 	conflictIDs []string,
+	knownAt *time.Time,
 ) ([]V2RelationshipConflictPositionRecord, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT position.conflict_id::text,
@@ -792,20 +738,39 @@ func loadV2RelationshipConflictPositionRows(
 		       position.authoritative_group_count,
 		       COALESCE(array_remove(array_agg(DISTINCT member.relationship_id::text ORDER BY member.relationship_id::text), NULL), ARRAY[]::text[]),
 		       COALESCE(array_remove(array_agg(DISTINCT member.owner_profile_id::text ORDER BY member.owner_profile_id::text), NULL), ARRAY[]::text[]),
-		       COALESCE(array_remove(array_agg(DISTINCT member.fragment_id::text ORDER BY member.fragment_id::text), NULL), ARRAY[]::text[]),
-		       max(member.effective_at),
-		       max(member.effective_time_basis)
-		FROM relationship_conflict_positions AS position
-		LEFT JOIN relationship_conflict_position_members AS member
-		  ON member.team_id = position.team_id
-		 AND member.position_id = position.position_id
-		WHERE position.team_id = ?::uuid
-		  AND position.conflict_id = ANY(?::uuid[])
-		GROUP BY position.conflict_id, position.position_id, position.position_key,
-		         position.object_entity_id, position.object_value_id, position.disposition,
-		         position.support_group_count, position.authoritative_group_count
-		ORDER BY position.conflict_id, position.position_key
-	`, teamID, pq.Array(conflictIDs)).Rows()
+			       COALESCE(array_remove(array_agg(DISTINCT member.fragment_id::text ORDER BY member.fragment_id::text), NULL), ARRAY[]::text[]),
+			       max(member.effective_at),
+			       max(member.effective_time_basis),
+			       COALESCE(bool_and(member.recorded_fallback), false)
+			FROM relationship_conflict_positions AS position
+			LEFT JOIN relationship_conflict_position_members AS member
+			 ON member.team_id = position.team_id
+			 AND member.position_id = position.position_id
+			 AND (
+			     (?::timestamptz IS NULL AND member.active)
+			     OR (
+			         ?::timestamptz IS NOT NULL
+			         AND member.first_seen_at <= ?::timestamptz
+			         AND (member.retired_at IS NULL OR member.retired_at > ?::timestamptz)
+			     )
+			 )
+			WHERE position.team_id = ?::uuid
+			  AND position.conflict_id = ANY(?::uuid[])
+			  AND (
+			      (?::timestamptz IS NULL AND position.active)
+			      OR (
+			          ?::timestamptz IS NOT NULL
+			          AND position.first_seen_at <= ?::timestamptz
+			          AND (position.retired_at IS NULL OR position.retired_at > ?::timestamptz)
+			      )
+			  )
+			GROUP BY position.conflict_id, position.position_id, position.position_key,
+			         position.object_entity_id, position.object_value_id, position.disposition,
+			         position.support_group_count, position.authoritative_group_count
+			ORDER BY position.conflict_id, position.position_key
+		`, knownAt, knownAt, knownAt, knownAt,
+		teamID, pq.Array(conflictIDs),
+		knownAt, knownAt, knownAt, knownAt).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -828,6 +793,7 @@ func loadV2RelationshipConflictPositionRows(
 			&evidenceIDs,
 			&record.EffectiveAt,
 			&record.EffectiveTimeBasis,
+			&record.RecordedFallback,
 		); err != nil {
 			return nil, err
 		}
@@ -850,4 +816,22 @@ func positionsForV2Conflict(
 		}
 	}
 	return out
+}
+
+func applyV2ConflictKnownAt(record *V2RelationshipConflictCaseRecord, knownAt *time.Time) {
+	if record == nil || knownAt == nil {
+		return
+	}
+	if record.ResolvedAt != nil && record.ResolvedAt.After(*knownAt) {
+		if knownAt.Before(record.ReviewDueAt) {
+			record.Status = string(domain.V2RelationshipConflictOpen)
+		} else {
+			record.Status = string(domain.V2RelationshipConflictOverdue)
+		}
+		record.PreferredPositionID = ""
+		record.ResolvedAt = nil
+		record.EffectiveAt = nil
+		record.EffectiveTimeBasis = ""
+		record.ResolutionReason = ""
+	}
 }

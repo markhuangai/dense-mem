@@ -87,6 +87,35 @@ func TestV2RecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 	require.Equal(t, "PostgreSQL memory", provider.query)
 }
 
+func TestV2RecallConflictSummariesEnforcePositionBounds(t *testing.T) {
+	records := make([]repository.V2RelationshipConflictPositionRecord, 0, 11)
+	for i := 0; i < 11; i++ {
+		records = append(records, repository.V2RelationshipConflictPositionRecord{
+			PositionID:      uuid.NewString(),
+			Disposition:     "candidate",
+			RelationshipIDs: make([]string, 21),
+			OwnerProfileIDs: make([]string, 21),
+			EvidenceIDs:     make([]string, 51),
+		})
+	}
+	summaries := v2RecallConflictSummaries([]repository.V2RelationshipConflictCaseRecord{{
+		ConflictID:  uuid.NewString(),
+		Version:     1,
+		Kind:        "cross_profile_current_state",
+		Status:      "open",
+		Question:    "Which value is current?",
+		ReviewDueAt: time.Now().UTC(),
+		Positions:   records,
+	}})
+
+	require.Len(t, summaries, 1)
+	require.True(t, summaries[0].PositionsTruncated)
+	require.Len(t, summaries[0].Positions, 10)
+	require.Len(t, summaries[0].Positions[0].RelationshipIDs, 20)
+	require.Len(t, summaries[0].Positions[0].OwnerProfileIDs, 20)
+	require.Len(t, summaries[0].Positions[0].ResultEvidenceIDs, 50)
+}
+
 func TestV2RecallReturnsRelatedHypothesesOutsidePrimaryResults(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()

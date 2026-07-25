@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const userUrl = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
 const controlUrl = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
@@ -112,7 +113,7 @@ async function createProfile(name) {
   const apiKey = stringAt(response, ["data", "api_key"]);
   const profileID = stringAt(response, ["data", "key", "id"]);
   if (!apiKey || !profileID) {
-    throw new Error(`profile creation response missing api key/profile id: ${JSON.stringify(response)}`);
+    throw new Error(`profile creation response missing api key/profile id (api_key_present=${Boolean(apiKey)}, profile_id_present=${Boolean(profileID)})`);
   }
   return { apiKey, profileID };
 }
@@ -237,13 +238,17 @@ function runConflictReview(now) {
     "--worker-id",
     `e2e-conflict-review-${Date.now()}`,
   ], {
-    cwd: new URL("../..", import.meta.url).pathname,
+    cwd: fileURLToPath(new URL("../..", import.meta.url)),
     encoding: "utf8",
   });
   if (result.status !== 0) {
     throw new Error(`review-conflicts failed (${result.status}): ${result.stderr || result.stdout}`);
   }
-  return JSON.parse(result.stdout);
+  try {
+    return JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error(`review-conflicts returned non-JSON output: ${error.message}: ${result.stdout}`);
+  }
 }
 
 async function mcpTool(apiKey, name, args) {
@@ -274,9 +279,13 @@ async function httpJSON(url, options) {
   const response = await fetch(url, options);
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status} ${url}: ${text}`);
+    throw new Error(`HTTP ${response.status} ${url}: ${redactHTTPBody(text)}`);
   }
   return text ? JSON.parse(text) : {};
+}
+
+function redactHTTPBody(text) {
+  return text.replace(/"api_key"\s*:\s*"[^"]*"/g, "\"api_key\":\"<redacted>\"");
 }
 
 function requiredEnv(name) {
