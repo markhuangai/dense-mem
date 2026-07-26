@@ -22,6 +22,7 @@ func TestRecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 	relationshipID := uuid.NewString()
 	conflictID := uuid.NewString()
 	positionID := uuid.NewString()
+	evidenceCreatedAt := time.Date(2026, 7, 20, 10, 30, 0, 0, time.UTC)
 	reviewDueAt := time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC)
 	search := &recallSearchStub{
 		contract: &repository.ActiveSearchContract{
@@ -37,6 +38,9 @@ func TestRecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 				Rank:            1,
 				Score:           0.99,
 				Context:         "Dense-Mem uses PostgreSQL for durable memory.",
+				Source:          "wiki:target-architecture",
+				SourceType:      "document",
+				CreatedAt:       evidenceCreatedAt,
 			}},
 			Conflicts: []repository.RelationshipConflictCaseRecord{{
 				ConflictID:          conflictID,
@@ -75,6 +79,9 @@ func TestRecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 	require.Len(t, result.Results, 1)
 	require.Nil(t, result.Degradation)
 	require.Equal(t, evidenceID, result.Results[0].EvidenceID)
+	require.Equal(t, "wiki:target-architecture", result.Results[0].Source)
+	require.Equal(t, "document", result.Results[0].SourceType)
+	require.Equal(t, &evidenceCreatedAt, result.Results[0].CreatedAt)
 	require.Len(t, result.Conflicts, 1)
 	require.Equal(t, conflictID, result.Conflicts[0].ConflictID)
 	require.Equal(t, &reviewDueAt, result.Conflicts[0].ReviewDueAt)

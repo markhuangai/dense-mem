@@ -97,10 +97,13 @@ type RecallResult struct {
 }
 
 type RecallResultItem struct {
-	EvidenceID      string   `json:"evidence_id"`
-	RelationshipIDs []string `json:"relationship_ids,omitempty"`
-	Rank            int      `json:"rank"`
-	Context         string   `json:"context,omitempty"`
+	EvidenceID      string     `json:"evidence_id"`
+	RelationshipIDs []string   `json:"relationship_ids,omitempty"`
+	Rank            int        `json:"rank"`
+	Context         string     `json:"context,omitempty"`
+	Source          string     `json:"source,omitempty"`
+	SourceType      string     `json:"source_type,omitempty"`
+	CreatedAt       *time.Time `json:"created_at,omitempty"`
 }
 
 type RecallDiscoveryPath struct {
@@ -448,6 +451,9 @@ func recallResultFromRepository(
 				RelationshipIDs: append([]string(nil), item.RelationshipIDs...),
 				Rank:            item.Rank,
 				Context:         item.Context,
+				Source:          item.Source,
+				SourceType:      item.SourceType,
+				CreatedAt:       recallCreatedAt(item.CreatedAt),
 			})
 		}
 		conflicts = recallConflictSummaries(recalled.Conflicts)
@@ -462,6 +468,14 @@ func recallResultFromRepository(
 		Degradation:       degradation,
 		SearchState:       searchState,
 	}
+}
+
+func recallCreatedAt(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	createdAt := value.UTC()
+	return &createdAt
 }
 
 func recallConflictSummaries(records []repository.RelationshipConflictCaseRecord) []RecallConflictSummary {

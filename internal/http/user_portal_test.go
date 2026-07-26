@@ -71,6 +71,8 @@ type userPortalKeySvc struct {
 	keys            []*domain.APIKey
 	rotateProfileID uuid.UUID
 	rotateKeyID     uuid.UUID
+	deleteProfileID uuid.UUID
+	deleteKeyID     uuid.UUID
 	lastRotateReq   service.CreateAPIKeyRequest
 	lastCreateReq   service.CreateAPIKeyRequest
 	rawRotatedKey   string
@@ -103,8 +105,14 @@ func (s *userPortalKeySvc) CreateStandardKey(_ context.Context, profileID uuid.U
 	s.keys = append(s.keys, key)
 	return key, s.rawCreatedKey, nil
 }
-func (s *userPortalKeySvc) UpdateNameForProfile(context.Context, uuid.UUID, uuid.UUID, string, *string, string, string, string) (*domain.APIKey, error) {
-	return nil, nil
+func (s *userPortalKeySvc) UpdateNameForProfile(_ context.Context, profileID, id uuid.UUID, name string, _ *string, _ string, _ string, _ string) (*domain.APIKey, error) {
+	key, _ := s.GetByIDForProfile(context.Background(), profileID, id)
+	if key == nil {
+		return nil, httperr.New(httperr.NOT_FOUND, "key not found")
+	}
+	key.Name = name
+	key.Label = name
+	return key, nil
 }
 func (s *userPortalKeySvc) UpdateRoleForProfile(context.Context, uuid.UUID, uuid.UUID, string, *string, string, string, string) (*domain.APIKey, error) {
 	return nil, nil
@@ -136,10 +144,24 @@ func (s *userPortalKeySvc) RotateForProfile(_ context.Context, profileID, id uui
 	}
 	return key, s.rawRotatedKey, nil
 }
-func (s *userPortalKeySvc) ListByProfile(context.Context, uuid.UUID, int, int) ([]*domain.APIKey, error) {
-	return nil, nil
+func (s *userPortalKeySvc) ListByProfile(_ context.Context, profileID uuid.UUID, _, _ int) ([]*domain.APIKey, error) {
+	out := make([]*domain.APIKey, 0, len(s.keys))
+	for _, key := range s.keys {
+		if key.GetTeamID() == profileID {
+			out = append(out, key)
+		}
+	}
+	return out, nil
 }
-func (s *userPortalKeySvc) CountByProfile(context.Context, uuid.UUID) (int64, error) { return 0, nil }
+func (s *userPortalKeySvc) CountByProfile(_ context.Context, profileID uuid.UUID) (int64, error) {
+	var count int64
+	for _, key := range s.keys {
+		if key.GetTeamID() == profileID {
+			count++
+		}
+	}
+	return count, nil
+}
 func (s *userPortalKeySvc) GetByIDForProfile(_ context.Context, profileID, id uuid.UUID) (*domain.APIKey, error) {
 	for _, key := range s.keys {
 		if key.GetTeamID() == profileID && key.ID == id {
@@ -156,7 +178,9 @@ func (s *userPortalKeySvc) GetSSOOwnedKey(_ context.Context, profileID, identity
 	}
 	return nil, nil
 }
-func (s *userPortalKeySvc) DeleteForProfile(context.Context, uuid.UUID, uuid.UUID, *string, string, string, string) error {
+func (s *userPortalKeySvc) DeleteForProfile(_ context.Context, profileID, id uuid.UUID, _ *string, _ string, _ string, _ string) error {
+	s.deleteProfileID = profileID
+	s.deleteKeyID = id
 	return nil
 }
 
@@ -649,10 +673,10 @@ func TestRegisterUserPortalRegistersCurrentSurface(t *testing.T) {
 		"DELETE /ui/api/team",
 		"GET /ui/api/team/profiles",
 		"POST /ui/api/team/profiles",
-		"GET /ui/api/team/profiles/:profileId",
-		"PATCH /ui/api/team/profiles/:profileId",
-		"POST /ui/api/team/profiles/:profileId/rotate",
-		"DELETE /ui/api/team/profiles/:profileId",
+		"GET /ui/api/team/profiles/:keyId",
+		"PATCH /ui/api/team/profiles/:keyId",
+		"POST /ui/api/team/profiles/:keyId/rotate",
+		"DELETE /ui/api/team/profiles/:keyId",
 		"GET /ui/api/dreaming/status",
 		"GET /ui/api/dreaming/runs",
 		"GET /ui/api/dreams",
@@ -712,6 +736,7 @@ func TestUserPortalMountedRoutesUseAuthenticatedTeam(t *testing.T) {
 		want   string
 	}{
 		{method: http.MethodGet, path: "/ui/api/team", want: `"name":"Team"`},
+		{method: http.MethodGet, path: "/ui/api/team/profiles", want: `"name":"Member"`},
 		{method: http.MethodGet, path: "/ui/api/team/profiles/" + memberID.String(), want: `"name":"Member"`},
 		{method: http.MethodGet, path: "/ui/api/dreams/dream-1", want: `"dream_id":"dream-1"`},
 	} {
@@ -723,9 +748,44 @@ func TestUserPortalMountedRoutesUseAuthenticatedTeam(t *testing.T) {
 		require.Contains(t, rec.Body.String(), tt.want)
 	}
 
-	req := httptest.NewRequest(http.MethodDelete, "/ui/api/team", nil)
+	req := httptest.NewRequest(http.MethodPost, "/ui/api/team/profiles", strings.NewReader(`{"name":"Created","scopes":["read"],"rate_limit":60}`))
 	req.Header.Set("Authorization", "Bearer "+rawKey)
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.Contains(t, rec.Body.String(), `"api_key":"dm_created_plaintext"`)
+	require.Equal(t, service.APIKeyRoleMember, keys.lastCreateReq.Role)
+
+	req = httptest.NewRequest(http.MethodPatch, "/ui/api/team/profiles/"+memberID.String(), strings.NewReader(`{"scopes":["read","write"]}`))
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"scopes":["read","write"]`)
+
+	req = httptest.NewRequest(http.MethodPost, "/ui/api/team/profiles/"+memberID.String()+"/rotate", strings.NewReader(`{"name":"Member rotated","rate_limit":90}`))
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"api_key":"dm_rotated_plaintext"`)
+	require.Equal(t, teamID, keys.rotateProfileID)
+	require.Equal(t, memberID, keys.rotateKeyID)
+
+	req = httptest.NewRequest(http.MethodDelete, "/ui/api/team/profiles/"+memberID.String(), nil)
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, teamID, keys.deleteProfileID)
+	require.Equal(t, memberID, keys.deleteKeyID)
+
+	req = httptest.NewRequest(http.MethodDelete, "/ui/api/team", nil)
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, teamID, profiles.deleted)

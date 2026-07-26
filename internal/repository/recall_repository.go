@@ -441,13 +441,16 @@ func hydrateRecallEvidence(
 			FROM relationship_support_decision_events
 			WHERE team_id = ?::uuid
 			ORDER BY team_id, support_id, created_at DESC, support_decision_id DESC
-		),
-		eligible AS (
-			SELECT fragment.fragment_id::text AS evidence_id,
-			       fragment.content AS context,
-			       document.search_state,
-			       relationship.relationship_id::text AS relationship_id
-			FROM requested
+			),
+			eligible AS (
+				SELECT fragment.fragment_id::text AS evidence_id,
+				       fragment.content AS context,
+				       COALESCE(NULLIF(fragment.source_ref, ''), NULLIF(fragment_source.source_key, ''), '') AS source,
+				       fragment.source_type,
+				       fragment.created_at,
+				       document.search_state,
+				       relationship.relationship_id::text AS relationship_id
+				FROM requested
 			JOIN evidence_fragments AS fragment
 			  ON fragment.team_id = ?::uuid
 			 AND fragment.fragment_id = requested.fragment_id
@@ -518,12 +521,15 @@ func hydrateRecallEvidence(
 			      OR fragment_source.current_revision_id = fragment.source_revision_id
 			  )
 			  AND (?::timestamptz IS NULL OR fragment.created_at <= ?::timestamptz)
-		)
-		SELECT evidence_id,
-		       max(context) AS context,
-		       COALESCE(
-		           array_remove(array_agg(DISTINCT relationship_id ORDER BY relationship_id), NULL),
-		           ARRAY[]::text[]
+			)
+			SELECT evidence_id,
+			       max(context) AS context,
+			       max(source) AS source,
+			       max(source_type) AS source_type,
+			       max(created_at) AS created_at,
+			       COALESCE(
+			           array_remove(array_agg(DISTINCT relationship_id ORDER BY relationship_id), NULL),
+			           ARRAY[]::text[]
 		       ) AS relationship_ids,
 		       CASE
 		           WHEN bool_or(search_state = 'pending') THEN 'pending'
@@ -544,9 +550,10 @@ func hydrateRecallEvidence(
 	defer rows.Close()
 	out := make(map[string]RecallEvidenceHit)
 	for rows.Next() {
-		var evidenceID, context, searchState string
+		var evidenceID, context, source, sourceType, searchState string
+		var createdAt time.Time
 		var relationshipIDs pq.StringArray
-		if err := rows.Scan(&evidenceID, &context, &relationshipIDs, &searchState); err != nil {
+		if err := rows.Scan(&evidenceID, &context, &source, &sourceType, &createdAt, &relationshipIDs, &searchState); err != nil {
 			return nil, err
 		}
 		out[evidenceID] = RecallEvidenceHit{
@@ -554,6 +561,9 @@ func hydrateRecallEvidence(
 			EvidenceID:      evidenceID,
 			RelationshipIDs: []string(relationshipIDs),
 			Context:         truncateRecallContext(context),
+			Source:          source,
+			SourceType:      sourceType,
+			CreatedAt:       createdAt,
 			SearchState:     searchState,
 		}
 	}

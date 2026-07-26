@@ -72,6 +72,44 @@ func TestRecallEvidenceHydratesSupportDecisionEligibility(t *testing.T) {
 		[]string{decision.Relationship.RelationshipID})
 }
 
+func TestRecallEvidenceHydratesEvidenceProvenance(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "recall-provenance-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "recall-provenance-owner")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	searchRepo := NewSearchRepository(appDB, rls)
+	content := "Dense Mem records recall provenance for evidence hits."
+
+	ingest, err := ledgerRepo.CreateIngest(ctx, CreateIngestInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		IdempotencyKey: "recall-provenance",
+		RequestHash:    sha256Hex(content),
+		Evidence: []EvidenceInput{{
+			Content:    content,
+			SourceType: "document",
+			SourceRef:  "wiki:recall-provenance",
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, ingest.Evidence, 1)
+	upsertRecallEvidenceSearchDocumentForTest(t, ctx, searchRepo, teamID, ownerID, ingest.Evidence[0])
+
+	recall, err := searchRepo.RecallEvidence(ctx, RecallEvidenceInput{
+		TeamID: teamID,
+		Query:  "recall provenance",
+		Limit:  5,
+	})
+	require.NoError(t, err)
+	require.Len(t, recall.Results, 1)
+	require.Equal(t, ingest.Evidence[0].FragmentID, recall.Results[0].EvidenceID)
+	require.Equal(t, "wiki:recall-provenance", recall.Results[0].Source)
+	require.Equal(t, "document", recall.Results[0].SourceType)
+	require.False(t, recall.Results[0].CreatedAt.IsZero())
+}
+
 func TestRecallEvidenceExcludesStaleSupportSourceRevision(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

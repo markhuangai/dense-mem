@@ -222,6 +222,9 @@ type RecallEvidenceHit struct {
 	EvidenceID      string
 	RelationshipIDs []string
 	Context         string
+	Source          string
+	SourceType      string
+	CreatedAt       time.Time
 	Rank            int
 	Score           float64
 	SearchState     string
