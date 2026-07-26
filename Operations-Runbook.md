@@ -188,7 +188,8 @@ failures remain hard blockers that need operator investigation.
 
 `needs_review` is terminal for handoff progress only when the placement item is
 `awaiting_review` and has an open or acknowledged review task. Those items do
-not block cutover; they remain review backlog after PostgreSQL V2 is active.
+not block cutover; they remain review backlog after PostgreSQL authority is
+active.
 Missing review tasks are repairable orchestration state, not valid held review.
 
 Do not mark jobs complete, delete queue rows, reset attempts, or extend leases

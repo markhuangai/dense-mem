@@ -313,8 +313,8 @@ called.
   versions are idempotent and do not extend the original deadline
 - two replicas claim team-local batches without duplicate events; expired leases
   recover after restart and no cross-team row is read or written
-- semantic memory tools appear in MCP `tools/list`/`tools/call` only and remain
-  absent/not-found on HTTP catalog, generic execution, and OpenAPI surfaces
+- semantic memory tools appear in MCP `tools/list`/`tools/call` only and no
+  generic HTTP discovery or execution route exposes them
 
 ## Concurrency And Failure Tests
 

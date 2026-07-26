@@ -162,8 +162,8 @@ tests/uat/e2e-journey.spec.ts against an isolated compose stack
 
 The UAT journey is the current production-surface smoke: MCP `tools/list` and
 `tools/call` for `remember`, `get_memory_placement`, `recall_memory`, and
-`trace_memory`; absence/not-found checks for those tools on HTTP/OpenAPI; and
-cross-team isolation. It must not depend on removed direct fragment, claim,
+`trace_memory`; checks that removed generic HTTP memory-tool routes stay absent;
+and cross-team isolation. It must not depend on removed direct fragment, claim,
 fact, or generic HTTP memory-tool routes.
 
 ## Evaluation Dimensions

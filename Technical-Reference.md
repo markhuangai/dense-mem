@@ -88,9 +88,8 @@ must not be enabled for production memory.
 Semantic memory tools are MCP-only. `remember`, `get_memory_placement`,
 `resolve_memory_placement`, `correct_entity_resolution`, `recall_memory`, and
 `trace_memory` are advertised by MCP `tools/list` and invoked by MCP
-`tools/call`; they are absent from the generic HTTP tool catalog/executor and
-from generated OpenAPI paths/components. A direct HTTP attempt to execute one
-returns not found rather than exposing a second public contract.
+`tools/call`. Removed HTTP catalog/executor routes must stay absent so the
+service does not expose a second public memory contract.
 
 ```text
 POST /mcp
@@ -945,7 +944,7 @@ Provider configuration belongs in
 | Alias becomes edge | client proposal creates an alias Relationship | aliases exist only on Entity hints and name storage |
 | Oversized trace | a hub Entity exhausts response or host context | depth, edge, content, time, and character budgets plus `stopped_reason` |
 | Forget is treated as deletion | client expects audit/evidence to vanish | explicit retraction semantics and separate privacy-erasure workflow |
-| HTTP bypass diverges from MCP | a caller executes a semantic memory tool through the generic HTTP route with a stale schema | transport visibility omits semantic memory tools from HTTP catalog/execution/OpenAPI and tests list/call parity separately |
+| HTTP bypass diverges from MCP | a caller executes a semantic memory tool through a reintroduced generic HTTP route with a stale schema | route registration keeps generic HTTP tool catalog/execution absent and tests list/call parity separately |
 | Stale conflict response changes the wrong case | C submits evidence against version 2 after the case moved to version 3 | per-proposal `conflict_id` plus expected version and pre-commit material-membership validation |
 | Resolved response conceals authorship | only B's current evidence returns and the host assumes A was deleted | required compact conflict ref plus full trace positions/events |
 | Raw evidence leaks noise | a vector seed returns stale A evidence with no eligible support path | omit `raw_evidence`; hydrate evidence text only through active support-path eligibility |
@@ -967,8 +966,8 @@ Contract `dense-mem.v2.3` is incomplete until:
 10. every public error has a correlation ID and bounded safe details
 11. `tools/list` visibility and `tools/call` execution agree for every scope and
     feature combination
-12. semantic memory tools are discoverable/callable through MCP and are
-    absent from generic HTTP tool discovery, execution, and OpenAPI
+12. semantic memory tools are discoverable/callable through MCP and no generic
+    HTTP discovery or execution route exposes them
 13. recall exposes independent Evidence, Relationship, Community, Conflict, and
     Hypothesis fields with the documented limits and exact item shapes
 14. `known_relationship_ids` suppresses a complete semantic group and direct

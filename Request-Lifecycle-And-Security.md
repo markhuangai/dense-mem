@@ -225,9 +225,9 @@ flowchart LR
 
 MCP discovery and execution share one registry and the same visibility check.
 The registry also declares allowed transports. Semantic memory tools are
-MCP-only: HTTP tool catalogs and OpenAPI omit them, and generic HTTP execution
-returns not found. Disabled, unauthorized, or transport-ineligible tools do not
-leak through another catalog or execution path. The exact tool set belongs in
+MCP-only: removed generic HTTP discovery/execution routes must stay absent.
+Disabled, unauthorized, or transport-ineligible tools do not leak through
+another catalog or execution path. The exact tool set belongs in
 [Technical Reference](Technical-Reference#production-http-surface).
 
 ## MCP Memory Interface
@@ -419,8 +419,8 @@ audit ledger.
 | Raw key leak | downstream log/provider receives Authorization | auth middleware removes header and sensitive-value tests |
 | Cookie CSRF | browser session mutates memory cross-site | SameSite/secure cookie and required CSRF token |
 | Discovery/execution drift | `tools/list` advertises a tool that `tools/call` then hides, or execution bypasses discovery policy | one registry and the same visibility/scope predicate for both methods |
-| HTTP bypass exposes a second memory contract | generic tool execution or OpenAPI publishes an MCP-only semantic memory tool | transport allowlist on catalog, execution, and schema generation plus not-found conformance tests |
-| Portal backend becomes an integration API | external clients depend on browser implementation details and bypass the intended MCP contract | same-origin portal boundary, no public SDK/OpenAPI/CORS contract, API-key-or-SSO authentication, and CSRF for SSO-cookie mutations |
+| HTTP bypass exposes a second memory contract | generic HTTP tool discovery or execution is reintroduced and publishes an MCP-only semantic memory tool | route registration keeps generic HTTP discovery/execution absent plus conformance tests |
+| Portal backend becomes an integration API | external clients depend on browser implementation details and bypass the intended MCP contract | same-origin portal boundary, no public SDK or CORS contract, API-key-or-SSO authentication, and CSRF for SSO-cookie mutations |
 | Redis outage weakens limits | replicas fall back to independent counters | distributed-required readiness failure |
 | Search candidate leakage | global vector search exposes another team's text | internal filtering and authorized hydration before return |
 | System-worker privilege leak | placement or embedding worker writes the wrong team | stored team on every job, explicit system transaction mode, source-version predicates, and audit |
@@ -452,5 +452,5 @@ audit ledger.
     guarded scanning/model policy
 14. a source revision can be advanced only by its immutable source owner and an
     exact expected prior token
-15. semantic memory tools are visible and executable through MCP only; HTTP
-    catalogs, generic execution, and OpenAPI cannot expose them
+15. semantic memory tools are visible and executable through MCP only; generic
+    HTTP discovery and execution routes cannot expose them
