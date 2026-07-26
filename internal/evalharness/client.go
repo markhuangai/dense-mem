@@ -729,6 +729,7 @@ func seedMetadata(item CorpusItem) map[string]any {
 func sourceDocIDsFromKnowledgeItem(kind string, item map[string]any, evidenceSourceDocIDs map[string][]string) []string {
 	sourceDocID := firstNonEmpty(
 		nestedString(item, "metadata", "source_doc_id"),
+		nestedStringPath(item, "metadata", "legacy_metadata", "source_doc_id"),
 		nestedString(item, "payload", "source_doc_id"),
 	)
 	sourceDocIDs := []string{}

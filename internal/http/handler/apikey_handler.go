@@ -414,9 +414,6 @@ func teamIDParam(c echo.Context) string {
 	if v := c.Param("teamId"); v != "" {
 		return v
 	}
-	if v := c.Param("profileId"); v != "" {
-		return v
-	}
 	if principal := middleware.GetPrincipal(c.Request().Context()); principal != nil && principal.GetTeamID() != uuid.Nil {
 		return principal.GetTeamID().String()
 	}

@@ -263,6 +263,42 @@ func TestHTTPClientKnowledgeMapping(t *testing.T) {
 	}
 }
 
+func TestHTTPClientKnowledgeMappingPreservesLegacyMetadataSourceDocID(t *testing.T) {
+	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "tool:eval_list_knowledge_refs" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		var input map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatalf("decode export body: %v", err)
+		}
+		items := []map[string]any{}
+		if stringValue(input["type"]) == "evidence" {
+			items = []map[string]any{{
+				"id": "evidence-legacy",
+				"metadata": map[string]any{
+					"legacy_metadata": map[string]any{"source_doc_id": "doc-legacy"},
+				},
+			}}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"items":       items,
+			"next_cursor": "",
+			"has_more":    false,
+		})
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	mapping, err := client.ExportKnowledgeMapping(context.Background(), 50)
+	if err != nil {
+		t.Fatalf("ExportKnowledgeMapping: %v", err)
+	}
+	if mapping.BySourceDocID["doc-legacy"].ID != "evidence-legacy" {
+		t.Fatalf("legacy metadata mapping = %+v", mapping.BySourceDocID["doc-legacy"])
+	}
+}
+
 func TestHTTPClientErrors(t *testing.T) {
 	client := &HTTPClient{}
 	if err := client.CallTool(context.Background(), "remember", map[string]any{}, nil); err == nil || err.Error() != "base URL is required" {

@@ -20,21 +20,31 @@ import (
 )
 
 type apiKeyHandlerService struct {
-	key           *domain.APIKey
-	raw           string
-	keys          []*domain.APIKey
-	total         int64
-	createReq     service.CreateAPIKeyRequest
-	rotateReq     service.CreateAPIKeyRequest
-	updatedName   string
-	updatedScopes []string
-	deletedKeyID  uuid.UUID
-	err           error
-	listErr       error
-	countErr      error
+	key             *domain.APIKey
+	raw             string
+	keys            []*domain.APIKey
+	total           int64
+	createProfileID uuid.UUID
+	listProfileID   uuid.UUID
+	getProfileID    uuid.UUID
+	getKeyID        uuid.UUID
+	updateProfileID uuid.UUID
+	updateKeyID     uuid.UUID
+	rotateProfileID uuid.UUID
+	rotateKeyID     uuid.UUID
+	deleteProfileID uuid.UUID
+	deletedKeyID    uuid.UUID
+	createReq       service.CreateAPIKeyRequest
+	rotateReq       service.CreateAPIKeyRequest
+	updatedName     string
+	updatedScopes   []string
+	err             error
+	listErr         error
+	countErr        error
 }
 
-func (s *apiKeyHandlerService) CreateStandardKey(_ context.Context, _ uuid.UUID, req service.CreateAPIKeyRequest, _ *string, actorRole, clientIP, _ string) (*domain.APIKey, string, error) {
+func (s *apiKeyHandlerService) CreateStandardKey(_ context.Context, profileID uuid.UUID, req service.CreateAPIKeyRequest, _ *string, actorRole, clientIP, _ string) (*domain.APIKey, string, error) {
+	s.createProfileID = profileID
 	s.createReq = req
 	if s.err != nil {
 		return nil, "", s.err
@@ -45,7 +55,9 @@ func (s *apiKeyHandlerService) CreateStandardKey(_ context.Context, _ uuid.UUID,
 	return s.key, s.raw, nil
 }
 
-func (s *apiKeyHandlerService) UpdateNameForProfile(_ context.Context, _ uuid.UUID, _ uuid.UUID, name string, _ *string, _ string, _ string, _ string) (*domain.APIKey, error) {
+func (s *apiKeyHandlerService) UpdateNameForProfile(_ context.Context, profileID, id uuid.UUID, name string, _ *string, _ string, _ string, _ string) (*domain.APIKey, error) {
+	s.updateProfileID = profileID
+	s.updateKeyID = id
 	s.updatedName = name
 	return s.key, s.err
 }
@@ -54,12 +66,16 @@ func (s *apiKeyHandlerService) UpdateRoleForProfile(context.Context, uuid.UUID, 
 	return s.key, s.err
 }
 
-func (s *apiKeyHandlerService) UpdateScopesForProfile(_ context.Context, _ uuid.UUID, _ uuid.UUID, scopes []string, _ *string, _ string, _ string, _ string) (*domain.APIKey, error) {
+func (s *apiKeyHandlerService) UpdateScopesForProfile(_ context.Context, profileID, id uuid.UUID, scopes []string, _ *string, _ string, _ string, _ string) (*domain.APIKey, error) {
+	s.updateProfileID = profileID
+	s.updateKeyID = id
 	s.updatedScopes = append([]string{}, scopes...)
 	return s.key, s.err
 }
 
-func (s *apiKeyHandlerService) RotateForProfile(_ context.Context, _ uuid.UUID, _ uuid.UUID, req service.CreateAPIKeyRequest, _ *string, _ string, _ string, _ string) (*domain.APIKey, string, error) {
+func (s *apiKeyHandlerService) RotateForProfile(_ context.Context, profileID, id uuid.UUID, req service.CreateAPIKeyRequest, _ *string, _ string, _ string, _ string) (*domain.APIKey, string, error) {
+	s.rotateProfileID = profileID
+	s.rotateKeyID = id
 	s.rotateReq = req
 	if s.err != nil {
 		return nil, "", s.err
@@ -67,7 +83,8 @@ func (s *apiKeyHandlerService) RotateForProfile(_ context.Context, _ uuid.UUID, 
 	return s.key, s.raw, nil
 }
 
-func (s *apiKeyHandlerService) ListByProfile(context.Context, uuid.UUID, int, int) ([]*domain.APIKey, error) {
+func (s *apiKeyHandlerService) ListByProfile(_ context.Context, profileID uuid.UUID, _ int, _ int) ([]*domain.APIKey, error) {
+	s.listProfileID = profileID
 	if s.listErr != nil {
 		return nil, s.listErr
 	}
@@ -81,7 +98,9 @@ func (s *apiKeyHandlerService) CountByProfile(context.Context, uuid.UUID) (int64
 	return s.total, s.err
 }
 
-func (s *apiKeyHandlerService) GetByIDForProfile(context.Context, uuid.UUID, uuid.UUID) (*domain.APIKey, error) {
+func (s *apiKeyHandlerService) GetByIDForProfile(_ context.Context, profileID, id uuid.UUID) (*domain.APIKey, error) {
+	s.getProfileID = profileID
+	s.getKeyID = id
 	return s.key, s.err
 }
 
@@ -89,7 +108,8 @@ func (s *apiKeyHandlerService) GetSSOOwnedKey(context.Context, uuid.UUID, uuid.U
 	return nil, nil
 }
 
-func (s *apiKeyHandlerService) DeleteForProfile(_ context.Context, _ uuid.UUID, id uuid.UUID, _ *string, _ string, _ string, _ string) error {
+func (s *apiKeyHandlerService) DeleteForProfile(_ context.Context, profileID uuid.UUID, id uuid.UUID, _ *string, _ string, _ string, _ string) error {
+	s.deleteProfileID = profileID
 	s.deletedKeyID = id
 	return s.err
 }
@@ -285,6 +305,50 @@ func TestAPIKeyHandlerCreateListGetRotateDelete(t *testing.T) {
 			t.Fatalf("deleted key = %s; want %s", svc.deletedKeyID, keyID)
 		}
 	})
+
+	t.Run("canonical member routes scope to principal team", func(t *testing.T) {
+		teamID := uuid.New()
+		memberID := uuid.New()
+		memberKey := &domain.APIKey{
+			ID:        memberID,
+			TeamID:    teamID,
+			Name:      "member profile",
+			Role:      service.APIKeyRoleMember,
+			KeySuffix: "lmno",
+			Scopes:    []string{"read"},
+			CreatedAt: createdAt,
+		}
+
+		updateSvc := &apiKeyHandlerService{key: memberKey}
+		updateHandler := NewAPIKeyHandler(updateSvc)
+		_, err := runAPIKeyHandlerWithUpdateBodyAndPrincipalTeam(t, http.MethodPatch, "/ui/api/team/profiles/"+memberID.String(), "/ui/api/team/profiles/:profileId", []string{"profileId"}, []string{memberID.String()}, `{"name":"renamed member"}`, teamID, updateHandler.Update)
+		if err != nil {
+			t.Fatalf("Update error: %v", err)
+		}
+		if updateSvc.getProfileID != teamID || updateSvc.getKeyID != memberID || updateSvc.updateProfileID != teamID || updateSvc.updateKeyID != memberID {
+			t.Fatalf("update scoped get/update = (%s,%s)/(%s,%s); want team %s member %s", updateSvc.getProfileID, updateSvc.getKeyID, updateSvc.updateProfileID, updateSvc.updateKeyID, teamID, memberID)
+		}
+
+		rotateSvc := &apiKeyHandlerService{key: memberKey, raw: "rotated-secret"}
+		rotateHandler := NewAPIKeyHandler(rotateSvc)
+		_, err = runAPIKeyHandlerWithBodyAndPrincipalTeam(t, http.MethodPost, "/ui/api/team/profiles/"+memberID.String()+"/rotate", "/ui/api/team/profiles/:profileId/rotate", []string{"profileId"}, []string{memberID.String()}, `{"name":"rotated member"}`, teamID, rotateHandler.Rotate)
+		if err != nil {
+			t.Fatalf("Rotate error: %v", err)
+		}
+		if rotateSvc.getProfileID != teamID || rotateSvc.getKeyID != memberID || rotateSvc.rotateProfileID != teamID || rotateSvc.rotateKeyID != memberID {
+			t.Fatalf("rotate scoped get/rotate = (%s,%s)/(%s,%s); want team %s member %s", rotateSvc.getProfileID, rotateSvc.getKeyID, rotateSvc.rotateProfileID, rotateSvc.rotateKeyID, teamID, memberID)
+		}
+
+		deleteSvc := &apiKeyHandlerService{key: memberKey}
+		deleteHandler := NewAPIKeyHandler(deleteSvc)
+		_, err = runAPIKeyHandlerWithPrincipalTeam(t, http.MethodDelete, "/ui/api/team/profiles/"+memberID.String(), "/ui/api/team/profiles/:profileId", []string{"profileId"}, []string{memberID.String()}, teamID, deleteHandler.Delete)
+		if err != nil {
+			t.Fatalf("Delete error: %v", err)
+		}
+		if deleteSvc.getProfileID != teamID || deleteSvc.getKeyID != memberID || deleteSvc.deleteProfileID != teamID || deleteSvc.deletedKeyID != memberID {
+			t.Fatalf("delete scoped get/delete = (%s,%s)/(%s,%s); want team %s member %s", deleteSvc.getProfileID, deleteSvc.getKeyID, deleteSvc.deleteProfileID, deleteSvc.deletedKeyID, teamID, memberID)
+		}
+	})
 }
 
 func TestAPIKeyHandlerValidationErrors(t *testing.T) {
@@ -412,7 +476,7 @@ func TestAPIKeyHandlerAdditionalBranches(t *testing.T) {
 
 	t.Run("get accepts keyId param name", func(t *testing.T) {
 		h := NewAPIKeyHandler(&apiKeyHandlerService{key: key})
-		rec, err := runAPIKeyHandler(t, http.MethodGet, "/ui/api/team/profiles/"+profileID.String()+"/api-keys/"+keyID.String(), "/ui/api/team/profiles/:profileId/api-keys/:keyId", []string{"profileId", "keyId"}, []string{profileID.String(), keyID.String()}, h.Get)
+		rec, err := runAPIKeyHandlerWithPrincipalTeam(t, http.MethodGet, "/ui/api/team/profiles/"+profileID.String()+"/api-keys/"+keyID.String(), "/ui/api/team/profiles/:profileId/api-keys/:keyId", []string{"profileId", "keyId"}, []string{profileID.String(), keyID.String()}, profileID, h.Get)
 		if err != nil {
 			t.Fatalf("Get error: %v", err)
 		}
@@ -487,6 +551,10 @@ func runAPIKeyHandlerWithBody(t *testing.T, method, target, path string, paramNa
 	return runAPIKeyHandlerWithOptionalBody(t, method, target, path, paramNames, paramVals, body, handler)
 }
 
+func runAPIKeyHandlerWithBodyAndPrincipalTeam(t *testing.T, method, target, path string, paramNames, paramVals []string, body string, principalTeamID uuid.UUID, handler echo.HandlerFunc) (*httptest.ResponseRecorder, error) {
+	return runAPIKeyHandlerWithOptionalBodyAndPrincipalTeam(t, method, target, path, paramNames, paramVals, body, principalTeamID, handler)
+}
+
 func assertAPIKeyHandlerErrorCode(t *testing.T, err error, want httperr.ErrorCode) {
 	t.Helper()
 	if err == nil {
@@ -509,14 +577,30 @@ func runAPIKeyHandlerWithUpdateBody(t *testing.T, method, target, path string, p
 	return rec, wrapped(c)
 }
 
+func runAPIKeyHandlerWithUpdateBodyAndPrincipalTeam(t *testing.T, method, target, path string, paramNames, paramVals []string, body string, principalTeamID uuid.UUID, handler echo.HandlerFunc) (*httptest.ResponseRecorder, error) {
+	t.Helper()
+
+	rec, c := newAPIKeyHandlerContextWithPrincipalTeam(t, method, target, path, paramNames, paramVals, body, principalTeamID)
+	wrapped := middleware.BindAndValidate[dto.UpdateAPIKeyRequest](middleware.UpdateAPIKeyBodyKey)(handler)
+	return rec, wrapped(c)
+}
+
 func runAPIKeyHandler(t *testing.T, method, target, path string, paramNames, paramVals []string, handler echo.HandlerFunc) (*httptest.ResponseRecorder, error) {
 	return runAPIKeyHandlerWithOptionalBody(t, method, target, path, paramNames, paramVals, "", handler)
 }
 
+func runAPIKeyHandlerWithPrincipalTeam(t *testing.T, method, target, path string, paramNames, paramVals []string, principalTeamID uuid.UUID, handler echo.HandlerFunc) (*httptest.ResponseRecorder, error) {
+	return runAPIKeyHandlerWithOptionalBodyAndPrincipalTeam(t, method, target, path, paramNames, paramVals, "", principalTeamID, handler)
+}
+
 func runAPIKeyHandlerWithOptionalBody(t *testing.T, method, target, path string, paramNames, paramVals []string, body string, handler echo.HandlerFunc) (*httptest.ResponseRecorder, error) {
+	return runAPIKeyHandlerWithOptionalBodyAndPrincipalTeam(t, method, target, path, paramNames, paramVals, body, uuid.Nil, handler)
+}
+
+func runAPIKeyHandlerWithOptionalBodyAndPrincipalTeam(t *testing.T, method, target, path string, paramNames, paramVals []string, body string, principalTeamID uuid.UUID, handler echo.HandlerFunc) (*httptest.ResponseRecorder, error) {
 	t.Helper()
 
-	rec, c := newAPIKeyHandlerContext(t, method, target, path, paramNames, paramVals, body)
+	rec, c := newAPIKeyHandlerContextWithPrincipalTeam(t, method, target, path, paramNames, paramVals, body, principalTeamID)
 	if body == "" {
 		return rec, handler(c)
 	}
@@ -525,6 +609,10 @@ func runAPIKeyHandlerWithOptionalBody(t *testing.T, method, target, path string,
 }
 
 func newAPIKeyHandlerContext(t *testing.T, method, target, path string, paramNames, paramVals []string, body string) (*httptest.ResponseRecorder, echo.Context) {
+	return newAPIKeyHandlerContextWithPrincipalTeam(t, method, target, path, paramNames, paramVals, body, uuid.Nil)
+}
+
+func newAPIKeyHandlerContextWithPrincipalTeam(t *testing.T, method, target, path string, paramNames, paramVals []string, body string, principalTeamID uuid.UUID) (*httptest.ResponseRecorder, echo.Context) {
 	t.Helper()
 
 	e := echo.New()
@@ -540,8 +628,9 @@ func newAPIKeyHandlerContext(t *testing.T, method, target, path string, paramNam
 	req.Header.Set("X-Correlation-ID", "corr-api-key-test")
 	principalID := uuid.New()
 	req = req.WithContext(middleware.SetPrincipalForTest(req.Context(), &middleware.Principal{
-		KeyID: principalID,
-		Role:  "admin",
+		KeyID:  principalID,
+		TeamID: principalTeamID,
+		Role:   "admin",
 	}))
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
