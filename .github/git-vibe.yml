@@ -80,7 +80,7 @@ ai:
       api_key:
         from_bundle: GITVIBE_AI_API_KEY
       base_url:
-        from_bundle: GITVIBE_AI_BASE_URL
+        from_bundle: CODEX_AI_BASE_URL
       model: gpt-5.4-mini
       reasoning:
         effort: xhigh
