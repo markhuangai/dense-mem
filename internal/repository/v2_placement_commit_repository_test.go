@@ -459,6 +459,19 @@ func TestV2PlacementSmallHelpers(t *testing.T) {
 	if scoped.TeamID != "team" || scoped.OwnerProfileID != "owner" || scoped.IngestID != "ingest" || scoped.PlacementItemID != "item" {
 		t.Fatalf("scoped decision = %#v", scoped)
 	}
+	for category, want := range map[string]string{
+		string(domain.V2OutcomeRelationshipNeedsReview): string(domain.V2OutcomeRelationshipNeedsReview),
+		string(domain.V2OutcomePredicateNeedsReview):    string(domain.V2OutcomePredicateNeedsReview),
+		string(domain.V2OutcomeIdentityNeedsReview):     string(domain.V2OutcomeIdentityNeedsReview),
+	} {
+		got := v2RelationshipOutcomeCategory(&V2RelationshipDecisionResult{
+			ReviewTaskID: "review",
+			Category:     category,
+		})
+		if got != want {
+			t.Fatalf("review category %q = %q, want %q", category, got, want)
+		}
+	}
 }
 
 func TestV2PlacementCorrectionTargetRelated(t *testing.T) {

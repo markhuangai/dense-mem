@@ -25,6 +25,7 @@ func lockV2EntityCorrectionRelationships(
 		WHERE team_id = ?::uuid
 		  AND owner_profile_id = ?::uuid
 		  AND relationship_id = ANY(?::uuid[])
+		  AND identity_alias_of_relationship_id IS NULL
 		FOR UPDATE
 	`, plan.TeamID, plan.OwnerProfileID, pq.Array(relationshipIDs)).Rows()
 	if err != nil {
@@ -104,6 +105,30 @@ func updateV2EntityCorrectionRelationships(
 		return err
 	}
 	for _, impact := range plan.AffectedRelationships {
+		current, err := loadV2RelationshipRecordForUpdate(ctx, tx, plan.TeamID, impact.RelationshipID)
+		if err != nil {
+			return err
+		}
+		if current.IdentityAliasOfID != "" {
+			return ErrV2SemanticCorrectionPlanStale
+		}
+		subjectEntityID := current.SubjectEntityID
+		objectEntityID := current.ObjectEntityID
+		if subjectEntityID == plan.SourceEntityID {
+			subjectEntityID = replacementEntityID
+		}
+		if objectEntityID == plan.SourceEntityID {
+			objectEntityID = replacementEntityID
+		}
+		semanticGroupKey := v2SemanticGroupKey(V2ApplyRelationshipDecisionInput{
+			SubjectEntityID: subjectEntityID,
+			PredicateKey:    current.PredicateKey,
+			ObjectEntityID:  objectEntityID,
+			ObjectValueID:   current.ObjectValueID,
+			Polarity:        current.Polarity,
+			ScopeKey:        current.ScopeKey,
+			ValidFrom:       current.ValidFrom,
+		})
 		result := tx.WithContext(ctx).Exec(`
 			UPDATE relationship_records
 			SET subject_entity_id = CASE
@@ -114,22 +139,7 @@ func updateV2EntityCorrectionRelationships(
 			        WHEN object_entity_id = ?::uuid THEN ?::uuid
 			        ELSE object_entity_id
 			    END,
-			    semantic_group_key = 'sg:' || encode(digest(
-			        concat_ws(chr(31),
-			            CASE WHEN subject_entity_id = ?::uuid THEN ?::text ELSE subject_entity_id::text END,
-			            predicate_key,
-			            CASE
-			                WHEN object_entity_id = ?::uuid THEN 'entity:' || ?::text
-			                WHEN object_entity_id IS NOT NULL THEN 'entity:' || object_entity_id::text
-			                ELSE 'value:' || object_value_id::text
-			            END,
-			            polarity,
-			            COALESCE(scope_key, ''),
-			            COALESCE(to_json(valid_from)::text, ''),
-			            COALESCE(to_json(valid_to)::text, '')
-			        ),
-			        'sha256'
-			    ), 'hex'),
+			    semantic_group_key = ?,
 			    metadata = metadata || ?::jsonb,
 			    version = version + 1,
 			    updated_at = now()
@@ -137,9 +147,9 @@ func updateV2EntityCorrectionRelationships(
 			  AND owner_profile_id = ?::uuid
 			  AND relationship_id = ?::uuid
 			  AND version = ?
+			  AND identity_alias_of_relationship_id IS NULL
 		`, plan.SourceEntityID, replacementEntityID, plan.SourceEntityID, replacementEntityID,
-			plan.SourceEntityID, replacementEntityID, plan.SourceEntityID, replacementEntityID,
-			string(metadata), plan.TeamID, plan.OwnerProfileID,
+			semanticGroupKey, string(metadata), plan.TeamID, plan.OwnerProfileID,
 			impact.RelationshipID, impact.Version)
 		if result.Error != nil {
 			return result.Error

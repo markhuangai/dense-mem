@@ -571,6 +571,9 @@ func applyV2RelationshipDecisionInTx(
 	if err != nil {
 		return nil, err
 	}
+	if recordState.ValidToConflict {
+		return insertV2RelationshipValidToReview(ctx, tx, input, recordState.Record)
+	}
 	observationID, err := insertV2RelationshipObservation(ctx, tx, input, recordState.Record.RelationshipID)
 	if err != nil {
 		return nil, err
@@ -688,7 +691,14 @@ func v2RelationshipOutcomeCategory(result *V2RelationshipDecisionResult) string 
 		return string(domain.V2OutcomeRelationshipRejected)
 	}
 	if result.ReviewTaskID != "" && result.Relationship == nil {
-		return string(domain.V2OutcomePredicateNeedsReview)
+		switch result.Category {
+		case string(domain.V2OutcomeIdentityNeedsReview):
+			return string(domain.V2OutcomeIdentityNeedsReview)
+		case string(domain.V2OutcomePredicateNeedsReview):
+			return string(domain.V2OutcomePredicateNeedsReview)
+		default:
+			return string(domain.V2OutcomeRelationshipNeedsReview)
+		}
 	}
 	if result.Relationship == nil {
 		return string(domain.V2OutcomeRelationshipRejected)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -241,4 +242,104 @@ func insertV2RelationshipReview(
 		Category:            taskType,
 		Reason:              reason,
 	}, rows.Err()
+}
+
+func insertV2RelationshipValidToReview(
+	ctx context.Context,
+	tx *gorm.DB,
+	input V2ApplyRelationshipDecisionInput,
+	canonical *V2RelationshipRecord,
+) (*V2RelationshipDecisionResult, error) {
+	if canonical == nil {
+		return nil, errors.New("canonical relationship is required for valid_to review")
+	}
+	observationMetadata := make(map[string]any, len(input.ObservationMetadata)+3)
+	for key, value := range input.ObservationMetadata {
+		observationMetadata[key] = value
+	}
+	observationMetadata["review_reason"] = "relationship_identity_valid_to_conflict"
+	observationMetadata["canonical_relationship_id"] = canonical.RelationshipID
+	observationMetadata["canonical_valid_to"] = v2ReviewTimeValue(canonical.ValidTo)
+	input.ObservationMetadata = observationMetadata
+
+	observationID, err := insertV2RelationshipObservation(ctx, tx, input, "")
+	if err != nil {
+		return nil, err
+	}
+	verificationID, err := insertV2VerificationEvent(ctx, tx, input, observationID)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := marshalV2JSON(map[string]any{
+		"relationship_ref":          input.ProposalRef,
+		"canonical_relationship_id": canonical.RelationshipID,
+		"subject_entity_id":         input.SubjectEntityID,
+		"predicate_key":             input.PredicateKey,
+		"predicate_version":         input.PredicateVersion,
+		"object_entity_id":          input.ObjectEntityID,
+		"object_value_id":           input.ObjectValueID,
+		"polarity":                  input.Polarity,
+		"scope_key":                 input.ScopeKey,
+		"valid_from":                v2ReviewTimeValue(input.ValidFrom),
+		"canonical_valid_to":        v2ReviewTimeValue(canonical.ValidTo),
+		"proposed_valid_to":         v2ReviewTimeValue(input.ValidTo),
+		"evidence_verdict":          input.EvidenceVerdict,
+		"reason":                    "relationship_identity_valid_to_conflict",
+	})
+	if err != nil {
+		return nil, err
+	}
+	proposalKey := input.ProposalRef
+	if proposalKey == "" {
+		proposalKey = observationID
+	}
+	dedupeKey := strings.Join([]string{
+		"relationship_valid_to",
+		canonical.RelationshipID,
+		input.IngestID,
+		proposalKey,
+	}, ":")
+	rows, err := tx.WithContext(ctx).Raw(`
+		INSERT INTO review_tasks (
+		    team_id, owner_profile_id, ingest_id, placement_item_id,
+		    relationship_id, observation_id, task_type, status,
+		    reason, payload, dedupe_key, updated_at
+		) VALUES (
+		    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid,
+		    ?::uuid, ?::uuid, 'relationship_needs_review', 'open',
+		    'relationship_identity_valid_to_conflict', ?::jsonb, ?, now()
+		)
+		ON CONFLICT (team_id, dedupe_key)
+		WHERE dedupe_key <> '' AND status IN ('open', 'acknowledged')
+		DO UPDATE SET updated_at = now()
+		RETURNING review_task_id::text
+	`, input.TeamID, input.OwnerProfileID, input.IngestID, input.PlacementItemID,
+		canonical.RelationshipID, observationID, string(payload), dedupeKey).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	var reviewTaskID string
+	if err := rows.Scan(&reviewTaskID); err != nil {
+		return nil, err
+	}
+	return &V2RelationshipDecisionResult{
+		ObservationID:       observationID,
+		VerificationEventID: verificationID,
+		ReviewTaskID:        reviewTaskID,
+		ProposalID:          input.ProposalRef,
+		OwnerProfileID:      input.OwnerProfileID,
+		Category:            string(domain.V2OutcomeRelationshipNeedsReview),
+		Reason:              "relationship_identity_valid_to_conflict",
+	}, rows.Err()
+}
+
+func v2ReviewTimeValue(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return value.UTC().Format(time.RFC3339Nano)
 }

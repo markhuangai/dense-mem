@@ -193,6 +193,9 @@ type V2RelationshipRecord struct {
 	Status             string
 	Polarity           string
 	ScopeKey           string
+	ValidFrom          *time.Time
+	ValidTo            *time.Time
+	IdentityAliasOfID  string
 	SupportCount       int
 	SourceGroupCount   int
 	Version            int
@@ -361,6 +364,7 @@ type V2RelationshipTraceRecord struct {
 	ScopeKey           string     `json:"scope_key,omitempty"`
 	ValidFrom          *time.Time `json:"valid_from,omitempty"`
 	ValidTo            *time.Time `json:"valid_to,omitempty"`
+	IdentityAliasOfID  string     `json:"identity_alias_of_relationship_id,omitempty"`
 	SupportCount       int        `json:"support_count,omitempty"`
 	SourceGroupCount   int        `json:"source_group_count,omitempty"`
 	Version            int        `json:"version,omitempty"`

@@ -26,8 +26,8 @@ func supersedeV2OneCardinalityRelationships(
 			  AND predicate_key = ?
 			  AND polarity = ?
 			  AND valid_from IS NOT DISTINCT FROM ?
-			  AND valid_to IS NOT DISTINCT FROM ?
 			  AND scope_key IS NOT DISTINCT FROM NULLIF(?, '')
+			  AND identity_alias_of_relationship_id IS NULL
 			  AND relationship_id <> COALESCE(NULLIF(?, '')::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
 			  AND (
 			      predicate_version < ?
@@ -51,7 +51,7 @@ func supersedeV2OneCardinalityRelationships(
 		SELECT relationship_id, tier, status
 		FROM updated
 	`, input.TeamID, input.OwnerProfileID, input.SubjectEntityID, input.PredicateKey,
-		input.Polarity, v2TimeArg(input.ValidFrom), v2TimeArg(input.ValidTo), input.ScopeKey,
+		input.Polarity, v2TimeArg(input.ValidFrom), input.ScopeKey,
 		keepRelationshipID, input.PredicateVersion, input.PredicateVersion, input.TeamID).Rows()
 	if err != nil {
 		return err
@@ -414,6 +414,9 @@ func recomputeV2RelationshipFromEffectiveSupport(
 	before, err := loadV2RelationshipRecordForUpdate(ctx, tx, teamID, relationshipID)
 	if err != nil {
 		return nil, err
+	}
+	if before.IdentityAliasOfID != "" {
+		return nil, ErrV2SemanticIdentityAlias
 	}
 	counts, err := effectiveV2RelationshipSupportCounts(ctx, tx, teamID, relationshipID)
 	if err != nil {

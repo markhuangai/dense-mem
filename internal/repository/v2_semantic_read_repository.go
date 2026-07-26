@@ -299,6 +299,7 @@ func loadV2TraceRelationship(
 		       COALESCE(value.value_type, ''),
 		       r.relationship_kind, r.current_cardinality, r.tier, r.status,
 		       r.polarity, COALESCE(r.scope_key, ''), r.valid_from, r.valid_to,
+		       COALESCE(r.identity_alias_of_relationship_id::text, ''),
 		       r.support_count, r.source_group_count, r.version,
 		       r.created_at, r.updated_at, r.recorded_to
 		FROM relationship_records r
@@ -349,6 +350,7 @@ func loadV2TraceRelationship(
 		&record.ObjectValueID, &record.ObjectValue, &record.ObjectValueType,
 		&record.RelationshipKind, &record.CurrentCardinality, &record.Tier, &record.Status,
 		&record.Polarity, &record.ScopeKey, &validFrom, &validTo,
+		&record.IdentityAliasOfID,
 		&record.SupportCount, &record.SourceGroupCount, &record.Version,
 		&record.CreatedAt, &record.UpdatedAt, &recordedTo,
 	); err != nil {

@@ -16,6 +16,7 @@ import (
 
 var ErrV2SemanticOwnerMismatch = errors.New("v2 semantic owner mismatch")
 var ErrV2SemanticIdempotencyConflict = errors.New("v2 semantic idempotency conflict")
+var ErrV2SemanticIdentityAlias = errors.New("v2 semantic relationship is a legacy identity alias")
 
 type V2SemanticRepositoryImpl struct {
 	db  *gorm.DB
@@ -250,6 +251,14 @@ func (r *V2SemanticRepositoryImpl) ApplyRelationshipDecision(
 		recordState, err := upsertV2RelationshipRecord(ctx, tx, input, predicate, tier, status, groupKey)
 		if err != nil {
 			return err
+		}
+		if recordState.ValidToConflict {
+			review, err := insertV2RelationshipValidToReview(ctx, tx, input, recordState.Record)
+			if err != nil {
+				return err
+			}
+			result = review
+			return nil
 		}
 		observationID, err := insertV2RelationshipObservation(ctx, tx, input, recordState.Record.RelationshipID)
 		if err != nil {

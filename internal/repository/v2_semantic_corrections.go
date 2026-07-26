@@ -301,6 +301,7 @@ func loadV2EntityCorrectionObservations(
 		WHERE o.team_id = ?::uuid
 		  AND o.owner_profile_id = ?::uuid
 		  AND r.owner_profile_id = ?::uuid
+		  AND r.identity_alias_of_relationship_id IS NULL
 		  AND o.relationship_id IS NOT NULL
 		  AND (
 		      o.subject_entity_id = ?::uuid
@@ -437,7 +438,6 @@ func v2MergeConflictKey(
 		observation.Polarity,
 		observation.ScopeKey,
 		v2NullableTimeKey(observation.ValidFrom),
-		v2NullableTimeKey(observation.ValidTo),
 	}, "\x00")
 	conflict, err := hasV2RelationshipIdentityConflict(ctx, tx, input.TeamID, input.OwnerProfileID, observation.RelationshipID, subjectEntityID, objectEntityID, observation)
 	return key, conflict, err
@@ -462,18 +462,17 @@ func hasV2RelationshipIdentityConflict(
 		  AND relationship_id <> ?::uuid
 		  AND subject_entity_id = ?::uuid
 		  AND predicate_key = ?
-		  AND predicate_version = ?
 		  AND object_entity_id IS NOT DISTINCT FROM NULLIF(?, '')::uuid
 		  AND object_value_id IS NOT DISTINCT FROM NULLIF(?, '')::uuid
 		  AND polarity = ?
 		  AND valid_from IS NOT DISTINCT FROM ?
-		  AND valid_to IS NOT DISTINCT FROM ?
 		  AND scope_key IS NOT DISTINCT FROM NULLIF(?, '')
+		  AND identity_alias_of_relationship_id IS NULL
 		LIMIT 1
 	`, teamID, ownerProfileID, relationshipID, subjectEntityID, observation.PredicateKey,
-		observation.PredicateVersion, objectEntityID, observation.ObjectValueID,
+		objectEntityID, observation.ObjectValueID,
 		observation.Polarity, v2NullableTimeArg(observation.ValidFrom),
-		v2NullableTimeArg(observation.ValidTo), observation.ScopeKey).Row().Scan(&existing)
+		observation.ScopeKey).Row().Scan(&existing)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}

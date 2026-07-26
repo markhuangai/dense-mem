@@ -26,11 +26,12 @@ type v2PredicateDefinition struct {
 }
 
 type v2RelationshipRecordState struct {
-	Record     *V2RelationshipRecord
-	Created    bool
-	Changed    bool
-	FromTier   string
-	FromStatus string
+	Record          *V2RelationshipRecord
+	Created         bool
+	Changed         bool
+	ValidToConflict bool
+	FromTier        string
+	FromStatus      string
 }
 
 type v2TransitionInput struct {
@@ -529,6 +530,10 @@ func insertV2PredicateReview(
 		ObservationID:       observationID,
 		VerificationEventID: verificationID,
 		ReviewTaskID:        reviewTaskID,
+		ProposalID:          input.ProposalRef,
+		OwnerProfileID:      input.OwnerProfileID,
+		Category:            string(domain.V2OutcomePredicateNeedsReview),
+		Reason:              "unknown_predicate",
 	}, rows.Err()
 }
 
@@ -624,14 +629,21 @@ func upsertV2RelationshipRecord(
 	if err != nil {
 		return nil, err
 	}
+	existing, err := selectV2RelationshipByIdentity(ctx, tx, input)
+	if err == nil && !v2NullableTimesEqual(existing.ValidTo, input.ValidTo) {
+		return &v2RelationshipRecordState{
+			Record:          existing,
+			ValidToConflict: true,
+		}, nil
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
 	if predicate.CurrentCardinality == string(domain.V2CurrentCardinalityOne) &&
 		status == string(domain.V2RelationshipStatusActive) {
 		keepRelationshipID := ""
-		existing, err := selectV2RelationshipByIdentity(ctx, tx, input)
-		if err == nil {
+		if existing != nil {
 			keepRelationshipID = existing.RelationshipID
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, err
 		}
 		if err := supersedeV2OneCardinalityRelationships(ctx, tx, input, keepRelationshipID); err != nil {
 			return nil, err
@@ -647,12 +659,19 @@ func upsertV2RelationshipRecord(
 		    ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid,
 		    ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?::jsonb
 		)
-		ON CONFLICT ON CONSTRAINT relationship_records_identity_unique DO NOTHING
+		ON CONFLICT (
+		    team_id, owner_profile_id, subject_entity_id, predicate_key,
+		    object_entity_id, object_value_id, polarity, valid_from, scope_key
+		)
+		WHERE identity_alias_of_relationship_id IS NULL
+		DO NOTHING
 		RETURNING team_id::text, relationship_id::text, owner_profile_id::text,
 		          semantic_group_key, subject_entity_id::text, predicate_key,
 		          predicate_version, COALESCE(object_entity_id::text, ''),
 		          COALESCE(object_value_id::text, ''), relationship_kind,
 		          current_cardinality, tier, status, polarity, COALESCE(scope_key, ''),
+		          valid_from, valid_to,
+		          COALESCE(identity_alias_of_relationship_id::text, ''),
 		          support_count, source_group_count, version
 	`, input.TeamID, input.OwnerProfileID, semanticGroupKey, input.SubjectEntityID,
 		input.PredicateKey, input.PredicateVersion, input.ObjectEntityID, input.ObjectValueID,
@@ -672,9 +691,15 @@ func upsertV2RelationshipRecord(
 	if inserted != nil {
 		return &v2RelationshipRecordState{Record: inserted, Created: true, Changed: true}, nil
 	}
-	existing, err := selectV2RelationshipByIdentity(ctx, tx, input)
+	existing, err = selectV2RelationshipByIdentity(ctx, tx, input)
 	if err != nil {
 		return nil, err
+	}
+	if !v2NullableTimesEqual(existing.ValidTo, input.ValidTo) {
+		return &v2RelationshipRecordState{
+			Record:          existing,
+			ValidToConflict: true,
+		}, nil
 	}
 	state := &v2RelationshipRecordState{Record: existing}
 	if existing.PredicateVersion != input.PredicateVersion ||
@@ -724,6 +749,8 @@ func selectV2RelationshipByIdentity(ctx context.Context, tx *gorm.DB, input V2Ap
 		       predicate_version, COALESCE(object_entity_id::text, ''),
 		       COALESCE(object_value_id::text, ''), relationship_kind,
 		       current_cardinality, tier, status, polarity, COALESCE(scope_key, ''),
+		       valid_from, valid_to,
+		       COALESCE(identity_alias_of_relationship_id::text, ''),
 		       support_count, source_group_count, version
 		FROM relationship_records
 		WHERE team_id = ?::uuid
@@ -734,12 +761,12 @@ func selectV2RelationshipByIdentity(ctx context.Context, tx *gorm.DB, input V2Ap
 		  AND object_value_id IS NOT DISTINCT FROM NULLIF(?, '')::uuid
 		  AND polarity = ?
 		  AND valid_from IS NOT DISTINCT FROM ?
-		  AND valid_to IS NOT DISTINCT FROM ?
 		  AND scope_key IS NOT DISTINCT FROM NULLIF(?, '')
+		  AND identity_alias_of_relationship_id IS NULL
 		FOR UPDATE
 	`, input.TeamID, input.OwnerProfileID, input.SubjectEntityID, input.PredicateKey,
 		input.ObjectEntityID, input.ObjectValueID, input.Polarity, v2TimeArg(input.ValidFrom),
-		v2TimeArg(input.ValidTo), input.ScopeKey).Rows()
+		input.ScopeKey).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -773,6 +800,8 @@ func loadV2RelationshipRecordWithLock(ctx context.Context, tx *gorm.DB, teamID, 
 		       predicate_version, COALESCE(object_entity_id::text, ''),
 		       COALESCE(object_value_id::text, ''), relationship_kind,
 		       current_cardinality, tier, status, polarity, COALESCE(scope_key, ''),
+		       valid_from, valid_to,
+		       COALESCE(identity_alias_of_relationship_id::text, ''),
 		       support_count, source_group_count, version
 		FROM relationship_records
 		WHERE team_id = ?::uuid
@@ -802,7 +831,8 @@ func scanV2RelationshipRows(rows *sql.Rows) (*V2RelationshipRecord, error) {
 		&loaded.SemanticGroupKey, &loaded.SubjectEntityID, &loaded.PredicateKey,
 		&loaded.PredicateVersion, &loaded.ObjectEntityID, &loaded.ObjectValueID,
 		&loaded.RelationshipKind, &loaded.CurrentCardinality, &loaded.Tier,
-		&loaded.Status, &loaded.Polarity, &loaded.ScopeKey, &loaded.SupportCount,
+		&loaded.Status, &loaded.Polarity, &loaded.ScopeKey, &loaded.ValidFrom,
+		&loaded.ValidTo, &loaded.IdentityAliasOfID, &loaded.SupportCount,
 		&loaded.SourceGroupCount, &loaded.Version); err != nil {
 		return nil, err
 	}
@@ -905,9 +935,16 @@ func v2SemanticGroupKey(input V2ApplyRelationshipDecisionInput) string {
 		input.Polarity,
 		input.ScopeKey,
 		v2TimeKey(input.ValidFrom),
-		v2TimeKey(input.ValidTo),
+		"",
 	}
 	return "sg:" + strings.TrimPrefix(sha256Hex(strings.Join(parts, "\x00")), "sha256:")
+}
+
+func v2NullableTimesEqual(left *time.Time, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.Equal(*right)
 }
 
 func v2TimeKey(value *time.Time) string {
