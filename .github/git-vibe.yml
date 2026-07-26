@@ -75,6 +75,16 @@ ai:
           DENSE_MEM_MCP_URL:
             from_bundle: DENSE_MEM_MCP_URL
   profiles:
+    codex_5.4_mini_xhigh:
+      adapter: codex-sdk
+      api_key:
+        from_bundle: GITVIBE_AI_API_KEY
+      base_url:
+        from_bundle: GITVIBE_AI_BASE_URL
+      model: gpt-5.4-mini
+      reasoning:
+        effort: xhigh
+        summary: concise
     local_proxy:
       adapter: claude-code-sdk
       env:
@@ -95,29 +105,29 @@ ai:
           effort: high
   role_groups:
     swarm:
-      synthesizer: local_proxy
+      synthesizer: codex_5.4_mini_xhigh
       parallel: 6
       roles:
         - role: correctness.md
-          profile: local_proxy
+          profile: codex_5.4_mini_xhigh
         - role: security.md
-          profile: local_proxy
+          profile: codex_5.4_mini_xhigh
         - role: maintainability.md
-          profile: local_proxy
+          profile: codex_5.4_mini_xhigh
         - role: implemented-feature.md
-          profile: local_proxy
+          profile: codex_5.4_mini_xhigh
         - role: over-engineering.md
-          profile: local_proxy
+          profile: codex_5.4_mini_xhigh
         - role: test-evidence.md
-          profile: local_proxy
+          profile: codex_5.4_mini_xhigh
         - role: contract-compatibility.md
-          profile: local_proxy
+          profile: codex_5.4_mini_xhigh
         - role: data-integrity.md
-          profile: local_proxy
+          profile: codex_5.4_mini_xhigh
         - role: operations-readiness.md
-          profile: local_proxy
+          profile: codex_5.4_mini_xhigh
         - role: performance-cost.md
-          profile: local_proxy
+          profile: codex_5.4_mini_xhigh
   budgets:
     default_timeout_minutes: 60
     review_timeout_minutes: 60
