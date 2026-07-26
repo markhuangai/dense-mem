@@ -19,8 +19,8 @@ flowchart LR
   Hypothesis --> Review{"Client review"}
   Review -- ignore / reject --> Isolated["Keep or close in<br/>Hypothesis lifecycle"]
   Review -- new evidence --> Remember["Normal remember"]
-  Remember --> Verify["Resolve and verify"]
-  Verify --> Relationship["Relationship lifecycle"]
+  Remember --> Assess["One structure/support assessment"]
+  Assess --> Relationship["Deterministic Relationship lifecycle"]
 ```
 
 Likelihood, confidence, repetition, feedback, source authority, or provenance
@@ -32,8 +32,9 @@ or update a Relationship.
 Dreaming may read:
 
 - compact active Relationships with effective support
-- a `pending_evidence` Relationship only when it has a final
-  schema-valid `insufficient` VerificationEvent
+- a `pending_evidence` Relationship only when its final schema-valid assessment
+  is `insufficient` or `entailed` below the positive-support threshold and its
+  seven-day semantic review has expired
 - existing resolved Entity and typed-Value endpoints referenced by those
   Relationships
 - registered predicate definitions
@@ -50,15 +51,16 @@ status = pending_evidence
 subject Entity already exists
 object Entity or Value already exists
 predicate is registered and valid for both endpoint kinds
-at least one schema-valid insufficient VerificationEvent exists
+final schema-valid assessment is insufficient or entailed below threshold
+the associated semantic review is expired
 no identity, predicate, scope, or temporal ambiguity is open
 ```
 
-Context retained after an unavailable verifier or invalid provider response is
+Context retained after an unavailable assessor or invalid provider response is
 not yet an eligible pending Relationship. Dense-Mem keeps that context in the
-placement ledger, but dreaming cannot use it until normal verification produces a valid
-material `insufficient` outcome. This prevents provider failure text from
-becoming a speculation seed.
+placement ledger, but dreaming cannot use it until normal assessment produces a
+valid material result and the review window closes. This prevents provider
+failure text from becoming a speculation seed.
 
 Dreaming must exclude quarantined, disputed, rejected, retracted, superseded,
 ambiguous, and review-held records. It must also exclude records whose only
@@ -145,7 +147,7 @@ flowchart TD
   Dedup --> Persist["Persist Hypothesis and cycle result"]
 ```
 
-The generator receives compact current rows, not full evidence or verifier
+The generator receives compact current rows, not full evidence or assessor
 rationales. Source Relationship IDs explain origin but are not confirming
 evidence. A pending source remains visibly identified as pending.
 
@@ -249,7 +251,8 @@ Confirming a Hypothesis requires evidence independent of the generated text:
 ```
 
 The server validates ID hints against the team and still runs the normal
-caller-owned `remember` verifier and lifecycle. The Hypothesis text is not
+caller-owned one-call `remember` assessor and deterministic lifecycle. The
+Hypothesis text is not
 copied into the evidence. A negative decision likewise needs correcting or
 explicitly negative evidence if it is meant to alter knowledge.
 
@@ -278,7 +281,8 @@ Hypothesis retrieval.
 | Pending-state pollution | weak insufficient text becomes an active edge through dreaming | Hypothesis-only output; no lifecycle mutation; new evidence must enter `remember` |
 | Dream invents nodes | generator creates a new “search freshness” Entity to complete an idea | endpoint allowlists, existing-ID validation, and reject any unknown ID |
 | Dream invents predicates | plausible free-form verb becomes durable graph vocabulary | registry allowlist and rejection; only an authorized registry workflow can add predicates |
-| Provider failure becomes a seed | invalid verifier output is treated as a verified pending Relationship | require a final schema-valid `insufficient` event for pending-input eligibility |
+| Provider failure becomes a seed | invalid assessor output is treated as an assessed pending Relationship | require a final schema-valid assessment plus an expired semantic review for pending-input eligibility |
+| Expiry becomes promotion | an unanswered review directly creates a Hypothesis or active edge | expiry changes only review state; Dream may later read an already resolved pending Relationship and still emits Hypothesis only |
 | Circular evidence | generated statement is submitted as its own proof | require independent user/external evidence and reject Hypothesis/source text as support |
 | Primary recall contamination | Hypothesis is ranked with Evidence | separate table, response field, and query path |
 | Source drift | sources change between generation and persistence | store and compare source IDs/versions in the PostgreSQL transaction |
@@ -292,8 +296,8 @@ Hypothesis retrieval.
    change, or SemanticEdge
 2. every endpoint and source ID already exists in the same team
 3. every proposed predicate is registered for the endpoint kinds
-4. pending Relationships are eligible only after schema-valid `insufficient`
-   verification
+4. pending Relationships are eligible only after a schema-valid final
+   `insufficient` or below-threshold assessment and semantic review expiry
 5. primary recall never contains Hypotheses
 6. confirmation without new evidence fails
 7. submitted evidence enters the normal strict `remember` pipeline
@@ -301,3 +305,5 @@ Hypothesis retrieval.
 9. cycle retries do not duplicate run or Hypothesis records
 10. equivalent authored Relationships do not multiply dream weight
 11. unresolved cross-profile conflict sets are not dream premises
+12. review expiry never creates a Hypothesis, support link, or active
+    Relationship directly

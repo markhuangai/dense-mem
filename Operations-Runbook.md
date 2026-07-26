@@ -9,7 +9,7 @@ deployed release before use.
 | Dependency | Required | Durable authority |
 | --- | --- | --- |
 | PostgreSQL with `pgvector` | yes | yes: all knowledge, workflow, security, audit, and search state |
-| reviewer/verifier provider | yes for write placement | no |
+| assessor provider | yes for write placement | no |
 | embedding provider | yes for vector build/query profiles that require it | no |
 | Redis | only for required distributed coordination or explicit configuration | no |
 | summary/dream provider | only for enabled provider-backed optional features | no |
@@ -18,7 +18,7 @@ deployed release before use.
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TB
   Server["Dense-Mem instances"] --> PG[("PostgreSQL + pgvector")]
-  Server --> AI["Reviewer, verifier,<br/>embedding providers"]
+  Server --> AI["Assessor and<br/>embedding providers"]
   Server -. "multi-instance coordination" .-> Redis[("Redis")]
   Workers["Placement, embedding,<br/>dream/community workers"] --> PG
   Workers --> AI
@@ -79,7 +79,7 @@ Readiness should expose component-level state:
 | --- | --- |
 | PostgreSQL | cannot connect, migration mismatch, RLS/bootstrap invalid, or pool exhausted |
 | `pgvector` | missing extension/operator class, dimension/contract mismatch, inactive search-index generation, or unusable search schema |
-| verifier | required write contract cannot be reached or the provider cannot satisfy the closed contract probe |
+| assessor | required write contract cannot be reached or the provider cannot satisfy the closed contract probe |
 | embedding | required recall profile cannot embed, or configured contract probe fails |
 | Redis | unreachable when distributed coordination is required |
 | placement/embedding jobs | backlog exceeds the release-defined readiness boundary |
@@ -101,7 +101,8 @@ Before user traffic:
    connection budget
 6. verify cluster-safe composite tenant keys and runtime-role/RLS behavior with
    two-team fixtures
-7. validate reviewer extraction and strict verifier schema
+7. validate the one-call assessor schema, request budgets, and persisted-result
+   reuse probe
 8. validate one embedding against persisted dimensions/normalization
 9. validate the active search-index generation, query plan, and exact/ANN oracle
 10. configure Redis as required by service-instance topology
@@ -123,7 +124,7 @@ flowchart TD
   Scope -- normal recall --> Search["Branch health and search freshness"]
   Scope -- trace/control --> PG["PostgreSQL query/auth state"]
   Scope -- multi-instance limits --> Redis["Redis coordination state"]
-  Placement --> Provider["Reviewer/verifier health"]
+  Placement --> Provider["Assessor health"]
   Placement --> Database["PostgreSQL transaction/lock health"]
   Search --> Embed["Query embedding and vector jobs"]
   Search --> Database
@@ -134,7 +135,7 @@ flowchart TD
 Always capture:
 
 - UTC window and correlation/ingest/Relationship IDs
-- deployed application/schema/config/ranking/embedding/verifier versions
+- deployed application/schema/config/ranking/embedding/assessor versions
 - affected team/profile without evidence content
 - processing/search state and safe error code
 - PostgreSQL pool, transaction, lock, query, WAL, disk, and replica state
@@ -151,7 +152,7 @@ flowchart TD
   Workers -- Yes --> Lease{"Leases advancing?"}
   Lease -- No --> Locks["Inspect PostgreSQL locks,<br/>clock and lease ownership"]
   Lease -- Yes --> Stage{"Dominant stage?"}
-  Stage -- extraction/verifier --> Provider["Inspect provider limits,<br/>schema failures and cooldown"]
+  Stage -- assessor --> Provider["Inspect provider limits,<br/>schema failures and cooldown"]
   Stage -- commit --> DB["Inspect lock waits, constraints,<br/>deadlocks and pool saturation"]
   Stage -- review --> Review["Expected awaiting_review;<br/>notify client/work queue"]
 ```
@@ -161,7 +162,8 @@ Required checks:
 - queued count and oldest age
 - active lease owner, heartbeat, and attempt count
 - failures grouped by stage and safe code
-- invalid-verifier regeneration count and JSON-pointer classes
+- invalid-assessor count, JSON-pointer classes, requests per claim, and
+  persisted-assessment reuse
 - provider 429/cooldown/concurrency
 - database deadlocks, lock timeouts, serialization failures, and constraint
   errors
@@ -196,18 +198,21 @@ Do not mark jobs complete, delete queue rows, reset attempts, or extend leases
 with direct SQL. Repair the root cause, use the supported pause/resume repair
 path, and let stable idempotency converge retries.
 
-## Invalid Verifier Responses
+## Invalid Assessor Responses
 
 The application never repairs or splices provider output.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Invalid["VERIFIER_RESPONSE_INVALID"] --> Classify["JSON parse, schema,<br/>coverage, allowlist, dependency"]
+  Invalid["ASSESSOR_RESPONSE_INVALID"] --> Persisted{"Valid assessment already<br/>persisted for claim?"}
+  Persisted -- Yes --> Resume["Resume deterministic policy/commit;<br/>make no provider call"]
+  Persisted -- No --> Classify["JSON parse, schema,<br/>coverage, allowlist, dependency"]
   Classify --> Contract{"Model, prompt revision, and local<br/>contract hash match deployment?"}
   Contract -- No --> Rollback["Restore compatible model/prompt<br/>or deploy the intended contract"]
   Contract -- Yes --> Reproduce["Reproduce with redacted IDs<br/>and retained validation pointers"]
-  Reproduce --> Fix["Fix prompt/provider adapter;<br/>rerun complete placement"]
+  Reproduce --> Fix["Fix prompt/provider adapter;<br/>allow a later claim"]
+  Fix --> Later["Later claim makes at most one<br/>complete assessor request"]
 ```
 
 Safe evidence for diagnosis includes the local contract hash, response byte
@@ -215,7 +220,16 @@ count, attempt count, JSON pointers, result cardinalities, and model/provider
 version. Do not log evidence text, rationales, or raw response payloads.
 
 No `VerificationEvent` or semantic subset exists for invalid attempts. The
-ingest remains traceable in `failed` processing state.
+ingest remains traceable in explicit failed/backoff processing state. One claim
+never makes an inline regeneration request. Do not delete the claim, clear its
+attempt history, or manually invoke the provider. After the root cause is fixed,
+the supported scheduler may create a later claim; it may make one complete
+request only when no valid assessment was persisted.
+
+If a valid assessment exists, treat any attempted second call as an invariant
+failure. Stop the affected placement workers, preserve the assessment and
+claim rows, inspect uniqueness/lease/version predicates, and resume only after
+the retry path is proven to reload the persisted result.
 
 ## Embedding Backlog And Search Freshness
 
@@ -306,6 +320,67 @@ bloat or ANN quality warrants it.
 Rollback restores the pre-migration PostgreSQL backup and the matching old
 application release together. Never roll back one without the other or allow
 old and new workers to overlap.
+
+### V2.4 one-call placement upgrade
+
+Run this upgrade only after issue #129's Relationship projection migration is
+complete and healthy. V2.4 changes placement and semantic-review workflow. It
+must not start another projection generation or embedding drain.
+
+Before cutover:
+
+1. freeze the application, schema, assessor model/prompt/contract,
+   `assessment_policy_version`, and bootstrap threshold (`0.7`);
+2. export counts for placement runs/items, VerificationEvents, Relationship
+   statuses/effective supports, review task kinds/states, search documents,
+   vectors, and embedding jobs;
+3. export search-text hashes by source kind plus the active projection,
+   embedding, and HNSW generation IDs;
+4. identify unresolved semantic reviews separately from security quarantine and
+   cross-profile Conflict cases;
+5. take and restore-test the PostgreSQL backup.
+
+During cutover:
+
+1. stop placement/API versions that can create or claim semantic placement
+   work, then confirm their leases are absent or expired;
+2. apply the additive assessment, stable-claim, confidence-audit, team-config,
+   and review-expiry schema migration;
+3. set `expires_at = cutover_time + 7 days` only for unresolved (`open` or
+   `acknowledged`) semantic `support_confidence`, `identity`, `predicate`,
+   `scope`, and `time` tasks;
+4. leave completed/held VerificationEvents, Relationship status/support,
+   security quarantine, and Conflict cases unchanged;
+5. deploy the V2.4 API and placement workers together and reject mixed-version
+   claim execution;
+6. resume work only after the one-call provider probe, persisted-assessment
+   crash/reload probe, and threshold configuration validation pass.
+
+After cutover:
+
+- compare lifecycle, review, search, vector, job, hash, and active-contract
+  snapshots with preflight;
+- allow differences only for the documented open semantic-review expiry fields
+  and new V2.4 work admitted after traffic opens;
+- verify legacy VerificationEvents have null V2.4 audit fields and were not
+  rescored;
+- verify an in-flight claim with a persisted valid assessment makes zero calls,
+  and one without a valid assessment makes at most one;
+- verify expiry closes a task without granting support, creating an active
+  Relationship, or directly creating a Hypothesis;
+- verify no search document version changed, no embedding job was enqueued, and
+  no assessor or embedding provider was called by the migration.
+
+Any changed vector, search-text hash, projection generation, embedding job
+count, or embedding-provider call attributable to this migration is a blocker.
+Do not “repair” it by draining the queue; find and remove the unintended
+projection change before traffic. Re-embedding associated with #129 is complete
+before this procedure and is not part of V2.4.
+
+Rollback is supported only before V2.4 traffic writes. Restore the pre-cutover
+database and matching V2.3 application together. After V2.4 claims commit,
+rollback requires the same full restore; never run V2.3 workers against
+persisted V2.4 assessment state.
 
 ## Recall Latency Or Quality
 
@@ -478,14 +553,14 @@ Never restore another data store over newer PostgreSQL state.
 | --- | --- |
 | PostgreSQL | backup verification, vacuum/analyze, bloat, locks, slow plans, WAL/disk, replica/PITR checks |
 | `pgvector` | index size/build health, Recall@K, iterative-scan cost, reindex planning |
-| placement | queue age, lease churn, review age, verifier schema failures |
+| placement | queue age, lease churn, semantic review age/expiry, assessor schema failures, requests per claim, persisted-result reuse |
 | embeddings | pending/failed age, provider quota, version mismatch, rebuild progress |
 | Conflict review | run/due/overdue age, lease recovery, policy parity, resolved/reopened/dismissed events, three-profile recall smoke |
 | security | key/session cleanup, audit retention, RLS tests |
 | optional jobs | dream/community due state, caps, stale output cleanup |
 | Redis | connectivity, memory/eviction, TLS/auth, global quota correctness |
 
-Embedding, predicate, verifier-schema, and search-document changes are data
+Embedding, predicate, assessor-schema, and search-document changes are data
 contract migrations, not routine config edits.
 
 ## Graceful Shutdown
@@ -514,7 +589,7 @@ not mark unfinished work successful.
 Include bounded, redacted:
 
 - UTC window, correlation/ingest/Relationship IDs
-- application/schema/config/predicate/ranking/verifier/embedding versions
+- application/schema/config/predicate/ranking/assessor/embedding versions
 - component readiness and queue/search freshness summaries
 - metric samples and structured safe error codes
 - PostgreSQL version, `pgvector` version, pool/lock/plan summaries
@@ -543,6 +618,10 @@ dumps.
 | Projection rollout biases Relationship rank | traffic opens while only some Relationships have replacement vectors | require complete text convergence before serve and whole-team vector activation after transactional recount |
 | Projection rollout changes Evidence | an operator launches a global vector rebuild for a Relationship-only format change | pre/post Evidence hashes and counts, source-kind-tagged generation, and unchanged contract/index IDs |
 | Mixed-version rollback writes incompatible state | old workers resume against the migrated schema | stop/lease audit before migration and restore database plus matching application as one unit |
+| Placement retry calls the assessor twice | a worker loses its lease after persisting a valid result and the next worker makes another request | unique claim assessment, request-per-claim alert, stop workers on any post-persist request, and resume from stored result |
+| Team threshold change rewrites history | an operator expects a new value to rescore active or held Relationships | commit-time policy applies only to future/in-flight work; audit the effective version and prohibit backfill |
+| Review expiry becomes approval | an expiry worker grants support to clear backlog | expiry may update only task state; lifecycle/support invariants page on any associated activation |
+| V2.4 cutover re-embeds Relationships | a shared format/version bump queues vectors even though search text is unchanged | pre/post text hashes and job/provider counts; treat any V2.4 embedding work as a blocker |
 
 ## Operational Acceptance
 
@@ -550,7 +629,8 @@ Before production:
 
 1. PostgreSQL/PITR restore is proven in isolation
 2. `pgvector` rebuild and exact-vs-ANN quality checks are proven
-3. verifier invalid-response failure is visible and commits no subset
+3. assessor invalid-response failure is visible, commits no subset, and makes
+   no inline regeneration request
 4. placement and embedding backlog alerts are active
 5. multi-instance Redis failure does not fall back locally
 6. two-team RLS/recall/trace leakage tests pass
@@ -565,3 +645,9 @@ Before production:
 12. Relationship projection upgrade proves resumable text convergence,
     Relationship-only fair re-embedding, whole-team vector activation, and
     unchanged Evidence/embedding/index state
+13. V2.4 cutover after #129 proves one request per claim, persisted-assessment
+    reuse, and zero legacy rescoring or lifecycle mutation
+14. V2.4 migration makes zero embedding calls/jobs and leaves search hashes,
+    vectors, projection formats, and active embedding/index contracts unchanged
+15. seven-day semantic review expiry closes workflow without activating
+    knowledge or directly creating a Hypothesis

@@ -3,7 +3,7 @@
 This page is the single source of truth for deciding whether a mention reuses
 an Entity, creates an Entity, or requires client resolution.
 
-The stage order and strict verifier response are defined in
+The stage order and strict assessor response are defined in
 [Memory Write Pipeline](Write-Pipeline). Storage is defined in
 [Data Model And Storage](Data-Model-And-Storage). Relationship identity is
 defined in
@@ -43,9 +43,9 @@ Dense-Mem does not create a `DM` node or an alias edge.
 | Alias | Alternate evidence-supported surface attached to the same Entity. |
 | Former name | Time-bounded prior name attached to the same Entity. |
 | Mention | Evidence-local text that may refer to an Entity. |
-| Reviewer ref | Request-local token used before durable identity resolution. |
+| Assessor ref | Request-local token used before durable identity resolution. |
 | Identity context | Evidence-supported discriminator such as employer, role, location, product, or namespace. |
-| Candidate | Existing same-team Entity supplied to the verifier for comparison. |
+| Candidate | Existing same-team Entity supplied to the assessor for comparison. |
 | Value | Canonical typed scalar endpoint such as a number, boolean, date, date-time, or literal string. |
 
 `entity_id` is not node text:
@@ -79,7 +79,7 @@ Relationships; the date on which it occurred remains a Value.
 
 ### Typed Value identity
 
-Value resolution is deterministic; the verifier does not decide whether two
+Value resolution is deterministic; the assessor does not decide whether two
 well-formed scalars are equal. A Value record contains:
 
 ```json
@@ -196,7 +196,7 @@ ent_mark_1: Mark, Dense-Mem team
 new evidence: "Mark works on the recall pipeline."
 ```
 
-With no contrary discriminator, the verifier returns `reuse ent_mark_1`. This
+With no contrary discriminator, the assessor returns `reuse ent_mark_1`. This
 avoids creating `Mark 2` merely because the evidence is brief.
 
 Later evidence says:
@@ -205,7 +205,7 @@ Later evidence says:
 "Mark from the finance team approved the budget."
 ```
 
-If `ent_mark_1` is known not to be that person, the verifier returns
+If `ent_mark_1` is known not to be that person, the assessor returns
 `ambiguous` or proposes `create` only when the evidence sufficiently
 distinguishes the finance-team Mark. Dense-Mem exposes the ambiguity and impact
 to the client. It does not silently split or overwrite the first Entity.
@@ -214,7 +214,7 @@ to the client. It does not silently split or overwrite the first Entity.
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
   First["Only one plausible Mark"] --> Reuse["Reuse ent_mark_1"]
-  Later["Later contradictory context"] --> Flag["Verifier flags ambiguity"]
+  Later["Later contradictory context"] --> Flag["Assessor flags ambiguity"]
   Flag --> Client{"Client decision"}
   Client -- same person --> Keep["Keep ent_mark_1"]
   Client -- distinct person --> New["Create ent_mark_2"]
@@ -222,51 +222,49 @@ flowchart TD
   Select --> Rebuild["Recompute only affected<br/>Relationships"]
 ```
 
-## Extraction And Candidate Retrieval
+## Candidate Prefetch And Integrated Assessment
 
-The reviewer extracts evidence-local mentions, exact spans, names, coarse
-kinds, identity context, and atomic Relationship observations. It does not
-allocate Entity IDs or decide that a candidate is canonical.
-
-Candidate retrieval is deterministic, bounded, and team-scoped:
+Candidate prefetch occurs before the only model call. The server revalidates
+client `known_entity_id` hints, generates bounded evidence phrases, and uses the
+current-name index to find canonical/alias names that are exact token-bounded
+evidence spans. It does not send all team Entities and does not use vector
+similarity in the automatic write allowlist.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
-  Mention["Reviewed mention"] --> Scope["Authenticated team only"]
-  Scope --> Hint["Validated server-issued ID hint"]
-  Scope --> External["Supported stable external ID"]
-  Scope --> Name["Canonical, alias, former name"]
-  Scope --> Vector["Entity text / vector similarity"]
-  Hint --> Union["Deduplicate Entity IDs"]
-  External --> Union
+  Evidence["Verbatim evidence and client hints"] --> Scope["Authenticated team only"]
+  Scope --> Hint["Revalidate server-issued ID hints"]
+  Scope --> Phrases["Generate token-bounded phrases"]
+  Phrases --> Name["Exact current canonical/alias lookup"]
+  Hint --> Union["Deduplicate Entity IDs by exact span"]
   Name --> Union
-  Vector --> Union
-  Union --> Context["Attach kind, identity context,<br/>and bounded Relationship summary"]
-  Context --> Limit["Rank and enforce candidate limit"]
+  Union --> Context["Attach kind and bounded identity context"]
+  Context --> Limit["At most 20 per surface<br/>inside 32 KiB candidate budget"]
+  Limit --> Assess["One integrated assessor request"]
 ```
 
 | Signal | Useful for | Cannot do by itself |
 | --- | --- | --- |
 | valid server ID hint | recover a previously recalled Entity | bypass team or active-state validation |
-| trusted stable identifier | strongly identify a namespace-scoped subject | turn an unverified string into a global identity |
-| normalized name | retrieve punctuation and spelling variants | merge homonyms |
-| alias or former name | retrieve acronyms and renames | prove the alias is unique |
+| exact normalized current name | find canonical/alias candidates anchored in evidence | merge homonyms |
+| alias | retrieve an evidence-present acronym or rename | prove the alias is unique |
 | Entity kind | remove implausible candidates | define identity |
 | identity context | distinguish same-name candidates | invent missing context |
-| vector similarity | retrieve paraphrases | authorize reuse or merge by threshold |
-| Relationship summary | compare known roles and affiliations | become evidence for the new statement |
+| vector similarity outside placement | surface possible duplicates for a separate review | enter the assessor allowlist or authorize reuse |
 
-An empty candidate list means retrieval found none; it does not automatically
-authorize `create`. A retrieval error is not an empty result and fails
-placement visibly.
+One revalidated known ID or one unique compatible exact match may be reused.
+Multiple/conflicting matches remain `ambiguous`; if more than 20 exact matches
+exist, the group is marked truncated and cannot be auto-resolved. An empty
+candidate list does not automatically authorize `create`. A retrieval error is
+not an empty result and fails placement visibly.
 
-## One Verifier Request
+## One Assessor Request
 
-After extraction and candidate retrieval, one verifier request returns
-separate `entity_results` and `relationship_results`. The exact input,
+One integrated assessor request extracts evidence-local mentions/Relationships
+and returns separate `entity_results` and `relationship_results`. The exact input,
 closed output schema, retry behavior, and no-coercion rule belong only in
-[Memory Write Pipeline](Write-Pipeline#strict-verifier-contract).
+[Memory Write Pipeline](Write-Pipeline#strict-assessor-contract).
 
 For identity, the server enforces:
 
@@ -279,9 +277,9 @@ For identity, the server enforces:
 - every dependent Relationship remains non-active until its endpoints and
   predicate resolve
 
-Invalid or incomplete output causes bounded regeneration of the entire
-response. No subset commits and application code does not repair provider
-JSON.
+Invalid or incomplete output fails the current placement claim. A later claim
+may make one new request only when no valid assessment was persisted. No subset
+commits and application code does not repair provider JSON.
 
 ## Build Relationships After Resolution
 
@@ -295,8 +293,8 @@ flowchart TD
   Ready -- Yes --> Predicate{"Registered predicate resolved?"}
   Predicate -- No --> Hold
   Predicate -- Yes --> Identity["Compute Relationship identity"]
-  Identity --> Verify["Apply verification and lifecycle policy"]
-  Verify --> Commit["Commit PostgreSQL ledger<br/>and current state"]
+  Identity --> Policy["Apply confidence gate and lifecycle policy"]
+  Policy --> Commit["Commit PostgreSQL ledger<br/>and current state"]
 ```
 
 Several refs may resolve to one Entity. The service coalesces the Entity write
@@ -307,20 +305,19 @@ Conceptual service logic:
 ```go
 resolved := make(map[string]EntityResolution)
 
-for _, mention := range extraction.Mentions {
-	candidates := entityCandidates(teamID, mention)
-	result := verifier.EntityResult(mention.Ref)
-	resolved[mention.Ref] = validateResolution(teamID, mention, candidates, result)
+for _, result := range assessment.EntityResults {
+	group := exactSpanCandidateGroup(result.EvidenceID, result.Start, result.End)
+	resolved[result.Ref] = validateResolution(teamID, group, result)
 }
 
-for _, draft := range extraction.Relationships {
-	subject, object := resolveEndpoints(draft, resolved)
+for _, result := range assessment.RelationshipResults {
+	subject, object := resolveEndpoints(result, resolved)
 	if subject.Ambiguous || object.Ambiguous {
-		createIdentityReviewTask(draft)
+		createIdentityReviewTask(result)
 		continue
 	}
 
-	upsertRelationshipObservation(subject.EntityID, draft, object)
+	upsertRelationshipObservation(subject.EntityID, result, object)
 }
 ```
 
@@ -335,10 +332,9 @@ globally safe name key.
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
-  Idempotency["Ingest idempotency"] --> Review["Normalize mentions"]
-  Review --> Candidates["Cross-ingest candidate retrieval"]
-  Candidates --> Verify["reuse / create / ambiguous"]
-  Verify --> Validate["Validate candidate allowlists"]
+  Idempotency["Ingest idempotency"] --> Candidates["Exact-span candidate prefetch"]
+  Candidates --> Assess["One integrated assessment"]
+  Assess --> Validate["Validate reuse / create / ambiguous<br/>against frozen allowlists"]
   Validate --> Lock["Ordered team-scoped<br/>name and identifier locks"]
   Lock --> Recheck["Requery inside transaction"]
   Recheck --> Write["Reuse or create once"]
@@ -351,7 +347,7 @@ Before `create`, the PostgreSQL transaction:
    stable identifiers
 2. reruns candidate lookup against committed records
 3. invalidates `create` if a new plausible candidate appeared
-4. reuses an exact candidate, requests another verifier pass, or holds review
+4. reuses a now-unique exact candidate or holds review without another AI call
 5. inserts the Entity and names once
 
 A uniqueness constraint can protect a stable external identifier within its
@@ -393,7 +389,7 @@ evidence-backed operations with dry-run impact reports. Any profile with
 
 Creating a distinct Entity makes that handle visible to the team. It does not
 move or invalidate another profile's observations. Another profile may later
-reuse the new Entity after its own evidence and verifier decision.
+reuse the new Entity after its own evidence and assessor decision.
 
 ### Profile-local merge
 
@@ -436,7 +432,7 @@ defined in
 ## Security Boundary
 
 Candidates, locks, records, vector results, and returned IDs are scoped to the
-authenticated team. The verifier receives immutable candidate sets but no
+authenticated team. The assessor receives immutable candidate sets but no
 credentials and cannot select an arbitrary database ID.
 
 Write authorization additionally scopes merge/split selection to observations
@@ -451,12 +447,13 @@ cannot alter the schema, candidate allowlist, tenant, or decision rules.
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
 | False merge | the first known Mark absorbs statements about a different Mark | reuse only without contrary context; flag later conflict; require client-confirmed observation-level split |
-| False split | `Dense-Mem` and `DM` become parallel Entities | alias/name/vector candidate retrieval, prefer the one plausible candidate, and recheck before create |
+| False split | `Dense-Mem` and an evidence-present `DM` alias become parallel Entities | exact canonical/alias prefetch, prefer the one plausible candidate, and recheck before create |
 | Bad bulk correction | resolving one finance-team Mark moves all historical Mark observations | preview immutable observation IDs and move only caller-owned, client-selected evidence |
 | Concurrent duplicate | two workers create the same new Entity | ingest idempotency, ordered locks, in-transaction recheck, and stable-ID constraints |
 | Retrieval outage | a backend error looks like no candidates and authorizes create | treat errors distinctly and fail placement visibly |
 | Cross-team reuse | provider returns an ID from another team | per-ref candidate allowlists, RLS, and team validation before commit |
-| Similarity merge | a high vector score collapses valid homonyms | similarity retrieves candidates only; verifier/client decisions authorize identity changes |
+| Similarity merge | a high vector score collapses valid homonyms | vector similarity is excluded from the placement allowlist; exact candidates and client decisions authorize identity changes |
+| Truncated homonym set | the correct Mark is the 21st exact candidate and the assessor selects from an incomplete list | persist the truncation flag and prohibit automatic reuse for that surface |
 | Merge evidence loss | duplicate Relationships are combined but one source disappears | dry-run mapping, one transaction, append-only support/history, and post-change count checks |
 | Cross-profile identity rewrite | profile B's split moves profile A's observations | owner predicate on selected observations and integration tests with three writable profiles |
 | Duplicate/scalar collapse | `42`, `42.0`, or case-varied codes become wrong duplicate/equal Value nodes | exact type-specific versioned canonicalization; conservative string rules and normalized-unit registry |
@@ -472,7 +469,7 @@ The identity refactor is incomplete until tests prove:
 5. different same-name identities with distinguishing context remain separate
 6. several plausible homonyms create review work and no active dependent edge
 7. a later client-confirmed split moves only selected caller-owned observations
-8. a non-candidate or cross-team ID invalidates the entire verifier response
+8. a non-candidate or cross-team ID invalidates the entire assessor response
 9. missing, extra, or duplicate results never cause a partial write
 10. simultaneous equivalent creates converge after the transactional recheck
 11. Entity resolution finishes before Relationship identity is computed
@@ -485,4 +482,6 @@ The identity refactor is incomplete until tests prove:
 16. a write-scoped profile may merge or split its own resolutions without
     changing another profile's observations or Relationships
 17. a newly created split Entity is team-readable and may be adopted by another
-    profile through that profile's normal verification flow
+    profile through that profile's normal assessment flow
+18. vector-only candidates and truncated exact-match groups cannot be
+    auto-selected during placement

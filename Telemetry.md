@@ -14,7 +14,7 @@ This page defines the target metrics/operations contract for the PostgreSQL +
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
   Request["Request and auth"] --> Metrics["Bounded Prometheus metrics"]
-  Placement["Placement and verifier"] --> Metrics
+  Placement["Placement and assessor"] --> Metrics
   Search["Embedding and recall"] --> Metrics
   Storage["PostgreSQL and Redis"] --> Metrics
   Optional["Dream/community jobs"] --> Metrics
@@ -34,7 +34,7 @@ flowchart LR
 | append-only audit/domain history | actor and semantic/security decision trace | PostgreSQL durable record |
 | recall feedback/evaluation | judged usefulness and quality regression | quality evidence, not automatic policy |
 
-Metrics/logs never substitute for the durable placement, verification,
+Metrics/logs never substitute for the durable placement, assessment/verification,
 Relationship, transition, or audit record.
 
 ## Label Rules
@@ -127,22 +127,32 @@ densemem_placement_lease_lost_total{stage}
 densemem_placement_attempts_total{outcome}
 densemem_review_tasks{kind,state}
 densemem_review_oldest_seconds{kind}
+densemem_review_expired_total{kind}
 ```
 
 Quarantined, failed, and awaiting-review work is distinct from a worker
 backlog. A high review age does not mean adding placement workers will help.
 
-## Reviewer And Strict Verifier
+## One-Call Assessor
 
 ```text
 densemem_provider_requests_total{provider_kind,model_alias,outcome}
 densemem_provider_request_duration_seconds{provider_kind,model_alias,outcome}
 densemem_provider_cooldown_seconds{provider_kind}
-densemem_verifier_responses_total{outcome}
-densemem_verifier_validation_failures_total{class}
-densemem_verifier_regenerations_total{outcome}
-densemem_verifier_result_items{kind}
+densemem_assessor_requests_total{provider_kind,model_alias,outcome}
+densemem_assessor_request_duration_seconds{provider_kind,model_alias,outcome}
+densemem_assessor_input_tokens{provider_kind,model_alias,outcome}
+densemem_assessor_output_tokens{provider_kind,model_alias,outcome}
+densemem_assessor_candidate_context_bytes{outcome}
+densemem_assessor_candidate_truncations_total{kind}
+densemem_assessor_responses_total{outcome}
+densemem_assessor_validation_failures_total{class}
+densemem_assessor_result_items{kind}
+densemem_assessment_persistence_total{outcome}
+densemem_assessment_reuse_total{reason}
+densemem_assessor_duplicate_request_prevented_total{reason}
 densemem_verification_events_total{verdict}
+densemem_relationship_confidence_gate_total{gate_state}
 ```
 
 `class` is bounded, for example:
@@ -164,8 +174,16 @@ size_limit
 Invalid attempts count as provider/validation telemetry only. They do not
 increment material `VerificationEvent` counts.
 
-Alert when complete-response regeneration or terminal invalid-response rate
-changes by model, prompt revision, or local contract hash.
+One placement claim may increment the assessor-request counter at most once.
+Assessment reuse covers restart, lease reclaim, pause/resume, and semantic
+commit retry after a valid result persists. Alert when request-per-claim
+invariants fail, persistence/reuse errors appear, or terminal invalid-response
+rate changes by model, prompt revision, or local contract hash.
+
+`gate_state` is the bounded public policy outcome:
+`meets_write_threshold`, `below_write_threshold`, or `not_applicable`. Never
+put raw confidence, the configured threshold, team ID, prompt text, or rationale
+in metric labels. Authorized audit rows retain the exact internal decision.
 
 ## Entity And Relationship Outcomes
 
@@ -386,18 +404,20 @@ must not become metric labels.
 
 - request rate/errors/latency by operation
 - write/read/trace readiness
-- PostgreSQL, verifier, embedding, and required Redis health
+- PostgreSQL, assessor, embedding, and required Redis health
 - service replica count and coordination mode
 
 ### Knowledge write
 
 - intake and placement throughput/age
 - stage latency and lease loss
-- reviewer/verifier latency, 429, invalid output, and regeneration
+- assessor call count, input/output tokens, latency, 429, invalid output,
+  persistence, and retry-time reuse
+- positive-support gate pass/hold/not-applicable outcomes
 - Entity actions/ambiguity and Relationship status/support outcomes
 - source revision activation, support revocation, and automatic pending-state transition
 - owner-mutation denials and cross-profile correction outcomes
-- review task count/age
+- review task count/age/expiry
 - Conflict case status/age, write-versus-nightly outcomes, overdue escalation,
   run duration, and lease recovery
 
@@ -442,7 +462,10 @@ must not become metric labels.
 | --- | --- |
 | PostgreSQL unavailable | readiness fails or transaction errors exceed window |
 | placement backlog | oldest queued/processing item above SLO |
-| verifier contract regression | invalid/schema regeneration ratio above baseline after model/prompt change |
+| assessor contract regression | invalid/schema ratio or request-per-claim invariant above baseline after model/prompt change |
+| assessment reuse failure | a restart/lease/commit retry calls the assessor after a valid result persisted |
+| confidence-gate shift | pass/hold ratio moves beyond the evaluated model/prompt baseline |
+| semantic review expiry backlog | due semantic tasks remain open beyond the expiry-worker SLO |
 | injection anomaly | quarantine/model-signal ratio shifts beyond the evaluated baseline or unauthorized release is nonzero |
 | source revision failure | stale/unowned/fanout outcomes exceed the source-update SLO or support/status reconciliation fails |
 | search backlog | oldest pending or failed document above SLO |
@@ -478,7 +501,10 @@ payloads, and vectors are opt-out by default and should not enter normal logs.
 | Evidence leak | provider response or query is logged on parse failure | log validation class/pointers and byte counts only |
 | Search lag mistaken for truth loss | embedding backlog triggers repeated remember calls | paired processing/search dashboards and API semantics |
 | ANN regression hidden | latency dashboard improves while relevant results disappear | exact-oracle Recall@K sampling and release alert |
-| Invalid attempts counted as decisions | verifier parse failures inflate semantic verdict counts | separate provider/validation and material-event metrics |
+| Invalid attempts counted as decisions | assessor parse failures inflate semantic verdict counts | separate provider/validation and material-event metrics |
+| Retry savings are overstated | provider calls fall but restart paths still make duplicate assessor requests | compare claim, request, persisted-assessment, and reuse counters; alert on any post-persist request |
+| Confidence labels expose team policy | a metric series contains team-specific thresholds or raw scores | expose only bounded gate state; keep exact confidence/threshold in authorized audit rows |
+| Review expiry is treated as acceptance | an expired-task counter is consumed as a support signal | metrics remain observational; lifecycle writes require persisted assessment and deterministic policy |
 | Detector details leak through labels | rule ID, evidence span, or source key creates a high-cardinality security metric | expose bounded decision/kind enums only and keep details in authorized audit rows |
 | Source support loss is invisible | a revision removes final support but operators see only ordinary transition counts | dedicated revision, support-revocation, and pending-transition counters linked by audit correlation ID in logs |
 | Projection appears complete too early | aggregate pending count falls while one team still has failed generation work | durable per-team generation checks plus bounded aggregate generation-state and oldest-job-class telemetry |
@@ -495,7 +521,7 @@ payloads, and vectors are opt-out by default and should not enter normal logs.
 
 1. no metric label contains tenant, record, evidence, query, or secret data
 2. processing and search freshness are separately visible
-3. invalid verifier attempts and material verification events are distinct
+3. invalid assessor attempts and material verification events are distinct
 4. PostgreSQL full-text/vector/adjacency branches have separate latency/error
    signals
 5. exact-vs-HNSW quality is measurable
@@ -515,3 +541,7 @@ payloads, and vectors are opt-out by default and should not enter normal logs.
     for its durable event history
 14. Relationship text projection, generation/foreground queue fairness, and
     whole-team vector-gate state are observable without team or generation IDs
+15. assessor request count, tokens, latency, validation, persistence, and
+    retry-time reuse prove the one-call contract without claim-ID labels
+16. confidence-gate pass/hold and semantic review expiry are visible without
+    raw confidence, team thresholds, or team IDs

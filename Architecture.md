@@ -22,7 +22,7 @@ flowchart TB
   Services --> Control["Control plane"]
   Services --> Dream["Dreaming"]
 
-  Remember --> Providers["Reviewer, verifier,<br/>and embedding providers"]
+  Remember --> Providers["Assessor and<br/>embedding providers"]
   Recall --> Providers
   Dream --> Providers
 
@@ -48,7 +48,7 @@ contains memory truth.
 | Application | remember, recall, trace, correction, dreaming, and control orchestration |
 | Domain | Entity identity, predicate vocabulary, Relationship identity/lifecycle, evidence acceptance, and Hypothesis rules |
 | PostgreSQL | durable ledger, current state, queues, review, audit, SemanticEdge queries, full-text, and `pgvector` |
-| Model providers | structured extraction, one-call verification, embeddings, and optional dream generation; no write authority |
+| Model providers | one-call structure/support assessment, embeddings, and optional dream generation; no write authority |
 | Coordination | rate limits, leases/signals, and SSE concurrency; Redis when distributed, process memory when safely single-instance |
 
 Store ownership and recovery belong in
@@ -114,9 +114,8 @@ internal/
     redis/
       coordination/
   provider/
+    assessor/
     embedding/
-    reviewer/
-    verifier/
     dream/
   transport/
     mcp/
@@ -172,7 +171,7 @@ distributed coordination is required or explicitly configured as mandatory. A
 multi-instance deployment cannot silently fall back to process-local limits or
 leases.
 
-Provider readiness distinguishes required operations: an unavailable verifier
+Provider readiness distinguishes required operations: an unavailable assessor
 may make write placement not-ready while authorized trace reads can still
 operate. Exact health and incident procedure belongs in
 [Operations Runbook](Operations-Runbook).
@@ -211,7 +210,7 @@ Canonical ownership:
 | PostgreSQL, Redis, transactions, durable storage, jobs, and recovery | [Data Model And Storage](Data-Model-And-Storage) |
 | PostgreSQL tenant keys, table placement, RLS/query locality, and future team sharding | [PostgreSQL Cluster-Safe Schema](PostgreSQL-Cluster-Safe-Schema) |
 | pgvector exact/ANN execution, HNSW/halfvec, index load, and search topology | [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec) |
-| `remember` stage order and strict one-call verifier | [Memory Write Pipeline](Write-Pipeline) |
+| `remember` stage order and strict one-call assessor | [Memory Write Pipeline](Write-Pipeline) |
 | recall eligibility, PostgreSQL branches, and trace escalation | [Recall Ranking](Recall-Ranking) |
 | cosine distance, RRF, reranking, and conflict preference | [Vector Search And Ranking](Vector-Search-And-Ranking) |
 | Hypothesis generation boundary | [Dreaming](Dreaming) |
@@ -221,11 +220,12 @@ Canonical ownership:
 
 Remember first validates and deterministically scans the bounded request, then
 atomically commits exact evidence, the scan event, and queued, guarded, or
-quarantined processing intent. A worker handling queued evidence extracts
-structure, retrieves immutable Entity/predicate candidates, makes one strict
-verifier request containing bounded `security_signals`, `entity_results`, and
-`relationship_results`, validates the whole response, applies deterministic
-policy, and commits all material outcomes in PostgreSQL.
+quarantined processing intent. A worker handling queued evidence prefetches
+exact-span current Entity candidates and a structured predicate catalog, makes
+one strict assessor request containing bounded `security_signals`,
+`entity_results`, and `relationship_results`, validates and persists the first
+complete response, applies the positive-support confidence gate plus
+deterministic policy, and commits all material outcomes in PostgreSQL.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
@@ -234,23 +234,24 @@ flowchart LR
   Scan -- quarantine --> StageQ["Commit quarantined intake"]
   StageQ --> Quarantine["Restricted audit only"]
   Scan -- pass or guarded --> Intake["Commit evidence and queue intent"]
-  Intake --> Extract["Structure extraction"]
-  Extract --> ExtractSignal{"Reviewer security signal?"}
-  ExtractSignal -- Yes --> Quarantine
-  ExtractSignal -- No --> Context["Server Entity/predicate context"]
-  Context --> Verify["One verifier response"]
-  Verify --> Validate["Closed-schema, security-signal,<br/>and allowlist validation"]
+  Intake --> Context["Exact Entity candidates and<br/>structured predicate catalog"]
+  Context --> Assess["One assessor response"]
+  Assess --> Validate["Closed-schema, security-signal,<br/>and allowlist validation"]
   Validate --> Signal{"Model security signal?"}
   Signal -- Yes --> Quarantine
-  Signal -- No --> Policy["Deterministic lifecycle"]
+  Signal -- No --> Persist["Persist first valid assessment"]
+  Persist --> Gate["Positive-support confidence gate"]
+  Gate --> Policy["Deterministic lifecycle"]
   Policy --> Commit["One PostgreSQL transaction"]
   Commit --> Immediate["Current rows, SemanticEdges,<br/>and full-text available"]
   Commit --> Async["Versioned embedding job"]
 ```
 
-Invalid verifier output is regenerated as a complete response. The application
-does not coerce it or commit a valid subset. Full details belong in
-[Memory Write Pipeline](Write-Pipeline#strict-verifier-contract).
+Invalid assessor output is not regenerated inside the claim. The application
+does not coerce it or commit a valid subset. A later claim may make one new
+request only when no valid assessment persisted; restart and commit retries
+reuse the first valid result. Full details belong in
+[Memory Write Pipeline](Write-Pipeline#strict-assessor-contract).
 
 ## Read Boundary
 
@@ -259,7 +260,7 @@ full-text and `pgvector`. It separately correlation-ranks active, supported,
 profile-owned Relationships and, when enabled, derived Communities. It returns
 bounded Evidence contexts, Relationship groups, Communities, Conflict status,
 Hypotheses, freshness, and trace handles in independent fields and limits—not
-verifier history.
+assessor history.
 
 Trace fetches normalized provenance when the caller needs to understand,
 correct, or forget knowledge. Graph visualization uses the same semantic-node
@@ -298,7 +299,7 @@ projection, outbox, or graph-reconciliation loop in the target.
 
 | Area | Dense-Mem owns | Host LLM owns |
 | --- | --- | --- |
-| Remember | evidence persistence, extraction review, strict verification, identity resolution, lifecycle, and traceability | submitting evidence and the smallest supported hint |
+| Remember | evidence persistence, exact candidate prefetch, strict integrated assessment, deterministic validation/lifecycle, and traceability | submitting evidence and the smallest supported hint |
 | Embeddings | evidence, Entity, Relationship, and query embeddings through configured providers | no normal-use vectors |
 | Recall | bounded retrieval, ranking, graph frontier, freshness, and trace handles | deciding which returned context to use, cite, or question |
 | Ambiguity | exact candidates, impact, review state, and safe decision application | presenting the ambiguity and collecting the user's evidence-backed choice |
@@ -320,7 +321,9 @@ change relies on it.
 | --- | --- | --- |
 | PostgreSQL graph query is unbounded | a hub Entity causes a recursive query to exhaust memory | partial adjacency indexes and strict seed/fan-out/depth/edge/time budgets |
 | ANN tenant filter loses recall | shared approximate search omits relevant team rows before hydration | enforce the team-shaped execution/topology gates in [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec) |
-| Provider controls truth | verifier returns lifecycle status or an arbitrary ID and it reaches storage | closed schema excludes writes; allowlist validation and deterministic lifecycle |
+| Provider controls truth | assessor returns lifecycle status, an unknown predicate, or an arbitrary ID and it reaches storage | closed schema excludes writes; exact candidate allowlists, structured predicate catalog, and deterministic lifecycle |
+| Retry makes a second write-time decision | a worker restarts after receiving a valid response and calls the assessor again | persist the first valid assessment under a stable claim key and reload it before any provider call |
+| Confidence gate becomes a universal override | a high score clears identity ambiguity or a security hold | apply it only to positive Relationship support after all structural/security checks |
 | Big-bang refactor stalls | every package changes before one end-to-end path works | small vertical changes and passing acceptance invariants per change |
 | Redis becomes a hidden database | replicas lose identity or review state after Redis restart | coordination-only ports and restart tests proving PostgreSQL is complete |
 | Conflict workflow becomes a truth edge | a team preference appears as a semantic predicate or closes an unrelated A Relationship | separate non-semantic case/event records, locked case membership, system reviewer transitions, and support-path-only recall disposition |
@@ -338,8 +341,8 @@ change relies on it.
    graph reads.
 8. Stored knowledge and search context can inform comparison but never count as
    submitted evidence.
-9. Only deterministic policy after a valid complete verifier response changes
-   lifecycle status or effective support.
+9. Only deterministic policy after a valid complete persisted assessor response
+   changes lifecycle status or effective support.
 10. Required recall failures are visible; optional degradation is reported.
 11. Embedding and search-index versions form explicit linked deployment
     contracts with separate rebuild lifecycles.
@@ -354,3 +357,11 @@ change relies on it.
     and physical search-index contracts; its migration cannot re-embed Evidence.
 17. Relationship vector fusion is team-gated until a complete projection
     generation is current.
+18. One placement claim makes at most one assessor request; every retry after a
+    valid persisted assessment makes zero.
+19. The confidence threshold gates only positive entailed Relationship support
+    and never resolves structure, time, security, or conflict.
+20. Semantic review expiry closes workflow without activating knowledge or
+    directly creating a Hypothesis.
+21. V2.4 changes no search projection or embedding input and therefore requires
+    no re-embedding.

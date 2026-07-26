@@ -46,7 +46,7 @@ interfaces. PostgreSQL remains the source of truth in either mode.
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
   Evidence["Evidence<br/>ingests and fragments"] --> Observation["Observations<br/>extracted statements"]
-  Observation --> Decision["Decisions<br/>verification and review"]
+  Observation --> Decision["Decisions<br/>assessment and review"]
   Decision --> Current["Current knowledge<br/>Entities and Relationships"]
   Current --> Read["Direct read model<br/>SemanticEdge and search"]
   Decision --> History["Append-only history<br/>support and transitions"]
@@ -76,12 +76,15 @@ flowchart LR
   Ingest --> Fragment["EvidenceFragment"]
   Revision --> Fragment
   Ingest --> Placement["PlacementRun / Item"]
+  Placement --> Assessment["PlacementAssessment"]
   Entity --> Name["EntityName"]
   Entity --> Resolution["EntityResolutionEvent"]
   Entity --> Correction["EntityCorrectionEvent"]
 
   Fragment --> Observation["RelationshipObservation"]
   Fragment --> Security["EvidenceSecurityEvent"]
+  Assessment --> Resolution
+  Assessment --> Verification
   Observation --> Verification["VerificationEvent"]
   Relationship --> Observation
   Relationship --> Support["RelationshipEvidenceSupport"]
@@ -108,20 +111,21 @@ flowchart LR
 | `evidence_sources` | one stable team/source-owner-scoped source identity and its current revision pointer |
 | `evidence_source_revisions` | append-only immutable source snapshots linked by expected previous-revision tokens |
 | `evidence_fragments` | immutable verbatim evidence slices and their source envelope |
-| `evidence_security_events` | append-only deterministic scan, model signal, quarantine, and authorized release history |
+| `evidence_security_events` | append-only deterministic scan, assessor signal, quarantine, and authorized release history |
 | `entity_records` | canonical team-scoped identities and current identity state |
 | `entity_names` | canonical, alias, and former names attached to an Entity |
 | `value_records` | canonical typed scalar endpoints |
-| `entity_resolution_events` | append-only verifier and server decisions for evidence-local mentions |
+| `entity_resolution_events` | append-only assessor and server decisions for evidence-local mentions |
 | `entity_correction_events` | append-only merge, split, and reassignment decisions |
 | `relationship_observations` | immutable extracted statements tied to exact evidence spans |
-| `verification_events` | append-only schema-valid verifier judgments |
+| `placement_assessments` | first schema-valid normalized assessor response for one placement claim; unique claim identity makes restart and commit retry reuse it |
+| `verification_events` | append-only Relationship judgments derived from persisted schema-valid assessor results |
 | `relationship_records` | one authored Relationship episode's current status, effective support, validity, author, and version |
 | `relationship_evidence_supports` | accepted, deduplicated evidence-span and source-group links |
 | `relationship_support_decision_events` | append-only grant/revoke/reinstate decisions controlling effective support |
 | `relationship_transition_events` | append-only status/validity-bound history |
 | `relationship_cross_references` | append-only same-team confirmation, challenge, correction, and evidence-adoption links between profile-owned Relationships |
-| `review_tasks` | identity, predicate, same-owner Relationship conflict, correction, and policy decisions needing a client |
+| `review_tasks` | bounded identity, predicate, scope, time, support-confidence, same-owner Relationship conflict, correction, and policy decisions needing a client; the five V2.4 semantic kinds carry seven-day expiry |
 | `relationship_conflict_cases` | current team-scoped status, version, deadline, due/lease metadata, effective time, and preferred-position disposition for material cross-profile Relationship conflicts |
 | `relationship_conflict_positions` | current bounded grouping of authored Relationship IDs/versions into equivalent case positions without merging ownership |
 | `relationship_conflict_events` | append-only open, membership, evaluation, resolve, reopen, overdue, and dismiss history |
@@ -132,7 +136,55 @@ flowchart LR
 | `embedding_contracts` | versioned provider/model/dimension/normalization/query meaning shared by compatible query and document vectors |
 | `search_projection_generations` | per-team, per-source-kind text projection convergence and vector activation state |
 | `search_index_generations` | versioned pgvector physical index compatibility, build state, and active pointer |
-| `placement_runs` / `placement_items` | observable processing workflow, retry, and failure state |
+| `placement_runs` / `placement_items` | observable processing workflow, stable claim identity, retry, and failure state |
+
+### Persisted assessment and semantic review shape
+
+`placement_assessments` is an append-once boundary between provider work and
+authoritative commit:
+
+```text
+assessment_id
+team_id
+placement_item_id
+claim_key
+request_id
+assessor_contract_version
+model
+prompt_revision
+normalized_response
+response_hash
+validated_at
+created_at
+
+UNIQUE (team_id, placement_item_id)
+UNIQUE (team_id, claim_key)
+```
+
+`normalized_response` contains only fields accepted by the closed assessor
+schema. It does not repeat request evidence, provider transport metadata, or
+secrets. `claim_key` is allocated with the immutable placement item and is not a
+worker, lease, or attempt ID; every reclaim uses the same value. The worker
+inserts the first valid result. A conflict on either unique key reloads that row;
+it never calls the model to produce a replacement. `VerificationEvent` and
+Entity-resolution rows reference the persisted assessment so a restart, lease
+reclaim, or semantic transaction retry applies the same decision.
+
+V2.4 adds nullable audit fields to `verification_events` for
+`assessment_id`, `assessment_policy_version`, `threshold_used`, and
+`gate_result`. They remain null on legacy rows. `gate_result` is one of
+`meets_write_threshold`, `below_write_threshold`, or `not_applicable`.
+
+A semantic `review_tasks` row stores a public-safe question, bounded options,
+guidance, current state, and `expires_at`. Its public kind is
+`support_confidence`, `identity`, `predicate`, `scope`, or `time`; its state is
+`open`, `acknowledged`, `resolved`, `canceled`, or `expired`. Storage may retain
+the existing `task_type` and reason for historical rows while a versioned,
+closed mapping exposes the public kind. V2.4 does not rewrite a legacy task's
+meaning merely to rename it. An unresolved open/acknowledged semantic task
+closes at seven days.
+Security quarantine and durable cross-profile Conflict cases retain their own
+workflows and are not converted to expiring semantic review tasks.
 
 The exact Relationship identity, fields, and lifecycle belong only in
 [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle). Entity
@@ -465,6 +517,53 @@ unit. Do not start old binaries against the migrated schema, start new binaries
 against a restored old schema, or run old and new workers together. A rollback
 restores the backup and the matching application release before traffic opens.
 
+### V2.4 one-call placement migration
+
+V2.4 follows the Relationship/search cutover tracked by issue #129. It changes
+write-time assessment and review workflow, not stored Relationship meaning,
+search projection text, or the numerical embedding contract.
+
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart LR
+  Baseline["V2.3 data after #129"] --> Pause["Pause placement workers"]
+  Pause --> Additive["Add assessment, audit,<br/>review-expiry, and team-config fields"]
+  Additive --> TTL["Give open semantic reviews<br/>a fresh seven-day expiry"]
+  TTL --> Deploy["Deploy V2.4 API and workers together"]
+  Deploy --> New["Only new/in-flight claims use<br/>one-call assessment policy"]
+```
+
+The release migration must:
+
+1. verify #129 is complete and record counts for ingests, placement items,
+   VerificationEvents, Relationship statuses/supports, review tasks, search
+   documents, vectors, and embedding jobs
+2. pause placement workers and prevent mixed V2.3/V2.4 placement execution
+3. add `placement_assessments`, stable claim keys, nullable assessment audit
+   fields, the bounded team threshold override, and semantic review expiry
+   fields without rewriting existing semantic rows
+4. set each currently unresolved semantic review (`open` or `acknowledged`) to
+   expire seven days after the V2.4 cutover; leave resolved/canceled/expired
+   tasks, security quarantine, and Conflict cases unchanged
+5. deploy the API and workers using the one-call contract, then resume claims;
+   an in-flight item with no persisted valid assessment may call once, while
+   one with a valid persisted assessment resumes from that row
+6. reconcile the before/after counts and prove that Relationship
+   status/support, evidence, search-document hashes, vectors, embedding jobs,
+   and active embedding/index contracts did not change
+
+The migration makes no model call, recomputes no confidence, changes no
+Relationship status or support, and does not reinterpret legacy
+VerificationEvents. It does not enqueue embedding jobs or re-embed
+Relationships, Evidence, or Entities. V2.4 leaves
+`projection_format_version`, rendered search text, and embedding inputs
+unchanged; therefore any re-embedding performed for #129 belongs to #129, not
+this migration.
+
+Rollback is valid only before V2.4 writes are admitted. After traffic resumes,
+restore the pre-cutover database and matching application release together
+rather than running V2.3 workers against persisted V2.4 claims.
+
 ### Vector storage consequence
 
 Every search document carries `team_id`, source/document version, embedding
@@ -534,7 +633,8 @@ Team/shard claim rules belong in
 One PostgreSQL transaction commits each accepted semantic change:
 
 1. the ingest and exact evidence
-2. schema-valid verifier decisions
+2. references to the first schema-valid persisted assessment and its
+   assessor-derived decisions
 3. Entity/Value resolution events
 4. Relationship observations, immutable support links, and support decisions
 5. Relationship current-state changes and transition events
@@ -562,9 +662,10 @@ fanout bound and aborts before changing the current pointer when the bound would
 be exceeded. It never batches one source activation into partially visible
 semantic states.
 
-Evidence source revisions, evidence fragments, security events, material
-verification events, support links, support decision events, resolution events,
-correction events, and Relationship transitions are append-only.
+Evidence source revisions, evidence fragments, security events, persisted
+placement assessments, material verification events, support links, support
+decision events, resolution events, correction events, and Relationship
+transitions are append-only.
 Corrections append decisions and update current-state rows in the same
 transaction; they do not rewrite the original evidence.
 
@@ -581,7 +682,7 @@ Repeated accepted evidence from one profile attaches to that owner's canonical
 Relationship identity. It does not insert a parallel semantic edge for the same
 owner. Equivalent Relationships from another profile remain separately owned
 and are grouped by `semantic_group_key` during recall. Compact current counts
-may live on the Relationship row; exact evidence and verifier history remain
+may live on the Relationship row; exact evidence and assessor history remain
 normalized and are fetched only for trace.
 
 Representative constraints include:
@@ -613,18 +714,21 @@ Predicate definitions are versioned PostgreSQL records. The registry owns
 canonical keys, aliases, allowed endpoint kinds, `relationship_kind`,
 `current_cardinality`, lifecycle state, and version.
 
-Global built-ins seed per-team `team_predicate_definitions`. Provider-backed
-extraction may propose team-local predicate candidates, but PostgreSQL
-normalization, RLS, append-only versioning, and the strict verifier contract
-decide whether a candidate can be referenced. Providers cannot directly mutate
-Relationship lifecycle or active graph state.
+Global built-ins seed per-team `team_predicate_definitions`. The assessor
+receives at most 100 structured active definitions, with exact evidence
+key/alias matches first. PostgreSQL normalization, RLS, append-only versioning,
+and the
+[strict assessor contract](Write-Pipeline#strict-assessor-contract) decide
+whether a returned option can be referenced. Providers cannot create registry
+vocabulary or directly mutate Relationship lifecycle or active graph state.
 
 The registry may grow without a fixed vocabulary ceiling. Extraction receives
-only a bounded evidence-relevant subset. Commit resolution checks the complete
-team registry under a team/key transaction lock. A compatible existing
-definition is reused; a safe novel definition and its Relationship commit
-atomically. Alias/key ambiguity or kind incompatibility produces task-backed
-review without expanding an existing definition's endpoint allowlist.
+only the bounded structured catalog. Commit resolution checks the complete team
+registry under a team/key transaction lock. A compatible existing definition
+is reused. Unmatched wording, catalog truncation without a valid exact match,
+alias/key ambiguity, or kind incompatibility produces task-backed review and no
+Relationship; the write path never expands an existing endpoint allowlist or
+registers a new definition.
 
 The registry does not contain `policy_family`. The
 canonical contract and unknown-predicate behavior are defined in
@@ -736,6 +840,9 @@ drills. Runbook commands belong in
 | Backfill starves foreground writes | a large generation occupies every embedding claim slot | reserve work-class capacity, fill foreground-first, and alert on age for both classes |
 | Stale worker completes an old projection | an old node writes a vector for an earlier document after format-2 text commits | exclusive restart plus source/document/contract version predicates on completion |
 | Mixed-version rollback corrupts search state | old workers interpret new generation fields or new workers run against restored old schema | treat application release and database backup as one rollback unit and prohibit mixed-version operation |
+| Restart causes a second assessor decision | a worker receives a valid response, loses its lease before semantic commit, then calls the model again | persist the first valid normalized response under a unique stable claim key and reload it on every retry |
+| V2.4 migration silently changes existing knowledge | a backfill applies the new threshold to legacy events and demotes active Relationships | keep new audit fields nullable, prohibit rescoring/status/support updates, and reconcile lifecycle counts before opening traffic |
+| Review expiry activates uncertain knowledge | an expiry job treats an unanswered confidence task as approval | expiry changes only workflow state; structurally complete Relationships remain pending and unresolved structures remain observations |
 
 ## Storage Invariants
 
@@ -784,3 +891,9 @@ drills. Runbook commands belong in
     vector RRF opens only after the team generation is transactionally current.
 28. Generation and foreground embedding work share leases, version fences, and
     starvation-free claim capacity.
+29. A placement claim stores at most one valid normalized assessment and every
+    restart, lease reclaim, and commit retry reuses it.
+30. V2.4 migration makes no model or embedding call and changes no existing
+    Relationship status, support, search text, vector, or embedding job.
+31. Semantic review expiry closes the task without granting support or creating
+    active knowledge.

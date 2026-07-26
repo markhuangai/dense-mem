@@ -1,6 +1,6 @@
 # Quick Start
 
-This is the local PostgreSQL setup and `dense-mem.v2.3` smoke test. Use a
+This is the local PostgreSQL setup and `dense-mem.v2.4` smoke test. Use a
 pinned release that advertises that contract.
 
 ## Local Shape
@@ -13,7 +13,7 @@ flowchart LR
   Operator["Operator"] --> Control["Control :8090"]
   UI --> Server
   Server --> PG[("PostgreSQL + pgvector<br/>knowledge, graph and search")]
-  Server --> AI["Reviewer, verifier,<br/>embedding providers"]
+  Server --> AI["Assessor and<br/>embedding providers"]
   Control --> PG
 ```
 
@@ -37,7 +37,7 @@ cp .env.example .env
 ```
 
 Verify the release tag, artifact checksum/signature, and release notes. Stop if
-the release does not advertise `dense-mem.v2.3` and PostgreSQL authority.
+the release does not advertise `dense-mem.v2.4` and PostgreSQL authority.
 
 ### Upgrading an existing installation
 
@@ -53,12 +53,17 @@ source before 2.1.1 -> run 2.1.1 migration -> current release
 fresh install 2.2.0+ -----------------------> current release
 ```
 
-The V2.3 Relationship projection upgrade is an exclusive restart: complete the
-blocking format-2 text projection before traffic, then allow
+The Relationship projection upgrade tracked by #129 is an exclusive restart:
+complete the blocking format-2 text projection before traffic, then allow
 Relationship-only vectors to warm asynchronously behind the team-wide vector
 gate. Follow
-[Relationship projection upgrade](Operations-Runbook#relationship-projection-upgrade);
-do not run mixed-version API or worker processes.
+[Relationship projection upgrade](Operations-Runbook#relationship-projection-upgrade).
+
+Only after that prerequisite is complete, apply the
+[V2.4 one-call placement upgrade](Operations-Runbook#v24-one-call-placement-upgrade).
+The V2.4 migration adds placement/review state but does not rescore legacy
+knowledge, change search projections, enqueue embedding jobs, or re-embed data.
+Do not run mixed-version API or placement workers in either cutover.
 
 ## 2. Configure Required Values
 
@@ -71,7 +76,7 @@ Complete [Required Startup Settings](Configuration#required-startup-settings):
 - non-template PostgreSQL credentials
 - embedding provider, model, dimensions, document/normalization contract
 - pgvector distance and compatible exact/ANN search-index strategy
-- structure-reviewer and strict-verifier model contract
+- one-call assessor model, prompt, and closed contract
 - control authentication/encryption secrets
 - Redis only when the chosen topology requires it
 
@@ -90,7 +95,7 @@ curl -fsS http://127.0.0.1:8080/ready
 ```
 
 Continue only when readiness confirms PostgreSQL migrations, `pgvector`,
-embedding/verifier contracts, and required coordination.
+embedding/assessor contracts, and required coordination.
 
 Local surfaces:
 
@@ -121,7 +126,7 @@ export DENSE_MEM_API_KEY="dm_..."
 Follow [MCP Clients](MCP-Clients) and connect the LLM host. The host initializes
 the server and calls `tools/list`; verify:
 
-- contract `dense-mem.v2.3`
+- contract `dense-mem.v2.4`
 - `remember` accepts evidence plus optional hints
 - `get_memory_placement` returns processing and search state
 - `recall_memory` returns ranked Evidence contexts plus
@@ -165,7 +170,8 @@ Valid outcomes:
 
 - `relationship_active` with effective support
 - `relationship_pending_evidence` retained but excluded from active/default recall
-- owner-scoped review for identity, predicate, same-owner conflict, scope, or time
+- owner-scoped review for support confidence, identity, predicate, same-owner
+  conflict, scope, or time
 - an open team Conflict case for a material cross-profile disagreement; placement
   may still complete while that case awaits nightly review
 - explicit rejected/quarantined/failed outcome
@@ -230,7 +236,7 @@ The smoke passes when:
 - eligible SemanticEdges are readable without another graph database
 - Redis is absent and one-process coordination is intentional
 - restart preserves memory
-- normal recall excludes pending Relationships, verifier history, and Hypotheses
+- normal recall excludes pending Relationships, assessor history, and Hypotheses
 - trace returns exact provenance
 - portal graph shows only Entity/Value nodes and eligible SemanticEdges
 - pending/failed vector work does not change semantic truth

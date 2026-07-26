@@ -19,7 +19,7 @@ in this architecture page.
 | PostgreSQL control plus a second semantic store | PostgreSQL owns ledger, current semantic state, graph reads, full text, and `pgvector` |
 | mixed semantic-object services and graph records | Entity, Value, RelationshipObservation, VerificationEvent, profile-authored RelationshipRecord, Support, CrossReference, Transition, Hypothesis |
 | graph-store startup/bootstrap | server requires PostgreSQL + `pgvector` |
-| verifier exposes alternate claim-decision vocabulary | one closed response with bounded `security_signals`, `entity_results`, and `relationship_results`; no model schema-version field or stored-Relationship context |
+| separate structure/support provider contracts or alternate claim-decision vocabulary | one closed assessor response with bounded `security_signals`, `entity_results`, and `relationship_results`; no model schema-version field or stored-Relationship context |
 | graph-specific adapters define behavior | repository ports expose bounded semantic-edge/search/trace operations |
 | Redis optional rate/SSE backend | same coordination-only role; mandatory when distributed contracts require it |
 
@@ -56,8 +56,7 @@ internal/
     redis/
       coordination only
   provider/
-    reviewer/
-    verifier/
+    assessor/
     embedding/
     dream/
   transport/
@@ -101,7 +100,7 @@ Forbidden dependencies:
   fixtures.
 - Every tenant-owned table, key, hot lookup, queue, and idempotency key carries
   `team_id`.
-- Reviewer output is an immutable proposal; deterministic server policy owns
+- Assessor output is an immutable persisted result; deterministic server policy owns
   identity, lifecycle, status, effective support, and durable commit.
 - Recall and trace use team-scoped PostgreSQL full-text, vector, and adjacency
   paths.
@@ -123,7 +122,7 @@ For each implementation change:
 8. record schema/config/API/migration implications
 
 If the change may affect retrieval quality, ranking, placement accuracy,
-verifier/reviewer behavior, embeddings, search documents, or performance, run
+assessor behavior, embeddings, search documents, or performance, run
 the deterministic 1k evaluation/comparison and put the result in the PR. Reuse
 a prior successful import only when import logic, schema, seed identity,
 placement terminality, and search/vector freshness are unchanged.
@@ -174,7 +173,7 @@ the relevant uniqueness constraints.
 | JSON contract | closed schemas, conditionals, bounds, exact enums, bounded security signals, and no removed/unknown fields |
 | PostgreSQL integration | migrations, RLS, constraints, atomic source activation, append-only security/support history, queues/leases, partial indexes, vector operators |
 | repository/service integration | actual transactions, concurrent create recheck, idempotency, current-state/transition consistency |
-| provider-adapter protocol | malformed JSON, extra/missing/duplicate results, wrong IDs/spans, model security signals, timeouts, 429, complete regeneration |
+| provider-adapter protocol | malformed JSON, extra/missing/duplicate results, wrong IDs/spans, model security signals, timeouts, 429, one request per claim, and persisted-result reuse |
 | recall evaluation | exact/full-text/vector/adjacency relevance, RRF/priority profiles, deterministic reranking, exact-vs-HNSW Recall@K, temporal/tenant/profile-conflict slices |
 | MCP contract | `tools/list` visibility, `tools/call` schema/scope enforcement, current contract semantics, and safe errors |
 | browser UAT | ambiguity, trace, correction, forget, quarantine release, Hypothesis styling, role/scope behavior |
@@ -195,7 +194,7 @@ real PostgreSQL/`pgvector` instance and actual service logic.
 - later conflict produces an impact preview and selected-observation split
 - caller-owned split/merge leaves other profiles' observations unchanged
 - concurrent equivalent creates converge
-- a cross-team/non-candidate ID invalidates the whole verifier response
+- a cross-team/non-candidate ID invalidates the whole assessor response
 
 ### Relationship lifecycle
 
@@ -203,7 +202,12 @@ real PostgreSQL/`pgvector` instance and actual service logic.
 - another profile's equivalent/correcting evidence creates its own Relationship
   and cross-reference
 - `insufficient` produces `pending_evidence` and no SemanticEdge
-- one accepted entailed effective support activates the Relationship
+- one accepted entailed support at or above the effective team threshold
+  activates the Relationship
+- entailed support below the threshold remains pending with a seven-day
+  support-confidence review; confidence equal to the threshold passes
+- a threshold change affects future/in-flight commits and never rescores a
+  completed or held assessment
 - additional independent accepted sources improve provenance but do not change
   lifecycle class or correlation rank
 - two stored Relationships do not automatically prove a third Relationship
@@ -213,12 +217,13 @@ real PostgreSQL/`pgvector` instance and actual service logic.
   semantic state
 - a quarantined or later failed replacement never reactivates the prior revision
 - existing predicate aliases resolve to one canonical team definition
-- a safe novel predicate definition and Relationship commit atomically
-- alias/key ambiguity, endpoint-kind mismatch, and relationship-kind collision
+- unmatched predicate wording, catalog truncation without a valid exact match,
+  alias/key ambiguity, endpoint-kind mismatch, and Relationship-kind collision
   create review and no Relationship
+- assessor output never creates or edits a predicate definition
 - forget retracts the edge while preserving nodes/history
 
-### Strict verifier
+### Strict assessor
 
 Use table-driven fixtures for:
 
@@ -243,16 +248,43 @@ cross-array unresolved endpoint
 valid complete response
 ```
 
-Assert that every invalid case causes complete regeneration and zero semantic
-commit. A valid non-empty security-signal array quarantines the complete item
+Assert that every invalid case releases the claim with bounded diagnostics,
+makes no inline regeneration call, and causes zero semantic commit. A later
+claim may make one new complete request only if no valid assessment was
+persisted. A valid non-empty security-signal array quarantines the complete item
 and creates no `VerificationEvent` or other semantic subset.
+
+Persist a valid response, then force process exit, lease loss, pause/resume, and
+semantic transaction failure before commit. Each resumed path must load the
+same assessment row, create the same material decisions, and make zero further
+assessor calls. A unique stable claim key must prevent two workers from
+persisting different valid responses.
+
+### Semantic review expiry
+
+Use an injected virtual clock; do not sleep for seven days. Cover every semantic
+kind (`support_confidence`, `identity`, `predicate`, `scope`, and `time`) at one
+instant before, exactly at, and one instant after `expires_at`.
+
+- only `open` or `acknowledged` tasks become `expired`
+- expiry is idempotent under two workers and lease recovery
+- expiry grants no support and creates no active Relationship or Hypothesis
+- a structurally complete pending Relationship becomes Dream-eligible only
+  after expiry
+- unresolved identity, predicate, scope, or time remains Evidence plus
+  Observation only
+- selecting a supplied Entity/predicate option reuses the persisted assessment
+  and makes zero assessor calls
+- accept/correct with exact new evidence creates one new placement claim and
+  makes at most one assessor call
+- security quarantine and cross-profile Conflict cases are unaffected
 
 ### Injection boundary
 
 - the same scanner policy and bytes produce the same bounded signals/decision
 - scanner error or deterministic quarantine reaches no model
 - guarded evidence receives fixed untrusted-data guidance
-- reviewer/verifier signals only escalate and retain exact original spans
+- assessor signals only escalate and retain exact original spans
 - manager plus `write` is required for release; release re-enters guarded
 - quoted security guidance and adversarial variants measure false positives and
   bypasses separately
@@ -304,7 +336,7 @@ called.
   and more than 75% support; at/after TTL, a unique authority or at least two
   independent source groups with more than 50% support may resolve
 - authoritative opposition blocks ordinary resolution unless the timed strong
-  override has verifier-confirmed later replacement time; recorded fallback
+  override has assessor-confirmed later replacement time; recorded fallback
   cannot override authority
 - nightly resolution atomically sets losing stale Relationships to
   `status=superseded`, writes `valid_to`, appends Relationship and Conflict
@@ -330,7 +362,8 @@ Run real concurrent tests for:
 - source activation at, below, and above the server-defined hard dependency
   fanout bound
 - quarantine release racing a repeated model security signal
-- verifier completion after placement lease loss
+- valid assessor response persistence followed by placement lease loss; the
+  reclaimed worker must not call again
 - correction racing recall and embedding work
 - C's conflict response racing a nightly claim and a newer case version
 - two nightly workers claiming the same due case and one losing/recovering lease
@@ -354,7 +387,7 @@ Measure at representative team sizes and concurrency:
 | Path | Required evidence |
 | --- | --- |
 | remember intake | p50/p95/p99 latency, transaction/lock time, throughput |
-| placement | stage latency, model time, retries, commit time, queue age |
+| placement | stage latency, assessor calls/claim, input/output tokens, model time, persisted-result reuse, commit time, queue age |
 | full text | plan, rows, buffers, p95/p99 |
 | exact vector | eligible row count and latency |
 | HNSW vector | Recall@K versus exact, tuples scanned, p95/p99 |
@@ -373,7 +406,12 @@ number alone. Include concurrent reads/writes and tenant-filter selectivity.
 
 - domain term has one canonical owner in the wiki
 - no active pending Relationship or Hypothesis path
-- verifier response remains closed and atomic
+- assessor response remains closed and atomic; one claim never makes a second
+  request
+- first valid assessment is persisted and reused before semantic policy/commit
+- positive-support confidence gates only entailed Relationships; it cannot
+  override identity, predicate, scope, time, security, or conflict holds
+- semantic review expiry never grants support or creates a Hypothesis directly
 - scanner decisions and model signals can only restrict semantic processing
 - source currentness, support revocation, status transition, and search intent commit
   atomically
@@ -393,7 +431,10 @@ number alone. Include concurrent reads/writes and tenant-filter selectivity.
 | --- | --- | --- |
 | Package cleanup becomes a big-bang rewrite | contributors rename all services before one vertical path works | small changes, adapters at boundaries, and deployable test gates |
 | Unit mocks hide storage bugs | mocked repository passes while RLS or unique identity fails | real PostgreSQL/`pgvector` integration is required |
-| Verifier accommodation returns | adapter accepts old/alternate field names to keep tests green | one committed schema, negative fixtures, and full regeneration |
+| Assessor accommodation returns | adapter accepts old/alternate field names to keep tests green | one committed schema, negative fixtures, and no local coercion or inline regeneration |
+| Restart breaks the one-call promise | a valid response is lost before semantic commit and the next worker calls again | append-once assessment row, stable claim key, and crash/lease/transaction integration fixtures |
+| Seven-day tests become slow or flaky | tests use wall-clock sleeps or race the expiry scheduler | injected clock with exact boundary cases and two-worker idempotency checks |
+| V2.4 migration triggers unnecessary vectors | a broad version bump rewrites search documents and queues embeddings | populated #129 fixture, before/after search hashes/job counts, and a hard zero-provider-call assertion |
 | ANN benchmark is misleading | global unfiltered test passes while small tenants lose results | tenant-filtered exact baseline under representative skew/concurrency |
 | Cross-profile tests collapse to one actor | ownership bugs pass because every fixture uses one profile | mandatory A/B/C read, correct, split, adopt, and forget integration cases |
 | Scanner fixtures test keywords only | ordinary security documentation is quarantined while obfuscated control text passes | quoted/adversarial minimal pairs plus pass/guarded/quarantine confusion and bypass gates |
@@ -406,7 +447,8 @@ The implementation is release-ready only when:
 
 1. every target domain/storage/API acceptance invariant passes
 2. PostgreSQL and `pgvector` integration tests run in CI
-3. strict verifier negative fixtures prove zero partial commits
+3. strict assessor negative fixtures prove zero partial commits, no inline
+   regeneration, and one request per claim
 4. exact-vs-ANN recall and concurrent load meet release gates
 5. server, Compose, configuration, readiness, documentation, and dependencies
    contain no secondary durable knowledge-store path
@@ -416,3 +458,10 @@ The implementation is release-ready only when:
 8. populated-database migration tests prove Relationship-only re-embedding,
    resumable text convergence, fair queue drain, whole-team vector activation,
    and unchanged Evidence/index contracts
+9. V2.4 migration tests start after #129 and prove zero model calls, rescoring,
+   lifecycle/search mutation, embedding jobs, or re-embedding
+10. virtual-clock tests prove seven-day semantic review expiry and the
+    pending-to-Dream boundary without promotion
+11. paired multi-round scripted and real-host evaluation reports placement
+    quality, confidence reliability, call/token/latency savings, and review
+    burden

@@ -28,7 +28,7 @@ memory, and discards that working graph after the run.
 
 Inputs include only same-team Relationships that are `active`, have effective
 support, and match the selected time scope. Pending Relationships, evidence,
-observations, verifier history, reviews, and Hypotheses are excluded.
+observations, assessor history, reviews, and Hypotheses are excluded.
 
 Equivalent authored Relationships collapse to one analytical edge so several
 profiles repeating the same meaning do not multiply topology. A bounded edge

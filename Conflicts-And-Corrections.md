@@ -27,7 +27,7 @@ sequenceDiagram
 
   User->>Host: Production now deploys from release
   Host->>DM: remember(new evidence)
-  DM->>PG: Preserve evidence, observation, verifier event, and conflict
+  DM->>PG: Preserve evidence, observation, VerificationEvent, and conflict
   DM-->>Host: relationship_needs_review
   Host->>DM: trace_memory(related relationship_id)
   DM->>PG: Load current state and append-only history
@@ -42,7 +42,8 @@ sequenceDiagram
 An unresolved same-owner conflicting observation is not an active edge. The
 owner's prior eligible Relationship stays current unless accepted evidence and
 deterministic predicate behavior permit supersession. A schema-valid, entailed
-cross-owner correction can become the caller's active edge and append a
+cross-owner correction at or above the team support threshold can become the
+caller's active edge and append a
 cross-reference to the other profile's record.
 
 ## Why Review Is Required
@@ -106,7 +107,7 @@ evidence through normal `remember`; any confirmation C remembers belongs to C an
 may `confirm` B or `challenge` A. It does not directly edit either record.
 
 If A later accepts the correction directly, A submits or adopts exact evidence
-through the normal verifier. A may then supersede A's old Relationships and
+through the normal one-call assessor. A may then supersede A's old Relationships and
 create A's corrected Relationships. Separately, the system Conflict reviewer may
 supersede A's stale episode after the team case resolves. Adoption preserves B's
 evidence author, provenance, and source-group identity; it does not count the
@@ -132,7 +133,7 @@ t2  B owns Relationship B1: production deploys_from release
 
 At `t2`, B's placement creates B1, the `corrects` cross-reference, and an open
 team Conflict case. A1, A's evidence, support, status, and validity remain
-unchanged during placement. The AI verifier does not decide that a conflict
+unchanged during placement. The AI assessor does not decide that a conflict
 exists; server policy detects the incompatible single-current state after B's
 submitted evidence verifies.
 
@@ -237,11 +238,11 @@ cleaned up.
 
 Authoritative opposition normally blocks automatic replacement. A timed strong
 override is allowed only when the proposed winner has at least four independent
-source groups, more than 75% of counted support, and verifier-confirmed evidence
+source groups, more than 75% of counted support, and assessor-confirmed evidence
 that the replacement became effective after the losing authoritative position.
 `recorded_fallback` time cannot override authoritative opposition.
 
-The cutoff is the evidence-supported effective time when the verifier confirms
+The cutoff is the evidence-supported effective time when the assessor confirms
 the extracted temporal bound. If no reliable bound exists and no authority
 override is needed, the reviewer may use the first contradictory placement time
 as `recorded_fallback`. Missing or conflicting time keeps the case open when the
@@ -347,25 +348,20 @@ The client may select only a server-supplied same-team candidate:
 {
   "ingest_id": "ing_01J...",
   "placement_item_id": "item_identity_1",
+  "placement_item_version": 3,
   "action": "select_entity",
-  "decision": {
-    "mention_ref": "mark",
-    "entity_id": "ent_mark_huang"
-  },
-  "evidence": [
-    {
-      "content": "I mean Mark Huang, the Dense-Mem maintainer.",
-      "source_type": "manual",
-      "authority": "authoritative",
-      "source_group": "user-resolution:ing_01J..."
-    }
-  ],
+  "entity_ref": "mark",
+  "candidate_entity_id": "ent_mark_huang",
   "idempotency_key": "identity-resolution-1"
 }
 ```
 
+Selecting a supplied candidate reapplies the persisted assessment
+deterministically and makes zero assessor calls. If exact current-session
+context cannot select one supplied option, the client asks the user.
 `confirm_new_entity` requires evidence that distinguishes a new identity. The
-client never allocates the new ID.
+client never allocates the new ID; the new evidence becomes one new placement
+item with at most one assessor call.
 
 A late same-name conflict may require a split. Dense-Mem first shows only the
 caller's observations and Relationships that may move. After confirmation, it
@@ -383,7 +379,7 @@ may:
 - route a proposed registry change through a separately authorized,
   versioned vocabulary workflow
 
-The verifier and ordinary review endpoint cannot add a predicate definition.
+The assessor and ordinary review endpoint cannot add a predicate definition.
 A Hypothesis is not an unknown predicate; it is an isolated dream output using
 an already registered predicate. See [Dreaming](Dreaming).
 
@@ -391,20 +387,20 @@ an already registered predicate. See [Dreaming](Dreaming).
 
 | Action | Meaning |
 | --- | --- |
-| `accept` | append authoritative client evidence for the pending observation, then rerun normal policy |
+| `accept` | append exact authoritative client evidence as one new placement item and run one assessment |
 | `reject` | append the rejection and preserve observation/history |
-| `correct` | append replacement evidence and reprocess affected knowledge |
+| `correct` | append exact replacement evidence as one new placement item and run one assessment |
 | `forget` | retract the caller-owned selected Relationship from active reads while retaining its ledger |
 | `acknowledge` | mark review consumption; change no semantic state |
 
-`accept` does not bypass verification or directly assign active status. New
-evidence enters normal verification; deterministic support policy decides
+`accept` does not bypass assessment or directly assign active status. New
+evidence enters the one-call assessor; deterministic support policy decides
 whether the Relationship becomes active. See
 [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle#source-independence-and-support-policy).
 
 These client actions mutate only a Relationship owned by the authenticated
 profile. To address another profile's Relationship, the caller submits new
-evidence through `remember`; deterministic post-verification identity and
+evidence through `remember`; deterministic post-assessment identity and
 conflict policy derive the appropriate cross-reference and case update. The
 system Conflict reviewer is the only non-owner lifecycle writer for a
 cross-profile stale-state case. There is no cross-profile client `accept`,
@@ -418,6 +414,7 @@ A correction appends evidence; it is not an in-place text edit.
 {
   "ingest_id": "ing_01J...",
   "placement_item_id": "item_relationship_1",
+  "placement_item_version": 4,
   "action": "correct",
   "evidence": [
     {
@@ -468,7 +465,7 @@ A correction appends evidence; it is not an in-place text edit.
 }
 ```
 
-The replacement enters the same extraction, one-call verifier, deterministic
+The replacement enters the same one-call assessor, deterministic
 lifecycle, and PostgreSQL transaction as every `remember`. Prior evidence and
 transitions remain traceable.
 
@@ -551,10 +548,10 @@ this page owns how the client sees and resolves uncertainty.
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
 | Wrong review target | a decision for one conflict applies to another | require ingest/item/Relationship IDs, idempotency key, and echo an impact summary |
-| Accept bypasses policy | a client click writes an active Relationship directly | append evidence and route through strict verification and deterministic lifecycle |
+| Accept bypasses policy | a client click writes an active Relationship directly | require exact new evidence and route its new placement item through one assessment plus deterministic lifecycle |
 | Correction erases history | old evidence is edited to match new truth | immutable fragments plus append-only observations, decisions, support, and transitions |
 | Homonym split corrupts history | finance-team Mark causes all Mark edges to move | client-confirmed impact preview and caller-owned observation-ID-level reassignment |
-| Unknown predicate expands vocabulary | verifier invents `dogfoods` as a durable key | registry allowlist and separate authorized vocabulary workflow |
+| Unknown predicate expands vocabulary | assessor invents `dogfoods` as a durable key | structured registry allowlist and separate authorized vocabulary workflow |
 | Wrong supersession | a many-valued predicate is treated as single-current | explicit `current_cardinality`, scope/time comparison, and before/after preview |
 | Forget becomes data loss | deleting an edge also removes source and audit history | transactional retraction status; nodes and append-only ledger remain |
 | Stale vector confuses review | vector search surfaces meaning from before correction | source-version checks, exact trace by ID, and explicit search freshness |
@@ -605,3 +602,7 @@ this page owns how the client sees and resolves uncertainty.
     `status=superseded` and `valid_to` updates, but cannot mutate raw evidence,
     support links, ownership, author attribution, Entity resolution, or source
     history
+22. selecting a server-supplied Entity or predicate option reuses the persisted
+    assessment and makes zero assessor calls
+23. accept, correct, and confirm-new-Entity actions require exact new evidence;
+    each creates one new placement item with at most one assessor call

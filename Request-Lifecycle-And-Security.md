@@ -278,7 +278,7 @@ The runtime advertises supported MCP protocol versions. Do not hardcode one
 protocol date in the manual as timeless.
 
 The negotiated MCP protocol version and Dense-Mem tool contract
-`dense-mem.v2.3` are
+`dense-mem.v2.4` are
 different versions. The host follows the current `tools/list` schemas and
 server instructions instead of applying a cached input shape from another
 Dense-Mem release.
@@ -382,12 +382,14 @@ Typed error schema is in [Technical Reference](Technical-Reference#error-contrac
 
 ## Provider Isolation
 
-Evidence and Entity/predicate candidates are untrusted prompt data. Stored
-Relationships, source authority, and source independence are not verifier
-inputs. The write path uses a deterministic `pass | guarded | quarantine` scan,
-bounded payloads, capability-free providers, required bounded model security
-signals, structured outputs, strict allowlist validation, and independent
-deterministic policy. Provider output can only escalate security handling; it
+Evidence, exact-span current Entity candidates, and the structured predicate
+catalog are untrusted prompt data. Stored Relationships, source authority, and
+source independence are not assessor inputs. The write path uses a
+deterministic `pass | guarded | quarantine` scan, one bounded capability-free
+assessor request per placement claim, required bounded model security signals,
+structured outputs, strict allowlist validation, persisted valid assessment,
+and independent deterministic policy. Provider output can only escalate
+security handling; it
 cannot clear a deterministic signal, select a stored Relationship or cross-team
 ID, create support, release quarantine, or write lifecycle status/support.
 

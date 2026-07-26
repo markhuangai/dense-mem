@@ -303,9 +303,9 @@ flowchart TD
 ```
 
 A profile's correction cannot down-rank another profile merely by labeling it
-wrong. Its challenge contributes only after normal evidence verification and
-cross-reference validation. Several profiles copying one source remain one
-source group. Verified cross-references, source independence, and applicable
+wrong. Its challenge contributes only after normal evidence assessment,
+confidence gating, and cross-reference validation. Several profiles copying one
+source remain one source group. Validated cross-references, source independence, and applicable
 recency may order otherwise eligible evidence within the bounded conflict view;
 none can substitute for the automatic-resolution floor, and recency cannot
 break a tie between two qualifying positions. The floor, deadline, time basis,

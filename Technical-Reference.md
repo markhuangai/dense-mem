@@ -1,6 +1,6 @@
 # Technical Reference
 
-This page defines public memory contract `dense-mem.v2.3`. The external memory
+This page defines public memory contract `dense-mem.v2.4`. The external memory
 contract is discovered and executed through MCP:
 
 ```text
@@ -37,7 +37,7 @@ The LLM host obtains this catalog with `tools/list` and invokes one entry with
 
 | Tool | Scope | Purpose |
 | --- | --- | --- |
-| `remember` | `write` | Persist evidence and queue extraction, one-call verification, and lifecycle placement. |
+| `remember` | `write` | Persist evidence and queue one integrated structure/support assessment per new placement item plus lifecycle placement. |
 | `get_memory_placement` | `read` | Poll processing/search state and inspect outcomes or review tasks. |
 | `resolve_memory_placement` | `write` | Supply a client decision, new evidence, correction, rejection, or forget request. |
 | `correct_entity_resolution` | `write` | Dry-run or apply a merge/split limited to caller-owned observations and Relationships. |
@@ -269,7 +269,7 @@ names are valid because homonyms exist. Canonical behavior is in
 | `polarity` | no | `+` or `-`; default `+`. |
 | `modality` | no | `statement`, `question`, `proposal`, `speculation`, or `quoted`. |
 | `evidence` | yes | One or more exact spans from this request. |
-| `valid_from` / `valid_to` | no | Evidence-supported real-world validity bounds extracted for verifier temporal judgment. |
+| `valid_from` / `valid_to` | no | Evidence-supported real-world validity bounds supplied as assessor hints. |
 | `correction_target` | no | Optional same-team Relationship target containing `relationship_id` and `expected_version`; it anchors an explicit correction but grants no winner or mutation authority. |
 | `conflict_context` | no | Response context containing one same-team `conflict_id` and `expected_version`; it requests re-evaluation but grants no decision authority. |
 | `client_comment` | no | Non-authoritative extraction note. |
@@ -313,7 +313,7 @@ from a prior `trace_memory` result:
 ```
 
 Dense-Mem revalidates team, version, visibility, and semantic relatedness after
-verification. A stale, cross-team, or unrelated target rejects the complete
+assessment. A stale, cross-team, or unrelated target rejects the complete
 `remember` request before evidence commits. The target ID can help the server
 derive `corrects` or `challenges`; it cannot set the target's status,
 validity, support, or conflict winner.
@@ -383,6 +383,11 @@ vector-search readiness.
           "relationship_status": "active",
           "category": "relationship_active",
           "reason": "Entailed authoritative user evidence.",
+          "assessment": {
+            "confidence_band": "meets_write_threshold",
+            "reason": "Entailed and met the current team automatic-write threshold.",
+            "assessment_policy_version": "one_call_v1"
+          },
           "review_task": null,
           "conflict": {
             "conflict_id": "conflict_01J...",
@@ -425,7 +430,7 @@ SemanticEdge visibility.
 Top-level placement items are stable evidence-processing items. Each item may
 contain zero or more `relationship_outcomes[]`; there is no preferred
 Relationship for an evidence item. Relationship outcomes preserve every bounded
-observation result that passed extraction and verification.
+observation result that passed integrated assessment.
 
 `conflict` is optional and appears when that Relationship opened or joined a
 durable cross-profile case. Placement returns `open` or `overdue`; `resolved`
@@ -447,20 +452,28 @@ Relationship outcome categories:
 | Category | Consumer behavior |
 | --- | --- |
 | `relationship_active` | active Relationship with effective accepted support |
-| `relationship_pending_evidence` | retained Relationship without effective support; exclude from normal recall; it may be eligible for dreaming |
+| `relationship_pending_evidence` | retained Relationship without effective support; exclude from normal recall; it may be eligible for dreaming only after semantic review expiry |
 | `relationship_needs_review` | present the exact same-owner Relationship conflict/scope question |
 | `predicate_needs_review` | present original wording and server options; no Relationship exists yet |
 | `relationship_rejected` | do not treat as true |
 | `identity_needs_review` | resolve identity before dependent knowledge can activate |
 
 A relationship outcome may lack `relationship_id` when unresolved identity or
-predicate, failed extraction, or invalid verification prevents canonical
+predicate, failed assessment, or unresolved scope/time prevents canonical
 Relationship creation. An evidence item may have no Relationship outcomes and
 still be current searchable evidence when it is safe and not superseded.
 
-`relationship_pending_evidence` and `relationship_rejected` are terminal
-processed outcomes for the evidence item. They do not by themselves put the
-placement item in `awaiting_review`.
+`assessment` never exposes raw confidence or the configured numeric threshold.
+`confidence_band` is exactly `meets_write_threshold`,
+`below_write_threshold`, or `not_applicable`. Its bounded reason and
+`assessment_policy_version` explain the policy branch without presenting model
+confidence as an evidence-level truth score.
+
+`relationship_rejected` is a terminal processed outcome. A
+`relationship_pending_evidence` outcome carrying an open/acknowledged
+support-confidence review keeps placement in `awaiting_review`; after that task
+is resolved, canceled, or expired, the pending outcome is terminal. The status
+alone does not imply an open task.
 `predicate_needs_review`, `identity_needs_review`, and
 `relationship_needs_review` require a durable review task; without that task the
 placement row is considered repairable orchestration state, not a valid held
@@ -470,9 +483,50 @@ review.
 Current collisions and ambiguities remain `awaiting_review`; operators do not
 reset placement rows manually.
 
-The strict internal verifier schema is not a public field. Its only canonical
+The strict internal assessor schema is not a public field. Its only canonical
 definition is
-[Memory Write Pipeline](Write-Pipeline#strict-verifier-contract).
+[Memory Write Pipeline](Write-Pipeline#strict-assessor-contract).
+
+### Review task
+
+```json
+{
+  "review_task_id": "review_01J...",
+  "version": 1,
+  "kind": "support_confidence",
+  "state": "open",
+  "question": "Should this evidence support Mark works_on Dense-Mem?",
+  "options": [
+    {
+      "action": "accept",
+      "requires_new_evidence": true
+    },
+    {
+      "action": "reject",
+      "requires_new_evidence": false
+    },
+    {
+      "action": "correct",
+      "requires_new_evidence": true
+    }
+  ],
+  "guidance": "Accept or correct only with exact current-session evidence; otherwise ask the user.",
+  "expires_at": "2026-08-02T12:00:00Z"
+}
+```
+
+Semantic `kind` is one of `support_confidence`, `identity`, `predicate`,
+`scope`, or `time`. State is `open`, `acknowledged`, `resolved`, `canceled`, or
+`expired`. All five semantic kinds expire after seven days. Security quarantine
+and cross-profile Conflict records use their separate contracts.
+Same-owner current-state conflict, correction, and policy tasks retain their
+separate existing review contract; they acquire this deadline only when the
+task is classified as one of the five semantic kinds.
+
+At expiry, placement becomes terminal. A structurally complete resolved
+Relationship remains `pending_evidence`; unresolved identity, predicate, scope,
+or time remains Evidence plus Observation only. Expiry never activates
+knowledge or creates a Hypothesis.
 
 ## `resolve_memory_placement`
 
@@ -486,14 +540,6 @@ Example:
   "action": "select_entity",
   "entity_ref": "person_1",
   "candidate_entity_id": "ent_mark_huang",
-  "evidence": [
-    {
-      "content": "I mean Mark Huang on the Dense-Mem team.",
-      "source_type": "manual",
-      "authority": "authoritative",
-      "source_group": "user-resolution:ing_01J..."
-    }
-  ],
   "idempotency_key": "resolution-1"
 }
 ```
@@ -501,12 +547,12 @@ Example:
 | Action | Required input | Result |
 | --- | --- | --- |
 | `acknowledge` | completed ingest | records acknowledgement only |
-| `select_entity` | placement item ID/version, Entity ref, and supplied candidate ID | appends identity decision and requeues affected observations |
-| `confirm_new_entity` | placement item ID/version, Entity ref, and distinguishing evidence | permits a fresh create decision; client allocates no ID |
-| `select_predicate` | placement item ID/version, observation ID, and supplied registered predicate/version | appends vocabulary review decision and reprocesses |
-| `accept` | placement item ID/version plus authoritative evidence | appends evidence and reruns strict placement |
+| `select_entity` | placement item ID/version, Entity ref, and supplied candidate ID | appends the identity decision and reapplies the persisted assessment with zero AI calls |
+| `confirm_new_entity` | placement item ID/version, Entity ref, and exact distinguishing evidence | stages the new evidence for one assessment; client allocates no ID |
+| `select_predicate` | placement item ID/version, observation ID, and supplied registered predicate/version | appends the vocabulary decision and reapplies the persisted assessment with zero AI calls |
+| `accept` | placement item ID/version plus exact authoritative session evidence | stages new evidence for one assessment; a bare acceptance cannot grant support |
 | `reject` | placement item ID/version plus bounded message | records rejection without deleting history |
-| `correct` | placement item ID/version plus replacement evidence | appends and reprocesses corrected input |
+| `correct` | placement item ID/version plus exact replacement evidence | appends corrected evidence and runs one assessment for that new item |
 | `release_quarantine` | placement item ID/version plus bounded reason; manager role and `write` scope | appends a security release and requeues the evidence as guarded |
 | `forget` | target Relationship ID, bounded message, and authoritative evidence | retracts active current state; preserves nodes and append-only ledger |
 
@@ -514,6 +560,11 @@ Every action that targets a placement item uses the item `version` returned by
 `remember` or `get_memory_placement` as `placement_item_version`. A stale value
 fails closed. Resolution fields are top-level closed-schema properties; there
 is no nested `decision` compatibility shape.
+
+Clients may select only server-supplied Entity/predicate options. If exact
+current-session context cannot resolve the question, the host asks the user.
+Selection never causes another assessor call. Any action that adds evidence
+creates a new placement item and therefore one new assessor call.
 
 No action writes a graph side channel or directly forces active status. Merge, split,
 supersede, support changes, and forget target caller-owned records only. A
@@ -556,7 +607,7 @@ Dry-run request:
 ```
 
 For `merge`, `target_entity_id` is one server-supplied same-team survivor. For
-`split`, it is null; the official reviewer/verifier decides whether the evidence
+`split`, it is null; the integrated assessor decides whether the evidence
 supports a distinct Entity and Dense-Mem allocates the ID.
 
 The dry run returns selected/blocked observation IDs, caller-owned Relationship
@@ -873,8 +924,8 @@ carry bounded safe metadata such as:
 
 ```json
 {
-  "code": "VERIFIER_RESPONSE_INVALID",
-  "message": "The verifier did not return the required complete response.",
+  "code": "ASSESSOR_RESPONSE_INVALID",
+  "message": "The assessor did not return the required complete response.",
   "retryable": true,
   "retry_after_seconds": 5,
   "correlation_id": "req_01J...",
@@ -908,24 +959,23 @@ The full lifecycle is in
 | Provider | Target payload |
 | --- | --- |
 | embedding | evidence/search document text or recall query under configured policy |
-| structure reviewer | submitted evidence and optional client proposal |
-| Entity/Relationship verifier | evidence, extracted items, immutable Entity candidate sets, and predicate registry options; no stored Relationships or source policy |
+| structure/support assessor | submitted evidence, optional client proposal, exact-span Entity candidate groups, and structured predicate options; no stored Relationships or source policy |
 | dream generator | compact allowed active/pending source Relationships plus existing endpoint and predicate IDs |
 
 Providers receive no API keys, password hashes, Redis contents, raw database
 access, unrestricted team graphs, or other-team evidence. Existing knowledge is
-not verifier input and cannot become source evidence. Dreaming receives only its
+not assessor input and cannot become source evidence. Dreaming receives only its
 separately bounded eligible inputs and has no knowledge-write capability.
 
 Provider configuration belongs in
-[Configuration](Configuration#reviewer-and-verifier).
+[Configuration](Configuration#assessor).
 
 ## Canonical References
 
 | Concern | Canonical page |
 | --- | --- |
 | authentication, tenant resolution, transport, and visibility | [Request Lifecycle And Security](Request-Lifecycle-And-Security) |
-| write stages, strict verifier response, regeneration, and failure | [Memory Write Pipeline](Write-Pipeline) |
+| write stages, strict assessor response, candidate prefetch, retry, confidence gate, and review expiry | [Memory Write Pipeline](Write-Pipeline) |
 | Entity reuse, creation, ambiguity, merge, and split | [Entity Identity And Resolution](Entity-Identity-And-Resolution) |
 | predicate and Relationship vocabulary/lifecycle | [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle) |
 | recall eligibility, PostgreSQL adjacency, and degradation | [Recall Ranking](Recall-Ranking) |
@@ -951,13 +1001,13 @@ Provider configuration belongs in
 
 ## Contract Acceptance
 
-Contract `dense-mem.v2.3` is incomplete until:
+Contract `dense-mem.v2.4` is incomplete until:
 
 1. generated MCP tool schemas match the committed examples and enums
 2. unknown write fields and forbidden lifecycle fields fail validation
 3. all semantic results use `relationship_id`
 4. pending categories never claim active status
-5. default recall contains evidence contexts but no verifier history,
+5. default recall contains evidence contexts but no assessment/verification history,
    pending Relationship, Community, or Hypothesis in `results[]`
 6. trace returns exact spans and lifecycle/correction lineage
 7. processing and search states vary independently
@@ -982,3 +1032,13 @@ Contract `dense-mem.v2.3` is incomplete until:
     resolved cases follow their specified primary-result behavior
 19. trace reconstructs every authorized Conflict position, version, event, and
     non-preferred evidence path
+20. normal semantic placement makes exactly one assessor call and persists the
+    first valid normalized response for retry/restart reuse
+21. public placement exposes threshold-relative confidence band, reason, and
+    policy version but never raw confidence
+22. Entity/predicate option selection makes zero AI calls, while new
+    support/correction evidence creates one new assessment item
+23. every semantic review returns an exact question, options, guidance, and
+    seven-day `expires_at`
+24. semantic review expiry never activates a Relationship or directly creates
+    a Hypothesis

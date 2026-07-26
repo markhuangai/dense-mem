@@ -78,10 +78,15 @@ host uses `tools/call` when the model selects a tool. Their canonical behavior
 is in
 [Request Lifecycle And Security](Request-Lifecycle-And-Security#mcp-memory-interface).
 
-For contract `dense-mem.v2.3`, verify:
+For contract `dense-mem.v2.4`, verify:
 
 - `remember` takes evidence and optional proposal
-- `get_memory_placement` returns processing and search state
+- `get_memory_placement` returns processing/search state, bounded assessment
+  policy, and semantic `review_tasks[]`
+- each semantic review exposes only stable ID/version, kind, state, question,
+  server-supplied options, bounded guidance, and `expires_at`
+- `resolve_memory_placement` may select a supplied option or submit exact new
+  evidence; it never accepts a client-supplied confidence score
 - `recall_memory` returns ranked Evidence contexts plus separate
   `related_relationships[]`, `related_communities[]`, `conflicts[]`,
   `related_hypotheses[]`, `search_states`, and `degradations[]`
@@ -95,6 +100,10 @@ field for short cross-tool guidance:
 
 ```text
 Remember accepts evidence asynchronously. Poll get_memory_placement.
+For a review, select only a server-supplied option when exact current-session
+context resolves it. Otherwise ask the user the returned question. Selecting an
+Entity or predicate option makes no AI call; accepting or correcting support
+requires exact new evidence and creates one new assessed placement item.
 Default recall returns bounded Evidence contexts plus compact Relationship
 discovery results in related_relationships. Trace relationship_id for
 evidence/history. Pending Relationships and Hypotheses are not active
@@ -119,9 +128,11 @@ Ask the client to:
 
 1. remember one small statement
 2. poll until processing completes
-3. inspect search state without treating vector freshness as write truth
-4. recall the statement
-5. trace its `relationship_id`
+3. when review is returned, inspect its expiry and either select an exact
+   supplied option or ask the user; never infer an unavailable choice
+4. inspect search state without treating vector freshness as write truth
+5. recall the statement
+6. trace its `relationship_id`
 
 Use [Quick Start](Quick-Start#6-remember-evidence) and
 [Using Dense-Mem](Using-Dense-Mem).

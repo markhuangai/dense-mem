@@ -17,8 +17,9 @@ Dense-Mem is suited to:
 - provenance needed to explain a remembered Relationship
 
 Dense-Mem is not a truth oracle. A host LLM chooses when to call it. Dense-Mem
-stores exact evidence, extracts structure, resolves identity, verifies in one
-strict response, applies deterministic lifecycle rules, and preserves trace.
+stores exact evidence, resolves structure/identity/support in one strict
+assessor response, applies a bounded confidence gate plus deterministic
+lifecycle rules, and preserves trace.
 
 ## How It Works
 
@@ -34,10 +35,10 @@ sequenceDiagram
   Host->>DM: remember(evidence, optional proposal)
   DM->>PG: Commit evidence and queued placement
   DM-->>Host: ingest_id
-  DM->>DM: Extract mentions and observations
-  DM->>PG: Load Entity, predicate, and Relationship candidates
-  DM->>DM: One strict Entity + Relationship verifier request
-  DM->>DM: Apply deterministic lifecycle
+  DM->>PG: Load exact Entity candidates and structured predicates
+  DM->>DM: One strict structure/support assessor request
+  DM->>PG: Persist first valid assessment
+  DM->>DM: Apply confidence gate and deterministic lifecycle
   DM->>PG: Commit current state, history, review, and search jobs
   alt Placement review required
     Host->>DM: get_memory_placement
@@ -97,7 +98,7 @@ flowchart LR
 | System boundary | [Architecture](Architecture) |
 | Entity IDs, names, aliases, homonyms, merge/split | [Entity Identity And Resolution](Entity-Identity-And-Resolution) |
 | Predicate, Relationship, evidence, verification, status/support, forget | [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle) |
-| `remember` process and strict verifier | [Memory Write Pipeline](Write-Pipeline) |
+| `remember` process and strict assessor | [Memory Write Pipeline](Write-Pipeline) |
 | PostgreSQL, `pgvector`, Redis, queues, and recovery | [Data Model And Storage](Data-Model-And-Storage) |
 | Tenant keys, composite constraints, RLS, queues, and future team sharding | [PostgreSQL Cluster-Safe Schema](PostgreSQL-Cluster-Safe-Schema) |
 | Recall eligibility, branches, adjacency, and trace escalation | [Recall Ranking](Recall-Ranking) |

@@ -38,7 +38,7 @@ Production startup requires:
 - PostgreSQL connection and migration/runtime credentials
 - `pgvector` extension availability, one active embedding contract, and one
   compatible active search-index generation
-- reviewer and verifier provider contracts
+- integrated assessor provider contract
 - embedding provider contract
 - control-portal authentication secret or explicit private/disabled policy
 - encryption/signing material required by enabled features
@@ -136,7 +136,7 @@ The adapter sends a dimensions request only when the configured provider/model
 supports it, but every response must have exactly the configured length.
 `AI_API_URL` must point at an endpoint that implements OpenAI-compatible
 `/embeddings` for the configured embedding model. A chat-only endpoint is not a
-valid embedding provider even if reviewer/verifier calls work there.
+valid embedding provider even if assessor calls work there.
 
 Embedding and cosine meaning is defined in
 [Vector Search And Ranking](Vector-Search-And-Ranking). Index compatibility and
@@ -162,61 +162,72 @@ The dimension matrix, 3,072-dimensional halfvec expression index, exact rerank,
 and activation procedure belong only in
 [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec#contract-and-index-decision-guide).
 
-## Reviewer And Verifier
+## Assessor
 
-The structure reviewer and Entity/Relationship verifier may share the embedding
-endpoint or use a separate OpenAI-compatible chat endpoint.
+The integrated structure/support assessor may share the embedding endpoint or
+use a separate OpenAI-compatible chat endpoint.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
-  URL{"AI_VERIFIER_API_URL set?"}
+  URL{"AI_ASSESSOR_API_URL set?"}
   URL -- No --> Shared["Use AI_API_URL and AI_API_KEY"]
-  URL -- Yes --> Key{"AI_VERIFIER_API_KEY set?"}
+  URL -- Yes --> Key{"AI_ASSESSOR_API_KEY set?"}
   Key -- No --> Invalid["Fail startup"]
   Key -- Yes --> Separate["Use separate endpoint and key"]
 ```
 
 | Variable | Target default | Meaning |
 | --- | --- | --- |
-| `AI_VERIFIER_API_URL` | empty | share `AI_API_URL` |
-| `AI_VERIFIER_API_KEY` | empty | share key only when URL is shared |
-| `AI_REVIEWER_MODEL` | none | structure-extraction model |
-| `AI_VERIFIER_MODEL` | none | one-call Entity and Relationship verifier |
-| `AI_VERIFIER_DISABLE_TEMPERATURE` | `false` | omit unsupported parameter |
-| `AI_VERIFIER_TIMEOUT_SECONDS` | `60` | one attempt timeout |
-| `AI_VERIFIER_MAX_CONCURRENCY` | `5` | shared reviewer/verifier gate |
-| `AI_VERIFIER_COOLDOWN_POLL_SECONDS` | `60` | one-probe interval after 429 |
-| `AI_VERIFIER_MAX_ENTITY_RESULTS` | `100` | hard per-request result cap |
-| `AI_VERIFIER_MAX_RELATIONSHIP_RESULTS` | `200` | hard per-request result cap |
-| `AI_VERIFIER_MAX_INPUT_BYTES` | `131072` | serialized request cap |
-| `AI_VERIFIER_MAX_OUTPUT_BYTES` | `131072` | response cap |
-| `AI_VERIFIER_MAX_RESPONSE_REGENERATIONS` | `2` | full-response correction attempts |
-| `RELATIONSHIP_MATCH_MAX_CANDIDATES` | `100` | post-verification server-side identity/conflict comparison cap |
+| `AI_ASSESSOR_API_URL` | empty | share `AI_API_URL` |
+| `AI_ASSESSOR_API_KEY` | empty | share key only when URL is shared |
+| `AI_ASSESSOR_MODEL` | none | integrated structure/support assessment model |
+| `AI_ASSESSOR_DISABLE_TEMPERATURE` | `false` | omit unsupported parameter |
+| `AI_ASSESSOR_TIMEOUT_SECONDS` | `60` | one request timeout |
+| `AI_ASSESSOR_MAX_CONCURRENCY` | `5` | process-wide assessor gate |
+| `AI_ASSESSOR_COOLDOWN_POLL_SECONDS` | `60` | one-probe interval after 429 |
+| `AI_ASSESSOR_MAX_ENTITY_RESULTS` | `100` | hard per-request extracted-Entity cap |
+| `AI_ASSESSOR_MAX_RELATIONSHIP_RESULTS` | `200` | hard per-request Relationship cap |
+| `AI_ASSESSOR_MAX_INPUT_BYTES` | `131072` | complete serialized request cap |
+| `AI_ASSESSOR_MAX_OUTPUT_BYTES` | `131072` | response cap |
+| `AI_ASSESSOR_MAX_CANDIDATE_CONTEXT_BYTES` | `32768` | combined Entity/predicate context inside the input cap |
+| `AI_ASSESSOR_MAX_ENTITY_CANDIDATES_PER_SURFACE` | `20` | exact current-name matches for one evidence span |
+| `AI_ASSESSOR_MAX_PREDICATE_OPTIONS` | `100` | structured active definitions, with exact evidence key/alias matches first |
+| `MEMORY_AUTO_WRITE_CONFIDENCE_THRESHOLD` | `0.7` | global bootstrap gate for positive Relationship support |
+| `MEMORY_SEMANTIC_REVIEW_TTL_DAYS` | `7` | support-confidence, identity, predicate, scope, and time review expiry |
+| `RELATIONSHIP_MATCH_MAX_CANDIDATES` | `100` | post-assessment server-side identity/conflict comparison cap |
 
-There is no partial-response retry setting. Each correction regenerates the
-complete `entity_results` and `relationship_results` response. If an ingest
-cannot fit the declared one-request contract, intake or extraction fails with a
-size error; the application does not split semantic dependencies and splice
-model outputs.
+There is no response-regeneration or partial-response retry setting. One
+placement claim may make at most one assessor request. A later claim may make
+one new request only when no valid fingerprint-matched assessment was persisted.
+If an item cannot fit the one-request contract, placement fails with a size
+error; the application does not split semantic dependencies or splice outputs.
 
 The closed contract and validation rules belong in
-[Memory Write Pipeline](Write-Pipeline#strict-verifier-contract).
+[Memory Write Pipeline](Write-Pipeline#strict-assessor-contract).
 The server may fingerprint that local contract for deployment and telemetry,
 but no schema-version field is sent to or accepted from the model.
+
+`MEMORY_AUTO_WRITE_CONFIDENCE_THRESHOLD` accepts `0..1` and comparison is
+inclusive. A manager may override it at
+`teams.config.memory_write.auto_write_confidence_threshold`. The update is
+audited and applies at commit time to in-flight/future assessments only; it
+never re-scores completed or already-held knowledge. It gates only positive
+Relationship support and cannot resolve identity, predicate, scope, time,
+security, or Conflict state.
 
 ## Entity Resolution
 
 | Variable | Target default | Meaning |
 | --- | --- | --- |
-| `ENTITY_RESOLUTION_MAX_CANDIDATES` | `20` | candidate allowlist per mention |
-| `ENTITY_RESOLUTION_VECTOR_OVERFETCH` | `5` | internal vector over-fetch multiplier |
 | `ENTITY_RESOLUTION_NAME_LOCK_TIMEOUT_SECONDS` | `5` | create-recheck lock timeout |
 | `ENTITY_RESOLUTION_RECHECK_LIMIT` | `2` | bounded retries after a concurrent candidate |
 | `ENTITY_DUPLICATE_REVIEW_ENABLED` | `true` | surface likely duplicate pairs |
 
-Vector similarity retrieves candidates only. No threshold authorizes an
-automatic merge. See
+The assessor receives only revalidated known IDs and exact token-bounded
+current canonical/alias matches. Vector similarity may support separate
+duplicate review, but it never enters the automatic write allowlist and no
+confidence threshold authorizes a merge. See
 [Entity Identity And Resolution](Entity-Identity-And-Resolution).
 
 ## Placement And Embedding Workers
@@ -282,6 +293,10 @@ same complete contract shape atomically instead of mutating individual fields.
 | `PGVECTOR_HNSW_ITERATIVE_SCAN` | `strict_order` | filtered approximate scan behavior |
 | `PGVECTOR_HNSW_MAX_SCAN_TUPLES` | `20000` | bounded iterative-scan work |
 | `PGVECTOR_HNSW_SCAN_MEM_MULTIPLIER` | `1` | bounded iterative-scan memory as a multiple of transaction-local `work_mem` |
+
+`RECALL_REQUIRED_BRANCH_PROFILE=relationship_v2.3` remains intentional under
+the V2.4 public tool contract: V2.4 changes write placement and review policy,
+not the recall branch/ranking contract.
 
 There is no Relationship lifecycle, support, source, authority, profile, or
 popularity weight. Disabling RRF changes only the Evidence branch-priority
@@ -478,7 +493,7 @@ flowchart TD
 ```
 
 Configuration errors fail visibly. Startup does not substitute another store,
-embedding model, verifier schema, resolver contract, or coordination mode.
+embedding model, assessor schema, resolver contract, or coordination mode.
 It also validates TTL/override bounds, local start time,
 batch/concurrency/lease/attempt ranges, and `APP_TIMEZONE` before starting the
 core Conflict worker.
@@ -501,7 +516,7 @@ core Conflict worker.
 | Incompatible ANN generation | a 3,072-dimensional contract attempts unsupported full-precision HNSW | capability resolver, persisted search-index generation, and controlled build gate |
 | Replica read is stale | recall after correction is routed to a lagging standby | primary-only freshness paths plus explicit lag/version gate |
 | Service scale-out exhausts PostgreSQL | each service instance opens 25 connections independently | deployment-wide pool formula and vector-query semaphore |
-| Partial verifier retry returns | operator enables an old setting that splices missing results | reject the unsupported setting, expose only full-response regeneration, and contract-test config parsing |
+| Inline assessor retry returns | operator enables an old setting that makes several requests or splices missing results inside one claim | reject the unsupported setting, expose one-call-per-claim behavior, and contract-test config parsing |
 | Redis fallback breaks replicas | outage switches multi-instance limits to local state | required distributed flag and no silent fallback |
 | ANN tuning harms quality | low HNSW breadth improves latency but loses tenant results | exact-baseline Recall@K gate and versioned atomic ranking contract/search generation |
 | Worker overload | placement and embedding workers exceed provider/database capacity | startup range checks, saturation metrics, and load testing |
@@ -519,7 +534,7 @@ core Conflict worker.
 - verify the active search-index generation, query plan, and exact-versus-ANN gate
 - verify the cluster-safe schema/key contract and two-team composite-FK/RLS
   probes
-- verify reviewer extraction and the closed verifier schema
+- verify the integrated assessor and its closed schema
 - create a manager key and least-privilege client key
 - confirm Redis requirement matches one- or multi-instance topology
 - run `remember` → placement → recall → trace, including a pending-vector case

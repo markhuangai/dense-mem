@@ -65,7 +65,7 @@ https://demo-dense-mem.markhuang.ai/mcp
 ```
 
 Run tool discovery. Verify that discovery/server metadata
-advertises Dense-Mem contract `dense-mem.v2.3` and that `recall_memory` returns
+advertises Dense-Mem contract `dense-mem.v2.4` and that `recall_memory` returns
 `relationship_id` handles.
 
 ## Step 3: Test Shared Memory
@@ -110,7 +110,7 @@ Ask to correct a prior preference and provide the new user statement as
 evidence. The safe behavior is:
 
 1. preserve prior evidence/history
-2. re-enter normal verification/policy
+2. re-enter the one-call assessment and deterministic policy
 3. commit the durable decision
 4. update PostgreSQL SemanticEdge/current rows atomically
 5. rebuild the versioned vector asynchronously

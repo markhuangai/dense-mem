@@ -57,9 +57,9 @@ validated seed and suite
 
 Runs are sequential so provider contention does not bias recall latency. Each
 run records the server revision, evaluator revision and dirty-state
-fingerprint, seed/suite hashes, embedding configuration, reviewer/verifier
-models, judge model, transport, and isolated team ID. The reviewer/verifier
-models are configured by the runtime profile. The answer-quality judge model is
+fingerprint, seed/suite hashes, embedding configuration, assessor model,
+prompt/contract versions, judge model, transport, and isolated team ID. The
+assessor model is configured by the runtime profile. The answer-quality judge model is
 recorded exactly. Import uses one evidence row per production `remember` call,
 and runner concurrency is part of the manifest.
 
@@ -67,7 +67,7 @@ When baseline behavior and the seed are unchanged, the retained clean baseline
 trace and retrieval artifact may be reused. If the seed, baseline behavior,
 recall parser, or judge contract changes, regenerate the affected artifact. The
 current implementation is reimported whenever remember logic, persisted
-semantic shape, verifier/reviewer prompt, or schema behavior changes. If only
+semantic shape, assessor prompt, or schema behavior changes. If only
 recall ranking changes, the existing successful import may be reused after
 validating search freshness and placement state.
 
@@ -139,7 +139,7 @@ comparability, but it does not replace the generated artifact files.
 ## PR Evaluation Rule
 
 Any PR that may affect retrieval quality, ranking, placement accuracy,
-verifier/reviewer behavior, embeddings, search documents, or performance must
+assessor behavior, embeddings, search documents, or performance must
 run the 1k corpus evaluation/comparison and include the result in the PR. If
 the seed and import logic are unchanged, a later PR may reuse a previous
 successful import after validating manifest identity, placement terminality,
@@ -172,7 +172,7 @@ fact, or generic HTTP memory-tool routes.
 | --- | --- |
 | semantic correctness | did evidence become the right Entity/Value/Relationship state and history? |
 | identity | did aliases converge and homonyms stay separable? |
-| verification contract | did invalid model output produce zero partial semantic writes? |
+| assessment contract | did the one-call result resolve structure/support correctly, and did invalid output produce zero partial semantic writes? |
 | retrieval quality | did full-text/vector/adjacency return the intended active Relationships? |
 | vector fidelity | how close is filtered HNSW to exact team-filtered search? |
 | temporal/lifecycle | are pending, conflict, supersession, retraction, and time handled correctly? |
@@ -194,7 +194,7 @@ contract and schema migration versions
 cluster-safe schema/key-contract version
 PostgreSQL and pgvector versions/config
 predicate registry version
-reviewer/verifier provider, models, prompt revisions, and local contract hash
+assessor provider, model, prompt revision, assessment-policy version, and local contract hash
 embedding provider/model, dimensions, normalization, and document version
 search-index profile, distance/operator, and HNSW construction
 ranking profile and HNSW query parameters
@@ -251,7 +251,7 @@ The corpus includes:
 - entailed, contradicted, insufficient, conflict, update, and ambiguity cases
 - deterministic pass, guarded, and quarantine evidence, including quoted
   security documentation that must not become a one-phrase false positive
-- reviewer and verifier security-signal cases, manager release, and unauthorized
+- assessor security-signal cases, manager release, and unauthorized
   release
 - stable source revisions, stale prior-revision tokens, explicit fragment
   supersession, team-wide support revocation, and pending-state transition
@@ -266,7 +266,7 @@ The corpus includes:
   nightly evaluation fixtures
 
 Seed through MCP `remember` and the first-party client-review workflow so runs
-exercise extraction, verification, policy, transactions, jobs, and interface
+exercise one-call assessment, policy, transactions, jobs, and interface
 contracts. Direct SQL is allowed only to create an explicitly labeled
 corruption/failure fixture.
 
@@ -283,7 +283,7 @@ Every run fails immediately on:
 | pending isolation | `pending_evidence` appears in neither default recall nor active graph |
 | Hypothesis isolation | dream output changes no Entity/Value/Relationship/support/status |
 | evidence lineage | every support resolves to an exact immutable span/source group; effective counts match latest support decisions |
-| support activation | one accepted entailed effective support activates the Relationship; additional sources do not add lifecycle or recall-rank classes |
+| support activation | one accepted entailed support at or above the effective team threshold activates the Relationship; additional sources do not add lifecycle or recall-rank classes |
 | source revision | one source lineage remains one independence group; exact prior token required; activation revokes old support team-wide |
 | support loss | loss of final effective support moves the same Relationship to `pending_evidence` automatically |
 | injection boundary | deterministic quarantine calls no model; model signals commit no semantic subset; release requires manager plus write |
@@ -318,7 +318,7 @@ Measure false merge, false split, duplicate-candidate rate, ambiguity rate, and
 client-correction burden. A low duplicate count is not success if valid
 homonyms were collapsed.
 
-## Strict Verifier Evaluation
+## Strict Assessor Evaluation
 
 Fault fixtures include:
 
@@ -337,18 +337,127 @@ wrong enum/type/range
 oversized string/array/output
 cross-array unresolved endpoint
 timeout and 429
-valid response after one full regeneration
-invalid response after retry budget
+invalid response followed by a later placement claim
+worker restart after valid assessment persistence but before semantic commit
+lease reclaim and transaction retry after valid assessment persistence
 ```
 
-For every invalid attempt assert:
+For every claim and invalid attempt assert:
 
 - no Entity/Value/Relationship/support/transition is committed from that output
 - no partial array is spliced into a later response
 - no `VerificationEvent` represents the invalid attempt
 - staged evidence and safe processing failure remain traceable
-- a retry contains the original immutable request and validation pointers and
-  expects a complete response
+- one placement claim makes at most one assessor request
+- an invalid result produces no inline regeneration; only a later claim with no
+  persisted valid assessment may make one fresh complete request
+- the first valid normalized assessment is unique for its stable claim key
+- restart, lease reclaim, and semantic commit retry reuse that persisted
+  assessment and make zero additional assessor calls
+- candidate/entity/predicate/input byte limits and truncation markers are
+  enforced before the call
+
+Run these protocol fixtures against both a scripted assessor and the real
+configured LLM host. The scripted host proves exact call count, crash/retry, and
+schema behavior; the real host measures whether the closed contract and prompt
+work under provider variability.
+
+## V2.4 One-Call Placement Evaluation
+
+The V2.4 release decision uses a paired V2.3/V2.4 run over the same pinned
+`public_6axis_1k_v1` rows, order, source identities, and isolated starting
+snapshot. Freeze the baseline/candidate revisions, model/provider versions,
+prompts, contracts, team configuration, runner concurrency, and random seeds
+before the first import. Do not reuse a V2.3 import because the change affects
+`remember` and persisted placement state.
+
+```text
+same validated 1k corpus
+  -> V2.3 isolated import with the two-call path
+  -> V2.4 isolated import with the one-call assessor
+  -> normalize per-evidence placement outcomes
+  -> compare structure, support, lifecycle, review, cost, tokens, and latency
+  -> human-adjudicate every active-state disagreement
+  -> run blinded swapped-order LLM judging as a diagnostic
+  -> repeat deterministic and real-host rounds
+```
+
+The paired outcome record includes:
+
+```text
+evidence id and source identity
+Entity action and selected Entity ID
+predicate status/key/version
+subject/object/polarity/scope/time
+evidence and temporal verdicts
+raw internal confidence and confidence bucket
+effective threshold and gate result
+Relationship ID/status/support decision
+review kind/state/expiry
+assessor request count, input/output tokens, latency, and provider result
+```
+
+Compare exact placement agreement and human-labeled accuracy for Entity
+identity, predicate resolution, Relationship structure, support verdict,
+temporal result, active/pending/review state, and final recall eligibility.
+Every difference receives a stable category rather than being collapsed into a
+single answer-quality score.
+
+### Confidence reliability
+
+Confidence evaluation applies only to positive Relationship support. Build
+reliability buckets and report sample count, empirical correctness, mean
+confidence, expected calibration error, Brier score, precision, recall, false
+activation, and unnecessary-hold rates. Report the bootstrap `0.7` operating
+point and a threshold sweep from `0` through `1`; choose future defaults from
+the measured reliability/cost trade-off, not from the LLM's numeric confidence
+alone. Identity, predicate, scope, time, security, and conflict failures remain
+separate hard holds regardless of confidence.
+
+Human reviewers label whether each candidate should have granted active
+positive support at write time from the exact submitted evidence and allowed
+context. They are blind to implementation, confidence, and threshold. Resolve
+reviewer disagreement under a recorded rubric before computing gate accuracy.
+
+### LLM-judge diagnostic
+
+An LLM judge may compare normalized V2.3 and V2.4 placement summaries, but it is
+not the active-state oracle or a release gate. Present outputs without version
+labels, run both A/B and B/A order for every case, and report agreement plus
+position-flip rate. The judge receives only the submitted evidence, allowed
+candidate context, and normalized outputs; it cannot recall, browse, or infer
+missing facts. Human adjudication controls every lifecycle disagreement. This
+swapped-order rule addresses documented position, verbosity, and
+self-enhancement biases in LLM-as-judge evaluation
+([Zheng et al., 2023](https://arxiv.org/abs/2306.05685)).
+
+### Multi-round gates
+
+Run at least two clean rounds with the scripted host and two with the real
+configured LLM host. Each round starts from a fresh isolated database and
+replays the identical manifest. Deterministic output should be byte-stable
+where the host is scripted; real-host results are compared by distribution and
+case category.
+
+V2.4 cannot ship unless:
+
+- every placement claim records at most one assessor request
+- restart, lease reclaim, pause/resume, and commit retry make zero extra calls
+  after a valid assessment is persisted
+- invalid/partial output creates no semantic subset and no inline regeneration
+- every structural, tenant, security, lifecycle, pending, and append-only hard
+  invariant remains at zero violations
+- the complete 1k import terminates with no lost or duplicate evidence claims
+- predeclared placement-quality non-regression bounds pass for the full corpus
+  and the homonym, predicate, temporal, conflict, and security slices
+- input/output tokens, call count, end-to-end placement latency, review burden,
+  and provider errors are reported side by side
+- confidence reliability and human false-activation results are published for
+  `0.7` and the threshold sweep
+
+The comparison report must keep quality and efficiency separate. Fewer calls do
+not excuse a false activation, structural regression, or increased unresolved
+review burden.
 
 ## Relationship Lifecycle Cases
 
@@ -364,22 +473,30 @@ Required examples:
 6. a dream may propose that third connection as a Hypothesis using existing
    nodes, but cannot activate it
 7. `insufficient` creates/retains a pending Relationship only when endpoints and a
-   predicate resolve
-8. same-owner conflict/single-current replacement remains review-held until safe
-9. forget retracts from current reads without erasing trace
-10. B's entailed correction creates B-owned knowledge, links A, and creates an
+   predicate resolve, opens a seven-day support-confidence review, and grants
+   no support
+8. `entailed` confidence below the effective team threshold follows the same
+   pending/review boundary, while confidence equal to the threshold passes
+9. changing the team threshold affects future/in-flight commits only and never
+   rescores completed or held assessments
+10. review expiry closes workflow without granting support or directly creating
+    a Hypothesis; only a structurally complete pending Relationship may later
+    become Dream input
+11. same-owner conflict/single-current replacement remains review-held until safe
+12. forget retracts from current reads without erasing trace
+13. B's entailed correction creates B-owned knowledge, links A, and creates an
     open team Conflict case without changing A during placement
-11. an open/overdue case returns material alternatives and clarification; a
+14. an open/overdue case returns material alternatives and clarification; a
     resolved case returns preferred current support paths plus conflict refs
-12. C's independent response creates C-owned knowledge and may contribute to
+15. C's independent response creates C-owned knowledge and may contribute to
     later nightly resolution; a bare assertion or copied source adds no vote
-13. `valid_at` before the change and `known_at` before later evidence/resolution
+16. `valid_at` before the change and `known_at` before later evidence/resolution
     reconstruct the earlier position and case state
-14. nightly evaluation resolves only one qualifying position, otherwise records
+17. nightly evaluation resolves only one qualifying position, otherwise records
     `overdue`, and never treats TTL as evidence
-15. nightly resolution atomically supersedes losing stale episodes with
+18. nightly resolution atomically supersedes losing stale episodes with
     `valid_to`, Relationship transitions, Conflict events, and search refresh
-16. A can adopt B's exact evidence without duplicating its source group, then
+19. A can adopt B's exact evidence without duplicating its source group, then
     supersede only A's prior Relationship
 
 ## Recall Judgments
@@ -455,6 +572,33 @@ activation. The after state may improve correlation quality, but neither state
 may alter Evidence `results[]`, lifecycle eligibility, semantic grouping, or
 Conflict disposition.
 
+## V2.4 Placement Migration
+
+Start from the fully migrated #129 fixture, then run the exact sequence in
+[Data Model And Storage](Data-Model-And-Storage#v24-one-call-placement-migration).
+The migration gate must prove:
+
+1. placement workers are paused and mixed V2.3/V2.4 execution is rejected;
+2. the preflight captures lifecycle, review, search, vector, and job counts;
+3. additive schema/config changes make zero assessor or embedding calls;
+4. legacy VerificationEvents remain byte-equivalent and receive no synthetic
+   confidence, threshold, or policy values;
+5. existing Relationship status, effective support, and transitions remain
+   unchanged;
+6. currently unresolved semantic reviews (`open` or `acknowledged`) receive a
+   fresh seven-day expiry, while resolved/canceled/expired tasks, security
+   quarantine, and Conflict cases do not;
+7. search-document text/hashes, vectors, embedding jobs, projection formats,
+   embedding contracts, and active HNSW generations match preflight;
+8. an in-flight item with a valid persisted assessment resumes without a call,
+   while one without a valid assessment makes at most one V2.4 call;
+9. rollback before traffic restores the matching database/application pair,
+   and rollback after V2.4 writes is rejected without full restore.
+
+Any re-embedding observed in this fixture is a failure. V2.4 changes placement
+policy and audit/workflow data only; #129 owns its separate Relationship
+projection and embedding work.
+
 ## Exact Versus HNSW Oracle
 
 For each vector dataset/query:
@@ -525,9 +669,9 @@ fairness.
 
 Inject:
 
-- reviewer/verifier timeout, 429, malformed and partial response
-- deterministic scanner false-positive/false-negative fixtures, valid reviewer
-  and verifier security signals, and repeated quarantine after release
+- assessor timeout, 429, malformed and partial response
+- deterministic scanner false-positive/false-negative fixtures, valid assessor
+  security signals, and repeated quarantine after release
 - stale or unowned source revision, source-activation fanout overflow, and crash
   before/after the atomic source pointer and support transition
 - embedding provider outage and wrong dimension
@@ -578,7 +722,9 @@ These criteria complement the paired comparison above.
 | Gate | Requirement |
 | --- | --- |
 | hard invariant | zero tenant, pending-Relationship, Hypothesis, duplicate-edge, append-only, and partial-commit violations |
-| verifier | every negative fixture rejects the whole response |
+| assessor | every negative fixture rejects the whole response; one claim never makes a second request |
+| V2.4 confidence gate | human-labeled false activation and unnecessary hold stay within predeclared bounds; reliability is reported at `0.7` and across the sweep |
+| V2.4 migration | no assessor/embedding calls, legacy rescoring, lifecycle mutation, search projection change, or re-embedding |
 | injection | no quarantined semantic/search state, no unauthorized release, and no model signal accepted as a safety clearance |
 | source lifecycle | stale/unowned revision changes nothing; accepted revision atomically revokes old effective support and recomputes statuses |
 | Relationship projection | complete format-2 text before serve; whole-team vector gate until current; zero Evidence/vector/index-contract changes |
@@ -604,6 +750,9 @@ comparisons are not added to the release evidence set.
 | Mocked success | fake repositories pass while RLS/locks/operators fail | real PostgreSQL + `pgvector` for storage gates |
 | Cross-profile correction mutates target | B's stronger evidence supersedes A automatically | A/B/C ownership fixtures and target-row version checks |
 | Provider variability hides regression | model change shifts identity/verdict output | record provider, model, prompt revision, and local contract hash; use repeated/paired runs |
+| Confidence looks precise but is miscalibrated | the `0.7` gate activates high-confidence false support for one model or domain | human labels, reliability buckets, ECE/Brier, threshold sweep, and per-slice false-activation reporting |
+| LLM judge prefers presentation or first position | the judge selects V2.4 because of wording or A/B order rather than correctness | normalize and blind outputs, run A/B and B/A, report flip rate, and use human active-state adjudication as the oracle |
+| Efficiency hides review displacement | one call lowers provider cost but pushes many correct writes into manual review | report review rate and unnecessary holds beside calls, tokens, latency, and placement accuracy |
 | Security corpus overfits keywords | detector passes benchmark but quarantines ordinary security prose | include quoted/adversarial minimal pairs and measure pass/guarded/quarantine confusion separately |
 | Source fixtures miss shared adoption | revision tests pass for one profile but leave another profile's unsupported Relationship active | use A/B/C adoption fixtures and verify effective support/status/search state for every dependent owner |
 | Migration fixture misses partial-vector bias | only a fully completed backfill is tested, so mixed lexical/vector RRF ships unnoticed | pause jobs at several keysets and assert the complete team vector branch remains disabled |
@@ -617,13 +766,14 @@ comparisons are not added to the release evidence set.
 3. hard semantic/isolation invariants run before quality scoring
 4. HNSW is always compared with exact team-filtered results
 5. concurrent read/write load includes tenant skew and hub graphs
-6. invalid verifier output proves zero partial semantic commit
+6. invalid assessor output proves zero partial semantic commit and zero inline
+   regeneration
 7. failure injection and recovery produce canonical expected outcomes
 8. RRF enabled/disabled profiles, deterministic reranking, and cross-profile
    conflict preference are evaluated separately
 9. every advertised PostgreSQL topology passes the same semantic, tenant,
     exact/ANN, connection-budget, backup, and failover gates
-10. reviewer/verifier contracts contain bounded security signals but no model
+10. the assessor contract contains bounded security signals but no model
     schema version, stored-knowledge alignment, or stored Relationship IDs
 11. source revision activation, automatic pending-state transition, and stale-token rejection
     pass with same-team cross-profile adopters
@@ -636,3 +786,11 @@ comparisons are not added to the release evidence set.
 14. Relationship projection tests prove resumable text convergence, fair
     asynchronous re-embedding, team-wide vector activation, and unchanged
     Evidence/embedding/index contracts
+15. paired V2.3/V2.4 runs use the same pinned 1k corpus and frozen manifest,
+    with human adjudication for every active-state disagreement
+16. scripted and real-host multi-round tests prove one request per claim and
+    persisted-assessment reuse after restart, lease reclaim, and commit retry
+17. confidence reliability, threshold-sweep results, token/call/latency savings,
+    and review burden are reported separately
+18. V2.4 migration tests prove zero rescoring, lifecycle/search mutation,
+    embedding work, or re-embedding

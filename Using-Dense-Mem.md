@@ -1,7 +1,7 @@
 # Using Dense-Mem
 
 Dense-Mem exposes its external memory tools through MCP. Contract
-`dense-mem.v2.3` accepts evidence, optionally accepts structured hints, and
+`dense-mem.v2.4` accepts evidence, optionally accepts structured hints, and
 processes semantic placement asynchronously. The user and control portals are
 first-party product interfaces, not alternative memory automation contracts.
 
@@ -153,8 +153,8 @@ Do not:
 ```
 
 Spans use Unicode code-point offsets, start inclusive and end exclusive. The
-reviewer may split/reject/normalize hints, and the one-call verifier still
-resolves Entities and evaluates Relationships.
+one-call assessor may split/reject/normalize hints, resolves Entities and
+registered predicates, and evaluates Relationship support.
 
 ## Read The Terminology
 
@@ -167,7 +167,7 @@ Relationship        one profile's canonical subject-predicate-object lifecycle
 SemanticEdge        active supported Relationship as a graph read
 Cross-reference     same-team confirmation/challenge/correction link; not an edge
 Observation         what one evidence submission expressed
-VerificationEvent  final schema-valid verifier judgment
+VerificationEvent  Relationship judgment derived from the persisted assessor result
 Hypothesis          isolated dream speculation
 ```
 
@@ -211,7 +211,12 @@ Poll `get_memory_placement` and inspect:
 
 - processing: `queued`, `processing`, `awaiting_review`, `completed`, `failed`
 - vector search: `not_required`, `pending`, `current`, `failed`
-- per-item category, reason, IDs, status, and review task
+- per-item category, reason, IDs, status, bounded assessment policy, and review
+  task
+
+Raw model confidence and the team's exact threshold are internal. The placement
+contract exposes only `meets_write_threshold`, `below_write_threshold`, or
+`not_applicable`, plus a bounded reason and assessment-policy version.
 
 Important categories:
 
@@ -235,25 +240,29 @@ Use the exact returned item and candidate:
 {
   "ingest_id": "ing_01J...",
   "placement_item_id": "item_1",
+  "placement_item_version": 3,
   "action": "select_entity",
-  "decision": {
-    "mention_ref": "person_1",
-    "entity_id": "ent_mark_huang"
-  },
-  "evidence": [
-    {
-      "content": "I mean Mark Huang on the Dense-Mem team.",
-      "source_type": "manual",
-      "authority": "authoritative",
-      "source_group": "user-resolution:ing_01J..."
-    }
-  ],
+  "entity_ref": "person_1",
+  "candidate_entity_id": "ent_mark_huang",
   "idempotency_key": "resolution-1"
 }
 ```
 
-The decision is durable input and re-enters strict processing. It never edits
-an edge directly. See
+Selecting a returned Entity or predicate option is a durable deterministic
+decision. It reapplies the persisted assessment with zero AI calls. If the
+current session does not exactly identify a supplied option, ask the user the
+returned question rather than guessing.
+
+`accept`, `correct`, and `confirm_new_entity` require exact new evidence. That
+evidence becomes a new placement item and receives one assessor call; a bare
+acceptance or client-supplied confidence cannot grant support. Every semantic
+review includes stable ID/version, kind, state, bounded question/options/
+guidance, and `expires_at`. After seven days an unanswered task expires. Expiry
+never activates knowledge or directly creates a Hypothesis: a structurally
+complete Relationship stays pending, while unresolved structure remains
+Evidence plus Observation only.
+
+No resolution action edits an edge directly. See
 [Conflicts And Corrections](Conflicts-And-Corrections).
 
 ## Recall Evidence Context
@@ -274,7 +283,7 @@ Default recall returns same-team active-supported evidence contexts in
 `results[]`. Relationships remain the durable semantic graph and appear in the
 separate correlation-ranked `related_relationships[]` frontier. When enabled,
 derived clusters appear only in `related_communities[]`. Recall excludes
-verifier history and pending Relationships from primary results. Server policy
+assessor history and pending Relationships from primary results. Server policy
 may include matching Hypotheses in `related_hypotheses`. Required `conflicts[]` is empty
 when no material disagreement applies. An open/overdue case returns bounded
 alternatives and a question; a resolved case returns preferred current evidence
@@ -316,7 +325,7 @@ old fragment. A correction to another profile creates caller-owned knowledge
 and a cross-reference during placement; it never directly changes the other
 profile's record. When recall returns an open Conflict case, place its
 `conflict_id` and expected version on the relevant Relationship proposal in a
-normal `remember` call. Dense-Mem derives the position from the new verified
+normal `remember` call. Dense-Mem derives the position from the new assessed
 evidence; there is no bare vote or cross-profile resolve action. Nightly
 Conflict review owns any automatic stale-state closure.
 

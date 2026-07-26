@@ -116,7 +116,7 @@ Examples:
 
 | Local page needs to say | Correct form |
 | --- | --- |
-| recall is fast because it omits verifier history | state that consequence; link to Relationship trace and Recall |
+| recall is fast because it omits assessor history | state that consequence; link to Relationship trace and Recall |
 | aliases do not become edges | state the local effect; link to Entity Identity |
 | vector build follows commit | show only the local consequence; link to Data Model for embedding-job semantics |
 | Relationship correlation rank is independent from lifecycle | state the local consequence; link to Recall Ranking and Vector Search |

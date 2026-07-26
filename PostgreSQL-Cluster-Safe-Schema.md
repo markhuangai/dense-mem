@@ -161,7 +161,7 @@ replicated by a future adapter:
 - predicate registry versions and immutable definitions
 - embedding contracts
 - search-index generations and global/default ranking contract definitions
-- verifier/reviewer closed-contract definitions and hashes
+- assessor closed-contract, prompt, and assessment-policy definitions/hashes
 - closed enum/reference definitions that cannot differ by shard
 
 Reference data activation follows a cluster-wide barrier. A predicate,
@@ -541,7 +541,7 @@ cannot consume every placement or embedding worker indefinitely.
 
 ## Version And Activation Barrier
 
-Schema, predicate, embedding, search-index, ranking, and verifier versions are
+Schema, predicate, embedding, search-index, ranking, and assessor versions are
 immutable records with one explicit active pointer per applicable scope.
 
 ```mermaid
