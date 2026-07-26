@@ -92,6 +92,21 @@ func TestV2ContractEnums(t *testing.T) {
 			t.Fatalf("V2CrossReferenceKinds missing %s", kind)
 		}
 	}
+	for _, status := range []string{"open", "overdue", "resolved", "dismissed"} {
+		if !slices.Contains(V2RelationshipConflictStatuses(), status) {
+			t.Fatalf("V2RelationshipConflictStatuses missing %s", status)
+		}
+	}
+	for _, kind := range []string{"cross_profile_current_state"} {
+		if !slices.Contains(V2RelationshipConflictKinds(), kind) {
+			t.Fatalf("V2RelationshipConflictKinds missing %s", kind)
+		}
+	}
+	for _, disposition := range []string{"candidate", "preferred", "suppressed_current"} {
+		if !slices.Contains(V2RelationshipConflictPositionDispositions(), disposition) {
+			t.Fatalf("V2RelationshipConflictPositionDispositions missing %s", disposition)
+		}
+	}
 	for _, status := range []string{"queued", "guarded", "quarantined", "processing", "awaiting_review", "completed", "failed"} {
 		if !slices.Contains(V2PlacementRunStatuses(), status) {
 			t.Fatalf("V2PlacementRunStatuses missing %s", status)

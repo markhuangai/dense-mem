@@ -6,8 +6,11 @@ func v2RecallFeedbackOutputSchema() map[string]any {
 	return v2ClosedObject(
 		[]string{"recorded", "recorded_count"},
 		map[string]any{
-			"recorded":       map[string]any{"type": "boolean"},
-			"recorded_count": map[string]any{"type": "integer", "minimum": 0, "maximum": 20},
+			"recorded":        map[string]any{"type": "boolean"},
+			"recorded_count":  map[string]any{"type": "integer", "minimum": 0, "maximum": 20},
+			"partial_success": map[string]any{"type": "boolean"},
+			"failed_index":    map[string]any{"type": "integer", "minimum": 0, "maximum": 19},
+			"error":           schemaString("Bounded feedback failure summary.", 128),
 		},
 	)
 }

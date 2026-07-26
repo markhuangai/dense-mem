@@ -138,6 +138,21 @@ func TestDreamHandlerRoutes(t *testing.T) {
 	assert.Contains(t, svc.profileIDs, profileID.String())
 }
 
+func TestDreamHandlerRunsReturnsEmptyArrayForNoRuns(t *testing.T) {
+	profileID := uuid.New()
+	e := echo.New()
+	h := NewDreamHandler(&dreamHandlerServiceStub{})
+	e.Use(injectProfileMiddleware(profileID))
+	e.GET("/api/v1/dreaming/runs", h.Runs)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/dreaming/runs", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.JSONEq(t, `{"data":[]}`, rec.Body.String())
+}
+
 func TestDreamHandlerValidationAndNotFound(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler

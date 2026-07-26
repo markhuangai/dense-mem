@@ -114,6 +114,9 @@ func (h *controlPortalHandler) listTeamDreamingRuns(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	if runs == nil {
+		runs = []*dreamservice.RunCycleResult{}
+	}
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": runs})
 }
 

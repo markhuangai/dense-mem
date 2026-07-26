@@ -17,8 +17,10 @@ func (s reviewStringer) String() string {
 }
 
 type reviewSourceLedgerStub struct {
-	placement *repository.V2CreateIngestResult
-	input     repository.V2GetPlacementRunInput
+	placement             *repository.V2CreateIngestResult
+	input                 repository.V2GetPlacementRunInput
+	conflictContextInputs []repository.V2ValidateRelationshipConflictContextInput
+	conflictContextErr    error
 }
 
 func (s *reviewSourceLedgerStub) CreateIngest(context.Context, repository.V2CreateIngestInput) (*repository.V2CreateIngestResult, error) {
@@ -28,6 +30,11 @@ func (s *reviewSourceLedgerStub) CreateIngest(context.Context, repository.V2Crea
 func (s *reviewSourceLedgerStub) GetPlacementRun(_ context.Context, input repository.V2GetPlacementRunInput) (*repository.V2CreateIngestResult, error) {
 	s.input = input
 	return s.placement, nil
+}
+
+func (s *reviewSourceLedgerStub) ValidateV2RelationshipConflictContext(_ context.Context, input repository.V2ValidateRelationshipConflictContextInput) error {
+	s.conflictContextInputs = append(s.conflictContextInputs, input)
+	return s.conflictContextErr
 }
 
 func (s *reviewSourceLedgerStub) AdvanceSourceRevision(context.Context, repository.V2AdvanceSourceRevisionInput) (*repository.V2SourceRevisionResult, error) {

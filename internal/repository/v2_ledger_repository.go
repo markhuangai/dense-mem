@@ -145,6 +145,8 @@ type V2LedgerRepositoryImpl struct {
 	db                      *gorm.DB
 	rls                     v2RLSHelper
 	embeddingJobMaxAttempts int
+	conflictReviewTTLDays   int
+	conflictReviewTimezone  string
 }
 
 var _ V2LedgerRepository = (*V2LedgerRepositoryImpl)(nil)
@@ -158,10 +160,22 @@ func NewV2LedgerRepositoryWithEmbeddingJobMaxAttempts(
 	rls *postgres.RLS,
 	maxAttempts int,
 ) *V2LedgerRepositoryImpl {
+	return NewV2LedgerRepositoryWithRuntimeConfig(db, rls, maxAttempts, V2ConflictRuntimeConfig{})
+}
+
+func NewV2LedgerRepositoryWithRuntimeConfig(
+	db *gorm.DB,
+	rls *postgres.RLS,
+	maxAttempts int,
+	conflictConfig V2ConflictRuntimeConfig,
+) *V2LedgerRepositoryImpl {
+	conflictConfig = normalizeV2ConflictRuntimeConfig(conflictConfig)
 	return &V2LedgerRepositoryImpl{
 		db:                      db,
 		rls:                     rls,
 		embeddingJobMaxAttempts: normalizeV2EmbeddingJobMaxAttempts(maxAttempts),
+		conflictReviewTTLDays:   conflictConfig.ReviewTTLDays,
+		conflictReviewTimezone:  conflictConfig.Timezone,
 	}
 }
 
@@ -429,6 +443,16 @@ func (r *V2LedgerRepositoryImpl) withTeamTx(ctx context.Context, teamID string, 
 		return errors.New("v2 ledger: rls helper is required")
 	}
 	return r.rls.WithTeamTx(ctx, r.db, teamID, fn)
+}
+
+func (r *V2LedgerRepositoryImpl) withSystemTx(ctx context.Context, fn func(tx *gorm.DB) error) error {
+	if r == nil || r.db == nil {
+		return errors.New("v2 ledger: database is required")
+	}
+	if r.rls == nil {
+		return errors.New("v2 ledger: rls helper is required")
+	}
+	return r.rls.WithSystemTx(ctx, r.db, fn)
 }
 
 func normalizeV2CreateIngestInput(input V2CreateIngestInput) V2CreateIngestInput {

@@ -115,6 +115,7 @@ func v2RelationshipProposalArraySchema() map[string]any {
 				"valid_from":        v2NullableDateTime("Evidence-supported validity start."),
 				"valid_to":          v2NullableDateTime("Evidence-supported validity end."),
 				"correction_target": v2RelationshipCorrectionTargetSchema(),
+				"conflict_context":  v2RelationshipConflictContextSchema(),
 				"client_comment":    v2NullableString("Non-authoritative extraction note.", 1000),
 				"evidence": map[string]any{
 					"type":     "array",
@@ -144,6 +145,18 @@ func v2RelationshipCorrectionTargetSchema() map[string]any {
 		"required":             []string{"relationship_id", "expected_version"},
 		"properties": map[string]any{
 			"relationship_id":  schemaString("Same-team Relationship target.", 128),
+			"expected_version": map[string]any{"type": "integer", "minimum": 1},
+		},
+	}
+}
+
+func v2RelationshipConflictContextSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"conflict_id", "expected_version"},
+		"properties": map[string]any{
+			"conflict_id":      schemaString("Same-team open Conflict case.", 128),
 			"expected_version": map[string]any{"type": "integer", "minimum": 1},
 		},
 	}

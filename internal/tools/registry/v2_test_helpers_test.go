@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -58,6 +59,7 @@ type stubRecallFeedbackRecorder struct {
 	snapshots []domain.RecallFeedbackEvent
 	feedback  []domain.RecallFeedbackSubmission
 	err       error
+	failAfter int
 }
 
 func (s *stubRecallFeedbackRecorder) RecordRecallSnapshot(_ context.Context, event domain.RecallFeedbackEvent) error {
@@ -71,6 +73,9 @@ func (s *stubRecallFeedbackRecorder) RecordRecallSnapshot(_ context.Context, eve
 func (s *stubRecallFeedbackRecorder) RecordRecallFeedback(_ context.Context, feedback domain.RecallFeedbackSubmission) error {
 	if s.err != nil {
 		return s.err
+	}
+	if s.failAfter > 0 && len(s.feedback) >= s.failAfter {
+		return errors.New("stub feedback failure")
 	}
 	s.feedback = append(s.feedback, feedback)
 	return nil

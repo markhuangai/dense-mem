@@ -342,6 +342,12 @@ func semanticCommitInputFromReview(job SemanticCommitJob) (repository.V2CommitPl
 				ExpectedVersion: observation.CorrectionTarget.ExpectedVersion,
 			}
 		}
+		if observation.ConflictContext != nil {
+			relationship.ConflictContext = &repository.V2PlacementConflictContextInput{
+				ConflictID:      observation.ConflictContext.ConflictID,
+				ExpectedVersion: observation.ConflictContext.ExpectedVersion,
+			}
+		}
 		if observation.ObjectValue != nil {
 			relationship.ObjectValue = &repository.V2PlacementValueInput{
 				Ref:            observation.ObjectValue.Ref,

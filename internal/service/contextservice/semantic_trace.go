@@ -36,6 +36,7 @@ type SemanticTrace struct {
 	EvidenceFragments      []repository.V2TraceEvidenceFragment             `json:"evidence_fragments,omitempty"`
 	VerificationEvents     []repository.V2RelationshipVerificationEvent     `json:"verification_events,omitempty"`
 	Transitions            []repository.V2RelationshipTransitionEvent       `json:"transitions,omitempty"`
+	Conflicts              []repository.V2RelationshipConflictCaseRecord    `json:"conflicts,omitempty"`
 	CrossProfileReferences []repository.V2RelationshipCrossReferenceRecord  `json:"cross_profile_references,omitempty"`
 	IdentityCorrections    []repository.V2EntityCorrectionEventRecord       `json:"identity_corrections,omitempty"`
 	SupersessionLineage    []repository.V2RelationshipTraceRecord           `json:"supersession_lineage,omitempty"`
@@ -102,6 +103,7 @@ func semanticTraceFromRepository(trace *repository.V2RelationshipTraceResult) *S
 		EvidenceFragments:      trace.EvidenceFragments,
 		VerificationEvents:     trace.VerificationEvents,
 		Transitions:            trace.Transitions,
+		Conflicts:              trace.Conflicts,
 		CrossProfileReferences: trace.CrossProfileReferences,
 		IdentityCorrections:    trace.IdentityCorrections,
 		SupersessionLineage:    trace.SupersessionLineage,

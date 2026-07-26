@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -12,6 +13,8 @@ const (
 	DefaultHTTPAddr                = ":" + DefaultHTTPPort
 	DefaultEmbeddingJobMaxAttempts = 20
 	MaxEmbeddingJobMaxAttempts     = 100
+	DefaultConflictReviewTTLDays   = 7
+	DefaultConflictReviewStartTime = "04:00"
 )
 
 var legacyNeo4jEnvVars = []string{
@@ -121,6 +124,14 @@ type Config struct {
 	TelemetryPrometheusJob       string
 	TelemetryQueryTimeoutSeconds int
 	TelemetryScrapeToken         string `json:"-"`
+	AppTimezone                  string
+	ConflictReviewTTLDays        int
+	ConflictReviewStartTimeLocal string
+	ConflictReviewMaxConcurrency int
+	ConflictReviewBatchSize      int
+	ConflictReviewLeaseSeconds   int
+	ConflictReviewMaxAttempts    int
+	ConflictReviewJitterSeconds  int
 }
 
 // Ensure Config implements ConfigProvider
@@ -200,6 +211,54 @@ func (c *Config) GetTelemetryQueryTimeoutSeconds() int {
 	return 5
 }
 func (c *Config) GetTelemetryScrapeToken() string { return c.TelemetryScrapeToken }
+func (c *Config) GetAppTimezone() string {
+	if strings.TrimSpace(c.AppTimezone) == "" {
+		return "Local"
+	}
+	return c.AppTimezone
+}
+func (c *Config) GetConflictReviewTTLDays() int {
+	if c.ConflictReviewTTLDays <= 0 {
+		return DefaultConflictReviewTTLDays
+	}
+	return c.ConflictReviewTTLDays
+}
+func (c *Config) GetConflictReviewStartTimeLocal() string {
+	if strings.TrimSpace(c.ConflictReviewStartTimeLocal) == "" {
+		return DefaultConflictReviewStartTime
+	}
+	return c.ConflictReviewStartTimeLocal
+}
+func (c *Config) GetConflictReviewMaxConcurrency() int {
+	if c.ConflictReviewMaxConcurrency <= 0 {
+		return 1
+	}
+	return c.ConflictReviewMaxConcurrency
+}
+func (c *Config) GetConflictReviewBatchSize() int {
+	if c.ConflictReviewBatchSize <= 0 {
+		return 100
+	}
+	return c.ConflictReviewBatchSize
+}
+func (c *Config) GetConflictReviewLeaseSeconds() int {
+	if c.ConflictReviewLeaseSeconds <= 0 {
+		return 300
+	}
+	return c.ConflictReviewLeaseSeconds
+}
+func (c *Config) GetConflictReviewMaxAttempts() int {
+	if c.ConflictReviewMaxAttempts <= 0 {
+		return 5
+	}
+	return c.ConflictReviewMaxAttempts
+}
+func (c *Config) GetConflictReviewJitterSeconds() int {
+	if c.ConflictReviewJitterSeconds < 0 {
+		return 0
+	}
+	return c.ConflictReviewJitterSeconds
+}
 
 // ValidationError represents a configuration validation failure.
 type ValidationError struct {
@@ -420,6 +479,18 @@ func Load() (Config, error) {
 	}); err != nil {
 		return cfg, err
 	}
+	cfg.AppTimezone = getEnvOrDefault("APP_TIMEZONE", "Local")
+	cfg.ConflictReviewStartTimeLocal = getEnvOrDefault("CONFLICT_REVIEW_START_TIME_LOCAL", DefaultConflictReviewStartTime)
+	if err := applyIntEnvSpecs(&cfg, []intEnvSpec{
+		{"CONFLICT_REVIEW_TTL_DAYS", DefaultConflictReviewTTLDays, func(c *Config, value int) { c.ConflictReviewTTLDays = value }},
+		{"CONFLICT_REVIEW_MAX_CONCURRENCY", 1, func(c *Config, value int) { c.ConflictReviewMaxConcurrency = value }},
+		{"CONFLICT_REVIEW_BATCH_SIZE", 100, func(c *Config, value int) { c.ConflictReviewBatchSize = value }},
+		{"CONFLICT_REVIEW_LEASE_SECONDS", 300, func(c *Config, value int) { c.ConflictReviewLeaseSeconds = value }},
+		{"CONFLICT_REVIEW_MAX_ATTEMPTS", 5, func(c *Config, value int) { c.ConflictReviewMaxAttempts = value }},
+		{"CONFLICT_REVIEW_JITTER_SECONDS", 600, func(c *Config, value int) { c.ConflictReviewJitterSeconds = value }},
+	}); err != nil {
+		return cfg, err
+	}
 	cfg.SkillPackImportHistoryDays, err = parseMemoryPackImportHistoryDays(30)
 	if err != nil {
 		return cfg, err
@@ -488,6 +559,11 @@ func Load() (Config, error) {
 		{"CLAIM_WRITE_RATE_LIMIT", cfg.ClaimWriteRateLimit},
 		{"CLAIM_READ_RATE_LIMIT", cfg.ClaimReadRateLimit},
 		{"PROMOTE_TX_TIMEOUT_SECONDS", cfg.PromoteTxTimeoutSeconds},
+		{"CONFLICT_REVIEW_TTL_DAYS", cfg.ConflictReviewTTLDays},
+		{"CONFLICT_REVIEW_MAX_CONCURRENCY", cfg.ConflictReviewMaxConcurrency},
+		{"CONFLICT_REVIEW_BATCH_SIZE", cfg.ConflictReviewBatchSize},
+		{"CONFLICT_REVIEW_LEASE_SECONDS", cfg.ConflictReviewLeaseSeconds},
+		{"CONFLICT_REVIEW_MAX_ATTEMPTS", cfg.ConflictReviewMaxAttempts},
 		{"MEMORY_PACK_IMPORT_HISTORY_DAYS", cfg.SkillPackImportHistoryDays},
 		{"AI_COMMUNITY_MAX_NODES", cfg.AICommunityMaxNodes},
 		{"TELEMETRY_QUERY_TIMEOUT_SECONDS", cfg.TelemetryQueryTimeoutSeconds},
@@ -505,6 +581,54 @@ func Load() (Config, error) {
 		return cfg, &ValidationError{
 			Field:   "EMBEDDING_JOB_MAX_ATTEMPTS",
 			Message: fmt.Sprintf("must be less than or equal to %d, got %d", MaxEmbeddingJobMaxAttempts, cfg.EmbeddingJobMaxAttempts),
+		}
+	}
+	if cfg.ConflictReviewTTLDays > 30 {
+		return cfg, &ValidationError{
+			Field:   "CONFLICT_REVIEW_TTL_DAYS",
+			Message: fmt.Sprintf("must be less than or equal to 30, got %d", cfg.ConflictReviewTTLDays),
+		}
+	}
+	if cfg.ConflictReviewMaxConcurrency > 16 {
+		return cfg, &ValidationError{
+			Field:   "CONFLICT_REVIEW_MAX_CONCURRENCY",
+			Message: fmt.Sprintf("must be less than or equal to 16, got %d", cfg.ConflictReviewMaxConcurrency),
+		}
+	}
+	if cfg.ConflictReviewBatchSize > 500 {
+		return cfg, &ValidationError{
+			Field:   "CONFLICT_REVIEW_BATCH_SIZE",
+			Message: fmt.Sprintf("must be less than or equal to 500, got %d", cfg.ConflictReviewBatchSize),
+		}
+	}
+	if cfg.ConflictReviewLeaseSeconds < 30 || cfg.ConflictReviewLeaseSeconds > 1800 {
+		return cfg, &ValidationError{
+			Field:   "CONFLICT_REVIEW_LEASE_SECONDS",
+			Message: fmt.Sprintf("must be between 30 and 1800, got %d", cfg.ConflictReviewLeaseSeconds),
+		}
+	}
+	if cfg.ConflictReviewMaxAttempts > 20 {
+		return cfg, &ValidationError{
+			Field:   "CONFLICT_REVIEW_MAX_ATTEMPTS",
+			Message: fmt.Sprintf("must be less than or equal to 20, got %d", cfg.ConflictReviewMaxAttempts),
+		}
+	}
+	if cfg.ConflictReviewJitterSeconds < 0 || cfg.ConflictReviewJitterSeconds > 3600 {
+		return cfg, &ValidationError{
+			Field:   "CONFLICT_REVIEW_JITTER_SECONDS",
+			Message: fmt.Sprintf("must be between 0 and 3600, got %d", cfg.ConflictReviewJitterSeconds),
+		}
+	}
+	if _, err := time.Parse("15:04", cfg.ConflictReviewStartTimeLocal); err != nil {
+		return cfg, &ValidationError{
+			Field:   "CONFLICT_REVIEW_START_TIME_LOCAL",
+			Message: fmt.Sprintf("invalid HH:MM value: %s", cfg.ConflictReviewStartTimeLocal),
+		}
+	}
+	if _, err := time.LoadLocation(cfg.GetAppTimezone()); err != nil {
+		return cfg, &ValidationError{
+			Field:   "APP_TIMEZONE",
+			Message: fmt.Sprintf("invalid timezone: %s", cfg.GetAppTimezone()),
 		}
 	}
 

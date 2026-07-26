@@ -488,7 +488,7 @@ func TestV2PlacementSemanticCommitAppendsCorrectionTargetCrossReference(t *testi
 		RelationshipObservations: []V2PlacementRelationshipDecisionInput{{
 			Ref:          "target-uses",
 			SubjectRef:   "subject",
-			PredicateKey: "uses",
+			PredicateKey: "primary_database",
 			ObjectRef:    "object",
 			Support: &V2EvidenceSupportInput{
 				FragmentID:     targetIngest.Evidence[0].FragmentID,
